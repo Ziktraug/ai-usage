@@ -48,6 +48,7 @@ import {
   type UsageSnapshot,
   usageSnapshotRowDedupeKey,
 } from '@ai-usage/report-core/snapshot';
+import { systemReportTimeZone } from '@ai-usage/report-core/time-zone';
 import type { Row, SourcedRow } from '@ai-usage/report-core/types';
 import { usageRowLineDelta, usageRowPricedCost, usageRowTokenTotal } from '@ai-usage/report-core/usage-row';
 import {
@@ -669,6 +670,7 @@ const collectLocalReportAssemblyInput = (
         options: request.options,
         projectGroups: projection.projectGroups,
         rows: projection.rows,
+        timeZone: systemReportTimeZone(),
         warnings: coalesceMetricValidationWarnings([...warnings, ...datasetResult.warnings, ...projection.warnings]),
       };
     }),
@@ -767,6 +769,7 @@ export const createStoredReportCapture = (
             options: request.options,
             projectGroups: projection.projectGroups,
             rows: projection.rows,
+            timeZone: systemReportTimeZone(),
             warnings: [...datasetResult.warnings, ...projection.warnings],
           });
           if (assembly.rows.length !== projection.sourceAuthorities.length) {
@@ -981,6 +984,7 @@ export const createMergedUsageReport = (request: MergedUsageReportRequest) =>
       options: request.options,
       projectGroups: projection.projectGroups,
       rows: projection.rows,
+      timeZone: systemReportTimeZone(),
       warnings: payloadWarnings,
     });
     return {

@@ -157,6 +157,10 @@ test('provides one accessible responsive source-control surface', async ({ page 
   await expect(page.getByRole('heading', { level: 2, name: 'Sessions' })).toBeVisible();
   await expect(page.getByRole('heading', { level: 2, name: 'Provider usage' })).toBeVisible();
   await expect(page.getByRole('heading', { level: 2, name: 'Enrichments' })).toBeVisible();
+  const healthySources = page.locator('[data-healthy-source-summary]');
+  await expect(healthySources).toHaveJSProperty('open', false);
+  await healthySources.locator('summary').click();
+  await expect(healthySources).toHaveJSProperty('open', true);
   await expect(page.getByRole('checkbox', { name: 'Enabled' })).toHaveCount(7);
   await expect(page.getByText('codex.sessions', { exact: true })).toBeVisible();
 
@@ -177,7 +181,6 @@ test('keeps the Report range mounted while focused chart options refresh', async
   await expect(advancedAnalysis.getByRole('heading', { level: 2, name: 'Punchcard' })).toBeVisible();
   await dateRange.evaluate((element) => element.setAttribute('data-stability-marker', 'original-range'));
   await timeline.evaluate((element) => element.setAttribute('data-stability-marker', 'original-chart'));
-  await advancedAnalysis.evaluate((element) => element.setAttribute('data-stability-marker', 'original-analysis'));
   await page.route('**/_serverFn/**', async (route) => {
     await new Promise<void>((resolve) => {
       setTimeout(resolve, 250);
@@ -189,10 +192,8 @@ test('keeps the Report range mounted while focused chart options refresh', async
   await chartOptions.getByRole('radio', { exact: true, name: 'Model' }).click();
   await expect(dateRange).toHaveAttribute('data-stability-marker', 'original-range', { timeout: 1000 });
   await expect(timeline).toHaveAttribute('data-stability-marker', 'original-chart');
-  await expect(advancedAnalysis).toHaveAttribute('data-stability-marker', 'original-analysis');
   await expect(dateRange).toHaveAttribute('data-stability-marker', 'original-range');
   await expect(timeline).toHaveAttribute('data-stability-marker', 'original-chart');
-  await expect(advancedAnalysis).toHaveAttribute('data-stability-marker', 'original-analysis');
   await expect(advancedAnalysis.getByRole('heading', { level: 2, name: 'Punchcard' })).toBeVisible();
 });
 

@@ -22,6 +22,7 @@ import { provenanceForUsageRow } from '@ai-usage/report-core/provenance';
 import type { SessionDetailResponse } from '@ai-usage/report-core/session-detail';
 import type { SessionVcsResolveResponse } from '@ai-usage/report-core/session-vcs';
 import { createEffect, createMemo, createSignal, For, onCleanup, Show } from 'solid-js';
+import { CampaignLabelEditor, type CampaignLabelEditorState } from './campaign-label-editor';
 import type { CampaignTotals, CampaignView } from './dashboard-model';
 import type { FieldFilterKey } from './dashboard-search';
 import { lineDeltaLabel, rtkSavedLabel, rtkSavedTitle } from './dashboard-sort';
@@ -50,7 +51,6 @@ import {
 
 const analysisDrawer = css({ w: { base: '100vw', md: 'min(960px, 94vw)' } });
 const SESSION_ANALYSIS_PANEL_ID = 'session-analysis-panel';
-
 const fmtRatio = (ratio: number) => (ratio >= 10 ? `${Math.round(ratio)}×` : `${ratio.toFixed(1)}×`);
 
 const fmtCampaignTotals = (totals: CampaignTotals) => {
@@ -74,6 +74,7 @@ const campaignSessionSummary = (row: DashboardRow) => {
 };
 
 export const SessionDrawer = (props: {
+  campaignLabelEditor?: CampaignLabelEditorState;
   onClose: () => void;
   onClearFilters: () => void;
   onFieldFilter: (key: FieldFilterKey, value: string) => void;
@@ -317,7 +318,7 @@ export const SessionDrawer = (props: {
       </div>
       <div class={drawerBody}>
         <div>
-          <div class={drawerTitle}>{props.row.sessionLabel}</div>
+          <div class={drawerTitle}>{props.campaignLabelEditor?.effectiveLabel ?? props.row.sessionLabel}</div>
           <div class={muted}>
             {props.row.providerDisplay} · {props.row.modelLabel}
           </div>
@@ -343,6 +344,7 @@ export const SessionDrawer = (props: {
             <Show when={durationRatio() != null}>{fmtRatio(durationRatio() ?? 0)} median duration</Show>
           </div>
         </Show>
+        <Show when={props.campaignLabelEditor}>{(editor) => <CampaignLabelEditor editor={editor()} />}</Show>
         <Show when={props.selectedCampaign}>
           {(campaign) => (
             <div class={drawerCompare}>

@@ -113,7 +113,7 @@ const openStableOverview = async (page: Page): Promise<void> => {
 };
 
 const scrollOverviewValueIntoView = (page: Page): Promise<void> =>
-  page.getByRole('region', { name: 'API-equivalent value' }).evaluate((element) => {
+  page.getByRole('region', { name: 'Estimated API-equivalent value' }).evaluate((element) => {
     element.scrollIntoView({ block: 'start' });
   });
 

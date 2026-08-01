@@ -5,12 +5,15 @@ import {
   type FocusedReportSupport,
   focusedAdvancedAnalysisFingerprint,
   focusedOverviewFingerprint,
+  focusedTimelineDimensionDefinitions,
+  focusedTimelineDimensions,
   parseFocusedOverviewRequest,
   parseFocusedReportQueryResult,
   projectFocusedBreakdown,
   projectFocusedOverview,
   projectFocusedSupport,
 } from './focused-report-query';
+import { localTimeRowFields } from './local-time-row.test-fixture';
 import {
   MAX_BREAKDOWN_REFRESH_BYTES,
   MAX_OVERVIEW_REFRESH_BYTES,
@@ -105,6 +108,7 @@ const support: FocusedReportSupport = {
   filters: { limit: 2, minTokens: 0, project: null, since: null, sort: 'date' },
   generatedAt: '2026-07-13T12:00:00.000Z',
   omittedRows: 0,
+  timeZone: 'UTC',
   projectGroupConfigs: [{ id: 'group-a', name: 'Group A', sources: [{ project: 'ai-usage' }] }],
   projectGroups: [],
   warnings: [{ message: 'warning' }],
@@ -127,15 +131,17 @@ describe('focused report query contracts', () => {
     expect(focusedOverviewFingerprint({ ...overviewRequest, includeAdvanced: false })).not.toBe(
       focusedOverviewFingerprint(overviewRequest),
     );
-    const dimensions: FocusedOverviewRequest['timeline']['dimension'][] = ['campaign', 'machine', 'origin'];
-    const dimensionFingerprints = dimensions.map((dimension) =>
+    const dimensionFingerprints = focusedTimelineDimensions.map((dimension) =>
       focusedOverviewFingerprint({
         ...overviewRequest,
         timeline: { ...overviewRequest.timeline, dimension },
       }),
     );
-    expect(new Set(dimensionFingerprints).size).toBe(3);
-    for (const dimension of ['campaign', 'machine', 'origin'] as const) {
+    expect(new Set(dimensionFingerprints).size).toBe(focusedTimelineDimensions.length);
+    expect(new Set(focusedTimelineDimensionDefinitions.map(({ label }) => label)).size).toBe(
+      focusedTimelineDimensions.length,
+    );
+    for (const dimension of focusedTimelineDimensions) {
       expect(
         parseFocusedOverviewRequest({
           ...overviewRequest,
@@ -150,6 +156,44 @@ describe('focused report query contracts', () => {
     const { includeAdvanced: _includeAdvanced, ...requestWithoutAdvancedMode } = overviewRequest;
     expect(() => parseFocusedOverviewRequest(requestWithoutAdvancedMode)).toThrow('unknown or missing');
     expect(() => parseFocusedOverviewRequest({ ...overviewRequest, extra: true })).toThrow('unknown or missing');
+  });
+
+  test('applies a local punchcard cell before every focused aggregation', () => {
+    const timedRow = (name: string, day: number, hour: number, minute: number, cost: number): SerializedRow => ({
+      ...row(name, 1, cost),
+      ...localTimeRowFields(day, hour, minute),
+    });
+    const fixtures = [
+      timedRow('monday-13:59', 27, 13, 59, 1),
+      timedRow('monday-14:00', 27, 14, 0, 2),
+      timedRow('monday-14:59', 27, 14, 59, 3),
+      timedRow('monday-15:00', 27, 15, 0, 4),
+      timedRow('sunday-14:00', 26, 14, 0, 5),
+      { ...row('missing-time', 1, 6), activeDate: null, date: null, endDate: null },
+    ];
+    const request: FocusedOverviewRequest = {
+      ...overviewRequest,
+      query: {
+        ...overviewRequest.query,
+        filters: { ...overviewRequest.query.filters, localTimeCell: { hour: 14, weekday: 0 } },
+        range: { from: null, to: null },
+      },
+    };
+
+    const monday = projectFocusedOverview(fixtures, support, request);
+    expect(monday.summary.sessionCount).toBe(2);
+    expect(monday.timeline?.grandSessions).toBe(2);
+    expect(monday.view.topSessions.map(({ label }) => label)).toEqual(['monday-14:59', 'monday-14:00']);
+    expect(monday.view.punchcard?.cells[0]?.[14]?.sessions).toBe(2);
+
+    const sunday = projectFocusedOverview(fixtures, support, {
+      ...request,
+      query: {
+        ...request.query,
+        filters: { ...request.query.filters, localTimeCell: { hour: 14, weekday: 6 } },
+      },
+    });
+    expect(sunday.view.topSessions.map(({ label }) => label)).toEqual(['sunday-14:00']);
   });
 
   test('omits advanced analysis work and results from timeline-only requests', () => {
@@ -173,7 +217,7 @@ describe('focused report query contracts', () => {
     expect(result.summary.totalCost).toBe(9);
     expect(result.timeline?.grandSessions).toBe(rows.length);
     expect(result.view.heatmap?.weeks.length).toBeGreaterThan(0);
-    expect(result.view.records?.topCost?.name).toBe('four');
+    expect(result.view.records?.topCost?.row.name).toBe('four');
     expect(result.view.topSessions.map(({ label }) => label)).toEqual(['four', 'three', 'two']);
     expect(result.view.sessionShape?.totalPoints).toBe(3);
     expect(result.view.punchcard?.maxSessions).toBe(1);
@@ -190,6 +234,25 @@ describe('focused report query contracts', () => {
         overviewRequest,
       ),
     ).toThrow('fingerprint');
+  });
+
+  test('keeps full-range and bounded empty previous periods distinct from available prior data', () => {
+    const withPrior = projectFocusedOverview(rows, support, overviewRequest);
+    const withoutPrior = projectFocusedOverview(rows, support, {
+      ...overviewRequest,
+      query: {
+        ...overviewRequest.query,
+        range: { from: '2026-07-01T00:00:00.000Z', to: overviewRequest.query.range.to },
+      },
+    });
+    const fullRange = projectFocusedOverview(rows, support, {
+      ...overviewRequest,
+      query: { ...overviewRequest.query, range: { from: null, to: null } },
+    });
+
+    expect(withPrior.view.previousSummary?.sessionCount).toBe(1);
+    expect(withoutPrior.view.previousSummary).toBeNull();
+    expect(fullRange.view.previousSummary).toBeNull();
   });
 
   test('groups focused timelines by campaign, machine, project identity, and declared origin', () => {
@@ -329,6 +392,58 @@ describe('focused report query contracts', () => {
     });
     expect(filtered.summary.sessionCount).toBe(1);
     expect(filtered.timeline?.series.map(({ key }) => key)).toEqual(['machine-b']);
+  });
+
+  test('uses campaign aggregates for session records while preserving day records', () => {
+    const campaignRoot = {
+      ...row('record-campaign-root', 2, 5),
+      durationMs: 7_200_000,
+      source: {
+        harnessKey: 'codex',
+        machineId: 'machine-a',
+        machineLabel: 'Machine A',
+        rootSourceSessionId: 'record-campaign-root',
+        sourceSessionId: 'record-campaign-root',
+      },
+    };
+    const campaignChild = {
+      ...row('record-campaign-child', 3, 7),
+      durationMs: 15_000_000,
+      source: {
+        harnessKey: 'codex',
+        machineId: 'machine-a',
+        machineLabel: 'Machine A',
+        parentSourceSessionId: 'record-campaign-root',
+        rootSourceSessionId: 'record-campaign-root',
+        sourceSessionId: 'record-campaign-child',
+      },
+    };
+    const standalone = {
+      ...row('record-standalone', 4, 10),
+      durationMs: 3_600_000,
+    };
+
+    const result = projectFocusedOverview([campaignRoot, campaignChild, standalone], support, overviewRequest);
+
+    expect(result.view.records?.topCost).toMatchObject({
+      costApprox: 12,
+      kind: 'campaign',
+      label: 'record-campaign-root',
+      sessionCount: 2,
+    });
+    expect(result.view.records?.longest).toMatchObject({
+      durationMs: 7_200_000,
+      kind: 'campaign',
+      label: 'record-campaign-root',
+      row: { name: 'record-campaign-root' },
+    });
+    expect(result.view.records?.busiest).toEqual({
+      cost: 10,
+      date: '2026-07-04T00:00:00.000Z',
+      sessions: 1,
+    });
+    expect(result.view.records?.streak).toBe(3);
+    expect(result.view.records?.streakEnd).toBe('2026-07-04T00:00:00.000Z');
   });
 
   test('preserves known API-value subtotals and completeness for top sessions and campaigns', () => {
@@ -581,6 +696,97 @@ describe('focused report query contracts', () => {
     expect(result.context.warnings).toEqual(support.warnings);
     expect(
       parseFocusedReportQueryResult('breakdown', JSON.parse(JSON.stringify(result)), { query: overviewRequest.query }),
+    ).toEqual(result);
+  });
+
+  test('projects each exact harness-provider pair without losing or duplicating totals', () => {
+    const jointRows: SerializedRow[] = [
+      { ...row('codex-codex', 1, 1), harness: 'Codex', provider: 'Codex API' },
+      { ...row('codex-anthropic', 2, 2), harness: 'Codex', provider: 'Anthropic' },
+      { ...row('claude-anthropic', 3, 3), harness: 'Claude Code', provider: 'Anthropic' },
+    ];
+    const result = projectFocusedBreakdown(jointRows, support, {
+      query: { ...overviewRequest.query, range: { from: null, to: null } },
+    });
+    const pairs = result.groups.harnessProviders;
+
+    expect(pairs.map(({ harness, provider, sessions }) => ({ harness, provider, sessions }))).toEqual([
+      { harness: 'Claude Code', provider: 'Anthropic', sessions: 1 },
+      { harness: 'Codex', provider: 'Anthropic', sessions: 1 },
+      { harness: 'Codex', provider: 'Codex API', sessions: 1 },
+    ]);
+    expect(
+      pairs
+        .filter(({ harness }) => harness === 'Codex')
+        .map(({ provider }) => provider)
+        .sort(),
+    ).toEqual(['Anthropic', 'Codex API']);
+    expect(
+      pairs
+        .filter(({ provider }) => provider === 'Anthropic')
+        .map(({ harness }) => harness)
+        .sort(),
+    ).toEqual(['Claude Code', 'Codex']);
+    expect(
+      pairs.reduce(
+        (totals, group) => ({
+          cache: totals.cache + group.cache,
+          costSum: totals.costSum + group.costSum,
+          fresh: totals.fresh + group.fresh,
+          inp: totals.inp + group.inp,
+          sessions: totals.sessions + group.sessions,
+          tools: totals.tools + group.tools,
+          turns: totals.turns + group.turns,
+        }),
+        { cache: 0, costSum: 0, fresh: 0, inp: 0, sessions: 0, tools: 0, turns: 0 },
+      ),
+    ).toEqual({ cache: 6, costSum: 6, fresh: 18, inp: 6, sessions: 3, tools: 6, turns: 6 });
+  });
+
+  test('preserves complete, partial, absent, and measured-zero project line coverage', () => {
+    const lineRows: SerializedRow[] = [
+      { ...row('complete-a', 2, 1, 'complete'), linesAdded: 3, linesDeleted: 1 },
+      { ...row('complete-b', 3, 1, 'complete'), linesAdded: 0, linesDeleted: 2 },
+      { ...row('partial-a', 2, 1, 'partial'), linesAdded: 4, linesDeleted: 1 },
+      { ...row('partial-b', 3, 1, 'partial'), linesAdded: null, linesDeleted: 2 },
+      { ...row('unmeasured', 2, 1, 'unmeasured'), linesAdded: null, linesDeleted: null },
+      { ...row('measured-zero', 2, 1, 'measured-zero'), linesAdded: 0, linesDeleted: 0 },
+    ];
+
+    const result = projectFocusedBreakdown(lineRows, support, { query: overviewRequest.query });
+    const lineGroups = Object.fromEntries(
+      result.groups.projects.map(({ key, lineMeasurement, linesAdded, linesDeleted }) => [
+        key,
+        { lineMeasurement, linesAdded, linesDeleted },
+      ]),
+    );
+
+    expect(lineGroups).toEqual({
+      complete: {
+        lineMeasurement: { measuredSessions: 2, totalSessions: 2 },
+        linesAdded: 3,
+        linesDeleted: 3,
+      },
+      'measured zero': {
+        lineMeasurement: { measuredSessions: 1, totalSessions: 1 },
+        linesAdded: 0,
+        linesDeleted: 0,
+      },
+      partial: {
+        lineMeasurement: { measuredSessions: 1, totalSessions: 2 },
+        linesAdded: 4,
+        linesDeleted: 1,
+      },
+      unmeasured: {
+        lineMeasurement: { measuredSessions: 0, totalSessions: 1 },
+        linesAdded: 0,
+        linesDeleted: 0,
+      },
+    });
+    expect(
+      parseFocusedReportQueryResult('breakdown', JSON.parse(JSON.stringify(result)), {
+        query: overviewRequest.query,
+      }),
     ).toEqual(result);
   });
 

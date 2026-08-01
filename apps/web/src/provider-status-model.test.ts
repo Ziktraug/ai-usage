@@ -11,6 +11,7 @@ const payload = (overrides: Partial<UsageReportPayload> = {}): UsageReportPayloa
     generatedAt: FIXTURE_NOW,
     rows: [],
     tableRows: [],
+    timeZone: 'UTC',
     omittedRows: 0,
     filters: { since: null, project: null, limit: null, minTokens: 1, sort: 'date' },
     analytics: {} as UsageReportPayload['analytics'],

@@ -44,7 +44,7 @@ export interface SessionQuerySqliteDatabase {
 
 export type SessionQuerySqliteTrace = (query: { params: readonly unknown[]; sql: string }) => void;
 
-const SESSION_QUERY_SCHEMA_VERSION = 14;
+const SESSION_QUERY_SCHEMA_VERSION = 17;
 const CURSOR_PATTERN = /^sq1\.([0-9a-f]{16})\.([0-9a-z]+)$/;
 const CAMPAIGN_EXACT_COST_SORT_FIELDS = new Set<SessionSortField>(['actual', 'cost', 'quota']);
 const EMPTY_API_PRICE_MEASUREMENT = {
@@ -215,6 +215,10 @@ export const buildSessionQuerySqlFilter = (request: SessionQueryRequest, alias =
   }
   if (request.filters.machine.length > 0) {
     add(`${alias}.machine_id IN (${request.filters.machine.map(() => '?').join(', ')})`, ...request.filters.machine);
+  }
+  if (request.filters.localTimeCell !== undefined) {
+    const { hour, weekday } = request.filters.localTimeCell;
+    add(`${alias}.local_time_weekday = ? AND ${alias}.local_time_hour = ?`, weekday, hour);
   }
   if (request.filters.origin?.length) {
     add(

@@ -1,5 +1,5 @@
 import { focusedAdvancedAnalysisFingerprint } from '@ai-usage/report-core/focused-report-query';
-import { type Accessor, batch, createEffect, createSignal, onCleanup } from 'solid-js';
+import { type Accessor, batch, createEffect, createSignal, onCleanup, untrack } from 'solid-js';
 import {
   type DashboardServedDestination,
   dashboardDestinationTimelineMatches,
@@ -23,6 +23,9 @@ interface AdvancedAnalysisFailure {
   message: string;
   scopeFingerprint: string;
 }
+interface DestinationOperation {
+  readonly destination: DashboardServedDestination;
+}
 
 export interface DashboardReportLifecycleOptions {
   currentOverviewRequestFingerprint: Accessor<string | undefined>;
@@ -40,6 +43,7 @@ export interface DashboardReportLifecycle {
   advancedAnalysisError: Accessor<string | null>;
   advancedAnalysisLoading: Accessor<boolean>;
   available: boolean;
+  destinationPending: Accessor<boolean>;
   focusedTimelineError: Accessor<string | null>;
   focusedTimelineLoading: Accessor<boolean>;
   refresh: () => Promise<void>;
@@ -71,10 +75,12 @@ export const createDashboardReportLifecycle = (options: DashboardReportLifecycle
   const [timeline, setTimeline] = createSignal<DashboardReportTimeline>(DEFAULT_TIMELINE);
   const [advancedAnalysisFailure, setAdvancedAnalysisFailure] = createSignal<AdvancedAnalysisFailure>();
   const [advancedAnalysisLoading, setAdvancedAnalysisLoading] = createSignal(false);
+  const [destinationPending, setDestinationPending] = createSignal(false);
   const [focusedTimelineError, setFocusedTimelineError] = createSignal<string | null>(null);
   const [focusedTimelineLoading, setFocusedTimelineLoading] = createSignal(available);
   const [sessionQueryLoading, setSessionQueryLoading] = createSignal(false);
   let disposed = false;
+  let pendingDestinationOperation: DestinationOperation | undefined;
 
   const advancedScopeFingerprint = (scope: DashboardReportQueryScope): string =>
     focusedAdvancedAnalysisFingerprint({ ...scope, revision: options.currentRevision() });
@@ -109,8 +115,11 @@ export const createDashboardReportLifecycle = (options: DashboardReportLifecycle
     return failure.scopeFingerprint === advancedScopeFingerprint(scope.query) ? failure.message : null;
   };
 
-  const markLoading = (nextDestination: DashboardServedDestination): void => {
+  const markLoading = (nextDestination: DashboardServedDestination): DestinationOperation => {
+    const operation = { destination: nextDestination };
+    pendingDestinationOperation = operation;
     batch(() => {
+      setDestinationPending(true);
       setFocusedTimelineLoading(
         !dashboardDestinationTimelineMatches(
           nextDestination,
@@ -119,12 +128,19 @@ export const createDashboardReportLifecycle = (options: DashboardReportLifecycle
         ),
       );
       setAdvancedAnalysisLoading(nextDestination.kind === 'overview' && nextDestination.includeAdvanced);
-      setSessionQueryLoading(nextDestination.kind === 'sessions' && !options.sessionState());
+      setSessionQueryLoading(nextDestination.kind === 'sessions' && !untrack(options.sessionState));
     });
+    return operation;
   };
 
-  const settleFailure = (nextDestination: DashboardServedDestination, message: string): void => {
+  const settleFailure = (operation: DestinationOperation, message: string): boolean => {
+    if (pendingDestinationOperation !== operation || disposed) {
+      return false;
+    }
+    pendingDestinationOperation = undefined;
+    const { destination: nextDestination } = operation;
     batch(() => {
+      setDestinationPending(false);
       setFocusedTimelineError(message);
       setFocusedTimelineLoading(false);
       setAdvancedAnalysisLoading(false);
@@ -136,39 +152,16 @@ export const createDashboardReportLifecycle = (options: DashboardReportLifecycle
         });
       }
     });
+    return true;
   };
-
-  const refreshDestination = async (
-    nextDestination: DashboardServedDestination,
-    thrownErrorFallback: string,
-  ): Promise<void> => {
-    const servedReportSession = options.servedReportSession;
-    if (!(servedReportSession && !disposed)) {
+  const settleSuccess = (operation: DestinationOperation): void => {
+    if (pendingDestinationOperation !== operation || disposed) {
       return;
     }
-
-    let outcome: Awaited<ReturnType<typeof servedReportSession.refresh>>;
-    try {
-      outcome = await servedReportSession.refresh(nextDestination);
-    } catch (error) {
-      if (!disposed) {
-        const message = errorMessage(error, thrownErrorFallback);
-        settleFailure(nextDestination, message);
-        options.onError(message);
-      }
-      return;
-    }
-    if (disposed || outcome.status === 'superseded') {
-      return;
-    }
-    if (outcome.status === 'failed-preserving-previous') {
-      const message = errorMessage(outcome.error, 'Failed to load report destination');
-      settleFailure(nextDestination, message);
-      options.onError(message);
-      return;
-    }
-
+    pendingDestinationOperation = undefined;
+    const { destination: nextDestination } = operation;
     batch(() => {
+      setDestinationPending(false);
       setFocusedTimelineError(null);
       setFocusedTimelineLoading(false);
       setAdvancedAnalysisLoading(false);
@@ -179,23 +172,53 @@ export const createDashboardReportLifecycle = (options: DashboardReportLifecycle
     });
   };
 
+  const refreshDestination = async (operation: DestinationOperation, thrownErrorFallback: string): Promise<void> => {
+    const servedReportSession = options.servedReportSession;
+    if (!(servedReportSession && !disposed)) {
+      return;
+    }
+
+    const { destination: nextDestination } = operation;
+    let outcome: Awaited<ReturnType<typeof servedReportSession.refresh>>;
+    try {
+      outcome = await servedReportSession.refresh(nextDestination);
+    } catch (error) {
+      const message = errorMessage(error, thrownErrorFallback);
+      if (settleFailure(operation, message)) {
+        options.onError(message);
+      }
+      return;
+    }
+    if (disposed || outcome.status === 'superseded') {
+      return;
+    }
+    if (outcome.status === 'failed-preserving-previous') {
+      const message = errorMessage(outcome.error, 'Failed to load report destination');
+      if (settleFailure(operation, message)) {
+        options.onError(message);
+      }
+      return;
+    }
+
+    settleSuccess(operation);
+  };
+
   const refresh = async (): Promise<void> => {
     const nextDestination = destination();
     if (!(options.ready() && nextDestination && available && !disposed)) {
       return;
     }
-    await refreshDestination(nextDestination, 'Failed to coordinate report destination');
+    const operation = markLoading(nextDestination);
+    await refreshDestination(operation, 'Failed to coordinate report destination');
   };
 
-  const coordinateRefresh = async (
-    nextDestination: DashboardServedDestination,
-    fallbackMessage: string,
-  ): Promise<void> => {
+  const coordinateRefresh = async (operation: DestinationOperation, fallbackMessage: string): Promise<void> => {
     try {
-      await refreshDestination(nextDestination, fallbackMessage);
+      await refreshDestination(operation, fallbackMessage);
     } catch (error) {
-      if (!disposed) {
-        options.onError(errorMessage(error, fallbackMessage));
+      const message = errorMessage(error, fallbackMessage);
+      if (settleFailure(operation, message)) {
+        options.onError(message);
       }
     }
   };
@@ -206,8 +229,8 @@ export const createDashboardReportLifecycle = (options: DashboardReportLifecycle
     if (!(isReady && nextDestination && available && !disposed)) {
       return;
     }
-    markLoading(nextDestination);
-    coordinateRefresh(nextDestination, 'Failed to coordinate report destination');
+    const operation = markLoading(nextDestination);
+    coordinateRefresh(operation, 'Failed to coordinate report destination');
   });
 
   let observedPublicationRevision: string | undefined;
@@ -227,7 +250,8 @@ export const createDashboardReportLifecycle = (options: DashboardReportLifecycle
     if (!(nextDestination && available && !disposed)) {
       return;
     }
-    coordinateRefresh(nextDestination, 'Published report data could not be loaded');
+    const operation = markLoading(nextDestination);
+    coordinateRefresh(operation, 'Published report data could not be loaded');
   });
 
   const requestTimeline = (nextTimeline: DashboardReportTimeline): void => {
@@ -245,6 +269,8 @@ export const createDashboardReportLifecycle = (options: DashboardReportLifecycle
       return;
     }
     disposed = true;
+    pendingDestinationOperation = undefined;
+    setDestinationPending(false);
     options.servedReportSession?.abort();
     options.sessionCoordinator?.close();
   });
@@ -253,6 +279,7 @@ export const createDashboardReportLifecycle = (options: DashboardReportLifecycle
     advancedAnalysisError,
     advancedAnalysisLoading,
     available,
+    destinationPending,
     focusedTimelineError,
     focusedTimelineLoading,
     refresh,

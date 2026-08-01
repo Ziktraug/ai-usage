@@ -11,11 +11,12 @@ import {
 import type { SortingState } from '@tanstack/solid-table';
 import {
   buildAnalyticsGroups,
+  buildHarnessProviderAnalyticsGroups,
   buildModelAnalyticsGroups,
   buildProjectGroups,
   type ProjectGroup,
 } from './dashboard-analytics';
-import type { Metric, MetricDelta } from './dashboard-metrics';
+import type { Metric, MetricDelta } from './dashboard-metric-model';
 import type { FieldFilterKey, FieldFilters } from './dashboard-search';
 import { DAY_MS, type DateBounds, endOfDay, rowMatchesDateBounds } from './date-range';
 import { isSessionColumnId, type SessionColumnId, sortValueForSessionColumn } from './session-table-schema';
@@ -111,6 +112,7 @@ export interface CampaignView {
   allRows: DashboardRow[];
   allTotals: CampaignTotals;
   campaignKey: CampaignKey;
+  label: string;
   root: DashboardRow;
   rootSourceSessionId: string;
   totalCount: number;
@@ -132,7 +134,11 @@ const campaignIdentityForRow = sessionCampaignIdentityForRow;
 export const buildCampaignTotals = (rows: DashboardRow[], root?: DashboardRow): CampaignTotals =>
   buildSessionCampaignTotals(rows, root);
 
-export const buildCampaignViews = (allRows: DashboardRow[], visibleRows: DashboardRow[]): CampaignView[] => {
+export const buildCampaignViews = (
+  allRows: DashboardRow[],
+  visibleRows: DashboardRow[],
+  labelFor: (campaignKey: string, derivedLabel: string) => string = (_campaignKey, derivedLabel) => derivedLabel,
+): CampaignView[] => {
   const visibleKeys = new Set(visibleRows.map(rowKeyForCampaignMembership));
   const groups = new Map<CampaignKey, DashboardRow[]>();
 
@@ -174,6 +180,7 @@ export const buildCampaignViews = (allRows: DashboardRow[], visibleRows: Dashboa
 
     campaigns.push({
       campaignKey,
+      label: labelFor(campaignKey, root.sessionLabel),
       rootSourceSessionId: firstIdentity.rootSourceSessionId,
       root,
       visibleRows: visibleRowsForTotals,
@@ -351,7 +358,7 @@ const campaignDisplayRow = (campaign: CampaignView, sorting: SortingState): Dash
     rtkOutputTokens: totals.rtkOutputTokens,
     rtkSavedTokens: totals.rtkSavedTokens,
     partial,
-    sessionLabel: campaign.root.sessionLabel,
+    sessionLabel: campaign.label,
     sortDate: latestVisibleRow.sortDate,
     tokenTotal: totals.tokenTotal,
     tokCr: totals.cacheRead,
@@ -416,6 +423,12 @@ export const buildProviderGroups = (rows: DashboardRow[], bounds: DateBounds, to
     totalCost,
   );
 
+export const buildHarnessProviderGroups = (
+  rows: DashboardRow[],
+  bounds: DateBounds,
+  totalCost: number,
+): AnalyticsGroup[] => buildHarnessProviderAnalyticsGroups(rows, (row) => rowMatchesDateBounds(row, bounds), totalCost);
+
 export const buildHarnessGroups = (rows: DashboardRow[], bounds: DateBounds, totalCost: number): AnalyticsGroup[] =>
   buildAnalyticsGroups(
     rows,
@@ -447,16 +460,18 @@ export const buildDashboardMetrics = (summary: ReportSummary, previous?: ReportS
   const apiValueProvenance = aggregateApiPriceProvenance(summary.priceMeasurement);
   const metrics: Metric[] = [
     {
+      kind: 'sessions',
       label: 'Sessions',
       value: fmtNum(summary.sessionCount),
       hint: 'Sessions in the current filter',
       delta: deltaVs(summary.sessionCount, prev?.sessionCount, fmtNum),
     },
     {
+      kind: 'api-value',
       label: apiValueProvenance ? `API value · ${apiValueProvenance.label}` : 'API value',
       value: apiValue.label,
       hint: [
-        `Estimated cost at standard API prices for ${fmtNum(summary.pricedSessions)} of ${fmtNum(summary.sessionCount)} fully priced sessions, including usage covered by subscriptions`,
+        `Estimated API-equivalent value at standard prices for ${fmtNum(summary.pricedSessions)} of ${fmtNum(summary.sessionCount)} fully priced sessions, including usage covered by subscriptions`,
         apiValueProvenance?.description,
       ]
         .filter((line): line is string => Boolean(line))
@@ -464,6 +479,7 @@ export const buildDashboardMetrics = (summary: ReportSummary, previous?: ReportS
       delta: deltaVs(summary.totalCost, prev?.totalCost, fmtMoney),
     },
     {
+      kind: 'actual-cost',
       label: 'Actual cost',
       value: fmtMoney(summary.actualCost),
       hint: `Out-of-pocket spend reported by harnesses; subscription usage counts as $0${
@@ -473,18 +489,23 @@ export const buildDashboardMetrics = (summary: ReportSummary, previous?: ReportS
     },
   ];
 
-  if (summary.costQuota) {
-    metrics.push({
-      label: 'Sub value',
-      value: fmtMoney(summary.costQuota),
-      hint: 'Cursor export value covered by the subscription quota',
-      delta: deltaVs(summary.costQuota, prev?.costQuota, fmtMoney),
-    });
-  }
+  metrics.push({
+    kind: 'subscription-value',
+    label: 'Sub value',
+    value: fmtMoney(summary.costQuota),
+    hint: 'Cursor export value covered by the subscription quota',
+    delta: deltaVs(summary.costQuota, prev?.costQuota, fmtMoney),
+  });
 
   metrics.push(
-    { label: 'Mean / sess', value: fmtMoney(summary.meanCost), hint: 'Mean API value per priced session' },
     {
+      kind: 'mean-cost',
+      label: 'Mean / sess',
+      value: fmtMoney(summary.meanCost),
+      hint: 'Mean API value per priced session',
+    },
+    {
+      kind: 'fresh-tokens',
       label: 'Fresh tokens',
       value: fmtCompact(summary.fresh),
       hint: `Tokens processed without cache: ${fmtNum(summary.fresh)}`,
@@ -494,6 +515,7 @@ export const buildDashboardMetrics = (summary: ReportSummary, previous?: ReportS
 
   if (summary.rtkSaved) {
     metrics.push({
+      kind: 'rtk-savings',
       label: 'RTK savings',
       value: fmtPct(summary.rtkInput ? (summary.rtkSaved / summary.rtkInput) * 100 : 0),
       hint: [
@@ -506,12 +528,14 @@ export const buildDashboardMetrics = (summary: ReportSummary, previous?: ReportS
 
   metrics.push(
     {
+      kind: 'turns',
       label: 'Turns',
       value: fmtNum(summary.turns),
       hint: 'Assistant turns across the filtered sessions',
       delta: deltaVs(summary.turns, prev?.turns, fmtNum),
     },
     {
+      kind: 'tool-calls',
       label: 'Tool calls',
       value: fmtNum(summary.tools),
       hint: 'Tool invocations across the filtered sessions',

@@ -1,9 +1,14 @@
 import type { Page } from '@playwright/test';
-import { expect, test } from './browser-test';
+import { expect, reportViewsFor, test } from './browser-test';
 
+const CALENDAR_NAME_PATTERN = /Daily activity calendar/;
 const CHART_VIEW_PATTERN = /Chart view:/;
 const DELEGATED_LEGEND_PATTERN = /^Delegated\b/;
 const HUMAN_LEGEND_PATTERN = /^Human\b/;
+const PUNCHCARD_CELL_BUTTON_PATTERN = /^Filter report to /;
+const PUNCHCARD_CELL_LABEL_PATTERN =
+  /^Filter report to (Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday) ([0-9]{2}):00–[0-9]{2}:59, ([0-9,]+) sessions?$/;
+const SESSION_SUMMARY_PATTERN = / sessions$/;
 
 const reportRangeValue = (page: Page): string | null => new URL(page.url()).searchParams.get('range');
 
@@ -19,7 +24,7 @@ test('uses one report range for the dashboard and activity chart', async ({ page
   await expect(dateRange.getByRole('textbox', { name: 'Start date' })).toHaveValue('May 12, 2026');
   await expect(dateRange.getByRole('textbox', { name: 'End date' })).toHaveValue('Jun 11, 2026');
   await expect(dateRange.getByText('May 12 → Jun 11, 2026 · 30 days', { exact: true })).toBeVisible();
-  await expect(dateRange.getByText('Follows report range', { exact: true })).toBeVisible();
+  await expect(dateRange.getByText('Activity range follows report range', { exact: true })).toBeVisible();
   await expect(dateRange.getByText('Filters the entire report', { exact: true })).toHaveCount(0);
   await expect(dateRange.getByTitle('Filter by Codex')).toHaveCount(1);
   expect(
@@ -33,7 +38,7 @@ test('uses one report range for the dashboard and activity chart', async ({ page
 
   const chartOptions = dateRange.locator('details[aria-label="Chart options"]');
   await expect(chartOptions).not.toHaveAttribute('open', '');
-  await expect(chartOptions.getByText('Harness · Day · Estimated API value', { exact: true })).toBeVisible();
+  await expect(chartOptions.getByText('Harness · Day · Estimated API-equivalent value', { exact: true })).toBeVisible();
   await expect(chartOptions.getByText('Group by', { exact: true })).not.toBeVisible();
 
   await chartOptions.locator('summary').click();
@@ -42,6 +47,81 @@ test('uses one report range for the dashboard and activity chart', async ({ page
   await expect(chartOptions.getByText('Group by', { exact: true })).toBeVisible();
   await expect(chartOptions.getByText('Interval', { exact: true })).toBeVisible();
   await expect(chartOptions.getByText('Metric', { exact: true })).toBeVisible();
+});
+
+test('uses clickable heatmap days as Rhythm activity-day controls without a native date input', async ({ page }) => {
+  await page.goto('/');
+
+  const calendar = page.getByRole('toolbar', { name: CALENDAR_NAME_PATTERN });
+  const rhythm = page.locator('section').filter({ has: calendar });
+  const heatmapDays = calendar.locator('button[data-heatmap-day]');
+  await expect(rhythm.getByRole('heading', { exact: true, name: 'Rhythm' })).toBeVisible();
+  await expect(rhythm.locator('input[type="date"]')).toHaveCount(0);
+  expect(await heatmapDays.count()).toBeGreaterThan(0);
+
+  await heatmapDays.first().click();
+  await expect(reportViewsFor(page).getByRole('link', { exact: true, name: 'Sessions' })).toHaveAttribute(
+    'aria-current',
+    'page',
+  );
+});
+
+test('filters the report from non-empty Punchcard cells with click and keyboard', async ({ page }) => {
+  await page.goto('/');
+
+  const heading = page.getByRole('heading', { exact: true, name: 'Punchcard' });
+  const punchcard = heading.locator('xpath=ancestor::section[1]');
+  const timeCellButtons = punchcard.getByRole('button', { name: PUNCHCARD_CELL_BUTTON_PATTERN });
+  await expect(heading).toBeVisible();
+  expect(await timeCellButtons.count()).toBeGreaterThan(0);
+  expect(await punchcard.locator('[title*="0 sessions"]').count()).toBeGreaterThan(0);
+  await expect(punchcard.locator('button[title*="0 sessions"]')).toHaveCount(0);
+
+  const ariaLabel = await timeCellButtons.first().getAttribute('aria-label');
+  if (ariaLabel === null) {
+    throw new Error('Expected a Punchcard cell label');
+  }
+  const match = ariaLabel.match(PUNCHCARD_CELL_LABEL_PATTERN);
+  if (!match) {
+    throw new Error('Expected a canonical Punchcard cell label');
+  }
+  const weekday = match[1] ?? '';
+  const hour = match[2] ?? '';
+  const formattedCount = match[3] ?? '';
+  const weekdayCodes = new Map<string, string>([
+    ['Monday', 'MON'],
+    ['Tuesday', 'TUE'],
+    ['Wednesday', 'WED'],
+    ['Thursday', 'THU'],
+    ['Friday', 'FRI'],
+    ['Saturday', 'SAT'],
+    ['Sunday', 'SUN'],
+  ]);
+  const weekdayCode = weekdayCodes.get(weekday);
+  if (!(weekdayCode && hour && formattedCount)) {
+    throw new Error('Expected a complete Punchcard cell label');
+  }
+  const timeCellValue = `${weekdayCode}-${hour}`;
+  const period = `${weekday} ${hour}:00–${hour}:59`;
+  const timePill = page.getByTitle('Clear Time filter');
+  const summary = page.locator('span[aria-live="polite"]').filter({ hasText: SESSION_SUMMARY_PATTERN }).first();
+  const firstTimeCell = punchcard.getByRole('button', { exact: true, name: ariaLabel });
+
+  await firstTimeCell.focus();
+  await firstTimeCell.press('Enter');
+  await expect.poll(() => new URL(page.url()).searchParams.get('timeCell')).toBe(timeCellValue);
+  await expect(timePill).toHaveText(`Time · ${period} ×`);
+  await expect(summary).toContainText(`${formattedCount} / `);
+
+  await timePill.click();
+  await expect.poll(() => new URL(page.url()).searchParams.get('timeCell')).toBeNull();
+  await expect(timePill).toHaveCount(0);
+
+  await punchcard.getByRole('button', { exact: true, name: ariaLabel }).click();
+  await expect.poll(() => new URL(page.url()).searchParams.get('timeCell')).toBe(timeCellValue);
+  await expect(timePill).toHaveText(`Time · ${period} ×`);
+  await timePill.click();
+  await expect.poll(() => new URL(page.url()).searchParams.get('timeCell')).toBeNull();
 });
 
 test('changes every chart option from its segmented controls', async ({ page }) => {
@@ -60,11 +140,11 @@ test('changes every chart option from its segmented controls', async ({ page }) 
     await expect(chartOptions.getByRole('radio', { exact: true, name: option })).toBeChecked();
   }
 
-  for (const option of ['Share', 'Sessions', 'Estimated API value']) {
+  for (const option of ['Share', 'Sessions', 'Estimated API-equivalent value']) {
     await chartOptions.getByRole('radio', { exact: true, name: option }).click();
     await expect(chartOptions.getByRole('radio', { exact: true, name: option })).toBeChecked();
   }
-  await expect(chartOptions.getByText('Harness · Day · Estimated API value', { exact: true })).toBeVisible();
+  await expect(chartOptions.getByText('Harness · Day · Estimated API-equivalent value', { exact: true })).toBeVisible();
 });
 
 test('groups the timeline by campaign, machine, and origin with matching legends', async ({ page }) => {
@@ -75,12 +155,14 @@ test('groups the timeline by campaign, machine, and origin with matching legends
   await chartOptions.locator('summary').click();
 
   await chartOptions.getByRole('radio', { exact: true, name: 'Campaign' }).click();
-  await expect(chartOptions.getByText('Campaign · Day · Estimated API value', { exact: true })).toBeVisible();
+  await expect(
+    chartOptions.getByText('Campaign · Day · Estimated API-equivalent value', { exact: true }),
+  ).toBeVisible();
   await expect(dateRange.getByTitle('Build report UI')).toContainText('Build report UI');
   await expect(dateRange.getByTitle('Inspect OpenCode root')).toContainText('Inspect OpenCode root');
 
   await chartOptions.getByRole('radio', { exact: true, name: 'Machine' }).click();
-  await expect(chartOptions.getByText('Machine · Day · Estimated API value', { exact: true })).toBeVisible();
+  await expect(chartOptions.getByText('Machine · Day · Estimated API-equivalent value', { exact: true })).toBeVisible();
   await expect(dateRange.getByTitle('Filter by Fixture Machine · Stale')).toContainText('Fixture Machine · Stale');
   await expect(dateRange.getByTitle('Unknown machine')).toContainText('Unknown machine');
 
@@ -98,7 +180,7 @@ test('commits preset, text, keyboard, and pointer report ranges to the URL', asy
   const startInput = dateRange.getByRole('textbox', { name: 'Start date' });
   const endInput = dateRange.getByRole('textbox', { name: 'End date' });
   const startHandle = dateRange.getByRole('slider', { name: 'Start date' });
-  const selectedRange = dateRange.getByRole('button', { name: 'Drag selected date range' });
+  const selectedRange = dateRange.getByRole('button', { name: 'Selected report window' });
 
   await dateRange.getByRole('button', { exact: true, name: 'All' }).click();
   await expect.poll(() => reportRangeValue(page)).not.toBeNull();
@@ -109,7 +191,7 @@ test('commits preset, text, keyboard, and pointer report ranges to the URL', asy
 
   await dateRange.getByRole('button', { exact: true, name: '7d' }).click();
   await expect(startInput).toHaveValue('Jun 04, 2026');
-  await expect(dateRange.getByText('Follows report range', { exact: true })).toBeVisible();
+  await expect(dateRange.getByText('Activity range follows report range', { exact: true })).toBeVisible();
 
   const presetUrl = page.url();
   await startInput.fill('2026-05-25');

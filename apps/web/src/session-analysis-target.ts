@@ -55,11 +55,19 @@ export const sessionAnalysisTargetForTopLevelRow = (input: {
   pageItems: readonly SessionPageItem[];
   row: DashboardRow;
 }): SessionAnalysisTarget => {
-  const pageItem = input.pageItems.find((item) => item.row.rowId === input.row.rowId);
+  const pageItem = input.pageItems.find((item) =>
+    input.row.campaignKey === undefined
+      ? item.row.rowId === input.row.rowId
+      : item.campaignKey === input.row.campaignKey,
+  );
   if (pageItem) {
     return sessionAnalysisTargetForPageItem(pageItem);
   }
-  const campaign = input.campaigns.find((candidate) => candidate.root.rowId === input.row.rowId);
+  const campaign = input.campaigns.find((candidate) =>
+    input.row.campaignKey === undefined
+      ? candidate.root.rowId === input.row.rowId
+      : candidate.campaignKey === input.row.campaignKey,
+  );
   if (!campaign) {
     throw new Error('Top-level session rows must resolve to a campaign');
   }

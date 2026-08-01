@@ -9,7 +9,18 @@ const SIZE_UNITS = ['KB', 'MB', 'GB', 'TB'] as const;
 const MILLISECONDS_PER_MINUTE = 60_000;
 const MILLISECONDS_PER_HOUR = 60 * MILLISECONDS_PER_MINUTE;
 const MILLISECONDS_PER_DAY = 24 * MILLISECONDS_PER_HOUR;
-export const MACHINE_FLEET_STALE_AFTER_MS = 30 * MILLISECONDS_PER_DAY;
+const MACHINE_FLEET_FRESHNESS_WINDOW_DAYS = 30;
+export const MACHINE_FLEET_STALE_AFTER_MS = MACHINE_FLEET_FRESHNESS_WINDOW_DAYS * MILLISECONDS_PER_DAY;
+
+export const INVALID_STORED_ROWS_EXPLANATION = 'Rows failed stored-row validation; details were not retained.';
+
+export const invalidStoredRowsSummary = (skippedRows: number): string =>
+  `${skippedRows.toLocaleString()} invalid stored ${skippedRows === 1 ? 'row was' : 'rows were'} excluded from fleet metadata.`;
+
+export const STALE_MACHINE_COLLECTION_GUIDANCE = {
+  command: 'bun run cli -- snapshot --out <path>',
+  description: `This machine is outside the ${MACHINE_FLEET_FRESHNESS_WINDOW_DAYS}-day freshness window. Run this command on that machine, then import the snapshot here.`,
+} as const;
 
 export interface MachineFreshnessObservation {
   id: string;

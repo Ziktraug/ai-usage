@@ -6,6 +6,7 @@ import {
   buildCampaignTableRows,
   buildCampaignViews,
   buildDashboardMetrics,
+  buildHarnessProviderGroups,
   buildModelGroups,
   buildPreviousPeriodSummary,
   buildProjectGroupRows,
@@ -165,6 +166,7 @@ describe('dashboard model', () => {
     expect(previous?.sessionCount).toBe(1);
     expect(previous?.totalCost).toBe(1);
     expect(metrics.find((metric) => metric.label === 'API value')?.delta?.pct).toBe(100);
+    expect(metrics.find((metric) => metric.label === 'Sub value')?.value).toBe('$0.00');
   });
 
   test('sorts export rows without mutating the filtered row order', () => {
@@ -231,6 +233,48 @@ describe('dashboard model', () => {
     ]);
   });
 
+  test('preserves complete, partial, absent, and measured-zero project line coverage', () => {
+    const bounds: DateBounds = { from: null, to: null };
+    const rows = [
+      row({ project: 'complete', linesAdded: 3, linesDeleted: 1 }),
+      row({ project: 'complete', linesAdded: 0, linesDeleted: 2 }),
+      row({ project: 'partial', linesAdded: 4, linesDeleted: 1 }),
+      row({ project: 'partial', linesAdded: null, linesDeleted: 2 }),
+      row({ project: 'unmeasured', linesAdded: null, linesDeleted: null }),
+      row({ project: 'measured-zero', linesAdded: 0, linesDeleted: 0 }),
+    ];
+
+    const lineGroups = Object.fromEntries(
+      buildProjectGroupRows(rows, bounds).map(({ key, lineMeasurement, linesAdded, linesDeleted }) => [
+        key,
+        { lineMeasurement, linesAdded, linesDeleted },
+      ]),
+    );
+
+    expect(lineGroups).toEqual({
+      complete: {
+        lineMeasurement: { measuredSessions: 2, totalSessions: 2 },
+        linesAdded: 3,
+        linesDeleted: 3,
+      },
+      'measured zero': {
+        lineMeasurement: { measuredSessions: 1, totalSessions: 1 },
+        linesAdded: 0,
+        linesDeleted: 0,
+      },
+      partial: {
+        lineMeasurement: { measuredSessions: 1, totalSessions: 2 },
+        linesAdded: 4,
+        linesDeleted: 1,
+      },
+      unmeasured: {
+        lineMeasurement: { measuredSessions: 0, totalSessions: 1 },
+        linesAdded: 0,
+        linesDeleted: 0,
+      },
+    });
+  });
+
   test('groups model rows by shared base model identity', () => {
     const bounds: DateBounds = { from: null, to: null };
     const rows = [
@@ -245,6 +289,27 @@ describe('dashboard model', () => {
     expect(gpt54?.sessions).toBe(2);
     expect(gpt54?.costSum).toBe(5);
     expect(groups.find((group) => group.key === 'gpt-5-codex')?.sessions).toBe(1);
+  });
+
+  test('builds exact harness-provider groups for the local dashboard fallback', () => {
+    const bounds: DateBounds = { from: null, to: null };
+    const rows = [
+      row({ costApprox: 1, harness: 'Codex', provider: 'Codex API' }),
+      row({ costApprox: 2, harness: 'Codex', provider: 'Anthropic' }),
+      row({ costApprox: 3, harness: 'Claude Code', provider: 'Anthropic' }),
+    ];
+
+    expect(
+      buildHarnessProviderGroups(rows, bounds, 6).map(({ harness, provider, sessions }) => ({
+        harness,
+        provider,
+        sessions,
+      })),
+    ).toEqual([
+      { harness: 'Claude Code', provider: 'Anthropic', sessions: 1 },
+      { harness: 'Codex', provider: 'Anthropic', sessions: 1 },
+      { harness: 'Codex', provider: 'Codex API', sessions: 1 },
+    ]);
   });
 
   test('builds campaign views by machine and root source id without merging rows', () => {
@@ -288,6 +353,40 @@ describe('dashboard model', () => {
     expect(primaryCampaign?.visibleTotals.tokenTotal).toBe(60);
     expect(orphanCampaign?.root).toBe(sameIdsOtherMachine);
     expect(orphanCampaign?.visibleCount).toBe(1);
+  });
+
+  test('applies a campaign label without changing identity or aggregate values', () => {
+    const parent = sourcedRow('parent', { costApprox: 4, tokenTotal: 40 });
+    const child = sourcedRow('child', {
+      costApprox: 2,
+      source: {
+        harnessKey: 'codex',
+        machineId: 'machine-a',
+        parentSourceSessionId: 'parent',
+        rootSourceSessionId: 'parent',
+        sourceSessionId: 'child',
+      },
+    });
+    const rows = [parent, child];
+    const baselineCampaigns = buildCampaignViews(rows, rows);
+    const renamedCampaigns = buildCampaignViews(rows, rows, (campaignKey, derivedLabel) =>
+      campaignKey === 'machine-a:codex:parent' ? 'Release train' : derivedLabel,
+    );
+
+    const baselineCampaign = baselineCampaigns[0];
+    const renamedCampaign = renamedCampaigns[0];
+    const baselineRow = buildCampaignTableRows(rows, rows, [], baselineCampaigns)[0];
+    const renamedRow = buildCampaignTableRows(rows, rows, [], renamedCampaigns)[0];
+
+    expect(renamedCampaign?.label).toBe('Release train');
+    expect(renamedCampaign?.campaignKey).toBe(baselineCampaign?.campaignKey);
+    expect(renamedCampaign?.root).toBe(baselineCampaign?.root);
+    expect(renamedCampaign?.allTotals).toEqual(baselineCampaign?.allTotals);
+    expect(renamedCampaign?.visibleTotals).toEqual(baselineCampaign?.visibleTotals);
+    expect(baselineRow?.sessionLabel).toBe('parent');
+    expect(renamedRow?.sessionLabel).toBe('Release train');
+    expect(renamedRow?.campaignKey).toBe(baselineRow?.campaignKey);
+    expect(renamedRow?.costApprox).toBe(baselineRow?.costApprox);
   });
 
   test('filters campaign origins before rolling classifier usage into the parent and keeps singletons', () => {

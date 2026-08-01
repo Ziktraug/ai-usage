@@ -3,7 +3,6 @@ import {
   actionRow,
   banner,
   bannerError,
-  commandButton,
   ghostButton,
   header,
   headerActions,
@@ -78,6 +77,26 @@ const switchLabel = css({
 });
 const progressStack = css({ display: 'grid', gap: '5px' });
 const progressBar = css({ width: '100%', accentColor: 'accent' });
+const healthySummary = css({ overflow: 'hidden' });
+const healthySummaryHeader = css({
+  display: 'flex',
+  justifyContent: 'space-between',
+  alignItems: 'center',
+  gap: '12px',
+  p: '14px 16px',
+  cursor: 'pointer',
+});
+const healthyList = css({ display: 'grid', borderTop: '1px solid token(colors.line)' });
+const healthyRow = css({
+  display: 'grid',
+  gridTemplateColumns: { base: 'minmax(0, 1fr)', md: 'minmax(0, 1fr) auto auto' },
+  gap: '8px 12px',
+  alignItems: 'center',
+  p: '12px 16px',
+  '& + &': { borderTop: '1px solid token(colors.line)' },
+});
+const healthyName = css({ display: 'grid', gap: '3px', minW: 0 });
+const detailsSummary = css({ color: 'muted', fontSize: '12px', fontWeight: 650, cursor: 'pointer' });
 
 const groupLabels: Record<CollectionSourceGroup, string> = {
   enrichments: 'Enrichments',
@@ -85,7 +104,7 @@ const groupLabels: Record<CollectionSourceGroup, string> = {
   sessions: 'Sessions',
 };
 
-const sourceCountLabel = (count: number): string => `${count} source${count === 1 ? '' : 's'}`;
+const sourceCountLabel = (count: number): string => `${fmtNum(count)} source${count === 1 ? '' : 's'}`;
 
 const MAX_INLINE_REVISION_LENGTH = 24;
 const REVISION_PREFIX_LENGTH = 12;
@@ -139,35 +158,104 @@ const publicationStatus = (publication: SourcePublicationView): string => {
     : 'Publication demand is fully acknowledged.';
 };
 
+const sourceCanRun = (source: SourceControlEntryView): boolean =>
+  source.policy === 'enabled' &&
+  source.availability === 'detected' &&
+  !['queued', 'running', 'pausing'].includes(source.lifecycle);
+
+const sourceRunDisabledReason = (source: SourceControlEntryView, pending: boolean): string | undefined => {
+  if (pending) {
+    return 'Another source command is pending.';
+  }
+  if (source.policy === 'disabled') {
+    return 'Enable this source before running it.';
+  }
+  if (source.availability !== 'detected') {
+    return 'Detect a supported input before running this source.';
+  }
+  if (!sourceCanRun(source)) {
+    return 'This source is already queued or running.';
+  }
+  return;
+};
+
+const SourceActions = (props: {
+  execute: ReturnType<typeof useSourceControl>['execute'];
+  pending: boolean;
+  source: SourceControlEntryView;
+}) => (
+  <div class={actionRow}>
+    <label class={switchLabel}>
+      <input
+        checked={props.source.policy === 'enabled'}
+        disabled={props.pending}
+        onChange={(event) => {
+          props
+            .execute({
+              command: 'set-enabled',
+              enabled: event.currentTarget.checked,
+              sourceId: props.source.id,
+            })
+            .catch(() => undefined);
+        }}
+        title={props.pending ? 'Another source command is pending.' : undefined}
+        type="checkbox"
+      />
+      Enabled
+    </label>
+    <button
+      aria-busy={props.pending ? 'true' : undefined}
+      class={ghostButton}
+      disabled={props.pending || !sourceCanRun(props.source)}
+      onClick={() => {
+        props.execute({ command: 'run-now', sourceId: props.source.id }).catch(() => undefined);
+      }}
+      title={sourceRunDisabledReason(props.source, props.pending)}
+      type="button"
+    >
+      Run now
+    </button>
+  </div>
+);
+
+const HealthySourceRow = (props: {
+  execute: ReturnType<typeof useSourceControl>['execute'];
+  pending: boolean;
+  source: SourceControlEntryView;
+}) => {
+  const presentation = () => presentSourceState(props.source);
+  return (
+    <div class={healthyRow} data-healthy-source-row>
+      <div class={healthyName}>
+        <h3 class={sourceName}>{props.source.label}</h3>
+        <p class={sourceId}>{props.source.id}</p>
+        <Show when={props.source.progress}>
+          {(progress) => (
+            <span class={meta}>
+              {progress().phase}
+              {progress().message ? ` · ${progress().message}` : ''}
+            </span>
+          )}
+        </Show>
+      </div>
+      <span class={cx(statusPill, sourceToneClass(presentation().tone))} data-source-health>
+        {presentation().label}
+      </span>
+      <SourceActions execute={props.execute} pending={props.pending} source={props.source} />
+    </div>
+  );
+};
+
 const SourceCard = (props: {
   pending: boolean;
   source: SourceControlEntryView;
   execute: ReturnType<typeof useSourceControl>['execute'];
 }) => {
-  const canRun = () =>
-    props.source.policy === 'enabled' &&
-    props.source.availability === 'detected' &&
-    !['queued', 'running', 'pausing'].includes(props.source.lifecycle);
   const determinateProgress = () => {
     const progress = presentSourceProgress(props.source);
     return progress.kind === 'determinate' ? progress : null;
   };
   const presentation = () => presentSourceState(props.source);
-  const runDisabledReason = () => {
-    if (props.pending) {
-      return 'Another source command is pending.';
-    }
-    if (props.source.policy === 'disabled') {
-      return 'Enable this source before running it.';
-    }
-    if (props.source.availability !== 'detected') {
-      return 'Detect a supported input before running this source.';
-    }
-    if (!canRun()) {
-      return 'This source is already queued or running.';
-    }
-    return;
-  };
 
   return (
     <article class={cx(panel, sourceCard)} data-source-card>
@@ -247,41 +335,28 @@ const SourceCard = (props: {
         </p>
         <For each={props.source.warnings}>{(warning) => <p>Warning: {warning.message ?? warning.code}</p>}</For>
       </div>
-      <div class={actionRow}>
-        <label class={switchLabel}>
-          <input
-            checked={props.source.policy === 'enabled'}
-            disabled={props.pending}
-            onChange={(event) => {
-              props
-                .execute({
-                  command: 'set-enabled',
-                  enabled: event.currentTarget.checked,
-                  sourceId: props.source.id,
-                })
-                .catch(() => undefined);
-            }}
-            title={props.pending ? 'Another source command is pending.' : undefined}
-            type="checkbox"
-          />
-          Enabled
-        </label>
-        <button
-          aria-busy={props.pending ? 'true' : undefined}
-          class={ghostButton}
-          disabled={props.pending || !canRun()}
-          onClick={() => {
-            props.execute({ command: 'run-now', sourceId: props.source.id }).catch(() => undefined);
-          }}
-          title={runDisabledReason()}
-          type="button"
-        >
-          Run now
-        </button>
-      </div>
+      <SourceActions execute={props.execute} pending={props.pending} source={props.source} />
     </article>
   );
 };
+
+const HealthySources = (props: {
+  execute: ReturnType<typeof useSourceControl>['execute'];
+  pending: boolean;
+  sources: readonly SourceControlEntryView[];
+}) => (
+  <details class={cx(panel, healthySummary)} data-healthy-source-summary>
+    <summary class={healthySummaryHeader}>
+      <h2 class={groupTitle}>Healthy sources</h2>
+      <span class={cx(statusPill, sourceToneClass('ok'))}>{sourceCountLabel(props.sources.length)}</span>
+    </summary>
+    <div class={healthyList}>
+      <For each={props.sources}>
+        {(source) => <HealthySourceRow execute={props.execute} pending={props.pending} source={source} />}
+      </For>
+    </div>
+  </details>
+);
 
 function SourcesRoute() {
   const sourceControl = useSourceControl();
@@ -296,6 +371,18 @@ function SourcesRoute() {
     },
     { id: 'enrichments', sources: collectionSourceDefinitions.filter((source) => source.group === 'enrichments') },
   ] as const;
+  const liveSources = createMemo(() =>
+    collectionSourceDefinitions.flatMap((definition) => {
+      const source = sourceById().get(definition.id);
+      return source ? [source] : [];
+    }),
+  );
+  const healthySources = createMemo(() => liveSources().filter((source) => presentSourceState(source).tone === 'ok'));
+  const deviationSources = createMemo(() => liveSources().filter((source) => presentSourceState(source).tone !== 'ok'));
+  const deviationsForGroup = (group: CollectionSourceGroup): readonly SourceControlEntryView[] =>
+    deviationSources().filter((source) =>
+      collectionSourceDefinitions.some((definition) => definition.id === source.id && definition.group === group),
+    );
   const conciseStatus = createMemo(() => {
     const state = sourceControl.state();
     if (state.commandError) {
@@ -329,7 +416,7 @@ function SourcesRoute() {
                 Detect all
               </button>
               <button
-                class={commandButton}
+                class={ghostButton}
                 disabled={!snapshot() || pending()}
                 onClick={() => {
                   sourceControl.execute({ command: 'run-all' }).catch(() => undefined);
@@ -355,60 +442,65 @@ function SourcesRoute() {
             {(current) => (
               <>
                 <p class={meta}>
-                  {current().runningCount} running · {current().queueDepth} queued · snapshot{' '}
+                  {fmtNum(current().runningCount)} running · {fmtNum(current().queueDepth)} queued · snapshot{' '}
                   {fmtDate(current().generatedAt)}
                 </p>
                 <section class={cx(panel, sourceCard)}>
                   <h2 class={groupTitle}>Report publication pipeline</h2>
                   <p class={meta}>{publicationStatus(current().publication)}</p>
-                  <div class={axes}>
-                    <div class={axis}>
-                      <span class={axisLabel}>Revision</span>
-                      <PublicationRevision value={current().publication.revision} />
+                  <details data-publication-details>
+                    <summary class={detailsSummary}>Details</summary>
+                    <div class={axes}>
+                      <div class={axis}>
+                        <span class={axisLabel}>Revision</span>
+                        <PublicationRevision value={current().publication.revision} />
+                      </div>
+                      <div class={axis}>
+                        <span class={axisLabel}>Last outcome</span>
+                        <span class={axisValue}>{current().publication.lastOutcome}</span>
+                      </div>
+                      <div class={axis}>
+                        <span class={axisLabel}>Demand</span>
+                        <span class={axisValue}>
+                          {current().publication.acknowledgedRequestGeneration}/
+                          {current().publication.requestedGeneration} acknowledged
+                        </span>
+                      </div>
+                      <div class={axis}>
+                        <span class={axisLabel}>RTK dependency</span>
+                        <span class={axisValue}>
+                          {current().publication.rtkCompletedGeneration >= current().publication.rtkRequiredGeneration
+                            ? 'Caught up'
+                            : `Waiting for generation ${current().publication.rtkRequiredGeneration}`}
+                        </span>
+                      </div>
                     </div>
-                    <div class={axis}>
-                      <span class={axisLabel}>Last outcome</span>
-                      <span class={axisValue}>{current().publication.lastOutcome}</span>
-                    </div>
-                    <div class={axis}>
-                      <span class={axisLabel}>Demand</span>
-                      <span class={axisValue}>
-                        {current().publication.acknowledgedRequestGeneration}/
-                        {current().publication.requestedGeneration} acknowledged
-                      </span>
-                    </div>
-                    <div class={axis}>
-                      <span class={axisLabel}>RTK dependency</span>
-                      <span class={axisValue}>
-                        {current().publication.rtkCompletedGeneration >= current().publication.rtkRequiredGeneration
-                          ? 'Caught up'
-                          : `Waiting for generation ${current().publication.rtkRequiredGeneration}`}
-                      </span>
-                    </div>
-                  </div>
+                  </details>
                 </section>
+                <HealthySources execute={sourceControl.execute} pending={pending()} sources={healthySources()} />
                 <For each={groups}>
-                  {(group) => (
-                    <section aria-labelledby={`source-group-${group.id}`} class={groupStack}>
-                      <div class={groupHeader}>
-                        <h2 class={groupTitle} id={`source-group-${group.id}`}>
-                          {groupLabels[group.id]}
-                        </h2>
-                        <span class={meta}>{sourceCountLabel(group.sources.length)}</span>
-                      </div>
-                      <div class={sourceGrid}>
-                        <For each={group.sources}>
-                          {(definition) => (
-                            <Show when={sourceById().get(definition.id)}>
+                  {(group) => {
+                    const deviations = () => deviationsForGroup(group.id);
+                    return (
+                      <Show when={deviations().length > 0}>
+                        <section aria-labelledby={`source-group-${group.id}`} class={groupStack}>
+                          <div class={groupHeader}>
+                            <h2 class={groupTitle} id={`source-group-${group.id}`}>
+                              {groupLabels[group.id]}
+                            </h2>
+                            <span class={meta}>{sourceCountLabel(deviations().length)}</span>
+                          </div>
+                          <div class={sourceGrid}>
+                            <For each={deviations()}>
                               {(source) => (
-                                <SourceCard execute={sourceControl.execute} pending={pending()} source={source()} />
+                                <SourceCard execute={sourceControl.execute} pending={pending()} source={source} />
                               )}
-                            </Show>
-                          )}
-                        </For>
-                      </div>
-                    </section>
-                  )}
+                            </For>
+                          </div>
+                        </section>
+                      </Show>
+                    );
+                  }}
                 </For>
               </>
             )}

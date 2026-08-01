@@ -2,21 +2,39 @@ import { describe, expect, test } from 'bun:test';
 import {
   breakdownTabFor,
   dashboardSearchDefaultsFor,
+  dashboardTimeCellLabel,
   defaultDashboardDateRangeMode,
   hasActiveDashboardFilters,
+  parseDashboardTimeCell,
   primaryDashboardTabFor,
+  serializeDashboardTimeCell,
   sortingStateFromSearch,
   toggleExactFieldFilter,
   validateDashboardSearch,
+  withoutDashboardTimeCell,
 } from './dashboard-search';
 
 describe('dashboard search params', () => {
-  test('maps legacy analysis tabs into the Breakdown navigation without rewriting deep links', () => {
+  test('maps legacy analysis tabs, new selection, and history snapshots without rewriting deep links', () => {
     expect(primaryDashboardTabFor('overview')).toBe('overview');
     expect(primaryDashboardTabFor('sessions')).toBe('sessions');
     expect(primaryDashboardTabFor('projects')).toBe('breakdown');
     expect(breakdownTabFor('projects')).toBe('projects');
     expect(breakdownTabFor('overview')).toBe('models');
+    expect(breakdownTabFor('harnesses')).toBe('harness-providers');
+    expect(breakdownTabFor('providers')).toBe('harness-providers');
+    expect(breakdownTabFor('harness-providers')).toBe('harness-providers');
+
+    const defaults = dashboardSearchDefaultsFor('date');
+    const historyTabs = ['harnesses', 'harness-providers', 'providers'] as const;
+    const parsedTabs = historyTabs.map((tab) => validateDashboardSearch({ tab }, defaults).tab);
+
+    expect(parsedTabs).toEqual([...historyTabs]);
+    expect(parsedTabs.map((tab) => breakdownTabFor(tab))).toEqual([
+      'harness-providers',
+      'harness-providers',
+      'harness-providers',
+    ]);
   });
 
   test('fills defaults when params are absent', () => {
@@ -28,6 +46,16 @@ describe('dashboard search params', () => {
     expect(sortingStateFromSearch(defaults.sort)).toEqual([{ id: 'cost', desc: true }]);
   });
 
+  test('round trips strict breakdown sorts while keeping value as the default', () => {
+    const defaults = dashboardSearchDefaultsFor('date');
+
+    expect(defaults.breakdownSort).toBe('value');
+    expect(validateDashboardSearch({ breakdownSort: 'value' }, defaults).breakdownSort).toBe('value');
+    expect(validateDashboardSearch({ breakdownSort: 'tokens' }, defaults).breakdownSort).toBe('tokens');
+    expect(validateDashboardSearch({ breakdownSort: 'sessions' }, defaults).breakdownSort).toBe('sessions');
+    expect(validateDashboardSearch({ breakdownSort: 'activity' }, defaults).breakdownSort).toBe('value');
+  });
+
   test('normalizes supported dashboard state and drops invalid values', () => {
     const defaults = dashboardSearchDefaultsFor('date');
 
@@ -35,6 +63,7 @@ describe('dashboard search params', () => {
       validateDashboardSearch(
         {
           campaigns: 'off',
+          breakdownSort: 'sessions',
           cols: ['tokIn', 'session', 'tokIn', 'missing'],
           filters: {
             campaign: ' fixture:codex:root ',
@@ -54,6 +83,7 @@ describe('dashboard search params', () => {
         defaults,
       ),
     ).toEqual({
+      breakdownSort: 'sessions',
       cols: ['tokIn'],
       colsBase: 'auto',
       filters: { campaign: 'fixture:codex:root', model: 'gpt-5', provider: 'Codex API' },
@@ -73,6 +103,7 @@ describe('dashboard search params', () => {
     expect(
       validateDashboardSearch(
         {
+          breakdownSort: 'activity',
           range: { mode: 'wat' },
           sort: { id: 'missing', desc: false },
           tab: 'missing',
@@ -133,6 +164,24 @@ describe('dashboard search params', () => {
     });
   });
 
+  test('round trips strict Punchcard cells with a removable human label', () => {
+    const defaults = dashboardSearchDefaultsFor('cost');
+    const validated = validateDashboardSearch({ timeCell: 'MON-14' }, defaults);
+
+    expect(validated.timeCell).toBe('MON-14');
+    const parsed = parseDashboardTimeCell(validated.timeCell);
+    expect(parsed).toEqual({ hour: 14, weekday: 0 });
+    if (parsed === undefined) {
+      throw new Error('Expected a parsed Punchcard cell');
+    }
+    expect(serializeDashboardTimeCell(parsed)).toBe('MON-14');
+    expect(dashboardTimeCellLabel(parsed)).toBe('Monday 14:00–14:59');
+    for (const invalid of ['mon-14', 'MON-4', 'MON-24', 'SUN-14-extra', '', ['MON-14']]) {
+      expect(validateDashboardSearch({ timeCell: invalid }, defaults).timeCell).toBeUndefined();
+    }
+    expect(withoutDashboardTimeCell(validated)).toEqual(defaults);
+  });
+
   test('detects only state that clear filters will reset', () => {
     const defaults = dashboardSearchDefaultsFor('cost');
 
@@ -142,6 +191,7 @@ describe('dashboard search params', () => {
     expect(hasActiveDashboardFilters({ ...defaults, origin: ['classifier'] })).toBe(true);
     expect(hasActiveDashboardFilters({ ...defaults, q: 'collector' })).toBe(true);
     expect(hasActiveDashboardFilters({ ...defaults, range: { mode: 'all' } })).toBe(true);
+    expect(hasActiveDashboardFilters({ ...defaults, timeCell: 'SUN-23' })).toBe(true);
     expect(hasActiveDashboardFilters({ ...defaults, tab: 'sessions' })).toBe(false);
   });
 });

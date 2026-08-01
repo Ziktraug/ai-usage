@@ -22,6 +22,7 @@ import {
   projectionStateLabel,
   projectRouteKey,
   selectionKey,
+  skillDiagnosticLabel,
   skillInvocation,
   skillScopeMatches,
   skillSelectionFromPath,
@@ -49,6 +50,11 @@ const skill = (name: string, overrides: Partial<SourceSkill> = {}): SourceSkill 
   tokenCount: { approximate: true, references: 1, skillMd: 2, total: 3 },
   validationStatus: 'valid',
   ...overrides,
+});
+
+test('presents the markdown token warning as a human diagnostic label', () => {
+  expect(skillDiagnosticLabel('SkillMarkdownTokenWarning')).toBe('Skill document token warning');
+  expect(skillDiagnosticLabel('UnreadableSkillReferenceFile')).toBe('UnreadableSkillReferenceFile');
 });
 
 const projection = (skillName: string, targetId: string, state: Projection['state']): Projection => ({

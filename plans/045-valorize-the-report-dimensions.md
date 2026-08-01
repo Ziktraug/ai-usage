@@ -73,6 +73,8 @@ provenance popover — a synonym in one place breaks the reading of the others.
 
 | Surface | String |
 | --- | --- |
+| API metric (full) | `Estimated API-equivalent value` |
+| API metric (compact) | `API value` |
 | Origin filter | `Origin: human + delegated` |
 | Origin series (chart legend) | `Human` · `Delegated` · `Automated review`; unclassified work renders outside the stack |
 | Classifier roll-up on a campaign row | `+ 492 automated reviews` |
@@ -274,7 +276,7 @@ range, or the narrower one carries its qualifier.
    to state its own coverage per harness (Wave 3b).
 5. Reconsider the default-collapsed `Chart options` disclosure: it will hold
    6 dimensions x 3 intervals x 3 metrics while its closed state reveals only
-   `Harness · Day · Estimated API value`. **If this turns into a layout question,
+   `Harness · Day · Estimated API-equivalent value`. **If this turns into a layout question,
    it belongs with Wave 5, not here.**
 
 **Files**: `apps/web/src/overview-model.ts:138`, `apps/web/src/dashboard.tsx:683`,
@@ -510,7 +512,7 @@ of this wave is entirely presentational.**
    ──────────────────────────────────────────────────────────
    [All] [Today] [7d] [30d]     From ──     To ──
    [―――――――――――――――――▬―]  brush
-   ▸ Harness · Day · Estimated API value
+   ▸ Harness · Day · Estimated API-equivalent value
    ```
 
    What you read is on top, what you adjust is beneath a rule. This also removes

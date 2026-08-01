@@ -1,4 +1,5 @@
 import path from 'node:path';
+import type { CampaignLabelOverride } from './campaign-label';
 import type { ProjectGroupConfig } from './project-group';
 import type { SourcePolicyOverrides } from './source-control';
 import type { UsageRowWithOptionalSource } from './types';
@@ -9,6 +10,7 @@ export interface ProjectAliasEntry {
 }
 
 export interface AiUsageConfig {
+  campaignLabelOverrides?: CampaignLabelOverride[];
   cursor?: {
     usageExportPaths?: string[];
     usageExportDir?: string;

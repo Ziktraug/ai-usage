@@ -1,5 +1,6 @@
 import { css, cx } from '@ai-usage/design-system/css';
 import {
+  ghostButton,
   HarnessBadge,
   meta,
   muted,
@@ -8,6 +9,7 @@ import {
   skillsDisclosureSummary,
   skillsPathText,
   statusPill,
+  statusPillInfo,
   statusPillWarn,
   strongCell,
 } from '@ai-usage/design-system/report';
@@ -42,13 +44,17 @@ const entryList = css({
 
 const entryRow = css({
   display: 'grid',
-  gridTemplateColumns: 'auto minmax(0, 1fr)',
+  gridTemplateColumns: 'auto minmax(0, 1fr) auto',
   gap: '8px',
   alignItems: 'center',
 });
 
-export const SkillsConsolidate = (props: { groups: readonly UnmanagedGroup[]; total: number }) => (
-  <details class={cx(panel, skillsDisclosurePanel)}>
+export const SkillsConsolidate = (props: {
+  groups: readonly UnmanagedGroup[];
+  onReviewEntry: () => void;
+  total: number;
+}) => (
+  <details class={cx(panel, skillsDisclosurePanel)} data-consolidation-panel>
     <summary class={skillsDisclosureSummary}>
       <span class={strongCell}>To consolidate</span>
       <span class={cx(statusPill, statusPillWarn)}>{count(props.total, 'entry', 'entries')}</span>
@@ -72,13 +78,20 @@ export const SkillsConsolidate = (props: { groups: readonly UnmanagedGroup[]; to
               <div class={entryList}>
                 <For each={group.entries}>
                   {(entry) => (
-                    <div class={entryRow}>
-                      <span class={cx(statusPill, statusPillWarn)}>
+                    <div
+                      class={entryRow}
+                      data-backlog-tone={entry.state === 'unmanaged-copy' ? 'neutral' : 'warning'}
+                      data-unmanaged-entry
+                    >
+                      <span class={cx(statusPill, entry.state === 'unmanaged-copy' ? statusPillInfo : statusPillWarn)}>
                         {entry.state === 'unmanaged-copy' ? 'copy' : 'symlink'}
                       </span>
                       <span class={skillsPathText} title={entry.path}>
                         {entry.name}
                       </span>
+                      <button class={ghostButton} onClick={props.onReviewEntry} type="button">
+                        Review consolidation
+                      </button>
                     </div>
                   )}
                 </For>

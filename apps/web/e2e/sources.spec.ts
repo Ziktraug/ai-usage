@@ -11,8 +11,10 @@ const RUNNING_ELAPSED_PATTERN = /Running: Codex sessions \(\d+s elapsed\)/;
 const NEXT_DUE_PATTERN = /Next due: .* at \d{4}-\d{2}-\d{2}T/;
 let shouldRestoreCodexSessions = false;
 
-const sourceCard = (page: Page, label: string) =>
-  page.getByRole('article').filter({ has: page.getByRole('heading', { level: 3, name: label }) });
+const sourceSurface = (page: Page, label: string) =>
+  page
+    .locator('[data-source-card], [data-healthy-source-row]')
+    .filter({ has: page.getByRole('heading', { level: 3, name: label }) });
 const publicationRevisionNumber = (revision: string | null): number => {
   const match = revision?.match(FULL_REVISION_PATTERN);
   if (!match?.[1]) {
@@ -46,18 +48,29 @@ test('states each source health once and keeps source metadata concise', async (
   await expect(page.getByRole('heading', { level: 1, name: 'Sources' })).toBeVisible();
 
   const sourceCards = page.locator('[data-source-card]');
-  await expect(sourceCards).toHaveCount(collectionSourceDefinitions.length);
-  for (const card of await sourceCards.all()) {
-    await expect(card.locator('[data-source-health]')).toHaveCount(1);
-    await expect(card.getByText('Last outcome', { exact: true })).toBeVisible();
+  const healthySummary = page.locator('[data-healthy-source-summary]');
+  await expect(sourceCards).toHaveCount(0);
+  await expect(healthySummary).toContainText(`${collectionSourceDefinitions.length} sources`);
+  await healthySummary.locator('summary').click();
+  const healthyRows = healthySummary.locator('[data-healthy-source-row]');
+  await expect(healthyRows).toHaveCount(collectionSourceDefinitions.length);
+  for (const row of await healthyRows.all()) {
+    await expect(row.locator('[data-source-health]')).toHaveCount(1);
   }
   await expect(page.getByText('The last run completed successfully.', { exact: true })).toHaveCount(0);
+  await expect(page.getByRole('heading', { level: 2, name: 'Sessions' })).toHaveCount(0);
+  await expect(page.getByRole('heading', { level: 2, name: 'Provider usage' })).toHaveCount(0);
+  await expect(page.getByRole('heading', { level: 2, name: 'Enrichments' })).toHaveCount(0);
 
-  const providerUsageGroup = page.getByRole('heading', { level: 2, name: 'Provider usage' }).locator('..');
-  await expect(providerUsageGroup.getByText('1 source', { exact: true })).toBeVisible();
-  await expect(providerUsageGroup.getByText('1 sources', { exact: true })).toHaveCount(0);
+  const detectAll = page.getByRole('button', { name: 'Detect all' });
+  const runAll = page.getByRole('button', { name: 'Run all enabled' });
+  expect(await runAll.getAttribute('class')).toBe(await detectAll.getAttribute('class'));
 
+  const publicationDetails = page.locator('[data-publication-details]');
+  await expect(publicationDetails).not.toHaveAttribute('open', '');
   const revisionCode = page.locator('code[title]').first();
+  await expect(revisionCode).toBeHidden();
+  await publicationDetails.locator('summary').click();
   await expect(revisionCode).toBeVisible();
   const fullRevision = await revisionCode.getAttribute('title');
   if (!(fullRevision && FULL_REVISION_PATTERN.test(fullRevision))) {
@@ -85,15 +98,16 @@ test('keeps business sources independent through a picked disable and publishes 
   await page.goto('/sources');
   await expect(page.getByRole('heading', { level: 1, name: 'Sources' })).toBeVisible();
 
-  const sessions = sourceCard(page, 'Codex sessions');
-  const quota = sourceCard(page, 'Codex usage limits');
+  const healthySummary = page.locator('[data-healthy-source-summary]');
+  await healthySummary.locator('summary').click();
+  const sessions = sourceSurface(page, 'Codex sessions');
+  const quota = sourceSurface(page, 'Codex usage limits');
   await expect(sessions).toBeVisible();
   await expect(quota).toBeVisible();
-  await expect(sessions.getByText('Lifecycle', { exact: true })).toBeVisible();
-  await expect(sessions.getByText('scheduled', { exact: true })).toBeVisible();
   await expect(sessions.getByRole('checkbox', { name: 'Enabled' })).toBeChecked();
   await expect(quota.getByRole('checkbox', { name: 'Enabled' })).toBeChecked();
 
+  await page.locator('[data-publication-details] > summary').click();
   const revisionCode = page.locator('code[title]').first();
   const initialRevision = publicationRevisionNumber(await revisionCode.getAttribute('title'));
   await sessions.getByRole('button', { name: 'Run now' }).click();
@@ -185,9 +199,69 @@ test('ignores a partial SSE snapshot after a complete catalogue', async ({ page 
   });
 
   await page.goto('/sources');
+  await page.locator('[data-healthy-source-summary] > summary').click();
   for (const definition of collectionSourceDefinitions) {
     await expect(page.getByRole('heading', { level: 3, name: definition.label })).toBeVisible();
   }
+});
+
+test('renders only deviation cards beside the healthy-source summary', async ({ page }) => {
+  const sources = collectionSourceDefinitions.map((definition) => ({
+    availability: 'detected' as const,
+    cadenceMs: definition.cadenceMs,
+    id: definition.id,
+    label: definition.label,
+    lastOutcome: definition.id === 'codex.sessions' ? ('failed' as const) : ('success' as const),
+    lifecycle: 'scheduled' as const,
+    policy: 'enabled' as const,
+    reason:
+      definition.id === 'codex.sessions'
+        ? { code: 'run-failed' as const, message: 'Synthetic collection failure.' }
+        : { code: 'none' as const },
+    warnings: [],
+  }));
+  const snapshot = {
+    generatedAt: '2026-07-20T20:41:00.000Z',
+    generation: 13,
+    instanceId: 'e2e-degraded-source',
+    publication: {
+      acknowledgedRequestGeneration: 1,
+      dirty: false,
+      dirtyGeneration: 1,
+      lastOutcome: 'success',
+      pendingDemand: false,
+      publishedGeneration: 1,
+      queued: false,
+      requestedGeneration: 1,
+      revision: 'e2e-degraded-source-revision',
+      rtkCompletedGeneration: 1,
+      rtkRequiredGeneration: 1,
+      running: false,
+    },
+    queueDepth: 0,
+    runningCount: 0,
+    sources,
+  };
+  await page.route('**/api/source-control', async (route) => {
+    await route.fulfill({
+      body: `event: snapshot\ndata: ${JSON.stringify(snapshot)}\n\n`,
+      contentType: 'text/event-stream',
+      status: 200,
+    });
+  });
+
+  await page.goto('/sources');
+  const sourceCards = page.locator('[data-source-card]');
+  await expect(sourceCards).toHaveCount(1);
+  await expect(sourceCards.getByRole('heading', { level: 3, name: 'Codex sessions' })).toBeVisible();
+  await expect(sourceCards.getByText('Failed', { exact: true })).toBeVisible();
+  await expect(page.locator('[data-healthy-source-summary]')).toContainText(
+    `${collectionSourceDefinitions.length - 1} sources`,
+  );
+  const sessionsGroup = page.getByRole('heading', { level: 2, name: 'Sessions' }).locator('..');
+  await expect(sessionsGroup.getByText('1 source', { exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { level: 2, name: 'Provider usage' })).toHaveCount(0);
+  await expect(page.getByRole('heading', { level: 2, name: 'Enrichments' })).toHaveCount(0);
 });
 
 test('renders count-free source progress without assigning a non-finite native value', async ({ page }) => {
@@ -236,5 +310,6 @@ test('renders count-free source progress without assigning a non-finite native v
   });
 
   await page.goto('/sources');
+  await page.locator('[data-healthy-source-summary] > summary').click();
   await expect(page.getByText('Reading local rollout history')).toBeVisible();
 });

@@ -20,6 +20,7 @@ export interface ReportAssemblyInput<ReportRow extends Row = Row> {
   options: ReportOptions;
   projectGroups: UsageReportProjectGroup[];
   rows: ReportRow[];
+  timeZone: string;
   warnings: UsageReportWarning[];
 }
 
@@ -123,6 +124,7 @@ export const assembleReport = <ReportRow extends Row>(
       input.projectGroups,
       input.configuredProjectGroups,
       input.datasets,
+      input.timeZone,
     ),
     report,
     rows,

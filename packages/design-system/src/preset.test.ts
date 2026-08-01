@@ -1,8 +1,10 @@
 import { describe, expect, test } from 'bun:test';
+import { PUNCHCARD_INTERACTIVE_TARGET_SIZE_PX } from './components/overview';
 import { aiUsagePreset } from './preset';
 
 const NORMAL_TEXT_CONTRAST = 4.5;
 const UI_COMPONENT_CONTRAST = 3;
+const WCAG_MINIMUM_TARGET_SIZE_PX = 24;
 const HEX_COLOR_PATTERN = /^#[0-9a-f]{6}$/i;
 const RGB_CHANNEL_MAX = 255;
 const SRGB_LINEAR_THRESHOLD = 0.040_45;
@@ -97,4 +99,25 @@ describe('semantic color contrast', () => {
       }
     });
   }
+});
+
+describe('semantic palette roles', () => {
+  for (const scheme of ['_light', '_dark'] as const) {
+    test(`${scheme.slice(1)} separates interaction, categorical, and default-control colors`, () => {
+      const accent = colorFor('accent', scheme);
+      const chartPrimary = colorFor('chart.c1', scheme);
+      const claude = colorFor('harness.claude.fg', scheme);
+      const controlDefault = colorFor('controlDefault', scheme);
+
+      expect(chartPrimary).not.toBe(accent);
+      expect(claude).not.toBe(accent);
+      expect(claude).not.toBe(chartPrimary);
+      expect(controlDefault).toBe(colorFor('surfaceMuted', scheme));
+      expect(controlDefault).not.toBe(accent);
+    });
+  }
+});
+
+test('punchcard controls meet the minimum interactive target size', () => {
+  expect(PUNCHCARD_INTERACTIVE_TARGET_SIZE_PX).toBeGreaterThanOrEqual(WCAG_MINIMUM_TARGET_SIZE_PX);
 });

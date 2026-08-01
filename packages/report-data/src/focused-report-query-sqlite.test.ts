@@ -3,6 +3,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { chmod, mkdtemp, open, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { harnessProviderAnalyticsKey } from '@ai-usage/report-core/analytics';
 import {
   type FocusedOverviewRequest,
   type FocusedReportSupport,
@@ -18,6 +19,7 @@ import {
 } from '@ai-usage/report-core/report-budgets';
 import type { SerializedRow } from '@ai-usage/report-core/report-data';
 import { enrichSessionPresentationRow } from '@ai-usage/report-core/session-query';
+import { localTimeRowFields } from '@ai-usage/report-core/test-fixtures/local-time-row';
 import { executeFocusedReportQuery } from './focused-report-query-sqlite';
 import { materializeSessionQueryDatabase, SESSION_QUERY_DATABASE_NAME } from './session-query-materialization';
 import { assertSessionQueryDatabase } from './session-query-sqlite';
@@ -123,6 +125,7 @@ const support: FocusedReportSupport = {
   filters: { limit: 2, minTokens: 0, project: null, since: null, sort: 'date' },
   generatedAt: '2026-07-13T12:00:00.000Z',
   omittedRows: 0,
+  timeZone: 'UTC',
   warnings: [{ message: 'warning' }],
 };
 const overviewRequest: FocusedOverviewRequest = {
@@ -209,6 +212,77 @@ describe('focused report SQLite queries', () => {
     }
   });
 
+  test('keeps complete, partial, absent, and measured-zero project line coverage in pure parity', async () => {
+    const projectRow = (
+      name: string,
+      day: number,
+      project: string,
+      linesAdded: number | null,
+      linesDeleted: number | null,
+    ): SerializedRow => ({
+      ...row(name, day, 1),
+      linesAdded,
+      linesDeleted,
+      project,
+      projectGroupId: `group:${project}`,
+      rawProject: project,
+    });
+    const lineRows: SerializedRow[] = [
+      projectRow('complete-a', 2, 'complete', 3, 1),
+      projectRow('complete-b', 3, 'complete', 0, 2),
+      projectRow('partial-a', 2, 'partial', 4, 1),
+      projectRow('partial-b', 3, 'partial', null, 2),
+      projectRow('unmeasured', 2, 'unmeasured', null, null),
+      projectRow('measured-zero', 2, 'measured-zero', 0, 0),
+    ];
+    const revisionDirectory = await mkdtemp(path.join(tmpdir(), 'ai-usage-focused-line-coverage-'));
+    temporaryDirectories.add(revisionDirectory);
+    await chmod(revisionDirectory, 0o700);
+    await materializeSessionQueryDatabase(revisionDirectory, lineRows, support);
+    const database = new Database(path.join(revisionDirectory, SESSION_QUERY_DATABASE_NAME), { readonly: true });
+    assertSessionQueryDatabase(database);
+    const request = { query: overviewRequest.query };
+
+    try {
+      const result = executeFocusedReportQuery(database, 'breakdown', request);
+      expect(result).toEqual(projectFocusedBreakdown(lineRows, support, request));
+      if (!('groups' in result)) {
+        throw new Error('The focused Breakdown query must return Breakdown groups');
+      }
+      expect(
+        Object.fromEntries(
+          result.groups.projects.map(({ key, lineMeasurement, linesAdded, linesDeleted }) => [
+            key,
+            { lineMeasurement, linesAdded, linesDeleted },
+          ]),
+        ),
+      ).toEqual({
+        'group:complete': {
+          lineMeasurement: { measuredSessions: 2, totalSessions: 2 },
+          linesAdded: 3,
+          linesDeleted: 3,
+        },
+        'group:measured-zero': {
+          lineMeasurement: { measuredSessions: 1, totalSessions: 1 },
+          linesAdded: 0,
+          linesDeleted: 0,
+        },
+        'group:partial': {
+          lineMeasurement: { measuredSessions: 1, totalSessions: 2 },
+          linesAdded: 4,
+          linesDeleted: 1,
+        },
+        'group:unmeasured': {
+          lineMeasurement: { measuredSessions: 0, totalSessions: 1 },
+          linesAdded: 0,
+          linesDeleted: 0,
+        },
+      });
+    } finally {
+      database.close();
+    }
+  });
+
   test('keeps campaign, machine, origin, and project timelines in pure/SQLite parity', async () => {
     const { database } = await fixture();
     const baseRequest: FocusedOverviewRequest = {
@@ -263,6 +337,52 @@ describe('focused report SQLite queries', () => {
         sessions: 1,
         total: 2,
       });
+    } finally {
+      database.close();
+    }
+  });
+
+  test('filters local punchcard cells with pure and SQLite focused row identity parity', async () => {
+    const timedRow = (name: string, day: number, hour: number, minute: number): SerializedRow => ({
+      ...row(name, 1, 1),
+      ...localTimeRowFields(day, hour, minute),
+    });
+    const fixtureRows = [
+      timedRow('monday-13:59', 27, 13, 59),
+      timedRow('monday-14:00', 27, 14, 0),
+      timedRow('monday-14:59', 27, 14, 59),
+      timedRow('monday-15:00', 27, 15, 0),
+      timedRow('sunday-14:00', 26, 14, 0),
+      { ...row('missing-time', 1, 1), activeDate: null, date: null, endDate: null },
+    ];
+    const revisionDirectory = await mkdtemp(path.join(tmpdir(), 'ai-usage-focused-time-cell-'));
+    temporaryDirectories.add(revisionDirectory);
+    await chmod(revisionDirectory, 0o700);
+    await materializeSessionQueryDatabase(revisionDirectory, fixtureRows, support);
+    const database = new Database(path.join(revisionDirectory, SESSION_QUERY_DATABASE_NAME), { readonly: true });
+    assertSessionQueryDatabase(database);
+    try {
+      for (const weekday of [0, 6] as const) {
+        const request: FocusedOverviewRequest = {
+          includeAdvanced: false,
+          query: {
+            ...overviewRequest.query,
+            filters: { ...overviewRequest.query.filters, localTimeCell: { hour: 14, weekday } },
+            range: { from: null, to: null },
+          },
+          timeline: { dimension: 'model', granularity: 'day' },
+        };
+        const expected = projectFocusedOverview(fixtureRows, support, request);
+        const actual = executeFocusedReportQuery(database, 'overview', request);
+        expect(actual).toEqual(expected);
+        if (!('view' in actual)) {
+          throw new Error('The local time cell query must return an Overview result');
+        }
+        expect(actual.summary.sessionCount).toBe(weekday === 0 ? 2 : 1);
+        expect(actual.view.topSessions.map(({ row: itemRow }) => itemRow.rowId)).toEqual(
+          expected.view.topSessions.map(({ row: itemRow }) => itemRow.rowId),
+        );
+      }
     } finally {
       database.close();
     }
@@ -488,6 +608,64 @@ describe('focused report SQLite queries', () => {
           sessions: 1,
           tools: 0,
           turns: 0,
+        },
+      ]);
+    } finally {
+      database.close();
+    }
+  });
+
+  test('preserves every exact harness-provider pair and its totals across pure and SQLite projections', async () => {
+    const jointRows = [
+      { ...row('a-one', 1, 1), harness: 'Harness "A"', provider: 'Provider\nOne' },
+      { ...row('a-two', 2, 2), harness: 'Harness "A"', provider: 'Provider Two' },
+      { ...row('b-one', 3, 3), harness: 'Harness B', provider: 'Provider\nOne' },
+    ];
+    const revisionDirectory = await mkdtemp(path.join(tmpdir(), 'ai-usage-focused-joint-distribution-'));
+    temporaryDirectories.add(revisionDirectory);
+    await chmod(revisionDirectory, 0o700);
+    await materializeSessionQueryDatabase(revisionDirectory, jointRows, support);
+    const database = new Database(path.join(revisionDirectory, SESSION_QUERY_DATABASE_NAME), { readonly: true });
+    assertSessionQueryDatabase(database);
+    const request = {
+      query: {
+        filters: { fields: {}, harness: [], machine: [], query: '' },
+        range: { from: null, to: null },
+        revision: 'revision-joint-distribution',
+      },
+    };
+    try {
+      const sqliteResult = executeFocusedReportQuery(database, 'breakdown', request);
+      const pureResult = projectFocusedBreakdown(jointRows, support, request);
+      expect(sqliteResult).toEqual(pureResult);
+      if (!('groups' in sqliteResult)) {
+        throw new Error('The joint-distribution query must return Breakdown groups');
+      }
+      expect(
+        sqliteResult.groups.harnessProviders.map(({ costSum, fresh, key, sessions }) => ({
+          costSum,
+          fresh,
+          key,
+          sessions,
+        })),
+      ).toEqual([
+        {
+          costSum: 3,
+          fresh: 9,
+          key: harnessProviderAnalyticsKey('Harness B', 'Provider\nOne'),
+          sessions: 1,
+        },
+        {
+          costSum: 2,
+          fresh: 6,
+          key: harnessProviderAnalyticsKey('Harness "A"', 'Provider Two'),
+          sessions: 1,
+        },
+        {
+          costSum: 1,
+          fresh: 3,
+          key: harnessProviderAnalyticsKey('Harness "A"', 'Provider\nOne'),
+          sessions: 1,
         },
       ]);
     } finally {

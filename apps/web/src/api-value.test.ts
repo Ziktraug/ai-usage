@@ -12,12 +12,12 @@ describe('API value presentation', () => {
     expect(apiValuePresentation({ costApprox: 68.09, costKnown: true })).toEqual({
       label: '$68.09',
       status: 'exact',
-      title: 'Estimated API value at standard prices',
+      title: 'Estimated API-equivalent value at standard prices',
     });
     expect(apiValuePresentation({ costApprox: 0, costKnown: true })).toEqual({
       label: '$0.00',
       status: 'exact',
-      title: 'Estimated API value at standard prices',
+      title: 'Estimated API-equivalent value at standard prices',
     });
     expect(apiValuePresentation({ costApprox: 69.3, costKnown: false })).toEqual({
       label: '≥ $69.30',

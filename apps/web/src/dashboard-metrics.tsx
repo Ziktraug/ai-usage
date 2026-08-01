@@ -1,5 +1,5 @@
 import { Popover } from '@ai-usage/design-system';
-import { css } from '@ai-usage/design-system/css';
+import { css, cx } from '@ai-usage/design-system/css';
 import {
   metricDelta,
   metricDeltaArrow,
@@ -8,20 +8,16 @@ import {
   metricValue,
   popoverContent,
 } from '@ai-usage/design-system/report';
-import { Show } from 'solid-js';
+import { For, Show } from 'solid-js';
+import {
+  type Metric,
+  type MetricComparisonState,
+  metricComparisonMessage,
+  valueBasisLabelFor,
+} from './dashboard-metric-model';
 import { fmtPct } from './shared';
 
-export interface MetricDelta {
-  hint: string;
-  pct: number;
-}
-
-export interface Metric {
-  delta?: MetricDelta | null;
-  hint?: string;
-  label: string;
-  value: string;
-}
+type MetricPresentation = Omit<Metric, 'kind'>;
 
 const metricLabelRow = css({
   display: 'flex',
@@ -39,6 +35,14 @@ export const dashboardMetricGrid = css({
   },
   gap: '10px',
   my: '20px',
+});
+
+const metricComparisonNotice = css({
+  gridColumn: '1 / -1',
+  m: 0,
+  color: 'muted',
+  fontSize: '13px',
+  lineHeight: 1.5,
 });
 
 const metricInfoButton = css({
@@ -65,6 +69,52 @@ const metricHintContent = css({
   lineHeight: 1.5,
 });
 
+const valueBasesPanel = css({
+  gridColumn: { base: '1 / -1', md: 'span 2' },
+  gap: 0,
+  overflow: 'hidden',
+  p: 0,
+});
+
+const valueBasesTitle = css({
+  p: '12px 16px',
+  borderBottom: '1px solid token(colors.line)',
+  color: 'ink',
+  fontSize: '13px',
+  fontWeight: 650,
+  m: 0,
+});
+
+const valueBasesList = css({
+  display: 'grid',
+  m: 0,
+});
+
+const valueBasesRow = css({
+  display: 'grid',
+  gridTemplateColumns: 'minmax(0, 1fr) auto',
+  gap: '8px 16px',
+  alignItems: 'center',
+  p: '10px 16px',
+  '& + &': {
+    borderTop: '1px solid token(colors.line)',
+  },
+});
+
+const valueBasesTerm = css({
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'space-between',
+  gap: '8px',
+  minW: 0,
+});
+
+const valueBasesDefinition = css({
+  display: 'grid',
+  justifyItems: 'end',
+  m: 0,
+});
+
 // Past ~4× the percentage stops being readable ("▲ 4632%"); switch to the
 // multiplication factor instead.
 export const fmtDeltaPct = (pct: number) => {
@@ -77,28 +127,80 @@ export const fmtDeltaPct = (pct: number) => {
 
 export const metricDeltaFaceLabel = (pct: number): string => `${fmtDeltaPct(pct)} vs previous period`;
 
+export const MetricComparisonNotice = (props: { state: MetricComparisonState }) => {
+  const message = () => metricComparisonMessage(props.state);
+  return (
+    <Show when={message()}>
+      {(copy) => (
+        <p class={metricComparisonNotice} data-metric-comparison-state={props.state}>
+          {copy()}
+        </p>
+      )}
+    </Show>
+  );
+};
+
+const MetricHintButton = (props: { metric: MetricPresentation }) => (
+  <Show when={props.metric.hint}>
+    {(hint) => (
+      <Popover
+        contentClass={popoverContent}
+        trigger={<span aria-hidden="true">i</span>}
+        triggerAriaLabel={`About ${props.metric.label}`}
+        triggerClass={metricInfoButton}
+        triggerTitle={`About ${props.metric.label}`}
+      >
+        <div class={metricHintContent}>
+          <div>{hint()}</div>
+          <Show when={props.metric.delta}>{(delta) => <div>{delta().hint}</div>}</Show>
+        </div>
+      </Popover>
+    )}
+  </Show>
+);
+
+export const ValueBasesPanel = (props: { metrics: readonly Metric[] }) => (
+  <section aria-labelledby="value-bases-title" class={cx(metricTile, valueBasesPanel)} data-value-bases-panel>
+    <h3 class={valueBasesTitle} id="value-bases-title">
+      Value bases
+    </h3>
+    <dl class={valueBasesList}>
+      <For each={props.metrics}>
+        {(metric) => (
+          <div class={valueBasesRow} data-value-bases-row>
+            <dt class={valueBasesTerm}>
+              <span class={metricLabel}>{valueBasisLabelFor(metric)}</span>
+              <MetricHintButton metric={metric} />
+            </dt>
+            <dd class={valueBasesDefinition}>
+              <span class={metricValue} data-metric-value>
+                {metric.value}
+              </span>
+              <Show when={metric.delta}>
+                {(delta) => (
+                  <span class={metricDelta} data-metric-delta>
+                    <span aria-hidden="true" class={metricDeltaArrow}>
+                      {delta().pct >= 0 ? '▲' : '▼'}
+                    </span>{' '}
+                    {metricDeltaFaceLabel(delta().pct)}
+                  </span>
+                )}
+              </Show>
+            </dd>
+          </div>
+        )}
+      </For>
+    </dl>
+  </section>
+);
+
 // Period deltas read as context, not judgement: cost going up is not "bad",
 // so the arrow stays in the accent and the number in muted ink.
-export const MetricTile = (props: Metric) => (
+export const MetricTile = (props: MetricPresentation) => (
   <div class={metricTile} data-metric-tile>
     <div class={metricLabelRow}>
       <div class={metricLabel}>{props.label}</div>
-      <Show when={props.hint}>
-        {(hint) => (
-          <Popover
-            contentClass={popoverContent}
-            trigger={<span aria-hidden="true">i</span>}
-            triggerAriaLabel={`About ${props.label}`}
-            triggerClass={metricInfoButton}
-            triggerTitle={`About ${props.label}`}
-          >
-            <div class={metricHintContent}>
-              <div>{hint()}</div>
-              <Show when={props.delta}>{(delta) => <div>{delta().hint}</div>}</Show>
-            </div>
-          </Popover>
-        )}
-      </Show>
+      <MetricHintButton metric={props} />
     </div>
     <div>
       <div class={metricValue} data-metric-value>

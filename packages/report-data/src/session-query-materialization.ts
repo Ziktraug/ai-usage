@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import { chmod, open, rm, stat } from 'node:fs/promises';
 import path from 'node:path';
+import { harnessProviderAnalyticsKey, hasMeasuredLineDelta } from '@ai-usage/report-core/analytics';
 import type { FocusedReportSupport } from '@ai-usage/report-core/focused-report-query';
 import { providerStatusKeyForUsage, providerStatusScopeKey } from '@ai-usage/report-core/provider-status';
 import type { SerializedRow } from '@ai-usage/report-core/report-data';
@@ -10,6 +11,7 @@ import {
   compareSessionIdentityValues,
   compareSessionTextValues,
   enrichSessionPresentationRow,
+  localTimeCellForTimestamp,
   type SessionCampaignView,
   type SessionPresentationRow,
   type SessionTextSortField,
@@ -26,8 +28,8 @@ import {
 
 export const SESSION_QUERY_DATABASE_NAME = 'sessions.sqlite';
 
-const SESSION_QUERY_SCHEMA_VERSION = 14;
-const SESSION_ROW_INSERT_VALUE_COUNT = 80;
+const SESSION_QUERY_SCHEMA_VERSION = 17;
+const SESSION_ROW_INSERT_VALUE_COUNT = 84;
 const createFileFlags =
   // biome-ignore lint/suspicious/noBitwiseOperators: Node file-open flags are a documented bitmask API.
   fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW;
@@ -98,6 +100,8 @@ const createSchema = (database: SqliteDatabase): void => {
       source_authority TEXT NOT NULL CHECK (source_authority IN ('local-observed', 'portable-opaque')),
       active_date TEXT,
       active_time INTEGER,
+      local_time_weekday INTEGER CHECK (local_time_weekday BETWEEN 0 AND 6),
+      local_time_hour INTEGER CHECK (local_time_hour BETWEEN 0 AND 23),
       search_text TEXT NOT NULL,
       harness TEXT NOT NULL,
       machine_id TEXT NOT NULL,
@@ -105,6 +109,7 @@ const createSchema = (database: SqliteDatabase): void => {
       provider_scope_key TEXT NOT NULL,
       provider TEXT NOT NULL,
       provider_display TEXT NOT NULL,
+      harness_provider_key TEXT NOT NULL,
       model_key TEXT NOT NULL,
       project_key TEXT NOT NULL,
       project_label TEXT NOT NULL,
@@ -158,6 +163,7 @@ const createSchema = (database: SqliteDatabase): void => {
       line_delta REAL,
       lines_added REAL,
       lines_deleted REAL,
+      lines_measured INTEGER NOT NULL CHECK (lines_measured IN (0, 1)),
       rtk_command_count REAL NOT NULL,
       rtk_input_tokens REAL NOT NULL,
       rtk_output_tokens REAL NOT NULL,
@@ -194,6 +200,7 @@ const createSchema = (database: SqliteDatabase): void => {
     );
     CREATE INDEX session_rows_campaign ON session_rows(campaign_key, campaign_root, ordinal);
     CREATE INDEX session_rows_active_time ON session_rows(active_time);
+    CREATE INDEX session_rows_local_time_cell ON session_rows(local_time_weekday, local_time_hour);
     CREATE INDEX session_rows_facets ON session_rows(harness, machine_id, provider_display, model_key, project_key);
     CREATE INDEX session_rows_provider_scope ON session_rows(provider_scope_key, ordinal);
     CREATE INDEX session_model_segments_model ON session_model_segments(model_key, ordinal);
@@ -203,15 +210,15 @@ const createSchema = (database: SqliteDatabase): void => {
 
 const insertSql = `
   INSERT INTO session_rows (
-    ordinal, row_id, row_json, source_row_json, source_authority, active_date, active_time, search_text, harness,
+    ordinal, row_id, row_json, source_row_json, source_authority, active_date, active_time, local_time_weekday, local_time_hour, search_text, harness,
     machine_id, machine_label,
-    provider_scope_key, provider, provider_display, model_key, project_key, project_label, origin, origin_provenance,
+    provider_scope_key, provider, provider_display, harness_provider_key, model_key, project_key, project_label, origin, origin_provenance,
     campaign_key, campaign_label, campaign_root, campaign_total_count,
     ${sessionSortFields.map((field) => `sort_${field === 'cache' ? 'cache' : field.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`)}`).join(', ')},
     ${sessionTextSortFields.map((field) => `sort_${field}_rank`).join(', ')},
     row_identity_rank, session_item_identity_rank, campaign_item_identity_rank,
     cost_actual, cost_approx, cost_known, cost_quota, duration_ms, fresh_tokens, unpriced_fresh_tokens, line_delta,
-    lines_added, lines_deleted, rtk_command_count, rtk_input_tokens, rtk_output_tokens,
+    lines_added, lines_deleted, lines_measured, rtk_command_count, rtk_input_tokens, rtk_output_tokens,
     rtk_saved_tokens, tok_cr, tok_cw, tok_in, tok_out, token_total, calls, turns, tools,
     usage_unavailable
   ) VALUES (${Array.from({ length: SESSION_ROW_INSERT_VALUE_COUNT }, () => '?').join(', ')})
@@ -291,12 +298,14 @@ const insertRow = (
   ordinal: number,
   campaign: { key: string; label: string; root: boolean; totalCount: number } | undefined,
   ranks: MaterializedSessionRanks,
+  timeZone: string,
 ): void => {
   const sortValues = sessionSortFields.map((field) => sortValueForSessionColumn(row, field));
   const textSortRanks = sessionTextSortFields.map((field) => {
     const value = String(sortValueForSessionColumn(row, field));
     return requireRank(ranks.text.get(field), value, `${field} sort`);
   });
+  const localTimeCell = row.activeTime === null ? null : localTimeCellForTimestamp(row.activeTime, timeZone);
   const machineId = row.source?.machineId ?? '';
   const providerKey = providerStatusKeyForUsage(row.harness, row.provider);
   insert.run(
@@ -307,6 +316,8 @@ const insertRow = (
     sourceAuthority,
     row.activeDate,
     row.activeTime,
+    localTimeCell?.weekday ?? null,
+    localTimeCell?.hour ?? null,
     row.searchText,
     row.harness,
     machineId,
@@ -314,6 +325,7 @@ const insertRow = (
     providerStatusScopeKey(providerKey, machineId || undefined),
     row.provider,
     row.providerDisplay,
+    harnessProviderAnalyticsKey(row.harness, row.providerDisplay),
     row.modelKey,
     row.projectKey,
     row.projectLabel,
@@ -340,6 +352,7 @@ const insertRow = (
     row.lineDelta,
     row.linesAdded,
     row.linesDeleted,
+    hasMeasuredLineDelta(row.linesAdded, row.linesDeleted) ? 1 : 0,
     row.rtkCommandCount ?? 0,
     row.rtkInputTokens ?? 0,
     row.rtkOutputTokens ?? 0,
@@ -389,6 +402,7 @@ export const materializeSessionQueryDatabase = async (
     filters: { limit: null, minTokens: 0, project: null, since: null, sort: 'date' },
     generatedAt: new Date(0).toISOString(),
     omittedRows: 0,
+    timeZone: 'UTC',
   },
   sourceAuthorities: readonly SessionDetailSourceAuthority[] = rows.map(() => 'portable-opaque'),
 ): Promise<string> => {
@@ -432,7 +446,7 @@ export const materializeSessionQueryDatabase = async (
         if (!sourceAuthority) {
           throw new Error(`Session query row ${ordinal} is missing its source authority`);
         }
-        insertRow(insert, row, sourceRow, sourceAuthority, ordinal, campaignByRow.get(row), ranks);
+        insertRow(insert, row, sourceRow, sourceAuthority, ordinal, campaignByRow.get(row), ranks, support.timeZone);
         const modelPriceMeasurements = usageRowModelApiPriceMeasurements(sourceRow);
         for (const [segmentPosition, segment] of usageRowModelContributions(sourceRow).entries()) {
           const priceMeasurement = modelPriceMeasurements.get(segment.key);

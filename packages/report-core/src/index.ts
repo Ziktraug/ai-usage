@@ -18,5 +18,6 @@ export * from './session-query';
 export * from './session-vcs';
 export * from './snapshot';
 export * from './source-control';
+export * from './time-zone';
 export * from './types';
 export * from './usage-row';

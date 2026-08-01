@@ -14,6 +14,7 @@ import {
 import { createFileRoute, type ErrorComponentProps, stripSearchParams, useRouter } from '@tanstack/solid-router';
 import { createEffect } from 'solid-js';
 import { getBrowserRuntimeMode } from '../browser-runtime-mode';
+import { createCampaignLabelE2EApi } from '../campaign-label-e2e-fixture';
 import { Dashboard } from '../dashboard';
 import { type DashboardSearch, dashboardSearchDefaultsFor, validateDashboardSearch } from '../dashboard-search';
 import { loadReportRouteData, type ReportLoaderData } from '../report-runtime';
@@ -103,20 +104,25 @@ function ReportLoadError(props: ErrorComponentProps) {
   );
 }
 
-const LoadedReport = (props: { data: ReportLoaderData }) =>
-  props.data.kind === 'payload' ? (
+const LoadedReport = (props: { data: ReportLoaderData }) => {
+  const campaignLabelApi = props.data.mode === 'e2e' ? createCampaignLabelE2EApi() : undefined;
+  const campaignLabelProps = campaignLabelApi ? { campaignLabelApi } : {};
+  return props.data.kind === 'payload' ? (
     <Dashboard
+      {...campaignLabelProps}
       initialPayload={props.data.payload}
       machineFreshness={props.data.machineFreshness}
       runtimeMode={props.data.mode}
     />
   ) : (
     <Dashboard
+      {...campaignLabelProps}
       machineFreshness={props.data.machineFreshness}
       runtimeMode={props.data.mode}
       servedBootstrap={props.data.bootstrap}
     />
   );
+};
 
 function IndexRoute() {
   const data = Route.useLoaderData();

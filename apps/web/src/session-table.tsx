@@ -264,7 +264,7 @@ const MobileSessionSummary = (props: {
             {fmtCompact(row().freshTokens)} fresh · {fmtCompact(row().tokCr)} cache ·{' '}
             <span title={durationSemantics().metricHint}>
               {fmtDuration(row().durationMs)}
-              {rootSessionOnly() ? ' root' : ''}
+              {rootSessionOnly() ? ' root-session time' : ''}
             </span>
           </span>
         </footer>
@@ -364,6 +364,7 @@ const SessionColumnControls = (props: {
               aria-pressed={active()}
               class={presetButton}
               data-active={String(active())}
+              data-default={String(preset.id === 'work')}
               onClick={() => props.onColumnVisibilityChange(columnVisibilityForSessionPreset(preset.id))}
               type="button"
             >
@@ -534,6 +535,7 @@ export const SessionTable = (props: {
 
     const frame = requestAnimationFrame(() => {
       hasAnchoredSessionRegion = true;
+      activeElement.style.removeProperty('--session-surface-height');
       regionStart.scrollIntoView({ block: 'start' });
       activeSurface.updateViewport();
     });

@@ -130,11 +130,12 @@ synthetic fixtures; never read or modify the maintainer's real config or history
 
 ## Git workflow
 
-- Use a separate branch after the multidimensional-reporting PR merges:
-  `feat/local-campaign-labels`.
-- Prefer one implementation commit, with an imperative message such as
+- Under unattended execution, this plan is step 1 of
+  `plans/AFK-RUNBOOK.md`; that runbook owns the branch, commit, push, and draft
+  PR workflow. Do not create the former separate `feat/local-campaign-labels`
+  branch or a plan-specific PR.
+- Use the fixed implementation commit message
   `Allow local campaign label overrides`.
-- Do not push or open a PR unless the operator explicitly asks.
 
 ## Steps
 
