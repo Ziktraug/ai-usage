@@ -8,6 +8,10 @@ export interface CampaignLabelContext {
   derivedLabel: string;
 }
 
+export type PresentedFocusedOverviewSessionItem<Item extends FocusedOverviewSessionItem> = Item & {
+  campaignLabelContext?: CampaignLabelContext;
+};
+
 export type CampaignLabelIndex = ReadonlyMap<string, string>;
 
 export const indexCampaignLabelOverrides = (overrides: readonly CampaignLabelOverride[]): CampaignLabelIndex =>
@@ -42,7 +46,12 @@ export const presentCampaignTimelineSeries = <Series extends { key: string; labe
   return { ...series, label: campaignLabelFor(index, campaignKey, series.label) };
 };
 
-export const focusedCampaignLabelContext = (item: FocusedOverviewSessionItem): CampaignLabelContext | null => {
+export const focusedCampaignLabelContext = (
+  item: PresentedFocusedOverviewSessionItem<FocusedOverviewSessionItem>,
+): CampaignLabelContext | null => {
+  if (item.campaignLabelContext) {
+    return item.campaignLabelContext;
+  }
   if (item.kind !== 'campaign') {
     return null;
   }
@@ -55,10 +64,14 @@ export const focusedCampaignLabelContext = (item: FocusedOverviewSessionItem): C
 export const presentFocusedOverviewSessionItem = <Item extends FocusedOverviewSessionItem>(
   item: Item,
   labelFor: (campaignKey: string, derivedLabel: string) => string,
-): Item => {
+): PresentedFocusedOverviewSessionItem<Item> => {
   const context = focusedCampaignLabelContext(item);
   if (!context) {
     return item;
   }
-  return { ...item, label: labelFor(context.campaignKey, context.derivedLabel) };
+  return {
+    ...item,
+    campaignLabelContext: context,
+    label: labelFor(context.campaignKey, context.derivedLabel),
+  };
 };

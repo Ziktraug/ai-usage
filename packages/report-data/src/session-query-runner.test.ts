@@ -19,6 +19,7 @@ import {
   sessionSortFields,
   sessionTextSortFields,
 } from '@ai-usage/report-core/session-query';
+import { localTimeRowFields } from './local-time-row.test-fixture';
 import { materializeSessionQueryDatabase, SESSION_QUERY_DATABASE_NAME } from './session-query-materialization';
 import {
   assertSessionQueryDatabase,
@@ -461,17 +462,10 @@ describe('session query SQLite materialization', () => {
   });
 
   test('filters local punchcard cells with pure and SQLite row identity parity', async () => {
-    const localIso = (day: number, hour: number, minute: number): string =>
-      new Date(2026, 6, day, hour, minute).toISOString();
-    const timedRow = (sourceSessionId: string, day: number, hour: number, minute: number): SerializedRow => {
-      const timestamp = localIso(day, hour, minute);
-      return {
-        ...row(sourceSessionId, 10),
-        activeDate: timestamp,
-        date: timestamp,
-        endDate: timestamp,
-      };
-    };
+    const timedRow = (sourceSessionId: string, day: number, hour: number, minute: number): SerializedRow => ({
+      ...row(sourceSessionId, 10),
+      ...localTimeRowFields(day, hour, minute),
+    });
     const fixtureRows = [
       timedRow('monday-13:59', 27, 13, 59),
       timedRow('monday-14:00', 27, 14, 0),

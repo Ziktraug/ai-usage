@@ -4,6 +4,7 @@ import { renderToString } from 'solid-js/web';
 import { createServer } from 'vite';
 import solidPlugin from 'vite-plugin-solid';
 import type { SyncFleetMachineView } from './manual-transfer-model';
+import { assertFunctionExports } from './render-test-module';
 
 interface ComparisonRow {
   current: boolean;
@@ -28,6 +29,14 @@ interface MachineFleetPanelProps {
   skipped: number;
 }
 
+interface MachineFleetComparisonModule {
+  MachineFleetComparison: Component<MachineFleetComparisonProps>;
+}
+
+interface MachineFleetPanelModule {
+  MachineFleetPanel: Component<MachineFleetPanelProps>;
+}
+
 const COLUMN_HEADERS = ['Machine', 'Sessions', 'Fleet share', 'Newest session', 'Freshness', 'Current'] as const;
 
 const viteServer = await createServer({
@@ -39,30 +48,12 @@ const viteServer = await createServer({
   server: { hmr: false, middlewareMode: true, ws: false },
 });
 const loaded: unknown = await viteServer.ssrLoadModule('/src/sync-machine-comparison.tsx');
-if (
-  !(
-    loaded &&
-    typeof loaded === 'object' &&
-    'MachineFleetComparison' in loaded &&
-    typeof loaded.MachineFleetComparison === 'function'
-  )
-) {
-  throw new Error('Vite did not load MachineFleetComparison');
-}
-const MachineFleetComparison = loaded.MachineFleetComparison as Component<MachineFleetComparisonProps>;
+assertFunctionExports<MachineFleetComparisonModule>(loaded, ['MachineFleetComparison'], 'MachineFleetComparison');
+const { MachineFleetComparison } = loaded;
 
 const loadedFleet: unknown = await viteServer.ssrLoadModule('/src/sync-machine-fleet.tsx');
-if (
-  !(
-    loadedFleet &&
-    typeof loadedFleet === 'object' &&
-    'MachineFleetPanel' in loadedFleet &&
-    typeof loadedFleet.MachineFleetPanel === 'function'
-  )
-) {
-  throw new Error('Vite did not load MachineFleetPanel');
-}
-const MachineFleetPanel = loadedFleet.MachineFleetPanel as Component<MachineFleetPanelProps>;
+assertFunctionExports<MachineFleetPanelModule>(loadedFleet, ['MachineFleetPanel'], 'MachineFleetPanel');
+const { MachineFleetPanel } = loadedFleet;
 
 afterAll(async () => viteServer.close());
 

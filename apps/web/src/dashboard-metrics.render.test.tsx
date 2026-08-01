@@ -4,6 +4,7 @@ import { renderToString } from 'solid-js/web';
 import { createServer } from 'vite';
 import solidPlugin from 'vite-plugin-solid';
 import type { DashboardMetricKind } from './dashboard-metric-model';
+import { assertFunctionExports } from './render-test-module';
 
 interface MetricTileProps {
   delta?: { hint: string; pct: number } | null;
@@ -19,6 +20,16 @@ interface ValueBasesPanelProps {
   metrics: (MetricTileProps & { kind: DashboardMetricKind })[];
 }
 
+interface DashboardMetricsModule {
+  MetricComparisonNotice: Component<MetricComparisonNoticeProps>;
+  MetricTile: Component<MetricTileProps>;
+  ValueBasesPanel: Component<ValueBasesPanelProps>;
+}
+
+interface DashboardPendingSurfaceModule {
+  DashboardPendingSurface: Component;
+}
+
 const viteServer = await createServer({
   appType: 'custom',
   configFile: false,
@@ -28,35 +39,19 @@ const viteServer = await createServer({
   server: { hmr: false, middlewareMode: true, ws: false },
 });
 const loaded: unknown = await viteServer.ssrLoadModule('/src/dashboard-metrics.tsx');
-if (
-  !(
-    loaded &&
-    typeof loaded === 'object' &&
-    'MetricTile' in loaded &&
-    typeof loaded.MetricTile === 'function' &&
-    'MetricComparisonNotice' in loaded &&
-    typeof loaded.MetricComparisonNotice === 'function' &&
-    'ValueBasesPanel' in loaded &&
-    typeof loaded.ValueBasesPanel === 'function'
-  )
-) {
-  throw new Error('Vite did not load dashboard metric components');
-}
-const MetricTile = loaded.MetricTile as Component<MetricTileProps>;
-const MetricComparisonNotice = loaded.MetricComparisonNotice as Component<MetricComparisonNoticeProps>;
-const ValueBasesPanel = loaded.ValueBasesPanel as Component<ValueBasesPanelProps>;
+assertFunctionExports<DashboardMetricsModule>(
+  loaded,
+  ['MetricTile', 'MetricComparisonNotice', 'ValueBasesPanel'],
+  'dashboard metric components',
+);
+const { MetricComparisonNotice, MetricTile, ValueBasesPanel } = loaded;
 const pendingSurfaceLoaded: unknown = await viteServer.ssrLoadModule('/src/dashboard-pending-surface.tsx');
-if (
-  !(
-    pendingSurfaceLoaded &&
-    typeof pendingSurfaceLoaded === 'object' &&
-    'DashboardPendingSurface' in pendingSurfaceLoaded &&
-    typeof pendingSurfaceLoaded.DashboardPendingSurface === 'function'
-  )
-) {
-  throw new Error('Vite did not load DashboardPendingSurface');
-}
-const DashboardPendingSurface = pendingSurfaceLoaded.DashboardPendingSurface as Component;
+assertFunctionExports<DashboardPendingSurfaceModule>(
+  pendingSurfaceLoaded,
+  ['DashboardPendingSurface'],
+  'DashboardPendingSurface',
+);
+const { DashboardPendingSurface } = pendingSurfaceLoaded;
 afterAll(async () => viteServer.close());
 
 const render = (props: MetricTileProps): string => renderToString(() => createComponent(MetricTile, props));

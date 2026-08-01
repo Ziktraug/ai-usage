@@ -13,6 +13,7 @@ import {
   projectFocusedOverview,
   projectFocusedSupport,
 } from './focused-report-query';
+import { localTimeRowFields } from './local-time-row.test-fixture';
 import {
   MAX_BREAKDOWN_REFRESH_BYTES,
   MAX_OVERVIEW_REFRESH_BYTES,
@@ -157,17 +158,10 @@ describe('focused report query contracts', () => {
   });
 
   test('applies a local punchcard cell before every focused aggregation', () => {
-    const localIso = (day: number, hour: number, minute: number): string =>
-      new Date(2026, 6, day, hour, minute).toISOString();
-    const timedRow = (name: string, day: number, hour: number, minute: number, cost: number): SerializedRow => {
-      const timestamp = localIso(day, hour, minute);
-      return {
-        ...row(name, 1, cost),
-        activeDate: timestamp,
-        date: timestamp,
-        endDate: timestamp,
-      };
-    };
+    const timedRow = (name: string, day: number, hour: number, minute: number, cost: number): SerializedRow => ({
+      ...row(name, 1, cost),
+      ...localTimeRowFields(day, hour, minute),
+    });
     const fixtures = [
       timedRow('monday-13:59', 27, 13, 59, 1),
       timedRow('monday-14:00', 27, 14, 0, 2),

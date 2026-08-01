@@ -7,6 +7,7 @@ import { renderToString } from 'solid-js/web';
 import { createServer } from 'vite';
 import solidPlugin from 'vite-plugin-solid';
 import type { CampaignView } from './dashboard-model';
+import { assertFunctionExports } from './render-test-module';
 import type { DashboardRow } from './shared';
 import { enrichReportRow } from './shared';
 
@@ -28,6 +29,11 @@ interface RecordsProps {
   timelineRows: DashboardRow[];
 }
 
+interface OverviewModule {
+  Records: Component<RecordsProps>;
+  SessionShape: Component<SessionShapeProps>;
+}
+
 const viteServer = await createServer({
   appType: 'custom',
   configFile: false,
@@ -37,20 +43,8 @@ const viteServer = await createServer({
   server: { hmr: false, middlewareMode: true, ws: false },
 });
 const loaded: unknown = await viteServer.ssrLoadModule('/src/overview.tsx');
-if (
-  !(
-    loaded &&
-    typeof loaded === 'object' &&
-    'Records' in loaded &&
-    typeof loaded.Records === 'function' &&
-    'SessionShape' in loaded &&
-    typeof loaded.SessionShape === 'function'
-  )
-) {
-  throw new Error('Vite did not load the Overview render surfaces');
-}
-const Records = loaded.Records as Component<RecordsProps>;
-const SessionShape = loaded.SessionShape as Component<SessionShapeProps>;
+assertFunctionExports<OverviewModule>(loaded, ['Records', 'SessionShape'], 'Overview render surfaces');
+const { Records, SessionShape } = loaded;
 afterAll(async () => viteServer.close());
 
 const baseRow: SerializedRow = {

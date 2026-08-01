@@ -5,6 +5,7 @@ import { renderToString } from 'solid-js/web';
 import { createServer } from 'vite';
 import solidPlugin from 'vite-plugin-solid';
 import type { BreakdownSort } from './dashboard-search';
+import { assertFunctionExports } from './render-test-module';
 
 const AMBIGUITY_ABBREVIATION_PATTERN = /\bambig\b/;
 const SESSION_ABBREVIATION_PATTERN = /\bsess\b/;
@@ -46,6 +47,13 @@ interface HarnessProviderPanelViewProps extends HarnessProviderPanelProps {
 
 type ExactGroupFilterHandler = (filter: (value: string) => void, value: string) => () => void;
 
+interface GroupPanelModule {
+  exactGroupFilterHandler: ExactGroupFilterHandler;
+  GroupPanel: Component<GroupPanelProps>;
+  GroupPanelView: Component<GroupPanelViewProps>;
+  HarnessProviderPanelView: Component<HarnessProviderPanelViewProps>;
+}
+
 const viteServer = await createServer({
   appType: 'custom',
   configFile: false,
@@ -55,26 +63,12 @@ const viteServer = await createServer({
   server: { hmr: false, middlewareMode: true, ws: false },
 });
 const loaded: unknown = await viteServer.ssrLoadModule('/src/group-panel.tsx');
-if (
-  !(
-    loaded &&
-    typeof loaded === 'object' &&
-    'GroupPanel' in loaded &&
-    typeof loaded.GroupPanel === 'function' &&
-    'GroupPanelView' in loaded &&
-    typeof loaded.GroupPanelView === 'function' &&
-    'HarnessProviderPanelView' in loaded &&
-    typeof loaded.HarnessProviderPanelView === 'function' &&
-    'exactGroupFilterHandler' in loaded &&
-    typeof loaded.exactGroupFilterHandler === 'function'
-  )
-) {
-  throw new Error('Vite did not load GroupPanel components');
-}
-const GroupPanel = loaded.GroupPanel as Component<GroupPanelProps>;
-const GroupPanelView = loaded.GroupPanelView as Component<GroupPanelViewProps>;
-const HarnessProviderPanelView = loaded.HarnessProviderPanelView as Component<HarnessProviderPanelViewProps>;
-const exactGroupFilterHandler = loaded.exactGroupFilterHandler as ExactGroupFilterHandler;
+assertFunctionExports<GroupPanelModule>(
+  loaded,
+  ['GroupPanel', 'GroupPanelView', 'HarnessProviderPanelView', 'exactGroupFilterHandler'],
+  'GroupPanel components',
+);
+const { exactGroupFilterHandler, GroupPanel, GroupPanelView, HarnessProviderPanelView } = loaded;
 afterAll(async () => viteServer.close());
 
 const partiallyMeasuredGroup: AnalyticsGroup = {

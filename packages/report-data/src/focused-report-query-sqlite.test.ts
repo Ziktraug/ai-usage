@@ -20,6 +20,7 @@ import {
 import type { SerializedRow } from '@ai-usage/report-core/report-data';
 import { enrichSessionPresentationRow } from '@ai-usage/report-core/session-query';
 import { executeFocusedReportQuery } from './focused-report-query-sqlite';
+import { localTimeRowFields } from './local-time-row.test-fixture';
 import { materializeSessionQueryDatabase, SESSION_QUERY_DATABASE_NAME } from './session-query-materialization';
 import { assertSessionQueryDatabase } from './session-query-sqlite';
 
@@ -341,17 +342,10 @@ describe('focused report SQLite queries', () => {
   });
 
   test('filters local punchcard cells with pure and SQLite focused row identity parity', async () => {
-    const localIso = (day: number, hour: number, minute: number): string =>
-      new Date(2026, 6, day, hour, minute).toISOString();
-    const timedRow = (name: string, day: number, hour: number, minute: number): SerializedRow => {
-      const timestamp = localIso(day, hour, minute);
-      return {
-        ...row(name, 1, 1),
-        activeDate: timestamp,
-        date: timestamp,
-        endDate: timestamp,
-      };
-    };
+    const timedRow = (name: string, day: number, hour: number, minute: number): SerializedRow => ({
+      ...row(name, 1, 1),
+      ...localTimeRowFields(day, hour, minute),
+    });
     const fixtureRows = [
       timedRow('monday-13:59', 27, 13, 59),
       timedRow('monday-14:00', 27, 14, 0),

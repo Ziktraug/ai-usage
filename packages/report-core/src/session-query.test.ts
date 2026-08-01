@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { localTimeRowFields } from './local-time-row.test-fixture';
 import { MAX_SESSION_QUERY_RESULT_BYTES } from './report-budgets';
 import type { SerializedRow } from './report-data';
 import { parseSessionDetailRequest } from './session-detail';
@@ -397,16 +398,8 @@ describe('session query contracts', () => {
   });
 
   test('matches bounded local punchcard cells across Monday and Sunday', () => {
-    const localIso = (day: number, hour: number, minute: number): string =>
-      new Date(2026, 6, day, hour, minute).toISOString();
-    const timedRow = (label: string, day: number, hour: number, minute: number): SerializedRow => {
-      const timestamp = localIso(day, hour, minute);
-      return sourcedRow(label, {
-        activeDate: timestamp,
-        date: timestamp,
-        endDate: timestamp,
-      });
-    };
+    const timedRow = (label: string, day: number, hour: number, minute: number): SerializedRow =>
+      sourcedRow(label, localTimeRowFields(day, hour, minute));
     const fixtures = [
       timedRow('monday-13:59', 27, 13, 59),
       timedRow('monday-14:00', 27, 14, 0),

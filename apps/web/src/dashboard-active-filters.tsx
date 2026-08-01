@@ -5,6 +5,7 @@ import {
   type DashboardSearch,
   dashboardTimeCellLabel,
   type FieldFilterKey,
+  fieldFilterKeys,
   hasActiveDashboardFilters,
   parseDashboardTimeCell,
 } from './dashboard-search';
@@ -35,6 +36,11 @@ export interface DashboardActiveFiltersProps {
 
 export const DashboardActiveFilters = (props: DashboardActiveFiltersProps) => {
   const localTimeCell = () => parseDashboardTimeCell(props.search.timeCell);
+  const activeFieldFilters = () =>
+    fieldFilterKeys.flatMap((key) => {
+      const value = props.search.filters[key];
+      return value === undefined ? [] : [{ key, value }];
+    });
 
   return (
     <div class={filterSummary}>
@@ -72,8 +78,8 @@ export const DashboardActiveFilters = (props: DashboardActiveFiltersProps) => {
             />
           )}
         </For>
-        <For each={Object.entries(props.search.filters) as [FieldFilterKey, string][]}>
-          {([key, value]) => (
+        <For each={activeFieldFilters()}>
+          {({ key, value }) => (
             <FilterPill label={fieldFilterLabels[key]} onClear={() => props.actions.clearField(key)} value={value} />
           )}
         </For>

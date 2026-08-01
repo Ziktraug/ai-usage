@@ -4,9 +4,14 @@ import { type Component, createComponent } from 'solid-js';
 import { renderToString } from 'solid-js/web';
 import { createServer } from 'vite';
 import solidPlugin from 'vite-plugin-solid';
+import { assertFunctionExports } from './render-test-module';
 
 interface SkillDiagnosticsProps {
   diagnostics: readonly SkillDiagnostic[];
+}
+
+interface SkillDiagnosticsModule {
+  SkillDiagnostics: Component<SkillDiagnosticsProps>;
 }
 
 const viteServer = await createServer({
@@ -18,17 +23,8 @@ const viteServer = await createServer({
   server: { hmr: false, middlewareMode: true, ws: false },
 });
 const loadedModule: unknown = await viteServer.ssrLoadModule('/src/skill-diagnostics.tsx');
-if (
-  !(
-    loadedModule &&
-    typeof loadedModule === 'object' &&
-    'SkillDiagnostics' in loadedModule &&
-    typeof loadedModule.SkillDiagnostics === 'function'
-  )
-) {
-  throw new Error('Vite did not load the Skills diagnostics renderer');
-}
-const SkillDiagnostics = loadedModule.SkillDiagnostics as Component<SkillDiagnosticsProps>;
+assertFunctionExports<SkillDiagnosticsModule>(loadedModule, ['SkillDiagnostics'], 'Skills diagnostics renderer');
+const { SkillDiagnostics } = loadedModule;
 afterAll(async () => viteServer.close());
 
 test('renders project token diagnostics with human labels and structured measurements', () => {

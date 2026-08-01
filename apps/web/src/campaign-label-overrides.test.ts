@@ -77,4 +77,38 @@ describe('campaign label presentation', () => {
     ).toBe('Derived root');
     expect(firstContext.campaignKey).not.toBe(secondContext.campaignKey);
   });
+
+  test('retains the raw derived label when a presented focused campaign is selected and reset', () => {
+    const item: FocusedOverviewSessionItem = {
+      costApprox: 1,
+      costKnown: true,
+      durationMs: 1,
+      harness: 'Codex',
+      kind: 'campaign',
+      label: 'Derived root',
+      row: enrichSessionPresentationRow({
+        ...baseRow,
+        source: {
+          ...baseRow.source,
+          harnessKey: 'codex',
+          machineId: 'machine-a',
+          rootSourceSessionId: 'root',
+          sourceSessionId: 'root',
+        },
+      }),
+      sessionCount: 2,
+    };
+    const rawContext = focusedCampaignLabelContext(item);
+    if (!rawContext) {
+      throw new Error('Expected a campaign context');
+    }
+    const presented = presentFocusedOverviewSessionItem(item, () => 'Override');
+    const selectedContext = focusedCampaignLabelContext(presented);
+
+    expect(presented.label).toBe('Override');
+    expect(selectedContext).toEqual(rawContext);
+    expect(campaignLabelFor(new Map(), rawContext.campaignKey, selectedContext?.derivedLabel ?? '')).toBe(
+      'Derived root',
+    );
+  });
 });
