@@ -260,6 +260,52 @@ interface GroupPanelViewProps extends GroupPanelProps {
   searchQuery: string;
 }
 
+interface BreakdownPanelShellProps {
+  actions?: JSX.Element;
+  children: JSX.Element;
+  count: number;
+  countLabel: string;
+  onSearchQueryChange: (value: string) => void;
+  searchQuery: string;
+  sortControl?: JSX.Element;
+  title: string;
+}
+
+const BreakdownPanelShell = (props: BreakdownPanelShellProps) => (
+  <div class={groupPanel}>
+    <div class={groupHeader}>
+      <div class={groupTitle}>{props.title}</div>
+      <div class={groupCount} title={`${props.count} ${props.countLabel}`}>
+        {props.count} {props.countLabel}
+      </div>
+      <div class={actionRow} style={{ 'grid-column': '1 / -1' }}>
+        <input
+          aria-label="Search this breakdown"
+          class={searchInput}
+          onInput={(event) => props.onSearchQueryChange(event.currentTarget.value)}
+          placeholder="Search this breakdown"
+          type="search"
+          value={props.searchQuery}
+        />
+        {props.sortControl}
+        {props.actions}
+      </div>
+    </div>
+    <div class={groupRows}>
+      <Show
+        fallback={
+          <div class={groupRow} role="status">
+            <div class={unavailableText}>No breakdown rows match this search</div>
+          </div>
+        }
+        when={props.count > 0}
+      >
+        {props.children}
+      </Show>
+    </div>
+  </div>
+);
+
 export const GroupPanelView = (props: GroupPanelViewProps) => {
   const visibleGroups = createMemo(() =>
     filterAndSortBreakdownGroups(props.groups, props.searchQuery, props.sort, (group) =>
@@ -269,63 +315,44 @@ export const GroupPanelView = (props: GroupPanelViewProps) => {
   const maxCost = createMemo(() => Math.max(0, ...visibleGroups().map((group) => group.costSum)));
 
   return (
-    <div class={groupPanel}>
-      <div class={groupHeader}>
-        <div class={groupTitle}>{props.title}</div>
-        <div class={groupCount} title={`${visibleGroups().length} ${props.countLabel}`}>
-          {visibleGroups().length} {props.countLabel}
-        </div>
-        <div class={actionRow} style={{ 'grid-column': '1 / -1' }}>
-          <input
-            aria-label="Search this breakdown"
-            class={searchInput}
-            onInput={(event) => props.onSearchQueryChange(event.currentTarget.value)}
-            placeholder="Search this breakdown"
-            type="search"
-            value={props.searchQuery}
-          />
-          <SegmentedControl
-            ariaLabel="Sort breakdown"
-            defaultValue="value"
-            items={BREAKDOWN_SORT_ITEMS}
-            onValueChange={(value) => {
-              if (isBreakdownSort(value)) {
-                props.onSortChange(value);
-              }
-            }}
-            value={props.sort}
-          />
-          {props.renderActions?.(visibleGroups())}
-        </div>
-      </div>
-      <div class={groupRows}>
-        <Show
-          fallback={
-            <div class={groupRow} role="status">
-              <div class={unavailableText}>No breakdown rows match this search</div>
-            </div>
-          }
-          when={visibleGroups().length > 0}
-        >
-          <For each={visibleGroups()}>
-            {(group) => (
-              <div class={groupRow} data-price-state={groupBarPresentation(group, maxCost()).state}>
-                <AnalyticsGroupContent group={group} harnessTones={props.harnessTones ?? false} maxCost={maxCost()}>
-                  <Show
-                    fallback={<div class={strongCell}>{groupDisplayKey(group, props.countLabel)}</div>}
-                    when={props.onFilter}
-                  >
-                    <button class={groupKeyButton} onClick={() => props.onFilter?.(group.key)} type="button">
-                      {groupDisplayKey(group, props.countLabel)}
-                    </button>
-                  </Show>
-                </AnalyticsGroupContent>
-              </div>
-            )}
-          </For>
-        </Show>
-      </div>
-    </div>
+    <BreakdownPanelShell
+      actions={props.renderActions?.(visibleGroups())}
+      count={visibleGroups().length}
+      countLabel={props.countLabel}
+      onSearchQueryChange={props.onSearchQueryChange}
+      searchQuery={props.searchQuery}
+      sortControl={
+        <SegmentedControl
+          ariaLabel="Sort breakdown"
+          defaultValue="value"
+          items={BREAKDOWN_SORT_ITEMS}
+          onValueChange={(value) => {
+            if (isBreakdownSort(value)) {
+              props.onSortChange(value);
+            }
+          }}
+          value={props.sort}
+        />
+      }
+      title={props.title}
+    >
+      <For each={visibleGroups()}>
+        {(group) => (
+          <div class={groupRow} data-price-state={groupBarPresentation(group, maxCost()).state}>
+            <AnalyticsGroupContent group={group} harnessTones={props.harnessTones ?? false} maxCost={maxCost()}>
+              <Show
+                fallback={<div class={strongCell}>{groupDisplayKey(group, props.countLabel)}</div>}
+                when={props.onFilter}
+              >
+                <button class={groupKeyButton} onClick={() => props.onFilter?.(group.key)} type="button">
+                  {groupDisplayKey(group, props.countLabel)}
+                </button>
+              </Show>
+            </AnalyticsGroupContent>
+          </div>
+        )}
+      </For>
+    </BreakdownPanelShell>
   );
 };
 
@@ -413,76 +440,55 @@ export const HarnessProviderPanelView = (props: HarnessProviderPanelViewProps) =
   });
 
   return (
-    <div class={groupPanel}>
-      <div class={groupHeader}>
-        <div class={groupTitle}>Harnesses & providers</div>
-        <div class={groupCount} title={`${visibleGroups().length} harnesses · ${pairCountLabel(visiblePairCount())}`}>
-          {visibleGroups().length} harnesses · {pairCountLabel(visiblePairCount())}
-        </div>
-        <div class={actionRow} style={{ 'grid-column': '1 / -1' }}>
-          <input
-            aria-label="Search this breakdown"
-            class={searchInput}
-            onInput={(event) => props.onSearchQueryChange(event.currentTarget.value)}
-            placeholder="Search this breakdown"
-            type="search"
-            value={props.searchQuery}
-          />
-          {props.renderActions?.(visibleExportRows())}
-        </div>
-      </div>
-      <div class={groupRows}>
-        <Show
-          fallback={
-            <div class={groupRow} role="status">
-              <div class={unavailableText}>No breakdown rows match this search</div>
+    <BreakdownPanelShell
+      actions={props.renderActions?.(visibleExportRows())}
+      count={visibleGroups().length}
+      countLabel={`harnesses · ${pairCountLabel(visiblePairCount())}`}
+      onSearchQueryChange={props.onSearchQueryChange}
+      searchQuery={props.searchQuery}
+      title="Harnesses & providers"
+    >
+      <For each={visibleGroups()}>
+        {(group) => {
+          const children = () => childrenByHarness().get(group.key) ?? [];
+          const expanded = () => props.expandedHarnesses.includes(group.key);
+          const controlsId = providerDisclosureId(group.key);
+          return (
+            <div class={hierarchyBlock}>
+              <HarnessProviderGroupRow
+                child={false}
+                disclosure={{
+                  controlsId,
+                  expanded: expanded(),
+                  onToggle: exactGroupFilterHandler(props.onToggleHarness, group.key),
+                }}
+                filterValue={group.key}
+                group={group}
+                label={group.key}
+                maxCost={maxCost()}
+                onFilter={props.onHarnessFilter}
+              />
+              <Show when={expanded() && children().length > 0}>
+                <fieldset aria-label={`Providers for ${group.key}`} class={hierarchyChildren} id={controlsId}>
+                  <For each={children()}>
+                    {(child) => (
+                      <HarnessProviderGroupRow
+                        child
+                        filterValue={child.provider}
+                        group={child}
+                        label={child.provider}
+                        maxCost={maxCost()}
+                        onFilter={props.onProviderFilter}
+                      />
+                    )}
+                  </For>
+                </fieldset>
+              </Show>
             </div>
-          }
-          when={visibleGroups().length > 0}
-        >
-          <For each={visibleGroups()}>
-            {(group) => {
-              const children = () => childrenByHarness().get(group.key) ?? [];
-              const expanded = () => props.expandedHarnesses.includes(group.key);
-              const controlsId = providerDisclosureId(group.key);
-              return (
-                <div class={hierarchyBlock}>
-                  <HarnessProviderGroupRow
-                    child={false}
-                    disclosure={{
-                      controlsId,
-                      expanded: expanded(),
-                      onToggle: exactGroupFilterHandler(props.onToggleHarness, group.key),
-                    }}
-                    filterValue={group.key}
-                    group={group}
-                    label={group.key}
-                    maxCost={maxCost()}
-                    onFilter={props.onHarnessFilter}
-                  />
-                  <Show when={expanded() && children().length > 0}>
-                    <fieldset aria-label={`Providers for ${group.key}`} class={hierarchyChildren} id={controlsId}>
-                      <For each={children()}>
-                        {(child) => (
-                          <HarnessProviderGroupRow
-                            child
-                            filterValue={child.provider}
-                            group={child}
-                            label={child.provider}
-                            maxCost={maxCost()}
-                            onFilter={props.onProviderFilter}
-                          />
-                        )}
-                      </For>
-                    </fieldset>
-                  </Show>
-                </div>
-              );
-            }}
-          </For>
-        </Show>
-      </div>
-    </div>
+          );
+        }}
+      </For>
+    </BreakdownPanelShell>
   );
 };
 

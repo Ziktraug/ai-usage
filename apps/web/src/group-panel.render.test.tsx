@@ -272,7 +272,7 @@ test('renders value-sorted harness totals with expandable session-sorted provide
   const alphaIndex = html.indexOf('data-provider-child="Alpha Provider"');
   const zetaIndex = html.indexOf('data-provider-child="Zeta Provider"');
 
-  expect(html).toContain('Harnesses & providers');
+  expect(html).toContain('Harnesses &amp; providers');
   expect(html).toContain('2 harnesses · 3 provider pairs');
   expect(html).toContain('aria-expanded="true"');
   expect(html).toContain('aria-expanded="false"');

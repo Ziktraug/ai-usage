@@ -8,7 +8,6 @@ import {
   panelHeaderRow,
   panelSub,
   panelTitle,
-  skillsDiagnosticRow,
   skillsPathText,
   statusPill,
   statusPillDanger,
@@ -17,10 +16,11 @@ import {
   statusPillWarn,
   strongCell,
 } from '@ai-usage/design-system/report';
-import type { ProjectSkillInventory, SkillDiagnostic, SkillManagementSnapshot, SourceSkill } from '@ai-usage/skills';
+import type { ProjectSkillInventory, SkillManagementSnapshot, SourceSkill } from '@ai-usage/skills';
 import { createEffect, createMemo, createSignal, For, type JSX, Show } from 'solid-js';
 import { type ProjectRuntimeDirId, projectSkillDirectories } from './project-skill-directories';
 import { getProjectSkillMarkdown } from './server/skills';
+import { SkillDiagnostics } from './skill-diagnostics';
 import { SkillMarkdownEditor } from './skill-markdown-editor';
 import {
   buildProjectSkillRows,
@@ -211,16 +211,6 @@ const validationPillClass = (status: string) => {
     return statusPillWarn;
   }
   return statusPillOk;
-};
-
-const diagnosticPillClass = (diagnostic: SkillDiagnostic) => {
-  if (diagnostic.severity === 'error') {
-    return statusPillDanger;
-  }
-  if (diagnostic.severity === 'warning') {
-    return statusPillWarn;
-  }
-  return statusPillInfo;
 };
 
 const exposureStateClass = (state: string) => {
@@ -558,7 +548,7 @@ const ProjectScopeDetail = (props: {
             </div>
           </Show>
         </section>
-        <Diagnostics diagnostics={diagnostics()} />
+        <SkillDiagnostics diagnostics={diagnostics()} />
       </Show>
     </div>
   );
@@ -624,7 +614,7 @@ const ProjectSkillDetail = (props: {
         </For>
       </section>
       <ProjectSkillMarkdownViewer row={props.row} />
-      <Diagnostics diagnostics={diagnostics()} />
+      <SkillDiagnostics diagnostics={diagnostics()} />
     </div>
   );
 };
@@ -772,22 +762,3 @@ const ProjectSkillMarkdownViewer = (props: { row: ProjectSkillRow }) => {
     </section>
   );
 };
-
-const Diagnostics = (props: { diagnostics: readonly SkillDiagnostic[] }) => (
-  <Show when={props.diagnostics.length > 0}>
-    <section class={section}>
-      <div class={panelHeader}>
-        <h3 class={panelTitle}>Diagnostics</h3>
-      </div>
-      <For each={props.diagnostics}>
-        {(diagnostic) => (
-          <div class={skillsDiagnosticRow}>
-            <span class={cx(statusPill, diagnosticPillClass(diagnostic))}>{diagnostic.severity}</span>
-            <div class={strongCell}>{diagnostic.code}</div>
-            <div class={meta}>{diagnostic.message}</div>
-          </div>
-        )}
-      </For>
-    </section>
-  </Show>
-);
