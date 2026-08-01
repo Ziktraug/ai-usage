@@ -767,14 +767,14 @@ export interface PunchcardData {
   maxSessions: number;
 }
 
-export const buildPunchcardData = (rows: DashboardRow[]): PunchcardData | null => {
+export const buildPunchcardData = (rows: DashboardRow[], timeZone = 'UTC'): PunchcardData | null => {
   const cells = Array.from({ length: 7 }, () => Array.from({ length: 24 }, () => ({ cost: 0, sessions: 0 })));
   let maxSessions = 0;
   for (const row of rows) {
     if (row.activeTime == null) {
       continue;
     }
-    const localTimeCell = localTimeCellForTimestamp(row.activeTime);
+    const localTimeCell = localTimeCellForTimestamp(row.activeTime, timeZone);
     const cell = cells[localTimeCell.weekday]?.[localTimeCell.hour];
     if (!cell) {
       continue;

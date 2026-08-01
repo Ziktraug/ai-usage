@@ -298,13 +298,14 @@ const insertRow = (
   ordinal: number,
   campaign: { key: string; label: string; root: boolean; totalCount: number } | undefined,
   ranks: MaterializedSessionRanks,
+  timeZone: string,
 ): void => {
   const sortValues = sessionSortFields.map((field) => sortValueForSessionColumn(row, field));
   const textSortRanks = sessionTextSortFields.map((field) => {
     const value = String(sortValueForSessionColumn(row, field));
     return requireRank(ranks.text.get(field), value, `${field} sort`);
   });
-  const localTimeCell = row.activeTime === null ? null : localTimeCellForTimestamp(row.activeTime);
+  const localTimeCell = row.activeTime === null ? null : localTimeCellForTimestamp(row.activeTime, timeZone);
   const machineId = row.source?.machineId ?? '';
   const providerKey = providerStatusKeyForUsage(row.harness, row.provider);
   insert.run(
@@ -401,6 +402,7 @@ export const materializeSessionQueryDatabase = async (
     filters: { limit: null, minTokens: 0, project: null, since: null, sort: 'date' },
     generatedAt: new Date(0).toISOString(),
     omittedRows: 0,
+    timeZone: 'UTC',
   },
   sourceAuthorities: readonly SessionDetailSourceAuthority[] = rows.map(() => 'portable-opaque'),
 ): Promise<string> => {
@@ -444,7 +446,7 @@ export const materializeSessionQueryDatabase = async (
         if (!sourceAuthority) {
           throw new Error(`Session query row ${ordinal} is missing its source authority`);
         }
-        insertRow(insert, row, sourceRow, sourceAuthority, ordinal, campaignByRow.get(row), ranks);
+        insertRow(insert, row, sourceRow, sourceAuthority, ordinal, campaignByRow.get(row), ranks, support.timeZone);
         const modelPriceMeasurements = usageRowModelApiPriceMeasurements(sourceRow);
         for (const [segmentPosition, segment] of usageRowModelContributions(sourceRow).entries()) {
           const priceMeasurement = modelPriceMeasurements.get(segment.key);

@@ -31,6 +31,7 @@ import {
   sessionModelKeys,
   sessionOriginLabel,
 } from './session-query';
+import { isReportTimeZone } from './time-zone';
 import { isOriginProvenanceKind, type OriginProvenanceKind } from './types';
 import {
   usageModelSegmentApiPriceMeasurement,
@@ -66,7 +67,7 @@ export type FocusedReportSupport = Omit<UsageReportPayload, 'rows' | 'tableRows'
 };
 export type FocusedBootstrapSupport = Pick<
   FocusedReportSupport,
-  'analytics' | 'filters' | 'generatedAt' | 'omittedRows' | 'warnings'
+  'analytics' | 'filters' | 'generatedAt' | 'omittedRows' | 'timeZone' | 'warnings'
 > & {
   datasets?: Pick<NonNullable<FocusedReportSupport['datasets']>, 'providerStatus'>;
 };
@@ -211,7 +212,7 @@ export type FocusedTimelineAggregate =
 
 export interface FocusedOverviewResult {
   dateDomain: FocusedDateDomain | null;
-  metadata: Pick<FocusedReportSupport, 'filters' | 'generatedAt' | 'omittedRows'>;
+  metadata: Pick<FocusedReportSupport, 'filters' | 'generatedAt' | 'omittedRows' | 'timeZone'>;
   requestFingerprint: string;
   revision: string;
   summary: FocusedReportSummary;
@@ -482,13 +483,17 @@ export const focusedBreakdownFingerprint = (input: FocusedBreakdownRequest): str
 export const focusedRevisionFingerprint = (kind: 'support', input: FocusedRevisionRequest): string =>
   fingerprint(kind, parseFocusedRevisionRequest(input));
 
-export const matchesFocusedReportQuery = (row: SessionPresentationRow, query: FocusedReportQueryScope): boolean => {
+export const matchesFocusedReportQuery = (
+  row: SessionPresentationRow,
+  query: FocusedReportQueryScope,
+  timeZone = 'UTC',
+): boolean => {
   const { fields } = query.filters;
   return (
     (!query.filters.query || row.searchText.includes(query.filters.query)) &&
     (query.filters.harness.length === 0 || query.filters.harness.includes(row.harness)) &&
     (query.filters.machine.length === 0 || query.filters.machine.includes(row.source?.machineId ?? '')) &&
-    activeTimeMatchesLocalTimeCell(row.activeTime, query.filters.localTimeCell) &&
+    activeTimeMatchesLocalTimeCell(row.activeTime, query.filters.localTimeCell, timeZone) &&
     (!query.filters.origin?.length || row.origin === undefined || query.filters.origin.includes(row.origin)) &&
     (fields.campaign === undefined || sessionCampaignIdentityForRow(row).campaignKey === fields.campaign) &&
     (fields.provider === undefined || row.providerDisplay === fields.provider) &&
@@ -1155,13 +1160,13 @@ export const buildFocusedPunchcardFromAggregates = (
   return maxSessions > 0 ? { cells, maxSessions } : null;
 };
 
-const buildPunchcard = (rows: readonly SessionPresentationRow[]): FocusedPunchcard | null =>
+const buildPunchcard = (rows: readonly SessionPresentationRow[], timeZone: string): FocusedPunchcard | null =>
   buildFocusedPunchcardFromAggregates(
     rows.flatMap((row) => {
       if (row.activeTime === null) {
         return [];
       }
-      const localTimeCell = localTimeCellForTimestamp(row.activeTime);
+      const localTimeCell = localTimeCellForTimestamp(row.activeTime, timeZone);
       return [
         {
           cost: row.costKnown ? row.costApprox : 0,
@@ -1303,12 +1308,12 @@ export const projectFocusedOverviewFromPresentationRows = (
 ): FocusedOverviewResult => {
   const request = parseFocusedOverviewRequest(input);
   const timelineQuery = { ...request.query, range: { from: null, to: null } };
-  const timelineRows = allRows.filter((row) => matchesFocusedReportQuery(row, timelineQuery));
-  const visible = timelineRows.filter((row) => matchesFocusedReportQuery(row, request.query));
+  const timelineRows = allRows.filter((row) => matchesFocusedReportQuery(row, timelineQuery, support.timeZone));
+  const visible = timelineRows.filter((row) => matchesFocusedReportQuery(row, request.query, support.timeZone));
   const campaigns = buildSessionCampaignViews(allRows, visible);
   const sessionItems = overviewSessionItems(visible, campaigns);
   const sessionShape = request.includeAdvanced ? buildSessionShape(sessionItems) : null;
-  const punchcard = request.includeAdvanced ? buildPunchcard(visible) : null;
+  const punchcard = request.includeAdvanced ? buildPunchcard(visible, support.timeZone) : null;
   const availableAnalyses = [
     ...(sessionShape ? ['Duration/value patterns'] : []),
     ...(punchcard ? ['weekly/hourly activity'] : []),
@@ -1317,7 +1322,12 @@ export const projectFocusedOverviewFromPresentationRows = (
     dateDomain: buildFocusedDateDomain(
       timelineRows.flatMap((row) => (row.activeTime === null ? [] : [row.activeTime])),
     ),
-    metadata: { filters: support.filters, generatedAt: support.generatedAt, omittedRows: support.omittedRows },
+    metadata: {
+      filters: support.filters,
+      generatedAt: support.generatedAt,
+      omittedRows: support.omittedRows,
+      timeZone: support.timeZone,
+    },
     requestFingerprint: focusedOverviewFingerprint(request),
     revision: request.query.revision,
     summary: buildFocusedReportSummary(visible),
@@ -1357,7 +1367,9 @@ export const projectFocusedBreakdown = (
   input: FocusedBreakdownRequest,
 ): FocusedBreakdownResult => {
   const request = parseFocusedBreakdownRequest(input);
-  const visible = rows.map(enrichSessionPresentationRow).filter((row) => matchesFocusedReportQuery(row, request.query));
+  const visible = rows
+    .map(enrichSessionPresentationRow)
+    .filter((row) => matchesFocusedReportQuery(row, request.query, support.timeZone));
   const totalCost = visible.reduce((sum, row) => sum + (row.costKnown ? row.costApprox : 0), 0);
   return {
     context: {
@@ -1472,6 +1484,7 @@ export const projectFocusedSupport = (
       filters: { ...support.filters, project, since },
       generatedAt: support.generatedAt,
       omittedRows: support.omittedRows,
+      timeZone: support.timeZone,
       ...(providerStatus === null
         ? {}
         : { datasets: { providerStatus: { ...providerStatus, providers: acceptedProviderStatuses } } }),
@@ -2390,7 +2403,7 @@ const assertBootstrapSupport = (value: unknown): void => {
   const support = requireRecord(value, 'bootstrap support');
   assertAllowedKeys(
     support,
-    ['analytics', 'filters', 'generatedAt', 'omittedRows'],
+    ['analytics', 'filters', 'generatedAt', 'omittedRows', 'timeZone'],
     ['datasets', 'warnings'],
     'bootstrap support',
   );
@@ -2398,6 +2411,9 @@ const assertBootstrapSupport = (value: unknown): void => {
   assertReportFilters(support.filters, 'bootstrap support.filters');
   requireIsoTimestamp(support.generatedAt, 'bootstrap support.generatedAt');
   requireNonNegativeSafeInteger(support.omittedRows, 'bootstrap support.omittedRows');
+  if (!isReportTimeZone(support.timeZone)) {
+    throw new Error('bootstrap support.timeZone is invalid');
+  }
   if (support.datasets !== undefined) {
     const datasets = requireRecord(support.datasets, 'bootstrap support.datasets');
     assertAllowedKeys(datasets, [], ['providerStatus'], 'bootstrap support.datasets');
@@ -2475,10 +2491,13 @@ export function parseFocusedReportQueryResult(
     );
     assertFocusedDateDomain(record.dateDomain, 'overview dateDomain');
     const metadata = requireRecord(record.metadata, 'overview metadata');
-    assertExactKeys(metadata, ['filters', 'generatedAt', 'omittedRows'], 'overview metadata');
+    assertExactKeys(metadata, ['filters', 'generatedAt', 'omittedRows', 'timeZone'], 'overview metadata');
     assertReportFilters(metadata.filters, 'overview metadata.filters');
     requireIsoTimestamp(metadata.generatedAt, 'overview metadata.generatedAt');
     requireNonNegativeSafeInteger(metadata.omittedRows, 'overview metadata.omittedRows');
+    if (!isReportTimeZone(metadata.timeZone)) {
+      throw new Error('overview metadata.timeZone is invalid');
+    }
     assertFocusedSummary(record.summary, 'overview summary');
     assertFocusedTimeline(record.timeline, parsed.timeline);
     assertOverviewView(record.view, parsed.includeAdvanced);

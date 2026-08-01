@@ -10,6 +10,7 @@ import {
   isSerializedUsageRowShape,
   SERIALIZED_USAGE_ROW_KEYS,
 } from './serialized-usage-validation';
+import { zonedWeekdayHourForTimestamp } from './time-zone';
 import { isSessionOrigin, type SessionOrigin } from './types';
 import { usageRowApiPriceMeasurement, usageRowModelContributions } from './usage-row';
 
@@ -887,24 +888,26 @@ export const parseSessionNeighborServerResult = (
   );
 };
 
-export const localTimeCellForTimestamp = (timestamp: number): LocalTimeCell => {
-  const date = new Date(timestamp);
-  const hour = date.getHours();
-  const weekday = (date.getDay() + 6) % 7;
+export const localTimeCellForTimestamp = (timestamp: number, timeZone = 'UTC'): LocalTimeCell => {
+  const { hour, weekday } = zonedWeekdayHourForTimestamp(timestamp, timeZone);
   if (!(isLocalTimeHour(hour) && isLocalTimeWeekday(weekday))) {
     throw new Error('Cannot derive a local time cell from an invalid timestamp');
   }
   return { hour, weekday };
 };
 
-export const activeTimeMatchesLocalTimeCell = (activeTime: number | null, cell: LocalTimeCell | undefined): boolean => {
+export const activeTimeMatchesLocalTimeCell = (
+  activeTime: number | null,
+  cell: LocalTimeCell | undefined,
+  timeZone = 'UTC',
+): boolean => {
   if (cell === undefined) {
     return true;
   }
   if (activeTime === null || !Number.isFinite(activeTime)) {
     return false;
   }
-  const activeCell = localTimeCellForTimestamp(activeTime);
+  const activeCell = localTimeCellForTimestamp(activeTime, timeZone);
   return activeCell.weekday === cell.weekday && activeCell.hour === cell.hour;
 };
 
@@ -1397,7 +1400,7 @@ export const classifierRollupLabelForSessionRow = (row: SessionPresentationRow):
   return count > 0 ? `+ ${count} automated ${count === 1 ? 'review' : 'reviews'}` : null;
 };
 
-const matchesSessionQuery = (row: SessionPresentationRow, request: SessionQueryRequest): boolean => {
+const matchesSessionQuery = (row: SessionPresentationRow, request: SessionQueryRequest, timeZone: string): boolean => {
   const { fields } = request.filters;
   if (request.filters.query && !row.searchText.includes(request.filters.query)) {
     return false;
@@ -1408,7 +1411,7 @@ const matchesSessionQuery = (row: SessionPresentationRow, request: SessionQueryR
   if (request.filters.machine.length && !request.filters.machine.includes(row.source?.machineId ?? '')) {
     return false;
   }
-  if (!activeTimeMatchesLocalTimeCell(row.activeTime, request.filters.localTimeCell)) {
+  if (!activeTimeMatchesLocalTimeCell(row.activeTime, request.filters.localTimeCell, timeZone)) {
     return false;
   }
   if (request.filters.origin?.length && row.origin !== undefined && !request.filters.origin.includes(row.origin)) {
@@ -1503,12 +1506,16 @@ const boundedPage = <T>(
  * adapters must page in SQLite with LIMIT pageSize + 1 rather than use this
  * in-memory helper as a storage implementation.
  */
-export const projectSessionPage = (rows: SerializedRow[], input: SessionQueryRequest): SessionPageResult => {
+export const projectSessionPage = (
+  rows: SerializedRow[],
+  input: SessionQueryRequest,
+  timeZone = 'UTC',
+): SessionPageResult => {
   const request = parseSessionQueryRequest(input);
   const requestFingerprint = sessionQueryFingerprint(request);
   const offset = sessionQueryPageOffset(request, requestFingerprint);
   const allRows = rows.map(enrichSessionPresentationRow);
-  const visibleRows = allRows.filter((row) => matchesSessionQuery(row, request));
+  const visibleRows = allRows.filter((row) => matchesSessionQuery(row, request, timeZone));
   const campaignItems = buildSessionCampaignTableItems(allRows, visibleRows, request.sort);
   const page = boundedPage(campaignItems, request.pageSize, offset);
   const items: SessionPageItem[] = page.items.map((item) => ({
@@ -1529,12 +1536,13 @@ export const projectSessionPage = (rows: SerializedRow[], input: SessionQueryReq
 export const projectSessionCampaignChildren = (
   rows: SerializedRow[],
   input: SessionCampaignChildrenRequest,
+  timeZone = 'UTC',
 ): SessionCampaignChildrenResult => {
   const request = parseSessionCampaignChildrenRequest(input);
   const requestFingerprint = sessionCampaignChildrenFingerprint(request);
   const offset = sessionQueryPageOffset(request.query, requestFingerprint);
   const allRows = rows.map(enrichSessionPresentationRow);
-  const visibleRows = allRows.filter((row) => matchesSessionQuery(row, request.query));
+  const visibleRows = allRows.filter((row) => matchesSessionQuery(row, request.query, timeZone));
   const campaign = buildSessionCampaignViews(allRows, visibleRows).find(
     (candidate) => candidate.campaignKey === request.campaignKey,
   );
@@ -1556,11 +1564,12 @@ export const projectSessionCampaignChildren = (
 export const projectSessionNeighbors = (
   rows: SerializedRow[],
   input: SessionNeighborRequest,
+  timeZone = 'UTC',
 ): SessionNeighborResult => {
   const request = parseSessionNeighborRequest(input);
   const requestFingerprint = sessionNeighborFingerprint(request);
   const sequence = buildSortedSessionPresentationRows(
-    rows.map(enrichSessionPresentationRow).filter((row) => matchesSessionQuery(row, request.query)),
+    rows.map(enrichSessionPresentationRow).filter((row) => matchesSessionQuery(row, request.query, timeZone)),
     request.query.sort,
   );
   const index = sequence.findIndex((row) => row.rowId === request.rowId);

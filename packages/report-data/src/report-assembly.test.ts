@@ -9,6 +9,7 @@ describe('pure report assembly', () => {
       options: { limit: null, minTokens: 1, project: null, since: null, sort: 'date' as const },
       projectGroups: [],
       rows: [],
+      timeZone: 'UTC',
       warnings: [{ message: 'stable warning', operation: 'test' }],
     };
 
@@ -28,6 +29,7 @@ describe('pure report assembly', () => {
       options: { limit: null, minTokens: 1, project: null, since: null, sort: 'date' as const },
       projectGroups: [],
       rows: [],
+      timeZone: 'UTC',
       warnings: [{ message: 'stable warning', operation: 'test' }],
     };
     const fingerprint = reportAssemblyInputFingerprint(input);

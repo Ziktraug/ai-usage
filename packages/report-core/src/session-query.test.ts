@@ -409,8 +409,18 @@ describe('session query contracts', () => {
       sourcedRow('missing-time', { activeDate: null, date: null, endDate: null }),
     ];
 
-    expect(localTimeCellForTimestamp(new Date(2026, 6, 27, 14).getTime())).toEqual({ hour: 14, weekday: 0 });
-    expect(localTimeCellForTimestamp(new Date(2026, 6, 26, 14).getTime())).toEqual({ hour: 14, weekday: 6 });
+    expect(localTimeCellForTimestamp(Date.parse('2026-07-27T14:00:00.000Z'), 'UTC')).toEqual({
+      hour: 14,
+      weekday: 0,
+    });
+    expect(localTimeCellForTimestamp(Date.parse('2026-07-26T14:00:00.000Z'), 'UTC')).toEqual({
+      hour: 14,
+      weekday: 6,
+    });
+    expect(localTimeCellForTimestamp(Date.parse('2026-07-27T00:30:00.000Z'), 'America/New_York')).toEqual({
+      hour: 20,
+      weekday: 6,
+    });
 
     const queryForCell = (weekday: 0 | 6): SessionQueryRequest =>
       defaultRequest({

@@ -108,6 +108,7 @@ const support: FocusedReportSupport = {
   filters: { limit: 2, minTokens: 0, project: null, since: null, sort: 'date' },
   generatedAt: '2026-07-13T12:00:00.000Z',
   omittedRows: 0,
+  timeZone: 'UTC',
   projectGroupConfigs: [{ id: 'group-a', name: 'Group A', sources: [{ project: 'ai-usage' }] }],
   projectGroups: [],
   warnings: [{ message: 'warning' }],

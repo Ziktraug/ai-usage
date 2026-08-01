@@ -145,6 +145,7 @@ export interface OverviewProps {
   rows: DashboardRow[];
   summary: ReportSummary;
   timelineRows: DashboardRow[];
+  timeZone: string;
 }
 
 const campaignLabelContextForOverviewItem = (
@@ -666,8 +667,11 @@ const Punchcard = (props: {
   focused: FocusedPunchcard | null | undefined;
   onSelectTimeCell: OverviewProps['onSelectTimeCell'];
   rows: DashboardRow[];
+  timeZone: string;
 }) => {
-  const data = createMemo(() => (props.focused === undefined ? buildPunchcardData(props.rows) : props.focused));
+  const data = createMemo(() =>
+    props.focused === undefined ? buildPunchcardData(props.rows, props.timeZone) : props.focused,
+  );
   const accessibleCells = createMemo(
     () =>
       data()?.cells.flatMap((dayCells, dayIndex) =>
@@ -978,6 +982,7 @@ export const Overview = (props: OverviewProps) => {
                               focused={props.focused?.view.punchcard}
                               onSelectTimeCell={props.onSelectTimeCell}
                               rows={props.rows}
+                              timeZone={props.timeZone}
                             />
                           </Show>
                         </div>

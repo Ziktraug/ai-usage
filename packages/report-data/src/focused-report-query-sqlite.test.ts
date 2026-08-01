@@ -19,8 +19,8 @@ import {
 } from '@ai-usage/report-core/report-budgets';
 import type { SerializedRow } from '@ai-usage/report-core/report-data';
 import { enrichSessionPresentationRow } from '@ai-usage/report-core/session-query';
+import { localTimeRowFields } from '@ai-usage/report-core/test-fixtures/local-time-row';
 import { executeFocusedReportQuery } from './focused-report-query-sqlite';
-import { localTimeRowFields } from './local-time-row.test-fixture';
 import { materializeSessionQueryDatabase, SESSION_QUERY_DATABASE_NAME } from './session-query-materialization';
 import { assertSessionQueryDatabase } from './session-query-sqlite';
 
@@ -125,6 +125,7 @@ const support: FocusedReportSupport = {
   filters: { limit: 2, minTokens: 0, project: null, since: null, sort: 'date' },
   generatedAt: '2026-07-13T12:00:00.000Z',
   omittedRows: 0,
+  timeZone: 'UTC',
   warnings: [{ message: 'warning' }],
 };
 const overviewRequest: FocusedOverviewRequest = {

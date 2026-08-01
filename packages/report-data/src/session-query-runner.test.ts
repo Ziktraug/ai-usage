@@ -19,7 +19,7 @@ import {
   sessionSortFields,
   sessionTextSortFields,
 } from '@ai-usage/report-core/session-query';
-import { localTimeRowFields } from './local-time-row.test-fixture';
+import { localTimeRowFields } from '@ai-usage/report-core/test-fixtures/local-time-row';
 import { materializeSessionQueryDatabase, SESSION_QUERY_DATABASE_NAME } from './session-query-materialization';
 import {
   assertSessionQueryDatabase,

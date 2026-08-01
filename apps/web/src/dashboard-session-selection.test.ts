@@ -222,6 +222,66 @@ describe('dashboard session selection', () => {
     }
   });
 
+  test('resolves colliding served row ids by the exact campaign key', () => {
+    const sharedRow = { ...campaignRoot, rowId: 'shared-root-row' };
+    const firstCampaignKey = 'machine-a:codex:shared-root';
+    const secondCampaignKey = 'machine-b:claude:shared-root';
+    const firstItem: SessionPageItem = {
+      campaignKey: firstCampaignKey,
+      kind: 'campaign',
+      row: { ...sharedRow, campaignKey: firstCampaignKey, campaignTotalCount: 2, campaignVisibleCount: 2 },
+    };
+    const secondItem: SessionPageItem = {
+      campaignKey: secondCampaignKey,
+      kind: 'campaign',
+      row: {
+        ...sharedRow,
+        campaignKey: secondCampaignKey,
+        campaignTotalCount: 3,
+        campaignVisibleCount: 3,
+        sessionLabel: 'Second derived label',
+      },
+    };
+    const state: SessionQueryState = {
+      campaignChildren: new Map(),
+      itemCount: 2,
+      items: [firstItem, secondItem],
+      loadingMore: false,
+      nextCursor: null,
+      query,
+      selectedRowId: null,
+      sessionCount: 2,
+    };
+    const { dispose, selection } = createOwnedSelection({
+      local: localData(),
+      onError: () => undefined,
+      overviewRevision: () => 'overview-revision',
+      served: {
+        active: () => true,
+        coordinator: {
+          loadNeighbors: () => Promise.resolve(undefined),
+          select: () => undefined,
+        },
+        rows: () => [firstItem.row, secondItem.row],
+        state: () => state,
+      },
+    });
+
+    try {
+      selection.toggleTableRow(secondItem.row);
+      expect(selection.selectedCampaignLabelContext()).toEqual({
+        campaignKey: secondCampaignKey,
+        derivedLabel: 'Second derived label',
+      });
+      expect(selection.analysisTarget()).toMatchObject({
+        campaignKey: secondCampaignKey,
+        totalCount: 3,
+      });
+    } finally {
+      dispose();
+    }
+  });
+
   test('prevents stale neighbor completion from replacing the current selection context', async () => {
     const firstRequest = Promise.withResolvers<SessionNeighborResult | undefined>();
     const secondRequest = Promise.withResolvers<SessionNeighborResult | undefined>();

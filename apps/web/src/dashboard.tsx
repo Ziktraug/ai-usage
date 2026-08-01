@@ -248,7 +248,7 @@ export const Dashboard = (props: {
       'aiUsage.web.client.compute.timelineRows',
       () =>
         filterTimelineRows(reportRows(), filterSnapshot()).filter((row) =>
-          activeTimeMatchesLocalTimeCell(row.activeTime, localTimeCell()),
+          activeTimeMatchesLocalTimeCell(row.activeTime, localTimeCell(), reportSupport().timeZone),
         ),
       (rows) => ({ rows: rows.length }),
     ),
@@ -775,6 +775,7 @@ export const Dashboard = (props: {
               rows: tableRows(),
               summary: visibleSummary(),
               timelineRows: timelineRows(),
+              timeZone: reportSupport().timeZone,
             }}
             pending={reportLifecycle.destinationPending}
             sessions={{

@@ -132,7 +132,11 @@ export const createDashboardSessionSelection = (
 
   const campaignLabelContextForTableRow = (row: DashboardRow, servedActive: boolean): CampaignLabelContext | null => {
     if (servedActive) {
-      const pageItem = options.served?.state()?.items.find((item) => item.row.rowId === row.rowId);
+      const pageItem = options.served
+        ?.state()
+        ?.items.find((item) =>
+          row.campaignKey === undefined ? item.row.rowId === row.rowId : item.campaignKey === row.campaignKey,
+        );
       return pageItem
         ? {
             campaignKey: pageItem.campaignKey,
@@ -140,7 +144,11 @@ export const createDashboardSessionSelection = (
           }
         : null;
     }
-    const campaign = options.local.campaigns().find((candidate) => candidate.root.rowId === row.rowId);
+    const campaign = options.local
+      .campaigns()
+      .find((candidate) =>
+        row.campaignKey === undefined ? candidate.root.rowId === row.rowId : candidate.campaignKey === row.campaignKey,
+      );
     return campaign ? { campaignKey: campaign.campaignKey, derivedLabel: campaign.root.sessionLabel } : null;
   };
 

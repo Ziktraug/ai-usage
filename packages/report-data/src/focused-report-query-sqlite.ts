@@ -774,7 +774,12 @@ const runOverview = (
   const sessionSelections = readOverviewSessionSelections(database, visibleFilter, trace);
   return {
     dateDomain: timelineAggregates.dateDomain,
-    metadata: { filters: support.filters, generatedAt: support.generatedAt, omittedRows: support.omittedRows },
+    metadata: {
+      filters: support.filters,
+      generatedAt: support.generatedAt,
+      omittedRows: support.omittedRows,
+      timeZone: support.timeZone,
+    },
     requestFingerprint: focusedOverviewFingerprint(request),
     revision: request.query.revision,
     summary,
