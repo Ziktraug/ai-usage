@@ -40,6 +40,13 @@ export const sortBreakdownGroups = (
   );
 const normalizeBreakdownSearchText = (value: string): string => value.normalize('NFKC').trim().toLocaleLowerCase();
 
+export const hasBreakdownSearchQuery = (query: string): boolean => normalizeBreakdownSearchText(query).length > 0;
+
+export const breakdownLabelMatchesSearch = (label: string, query: string): boolean => {
+  const normalizedQuery = normalizeBreakdownSearchText(query);
+  return normalizedQuery.length === 0 || normalizeBreakdownSearchText(label).includes(normalizedQuery);
+};
+
 export const filterAndSortBreakdownGroups = (
   groups: readonly AnalyticsGroup[],
   query: string,
@@ -50,7 +57,7 @@ export const filterAndSortBreakdownGroups = (
   const matchingGroups =
     normalizedQuery.length === 0
       ? groups
-      : groups.filter((group) => normalizeBreakdownSearchText(labelFor(group)).includes(normalizedQuery));
+      : groups.filter((group) => breakdownLabelMatchesSearch(labelFor(group), query));
   return sortBreakdownGroups(matchingGroups, sort, labelFor);
 };
 const MAX_PERCENT = 100;

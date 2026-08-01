@@ -187,8 +187,35 @@ git diff --stat origin/main...HEAD
 git diff --check origin/main...HEAD
 ```
 
-Expected: exactly 15 implementation commits after the plan-document commit, no
-unexplained file outside the union of plan scopes, and a clean diff.
+At the end of the unattended run, expect exactly 15 implementation commits after
+the plan-document commit, no unexplained file outside the union of plan scopes,
+and a clean diff. Later review work does not retroactively invalidate that
+checkpoint when each follow-up commit is documented separately, stays within
+the reviewed branch scope, and the complete final gate is rerun.
+
+### Recorded post-run review deviation
+
+This branch intentionally retains five commits created after the 15-plan
+transaction instead of rewriting already reviewed history:
+
+| Commit | Purpose |
+| --- | --- |
+| `90b767e` | Apply correctness fixes found by the first report-trust review. |
+| `daca3be` | Stabilize the bounded file-sink timeout regression test. |
+| `1ed0ff0` | Add missing test seams and close report-trust verification gaps. |
+| `3951bc7` | Make the measured CSS-bundle allowance deterministic in CI. |
+| `a09eeaa` | Split oversized Dashboard and Skills diagnostics presentation modules. |
+
+The PR must list these commits as post-run review follow-ups, distinct from the
+15 fixed plan commits. Any further review commit must be listed by subject and
+purpose in the PR before the branch is considered complete.
+
+During the 2026-08-01 post-run review, one manual Vite startup diagnostic was
+briefly launched without the E2E runtime flag after Playwright's owned server
+timed out. Local collectors ran before the process was stopped. No local history
+content entered the repository, but the PR must disclose that this post-run
+diagnostic was not synthetic-only and must not repeat the original run's broader
+synthetic-only claim for the review phase.
 
 ## One push and one draft PR
 
@@ -204,10 +231,11 @@ Create `/tmp/ai-usage-afk-pr-body.md` with:
 - summary grouped as Trust, Interaction/export, and Presentation/data quality;
 - the 15 plan numbers and commit subjects;
 - exact final-gate commands with pass status;
-- explicit notes that only synthetic data was used and no real histories were
-  read;
+- a data-source note distinguishing the synthetic-only unattended run from any
+  documented post-run diagnostic that accessed configured local histories;
 - snapshot files intentionally updated;
-- any documented deviation (there should be none for a successful AFK run).
+- any documented deviation, including every post-run review follow-up (none is
+  expected before the initial successful AFK run).
 
 After creation, run `gh pr view --json url,isDraft,baseRefName,headRefName` and
 verify exactly: draft `true`, base `main`, head fixed branch. Report the URL and
@@ -215,7 +243,8 @@ stop. Do not merge or mark ready for review.
 
 ## AFK completion criteria
 
-- [ ] One branch contains the plan commit plus 15 green implementation commits.
+- [ ] One branch contains the plan commit plus 15 green implementation commits;
+      any later review commits are separately documented and gated.
 - [ ] Plans 051–065 are DONE; plan 046 is DONE after plan 061.
 - [ ] No BLOCKED or IN PROGRESS row remains in 051–065.
 - [ ] Every final command passes from a clean worktree.

@@ -55,6 +55,14 @@ test('keeps every populated harness and machine visible with default dimension f
   expect(sortedCategoryLabels(harnessSnapshot.categories)).toEqual(sortedCategoryLabels(harnessSnapshot.options));
   await page.keyboard.press('Escape');
 
+  const breakdownSearch = harnessPanel.getByRole('searchbox', { name: 'Search this breakdown' });
+  await breakdownSearch.fill('claude sub');
+  await expect(harnessPanel.locator('[data-harness-total]')).toHaveCount(1);
+  await expect(harnessPanel.locator('[data-harness-total="Claude"]')).toBeVisible();
+  await expect(harnessPanel.locator('[data-provider-child="Claude sub"]')).toBeVisible();
+  await expect(harnessPanel.locator('[data-provider-child]')).toHaveCount(1);
+  await breakdownSearch.clear();
+
   const chartOptions = dateRange.locator('details[aria-label="Chart options"]');
   await chartOptions.locator('summary').click();
   const machineRadio = chartOptions.getByRole('radio', { exact: true, name: 'Machine' });

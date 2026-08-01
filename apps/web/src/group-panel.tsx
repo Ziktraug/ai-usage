@@ -25,10 +25,12 @@ import { createMemo, createSignal, For, type JSX, Show } from 'solid-js';
 import { type BreakdownSort, isBreakdownSort } from './dashboard-search';
 import {
   breakdownBarPresentation,
+  breakdownLabelMatchesSearch,
   breakdownModelLabel,
   breakdownPriceState,
   breakdownPriceStateLabel,
   filterAndSortBreakdownGroups,
+  hasBreakdownSearchQuery,
 } from './group-panel-presentation';
 import {
   accentFill,
@@ -416,6 +418,20 @@ const pairCountLabel = (count: number): string => `${count} provider ${count ===
 
 export const HarnessProviderPanelView = (props: HarnessProviderPanelViewProps) => {
   const childrenByHarness = createMemo(() => providerChildrenByHarness(props.harnessProviderGroups));
+  const searchActive = createMemo(() => hasBreakdownSearchQuery(props.searchQuery));
+  const matchingChildrenFor = (harness: string): AnalyticsGroup[] =>
+    (childrenByHarness().get(harness) ?? []).filter((child) =>
+      breakdownLabelMatchesSearch(child.provider, props.searchQuery),
+    );
+  const visibleChildrenFor = (harness: string): AnalyticsGroup[] => {
+    if (searchActive()) {
+      return matchingChildrenFor(harness);
+    }
+    if (!props.expandedHarnesses.includes(harness)) {
+      return [];
+    }
+    return childrenByHarness().get(harness) ?? [];
+  };
   const visibleGroups = createMemo(() =>
     filterAndSortBreakdownGroups(props.groups, props.searchQuery, 'value', (group) =>
       [group.key, ...(childrenByHarness().get(group.key) ?? []).map(({ provider }) => provider)].join(' '),
@@ -423,16 +439,22 @@ export const HarnessProviderPanelView = (props: HarnessProviderPanelViewProps) =
   );
   const maxCost = createMemo(() => Math.max(0, ...visibleGroups().map(({ costSum }) => costSum)));
   const visiblePairCount = createMemo(() =>
-    visibleGroups().reduce((count, group) => count + (childrenByHarness().get(group.key)?.length ?? 0), 0),
+    visibleGroups().reduce(
+      (count, group) =>
+        count +
+        (searchActive() ? matchingChildrenFor(group.key).length : (childrenByHarness().get(group.key)?.length ?? 0)),
+      0,
+    ),
   );
   const visibleExportRows = createMemo(() => {
     const rows: VisibleBreakdownGroup[] = [];
     for (const group of visibleGroups()) {
       rows.push({ group, label: group.key });
-      if (!props.expandedHarnesses.includes(group.key)) {
+      const children = visibleChildrenFor(group.key);
+      if (children.length === 0) {
         continue;
       }
-      for (const child of childrenByHarness().get(group.key) ?? []) {
+      for (const child of children) {
         rows.push({ group: child, label: child.provider });
       }
     }
@@ -450,27 +472,31 @@ export const HarnessProviderPanelView = (props: HarnessProviderPanelViewProps) =
     >
       <For each={visibleGroups()}>
         {(group) => {
-          const children = () => childrenByHarness().get(group.key) ?? [];
-          const expanded = () => props.expandedHarnesses.includes(group.key);
+          const visibleChildren = () => visibleChildrenFor(group.key);
+          const expanded = () => visibleChildren().length > 0;
           const controlsId = providerDisclosureId(group.key);
           return (
             <div class={hierarchyBlock}>
               <HarnessProviderGroupRow
                 child={false}
-                disclosure={{
-                  controlsId,
-                  expanded: expanded(),
-                  onToggle: exactGroupFilterHandler(props.onToggleHarness, group.key),
-                }}
+                {...(searchActive()
+                  ? {}
+                  : {
+                      disclosure: {
+                        controlsId,
+                        expanded: expanded(),
+                        onToggle: exactGroupFilterHandler(props.onToggleHarness, group.key),
+                      },
+                    })}
                 filterValue={group.key}
                 group={group}
                 label={group.key}
                 maxCost={maxCost()}
                 onFilter={props.onHarnessFilter}
               />
-              <Show when={expanded() && children().length > 0}>
+              <Show when={visibleChildren().length > 0}>
                 <fieldset aria-label={`Providers for ${group.key}`} class={hierarchyChildren} id={controlsId}>
-                  <For each={children()}>
+                  <For each={visibleChildren()}>
                     {(child) => (
                       <HarnessProviderGroupRow
                         child

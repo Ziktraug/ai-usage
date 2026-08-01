@@ -284,6 +284,37 @@ test('renders value-sorted harness totals with expandable session-sorted provide
   expect(exportedLabels).toEqual(['Harness B', 'Harness A', 'Alpha Provider', 'Zeta Provider']);
 });
 
+test('auto-exposes only provider children that match hierarchy search', () => {
+  let exportedLabels: string[] = [];
+  const html = renderToString(() =>
+    createComponent(HarnessProviderPanelView, {
+      expandedHarnesses: [],
+      groups: [harnessGroup('Harness A', 10, 30, 3), harnessGroup('Harness B', 20, 20, 2)],
+      harnessProviderGroups: [
+        harnessProviderGroup('Harness A', 'Zeta Provider', 4, 10, 1),
+        harnessProviderGroup('Harness B', 'Hidden Provider', 20, 20, 2),
+        harnessProviderGroup('Harness A', 'Alpha Provider', 6, 20, 2),
+      ],
+      onHarnessFilter: () => undefined,
+      onProviderFilter: () => undefined,
+      onSearchQueryChange: () => undefined,
+      onToggleHarness: () => undefined,
+      renderActions: (rows) => {
+        exportedLabels = rows.map(({ label }) => label);
+        return null;
+      },
+      searchQuery: ' alpha provider ',
+    }),
+  );
+
+  expect(html).toContain('1 harnesses · 1 provider pair');
+  expect(html).toContain('data-harness-total="Harness A"');
+  expect(html).toContain('data-provider-child="Alpha Provider"');
+  expect(html).not.toContain('data-provider-child="Zeta Provider"');
+  expect(html).not.toContain('data-harness-total="Harness B"');
+  expect(exportedLabels).toEqual(['Harness A', 'Alpha Provider']);
+});
+
 test('binds parent and child buttons to their exact filter values', () => {
   const selections: string[] = [];
 
