@@ -29,12 +29,16 @@ Plan 067 records the post-cutover runtime review at `d9cc99c`: polling ownership
 and the data-plane split are correct, but control failure classification, SSE
 failure visibility, deferred cleanup diagnostics, snapshot waiting, and manual
 merge ownership need a focused hardening pass.
-Plan 068 records the 2026-08-02 decision at `b8a3aad` to migrate Web from
-Solid/TanStack Start/Nitro to SvelteKit and replace framework server functions
-with a contract-first oRPC browser boundary. TanStack Svelte Query retains
-explicit cache/SWR ownership; direct read-only SQLite, exact served revisions,
-the usage-engine control plane, and explicit source-control SSE remain unchanged.
-The Bun adapter is selected by a lifecycle/SSE spike rather than assumption.
+Plan 068 records the 2026-08-02 decision, reconciled against merged `main` at
+`72c648e`, to migrate Web from Solid/TanStack Start/Nitro to SvelteKit and
+replace framework server functions with a contract-first oRPC browser boundary.
+TanStack Svelte Query retains explicit cache/SWR ownership; direct read-only
+SQLite, exact served revisions, the usage-engine control plane, and explicit
+source-control SSE remain unchanged. The final runtime hardening is included:
+signal-aware handoff staging/late cleanup, engine-owned source snapshot/event
+fan-out, the Web reader-only package boundary, and shared private file/process
+identity helpers. The Bun adapter is selected by a lifecycle/SSE spike rather
+than assumption.
 Implementation uses one coordinator-owned integration branch, local isolated
 worktrees, independently reviewed packet commits and exactly one final GitHub
 PR. The packet DAG, exclusive ownership matrix and convergence gates live in the

@@ -10,8 +10,9 @@
 > row in `plans/README.md`, and only after the final gate passes.
 >
 > **Drift check (run first)**:
-> `git diff --stat b8a3aad..HEAD -- apps/web packages/design-system packages/web-contract tools package.json bun.lock turbo.json docs/adr docs/architecture.md`
-> This plan is based on the usage-engine runtime split at `b8a3aad`. If a
+> `git diff --stat 72c648e..HEAD -- apps/web packages/design-system packages/web-contract tools package.json bun.lock turbo.json docs/adr docs/architecture.md`
+> This plan was reconciled against the merged usage-engine runtime split at
+> `72c648e`. If a
 > current-state path or excerpt below has changed, reconcile the affected wave
 > against the live code before implementation. A changed transport wrapper is
 > expected; a changed served-revision, data-plane, or process-ownership invariant
@@ -24,7 +25,7 @@
 - **Risk**: HIGH
 - **Depends on**: plans 066 and 067 (both DONE)
 - **Category**: migration, tech-debt, performance, tests, dx
-- **Planned at**: commit `b8a3aad`, 2026-08-02
+- **Planned at**: commit `72c648e`, 2026-08-02
 - **State**: READY FOR ORCHESTRATED EXECUTION after the entry gate below. The
   architecture and execution topology are locked; adapter/version pins are
   intentionally resolved by packet B2 against the then-current ecosystem.
@@ -85,13 +86,16 @@ When this program is complete:
 | Browser/Web transport | Use oRPC in **contract-first** mode. Browser code imports only contracts, schemas, public errors and its client adapter. |
 | API scope | oRPC spans browser to Web server only. It does not span Web to usage-engine, Web to SQLite, CLI to Web, or engine to SQLite. |
 | Data plane | Preserve ADR 0009: Web and CLI perform bounded direct SQLite reads; the usage engine remains sole writer. |
+| Writer package boundary | Web may use the usage-store reader facade but must never import the writer-capable `@ai-usage/usage-merge`; only usage-engine-runtime owns that package. |
 | Control plane | Preserve authenticated numeric-loopback engine command/status/SSE. Web adapts it without exposing credentials or rendezvous details. |
+| Source snapshots | Preserve the engine runtime's source-snapshot broker and bounded control event stream. SvelteKit adapts their existing control interface; it does not recreate snapshot waiting or event fan-out. |
 | Client server-state | Keep `@tanstack/svelte-query` for cache, mutation state, SWR and invalidation. Do not recreate a query cache with Svelte state. |
 | SSR | Create request/navigation-scoped QueryClient and oRPC clients. Await all server prefetches. No module-global `$client`, QueryClient, request event or cache. |
 | Validation | Runtime-validate every oRPC input/output. Prefer one Standard Schema library; default to Valibot unless Wave 1 proves an incompatibility. Preserve current wire shapes and bounded errors. |
 | Errors | Expose closed typed sanitized errors. Raw exceptions, paths, SQLite details, engine tokens and stack traces never cross the browser boundary. |
 | SSE | Keep `/api/source-control` as explicit `EventSource` transport for cutover. oRPC event iterators are out of scope without measured benefit. |
-| Upload/download | Keep merge uploads and downloads as explicit HTTP endpoints with existing byte/path/content-disposition/abort guarantees; do not encode files as ordinary RPC JSON. |
+| Upload/download | Keep merge uploads and downloads as explicit HTTP endpoints with existing byte/path/content-disposition/abort guarantees. Forward `AbortSignal` through inbox staging, race abort against staging, and clean a handoff that completes late; do not encode files as ordinary RPC JSON. |
+| Process/file identity | Reuse `@ai-usage/usage-engine-control/node` file-identity, ownership, process-start and liveness helpers in Web build/runtime adapters; do not fork those checks in SvelteKit scripts. |
 | URL state | Preserve shareable dashboard query strings, canonical defaults and legacy values. URL state remains framework-neutral. |
 | Design system | Preserve Panda tokens, recipes, CSS and semantic classes. Port interactive primitives to `@ark-ui/svelte` or native semantic HTML without changing a11y contracts. |
 | Migration shape | Introduce oRPC and explicit query ownership on Solid first, build a SvelteKit shadow entry in the same package, then cut over atomically. |
@@ -193,6 +197,28 @@ not move business logic into the oRPC router.
   engine/store. oRPC here is strictly browser-facing Web transport.
 - `CONTEXT.md` defines served revision, data/control plane, focused report result,
   source publication and Skills projection terminology.
+
+### Post-merge hardening already present at `72c648e`
+
+- `apps/web/src/server/manual-merge-upload.server.ts` passes the request
+  `AbortSignal` into handoff staging, races cancellation against staging, and
+  schedules cleanup if staging succeeds after the request has already aborted.
+  P7/Wave 11 must preserve all three behaviors, including recovery when detached
+  cleanup cannot finish.
+- `tools/check-package-boundaries.ts` permits Web/CLI to import only the
+  usage-store reader facade and reserves the writer-capable
+  `@ai-usage/usage-merge` package for usage-engine-runtime. Contract/RPC/Svelte
+  work may not weaken or route around that graph.
+- `apps/web/src/focused-report-client.ts` now performs explicit per-destination
+  exact revision and canonical fingerprint validation through the same public
+  source interface. The simplification changes no ServedReportSession invariant.
+- `apps/web/vite-production-build.ts` consumes private file identity, ownership,
+  process-start and liveness helpers from
+  `@ai-usage/usage-engine-control/node`. The SvelteKit adapter/build cutover
+  reuses that deep module instead of copying its implementation.
+- The usage-engine runtime owns a dedicated source-snapshot broker and the engine
+  app owns the bounded control event stream. P6 adapts those existing interfaces;
+  it does not move snapshot waiting, fan-out or event lifecycle into Web.
 
 ### Design system
 
@@ -690,9 +716,9 @@ Before dispatching any implementation packet, the coordinator must:
 1. Confirm plans 066/067 and this plan are present in `origin/main` and record
    the exact `BASE_SHA` in `plans/068-execution-state.md`.
 2. Run the complete current Solid verification commands from a clean worktree.
-   The base must be green. In particular, the currently observed undeclared
-   `port` error in `tools/measure-usage-runtime-io.ts` must be fixed upstream or
-   absent after reconciliation; it is not an allowlisted migration failure.
+   The base must be green with no allowlisted migration failure. At plan
+   reconciliation, `bun run check` and `bun run lint` pass on `72c648e`; B0 must
+   still run the complete gate against the later post-plan `BASE_SHA`.
 3. Re-run the drift check against `BASE_SHA`, reconcile path/test/operation
    inventory changes, and STOP on any changed served-revision, direct-read,
    sole-writer, trust or demo-privacy invariant.
@@ -706,8 +732,8 @@ Before dispatching any implementation packet, the coordinator must:
 6. Confirm each worker can create an isolated worktree with its own temporary
    home, store, ports, logs, rendezvous and build-output paths.
 
-No packet may start from the historical `b8a3aad` automatically. It starts from
-the exact compatible integration checkpoint named in its dispatch card.
+No packet may start from the planned `72c648e` automatically. It starts from the
+exact post-plan integration checkpoint named in its dispatch card.
 
 ### Roles and scheduler
 
@@ -1021,13 +1047,13 @@ same agents in a circle instead of dedicating one slot permanently to review.
 | --- | --- | --- | --- |
 | B0 Lock execution base | **COORDINATOR**, none | Entry gate, integration branch, execution state, exact baseline SHA, dispatch/denylist mechanics | Current Solid full suite green; STOP on red base or invariant drift |
 | B1 Freeze parity and budgets | B0 | Wave 0 characterization, ledger schema/shards/checker, 30-op and test inventory, performance baseline, `.svelte` graph-scanner coverage | 100% current features/ops/TSX/design/tests owned; demo negative gates and reproducible budgets |
-| B2 Resolve runtime ecosystem | B0 | Disposable Wave 1 adapter/version/oRPC/Query/Ark/Panda spike and lifecycle decision; no production app port | SSR, illegal import, abort, >30s SSE, clean shutdown/output; STOP if neither adapter passes |
+| B2 Resolve runtime ecosystem | B0 | Disposable Wave 1 adapter/version/oRPC/Query/Ark/Panda spike and lifecycle decision; exercise the existing `usage-engine-control/node` identity/liveness helpers rather than copying them; no production app port | SSR, illegal import, abort, >30s SSE, clean shutdown/output and unchanged private file/process checks; STOP if neither adapter passes |
 | F0 Freeze shared foundations | **COORDINATOR**, B1+B2 | Dependency/lockfile checkpoint, Svelte shadow skeleton, target directories, structural navigation/table/subscription types, composition stubs and frozen public conventions; add `.svelte-kit` to `.gitignore`/recursive-scanner ignores and generated-tooling ownership docs | Solid remains green; shadow build/typecheck/boundary fixtures green; clean `git status` has no generated output and no unresolved downstream choice |
 | V0 Contract/request-policy kernel | F0 | Pure errors/schema conventions, request-policy interface/matrix and contract tests; no family procedures | Contract closure has no server imports; method/trust/CSRF/body/error policies mechanically testable |
 | V1 Report/campaign/quota vertical | V0 | Assigned report/campaign/project-group/quota contracts, RPC leaves, handler tests and Solid client adapters | Assigned operations mapped; exact/current semantics, typed errors and no deep-logic copy |
 | V2 Session vertical | V0 | Session page/children/neighbors/detail/VCS contracts, RPC leaves, tests and Solid adapters | Exact revision/fingerprint/abort/supersession gates; no table/UI work |
 | V3 Skills vertical | V0 | Skills contracts, RPC leaves, tests and Solid adapters | Filesystem authority, dirty/conflict semantics and demo acquisition isolation |
-| V4 Control/Sources/Sync vertical | V0 | Sync/control RPC metadata, policy classification, Solid callers and temporary Nitro adapters only; freeze final SvelteKit endpoint interfaces for P6/P7 | Trust/CSRF/byte/path/abort; no file bytes or SSE hidden in RPC and no final SvelteKit endpoint leaf |
+| V4 Control/Sources/Sync vertical | V0 | Sync/control RPC metadata, policy classification, Solid callers and temporary Nitro adapters only; freeze final SvelteKit endpoint interfaces for P6/P7; Web imports neither `usage-merge` nor engine-runtime | Trust/CSRF/byte/path/staging-abort/late-cleanup; no file bytes or SSE hidden in RPC, no writer-package reachability and no final SvelteKit endpoint leaf |
 | V5 Transport convergence | **COORDINATOR**, V1+V2+V3+V4 | Compose contract/router/context/Nitro handler, apply request policy globally, switch Solid callers, retire serverFn wrappers at 30/30 | Solid unit/demo/production gates through oRPC; no serverFn/warmup or policy bypass |
 | Q0 Query core | V5 | Exclusive temporary ownership of `lib/query/client.ts`, common key/policy vocabulary, hydration/dehydration seam and framework-neutral cache test harness | No global client/default infinite stale; concurrent request isolation and abort proof |
 | Q1 Report/Session/quota policies | Q0 | Family keys/options, exact/current invalidation, retained-data SWR and bounded GC | No duplicate bootstrap, immutable refetch or publication-wide invalidation |
@@ -1045,13 +1071,13 @@ same agents in a circle instead of dedicating one slot permanently to review.
 | P3 Sessions table | P1+V2+Q1+D4 | `features/sessions/table/**`: schema adapter, paging, campaign expansion, virtualization and responsive projections | 25 columns/presets and 5,000-row DOM/heap/network/keyboard budgets |
 | P4 Session drawer/analysis | P3 | `features/sessions/detail/**`: Drawer selection/navigation/detail/VCS/chronology/multi-harness analysis modules | Focus/Escape/history/neighbors/abort and recorded/partial/unavailable trust semantics |
 | P5 Skills shell/SSR | R1+V3+Q2+D4 | `features/skills/shell/**`, tree/workspace/Inspector composition interface, SSR data adapter and Skills route-leaf request; editor/health/matrix are slots | Settled SSR, no duplicate load, nested selection/responsive shell and demo acquisition isolation |
-| P6 Sources/SSE | R1+V4+Q2+D4+B2 | `features/sources`, final explicit Svelte EventSource owner and SvelteKit endpoint leaves in Sources-owned prefixes; shared shell summary requested | Snapshot/replay/heartbeat/reconnect/abort/backpressure, sanitized state and no Query ownership |
-| P7 Sync/files/observability | R1+V4+Q2+D4 | `features/sync`, fleet UI, final SvelteKit manual-transfer endpoints and Web observability leaves in Sync-owned prefixes | Byte/path/trust/opaque-ID/cleanup and single-init/teardown gates |
+| P6 Sources/SSE | R1+V4+Q2+D4+B2 | `features/sources`, final explicit Svelte EventSource owner and SvelteKit endpoint leaves in Sources-owned prefixes; adapt the existing engine snapshot broker/control stream without duplicating them; shared shell summary requested | Snapshot/replay/heartbeat/reconnect/abort/backpressure, sanitized state, no Query ownership and no Web-owned snapshot waiting/fan-out |
+| P7 Sync/files/observability | R1+V4+Q2+D4 | `features/sync`, fleet UI, final SvelteKit manual-transfer endpoints and Web observability leaves in Sync-owned prefixes; forward request abort into staging and preserve cleanup of late staging success | Byte/path/trust/opaque-ID/staging-abort/late-cleanup/recovery and single-init/teardown gates; no `usage-merge` reachability from Web |
 | P8 Breakdown/filters/actions | P1 | `features/report/breakdown/**` and `features/report/actions/**`: filters, grouping, breakdown, labels, CSV/share and quota plus assigned specs | Value/filter/URL/CSV/quota/a11y/visual DOM gates; no Overview/range files |
 | P9 Skills editor/draft | P5 | `features/skills/editor/**`: Markdown controller adapter, shortcuts, dirty/conflict/pending replacement and navigation-blocker integration request | Exact draft preservation, save/refresh conflict, keep/discard/focus and cleanup gates |
 | P10 Skills health/reconcile/matrix | P5 | `features/skills/management/**`: health, diagnostics, context, reconcile/consolidation and matrix modules | Filesystem authority, unmanaged safety, preview/apply, projection and responsive matrix gates |
 | X0 Feature convergence | **COORDINATOR**, P2+P8+P4+P9+P10+P6+P7 | Compose root/routes/contexts, apply requested deltas/evidence, run global ledger and integrated functional/demo/production/scale suites | No missing ID/test/title/export/op; semantic conflicts return to feature owner |
-| X1 Cut over and delete | **COORDINATOR**, X0 | Wave 12 scripts/runtime/supervisor/CI split, remove Solid/Start/Nitro/old TSX/glue, final manifests/lockfile/docs/performance | Clean install and every pre-PR final criterion; STOP on manifest leak, unmapped removal or >10% unexplained regression |
+| X1 Cut over and delete | **COORDINATOR**, X0 | Wave 12 scripts/runtime/supervisor/CI split, remove Solid/Start/Nitro/old TSX/glue, retain the shared control/node identity seam, final manifests/lockfile/docs/performance | Clean install and every pre-PR final criterion; STOP on manifest/server leak, Web writer-package reachability, duplicated identity logic, unmapped removal or >10% unexplained regression |
 | X2 Reconcile and cold final review | **COORDINATOR** plus independent fresh-context reviewer, X1 | Fetch `origin/main`; if it advanced, coordinator rebases/reconciles, redispatches semantic conflicts and reruns full gates. Then review final merge-base-to-HEAD parity/spec, security boundaries, design closure, generated output and code quality | Reviewer ACCEPT plus full clean-worktree gate at unchanged final base; then push/open the one implementation PR and require its CI green before DONE |
 
 Workers must receive a packet-specific expansion of the register row using the
@@ -1322,12 +1348,17 @@ Skills/unit/E2E/visual/demo tests pass.
 
 1. Port `/sources`, `/sync` and pure presentation models.
 2. Move Nitro source-control GET/POST to SvelteKit endpoints preserving trust,
-   replay, heartbeat, abort, reconnection and backpressure.
+   replay, heartbeat, abort, reconnection and backpressure. Adapt the existing
+   engine source-snapshot broker/control event stream; do not recreate snapshot
+   waiting or fan-out in Web.
 3. Port EventSource owner to explicit Svelte service/context with start,
    subscribe, reconnect and dispose; keep outside Query.
 4. Map publications only to Wave 4 keys; never invalidate Skills.
 5. Port merge upload/export with byte limits, opaque IDs, disposition, no-follow,
-   validation, confirmation and abort cleanup; no ordinary RPC file bytes.
+   validation and confirmation. Pass the request `AbortSignal` through handoff
+   staging, race abort against staging, clean a staging operation that succeeds
+   late and preserve identity-validated recovery when detached cleanup fails. No
+   ordinary RPC file bytes and no Web import of `@ai-usage/usage-merge`.
 6. Port Web read observability to SvelteKit hooks without widening logged data or
    duplicating wide events.
 
@@ -1338,7 +1369,9 @@ Skills/unit/E2E/visual/demo tests pass.
 
 1. Switch Web dev/build/preview/check/test/Turbo scripts to SvelteKit.
 2. Adapt start/build/supervisor only as selected adapter requires, preserving
-   locks, output isolation, loopback, explicit env, engine readiness and shutdown.
+   locks, output isolation, loopback, explicit env, engine readiness and
+   shutdown. Reuse `@ai-usage/usage-engine-control/node` private file/process
+   helpers; do not copy their implementation into SvelteKit scripts.
 3. Switch Playwright/demo/start/setup tools; remove Nitro workaround only after
    SSE proof.
 4. Delete Solid routes/components/shadow compatibility and retired tests after
@@ -1367,6 +1400,10 @@ usage-engine tests. Add:
 - reviewed wire serialization snapshots and file exclusions;
 - illegal import fixtures plus emitted client manifest scans;
 - abort/deadline and demo adapter acquisition tests;
+- manual handoff abort-before-staging, abort-during-staging, late-success cleanup
+  and cleanup-failure recovery tests through the final SvelteKit endpoint;
+- source snapshot/control-stream adapter tests proving Web does not recreate the
+  engine broker or fan-out lifecycle;
 - concurrent SSR request isolation and no work after response;
 - hydration timestamp/no-duplicate tests for report and Skills;
 - current-vs-immutable invalidation, retained-data SWR and GC tests;
@@ -1408,6 +1445,9 @@ Final delivery sequence is strict:
 - [ ] Client manifest contains no `node:*`, `bun:*`, `@orpc/server`, usage-store,
   report-data, local-machine, engine implementation, `$lib/server` or `.server`
   module.
+- [ ] Web source and emitted manifests contain no `@ai-usage/usage-merge` or
+  usage-engine-runtime import; reader access remains on the explicit usage-store
+  reader facade.
 - [ ] Every Wave 0 operation is implemented or explicitly classified as file/SSE;
   none is lost.
 - [ ] The parity checker reports every feature ID COMPLETE, 30/30 server
@@ -1420,6 +1460,12 @@ Final delivery sequence is strict:
 - [ ] Exact revision retry/supersession/atomic commit matches characterization.
 - [ ] Publication does not invalidate Skills or immutable exact revision; quota
   is independently owned.
+- [ ] Manual transfer preserves abort before/during staging, cleans staging that
+  succeeds after abort and retains identity-validated recovery on cleanup
+  failure; source SSE still delegates snapshot waiting/fan-out to the engine.
+- [ ] Web build/runtime adapters reuse the shared
+  `@ai-usage/usage-engine-control/node` identity/liveness helpers instead of
+  duplicating them.
 - [ ] ADRs 0007/0009 remain true and tested.
 - [ ] Architecture/export/workspace scanners cover `.svelte` files and fail on
   direct, indirect, re-exported and dynamic client-to-server reachability.
@@ -1436,6 +1482,8 @@ Stop and report if:
 - ADR 0009's direct reads/sole writer changes underneath the plan;
 - oRPC seems to require an engine report endpoint, browser SQLite or engine
   credentials/rendezvous in browser;
+- Web needs to import `@ai-usage/usage-merge`, usage-engine-runtime, or recreate
+  source snapshot waiting/event fan-out;
 - the contract must import the server router/implementation, or client can reach
   server code transitively;
 - neither adapter passes Bun SSE/shutdown/output/lifecycle tests;
@@ -1444,6 +1492,10 @@ Stop and report if:
   validation or atomic commit;
 - a port changes URLs, calculations, cadence, Skills authority or demo privacy;
 - a boundary must be weakened or raw server failures exposed;
+- the SvelteKit file endpoint cannot propagate staging cancellation, clean late
+  staging success or preserve the existing recovery semantics;
+- the adapter/build cutover would duplicate private file/process identity logic
+  instead of consuming `@ai-usage/usage-engine-control/node`;
 - a frozen cross-packet interface must change without coordinator reconciliation,
   or integration produces a semantic conflict outside coordinator-owned files;
 - table parity cannot meet scale/heap/keyboard budgets—return to Wave 9;
