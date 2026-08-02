@@ -18,7 +18,7 @@ const ignoredDirectories = new Set([
   'node_modules',
   'styled-system',
 ]);
-const checkedExtensions = new Set(['.cjs', '.js', '.jsx', '.mjs', '.ts', '.tsx']);
+const checkedExtensions = new Set(['.cjs', '.js', '.jsx', '.mjs', '.svelte', '.ts', '.tsx']);
 const workspaceImportPattern =
   /\b(?:import|export)\s+(?:type\s+)?(?:[^'";]+?\s+from\s*)?['"](@ai-usage\/[^'"]+)['"]|\bimport\(\s*['"](@ai-usage\/[^'"]+)['"]\s*\)|\brequire\(\s*['"](@ai-usage\/[^'"]+)['"]\s*\)/g;
 const moduleImportPattern =
@@ -496,7 +496,7 @@ const collectTargetImportViolations = async (
   return violations;
 };
 
-const sourceModuleExtensions = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.mts', '.cts'] as const;
+const sourceModuleExtensions = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.mts', '.cts', '.svelte'] as const;
 const emittedExtensionSources = new Map<string, readonly string[]>([
   ['.js', ['.ts', '.tsx']],
   ['.jsx', ['.tsx']],
