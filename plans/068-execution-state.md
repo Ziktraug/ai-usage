@@ -237,6 +237,16 @@ freeze exact values. B2 was redispatched to turn the disposable evidence into
 an actual selected-adapter regression, resolve the peer set and harden failure
 cleanup; the first commit remains local-only and unintegrated.
 
+During B2 rework's first committed-fixture lifecycle attempt, the private
+`bun install --frozen-lockfile` reached its 60-second setup deadline before any
+SvelteKit server started. Cleanup passed. Read-only inspection identified an
+overlapping B1 parity checker whose inventory path had spawned Playwright
+`--list` despite being classified as static. The exact processes then exited
+normally, no Plan listener remained, and the coordinator barred B1 from further
+process-capable checkers until B2 returns the token. B2 retained the exclusive
+token for one clean rerun after an evidence-based cold-install setup bound
+correction; lifecycle, SSE and shutdown budgets remain unchanged.
+
 B1's two fresh isolated production measurements then exposed a separate Wave-0
 invariant failure: `getReportRevisionBootstrap` was requested exactly twice
 before hydration in both runs. The samples recorded bootstrap counts `2/2`,
