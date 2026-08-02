@@ -247,6 +247,14 @@ process-capable checkers until B2 returns the token. B2 retained the exclusive
 token for one clean rerun after an evidence-based cold-install setup bound
 correction; lifecycle, SSE and shutdown budgets remain unchanged.
 
+The clean rerun completed its frozen install in about 41 seconds and then failed
+deterministically in fixture Svelte check before starting a server: the isolated
+fixture omitted a direct `@types/node` pin, so `process` in its shutdown hook had
+no type. The private root was removed and B2 returned the token. Under the
+relaxed STOP policy B2 received a third, narrower static correction to add an
+exact compatible Node type dependency and regenerate only the fixture lock; it
+must wait for a later token transfer before another lifecycle run.
+
 B1's two fresh isolated production measurements then exposed a separate Wave-0
 invariant failure: `getReportRevisionBootstrap` was requested exactly twice
 before hydration in both runs. The samples recorded bootstrap counts `2/2`,
