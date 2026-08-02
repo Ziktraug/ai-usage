@@ -1,66 +1,69 @@
 # Web framework migration performance baseline
 
 This is the Wave-0 Solid baseline for Plan 068. It is a comparison ledger, not
-a composite score and not a claim that the Svelte application is faster.
+a composite score or a claim that the Svelte application is faster.
 
 ## Identity and safety
 
 - Reviewed B0 checkpoint: `2051c4887894e42f31b309adf8446869d2e1b566`
+- Measured B1-C checkpoint: `7d1ff6e54cfc89f8e619d3409c474ccf506c412c`
 - Recorded: 2026-08-02, Europe/Paris
 - Runtime: Bun 1.3.13 and the pinned repository/browser dependencies
-- Source of retained results:
-  [`plans/068-execution-state.md`](../../plans/068-execution-state.md)
 - Fixtures: deterministic E2E/demo data and isolated temporary production
   homes, stores, ports, logs, rendezvous, and build outputs only
 
-No command in this document may be pointed at a maintainer home, database,
-Skills directory, engine rendezvous, or ordinary development server. Browser,
-production, lifecycle, SSE, heap, timing, and startup commands use the
-coordinator's exclusive process-test token.
+No command here may target a maintainer home, database, Skills directory,
+engine rendezvous, or ordinary development server. Browser, production,
+lifecycle, SSE, heap, timing, and startup commands require the coordinator's
+exclusive process-test token.
 
-## Retained Session scale measurements
+## Session scale measurements
 
-The authoritative command is:
+Reproduce the 5,000-session production fixture, warm-up, and three recorded
+samples with:
 
 ```sh
 bun run --cwd apps/web benchmark:session-scroll
 ```
 
-It warms the 5,000-session production fixture and records three samples. B0
-passed four tests and retained these medians:
+The B1-C run passed all four tests and emitted these medians:
 
 | Metric | Solid median | Greater-than-10% investigation trigger |
 | --- | ---: | ---: |
-| Initial settled load | 1535.192 ms | 1688.712 ms |
-| Filter response | 332.803 ms | 366.084 ms |
-| Sort response | 1409.614 ms | 1550.576 ms |
-| Heap delta after full desktop traversal | 32,452,828 bytes | 35,698,111 bytes |
+| Initial settled load | 1526.194 ms | 1678.813 ms |
+| Filter response | 225.676 ms | 248.244 ms |
+| Sort response | 1390.970 ms | 1530.067 ms |
+| Heap delta after full desktop traversal | 32,059,716 bytes | 35,265,688 bytes |
 | Maximum Session page payload | 321,397 bytes | 353,537 bytes |
 | Desktop maximum rendered items | 33 | 36 items |
 | Desktop maximum Session DOM nodes | 624 | 687 nodes |
 | Mobile maximum rendered items | 17 | 19 items |
 | Mobile maximum Session DOM nodes | 258 | 284 nodes |
 
-The final build must still satisfy the scale suite's reachability, row identity,
-network, geometry, and memory assertions. Crossing a trigger requires
-investigation and a reviewed explanation; the arithmetic is not an automatic
-waiver for a failing absolute gate.
+One mobile sample reached 18 rendered items and 273 Session nodes; the table
+records the median. The final build must still satisfy the suite's reachability,
+row-identity, network, geometry, and memory assertions. Crossing a trigger
+requires investigation and a reviewed explanation; it cannot waive a failing
+absolute gate.
 
-The smaller deterministic DOM audit is reproduced by the functional suite:
+The run emitted bounded `wide-event:file` lock-timeout telemetry from its
+synthetic log sink. Playwright exited zero, all four assertions passed, the
+server shut down, and the post-suite process/listener audit was empty. This is
+classified as nonfatal fixture telemetry, not a product or benchmark failure.
+
+The smaller deterministic audit is reproduced with:
 
 ```sh
 bun run test:e2e -- e2e/audit-performance.spec.ts
 ```
 
-It emits the desktop/mobile Session surface and Overview advanced-analysis DOM
-measurements from the synthetic fixture. B0 retained the green result but did
-not retain those emitted node counts, so the coordinator must capture their
-JSON at the next measured checkpoint rather than inventing values here.
+It passed and emitted 262 nodes for Overview advanced analysis. The desktop
+Session surface/table contained 80/79 nodes at 1024 px. The 361 px mobile
+surface contained 45 summary nodes, 45 total Session nodes, and no table.
 
 ## Production artifact closure and bytes
 
-Build the current artifact with the repository's locked, isolated output
-owner:
+Build and enumerate the selected artifact in stable path order:
 
 ```sh
 bun run build
@@ -68,46 +71,62 @@ find apps/web/.output-build/nitro -type f -printf '%s %p\n' | LC_ALL=C sort -k2
 du -sb apps/web/.output-build/nitro
 ```
 
-For the final Svelte adapter, run the same file-size listing against its selected
-production output directory and classify closure changes by module and asset.
-The final client manifest scan is the authority for retired Solid/Nitro and
-server-module reachability; total bytes alone cannot prove the boundary.
-
-B0 proved an uncached production build and all workspace builds green. It did
-not retain a normalized closure byte total, so Wave 1/F0 must capture the
-selected adapter's equivalent output and X1 must compare both explicit file
-lists. No baseline byte total is fabricated in this record.
+The recursive Bun `stat` inventory contained 118 files and 4,931,722 bytes:
+1,200,533 public bytes and 3,730,859 server bytes. The canonical sorted
+`path:size` manifest SHA-256 was
+`495de210cb7051c7415d5ac506f255f5e68c7fd74d0a6005d718d0d12f564a7c`.
+The final Svelte adapter must use its selected output directory and classify
+closure changes by module and asset. Total bytes alone do not prove retired
+Solid/Nitro or server-module reachability.
 
 ## Initial HTML, hydration, and requests
 
-The production fixture and SSR assertions are exercised by:
+The seven-test production suite is reproduced with:
 
 ```sh
 bun run test:e2e-production
 ```
 
-The seven production-report tests passed at B0, including initial Overview SSR,
-focused refresh stability, exact-revision Session paging, chronology/VCS, source
-control, and mobile paging. The initial response must continue to contain the
-bounded support-backed report content required by ADR 0007.
+The B1-C production probe launched `apps/web/e2e/production-server.ts` on an
+isolated port and attached Playwright request listeners before `page.goto`.
+It waited for `main[data-hydrated="true"]`, then for network settlement, and
+asserted the exact bootstrap URL count, duplicate URLs, and pending requests.
+It closed the browser and terminated the fixture with the production config's
+15-second graceful-shutdown bound.
 
-Wave 7 must add and retain per-run instrumentation for:
+| Measurement | Solid result |
+| --- | ---: |
+| Initial HTML bytes | 36,995 |
+| Server render TTFB | 9.5 ms |
+| Server response complete | 10.1 ms |
+| Hydration marker settled | 117.5 ms |
+| Total initial requests | 15 |
+| Bootstrap acquisitions | 1 |
+| Duplicate already-prefetched exact URLs | 0 |
+| Server queries pending after settlement | 0 |
 
-- initial response bytes and meaningful settled HTML markers;
-- server render duration and browser hydration-settle duration;
-- bootstrap acquisition count (exactly one);
-- already-prefetched exact request count (zero duplicates);
-- total initial request count by bounded response class; and
-- server queries still running after response settlement (zero).
-
-Those numeric values were not emitted by the B0 harness, so they remain
-explicit coordinator-run measurements rather than zero-valued placeholders.
-The same production command, plus the new counter assertions, is the
-reproduction gate.
+The response contained both the hydration marker and usage-report content.
+Request classes were one document, seven scripts, one stylesheet, one
+EventSource, four fetches, and one other request. The exact bootstrap response
+SHA-256 was
+`c6234ffc648ce32eff6545c823eea8c3f3bead4a3a0e77d5e2a06a5f2303b8c4`.
 
 ## Startup, shutdown, SSE, and output isolation
 
-The operational baseline is reproduced by these existing commands:
+Three isolated cold/warm pairs used direct Vite, `VITE_AI_USAGE_E2E=1`,
+`NITRO_DEV_RUNNER=self`, `BROWSER=none`, unique loopback ports, and fresh
+temporary HOME/TMP/XDG roots. Cold runs removed only the explicit ignored
+`apps/web/.output-dev`; warm runs preserved it. Each child received SIGTERM
+with a 15-second SIGKILL fallback, and every child exited before cleanup.
+
+| Run | Cold | Warm |
+| --- | ---: | ---: |
+| 1 | 3552.362 ms | 3376.101 ms |
+| 2 | 3606.445 ms | 3438.394 ms |
+| 3 | 3491.509 ms | 3499.788 ms |
+| Median | 3552.362 ms | 3438.394 ms |
+
+The operational gates are:
 
 ```sh
 bun run test:web-production
@@ -115,19 +134,11 @@ bun run test:web-dev-build-isolation
 bun run test:setup-loopback
 ```
 
-B0 passed all three. The lifecycle gate proved engine/Web start and clean stop;
-the concurrent dev/build gate observed 79 healthy requests, no HMR failure, no
-deleted development descriptors, and the expected rejected competing build;
-the setup gate proved numeric IPv4 loopback. B0 did not retain cold/warm startup
-milliseconds or a production output byte total.
-
-Packet B2 owns the reusable adapter lifecycle fixture that records cold/warm
-startup, SSR, assets, abort propagation, a greater-than-30-second SSE, signal
-shutdown, descendant/port exit, explicit `bun --no-env-file`, and isolated
-outputs. Those process measurements require the coordinator token when
-integrated. X1 compares the selected Svelte adapter with this Solid operational
-baseline and investigates every regression over 10% without combining unlike
-metrics.
+All passed. The isolation gate observed 80 healthy requests, unchanged dev
+process count (2 before and after), zero HMR messages, zero deleted dev-output
+descriptors, a 21,566.405 ms build, and the expected rejected competing build.
+The final process audit found no browser/server fixture processes and no
+listeners on the suite or measurement ports.
 
 ## Full reproducibility gate
 
@@ -151,8 +162,7 @@ bun run test:setup-loopback
 git diff --check
 ```
 
-The retained counts were 585 focused Web tests, 90 functional browser tests,
-one destructive-negative demo test, seven production-report tests, two scale
-tests, and four benchmark tests. The parity ledger separately freezes all 104
-individual browser titles, including demo, production, scale, and benchmark
-configurations.
+Retained counts are 585 focused Web tests, 90 functional browser tests, one
+destructive-negative demo test, seven production-report tests, two scale tests,
+and four benchmark tests. The parity ledger separately freezes all 104 browser
+titles across demo, production, scale, and benchmark configurations.
