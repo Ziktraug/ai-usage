@@ -1,4 +1,4 @@
-export const baselineEvidenceCommit = '2183270ebfbb886fafa7e6268893122db9b364c0';
+export const baselineEvidenceCommit = '2051c4887894e42f31b309adf8446869d2e1b566';
 
 export const packetIds = [
   'B1',
@@ -142,16 +142,23 @@ export const parityKinds = [
 
 export const parityStatuses = ['current', 'complete', 'reviewed-removal'] as const;
 export const evidenceKinds = ['source', 'test', 'command', 'measurement', 'review'] as const;
+export const evidencePhases = ['baseline', 'target'] as const;
 
 export type ParityKind = (typeof parityKinds)[number];
 export type ParityStatus = (typeof parityStatuses)[number];
 export type EvidenceKind = (typeof evidenceKinds)[number];
+export type EvidencePhase = (typeof evidencePhases)[number];
 
 export interface ParityEvidence {
   commit: string;
   kind: EvidenceKind;
+  phase: EvidencePhase;
   reference: string;
 }
+
+export type ParityEvidenceInput =
+  | { commit?: string; kind: EvidenceKind; phase?: 'baseline'; reference: string }
+  | { commit: string; kind: EvidenceKind; phase: 'target'; reference: string };
 
 export interface OperationDescriptor {
   currentMethod: 'GET' | 'POST';
@@ -189,8 +196,21 @@ export interface ParityShard {
 
 export const defineParityShard = <const Shard extends ParityShard>(shard: Shard): Shard => shard;
 
-export const waveZeroEvidence = (kind: EvidenceKind, reference: string): ParityEvidence => ({
-  commit: baselineEvidenceCommit,
-  kind,
-  reference,
+export const isPacketId = (value: unknown): value is PacketId =>
+  typeof value === 'string' && (packetIds as readonly string[]).includes(value);
+export const isParityKind = (value: unknown): value is ParityKind =>
+  typeof value === 'string' && (parityKinds as readonly string[]).includes(value);
+export const isParityStatus = (value: unknown): value is ParityStatus =>
+  typeof value === 'string' && (parityStatuses as readonly string[]).includes(value);
+export const isEvidenceKind = (value: unknown): value is EvidenceKind =>
+  typeof value === 'string' && (evidenceKinds as readonly string[]).includes(value);
+export const isEvidencePhase = (value: unknown): value is EvidencePhase =>
+  typeof value === 'string' && (evidencePhases as readonly string[]).includes(value);
+
+export const parityEvidence = (input: ParityEvidenceInput): ParityEvidence => ({
+  ...input,
+  commit: input.commit ?? baselineEvidenceCommit,
+  phase: input.phase ?? 'baseline',
 });
+export const waveZeroEvidence = (kind: EvidenceKind, reference: string, commit = baselineEvidenceCommit) =>
+  parityEvidence({ commit, kind, reference });

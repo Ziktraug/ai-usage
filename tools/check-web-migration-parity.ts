@@ -1,101 +1,23 @@
-import { readdir, readFile } from 'node:fs/promises';
+import { readdir, readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
-import ts from 'typescript';
-
-export type PacketId = string;
-export type ParityKind =
-  | 'feature'
-  | 'operation'
-  | 'production-tsx'
-  | 'design-row'
-  | 'design-export'
-  | 'render-suite'
-  | 'playwright-title'
-  | 'url-contract';
-export type ParityStatus = 'current' | 'complete' | 'reviewed-removal';
-export type EvidenceKind = 'source' | 'test' | 'command' | 'measurement' | 'review';
-
-export interface ParityEvidence {
-  commit: string;
-  kind: EvidenceKind;
-  reference: string;
-}
-
-export interface OperationDescriptor {
-  currentMethod: 'GET' | 'POST';
-  implementationOwner: string;
-  inputParser: string;
-  outputParser: string;
-  publicErrors: readonly string[];
-  target: string;
-  transport: 'query' | 'mutation' | 'file';
-}
-
-export interface UrlContractDescriptor {
-  canonical: string;
-  defaultValue: string;
-  legacyValues: readonly string[];
-  lifecycle: string;
-}
-
-export interface ParityRecord {
-  currentOwner: string;
-  evidence: readonly ParityEvidence[];
-  id: string;
-  kind: ParityKind;
-  operation?: OperationDescriptor;
-  replacementReason?: string;
-  status: ParityStatus;
-  targetOwner: PacketId;
-  urlContract?: UrlContractDescriptor;
-}
-
-export interface ParityShard {
-  owner: PacketId;
-  records: readonly ParityRecord[];
-}
-
-export interface LoadedParityShard {
-  file: string;
-  shard: unknown;
-}
-
-interface ParityAggregateModule {
-  asParityShard: (value: unknown) => ParityShard | undefined;
-  loadParityShards: (repositoryRoot: string, directory?: string) => Promise<readonly LoadedParityShard[]>;
-}
-
-interface ParitySchemaModule {
-  baselineEvidenceCommit: string;
-  designRowIds: readonly string[];
-  evidenceKinds: readonly EvidenceKind[];
-  featureIds: readonly string[];
-  packetIds: readonly string[];
-  parityKinds: readonly ParityKind[];
-  parityStatuses: readonly ParityStatus[];
-  renderSuitePaths: readonly string[];
-  urlContractIds: readonly string[];
-}
-
-const parityModuleRoot = path.resolve(import.meta.dir, '../apps/web/migration-parity');
-const [aggregateModule, schemaModule] = await Promise.all([
-  import(pathToFileURL(path.join(parityModuleRoot, 'aggregate.ts')).href) as Promise<ParityAggregateModule>,
-  import(pathToFileURL(path.join(parityModuleRoot, 'schema.ts')).href) as Promise<ParitySchemaModule>,
-]);
-const { asParityShard } = aggregateModule;
-export const loadParityShards = aggregateModule.loadParityShards;
-export const baselineEvidenceCommit = schemaModule.baselineEvidenceCommit;
-const {
+import { asParityShard, type LoadedParityShard, loadParityShards } from '@ai-usage/web/migration-parity/aggregate';
+import {
+  baselineEvidenceCommit,
   designRowIds,
-  evidenceKinds,
   featureIds,
-  packetIds,
+  isEvidenceKind,
+  isEvidencePhase,
+  isPacketId,
+  isParityKind,
+  isParityStatus,
+  type ParityEvidence,
+  type ParityKind,
+  type ParityRecord,
   parityKinds,
-  parityStatuses,
   renderSuitePaths,
   urlContractIds,
-} = schemaModule;
+} from '@ai-usage/web/migration-parity/schema';
+import ts from 'typescript';
 
 const commitPattern = /^[a-f0-9]{40}$/u;
 const serverOperationPattern =
@@ -157,11 +79,18 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 
 const hasString = (value: unknown): value is string => typeof value === 'string' && value.trim().length > 0;
 
-const fileExists = async (file: string): Promise<boolean> =>
-  await readFile(file, 'utf8').then(
-    () => true,
-    () => false,
-  );
+type FileStatReader = (file: string) => Promise<{ isFile: () => boolean }>;
+
+export const fileExists = async (file: string, readStat: FileStatReader = stat): Promise<boolean> => {
+  try {
+    return (await readStat(file)).isFile();
+  } catch (error) {
+    if (isRecord(error) && error.code === 'ENOENT') {
+      return false;
+    }
+    throw new Error(`Unable to inspect ${file}.`, { cause: error });
+  }
+};
 
 const collectFiles = async (directory: string, predicate: (file: string) => boolean): Promise<readonly string[]> => {
   const entries = await readdir(directory, { withFileTypes: true });
@@ -199,28 +128,24 @@ export const discoverProductionTsx = async (repositoryRoot: string): Promise<Rea
   return inventory;
 };
 
-const serverOperationFiles = [
-  'apps/web/src/server/report-payload.ts',
-  'apps/web/src/server/provider-quota.ts',
-  'apps/web/src/server/skills.ts',
-  'apps/web/src/server/sync.ts',
-] as const;
-
 export const discoverServerOperations = async (repositoryRoot: string): Promise<ReadonlyMap<string, InventoryItem>> => {
   const operations = new Map<string, InventoryItem>();
-  for (const currentOwner of serverOperationFiles) {
-    const source = await readFile(path.join(repositoryRoot, currentOwner), 'utf8');
-    for (const match of source.matchAll(serverOperationPattern)) {
-      const name = match[1];
-      const currentMethod = match[2];
-      if (!(name && (currentMethod === 'GET' || currentMethod === 'POST'))) {
-        continue;
+  const sources = await collectFiles(path.join(repositoryRoot, 'apps/web'), (candidate) => {
+    const name = path.basename(candidate);
+    const isTypeScript = candidate.endsWith('.ts') || candidate.endsWith('.tsx');
+    return isTypeScript && !(name.endsWith('.d.ts') || name.includes('.test.') || name.includes('.spec.'));
+  });
+  for (const file of sources) {
+    const currentOwner = normalizePath(path.relative(repositoryRoot, file));
+    for (const match of (await readFile(file, 'utf8')).matchAll(serverOperationPattern)) {
+      const [name, currentMethod] = [match[1], match[2]];
+      if (name && (currentMethod === 'GET' || currentMethod === 'POST')) {
+        const id = `op:${name}`;
+        if (operations.has(id)) {
+          throw new Error(`Duplicate server operation discovered: ${id}`);
+        }
+        operations.set(id, { currentMethod, currentOwner });
       }
-      const id = `op:${name}`;
-      if (operations.has(id)) {
-        throw new Error(`Duplicate server operation discovered: ${id}`);
-      }
-      operations.set(id, { currentMethod, currentOwner });
     }
   }
   return operations;
@@ -412,13 +337,12 @@ export const discoverPlaywrightTitles = async (repositoryRoot: string): Promise<
   return inventory;
 };
 
-const discoverRenderSuites = async (repositoryRoot: string): Promise<ReadonlyMap<string, InventoryItem>> => {
+export const discoverRenderSuites = async (repositoryRoot: string): Promise<ReadonlyMap<string, InventoryItem>> => {
   const inventory = new Map<string, InventoryItem>();
   for (const currentOwner of renderSuitePaths) {
-    if (!(await fileExists(path.join(repositoryRoot, currentOwner)))) {
-      throw new Error(`Missing frozen Solid render suite: ${currentOwner}`);
+    if (await fileExists(path.join(repositoryRoot, currentOwner))) {
+      inventory.set(`render:${currentOwner}`, { currentOwner });
     }
-    inventory.set(`render:${currentOwner}`, { currentOwner });
   }
   return inventory;
 };
@@ -435,21 +359,30 @@ export const collectCurrentParityInventory = async (repositoryRoot: string): Pro
     ['url-contract', fixedInventory(urlContractIds)],
   ]);
 
+const hasValidRecordHeader = (record: Record<string, unknown>): boolean =>
+  hasString(record.id) &&
+  isParityKind(record.kind) &&
+  hasString(record.currentOwner) &&
+  isPacketId(record.targetOwner) &&
+  isParityStatus(record.status) &&
+  Array.isArray(record.evidence) &&
+  record.evidence.length > 0;
+
 const recordFieldIssues = (record: Record<string, unknown>, location: string): readonly string[] => {
   const issues: string[] = [];
   if (!hasString(record.id)) {
     issues.push(`${location} has no stable id.`);
   }
-  if (!(typeof record.kind === 'string' && parityKinds.includes(record.kind as ParityKind))) {
+  if (!isParityKind(record.kind)) {
     issues.push(`${location} has an unsupported kind.`);
   }
   if (!hasString(record.currentOwner)) {
     issues.push(`${location} has no currentOwner.`);
   }
-  if (!(typeof record.targetOwner === 'string' && packetIds.includes(record.targetOwner as never))) {
+  if (!isPacketId(record.targetOwner)) {
     issues.push(`${location} has no valid targetOwner.`);
   }
-  if (!(typeof record.status === 'string' && parityStatuses.includes(record.status as never))) {
+  if (!isParityStatus(record.status)) {
     issues.push(`${location} has an unsupported status.`);
   }
   if (!(Array.isArray(record.evidence) && record.evidence.length > 0)) {
@@ -458,9 +391,17 @@ const recordFieldIssues = (record: Record<string, unknown>, location: string): r
   return issues;
 };
 
+const isValidEvidence = (value: unknown): value is ParityEvidence =>
+  isRecord(value) &&
+  typeof value.commit === 'string' &&
+  commitPattern.test(value.commit) &&
+  isEvidenceKind(value.kind) &&
+  isEvidencePhase(value.phase) &&
+  hasString(value.reference);
+
 const evidenceIssues = (record: ParityRecord, location: string, commits: Set<string>): readonly string[] => {
   const issues: string[] = [];
-  for (const [index, value] of record.evidence.entries()) {
+  for (const [index, value] of (record.evidence as readonly unknown[]).entries()) {
     if (!isRecord(value)) {
       issues.push(`${location} evidence ${index} is not an object.`);
       continue;
@@ -470,8 +411,11 @@ const evidenceIssues = (record: ParityRecord, location: string, commits: Set<str
     } else {
       issues.push(`${location} evidence ${index} has an invalid commit.`);
     }
-    if (!(typeof value.kind === 'string' && evidenceKinds.includes(value.kind as never))) {
+    if (!isEvidenceKind(value.kind)) {
       issues.push(`${location} evidence ${index} has an invalid kind.`);
+    }
+    if (!isEvidencePhase(value.phase)) {
+      issues.push(`${location} evidence ${index} has an invalid phase.`);
     }
     if (!hasString(value.reference)) {
       issues.push(`${location} evidence ${index} has no reference.`);
@@ -480,48 +424,78 @@ const evidenceIssues = (record: ParityRecord, location: string, commits: Set<str
   return issues;
 };
 
+const hasTargetEvidence = (record: ParityRecord, kind?: ParityEvidence['kind']): boolean =>
+  (record.evidence as readonly unknown[]).some(
+    (value) =>
+      isValidEvidence(value) &&
+      value.phase === 'target' &&
+      value.commit !== baselineEvidenceCommit &&
+      (kind === undefined || value.kind === kind),
+  );
+
 const descriptorIssues = (record: ParityRecord, location: string): readonly string[] => {
   const issues: string[] = [];
+  const operationValue = record.operation as unknown;
   if (record.kind === 'operation') {
-    const descriptor = record.operation;
-    if (!descriptor) {
-      return [`${location} has no operation descriptor.`];
+    if (!isRecord(operationValue)) {
+      return [`${location} has no valid operation descriptor.`];
     }
-    if (!(descriptor.currentMethod === 'GET' || descriptor.currentMethod === 'POST')) {
+    if (!(operationValue.currentMethod === 'GET' || operationValue.currentMethod === 'POST')) {
       issues.push(`${location} has an invalid current method.`);
     }
     for (const [field, value] of Object.entries({
-      implementationOwner: descriptor.implementationOwner,
-      inputParser: descriptor.inputParser,
-      outputParser: descriptor.outputParser,
-      target: descriptor.target,
+      implementationOwner: operationValue.implementationOwner,
+      inputParser: operationValue.inputParser,
+      outputParser: operationValue.outputParser,
+      target: operationValue.target,
     })) {
       if (!hasString(value)) {
         issues.push(`${location} operation ${field} is empty.`);
       }
     }
-    if (!(Array.isArray(descriptor.publicErrors) && descriptor.publicErrors.length > 0)) {
+    if (
+      !(
+        Array.isArray(operationValue.publicErrors) &&
+        operationValue.publicErrors.length > 0 &&
+        operationValue.publicErrors.every(hasString)
+      )
+    ) {
       issues.push(`${location} has no closed public error inventory.`);
     }
+    if (
+      !(
+        operationValue.transport === 'query' ||
+        operationValue.transport === 'mutation' ||
+        operationValue.transport === 'file'
+      )
+    ) {
+      issues.push(`${location} has an invalid operation transport.`);
+    }
+  } else if (operationValue !== undefined) {
+    issues.push(`${location} has an operation descriptor for ${record.kind}.`);
   }
+
+  const urlValue = record.urlContract as unknown;
   if (record.kind === 'url-contract') {
-    const descriptor = record.urlContract;
-    if (!descriptor) {
-      return [`${location} has no URL contract descriptor.`];
+    if (!isRecord(urlValue)) {
+      return [...issues, `${location} has no valid URL contract descriptor.`];
     }
     for (const [field, value] of Object.entries({
-      canonical: descriptor.canonical,
-      defaultValue: descriptor.defaultValue,
-      lifecycle: descriptor.lifecycle,
+      canonical: urlValue.canonical,
+      defaultValue: urlValue.defaultValue,
+      lifecycle: urlValue.lifecycle,
     })) {
       if (!hasString(value)) {
         issues.push(`${location} URL ${field} is empty.`);
       }
     }
-    if (!Array.isArray(descriptor.legacyValues)) {
+    if (!(Array.isArray(urlValue.legacyValues) && urlValue.legacyValues.every(hasString))) {
       issues.push(`${location} has no URL legacy-values inventory.`);
     }
+  } else if (urlValue !== undefined) {
+    issues.push(`${location} has a URL contract descriptor for ${record.kind}.`);
   }
+
   return issues;
 };
 
@@ -552,7 +526,7 @@ export const validateParityShards = async (
         continue;
       }
       issues.push(...recordFieldIssues(value, location));
-      if (!(hasString(value.id) && typeof value.kind === 'string' && parityKinds.includes(value.kind as ParityKind))) {
+      if (!hasValidRecordHeader(value)) {
         continue;
       }
       const record = value as unknown as ParityRecord;
@@ -567,11 +541,20 @@ export const validateParityShards = async (
         recordsByKind.get(record.kind)?.set(record.id, record);
       }
       if (record.status === 'reviewed-removal') {
+        if (record.kind === 'feature') {
+          issues.push(`${location} cannot remove a required feature ID.`);
+        }
         if (!hasString(record.replacementReason)) {
           issues.push(`${location} is an unsupported removal without a reviewed replacementReason.`);
         }
+        if (!hasTargetEvidence(record, 'review')) {
+          issues.push(`${location} has no integrated target review evidence for its removal.`);
+        }
       } else if (record.replacementReason !== undefined) {
         issues.push(`${location} has a replacementReason without reviewed-removal status.`);
+      }
+      if (record.status === 'complete' && !hasTargetEvidence(record)) {
+        issues.push(`${location} is complete without integrated target evidence.`);
       }
       if (options.requireComplete && record.status === 'current') {
         issues.push(`${location} remains current at the complete-only gate.`);
@@ -646,7 +629,7 @@ export const checkWebMigrationParity = async (
   ]);
   return await validateParityShards(loadedShards, inventory, {
     integratedEvidence: async (commit) => await integratedIntoHead(repositoryRoot, commit),
-    requireComplete: options.requireComplete,
+    ...(options.requireComplete === undefined ? {} : { requireComplete: options.requireComplete }),
   });
 };
 

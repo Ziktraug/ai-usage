@@ -137,9 +137,12 @@ export default defineParityShard({
       'url:dashboard.columns',
       dashboardOwner,
       {
-        canonical: 'cols=<unique searchable column-diff IDs>&colsBase=auto|legacy',
+        canonical: 'cols=<unique searchable column-diff IDs>&colsBase=auto|work|legacy',
         defaultValue: 'cols=[] and colsBase=auto (stripped)',
-        legacyValues: ['unversioned cols use auto', 'colsBase=legacy remains valid', 'invalid IDs are dropped'],
+        legacyValues: [
+          'unversioned cols use auto; empty resolves to work while non-empty resolves to legacy',
+          'explicit colsBase=work and colsBase=legacy remain valid; invalid IDs are dropped',
+        ],
         lifecycle: 'Visibility changes replace the current history entry and never reset scroll.',
       },
       [...dashboardTests, 'apps/web/src/session-table-schema.test.ts'],

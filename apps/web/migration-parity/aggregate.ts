@@ -1,7 +1,7 @@
 import { readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import type { ParityShard } from './schema';
+import { isPacketId, type ParityShard } from './schema';
 
 const shardFilePattern = /\.parity\.ts$/u;
 
@@ -43,7 +43,7 @@ export const asParityShard = (value: unknown): ParityShard | undefined => {
     return;
   }
   const candidate = value as Record<string, unknown>;
-  if (!(typeof candidate.owner === 'string' && Array.isArray(candidate.records))) {
+  if (!(isPacketId(candidate.owner) && Array.isArray(candidate.records))) {
     return;
   }
   return value as ParityShard;

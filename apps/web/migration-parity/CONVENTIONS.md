@@ -14,12 +14,16 @@ evidence only by the packet named in each shard.
 - IDs are globally unique. A later packet edits only its existing shard; it
   does not duplicate an ID in a new shard.
 - `current` means the Solid implementation is the release authority during the
-  additive migration. `complete` means the target Svelte evidence passes.
-  `reviewed-removal` requires a non-empty reviewed `replacementReason`.
-- Every evidence item names the commit that introduced the evidence. The
-  checker accepts it only when Git proves that commit is an ancestor of the
-  checked integration `HEAD`. A packet therefore lands implementation first
-  and may use a following evidence commit to reference that implementation SHA.
+  additive migration. `complete` requires integrated, non-baseline
+  `phase: "target"` evidence for the replacement.
+- `reviewed-removal` requires a non-empty reviewed `replacementReason` and
+  integrated target review evidence. Required feature IDs cannot be removed.
+- Baseline evidence defaults to reviewed B0 checkpoint
+  `2051c4887894e42f31b309adf8446869d2e1b566`. Target evidence must name its
+  explicit implementation commit and use `phase: "target"`.
+- The checker accepts evidence only when Git proves its commit is an ancestor
+  of the checked integration `HEAD`. A packet lands implementation first and
+  may use a following evidence commit to reference that SHA.
 - `bun tools/check-web-migration-parity.ts` accepts Wave-0 `current` records.
   `--require-complete` is the Wave-12 gate and rejects every remaining
   `current` record.

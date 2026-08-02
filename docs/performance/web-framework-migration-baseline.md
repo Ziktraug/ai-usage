@@ -5,7 +5,7 @@ a composite score and not a claim that the Svelte application is faster.
 
 ## Identity and safety
 
-- Baseline commit: `2183270ebfbb886fafa7e6268893122db9b364c0`
+- Reviewed B0 checkpoint: `2051c4887894e42f31b309adf8446869d2e1b566`
 - Recorded: 2026-08-02, Europe/Paris
 - Runtime: Bun 1.3.13 and the pinned repository/browser dependencies
 - Source of retained results:

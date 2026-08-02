@@ -2,22 +2,27 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { type LoadedParityShard, loadParityShards } from '@ai-usage/web/migration-parity/aggregate';
 import {
   baselineEvidenceCommit,
-  type CurrentParityInventory,
-  checkWebMigrationParity,
-  type LoadedParityShard,
-  loadParityShards,
   type PacketId,
   type ParityKind,
   type ParityRecord,
   type ParityShard,
+} from '@ai-usage/web/migration-parity/schema';
+import {
+  type CurrentParityInventory,
+  checkWebMigrationParity,
+  discoverRenderSuites,
+  discoverServerOperations,
+  fileExists,
   parsePlaywrightListOutput,
   validateParityShards,
 } from './check-web-migration-parity';
 
 const temporaryDirectories: string[] = [];
 const repositoryRoot = path.resolve(import.meta.dir, '..');
+const targetEvidenceCommit = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 
 afterEach(async () => {
   await Promise.all(temporaryDirectories.splice(0).map((directory) => rm(directory, { force: true, recursive: true })));
@@ -25,7 +30,7 @@ afterEach(async () => {
 
 const validRecord = (overrides: Partial<ParityRecord> = {}): ParityRecord => ({
   currentOwner: 'apps/web/src/example.tsx',
-  evidence: [{ commit: baselineEvidenceCommit, kind: 'test', reference: 'example.test.ts › preserves behavior' }],
+  evidence: [{ commit: baselineEvidenceCommit, kind: 'test', phase: 'baseline', reference: 'example test' }],
   id: 'EXAMPLE-01',
   kind: 'feature',
   status: 'current',
@@ -59,7 +64,7 @@ const validate = async (
 ) =>
   await validateParityShards(shards, inventory, {
     integratedEvidence: async () => options.integrated ?? true,
-    requireComplete: options.requireComplete,
+    ...(options.requireComplete === undefined ? {} : { requireComplete: options.requireComplete }),
   });
 
 describe('Web migration parity checker', () => {
@@ -67,6 +72,7 @@ describe('Web migration parity checker', () => {
     const current = validRecord();
     const replacement = validRecord({
       currentOwner: 'apps/web/src/retired.tsx',
+      evidence: [{ commit: targetEvidenceCommit, kind: 'test', phase: 'target', reference: 'replacement test' }],
       id: 'tsx:apps/web/src/retired.tsx',
       kind: 'production-tsx',
       status: 'complete',
@@ -80,20 +86,17 @@ describe('Web migration parity checker', () => {
 
   test('rejects duplicate, cross-shard, and unowned records', async () => {
     const first = validRecord();
-    const duplicate = validRecord({ currentOwner: '', targetOwner: 'B1' });
+    const duplicate = validRecord();
+    const unowned = validRecord({ currentOwner: '', id: 'UNOWNED-01' });
     const result = await validate(
-      [loadedShard([first]), loadedShard([duplicate], 'B2', 'foreign.parity.ts')],
+      [loadedShard([first]), loadedShard([duplicate, unowned], 'B2', 'foreign.parity.ts')],
       inventoryFor([first]),
     );
 
-    expect(result.issues).toEqual(
-      expect.arrayContaining([
-        expect.stringContaining('crosses shard ownership'),
-        expect.stringContaining('has no currentOwner'),
-        expect.stringContaining('not shard B2'),
-        expect.stringContaining('duplicates EXAMPLE-01'),
-      ]),
-    );
+    expect(result.issues).toContain('foreign.parity.ts crosses shard ownership for B2.');
+    expect(result.issues).toContain('foreign.parity.ts record 0 is owned by B1, not shard B2.');
+    expect(result.issues).toContain('foreign.parity.ts record 1 has no currentOwner.');
+    expect(result.issues).toContain('foreign.parity.ts record 0 duplicates EXAMPLE-01 from b1.parity.ts.');
   });
 
   test('rejects missing and stale current inventory records', async () => {
@@ -130,6 +133,31 @@ describe('Web migration parity checker', () => {
     );
   });
 
+  test('closes complete-without-target and required-feature removal loopholes', async () => {
+    const completeWithoutTarget = validRecord({ id: 'COMPLETE-01', status: 'complete' });
+    const removedFeature = validRecord({
+      evidence: [
+        {
+          commit: targetEvidenceCommit,
+          kind: 'review',
+          phase: 'target',
+          reference: 'X2 removal review',
+        },
+      ],
+      id: 'REMOVED-01',
+      replacementReason: 'Reviewed replacement.',
+      status: 'reviewed-removal',
+    });
+    const result = await validate([loadedShard([completeWithoutTarget, removedFeature])], new Map());
+
+    expect(result.issues).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('complete without integrated target evidence'),
+        expect.stringContaining('cannot remove a required feature ID'),
+      ]),
+    );
+  });
+
   test('requires every record to leave current status at the final gate', async () => {
     const record = validRecord();
     const result = await validate([loadedShard([record])], inventoryFor([record]), { requireComplete: true });
@@ -162,13 +190,62 @@ describe('Web migration parity checker', () => {
     ]);
     const result = await validate([loadedShard([operation, url])], inventory);
 
+    expect(result.issues).toContain('b1.parity.ts record 0 operation implementationOwner is empty.');
+    expect(result.issues).toContain('b1.parity.ts record 0 has no closed public error inventory.');
+    expect(result.issues).toContain('b1.parity.ts record 1 has no valid URL contract descriptor.');
+    expect(result.issues).toContain('op:example current method is GET, expected POST.');
+  });
+
+  test('fails closed for malformed records and non-packet shard owners', async () => {
+    const invalidPhase = {
+      ...validRecord(),
+      evidence: [{ commit: baselineEvidenceCommit, kind: 'test', phase: 'future', reference: 'bad phase' }],
+    } as unknown as ParityRecord;
+    const invalidOperation = {
+      ...validRecord({ id: 'op:bad', kind: 'operation' }),
+      operation: null,
+    } as unknown as ParityRecord;
+    const result = await validate(
+      [
+        { file: 'rogue.parity.ts', shard: { owner: 'ROGUE', records: [] } },
+        loadedShard([invalidPhase, invalidOperation]),
+      ],
+      new Map(),
+    );
+
     expect(result.issues).toEqual(
       expect.arrayContaining([
-        expect.stringContaining('operation implementationOwner is empty'),
-        expect.stringContaining('has no closed public error inventory'),
-        expect.stringContaining('has no URL contract descriptor'),
-        expect.stringContaining('current method is GET, expected POST'),
+        expect.stringContaining('does not export a parity shard'),
+        expect.stringContaining('evidence 0 has an invalid phase'),
+        expect.stringContaining('has no valid operation descriptor'),
       ]),
+    );
+  });
+
+  test('discovers wrappers globally, tolerates deletion, and exposes I/O failures', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'ai-usage-parity-discovery-'));
+    temporaryDirectories.push(root);
+    const source = path.join(root, 'apps/web/src');
+    const nested = path.join(source, 'nested');
+    const renderFile = path.join(source, 'dashboard-metrics.render.test.tsx');
+    await mkdir(nested, { recursive: true });
+    await Promise.all([
+      writeFile(path.join(source, 'first.ts'), "export const first = createServerFn({ method: 'GET' });\n"),
+      writeFile(path.join(nested, 'second.tsx'), "export const second = createServerFn({ method: 'POST' });\n"),
+      writeFile(path.join(nested, 'ignored.test.ts'), "export const ignored = createServerFn({ method: 'GET' });\n"),
+      writeFile(renderFile, '// frozen render suite\n'),
+    ]);
+
+    expect([...(await discoverServerOperations(root)).keys()]).toEqual(['op:first', 'op:second']);
+    expect([...(await discoverRenderSuites(root)).keys()]).toEqual([
+      'render:apps/web/src/dashboard-metrics.render.test.tsx',
+    ]);
+    await rm(renderFile);
+    expect((await discoverRenderSuites(root)).size).toBe(0);
+    const failure = (code: string) => Object.assign(new Error(code), { code });
+    expect(await fileExists('missing', () => Promise.reject(failure('ENOENT')))).toBe(false);
+    await expect(fileExists('denied', () => Promise.reject(failure('EACCES')))).rejects.toThrow(
+      'Unable to inspect denied.',
     );
   });
 

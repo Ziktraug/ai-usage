@@ -21,6 +21,9 @@ export const TYPECHECK_PROJECTS = [
   'tsconfig.tools.json',
 ] as const;
 
+const SUPPLEMENTAL_TYPECHECK_CONFIG = 'tsconfig.tools.json';
+export const SUPPLEMENTAL_TYPECHECK_PREFIXES = ['apps/web/migration-parity/'] as const;
+
 const formatHost: ts.FormatDiagnosticsHost = {
   getCanonicalFileName: (fileName) => fileName,
   getCurrentDirectory: ts.sys.getCurrentDirectory,
@@ -41,6 +44,9 @@ export const filterExistingRepositoryFiles = (
   fileExists: (fileName: string) => boolean = ts.sys.fileExists,
 ): string[] => repositoryFiles.filter((fileName) => fileExists(path.resolve(root, fileName)));
 
+export const selectSupplementalTypeScriptFiles = (repositoryFiles: readonly string[]): string[] =>
+  repositoryFiles.filter((fileName) => SUPPLEMENTAL_TYPECHECK_PREFIXES.some((prefix) => fileName.startsWith(prefix)));
+
 export const listRepositoryTypeScriptFiles = (root: string): string[] => {
   const result = Bun.spawnSync({
     cmd: ['git', 'ls-files', '--cached', '--others', '--exclude-standard', '--', '*.ts', '*.tsx'],
@@ -53,7 +59,11 @@ export const listRepositoryTypeScriptFiles = (root: string): string[] => {
   return filterExistingRepositoryFiles(root, repositoryFiles);
 };
 
-export const listTypeScriptProjectFiles = (root: string, projectConfigs: readonly string[]): Set<string> => {
+export const listTypeScriptProjectFiles = (
+  root: string,
+  projectConfigs: readonly string[],
+  supplementalFiles: readonly string[] = [],
+): Set<string> => {
   const projectFiles = new Set<string>();
 
   for (const projectConfig of projectConfigs) {
@@ -72,11 +82,21 @@ export const listTypeScriptProjectFiles = (root: string, projectConfigs: readonl
     if (parsedConfig.errors.length > 0) {
       throw new Error(ts.formatDiagnostics(parsedConfig.errors, formatHost));
     }
+    const supplementalRootNames =
+      projectConfig === SUPPLEMENTAL_TYPECHECK_CONFIG
+        ? supplementalFiles.map((fileName) => path.resolve(root, fileName))
+        : [];
     const program = ts.createProgram({
       options: parsedConfig.options,
       ...(parsedConfig.projectReferences === undefined ? {} : { projectReferences: parsedConfig.projectReferences }),
-      rootNames: parsedConfig.fileNames,
+      rootNames: [...new Set([...parsedConfig.fileNames, ...supplementalRootNames])],
     });
+    if (supplementalRootNames.length > 0) {
+      const diagnostics = ts.getPreEmitDiagnostics(program);
+      if (diagnostics.length > 0) {
+        throw new Error(ts.formatDiagnostics(diagnostics, formatHost));
+      }
+    }
     for (const sourceFile of program.getSourceFiles()) {
       const fileName = sourceFile.fileName;
       const relativePath = normalizeRelativePath(root, fileName);
@@ -92,8 +112,14 @@ export const listTypeScriptProjectFiles = (root: string, projectConfigs: readonl
 export const collectUncoveredTypeScriptFiles = (
   root: string,
   projectConfigs: readonly string[] = TYPECHECK_PROJECTS,
-): string[] =>
-  findUncoveredTypeScriptFiles(listRepositoryTypeScriptFiles(root), listTypeScriptProjectFiles(root, projectConfigs));
+): string[] => {
+  const repositoryFiles = listRepositoryTypeScriptFiles(root);
+  const supplementalFiles = selectSupplementalTypeScriptFiles(repositoryFiles);
+  return findUncoveredTypeScriptFiles(
+    repositoryFiles,
+    listTypeScriptProjectFiles(root, projectConfigs, supplementalFiles),
+  );
+};
 
 if (import.meta.main) {
   const uncoveredFiles = collectUncoveredTypeScriptFiles(process.cwd());

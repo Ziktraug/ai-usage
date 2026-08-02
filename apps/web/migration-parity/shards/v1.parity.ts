@@ -94,7 +94,7 @@ export default defineParityShard({
         currentMethod: 'POST',
         implementationOwner:
           'apps/web/src/server/provider-quota-resolver.server.ts#resolveProviderQuotaHistoryForServer',
-        publicErrors: ['InvalidInput', 'Unavailable'],
+        publicErrors: ['ForbiddenDemo', 'InvalidInput', 'Unavailable'],
         target: 'quota.history',
         transport: 'query',
       },

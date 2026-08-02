@@ -1,17 +1,17 @@
 import {
-  type EvidenceKind,
   type OperationDescriptor,
   type PacketId,
+  type ParityEvidenceInput,
   type ParityKind,
   type ParityRecord,
+  parityEvidence,
   type UrlContractDescriptor,
-  waveZeroEvidence,
 } from './schema';
 
 const whitespacePattern = /\s+/u;
 export interface CurrentRecordSpec {
   currentOwner: string;
-  evidence?: readonly { kind: EvidenceKind; reference: string }[];
+  evidence?: readonly ParityEvidenceInput[];
   id: string;
   kind: ParityKind;
   operation?: OperationDescriptor;
@@ -20,9 +20,7 @@ export interface CurrentRecordSpec {
 
 export const currentRecord = (targetOwner: PacketId, spec: CurrentRecordSpec): ParityRecord => ({
   currentOwner: spec.currentOwner,
-  evidence: (spec.evidence ?? [{ kind: 'source', reference: spec.currentOwner }]).map(({ kind, reference }) =>
-    waveZeroEvidence(kind, reference),
-  ),
+  evidence: (spec.evidence ?? [{ kind: 'source', reference: spec.currentOwner }]).map(parityEvidence),
   id: spec.id,
   kind: spec.kind,
   ...(spec.operation === undefined ? {} : { operation: spec.operation }),
