@@ -12,9 +12,9 @@ authority for feature, operation, design, source-file, and test-title coverage.
 - Planning PR: `#26`, squash-merged as
   `2183270ebfbb886fafa7e6268893122db9b364c0`
 - `BASE_SHA`: `2183270ebfbb886fafa7e6268893122db9b364c0`
-- Current integration checkpoint: `ee9a24e`
+- Current integration checkpoint: `3ed2259`
 - Last reviewed green checkpoint: `ee9a24e`
-- Next dispatch base: `ee9a24e` (V0 and D0 after the F0 acceptance ledger commit)
+- Active V0/D0 dispatch base: `3ed2259`
 - Implementation PR: not opened
 - Exclusive process-test token: free after the complete F0 tool-lifecycle gate
 
@@ -119,7 +119,7 @@ Statuses are `BLOCKED`, `READY`, `IMPLEMENTING`, `REVIEW`, `REWORK`,
 | B1 | B0 | INTEGRATED | `2613d9b`, `175e2d0`, `cd90bce`, `4348a2e1138a98a9dfd19b8de9bd3d839e3dc77e` | `/root/b1_final_review` / ACCEPT | `5f43d59` |
 | B2 | B0 | INTEGRATED | `416ed3befda96e101763f129ddd32151a12f6ed2`, `f9fa43e3abff4ec14107cdd16272597e9bc8dc46` | `/root/b2_re_review` / ACCEPT | `28d2f42` |
 | F0 | B1, B2 | INTEGRATED | `dd1469a`, `ee9a24e` | `/root/f0_final_review` / ACCEPT; Vite seam: `/root/b2_re_review` / ACCEPT | `ee9a24e` |
-| V0 | F0 | READY | - | - | - |
+| V0 | F0 | IMPLEMENTING | - | - | - |
 | V1 | V0 | BLOCKED | - | - | - |
 | V2 | V0 | BLOCKED | - | - | - |
 | V3 | V0 | BLOCKED | - | - | - |
@@ -129,7 +129,7 @@ Statuses are `BLOCKED`, `READY`, `IMPLEMENTING`, `REVIEW`, `REWORK`,
 | Q1 | Q0 | BLOCKED | - | - | - |
 | Q2 | Q0 | BLOCKED | - | - | - |
 | Q3 | Q1, Q2 | BLOCKED | - | - | - |
-| D0 | F0 | READY | - | - | - |
+| D0 | F0 | IMPLEMENTING | - | - | - |
 | D1 | D0 | BLOCKED | - | - | - |
 | D2 | D0 | BLOCKED | - | - | - |
 | D3 | D0 | BLOCKED | - | - | - |
@@ -369,8 +369,13 @@ required axes and returned ACCEPT. Its 41 focused tests / 50 assertions, public-
 export, relative-path, package-boundary, diff-cleanliness, leakage and tracked-
 generated-output checks passed. The reviewer confirmed no product, transport,
 served-revision, writer, privacy or route behavior changed and retained only the
-X1 deletion obligations for the exact-pinned Solid Vite wrapper. F0 is integrated;
-V0 and D0 are ready.
+X1 deletion obligations for the exact-pinned Solid Vite wrapper. F0 is integrated. V0 and D0 were dispatched concurrently from `3ed2259`
+to local-only isolated worktrees `/tmp/ai-usage-068-v0` and
+`/tmp/ai-usage-068-d0`. Their mandatory cards freeze exact parity shards,
+non-overlapping write sets, coordinator hot-file denylists, scoped gates and
+handoffs. Neither worker owns the exclusive process-test token. A separate
+read-only audit is preparing the V1-V4 interface maps without starting a
+dependent packet.
 
 ## Deviations, STOPs, and recovery
 
