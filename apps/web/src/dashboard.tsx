@@ -65,7 +65,11 @@ import { createDashboardServedReportSession } from './dashboard-served-report-se
 import { createDashboardSessionSelection } from './dashboard-session-selection';
 import { type DateBounds, shiftCalendarDays, startOfDay, toDateInputValue } from './date-range';
 import { createDateRangeController } from './date-range-controller';
-import { createFocusedReportStore, createServedFocusedReportSource } from './focused-report-client';
+import {
+  createFocusedReportStore,
+  createServedFocusedReportSource,
+  type FocusedReportBootstrapDescriptor,
+} from './focused-report-client';
 import { createFocusedReportE2EFixture } from './focused-report-e2e-fixture';
 import {
   type MachineFreshnessSnapshot,
@@ -108,11 +112,13 @@ export const Dashboard = (props: {
   quotaSource?: ProviderQuotaSource;
   runtimeMode?: RuntimeMode;
   servedBootstrap?: FocusedSupportResult;
+  servedBootstrapDescriptor?: FocusedReportBootstrapDescriptor;
 }) => {
   const sourceControl = useSourceControl();
   const runtimeMode = props.runtimeMode ?? 'live';
   const focusedFixture = runtimeMode === 'e2e' ? createFocusedReportE2EFixture() : undefined;
-  const servedBootstrap = props.servedBootstrap ?? focusedFixture?.bootstrap;
+  const servedBootstrap =
+    props.servedBootstrapDescriptor?.bootstrap ?? props.servedBootstrap ?? focusedFixture?.bootstrap;
   const initialPayload =
     props.initialPayload ??
     (servedBootstrap ? payloadForFocusedBootstrap(servedBootstrap) : toWebReportPayload(demoReportPayload));
@@ -432,7 +438,12 @@ export const Dashboard = (props: {
   };
   const servedReportSession =
     focusedSource && focusedStore && sessionQueryCoordinator
-      ? createDashboardServedReportSession({ focusedSource, focusedStore, sessionCoordinator: sessionQueryCoordinator })
+      ? createDashboardServedReportSession({
+          focusedSource,
+          focusedStore,
+          ...(props.servedBootstrapDescriptor ? { initialDescriptor: props.servedBootstrapDescriptor } : {}),
+          sessionCoordinator: sessionQueryCoordinator,
+        })
       : undefined;
   const destinationScope = createMemo<DashboardReportDestinationScope | undefined>(() => {
     if (!(focusedStore && servedReportSession)) {

@@ -1,6 +1,10 @@
 import type { FocusedSupportResult } from '@ai-usage/report-core/focused-report-query';
 import { getBrowserRuntimeMode } from './browser-runtime-mode';
-import { createServedFocusedReportSource, fetchFocusedReportBootstrap } from './focused-report-client';
+import {
+  createServedFocusedReportSource,
+  type FocusedReportBootstrapDescriptor,
+  fetchFocusedReportBootstrapDescriptor,
+} from './focused-report-client';
 import { type MachineFreshnessSnapshot, machineFreshnessSnapshotFromFocused } from './manual-transfer-model';
 import { demoReportPayload } from './report-data';
 import type { RuntimeMode } from './runtime-mode';
@@ -21,7 +25,12 @@ export const machineFreshnessSnapshotFromBootstrap = (bootstrap: FocusedSupportR
 
 export type ReportLoaderData =
   | { kind: 'payload'; machineFreshness: MachineFreshnessSnapshot; mode: 'demo' | 'e2e'; payload: WebReportPayload }
-  | { bootstrap: FocusedSupportResult; kind: 'served'; machineFreshness: MachineFreshnessSnapshot; mode: 'live' };
+  | {
+      bootstrapDescriptor: FocusedReportBootstrapDescriptor;
+      kind: 'served';
+      machineFreshness: MachineFreshnessSnapshot;
+      mode: 'live';
+    };
 
 export const loadReportRouteData = async (mode: RuntimeMode = getBrowserRuntimeMode()): Promise<ReportLoaderData> => {
   if (mode === 'demo' || mode === 'e2e') {
@@ -37,11 +46,11 @@ export const loadReportRouteData = async (mode: RuntimeMode = getBrowserRuntimeM
     return { kind: 'payload', machineFreshness: syntheticMachineFreshness, mode, payload: demoWebReportPayload };
   }
 
-  const bootstrap = await fetchFocusedReportBootstrap(createServedFocusedReportSource());
+  const bootstrapDescriptor = await fetchFocusedReportBootstrapDescriptor(createServedFocusedReportSource());
   return {
-    bootstrap,
+    bootstrapDescriptor,
     kind: 'served',
-    machineFreshness: machineFreshnessSnapshotFromBootstrap(bootstrap),
+    machineFreshness: machineFreshnessSnapshotFromBootstrap(bootstrapDescriptor.bootstrap),
     mode,
   };
 };

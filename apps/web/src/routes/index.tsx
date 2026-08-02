@@ -119,7 +119,7 @@ const LoadedReport = (props: { data: ReportLoaderData }) => {
       {...campaignLabelProps}
       machineFreshness={props.data.machineFreshness}
       runtimeMode={props.data.mode}
-      servedBootstrap={props.data.bootstrap}
+      servedBootstrapDescriptor={props.data.bootstrapDescriptor}
     />
   );
 };

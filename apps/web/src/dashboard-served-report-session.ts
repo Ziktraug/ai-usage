@@ -13,6 +13,7 @@ import {
 import { sessionQueryFingerprint } from '@ai-usage/report-core/session-query';
 import { batch } from 'solid-js';
 import {
+  type FocusedReportBootstrapDescriptor,
   type FocusedReportSource,
   type FocusedReportStore,
   FocusedRevisionExpiredError,
@@ -102,14 +103,20 @@ const destinationFingerprint = (destination: DashboardServedDestination): string
 export const createDashboardServedReportSession = (options: {
   focusedSource: FocusedReportSource;
   focusedStore: FocusedReportStore;
+  initialDescriptor?: FocusedReportBootstrapDescriptor;
   sessionCoordinator: SessionQueryCoordinator;
-}): ServedReportSession<DashboardServedDestination, DashboardServedRevisionDescriptor> =>
-  createServedReportSession<
+}): ServedReportSession<DashboardServedDestination, DashboardServedRevisionDescriptor> => {
+  let initialDescriptor = options.initialDescriptor;
+  return createServedReportSession<
     DashboardServedDestination,
     DashboardPreparedDestination,
     DashboardServedRevisionDescriptor
   >({
-    acquire: async () => await fetchFocusedReportBootstrapDescriptor(options.focusedSource),
+    acquire: async () => {
+      const descriptor = initialDescriptor;
+      initialDescriptor = undefined;
+      return descriptor ?? (await fetchFocusedReportBootstrapDescriptor(options.focusedSource));
+    },
     commit: (prepared, descriptor, destination) => {
       const overviewDestination = { kind: 'overview' as const, ...prepared.overview };
       const overviewValidation = options.focusedStore.canCommitRevision(descriptor.bootstrap, overviewDestination);
@@ -194,3 +201,4 @@ export const createDashboardServedReportSession = (options: {
       };
     },
   });
+};
