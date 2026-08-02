@@ -6,6 +6,7 @@ import {
   createUsageReportPayload,
   deserializeProjectedUsageRow,
   deserializeUsageRow,
+  type ProjectedUsageRow,
   type SerializedRow,
   type UsageReportPayload,
   type UsageReportProjectGroup,
@@ -106,14 +107,14 @@ const selectWarnings = (warnings: readonly UsageReportWarning[], selection: Usag
 
 const filteredProjectGroups = (
   groups: readonly UsageReportProjectGroup[] | undefined,
-  rows: readonly Row[],
+  rows: readonly ProjectedUsageRow[],
 ): UsageReportProjectGroup[] | undefined => {
   if (!groups) {
     return;
   }
-  const rowsByGroup = new Map<string, Row[]>();
+  const rowsByGroup = new Map<string, ProjectedUsageRow[]>();
   for (const row of rows) {
-    const groupId = (row as Row & { readonly projectGroupId?: string }).projectGroupId;
+    const groupId = row.projectGroupId;
     if (!groupId) {
       continue;
     }
@@ -127,9 +128,9 @@ const filteredProjectGroups = (
       if (groupRows.length === 0) {
         return [];
       }
-      const sourceRows = new Map<string, Row[]>();
+      const sourceRows = new Map<string, ProjectedUsageRow[]>();
       for (const row of groupRows) {
-        const sourceId = (row as Row & { readonly projectSourceId?: string }).projectSourceId;
+        const sourceId = row.projectSourceId;
         if (!sourceId) {
           continue;
         }

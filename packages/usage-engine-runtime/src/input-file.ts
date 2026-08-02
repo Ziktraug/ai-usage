@@ -3,7 +3,7 @@ import { constants, type Stats } from 'node:fs';
 import { type FileHandle, lstat, mkdir, open, opendir, realpath, rename, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import type { UsageEngineFileInput } from '@ai-usage/usage-engine-control';
-import { readOpenedFileBounded } from './read-opened-file';
+import { readOpenedFileBounded } from '@ai-usage/usage-engine-control/node';
 
 const CURSOR_EXPORT_MAX_BYTES = 64 * 1024 * 1024;
 const PRIVATE_DIRECTORY_MODE = 0o700;

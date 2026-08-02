@@ -235,3 +235,6 @@ export const loadUsageEngineRendezvous = async (filePath: string): Promise<Usage
     await file.close().catch(() => undefined);
   }
 };
+
+export { readOpenedFileBounded } from './read-opened-file';
+export { resolveUsageRuntimePaths, type UsageRuntimePaths } from './runtime-paths';

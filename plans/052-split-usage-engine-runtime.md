@@ -68,7 +68,7 @@ outputs, and make one process the only durable-data writer.
 | Data plane | Web and CLI query the durable SQLite database directly. There is no report/session/quota data API in the engine. |
 | Reader safety | Reader connections open existing files read-only, set `PRAGMA query_only = ON`, use a finite busy timeout, validate schema compatibility, and keep transactions bounded and short. |
 | Served revisions | Replace immutable JSON/SQLite artifact directories with append-only, revision-keyed served projection tables in the durable database. The engine inserts a complete revision and advances the current pointer in one transaction. |
-| Exact-revision semantics | Every report manifest and focused query names one opaque revision. A query either reads that complete revision or returns the existing typed unavailable/expired result. It never falls through to current data. |
+| Exact-revision semantics | Every report manifest and focused query names one opaque revision. A query either reads that complete revision or returns the existing typed unavailable/expired result. It never falls through to current data. The current complete revision remains readable after its TTL while it is still current so engine downtime does not erase the last compatible publication; once superseded, its expiry is enforced normally. |
 | Control plane | Use a minimal authenticated loopback HTTP control plane: bounded JSON commands/status plus bounded SSE events. It carries no report rows, pages, details, quota history, or other read-model payloads. |
 | Discovery and trust | The engine binds only numeric `127.0.0.1` on an ephemeral or explicitly configured port. It atomically publishes an owner-only rendezvous file containing protocol version, instance identity, port, and a random bearer token. |
 | Writer exclusion | A separate owner-only engine lock at `<canonical-database-path>.engine.lock` permits one durable writer for that SQLite store. The canonical identity is the real existing database path, or the real parent plus basename before first creation; the independently configurable state/rendezvous directory never scopes writer exclusion. Lock metadata binds the database identity and publishing state directory so stale recovery can revalidate PID/process identity and rendezvous ownership; it never blindly deletes a live lock. |
@@ -129,8 +129,9 @@ Preserve these already-accepted guarantees while changing their owner:
   cancellation, and non-destructive disable/failure behavior from plans 022-024;
 - semantic store generations and unchanged-capture publication skipping from
   plan 017;
-- browser-side exact-revision retry, same-revision no-op, expiry, and
-  supersession behavior from plan 018;
+- browser-side exact-revision retry, same-revision no-op, and supersession
+  behavior from plan 018; expiry applies to superseded revisions, while the
+  current complete revision remains readable until replacement;
 - the one exact-revision execute/parse/validate lifecycle from plan 044, with
   its transport changed from copied artifact subprocesses to direct read-only
   SQLite;
@@ -278,8 +279,8 @@ temporary home and explicit database/rendezvous paths.
   generated/runtime paths from triggering HMR, and regression-testing
   concurrent dev/build behavior.
 - Safe startup scavenging of only ai-usage-owned legacy temporary revision/lease
-  directories after strict identity, ownership, symlink, age, and liveness
-  checks.
+  directories whose names match the exact six-character `mkdtemp` suffix
+  format, after strict identity, ownership, symlink, age, and liveness checks.
 - Package-boundary enforcement, architecture/public-interface documentation,
   and ADR updates that supersede only the old process/file placement.
 
@@ -419,9 +420,10 @@ revision A never observes B.
    other usage-store/config mutations through engine commands. Preserve stale
    confirmation, file bounds, atomic config writes, and publication.
 6. Recover incomplete revisions and legacy temp artifacts. Scavenge only exact
-   prefixes owned by current UID, below expected temp root, beyond the grace
-   period, with no symlink/special file or live validated owner. Log counts and
-   bytes only; skip/report suspicious entries.
+   legacy `mkdtemp` names with their six-character generated suffix, owned by
+   current UID, below expected temp root, beyond the grace period, with no
+   symlink/special file or live validated owner. A longer or otherwise free-form
+   suffix is suspicious and must be preserved. Log counts and bytes only.
 7. Compose engine wide events with surface `engine`, without tokens, raw paths,
    row content, or duplicate source events.
 
@@ -452,8 +454,9 @@ collection after disposal.
    load production reader/control modules.
 
 **Verify**: web tests pass with engine available, engine stopped after publish,
-no store, protocol mismatch, and expired revision. Static checks find no writer,
-engine-runtime, source adapter, temp revision lease, or artifact runner in web.
+no store, protocol mismatch, an expired superseded revision, and a current
+revision beyond its TTL. Static checks find no writer, engine-runtime, source
+adapter, temp revision lease, or artifact runner in web.
 
 ### Step 5: Make CLI a reader plus bounded engine client
 

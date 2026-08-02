@@ -37,10 +37,10 @@ describe('legacy runtime artifact recovery', () => {
     expect(isTrustedUsageEngineTemporaryRoot({ mode: 0o777, uid: 0 }, 1000)).toBe(false);
   });
 
-  test('deletes only old exact-prefix owned trees and reports aggregate counts and bytes', async () => {
+  test('deletes only old legacy mkdtemp trees and reports aggregate counts and bytes', async () => {
     const root = await createFixture();
-    const lease = await oldArtifact(root, 'ai-usage-session-query-lease-owned', '12345');
-    const revisions = await oldArtifact(root, 'ai-usage-report-revisions-owned', '1234567');
+    const lease = await oldArtifact(root, 'ai-usage-session-query-lease-a1B2c3', '12345');
+    const revisions = await oldArtifact(root, 'ai-usage-report-revisions-X9y8Z7', '1234567');
     const unrelated = await oldArtifact(root, 'ai-usage-other-owned', 'must stay');
     const result = await scavengeLegacyUsageEngineArtifacts({ gracePeriodMs: 60_000, now: NOW, temporaryRoot: root });
 
@@ -48,6 +48,18 @@ describe('legacy runtime artifact recovery', () => {
     await expect(Bun.file(lease).exists()).resolves.toBe(false);
     await expect(Bun.file(revisions).exists()).resolves.toBe(false);
     expect(await readFile(path.join(unrelated, 'artifact.bin'), 'utf8')).toBe('must stay');
+  });
+
+  test('preserves old owner-only directories whose names were not produced by legacy mkdtemp', async () => {
+    const root = await createFixture();
+    const unrelatedLease = await oldArtifact(root, 'ai-usage-session-query-lease-personal-backup');
+    const unrelatedRevisions = await oldArtifact(root, 'ai-usage-report-revisions-owned');
+
+    const result = await scavengeLegacyUsageEngineArtifacts({ gracePeriodMs: 60_000, now: NOW, temporaryRoot: root });
+
+    expect(result).toEqual({ deletedBytes: 0, deletedEntries: 0, deletedRoots: 0, skippedSuspicious: 2 });
+    await expect(Bun.file(path.join(unrelatedLease, 'artifact.bin')).exists()).resolves.toBe(true);
+    await expect(Bun.file(path.join(unrelatedRevisions, 'artifact.bin')).exists()).resolves.toBe(true);
   });
 
   test('skips recent, symlink-containing, and live-owned candidates without exposing their paths', async () => {

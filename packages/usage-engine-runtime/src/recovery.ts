@@ -2,9 +2,10 @@ import { randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
 import { lstat, open, opendir, realpath, rename, rm } from 'node:fs/promises';
 import path from 'node:path';
-import { readOpenedFileBounded } from './read-opened-file';
+import { readOpenedFileBounded } from '@ai-usage/usage-engine-control/node';
 
 const LEGACY_ARTIFACT_PREFIXES = ['ai-usage-report-revisions-', 'ai-usage-session-query-lease-'] as const;
+const LEGACY_MKDTEMP_SUFFIX_PATTERN = /^[A-Za-z0-9]{6}$/;
 const OWNER_FILE_NAME = '.owner.json';
 const MAX_OWNER_BYTES = 1024;
 const MAX_SCAVENGE_ENTRIES = 100_000;
@@ -241,8 +242,11 @@ const inspectTree = async (rootPath: string): Promise<InspectedTree> => {
   };
 };
 
-const isLegacyArtifactName = (name: string): boolean =>
-  LEGACY_ARTIFACT_PREFIXES.some((prefix) => name.startsWith(prefix) && name.length > prefix.length);
+const legacyArtifactPrefixFor = (name: string): (typeof LEGACY_ARTIFACT_PREFIXES)[number] | undefined =>
+  LEGACY_ARTIFACT_PREFIXES.find((prefix) => name.startsWith(prefix));
+
+const isLegacyArtifactName = (name: string, prefix: (typeof LEGACY_ARTIFACT_PREFIXES)[number]): boolean =>
+  LEGACY_MKDTEMP_SUFFIX_PATTERN.test(name.slice(prefix.length));
 
 const canonicalTemporaryRoot = async (temporaryRootValue: string): Promise<string> => {
   const temporaryRoot = path.resolve(temporaryRootValue);
@@ -292,7 +296,12 @@ export const scavengeLegacyUsageEngineArtifacts = async ({
       skippedSuspicious += 1;
       break;
     }
-    if (!isLegacyArtifactName(entry.name)) {
+    const legacyPrefix = legacyArtifactPrefixFor(entry.name);
+    if (!legacyPrefix) {
+      continue;
+    }
+    if (!isLegacyArtifactName(entry.name, legacyPrefix)) {
+      skippedSuspicious += 1;
       continue;
     }
     const candidatePath = path.join(temporaryRoot, entry.name);

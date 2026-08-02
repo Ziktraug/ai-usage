@@ -44,6 +44,6 @@ describe('usage web runtime paths', () => {
       resolveUsageWebRuntimePaths({
         env: { AI_USAGE_HOME: '/isolated/home', AI_USAGE_ROOT_DIR: 'relative-config' },
       }),
-    ).toThrow('Usage web config root must be an absolute path.');
+    ).toThrow('Usage config root must be an absolute path.');
   });
 });

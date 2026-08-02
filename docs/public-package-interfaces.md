@@ -136,7 +136,9 @@ There is deliberately no root export.
 - `./handoff`: bounded byte staging, fsync, owner-only/no-follow inbox files,
   opaque handoff identifiers, and cleanup. The engine independently revalidates
   and consumes the file; this seam never parses/imports the document.
-- `./node`: owner-only/no-follow rendezvous parsing and fixed loopback origin.
+- `./node`: owner-only/no-follow rendezvous parsing, fixed loopback origin,
+  bounded opened-file reads, and the shared engine/Web/CLI runtime-target path
+  resolver.
 - `./testing`: parser-backed in-memory client for tests/fixtures only.
 
 The protocol surface carries commands, status, and bounded events only. It must

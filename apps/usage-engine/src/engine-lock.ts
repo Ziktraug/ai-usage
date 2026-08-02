@@ -4,8 +4,7 @@ import { chmod, link, lstat, mkdir, open, opendir, realpath, rename, unlink } fr
 import os from 'node:os';
 import path from 'node:path';
 import { parseUsageEngineInstanceId, type UsageEngineInstanceId } from '@ai-usage/usage-engine-control';
-import { loadUsageEngineRendezvous } from '@ai-usage/usage-engine-control/node';
-import { readOpenedFileBounded } from './read-opened-file';
+import { loadUsageEngineRendezvous, readOpenedFileBounded } from '@ai-usage/usage-engine-control/node';
 
 const LOCK_FILE_SUFFIX = '.engine.lock';
 const RENDEZVOUS_FILE_NAME = 'rendezvous.json';
@@ -1163,129 +1162,181 @@ const recoverStaleLock = async (
   return claim;
 };
 
+type LockFile = Awaited<ReturnType<typeof open>>;
+
+interface PreparedLock {
+  readonly file: LockFile;
+  readonly identity: FileIdentity;
+  readonly temporaryPath: string;
+}
+
+interface LockPublicationFaults {
+  readonly afterPublishedLockRollbackAbsent?: ((lockPath: string) => Promise<void>) | undefined;
+  readonly afterRecoveredLockLinked?: ((lockPath: string) => Promise<void>) | undefined;
+  readonly beforePublishedLockRollbackInspection?: ((lockPath: string) => Promise<void>) | undefined;
+  readonly beforeRecoveredLockPublication?: (() => Promise<void>) | undefined;
+}
+
+const serializeLockMetadata = (lockPath: string, metadata: UsageEngineLockMetadata): string => {
+  const serializedMetadata = `${JSON.stringify(metadata)}\n`;
+  if (Buffer.byteLength(serializedMetadata, 'utf8') > MAX_LOCK_METADATA_BYTES) {
+    throw new Error(`Usage engine lock metadata exceeds its byte limit: ${lockPath}`);
+  }
+  return serializedMetadata;
+};
+
+const prepareTemporaryLock = async (
+  directory: ValidatedStateDirectory,
+  serializedMetadata: string,
+): Promise<PreparedLock> => {
+  const temporaryPath = path.join(directory.path, `.ai-usage-engine-lock-${process.pid}-${randomUUID()}.tmp`);
+  let file: LockFile | undefined;
+  try {
+    file = await open(temporaryPath, 'wx+', 0o600);
+    await file.writeFile(serializedMetadata, 'utf8');
+    await file.sync();
+    const identity = await file.stat();
+    if (
+      !identity.isFile() ||
+      identity.nlink !== 1 ||
+      identity.size <= 0 ||
+      identity.size > MAX_LOCK_METADATA_BYTES ||
+      !hasCurrentOwner(identity.uid) ||
+      !isOwnerOnly(identity.mode)
+    ) {
+      throw new Error(`Usage engine lock temporary file is unsafe: ${temporaryPath}`);
+    }
+    return { file, identity, temporaryPath };
+  } catch (error) {
+    await file?.close().catch(() => undefined);
+    await unlink(temporaryPath).catch(() => undefined);
+    throw error;
+  }
+};
+
+const discardPreparedLock = async ({ file, temporaryPath }: PreparedLock): Promise<void> => {
+  await file.close().catch(() => undefined);
+  await unlink(temporaryPath).catch(() => undefined);
+};
+
+const validatePublishedLock = async (lockPath: string, prepared: PreparedLock): Promise<Stats> => {
+  const finalIdentity = await lstat(lockPath);
+  if (
+    !finalIdentity.isFile() ||
+    finalIdentity.isSymbolicLink() ||
+    finalIdentity.nlink !== 1 ||
+    !sameIdentity(prepared.identity, finalIdentity) ||
+    !hasCurrentOwner(finalIdentity.uid) ||
+    !isOwnerOnly(finalIdentity.mode)
+  ) {
+    throw new Error(`Usage engine lock changed during publication: ${lockPath}`);
+  }
+  return finalIdentity;
+};
+
+const rollBackPublishedLock = async (
+  lockPath: string,
+  identity: FileIdentity,
+  error: unknown,
+  faults: LockPublicationFaults,
+): Promise<void> => {
+  if (await removeLockIfUnchanged(lockPath, identity)) {
+    return;
+  }
+  let unresolvedFinal: Stats | undefined;
+  try {
+    await faults.beforePublishedLockRollbackInspection?.(lockPath);
+    unresolvedFinal = await lstat(lockPath);
+  } catch (inspectionError) {
+    if (!errorHasCode(inspectionError, 'ENOENT')) {
+      throw new UnprovenPublishedLockRollbackError(
+        [error, inspectionError],
+        'Usage engine lock publication rollback could not be proven.',
+      );
+    }
+  }
+  if (unresolvedFinal) {
+    throw new UnprovenPublishedLockRollbackError(
+      [error, new Error(`Usage engine published lock changed before rollback: ${lockPath}`)],
+      'Usage engine lock publication rollback could not be proven.',
+    );
+  }
+  await faults.afterPublishedLockRollbackAbsent?.(lockPath);
+};
+
+const hasRecoveryClaims = async (
+  lockPath: string,
+  directory: ValidatedStateDirectory,
+  databasePath: string,
+): Promise<boolean> => (await listRecoveryClaims(lockPath, directory, databasePath)).length > 0;
+
+const recoverLockClaim = async (
+  lockPath: string,
+  directory: ValidatedStateDirectory,
+  databasePath: string,
+  ownIntent: AcquisitionIntent,
+): Promise<RecoveryClaim | undefined> =>
+  await recoverStaleLock(lockPath, directory, databasePath, ownIntent.owner, ownIntent);
+
 const publishLock = async (
   lockPath: string,
   directory: ValidatedStateDirectory,
   databasePath: string,
   metadata: UsageEngineLockMetadata,
   ownIntent: AcquisitionIntent,
-  beforeRecoveredLockPublication?: () => Promise<void>,
-  afterRecoveredLockLinked?: (lockPath: string) => Promise<void>,
-  beforePublishedLockRollbackInspection?: (lockPath: string) => Promise<void>,
-  afterPublishedLockRollbackAbsent?: (lockPath: string) => Promise<void>,
-): Promise<{ readonly file: Awaited<ReturnType<typeof open>>; readonly identity: FileIdentity }> => {
-  const serializedMetadata = `${JSON.stringify(metadata)}\n`;
-  if (Buffer.byteLength(serializedMetadata, 'utf8') > MAX_LOCK_METADATA_BYTES) {
-    throw new Error(`Usage engine lock metadata exceeds its byte limit: ${lockPath}`);
-  }
+  faults: LockPublicationFaults,
+): Promise<{ readonly file: LockFile; readonly identity: FileIdentity }> => {
+  const serializedMetadata = serializeLockMetadata(lockPath, metadata);
   await scavengeAbandonedLockTemporaryFiles(directory);
   await scavengeAbandonedAcquisitionIntents(lockPath, directory, ownIntent);
   let recoveryClaim: RecoveryClaim | undefined;
-  const acceptRecoveryClaim = async (claim: RecoveryClaim | undefined): Promise<RecoveryClaim | undefined> => {
-    recoveryClaim = claim;
-    if (claim) {
-      await beforeRecoveredLockPublication?.();
-    }
-    return recoveryClaim;
-  };
   try {
     for (let attempt = 0; attempt < LOCK_ACQUISITION_ATTEMPTS; attempt += 1) {
       await assertStateDirectoryUnchanged(directory);
-      if (!recoveryClaim && (await listRecoveryClaims(lockPath, directory, databasePath)).length > 0) {
-        recoveryClaim = await acceptRecoveryClaim(
-          await recoverStaleLock(lockPath, directory, databasePath, ownIntent.owner, ownIntent),
-        );
+      if (!recoveryClaim && (await hasRecoveryClaims(lockPath, directory, databasePath))) {
+        recoveryClaim = await recoverLockClaim(lockPath, directory, databasePath, ownIntent);
+        if (recoveryClaim) {
+          await faults.beforeRecoveredLockPublication?.();
+        }
         if (!recoveryClaim) {
           await Bun.sleep(LOCK_RECOVERY_POLL_MS);
           continue;
         }
       }
-      const temporaryPath = path.join(directory.path, `.ai-usage-engine-lock-${process.pid}-${randomUUID()}.tmp`);
-      let lockFile: Awaited<ReturnType<typeof open>> | undefined;
-      let temporaryIdentity: FileIdentity | undefined;
-      try {
-        lockFile = await open(temporaryPath, 'wx+', 0o600);
-        await lockFile.writeFile(serializedMetadata, 'utf8');
-        await lockFile.sync();
-        const prepared = await lockFile.stat();
-        if (
-          !prepared.isFile() ||
-          prepared.nlink !== 1 ||
-          prepared.size <= 0 ||
-          prepared.size > MAX_LOCK_METADATA_BYTES ||
-          !hasCurrentOwner(prepared.uid) ||
-          !isOwnerOnly(prepared.mode)
-        ) {
-          throw new Error(`Usage engine lock temporary file is unsafe: ${temporaryPath}`);
-        }
-        temporaryIdentity = prepared;
-      } catch (error) {
-        await lockFile?.close().catch(() => undefined);
-        await unlink(temporaryPath).catch(() => undefined);
-        throw error;
-      }
+      const prepared = await prepareTemporaryLock(directory, serializedMetadata);
       let published = false;
       try {
         await assertStateDirectoryUnchanged(directory);
-        if (!recoveryClaim && (await listRecoveryClaims(lockPath, directory, databasePath)).length > 0) {
-          await lockFile.close().catch(() => undefined);
-          await unlink(temporaryPath).catch(() => undefined);
-          recoveryClaim = await acceptRecoveryClaim(
-            await recoverStaleLock(lockPath, directory, databasePath, ownIntent.owner, ownIntent),
-          );
+        if (!recoveryClaim && (await hasRecoveryClaims(lockPath, directory, databasePath))) {
+          await discardPreparedLock(prepared);
+          recoveryClaim = await recoverLockClaim(lockPath, directory, databasePath, ownIntent);
+          if (recoveryClaim) {
+            await faults.beforeRecoveredLockPublication?.();
+          }
           if (!recoveryClaim) {
             await Bun.sleep(LOCK_RECOVERY_POLL_MS);
           }
           continue;
         }
-        await link(temporaryPath, lockPath);
+        await link(prepared.temporaryPath, lockPath);
         published = true;
         if (recoveryClaim) {
-          await afterRecoveredLockLinked?.(lockPath);
+          await faults.afterRecoveredLockLinked?.(lockPath);
         }
-        await unlink(temporaryPath).catch((error: unknown) => {
+        await unlink(prepared.temporaryPath).catch((error: unknown) => {
           if (!errorHasCode(error, 'ENOENT')) {
             throw error;
           }
         });
-        const finalIdentity = await lstat(lockPath);
-        if (
-          !finalIdentity.isFile() ||
-          finalIdentity.isSymbolicLink() ||
-          finalIdentity.nlink !== 1 ||
-          !sameIdentity(temporaryIdentity, finalIdentity) ||
-          !hasCurrentOwner(finalIdentity.uid) ||
-          !isOwnerOnly(finalIdentity.mode)
-        ) {
-          throw new Error(`Usage engine lock changed during publication: ${lockPath}`);
-        }
+        const finalIdentity = await validatePublishedLock(lockPath, prepared);
         if (recoveryClaim && !(await removePrivateFileIfUnchanged(recoveryClaim.path, recoveryClaim.identity))) {
           throw new Error(`Usage engine lock recovery claim changed before completion: ${recoveryClaim.path}`);
         }
-        return { file: lockFile, identity: finalIdentity };
+        return { file: prepared.file, identity: finalIdentity };
       } catch (error) {
-        await lockFile.close().catch(() => undefined);
-        await unlink(temporaryPath).catch(() => undefined);
-        if (published && temporaryIdentity && !(await removeLockIfUnchanged(lockPath, temporaryIdentity))) {
-          let unresolvedFinal: Stats | undefined;
-          try {
-            await beforePublishedLockRollbackInspection?.(lockPath);
-            unresolvedFinal = await lstat(lockPath);
-          } catch (inspectionError) {
-            if (!errorHasCode(inspectionError, 'ENOENT')) {
-              throw new UnprovenPublishedLockRollbackError(
-                [error, inspectionError],
-                'Usage engine lock publication rollback could not be proven.',
-              );
-            }
-          }
-          if (unresolvedFinal) {
-            throw new UnprovenPublishedLockRollbackError(
-              [error, new Error(`Usage engine published lock changed before rollback: ${lockPath}`)],
-              'Usage engine lock publication rollback could not be proven.',
-            );
-          }
-          await afterPublishedLockRollbackAbsent?.(lockPath);
+        await discardPreparedLock(prepared);
+        if (published) {
+          await rollBackPublishedLock(lockPath, prepared.identity, error, faults);
         }
         if (!errorHasCode(error, 'EEXIST')) {
           throw error;
@@ -1296,9 +1347,10 @@ const publishLock = async (
           }
           recoveryClaim = undefined;
         }
-        recoveryClaim = await acceptRecoveryClaim(
-          await recoverStaleLock(lockPath, directory, databasePath, ownIntent.owner, ownIntent),
-        );
+        recoveryClaim = await recoverLockClaim(lockPath, directory, databasePath, ownIntent);
+        if (recoveryClaim) {
+          await faults.beforeRecoveredLockPublication?.();
+        }
       }
     }
   } catch (error) {
@@ -1426,17 +1478,12 @@ export const acquireUsageEngineLock = async ({
         throw new Error(`Usage engine orphan rendezvous was preserved: ${stateDirectory.path}`);
       }
     }
-    acquired = await publishLock(
-      lockPath,
-      target.directory,
-      target.databasePath,
-      metadata,
-      ownIntent,
-      beforeRecoveredLockPublication,
+    acquired = await publishLock(lockPath, target.directory, target.databasePath, metadata, ownIntent, {
+      afterPublishedLockRollbackAbsent,
       afterRecoveredLockLinked,
       beforePublishedLockRollbackInspection,
-      afterPublishedLockRollbackAbsent,
-    );
+      beforeRecoveredLockPublication,
+    });
   } catch (error) {
     if (!(await removePrivateFileIfUnchanged(ownIntent.path, ownIntent.identity))) {
       throw new AggregateError(

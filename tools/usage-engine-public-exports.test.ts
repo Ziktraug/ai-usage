@@ -14,6 +14,8 @@ import {
   assertUsageEngineRendezvousTarget,
   parseUsageEngineRendezvous,
   parseUsageEngineTargetId,
+  readOpenedFileBounded,
+  resolveUsageRuntimePaths,
   usageEngineTargetIdFor,
 } from '@ai-usage/usage-engine-control/node';
 import { createInMemoryUsageEngineControlClient } from '@ai-usage/usage-engine-control/testing';
@@ -70,6 +72,8 @@ describe('usage engine public package exports', () => {
     expect(parseUsageEngineTargetId).toBeFunction();
     expect(usageEngineTargetIdFor).toBeFunction();
     expect(assertUsageEngineRendezvousTarget).toBeFunction();
+    expect(readOpenedFileBounded).toBeFunction();
+    expect(resolveUsageRuntimePaths).toBeFunction();
     expect(createInMemoryUsageEngineControlClient).toBeFunction();
     expect(defineUsageEngineRuntimeFactory).toBeFunction();
     expect(queryReportRows).toBeFunction();

@@ -25,6 +25,10 @@ projections directly from SQLite; a minimal authenticated loopback API carries
 commands, status, and bounded events only. It is an intentional big-bang
 cutover and also owns the measured revision-lease and concurrent dev/build I/O
 regressions.
+Plan 053 records the post-cutover runtime review at `d9cc99c`: polling ownership
+and the data-plane split are correct, but control failure classification, SSE
+failure visibility, deferred cleanup diagnostics, snapshot waiting, and manual
+merge ownership need a focused hardening pass.
 
 ## Execution order & status
 
@@ -79,6 +83,7 @@ regressions.
 | 050 | Make the E2E Gate Deterministic | P0 | S | - | DONE |
 | 051 | Allow Local Campaign Label Overrides | P3 | M | 045 | TODO |
 | 052 | Split the Usage Engine From the Web and CLI Runtimes | P0 | XL | 022-024, 043-044 | DONE |
+| 053 | Close the Post-Cutover Usage-Engine Runtime Review Gaps | P1 | L | 052 | TODO |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) |
 REJECTED (with one-line rationale).
@@ -226,6 +231,11 @@ REJECTED (with one-line rationale).
   API, dual writer, or compatibility scheduler. Its wave 0 output isolation is
   independent and must land in the same cutover because the measured `.output`
   deletion loop is not fixed merely by moving collection.
+- Plan 053 hardens plan 052 without reopening its architecture. It preserves
+  the engine as sole writer and sole provider-usage poller, keeps the existing
+  five-minute `codex.usage-limits` cadence, and adds no data API. Execute it only
+  after the active runtime-path consolidation has landed, because both touch
+  engine lock/input/runtime files and must not share a moving worktree.
 - Plan 036 adds Effect-native wide-event observability without an OTLP exporter
   so operators can see what Effect boundaries do, especially collectors:
   business outcome, duration, measured hops, and allowlisted local context. The
