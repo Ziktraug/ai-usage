@@ -1,13 +1,16 @@
 # Plan 068: Migrate Web to SvelteKit with contract-first oRPC
 
 > **Executor instructions**: Read this plan completely before editing code.
-> Execute the waves in order, run every wave gate, and keep each wave reviewable.
-> Do not weaken an invariant to make a framework integration pass. If a STOP
-> condition occurs, stop and report it instead of improvising. Update the status
-> row in `plans/README.md` only after the final gate passes.
+> One coordinator owns the integration branch and schedules the autonomous work
+> packets below from their dependency graph. Waves are convergence milestones,
+> not worker assignments: independent packets may run concurrently, but a wave
+> gate is evaluated only on the integrated branch. Do not weaken an invariant to
+> make a framework integration pass. If a STOP condition occurs, stop and report
+> it instead of improvising. Only the coordinator updates this plan or the status
+> row in `plans/README.md`, and only after the final gate passes.
 >
 > **Drift check (run first)**:
-> `git diff --stat b8a3aad..HEAD -- apps/web packages/design-system tools package.json turbo.json docs/adr docs/architecture.md`
+> `git diff --stat b8a3aad..HEAD -- apps/web packages/design-system packages/web-contract tools package.json bun.lock turbo.json docs/adr docs/architecture.md`
 > This plan is based on the usage-engine runtime split at `b8a3aad`. If a
 > current-state path or excerpt below has changed, reconcile the affected wave
 > against the live code before implementation. A changed transport wrapper is
@@ -17,13 +20,14 @@
 ## Status
 
 - **Priority**: P1
-- **Effort**: L (multi-PR program)
+- **Effort**: XL (single-PR, multi-agent program)
 - **Risk**: HIGH
 - **Depends on**: plans 066 and 067 (both DONE)
 - **Category**: migration, tech-debt, performance, tests, dx
 - **Planned at**: commit `b8a3aad`, 2026-08-02
-- **State**: DRAFT — architectural direction is locked; adapter/version pins are
-  intentionally resolved by Wave 1 against the then-current ecosystem.
+- **State**: READY FOR ORCHESTRATED EXECUTION after the entry gate below. The
+  architecture and execution topology are locked; adapter/version pins are
+  intentionally resolved by packet B2 against the then-current ecosystem.
 
 ## Why this matters
 
@@ -91,6 +95,7 @@ When this program is complete:
 | URL state | Preserve shareable dashboard query strings, canonical defaults and legacy values. URL state remains framework-neutral. |
 | Design system | Preserve Panda tokens, recipes, CSS and semantic classes. Port interactive primitives to `@ark-ui/svelte` or native semantic HTML without changing a11y contracts. |
 | Migration shape | Introduce oRPC and explicit query ownership on Solid first, build a SvelteKit shadow entry in the same package, then cut over atomically. |
+| Delivery shape | One coordinator-owned integration branch, isolated local packet worktrees, no packet PRs, and exactly one final implementation PR after the final local integrated gate. |
 | Product behavior | This is not a redesign. Routes, deep links, keyboard behavior, responsive layout, demo privacy and local trust remain stable. |
 
 ## Architectural boundary
@@ -491,8 +496,10 @@ The Solid render suites
 assertions move to Svelte SSR/render or focused Playwright tests; they are not
 discarded merely because the renderer changed.
 
-Wave 0 creates `apps/web/migration-parity.ts` (or a tool-owned JSON/TS fixture)
-with stable feature IDs, current test titles and target gates. Wave 12 fails if:
+Wave 0 creates the schema/checker plus domain shards under
+`apps/web/migration-parity/` (or an equivalent tool-owned data path), with stable
+feature IDs, current test titles and target gates. The coordinator owns schema
+and aggregation; family packets own only their assigned shard. Wave 12 fails if:
 
 - a feature ID has no passing Svelte evidence;
 - a current E2E test title was deleted without an explicit replacement ID;
@@ -508,26 +515,34 @@ with stable feature IDs, current test titles and target gates. Wave 12 fails if:
 packages/web-contract/
   src/contract.ts                 # contract composition only
   src/errors.ts                   # closed public errors
-  src/report.ts                   # report/session schemas
+  src/report.ts                   # report/campaign/quota schemas
+  src/session.ts                  # exact-revision Session schemas
   src/skills.ts                   # Skills schemas
   src/control.ts                  # browser-facing command contracts
   src/sync.ts                     # JSON metadata only
   src/*.test.ts
 
 apps/web/src/lib/
+  foundation/                     # framework-neutral navigation/table/lifecycle seams
   rpc/client.ts                   # browser client factory, contract only
   query/client.ts                 # scoped QueryClient factory
-  query/keys.ts
   query/policies.ts
-  query/options/*.ts
-  report/served-report-session.ts
-  url/dashboard-search.ts
-  components/**/*.svelte
+  query/options/report.ts
+  query/options/session.ts
+  query/options/skills.ts
+  query/options/sync.ts
+  features/shell/**/*.svelte
+  features/report/**/*.{ts,svelte}
+  features/sessions/**/*.{ts,svelte}
+  features/skills/**/*.{ts,svelte}
+  features/sources/**/*.{ts,svelte}
+  features/sync/**/*.{ts,svelte}
 
 apps/web/src/lib/server/
   rpc/context.ts                  # request-scoped capabilities
   rpc/router.ts                   # contract implementation composition
   rpc/report.ts
+  rpc/session.ts
   rpc/skills.ts
   rpc/control.ts
   rpc/quota.ts
@@ -614,6 +629,7 @@ Global QueryClient rules:
 | Browser | `bun run test:e2e` | all pass |
 | Demo privacy | `bun run test:e2e-demo` | all pass without local-data access |
 | Production browser | `bun run test:e2e-production` | report and Session scale pass |
+| Session benchmark | `bun run --cwd apps/web benchmark:session-scroll` | production scroll samples pass within recorded budgets |
 | Production lifecycle | `bun run test:web-production` | engine/Web start/stop cleanly |
 | Dev/build isolation | `bun run test:web-dev-build-isolation` | outputs do not collide |
 | Setup | `bun run test:setup-loopback` | passes |
@@ -652,21 +668,430 @@ state.
 - Moving Skills into the usage-engine plane.
 - Shipping two production Web apps or permanent Solid compatibility.
 
+## Autonomous single-PR execution protocol
+
+The implementation is delivered as **exactly one implementation PR**. A single
+implementation PR does not mean one commit, one worktree or linear work. It
+means one coordinator owns one integration branch while autonomous workers
+produce reviewed local commits from isolated worktrees. Packet branches are
+never pushed and never receive PRs.
+
+This planning PR is not the implementation PR. After the runtime-split branch
+and this plan are merged, packet B0 creates the implementation branch from the
+then-approved `origin/main`. The coordinator opens exactly one implementation PR
+only after packet X2's local clean-worktree gate and independent `ACCEPT`.
+Opening that PR triggers its CI; plan 068 becomes DONE only after that CI is
+green and any CI-driven fix has been re-reviewed.
+
+### Entry gate
+
+Before dispatching any implementation packet, the coordinator must:
+
+1. Confirm plans 066/067 and this plan are present in `origin/main` and record
+   the exact `BASE_SHA` in `plans/068-execution-state.md`.
+2. Run the complete current Solid verification commands from a clean worktree.
+   The base must be green. In particular, the currently observed undeclared
+   `port` error in `tools/measure-usage-runtime-io.ts` must be fixed upstream or
+   absent after reconciliation; it is not an allowlisted migration failure.
+3. Re-run the drift check against `BASE_SHA`, reconcile path/test/operation
+   inventory changes, and STOP on any changed served-revision, direct-read,
+   sole-writer, trust or demo-privacy invariant.
+4. Create one local integration branch named
+   `agent/migrate-web-sveltekit-orpc`. Only the coordinator may check it out,
+   merge into it, rebase it, push it or open its PR.
+5. Create `plans/068-execution-state.md` with the base SHA, integration HEAD,
+   frozen decisions, packet states, worker/reviewer commit SHAs, accepted gates,
+   deviations and current integration checkpoint. This is execution evidence,
+   not a substitute for the machine-readable parity ledger.
+6. Confirm each worker can create an isolated worktree with its own temporary
+   home, store, ports, logs, rendezvous and build-output paths.
+
+No packet may start from the historical `b8a3aad` automatically. It starts from
+the exact compatible integration checkpoint named in its dispatch card.
+
+### Roles and scheduler
+
+**Coordinator/integrator**:
+
+- owns the integration branch, execution state, dependency scheduler, shared
+  files and exclusive process-test lane;
+- freezes interfaces before fan-out, creates packet dispatch cards, reviews
+  scope and cherry-picks only accepted commits;
+- performs all composition, dependency/lockfile changes, generated-file updates,
+  old-code deletion and GitHub actions;
+- never rewrites a worker's domain implementation while integrating it. A
+  semantic conflict returns to the worker on a fresh checkpoint.
+
+**Implementer**:
+
+- works only in the packet worktree and path/symbol allowlist;
+- reads this complete plan plus its dispatch card, implements tests with code,
+  commits atomically and returns the handoff contract below;
+- never edits coordinator-owned files, updates the global ledger schema/aggregate
+  outside its assigned family shard, weakens a gate, merges/rebases the
+  integration branch, pushes or opens a PR.
+
+**Independent reviewer**:
+
+- did not implement the packet and reviews `packetBase..packetHead` read-only;
+- separately checks parity/spec and code quality/seam discipline;
+- returns `ACCEPT`, `REWORK` or `STOP` with exact file/symbol evidence. `REWORK`
+  returns to the original implementer; the reviewer does not silently fix it.
+
+Use all available child slots for ready implementation packets. Do not reserve a
+reviewer permanently: as packets finish, use idle agents for circular cross-
+review while other lanes continue. Reviews take scheduling priority when two
+accepted-but-unreviewed packets are queued, preventing a large unverified merge
+batch. The coordinator remains available for integration, interface decisions
+and user-visible progress.
+
+### Worktree and commit protocol
+
+For packet `<ID>` at checkpoint `<SHA>`:
+
+1. The coordinator creates branch `agent/068-<id>-<slug>` and an isolated
+   worktree from `<SHA>`; the branch is local-only.
+2. The dispatch card freezes dependencies, interfaces, parity IDs, allowed paths,
+   forbidden paths, commands and STOP conditions. An agent may not infer broader
+   authority from this program plan.
+3. The worker adds before removing. Solid remains authoritative until the
+   packet's convergence owner switches its assigned interface.
+4. The worker commits one logical change per independently reviewable outcome.
+   Generated output, package-manager caches and build artefacts are excluded.
+5. A different agent reviews the commit range. The original worker performs any
+   rework in the same worktree and returns a new head SHA.
+6. The coordinator confirms the changed-path allowlist, reruns the packet gate,
+   cherry-picks the accepted commits in DAG order and records them in execution
+   state.
+7. If cherry-pick has a semantic conflict, abort it and create a new packet
+   worktree from the latest compatible checkpoint, then reapply/rework the
+   commits there. The coordinator may resolve only mechanical composition-file
+   conflicts. A generated-file conflict is resolved by regenerating from its
+   accepted sources, never by editing conflict markers manually.
+
+The coordinator may push only the integration branch at reviewed green
+checkpoints as a backup. No PR is opened at those checkpoints. Exactly one
+implementation PR is opened after X2's local gate; worker branches are never
+pushed. Its CI is the post-open final gate.
+
+### Mandatory packet dispatch card
+
+Every worker prompt must contain all of these fields; a missing field means the
+packet is not ready to dispatch:
+
+| Field | Required content |
+| --- | --- |
+| Identity | packet ID/title, implementer role, risk and expected maximum size |
+| Base | exact integration `baseSha`, prerequisites already integrated and drift command limited to owned paths |
+| Parity | feature/operation/design/test IDs the packet must satisfy; no unscoped “port this feature” |
+| Frozen inputs | exact upstream interfaces, decisions and files to consume without modifying |
+| Write set | exclusive allowed paths and any symbol-level restriction in otherwise shared files |
+| Denylist | coordinator/shared files and adjacent domains that must not change |
+| Deliverables | named modules, adapters, tests and evidence the packet returns |
+| Gates | exact targeted commands and expected exit/result, including write-set and bundle-boundary checks |
+| STOP | packet-specific false assumptions, interface changes, invariant failures and two-attempt limit |
+| Handoff | required commit SHAs, changed paths, parity evidence, test results, dependency/config requests and residual risks |
+
+The worker's final handoff uses this exact shape:
+
+```text
+Packet: <ID>
+Base: <SHA>
+Commits: <SHA...>
+Changed paths: <list>
+Parity IDs/evidence: <ID -> test/command>
+Commands: <command -> result>
+Requested integration deltas: <none or precise manifest/config/composition change>
+Deviations/risks: <none or precise STOP/review item>
+```
+
+### Coordinator-owned hot files
+
+These paths serialize the program. Feature workers request a precise integration
+delta rather than editing them. A foundation packet may own one only where its
+register row names that exact responsibility; after that packet converges, the
+path returns to coordinator ownership:
+
+| Area | Coordinator-only paths/responsibility |
+| --- | --- |
+| Workspace/dependencies | root `package.json`, `bun.lock`, `turbo.json`, root TypeScript/Biome/Lefthook/CI configuration; all dependency/version updates |
+| Web runtime | `apps/web/package.json`, `apps/web/tsconfig*.json`, `apps/web/svelte.config.*`, `apps/web/vite.config.ts`, `apps/web/panda.config.ts`, `apps/web/start.mjs`, `apps/web/vite-{production-build,output-paths,warmup}*` |
+| SvelteKit composition | `apps/web/src/app.d.ts`, `apps/web/src/hooks.server.ts`, root `routes/+layout*`, `routes/+error.svelte`, root `routes/+page*` and global providers |
+| RPC composition | `apps/web/src/lib/server/rpc/context.ts`, `router.ts` and `/rpc/[...rest]/+server.ts`; V0 temporarily owns the pure request-policy schema/matrix, V5 owns its composition |
+| Contract composition | `packages/web-contract/package.json`, root export map and `src/contract.ts`; V1–V4 own only disjoint family leaves, V5 owns composition |
+| Query composition | Q0 temporarily owns `lib/query/client.ts`, common key/policy vocabulary and pure harness; Q3 owns provider/root wiring and aggregate invalidation composition; family option files remain family-owned |
+| Design public surface | `packages/design-system/package.json`, `src/index.ts`, `src/report.ts` and final `/solid`/`/svelte` export-map changes; D0 temporarily owns `src/preset.ts`, `preset.test.ts`, passive style modules and its CSS harness, while D4 owns public composition |
+| Tests/harnesses | Playwright configs/helpers/production server, `dashboard.spec.ts`, `production-report.spec.ts`, accessibility, demo privacy, audit-performance, visual regression and snapshots |
+| Generated/global evidence | `routeTree.gen.ts` until deletion and generated manifests; B1 temporarily owns parity schema/aggregator/checker and ADR 0010, while plan/execution state/README/architecture remain coordinator-owned |
+| Cutover | root scripts, old TSX/server-function/runtime deletion, Solid/Nitro dependency removal, final lockfile and docs |
+
+Only the coordinator runs an installation that may modify manifests or
+`bun.lock`; those changes land in the same checkpoint. Workers may run only
+`bun install --frozen-lockfile` when an isolated worktree needs dependencies.
+Never use `bun update` during this program.
+
+Never edit `routeTree.gen.ts`, generated Panda `styled-system`, `.svelte-kit`,
+Turbo caches or build outputs manually. Extend the architecture scanners to
+`.svelte` in B1/F0; otherwise the migration could reintroduce the client/server
+leaks it is intended to eliminate.
+
+### Parallel ownership seams
+
+Feature and family modules live behind small interfaces. Route files, the oRPC
+router, contract composition and providers assemble them; they do not contain
+their implementation. The target write-set prefixes are:
+
+```text
+packages/web-contract/src/
+  report*.ts                 # report/campaign/project-group/quota contract owner
+  session*.ts                # Session contract owner
+  skills*.ts                 # Skills contract owner
+  control*.ts, sync*.ts      # Sources/control/Sync contract owner
+
+apps/web/src/lib/
+  foundation/                # framework-neutral navigation/table/lifecycle seams
+  rpc/                       # browser adapter; composition coordinator-owned
+  query/options/             # one directly imported file per family
+  server/rpc/                # one implementation leaf per contract family
+  features/
+    shell/
+    report/
+    sessions/
+    skills/
+    sources/
+    sync/
+
+packages/design-system/src/svelte/
+  passive/
+  controls/
+  overlays/
+  compound/
+```
+
+Do not add feature barrels. Import the exact module needed. Each feature exposes
+one narrow page/destination module interface for coordinator-owned route/shell
+composition. Deep server modules under `apps/web/src/server/*.server.ts` remain
+implementation owners; RPC leaves adapt their interfaces and do not copy SQL,
+filesystem or domain workflows.
+
+Before UI fan-out, F0 removes only structural framework types that can be shared
+without the new transport/cache existing: dashboard search/sort/navigation
+intent, table sorting/visibility/updater shapes and subscription primitives.
+Report lifecycle moves behind its Svelte seam in P1, Session selection in P4,
+and the shared Skills controller in P5 after their V/Q dependencies exist. P4 alone
+owns `dashboard-session-selection` and its new adapter; P3 exposes only table,
+query and row-identity interfaces. P5 alone owns the shared Skills
+route/snapshot/query controller; P9 owns only editor/draft adaptation and a
+blocker integration request. Solid and Svelte adapters then exercise the same
+seam. This is justified by two real adapters during migration; do not create
+ports around code with only one implementation.
+
+### Machine ledger sharding
+
+The parity ledger must not become a concurrent-edit bottleneck:
+
+- B1 owns its schema, checker and read-only aggregate.
+- Each packet owns one shard under
+  `apps/web/migration-parity/<packet-or-family>.ts` (or equivalent tool-owned
+  data path) and may update only its assigned IDs/evidence. Parallel design and
+  Skills packets therefore use separate shards rather than sharing one family
+  file.
+- The aggregate is generated or composed deterministically without a hand-edited
+  barrel. The coordinator alone changes the schema, ID assignment or reviewed
+  removal records.
+- The checker fails on duplicate IDs, missing current inventory, evidence for a
+  non-integrated commit, or an agent editing another family's shard.
+
+### Quality and test lanes
+
+Every packet receives independent review before integration. Review has two
+separate verdicts:
+
+1. **Parity/spec** — assigned IDs, behavior, errors, lifecycle and test intent
+   match this plan.
+2. **Code quality/seams** — explicit client/server graph, deep-module ownership,
+   injected dependencies, cleanup/cancellation, SSR isolation and maintainable
+   Svelte code match repository standards.
+
+For `COORDINATOR` packets, “before integration” means before accepting the new
+checkpoint or dispatching any dependent packet: the coordinator commits a
+bounded range on the integration branch, a different agent reviews that range,
+the coordinator performs any rework, and the same independent verdict is
+required again. Being already present on the integration branch does not waive
+packet review.
+
+Packet worktrees run only deterministic scoped gates:
+
+- changed-path allowlist and `git diff --check`;
+- targeted Ultracite/Biome check without unrelated formatting;
+- unit/contract/render tests named in the packet;
+- affected workspace typecheck/`svelte-check` and shadow build when applicable;
+- assigned parity shard and client/server graph checks;
+- no unexpected generated, manifest or lockfile changes.
+
+After each accepted cherry-pick or coordinator packet, the coordinator runs repository architecture
+lint, aggregate parity check, affected workspace tests/typecheck and the shadow
+build. At B1, B2, F0, V5, Q3, D4, R1, X0, X1 and X2 checkpoints, run
+`bun run check`, `bun run lint`, `bun run typecheck`, `bun run test` and
+`bun run build`, plus the integrated browser subset named by that checkpoint.
+
+One coordinator-managed **exclusive process-test token** serializes suites that
+share authoritative scripts, ports, process trees, outputs or expensive browser
+state. Workers do not run these concurrently unless the dispatch card supplies
+proven isolated ports/outputs:
+
+- complete Playwright functional, Axe and visual suites;
+- demo privacy and production report/Session scale;
+- Web production lifecycle, dev/build isolation and setup loopback;
+- long SSE, bundle/manifest, heap, request/timing and startup measurements.
+
+At final PR time, split `.github/workflows/pr-checks.yml` into independently
+parallel jobs for static/types, unit/build, lifecycle (including
+`test:web-dev-build-isolation`), functional E2E and demo/production E2E while
+preserving every current command and artifact. Cache only paths proven safe;
+the deliberately uncached Web production build must remain uncached. This may
+not remove a check, change test semantics or hide a failure behind
+`continue-on-error`.
+
+For optional remote feedback before the PR exists, the coordinator may push a
+green integration checkpoint and start the existing `workflow_dispatch` at that
+exact ref. This never authorizes a worker push or an intermediate PR.
+
+### Failure and rework policy
+
+- An allowlist violation or unapproved interface change is `REWORK`, even if the
+  implementation appears correct.
+- A semantic cherry-pick conflict, changed upstream interface or stale base
+  causes redispatch from the latest compatible checkpoint, not improvised
+  integration.
+- One flaky-looking failure may be rerun once for classification. Never add
+  `.skip`, weaken an assertion, increase a timeout without measurement or accept
+  a red-baseline delta.
+- A packet failing the same invariant twice reaches its packet/program STOP
+  condition. Independent lanes may continue only if they do not depend on it.
+- Integration regressions remove the offending packet from the queue and return
+  it to its owner; do not stack unrelated fixes on top of a red checkpoint.
+
+Before X2, fetch `origin/main`. If it differs from B0's base, the coordinator
+alone rebases/reconciles the integration branch, updates every rewritten SHA in
+execution state, redispatches semantic conflicts to their owners, and reruns X1
+plus the full gates. The cold reviewer uses the resulting final merge-base.
+Fetch again immediately before opening the PR: any new relevant `main` change
+invalidates the previous `ACCEPT`. If `main` advances after the PR opens, repeat
+the affected full gates and X2 review before merge; never rely only on GitHub's
+mergeability flag.
+
+## Work-packet dependency graph
+
+The scheduler dispatches packets, not whole waves. `COORDINATOR` packets are
+serialized on the integration worktree. All other ready packets use isolated
+worktrees and independent review.
+
+```text
+B0 ──┬── B1 ──┐
+     └── B2 ──┴── F0 ──┬── V0 ──┬── V1 ──┐
+                       │        ├── V2 ──┤
+                       │        ├── V3 ──┼── V5 ── Q0 ──┬── Q1 ──┐
+                       │        └── V4 ──┘               └── Q2 ──┴── Q3
+                       │
+                       └── D0 ──┬── D1 ──┐
+                                ├── D2 ──┼── D4
+                                └── D3 ──┘
+
+F0 + V5 + Q3 + D4 ── R0 ── R1
+
+R1 ──┬── P1 ──┬── P2 ──────────────┐
+     │        ├── P8 ──────────────┤
+     │        └── P3 ── P4 ───────┤
+     ├── P5 ──┬── P9 ─────────────┤
+     │        └── P10 ────────────┤
+     ├── P6 ──────────────────────┼── X0 ── X1 ── X2
+     └── P7 ──────────────────────┘
+```
+
+Critical-path packets receive the first free worker. Remaining slots take ready
+design or feature packets. With three child slots, V1/V2/V3 are the first large
+cohort; after R1, P1/P5/P6 can run while P7 takes the next slot, followed by
+P2/P3/P8 and P9/P10 as their shallow prerequisites finish. Review reuses those
+same agents in a circle instead of dedicating one slot permanently to review.
+
+### Packet register
+
+| ID | Owner/dependencies | Exclusive deliverable and parity ownership | Integrated gate / STOP focus |
+| --- | --- | --- | --- |
+| B0 Lock execution base | **COORDINATOR**, none | Entry gate, integration branch, execution state, exact baseline SHA, dispatch/denylist mechanics | Current Solid full suite green; STOP on red base or invariant drift |
+| B1 Freeze parity and budgets | B0 | Wave 0 characterization, ledger schema/shards/checker, 30-op and test inventory, performance baseline, `.svelte` graph-scanner coverage | 100% current features/ops/TSX/design/tests owned; demo negative gates and reproducible budgets |
+| B2 Resolve runtime ecosystem | B0 | Disposable Wave 1 adapter/version/oRPC/Query/Ark/Panda spike and lifecycle decision; no production app port | SSR, illegal import, abort, >30s SSE, clean shutdown/output; STOP if neither adapter passes |
+| F0 Freeze shared foundations | **COORDINATOR**, B1+B2 | Dependency/lockfile checkpoint, Svelte shadow skeleton, target directories, structural navigation/table/subscription types, composition stubs and frozen public conventions; add `.svelte-kit` to `.gitignore`/recursive-scanner ignores and generated-tooling ownership docs | Solid remains green; shadow build/typecheck/boundary fixtures green; clean `git status` has no generated output and no unresolved downstream choice |
+| V0 Contract/request-policy kernel | F0 | Pure errors/schema conventions, request-policy interface/matrix and contract tests; no family procedures | Contract closure has no server imports; method/trust/CSRF/body/error policies mechanically testable |
+| V1 Report/campaign/quota vertical | V0 | Assigned report/campaign/project-group/quota contracts, RPC leaves, handler tests and Solid client adapters | Assigned operations mapped; exact/current semantics, typed errors and no deep-logic copy |
+| V2 Session vertical | V0 | Session page/children/neighbors/detail/VCS contracts, RPC leaves, tests and Solid adapters | Exact revision/fingerprint/abort/supersession gates; no table/UI work |
+| V3 Skills vertical | V0 | Skills contracts, RPC leaves, tests and Solid adapters | Filesystem authority, dirty/conflict semantics and demo acquisition isolation |
+| V4 Control/Sources/Sync vertical | V0 | Sync/control RPC metadata, policy classification, Solid callers and temporary Nitro adapters only; freeze final SvelteKit endpoint interfaces for P6/P7 | Trust/CSRF/byte/path/abort; no file bytes or SSE hidden in RPC and no final SvelteKit endpoint leaf |
+| V5 Transport convergence | **COORDINATOR**, V1+V2+V3+V4 | Compose contract/router/context/Nitro handler, apply request policy globally, switch Solid callers, retire serverFn wrappers at 30/30 | Solid unit/demo/production gates through oRPC; no serverFn/warmup or policy bypass |
+| Q0 Query core | V5 | Exclusive temporary ownership of `lib/query/client.ts`, common key/policy vocabulary, hydration/dehydration seam and framework-neutral cache test harness | No global client/default infinite stale; concurrent request isolation and abort proof |
+| Q1 Report/Session/quota policies | Q0 | Family keys/options, exact/current invalidation, retained-data SWR and bounded GC | No duplicate bootstrap, immutable refetch or publication-wide invalidation |
+| Q2 Skills/Sync policies | Q0 | Skills markdown/snapshot and Sync fleet keys/options/mutation cache updates | Independent finite SWR; dirty buffers stay client state; smallest-key updates |
+| Q3 Query convergence | **COORDINATOR**, Q1+Q2 | Provider/composition, publication mapping and integrated network-count/cache/heap gates | Query ownership matrix complete; unrelated invalidation count is zero |
+| D0 Neutral design foundation | F0 | Exclusive temporary ownership of `preset.ts`, `preset.test.ts`, passive style modules and normalized CSS comparison harness; no public root exports/manifest | No unexplained token/class/CSS loss; no Svelte/Solid runtime in passive closure |
+| D1 Basic Svelte controls | D0 | Toggle, HarnessBadge, Checkbox, MetricTile and SegmentBar Svelte modules/tests/fixture consumers | Controlled state, propagation, semantic/accessibility and render parity |
+| D2 Overlay Svelte controls | D0 | Tooltip, Popover and Drawer Svelte modules/tests/fixture consumers | Portal, focus, Escape, outside interaction, lazy mount and cleanup parity |
+| D3 Compound Svelte controls | D0 | Tabs, SegmentedControl and MultiSelect Svelte modules/tests/fixture consumers | Keyboard, hidden input, open-state, focus/tabindex and selection parity |
+| D4 Design convergence | **COORDINATOR**, D1+D2+D3 | Public `/svelte`/temporary `/solid` exports, dependency-closure test, fixture consumers and CSS/token aggregate; no application shell/theme/navigation | Solid and shadow fixtures green; Svelte closure cannot reach Solid/Ark Solid |
+| R0 URL/navigation adapters | F0+V5+Q3+D4 | Framework-neutral URL/history intent plus Svelte navigation, scroll, error-retry and dirty-blocker adapters under `lib/foundation/navigation/svelte/**`; no route/layout files | Direct/reload/deep-link/history/scroll/blocker adapter tests; no application composition |
+| R1 Routes and application shell | **COORDINATOR**, R0 | SvelteKit route skeletons, thin page composition, `features/shell`, theme bootstrap/nav, error/404, global providers and demo hook | Direct/reload/deep-link/history/scroll/error/demo/a11y shell matrix green |
+| P1 Report SSR/lifecycle | R1+V1+V2+Q1+D4 | `features/report/core/**` and `features/report/lifecycle/**`: bootstrap/status/workspace and ServedReportSession rune adapter; root-page integration requested, not edited | Meaningful HTML, one bootstrap, expiry/supersession/atomic acceptance and no global loading replacement |
+| P2 Overview/range/charts | P1 | `features/report/overview/**` and `features/report/range/**`: metrics, provider status, time controls, timeline, heatmap and Punchcard plus assigned specs | Presentation/value/range/keyboard/a11y/geometry gates; no Breakdown/filter/actions files |
+| P3 Sessions table | P1+V2+Q1+D4 | `features/sessions/table/**`: schema adapter, paging, campaign expansion, virtualization and responsive projections | 25 columns/presets and 5,000-row DOM/heap/network/keyboard budgets |
+| P4 Session drawer/analysis | P3 | `features/sessions/detail/**`: Drawer selection/navigation/detail/VCS/chronology/multi-harness analysis modules | Focus/Escape/history/neighbors/abort and recorded/partial/unavailable trust semantics |
+| P5 Skills shell/SSR | R1+V3+Q2+D4 | `features/skills/shell/**`, tree/workspace/Inspector composition interface, SSR data adapter and Skills route-leaf request; editor/health/matrix are slots | Settled SSR, no duplicate load, nested selection/responsive shell and demo acquisition isolation |
+| P6 Sources/SSE | R1+V4+Q2+D4+B2 | `features/sources`, final explicit Svelte EventSource owner and SvelteKit endpoint leaves in Sources-owned prefixes; shared shell summary requested | Snapshot/replay/heartbeat/reconnect/abort/backpressure, sanitized state and no Query ownership |
+| P7 Sync/files/observability | R1+V4+Q2+D4 | `features/sync`, fleet UI, final SvelteKit manual-transfer endpoints and Web observability leaves in Sync-owned prefixes | Byte/path/trust/opaque-ID/cleanup and single-init/teardown gates |
+| P8 Breakdown/filters/actions | P1 | `features/report/breakdown/**` and `features/report/actions/**`: filters, grouping, breakdown, labels, CSV/share and quota plus assigned specs | Value/filter/URL/CSV/quota/a11y/visual DOM gates; no Overview/range files |
+| P9 Skills editor/draft | P5 | `features/skills/editor/**`: Markdown controller adapter, shortcuts, dirty/conflict/pending replacement and navigation-blocker integration request | Exact draft preservation, save/refresh conflict, keep/discard/focus and cleanup gates |
+| P10 Skills health/reconcile/matrix | P5 | `features/skills/management/**`: health, diagnostics, context, reconcile/consolidation and matrix modules | Filesystem authority, unmanaged safety, preview/apply, projection and responsive matrix gates |
+| X0 Feature convergence | **COORDINATOR**, P2+P8+P4+P9+P10+P6+P7 | Compose root/routes/contexts, apply requested deltas/evidence, run global ledger and integrated functional/demo/production/scale suites | No missing ID/test/title/export/op; semantic conflicts return to feature owner |
+| X1 Cut over and delete | **COORDINATOR**, X0 | Wave 12 scripts/runtime/supervisor/CI split, remove Solid/Start/Nitro/old TSX/glue, final manifests/lockfile/docs/performance | Clean install and every pre-PR final criterion; STOP on manifest leak, unmapped removal or >10% unexplained regression |
+| X2 Reconcile and cold final review | **COORDINATOR** plus independent fresh-context reviewer, X1 | Fetch `origin/main`; if it advanced, coordinator rebases/reconciles, redispatches semantic conflicts and reruns full gates. Then review final merge-base-to-HEAD parity/spec, security boundaries, design closure, generated output and code quality | Reviewer ACCEPT plus full clean-worktree gate at unchanged final base; then push/open the one implementation PR and require its CI green before DONE |
+
+Workers must receive a packet-specific expansion of the register row using the
+mandatory dispatch card. The register does not authorize them to modify every
+file mentioned elsewhere in a wave.
+
 ## Git and delivery
 
-- Execute in a dedicated worktree/branch from the approved plan commit.
-- Prefer one PR per wave or tightly related pair; every PR is green.
-- Suggested commits/PRs: `Characterize the Web migration boundary`, `Add the
-  browser Web contract`, `Replace Web server functions with oRPC`, `Make Web
-  query ownership explicit`, `Bootstrap the SvelteKit Web runtime`, `Port the
-  report workspace to Svelte`, `Port Skills and control surfaces to Svelte`,
-  `Cut over the Web runtime to SvelteKit`.
+- The coordinator-owned implementation branch is the only branch pushed and the
+  only branch that receives a GitHub PR.
+- Packet branches/worktrees remain local and deliver atomic commits for
+  independent review and cherry-pick; never squash the whole program while work
+  is in progress because bisectable convergence commits are quality evidence.
+- Waves below are integrated behavior gates. They do not imply one PR, one
+  worker or blanket ownership of the files named by that wave.
 - A shadow Svelte entry may coexist inside `apps/web`, but root production stays
-  Solid until Wave 12.
+  Solid until X1/Wave 12.
 - Never allow both apps to mutate real Skills/send engine commands in ordinary
   production; shadow execution is demo/E2E-only until cutover.
-- Do not mark DONE until retired dependencies/glue are removed and final gates
-  pass.
+- Delete the retired runtime only in X1 after X0 convergence. Do not open the
+  implementation PR until X2's local gate passes, and do not mark plan 068 DONE
+  until that sole PR's CI is green.
+
+Primary wave-to-packet mapping:
+
+| Wave | Primary packets |
+| --- | --- |
+| 0 characterization | B0, B1 |
+| 1 ecosystem decision | B2 and the dependency/config part of F0 |
+| 2 contract/guards | F0 structural seams, V0 |
+| 3 oRPC on Solid | V1–V5 |
+| 4 cache ownership | Q0–Q3 |
+| 5 shadow/design system | F0 shadow bootstrap, D0–D4 |
+| 6 routes/URL shell | R0, R1 |
+| 7 report SSR/lifecycle | P1 |
+| 8 report destinations/actions | P2, P8 |
+| 9 Sessions | P3, P4 |
+| 10 Skills | P5, P9, P10 |
+| 11 Sources/Sync/files | P6, P7 |
+| 12 convergence/cutover | X0, X1, X2 |
 
 ## Waves
 
@@ -687,14 +1112,18 @@ state.
 5. Characterize every dashboard search parameter/default/legacy value, nested
    Skills URL, selected document, drawer identity and back/forward behavior.
 6. Confirm demo tests fail on real database/home/Skills/engine/network acquisition.
-7. Create the machine-readable parity ledger named in “Test-parity and deletion
-   register.” Seed every feature ID, all 30 server operations, every production
-   TSX file, every design-system export and every current Playwright test title.
-   Each record contains `currentOwner`, `targetOwner`, `evidence`, `status` and
-   optional reviewed `replacementReason`; no free-form “covered” boolean.
-8. Add a read-only checker that compares the ledger with filesystem exports,
-   server-function inventory and Playwright-discovered titles. At this wave the
-   Solid entries are expected to be current; missing/unowned entries fail.
+7. Create the sharded machine-readable parity ledger named in “Test-parity and
+   deletion register.” Seed every feature ID, all 30 server operations, every
+   production TSX file, every design-system export and every current Playwright
+   test title. Each record contains `currentOwner`, `targetOwner`, `evidence`,
+   `status` and optional reviewed `replacementReason`; no free-form “covered”
+   boolean. Schema/aggregation are coordinator-owned and family shards have
+   disjoint ID/write ownership.
+8. Add a read-only checker that compares every shard and its deterministic
+   aggregate with filesystem exports, server-function inventory and
+   Playwright-discovered titles. It fails on duplicate/cross-shard IDs or
+   evidence from non-integrated commits. At this wave the Solid entries are
+   expected to be current; missing/unowned entries fail.
 
 **Gate**: unchanged Solid Web unit, E2E, demo and production suites pass, the
 baseline is reproducible, and the parity checker accounts for 100% of current
@@ -871,8 +1300,8 @@ real services.
    network budgets.
 5. Add component tests only where browser/pure tests cannot localize ownership.
 
-**Gate**: Session/drawer/VCS/analysis and production scale/benchmark pass within
-Wave 0 budgets.
+**Gate**: Session/drawer/VCS/analysis and production scale pass, and
+`bun run --cwd apps/web benchmark:session-scroll` exits 0 within Wave 0 budgets.
 
 ### Wave 10: Port Skills with SSR and independent cache ownership
 
@@ -946,6 +1375,17 @@ usage-engine tests. Add:
 - report, Session scale, Skills, Sources, Sync, demo privacy and production
   lifecycle parity through existing Playwright suites.
 
+Final delivery sequence is strict:
+
+1. X1 completes the cutover and every local pre-PR criterion.
+2. X2 reconciles the latest `origin/main`, reruns the clean-worktree gate and
+   receives an independent `ACCEPT`.
+3. The coordinator pushes the integration branch and opens the sole
+   implementation PR.
+4. The PR CI must pass. Any fix stays on that PR, receives the applicable packet
+   re-review plus X2 delta review, and reruns affected/full gates.
+5. Only then may the coordinator mark plan 068 DONE or merge the PR.
+
 ## Final done criteria
 
 - [ ] `bun run check`, `bun run lint`, `bun run typecheck`, `bun run test` and
@@ -953,7 +1393,15 @@ usage-engine tests. Add:
 - [ ] `bun run test:e2e`, `bun run test:e2e-demo`,
   `bun run test:e2e-production`, `bun run test:web-production`,
   `bun run test:web-dev-build-isolation` and `bun run test:setup-loopback` exit 0.
+- [ ] `bun run --cwd apps/web benchmark:session-scroll` exits 0 and its retained
+  DOM/heap/network/timing values remain within the approved Wave 0 budgets.
 - [ ] `git diff --check` emits no output.
+- [ ] A clean worktree at the final integration SHA completes
+  `bun install --frozen-lockfile` and the exact PR workflow commands without
+  relying on another worktree's generated files.
+- [ ] `plans/068-execution-state.md` records every packet as independently
+  reviewed and integrated, with accepted commit SHAs and no unresolved
+  deviation/STOP; the sole implementation PR's CI is green.
 - [ ] No production match remains for `createServerFn`, `_serverFn`, TanStack
   Solid/Start/Router/Query/Table, `solid-js`, Solid Vite/icons/Ark, Nitro or the
   Nitro runner workaround.
@@ -973,6 +1421,8 @@ usage-engine tests. Add:
 - [ ] Publication does not invalidate Skills or immutable exact revision; quota
   is independently owned.
 - [ ] ADRs 0007/0009 remain true and tested.
+- [ ] Architecture/export/workspace scanners cover `.svelte` files and fail on
+  direct, indirect, re-exported and dynamic client-to-server reachability.
 - [ ] Final measurements are recorded; every >10% regression is fixed or
   explicitly approved with evidence.
 - [ ] Plan 068 is marked DONE only after all checks.
@@ -981,6 +1431,8 @@ usage-engine tests. Add:
 
 Stop and report if:
 
+- the entry baseline is red, a packet lacks a complete dispatch card, or two
+  ready packets require overlapping write ownership;
 - ADR 0009's direct reads/sole writer changes underneath the plan;
 - oRPC seems to require an engine report endpoint, browser SQLite or engine
   credentials/rendezvous in browser;
@@ -992,6 +1444,8 @@ Stop and report if:
   validation or atomic commit;
 - a port changes URLs, calculations, cadence, Skills authority or demo privacy;
 - a boundary must be weakened or raw server failures exposed;
+- a frozen cross-packet interface must change without coordinator reconciliation,
+  or integration produces a semantic conflict outside coordinator-owned files;
 - table parity cannot meet scale/heap/keyboard budgets—return to Wave 9;
 - a gate fails twice after reasonable scoped correction;
 - work expands into redesign or unrelated product features.

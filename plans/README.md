@@ -35,6 +35,10 @@ with a contract-first oRPC browser boundary. TanStack Svelte Query retains
 explicit cache/SWR ownership; direct read-only SQLite, exact served revisions,
 the usage-engine control plane, and explicit source-control SSE remain unchanged.
 The Bun adapter is selected by a lifecycle/SSE spike rather than assumption.
+Implementation uses one coordinator-owned integration branch, local isolated
+worktrees, independently reviewed packet commits and exactly one final GitHub
+PR. The packet DAG, exclusive ownership matrix and convergence gates live in the
+plan; waves are milestones rather than PR or worker boundaries.
 
 ## Execution order & status
 
@@ -104,7 +108,7 @@ The Bun adapter is selected by a lifecycle/SSE spike rather than assumption.
 | 065 | Expose the Harness–Provider Joint Distribution | P3 | M | 054, 062 | DONE |
 | 066 | Split the Usage Engine From the Web and CLI Runtimes | P0 | XL | 022-024, 043-044 | DONE |
 | 067 | Close the Post-Cutover Usage-Engine Runtime Review Gaps | P1 | L | 066 | DONE |
-| 068 | Migrate Web to SvelteKit With Contract-First oRPC | P1 | L | 066, 067 | TODO |
+| 068 | Migrate Web to SvelteKit With Contract-First oRPC | P1 | XL | 066, 067 | TODO |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) |
 REJECTED (with one-line rationale).
@@ -296,8 +300,11 @@ plan is parallelized and nothing is pushed until every plan and final gate pass.
   Solid-specific design-system implementation. It preserves plan 032's deep
   frontend owners and all later presentation decisions. It also preserves plans
   018/044/066 exact-revision and direct-data-plane guarantees: oRPC is a
-  browser-to-Web adapter, never an engine report service. Execute its waves in
-  order so transport and cache semantics stabilize before the Svelte UI cutover.
+  browser-to-Web adapter, never an engine report service. Its coordinator
+  schedules bounded packets from the dependency DAG into isolated worktrees;
+  wave gates still serialize transport/cache/design convergence before dependent
+  Svelte features and the final cutover. Packet branches never receive PRs; one
+  reviewed integration branch produces the sole implementation PR.
 - Plan 036 adds Effect-native wide-event observability without an OTLP exporter
   so operators can see what Effect boundaries do, especially collectors:
   business outcome, duration, measured hops, and allowlisted local context. The
