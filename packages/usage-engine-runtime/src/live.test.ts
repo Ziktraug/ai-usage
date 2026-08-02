@@ -237,6 +237,23 @@ describe('live usage engine publication', () => {
     await port.dispose();
   });
 
+  test('applies the startup deadline while reading the initial snapshot', async () => {
+    const instanceId = '21212121-2121-4121-8121-212121212121';
+    const sourceControlService = sourceControlFixture([sourceSnapshot(instanceId, 1, 0, 0)], Stream.never);
+    const port = createTerminalSourceControlPort({
+      instanceId,
+      policyStore: { load: Effect.succeed({}), setEnabled: () => Effect.void },
+      publication: { publish: Effect.succeed({ changed: false, revision: 'unused' }) },
+      sourceControlService: { ...sourceControlService, getSnapshot: Effect.never },
+      sources: new Map(),
+      startupDeadlineMs: 10,
+      wideEventSinkLayer: makeTestWideEventSinkLayer(noopWideEventSink),
+    });
+
+    await expect(port.start()).rejects.toThrow('timed out');
+    await port.dispose();
+  });
+
   test('rejects pending startup when the source-control stream dies or completes', async () => {
     const cases = [Stream.die(new Error('private stream failure')), Stream.empty] as const;
     for (const [index, changes] of cases.entries()) {

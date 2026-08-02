@@ -2241,6 +2241,7 @@ interface PreparedMeasurementFixture {
   readonly databasePath: string;
   readonly environment: Record<string, string>;
   readonly fixtureBinDirectory: string;
+  readonly port: number;
   readonly repositoryDirectory: string;
   readonly sourceDirectory: string;
   readonly sourceIdentity: Awaited<ReturnType<typeof prepareSourceSnapshot>>;
@@ -2318,6 +2319,7 @@ const prepareMeasurementFixture = async (
     databasePath,
     environment,
     fixtureBinDirectory,
+    port,
     repositoryDirectory,
     sourceDirectory,
     sourceIdentity,
@@ -2357,6 +2359,7 @@ export const measureUsageRuntimeIo = async (
       control,
       databasePath,
       environment,
+      port,
       sourceDirectory,
       sourceIdentity,
       temporaryDirectory,

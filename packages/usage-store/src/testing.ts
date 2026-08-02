@@ -1,1 +1,19 @@
-export * from './index';
+export {
+  createUsageStore,
+  importLocalRows,
+  importNormalizedDatasetItems,
+  importPeerMergeBundle,
+  importProviderQuotaBatch,
+  initializeUsageStore,
+  publishServedReportRevision,
+  queryCurrentServedReportRevision,
+  queryLatestProviderQuotaObservations,
+  queryNormalizedDatasetItems,
+  queryReportRows,
+  quiesceUsageStoreForShutdown,
+  setLocalProjectionReadFaultInjectorForTesting,
+  setServedReportPublicationFaultInjectorForTesting,
+  setServedReportReadFaultInjectorForTesting,
+  updateUsageMachineLabel,
+  usageStorePath,
+} from './index';

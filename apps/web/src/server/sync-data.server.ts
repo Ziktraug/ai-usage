@@ -1,6 +1,10 @@
 import { serializeUsageMergeBundle } from '@ai-usage/report-core/merge-bundle';
 import type { UsageMachine } from '@ai-usage/report-core/snapshot';
-import type { QueryUsageSyncFleetResult, UsageStoreErrorReason } from '@ai-usage/usage-store/reader';
+import {
+  type QueryUsageSyncFleetResult,
+  type UsageStoreErrorReason,
+  usageStoreErrorReasonFrom,
+} from '@ai-usage/usage-store/reader';
 import type { ManualOperationResult } from '../manual-transfer-contract';
 import type { UsageReadModel } from './usage-read-model.server';
 
@@ -11,32 +15,6 @@ export interface ManualMergeExportResult {
   readonly rows: number;
   readonly text: string;
 }
-
-const usageStoreReasons = new Set<UsageStoreErrorReason>([
-  'busy',
-  'corrupt',
-  'invalid-input',
-  'machine-unavailable',
-  'migration-failure',
-  'preview-stale',
-  'preview-unavailable',
-  'revision-expired',
-  'revision-unavailable',
-  'schema-too-new',
-  'schema-too-old',
-  'self-import',
-  'storage-failure',
-  'store-missing',
-]);
-
-const usageStoreReason = (error: unknown): UsageStoreErrorReason | undefined => {
-  if (!(typeof error === 'object' && error !== null && 'reason' in error && typeof error.reason === 'string')) {
-    return;
-  }
-  return usageStoreReasons.has(error.reason as UsageStoreErrorReason)
-    ? (error.reason as UsageStoreErrorReason)
-    : undefined;
-};
 
 const usageStoreFailureMessage = (reason: UsageStoreErrorReason | undefined): string => {
   if (reason === 'store-missing' || reason === 'machine-unavailable' || reason === 'revision-unavailable') {
@@ -52,7 +30,7 @@ const usageStoreFailureMessage = (reason: UsageStoreErrorReason | undefined): st
 };
 
 const usageStoreFailure = (error: unknown): ManualOperationResult<never> => {
-  const reason = usageStoreReason(error);
+  const reason = usageStoreErrorReasonFrom(error);
   return {
     error: {
       message: usageStoreFailureMessage(reason),

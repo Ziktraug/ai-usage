@@ -1,3 +1,5 @@
+export type { UsageStoreErrorReason } from './errors';
+export { isUsageStoreErrorReason, UsageStoreError, usageStoreErrorReasonFrom } from './errors';
 export type { FocusedReportQueryResult } from './focused-report-query-sqlite';
 export { executeFocusedReportQuery } from './focused-report-query-sqlite';
 export type {
@@ -36,7 +38,6 @@ export type {
   StoredSourceAuthority,
   StoredUsageRowStatus,
   UsageMachineFleetItem,
-  UsageStoreErrorReason,
   UsageStoreGenerations,
 } from './index';
 export {
@@ -65,7 +66,6 @@ export {
   queryUsageStoreGenerations,
   queryUsageSyncFleet,
   USAGE_STORE_SCHEMA_VERSION,
-  UsageStoreError,
   usageStorePath,
 } from './index';
 export type { ServedRevisionQueryKind, ServedRevisionQueryResult } from './served-query-catalog';

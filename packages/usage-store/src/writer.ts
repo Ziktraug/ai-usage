@@ -1,3 +1,5 @@
+export type { UsageStoreErrorReason } from './errors';
+export { UsageStoreError } from './errors';
 export type {
   CheckpointUsageStoreInput,
   CheckpointUsageStoreResult,
@@ -46,7 +48,6 @@ export type {
   UpdateUsageMachineLabelResult,
   UpsertRtkSavingsContributionsInput,
   UsageStore,
-  UsageStoreErrorReason,
   UsageStoreGenerations,
 } from './index';
 export {
@@ -72,7 +73,6 @@ export {
   quiesceUsageStoreForShutdown,
   recordProviderQuotaSourceAttempt,
   retainServedReportRevisions,
-  UsageStoreError,
   updateUsageMachineLabel,
   upsertRtkSavingsContributions,
   usageStorePath,

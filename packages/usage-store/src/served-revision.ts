@@ -254,60 +254,6 @@ const EXPECTED_SERVED_SCHEMA_SQL = new Map(
   }),
 );
 
-const PREVIOUS_SERVED_REPORT_PROJECTION_SCHEMA_VERSION = 15;
-const PREVIOUS_SERVED_REPORT_ROWS_SCHEMA_SQL = (() => {
-  const currentSchema = EXPECTED_SERVED_SCHEMA_SQL.get('served_report_rows');
-  if (!currentSchema) {
-    throw new Error('Served report schema does not define served_report_rows');
-  }
-  return currentSchema
-    .replace(',local_time_weekday integer check(local_time_weekday between 0 and 6)', '')
-    .replace(',local_time_hour integer check(local_time_hour between 0 and 23)', '')
-    .replace(',harness_provider_key text not null', '')
-    .replace(',lines_measured integer not null check(lines_measured in(0,1))', '');
-})();
-
-const hasPreviousServedReportProjectionSchema = (database: ServedRevisionReadDatabase): boolean => {
-  for (const [name, currentSchema] of EXPECTED_SERVED_SCHEMA_SQL) {
-    const record = database.query('SELECT sql FROM sqlite_schema WHERE name = ?').get(name) as {
-      sql?: unknown;
-    } | null;
-    if (name === 'idx_served_report_rows_local_time_cell') {
-      if (record !== null) {
-        return false;
-      }
-      continue;
-    }
-    if (name === 'served_report_local_context' && record === null) {
-      continue;
-    }
-    const expectedSchema = name === 'served_report_rows' ? PREVIOUS_SERVED_REPORT_ROWS_SCHEMA_SQL : currentSchema;
-    if (typeof record?.sql !== 'string' || normalizeSchemaSql(`${record.sql};`) !== expectedSchema) {
-      return false;
-    }
-  }
-  const newerProjection = database
-    .query('SELECT 1 FROM served_report_revisions WHERE projection_schema_version > ? LIMIT 1')
-    .get(PREVIOUS_SERVED_REPORT_PROJECTION_SCHEMA_VERSION);
-  return newerProjection === null;
-};
-
-export const rebuildPreviousServedReportProjectionSchema = (database: ServedRevisionWriteDatabase): boolean => {
-  if (!hasPreviousServedReportProjectionSchema(database)) {
-    return false;
-  }
-  database.exec(`
-    DROP TABLE served_report_current;
-    DROP TABLE served_report_support;
-    DROP TABLE IF EXISTS served_report_local_context;
-    DROP TABLE served_session_model_filter_keys;
-    DROP TABLE served_session_model_segments;
-    DROP TABLE served_report_rows;
-    DROP TABLE served_report_revisions;
-  `);
-  return true;
-};
-
 const servedReportRowInsertColumns: readonly string[] = [
   'revision',
   'ordinal',

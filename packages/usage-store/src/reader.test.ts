@@ -8,10 +8,12 @@ import type { UsageRowWithOptionalSource } from '@ai-usage/report-core/types';
 import { actualCost, normalizeUsageRow } from '@ai-usage/report-core/usage-row';
 import { Effect } from 'effect';
 import {
+  isUsageStoreErrorReason,
   queryReportRows,
   USAGE_STORE_SCHEMA_VERSION,
   type UsageStoreError,
   type UsageStoreErrorReason,
+  usageStoreErrorReasonFrom,
 } from './reader';
 import { importLocalRows, quiesceUsageStoreForShutdown } from './writer';
 
@@ -27,6 +29,16 @@ const createRoot = async (): Promise<string> => {
   roots.push(root);
   return root;
 };
+
+describe('usage-store error reasons', () => {
+  test('narrows only the closed public reason set', () => {
+    expect(isUsageStoreErrorReason('store-missing')).toBe(true);
+    expect(isUsageStoreErrorReason('unrelated-failure')).toBe(false);
+    expect(usageStoreErrorReasonFrom({ reason: 'busy' })).toBe('busy');
+    expect(usageStoreErrorReasonFrom({ reason: 'unrelated-failure' })).toBeUndefined();
+    expect(usageStoreErrorReasonFrom(new Error('busy'))).toBeUndefined();
+  });
+});
 
 const fixtureRow = (): UsageRowWithOptionalSource => ({
   ...normalizeUsageRow({

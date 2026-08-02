@@ -300,11 +300,6 @@ export const createTerminalSourceControlPort = (
 
   const start = (): Promise<SourceControlView> => {
     startPromise ??= (async () => {
-      const snapshot = await run((service) => service.getSnapshot);
-      publishSnapshot(snapshot);
-      startStream();
-      publishSnapshot(await run((service) => service.getSnapshot));
-      const initialPublicationTarget = snapshot.publication.requestedGeneration;
       const startupAbort = new AbortController();
       let startupTimedOut = false;
       const deadline = setTimeout(() => {
@@ -312,6 +307,11 @@ export const createTerminalSourceControlPort = (
         startupAbort.abort();
       }, startupDeadlineMs);
       try {
+        const snapshot = await run((service) => service.getSnapshot, startupAbort.signal);
+        publishSnapshot(snapshot);
+        startStream();
+        publishSnapshot(await run((service) => service.getSnapshot, startupAbort.signal));
+        const initialPublicationTarget = snapshot.publication.requestedGeneration;
         let current = latest ?? snapshot;
         while (current.publication.acknowledgedRequestGeneration < initialPublicationTarget) {
           if (current.publication.lastOutcome === 'failed') {

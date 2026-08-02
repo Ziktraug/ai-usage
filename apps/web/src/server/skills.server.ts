@@ -18,7 +18,7 @@ import {
   projectSkillDirectories,
 } from '@ai-usage/skills';
 import { createSkillsApplication } from '@ai-usage/skills/application';
-import { type UsageStoreErrorReason, usageStorePath } from '@ai-usage/usage-store/reader';
+import { usageStoreErrorReasonFrom, usageStorePath } from '@ai-usage/usage-store/reader';
 import { Cause, Option, Runtime } from 'effect';
 import type {
   KnownSkillProjectPath,
@@ -390,13 +390,6 @@ export const createSkillsServerDependencies = (
     (options.homePath === undefined
       ? createLiveUsageReadModel()
       : createSqliteUsageReadModel({ dbPath: usageStorePath(configStore.homePath) }));
-  const usageStoreReason = (error: unknown): UsageStoreErrorReason | undefined => {
-    if (!(typeof error === 'object' && error !== null && 'reason' in error)) {
-      return;
-    }
-    const reason = error.reason;
-    return typeof reason === 'string' ? (reason as UsageStoreErrorReason) : undefined;
-  };
   const readKnownProjectSources: SkillsServerAdapterDependencies['readKnownProjectSources'] = async () => {
     try {
       const result = await readModel.readCurrentLocalProjectSources();
@@ -416,7 +409,7 @@ export const createSkillsServerDependencies = (
       }
       return projectSources;
     } catch (error) {
-      const reason = usageStoreReason(error);
+      const reason = usageStoreErrorReasonFrom(error);
       if (reason === 'store-missing' || reason === 'revision-unavailable' || reason === 'revision-expired') {
         return { projectGroups: [], sources: [] };
       }
