@@ -120,9 +120,9 @@ Statuses are `BLOCKED`, `READY`, `IMPLEMENTING`, `REVIEW`, `REWORK`,
 | B2 | B0 | INTEGRATED | `416ed3befda96e101763f129ddd32151a12f6ed2`, `f9fa43e3abff4ec14107cdd16272597e9bc8dc46` | `/root/b2_re_review` / ACCEPT | `28d2f42` |
 | F0 | B1, B2 | INTEGRATED | `dd1469a`, `ee9a24e` | `/root/f0_final_review` / ACCEPT; Vite seam: `/root/b2_re_review` / ACCEPT | `ee9a24e` |
 | V0 | F0 | INTEGRATED | `e95616f`, `848ad36`, `266d88d`, evidence `e76cc23`, `9b38bb2` | `/root/v_vertical_audit` / ACCEPT | `9b38bb260383d2743b0da1408c33d36b99f94d61` |
-| V1 | V0 | IMPLEMENTING | - | - | - |
-| V2 | V0 | REVIEW | `bfae6c6`, `ab1ae5f`, `0db6f75`, `7c790c1` | pending independent review | - |
-| V3 | V0 | IMPLEMENTING | - | - | - |
+| V1 | V0 | REVIEW | `a9ce980` | pending independent review | - |
+| V2 | V0 | REVIEW | `bfae6c6`, `ab1ae5f`, `0db6f75`, `7c790c1` | `/root/v_vertical_audit` reviewing | - |
+| V3 | V0 | REVIEW | `d465e65` | `/root/v0_impl` reviewing | - |
 | V4 | V0 | IMPLEMENTING | - | - | - |
 | V5 | V1, V2, V3, V4 | BLOCKED | - | - | - |
 | Q0 | V5 | BLOCKED | - | - | - |
