@@ -12,11 +12,11 @@ authority for feature, operation, design, source-file, and test-title coverage.
 - Planning PR: `#26`, squash-merged as
   `2183270ebfbb886fafa7e6268893122db9b364c0`
 - `BASE_SHA`: `2183270ebfbb886fafa7e6268893122db9b364c0`
-- Current integration checkpoint: `2051c4887894e42f31b309adf8446869d2e1b566`
-- Last reviewed green checkpoint: `2051c4887894e42f31b309adf8446869d2e1b566`
-- Active B1/B2 dispatch base: `b1bc3c7414918041acef6c7eb7a914a2880d91f9`
+- Current integration checkpoint: `dd1469a`
+- Last reviewed green checkpoint: `1c76dad`
+- Active F0 candidate base: `1c76dad`
 - Implementation PR: not opened
-- Exclusive process-test token: returned to coordinator after B2 cleanup
+- Exclusive process-test token: free after the complete F0 tool-lifecycle gate
 
 The integration branch did not exist locally or remotely before this run. Local
 `main` and `origin/main` were clean and aligned at `BASE_SHA`; plans 066 and 067
@@ -118,7 +118,7 @@ Statuses are `BLOCKED`, `READY`, `IMPLEMENTING`, `REVIEW`, `REWORK`,
 | B0 | none | INTEGRATED | `40cda764f655d68608f378dd9f8d02e4160e0f52`, `2051c4887894e42f31b309adf8446869d2e1b566` | `/root/b0_review` / ACCEPT | `2051c4887894e42f31b309adf8446869d2e1b566` |
 | B1 | B0 | INTEGRATED | `2613d9b`, `175e2d0`, `cd90bce`, `4348a2e1138a98a9dfd19b8de9bd3d839e3dc77e` | `/root/b1_final_review` / ACCEPT | `5f43d59` |
 | B2 | B0 | INTEGRATED | `416ed3befda96e101763f129ddd32151a12f6ed2`, `f9fa43e3abff4ec14107cdd16272597e9bc8dc46` | `/root/b2_re_review` / ACCEPT | `28d2f42` |
-| F0 | B1, B2 | READY | - | - | - |
+| F0 | B1, B2 | REVIEW | `dd1469a` | full packet review pending; Vite seam: `/root/b2_re_review` / ACCEPT | - |
 | V0 | F0 | BLOCKED | - | - | - |
 | V1 | V0 | BLOCKED | - | - | - |
 | V2 | V0 | BLOCKED | - | - | - |
@@ -309,6 +309,60 @@ B1 as `a64ec59`, `57118ca`, `2ef4c50` and `5f43d59`. On the combined B1+B2
 checkpoint, 48 focused tests, exact parity discovery, boundaries, TypeScript,
 build, browser 90/90, demo 1/1, production 7/7+2/2, lifecycle, isolation and
 loopback all passed again. B1 is integrated and F0 is ready.
+
+## F0 foundation checkpoint
+
+F0 candidate `dd1469a` establishes the isolated SvelteKit shadow, the empty
+contract-first `@ai-usage/web-contract` package, exact framework pins, recursive
+scanner coverage for Svelte and generated outputs, and framework-neutral table,
+navigation-intent, and subscription vocabulary. The shadow owns only
+`.svelte-kit-shadow/<phase>` and `.output-svelte-shadow/<phase>`; it cannot write
+the Solid production output and contains no product route, live adapter,
+transport, query cache, database, engine, Skills, or maintainer-state access.
+
+The exact F0 dependency set keeps root TypeScript 6.0.3 while Web uses local
+TypeScript 5.9.3 for the selected adapter peer set. Svelte 5.56.8, SvelteKit
+2.70.2, the Svelte Vite plugin 7.2.0, svelte-adapter-bun 1.0.1, Ark Svelte
+5.22.1, TanStack Svelte Query 6.1.38, oRPC 1.14.13, Panda 1.12.0, and Vite
+8.2.0 are exact. Frozen install and lockfile reproduction passed.
+
+Vite 8.2.0 changed the legacy Solid/Rolldown chunk topology and raised the
+measured gzip closure from the preserved 8.0.16 baseline of 282,169 bytes to
+285,305 bytes, above the unchanged 282,614-byte limit, while the generated CSS
+remained byte-identical at 76,716 raw / 17,022 gzip. No source, Panda, product,
+assertion, or budget change caused the regression. F0 therefore pins a
+production-build-only `vite-solid` alias at 8.0.16 and launches its real CLI
+through the existing owned build lock. The measured closure is 277,917 bytes,
+4,697 below the limit, and the full client, SSR, and Nitro artifact is present.
+`/root/b2_re_review` independently ACCEPTed this narrow seam. It must be deleted
+atomically with the Solid build in X1; dev/preview remain on Vite 8.2.0, the
+private CLI path is bounded by the exact pin, and the wrapper must never be
+reused for SvelteKit.
+
+| F0 command | Result |
+| --- | --- |
+| `bun install --frozen-lockfile` | PASS |
+| `bun run check` | PASS; 768 files |
+| `bun run lint` | PASS; recursive package, export and path boundaries |
+| `bun run typecheck` | PASS; 28/28 tasks, Svelte 0 errors and 0 warnings |
+| `bun run test` | PASS; 28/28 package tasks, Web 593 tests, tools 93 tests |
+| `bun run build` | PASS; Solid client, SSR and Nitro |
+| `bun run build:svelte` in `apps/web` | PASS; isolated adapter-bun artifact |
+| focused build lock and CSS suite | PASS; 14 tests |
+| foundation non-regression suite | PASS; 89 tests |
+| `git diff --check` | PASS |
+
+Resolved F0 implementation incidents are retained as evidence rather than STOPs:
+the unavailable bubblewrap patch helper required exact local edit fallbacks; one
+parity-checker edit and one package-script edit were immediately restored after
+mechanical truncation/corruption and validated by the full gates; an accidental
+Solid-table import rewrite was corrected before tests; generated Svelte env
+declarations initially reflected inherited variable names, so the shadow now
+fails closed with an explicit private prefix; supplemental TypeScript inclusion
+and public-export declarations were tightened after the scanners correctly
+identified bleed and undeclared tool imports. `bun install` loaded repository
+environment configuration but no value was printed or copied, and all runtime
+proofs used synthetic or generated state only.
 
 ## Deviations, STOPs, and recovery
 
