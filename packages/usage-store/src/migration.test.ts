@@ -21,6 +21,66 @@ afterEach(async () => {
 });
 
 describe('usage-store forward migration', () => {
+  test('rebuilds the previous served projection schema without changing usage data', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'usage-store-served-schema-migration-'));
+    temporaryRoots.push(root);
+    const dbPath = path.join(root, 'usage-store.sqlite');
+    const machine = { id: 'migration-machine', label: 'Migration machine' };
+    const row = normalizeUsageRow({
+      calls: 1,
+      cost: actualCost(null),
+      date: new Date('2026-07-30T10:00:00.000Z'),
+      durationMs: 1000,
+      endDate: new Date('2026-07-30T10:01:00.000Z'),
+      harness: 'Codex',
+      model: 'gpt-5',
+      name: 'Migrated session',
+      project: 'ai-usage',
+      provider: 'OpenAI',
+      tokens: { cr: 0, cw: 0, in: 10, out: 20 },
+    });
+    await Effect.runPromise(updateUsageMachineLabel({ dbPath, machine }));
+    await Effect.runPromise(importLocalRows({ dbPath, machine, rows: [row] }));
+
+    const legacy = new Database(dbPath, { create: false, readwrite: true });
+    legacy.exec(`
+      INSERT INTO served_report_revisions (
+        revision, capture_fingerprint, private_capture_fingerprint, config_fingerprint,
+        usage_store_generation, machine_fleet_generation, projection_schema_version,
+        generated_at, published_at, expires_at, complete, row_count, segment_count,
+        filter_key_count, rows_bytes, support_bytes, projection_bytes
+      ) VALUES (
+        'legacy-revision', '${'a'.repeat(64)}', '${'b'.repeat(64)}', '${'c'.repeat(64)}',
+        1, 1, 15, '2026-07-30T10:00:00.000Z', 1000, 2000, 1, 0, 0, 0, 0, 0, 0
+      );
+      INSERT INTO served_report_current (singleton, revision, required_complete)
+      VALUES (1, 'legacy-revision', 1);
+      DROP INDEX idx_served_report_rows_local_time_cell;
+      ALTER TABLE served_report_rows DROP COLUMN local_time_weekday;
+      ALTER TABLE served_report_rows DROP COLUMN local_time_hour;
+      ALTER TABLE served_report_rows DROP COLUMN harness_provider_key;
+      ALTER TABLE served_report_rows DROP COLUMN lines_measured;
+      PRAGMA user_version = 2;
+    `);
+    legacy.close(true);
+
+    expect(await Effect.runPromise(initializeUsageStore({ dbPath }))).toBe(USAGE_STORE_SCHEMA_VERSION);
+    expect(await Effect.runPromise(initializeUsageStore({ dbPath }))).toBe(USAGE_STORE_SCHEMA_VERSION);
+
+    const migrated = new Database(dbPath, { create: false, readonly: true });
+    const usageRowCount = migrated.query('SELECT COUNT(*) AS count FROM usage_rows').get() as { count: number };
+    const currentRevision = migrated.query('SELECT revision FROM served_report_current WHERE singleton = 1').get();
+    const servedColumns = migrated.query('PRAGMA table_info(served_report_rows)').all() as Array<{ name: string }>;
+    const servedColumnNames = servedColumns.map(({ name }) => name);
+    expect(usageRowCount.count).toBe(1);
+    expect(currentRevision).toBeNull();
+    expect(servedColumnNames).toContain('local_time_weekday');
+    expect(servedColumnNames).toContain('local_time_hour');
+    expect(servedColumnNames).toContain('harness_provider_key');
+    expect(servedColumnNames).toContain('lines_measured');
+    migrated.close(true);
+  });
+
   test('rolls back all projection DDL on failure, preserves populated state, and retries idempotently', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'usage-store-migration-'));
     temporaryRoots.push(root);

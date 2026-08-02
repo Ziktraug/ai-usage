@@ -60,6 +60,7 @@ import {
   assertServedReportSchema,
   createServedRevisionQueryDatabase,
   insertServedReportProjection,
+  rebuildPreviousServedReportProjectionSchema,
   SERVED_REPORT_PROJECTION_SCHEMA_VERSION,
   SERVED_REPORT_REVISION_PATTERN,
   type ServedRevisionQueryTrace,
@@ -1325,6 +1326,8 @@ const migrate = (db: SqliteDatabase): boolean => {
         ON provider_quota_observations(provider_key, machine_id, source_key, source_event_key)
         WHERE source_event_key IS NOT NULL;
     `);
+    const servedReportSchemaChanged = rebuildPreviousServedReportProjectionSchema(db);
+    schemaChanged ||= servedReportSchemaChanged;
     db.exec(servedReportSchemaSql);
     if (!hasExactUsageLocalMachineSchema(db)) {
       throw new Error('The local machine projection schema is incompatible.');
