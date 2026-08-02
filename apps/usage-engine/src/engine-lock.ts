@@ -5,6 +5,13 @@ import os from 'node:os';
 import path from 'node:path';
 import { parseUsageEngineInstanceId, type UsageEngineInstanceId } from '@ai-usage/usage-engine-control';
 import { loadUsageEngineRendezvous, readOpenedFileBounded } from '@ai-usage/usage-engine-control/node';
+import {
+  errorHasCode,
+  type FileIdentity,
+  hasCurrentOwner,
+  isOwnerOnly,
+  sameFileIdentity as sameIdentity,
+} from './private-file-identity';
 
 const LOCK_FILE_SUFFIX = '.engine.lock';
 const RENDEZVOUS_FILE_NAME = 'rendezvous.json';
@@ -28,11 +35,6 @@ const LOCK_ACQUISITION_INTENT_PATTERN =
 const LOCK_RECOVERY_CLAIM_PATTERN =
   /^\.ai-usage-engine-recovery-([0-9a-f]{16})-(\d+)-(none|\d+)-(\d{1,16})-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.claim$/;
 const MAX_STATE_DIRECTORY_ENTRIES = 4096;
-
-interface FileIdentity {
-  readonly dev: number;
-  readonly ino: number;
-}
 
 interface ValidatedStateDirectory {
   readonly identity: FileIdentity;
@@ -102,16 +104,6 @@ export type UsageEngineLockInspection =
       readonly state: 'live' | 'stale';
     }
   | { readonly path: string; readonly reason: string; readonly state: 'unsafe' };
-
-const errorHasCode = (error: unknown, code: string): boolean =>
-  typeof error === 'object' && error !== null && 'code' in error && error.code === code;
-
-const sameIdentity = (left: FileIdentity, right: FileIdentity): boolean =>
-  left.dev === right.dev && left.ino === right.ino;
-
-const hasCurrentOwner = (uid: number): boolean => typeof process.getuid !== 'function' || uid === process.getuid();
-
-const isOwnerOnly = (mode: number): boolean => process.platform === 'win32' || mode % 0o100 === 0;
 
 const validateStateDirectoryStat = (directoryPath: string, stats: Stats): void => {
   if (stats.isSymbolicLink() || !stats.isDirectory() || !hasCurrentOwner(stats.uid) || !isOwnerOnly(stats.mode)) {

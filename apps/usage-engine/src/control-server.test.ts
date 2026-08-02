@@ -559,11 +559,18 @@ describe('usage engine control server', () => {
 
     finishEvents?.({ done: true, value: undefined });
     await expect(reader.read()).resolves.toMatchObject({ done: true });
+    const unauthenticated = await handler.handle(
+      new Request('http://127.0.0.1:41052/v1/status', {
+        headers: headers({ authorization: 'Bearer wrong-token-that-is-still-long-enough' }),
+      }),
+      '127.0.0.1',
+    );
     const status = await handler.handle(
       new Request('http://127.0.0.1:41052/v1/status', { headers: headers() }),
       '127.0.0.1',
     );
 
+    expect(unauthenticated.status).toBe(401);
     expect(status.status).toBe(503);
     expect(failures).toEqual(['event-stream']);
     expect(clearHeartbeatCalls).toBe(1);

@@ -12,6 +12,13 @@ import {
   type UsageEngineBearerToken,
   type UsageEngineTargetId,
 } from '@ai-usage/usage-engine-control/node';
+import {
+  errorHasCode,
+  type FileIdentity,
+  hasCurrentOwner,
+  isOwnerOnly,
+  sameFileIdentity as sameIdentity,
+} from './private-file-identity';
 
 const RENDEZVOUS_FILE_NAME = 'rendezvous.json';
 const PRIVATE_DIRECTORY_MODE = 0o700;
@@ -20,11 +27,6 @@ const RENDEZVOUS_TEMPORARY_GRACE_MS = 1000;
 const MAX_STATE_DIRECTORY_ENTRIES = 4096;
 const RENDEZVOUS_TEMPORARY_FILE_PATTERN =
   /^\.rendezvous-(\d+)-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.tmp$/;
-
-interface FileIdentity {
-  readonly dev: number;
-  readonly ino: number;
-}
 
 export interface PublishUsageEngineRendezvousOptions {
   readonly instanceId: string;
@@ -42,16 +44,6 @@ export interface PublishedUsageEngineRendezvous {
   readonly targetId: UsageEngineTargetId;
   readonly token: UsageEngineBearerToken;
 }
-
-const errorHasCode = (error: unknown, code: string): boolean =>
-  typeof error === 'object' && error !== null && 'code' in error && error.code === code;
-
-const sameIdentity = (left: FileIdentity, right: FileIdentity): boolean =>
-  left.dev === right.dev && left.ino === right.ino;
-
-const hasCurrentOwner = (uid: number): boolean => typeof process.getuid !== 'function' || uid === process.getuid();
-
-const isOwnerOnly = (mode: number): boolean => process.platform === 'win32' || mode % 0o100 === 0;
 
 const processIsAlive = (pid: number): boolean => {
   try {

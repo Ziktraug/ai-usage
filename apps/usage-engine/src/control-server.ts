@@ -470,15 +470,15 @@ export const createUsageEngineControlHandler = ({
   };
 
   const handle = async (request: Request, peerAddress: string | null): Promise<Response> => {
+    const rejected = authorize(request, peerAddress);
+    if (rejected) {
+      return rejected;
+    }
     if (disposed || eventPumpState === 'disposed') {
       return errorResponse('engine-unavailable', 'Usage engine is stopping.', 503);
     }
     if (eventPumpState === 'failed') {
       return errorResponse('engine-unavailable', 'Usage engine is unavailable.', 503);
-    }
-    const rejected = authorize(request, peerAddress);
-    if (rejected) {
-      return rejected;
     }
     const { pathname } = new URL(request.url);
     const deadline = createRequestDeadline(request, requestTimeoutMs);

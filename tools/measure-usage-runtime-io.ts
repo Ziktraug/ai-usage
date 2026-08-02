@@ -2174,26 +2174,19 @@ const removeActiveUsageRuntimeMeasurementRoots = async (): Promise<void> => {
   }
 };
 
-export const measureUsageRuntimeIo = async (
-  options: RuntimeMeasurementOptions,
-): Promise<UsageRuntimeMeasurementResult> => {
-  if (process.platform !== 'linux') {
-    throw new Error('Usage runtime I/O measurement requires Linux /proc.');
-  }
-  if ((await readBlockDeviceSectors(options.blockDevice)) === undefined) {
-    throw new Error(`Block device ${options.blockDevice} is absent from /proc/diskstats.`);
-  }
-  const repositoryDirectory = path.resolve(import.meta.dirname, '..');
-  const runtimeRoot = await mkdtemp(RUNTIME_ROOT_PREFIX);
-  await chmod(runtimeRoot, 0o700);
-  const sourceDirectory = path.join(runtimeRoot, 'source');
-  const temporaryDirectory = path.join(runtimeRoot, 'tmp');
-  const webDirectory = path.join(sourceDirectory, 'apps', 'web');
-  const fixtureBinDirectory = path.join(runtimeRoot, 'fixture-bin');
-  const ownedProcesses = new Set<CapturedOwnedProcess>();
-  let snapshotStream: SourceSnapshotStream | undefined;
-  let result: UsageRuntimeMeasurementResult | undefined;
-  let operationError: unknown;
+interface MeasurementCleanupLifecycle {
+  readonly cleanup: (removeRoot?: boolean) => Promise<unknown[]>;
+  readonly register: () => void;
+}
+
+const createMeasurementCleanupLifecycle = (
+  runtimeRoot: string,
+  ownedProcesses: Set<CapturedOwnedProcess>,
+  snapshotStream: {
+    clear: () => void;
+    current: () => SourceSnapshotStream | undefined;
+  },
+): MeasurementCleanupLifecycle => {
   let cleanupPromise: Promise<unknown[]> | undefined;
   let rootRemovalPromise: Promise<unknown[]> | undefined;
   const removeMeasurementRoot = (): Promise<unknown[]> => {
@@ -2204,22 +2197,20 @@ export const measureUsageRuntimeIo = async (
       } catch (error) {
         return [error];
       }
-    })().finally(() => {
-      activeMeasurementRootRemovals.delete(removeMeasurementRoot);
-    });
+    })().finally(() => activeMeasurementRootRemovals.delete(removeMeasurementRoot));
     return rootRemovalPromise;
   };
-  activeMeasurementRootRemovals.add(removeMeasurementRoot);
-  const cleanupMeasurement = (removeRoot = true): Promise<unknown[]> => {
+  const cleanup = (removeRoot = true): Promise<unknown[]> => {
     cleanupPromise ??= (async () => {
       const cleanupFailures: unknown[] = [];
-      if (snapshotStream) {
+      const activeSnapshotStream = snapshotStream.current();
+      if (activeSnapshotStream) {
         try {
-          await snapshotStream.close();
+          await activeSnapshotStream.close();
         } catch (error) {
           cleanupFailures.push(error);
         }
-        snapshotStream = undefined;
+        snapshotStream.clear();
       }
       const processes = new Set([...ownedProcesses, ...activeCapturedProcesses]);
       const processCleanupResults = await Promise.allSettled([...processes].map(stopCapturedProcess));
@@ -2231,69 +2222,146 @@ export const measureUsageRuntimeIo = async (
         cleanupFailures.push(...(await removeMeasurementRoot()));
       }
       return cleanupFailures;
-    })().finally(() => {
-      activeMeasurementCleanups.delete(cleanupMeasurement);
-    });
+    })().finally(() => activeMeasurementCleanups.delete(cleanup));
     return cleanupPromise;
   };
-  activeMeasurementCleanups.add(cleanupMeasurement);
+  return {
+    cleanup,
+    register: () => {
+      activeMeasurementRootRemovals.add(removeMeasurementRoot);
+      activeMeasurementCleanups.add(cleanup);
+    },
+  };
+};
+
+interface PreparedMeasurementFixture {
+  readonly baseUrl: string;
+  readonly clockTicksPerSecond: number;
+  readonly control: UsageEngineControlClient;
+  readonly databasePath: string;
+  readonly environment: Record<string, string>;
+  readonly fixtureBinDirectory: string;
+  readonly repositoryDirectory: string;
+  readonly sourceDirectory: string;
+  readonly sourceIdentity: Awaited<ReturnType<typeof prepareSourceSnapshot>>;
+  readonly temporaryDirectory: string;
+  readonly webDirectory: string;
+}
+
+const prepareMeasurementFixture = async (
+  options: RuntimeMeasurementOptions,
+  runtimeRoot: string,
+): Promise<PreparedMeasurementFixture> => {
+  const repositoryDirectory = path.resolve(import.meta.dirname, '..');
+  const sourceDirectory = path.join(runtimeRoot, 'source');
+  const temporaryDirectory = path.join(runtimeRoot, 'tmp');
+  const webDirectory = path.join(sourceDirectory, 'apps', 'web');
+  const fixtureBinDirectory = path.join(runtimeRoot, 'fixture-bin');
+  await createRuntimeDirectories(runtimeRoot);
+  const snapshotEnvironment = createUsageRuntimeMeasurementEnvironment({
+    inheritedEnvironment: process.env,
+    repositoryDirectory,
+    runtimeRoot,
+  });
+  const sourceIdentity = await prepareSourceSnapshot(
+    repositoryDirectory,
+    sourceDirectory,
+    runtimeRoot,
+    options.source,
+    snapshotEnvironment,
+  );
+  await createFixtureCodexExecutable(fixtureBinDirectory, sourceDirectory);
+  const environment: Record<string, string> = {
+    ...createUsageRuntimeMeasurementEnvironment({
+      inheritedEnvironment: process.env,
+      repositoryDirectory: sourceDirectory,
+      runtimeRoot,
+    }),
+    AI_USAGE_CODEX_FIXTURE_LOG: path.join(runtimeRoot, 'logs', 'codex-requests.json'),
+    PATH: [fixtureBinDirectory, snapshotEnvironment.PATH].filter(Boolean).join(path.delimiter),
+    PLAN052_CODEX_SESSION_COUNT: String(options.codexSessions),
+  };
+  await runRequiredCommand(
+    'fixture seeding',
+    [process.execPath, '--no-env-file', '-e', SEED_FIXTURE_SCRIPT],
+    sourceDirectory,
+    environment,
+    READINESS_DEADLINE_MS,
+  );
+  await runRequiredCommand(
+    'design-system preparation',
+    [process.execPath, '--no-env-file', '--filter', '@ai-usage/design-system', 'build'],
+    sourceDirectory,
+    environment,
+  );
+  await runRequiredCommand(
+    'web development preparation',
+    [process.execPath, '--no-env-file', 'run', 'dev:prepare'],
+    webDirectory,
+    environment,
+  );
+  await warmDevelopmentCompiler(sourceDirectory, runtimeRoot, fixtureBinDirectory, {
+    PATH: environment.PATH,
+    PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH: environment.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH,
+  });
+  const clockTicksPerSecond = await readClockTicksPerSecond(sourceDirectory, environment);
+  const port = await reserveFreePort();
+  const baseUrl = `http://${LOOPBACK_HOST}:${port}`;
+  const databasePath = environment.AI_USAGE_DATABASE_PATH;
+  if (!databasePath) {
+    throw new Error('The measured runtime requires an explicit database path.');
+  }
+  return {
+    baseUrl,
+    clockTicksPerSecond,
+    control: createRuntimeControlClient(environment),
+    databasePath,
+    environment,
+    fixtureBinDirectory,
+    repositoryDirectory,
+    sourceDirectory,
+    sourceIdentity,
+    temporaryDirectory,
+    webDirectory,
+  };
+};
+
+export const measureUsageRuntimeIo = async (
+  options: RuntimeMeasurementOptions,
+): Promise<UsageRuntimeMeasurementResult> => {
+  if (process.platform !== 'linux') {
+    throw new Error('Usage runtime I/O measurement requires Linux /proc.');
+  }
+  if ((await readBlockDeviceSectors(options.blockDevice)) === undefined) {
+    throw new Error(`Block device ${options.blockDevice} is absent from /proc/diskstats.`);
+  }
+  const runtimeRoot = await mkdtemp(RUNTIME_ROOT_PREFIX);
+  await chmod(runtimeRoot, 0o700);
+  const ownedProcesses = new Set<CapturedOwnedProcess>();
+  let snapshotStream: SourceSnapshotStream | undefined;
+  let result: UsageRuntimeMeasurementResult | undefined;
+  let operationError: unknown;
+  const cleanupLifecycle = createMeasurementCleanupLifecycle(runtimeRoot, ownedProcesses, {
+    clear: () => {
+      snapshotStream = undefined;
+    },
+    current: () => snapshotStream,
+  });
+  cleanupLifecycle.register();
 
   try {
-    await createRuntimeDirectories(runtimeRoot);
-    const snapshotEnvironment = createUsageRuntimeMeasurementEnvironment({
-      inheritedEnvironment: process.env,
-      repositoryDirectory,
-      runtimeRoot,
-    });
-    const sourceIdentity = await prepareSourceSnapshot(
-      repositoryDirectory,
-      sourceDirectory,
-      runtimeRoot,
-      options.source,
-      snapshotEnvironment,
-    );
-    await createFixtureCodexExecutable(fixtureBinDirectory, sourceDirectory);
-    const environment: Record<string, string> = {
-      ...createUsageRuntimeMeasurementEnvironment({
-        inheritedEnvironment: process.env,
-        repositoryDirectory: sourceDirectory,
-        runtimeRoot,
-      }),
-      AI_USAGE_CODEX_FIXTURE_LOG: path.join(runtimeRoot, 'logs', 'codex-requests.json'),
-      PATH: [fixtureBinDirectory, snapshotEnvironment.PATH].filter(Boolean).join(path.delimiter),
-      PLAN052_CODEX_SESSION_COUNT: String(options.codexSessions),
-    };
-    await runRequiredCommand(
-      'fixture seeding',
-      [process.execPath, '--no-env-file', '-e', SEED_FIXTURE_SCRIPT],
-      sourceDirectory,
+    const fixture = await prepareMeasurementFixture(options, runtimeRoot);
+    const {
+      baseUrl,
+      clockTicksPerSecond,
+      control,
+      databasePath,
       environment,
-      READINESS_DEADLINE_MS,
-    );
-    await runRequiredCommand(
-      'design-system preparation',
-      [process.execPath, '--no-env-file', '--filter', '@ai-usage/design-system', 'build'],
       sourceDirectory,
-      environment,
-    );
-    await runRequiredCommand(
-      'web development preparation',
-      [process.execPath, '--no-env-file', 'run', 'dev:prepare'],
+      sourceIdentity,
+      temporaryDirectory,
       webDirectory,
-      environment,
-    );
-    await warmDevelopmentCompiler(sourceDirectory, runtimeRoot, fixtureBinDirectory, {
-      PATH: environment.PATH,
-      PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH: environment.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH,
-    });
-    const clockTicksPerSecond = await readClockTicksPerSecond(sourceDirectory, environment);
-    const port = await reserveFreePort();
-    const baseUrl = `http://${LOOPBACK_HOST}:${port}`;
-    const databasePath = environment.AI_USAGE_DATABASE_PATH;
-    if (!databasePath) {
-      throw new Error('The measured runtime requires an explicit database path.');
-    }
-    const control = createRuntimeControlClient(environment);
+    } = fixture;
     let engineProcess: CapturedOwnedProcess | undefined;
     let webProcess: CapturedOwnedProcess | undefined;
     let queryProcess: CapturedOwnedProcess | undefined;
@@ -2774,7 +2842,7 @@ export const measureUsageRuntimeIo = async (
     operationError = error;
   }
 
-  const cleanupFailures = await cleanupMeasurement();
+  const cleanupFailures = await cleanupLifecycle.cleanup();
   const failures = [operationError, ...cleanupFailures].filter(
     (failure): failure is NonNullable<unknown> => failure !== undefined,
   );
