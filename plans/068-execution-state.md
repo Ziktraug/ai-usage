@@ -186,8 +186,9 @@ invalid shard owners passing; duplicated schema types; and I/O errors treated
 as absent files. The review's scoped commands otherwise reconfirmed the exact
 inventories, 40 tests, targeted Ultracite, boundary checker, path/size cap and
 clean worktree. The commits remain recoverable in `/tmp/ai-usage-068-b1` and
-were not cherry-picked. Because B2 has independently reached a program STOP,
-B1 rework is not being restarted in this blocked run without new authority.
+were not cherry-picked. After the user relaxed local STOP handling, the original
+implementer resumed B1. Its 48 focused tests, parity/package checkers, TypeScript
+coverage and root typecheck are green; process measurements wait for the B2 token.
 
 B2 initially stopped after exhausting both allowed focused corrections for the bounded
 SSE lifecycle harness. The exact final command was `bun --no-env-file probe.ts`
@@ -212,6 +213,17 @@ Bun-managed subprocess pipes. The product invariant remains unchanged: the
 production artifact must serve the held SSE event, terminate within the bounded
 client/shutdown window, release its port and leave no descendants.
 
+The fresh adapter-node audit is retained at
+`/tmp/ai-usage-068-b2-spike-pass.csh2Si`. File-backed browser/server/curl output
+removed the Bun pipe deadlocks, and bounded request-body reconstruction made
+external oRPC success and closed-error responses reliable. Adapter-node was
+then rejected for two independent Bun lifecycle failures: neither graceful FIN
+nor forced client reset reached the delayed handler AbortSignal through public
+request/socket events, and the generated SIGTERM shutdown left the process alive
+past `SHUTDOWN_TIMEOUT` plus the eight-second harness bound. Every exact orphan
+process group and listener was cleaned. Wave 1 therefore advanced to its mandated
+`svelte-adapter-bun` fallback; this is an active ecosystem decision, not a STOP.
+
 ## Deviations, STOPs, and recovery
 
 - Reviewed deviations: none.
@@ -221,11 +233,11 @@ client/shutdown window, release its port and leave no descendants.
 - B1 recovery: `/tmp/ai-usage-068-b1` is clean at
   `11e184f08528b7ff7a1153443322713bd0df0b94`; both reviewed REWORK commits are
   local-only and unintegrated.
-- B2 recovery: `/tmp/ai-usage-068-b2` is clean and the disposable spike is
-  retained at `/tmp/ai-usage-068-b2-spike.1VftYr`.
-- Active B2 correction: redesign the reusable harness so native curl writes to
-  packet-isolated files rather than Bun-owned pipe streams, then rerun the full
-  adapter audit. An external native supervisor remains the fallback if the
-  file-backed harness exposes another Bun subprocess lifecycle defect.
+- B2 recovery: `/tmp/ai-usage-068-b2` is clean; the original pipe-harness spike
+  remains at `/tmp/ai-usage-068-b2-spike.1VftYr`, and the adapter-node rejection
+  audit remains at `/tmp/ai-usage-068-b2-spike-pass.csh2Si`.
+- Active B2 correction: run the complete isolated lifecycle matrix against the
+  Plan-mandated `svelte-adapter-bun` fallback, pin its exact accepted version and
+  retain only the reusable fixture and decision after a green audit.
 - Recovery point: `2051c4887894e42f31b309adf8446869d2e1b566` is the last
   reviewed green integration checkpoint.
