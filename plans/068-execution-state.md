@@ -116,7 +116,7 @@ Statuses are `BLOCKED`, `READY`, `IMPLEMENTING`, `REVIEW`, `REWORK`,
 | Packet | Prerequisites | Status | Implementer commits | Reviewer / verdict | Integrated checkpoint |
 | --- | --- | --- | --- | --- | --- |
 | B0 | none | INTEGRATED | `40cda764f655d68608f378dd9f8d02e4160e0f52`, `2051c4887894e42f31b309adf8446869d2e1b566` | `/root/b0_review` / ACCEPT | `2051c4887894e42f31b309adf8446869d2e1b566` |
-| B1 | B0 | IMPLEMENTING | `bf39106fa692663957c26ac12ed063eb21dcd9a6`, `11e184f08528b7ff7a1153443322713bd0df0b94` | `/root/b0_review` / REWORK; original implementer redispatched | - |
+| B1 | B0 | REWORK | `bf39106fa692663957c26ac12ed063eb21dcd9a6`, `11e184f08528b7ff7a1153443322713bd0df0b94` | `/root/b0_review` / REWORK; static rework green, runtime correction dispatched | - |
 | B2 | B0 | IMPLEMENTING | no commits; recoverable spike `/tmp/ai-usage-068-b2-spike.1VftYr` | SSE harness incident documented; fresh audit authorized | - |
 | F0 | B1, B2 | BLOCKED | - | - | - |
 | V0 | F0 | BLOCKED | - | - | - |
@@ -224,14 +224,32 @@ past `SHUTDOWN_TIMEOUT` plus the eight-second harness bound. Every exact orphan
 process group and listener was cleaned. Wave 1 therefore advanced to its mandated
 `svelte-adapter-bun` fallback; this is an active ecosystem decision, not a STOP.
 
+B1's two fresh isolated production measurements then exposed a separate Wave-0
+invariant failure: `getReportRevisionBootstrap` was requested exactly twice
+before hydration in both runs. The samples recorded bootstrap counts `2/2`,
+HTML size `36,832` bytes, 16 requests, TTFB `10.3/9.4` ms, hydration
+`107.5/108.1` ms, and zero active fetch/XHR queries after settlement. B1's
+static rework remains green and recoverable, but its runtime ownership did not
+permit changing the Solid bootstrap lifecycle. Under the user's relaxed STOP
+policy the coordinator therefore dispatched focused correction B1-C from
+`05650f7a1a99c2b589332fc0b932a30585f4f878` in isolated worktree
+`/tmp/ai-usage-068-b1-bootstrap-fix`. B1-C must first produce a deterministic
+red regression, diagnose the request provenance, preserve ADR 0007 and all
+product behavior, and eliminate the duplicate before B1 is redispatched for
+fresh performance evidence.
+
 ## Deviations, STOPs, and recovery
 
 - Reviewed deviations: none.
 - Resolved local STOP: B2 exhausted both original focused SSE-harness
   corrections. The user authorized autonomous correction of this class of
   technical blocker; the incident remains recorded above and B2 is active.
-- B1 recovery: `/tmp/ai-usage-068-b1` is clean at
-  `11e184f08528b7ff7a1153443322713bd0df0b94`; both reviewed REWORK commits are
+- Active B1 correction: B1-C owns the duplicate pre-hydration bootstrap
+  diagnosis in `/tmp/ai-usage-068-b1-bootstrap-fix`; it may not run production
+  processes until B2 returns the exclusive token.
+- B1 recovery: `/tmp/ai-usage-068-b1` is at
+  `11e184f08528b7ff7a1153443322713bd0df0b94` with its completed static rework
+  retained as uncommitted allowlisted changes; both reviewed REWORK commits are
   local-only and unintegrated.
 - B2 recovery: `/tmp/ai-usage-068-b2` is clean; the original pipe-harness spike
   remains at `/tmp/ai-usage-068-b2-spike.1VftYr`, and the adapter-node rejection
