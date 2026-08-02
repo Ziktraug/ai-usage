@@ -110,7 +110,7 @@ describe('normalized design artifact parity', () => {
       throw new Error('Synthetic duplicate fixture did not produce an unexpected rule.');
     }
     expect(differences.map(({ key, kind, scope }) => `${scope}:${kind}:${key}`)).toContain(
-      'css:changed:cascade-duplicate-placement:@layer utilities > .same',
+      'css:changed:cascade-conflicting-rule-placement:@layer utilities > .same',
     );
     for (const classification of ['framework-syntax', 'intentional-unused-code'] as const) {
       expect(() =>
@@ -123,7 +123,7 @@ describe('normalized design artifact parity', () => {
             scope: syntaxDifference.scope,
           },
         ]),
-      ).toThrow('unclassified css:changed:cascade-duplicate-placement:@layer utilities > .same');
+      ).toThrow('unclassified css:changed:cascade-conflicting-rule-placement:@layer utilities > .same');
     }
   });
 
@@ -140,7 +140,7 @@ describe('normalized design artifact parity', () => {
       throw new Error('Synthetic duplicate fixture did not produce a missing rule.');
     }
     expect(differences.map(({ key, kind, scope }) => `${scope}:${kind}:${key}`)).toContain(
-      'css:changed:cascade-duplicate-placement:@layer utilities > .same',
+      'css:changed:cascade-conflicting-rule-placement:@layer utilities > .same',
     );
     for (const classification of ['framework-syntax', 'intentional-unused-code'] as const) {
       expect(() =>
@@ -153,7 +153,97 @@ describe('normalized design artifact parity', () => {
             scope: syntaxDifference.scope,
           },
         ]),
-      ).toThrow('unclassified css:changed:cascade-duplicate-placement:@layer utilities > .same');
+      ).toThrow('unclassified css:changed:cascade-conflicting-rule-placement:@layer utilities > .same');
+    }
+  });
+
+  test('rejects an appended conflicting declaration that changes the winner', () => {
+    const reference = snapshot(
+      '@layer reset, base, tokens, recipes, utilities; @layer utilities { .same { color: red; } }',
+    );
+    const target = snapshot(
+      '@layer reset, base, tokens, recipes, utilities; @layer utilities { .same { color: red; } .same { color: blue; } }',
+    );
+    const differences = findDesignArtifactDifferences(reference, target);
+    const syntaxDifference = differences.find((difference) => difference.key.includes('.same{color:blue}'));
+    if (!syntaxDifference) {
+      throw new Error('Synthetic conflict fixture did not produce an unexpected rule.');
+    }
+    expect(differences.map(({ key, kind, scope }) => `${scope}:${kind}:${key}`)).toContain(
+      'css:changed:cascade-conflicting-rule-placement:@layer utilities > .same',
+    );
+    for (const classification of ['framework-syntax', 'intentional-unused-code'] as const) {
+      expect(() =>
+        compareDesignArtifacts(reference, target, [
+          {
+            classification,
+            key: syntaxDifference.key,
+            kind: syntaxDifference.kind,
+            reason: 'A syntax classification may not hide a conflicting declaration.',
+            scope: syntaxDifference.scope,
+          },
+        ]),
+      ).toThrow('unclassified css:changed:cascade-conflicting-rule-placement:@layer utilities > .same');
+    }
+  });
+
+  test('rejects removal of a conflicting winning declaration', () => {
+    const reference = snapshot(
+      '@layer reset, base, tokens, recipes, utilities; @layer utilities { .same { color: red; } .same { color: blue; } }',
+    );
+    const target = snapshot(
+      '@layer reset, base, tokens, recipes, utilities; @layer utilities { .same { color: red; } }',
+    );
+    const differences = findDesignArtifactDifferences(reference, target);
+    const syntaxDifference = differences.find((difference) => difference.key.includes('.same{color:blue}'));
+    if (!syntaxDifference) {
+      throw new Error('Synthetic conflict fixture did not produce a missing rule.');
+    }
+    expect(differences.map(({ key, kind, scope }) => `${scope}:${kind}:${key}`)).toContain(
+      'css:changed:cascade-conflicting-rule-placement:@layer utilities > .same',
+    );
+    for (const classification of ['framework-syntax', 'intentional-unused-code'] as const) {
+      expect(() =>
+        compareDesignArtifacts(reference, target, [
+          {
+            classification,
+            key: syntaxDifference.key,
+            kind: syntaxDifference.kind,
+            reason: 'A syntax classification may not hide a conflicting declaration.',
+            scope: syntaxDifference.scope,
+          },
+        ]),
+      ).toThrow('unclassified css:changed:cascade-conflicting-rule-placement:@layer utilities > .same');
+    }
+  });
+
+  test('keeps unique-selector insertions and identical duplicates classifiable', () => {
+    const reference = snapshot(
+      '@layer reset, base, tokens, recipes, utilities; @layer utilities { .same { color: red; } }',
+    );
+    const safeTargets = [
+      {
+        keyPart: '.other{color:blue}',
+        target: snapshot(
+          '@layer reset, base, tokens, recipes, utilities; @layer utilities { .same { color: red; } .other { color: blue; } }',
+        ),
+      },
+      {
+        keyPart: '.same{color:red}',
+        target: snapshot(
+          '@layer reset, base, tokens, recipes, utilities; @layer utilities { .same { color: red; } .same { color: red; } }',
+        ),
+      },
+    ];
+    for (const safeTarget of safeTargets) {
+      const differences = findDesignArtifactDifferences(reference, safeTarget.target);
+      expect(differences.some(({ kind }) => kind === 'changed')).toBe(false);
+      for (const classification of ['framework-syntax', 'intentional-unused-code'] as const) {
+        const approval = approvalFor(differences, safeTarget.keyPart, classification);
+        expect(compareDesignArtifacts(reference, safeTarget.target, [approval]).approvedDifferences).toEqual([
+          approval,
+        ]);
+      }
     }
   });
 
@@ -171,7 +261,7 @@ describe('normalized design artifact parity', () => {
     expect(compareDesignArtifacts(reference, equivalent).approvedDifferences).toEqual([]);
     expect(
       findDesignArtifactDifferences(reference, missingContent).map(({ kind, scope }) => `${scope}:${kind}`),
-    ).toEqual(['css:missing', 'css:unexpected']);
+    ).toEqual(['css:changed', 'css:missing', 'css:unexpected']);
     expect(() => compareDesignArtifacts(reference, missingContent)).toThrow('unclassified css:missing');
   });
   test('rejects missing exports, token changes, and layer reordering without an escape hatch', async () => {

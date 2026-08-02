@@ -342,7 +342,7 @@ const cascadeIdentityFor = (rule: string): string => {
   return boundary?.kind === '{' ? rule.slice(0, boundary.index) : rule;
 };
 
-const changedConflictingDuplicateIdentities = (
+const changedConflictingRuleIdentities = (
   referenceRules: readonly string[],
   targetRules: readonly string[],
 ): string[] => {
@@ -355,15 +355,26 @@ const changedConflictingDuplicateIdentities = (
     distinctRules.add(rule);
     distinctRulesByIdentity.set(identity, distinctRules);
   }
-  const changedIdentities = new Set<string>();
-  for (const [rule, referenceCount] of referenceCounts) {
-    const targetCount = targetCounts.get(rule) ?? 0;
-    const identity = cascadeIdentityFor(rule);
-    if (targetCount > 0 && referenceCount !== targetCount && (distinctRulesByIdentity.get(identity)?.size ?? 0) > 1) {
-      changedIdentities.add(identity);
+  const changedIdentities: string[] = [];
+  for (const [identity, distinctRules] of distinctRulesByIdentity) {
+    if (distinctRules.size < 2) {
+      continue;
+    }
+    let referenceIdentityCount = 0;
+    let targetIdentityCount = 0;
+    let hasUnmatchedOccurrence = false;
+    for (const rule of distinctRules) {
+      const referenceCount = referenceCounts.get(rule) ?? 0;
+      const targetCount = targetCounts.get(rule) ?? 0;
+      referenceIdentityCount += referenceCount;
+      targetIdentityCount += targetCount;
+      hasUnmatchedOccurrence ||= referenceCount !== targetCount;
+    }
+    if (referenceIdentityCount > 0 && targetIdentityCount > 0 && hasUnmatchedOccurrence) {
+      changedIdentities.push(identity);
     }
   }
-  return [...changedIdentities].sort();
+  return changedIdentities.sort();
 };
 
 const compareCssRules = (
@@ -382,13 +393,13 @@ const compareCssRules = (
       target: 'cascade-significant rule order changed',
     });
   }
-  for (const identity of changedConflictingDuplicateIdentities(referenceRules, targetRules)) {
+  for (const identity of changedConflictingRuleIdentities(referenceRules, targetRules)) {
     differences.push({
-      key: `cascade-duplicate-placement:${identity}`,
+      key: `cascade-conflicting-rule-placement:${identity}`,
       kind: 'changed',
-      reference: 'shared duplicate count changed around conflicting declarations',
+      reference: 'cascade identity has unmatched conflicting declarations',
       scope: 'css',
-      target: 'cascade-significant duplicate placement changed',
+      target: 'cascade-significant conflicting rule placement changed',
     });
   }
   return differences;
