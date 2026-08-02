@@ -4,7 +4,9 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/contract.ts"
+    ".": "./src/contract.ts",
+    "./errors": "./src/errors.ts",
+    "./schema-conventions": "./src/schema-conventions.ts"
   },
   "dependencies": {
     "@orpc/contract": "1.14.13",
