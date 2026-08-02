@@ -116,8 +116,8 @@ Statuses are `BLOCKED`, `READY`, `IMPLEMENTING`, `REVIEW`, `REWORK`,
 | Packet | Prerequisites | Status | Implementer commits | Reviewer / verdict | Integrated checkpoint |
 | --- | --- | --- | --- | --- | --- |
 | B0 | none | INTEGRATED | `40cda764f655d68608f378dd9f8d02e4160e0f52`, `2051c4887894e42f31b309adf8446869d2e1b566` | `/root/b0_review` / ACCEPT | `2051c4887894e42f31b309adf8446869d2e1b566` |
-| B1 | B0 | REWORK | `bf39106fa692663957c26ac12ed063eb21dcd9a6`, `11e184f08528b7ff7a1153443322713bd0df0b94` | `/root/b0_review` / REWORK | - |
-| B2 | B0 | STOP | no commits; recoverable spike `/tmp/ai-usage-068-b2-spike.1VftYr` | two allowed SSE-harness attempts exhausted | - |
+| B1 | B0 | IMPLEMENTING | `bf39106fa692663957c26ac12ed063eb21dcd9a6`, `11e184f08528b7ff7a1153443322713bd0df0b94` | `/root/b0_review` / REWORK; original implementer redispatched | - |
+| B2 | B0 | IMPLEMENTING | no commits; recoverable spike `/tmp/ai-usage-068-b2-spike.1VftYr` | SSE harness incident documented; fresh audit authorized | - |
 | F0 | B1, B2 | BLOCKED | - | - | - |
 | V0 | F0 | BLOCKED | - | - | - |
 | V1 | V0 | BLOCKED | - | - | - |
@@ -189,7 +189,7 @@ clean worktree. The commits remain recoverable in `/tmp/ai-usage-068-b1` and
 were not cherry-picked. Because B2 has independently reached a program STOP,
 B1 rework is not being restarted in this blocked run without new authority.
 
-B2 stopped after exhausting both allowed focused corrections for the bounded
+B2 initially stopped after exhausting both allowed focused corrections for the bounded
 SSE lifecycle harness. The exact final command was `bun --no-env-file probe.ts`
 in `/tmp/ai-usage-068-b2-spike.1VftYr/app`. The unchanged adapter-node artifact
 served `event: held` and `data: 31100` after approximately 31.1 seconds, but on
@@ -201,25 +201,31 @@ synthetic processes, released port `42501`, and returned the process token. The
 coordinator independently confirmed both PIDs and the listener were gone, the
 B2 Git worktree was clean, and the recoverable synthetic spike remained at the
 path above. No B2 commit was produced or integrated, and no B2 dependant may be
-dispatched without new authority.
+dispatched until B2 is independently accepted and integrated.
+
+On 2026-08-02 the user explicitly relaxed Plan 068 local STOP policy for this
+run: technical packet failures must be documented and corrected autonomously,
+and execution stops only for a major blocker that calls the viability of the
+complete migration into question. B2 was therefore redispatched for a fresh
+audit using native curl with packet-isolated file-backed output rather than
+Bun-managed subprocess pipes. The product invariant remains unchanged: the
+production artifact must serve the held SSE event, terminate within the bounded
+client/shutdown window, release its port and leave no descendants.
 
 ## Deviations, STOPs, and recovery
 
 - Reviewed deviations: none.
-- Active STOP condition: B2 exhausted both focused SSE-harness corrections; F0
-  and every downstream packet remain blocked.
+- Resolved local STOP: B2 exhausted both original focused SSE-harness
+  corrections. The user authorized autonomous correction of this class of
+  technical blocker; the incident remains recorded above and B2 is active.
 - B1 recovery: `/tmp/ai-usage-068-b1` is clean at
   `11e184f08528b7ff7a1153443322713bd0df0b94`; both reviewed REWORK commits are
   local-only and unintegrated.
 - B2 recovery: `/tmp/ai-usage-068-b2` is clean and the disposable spike is
   retained at `/tmp/ai-usage-068-b2-spike.1VftYr`.
-- Recovery options requiring new authority:
-  1. redesign the reusable harness so native curl writes to packet-isolated
-     files rather than Bun-owned pipe streams, then restart a fresh two-attempt
-     B2 audit;
-  2. use an external native supervisor for the complete lifecycle fixture, then
-     restart the B2 audit; or
-  3. explicitly classify the measured server-side long-SSE success as an
-     environment/harness exception and authorize a fresh B2 audit.
+- Active B2 correction: redesign the reusable harness so native curl writes to
+  packet-isolated files rather than Bun-owned pipe streams, then rerun the full
+  adapter audit. An external native supervisor remains the fallback if the
+  file-backed harness exposes another Bun subprocess lifecycle defect.
 - Recovery point: `2051c4887894e42f31b309adf8446869d2e1b566` is the last
   reviewed green integration checkpoint.
