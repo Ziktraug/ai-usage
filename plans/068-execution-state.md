@@ -12,9 +12,9 @@ authority for feature, operation, design, source-file, and test-title coverage.
 - Planning PR: `#26`, squash-merged as
   `2183270ebfbb886fafa7e6268893122db9b364c0`
 - `BASE_SHA`: `2183270ebfbb886fafa7e6268893122db9b364c0`
-- Current integration checkpoint: `dd1469a`
-- Last reviewed green checkpoint: `1c76dad`
-- Active F0 candidate base: `1c76dad`
+- Current integration checkpoint: `ee9a24e`
+- Last reviewed green checkpoint: `ee9a24e`
+- Next dispatch base: `ee9a24e` (V0 and D0 after the F0 acceptance ledger commit)
 - Implementation PR: not opened
 - Exclusive process-test token: free after the complete F0 tool-lifecycle gate
 
@@ -118,8 +118,8 @@ Statuses are `BLOCKED`, `READY`, `IMPLEMENTING`, `REVIEW`, `REWORK`,
 | B0 | none | INTEGRATED | `40cda764f655d68608f378dd9f8d02e4160e0f52`, `2051c4887894e42f31b309adf8446869d2e1b566` | `/root/b0_review` / ACCEPT | `2051c4887894e42f31b309adf8446869d2e1b566` |
 | B1 | B0 | INTEGRATED | `2613d9b`, `175e2d0`, `cd90bce`, `4348a2e1138a98a9dfd19b8de9bd3d839e3dc77e` | `/root/b1_final_review` / ACCEPT | `5f43d59` |
 | B2 | B0 | INTEGRATED | `416ed3befda96e101763f129ddd32151a12f6ed2`, `f9fa43e3abff4ec14107cdd16272597e9bc8dc46` | `/root/b2_re_review` / ACCEPT | `28d2f42` |
-| F0 | B1, B2 | REVIEW | `dd1469a` | full packet review pending; Vite seam: `/root/b2_re_review` / ACCEPT | - |
-| V0 | F0 | BLOCKED | - | - | - |
+| F0 | B1, B2 | INTEGRATED | `dd1469a`, `ee9a24e` | `/root/f0_final_review` / ACCEPT; Vite seam: `/root/b2_re_review` / ACCEPT | `ee9a24e` |
+| V0 | F0 | READY | - | - | - |
 | V1 | V0 | BLOCKED | - | - | - |
 | V2 | V0 | BLOCKED | - | - | - |
 | V3 | V0 | BLOCKED | - | - | - |
@@ -129,7 +129,7 @@ Statuses are `BLOCKED`, `READY`, `IMPLEMENTING`, `REVIEW`, `REWORK`,
 | Q1 | Q0 | BLOCKED | - | - | - |
 | Q2 | Q0 | BLOCKED | - | - | - |
 | Q3 | Q1, Q2 | BLOCKED | - | - | - |
-| D0 | F0 | BLOCKED | - | - | - |
+| D0 | F0 | READY | - | - | - |
 | D1 | D0 | BLOCKED | - | - | - |
 | D2 | D0 | BLOCKED | - | - | - |
 | D3 | D0 | BLOCKED | - | - | - |
@@ -364,6 +364,14 @@ identified bleed and undeclared tool imports. `bun install` loaded repository
 environment configuration but no value was printed or copied, and all runtime
 proofs used synthetic or generated state only.
 
+`/root/f0_final_review` independently reviewed `1c76dad..ee9a24e` on both
+required axes and returned ACCEPT. Its 41 focused tests / 50 assertions, public-
+export, relative-path, package-boundary, diff-cleanliness, leakage and tracked-
+generated-output checks passed. The reviewer confirmed no product, transport,
+served-revision, writer, privacy or route behavior changed and retained only the
+X1 deletion obligations for the exact-pinned Solid Vite wrapper. F0 is integrated;
+V0 and D0 are ready.
+
 ## Deviations, STOPs, and recovery
 
 - Reviewed deviations: none.
@@ -381,5 +389,5 @@ proofs used synthetic or generated state only.
 - Resolved B2 correction: exact SvelteKit selected-adapter lifecycle coverage is
   independently accepted and integrated at `28d2f42`; adapter-node failure
   spikes remain recoverable evidence until final convergence.
-- Recovery point: `5f43d59` is the latest independently reviewed green code
-  checkpoint; the combined B1+B2 post-cherry full gates passed unchanged.
+- Recovery point: `ee9a24e` is the latest independently reviewed green code
+  checkpoint; the complete F0 gates and independent review passed unchanged.
