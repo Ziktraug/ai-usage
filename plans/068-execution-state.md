@@ -12,7 +12,7 @@ authority for feature, operation, design, source-file, and test-title coverage.
 - Planning PR: `#26`, squash-merged as
   `2183270ebfbb886fafa7e6268893122db9b364c0`
 - `BASE_SHA`: `2183270ebfbb886fafa7e6268893122db9b364c0`
-- Current integration checkpoint: `3ed2259`
+- Current integration checkpoint: `f3faacd`
 - Last reviewed green checkpoint: `ee9a24e`
 - Active V0/D0 dispatch base: `3ed2259`
 - Implementation PR: not opened
@@ -119,7 +119,7 @@ Statuses are `BLOCKED`, `READY`, `IMPLEMENTING`, `REVIEW`, `REWORK`,
 | B1 | B0 | INTEGRATED | `2613d9b`, `175e2d0`, `cd90bce`, `4348a2e1138a98a9dfd19b8de9bd3d839e3dc77e` | `/root/b1_final_review` / ACCEPT | `5f43d59` |
 | B2 | B0 | INTEGRATED | `416ed3befda96e101763f129ddd32151a12f6ed2`, `f9fa43e3abff4ec14107cdd16272597e9bc8dc46` | `/root/b2_re_review` / ACCEPT | `28d2f42` |
 | F0 | B1, B2 | INTEGRATED | `dd1469a`, `ee9a24e` | `/root/f0_final_review` / ACCEPT; Vite seam: `/root/b2_re_review` / ACCEPT | `ee9a24e` |
-| V0 | F0 | IMPLEMENTING | - | - | - |
+| V0 | F0 | REWORK | `e95616f` | `/root/v_vertical_audit` / REWORK | - |
 | V1 | V0 | BLOCKED | - | - | - |
 | V2 | V0 | BLOCKED | - | - | - |
 | V3 | V0 | BLOCKED | - | - | - |
@@ -129,7 +129,7 @@ Statuses are `BLOCKED`, `READY`, `IMPLEMENTING`, `REVIEW`, `REWORK`,
 | Q1 | Q0 | BLOCKED | - | - | - |
 | Q2 | Q0 | BLOCKED | - | - | - |
 | Q3 | Q1, Q2 | BLOCKED | - | - | - |
-| D0 | F0 | IMPLEMENTING | - | - | - |
+| D0 | F0 | REWORK | `d476690` | `/root/v_vertical_audit` / REWORK | - |
 | D1 | D0 | BLOCKED | - | - | - |
 | D2 | D0 | BLOCKED | - | - | - |
 | D3 | D0 | BLOCKED | - | - | - |
@@ -373,9 +373,29 @@ X1 deletion obligations for the exact-pinned Solid Vite wrapper. F0 is integrate
 to local-only isolated worktrees `/tmp/ai-usage-068-v0` and
 `/tmp/ai-usage-068-d0`. Their mandatory cards freeze exact parity shards,
 non-overlapping write sets, coordinator hot-file denylists, scoped gates and
-handoffs. Neither worker owns the exclusive process-test token. A separate
-read-only audit is preparing the V1-V4 interface maps without starting a
-dependent packet.
+handoffs. Neither worker owns the exclusive process-test token. The read-only V1-V4 audit completed without starting a dependent packet. It froze
+disjoint leaves and identified coordinator-owned explicit contract exports as
+the only prerequisite composition delta after V0.
+
+Two dispatch-card commands were corrected without weakening a gate. The named
+`apps/web/src/design-system-contract.test.ts` does not exist at the exact base;
+D0 used the actual preset, generated-artifact and CSS-bundle authorities. Bun
+1.3.13 also treats `bun --cwd <dir> run <script>` as a help-only exit-zero path,
+so no such result was credited; every affected gate was rerun with the effective
+`bun run --cwd <dir> <script>` syntax.
+
+D0 candidate `d476690` kept the actual generated CSS and Panda metadata
+byte-identical, but independent review returned REWORK on two adversarial
+harness defects: global multiset comparison missed cascade-changing duplicate-
+rule inversion, and pre-parse comment stripping erased comment-shaped quoted
+content. The original implementer is adding ordered, quote-aware regressions.
+
+V0 candidate `e95616f` covered the exact 30 operations and three explicit HTTP
+policies, but independent review returned REWORK because JSON validation invoked
+and accepted array index accessors. The original implementer is adding descriptor-
+based non-invoking validation. The coordinator will then add explicit `./errors`
+and `./schema-conventions` package exports and close every policy application
+error against the shared `PublicErrorFamily` vocabulary before re-review.
 
 ## Deviations, STOPs, and recovery
 
