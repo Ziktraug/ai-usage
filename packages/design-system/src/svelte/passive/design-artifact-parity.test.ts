@@ -97,6 +97,66 @@ describe('normalized design artifact parity', () => {
     ).toThrow('CSS cascade order is an exact contract');
   });
 
+  test('rejects a trailing duplicate that changes the winning declaration', () => {
+    const reference = snapshot(
+      '@layer reset, base, tokens, recipes, utilities; @layer utilities { .same { color: red; } .same { color: blue; } }',
+    );
+    const target = snapshot(
+      '@layer reset, base, tokens, recipes, utilities; @layer utilities { .same { color: red; } .same { color: blue; } .same { color: red; } }',
+    );
+    const differences = findDesignArtifactDifferences(reference, target);
+    const syntaxDifference = differences.find((difference) => difference.key.includes('.same{color:red}'));
+    if (!syntaxDifference) {
+      throw new Error('Synthetic duplicate fixture did not produce an unexpected rule.');
+    }
+    expect(differences.map(({ key, kind, scope }) => `${scope}:${kind}:${key}`)).toContain(
+      'css:changed:cascade-duplicate-placement:@layer utilities > .same',
+    );
+    for (const classification of ['framework-syntax', 'intentional-unused-code'] as const) {
+      expect(() =>
+        compareDesignArtifacts(reference, target, [
+          {
+            classification,
+            key: syntaxDifference.key,
+            kind: syntaxDifference.kind,
+            reason: 'A syntax classification may not hide a cascade change.',
+            scope: syntaxDifference.scope,
+          },
+        ]),
+      ).toThrow('unclassified css:changed:cascade-duplicate-placement:@layer utilities > .same');
+    }
+  });
+
+  test('rejects removal of a trailing duplicate that changes the winning declaration', () => {
+    const reference = snapshot(
+      '@layer reset, base, tokens, recipes, utilities; @layer utilities { .same { color: red; } .same { color: blue; } .same { color: red; } }',
+    );
+    const target = snapshot(
+      '@layer reset, base, tokens, recipes, utilities; @layer utilities { .same { color: red; } .same { color: blue; } }',
+    );
+    const differences = findDesignArtifactDifferences(reference, target);
+    const syntaxDifference = differences.find((difference) => difference.key.includes('.same{color:red}'));
+    if (!syntaxDifference) {
+      throw new Error('Synthetic duplicate fixture did not produce a missing rule.');
+    }
+    expect(differences.map(({ key, kind, scope }) => `${scope}:${kind}:${key}`)).toContain(
+      'css:changed:cascade-duplicate-placement:@layer utilities > .same',
+    );
+    for (const classification of ['framework-syntax', 'intentional-unused-code'] as const) {
+      expect(() =>
+        compareDesignArtifacts(reference, target, [
+          {
+            classification,
+            key: syntaxDifference.key,
+            kind: syntaxDifference.kind,
+            reason: 'A syntax classification may not hide a cascade change.',
+            scope: syntaxDifference.scope,
+          },
+        ]),
+      ).toThrow('unclassified css:changed:cascade-duplicate-placement:@layer utilities > .same');
+    }
+  });
+
   test('preserves comment-shaped content inside quoted CSS strings', () => {
     const reference = snapshot(
       '@layer reset, base, tokens, recipes, utilities; @layer utilities { .label { content: "/* visible */"; } }',

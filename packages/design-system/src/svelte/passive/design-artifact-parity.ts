@@ -337,6 +337,35 @@ const sharedValueCount = (reference: readonly string[], target: readonly string[
   return sharedCount;
 };
 
+const cascadeIdentityFor = (rule: string): string => {
+  const boundary = findCssBoundary(rule, 0);
+  return boundary?.kind === '{' ? rule.slice(0, boundary.index) : rule;
+};
+
+const changedConflictingDuplicateIdentities = (
+  referenceRules: readonly string[],
+  targetRules: readonly string[],
+): string[] => {
+  const referenceCounts = countValues(referenceRules);
+  const targetCounts = countValues(targetRules);
+  const distinctRulesByIdentity = new Map<string, Set<string>>();
+  for (const rule of new Set([...referenceRules, ...targetRules])) {
+    const identity = cascadeIdentityFor(rule);
+    const distinctRules = distinctRulesByIdentity.get(identity) ?? new Set<string>();
+    distinctRules.add(rule);
+    distinctRulesByIdentity.set(identity, distinctRules);
+  }
+  const changedIdentities = new Set<string>();
+  for (const [rule, referenceCount] of referenceCounts) {
+    const targetCount = targetCounts.get(rule) ?? 0;
+    const identity = cascadeIdentityFor(rule);
+    if (targetCount > 0 && referenceCount !== targetCount && (distinctRulesByIdentity.get(identity)?.size ?? 0) > 1) {
+      changedIdentities.add(identity);
+    }
+  }
+  return [...changedIdentities].sort();
+};
+
 const compareCssRules = (
   referenceRules: readonly string[],
   targetRules: readonly string[],
@@ -351,6 +380,15 @@ const compareCssRules = (
       reference: `${orderedSharedRuleCount}/${sharedRuleCount} shared rules retain order`,
       scope: 'css',
       target: 'cascade-significant rule order changed',
+    });
+  }
+  for (const identity of changedConflictingDuplicateIdentities(referenceRules, targetRules)) {
+    differences.push({
+      key: `cascade-duplicate-placement:${identity}`,
+      kind: 'changed',
+      reference: 'shared duplicate count changed around conflicting declarations',
+      scope: 'css',
+      target: 'cascade-significant duplicate placement changed',
     });
   }
   return differences;
