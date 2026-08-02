@@ -1,7 +1,8 @@
-import type { ProviderQuotaHistoryPoint, ProviderQuotaHistoryResult } from '@ai-usage/report-core/provider-quota';
+import type { ProviderQuotaHistoryResult } from '@ai-usage/report-core/provider-quota';
 import { createQuery } from '@tanstack/solid-query';
 import { createMemo, createSignal, lazy, onMount, Show, Suspense } from 'solid-js';
 import { createServedProviderQuotaSource, type ProviderQuotaSource } from './provider-quota-client';
+import { createE2EProviderQuotaHistoryFixture } from './provider-quota-e2e-fixture';
 import type { ProviderQuotaHistoryRange } from './provider-quota-history-model';
 import { createProviderStatusClock } from './provider-status-clock';
 import { buildProviderStatusViews, providerHistoryAvailable } from './provider-status-model';
@@ -15,75 +16,6 @@ const ProviderQuotaHistoryPanel = lazy(async () => {
   const module = await import('./provider-quota-history-panel');
   return { default: module.ProviderQuotaHistoryPanel };
 });
-
-const fixtureQuotaPoint = (input: {
-  at: string;
-  resetAt: string;
-  usedPercent: number;
-  window: '5h' | 'weekly';
-}): ProviderQuotaHistoryPoint => ({
-  accountScope: 'fixture-account',
-  blocked: false,
-  firstObservedAt: input.at,
-  group: input.window,
-  lastObservedAt: input.at,
-  limitSeconds: input.window === '5h' ? 18_000 : 604_800,
-  machineId: 'fixture-machine',
-  machineLabel: 'Fixture Machine',
-  providerKey: 'codex',
-  providerLabel: 'Codex',
-  resetAt: input.resetAt,
-  source: { confidence: 'authoritative', key: 'codex-app-server', mode: 'poll' },
-  usedPercent: input.usedPercent,
-  windowId: `codex:${input.window}`,
-  windowLabel: input.window === '5h' ? '5h' : 'Weekly',
-});
-
-const e2eQuotaHistoryFixture: ProviderQuotaHistoryResult = {
-  coverage: [],
-  generatedAt: '2026-07-15T10:40:00.000Z',
-  latest: [],
-  points: [
-    fixtureQuotaPoint({
-      at: '2026-07-15T09:00:00.000Z',
-      resetAt: '2026-07-15T12:00:00.000Z',
-      usedPercent: 22,
-      window: '5h',
-    }),
-    fixtureQuotaPoint({
-      at: '2026-07-15T09:05:00.000Z',
-      resetAt: '2026-07-15T12:00:00.000Z',
-      usedPercent: 28,
-      window: '5h',
-    }),
-    fixtureQuotaPoint({
-      at: '2026-07-15T09:30:00.000Z',
-      resetAt: '2026-07-15T12:00:00.000Z',
-      usedPercent: 35,
-      window: '5h',
-    }),
-    fixtureQuotaPoint({
-      at: '2026-07-15T09:35:00.000Z',
-      resetAt: '2026-07-15T17:00:00.000Z',
-      usedPercent: 4,
-      window: '5h',
-    }),
-    fixtureQuotaPoint({
-      at: '2026-07-15T09:00:00.000Z',
-      resetAt: '2026-07-21T00:00:00.000Z',
-      usedPercent: 61,
-      window: 'weekly',
-    }),
-    fixtureQuotaPoint({
-      at: '2026-07-15T09:35:00.000Z',
-      resetAt: '2026-07-21T00:00:00.000Z',
-      usedPercent: 63,
-      window: 'weekly',
-    }),
-  ],
-  skipped: 0,
-  truncated: false,
-};
 
 type ProviderStatusReport = Pick<WebReportPayloadWithoutRows, 'datasets' | 'facets' | 'generatedAt'>;
 
@@ -136,7 +68,8 @@ export const DashboardProviderStatus = (props: DashboardProviderStatusProps) => 
     return null;
   }
 
-  const quotaFixture = props.quotaHistoryFixture ?? (props.runtimeMode === 'e2e' ? e2eQuotaHistoryFixture : undefined);
+  const quotaFixture =
+    props.quotaHistoryFixture ?? (props.runtimeMode === 'e2e' ? createE2EProviderQuotaHistoryFixture() : undefined);
   const quotaSource =
     quotaFixture === undefined
       ? (props.quotaSource ?? (props.served ? createServedProviderQuotaSource() : undefined))

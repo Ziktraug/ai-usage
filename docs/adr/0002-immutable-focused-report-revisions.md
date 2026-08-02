@@ -8,6 +8,16 @@ A large report cannot be fetched and recomputed atomically in the browser while 
 
 The served app bootstraps bounded support metadata, then requests Overview, Breakdown, or paged Sessions against one named immutable revision. One dashboard lifecycle coordinates destination refresh, expiry recovery, supersession, and atomic commit.
 
+### Plan 066 amendment
+
+[ADR 0009](0009-sole-writer-usage-engine-and-direct-sqlite-readers.md)
+supersedes only the artifact transport: immutable projection content now lives
+under revision keys in durable SQLite and Web queries it read-only/query-only.
+Copied revision databases, filesystem leases, and Bun query runners are
+removed. The named-revision browser lifecycle and consistency decision remain
+unchanged; unchanged current metadata may be renewed without rewriting
+projection content.
+
 ## Consequences
 
 Every visible destination is internally consistent. Publication refreshes the active destination instead of mixing results from different revisions.

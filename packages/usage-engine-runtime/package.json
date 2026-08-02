@@ -1,0 +1,31 @@
+{
+  "name": "@ai-usage/usage-engine-runtime",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/runtime.ts",
+    "./live": "./src/live.ts",
+    "./recovery": "./src/recovery.ts",
+    "./source-adapters": "./src/source-adapters.ts",
+    "./source-control": "./src/source-control.ts"
+  },
+  "dependencies": {
+    "@ai-usage/effect-runtime": "workspace:*",
+    "@ai-usage/local-collectors": "workspace:*",
+    "@ai-usage/local-machine": "workspace:*",
+    "@ai-usage/report-core": "workspace:*",
+    "@ai-usage/report-data": "workspace:*",
+    "@ai-usage/usage-engine-control": "workspace:*",
+    "@ai-usage/usage-merge": "workspace:*",
+    "@ai-usage/usage-store": "workspace:*",
+    "effect": "^3.21.4"
+  },
+  "scripts": {
+    "build": "tsc --noEmit",
+    "check": "tsc --noEmit",
+    "test": "bun test",
+    "lint": "biome check .",
+    "format": "biome format --write ."
+  }
+}

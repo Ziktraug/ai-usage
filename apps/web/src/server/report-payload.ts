@@ -4,7 +4,6 @@ import {
   parseFocusedOverviewRequest,
   parseFocusedRevisionRequest,
 } from '@ai-usage/report-core/focused-report-query';
-import { parseProjectGroupConfigs } from '@ai-usage/report-core/project-group';
 import { parseSessionDetailRequest } from '@ai-usage/report-core/session-detail';
 import {
   parseSessionCampaignChildrenRequest,
@@ -12,7 +11,7 @@ import {
   parseSessionQueryRequest,
 } from '@ai-usage/report-core/session-query';
 import { parseSessionVcsResolveRequest } from '@ai-usage/report-core/session-vcs';
-import { parseSourceControlCommand } from '@ai-usage/report-core/source-control';
+import { parseWebUsageEngineCommand } from '@ai-usage/usage-engine-control';
 import { createServerFn } from '@tanstack/solid-start';
 import type { JsonValue } from '../web-report-payload';
 
@@ -37,8 +36,11 @@ export const setCampaignLabelOverride = createServerFn({ method: 'POST' })
   .handler(
     async ({ data }) =>
       await runLiveServerFunction(async () => {
-        const { setCampaignLabelOverrideForServer } = await import('./campaign-labels.server');
-        return await setCampaignLabelOverrideForServer(data);
+        const [{ getRequest }, { setCampaignLabelOverrideFromRequestForServer }] = await Promise.all([
+          import('@tanstack/solid-start/server'),
+          import('./campaign-labels.server'),
+        ]);
+        return await setCampaignLabelOverrideFromRequestForServer(getRequest(), data);
       }),
   );
 
@@ -49,42 +51,6 @@ export const getReportPerfEnabled = createServerFn({ method: 'GET' }).handler(
       return reportPerfEnabled();
     }),
 );
-
-export const getSourceControlSnapshot = createServerFn({
-  method: 'GET',
-}).handler(
-  async () =>
-    await runLiveServerFunction(async () => {
-      const [{ getRequest }, { validateTrustedLocalRequest }, sourceControlApi] = await Promise.all([
-        import('@tanstack/solid-start/server'),
-        import('./local-request-trust.server'),
-        import('./source-control-api.server'),
-      ]);
-      const trustFailure = validateTrustedLocalRequest(getRequest());
-      if (trustFailure) {
-        throw trustFailure;
-      }
-      return await sourceControlApi.getSourceControlSnapshotForServer();
-    }),
-);
-
-export const applySourceControlCommand = createServerFn({ method: 'POST' })
-  .validator(parseSourceControlCommand)
-  .handler(
-    async ({ data }) =>
-      await runLiveServerFunction(async () => {
-        const [{ getRequest }, { validateTrustedLocalRequest }, sourceControlApi] = await Promise.all([
-          import('@tanstack/solid-start/server'),
-          import('./local-request-trust.server'),
-          import('./source-control-api.server'),
-        ]);
-        const trustFailure = validateTrustedLocalRequest(getRequest());
-        if (trustFailure) {
-          throw trustFailure;
-        }
-        return await sourceControlApi.applySourceControlCommandForServer(data);
-      }),
-  );
 
 export const getReportSessionDetail = createServerFn({ method: 'POST' })
   .validator(parseSessionDetailRequest)
@@ -127,6 +93,14 @@ export const getReportRevisionManifest = createServerFn({ method: 'GET' }).handl
     await runLiveServerFunction(async () => {
       const { getReportRevisionManifestForServer } = await import('./report-payload.server');
       return await getReportRevisionManifestForServer();
+    }),
+);
+
+export const getReportRevisionBootstrap = createServerFn({ method: 'GET' }).handler(
+  async () =>
+    await runLiveServerFunction(async () => {
+      const { getReportRevisionBootstrapForServer } = await import('./report-payload.server');
+      return await getReportRevisionBootstrapForServer();
     }),
 );
 
@@ -191,13 +165,20 @@ export const getFocusedReportBreakdown = createServerFn({ method: 'POST' })
   );
 
 export const saveProjectGroups = createServerFn({ method: 'POST' })
-  .validator((input: { projectGroups?: unknown }) => ({
-    projectGroups: parseProjectGroupConfigs(input.projectGroups),
-  }))
+  .validator((input: unknown) => {
+    const command = parseWebUsageEngineCommand(input);
+    if (command.command !== 'replace-project-groups-by-reference') {
+      throw new Error('Expected a project group reference command.');
+    }
+    return command;
+  })
   .handler(
     async ({ data }) =>
       await runLiveServerFunction(async () => {
-        const { saveProjectGroupsForServer } = await import('./report-payload.server');
-        return await saveProjectGroupsForServer(data.projectGroups);
+        const [{ getRequest }, { saveProjectGroupsFromRequestForServer }] = await Promise.all([
+          import('@tanstack/solid-start/server'),
+          import('./report-payload.server'),
+        ]);
+        return await saveProjectGroupsFromRequestForServer(getRequest(), data);
       }),
   );

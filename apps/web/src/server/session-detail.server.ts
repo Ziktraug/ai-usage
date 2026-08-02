@@ -1,12 +1,4 @@
-import { readClaudeSessionAnalysis } from '@ai-usage/local-collectors/claude-history';
-import { readCodexSessionAnalysis } from '@ai-usage/local-collectors/codex-history';
-import {
-  createLocalHistoryStorage,
-  LocalHistoryStorage,
-  type LocalHistoryStorage as LocalHistoryStorageService,
-} from '@ai-usage/local-collectors/local-history';
-import { ensureMachineConfig } from '@ai-usage/local-collectors/machine-config';
-import { readOpenCodeSessionAnalysis } from '@ai-usage/local-collectors/opencode-history';
+import { readLocalSessionAnalysis } from '@ai-usage/local-machine/session-detail';
 import {
   compareSessionProjectionFacts,
   type LocalSessionAnalysis,
@@ -19,9 +11,9 @@ import {
   supportsSessionDetailHarness,
 } from '@ai-usage/report-core/session-detail';
 import type { SessionQueryServerResult } from '@ai-usage/report-core/session-query';
-import { Effect } from 'effect';
 import { authorizeLocalSessionAnchor } from './local-session-authority.server';
 import { runRevisionQueryForServer } from './revision-query-runner.server';
+import { resolveUsageReadModelForServer } from './usage-read-model-resolver.server';
 
 export interface SessionDetailServerDependencies {
   readAnalysis(harnessKey: SessionDetailHarnessKey, sourceSessionId: string): Promise<LocalSessionAnalysis | null>;
@@ -29,21 +21,11 @@ export interface SessionDetailServerDependencies {
   resolveAnchor(request: SessionDetailRequest): Promise<SessionQueryServerResult<SessionDetailAnchorResult>>;
 }
 
-const defaultDependencies = (
-  storage: LocalHistoryStorageService = createLocalHistoryStorage(),
-): SessionDetailServerDependencies => {
-  const readers = {
-    claude: readClaudeSessionAnalysis,
-    codex: readCodexSessionAnalysis,
-    opencode: readOpenCodeSessionAnalysis,
-  } satisfies Record<SessionDetailHarnessKey, typeof readCodexSessionAnalysis>;
-  return {
-    readAnalysis: (harnessKey, sourceSessionId) =>
-      Effect.runPromise(readers[harnessKey](sourceSessionId).pipe(Effect.provideService(LocalHistoryStorage, storage))),
-    readMachine: () => Effect.runPromise(ensureMachineConfig.pipe(Effect.provideService(LocalHistoryStorage, storage))),
-    resolveAnchor: (request) => runRevisionQueryForServer('session-detail-anchor', request),
-  };
-};
+const defaultDependencies = (): SessionDetailServerDependencies => ({
+  readAnalysis: (harnessKey, sourceSessionId) => readLocalSessionAnalysis({ harnessKey, sourceSessionId }),
+  readMachine: async () => await (await resolveUsageReadModelForServer()).readLocalMachine(),
+  resolveAnchor: (request) => runRevisionQueryForServer('session-detail-anchor', request),
+});
 
 const unavailable = (
   reason: Extract<SessionDetailResponse, { status: 'unavailable' }>['reason'],

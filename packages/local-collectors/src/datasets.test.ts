@@ -1,4 +1,7 @@
 import { describe, expect, test } from 'bun:test';
+import { LocalHistoryError } from '@ai-usage/local-machine/errors';
+import { LocalHistoryStorage } from '@ai-usage/local-machine/local-history';
+import { TestMemoryStorage } from '@ai-usage/local-machine/testing/memory-storage';
 import { Effect } from 'effect';
 import {
   collectHarnessDatasets,
@@ -6,10 +9,7 @@ import {
   cursorCommitAttributionItemKey,
   normalizeCursorCommitAttributionItems,
 } from './datasets';
-import { LocalHistoryError } from './errors';
 import { CURSOR_COMMIT_ATTRIBUTION_SQL } from './facets';
-import { LocalHistoryStorage } from './local-history';
-import { TestMemoryStorage } from './test-memory-storage';
 
 class FailingCodexStorage extends TestMemoryStorage {
   override exists() {

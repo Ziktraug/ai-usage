@@ -1,8 +1,10 @@
 import { expect, test } from 'bun:test';
-import { chmod, mkdir, readdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { WideEventSnapshot } from '@ai-usage/effect-runtime';
 import { parseUsageSnapshot } from '@ai-usage/report-core/snapshot';
+import { createUsageEngineControlClient } from '@ai-usage/usage-engine-control/client';
+import { loadUsageEngineRendezvous } from '@ai-usage/usage-engine-control/node';
 import { withCliSandbox } from './test-support/run-cli';
 
 type StoredWideEvent = Omit<WideEventSnapshot, 'resource' | 'schemaVersion'> &
@@ -26,6 +28,51 @@ const codexHistory =
   })}\n`;
 
 const PROCESS_INTEGRATION_TEST_TIMEOUT_MS = 20_000;
+const DAEMON_INTEGRATION_TEST_TIMEOUT_MS = 40_000;
+const SETUP_URL_PATTERN = /Setup UI: (http:\/\/[^\s]+)/;
+const usageEngineMainPath = path.resolve(import.meta.dir, '../../usage-engine/src/main.ts');
+
+const spawnUsageEngineDaemon = (root: string, environment: Readonly<Record<string, string>>) => {
+  const child = Bun.spawn([process.execPath, '--no-env-file', usageEngineMainPath, 'serve', '--port', '0'], {
+    cwd: root,
+    env: environment,
+    stderr: 'pipe',
+    stdout: 'pipe',
+  });
+  return {
+    child,
+    stderr: new Response(child.stderr).text(),
+    stdout: new Response(child.stdout).text(),
+  };
+};
+
+const waitForUsageEngineDaemon = async (
+  daemon: ReturnType<typeof spawnUsageEngineDaemon>,
+  rendezvousPath: string,
+): Promise<void> => {
+  const deadline = Date.now() + PROCESS_INTEGRATION_TEST_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    if (daemon.child.exitCode !== null) {
+      throw new Error(`Usage engine daemon exited before readiness: ${await daemon.stderr}`);
+    }
+    try {
+      await loadUsageEngineRendezvous(rendezvousPath);
+      return;
+    } catch {
+      await Bun.sleep(10);
+    }
+  }
+  throw new Error('Timed out waiting for the usage engine daemon.');
+};
+
+const stopUsageEngineDaemon = async (daemon: ReturnType<typeof spawnUsageEngineDaemon>): Promise<number> => {
+  if (daemon.child.exitCode === null) {
+    daemon.child.kill('SIGTERM');
+  }
+  const exitCode = await daemon.child.exited;
+  await Promise.all([daemon.stderr, daemon.stdout]);
+  return exitCode;
+};
 
 const parseWideEventLines = (body: string): StoredWideEvent[] =>
   body
@@ -79,12 +126,16 @@ test(
     await withCliSandbox(async ({ root, runCli }) => {
       const first = await runCli(['machine']);
       const second = await runCli(['machine']);
+      if (first.exitCode !== 0) {
+        throw new Error(`Initial machine lookup failed: ${first.stderr}`);
+      }
       expect(first.exitCode).toBe(0);
       expect(first.stdout).toBe(second.stdout);
-
       const labelled = await runCli(['machine', 'set-label', 'Fixture Machine']);
       expect(labelled.exitCode).toBe(0);
       expect(labelled.stdout).toContain('Fixture Machine');
+      const renamed = await runCli(['machine']);
+      expect(renamed.stdout).toBe(labelled.stdout);
 
       const home = path.join(root, 'profile');
       await mkdir(path.join(home, '.codex', 'sessions', '2026', '01', '01'), { recursive: true });
@@ -98,6 +149,109 @@ test(
   },
   PROCESS_INTEGRATION_TEST_TIMEOUT_MS,
 );
+
+test(
+  'keeps stored outputs byte-identical and fresh daemon/foreground rows identical under concurrency',
+  async () => {
+    await withCliSandbox(async ({ environment, root, runCli }) => {
+      const home = path.join(root, 'profile');
+      await mkdir(path.join(home, '.codex', 'sessions', '2026', '01', '01'), { recursive: true });
+      await writeFile(path.join(home, '.codex', 'sessions', '2026', '01', '01', 'fixture.jsonl'), codexHistory);
+      const selection = ['--harness', 'codex', '--no-cursor', '--no-color'];
+      const initial = await runCli([...selection, '--json']);
+      expect(initial.exitCode).toBe(0);
+
+      const formats = [[], ['--json'], ['--csv'], ['--payload-json']];
+      const rendezvousPath = path.join(root, 'state', 'rendezvous.json');
+      const daemon = spawnUsageEngineDaemon(root, environment);
+      let expected: Awaited<ReturnType<typeof runCli>>[] = [];
+      try {
+        await waitForUsageEngineDaemon(daemon, rendezvousPath);
+        const daemonFresh = await runCli([...selection, '--json']);
+        if (daemonFresh.exitCode !== 0) {
+          const rendezvous = await loadUsageEngineRendezvous(rendezvousPath);
+          const daemonStatus = await createUsageEngineControlClient({
+            resolveRendezvous: () => Promise.resolve(rendezvous),
+          }).getStatus();
+          await stopUsageEngineDaemon(daemon);
+          throw new Error(
+            `Daemon fresh report failed: ${daemonFresh.stderr}\nDaemon status:\n${JSON.stringify(daemonStatus)}\nEngine diagnostics:\n${await daemon.stderr}`,
+          );
+        }
+        expect(daemonFresh).toMatchObject({
+          exitCode: 0,
+          stderr: initial.stderr,
+          stdout: initial.stdout,
+        });
+
+        const concurrent = await Promise.all([runCli([...selection, '--json']), runCli([...selection, '--json'])]);
+        expect(concurrent.map(({ exitCode }) => exitCode)).toEqual([0, 0]);
+        expect(concurrent.map(({ stdout }) => stdout)).toEqual([initial.stdout, initial.stdout]);
+        expect(concurrent.map(({ stderr }) => stderr)).toEqual([initial.stderr, initial.stderr]);
+        await expect(Bun.file(rendezvousPath).exists()).resolves.toBe(true);
+
+        expected = await Promise.all(
+          formats.map(async (format) => await runCli([...selection, '--stored', ...format])),
+        );
+        expect(expected.every(({ exitCode }) => exitCode === 0)).toBe(true);
+        expect(expected.every(({ stderr }) => stderr === '')).toBe(true);
+      } finally {
+        expect(await stopUsageEngineDaemon(daemon)).toBe(0);
+      }
+
+      const stopped = await Promise.all(
+        formats.map(async (format) => await runCli([...selection, '--stored', ...format])),
+      );
+      expect(stopped.map(({ stdout }) => stdout)).toEqual(expected.map(({ stdout }) => stdout));
+      expect(stopped.map(({ stderr }) => stderr)).toEqual(expected.map(({ stderr }) => stderr));
+      await expect(Bun.file(rendezvousPath).exists()).resolves.toBe(false);
+    });
+  },
+  DAEMON_INTEGRATION_TEST_TIMEOUT_MS,
+);
+
+test('fails an empty stored read without starting an engine and can then publish foreground', async () => {
+  await withCliSandbox(async ({ root, runCli }) => {
+    const databasePath = path.join(root, 'store', 'usage.sqlite');
+    const rendezvousPath = path.join(root, 'state', 'rendezvous.json');
+    const stored = await runCli(['--stored', '--json', '--harness', 'codex', '--no-cursor']);
+    expect(stored.exitCode).toBe(1);
+    expect(stored.stdout).toBe('');
+    expect(stored.stderr).toContain('Usage store');
+    await expect(Bun.file(databasePath).exists()).resolves.toBe(false);
+    await expect(Bun.file(rendezvousPath).exists()).resolves.toBe(false);
+
+    const fresh = await runCli(['--json', '--harness', 'codex', '--no-cursor']);
+    expect(fresh.exitCode).toBe(0);
+    expect(JSON.parse(fresh.stdout)).toEqual([]);
+    await expect(Bun.file(databasePath).exists()).resolves.toBe(true);
+    await expect(Bun.file(rendezvousPath).exists()).resolves.toBe(false);
+    await expect(Bun.file(`${databasePath}.engine.lock`).exists()).resolves.toBe(false);
+  });
+});
+
+test('forwards Ctrl-C through a foreground engine and leaves no writer or listener behind', async () => {
+  await withCliSandbox(async ({ root, runCli }) => {
+    const databasePath = path.join(root, 'store', 'usage.sqlite');
+    const interrupted = await runCli(['setup', '--local', '--port', '0'], {
+      interrupt: { afterMs: 750, signal: 'SIGINT' },
+    });
+    if (interrupted.exitCode !== 130) {
+      throw new Error(
+        `Expected setup to exit 130 after SIGINT, got ${interrupted.exitCode}. stderr: ${interrupted.stderr}`,
+      );
+    }
+    expect(interrupted.signalCode).toBeNull();
+    await expect(Bun.file(`${databasePath}.engine.lock`).exists()).resolves.toBe(false);
+    await expect(Bun.file(path.join(root, 'state', 'rendezvous.json')).exists()).resolves.toBe(false);
+
+    const setupUrl = interrupted.stdout.match(SETUP_URL_PATTERN)?.[1];
+    if (setupUrl !== undefined) {
+      await expect(fetch(setupUrl)).rejects.toThrow();
+    }
+    expect((await runCli(['--json', '--harness', 'codex', '--no-cursor'])).exitCode).toBe(0);
+  });
+});
 
 test('renders a snapshot merge and rejects retired HTML arguments as real processes', async () => {
   await withCliSandbox(async ({ root, runCli }) => {
@@ -120,6 +274,38 @@ test('renders a snapshot merge and rejects retired HTML arguments as real proces
     expect(reportHtml.stderr).toContain('Unknown option: --html');
     expect(mergeHtml.exitCode).toBe(1);
     expect(mergeHtml.stderr).toContain('Unknown option for merge: --html');
+  });
+});
+
+test('merges a portable snapshot with durable config while the engine and source config are absent', async () => {
+  await withCliSandbox(async ({ root, runCli }) => {
+    const profile = path.join(root, 'profile');
+    const configPath = path.join(root, 'ai-usage.config.ts');
+    const databasePath = path.join(root, 'store', 'usage.sqlite');
+    const rendezvousPath = path.join(root, 'state', 'rendezvous.json');
+    const snapshotPath = path.join(root, 'portable.json');
+    await mkdir(path.join(profile, '.codex', 'sessions', '2026', '01', '01'), { recursive: true });
+    await writeFile(path.join(profile, '.codex', 'sessions', '2026', '01', '01', 'fixture.jsonl'), codexHistory);
+    await writeFile(
+      configPath,
+      "export default { projectAliases: [{ name: 'Durable Alias', match: ['/work/fixture-project'] }] };\n",
+    );
+
+    const snapshot = await runCli(['snapshot', '--no-cursor', '--out', snapshotPath]);
+    expect(snapshot.exitCode).toBe(0);
+    await rm(configPath);
+    await expect(Bun.file(rendezvousPath).exists()).resolves.toBe(false);
+    const before = await stat(databasePath);
+
+    const merged = await runCli(['merge', snapshotPath, '--json', '--no-cursor']);
+
+    expect(merged.exitCode).toBe(0);
+    expect(merged.stderr).toContain('Durable Alias');
+    expect(JSON.parse(merged.stdout)).toEqual([expect.objectContaining({ project: 'Durable Alias' })]);
+    const after = await stat(databasePath);
+    expect({ mtimeMs: after.mtimeMs, size: after.size }).toEqual({ mtimeMs: before.mtimeMs, size: before.size });
+    await expect(Bun.file(rendezvousPath).exists()).resolves.toBe(false);
+    await expect(Bun.file(`${databasePath}.engine.lock`).exists()).resolves.toBe(false);
   });
 });
 
@@ -204,7 +390,7 @@ test('normal reports do not invoke provider quota collection', async () => {
     expect(Bun.file(markerPath).exists()).resolves.toBe(false);
 
     const configDirectory = path.join(home, '.config', 'ai-usage');
-    await mkdir(configDirectory, { recursive: true });
+    await mkdir(configDirectory, { mode: 0o700, recursive: true });
     await writeFile(
       path.join(configDirectory, 'config.json'),
       JSON.stringify({
@@ -228,7 +414,7 @@ test('quota reports a paused policy without invoking the provider', async () => 
   await withCliSandbox(async ({ root, runCli }) => {
     const logDirectory = path.join(root, 'logs');
     const configDirectory = path.join(root, 'profile', '.config', 'ai-usage');
-    await mkdir(configDirectory, { recursive: true });
+    await mkdir(configDirectory, { mode: 0o700, recursive: true });
     await writeFile(
       path.join(configDirectory, 'config.json'),
       JSON.stringify({
@@ -245,9 +431,11 @@ test('quota reports a paused policy without invoking the provider', async () => 
     expect(result.stderr).toContain('Codex usage-limit collection is paused');
     expect(result.stderr).not.toContain('[wide-event]');
     const events = await readWideEvents(logDirectory);
-    expect(events).toHaveLength(1);
-    expect(events[0]?.boundary).toBe('cli.quota');
-    expect(events[0]?.outcome).toBe('failure');
+    const cliEvents = events.filter((event) => event.resource?.surface === 'cli');
+    expect(cliEvents).toHaveLength(1);
+    expect(cliEvents[0]?.boundary).toBe('cli.quota');
+    expect(cliEvents[0]?.outcome).toBe('failure');
+    expect(events.some((event) => event.resource?.surface === 'engine')).toBe(true);
   });
 });
 
@@ -290,12 +478,13 @@ test('quota persists a degraded boundary without polluting stderr when live refr
     expect(result.exitCode).toBe(0);
     expect(result.stderr).toBe('');
     const events = await readWideEvents(logDirectory);
-    expect(events).toHaveLength(1);
-    expect(events[0]?.boundary).toBe('cli.quota');
-    expect(events[0]?.outcome).toBe('degraded');
-    expect(events[0]?.schemaVersion).toBe(2);
-    expect(events[0]?.resource).toMatchObject({ serviceName: 'ai-usage', surface: 'cli' });
-    expect(events[0]?.annotations.warningCodes).toEqual(['provider-warning']);
+    const cliEvent = events.find((event) => event.resource?.surface === 'cli');
+    expect(cliEvent?.boundary).toBe('cli.quota');
+    expect(cliEvent?.outcome).toBe('degraded');
+    expect(cliEvent?.schemaVersion).toBe(2);
+    expect(cliEvent?.resource).toMatchObject({ serviceName: 'ai-usage', surface: 'cli' });
+    expect(cliEvent?.annotations.warningCodes).toEqual(['provider-warning']);
+    expect(events.some((event) => event.resource?.surface === 'engine' && event.boundary === 'source.run')).toBe(true);
   });
 });
 
@@ -319,8 +508,8 @@ test('quota persists a failed boundary when refresh fails without durable data',
     expect(result.stdout).toContain('No stored Codex usage-limit observation is available.');
     expect(result.stderr).toBe('');
     const events = await readWideEvents(logDirectory);
-    expect(events).toHaveLength(1);
-    expect(events[0]).toMatchObject({
+    const cliEvent = events.find((event) => event.resource?.surface === 'cli');
+    expect(cliEvent).toMatchObject({
       annotations: {
         domainOutcome: 'warning',
         outputCount: 0,
@@ -328,7 +517,14 @@ test('quota persists a failed boundary when refresh fails without durable data',
       },
       boundary: 'cli.quota',
       outcome: 'failure',
-      services: [{ name: 'quota.refresh', outcome: 'failure' }],
     });
+    expect(
+      events.some(
+        (event) =>
+          event.resource?.surface === 'engine' &&
+          event.boundary === 'source.run' &&
+          event.services.some((service) => service.name === 'source.execute'),
+      ),
+    ).toBe(true);
   });
 });

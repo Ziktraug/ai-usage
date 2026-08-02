@@ -19,6 +19,16 @@ executor: read the plan fully before starting, honor its STOP conditions, and
 update the row only when its done criteria actually pass. These plans authorize
 local implementation and verification only; do not push a branch or open a pull
 request unless the user explicitly asks.
+Plan 066 records the 2026-07-29 decision at `f4f9650` to replace that web-owned
+runtime with a sole-writer Bun usage engine. Web and CLI read revision-keyed
+projections directly from SQLite; a minimal authenticated loopback API carries
+commands, status, and bounded events only. It is an intentional big-bang
+cutover and also owns the measured revision-lease and concurrent dev/build I/O
+regressions.
+Plan 067 records the post-cutover runtime review at `d9cc99c`: polling ownership
+and the data-plane split are correct, but control failure classification, SSE
+failure visibility, deferred cleanup diagnostics, snapshot waiting, and manual
+merge ownership need a focused hardening pass.
 
 ## Execution order & status
 
@@ -86,6 +96,8 @@ request unless the user explicitly asks.
 | 063 | Normalize Report Signal and Language | P2 | L | 053, 062 | DONE |
 | 064 | Label Data Quality Without Dropping Data | P3 | M | 053, 059 | DONE |
 | 065 | Expose the Harness–Provider Joint Distribution | P3 | M | 054, 062 | DONE |
+| 066 | Split the Usage Engine From the Web and CLI Runtimes | P0 | XL | 022-024, 043-044 | DONE |
+| 067 | Close the Post-Cutover Usage-Engine Runtime Review Gaps | P1 | L | 066 | DONE |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) |
 REJECTED (with one-line rationale).
@@ -259,6 +271,20 @@ plan is parallelized and nothing is pushed until every plan and final gate pass.
 - Plan 032 runs last so its architecture notes describe the stabilized code. It
   performs scoped Dashboard/TimeRange/Router/style cleanup, records durable
   decisions, and adds concise legal, contribution, and security documentation.
+- Plan 066 supersedes plans 022 and 043 only on process placement: their
+  scheduler/source invariants and narrow capability seams remain requirements,
+  but the owner moves from Nitro to `apps/usage-engine`. It supersedes plans
+  016, 018, and 044 only on filesystem artifact transport: exact-revision
+  consistency, browser retry/supersession, and one execute/validate lifecycle
+  remain requirements on revision-keyed read-only SQLite. It permits no data
+  API, dual writer, or compatibility scheduler. Its wave 0 output isolation is
+  independent and must land in the same cutover because the measured `.output`
+  deletion loop is not fixed merely by moving collection.
+- Plan 067 hardens plan 066 without reopening its architecture. It preserves
+  the engine as sole writer and sole provider-usage poller, keeps the existing
+  five-minute `codex.usage-limits` cadence, and adds no data API. Execute it only
+  after the active runtime-path consolidation has landed, because both touch
+  engine lock/input/runtime files and must not share a moving worktree.
 - Plan 036 adds Effect-native wide-event observability without an OTLP exporter
   so operators can see what Effect boundaries do, especially collectors:
   business outcome, duration, measured hops, and allowlisted local context. The

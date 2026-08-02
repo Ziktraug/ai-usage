@@ -23,6 +23,7 @@
     "./merge-bundle": "./src/merge-bundle.ts",
     "./report-data": "./src/report-data.ts",
     "./report-budgets": "./src/report-budgets.ts",
+    "./report-capture-fingerprint": "./src/report-capture-fingerprint.ts",
     "./session-query": "./src/session-query.ts",
     "./session-vcs": "./src/session-vcs.ts",
     "./session-detail": "./src/session-detail.ts",

@@ -1,30 +1,39 @@
-import { MAX_PORTABLE_USAGE_BYTES, MAX_PORTABLE_USAGE_ROWS } from '@ai-usage/report-core/portable-usage';
+import { MAX_PORTABLE_USAGE_BYTES } from '@ai-usage/report-core/portable-usage';
+import type { UsageEngineCommandCompletion, UsageEngineErrorCode } from '@ai-usage/usage-engine-control';
+import type { StagedUsageEngineHandoff } from '@ai-usage/usage-engine-control/handoff';
 import type { ManualOperationResult } from '../manual-transfer-contract';
+import { readAbortableRequestBodyChunk } from './abortable-request-body.server';
 import { validateTrustedLocalRequest } from './local-request-trust.server';
+import { UsageEngineCommandCompletionError } from './usage-engine-command.server';
 
 const BYTE_COUNT_PATTERN = /^\d+$/;
-const MAX_CONFIRMATION_TOKEN_CHARACTERS = 128;
-const WHITESPACE_PATTERN = /\s/;
+const SHA_256_DIGEST_PATTERN = /^[a-f0-9]{64}$/;
+const MAX_CONFIRMATION_TOKEN_BYTES = 128;
+const encoder = new TextEncoder();
 
+type InboxHandoffInput = StagedUsageEngineHandoff['input'];
+type ManualMergeCommand =
+  | { readonly command: 'preview-merge'; readonly input: InboxHandoffInput }
+  | {
+      readonly command: 'confirm-merge';
+      readonly confirmationToken: string;
+      readonly documentDigest: string;
+      readonly input: InboxHandoffInput;
+    };
 type ManualMergeUploadResult = ManualOperationResult<unknown>;
-type ManualMergeUploadFailure = Extract<ManualMergeUploadResult, { ok: false }>;
+type ManualMergeUploadFailure = Extract<ManualMergeUploadResult, { readonly ok: false }>;
 
-interface ManualMergeUploadOptions {
-  confirmBundle?: (
-    document: { bytes: Uint8Array; text: string },
-    expected: { confirmationToken: string; digest: string },
-  ) => Promise<ManualMergeUploadResult>;
-  importBundle?: (text: string) => Promise<ManualMergeUploadResult>;
-  maxBytes?: number;
-  maxRows?: number;
-  previewBundle?: (document: { bytes: Uint8Array; text: string }) => Promise<ManualMergeUploadResult>;
+export interface ManualMergeUploadOptions {
+  readonly executeCommand: (command: ManualMergeCommand) => Promise<UsageEngineCommandCompletion>;
+  readonly maxBytes?: number;
+  readonly stageHandoff: (bytes: Uint8Array, signal: AbortSignal) => Promise<StagedUsageEngineHandoff>;
 }
 
-const jsonFailure = (status: number, tag: string, message: string, reason?: string) =>
+const jsonFailure = (status: number, tag: string, message: string, reason?: string): Response =>
   Response.json(
     {
+      error: { message, ...(reason === undefined ? {} : { reason }), tag },
       ok: false,
-      error: { tag, message, ...(reason === undefined ? {} : { reason }) },
     } satisfies ManualMergeUploadFailure,
     { status },
   );
@@ -37,7 +46,7 @@ const validateJsonContentType = (request: Request): Response | null => {
   return null;
 };
 
-type BoundedBodyResult = { bytes: Uint8Array; text: string } | { response: Response };
+type BoundedBodyResult = { readonly bytes: Uint8Array } | { readonly response: Response };
 
 const readBoundedBody = async (request: Request, maxBytes: number): Promise<BoundedBodyResult> => {
   const contentLength = request.headers.get('content-length');
@@ -60,8 +69,14 @@ const readBoundedBody = async (request: Request, maxBytes: number): Promise<Boun
   const chunks: Uint8Array[] = [];
   let byteLength = 0;
   while (true) {
-    const chunk = await reader.read();
+    const chunk = await readAbortableRequestBodyChunk(reader, request.signal);
+    if ('aborted' in chunk) {
+      return { response: jsonFailure(499, 'UploadAborted', 'The merge upload was cancelled.') };
+    }
     if (chunk.done) {
+      if (request.signal.aborted) {
+        return { response: jsonFailure(499, 'UploadAborted', 'The merge upload was cancelled.') };
+      }
       break;
     }
     byteLength += chunk.value.byteLength;
@@ -85,117 +100,131 @@ const readBoundedBody = async (request: Request, maxBytes: number): Promise<Boun
     offset += chunk.byteLength;
   }
   try {
-    return { bytes, text: new TextDecoder('utf-8', { fatal: true }).decode(bytes) };
+    new TextDecoder('utf-8', { fatal: true }).decode(bytes);
   } catch {
     return { response: jsonFailure(400, 'InvalidEncoding', 'Manual import files must contain valid UTF-8 JSON.') };
   }
+  return { bytes };
 };
 
-const stringEnd = (text: string, start: number): number => {
-  let escaped = false;
-  for (let index = start + 1; index < text.length; index++) {
-    const character = text[index];
-    if (escaped) {
-      escaped = false;
-    } else if (character === '\\') {
-      escaped = true;
-    } else if (character === '"') {
-      return index;
-    }
+interface ParsedManualMergeAction {
+  readonly action: 'confirm' | 'preview';
+  readonly confirmationToken?: string;
+  readonly documentDigest?: string;
+}
+
+const parseManualMergeAction = (request: Request): ParsedManualMergeAction | Response => {
+  const action = request.headers.get('x-ai-usage-merge-action');
+  if (action === 'preview') {
+    return { action };
   }
-  return -1;
-};
-
-const skipWhitespace = (text: string, start: number): number => {
-  let index = start;
-  while (WHITESPACE_PATTERN.test(text[index] ?? '')) {
-    index++;
+  if (action !== 'confirm') {
+    return jsonFailure(400, 'InvalidAction', 'Choose preview or confirm for a manual import.');
   }
-  return index;
+  const documentDigest = request.headers.get('x-ai-usage-merge-digest') ?? '';
+  const confirmationToken = request.headers.get('x-ai-usage-merge-confirmation') ?? '';
+  if (
+    !SHA_256_DIGEST_PATTERN.test(documentDigest) ||
+    confirmationToken.length === 0 ||
+    encoder.encode(confirmationToken).byteLength > MAX_CONFIRMATION_TOKEN_BYTES
+  ) {
+    return jsonFailure(400, 'InvalidConfirmation', 'Manual import confirmation preconditions are invalid.');
+  }
+  return { action, confirmationToken, documentDigest };
 };
 
-const topLevelRowsExceedLimit = (text: string, maxRows: number): boolean => {
-  let objectDepth = 0;
-  for (let index = 0; index < text.length; index++) {
-    const character = text[index];
-    if (character === '"') {
-      const end = stringEnd(text, index);
-      if (end < 0) {
-        return false;
+const engineFailurePresentation = {
+  aborted: { message: 'The merge command was cancelled.', status: 503 },
+  'authentication-failed': { message: 'The usage engine is unavailable for this merge.', status: 503 },
+  'command-failed': { message: 'The usage engine could not complete this merge.', status: 500 },
+  'command-rejected': { message: 'The usage engine rejected the merge command.', status: 409 },
+  'engine-busy': { message: 'The usage engine is unavailable for this merge.', status: 503 },
+  'engine-unavailable': { message: 'The usage engine is unavailable for this merge.', status: 503 },
+  'invalid-response': { message: 'The usage engine returned an invalid merge response.', status: 502 },
+  'merge-invalid-input': { message: 'The merge file is invalid.', status: 422 },
+  'merge-invalid-json': { message: 'The merge file does not contain valid JSON.', status: 400 },
+  'merge-self-merge': { message: 'The merge file belongs to this machine.', status: 409 },
+  'merge-store-failed': { message: 'The usage store could not apply the merge file.', status: 500 },
+  'preview-stale': { message: 'The merge file changed after it was previewed.', status: 409 },
+  'protocol-mismatch': { message: 'The usage engine version is incompatible with the web app.', status: 409 },
+  'request-too-large': { message: 'The usage engine rejected the merge file size.', status: 413 },
+  'response-too-large': { message: 'The usage engine returned an invalid merge response.', status: 502 },
+  timeout: { message: 'The usage engine is unavailable for this merge.', status: 503 },
+  'transport-failed': { message: 'The usage engine is unavailable for this merge.', status: 503 },
+} as const satisfies Readonly<Record<UsageEngineErrorCode, { readonly message: string; readonly status: number }>>;
+
+const engineFailureResponse = (error: UsageEngineCommandCompletionError): Response => {
+  const presentation = engineFailurePresentation[error.code];
+  return jsonFailure(presentation.status, 'UsageEngineCommandError', presentation.message, error.code);
+};
+
+const commandFor = (action: ParsedManualMergeAction, staged: StagedUsageEngineHandoff): ManualMergeCommand =>
+  action.action === 'preview'
+    ? { command: 'preview-merge', input: staged.input }
+    : {
+        command: 'confirm-merge',
+        confirmationToken: action.confirmationToken ?? '',
+        documentDigest: action.documentDigest ?? '',
+        input: staged.input,
+      };
+
+type StagingOutcome =
+  | { readonly state: 'aborted' }
+  | { readonly error: unknown; readonly state: 'failed' }
+  | { readonly staged: StagedUsageEngineHandoff; readonly state: 'staged' };
+
+const cleanupLateStaging = (staging: Promise<StagedUsageEngineHandoff>): void => {
+  staging.then(
+    async (staged) => {
+      try {
+        await staged.cleanup();
+      } catch {
+        // Recovery preserves or scavenges an identity-validated handoff when detached cleanup cannot finish.
       }
-      if (objectDepth === 1) {
-        const token = text.slice(index, end + 1);
-        let key: unknown;
-        try {
-          key = JSON.parse(token) as unknown;
-        } catch {
-          return false;
-        }
-        let cursor = skipWhitespace(text, end + 1);
-        if (key === 'rows' && text[cursor] === ':') {
-          cursor = skipWhitespace(text, cursor + 1);
-          if (text[cursor] !== '[') {
-            return false;
-          }
-          let nestedDepth = 0;
-          let rows = 0;
-          let hasValue = false;
-          for (cursor++; cursor < text.length; cursor++) {
-            const rowCharacter = text[cursor];
-            if (rowCharacter === '"') {
-              const rowStringEnd = stringEnd(text, cursor);
-              if (rowStringEnd < 0) {
-                return false;
-              }
-              if (nestedDepth === 0) {
-                hasValue = true;
-              }
-              cursor = rowStringEnd;
-            } else if (rowCharacter === '[' || rowCharacter === '{') {
-              if (nestedDepth === 0) {
-                hasValue = true;
-              }
-              nestedDepth++;
-            } else if (rowCharacter === '}' || (rowCharacter === ']' && nestedDepth > 0)) {
-              nestedDepth--;
-            } else if (rowCharacter === ']' && nestedDepth === 0) {
-              return hasValue ? rows + 1 > maxRows : false;
-            } else if (rowCharacter === ',' && nestedDepth === 0) {
-              rows++;
-              if (rows >= maxRows) {
-                return true;
-              }
-              hasValue = false;
-            } else if (!WHITESPACE_PATTERN.test(rowCharacter ?? '') && nestedDepth === 0) {
-              hasValue = true;
-            }
-          }
-          return false;
-        }
-      }
-      index = end;
-    } else if (character === '{') {
-      objectDepth++;
-    } else if (character === '}') {
-      objectDepth--;
-    }
-  }
-  return false;
+    },
+    () => undefined,
+  );
 };
 
-const rowLimitFailure = (text: string, maxRows: number): Response | null =>
-  topLevelRowsExceedLimit(text, maxRows)
-    ? jsonFailure(413, 'TooManyRows', `Manual import files must not contain more than ${maxRows} rows.`)
-    : null;
+const stageUntilAbort = async (
+  bytes: Uint8Array,
+  signal: AbortSignal,
+  stageHandoff: ManualMergeUploadOptions['stageHandoff'],
+): Promise<StagingOutcome> => {
+  if (signal.aborted) {
+    return { state: 'aborted' };
+  }
+  const staging = stageHandoff(bytes, signal);
+  let onAbort: (() => void) | undefined;
+  const aborted = new Promise<StagingOutcome>((resolve) => {
+    onAbort = () => resolve({ state: 'aborted' });
+    signal.addEventListener('abort', onAbort, { once: true });
+    if (signal.aborted) {
+      onAbort();
+    }
+  });
+  const settled = staging.then<StagingOutcome, StagingOutcome>(
+    (staged) => ({ staged, state: 'staged' }),
+    (error: unknown) => ({ error, state: 'failed' }),
+  );
+  const outcome = await Promise.race([settled, aborted]);
+  if (onAbort) {
+    signal.removeEventListener('abort', onAbort);
+  }
+  if (outcome.state === 'aborted') {
+    cleanupLateStaging(staging);
+  }
+  return outcome;
+};
 
-const importFailureStatus = (failure: ManualMergeUploadFailure) => {
-  if (failure.error.reason === 'invalid-input') {
-    return 422;
+const completionResponse = (action: ParsedManualMergeAction, completion: UsageEngineCommandCompletion): Response => {
+  const expectedCommand = action.action === 'preview' ? 'preview-merge' : 'confirm-merge';
+  if (completion.state !== 'succeeded' || completion.command !== expectedCommand) {
+    return engineFailureResponse(
+      new UsageEngineCommandCompletionError('invalid-response', 'Usage engine returned a mismatched completion.'),
+    );
   }
-  if (failure.error.reason === 'self-merge' || failure.error.reason === 'preview-stale') {
-    return 409;
-  }
-  return 500;
+  return Response.json({ data: completion.output, ok: true } satisfies ManualMergeUploadResult, { status: 200 });
 };
 
 export const handleManualMergeUpload = async (
@@ -210,40 +239,53 @@ export const handleManualMergeUpload = async (
   if (contentTypeFailure) {
     return contentTypeFailure;
   }
-
-  const body = await readBoundedBody(request, options.maxBytes ?? MAX_PORTABLE_USAGE_BYTES);
+  const action = parseManualMergeAction(request);
+  if (action instanceof Response) {
+    return action;
+  }
+  const maximumBytes = options.maxBytes ?? MAX_PORTABLE_USAGE_BYTES;
+  if (!(Number.isSafeInteger(maximumBytes) && maximumBytes > 0 && maximumBytes <= MAX_PORTABLE_USAGE_BYTES)) {
+    return jsonFailure(500, 'UploadConfigurationError', 'Manual import upload limits are unavailable.');
+  }
+  const body = await readBoundedBody(request, maximumBytes);
   if ('response' in body) {
     return body.response;
   }
-  const rowFailure = rowLimitFailure(body.text, options.maxRows ?? MAX_PORTABLE_USAGE_ROWS);
-  if (rowFailure) {
-    return rowFailure;
-  }
-  try {
-    JSON.parse(body.text);
-  } catch {
-    return jsonFailure(400, 'MalformedJson', 'The manual import file does not contain valid JSON.');
+  if (request.signal.aborted) {
+    return jsonFailure(499, 'UploadAborted', 'The merge upload was cancelled.');
   }
 
-  try {
-    const action = request.headers.get('x-ai-usage-merge-action') ?? 'import';
-    let result: ManualMergeUploadResult;
-    if (action === 'preview' && options.previewBundle) {
-      result = await options.previewBundle(body);
-    } else if (action === 'confirm' && options.confirmBundle) {
-      const digest = request.headers.get('x-ai-usage-merge-digest') ?? '';
-      const confirmationToken = request.headers.get('x-ai-usage-merge-confirmation') ?? '';
-      if (!(digest && confirmationToken && confirmationToken.length <= MAX_CONFIRMATION_TOKEN_CHARACTERS)) {
-        return jsonFailure(400, 'InvalidConfirmation', 'Manual import confirmation preconditions are missing.');
-      }
-      result = await options.confirmBundle(body, { confirmationToken, digest });
-    } else if (action === 'import' && options.importBundle) {
-      result = await options.importBundle(body.text);
-    } else {
-      return jsonFailure(400, 'InvalidAction', 'Manual import action is not supported.');
-    }
-    return Response.json(result, { status: result.ok ? 200 : importFailureStatus(result) });
-  } catch {
-    return jsonFailure(500, 'ImportFailed', 'The server could not process the manual import file.');
+  const staging = await stageUntilAbort(body.bytes, request.signal, options.stageHandoff);
+  if (staging.state === 'aborted') {
+    return jsonFailure(499, 'UploadAborted', 'The merge upload was cancelled.');
   }
+  if (staging.state === 'failed') {
+    return jsonFailure(503, 'EngineInboxUnavailable', 'The usage engine inbox is unavailable.');
+  }
+  const { staged } = staging;
+  if (request.signal.aborted) {
+    try {
+      await staged.cleanup();
+    } catch {
+      return jsonFailure(500, 'HandoffCleanupFailed', 'The merge upload could not be cleaned up safely.');
+    }
+    return jsonFailure(499, 'UploadAborted', 'The merge upload was cancelled.');
+  }
+
+  let response: Response;
+  try {
+    const completion = await options.executeCommand(commandFor(action, staged));
+    response = completionResponse(action, completion);
+  } catch (error) {
+    response =
+      error instanceof UsageEngineCommandCompletionError
+        ? engineFailureResponse(error)
+        : jsonFailure(503, 'UsageEngineUnavailable', 'The usage engine is unavailable for this merge.');
+  }
+  try {
+    await staged.cleanup();
+  } catch {
+    return jsonFailure(500, 'HandoffCleanupFailed', 'The merge upload could not be cleaned up safely.');
+  }
+  return response;
 };

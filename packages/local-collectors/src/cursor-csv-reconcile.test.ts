@@ -1,11 +1,11 @@
 import { describe, expect, test } from 'bun:test';
+import { LocalHistoryStorage } from '@ai-usage/local-machine/local-history';
+import { TestMemoryStorage } from '@ai-usage/local-machine/testing/memory-storage';
 import { actualCost } from '@ai-usage/report-core/usage-row';
 import { Effect } from 'effect';
 import type { CollectedSession } from './collected-session';
 import { collectCursorCsvTurns, collectCursorCsvTurnsResult } from './collectors/cursor-csv';
 import { reconcileCursorSessions } from './collectors/cursor-reconcile';
-import { LocalHistoryStorage } from './local-history';
-import { TestMemoryStorage } from './test-memory-storage';
 
 const csv = (rows: string[]) =>
   [

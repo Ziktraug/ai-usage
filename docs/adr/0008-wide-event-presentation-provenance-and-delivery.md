@@ -3,6 +3,7 @@
 - **Status**: Accepted
 - **Date**: 2026-07-22
 - **Supersedes**: selected clauses of ADR 0002 and plan 036 only
+- **Amended by**: [ADR 0009](0009-sole-writer-usage-engine-and-direct-sqlite-readers.md)
 
 ## Context
 
@@ -17,10 +18,12 @@ text should cross the boundary.
 ## Decision
 
 New records use schema v2 and contain a required, sanitized process-scoped
-resource: instance id, runtime mode, service name/version, and surface. Web and
-CLI composition roots provide the resource; the domain-free runtime package
-does not read application configuration or import another workspace package.
-Historical schema-v1 files are not rewritten.
+resource: instance id, runtime mode, service name/version, and surface. Engine,
+Web, and CLI composition roots provide the resource; the domain-free runtime
+package does not read application configuration or import another workspace
+package. Historical schema-v1 files are not rewritten. Under ADR 0009,
+source/publication records move from the former Web host to surface `engine`;
+Web retains its direct-read boundaries.
 
 Canonical storage and terminal presentation are independent. NDJSON and JSON
 console records remain one compact object per physical line. Pretty TTY output
@@ -36,10 +39,11 @@ public text is bounded and scrubbed for credential-shaped query and
 authorization values. Domain boundaries prefer stable reason and warning
 codes.
 
-Web file warnings use fixed typed kinds, bounded counters, and per-kind
-rate-limiting. They write directly to the console warning channel and never
-re-enter the file sink. Shutdown prints a console-only loss summary when a
-transport dropped or failed records. CLI warnings and summaries remain silent.
+Engine/Web file warnings use fixed typed kinds, bounded counters, and per-kind
+rate-limiting. They write directly to their process console warning channel and
+never re-enter the file sink. Shutdown prints a console-only loss summary when
+a transport dropped or failed records. CLI warnings and summaries remain
+silent.
 An append timeout opens the circuit at the configured deadline while the
 non-cooperative append and cooperative lock remain alive until I/O settles.
 Retention sweeps run on the first successful append and target rotation, not on

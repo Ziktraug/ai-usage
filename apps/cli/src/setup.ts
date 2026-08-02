@@ -1,26 +1,33 @@
 #!/usr/bin/env bun
-import { LocalHistoryStorage, readAiUsageConfig, updateAiUsageConfig } from '@ai-usage/local-collectors';
-import type { ProjectAliasEntry } from '@ai-usage/report-core/project-alias';
+import { type ProjectGroupConfig, parseProjectGroupConfigs } from '@ai-usage/report-core/project-group';
 import type { UsageSnapshot } from '@ai-usage/report-core/snapshot';
-import type { ProjectSource } from '@ai-usage/report-data';
-import { listProjectSourcesWithFreshLocalWarnings } from '@ai-usage/report-data/one-shot-sources';
+import { collectProjectSourcesFromSnapshots, type ProjectSource } from '@ai-usage/report-data/portable-report';
 import { Console, Effect } from 'effect';
 import { readUsageSnapshotFile } from './snapshot-file';
 
 export const SETUP_SERVER_HOSTNAME = '127.0.0.1';
-export const MAX_SETUP_ALIAS_BODY_BYTES = 256 * 1024;
-export const MAX_SETUP_ALIASES = 500;
-export const MAX_SETUP_ALIAS_MATCHES = 500;
+export const MAX_SETUP_PROJECT_GROUP_BODY_BYTES = 256 * 1024;
+export const MAX_SETUP_PROJECT_GROUPS = 256;
+export const MAX_SETUP_PROJECT_SOURCES = 500;
 const BYTE_COUNT_PATTERN = /^\d+$/;
 const LOOPBACK_HOSTNAMES = new Set(['127.0.0.1', '[::1]', 'localhost']);
 
 interface SetupServerOptions {
-  aliases: ProjectAliasEntry[];
-  maxAliasBodyBytes?: number;
+  maxProjectGroupBodyBytes?: number;
   port: number;
+  projectGroups: ProjectGroupConfig[];
   sources: ProjectSource[];
   warnings: { harness?: string; message: string }[];
-  writeAliases: (aliases: ProjectAliasEntry[]) => Promise<unknown>;
+  writeProjectGroups: (projectGroups: ProjectGroupConfig[]) => Promise<unknown>;
+}
+
+export interface RunSetupServerOptions {
+  readonly localSnapshot?: UsageSnapshot;
+  readonly port: number;
+  readonly projectGroups: ProjectGroupConfig[];
+  readonly signal?: AbortSignal;
+  readonly snapshotFiles: string[];
+  readonly writeProjectGroups: (projectGroups: ProjectGroupConfig[]) => Promise<unknown>;
 }
 
 export interface SetupServerHandle {
@@ -96,7 +103,7 @@ const validateSetupJsonContentType = (request: Request): Response | null => {
   const contentType = request.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase();
   return contentType === 'application/json'
     ? null
-    : setupJsonFailure(415, 'UnsupportedMediaType', 'Alias updates require Content-Type: application/json.');
+    : setupJsonFailure(415, 'UnsupportedMediaType', 'Project group updates require Content-Type: application/json.');
 };
 
 type SetupBodyResult = { text: string } | { response: Response };
@@ -109,13 +116,13 @@ const readBoundedSetupBody = async (request: Request, maxBytes: number): Promise
     }
     if (Number(contentLength) > maxBytes) {
       return {
-        response: setupJsonFailure(413, 'BodyTooLarge', `Alias updates must not exceed ${maxBytes} bytes.`),
+        response: setupJsonFailure(413, 'BodyTooLarge', `Project group updates must not exceed ${maxBytes} bytes.`),
       };
     }
   }
 
   if (!request.body) {
-    return { response: setupJsonFailure(400, 'EmptyBody', 'Alias updates require a JSON body.') };
+    return { response: setupJsonFailure(400, 'EmptyBody', 'Project group updates require a JSON body.') };
   }
 
   const reader = request.body.getReader();
@@ -130,14 +137,14 @@ const readBoundedSetupBody = async (request: Request, maxBytes: number): Promise
     if (byteLength > maxBytes) {
       await reader.cancel();
       return {
-        response: setupJsonFailure(413, 'BodyTooLarge', `Alias updates must not exceed ${maxBytes} bytes.`),
+        response: setupJsonFailure(413, 'BodyTooLarge', `Project group updates must not exceed ${maxBytes} bytes.`),
       };
     }
     chunks.push(chunk.value);
   }
 
   if (byteLength === 0) {
-    return { response: setupJsonFailure(400, 'EmptyBody', 'Alias updates require a JSON body.') };
+    return { response: setupJsonFailure(400, 'EmptyBody', 'Project group updates require a JSON body.') };
   }
 
   const bytes = new Uint8Array(byteLength);
@@ -149,81 +156,83 @@ const readBoundedSetupBody = async (request: Request, maxBytes: number): Promise
   try {
     return { text: new TextDecoder('utf-8', { fatal: true }).decode(bytes) };
   } catch {
-    return { response: setupJsonFailure(400, 'InvalidEncoding', 'Alias updates must contain UTF-8 JSON.') };
+    return { response: setupJsonFailure(400, 'InvalidEncoding', 'Project group updates must contain UTF-8 JSON.') };
   }
 };
 
-type AliasParseResult = { aliases: ProjectAliasEntry[] } | { response: Response };
+type ProjectGroupParseResult = { projectGroups: ProjectGroupConfig[] } | { response: Response };
 
-const parseSetupAliases = (text: string): AliasParseResult => {
+const parseSetupProjectGroups = (text: string): ProjectGroupParseResult => {
   let value: unknown;
   try {
     value = JSON.parse(text) as unknown;
   } catch {
-    return { response: setupJsonFailure(400, 'MalformedJson', 'The alias update is not valid JSON.') };
+    return { response: setupJsonFailure(400, 'MalformedJson', 'The project group update is not valid JSON.') };
   }
   if (!Array.isArray(value)) {
-    return { response: setupJsonFailure(422, 'InvalidAliases', 'Aliases must be a JSON array.') };
+    return { response: setupJsonFailure(422, 'InvalidProjectGroups', 'Project groups must be a JSON array.') };
   }
-  if (value.length > MAX_SETUP_ALIASES) {
+  if (value.length > MAX_SETUP_PROJECT_GROUPS) {
     return {
-      response: setupJsonFailure(413, 'TooManyAliases', `Alias updates support at most ${MAX_SETUP_ALIASES} aliases.`),
+      response: setupJsonFailure(
+        413,
+        'TooManyProjectGroups',
+        `Project group updates support at most ${MAX_SETUP_PROJECT_GROUPS} groups.`,
+      ),
     };
   }
-  for (const alias of value) {
-    if (typeof alias !== 'object' || alias === null || Array.isArray(alias)) {
-      return { response: setupJsonFailure(422, 'InvalidAliases', 'Every alias must be an object.') };
-    }
-    const record = alias as Record<string, unknown>;
-    if (
-      typeof record.name !== 'string' ||
-      !Array.isArray(record.match) ||
-      !record.match.every((pattern) => typeof pattern === 'string')
-    ) {
-      return {
-        response: setupJsonFailure(422, 'InvalidAliases', 'Every alias requires a string name and string match array.'),
-      };
-    }
-    if (record.match.length > MAX_SETUP_ALIAS_MATCHES) {
+  for (const group of value) {
+    const sourceCount =
+      typeof group === 'object' && group !== null && !Array.isArray(group) && Array.isArray(group.sources)
+        ? group.sources.length
+        : 0;
+    if (sourceCount > MAX_SETUP_PROJECT_SOURCES) {
       return {
         response: setupJsonFailure(
           413,
-          'TooManyAliasMatches',
-          `Each alias supports at most ${MAX_SETUP_ALIAS_MATCHES} match patterns.`,
+          'TooManyProjectSources',
+          `Each project group supports at most ${MAX_SETUP_PROJECT_SOURCES} source selectors.`,
         ),
       };
     }
   }
-  return { aliases: value as ProjectAliasEntry[] };
+  try {
+    return { projectGroups: parseProjectGroupConfigs(value) };
+  } catch {
+    return {
+      response: setupJsonFailure(
+        422,
+        'InvalidProjectGroups',
+        'Every project group requires a unique id, a name, and non-overlapping source selectors.',
+      ),
+    };
+  }
 };
 
-export const collectSetupSources = (snapshotFiles: string[], local: boolean) =>
+export const collectSetupSources = (snapshotFiles: string[], localSnapshot?: UsageSnapshot) =>
   Effect.gen(function* () {
     const snapshots: UsageSnapshot[] = [];
     for (const file of snapshotFiles) {
       snapshots.push(yield* readUsageSnapshotFile(file));
     }
-    return yield* listProjectSourcesWithFreshLocalWarnings({
+    return collectProjectSourcesFromSnapshots({
       snapshots,
-      includeLocal: local,
       harness: null,
       includeCursor: true,
       includeGitRemote: true,
+      ...(localSnapshot === undefined ? {} : { localSnapshots: [localSnapshot] }),
     });
   });
 
 const scriptJson = (value: unknown) => (JSON.stringify(value) ?? 'null').replace(/</g, '\\u003c');
 
-export const saveSetupProjectAliases = (projectAliases: ProjectAliasEntry[]) =>
-  updateAiUsageConfig((config) => ({ ...config, projectAliases }));
-
 export const setupHTML = (
   sources: ProjectSource[],
-  aliases: ProjectAliasEntry[],
+  projectGroups: ProjectGroupConfig[],
   warnings: { harness?: string; message: string }[],
 ) => {
   const sourcesJson = scriptJson(sources);
-  const aliasesJson = scriptJson(aliases);
+  const projectGroupsJson = scriptJson(projectGroups);
   const warningsJson = scriptJson(warnings);
   return `<!doctype html>
 <html lang="en">
@@ -248,11 +257,11 @@ export const setupHTML = (
   button:disabled { opacity: 0.5; cursor: default; }
   input { padding: 4px 8px; border-radius: 4px; border: 1px solid #888; }
   .saved { color: #4caf50; font-weight: 600; }
-  .alias-list { margin-top: 12px; }
-  .alias-item { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid #333; }
-  .alias-name { font-weight: 600; min-width: 120px; }
-  .alias-patterns { color: #999; font-size: 12px; }
-  .alias-delete { cursor: pointer; color: #e57373; border: none; background: none; font-size: 18px; }
+  .group-list { margin-top: 12px; }
+  .group-item { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid #333; }
+  .group-name { font-weight: 600; min-width: 120px; }
+  .group-sources { color: #999; font-size: 12px; }
+  .group-delete { cursor: pointer; color: #e57373; border: none; background: none; font-size: 18px; }
   .row-selected { background: rgba(100, 149, 237, 0.15); }
   .suggestion { color: #999; font-size: 12px; padding: 4px 8px; background: rgba(255,255,255,0.05); border-radius: 4px; margin-right: 4px; }
   .suggestion:hover { background: rgba(255,255,255,0.1); cursor: pointer; }
@@ -266,10 +275,10 @@ export const setupHTML = (
 <div id="warnings"></div>
 <div class="actions" id="toolbar">
   <span id="selected-count">0 selected</span>
-  <label>Alias name: <input id="alias-name" type="text" placeholder="my-project"></label>
-  <button id="merge-btn" disabled>Merge into alias</button>
+  <label>Group name: <input id="group-name" type="text" placeholder="my-project"></label>
+  <button id="merge-btn" disabled>Merge into group</button>
   <span id="save-status" role="status" aria-live="polite"></span>
-  <span id="alias-name-error" role="alert"></span>
+  <span id="group-name-error" role="alert"></span>
 </div>
 <h2>Sources</h2>
 <div style="overflow-x:auto; max-height:60vh;">
@@ -283,25 +292,25 @@ export const setupHTML = (
 </div>
 <h2>Suggestions</h2>
 <div id="suggestions"></div>
-<h2>Current aliases</h2>
-<div id="aliases-list" class="alias-list"></div>
+<h2>Current project groups</h2>
+<div id="groups-list" class="group-list"></div>
 
 <script>
 const sources = ${sourcesJson};
-const initialAliases = ${aliasesJson};
+const initialGroups = ${projectGroupsJson};
 const warnings = ${warningsJson};
-let aliases = JSON.parse(JSON.stringify(initialAliases));
+let projectGroups = JSON.parse(JSON.stringify(initialGroups));
 let selected = new Set();
 
 const warningsEl = document.getElementById('warnings');
 const tbody = document.getElementById('sources-body');
-const nameInput = document.getElementById('alias-name');
+const nameInput = document.getElementById('group-name');
 const mergeBtn = document.getElementById('merge-btn');
 const countEl = document.getElementById('selected-count');
 const statusEl = document.getElementById('save-status');
-const nameErrorEl = document.getElementById('alias-name-error');
+const nameErrorEl = document.getElementById('group-name-error');
 const sugEl = document.getElementById('suggestions');
-const aliasListEl = document.getElementById('aliases-list');
+const groupListEl = document.getElementById('groups-list');
 const selectAllEl = document.getElementById('select-all');
 
 const fmtNum = n => { if (n >= 1e6) return (n/1e6).toFixed(1)+'M'; if (n >= 1e3) return (n/1e3).toFixed(1)+'K'; return String(n); };
@@ -368,48 +377,36 @@ function updateCount() {
   selectAllEl.checked = selected.size === sources.length && sources.length > 0;
 }
 
-function effectiveProject(source) {
-  for (const alias of aliases) {
-    for (const pattern of alias.match) {
-      const regex = globToRegex(pattern);
-      if (regex.test(source.sourcePath) || regex.test(source.project)) return alias.name;
-    }
-  }
-  return source.project;
+function selectorLabel(selector) {
+  return selector.sourcePath || selector.project || selector.gitRemote || selector.machineId || 'unknown source';
 }
 
-function globToRegex(glob) {
-  const parts = glob.split('*');
-  const escaped = parts.map(p => p.replace(/[^a-zA-Z0-9_/ -]/g, '\\\\$&'));
-  return new RegExp('^' + escaped.join('.*') + '$', 'i');
-}
-
-function renderAliases() {
-  aliasListEl.replaceChildren();
-  if (!aliases.length) {
-    aliasListEl.textContent = 'No aliases configured.';
+function renderGroups() {
+  groupListEl.replaceChildren();
+  if (!projectGroups.length) {
+    groupListEl.textContent = 'No project groups configured.';
     return;
   }
-  for (const alias of aliases) {
+  for (const group of projectGroups) {
     const div = document.createElement('div');
-    div.className = 'alias-item';
+    div.className = 'group-item';
     const name = document.createElement('span');
-    name.className = 'alias-name';
-    name.textContent = alias.name;
-    const patterns = document.createElement('span');
-    patterns.className = 'alias-patterns';
-    patterns.textContent = alias.match.join(', ');
+    name.className = 'group-name';
+    name.textContent = group.name;
+    const groupSources = document.createElement('span');
+    groupSources.className = 'group-sources';
+    groupSources.textContent = group.sources.map(selectorLabel).join(', ');
     const deleteButton = document.createElement('button');
-    deleteButton.className = 'alias-delete';
-    deleteButton.dataset.name = alias.name;
-    deleteButton.setAttribute('aria-label', 'Remove alias ' + alias.name);
-    deleteButton.title = 'Remove alias';
+    deleteButton.className = 'group-delete';
+    deleteButton.dataset.id = group.id;
+    deleteButton.setAttribute('aria-label', 'Remove project group ' + group.name);
+    deleteButton.title = 'Remove project group';
     deleteButton.type = 'button';
     deleteButton.textContent = '×';
     div.appendChild(name);
-    div.appendChild(patterns);
+    div.appendChild(groupSources);
     div.appendChild(deleteButton);
-    aliasListEl.appendChild(div);
+    groupListEl.appendChild(div);
   }
 }
 
@@ -477,26 +474,48 @@ selectAllEl.addEventListener('change', () => {
   renderSources();
 });
 
+function selectorKey(selector) {
+  return JSON.stringify([
+    selector.machineId || '',
+    selector.sourcePath || '',
+    (selector.project || '').toLowerCase(),
+    selector.gitRemote || '',
+  ]);
+}
+
 mergeBtn.addEventListener('click', async () => {
   const name = nameInput.value.trim();
   if (!name) {
-    nameErrorEl.textContent = 'Enter an alias name.';
+    nameErrorEl.textContent = 'Enter a project group name.';
     nameInput.focus();
     return;
   }
   nameErrorEl.textContent = '';
   const matchedSources = [...selected].map(i => sources[i]);
-  const paths = [...new Set(matchedSources.map(s => s.sourcePath).filter(Boolean))];
-  const basenames = [...new Set(matchedSources.map(s => s.project))];
-  const match = [...paths, ...basenames.map(b => '*/' + b)];
-  const existing = aliases.find(a => a.name === name);
-  if (existing) { existing.match = [...new Set([...existing.match, ...match])]; }
-  else aliases.push({ name, match });
+  const selectors = matchedSources.map(source => ({
+    machineId: source.machineId,
+    ...(source.sourcePath ? { sourcePath: source.sourcePath } : { project: source.project }),
+    ...(source.gitRemote ? { gitRemote: source.gitRemote } : {}),
+  }));
+  const selectorKeys = new Set(selectors.map(selectorKey));
+  const existing = projectGroups.find(group => group.name === name);
+  projectGroups = projectGroups
+    .map(group => group === existing ? group : {
+      ...group,
+      sources: group.sources.filter(selector => !selectorKeys.has(selectorKey(selector))),
+    })
+    .filter(group => group.sources.length > 0);
+  if (existing) {
+    const existingKeys = new Set(existing.sources.map(selectorKey));
+    existing.sources.push(...selectors.filter(selector => !existingKeys.has(selectorKey(selector))));
+  } else {
+    projectGroups.push({ id: 'setup-' + crypto.randomUUID(), name, sources: selectors });
+  }
   nameInput.value = '';
   selected.clear();
-  await saveAliases();
+  await saveProjectGroups();
   renderSources();
-  renderAliases();
+  renderGroups();
   renderSuggestions();
 });
 
@@ -504,20 +523,20 @@ nameInput.addEventListener('input', () => {
   nameErrorEl.textContent = '';
 });
 
-aliasListEl.addEventListener('click', async (e) => {
-  if (!e.target.classList.contains('alias-delete')) return;
-  const name = e.target.dataset.name;
-  aliases = aliases.filter(a => a.name !== name);
-  await saveAliases();
-  renderAliases();
+groupListEl.addEventListener('click', async (e) => {
+  if (!e.target.classList.contains('group-delete')) return;
+  const id = e.target.dataset.id;
+  projectGroups = projectGroups.filter(group => group.id !== id);
+  await saveProjectGroups();
+  renderGroups();
   renderSuggestions();
 });
 
-async function saveAliases() {
+async function saveProjectGroups() {
   statusEl.textContent = 'Saving…';
   statusEl.className = '';
   try {
-    const res = await fetch('/api/aliases', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(aliases) });
+    const res = await fetch('/api/project-groups', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(projectGroups) });
     if (!res.ok) throw new Error(res.statusText);
     statusEl.textContent = 'Saved';
     statusEl.className = 'saved';
@@ -529,7 +548,7 @@ async function saveAliases() {
 
 renderSources();
 renderWarnings();
-renderAliases();
+renderGroups();
 renderSuggestions();
 </script>
 </body>
@@ -537,14 +556,14 @@ renderSuggestions();
 };
 
 export const createSetupServer = ({
-  aliases,
-  maxAliasBodyBytes = MAX_SETUP_ALIAS_BODY_BYTES,
+  projectGroups,
+  maxProjectGroupBodyBytes = MAX_SETUP_PROJECT_GROUP_BODY_BYTES,
   port,
   sources,
   warnings,
-  writeAliases,
+  writeProjectGroups,
 }: SetupServerOptions): SetupServerHandle => {
-  const html = setupHTML(sources, aliases, warnings);
+  const html = setupHTML(sources, projectGroups, warnings);
   const server = Bun.serve({
     hostname: SETUP_SERVER_HOSTNAME,
     port,
@@ -559,7 +578,7 @@ export const createSetupServer = ({
         return new Response(html, { headers: { 'content-type': 'text/html; charset=utf-8' } });
       }
 
-      if (url.pathname === '/api/aliases' && request.method === 'PUT') {
+      if (url.pathname === '/api/project-groups' && request.method === 'PUT') {
         const originFailure = validateSetupMutationOrigin(request);
         if (originFailure) {
           return originFailure;
@@ -568,19 +587,23 @@ export const createSetupServer = ({
         if (contentTypeFailure) {
           return contentTypeFailure;
         }
-        const body = await readBoundedSetupBody(request, maxAliasBodyBytes);
+        const body = await readBoundedSetupBody(request, maxProjectGroupBodyBytes);
         if ('response' in body) {
           return body.response;
         }
-        const parsed = parseSetupAliases(body.text);
+        const parsed = parseSetupProjectGroups(body.text);
         if ('response' in parsed) {
           return parsed.response;
         }
         try {
-          await writeAliases(parsed.aliases);
+          await writeProjectGroups(parsed.projectGroups);
           return new Response('ok');
         } catch {
-          return setupJsonFailure(500, 'ConfigWriteFailed', 'The alias configuration could not be saved.');
+          return setupJsonFailure(
+            500,
+            'ProjectGroupWriteFailed',
+            'The project group configuration could not be saved.',
+          );
         }
       }
 
@@ -604,26 +627,35 @@ export const createSetupServer = ({
   };
 };
 
-export const runSetupServer = (snapshotFiles: string[], local: boolean, port: number) =>
+const waitForSetupAbort = (signal: AbortSignal | undefined): Effect.Effect<void> => {
+  if (!signal) {
+    return Effect.never;
+  }
+  return Effect.async<void>((resume) => {
+    const finish = (): void => resume(Effect.void);
+    if (signal.aborted) {
+      finish();
+      return;
+    }
+    signal.addEventListener('abort', finish, { once: true });
+    return Effect.sync(() => signal.removeEventListener('abort', finish));
+  });
+};
+
+export const runSetupServer = (options: RunSetupServerOptions) =>
   Effect.gen(function* () {
-    const { sources, warnings } = yield* collectSetupSources(snapshotFiles, local);
-    const config = yield* readAiUsageConfig;
-    const storage = yield* LocalHistoryStorage;
-    const aliases = config.projectAliases ?? [];
+    const { sources, warnings } = yield* collectSetupSources(options.snapshotFiles, options.localSnapshot);
     const server = createSetupServer({
-      aliases,
-      port,
+      port: options.port,
+      projectGroups: options.projectGroups,
       sources,
       warnings,
-      writeAliases: (newAliases) =>
-        Effect.runPromise(
-          saveSetupProjectAliases(newAliases).pipe(Effect.provideService(LocalHistoryStorage, storage)),
-        ),
+      writeProjectGroups: options.writeProjectGroups,
     });
 
     yield* Console.log(`Setup UI: http://${SETUP_SERVER_HOSTNAME}:${server.port}`);
     yield* Console.log('Press Ctrl+C to stop.');
-    yield* Effect.never.pipe(
+    yield* waitForSetupAbort(options.signal).pipe(
       Effect.ensuring(
         Effect.promise(async () => {
           await server.stop(true);

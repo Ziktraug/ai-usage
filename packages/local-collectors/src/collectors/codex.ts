@@ -1,7 +1,7 @@
+import type { LocalHistoryWarning } from '@ai-usage/local-machine/errors';
 import { Effect } from 'effect';
 import { hasCodexHistory, readCodexUsageSessionsResult } from '../codex-history';
 import { sessionToUsageRow } from '../collected-session';
-import type { LocalHistoryWarning } from '../errors';
 import { metricValidationWarning } from '../metric-validation';
 
 export interface CodexCollectionResult {

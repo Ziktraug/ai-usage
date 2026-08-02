@@ -581,8 +581,18 @@ export const Dashboard = (props: {
   });
   const metricComparisonState = createMemo(() => metricComparisonStateFor(dateRange.mode(), previousSummary()));
   const saveProjectGroupConfigs = async (projectGroups: ProjectGroupConfig[]) => {
-    const { saveProjectGroups } = await import('./server/report-payload');
-    await saveProjectGroups({ data: { projectGroups } });
+    if (!focusedStore) {
+      throw new Error('Project groups require a served report revision.');
+    }
+    if (sourceControl.state().connection !== 'live') {
+      throw new Error('Project group mutations require a live compatible usage engine.');
+    }
+    const [{ buildProjectGroupReferenceCommand }, { saveProjectGroups }] = await Promise.all([
+      import('./project-group-control'),
+      import('./server/report-payload'),
+    ]);
+    const command = await buildProjectGroupReferenceCommand(projectGroups, focusedStore.revision());
+    await saveProjectGroups({ data: command });
   };
   const projectWarningCleanup = createProjectWarningCleanup({
     focusedQueryScope,
@@ -732,6 +742,7 @@ export const Dashboard = (props: {
 
           <ReportWarnings
             cleaningProjectWarningGroupId={projectWarningCleanup.cleaningGroupId()}
+            cleanupDisabled={sourceControl.state().connection !== 'live'}
             omittedSupportItemCount={supportOmissionCount()}
             onCleanupProjectWarning={projectWarningCleanup.cleanup}
             warnings={reportSupport().warnings}
@@ -756,7 +767,7 @@ export const Dashboard = (props: {
               onFieldFilter: setFieldFilter,
               onHarnessFilter: toggleHarness,
               projectEditor: {
-                disabled: !reportLifecycle.available,
+                disabled: !reportLifecycle.available || sourceControl.state().connection !== 'live',
                 onSave: saveProjectGroupConfigs,
                 payload: projectGroupPayload(),
               },

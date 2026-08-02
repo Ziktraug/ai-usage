@@ -1,42 +1,65 @@
+import { readLocalCampaignLabelOverrides } from '@ai-usage/local-machine/campaign-label-config';
 import {
-  createLocalHistoryStorage,
-  LocalHistoryStorage,
-  type LocalHistoryStorage as LocalHistoryStorageService,
-} from '@ai-usage/local-collectors/local-history';
-import { readAiUsageConfig, updateAiUsageConfig } from '@ai-usage/local-collectors/machine-config';
-import {
-  applyCampaignLabelOverrideMutation,
   type CampaignLabelOverride,
   type CampaignLabelOverrideMutation,
   parseCampaignLabelOverrideMutation,
   parseCampaignLabelOverrides,
 } from '@ai-usage/report-core/campaign-label';
-import { Effect } from 'effect';
+import { parseWebUsageEngineCommand, type WebUsageEngineCommand } from '@ai-usage/usage-engine-control';
+import { validateTrustedLocalRequest } from './local-request-trust.server';
+import {
+  type ExecuteUsageEngineCommandOptions,
+  executeUsageEngineCommandToCompletion,
+} from './usage-engine-command.server';
+import { resolveUsageEngineControlClientForServer } from './usage-engine-control-resolver.server';
+
+type SetCampaignLabelOverrideCommand = Extract<
+  WebUsageEngineCommand,
+  { readonly command: 'set-campaign-label-override' }
+>;
+
+type ExecuteCampaignLabelCommand = (
+  command: SetCampaignLabelOverrideCommand,
+  options?: ExecuteUsageEngineCommandOptions,
+) => Promise<unknown>;
+
+type ReadCampaignLabelOverrides = () => Promise<CampaignLabelOverride[]>;
+
+const executeCampaignLabelCommand: ExecuteCampaignLabelCommand = async (command, options) => {
+  const control = await resolveUsageEngineControlClientForServer();
+  return await executeUsageEngineCommandToCompletion(control, command, options);
+};
 
 export const getCampaignLabelOverridesForServer = async (
-  storage: LocalHistoryStorageService = createLocalHistoryStorage(),
-): Promise<{ campaignLabelOverrides: CampaignLabelOverride[] }> => {
-  const config = await Effect.runPromise(readAiUsageConfig.pipe(Effect.provideService(LocalHistoryStorage, storage)));
-  return { campaignLabelOverrides: parseCampaignLabelOverrides(config.campaignLabelOverrides ?? []) };
-};
+  readOverrides: ReadCampaignLabelOverrides = readLocalCampaignLabelOverrides,
+): Promise<{ campaignLabelOverrides: CampaignLabelOverride[] }> => ({
+  campaignLabelOverrides: parseCampaignLabelOverrides(await readOverrides()),
+});
 
 export const setCampaignLabelOverrideForServer = async (
   input: CampaignLabelOverrideMutation,
-  storage: LocalHistoryStorageService = createLocalHistoryStorage(),
+  execute: ExecuteCampaignLabelCommand = executeCampaignLabelCommand,
+  readOverrides: ReadCampaignLabelOverrides = readLocalCampaignLabelOverrides,
+  options?: ExecuteUsageEngineCommandOptions,
 ): Promise<{ campaignLabelOverrides: CampaignLabelOverride[] }> => {
   const mutation = parseCampaignLabelOverrideMutation(input);
-  const config = await Effect.runPromise(
-    updateAiUsageConfig((currentConfig) => {
-      const campaignLabelOverrides = applyCampaignLabelOverrideMutation(
-        currentConfig.campaignLabelOverrides ?? [],
-        mutation,
-      );
-      if (campaignLabelOverrides.length === 0) {
-        const { campaignLabelOverrides: _campaignLabelOverrides, ...rest } = currentConfig;
-        return rest;
-      }
-      return { ...currentConfig, campaignLabelOverrides };
-    }).pipe(Effect.provideService(LocalHistoryStorage, storage)),
-  );
-  return { campaignLabelOverrides: parseCampaignLabelOverrides(config.campaignLabelOverrides ?? []) };
+  const command = parseWebUsageEngineCommand({ command: 'set-campaign-label-override', ...mutation });
+  if (command.command !== 'set-campaign-label-override') {
+    throw new Error('Expected a campaign label override command.');
+  }
+  await execute(command, options);
+  return await getCampaignLabelOverridesForServer(readOverrides);
+};
+
+export const setCampaignLabelOverrideFromRequestForServer = async (
+  request: Request,
+  input: CampaignLabelOverrideMutation,
+  execute?: ExecuteCampaignLabelCommand,
+  readOverrides?: ReadCampaignLabelOverrides,
+): Promise<{ campaignLabelOverrides: CampaignLabelOverride[] }> => {
+  const trustFailure = validateTrustedLocalRequest(request);
+  if (trustFailure) {
+    throw trustFailure;
+  }
+  return await setCampaignLabelOverrideForServer(input, execute, readOverrides, { signal: request.signal });
 };

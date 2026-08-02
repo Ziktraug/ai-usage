@@ -1,0 +1,26 @@
+{
+  "name": "@ai-usage/usage-engine",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./main": "./src/main.ts"
+  },
+  "dependencies": {
+    "@ai-usage/effect-runtime": "workspace:*",
+    "@ai-usage/local-machine": "workspace:*",
+    "@ai-usage/usage-engine-control": "workspace:*",
+    "@ai-usage/usage-engine-runtime": "workspace:*",
+    "@ai-usage/usage-store": "workspace:*",
+    "effect": "^3.21.4"
+  },
+  "scripts": {
+    "dev": "bun --no-env-file src/dev.ts",
+    "start": "bun --no-env-file src/main.ts serve",
+    "build": "tsc --noEmit",
+    "check": "tsc --noEmit",
+    "test": "bun test",
+    "lint": "biome check .",
+    "format": "biome format --write ."
+  }
+}

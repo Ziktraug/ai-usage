@@ -2,28 +2,53 @@
 
 ## Owns
 
-The SQLite materialized usage store, additive migrations, producer-owned base-row import, source-owned enrichment contributions, normalized dataset-item upserts, merge bundle persistence, status tracking, and validated composed report queries.
+The durable SQLite schema, normalized usage and dataset persistence, enrichment
+contributions, provider-quota observations, transfer mutations, source
+checkpoints/attempts, and immutable revision-keyed served projections.
 
-## Does Not Own
+## Does not own
 
-It does not own raw local history collection, file selection or transfer, network transport, immutable web revision artifacts, Session page/campaign/neighbor projection, report payload rendering, app routes, or CLI formatting.
+It does not choose or read harness files, schedule collection, authorize app
+commands, render output, expose HTTP, or create per-revision database files.
 
-## Public Interface
+## Public interface
 
-The root export provides typed APIs for importing local base rows and normalized dataset items, querying enrichable rows with stable keys, idempotently upserting validated RTK savings contributions, previewing and atomically confirming portable bundles with one bounded, versioned, opaque, stateless `confirmationToken`, exporting local merge bundles, and querying composed projections plus semantic generation.
+- `./reader`: opens only an existing compatible database read-only with
+  `query_only`, finite busy timeout, and typed missing/schema/revision/busy/
+  corrupt failures. It never creates, migrates, changes journal mode,
+  checkpoints, or writes.
+- `./writer`: migrations, imports, enrichment, transfer mutation, publication,
+  recovery, retention, and checkpoints. Production composition is restricted
+  to usage-engine-runtime.
+- `./testing`: mixed temporary-store helpers for tests/E2E only.
 
-## Depends On
+There is no mixed root export.
 
-`@ai-usage/usage-store` may depend on `@ai-usage/report-core` for normalized row and merge bundle types.
+## Data boundary
 
-## Must Not Import
+A publication inserts and validates one complete immutable projection before
+atomically advancing the current pointer. Every served query includes the
+revision key, so a reader pinned to A cannot observe B. Retention preserves
+current, tolerates WAL readers, bounds retained rows/bytes/revisions, and
+removes abandoned incomplete work.
 
-It must not import `@ai-usage/local-collectors`, `@ai-usage/report-data`, `@ai-usage/usage-merge`, or app packages.
+Merge preview and confirmation use the same canonical preparation and one
+bounded, versioned, opaque, stateless token bound to the document and relevant
+logical store state. A first preview may initialize an empty current-schema
+private store; preview of an existing store may migrate, but preview never
+imports rows or advances semantic generation. Confirmation is atomic and
+returns `preview-stale` when its bound state changed. Semantic generation
+advances only when the active composed report projection changes.
 
-## Data Boundary
+## Backup and recovery
 
-SQLite stores normalized machine-scoped base usage facts keyed by stable row identity. Enrichers own separate versioned contributions keyed by row and enrichment source; report reads validate and overlay them without teaching base upserts about enrichment fields. Every local or portable merge import canonicalizes validated RTK fields into a hash-recomputed base row plus a separate contribution inside one transaction; preview uses the identical preparation. A first preview may initialize an empty current-schema private store without inserting usage rows or advancing semantic generation. Previewing an existing store may run migrations, but never imports the peer bundle. Its `confirmationToken` binds the canonical bundle to the relevant logical store state without exposing its contents or persisting token state. Missing incoming RTK fields never clear an existing contribution, and the transaction advances semantic generation at most once. Empty or unmatched enrichment runs never clear prior contributions. Versioned dataset items remain keyed by source, machine, dataset, schema, and stable item identity. Generation advances only when the active composed report projection changes; observation timestamps and identical imports do not invalidate report captures.
+Do not copy only the main database while its WAL writer may be active. The
+supported backup procedure is to stop the usage engine cleanly, then copy the
+database. ai-usage exposes no online-backup command. Readers never perform
+backup, repair, migration, retention, or checkpoint work.
 
-## Test Strategy
+## Test strategy
 
-Use temporary SQLite databases for schema, migration, import/export, idempotency, update, tombstone, rollback, and query tests.
+Use isolated temporary databases for migrations, publication fault injection,
+reader byte-for-byte immutability, WAL concurrency, exact-revision isolation,
+retention, corruption, query plans, and 5,000+ Session fixtures.

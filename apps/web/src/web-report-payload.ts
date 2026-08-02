@@ -1,4 +1,4 @@
-import type { FocusedMachineFreshness } from '@ai-usage/report-core/focused-report-query';
+import type { FocusedMachineFreshness, FocusedSupportResult } from '@ai-usage/report-core/focused-report-query';
 import type { UsageReportPayload } from '@ai-usage/report-core/report-data';
 
 export type JsonValue = boolean | number | string | null | JsonValue[] | { [key: string]: JsonValue };
@@ -71,6 +71,19 @@ export interface RevisionUnavailableError {
 
 export type WebReportRevisionManifestResult =
   | {
+      manifest: WebReportRevisionManifest;
+      ok: true;
+      requestFingerprint: ReportRequestFingerprint;
+    }
+  | {
+      error: RevisionUnavailableError;
+      ok: false;
+      requestFingerprint: ReportRequestFingerprint;
+    };
+
+export type WebReportRevisionBootstrapResult =
+  | {
+      bootstrap: FocusedSupportResult;
       manifest: WebReportRevisionManifest;
       ok: true;
       requestFingerprint: ReportRequestFingerprint;

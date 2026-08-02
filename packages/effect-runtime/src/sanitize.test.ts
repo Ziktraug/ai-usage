@@ -7,7 +7,7 @@ import {
   MAX_SERIALIZED_EVENT_BYTES,
   type WideEventSnapshot,
 } from './model';
-import { sanitizeWideEventSnapshot, serializeWideEventSnapshot } from './sanitize';
+import { sanitizeWideEventResource, sanitizeWideEventSnapshot, serializeWideEventSnapshot } from './sanitize';
 
 const baseEvent = (overrides: Partial<WideEventSnapshot> = {}): WideEventSnapshot => ({
   schemaVersion: 2,
@@ -34,6 +34,11 @@ const baseEvent = (overrides: Partial<WideEventSnapshot> = {}): WideEventSnapsho
 });
 
 describe('wide-event sanitizer', () => {
+  test('keeps engine distinct from web while rejecting unknown surfaces', () => {
+    expect(sanitizeWideEventResource({ ...baseEvent().resource, surface: 'engine' }).surface).toBe('engine');
+    expect(sanitizeWideEventResource({ ...baseEvent().resource, surface: 'unknown-surface' }).surface).toBe('web');
+  });
+
   test('redacts sensitive keys and Redacted values', () => {
     const result = sanitizeWideEventSnapshot(
       baseEvent({

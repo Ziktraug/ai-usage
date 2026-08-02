@@ -1,7 +1,8 @@
 import type { FocusedMachineFreshness } from '@ai-usage/report-core/focused-report-query';
 import type { UsageMachine } from '@ai-usage/report-core/snapshot';
-import type { ManualMergeImportResult } from '@ai-usage/usage-merge';
-import type { UsageMachineFleetItem } from '@ai-usage/usage-store';
+import type { UsageEngineMergePreviewOutput } from '@ai-usage/usage-engine-control';
+import type { UsageMachineFleetItem } from '@ai-usage/usage-store/reader';
+import type { SourceControlConnectionState } from './source-control-client';
 
 const BYTES_PER_UNIT = 1024;
 const SIZE_UNITS = ['KB', 'MB', 'GB', 'TB'] as const;
@@ -94,9 +95,40 @@ export const formatTransferBytes = (bytes: number): string => {
   return `${value.toFixed(1)} ${SIZE_UNITS[unitIndex]}`;
 };
 
-export const formatManualImportSummary = (result: ManualMergeImportResult): string => {
+export const formatManualImportSummary = (result: UsageEngineMergePreviewOutput): string => {
   const changed = result.result.inserted + result.result.updated + result.result.superseded + result.result.deleted;
-  return `Imported ${result.machine.label}: ${changed.toLocaleString()} changed, ${result.result.unchanged.toLocaleString()} unchanged.`;
+  return `Imported usage: ${changed.toLocaleString()} changed, ${result.result.unchanged.toLocaleString()} unchanged.`;
+};
+
+export interface ManualTransferMutationAvailability {
+  readonly available: boolean;
+  readonly message: string | null;
+}
+
+export const manualTransferMutationAvailability = (
+  connection: SourceControlConnectionState,
+): ManualTransferMutationAvailability => {
+  if (connection === 'live') {
+    return { available: true, message: null };
+  }
+  if (connection === 'protocol-mismatch') {
+    return {
+      available: false,
+      message:
+        'This usage engine version is incompatible. Imports are disabled; exports and stored fleet reads remain available.',
+    };
+  }
+  if (connection === 'disconnected') {
+    return {
+      available: false,
+      message:
+        'The usage engine is disconnected. Imports are disabled while reconnecting; exports and stored fleet reads remain available.',
+    };
+  }
+  return {
+    available: false,
+    message: 'Connecting to the usage engine. Imports are disabled; exports and stored fleet reads remain available.',
+  };
 };
 
 const fleetMachineIsStale = (lastSeenAt: string | null, now: number): boolean => {

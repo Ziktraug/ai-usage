@@ -71,7 +71,7 @@ export const sanitizeWideEventResource = (value: unknown): WideEventResource => 
       runtimeMode === 'development' || runtimeMode === 'production' || runtimeMode === 'test' ? runtimeMode : 'unknown',
     serviceName: 'ai-usage',
     serviceVersion: sanitizeResourceString(safeOwnString(value, 'serviceVersion'), 'unknown'),
-    surface: surface === 'cli' ? 'cli' : 'web',
+    surface: surface === 'cli' || surface === 'engine' ? surface : 'web',
   };
 };
 

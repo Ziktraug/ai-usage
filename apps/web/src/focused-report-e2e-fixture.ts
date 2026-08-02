@@ -143,17 +143,12 @@ export const createFocusedReportE2EFixture = (): FocusedReportE2EFixture | undef
         await gate.waitForResponse();
         return success(data);
       },
-      getManifest: async () => {
+      getBootstrap: async () => {
         await gate.waitForResponse();
-        return manifest;
+        return { ...manifest, bootstrap };
       },
       getOverview: async (request) => {
         const data = projectFocusedOverview(demoReportPayload.rows, support, request);
-        await gate.waitForResponse();
-        return success(data);
-      },
-      getSupport: async (request) => {
-        const data = projectFocusedSupport(bootstrap.support, bootstrap.filterOptions, request);
         await gate.waitForResponse();
         return success(data);
       },

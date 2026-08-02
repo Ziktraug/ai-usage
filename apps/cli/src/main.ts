@@ -1,329 +1,41 @@
 #!/usr/bin/env bun
 import { randomUUID } from 'node:crypto';
-import fs from 'node:fs';
-import path from 'node:path';
-import {
-  type BoundaryClassification,
-  classifyExit,
-  makeAiUsageWideEventResource,
-  runBoundaryEffect,
-} from '@ai-usage/effect-runtime';
+import { makeAiUsageWideEventResource } from '@ai-usage/effect-runtime';
 import { makeCliWideEventSinkLayer } from '@ai-usage/effect-runtime/node';
-import { LocalHistoryStorageLive } from '@ai-usage/local-collectors/local-history';
-import { ensureMachineConfig, writeMachineConfig } from '@ai-usage/local-collectors/machine-config';
-import { deserializeUsageRow, type UsageReportWarning } from '@ai-usage/report-core/report-data';
-import type { UsageSnapshot } from '@ai-usage/report-core/snapshot';
-import { serializeUsageSnapshot } from '@ai-usage/report-core/snapshot';
-import { sanitizeSourceWarningCodes } from '@ai-usage/report-core/source-control';
-import { createStoredReportPayload, createStoredUsageSnapshot, type ProjectSource } from '@ai-usage/report-data';
-import {
-  createMergedUsageReportWithFreshLocal,
-  listProjectSourcesWithFreshLocalWarnings,
-  type OneShotExecutionResult,
-  runOneShotLocalSources,
-  runOneShotQuotaAndReadLatest,
-} from '@ai-usage/report-data/one-shot-sources';
-import { Console, Effect, Exit, Layer } from 'effect';
-import { type Args, helpText, parseCommand } from './cli';
-import { importCursorUsageExportFile } from './cursor-import-file';
-import { type AppError, CliArgumentError, formatAppError } from './errors';
-import { renderQuota } from './quota';
-import { setColor } from './render/colors';
-import { fmtNum, pad, trunc } from './render/format';
-import { renderUsagePayloadForCli, renderUsageReportForCli, renderWarnings, renderWarningsForStderr } from './report';
-import { CliRuntime, CliRuntimeLive } from './runtime';
-import { runSetupServer } from './setup';
-import { readUsageSnapshotFile } from './snapshot-file';
+import { Effect, Layer } from 'effect';
+import { runnableApp } from './app';
+import { createCliRuntimeLayer } from './runtime';
 
-interface CliQuotaBoundaryResult {
-  readonly collection: OneShotExecutionResult;
-  readonly latest: readonly unknown[];
-}
-
-const CLI_QUOTA_ERROR_POLICY = {
-  allowedTags: new Set(['CliArgumentError', 'ProviderQuotaRefreshAborted']),
-  interruptedTags: new Set(['ProviderQuotaRefreshAborted']),
-};
-
-const classifyCliQuotaOutcome = (exit: Exit.Exit<CliQuotaBoundaryResult, unknown>): BoundaryClassification => {
-  if (Exit.isFailure(exit)) {
-    return {
-      ...classifyExit(exit, CLI_QUOTA_ERROR_POLICY),
-      annotations: { failureKind: 'quota-command-failed' },
-    };
-  }
-  const sourceOutcome = exit.value.collection.outcomes[0];
-  const sourceStatus = sourceOutcome?.status ?? 'unavailable';
-  const hasUsableLatest = exit.value.latest.length > 0;
-  const warningCodes = sanitizeSourceWarningCodes(sourceOutcome?.warnings ?? []);
-  let outcome: BoundaryClassification['outcome'] = 'failure';
-  if (sourceStatus === 'success') {
-    outcome = 'success';
-  } else if (hasUsableLatest) {
-    outcome = 'degraded';
-  }
-  return {
-    outcome,
-    annotations: {
-      domainOutcome: sourceStatus,
-      outputCount: exit.value.latest.length,
-      ...(sourceStatus === 'failed' ? { failureKind: 'quota-refresh-failed' } : {}),
-      ...(sourceOutcome?.result?.unavailable === undefined
-        ? {}
-        : { unavailableCode: sourceOutcome.result.unavailable.code }),
-      ...(warningCodes.length === 0 ? {} : { warningCodes }),
-    },
+if (import.meta.main) {
+  const abortController = new AbortController();
+  let signalExitCode = 0;
+  const forwardSignal = (signal: NodeJS.Signals): void => {
+    signalExitCode = signal === 'SIGINT' ? 130 : 143;
+    abortController.abort(new DOMException(`CLI received ${signal}`, 'AbortError'));
   };
-};
+  process.once('SIGINT', forwardSignal);
+  process.once('SIGTERM', forwardSignal);
 
-export const app = Effect.gen(function* () {
-  const runtime = yield* CliRuntime;
-  const command = yield* parseCommand(runtime.argv);
-
-  if (command._tag === 'Help') {
-    yield* Console.log(helpText);
-    return;
-  }
-
-  if (command._tag === 'Quota') {
-    yield* runBoundaryEffect(
-      { boundary: 'cli.quota', classify: classifyCliQuotaOutcome },
-      Effect.gen(function* () {
-        yield* Effect.sync(() => setColor(command.color === null ? runtime.stdoutIsTTY : command.color));
-        const { collection, latest } = yield* runOneShotQuotaAndReadLatest();
-        if (collection.outcomes[0]?.status === 'paused') {
-          return yield* Effect.fail(
-            new CliArgumentError({
-              message: 'Codex usage-limit collection is paused; re-enable codex.usage-limits first.',
-            }),
-          );
-        }
-        yield* Console.log(renderQuota(latest));
-        return { collection, latest };
-      }),
-    );
-    return;
-  }
-
-  if (command._tag === 'Machine') {
-    const machine = yield* ensureMachineConfig;
-    yield* Console.log(`Machine: ${machine.label}\nID: ${machine.id}`);
-    return;
-  }
-
-  if (command._tag === 'MachineSetLabel') {
-    const machine = yield* ensureMachineConfig;
-    const updated = { ...machine, label: command.label };
-    yield* writeMachineConfig(updated);
-    yield* Console.log(`Machine: ${updated.label}\nID: ${updated.id}`);
-    return;
-  }
-
-  if (command._tag === 'Snapshot') {
-    const collection = yield* runOneShotLocalSources({
-      harness: command.args.harness,
-      includeCursor: command.args.cursor,
-    });
-    const snapshot = yield* createStoredUsageSnapshot({
-      harness: command.args.harness,
-      includeCursor: command.args.cursor,
-      includeFacets: true,
-      warnings: oneShotWarnings(collection),
-    });
-    yield* writePortableFile(command.args.out, serializeUsageSnapshot(snapshot));
-    yield* writeWarningsStderr(snapshot.warnings);
-    yield* Console.log(`Wrote ${command.args.out}`);
-    return;
-  }
-
-  if (command._tag === 'Merge') {
-    yield* Effect.sync(() => setColor(command.args.color === null ? runtime.stdoutIsTTY : command.args.color));
-    const snapshots: UsageSnapshot[] = [];
-    for (const file of command.args.files) {
-      snapshots.push(yield* readUsageSnapshotFile(file));
-    }
-    const merged = yield* createMergedUsageReportWithFreshLocal({
-      snapshots,
-      includeLocal: command.args.local,
-      harness: command.args.harness,
-      includeCursor: command.args.cursor,
-      options: command.args,
-    });
-    const output =
-      command.args.format === 'payload'
-        ? renderUsagePayloadForCli(merged.payload)
-        : renderUsageReportForCli(merged.rows, command.args, undefined, merged.payload.warnings);
-    yield* writeFormatWarningsStderr(command.args, merged.payload.warnings);
-    yield* writeStdout(`${output}\n`);
-    return;
-  }
-
-  if (command._tag === 'ProjectsList') {
-    const snapshots: UsageSnapshot[] = [];
-    for (const file of command.args.files) {
-      snapshots.push(yield* readUsageSnapshotFile(file));
-    }
-    const { sources, warnings } = yield* listProjectSourcesWithFreshLocalWarnings({
-      snapshots,
-      includeLocal: command.args.local,
-      harness: null,
-      includeCursor: true,
-    });
-    yield* writeWarningsStderr(warnings);
-    yield* writeStdout(`${renderProjectSources(sources)}\n`);
-    return;
-  }
-
-  if (command._tag === 'CursorImport') {
-    const imported = yield* importCursorUsageExport(command.args.file);
-    yield* Console.log(
-      imported.alreadyImported
-        ? `Already imported: ${imported.path}`
-        : `Imported Cursor usage export: ${imported.path}`,
-    );
-    return;
-  }
-
-  if (command._tag === 'Setup') {
-    yield* runSetupServer(command.args.files, command.args.local, command.args.port);
-    return;
-  }
-
-  yield* Effect.sync(() => setColor(command.args.color === null ? runtime.stdoutIsTTY : command.args.color));
-  const reportRequest = {
-    harness: command.args.harness,
-    includeCursor: command.args.cursor,
-  };
-  const collection = yield* runOneShotLocalSources(reportRequest);
-  const collectionWarnings = oneShotWarnings(collection);
-  const storedPayload = yield* createStoredReportPayload({
-    ...reportRequest,
-    includeFacets: true,
-    options: command.args,
-  });
-  const warnings = [...(storedPayload.warnings ?? []), ...collectionWarnings];
-  const payload = warnings.length ? { ...storedPayload, warnings } : storedPayload;
-  const output =
-    command.args.format === 'payload'
-      ? renderUsagePayloadForCli(payload)
-      : renderUsageReportForCli(payload.rows.map(deserializeUsageRow), command.args, undefined, warnings);
-  yield* writeFormatWarningsStderr(command.args, warnings);
-  yield* writeStdout(`${output}\n`);
-});
-
-const oneShotWarnings = (collection: OneShotExecutionResult): UsageReportWarning[] =>
-  collection.outcomes.flatMap((outcome) =>
-    outcome.warnings.map((warning) => {
-      const harness = outcome.sourceId.split('.')[0];
-      return {
-        message: warning.message ?? 'The source reported a warning.',
-        operation: outcome.sourceId,
-        ...(harness === undefined ? {} : { harness }),
-      };
-    }),
+  const runnable = runnableApp.pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        createCliRuntimeLayer({ signal: abortController.signal }),
+        makeCliWideEventSinkLayer({
+          resource: makeAiUsageWideEventResource({
+            instanceId: randomUUID(),
+            nodeEnvironment: process.env.NODE_ENV,
+            surface: 'cli',
+          }),
+        }),
+      ),
+    ),
   );
 
-const renderProjectSources = (items: ProjectSource[]) => {
-  const cols = [
-    { h: 'Project', w: 20, f: (s: ProjectSource) => s.project },
-    { h: 'Machine', w: 18, f: (s: ProjectSource) => s.machine },
-    { h: 'Harness', w: 12, f: (s: ProjectSource) => s.harness },
-    { h: 'Sessions', w: 8, f: (s: ProjectSource) => fmtNum(s.sessions), r: true },
-    { h: 'Tokens', w: 10, f: (s: ProjectSource) => fmtNum(s.tokens), r: true },
-    { h: 'Path', w: 48, f: (s: ProjectSource) => s.sourcePath || '—' },
-  ];
-  const header = cols.map((col) => pad(col.h, col.w, col.r)).join('  ');
-  const body = items.map((item) => cols.map((col) => pad(trunc(col.f(item), col.w), col.w, col.r)).join('  '));
-  return [header, ...body].join('\n');
-};
-
-// Multi-megabyte outputs (e.g. --payload-json) get truncated when stdout is a
-// pipe and the runtime exits before the async stream drains, so completion is
-// gated on the write callback for the actual payload chunk before the explicit
-// process.exit below. (Bun.write(Bun.stdout, …) busy-spins on a backed-up pipe
-// once process.stdout has been touched, so the node stream is used throughout.)
-const writeStdout = (text: string) =>
-  Effect.async<void>((resume) => {
-    process.stdout.write(text, () => resume(Effect.void));
-  });
-
-const writeStderr = (text: string) =>
-  Effect.async<void>((resume) => {
-    process.stderr.write(text, () => resume(Effect.void));
-  });
-
-const writeWarningsStderr = (warnings: UsageReportWarning[] | undefined) => {
-  const output = renderWarnings(warnings);
-  return output ? writeStderr(`${output}\n`) : Effect.void;
-};
-
-const writeFormatWarningsStderr = (args: Args, warnings: UsageReportWarning[] | undefined) => {
-  const output = renderWarningsForStderr(args, warnings);
-  return output ? writeStderr(`${output}\n`) : Effect.void;
-};
-
-const fileError = (operation: string, filePath: string) => (cause: unknown) =>
-  new CliArgumentError({
-    message: `${operation} ${filePath}: ${cause instanceof Error ? cause.message : String(cause)}`,
-  });
-
-const writePortableFile = (filePath: string, text: string) =>
-  Effect.try({
-    try: () => {
-      const directory = path.dirname(filePath);
-      fs.mkdirSync(directory, { recursive: true });
-      const temporaryPath = path.join(directory, `.${path.basename(filePath)}.${process.pid}.${randomUUID()}.tmp`);
-      try {
-        fs.writeFileSync(temporaryPath, text, { encoding: 'utf8', flag: 'wx', mode: 0o600 });
-        fs.renameSync(temporaryPath, filePath);
-        if (process.platform !== 'win32') {
-          fs.chmodSync(filePath, 0o600);
-        }
-      } finally {
-        fs.rmSync(temporaryPath, { force: true });
-      }
-    },
-    catch: fileError('writeFile', filePath),
-  });
-
-const importCursorUsageExport = (filePath: string) =>
-  Effect.try({
-    try: () => importCursorUsageExportFile(filePath),
-    catch: fileError('cursorImport', filePath),
-  });
-
-const formatDefect = (defect: unknown) => (defect instanceof Error ? defect.message : String(defect));
-
-const isAppError = (error: unknown): error is AppError =>
-  error instanceof CliArgumentError ||
-  (typeof error === 'object' &&
-    error !== null &&
-    '_tag' in error &&
-    (error as { _tag: unknown })._tag === 'LocalHistoryError');
-
-const runnable = app.pipe(
-  Effect.as(0 as number),
-  Effect.catchAll((error: unknown) =>
-    Console.error(`Error: ${isAppError(error) ? formatAppError(error) : formatDefect(error)}`).pipe(Effect.as(1)),
-  ),
-  Effect.catchAllDefect((defect: unknown) => Console.error(`Error: ${formatDefect(defect)}`).pipe(Effect.as(1))),
-  Effect.provide(
-    Layer.mergeAll(
-      LocalHistoryStorageLive,
-      CliRuntimeLive,
-      makeCliWideEventSinkLayer({
-        resource: makeAiUsageWideEventResource({
-          instanceId: randomUUID(),
-          nodeEnvironment: process.env.NODE_ENV,
-          surface: 'cli',
-        }),
-      }),
-    ),
-  ),
-);
-
-Effect.runPromise(runnable).then((code) => {
-  if (code !== 0) {
-    process.exit(code);
+  const code = await Effect.runPromise(runnable);
+  process.removeListener('SIGINT', forwardSignal);
+  process.removeListener('SIGTERM', forwardSignal);
+  const finalCode = signalExitCode || code;
+  if (finalCode !== 0) {
+    process.exit(finalCode);
   }
-});
+}

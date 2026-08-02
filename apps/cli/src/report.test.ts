@@ -14,6 +14,7 @@ const args = (overrides: Partial<Args> = {}): Args => ({
   color: false,
   wide: false,
   sort: 'date',
+  stored: false,
   ...overrides,
 });
 

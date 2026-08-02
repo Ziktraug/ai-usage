@@ -8,7 +8,6 @@ import {
   type FocusedRevisionRequest,
   type FocusedSupportResult,
   focusedOverviewFingerprint,
-  focusedRevisionFingerprint,
   projectFocusedOverview,
   projectFocusedSupport,
 } from '@ai-usage/report-core/focused-report-query';
@@ -24,6 +23,7 @@ import { demoReportPayload } from './report-data';
 import {
   parseReportRevision,
   reportManifestRequestFingerprint,
+  type WebReportRevisionBootstrapResult,
   type WebReportRevisionManifestResult,
 } from './web-report-payload';
 
@@ -68,6 +68,19 @@ const manifest = (revision: string): WebReportRevisionManifestResult => ({
   requestFingerprint: reportManifestRequestFingerprint,
 });
 
+const bootstrapResult = (revision: string): WebReportRevisionBootstrapResult => {
+  const manifestResult = manifest(revision);
+  if (!manifestResult.ok) {
+    return manifestResult;
+  }
+  return {
+    bootstrap: supportResult(revision),
+    manifest: manifestResult.manifest,
+    ok: true,
+    requestFingerprint: reportManifestRequestFingerprint,
+  };
+};
+
 const success = <Result extends { requestFingerprint: string; revision: string }>(
   data: Result,
 ): SessionQueryServerResult<Result> => ({
@@ -80,10 +93,9 @@ const success = <Result extends { requestFingerprint: string; revision: string }
 const sourceWith = (overrides: Partial<FocusedReportSource>): FocusedReportSource => ({
   getBreakdown: (_request: FocusedBreakdownRequest) =>
     Promise.reject<SessionQueryServerResult<FocusedBreakdownResult>>(new Error('Unexpected breakdown request')),
-  getManifest: () => Promise.resolve(manifest('revision-a')),
+  getBootstrap: () => Promise.resolve(bootstrapResult('revision-a')),
   getOverview: (_request: FocusedOverviewRequest) =>
     Promise.reject<SessionQueryServerResult<FocusedOverviewResult>>(new Error('Unexpected overview request')),
-  getSupport: (request: FocusedRevisionRequest) => Promise.resolve(success(supportResult(request.revision))),
   ...overrides,
 });
 
@@ -94,31 +106,25 @@ describe('focused report bootstrap and store', () => {
   });
 
   test('performs one bounded query for each bootstrap and Overview request', async () => {
-    let manifestRequests = 0;
-    let supportRequests = 0;
+    let bootstrapRequests = 0;
     let overviewRequests = 0;
     const source = sourceWith({
-      getManifest: () => {
-        manifestRequests += 1;
-        return Promise.resolve(manifest('revision-a'));
+      getBootstrap: () => {
+        bootstrapRequests += 1;
+        return Promise.resolve(bootstrapResult('revision-a'));
       },
       getOverview: (request) => {
         overviewRequests += 1;
         return Promise.resolve(success(overviewResult(request.query.revision)));
-      },
-      getSupport: (request) => {
-        supportRequests += 1;
-        return Promise.resolve(success(supportResult(request.revision)));
       },
     });
 
     await fetchFocusedReportBootstrap(source);
     await fetchFocusedOverview(source, overviewRequest());
 
-    expect({ manifestRequests, overviewRequests, supportRequests }).toEqual({
-      manifestRequests: 1,
+    expect({ bootstrapRequests, overviewRequests }).toEqual({
+      bootstrapRequests: 1,
       overviewRequests: 1,
-      supportRequests: 1,
     });
   });
 
@@ -245,43 +251,41 @@ describe('focused report bootstrap and store', () => {
     expect(store.machineFreshness()).toBe(machineFreshness);
   });
 
-  test('restarts bootstrap from a fresh manifest after exact-revision expiry', async () => {
-    let manifestReads = 0;
-    const requested: string[] = [];
-    const bootstrap = await fetchFocusedReportBootstrap(
-      sourceWith({
-        getManifest: () => {
-          manifestReads += 1;
-          return Promise.resolve(manifest(manifestReads === 1 ? 'revision-a' : 'revision-b'));
-        },
-        getSupport: (request) => {
-          requested.push(request.revision);
-          if (request.revision === 'revision-a') {
-            return Promise.resolve({
-              error: { message: 'expired', revision: request.revision, tag: 'RevisionExpired' },
-              ok: false,
-              requestFingerprint: focusedRevisionFingerprint('support', request),
-              revision: request.revision,
-            });
-          }
-          return Promise.resolve(success(supportResult(request.revision)));
-        },
-      }),
-    );
-
-    expect(bootstrap.revision).toBe('revision-b');
-    expect(requested).toEqual(['revision-a', 'revision-b']);
+  test('rejects a bootstrap assembled from mixed manifest and support revisions', async () => {
+    const mixed = bootstrapResult('revision-a');
+    if (!mixed.ok) {
+      throw new Error('Expected a bootstrap fixture');
+    }
+    await expect(
+      fetchFocusedReportBootstrap(
+        sourceWith({
+          getBootstrap: () =>
+            Promise.resolve({
+              ...mixed,
+              bootstrap: supportResult('revision-b'),
+            }),
+        }),
+      ),
+    ).rejects.toThrow('revision or fingerprint mismatch');
   });
 
   test('rejects wrong envelope fingerprints before applying parsed data', async () => {
     await expect(
       fetchFocusedReportBootstrap(
         sourceWith({
-          getSupport: (request) =>
-            Promise.resolve({
-              ...success(supportResult(request.revision)),
-              requestFingerprint: 'focused-support-v1:0000000000000000',
-            }),
+          getBootstrap: () => {
+            const result = bootstrapResult('revision-a');
+            if (!result.ok) {
+              return Promise.resolve(result);
+            }
+            return Promise.resolve({
+              ...result,
+              bootstrap: {
+                ...result.bootstrap,
+                requestFingerprint: 'focused-support-v1:0000000000000000',
+              },
+            });
+          },
         }),
       ),
     ).rejects.toThrow('fingerprint mismatch');

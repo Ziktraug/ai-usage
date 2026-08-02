@@ -2,6 +2,7 @@
 
 - **Status**: Accepted
 - **Date**: 2026-07-21
+- **Amended by**: [ADR 0009](0009-sole-writer-usage-engine-and-direct-sqlite-readers.md)
 
 ## Context
 
@@ -10,7 +11,7 @@ adapters, CLI commands, and later Effect boundaries. Putting it in
 `@ai-usage/report-data` would couple generic observability to report
 orchestration and encourage separate web and CLI implementations.
 
-The web process and CLI may write concurrently. Logging must remain
+The engine, web process, and CLI may write concurrently. Logging must remain
 best-effort, bounded, private, and unable to change product results or terminal
 output.
 
@@ -33,11 +34,12 @@ Node-specific file and console composition is exposed separately from the
 runtime-neutral model so browser-visible modules cannot accidentally import
 filesystem code.
 
-`apps/web` owns one process-scoped Effect runtime created by a Nitro plugin. It
-owns the file appender and web console sink, supplies the same sink instance to
-source control and finite server adapters, and drains it during Nitro shutdown.
-TTY web logging uses one compact, context-rich line per event on stderr. Non-TTY output, or
-`LOG_FORMAT=json`, uses one-line JSON on stderr.
+Under ADR 0009, `apps/usage-engine` owns the process-scoped sink/resource for
+source and publication work and drains it during engine shutdown. `apps/web`
+owns a separate process-scoped read-observability sink/resource for finite
+direct SQLite server adapters and drains it during Nitro shutdown. Engine/Web
+TTY logging uses compact context-rich projected output; non-TTY output, or
+`LOG_FORMAT=json`, uses one-line JSON.
 
 `apps/cli` uses the same boundary and sink primitives but composes only the file
 sink. It never prints wide events or file-sink diagnostics to stdout or stderr.
@@ -53,7 +55,7 @@ disabled without failing the product.
 The log directory is ai-usage-owned and `0700` on POSIX; files and the
 cooperative writer lock are regular, single-link, non-symlink `0600` files.
 Selection, append, rotation, and sweep run under a bounded interprocess lock so
-web and CLI cannot race each other. The appender uses a bounded in-memory queue,
+engine, web, and CLI cannot race each other. The appender uses a bounded in-memory queue,
 an append timeout and circuit breaker, and a scoped drain deadline. Queue-full,
 lock, filesystem, and serialization failures drop observability records but
 never fail business work.
@@ -64,10 +66,10 @@ ignore unrelated files. No compression is added in v1.
 
 ## Consequences
 
-- `apps/web`, `apps/cli`, and `packages/report-data` consume one foundation and
+- `apps/usage-engine`, `apps/web`, and `apps/cli` consume one foundation and
   differ only at their composition roots.
-- The web runtime has one sink lifecycle instead of one appender per route or
-  boundary.
+- Engine source/publication work and Web direct reads each have one sink
+  lifecycle instead of one appender per job or route.
 - Tests use injected capture or no-op sinks; production event state is never a
   mutable process global.
 - File delivery is explicitly best-effort. "Emit exactly once" means one
@@ -77,8 +79,8 @@ ignore unrelated files. No compression is added in v1.
 
 ## Rejected Alternatives
 
-- A logging package inside `report-data`: rejected because web and CLI have
-  Effect boundaries outside report orchestration.
+- A logging package inside `report-data`: rejected because engine, Web, and CLI
+  have Effect boundaries outside report orchestration.
 - Fire-and-forget `appendFile` without a scoped queue: rejected because CLI
   failures can call `process.exit` before the write settles.
 - Per-process files without coordination: rejected because they weaken the

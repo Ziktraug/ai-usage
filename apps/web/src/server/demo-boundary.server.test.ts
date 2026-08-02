@@ -1,5 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { assertOutsideDemo, rejectProtectedDemoRequest, runOutsideDemo } from './demo-boundary.server';
+import { resolveUsageEngineControlClientForServer } from './usage-engine-control-resolver.server';
+import { resolveUsageReadModelForServer } from './usage-read-model-resolver.server';
 
 describe('demo server boundary', () => {
   test('returns one non-disclosing response for local reads and mutations', () => {
@@ -38,5 +40,31 @@ describe('demo server boundary', () => {
       expect(error).toBeInstanceOf(Response);
       expect((error as Response).status).toBe(404);
     }
+  });
+
+  test('does not load the live SQLite reader or engine client in demo mode', async () => {
+    let liveControlLoads = 0;
+    let liveReaderLoads = 0;
+    const control = resolveUsageEngineControlClientForServer('demo', () => {
+      liveControlLoads += 1;
+      return Promise.reject(new Error('The live engine client loader must remain unreachable.'));
+    });
+    const reader = resolveUsageReadModelForServer('demo', () => {
+      liveReaderLoads += 1;
+      return Promise.reject(new Error('The live SQLite reader loader must remain unreachable.'));
+    });
+
+    const [controlResult, readerResult] = await Promise.allSettled([control, reader]);
+    expect(controlResult.status).toBe('rejected');
+    expect(readerResult.status).toBe('rejected');
+    if (controlResult.status === 'rejected') {
+      expect(controlResult.reason).toBeInstanceOf(Response);
+      expect((controlResult.reason as Response).status).toBe(404);
+    }
+    if (readerResult.status === 'rejected') {
+      expect(readerResult.reason).toBeInstanceOf(Response);
+      expect((readerResult.reason as Response).status).toBe(404);
+    }
+    expect({ liveControlLoads, liveReaderLoads }).toEqual({ liveControlLoads: 0, liveReaderLoads: 0 });
   });
 });

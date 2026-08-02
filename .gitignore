@@ -1,6 +1,8 @@
 node_modules
 dist
 .output
+.output-build
+.output-dev
 styled-system
 .turbo
 .worktrees/

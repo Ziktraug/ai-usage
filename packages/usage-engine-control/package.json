@@ -1,0 +1,24 @@
+{
+  "name": "@ai-usage/usage-engine-control",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/contracts.ts",
+    "./client": "./src/client.ts",
+    "./completion": "./src/completion.ts",
+    "./handoff": "./src/handoff.ts",
+    "./node": "./src/rendezvous.ts",
+    "./testing": "./src/testing.ts"
+  },
+  "dependencies": {
+    "@ai-usage/report-core": "workspace:*"
+  },
+  "scripts": {
+    "build": "tsc --noEmit",
+    "check": "tsc --noEmit",
+    "test": "bun test",
+    "lint": "biome check .",
+    "format": "biome format --write ."
+  }
+}

@@ -3,15 +3,19 @@ import ts from 'typescript';
 
 export const TYPECHECK_PROJECTS = [
   'apps/cli/tsconfig.json',
+  'apps/usage-engine/tsconfig.json',
   'apps/web/tsconfig.json',
   'apps/web/tsconfig.e2e.json',
   'apps/web/tsconfig.server.json',
   'packages/design-system/tsconfig.json',
   'packages/effect-runtime/tsconfig.json',
   'packages/local-collectors/tsconfig.json',
+  'packages/local-machine/tsconfig.json',
   'packages/report-core/tsconfig.json',
   'packages/report-data/tsconfig.json',
   'packages/skills/tsconfig.json',
+  'packages/usage-engine-control/tsconfig.json',
+  'packages/usage-engine-runtime/tsconfig.json',
   'packages/usage-merge/tsconfig.json',
   'packages/usage-store/tsconfig.json',
   'tsconfig.tools.json',
@@ -31,6 +35,12 @@ export const findUncoveredTypeScriptFiles = (
   projectFiles: ReadonlySet<string>,
 ): string[] => repositoryFiles.filter((fileName) => !projectFiles.has(fileName)).sort();
 
+export const filterExistingRepositoryFiles = (
+  root: string,
+  repositoryFiles: readonly string[],
+  fileExists: (fileName: string) => boolean = ts.sys.fileExists,
+): string[] => repositoryFiles.filter((fileName) => fileExists(path.resolve(root, fileName)));
+
 export const listRepositoryTypeScriptFiles = (root: string): string[] => {
   const result = Bun.spawnSync({
     cmd: ['git', 'ls-files', '--cached', '--others', '--exclude-standard', '--', '*.ts', '*.tsx'],
@@ -39,7 +49,8 @@ export const listRepositoryTypeScriptFiles = (root: string): string[] => {
   if (result.exitCode !== 0) {
     throw new Error(new TextDecoder().decode(result.stderr).trim() || 'Unable to list repository TypeScript files.');
   }
-  return new TextDecoder().decode(result.stdout).trim().split('\n').filter(Boolean).sort();
+  const repositoryFiles = new TextDecoder().decode(result.stdout).trim().split('\n').filter(Boolean).sort();
+  return filterExistingRepositoryFiles(root, repositoryFiles);
 };
 
 export const listTypeScriptProjectFiles = (root: string, projectConfigs: readonly string[]): Set<string> => {

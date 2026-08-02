@@ -400,6 +400,19 @@ export const deserializeUsageRow = (row: SerializedUsageRow): UsageRow => {
   };
 };
 
+export type ProjectedUsageRow = UsageRow & {
+  readonly projectGroupId?: string;
+  readonly projectSourceId?: string;
+  readonly rawProject?: string;
+};
+
+export const deserializeProjectedUsageRow = (row: SerializedUsageRow): ProjectedUsageRow => ({
+  ...deserializeUsageRow(row),
+  ...(row.rawProject === undefined ? {} : { rawProject: row.rawProject }),
+  ...(row.projectGroupId === undefined ? {} : { projectGroupId: row.projectGroupId }),
+  ...(row.projectSourceId === undefined ? {} : { projectSourceId: row.projectSourceId }),
+});
+
 export const createUsageReportPayload = (
   report: PreparedUsageReport,
   options: ReportOptions,

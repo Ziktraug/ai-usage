@@ -6,7 +6,7 @@ Global backlog for known follow-ups that should survive individual refactor logs
 
 - Preserve the delivered compatibility split: the served app reads exact immutable revisions through focused Overview, Breakdown, bounded-support, Session page, campaign, and neighbor queries, while compatible CLI consumers retain the complete `UsageReportPayload` path.
 - Continue deepening served report surfaces into bounded, destination-specific queries with canonical request fingerprints; do not make the full compatibility payload the live refresh protocol again.
-- Keep CLI quota output on the report-data one-shot application port if quota output becomes part of additional reporting surfaces.
+- Keep quota refresh on the usage-engine command seam and quota reads/rendering on the read-only durable-observation seam; do not restore a report-data one-shot port.
 
 ## Report UI Models
 

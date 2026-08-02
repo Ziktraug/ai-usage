@@ -35,7 +35,7 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
 const initialAssetPaths = async (appDir: string): Promise<string[]> => {
-  const serverDir = path.join(appDir, '.output/server');
+  const serverDir = path.join(appDir, '.output-build/nitro/server');
   const manifestFile = readdirSync(serverDir).find(
     (file) => file.startsWith('_tanstack-start-manifest_') && file.endsWith('.mjs'),
   );
@@ -74,7 +74,7 @@ describe('report app client bundle', () => {
       const appDir = path.resolve(import.meta.dir, '..');
       await $`bun run build`.cwd(appDir).quiet();
 
-      const assetsDir = path.join(appDir, '.output/public/assets');
+      const assetsDir = path.join(appDir, '.output-build/nitro/public/assets');
       expect(existsSync(assetsDir)).toBe(true);
 
       const cssFile = readdirSync(assetsDir).find((file) => file.endsWith('.css'));
@@ -97,7 +97,7 @@ describe('report app client bundle', () => {
       }
       expect(readFileSync(path.join(assetsDir, reportEntry)).byteLength).toBeLessThan(720_000);
 
-      const publicDir = path.join(appDir, '.output/public');
+      const publicDir = path.join(appDir, '.output-build/nitro/public');
       const rootAssets = await initialAssetPaths(appDir);
       const gzipClosureBytes = rootAssets.reduce(
         (total, assetPath) =>

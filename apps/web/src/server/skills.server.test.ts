@@ -2,14 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { createLocalHistoryStorage, LocalHistoryStorage } from '@ai-usage/local-collectors/local-history';
-import { writeMachineConfig } from '@ai-usage/local-collectors/machine-config';
-import { createUsageMergeBundle } from '@ai-usage/report-core/merge-bundle';
-import type { UsageMachine } from '@ai-usage/report-core/snapshot';
-import type { SourcedRow } from '@ai-usage/report-core/types';
-import { approximateApiCost, normalizeUsageRow } from '@ai-usage/report-core/usage-row';
-import { importPeerMergeBundle, usageStorePath } from '@ai-usage/usage-store';
-import { Effect } from 'effect';
+import { usageStorePath } from '@ai-usage/usage-store/reader';
 import {
   createSkillsServerAdapter,
   createSkillsServerDependencies,
@@ -59,26 +52,6 @@ const writeSourceSkill = async (sourceRepoPath: string, skillName: string, conte
   await writeFile(path.join(skillPath, 'SKILL.md'), content, 'utf8');
 };
 
-const makeStoredRow = (input: { project: string; sessionId: string; sourcePath: string }): SourcedRow => ({
-  ...normalizeUsageRow({
-    calls: 1,
-    cost: approximateApiCost,
-    date: new Date('2026-01-01T00:00:00.000Z'),
-    endDate: new Date('2026-01-01T00:01:00.000Z'),
-    harness: 'Claude Code',
-    model: 'claude-sonnet-4-6',
-    name: input.sessionId,
-    project: input.project,
-    provider: 'Claude API',
-    tokens: { cr: 0, cw: 0, in: 10, out: 5 },
-  }),
-  source: {
-    harnessKey: 'claude',
-    sourcePath: input.sourcePath,
-    sourceSessionId: input.sessionId,
-  },
-});
-
 describe('real skills server adapter', () => {
   test('uses injected temp storage and workflows for the complete management lifecycle', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'ai-usage-skills-server-adapter-'));
@@ -124,8 +97,7 @@ description: Helps with adapter tests
         'utf8',
       );
 
-      const storage = createLocalHistoryStorage(home);
-      const baseDependencies = createSkillsServerDependencies({ configCwd, storage });
+      const baseDependencies = createSkillsServerDependencies({ configCwd, homePath: home });
       const calls = {
         configReads: [] as { configCwd: string; home: string }[],
         configWrites: [] as string[],
@@ -133,20 +105,20 @@ description: Helps with adapter tests
       };
       const adapter = createSkillsServerAdapter({
         ...baseDependencies,
-        readConfig: (input) => {
-          calls.configReads.push({ configCwd: input.configCwd, home: input.storage.home });
-          return baseDependencies.readConfig(input);
+        readConfig: () => {
+          calls.configReads.push({ configCwd: baseDependencies.configCwd, home: baseDependencies.homePath });
+          return baseDependencies.readConfig();
         },
-        readKnownProjectSources: (input) => {
+        readKnownProjectSources: () => {
           calls.projectSourceReads.push({
-            ...(input.request.configCwd === undefined ? {} : { configCwd: input.request.configCwd }),
-            home: input.storage.home,
+            configCwd: baseDependencies.configCwd,
+            home: baseDependencies.homePath,
           });
-          return baseDependencies.readKnownProjectSources(input);
+          return baseDependencies.readKnownProjectSources();
         },
-        updateConfig: (input) => {
-          calls.configWrites.push(input.storage.home);
-          return baseDependencies.updateConfig(input);
+        updateSkills: (skills) => {
+          calls.configWrites.push(baseDependencies.homePath);
+          return baseDependencies.updateSkills(skills);
         },
       });
 
@@ -228,40 +200,82 @@ description: Helps with adapter tests
     }
   });
 
-  test('excludes imported machine project paths through the real project-source adapter', async () => {
-    const root = await mkdtemp(path.join(tmpdir(), 'ai-usage-skills-server-imported-'));
+  test('keeps configured project scans available without creating a store or machine config', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'ai-usage-skills-server-no-store-'));
     try {
       const home = path.join(root, 'home');
       const configCwd = path.join(root, 'cwd');
-      const importedProjectPath = path.join(root, 'imported-project');
-      const storage = createLocalHistoryStorage(home);
-      const machine: UsageMachine = { id: 'local-machine', label: 'Local Machine' };
+      const projectPath = path.join(root, 'configured-project');
+      const configPath = path.join(home, '.config', 'ai-usage', 'config.json');
       await Promise.all([
-        mkdir(path.join(importedProjectPath, '.git'), { recursive: true }),
+        writeProjectSkill(path.join(projectPath, '.claude', 'skills', 'configured-skill'), 'configured-skill'),
         mkdir(configCwd, { recursive: true }),
+        mkdir(path.dirname(configPath), { recursive: true }),
       ]);
-      await Effect.runPromise(writeMachineConfig(machine).pipe(Effect.provideService(LocalHistoryStorage, storage)));
-      await Effect.runPromise(
-        importPeerMergeBundle({
-          bundle: createUsageMergeBundle({
-            machine: { id: 'imported-machine', label: 'Imported Machine' },
-            rows: [
-              makeStoredRow({
-                project: 'imported-project',
-                sessionId: 'imported-session',
-                sourcePath: importedProjectPath,
-              }),
-            ],
-          }),
-          dbPath: usageStorePath(home),
-          localMachineId: machine.id,
-        }),
-      );
+      await writeFile(configPath, `${JSON.stringify({ skills: { projectPaths: [projectPath] } }, null, 2)}\n`, 'utf8');
 
-      const adapter = createSkillsServerAdapter(createSkillsServerDependencies({ configCwd, storage }));
+      const adapter = createSkillsServerAdapter(createSkillsServerDependencies({ configCwd, homePath: home }));
       expect(await adapter.readKnownProjectPaths()).toEqual({ ok: true, data: [] });
+      expect(await adapter.readProjectInventories()).toMatchObject({ data: [{ projectPath }], ok: true });
+      expect(await Bun.file(usageStorePath(home)).exists()).toBe(false);
+      expect(await Bun.file(path.join(home, '.config', 'ai-usage', 'machine.json')).exists()).toBe(false);
     } finally {
       await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test('does not hide incompatible or corrupt project projection failures', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'ai-usage-skills-server-reader-failure-'));
+    try {
+      const dependencies = createSkillsServerDependencies({
+        configCwd: root,
+        homePath: path.join(root, 'home'),
+        readModel: {
+          readCurrentLocalProjectSources: () =>
+            Promise.reject({ message: 'private database path', reason: 'schema-too-new' }),
+        },
+      });
+
+      const result = await createSkillsServerAdapter(dependencies).readKnownProjectPaths();
+
+      expect(result).toEqual({
+        error: { message: 'Project discovery is unavailable.', tag: 'Error' },
+        ok: false,
+      });
+      expect(JSON.stringify(result)).not.toContain('private database path');
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test('rejects an expanded project-source response above the preserved 512 KiB wire budget', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'ai-usage-skills-server-budget-'));
+    try {
+      const sources = Array.from({ length: 700 }, (_, index) => ({
+        label: `Project ${index}`,
+        machineId: 'machine-local',
+        machineLabel: 'Local machine',
+        project: `project-${index}`,
+        sessions: 1,
+        sourcePath: `/private/${'x'.repeat(900)}/${index}`,
+      }));
+      expect(Buffer.byteLength(JSON.stringify({ revision: 'revision-a', sources }))).toBeGreaterThan(512 * 1024);
+      const dependencies = createSkillsServerDependencies({
+        configCwd: root,
+        homePath: path.join(root, 'home'),
+        readModel: {
+          readCurrentLocalProjectSources: () => Promise.resolve({ revision: 'revision-a', sources }),
+        },
+      });
+
+      const result = await createSkillsServerAdapter(dependencies).readKnownProjectPaths();
+
+      expect(result).toEqual({
+        error: { message: 'Project discovery exceeds its response budget.', tag: 'Error' },
+        ok: false,
+      });
+    } finally {
+      await rm(root, { force: true, recursive: true });
     }
   });
 });

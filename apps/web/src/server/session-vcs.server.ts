@@ -1,12 +1,6 @@
 import fs from 'node:fs';
 import { access } from 'node:fs/promises';
 import path from 'node:path';
-import {
-  createLocalHistoryStorage,
-  LocalHistoryStorage,
-  type LocalHistoryStorage as LocalHistoryStorageService,
-} from '@ai-usage/local-collectors/local-history';
-import { ensureMachineConfig } from '@ai-usage/local-collectors/machine-config';
 import type { SessionDetailAnchorResult } from '@ai-usage/report-core/session-detail';
 import type { SessionQueryServerResult } from '@ai-usage/report-core/session-query';
 import {
@@ -18,7 +12,6 @@ import {
   type SessionVcsResolveRequest,
   type SessionVcsResolveResponse,
 } from '@ai-usage/report-core/session-vcs';
-import { Effect } from 'effect';
 import {
   BoundedStdoutProcessError,
   type BoundedStdoutProcessOptions,
@@ -26,6 +19,7 @@ import {
 } from './bounded-stdout-process.server';
 import { authorizeLocalSessionAnchor } from './local-session-authority.server';
 import { runRevisionQueryForServer } from './revision-query-runner.server';
+import { resolveUsageReadModelForServer } from './usage-read-model-resolver.server';
 
 const GH_TIMEOUT_MS = 5000;
 const GH_MAXIMUM_OUTPUT_BYTES = 256 * 1024;
@@ -204,10 +198,8 @@ export const createGhSessionVcsProviderResolver = (
   },
 });
 
-const defaultDependencies = (
-  storage: LocalHistoryStorageService = createLocalHistoryStorage(),
-): SessionVcsServerDependencies => ({
-  readMachine: () => Effect.runPromise(ensureMachineConfig.pipe(Effect.provideService(LocalHistoryStorage, storage))),
+const defaultDependencies = (): SessionVcsServerDependencies => ({
+  readMachine: async () => await (await resolveUsageReadModelForServer()).readLocalMachine(),
   resolveAnchor: (request) => runRevisionQueryForServer('session-detail-anchor', request),
   resolver: createGhSessionVcsProviderResolver(),
 });

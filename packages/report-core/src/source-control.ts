@@ -572,6 +572,35 @@ const assertSerializedBound = (value: unknown, maximumBytes: number, label: stri
   }
 };
 
+const copySourceControlEntry = (source: SourceControlEntryView): SourceControlEntryView => ({
+  availability: source.availability,
+  cadenceMs: source.cadenceMs,
+  id: source.id,
+  label: source.label,
+  lastOutcome: source.lastOutcome,
+  lifecycle: source.lifecycle,
+  policy: source.policy,
+  reason: { ...source.reason },
+  warnings: source.warnings.map((warning) => ({ ...warning })),
+  ...(source.durationMs === undefined ? {} : { durationMs: source.durationMs }),
+  ...(source.inputCount === undefined ? {} : { inputCount: source.inputCount }),
+  ...(source.lastFinishedAt === undefined ? {} : { lastFinishedAt: source.lastFinishedAt }),
+  ...(source.lastStartedAt === undefined ? {} : { lastStartedAt: source.lastStartedAt }),
+  ...(source.lastSuccessAt === undefined ? {} : { lastSuccessAt: source.lastSuccessAt }),
+  ...(source.nextDueAt === undefined ? {} : { nextDueAt: source.nextDueAt }),
+  ...(source.outputCount === undefined ? {} : { outputCount: source.outputCount }),
+  ...(source.progress === undefined ? {} : { progress: { ...source.progress } }),
+  ...(source.queueDelayMs === undefined ? {} : { queueDelayMs: source.queueDelayMs }),
+});
+
+export const parseSourceControlEntryView = (value: unknown): SourceControlEntryView => {
+  assertSerializedBound(value, sourceControlBounds.maxEventBytes, 'Source control entry');
+  if (!(isSourceEntry(value) && isSourceLifecycleConsistent(value))) {
+    return parseFailure('Source control entry is invalid.');
+  }
+  return copySourceControlEntry(value);
+};
+
 export const parseSourceControlSnapshot = (value: unknown): SourceControlView => {
   assertSerializedBound(value, sourceControlBounds.maxSnapshotBytes, 'Source control snapshot');
   if (
@@ -602,26 +631,7 @@ export const parseSourceControlSnapshot = (value: unknown): SourceControlView =>
     if (!isSourceEntry(source)) {
       return parseFailure('Source control snapshot is invalid.');
     }
-    sources.push({
-      availability: source.availability,
-      cadenceMs: source.cadenceMs,
-      id: source.id,
-      label: source.label,
-      lastOutcome: source.lastOutcome,
-      lifecycle: source.lifecycle,
-      policy: source.policy,
-      reason: { ...source.reason },
-      warnings: source.warnings.map((warning) => ({ ...warning })),
-      ...(source.durationMs === undefined ? {} : { durationMs: source.durationMs }),
-      ...(source.inputCount === undefined ? {} : { inputCount: source.inputCount }),
-      ...(source.lastFinishedAt === undefined ? {} : { lastFinishedAt: source.lastFinishedAt }),
-      ...(source.lastStartedAt === undefined ? {} : { lastStartedAt: source.lastStartedAt }),
-      ...(source.lastSuccessAt === undefined ? {} : { lastSuccessAt: source.lastSuccessAt }),
-      ...(source.nextDueAt === undefined ? {} : { nextDueAt: source.nextDueAt }),
-      ...(source.outputCount === undefined ? {} : { outputCount: source.outputCount }),
-      ...(source.progress === undefined ? {} : { progress: { ...source.progress } }),
-      ...(source.queueDelayMs === undefined ? {} : { queueDelayMs: source.queueDelayMs }),
-    });
+    sources.push(copySourceControlEntry(source));
   }
   const sourceIds = new Set(sources.map(({ id }) => id));
   const runningCount = sources.filter(({ lifecycle }) => lifecycle === 'running' || lifecycle === 'pausing').length;

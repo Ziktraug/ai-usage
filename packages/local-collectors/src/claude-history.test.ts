@@ -2,6 +2,9 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { appendFile, mkdtemp, rm, symlink } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { readClaudeSessionAnalysis } from '@ai-usage/local-machine/claude-session-analysis';
+import { createLocalHistoryStorage, LocalHistoryStorage } from '@ai-usage/local-machine/local-history';
+import { HARNESS_FIXTURE_PRIVATE_PROMPT_SENTINEL, seedHarnessHome } from '@ai-usage/local-machine/testing/harness-home';
 import { serializeUsageRow } from '@ai-usage/report-core/report-data';
 import {
   compareSessionProjectionFacts,
@@ -9,10 +12,7 @@ import {
   sessionProjectionFactsForSerializedRow,
 } from '@ai-usage/report-core/session-detail';
 import { Effect } from 'effect';
-import { readClaudeSessionAnalysis } from './claude-history';
 import { collectClaude } from './collectors/claude';
-import { createLocalHistoryStorage, LocalHistoryStorage } from './local-history';
-import { HARNESS_FIXTURE_PRIVATE_PROMPT_SENTINEL, seedHarnessHome } from './test-fixtures/harness-home';
 
 const homes: string[] = [];
 

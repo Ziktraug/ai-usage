@@ -1,23 +1,35 @@
 import type { RuntimeMode } from '../runtime-mode';
 import { runOutsideDemo } from './demo-boundary.server';
+import { validateTrustedLocalRequest } from './local-request-trust.server';
 import { getServerRuntimeMode } from './runtime-mode.server';
 
 type SyncUploadHandler = (request: Request) => Promise<Response>;
 
-const loadSyncUploadHandler = async (): Promise<SyncUploadHandler> => {
-  const [mergeServer, { handleManualMergeUpload }] = await Promise.all([
-    import('./manual-merge.server'),
+const loadSyncUploadHandler = async (mode: Exclude<RuntimeMode, 'demo'>): Promise<SyncUploadHandler> => {
+  const [
+    { handleManualMergeUpload },
+    { executeUsageEngineCommandToCompletion },
+    { resolveUsageEngineControlClientForServer },
+  ] = await Promise.all([
     import('./manual-merge-upload.server'),
+    import('./usage-engine-command.server'),
+    import('./usage-engine-control-resolver.server'),
   ]);
+  const control = await resolveUsageEngineControlClientForServer(mode);
+  const stageHandoff =
+    mode === 'e2e'
+      ? (await import('./e2e/sync-fixture.server')).stageSyncE2EHandoff
+      : await Promise.all([
+          import('@ai-usage/usage-engine-control/handoff'),
+          import('./usage-runtime-paths.server'),
+        ]).then(([{ stageUsageEngineHandoff }, { resolveUsageWebRuntimePaths }]) => {
+          const inboxDirectory = resolveUsageWebRuntimePaths().inboxDirectory;
+          return (bytes: Uint8Array, signal: AbortSignal) => stageUsageEngineHandoff(bytes, { inboxDirectory, signal });
+        });
   return (request) =>
     handleManualMergeUpload(request, {
-      previewBundle: (document) => mergeServer.previewManualMergeBundleForServer(document),
-      confirmBundle: (document, expected) =>
-        mergeServer.confirmManualMergeBundleForServer({
-          ...document,
-          expectedDigest: expected.digest,
-          confirmationToken: expected.confirmationToken,
-        }),
+      executeCommand: (command) => executeUsageEngineCommandToCompletion(control, command, { signal: request.signal }),
+      stageHandoff,
     });
 };
 
@@ -28,9 +40,16 @@ export const handleSyncUploadRequest = async (
     mode?: RuntimeMode;
   } = {},
 ): Promise<Response> => {
+  const mode = options.mode ?? getServerRuntimeMode();
   const result = await runOutsideDemo(async () => {
-    const handler = await (options.loadHandler ?? loadSyncUploadHandler)();
+    const trustFailure = validateTrustedLocalRequest(request);
+    if (trustFailure) {
+      return trustFailure;
+    }
+    const handler = await (
+      options.loadHandler ?? (() => loadSyncUploadHandler(mode as Exclude<RuntimeMode, 'demo'>))
+    )();
     return await handler(request);
-  }, options.mode ?? getServerRuntimeMode());
+  }, mode);
   return result;
 };

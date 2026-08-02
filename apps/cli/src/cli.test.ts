@@ -27,6 +27,20 @@ describe('CLI command parsing', () => {
     });
   });
 
+  test('makes stored report reads explicit without changing the fresh default', () => {
+    expect(Effect.runSync(parseCommand([]))).toMatchObject({
+      _tag: 'Report',
+      args: { stored: false },
+    });
+    expect(Effect.runSync(parseCommand(['report', '--stored', '--json']))).toMatchObject({
+      _tag: 'Report',
+      args: { format: 'json', stored: true },
+    });
+    expect(Effect.runSync(Effect.flip(parseCommand(['merge', 'mac.json', '--stored']))).message).toBe(
+      'Unknown option for merge: --stored',
+    );
+  });
+
   test('parses payload JSON as an exclusive output format and rejects HTML', () => {
     expect(Effect.runSync(parseCommand(['--payload-json']))).toMatchObject({
       _tag: 'Report',
@@ -85,6 +99,10 @@ describe('CLI command parsing', () => {
     expect(Effect.runSync(parseCommand(['setup', '--local', '--port', '8080']))).toEqual({
       _tag: 'Setup',
       args: { files: [], local: true, port: 8080 },
+    });
+    expect(Effect.runSync(parseCommand(['setup', '--local', '--port', '0']))).toEqual({
+      _tag: 'Setup',
+      args: { files: [], local: true, port: 0 },
     });
   });
 

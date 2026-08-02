@@ -2,28 +2,39 @@
 
 ## Owns
 
-Local history adapters, harness-specific file/database reads, machine config, project-source discovery, local warning/error mapping, and `.env` discovery helpers.
+Collection-only adapters for Claude, Codex, OpenCode, Cursor, Cursor CSV,
+Codex usage-limit observations, RTK savings, and Cursor commit attribution. It
+also owns collector-private Codex rollout/cache writes and conversion into
+normalized contributions.
 
-## Does Not Own
+## Does not own
 
-It does not own report analytics, report payload creation, network transport, UI state, usage-store schema, or final output rendering.
+It does not own exact on-demand Session analysis, machine/config transactions,
+the usage-store schema, report assembly, scheduling, commands, publication,
+HTTP, or final output.
 
-## Public Interface
+## Public interface
 
-The package exposes local collection orchestration plus declared subpath exports for Codex history, focused datasets, errors, local history storage, and machine config.
+The root exposes collection orchestration. Focused exports cover Codex
+collector history, per-harness collectors, datasets, facets, and RTK
+enrichment. Neutral history/config/fact exports were moved to
+`@ai-usage/local-machine` and are not compatibility-reexported.
 
-## Depends On
+## Dependency rules
 
-`@ai-usage/local-collectors` may depend on `@ai-usage/report-core` for normalized row/domain types and pure helpers, and `@ai-usage/skills` for the skill-management config schema embedded in machine config.
+It may depend on `local-machine` for neutral reads/facts and report-core for
+domain contracts. It must not import report-data, usage-store, engine control,
+apps, or renderers. Only `usage-engine-runtime` may compose collectors in
+production; Web and CLI are forbidden direct and transitive access.
 
-## Must Not Import
+## Data boundary
 
-It must not import `@ai-usage/report-data`, `@ai-usage/usage-store`, `@ai-usage/usage-merge`, app packages, or CLI/web renderers.
+Collectors read raw local harness inputs and emit normalized rows, datasets,
+warnings, or provider-neutral quota observations. Usage-bearing metrics are
+validated as finite and non-negative. Collector-private caches are never a
+served report plane and run only under the engine's sole production process.
 
-## Data Boundary
+## Test strategy
 
-This package reads local raw history and config, then emits normalized row inputs, collected rows, focused datasets, warnings, and config records. It does not produce final reports or transfer data between machines.
-
-## Test Strategy
-
-Use fixture-backed and temporary-filesystem tests for each collector and config boundary. Keep deterministic normalization expectations in report-core tests when possible.
+Use deterministic temporary harness homes and injected storage/provider
+adapters. Collector tests may mutate only their isolated fixture/cache paths.

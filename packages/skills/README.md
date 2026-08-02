@@ -20,9 +20,9 @@
 
 ## Dependencies
 
-This package should stay independent from app packages, report-data, usage-store,
-and usage-merge. It may use standard Node filesystem APIs behind
-workflow functions and should expose JSON-safe data to app callers.
+This package should stay independent from every workspace package. It may use
+standard Node filesystem APIs behind workflow functions and should expose
+JSON-safe data to app callers.
 
 `src/index.ts` is the domain public facade; `application.ts` is exposed through
 the explicit `@ai-usage/skills/application` subpath so app orchestration does

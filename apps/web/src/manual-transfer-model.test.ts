@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test';
-import type { ManualMergeImportResult } from '@ai-usage/usage-merge';
-import type { UsageMachineFleetItem } from '@ai-usage/usage-store';
+import type { UsageEngineMergePreviewOutput } from '@ai-usage/usage-engine-control';
+import type { UsageMachineFleetItem } from '@ai-usage/usage-store/reader';
 import {
   buildSyncFleetMachineViews,
   formatFleetAge,
@@ -11,6 +11,7 @@ import {
   machineFreshnessStatusLabel,
   machineLabelPresentation,
   machineLabelPresentationForSnapshot,
+  manualTransferMutationAvailability,
   STALE_MACHINE_COLLECTION_GUIDANCE,
 } from './manual-transfer-model';
 import { buildSyncFleetComparisonRows } from './sync-machine-comparison-model';
@@ -31,6 +32,22 @@ const fleetItem = (
   sessionCount,
 });
 
+test('keeps exports readable while disabling imports outside a live engine connection', () => {
+  expect(manualTransferMutationAvailability('live')).toEqual({ available: true, message: null });
+  expect(manualTransferMutationAvailability('disconnected')).toEqual({
+    available: false,
+    message:
+      'The usage engine is disconnected. Imports are disabled while reconnecting; exports and stored fleet reads remain available.',
+  });
+  expect(manualTransferMutationAvailability('protocol-mismatch')).toEqual({
+    available: false,
+    message:
+      'This usage engine version is incompatible. Imports are disabled; exports and stored fleet reads remain available.',
+  });
+  expect(manualTransferMutationAvailability('connecting').available).toBe(false);
+  expect(manualTransferMutationAvailability('stopped').available).toBe(false);
+});
+
 test('formats manual transfer sizes for upload progress', () => {
   expect(formatTransferBytes(0)).toBe('0 B');
   expect(formatTransferBytes(1023)).toBe('1023 B');
@@ -48,9 +65,11 @@ test('owns conservative invalid-row and stale-machine guidance without local pat
 });
 
 test('summarizes changed and unchanged usage rows after a manual import', () => {
-  const result: ManualMergeImportResult = {
-    generatedAt: '2026-07-11T12:00:00.000Z',
-    machine: { id: 'studio-mac', label: 'Studio Mac' },
+  const result: UsageEngineMergePreviewOutput = {
+    bytes: 1024,
+    confirmationToken: 'confirmation-token',
+    documentDigest: 'a'.repeat(64),
+    kind: 'merge-preview',
     result: {
       deleted: 5,
       fleetChanged: false,
@@ -61,10 +80,10 @@ test('summarizes changed and unchanged usage rows after a manual import', () => 
       warnings: 0,
     },
     rows: 20,
-    warnings: 0,
+    warningCount: 0,
   };
 
-  expect(formatManualImportSummary(result)).toBe('Imported Studio Mac: 14 changed, 6 unchanged.');
+  expect(formatManualImportSummary(result)).toBe('Imported usage: 14 changed, 6 unchanged.');
 });
 
 test('builds a current-first fleet and marks machines outside the 30-day report window stale', () => {

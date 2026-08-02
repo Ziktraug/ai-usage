@@ -2,9 +2,9 @@ import { describe, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { createLocalHistoryStorage, LocalHistoryStorage } from '@ai-usage/local-machine/local-history';
 import { Effect } from 'effect';
 import { collectCodexRolloutQuotaBatch } from './codex-quota-history';
-import { createLocalHistoryStorage, LocalHistoryStorage } from './local-history';
 
 const event = (timestamp: string, usedPercent: number): string =>
   JSON.stringify({

@@ -58,15 +58,17 @@ export const makeCliWideEventSinkLayer = (
 ): Layer.Layer<WideEventResourceService | WideEventSink> =>
   Layer.merge(makeFileWideEventSinkLayer(options), makeWideEventResourceLayer(options.resource));
 
-export const makeWebWideEventSinkLayer = (
-  options: Omit<FileWideEventSinkOptions, 'directory'> & {
-    readonly directory?: string | null;
-    readonly format?: ConsoleLogFormat;
-    readonly resource: WideEventResourceInput;
-    readonly consoleWrite?: ConsoleWideEventWriter;
-    readonly projector?: PrettyWideEventProjector;
-    readonly silenceConsole?: boolean;
-  },
+type ProcessWideEventSinkOptions = Omit<FileWideEventSinkOptions, 'directory'> & {
+  readonly directory?: string | null;
+  readonly format?: ConsoleLogFormat;
+  readonly resource: WideEventResourceInput;
+  readonly consoleWrite?: ConsoleWideEventWriter;
+  readonly projector?: PrettyWideEventProjector;
+  readonly silenceConsole?: boolean;
+};
+
+const makeProcessWideEventSinkLayer = (
+  options: ProcessWideEventSinkOptions,
 ): Layer.Layer<WideEventResourceService | WideEventSink> =>
   Layer.merge(
     Layer.scoped(
@@ -131,6 +133,16 @@ export const makeWebWideEventSinkLayer = (
     ),
     makeWideEventResourceLayer(options.resource),
   );
+
+export const makeEngineWideEventSinkLayer = (
+  options: Omit<ProcessWideEventSinkOptions, 'resource'> & {
+    readonly resource: Omit<WideEventResourceInput, 'surface'> & { readonly surface: 'engine' };
+  },
+): Layer.Layer<WideEventResourceService | WideEventSink> => makeProcessWideEventSinkLayer(options);
+
+export const makeWebWideEventSinkLayer = (
+  options: ProcessWideEventSinkOptions,
+): Layer.Layer<WideEventResourceService | WideEventSink> => makeProcessWideEventSinkLayer(options);
 
 export const makeSilentWideEventSinkLayer = (
   resource: WideEventResourceInput,

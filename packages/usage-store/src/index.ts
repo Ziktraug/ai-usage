@@ -1,11 +1,14 @@
 import { createHash } from 'node:crypto';
+import fs from 'node:fs';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import {
   isNormalizedDatasetIdentity,
   isNormalizedDatasetItem,
   type NormalizedDatasetItem,
   type NormalizedDatasetKey,
 } from '@ai-usage/report-core/datasets';
+import type { FocusedReportSupport, FocusedSupportResult } from '@ai-usage/report-core/focused-report-query';
 import {
   createUsageMergeBundle,
   deserializeMergeRow,
@@ -17,24 +20,39 @@ import {
   type UsageMergeBundle,
   usageContentHash,
 } from '@ai-usage/report-core/merge-bundle';
-import {
-  type ProviderQuotaObservation,
-  parseProviderQuotaObservation,
-  providerQuotaObservationFingerprintInput,
-} from '@ai-usage/report-core/provider-quota';
+import { MAX_PORTABLE_USAGE_ROWS } from '@ai-usage/report-core/portable-usage';
+import type { ProjectAliasEntry } from '@ai-usage/report-core/project-alias';
+import type { ProjectGroupConfig } from '@ai-usage/report-core/project-group';
+import type { ProviderQuotaObservation } from '@ai-usage/report-core/provider-quota';
 import { IMPORT_EXISTING_ROW_LOOKUP_BATCH_SIZE } from '@ai-usage/report-core/report-budgets';
+import type { SerializedRow } from '@ai-usage/report-core/report-data';
+import type { SessionDetailSourceAuthority } from '@ai-usage/report-core/session-detail';
 import type { UsageMachine } from '@ai-usage/report-core/snapshot';
 import type { CollectedUsageRow, UsageRowWithOptionalSource } from '@ai-usage/report-core/types';
-import { Data, Effect } from 'effect';
+import { Effect } from 'effect';
+import { UsageStoreError, type UsageStoreErrorReason } from './errors';
 import {
   inspectPrivateStoreForConfirmation,
   type PrivateStoreConfirmationIdentity,
   preparePrivateStoreFile,
   revalidatePrivateStoreForConfirmation,
 } from './private-storage';
+import { createProviderQuotaStore, MAX_PROVIDER_QUOTA_STREAMS } from './provider-quota-store';
+import type { ServedRevisionQueryKind } from './served-query-catalog';
+import { createServedReportStore } from './served-report-store';
+import {
+  assertServedReportSchema,
+  type ServedRevisionQueryTrace,
+  ServedRevisionQueryValidationError,
+  ServedRevisionSchemaValidationError,
+  servedReportSchemaSql,
+} from './served-revision';
 
 export type StoredUsageRowStatus = 'active' | 'superseded' | 'deleted';
 export type StoredSourceAuthority = 'local-observed' | 'portable-opaque';
+
+export const USAGE_STORE_SCHEMA_VERSION = 3;
+const USAGE_STORE_READER_BUSY_TIMEOUT_MS = 1000;
 
 export interface ImportResult {
   deleted: number;
@@ -53,10 +71,46 @@ export interface ImportLocalRowsInput {
   rows: UsageRowWithOptionalSource[];
 }
 
+export interface UpdateUsageMachineLabelInput {
+  readonly dbPath: string;
+  readonly machine: UsageMachine;
+  readonly updatedAt?: Date;
+}
+
+export interface UpdateUsageMachineLabelResult {
+  readonly changed: boolean;
+  readonly skippedRows: number;
+  readonly updatedRows: number;
+}
+
+export interface InitializeUsageStoreInput {
+  readonly dbPath: string;
+}
+
+export interface CheckpointUsageStoreInput {
+  readonly dbPath: string;
+  readonly mode?: 'passive' | 'truncate';
+}
+
+export interface CheckpointUsageStoreResult {
+  readonly busy: number;
+  readonly checkpointedFrames: number;
+  readonly logFrames: number;
+}
+
+export interface QuiesceUsageStoreForShutdownInput {
+  readonly dbPath: string;
+}
+
 export interface ExportLocalMergeBundleInput {
   dbPath: string;
   generatedAt?: Date;
   machine: UsageMachine;
+}
+
+export interface QueryLocalMergeBundleInput {
+  readonly dbPath: string;
+  readonly generatedAt?: Date;
 }
 
 export interface ImportPeerMergeBundleInput {
@@ -111,6 +165,14 @@ export interface QueryUsageMachineFleetResult {
   omittedMachines: number;
   /** Stored rows that failed validation and were skipped from fleet metadata. */
   skipped: number;
+}
+
+export interface QueryUsageLocalMachineInput {
+  readonly dbPath: string;
+}
+
+export interface QueryUsageSyncFleetResult extends QueryUsageMachineFleetResult {
+  readonly currentMachine: UsageMachine;
 }
 
 export interface QueryStoredReportCaptureInput extends QueryReportRowsInput {
@@ -232,6 +294,7 @@ export interface QueryProviderQuotaObservationsInput {
   maximumObservations?: number;
   providerKey?: string;
   to: string;
+  trace?: (query: ServedRevisionQueryTrace) => void;
 }
 
 export interface StoredProviderQuotaObservation {
@@ -258,6 +321,7 @@ export interface QueryProviderQuotaSourceStateInput {
 export interface QueryProviderQuotaSourceStatesInput {
   dbPath: string;
   machineId: string;
+  maximumStates?: number;
   providerKey: string;
   sourceKey: string;
 }
@@ -265,8 +329,154 @@ export interface QueryProviderQuotaSourceStatesInput {
 export interface QueryLatestProviderQuotaObservationsInput {
   dbPath: string;
   machineId?: string;
+  maximumObservations?: number;
   providerKey?: string;
+  trace?: (query: ServedRevisionQueryTrace) => void;
 }
+
+export type QueryLatestLocalProviderQuotaObservationsInput = Omit<
+  QueryLatestProviderQuotaObservationsInput,
+  'machineId'
+>;
+
+export interface ServedReportRevisionManifest {
+  readonly captureFingerprint: string;
+  readonly expiresAt: number;
+  readonly generatedAt: string;
+  readonly machineFleetGeneration: number;
+  readonly projectionBytes: number;
+  readonly publishedAt: number;
+  readonly revision: string;
+  readonly rowCount: number;
+  readonly rowsBytes: number;
+  readonly supportBytes: number;
+  readonly usageStoreGeneration: number;
+}
+
+export interface PublishServedReportRevisionCapture {
+  readonly configFingerprint: string;
+  readonly generatedAt: string;
+  readonly projectAliases: readonly ProjectAliasEntry[];
+  readonly projectGroupConfigs: readonly ProjectGroupConfig[];
+  readonly rows: readonly SerializedRow[];
+  readonly sourceAuthorities: readonly SessionDetailSourceAuthority[];
+  readonly support: FocusedReportSupport;
+}
+
+export interface PublishServedReportRevisionContext {
+  readonly generations: UsageStoreGenerations;
+}
+
+export interface PublishServedReportRevisionInput {
+  readonly assemble: (
+    context: PublishServedReportRevisionContext,
+  ) => Promise<PublishServedReportRevisionCapture> | PublishServedReportRevisionCapture;
+  readonly dbPath: string;
+  readonly expiresAt?: number;
+  readonly now?: number;
+  readonly renewalWindowMs?: number;
+  readonly revision: string;
+  readonly ttlMs?: number;
+}
+
+export interface PublishServedReportRevisionResult {
+  readonly changed: boolean;
+  readonly manifest: ServedReportRevisionManifest;
+  readonly renewed: boolean;
+}
+
+export interface QueryServedReportRevisionInput {
+  readonly dbPath: string;
+  readonly now?: number;
+  readonly revision?: string;
+  readonly trace?: (query: ServedRevisionQueryTrace) => void;
+}
+
+export interface QueryServedRevisionDataInput extends QueryServedReportRevisionInput {
+  readonly kind: ServedRevisionQueryKind;
+  readonly request: unknown;
+  readonly revision: string;
+}
+
+export interface ServedReportRevisionSlices {
+  readonly manifest: ServedReportRevisionManifest;
+  readonly rows: readonly SerializedRow[];
+  readonly support: FocusedReportSupport;
+}
+
+export interface ServedReportRevisionRows {
+  readonly manifest: ServedReportRevisionManifest;
+  readonly rows: readonly SerializedRow[];
+}
+
+export interface ServedReportRevisionSupport {
+  readonly manifest: ServedReportRevisionManifest;
+  readonly support: FocusedReportSupport;
+}
+
+export interface ServedReportRevisionBootstrap {
+  readonly manifest: ServedReportRevisionManifest;
+  readonly support: FocusedSupportResult;
+}
+
+export interface QueryServedReportRevisionLocalSnapshotInput extends QueryServedReportRevisionInput {
+  readonly revision: string;
+}
+
+export interface ServedReportRevisionLocalSnapshot {
+  readonly machine: UsageMachine;
+  readonly manifest: ServedReportRevisionManifest;
+  readonly rows: readonly SerializedRow[];
+  readonly support: FocusedReportSupport;
+}
+
+export interface ServedReportRevisionPortableConfig {
+  readonly manifest: ServedReportRevisionManifest;
+  readonly projectAliases: readonly ProjectAliasEntry[];
+  readonly projectGroupConfigs: readonly ProjectGroupConfig[];
+}
+
+export interface ServedLocalProjectSource {
+  readonly label: string;
+  readonly machineId: string;
+  readonly machineLabel: string;
+  readonly project: string;
+  readonly sessions: number;
+  readonly sourcePath: string;
+}
+
+export interface CurrentServedLocalProjectSources {
+  readonly revision: string;
+  readonly sources: readonly ServedLocalProjectSource[];
+}
+
+export interface RetainServedReportRevisionsInput {
+  readonly abandonedAfterMs?: number;
+  readonly dbPath: string;
+  readonly maximumBytes?: number;
+  readonly maximumRevisions?: number;
+  readonly maximumRows?: number;
+  readonly now?: number;
+}
+
+export interface RetainServedReportRevisionsResult {
+  readonly deletedBytes: number;
+  readonly deletedRevisions: number;
+  readonly deletedRows: number;
+  readonly expiredRevisions: number;
+}
+
+export type ServedReportPublicationPhase =
+  | 'after-commit'
+  | 'after-complete'
+  | 'after-generation-read'
+  | 'after-metadata'
+  | 'after-pointer'
+  | 'after-projection'
+  | 'after-support'
+  | 'after-validation';
+
+export type ServedReportReadPhase = 'after-resolve';
 
 export interface ProviderQuotaSourceState extends Omit<QueryProviderQuotaSourceStateInput, 'dbPath'> {
   cursor: unknown;
@@ -280,19 +490,8 @@ export interface RecordProviderQuotaSourceAttemptInput extends QueryProviderQuot
   succeeded: boolean;
 }
 
-export type UsageStoreErrorReason =
-  | 'invalid-input'
-  | 'self-import'
-  | 'storage-failure'
-  | 'migration-failure'
-  | 'preview-stale';
-
-export class UsageStoreError extends Data.TaggedError('UsageStoreError')<{
-  readonly operation: string;
-  readonly message: string;
-  readonly reason?: UsageStoreErrorReason;
-  readonly cause?: unknown;
-}> {}
+export type { UsageStoreErrorReason } from './errors';
+export { UsageStoreError } from './errors';
 
 export interface UsageStore {
   confirmPeerMergeBundle(input: ConfirmPeerMergeBundleInput): Effect.Effect<ImportResult, UsageStoreError>;
@@ -322,6 +521,9 @@ export interface UsageStore {
   queryUsageStoreGenerations(
     input?: QueryUsageStoreGenerationInput,
   ): Effect.Effect<UsageStoreGenerations, UsageStoreError>;
+  updateUsageMachineLabel(
+    input: UpdateUsageMachineLabelInput,
+  ): Effect.Effect<UpdateUsageMachineLabelResult, UsageStoreError>;
   upsertRtkSavingsContributions(
     input: UpsertRtkSavingsContributionsInput,
   ): Effect.Effect<EnrichmentImportResult, UsageStoreError>;
@@ -329,16 +531,62 @@ export interface UsageStore {
 
 interface SqliteStatement {
   all(...params: unknown[]): unknown[];
+  finalize(): void;
   get(...params: unknown[]): unknown;
   iterate(...params: unknown[]): IterableIterator<unknown>;
   run(...params: unknown[]): unknown;
 }
 
 interface SqliteDatabase {
-  close(): void;
+  clearStatements(): void;
+  close(throwOnError?: boolean): void;
   exec(sql: string): unknown;
+  readonly inTransaction: boolean;
   query(sql: string): SqliteStatement;
 }
+
+interface RawSqliteDatabase {
+  clearQueryCache(): void;
+  close(throwOnError?: boolean): void;
+  exec(sql: string): unknown;
+  readonly inTransaction: boolean;
+  query(sql: string): SqliteStatement;
+}
+
+const createTrackedSqliteDatabase = (database: RawSqliteDatabase): SqliteDatabase => {
+  const statements = new Set<SqliteStatement>();
+  const clearStatements = (): void => {
+    let firstError: unknown;
+    for (const statement of statements) {
+      try {
+        statement.finalize();
+      } catch (cause) {
+        firstError ??= cause;
+      }
+    }
+    statements.clear();
+    database.clearQueryCache();
+    if (firstError !== undefined) {
+      throw firstError;
+    }
+  };
+  return {
+    clearStatements,
+    close: (throwOnError) => {
+      clearStatements();
+      database.close(throwOnError);
+    },
+    exec: (sql) => database.exec(sql),
+    get inTransaction() {
+      return database.inTransaction;
+    },
+    query: (sql) => {
+      const statement = database.query(sql);
+      statements.add(statement);
+      return statement;
+    },
+  };
+};
 
 interface ExistingRow {
   active_date: string | null;
@@ -385,6 +633,12 @@ interface StoredMachineFleetOrderRecord {
   origin_machine_id: string;
 }
 
+interface StoredUsageLocalMachineRecord {
+  machine_id: string;
+  machine_label: string;
+  updated_at: string;
+}
+
 interface StoredEnrichmentRecord {
   content_hash: string;
   payload_json: string;
@@ -428,55 +682,76 @@ interface EnrichmentStatements {
   update: SqliteStatement;
 }
 
-interface ProviderQuotaObservationRecord {
-  account_scope: string | null;
-  content_hash: string;
-  first_observed_at: string;
-  id: number;
-  last_observed_at: string;
-  machine_id: string;
-  machine_label: string | null;
-  plan: string | null;
-  provider_generated_at: string | null;
-  provider_key: string;
-  provider_label: string;
-  source_confidence: ProviderQuotaObservation['source']['confidence'];
-  source_key: string;
-  source_mode: ProviderQuotaObservation['source']['mode'];
-  state: ProviderQuotaObservation['state'];
-}
-
-interface ProviderQuotaWindowRecord {
-  blocked: number;
-  label: string;
-  limit_seconds: number | null;
-  observation_id: number;
-  provider_window_id: string;
-  remaining_percent: number | null;
-  reset_at: string | null;
-  scope: ProviderQuotaObservation['windows'][number]['scope'];
-  semantic_group: string | null;
-  used_percent: number | null;
-}
-
-interface ProviderQuotaSourceStateRecord {
-  cursor_json: string | null;
-  cursor_key: string;
-  last_attempt_at: string | null;
-  last_success_at: string | null;
-  machine_id: string;
-  provider_key: string;
-  source_key: string;
-  updated_at: string;
-}
-
-const usageStoreError = (operation: string, dbPath: string, cause: unknown, reason?: UsageStoreErrorReason) =>
+const usageStoreError = (operation: string, dbPath: string, cause: unknown, reason: UsageStoreErrorReason) =>
   new UsageStoreError({
     operation,
     message: `${operation} ${dbPath}: ${cause instanceof Error ? cause.message : String(cause)}`,
-    ...(reason === undefined ? {} : { reason }),
+    reason,
     cause,
   });
+
+const sqliteErrorText = (cause: unknown): string =>
+  cause instanceof Error ? `${cause.name} ${cause.message}`.toLowerCase() : String(cause).toLowerCase();
+
+const readFailureReason = (cause: unknown): UsageStoreErrorReason => {
+  if (cause instanceof ServedRevisionSchemaValidationError) {
+    return 'corrupt';
+  }
+  if (cause instanceof ServedRevisionQueryValidationError) {
+    return 'invalid-input';
+  }
+  const sqliteCode =
+    cause instanceof Error && 'code' in cause && typeof cause.code === 'string' ? cause.code.toUpperCase() : '';
+  if (sqliteCode.startsWith('SQLITE_BUSY') || sqliteCode.startsWith('SQLITE_LOCKED')) {
+    return 'busy';
+  }
+  if (sqliteCode.startsWith('SQLITE_CORRUPT') || sqliteCode.startsWith('SQLITE_NOTADB')) {
+    return 'corrupt';
+  }
+  const errorText = sqliteErrorText(cause);
+  if (errorText.includes('busy') || errorText.includes('locked')) {
+    return 'busy';
+  }
+  if (
+    errorText.includes('corrupt') ||
+    errorText.includes('malformed') ||
+    errorText.includes('not a database') ||
+    errorText.includes('file is encrypted')
+  ) {
+    return 'corrupt';
+  }
+  if (errorText.includes('unsafe') || errorText.includes('not owner-only')) {
+    return 'corrupt';
+  }
+  return 'storage-failure';
+};
+
+const usageStoreReadError = (operation: string, dbPath: string, cause: unknown): UsageStoreError =>
+  cause instanceof UsageStoreError ? cause : usageStoreError(operation, dbPath, cause, readFailureReason(cause));
+
+const usageStorePreviewReadError = (operation: string, dbPath: string, cause: unknown): UsageStoreError => {
+  const reason = cause instanceof UsageStoreError ? cause.reason : readFailureReason(cause);
+  if (reason === 'corrupt' || reason === 'schema-too-new' || reason === 'schema-too-old') {
+    return usageStoreError(operation, dbPath, cause, 'preview-unavailable');
+  }
+  return cause instanceof UsageStoreError ? cause : usageStoreError(operation, dbPath, cause, reason);
+};
+
+const usageStorePreviewStateError = (operation: string, dbPath: string, cause: unknown): UsageStoreError => {
+  const reason = cause instanceof UsageStoreError ? cause.reason : readFailureReason(cause);
+  if (reason === 'busy') {
+    return cause instanceof UsageStoreError ? cause : usageStoreError(operation, dbPath, cause, reason);
+  }
+  return usageStoreError(operation, dbPath, cause, 'preview-unavailable');
+};
+
+const usageStoreServedReadError = (operation: string, dbPath: string, cause: unknown): UsageStoreError => {
+  if (cause instanceof UsageStoreError) {
+    return cause;
+  }
+  const reason = readFailureReason(cause);
+  return usageStoreError(operation, dbPath, cause, reason === 'storage-failure' ? 'corrupt' : reason);
+};
 
 export const usageStorePath = (home: string) => path.join(home, '.config', 'ai-usage', 'usage-store.sqlite');
 
@@ -711,11 +986,46 @@ const upsertRtkContribution = (
   return 'updated';
 };
 
+const usageLocalMachineSchemaSql = `
+  CREATE TABLE usage_local_machine (
+    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+    machine_id TEXT NOT NULL CHECK (length(machine_id) > 0),
+    machine_label TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  )
+`;
+
+const normalizedSchemaSql = (sql: string): string => sql.replace(/\s+/g, ' ').trim().toLowerCase();
+
+const hasExactUsageLocalMachineSchema = (db: SqliteDatabase): boolean => {
+  const record = db
+    .query("SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = 'usage_local_machine'")
+    .get() as { sql: string | null } | null;
+  return (
+    typeof record?.sql === 'string' &&
+    normalizedSchemaSql(record.sql) === normalizedSchemaSql(usageLocalMachineSchemaSql)
+  );
+};
+
 const migrate = (db: SqliteDatabase): boolean => {
+  const schemaVersion = db.query('PRAGMA user_version').get() as { user_version: number };
+  if (schemaVersion.user_version > USAGE_STORE_SCHEMA_VERSION) {
+    throw new Error(
+      `Usage store schema ${schemaVersion.user_version} is newer than supported schema ${USAGE_STORE_SCHEMA_VERSION}`,
+    );
+  }
   let schemaChanged =
+    schemaVersion.user_version < USAGE_STORE_SCHEMA_VERSION ||
     db.query("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'usage_store_metadata'").get() === null;
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS usage_rows (
+  const quotaReadProjectionMissing =
+    db.query("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'provider_quota_streams'").get() === null ||
+    db.query("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'provider_quota_latest_heads'").get() ===
+      null;
+  schemaChanged ||= quotaReadProjectionMissing;
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS usage_rows (
       origin_machine_id TEXT NOT NULL,
       harness_key TEXT NOT NULL,
       source_session_id TEXT,
@@ -753,6 +1063,13 @@ const migrate = (db: SqliteDatabase): boolean => {
       origin_machine_id TEXT PRIMARY KEY,
       machine_label TEXT NOT NULL,
       sort_rank INTEGER NOT NULL UNIQUE CHECK (sort_rank >= 0)
+    );
+
+    CREATE TABLE IF NOT EXISTS usage_local_machine (
+      singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+      machine_id TEXT NOT NULL CHECK (length(machine_id) > 0),
+      machine_label TEXT NOT NULL,
+      updated_at TEXT NOT NULL
     );
 
     INSERT OR IGNORE INTO usage_store_metadata (key, value) VALUES ('generation', 0);
@@ -848,16 +1165,122 @@ const migrate = (db: SqliteDatabase): boolean => {
       PRIMARY KEY (provider_key, machine_id, source_key, source_event_key)
     );
 
+    CREATE TABLE IF NOT EXISTS provider_quota_streams (
+      provider_key TEXT NOT NULL,
+      machine_id TEXT NOT NULL,
+      account_scope_key TEXT NOT NULL,
+      account_scope TEXT,
+      source_key TEXT NOT NULL,
+      CHECK (account_scope_key = CASE WHEN account_scope IS NULL THEN 'n:' ELSE 's:' || account_scope END),
+      PRIMARY KEY (provider_key, machine_id, account_scope_key, source_key)
+    ) WITHOUT ROWID;
+
+    CREATE TABLE IF NOT EXISTS provider_quota_latest_heads (
+      provider_key TEXT NOT NULL,
+      machine_id TEXT NOT NULL,
+      account_scope_key TEXT NOT NULL,
+      observation_id INTEGER NOT NULL REFERENCES provider_quota_observations(id) ON DELETE CASCADE,
+      confidence_rank INTEGER NOT NULL CHECK (confidence_rank BETWEEN 0 AND 2),
+      first_observed_at TEXT NOT NULL,
+      PRIMARY KEY (provider_key, machine_id, account_scope_key)
+    ) WITHOUT ROWID;
+
     CREATE INDEX IF NOT EXISTS idx_provider_quota_observed_range
       ON provider_quota_observations(provider_key, machine_id, first_observed_at);
     CREATE INDEX IF NOT EXISTS idx_provider_quota_latest
       ON provider_quota_observations(provider_key, machine_id, account_scope, source_key, first_observed_at DESC);
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_provider_quota_source_event
-      ON provider_quota_observations(provider_key, machine_id, source_key, source_event_key)
-      WHERE source_event_key IS NOT NULL;
-  `);
-  db.exec('BEGIN IMMEDIATE');
-  try {
+    CREATE INDEX IF NOT EXISTS idx_provider_quota_anchor_normalized
+      ON provider_quota_observations(
+        provider_key, machine_id, COALESCE(account_scope, ''), source_key, first_observed_at DESC, id DESC
+      );
+    CREATE INDEX IF NOT EXISTS idx_provider_quota_anchor_exact
+      ON provider_quota_observations(
+        provider_key, machine_id, account_scope, source_key, first_observed_at DESC, id DESC
+      );
+    CREATE INDEX IF NOT EXISTS idx_provider_quota_range_all
+      ON provider_quota_observations(first_observed_at, id);
+    CREATE INDEX IF NOT EXISTS idx_provider_quota_range_provider
+      ON provider_quota_observations(provider_key, first_observed_at, id);
+    CREATE INDEX IF NOT EXISTS idx_provider_quota_range_machine
+      ON provider_quota_observations(machine_id, first_observed_at, id);
+    CREATE INDEX IF NOT EXISTS idx_provider_quota_range_account
+      ON provider_quota_observations(account_scope, first_observed_at, id);
+    CREATE INDEX IF NOT EXISTS idx_provider_quota_range_provider_machine
+      ON provider_quota_observations(provider_key, machine_id, first_observed_at, id);
+    CREATE INDEX IF NOT EXISTS idx_provider_quota_range_provider_account
+      ON provider_quota_observations(provider_key, account_scope, first_observed_at, id);
+    CREATE INDEX IF NOT EXISTS idx_provider_quota_range_machine_account
+      ON provider_quota_observations(machine_id, account_scope, first_observed_at, id);
+    CREATE INDEX IF NOT EXISTS idx_provider_quota_range_provider_machine_account
+      ON provider_quota_observations(provider_key, machine_id, account_scope, first_observed_at, id);
+    CREATE INDEX IF NOT EXISTS idx_provider_quota_heads_order
+      ON provider_quota_latest_heads(confidence_rank, first_observed_at DESC, observation_id DESC);
+    CREATE INDEX IF NOT EXISTS idx_provider_quota_heads_provider
+      ON provider_quota_latest_heads(
+        provider_key, confidence_rank, first_observed_at DESC, observation_id DESC
+      );
+    CREATE INDEX IF NOT EXISTS idx_provider_quota_heads_machine
+      ON provider_quota_latest_heads(
+        machine_id, confidence_rank, first_observed_at DESC, observation_id DESC
+      );
+    CREATE INDEX IF NOT EXISTS idx_provider_quota_heads_provider_machine
+      ON provider_quota_latest_heads(
+        provider_key, machine_id, confidence_rank, first_observed_at DESC, observation_id DESC
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_provider_quota_source_event
+        ON provider_quota_observations(provider_key, machine_id, source_key, source_event_key)
+        WHERE source_event_key IS NOT NULL;
+    `);
+    db.exec(servedReportSchemaSql);
+    if (!hasExactUsageLocalMachineSchema(db)) {
+      throw new Error('The local machine projection schema is incompatible.');
+    }
+    if (quotaReadProjectionMissing) {
+      db.exec(`
+        INSERT OR IGNORE INTO provider_quota_streams (
+          provider_key, machine_id, account_scope_key, account_scope, source_key
+        )
+        SELECT
+          provider_key,
+          machine_id,
+          CASE WHEN account_scope IS NULL THEN 'n:' ELSE 's:' || account_scope END,
+          account_scope,
+          source_key
+        FROM provider_quota_observations
+        GROUP BY provider_key, machine_id, account_scope, source_key;
+
+        WITH ranked AS (
+          SELECT
+            provider_key,
+            machine_id,
+            COALESCE(account_scope, '') AS account_scope_key,
+            id AS observation_id,
+            CASE source_confidence WHEN 'authoritative' THEN 0 WHEN 'derived' THEN 1 ELSE 2 END AS confidence_rank,
+            first_observed_at,
+            ROW_NUMBER() OVER (
+              PARTITION BY provider_key, machine_id, COALESCE(account_scope, '')
+              ORDER BY
+                CASE source_confidence WHEN 'authoritative' THEN 0 WHEN 'derived' THEN 1 ELSE 2 END,
+                first_observed_at DESC,
+                id DESC
+            ) AS latest_rank
+          FROM provider_quota_observations
+        )
+        INSERT OR REPLACE INTO provider_quota_latest_heads (
+          provider_key, machine_id, account_scope_key, observation_id, confidence_rank, first_observed_at
+        )
+        SELECT
+          provider_key, machine_id, account_scope_key, observation_id, confidence_rank, first_observed_at
+        FROM ranked
+        WHERE latest_rank = 1;
+      `);
+      const streamBudgetRows = db
+        .query('SELECT 1 FROM provider_quota_streams LIMIT ?')
+        .all(MAX_PROVIDER_QUOTA_STREAMS + 1);
+      if (streamBudgetRows.length > MAX_PROVIDER_QUOTA_STREAMS) {
+        throw new Error(`Provider quota history exceeds its ${MAX_PROVIDER_QUOTA_STREAMS}-stream read budget`);
+      }
+    }
     const columns = db.query('PRAGMA table_info(usage_rows)').all() as Array<{ name?: unknown }>;
     if (!columns.some((column) => column.name === 'source_authority')) {
       schemaChanged = true;
@@ -1022,6 +1445,7 @@ const migrate = (db: SqliteDatabase): boolean => {
       rebuildUsageMachineFleetOrder(db);
       db.query("UPDATE usage_store_metadata SET value = 1 WHERE key = 'migration.machine-fleet-order-v1'").run();
     }
+    db.exec(`PRAGMA user_version = ${USAGE_STORE_SCHEMA_VERSION}`);
     db.exec('COMMIT');
     return schemaChanged;
   } catch (error) {
@@ -1030,23 +1454,158 @@ const migrate = (db: SqliteDatabase): boolean => {
   }
 };
 
-const openUsageStoreDatabase = (dbPath: string): Effect.Effect<SqliteDatabase, UsageStoreError> =>
+const openUsageStoreWriterDatabase = (dbPath: string): Effect.Effect<SqliteDatabase, UsageStoreError> =>
   Effect.tryPromise({
     try: async () => {
       preparePrivateStoreFile(dbPath);
       const { Database } = await import('bun:sqlite');
-      const db = new Database(dbPath) as SqliteDatabase;
-      db.exec('PRAGMA busy_timeout = 5000');
-      db.exec('PRAGMA journal_mode = WAL');
-      db.exec('PRAGMA foreign_keys = ON');
-      const schemaChanged = migrate(db);
-      if (schemaChanged) {
-        db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+      const db = createTrackedSqliteDatabase(new Database(dbPath) as unknown as RawSqliteDatabase);
+      try {
+        db.exec('PRAGMA busy_timeout = 5000');
+        db.exec('PRAGMA journal_mode = WAL');
+        db.exec('PRAGMA foreign_keys = ON');
+        const schemaChanged = migrate(db);
+        if (schemaChanged) {
+          db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+        }
+        db.clearStatements();
+        preparePrivateStoreFile(dbPath);
+        return db;
+      } catch (cause) {
+        try {
+          db.close(true);
+        } catch {
+          // The setup or migration failure remains authoritative.
+        }
+        throw cause;
       }
-      preparePrivateStoreFile(dbPath);
-      return db;
     },
-    catch: (cause) => usageStoreError('openUsageStore', dbPath, cause, 'storage-failure'),
+    catch: (cause) => usageStoreError('openUsageStoreWriter', dbPath, cause, 'storage-failure'),
+  });
+
+const assertUsageLocalMachineSchema = (db: SqliteDatabase, dbPath: string, operation: string): void => {
+  const columns = db.query('PRAGMA table_info(usage_local_machine)').all() as Array<{
+    name: string;
+    notnull: number;
+    pk: number;
+    type: string;
+  }>;
+  const expected = [
+    { name: 'singleton', notnull: 0, pk: 1, type: 'INTEGER' },
+    { name: 'machine_id', notnull: 1, pk: 0, type: 'TEXT' },
+    { name: 'machine_label', notnull: 1, pk: 0, type: 'TEXT' },
+    { name: 'updated_at', notnull: 1, pk: 0, type: 'TEXT' },
+  ];
+  const compatible =
+    columns.length === expected.length &&
+    columns.every((column, index) => {
+      const expectedColumn = expected[index];
+      return (
+        expectedColumn !== undefined &&
+        column.name === expectedColumn.name &&
+        column.notnull === expectedColumn.notnull &&
+        column.pk === expectedColumn.pk &&
+        column.type.toUpperCase() === expectedColumn.type
+      );
+    });
+  if (!(compatible && hasExactUsageLocalMachineSchema(db))) {
+    throw usageStoreError(operation, dbPath, 'The local machine projection schema is invalid.', 'corrupt');
+  }
+};
+
+interface OpenReadOnlyUsageStoreOptions {
+  readonly immutable: boolean;
+  readonly operation: string;
+}
+
+const openValidatedReadOnlyUsageStore = async (
+  dbPath: string,
+  options: OpenReadOnlyUsageStoreOptions,
+): Promise<SqliteDatabase> => {
+  const identity = inspectPrivateStoreForConfirmation(dbPath);
+  const { constants, Database } = await import('bun:sqlite');
+  // Bun's options object does not expose SQLITE_OPEN_URI or NOFOLLOW, so pass the documented SQLite flags
+  // directly and use an explicit mode=ro URI. Ordinary SQLite locking keeps reader snapshots consistent.
+  // biome-ignore lint/suspicious/noBitwiseOperators: SQLite open flags are a documented bitmask API.
+  const flags = constants.SQLITE_OPEN_READONLY | constants.SQLITE_OPEN_URI | constants.SQLITE_OPEN_NOFOLLOW;
+  const fileUrl = pathToFileURL(dbPath);
+  fileUrl.searchParams.set('mode', 'ro');
+  if (options.immutable) {
+    // With no committed WAL frames, immutable mode prevents a preview from creating WAL/SHM sidecars.
+    // The confirmation token detects a concurrent writer before the eventual mutation.
+    fileUrl.searchParams.set('immutable', '1');
+  }
+  const db = createTrackedSqliteDatabase(new Database(fileUrl.href, flags) as unknown as RawSqliteDatabase);
+  try {
+    db.exec(`PRAGMA busy_timeout = ${USAGE_STORE_READER_BUSY_TIMEOUT_MS}`);
+    db.exec('PRAGMA query_only = ON');
+    db.exec('PRAGMA foreign_keys = ON');
+    revalidatePrivateStoreForConfirmation(dbPath, identity);
+    const schemaVersion = db.query('PRAGMA user_version').get() as { user_version: number };
+    if (schemaVersion.user_version < USAGE_STORE_SCHEMA_VERSION) {
+      throw usageStoreError(
+        options.operation,
+        dbPath,
+        `Usage store schema ${schemaVersion.user_version} is older than required schema ${USAGE_STORE_SCHEMA_VERSION}`,
+        'schema-too-old',
+      );
+    }
+    if (schemaVersion.user_version > USAGE_STORE_SCHEMA_VERSION) {
+      throw usageStoreError(
+        options.operation,
+        dbPath,
+        `Usage store schema ${schemaVersion.user_version} is newer than supported schema ${USAGE_STORE_SCHEMA_VERSION}`,
+        'schema-too-new',
+      );
+    }
+    assertUsageLocalMachineSchema(db, dbPath, options.operation);
+    assertServedReportSchema(db);
+    db.clearStatements();
+    return db;
+  } catch (cause) {
+    try {
+      db.close(true);
+    } catch {
+      // The setup or validation failure remains authoritative.
+    }
+    throw cause;
+  }
+};
+
+const openUsageStoreReaderDatabase = (dbPath: string): Effect.Effect<SqliteDatabase, UsageStoreError> =>
+  Effect.tryPromise({
+    try: async () => {
+      const databaseStat = fs.lstatSync(dbPath, { throwIfNoEntry: false });
+      if (!databaseStat) {
+        throw usageStoreError('openUsageStoreReader', dbPath, 'Usage store does not exist', 'store-missing');
+      }
+      return await openValidatedReadOnlyUsageStore(dbPath, {
+        immutable: false,
+        operation: 'openUsageStoreReader',
+      });
+    },
+    catch: (cause) => usageStoreReadError('openUsageStoreReader', dbPath, cause),
+  });
+
+const openUsageStorePreviewDatabase = (dbPath: string): Effect.Effect<SqliteDatabase, UsageStoreError> =>
+  Effect.tryPromise({
+    try: async () => {
+      const walExists = fs.lstatSync(`${dbPath}-wal`, { throwIfNoEntry: false }) !== undefined;
+      const sharedMemoryExists = fs.lstatSync(`${dbPath}-shm`, { throwIfNoEntry: false }) !== undefined;
+      if (walExists && !sharedMemoryExists) {
+        throw usageStoreError(
+          'openUsageStorePreview',
+          dbPath,
+          'Cannot preview a WAL-backed usage store without a pre-existing shared-memory sidecar.',
+          'preview-unavailable',
+        );
+      }
+      return await openValidatedReadOnlyUsageStore(dbPath, {
+        immutable: !walExists,
+        operation: 'openUsageStorePreview',
+      });
+    },
+    catch: (cause) => usageStorePreviewReadError('openUsageStorePreview', dbPath, cause),
   });
 
 interface ConfirmationUsageStoreResource {
@@ -1061,7 +1620,9 @@ const openConfirmationUsageStoreDatabase = (
     try: async () => {
       const identity = inspectPrivateStoreForConfirmation(dbPath);
       const { Database } = await import('bun:sqlite');
-      const db = new Database(dbPath, { create: false, readwrite: true }) as SqliteDatabase;
+      const db = createTrackedSqliteDatabase(
+        new Database(dbPath, { create: false, readwrite: true }) as unknown as RawSqliteDatabase,
+      );
       try {
         db.exec('PRAGMA busy_timeout = 5000');
         db.exec('PRAGMA foreign_keys = ON');
@@ -1069,7 +1630,7 @@ const openConfirmationUsageStoreDatabase = (
         return { db, identity };
       } catch (cause) {
         try {
-          db.close();
+          db.close(true);
         } catch {
           // The validation or setup failure remains authoritative.
         }
@@ -1081,22 +1642,113 @@ const openConfirmationUsageStoreDatabase = (
 
 const closeUsageStoreDatabase = (dbPath: string, db: SqliteDatabase): Effect.Effect<void> =>
   Effect.try({
-    try: () => db.close(),
+    try: () => db.close(true),
     catch: (cause) => usageStoreError('closeUsageStore', dbPath, cause, 'storage-failure'),
   }).pipe(Effect.ignore);
 
-const withUsageStore = <A>(
+const closeUsageStoreWriterDatabase = (dbPath: string, db: SqliteDatabase): Effect.Effect<void> =>
+  Effect.try({
+    try: () => db.close(true),
+    catch: (cause) => usageStoreError('closeUsageStoreWriter', dbPath, cause, 'storage-failure'),
+  }).pipe(Effect.ignore);
+
+const withUsageStoreWriter = <A>(
   dbPath: string,
   use: (db: SqliteDatabase) => Effect.Effect<A, UsageStoreError>,
 ): Effect.Effect<A, UsageStoreError> =>
-  Effect.acquireUseRelease(openUsageStoreDatabase(dbPath), use, (db) => closeUsageStoreDatabase(dbPath, db));
+  Effect.acquireUseRelease(openUsageStoreWriterDatabase(dbPath), use, (db) =>
+    closeUsageStoreWriterDatabase(dbPath, db),
+  );
+
+const withUsageStoreReader = <A>(
+  dbPath: string,
+  use: (db: SqliteDatabase) => Effect.Effect<A, UsageStoreError>,
+): Effect.Effect<A, UsageStoreError> =>
+  Effect.acquireUseRelease(openUsageStoreReaderDatabase(dbPath), use, (db) => closeUsageStoreDatabase(dbPath, db));
+
+const withUsageStorePreviewReader = <A>(
+  dbPath: string,
+  use: (db: SqliteDatabase) => Effect.Effect<A, UsageStoreError>,
+): Effect.Effect<A, UsageStoreError> =>
+  Effect.acquireUseRelease(openUsageStorePreviewDatabase(dbPath), use, (db) => closeUsageStoreDatabase(dbPath, db));
+
+const withUsageStorePreview = <A>(
+  dbPath: string,
+  use: (db: SqliteDatabase) => Effect.Effect<A, UsageStoreError>,
+): Effect.Effect<A, UsageStoreError> =>
+  Effect.try({
+    try: () => fs.lstatSync(dbPath, { throwIfNoEntry: false }),
+    catch: (cause) => usageStoreError('previewPeerMergeBundle', dbPath, cause, 'storage-failure'),
+  }).pipe(
+    Effect.flatMap((databaseStat) =>
+      databaseStat ? withUsageStorePreviewReader(dbPath, use) : withUsageStoreWriter(dbPath, use),
+    ),
+  );
 
 const withConfirmationUsageStore = <A>(
   dbPath: string,
   use: (resource: ConfirmationUsageStoreResource) => Effect.Effect<A, UsageStoreError>,
 ): Effect.Effect<A, UsageStoreError> =>
   Effect.acquireUseRelease(openConfirmationUsageStoreDatabase(dbPath), use, ({ db }) =>
-    closeUsageStoreDatabase(dbPath, db),
+    closeUsageStoreWriterDatabase(dbPath, db),
+  );
+
+export const initializeUsageStore = (input: InitializeUsageStoreInput): Effect.Effect<number, UsageStoreError> =>
+  withUsageStoreWriter(input.dbPath, (database) =>
+    Effect.sync(() => {
+      const record = database.query('PRAGMA user_version').get() as { user_version?: unknown } | null;
+      if (record?.user_version !== USAGE_STORE_SCHEMA_VERSION) {
+        throw new Error('Usage store migration did not install the expected schema version');
+      }
+      return USAGE_STORE_SCHEMA_VERSION;
+    }),
+  );
+
+export const checkpointUsageStore = (
+  input: CheckpointUsageStoreInput,
+): Effect.Effect<CheckpointUsageStoreResult, UsageStoreError> =>
+  withUsageStoreWriter(input.dbPath, (database) =>
+    Effect.try({
+      try: () => {
+        const checkpointMode = input.mode === 'truncate' ? 'TRUNCATE' : 'PASSIVE';
+        const record = database.query(`PRAGMA wal_checkpoint(${checkpointMode})`).get() as {
+          busy?: unknown;
+          checkpointed?: unknown;
+          log?: unknown;
+        } | null;
+        const busy = record?.busy;
+        const checkpointed = record?.checkpointed;
+        const log = record?.log;
+        if (!(Number.isSafeInteger(busy) && Number.isSafeInteger(checkpointed) && Number.isSafeInteger(log))) {
+          throw new Error('SQLite returned an invalid WAL checkpoint result');
+        }
+        return {
+          busy: Number(busy),
+          checkpointedFrames: Number(checkpointed),
+          logFrames: Number(log),
+        };
+      },
+      catch: (cause) => usageStoreError('checkpointUsageStore', input.dbPath, cause, 'storage-failure'),
+    }),
+  );
+
+export const quiesceUsageStoreForShutdown = (
+  input: QuiesceUsageStoreForShutdownInput,
+): Effect.Effect<void, UsageStoreError> =>
+  withUsageStoreWriter(input.dbPath, (database) =>
+    Effect.try({
+      try: () => {
+        database.query('PRAGMA wal_checkpoint(TRUNCATE)').get();
+        database.clearStatements();
+        const journalMode = database.query('PRAGMA journal_mode = DELETE').get() as {
+          journal_mode?: unknown;
+        } | null;
+        if (journalMode?.journal_mode !== 'delete') {
+          throw new Error('SQLite did not enter DELETE journal mode during store quiescence');
+        }
+      },
+      catch: (cause) => usageStoreError('quiesceUsageStoreForShutdown', input.dbPath, cause, 'storage-failure'),
+    }),
   );
 
 const emptyImportResult = (): ImportResult => ({
@@ -1380,7 +2032,7 @@ const importMergeRows = (
   importedAt = new Date(),
   authority: StoredSourceAuthority = 'portable-opaque',
 ): Effect.Effect<ImportResult, UsageStoreError> =>
-  withUsageStore(dbPath, (db) =>
+  withUsageStoreWriter(dbPath, (db) =>
     Effect.try({
       try: () => {
         const now = importedAt.toISOString();
@@ -1413,6 +2065,117 @@ export const importLocalRows = (input: ImportLocalRowsInput): Effect.Effect<Impo
     input.importedAt,
     'local-observed',
   );
+
+export const updateUsageMachineLabel = (
+  input: UpdateUsageMachineLabelInput,
+): Effect.Effect<UpdateUsageMachineLabelResult, UsageStoreError> => {
+  if (input.machine.id.length === 0) {
+    return Effect.fail(
+      usageStoreError('updateUsageMachineLabel', input.dbPath, 'Machine identity must be non-empty.', 'invalid-input'),
+    );
+  }
+  return withUsageStoreWriter(input.dbPath, (db) =>
+    Effect.try({
+      try: () => {
+        const updatedAt = (input.updatedAt ?? new Date()).toISOString();
+        const update = db.query(`
+          UPDATE usage_rows
+          SET content_hash = ?, row_json = ?, updated_at = ?
+          WHERE row_key = ? AND origin_machine_id = ? AND source_authority = 'local-observed'
+        `);
+        const validateFleetMetadata = db.query(`
+          UPDATE usage_rows
+          SET machine_label = ?, fleet_metadata_valid = 1
+          WHERE row_key = ?
+        `);
+        const upsertLocalMachine = db.query(`
+          INSERT INTO usage_local_machine (singleton, machine_id, machine_label, updated_at)
+          VALUES (1, ?, ?, ?)
+          ON CONFLICT(singleton) DO UPDATE SET
+            machine_id = excluded.machine_id,
+            machine_label = excluded.machine_label,
+            updated_at = excluded.updated_at
+        `);
+        let localMachineChanged = false;
+        let skippedRows = 0;
+        let updatedRows = 0;
+        db.exec('BEGIN IMMEDIATE');
+        try {
+          const previousLocalMachine = db
+            .query('SELECT machine_id, machine_label, updated_at FROM usage_local_machine WHERE singleton = 1')
+            .get() as StoredUsageLocalMachineRecord | null;
+          localMachineChanged =
+            previousLocalMachine?.machine_id !== input.machine.id ||
+            previousLocalMachine?.machine_label !== input.machine.label;
+          if (localMachineChanged) {
+            upsertLocalMachine.run(input.machine.id, input.machine.label, updatedAt);
+          }
+          const records = db
+            .query(`
+              SELECT fleet_metadata_valid, machine_label, row_json, row_key
+              FROM usage_rows
+              WHERE origin_machine_id = ? AND source_authority = 'local-observed'
+              ORDER BY row_key
+            `)
+            .all(input.machine.id) as Array<{
+            fleet_metadata_valid: number;
+            machine_label: string;
+            row_json: string;
+            row_key: string;
+          }>;
+          for (const record of records) {
+            let parsed: unknown;
+            try {
+              parsed = JSON.parse(record.row_json) as unknown;
+            } catch {
+              skippedRows++;
+              continue;
+            }
+            if (!(isSerializedMergeRow(parsed) && parsed.source.machineId === input.machine.id)) {
+              skippedRows++;
+              continue;
+            }
+            if (
+              parsed.source.machineLabel === input.machine.label &&
+              record.machine_label === input.machine.label &&
+              Number(record.fleet_metadata_valid) === 1
+            ) {
+              continue;
+            }
+            const { contentHash: _contentHash, ...storedContent } = parsed;
+            const content = {
+              ...storedContent,
+              source: { ...parsed.source, machineLabel: input.machine.label },
+            };
+            const relabeled = { ...content, contentHash: usageContentHash(content) };
+            if (!isSerializedMergeRow(relabeled)) {
+              throw new Error('Relabeled usage row failed strict validation.');
+            }
+            update.run(relabeled.contentHash, JSON.stringify(relabeled), updatedAt, record.row_key, input.machine.id);
+            validateFleetMetadata.run(input.machine.label, record.row_key);
+            updatedRows++;
+          }
+          if (updatedRows > 0) {
+            rebuildUsageMachineFleetOrder(db);
+          }
+          if (updatedRows > 0 || localMachineChanged) {
+            db.query("UPDATE usage_store_metadata SET value = value + 1 WHERE key = 'generation'").run();
+            db.query("UPDATE usage_store_metadata SET value = value + 1 WHERE key = 'machine_fleet_generation'").run();
+          }
+          db.exec('COMMIT');
+        } catch (cause) {
+          db.exec('ROLLBACK');
+          throw cause;
+        }
+        return { changed: updatedRows > 0 || localMachineChanged, skippedRows, updatedRows };
+      },
+      catch: (cause) =>
+        cause instanceof UsageStoreError
+          ? cause
+          : usageStoreError('updateUsageMachineLabel', input.dbPath, cause, 'storage-failure'),
+    }),
+  );
+};
 
 export const importPeerMergeBundle = (
   input: ImportPeerMergeBundleInput,
@@ -1616,10 +2379,10 @@ export const previewPeerMergeBundle = (
 ): Effect.Effect<PreviewPeerMergeBundleResult, UsageStoreError> =>
   validatePeerBundle(input.bundle, input.localMachineId, 'previewPeerMergeBundle').pipe(
     Effect.flatMap((bundle) =>
-      withUsageStore(input.dbPath, (db) =>
+      withUsageStorePreview(input.dbPath, (db) =>
         Effect.try({
           try: () => readStorePreview(db, bundle, (input.importedAt ?? new Date()).toISOString()),
-          catch: (cause) => usageStoreError('previewPeerMergeBundle', input.dbPath, cause, 'storage-failure'),
+          catch: (cause) => usageStorePreviewStateError('previewPeerMergeBundle', input.dbPath, cause),
         }),
       ),
     ),
@@ -1742,7 +2505,13 @@ const readReportRows = (db: SqliteDatabase, input: QueryReportRowsInput): QueryR
   const rows: CollectedUsageRow[] = [];
   const sourceAuthorities: StoredSourceAuthority[] = [];
   for (const record of records) {
-    const parsed = JSON.parse(record.row_json) as unknown;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(record.row_json) as unknown;
+    } catch {
+      skipped += 1;
+      continue;
+    }
     if (isSerializedMergeRow(parsed)) {
       const base = stripRtkSavings(deserializeMergeRow(parsed));
       const contribution = rtkByRowKey.get(record.row_key);
@@ -1756,10 +2525,10 @@ const readReportRows = (db: SqliteDatabase, input: QueryReportRowsInput): QueryR
 };
 
 export const queryReportRows = (input: QueryReportRowsInput): Effect.Effect<QueryRowsResult, UsageStoreError> =>
-  withUsageStore(input.dbPath, (db) =>
+  withUsageStoreReader(input.dbPath, (db) =>
     Effect.try({
       try: () => readReportRows(db, input),
-      catch: (cause) => usageStoreError('queryReportRows', input.dbPath, cause, 'storage-failure'),
+      catch: (cause) => usageStoreReadError('queryReportRows', input.dbPath, cause),
     }),
   );
 
@@ -1893,19 +2662,206 @@ const queryUsageMachineFleetWithDatabase = (
         skipped: summary.skipped,
       };
     },
-    catch: (cause) => usageStoreError('queryUsageMachineFleet', input.dbPath, cause, 'storage-failure'),
+    catch: (cause) => usageStoreReadError('queryUsageMachineFleet', input.dbPath, cause),
   });
 };
 
 export const queryUsageMachineFleet = (
   input: QueryUsageMachineFleetInput,
 ): Effect.Effect<QueryUsageMachineFleetResult, UsageStoreError> =>
-  withUsageStore(input.dbPath, (db) => queryUsageMachineFleetWithDatabase(db, input));
+  withUsageStoreReader(input.dbPath, (db) => queryUsageMachineFleetWithDatabase(db, input));
+
+const readUsageLocalMachineWithDatabase = (db: SqliteDatabase, dbPath: string): UsageMachine => {
+  const record = db
+    .query('SELECT machine_id, machine_label, updated_at FROM usage_local_machine WHERE singleton = 1')
+    .get() as StoredUsageLocalMachineRecord | null;
+  if (!record) {
+    throw usageStoreError(
+      'queryUsageLocalMachine',
+      dbPath,
+      'The usage engine has not published its local machine identity.',
+      'machine-unavailable',
+    );
+  }
+  if (
+    typeof record.machine_id !== 'string' ||
+    typeof record.machine_label !== 'string' ||
+    typeof record.updated_at !== 'string' ||
+    record.machine_id.length === 0 ||
+    record.updated_at.length === 0
+  ) {
+    throw usageStoreError('queryUsageLocalMachine', dbPath, 'The local machine projection is invalid.', 'corrupt');
+  }
+  const updatedAt = new Date(record.updated_at);
+  if (!Number.isFinite(updatedAt.getTime()) || updatedAt.toISOString() !== record.updated_at) {
+    throw usageStoreError('queryUsageLocalMachine', dbPath, 'The local machine projection is invalid.', 'corrupt');
+  }
+  return { id: record.machine_id, label: record.machine_label };
+};
+
+export const queryUsageLocalMachine = (
+  input: QueryUsageLocalMachineInput,
+): Effect.Effect<UsageMachine, UsageStoreError> =>
+  withUsageStoreReader(input.dbPath, (db) =>
+    Effect.try({
+      try: () => readUsageLocalMachineWithDatabase(db, input.dbPath),
+      catch: (cause) => usageStoreReadError('queryUsageLocalMachine', input.dbPath, cause),
+    }),
+  );
+
+export type LocalProjectionReadPhase = 'local-bundle-after-machine' | 'sync-fleet-after-machine';
+
+let localProjectionReadFaultInjector: ((phase: LocalProjectionReadPhase) => Promise<void> | void) | undefined;
+
+export const setLocalProjectionReadFaultInjectorForTesting = (
+  injector: (phase: LocalProjectionReadPhase) => Promise<void> | void,
+): (() => void) => {
+  if (localProjectionReadFaultInjector) {
+    throw new Error('A local projection read fault injector is already installed.');
+  }
+  localProjectionReadFaultInjector = injector;
+  return () => {
+    if (localProjectionReadFaultInjector === injector) {
+      localProjectionReadFaultInjector = undefined;
+    }
+  };
+};
+
+const injectLocalProjectionReadPhase = (phase: LocalProjectionReadPhase): Promise<void> =>
+  Promise.resolve(localProjectionReadFaultInjector?.(phase));
+
+export const queryUsageSyncFleet = (
+  input: QueryUsageMachineFleetInput,
+): Effect.Effect<QueryUsageSyncFleetResult, UsageStoreError> =>
+  withUsageStoreReader(input.dbPath, (db) =>
+    Effect.gen(function* () {
+      yield* Effect.try({
+        try: () => db.exec('BEGIN'),
+        catch: (cause) => usageStoreReadError('queryUsageSyncFleet', input.dbPath, cause),
+      });
+      return yield* Effect.gen(function* () {
+        const currentMachine = yield* Effect.try({
+          try: () => readUsageLocalMachineWithDatabase(db, input.dbPath),
+          catch: (cause) => usageStoreReadError('queryUsageSyncFleet', input.dbPath, cause),
+        });
+        yield* Effect.tryPromise({
+          try: () => injectLocalProjectionReadPhase('sync-fleet-after-machine'),
+          catch: (cause) => usageStoreReadError('queryUsageSyncFleet', input.dbPath, cause),
+        });
+        const fleet = yield* queryUsageMachineFleetWithDatabase(db, input);
+        yield* Effect.try({
+          try: () => db.exec('COMMIT'),
+          catch: (cause) => usageStoreReadError('queryUsageSyncFleet', input.dbPath, cause),
+        });
+        return { currentMachine, ...fleet };
+      }).pipe(
+        Effect.catchAll((error) =>
+          Effect.sync(() => {
+            try {
+              db.exec('ROLLBACK');
+            } catch {
+              // The read failure remains authoritative.
+            }
+          }).pipe(Effect.zipRight(Effect.fail(error))),
+        ),
+      );
+    }),
+  );
+
+const assertLocalMergeBundleRowBudget = (db: SqliteDatabase, dbPath: string, machineId: string): void => {
+  const boundedRows = db
+    .query(`
+      SELECT row_key
+      FROM usage_rows
+      WHERE origin_machine_id = ? AND source_authority = 'local-observed' AND status = 'active'
+      LIMIT ?
+    `)
+    .all(machineId, MAX_PORTABLE_USAGE_ROWS + 1);
+  if (boundedRows.length <= MAX_PORTABLE_USAGE_ROWS) {
+    return;
+  }
+  const record = db
+    .query(`
+      SELECT COUNT(*) AS row_count
+      FROM usage_rows
+      WHERE origin_machine_id = ? AND source_authority = 'local-observed' AND status = 'active'
+    `)
+    .get(machineId) as { row_count: number } | null;
+  const rowCount = record?.row_count;
+  if (!(Number.isSafeInteger(rowCount) && Number(rowCount) > MAX_PORTABLE_USAGE_ROWS)) {
+    throw usageStoreError('queryLocalMergeBundle', dbPath, 'The local export row count is invalid.', 'corrupt');
+  }
+  throw usageStoreError(
+    'queryLocalMergeBundle',
+    dbPath,
+    `Usage merge bundle contains ${rowCount} rows; maximum is ${MAX_PORTABLE_USAGE_ROWS}`,
+    'invalid-input',
+  );
+};
+
+export const queryLocalMergeBundle = (
+  input: QueryLocalMergeBundleInput,
+): Effect.Effect<UsageMergeBundle, UsageStoreError> =>
+  withUsageStoreReader(input.dbPath, (db) =>
+    Effect.gen(function* () {
+      yield* Effect.try({
+        try: () => db.exec('BEGIN'),
+        catch: (cause) => usageStoreReadError('queryLocalMergeBundle', input.dbPath, cause),
+      });
+      return yield* Effect.gen(function* () {
+        const machine = yield* Effect.try({
+          try: () => readUsageLocalMachineWithDatabase(db, input.dbPath),
+          catch: (cause) => usageStoreReadError('queryLocalMergeBundle', input.dbPath, cause),
+        });
+        yield* Effect.tryPromise({
+          try: () => injectLocalProjectionReadPhase('local-bundle-after-machine'),
+          catch: (cause) => usageStoreReadError('queryLocalMergeBundle', input.dbPath, cause),
+        });
+        yield* Effect.try({
+          try: () => assertLocalMergeBundleRowBudget(db, input.dbPath, machine.id),
+          catch: (cause) => usageStoreReadError('queryLocalMergeBundle', input.dbPath, cause),
+        });
+        const result = yield* Effect.try({
+          try: () =>
+            readReportRows(db, {
+              dbPath: input.dbPath,
+              originMachineIds: [machine.id],
+              sourceAuthorities: ['local-observed'],
+            }),
+          catch: (cause) => usageStoreReadError('queryLocalMergeBundle', input.dbPath, cause),
+        });
+        const bundle = yield* Effect.try({
+          try: () =>
+            createUsageMergeBundle({
+              machine,
+              rows: result.rows,
+              ...(input.generatedAt === undefined ? {} : { generatedAt: input.generatedAt }),
+            }),
+          catch: (cause) => usageStoreReadError('queryLocalMergeBundle', input.dbPath, cause),
+        });
+        yield* Effect.try({
+          try: () => db.exec('COMMIT'),
+          catch: (cause) => usageStoreReadError('queryLocalMergeBundle', input.dbPath, cause),
+        });
+        return bundle;
+      }).pipe(
+        Effect.catchAll((error) =>
+          Effect.sync(() => {
+            try {
+              db.exec('ROLLBACK');
+            } catch {
+              // The read failure remains authoritative.
+            }
+          }).pipe(Effect.zipRight(Effect.fail(error))),
+        ),
+      );
+    }),
+  );
 
 export const queryEnrichableUsageRows = (
   input: QueryEnrichableUsageRowsInput,
 ): Effect.Effect<QueryEnrichableUsageRowsResult, UsageStoreError> =>
-  withUsageStore(input.dbPath, (db) =>
+  withUsageStoreReader(input.dbPath, (db) =>
     Effect.try({
       try: () => {
         const params: unknown[] = [];
@@ -1938,14 +2894,14 @@ export const queryEnrichableUsageRows = (
         }
         return { rows, skipped };
       },
-      catch: (cause) => usageStoreError('queryEnrichableUsageRows', input.dbPath, cause, 'storage-failure'),
+      catch: (cause) => usageStoreReadError('queryEnrichableUsageRows', input.dbPath, cause),
     }),
   );
 
 export const upsertRtkSavingsContributions = (
   input: UpsertRtkSavingsContributionsInput,
 ): Effect.Effect<EnrichmentImportResult, UsageStoreError> =>
-  withUsageStore(input.dbPath, (db) =>
+  withUsageStoreWriter(input.dbPath, (db) =>
     Effect.try({
       try: () => {
         const unique = new Map<string, RtkSavingsContribution>();
@@ -2014,10 +2970,10 @@ const readUsageStoreGenerations = (db: SqliteDatabase): UsageStoreGenerations =>
 export const queryUsageStoreGenerations = (
   input: QueryUsageStoreGenerationInput,
 ): Effect.Effect<UsageStoreGenerations, UsageStoreError> =>
-  withUsageStore(input.dbPath, (db) =>
+  withUsageStoreReader(input.dbPath, (db) =>
     Effect.try({
       try: () => readUsageStoreGenerations(db),
-      catch: (cause) => usageStoreError('queryUsageStoreGenerations', input.dbPath, cause, 'storage-failure'),
+      catch: (cause) => usageStoreReadError('queryUsageStoreGenerations', input.dbPath, cause),
     }),
   );
 
@@ -2029,20 +2985,20 @@ export const queryUsageStoreGeneration = (
 export const queryStoredReportCapture = (
   input: QueryStoredReportCaptureInput,
 ): Effect.Effect<QueryStoredReportCaptureResult, UsageStoreError> =>
-  withUsageStore(input.dbPath, (db) =>
+  withUsageStoreReader(input.dbPath, (db) =>
     Effect.gen(function* () {
       yield* Effect.try({
         try: () => db.exec('BEGIN'),
-        catch: (cause) => usageStoreError('queryStoredReportCapture', input.dbPath, cause, 'storage-failure'),
+        catch: (cause) => usageStoreReadError('queryStoredReportCapture', input.dbPath, cause),
       });
       return yield* Effect.gen(function* () {
         const generations = yield* Effect.try({
           try: () => readUsageStoreGenerations(db),
-          catch: (cause) => usageStoreError('queryStoredReportCapture', input.dbPath, cause, 'storage-failure'),
+          catch: (cause) => usageStoreReadError('queryStoredReportCapture', input.dbPath, cause),
         });
         const reportRows = yield* Effect.try({
           try: () => readReportRows(db, input),
-          catch: (cause) => usageStoreError('queryStoredReportCapture', input.dbPath, cause, 'storage-failure'),
+          catch: (cause) => usageStoreReadError('queryStoredReportCapture', input.dbPath, cause),
         });
         const machineFleet = yield* queryUsageMachineFleetWithDatabase(db, {
           dbPath: input.dbPath,
@@ -2050,7 +3006,7 @@ export const queryStoredReportCapture = (
         });
         yield* Effect.try({
           try: () => db.exec('COMMIT'),
-          catch: (cause) => usageStoreError('queryStoredReportCapture', input.dbPath, cause, 'storage-failure'),
+          catch: (cause) => usageStoreReadError('queryStoredReportCapture', input.dbPath, cause),
         });
         return { generations, machineFleet, reportRows };
       }).pipe(
@@ -2066,6 +3022,29 @@ export const queryStoredReportCapture = (
       );
     }),
   );
+
+export const {
+  setServedReportPublicationFaultInjectorForTesting,
+  setServedReportReadFaultInjectorForTesting,
+  queryServedRevisionData,
+  queryCurrentServedReportRevision,
+  queryCurrentServedReportRevisionBootstrap,
+  queryCurrentServedLocalProjectSources,
+  queryServedReportRevisionSupport,
+  queryServedReportRevisionRows,
+  queryServedReportRevisionSlices,
+  queryServedReportRevisionPortableConfig,
+  queryServedReportRevisionLocalSnapshot,
+  publishServedReportRevision,
+  retainServedReportRevisions,
+} = createServedReportStore({
+  readUsageLocalMachineWithDatabase,
+  readUsageStoreGenerations,
+  usageStoreError,
+  usageStoreServedReadError,
+  withUsageStoreReader,
+  withUsageStoreWriter,
+});
 
 const maximumNormalizedDatasetItems = 50_000;
 
@@ -2110,7 +3089,7 @@ export const importNormalizedDatasetItems = (
     );
   }
 
-  return withUsageStore(input.dbPath, (db) =>
+  return withUsageStoreWriter(input.dbPath, (db) =>
     Effect.try({
       try: () => {
         const result: NormalizedDatasetImportResult = { inserted: 0, unchanged: 0, updated: 0 };
@@ -2191,7 +3170,7 @@ export const queryNormalizedDatasetItems = (
     );
   }
 
-  return withUsageStore(input.dbPath, (db) =>
+  return withUsageStoreReader(input.dbPath, (db) =>
     Effect.try({
       try: () => {
         const filters: string[] = [];
@@ -2252,461 +3231,26 @@ export const queryNormalizedDatasetItems = (
         }
         return { items, skipped, truncated };
       },
-      catch: (cause) => usageStoreError('queryNormalizedDatasetItems', input.dbPath, cause, 'storage-failure'),
+      catch: (cause) => usageStoreReadError('queryNormalizedDatasetItems', input.dbPath, cause),
     }),
   );
 };
 
-const providerQuotaContentHash = (observation: ProviderQuotaObservation): string =>
-  createHash('sha256').update(providerQuotaObservationFingerprintInput(observation)).digest('hex');
-
-const latestQuotaObservation = (
-  db: SqliteDatabase,
-  observation: ProviderQuotaObservation,
-): ProviderQuotaObservationRecord | null =>
-  db
-    .query(`
-      SELECT * FROM provider_quota_observations
-      WHERE provider_key = ? AND machine_id = ? AND account_scope IS ? AND source_key = ?
-      ORDER BY first_observed_at DESC, id DESC
-      LIMIT 1
-    `)
-    .get(
-      observation.providerKey,
-      observation.machineId,
-      observation.accountScope,
-      observation.source.key,
-    ) as ProviderQuotaObservationRecord | null;
-
-const insertQuotaObservation = (db: SqliteDatabase, item: ProviderQuotaImportItem, contentHash: string): number => {
-  const observation = item.observation;
-  const result = db
-    .query(`
-      INSERT INTO provider_quota_observations (
-        provider_key, provider_label, account_scope, machine_id, machine_label,
-        source_key, source_mode, source_confidence, source_event_key, state, plan,
-        provider_generated_at, first_observed_at, last_observed_at, content_hash
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      RETURNING id
-    `)
-    .get(
-      observation.providerKey,
-      observation.providerLabel,
-      observation.accountScope,
-      observation.machineId,
-      observation.machineLabel,
-      observation.source.key,
-      observation.source.mode,
-      observation.source.confidence,
-      item.sourceEventKey ?? null,
-      observation.state,
-      observation.plan,
-      observation.providerGeneratedAt,
-      observation.observedAt,
-      observation.observedAt,
-      contentHash,
-    ) as { id: number };
-  const insertWindow = db.query(`
-    INSERT INTO provider_quota_windows (
-      observation_id, provider_window_id, label, semantic_group, scope, limit_seconds,
-      used_percent, remaining_percent, reset_at, blocked
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `);
-  for (const window of observation.windows) {
-    insertWindow.run(
-      result.id,
-      window.id,
-      window.label,
-      window.group,
-      window.scope,
-      window.limitSeconds,
-      window.usedPercent,
-      window.remainingPercent,
-      window.resetsAt,
-      window.blocked ? 1 : 0,
-    );
-  }
-  return result.id;
-};
-
-const insertQuotaSourceEvent = (
-  db: SqliteDatabase,
-  observation: ProviderQuotaObservation,
-  sourceEventKey: string | undefined,
-  observationId: number,
-): void => {
-  if (!sourceEventKey) {
-    return;
-  }
-  db.query(`
-    INSERT INTO provider_quota_source_events (
-      provider_key, machine_id, source_key, source_event_key, observation_id
-    ) VALUES (?, ?, ?, ?, ?)
-  `).run(observation.providerKey, observation.machineId, observation.source.key, sourceEventKey, observationId);
-};
-
-const upsertQuotaCheckpoint = (
-  db: SqliteDatabase,
-  checkpoint: ProviderQuotaCheckpointUpdate,
-  updatedAt: string,
-): void => {
-  db.query(`
-    INSERT INTO provider_quota_source_state (
-      provider_key, machine_id, source_key, cursor_key, cursor_json,
-      last_attempt_at, last_success_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, NULL, NULL, ?)
-    ON CONFLICT(provider_key, machine_id, source_key, cursor_key) DO UPDATE SET
-      cursor_json = excluded.cursor_json,
-      updated_at = excluded.updated_at
-  `).run(
-    checkpoint.providerKey,
-    checkpoint.machineId,
-    checkpoint.sourceKey,
-    checkpoint.cursorKey,
-    JSON.stringify(checkpoint.cursor),
-    updatedAt,
-  );
-};
-
-export const importProviderQuotaBatch = (
-  input: ImportProviderQuotaBatchInput,
-): Effect.Effect<ProviderQuotaImportResult, UsageStoreError> =>
-  withUsageStore(input.dbPath, (db) =>
-    Effect.try({
-      try: () => {
-        const result: ProviderQuotaImportResult = { coalesced: 0, inserted: 0, unchanged: 0 };
-        const updatedAt = (input.importedAt ?? new Date()).toISOString();
-        db.exec('BEGIN IMMEDIATE');
-        try {
-          for (const item of input.items) {
-            const observation = parseProviderQuotaObservation(item.observation);
-            if (!observation) {
-              throw new Error('Provider quota observation failed strict validation');
-            }
-            if (item.sourceEventKey) {
-              const existingEvent = db
-                .query(`
-                  SELECT observation_id FROM provider_quota_source_events
-                  WHERE provider_key = ? AND machine_id = ? AND source_key = ? AND source_event_key = ?
-                `)
-                .get(observation.providerKey, observation.machineId, observation.source.key, item.sourceEventKey);
-              if (existingEvent) {
-                result.unchanged++;
-                continue;
-              }
-            }
-            const contentHash = providerQuotaContentHash(observation);
-            const latest = latestQuotaObservation(db, observation);
-            const elapsedSinceFirst = latest
-              ? Date.parse(observation.observedAt) - Date.parse(latest.first_observed_at)
-              : Number.POSITIVE_INFINITY;
-            if (latest?.content_hash === contentHash && elapsedSinceFirst < 30 * 60 * 1000) {
-              db.query('UPDATE provider_quota_observations SET last_observed_at = ? WHERE id = ?').run(
-                observation.observedAt,
-                latest.id,
-              );
-              insertQuotaSourceEvent(db, observation, item.sourceEventKey, latest.id);
-              result.coalesced++;
-              continue;
-            }
-            const observationId = insertQuotaObservation(db, { ...item, observation }, contentHash);
-            insertQuotaSourceEvent(db, observation, item.sourceEventKey, observationId);
-            result.inserted++;
-          }
-          for (const checkpoint of input.checkpointUpdates) {
-            upsertQuotaCheckpoint(db, checkpoint, updatedAt);
-          }
-          if (result.inserted > 0 || result.coalesced > 0 || input.checkpointUpdates.length > 0) {
-            db.query("UPDATE usage_store_metadata SET value = value + 1 WHERE key = 'generation'").run();
-          }
-          db.exec('COMMIT');
-        } catch (error) {
-          db.exec('ROLLBACK');
-          throw error;
-        }
-        return result;
-      },
-      catch: (cause) => usageStoreError('importProviderQuotaBatch', input.dbPath, cause, 'storage-failure'),
-    }),
-  );
-
-const quotaObservationFromRecords = (
-  record: ProviderQuotaObservationRecord,
-  windows: ProviderQuotaWindowRecord[],
-): StoredProviderQuotaObservation | null => {
-  const observation = parseProviderQuotaObservation({
-    accountScope: record.account_scope,
-    machineId: record.machine_id,
-    machineLabel: record.machine_label,
-    observedAt: record.first_observed_at,
-    plan: record.plan,
-    providerGeneratedAt: record.provider_generated_at,
-    providerKey: record.provider_key,
-    providerLabel: record.provider_label,
-    source: {
-      confidence: record.source_confidence,
-      key: record.source_key,
-      mode: record.source_mode,
-    },
-    state: record.state,
-    windows: windows.map((window) => ({
-      blocked: window.blocked === 1,
-      group: window.semantic_group,
-      id: window.provider_window_id,
-      label: window.label,
-      limitSeconds: window.limit_seconds,
-      remainingPercent: window.remaining_percent,
-      resetsAt: window.reset_at,
-      scope: window.scope,
-      usedPercent: window.used_percent,
-    })),
-  });
-  return observation
-    ? {
-        firstObservedAt: record.first_observed_at,
-        id: record.id,
-        lastObservedAt: record.last_observed_at,
-        observation,
-      }
-    : null;
-};
-
-const quotaQueryFilters = (input: QueryProviderQuotaObservationsInput): { clauses: string[]; params: unknown[] } => {
-  const clauses: string[] = [];
-  const params: unknown[] = [];
-  if (input.providerKey) {
-    clauses.push('provider_key = ?');
-    params.push(input.providerKey);
-  }
-  if (input.machineId) {
-    clauses.push('machine_id = ?');
-    params.push(input.machineId);
-  }
-  if (input.accountScope !== undefined) {
-    clauses.push('account_scope IS ?');
-    params.push(input.accountScope);
-  }
-  return { clauses, params };
-};
-
-export const queryProviderQuotaObservations = (
-  input: QueryProviderQuotaObservationsInput,
-): Effect.Effect<QueryProviderQuotaObservationsResult, UsageStoreError> =>
-  withUsageStore(input.dbPath, (db) =>
-    Effect.try({
-      try: () => {
-        const maximum = input.maximumObservations ?? 10_000;
-        const filters = quotaQueryFilters(input);
-        const filterSql = filters.clauses.length ? ` AND ${filters.clauses.join(' AND ')}` : '';
-        const rangeRows = db
-          .query(`
-            SELECT * FROM provider_quota_observations
-            WHERE first_observed_at >= ? AND first_observed_at <= ?${filterSql}
-            ORDER BY first_observed_at ASC, id ASC
-            LIMIT ?
-          `)
-          .all(input.from, input.to, ...filters.params, maximum + 1) as ProviderQuotaObservationRecord[];
-        const beforeRows = db
-          .query(`
-            SELECT * FROM provider_quota_observations
-            WHERE first_observed_at < ?${filterSql}
-            ORDER BY first_observed_at DESC, id DESC
-          `)
-          .all(input.from, ...filters.params) as ProviderQuotaObservationRecord[];
-        const anchors = new Map<string, ProviderQuotaObservationRecord>();
-        for (const row of beforeRows) {
-          const key = `${row.provider_key}|${row.machine_id}|${row.account_scope ?? ''}|${row.source_key}`;
-          if (!anchors.has(key)) {
-            anchors.set(key, row);
-          }
-        }
-        const rows = [...anchors.values(), ...rangeRows]
-          .sort((left, right) => left.first_observed_at.localeCompare(right.first_observed_at) || left.id - right.id)
-          .slice(0, maximum);
-        if (rows.length === 0) {
-          return { observations: [], skipped: 0, truncated: rangeRows.length > maximum };
-        }
-        const placeholders = rows.map(() => '?').join(', ');
-        const windowRows = db
-          .query(
-            `SELECT * FROM provider_quota_windows WHERE observation_id IN (${placeholders}) ORDER BY provider_window_id`,
-          )
-          .all(...rows.map((row) => row.id)) as ProviderQuotaWindowRecord[];
-        const windowsByObservation = new Map<number, ProviderQuotaWindowRecord[]>();
-        for (const window of windowRows) {
-          const windows = windowsByObservation.get(window.observation_id) ?? [];
-          windows.push(window);
-          windowsByObservation.set(window.observation_id, windows);
-        }
-        const observations: StoredProviderQuotaObservation[] = [];
-        let skipped = 0;
-        for (const row of rows) {
-          const parsed = quotaObservationFromRecords(row, windowsByObservation.get(row.id) ?? []);
-          if (parsed) {
-            observations.push(parsed);
-          } else {
-            skipped++;
-          }
-        }
-        return { observations, skipped, truncated: rangeRows.length > maximum };
-      },
-      catch: (cause) => usageStoreError('queryProviderQuotaObservations', input.dbPath, cause, 'storage-failure'),
-    }),
-  );
-
-export const queryProviderQuotaSourceState = (
-  input: QueryProviderQuotaSourceStateInput,
-): Effect.Effect<ProviderQuotaSourceState | null, UsageStoreError> =>
-  withUsageStore(input.dbPath, (db) =>
-    Effect.try({
-      try: () => {
-        const row = db
-          .query(`
-            SELECT * FROM provider_quota_source_state
-            WHERE provider_key = ? AND machine_id = ? AND source_key = ? AND cursor_key = ?
-          `)
-          .get(
-            input.providerKey,
-            input.machineId,
-            input.sourceKey,
-            input.cursorKey,
-          ) as ProviderQuotaSourceStateRecord | null;
-        if (!row) {
-          return null;
-        }
-        return {
-          cursor: row.cursor_json === null ? null : (JSON.parse(row.cursor_json) as unknown),
-          cursorKey: row.cursor_key,
-          lastAttemptAt: row.last_attempt_at,
-          lastSuccessAt: row.last_success_at,
-          machineId: row.machine_id,
-          providerKey: row.provider_key,
-          sourceKey: row.source_key,
-          updatedAt: row.updated_at,
-        };
-      },
-      catch: (cause) => usageStoreError('queryProviderQuotaSourceState', input.dbPath, cause, 'storage-failure'),
-    }),
-  );
-
-export const queryProviderQuotaSourceStates = (
-  input: QueryProviderQuotaSourceStatesInput,
-): Effect.Effect<ProviderQuotaSourceState[], UsageStoreError> =>
-  withUsageStore(input.dbPath, (db) =>
-    Effect.try({
-      try: () => {
-        const rows = db
-          .query(`
-            SELECT * FROM provider_quota_source_state
-            WHERE provider_key = ? AND machine_id = ? AND source_key = ?
-            ORDER BY cursor_key
-          `)
-          .all(input.providerKey, input.machineId, input.sourceKey) as ProviderQuotaSourceStateRecord[];
-        return rows.map((row) => ({
-          cursor: row.cursor_json === null ? null : (JSON.parse(row.cursor_json) as unknown),
-          cursorKey: row.cursor_key,
-          lastAttemptAt: row.last_attempt_at,
-          lastSuccessAt: row.last_success_at,
-          machineId: row.machine_id,
-          providerKey: row.provider_key,
-          sourceKey: row.source_key,
-          updatedAt: row.updated_at,
-        }));
-      },
-      catch: (cause) => usageStoreError('queryProviderQuotaSourceStates', input.dbPath, cause, 'storage-failure'),
-    }),
-  );
-
-export const queryLatestProviderQuotaObservations = (
-  input: QueryLatestProviderQuotaObservationsInput,
-): Effect.Effect<QueryProviderQuotaObservationsResult, UsageStoreError> =>
-  withUsageStore(input.dbPath, (db) =>
-    Effect.try({
-      try: () => {
-        const filters = quotaQueryFilters({
-          dbPath: input.dbPath,
-          from: '1970-01-01T00:00:00.000Z',
-          ...(input.machineId === undefined ? {} : { machineId: input.machineId }),
-          ...(input.providerKey === undefined ? {} : { providerKey: input.providerKey }),
-          to: '9999-12-31T23:59:59.999Z',
-        });
-        const filterSql = filters.clauses.length ? `WHERE ${filters.clauses.join(' AND ')}` : '';
-        const candidates = db
-          .query(`
-            SELECT * FROM provider_quota_observations
-            ${filterSql}
-            ORDER BY
-              CASE source_confidence WHEN 'authoritative' THEN 0 WHEN 'derived' THEN 1 ELSE 2 END,
-              first_observed_at DESC,
-              id DESC
-          `)
-          .all(...filters.params) as ProviderQuotaObservationRecord[];
-        const latest = new Map<string, ProviderQuotaObservationRecord>();
-        for (const row of candidates) {
-          const key = `${row.provider_key}|${row.machine_id}|${row.account_scope ?? ''}`;
-          if (!latest.has(key)) {
-            latest.set(key, row);
-          }
-        }
-        const rows = [...latest.values()];
-        if (rows.length === 0) {
-          return { observations: [], skipped: 0, truncated: false };
-        }
-        const windows = db
-          .query(`SELECT * FROM provider_quota_windows WHERE observation_id IN (${rows.map(() => '?').join(', ')})`)
-          .all(...rows.map((row) => row.id)) as ProviderQuotaWindowRecord[];
-        const byObservation = new Map<number, ProviderQuotaWindowRecord[]>();
-        for (const window of windows) {
-          const list = byObservation.get(window.observation_id) ?? [];
-          list.push(window);
-          byObservation.set(window.observation_id, list);
-        }
-        const observations: StoredProviderQuotaObservation[] = [];
-        let skipped = 0;
-        for (const row of rows) {
-          const parsed = quotaObservationFromRecords(row, byObservation.get(row.id) ?? []);
-          if (parsed) {
-            observations.push(parsed);
-          } else {
-            skipped++;
-          }
-        }
-        return { observations, skipped, truncated: false };
-      },
-      catch: (cause) => usageStoreError('queryLatestProviderQuotaObservations', input.dbPath, cause, 'storage-failure'),
-    }),
-  );
-
-export const recordProviderQuotaSourceAttempt = (
-  input: RecordProviderQuotaSourceAttemptInput,
-): Effect.Effect<void, UsageStoreError> =>
-  withUsageStore(input.dbPath, (db) =>
-    Effect.try({
-      try: () => {
-        const attemptedAt = (input.attemptedAt ?? new Date()).toISOString();
-        db.query(`
-          INSERT INTO provider_quota_source_state (
-            provider_key, machine_id, source_key, cursor_key, cursor_json,
-            last_attempt_at, last_success_at, updated_at
-          ) VALUES (?, ?, ?, ?, NULL, ?, ?, ?)
-          ON CONFLICT(provider_key, machine_id, source_key, cursor_key) DO UPDATE SET
-            last_attempt_at = excluded.last_attempt_at,
-            last_success_at = CASE WHEN ? THEN excluded.last_success_at ELSE provider_quota_source_state.last_success_at END,
-            updated_at = excluded.updated_at
-        `).run(
-          input.providerKey,
-          input.machineId,
-          input.sourceKey,
-          input.cursorKey,
-          attemptedAt,
-          input.succeeded ? attemptedAt : null,
-          attemptedAt,
-          input.succeeded ? 1 : 0,
-        );
-      },
-      catch: (cause) => usageStoreError('recordProviderQuotaSourceAttempt', input.dbPath, cause, 'storage-failure'),
-    }),
-  );
+export const {
+  importProviderQuotaBatch,
+  queryProviderQuotaObservations,
+  queryProviderQuotaSourceState,
+  queryProviderQuotaSourceStates,
+  queryLatestProviderQuotaObservations,
+  queryLatestLocalProviderQuotaObservations,
+  recordProviderQuotaSourceAttempt,
+} = createProviderQuotaStore({
+  readUsageLocalMachineWithDatabase,
+  usageStoreError,
+  usageStoreReadError,
+  withUsageStoreReader,
+  withUsageStoreWriter,
+});
 
 export const exportLocalMergeBundle = (
   input: ExportLocalMergeBundleInput,
@@ -2742,5 +3286,6 @@ export const createUsageStore = (dbPath: string): UsageStore => ({
     queryUsageStoreGenerations({ ...(input ?? {}), dbPath: input?.dbPath ?? dbPath }),
   queryUsageStoreGeneration: (input) =>
     queryUsageStoreGeneration({ ...(input ?? {}), dbPath: input?.dbPath ?? dbPath }),
+  updateUsageMachineLabel: (input) => updateUsageMachineLabel({ ...input, dbPath: input.dbPath ?? dbPath }),
   upsertRtkSavingsContributions: (input) => upsertRtkSavingsContributions({ ...input, dbPath: input.dbPath ?? dbPath }),
 });

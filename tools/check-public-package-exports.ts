@@ -1,11 +1,20 @@
 import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 
-const ignoredDirectories = new Set(['.git', '.turbo', '.output', 'dist', 'node_modules', 'styled-system']);
+const ignoredDirectories = new Set([
+  '.git',
+  '.output',
+  '.output-build',
+  '.output-dev',
+  '.turbo',
+  'dist',
+  'node_modules',
+  'styled-system',
+]);
 const checkedExtensions = new Set(['.cjs', '.js', '.jsx', '.mjs', '.ts', '.tsx']);
 const workspacePackageParents = ['apps', 'packages'];
 const workspaceImportPattern =
-  /\b(?:import|export)\s+(?:type\s+)?(?:[^'";]+?\s+from\s*)?['"](@ai-usage\/[^'"]+)['"]|\bimport\(\s*['"](@ai-usage\/[^'"]+)['"]\s*\)/g;
+  /\b(?:import|export)\s+(?:type\s+)?(?:[^'";]+?\s+from\s*)?['"](@ai-usage\/[^'"]+)['"]|\bimport\(\s*['"](@ai-usage\/[^'"]+)['"]\s*\)|\bimport\.meta\.resolve\(\s*['"](@ai-usage\/[^'"]+)['"]\s*\)/g;
 
 interface PackageInterface {
   exports: Set<string>;
@@ -112,7 +121,7 @@ async function collectViolations(packages: Map<string, PackageInterface>) {
   for (const file of files) {
     const text = await readFile(file, 'utf8');
     for (const match of text.matchAll(workspaceImportPattern)) {
-      const specifier = match[1] ?? match[2];
+      const specifier = match[1] ?? match[2] ?? match[3];
       if (!specifier) {
         continue;
       }

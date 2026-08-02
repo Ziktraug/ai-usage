@@ -163,9 +163,24 @@ const sourceCanRun = (source: SourceControlEntryView): boolean =>
   source.availability === 'detected' &&
   !['queued', 'running', 'pausing'].includes(source.lifecycle);
 
-const sourceRunDisabledReason = (source: SourceControlEntryView, pending: boolean): string | undefined => {
+const sourceMutationDisabledReason = (pending: boolean, available: boolean): string | undefined => {
+  if (!available) {
+    return 'The usage engine is not available for source commands.';
+  }
   if (pending) {
     return 'Another source command is pending.';
+  }
+  return;
+};
+
+const sourceRunDisabledReason = (
+  source: SourceControlEntryView,
+  pending: boolean,
+  available: boolean,
+): string | undefined => {
+  const mutationReason = sourceMutationDisabledReason(pending, available);
+  if (mutationReason) {
+    return mutationReason;
   }
   if (source.policy === 'disabled') {
     return 'Enable this source before running it.';
@@ -180,6 +195,7 @@ const sourceRunDisabledReason = (source: SourceControlEntryView, pending: boolea
 };
 
 const SourceActions = (props: {
+  available: boolean;
   execute: ReturnType<typeof useSourceControl>['execute'];
   pending: boolean;
   source: SourceControlEntryView;
@@ -188,7 +204,7 @@ const SourceActions = (props: {
     <label class={switchLabel}>
       <input
         checked={props.source.policy === 'enabled'}
-        disabled={props.pending}
+        disabled={!props.available || props.pending}
         onChange={(event) => {
           props
             .execute({
@@ -198,7 +214,7 @@ const SourceActions = (props: {
             })
             .catch(() => undefined);
         }}
-        title={props.pending ? 'Another source command is pending.' : undefined}
+        title={sourceMutationDisabledReason(props.pending, props.available)}
         type="checkbox"
       />
       Enabled
@@ -206,11 +222,11 @@ const SourceActions = (props: {
     <button
       aria-busy={props.pending ? 'true' : undefined}
       class={ghostButton}
-      disabled={props.pending || !sourceCanRun(props.source)}
+      disabled={!props.available || props.pending || !sourceCanRun(props.source)}
       onClick={() => {
         props.execute({ command: 'run-now', sourceId: props.source.id }).catch(() => undefined);
       }}
-      title={sourceRunDisabledReason(props.source, props.pending)}
+      title={sourceRunDisabledReason(props.source, props.pending, props.available)}
       type="button"
     >
       Run now
@@ -219,6 +235,7 @@ const SourceActions = (props: {
 );
 
 const HealthySourceRow = (props: {
+  available: boolean;
   execute: ReturnType<typeof useSourceControl>['execute'];
   pending: boolean;
   source: SourceControlEntryView;
@@ -241,12 +258,18 @@ const HealthySourceRow = (props: {
       <span class={cx(statusPill, sourceToneClass(presentation().tone))} data-source-health>
         {presentation().label}
       </span>
-      <SourceActions execute={props.execute} pending={props.pending} source={props.source} />
+      <SourceActions
+        available={props.available}
+        execute={props.execute}
+        pending={props.pending}
+        source={props.source}
+      />
     </div>
   );
 };
 
 const SourceCard = (props: {
+  available: boolean;
   pending: boolean;
   source: SourceControlEntryView;
   execute: ReturnType<typeof useSourceControl>['execute'];
@@ -335,12 +358,18 @@ const SourceCard = (props: {
         </p>
         <For each={props.source.warnings}>{(warning) => <p>Warning: {warning.message ?? warning.code}</p>}</For>
       </div>
-      <SourceActions execute={props.execute} pending={props.pending} source={props.source} />
+      <SourceActions
+        available={props.available}
+        execute={props.execute}
+        pending={props.pending}
+        source={props.source}
+      />
     </article>
   );
 };
 
 const HealthySources = (props: {
+  available: boolean;
   execute: ReturnType<typeof useSourceControl>['execute'];
   pending: boolean;
   sources: readonly SourceControlEntryView[];
@@ -352,7 +381,14 @@ const HealthySources = (props: {
     </summary>
     <div class={healthyList}>
       <For each={props.sources}>
-        {(source) => <HealthySourceRow execute={props.execute} pending={props.pending} source={source} />}
+        {(source) => (
+          <HealthySourceRow
+            available={props.available}
+            execute={props.execute}
+            pending={props.pending}
+            source={source}
+          />
+        )}
       </For>
     </div>
   </details>
@@ -362,6 +398,7 @@ function SourcesRoute() {
   const sourceControl = useSourceControl();
   const snapshot = () => sourceControl.state().snapshot;
   const pending = () => sourceControl.state().pendingCommand !== null;
+  const controlsAvailable = () => sourceControl.state().connection === 'live';
   const sourceById = createMemo(() => new Map(snapshot()?.sources.map((source) => [source.id, source] as const) ?? []));
   const groups = [
     { id: 'sessions', sources: collectionSourceDefinitions.filter((source) => source.group === 'sessions') },
@@ -388,7 +425,7 @@ function SourcesRoute() {
     if (state.commandError) {
       return state.commandError;
     }
-    if (state.connection === 'stale') {
+    if (state.connection === 'disconnected') {
       return 'Connection interrupted; reconnecting.';
     }
     return state.publication ? 'Report published.' : '';
@@ -407,7 +444,7 @@ function SourcesRoute() {
             <div class={headerActions}>
               <button
                 class={ghostButton}
-                disabled={!snapshot() || pending()}
+                disabled={!(snapshot() && controlsAvailable()) || pending()}
                 onClick={() => {
                   sourceControl.execute({ command: 'detect-all' }).catch(() => undefined);
                 }}
@@ -417,7 +454,7 @@ function SourcesRoute() {
               </button>
               <button
                 class={ghostButton}
-                disabled={!snapshot() || pending()}
+                disabled={!(snapshot() && controlsAvailable()) || pending()}
                 onClick={() => {
                   sourceControl.execute({ command: 'run-all' }).catch(() => undefined);
                 }}
@@ -432,7 +469,7 @@ function SourcesRoute() {
           {conciseStatus()}
         </div>
         <div class={pageStack}>
-          <Show when={sourceControl.state().connection === 'stale'}>
+          <Show when={sourceControl.state().connection === 'disconnected'}>
             <div class={banner}>Connection interrupted. Showing the last server snapshot while reconnecting.</div>
           </Show>
           <Show when={sourceControl.state().commandError}>
@@ -477,7 +514,12 @@ function SourcesRoute() {
                     </div>
                   </details>
                 </section>
-                <HealthySources execute={sourceControl.execute} pending={pending()} sources={healthySources()} />
+                <HealthySources
+                  available={controlsAvailable()}
+                  execute={sourceControl.execute}
+                  pending={pending()}
+                  sources={healthySources()}
+                />
                 <For each={groups}>
                   {(group) => {
                     const deviations = () => deviationsForGroup(group.id);
@@ -493,7 +535,12 @@ function SourcesRoute() {
                           <div class={sourceGrid}>
                             <For each={deviations()}>
                               {(source) => (
-                                <SourceCard execute={sourceControl.execute} pending={pending()} source={source} />
+                                <SourceCard
+                                  available={controlsAvailable()}
+                                  execute={sourceControl.execute}
+                                  pending={pending()}
+                                  source={source}
+                                />
                               )}
                             </For>
                           </div>

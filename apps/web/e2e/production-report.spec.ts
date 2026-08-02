@@ -3,7 +3,7 @@ import {
   HARNESS_FIXTURE_DANGEROUS_URL_SENTINEL,
   HARNESS_FIXTURE_PRIVATE_PROMPT_SENTINEL,
   HARNESS_FIXTURE_PROVIDER_STDERR_SENTINEL,
-} from '@ai-usage/local-collectors/test-fixtures/harness-home';
+} from '@ai-usage/local-machine/testing/harness-home';
 import { expect, reportViewsFor, test } from './browser-test';
 
 const NON_EMPTY_ATTRIBUTE_PATTERN = /.+/;
@@ -250,7 +250,10 @@ test('hydrates and automatically pages Sessions through the production revision 
   await page.goto('/?tab=sessions');
   const report = page.locator('main[data-hydrated="true"]');
   await expect(report).toBeVisible();
-  await expect(page.getByText('207 / 207 sessions', { exact: true })).toBeVisible();
+  const completedSessionCount = page.getByText('207 / 207 sessions', { exact: true });
+  const queryFailure = page.getByText('The report query could not be completed.', { exact: true });
+  await expect(completedSessionCount.or(queryFailure)).toBeVisible();
+  expect(await queryFailure.count()).toBe(0);
   await expect(report).toHaveAttribute('data-report-revision', NON_EMPTY_ATTRIBUTE_PATTERN);
   await expect(report).toHaveAttribute('data-request-fingerprint', SESSION_QUERY_FINGERPRINT_PATTERN);
   const revision = await report.getAttribute('data-report-revision');

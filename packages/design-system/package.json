@@ -31,9 +31,9 @@
     "solid-js": "^1.9.13"
   },
   "scripts": {
-    "ship": "CI=1 panda ship --outfile styled-system/panda.buildinfo.json --silent",
-    "build": "CI=1 panda codegen --silent && CI=1 panda cssgen --silent && bun run ship && tsc --noEmit",
-    "check": "CI=1 panda codegen --silent && CI=1 panda cssgen --silent && bun run ship && tsc --noEmit",
+    "ship": "CI=1 bun --bun panda ship --outfile styled-system/panda.buildinfo.json --silent",
+    "build": "CI=1 bun --bun panda codegen --silent && CI=1 bun --bun panda cssgen --silent && bun run ship && bun --bun tsc --noEmit",
+    "check": "CI=1 bun --bun panda codegen --silent && CI=1 bun --bun panda cssgen --silent && bun run ship && bun --bun tsc --noEmit",
     "test": "bun test",
     "lint": "biome check .",
     "format": "biome format --write ."

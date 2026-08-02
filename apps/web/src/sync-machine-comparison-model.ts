@@ -1,5 +1,5 @@
 import type { UsageMachine } from '@ai-usage/report-core/snapshot';
-import type { UsageMachineFleetItem } from '@ai-usage/usage-store';
+import type { UsageMachineFleetItem } from '@ai-usage/usage-store/reader';
 import { buildSyncFleetMachineViews, formatFleetAge, type SyncFleetMachineView } from './manual-transfer-model';
 
 export type SyncFleetComparisonFreshness = 'fresh' | 'stale' | 'unavailable';

@@ -1,11 +1,14 @@
 import path from 'node:path';
+import { LocalHistoryError, type LocalHistoryWarning } from '@ai-usage/local-machine/errors';
+import {
+  LocalHistoryStorage,
+  type LocalHistoryStorage as LocalHistoryStorageService,
+} from '@ai-usage/local-machine/local-history';
 import { approxCost, priceFor } from '@ai-usage/report-core/pricing';
 import type { UsageModelSegment } from '@ai-usage/report-core/types';
 import type { TokenCounts } from '@ai-usage/report-core/usage-row';
 import { Effect } from 'effect';
-import { LocalHistoryError, type LocalHistoryWarning } from '../errors';
 import { CURSOR_CSV_MAX_BYTES } from '../history-budgets';
-import { LocalHistoryStorage, type LocalHistoryStorage as LocalHistoryStorageService } from '../local-history';
 import {
   addNonNegativeSafeIntegers,
   metricValidationWarning,

@@ -15,4 +15,4 @@ if (!pinnedBunVersion || Bun.version !== pinnedBunVersion) {
 process.env.HOST = LOOPBACK_HOST;
 process.env.NITRO_HOST = LOOPBACK_HOST;
 
-await import('./.output/server/index.mjs');
+await import('./.output-build/nitro/server/index.mjs');

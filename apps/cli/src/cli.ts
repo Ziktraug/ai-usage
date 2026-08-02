@@ -15,6 +15,7 @@ export interface Args extends ReportOptions {
   cursor: boolean;
   format: OutputFormat;
   harness: HarnessKey | null;
+  stored: boolean;
   wide: boolean;
 }
 
@@ -84,6 +85,13 @@ const parsePositiveInt = (value: string, name: string): Effect.Effect<number, Cl
     : Effect.succeed(n);
 };
 
+const parseTcpPort = (value: string, name: string): Effect.Effect<number, CliArgumentError> => {
+  const port = Number(value);
+  return !Number.isSafeInteger(port) || port < 0 || port > 65_535 || String(port) !== value
+    ? Effect.fail(cliArgumentError(`${name} expects an integer from 0 to 65535`))
+    : Effect.succeed(port);
+};
+
 const parseSort = (value: string): Effect.Effect<SortKey, CliArgumentError> => {
   if (value === 'date' || value === 'tokens' || value === 'cost') {
     return Effect.succeed(value);
@@ -127,6 +135,7 @@ export const helpText =
   '  --sort date|tokens|cost\n' +
   '  --wide                 add Dur / Turns / Tools / ±Lines columns\n' +
   '  --no-cursor            skip Cursor (local data is partial)\n' +
+  '  --stored               read the last compatible published revision without refreshing\n' +
   '  --no-color / --color   disable / force ANSI colors (default: auto)\n' +
   '  --json | --csv\n' +
   '  --payload-json         full report payload JSON for compatible consumers\n' +
@@ -156,6 +165,7 @@ export const parseArgs = (argv: string[]): Effect.Effect<Args, CliArgumentError>
       format: 'table',
       cursor: true,
       color: null,
+      stored: false,
       wide: false,
       sort: 'date',
     };
@@ -180,6 +190,8 @@ export const parseArgs = (argv: string[]): Effect.Effect<Args, CliArgumentError>
         yield* setOutputFormat(args, 'payload');
       } else if (arg === '--no-cursor') {
         args.cursor = false;
+      } else if (arg === '--stored') {
+        args.stored = true;
       } else if (arg === '--no-color') {
         args.color = false;
       } else if (arg === '--color') {
@@ -360,7 +372,7 @@ const parseSetupArgs = (argv: string[]): Effect.Effect<SetupArgs, CliArgumentErr
       if (arg === '--local') {
         args.local = true;
       } else if (arg === '--port') {
-        args.port = yield* parsePositiveInt(yield* parseRequiredValue(rest, '--port'), '--port');
+        args.port = yield* parseTcpPort(yield* parseRequiredValue(rest, '--port'), '--port');
       } else if (arg.startsWith('--')) {
         return yield* Effect.fail(cliArgumentError(`Unknown option for setup: ${arg}`));
       } else {

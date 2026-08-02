@@ -28,9 +28,9 @@ describe('wide-event process resource', () => {
       makeAiUsageWideEventResource({
         instanceId: 'production-instance',
         nodeEnvironment: 'production',
-        surface: 'web',
+        surface: 'engine',
         testRuntime: true,
-      }).runtimeMode,
-    ).toBe('production');
+      }),
+    ).toMatchObject({ runtimeMode: 'production', surface: 'engine' });
   });
 });

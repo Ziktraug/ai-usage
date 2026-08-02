@@ -1,14 +1,14 @@
 import { describe, expect, test } from 'bun:test';
+import { LocalHistoryStorage } from '@ai-usage/local-machine/local-history';
+import { TestMemoryStorage } from '@ai-usage/local-machine/testing/memory-storage';
 import type { Row } from '@ai-usage/report-core/types';
 import { Effect } from 'effect';
-import { LocalHistoryStorage } from './local-history';
 import {
   type CollectorRow,
   enrichCollectorRowsWithRtkSavings,
   RTK_COMMANDS_SQL,
   withProjectPath,
 } from './rtk-enrichment';
-import { TestMemoryStorage } from './test-memory-storage';
 
 const RTK_DB = '.local/share/rtk/history.db';
 

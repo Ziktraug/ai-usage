@@ -1,3 +1,17 @@
+import { type LocalHistoryWarning, localHistoryWarningFromError } from '@ai-usage/local-machine/errors';
+import { readLocalGitRepository } from '@ai-usage/local-machine/local-git';
+import { LocalHistoryStorage } from '@ai-usage/local-machine/local-history';
+import {
+  OPENCODE_DIRECT_USER_PART_PREDICATE,
+  OPENCODE_TOOL_PART_PREDICATE,
+} from '@ai-usage/local-machine/opencode-schema';
+import {
+  buildOpenCodeProjectionSummary,
+  decodeOpenCodeMessageRow,
+  type OpenCodeMessageFact,
+} from '@ai-usage/local-machine/opencode-session-facts';
+import { resolvePathCandidates } from '@ai-usage/local-machine/platform-paths';
+import { base, safeJSON } from '@ai-usage/local-machine/text';
 import { parseSessionVcsContext, type SessionVcsContext } from '@ai-usage/report-core/session-vcs';
 import type { TitleSource } from '@ai-usage/report-core/types';
 import { actualCost } from '@ai-usage/report-core/usage-row';
@@ -11,20 +25,9 @@ import {
   storeDbRows,
   writeDbRowCache,
 } from '../collector-cache';
-import { type LocalHistoryWarning, localHistoryWarningFromError } from '../errors';
-import { readLocalGitRepository } from '../local-git';
-import { LocalHistoryStorage } from '../local-history';
 import { metricValidationWarning, parseOptionalNonNegativeSafeInteger } from '../metric-validation';
-import { OPENCODE_DIRECT_USER_PART_PREDICATE, OPENCODE_TOOL_PART_PREDICATE } from '../opencode-schema';
-import {
-  buildOpenCodeProjectionSummary,
-  decodeOpenCodeMessageRow,
-  type OpenCodeMessageFact,
-} from '../opencode-session-facts';
 import { withPerfSpan } from '../perf';
-import { resolvePathCandidates } from '../platform-paths';
 import type { CollectorRow } from '../rtk-enrichment';
-import { base, safeJSON } from '../text';
 
 const DEFAULT_ACP_SESSION_TITLE = /^(new session\s*[.…]*|acp(?: session)?)$/i;
 
@@ -64,12 +67,12 @@ const MESSAGE_SQL = 'SELECT session_id, data, time_created FROM message ORDER BY
 
 const collectFromDb = (
   dbPath: string,
-  storage: import('../local-history').LocalHistoryStorage,
+  storage: import('@ai-usage/local-machine/local-history').LocalHistoryStorage,
   source: 'live' | 'stable',
   cache: DbRowCache | null,
 ): Effect.Effect<
   { rejectedMetricRecords: number; rows: CollectorRow[] },
-  import('../errors').LocalHistoryError,
+  import('@ai-usage/local-machine/errors').LocalHistoryError,
   never
 > =>
   withPerfSpan(
@@ -335,7 +338,7 @@ export const collectOpenCode = Effect.gen(function* () {
 export const collectOpenCodeResult: Effect.Effect<
   OpenCodeCollectionResult,
   never,
-  import('../local-history').LocalHistoryStorage
+  import('@ai-usage/local-machine/local-history').LocalHistoryStorage
 > = Effect.gen(function* () {
   const storage = yield* LocalHistoryStorage;
   const paths = resolvePathCandidates(storage).opencode;

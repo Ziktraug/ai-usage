@@ -1,10 +1,11 @@
 import { createServerFn } from '@tanstack/solid-start';
+import { exportManualMergeBundleForServer, getSyncFleetForServer } from './sync-data.server';
 
 export const getSyncFleet = createServerFn({ method: 'GET' }).handler(async () => {
   const { assertOutsideDemo } = await import('./demo-boundary.server');
   assertOutsideDemo();
-  const { queryManualSyncFleetForServer } = await import('./manual-merge.server');
-  return await queryManualSyncFleetForServer();
+  const { resolveUsageReadModelForServer } = await import('./usage-read-model-resolver.server');
+  return await getSyncFleetForServer(await resolveUsageReadModelForServer());
 });
 
 export const exportManualMergeBundle = createServerFn({ method: 'POST' })
@@ -12,7 +13,6 @@ export const exportManualMergeBundle = createServerFn({ method: 'POST' })
   .handler(async () => {
     const { assertOutsideDemo } = await import('./demo-boundary.server');
     assertOutsideDemo();
-    const { exportManualMergeBundleForServer } = await import('./manual-merge.server');
-    const result = await exportManualMergeBundleForServer();
-    return result;
+    const { resolveUsageReadModelForServer } = await import('./usage-read-model-resolver.server');
+    return await exportManualMergeBundleForServer(await resolveUsageReadModelForServer());
   });
