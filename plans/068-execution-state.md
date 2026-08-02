@@ -117,7 +117,7 @@ Statuses are `BLOCKED`, `READY`, `IMPLEMENTING`, `REVIEW`, `REWORK`,
 | --- | --- | --- | --- | --- | --- |
 | B0 | none | INTEGRATED | `40cda764f655d68608f378dd9f8d02e4160e0f52`, `2051c4887894e42f31b309adf8446869d2e1b566` | `/root/b0_review` / ACCEPT | `2051c4887894e42f31b309adf8446869d2e1b566` |
 | B1 | B0 | REWORK | `bf39106fa692663957c26ac12ed063eb21dcd9a6`, `11e184f08528b7ff7a1153443322713bd0df0b94` | `/root/b0_review` / REWORK; static rework green, runtime correction dispatched | - |
-| B2 | B0 | REWORK | `416ed3befda96e101763f129ddd32151a12f6ed2` | `/root/b1_freeze_parity` + standards child / REWORK | - |
+| B2 | B0 | INTEGRATED | `416ed3befda96e101763f129ddd32151a12f6ed2`, `f9fa43e3abff4ec14107cdd16272597e9bc8dc46` | `/root/b2_re_review` / ACCEPT | `28d2f42` |
 | F0 | B1, B2 | BLOCKED | - | - | - |
 | V0 | F0 | BLOCKED | - | - | - |
 | V1 | V0 | BLOCKED | - | - | - |
@@ -255,6 +255,18 @@ relaxed STOP policy B2 received a third, narrower static correction to add an
 exact compatible Node type dependency and regenerate only the fixture lock; it
 must wait for a later token transfer before another lifecycle run.
 
+B2's corrected full range was independently ACCEPTed on parity and standards.
+The committed selected-adapter gate passed 4 tests and 8 assertions in 172.04
+seconds before integration, then passed again post-cherry in 169.69 seconds.
+Both runs built the exact-pinned private SvelteKit artifact, served meaningful
+SSR and the static asset, held SSE for 31.1 seconds, exited through the shutdown
+event with no process group, released the port, preserved artifact identity,
+metadata and SHA-256 content, and removed private roots/generated output. The
+coordinator cherry-picked B2 as `01a758d` and `28d2f42`; the integration branch
+remained clean. Broader oRPC/Query/Ark/Panda/context/import-guard/supervisor
+compatibility remains explicitly classified as disposable-matrix evidence for
+F0 and later boundary gates.
+
 B1's two fresh isolated production measurements then exposed a separate Wave-0
 invariant failure: `getReportRevisionBootstrap` was requested exactly twice
 before hydration in both runs. The samples recorded bootstrap counts `2/2`,
@@ -297,8 +309,8 @@ compatible checkpoint and reproduce its complete budgets.
 - B2 recovery: `/tmp/ai-usage-068-b2` is clean; the original pipe-harness spike
   remains at `/tmp/ai-usage-068-b2-spike.1VftYr`, and the adapter-node rejection
   audit remains at `/tmp/ai-usage-068-b2-spike-pass.csh2Si`.
-- Active B2 correction: run the complete isolated lifecycle matrix against the
-  Plan-mandated `svelte-adapter-bun` fallback, pin its exact accepted version and
-  retain only the reusable fixture and decision after a green audit.
-- Recovery point: `c85b077` is the last independently reviewed green code
-  checkpoint; later coordinator-only commits contain execution bookkeeping.
+- Resolved B2 correction: exact SvelteKit selected-adapter lifecycle coverage is
+  independently accepted and integrated at `28d2f42`; adapter-node failure
+  spikes remain recoverable evidence until final convergence.
+- Recovery point: `28d2f42` is the latest independently reviewed green code
+  checkpoint; B2 post-cherry lifecycle and cleanup gates passed unchanged.
