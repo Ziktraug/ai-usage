@@ -199,6 +199,309 @@ not move business logic into the oRPC router.
 - Playwright covers accessibility, responsive/visual presentation, theme,
   dashboard, Skills, sources, Session scale, demo privacy and production.
 
+## What “feature parity” means
+
+Parity is a release gate, not a visual impression and not “the new page opens.”
+Every row in the registers below must be checked at five levels before the old
+implementation is deleted:
+
+1. **Interface parity** — URL, keyboard/pointer commands, accessible names,
+   focus, error modes and visible states remain compatible.
+2. **Data parity** — the same deep module is called with the same normalized
+   input, revision/fingerprint and authority context; outputs retain their
+   meaning and ordering.
+3. **Lifecycle parity** — SSR, hydration, pending, SWR, cancellation,
+   supersession, retry, teardown and back/forward behavior are characterized.
+4. **Presentation parity** — semantic Panda tokens/classes, responsive geometry,
+   reduced motion, light/dark mode and settled screenshots remain equivalent.
+5. **Operational parity** — privacy, local trust, CSRF, byte/path bounds,
+   observability, loopback binding, process lifecycle and performance budgets
+   remain enforced.
+
+A row is not complete because its `.svelte` file exists. It is complete only
+when its named pure/unit/server/browser/production gates pass against the new
+runtime. Product copy and deliberate visual decisions from plans 045–065 are
+part of the interface and must not be “simplified” during the rewrite.
+
+## Feature-parity register
+
+This is the minimum user-visible ledger. The Wave 0 inventory must turn each row
+into a machine-readable ID and attach its exact test names, but an executor may
+not remove or merge rows without a reviewed plan update.
+
+| ID | Current feature/interface | Current owners | Required Svelte target and parity evidence |
+| --- | --- | --- | --- |
+| SHELL-01 | Shared navigation on Report, Skills, Sources and Sync; active route; deep-scroll destination remains visible; narrow layout has no overflow | `app-navigation.tsx`, `routes/__root.tsx`, `components/source-control-summary.tsx` | `+layout.svelte` shell using SvelteKit links; preserve active semantics, sticky behavior, demo visibility and the accessibility route matrix |
+| SHELL-02 | Theme resolved before paint, named toggle, light/dark/system behavior and reduced motion | `dashboard-theme.tsx`, root inline theme script, Panda global CSS | SSR-safe theme bootstrap before hydration; run `theme.spec.ts`, focus/reduced-motion tests and light/dark visual gates |
+| SHELL-03 | Scroll restoration, default Not Found, route error shell and report retry | `router.tsx`, `routes/index.tsx` | SvelteKit navigation/snapshot policy and `+error.svelte`; characterize restoration, 404, retry after loader error and no hydration mismatch |
+| REPORT-01 | Initial production Overview is server-rendered from a bounded support bootstrap and compatible stored publication when engine is down | `report-runtime.ts`, `routes/index.tsx`, `Dashboard`, UsageReadModel | `+page.ts/+page.svelte` awaited query hydration; assert meaningful initial HTML, one bootstrap acquisition and compatible-last-publication behavior |
+| REPORT-02 | Report lifecycle distinguishes first load, focused pending, last complete output, refresh error, expiry retry and supersession | `dashboard-report-lifecycle.ts`, `served-report-session.ts`, `dashboard-report-workspace.tsx` | Preserve the same deep session interface and transition tests; a thin rune adapter must not reimplement state transitions |
+| REPORT-03 | Overview metric tiles, comparison semantics, token anatomy, provenance explanations, source freshness, spend coverage and data-quality labels | `dashboard-metrics.tsx`, `overview.tsx`, `provider-status-panel.tsx`, `report-warnings.tsx` | Port presentation over unchanged pure models; retain DOM/text/token assertions and `dashboard-presentation.spec.ts` |
+| REPORT-04 | One report range owns every chart; presets, text, keyboard, pointer and canonical URL; wheel scroll is not captured | `time-range-control.tsx`, `date-range-controller.ts`, `time-range-control-state.ts` | Preserve state module as interface; replace DOM adapter only; run all `time-range.spec.ts` cases and controller tests |
+| REPORT-05 | Activity timeline, campaign/machine/origin grouping, legends, boundary ticks, selectable heatmap days and compact Punchcard with keyboard parity | `overview.tsx`, `time-range-control.tsx`, pure overview/group models | Port SVG/DOM with stable series keys and geometry; run timeline/heatmap/punchcard DOM, keyboard, geometry and visual tests |
+| REPORT-06 | Primary Overview/Sessions/Breakdown navigation, Breakdown legacy deep links, sub-tabs, list search, value/tokens/sessions sorting and measured/partial/zero bars | `dashboard-breakdown*.tsx`, `group-panel.tsx`, dashboard search/model modules | Preserve query-string contract and ordering/value semantics; port Tabs/SegmentedControl; run dashboard, value-presentation and breakdown tests |
+| REPORT-07 | Exact breakdown URL copy and safe CSV of only visible sorted rows | `report-sharing-actions.tsx`, `report-export.ts` | Keep Clipboard/download behavior and explicit HTTP/file rules; same filename, headers, rows, escaping and error feedback |
+| FILTER-01 | Text, harness, machine, origin, exact dimension, time-cell, date and column filters are URL-owned, removable and back/forward-safe | `dashboard-filter-bar.tsx`, `dashboard-active-filters.tsx`, `origin-filter.tsx`, `dashboard-navigation-controller.ts` | Pure parser/serializer plus SvelteKit navigation adapter; full default/legacy/canonical/history test matrix |
+| FILTER-02 | Harness badge filters stop row selection propagation and expose pressed state; machine staleness keeps raw filter identity | design `HarnessBadge`, `machine-staleness.spec.ts` | Controlled Svelte Toggle with same stop-propagation, label/title and raw-value behavior |
+| SESSION-01 | One responsive Sessions surface survives viewport changes; desktop table/mobile summaries share state | `session-table.tsx`, `session-surface-mode.ts` | One state owner with desktop/mobile projections; no duplicate table/query owner across breakpoints; existing viewport-change E2E |
+| SESSION-02 | Sortable/hideable 25-column schema, Work/Tokens/Reliability presets and legacy URL column diffs | `session-columns.tsx`, `session-table-schema.ts`, TanStack Table | Framework-neutral sorting/visibility types; preserve schema, headers, comparators, presets, URL encoding and all column tests |
+| SESSION-03 | Campaign expansion, explicit child loading, automatic top-level paging and stable row identity | `session-query-client.ts`, `session-query-operation-owner.ts`, table expansion | Preserve exact revision/request fingerprint, one operation owner, dedupe/cancel/supersede and campaign reachability gates |
+| SESSION-04 | Bounded virtual window, fixed row geometry, desktop/mobile sentinels and 5,000-row DOM/heap/network budgets | `session-row-window.ts`, virtual surfaces in `session-table.tsx` | Reuse pure window math; Svelte DOM adapter must meet production scale/benchmark and viewport geometry tests |
+| SESSION-05 | Session selection from Overview/table, URL/history identity, drawer next/previous/close keyboard commands and focus return | `dashboard-session-selection.ts`, `session-drawer.tsx`, Router history | Svelte navigation adapter plus controlled Drawer; preserve history/back-forward, focus, Escape and neighboring-session behavior |
+| SESSION-06 | Detail, VCS, chronology and Claude/Codex/OpenCode analysis with recorded/partial/unavailable trust semantics | `session-analysis.tsx`, `session-vcs-summary.tsx`, detail/VCS clients and pure presentation modules | Keep deep server clients and pure analysis models; port rendering only; run all multi-harness render/production gates |
+| CAMPAIGN-01 | Every top-level row is campaign-shaped; human root is not a subagent; neutral origin and undeclared-origin gap semantics | dashboard model, campaign/origin presentation | Preserve domain aggregation and exact labels; origin/campaign/category E2E remains byte/text-equivalent where asserted |
+| CAMPAIGN-02 | Local campaign-label rename/reset preserves filter key; project groups can be edited/saved without changing report identity | `campaign-label-editor.tsx`, `project-group-editor.tsx`, controllers/server modules | Typed oRPC mutations with current validation/conflict semantics; preserve local-only authority and post-save refresh behavior |
+| QUOTA-01 | Codex quota history is on demand, responsive, reset-aware and gap-aware | `provider-quota-history-panel.tsx`, quota model/client | Independent finite query policy; drawer opens/fetches without blocking report SSR or reacting to unrelated publication |
+| SKILLS-01 | Nested addressable Global/Project/Skill/Matrix routes and selection links | `routes/skills*`, `skills-selection-link.tsx`, `skills-route-model.ts` | SvelteKit route tree with encoded stable keys and same redirect/default/deep-link behavior |
+| SKILLS-02 | SSR workspace with tree, editor and Inspector in one bounded desktop row; mobile prioritizes editor/picker; matrix cards/table responsive | `routes/skills.tsx`, `skills-workspace.tsx`, `skills-tree.tsx`, `skills-context-panel.tsx`, `skills-matrix.tsx` | Replace current ClientOnly with hydrated SSR while preserving every geometry/a11y/visual test |
+| SKILLS-03 | SKILL.md immediately editable; exact draft retained on disk conflict/save failure/refresh; Ctrl/Cmd+S; follow-up edits | `skill-markdown-editor.tsx`, `skill-markdown-editor-model.ts` | Preserve controller as deep module; Svelte adapter owns textarea/events only; all editor conflict/shortcut tests remain |
+| SKILLS-04 | Unsaved draft blocks in-app navigation, reload and selection; discard/keep/focus flows | Router `useBlocker`, `DiscardConfirmationDialog`, workspace draft guard | SvelteKit `beforeNavigate` plus `beforeunload` adapter and controlled confirmation UI; test resolved/cancelled navigation and cleanup |
+| SKILLS-05 | Snapshot/inventory refresh never replaces dirty document; mutations stay in deterministic E2E backend | `skills-route-controller.ts`, Query cache, E2E fixture | Explicit query/mutation ownership with smallest cache updates; preserve dirty-state priority and no real filesystem in E2E/demo |
+| SKILLS-06 | Reconcile preview/apply, target directory, runtime projections, unmanaged backlog and validation findings | `skills-consolidate.tsx`, `skills-health.tsx`, `skill-diagnostics.tsx`, Skills server modules | One `skills.*` contract family over existing application module; retain path trust, lock, conflict and neutral-unmanaged semantics |
+| SOURCES-01 | Complete catalogue, independent source enable/disable/collect/publish, one publication, deviation cards, progress and partial-SSE rejection | `routes/sources.tsx`, source-control client/presentation | Explicit EventSource state module plus typed command RPC/endpoint; run all `sources.spec.ts` and reducer/server tests |
+| SOURCES-02 | Responsive source-control summary on Report and routes, engine unavailable/reconnect and sanitized state | summary component and source-control context/client | Svelte context adapter with one subscription and deterministic dispose/reconnect; no Query ownership |
+| SYNC-01 | Fleet comparison, machine contribution/staleness and explicit manual file-transfer-only UX | `routes/sync.tsx`, `sync-machine-fleet.tsx`, `sync-machine-comparison.tsx` | SSR/SWR fleet query and same pure comparison models; preserve labels, warnings and responsive render tests |
+| SYNC-02 | Bounded export/upload/preview/confirm with opaque IDs, stale preview, warnings and cleanup | sync route, manual-transfer model, upload/export server modules | Explicit SvelteKit file endpoints plus oRPC metadata only; retain byte/path/trust/abort/content-disposition tests |
+| PRIVACY-01 | Demo serves synthetic report only and keeps local database, engine, Skills, source/sync commands and protected routes inert | demo guard/middleware/fixtures | SvelteKit server hook + route policy selected before acquisition; `demo-privacy.spec.ts` remains the destructive negative gate |
+| SECURITY-01 | Local-request trust and CSRF cover browser mutations/server operations | `start.ts`, `local-request-trust.server.ts`, demo middleware | SvelteKit `hooks.server.ts` and oRPC mutation middleware with identical rejection semantics; add route matrix proving no handler bypass |
+| OPS-01 | Web read wide-event observability initializes once and remains sanitized/bounded | Nitro plugin and Web observability module | SvelteKit server hook/lifecycle adapter; existing server tests plus single-initialization/teardown test |
+| OPS-02 | Loopback-only dev/production, build lock, isolated outputs, engine readiness, clean signals/descendants and long SSE | Vite/Nitro/build/start/supervisor/tool tests | Selected Svelte adapter must pass the exact operational suite before old runtime deletion |
+
+## Complete UI migration ledger
+
+Every production TSX file is accounted for below. “Port” means reproduce its
+interface in Svelte; “preserve” means keep/extract its pure TypeScript module and
+replace only the framework adapter. Wave 0 must fail if a new TSX file is not
+assigned to a ledger row before cutover.
+
+| Cluster | Current files | Treatment |
+| --- | --- | --- |
+| Root/routing | `router.tsx`, `routes/__root.tsx`, `routes/index.tsx`, all five nested `routes/skills.*.tsx`, `routes/skills.tsx`, `routes/sources.tsx`, `routes/sync.tsx` | Replace with SvelteKit layouts/pages; preserve pure loaders/parsers behind injected interfaces |
+| Shared shell/control | `app-navigation.tsx`, `dashboard-theme.tsx`, `source-control-context.tsx`, `components/source-control-summary.tsx` | Port; replace Router/Context lifecycles and keep source-control state module framework-neutral |
+| Report composition | `dashboard.tsx`, `dashboard-header.tsx`, `dashboard-status.tsx`, `dashboard-provider-status.tsx`, `dashboard-report-workspace.tsx`, `dashboard-pending-surface.tsx`, `report-warnings.tsx` | Port composition; preserve existing lifecycle/session modules rather than embedding them in components |
+| Filters/navigation | `dashboard-filter-bar.tsx`, `dashboard-filters.tsx`, `dashboard-active-filters.tsx`, `origin-filter.tsx` | Port DOM; preserve pure search, navigation intent and filter models |
+| Overview/time/value | `overview.tsx`, `time-range-control.tsx`, `dashboard-metrics.tsx`, `provider-status-panel.tsx`, `provider-quota-history-panel.tsx`, `project-summary.tsx`, `group-panel.tsx`, `cursor-attribution-panel.tsx`, `shared.tsx` | Port render/interaction adapters; preserve calculations, chart series, window/range and presentation modules |
+| Breakdown/actions | `dashboard-breakdown.tsx`, `dashboard-breakdown-panels.tsx`, `dashboard-breakdown-harness-panel.tsx`, `report-sharing-actions.tsx`, `campaign-label-editor.tsx`, `project-group-editor.tsx` | Port; retain sorted/filtered export and mutation controller semantics |
+| Sessions | `session-table.tsx`, `session-columns.tsx`, `session-drawer.tsx`, `session-analysis.tsx`, `session-vcs-summary.tsx`, `drawer-detail-item.tsx`, `highlighted-text.tsx` | Port table/drawer/rendering; preserve schema/window/selection/query/analysis modules and exact identifiers |
+| Skills | `skills-workspace.tsx`, `skills-tree.tsx`, `skills-context-panel.tsx`, `skills-matrix.tsx`, `skills-detail.tsx`, `skills-health.tsx`, `skills-consolidate.tsx`, `skill-diagnostics.tsx`, `skill-markdown-editor.tsx`, `skills-selection-link.tsx`, `discard-confirmation-dialog.tsx` | Port all; preserve route/editor/query/controllers as deep modules where framework-free; explicitly replace Router blocker/link adapters |
+| Sync | `sync-machine-fleet.tsx`, `sync-machine-comparison.tsx` | Port rendering over pure transfer/comparison models |
+
+The nested route shims accounted for by the Root/routing row are
+`routes/skills.global.tsx`, `routes/skills.global.$skillName.tsx`,
+`routes/skills.matrix.tsx`, `routes/skills.projects.$projectKey.tsx`, and
+`routes/skills.projects.$projectKey.$skillName.tsx`. They are deleted only after
+the equivalent SvelteKit route directories pass compile-time parameter and
+deep-link tests.
+
+## Design-system parity register
+
+The design-system work is not “swap `@ark-ui/solid` for `@ark-ui/svelte`.” The
+module interface includes controlled state, focus, DOM attributes, keyboard,
+portals, responsive geometry and semantic tokens. Each row gets a Svelte render
+test and at least one integrated browser consumer before the Solid adapter is
+removed.
+
+The production component files owned by this register are
+`components/badge.tsx`, `components/checkbox.tsx`,
+`components/drawer.tsx`, `components/metric-tile.tsx`,
+`components/popover.tsx`, `components/segment-bar.tsx`,
+`components/segmented-control.tsx`, `components/select.tsx`,
+`components/tabs.tsx`, `components/toggle.tsx`, and
+`components/tooltip.tsx`. The passive `.ts` style modules are owned by the
+“Passive style modules” row.
+
+| Design module | Current interface/implementation details to preserve | Target/gate |
+| --- | --- | --- |
+| Preset/global CSS | light/dark token sets, categorical harness/model/series colors, focus ring, line/surface hierarchy, keyframes, responsive conditions and WCAG contrast tests | Keep one framework-neutral `aiUsagePreset`; Panda Svelte scan must emit identical semantic tokens/classes; preset contrast and target-size tests unchanged |
+| Semantic style exports | `report.ts` exposes layout/button/chart/field/overview/panel/refresh/skills/status/table/time classes; app imports stable names | Preserve export names and CSS layer order; generated CSS class/token snapshot or normalized CSS bundle gate detects omissions |
+| `Toggle` | controlled `pressed`, disabled, accessible label/title, click plus pressed-change | Svelte Ark Toggle adapter; assert `aria-pressed`, click ordering, disabled and keyboard Space/Enter |
+| `HarnessBadge` | passive span or interactive Toggle; family tones; active state; click stops parent row selection | Svelte passive/interactive branches over same pure tone functions; propagation and pressed-state browser test |
+| `Checkbox` | controlled boolean, disabled, hidden native input, label, checked indicator/data-state | Ark Svelte Checkbox; form/a11y role/name/state and callback exactly once |
+| `Drawer` | controlled open; optional modal/trap/outside-close; initial/final focus; portal; responsive bottom sheet/right drawer; Escape/focus return | Ark Svelte Drawer; complete option matrix, reduced motion, no background focus leak, existing session/a11y/visual tests |
+| `Popover` | button trigger with optional label/title/class; lazy mount/unmount; 4px gutter; portal/z-index | Ark Svelte Popover/snippet adapter; trigger semantics, outside/Escape/focus, sticky-toolbar layering |
+| `Tooltip` | 300ms default/open-delay override; lazy portal; trigger association; arbitrary content; provenance marker accessible fallback | Ark Svelte Tooltip; hover/focus/dismiss/delay plus provenance text/role tests |
+| `MultiSelect` | controlled string array; multiple; stays open; reactive collection/labels; same-width popup; summary placeholder/one/count; highlighted/selected; portal z-index override | Ark Svelte Select; complete keyboard selection/deselection, label/value preservation, dynamic options and stacking tests |
+| `SegmentedControl` | controlled single value; not deselectable; optional label/default marker; ToggleGroup keyboard behavior | Ark Svelte ToggleGroup; exactly one selection, arrows/Space, no empty value and URL callback parity |
+| `Tabs` | controlled value; disabled items; composite keyboard; lazy/unmount; active panel forced into tab order after Zag frame | Ark Svelte Tabs; explicitly retain the `tabIndex=0` contract and test the post-animation-frame behavior rather than assuming adapter parity |
+| `SegmentBar` | role image/label; positive segments only; stable proportional widths/titles; token anatomy fills | Mostly framework-neutral Svelte iteration; exact width/title/empty/zero tests |
+| `MetricTile` | label/value/hint; optional delta arrow hidden from AT; comparison hint | Svelte passive view; existing render/presentation assertions |
+| Passive style modules | button, chart color helpers, empty state, field, layout, overview, panel, refresh, skills, status, table, time slider | Keep framework-neutral functions/constants; prove no component import is required to consume them and CSS extraction includes every recipe |
+| Icons | one `lucide-solid` import plus text/SVG glyphs with decorative/accessibility distinctions | Select equivalent Svelte icons or local SVG adapter; keep size/stroke/`aria-hidden`/labels and include icons in client bundle budget |
+
+Design-system package shape after the transition:
+
+```text
+@ai-usage/design-system/preset       # framework-neutral Panda preset
+@ai-usage/design-system/css          # generated functions/classes
+@ai-usage/design-system/report       # semantic report styles, no component runtime
+@ai-usage/design-system/svelte       # Svelte interactive/passive modules
+@ai-usage/design-system/solid        # temporary compatibility during migration
+```
+
+The root export must not silently expose both runtimes. During coexistence,
+callers use explicit `/solid` or `/svelte` entrypoints; at cutover the root may
+point to Svelte only after all Solid imports are deleted. Ark peer dependencies
+must also live behind the corresponding export so installing the final Web does
+not retain the Solid runtime.
+
+## Framework-foundation replacement register
+
+This register accounts for behavior provided by the current framework stack,
+including responsibilities that are easy to miss because they are not visible
+as application features.
+
+| Current foundation/interface | Current usage/evidence | Replacement seam and parity gate |
+| --- | --- | --- |
+| TanStack file routes and generated typed tree | root + `/`, `/sources`, `/sync`, `/skills` and five nested Skills files; `routeTree.gen.ts`; typed `Link`/navigate params | SvelteKit filesystem routes/generated `$types`; pure typed URL builders for links and dashboard search. Compile fixtures must reject missing/invalid route params and E2E covers every deep link |
+| Router search validation/default stripping | `/` `validateSearch`, `stripSearchParams`, dashboard defaults/legacy parsing | Keep parser/canonical serializer as deep module; SvelteKit adapter reads `URLSearchParams` and emits minimal canonical URLs. Golden parse/serialize matrix is the interface test |
+| Router loaders/cache/invalidation/error | report loader, infinite route stale time, explicit `router.invalidate`, error retry | SvelteKit universal load + TanStack Query. Critical fetch throws route error; current alias invalidation re-runs exact query option, not whole-route magic. Network-count and retry tests |
+| Router navigation/history | `Link`, `useNavigate`, `useLocation`, `useRouterState`, numeric history ±1, replace vs push | One injected navigation port with SvelteKit adapter and in-memory test adapter; preserve scroll/history/selection semantics through interface tests |
+| Router blocker | Skills `useBlocker` handles in-app route plus `beforeunload` with resolver | SvelteKit `beforeNavigate` cancellation + browser `beforeunload`, wrapped by one draft-navigation module returning keep/discard outcomes; test every exit path and listener cleanup |
+| Router ClientOnly | Skills and Theme avoid SSR-specific browser values | Eliminate for Skills through SSR hydration; theme uses SSR-safe initial script/browser-only enhancement. No generic ClientOnly wrapper unless another browser-only interface is proven |
+| Router scroll/not-found | `scrollRestoration: true`, default Not Found | SvelteKit navigation/snapshot behavior plus `+error`; browser tests for forward/back scroll, anchor/deep scroll and 404 |
+| TanStack Start server functions | 30 wrappers, input validators, generated transport/serialization and server function warmup | Contract-first oRPC procedures/adapters with exact operation inventory, runtime schemas, typed errors, abort and HTTP integration. Remove warmup only at 30/30 parity |
+| TanStack Start request middleware | `start.ts` composes demo rejection, trusted-local request validation and CSRF for every server function | `hooks.server.ts` handle sequence plus oRPC mutation middleware and explicit route checks. A generated endpoint/method matrix proves every RPC/file/SSE mutation crosses the required checks |
+| TanStack Query provider/cache | root provider/defaults; Skills initial/inventory/mutation cache; quota history; source publication invalidation | scoped Svelte Query client and named policies. Preserve `setQueryData` post-mutation state, pending/error flags and no retry; eliminate broad invalidation; SSR/hydration/network-count tests |
+| TanStack Table | column defs/meta/flex render, core/expanded row models, subrows, sorting, visibility, expansion callbacks | Prefer framework-neutral Table core or a thin Svelte adapter behind `SessionTableModel`; keep 25-column schema, row expansion, metadata and pure windowing. Table is not complete until 5,000-row and keyboard gates pass |
+| Solid fine-grained reactivity | 157 signals, 239 memos, 60 effects, 24 mounts, 44 cleanups, 12 batches, 10 untracks, 590 Shows, 296 Fors, Suspense and portals across 88 files | Do not mechanically translate. Pure computation moves to `.ts`; local state uses `$state`, pure projections `$derived`, external subscriptions/DOM sync `$effect` with cleanup, lifecycle uses actions/onMount, markup uses `{#if}`/`{#each}`. Per-cluster controller tests prevent effect-order regressions |
+| Solid context/root ownership | Query/source-control contexts and test-created reactive roots | Svelte context only for truly shared runtime modules; clients/controllers accepted as dependencies. Replace Solid-root unit tests with pure module/interface tests or Svelte render tests, not rune-internals tests |
+| Solid SSR/hydration | `HydrationScript`, `renderToString`, eager-root workaround and 11 render-test files | SvelteKit native SSR/hydration; replace render assertions with Svelte SSR output/Playwright DOM while retaining semantic assertions. Remove eager-root workaround only after interactive hydration test |
+| Ark UI Solid/Zag adapters | eight primitives with controlled state, portals and focus behavior | Explicit design-system `/svelte` adapters; the design parity register, not matching prop names, is authoritative |
+| Panda Solid integration | Solid JSX scan and generated CSS/build-info ownership | Panda's documented Svelte/PostCSS scanning; retain preset/import map/build-info/generated ownership and CSS bundle gates |
+| Nitro HTTP/plugin runtime | source-control handlers, observability plugin, Bun preset, separate build/output and SSE runner workaround | SvelteKit endpoints/hooks plus selected adapter. Preserve Web server interface: loopback, streaming, abort, status/headers, startup/shutdown and output isolation |
+| Custom Vite/build glue | dep-scan JSX preserve, dedupe, serverFn warmup, route split workaround, ignored generated trees, production build lock | Delete only when corresponding SvelteKit behavior is proven. Carry ignored generated/output paths and build lock into new scripts; cold-dev and concurrent-build tool tests are deletion gates |
+
+### Solid-to-Svelte translation rules
+
+The rewrite must reduce framework coupling rather than reproduce it under new
+syntax:
+
+- `createMemo` that performs pure transformation becomes an ordinary pure
+  function first; use `$derived` only when a component truly owns reactive input.
+- `createEffect` is not translated one-for-one. Effects that derive state are
+  redesigned as pure projections; effects that synchronize DOM/subscriptions use
+  `$effect`/actions and return cleanup.
+- Existing controller modules with `getState/subscribe/command` interfaces stay
+  framework-neutral and receive a thin Svelte adapter. This applies especially
+  to ServedReportSession, source control and the Markdown editor.
+- `batch`/`untrack` sites are individually reviewed for atomic visible state and
+  dependency suppression. Svelte's scheduling is not assumed equivalent without
+  a transition test.
+- `onMount`/`onCleanup` pairs become one owned lifecycle with an idempotent
+  disposer. No listener, ResizeObserver, timer, EventSource or request controller
+  survives unmount or navigation.
+- Solid `Suspense` is not copied around arbitrary queries. Route-critical data
+  belongs in awaited load; optional browser queries render explicit pending/
+  refreshing/failed-with-prior-data states.
+- Portals remain owned by the design-system adapters so feature modules do not
+  learn Ark/Zag portal mechanics.
+
+### Exact server-function replacement ledger
+
+Wave 3 must track 30/30 operations. Target names can be refined in Wave 2, but
+no operation may disappear or change method/error semantics implicitly.
+
+| Current operation | Target procedure/transport |
+| --- | --- |
+| `getReportRevisionManifest` | `report.revisionManifest` query |
+| `getReportRevisionBootstrap` | `report.revisionBootstrap` query |
+| `getFocusedReportSupport` | `report.focusedSupport` query |
+| `getFocusedReportOverview` | `report.focusedOverview` query |
+| `getFocusedReportBreakdown` | `report.focusedBreakdown` query |
+| `getReportSessionPage` | `session.page` query |
+| `getReportSessionCampaignChildren` | `session.campaignChildren` query |
+| `getReportSessionNeighbors` | `session.neighbors` query |
+| `getReportSessionDetail` | `session.detail` query |
+| `resolveReportSessionVcs` | `session.vcs` query |
+| `getCampaignLabelOverrides` | `campaign.labelOverrides` query |
+| `setCampaignLabelOverride` | `campaign.setLabelOverride` mutation |
+| `saveProjectGroups` | `projectGroup.save` mutation |
+| `getReportPerfEnabled` | request/runtime context or `runtime.reportPerfEnabled` query only if it cannot be derived safely |
+| `getProviderQuotaHistory` | `quota.history` query |
+| `getSkillManagementSnapshot` | `skills.snapshot` query |
+| `refreshSkillManagementSnapshot` | `skills.refreshSnapshot` mutation despite its current GET wrapper, because it requests active refresh work |
+| `getKnownSkillProjectPaths` | `skills.knownProjectPaths` query |
+| `saveSkillManagementConfig` | `skills.saveConfig` mutation |
+| `toggleManagedSkill` | `skills.toggleProjection` mutation |
+| `reconcileManagedSkill` | `skills.reconcileOne` mutation |
+| `reconcileAllManagedSkills` | `skills.reconcileAll` mutation |
+| `previewReconcileAllManagedSkills` | `skills.previewReconcileAll` query only if proven side-effect free; otherwise mutation |
+| `createManagedSkillTargetDirectory` | `skills.createTargetDirectory` mutation |
+| `getSkillProjectInventories` | `skills.projectInventories` query |
+| `getProjectSkillMarkdown` | `skills.projectMarkdown` query |
+| `getManagedSkillMarkdown` | `skills.managedMarkdown` query; normalize current POST only after input/privacy tests |
+| `saveManagedSkillMarkdown` | `skills.saveManagedMarkdown` mutation |
+| `getSyncFleet` | `sync.fleet` query |
+| `exportManualMergeBundle` | explicit download route; oRPC may issue bounded metadata/one-use identifier but never carries bundle bytes |
+
+Method normalization above is intentional but cannot change trust/CSRF/cache
+semantics. Wave 0 records whether each current GET is pure; any GET with durable
+or external side effects becomes a mutation and receives CSRF protection.
+
+## Test-parity and deletion register
+
+Tests are migrated by interface, not mechanically translated by filename.
+
+| Current test layer | Required treatment | Deletion gate |
+| --- | --- | --- |
+| Pure `.test.ts` models/controllers | Preserve unchanged after removing framework-only imported types; these are the highest-value stable interface tests | No Solid/TanStack import remains and all assertions still describe the same domain/presentation outcome |
+| Solid-root controller tests | Move controller to framework-neutral interface where possible; otherwise replace with a Svelte adapter test | Equivalent transition/subscription/disposal cases pass without observing rune internals |
+| 11 Solid SSR/render test files | Recreate semantic HTML/a11y assertions with Svelte SSR or focused Playwright; do not replace with snapshots alone | Every existing named assertion is mapped in Wave 0 and passes in replacement suite |
+| Design preset/chart tests | Preserve unchanged | Same token/contrast/series results and generated CSS presence |
+| Server `.server.test.ts` | Preserve at deep module interface; add oRPC handler integration above rather than replacing them | Existing server outcomes plus contract validation/error mapping pass |
+| Router/search/navigation tests | Keep pure search tests; add SvelteKit adapter/in-memory navigation tests and browser history/scroll cases | Default/legacy/deep-link/blocker/retry/404/scroll matrix passes |
+| Query tests | Add key/policy/cache transition tests independent from component rendering | Network counts and exact invalidation matrix pass in SSR/hydration E2E |
+| Playwright functional specs | Keep test intent and selectors unless markup semantics legitimately improve; update harness/start command only | Every named current test is present and green against Svelte; removals require an explicit reviewed equivalence note |
+| Axe/visual/geometry specs | Run after deterministic content settles; update snapshots only after DOM/token/geometry assertions pass | Light/dark, desktop/narrow, drawer and Skills settled artifacts reviewed |
+| Production/scale/benchmark specs | Keep as cross-framework release authority | Initial SSR, paging, chronology, 5,000-row reachability, DOM/heap/network and lifecycle budgets pass |
+| Demo privacy/negative tests | Preserve or strengthen; never mock away real adapter acquisition | Synthetic-only response and every protected local interface remain inert |
+
+### Browser-suite preservation map
+
+| Existing suite | Interface it freezes for the rewrite |
+| --- | --- |
+| `accessibility.spec.ts` | shared navigation, overflow, sticky destination, light/dark focus, reduced motion and Axe gates for Overview/drawer/Skills/Sources/Sync |
+| `audit-performance.spec.ts` | deterministic settled DOM measurements used by the performance audit |
+| `campaign-label-overrides.spec.ts` | local rename/reset without filter identity drift |
+| `category-visibility.spec.ts` | populated harness/machine visibility under default filters |
+| `dashboard-presentation.spec.ts` | metric qualification/provenance, source freshness, token/spend encoding, Overview hierarchy, Punchcard/timeline geometry and mobile filter stack |
+| `dashboard.spec.ts` | report load/pending/retry, navigation/deep links, share/export, quota, URL filters, drawer, session presets, charts, responsive state and explicit sync boundary |
+| `demo-privacy.spec.ts` | synthetic-only app and inert local interfaces |
+| `drawer-value-presentation.spec.ts` | token magnitude and accessible drawer explanation |
+| `machine-staleness.spec.ts` | stale-machine presentation without raw filter-value drift |
+| `origin-campaign.spec.ts`, `origin-gap.spec.ts` | neutral origin, bounded campaign roots, legacy URL handling and undeclared-origin gap causes |
+| `production-report.spec.ts` | real production SSR, source control, focused refresh stability, exact-revision paging, chronology/VCS and mobile paging |
+| `session-viewport-geometry.spec.ts` | virtual viewport anchoring on desktop/mobile |
+| `skills.spec.ts` | complete editor/draft/conflict/refresh/Inspector/workspace/unmanaged/mobile/matrix interface |
+| `sources.spec.ts` | catalogue, independent commands, publication, partial SSE rejection, deviation/progress presentation |
+| `theme.spec.ts` | pre-hydration theme resolution and toggle naming |
+| `time-range.spec.ts` | report-range/chart/heatmap/Punchcard controls, grouping, URL commit, wheel and canonicalization |
+| `value-presentation.spec.ts` | measured/partial/zero Breakdown distinction |
+| `visual-regression.spec.ts` | settled desktop/narrow Overview, drawer and Skills visual artifacts |
+| `session-scroll.scale.ts` | every top-level production campaign reached exactly once at both viewports |
+| `session-scroll-benchmark.scale.ts` | repeatable production scroll samples and retained budget comparison |
+
+The Solid render suites
+`dashboard-metrics.render.test.tsx`, `drawer-detail-item.render.test.tsx`,
+`group-panel.render.test.tsx`, `highlighted-text.render.test.tsx`,
+`overview.render.test.tsx`, `project-summary.render.test.tsx`,
+`session-analysis.render.test.tsx`, `session-drawer.render.test.tsx`,
+`session-vcs-summary.test.tsx`, `skills-detail.render.test.tsx`, and
+`sync.render.test.tsx` also receive explicit replacement IDs. Their semantic
+assertions move to Svelte SSR/render or focused Playwright tests; they are not
+discarded merely because the renderer changed.
+
+Wave 0 creates `apps/web/migration-parity.ts` (or a tool-owned JSON/TS fixture)
+with stable feature IDs, current test titles and target gates. Wave 12 fails if:
+
+- a feature ID has no passing Svelte evidence;
+- a current E2E test title was deleted without an explicit replacement ID;
+- a production TSX file is neither ported nor recorded as intentionally removed;
+- a design-system export lacks a Svelte consumer/test or an explicit
+  framework-neutral classification;
+- one of the 30 server operations is not mapped to RPC/context/file transport;
+- a forbidden foundation package remains reachable from the client manifest.
+
 ## Target layout
 
 ```text
@@ -384,9 +687,18 @@ state.
 5. Characterize every dashboard search parameter/default/legacy value, nested
    Skills URL, selected document, drawer identity and back/forward behavior.
 6. Confirm demo tests fail on real database/home/Skills/engine/network acquisition.
+7. Create the machine-readable parity ledger named in “Test-parity and deletion
+   register.” Seed every feature ID, all 30 server operations, every production
+   TSX file, every design-system export and every current Playwright test title.
+   Each record contains `currentOwner`, `targetOwner`, `evidence`, `status` and
+   optional reviewed `replacementReason`; no free-form “covered” boolean.
+8. Add a read-only checker that compares the ledger with filesystem exports,
+   server-function inventory and Playwright-discovered titles. At this wave the
+   Solid entries are expected to be current; missing/unowned entries fail.
 
-**Gate**: unchanged Solid Web unit, E2E, demo and production suites pass and the
-baseline is reproducible.
+**Gate**: unchanged Solid Web unit, E2E, demo and production suites pass, the
+baseline is reproducible, and the parity checker accounts for 100% of current
+features/operations/TSX/design exports/browser tests.
 
 ### Wave 1: Resolve adapter/version uncertainty with a disposable spike
 
@@ -423,6 +735,10 @@ observes SSR and >30-second SSE, signals shutdown, and proves port/process exit.
    engine implementations, `$lib/server` or `*.server.*`, even via re-exports.
 6. Add SvelteKit fixtures proving direct/indirect/re-export/dynamic illegal
    imports fail. Keep graph checks because test runners disable Kit detection.
+7. Specify the request-policy matrix for every RPC and explicit HTTP route:
+   public method, demo availability, trusted-local requirement, CSRF requirement,
+   maximum body/response class and observable error family. Generate handler
+   tests from this data rather than relying on a convention in router files.
 
 **Gate**: contract/boundary tests and `bun run lint` pass; the contract has no
 server/runtime imports.
@@ -440,7 +756,11 @@ server/runtime imports.
    public dynamic/static server imports.
 6. Add real HTTP handler tests with fake deep services for validation, typed
    errors, abort, demo rejection, leakage and size budgets.
-7. Delete `createServerFn` wrappers only when inventory parity is complete;
+7. Move TanStack Start's demo, trusted-local and CSRF middleware semantics to a
+   transport-independent request-policy module with adapters for the temporary
+   Nitro handler and future SvelteKit hook. Prove every mutation/file endpoint
+   crosses the same policy before retiring `start.ts`.
+8. Delete `createServerFn` wrappers only when inventory parity is complete;
    remove warmup and `/_serverFn/` glue.
 
 **Gate**: no production `createServerFn`, `_serverFn` or warmup match; all Solid
@@ -469,14 +789,22 @@ refetch; policy tests pass.
    authoritative until cutover.
 2. Configure Panda's supported Svelte/PostCSS integration to scan TS/Svelte;
    preserve preset, semantic exports and CSS layers.
-3. Split design-system framework-neutral styles, explicit Solid compatibility
-   exports and Svelte primitives.
-4. Port Tooltip, Popover, Drawer, Checkbox, Toggle, Tabs, SegmentedControl and
-   MultiSelect with focus/Escape/keyboard/label/reduced-motion/portal parity.
+3. Split design-system framework-neutral styles, explicit `/solid` compatibility
+   exports and `/svelte` primitives. Add an export-condition test proving the
+   Svelte dependency closure cannot reach `solid-js` or `@ark-ui/solid`.
+4. Port the complete design-system parity register in dependency order: passive
+   token/style modules, Toggle, HarnessBadge/Checkbox, Tooltip/Popover,
+   SegmentedControl/Tabs/MultiSelect, then Drawer. For every module, land its
+   controlled-state/focus/keyboard/render tests and at least one real Svelte
+   consumer before marking its ledger row complete.
 5. Add narrow Svelte render tests where useful; rely on Playwright for integrated
    behavior rather than adding a redundant browser framework.
 6. Build root layout, error boundary, theme bootstrap and navigation shell with
    matching SSR/hydration.
+7. Compare normalized generated CSS/token exports between Solid and Svelte
+   builds. Differences require classification as framework syntax only,
+   intentional unused-code removal, or a parity defect; unexplained omissions
+   fail the wave.
 
 **Gate**: shadow build/typecheck, primitive tests and theme/navigation/a11y
 subset pass; Solid remains green.
@@ -490,7 +818,13 @@ subset pass; Solid remains green.
 3. Build a narrow SvelteKit URL adapter preserving unrelated params, replace vs
    push, defaults and back/forward without loops.
 4. Port navigation and route loading/error shells with demo policy.
-5. Test direct deep links, reload, copy/paste, legacy values and history.
+5. Implement the draft-navigation module replacing `useBlocker`, including
+   SvelteKit navigation cancellation/resolution, `beforeunload`, keep/discard,
+   focus return and idempotent listener cleanup.
+6. Implement and test scroll restoration, numeric history traversal, 404 and
+   error retry explicitly; do not assume SvelteKit defaults equal TanStack
+   Router's configured behavior.
+7. Test direct deep links, reload, copy/paste, legacy values and history.
 
 **Gate**: URL/deep-link suites pass against both apps; demo shadow acquires no
 real services.
@@ -584,11 +918,15 @@ Skills/unit/E2E/visual/demo tests pass.
    retain framework-neutral core only if used.
 6. Delete warmup, hydration workaround, Nitro handlers/plugins/paths/exceptions.
 7. Scan emitted client manifest as well as sources for retired/server modules.
-8. Compare final bundle/HTML/requests/timing/startup/Session memory/lifecycle to
+8. Switch every parity-ledger entry from current Solid evidence to passing
+   Svelte evidence. Run the ledger checker against production sources, exports,
+   procedure routes and Playwright titles; no `unmapped`, `solid-only` or
+   unreviewed removal state is allowed.
+9. Compare final bundle/HTML/requests/timing/startup/Session memory/lifecycle to
    Wave 0. Investigate >10% regressions; claim no unmeasured performance win.
-9. Update README/Web README/architecture/public interfaces/generated ownership/
+10. Update README/Web README/architecture/public interfaces/generated ownership/
    ADR consequences and final performance results.
-10. Accept ADR 0010 and mark plan DONE only after final gates.
+11. Accept ADR 0010 and mark plan DONE only after final gates.
 
 ## Test plan
 
@@ -624,6 +962,12 @@ usage-engine tests. Add:
   module.
 - [ ] Every Wave 0 operation is implemented or explicitly classified as file/SSE;
   none is lost.
+- [ ] The parity checker reports every feature ID COMPLETE, 30/30 server
+  operations mapped, every former production TSX file ported/preserved/reviewed,
+  and every current Playwright title retained or linked to a reviewed equivalent.
+- [ ] Every design-system export is framework-neutral or has a tested Svelte
+  implementation/consumer; the final design-system/Web dependency closure has
+  no Solid/Ark Solid runtime.
 - [ ] Initial `/` and `/skills` HTML has settled content and no duplicate fetch.
 - [ ] Exact revision retry/supersession/atomic commit matches characterization.
 - [ ] Publication does not invalidate Skills or immutable exact revision; quota
