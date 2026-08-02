@@ -6,13 +6,16 @@ const ignoredDirectories = new Set([
   '.output',
   '.output-build',
   '.output-dev',
+  '.output-svelte-shadow',
+  '.svelte-kit',
+  '.svelte-kit-shadow',
   '.turbo',
   'dist',
   'node_modules',
   'styled-system',
 ]);
 const ignoredFiles = new Set(['biome.json']);
-const checkedExtensions = new Set(['.cjs', '.js', '.jsx', '.json', '.mjs', '.ts', '.tsx', '.yaml', '.yml']);
+const checkedExtensions = new Set(['.cjs', '.js', '.jsx', '.json', '.mjs', '.svelte', '.ts', '.tsx', '.yaml', '.yml']);
 const relativeWorkspacePath = /\.\.\/(?:\.\.\/)*(?:apps|packages)\//g;
 
 interface Violation {

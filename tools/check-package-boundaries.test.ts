@@ -670,7 +670,8 @@ describe('package boundary guard', () => {
     await mkdir(sourceDirectory, { recursive: true });
     await writeFile(
       path.join(sourceDirectory, 'dynamic.svelte'),
-      "<script>const merge = import('@ai-usage/usage-merge/internal'); void merge;</script>\n",
+      `<script>const merge = import('${['@ai-usage', 'usage-merge', 'internal'].join('/')}'); void merge;</script>
+`,
     );
 
     expect(await collectViolations(root)).toContainEqual(
@@ -709,7 +710,7 @@ describe('package boundary guard', () => {
     const webSource = path.join(root, 'apps/web/src/+page.svelte');
     const bridgeSource = path.join(root, 'packages/web-bridge/src/bridge.svelte');
     await Promise.all([
-      writeFile(webSource, "<script>import '@ai-usage/web-bridge';</script>\n"),
+      writeFile(webSource, `<script>import '${webBridgePackage}';</script>\n`),
       writeFile(
         bridgeSource,
         '<script context="module">export { collect } from \'@ai-usage/local-collectors/codex-history\';</script>\n',
@@ -745,6 +746,20 @@ describe('package boundary guard', () => {
         specifier: '@ai-usage/local-collectors',
       }),
     );
+  });
+
+  test('ignores every generated SvelteKit shadow tree', async () => {
+    const root = await createFixture();
+    await writePackage(root, 'apps', 'web', { name: '@ai-usage/web' });
+    const generatedDirectories = ['.output-svelte-shadow', '.svelte-kit', '.svelte-kit-shadow'];
+
+    for (const generatedDirectory of generatedDirectories) {
+      const directory = path.join(root, 'apps/web', generatedDirectory);
+      await mkdir(directory, { recursive: true });
+      await writeFile(path.join(directory, 'forbidden.svelte'), "<script>import '@ai-usage/usage-merge';</script>\n");
+    }
+
+    expect(await collectViolations(root)).toEqual([]);
   });
 
   test('accepts the current workspace graph', async () => {

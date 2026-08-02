@@ -8,6 +8,7 @@ import {
   type SourceControlCommandResponse,
   type SourceControlView,
 } from '@ai-usage/report-core/source-control';
+import type { StateSubscription } from './lib/foundation/subscription';
 import type { RuntimeMode } from './runtime-mode';
 
 export type { SourceControlCommandResponse } from '@ai-usage/report-core/source-control';
@@ -41,12 +42,10 @@ export interface SourceControlClientOptions {
   readonly sendCommand?: (command: SourceControlCommand) => Promise<SourceControlCommandResponse>;
 }
 
-export interface SourceControlClient {
+export interface SourceControlClient extends StateSubscription<SourceControlClientState> {
   readonly execute: (command: SourceControlCommand) => Promise<boolean>;
-  readonly getState: () => SourceControlClientState;
   readonly start: () => void;
   readonly stop: () => void;
-  readonly subscribe: (listener: (state: SourceControlClientState) => void) => () => void;
 }
 
 const initialState: SourceControlClientState = {

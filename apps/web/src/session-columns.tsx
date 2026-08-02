@@ -12,12 +12,13 @@ import {
 } from '@ai-usage/design-system/report';
 import { provenanceForMetric, type UsageMetricKey } from '@ai-usage/report-core/provenance';
 import { classifierRollupLabelForSessionRow, sessionOriginLabel } from '@ai-usage/report-core/session-query';
-import type { ColumnDef, RowData, VisibilityState } from '@tanstack/solid-table';
+import type { ColumnDef, RowData } from '@tanstack/solid-table';
 import { type JSX, Show } from 'solid-js';
 import { campaignBadgeLabelForRow } from './dashboard-model';
 import type { FieldFilterKey } from './dashboard-search';
 import { lineDeltaLabel, rtkSavedLabel, rtkSavedTitle, rtkSavingsPct, sortValueForRow } from './dashboard-sort';
 import { HighlightedText } from './highlighted-text';
+import type { TableVisibilityState } from './lib/foundation/table/state';
 import { sessionDurationSemantics } from './session-analysis-model';
 import type { SessionColumnId } from './session-table-schema';
 import { isSessionColumnVisible as isSessionColumnVisibleForSchema } from './session-table-schema';
@@ -451,7 +452,7 @@ export const sessionColumns: SessionColumnDef[] = [
 
 export { defaultColumnVisibility, isSessionColumnVisible } from './session-table-schema';
 
-export const visibleSessionColumns = (visibility: VisibilityState) =>
+export const visibleSessionColumns = (visibility: TableVisibilityState) =>
   sessionColumns.filter((column) => isSessionColumnVisibleForSchema(visibility, column.id));
 
 export const sessionColumnLabel = (column: SessionColumnDef) => column.meta?.label ?? column.id;

@@ -37,12 +37,13 @@ import {
   tableControls,
   tableWrap,
 } from '@ai-usage/design-system/report';
-import type { Column, ExpandedState, OnChangeFn, Row, SortingState, VisibilityState } from '@tanstack/solid-table';
+import type { Column, ExpandedState, Row } from '@tanstack/solid-table';
 import { createSolidTable, flexRender, getCoreRowModel, getExpandedRowModel } from '@tanstack/solid-table';
 import { type Accessor, createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from 'solid-js';
 import { measureClientPerf } from './client-perf';
 import type { FieldFilterKey } from './dashboard-search';
 import { HighlightedText } from './highlighted-text';
+import type { StateChangeHandler, TableSortingState, TableVisibilityState } from './lib/foundation/table/state';
 import { sessionDurationSemantics } from './session-analysis-model';
 import {
   defaultColumnVisibility,
@@ -301,9 +302,9 @@ const SortHeader = (props: { column: Column<DashboardRow, unknown>; label: strin
 // Folded into a disclosure: column tuning is an occasional task, so it should
 // not permanently cost two rows of prime space above the table.
 const ColumnVisibilityControl = (props: {
-  columnVisibility: VisibilityState;
+  columnVisibility: TableVisibilityState;
   hiddenColumnIds?: string[];
-  onColumnVisibilityChange: OnChangeFn<VisibilityState>;
+  onColumnVisibilityChange: StateChangeHandler<TableVisibilityState>;
 }) => {
   const hideableColumns = () =>
     sessionColumns.filter((column) => column.enableHiding !== false && !props.hiddenColumnIds?.includes(column.id));
@@ -348,9 +349,9 @@ const ColumnVisibilityControl = (props: {
 };
 
 const SessionColumnControls = (props: {
-  columnVisibility: VisibilityState;
+  columnVisibility: TableVisibilityState;
   hiddenColumnIds?: string[];
-  onColumnVisibilityChange: OnChangeFn<VisibilityState>;
+  onColumnVisibilityChange: StateChangeHandler<TableVisibilityState>;
 }) => {
   const activePreset = () => sessionColumnPresetForVisibility(props.columnVisibility);
 
@@ -384,23 +385,23 @@ const SessionColumnControls = (props: {
 
 export const SessionTable = (props: {
   campaignChildren?: ReadonlyMap<string, { loading: boolean; nextCursor: string | null }>;
-  columnVisibility: VisibilityState;
+  columnVisibility: TableVisibilityState;
   hasMoreRows?: boolean;
   loading?: boolean;
   loadingMoreRows?: boolean;
-  onColumnVisibilityChange: OnChangeFn<VisibilityState>;
+  onColumnVisibilityChange: StateChangeHandler<TableVisibilityState>;
   onClearFilters: () => void;
   onFieldFilter: (key: FieldFilterKey, value: string) => void;
   onHarnessFilter: (value: string) => void;
   onLoadCampaignChildren?: (campaignKey: string) => void;
   onLoadMoreRows?: () => void;
   onSelect: (row: DashboardRow) => void;
-  onSortingChange: OnChangeFn<SortingState>;
+  onSortingChange: StateChangeHandler<TableSortingState>;
   queryResetKey: string;
   rows: DashboardRow[];
   searchQuery: string;
   selectedKey: string | null;
-  sorting: SortingState;
+  sorting: TableSortingState;
   totalRows?: number;
 }) => {
   // A column whose every visible row reads "—" is dead weight; RTK savings

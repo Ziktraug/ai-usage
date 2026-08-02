@@ -1,6 +1,5 @@
 <script lang="ts">
-// biome-ignore lint/correctness/noUnusedVariables: Svelte consumes this value in the template.
-const fixtureTitle = 'Meaningful server-rendered content';
+  const fixtureTitle = 'Meaningful server-rendered content';
 </script>
 
 <svelte:head>

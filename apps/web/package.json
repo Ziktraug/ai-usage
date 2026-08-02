@@ -3,6 +3,10 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "exports": {
+    "./migration-parity/aggregate": "./migration-parity/aggregate.ts",
+    "./migration-parity/schema": "./migration-parity/schema.ts"
+  },
   "dependencies": {
     "@ai-usage/design-system": "workspace:*",
     "@ai-usage/effect-runtime": "workspace:*",
@@ -12,28 +16,44 @@
     "@ai-usage/skills": "workspace:*",
     "@ai-usage/usage-engine-control": "workspace:*",
     "@ai-usage/usage-store": "workspace:*",
+    "@ai-usage/web-contract": "workspace:*",
+    "@ark-ui/svelte": "5.22.1",
+    "@orpc/client": "1.14.13",
+    "@orpc/server": "1.14.13",
+    "@orpc/svelte-query": "1.14.13",
     "@tanstack/solid-query": "^5.101.2",
     "@tanstack/solid-router": "1.170.16",
     "@tanstack/solid-start": "1.168.26",
     "@tanstack/solid-table": "^8.21.3",
+    "@tanstack/svelte-query": "6.1.38",
     "effect": "^3.21.4",
     "lucide-solid": "^1.25.0",
-    "solid-js": "^1.9.13"
+    "solid-js": "^1.9.13",
+    "svelte": "5.56.8"
   },
   "devDependencies": {
     "@axe-core/playwright": "4.12.1",
-    "@pandacss/dev": "^1.11.3",
+    "@pandacss/dev": "1.12.0",
     "@playwright/test": "1.61.1",
+    "@sveltejs/kit": "2.70.2",
+    "@sveltejs/vite-plugin-svelte": "7.2.0",
     "nitro": "^3.0.260610-beta",
-    "vite": "^8.0.16",
+    "svelte-adapter-bun": "1.0.1",
+    "svelte-check": "4.7.4",
+    "typescript": "5.9.3",
+    "vite": "8.2.0",
+    "vite-solid": "npm:vite@8.0.16",
     "vite-plugin-solid": "^2.11.12"
   },
   "scripts": {
     "dev": "bun --bun vite --host 127.0.0.1",
+    "dev:svelte": "AI_USAGE_SVELTEKIT_SHADOW_MODE=dev bun --no-env-file --bun vite --config vite.svelte.config.ts --host 127.0.0.1",
     "dev:prepare": "CI=1 bun --bun panda codegen --silent && CI=1 bun --bun panda cssgen --silent",
     "dev:standalone": "bun --filter @ai-usage/design-system build && bun run dev:prepare && bun run dev",
     "build": "bun --no-env-file vite-production-build.ts",
+    "build:svelte": "AI_USAGE_SVELTEKIT_SHADOW_MODE=build bun --no-env-file --bun vite build --config vite.svelte.config.ts",
     "check": "bun --filter @ai-usage/design-system build && CI=1 panda codegen --silent && CI=1 panda cssgen --silent && bun run typecheck",
+    "check:svelte": "AI_USAGE_SVELTEKIT_SHADOW_MODE=check bun --no-env-file svelte-kit sync && AI_USAGE_SVELTEKIT_SHADOW_MODE=check bun --no-env-file svelte-check --tsconfig ./tsconfig.svelte.json",
     "test": "bun --filter @ai-usage/design-system build && bun test src ./*.test.ts",
     "test:e2e": "playwright test",
     "test:e2e-demo": "playwright test --config playwright.demo.config.ts",
@@ -41,7 +61,7 @@
     "benchmark:session-scroll": "bun --bun playwright test --config playwright.session-scroll.config.ts e2e/session-scroll-benchmark.scale.ts",
     "preview": "vite preview --host 127.0.0.1",
     "start:web-only": "bun --no-env-file start.mjs",
-    "typecheck": "tsc --noEmit && tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.e2e.json --noEmit",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.server.json --noEmit && tsc -p tsconfig.e2e.json --noEmit && bun run check:svelte",
     "lint": "biome check .",
     "format": "biome format --write ."
   }

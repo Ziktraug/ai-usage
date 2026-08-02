@@ -4,7 +4,7 @@ import {
   sessionSortFields,
   sortValueForSessionColumn as sortValueForCoreSessionColumn,
 } from '@ai-usage/report-core/session-query';
-import type { SortingState, VisibilityState } from '@tanstack/solid-table';
+import type { TableSortingState, TableVisibilityState } from './lib/foundation/table/state';
 import type { DashboardRow } from './shared';
 
 export type SessionColumnId = SessionSortField;
@@ -113,8 +113,8 @@ export const isSessionColumnVisibilityBase = (value: unknown): value is SessionC
 export const sortValueForSessionColumn = (row: DashboardRow, columnId: SessionColumnId): number | string =>
   sortValueForCoreSessionColumn(row, columnId);
 
-const hiddenColumnVisibility = (isHidden: (column: SessionColumnSchemaEntry) => boolean): VisibilityState => {
-  const visibility: VisibilityState = {};
+const hiddenColumnVisibility = (isHidden: (column: SessionColumnSchemaEntry) => boolean): TableVisibilityState => {
+  const visibility: TableVisibilityState = {};
   for (const column of sessionColumnEntries) {
     if (isHidden(column)) {
       visibility[column.id] = false;
@@ -127,9 +127,10 @@ export const defaultColumnVisibility = hiddenColumnVisibility((column) => column
 
 const legacyDefaultColumnVisibility = hiddenColumnVisibility((column) => !legacyDefaultVisibleColumnIds.has(column.id));
 
-export const isSessionColumnVisible = (visibility: VisibilityState, columnId: string) => visibility[columnId] !== false;
+export const isSessionColumnVisible = (visibility: TableVisibilityState, columnId: string) =>
+  visibility[columnId] !== false;
 
-export const columnVisibilityForSessionPreset = (presetId: SessionColumnPresetId): VisibilityState => {
+export const columnVisibilityForSessionPreset = (presetId: SessionColumnPresetId): TableVisibilityState => {
   const preset = sessionColumnPresets.find((candidate) => candidate.id === presetId);
   if (!preset) {
     throw new Error(`Unknown session column preset: ${presetId}`);
@@ -142,7 +143,7 @@ export const columnVisibilityForSessionPreset = (presetId: SessionColumnPresetId
   );
 };
 
-export const sessionColumnPresetForVisibility = (visibility: VisibilityState): SessionColumnPresetId | null => {
+export const sessionColumnPresetForVisibility = (visibility: TableVisibilityState): SessionColumnPresetId | null => {
   for (const preset of sessionColumnPresets) {
     const visibleColumnIds = new Set<string>(preset.visibleColumnIds);
     const matchesPreset = sessionColumnEntries.every(
@@ -168,7 +169,7 @@ const resolvedColumnVisibilityBase = (
 export const columnVisibilityFromDiff = (
   columnDiff: SearchableColumnDiffId[],
   requestedBase?: SessionColumnVisibilityBase,
-): VisibilityState => {
+): TableVisibilityState => {
   // Unversioned non-empty links were encoded against the former wide default.
   // Unversioned empty links intentionally migrate to the focused Work preset.
   const base = resolvedColumnVisibilityBase(columnDiff, requestedBase);
@@ -181,7 +182,7 @@ export const columnVisibilityFromDiff = (
 };
 
 export const columnDiffFromVisibility = (
-  visibility: VisibilityState,
+  visibility: TableVisibilityState,
   base: ExplicitSessionColumnVisibilityBase,
 ): SearchableColumnDiffId[] => {
   const baseline = base === 'work' ? defaultColumnVisibility : legacyDefaultColumnVisibility;
@@ -192,7 +193,9 @@ export const columnDiffFromVisibility = (
   });
 };
 
-export const columnVisibilitySearchForVisibility = (visibility: VisibilityState): SessionColumnVisibilitySearch => {
+export const columnVisibilitySearchForVisibility = (
+  visibility: TableVisibilityState,
+): SessionColumnVisibilitySearch => {
   const workDiff = columnDiffFromVisibility(visibility, 'work');
   if (workDiff.length === 0) {
     return { cols: [], colsBase: 'auto' };
@@ -203,7 +206,10 @@ export const columnVisibilitySearchForVisibility = (visibility: VisibilityState)
     : { cols: legacyDiff, colsBase: 'legacy' };
 };
 
-export const sortFromSortingState = (sorting: SortingState, fallbackSort: { id: SessionColumnId; desc: boolean }) => {
+export const sortFromSortingState = (
+  sorting: TableSortingState,
+  fallbackSort: { id: SessionColumnId; desc: boolean },
+) => {
   const sort = sorting[0];
   if (!(sort && isSessionColumnId(sort.id))) {
     return fallbackSort;

@@ -3,9 +3,9 @@ import { tanstackStart } from '@tanstack/solid-start/plugin/vite';
 import { nitro } from 'nitro/vite';
 import { defineConfig, type Plugin } from 'vite';
 import solid from 'vite-plugin-solid';
-import { getServerRuntimeMode } from './src/server/runtime-mode.server';
-import { resolveViteRuntimePaths } from './vite-output-paths';
-import { createRetryableWarmup } from './vite-warmup';
+import { getServerRuntimeMode } from './src/server/runtime-mode.server.ts';
+import { resolveViteRuntimePaths } from './vite-output-paths.ts';
+import { createRetryableWarmup } from './vite-warmup.ts';
 
 const serverFunctionEntrypoints = [
   './src/server/report-payload.ts',

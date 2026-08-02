@@ -296,7 +296,7 @@ describe('production web build command', () => {
       },
       { command: ['bun', '--no-env-file', 'run', 'dev:prepare'], cwd: webDirectory },
       { command: ['bun', '--no-env-file', 'run', 'typecheck'], cwd: webDirectory },
-      { command: ['bun', '--no-env-file', '--bun', 'vite', 'build'], cwd: webDirectory },
+      { command: ['bun', '--no-env-file', 'vite-solid-build.ts'], cwd: webDirectory },
     ]);
     await expect(Bun.file(devOutputFile).exists()).resolves.toBe(true);
     for (const productionOutputFile of productionOutputFiles) {

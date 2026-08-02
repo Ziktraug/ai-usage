@@ -18,9 +18,9 @@ import {
   type SessionQueryServerResult,
   sessionQueryFingerprint,
 } from '@ai-usage/report-core/session-query';
-import type { SortingState } from '@tanstack/solid-table';
 import type { FieldFilters } from './dashboard-search';
 import type { DateBounds } from './date-range';
+import type { TableSortingState } from './lib/foundation/table/state';
 import {
   createSessionQueryOperationOwner,
   type SessionQueryOperationContext,
@@ -41,7 +41,7 @@ export interface DashboardSessionQueryInput {
   pageSize?: number;
   query: string;
   range: DateBounds;
-  sorting: SortingState;
+  sorting: TableSortingState;
 }
 
 export interface SessionQuerySource {

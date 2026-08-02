@@ -45,6 +45,18 @@ production E2E uses an isolated real engine/store/runtime.
 Development and production outputs are isolated in `.output-dev` and
 `.output-build`; the production build lock never targets active dev output.
 
+## SvelteKit migration shadow
+
+The shadow is build/typecheck scaffolding and may use only synthetic state until
+the reviewed cutover. Solid remains the production and ordinary test authority.
+
+- `bun run --cwd apps/web check:svelte` syncs and checks the shadow.
+- `bun run --cwd apps/web build:svelte` builds the selected Bun adapter output.
+- `bun run --cwd apps/web dev:svelte` starts only the isolated shadow dev server.
+
+Each command owns a separate ignored phase below `.svelte-kit-shadow` and
+`.output-svelte-shadow`; it does not mutate Solid `.output-*` trees.
+
 ## Test strategy
 
 Keep model tests near models and server adapter tests under `src/server`. Use

@@ -6,7 +6,7 @@ const designSystemBuildInfo = require.resolve(designSystemBuildInfoPackage);
 
 export default defineConfig({
   preflight: true,
-  include: ['./src/**/*.{ts,tsx}', designSystemBuildInfo],
+  include: ['./src/**/*.{ts,tsx,svelte}', './svelte-shadow/**/*.svelte', designSystemBuildInfo],
   exclude: [],
   jsxFramework: 'solid',
   outdir: 'styled-system',

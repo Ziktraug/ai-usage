@@ -21,6 +21,19 @@ This repo uses generated files from PandaCSS, TanStack Start/Router, Vite/Nitro,
 
 These directories are ignored by git and Biome.
 
+## SvelteKit Shadow Outputs
+
+- `.svelte-kit-shadow/check`, `.svelte-kit-shadow/dev`, and
+  `.svelte-kit-shadow/build` are phase-isolated SvelteKit intermediate trees.
+- `.output-svelte-shadow/{check,dev,build}` contains selected-adapter output.
+- `.svelte-kit/` remains reserved and ignored for generated SvelteKit tooling.
+- Shadow scripts own only their matching phase and never clean another phase or
+  any Solid `.output-*` tree.
+- These trees are disposable, untracked, excluded from recursive scanners, and
+  must never be hand-edited or committed.
+
+Solid `.output-dev` and `.output-build` remain production authority until X1.
+
 ## Turbo Outputs
 
 - `@ai-usage/design-system#build` and `@ai-usage/design-system#check` cache `styled-system/**`.

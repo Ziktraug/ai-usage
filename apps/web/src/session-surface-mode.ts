@@ -1,3 +1,5 @@
+import type { Disposer, StateListener } from './lib/foundation/subscription';
+
 export type SessionSurfaceMode = 'pending' | 'mobile' | 'desktop';
 
 export const SESSION_DESKTOP_MEDIA_QUERY = '(min-width: 48rem)';
@@ -18,7 +20,7 @@ export interface SessionSurfaceModeEnvironment {
 
 export interface SessionSurfaceModeController {
   mode(): SessionSurfaceMode;
-  start(onModeChange: (mode: SessionSurfaceMode) => void): () => void;
+  start(onModeChange: StateListener<SessionSurfaceMode>): Disposer;
 }
 
 export const createSessionSurfaceModeController = (

@@ -1,0 +1,20 @@
+{
+  "name": "@ai-usage/web-contract",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/contract.ts"
+  },
+  "dependencies": {
+    "@orpc/contract": "1.14.13",
+    "valibot": "1.4.2"
+  },
+  "scripts": {
+    "build": "tsc --noEmit",
+    "check": "tsc --noEmit",
+    "test": "bun test",
+    "lint": "biome check .",
+    "format": "biome format --write ."
+  }
+}

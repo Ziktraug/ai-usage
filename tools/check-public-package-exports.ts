@@ -6,12 +6,15 @@ const ignoredDirectories = new Set([
   '.output',
   '.output-build',
   '.output-dev',
+  '.output-svelte-shadow',
+  '.svelte-kit',
+  '.svelte-kit-shadow',
   '.turbo',
   'dist',
   'node_modules',
   'styled-system',
 ]);
-const checkedExtensions = new Set(['.cjs', '.js', '.jsx', '.mjs', '.ts', '.tsx']);
+const checkedExtensions = new Set(['.cjs', '.js', '.jsx', '.mjs', '.svelte', '.ts', '.tsx']);
 const workspacePackageParents = ['apps', 'packages'];
 const workspaceImportPattern =
   /\b(?:import|export)\s+(?:type\s+)?(?:[^'";]+?\s+from\s*)?['"](@ai-usage\/[^'"]+)['"]|\bimport\(\s*['"](@ai-usage\/[^'"]+)['"]\s*\)|\bimport\.meta\.resolve\(\s*['"](@ai-usage\/[^'"]+)['"]\s*\)/g;

@@ -4,7 +4,7 @@ import {
   compareSessionPresentationRows,
   sortValueForSessionColumn as sortValueForCoreSessionColumn,
 } from '@ai-usage/report-core/session-query';
-import type { SortingState } from '@tanstack/solid-table';
+import type { TableSortingState } from './lib/foundation/table/state';
 import type { SessionColumnId } from './session-table-schema';
 import type { DashboardRow } from './shared';
 import { fmtMaybeNum, fmtNum, fmtPct } from './shared';
@@ -12,7 +12,7 @@ import { fmtMaybeNum, fmtNum, fmtPct } from './shared';
 export const sortValueForRow = (row: DashboardRow, columnId: SessionColumnId): number | string =>
   sortValueForCoreSessionColumn(row, columnId);
 
-export const compareRows = (sorting: SortingState) => compareSessionPresentationRows(sorting);
+export const compareRows = (sorting: TableSortingState) => compareSessionPresentationRows(sorting);
 
 export const lineDeltaLabel = (row: Pick<SerializedRow, 'lineDelta' | 'linesAdded' | 'linesDeleted'>) => {
   if (row.lineDelta == null) {

@@ -7,6 +7,7 @@ export const TYPECHECK_PROJECTS = [
   'apps/web/tsconfig.json',
   'apps/web/tsconfig.e2e.json',
   'apps/web/tsconfig.server.json',
+  'apps/web/tsconfig.svelte.json',
   'packages/design-system/tsconfig.json',
   'packages/effect-runtime/tsconfig.json',
   'packages/local-collectors/tsconfig.json',
@@ -18,6 +19,7 @@ export const TYPECHECK_PROJECTS = [
   'packages/usage-engine-runtime/tsconfig.json',
   'packages/usage-merge/tsconfig.json',
   'packages/usage-store/tsconfig.json',
+  'packages/web-contract/tsconfig.json',
   'tsconfig.tools.json',
 ] as const;
 

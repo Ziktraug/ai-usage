@@ -313,7 +313,7 @@ export const runProductionWebBuild = async ({
         rm(path.join(webDirectory, relativePath), { force: true, recursive: true }),
       ),
     );
-    await runCommand(['bun', '--no-env-file', '--bun', 'vite', 'build'], webDirectory);
+    await runCommand(['bun', '--no-env-file', 'vite-solid-build.ts'], webDirectory);
   });
 
 if (import.meta.main) {

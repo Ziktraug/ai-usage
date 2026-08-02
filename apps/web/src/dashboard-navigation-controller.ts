@@ -1,6 +1,5 @@
 import type { LocalTimeCell, SessionOrigin } from '@ai-usage/report-core/session-query';
 import { useNavigate, useSearch } from '@tanstack/solid-router';
-import type { OnChangeFn, SortingState, Updater, VisibilityState } from '@tanstack/solid-table';
 import { type Accessor, createEffect, createMemo, createSignal } from 'solid-js';
 import { applyTimelineDimensionFilter } from './dashboard-filter-navigation';
 import {
@@ -15,16 +14,23 @@ import {
   toggleExactFieldFilter,
   withoutDashboardTimeCell,
 } from './dashboard-search';
+import type { SearchNavigationIntent } from './lib/foundation/navigation/search-intent';
+import {
+  applyStateUpdate,
+  type StateChangeHandler,
+  type StateUpdater,
+  type TableSortingState,
+  type TableVisibilityState,
+} from './lib/foundation/table/state';
 import type { TimelineDimension } from './overview-model';
 import {
   columnVisibilityFromDiff,
   columnVisibilitySearchForVisibility,
   sortFromSortingState,
 } from './session-table-schema';
-import { applyTableUpdate } from './table-utils';
 
 interface DashboardNavigationState {
-  columnVisibility: Accessor<VisibilityState>;
+  columnVisibility: Accessor<TableVisibilityState>;
   fieldFilters: Accessor<FieldFilters>;
   harness: Accessor<string[]>;
   localTimeCell: Accessor<LocalTimeCell | undefined>;
@@ -32,15 +38,15 @@ interface DashboardNavigationState {
   origin: Accessor<SessionOrigin[]>;
   query: Accessor<string>;
   search: Accessor<DashboardSearch>;
-  sorting: Accessor<SortingState>;
+  sorting: Accessor<TableSortingState>;
 }
 
 export interface DashboardNavigationController extends DashboardNavigationState {
   clearFieldFilter: (key: FieldFilterKey) => void;
   clearLocalTimeCell: () => void;
   commitQueryEdit: () => void;
-  handleColumnVisibilityChange: OnChangeFn<VisibilityState>;
-  handleSortingChange: OnChangeFn<SortingState>;
+  handleColumnVisibilityChange: StateChangeHandler<TableVisibilityState>;
+  handleSortingChange: StateChangeHandler<TableSortingState>;
   removeHarness: (value: string) => void;
   removeMachine: (value: string) => void;
   setBreakdownSort: (sort: BreakdownSort) => void;
@@ -53,10 +59,7 @@ export interface DashboardNavigationController extends DashboardNavigationState 
   setTab: (tab: string) => void;
   setTimelineDimensionFilter: (dimension: TimelineDimension, value: string) => void;
   toggleHarness: (value: string) => void;
-  updateSearch: (
-    updater: (current: DashboardSearch) => DashboardSearch,
-    options?: { replace?: boolean; resetScroll?: boolean },
-  ) => void;
+  updateSearch: SearchNavigationIntent<DashboardSearch>;
 }
 
 export const createDashboardNavigationController = (defaults: DashboardSearch): DashboardNavigationController => {
@@ -104,8 +107,8 @@ export const createDashboardNavigationController = (defaults: DashboardSearch): 
   const setLocalTimeCell = (cell: LocalTimeCell): void =>
     updateSearch((current) => ({ ...current, timeCell: serializeDashboardTimeCell(cell) }));
   const clearLocalTimeCell = (): void => updateSearch((current) => withoutDashboardTimeCell(current));
-  const setFieldFilters = (updater: Updater<FieldFilters>): void =>
-    updateSearch((current) => ({ ...current, filters: applyTableUpdate(updater, current.filters) }));
+  const setFieldFilters = (updater: StateUpdater<FieldFilters>): void =>
+    updateSearch((current) => ({ ...current, filters: applyStateUpdate(updater, current.filters) }));
   const setFieldFilter = (key: FieldFilterKey, value: string): void =>
     setFieldFilters((current) => toggleExactFieldFilter(current, key, value));
   const setTimelineDimensionFilter = (dimension: TimelineDimension, value: string): void =>
@@ -116,13 +119,13 @@ export const createDashboardNavigationController = (defaults: DashboardSearch): 
       delete next[key];
       return next;
     });
-  const handleSortingChange: OnChangeFn<SortingState> = (updater) =>
+  const handleSortingChange: StateChangeHandler<TableSortingState> = (updater) =>
     updateSearch((current) => ({
       ...current,
-      sort: sortFromSortingState(applyTableUpdate(updater, sortingStateFromSearch(current.sort)), defaults.sort),
+      sort: sortFromSortingState(applyStateUpdate(updater, sortingStateFromSearch(current.sort)), defaults.sort),
     }));
-  const handleColumnVisibilityChange: OnChangeFn<VisibilityState> = (updater) => {
-    const nextVisibility = applyTableUpdate(updater, columnVisibility());
+  const handleColumnVisibilityChange: StateChangeHandler<TableVisibilityState> = (updater) => {
+    const nextVisibility = applyStateUpdate(updater, columnVisibility());
     setColumnVisibility(nextVisibility);
     updateSearch((current) => ({ ...current, ...columnVisibilitySearchForVisibility(nextVisibility) }), {
       replace: true,

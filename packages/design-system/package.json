@@ -27,7 +27,7 @@
     "solid-js": "^1.9.13"
   },
   "devDependencies": {
-    "@pandacss/dev": "^1.11.3",
+    "@pandacss/dev": "1.12.0",
     "solid-js": "^1.9.13"
   },
   "scripts": {

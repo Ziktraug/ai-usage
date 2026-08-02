@@ -4,10 +4,14 @@
     "includes": [
       "**/*.ts",
       "**/*.tsx",
+      "**/*.svelte",
       "**/*.json",
       "!**/.output",
       "!**/.output-build",
       "!**/.output-dev",
+      "!**/.output-svelte-shadow",
+      "!**/.svelte-kit",
+      "!**/.svelte-kit-shadow",
       "!**/.turbo",
       "!**/.worktrees",
       "!**/dist",
@@ -130,6 +134,7 @@
   "extends": [
     "ultracite/biome/core",
     "ultracite/biome/solid",
+    "ultracite/biome/svelte",
     "ultracite/biome/tanstack",
     "ultracite/biome/vitest"
   ]
