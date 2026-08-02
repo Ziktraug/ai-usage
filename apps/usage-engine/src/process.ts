@@ -62,6 +62,7 @@ export interface UsageEngineProcessDependencies {
     readonly targetId: UsageEngineTargetId;
     readonly token: UsageEngineBearerToken;
   }) => Promise<PublishedUsageEngineRendezvous>;
+  readonly reportCleanupFailure: (resource: UsageEngineCleanupResource) => void;
   readonly startControlServer: (input: {
     readonly hostname: '127.0.0.1';
     readonly port: number;
@@ -70,6 +71,8 @@ export interface UsageEngineProcessDependencies {
   }) => Promise<UsageEngineControlServer>;
   readonly writeOutput: (line: string) => void;
 }
+
+export type UsageEngineCleanupResource = 'control-server' | 'rendezvous' | 'runtime';
 
 export interface RunUsageEngineProcessOptions {
   readonly forcedTermination?: Promise<UsageEngineTerminationSignal>;
@@ -130,8 +133,18 @@ const writeForegroundOutcome = (
 const scheduleLateCleanup = <Resource>(
   resource: Promise<Resource>,
   cleanup: (value: Resource) => Promise<void>,
+  reportCleanupFailure: () => void,
 ): void => {
-  resource.then(cleanup).catch(() => undefined);
+  resource.then(
+    async (value) => {
+      try {
+        await cleanup(value);
+      } catch {
+        reportCleanupFailure();
+      }
+    },
+    () => undefined,
+  );
 };
 
 type ProcessCleanupOutcome =
@@ -142,6 +155,7 @@ type ProcessCleanupOutcome =
 const settleProcessCleanup = async (
   cleanup: () => Promise<void>,
   forcedTermination?: Promise<UsageEngineTerminationSignal>,
+  reportCleanupFailure?: () => void,
 ): Promise<ProcessCleanupOutcome> => {
   let operation: Promise<void>;
   try {
@@ -156,7 +170,18 @@ const settleProcessCleanup = async (
   if (!forcedTermination) {
     return await settlement;
   }
-  return await Promise.race([settlement, forcedTermination.then((): ProcessCleanupOutcome => ({ kind: 'forced' }))]);
+  const outcome = await Promise.race([
+    settlement,
+    forcedTermination.then((): ProcessCleanupOutcome => ({ kind: 'forced' })),
+  ]);
+  if (outcome.kind === 'forced') {
+    settlement.then((lateOutcome) => {
+      if (lateOutcome.kind === 'failed') {
+        reportCleanupFailure?.();
+      }
+    });
+  }
+  return outcome;
 };
 
 type TrackedOperationState = 'fulfilled' | 'pending' | 'rejected';
@@ -185,7 +210,16 @@ const disposeRuntimeForProcess = async (
   runtime: UsageEngineRuntimeHost,
   retainWriterLease: boolean,
   forcedTermination?: Promise<UsageEngineTerminationSignal>,
+  reportCleanupFailure?: () => void,
 ): Promise<void> => {
+  let cleanupFailureReported = false;
+  const reportOnce = (): void => {
+    if (cleanupFailureReported) {
+      return;
+    }
+    cleanupFailureReported = true;
+    reportCleanupFailure?.();
+  };
   const disposal = retainWriterLease ? runtime.disposeRetainingWriterLease() : runtime.dispose();
   if (!forcedTermination) {
     await disposal;
@@ -202,11 +236,22 @@ const disposeRuntimeForProcess = async (
     throw outcome.error;
   }
   if (outcome.kind === 'forced') {
-    runtime.disposeRetainingWriterLease().catch(() => undefined);
+    disposal.then(
+      () => undefined,
+      () => reportOnce(),
+    );
+    runtime.disposeRetainingWriterLease().catch(reportOnce);
   }
 };
 
 export const createUsageEngineProcess = (dependencies: UsageEngineProcessDependencies): UsageEngineProcess => {
+  const reportCleanupFailure = (resource: UsageEngineCleanupResource): void => {
+    try {
+      dependencies.reportCleanupFailure(resource);
+    } catch {
+      // Cleanup diagnostics must never create another shutdown failure.
+    }
+  };
   const runServe = async (
     options: RunUsageEngineProcessOptions & { readonly mode: { readonly mode: 'serve'; readonly port: number } },
   ) => {
@@ -255,11 +300,19 @@ export const createUsageEngineProcess = (dependencies: UsageEngineProcessDepende
         rendezvous = await rendezvousPublication.promise;
       } else if (rendezvousPublication.state() === 'pending') {
         retainWriterLease = true;
-        scheduleLateCleanup(rendezvousPublication.promise, async (published) => await published.remove());
+        scheduleLateCleanup(
+          rendezvousPublication.promise,
+          async (published) => await published.remove(),
+          () => reportCleanupFailure('rendezvous'),
+        );
       }
     }
     if (rendezvous) {
-      const removal = await settleProcessCleanup(() => rendezvous.remove(), options.forcedTermination);
+      const removal = await settleProcessCleanup(
+        () => rendezvous.remove(),
+        options.forcedTermination,
+        () => reportCleanupFailure('rendezvous'),
+      );
       if (removal.kind === 'failed') {
         cleanupFailures.push(removal.error);
         retainWriterLease = true;
@@ -272,11 +325,19 @@ export const createUsageEngineProcess = (dependencies: UsageEngineProcessDepende
         server = await serverStart.promise;
       } else if (serverStart.state() === 'pending') {
         retainWriterLease = true;
-        scheduleLateCleanup(serverStart.promise, async (started) => await started.dispose());
+        scheduleLateCleanup(
+          serverStart.promise,
+          async (started) => await started.dispose(),
+          () => reportCleanupFailure('control-server'),
+        );
       }
     }
     if (server) {
-      const disposal = await settleProcessCleanup(() => server.dispose(), options.forcedTermination);
+      const disposal = await settleProcessCleanup(
+        () => server.dispose(),
+        options.forcedTermination,
+        () => reportCleanupFailure('control-server'),
+      );
       if (disposal.kind === 'failed') {
         cleanupFailures.push(disposal.error);
         retainWriterLease = true;
@@ -285,7 +346,9 @@ export const createUsageEngineProcess = (dependencies: UsageEngineProcessDepende
       }
     }
     try {
-      await disposeRuntimeForProcess(runtime, retainWriterLease, options.forcedTermination);
+      await disposeRuntimeForProcess(runtime, retainWriterLease, options.forcedTermination, () =>
+        reportCleanupFailure('runtime'),
+      );
     } catch (error) {
       cleanupFailures.push(error);
     }
@@ -337,7 +400,7 @@ export const createUsageEngineProcess = (dependencies: UsageEngineProcessDepende
     }
     let cleanupFailure: unknown;
     try {
-      await disposeRuntimeForProcess(runtime, false, options.forcedTermination);
+      await disposeRuntimeForProcess(runtime, false, options.forcedTermination, () => reportCleanupFailure('runtime'));
     } catch (error) {
       cleanupFailure = error;
     }

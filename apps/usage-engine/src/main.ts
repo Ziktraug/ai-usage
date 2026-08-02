@@ -4,9 +4,14 @@ import { makeEngineWideEventSinkLayer, resolveWideEventLogDirectory } from '@ai-
 import { parseUsageEngineInstanceId, type UsageEngineInstanceId } from '@ai-usage/usage-engine-control';
 import { createUsageEngineBearerToken } from '@ai-usage/usage-engine-control/node';
 import { createLiveUsageEngineRuntime } from '@ai-usage/usage-engine-runtime/live';
-import { startUsageEngineControlServer } from './control-server';
+import { startUsageEngineControlServer, type UsageEngineInternalFailureBoundary } from './control-server';
 import { acquireUsageEngineLock } from './engine-lock';
-import { createUsageEngineProcess, interruptedExitCode, type UsageEngineProcessDependencies } from './process';
+import {
+  createUsageEngineProcess,
+  interruptedExitCode,
+  type UsageEngineCleanupResource,
+  type UsageEngineProcessDependencies,
+} from './process';
 import { parseUsageEngineProcessArguments } from './process-arguments';
 import { checkUsageEngine } from './process-check';
 import { resolveUsageEngineProcessPaths } from './process-paths';
@@ -19,6 +24,14 @@ const engineInstanceIdFrom = (env: NodeJS.ProcessEnv): UsageEngineInstanceId =>
   env.AI_USAGE_ENGINE_INSTANCE_ID === undefined
     ? parseUsageEngineInstanceId(randomUUID())
     : parseUsageEngineInstanceId(env.AI_USAGE_ENGINE_INSTANCE_ID);
+
+const reportControlFailure = (boundary: UsageEngineInternalFailureBoundary): void => {
+  process.stderr.write(`usage-engine controlFailure=${boundary}\n`);
+};
+
+const reportCleanupFailure = (resource: UsageEngineCleanupResource): void => {
+  process.stderr.write(`usage-engine cleanupFailure=${resource}\n`);
+};
 
 const createProductionDependencies = (
   env: NodeJS.ProcessEnv,
@@ -71,7 +84,9 @@ const createProductionDependencies = (
     }),
   createToken: () => createUsageEngineBearerToken(randomBytes(32).toString('base64url')),
   publishRendezvous: publishUsageEngineRendezvous,
-  startControlServer: startUsageEngineControlServer,
+  reportCleanupFailure,
+  startControlServer: async (input) =>
+    await startUsageEngineControlServer({ ...input, reportInternalFailure: reportControlFailure }),
   writeOutput: (line) => {
     process.stdout.write(`${line}\n`);
   },

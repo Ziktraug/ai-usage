@@ -1,6 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { basename } from 'node:path';
-import { scheduler as hostScheduler } from 'node:timers/promises';
 import { runBoundaryEffect, WideEventResourceService, WideEventSink } from '@ai-usage/effect-runtime';
 import {
   createLocalHistoryStorage,
@@ -38,6 +37,7 @@ import {
   parseUsageEnginePublicationRevision,
   type UsageEngineProjectSourceReference,
 } from '@ai-usage/usage-engine-control';
+import { createUsageFileMergeService, type UsageFileMergeService, UsageMergeError } from '@ai-usage/usage-merge';
 import {
   initializeUsageStore,
   publishServedReportRevision,
@@ -56,7 +56,6 @@ import {
   scavengeUsageEngineInbox,
   stageCursorUsageExport,
 } from './input-file';
-import { createEngineUsageMergeService, EngineMergeError, type EngineUsageMergeService } from './merge';
 import { type LegacyArtifactScavengeResult, scavengeLegacyUsageEngineArtifacts } from './recovery';
 import {
   createInitialUsageEngineSourceControlView,
@@ -82,6 +81,7 @@ import { createUsageEngineWriterGate, type UsageEngineWriterGate } from './write
 
 const TERMINAL_SOURCE_OUTCOMES = new Set(['failed', 'timed-out']);
 const MAX_SOURCE_SNAPSHOT_QUEUE = 64;
+const DEFAULT_SOURCE_CONTROL_STARTUP_DEADLINE_MS = 30_000;
 
 interface SourceSnapshotSubscriber {
   closed: boolean;
@@ -95,7 +95,9 @@ export interface TerminalSourceControlOptions {
   readonly instanceId: string;
   readonly policyStore: SourcePolicyStore;
   readonly publication: ReportPublicationPort;
+  readonly sourceControlService?: SourceControlService;
   readonly sources: ReadonlyMap<CollectionSourceId, ScheduledSource>;
+  readonly startupDeadlineMs?: number;
   readonly wideEventSinkLayer: Layer.Layer<WideEventResourceService | WideEventSink>;
   readonly writerGate?: UsageEngineWriterGate;
 }
@@ -122,23 +124,25 @@ const publicationIsSettled = (snapshot: SourceControlView): boolean => {
 export const createTerminalSourceControlPort = (
   options: TerminalSourceControlOptions,
 ): UsageEngineSourceControlPort => {
-  const controlLayer = Layer.scoped(
-    SourceControl,
-    createSourceControl({
-      autonomousCollection: options.initialDetection !== 'deferred',
-      ...(options.beforeInitialCollection === undefined
-        ? {}
-        : { beforeInitialCollection: options.beforeInitialCollection }),
-      initialDetection: options.initialDetection ?? 'automatic',
-      initialPublicationOrder: 'externally-published',
-      instanceId: options.instanceId,
-      policyStore: options.policyStore,
-      publication: options.publication,
-      sources: options.sources,
-      workerCount: 1,
-      ...(options.writerGate === undefined ? {} : { writerGate: options.writerGate }),
-    }),
-  ).pipe(Layer.provideMerge(options.wideEventSinkLayer));
+  const controlLayer = options.sourceControlService
+    ? Layer.succeed(SourceControl, options.sourceControlService)
+    : Layer.scoped(
+        SourceControl,
+        createSourceControl({
+          autonomousCollection: options.initialDetection !== 'deferred',
+          ...(options.beforeInitialCollection === undefined
+            ? {}
+            : { beforeInitialCollection: options.beforeInitialCollection }),
+          initialDetection: options.initialDetection ?? 'automatic',
+          initialPublicationOrder: 'externally-published',
+          instanceId: options.instanceId,
+          policyStore: options.policyStore,
+          publication: options.publication,
+          sources: options.sources,
+          workerCount: 1,
+          ...(options.writerGate === undefined ? {} : { writerGate: options.writerGate }),
+        }),
+      ).pipe(Layer.provideMerge(options.wideEventSinkLayer));
   const managedRuntime = ManagedRuntime.make(controlLayer);
   const subscribers = new Set<SourceSnapshotSubscriber>();
   const sourceCompletionGenerations = new Map<CollectionSourceId, number>(
@@ -147,6 +151,14 @@ export const createTerminalSourceControlPort = (
   let latest: SourceControlView | undefined;
   let startPromise: Promise<SourceControlView> | undefined;
   let disposalPromise: Promise<void> | undefined;
+  let disposing = false;
+  let streamFailure: Error | undefined;
+  let streamSettlement: Promise<void> | undefined;
+
+  const startupDeadlineMs = options.startupDeadlineMs ?? DEFAULT_SOURCE_CONTROL_STARTUP_DEADLINE_MS;
+  if (!(Number.isSafeInteger(startupDeadlineMs) && startupDeadlineMs > 0)) {
+    throw new Error('The source-control startup deadline must be a positive integer.');
+  }
 
   const withControl = <Value, Error>(
     operation: (service: SourceControlService) => Effect.Effect<Value, Error>,
@@ -212,42 +224,29 @@ export const createTerminalSourceControlPort = (
     }
   };
 
-  const start = (): Promise<SourceControlView> => {
-    startPromise ??= (async () => {
-      const snapshot = await run((service) => service.getSnapshot);
-      latest = snapshot;
-      managedRuntime.runFork(
-        withControl((service) =>
-          Stream.runForEach(service.changes, (next) => Effect.sync(() => publishSnapshot(next))),
-        ),
-      );
-      const initialPublicationTarget = snapshot.publication.requestedGeneration;
-      let current = snapshot;
-      while (current.publication.acknowledgedRequestGeneration < initialPublicationTarget) {
-        if (current.publication.lastOutcome === 'failed') {
-          throw new Error('The usage engine initial source-control publication failed.');
-        }
-        await hostScheduler.yield();
-        current = await run((service) => service.getSnapshot);
-      }
-      while ((latest?.generation ?? -1) < current.generation) {
-        await hostScheduler.yield();
-      }
-      return latest ?? current;
-    })();
-    return startPromise;
+  const failStream = (): void => {
+    if (disposing || streamFailure) {
+      return;
+    }
+    streamFailure = new Error('The usage engine source-control event stream stopped unexpectedly.');
+    for (const subscriber of [...subscribers]) {
+      closeSubscriber(subscriber);
+    }
   };
 
-  const currentSnapshot = async (signal?: AbortSignal): Promise<SourceControlView> => {
-    throwIfAborted(signal);
-    await start();
-    throwIfAborted(signal);
-    const snapshot = await run((service) => service.getSnapshot, signal);
-    while ((latest?.generation ?? -1) < snapshot.generation) {
-      throwIfAborted(signal);
-      await hostScheduler.yield();
+  const startStream = (): void => {
+    if (streamSettlement) {
+      return;
     }
-    return latest ?? snapshot;
+    const streamFiber = managedRuntime.runFork(
+      withControl((service) => Stream.runForEach(service.changes, (next) => Effect.sync(() => publishSnapshot(next)))),
+    );
+    streamSettlement = new Promise<void>((resolve) => {
+      streamFiber.addObserver(() => {
+        failStream();
+        resolve();
+      });
+    });
   };
 
   const waitForNextSnapshot = async (generation: number, signal?: AbortSignal): Promise<void> => {
@@ -256,6 +255,9 @@ export const createTerminalSourceControlPort = (
     }
     if (latest && latest.generation > generation) {
       return;
+    }
+    if (streamFailure) {
+      throw streamFailure;
     }
     await new Promise<void>((resolve, reject) => {
       let settled = false;
@@ -275,7 +277,11 @@ export const createTerminalSourceControlPort = (
       };
       const onAbort = (): void => finish(abortedOperation());
       const receive = ({ done, value }: IteratorResult<SourceControlView>): void => {
-        if (done || value.generation > generation) {
+        if (done) {
+          finish(streamFailure ?? abortedOperation());
+          return;
+        }
+        if (value.generation > generation) {
           finish();
           return;
         }
@@ -286,8 +292,54 @@ export const createTerminalSourceControlPort = (
       signal?.addEventListener('abort', onAbort, { once: true });
       if (latest && latest.generation > generation) {
         finish();
+      } else if (streamFailure) {
+        finish(streamFailure);
       }
     });
+  };
+
+  const start = (): Promise<SourceControlView> => {
+    startPromise ??= (async () => {
+      const snapshot = await run((service) => service.getSnapshot);
+      publishSnapshot(snapshot);
+      startStream();
+      publishSnapshot(await run((service) => service.getSnapshot));
+      const initialPublicationTarget = snapshot.publication.requestedGeneration;
+      const startupAbort = new AbortController();
+      let startupTimedOut = false;
+      const deadline = setTimeout(() => {
+        startupTimedOut = true;
+        startupAbort.abort();
+      }, startupDeadlineMs);
+      try {
+        let current = latest ?? snapshot;
+        while (current.publication.acknowledgedRequestGeneration < initialPublicationTarget) {
+          if (current.publication.lastOutcome === 'failed') {
+            throw new Error('The usage engine initial source-control publication failed.');
+          }
+          await waitForNextSnapshot(current.generation, startupAbort.signal);
+          current = latest ?? current;
+        }
+        return current;
+      } catch (error) {
+        if (startupTimedOut) {
+          throw new Error('The usage engine initial source-control publication timed out.');
+        }
+        throw error;
+      } finally {
+        clearTimeout(deadline);
+      }
+    })();
+    return startPromise;
+  };
+
+  const currentSnapshot = async (signal?: AbortSignal): Promise<SourceControlView> => {
+    throwIfAborted(signal);
+    await start();
+    throwIfAborted(signal);
+    const snapshot = await run((service) => service.getSnapshot, signal);
+    publishSnapshot(snapshot);
+    return latest ?? snapshot;
   };
 
   const waitForSnapshot = async (
@@ -519,6 +571,7 @@ export const createTerminalSourceControlPort = (
 
   const dispose = (): Promise<void> => {
     disposalPromise ??= (async () => {
+      disposing = true;
       for (const subscriber of [...subscribers]) {
         closeSubscriber(subscriber);
       }
@@ -566,7 +619,7 @@ export interface LiveUsageEngineMutationOptions {
   readonly dbPath: string;
   readonly inboxDirectory: string;
   readonly machine: UsageMachine;
-  readonly mergeService?: EngineUsageMergeService;
+  readonly mergeService?: UsageFileMergeService;
   readonly now?: () => Date;
   readonly operatorCwd: string;
   readonly readInput?: typeof readUsageEngineInput;
@@ -639,7 +692,7 @@ export const createLiveUsageEngineMutationPort = (options: LiveUsageEngineMutati
     });
   const mergeService =
     options.mergeService ??
-    createEngineUsageMergeService({
+    createUsageFileMergeService({
       dbPath: options.dbPath,
       localMachine: options.machine,
       ...(options.now === undefined ? {} : { now: options.now }),
@@ -658,7 +711,7 @@ export const createLiveUsageEngineMutationPort = (options: LiveUsageEngineMutati
     }
   };
   const mergeCommandError = (error: unknown): unknown => {
-    if (!(error instanceof EngineMergeError)) {
+    if (!(error instanceof UsageMergeError)) {
       return error;
     }
     switch (error.reason) {
@@ -686,7 +739,7 @@ export const createLiveUsageEngineMutationPort = (options: LiveUsageEngineMutati
       }
     }
   };
-  const runMergeEffect = async <Value>(effect: Effect.Effect<Value, EngineMergeError>): Promise<Value> => {
+  const runMergeEffect = async <Value>(effect: Effect.Effect<Value, UsageMergeError>): Promise<Value> => {
     const outcome = await Effect.runPromise(
       effect.pipe(
         Effect.match({
@@ -788,7 +841,7 @@ export const createLiveUsageEngineMutationPort = (options: LiveUsageEngineMutati
           try {
             throwIfAborted(signal);
             await runMergeEffect(
-              mergeService.confirm({
+              mergeService.confirmManualMergeBundle({
                 bytes: input.bytes,
                 confirmationToken: command.confirmationToken,
                 expectedDigest: command.documentDigest,
@@ -834,7 +887,9 @@ export const createLiveUsageEngineMutationPort = (options: LiveUsageEngineMutati
           const input = await readMergeInput(command.input);
           try {
             throwIfAborted(signal);
-            const preview = await runMergeEffect(mergeService.preview({ bytes: input.bytes, text: input.text }));
+            const preview = await runMergeEffect(
+              mergeService.previewManualMergeBundle({ bytes: input.bytes, text: input.text }),
+            );
             throwIfAborted(signal);
             return {
               bytes: preview.bytes,
@@ -1141,7 +1196,7 @@ export const createLiveUsageEngineRuntime = (options: LiveUsageEngineRuntimeOpti
         });
       } finally {
         await Promise.all([...pendingDiagnostics]);
-        await eventRuntime.dispose().catch(() => undefined);
+        await eventRuntime.dispose();
       }
     },
     recover: async () =>

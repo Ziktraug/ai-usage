@@ -16,6 +16,7 @@ export const TYPECHECK_PROJECTS = [
   'packages/skills/tsconfig.json',
   'packages/usage-engine-control/tsconfig.json',
   'packages/usage-engine-runtime/tsconfig.json',
+  'packages/usage-merge/tsconfig.json',
   'packages/usage-store/tsconfig.json',
   'tsconfig.tools.json',
 ] as const;

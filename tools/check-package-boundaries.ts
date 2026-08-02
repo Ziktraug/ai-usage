@@ -89,6 +89,12 @@ const boundaryPolicies: BoundaryPolicy[] = [
     reason: 'report-data must stay collector-free and must not import runtime or app packages.',
   },
   {
+    packageName: '@ai-usage/usage-merge',
+    forbiddenDependencies: ['@ai-usage/local-collectors', '@ai-usage/report-data', '@ai-usage/web', '@ai-usage/cli'],
+    forbiddenImports: ['@ai-usage/local-collectors', '@ai-usage/report-data', '@ai-usage/web', '@ai-usage/cli'],
+    reason: 'usage-merge owns only the store-backed manual merge workflow.',
+  },
+  {
     packageName: '@ai-usage/cli',
     forbiddenDependencies: ['@ai-usage/local-collectors'],
     forbiddenImports: ['@ai-usage/local-collectors'],
@@ -132,6 +138,7 @@ const engineControlPackage = '@ai-usage/usage-engine-control';
 const engineControlTesting = `${engineControlPackage}/testing`;
 const engineRuntimePackage = '@ai-usage/usage-engine-runtime';
 const engineAppPackage = '@ai-usage/usage-engine';
+const usageMergePackage = '@ai-usage/usage-merge';
 const localMachinePackage = '@ai-usage/local-machine';
 const localMachineCampaignLabelConfig = `${localMachinePackage}/campaign-label-config`;
 const localMachineSessionDetail = `${localMachinePackage}/session-detail`;
@@ -147,6 +154,7 @@ const engineRuntimeAllowedWorkspaceDependencies = new Set([
   '@ai-usage/report-core',
   '@ai-usage/report-data',
   '@ai-usage/usage-engine-control',
+  usageMergePackage,
   usageStorePackage,
 ]);
 const testOnlySourcePattern =
@@ -175,6 +183,13 @@ const targetDependencyReason = (
   }
   if (packageName === engineRuntimePackage && !engineRuntimeAllowedWorkspaceDependencies.has(dependencyPackage)) {
     return 'usage-engine-runtime may depend only on its explicit write-side domain packages.';
+  }
+  if (
+    packageName === usageMergePackage &&
+    dependencyPackage !== '@ai-usage/report-core' &&
+    dependencyPackage !== usageStorePackage
+  ) {
+    return 'usage-merge may depend only on report-core and usage-store.';
   }
   if (dependencyPackage === engineRuntimePackage && packageName !== engineAppPackage) {
     return 'Only apps/usage-engine may depend on usage-engine-runtime.';
@@ -212,8 +227,12 @@ const targetImportReason = (
   ) {
     return 'Web and CLI may import only the usage-store reader facade.';
   }
-  if (isPackageOrSubpath(specifier, usageStoreWriter) && packageName !== engineRuntimePackage) {
-    return 'Only usage-engine-runtime may import the usage-store writer facade.';
+  if (
+    isPackageOrSubpath(specifier, usageStoreWriter) &&
+    packageName !== engineRuntimePackage &&
+    packageName !== usageMergePackage
+  ) {
+    return 'Only usage-engine-runtime and usage-merge may import the usage-store writer facade.';
   }
   if (isPackageOrSubpath(specifier, engineRuntimePackage) && packageName !== engineAppPackage) {
     return 'Only apps/usage-engine may compose usage-engine-runtime.';

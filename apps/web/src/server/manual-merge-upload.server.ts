@@ -133,79 +133,30 @@ const parseManualMergeAction = (request: Request): ParsedManualMergeAction | Res
   return { action, confirmationToken, documentDigest };
 };
 
-const engineFailureStatus = (code: UsageEngineErrorCode): number => {
-  switch (code) {
-    case 'merge-invalid-json':
-      return 400;
-    case 'merge-invalid-input':
-      return 422;
-    case 'command-rejected':
-    case 'merge-self-merge':
-    case 'preview-stale':
-    case 'protocol-mismatch':
-      return 409;
-    case 'request-too-large':
-      return 413;
-    case 'invalid-response':
-    case 'response-too-large':
-      return 502;
-    case 'aborted':
-    case 'authentication-failed':
-    case 'engine-busy':
-    case 'engine-unavailable':
-    case 'timeout':
-    case 'transport-failed':
-      return 503;
-    case 'command-failed':
-    case 'merge-store-failed':
-      return 500;
-    default: {
-      const unsupportedCode: never = code;
-      return unsupportedCode;
-    }
-  }
-};
+const engineFailurePresentation = {
+  aborted: { message: 'The merge command was cancelled.', status: 503 },
+  'authentication-failed': { message: 'The usage engine is unavailable for this merge.', status: 503 },
+  'command-failed': { message: 'The usage engine could not complete this merge.', status: 500 },
+  'command-rejected': { message: 'The usage engine rejected the merge command.', status: 409 },
+  'engine-busy': { message: 'The usage engine is unavailable for this merge.', status: 503 },
+  'engine-unavailable': { message: 'The usage engine is unavailable for this merge.', status: 503 },
+  'invalid-response': { message: 'The usage engine returned an invalid merge response.', status: 502 },
+  'merge-invalid-input': { message: 'The merge file is invalid.', status: 422 },
+  'merge-invalid-json': { message: 'The merge file does not contain valid JSON.', status: 400 },
+  'merge-self-merge': { message: 'The merge file belongs to this machine.', status: 409 },
+  'merge-store-failed': { message: 'The usage store could not apply the merge file.', status: 500 },
+  'preview-stale': { message: 'The merge file changed after it was previewed.', status: 409 },
+  'protocol-mismatch': { message: 'The usage engine version is incompatible with the web app.', status: 409 },
+  'request-too-large': { message: 'The usage engine rejected the merge file size.', status: 413 },
+  'response-too-large': { message: 'The usage engine returned an invalid merge response.', status: 502 },
+  timeout: { message: 'The usage engine is unavailable for this merge.', status: 503 },
+  'transport-failed': { message: 'The usage engine is unavailable for this merge.', status: 503 },
+} as const satisfies Readonly<Record<UsageEngineErrorCode, { readonly message: string; readonly status: number }>>;
 
-const engineFailureMessage = (code: UsageEngineErrorCode): string => {
-  switch (code) {
-    case 'merge-invalid-json':
-      return 'The merge file does not contain valid JSON.';
-    case 'merge-invalid-input':
-      return 'The merge file is invalid.';
-    case 'merge-self-merge':
-      return 'The merge file belongs to this machine.';
-    case 'preview-stale':
-      return 'The merge file changed after it was previewed.';
-    case 'protocol-mismatch':
-      return 'The usage engine version is incompatible with the web app.';
-    case 'request-too-large':
-      return 'The usage engine rejected the merge file size.';
-    case 'invalid-response':
-    case 'response-too-large':
-      return 'The usage engine returned an invalid merge response.';
-    case 'command-rejected':
-      return 'The usage engine rejected the merge command.';
-    case 'aborted':
-      return 'The merge command was cancelled.';
-    case 'authentication-failed':
-    case 'engine-busy':
-    case 'engine-unavailable':
-    case 'timeout':
-    case 'transport-failed':
-      return 'The usage engine is unavailable for this merge.';
-    case 'command-failed':
-      return 'The usage engine could not complete this merge.';
-    case 'merge-store-failed':
-      return 'The usage store could not apply the merge file.';
-    default: {
-      const unsupportedCode: never = code;
-      return unsupportedCode;
-    }
-  }
+const engineFailureResponse = (error: UsageEngineCommandCompletionError): Response => {
+  const presentation = engineFailurePresentation[error.code];
+  return jsonFailure(presentation.status, 'UsageEngineCommandError', presentation.message, error.code);
 };
-
-const engineFailureResponse = (error: UsageEngineCommandCompletionError): Response =>
-  jsonFailure(engineFailureStatus(error.code), 'UsageEngineCommandError', engineFailureMessage(error.code), error.code);
 
 const commandFor = (action: ParsedManualMergeAction, staged: StagedUsageEngineHandoff): ManualMergeCommand =>
   action.action === 'preview'

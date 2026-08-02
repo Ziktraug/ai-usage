@@ -240,9 +240,9 @@ Owns the durable SQLite schema and explicitly separate exports:
   checkpoints, atomic served-revision publication, recovery, and retention;
 - `./testing`: mixed temporary-store fixtures for tests only.
 
-There is no mixed root export. Production writer composition is permitted only
-through `usage-engine-runtime`, which itself is composed only by
-`apps/usage-engine`.
+There is no mixed root export. Production writer calls are owned by
+`usage-engine-runtime` and its deep `usage-merge` dependency; the runtime itself
+is composed only by `apps/usage-engine`.
 
 Served revision content is immutable once complete: support JSON,
 revision-keyed report rows, Session query columns, and private source authority
@@ -263,6 +263,12 @@ preview never imports rows or advances semantic generation. A document or
 logical-state change returns `preview-stale` and requires another preview.
 Generation advances only when the active semantic report projection changes;
 observation timestamps and identical imports do not invalidate captures.
+
+### `@ai-usage/usage-merge`
+
+Owns the manual merge bundle parser, byte digest, preview/confirmation workflow,
+bounded warning projection, and store-error mapping. Engine-runtime owns file
+and command adaptation and must not duplicate these semantics.
 
 ### `@ai-usage/usage-engine-control`
 

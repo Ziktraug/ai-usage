@@ -52,6 +52,8 @@ state.
 
 ## `@ai-usage/local-machine`
 
+- `./campaign-label-config`: read-only campaign-label overrides for Web
+  presentation after engine-owned mutations.
 - `./claude-session-analysis`: bounded exact-session Claude reader.
 - `./claude-session-facts`: pure Claude semantic facts.
 - `./codex-session-analysis`: bounded exact-session Codex reader.
@@ -80,7 +82,8 @@ state.
 
 This package is collector-independent and must not import local collectors,
 report-data, the store, engine/runtime, or apps. Web production imports are
-restricted exactly to `@ai-usage/local-machine/session-detail` and
+restricted exactly to `@ai-usage/local-machine/campaign-label-config`,
+`@ai-usage/local-machine/session-detail`, and
 `@ai-usage/local-machine/skills-config`.
 
 ## `@ai-usage/local-collectors`
@@ -119,8 +122,8 @@ lease, or subprocess exports. Production `report-data` code may import only
   checkpoints, changes journal mode, or writes.
 - `./writer`: migrations, normalized imports, enrichment, transfer mutations,
   source checkpoints/attempts, atomic served-revision publication, recovery,
-  retention, and explicit checkpointing. Production use is restricted to
-  `usage-engine-runtime`.
+  retention, and explicit checkpointing. Production use is restricted to the
+  deep `usage-engine-runtime` and `usage-merge` owners.
 - `./testing`: temporary mixed read/write fixtures for tests and E2E only.
 
 There is deliberately no root export.
@@ -145,6 +148,15 @@ The protocol surface carries commands, status, and bounded events only. It must
 never expose report rows, focused/Session results, quota history, SQLite bytes,
 staged file contents, or arbitrary operator paths to web clients.
 
+## `@ai-usage/usage-merge`
+
+- `.`: manual merge parsing, raw-byte digest binding, preview, confirmation,
+  bounded warning projection, and usage-store error mapping.
+
+This package may import report-core, `usage-store/writer`, and Effect only.
+Engine-runtime adapts it to inbox/operator files and control commands; it does
+not duplicate merge semantics.
+
 ## `@ai-usage/usage-engine-runtime`
 
 - `.`: scoped `UsageEngineRuntime` lifecycle and injected factory contract.
@@ -157,8 +169,13 @@ staged file contents, or arbitrary operator paths to web clients.
 - `./source-control`: bounded scheduler/state-machine runtime.
 
 This is the sole deep write-side service. It may import collectors,
-`report-data`, control contracts, and `usage-store/writer`, but no app. Only
-`apps/usage-engine` may compose its live implementation.
+`report-data`, control contracts, `usage-merge`, and `usage-store/writer`, but
+no app. Only `apps/usage-engine` may compose its live implementation.
+
+Provider usage polling is the engine-owned `codex.usage-limits` source at its
+five-minute cadence. Web and CLI display its stored freshness through read-only
+facades; an explicit refresh sends `collect-fresh-quota` through the control
+client and never starts an app-owned provider timer.
 
 ## `@ai-usage/usage-engine`
 
@@ -188,8 +205,9 @@ This is the sole deep write-side service. It may import collectors,
   `usage-engine-runtime` or composes `usage-store/writer` transitively.
 - `apps/web` may import design-system, effect-runtime, report-core/report-data,
   skills, usage-engine-control, `usage-store/reader`,
-  `local-machine/session-detail`, and `local-machine/skills-config`. It must not
-  reach collectors or engine-runtime directly or transitively.
+  `local-machine/campaign-label-config`, `local-machine/session-detail`, and
+  `local-machine/skills-config`. It must not reach collectors or engine-runtime
+  directly or transitively.
 - `apps/cli` may import effect-runtime, report-core,
   `@ai-usage/report-data/portable-report`, usage-engine-control,
   `usage-store/reader`, and `@ai-usage/usage-engine/main` for a bounded

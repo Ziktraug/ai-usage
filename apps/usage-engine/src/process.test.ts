@@ -35,10 +35,12 @@ const paths: UsageEngineProcessPaths = {
 
 const deferred = <Value>() => {
   let resolve: ((value: Value | PromiseLike<Value>) => void) | undefined;
-  const promise = new Promise<Value>((resolver) => {
+  let reject: ((reason?: unknown) => void) | undefined;
+  const promise = new Promise<Value>((resolver, rejecter) => {
     resolve = resolver;
+    reject = rejecter;
   });
-  return { promise, resolve: (value: Value) => resolve?.(value) };
+  return { promise, reject: (reason?: unknown) => reject?.(reason), resolve: (value: Value) => resolve?.(value) };
 };
 
 const completion: UsageEngineCommandCompletion = parseUsageEngineCommandCompletion({
@@ -128,6 +130,7 @@ const createDependencies = (
   createInstanceId: () => INSTANCE_ID,
   createRuntime: () => createRuntime(trace),
   createToken: () => TOKEN,
+  reportCleanupFailure: (resource) => trace.push(`cleanup-failure:${resource}`),
   publishRendezvous: ({ port, targetId, token }) => {
     trace.push(`rendezvous:${port}:${token === TOKEN}`);
     return Promise.resolve({
@@ -309,6 +312,56 @@ describe('usage engine process lifecycle', () => {
     expect(trace).toContain('runtime-retain-dispose');
   });
 
+  test('reports a deferred server cleanup failure after terminated startup settles late', async () => {
+    const trace: string[] = [];
+    const output: string[] = [];
+    const termination = deferred<UsageEngineTerminationSignal>();
+    const serverStart = deferred<Awaited<ReturnType<UsageEngineProcessDependencies['startControlServer']>>>();
+    const dependencies = createDependencies(trace, output, {
+      startControlServer: () => serverStart.promise,
+    });
+    const running = createUsageEngineProcess(dependencies).run({
+      mode: { mode: 'serve', port: 0 },
+      paths,
+      termination: termination.promise,
+    });
+    await Promise.resolve();
+    termination.resolve('SIGTERM');
+    await expect(running).resolves.toBe(0);
+
+    serverStart.resolve({
+      dispose: () => Promise.reject(new Error('private late server cleanup failure')),
+      hostname: '127.0.0.1',
+      port: 41_052,
+    });
+    await Bun.sleep(0);
+
+    expect(trace).toContain('cleanup-failure:control-server');
+  });
+
+  test('does not misclassify a deferred server startup rejection as cleanup failure', async () => {
+    const trace: string[] = [];
+    const output: string[] = [];
+    const termination = deferred<UsageEngineTerminationSignal>();
+    const serverStart = deferred<Awaited<ReturnType<UsageEngineProcessDependencies['startControlServer']>>>();
+    const dependencies = createDependencies(trace, output, {
+      startControlServer: () => serverStart.promise,
+    });
+    const running = createUsageEngineProcess(dependencies).run({
+      mode: { mode: 'serve', port: 0 },
+      paths,
+      termination: termination.promise,
+    });
+    await Promise.resolve();
+    termination.resolve('SIGTERM');
+    await expect(running).resolves.toBe(0);
+
+    serverStart.reject(new Error('private late server startup failure'));
+    await Bun.sleep(0);
+
+    expect(trace).not.toContain('cleanup-failure:control-server');
+  });
+
   test('does not wait forever for non-cooperative rendezvous removal after forced termination', async () => {
     const trace: string[] = [];
     const output: string[] = [];
@@ -436,6 +489,88 @@ describe('usage engine process lifecycle', () => {
     ]);
     expect(outcome).toEqual({ exitCode: 143, kind: 'completed' });
     expect(trace).toContain('runtime-retain-dispose');
+  });
+
+  test('reports a runtime disposal rejection that settles after forced termination', async () => {
+    const trace: string[] = [];
+    const output: string[] = [];
+    const termination = deferred<UsageEngineTerminationSignal>();
+    const forcedTermination = deferred<UsageEngineTerminationSignal>();
+    const waiting = deferred<void>();
+    const disposalStarted = deferred<void>();
+    const disposal = deferred<void>();
+    const runtime = createRuntime(trace, {
+      dispose: () => {
+        disposalStarted.resolve();
+        return disposal.promise;
+      },
+      disposeRetainingWriterLease: () => disposal.promise,
+      waitForCommand: () => {
+        waiting.resolve();
+        return new Promise(() => undefined);
+      },
+    });
+    const request = parseUsageEngineCommandRequest({
+      command: { command: 'publish' },
+      commandId: 'command-1',
+      protocolVersion: USAGE_ENGINE_PROTOCOL_VERSION,
+    });
+    const running = createUsageEngineProcess(createDependencies(trace, output, { createRuntime: () => runtime })).run({
+      forcedTermination: forcedTermination.promise,
+      mode: { mode: 'once', request },
+      paths,
+      termination: termination.promise,
+    });
+    await waiting.promise;
+    termination.resolve('SIGTERM');
+    await disposalStarted.promise;
+    forcedTermination.resolve('SIGTERM');
+    await expect(running).resolves.toBe(143);
+
+    disposal.reject(new Error('private delayed runtime cleanup failure'));
+    await Bun.sleep(0);
+
+    expect(trace.filter((entry) => entry === 'cleanup-failure:runtime')).toHaveLength(1);
+  });
+
+  test('ignores cleanup reporter failures without creating a shutdown failure', async () => {
+    const trace: string[] = [];
+    const output: string[] = [];
+    const termination = deferred<UsageEngineTerminationSignal>();
+    const forcedTermination = deferred<UsageEngineTerminationSignal>();
+    const ready = deferred<void>();
+    const removalStarted = deferred<void>();
+    const removal = deferred<void>();
+    const dependencies = createDependencies(trace, output, {
+      publishRendezvous: async (input) => {
+        const rendezvous = await createDependencies(trace, output).publishRendezvous(input);
+        ready.resolve();
+        return {
+          ...rendezvous,
+          remove: () => {
+            removalStarted.resolve();
+            return removal.promise;
+          },
+        };
+      },
+      reportCleanupFailure: () => {
+        throw new Error('private reporter failure');
+      },
+    });
+    const running = createUsageEngineProcess(dependencies).run({
+      forcedTermination: forcedTermination.promise,
+      mode: { mode: 'serve', port: 0 },
+      paths,
+      termination: termination.promise,
+    });
+    await ready.promise;
+    termination.resolve('SIGTERM');
+    await removalStarted.promise;
+    forcedTermination.resolve('SIGTERM');
+    await expect(running).resolves.toBe(0);
+
+    removal.reject(new Error('private late rendezvous cleanup failure'));
+    await Bun.sleep(0);
   });
 
   test('waits for the exact foreground completion and starts no control server or rendezvous', async () => {

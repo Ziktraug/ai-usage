@@ -24,9 +24,10 @@ writer retention/recovery.
 ## Dependency rules
 
 It may import local collectors/machine primitives, report-data assembly,
-report-core, control contracts, effect-runtime, and `usage-store/writer`. It
-must not import any app. Only `apps/usage-engine` may compose its live
-implementation.
+report-core, control contracts, effect-runtime, `usage-merge`, and
+`usage-store/writer`. Manual bundle parsing, preview, and confirmation belong
+to `usage-merge`; the runtime only composes that service. It must not import
+any app. Only `apps/usage-engine` may compose its live implementation.
 
 ## Runtime guarantees
 

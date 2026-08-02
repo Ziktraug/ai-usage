@@ -17,13 +17,18 @@ import { ensureMachineConfig, readAiUsageConfig, writeMachineConfig } from '@ai-
 import { createUsageMergeBundle, serializeUsageMergeBundle } from '@ai-usage/report-core/merge-bundle';
 import { projectSourceSelectorKey } from '@ai-usage/report-core/project-group';
 import type { UsageMachine } from '@ai-usage/report-core/snapshot';
-import type { CollectionSourceId } from '@ai-usage/report-core/source-control';
+import {
+  type CollectionSourceId,
+  parseSourceControlSnapshot,
+  type SourceControlView,
+} from '@ai-usage/report-core/source-control';
 import { actualCost, normalizeUsageRow } from '@ai-usage/report-core/usage-row';
 import {
   parseUsageEngineHandoffId,
   parseUsageEngineProjectSourceReference,
   parseUsageEnginePublicationRevision,
 } from '@ai-usage/usage-engine-control';
+import type { UsageFileMergeService } from '@ai-usage/usage-merge';
 import {
   importLocalRows,
   initializeUsageStore,
@@ -31,7 +36,7 @@ import {
   queryReportRows,
   updateUsageMachineLabel,
 } from '@ai-usage/usage-store/testing';
-import { Deferred, Duration, Effect, Layer } from 'effect';
+import { Deferred, Duration, Effect, Layer, Stream } from 'effect';
 import { readUsageEngineInput } from './input-file';
 import {
   createDurableReportPublisher,
@@ -39,14 +44,55 @@ import {
   createLiveUsageEngineRuntime,
   createTerminalSourceControlPort,
 } from './live';
-import type { EngineUsageMergeService } from './merge';
-import { UsageEngineFatalConsistencyError, UsageEngineSoftSourceError } from './runtime';
+import {
+  createInitialUsageEngineSourceControlView,
+  UsageEngineFatalConsistencyError,
+  UsageEngineSoftSourceError,
+} from './runtime';
 import { type ScheduledSource, SourceRunError } from './source-adapters';
+import type { SourceControlService } from './source-control';
 import { createUsageEngineWriterGate } from './writer-gate';
 
 const roots: string[] = [];
 const machine: UsageMachine = { id: 'engine-machine', label: 'Engine Machine' };
 const now = new Date('2026-07-30T10:00:00.000Z');
+
+const sourceSnapshot = (
+  instanceId: string,
+  generation: number,
+  requestedGeneration: number,
+  acknowledgedRequestGeneration: number,
+): SourceControlView => {
+  const initial = createInitialUsageEngineSourceControlView(instanceId, now);
+  return parseSourceControlSnapshot({
+    ...initial,
+    generation,
+    publication: {
+      ...initial.publication,
+      acknowledgedRequestGeneration,
+      pendingDemand: requestedGeneration > acknowledgedRequestGeneration,
+      requestedGeneration,
+    },
+  });
+};
+
+const sourceControlFixture = (
+  snapshots: readonly SourceControlView[],
+  changes: Stream.Stream<SourceControlView>,
+): SourceControlService => {
+  let snapshotIndex = 0;
+  return {
+    changes,
+    detectAll: Effect.void,
+    detectSource: () => Effect.succeed(false),
+    getSnapshot: Effect.sync(() => snapshots[Math.min(snapshotIndex++, snapshots.length - 1)]!),
+    requestPublication: Effect.succeed(false),
+    runAllEnabled: Effect.succeed(0),
+    runNow: () => Effect.succeed(false),
+    setEnabled: () => Effect.void,
+    stopAutonomousCollection: Effect.void,
+  };
+};
 
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { force: true, recursive: true })));
@@ -154,6 +200,61 @@ describe('live usage engine publication', () => {
 
     expect(publicationCalls).toBe(1);
     await port.dispose();
+  });
+
+  test('advances immediately from a direct snapshot without waiting for a stream echo', async () => {
+    const instanceId = '10101010-1010-4010-8010-101010101010';
+    const initial = sourceSnapshot(instanceId, 1, 1, 0);
+    const acknowledged = sourceSnapshot(instanceId, 2, 1, 1);
+    const port = createTerminalSourceControlPort({
+      instanceId,
+      policyStore: { load: Effect.succeed({}), setEnabled: () => Effect.void },
+      publication: { publish: Effect.succeed({ changed: false, revision: 'unused' }) },
+      sourceControlService: sourceControlFixture([initial, acknowledged], Stream.never),
+      sources: new Map(),
+      startupDeadlineMs: 25,
+      wideEventSinkLayer: makeTestWideEventSinkLayer(noopWideEventSink),
+    });
+
+    await expect(port.start()).resolves.toMatchObject({ generation: 2 });
+    await port.dispose();
+  });
+
+  test('fails startup at its finite publication deadline', async () => {
+    const instanceId = '20202020-2020-4020-8020-202020202020';
+    const pending = sourceSnapshot(instanceId, 1, 1, 0);
+    const port = createTerminalSourceControlPort({
+      instanceId,
+      policyStore: { load: Effect.succeed({}), setEnabled: () => Effect.void },
+      publication: { publish: Effect.succeed({ changed: false, revision: 'unused' }) },
+      sourceControlService: sourceControlFixture([pending], Stream.never),
+      sources: new Map(),
+      startupDeadlineMs: 10,
+      wideEventSinkLayer: makeTestWideEventSinkLayer(noopWideEventSink),
+    });
+
+    await expect(port.start()).rejects.toThrow('timed out');
+    await port.dispose();
+  });
+
+  test('rejects pending startup when the source-control stream dies or completes', async () => {
+    const cases = [Stream.die(new Error('private stream failure')), Stream.empty] as const;
+    for (const [index, changes] of cases.entries()) {
+      const instanceId = index === 0 ? '30303030-3030-4030-8030-303030303030' : '40404040-4040-4040-8040-404040404040';
+      const pending = sourceSnapshot(instanceId, 1, 1, 0);
+      const port = createTerminalSourceControlPort({
+        instanceId,
+        policyStore: { load: Effect.succeed({}), setEnabled: () => Effect.void },
+        publication: { publish: Effect.succeed({ changed: false, revision: 'unused' }) },
+        sourceControlService: sourceControlFixture([pending], changes),
+        sources: new Map(),
+        startupDeadlineMs: 100,
+        wideEventSinkLayer: makeTestWideEventSinkLayer(noopWideEventSink),
+      });
+
+      await expect(port.start()).rejects.toThrow('event stream stopped unexpectedly');
+      await port.dispose();
+    }
   });
 
   test('surfaces an automatically undetected source as a soft collection outcome', async () => {
@@ -771,9 +872,9 @@ describe('live usage engine publication', () => {
     await writeFile(handoffPath, '{}', { mode: 0o600 });
     const previewStarted = await Effect.runPromise(Deferred.make<void>());
     const allowPreview = await Effect.runPromise(Deferred.make<void>());
-    const mergeService: EngineUsageMergeService = {
-      confirm: () => Effect.die(new Error('Confirmation is not used by this fixture.')),
-      preview: () =>
+    const mergeService: UsageFileMergeService = {
+      confirmManualMergeBundle: () => Effect.die(new Error('Confirmation is not used by this fixture.')),
+      previewManualMergeBundle: () =>
         Deferred.succeed(previewStarted, undefined).pipe(
           Effect.andThen(Deferred.await(allowPreview)),
           Effect.as({

@@ -235,7 +235,7 @@ describe('package boundary guard', () => {
     );
   });
 
-  test('allows usage-store writer only from usage-engine-runtime', async () => {
+  test('allows usage-store writer only from usage-engine-runtime and usage-merge', async () => {
     const root = await createFixture();
     await writePackage(root, 'apps', 'web', { name: '@ai-usage/web' }, "import '@ai-usage/usage-store/writer';\n");
     await writePackage(
@@ -243,6 +243,13 @@ describe('package boundary guard', () => {
       'packages',
       'usage-engine-runtime',
       { name: '@ai-usage/usage-engine-runtime' },
+      "import '@ai-usage/usage-store/writer';\n",
+    );
+    await writePackage(
+      root,
+      'packages',
+      'usage-merge',
+      { name: '@ai-usage/usage-merge' },
       "import '@ai-usage/usage-store/writer';\n",
     );
 
@@ -253,6 +260,12 @@ describe('package boundary guard', () => {
     expect(violations).not.toContainEqual(
       expect.objectContaining({
         packageName: '@ai-usage/usage-engine-runtime',
+        specifier: '@ai-usage/usage-store/writer',
+      }),
+    );
+    expect(violations).not.toContainEqual(
+      expect.objectContaining({
+        packageName: '@ai-usage/usage-merge',
         specifier: '@ai-usage/usage-store/writer',
       }),
     );
@@ -377,7 +390,7 @@ describe('package boundary guard', () => {
     );
   });
 
-  test('allows only the two Web local-machine operations and test-only fixtures', async () => {
+  test('allows only the three Web local-machine operations and test-only fixtures', async () => {
     const root = await createFixture();
     await writePackage(
       root,
@@ -385,6 +398,7 @@ describe('package boundary guard', () => {
       'web',
       { name: '@ai-usage/web' },
       [
+        "import '@ai-usage/local-machine/campaign-label-config';",
         "import '@ai-usage/local-machine/session-detail';",
         "import '@ai-usage/local-machine/skills-config';",
         `import '${localMachineRoot}';`,

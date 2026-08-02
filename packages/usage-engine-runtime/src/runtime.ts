@@ -362,7 +362,13 @@ export const createUsageEngineRuntime = (dependencies: UsageEngineRuntimeDepende
     if (!commandHasFileInput(command)) {
       return;
     }
-    const cleanup = dependencies.mutation.discardFileInput(command).catch(() => undefined);
+    const cleanup = (async () => {
+      try {
+        await dependencies.mutation.discardFileInput(command);
+      } catch {
+        // The live mutation port reports cleanup failures at their bounded boundary.
+      }
+    })();
     pendingFileInputCleanups.add(cleanup);
     cleanup.finally(() => pendingFileInputCleanups.delete(cleanup));
   };
@@ -841,20 +847,29 @@ export const createUsageEngineRuntime = (dependencies: UsageEngineRuntimeDepende
     }
   };
 
-  const drainCommands = (): void => {
-    if (drainPromise !== undefined) {
+  interface CommandDrain {
+    readonly abortOnShutdown: boolean;
+    readonly active: () => ActiveCommand | undefined;
+    readonly drain: () => Promise<void> | undefined;
+    readonly queue: QueuedCommand[];
+    readonly setActive: (active: ActiveCommand | undefined) => void;
+    readonly setDrain: (drain: Promise<void> | undefined) => void;
+  }
+
+  const drainCommandQueue = (commandDrain: CommandDrain): void => {
+    if (commandDrain.drain() !== undefined) {
       return;
     }
-    drainPromise = (async () => {
-      while (commandQueue.length > 0) {
-        const job = commandQueue.shift();
+    const drain = (async () => {
+      while (commandDrain.queue.length > 0) {
+        const job = commandDrain.queue.shift();
         if (!job) {
           continue;
         }
         const controller = new AbortController();
         const currentCommand = { controller, job };
-        activeCommand = currentCommand;
-        if (shutdownBegun && commandIsSafelyInterruptible(job.command)) {
+        commandDrain.setActive(currentCommand);
+        if (commandDrain.abortOnShutdown && shutdownBegun && commandIsSafelyInterruptible(job.command)) {
           controller.abort();
         }
         try {
@@ -880,69 +895,48 @@ export const createUsageEngineRuntime = (dependencies: UsageEngineRuntimeDepende
             break;
           }
         } finally {
-          if (activeCommand === currentCommand) {
-            activeCommand = undefined;
+          if (commandDrain.active() === currentCommand) {
+            commandDrain.setActive(undefined);
           }
         }
       }
     })().finally(() => {
-      drainPromise = undefined;
+      commandDrain.setDrain(undefined);
       resolveIdle();
-      if (commandQueue.length > 0) {
-        drainCommands();
+      if (commandDrain.queue.length > 0) {
+        drainCommandQueue(commandDrain);
       }
     });
+    commandDrain.setDrain(drain);
   };
 
-  const drainPolicyCommands = (): void => {
-    if (policyDrainPromise !== undefined) {
-      return;
-    }
-    policyDrainPromise = (async () => {
-      while (policyCommandQueue.length > 0) {
-        const job = policyCommandQueue.shift();
-        if (!job) {
-          continue;
-        }
-        const controller = new AbortController();
-        const currentCommand = { controller, job };
-        activePolicyCommand = currentCommand;
-        try {
-          const result = await runCommand(job.command, controller.signal);
-          if (controller.signal.aborted) {
-            throw new Error('Usage engine command was aborted.');
-          }
-          publishCompletion(completionFor(job, result));
-        } catch (error) {
-          const typedCommandError = error instanceof UsageEngineCommandError ? error : undefined;
-          publishCompletion(
-            failedCompletionFor(
-              job,
-              controller.signal.aborted || lifecycleAbort.signal.aborted
-                ? 'aborted'
-                : (typedCommandError?.code ?? 'command-failed'),
-              typedCommandError?.message ?? commandFailureMessage,
-            ),
-          );
-          if (error instanceof UsageEngineFatalConsistencyError) {
-            enterFatalConsistencyState();
-            rejectQueuedCommandsAfterFatalConsistency();
-            break;
-          }
-        } finally {
-          if (activePolicyCommand === currentCommand) {
-            activePolicyCommand = undefined;
-          }
-        }
-      }
-    })().finally(() => {
-      policyDrainPromise = undefined;
-      resolveIdle();
-      if (policyCommandQueue.length > 0) {
-        drainPolicyCommands();
-      }
-    });
+  const ordinaryCommandDrain: CommandDrain = {
+    abortOnShutdown: true,
+    active: () => activeCommand,
+    drain: () => drainPromise,
+    queue: commandQueue,
+    setActive: (active) => {
+      activeCommand = active;
+    },
+    setDrain: (drain) => {
+      drainPromise = drain;
+    },
   };
+  const policyCommandDrain: CommandDrain = {
+    abortOnShutdown: false,
+    active: () => activePolicyCommand,
+    drain: () => policyDrainPromise,
+    queue: policyCommandQueue,
+    setActive: (active) => {
+      activePolicyCommand = active;
+    },
+    setDrain: (drain) => {
+      policyDrainPromise = drain;
+    },
+  };
+
+  const drainCommands = (): void => drainCommandQueue(ordinaryCommandDrain);
+  const drainPolicyCommands = (): void => drainCommandQueue(policyCommandDrain);
 
   const sourcePolicyMustPreemptActiveCollection = (command: SetSourceEnabledCommand): boolean => {
     if (command.enabled || !activeCommand) {
@@ -1246,7 +1240,11 @@ export const createUsageEngineRuntime = (dependencies: UsageEngineRuntimeDepende
     }
     disposalPromise = (async () => {
       beginShutdown();
-      await startPromise?.catch(() => undefined);
+      try {
+        await startPromise;
+      } catch {
+        // The startup caller owns its failure; disposal must still finish cleanup.
+      }
       await cleanupOwnedResources(releaseWriterLease);
     })();
     return disposalPromise;

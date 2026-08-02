@@ -1,5 +1,10 @@
 # Plan 067: Close the post-cutover usage-engine runtime review gaps
 
+> **Status: DONE.** Implemented and verified on 2026-08-02. Every focused and
+> complete check/type/lint/test/build command passed, the production lifecycle
+> stopped cleanly under normal and port-collision paths, and the forbidden
+> control/runtime/merge/polling searches found no new production ownership gap.
+
 > **Executor instructions**: Follow this plan step by step. Run every
 > verification command and confirm the expected result before moving to the
 > next step. If a STOP condition occurs, stop and report rather than weakening

@@ -97,7 +97,7 @@ merge ownership need a focused hardening pass.
 | 064 | Label Data Quality Without Dropping Data | P3 | M | 053, 059 | DONE |
 | 065 | Expose the Harness–Provider Joint Distribution | P3 | M | 054, 062 | DONE |
 | 066 | Split the Usage Engine From the Web and CLI Runtimes | P0 | XL | 022-024, 043-044 | DONE |
-| 067 | Close the Post-Cutover Usage-Engine Runtime Review Gaps | P1 | L | 066 | TODO |
+| 067 | Close the Post-Cutover Usage-Engine Runtime Review Gaps | P1 | L | 066 | DONE |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) |
 REJECTED (with one-line rationale).

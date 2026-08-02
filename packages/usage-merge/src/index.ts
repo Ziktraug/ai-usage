@@ -4,12 +4,12 @@ import type { UsageMachine } from '@ai-usage/report-core/snapshot';
 import { confirmPeerMergeBundle, type ImportResult, previewPeerMergeBundle } from '@ai-usage/usage-store/writer';
 import { Data, Effect } from 'effect';
 
-export interface EngineMergeDocumentInput {
+export interface ManualMergeDocumentInput {
   readonly bytes: Uint8Array;
   readonly text: string;
 }
 
-export interface EngineMergePreviewResult extends ImportResult {
+export interface ManualMergePreviewResult extends ImportResult {
   readonly bytes: number;
   readonly confirmationToken: string;
   readonly digest: string;
@@ -20,12 +20,12 @@ export interface EngineMergePreviewResult extends ImportResult {
   readonly warningItems: string[];
 }
 
-export interface EngineMergeConfirmInput extends EngineMergeDocumentInput {
+export interface ManualMergeConfirmInput extends ManualMergeDocumentInput {
   readonly confirmationToken: string;
   readonly expectedDigest: string;
 }
 
-export interface EngineMergeConfirmResult {
+export interface ManualMergeConfirmResult {
   readonly generatedAt: string;
   readonly machine: UsageMachine;
   readonly result: ImportResult;
@@ -33,33 +33,37 @@ export interface EngineMergeConfirmResult {
   readonly warnings: number;
 }
 
-export type EngineMergeErrorReason = 'invalid-input' | 'invalid-json' | 'preview-stale' | 'self-merge' | 'store-failed';
+export type UsageMergeErrorReason = 'invalid-input' | 'invalid-json' | 'preview-stale' | 'self-merge' | 'store-failed';
 
-export class EngineMergeError extends Data.TaggedError('EngineMergeError')<{
+export class UsageMergeError extends Data.TaggedError('UsageMergeError')<{
   readonly cause?: unknown;
   readonly message: string;
   readonly operation: string;
-  readonly reason: EngineMergeErrorReason;
+  readonly reason: UsageMergeErrorReason;
 }> {}
 
-export interface EngineUsageMergeService {
-  readonly confirm: (input: EngineMergeConfirmInput) => Effect.Effect<EngineMergeConfirmResult, EngineMergeError>;
-  readonly preview: (input: EngineMergeDocumentInput) => Effect.Effect<EngineMergePreviewResult, EngineMergeError>;
+export interface UsageFileMergeService {
+  readonly confirmManualMergeBundle: (
+    input: ManualMergeConfirmInput,
+  ) => Effect.Effect<ManualMergeConfirmResult, UsageMergeError>;
+  readonly previewManualMergeBundle: (
+    input: ManualMergeDocumentInput,
+  ) => Effect.Effect<ManualMergePreviewResult, UsageMergeError>;
 }
 
-interface EngineUsageMergeServiceOptions {
+export interface UsageFileMergeServiceOptions {
   readonly dbPath: string;
   readonly localMachine: UsageMachine;
   readonly now?: () => Date;
 }
 
-const MAX_PREVIEW_WARNINGS = 20;
+export const MAX_MANUAL_MERGE_PREVIEW_WARNINGS = 20;
 const MAX_PREVIEW_WARNING_CHARACTERS = 512;
 const WHITESPACE_PATTERN = /\s+/g;
 
 const documentDigest = (bytes: Uint8Array): string => createHash('sha256').update(bytes).digest('hex');
 
-const mergeReasonFromStore = (reason: string | undefined): EngineMergeErrorReason => {
+const mergeReasonFromStore = (reason: string | undefined): UsageMergeErrorReason => {
   if (reason === 'invalid-input') {
     return 'invalid-input';
   }
@@ -72,13 +76,13 @@ const mergeReasonFromStore = (reason: string | undefined): EngineMergeErrorReaso
   return 'store-failed';
 };
 
-const engineMergeError = (
+const usageMergeError = (
   operation: string,
   message: string,
-  reason: EngineMergeErrorReason,
+  reason: UsageMergeErrorReason,
   cause?: unknown,
-): EngineMergeError =>
-  new EngineMergeError({
+): UsageMergeError =>
+  new UsageMergeError({
     operation,
     message,
     reason,
@@ -89,7 +93,7 @@ const parseMergeDocument = (text: string, operation: string) => {
   try {
     return parseUsageMergeBundle(text);
   } catch (cause) {
-    throw engineMergeError(
+    throw usageMergeError(
       operation,
       'Could not parse usage merge document.',
       cause instanceof SyntaxError ? 'invalid-json' : 'invalid-input',
@@ -98,21 +102,25 @@ const parseMergeDocument = (text: string, operation: string) => {
   }
 };
 
-export const createEngineUsageMergeService = (options: EngineUsageMergeServiceOptions): EngineUsageMergeService => ({
-  confirm: (input) =>
+export const createUsageFileMergeService = (options: UsageFileMergeServiceOptions): UsageFileMergeService => ({
+  confirmManualMergeBundle: (input) =>
     Effect.gen(function* () {
-      const digest = documentDigest(input.bytes);
-      if (digest !== input.expectedDigest) {
+      if (documentDigest(input.bytes) !== input.expectedDigest) {
         return yield* Effect.fail(
-          engineMergeError('confirmMerge', 'The selected file changed after preview.', 'preview-stale'),
+          usageMergeError('confirmManualMergeBundle', 'The selected file changed after preview.', 'preview-stale'),
         );
       }
       const bundle = yield* Effect.try({
-        try: () => parseMergeDocument(input.text, 'confirmMerge'),
+        try: () => parseMergeDocument(input.text, 'confirmManualMergeBundle'),
         catch: (cause) =>
-          cause instanceof EngineMergeError
+          cause instanceof UsageMergeError
             ? cause
-            : engineMergeError('confirmMerge', 'Could not parse usage merge confirmation.', 'invalid-input', cause),
+            : usageMergeError(
+                'confirmManualMergeBundle',
+                'Could not parse usage merge confirmation.',
+                'invalid-input',
+                cause,
+              ),
       });
       const result = yield* confirmPeerMergeBundle({
         bundle,
@@ -122,8 +130,8 @@ export const createEngineUsageMergeService = (options: EngineUsageMergeServiceOp
         localMachineId: options.localMachine.id,
       }).pipe(
         Effect.mapError((cause) =>
-          engineMergeError(
-            'confirmMerge',
+          usageMergeError(
+            'confirmManualMergeBundle',
             `Could not confirm usage merge file from ${bundle.machine.label}.`,
             mergeReasonFromStore(cause.reason),
             cause,
@@ -138,14 +146,19 @@ export const createEngineUsageMergeService = (options: EngineUsageMergeServiceOp
         warnings: bundle.warnings.length,
       };
     }),
-  preview: (input) =>
+  previewManualMergeBundle: (input) =>
     Effect.gen(function* () {
       const bundle = yield* Effect.try({
-        try: () => parseMergeDocument(input.text, 'previewMerge'),
+        try: () => parseMergeDocument(input.text, 'previewManualMergeBundle'),
         catch: (cause) =>
-          cause instanceof EngineMergeError
+          cause instanceof UsageMergeError
             ? cause
-            : engineMergeError('previewMerge', 'Could not parse usage merge preview.', 'invalid-input', cause),
+            : usageMergeError(
+                'previewManualMergeBundle',
+                'Could not parse usage merge preview.',
+                'invalid-input',
+                cause,
+              ),
       });
       const preview = yield* previewPeerMergeBundle({
         bundle,
@@ -153,8 +166,8 @@ export const createEngineUsageMergeService = (options: EngineUsageMergeServiceOp
         localMachineId: options.localMachine.id,
       }).pipe(
         Effect.mapError((cause) =>
-          engineMergeError(
-            'previewMerge',
+          usageMergeError(
+            'previewManualMergeBundle',
             `Could not preview usage merge file from ${bundle.machine.label}.`,
             mergeReasonFromStore(cause.reason),
             cause,
@@ -172,7 +185,7 @@ export const createEngineUsageMergeService = (options: EngineUsageMergeServiceOp
         rows: bundle.rows.length,
         warningCount: bundle.warnings.length,
         warningItems: bundle.warnings
-          .slice(0, MAX_PREVIEW_WARNINGS)
+          .slice(0, MAX_MANUAL_MERGE_PREVIEW_WARNINGS)
           .map((warning) => warning.message.replace(WHITESPACE_PATTERN, ' ').slice(0, MAX_PREVIEW_WARNING_CHARACTERS)),
       };
     }),

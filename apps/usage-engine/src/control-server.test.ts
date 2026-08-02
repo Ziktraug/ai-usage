@@ -224,6 +224,79 @@ describe('usage engine control server', () => {
     ]);
   });
 
+  test('keeps invalid command input at 400 and maps runtime defects to sanitized 503 responses', async () => {
+    const fixture = createRuntime();
+    const failures: string[] = [];
+    let executions = 0;
+    const handler = createUsageEngineControlHandler({
+      reportInternalFailure: (boundary) => failures.push(boundary),
+      runtime: {
+        ...fixture.runtime,
+        executeCommand: () => {
+          executions++;
+          return Promise.reject(new Error('private runtime path /secret/store.sqlite'));
+        },
+      },
+      token: createUsageEngineBearerToken(TOKEN),
+    });
+    servers.push(handler);
+
+    for (const body of ['{invalid', JSON.stringify({ command: { command: 'unknown' } })]) {
+      const invalid = await handler.handle(
+        new Request('http://127.0.0.1:41052/v1/commands', {
+          body,
+          headers: headers({ 'content-type': 'application/json' }),
+          method: 'POST',
+        }),
+        '127.0.0.1',
+      );
+      expect(invalid.status).toBe(400);
+    }
+    expect(executions).toBe(0);
+    expect(failures).toEqual([]);
+
+    const failed = await handler.handle(
+      new Request('http://127.0.0.1:41052/v1/commands', {
+        body: commandRequest({ command: 'publish' }),
+        headers: headers({ 'content-type': 'application/json' }),
+        method: 'POST',
+      }),
+      '127.0.0.1',
+    );
+    const failedBody = JSON.stringify(await failed.json());
+    expect(failed.status).toBe(503);
+    expect(failedBody).toContain('engine-unavailable');
+    expect(failedBody).not.toContain('/secret/store.sqlite');
+    expect(failures).toEqual(['command-execution']);
+  });
+
+  test('treats an invalid runtime command result as an internal failure', async () => {
+    const fixture = createRuntime();
+    const failures: string[] = [];
+    const handler = createUsageEngineControlHandler({
+      reportInternalFailure: (boundary) => failures.push(boundary),
+      runtime: {
+        ...fixture.runtime,
+        executeCommand: () => Promise.resolve({ privatePayload: TOKEN } as never),
+      },
+      token: createUsageEngineBearerToken(TOKEN),
+    });
+    servers.push(handler);
+
+    const response = await handler.handle(
+      new Request('http://127.0.0.1:41052/v1/commands', {
+        body: commandRequest({ command: 'publish' }),
+        headers: headers({ 'content-type': 'application/json' }),
+        method: 'POST',
+      }),
+      '127.0.0.1',
+    );
+
+    expect(response.status).toBe(503);
+    expect(JSON.stringify(await response.json())).not.toContain(TOKEN);
+    expect(failures).toEqual(['command-execution']);
+  });
+
   test('authenticates bodyless command cancellation and preserves the exact command ID', async () => {
     const fixture = createRuntime();
     const handler = createUsageEngineControlHandler({
@@ -451,6 +524,146 @@ describe('usage engine control server', () => {
     await reader.cancel();
   });
 
+  test('fails closed and closes active subscribers when the runtime event stream ends', async () => {
+    const fixture = createRuntime();
+    const failures: string[] = [];
+    let clearHeartbeatCalls = 0;
+    let finishEvents: ((result: IteratorResult<UsageEngineEvent>) => void) | undefined;
+    const handler = createUsageEngineControlHandler({
+      clearHeartbeat: () => {
+        clearHeartbeatCalls++;
+      },
+      reportInternalFailure: (boundary) => failures.push(boundary),
+      runtime: {
+        ...fixture.runtime,
+        changes: () => ({
+          [Symbol.asyncIterator]: () => ({
+            next: () =>
+              new Promise<IteratorResult<UsageEngineEvent>>((resolve) => {
+                finishEvents = resolve;
+              }),
+            return: () => Promise.resolve({ done: true as const, value: undefined }),
+          }),
+        }),
+      },
+      scheduleHeartbeat: () => 1 as never,
+      token: createUsageEngineBearerToken(TOKEN),
+    });
+    servers.push(handler);
+    const response = await handler.handle(
+      new Request('http://127.0.0.1:41052/v1/events', { headers: headers({ accept: 'text/event-stream' }) }),
+      '127.0.0.1',
+    );
+    const reader = response.body!.getReader();
+    expect(await readFrame(reader)).toContain('"event":"status"');
+
+    finishEvents?.({ done: true, value: undefined });
+    await expect(reader.read()).resolves.toMatchObject({ done: true });
+    const status = await handler.handle(
+      new Request('http://127.0.0.1:41052/v1/status', { headers: headers() }),
+      '127.0.0.1',
+    );
+
+    expect(status.status).toBe(503);
+    expect(failures).toEqual(['event-stream']);
+    expect(clearHeartbeatCalls).toBe(1);
+  });
+
+  test('fails closed when the runtime event iterator rejects', async () => {
+    const fixture = createRuntime();
+    const failures: string[] = [];
+    const handler = createUsageEngineControlHandler({
+      reportInternalFailure: (boundary) => failures.push(boundary),
+      runtime: {
+        ...fixture.runtime,
+        changes: () => ({
+          [Symbol.asyncIterator]: () => ({
+            next: () => Promise.reject(new Error(`private ${TOKEN}`)),
+          }),
+        }),
+      },
+      token: createUsageEngineBearerToken(TOKEN),
+    });
+    servers.push(handler);
+    await Bun.sleep(0);
+
+    const response = await handler.handle(
+      new Request('http://127.0.0.1:41052/v1/status', { headers: headers() }),
+      '127.0.0.1',
+    );
+
+    expect(response.status).toBe(503);
+    expect(JSON.stringify(await response.json())).not.toContain(TOKEN);
+    expect(failures).toEqual(['event-stream']);
+  });
+
+  test('preserves an event failure while reporting iterator cleanup once', async () => {
+    const fixture = createRuntime();
+    const failures: string[] = [];
+    const handler = createUsageEngineControlHandler({
+      reportInternalFailure: (boundary) => failures.push(boundary),
+      runtime: {
+        ...fixture.runtime,
+        changes: () => ({
+          [Symbol.asyncIterator]: () => ({
+            next: () => Promise.reject(new Error(`private stream ${TOKEN}`)),
+            return: () => Promise.reject(new Error(`private cleanup ${TOKEN}`)),
+          }),
+        }),
+      },
+      token: createUsageEngineBearerToken(TOKEN),
+    });
+    await Bun.sleep(0);
+
+    await expect(handler.dispose()).resolves.toBeUndefined();
+    await expect(handler.dispose()).resolves.toBeUndefined();
+
+    expect(failures).toEqual(['event-stream', 'event-stream-cleanup']);
+  });
+
+  test('disposes a healthy event iterator without reporting a failure', async () => {
+    const fixture = createRuntime();
+    const failures: string[] = [];
+    const handler = createUsageEngineControlHandler({
+      reportInternalFailure: (boundary) => failures.push(boundary),
+      runtime: fixture.runtime,
+      token: createUsageEngineBearerToken(TOKEN),
+    });
+
+    await expect(handler.dispose()).resolves.toBeUndefined();
+
+    expect(failures).toEqual([]);
+  });
+
+  test('closes subscribers when healthy iterator cleanup rejects', async () => {
+    const fixture = createRuntime();
+    const failures: string[] = [];
+    const handler = createUsageEngineControlHandler({
+      reportInternalFailure: (boundary) => failures.push(boundary),
+      runtime: {
+        ...fixture.runtime,
+        changes: () => ({
+          [Symbol.asyncIterator]: () => ({
+            next: () => new Promise<IteratorResult<UsageEngineEvent>>(() => undefined),
+            return: () => Promise.reject(new Error(`private cleanup ${TOKEN}`)),
+          }),
+        }),
+      },
+      token: createUsageEngineBearerToken(TOKEN),
+    });
+    const response = await handler.handle(
+      new Request('http://127.0.0.1:41052/v1/events', { headers: headers({ accept: 'text/event-stream' }) }),
+      '127.0.0.1',
+    );
+    const reader = response.body!.getReader();
+    expect(await readFrame(reader)).toContain('"event":"status"');
+
+    await expect(handler.dispose()).rejects.toThrow('private cleanup');
+
+    await expect(reader.read()).resolves.toMatchObject({ done: true });
+    expect(failures).toEqual(['event-stream-cleanup']);
+  });
+
   test('emits a fresh status before live events without replaying stale state', async () => {
     const fixture = createRuntime();
     const handler = createUsageEngineControlHandler({
@@ -661,5 +874,33 @@ describe('usage engine control server', () => {
         token: createUsageEngineBearerToken(TOKEN),
       }),
     ).rejects.toThrow('numeric 127.0.0.1');
+  });
+
+  test('threads sanitized event diagnostics through the real HTTP server', async () => {
+    const fixture = createRuntime();
+    const failures: string[] = [];
+    const server = await startUsageEngineControlServer({
+      hostname: '127.0.0.1',
+      port: 0,
+      reportInternalFailure: (boundary) => failures.push(boundary),
+      runtime: {
+        ...fixture.runtime,
+        changes: () => ({
+          [Symbol.asyncIterator]: () => ({
+            next: () => Promise.reject(new Error(`private ${TOKEN}`)),
+            return: () => Promise.resolve({ done: true as const, value: undefined }),
+          }),
+        }),
+      },
+      token: createUsageEngineBearerToken(TOKEN),
+    });
+    servers.push(server);
+    await Bun.sleep(0);
+
+    const response = await fetch(`http://127.0.0.1:${server.port}/v1/status`, { headers: headers() });
+
+    expect(response.status).toBe(503);
+    expect(JSON.stringify(await response.json())).not.toContain(TOKEN);
+    expect(failures).toEqual(['event-stream']);
   });
 });

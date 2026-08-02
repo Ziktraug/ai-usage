@@ -93,6 +93,8 @@
         "$TURBO_ROOT$/packages/usage-engine-control/src/**",
         "$TURBO_ROOT$/packages/usage-engine-runtime/package.json",
         "$TURBO_ROOT$/packages/usage-engine-runtime/src/**",
+        "$TURBO_ROOT$/packages/usage-merge/package.json",
+        "$TURBO_ROOT$/packages/usage-merge/src/**",
         "$TURBO_ROOT$/packages/usage-store/package.json",
         "$TURBO_ROOT$/packages/usage-store/src/**"
       ],

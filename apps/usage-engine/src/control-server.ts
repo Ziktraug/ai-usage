@@ -35,6 +35,14 @@ interface EventSubscriber {
   readonly emit: (event: UsageEngineEvent) => void;
 }
 
+export type UsageEngineInternalFailureBoundary =
+  | 'command-cancellation'
+  | 'command-execution'
+  | 'event-stream'
+  | 'event-stream-cleanup'
+  | 'event-stream-status'
+  | 'status';
+
 export interface UsageEngineControlHandler {
   readonly dispose: () => Promise<void>;
   readonly handle: (request: Request, peerAddress: string | null) => Promise<Response>;
@@ -42,6 +50,7 @@ export interface UsageEngineControlHandler {
 
 export interface CreateUsageEngineControlHandlerOptions {
   readonly clearHeartbeat?: (heartbeat: ReturnType<typeof setInterval>) => void;
+  readonly reportInternalFailure?: (boundary: UsageEngineInternalFailureBoundary) => void;
   readonly requestTimeoutMs?: number;
   readonly runtime: UsageEngineRuntimeHost;
   readonly scheduleHeartbeat?: (callback: () => void, milliseconds: number) => ReturnType<typeof setInterval>;
@@ -198,7 +207,9 @@ const readBoundedBody = async (request: Request, deadline: RequestDeadline): Pro
     }
   } finally {
     if (!completed) {
-      reader.cancel().catch(() => undefined);
+      reader.cancel().catch(() => {
+        // Cancellation is best-effort after the request boundary has already failed.
+      });
     }
     try {
       reader.releaseLock();
@@ -245,6 +256,7 @@ const lastSeenSequence = (
 export const createUsageEngineControlHandler = ({
   clearHeartbeat = clearInterval,
   requestTimeoutMs = usageEngineControlServerBounds.requestTimeoutMs,
+  reportInternalFailure: reportInternalFailureOption,
   runtime,
   scheduleHeartbeat = setInterval,
   token,
@@ -258,6 +270,15 @@ export const createUsageEngineControlHandler = ({
   const runtimeIterator = runtime.changes()[Symbol.asyncIterator]();
   let disposed = false;
   let disposalPromise: Promise<void> | undefined;
+  let eventPumpState: 'disposed' | 'failed' | 'running' = 'running';
+
+  const reportInternalFailure = (boundary: UsageEngineInternalFailureBoundary): void => {
+    try {
+      reportInternalFailureOption?.(boundary);
+    } catch {
+      // Diagnostics must not change the control-plane response or lifecycle.
+    }
+  };
 
   const publish = (eventValue: UsageEngineEvent): void => {
     const event = parseUsageEngineEvent(eventValue);
@@ -270,15 +291,36 @@ export const createUsageEngineControlHandler = ({
     }
   };
 
-  const eventPump = (async () => {
-    while (!disposed) {
-      const next = await runtimeIterator.next();
-      if (next.done) {
-        break;
-      }
-      publish(next.value);
+  const failEventPump = (): void => {
+    if (eventPumpState !== 'running') {
+      return;
     }
-  })().catch(() => undefined);
+    eventPumpState = 'failed';
+    eventBuffer.length = 0;
+    for (const subscriber of [...subscribers]) {
+      subscriber.close();
+    }
+    reportInternalFailure('event-stream');
+  };
+
+  const eventPump = (async () => {
+    try {
+      while (!disposed) {
+        const next = await runtimeIterator.next();
+        if (next.done) {
+          if (!disposed) {
+            failEventPump();
+          }
+          return;
+        }
+        publish(next.value);
+      }
+    } catch {
+      if (!disposed) {
+        failEventPump();
+      }
+    }
+  })();
 
   const authorize = (request: Request, peerAddress: string | null): Response | undefined => {
     let url: URL;
@@ -428,8 +470,11 @@ export const createUsageEngineControlHandler = ({
   };
 
   const handle = async (request: Request, peerAddress: string | null): Promise<Response> => {
-    if (disposed) {
+    if (disposed || eventPumpState === 'disposed') {
       return errorResponse('engine-unavailable', 'Usage engine is stopping.', 503);
+    }
+    if (eventPumpState === 'failed') {
+      return errorResponse('engine-unavailable', 'Usage engine is unavailable.', 503);
     }
     const rejected = authorize(request, peerAddress);
     if (rejected) {
@@ -448,7 +493,8 @@ export const createUsageEngineControlHandler = ({
         if (response) {
           return response;
         }
-        throw error;
+        reportInternalFailure('status');
+        return errorResponse('engine-unavailable', 'Usage engine is unavailable.', 503);
       }
     }
     if (pathname === '/v1/events') {
@@ -462,7 +508,8 @@ export const createUsageEngineControlHandler = ({
         if (response) {
           return response;
         }
-        throw error;
+        reportInternalFailure('event-stream-status');
+        return errorResponse('engine-unavailable', 'Usage engine is unavailable.', 503);
       }
     }
     const cancellationMatch = COMMAND_CANCELLATION_PATH_PATTERN.exec(pathname);
@@ -473,8 +520,13 @@ export const createUsageEngineControlHandler = ({
       if (request.body !== null) {
         return errorResponse('command-rejected', 'Usage engine cancellation must not include a body.', 400);
       }
+      let commandId: ReturnType<typeof parseUsageEngineCommandId>;
       try {
-        const commandId = parseUsageEngineCommandId(cancellationMatch[1]);
+        commandId = parseUsageEngineCommandId(cancellationMatch[1]);
+      } catch {
+        return errorResponse('command-rejected', 'Usage engine cancellation is invalid.', 400);
+      }
+      try {
         const result = parseUsageEngineCommandCancellationResult(
           await deadline.run(async () => await runtime.cancelCommand(commandId)),
         );
@@ -487,7 +539,8 @@ export const createUsageEngineControlHandler = ({
         if (boundaryResponse) {
           return boundaryResponse;
         }
-        return errorResponse('command-rejected', 'Usage engine cancellation is invalid.', 400);
+        reportInternalFailure('command-cancellation');
+        return errorResponse('engine-unavailable', 'Usage engine is unavailable.', 503);
       }
     }
     if (pathname === '/v1/commands') {
@@ -510,8 +563,13 @@ export const createUsageEngineControlHandler = ({
         }
         return errorResponse('command-rejected', 'Usage engine command body is invalid.', 400);
       }
+      let commandRequest: ReturnType<typeof parseUsageEngineCommandRequest>;
       try {
-        const commandRequest = parseUsageEngineCommandRequest(parseBodyJson(bytes));
+        commandRequest = parseUsageEngineCommandRequest(parseBodyJson(bytes));
+      } catch {
+        return errorResponse('command-rejected', 'Usage engine command is invalid.', 400);
+      }
+      try {
         const result = parseUsageEngineCommandResult(
           await deadline.run(
             async () => await runtime.executeCommand(commandRequest.command, commandRequest.commandId),
@@ -523,7 +581,8 @@ export const createUsageEngineControlHandler = ({
         if (boundaryResponse) {
           return boundaryResponse;
         }
-        return errorResponse('command-rejected', 'Usage engine command is invalid.', 400);
+        reportInternalFailure('command-execution');
+        return errorResponse('engine-unavailable', 'Usage engine is unavailable.', 503);
       }
     }
     return new Response(null, { status: 404 });
@@ -532,7 +591,18 @@ export const createUsageEngineControlHandler = ({
   const dispose = (): Promise<void> => {
     disposalPromise ??= (async () => {
       disposed = true;
-      await runtimeIterator.return?.();
+      eventPumpState = eventPumpState === 'failed' ? 'failed' : 'disposed';
+      try {
+        await runtimeIterator.return?.();
+      } catch (error) {
+        reportInternalFailure('event-stream-cleanup');
+        if (eventPumpState !== 'failed') {
+          for (const subscriber of [...subscribers]) {
+            subscriber.close();
+          }
+          throw error;
+        }
+      }
       await eventPump;
       for (const subscriber of [...subscribers]) {
         subscriber.close();
@@ -547,6 +617,7 @@ export const createUsageEngineControlHandler = ({
 export const startUsageEngineControlServer = async ({
   hostname = '127.0.0.1',
   port = 0,
+  reportInternalFailure,
   requestTimeoutMs,
   runtime,
   token,
@@ -558,6 +629,7 @@ export const startUsageEngineControlServer = async ({
     throw new Error('Usage engine control port is invalid.');
   }
   const handler = createUsageEngineControlHandler({
+    ...(reportInternalFailure === undefined ? {} : { reportInternalFailure }),
     ...(requestTimeoutMs === undefined ? {} : { requestTimeoutMs }),
     runtime,
     token,

@@ -144,6 +144,16 @@
         "@ai-usage/report-core": "workspace:*",
         "@ai-usage/report-data": "workspace:*",
         "@ai-usage/usage-engine-control": "workspace:*",
+        "@ai-usage/usage-merge": "workspace:*",
+        "@ai-usage/usage-store": "workspace:*",
+        "effect": "^3.21.4",
+      },
+    },
+    "packages/usage-merge": {
+      "name": "@ai-usage/usage-merge",
+      "version": "0.1.0",
+      "dependencies": {
+        "@ai-usage/report-core": "workspace:*",
         "@ai-usage/usage-store": "workspace:*",
         "effect": "^3.21.4",
       },
@@ -179,6 +189,8 @@
     "@ai-usage/usage-engine-control": ["@ai-usage/usage-engine-control@workspace:packages/usage-engine-control"],
 
     "@ai-usage/usage-engine-runtime": ["@ai-usage/usage-engine-runtime@workspace:packages/usage-engine-runtime"],
+
+    "@ai-usage/usage-merge": ["@ai-usage/usage-merge@workspace:packages/usage-merge"],
 
     "@ai-usage/usage-store": ["@ai-usage/usage-store@workspace:packages/usage-store"],
 
