@@ -56,6 +56,7 @@ describe('Sync contract', () => {
 
   test('keeps upload and download bytes on explicit POST transports', () => {
     expect(manualMergeUploadTransport).toMatchObject({
+      abort: 'request-signal-with-late-staging-cleanup',
       body: 'portable-usage-json',
       csrf: 'required',
       method: 'POST',
@@ -63,6 +64,7 @@ describe('Sync contract', () => {
       response: 'bounded-json',
     });
     expect(manualMergeDownloadTransport).toMatchObject({
+      abort: 'request-signal',
       body: 'none',
       csrf: 'required',
       method: 'POST',

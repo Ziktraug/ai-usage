@@ -83,7 +83,7 @@ export const syncContract = {
 export type SyncContractClient = ContractRouterClient<typeof syncContract>;
 
 export interface ExplicitSyncTransportDescriptor {
-  readonly abort: 'request-signal-with-late-staging-cleanup';
+  readonly abort: 'request-signal' | 'request-signal-with-late-staging-cleanup';
   readonly body: 'none' | 'portable-usage-json';
   readonly csrf: 'required';
   readonly id: 'manual-merge-download' | 'manual-merge-upload';
@@ -105,7 +105,7 @@ export const manualMergeUploadTransport = {
 } as const satisfies ExplicitSyncTransportDescriptor;
 
 export const manualMergeDownloadTransport = {
-  abort: 'request-signal-with-late-staging-cleanup',
+  abort: 'request-signal',
   body: 'none',
   csrf: 'required',
   id: 'manual-merge-download',
