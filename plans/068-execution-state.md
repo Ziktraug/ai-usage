@@ -116,9 +116,9 @@ Statuses are `BLOCKED`, `READY`, `IMPLEMENTING`, `REVIEW`, `REWORK`,
 | Packet | Prerequisites | Status | Implementer commits | Reviewer / verdict | Integrated checkpoint |
 | --- | --- | --- | --- | --- | --- |
 | B0 | none | INTEGRATED | `40cda764f655d68608f378dd9f8d02e4160e0f52`, `2051c4887894e42f31b309adf8446869d2e1b566` | `/root/b0_review` / ACCEPT | `2051c4887894e42f31b309adf8446869d2e1b566` |
-| B1 | B0 | REWORK | `bf39106fa692663957c26ac12ed063eb21dcd9a6`, `11e184f08528b7ff7a1153443322713bd0df0b94` | `/root/b0_review` / REWORK; static rework green, runtime correction dispatched | - |
+| B1 | B0 | INTEGRATED | `2613d9b`, `175e2d0`, `cd90bce`, `4348a2e1138a98a9dfd19b8de9bd3d839e3dc77e` | `/root/b1_final_review` / ACCEPT | `5f43d59` |
 | B2 | B0 | INTEGRATED | `416ed3befda96e101763f129ddd32151a12f6ed2`, `f9fa43e3abff4ec14107cdd16272597e9bc8dc46` | `/root/b2_re_review` / ACCEPT | `28d2f42` |
-| F0 | B1, B2 | BLOCKED | - | - | - |
+| F0 | B1, B2 | READY | - | - | - |
 | V0 | F0 | BLOCKED | - | - | - |
 | V1 | V0 | BLOCKED | - | - | - |
 | V2 | V0 | BLOCKED | - | - | - |
@@ -294,23 +294,38 @@ returned ACCEPT on both axes. The coordinator cherry-picked the correction as
 diff cleanliness. B1-C is integrated; B1 must now be redispatched from this
 compatible checkpoint and reproduce its complete budgets.
 
+Fresh B1 redispatch from `7d1ff6e` applied the three recoverable commits without
+conflict and added measured-baseline commit
+`4348a2e1138a98a9dfd19b8de9bd3d839e3dc77e`. The final candidate passed exact
+inventories `35/30/72/15/385/11/104/18`, 48 focused tests, 26/26 type tasks,
+build, 90 browser tests, demo, production `7+2`, DOM, benchmark, production
+lifecycle, dev/build isolation and loopback with an empty process/listener audit.
+It measured one bootstrap, zero duplicate URLs and pending queries, 36,995-byte
+HTML, 9.5 ms TTFB, 117.5 ms hydration and budgets documented in the performance
+baseline. `/root/b1_final_review` returned ACCEPT on both axes; the bounded
+wide-event file-sink lock timeout was honestly classified as lost synthetic
+telemetry with successful assertions and cleanup. The coordinator cherry-picked
+B1 as `a64ec59`, `57118ca`, `2ef4c50` and `5f43d59`. On the combined B1+B2
+checkpoint, 48 focused tests, exact parity discovery, boundaries, TypeScript,
+build, browser 90/90, demo 1/1, production 7/7+2/2, lifecycle, isolation and
+loopback all passed again. B1 is integrated and F0 is ready.
+
 ## Deviations, STOPs, and recovery
 
 - Reviewed deviations: none.
 - Resolved local STOP: B2 exhausted both original focused SSE-harness
   corrections. The user authorized autonomous correction of this class of
-  technical blocker; the incident remains recorded above and B2 is active.
+  technical blocker; the incident remains recorded above and B2 is integrated.
 - Resolved B1 correction: B1-C is independently accepted and integrated at
   `c85b077`; its production proof and post-cherry gates are recorded above.
-- B1 recovery: `/tmp/ai-usage-068-b1` is at
-  `11e184f08528b7ff7a1153443322713bd0df0b94` with its completed static rework
-  retained as uncommitted allowlisted changes; both reviewed REWORK commits are
-  local-only and unintegrated.
+- B1 recovery: final accepted candidate remains at `4348a2e` in
+  `/tmp/ai-usage-068-b1-final`; its four commits are integrated through
+  `5f43d59` and the earlier worktree remains recoverable evidence.
 - B2 recovery: `/tmp/ai-usage-068-b2` is clean; the original pipe-harness spike
   remains at `/tmp/ai-usage-068-b2-spike.1VftYr`, and the adapter-node rejection
   audit remains at `/tmp/ai-usage-068-b2-spike-pass.csh2Si`.
 - Resolved B2 correction: exact SvelteKit selected-adapter lifecycle coverage is
   independently accepted and integrated at `28d2f42`; adapter-node failure
   spikes remain recoverable evidence until final convergence.
-- Recovery point: `28d2f42` is the latest independently reviewed green code
-  checkpoint; B2 post-cherry lifecycle and cleanup gates passed unchanged.
+- Recovery point: `5f43d59` is the latest independently reviewed green code
+  checkpoint; the combined B1+B2 post-cherry full gates passed unchanged.
