@@ -4,14 +4,18 @@ import { chmod, link, lstat, mkdir, open, opendir, realpath, rename, unlink } fr
 import os from 'node:os';
 import path from 'node:path';
 import { parseUsageEngineInstanceId, type UsageEngineInstanceId } from '@ai-usage/usage-engine-control';
-import { loadUsageEngineRendezvous, readOpenedFileBounded } from '@ai-usage/usage-engine-control/node';
 import {
   errorHasCode,
   type FileIdentity,
   hasCurrentOwner,
   isOwnerOnly,
+  isProcessStartTimeTicks,
+  loadUsageEngineRendezvous,
+  processIsAlive,
+  readProcessStartTimeTicks as processStartTimeTicks,
+  readOpenedFileBounded,
   sameFileIdentity as sameIdentity,
-} from './private-file-identity';
+} from '@ai-usage/usage-engine-control/node';
 
 const LOCK_FILE_SUFFIX = '.engine.lock';
 const RENDEZVOUS_FILE_NAME = 'rendezvous.json';
@@ -23,9 +27,6 @@ const LOCK_ACQUISITION_ATTEMPTS = 8;
 const LOCK_TEMPORARY_GRACE_MS = 1000;
 const LOCK_RECOVERY_POLL_MS = 10;
 const LOCK_RECOVERY_SETTLE_DEADLINE_MS = 500;
-const PROCESS_START_TIME_INDEX = 19;
-const DIGITS_PATTERN = /^\d+$/;
-const WHITESPACE_PATTERN = /\s+/;
 const RENDEZVOUS_TEMPORARY_FILE_PATTERN =
   /^\.rendezvous-(\d+)-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.tmp$/;
 const LOCK_TEMPORARY_FILE_PATTERN =
@@ -221,36 +222,6 @@ const resolveDatabaseLockTarget = async (
   };
 };
 
-const processStartTimeTicks = async (pid: number): Promise<string | null> => {
-  if (process.platform !== 'linux') {
-    return null;
-  }
-  try {
-    const stat = await Bun.file(`/proc/${pid}/stat`).text();
-    const commandEnd = stat.lastIndexOf(')');
-    if (commandEnd < 0) {
-      return null;
-    }
-    const fields = stat
-      .slice(commandEnd + 2)
-      .trim()
-      .split(WHITESPACE_PATTERN);
-    const startTime = fields[PROCESS_START_TIME_INDEX];
-    return startTime && DIGITS_PATTERN.test(startTime) ? startTime : null;
-  } catch {
-    return null;
-  }
-};
-
-const processIsAlive = (pid: number): boolean => {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return !errorHasCode(error, 'ESRCH');
-  }
-};
-
 const recoveryOwnerIsLive = async (owner: RecoveryOwner): Promise<boolean> => {
   if (!processIsAlive(owner.pid)) {
     return false;
@@ -325,10 +296,7 @@ const parseLockMetadata = (text: string): UsageEngineLockMetadata | undefined =>
       typeof record.ownerId !== 'string' ||
       typeof record.stateDirectory !== 'string' ||
       !(typeof record.pid === 'number' && Number.isSafeInteger(record.pid) && record.pid > 0) ||
-      !(
-        record.processStartTimeTicks === null ||
-        (typeof record.processStartTimeTicks === 'string' && DIGITS_PATTERN.test(record.processStartTimeTicks))
-      )
+      !(record.processStartTimeTicks === null || isProcessStartTimeTicks(record.processStartTimeTicks))
     ) {
       return;
     }

@@ -4,22 +4,18 @@ import {
   parseUsageEngineCommandId,
   parseUsageEngineCommandRequest,
   parseUsageEngineCommandResult,
-  parseUsageEngineEvent,
   parseUsageEngineStatus,
   USAGE_ENGINE_PROTOCOL_VERSION,
   type UsageEngineErrorCode,
-  type UsageEngineEvent,
-  type UsageEngineStatus,
   usageEngineControlBounds,
 } from '@ai-usage/usage-engine-control';
 import { revealUsageEngineBearerToken, type UsageEngineBearerToken } from '@ai-usage/usage-engine-control/node';
 import type { UsageEngineRuntimeHost } from '@ai-usage/usage-engine-runtime';
+import { createUsageEngineControlEventHub } from './control-event-stream';
 
 const JSON_MEDIA_TYPE = 'application/json';
 const EVENT_STREAM_MEDIA_TYPE = 'text/event-stream';
 const PROTOCOL_HEADER = 'x-ai-usage-protocol-version';
-const SSE_HEARTBEAT_MS = 5000;
-const REPLAY_EVENT_ID_PATTERN = /^(?:engine|snapshot):(\d+)$/;
 const COMMAND_CANCELLATION_PATH_PATTERN = /^\/v1\/commands\/([^/]+)$/;
 const encoder = new TextEncoder();
 
@@ -29,11 +25,6 @@ export const usageEngineControlServerBounds = {
   maxSubscriberFrames: 129,
   maxSubscribers: 64,
 } as const;
-
-interface EventSubscriber {
-  readonly close: () => void;
-  readonly emit: (event: UsageEngineEvent) => void;
-}
 
 export type UsageEngineInternalFailureBoundary =
   | 'command-cancellation'
@@ -231,28 +222,6 @@ const parseBodyJson = (bytes: Uint8Array): unknown => {
   return JSON.parse(text) as unknown;
 };
 
-const sseFrame = (event: UsageEngineEvent): Uint8Array =>
-  encoder.encode(`id: ${event.eventId}\nevent: usage-engine\ndata: ${JSON.stringify(event)}\n\n`);
-
-const lastSeenSequence = (
-  lastEventId: string | null,
-  snapshotBoundarySequence: number,
-  eventBuffer: readonly UsageEngineEvent[],
-): number => {
-  if (lastEventId === null) {
-    return 0;
-  }
-  const exact = eventBuffer.find((event) => event.eventId === lastEventId);
-  if (exact) {
-    return Math.min(exact.sequence, snapshotBoundarySequence);
-  }
-  const match = REPLAY_EVENT_ID_PATTERN.exec(lastEventId);
-  const parsed = Number(match?.[1]);
-  return Number.isSafeInteger(parsed) && parsed >= 0 && parsed <= snapshotBoundarySequence
-    ? parsed
-    : snapshotBoundarySequence;
-};
-
 export const createUsageEngineControlHandler = ({
   clearHeartbeat = clearInterval,
   requestTimeoutMs = usageEngineControlServerBounds.requestTimeoutMs,
@@ -265,12 +234,7 @@ export const createUsageEngineControlHandler = ({
     throw new Error('Usage engine control request timeout is invalid.');
   }
   const expectedToken = revealUsageEngineBearerToken(token);
-  const eventBuffer: UsageEngineEvent[] = [];
-  const subscribers = new Set<EventSubscriber>();
-  const runtimeIterator = runtime.changes()[Symbol.asyncIterator]();
   let disposed = false;
-  let disposalPromise: Promise<void> | undefined;
-  let eventPumpState: 'disposed' | 'failed' | 'running' = 'running';
 
   const reportInternalFailure = (boundary: UsageEngineInternalFailureBoundary): void => {
     try {
@@ -280,47 +244,16 @@ export const createUsageEngineControlHandler = ({
     }
   };
 
-  const publish = (eventValue: UsageEngineEvent): void => {
-    const event = parseUsageEngineEvent(eventValue);
-    eventBuffer.push(event);
-    if (eventBuffer.length > usageEngineControlServerBounds.maxReplayEvents) {
-      eventBuffer.shift();
-    }
-    for (const subscriber of subscribers) {
-      subscriber.emit(event);
-    }
-  };
-
-  const failEventPump = (): void => {
-    if (eventPumpState !== 'running') {
-      return;
-    }
-    eventPumpState = 'failed';
-    eventBuffer.length = 0;
-    for (const subscriber of [...subscribers]) {
-      subscriber.close();
-    }
-    reportInternalFailure('event-stream');
-  };
-
-  const eventPump = (async () => {
-    try {
-      while (!disposed) {
-        const next = await runtimeIterator.next();
-        if (next.done) {
-          if (!disposed) {
-            failEventPump();
-          }
-          return;
-        }
-        publish(next.value);
-      }
-    } catch {
-      if (!disposed) {
-        failEventPump();
-      }
-    }
-  })();
+  const eventHub = createUsageEngineControlEventHub({
+    capacityResponse: () => errorResponse('engine-busy', 'Usage engine event subscriber capacity is full.', 503),
+    clearHeartbeat,
+    maxReplayEvents: usageEngineControlServerBounds.maxReplayEvents,
+    maxSubscriberFrames: usageEngineControlServerBounds.maxSubscriberFrames,
+    maxSubscribers: usageEngineControlServerBounds.maxSubscribers,
+    reportFailure: reportInternalFailure,
+    runtime,
+    scheduleHeartbeat,
+  });
 
   const authorize = (request: Request, peerAddress: string | null): Response | undefined => {
     let url: URL;
@@ -340,144 +273,18 @@ export const createUsageEngineControlHandler = ({
     }
   };
 
-  const createEventStream = async (request: Request, deadline: RequestDeadline): Promise<Response> => {
-    if (subscribers.size >= usageEngineControlServerBounds.maxSubscribers) {
-      return errorResponse('engine-busy', 'Usage engine event subscriber capacity is full.', 503);
-    }
-    const replayEvents = eventBuffer.slice();
-    const snapshotBoundarySequence = replayEvents.at(-1)?.sequence ?? 0;
-    const pending: UsageEngineEvent[] = [];
-    let pendingOverflow = false;
-    let deliver = (event: UsageEngineEvent): void => {
-      if (pending.length >= usageEngineControlServerBounds.maxSubscriberFrames) {
-        pendingOverflow = true;
-        return;
-      }
-      pending.push(event);
-    };
-    let heartbeat: ReturnType<typeof setInterval> | undefined;
-    let controller: ReadableStreamDefaultController<Uint8Array> | undefined;
-    let closed = false;
-    const subscriber: EventSubscriber = {
-      close: () => {
-        if (closed) {
-          return;
-        }
-        closed = true;
-        if (heartbeat !== undefined) {
-          clearHeartbeat(heartbeat);
-        }
-        subscribers.delete(subscriber);
-        try {
-          controller?.close();
-        } catch {
-          // The transport may have already cancelled the stream.
-        }
-      },
-      emit: (event) => deliver(event),
-    };
-    subscribers.add(subscriber);
-    let status: UsageEngineStatus;
-    try {
-      status = parseUsageEngineStatus(await deadline.run(runtime.status));
-    } catch (cause) {
-      subscribers.delete(subscriber);
-      closed = true;
-      throw cause;
-    }
-    const statusEvent = parseUsageEngineEvent({
-      event: 'status',
-      eventId: `snapshot:${snapshotBoundarySequence}`,
-      instanceId: status.instanceId,
-      sequence: 0,
-      status,
-    });
-    const stream = new ReadableStream<Uint8Array>(
-      {
-        cancel: () => subscriber.close(),
-        start: (streamController) => {
-          controller = streamController;
-          let latestSequence = -1;
-          const enqueueFrame = (frame: Uint8Array): boolean => {
-            if (closed || (streamController.desiredSize ?? 0) <= 0) {
-              subscriber.close();
-              return false;
-            }
-            try {
-              streamController.enqueue(frame);
-              return true;
-            } catch {
-              subscriber.close();
-              return false;
-            }
-          };
-          const enqueueEvent = (event: UsageEngineEvent): void => {
-            if (event.sequence <= latestSequence) {
-              return;
-            }
-            if (enqueueFrame(sseFrame(event))) {
-              latestSequence = event.sequence;
-            }
-          };
-          if (!enqueueFrame(sseFrame(statusEvent))) {
-            return;
-          }
-          const seenSequence = lastSeenSequence(
-            request.headers.get('last-event-id'),
-            snapshotBoundarySequence,
-            replayEvents,
-          );
-          for (const event of replayEvents) {
-            if (
-              event.event === 'command-completed' &&
-              event.sequence > seenSequence &&
-              event.sequence <= snapshotBoundarySequence
-            ) {
-              enqueueEvent(event);
-            }
-          }
-          deliver = enqueueEvent;
-          for (const event of pending) {
-            if (event.sequence > snapshotBoundarySequence) {
-              enqueueEvent(event);
-            }
-          }
-          pending.length = 0;
-          if (pendingOverflow) {
-            subscriber.close();
-            return;
-          }
-          if (!closed) {
-            heartbeat = scheduleHeartbeat(() => {
-              enqueueFrame(encoder.encode(': heartbeat\n\n'));
-            }, SSE_HEARTBEAT_MS);
-          }
-        },
-      },
-      {
-        highWaterMark: usageEngineControlServerBounds.maxSubscriberFrames,
-        size: () => 1,
-      },
-    );
-    return new Response(stream, {
-      headers: {
-        'cache-control': 'no-cache, no-store',
-        connection: 'keep-alive',
-        'content-type': EVENT_STREAM_MEDIA_TYPE,
-        'x-accel-buffering': 'no',
-      },
-    });
-  };
+  const createEventStream = async (request: Request, deadline: RequestDeadline): Promise<Response> =>
+    await eventHub.createResponse(request, async () => await deadline.run(runtime.status));
 
   const handle = async (request: Request, peerAddress: string | null): Promise<Response> => {
     const rejected = authorize(request, peerAddress);
     if (rejected) {
       return rejected;
     }
-    if (disposed || eventPumpState === 'disposed') {
+    if (disposed || eventHub.state() === 'disposed') {
       return errorResponse('engine-unavailable', 'Usage engine is stopping.', 503);
     }
-    if (eventPumpState === 'failed') {
+    if (eventHub.state() === 'failed') {
       return errorResponse('engine-unavailable', 'Usage engine is unavailable.', 503);
     }
     const { pathname } = new URL(request.url);
@@ -588,27 +395,9 @@ export const createUsageEngineControlHandler = ({
     return new Response(null, { status: 404 });
   };
 
-  const dispose = (): Promise<void> => {
-    disposalPromise ??= (async () => {
-      disposed = true;
-      eventPumpState = eventPumpState === 'failed' ? 'failed' : 'disposed';
-      try {
-        await runtimeIterator.return?.();
-      } catch (error) {
-        reportInternalFailure('event-stream-cleanup');
-        if (eventPumpState !== 'failed') {
-          for (const subscriber of [...subscribers]) {
-            subscriber.close();
-          }
-          throw error;
-        }
-      }
-      await eventPump;
-      for (const subscriber of [...subscribers]) {
-        subscriber.close();
-      }
-    })();
-    return disposalPromise;
+  const dispose = async (): Promise<void> => {
+    disposed = true;
+    await eventHub.dispose();
   };
 
   return { dispose, handle };

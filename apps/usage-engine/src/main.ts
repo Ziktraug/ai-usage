@@ -1,4 +1,5 @@
 import { randomBytes, randomUUID } from 'node:crypto';
+import { writeSync } from 'node:fs';
 import { makeAiUsageWideEventResource } from '@ai-usage/effect-runtime';
 import { makeEngineWideEventSinkLayer, resolveWideEventLogDirectory } from '@ai-usage/effect-runtime/node';
 import { parseUsageEngineInstanceId, type UsageEngineInstanceId } from '@ai-usage/usage-engine-control';
@@ -19,6 +20,9 @@ import { createUsageEngineTermination } from './process-signals';
 import { publishUsageEngineRendezvous } from './rendezvous-file';
 
 export const defineUsageEngineComposition = <Factory>(factory: Factory): Factory => factory;
+
+export const usageEngineFailureDiagnostic = 'Usage engine failed to start or complete its command.';
+export const usageEngineForcedShutdownDiagnostic = 'Usage engine forced shutdown before cleanup was confirmed.';
 
 const engineInstanceIdFrom = (env: NodeJS.ProcessEnv): UsageEngineInstanceId =>
   env.AI_USAGE_ENGINE_INSTANCE_ID === undefined
@@ -100,6 +104,7 @@ export const runUsageEngineMain = async (
   const paths = resolveUsageEngineProcessPaths({ env });
   const logDirectory = await resolveWideEventLogDirectory(env);
   const termination = createUsageEngineTermination(process, (signal) => {
+    writeSync(process.stderr.fd, `${usageEngineForcedShutdownDiagnostic}\n`);
     process.exit(interruptedExitCode(signal));
   });
   try {
@@ -117,8 +122,8 @@ export const runUsageEngineMain = async (
 if (import.meta.main) {
   try {
     process.exitCode = await runUsageEngineMain();
-  } catch (error) {
-    process.stderr.write(`${error instanceof Error ? error.message : 'Usage engine failed.'}\n`);
+  } catch {
+    process.stderr.write(`${usageEngineFailureDiagnostic}\n`);
     process.exitCode = 1;
   }
 }

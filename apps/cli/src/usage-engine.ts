@@ -19,6 +19,7 @@ import {
 } from '@ai-usage/usage-engine-control/client';
 import {
   executeUsageEngineCommandToCompletion,
+  USAGE_ENGINE_COMMAND_COMPLETION_TIMEOUT_MS,
   UsageEngineCommandCompletionError,
 } from '@ai-usage/usage-engine-control/completion';
 import {
@@ -249,6 +250,7 @@ const terminateForegroundChild = async (
 
 export interface CreateLiveCliUsageEngineOptions {
   readonly engineEntrypoint?: string;
+  readonly foregroundDeadlineMs?: number;
   readonly foregroundTerminationGraceMs?: number;
   readonly paths: CliUsagePaths;
   readonly writeDiagnostics?: (bytes: Uint8Array) => Promise<void>;
@@ -258,7 +260,17 @@ export const createLiveCliUsageEngine = (options: CreateLiveCliUsageEngineOption
   const engineEntrypoint =
     options.engineEntrypoint ?? fileURLToPath(import.meta.resolve('@ai-usage/usage-engine/main'));
   const writeDiagnostics = options.writeDiagnostics ?? writeProcessStderr;
+  const foregroundDeadlineMs = options.foregroundDeadlineMs ?? USAGE_ENGINE_COMMAND_COMPLETION_TIMEOUT_MS;
   const foregroundTerminationGraceMs = options.foregroundTerminationGraceMs ?? DEFAULT_FOREGROUND_TERMINATION_GRACE_MS;
+  if (
+    !(
+      Number.isSafeInteger(foregroundDeadlineMs) &&
+      foregroundDeadlineMs > 0 &&
+      foregroundDeadlineMs <= USAGE_ENGINE_COMMAND_COMPLETION_TIMEOUT_MS
+    )
+  ) {
+    throw new Error('Usage engine foreground deadline must be a positive bounded integer.');
+  }
   if (!(Number.isSafeInteger(foregroundTerminationGraceMs) && foregroundTerminationGraceMs >= 0)) {
     throw new Error('Usage engine foreground termination grace must be a non-negative integer.');
   }
@@ -294,6 +306,10 @@ export const createLiveCliUsageEngine = (options: CreateLiveCliUsageEngineOption
     });
     const markAborted = (): void => resolveAbort?.();
     signal?.addEventListener('abort', markAborted, { once: true });
+    let deadline: ReturnType<typeof setTimeout> | undefined;
+    const timedOut = new Promise<void>((resolve) => {
+      deadline = setTimeout(resolve, foregroundDeadlineMs);
+    });
     const processSettlement = Promise.all([
       readBoundedStream(child.stdout, usageEngineControlBounds.maxForegroundOutcomeBytes),
       child.exited,
@@ -304,7 +320,11 @@ export const createLiveCliUsageEngine = (options: CreateLiveCliUsageEngineOption
       const settlement = await Promise.race([
         processSettlement.then(([stdout, exitCode]) => ({ exitCode, kind: 'settled' as const, stdout })),
         abort.then(() => ({ kind: 'aborted' as const })),
+        timedOut.then(() => ({ kind: 'timed-out' as const })),
       ]);
+      if (settlement.kind === 'timed-out') {
+        throw new CliUsageEngineError('timeout', 'Usage engine foreground command timed out.');
+      }
       if (settlement.kind === 'aborted' || signal?.aborted) {
         throw new CliUsageEngineError('aborted', 'Usage engine command was cancelled.');
       }
@@ -343,6 +363,9 @@ export const createLiveCliUsageEngine = (options: CreateLiveCliUsageEngineOption
       }
       throw error;
     } finally {
+      if (deadline !== undefined) {
+        clearTimeout(deadline);
+      }
       signal?.removeEventListener('abort', markAborted);
       if (child.exitCode === null) {
         await terminateForegroundChild(child, signal?.aborted ? 'SIGINT' : 'SIGTERM', foregroundTerminationGraceMs);

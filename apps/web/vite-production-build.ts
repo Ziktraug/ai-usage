@@ -4,6 +4,16 @@ import fs from 'node:fs';
 import { chmod, lstat, mkdir, open, realpath, rm, unlink } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import {
+  errorHasCode,
+  type FileIdentity,
+  hasCurrentOwner,
+  isOwnerOnly,
+  isProcessStartTimeTicks,
+  processIsAlive,
+  readProcessStartTimeTicks as processStartTimeTicks,
+  sameFileIdentity,
+} from '@ai-usage/usage-engine-control/node';
 
 const BUILD_CONTAINER_NAME = '.output-build';
 const BUILD_LOCK_NAME = 'build.lock';
@@ -12,20 +22,12 @@ const LOCK_METADATA_VERSION = 1;
 const LOCK_INITIALIZATION_DEADLINE_MS = 250;
 const LOCK_INITIALIZATION_POLL_MS = 10;
 const MAX_LOCK_METADATA_BYTES = 4096;
-const PROCESS_START_TIME_INDEX = 19;
-const DIGITS_PATTERN = /^\d+$/;
-const WHITESPACE_PATTERN = /\s+/;
 const PRODUCTION_OUTPUT_CHILDREN = [
   path.join(BUILD_CONTAINER_NAME, 'nitro'),
   path.join(BUILD_CONTAINER_NAME, 'vite'),
   path.join(BUILD_CONTAINER_NAME, 'work'),
   'dist',
 ] as const;
-
-interface FileIdentity {
-  dev: number;
-  ino: number;
-}
 
 interface ValidatedBuildContainer {
   identity: FileIdentity;
@@ -45,16 +47,6 @@ interface ProductionBuildLockMetadata {
   processStartTimeTicks: string | null;
   version: typeof LOCK_METADATA_VERSION;
 }
-
-const errorHasCode = (error: unknown, code: string): boolean =>
-  typeof error === 'object' && error !== null && 'code' in error && error.code === code;
-
-const sameFileIdentity = (left: FileIdentity, right: FileIdentity): boolean =>
-  left.dev === right.dev && left.ino === right.ino;
-
-const hasCurrentOwner = (uid: number): boolean => typeof process.getuid !== 'function' || uid === process.getuid();
-
-const isOwnerOnly = (mode: number): boolean => process.platform === 'win32' || mode % 0o100 === 0;
 
 const validateBuildContainerStat = (containerPath: string, containerStat: Stats): void => {
   if (
@@ -102,36 +94,6 @@ const assertBuildContainerUnchanged = async (container: ValidatedBuildContainer)
   }
 };
 
-const processStartTimeTicks = async (pid: number): Promise<string | null> => {
-  if (process.platform !== 'linux') {
-    return null;
-  }
-  try {
-    const stat = await Bun.file(`/proc/${pid}/stat`).text();
-    const commandEnd = stat.lastIndexOf(')');
-    if (commandEnd < 0) {
-      return null;
-    }
-    const fieldsAfterCommand = stat
-      .slice(commandEnd + 2)
-      .trim()
-      .split(WHITESPACE_PATTERN);
-    const startTime = fieldsAfterCommand[PROCESS_START_TIME_INDEX];
-    return startTime && DIGITS_PATTERN.test(startTime) ? startTime : null;
-  } catch {
-    return null;
-  }
-};
-
-const processIsAlive = (pid: number): boolean => {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return !errorHasCode(error, 'ESRCH');
-  }
-};
-
 const parseLockMetadata = (text: string): ProductionBuildLockMetadata | undefined => {
   try {
     const value = JSON.parse(text) as unknown;
@@ -155,10 +117,7 @@ const parseLockMetadata = (text: string): ProductionBuildLockMetadata | undefine
       !Number.isSafeInteger(value.pid) ||
       value.pid <= 0 ||
       !('processStartTimeTicks' in value) ||
-      !(
-        value.processStartTimeTicks === null ||
-        (typeof value.processStartTimeTicks === 'string' && DIGITS_PATTERN.test(value.processStartTimeTicks))
-      )
+      !(value.processStartTimeTicks === null || isProcessStartTimeTicks(value.processStartTimeTicks))
     ) {
       return;
     }

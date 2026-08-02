@@ -4,7 +4,6 @@ import {
   type FocusedOverviewRequest,
   type FocusedOverviewResult,
   type FocusedOverviewView,
-  type FocusedReportQueryKind,
   type FocusedReportQueryScope,
   type FocusedSupportResult,
   focusedAdvancedAnalysisFingerprint,
@@ -22,36 +21,6 @@ export interface FocusedReportSource {
   getOverview: (request: FocusedOverviewRequest) => Promise<SessionQueryServerResult<FocusedOverviewResult>>;
 }
 
-type FocusedInteractiveQueryKind = Exclude<FocusedReportQueryKind, 'support'>;
-
-interface FocusedRequestByKind {
-  breakdown: FocusedBreakdownRequest;
-  overview: FocusedOverviewRequest;
-}
-
-interface FocusedResultByKind {
-  breakdown: FocusedBreakdownResult;
-  overview: FocusedOverviewResult;
-}
-
-const requestRevision = <Kind extends FocusedInteractiveQueryKind>(
-  _kind: Kind,
-  request: FocusedRequestByKind[Kind],
-): string => (request as FocusedOverviewRequest | FocusedBreakdownRequest).query.revision;
-
-const requestFingerprint = <Kind extends FocusedInteractiveQueryKind>(
-  kind: Kind,
-  request: FocusedRequestByKind[Kind],
-): string => {
-  if (kind === 'overview') {
-    return focusedOverviewFingerprint(request as FocusedOverviewRequest);
-  }
-  if (kind === 'breakdown') {
-    return focusedBreakdownFingerprint(request as FocusedBreakdownRequest);
-  }
-  return focusedBreakdownFingerprint(request as FocusedBreakdownRequest);
-};
-
 export class FocusedRevisionExpiredError extends Error {
   constructor() {
     super('The focused report revision expired');
@@ -59,13 +28,12 @@ export class FocusedRevisionExpiredError extends Error {
   }
 }
 
-const validateServerResult = <Kind extends FocusedInteractiveQueryKind>(
-  kind: Kind,
-  request: FocusedRequestByKind[Kind],
-  result: SessionQueryServerResult<FocusedResultByKind[Kind]>,
-): FocusedResultByKind[Kind] => {
-  const revision = requestRevision(kind, request);
-  const fingerprint = requestFingerprint(kind, request);
+const validateServerResult = <Result>(
+  kind: 'breakdown' | 'overview',
+  revision: string,
+  fingerprint: string,
+  result: SessionQueryServerResult<Result>,
+): Result => {
   if (result.revision !== revision || result.requestFingerprint !== fingerprint) {
     throw new Error(`Focused ${kind} response revision or fingerprint mismatch`);
   }
@@ -79,29 +47,6 @@ const validateServerResult = <Kind extends FocusedInteractiveQueryKind>(
   // before it reaches this transport. The browser rechecks the exact revision
   // and canonical request fingerprint above, then accepts that parsed value.
   return result.data;
-};
-
-const querySource = async <Kind extends FocusedInteractiveQueryKind>(
-  source: FocusedReportSource,
-  kind: Kind,
-  request: FocusedRequestByKind[Kind],
-): Promise<FocusedResultByKind[Kind]> => {
-  if (kind === 'overview') {
-    return validateServerResult(
-      kind,
-      request,
-      (await source.getOverview(request as FocusedOverviewRequest)) as SessionQueryServerResult<
-        FocusedResultByKind[Kind]
-      >,
-    );
-  }
-  return validateServerResult(
-    kind,
-    request,
-    (await source.getBreakdown(request as FocusedBreakdownRequest)) as SessionQueryServerResult<
-      FocusedResultByKind[Kind]
-    >,
-  );
 };
 
 const validatedBootstrap = (
@@ -143,11 +88,27 @@ export const fetchFocusedReportBootstrapDescriptor = async (
 export const fetchFocusedReportBootstrap = async (source: FocusedReportSource): Promise<FocusedSupportResult> =>
   (await fetchFocusedReportBootstrapDescriptor(source)).bootstrap;
 
-export const fetchFocusedOverview = (source: FocusedReportSource, request: FocusedOverviewRequest) =>
-  querySource(source, 'overview', request);
+export const fetchFocusedOverview = async (
+  source: FocusedReportSource,
+  request: FocusedOverviewRequest,
+): Promise<FocusedOverviewResult> =>
+  validateServerResult(
+    'overview',
+    request.query.revision,
+    focusedOverviewFingerprint(request),
+    await source.getOverview(request),
+  );
 
-export const fetchFocusedBreakdown = (source: FocusedReportSource, request: FocusedBreakdownRequest) =>
-  querySource(source, 'breakdown', request);
+export const fetchFocusedBreakdown = async (
+  source: FocusedReportSource,
+  request: FocusedBreakdownRequest,
+): Promise<FocusedBreakdownResult> =>
+  validateServerResult(
+    'breakdown',
+    request.query.revision,
+    focusedBreakdownFingerprint(request),
+    await source.getBreakdown(request),
+  );
 
 export type FocusedStoreApplyResult =
   | { applied: true }

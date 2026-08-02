@@ -8,7 +8,7 @@ import {
   type UsageEngineStatus,
 } from './contracts';
 
-const DEFAULT_COMPLETION_TIMEOUT_MS = 5 * 60_000;
+export const USAGE_ENGINE_COMMAND_COMPLETION_TIMEOUT_MS = 5 * 60_000;
 const BEST_EFFORT_CANCELLATION_TIMEOUT_MS = 1000;
 const MAX_IGNORED_EVENTS = 512;
 
@@ -47,14 +47,14 @@ export const executeUsageEngineCommandToCompletion = async (
   options: ExecuteUsageEngineCommandOptions,
 ): Promise<UsageEngineCommandCompletion> => {
   const commandId = parseUsageEngineCommandId(options.commandId ?? randomUUID());
-  const timeoutMs = options.timeoutMs ?? DEFAULT_COMPLETION_TIMEOUT_MS;
+  const timeoutMs = options.timeoutMs ?? USAGE_ENGINE_COMMAND_COMPLETION_TIMEOUT_MS;
   if (
     !(
       Number.isSafeInteger(options.expectedStoreSchemaVersion) &&
       options.expectedStoreSchemaVersion > 0 &&
       Number.isSafeInteger(timeoutMs) &&
       timeoutMs > 0 &&
-      timeoutMs <= DEFAULT_COMPLETION_TIMEOUT_MS
+      timeoutMs <= USAGE_ENGINE_COMMAND_COMPLETION_TIMEOUT_MS
     )
   ) {
     throw new Error('Usage engine command completion options are invalid.');

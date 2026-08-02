@@ -9,6 +9,7 @@ import {
   type UsageEngineProtocolVersion,
   usageEngineControlBounds,
 } from './contracts';
+import { sameFileIdentity } from './private-file-identity';
 import { readOpenedFileBounded } from './read-opened-file';
 import { createUsageEngineBearerToken, type UsageEngineBearerToken } from './secret';
 
@@ -67,11 +68,6 @@ const hasExactKeys = (record: Record<string, unknown>, expected: readonly string
   const sortedExpected = [...expected].sort();
   return actual.length === sortedExpected.length && actual.every((key, index) => key === sortedExpected[index]);
 };
-
-const sameFileIdentity = (
-  left: { readonly dev: number | bigint; readonly ino: number | bigint },
-  right: { readonly dev: number | bigint; readonly ino: number | bigint },
-): boolean => left.dev === right.dev && left.ino === right.ino;
 
 export const parseUsageEngineTargetId = (value: unknown): UsageEngineTargetId => {
   if (!(typeof value === 'string' && targetIdPattern.test(value))) {
@@ -236,5 +232,15 @@ export const loadUsageEngineRendezvous = async (filePath: string): Promise<Usage
   }
 };
 
+export {
+  errorHasCode,
+  type FileIdentity,
+  hasCurrentOwner,
+  isOwnerOnly,
+  isProcessStartTimeTicks,
+  processIsAlive,
+  readProcessStartTimeTicks,
+  sameFileIdentity,
+} from './private-file-identity';
 export { readOpenedFileBounded } from './read-opened-file';
 export { resolveUsageRuntimePaths, type UsageRuntimePaths } from './runtime-paths';

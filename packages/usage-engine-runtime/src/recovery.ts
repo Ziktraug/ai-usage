@@ -2,7 +2,16 @@ import { randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
 import { lstat, open, opendir, realpath, rename, rm } from 'node:fs/promises';
 import path from 'node:path';
-import { readOpenedFileBounded } from '@ai-usage/usage-engine-control/node';
+import {
+  type FileIdentity,
+  hasCurrentOwner,
+  isOwnerOnly,
+  isProcessStartTimeTicks,
+  processIsAlive,
+  readProcessStartTimeTicks as processStartTimeTicks,
+  readOpenedFileBounded,
+  sameFileIdentity as sameIdentity,
+} from '@ai-usage/usage-engine-control/node';
 
 const LEGACY_ARTIFACT_PREFIXES = ['ai-usage-report-revisions-', 'ai-usage-session-query-lease-'] as const;
 const LEGACY_MKDTEMP_SUFFIX_PATTERN = /^[A-Za-z0-9]{6}$/;
@@ -10,15 +19,7 @@ const OWNER_FILE_NAME = '.owner.json';
 const MAX_OWNER_BYTES = 1024;
 const MAX_SCAVENGE_ENTRIES = 100_000;
 const MAX_SCAVENGE_ROOT_ENTRIES = 10_000;
-const PROCESS_START_TIME_INDEX = 19;
-const DIGITS_PATTERN = /^\d+$/;
-const WHITESPACE_PATTERN = /\s+/;
 const SHARED_TEMP_ROOT_MODE = 0o1002;
-
-interface FileIdentity {
-  readonly dev: number;
-  readonly ino: number;
-}
 
 interface OwnerMetadata {
   readonly pid: number;
@@ -47,16 +48,6 @@ export interface LegacyArtifactScavengeResult {
   readonly skippedSuspicious: number;
 }
 
-const errorHasCode = (error: unknown, code: string): boolean =>
-  typeof error === 'object' && error !== null && 'code' in error && error.code === code;
-
-const sameIdentity = (left: FileIdentity, right: FileIdentity): boolean =>
-  left.dev === right.dev && left.ino === right.ino;
-
-const hasCurrentOwner = (uid: number): boolean => typeof process.getuid !== 'function' || uid === process.getuid();
-
-const isOwnerOnly = (mode: number): boolean => process.platform === 'win32' || mode % 0o100 === 0;
-
 export const isTrustedUsageEngineTemporaryRoot = (
   stats: { readonly mode: number; readonly uid: number },
   currentUserId: number | undefined = typeof process.getuid === 'function' ? process.getuid() : undefined,
@@ -69,36 +60,6 @@ export const isTrustedUsageEngineTemporaryRoot = (
   }
   // biome-ignore lint/suspicious/noBitwiseOperators: Unix sticky/world-write permissions are a mode bitmask.
   return (stats.mode & SHARED_TEMP_ROOT_MODE) === SHARED_TEMP_ROOT_MODE;
-};
-
-const processIsAlive = (pid: number): boolean => {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return !errorHasCode(error, 'ESRCH');
-  }
-};
-
-const processStartTimeTicks = async (pid: number): Promise<string | null> => {
-  if (process.platform !== 'linux') {
-    return null;
-  }
-  try {
-    const stat = await Bun.file(`/proc/${pid}/stat`).text();
-    const commandEnd = stat.lastIndexOf(')');
-    if (commandEnd < 0) {
-      return null;
-    }
-    const fields = stat
-      .slice(commandEnd + 2)
-      .trim()
-      .split(WHITESPACE_PATTERN);
-    const startTime = fields[PROCESS_START_TIME_INDEX];
-    return startTime && DIGITS_PATTERN.test(startTime) ? startTime : null;
-  } catch {
-    return null;
-  }
 };
 
 const parseOwnerMetadata = (value: unknown): OwnerMetadata | undefined => {
@@ -116,8 +77,7 @@ const parseOwnerMetadata = (value: unknown): OwnerMetadata | undefined => {
       typeof record.pid === 'number' &&
       Number.isSafeInteger(record.pid) &&
       record.pid > 0 &&
-      (record.processStartTimeTicks === null ||
-        (typeof record.processStartTimeTicks === 'string' && DIGITS_PATTERN.test(record.processStartTimeTicks)))
+      (record.processStartTimeTicks === null || isProcessStartTimeTicks(record.processStartTimeTicks))
     )
   ) {
     return;

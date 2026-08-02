@@ -167,8 +167,9 @@ describe('usage engine real process lifecycle', () => {
     const contender = spawnEngine(fixture, ['serve', '--port', '0']);
     const contenderResult = await finishChild(contender);
     expect(contenderResult.exitCode).toBe(1);
-    expect(contenderResult.stderr).toContain(`owned by live PID ${primary.child.pid}`);
-    expect(contenderResult.stderr).toContain(fixture.lockPath);
+    expect(contenderResult.stderr).toBe('Usage engine failed to start or complete its command.\n');
+    expect(contenderResult.stderr).not.toContain(String(primary.child.pid));
+    expect(contenderResult.stderr).not.toContain(fixture.lockPath);
     expect(await loadUsageEngineRendezvous(fixture.rendezvousPath)).toEqual(rendezvous);
     expect((await statusRequest(rendezvous, token)).status).toBe(200);
 

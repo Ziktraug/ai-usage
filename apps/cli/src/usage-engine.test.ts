@@ -296,6 +296,62 @@ process.stdout.write(JSON.stringify({
   }
 });
 
+test('times out and reaps a foreground command that never completes', async () => {
+  const fixture = await createForegroundFixture();
+  const entrypoint = path.join(fixture.root, 'stalled-engine.ts');
+  const pidPath = path.join(fixture.root, 'stalled.pid');
+  await writeFile(
+    entrypoint,
+    `
+process.on('SIGINT', () => undefined);
+process.on('SIGTERM', () => undefined);
+await Bun.write(${JSON.stringify(pidPath)}, String(process.pid));
+setInterval(() => undefined, 1000);
+`,
+  );
+  const engine = createLiveCliUsageEngine({
+    engineEntrypoint: entrypoint,
+    foregroundDeadlineMs: 20,
+    foregroundTerminationGraceMs: 10,
+    paths: fixture.paths,
+    writeDiagnostics: () => Promise.resolve(),
+  });
+  let childPid: number | undefined;
+  try {
+    const outcome = engine.execute({ command: 'publish' });
+    for (let attempt = 0; attempt < 200; attempt++) {
+      if (await Bun.file(pidPath).exists()) {
+        childPid = Number(await Bun.file(pidPath).text());
+        break;
+      }
+      await Bun.sleep(5);
+    }
+    expect(childPid).toBeInteger();
+    await expect(outcome).rejects.toMatchObject({ code: 'timeout' });
+
+    let childAlive = true;
+    for (let attempt = 0; attempt < 100; attempt++) {
+      try {
+        process.kill(childPid!, 0);
+      } catch {
+        childAlive = false;
+        break;
+      }
+      await Bun.sleep(5);
+    }
+    expect(childAlive).toBe(false);
+  } finally {
+    if (childPid !== undefined) {
+      try {
+        process.kill(childPid, 'SIGKILL');
+      } catch {
+        // The deadline path already reaped the isolated fixture process.
+      }
+    }
+    await rm(fixture.root, { force: true, recursive: true });
+  }
+});
+
 test('drains large foreground diagnostics before accepting the bounded control outcome', async () => {
   const fixture = await createForegroundFixture();
   const entrypoint = path.join(fixture.root, 'fake-engine.ts');

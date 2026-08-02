@@ -18,6 +18,7 @@ import {
 } from '@ai-usage/usage-engine-control';
 import { failedCommandCompletion, successfulCommandCompletion } from './runtime-command-completion';
 import type { UsageEngineCommandOutput } from './runtime-command-executor';
+import { usageEngineCommandPolicies } from './runtime-command-policy';
 import {
   UsageEngineCommandError,
   type UsageEngineCommandErrorCode,
@@ -81,31 +82,8 @@ const commandFailureMessage = 'The usage engine command could not be completed.'
 
 const commandFingerprint = (command: UsageEngineCommand): string => JSON.stringify(command);
 
-const commandIsSafelyInterruptible = (command: UsageEngineCommand): boolean => {
-  switch (command.command) {
-    case 'collect-fresh-report':
-    case 'collect-fresh-quota':
-    case 'detect-all':
-    case 'preview-merge':
-    case 'run-all-enabled':
-    case 'run-source':
-      return true;
-    case 'confirm-merge':
-    case 'import-cursor':
-    case 'publish':
-    case 'replace-project-aliases':
-    case 'replace-project-groups':
-    case 'replace-project-groups-by-reference':
-    case 'set-machine-label':
-    case 'set-campaign-label-override':
-    case 'set-source-enabled':
-      return false;
-    default: {
-      const unsupportedCommand: never = command;
-      throw new Error(`Unsupported usage engine command: ${JSON.stringify(unsupportedCommand)}`);
-    }
-  }
-};
+const commandIsSafelyInterruptible = (command: UsageEngineCommand): boolean =>
+  usageEngineCommandPolicies[command.command].interruptible;
 
 const commandHasFileInput = (command: UsageEngineCommand): command is FileInputCommand =>
   command.command === 'confirm-merge' || command.command === 'import-cursor' || command.command === 'preview-merge';

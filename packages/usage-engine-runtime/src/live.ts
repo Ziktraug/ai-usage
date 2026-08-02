@@ -24,7 +24,6 @@ import {
 import type { UsageMachine } from '@ai-usage/report-core/snapshot';
 import {
   type CollectionSourceId,
-  collectionSourceIds,
   type SourceControlView,
   updateSourcePolicyOverrides,
 } from '@ai-usage/report-core/source-control';
@@ -77,17 +76,11 @@ import {
   type SourceControlService,
   type SourcePolicyStore,
 } from './source-control';
+import { createSourceSnapshotBroker } from './source-snapshot-broker';
 import { createUsageEngineWriterGate, type UsageEngineWriterGate } from './writer-gate';
 
 const TERMINAL_SOURCE_OUTCOMES = new Set(['failed', 'timed-out']);
-const MAX_SOURCE_SNAPSHOT_QUEUE = 64;
 const DEFAULT_SOURCE_CONTROL_STARTUP_DEADLINE_MS = 30_000;
-
-interface SourceSnapshotSubscriber {
-  closed: boolean;
-  pending: ((result: IteratorResult<SourceControlView>) => void) | undefined;
-  readonly queue: SourceControlView[];
-}
 
 export interface TerminalSourceControlOptions {
   readonly beforeInitialCollection?: Effect.Effect<void>;
@@ -144,15 +137,9 @@ export const createTerminalSourceControlPort = (
         }),
       ).pipe(Layer.provideMerge(options.wideEventSinkLayer));
   const managedRuntime = ManagedRuntime.make(controlLayer);
-  const subscribers = new Set<SourceSnapshotSubscriber>();
-  const sourceCompletionGenerations = new Map<CollectionSourceId, number>(
-    collectionSourceIds.map((sourceId) => [sourceId, 0]),
-  );
-  let latest: SourceControlView | undefined;
+  const snapshots = createSourceSnapshotBroker();
   let startPromise: Promise<SourceControlView> | undefined;
   let disposalPromise: Promise<void> | undefined;
-  let disposing = false;
-  let streamFailure: Error | undefined;
   let streamSettlement: Promise<void> | undefined;
 
   const startupDeadlineMs = options.startupDeadlineMs ?? DEFAULT_SOURCE_CONTROL_STARTUP_DEADLINE_MS;
@@ -183,118 +170,20 @@ export const createTerminalSourceControlPort = (
     return outcome.value;
   };
 
-  const closeSubscriber = (subscriber: SourceSnapshotSubscriber): void => {
-    if (subscriber.closed) {
-      return;
-    }
-    subscriber.closed = true;
-    subscriber.queue.length = 0;
-    subscriber.pending?.({ done: true, value: undefined });
-    subscriber.pending = undefined;
-    subscribers.delete(subscriber);
-  };
-
-  const publishSnapshot = (snapshot: SourceControlView): void => {
-    if (latest && snapshot.generation <= latest.generation) {
-      return;
-    }
-    const previous = latest;
-    if (previous) {
-      for (const source of snapshot.sources) {
-        const prior = sourceEntry(previous, source.id);
-        const wasRunning = prior.lifecycle === 'running' || prior.lifecycle === 'pausing';
-        const isRunning = source.lifecycle === 'running' || source.lifecycle === 'pausing';
-        if (wasRunning && !isRunning) {
-          sourceCompletionGenerations.set(source.id, (sourceCompletionGenerations.get(source.id) ?? 0) + 1);
-        }
-      }
-    }
-    latest = snapshot;
-    for (const subscriber of subscribers) {
-      if (subscriber.pending) {
-        const resolve = subscriber.pending;
-        subscriber.pending = undefined;
-        resolve({ done: false, value: snapshot });
-        continue;
-      }
-      if (subscriber.queue.length >= MAX_SOURCE_SNAPSHOT_QUEUE) {
-        subscriber.queue.shift();
-      }
-      subscriber.queue.push(snapshot);
-    }
-  };
-
-  const failStream = (): void => {
-    if (disposing || streamFailure) {
-      return;
-    }
-    streamFailure = new Error('The usage engine source-control event stream stopped unexpectedly.');
-    for (const subscriber of [...subscribers]) {
-      closeSubscriber(subscriber);
-    }
-  };
-
   const startStream = (): void => {
     if (streamSettlement) {
       return;
     }
     const streamFiber = managedRuntime.runFork(
-      withControl((service) => Stream.runForEach(service.changes, (next) => Effect.sync(() => publishSnapshot(next)))),
+      withControl((service) =>
+        Stream.runForEach(service.changes, (next) => Effect.sync(() => snapshots.publish(next))),
+      ),
     );
     streamSettlement = new Promise<void>((resolve) => {
       streamFiber.addObserver(() => {
-        failStream();
+        snapshots.failStream();
         resolve();
       });
-    });
-  };
-
-  const waitForNextSnapshot = async (generation: number, signal?: AbortSignal): Promise<void> => {
-    if (signal?.aborted) {
-      throw abortedOperation();
-    }
-    if (latest && latest.generation > generation) {
-      return;
-    }
-    if (streamFailure) {
-      throw streamFailure;
-    }
-    await new Promise<void>((resolve, reject) => {
-      let settled = false;
-      const subscriber: SourceSnapshotSubscriber = { closed: false, pending: undefined, queue: [] };
-      const finish = (error?: Error): void => {
-        if (settled) {
-          return;
-        }
-        settled = true;
-        signal?.removeEventListener('abort', onAbort);
-        closeSubscriber(subscriber);
-        if (error) {
-          reject(error);
-        } else {
-          resolve();
-        }
-      };
-      const onAbort = (): void => finish(abortedOperation());
-      const receive = ({ done, value }: IteratorResult<SourceControlView>): void => {
-        if (done) {
-          finish(streamFailure ?? abortedOperation());
-          return;
-        }
-        if (value.generation > generation) {
-          finish();
-          return;
-        }
-        subscriber.pending = receive;
-      };
-      subscriber.pending = receive;
-      subscribers.add(subscriber);
-      signal?.addEventListener('abort', onAbort, { once: true });
-      if (latest && latest.generation > generation) {
-        finish();
-      } else if (streamFailure) {
-        finish(streamFailure);
-      }
     });
   };
 
@@ -308,17 +197,17 @@ export const createTerminalSourceControlPort = (
       }, startupDeadlineMs);
       try {
         const snapshot = await run((service) => service.getSnapshot, startupAbort.signal);
-        publishSnapshot(snapshot);
+        snapshots.publish(snapshot);
         startStream();
-        publishSnapshot(await run((service) => service.getSnapshot, startupAbort.signal));
+        snapshots.publish(await run((service) => service.getSnapshot, startupAbort.signal));
         const initialPublicationTarget = snapshot.publication.requestedGeneration;
-        let current = latest ?? snapshot;
+        let current = snapshots.latest() ?? snapshot;
         while (current.publication.acknowledgedRequestGeneration < initialPublicationTarget) {
           if (current.publication.lastOutcome === 'failed') {
             throw new Error('The usage engine initial source-control publication failed.');
           }
-          await waitForNextSnapshot(current.generation, startupAbort.signal);
-          current = latest ?? current;
+          await snapshots.waitForNext(current.generation, startupAbort.signal);
+          current = snapshots.latest() ?? current;
         }
         return current;
       } catch (error) {
@@ -338,8 +227,8 @@ export const createTerminalSourceControlPort = (
     await start();
     throwIfAborted(signal);
     const snapshot = await run((service) => service.getSnapshot, signal);
-    publishSnapshot(snapshot);
-    return latest ?? snapshot;
+    snapshots.publish(snapshot);
+    return snapshots.latest() ?? snapshot;
   };
 
   const waitForSnapshot = async (
@@ -348,7 +237,7 @@ export const createTerminalSourceControlPort = (
     signal?: AbortSignal,
   ): Promise<SourceControlView> => {
     while (true) {
-      const snapshot = latest ?? (await currentSnapshot(signal));
+      const snapshot = snapshots.latest() ?? (await currentSnapshot(signal));
       const error = failure(snapshot);
       if (error) {
         throw error;
@@ -356,7 +245,7 @@ export const createTerminalSourceControlPort = (
       if (predicate(snapshot)) {
         return snapshot;
       }
-      await waitForNextSnapshot(snapshot.generation, signal);
+      await snapshots.waitForNext(snapshot.generation, signal);
     }
   };
 
@@ -380,7 +269,7 @@ export const createTerminalSourceControlPort = (
         const source = sourceEntry(snapshot, sourceId);
         return (
           !(source.lifecycle === 'queued' || source.lifecycle === 'running') &&
-          (sourceCompletionGenerations.get(sourceId) ?? 0) > previousCompletionGeneration
+          snapshots.completionGeneration(sourceId) > previousCompletionGeneration
         );
       },
       () => undefined,
@@ -402,7 +291,7 @@ export const createTerminalSourceControlPort = (
       return await redetectAndRunSource(sourceId, signal);
     }
     await currentSnapshot(signal);
-    const previousCompletionGeneration = sourceCompletionGenerations.get(sourceId) ?? 0;
+    const previousCompletionGeneration = snapshots.completionGeneration(sourceId);
     try {
       await run((service) => service.runNow(sourceId), signal);
     } catch (error) {
@@ -427,11 +316,11 @@ export const createTerminalSourceControlPort = (
     signal?: AbortSignal,
   ): Promise<SourceControlView> => {
     await currentSnapshot(signal);
-    const previousCompletionGeneration = sourceCompletionGenerations.get(sourceId) ?? 0;
+    const previousCompletionGeneration = snapshots.completionGeneration(sourceId);
     const admitted = await run((service) => service.detectSource(sourceId), signal);
     const after = await currentSnapshot(signal);
     const source = sourceEntry(after, sourceId);
-    const alreadyCompleted = (sourceCompletionGenerations.get(sourceId) ?? 0) > previousCompletionGeneration;
+    const alreadyCompleted = snapshots.completionGeneration(sourceId) > previousCompletionGeneration;
     const joined = source.lifecycle === 'queued' || source.lifecycle === 'running' || source.lifecycle === 'pausing';
     if (!(admitted || alreadyCompleted || joined)) {
       throw new UsageEngineSoftSourceError({ reason: 'not-admitted', snapshot: after, sourceId });
@@ -441,7 +330,7 @@ export const createTerminalSourceControlPort = (
 
   const runAllEnabled = async (signal?: AbortSignal): Promise<void> => {
     await currentSnapshot(signal);
-    const previousCompletions = new Map(sourceCompletionGenerations);
+    const previousCompletions = snapshots.completionGenerations();
     await run(
       (service) => (options.initialDetection === 'deferred' ? service.detectAll : service.runAllEnabled),
       signal,
@@ -452,7 +341,7 @@ export const createTerminalSourceControlPort = (
       (snapshot) => {
         const failed = snapshot.sources.some(
           (source) =>
-            (sourceCompletionGenerations.get(source.id) ?? 0) > (previousCompletions.get(source.id) ?? 0) &&
+            snapshots.completionGeneration(source.id) > (previousCompletions.get(source.id) ?? 0) &&
             TERMINAL_SOURCE_OUTCOMES.has(source.lastOutcome),
         );
         if (failed) {
@@ -467,7 +356,7 @@ export const createTerminalSourceControlPort = (
     if (
       terminal.sources.some(
         (source) =>
-          (sourceCompletionGenerations.get(source.id) ?? 0) > (previousCompletions.get(source.id) ?? 0) &&
+          snapshots.completionGeneration(source.id) > (previousCompletions.get(source.id) ?? 0) &&
           TERMINAL_SOURCE_OUTCOMES.has(source.lastOutcome),
       )
     ) {
@@ -512,7 +401,7 @@ export const createTerminalSourceControlPort = (
     signal?: AbortSignal,
   ): Promise<void> => {
     const before = await currentSnapshot(signal);
-    const previousCompletionGeneration = sourceCompletionGenerations.get(sourceId) ?? 0;
+    const previousCompletionGeneration = snapshots.completionGeneration(sourceId);
     const detectionAdmitted =
       enabled && options.initialDetection === 'deferred' && sourceEntry(before, sourceId).policy === 'disabled'
         ? await run((service) => service.detectSource(sourceId), signal)
@@ -537,44 +426,12 @@ export const createTerminalSourceControlPort = (
     );
   };
 
-  const changes = (signal: AbortSignal): AsyncIterable<SourceControlView> => ({
-    [Symbol.asyncIterator]: () => {
-      const subscriber: SourceSnapshotSubscriber = {
-        closed: false,
-        pending: undefined,
-        queue: latest === undefined ? [] : [latest],
-      };
-      subscribers.add(subscriber);
-      const close = (): void => closeSubscriber(subscriber);
-      signal.addEventListener('abort', close, { once: true });
-      return {
-        next: () => {
-          const snapshot = subscriber.queue.shift();
-          if (snapshot) {
-            return Promise.resolve({ done: false as const, value: snapshot });
-          }
-          if (subscriber.closed || signal.aborted) {
-            return Promise.resolve({ done: true as const, value: undefined });
-          }
-          return new Promise<IteratorResult<SourceControlView>>((resolve) => {
-            subscriber.pending = resolve;
-          });
-        },
-        return: () => {
-          signal.removeEventListener('abort', close);
-          close();
-          return Promise.resolve({ done: true as const, value: undefined });
-        },
-      };
-    },
-  });
+  const changes = (signal: AbortSignal): AsyncIterable<SourceControlView> => snapshots.changes(signal);
 
   const dispose = (): Promise<void> => {
     disposalPromise ??= (async () => {
-      disposing = true;
-      for (const subscriber of [...subscribers]) {
-        closeSubscriber(subscriber);
-      }
+      snapshots.beginDisposal();
+      snapshots.close();
       await managedRuntime.dispose();
     })();
     return disposalPromise;

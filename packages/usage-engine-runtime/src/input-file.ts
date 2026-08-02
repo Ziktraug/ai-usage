@@ -3,7 +3,15 @@ import { constants, type Stats } from 'node:fs';
 import { type FileHandle, lstat, mkdir, open, opendir, realpath, rename, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import type { UsageEngineFileInput } from '@ai-usage/usage-engine-control';
-import { readOpenedFileBounded } from '@ai-usage/usage-engine-control/node';
+import {
+  errorHasCode,
+  type FileIdentity,
+  hasCurrentOwner,
+  isOwnerOnly,
+  processIsAlive,
+  readOpenedFileBounded,
+  sameFileIdentity as sameIdentity,
+} from '@ai-usage/usage-engine-control/node';
 
 const CURSOR_EXPORT_MAX_BYTES = 64 * 1024 * 1024;
 const PRIVATE_DIRECTORY_MODE = 0o700;
@@ -23,11 +31,6 @@ const MANAGED_CURSOR_EXPORT_PATTERN = /^(?:[0-9a-f]{64}|[0-9a-f]{12}-[a-zA-Z0-9.
 const SAFE_READ_FLAGS = constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK;
 // biome-ignore lint/suspicious/noBitwiseOperators: Node combines no-follow directory open flags.
 const SAFE_DIRECTORY_READ_FLAGS = constants.O_RDONLY | constants.O_NOFOLLOW | (constants.O_DIRECTORY ?? 0);
-
-interface FileIdentity {
-  readonly dev: number;
-  readonly ino: number;
-}
 
 interface FileFingerprint extends FileIdentity {
   readonly changedAtMilliseconds: number;
@@ -85,9 +88,6 @@ export interface ScavengeUsageEngineInboxResult {
   readonly skippedSuspicious: number;
 }
 
-const sameIdentity = (left: FileIdentity, right: FileIdentity): boolean =>
-  left.dev === right.dev && left.ino === right.ino;
-
 const toFileFingerprint = (stats: Stats): FileFingerprint => ({
   changedAtMilliseconds: stats.ctimeMs,
   dev: stats.dev,
@@ -108,24 +108,8 @@ const sameFingerprint = (left: FileFingerprint, right: FileFingerprint): boolean
   left.size === right.size &&
   left.uid === right.uid;
 
-const hasCurrentOwner = (uid: number): boolean => typeof process.getuid !== 'function' || uid === process.getuid();
-
-const isOwnerOnly = (mode: number): boolean => process.platform === 'win32' || mode % 0o100 === 0;
-
 const hasExactMode = (mode: number, expectedMode: number): boolean =>
   process.platform === 'win32' || mode % 0o1000 === expectedMode;
-
-const errorHasCode = (error: unknown, code: string): boolean =>
-  typeof error === 'object' && error !== null && 'code' in error && error.code === code;
-
-const processIsAlive = (pid: number): boolean => {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return !errorHasCode(error, 'ESRCH');
-  }
-};
 
 const throwIfSignalAborted = (signal?: AbortSignal): void => {
   if (signal?.aborted) {

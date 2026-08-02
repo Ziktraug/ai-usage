@@ -7,18 +7,16 @@ import {
   type UsageEngineInstanceId,
 } from '@ai-usage/usage-engine-control';
 import {
-  parseUsageEngineTargetId,
-  revealUsageEngineBearerToken,
-  type UsageEngineBearerToken,
-  type UsageEngineTargetId,
-} from '@ai-usage/usage-engine-control/node';
-import {
   errorHasCode,
   type FileIdentity,
   hasCurrentOwner,
   isOwnerOnly,
+  parseUsageEngineTargetId,
+  revealUsageEngineBearerToken,
   sameFileIdentity as sameIdentity,
-} from './private-file-identity';
+  type UsageEngineBearerToken,
+  type UsageEngineTargetId,
+} from '@ai-usage/usage-engine-control/node';
 
 const RENDEZVOUS_FILE_NAME = 'rendezvous.json';
 const PRIVATE_DIRECTORY_MODE = 0o700;
