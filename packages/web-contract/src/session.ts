@@ -9,9 +9,9 @@ import {
 } from '@ai-usage/report-core/session-query';
 import { parseSessionVcsResolveRequest, parseSessionVcsResolveResponse } from '@ai-usage/report-core/session-vcs';
 import { type ContractRouterClient, oc } from '@orpc/contract';
-import { custom, literal, picklist, pipe, strictObject, string, transform, union } from 'valibot';
+import { custom, literal, minLength, picklist, pipe, strictObject, string, transform, union } from 'valibot';
 import { publicErrorMap } from './errors';
-import { isJsonWireValue, publicMessageSchema } from './schema-conventions';
+import { isJsonWireValue } from './schema-conventions';
 
 const parses = <Output>(parser: (input: unknown) => Output, input: unknown): boolean => {
   try {
@@ -84,7 +84,7 @@ const sessionQueryOutputSchema = <Output>() =>
       }),
       strictObject({
         error: strictObject({
-          message: publicMessageSchema,
+          message: pipe(string(), minLength(1, 'Session query errors must not be empty.')),
           revision: string(),
           tag: picklist(['QueryFailed', 'RevisionExpired']),
         }),
