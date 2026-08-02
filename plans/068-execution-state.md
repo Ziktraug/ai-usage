@@ -12,9 +12,9 @@ authority for feature, operation, design, source-file, and test-title coverage.
 - Planning PR: `#26`, squash-merged as
   `2183270ebfbb886fafa7e6268893122db9b364c0`
 - `BASE_SHA`: `2183270ebfbb886fafa7e6268893122db9b364c0`
-- Current integration checkpoint: `f3faacd`
-- Last reviewed green checkpoint: `ee9a24e`
-- Active V0/D0 dispatch base: `3ed2259`
+- Current integration checkpoint: `bf94c6521bfa6528004096241a658f28db4a44ee`
+- Last reviewed green checkpoint: `bf94c6521bfa6528004096241a658f28db4a44ee`
+- Next vertical/design dispatch base: `bf94c6521bfa6528004096241a658f28db4a44ee`
 - Implementation PR: not opened
 - Exclusive process-test token: free after the complete F0 tool-lifecycle gate
 
@@ -119,20 +119,20 @@ Statuses are `BLOCKED`, `READY`, `IMPLEMENTING`, `REVIEW`, `REWORK`,
 | B1 | B0 | INTEGRATED | `2613d9b`, `175e2d0`, `cd90bce`, `4348a2e1138a98a9dfd19b8de9bd3d839e3dc77e` | `/root/b1_final_review` / ACCEPT | `5f43d59` |
 | B2 | B0 | INTEGRATED | `416ed3befda96e101763f129ddd32151a12f6ed2`, `f9fa43e3abff4ec14107cdd16272597e9bc8dc46` | `/root/b2_re_review` / ACCEPT | `28d2f42` |
 | F0 | B1, B2 | INTEGRATED | `dd1469a`, `ee9a24e` | `/root/f0_final_review` / ACCEPT; Vite seam: `/root/b2_re_review` / ACCEPT | `ee9a24e` |
-| V0 | F0 | REWORK | `e95616f` | `/root/v_vertical_audit` / REWORK | - |
-| V1 | V0 | BLOCKED | - | - | - |
-| V2 | V0 | BLOCKED | - | - | - |
-| V3 | V0 | BLOCKED | - | - | - |
-| V4 | V0 | BLOCKED | - | - | - |
+| V0 | F0 | INTEGRATED | `e95616f`, `848ad36`, `266d88d`, evidence `e76cc23`, `9b38bb2` | `/root/v_vertical_audit` / ACCEPT | `9b38bb260383d2743b0da1408c33d36b99f94d61` |
+| V1 | V0 | READY | - | - | - |
+| V2 | V0 | READY | - | - | - |
+| V3 | V0 | READY | - | - | - |
+| V4 | V0 | READY | - | - | - |
 | V5 | V1, V2, V3, V4 | BLOCKED | - | - | - |
 | Q0 | V5 | BLOCKED | - | - | - |
 | Q1 | Q0 | BLOCKED | - | - | - |
 | Q2 | Q0 | BLOCKED | - | - | - |
 | Q3 | Q1, Q2 | BLOCKED | - | - | - |
-| D0 | F0 | REWORK | `d476690` | `/root/v_vertical_audit` / REWORK | - |
-| D1 | D0 | BLOCKED | - | - | - |
-| D2 | D0 | BLOCKED | - | - | - |
-| D3 | D0 | BLOCKED | - | - | - |
+| D0 | F0 | INTEGRATED | `d476690`, `65d48b4`, `3cea781`, `f84ad2c`, evidence `bd948a7` | `/root/v_vertical_audit`, `/root/v0_impl` / ACCEPT | `bf94c6521bfa6528004096241a658f28db4a44ee` |
+| D1 | D0 | READY | - | - | - |
+| D2 | D0 | READY | - | - | - |
+| D3 | D0 | READY | - | - | - |
 | D4 | D1, D2, D3 | BLOCKED | - | - | - |
 | R0 | F0, V5, Q3, D4 | BLOCKED | - | - | - |
 | R1 | R0 | BLOCKED | - | - | - |
@@ -384,18 +384,33 @@ D0 used the actual preset, generated-artifact and CSS-bundle authorities. Bun
 so no such result was credited; every affected gate was rerun with the effective
 `bun run --cwd <dir> <script>` syntax.
 
-D0 candidate `d476690` kept the actual generated CSS and Panda metadata
-byte-identical, but independent review returned REWORK on two adversarial
-harness defects: global multiset comparison missed cascade-changing duplicate-
-rule inversion, and pre-parse comment stripping erased comment-shaped quoted
-content. The original implementer is adding ordered, quote-aware regressions.
+V0 converged through worker commits `e95616f`, `848ad36` and `266d88d`,
+cherry-picked as `26967ea`, `5f3af77` and `7711974`. Descriptor-based JSON
+validation never invokes accessors, every policy outcome is closed by
+`PublicErrorFamily`, and the explicit `errors` and `schema-conventions` exports
+keep the root contract empty. Evidence commits `e76cc23` and `9b38bb2` honestly
+leave SECURITY-01 current until V5/R1 apply the kernel. Independent review and
+post-integration gates passed: 53 tests, 792 assertions, 28/28 type tasks and
+the Svelte shadow build.
 
-V0 candidate `e95616f` covered the exact 30 operations and three explicit HTTP
-policies, but independent review returned REWORK because JSON validation invoked
-and accepted array index accessors. The original implementer is adding descriptor-
-based non-invoking validation. The coordinator will then add explicit `./errors`
-and `./schema-conventions` package exports and close every policy application
-error against the shared `PublicErrorFamily` vocabulary before re-review.
+D0 converged through `d476690`, `65d48b4`, `3cea781` and `f84ad2c`, mapped on
+the integration branch through `8474f18`. The normalized CSS comparator now
+preserves cascade order, quoted comment text, duplicate placement and unique
+conflicting declaration winners. Independent adversarial review and the final
+post-integration suite passed 21 tests and 158 assertions with byte-identical
+artifacts and no framework runtime in passive closure. Evidence `bd948a7` was
+cherry-picked as `bf94c65`; only preset/global CSS and passive modules are
+complete, while semantic exports, icons and all 301 public exports remain
+honestly current for D4.
+
+Coordinator prerequisite commits `74fd6a9` and `ee6c59e` add only five empty
+vertical leaves and their public exports. Review initially rejected a broad
+Skills package-prefix allowlist because it could reach filesystem-backed
+application code. The focused correction admits only exact pure `config` and
+`shared` subpaths and rejects root, application and unknown subpaths. Contract
+16/16, root typecheck 28/28, boundaries, parity and Svelte shadow build passed;
+`/root/v_vertical_audit` returned ACCEPT on both axes for
+`9b38bb2..ee6c59e`. V1-V4 are unblocked from reviewed checkpoint `bf94c65`.
 
 ## Deviations, STOPs, and recovery
 
@@ -414,5 +429,6 @@ error against the shared `PublicErrorFamily` vocabulary before re-review.
 - Resolved B2 correction: exact SvelteKit selected-adapter lifecycle coverage is
   independently accepted and integrated at `28d2f42`; adapter-node failure
   spikes remain recoverable evidence until final convergence.
-- Recovery point: `ee9a24e` is the latest independently reviewed green code
-  checkpoint; the complete F0 gates and independent review passed unchanged.
+- Recovery point: `bf94c6521bfa6528004096241a658f28db4a44ee` is the latest
+  independently reviewed green checkpoint. V0 and D0 are integrated; the
+  vertical prerequisite checkpoint and every post-cherry gate passed.
