@@ -116,7 +116,7 @@ Statuses are `BLOCKED`, `READY`, `IMPLEMENTING`, `REVIEW`, `REWORK`,
 | Packet | Prerequisites | Status | Implementer commits | Reviewer / verdict | Integrated checkpoint |
 | --- | --- | --- | --- | --- | --- |
 | B0 | none | INTEGRATED | `40cda764f655d68608f378dd9f8d02e4160e0f52`, `2051c4887894e42f31b309adf8446869d2e1b566` | `/root/b0_review` / ACCEPT | `2051c4887894e42f31b309adf8446869d2e1b566` |
-| B1 | B0 | REVIEW | `bf39106fa692663957c26ac12ed063eb21dcd9a6`, `11e184f08528b7ff7a1153443322713bd0df0b94` | `/root/b0_review` / pending | - |
+| B1 | B0 | REWORK | `bf39106fa692663957c26ac12ed063eb21dcd9a6`, `11e184f08528b7ff7a1153443322713bd0df0b94` | `/root/b0_review` / REWORK | - |
 | B2 | B0 | STOP | no commits; recoverable spike `/tmp/ai-usage-068-b2-spike.1VftYr` | two allowed SSE-harness attempts exhausted | - |
 | F0 | B1, B2 | BLOCKED | - | - | - |
 | V0 | F0 | BLOCKED | - | - | - |
@@ -175,8 +175,19 @@ package-boundary checker, Web typecheck, and the aggregate ledger at 35
 features, 30 operations, 72 production TSX files, 15 design rows, 385 design
 exports, 11 render suites, 104 Playwright titles, and 18 URL contracts. Both
 allowed lint corrections were consumed and the final lint result is green.
-`/root/b0_review` is independently reviewing the complete B1 range on both
-required axes; no B1 commit has been integrated yet.
+`/root/b0_review` returned REWORK on both required axes. Confirmed hard gaps are
+the missing Wave-0 bundle/HTML/hydration/request/startup measurements; a final
+checker that accepts Solid-only COMPLETE evidence and feature removals;
+hard-coded server-wrapper discovery and deletion-unsafe render discovery;
+missing `colsBase=work` and provider-quota `ForbiddenDemo` parity; evidence
+stamped before the reviewed B0 checkpoint; all 26 ledger modules missing from
+root TypeScript coverage; malformed records crashing instead of failing closed;
+invalid shard owners passing; duplicated schema types; and I/O errors treated
+as absent files. The review's scoped commands otherwise reconfirmed the exact
+inventories, 40 tests, targeted Ultracite, boundary checker, path/size cap and
+clean worktree. The commits remain recoverable in `/tmp/ai-usage-068-b1` and
+were not cherry-picked. Because B2 has independently reached a program STOP,
+B1 rework is not being restarted in this blocked run without new authority.
 
 B2 stopped after exhausting both allowed focused corrections for the bounded
 SSE lifecycle harness. The exact final command was `bun --no-env-file probe.ts`
@@ -197,8 +208,11 @@ dispatched without new authority.
 - Reviewed deviations: none.
 - Active STOP condition: B2 exhausted both focused SSE-harness corrections; F0
   and every downstream packet remain blocked.
-- Failed packet recovery: `/tmp/ai-usage-068-b2` is clean and the disposable
-  spike is retained at `/tmp/ai-usage-068-b2-spike.1VftYr`.
+- B1 recovery: `/tmp/ai-usage-068-b1` is clean at
+  `11e184f08528b7ff7a1153443322713bd0df0b94`; both reviewed REWORK commits are
+  local-only and unintegrated.
+- B2 recovery: `/tmp/ai-usage-068-b2` is clean and the disposable spike is
+  retained at `/tmp/ai-usage-068-b2-spike.1VftYr`.
 - Recovery options requiring new authority:
   1. redesign the reusable harness so native curl writes to packet-isolated
      files rather than Bun-owned pipe streams, then restart a fresh two-attempt
