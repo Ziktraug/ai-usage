@@ -12,15 +12,6 @@ export type JsonWireValue =
   | readonly JsonWireValue[]
   | { readonly [key: string]: JsonWireValue };
 
-const hasOnlyJsonArrayKeys = (value: readonly unknown[]): boolean => {
-  const keys = Reflect.ownKeys(value);
-  if (keys.some((key) => typeof key !== 'string')) {
-    return false;
-  }
-  const enumerableKeys = keys.filter((key) => key !== 'length');
-  return enumerableKeys.length === value.length && value.every((_, index) => Object.hasOwn(value, index));
-};
-
 const isPlainRecord = (value: object): value is Record<string, unknown> => {
   const prototype = Object.getPrototypeOf(value);
   return prototype === null || prototype === Object.prototype;
@@ -39,7 +30,20 @@ const isJsonWireValueInternal = (value: unknown, ancestors: ReadonlySet<object>)
 
   const nextAncestors = new Set(ancestors).add(value);
   if (Array.isArray(value)) {
-    return hasOnlyJsonArrayKeys(value) && value.every((item) => isJsonWireValueInternal(item, nextAncestors));
+    const keys = Reflect.ownKeys(value);
+    if (keys.some((key) => typeof key !== 'string') || keys.length !== value.length + 1) {
+      return false;
+    }
+    for (const index of value.keys()) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, index);
+      if (!(descriptor?.enumerable && 'value' in descriptor)) {
+        return false;
+      }
+      if (!isJsonWireValueInternal(descriptor.value, nextAncestors)) {
+        return false;
+      }
+    }
+    return true;
   }
   if (!isPlainRecord(value)) {
     return false;

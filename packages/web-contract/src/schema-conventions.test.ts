@@ -62,10 +62,20 @@ describe('contract schema conventions', () => {
         return 'private';
       },
     });
+    const arrayAccessor: unknown[] = [];
+    Object.defineProperty(arrayAccessor, 0, {
+      enumerable: true,
+      get: () => {
+        reads += 1;
+        return 'private';
+      },
+    });
     const symbolKeyed = { [Symbol('secret')]: 'private' };
 
     expect(safeParse(jsonWireValueSchema, accessor).success).toBe(false);
+    expect(safeParse(jsonWireValueSchema, arrayAccessor).success).toBe(false);
     expect(safeParse(jsonWireValueSchema, symbolKeyed).success).toBe(false);
+    expect(isJsonWireValue(arrayAccessor)).toBe(false);
     expect(reads).toBe(0);
   });
 

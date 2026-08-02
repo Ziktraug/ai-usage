@@ -1,3 +1,5 @@
+import type { PublicErrorFamily } from '@ai-usage/web-contract/errors';
+
 export const publicHttpMethods = ['GET', 'POST'] as const;
 export const demoPolicies = ['forbidden'] as const;
 export const trustedLocalPolicies = ['required'] as const;
@@ -37,7 +39,7 @@ type OperationTransport = 'file' | 'mutation' | 'query';
 type ExplicitTransport = 'command' | 'sse' | 'upload';
 
 interface SharedRequestPolicy {
-  readonly applicationErrorFamilies: readonly string[];
+  readonly applicationErrorFamilies: readonly PublicErrorFamily[];
   readonly csrf: CsrfPolicy;
   readonly demo: DemoPolicy;
   readonly id: string;
