@@ -268,7 +268,8 @@ observation timestamps and identical imports do not invalidate captures.
 
 Owns the manual merge bundle parser, byte digest, preview/confirmation workflow,
 bounded warning projection, and store-error mapping. Engine-runtime owns file
-and command adaptation and must not duplicate these semantics.
+and command adaptation and must not duplicate these semantics. Only
+engine-runtime may import this writer-capable package.
 
 ### `@ai-usage/usage-engine-control`
 

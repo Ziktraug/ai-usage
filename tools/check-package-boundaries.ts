@@ -184,6 +184,9 @@ const targetDependencyReason = (
   if (packageName === engineRuntimePackage && !engineRuntimeAllowedWorkspaceDependencies.has(dependencyPackage)) {
     return 'usage-engine-runtime may depend only on its explicit write-side domain packages.';
   }
+  if (dependencyPackage === usageMergePackage && packageName !== engineRuntimePackage) {
+    return 'Only usage-engine-runtime may depend on the writer-capable usage-merge package.';
+  }
   if (
     packageName === usageMergePackage &&
     dependencyPackage !== '@ai-usage/report-core' &&
@@ -226,6 +229,9 @@ const targetImportReason = (
     specifier !== usageStoreReader
   ) {
     return 'Web and CLI may import only the usage-store reader facade.';
+  }
+  if (isPackageOrSubpath(specifier, usageMergePackage) && packageName !== engineRuntimePackage) {
+    return 'Only usage-engine-runtime may import the writer-capable usage-merge package.';
   }
   if (
     isPackageOrSubpath(specifier, usageStoreWriter) &&

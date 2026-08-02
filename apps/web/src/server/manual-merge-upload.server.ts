@@ -26,7 +26,7 @@ type ManualMergeUploadFailure = Extract<ManualMergeUploadResult, { readonly ok: 
 export interface ManualMergeUploadOptions {
   readonly executeCommand: (command: ManualMergeCommand) => Promise<UsageEngineCommandCompletion>;
   readonly maxBytes?: number;
-  readonly stageHandoff: (bytes: Uint8Array) => Promise<StagedUsageEngineHandoff>;
+  readonly stageHandoff: (bytes: Uint8Array, signal: AbortSignal) => Promise<StagedUsageEngineHandoff>;
 }
 
 const jsonFailure = (status: number, tag: string, message: string, reason?: string): Response =>
@@ -168,6 +168,55 @@ const commandFor = (action: ParsedManualMergeAction, staged: StagedUsageEngineHa
         input: staged.input,
       };
 
+type StagingOutcome =
+  | { readonly state: 'aborted' }
+  | { readonly error: unknown; readonly state: 'failed' }
+  | { readonly staged: StagedUsageEngineHandoff; readonly state: 'staged' };
+
+const cleanupLateStaging = (staging: Promise<StagedUsageEngineHandoff>): void => {
+  staging.then(
+    async (staged) => {
+      try {
+        await staged.cleanup();
+      } catch {
+        // Recovery preserves or scavenges an identity-validated handoff when detached cleanup cannot finish.
+      }
+    },
+    () => undefined,
+  );
+};
+
+const stageUntilAbort = async (
+  bytes: Uint8Array,
+  signal: AbortSignal,
+  stageHandoff: ManualMergeUploadOptions['stageHandoff'],
+): Promise<StagingOutcome> => {
+  if (signal.aborted) {
+    return { state: 'aborted' };
+  }
+  const staging = stageHandoff(bytes, signal);
+  let onAbort: (() => void) | undefined;
+  const aborted = new Promise<StagingOutcome>((resolve) => {
+    onAbort = () => resolve({ state: 'aborted' });
+    signal.addEventListener('abort', onAbort, { once: true });
+    if (signal.aborted) {
+      onAbort();
+    }
+  });
+  const settled = staging.then<StagingOutcome, StagingOutcome>(
+    (staged) => ({ staged, state: 'staged' }),
+    (error: unknown) => ({ error, state: 'failed' }),
+  );
+  const outcome = await Promise.race([settled, aborted]);
+  if (onAbort) {
+    signal.removeEventListener('abort', onAbort);
+  }
+  if (outcome.state === 'aborted') {
+    cleanupLateStaging(staging);
+  }
+  return outcome;
+};
+
 const completionResponse = (action: ParsedManualMergeAction, completion: UsageEngineCommandCompletion): Response => {
   const expectedCommand = action.action === 'preview' ? 'preview-merge' : 'confirm-merge';
   if (completion.state !== 'succeeded' || completion.command !== expectedCommand) {
@@ -206,12 +255,14 @@ export const handleManualMergeUpload = async (
     return jsonFailure(499, 'UploadAborted', 'The merge upload was cancelled.');
   }
 
-  let staged: StagedUsageEngineHandoff;
-  try {
-    staged = await options.stageHandoff(body.bytes);
-  } catch {
+  const staging = await stageUntilAbort(body.bytes, request.signal, options.stageHandoff);
+  if (staging.state === 'aborted') {
+    return jsonFailure(499, 'UploadAborted', 'The merge upload was cancelled.');
+  }
+  if (staging.state === 'failed') {
     return jsonFailure(503, 'EngineInboxUnavailable', 'The usage engine inbox is unavailable.');
   }
+  const { staged } = staging;
   if (request.signal.aborted) {
     try {
       await staged.cleanup();

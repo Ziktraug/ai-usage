@@ -26,6 +26,7 @@ export interface StageUsageEngineHandoffOptions {
   readonly createHandoffId?: () => string;
   readonly inboxDirectory: string;
   readonly maximumBytes?: number;
+  readonly signal?: AbortSignal;
 }
 
 export interface StagedUsageEngineHandoff {
@@ -128,6 +129,7 @@ export const stageUsageEngineHandoff = async (
   bytes: Uint8Array,
   options: StageUsageEngineHandoffOptions,
 ): Promise<StagedUsageEngineHandoff> => {
+  options.signal?.throwIfAborted();
   const maximumBytes = options.maximumBytes ?? MAX_PORTABLE_USAGE_BYTES;
   if (
     !Number.isSafeInteger(maximumBytes) ||
@@ -138,6 +140,7 @@ export const stageUsageEngineHandoff = async (
     throw new Error('Usage engine inbox handoff exceeds its byte limit.');
   }
   const directory = await validateInboxDirectory(options.inboxDirectory);
+  options.signal?.throwIfAborted();
   const handoffId = parseUsageEngineHandoffId(options.createHandoffId?.() ?? randomUUID());
   const filePath = handoffPathFor(directory, handoffId);
   const file = await open(filePath, SAFE_CREATE_FLAGS, PRIVATE_FILE_MODE);
@@ -147,8 +150,10 @@ export const stageUsageEngineHandoff = async (
     const opened = await file.stat();
     assertOpenedHandoff(opened, 0);
     createdIdentity = { dev: opened.dev, ino: opened.ino };
-    await file.writeFile(bytes);
+    await file.writeFile(bytes, options.signal === undefined ? undefined : { signal: options.signal });
+    options.signal?.throwIfAborted();
     await file.sync();
+    options.signal?.throwIfAborted();
     const written = await file.stat();
     assertOpenedHandoff(written, bytes.byteLength);
     if (opened.dev !== written.dev || opened.ino !== written.ino) {

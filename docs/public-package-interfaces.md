@@ -155,7 +155,8 @@ staged file contents, or arbitrary operator paths to web clients.
 
 This package may import report-core, `usage-store/writer`, and Effect only.
 Engine-runtime adapts it to inbox/operator files and control commands; it does
-not duplicate merge semantics.
+not duplicate merge semantics. No other production package may depend on or
+import this writer-capable service.
 
 ## `@ai-usage/usage-engine-runtime`
 

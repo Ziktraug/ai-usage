@@ -24,7 +24,7 @@ const loadSyncUploadHandler = async (mode: Exclude<RuntimeMode, 'demo'>): Promis
           import('./usage-runtime-paths.server'),
         ]).then(([{ stageUsageEngineHandoff }, { resolveUsageWebRuntimePaths }]) => {
           const inboxDirectory = resolveUsageWebRuntimePaths().inboxDirectory;
-          return (bytes: Uint8Array) => stageUsageEngineHandoff(bytes, { inboxDirectory });
+          return (bytes: Uint8Array, signal: AbortSignal) => stageUsageEngineHandoff(bytes, { inboxDirectory, signal });
         });
   return (request) =>
     handleManualMergeUpload(request, {

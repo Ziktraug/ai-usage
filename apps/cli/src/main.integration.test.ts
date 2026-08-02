@@ -233,14 +233,7 @@ test('fails an empty stored read without starting an engine and can then publish
 test('forwards Ctrl-C through a foreground engine and leaves no writer or listener behind', async () => {
   await withCliSandbox(async ({ root, runCli }) => {
     const databasePath = path.join(root, 'store', 'usage.sqlite');
-    const portReservation = Bun.serve({
-      fetch: () => new Response('reserved'),
-      hostname: '127.0.0.1',
-      port: 0,
-    });
-    const setupPort = portReservation.port;
-    await portReservation.stop(true);
-    const interrupted = await runCli(['setup', '--local', '--port', String(setupPort)], {
+    const interrupted = await runCli(['setup', '--local', '--port', '0'], {
       interrupt: { afterMs: 750, signal: 'SIGINT' },
     });
     if (interrupted.exitCode !== 130) {

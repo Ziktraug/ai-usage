@@ -100,6 +100,10 @@ describe('CLI command parsing', () => {
       _tag: 'Setup',
       args: { files: [], local: true, port: 8080 },
     });
+    expect(Effect.runSync(parseCommand(['setup', '--local', '--port', '0']))).toEqual({
+      _tag: 'Setup',
+      args: { files: [], local: true, port: 0 },
+    });
   });
 
   test('rejects the stale setup --web spelling', () => {

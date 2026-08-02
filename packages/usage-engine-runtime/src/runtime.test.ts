@@ -47,11 +47,13 @@ const publishedSourceControl = (generation = 1): SourceControlView => ({
 
 interface TestSourceControl extends UsageEngineSourceControlPort {
   readonly calls: string[];
+  readonly closeChanges: () => void;
   readonly publishSnapshot: (snapshot: SourceControlView) => void;
 }
 
 const createTestSourceControl = (initial = publishedSourceControl()): TestSourceControl => {
   const calls: string[] = [];
+  const changeClosers = new Set<() => void>();
   const listeners = new Set<(snapshot: SourceControlView) => void>();
   let snapshot = initial;
   return {
@@ -71,10 +73,12 @@ const createTestSourceControl = (initial = publishedSourceControl()): TestSource
         };
         listeners.add(listener);
         const close = (): void => {
+          changeClosers.delete(close);
           listeners.delete(listener);
           pending?.({ done: true, value: undefined });
           pending = undefined;
         };
+        changeClosers.add(close);
         signal.addEventListener('abort', close, { once: true });
         return {
           next: () => {
@@ -96,6 +100,11 @@ const createTestSourceControl = (initial = publishedSourceControl()): TestSource
         };
       },
     }),
+    closeChanges: () => {
+      for (const close of [...changeClosers]) {
+        close();
+      }
+    },
     detectAll: () => {
       calls.push('detect-all');
       return Promise.resolve();
@@ -1034,6 +1043,26 @@ describe('usage engine runtime', () => {
     const rejected = await runtime.execute({ command: 'run-source', sourceId: collectionSourceDefinitions[0]!.id });
     expect(rejected).toMatchObject({ error: { code: 'engine-busy' }, ok: false });
     expect(sourceControl.calls.filter((entry) => entry.startsWith('run-source'))).toHaveLength(0);
+  });
+
+  test('degrades and stops admitting commands when source changes end after readiness', async () => {
+    const sourceControl = createTestSourceControl();
+    const runtime = createUsageEngineRuntime(createDependencies({ sourceControl }));
+    await runtime.start();
+    const events = runtime.changes()[Symbol.asyncIterator]();
+
+    sourceControl.closeChanges();
+
+    expect(await events.next()).toMatchObject({
+      value: {
+        event: 'status',
+        status: { degradedReason: { code: 'source-control-unavailable' }, readiness: 'degraded' },
+      },
+    });
+    expect(
+      await runtime.execute({ command: 'run-source', sourceId: collectionSourceDefinitions[0]!.id }),
+    ).toMatchObject({ error: { code: 'engine-busy' }, ok: false });
+    await runtime.dispose();
   });
 
   test('emits authoritative ready and stopping status transitions', async () => {

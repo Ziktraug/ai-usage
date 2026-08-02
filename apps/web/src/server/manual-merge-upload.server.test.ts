@@ -209,6 +209,39 @@ describe('manual merge upload boundary', () => {
     expect(stages).toBe(0);
   });
 
+  test('returns promptly on abort during staging and cleans a handoff that settles late', async () => {
+    const abort = new AbortController();
+    let cleanupCount = 0;
+    let resolveStaging: ((staged: StagedUsageEngineHandoff) => void) | undefined;
+    let resolveStagingStarted: (() => void) | undefined;
+    let stagingSignal: AbortSignal | undefined;
+    const staging = new Promise<StagedUsageEngineHandoff>((resolve) => {
+      resolveStaging = resolve;
+    });
+    const stagingStarted = new Promise<void>((resolve) => {
+      resolveStagingStarted = resolve;
+    });
+    const responsePromise = handleManualMergeUpload(jsonRequest('{"rows":[]}', {}, abort.signal), {
+      executeCommand: () => Promise.resolve(previewCompletion()),
+      stageHandoff: (_bytes, signal) => {
+        stagingSignal = signal;
+        resolveStagingStarted?.();
+        return staging;
+      },
+    });
+    await stagingStarted;
+
+    abort.abort();
+    const response = await responsePromise;
+    resolveStaging?.(stagedFixture('late-handoff', () => (cleanupCount += 1)));
+    await staging;
+    await Promise.resolve();
+
+    expect(response.status).toBe(499);
+    expect(stagingSignal?.aborted).toBe(true);
+    expect(cleanupCount).toBe(1);
+  });
+
   test('maps stable engine failures and cleans the handoff after rejection', async () => {
     const cases = [
       ['merge-invalid-json', 400],

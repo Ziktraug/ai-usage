@@ -273,6 +273,20 @@ export const createUsageEngineRuntime = (dependencies: UsageEngineRuntimeDepende
     lifecycle.closeAutonomousSourceAdmission();
   };
 
+  const markSourceControlUnavailable = (signal: AbortSignal): void => {
+    if (signal.aborted || readiness !== 'ready') {
+      return;
+    }
+    readiness = 'degraded';
+    degradedReason = {
+      code: 'source-control-unavailable',
+      message: 'Usage source status updates are unavailable.',
+    };
+    statusGeneration += 1;
+    publishEvent({ event: 'status', status: currentStatus() });
+    lifecycle.closeAutonomousSourceAdmission();
+  };
+
   const watchSourceChanges = async (signal: AbortSignal): Promise<void> => {
     try {
       for await (const snapshot of dependencies.sourceControl.changes(signal)) {
@@ -281,16 +295,9 @@ export const createUsageEngineRuntime = (dependencies: UsageEngineRuntimeDepende
         }
         publishSourceControl(snapshot);
       }
+      markSourceControlUnavailable(signal);
     } catch {
-      if (!signal.aborted) {
-        readiness = 'degraded';
-        degradedReason = {
-          code: 'source-control-unavailable',
-          message: 'Usage source status updates are unavailable.',
-        };
-        statusGeneration += 1;
-        publishEvent({ event: 'status', status: currentStatus() });
-      }
+      markSourceControlUnavailable(signal);
     }
   };
 

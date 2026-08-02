@@ -48,6 +48,21 @@ test('treats an engine-consumed handoff as an already completed cleanup', async 
   await expect(staged.cleanup()).resolves.toBeUndefined();
 });
 
+test('rejects an already-aborted staging request without creating a handoff', async () => {
+  const { inboxDirectory } = await fixture();
+  const abort = new AbortController();
+  abort.abort();
+
+  await expect(
+    stageUsageEngineHandoff(new Uint8Array([1]), {
+      createHandoffId: () => 'aborted-stage',
+      inboxDirectory,
+      signal: abort.signal,
+    }),
+  ).rejects.toThrow();
+  await expect(Bun.file(path.join(inboxDirectory, 'aborted-stage.upload')).exists()).resolves.toBe(false);
+});
+
 test('rejects unsafe directories, exclusive-name collisions, symlinks, and byte overflow', async () => {
   const { inboxDirectory, root } = await fixture();
   await chmod(inboxDirectory, 0o755);

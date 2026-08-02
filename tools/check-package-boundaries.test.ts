@@ -271,6 +271,46 @@ describe('package boundary guard', () => {
     );
   });
 
+  test('allows only usage-engine-runtime to depend on the writer-capable usage-merge package', async () => {
+    const root = await createFixture();
+    await writePackage(
+      root,
+      'apps',
+      'web',
+      {
+        dependencies: { '@ai-usage/usage-merge': 'workspace:*' },
+        name: '@ai-usage/web',
+      },
+      "import '@ai-usage/usage-merge';\n",
+    );
+    await writePackage(
+      root,
+      'packages',
+      'usage-engine-runtime',
+      {
+        dependencies: { '@ai-usage/usage-merge': 'workspace:*' },
+        name: '@ai-usage/usage-engine-runtime',
+      },
+      "import '@ai-usage/usage-merge';\n",
+    );
+
+    const violations = await collectViolations(root);
+    expect(violations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          packageName: '@ai-usage/web',
+          specifier: '@ai-usage/usage-merge',
+        }),
+      ]),
+    );
+    expect(violations).not.toContainEqual(
+      expect.objectContaining({
+        packageName: '@ai-usage/usage-engine-runtime',
+        specifier: '@ai-usage/usage-merge',
+      }),
+    );
+  });
+
   test('forbids mixed usage-store roots and production testing adapters', async () => {
     const root = await createFixture();
     const mixedStoreSpecifier = ['@ai-usage', 'usage-store'].join('/');

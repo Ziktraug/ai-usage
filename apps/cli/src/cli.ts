@@ -85,6 +85,13 @@ const parsePositiveInt = (value: string, name: string): Effect.Effect<number, Cl
     : Effect.succeed(n);
 };
 
+const parseTcpPort = (value: string, name: string): Effect.Effect<number, CliArgumentError> => {
+  const port = Number(value);
+  return !Number.isSafeInteger(port) || port < 0 || port > 65_535 || String(port) !== value
+    ? Effect.fail(cliArgumentError(`${name} expects an integer from 0 to 65535`))
+    : Effect.succeed(port);
+};
+
 const parseSort = (value: string): Effect.Effect<SortKey, CliArgumentError> => {
   if (value === 'date' || value === 'tokens' || value === 'cost') {
     return Effect.succeed(value);
@@ -365,7 +372,7 @@ const parseSetupArgs = (argv: string[]): Effect.Effect<SetupArgs, CliArgumentErr
       if (arg === '--local') {
         args.local = true;
       } else if (arg === '--port') {
-        args.port = yield* parsePositiveInt(yield* parseRequiredValue(rest, '--port'), '--port');
+        args.port = yield* parseTcpPort(yield* parseRequiredValue(rest, '--port'), '--port');
       } else if (arg.startsWith('--')) {
         return yield* Effect.fail(cliArgumentError(`Unknown option for setup: ${arg}`));
       } else {

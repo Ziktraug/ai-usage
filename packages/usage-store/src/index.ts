@@ -1513,6 +1513,65 @@ const assertUsageLocalMachineSchema = (db: SqliteDatabase, dbPath: string, opera
   }
 };
 
+interface OpenReadOnlyUsageStoreOptions {
+  readonly immutable: boolean;
+  readonly operation: string;
+}
+
+const openValidatedReadOnlyUsageStore = async (
+  dbPath: string,
+  options: OpenReadOnlyUsageStoreOptions,
+): Promise<SqliteDatabase> => {
+  const identity = inspectPrivateStoreForConfirmation(dbPath);
+  const { constants, Database } = await import('bun:sqlite');
+  // Bun's options object does not expose SQLITE_OPEN_URI or NOFOLLOW, so pass the documented SQLite flags
+  // directly and use an explicit mode=ro URI. Ordinary SQLite locking keeps reader snapshots consistent.
+  // biome-ignore lint/suspicious/noBitwiseOperators: SQLite open flags are a documented bitmask API.
+  const flags = constants.SQLITE_OPEN_READONLY | constants.SQLITE_OPEN_URI | constants.SQLITE_OPEN_NOFOLLOW;
+  const fileUrl = pathToFileURL(dbPath);
+  fileUrl.searchParams.set('mode', 'ro');
+  if (options.immutable) {
+    // With no committed WAL frames, immutable mode prevents a preview from creating WAL/SHM sidecars.
+    // The confirmation token detects a concurrent writer before the eventual mutation.
+    fileUrl.searchParams.set('immutable', '1');
+  }
+  const db = createTrackedSqliteDatabase(new Database(fileUrl.href, flags) as unknown as RawSqliteDatabase);
+  try {
+    db.exec(`PRAGMA busy_timeout = ${USAGE_STORE_READER_BUSY_TIMEOUT_MS}`);
+    db.exec('PRAGMA query_only = ON');
+    db.exec('PRAGMA foreign_keys = ON');
+    revalidatePrivateStoreForConfirmation(dbPath, identity);
+    const schemaVersion = db.query('PRAGMA user_version').get() as { user_version: number };
+    if (schemaVersion.user_version < USAGE_STORE_SCHEMA_VERSION) {
+      throw usageStoreError(
+        options.operation,
+        dbPath,
+        `Usage store schema ${schemaVersion.user_version} is older than required schema ${USAGE_STORE_SCHEMA_VERSION}`,
+        'schema-too-old',
+      );
+    }
+    if (schemaVersion.user_version > USAGE_STORE_SCHEMA_VERSION) {
+      throw usageStoreError(
+        options.operation,
+        dbPath,
+        `Usage store schema ${schemaVersion.user_version} is newer than supported schema ${USAGE_STORE_SCHEMA_VERSION}`,
+        'schema-too-new',
+      );
+    }
+    assertUsageLocalMachineSchema(db, dbPath, options.operation);
+    assertServedReportSchema(db);
+    db.clearStatements();
+    return db;
+  } catch (cause) {
+    try {
+      db.close(true);
+    } catch {
+      // The setup or validation failure remains authoritative.
+    }
+    throw cause;
+  }
+};
+
 const openUsageStoreReaderDatabase = (dbPath: string): Effect.Effect<SqliteDatabase, UsageStoreError> =>
   Effect.tryPromise({
     try: async () => {
@@ -1520,51 +1579,10 @@ const openUsageStoreReaderDatabase = (dbPath: string): Effect.Effect<SqliteDatab
       if (!databaseStat) {
         throw usageStoreError('openUsageStoreReader', dbPath, 'Usage store does not exist', 'store-missing');
       }
-      const identity = inspectPrivateStoreForConfirmation(dbPath);
-      const { constants, Database } = await import('bun:sqlite');
-      // Bun's options object does not expose SQLITE_OPEN_URI or NOFOLLOW, so
-      // pass the documented SQLite flags directly and use an explicit mode=ro
-      // URI. Ordinary SQLite locking is required for a consistent snapshot
-      // when the engine publishes concurrently.
-      // biome-ignore lint/suspicious/noBitwiseOperators: SQLite open flags are a documented bitmask API.
-      const flags = constants.SQLITE_OPEN_READONLY | constants.SQLITE_OPEN_URI | constants.SQLITE_OPEN_NOFOLLOW;
-      const fileUrl = pathToFileURL(dbPath);
-      fileUrl.searchParams.set('mode', 'ro');
-      const db = createTrackedSqliteDatabase(new Database(fileUrl.href, flags) as unknown as RawSqliteDatabase);
-      try {
-        db.exec(`PRAGMA busy_timeout = ${USAGE_STORE_READER_BUSY_TIMEOUT_MS}`);
-        db.exec('PRAGMA query_only = ON');
-        db.exec('PRAGMA foreign_keys = ON');
-        revalidatePrivateStoreForConfirmation(dbPath, identity);
-        const schemaVersion = db.query('PRAGMA user_version').get() as { user_version: number };
-        if (schemaVersion.user_version < USAGE_STORE_SCHEMA_VERSION) {
-          throw usageStoreError(
-            'openUsageStoreReader',
-            dbPath,
-            `Usage store schema ${schemaVersion.user_version} is older than required schema ${USAGE_STORE_SCHEMA_VERSION}`,
-            'schema-too-old',
-          );
-        }
-        if (schemaVersion.user_version > USAGE_STORE_SCHEMA_VERSION) {
-          throw usageStoreError(
-            'openUsageStoreReader',
-            dbPath,
-            `Usage store schema ${schemaVersion.user_version} is newer than supported schema ${USAGE_STORE_SCHEMA_VERSION}`,
-            'schema-too-new',
-          );
-        }
-        assertUsageLocalMachineSchema(db, dbPath, 'openUsageStoreReader');
-        assertServedReportSchema(db);
-        db.clearStatements();
-        return db;
-      } catch (cause) {
-        try {
-          db.close(true);
-        } catch {
-          // The setup or validation failure remains authoritative.
-        }
-        throw cause;
-      }
+      return await openValidatedReadOnlyUsageStore(dbPath, {
+        immutable: false,
+        operation: 'openUsageStoreReader',
+      });
     },
     catch: (cause) => usageStoreReadError('openUsageStoreReader', dbPath, cause),
   });
@@ -1572,7 +1590,6 @@ const openUsageStoreReaderDatabase = (dbPath: string): Effect.Effect<SqliteDatab
 const openUsageStorePreviewDatabase = (dbPath: string): Effect.Effect<SqliteDatabase, UsageStoreError> =>
   Effect.tryPromise({
     try: async () => {
-      const identity = inspectPrivateStoreForConfirmation(dbPath);
       const walExists = fs.lstatSync(`${dbPath}-wal`, { throwIfNoEntry: false }) !== undefined;
       const sharedMemoryExists = fs.lstatSync(`${dbPath}-shm`, { throwIfNoEntry: false }) !== undefined;
       if (walExists && !sharedMemoryExists) {
@@ -1583,51 +1600,10 @@ const openUsageStorePreviewDatabase = (dbPath: string): Effect.Effect<SqliteData
           'preview-unavailable',
         );
       }
-      const { constants, Database } = await import('bun:sqlite');
-      // biome-ignore lint/suspicious/noBitwiseOperators: SQLite open flags are a documented bitmask API.
-      const flags = constants.SQLITE_OPEN_READONLY | constants.SQLITE_OPEN_URI | constants.SQLITE_OPEN_NOFOLLOW;
-      const fileUrl = pathToFileURL(dbPath);
-      fileUrl.searchParams.set('mode', 'ro');
-      if (!walExists) {
-        // No committed frames exist outside the main file at this instant. Immutable mode prevents SQLite from
-        // creating WAL/SHM sidecars for a preview. A concurrent writer is detected later by the confirmation token.
-        fileUrl.searchParams.set('immutable', '1');
-      }
-      const db = createTrackedSqliteDatabase(new Database(fileUrl.href, flags) as unknown as RawSqliteDatabase);
-      try {
-        db.exec(`PRAGMA busy_timeout = ${USAGE_STORE_READER_BUSY_TIMEOUT_MS}`);
-        db.exec('PRAGMA query_only = ON');
-        db.exec('PRAGMA foreign_keys = ON');
-        revalidatePrivateStoreForConfirmation(dbPath, identity);
-        const schemaVersion = db.query('PRAGMA user_version').get() as { user_version: number };
-        if (schemaVersion.user_version < USAGE_STORE_SCHEMA_VERSION) {
-          throw usageStoreError(
-            'openUsageStorePreview',
-            dbPath,
-            `Usage store schema ${schemaVersion.user_version} is older than required schema ${USAGE_STORE_SCHEMA_VERSION}`,
-            'schema-too-old',
-          );
-        }
-        if (schemaVersion.user_version > USAGE_STORE_SCHEMA_VERSION) {
-          throw usageStoreError(
-            'openUsageStorePreview',
-            dbPath,
-            `Usage store schema ${schemaVersion.user_version} is newer than supported schema ${USAGE_STORE_SCHEMA_VERSION}`,
-            'schema-too-new',
-          );
-        }
-        assertUsageLocalMachineSchema(db, dbPath, 'openUsageStorePreview');
-        assertServedReportSchema(db);
-        db.clearStatements();
-        return db;
-      } catch (cause) {
-        try {
-          db.close(true);
-        } catch {
-          // The setup or validation failure remains authoritative.
-        }
-        throw cause;
-      }
+      return await openValidatedReadOnlyUsageStore(dbPath, {
+        immutable: !walExists,
+        operation: 'openUsageStorePreview',
+      });
     },
     catch: (cause) => usageStorePreviewReadError('openUsageStorePreview', dbPath, cause),
   });
