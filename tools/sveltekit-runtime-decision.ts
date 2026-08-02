@@ -20,7 +20,7 @@ export const svelteKitRuntimeDecision = {
     '@sveltejs/vite-plugin-svelte': '7.2.0',
     '@tanstack/svelte-query': '6.1.38',
     svelte: '5.56.8',
-    typescript: '6.0.3',
+    typescript: '5.9.3',
     valibot: '1.4.2',
     vite: '8.2.0',
   },

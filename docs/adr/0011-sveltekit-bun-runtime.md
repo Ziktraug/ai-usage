@@ -15,11 +15,13 @@ Bun. More importantly, response-side disconnect did not reach
 process after the configured shutdown deadline. The official adapter therefore
 failed mandatory lifecycle gates.
 
-`svelte-adapter-bun@1.0.1` passed SSR/assets, isolated concurrent request
-context, exact oRPC success and closed errors, Svelte Query SSR hydration without
-a duplicate acquisition, Ark UI/Panda rendering, native abort propagation,
-31.1-second SSE, signal shutdown, process/port exit, isolated dev/build outputs
-and the repository production supervisor interface.
+The selected `svelte-adapter-bun@1.0.1` package declares TypeScript `^5` as a
+peer. The Web SvelteKit ecosystem is therefore pinned to `typescript@5.9.3`,
+which passed the isolated fixture install, Svelte check and production build.
+The repository's root tools may remain on TypeScript 6 because that toolchain is
+not the adapter's application peer environment.
+The regression fixture separately pins `@types/node@25.9.3` as test-only
+tooling; it is not an application ecosystem decision.
 
 ## Decision
 
@@ -41,15 +43,32 @@ Production must:
 - reuse process identity and liveness helpers from
   `@ai-usage/usage-engine-control/node`.
 
-## Evidence and consequences
+## Committed regression evidence
 
-The reusable lifecycle checker starts a detached production fixture on numeric
-loopback, verifies SSR/static assets and greater-than-30-second SSE, signals
-shutdown, reaps the exact process group and proves process/port release. Direct,
-indirect, re-exported and dynamic browser imports of `$lib/server/router`
-individually failed SvelteKit's browser guard. A production build into isolated
-intermediate/final roots completed while the dev server remained healthy, and
-the built artifact exited cleanly through `spawnProductionChild`.
+The committed fixture is a minimal, exact-pinned SvelteKit application using the
+selected adapter. Its test copies the source and lock into a private temporary
+workspace, installs with `--frozen-lockfile`, runs Svelte check, builds the
+production artifact and then starts that artifact on numeric loopback.
+
+The reusable lifecycle checker verifies meaningful SSR, a static asset and
+greater-than-30-second SSE before signaling shutdown. It reaps only its acquired
+process group, proves port release and verifies the artifact's file identities,
+metadata and SHA-256 content hashes are unchanged. Focused tests cover
+equal-size artifact rewrites and temporary-root cleanup after partial setup
+failure. Dependencies, generated output and build products are not retained.
+
+## Disposable empirical matrix
+
+The deleted disposable application separately established request-scoped
+context isolation, exact oRPC success and closed errors, Svelte Query SSR
+hydration without duplicate acquisition, Ark UI/Panda rendering, native abort
+propagation, 31.1-second SSE, signal shutdown, no descendants, isolated
+dev/build outputs and the repository production supervisor interface.
+
+Direct, indirect, re-exported and dynamic browser imports of
+`$lib/server/router` each failed SvelteKit's browser guard. These broader
+matrix results inform the decision but are not represented as committed
+end-to-end regression coverage by the minimal lifecycle fixture.
 
 This replaces the default adapter preference only because adapter-node failed
 mandatory Bun lifecycle behavior. Nitro is not retained beneath SvelteKit.

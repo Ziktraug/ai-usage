@@ -1,0 +1,19 @@
+{
+  "name": "sveltekit-runtime-fixture",
+  "private": true,
+  "scripts": {
+    "build": "vite build",
+    "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json"
+  },
+  "type": "module",
+  "devDependencies": {
+    "@types/node": "25.9.3",
+    "@sveltejs/kit": "2.70.2",
+    "@sveltejs/vite-plugin-svelte": "7.2.0",
+    "svelte": "5.56.8",
+    "svelte-adapter-bun": "1.0.1",
+    "svelte-check": "4.7.4",
+    "typescript": "5.9.3",
+    "vite": "8.2.0"
+  }
+}
