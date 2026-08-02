@@ -142,7 +142,7 @@ describe('Session RPC server adapter', () => {
     expect(calls[0]?.request).toEqual(query);
   });
 
-  test('maps exact-query protocol errors to their closed public families', async () => {
+  test('preserves exact-query protocol error envelopes and rejects stale identities', async () => {
     const incompatibleRouter = createSessionRpcRouter({
       getDetail: async () => detailUnavailable,
       resolveVcs: async () => vcsUnavailable,
@@ -154,26 +154,40 @@ describe('Session RPC server adapter', () => {
     expect(invalidError.message).not.toContain('stale-revision');
 
     const requestFingerprint = sessionQueryFingerprint(query);
-    const expiredRouter = createSessionRpcRouter({
+    const revisionExpiredEnvelope = {
+      error: {
+        message: `revision expired: ${'x'.repeat(513)}`,
+        revision: query.revision,
+        tag: 'RevisionExpired' as const,
+      },
+      ok: false as const,
+      requestFingerprint,
+      revision: query.revision,
+    };
+    const queryFailedEnvelope = {
+      error: {
+        message: 'The exact query could not be completed.',
+        revision: query.revision,
+        tag: 'QueryFailed' as const,
+      },
+      ok: false as const,
+      requestFingerprint,
+      revision: query.revision,
+    };
+    let invocation = 0;
+    const protocolErrorRouter = createSessionRpcRouter({
       getDetail: async () => detailUnavailable,
       resolveVcs: async () => vcsUnavailable,
-      runRevisionQuery: async () => ({
-        error: {
-          message: 'Internal revision bookkeeping details',
-          revision: query.revision,
-          tag: 'RevisionExpired',
-        },
-        ok: false,
-        requestFingerprint,
-        revision: query.revision,
-      }),
+      runRevisionQuery: () => {
+        invocation += 1;
+        return Promise.resolve(invocation === 1 ? revisionExpiredEnvelope : queryFailedEnvelope);
+      },
     });
-    const expiredError = requireOrpcError(await catchError(call(expiredRouter.page, query)));
-    expect(expiredError.code).toBe('RevisionExpired');
-    expect(expiredError.data).toEqual({ reason: 'revision-expired' });
-    expect(expiredError.message).not.toContain('bookkeeping');
-  });
 
+    expect(await call(protocolErrorRouter.page, query)).toEqual(revisionExpiredEnvelope);
+    expect(await call(protocolErrorRouter.page, query)).toEqual(queryFailedEnvelope);
+    expect(revisionExpiredEnvelope.error.message.length).toBeGreaterThan(512);
+  });
   test('sanitizes private deep-port failures and invalid local-read output', async () => {
     const privatePath = '/private/home/history.jsonl';
     const router = createSessionRpcRouter({
@@ -212,7 +226,7 @@ describe('Session RPC server adapter', () => {
         receivedSignal = signal;
         signalStarted?.();
         await new Promise<void>((_resolve, reject) => {
-          signal?.addEventListener('abort', () => reject(signal.reason), { once: true });
+          signal?.addEventListener('abort', () => reject(new Error('concurrent deep failure')), { once: true });
         });
       },
     });

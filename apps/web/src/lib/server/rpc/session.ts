@@ -36,14 +36,17 @@ export interface SessionRpcDependencies {
 
 interface ExactQueryErrorFactories {
   readonly incompatibleStore: () => Error;
-  readonly revisionExpired: () => Error;
 }
-
-const isAbortError = (error: unknown, signal: AbortSignal | undefined): boolean =>
-  signal?.aborted === true || (error instanceof DOMException && error.name === 'AbortError');
 
 const throwIfAborted = (signal: AbortSignal | undefined): void => {
   signal?.throwIfAborted();
+};
+
+const rethrowCancellation = (error: unknown, signal: AbortSignal | undefined): void => {
+  throwIfAborted(signal);
+  if (error instanceof DOMException && error.name === 'AbortError') {
+    throw error;
+  }
 };
 
 const runExactQuery = async <Request, Result>(
@@ -54,22 +57,14 @@ const runExactQuery = async <Request, Result>(
   errors: ExactQueryErrorFactories,
 ): Promise<SessionQueryServerResult<Result>> => {
   throwIfAborted(signal);
-  let result: SessionQueryServerResult<Result>;
   try {
     const value = await execute(request, signal);
     throwIfAborted(signal);
-    result = parse(value, request);
+    return parse(value, request);
   } catch (error) {
-    if (isAbortError(error, signal)) {
-      throw error;
-    }
+    rethrowCancellation(error, signal);
     throw errors.incompatibleStore();
   }
-
-  if (!result.ok) {
-    throw result.error.tag === 'RevisionExpired' ? errors.revisionExpired() : errors.incompatibleStore();
-  }
-  return result;
 };
 
 const runLocalRead = async <Request, Response>(
@@ -85,9 +80,7 @@ const runLocalRead = async <Request, Response>(
     throwIfAborted(signal);
     return parse(value);
   } catch (error) {
-    if (isAbortError(error, signal)) {
-      throw error;
-    }
+    rethrowCancellation(error, signal);
     throw unavailable();
   }
 };
@@ -108,11 +101,6 @@ export const createSessionRpcRouter = (dependencies: SessionRpcDependencies) => 
               errors.IncompatibleStore({
                 data: { reason: 'incompatible-store' },
                 message: 'The exact Session campaign query is unavailable for this report store.',
-              }),
-            revisionExpired: () =>
-              errors.RevisionExpired({
-                data: { reason: 'revision-expired' },
-                message: 'The requested report revision is no longer available.',
               }),
           },
         ),
@@ -139,11 +127,6 @@ export const createSessionRpcRouter = (dependencies: SessionRpcDependencies) => 
                 data: { reason: 'incompatible-store' },
                 message: 'The exact Session neighbor query is unavailable for this report store.',
               }),
-            revisionExpired: () =>
-              errors.RevisionExpired({
-                data: { reason: 'revision-expired' },
-                message: 'The requested report revision is no longer available.',
-              }),
           },
         ),
     ),
@@ -159,11 +142,6 @@ export const createSessionRpcRouter = (dependencies: SessionRpcDependencies) => 
               errors.IncompatibleStore({
                 data: { reason: 'incompatible-store' },
                 message: 'The exact Session page is unavailable for this report store.',
-              }),
-            revisionExpired: () =>
-              errors.RevisionExpired({
-                data: { reason: 'revision-expired' },
-                message: 'The requested report revision is no longer available.',
               }),
           },
         ),
