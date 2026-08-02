@@ -78,6 +78,7 @@ drifted.
 | `bun run test:web-production` | PASS; production lifecycle and collision cleanup |
 | `bun run test:web-dev-build-isolation` | PASS; 79 healthy concurrent-build requests, no deleted dev descriptors |
 | `bun run test:setup-loopback` | PASS; IPv4 loopback only |
+| Disposable worker-isolation probe | PASS; clean detached worktree, five synthetic runtime roots, ephemeral IPv4-loopback listener |
 | `git diff --check` | PASS; no output |
 | `git status --short --branch` | PASS; clean integration base |
 
@@ -97,6 +98,14 @@ The documentation-only planning PR observed two pre-existing CI timing misses:
 the CLI foreground-timeout test and the TypeScript coverage guard. Each exact
 local suite passed, and the complete B0 local suite subsequently passed without
 an allowlist, skipped check, weakened assertion, or timeout change.
+
+The coordinator also created a disposable detached worktree at the B0 ledger
+commit, created separate temporary home, store, log, rendezvous, and build-output
+roots outside the checkout, and served a successful HTTP probe on ephemeral
+numeric IPv4 loopback port `40417`. The detached checkout remained clean at
+`40cda764f655d68608f378dd9f8d02e4160e0f52`; the probe worktree and empty
+runtime roots were then removed. B1/B2 dispatch will use the same mechanism with
+packet-unique paths and ports.
 
 ## Packet ledger
 
