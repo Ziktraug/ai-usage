@@ -6,6 +6,7 @@ import {
   type SkillsCallOptions,
   type SkillsCapability,
   type SkillsCapabilityResult,
+  skillsValidationErrorFor,
 } from './skills';
 
 const snapshot: SkillManagementSnapshot = {
@@ -139,20 +140,108 @@ describe('Skills server RPC leaf', () => {
     ]);
   });
 
-  test('selects lazily and can reject demo mode before live acquisition', async () => {
+  test('rejects demo mode through preflight before live capability acquisition', async () => {
     let liveAcquisitions = 0;
-    const demoCapability = capability();
-    const router = createSkillsRouter(() => {
-      const runtimeMode = 'demo';
-      if (runtimeMode === 'demo') {
-        return demoCapability;
+    const router = createSkillsRouter(
+      () => {
+        liveAcquisitions += 1;
+        return capability();
+      },
+      () => ({ allowed: false, tag: 'ForbiddenDemo' }),
+    );
+    expect(liveAcquisitions).toBe(0);
+    try {
+      await createRouterClient(router).snapshot({});
+      throw new Error('Expected demo snapshot to reject');
+    } catch (error) {
+      expect(error).toBeInstanceOf(ORPCError);
+      if (error instanceof ORPCError) {
+        expect(error.code).toBe('ForbiddenDemo');
       }
-      liveAcquisitions += 1;
-      return capability();
-    });
+    }
     expect(liveAcquisitions).toBe(0);
-    await createRouterClient(router).snapshot({});
-    expect(liveAcquisitions).toBe(0);
+  });
+
+  test('maps schema BAD_REQUEST to the frozen InvalidInput seam without capability acquisition', async () => {
+    let acquisitions = 0;
+    const client = createRouterClient(
+      createSkillsRouter(() => {
+        acquisitions += 1;
+        return capability();
+      }),
+    );
+    try {
+      await client.saveConfig({ sourceRepoPath: '   ' } as never);
+      throw new Error('Expected invalid config to reject');
+    } catch (error) {
+      const mapped = skillsValidationErrorFor(error);
+      expect(mapped).toBeInstanceOf(ORPCError);
+      expect(mapped?.code).toBe('InvalidInput');
+      expect(mapped?.defined).toBe(true);
+      expect(mapped?.message).toBe('The Skills request is invalid.');
+    }
+    expect(acquisitions).toBe(0);
+  });
+
+  test('preserves pre-abort reason without capability acquisition or read', async () => {
+    let acquisitions = 0;
+    const calls: string[] = [];
+    const controller = new AbortController();
+    const reason = new Error('synthetic pre-abort');
+    controller.abort(reason);
+    const pending = createRouterClient(
+      createSkillsRouter(() => {
+        acquisitions += 1;
+        return capability(calls);
+      }),
+    ).snapshot({}, { signal: controller.signal });
+
+    await expect(pending).rejects.toBe(reason);
+    expect(acquisitions).toBe(0);
+    expect(calls).toEqual([]);
+  });
+
+  test('rechecks cancellation after awaited capability acquisition', async () => {
+    const acquisition = Promise.withResolvers<SkillsCapability>();
+    const acquisitionStarted = Promise.withResolvers<void>();
+    const calls: string[] = [];
+    let acquisitions = 0;
+    const controller = new AbortController();
+    const reason = new Error('synthetic acquisition abort');
+    const pending = createRouterClient(
+      createSkillsRouter(() => {
+        acquisitions += 1;
+        acquisitionStarted.resolve();
+        return acquisition.promise;
+      }),
+    ).snapshot({}, { signal: controller.signal });
+
+    await acquisitionStarted.promise;
+    expect(acquisitions).toBe(1);
+    controller.abort(reason);
+    acquisition.resolve(capability(calls));
+
+    await expect(pending).rejects.toBe(reason);
+    expect(calls).toEqual([]);
+  });
+
+  test('does not accept a capability resolution after cancellation', async () => {
+    const callStarted = Promise.withResolvers<void>();
+    const callResult = Promise.withResolvers<SkillsCapabilityResult<SkillManagementSnapshot>>();
+    const fixture = capability();
+    fixture.readSnapshot = () => {
+      callStarted.resolve();
+      return callResult.promise;
+    };
+    const controller = new AbortController();
+    const reason = new Error('synthetic call abort');
+    const pending = createRouterClient(createSkillsRouter(() => fixture)).snapshot({}, { signal: controller.signal });
+
+    await callStarted.promise;
+    controller.abort(reason);
+    callResult.resolve(ok(snapshot));
+
+    await expect(pending).rejects.toBe(reason);
   });
 
   test('preview invokes only the side-effect-free capability and propagates the signal', async () => {

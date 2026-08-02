@@ -1,9 +1,14 @@
 import { describe, expect, test } from 'bun:test';
 import { safeParse } from 'valibot';
 import {
+  knownSkillProjectPathsSchema,
+  projectSkillInventoriesSchema,
+  projectSkillMarkdownDocumentSchema,
   projectSkillMarkdownInputSchema,
   saveSkillMarkdownInputSchema,
+  skillManagementConfigSchema,
   skillManagementSnapshotSchema,
+  skillMarkdownDocumentSchema,
   skillMarkdownSaveResultSchema,
   skillNameInputSchema,
   skillsContract,
@@ -111,6 +116,128 @@ describe('Skills oRPC contract', () => {
     ).toBe(false);
   });
 
+  test('performs non-invoking JSON-wire preflight before transforms', () => {
+    let reads = 0;
+    const rootAccessor: Record<string, unknown> = {};
+    Object.defineProperty(rootAccessor, 'skillName', {
+      enumerable: true,
+      get: () => {
+        reads += 1;
+        return 'valid-skill';
+      },
+    });
+    expect(safeParse(skillNameInputSchema, rootAccessor).success).toBe(false);
+
+    const nestedAccessor: Record<string, unknown> = {};
+    Object.defineProperty(nestedAccessor, 'sourceRepoPath', {
+      enumerable: true,
+      get: () => {
+        reads += 1;
+        return '/synthetic/source';
+      },
+    });
+    expect(
+      safeParse(skillManagementSnapshotSchema, {
+        ...emptySnapshot,
+        config: nestedAccessor,
+      }).success,
+    ).toBe(false);
+    expect(reads).toBe(0);
+
+    expect(safeParse(skillManagementConfigSchema, { nested: { value: Number.POSITIVE_INFINITY } }).success).toBe(false);
+    expect(safeParse(skillManagementConfigSchema, { nested: new Date(0) }).success).toBe(false);
+    expect(safeParse(skillManagementConfigSchema, { nested: new Blob(['synthetic']) }).success).toBe(false);
+  });
+
+  test('uses the authoritative pure Skills config parser and bounded config collections', () => {
+    const parsed = safeParse(skillManagementConfigSchema, {
+      connectors: {
+        'agents-project': { consumesTargets: ['codex', 'claude'], enabled: true },
+      },
+      ignoredTargetFindings: ['synthetic-finding'],
+      projectPaths: ['/synthetic/project'],
+      projectsRootPath: '/synthetic/projects',
+      sourceRepoPath: '/synthetic/source',
+      targets: {
+        codex: {
+          enabled: true,
+          kind: 'standard-interop',
+          path: '/synthetic/target',
+          scope: 'system',
+        },
+      },
+      tokenThresholds: {
+        referenceFile: { high: 2, warn: 1 },
+        skillMd: { high: 2, warn: 1 },
+        totalSkill: { high: 2, warn: 1 },
+      },
+    });
+    expect(parsed.success).toBe(true);
+    expect(safeParse(skillManagementConfigSchema, { sourceRepoPath: '   ' }).success).toBe(false);
+    expect(
+      safeParse(skillManagementConfigSchema, {
+        connectors: { 'Bad Connector': { consumesTargets: [], enabled: true } },
+      }).success,
+    ).toBe(false);
+    expect(
+      safeParse(skillManagementConfigSchema, {
+        connectors: { valid: { consumesTargets: ['bad/target'], enabled: true } },
+      }).success,
+    ).toBe(false);
+    expect(
+      safeParse(skillManagementConfigSchema, {
+        targets: {
+          valid: { enabled: true, kind: 'custom', path: ' ', scope: 'project' },
+        },
+      }).success,
+    ).toBe(false);
+    expect(safeParse(skillManagementConfigSchema, { sourceRepoPath: `/${'a'.repeat(4096)}` }).success).toBe(false);
+    expect(
+      safeParse(skillManagementConfigSchema, {
+        ignoredTargetFindings: Array.from({ length: 4097 }, () => 'synthetic'),
+      }).success,
+    ).toBe(false);
+  });
+
+  test('enforces explicit collection and aggregate output budgets', () => {
+    const knownPath = {
+      label: 'Synthetic',
+      path: '/synthetic/project',
+      project: 'synthetic',
+      sessions: 1,
+    };
+    expect(
+      safeParse(
+        knownSkillProjectPathsSchema,
+        Array.from({ length: 4097 }, () => knownPath),
+      ).success,
+    ).toBe(false);
+    expect(
+      safeParse(
+        knownSkillProjectPathsSchema,
+        Array.from({ length: 2050 }, () => ({ ...knownPath, path: `/${'a'.repeat(4095)}` })),
+      ).success,
+    ).toBe(false);
+
+    const inventory = { diagnostics: [], observations: [], projectPath: '/synthetic/project' };
+    expect(
+      safeParse(
+        projectSkillInventoriesSchema,
+        Array.from({ length: 4097 }, () => inventory),
+      ).success,
+    ).toBe(false);
+    expect(
+      safeParse(skillManagementSnapshotSchema, {
+        ...emptySnapshot,
+        diagnostics: Array.from({ length: 4096 }, () => ({
+          code: 'synthetic',
+          message: 'a'.repeat(2050),
+          severity: 'warning',
+        })),
+      }).success,
+    ).toBe(false);
+  });
+
   test('uses strict validated names and project markdown inputs', () => {
     expect(safeParse(skillNameInputSchema, { skillName: 'valid-skill' }).success).toBe(true);
     expect(safeParse(skillNameInputSchema, { skillName: '../escape' }).success).toBe(false);
@@ -155,6 +282,23 @@ describe('Skills oRPC contract', () => {
         baseSha256: 'A'.repeat(64),
         content: '',
         skillName: 'valid-skill',
+      }).success,
+    ).toBe(false);
+
+    expect(
+      safeParse(skillMarkdownDocumentSchema, {
+        content: 'é'.repeat(131_073),
+        path: '/synthetic/source/valid-skill/SKILL.md',
+        sha256: baseSha256,
+        skillName: 'valid-skill',
+      }).success,
+    ).toBe(false);
+    expect(
+      safeParse(projectSkillMarkdownDocumentSchema, {
+        content: 'é'.repeat(32_769),
+        path: '/synthetic/project/.agents/skills/valid-skill/SKILL.md',
+        skillName: 'valid-skill',
+        truncated: true,
       }).success,
     ).toBe(false);
   });

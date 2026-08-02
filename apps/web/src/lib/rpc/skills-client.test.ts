@@ -133,18 +133,47 @@ describe('Skills browser RPC adapter', () => {
     });
   });
 
-  test('does not turn cancellation into a server failure envelope', async () => {
+  test('preserves a pre-abort reason without transport acquisition or read', async () => {
+    const calls: string[] = [];
+    let acquisitions = 0;
     const fixture = fixtureCapability();
-    fixture.readSnapshot = (options) => {
-      if (options.signal?.aborted) {
-        throw options.signal.reason;
-      }
+    fixture.readSnapshot = () => {
+      calls.push('readSnapshot');
       return ok(snapshot);
     };
-    const controller = new AbortController();
-    controller.abort(new Error('cancelled'));
-    await expect(clientFor(fixture).getSkillManagementSnapshot({ signal: controller.signal })).rejects.toThrow(
-      'cancelled',
+    const client = createSkillsClient(
+      createRouterClient(
+        createSkillsRouter(() => {
+          acquisitions += 1;
+          return fixture;
+        }),
+      ),
     );
+    const controller = new AbortController();
+    const reason = new Error('synthetic pre-abort');
+    controller.abort(reason);
+
+    await expect(client.getSkillManagementSnapshot({ signal: controller.signal })).rejects.toBe(reason);
+    expect(acquisitions).toBe(0);
+    expect(calls).toEqual([]);
+  });
+
+  test('does not turn a late aborted resolution into a success envelope', async () => {
+    const callStarted = Promise.withResolvers<void>();
+    const callResult = Promise.withResolvers<SkillsCapabilityResult<SkillManagementSnapshot>>();
+    const fixture = fixtureCapability();
+    fixture.readSnapshot = () => {
+      callStarted.resolve();
+      return callResult.promise;
+    };
+    const controller = new AbortController();
+    const reason = new Error('synthetic late abort');
+    const pending = clientFor(fixture).getSkillManagementSnapshot({ signal: controller.signal });
+
+    await callStarted.promise;
+    controller.abort(reason);
+    callResult.resolve(ok(snapshot));
+
+    await expect(pending).rejects.toBe(reason);
   });
 });

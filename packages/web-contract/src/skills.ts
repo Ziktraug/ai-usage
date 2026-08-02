@@ -1,18 +1,23 @@
+import { parseSkillConfigInput } from '@ai-usage/skills/config';
 import { skillNamePattern, skillTargetIdPattern } from '@ai-usage/skills/shared';
 import { oc } from '@orpc/contract';
 import {
   array,
   boolean,
+  check,
+  custom,
   finite,
   type InferOutput,
   literal,
   maxBytes,
+  maxLength,
   minLength,
   minValue,
   number,
   optional,
   picklist,
   pipe,
+  rawTransform,
   record,
   regex,
   safeInteger,
@@ -22,25 +27,63 @@ import {
   union,
 } from 'valibot';
 import { publicErrorDataSchema } from './errors';
-import { emptyInputSchema, jsonWireValueSchema } from './schema-conventions';
+import { emptyInputSchema, isJsonWireValue, jsonWireValueSchema } from './schema-conventions';
 
-const nonEmptyStringSchema = pipe(string(), minLength(1));
+const boundedStringSchema = pipe(string(), maxLength(4096));
 const nonNegativeFiniteNumberSchema = pipe(number(), finite(), safeInteger(), minValue(0));
-const positiveFiniteNumberSchema = pipe(number(), finite(), minValue(Number.MIN_VALUE));
 const skillNameSchema = pipe(string(), regex(skillNamePattern));
 const targetIdSchema = pipe(string(), regex(skillTargetIdPattern));
 const sha256Schema = pipe(string(), regex(/^[a-f0-9]{64}$/));
 const markdownContentSchema = pipe(string(), maxBytes(262_144));
+const projectMarkdownContentSchema = pipe(string(), maxBytes(65_536));
 const projectPathSchema = pipe(
   string(),
   transform((value) => value.trim()),
   minLength(1),
+  maxLength(4096),
 );
+const textEncoder = new TextEncoder();
+const MAX_CONFIG_BYTES = 512 * 1024;
+const MAX_SNAPSHOT_BYTES = 8 * 1024 * 1024;
+const MAX_RECONCILE_BYTES = 10 * 1024 * 1024;
+const MAX_COLLECTION_BYTES = 8 * 1024 * 1024;
+const MAX_MANAGED_MARKDOWN_DOCUMENT_BYTES = 320 * 1024;
+const MAX_PROJECT_MARKDOWN_DOCUMENT_BYTES = 96 * 1024;
+const MAX_PATH_CHARACTERS = 4096;
+const MAX_COLLECTION_ITEMS = 4096;
+const jsonWirePreflightSchema = custom<unknown>(
+  isJsonWireValue,
+  'Expected a finite, acyclic JSON value without files, streams, dates, class instances, or accessors.',
+);
+
+const jsonWithinBytes = (value: unknown, maximumBytes: number): boolean =>
+  textEncoder.encode(JSON.stringify(value)).byteLength <= maximumBytes;
+
+const configPathsAreBounded = (config: ReturnType<typeof parseSkillConfigInput>): boolean => {
+  const paths = [
+    config.projectsRootPath,
+    config.sourceRepoPath,
+    ...(config.projectPaths ?? []),
+    ...Object.values(config.targets ?? {}).map((target) => target.path),
+  ];
+  return paths.every((path) => path === undefined || path.length <= MAX_PATH_CHARACTERS);
+};
+
+const configCollectionsAreBounded = (config: ReturnType<typeof parseSkillConfigInput>): boolean => {
+  const connectors = Object.values(config.connectors ?? {});
+  return (
+    (config.projectPaths?.length ?? 0) <= MAX_COLLECTION_ITEMS &&
+    (config.ignoredTargetFindings?.length ?? 0) <= MAX_COLLECTION_ITEMS &&
+    Object.keys(config.targets ?? {}).length <= MAX_COLLECTION_ITEMS &&
+    connectors.length <= MAX_COLLECTION_ITEMS &&
+    connectors.every((connector) => connector.consumesTargets.length <= MAX_COLLECTION_ITEMS)
+  );
+};
 
 const diagnosticSchema = strictObject({
   code: string(),
   message: string(),
-  path: optional(string()),
+  path: optional(boundedStringSchema),
   severity: picklist(['info', 'warning', 'error']),
   skillName: optional(skillNameSchema),
   targetId: optional(targetIdSchema),
@@ -53,53 +96,39 @@ const diagnosticSchema = strictObject({
   ),
 });
 
-const tokenThresholdSchema = strictObject({
-  high: positiveFiniteNumberSchema,
-  warn: positiveFiniteNumberSchema,
-});
-
-export const skillManagementConfigSchema = strictObject({
-  connectors: optional(
-    record(
-      nonEmptyStringSchema,
-      strictObject({
-        consumesTargets: array(targetIdSchema),
-        enabled: boolean(),
-      }),
-    ),
-  ),
-  ignoredTargetFindings: optional(array(nonEmptyStringSchema)),
-  projectPaths: optional(array(nonEmptyStringSchema)),
-  projectsRootPath: optional(nonEmptyStringSchema),
-  sourceRepoPath: optional(nonEmptyStringSchema),
-  targets: optional(
-    record(
-      targetIdSchema,
-      strictObject({
-        enabled: boolean(),
-        kind: picklist(['standard-interop', 'native', 'custom']),
-        path: nonEmptyStringSchema,
-        scope: picklist(['system', 'project']),
-      }),
-    ),
-  ),
-  tokenThresholds: optional(
-    strictObject({
-      referenceFile: tokenThresholdSchema,
-      skillMd: tokenThresholdSchema,
-      totalSkill: tokenThresholdSchema,
-    }),
-  ),
-});
+export const skillManagementConfigSchema = pipe(
+  jsonWirePreflightSchema,
+  rawTransform(({ dataset, addIssue, NEVER }) => {
+    try {
+      const config = parseSkillConfigInput(dataset.value);
+      if (
+        !(
+          configPathsAreBounded(config) &&
+          configCollectionsAreBounded(config) &&
+          jsonWithinBytes(config, MAX_CONFIG_BYTES)
+        )
+      ) {
+        throw new Error('Skills config exceeds its public bounds.');
+      }
+      return config;
+    } catch {
+      addIssue({ message: 'Expected an exact bounded Skills config.' });
+      return NEVER;
+    }
+  }),
+);
 
 const manifestSchema = strictObject({
   description: optional(string()),
-  fields: array(
-    strictObject({
-      key: string(),
-      kind: picklist(['standard', 'known-extension', 'unknown-extension']),
-      value: jsonWireValueSchema,
-    }),
+  fields: pipe(
+    array(
+      strictObject({
+        key: string(),
+        kind: picklist(['standard', 'known-extension', 'unknown-extension']),
+        value: jsonWireValueSchema,
+      }),
+    ),
+    maxLength(MAX_COLLECTION_ITEMS),
   ),
   markdown: string(),
   name: optional(string()),
@@ -114,26 +143,26 @@ const tokenCountSchema = strictObject({
 
 const sourceSkillSchema = strictObject({
   description: string(),
-  diagnostics: array(diagnosticSchema),
+  diagnostics: pipe(array(diagnosticSchema), maxLength(MAX_COLLECTION_ITEMS)),
   enabled: boolean(),
   manifest: manifestSchema,
   name: skillNameSchema,
-  path: string(),
-  skillMdPath: string(),
+  path: boundedStringSchema,
+  skillMdPath: boundedStringSchema,
   tokenCount: optional(tokenCountSchema),
   validationStatus: picklist(['valid', 'warning', 'invalid']),
 });
 
 const targetIdentitySchema = strictObject({
-  canonicalPath: string(),
+  canonicalPath: boundedStringSchema,
   dev: string(),
   ino: string(),
 });
 
 const projectionSchema = strictObject({
-  actualPath: optional(string()),
-  diagnostics: array(diagnosticSchema),
-  expectedPath: string(),
+  actualPath: optional(boundedStringSchema),
+  diagnostics: pipe(array(diagnosticSchema), maxLength(MAX_COLLECTION_ITEMS)),
+  expectedPath: boundedStringSchema,
   skillName: skillNameSchema,
   state: picklist([
     'linked',
@@ -151,13 +180,13 @@ const projectionSchema = strictObject({
   targetIdentity: optional(targetIdentitySchema),
 });
 
-export const skillManagementSnapshotSchema = strictObject({
+const skillManagementSnapshotShapeSchema = strictObject({
   config: skillManagementConfigSchema,
   configured: boolean(),
-  diagnostics: array(diagnosticSchema),
-  nativeRuleFindings: array(diagnosticSchema),
-  projections: array(projectionSchema),
-  skills: array(sourceSkillSchema),
+  diagnostics: pipe(array(diagnosticSchema), maxLength(MAX_COLLECTION_ITEMS)),
+  nativeRuleFindings: pipe(array(diagnosticSchema), maxLength(MAX_COLLECTION_ITEMS)),
+  projections: pipe(array(projectionSchema), maxLength(MAX_COLLECTION_ITEMS)),
+  skills: pipe(array(sourceSkillSchema), maxLength(MAX_COLLECTION_ITEMS)),
   sourceState: strictObject({
     skillEnabledByName: record(skillNameSchema, boolean()),
     skillOriginByName: optional(record(skillNameSchema, string())),
@@ -172,42 +201,51 @@ export const skillManagementSnapshotSchema = strictObject({
     unhealthyProjectionCount: nonNegativeFiniteNumberSchema,
     unmanagedEntryCount: nonNegativeFiniteNumberSchema,
   }),
-  targets: array(
-    strictObject({
-      connectorId: optional(string()),
-      enabled: boolean(),
-      id: targetIdSchema,
-      kind: picklist(['standard-interop', 'native', 'custom']),
-      label: string(),
-      missing: boolean(),
-      observed: boolean(),
-      path: string(),
-      scope: picklist(['system', 'project']),
-    }),
+  targets: pipe(
+    array(
+      strictObject({
+        connectorId: optional(string()),
+        enabled: boolean(),
+        id: targetIdSchema,
+        kind: picklist(['standard-interop', 'native', 'custom']),
+        label: string(),
+        missing: boolean(),
+        observed: boolean(),
+        path: boundedStringSchema,
+        scope: picklist(['system', 'project']),
+      }),
+    ),
+    maxLength(MAX_COLLECTION_ITEMS),
   ),
-  unmanagedEntries: array(projectionSchema),
+  unmanagedEntries: pipe(array(projectionSchema), maxLength(MAX_COLLECTION_ITEMS)),
 });
+
+export const skillManagementSnapshotSchema = pipe(
+  jsonWirePreflightSchema,
+  skillManagementSnapshotShapeSchema,
+  check((value) => jsonWithinBytes(value, MAX_SNAPSHOT_BYTES), 'Skills snapshot exceeds its byte budget.'),
+);
 
 const projectionActionSchema = union([
   strictObject({
-    path: string(),
+    path: boundedStringSchema,
     skillName: skillNameSchema,
-    sourcePath: string(),
+    sourcePath: boundedStringSchema,
     targetId: targetIdSchema,
     targetIdentity: optional(targetIdentitySchema),
     type: literal('create-symlink'),
   }),
   strictObject({
-    observedSourcePath: string(),
-    path: string(),
+    observedSourcePath: boundedStringSchema,
+    path: boundedStringSchema,
     skillName: skillNameSchema,
-    sourcePath: string(),
+    sourcePath: boundedStringSchema,
     targetId: targetIdSchema,
     targetIdentity: optional(targetIdentitySchema),
     type: picklist(['repair-symlink', 'unlink-managed-symlink']),
   }),
   strictObject({
-    path: string(),
+    path: boundedStringSchema,
     reason: string(),
     skillName: skillNameSchema,
     targetId: targetIdSchema,
@@ -215,82 +253,149 @@ const projectionActionSchema = union([
   }),
 ]);
 
-export const skillReconcileResultSchema = strictObject({
-  actions: array(projectionActionSchema),
+const skillReconcileResultShapeSchema = strictObject({
+  actions: pipe(array(projectionActionSchema), maxLength(MAX_COLLECTION_ITEMS)),
   snapshot: skillManagementSnapshotSchema,
 });
 
-export const knownSkillProjectPathSchema = strictObject({
+export const skillReconcileResultSchema = pipe(
+  jsonWirePreflightSchema,
+  skillReconcileResultShapeSchema,
+  check((value) => jsonWithinBytes(value, MAX_RECONCILE_BYTES), 'Skills reconcile result exceeds its byte budget.'),
+);
+
+const knownSkillProjectPathShapeSchema = strictObject({
   groupId: optional(string()),
   groupLabel: optional(string()),
   label: string(),
   machineLabel: optional(string()),
-  path: string(),
+  path: boundedStringSchema,
   project: string(),
   sessions: nonNegativeFiniteNumberSchema,
 });
 
+export const knownSkillProjectPathSchema = pipe(jsonWirePreflightSchema, knownSkillProjectPathShapeSchema);
+
 const projectSkillObservationSchema = strictObject({
   description: string(),
-  diagnostics: array(diagnosticSchema),
+  diagnostics: pipe(array(diagnosticSchema), maxLength(MAX_COLLECTION_ITEMS)),
   invocation: picklist(['auto', 'manual']),
   markdownReadable: boolean(),
   name: skillNameSchema,
-  path: string(),
+  path: boundedStringSchema,
   placement: picklist(['owned-directory', 'symlink-to-source', 'project-symlink', 'external-symlink']),
   runtimeDirId: picklist(['claude-project', 'agents-project']),
-  skillMdPath: string(),
+  skillMdPath: boundedStringSchema,
   tokenCount: optional(tokenCountSchema),
   validationStatus: picklist(['valid', 'warning', 'invalid']),
 });
 
-export const projectSkillInventorySchema = strictObject({
-  diagnostics: array(diagnosticSchema),
-  observations: array(projectSkillObservationSchema),
-  projectPath: string(),
+const projectSkillInventoryShapeSchema = strictObject({
+  diagnostics: pipe(array(diagnosticSchema), maxLength(MAX_COLLECTION_ITEMS)),
+  observations: pipe(array(projectSkillObservationSchema), maxLength(MAX_COLLECTION_ITEMS)),
+  projectPath: boundedStringSchema,
 });
 
-export const skillMarkdownDocumentSchema = strictObject({
-  content: string(),
-  path: string(),
+export const projectSkillInventorySchema = pipe(jsonWirePreflightSchema, projectSkillInventoryShapeSchema);
+
+const skillMarkdownDocumentShapeSchema = strictObject({
+  content: markdownContentSchema,
+  path: boundedStringSchema,
   sha256: sha256Schema,
   skillName: skillNameSchema,
 });
 
-export const projectSkillMarkdownDocumentSchema = strictObject({
-  content: string(),
-  path: string(),
+const projectSkillMarkdownDocumentShapeSchema = strictObject({
+  content: projectMarkdownContentSchema,
+  path: boundedStringSchema,
   skillName: skillNameSchema,
   truncated: boolean(),
 });
 
-export const skillMarkdownSaveResultSchema = union([
-  strictObject({ reason: picklist(['conflict', 'not-found', 'too-large']) }),
+export const skillMarkdownDocumentSchema = pipe(
+  jsonWirePreflightSchema,
+  skillMarkdownDocumentShapeSchema,
+  check(
+    (value) => jsonWithinBytes(value, MAX_MANAGED_MARKDOWN_DOCUMENT_BYTES),
+    'Managed Skills markdown document exceeds its byte budget.',
+  ),
+);
+export const projectSkillMarkdownDocumentSchema = pipe(
+  jsonWirePreflightSchema,
+  projectSkillMarkdownDocumentShapeSchema,
+  check(
+    (value) => jsonWithinBytes(value, MAX_PROJECT_MARKDOWN_DOCUMENT_BYTES),
+    'Project Skills markdown document exceeds its byte budget.',
+  ),
+);
+
+export const skillMarkdownSaveResultSchema = pipe(
+  jsonWirePreflightSchema,
+  union([
+    strictObject({ reason: picklist(['conflict', 'not-found', 'too-large']) }),
+    strictObject({
+      document: skillMarkdownDocumentSchema,
+      snapshot: skillManagementSnapshotSchema,
+    }),
+  ]),
+  check(
+    (value) => jsonWithinBytes(value, MAX_RECONCILE_BYTES),
+    'Managed Skills markdown save result exceeds its byte budget.',
+  ),
+);
+
+export const saveSkillMarkdownInputSchema = pipe(
+  jsonWirePreflightSchema,
   strictObject({
-    document: skillMarkdownDocumentSchema,
-    snapshot: skillManagementSnapshotSchema,
+    baseSha256: sha256Schema,
+    content: markdownContentSchema,
+    skillName: skillNameSchema,
   }),
-]);
+  check(
+    (value) => jsonWithinBytes(value, MAX_MANAGED_MARKDOWN_DOCUMENT_BYTES),
+    'Managed Skills markdown input exceeds its byte budget.',
+  ),
+);
 
-export const saveSkillMarkdownInputSchema = strictObject({
-  baseSha256: sha256Schema,
-  content: markdownContentSchema,
-  skillName: skillNameSchema,
-});
+export const projectSkillMarkdownInputSchema = pipe(
+  jsonWirePreflightSchema,
+  strictObject({
+    projectPath: projectPathSchema,
+    runtimeDirId: picklist(['claude-project', 'agents-project']),
+    skillName: skillNameSchema,
+  }),
+);
 
-export const projectSkillMarkdownInputSchema = strictObject({
-  projectPath: projectPathSchema,
-  runtimeDirId: picklist(['claude-project', 'agents-project']),
-  skillName: skillNameSchema,
-});
+export const skillToggleInputSchema = pipe(
+  jsonWirePreflightSchema,
+  strictObject({
+    enabled: boolean(),
+    skillName: skillNameSchema,
+  }),
+);
 
-export const skillToggleInputSchema = strictObject({
-  enabled: boolean(),
-  skillName: skillNameSchema,
-});
+export const skillNameInputSchema = pipe(jsonWirePreflightSchema, strictObject({ skillName: skillNameSchema }));
+export const skillTargetInputSchema = pipe(jsonWirePreflightSchema, strictObject({ targetId: targetIdSchema }));
 
-export const skillNameInputSchema = strictObject({ skillName: skillNameSchema });
-export const skillTargetInputSchema = strictObject({ targetId: targetIdSchema });
+export const knownSkillProjectPathsSchema = pipe(
+  jsonWirePreflightSchema,
+  array(knownSkillProjectPathSchema),
+  maxLength(MAX_COLLECTION_ITEMS),
+  check(
+    (value) => jsonWithinBytes(value, MAX_COLLECTION_BYTES),
+    'Known Skills project paths exceed their byte budget.',
+  ),
+);
+
+export const projectSkillInventoriesSchema = pipe(
+  jsonWirePreflightSchema,
+  array(projectSkillInventorySchema),
+  maxLength(MAX_COLLECTION_ITEMS),
+  check(
+    (value) => jsonWithinBytes(value, MAX_COLLECTION_BYTES),
+    'Project Skills inventories exceed their byte budget.',
+  ),
+);
 
 export const skillsErrorMap = {
   ForbiddenDemo: {
@@ -325,11 +430,11 @@ export const skillsContract = {
   projectInventories: skills
     .route({ method: 'GET', path: '/skills/inventories' })
     .input(emptyInputSchema)
-    .output(array(projectSkillInventorySchema)),
+    .output(projectSkillInventoriesSchema),
   knownProjectPaths: skills
     .route({ method: 'GET', path: '/skills/known-paths' })
     .input(emptyInputSchema)
-    .output(array(knownSkillProjectPathSchema)),
+    .output(knownSkillProjectPathsSchema),
   managedMarkdown: skills
     .route({ method: 'POST', path: '/skills/markdown/read' })
     .input(skillNameInputSchema)

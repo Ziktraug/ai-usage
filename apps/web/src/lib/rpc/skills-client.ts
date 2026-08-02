@@ -42,11 +42,12 @@ const call = async <T>(
   options: SkillsClientCallOptions,
 ): Promise<SkillsClientResult<T>> => {
   try {
-    return { data: await request(options), ok: true };
+    options.signal?.throwIfAborted();
+    const data = await request(options);
+    options.signal?.throwIfAborted();
+    return { data, ok: true };
   } catch (error) {
-    if (options.signal?.aborted) {
-      throw error;
-    }
+    options.signal?.throwIfAborted();
     if (error instanceof ORPCError && error.defined) {
       return {
         error: {
