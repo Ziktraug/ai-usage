@@ -14,8 +14,9 @@ authority for feature, operation, design, source-file, and test-title coverage.
 - `BASE_SHA`: `2183270ebfbb886fafa7e6268893122db9b364c0`
 - Current integration checkpoint: `2051c4887894e42f31b309adf8446869d2e1b566`
 - Last reviewed green checkpoint: `2051c4887894e42f31b309adf8446869d2e1b566`
+- Active B1/B2 dispatch base: `b1bc3c7414918041acef6c7eb7a914a2880d91f9`
 - Implementation PR: not opened
-- Exclusive process-test token: coordinator owned
+- Exclusive process-test token: coordinator owned; delegated only to B2 for its packet-unique lifecycle spike
 
 The integration branch did not exist locally or remotely before this run. Local
 `main` and `origin/main` were clean and aligned at `BASE_SHA`; plans 066 and 067
@@ -115,8 +116,8 @@ Statuses are `BLOCKED`, `READY`, `IMPLEMENTING`, `REVIEW`, `REWORK`,
 | Packet | Prerequisites | Status | Implementer commits | Reviewer / verdict | Integrated checkpoint |
 | --- | --- | --- | --- | --- | --- |
 | B0 | none | INTEGRATED | `40cda764f655d68608f378dd9f8d02e4160e0f52`, `2051c4887894e42f31b309adf8446869d2e1b566` | `/root/b0_review` / ACCEPT | `2051c4887894e42f31b309adf8446869d2e1b566` |
-| B1 | B0 | READY | - | - | - |
-| B2 | B0 | READY | - | - | - |
+| B1 | B0 | IMPLEMENTING | `/root/b1_freeze_parity` at `b1bc3c7414918041acef6c7eb7a914a2880d91f9` | pending | - |
+| B2 | B0 | IMPLEMENTING | `/root/b2_runtime_ecosystem` at `b1bc3c7414918041acef6c7eb7a914a2880d91f9` | pending | - |
 | F0 | B1, B2 | BLOCKED | - | - | - |
 | V0 | F0 | BLOCKED | - | - | - |
 | V1 | V0 | BLOCKED | - | - | - |
@@ -159,6 +160,13 @@ ownership, Plan status and drift result, complete green Solid baseline, worker
 isolation probe, packet DAG, recovery point, and absence of scope creep. It
 also verified both recorded planning-PR timing misses against Actions run
 `30752460299`; no B0 STOP condition remains.
+
+B1 and B2 were dispatched concurrently from
+`b1bc3c7414918041acef6c7eb7a914a2880d91f9` into local-only isolated worktrees
+`/tmp/ai-usage-068-b1` and `/tmp/ai-usage-068-b2`. Their mandatory cards freeze
+non-overlapping write sets, all assigned parity IDs, coordinator-owned files,
+targeted gates, two-attempt STOP rules, and the exact handoff contract. B2 alone
+holds the delegated process-test token with packet-unique ports and outputs.
 
 ## Deviations, STOPs, and recovery
 
