@@ -61,7 +61,7 @@ export default defineParityShard({
           reference: 'Independent V0 re-review ACCEPT on parity/spec and code-quality/seams over 26967ea..7711974',
         }),
       ],
-      status: 'complete',
+      status: 'current',
     },
   ],
 });
