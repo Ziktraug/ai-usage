@@ -16,7 +16,7 @@ authority for feature, operation, design, source-file, and test-title coverage.
 - Last reviewed green checkpoint: `2051c4887894e42f31b309adf8446869d2e1b566`
 - Active B1/B2 dispatch base: `b1bc3c7414918041acef6c7eb7a914a2880d91f9`
 - Implementation PR: not opened
-- Exclusive process-test token: coordinator owned; delegated only to B2 for its packet-unique lifecycle spike
+- Exclusive process-test token: returned to coordinator after B2 cleanup
 
 The integration branch did not exist locally or remotely before this run. Local
 `main` and `origin/main` were clean and aligned at `BASE_SHA`; plans 066 and 067
@@ -116,8 +116,8 @@ Statuses are `BLOCKED`, `READY`, `IMPLEMENTING`, `REVIEW`, `REWORK`,
 | Packet | Prerequisites | Status | Implementer commits | Reviewer / verdict | Integrated checkpoint |
 | --- | --- | --- | --- | --- | --- |
 | B0 | none | INTEGRATED | `40cda764f655d68608f378dd9f8d02e4160e0f52`, `2051c4887894e42f31b309adf8446869d2e1b566` | `/root/b0_review` / ACCEPT | `2051c4887894e42f31b309adf8446869d2e1b566` |
-| B1 | B0 | IMPLEMENTING | `/root/b1_freeze_parity` at `b1bc3c7414918041acef6c7eb7a914a2880d91f9` | pending | - |
-| B2 | B0 | IMPLEMENTING | `/root/b2_runtime_ecosystem` at `b1bc3c7414918041acef6c7eb7a914a2880d91f9` | pending | - |
+| B1 | B0 | REVIEW | `bf39106fa692663957c26ac12ed063eb21dcd9a6`, `11e184f08528b7ff7a1153443322713bd0df0b94` | `/root/b0_review` / pending | - |
+| B2 | B0 | STOP | no commits; recoverable spike `/tmp/ai-usage-068-b2-spike.1VftYr` | two allowed SSE-harness attempts exhausted | - |
 | F0 | B1, B2 | BLOCKED | - | - | - |
 | V0 | F0 | BLOCKED | - | - | - |
 | V1 | V0 | BLOCKED | - | - | - |
@@ -168,10 +168,44 @@ non-overlapping write sets, all assigned parity IDs, coordinator-owned files,
 targeted gates, two-attempt STOP rules, and the exact handoff contract. B2 alone
 holds the delegated process-test token with packet-unique ports and outputs.
 
+B1 returned clean commits `bf39106fa692663957c26ac12ed063eb21dcd9a6` and
+`11e184f08528b7ff7a1153443322713bd0df0b94`, a 3,484-line allowlisted delta.
+Its scoped gates passed: targeted Ultracite, 40 parity/boundary tests, the
+package-boundary checker, Web typecheck, and the aggregate ledger at 35
+features, 30 operations, 72 production TSX files, 15 design rows, 385 design
+exports, 11 render suites, 104 Playwright titles, and 18 URL contracts. Both
+allowed lint corrections were consumed and the final lint result is green.
+`/root/b0_review` is independently reviewing the complete B1 range on both
+required axes; no B1 commit has been integrated yet.
+
+B2 stopped after exhausting both allowed focused corrections for the bounded
+SSE lifecycle harness. The exact final command was `bun --no-env-file probe.ts`
+in `/tmp/ai-usage-068-b2-spike.1VftYr/app`. The unchanged adapter-node artifact
+served `event: held` and `data: 31100` after approximately 31.1 seconds, but on
+both attempts Bun 1.3.13 remained blocked while consuming a deliberately open
+stream client's subprocess output. The final native-curl attempt exceeded the
+40-second client plus 8-second shutdown bound and left probe PID `204820` and
+adapter PID `204841` alive past two minutes. The worker stopped those exact
+synthetic processes, released port `42501`, and returned the process token. The
+coordinator independently confirmed both PIDs and the listener were gone, the
+B2 Git worktree was clean, and the recoverable synthetic spike remained at the
+path above. No B2 commit was produced or integrated, and no B2 dependant may be
+dispatched without new authority.
+
 ## Deviations, STOPs, and recovery
 
 - Reviewed deviations: none.
-- Active STOP condition: none.
-- Failed packet worktrees: none.
+- Active STOP condition: B2 exhausted both focused SSE-harness corrections; F0
+  and every downstream packet remain blocked.
+- Failed packet recovery: `/tmp/ai-usage-068-b2` is clean and the disposable
+  spike is retained at `/tmp/ai-usage-068-b2-spike.1VftYr`.
+- Recovery options requiring new authority:
+  1. redesign the reusable harness so native curl writes to packet-isolated
+     files rather than Bun-owned pipe streams, then restart a fresh two-attempt
+     B2 audit;
+  2. use an external native supervisor for the complete lifecycle fixture, then
+     restart the B2 audit; or
+  3. explicitly classify the measured server-side long-SSE success as an
+     environment/harness exception and authorize a fresh B2 audit.
 - Recovery point: `2051c4887894e42f31b309adf8446869d2e1b566` is the last
   reviewed green integration checkpoint.
