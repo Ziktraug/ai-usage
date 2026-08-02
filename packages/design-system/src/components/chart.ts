@@ -1,5 +1,5 @@
 import { css } from '@ai-usage/design-system/css';
-import { harnessFillFor } from './badge';
+import { harnessFillFor } from '../svelte/passive/harness-fill';
 
 export const chartAxis = css({
   display: 'flex',

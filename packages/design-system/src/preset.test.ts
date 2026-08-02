@@ -118,6 +118,11 @@ describe('semantic palette roles', () => {
   }
 });
 
+test('preset preserves the exact global CSS, keyframes, tokens, and semantic values', () => {
+  const presetHash = new Bun.CryptoHasher('sha256').update(JSON.stringify(aiUsagePreset)).digest('hex');
+  expect(presetHash).toBe('d964dd02cedfb02e539a7fc121e34f67fe4877509824e633005033b4e543f905');
+});
+
 test('punchcard controls meet the minimum interactive target size', () => {
   expect(PUNCHCARD_INTERACTIVE_TARGET_SIZE_PX).toBeGreaterThanOrEqual(WCAG_MINIMUM_TARGET_SIZE_PX);
 });
