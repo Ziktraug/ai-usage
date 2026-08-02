@@ -1,7 +1,37 @@
 import { currentRecord, designExportRecords } from '../helpers';
-import { defineParityShard } from '../schema';
+import { defineParityShard, type ParityEvidence, type ParityRecord } from '../schema';
 
 const owner = 'D0' as const;
+const foundationCommit = '6c6d6c4ebe134d980dd630a13ab53086e38aa142';
+const finalD0Commit = '8474f185f0bef832bae5bb0338f1af316ba02401';
+const targetEvidence = (commit: string, kind: ParityEvidence['kind'], reference: string): ParityEvidence => ({
+  commit,
+  kind,
+  phase: 'target',
+  reference,
+});
+const appendTargetEvidence = (record: ParityRecord, evidence: readonly ParityEvidence[]): ParityRecord => ({
+  ...record,
+  evidence: [...record.evidence, ...evidence],
+});
+const completeRecord = (record: ParityRecord, evidence: readonly ParityEvidence[]): ParityRecord => ({
+  ...appendTargetEvidence(record, evidence),
+  status: 'complete',
+});
+const retainedPublicCompositionEvidence = [
+  targetEvidence(
+    finalD0Commit,
+    'command',
+    'bun tools/check-public-package-exports.ts; bun tools/check-package-boundaries.ts (green at integrated D0 checkpoint)',
+  ),
+  targetEvidence(
+    finalD0Commit,
+    'review',
+    'D0 ACCEPT covers the neutral passive foundation only; Plan 068 D4 still owns public /solid, /svelte, and report composition.',
+  ),
+] as const;
+const retainForD4 = (record: ParityRecord): ParityRecord =>
+  appendTargetEvidence(record, retainedPublicCompositionEvidence);
 const designRow = (id: string, currentOwner: string, evidence: string) =>
   currentRecord(owner, {
     currentOwner,
@@ -13,41 +43,95 @@ const designRow = (id: string, currentOwner: string, evidence: string) =>
 export default defineParityShard({
   owner,
   records: [
-    designRow(
-      'design:preset-global-css',
-      'packages/design-system/src/preset.ts; apps/web/src/styles.css',
-      'packages/design-system/src/preset.test.ts; apps/web/src/design-system-contract.test.ts',
+    completeRecord(
+      designRow(
+        'design:preset-global-css',
+        'packages/design-system/src/preset.ts; apps/web/src/styles.css',
+        'packages/design-system/src/preset.test.ts; apps/web/src/design-system-contract.test.ts',
+      ),
+      [
+        targetEvidence(
+          foundationCommit,
+          'source',
+          'packages/design-system/src/preset.ts; packages/design-system/src/svelte/passive/harness-fill.ts',
+        ),
+        targetEvidence(
+          finalD0Commit,
+          'test',
+          'packages/design-system/src/preset.test.ts; packages/design-system/src/svelte/passive/design-artifact-parity.test.ts',
+        ),
+        targetEvidence(
+          finalD0Commit,
+          'command',
+          'bun --filter @ai-usage/design-system build; generated styles.css and panda.buildinfo.json are byte-identical to the accepted baseline',
+        ),
+        targetEvidence(finalD0Commit, 'review', 'D0 independent parity/spec and code-quality ACCEPT.'),
+      ],
     ),
-    designRow(
-      'design:semantic-style-exports',
-      'packages/design-system/src/report.ts',
-      'apps/web/src/design-system-contract.test.ts',
+    // D4 still owns public report and /solid-/svelte composition; D0 only proved the passive closure.
+    retainForD4(
+      designRow(
+        'design:semantic-style-exports',
+        'packages/design-system/src/report.ts',
+        'apps/web/src/design-system-contract.test.ts',
+      ),
     ),
-    designRow(
-      'design:passive-style-modules',
-      'packages/design-system/src/components/*.ts',
-      'packages/design-system/src/preset.test.ts; apps/web/src/design-system-contract.test.ts',
+    completeRecord(
+      designRow(
+        'design:passive-style-modules',
+        'packages/design-system/src/components/*.ts',
+        'packages/design-system/src/preset.test.ts; apps/web/src/design-system-contract.test.ts',
+      ),
+      [
+        targetEvidence(
+          foundationCommit,
+          'source',
+          'packages/design-system/src/components/*.ts; packages/design-system/src/svelte/passive/harness-fill.ts',
+        ),
+        targetEvidence(
+          finalD0Commit,
+          'test',
+          'packages/design-system/src/svelte/passive/passive-closure.test.ts; packages/design-system/src/svelte/passive/design-artifact-parity.test.ts',
+        ),
+        targetEvidence(
+          finalD0Commit,
+          'command',
+          'bun test D0 focused suite (21 passed, 158 assertions); bun run lint; bun run --cwd apps/web check:svelte; bun run --cwd apps/web build:svelte',
+        ),
+        targetEvidence(finalD0Commit, 'review', 'D0 independent parity/spec and code-quality ACCEPT.'),
+      ],
     ),
+    // No Svelte icon target exists yet; the Solid TSX icon owners remain authoritative.
     designRow(
       'design:icons',
       'apps/web/src/app-navigation.tsx; apps/web/src/skills-workspace.tsx',
       'apps/web/e2e/accessibility.spec.ts; apps/web/e2e/visual-regression.spec.ts',
     ),
-    currentRecord(owner, {
-      currentOwner: 'packages/design-system/package.json',
-      id: 'design-export:./css::<module>',
-      kind: 'design-export',
-    }),
-    currentRecord(owner, {
-      currentOwner: 'packages/design-system/package.json',
-      id: 'design-export:./panda.buildinfo.json::<asset>',
-      kind: 'design-export',
-    }),
-    currentRecord(owner, {
-      currentOwner: 'packages/design-system/package.json',
-      id: 'design-export:./styles.css::<asset>',
-      kind: 'design-export',
-    }),
+    // D4 owns package export-map and public report composition; D0 evidence records only neutral-foundation progress.
+    retainForD4(
+      currentRecord(owner, {
+        currentOwner: 'packages/design-system/package.json',
+        id: 'design-export:./css::<module>',
+        kind: 'design-export',
+      }),
+    ),
+    // D4 owns package export-map and public report composition; D0 evidence records only neutral-foundation progress.
+    retainForD4(
+      currentRecord(owner, {
+        currentOwner: 'packages/design-system/package.json',
+        id: 'design-export:./panda.buildinfo.json::<asset>',
+        kind: 'design-export',
+      }),
+    ),
+    // D4 owns package export-map and public report composition; D0 evidence records only neutral-foundation progress.
+    retainForD4(
+      currentRecord(owner, {
+        currentOwner: 'packages/design-system/package.json',
+        id: 'design-export:./styles.css::<asset>',
+        kind: 'design-export',
+      }),
+    ),
+    // Named public exports also stay current until D4 composes and proves the /solid and /svelte surfaces.
     ...designExportRecords(owner, [
       {
         entrypoint: '.',
@@ -146,6 +230,6 @@ export default defineParityShard({
         `,
         source: 'packages/design-system/src/components/time-slider.ts',
       },
-    ]),
+    ]).map(retainForD4),
   ],
 });
