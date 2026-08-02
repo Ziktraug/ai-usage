@@ -12,8 +12,8 @@ authority for feature, operation, design, source-file, and test-title coverage.
 - Planning PR: `#26`, squash-merged as
   `2183270ebfbb886fafa7e6268893122db9b364c0`
 - `BASE_SHA`: `2183270ebfbb886fafa7e6268893122db9b364c0`
-- Current integration checkpoint: B0 ledger commit pending independent review
-- Last reviewed green checkpoint: `2183270ebfbb886fafa7e6268893122db9b364c0`
+- Current integration checkpoint: `2051c4887894e42f31b309adf8446869d2e1b566`
+- Last reviewed green checkpoint: `2051c4887894e42f31b309adf8446869d2e1b566`
 - Implementation PR: not opened
 - Exclusive process-test token: coordinator owned
 
@@ -114,9 +114,9 @@ Statuses are `BLOCKED`, `READY`, `IMPLEMENTING`, `REVIEW`, `REWORK`,
 
 | Packet | Prerequisites | Status | Implementer commits | Reviewer / verdict | Integrated checkpoint |
 | --- | --- | --- | --- | --- | --- |
-| B0 | none | REVIEW | coordinator ledger pending | pending | pending |
-| B1 | B0 | BLOCKED | - | - | - |
-| B2 | B0 | BLOCKED | - | - | - |
+| B0 | none | INTEGRATED | `40cda764f655d68608f378dd9f8d02e4160e0f52`, `2051c4887894e42f31b309adf8446869d2e1b566` | `/root/b0_review` / ACCEPT | `2051c4887894e42f31b309adf8446869d2e1b566` |
+| B1 | B0 | READY | - | - | - |
+| B2 | B0 | READY | - | - | - |
 | F0 | B1, B2 | BLOCKED | - | - | - |
 | V0 | F0 | BLOCKED | - | - | - |
 | V1 | V0 | BLOCKED | - | - | - |
@@ -151,14 +151,19 @@ Statuses are `BLOCKED`, `READY`, `IMPLEMENTING`, `REVIEW`, `REWORK`,
 
 ## Review and integration ledger
 
-No packet has been accepted or integrated yet. B0 awaits a different agent's
-two-axis review of this ledger, branch provenance, drift evidence, and complete
-baseline results.
+B0 was independently reviewed over
+`2183270ebfbb886fafa7e6268893122db9b364c0..2051c4887894e42f31b309adf8446869d2e1b566`.
+`/root/b0_review` returned ACCEPT on both parity/spec and code-quality/seam axes.
+The review confirmed the exact base and planning-PR provenance, branch
+ownership, Plan status and drift result, complete green Solid baseline, worker
+isolation probe, packet DAG, recovery point, and absence of scope creep. It
+also verified both recorded planning-PR timing misses against Actions run
+`30752460299`; no B0 STOP condition remains.
 
 ## Deviations, STOPs, and recovery
 
 - Reviewed deviations: none.
 - Active STOP condition: none.
 - Failed packet worktrees: none.
-- Recovery point: `BASE_SHA` is the last reviewed green checkpoint until B0 is
-  independently accepted.
+- Recovery point: `2051c4887894e42f31b309adf8446869d2e1b566` is the last
+  reviewed green integration checkpoint.
