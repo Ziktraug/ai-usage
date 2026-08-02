@@ -5,7 +5,8 @@ import path from 'node:path';
 const moduleSpecifierPattern =
   /\b(?:import|export)\s+(?:type\s+)?(?:[^'";]+?\s+from\s*)?['"]([^'"]+)['"]|\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)|\brequire\s*\(\s*['"]([^'"]+)['"]\s*\)/gu;
 const sourceExtensions = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs'] as const;
-const allowedExternalPackages = ['@ai-usage/report-core', '@ai-usage/skills', '@orpc/contract', 'valibot'] as const;
+const allowedExternalPackages = ['@ai-usage/report-core', '@orpc/contract', 'valibot'] as const;
+const allowedExactExternalSpecifiers = new Set(['@ai-usage/skills/config', '@ai-usage/skills/shared']);
 const forbiddenWebRouter = ['@ai-usage', 'web', 'server', 'router'].join('/');
 
 interface ContractClosureViolation {
@@ -28,6 +29,7 @@ const collectModuleSpecifiers = (source: string): readonly string[] => {
 };
 
 const isAllowedExternalSpecifier = (specifier: string): boolean =>
+  allowedExactExternalSpecifiers.has(specifier) ||
   allowedExternalPackages.some((packageName) => specifier === packageName || specifier.startsWith(`${packageName}/`));
 
 const resolveRelativeSpecifier = (
@@ -165,5 +167,24 @@ describe('web contract production closure', () => {
     ]);
 
     expect(collectContractClosureViolations(sources, ['index.ts'])).toEqual([]);
+  });
+  test('permits only exact reviewed Skills contract entrypoints', () => {
+    const unreviewedSkillsSpecifier = ['@ai-usage/skills', 'not-reviewed'].join('/');
+    const allowedSources = new Map([
+      ['config.ts', "import '@ai-usage/skills/config';\n"],
+      ['shared.ts', "import '@ai-usage/skills/shared';\n"],
+    ]);
+    expect(collectContractClosureViolations(allowedSources, [...allowedSources.keys()])).toEqual([]);
+
+    const rejectedSources = new Map([
+      ['application.ts', "import '@ai-usage/skills/application';\n"],
+      ['root.ts', 'import \x27@ai-usage/skills\x27;\n'],
+      ['unknown.ts', `import \x27${unreviewedSkillsSpecifier}\x27;\n`],
+    ]);
+    expect(collectContractClosureViolations(rejectedSources, [...rejectedSources.keys()])).toEqual([
+      { importer: 'application.ts', path: ['application.ts'], specifier: '@ai-usage/skills/application' },
+      { importer: 'root.ts', path: ['root.ts'], specifier: '@ai-usage/skills' },
+      { importer: 'unknown.ts', path: ['unknown.ts'], specifier: unreviewedSkillsSpecifier },
+    ]);
   });
 });
