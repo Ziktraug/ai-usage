@@ -117,7 +117,7 @@ Statuses are `BLOCKED`, `READY`, `IMPLEMENTING`, `REVIEW`, `REWORK`,
 | --- | --- | --- | --- | --- | --- |
 | B0 | none | INTEGRATED | `40cda764f655d68608f378dd9f8d02e4160e0f52`, `2051c4887894e42f31b309adf8446869d2e1b566` | `/root/b0_review` / ACCEPT | `2051c4887894e42f31b309adf8446869d2e1b566` |
 | B1 | B0 | REWORK | `bf39106fa692663957c26ac12ed063eb21dcd9a6`, `11e184f08528b7ff7a1153443322713bd0df0b94` | `/root/b0_review` / REWORK; static rework green, runtime correction dispatched | - |
-| B2 | B0 | IMPLEMENTING | no commits; recoverable spike `/tmp/ai-usage-068-b2-spike.1VftYr` | SSE harness incident documented; fresh audit authorized | - |
+| B2 | B0 | REWORK | `416ed3befda96e101763f129ddd32151a12f6ed2` | `/root/b1_freeze_parity` + standards child / REWORK | - |
 | F0 | B1, B2 | BLOCKED | - | - | - |
 | V0 | F0 | BLOCKED | - | - | - |
 | V1 | V0 | BLOCKED | - | - | - |
@@ -223,6 +223,19 @@ request/socket events, and the generated SIGTERM shutdown left the process alive
 past `SHUTDOWN_TIMEOUT` plus the eight-second harness bound. Every exact orphan
 process group and listener was cleaned. Wave 1 therefore advanced to its mandated
 `svelte-adapter-bun` fallback; this is an active ecosystem decision, not a STOP.
+
+B2 then produced local commit
+`416ed3befda96e101763f129ddd32151a12f6ed2` with its decision, ADR and
+reusable lifecycle harness. Independent parity and standards review returned
+REWORK. The committed test launched a plain `Bun.serve` fixture instead of a
+built selected-adapter SvelteKit artifact, and the decision paired
+`svelte-adapter-bun` version `1.0.1` (peer TypeScript `^5`) with incompatible TypeScript
+`6.0.3`. The review also found partial-acquisition cleanup gaps, artifact
+integrity limited to file identity and size, a timeout below the complete
+failure envelope, spread accumulation, and decision assertions that did not
+freeze exact values. B2 was redispatched to turn the disposable evidence into
+an actual selected-adapter regression, resolve the peer set and harden failure
+cleanup; the first commit remains local-only and unintegrated.
 
 B1's two fresh isolated production measurements then exposed a separate Wave-0
 invariant failure: `getReportRevisionBootstrap` was requested exactly twice
