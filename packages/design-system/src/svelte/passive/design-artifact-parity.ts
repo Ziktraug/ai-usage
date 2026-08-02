@@ -32,20 +32,59 @@ export interface DesignParityEvidence {
   tokenCount: number;
 }
 
-const CSS_COMMENT_PATTERN = /\/\*[\s\S]*?\*\//g;
 const CSS_PUNCTUATION = new Set(['{', '}', ':', ';', ',', '>', '+', '~']);
 const LAYER_STATEMENT_PATTERN = /^@layer ([^;]+);$/;
 const TRAILING_SEMICOLON_PATTERN = /;$/;
 const WHITESPACE_CHARACTER_PATTERN = /\s/;
 
+const stripCssComments = (source: string): string => {
+  let stripped = '';
+  let quote: '"' | "'" | undefined;
+  let escaped = false;
+  let index = 0;
+
+  while (index < source.length) {
+    const character = source[index];
+    if (quote) {
+      stripped += character;
+      if (escaped) {
+        escaped = false;
+      } else if (character === '\\') {
+        escaped = true;
+      } else if (character === quote) {
+        quote = undefined;
+      }
+      index += 1;
+      continue;
+    }
+    if (character === '"' || character === "'") {
+      quote = character;
+      stripped += character;
+      index += 1;
+      continue;
+    }
+    if (character === '/' && source[index + 1] === '*') {
+      const closingIndex = source.indexOf('*/', index + 2);
+      if (closingIndex === -1) {
+        throw new Error(`Unclosed CSS comment starting at byte ${index}.`);
+      }
+      index = closingIndex + 2;
+      continue;
+    }
+    stripped += character;
+    index += 1;
+  }
+
+  return stripped;
+};
+
 const normalizeCssText = (source: string): string => {
-  const uncommented = source.replace(CSS_COMMENT_PATTERN, '');
   let normalized = '';
   let pendingWhitespace = false;
   let quote: '"' | "'" | undefined;
   let escaped = false;
 
-  for (const character of uncommented) {
+  for (const character of source) {
     if (quote) {
       normalized += character;
       if (escaped) {
@@ -216,6 +255,7 @@ const collectCssRules = (source: string, ancestors: readonly string[] = []): str
 
   return rules;
 };
+const cssRulesFor = (source: string): string[] => collectCssRules(stripCssComments(source));
 
 const canonicalValue = (value: unknown): string => {
   if (Array.isArray(value)) {
@@ -267,6 +307,55 @@ const compareSets = (
   return differences;
 };
 
+const longestCommonSubsequenceLength = (reference: readonly string[], target: readonly string[]): number => {
+  if (reference.length === target.length && reference.every((value, index) => value === target[index])) {
+    return reference.length;
+  }
+
+  const [rows, columns] = reference.length >= target.length ? [reference, target] : [target, reference];
+  let previous = new Uint32Array(columns.length + 1);
+  for (const rowValue of rows) {
+    const current = new Uint32Array(columns.length + 1);
+    for (let columnIndex = 1; columnIndex <= columns.length; columnIndex += 1) {
+      current[columnIndex] =
+        rowValue === columns[columnIndex - 1]
+          ? (previous[columnIndex - 1] ?? 0) + 1
+          : Math.max(previous[columnIndex] ?? 0, current[columnIndex - 1] ?? 0);
+    }
+    previous = current;
+  }
+  return previous[columns.length] ?? 0;
+};
+
+const sharedValueCount = (reference: readonly string[], target: readonly string[]): number => {
+  const referenceCounts = countValues(reference);
+  const targetCounts = countValues(target);
+  let sharedCount = 0;
+  for (const [value, referenceCount] of referenceCounts) {
+    sharedCount += Math.min(referenceCount, targetCounts.get(value) ?? 0);
+  }
+  return sharedCount;
+};
+
+const compareCssRules = (
+  referenceRules: readonly string[],
+  targetRules: readonly string[],
+): DesignArtifactDifference[] => {
+  const differences = compareSets('css', referenceRules, targetRules);
+  const sharedRuleCount = sharedValueCount(referenceRules, targetRules);
+  const orderedSharedRuleCount = longestCommonSubsequenceLength(referenceRules, targetRules);
+  if (orderedSharedRuleCount < sharedRuleCount) {
+    differences.push({
+      key: 'cascade-rule-order',
+      kind: 'changed',
+      reference: `${orderedSharedRuleCount}/${sharedRuleCount} shared rules retain order`,
+      scope: 'css',
+      target: 'cascade-significant rule order changed',
+    });
+  }
+  return differences;
+};
+
 const compareTokens = (
   referenceTokens: Readonly<Record<string, unknown>>,
   targetTokens: Readonly<Record<string, unknown>>,
@@ -312,14 +401,14 @@ export const findDesignArtifactDifferences = (
   reference: DesignArtifactSnapshot,
   target: DesignArtifactSnapshot,
 ): DesignArtifactDifference[] => {
-  const referenceRules = collectCssRules(reference.css);
-  const targetRules = collectCssRules(target.css);
+  const referenceRules = cssRulesFor(reference.css);
+  const targetRules = cssRulesFor(target.css);
   const referenceLayers = layerOrderFor(referenceRules);
   const targetLayers = layerOrderFor(targetRules);
   const cssRulesWithoutLayerOrder = (rules: readonly string[]) =>
     rules.filter((rule) => !LAYER_STATEMENT_PATTERN.test(rule));
   const differences = [
-    ...compareSets('css', cssRulesWithoutLayerOrder(referenceRules), cssRulesWithoutLayerOrder(targetRules)),
+    ...compareCssRules(cssRulesWithoutLayerOrder(referenceRules), cssRulesWithoutLayerOrder(targetRules)),
     ...compareSets('export', reference.exports, target.exports),
     ...compareTokens(reference.tokens, target.tokens),
   ];
@@ -344,6 +433,11 @@ const validateApproval = (approval: ApprovedDesignDifference): void => {
   if (approval.scope !== 'css') {
     throw new Error(
       `Design difference ${differenceIdentity(approval)} cannot be classified: tokens, exports, and layer order are exact contracts.`,
+    );
+  }
+  if (approval.kind === 'changed') {
+    throw new Error(
+      `Design difference ${differenceIdentity(approval)} cannot be classified: CSS cascade order is an exact contract.`,
     );
   }
 };
@@ -375,7 +469,7 @@ export const compareDesignArtifacts = (
     throw new Error(`Design artifact parity failed:\n${details.join('\n')}`);
   }
 
-  const targetRules = collectCssRules(target.css);
+  const targetRules = cssRulesFor(target.css);
   return {
     approvedDifferences,
     cssRuleCount: targetRules.filter((rule) => !LAYER_STATEMENT_PATTERN.test(rule)).length,

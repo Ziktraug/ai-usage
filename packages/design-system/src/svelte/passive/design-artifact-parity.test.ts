@@ -38,7 +38,7 @@ const approvalFor = (
 };
 
 describe('normalized design artifact parity', () => {
-  test('ignores formatting and rule order while retaining declared layer order', async () => {
+  test('normalizes formatting and comments while retaining declared layer order', async () => {
     const referenceCss = await fixtureCss('reference.css');
     const equivalentCss = referenceCss
       .replace('/* Solid reference artifact */', '')
@@ -71,6 +71,49 @@ describe('normalized design artifact parity', () => {
     expect(evidence.cssRuleCount).toBe(3);
   });
 
+  test('rejects cascade-significant duplicate-selector rule inversion', () => {
+    const reference = snapshot(
+      '@layer reset, base, tokens, recipes, utilities; @layer utilities { .same { color: red; } .same { color: blue; } }',
+    );
+    const target = snapshot(
+      '@layer reset, base, tokens, recipes, utilities; @layer utilities { .same { color: blue; } .same { color: red; } }',
+    );
+    const differences = findDesignArtifactDifferences(reference, target);
+
+    expect(differences.map(({ key, kind, scope }) => `${scope}:${kind}:${key}`)).toEqual([
+      'css:changed:cascade-rule-order',
+    ]);
+    expect(() => compareDesignArtifacts(reference, target)).toThrow('unclassified css:changed:cascade-rule-order');
+    expect(() =>
+      compareDesignArtifacts(reference, target, [
+        {
+          classification: 'framework-syntax',
+          key: 'cascade-rule-order',
+          kind: 'changed',
+          reason: 'Cascade changes may not be classified away.',
+          scope: 'css',
+        },
+      ]),
+    ).toThrow('CSS cascade order is an exact contract');
+  });
+
+  test('preserves comment-shaped content inside quoted CSS strings', () => {
+    const reference = snapshot(
+      '@layer reset, base, tokens, recipes, utilities; @layer utilities { .label { content: "/* visible */"; } }',
+    );
+    const equivalent = snapshot(
+      '/* removed comment */ @layer reset,base,tokens,recipes,utilities; @layer utilities{.label{content:"/* visible */"}}',
+    );
+    const missingContent = snapshot(
+      '@layer reset, base, tokens, recipes, utilities; @layer utilities { .label { content: ""; } }',
+    );
+
+    expect(compareDesignArtifacts(reference, equivalent).approvedDifferences).toEqual([]);
+    expect(
+      findDesignArtifactDifferences(reference, missingContent).map(({ kind, scope }) => `${scope}:${kind}`),
+    ).toEqual(['css:missing', 'css:unexpected']);
+    expect(() => compareDesignArtifacts(reference, missingContent)).toThrow('unclassified css:missing');
+  });
   test('rejects missing exports, token changes, and layer reordering without an escape hatch', async () => {
     const css = await fixtureCss('reference.css');
     const reference = snapshot(css);

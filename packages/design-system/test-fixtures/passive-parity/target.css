@@ -1,15 +1,15 @@
 @layer reset, base, tokens, recipes, utilities;
-@layer utilities {
-  .svelte-marker > span {
-    display: inline-flex;
-  }
-  .shared {
-    color: var(--colors-accent);
-  }
-}
 @layer tokens {
   :root {
     --colors-canvas: #f6f4ef;
     --colors-accent: #ac4b12;
+  }
+}
+@layer utilities {
+  .shared {
+    color: var(--colors-accent);
+  }
+  .svelte-marker > span {
+    display: inline-flex;
   }
 }
