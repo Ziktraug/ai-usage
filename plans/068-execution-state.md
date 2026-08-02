@@ -251,15 +251,27 @@ red regression, diagnose the request provenance, preserve ADR 0007 and all
 product behavior, and eliminate the duplicate before B1 is redispatched for
 fresh performance evidence.
 
+B1-C produced local commit
+`c7a2c445a45ca6fd360ed5559cacc6d1800f6fa4`. Its deterministic test failed
+twice before the fix with expected one/received two acquisitions, then passed
+with instance-local one-shot descriptor seeding plus fresh later refresh, expiry
+retry and instance-isolation coverage. The exact synthetic production replay on
+port `45177` observed the bootstrap operation hash once, 36,995 HTML bytes, 15
+requests, 10.3 ms TTFB, 111 ms hydration and no fetch/XHR after settlement;
+the listener and fixture roots were released. `/root/b1_bootstrap_review`
+returned ACCEPT on both axes. The coordinator cherry-picked the correction as
+`c85b077`, then passed 34 focused tests, root TypeScript coverage/typecheck and
+diff cleanliness. B1-C is integrated; B1 must now be redispatched from this
+compatible checkpoint and reproduce its complete budgets.
+
 ## Deviations, STOPs, and recovery
 
 - Reviewed deviations: none.
 - Resolved local STOP: B2 exhausted both original focused SSE-harness
   corrections. The user authorized autonomous correction of this class of
   technical blocker; the incident remains recorded above and B2 is active.
-- Active B1 correction: B1-C owns the duplicate pre-hydration bootstrap
-  diagnosis in `/tmp/ai-usage-068-b1-bootstrap-fix`; it may not run production
-  processes until B2 returns the exclusive token.
+- Resolved B1 correction: B1-C is independently accepted and integrated at
+  `c85b077`; its production proof and post-cherry gates are recorded above.
 - B1 recovery: `/tmp/ai-usage-068-b1` is at
   `11e184f08528b7ff7a1153443322713bd0df0b94` with its completed static rework
   retained as uncommitted allowlisted changes; both reviewed REWORK commits are
@@ -270,5 +282,5 @@ fresh performance evidence.
 - Active B2 correction: run the complete isolated lifecycle matrix against the
   Plan-mandated `svelte-adapter-bun` fallback, pin its exact accepted version and
   retain only the reusable fixture and decision after a green audit.
-- Recovery point: `2051c4887894e42f31b309adf8446869d2e1b566` is the last
-  reviewed green integration checkpoint.
+- Recovery point: `c85b077` is the last independently reviewed green code
+  checkpoint; later coordinator-only commits contain execution bookkeeping.
