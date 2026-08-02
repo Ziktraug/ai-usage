@@ -1,50 +1,25 @@
-import { MultiSelect, Tabs } from '@ai-usage/design-system';
-import { css, cx } from '@ai-usage/design-system/css';
+import { cx } from '@ai-usage/design-system/css';
 import {
-  activeFilters,
   banner,
   bannerError,
-  demoBadge,
-  eyebrow,
-  eyebrowRow,
-  filterSummary,
-  ghostButton,
-  header,
-  headerTop,
-  meta,
   page,
-  searchInput,
-  section,
   shell,
-  summaryPill,
-  title,
-  titleBlock,
   unavailablePanel,
   unavailableText,
   unavailableTitle,
 } from '@ai-usage/design-system/report';
 import type { FocusedReportQueryScope, FocusedSupportResult } from '@ai-usage/report-core/focused-report-query';
-import {
-  type ProjectGroupConfig,
-  type ProjectSourceSelector,
-  projectSourceSelectorKey,
-} from '@ai-usage/report-core/project-group';
+import type { ProjectGroupConfig } from '@ai-usage/report-core/project-group';
 import type { ProviderQuotaHistoryResult } from '@ai-usage/report-core/provider-quota';
-import { isSessionOrigin, type SessionOrigin, sessionQueryFingerprint } from '@ai-usage/report-core/session-query';
-import { useNavigate, useSearch } from '@tanstack/solid-router';
-import type { OnChangeFn, SortingState, Updater, VisibilityState } from '@tanstack/solid-table';
+import { activeTimeMatchesLocalTimeCell, sessionQueryFingerprint } from '@ai-usage/report-core/session-query';
+import { createEffect, createMemo, createSignal, onCleanup, onMount, Show, untrack } from 'solid-js';
+import type { CampaignLabelApi } from './campaign-label-controller';
 import {
-  createEffect,
-  createMemo,
-  createSignal,
-  For,
-  lazy,
-  onCleanup,
-  onMount,
-  Show,
-  Suspense,
-  untrack,
-} from 'solid-js';
+  indexCampaignLabelOverrides,
+  presentCampaignTimelineSeries,
+  presentServedCampaignDisplayRow,
+} from './campaign-label-overrides';
+import { createCampaignLabelRuntime } from './campaign-label-runtime';
 import {
   logClientPerf,
   logNavigationPerf,
@@ -52,19 +27,19 @@ import {
   payloadStats,
   resolveClientPerfEnabled,
 } from './client-perf';
-import { SourceControlSummary } from './components/source-control-summary';
-import { CursorAttributionPanel } from './cursor-attribution-panel';
-import { FilterPill, fieldFilterLabels } from './dashboard-filters';
-import { dashboardMetricGrid, MetricTile } from './dashboard-metrics';
+import { DashboardActiveFilters } from './dashboard-active-filters';
+import { DashboardFilterBar } from './dashboard-filter-bar';
+import { DashboardHeader } from './dashboard-header';
+import { metricComparisonStateFor } from './dashboard-metric-model';
 import {
   buildCampaignTableRows,
   buildCampaignViews,
   buildDashboardMetrics,
   buildHarnessGroups,
+  buildHarnessProviderGroups,
   buildModelGroups,
   buildPreviousPeriodSummary,
   buildProjectGroupRows,
-  buildProviderGroups,
   buildSortedDashboardRows,
   buildVisibleSummary,
   createFilterSnapshot,
@@ -73,32 +48,25 @@ import {
   hiddenSessionCount,
   machineFilterOptionsForRows,
 } from './dashboard-model';
-import { DashboardProviderStatus } from './dashboard-provider-status';
+import { createDashboardNavigationController } from './dashboard-navigation-controller';
+import { createProjectWarningCleanup } from './dashboard-project-warning-cleanup';
+import { buildDashboardReportDestinationScope } from './dashboard-report-destination';
 import { createDashboardReportLifecycle, type DashboardReportDestinationScope } from './dashboard-report-lifecycle';
+import { DashboardReportWorkspace } from './dashboard-report-workspace';
 import {
   breakdownTabFor,
   type DashboardSearch,
   dashboardSearchDefaultsFor,
   defaultDashboardDateRangeMode,
   defaultDashboardOrigins,
-  type FieldFilterKey,
-  type FieldFilters,
-  hasActiveDashboardFilters,
-  isDashboardTab,
-  primaryDashboardTabFor,
-  sortingStateFromSearch,
-  toggleExactFieldFilter,
+  withoutDashboardTimeCell,
 } from './dashboard-search';
 import { createDashboardServedReportSession } from './dashboard-served-report-session';
 import { createDashboardSessionSelection } from './dashboard-session-selection';
 import { type DateBounds, shiftCalendarDays, startOfDay, toDateInputValue } from './date-range';
 import { createDateRangeController } from './date-range-controller';
-import {
-  createFocusedReportStore,
-  createServedFocusedReportSource,
-  fetchFocusedBreakdown,
-} from './focused-report-client';
-import { GroupPanel } from './group-panel';
+import { createFocusedReportStore, createServedFocusedReportSource } from './focused-report-client';
+import { createFocusedReportE2EFixture } from './focused-report-e2e-fixture';
 import {
   type MachineFreshnessSnapshot,
   type MachineLabelPresentation,
@@ -106,17 +74,11 @@ import {
   machineFreshnessStatusLabel,
   machineLabelPresentationForSnapshot,
 } from './manual-transfer-model';
-import { OriginFilter } from './origin-filter';
-import { Overview } from './overview';
-import type { TimelineDimension } from './overview-model';
-import { ProjectGroupEditor } from './project-group-editor';
-import { ProjectSummary } from './project-summary';
 import type { ProviderQuotaSource } from './provider-quota-client';
 import { cursorCommitAttributionFacet, demoReportPayload } from './report-data';
 import { ReportWarnings } from './report-warnings';
 import type { RuntimeMode } from './runtime-mode';
 import { sessionAnalysisTargetForSession } from './session-analysis-target';
-import { SessionDrawer } from './session-drawer';
 import {
   buildDashboardSessionQueryScope,
   createServedSessionQuerySource,
@@ -124,111 +86,12 @@ import {
   type SessionQueryState,
   sessionRowsForState,
 } from './session-query-client';
-import {
-  columnVisibilityFromDiff,
-  columnVisibilitySearchForVisibility,
-  sortFromSortingState,
-} from './session-table-schema';
-import { enrichReportRow, fmtDate, fmtDateOnly, fmtNum } from './shared';
+import { enrichReportRow, fmtDateOnly } from './shared';
 import { useSourceControl } from './source-control-context';
-import { applyTableUpdate } from './table-utils';
 import { TimeRangeControl } from './time-range-control';
 import { toWebReportPayload, type WebReportPayload, type WebReportPayloadWithoutRows } from './web-report-payload';
 
 const FORM_CONTROL_TAG_PATTERN = /^(INPUT|SELECT|TEXTAREA)$/;
-const SessionTable = lazy(async () => {
-  const module = await import('./session-table');
-  return { default: module.SessionTable };
-});
-
-const secondaryMetrics = css({
-  my: '20px',
-  border: '1px solid token(colors.line)',
-  borderRadius: 'md',
-  bg: 'surface',
-  boxShadow: 'card',
-});
-
-const secondaryMetricsHeader = css({
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'space-between',
-  gap: '12px',
-  p: '14px 16px',
-  color: 'ink',
-  fontWeight: 600,
-  borderBottom: '1px solid token(colors.line)',
-});
-
-const secondaryMetricsTitle = css({
-  m: 0,
-  fontSize: 'inherit',
-  fontWeight: 'inherit',
-});
-
-const secondaryMetricsGrid = css({
-  display: 'block',
-  px: '14px',
-  pb: '14px',
-  '& > div': { my: '14px' },
-});
-
-const dashboardFilterToolbar = css({
-  position: { base: 'static', md: 'sticky' },
-  top: '0',
-  zIndex: 20,
-  display: 'flex',
-  flexDirection: { base: 'column', sm: 'row' },
-  flexWrap: { base: 'nowrap', sm: 'wrap' },
-  gap: { base: '8px', sm: '10px' },
-  alignItems: 'center',
-  py: { base: '8px', sm: '12px' },
-  bg: 'canvas',
-  borderBottom: '1px solid token(colors.line)',
-  _print: { display: 'none' },
-  '& > input': {
-    flex: { base: 'none', sm: '1 1 240px' },
-    minW: { base: 0, sm: '180px' },
-    w: { base: 'full', sm: 'auto' },
-  },
-});
-
-const dashboardFilterControls = css({
-  display: { base: 'grid', sm: 'contents' },
-  gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
-  w: { base: 'full', sm: 'auto' },
-  gap: { base: '8px', sm: '0' },
-  alignItems: 'center',
-  '& > *': { minW: 0, w: { base: 'full', sm: 'auto' } },
-  '& > :last-child:nth-child(odd)': { gridColumn: { base: '1 / -1', sm: 'auto' } },
-});
-
-const dashboardLayout = css({
-  display: 'flex',
-  flexDirection: 'column',
-});
-
-const dashboardView = css({
-  order: 1,
-});
-
-const dashboardPanel = css({
-  minW: 0,
-  _focus: {
-    outline: '2px solid token(colors.accent)',
-    outlineOffset: '4px',
-  },
-});
-
-const dashboardStatus = css({
-  order: 2,
-});
-
-const removeSelectors = (sources: ProjectSourceSelector[], selectors: ProjectSourceSelector[]) => {
-  const removed = new Set(selectors.map(projectSourceSelectorKey));
-  return sources.filter((source) => !removed.has(projectSourceSelectorKey(source)));
-};
-
 const payloadForFocusedBootstrap = (bootstrap: FocusedSupportResult): WebReportPayload =>
   toWebReportPayload({ ...bootstrap.support, rows: [], tableRows: [] });
 
@@ -238,6 +101,7 @@ const supportForFocusedBootstrap = (bootstrap: FocusedSupportResult): WebReportP
 };
 
 export const Dashboard = (props: {
+  campaignLabelApi?: CampaignLabelApi;
   initialPayload?: WebReportPayload;
   machineFreshness: MachineFreshnessSnapshot;
   quotaHistoryFixture?: ProviderQuotaHistoryResult;
@@ -246,13 +110,16 @@ export const Dashboard = (props: {
   servedBootstrap?: FocusedSupportResult;
 }) => {
   const sourceControl = useSourceControl();
+  const runtimeMode = props.runtimeMode ?? 'live';
+  const focusedFixture = runtimeMode === 'e2e' ? createFocusedReportE2EFixture() : undefined;
+  const servedBootstrap = props.servedBootstrap ?? focusedFixture?.bootstrap;
   const initialPayload =
     props.initialPayload ??
-    (props.servedBootstrap ? payloadForFocusedBootstrap(props.servedBootstrap) : toWebReportPayload(demoReportPayload));
+    (servedBootstrap ? payloadForFocusedBootstrap(servedBootstrap) : toWebReportPayload(demoReportPayload));
   const dashboardSearchDefaults = dashboardSearchDefaultsFor(initialPayload.filters.sort);
   const { rows: _initialRows, ...initialSupport } = initialPayload;
-  const focusedStore = props.servedBootstrap ? createFocusedReportStore(props.servedBootstrap) : undefined;
-  const focusedSource = focusedStore ? createServedFocusedReportSource() : undefined;
+  const focusedStore = servedBootstrap ? createFocusedReportStore(servedBootstrap) : undefined;
+  const focusedSource = focusedStore ? (focusedFixture?.source ?? createServedFocusedReportSource()) : undefined;
   let restartServedDestination = (): Promise<void> => Promise.resolve();
   const activeMachineFreshness = createMemo(() =>
     focusedStore ? machineFreshnessSnapshotFromFocused(focusedStore.machineFreshness()) : props.machineFreshness,
@@ -275,9 +142,10 @@ export const Dashboard = (props: {
     const truncation = focusedStore?.truncation();
     return truncation ? Object.values(truncation).reduce((total, omitted) => total + omitted, 0) : 0;
   });
-  const runtimeMode = props.runtimeMode ?? 'live';
   const isDemo = runtimeMode === 'demo';
-  const hasReportData = Boolean(props.initialPayload || props.servedBootstrap || runtimeMode !== 'live');
+  const campaignLabels = createCampaignLabelRuntime(runtimeMode, props.campaignLabelApi);
+  const campaignLabelIndex = createMemo(() => indexCampaignLabelOverrides(campaignLabels.overrides()));
+  const hasReportData = Boolean(props.initialPayload || servedBootstrap || runtimeMode !== 'live');
   const servedSessionQueries = Boolean(focusedStore);
   const [servedSessionState, setServedSessionState] = createSignal<SessionQueryState>();
   const servedSessionFingerprint = () => {
@@ -298,32 +166,40 @@ export const Dashboard = (props: {
     : undefined;
   const [clientReady, setClientReady] = createSignal(false);
   const [operationError, setOperationError] = createSignal<string | null>(null);
-  const search = useSearch({ from: '/' });
+  const navigation = createDashboardNavigationController(dashboardSearchDefaults);
+  const {
+    clearFieldFilter,
+    clearLocalTimeCell,
+    columnVisibility,
+    commitQueryEdit,
+    fieldFilters,
+    handleColumnVisibilityChange,
+    handleSortingChange,
+    harness,
+    localTimeCell,
+    machine,
+    origin,
+    query,
+    removeHarness,
+    removeMachine,
+    search,
+    setBreakdownSort,
+    setFieldFilter,
+    setHarness,
+    setLocalTimeCell,
+    setMachine,
+    setOrigin,
+    setQuery,
+    setTab,
+    setTimelineDimensionFilter,
+    sorting,
+    toggleHarness,
+    updateSearch,
+  } = navigation;
   const servedSessionViewActive = () => servedSessionQueries && search().tab === 'sessions';
-  const navigate = useNavigate({ from: '/' });
-  const updateSearch = (
-    updater: (current: DashboardSearch) => DashboardSearch,
-    options?: { replace?: boolean; resetScroll?: boolean },
-  ) => {
-    navigate({
-      search: updater(search()),
-      ...(options?.replace == null ? {} : { replace: options.replace }),
-      resetScroll: options?.resetScroll ?? false,
-    }).catch((error: unknown) => {
-      console.error(error);
-    });
-  };
-  const query = () => search().q;
-  const harness = () => search().harness;
-  const origin = () => search().origin;
-  const machine = () => search().machine;
-  const fieldFilters = () => search().filters;
-  const sorting = createMemo(() => sortingStateFromSearch(search().sort));
-  const [columnVisibility, setColumnVisibility] = createSignal(
-    columnVisibilityFromDiff(search().cols, search().colsBase),
-  );
-  createEffect(() => {
-    setColumnVisibility(columnVisibilityFromDiff(search().cols, search().colsBase));
+  const localTimeCellQueryInput = createMemo(() => {
+    const cell = localTimeCell();
+    return cell === undefined ? {} : { localTimeCell: cell };
   });
   const generatedAt = createMemo(() => new Date(reportSupport().generatedAt));
   const reportRows = createMemo(() =>
@@ -370,7 +246,10 @@ export const Dashboard = (props: {
   const timelineRows = createMemo(() =>
     measureClientPerf(
       'aiUsage.web.client.compute.timelineRows',
-      () => filterTimelineRows(reportRows(), filterSnapshot()),
+      () =>
+        filterTimelineRows(reportRows(), filterSnapshot()).filter((row) =>
+          activeTimeMatchesLocalTimeCell(row.activeTime, localTimeCell(), reportSupport().timeZone),
+        ),
       (rows) => ({ rows: rows.length }),
     ),
   );
@@ -402,8 +281,9 @@ export const Dashboard = (props: {
     const sessionScope = buildDashboardSessionQueryScope({
       fields: fieldFilters(),
       harness: harness(),
-      origin: origin(),
+      ...localTimeCellQueryInput(),
       machine: machine(),
+      origin: origin(),
       query: query(),
       range: tableDateBounds(),
       sorting: sorting(),
@@ -425,8 +305,9 @@ export const Dashboard = (props: {
     buildDashboardSessionQueryScope({
       fields: fieldFilters(),
       harness: harness(),
-      origin: origin(),
+      ...localTimeCellQueryInput(),
       machine: machine(),
+      origin: origin(),
       query: query(),
       range: tableDateBounds(),
       sorting: sorting(),
@@ -487,7 +368,7 @@ export const Dashboard = (props: {
   const campaignViews = createMemo(() =>
     measureClientPerf(
       'aiUsage.web.client.compute.campaignViews',
-      () => buildCampaignViews(reportRows(), tableFilteredRows()),
+      () => buildCampaignViews(reportRows(), tableFilteredRows(), campaignLabels.labelFor),
       (campaigns) => ({ campaigns: campaigns.length }),
     ),
   );
@@ -499,7 +380,11 @@ export const Dashboard = (props: {
     ),
   );
   const visibleSessionTableRows = createMemo(() =>
-    servedSessionQueries ? sessionRowsForState(servedSessionState()) : sessionTableRows(),
+    servedSessionQueries
+      ? sessionRowsForState(servedSessionState()).map((row) =>
+          presentServedCampaignDisplayRow(row, campaignLabelIndex()),
+        )
+      : sessionTableRows(),
   );
   const sessionSelection = createDashboardSessionSelection({
     local: { campaigns: campaignViews, reportRows, sortedRows },
@@ -520,6 +405,31 @@ export const Dashboard = (props: {
     const navigation = sessionSelection.drawerNavigation();
     return navigation ? { navigation } : {};
   });
+  const selectedCampaignLabelEditor = createMemo(() => {
+    if (isDemo) {
+      return;
+    }
+    const context = sessionSelection.selectedCampaignLabelContext();
+    if (!context) {
+      return;
+    }
+    return {
+      campaignKey: context.campaignKey,
+      effectiveLabel: campaignLabels.labelFor(context.campaignKey, context.derivedLabel),
+      hasOverride: campaignLabels.overrideFor(context.campaignKey) !== undefined,
+      loadError: campaignLabels.loadError(),
+      loadStatus: campaignLabels.loadStatus(),
+      mutationError: campaignLabels.mutationError(),
+      mutationStatus: campaignLabels.mutationStatus(),
+      onRename: (label: string) => campaignLabels.rename(context.campaignKey, label),
+      onReset: () => campaignLabels.reset(context.campaignKey, context.derivedLabel),
+      onRetry: campaignLabels.retryLoad,
+    };
+  });
+  const selectedCampaignLabelEditorProps = () => {
+    const editor = selectedCampaignLabelEditor();
+    return editor ? { campaignLabelEditor: editor } : {};
+  };
   const servedReportSession =
     focusedSource && focusedStore && sessionQueryCoordinator
       ? createDashboardServedReportSession({ focusedSource, focusedStore, sessionCoordinator: sessionQueryCoordinator })
@@ -528,15 +438,7 @@ export const Dashboard = (props: {
     if (!(focusedStore && servedReportSession)) {
       return;
     }
-    const { revision: _revision, ...queryScope } = focusedQueryScope();
-    const destination = primaryDashboardTabFor(search().tab);
-    if (destination === 'overview') {
-      return { kind: 'overview', query: queryScope };
-    }
-    if (destination === 'breakdown') {
-      return { kind: 'breakdown', query: queryScope };
-    }
-    return { kind: 'sessions', query: queryScope, sessions: activeSessionQueryScope() };
+    return buildDashboardReportDestinationScope(search().tab, focusedQueryScope(), activeSessionQueryScope());
   });
   const reportLifecycle = createDashboardReportLifecycle({
     currentOverviewRequestFingerprint: () => focusedStore?.overview()?.requestFingerprint,
@@ -552,6 +454,28 @@ export const Dashboard = (props: {
     ...(servedReportSession ? { servedReportSession } : {}),
     ...(sessionQueryCoordinator ? { sessionCoordinator: sessionQueryCoordinator } : {}),
   });
+  const focusedFilterFingerprint = createMemo(() =>
+    focusedStore ? JSON.stringify(focusedQueryScope().filters) : undefined,
+  );
+  const [committedOverviewFilterFingerprint, setCommittedOverviewFilterFingerprint] = createSignal<string>();
+  let committedOverview = focusedStore?.overview();
+  createEffect(() => {
+    const overview = focusedStore?.overview();
+    if (!overview || overview === committedOverview) {
+      return;
+    }
+    committedOverview = overview;
+    setCommittedOverviewFilterFingerprint(untrack(focusedFilterFingerprint));
+  });
+  const focusedTimelineFiltersAreStale = (): boolean => {
+    const committedFingerprint = committedOverviewFilterFingerprint();
+    const requestedFingerprint = focusedFilterFingerprint();
+    return (
+      reportLifecycle.destinationPending() &&
+      committedFingerprint !== undefined &&
+      requestedFingerprint !== committedFingerprint
+    );
+  };
   restartServedDestination = reportLifecycle.refresh;
   createEffect(() => {
     if (!sessionSelection.selectedRow()) {
@@ -611,22 +535,22 @@ export const Dashboard = (props: {
       buildModelGroups(timelineRows(), dateRange.bounds(), visibleSummary().totalCost)
     );
   });
-  const providerGroups = createMemo(() => {
-    if (search().tab !== 'providers') {
-      return [];
-    }
-    return (
-      focusedStore?.breakdown()?.groups.providers ??
-      buildProviderGroups(timelineRows(), dateRange.bounds(), visibleSummary().totalCost)
-    );
-  });
   const harnessGroups = createMemo(() => {
-    if (search().tab !== 'harnesses') {
+    if (breakdownTabFor(search().tab) !== 'harness-providers') {
       return [];
     }
     return (
       focusedStore?.breakdown()?.groups.harnesses ??
       buildHarnessGroups(timelineRows(), dateRange.bounds(), visibleSummary().totalCost)
+    );
+  });
+  const harnessProviderGroups = createMemo(() => {
+    if (breakdownTabFor(search().tab) !== 'harness-providers') {
+      return [];
+    }
+    return (
+      focusedStore?.breakdown()?.groups.harnessProviders ??
+      buildHarnessProviderGroups(timelineRows(), dateRange.bounds(), visibleSummary().totalCost)
     );
   });
   const projectGroupRows = createMemo(() => {
@@ -649,11 +573,13 @@ export const Dashboard = (props: {
   const visibleSessionCount = () =>
     servedSessionViewActive() ? (servedSessionState()?.sessionCount ?? 0) : visibleSummary().sessionCount;
   const hiddenCount = createMemo(() => hiddenSessionCount(totalSessionCount(), visibleSessionCount()));
-  const previousSummary = createMemo(
-    () =>
-      focusedStore?.overview()?.view.previousSummary ??
-      buildPreviousPeriodSummary(timelineRows(), dateRange.bounds(), generatedAt()),
-  );
+  const previousSummary = createMemo(() => {
+    if (focusedStore) {
+      return focusedStore.overview()?.view.previousSummary ?? null;
+    }
+    return buildPreviousPeriodSummary(timelineRows(), dateRange.bounds(), generatedAt());
+  });
+  const metricComparisonState = createMemo(() => metricComparisonStateFor(dateRange.mode(), previousSummary()));
   const saveProjectGroupConfigs = async (projectGroups: ProjectGroupConfig[]) => {
     if (!focusedStore) {
       throw new Error('Project groups require a served report revision.');
@@ -668,82 +594,15 @@ export const Dashboard = (props: {
     const command = await buildProjectGroupReferenceCommand(projectGroups, focusedStore.revision());
     await saveProjectGroups({ data: command });
   };
-  const [cleanupWarningGroupId, setCleanupWarningGroupId] = createSignal<string>();
-  const cleanupProjectWarningForServer = async (
-    warning: NonNullable<WebReportPayload['warnings']>[number],
-  ): Promise<void> => {
-    const groupId = warning.groupId;
-    if (!groupId) {
-      throw new Error('This project-group warning does not identify a group to clean up');
-    }
-    let configs = reportSupport().projectGroupConfigs ?? [];
-    if (focusedStore && focusedSource) {
-      let breakdown = focusedStore.breakdown();
-      if (!breakdown?.context.projectGroupConfigs) {
-        const request = { query: focusedQueryScope() };
-        const result = await fetchFocusedBreakdown(focusedSource, request);
-        const applied = focusedStore.applyBreakdown(request, result);
-        if (!applied.applied) {
-          throw new Error(`Project-group context rejected: ${applied.reason}`);
-        }
-        breakdown = result;
-      }
-      configs = breakdown.context.projectGroupConfigs ?? [];
-    }
-    const target = configs.find((group) => group.id === groupId);
-    if (!target) {
-      throw new Error(`Project group ${groupId} is no longer available to clean up`);
-    }
-    const nextGroups =
-      warning.reason === 'unmatched-group'
-        ? configs.filter((group) => group.id !== groupId)
-        : configs.map((group) => {
-            if (group.id !== groupId) {
-              return group;
-            }
-            return { ...group, sources: removeSelectors(group.sources, warning.selectors ?? []) };
-          });
-    await saveProjectGroupConfigs(nextGroups.filter((group) => group.sources.length > 0));
-  };
-  const cleanupProjectWarning = (warning: NonNullable<WebReportPayload['warnings']>[number]) => {
-    const groupId = warning.groupId;
-    if (!groupId || cleanupWarningGroupId() || sourceControl.state().connection !== 'live') {
-      return;
-    }
-    setCleanupWarningGroupId(groupId);
-    cleanupProjectWarningForServer(warning)
-      .catch((error: unknown) => {
-        setOperationError(error instanceof Error ? error.message : 'Failed to clean up the project group');
-      })
-      .finally(() => setCleanupWarningGroupId());
-  };
+  const projectWarningCleanup = createProjectWarningCleanup({
+    focusedQueryScope,
+    ...(focusedSource ? { focusedSource } : {}),
+    ...(focusedStore ? { focusedStore } : {}),
+    onError: setOperationError,
+    projectGroupConfigs: () => reportSupport().projectGroupConfigs ?? [],
+    save: saveProjectGroupConfigs,
+  });
   onMount(() => setClientReady(true));
-  let activeQueryEdit = false;
-  const commitQueryEdit = () => {
-    activeQueryEdit = false;
-  };
-  const setQuery = (q: string) => {
-    const replace = activeQueryEdit;
-    activeQueryEdit = true;
-    updateSearch((current) => ({ ...current, q }), { replace });
-  };
-  const setHarness = (next: string[]) => updateSearch((current) => ({ ...current, harness: next }));
-  const toggleHarness = (name: string) =>
-    setHarness(harness().includes(name) ? harness().filter((value) => value !== name) : [...harness(), name]);
-  const removeHarness = (name: string) => setHarness(harness().filter((value) => value !== name));
-  const setOrigin = (next: SessionOrigin[]) => updateSearch((current) => ({ ...current, origin: next }));
-  const toggleOrigin = (value: SessionOrigin) => {
-    const current = origin();
-    setOrigin(
-      current.length === 0 || !current.includes(value)
-        ? [value]
-        : current.filter((originValue) => originValue !== value),
-    );
-  };
-  const setMachine = (next: string[]) => updateSearch((current) => ({ ...current, machine: next }));
-  const toggleMachine = (name: string) =>
-    setMachine(machine().includes(name) ? machine().filter((value) => value !== name) : [...machine(), name]);
-  const removeMachine = (name: string) => setMachine(machine().filter((value) => value !== name));
   const focusDay = (day: Date) => {
     const value = toDateInputValue(day);
     dateRange.setCustom(value, value);
@@ -754,46 +613,11 @@ export const Dashboard = (props: {
       tab: 'sessions',
     }));
   };
-  const setFieldFilters = (updater: Updater<FieldFilters>) =>
-    updateSearch((current) => ({ ...current, filters: applyTableUpdate(updater, current.filters) }));
-  const setFieldFilter = (key: FieldFilterKey, value: string) =>
-    setFieldFilters((current) => toggleExactFieldFilter(current, key, value));
-  const setTimelineDimensionFilter = (dimension: TimelineDimension, value: string) => {
-    // biome-ignore lint/style/useDefaultSwitchClause: Exhaustive by type so a future dimension fails compilation.
-    switch (dimension) {
-      case 'campaign': {
-        const campaignKey = value.startsWith('campaign:') ? value.slice('campaign:'.length) : value;
-        setFieldFilter('campaign', campaignKey);
-        return;
-      }
-      case 'origin':
-        if (isSessionOrigin(value)) {
-          toggleOrigin(value);
-        }
-        return;
-      case 'harness':
-        toggleHarness(value);
-        return;
-      case 'machine':
-        toggleMachine(value);
-        return;
-      case 'model':
-      case 'project':
-      case 'provider':
-        setFieldFilter(dimension, value);
-    }
-  };
-  const clearFieldFilter = (key: FieldFilterKey) =>
-    setFieldFilters((current) => {
-      const next = { ...current };
-      delete next[key];
-      return next;
-    });
   const clearFilters = () => {
     dateRange.setRange(defaultDashboardDateRangeMode);
     setTableDateBounds(dateRange.bounds());
     updateSearch((current) => ({
-      ...current,
+      ...withoutDashboardTimeCell(current),
       filters: {},
       harness: [],
       origin: [...defaultDashboardOrigins],
@@ -802,26 +626,25 @@ export const Dashboard = (props: {
       range: { mode: defaultDashboardDateRangeMode },
     }));
   };
-  const handleSortingChange: OnChangeFn<SortingState> = (updater) =>
-    updateSearch((current) => ({
-      ...current,
-      sort: sortFromSortingState(
-        applyTableUpdate(updater, sortingStateFromSearch(current.sort)),
-        dashboardSearchDefaults.sort,
-      ),
-    }));
-  const handleColumnVisibilityChange: OnChangeFn<VisibilityState> = (updater) => {
-    const nextVisibility = applyTableUpdate(updater, columnVisibility());
-    setColumnVisibility(nextVisibility);
-    updateSearch((current) => ({ ...current, ...columnVisibilitySearchForVisibility(nextVisibility) }), {
-      replace: true,
-    });
-  };
-  const setTab = (tab: string) => {
-    if (!isDashboardTab(tab)) {
+  const sessionDrawerProps = () => {
+    const row = sessionSelection.selectedRow();
+    if (!row) {
       return;
     }
-    updateSearch((current) => ({ ...current, tab }));
+    return {
+      ...drawerNavigationProps(),
+      ...selectedCampaignLabelEditorProps(),
+      onClearFilters: clearFilters,
+      onClose: sessionSelection.close,
+      onFieldFilter: setFieldFilter,
+      onNavigate: sessionSelection.navigate,
+      onSelectSession: sessionSelection.selectDrawerSession,
+      revision: sessionSelection.analysisRevision(),
+      row,
+      rows: sessionSelection.drawerRows(),
+      selectedCampaign: sessionSelection.selectedCampaign(),
+      target: sessionSelection.analysisTarget() ?? sessionAnalysisTargetForSession(row),
+    };
   };
   const metrics = createMemo(() =>
     measureClientPerf('aiUsage.web.client.compute.metrics', () =>
@@ -837,76 +660,32 @@ export const Dashboard = (props: {
       data-request-fingerprint={servedSessionFingerprint()}
     >
       <div class={shell}>
-        <header class={header}>
-          <div class={headerTop}>
-            <div class={titleBlock}>
-              <div class={eyebrowRow}>
-                <div class={eyebrow}>ai-usage</div>
-                <Show when={isDemo}>
-                  <span class={demoBadge}>Demo data</span>
-                </Show>
-              </div>
-              <h1 class={title}>Usage report</h1>
-              <div class={meta}>
-                <Show fallback="Report payload unavailable" when={hasReportData}>
-                  Generated {fmtDate(reportSupport().generatedAt)}
-                </Show>
-              </div>
-            </div>
-          </div>
-        </header>
+        <DashboardHeader generatedAt={reportSupport().generatedAt} hasReportData={hasReportData} isDemo={isDemo} />
 
         <Show when={hasReportData}>
-          <div class={dashboardFilterToolbar} data-dashboard-filter-stack>
-            <input
-              aria-label="Filter sessions by title, project, model, provider, or harness"
-              class={searchInput}
-              onBlur={commitQueryEdit}
-              onInput={(event) => setQuery(event.currentTarget.value)}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter') {
-                  commitQueryEdit();
-                }
-              }}
-              placeholder="Filter by title, project, model…  ( / )"
-              ref={(element) => {
+          <DashboardFilterBar
+            freshnessStatus={machineFreshnessStatus()}
+            freshnessUnavailable={activeMachineFreshness().kind === 'unavailable'}
+            harness={{ onChange: setHarness, options: harnessOptions(), value: harness() }}
+            isDemo={isDemo}
+            machine={{
+              attention: hasMachineFreshnessAttention(),
+              labelFor: presentMachineLabel,
+              onChange: setMachine,
+              options: machineOptionValues(),
+              value: machine(),
+            }}
+            onOriginChange={setOrigin}
+            origin={origin()}
+            query={{
+              inputRef: (element) => {
                 searchInputEl = element;
-              }}
-              value={query()}
-            />
-            <div class={dashboardFilterControls}>
-              <MultiSelect
-                label="Filter by harness"
-                noun="harnesses"
-                onValueChange={setHarness}
-                options={harnessOptions()}
-                placeholder="All harnesses"
-                value={harness()}
-              />
-              <OriginFilter onValueChange={setOrigin} value={origin()} />
-              <Show when={machineFreshnessStatus()}>
-                {(label) => (
-                  <span aria-live="polite" class={summaryPill}>
-                    {label()}
-                  </span>
-                )}
-              </Show>
-              <Show when={machineOptions().length > 1 || hasMachineFreshnessAttention()}>
-                <MultiSelect
-                  label="Filter by machine"
-                  noun="machines"
-                  onValueChange={setMachine}
-                  optionLabel={presentMachineLabel}
-                  options={machineOptionValues()}
-                  placeholder="All machines"
-                  value={machine()}
-                />
-              </Show>
-              <Show when={!isDemo}>
-                <SourceControlSummary />
-              </Show>
-            </div>
-          </div>
+              },
+              onCommit: commitQueryEdit,
+              onInput: setQuery,
+              value: query(),
+            }}
+          />
         </Show>
 
         <Show when={operationError()}>{(message) => <div class={cx(banner, bannerError)}>{message()}</div>}</Show>
@@ -923,253 +702,150 @@ export const Dashboard = (props: {
           }
           when={hasReportData}
         >
-          <TimeRangeControl
-            {...(reportLifecycle.available ? { onFocusedTimelineRequest: reportLifecycle.requestTimeline } : {})}
-            activeFieldFilters={fieldFilters()}
-            activeHarness={harness()}
-            activeMachine={machine()}
-            campaignRows={reportRows()}
-            dateRange={dateRange}
-            focusedTimeline={focusedStore ? (focusedStore.overview()?.timeline ?? null) : undefined}
-            focusedTimelineError={reportLifecycle.focusedTimelineError()}
-            focusedTimelineLoading={reportLifecycle.focusedTimelineLoading()}
-            onDateRangeCommit={commitTableDateRange}
-            onDimensionFilter={setTimelineDimensionFilter}
-            presentMachineLabel={presentMachineLabel}
-            rows={timelineRows()}
-          />
-
-          <div class={filterSummary}>
-            <span aria-live="polite" class={summaryPill}>
-              {fmtNum(visibleSessionCount())} / {fmtNum(totalSessionCount())} sessions
-            </span>
-            <Show when={hiddenCount() > 0}>
-              <span>{fmtNum(hiddenCount())} hidden by filters</span>
-            </Show>
-            <div class={activeFilters}>
-              <Show when={query()}>
-                <FilterPill label="Query" onClear={() => setQuery('')} value={query()} />
-              </Show>
-              <For each={harness()}>
-                {(value) => <FilterPill label="Harness" onClear={() => removeHarness(value)} value={value} />}
-              </For>
-              <For each={machine()}>
-                {(value) => (
-                  <FilterPill label="Machine" onClear={() => removeMachine(value)} value={presentMachineLabel(value)} />
-                )}
-              </For>
-              <For each={Object.entries(fieldFilters()) as [FieldFilterKey, string][]}>
-                {([key, value]) => (
-                  <FilterPill label={fieldFilterLabels[key]} onClear={() => clearFieldFilter(key)} value={value} />
-                )}
-              </For>
-            </div>
-            <Show when={hasActiveDashboardFilters(search())}>
-              <button class={ghostButton} onClick={clearFilters} type="button">
-                Clear all
-              </button>
-            </Show>
+          <div hidden={focusedTimelineFiltersAreStale()}>
+            <TimeRangeControl
+              {...(reportLifecycle.available ? { onFocusedTimelineRequest: reportLifecycle.requestTimeline } : {})}
+              activeFieldFilters={fieldFilters()}
+              activeHarness={harness()}
+              activeMachine={machine()}
+              campaignRows={reportRows()}
+              dateRange={dateRange}
+              focusedTimeline={focusedStore ? (focusedStore.overview()?.timeline ?? null) : undefined}
+              focusedTimelineError={reportLifecycle.focusedTimelineError()}
+              focusedTimelineLoading={reportLifecycle.focusedTimelineLoading()}
+              onDateRangeCommit={commitTableDateRange}
+              onDimensionFilter={setTimelineDimensionFilter}
+              presentCampaignSeries={(series) => presentCampaignTimelineSeries(series, campaignLabelIndex())}
+              presentMachineLabel={presentMachineLabel}
+              rows={timelineRows()}
+            />
           </div>
 
+          <DashboardActiveFilters
+            actions={{
+              clearAll: clearFilters,
+              clearField: clearFieldFilter,
+              clearHarness: removeHarness,
+              clearMachine: removeMachine,
+              clearTimeCell: clearLocalTimeCell,
+              setQuery,
+            }}
+            counts={{
+              hidden: hiddenCount(),
+              pending: reportLifecycle.destinationPending(),
+              total: totalSessionCount(),
+              visible: visibleSessionCount(),
+            }}
+            presentMachineLabel={presentMachineLabel}
+            search={search()}
+          />
+
           <ReportWarnings
-            cleaningProjectWarningGroupId={cleanupWarningGroupId()}
+            cleaningProjectWarningGroupId={projectWarningCleanup.cleaningGroupId()}
             cleanupDisabled={sourceControl.state().connection !== 'live'}
             omittedSupportItemCount={supportOmissionCount()}
-            onCleanupProjectWarning={cleanupProjectWarning}
+            onCleanupProjectWarning={projectWarningCleanup.cleanup}
             warnings={reportSupport().warnings}
           />
 
-          <div class={dashboardLayout}>
-            <div class={dashboardView}>
-              {/* biome-ignore lint/a11y/noNoninteractiveTabindex: The active report panel must remain keyboard-reachable after removing the primary tabs. */}
-              <div class={dashboardPanel} data-dashboard-panel tabIndex={0}>
-                <Show when={search().tab === 'overview'}>
-                  <section class={section}>
-                    <Overview
-                      advancedAnalysisError={reportLifecycle.advancedAnalysisError()}
-                      advancedAnalysisLoading={reportLifecycle.advancedAnalysisLoading()}
-                      campaigns={campaignViews()}
-                      focused={focusedOverviewForDisplay()}
-                      onSelectDay={focusDay}
-                      onSelectSession={sessionSelection.inspectOverview}
-                      rangeLabel={dateRange.label()}
-                      rows={tableRows()}
-                      summary={visibleSummary()}
-                      timelineRows={timelineRows()}
-                    />
-                  </section>
-                </Show>
-                <Show when={search().tab === 'sessions'}>
-                  <section class={section}>
-                    <Suspense fallback={<div class={unavailableText}>Loading sessions…</div>}>
-                      <SessionTable
-                        {...(servedSessionState()
-                          ? {
-                              campaignChildren: servedSessionState()!.campaignChildren,
-                              loadingMoreRows: servedSessionState()!.loadingMore,
-                              totalRows: servedSessionState()!.itemCount,
-                            }
-                          : {})}
-                        {...(sessionQueryCoordinator
-                          ? {
-                              onLoadCampaignChildren: (campaignKey: string) => {
-                                sessionQueryCoordinator.loadCampaignChildren(campaignKey).catch((error: unknown) => {
-                                  setOperationError(
-                                    error instanceof Error ? error.message : 'Failed to load campaign sessions',
-                                  );
-                                });
-                              },
-                              onLoadMoreRows: () => {
-                                sessionQueryCoordinator.loadMore().catch((error: unknown) => {
-                                  setOperationError(error instanceof Error ? error.message : 'Failed to load sessions');
-                                });
-                              },
-                            }
-                          : {})}
-                        columnVisibility={columnVisibility()}
-                        hasMoreRows={Boolean(servedSessionState()?.nextCursor)}
-                        loading={reportLifecycle.sessionQueryLoading()}
-                        onClearFilters={clearFilters}
-                        onColumnVisibilityChange={handleColumnVisibilityChange}
-                        onFieldFilter={setFieldFilter}
-                        onHarnessFilter={toggleHarness}
-                        onSelect={sessionSelection.toggleTableRow}
-                        onSortingChange={handleSortingChange}
-                        queryResetKey={sessionTableQueryResetKey()}
-                        rows={visibleSessionTableRows()}
-                        searchQuery={query()}
-                        selectedKey={sessionSelection.selectedKey()}
-                        sorting={sorting()}
-                      />
-                    </Suspense>
-                  </section>
-                </Show>
-                <Show when={primaryDashboardTabFor(search().tab) === 'breakdown'}>
-                  <Tabs
-                    ariaLabel="Breakdown dimension"
-                    items={[
-                      {
-                        content: () => (
-                          <section class={section}>
-                            <GroupPanel
-                              countLabel="models"
-                              groups={modelGroups()}
-                              harnessTones
-                              onFilter={(value) => setFieldFilter('model', value)}
-                              title="By model"
-                            />
-                          </section>
-                        ),
-                        label: 'Models',
-                        value: 'models',
-                      },
-                      {
-                        content: () => (
-                          <section class={section}>
-                            <GroupPanel
-                              countLabel="providers"
-                              groups={providerGroups()}
-                              harnessTones
-                              onFilter={(value) => setFieldFilter('provider', value)}
-                              title="By provider"
-                            />
-                          </section>
-                        ),
-                        label: 'Providers',
-                        value: 'providers',
-                      },
-                      {
-                        content: () => (
-                          <section class={section}>
-                            <GroupPanel
-                              countLabel="harnesses"
-                              groups={harnessGroups()}
-                              harnessTones
-                              onFilter={toggleHarness}
-                              title="By harness"
-                            />
-                          </section>
-                        ),
-                        label: 'Harnesses',
-                        value: 'harnesses',
-                      },
-                      {
-                        content: () => (
-                          <section class={section}>
-                            <ProjectGroupEditor
-                              disabled={!reportLifecycle.available || sourceControl.state().connection !== 'live'}
-                              onSave={saveProjectGroupConfigs}
-                              payload={projectGroupPayload()}
-                            />
-                            <ProjectSummary
-                              groups={projectGroupRows()}
-                              onProjectFilter={(value) => setFieldFilter('project', value)}
-                            />
-                          </section>
-                        ),
-                        label: 'Projects',
-                        value: 'projects',
-                      },
-                      {
-                        content: () => (
-                          <section class={section}>
-                            <CursorAttributionPanel rows={cursorCommitRows()} />
-                          </section>
-                        ),
-                        label: 'Cursor AI',
-                        value: 'cursor-ai',
-                      },
-                    ]}
-                    onValueChange={setTab}
-                    value={breakdownTabFor(search().tab)}
-                  />
-                </Show>
-              </div>
-            </div>
-
-            <div class={dashboardStatus}>
-              <section aria-labelledby="additional-report-metrics-title" class={secondaryMetrics}>
-                <header class={secondaryMetricsHeader}>
-                  <h2 class={secondaryMetricsTitle} id="additional-report-metrics-title">
-                    More report metrics
-                  </h2>
-                  <span class={meta}>{metrics().length}</span>
-                </header>
-                <div class={secondaryMetricsGrid} id="additional-report-metrics">
-                  <div class={dashboardMetricGrid} data-metric-grid>
-                    <For each={metrics()}>{(metric) => <MetricTile {...metric} />}</For>
-                  </div>
-                </div>
-              </section>
-
-              <DashboardProviderStatus
-                {...(props.quotaHistoryFixture === undefined ? {} : { quotaHistoryFixture: props.quotaHistoryFixture })}
-                {...(props.quotaSource === undefined ? {} : { quotaSource: props.quotaSource })}
-                report={reportSupport()}
-                rows={focusedStore ? focusedStore.providerRows() : reportRows()}
-                runtimeMode={runtimeMode}
-                served={Boolean(focusedStore)}
-              />
-            </div>
-          </div>
-
-          <Show when={sessionSelection.selectedRow()}>
-            {(row) => (
-              <SessionDrawer
-                {...drawerNavigationProps()}
-                onClearFilters={clearFilters}
-                onClose={sessionSelection.close}
-                onFieldFilter={setFieldFilter}
-                onNavigate={sessionSelection.navigate}
-                onSelectSession={sessionSelection.selectDrawerSession}
-                revision={sessionSelection.analysisRevision()}
-                row={row()}
-                rows={sessionSelection.drawerRows()}
-                selectedCampaign={sessionSelection.selectedCampaign()}
-                target={sessionSelection.analysisTarget() ?? sessionAnalysisTargetForSession(row())}
-              />
-            )}
-          </Show>
+          <DashboardReportWorkspace
+            breakdown={{
+              data: {
+                cursorRows: cursorCommitRows(),
+                generatedAt: reportSupport().generatedAt,
+                harnesses: harnessGroups(),
+                harnessProviders: harnessProviderGroups(),
+                models: modelGroups(),
+                projects: projectGroupRows(),
+              },
+              navigation: {
+                onSortChange: setBreakdownSort,
+                onTabChange: setTab,
+                sort: search().breakdownSort,
+                tab: search().tab,
+              },
+              onFieldFilter: setFieldFilter,
+              onHarnessFilter: toggleHarness,
+              projectEditor: {
+                disabled: !reportLifecycle.available || sourceControl.state().connection !== 'live',
+                onSave: saveProjectGroupConfigs,
+                payload: projectGroupPayload(),
+              },
+            }}
+            drawer={sessionDrawerProps()}
+            overview={{
+              advancedAnalysisError: reportLifecycle.advancedAnalysisError(),
+              advancedAnalysisLoading: reportLifecycle.advancedAnalysisLoading(),
+              campaigns: campaignViews(),
+              focused: focusedOverviewForDisplay(),
+              labelFor: campaignLabels.labelFor,
+              onSelectDay: focusDay,
+              onSelectSession: sessionSelection.inspectOverview,
+              onSelectTimeCell: setLocalTimeCell,
+              rangeLabel: dateRange.label(),
+              rows: tableRows(),
+              summary: visibleSummary(),
+              timelineRows: timelineRows(),
+              timeZone: reportSupport().timeZone,
+            }}
+            pending={reportLifecycle.destinationPending}
+            sessions={{
+              ...(servedSessionState()
+                ? {
+                    campaignChildren: servedSessionState()!.campaignChildren,
+                    loadingMoreRows: servedSessionState()!.loadingMore,
+                    totalRows: servedSessionState()!.itemCount,
+                  }
+                : {}),
+              ...(sessionQueryCoordinator
+                ? {
+                    onLoadCampaignChildren: (campaignKey: string) => {
+                      sessionQueryCoordinator.loadCampaignChildren(campaignKey).catch((error: unknown) => {
+                        setOperationError(error instanceof Error ? error.message : 'Failed to load campaign sessions');
+                      });
+                    },
+                    onLoadMoreRows: () => {
+                      sessionQueryCoordinator.loadMore().catch((error: unknown) => {
+                        setOperationError(error instanceof Error ? error.message : 'Failed to load sessions');
+                      });
+                    },
+                  }
+                : {}),
+              columnVisibility: columnVisibility(),
+              hasMoreRows: Boolean(servedSessionState()?.nextCursor),
+              loading: reportLifecycle.sessionQueryLoading(),
+              onClearFilters: clearFilters,
+              onColumnVisibilityChange: handleColumnVisibilityChange,
+              onFieldFilter: setFieldFilter,
+              onHarnessFilter: toggleHarness,
+              onSelect: sessionSelection.toggleTableRow,
+              onSortingChange: handleSortingChange,
+              queryResetKey: sessionTableQueryResetKey(),
+              rows: visibleSessionTableRows(),
+              searchQuery: query(),
+              selectedKey: sessionSelection.selectedKey(),
+              sorting: sorting(),
+            }}
+            status={
+              !reportLifecycle.destinationPending() && search().tab === 'overview'
+                ? {
+                    comparisonState: metricComparisonState(),
+                    metrics: metrics(),
+                    providerStatus: {
+                      ...(props.quotaHistoryFixture === undefined
+                        ? {}
+                        : { quotaHistoryFixture: props.quotaHistoryFixture }),
+                      ...(props.quotaSource === undefined ? {} : { quotaSource: props.quotaSource }),
+                      report: reportSupport(),
+                      rows: focusedStore ? focusedStore.providerRows() : reportRows(),
+                      runtimeMode,
+                      served: Boolean(focusedStore),
+                    },
+                  }
+                : undefined
+            }
+            tab={search().tab}
+          />
         </Show>
       </div>
     </main>

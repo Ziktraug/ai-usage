@@ -39,6 +39,7 @@ const support = (sessionCount: number): FocusedReportSupport => ({
   filters: { limit: null, minTokens: 0, project: null, since: null, sort: 'date' },
   generatedAt: '2026-07-30T08:00:00.000Z',
   omittedRows: 0,
+  timeZone: 'UTC',
 });
 
 const row = (name: string): SerializedRow => ({

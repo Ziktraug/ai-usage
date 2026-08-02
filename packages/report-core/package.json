@@ -7,6 +7,7 @@
     ".": "./src/index.ts",
     "./analytics": "./src/analytics.ts",
     "./auth": "./src/auth.ts",
+    "./campaign-label": "./src/campaign-label.ts",
     "./csv": "./src/csv.ts",
     "./datasets": "./src/datasets.ts",
     "./focused-report-query": "./src/focused-report-query.ts",
@@ -29,6 +30,8 @@
     "./session-lineage": "./src/session-lineage.ts",
     "./snapshot": "./src/snapshot.ts",
     "./source-control": "./src/source-control.ts",
+    "./test-fixtures/local-time-row": "./src/local-time-row.test-fixture.ts",
+    "./time-zone": "./src/time-zone.ts",
     "./types": "./src/types.ts",
     "./usage-row": "./src/usage-row.ts"
   },

@@ -64,10 +64,13 @@ import {
   timeSliderTrack,
   timeSliderUnclassifiedBands,
 } from '@ai-usage/design-system/report';
-import type {
-  FocusedTimelineData,
-  FocusedTimelineDimension,
-  FocusedTimelineGranularity,
+import {
+  type FocusedTimelineData,
+  type FocusedTimelineDimension,
+  type FocusedTimelineGranularity,
+  focusedTimelineDimensionDefinitions,
+  focusedTimelineDimensionLabel,
+  isFocusedTimelineDimension,
 } from '@ai-usage/report-core/focused-report-query';
 import {
   type ApiPriceMeasurement,
@@ -75,7 +78,7 @@ import {
   combineApiPriceMeasurements,
   originProvenanceFor,
 } from '@ai-usage/report-core/provenance';
-import { createEffect, createMemo, createSignal, For, Show, untrack } from 'solid-js';
+import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show, untrack } from 'solid-js';
 import type { FieldFilterKey } from './dashboard-search';
 import { clampNumber, dateFromIndex, dateRangePresets, parseLocalDate, type TimeRangePreset } from './date-range';
 import type { DateRangeController } from './date-range-controller';
@@ -135,25 +138,7 @@ export const reportRangeSummary = (
   toLabel: fmtDateOnly(to),
 });
 
-const DIMENSION_ITEMS = [
-  { label: 'Campaign', value: 'campaign' },
-  { label: 'Harness', value: 'harness' },
-  { label: 'Machine', value: 'machine' },
-  { label: 'Model', value: 'model' },
-  { label: 'Origin', value: 'origin' },
-  { label: 'Provider', value: 'provider' },
-  { label: 'Project', value: 'project' },
-] as const;
-
-const DIMENSION_LABELS = {
-  campaign: 'Campaign',
-  harness: 'Harness',
-  machine: 'Machine',
-  model: 'Model',
-  origin: 'Origin',
-  project: 'Project',
-  provider: 'Provider',
-} as const satisfies Record<TimelineDimension, string>;
+const DIMENSION_ITEMS = focusedTimelineDimensionDefinitions;
 
 const GRANULARITY_ITEMS = [
   { label: 'Day', value: 'day' },
@@ -162,7 +147,7 @@ const GRANULARITY_ITEMS = [
 ] as const;
 
 const VALUE_ITEMS = [
-  { label: 'Estimated API value', value: 'cost' },
+  { label: 'Estimated API-equivalent value', value: 'cost' },
   { label: 'Share', value: 'share' },
   { label: 'Sessions', value: 'sessions' },
 ] as const;
@@ -172,26 +157,14 @@ export const chartOptionsSummary = (
   granularity: MigrationGranularity,
   value: TimelineValue,
 ) => {
-  const dimensionLabel = DIMENSION_LABELS[dimension];
+  const dimensionLabel = focusedTimelineDimensionLabel(dimension);
   const granularityLabel = GRANULARITY_ITEMS.find((item) => item.value === granularity)?.label ?? 'Day';
-  const valueLabel = VALUE_ITEMS.find((item) => item.value === value)?.label ?? 'Estimated API value';
+  const valueLabel = VALUE_ITEMS.find((item) => item.value === value)?.label ?? 'Estimated API-equivalent value';
   return `${dimensionLabel} · ${granularityLabel} · ${valueLabel}`;
 };
 
-const toTimelineDimension = (value: string): TimelineDimension => {
-  if (
-    value === 'campaign' ||
-    value === 'harness' ||
-    value === 'machine' ||
-    value === 'model' ||
-    value === 'origin' ||
-    value === 'project' ||
-    value === 'provider'
-  ) {
-    return value;
-  }
-  return 'harness';
-};
+const toTimelineDimension = (value: string): TimelineDimension =>
+  isFocusedTimelineDimension(value) ? value : 'harness';
 
 const toGranularity = (value: string): MigrationGranularity => (value === 'week' || value === 'month' ? value : 'day');
 
@@ -244,6 +217,20 @@ const visibleMonthTicksFor = (buckets: TimelineBucket[], range: TimeRangeIndexRa
   const step = Math.ceil(ticks.length / MAX_VISUAL_TICKS);
   return ticks.filter((_, index) => index % step === 0);
 };
+
+export interface TimelineLabelBox {
+  id: string;
+  left: number;
+  right: number;
+}
+
+export const retainTimelineTickLabels = (
+  ticks: readonly TimelineLabelBox[],
+  boundaries: readonly TimelineLabelBox[],
+): TimelineLabelBox[] =>
+  ticks.filter((tick) => boundaries.every((boundary) => tick.right <= boundary.left || tick.left >= boundary.right));
+
+const timelineTickIdFor = (tick: { label: string; pct: number }): string => `${tick.pct}:${tick.label}`;
 
 const bucketIndexAtOrBefore = (buckets: TimelineBucket[], date: Date) => {
   const time = date.getTime();
@@ -416,6 +403,7 @@ export const TimeRangeControl = (props: {
     dimension: FocusedTimelineDimension;
     granularity: FocusedTimelineGranularity;
   }) => void;
+  presentCampaignSeries: (series: TimelineSeries) => TimelineSeries;
   presentMachineLabel: (value: string) => string;
   rows: DashboardRow[];
 }) => {
@@ -460,13 +448,15 @@ export const TimeRangeControl = (props: {
     if (!timeline) {
       return null;
     }
-    const series =
-      timeline.dimension === 'machine'
-        ? timeline.series.map((timelineSeries) => ({
-            ...timelineSeries,
-            label: timelineSeries.key ? props.presentMachineLabel(timelineSeries.key) : timelineSeries.label,
-          }))
-        : timeline.series;
+    let series = timeline.series;
+    if (timeline.dimension === 'machine') {
+      series = timeline.series.map((timelineSeries) => ({
+        ...timelineSeries,
+        label: timelineSeries.key ? props.presentMachineLabel(timelineSeries.key) : timelineSeries.label,
+      }));
+    } else if (timeline.dimension === 'campaign') {
+      series = timeline.series.map(props.presentCampaignSeries);
+    }
     return {
       ...timeline,
       series,
@@ -587,6 +577,52 @@ export const TimeRangeControl = (props: {
       return [];
     }
     return visibleMonthTicksFor(chart.buckets, visibleBucketRange());
+  });
+
+  let timelineTickRow: HTMLDivElement | undefined;
+  let timelineBoundaryRow: HTMLDivElement | undefined;
+  const [retainedTimelineTickIds, setRetainedTimelineTickIds] = createSignal<ReadonlySet<string> | null>(null);
+
+  const measuredLabelBoxes = (root: HTMLDivElement | undefined, selector: string): TimelineLabelBox[] => {
+    if (!root) {
+      return [];
+    }
+    return [...root.querySelectorAll<HTMLElement>(selector)].map((element) => {
+      const box = element.getBoundingClientRect();
+      return {
+        id: element.dataset.timelineLabelId ?? '',
+        left: box.left,
+        right: box.right,
+      };
+    });
+  };
+
+  const measureTimelineLabelCollisions = () => {
+    const tickBoxes = measuredLabelBoxes(timelineTickRow, '[data-timeline-tick]');
+    const boundaryBoxes = measuredLabelBoxes(timelineBoundaryRow, '[data-timeline-boundary]');
+    setRetainedTimelineTickIds(new Set(retainTimelineTickLabels(tickBoxes, boundaryBoxes).map((tick) => tick.id)));
+  };
+
+  createEffect(() => {
+    visibleMonthTicks();
+    const chart = data();
+    const range = visibleBucketRange();
+    chart?.buckets[range.from]?.date.getTime();
+    chart?.buckets[range.to]?.date.getTime();
+    setRetainedTimelineTickIds(null);
+    queueMicrotask(measureTimelineLabelCollisions);
+  });
+
+  onMount(() => {
+    const resizeObserver = new ResizeObserver(measureTimelineLabelCollisions);
+    if (timelineTickRow) {
+      resizeObserver.observe(timelineTickRow);
+    }
+    if (timelineBoundaryRow) {
+      resizeObserver.observe(timelineBoundaryRow);
+    }
+    measureTimelineLabelCollisions();
+    onCleanup(() => resizeObserver.disconnect());
   });
 
   const usesSessionShare = (chart: NonNullable<ReturnType<typeof data>>) =>
@@ -1230,16 +1266,47 @@ export const TimeRangeControl = (props: {
                     </Show>
                   </div>
                 </div>
-                <div class={timeAxis} data-report-range-part="chart-axis">
-                  <span>{fmtDateOnly(chart().buckets[visibleBucketRange().from]?.date ?? chart().first)}</span>
+                <div
+                  class={timeAxis}
+                  data-report-range-part="chart-axis"
+                  data-timeline-tick-row
+                  ref={(element) => {
+                    timelineTickRow = element;
+                  }}
+                  style={{ 'min-height': '16px' }}
+                >
                   <For each={visibleMonthTicks()}>
-                    {(tick) => (
-                      <span class={timeAxisTick} style={{ left: `${tick.pct}%` }}>
-                        {tick.label}
-                      </span>
-                    )}
+                    {(tick) => {
+                      const tickId = timelineTickIdFor(tick);
+                      return (
+                        <span
+                          class={timeAxisTick}
+                          data-timeline-label-id={tickId}
+                          data-timeline-tick
+                          style={{
+                            left: `${tick.pct}%`,
+                            visibility: retainedTimelineTickIds()?.has(tickId) === false ? 'hidden' : undefined,
+                          }}
+                        >
+                          {tick.label}
+                        </span>
+                      );
+                    }}
                   </For>
-                  <span>{fmtDateOnly(chart().buckets[visibleBucketRange().to]?.date ?? chart().last)}</span>
+                </div>
+                <div
+                  class={timeAxis}
+                  data-timeline-boundary-row
+                  ref={(element) => {
+                    timelineBoundaryRow = element;
+                  }}
+                >
+                  <span data-timeline-boundary data-timeline-label-id="from">
+                    {fmtDateOnly(chart().buckets[visibleBucketRange().from]?.date ?? chart().first)}
+                  </span>
+                  <span data-timeline-boundary data-timeline-label-id="to">
+                    {fmtDateOnly(chart().buckets[visibleBucketRange().to]?.date ?? chart().last)}
+                  </span>
                 </div>
                 <Show when={readout()}>
                   {(tip) => (
@@ -1331,6 +1398,7 @@ export const TimeRangeControl = (props: {
                         aria-pressed={props.dateRange.mode() === preset.mode}
                         class={presetButton}
                         data-active={props.dateRange.mode() === preset.mode}
+                        data-default={String(preset.mode === '30d')}
                         onClick={() => applyPreset(preset.mode)}
                         title={`Set report range to ${preset.label}`}
                         type="button"
@@ -1413,7 +1481,7 @@ export const TimeRangeControl = (props: {
               </div>
               <div class={timeSliderBrushColumn} data-report-range-part="brush">
                 <div class={timeSliderBrushHeader}>
-                  <span>Follows report range</span>
+                  <span>Activity range follows report range</span>
                 </div>
                 <div class={timeSliderBrushTrack} style={rangeVars(chart())}>
                   <div
@@ -1424,7 +1492,7 @@ export const TimeRangeControl = (props: {
                   <div aria-hidden="true" class={timeSliderDimLeft} />
                   <div aria-hidden="true" class={timeSliderDimRight} />
                   <button
-                    aria-label="Drag selected date range"
+                    aria-label="Selected report window"
                     class={timeSliderRangeDrag}
                     data-dragging={String(draggingSelection())}
                     onLostPointerCapture={endSelectionDrag}
@@ -1484,6 +1552,7 @@ export const TimeRangeControl = (props: {
               <div class={timeRangeViewControls}>
                 <SegmentedControl
                   ariaLabel="Timeline dimension"
+                  defaultValue="harness"
                   items={DIMENSION_ITEMS}
                   label="Group by"
                   onValueChange={(value) => {
@@ -1497,6 +1566,7 @@ export const TimeRangeControl = (props: {
                 />
                 <SegmentedControl
                   ariaLabel="Timeline granularity"
+                  defaultValue="day"
                   items={GRANULARITY_ITEMS}
                   label="Interval"
                   onValueChange={(value) => {
@@ -1518,6 +1588,7 @@ export const TimeRangeControl = (props: {
                 />
                 <SegmentedControl
                   ariaLabel="Timeline value"
+                  defaultValue="cost"
                   items={VALUE_ITEMS}
                   label="Metric"
                   onValueChange={(value) => {

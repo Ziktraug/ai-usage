@@ -192,6 +192,10 @@ const createMutationPort = (calls: string[]): UsageEngineMutationPort => ({
     calls.push('replace-project-groups-by-reference');
     return Promise.resolve();
   },
+  setCampaignLabelOverride: () => {
+    calls.push('set-campaign-label-override');
+    return Promise.resolve();
+  },
   setMachineLabel: (label) => {
     calls.push('set-machine-label');
     return Promise.resolve({ id: 'machine-a', label });

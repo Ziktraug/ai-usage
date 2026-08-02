@@ -55,6 +55,28 @@ describe('skill document inspector model', () => {
     ]);
   });
 
+  test('preserves structured token measurements for presentation', () => {
+    expect(
+      groupSkillDiagnostics([
+        {
+          code: 'SkillMarkdownTokenWarning',
+          message: 'SKILL.md token warning',
+          severity: 'warning',
+          tokenMeasurement: { observed: 1240, threshold: 1000, unit: 'tokens' },
+        },
+      ]),
+    ).toEqual([
+      {
+        code: 'SkillMarkdownTokenWarning',
+        count: 1,
+        message: 'SKILL.md token warning',
+        paths: [],
+        severity: 'warning',
+        tokenMeasurement: { observed: 1240, threshold: 1000, unit: 'tokens' },
+      },
+    ]);
+  });
+
   test('returns no diagnostic groups for an empty list', () => {
     expect(groupSkillDiagnostics([])).toEqual([]);
   });

@@ -14,6 +14,7 @@ import {
   isStrictIsoTimestamp,
   isUsageReportWarnings,
 } from './serialized-usage-validation';
+import { isReportTimeZone, parseReportTimeZone } from './time-zone';
 import type { UsageRow, UsageRowSource, UsageRowWithOptionalSource } from './types';
 import { usageRowActiveDate, usageRowLineDelta, usageRowSessionLabel, usageRowTokenTotal } from './usage-row';
 
@@ -108,6 +109,7 @@ export interface UsageReportPayload {
   projectGroups?: UsageReportProjectGroup[];
   rows: SerializedUsageRow[];
   tableRows: SerializedUsageRow[];
+  timeZone: string;
   warnings?: UsageReportWarning[];
 }
 
@@ -122,6 +124,7 @@ const REPORT_PAYLOAD_KEYS = new Set([
   'projectGroups',
   'rows',
   'tableRows',
+  'timeZone',
   'warnings',
 ]);
 const REPORT_FILTER_KEYS = new Set(['limit', 'minTokens', 'project', 'since', 'sort']);
@@ -302,6 +305,7 @@ const isUsageReportPayloadValue = (value: unknown): value is UsageReportPayload 
   value.rows.every((row) => isSerializedUsageRow(row)) &&
   Array.isArray(value.tableRows) &&
   value.tableRows.every((row) => isSerializedUsageRow(row)) &&
+  isReportTimeZone(value.timeZone) &&
   (value.datasets === undefined || isJsonSafeObject(value.datasets)) &&
   (value.facets === undefined || isJsonSafeObject(value.facets)) &&
   (value.projectGroupConfigs === undefined || isProjectGroupConfigArray(value.projectGroupConfigs)) &&
@@ -418,6 +422,7 @@ export const createUsageReportPayload = (
   projectGroups?: UsageReportProjectGroup[],
   projectGroupConfigs?: ProjectGroupConfig[],
   datasets?: ReportDatasets,
+  timeZone = 'UTC',
 ): UsageReportPayload => ({
   generatedAt: generatedAt.toISOString(),
   filters: {
@@ -429,6 +434,7 @@ export const createUsageReportPayload = (
   },
   rows: report.rows.map(serializeUsageRow),
   tableRows: report.tableRows.map(serializeUsageRow),
+  timeZone: parseReportTimeZone(timeZone),
   omittedRows: report.omittedRows,
   analytics: calculateAnalytics(report.rows, generatedAt.getTime()),
   ...(projectGroups === undefined ? {} : { projectGroups }),

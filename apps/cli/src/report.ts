@@ -11,6 +11,7 @@ import {
   type UsageReportWarning,
 } from '@ai-usage/report-core/report-data';
 import { normalizeSessionLineage } from '@ai-usage/report-core/session-lineage';
+import { systemReportTimeZone } from '@ai-usage/report-core/time-zone';
 import type { Row } from '@ai-usage/report-core/types';
 import type { Args } from './cli';
 import { renderAnalytics } from './render/analytics';
@@ -77,7 +78,19 @@ export const renderUsageReport = (
     return renderCSV(report.rows);
   }
   if (args.format === 'payload') {
-    return JSON.stringify(createUsageReportPayload(report, args, new Date(), facets, warnings));
+    return JSON.stringify(
+      createUsageReportPayload(
+        report,
+        args,
+        new Date(),
+        facets,
+        warnings,
+        undefined,
+        undefined,
+        undefined,
+        systemReportTimeZone(),
+      ),
+    );
   }
 
   return renderTerminalReport(report, args, warnings);

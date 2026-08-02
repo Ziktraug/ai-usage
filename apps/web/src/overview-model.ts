@@ -1,5 +1,8 @@
 import { compareAnalyticsKeys } from '@ai-usage/report-core/analytics';
-import type { FocusedTimelineDimension } from '@ai-usage/report-core/focused-report-query';
+import {
+  type FocusedTimelineDimension,
+  focusedTimelineIdentityForRow,
+} from '@ai-usage/report-core/focused-report-query';
 import {
   type ApiPriceMeasurement,
   apiPriceMeasurement,
@@ -7,8 +10,8 @@ import {
 } from '@ai-usage/report-core/provenance';
 import {
   buildSessionCampaignTimelineIdentities,
+  localTimeCellForTimestamp,
   type SessionCampaignTimelineIdentity,
-  sessionOriginLabel,
 } from '@ai-usage/report-core/session-query';
 import type { OriginProvenanceKind } from '@ai-usage/report-core/types';
 import {
@@ -272,33 +275,6 @@ export const buildModelMigrationData = (
   };
 };
 
-const timelineIdentityForRow = (
-  row: DashboardRow,
-  dimension: TimelineDimension,
-  campaignIdentity: SessionCampaignTimelineIdentity | undefined,
-): SessionCampaignTimelineIdentity | undefined => {
-  // biome-ignore lint/style/useDefaultSwitchClause: Exhaustive by type so a future dimension fails compilation.
-  switch (dimension) {
-    case 'campaign':
-      return campaignIdentity ?? { key: `session:${row.rowId}`, label: row.sessionLabel };
-    case 'harness':
-      return { key: row.harness, label: row.harness };
-    case 'machine': {
-      const key = row.source?.machineId ?? '';
-      const label = row.source?.machineLabel ?? '';
-      return { key, label: label || 'Unknown machine' };
-    }
-    case 'model':
-      return { key: row.modelKey, label: row.modelKey };
-    case 'origin':
-      return row.origin === undefined ? undefined : { key: row.origin, label: sessionOriginLabel(row.origin) };
-    case 'project':
-      return { key: row.projectKey, label: row.projectLabel };
-    case 'provider':
-      return { key: row.providerDisplay, label: row.providerDisplay };
-  }
-};
-
 const timelineContributionsForRow = (
   row: DashboardRow,
   dimension: TimelineDimension,
@@ -306,7 +282,7 @@ const timelineContributionsForRow = (
 ) => {
   if (dimension !== 'model') {
     const priceMeasurement = usageRowApiPriceMeasurement(row);
-    const identity = timelineIdentityForRow(row, dimension, campaignIdentity);
+    const identity = focusedTimelineIdentityForRow(row, dimension, campaignIdentity);
     if (identity === undefined) {
       return [];
     }
@@ -616,7 +592,7 @@ export const buildOverviewSessionItems = (
     kind: 'campaign',
     row: campaign.root,
     campaign,
-    label: campaign.root.sessionLabel,
+    label: campaign.label,
     harness: campaign.root.harness,
     costApprox: campaign.visibleTotals.totalCost,
     costKnown: campaign.visibleTotals.costKnown,
@@ -638,6 +614,8 @@ export const buildOverviewSessionItems = (
 
   return [...campaignItems, ...sessionItems];
 };
+
+export const SESSION_SHAPE_POINT_RADIUS = 4;
 
 export interface SessionShapeData {
   harnesses: string[];
@@ -769,6 +747,16 @@ export const buildSessionShapeData = (
   };
 };
 
+export const PUNCHCARD_MIN_SESSION_OPACITY = 0.3;
+
+export const punchcardSessionOpacity = (sessions: number, maxSessions: number): number => {
+  if (sessions <= 0 || maxSessions <= 0) {
+    return 0;
+  }
+  const normalizedSessions = Math.min(1, sessions / maxSessions);
+  return PUNCHCARD_MIN_SESSION_OPACITY + (1 - PUNCHCARD_MIN_SESSION_OPACITY) * normalizedSessions;
+};
+
 export const PUNCH_DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'] as const;
 export interface PunchCell {
   cost: number;
@@ -779,15 +767,15 @@ export interface PunchcardData {
   maxSessions: number;
 }
 
-export const buildPunchcardData = (rows: DashboardRow[]): PunchcardData | null => {
+export const buildPunchcardData = (rows: DashboardRow[], timeZone = 'UTC'): PunchcardData | null => {
   const cells = Array.from({ length: 7 }, () => Array.from({ length: 24 }, () => ({ cost: 0, sessions: 0 })));
   let maxSessions = 0;
   for (const row of rows) {
     if (row.activeTime == null) {
       continue;
     }
-    const date = new Date(row.activeTime);
-    const cell = cells[(date.getDay() + 6) % 7]?.[date.getHours()];
+    const localTimeCell = localTimeCellForTimestamp(row.activeTime, timeZone);
+    const cell = cells[localTimeCell.weekday]?.[localTimeCell.hour];
     if (!cell) {
       continue;
     }
@@ -834,21 +822,26 @@ export const buildAdvancedAnalysisSummary = (
 
 export interface OverviewRecords {
   busiest: { cost: number; date: Date; sessions: number } | null;
-  longest: DashboardRow | null;
+  longest: OverviewSessionItem | null;
   streak: number;
   streakEnd: Date | null;
-  topCost: DashboardRow | null;
+  topCost: OverviewSessionItem | null;
 }
 
-export const buildOverviewRecords = (rows: DashboardRow[], timelineRows: DashboardRow[]): OverviewRecords | null => {
-  const priced = rows.filter((row) => row.costKnown && row.costApprox > 0);
-  const topCost = priced.reduce<DashboardRow | null>(
-    (best, row) => (best == null || row.costApprox > best.costApprox ? row : best),
+export const buildOverviewRecords = (
+  rows: DashboardRow[],
+  timelineRows: DashboardRow[],
+  campaigns: CampaignView[] = [],
+): OverviewRecords | null => {
+  const sessionItems = buildOverviewSessionItems(rows, campaigns);
+  const valued = sessionItems.filter((item) => item.costApprox > 0);
+  const topCost = valued.reduce<OverviewSessionItem | null>(
+    (best, item) => (best === null || item.costApprox > best.costApprox ? item : best),
     null,
   );
-  const longest = rows.reduce<DashboardRow | null>(
-    (best, row) =>
-      (row.durationMs ?? 0) > 0 && (best == null || (row.durationMs ?? 0) > (best.durationMs ?? 0)) ? row : best,
+  const longest = sessionItems.reduce<OverviewSessionItem | null>(
+    (best, item) =>
+      (item.durationMs ?? 0) > 0 && (best === null || (item.durationMs ?? 0) > (best.durationMs ?? 0)) ? item : best,
     null,
   );
 

@@ -9,10 +9,11 @@ import {
   anatomyHeadline,
   anatomyLegend,
   anatomyLegendItem,
+  anatomyLegendLabel,
+  anatomyLegendPercentage,
   anatomyLegendSwatch,
   anatomyLegendValue,
-  dateFieldGroup,
-  dateInput,
+  anatomyLegendValues,
   emptyPanel,
   HarnessBadge,
   harnessSvgFillFor,
@@ -37,8 +38,6 @@ import {
   heroSide,
   heroText,
   heroValue,
-  inkFill,
-  inlineFieldLabel,
   muted,
   overviewGrid,
   panel,
@@ -46,10 +45,13 @@ import {
   panelSub,
   panelTitle,
   punchCell,
+  punchCellButton,
   punchDayLabel,
   punchDot,
   punchGrid,
   punchHourLabel,
+  punchIntensityKey,
+  punchIntensityKeyCell,
   recordCard,
   recordLabel,
   recordSub,
@@ -84,7 +86,19 @@ import type {
   FocusedPunchcard,
   FocusedSessionShape,
 } from '@ai-usage/report-core/focused-report-query';
+import {
+  isLocalTimeHour,
+  isLocalTimeWeekday,
+  type LocalTimeCell,
+  localTimeCellLabel,
+  localTimeWeekdayNames,
+} from '@ai-usage/report-core/session-query';
 import { createEffect, createMemo, createSignal, For, type JSX, Show } from 'solid-js';
+import {
+  type CampaignLabelContext,
+  focusedCampaignLabelContext,
+  presentFocusedOverviewSessionItem,
+} from './campaign-label-overrides';
 import type { CampaignView } from './dashboard-model';
 import { toDateInputValue } from './date-range';
 import type { FocusedOverviewDisplayModel } from './focused-report-client';
@@ -98,7 +112,11 @@ import {
   buildTopSessions,
   type HeatDay,
   nextHeatmapFocusIndex,
+  type OverviewSessionItem,
   PUNCH_DAYS,
+  PUNCHCARD_MIN_SESSION_OPACITY,
+  punchcardSessionOpacity,
+  SESSION_SHAPE_POINT_RADIUS,
 } from './overview-model';
 import {
   aggregateApiPriceProvenance,
@@ -112,7 +130,6 @@ import {
   fmtNum,
   fmtPct,
   type ReportSummary,
-  SegmentBar,
 } from './shared';
 
 export interface OverviewProps {
@@ -120,13 +137,31 @@ export interface OverviewProps {
   advancedAnalysisLoading?: boolean;
   campaigns: CampaignView[];
   focused?: FocusedOverviewDisplayModel | undefined;
+  labelFor: (campaignKey: string, derivedLabel: string) => string;
   onSelectDay: (day: Date) => void;
-  onSelectSession: (row: DashboardRow) => void;
+  onSelectSession: (row: DashboardRow, campaignLabelContext?: CampaignLabelContext | null) => void;
+  onSelectTimeCell: (cell: LocalTimeCell) => void;
   rangeLabel: string;
   rows: DashboardRow[];
   summary: ReportSummary;
   timelineRows: DashboardRow[];
+  timeZone: string;
 }
+
+const campaignLabelContextForOverviewItem = (
+  item: FocusedOverviewSessionItem | OverviewSessionItem,
+): CampaignLabelContext | null => {
+  if (item.kind !== 'campaign') {
+    return null;
+  }
+  if ('campaign' in item) {
+    return {
+      campaignKey: item.campaign.campaignKey,
+      derivedLabel: item.campaign.root.sessionLabel,
+    };
+  }
+  return focusedCampaignLabelContext(item);
+};
 
 const visuallyHidden = css({ srOnly: true });
 const Panel = (props: { title: string; sub?: string; children: JSX.Element; headingId?: string }) => (
@@ -154,7 +189,7 @@ const Hero = (props: { summary: ReportSummary; rangeLabel: string }) => {
   return (
     <Show when={data()}>
       {(hero) => (
-        <section aria-label="API-equivalent value" class={heroPanel}>
+        <section aria-label="Estimated API-equivalent value" class={heroPanel}>
           <div>
             <div class={heroLabel}>Estimated API-equivalent value</div>
             <div class={heroValue}>{aggregateApiValuePresentation(hero().priceMeasurement).label}</div>
@@ -188,23 +223,6 @@ const Hero = (props: { summary: ReportSummary; rangeLabel: string }) => {
                 </span>
               </Show>
             </div>
-            <SegmentBar
-              ariaLabel="Actual-spend reporting coverage by session"
-              segments={[
-                {
-                  label: 'Actual spend reported',
-                  value: hero().actualSpendKnownSessions,
-                  class: accentFill,
-                  title: `Actual spend reported for ${fmtNum(hero().actualSpendKnownSessions)} sessions`,
-                },
-                {
-                  label: 'Actual spend unavailable',
-                  value: hero().sessionCount - hero().actualSpendKnownSessions,
-                  class: inkFill,
-                  title: `Actual spend unavailable for ${fmtNum(hero().sessionCount - hero().actualSpendKnownSessions)} sessions`,
-                },
-              ]}
-            />
           </div>
         </section>
       )}
@@ -393,19 +411,6 @@ const CalendarHeatmap = (props: {
               </div>
             </div>
             <div class={heatDayControl}>
-              <label class={dateFieldGroup}>
-                <span class={inlineFieldLabel}>Select activity day</span>
-                <input
-                  aria-describedby={HEAT_DAY_DETAIL_ID}
-                  class={dateInput}
-                  max={toDateInputValue(heatDays().at(-1)?.date ?? new Date())}
-                  min={toDateInputValue(heatDays()[0]?.date ?? new Date())}
-                  onChange={(event) => selectHeatDay(event.currentTarget.value)}
-                  onInput={(event) => focusHeatDay(event.currentTarget.value)}
-                  type="date"
-                  value={focusedDayKey() ?? ''}
-                />
-              </label>
               <span class={heatDayDetail} id={HEAT_DAY_DETAIL_ID}>
                 {focusedHeatDayDescription()}
               </span>
@@ -448,22 +453,30 @@ const TokenAnatomy = (props: { summary: ReportSummary }) => {
           <strong>{fmtPct(cachePct())}</strong> of all token volume was read from cache — context reuse is what makes
           agentic sessions affordable.
         </div>
-        <SegmentBar ariaLabel="Token anatomy" segments={segments()} />
-        <div class={anatomyLegend} data-overview-token-legend>
+        <dl class={anatomyLegend} data-overview-token-legend>
           <For each={segments()}>
             {(segment) => (
-              <span
+              <div
                 class={anatomyLegendItem}
-                data-token-legend-item
+                data-token-anatomy-row
                 title={`${segment.label}: ${fmtNum(segment.value)} tokens`}
               >
-                <span class={cx(anatomyLegendSwatch, segment.class)} />
-                {segment.label}
-                <span class={anatomyLegendValue}>{fmtCompact(segment.value)}</span>
-              </span>
+                <dt class={anatomyLegendLabel}>
+                  <span class={cx(anatomyLegendSwatch, segment.class)} />
+                  <span>{segment.label}</span>
+                </dt>
+                <dd class={anatomyLegendValues}>
+                  <span class={anatomyLegendValue} data-token-exact-value>
+                    {fmtNum(segment.value)}
+                  </span>
+                  <span class={anatomyLegendPercentage} data-token-percentage>
+                    {fmtPct((segment.value / total()) * 100)}
+                  </span>
+                </dd>
+              </div>
             )}
           </For>
-        </div>
+        </dl>
         <Show when={props.summary.rtkSaved > 0}>
           <div class={rtkNote}>
             <span>
@@ -482,11 +495,12 @@ const TokenAnatomy = (props: { summary: ReportSummary }) => {
 // Session shape — duration × cost scatter on log scales. Micro-questions,
 // working sessions and marathons separate into visible clusters.
 
-const SessionShape = (props: {
+export const SessionShape = (props: {
   campaigns: CampaignView[];
   focused: FocusedSessionShape | null | undefined;
+  labelFor: (campaignKey: string, derivedLabel: string) => string;
   rows: DashboardRow[];
-  onSelectSession: (row: DashboardRow) => void;
+  onSelectSession: (row: DashboardRow, campaignLabelContext?: CampaignLabelContext | null) => void;
 }) => {
   const data = createMemo(() => {
     const focused = props.focused;
@@ -500,6 +514,8 @@ const SessionShape = (props: {
       (Math.log10(Math.max(value, Number.EPSILON)) - domain.min) / Math.max(Number.EPSILON, domain.max - domain.min);
     return {
       ...focused,
+      outliers: focused.outliers.map((item) => presentFocusedOverviewSessionItem(item, props.labelFor)),
+      points: focused.points.map((item) => presentFocusedOverviewSessionItem(item, props.labelFor)),
       xPct: (value: number) => 4 + logRatio(value, focused.xDomain) * 92,
       yPct: (value: number) => 92 - logRatio(value, focused.yDomain) * 84,
     };
@@ -507,7 +523,7 @@ const SessionShape = (props: {
 
   return (
     <Panel
-      sub="Duration × API value (log scales) — density is aggregated; inspect standout work below"
+      sub="Duration × API value (log scales) — fixed-size marks show plotted sessions or campaigns"
       title="Session shape"
     >
       <Show fallback={<div class={emptyPanel}>Not enough timed, fully priced sessions in range</div>} when={data()}>
@@ -553,7 +569,8 @@ const SessionShape = (props: {
                       class={cx(harnessSvgFillFor(item.harness), scatterPoint)}
                       cx={`${chart().xPct(item.durationMs ?? 0)}%`}
                       cy={`${chart().yPct(item.costApprox)}%`}
-                      r={String(Math.min(8, (item.kind === 'campaign' ? 4 : 3) + Math.log2(item.aggregateCount + 1)))}
+                      data-session-shape-point
+                      r={String(SESSION_SHAPE_POINT_RADIUS)}
                     >
                       <title>
                         {[
@@ -569,8 +586,9 @@ const SessionShape = (props: {
                 </For>
               </svg>
             </div>
-            <div class={scatterSummary}>
-              {fmtNum(chart().totalPoints)} timed, fully priced sessions · {fmtNum(chart().points.length)} density marks
+            <div class={scatterSummary} data-session-shape-summary>
+              {fmtNum(chart().totalPoints)} timed, fully priced sessions · {fmtNum(chart().points.length)} plotted
+              session/campaign groups
             </div>
             <details class={scatterDistribution}>
               <summary>Distribution by harness</summary>
@@ -597,7 +615,7 @@ const SessionShape = (props: {
                   <button
                     aria-label={`Inspect ${item.kind === 'campaign' ? 'campaign' : 'session'}: ${item.label}`}
                     class={scatterOutlierButton}
-                    onClick={() => props.onSelectSession(item.row)}
+                    onClick={() => props.onSelectSession(item.row, campaignLabelContextForOverviewItem(item))}
                     type="button"
                   >
                     <span>{item.label}</span>
@@ -608,9 +626,20 @@ const SessionShape = (props: {
                 )}
               </For>
             </section>
-            <div class={scatterLegend}>
-              <For each={chart().harnesses}>{(name) => <HarnessBadge name={name} />}</For>
-            </div>
+            <ul
+              aria-label="Session Shape harness key"
+              class={scatterLegend}
+              data-session-shape-harness-key
+              style={{ 'list-style': 'none', margin: 0, padding: 0 }}
+            >
+              <For each={chart().harnesses}>
+                {(name) => (
+                  <li>
+                    <HarnessBadge name={name} />
+                  </li>
+                )}
+              </For>
+            </ul>
           </>
         )}
       </Show>
@@ -623,15 +652,31 @@ const SessionShape = (props: {
 // streaks show up immediately.
 
 const PUNCHCARD_HEADING_ID = 'overview-punchcard-title';
-const PUNCH_DAY_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'] as const;
 
-const Punchcard = (props: { focused: FocusedPunchcard | null | undefined; rows: DashboardRow[] }) => {
-  const data = createMemo(() => (props.focused === undefined ? buildPunchcardData(props.rows) : props.focused));
+const punchcardTimeCellFor = (weekday: number, hour: number): LocalTimeCell | null => {
+  if (!(isLocalTimeWeekday(weekday) && isLocalTimeHour(hour))) {
+    return null;
+  }
+  return { hour, weekday };
+};
+
+const punchcardTimeCellAriaLabel = (cell: LocalTimeCell, sessionCount: number): string =>
+  `Filter report to ${localTimeCellLabel(cell)}, ${fmtNum(sessionCount)} ${sessionCount === 1 ? 'session' : 'sessions'}`;
+
+const Punchcard = (props: {
+  focused: FocusedPunchcard | null | undefined;
+  onSelectTimeCell: OverviewProps['onSelectTimeCell'];
+  rows: DashboardRow[];
+  timeZone: string;
+}) => {
+  const data = createMemo(() =>
+    props.focused === undefined ? buildPunchcardData(props.rows, props.timeZone) : props.focused,
+  );
   const accessibleCells = createMemo(
     () =>
       data()?.cells.flatMap((dayCells, dayIndex) =>
         dayCells.flatMap((cell, hour) =>
-          cell.sessions > 0 ? [{ ...cell, day: PUNCH_DAY_NAMES[dayIndex] ?? '', hour }] : [],
+          cell.sessions > 0 ? [{ ...cell, day: localTimeWeekdayNames[dayIndex] ?? '', hour }] : [],
         ),
       ) ?? [],
   );
@@ -641,7 +686,7 @@ const Punchcard = (props: { focused: FocusedPunchcard | null | undefined; rows: 
       <Show fallback={<div class={emptyPanel}>No dated sessions in range</div>} when={data()}>
         {(punch) => (
           <>
-            <div aria-hidden="true" class={punchGrid} data-punchcard-visual>
+            <div class={punchGrid} data-punchcard-visual>
               <For each={punch().cells}>
                 {(dayCells, dayIndex) => (
                   <>
@@ -654,15 +699,21 @@ const Punchcard = (props: { focused: FocusedPunchcard | null | undefined; rows: 
                           class={punchCell}
                           title={`${PUNCH_DAYS[dayIndex()]} ${String(hour()).padStart(2, '0')}:00 — ${fmtNum(cell.sessions)} sessions · ${fmtMoney(cell.cost)}`}
                         >
-                          <Show when={cell.sessions > 0}>
-                            <span
-                              class={cx(punchDot, accentFill)}
-                              style={{
-                                width: `${4 + 9 * Math.sqrt(cell.sessions / punch().maxSessions)}px`,
-                                height: `${4 + 9 * Math.sqrt(cell.sessions / punch().maxSessions)}px`,
-                                opacity: 0.35 + 0.65 * (cell.sessions / punch().maxSessions),
-                              }}
-                            />
+                          <Show when={cell.sessions > 0 ? punchcardTimeCellFor(dayIndex(), hour()) : null}>
+                            {(timeCell) => (
+                              <button
+                                aria-label={punchcardTimeCellAriaLabel(timeCell(), cell.sessions)}
+                                class={punchCellButton}
+                                onClick={() => props.onSelectTimeCell(timeCell())}
+                                type="button"
+                              >
+                                <span
+                                  class={cx(punchDot, accentFill)}
+                                  data-punchcard-cell-fill
+                                  style={{ opacity: punchcardSessionOpacity(cell.sessions, punch().maxSessions) }}
+                                />
+                              </button>
+                            )}
                           </Show>
                         </span>
                       )}
@@ -672,8 +723,24 @@ const Punchcard = (props: { focused: FocusedPunchcard | null | undefined; rows: 
               </For>
               <span />
               <For each={Array.from({ length: 24 }, (_, hour) => hour)}>
-                {(hour) => <span class={punchHourLabel}>{hour % 3 === 0 ? hour : ''}</span>}
+                {(hour) => (
+                  <span aria-hidden="true" class={punchHourLabel}>
+                    {hour % 3 === 0 ? hour : ''}
+                  </span>
+                )}
               </For>
+            </div>
+            <div
+              aria-label="Punchcard session-count intensity"
+              class={punchIntensityKey}
+              data-punchcard-intensity-key
+              role="img"
+            >
+              <span>Low</span>
+              <span class={cx(punchIntensityKeyCell, accentFill)} style={{ opacity: PUNCHCARD_MIN_SESSION_OPACITY }} />
+              <span class={cx(punchIntensityKeyCell, accentFill)} />
+              <span>High</span>
+              <span>session count</span>
             </div>
             <div class={visuallyHidden}>
               <table aria-labelledby={PUNCHCARD_HEADING_ID}>
@@ -683,7 +750,7 @@ const Punchcard = (props: { focused: FocusedPunchcard | null | undefined; rows: 
                     <th scope="col">Weekday</th>
                     <th scope="col">Hour</th>
                     <th scope="col">Sessions</th>
-                    <th scope="col">API-equivalent value</th>
+                    <th scope="col">Estimated API-equivalent value</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -710,25 +777,31 @@ const Punchcard = (props: { focused: FocusedPunchcard | null | undefined; rows: 
 // ---------------------------------------------------------------------------
 // Records — small bragging rights, sober clothes.
 
-const Records = (props: {
+export const Records = (props: {
+  campaigns: CampaignView[];
   focused: FocusedOverviewRecords | null | undefined;
+  labelFor: (campaignKey: string, derivedLabel: string) => string;
   rows: DashboardRow[];
   timelineRows: DashboardRow[];
-  onSelectSession: (row: DashboardRow) => void;
+  onSelectSession: OverviewProps['onSelectSession'];
   onSelectDay: (day: Date) => void;
 }) => {
   const data = createMemo(() => {
     if (props.focused === undefined) {
-      return buildOverviewRecords(props.rows, props.timelineRows);
+      return buildOverviewRecords(props.rows, props.timelineRows, props.campaigns);
     }
     const focused = props.focused;
     if (!focused) {
       return null;
     }
+    const presentItem = (item: FocusedOverviewSessionItem | null): FocusedOverviewSessionItem | null =>
+      item ? presentFocusedOverviewSessionItem(item, props.labelFor) : null;
     return {
       ...focused,
       busiest: focused.busiest ? { ...focused.busiest, date: new Date(focused.busiest.date) } : null,
+      longest: presentItem(focused.longest),
       streakEnd: focused.streakEnd ? new Date(focused.streakEnd) : null,
+      topCost: presentItem(focused.topCost),
     };
   });
 
@@ -737,20 +810,30 @@ const Records = (props: {
       {(records) => (
         <div class={recordsGrid}>
           <Show when={records().topCost}>
-            {(row) => (
-              <button class={recordCard} onClick={() => props.onSelectSession(row())} type="button">
+            {(item) => (
+              <button
+                class={recordCard}
+                onClick={() => props.onSelectSession(item().row, campaignLabelContextForOverviewItem(item()))}
+                type="button"
+              >
                 <span class={recordLabel}>Top session</span>
-                <span class={recordValue}>{fmtMoney(row().costApprox)}</span>
-                <span class={recordSub}>{row().sessionLabel}</span>
+                <span class={recordValue} title={apiValuePresentation(item()).title}>
+                  {apiValuePresentation(item()).label}
+                </span>
+                <span class={recordSub}>{item().label}</span>
               </button>
             )}
           </Show>
           <Show when={records().longest}>
-            {(row) => (
-              <button class={recordCard} onClick={() => props.onSelectSession(row())} type="button">
+            {(item) => (
+              <button
+                class={recordCard}
+                onClick={() => props.onSelectSession(item().row, campaignLabelContextForOverviewItem(item()))}
+                type="button"
+              >
                 <span class={recordLabel}>Longest session</span>
-                <span class={recordValue}>{fmtDuration(row().durationMs)}</span>
-                <span class={recordSub}>{row().sessionLabel}</span>
+                <span class={recordValue}>{fmtDuration(item().durationMs)}</span>
+                <span class={recordSub}>{item().label}</span>
               </button>
             )}
           </Show>
@@ -789,10 +872,15 @@ const Records = (props: {
 const TopSessions = (props: {
   campaigns: CampaignView[];
   focused: FocusedOverviewSessionItem[] | undefined;
+  labelFor: (campaignKey: string, derivedLabel: string) => string;
   rows: DashboardRow[];
-  onSelectSession: (row: DashboardRow) => void;
+  onSelectSession: (row: DashboardRow, campaignLabelContext?: CampaignLabelContext | null) => void;
 }) => {
-  const top = createMemo(() => props.focused ?? buildTopSessions(props.rows, 5, props.campaigns));
+  const top = createMemo(() =>
+    props.focused
+      ? props.focused.map((item) => presentFocusedOverviewSessionItem(item, props.labelFor))
+      : buildTopSessions(props.rows, 5, props.campaigns),
+  );
 
   return (
     <Show when={top().length}>
@@ -803,7 +891,11 @@ const TopSessions = (props: {
         <div class={topList}>
           <For each={top()}>
             {(item, index) => (
-              <button class={topRow} onClick={() => props.onSelectSession(item.row)} type="button">
+              <button
+                class={topRow}
+                onClick={() => props.onSelectSession(item.row, campaignLabelContextForOverviewItem(item))}
+                type="button"
+              >
                 <span class={topRank}>{index() + 1}</span>
                 <span class={topTitle}>
                   {item.label}
@@ -845,7 +937,9 @@ export const Overview = (props: OverviewProps) => {
         />
         <TokenAnatomy summary={summary()} />
         <Records
+          campaigns={props.campaigns}
           focused={props.focused?.view.records}
+          labelFor={props.labelFor}
           onSelectDay={props.onSelectDay}
           onSelectSession={props.onSelectSession}
           rows={props.rows}
@@ -854,6 +948,7 @@ export const Overview = (props: OverviewProps) => {
         <TopSessions
           campaigns={props.campaigns}
           focused={props.focused?.view.topSessions}
+          labelFor={props.labelFor}
           onSelectSession={props.onSelectSession}
           rows={props.rows}
         />
@@ -877,12 +972,18 @@ export const Overview = (props: OverviewProps) => {
                             <SessionShape
                               campaigns={props.campaigns}
                               focused={props.focused?.view.sessionShape}
+                              labelFor={props.labelFor}
                               onSelectSession={props.onSelectSession}
                               rows={props.rows}
                             />
                           </Show>
                           <Show when={loadedSummary().hasPunchcard}>
-                            <Punchcard focused={props.focused?.view.punchcard} rows={props.rows} />
+                            <Punchcard
+                              focused={props.focused?.view.punchcard}
+                              onSelectTimeCell={props.onSelectTimeCell}
+                              rows={props.rows}
+                              timeZone={props.timeZone}
+                            />
                           </Show>
                         </div>
                       )}

@@ -150,7 +150,7 @@ const tokenDiagnosticFor = (
       `${codePrefixes[kind]}High`,
       'error',
       `${labels[kind]} token count reached the configured high threshold`,
-      details,
+      { ...details, tokenMeasurement: { observed: tokenCount, threshold: threshold.high, unit: 'tokens' } },
     );
   }
   if (tokenCount >= threshold.warn) {
@@ -158,7 +158,7 @@ const tokenDiagnosticFor = (
       `${codePrefixes[kind]}Warning`,
       'warning',
       `${labels[kind]} token count reached the configured warning threshold`,
-      details,
+      { ...details, tokenMeasurement: { observed: tokenCount, threshold: threshold.warn, unit: 'tokens' } },
     );
   }
   return;

@@ -17,8 +17,11 @@ test('keeps every populated harness and machine visible with default dimension f
   await dateRange.getByRole('button', { exact: true, name: 'All' }).click();
 
   const breakdownTabs = page.getByRole('tablist', { name: 'Breakdown dimension' });
-  await expect(breakdownTabs.getByRole('tab', { name: 'Harnesses' })).toHaveAttribute('aria-selected', 'true');
-  const harnessPanel = page.getByRole('tabpanel', { name: 'Harnesses' });
+  await expect(breakdownTabs.getByRole('tab', { name: 'Harnesses & providers' })).toHaveAttribute(
+    'aria-selected',
+    'true',
+  );
+  const harnessPanel = page.getByRole('tabpanel', { name: 'Harnesses & providers' });
   await expect(harnessPanel).toBeVisible();
 
   const harnessFilter = page.getByRole('combobox', { name: 'Filter by harness' });
@@ -40,7 +43,7 @@ test('keeps every populated harness and machine visible with default dimension f
     }
     const categories: string[] = [];
     for (const row of panel.querySelectorAll('[data-price-state]')) {
-      const label = row.querySelector('button')?.textContent?.trim();
+      const label = row.querySelector('button:not([aria-expanded])')?.textContent?.trim();
       if (label) {
         categories.push(label);
       }
@@ -51,6 +54,14 @@ test('keeps every populated harness and machine visible with default dimension f
   expect(harnessSnapshot.options.length).toBeGreaterThan(0);
   expect(sortedCategoryLabels(harnessSnapshot.categories)).toEqual(sortedCategoryLabels(harnessSnapshot.options));
   await page.keyboard.press('Escape');
+
+  const breakdownSearch = harnessPanel.getByRole('searchbox', { name: 'Search this breakdown' });
+  await breakdownSearch.fill('claude sub');
+  await expect(harnessPanel.locator('[data-harness-total]')).toHaveCount(1);
+  await expect(harnessPanel.locator('[data-harness-total="Claude"]')).toBeVisible();
+  await expect(harnessPanel.locator('[data-provider-child="Claude sub"]')).toBeVisible();
+  await expect(harnessPanel.locator('[data-provider-child]')).toHaveCount(1);
+  await breakdownSearch.clear();
 
   const chartOptions = dateRange.locator('details[aria-label="Chart options"]');
   await chartOptions.locator('summary').click();

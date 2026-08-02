@@ -39,6 +39,7 @@ const reportPayload = (): UsageReportPayload => {
     omittedRows: 0,
     rows: [],
     tableRows: [],
+    timeZone: 'UTC',
   };
 };
 

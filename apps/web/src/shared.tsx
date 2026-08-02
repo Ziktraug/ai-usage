@@ -98,7 +98,11 @@ export interface ApiValuePresentation {
 
 export const apiValuePresentation = (row: { costApprox: number; costKnown: boolean }): ApiValuePresentation => {
   if (row.costKnown) {
-    return { label: fmtMoney(row.costApprox), status: 'exact', title: 'Estimated API value at standard prices' };
+    return {
+      label: fmtMoney(row.costApprox),
+      status: 'exact',
+      title: 'Estimated API-equivalent value at standard prices',
+    };
   }
   if (row.costApprox > 0) {
     return { label: `≥ ${fmtMoney(row.costApprox)}`, status: 'lower-bound', title: PARTIAL_PRICE_HINT };
@@ -111,7 +115,7 @@ export const aggregateApiValuePresentation = (measurement: ApiPriceMeasurement):
     return {
       label: fmtMoney(measurement.knownCost),
       status: 'exact',
-      title: 'Estimated API value at standard prices',
+      title: 'Estimated API-equivalent value at standard prices',
     };
   }
   return {

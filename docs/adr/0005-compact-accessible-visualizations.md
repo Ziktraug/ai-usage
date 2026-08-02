@@ -1,5 +1,8 @@
 # ADR 0005: Keep compact visuals and provide equivalent controls
 
+- **Status**: Partially superseded by ADR 0009
+- **Superseded clause**: the synchronized labelled heatmap day input
+
 ## Context
 
 The dense activity heatmap and Punchcard communicate patterns well, but tiny visual marks cannot also be comfortable touch targets or the sole semantic representation.

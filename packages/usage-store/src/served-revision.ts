@@ -1,3 +1,4 @@
+import { harnessProviderAnalyticsKey, hasMeasuredLineDelta } from '@ai-usage/report-core/analytics';
 import { MAX_PORTABLE_USAGE_ROWS } from '@ai-usage/report-core/portable-usage';
 import { providerStatusKeyForUsage, providerStatusScopeKey } from '@ai-usage/report-core/provider-status';
 import type { SerializedRow } from '@ai-usage/report-core/report-data';
@@ -7,6 +8,7 @@ import {
   compareSessionIdentityValues,
   compareSessionTextValues,
   enrichSessionPresentationRow,
+  localTimeCellForTimestamp,
   type SessionCampaignView,
   type SessionPresentationRow,
   type SessionTextSortField,
@@ -21,7 +23,7 @@ import {
   usageRowModelContributions,
 } from '@ai-usage/report-core/usage-row';
 
-export const SERVED_REPORT_PROJECTION_SCHEMA_VERSION = 15;
+export const SERVED_REPORT_PROJECTION_SCHEMA_VERSION = 17;
 export const SERVED_REPORT_REVISION_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,159}$/;
 
 export interface ServedRevisionReadStatement {
@@ -110,6 +112,8 @@ export const servedReportSchemaSql = `
     source_authority TEXT NOT NULL CHECK (source_authority IN ('local-observed', 'portable-opaque')),
     active_date TEXT,
     active_time INTEGER,
+    local_time_weekday INTEGER CHECK (local_time_weekday BETWEEN 0 AND 6),
+    local_time_hour INTEGER CHECK (local_time_hour BETWEEN 0 AND 23),
     search_text TEXT NOT NULL,
     harness TEXT NOT NULL,
     machine_id TEXT NOT NULL,
@@ -117,6 +121,7 @@ export const servedReportSchemaSql = `
     provider_scope_key TEXT NOT NULL,
     provider TEXT NOT NULL,
     provider_display TEXT NOT NULL,
+    harness_provider_key TEXT NOT NULL,
     model_key TEXT NOT NULL,
     project_key TEXT NOT NULL,
     project_label TEXT NOT NULL,
@@ -170,6 +175,7 @@ export const servedReportSchemaSql = `
     line_delta REAL,
     lines_added REAL,
     lines_deleted REAL,
+    lines_measured INTEGER NOT NULL CHECK (lines_measured IN (0, 1)),
     rtk_command_count REAL NOT NULL,
     rtk_input_tokens REAL NOT NULL,
     rtk_output_tokens REAL NOT NULL,
@@ -215,6 +221,8 @@ export const servedReportSchemaSql = `
     ON served_report_rows(revision, campaign_key, campaign_root, ordinal);
   CREATE INDEX IF NOT EXISTS idx_served_report_rows_active_time
     ON served_report_rows(revision, active_time);
+  CREATE INDEX IF NOT EXISTS idx_served_report_rows_local_time_cell
+    ON served_report_rows(revision, local_time_weekday, local_time_hour);
   CREATE INDEX IF NOT EXISTS idx_served_report_rows_facets
     ON served_report_rows(revision, harness, machine_id, provider_display, model_key, project_key);
   CREATE INDEX IF NOT EXISTS idx_served_report_rows_provider_scope
@@ -255,6 +263,8 @@ const servedReportRowInsertColumns: readonly string[] = [
   'source_authority',
   'active_date',
   'active_time',
+  'local_time_weekday',
+  'local_time_hour',
   'search_text',
   'harness',
   'machine_id',
@@ -262,6 +272,7 @@ const servedReportRowInsertColumns: readonly string[] = [
   'provider_scope_key',
   'provider',
   'provider_display',
+  'harness_provider_key',
   'model_key',
   'project_key',
   'project_label',
@@ -288,6 +299,7 @@ const servedReportRowInsertColumns: readonly string[] = [
   'line_delta',
   'lines_added',
   'lines_deleted',
+  'lines_measured',
   'rtk_command_count',
   'rtk_input_tokens',
   'rtk_output_tokens',
@@ -373,6 +385,7 @@ interface InsertProjectionInput {
   readonly revision: string;
   readonly rows: readonly SerializedRow[];
   readonly sourceAuthorities: readonly SessionDetailSourceAuthority[];
+  readonly timeZone: string;
 }
 
 export interface InsertProjectionResult {
@@ -432,6 +445,7 @@ export const insertServedReportProjection = (
     );
     const machineId = row.source?.machineId ?? '';
     const providerKey = providerStatusKeyForUsage(row.harness, row.provider);
+    const localTimeCell = row.activeTime === null ? null : localTimeCellForTimestamp(row.activeTime, input.timeZone);
     const rowJson = JSON.stringify(row);
     const sourceRowJson = JSON.stringify(sourceRow);
     insert.run(
@@ -443,6 +457,8 @@ export const insertServedReportProjection = (
       sourceAuthority,
       row.activeDate,
       row.activeTime,
+      localTimeCell?.weekday ?? null,
+      localTimeCell?.hour ?? null,
       row.searchText,
       row.harness,
       machineId,
@@ -450,6 +466,7 @@ export const insertServedReportProjection = (
       providerStatusScopeKey(providerKey, machineId || undefined),
       row.provider,
       row.providerDisplay,
+      harnessProviderAnalyticsKey(row.harness, row.providerDisplay),
       row.modelKey,
       row.projectKey,
       row.projectLabel,
@@ -476,6 +493,7 @@ export const insertServedReportProjection = (
       row.lineDelta,
       row.linesAdded,
       row.linesDeleted,
+      hasMeasuredLineDelta(row.linesAdded, row.linesDeleted) ? 1 : 0,
       row.rtkCommandCount ?? 0,
       row.rtkInputTokens ?? 0,
       row.rtkOutputTokens ?? 0,
@@ -755,6 +773,7 @@ const REQUIRED_SERVED_INDEXES: Readonly<Record<string, readonly (string | null)[
   ],
   idx_served_report_revisions_retention: ['complete', 'expires_at', 'published_at', 'revision'],
   idx_served_report_rows_active_time: ['revision', 'active_time'],
+  idx_served_report_rows_local_time_cell: ['revision', 'local_time_weekday', 'local_time_hour'],
   idx_served_report_rows_campaign: ['revision', 'campaign_key', 'campaign_root', 'ordinal'],
   idx_served_report_rows_facets: ['revision', 'harness', 'machine_id', 'provider_display', 'model_key', 'project_key'],
   idx_served_report_rows_provider_scope: ['revision', 'provider_scope_key', 'ordinal'],

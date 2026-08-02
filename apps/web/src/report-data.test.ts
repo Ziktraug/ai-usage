@@ -29,6 +29,7 @@ const minimalPayload = (overrides: Partial<UsageReportPayload>): UsageReportPayl
   omittedRows: 0,
   rows: [],
   tableRows: [],
+  timeZone: 'UTC',
   ...overrides,
 });
 

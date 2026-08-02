@@ -1,4 +1,4 @@
-# Plan 053: Close the post-cutover usage-engine runtime review gaps
+# Plan 067: Close the post-cutover usage-engine runtime review gaps
 
 > **Executor instructions**: Follow this plan step by step. Run every
 > verification command and confirm the expected result before moving to the
@@ -19,13 +19,13 @@
 - **Priority**: P1
 - **Effort**: L
 - **Risk**: HIGH
-- **Depends on**: plan 052
+- **Depends on**: plan 066
 - **Category**: bug, tech-debt, performance
 - **Planned at**: commit `d9cc99c`, 2026-08-01
 
 ## Why this matters
 
-Plan 052 completed the structural cutover: the Bun usage engine is the sole
+Plan 066 completed the structural cutover: the Bun usage engine is the sole
 writer and poller, while web and CLI read SQLite. A post-cutover review found
 that several failure paths are still less trustworthy than the architecture
 they protect. The control server can report internal failures as invalid client

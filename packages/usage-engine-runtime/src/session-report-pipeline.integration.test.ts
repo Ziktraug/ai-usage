@@ -242,6 +242,7 @@ describe('session report pipeline', () => {
         campaignRow('delegated-worker', 'subagent', { parentSourceSessionId: 'human-root' }),
         campaignRow('classifier-review', 'classifier', { rootSourceSessionId: 'delegated-worker' }),
       ],
+      timeZone: 'UTC',
       warnings: [],
     });
     const classifier = assembly.payload.rows.find((row) => row.source?.sourceSessionId === 'classifier-review');

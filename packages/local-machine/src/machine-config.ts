@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
+import { isCampaignLabelOverrides } from '@ai-usage/report-core/campaign-label';
 import type { AiUsageConfig } from '@ai-usage/report-core/project-alias';
 import { isProjectGroupConfigArray } from '@ai-usage/report-core/project-group';
 import type { UsageMachine } from '@ai-usage/report-core/snapshot';
@@ -276,6 +277,10 @@ const isAiUsageConfig = (value: unknown): value is AiUsageConfig => {
     return false;
   }
   const config = value as Record<string, unknown>;
+  const campaignLabelOverrides = config.campaignLabelOverrides;
+  if (campaignLabelOverrides !== undefined && !isCampaignLabelOverrides(campaignLabelOverrides)) {
+    return false;
+  }
   const aliases = config.projectAliases;
   if (aliases !== undefined) {
     if (!Array.isArray(aliases)) {
@@ -447,16 +452,16 @@ export const readRepoAiUsageConfig = (cwd = process.cwd()): Effect.Effect<AiUsag
     const exportedConfig =
       (module as { default?: unknown; config?: unknown }).default ??
       (module as { default?: unknown; config?: unknown }).config;
-    if (
-      typeof exportedConfig === 'object' &&
-      exportedConfig !== null &&
-      Object.hasOwn(exportedConfig, 'sourcePolicies')
-    ) {
+    const homeOnlyField =
+      typeof exportedConfig === 'object' && exportedConfig !== null
+        ? ['campaignLabelOverrides', 'sourcePolicies'].find((field) => Object.hasOwn(exportedConfig, field))
+        : undefined;
+    if (homeOnlyField) {
       return yield* Effect.fail(
         machineConfigError(
           'importAiUsageConfig',
           filePath,
-        )(new Error('sourcePolicies may only be configured in the user home config')),
+        )(new Error(`${homeOnlyField} may only be configured in the user home config`)),
       );
     }
     return parseAiUsageConfig(exportedConfig, filePath);

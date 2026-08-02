@@ -401,11 +401,28 @@ description: Helps with examples
         },
       });
 
-      expect(scan.diagnostics.map(({ code, severity }) => [code, severity])).toEqual([
-        ['SkillMarkdownTokenWarning', 'warning'],
-        ['SkillReferenceTokenHigh', 'error'],
-        ['SkillTotalTokenWarning', 'warning'],
+      expect(scan.diagnostics).toEqual([
+        expect.objectContaining({
+          code: 'SkillMarkdownTokenWarning',
+          severity: 'warning',
+          tokenMeasurement: { observed: expect.any(Number), threshold: 1, unit: 'tokens' },
+        }),
+        expect.objectContaining({
+          code: 'SkillReferenceTokenHigh',
+          severity: 'error',
+          tokenMeasurement: { observed: expect.any(Number), threshold: 5, unit: 'tokens' },
+        }),
+        expect.objectContaining({
+          code: 'SkillTotalTokenWarning',
+          severity: 'warning',
+          tokenMeasurement: { observed: expect.any(Number), threshold: 1, unit: 'tokens' },
+        }),
       ]);
+      for (const diagnostic of scan.diagnostics) {
+        expect(diagnostic.tokenMeasurement?.observed ?? 0).toBeGreaterThanOrEqual(
+          diagnostic.tokenMeasurement?.threshold ?? 1,
+        );
+      }
       expect(scan.skills[0]?.validationStatus).toBe('warning');
     } finally {
       await rm(sourceRepoPath, { recursive: true, force: true });

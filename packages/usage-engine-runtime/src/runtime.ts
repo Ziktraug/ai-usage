@@ -125,6 +125,7 @@ export interface UsageEngineSourceControlPort {
 
 type RunSourceCommand = Extract<UsageEngineCommand, { readonly command: 'run-source' }>;
 type SetSourceEnabledCommand = Extract<UsageEngineCommand, { readonly command: 'set-source-enabled' }>;
+type SetCampaignLabelOverrideCommand = Extract<UsageEngineCommand, { readonly command: 'set-campaign-label-override' }>;
 type ReplaceProjectAliasesCommand = Extract<UsageEngineCommand, { readonly command: 'replace-project-aliases' }>;
 type ReplaceProjectGroupsCommand = Extract<UsageEngineCommand, { readonly command: 'replace-project-groups' }>;
 type ReplaceProjectGroupsByReferenceCommand = Extract<
@@ -147,6 +148,7 @@ export interface UsageEngineMutationPort {
     command: ReplaceProjectGroupsByReferenceCommand,
     signal?: AbortSignal,
   ) => Promise<void>;
+  readonly setCampaignLabelOverride: (command: SetCampaignLabelOverrideCommand, signal?: AbortSignal) => Promise<void>;
   readonly setMachineLabel: (label: string, signal?: AbortSignal) => Promise<UsageMachine>;
 }
 
@@ -227,6 +229,7 @@ const commandIsSafelyInterruptible = (command: UsageEngineCommand): boolean => {
     case 'replace-project-groups':
     case 'replace-project-groups-by-reference':
     case 'set-machine-label':
+    case 'set-campaign-label-override':
     case 'set-source-enabled':
       return false;
     default: {
@@ -560,6 +563,9 @@ export const createUsageEngineRuntime = (dependencies: UsageEngineRuntimeDepende
         await dependencies.sourceControl.publish(signal);
         return { kind: 'machine', machine };
       }
+      case 'set-campaign-label-override':
+        await dependencies.mutation.setCampaignLabelOverride(command, signal);
+        return;
       case 'collect-fresh-quota':
         return await collectSources(['codex.usage-limits']);
       case 'import-cursor': {

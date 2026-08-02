@@ -123,6 +123,10 @@ describe('dashboard session selection', () => {
       selection.toggleTableRow(campaignRoot);
       expect(selection.selectedRow()).toBe(campaignRoot);
       expect(selection.selectedCampaign()).toBe(campaign);
+      expect(selection.selectedCampaignLabelContext()).toEqual({
+        campaignKey: campaign.campaignKey,
+        derivedLabel: campaign.root.sessionLabel,
+      });
       expect(selection.analysisTarget()).toMatchObject({
         campaignKey: campaign.campaignKey,
         kind: 'campaign-root',
@@ -132,8 +136,10 @@ describe('dashboard session selection', () => {
       selection.toggleTableRow(campaignRoot);
       expect(selection.selectedRow()).toBeNull();
       expect(selection.analysisTarget()).toBeNull();
+      expect(selection.selectedCampaignLabelContext()).toBeNull();
 
       selection.inspectOverview(firstStandalone);
+      expect(selection.selectedCampaignLabelContext()).toBeNull();
       selection.navigate(1);
       expect(selection.selectedRow()).toBe(secondStandalone);
       expect(selection.analysisTarget()).toMatchObject({
@@ -179,6 +185,10 @@ describe('dashboard session selection', () => {
       selection.toggleTableRow(firstStandalone);
       await flushPromises();
       expect(selection.analysisRevision()).toBe(query.revision);
+      expect(selection.selectedCampaignLabelContext()).toEqual({
+        campaignKey: `campaign:${firstStandalone.rowId}`,
+        derivedLabel: firstStandalone.sessionLabel,
+      });
       expect(selection.drawerNavigation()).toMatchObject({
         loading: false,
         next: secondStandalone,
@@ -198,13 +208,75 @@ describe('dashboard session selection', () => {
         kind: 'session',
         reportRowId: secondStandalone.rowId,
       });
+      expect(selection.selectedCampaignLabelContext()).toBeNull();
       expect(selectedIds).toEqual([firstStandalone.rowId, secondStandalone.rowId]);
 
       selection.close();
       expect(selection.selectedRow()).toBeNull();
       expect(selection.analysisRevision()).toBeNull();
       expect(selection.drawerNavigation()).toMatchObject({ loading: false, next: null, previous: null });
+      expect(selection.selectedCampaignLabelContext()).toBeNull();
       expect(selectedIds).toEqual([firstStandalone.rowId, secondStandalone.rowId, null]);
+    } finally {
+      dispose();
+    }
+  });
+
+  test('resolves colliding served row ids by the exact campaign key', () => {
+    const sharedRow = { ...campaignRoot, rowId: 'shared-root-row' };
+    const firstCampaignKey = 'machine-a:codex:shared-root';
+    const secondCampaignKey = 'machine-b:claude:shared-root';
+    const firstItem: SessionPageItem = {
+      campaignKey: firstCampaignKey,
+      kind: 'campaign',
+      row: { ...sharedRow, campaignKey: firstCampaignKey, campaignTotalCount: 2, campaignVisibleCount: 2 },
+    };
+    const secondItem: SessionPageItem = {
+      campaignKey: secondCampaignKey,
+      kind: 'campaign',
+      row: {
+        ...sharedRow,
+        campaignKey: secondCampaignKey,
+        campaignTotalCount: 3,
+        campaignVisibleCount: 3,
+        sessionLabel: 'Second derived label',
+      },
+    };
+    const state: SessionQueryState = {
+      campaignChildren: new Map(),
+      itemCount: 2,
+      items: [firstItem, secondItem],
+      loadingMore: false,
+      nextCursor: null,
+      query,
+      selectedRowId: null,
+      sessionCount: 2,
+    };
+    const { dispose, selection } = createOwnedSelection({
+      local: localData(),
+      onError: () => undefined,
+      overviewRevision: () => 'overview-revision',
+      served: {
+        active: () => true,
+        coordinator: {
+          loadNeighbors: () => Promise.resolve(undefined),
+          select: () => undefined,
+        },
+        rows: () => [firstItem.row, secondItem.row],
+        state: () => state,
+      },
+    });
+
+    try {
+      selection.toggleTableRow(secondItem.row);
+      expect(selection.selectedCampaignLabelContext()).toEqual({
+        campaignKey: secondCampaignKey,
+        derivedLabel: 'Second derived label',
+      });
+      expect(selection.analysisTarget()).toMatchObject({
+        campaignKey: secondCampaignKey,
+        totalCount: 3,
+      });
     } finally {
       dispose();
     }

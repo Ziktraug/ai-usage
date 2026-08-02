@@ -18,6 +18,7 @@ import {
   type FocusedRevisionRequest,
   type FocusedSupportResult,
   type FocusedTimelineAggregate,
+  type FocusedTimelineDimension,
   focusedBreakdownFingerprint,
   focusedOverviewFingerprint,
   parseFocusedBreakdownRequest,
@@ -142,16 +143,12 @@ interface DayRecord {
   unpriced_fresh_tokens: number;
 }
 
-interface RecordCandidates {
-  longest_json: string | null;
-  top_cost_json: string | null;
-}
-
-interface TopSessionRecord {
+interface OverviewSessionSelectionRecord {
   cost_approx: number;
   cost_known: number;
   duration_ms: number | null;
   item_kind: 'campaign' | 'session';
+  item_role: 'longest' | 'top-session';
   root_ordinal: number;
   session_count: number;
 }
@@ -275,38 +272,26 @@ interface TimelineDimensionProjection {
   label: string;
 }
 
-const timelineDimensionProjection = (
-  dimension: FocusedOverviewRequest['timeline']['dimension'],
-): TimelineDimensionProjection => {
-  // biome-ignore lint/style/useDefaultSwitchClause: Exhaustive by type so a future dimension fails compilation.
-  switch (dimension) {
-    case 'campaign':
-      return {
-        cause: 'NULL',
-        key: "CASE WHEN session_rows.campaign_key IS NULL THEN 'session:' || session_rows.row_id ELSE 'campaign:' || session_rows.campaign_key END",
-        label: 'session_rows.campaign_label',
-      };
-    case 'harness':
-      return { cause: 'NULL', key: 'session_rows.harness', label: 'session_rows.harness' };
-    case 'machine':
-      return {
-        cause: 'NULL',
-        key: 'session_rows.machine_id',
-        label: "CASE WHEN session_rows.machine_label = '' THEN 'Unknown machine' ELSE session_rows.machine_label END",
-      };
-    case 'model':
-      return { cause: 'NULL', key: 'session_rows.model_key', label: 'session_rows.model_key' };
-    case 'origin':
-      return {
-        cause: 'session_rows.origin_provenance',
-        key: 'session_rows.origin',
-        label: 'session_rows.origin',
-      };
-    case 'project':
-      return { cause: 'NULL', key: 'session_rows.project_key', label: 'session_rows.project_label' };
-    case 'provider':
-      return { cause: 'NULL', key: 'session_rows.provider_display', label: 'session_rows.provider_display' };
-  }
+const timelineDimensionProjections: Record<FocusedTimelineDimension, TimelineDimensionProjection> = {
+  campaign: {
+    cause: 'NULL',
+    key: "CASE WHEN session_rows.campaign_key IS NULL THEN 'session:' || session_rows.row_id ELSE 'campaign:' || session_rows.campaign_key END",
+    label: 'session_rows.campaign_label',
+  },
+  harness: { cause: 'NULL', key: 'session_rows.harness', label: 'session_rows.harness' },
+  machine: {
+    cause: 'NULL',
+    key: 'session_rows.machine_id',
+    label: "CASE WHEN session_rows.machine_label = '' THEN 'Unknown machine' ELSE session_rows.machine_label END",
+  },
+  model: { cause: 'NULL', key: 'session_rows.model_key', label: 'session_rows.model_key' },
+  origin: {
+    cause: 'session_rows.origin_provenance',
+    key: 'session_rows.origin',
+    label: 'session_rows.origin',
+  },
+  project: { cause: 'NULL', key: 'session_rows.project_key', label: 'session_rows.project_label' },
+  provider: { cause: 'NULL', key: 'session_rows.provider_display', label: 'session_rows.provider_display' },
 };
 
 const timelineLabelFromRecord = (
@@ -314,21 +299,13 @@ const timelineLabelFromRecord = (
   key: string,
   label: string,
 ): string => {
-  // biome-ignore lint/style/useDefaultSwitchClause: Exhaustive by type so a future dimension fails compilation.
-  switch (dimension) {
-    case 'campaign':
-    case 'harness':
-    case 'machine':
-    case 'model':
-    case 'project':
-    case 'provider':
-      return label;
-    case 'origin':
-      if (!isSessionOrigin(key)) {
-        throw new Error('Report revision contains an invalid session origin');
-      }
-      return sessionOriginLabel(key);
+  if (dimension !== 'origin') {
+    return label;
   }
+  if (!isSessionOrigin(key)) {
+    throw new Error('Report revision contains an invalid session origin');
+  }
+  return sessionOriginLabel(key);
 };
 
 const timeForLocalDay = (dayKey: string): number => {
@@ -467,7 +444,7 @@ const readTimeline = (
   if (dimension === 'model') {
     return readModelTimeline(database, filter, trace);
   }
-  const projection = timelineDimensionProjection(dimension);
+  const projection = timelineDimensionProjections[dimension];
   const records = executeAll<TimelineRecord>(
     database,
     `WITH segment_coverage AS (
@@ -618,40 +595,29 @@ const readDays = (
     time: timeForLocalDay(dayKey),
   }));
 
-const readRecordCandidates = (
-  database: SessionQuerySqliteDatabase,
-  filter: SqlFilter,
-  trace?: SessionQuerySqliteTrace,
-): { longest: SessionPresentationRow | null; topCost: SessionPresentationRow | null } => {
-  const candidates = executeGet<RecordCandidates>(
-    database,
-    `WITH visible AS (
-      SELECT ordinal, row_json, cost_known, cost_approx, duration_ms
-      FROM session_rows
-      WHERE ${filter.where}
-    )
-    SELECT
-      (SELECT row_json FROM visible
-       WHERE cost_known = 1 AND cost_approx > 0
-       ORDER BY cost_approx DESC, ordinal ASC LIMIT 1) AS top_cost_json,
-      (SELECT row_json FROM visible
-       WHERE duration_ms > 0
-       ORDER BY duration_ms DESC, ordinal ASC LIMIT 1) AS longest_json`,
-    filter.params,
-    trace,
-  );
+const overviewSessionItemFromRecord = (
+  record: OverviewSessionSelectionRecord,
+  rowJson: string,
+): FocusedOverviewSessionItem => {
+  const row = parsePresentationRow(rowJson);
   return {
-    longest: candidates?.longest_json ? parsePresentationRow(candidates.longest_json) : null,
-    topCost: candidates?.top_cost_json ? parsePresentationRow(candidates.top_cost_json) : null,
+    costApprox: record.cost_approx,
+    costKnown: record.cost_known === 1,
+    durationMs: record.duration_ms,
+    harness: row.harness,
+    kind: record.item_kind,
+    label: row.sessionLabel,
+    row,
+    sessionCount: record.session_count,
   };
 };
 
-const readTopSessions = (
+const readOverviewSessionSelections = (
   database: SessionQuerySqliteDatabase,
   filter: SqlFilter,
   trace?: SessionQuerySqliteTrace,
-): FocusedOverviewSessionItem[] => {
-  const records = executeAll<TopSessionRecord>(
+): { longest: FocusedOverviewSessionItem | null; topSessions: FocusedOverviewSessionItem[] } => {
+  const records = executeAll<OverviewSessionSelectionRecord>(
     database,
     `WITH visible AS (
       SELECT ordinal, campaign_key, cost_known, cost_approx, duration_ms
@@ -706,46 +672,76 @@ const readTopSessions = (
         ordinal AS item_ordinal
       FROM visible
       WHERE campaign_key IS NULL
+    ),
+    top_sessions AS (
+      SELECT *
+      FROM items
+      WHERE cost_approx > 0
+      ORDER BY cost_approx DESC, kind_order ASC, item_ordinal ASC
+      LIMIT 5
+    ),
+    longest_item AS (
+      SELECT *
+      FROM items
+      WHERE duration_ms > 0
+      ORDER BY duration_ms DESC, kind_order ASC, item_ordinal ASC
+      LIMIT 1
     )
-    SELECT item_kind, root_ordinal, cost_approx, cost_known, duration_ms, session_count
-    FROM items
-    WHERE cost_approx > 0
-    ORDER BY cost_approx DESC, kind_order ASC, item_ordinal ASC
-    LIMIT 5`,
+    SELECT
+      'top-session' AS item_role,
+      item_kind,
+      root_ordinal,
+      cost_approx,
+      cost_known,
+      duration_ms,
+      session_count,
+      kind_order,
+      item_ordinal,
+      0 AS role_order
+    FROM top_sessions
+    UNION ALL
+    SELECT
+      'longest' AS item_role,
+      item_kind,
+      root_ordinal,
+      cost_approx,
+      cost_known,
+      duration_ms,
+      session_count,
+      kind_order,
+      item_ordinal,
+      1 AS role_order
+    FROM longest_item
+    ORDER BY role_order ASC, cost_approx DESC, kind_order ASC, item_ordinal ASC`,
     filter.params,
     trace,
   );
   if (records.length === 0) {
-    return [];
+    return { longest: null, topSessions: [] };
   }
   const rootOrdinals = [...new Set(records.map((record) => record.root_ordinal))];
   const roots = executeAll<TopSessionRootRecord>(
     database,
     `SELECT ordinal, row_json
     FROM session_rows
-    WHERE ordinal IN (${rootOrdinals.map(() => '?').join(', ')})
-    LIMIT 5`,
+    WHERE ordinal IN (${rootOrdinals.map(() => '?').join(', ')})`,
     rootOrdinals,
     trace,
   );
   const rootJsonByOrdinal = new Map(roots.map((root) => [root.ordinal, root.row_json]));
-  return records.map((record) => {
+  const itemFromRecord = (record: OverviewSessionSelectionRecord): FocusedOverviewSessionItem => {
     const rootJson = rootJsonByOrdinal.get(record.root_ordinal);
     if (rootJson === undefined) {
-      throw new Error('Focused report query database omitted a top-session root');
+      throw new Error('Focused report query database omitted an Overview session-selection root');
     }
-    const row = parsePresentationRow(rootJson);
-    return {
-      costApprox: record.cost_approx,
-      costKnown: record.cost_known === 1,
-      durationMs: record.duration_ms,
-      harness: row.harness,
-      kind: record.item_kind,
-      label: row.sessionLabel,
-      row,
-      sessionCount: record.session_count,
-    };
-  });
+    return overviewSessionItemFromRecord(record, rootJson);
+  };
+  const topSessions = records.filter((record) => record.item_role === 'top-session').map(itemFromRecord);
+  const longestRecord = records.find((record) => record.item_role === 'longest');
+  return {
+    longest: longestRecord ? itemFromRecord(longestRecord) : null,
+    topSessions,
+  };
 };
 
 const previousSummary = (
@@ -807,10 +803,15 @@ const runOverview = (
   const summary = readSummary(database, visibleFilter, trace);
   const timelineAggregates = readTimeline(database, timelineFilter, request.timeline.dimension, trace);
   const visibleDays = readDays(database, visibleFilter, trace);
-  const candidates = readRecordCandidates(database, visibleFilter, trace);
+  const sessionSelections = readOverviewSessionSelections(database, visibleFilter, trace);
   return {
     dateDomain: timelineAggregates.dateDomain,
-    metadata: { filters: support.filters, generatedAt: support.generatedAt, omittedRows: support.omittedRows },
+    metadata: {
+      filters: support.filters,
+      generatedAt: support.generatedAt,
+      omittedRows: support.omittedRows,
+      timeZone: support.timeZone,
+    },
     requestFingerprint: focusedOverviewFingerprint(request),
     revision: request.query.revision,
     summary,
@@ -821,13 +822,13 @@ const runOverview = (
       previousSummary: previousSummary(database, request, support.generatedAt, trace),
       punchcard: null,
       records: buildFocusedRecordsFromAggregates(
-        candidates.topCost,
-        candidates.longest,
+        sessionSelections.topSessions[0] ?? null,
+        sessionSelections.longest,
         visibleDays,
         timelineAggregates.days,
       ),
       sessionShape: null,
-      topSessions: readTopSessions(database, visibleFilter, trace),
+      topSessions: sessionSelections.topSessions,
     },
   };
 };
@@ -841,7 +842,7 @@ interface AnalyticsAggregateRecord {
   harness: string;
   inp: number;
   key: string;
-  kind: 'harness' | 'model' | 'provider';
+  kind: 'harness' | 'harness-provider' | 'model' | 'provider';
   lines_a: number;
   lines_d: number;
   median_cost: number | null;
@@ -866,6 +867,7 @@ interface ProjectAggregateRecord {
   label: string;
   lines_added: number;
   lines_deleted: number;
+  measured_sessions: number;
   priced: number;
   sessions: number;
   tools: number;
@@ -905,7 +907,12 @@ const readAnalyticsGroups = (
   database: SessionQuerySqliteDatabase,
   filter: SqlFilter,
   trace?: SessionQuerySqliteTrace,
-): { harnesses: AnalyticsGroup[]; models: AnalyticsGroup[]; providers: AnalyticsGroup[] } => {
+): {
+  harnesses: AnalyticsGroup[];
+  harnessProviders: AnalyticsGroup[];
+  models: AnalyticsGroup[];
+  providers: AnalyticsGroup[];
+} => {
   const records = executeAll<AnalyticsAggregateRecord>(
     database,
     `WITH filtered AS (
@@ -914,6 +921,7 @@ const readAnalyticsGroups = (
         harness,
         provider,
         provider_display,
+        harness_provider_key,
         model_key,
         cost_known,
         cost_approx,
@@ -957,6 +965,26 @@ const readAnalyticsGroups = (
         ordinal,
         harness,
         provider,
+        cost_known,
+        cost_approx,
+        usage_unavailable,
+        sort_ambiguous,
+        fresh_tokens,
+        unpriced_fresh_tokens,
+        tok_in,
+        tok_cr,
+        lines_added,
+        lines_deleted,
+        turns,
+        tools
+      FROM filtered
+      UNION ALL
+      SELECT
+        'harness-provider' AS kind,
+        harness_provider_key AS key,
+        ordinal,
+        harness,
+        provider_display AS provider,
         cost_known,
         cost_approx,
         usage_unavailable,
@@ -1059,6 +1087,7 @@ const readAnalyticsGroups = (
       .sort((left, right) => right.costSum - left.costSum || compareAnalyticsKeys(left.key, right.key));
   return {
     harnesses: groupsForKind('harness'),
+    harnessProviders: groupsForKind('harness-provider'),
     models: groupsForKind('model'),
     providers: groupsForKind('provider'),
   };
@@ -1080,8 +1109,9 @@ const readProjectGroups = (
       SUM(tok_cr) AS cache,
       SUM(turns) AS turns,
       SUM(tools) AS tools,
-      SUM(COALESCE(lines_added, 0)) AS lines_added,
-      SUM(COALESCE(lines_deleted, 0)) AS lines_deleted,
+      SUM(CASE WHEN lines_measured = 1 THEN lines_added ELSE 0 END) AS lines_added,
+      SUM(CASE WHEN lines_measured = 1 THEN lines_deleted ELSE 0 END) AS lines_deleted,
+      SUM(lines_measured) AS measured_sessions,
       SUM(CASE WHEN cost_known = 1 THEN cost_approx ELSE 0 END) AS cost,
       SUM(cost_known) AS priced
     FROM session_rows
@@ -1096,6 +1126,10 @@ const readProjectGroups = (
     fresh: record.fresh,
     key: record.key,
     label: record.label,
+    lineMeasurement: {
+      measuredSessions: record.measured_sessions,
+      totalSessions: record.sessions,
+    },
     linesAdded: record.lines_added,
     linesDeleted: record.lines_deleted,
     priced: record.priced,

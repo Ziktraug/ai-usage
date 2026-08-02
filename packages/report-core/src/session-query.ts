@@ -10,6 +10,7 @@ import {
   isSerializedUsageRowShape,
   SERIALIZED_USAGE_ROW_KEYS,
 } from './serialized-usage-validation';
+import { zonedWeekdayHourForTimestamp } from './time-zone';
 import { isSessionOrigin, type SessionOrigin } from './types';
 import { usageRowApiPriceMeasurement, usageRowModelContributions } from './usage-row';
 
@@ -68,9 +69,57 @@ export const sessionFieldFilterKeys = ['campaign', 'provider', 'model', 'project
 export type SessionFieldFilterKey = (typeof sessionFieldFilterKeys)[number];
 export type SessionFieldFilters = Partial<Record<SessionFieldFilterKey, string>>;
 
+export type LocalTimeHour =
+  | 0
+  | 1
+  | 2
+  | 3
+  | 4
+  | 5
+  | 6
+  | 7
+  | 8
+  | 9
+  | 10
+  | 11
+  | 12
+  | 13
+  | 14
+  | 15
+  | 16
+  | 17
+  | 18
+  | 19
+  | 20
+  | 21
+  | 22
+  | 23;
+export type LocalTimeWeekday = 0 | 1 | 2 | 3 | 4 | 5 | 6;
+
+export interface LocalTimeCell {
+  hour: LocalTimeHour;
+  weekday: LocalTimeWeekday;
+}
+
+export const localTimeWeekdayNames = [
+  'Monday',
+  'Tuesday',
+  'Wednesday',
+  'Thursday',
+  'Friday',
+  'Saturday',
+  'Sunday',
+] as const;
+
+export const localTimeCellLabel = (cell: LocalTimeCell): string => {
+  const hour = String(cell.hour).padStart(2, '0');
+  return `${localTimeWeekdayNames[cell.weekday]} ${hour}:00–${hour}:59`;
+};
+
 export interface SessionQueryFilters {
   fields: SessionFieldFilters;
   harness: string[];
+  localTimeCell?: LocalTimeCell;
   machine: string[];
   origin?: SessionOrigin[];
   query: string;
@@ -361,13 +410,34 @@ const parseFieldFilters = (value: unknown): SessionFieldFilters => {
   );
 };
 
+export const isLocalTimeHour = (value: unknown): value is LocalTimeHour =>
+  typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= 23;
+export const isLocalTimeWeekday = (value: unknown): value is LocalTimeWeekday =>
+  typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= 6;
+
+const parseLocalTimeCell = (value: unknown): LocalTimeCell => {
+  const record = requireRecord(value, 'filters.localTimeCell');
+  assertExactKeys(record, ['hour', 'weekday'], 'filters.localTimeCell');
+  if (!(isLocalTimeHour(record.hour) && isLocalTimeWeekday(record.weekday))) {
+    throw new SessionQueryValidationError(
+      'filters.localTimeCell must contain a weekday from 0 to 6 and an hour from 0 to 23',
+    );
+  }
+  return { hour: record.hour, weekday: record.weekday };
+};
+
 const parseFilters = (value: unknown): SessionQueryFilters => {
   const record = requireRecord(value, 'filters');
   assertExactKeys(
     record,
-    record.origin === undefined
-      ? ['fields', 'harness', 'machine', 'query']
-      : ['fields', 'harness', 'machine', 'origin', 'query'],
+    [
+      'fields',
+      'harness',
+      ...(record.localTimeCell === undefined ? [] : ['localTimeCell']),
+      'machine',
+      ...(record.origin === undefined ? [] : ['origin']),
+      'query',
+    ],
     'filters',
   );
   if (typeof record.query !== 'string' || record.query.length > MAX_STRING_LENGTH) {
@@ -380,6 +450,7 @@ const parseFilters = (value: unknown): SessionQueryFilters => {
   return {
     fields: parseFieldFilters(record.fields),
     harness: normalizeStringList(record.harness, 'filters.harness'),
+    ...(record.localTimeCell === undefined ? {} : { localTimeCell: parseLocalTimeCell(record.localTimeCell) }),
     machine: normalizeStringList(record.machine, 'filters.machine'),
     origin: origin as SessionOrigin[],
     query: record.query.trim().toLowerCase(),
@@ -499,6 +570,7 @@ const canonicalQueryScope = (request: SessionQueryRequest): string =>
         ),
       ),
       harness: request.filters.harness,
+      ...(request.filters.localTimeCell === undefined ? {} : { localTimeCell: request.filters.localTimeCell }),
       machine: request.filters.machine,
       origin: request.filters.origin ?? [],
       query: request.filters.query,
@@ -814,6 +886,29 @@ export const parseSessionNeighborServerResult = (
   return parseSessionQueryServerResult(value, request.query.revision, sessionNeighborFingerprint(request), (data) =>
     parseSessionNeighborResult(data, request),
   );
+};
+
+export const localTimeCellForTimestamp = (timestamp: number, timeZone = 'UTC'): LocalTimeCell => {
+  const { hour, weekday } = zonedWeekdayHourForTimestamp(timestamp, timeZone);
+  if (!(isLocalTimeHour(hour) && isLocalTimeWeekday(weekday))) {
+    throw new Error('Cannot derive a local time cell from an invalid timestamp');
+  }
+  return { hour, weekday };
+};
+
+export const activeTimeMatchesLocalTimeCell = (
+  activeTime: number | null,
+  cell: LocalTimeCell | undefined,
+  timeZone = 'UTC',
+): boolean => {
+  if (cell === undefined) {
+    return true;
+  }
+  if (activeTime === null || !Number.isFinite(activeTime)) {
+    return false;
+  }
+  const activeCell = localTimeCellForTimestamp(activeTime, timeZone);
+  return activeCell.weekday === cell.weekday && activeCell.hour === cell.hour;
 };
 
 const activeTimeForRow = (row: SerializedRow): number | null => {
@@ -1305,7 +1400,7 @@ export const classifierRollupLabelForSessionRow = (row: SessionPresentationRow):
   return count > 0 ? `+ ${count} automated ${count === 1 ? 'review' : 'reviews'}` : null;
 };
 
-const matchesSessionQuery = (row: SessionPresentationRow, request: SessionQueryRequest): boolean => {
+const matchesSessionQuery = (row: SessionPresentationRow, request: SessionQueryRequest, timeZone: string): boolean => {
   const { fields } = request.filters;
   if (request.filters.query && !row.searchText.includes(request.filters.query)) {
     return false;
@@ -1314,6 +1409,9 @@ const matchesSessionQuery = (row: SessionPresentationRow, request: SessionQueryR
     return false;
   }
   if (request.filters.machine.length && !request.filters.machine.includes(row.source?.machineId ?? '')) {
+    return false;
+  }
+  if (!activeTimeMatchesLocalTimeCell(row.activeTime, request.filters.localTimeCell, timeZone)) {
     return false;
   }
   if (request.filters.origin?.length && row.origin !== undefined && !request.filters.origin.includes(row.origin)) {
@@ -1408,12 +1506,16 @@ const boundedPage = <T>(
  * adapters must page in SQLite with LIMIT pageSize + 1 rather than use this
  * in-memory helper as a storage implementation.
  */
-export const projectSessionPage = (rows: SerializedRow[], input: SessionQueryRequest): SessionPageResult => {
+export const projectSessionPage = (
+  rows: SerializedRow[],
+  input: SessionQueryRequest,
+  timeZone = 'UTC',
+): SessionPageResult => {
   const request = parseSessionQueryRequest(input);
   const requestFingerprint = sessionQueryFingerprint(request);
   const offset = sessionQueryPageOffset(request, requestFingerprint);
   const allRows = rows.map(enrichSessionPresentationRow);
-  const visibleRows = allRows.filter((row) => matchesSessionQuery(row, request));
+  const visibleRows = allRows.filter((row) => matchesSessionQuery(row, request, timeZone));
   const campaignItems = buildSessionCampaignTableItems(allRows, visibleRows, request.sort);
   const page = boundedPage(campaignItems, request.pageSize, offset);
   const items: SessionPageItem[] = page.items.map((item) => ({
@@ -1434,12 +1536,13 @@ export const projectSessionPage = (rows: SerializedRow[], input: SessionQueryReq
 export const projectSessionCampaignChildren = (
   rows: SerializedRow[],
   input: SessionCampaignChildrenRequest,
+  timeZone = 'UTC',
 ): SessionCampaignChildrenResult => {
   const request = parseSessionCampaignChildrenRequest(input);
   const requestFingerprint = sessionCampaignChildrenFingerprint(request);
   const offset = sessionQueryPageOffset(request.query, requestFingerprint);
   const allRows = rows.map(enrichSessionPresentationRow);
-  const visibleRows = allRows.filter((row) => matchesSessionQuery(row, request.query));
+  const visibleRows = allRows.filter((row) => matchesSessionQuery(row, request.query, timeZone));
   const campaign = buildSessionCampaignViews(allRows, visibleRows).find(
     (candidate) => candidate.campaignKey === request.campaignKey,
   );
@@ -1461,11 +1564,12 @@ export const projectSessionCampaignChildren = (
 export const projectSessionNeighbors = (
   rows: SerializedRow[],
   input: SessionNeighborRequest,
+  timeZone = 'UTC',
 ): SessionNeighborResult => {
   const request = parseSessionNeighborRequest(input);
   const requestFingerprint = sessionNeighborFingerprint(request);
   const sequence = buildSortedSessionPresentationRows(
-    rows.map(enrichSessionPresentationRow).filter((row) => matchesSessionQuery(row, request.query)),
+    rows.map(enrichSessionPresentationRow).filter((row) => matchesSessionQuery(row, request.query, timeZone)),
     request.query.sort,
   );
   const index = sequence.findIndex((row) => row.rowId === request.rowId);

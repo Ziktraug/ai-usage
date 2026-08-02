@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { localTimeRowFields } from './local-time-row.test-fixture';
 import { MAX_SESSION_QUERY_RESULT_BYTES } from './report-budgets';
 import type { SerializedRow } from './report-data';
 import { parseSessionDetailRequest } from './session-detail';
@@ -7,6 +8,7 @@ import {
   classifierRollupLabelForSessionRow,
   compareSessionPresentationRows,
   enrichSessionPresentationRow,
+  localTimeCellForTimestamp,
   MAX_SESSION_QUERY_PAGE_SIZE,
   parseSessionCampaignChildrenRequest,
   parseSessionCampaignChildrenResult,
@@ -301,6 +303,7 @@ describe('session query contracts', () => {
       filters: {
         fields: { project: 'alpha' },
         harness: [' Codex ', 'Codex', 'Claude'],
+        localTimeCell: { hour: 14, weekday: 0 },
         machine: ['Machine B', 'Machine A'],
         query: '  COST Review  ',
       },
@@ -316,6 +319,7 @@ describe('session query contracts', () => {
     expect(parsed.filters).toEqual({
       fields: { project: 'alpha' },
       harness: ['Claude', 'Codex'],
+      localTimeCell: { hour: 14, weekday: 0 },
       machine: ['Machine A', 'Machine B'],
       origin: [],
       query: 'cost review',
@@ -348,6 +352,14 @@ describe('session query contracts', () => {
       },
       { ...valid, filters: { ...valid.filters, extra: true } },
       { ...valid, filters: { ...valid.filters, fields: { unknown: 'value' } } },
+      { ...valid, filters: { ...valid.filters, localTimeCell: null } },
+      { ...valid, filters: { ...valid.filters, localTimeCell: { hour: 14, weekday: -1 } } },
+      { ...valid, filters: { ...valid.filters, localTimeCell: { hour: 14, weekday: 7 } } },
+      { ...valid, filters: { ...valid.filters, localTimeCell: { hour: 14, weekday: 1.5 } } },
+      { ...valid, filters: { ...valid.filters, localTimeCell: { hour: -1, weekday: 0 } } },
+      { ...valid, filters: { ...valid.filters, localTimeCell: { hour: 24, weekday: 0 } } },
+      { ...valid, filters: { ...valid.filters, localTimeCell: { hour: 1.5, weekday: 0 } } },
+      { ...valid, filters: { ...valid.filters, localTimeCell: { extra: true, hour: 14, weekday: 0 } } },
       { ...valid, range: { from: '2026-06-30T00:00:00.000Z', to: '2026-06-01T00:00:00.000Z' } },
       { ...valid, range: { from: '2026-06-01', to: null } },
     ];
@@ -377,6 +389,52 @@ describe('session query contracts', () => {
         filters: { ...first.filters, origin: ['human', 'subagent'] },
       }),
     ).not.toBe(sessionQueryFingerprint(first));
+    expect(
+      sessionQueryFingerprint({
+        ...first,
+        filters: { ...first.filters, localTimeCell: { hour: 14, weekday: 0 } },
+      }),
+    ).not.toBe(sessionQueryFingerprint(first));
+  });
+
+  test('matches bounded local punchcard cells across Monday and Sunday', () => {
+    const timedRow = (label: string, day: number, hour: number, minute: number): SerializedRow =>
+      sourcedRow(label, localTimeRowFields(day, hour, minute));
+    const fixtures = [
+      timedRow('monday-13:59', 27, 13, 59),
+      timedRow('monday-14:00', 27, 14, 0),
+      timedRow('monday-14:59', 27, 14, 59),
+      timedRow('monday-15:00', 27, 15, 0),
+      timedRow('sunday-14:00', 26, 14, 0),
+      sourcedRow('missing-time', { activeDate: null, date: null, endDate: null }),
+    ];
+
+    expect(localTimeCellForTimestamp(Date.parse('2026-07-27T14:00:00.000Z'), 'UTC')).toEqual({
+      hour: 14,
+      weekday: 0,
+    });
+    expect(localTimeCellForTimestamp(Date.parse('2026-07-26T14:00:00.000Z'), 'UTC')).toEqual({
+      hour: 14,
+      weekday: 6,
+    });
+    expect(localTimeCellForTimestamp(Date.parse('2026-07-27T00:30:00.000Z'), 'America/New_York')).toEqual({
+      hour: 20,
+      weekday: 6,
+    });
+
+    const queryForCell = (weekday: 0 | 6): SessionQueryRequest =>
+      defaultRequest({
+        filters: { ...defaultRequest().filters, localTimeCell: { hour: 14, weekday } },
+        pageSize: 10,
+      });
+
+    expect(projectSessionPage(fixtures, queryForCell(0)).items.map((item) => item.row.sessionLabel)).toEqual([
+      'monday-14:59',
+      'monday-14:00',
+    ]);
+    expect(projectSessionPage(fixtures, queryForCell(6)).items.map((item) => item.row.sessionLabel)).toEqual([
+      'sunday-14:00',
+    ]);
   });
 
   test('uses stable presentation identity as the final sort tie-breaker', () => {

@@ -11,6 +11,7 @@ export interface GroupedSkillDiagnostic {
   message: string;
   paths: readonly string[];
   severity: SkillDiagnosticSeverity;
+  tokenMeasurement?: SkillDiagnostic['tokenMeasurement'];
 }
 
 export type InstallationActionLabel = 'Install' | 'Repair' | 'Review installation';
@@ -37,6 +38,7 @@ interface MutableDiagnosticGroup {
   message: string;
   paths: string[];
   severity: SkillDiagnosticSeverity;
+  tokenMeasurement?: SkillDiagnostic['tokenMeasurement'];
 }
 
 const diagnosticSeverityRank: Record<SkillDiagnosticSeverity, number> = {
@@ -58,7 +60,10 @@ export const groupSkillDiagnostics = (diagnostics: readonly SkillDiagnostic[]): 
       groupsByCode.set(diagnostic.code, groupsByMessage);
     }
 
-    const existingGroup = groupsByMessage.get(diagnostic.message);
+    const measurementKey = diagnostic.tokenMeasurement
+      ? `${diagnostic.message}:${diagnostic.tokenMeasurement.observed}:${diagnostic.tokenMeasurement.threshold}`
+      : diagnostic.message;
+    const existingGroup = groupsByMessage.get(measurementKey);
     if (existingGroup === undefined) {
       const group: MutableDiagnosticGroup = {
         code: diagnostic.code,
@@ -66,8 +71,9 @@ export const groupSkillDiagnostics = (diagnostics: readonly SkillDiagnostic[]): 
         message: diagnostic.message,
         paths: diagnostic.path === undefined ? [] : [diagnostic.path],
         severity: diagnostic.severity,
+        ...(diagnostic.tokenMeasurement ? { tokenMeasurement: diagnostic.tokenMeasurement } : {}),
       };
-      groupsByMessage.set(diagnostic.message, group);
+      groupsByMessage.set(measurementKey, group);
       orderedGroups.push(group);
       continue;
     }
@@ -87,6 +93,7 @@ export const groupSkillDiagnostics = (diagnostics: readonly SkillDiagnostic[]): 
     message: group.message,
     paths: group.paths,
     severity: group.severity,
+    ...(group.tokenMeasurement ? { tokenMeasurement: group.tokenMeasurement } : {}),
   }));
 };
 

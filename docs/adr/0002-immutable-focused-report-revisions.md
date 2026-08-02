@@ -8,7 +8,7 @@ A large report cannot be fetched and recomputed atomically in the browser while 
 
 The served app bootstraps bounded support metadata, then requests Overview, Breakdown, or paged Sessions against one named immutable revision. One dashboard lifecycle coordinates destination refresh, expiry recovery, supersession, and atomic commit.
 
-### Plan 052 amendment
+### Plan 066 amendment
 
 [ADR 0009](0009-sole-writer-usage-engine-and-direct-sqlite-readers.md)
 supersedes only the artifact transport: immutable projection content now lives

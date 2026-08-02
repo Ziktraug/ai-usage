@@ -16,6 +16,7 @@ import {
   type UsageSnapshot,
   usageSnapshotRowDedupeKey,
 } from '@ai-usage/report-core/snapshot';
+import { systemReportTimeZone } from '@ai-usage/report-core/time-zone';
 import {
   type AuthorizedSourceRow,
   buildProjectProjection,
@@ -136,6 +137,7 @@ export const assembleMergedUsageReport = (request: ProjectedMergedUsageReportReq
     options: request.options,
     projectGroups: projection.projectGroups,
     rows: projection.rows,
+    timeZone: systemReportTimeZone(),
     warnings: payloadWarnings,
   });
   return {

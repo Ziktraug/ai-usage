@@ -12,28 +12,26 @@ import {
   panelSub,
   panelTitle,
   shell,
-  statusPill,
-  statusPillInfo,
-  statusPillOk,
-  statusPillWarn,
   strongCell,
   title,
   titleBlock,
 } from '@ai-usage/design-system/report';
 import { parseUsageEngineMergePreviewOutput, type UsageEngineMergePreviewOutput } from '@ai-usage/usage-engine-control';
 import { createFileRoute, useRouter } from '@tanstack/solid-router';
-import { createEffect, createSignal, For, onCleanup, Show } from 'solid-js';
+import { createEffect, createSignal, onCleanup, Show } from 'solid-js';
 import { enforceReportOnlyDemoNavigation } from '../demo-route-guard';
 import type { ManualOperationError, ManualOperationResult } from '../manual-transfer-contract';
 import {
   buildSyncFleetMachineViews,
-  formatFleetAge,
   formatManualImportSummary,
   formatTransferBytes,
   manualTransferMutationAvailability,
 } from '../manual-transfer-model';
 import { exportManualMergeBundle, getSyncFleet } from '../server/sync';
 import { useSourceControl } from '../source-control-context';
+import { MachineFleetComparison } from '../sync-machine-comparison';
+import { buildSyncFleetComparisonRows } from '../sync-machine-comparison-model';
+import { MachineFleetPanel } from '../sync-machine-fleet';
 
 export const Route = createFileRoute('/sync')({
   beforeLoad: enforceReportOnlyDemoNavigation,
@@ -101,29 +99,6 @@ const progressHint = css({
   lineHeight: 1.5,
 });
 
-const fleetGrid = css({
-  display: 'grid',
-  gridTemplateColumns: { base: '1fr', md: 'repeat(2, minmax(0, 1fr))' },
-  gap: '12px',
-});
-const machineCard = css({
-  display: 'grid',
-  gap: '14px',
-  minW: 0,
-  transition: 'border-color 0.15s ease, box-shadow 0.15s ease',
-});
-const machineCardCurrent = css({ borderColor: 'accent', boxShadow: '0 0 0 1px token(colors.accent)' });
-const machineHeader = css({
-  display: 'flex',
-  alignItems: 'start',
-  justifyContent: 'space-between',
-  flexWrap: 'wrap',
-  gap: '10px',
-});
-const machineTitle = css({ fontSize: '15px', fontWeight: 750, overflowWrap: 'anywhere' });
-const machineFacts = css({ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '10px' });
-const machineFact = css({ display: 'grid', gap: '3px', minW: 0 });
-const machineFactLabel = css({ color: 'muted', fontSize: '10px', fontWeight: 700, textTransform: 'uppercase' });
 const dropZone = css({
   display: 'grid',
   placeItems: 'center',
@@ -219,76 +194,6 @@ const ManualImportProgressView = (props: { progress: ManualImportProgress }) => 
     </div>
   );
 };
-
-const machineFreshnessLabel = (machine: { current: boolean; stale: boolean }): string => {
-  if (!machine.stale) {
-    return 'Fresh';
-  }
-  return machine.current ? 'Needs collection' : 'Stale';
-};
-
-const MachineFleetPanel = (props: {
-  machines: ReturnType<typeof buildSyncFleetMachineViews>;
-  omittedMachines: number;
-  skipped: number;
-}) => (
-  <section aria-labelledby="machine-fleet-title">
-    <div class={panelHeader}>
-      <h2 class={panelTitle} id="machine-fleet-title">
-        Machine fleet
-      </h2>
-      <div class={panelSub}>Freshness is evaluated against the report's default 30-day window.</div>
-    </div>
-    <div class={fleetGrid}>
-      <For each={props.machines}>
-        {(machine) => (
-          <article
-            class={cx(panel, machineCard, machine.current && machineCardCurrent)}
-            data-machine-stale={machine.stale ? 'true' : 'false'}
-          >
-            <div class={machineHeader}>
-              <div>
-                <h3 class={machineTitle}>{machine.label}</h3>
-              </div>
-              <div class={actionRow}>
-                <Show when={machine.current}>
-                  <span class={cx(statusPill, statusPillInfo)}>Current machine</span>
-                </Show>
-                <span class={cx(statusPill, machine.stale ? statusPillWarn : statusPillOk)}>
-                  {machineFreshnessLabel(machine)}
-                </span>
-              </div>
-            </div>
-            <div class={machineFacts}>
-              <div class={machineFact}>
-                <span class={machineFactLabel}>Sessions</span>
-                <span>{machine.sessionCount.toLocaleString()}</span>
-              </div>
-              <div class={machineFact}>
-                <span class={machineFactLabel}>Newest session</span>
-                <span>{formatFleetAge(machine.newestSessionAt)}</span>
-              </div>
-              <div class={machineFact}>
-                <span class={machineFactLabel}>{machine.current ? 'Last observed' : 'Last import'}</span>
-                <span>{formatFleetAge(machine.lastSeenAt)}</span>
-              </div>
-            </div>
-          </article>
-        )}
-      </For>
-    </div>
-    <Show when={props.skipped > 0}>
-      <p class={panelSub} role="status">
-        {props.skipped.toLocaleString()} invalid stored rows were excluded from fleet metadata.
-      </p>
-    </Show>
-    <Show when={props.omittedMachines > 0}>
-      <p class={panelSub} role="status">
-        {props.omittedMachines.toLocaleString()} additional machines were omitted from this bounded fleet view.
-      </p>
-    </Show>
-  </section>
-);
 
 const ImportDropTarget = (props: { disabled: boolean; onImport: (file: File | undefined) => void }) => {
   const [dragActive, setDragActive] = createSignal(false);
@@ -633,11 +538,14 @@ function SyncRoute() {
           <OperationNotice error={null} message={mutationAvailability().message} />
           <Show when={fleetData()}>
             {(data) => (
-              <MachineFleetPanel
-                machines={buildSyncFleetMachineViews(data().currentMachine, data().machines)}
-                omittedMachines={data().omittedMachines}
-                skipped={data().skipped}
-              />
+              <>
+                <MachineFleetPanel
+                  machines={buildSyncFleetMachineViews(data().currentMachine, data().machines)}
+                  omittedMachines={data().omittedMachines}
+                  skipped={data().skipped}
+                />
+                <MachineFleetComparison rows={buildSyncFleetComparisonRows(data().currentMachine, data().machines)} />
+              </>
             )}
           </Show>
           <ManualTransferPanel

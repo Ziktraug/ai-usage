@@ -244,7 +244,17 @@ export const SkillsWorkspace = (props: {
     });
   };
 
-  const consolidatePanel = () => <SkillsConsolidate groups={unmanagedGroups()} total={health().consolidateCount} />;
+  const reviewConsolidation = (): void => {
+    props.onPreviewReconcile();
+    navigate({ to: '/skills/matrix' });
+  };
+  const consolidatePanel = () => (
+    <SkillsConsolidate
+      groups={unmanagedGroups()}
+      onReviewEntry={reviewConsolidation}
+      total={health().consolidateCount}
+    />
+  );
 
   return (
     <div class={workspaceGrid}>

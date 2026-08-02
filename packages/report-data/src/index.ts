@@ -16,6 +16,7 @@ import type {
   UsageReportWarning,
 } from '@ai-usage/report-core/report-data';
 import { createUsageSnapshot, type UsageMachine } from '@ai-usage/report-core/snapshot';
+import { systemReportTimeZone } from '@ai-usage/report-core/time-zone';
 import type { Row, SourcedRow } from '@ai-usage/report-core/types';
 import {
   queryLatestProviderQuotaObservations,
@@ -366,6 +367,7 @@ export const createStoredReportCapture = (request: StoredReportPayloadRequest) =
             options: request.options,
             projectGroups: projection.projectGroups,
             rows: projection.rows,
+            timeZone: systemReportTimeZone(),
             warnings: [...datasetResult.warnings, ...projection.warnings],
           });
           if (assembly.rows.length !== projection.sourceAuthorities.length) {

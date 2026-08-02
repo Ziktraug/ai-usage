@@ -1298,10 +1298,10 @@ const initializePrivateSourceRepository = async (
       '-c',
       'user.email=plan052@invalid.example',
       '-c',
-      'user.name=Plan 052 Measurement',
+      'user.name=Plan 066 Measurement',
       'commit',
       '--quiet',
-      '--message=Plan 052 private source snapshot',
+      '--message=Plan 066 private source snapshot',
     ],
     sourceDirectory,
     environment,
@@ -1369,7 +1369,7 @@ const SEED_FIXTURE_SCRIPT = `
   await Effect.runPromise(
     writeMachineConfig({
       id: 'plan052-fixture-machine',
-      label: 'Plan 052 Fixture',
+      label: 'Plan 066 Fixture',
     }).pipe(
       Effect.provideService(
         LocalHistoryStorage,

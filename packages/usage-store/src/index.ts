@@ -3838,6 +3838,7 @@ const validatePublicationInput = (
   rows: readonly SerializedRow[];
   rowsBytes: number;
   sourceAuthorities: readonly SessionDetailSourceAuthority[];
+  timeZone: string;
   supportJson: string;
   supportBytes: number;
 } => {
@@ -3887,6 +3888,7 @@ const validatePublicationInput = (
     rows: capture.rows,
     rowsBytes,
     sourceAuthorities: capture.sourceAuthorities,
+    timeZone: reportSupport.timeZone,
     supportBytes,
     supportJson,
   };
@@ -4041,6 +4043,7 @@ export const publishServedReportRevision = (
                 revision: input.revision,
                 rows: prepared.rows,
                 sourceAuthorities: prepared.sourceAuthorities,
+                timeZone: prepared.timeZone,
               });
               database
                 .query(`

@@ -1129,6 +1129,36 @@ describe('live usage engine publication', () => {
     const groupConfig = await Effect.runPromise(
       readAiUsageConfig.pipe(Effect.provideService(LocalHistoryStorage, storage)),
     );
+    await runtime.executeCommand(
+      {
+        campaignKey: 'project-mutation-machine:codex:project-mutation-session',
+        command: 'set-campaign-label-override',
+        label: 'Release train',
+      },
+      'campaign-label',
+    );
+    await expect(runtime.waitForCommand('campaign-label')).resolves.toMatchObject({
+      command: 'set-campaign-label-override',
+      state: 'succeeded',
+    });
+    const afterCampaignLabel = await Effect.runPromise(
+      queryCurrentServedReportRevision({ dbPath, now: now.getTime() }),
+    );
+    const campaignConfig = await Effect.runPromise(
+      readAiUsageConfig.pipe(Effect.provideService(LocalHistoryStorage, storage)),
+    );
+    await runtime.executeCommand(
+      {
+        campaignKey: 'project-mutation-machine:codex:project-mutation-session',
+        command: 'set-campaign-label-override',
+        label: null,
+      },
+      'campaign-label-reset',
+    );
+    await expect(runtime.waitForCommand('campaign-label-reset')).resolves.toMatchObject({ state: 'succeeded' });
+    const resetCampaignConfig = await Effect.runPromise(
+      readAiUsageConfig.pipe(Effect.provideService(LocalHistoryStorage, storage)),
+    );
     await runtime.dispose();
 
     expect(groupConfig.projectGroups).toEqual([
@@ -1139,6 +1169,14 @@ describe('live usage engine publication', () => {
       },
     ]);
     expect(afterGroups.revision).not.toBe(afterAliases.revision);
+    expect(campaignConfig.campaignLabelOverrides).toEqual([
+      {
+        campaignKey: 'project-mutation-machine:codex:project-mutation-session',
+        label: 'Release train',
+      },
+    ]);
+    expect(afterCampaignLabel.revision).toBe(afterGroups.revision);
+    expect(resetCampaignConfig.campaignLabelOverrides).toBeUndefined();
   });
 
   test('cleans rejected handoffs and preserves stale typing when its cleanup also fails', async () => {

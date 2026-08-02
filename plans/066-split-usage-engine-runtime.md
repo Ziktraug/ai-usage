@@ -1,4 +1,4 @@
-# Plan 052: Split the usage engine from the web and CLI runtimes
+# Plan 066: Split the usage engine from the web and CLI runtimes
 
 > **Status: DONE.** Implemented and verified on 2026-07-31. Every command in
 > this plan passed, the five-minute isolated I/O trace met all eight acceptance

@@ -1,3 +1,4 @@
+import { parseCampaignLabelOverrideMutation } from '@ai-usage/report-core/campaign-label';
 import {
   parseFocusedBreakdownRequest,
   parseFocusedOverviewRequest,
@@ -21,6 +22,27 @@ const runLiveServerFunction = async <Result>(operation: () => Promise<Result> | 
   assertOutsideDemo();
   return await operation();
 };
+
+export const getCampaignLabelOverrides = createServerFn({ method: 'GET' }).handler(
+  async () =>
+    await runLiveServerFunction(async () => {
+      const { getCampaignLabelOverridesForServer } = await import('./campaign-labels.server');
+      return await getCampaignLabelOverridesForServer();
+    }),
+);
+
+export const setCampaignLabelOverride = createServerFn({ method: 'POST' })
+  .validator(parseCampaignLabelOverrideMutation)
+  .handler(
+    async ({ data }) =>
+      await runLiveServerFunction(async () => {
+        const [{ getRequest }, { setCampaignLabelOverrideFromRequestForServer }] = await Promise.all([
+          import('@tanstack/solid-start/server'),
+          import('./campaign-labels.server'),
+        ]);
+        return await setCampaignLabelOverrideFromRequestForServer(getRequest(), data);
+      }),
+  );
 
 export const getReportPerfEnabled = createServerFn({ method: 'GET' }).handler(
   async () =>

@@ -19,13 +19,13 @@ executor: read the plan fully before starting, honor its STOP conditions, and
 update the row only when its done criteria actually pass. These plans authorize
 local implementation and verification only; do not push a branch or open a pull
 request unless the user explicitly asks.
-Plan 052 records the 2026-07-29 decision at `f4f9650` to replace that web-owned
+Plan 066 records the 2026-07-29 decision at `f4f9650` to replace that web-owned
 runtime with a sole-writer Bun usage engine. Web and CLI read revision-keyed
 projections directly from SQLite; a minimal authenticated loopback API carries
 commands, status, and bounded events only. It is an intentional big-bang
 cutover and also owns the measured revision-lease and concurrent dev/build I/O
 regressions.
-Plan 053 records the post-cutover runtime review at `d9cc99c`: polling ownership
+Plan 067 records the post-cutover runtime review at `d9cc99c`: polling ownership
 and the data-plane split are correct, but control failure classification, SSE
 failure visibility, deferred cleanup diagnostics, snapshot waiting, and manual
 merge ownership need a focused hardening pass.
@@ -81,12 +81,61 @@ merge ownership need a focused hardening pass.
 | 048 | Restore Multi-Harness Visibility After the Origin Default | P0 | S | 045 | DONE |
 | 049 | Make Undeclared Origin a Gap, Not a Category | P1 | M | 048 | DONE |
 | 050 | Make the E2E Gate Deterministic | P0 | S | - | DONE |
-| 051 | Allow Local Campaign Label Overrides | P3 | M | 045 | TODO |
-| 052 | Split the Usage Engine From the Web and CLI Runtimes | P0 | XL | 022-024, 043-044 | DONE |
-| 053 | Close the Post-Cutover Usage-Engine Runtime Review Gaps | P1 | L | 052 | TODO |
+| 051 | Allow Local Campaign Label Overrides | P3 | M | 045 | DONE |
+| 052 | Align Overview Records With Campaign Aggregation | P1 | S | - | DONE |
+| 053 | Make Cursor and Project Line Measurements Honest | P1 | M | - | DONE |
+| 054 | Add Shareable Breakdown Sorting | P1 | S | - | DONE |
+| 055 | Make Focused Report Pending State Truthful | P1 | M | - | DONE |
+| 056 | Explain the Full-Range Comparison Boundary | P2 | S | - | DONE |
+| 057 | Make Punchcard Cells Filter the Report | P2 | M | 055 | DONE |
+| 058 | Add Report Sharing and Safe CSV Export | P3 | M | 053, 054 | DONE |
+| 059 | Compare Machine Contributions on Sync | P3 | M | - | DONE |
+| 060 | Add Local Search to Long Breakdown Lists | P3 | S | 054 | DONE |
+| 061 | Close the Four Reopened Presentation Regressions | P1 | S | 046 implementation | DONE |
+| 062 | Clarify Report Structure and Visual Encoding | P2 | L | 053, 054, 061 | DONE |
+| 063 | Normalize Report Signal and Language | P2 | L | 053, 062 | DONE |
+| 064 | Label Data Quality Without Dropping Data | P3 | M | 053, 059 | DONE |
+| 065 | Expose the Harness–Provider Joint Distribution | P3 | M | 054, 062 | DONE |
+| 066 | Split the Usage Engine From the Web and CLI Runtimes | P0 | XL | 022-024, 043-044 | DONE |
+| 067 | Close the Post-Cutover Usage-Engine Runtime Review Gaps | P1 | L | 066 | TODO |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) |
 REJECTED (with one-line rationale).
+
+## Presentation gate
+
+Adopted 2026-07-28, after plan 046 was found marked DONE with four rows still
+visibly broken. In each case a change *had* been made; the mechanism simply did not
+produce the intended reading, and each was verifiable by eye in seconds.
+
+**A presentation defect may not be marked DONE from a written diff alone.** Its
+plan must add a deterministic DOM, computed-geometry, render, or token assertion
+that fails on the symptom and passes on the fix. Existing settled Playwright
+snapshots are updated afterward as review artefacts; they are not a synchronous
+human approval gate.
+
+"Settled" is load-bearing. On a warm dev server the dashboard asserts a complete
+empty state — `0 / N sessions`, "hidden by filters", nine tiles at `$0.00` — at
++830 ms and resolves at +1 232 ms; on a cold module graph that false state persists
+5-10 s. A capture taken before the page settles is evidence of nothing. This is not
+hypothetical: it produced four false findings in the 2026-07-28 review, retained
+as measured retractions in the execution notes below.
+
+Plans 061-064 use deterministic synthetic fixtures in UTC and encode visual
+success as machine-checkable invariants. Test-verifiable trust changes remain
+separate in plans 052-056, so a snapshot cannot substitute for a domain assertion
+and a green unit test cannot close a visual symptom it does not assert.
+
+## AFK execution protocol (plans 051–065)
+
+Launch only `plans/AFK-RUNBOOK.md` for unattended execution. It owns the single
+branch, linear order, green-commit checkpoints, two-attempt correction limit,
+blocked recovery, full final gate, one final push, and one draft PR. Child-plan
+git workflow text is subordinate to the runbook for this program.
+
+The fixed branch is `feat/report-trust-and-interrogation`. Plans execute in order
+051, 052, 053, 054, 055, 056, 061, 057, 059, 060, 062, 063, 064, 065, 058. No
+plan is parallelized and nothing is pushed until every plan and final gate pass.
 
 ## Dependency notes
 
@@ -222,7 +271,7 @@ REJECTED (with one-line rationale).
 - Plan 032 runs last so its architecture notes describe the stabilized code. It
   performs scoped Dashboard/TimeRange/Router/style cleanup, records durable
   decisions, and adds concise legal, contribution, and security documentation.
-- Plan 052 supersedes plans 022 and 043 only on process placement: their
+- Plan 066 supersedes plans 022 and 043 only on process placement: their
   scheduler/source invariants and narrow capability seams remain requirements,
   but the owner moves from Nitro to `apps/usage-engine`. It supersedes plans
   016, 018, and 044 only on filesystem artifact transport: exact-revision
@@ -231,7 +280,7 @@ REJECTED (with one-line rationale).
   API, dual writer, or compatibility scheduler. Its wave 0 output isolation is
   independent and must land in the same cutover because the measured `.output`
   deletion loop is not fixed merely by moving collection.
-- Plan 053 hardens plan 052 without reopening its architecture. It preserves
+- Plan 067 hardens plan 066 without reopening its architecture. It preserves
   the engine as sole writer and sole provider-usage poller, keeps the existing
   five-minute `codex.usage-limits` cadence, and adds no data API. Execute it only
   after the active runtime-path consolidation has landed, because both touch
@@ -424,6 +473,14 @@ sequence overlapping files and rebase/re-read before execution.
   large: rejected until a concrete ordering defect or a second transition
   consumer proves a deeper package seam. Plan 043 narrows process capabilities
   without moving the state machine speculatively.
+- Build a generic mark-to-filter abstraction for Breakdown, Projects, timeline,
+  and Session Shape: rejected on 2026-07-28 because those interactions already
+  exist. `GroupPanel` and `ProjectSummary` already apply exact filters, timeline
+  entries call `onDimensionFilter`, and Session Shape already opens the drawer.
+  Plan 057 covers only the genuinely missing Punchcard predicate.
+- Build the Skills matrix and navigation: rejected as already implemented.
+  `SkillsWorkspace` renders `SkillsMatrix` at `/skills/matrix`, and
+  `SkillsContextPanel` exposes the `Exposure matrix` navigation action.
 - Create a semantic definition registry for every wide-event boundary now:
   rejected while each existing boundary still has one implementation owner.
   Plan 044 removes the current lifecycle duplication; add shared metadata only
@@ -537,3 +594,24 @@ provenance files, and their code anchors were re-checked line by line.
   data, merge-bundle field, `usage-store` state, or conflict semantics. Execute it
   separately after the current multidimensional-reporting PR; it is not a merge
   gate for plans 045, 046, 048, 049, or 050.
+- Plans 052-065 refine the 2026-07-28 review into seam-sized handoffs. Trust work
+  is split into campaign records (052), line-measurement authority and coverage
+  (053), breakdown ordering (054), pending state (055), and the full-range
+  comparison boundary (056). Each has its own type/test boundary and may execute
+  independently unless the status table says otherwise.
+- Direction work is limited to gaps confirmed in current source: Punchcard's
+  missing end-to-end time-cell predicate (057), safe breakdown export (058),
+  machine comparison (059), local breakdown search (060), and the actual
+  harness-provider joint distribution (065). Existing Breakdown/Project/timeline
+  filters, Session Shape drawer selection, and the Skills matrix are explicitly
+  rejected above so they are not rebuilt.
+- Presentation work is ordered as four reopened regressions first (061), then
+  structure and encoding (062), signal and language (063), and conservative data
+  quality labels (064). DOM, geometry, token, and render assertions are the
+  authority; settled snapshots remain review artefacts.
+- The review's measured retractions remain authoritative: the 30-day default does
+  not hide all data, bounded period deltas exist, the hero is above the fold, the
+  Report range card stays per plan 045 decision 8, and `By model` is not folded.
+- Plan 052 implements plan 045 decision 1 (every top-level row is a campaign).
+  Plan 059 completes decision 10's machine-fleet direction. Plan 063 removes the
+  stale Origin tint because plans 048/049 made the default neutral.

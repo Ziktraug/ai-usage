@@ -14,6 +14,7 @@ import {
   updateAiUsageConfig,
   writeMachineConfig,
 } from '@ai-usage/local-machine/machine-config';
+import { applyCampaignLabelOverrideMutation } from '@ai-usage/report-core/campaign-label';
 import { MAX_PORTABLE_USAGE_BYTES } from '@ai-usage/report-core/portable-usage';
 import {
   type ProjectSourceSelector,
@@ -879,6 +880,24 @@ export const createLiveUsageEngineMutationPort = (options: LiveUsageEngineMutati
         throwIfAborted(signal);
         await runWithStorage(updateAiUsageConfig((config) => ({ ...config, projectGroups })));
       }, signal),
+    setCampaignLabelOverride: async (command, signal) =>
+      await runWithWriter(async () => {
+        throwIfAborted(signal);
+        await runWithStorage(
+          updateAiUsageConfig((config) => {
+            const mutation = { campaignKey: command.campaignKey, label: command.label };
+            const campaignLabelOverrides = applyCampaignLabelOverrideMutation(
+              config.campaignLabelOverrides ?? [],
+              mutation,
+            );
+            if (campaignLabelOverrides.length === 0) {
+              const { campaignLabelOverrides: _campaignLabelOverrides, ...rest } = config;
+              return rest;
+            }
+            return { ...config, campaignLabelOverrides };
+          }),
+        );
+      }, signal),
     setMachineLabel: async (label, signal) =>
       await runWithWriter(async () => {
         throwIfAborted(signal);
@@ -1084,6 +1103,8 @@ export const createLiveUsageEngineRuntime = (options: LiveUsageEngineRuntimeOpti
     replaceProjectGroups: async (command, signal) => await requireMutation().replaceProjectGroups(command, signal),
     replaceProjectGroupsByReference: async (command, signal) =>
       await requireMutation().replaceProjectGroupsByReference(command, signal),
+    setCampaignLabelOverride: async (command, signal) =>
+      await requireMutation().setCampaignLabelOverride(command, signal),
     setMachineLabel: async (label, signal) => await requireMutation().setMachineLabel(label, signal),
   };
 

@@ -5,6 +5,7 @@ import { hostname, tmpdir } from 'node:os';
 import path from 'node:path';
 import { formatLocalHistoryError } from '@ai-usage/local-machine/errors';
 import { createLocalHistoryStorage, LocalHistoryStorage } from '@ai-usage/local-machine/local-history';
+import './machine-config.campaign-label.test';
 import {
   aiUsageConfigPath,
   machineConfigPath,

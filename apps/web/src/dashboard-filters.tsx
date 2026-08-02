@@ -8,13 +8,15 @@ export const fieldFilterLabels: Record<FieldFilterKey, string> = {
   project: 'Project',
 };
 
-export const FilterPill = (props: { label: string; value: string; onClear: () => void }) => (
+export const FilterPill = (props: { label: string; onClear: () => void; separator?: string; value: string }) => (
   <button
     class={activeFilterButton}
     onClick={() => props.onClear()}
     title={`Clear ${props.label} filter`}
     type="button"
   >
-    {props.label}: {props.value} ×
+    {props.label}
+    {props.separator ?? ': '}
+    {props.value} ×
   </button>
 );

@@ -205,6 +205,7 @@ export const demoReportPayload: UsageReportPayload = {
   },
   rows: demoRows,
   tableRows: demoRows,
+  timeZone: 'UTC',
   omittedRows: 0,
   analytics: calculateAnalytics(demoRowsForAnalytics(), new Date('2026-06-11T12:00:00.000Z').getTime()),
   datasets: {

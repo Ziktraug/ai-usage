@@ -14,6 +14,8 @@ import {
   buildTimelineData,
   buildTopSessions,
   nextHeatmapFocusIndex,
+  punchcardSessionOpacity,
+  SESSION_SHAPE_POINT_RADIUS,
   type TimelineDimension,
 } from './overview-model';
 import { buildReportSummary, enrichReportRow } from './shared';
@@ -567,18 +569,26 @@ describe('overview model', () => {
   });
 
   test('builds punchcard density', () => {
+    const localIso = (day: number, hour: number, minute: number): string =>
+      new Date(2026, 6, day, hour, minute).toISOString();
     const rows = [
       row({
         sessionLabel: 'A',
-        activeDate: '2026-06-10T12:00:00.000Z',
-        date: '2026-06-10T12:00:00.000Z',
+        activeDate: localIso(27, 14, 0),
+        date: localIso(27, 14, 0),
         costApprox: 2,
       }),
       row({
         sessionLabel: 'B',
-        activeDate: '2026-06-10T12:30:00.000Z',
-        date: '2026-06-10T12:30:00.000Z',
+        activeDate: localIso(27, 14, 30),
+        date: localIso(27, 14, 30),
         costApprox: 3,
+      }),
+      row({
+        sessionLabel: 'C',
+        activeDate: localIso(26, 14, 0),
+        date: localIso(26, 14, 0),
+        costApprox: 1,
       }),
     ];
 
@@ -586,8 +596,18 @@ describe('overview model', () => {
     const cells = data?.cells.flat() ?? [];
 
     expect(data?.maxSessions).toBe(2);
-    expect(cells.reduce((sum, cell) => sum + cell.sessions, 0)).toBe(2);
-    expect(cells.reduce((sum, cell) => sum + cell.cost, 0)).toBe(5);
+    expect(cells.reduce((sum, cell) => sum + cell.sessions, 0)).toBe(3);
+    expect(cells.reduce((sum, cell) => sum + cell.cost, 0)).toBe(6);
+    expect(data?.cells[0]?.[14]?.sessions).toBe(2);
+    expect(data?.cells[6]?.[14]?.sessions).toBe(1);
+  });
+
+  test('uses one intensity channel for Punchcard sessions and a fixed Session Shape point size', () => {
+    expect(punchcardSessionOpacity(0, 4)).toBe(0);
+    expect(punchcardSessionOpacity(1, 4)).toBeGreaterThan(0);
+    expect(punchcardSessionOpacity(1, 4)).toBeLessThan(punchcardSessionOpacity(4, 4));
+    expect(punchcardSessionOpacity(4, 4)).toBe(1);
+    expect(SESSION_SHAPE_POINT_RADIUS).toBe(4);
   });
 
   test('builds records and top sessions', () => {
@@ -618,8 +638,8 @@ describe('overview model', () => {
     const records = buildOverviewRecords(rows, rows);
     const top = buildTopSessions(rows, 2);
 
-    expect(records?.topCost?.sessionLabel).toBe('High');
-    expect(records?.longest?.sessionLabel).toBe('Long');
+    expect(records?.topCost?.label).toBe('High');
+    expect(records?.longest?.label).toBe('Long');
     expect(records?.streak).toBe(3);
     expect(top.map((item) => item.label)).toEqual(['High', 'Long']);
   });
@@ -657,13 +677,24 @@ describe('overview model', () => {
     const soloB = row({ sessionLabel: 'Solo B', costApprox: 3, durationMs: 240_000 });
     const soloC = row({ sessionLabel: 'Solo C', costApprox: 1, durationMs: 360_000 });
     const rows = [campaignRoot, campaignChild, soloA, soloB, soloC];
-    const campaigns = buildCampaignViews(rows, rows);
+    const campaigns = buildCampaignViews(rows, rows, (campaignKey, derivedLabel) =>
+      campaignKey === 'machine-a:codex:root-1' ? 'Release train' : derivedLabel,
+    );
 
+    const records = buildOverviewRecords(rows, rows, campaigns);
     const items = buildOverviewSessionItems(rows, campaigns);
     const top = buildTopSessions(rows, 2, campaigns);
     const shape = buildSessionShapeData(rows, campaigns);
 
-    expect(items.map((item) => item.label).sort()).toEqual(['Campaign root', 'Solo A', 'Solo B', 'Solo C']);
+    expect(records?.topCost).toMatchObject({
+      costApprox: 13,
+      kind: 'campaign',
+      label: 'Release train',
+    });
+    expect(records?.topCost?.row).toBe(campaignRoot);
+    expect(records?.longest?.row).toBe(campaignRoot);
+    expect(campaigns[0]?.root.sessionLabel).toBe('Campaign root');
+    expect(items.map((item) => item.label).sort()).toEqual(['Release train', 'Solo A', 'Solo B', 'Solo C']);
     expect(top.map((item) => item.kind)).toEqual(['campaign', 'campaign']);
     expect(top.map((item) => item.costApprox)).toEqual([13, 12]);
     expect(top.map((item) => item.costKnown)).toEqual([false, true]);

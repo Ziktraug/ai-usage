@@ -146,6 +146,7 @@ const support = (
     skippedRows: 0,
   },
   omittedRows: 0,
+  timeZone: 'UTC',
 });
 
 type PublicationOverrides = Partial<Omit<PublishServedReportRevisionInput, 'assemble'>> & {

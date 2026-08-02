@@ -21,6 +21,7 @@ import {
   sessionSortFields,
   sessionTextSortFields,
 } from '@ai-usage/report-core/session-query';
+import { localTimeRowFields } from '@ai-usage/report-core/test-fixtures/local-time-row';
 import { Effect } from 'effect';
 import { queryServedRevisionData } from './reader';
 import { createServedRevisionQueryDatabase } from './served-revision';
@@ -164,6 +165,7 @@ const support = (sessionCount: number): FocusedReportSupport => ({
   filters: { limit: null, minTokens: 0, project: null, since: null, sort: 'date' },
   generatedAt: '2026-07-13T00:00:00.000Z',
   omittedRows: 0,
+  timeZone: 'UTC',
 });
 
 type TestQueryDatabase = SessionQuerySqliteDatabase & { readonly close: () => void };
@@ -386,7 +388,42 @@ describe('durable session query SQLite projections', () => {
     }
   });
 
-  test('filters sessions by machine ID when display labels collide', async () => {
+  test('filters local punchcard cells with pure and SQLite row identity parity', async () => {
+    const timedRow = (sourceSessionId: string, day: number, hour: number, minute: number): SerializedRow => ({
+      ...row(sourceSessionId, 10),
+      ...localTimeRowFields(day, hour, minute),
+    });
+    const fixtureRows = [
+      timedRow('monday-13:59', 27, 13, 59),
+      timedRow('monday-14:00', 27, 14, 0),
+      timedRow('monday-14:59', 27, 14, 59),
+      timedRow('monday-15:00', 27, 15, 0),
+      timedRow('sunday-14:00', 26, 14, 0),
+      { ...row('missing-time', 10), activeDate: null, date: null, endDate: null },
+    ];
+    const { database } = await openRowsDatabase(fixtureRows);
+    try {
+      for (const weekday of [0, 6] as const) {
+        const request = queryRequest({
+          filters: { ...queryRequest().filters, localTimeCell: { hour: 14, weekday } },
+          pageSize: 200,
+        });
+        const expected = projectSessionPage(fixtureRows, request);
+        const actual = executeMaterializedSessionQuery(database, 'sessions', request);
+        expect(actual).toEqual(expected);
+        expect(actual.items.map(({ row: itemRow }) => itemRow.rowId)).toEqual(
+          expected.items.map(({ row: itemRow }) => itemRow.rowId),
+        );
+        expect(actual.items.map(({ row: itemRow }) => itemRow.sessionLabel).toSorted()).toEqual(
+          weekday === 0 ? ['monday-14:00', 'monday-14:59'] : ['sunday-14:00'],
+        );
+      }
+    } finally {
+      database.close();
+    }
+  });
+
+  test('filters materialized sessions by machine ID when display labels collide', async () => {
     const first = row('machine-a-row', 10);
     const second = row('machine-b-row', 20);
     if (!(first.source && second.source)) {

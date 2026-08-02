@@ -1,3 +1,4 @@
+import type { AnalyticsGroup } from './analytics';
 import type { SerializedRow } from './report-data';
 
 const CSV_ESCAPE_REQUIRED = /[",\r\n]/;
@@ -68,3 +69,166 @@ export const serializedRowsToCSV = (rows: SerializedRow[]): string => {
   );
   return [head.join(','), ...body].join('\n');
 };
+
+export type ReportCsvDimension = 'harnesses' | 'models' | 'projects' | 'providers';
+
+export interface AnalyticsExportRow {
+  group: AnalyticsGroup;
+  label: string;
+}
+
+export interface ProjectBreakdownExportGroup {
+  cache: number;
+  cost: number;
+  fresh: number;
+  label: string;
+  lineMeasurement: {
+    measuredSessions: number;
+    totalSessions: number;
+  };
+  linesAdded: number;
+  linesDeleted: number;
+  priced: number;
+  sessions: number;
+  tools: number;
+  turns: number;
+}
+
+type ApiValueMeasurement = 'complete' | 'partial' | 'unavailable';
+type ReportCsvValue = number | string;
+
+const ANALYTICS_BREAKDOWN_COLUMNS = [
+  'label',
+  'sessions',
+  'fresh_tokens',
+  'cache_read_tokens',
+  'cache_hit_percent',
+  'api_value_known',
+  'api_value_display',
+  'api_value_measurement',
+  'fully_priced_sessions',
+  'total_sessions',
+  'unpriced_fresh_tokens',
+  'turns',
+  'tools',
+] as const;
+
+const PROJECT_BREAKDOWN_COLUMNS = [
+  'label',
+  'sessions',
+  'fresh_tokens',
+  'cache_read_tokens',
+  'api_value_known',
+  'api_value_display',
+  'api_value_measurement',
+  'fully_priced_sessions',
+  'total_sessions',
+  'lines_added',
+  'lines_deleted',
+  'line_measured_sessions',
+  'line_total_sessions',
+  'turns',
+  'tools',
+] as const;
+
+const ASCII_SPACE_CODE_POINT = 32;
+const SPREADSHEET_FORMULA_MARKERS = new Set(['=', '+', '-', '@']);
+
+const startsSpreadsheetFormula = (value: string): boolean => {
+  for (const character of value) {
+    const codePoint = character.codePointAt(0);
+    const isLeadingControlOrWhitespace =
+      (codePoint !== undefined && codePoint <= ASCII_SPACE_CODE_POINT) || character.trim() === '';
+    if (isLeadingControlOrWhitespace) {
+      continue;
+    }
+    return SPREADSHEET_FORMULA_MARKERS.has(character);
+  }
+  return false;
+};
+
+const apiValueDisplay = (knownValue: number, measurement: ApiValueMeasurement): string => {
+  if (measurement === 'unavailable' || (measurement === 'partial' && knownValue === 0)) {
+    return '—';
+  }
+  const formattedValue = `$${knownValue.toFixed(2)}`;
+  return measurement === 'partial' ? `≥ ${formattedValue}` : formattedValue;
+};
+
+const analyticsMeasurement = (group: AnalyticsGroup): ApiValueMeasurement => {
+  if (group.usageUnavailable === group.sessions) {
+    return 'unavailable';
+  }
+  return group.unpriced > 0 ? 'partial' : 'complete';
+};
+
+const projectMeasurement = (group: ProjectBreakdownExportGroup): ApiValueMeasurement => {
+  if (group.priced === 0) {
+    return 'unavailable';
+  }
+  return group.priced < group.sessions ? 'partial' : 'complete';
+};
+
+const serializeReportCsvValue = (value: ReportCsvValue): string => {
+  if (typeof value === 'number') {
+    return String(value);
+  }
+  const neutralizedValue = startsSpreadsheetFormula(value) ? `'${value}` : value;
+  return csvEscape(neutralizedValue);
+};
+
+const serializeReportCsv = (header: readonly string[], rows: readonly (readonly ReportCsvValue[])[]): string => {
+  const serializedRows = [header, ...rows].map((row) => row.map(serializeReportCsvValue).join(','));
+  return `${serializedRows.join('\r\n')}\r\n`;
+};
+
+export const analyticsBreakdownCsv = (rows: readonly AnalyticsExportRow[]): string =>
+  serializeReportCsv(
+    ANALYTICS_BREAKDOWN_COLUMNS,
+    rows.map(({ group, label }) => {
+      const measurement = analyticsMeasurement(group);
+      return [
+        label,
+        group.sessions,
+        group.fresh,
+        group.cache,
+        group.cacheHitPct,
+        group.costSum,
+        apiValueDisplay(group.costSum, measurement),
+        measurement,
+        group.priced,
+        group.sessions,
+        group.unpricedFreshTokens,
+        group.turns,
+        group.tools,
+      ];
+    }),
+  );
+
+export const projectBreakdownCsv = (groups: readonly ProjectBreakdownExportGroup[]): string =>
+  serializeReportCsv(
+    PROJECT_BREAKDOWN_COLUMNS,
+    groups.map((group) => {
+      const measurement = projectMeasurement(group);
+      return [
+        group.label,
+        group.sessions,
+        group.fresh,
+        group.cache,
+        group.cost,
+        apiValueDisplay(group.cost, measurement),
+        measurement,
+        group.priced,
+        group.sessions,
+        group.linesAdded,
+        group.linesDeleted,
+        group.lineMeasurement.measuredSessions,
+        group.lineMeasurement.totalSessions,
+        group.turns,
+        group.tools,
+      ];
+    }),
+  );
+
+export const reportCsvFilename = (dimension: ReportCsvDimension, generatedAt: string): string =>
+  `ai-usage-${dimension}-${new Date(generatedAt).toISOString().slice(0, 10)}.csv`;

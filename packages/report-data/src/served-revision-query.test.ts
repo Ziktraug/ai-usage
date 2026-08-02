@@ -104,6 +104,7 @@ const support = (rowCount: number): FocusedReportSupport => ({
   filters: { limit: null, minTokens: 0, project: null, since: null, sort: 'date' },
   generatedAt: '2026-07-29T12:00:00.000Z',
   omittedRows: 0,
+  timeZone: 'UTC',
 });
 
 const sessionRequest = (revision: string, overrides: Partial<SessionQueryRequest> = {}): SessionQueryRequest => ({
@@ -194,6 +195,18 @@ describe('durable served revision query dispatcher', () => {
     const rowId = sessionRowIdentity(rootRow);
     const requests: ReadonlyArray<{ kind: ServedRevisionQueryKind; request: unknown }> = [
       { kind: 'sessions', request: baseRequest },
+      {
+        kind: 'sessions',
+        request: sessionRequest('revision-a', {
+          range: { from: '2026-07-01T00:00:00.000Z', to: '2026-07-31T23:59:59.999Z' },
+        }),
+      },
+      {
+        kind: 'sessions',
+        request: sessionRequest('revision-a', {
+          filters: { ...baseRequest.filters, localTimeCell: { hour: 10, weekday: 3 } },
+        }),
+      },
       {
         kind: 'sessions',
         request: {
@@ -387,7 +400,6 @@ describe('durable served revision query dispatcher', () => {
     }
     expect(traces.length).toBeGreaterThan(7);
     expect([...usedIndexes].sort()).toEqual([
-      'idx_served_report_rows_active_time',
       'idx_served_report_rows_campaign',
       'idx_served_report_rows_facets',
       'idx_served_report_rows_provider_scope',

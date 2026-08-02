@@ -64,12 +64,14 @@ const betaSkill: SourceSkill = {
       message: 'SKILL.md is approaching the recommended token limit.',
       severity: 'warning',
       skillName: 'beta-skill',
+      tokenMeasurement: { observed: 1240, threshold: 1000, unit: 'tokens' },
     },
     {
       code: 'SkillReferenceTokenWarning',
       message: 'Reference files are approaching the recommended token limit.',
       severity: 'warning',
       skillName: 'beta-skill',
+      tokenMeasurement: { observed: 2400, threshold: 2000, unit: 'tokens' },
     },
   ],
   validationStatus: 'warning',
@@ -107,10 +109,10 @@ const snapshot: SkillManagementSnapshot = {
     skillCount: 2,
     targetCount: 2,
     unhealthyProjectionCount: 1,
-    unmanagedEntryCount: 0,
+    unmanagedEntryCount: 1,
   },
   targets,
-  unmanagedEntries: [],
+  unmanagedEntries: [projection('legacy-local-copy', 'codex', 'unmanaged-copy')],
 };
 
 const snapshotCopy = (overrides: Partial<SkillManagementSnapshot> = {}): SkillManagementSnapshot => ({

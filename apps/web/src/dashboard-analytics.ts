@@ -1,15 +1,21 @@
-import { type AnalyticsRowInput, groupAnalytics, groupModelAnalytics } from '@ai-usage/report-core/analytics';
+import {
+  type AnalyticsRowInput,
+  accumulateLineMeasurement,
+  createLineMeasurementAccumulator,
+  groupAnalytics,
+  groupModelAnalytics,
+  harnessProviderAnalyticsKey,
+  type LineMeasurementAccumulator,
+} from '@ai-usage/report-core/analytics';
 import { usageRowApiPriceMeasurement } from '@ai-usage/report-core/usage-row';
 import type { DashboardRow } from './shared';
 
-export interface ProjectGroup {
+export interface ProjectGroup extends LineMeasurementAccumulator {
   cache: number;
   cost: number;
   fresh: number;
   key: string;
   label: string;
-  linesAdded: number;
-  linesDeleted: number;
   priced: number;
   sessions: number;
   tools: number;
@@ -34,6 +40,7 @@ const dashboardRowToAnalyticsInput = (row: DashboardRow): AnalyticsRowInput => (
 });
 
 const createProjectGroup = (key: string, label: string): ProjectGroup => ({
+  ...createLineMeasurementAccumulator(),
   key,
   label,
   sessions: 0,
@@ -43,8 +50,6 @@ const createProjectGroup = (key: string, label: string): ProjectGroup => ({
   priced: 0,
   turns: 0,
   tools: 0,
-  linesAdded: 0,
-  linesDeleted: 0,
 });
 
 const addProjectRow = (groups: Map<string, ProjectGroup>, row: DashboardRow) => {
@@ -59,8 +64,7 @@ const addProjectRow = (groups: Map<string, ProjectGroup>, row: DashboardRow) => 
   group.cache += row.tokCr;
   group.turns += row.turns;
   group.tools += row.tools;
-  group.linesAdded += row.linesAdded ?? 0;
-  group.linesDeleted += row.linesDeleted ?? 0;
+  accumulateLineMeasurement(group, row.linesAdded, row.linesDeleted);
   if (row.costKnown) {
     group.cost += row.costApprox;
     group.priced++;
@@ -73,6 +77,18 @@ export const buildAnalyticsGroups = (
   keyForRow: (row: DashboardRow) => string,
   totalCost: number,
 ) => groupAnalytics(rows.filter(acceptsRow), dashboardRowToAnalyticsInput, keyForRow, totalCost);
+
+export const buildHarnessProviderAnalyticsGroups = (
+  rows: DashboardRow[],
+  acceptsRow: (row: DashboardRow) => boolean,
+  totalCost: number,
+) =>
+  groupAnalytics(
+    rows.filter(acceptsRow),
+    (row) => ({ ...dashboardRowToAnalyticsInput(row), provider: row.providerDisplay }),
+    (row) => harnessProviderAnalyticsKey(row.harness, row.providerDisplay),
+    totalCost,
+  );
 
 export const buildModelAnalyticsGroups = (rows: DashboardRow[], acceptsRow: (row: DashboardRow) => boolean) =>
   groupModelAnalytics(rows.filter(acceptsRow));

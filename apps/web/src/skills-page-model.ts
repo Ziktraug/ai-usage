@@ -11,6 +11,9 @@ import type {
 } from '@ai-usage/skills';
 import { skillTokenDiagnosticCodes } from '@ai-usage/skills/shared';
 
+export const skillDiagnosticLabel = (code: string): string =>
+  code === 'SkillMarkdownTokenWarning' ? 'Skill document token warning' : code;
+
 export type SkillInvocation = 'auto' | 'manual';
 export type MatrixCellState = ProjectionState | 'not-applicable';
 

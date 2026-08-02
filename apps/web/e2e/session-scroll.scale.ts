@@ -356,6 +356,10 @@ const inspectAllSessions = async (
   await expect(page.getByText('5,000 / 5,000 sessions', { exact: true })).toBeVisible();
   await expect(report).toHaveAttribute('data-report-revision', frozenReportRevision);
   await expect(report).toHaveAttribute('data-request-fingerprint', SESSION_QUERY_FINGERPRINT_PATTERN);
+  const reportElement = await report.elementHandle();
+  if (!reportElement) {
+    throw new Error('The production Session report must expose its mounted root element');
+  }
   const reportRevision = await report.getAttribute('data-report-revision');
   const requestFingerprint = await report.getAttribute('data-request-fingerprint');
   if (!(reportRevision && requestFingerprint)) {
@@ -519,6 +523,12 @@ const inspectAllSessions = async (
     'data-session-row-id',
     lastRowId,
   );
+  expect(
+    await reportElement.evaluate(
+      (element) => element.isConnected && element === document.querySelector('main[data-hydrated="true"]'),
+    ),
+    'Loading additional Session pages must preserve the mounted Report root',
+  ).toBe(true);
   await expect(report).toHaveAttribute('data-report-revision', reportRevision);
   await expect(report).toHaveAttribute('data-request-fingerprint', requestFingerprint);
   await expect(page.getByText('Loading more sessions…', { exact: true })).toHaveCount(0);

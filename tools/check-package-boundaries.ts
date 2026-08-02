@@ -133,6 +133,7 @@ const engineControlTesting = `${engineControlPackage}/testing`;
 const engineRuntimePackage = '@ai-usage/usage-engine-runtime';
 const engineAppPackage = '@ai-usage/usage-engine';
 const localMachinePackage = '@ai-usage/local-machine';
+const localMachineCampaignLabelConfig = `${localMachinePackage}/campaign-label-config`;
 const localMachineSessionDetail = `${localMachinePackage}/session-detail`;
 const localMachineSkillsConfig = `${localMachinePackage}/skills-config`;
 const localMachineTestingHarnessHome = `${localMachinePackage}/testing/harness-home`;
@@ -226,10 +227,12 @@ const targetImportReason = (
   ) {
     const isAllowedWebOperation =
       packageName === '@ai-usage/web' &&
-      (specifier === localMachineSessionDetail || specifier === localMachineSkillsConfig);
+      (specifier === localMachineCampaignLabelConfig ||
+        specifier === localMachineSessionDetail ||
+        specifier === localMachineSkillsConfig);
     const isAllowedTestFixture = specifier === localMachineTestingHarnessHome && isTestOnlySource(relativeFile);
     if (!(isAllowedWebOperation || isAllowedTestFixture)) {
-      return 'Web may import only local-machine session-detail/skills-config; CLI has no local-machine data path.';
+      return 'Web may import only local-machine campaign-label-config/session-detail/skills-config; CLI has no local-machine data path.';
     }
   }
   if (

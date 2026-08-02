@@ -96,7 +96,7 @@ aggregate ticks divided by 100.
 
 ## Locked historical planning evidence
 
-These values motivated plan 052. They came from maintainer-scale observations
+These values motivated plan 066. They came from maintainer-scale observations
 before the isolated harness existed and were not regenerated from maintainer
 state.
 

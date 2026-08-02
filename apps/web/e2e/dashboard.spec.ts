@@ -1,3 +1,6 @@
+import { readFile } from 'node:fs/promises';
+import type { Page } from '@playwright/test';
+import { FOCUSED_REPORT_E2E_CONTROL_KEY, FOCUSED_REPORT_E2E_ENABLED_KEY } from '../src/focused-report-e2e-fixture';
 import { expect, reportViewsFor, test } from './browser-test';
 
 const ADVANCED_COLUMNS_PATTERN = /Advanced columns/;
@@ -5,11 +8,12 @@ const CALENDAR_NAME_PATTERN = /Daily activity calendar/;
 const COLUMN_URL_PATTERN = /cols=/;
 const DATE_HEADER_PATTERN = /Date/;
 const ESTIMATED_API_VALUE_HELP_PATTERN =
-  /Estimated cost at standard API prices for \d+ of \d+ fully priced sessions, including usage covered by subscriptions/;
+  /Estimated API-equivalent value at standard prices for \d+ of \d+ fully priced sessions, including usage covered by subscriptions/;
 const HYDRATION_TIMEOUT_MS = 15_000;
 const INSPECT_SESSION_PATTERN = /Inspect session/;
 const LEGACY_PROJECT_TAB_URL_PATTERN = /tab=projects/;
 const PROVIDER_DETAILS_PATTERN = /^Provider details \(/;
+const PUNCHCARD_FILTER_PATTERN = /^Filter report to /;
 const PROVIDER_CATEGORY_COUNT_PATTERN = /: (\d+) providers?$/;
 const PROVIDER_CATEGORY_TOTAL_PATTERN = /\((\d+) providers?\)$/;
 const PROVIDER_CATEGORIES_PATTERN = /^Provider categories/;
@@ -21,6 +25,96 @@ const GAP_COUNT_PATTERN = /1 collection gap/;
 const SORT_URL_PATTERN = /sort=/;
 const TOP_SESSION_PATTERN = /Top session/;
 const UUID_PATTERN = /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/i;
+const HIDDEN_FILTERS_PATTERN = /hidden by filters/;
+const NO_SESSIONS_PATTERN = /No sessions/;
+const SESSION_COUNTER_PATTERN = /^\d+ \/ \d+ sessions$/;
+type FocusedResponseControlAction = 'arm' | 'release' | 'waitUntilBlocked';
+
+const controlFocusedResponse = async (page: Page, action: FocusedResponseControlAction): Promise<void> => {
+  await page.evaluate(
+    async ({ action: requestedAction, controlKey }) => {
+      const control = Reflect.get(globalThis, controlKey);
+      if (!(control && typeof control === 'object')) {
+        throw new Error('Focused E2E response control is unavailable');
+      }
+      const command = Reflect.get(control, requestedAction);
+      if (typeof command !== 'function') {
+        throw new Error(`Focused E2E response control cannot ${requestedAction}`);
+      }
+      await Promise.resolve(Reflect.apply(command, control, []));
+    },
+    { action, controlKey: FOCUSED_REPORT_E2E_CONTROL_KEY },
+  );
+};
+
+const PENDING_CLAIM_AUDIT_KEY = '__aiUsageE2EPendingClaimViolations';
+const PENDING_CLAIM_OBSERVER_KEY = '__aiUsageE2EPendingClaimObserver';
+
+const startPendingClaimAudit = async (page: Page, query: string): Promise<void> => {
+  await page.evaluate(
+    ({ auditKey, observerKey, requestedQuery }) => {
+      const violations = new Set<string>();
+      Reflect.set(globalThis, auditKey, violations);
+      const record = (): void => {
+        if (new URLSearchParams(window.location.search).get('q') !== requestedQuery) {
+          return;
+        }
+        const main = document.querySelector('main');
+        if (!main) {
+          return;
+        }
+        const text = main.textContent ?? '';
+        const hasSessionCounter = [...main.querySelectorAll('span')].some((element) => {
+          const value = element.textContent?.trim() ?? '';
+          return value.includes(' / ') && value.endsWith(' sessions');
+        });
+        if (hasSessionCounter) {
+          violations.add('session counter');
+        }
+        if (text.includes('hidden by filters')) {
+          violations.add('hidden by filters');
+        }
+        if (text.includes('No sessions')) {
+          violations.add('No sessions');
+        }
+        if (text.includes('$0.00')) {
+          violations.add('$0.00');
+        }
+        if (main.querySelector('[data-metric-grid]')) {
+          violations.add('metric tiles');
+        }
+      };
+      const observer = new MutationObserver(record);
+      observer.observe(document.body, {
+        characterData: true,
+        childList: true,
+        subtree: true,
+      });
+      Reflect.set(globalThis, observerKey, observer);
+      record();
+    },
+    { auditKey: PENDING_CLAIM_AUDIT_KEY, observerKey: PENDING_CLAIM_OBSERVER_KEY, requestedQuery: query },
+  );
+};
+
+const finishPendingClaimAudit = async (page: Page): Promise<string[]> =>
+  await page.evaluate(
+    ({ auditKey, observerKey }) => {
+      const observer = Reflect.get(globalThis, observerKey);
+      if (observer instanceof MutationObserver) {
+        observer.disconnect();
+      }
+      const violations = Reflect.get(globalThis, auditKey);
+      if (!(violations instanceof Set)) {
+        return ['Pending claim audit unavailable'];
+      }
+      return [...violations].filter((value): value is string => typeof value === 'string');
+    },
+    {
+      auditKey: PENDING_CLAIM_AUDIT_KEY,
+      observerKey: PENDING_CLAIM_OBSERVER_KEY,
+    },
+  );
 
 test('loads a deterministic report overview', async ({ page }) => {
   const response = await page.goto('/');
@@ -36,6 +130,51 @@ test('loads a deterministic report overview', async ({ page }) => {
     'aria-current',
     'page',
   );
+});
+
+test('locks definitive output while a focused filter response is pending', async ({ page }) => {
+  await page.goto('/skills');
+  await page.evaluate((enabledKey) => {
+    Reflect.set(globalThis, enabledKey, true);
+  }, FOCUSED_REPORT_E2E_ENABLED_KEY);
+  await reportViewsFor(page).getByRole('link', { exact: true, name: 'Overview' }).click();
+
+  await expect(page.locator('main[data-hydrated="true"]')).toBeVisible({
+    timeout: HYDRATION_TIMEOUT_MS,
+  });
+  await expect(page.getByText('5 / 6 sessions', { exact: true })).toBeVisible();
+  const pendingSurface = page.locator('[data-report-pending]');
+  await expect(pendingSurface).toHaveCount(0);
+
+  const query = 'pending-filter';
+  const search = page.getByRole('textbox', {
+    name: 'Filter sessions by title, project, model, provider, or harness',
+  });
+  await startPendingClaimAudit(page, query);
+  await controlFocusedResponse(page, 'arm');
+  let violations: string[] = [];
+  try {
+    await search.fill(query);
+    await controlFocusedResponse(page, 'waitUntilBlocked');
+
+    await expect(pendingSurface).toHaveCount(1);
+    await expect(pendingSurface).toHaveText('Loading report…');
+    await expect(page.getByRole('button', { name: `Query: ${query} ×` })).toBeVisible();
+    await expect(page.getByText(SESSION_COUNTER_PATTERN)).toHaveCount(0);
+    await expect(page.getByText(HIDDEN_FILTERS_PATTERN)).toHaveCount(0);
+    await expect(page.getByText(NO_SESSIONS_PATTERN)).toHaveCount(0);
+    await expect(page.getByText('$0.00', { exact: true })).toHaveCount(0);
+    await expect(page.locator('[data-metric-grid]')).toHaveCount(0);
+    await expect(page.getByRole('region', { name: 'Date range' })).toHaveCount(0);
+  } finally {
+    violations = await finishPendingClaimAudit(page);
+    await controlFocusedResponse(page, 'release');
+  }
+
+  expect(violations).toEqual([]);
+  await expect(pendingSurface).toHaveCount(0);
+  await expect(page.getByRole('region', { name: 'Date range' })).toBeVisible();
+  await expect(page.getByText('0 / 6 sessions', { exact: true })).toBeVisible();
 });
 
 test('retries a failed report through the Router loading lifecycle', async ({ page }) => {
@@ -92,8 +231,47 @@ test('uses one primary navigation while preserving Breakdown deep links and sub-
   await expect(page.getByText('By model', { exact: true })).toBeVisible();
 
   await breakdownTabs.getByRole('tab', { name: 'Projects' }).click();
-  await expect(page.getByRole('heading', { level: 2, name: 'Project groups' })).toBeVisible();
+  await expect(page.getByRole('columnheader', { name: 'Project' })).toBeVisible();
+  await expect(page.getByText('Manage project groups', { exact: true })).toBeVisible();
   await expect(page).toHaveURL(LEGACY_PROJECT_TAB_URL_PATTERN);
+});
+
+test('copies the exact breakdown URL and exports only visible sorted model rows', async ({ page }) => {
+  await page.goto('/?tab=models&breakdownSort=sessions');
+  await expect(page.getByText('By model', { exact: true })).toBeVisible();
+
+  const localSearch = page.getByRole('searchbox', { name: 'Search this breakdown' });
+  await localSearch.fill('cod');
+  const visibleRows = page.locator('[data-price-state]');
+  await expect(visibleRows).toHaveCount(2);
+  await expect(visibleRows.getByRole('button')).toHaveText(['qwen3-coder', 'gpt-5.3-codex']);
+
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write'], {
+    origin: new URL(page.url()).origin,
+  });
+  const expectedUrl = page.url();
+  await page.getByRole('button', { name: 'Copy link' }).click();
+  await expect(page.getByText('Link copied', { exact: true })).toBeVisible();
+  expect(await page.evaluate(async () => await navigator.clipboard.readText())).toBe(expectedUrl);
+
+  const [download] = await Promise.all([
+    page.waitForEvent('download'),
+    page.getByRole('button', { name: 'Export CSV' }).click(),
+  ]);
+  expect(download.suggestedFilename()).toBe('ai-usage-models-2026-06-11.csv');
+  const downloadPath = await download.path();
+  if (!downloadPath) {
+    throw new Error('The model CSV download has no local path');
+  }
+  const csv = await readFile(downloadPath, 'utf8');
+  expect(csv).toBe(
+    [
+      'label,sessions,fresh_tokens,cache_read_tokens,cache_hit_percent,api_value_known,api_value_display,api_value_measurement,fully_priced_sessions,total_sessions,unpriced_fresh_tokens,turns,tools',
+      'qwen3-coder,2,97600,144000,63.716814159292035,1.68,$1.68,complete,2,2,0,0,0',
+      'gpt-5.3-codex,1,73500,130000,67.70833333333334,3.2,$3.20,complete,1,1,0,0,0',
+      '',
+    ].join('\r\n'),
+  );
 });
 
 test('shows analysis and report metrics without disclosure gates', async ({ page }) => {
@@ -117,12 +295,13 @@ test('shows analysis and report metrics without disclosure gates', async ({ page
     'Weekday',
     'Hour',
     'Sessions',
-    'API-equivalent value',
+    'Estimated API-equivalent value',
   ]);
   expect(await punchcardTable.getByRole('row').count()).toBeGreaterThan(1);
   await expect(punchcardTable.getByRole('row', { name: 'Sunday 14:00 1 $0.84' })).toBeAttached();
-  await expect(page.locator('[data-punchcard-visual]')).toHaveAttribute('aria-hidden', 'true');
-  await expect(page.locator('[data-punchcard-visual]').getByRole('button')).toHaveCount(0);
+  const punchcardVisual = page.locator('[data-punchcard-visual]');
+  await expect(punchcardVisual).not.toHaveAttribute('aria-hidden', 'true');
+  expect(await punchcardVisual.getByRole('button', { name: PUNCHCARD_FILTER_PATTERN }).count()).toBeGreaterThan(0);
 
   const reportMetrics = page.getByRole('region', { name: 'More report metrics' });
   await expect(reportMetrics.getByRole('heading', { level: 2, name: 'More report metrics' })).toBeVisible();
@@ -323,7 +502,7 @@ test('uses the report range as the only graph viewport', async ({ page }) => {
   await expect(dateRange.getByRole('button', { name: 'Zoom chart' })).toHaveCount(0);
   await expect(dateRange.getByRole('slider', { name: 'Graph view start' })).toHaveCount(0);
   await expect(dateRange.getByText('Custom chart view', { exact: true })).toHaveCount(0);
-  await expect(dateRange.getByText('Follows report range', { exact: true })).toBeVisible();
+  await expect(dateRange.getByText('Activity range follows report range', { exact: true })).toBeVisible();
 });
 
 test('offers keyboard-safe charts and mobile summaries at a narrow viewport', async ({ page }) => {
@@ -331,15 +510,12 @@ test('offers keyboard-safe charts and mobile summaries at a narrow viewport', as
   await page.goto('/');
 
   const calendar = page.getByRole('toolbar', { name: CALENDAR_NAME_PATTERN });
-  const dayControl = page.getByLabel('Select activity day');
   const focusedCalendarDay = calendar.locator('button[tabindex="0"]');
   await expect(focusedCalendarDay).toHaveCount(1);
-  await expect(dayControl).toHaveValue((await focusedCalendarDay.getAttribute('data-heatmap-day')) ?? '');
   const initialDayLabel = await focusedCalendarDay.getAttribute('aria-label');
   await focusedCalendarDay.focus();
   await focusedCalendarDay.press('ArrowLeft');
   await expect(calendar.locator('button:focus')).not.toHaveAttribute('aria-label', initialDayLabel ?? '');
-  await expect(dayControl).toHaveValue((await calendar.locator('button:focus').getAttribute('data-heatmap-day')) ?? '');
   await expect(calendar.locator('button[tabindex="0"]')).toHaveCount(1);
 
   await reportViewsFor(page).getByRole('link', { exact: true, name: 'Sessions' }).click();
@@ -364,21 +540,16 @@ test('offers keyboard-safe charts and mobile summaries at a narrow viewport', as
   await expect(page.getByRole('table')).toHaveCount(0);
 });
 
-test('keeps compact heatmap geometry beside an equivalent touch control', async ({ page }) => {
+test('keeps compact heatmap geometry at narrow and desktop viewports', async ({ page }) => {
   await page.setViewportSize({ height: 800, width: 361 });
   await page.goto('/');
 
   const calendar = page.getByRole('toolbar', { name: CALENDAR_NAME_PATTERN });
-  const dayControl = page.getByLabel('Select activity day');
   const cell = calendar.locator('button').first();
 
-  // The labelled 36px date control provides the equivalent target-size path;
-  // the GitHub-style visual cells intentionally remain compact and non-overlapping.
   const narrowCellBox = await cell.boundingBox();
-  const narrowControlBox = await dayControl.boundingBox();
   expect(Math.round(narrowCellBox?.width ?? 0)).toBe(18);
   expect(Math.round(narrowCellBox?.height ?? 0)).toBe(18);
-  expect(Math.round(narrowControlBox?.height ?? 0)).toBeGreaterThanOrEqual(24);
   await expect(calendar).toHaveCSS('column-gap', '3px');
 
   await page.setViewportSize({ height: 900, width: 1024 });
@@ -388,7 +559,7 @@ test('keeps compact heatmap geometry beside an equivalent touch control', async 
   await expect(calendar).toHaveCSS('column-gap', '3px');
 });
 
-test('selects the same heatmap day with mouse, keyboard, and the equivalent control', async ({ page }) => {
+test('selects the same heatmap day with mouse and keyboard', async ({ page }) => {
   const selectedDay = '2026-05-25';
   const selectedDayDisplay = 'May 25, 2026';
   const assertSelectedDay = async () => {
@@ -410,10 +581,6 @@ test('selects the same heatmap day with mouse, keyboard, and the equivalent cont
   await page.goto('/');
   await selectedCell().focus();
   await selectedCell().press('Enter');
-  await assertSelectedDay();
-
-  await page.goto('/');
-  await page.getByLabel('Select activity day').fill(selectedDay);
   await assertSelectedDay();
 });
 
@@ -456,7 +623,7 @@ test('keeps sync limited to explicit file transfers', async ({ page }) => {
   await expect(page.getByRole('heading', { level: 1, name: 'Sync' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Export current machine' })).toBeVisible();
   await expect(page.getByRole('heading', { level: 2, name: 'Machine fleet' })).toBeVisible();
-  await expect(page.getByText('Current machine', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('Machine fleet').getByText('Current machine', { exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Drop a merge file here or choose a file' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Start LAN merge' })).toHaveCount(0);
   await expect(page.getByLabel('Scan host')).toHaveCount(0);

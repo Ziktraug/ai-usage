@@ -4,24 +4,63 @@ import { MetricTile } from './dashboard-metrics';
 import type { CursorCommitAttributionFacet } from './report-data';
 import { fmtDate, fmtNum, fmtPct } from './shared';
 
-const cursorAiLineTotal = (row: CursorCommitAttributionFacet) =>
-  row.composerLinesAdded + row.composerLinesDeleted + row.tabLinesAdded + row.tabLinesDeleted;
+const CURSOR_COMPONENT_COUNTER_HINT =
+  "Component counters are vendor fields; zero may mean no attributed lines. AI % is Cursor's v2 score.";
 
-const uniqueCursorCommits = (rows: CursorCommitAttributionFacet[]) => new Set(rows.map((row) => row.commitHash)).size;
+export interface CursorAiPercentageSummary {
+  measuredCommits: number;
+  percentage: number | null;
+  totalCommits: number;
+}
+
+const formatCursorAiPercentage = (percentage: number | null): string =>
+  percentage === null ? '—' : fmtPct(percentage);
+
+export const summarizeCursorAiPercentage = (
+  rows: readonly CursorCommitAttributionFacet[],
+): CursorAiPercentageSummary => {
+  const commits = new Map<string, { lineTotals: Set<number>; percentages: Set<number> }>();
+  for (const row of rows) {
+    const commit = commits.get(row.commitHash) ?? {
+      lineTotals: new Set<number>(),
+      percentages: new Set<number>(),
+    };
+    if (row.v2AiPercentage !== null) {
+      commit.percentages.add(row.v2AiPercentage);
+    }
+    commit.lineTotals.add(row.linesAdded + row.linesDeleted);
+    commits.set(row.commitHash, commit);
+  }
+
+  let measuredCommits = 0;
+  let totalWeight = 0;
+  let weightedPercentage = 0;
+  for (const commit of commits.values()) {
+    if (commit.percentages.size !== 1 || commit.lineTotals.size !== 1) {
+      continue;
+    }
+    const percentage = commit.percentages.values().next().value;
+    const weight = commit.lineTotals.values().next().value;
+    if (percentage === undefined || weight === undefined || weight <= 0) {
+      continue;
+    }
+    measuredCommits++;
+    totalWeight += weight;
+    weightedPercentage += percentage * weight;
+  }
+
+  return {
+    measuredCommits,
+    percentage: totalWeight > 0 ? weightedPercentage / totalWeight : null,
+    totalCommits: commits.size,
+  };
+};
 
 export const CursorAttributionPanel = (props: { rows: CursorCommitAttributionFacet[] }) => {
-  const totals = createMemo(() =>
-    props.rows.reduce(
-      (acc, row) => ({
-        aiLines: acc.aiLines + cursorAiLineTotal(row),
-        blankLines: acc.blankLines + row.blankLinesAdded + row.blankLinesDeleted,
-        humanLines: acc.humanLines + row.humanLinesAdded + row.humanLinesDeleted,
-        totalLines: acc.totalLines + row.linesAdded + row.linesDeleted,
-      }),
-      { aiLines: 0, blankLines: 0, humanLines: 0, totalLines: 0 },
-    ),
+  const aiPercentage = createMemo(() => summarizeCursorAiPercentage(props.rows));
+  const humanLines = createMemo(() =>
+    props.rows.reduce((total, row) => total + row.humanLinesAdded + row.humanLinesDeleted, 0),
   );
-  const aiPct = () => (totals().totalLines ? (totals().aiLines / totals().totalLines) * 100 : 0);
 
   return (
     <Show
@@ -32,7 +71,7 @@ export const CursorAttributionPanel = (props: { rows: CursorCommitAttributionFac
         <MetricTile
           hint="Unique commit hashes scored by Cursor"
           label="Scored commits"
-          value={fmtNum(uniqueCursorCommits(props.rows))}
+          value={fmtNum(aiPercentage().totalCommits)}
         />
         <MetricTile
           hint="Cursor stores attribution per branch, so commits can repeat"
@@ -40,15 +79,11 @@ export const CursorAttributionPanel = (props: { rows: CursorCommitAttributionFac
           value={fmtNum(props.rows.length)}
         />
         <MetricTile
-          hint="Composer + Tab lines over scored added/deleted lines"
-          label="AI line share"
-          value={fmtPct(aiPct())}
+          hint={CURSOR_COMPONENT_COUNTER_HINT}
+          label={`AI line share · ${fmtNum(aiPercentage().measuredCommits)}/${fmtNum(aiPercentage().totalCommits)} measured`}
+          value={formatCursorAiPercentage(aiPercentage().percentage)}
         />
-        <MetricTile
-          hint="Lines Cursor classified as human-authored"
-          label="Human lines"
-          value={fmtNum(totals().humanLines)}
-        />
+        <MetricTile hint="Lines Cursor classified as human-authored" label="Human lines" value={fmtNum(humanLines())} />
       </div>
 
       <div class={tableWrap}>
@@ -57,7 +92,7 @@ export const CursorAttributionPanel = (props: { rows: CursorCommitAttributionFac
             <tr>
               <th>Commit</th>
               <th style={{ width: '150px' }}>Branch</th>
-              <th class={right} style={{ width: '110px' }}>
+              <th class={right} style={{ width: '110px' }} title={CURSOR_COMPONENT_COUNTER_HINT}>
                 AI %
               </th>
               <th class={right} style={{ width: '120px' }}>

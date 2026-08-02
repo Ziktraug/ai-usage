@@ -37,6 +37,7 @@ describe('usage engine control contracts', () => {
         revision: 'revision-a',
       },
       { command: 'set-machine-label', label: 'Workstation' },
+      { campaignKey: 'machine-a:codex:root-a', command: 'set-campaign-label-override', label: 'Launch' },
       { command: 'collect-fresh-quota' },
       { command: 'import-cursor', input: { handoffId: 'handoff-1', kind: 'inbox-handoff' } },
       {

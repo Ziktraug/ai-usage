@@ -1,3 +1,8 @@
+import {
+  type CampaignLabelOverrideMutation,
+  MAX_CAMPAIGN_KEY_BYTES,
+  parseCampaignLabelOverrideMutation,
+} from '@ai-usage/report-core/campaign-label';
 import { type HarnessKey, isHarnessKey } from '@ai-usage/report-core/harness-metadata';
 import { MAX_PORTABLE_USAGE_BYTES, MAX_PORTABLE_USAGE_ROWS } from '@ai-usage/report-core/portable-usage';
 import type { ProjectAliasEntry } from '@ai-usage/report-core/project-alias';
@@ -45,7 +50,7 @@ const maxStatusBytes = sourceControlBounds.maxSnapshotBytes + 32 * kibibyte;
 const maxForegroundEnvelopeBytes = 4 * kibibyte;
 
 export const usageEngineControlBounds = {
-  maxCommandBytes: 64 * kibibyte,
+  maxCommandBytes: MAX_CAMPAIGN_KEY_BYTES + 4 * kibibyte,
   maxCommandCompletionEventBytes,
   maxCommandResultBytes: 8 * kibibyte,
   maxErrorResponseBytes: 4 * kibibyte,
@@ -245,6 +250,7 @@ export type UsageEngineCommand =
       readonly projectAliases: readonly ProjectAliasEntry[];
     }
   | { readonly command: 'set-machine-label'; readonly label: string }
+  | ({ readonly command: 'set-campaign-label-override' } & CampaignLabelOverrideMutation)
   | { readonly command: 'collect-fresh-quota' }
   | { readonly command: 'import-cursor'; readonly input: UsageEngineFileInput }
   | { readonly command: 'preview-merge'; readonly input: UsageEngineFileInput }
@@ -526,6 +532,20 @@ export const parseUsageEngineCommand = (value: unknown): UsageEngineCommand => {
           'Usage engine machine label',
         ),
       };
+    case 'set-campaign-label-override': {
+      if (!hasExactKeys(command, ['campaignKey', 'command', 'label'])) {
+        return fail('Usage engine campaign label command contains unknown fields.');
+      }
+      try {
+        const mutation = parseCampaignLabelOverrideMutation({
+          campaignKey: command.campaignKey,
+          label: command.label,
+        });
+        return { command: 'set-campaign-label-override', ...mutation };
+      } catch (error) {
+        return fail(error instanceof Error ? error.message : 'Usage engine campaign label command is invalid.');
+      }
+    }
     case 'import-cursor':
     case 'preview-merge':
       if (!hasExactKeys(command, ['command', 'input'])) {
@@ -854,6 +874,7 @@ const usageEngineCommandNames = new Set<UsageEngineCommandName>([
   'replace-project-groups-by-reference',
   'run-all-enabled',
   'run-source',
+  'set-campaign-label-override',
   'set-machine-label',
   'set-source-enabled',
 ]);
