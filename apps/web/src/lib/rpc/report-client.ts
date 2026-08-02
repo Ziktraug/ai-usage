@@ -1,19 +1,22 @@
-import type {
-  CampaignLabelOverrideMutation,
-  CampaignLabelOverridesResult,
-  FocusedBreakdownRequest,
-  FocusedBreakdownResult,
-  FocusedOverviewRequest,
-  FocusedOverviewResult,
-  FocusedReportServerResult,
-  FocusedRevisionRequest,
-  FocusedSupportResult,
-  ProviderQuotaHistoryRequest,
-  ProviderQuotaHistoryResult,
-  ReportContractClient,
-  ReportRevisionBootstrapResult,
-  ReportRevisionManifestResult,
-  SaveProjectGroupsInput,
+import {
+  type CampaignLabelOverrideMutation,
+  type CampaignLabelOverridesResult,
+  type FocusedBreakdownRequest,
+  type FocusedBreakdownResult,
+  type FocusedOverviewRequest,
+  type FocusedOverviewResult,
+  type FocusedReportServerResult,
+  type FocusedRevisionRequest,
+  type FocusedSupportResult,
+  type ProviderQuotaHistoryRequest,
+  type ProviderQuotaHistoryResult,
+  parseFocusedBreakdownServerResult,
+  parseFocusedOverviewServerResult,
+  parseFocusedSupportServerResult,
+  type ReportContractClient,
+  type ReportRevisionBootstrapResult,
+  type ReportRevisionManifestResult,
+  type SaveProjectGroupsInput,
 } from '@ai-usage/web-contract/report';
 
 export interface ReportClientCallOptions {
@@ -57,10 +60,11 @@ export interface ReportClient {
 export const createReportClient = (client: ReportContractClient): ReportClient => ({
   getCampaignLabelOverrides: async (options) => await client.campaign.labelOverrides({}, signalOptions(options)),
   getFocusedReportBreakdown: async (input, options) =>
-    await client.report.focusedBreakdown(input, signalOptions(options)),
+    parseFocusedBreakdownServerResult(await client.report.focusedBreakdown(input, signalOptions(options)), input),
   getFocusedReportOverview: async (input, options) =>
-    await client.report.focusedOverview(input, signalOptions(options)),
-  getFocusedReportSupport: async (input, options) => await client.report.focusedSupport(input, signalOptions(options)),
+    parseFocusedOverviewServerResult(await client.report.focusedOverview(input, signalOptions(options)), input),
+  getFocusedReportSupport: async (input, options) =>
+    parseFocusedSupportServerResult(await client.report.focusedSupport(input, signalOptions(options)), input),
   getProviderQuotaHistory: async (input, options) => await client.quota.history(input, signalOptions(options)),
   getReportPerfEnabled: async (options) => await client.runtime.reportPerfEnabled({}, signalOptions(options)),
   getReportRevisionBootstrap: async (options) => await client.report.revisionBootstrap({}, signalOptions(options)),

@@ -93,6 +93,13 @@ const parseNonEmptyText = (value: unknown, label: string, maximum = MAX_PROJECT_
   return value;
 };
 
+const parseNonEmptyProtocolMessage = (value: unknown): string => {
+  if (typeof value !== 'string' || value.length === 0) {
+    throw new Error('Invalid focused report error message.');
+  }
+  return value;
+};
+
 const parseNonNegativeSafeInteger = (value: unknown, label: string): number => {
   if (!(Number.isSafeInteger(value) && Number(value) >= 0)) {
     throw new Error(`Invalid ${label}.`);
@@ -251,11 +258,7 @@ const parseFocusedEnvelopeShape = <Result>(value: unknown, maximumBytes: number)
   }
   return {
     error: {
-      message: parseNonEmptyText(
-        value.error.message,
-        'focused report error message',
-        MAX_PUBLIC_ERROR_MESSAGE_CHARACTERS,
-      ),
+      message: parseNonEmptyProtocolMessage(value.error.message),
       revision,
       tag: value.error.tag,
     },

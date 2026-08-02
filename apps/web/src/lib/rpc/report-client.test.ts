@@ -1,4 +1,12 @@
 import { describe, expect, test } from 'bun:test';
+import {
+  type FocusedBreakdownRequest,
+  type FocusedOverviewRequest,
+  type FocusedRevisionRequest,
+  focusedBreakdownFingerprint,
+  focusedOverviewFingerprint,
+  focusedRevisionFingerprint,
+} from '@ai-usage/report-core/focused-report-query';
 import type { ReportContractClient } from '@ai-usage/web-contract/report';
 import { createReportClient } from './report-client';
 
@@ -18,6 +26,21 @@ describe('report client adapter', () => {
         calls.push({ input, path, signal: options?.signal });
         return Promise.resolve(result);
       };
+    const focusedResponse = (
+      path: string,
+      input: FocusedBreakdownRequest | FocusedOverviewRequest | FocusedRevisionRequest,
+      requestFingerprint: string,
+      options?: { readonly signal?: AbortSignal },
+    ): Promise<unknown> => {
+      calls.push({ input, path, signal: options?.signal });
+      const responseRevision = 'query' in input ? input.query.revision : input.revision;
+      return Promise.resolve({
+        error: { message: 'Query failed.', revision: responseRevision, tag: 'QueryFailed' },
+        ok: false,
+        requestFingerprint,
+        revision: responseRevision,
+      });
+    };
     const transport = {
       campaign: {
         labelOverrides: record('campaign.labelOverrides', { campaignLabelOverrides: [] }),
@@ -37,9 +60,12 @@ describe('report client adapter', () => {
         }),
       },
       report: {
-        focusedBreakdown: record('report.focusedBreakdown', {}),
-        focusedOverview: record('report.focusedOverview', {}),
-        focusedSupport: record('report.focusedSupport', {}),
+        focusedBreakdown: (input: FocusedBreakdownRequest, options?: { readonly signal?: AbortSignal }) =>
+          focusedResponse('report.focusedBreakdown', input, focusedBreakdownFingerprint(input), options),
+        focusedOverview: (input: FocusedOverviewRequest, options?: { readonly signal?: AbortSignal }) =>
+          focusedResponse('report.focusedOverview', input, focusedOverviewFingerprint(input), options),
+        focusedSupport: (input: FocusedRevisionRequest, options?: { readonly signal?: AbortSignal }) =>
+          focusedResponse('report.focusedSupport', input, focusedRevisionFingerprint('support', input), options),
         revisionBootstrap: record('report.revisionBootstrap', {}),
         revisionManifest: record('report.revisionManifest', {}),
       },
@@ -126,6 +152,71 @@ describe('report client adapter', () => {
     await createReportClient(transport).getCampaignLabelOverrides();
 
     expect(calls).toEqual([{ input: {}, path: 'campaign.labelOverrides', signal: undefined }]);
+  });
+
+  test('validates focused responses against the originating request before returning them', async () => {
+    const query = {
+      filters: { fields: {}, harness: [], machine: [], origin: [], query: '' },
+      range: { from: null, to: null },
+      revision: 'revision-a',
+    };
+    const breakdownInput: FocusedBreakdownRequest = { query };
+    const overviewInput: FocusedOverviewRequest = {
+      includeAdvanced: false,
+      query,
+      timeline: { dimension: 'provider', granularity: 'day' },
+    };
+    const supportInput: FocusedRevisionRequest = { revision: query.revision };
+    const clientFor = (report: object) => createReportClient({ report } as unknown as ReportContractClient);
+
+    await expect(
+      clientFor({
+        focusedSupport: () =>
+          Promise.resolve({
+            error: { message: 'Query failed.', revision: query.revision, tag: 'QueryFailed' },
+            ok: false,
+            requestFingerprint: 'wrong-fingerprint',
+            revision: query.revision,
+          }),
+      }).getFocusedReportSupport(supportInput),
+    ).rejects.toThrow('identity');
+
+    await expect(
+      clientFor({
+        focusedOverview: () =>
+          Promise.resolve({
+            error: { message: 'Query failed.', revision: 'revision-b', tag: 'QueryFailed' },
+            ok: false,
+            requestFingerprint: focusedOverviewFingerprint(overviewInput),
+            revision: 'revision-b',
+          }),
+      }).getFocusedReportOverview(overviewInput),
+    ).rejects.toThrow('identity');
+
+    await expect(
+      clientFor({
+        focusedBreakdown: () =>
+          Promise.resolve({
+            error: { message: 'Query failed.', revision: query.revision, tag: 'QueryFailed' },
+            extra: true,
+            ok: false,
+            requestFingerprint: focusedBreakdownFingerprint(breakdownInput),
+            revision: query.revision,
+          }),
+      }).getFocusedReportBreakdown(breakdownInput),
+    ).rejects.toThrow('focused report result');
+
+    await expect(
+      clientFor({
+        focusedSupport: () =>
+          Promise.resolve({
+            data: {},
+            ok: true,
+            requestFingerprint: focusedRevisionFingerprint('support', supportInput),
+            revision: query.revision,
+          }),
+      }).getFocusedReportSupport(supportInput),
+    ).rejects.toThrow();
   });
 
   test('imports only the public contract boundary and no server module', async () => {

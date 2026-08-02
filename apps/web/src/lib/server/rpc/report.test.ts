@@ -198,6 +198,50 @@ describe('report RPC handler', () => {
     });
   });
 
+  test('preserves the exact cancellation reason before and after service awaits', async () => {
+    const preAwaitReason = new Error('cancelled before service acquisition');
+    const preAwaitController = new AbortController();
+    preAwaitController.abort(preAwaitReason);
+    let serviceCalls = 0;
+    const preAwaitRouter = createReportRpcRouter({
+      ...createServices(),
+      getReportRevisionManifest: () => {
+        serviceCalls += 1;
+        return Promise.resolve(reportManifest);
+      },
+    });
+
+    const preAwaitError = await caught(
+      call(preAwaitRouter.report.revisionManifest, {}, { signal: preAwaitController.signal }),
+    );
+    expect(preAwaitError).toBe(preAwaitReason);
+    expect(serviceCalls).toBe(0);
+
+    let markServiceEntered: (() => void) | undefined;
+    const serviceEntered = new Promise<void>((resolve) => {
+      markServiceEntered = resolve;
+    });
+    let releaseService: ((value: typeof reportManifest) => void) | undefined;
+    const serviceResult = new Promise<typeof reportManifest>((resolve) => {
+      releaseService = resolve;
+    });
+    const postAwaitController = new AbortController();
+    const postAwaitRouter = createReportRpcRouter({
+      ...createServices(),
+      getReportRevisionManifest: () => {
+        markServiceEntered?.();
+        return serviceResult;
+      },
+    });
+    const request = call(postAwaitRouter.report.revisionManifest, {}, { signal: postAwaitController.signal });
+    await serviceEntered;
+    const postAwaitReason = new Error('cancelled during service await');
+    postAwaitController.abort(postAwaitReason);
+    releaseService?.(reportManifest);
+
+    expect(await caught(request)).toBe(postAwaitReason);
+  });
+
   test('never exposes raw unknown service failures', async () => {
     const services = createServices();
     const router = createReportRpcRouter({

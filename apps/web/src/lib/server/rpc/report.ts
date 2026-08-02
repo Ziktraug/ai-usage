@@ -94,12 +94,30 @@ const safeServiceOptions = (error: ReportRpcServiceError): PublicErrorOptions =>
       : 'The report operation could not be completed.',
 });
 
+const throwIfCancelled = (signal: AbortSignal | undefined): void => {
+  if (signal?.aborted) {
+    throw signal.reason;
+  }
+};
+
+const callWithCancellation = async <Result>(
+  signal: AbortSignal | undefined,
+  call: () => Promise<Result>,
+): Promise<Result> => {
+  throwIfCancelled(signal);
+  const result = await call();
+  throwIfCancelled(signal);
+  return result;
+};
+
 const throwMappedError = (
   error: unknown,
   fallbackFamily: string,
   fallbackMessage: string,
   factories: PublicErrorFactories,
+  signal: AbortSignal | undefined,
 ): never => {
+  throwIfCancelled(signal);
   const serviceError = error instanceof ReportRpcServiceError ? error : undefined;
   const family = serviceError && Object.hasOwn(factories, serviceError.family) ? serviceError.family : fallbackFamily;
   const factory = factories[family];
@@ -115,57 +133,81 @@ export const createReportRpcRouter = (services: ReportRpcServices) => ({
   campaign: {
     labelOverrides: reportImplementation.campaign.labelOverrides.handler(async ({ errors, signal }) => {
       try {
-        return await services.getCampaignLabelOverrides({ signal });
+        return await callWithCancellation(signal, () => services.getCampaignLabelOverrides({ signal }));
       } catch (error) {
-        return throwMappedError(error, 'Unavailable', 'Campaign labels are temporarily unavailable.', errors);
+        return throwMappedError(error, 'Unavailable', 'Campaign labels are temporarily unavailable.', errors, signal);
       }
     }),
     setLabelOverride: reportImplementation.campaign.setLabelOverride.handler(async ({ errors, input, signal }) => {
       try {
-        return await services.setCampaignLabelOverride(input, { signal });
+        return await callWithCancellation(signal, () => services.setCampaignLabelOverride(input, { signal }));
       } catch (error) {
-        return throwMappedError(error, 'Conflict', 'The campaign label could not be saved.', errors);
+        return throwMappedError(error, 'Conflict', 'The campaign label could not be saved.', errors, signal);
       }
     }),
   },
   projectGroup: {
     save: reportImplementation.projectGroup.save.handler(async ({ errors, input, signal }) => {
       try {
-        return await services.saveProjectGroups(input, { signal });
+        return await callWithCancellation(signal, () => services.saveProjectGroups(input, { signal }));
       } catch (error) {
-        return throwMappedError(error, 'EngineUnavailable', 'Project groups are temporarily unavailable.', errors);
+        return throwMappedError(
+          error,
+          'EngineUnavailable',
+          'Project groups are temporarily unavailable.',
+          errors,
+          signal,
+        );
       }
     }),
   },
   quota: {
     history: reportImplementation.quota.history.handler(async ({ errors, input, signal }) => {
       try {
-        return await services.getProviderQuotaHistory(input, { signal });
+        return await callWithCancellation(signal, () => services.getProviderQuotaHistory(input, { signal }));
       } catch (error) {
-        return throwMappedError(error, 'Unavailable', 'Provider quota history is temporarily unavailable.', errors);
+        return throwMappedError(
+          error,
+          'Unavailable',
+          'Provider quota history is temporarily unavailable.',
+          errors,
+          signal,
+        );
       }
     }),
   },
   report: {
     focusedBreakdown: reportImplementation.report.focusedBreakdown.handler(async ({ errors, input, signal }) => {
       try {
-        const result = await services.runFocusedBreakdown(input, { signal });
+        const result = await callWithCancellation(signal, () => services.runFocusedBreakdown(input, { signal }));
         return parseFocusedBreakdownServerResult(result, input);
       } catch (error) {
-        return throwMappedError(error, 'IncompatibleStore', 'The requested report breakdown is unavailable.', errors);
+        return throwMappedError(
+          error,
+          'IncompatibleStore',
+          'The requested report breakdown is unavailable.',
+          errors,
+          signal,
+        );
       }
     }),
     focusedOverview: reportImplementation.report.focusedOverview.handler(async ({ errors, input, signal }) => {
       try {
-        const result = await services.runFocusedOverview(input, { signal });
+        const result = await callWithCancellation(signal, () => services.runFocusedOverview(input, { signal }));
         return parseFocusedOverviewServerResult(result, input);
       } catch (error) {
-        return throwMappedError(error, 'IncompatibleStore', 'The requested report overview is unavailable.', errors);
+        return throwMappedError(
+          error,
+          'IncompatibleStore',
+          'The requested report overview is unavailable.',
+          errors,
+          signal,
+        );
       }
     }),
     focusedSupport: reportImplementation.report.focusedSupport.handler(async ({ errors, input, signal }) => {
       try {
-        const result = await services.runFocusedSupport(input, { signal });
+        const result = await callWithCancellation(signal, () => services.runFocusedSupport(input, { signal }));
         return parseFocusedSupportServerResult(result, input);
       } catch (error) {
         return throwMappedError(
@@ -173,30 +215,49 @@ export const createReportRpcRouter = (services: ReportRpcServices) => ({
           'IncompatibleStore',
           'The requested report support data is unavailable.',
           errors,
+          signal,
         );
       }
     }),
     revisionBootstrap: reportImplementation.report.revisionBootstrap.handler(async ({ errors, signal }) => {
       try {
-        return await services.getReportRevisionBootstrap({ signal });
+        return await callWithCancellation(signal, () => services.getReportRevisionBootstrap({ signal }));
       } catch (error) {
-        return throwMappedError(error, 'Unavailable', 'The report bootstrap is temporarily unavailable.', errors);
+        return throwMappedError(
+          error,
+          'Unavailable',
+          'The report bootstrap is temporarily unavailable.',
+          errors,
+          signal,
+        );
       }
     }),
     revisionManifest: reportImplementation.report.revisionManifest.handler(async ({ errors, signal }) => {
       try {
-        return await services.getReportRevisionManifest({ signal });
+        return await callWithCancellation(signal, () => services.getReportRevisionManifest({ signal }));
       } catch (error) {
-        return throwMappedError(error, 'Unavailable', 'The report manifest is temporarily unavailable.', errors);
+        return throwMappedError(
+          error,
+          'Unavailable',
+          'The report manifest is temporarily unavailable.',
+          errors,
+          signal,
+        );
       }
     }),
   },
   runtime: {
     reportPerfEnabled: reportImplementation.runtime.reportPerfEnabled.handler(async ({ errors, signal }) => {
       try {
-        return await services.getReportPerfEnabled({ signal });
+        return await callWithCancellation(signal, () => services.getReportPerfEnabled({ signal }));
       } catch (error) {
-        return throwMappedError(error, 'ForbiddenDemo', 'Report performance diagnostics are unavailable.', errors);
+        return throwMappedError(
+          error,
+          'ForbiddenDemo',
+          'Report performance diagnostics are unavailable.',
+          errors,
+          signal,
+        );
       }
     }),
   },

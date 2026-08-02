@@ -154,6 +154,13 @@ describe('report contract', () => {
       revision: query.revision,
     } as const;
     expect(parseFocusedSupportServerResult(supportFailure, supportRequest)).toEqual(supportFailure);
+    const longProtocolMessage = 'x'.repeat(513);
+    expect(
+      parseFocusedSupportServerResult(
+        { ...supportFailure, error: { ...supportFailure.error, message: longProtocolMessage } },
+        supportRequest,
+      ),
+    ).toEqual({ ...supportFailure, error: { ...supportFailure.error, message: longProtocolMessage } });
     expect(() =>
       parseFocusedSupportServerResult({ ...supportFailure, requestFingerprint: 'wrong' }, supportRequest),
     ).toThrow('identity');
