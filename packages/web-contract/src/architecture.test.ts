@@ -5,7 +5,7 @@ import path from 'node:path';
 const moduleSpecifierPattern =
   /\b(?:import|export)\s+(?:type\s+)?(?:[^'";]+?\s+from\s*)?['"]([^'"]+)['"]|\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)|\brequire\s*\(\s*['"]([^'"]+)['"]\s*\)/gu;
 const sourceExtensions = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs'] as const;
-const allowedExternalPackages = ['@ai-usage/report-core', '@orpc/contract', 'valibot'] as const;
+const allowedExternalPackages = ['@ai-usage/report-core', '@ai-usage/skills', '@orpc/contract', 'valibot'] as const;
 const forbiddenWebRouter = ['@ai-usage', 'web', 'server', 'router'].join('/');
 
 interface ContractClosureViolation {

@@ -183,6 +183,8 @@
       "name": "@ai-usage/web-contract",
       "version": "0.1.0",
       "dependencies": {
+        "@ai-usage/report-core": "workspace:*",
+        "@ai-usage/skills": "workspace:*",
         "@orpc/contract": "1.14.13",
         "valibot": "1.4.2",
       },
