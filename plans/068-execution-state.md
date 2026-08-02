@@ -121,9 +121,9 @@ Statuses are `BLOCKED`, `READY`, `IMPLEMENTING`, `REVIEW`, `REWORK`,
 | F0 | B1, B2 | INTEGRATED | `dd1469a`, `ee9a24e` | `/root/f0_final_review` / ACCEPT; Vite seam: `/root/b2_re_review` / ACCEPT | `ee9a24e` |
 | V0 | F0 | INTEGRATED | `e95616f`, `848ad36`, `266d88d`, evidence `e76cc23`, `9b38bb2` | `/root/v_vertical_audit` / ACCEPT | `9b38bb260383d2743b0da1408c33d36b99f94d61` |
 | V1 | V0 | IMPLEMENTING | - | - | - |
-| V2 | V0 | IMPLEMENTING | - | - | - |
+| V2 | V0 | REVIEW | `bfae6c6`, `ab1ae5f`, `0db6f75`, `7c790c1` | pending independent review | - |
 | V3 | V0 | IMPLEMENTING | - | - | - |
-| V4 | V0 | READY | - | - | - |
+| V4 | V0 | IMPLEMENTING | - | - | - |
 | V5 | V1, V2, V3, V4 | BLOCKED | - | - | - |
 | Q0 | V5 | BLOCKED | - | - | - |
 | Q1 | Q0 | BLOCKED | - | - | - |
