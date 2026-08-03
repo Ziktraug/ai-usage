@@ -12,8 +12,8 @@ authority for feature, operation, design, source-file, and test-title coverage.
 - Planning PR: `#26`, squash-merged as
   `2183270ebfbb886fafa7e6268893122db9b364c0`
 - `BASE_SHA`: `2183270ebfbb886fafa7e6268893122db9b364c0`
-- Current integration checkpoint: `4ddf145e4d29f92e059fb8deec3513e8af076d5b`
-- Last reviewed green checkpoint: `4ddf145e4d29f92e059fb8deec3513e8af076d5b`
+- Current integration checkpoint: `2f55410ec9296dd2f66962d6ee3e4d2340e554b2`
+- Last reviewed green checkpoint: `2f55410ec9296dd2f66962d6ee3e4d2340e554b2`
 - Active design bases: D1 `4862293`, D2 `fce5c1a`, D3 `e2f13cd`
 - Implementation PR: not opened
 - Exclusive process-test token: free after the V5 Nitro loopback and D4 browser gates
@@ -125,9 +125,9 @@ Statuses are `BLOCKED`, `READY`, `IMPLEMENTING`, `REVIEW`, `REWORK`,
 | V3 | V0 | INTEGRATED | `d465e65`, `9545bb0`, `4e87ebe`, evidence `71dc320`, correction `4ddf145` | `/root/v0_impl`, `/root/d123_parity_review`, `/root/v5_parity_spec_review` / ACCEPT | `4ddf145` |
 | V4 | V0 | INTEGRATED | `bcff1ea`, `34e76eb`, `632ce8a`, `dcb8ecb`, `b59f264`, evidence `71dc320`, correction `4ddf145` | `/root/v0_impl`, `/root/d123_parity_review`, `/root/v5_parity_spec_review` / ACCEPT | `4ddf145` |
 | V5 | V1, V2, V3, V4 | INTEGRATED | `781901a`, `f6bde5a`, `b93b70c`, `9804135`, `3dcf2bb`, `0d4f20a`, `66bc4d0`, `8b6164f`, `b0a6518`, `0a21f62`, `1529101`, `bed49d9`, `067b4bb`, `c87054f`, `04bc076`, convergence `9799299`, `7e0c6ef`, `9b17da8`, `4ddf145` | `/root/v5_bounds_review`, `/root/v5_transport_review`, `/root/v5_abort_review`, `/root/v5_loopback_review`, `/root/d123_parity_review`, `/root/v5_parity_spec_review` / ACCEPT | `4ddf145e4d29f92e059fb8deec3513e8af076d5b` |
-| Q0 | V5 | READY | - | - | - |
-| Q1 | Q0 | BLOCKED | - | - | - |
-| Q2 | Q0 | BLOCKED | - | - | - |
+| Q0 | V5 | INTEGRATED | `31c85a0`, correction `2f55410` | `/root/d123_parity_review`, `/root/v5_parity_spec_review` / ACCEPT | `2f55410ec9296dd2f66962d6ee3e4d2340e554b2` |
+| Q1 | Q0 | READY | - | - | - |
+| Q2 | Q0 | READY | - | - | - |
 | Q3 | Q1, Q2 | BLOCKED | - | - | - |
 | D0 | F0 | INTEGRATED | `d476690`, `65d48b4`, `3cea781`, `f84ad2c`, evidence `bd948a7`, `a27764b`, correction `7e0c6ef` | `/root/v_vertical_audit`, `/root/v0_impl`, `/root/d123_parity_review`, `/root/v5_parity_spec_review` / ACCEPT | `4ddf145` |
 | D1 | D0 | INTEGRATED | `4862293`, `3b22c28`, evidence `b31c3af` | `/root/d123_parity_review` / ACCEPT | `b31c3af` |
@@ -479,6 +479,17 @@ both independent re-reviews. No reset, branch overwrite or unrelated mutation
 was performed; the source correction remains recoverable as `4bcd9c0` in the
 isolated V1/V2 parity worktree.
 
+Q0 is integrated through `31c85a0` and focused correction `2f55410`. It adds a
+request-scoped QueryClient factory, named current/immutable/finite-SWR/control
+policies with bounded GC, typed key vocabulary, hydration/dehydration seam and
+pure cache harness. The first spec review returned REWORK because the isolation
+test proved distinct caches only with synchronous writes. The correction uses
+promise barriers to overlap same-key work on two clients, then proves alpha
+resolution, active-refetch cancellation and clearing cannot resolve, abort or
+mutate beta. Both re-reviews returned ACCEPT. Post-cherry gates passed 7 tests
+and 71 assertions, Web TypeScript with Svelte 0/0, the shadow production build,
+architecture boundaries, parity, Ultracite and diff cleanliness.
+
 ## Deviations, STOPs, and recovery
 
 - Reviewed deviations: the two Vite/Bun loopback proof substitutions above are
@@ -500,7 +511,6 @@ isolated V1/V2 parity worktree.
 - Resolved B2 correction: exact SvelteKit selected-adapter lifecycle coverage is
   independently accepted and integrated at `28d2f42`; adapter-node failure
   spikes remain recoverable evidence until final convergence.
-- Recovery point: `4ddf145e4d29f92e059fb8deec3513e8af076d5b` is the latest
-  independently reviewed green checkpoint. V1-V5 and D0-D4 are integrated;
-  the complete transport/design parity checkpoint and every focused
-  post-correction gate passed.
+- Recovery point: `2f55410ec9296dd2f66962d6ee3e4d2340e554b2` is the latest
+  independently reviewed green checkpoint. V1-V5, Q0 and D0-D4 are integrated;
+  the complete transport/design parity and query-core post-cherry gates passed.
