@@ -2,19 +2,7 @@
   import { MAX_CAMPAIGN_LABEL_LENGTH } from '@ai-usage/report-core/campaign-label';
   import { untrack } from 'svelte';
   import { button, field, muted, row, stack, title } from '../breakdown/styles';
-
-  export interface CampaignLabelEditorState {
-    readonly campaignKey: string;
-    readonly effectiveLabel: string;
-    readonly hasOverride: boolean;
-    readonly loadError: string | null;
-    readonly loadStatus: 'error' | 'idle' | 'loading' | 'ready';
-    readonly mutationError: string | null;
-    readonly mutationStatus: 'error' | 'idle' | 'saving';
-    readonly onRename: (label: string) => Promise<string | null>;
-    readonly onReset: () => Promise<string | null>;
-    readonly onRetry: () => Promise<boolean> | undefined;
-  }
+  import type { CampaignLabelEditorState } from './campaign-label-editor-state';
 
   let { editor }: { editor: CampaignLabelEditorState } = $props();
   let draft = $state(untrack(() => editor.effectiveLabel));

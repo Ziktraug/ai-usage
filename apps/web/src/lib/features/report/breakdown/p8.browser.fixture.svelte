@@ -16,7 +16,8 @@
   import type { RuntimeMode } from '../../../../runtime-mode';
   import type { QuotaQueryClient } from '../../../query/options/quota';
   import QueryProvider from '../../../query/provider.svelte';
-  import CampaignLabelEditor, { type CampaignLabelEditorState } from '../actions/campaign-label-editor.svelte';
+  import CampaignLabelEditor from '../actions/campaign-label-editor.svelte';
+  import type { CampaignLabelEditorState } from '../actions/campaign-label-editor-state';
   import QuotaHistoryOwner from '../actions/quota-history-owner.svelte';
   import ReportSharingActions from '../actions/report-sharing-actions.svelte';
   import type { SharingEnvironment } from '../actions/sharing';

@@ -2,7 +2,7 @@ import { type CampaignLabelOverride, parseCampaignLabelOverrides } from '@ai-usa
 import { campaignLabelFor, indexCampaignLabelOverrides } from '../../../../campaign-label-overrides';
 import type { ReportClient } from '../../../rpc/report-client';
 import { campaignRenameMutation, campaignResetMutation } from '../actions/campaign';
-import type { CampaignLabelEditorState } from '../actions/campaign-label-editor.svelte';
+import type { CampaignLabelEditorState } from '../actions/campaign-label-editor-state';
 
 export interface CampaignLabelOwnerSnapshot {
   readonly loadError: string | null;
