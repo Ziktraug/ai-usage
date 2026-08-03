@@ -184,10 +184,15 @@
       throw new Error('Project groups can only be saved from a live report.');
     }
     const revision = descriptorSource.current().revision;
-    await saveProjectGroupsAtRevision(groups, revision, () => descriptorSource.current().revision, async (next, current) => {
-      const command = await buildProjectGroupReferenceCommand(next, current);
-      await reportClient.saveProjectGroups(command);
-    });
+    await saveProjectGroupsAtRevision(
+      groups,
+      revision,
+      () => descriptorSource.current().revision,
+      async (next, current) => {
+        const command = await buildProjectGroupReferenceCommand(next, current);
+        await reportClient.saveProjectGroups(command);
+      },
+    );
   };
 
   onMount(() => {
@@ -275,10 +280,11 @@
               disabled: runtimeMode !== 'live',
               onSave: async (groups) => {
                 await persistProjectGroups(groups);
-                if (destination.focused === undefined) {
+                const focusedDestination = destination.focused;
+                if (focusedDestination === null) {
                   throw new Error('Project groups require a focused report destination.');
                 }
-                await _owner.refresh(destination.focused);
+                await _owner.refresh(focusedDestination);
               },
               payload: projectPayload,
             }}
