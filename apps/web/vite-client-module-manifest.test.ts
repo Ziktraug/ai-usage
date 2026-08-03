@@ -6,6 +6,7 @@ import { build } from 'vite';
 import {
   createWebClientModuleManifest,
   webClientModuleManifest,
+  webClientModuleManifestAppliesToEnvironment,
   webClientModuleManifestFormat,
   webClientModuleManifestVersion,
   writeWebClientModuleManifest,
@@ -24,6 +25,16 @@ const createTemporaryDirectory = async (): Promise<string> => {
 };
 
 describe('Web client module manifest plugin', () => {
+  test('applies only to the named client build environment', () => {
+    const plugin = webClientModuleManifest({ manifestFile: '.private/client-modules.json' });
+
+    expect(plugin.apply).toBe('build');
+    expect(plugin.applyToEnvironment).toBe(webClientModuleManifestAppliesToEnvironment);
+    expect(webClientModuleManifestAppliesToEnvironment({ name: 'client' })).toBe(true);
+    expect(webClientModuleManifestAppliesToEnvironment({ name: 'server' })).toBe(false);
+    expect(webClientModuleManifestAppliesToEnvironment({ name: 'ssr' })).toBe(false);
+  });
+
   test('records complete moduleIds and modules for every chunk deterministically', () => {
     const root = path.resolve('/workspace/apps/web');
     const firstModule = path.join(root, 'src/routes/+page.svelte');

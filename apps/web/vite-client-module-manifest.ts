@@ -36,6 +36,12 @@ type RenderedDynamicImports = ReadonlyMap<string, ReadonlySet<string>>;
 export interface WebClientModuleManifestPluginOptions {
   manifestFile: string;
 }
+interface NamedBuildEnvironment {
+  name: string;
+}
+
+export const webClientModuleManifestAppliesToEnvironment = ({ name }: NamedBuildEnvironment): boolean =>
+  name === 'client';
 
 const compareText = (left: string, right: string): number => {
   if (left < right) {
@@ -104,7 +110,8 @@ export const webClientModuleManifest = ({ manifestFile }: WebClientModuleManifes
     renderedDynamicImports.set(moduleId, imports);
   };
   return {
-    apply: (_config, environment) => environment.command === 'build' && !environment.isSsrBuild,
+    apply: 'build',
+    applyToEnvironment: webClientModuleManifestAppliesToEnvironment,
     configResolved: (config) => {
       projectRoot = config.root;
     },
