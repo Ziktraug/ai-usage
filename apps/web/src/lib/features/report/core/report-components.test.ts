@@ -1,10 +1,16 @@
 import { afterAll, describe, expect, it } from 'bun:test';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
+import { projectFocusedSupport } from '@ai-usage/report-core/focused-report-query';
+import type { ReportRevisionBootstrapResult } from '@ai-usage/web-contract/report';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
 import type { Component } from 'svelte';
 import { compile } from 'svelte/compiler';
 import { createServer } from 'vite';
+import { demoReportPayload } from '../../../../report-data';
+import type { ReportQueryClient } from '../../../query/options/report';
+import { reportBootstrapKey } from '../../../query/options/report';
+import { loadReportPageData } from './report-bootstrap';
 
 const components = [
   'report-bootstrap-overview.svelte',
@@ -20,9 +26,9 @@ interface SvelteServerModule {
   render(component: Component, options?: { props?: Record<string, unknown> }): { body: string };
 }
 
-const componentFrom = (loaded: unknown): Component => {
+const componentFrom = (loaded: unknown, label: string): Component => {
   if (typeof loaded !== 'object' || loaded === null || !('default' in loaded) || typeof loaded.default !== 'function') {
-    throw new Error('Report bootstrap overview did not expose a Svelte component');
+    throw new Error(`${label} did not expose a Svelte component`);
   }
   return loaded.default as Component;
 };
@@ -35,23 +41,63 @@ const rendererFrom = (loaded: unknown): SvelteServerModule => {
 };
 
 const repositoryDirectory = fileURLToPath(new URL('../../../../../../../', import.meta.url));
+const environmentFixture = fileURLToPath(new URL('./report-ssr-environment.fixture.ts', import.meta.url));
 const viteServer = await createServer({
   appType: 'custom',
   configFile: false,
   optimizeDeps: { exclude: ['svelte'], noDiscovery: true },
   plugins: [...svelte()],
-  resolve: { conditions: ['svelte'], dedupe: ['svelte'] },
+  resolve: { alias: { '$app/environment': environmentFixture }, conditions: ['svelte'], dedupe: ['svelte'] },
   root: repositoryDirectory,
   server: { hmr: false, middlewareMode: true, ws: false },
   ssr: { noExternal: true },
 });
-const [overviewModule, serverModule] = await Promise.all([
+const [overviewModule, rootModule, serverModule] = await Promise.all([
   viteServer.ssrLoadModule('/apps/web/src/lib/features/report/core/report-bootstrap-overview.svelte'),
+  viteServer.ssrLoadModule('/apps/web/src/lib/features/report/core/report-root.fixture.svelte'),
   viteServer.ssrLoadModule('svelte/server'),
 ]);
-const overview = componentFrom(overviewModule);
+const overview = componentFrom(overviewModule, 'Report bootstrap overview');
+const reportRoot = componentFrom(rootModule, 'Hydrated report root fixture');
 const { render } = rendererFrom(serverModule);
 afterAll(async () => viteServer.close());
+
+const compatiblePublication = (): Extract<ReportRevisionBootstrapResult, { readonly ok: true }> => {
+  const { rows: _rows, tableRows: _tableRows, ...reportSupport } = demoReportPayload;
+  return {
+    bootstrap: projectFocusedSupport(
+      reportSupport,
+      { harness: ['claude-code'], machine: [{ label: 'Laptop', value: 'machine-a' }], truncated: false },
+      { revision: 'compatible-last-revision' },
+      { dateDomain: { first: '2026-07-01', last: '2026-08-01' } },
+    ),
+    manifest: {
+      captureFingerprint: 'c'.repeat(64),
+      expiresAt: 2,
+      generatedAt: '2026-08-01T10:00:00',
+      publishedAt: 1,
+      revision: 'compatible-last-revision',
+      rowsBytes: 1,
+      supportBytes: 1,
+    },
+    ok: true,
+    requestFingerprint: 'report-manifest:v1:{}',
+  };
+};
+
+const reportClientFixture = (result: ReportRevisionBootstrapResult, onBootstrap: () => void): ReportQueryClient => {
+  const unavailable = () => Promise.reject(new Error('Unexpected report query'));
+  return {
+    getFocusedReportBreakdown: unavailable,
+    getFocusedReportOverview: unavailable,
+    getFocusedReportSupport: unavailable,
+    getReportRevisionBootstrap: () => {
+      onBootstrap();
+      return Promise.resolve(result);
+    },
+    getReportRevisionManifest: unavailable,
+  };
+};
 
 describe('report Svelte SSR components', () => {
   for (const component of components) {
@@ -87,6 +133,32 @@ describe('report Svelte SSR components', () => {
     expect(body).toContain('Compatible stored publication');
     expect(body).toContain('2026-07-01 – 2026-08-01');
     expect(body).toContain('Machines');
+  });
+
+  it('renders ReportRoot from the awaited dehydrated current alias without a second bootstrap', async () => {
+    let bootstrapCount = 0;
+    const data = await loadReportPageData(
+      {
+        fetch: () => Promise.reject(new Error('The injected report client owns this test acquisition')),
+        mode: 'live',
+        url: new URL('http://report.invalid/'),
+      },
+      {
+        createClient: () =>
+          reportClientFixture(compatiblePublication(), () => {
+            bootstrapCount += 1;
+          }),
+      },
+    );
+
+    expect(data.queryState.dehydratedState.queries[0]?.queryKey).toEqual(reportBootstrapKey());
+    const { body } = render(reportRoot, { props: { data } });
+    expect(bootstrapCount).toBe(1);
+    expect(body).toContain('data-report-bootstrap-overview');
+    expect(body).toContain('data-report-revision="compatible-last-revision"');
+    expect(body).toContain('Compatible stored publication');
+    expect(body).toContain('2026-07-01 – 2026-08-01');
+    expect(body).not.toContain('Loading report');
   });
 
   it('retains complete output while a destination refresh is pending', async () => {

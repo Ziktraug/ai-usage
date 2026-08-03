@@ -4,8 +4,6 @@ import { demoReportPayload } from '../../../../report-data';
 import { toWebReportPayload } from '../../../../web-report-payload';
 import { liveReportShellModel, reportGeneratedLabel, syntheticReportShellModel } from './report-view-model';
 
-const GENERATED_LABEL_PATTERN = /^Generated [A-Z][a-z]{2} \d{2}, \d{2}:\d{2}$/;
-
 const support = () => {
   const { rows: _rows, tableRows: _tableRows, ...reportSupport } = demoReportPayload;
   return projectFocusedSupport(
@@ -40,7 +38,7 @@ describe('report SSR view model', () => {
       revision: 'revision-a',
     });
     expect(model.overviewItems).toEqual(expect.arrayContaining([{ label: 'Harnesses', value: '0' }]));
-    expect(reportGeneratedLabel(model.generatedAt, model.hasReportData)).toMatch(GENERATED_LABEL_PATTERN);
+    expect(reportGeneratedLabel('2026-08-01T10:00:00', model.hasReportData)).toBe('Generated Aug 01, 10:00');
   });
 
   it('keeps demo and E2E payloads meaningful without labelling E2E as demo', () => {

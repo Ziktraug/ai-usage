@@ -1,8 +1,7 @@
 import { afterAll, describe, expect, it } from 'bun:test';
-import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
-import { compile } from 'svelte/compiler';
+import type { Component } from 'svelte';
 import { createServer } from 'vite';
 import type {
   ServedReportRefreshOutcome,
@@ -33,6 +32,24 @@ interface OwnerModule {
   ): ServedReportSessionOwner<Destination, Descriptor>;
 }
 
+interface SvelteServerModule {
+  render(component: Component, options?: { props?: Record<string, unknown> }): { body: string };
+}
+
+const componentFrom = (loaded: unknown): Component => {
+  if (typeof loaded !== 'object' || loaded === null || !('default' in loaded) || typeof loaded.default !== 'function') {
+    throw new Error('Report lifecycle owner fixture did not expose a Svelte component');
+  }
+  return loaded.default as Component;
+};
+
+const rendererFrom = (loaded: unknown): SvelteServerModule => {
+  if (typeof loaded !== 'object' || loaded === null || !('render' in loaded) || typeof loaded.render !== 'function') {
+    throw new Error('svelte/server did not expose render');
+  }
+  return loaded as SvelteServerModule;
+};
+
 const repositoryDirectory = fileURLToPath(new URL('../../../../../../../', import.meta.url));
 const viteServer = await createServer({
   appType: 'custom',
@@ -44,9 +61,14 @@ const viteServer = await createServer({
   server: { hmr: false, middlewareMode: true, ws: false },
   ssr: { noExternal: true },
 });
-const ownerModule = (await viteServer.ssrLoadModule(
-  '/apps/web/src/lib/features/report/lifecycle/served-report-session-owner.svelte.ts',
-)) as OwnerModule;
+const [loadedOwnerModule, fixtureModule, serverModule] = await Promise.all([
+  viteServer.ssrLoadModule('/apps/web/src/lib/features/report/lifecycle/served-report-session-owner.svelte.ts'),
+  viteServer.ssrLoadModule('/apps/web/src/lib/features/report/lifecycle/report-lifecycle-owner.fixture.svelte'),
+  viteServer.ssrLoadModule('svelte/server'),
+]);
+const ownerModule = loadedOwnerModule as OwnerModule;
+const lifecycleFixture = componentFrom(fixtureModule);
+const { render } = rendererFrom(serverModule);
 afterAll(async () => viteServer.close());
 
 const descriptor = (revision: string): ServedRevisionDescriptor => ({
@@ -129,11 +151,18 @@ describe('ServedReportSession rune owner', () => {
     expect(refreshCount).toBe(1);
   });
 
-  it('compiles an explicit onDestroy consumer that disposes the owner', async () => {
-    const sourcePath = new URL('./report-lifecycle-owner.svelte', import.meta.url);
-    const source = await readFile(sourcePath, 'utf8');
-    const compiled = compile(source, { filename: sourcePath.pathname, generate: 'server', runes: true });
-    expect(compiled.warnings).toEqual([]);
-    expect(source).toContain('onDestroy(() => owner.dispose())');
+  it('renders and destroys the lifecycle consumer with exactly one delegated abort', () => {
+    let abortCount = 0;
+    const session: ServedReportSession<string> = {
+      abort: () => {
+        abortCount += 1;
+      },
+      refresh: () => Promise.resolve({ descriptor: descriptor('revision-a'), status: 'committed' }),
+    };
+
+    const { body } = render(lifecycleFixture, { props: { session } });
+    expect(body).toContain('data-report-lifecycle-owner');
+    expect(body).toContain('settled');
+    expect(abortCount).toBe(1);
   });
 });
