@@ -4,6 +4,7 @@
   import type { SessionPresentationRow } from '@ai-usage/report-core/session-query';
   import type { ExpandedState } from '@tanstack/table-core';
   import { onMount, untrack } from 'svelte';
+  import { calculateSessionViewportHeight } from '../../../../session-row-window';
   import {
     browserSessionSurfaceModeEnvironment,
     createSessionSurfaceModeController,
@@ -51,7 +52,16 @@
     surface,
     table,
   } from './session-table-styles';
-  import { isSessionPagePrefetchRequired, projectSessionVirtualRows } from './session-virtualization';
+  import {
+    isSessionPagePrefetchRequired,
+    projectSessionVirtualRows,
+    sessionVirtualBudgets,
+  } from './session-virtualization';
+
+  const SESSION_VIEWPORT_BOTTOM_INSET = 24;
+  const SESSION_VIEWPORT_FALLBACK_HEIGHT = 520;
+  const DESKTOP_MINIMUM_VIEWPORT_HEIGHT = sessionVirtualBudgets.desktop.rowHeight * 3;
+  const MOBILE_MINIMUM_VIEWPORT_HEIGHT = sessionVirtualBudgets.mobile.rowHeight;
 
   interface Props {
     campaignChildren?: ReadonlyMap<string, SessionCampaignPage>;
@@ -106,6 +116,8 @@
   let scrollTop = $state(0);
   let viewportHeight = $state(520);
   let surfaceElement = $state<HTMLElement>();
+  let sessionRegionStartElement = $state<HTMLElement>();
+  let hasAnchoredSessionRegion = $state(false);
   let previousResetKey = $state('');
   let pagingSignature = $state('');
   let pendingFocusIndex = $state<number>();
@@ -144,8 +156,16 @@
     if (!surfaceElement) {
       return;
     }
+    const minimumHeight = activeMode === 'desktop' ? DESKTOP_MINIMUM_VIEWPORT_HEIGHT : MOBILE_MINIMUM_VIEWPORT_HEIGHT;
+    const nextHeight = calculateSessionViewportHeight({
+      bottomInset: SESSION_VIEWPORT_BOTTOM_INSET,
+      minimumHeight,
+      surfaceTop: surfaceElement.getBoundingClientRect().top,
+      viewportHeight: window.innerHeight,
+    });
+    surfaceElement.style.setProperty('--session-surface-height', `${nextHeight}px`);
     scrollTop = surfaceElement.scrollTop;
-    viewportHeight = surfaceElement.clientHeight || 520;
+    viewportHeight = surfaceElement.clientHeight || SESSION_VIEWPORT_FALLBACK_HEIGHT;
   };
 
   const setSurfaceElement = (element: HTMLElement): void => {
@@ -171,6 +191,21 @@
       observer.disconnect();
       window.removeEventListener('resize', updateViewport);
     };
+  });
+
+  $effect(() => {
+    const activeSurface = surfaceElement;
+    const regionStart = sessionRegionStartElement;
+    if (hasAnchoredSessionRegion || !activeSurface || !regionStart) {
+      return;
+    }
+    const frame = window.requestAnimationFrame(() => {
+      hasAnchoredSessionRegion = true;
+      activeSurface.style.removeProperty('--session-surface-height');
+      regionStart.scrollIntoView({ block: 'start' });
+      updateViewport();
+    });
+    return () => window.cancelAnimationFrame(frame);
   });
 
   $effect(() => {
@@ -271,7 +306,7 @@
   </div>
 {:else}
   <section aria-label="Sessions" data-session-mode={activeMode} data-session-table-owner>
-    <div class={controls}>
+    <div class={controls} data-session-region-start bind:this={sessionRegionStartElement}>
       {#if activeMode === 'desktop'}
         <fieldset aria-label="Session column presets" class={presetGroup}>
           {#each sessionColumnPresets as preset (preset.id)}
@@ -369,6 +404,7 @@
             {#each virtual.rows as virtualRow (virtualRow.row.id)}
               <tr
                 data-depth={virtualRow.row.depth}
+                data-index={virtualRow.index}
                 data-selected={selectedRowId === virtualRow.row.id}
                 data-session-index={virtualRow.index}
                 data-session-row-id={virtualRow.row.id}
@@ -428,6 +464,7 @@
             aria-setsize={Math.max(totalRows ?? 0, model.rows.length)}
             class={mobileRow}
             data-depth={virtualRow.row.depth}
+            data-index={virtualRow.index}
             data-session-row-height="188"
             data-session-row-id={virtualRow.row.id}
           >

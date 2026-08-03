@@ -64,6 +64,8 @@ describe('session table Svelte rendering', () => {
     const { body } = render(fixture);
 
     expect(body).toContain('data-session-table-owner');
+    expect(body).toContain('data-session-region-start');
+    expect(body).toContain('data-index="0"');
     expect(body).toContain('data-session-surface="desktop"');
     expect(body).not.toContain('data-session-surface="mobile"');
     expect(body).toContain('<table');
@@ -121,6 +123,9 @@ describe('session table Svelte rendering', () => {
     const source = await readFile(new URL('./session-table.svelte', import.meta.url), 'utf8');
     expect(source).toContain('let mode = $state<SessionSurfaceMode>');
     expect(source).toContain("mode === 'mobile' ? 'mobile' : 'desktop'");
+    expect(source).toContain('calculateSessionViewportHeight');
+    expect(source).toContain('data-session-region-start');
+    expect(source).toContain('scrollIntoView');
     expect(source).toContain('data-session-paging-sentinel="mobile"');
     expect(source).toContain('data-virtual-spacer="top"');
     expect(source).toContain('data-virtual-spacer="bottom"');
