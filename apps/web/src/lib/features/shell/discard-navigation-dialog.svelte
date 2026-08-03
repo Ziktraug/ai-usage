@@ -59,17 +59,21 @@
   const onKeydown = (event: KeyboardEvent): void => {
     if (event.key === 'Escape' && !pending) {
       event.preventDefault();
+      event.stopPropagation();
       onKeep();
       return;
     }
     if (event.key !== 'Tab') {
       return;
     }
-    const reverseFromKeep = event.shiftKey && document.activeElement === keepButton;
-    const forwardFromDiscard = !event.shiftKey && document.activeElement === discardButton;
-    if (reverseFromKeep || forwardFromDiscard) {
+    const activeElement = document.activeElement;
+    const focusIsOutside = activeElement !== keepButton && activeElement !== discardButton;
+    const reverseFromKeep = event.shiftKey && activeElement === keepButton;
+    const forwardFromDiscard = !event.shiftKey && activeElement === discardButton;
+    if (focusIsOutside || reverseFromKeep || forwardFromDiscard) {
       event.preventDefault();
-      (reverseFromKeep ? discardButton : keepButton)?.focus();
+      event.stopPropagation();
+      (event.shiftKey ? discardButton : keepButton)?.focus();
     }
   };
 
@@ -79,8 +83,8 @@
       return;
     }
     tick().then(() => keepButton?.focus());
-    window.addEventListener('keydown', onKeydown);
-    return () => window.removeEventListener('keydown', onKeydown);
+    document.addEventListener('keydown', onKeydown, true);
+    return () => document.removeEventListener('keydown', onKeydown, true);
   });
 </script>
 
@@ -89,6 +93,7 @@
     <div
       aria-describedby="discard-navigation-description"
       aria-labelledby="discard-navigation-title"
+      aria-modal="true"
       class={dialog}
       role="alertdialog"
     >

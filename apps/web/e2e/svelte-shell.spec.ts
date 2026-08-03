@@ -124,6 +124,7 @@ test('resolves stored and system theme before paint and toggles the named prefer
 });
 
 test('blocks dirty navigation through Keep, Discard, reload, focus, and cleanup', async ({ page }) => {
+  await page.setViewportSize({ height: 844, width: 390 });
   await page.goto('/skills/global/alpha%20skill');
   const editor = page.getByLabel('Synthetic SKILL.md draft');
   await editor.fill('Unsaved synthetic draft');
@@ -134,14 +135,27 @@ test('blocks dirty navigation through Keep, Discard, reload, focus, and cleanup'
     }),
   ).toBe(false);
 
+  const manage = page.getByRole('button', { name: 'Manage' });
+  await manage.click();
   await page.getByRole('link', { name: 'Sources' }).click();
   await expect(page).toHaveURL('/skills/global/alpha%20skill');
   const prompt = page.getByRole('alertdialog', { name: 'Discard unsaved changes?' });
   await expect(prompt).toBeVisible();
+  await expect(prompt).toHaveAttribute('aria-modal', 'true');
   await expect(page.getByRole('button', { name: 'Keep editing' })).toBeFocused();
-  await page.getByRole('button', { name: 'Keep editing' }).click();
+  await page.keyboard.press('Shift+Tab');
+  await expect(page.getByRole('button', { name: 'Discard changes' })).toBeFocused();
+  await page.keyboard.press('Tab');
+  await expect(page.getByRole('button', { name: 'Keep editing' })).toBeFocused();
+  await manage.focus();
+  await page.keyboard.press('Tab');
+  await expect(page.getByRole('button', { name: 'Keep editing' })).toBeFocused();
+  await page.keyboard.press('Escape');
   await expect(editor).toHaveValue('Unsaved synthetic draft');
   await expect(editor).toBeFocused();
+  await expect(manage).toHaveAttribute('aria-expanded', 'true');
+
+  await page.setViewportSize({ height: 900, width: 1280 });
 
   const historyLength = await page.evaluate(() => history.length);
   await page.getByRole('link', { name: 'Sources' }).click();
