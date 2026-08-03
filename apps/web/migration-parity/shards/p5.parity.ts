@@ -1,7 +1,33 @@
 import { currentRecord, sourceInventoryRecords } from '../helpers';
-import { defineParityShard } from '../schema';
+import { defineParityShard, type ParityRecord } from '../schema';
 
 const owner = 'P5' as const;
+const implementationCommit = '231f109159e1053b8b1de340194cb41057e1a22e';
+const withTargetEvidence = (record: ParityRecord): ParityRecord => ({
+  ...record,
+  evidence: [
+    ...record.evidence,
+    {
+      commit: implementationCommit,
+      kind: 'source',
+      phase: 'target',
+      reference: 'apps/web/src/lib/features/skills/shell/**',
+    },
+    {
+      commit: implementationCommit,
+      kind: 'test',
+      phase: 'target',
+      reference:
+        'apps/web/src/lib/features/skills/shell/{data,model-parity,snapshot-controller,skills-workspace.ssr}.test.ts',
+    },
+    {
+      commit: implementationCommit,
+      kind: 'command',
+      phase: 'target',
+      reference: 'bun run --cwd apps/web check:svelte; bun run --cwd apps/web build:svelte',
+    },
+  ],
+});
 const feature = (id: string, currentOwner: string, test: string) =>
   currentRecord(owner, {
     currentOwner,
@@ -45,5 +71,5 @@ export default defineParityShard({
       'apps/web/src/skills-workspace.tsx',
     ]),
     ...sourceInventoryRecords(owner, 'render-suite', ['apps/web/src/skills-detail.render.test.tsx']),
-  ],
+  ].map(withTargetEvidence),
 });
