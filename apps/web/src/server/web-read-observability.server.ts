@@ -6,19 +6,17 @@ import {
 } from '@ai-usage/effect-runtime';
 import { makeSilentWideEventSinkLayer, makeWebWideEventSinkLayer } from '@ai-usage/effect-runtime/node';
 import { Effect, Exit, Layer, Scope } from 'effect';
-import { useNitroApp } from 'nitro/app';
+import type { useNitroApp } from 'nitro/app';
+import {
+  type WebReadObservabilityRuntime,
+  webReadObservabilityRuntimeRegistry,
+} from '../lib/server/observability/web-read-runtime-registry.server';
 import { getServerRuntimeMode } from './runtime-mode.server';
 import { projectWebWideEvent } from './wide-event-presentation.server';
 
 type WebReadServices = WideEventResourceService | WideEventSink;
 
-export interface WebReadObservabilityRuntime {
-  readonly dispose: () => Promise<void>;
-  readonly runEffect: <Value, Failure>(
-    effect: Effect.Effect<Value, Failure, WebReadServices>,
-    options?: { readonly signal?: AbortSignal },
-  ) => Promise<Value>;
-}
+export type { WebReadObservabilityRuntime } from '../lib/server/observability/web-read-runtime-registry.server';
 
 const webReadRuntimeProperty = '__aiUsageWebReadObservabilityRuntime' as const;
 
@@ -72,19 +70,24 @@ export const installWebReadObservabilityRuntime = (
   const nitroApp = nitroAppValue as WebReadNitroApp;
   const existing = nitroApp[webReadRuntimeProperty];
   if (existing) {
-    return existing;
+    return webReadObservabilityRuntimeRegistry.install(existing);
   }
   if (!nitroApp.hooks) {
     throw new Error('Nitro hooks are unavailable for web read observability.');
   }
-  nitroApp[webReadRuntimeProperty] = runtime;
+  const installed = webReadObservabilityRuntimeRegistry.install(runtime);
+  nitroApp[webReadRuntimeProperty] = installed;
   nitroApp.hooks.hook('close', async () => {
-    await runtime.dispose();
-    if (nitroApp[webReadRuntimeProperty] === runtime) {
-      delete nitroApp[webReadRuntimeProperty];
+    try {
+      await installed.dispose();
+    } finally {
+      webReadObservabilityRuntimeRegistry.remove(installed);
+      if (nitroApp[webReadRuntimeProperty] === installed) {
+        delete nitroApp[webReadRuntimeProperty];
+      }
     }
   });
-  return runtime;
+  return installed;
 };
 
 export const initializeWebReadObservabilityRuntime = async (
@@ -106,10 +109,4 @@ export const initializeWebReadObservabilityRuntime = async (
 export const runWebReadEffect = <Value, Failure>(
   effect: Effect.Effect<Value, Failure, WebReadServices>,
   options?: { readonly signal?: AbortSignal },
-): Promise<Value> => {
-  const runtime = (useNitroApp() as WebReadNitroApp)[webReadRuntimeProperty];
-  if (!runtime) {
-    return Promise.reject(new Error('Web read observability has not started.'));
-  }
-  return runtime.runEffect(effect, options);
-};
+): Promise<Value> => webReadObservabilityRuntimeRegistry.runEffect(effect, options);

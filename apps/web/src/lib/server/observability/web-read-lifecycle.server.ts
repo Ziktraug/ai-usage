@@ -1,4 +1,8 @@
-import type { WebReadObservabilityRuntime } from '../../../server/web-read-observability.server';
+import {
+  type WebReadObservabilityRuntime,
+  type WebReadObservabilityRuntimeRegistry,
+  webReadObservabilityRuntimeRegistry,
+} from './web-read-runtime-registry.server';
 
 export type WebReadRuntimeFactory = () => Promise<WebReadObservabilityRuntime>;
 
@@ -19,6 +23,7 @@ const defaultFactory: WebReadRuntimeFactory = async () => {
  */
 export const createWebReadObservabilityLifecycle = (
   createRuntime: WebReadRuntimeFactory = defaultFactory,
+  registry: WebReadObservabilityRuntimeRegistry = webReadObservabilityRuntimeRegistry,
 ): WebReadObservabilityLifecycle => {
   let runtimePromise: Promise<WebReadObservabilityRuntime> | undefined;
   let disposal: Promise<void> | undefined;
@@ -28,10 +33,14 @@ export const createWebReadObservabilityLifecycle = (
     if (stopped) {
       return Promise.reject(new Error('Web read observability lifecycle has stopped.'));
     }
-    runtimePromise ??= createRuntime().then(async (runtime) => {
+    runtimePromise ??= createRuntime().then(async (candidate) => {
       if (stopped) {
-        await runtime.dispose();
+        await candidate.dispose();
         throw new Error('Web read observability lifecycle stopped during initialization.');
+      }
+      const runtime = registry.install(candidate);
+      if (runtime !== candidate) {
+        await candidate.dispose();
       }
       return runtime;
     });
@@ -42,7 +51,13 @@ export const createWebReadObservabilityLifecycle = (
     stopped = true;
     disposal ??= runtimePromise
       ? runtimePromise.then(
-          async (runtime) => await runtime.dispose(),
+          async (runtime) => {
+            try {
+              await runtime.dispose();
+            } finally {
+              registry.remove(runtime);
+            }
+          },
           () => undefined,
         )
       : Promise.resolve();
