@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { rollup } from 'rollup';
+import { build } from 'vite';
 import {
   createWebClientModuleManifest,
   webClientModuleManifest,
@@ -59,6 +59,7 @@ describe('Web client module manifest plugin', () => {
           imports: [],
           moduleIds: ['./src/routes/+page.svelte'],
           modules: ['./src/routes/+page.svelte'],
+          renderedDynamicImports: [],
         },
         {
           dynamicImports: [],
@@ -66,6 +67,7 @@ describe('Web client module manifest plugin', () => {
           imports: [],
           moduleIds: ['./src/lib/rpc/client.ts', './src/routes/+page.svelte'],
           modules: ['./src/lib/rpc/client.ts', './src/routes/+page.svelte'],
+          renderedDynamicImports: [],
         },
       ],
       format: webClientModuleManifestFormat,
@@ -111,34 +113,54 @@ describe('Web client module manifest plugin', () => {
     );
   });
 
-  test('captures and rejects static and dynamic externals from an actual Rollup client build', async () => {
+  test('captures and rejects static and dynamic externals from the declared Vite build', async () => {
     const root = await createTemporaryDirectory();
     const entryFile = path.join(root, 'entry.ts');
     const manifestFile = path.join(root, '.private', 'client-modules.json');
-    await writeFile(entryFile, "import 'node:fs';\nvoid import('@orpc/server');\n", 'utf8');
+    await writeFile(entryFile, "import 'fs';\nvoid import('path');\nvoid import('@orpc/server');\n", 'utf8');
 
-    const bundle = await rollup({
-      external: ['node:fs', '@orpc/server'],
-      input: entryFile,
+    await build({
+      build: {
+        emptyOutDir: false,
+        outDir: path.join(root, 'public-build'),
+        rollupOptions: {
+          external: ['fs', 'path', '@orpc/server'],
+          input: entryFile,
+        },
+      },
+      configFile: false,
+      logLevel: 'silent',
+      plugins: [webClientModuleManifest({ manifestFile })],
+      root,
     });
-    await bundle.write({
-      dir: path.join(root, 'public-build'),
-      format: 'es',
-      plugins: [webClientModuleManifest({ manifestFile, root })],
-    });
-    await bundle.close();
 
     const manifest = await readFile(manifestFile, 'utf8');
-    expect(manifest).toContain('"imports": [\n        "node:fs"');
-    expect(manifest).toContain('"dynamicImports": [\n        "@orpc/server"');
+    expect(manifest).toContain('"imports": [\n        "fs"');
+    expect(manifest).toContain('"renderedDynamicImports": [\n        "@orpc/server",\n        "path"');
 
     const scanner = Bun.spawn(
-      [process.execPath, path.resolve(import.meta.dir, '../../tools/check-web-client-manifest.ts'), manifestFile],
-      { cwd: path.resolve(import.meta.dir, '../..'), stderr: 'pipe', stdout: 'pipe' },
+      [
+        process.execPath,
+        '--no-env-file',
+        path.resolve(import.meta.dir, '../../tools/check-web-client-manifest.ts'),
+        manifestFile,
+      ],
+      {
+        cwd: root,
+        env: {
+          HOME: root,
+          NO_COLOR: '1',
+          PATH: process.env.PATH ?? '',
+          TMPDIR: root,
+        },
+        stderr: 'pipe',
+        stdout: 'pipe',
+      },
     );
     const [exitCode, stderr] = await Promise.all([scanner.exited, new Response(scanner.stderr).text()]);
     expect(exitCode).toBe(1);
-    expect(stderr).toContain('node:fs (node builtin)');
+    expect(stderr).toContain('fs (node builtin)');
+    expect(stderr).toContain('path (node builtin)');
     expect(stderr).toContain('@orpc/server (@orpc/server)');
   });
 });

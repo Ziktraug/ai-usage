@@ -1,8 +1,13 @@
 import { readFile } from 'node:fs/promises';
+import { builtinModules } from 'node:module';
 
 const webClientModuleManifestFormat = 'ai-usage-web-client-modules' as const;
-const webClientModuleManifestVersion = 1 as const;
+const webClientModuleManifestVersion = 2 as const;
+const moduleQueryPattern = /[?#].*$/u;
 const serverModulePattern = /\.server(?:\.|\/|\?|$)/u;
+const nodeBuiltinSpecifiers = new Set(
+  builtinModules.map((specifier) => (specifier.startsWith('node:') ? specifier.slice('node:'.length) : specifier)),
+);
 
 interface WebClientModuleManifestChunk {
   dynamicImports: readonly string[];
@@ -10,6 +15,7 @@ interface WebClientModuleManifestChunk {
   imports: readonly string[];
   moduleIds: readonly string[];
   modules: readonly string[];
+  renderedDynamicImports: readonly string[];
 }
 
 interface WebClientModuleManifest {
@@ -49,6 +55,23 @@ const sameStringSet = (left: readonly string[], right: readonly string[]): boole
 };
 
 const normalizedModuleId = (moduleId: string): string => moduleId.replaceAll('\\', '/').toLowerCase();
+const isNodeBuiltin = (moduleId: string): boolean => {
+  const normalized = normalizedModuleId(moduleId).replace(moduleQueryPattern, '');
+  if (normalized.includes('node:')) {
+    return true;
+  }
+  if (normalized.startsWith('.') || normalized.startsWith('/')) {
+    return false;
+  }
+  let candidate = normalized;
+  while (candidate.includes('/')) {
+    if (nodeBuiltinSpecifiers.has(candidate)) {
+      return true;
+    }
+    candidate = candidate.slice(0, candidate.lastIndexOf('/'));
+  }
+  return nodeBuiltinSpecifiers.has(candidate);
+};
 
 const includesPathSegment = (moduleId: string, segment: string): boolean =>
   moduleId === segment ||
@@ -65,7 +88,7 @@ const packageOrWorkspaceRule = (name: string, packageName: string, workspacePath
 });
 
 const forbiddenModuleRules: readonly ForbiddenModuleRule[] = [
-  { matches: (moduleId) => normalizedModuleId(moduleId).includes('node:'), name: 'node builtin' },
+  { matches: isNodeBuiltin, name: 'node builtin' },
   { matches: (moduleId) => normalizedModuleId(moduleId).includes('bun:'), name: 'Bun builtin' },
   packageOrWorkspaceRule('@orpc/server', '@orpc/server', 'node_modules/@orpc/server'),
   packageOrWorkspaceRule('usage-store', '@ai-usage/usage-store', 'packages/usage-store'),
@@ -153,9 +176,15 @@ export const parseWebClientModuleManifest = (text: string): WebClientModuleManif
         `Web client module manifest chunk ${chunk.fileName} must contain imports and dynamicImports arrays.`,
       );
     }
+    if (!isStringArray(chunk.renderedDynamicImports)) {
+      throw new Error(
+        `Web client module manifest chunk ${chunk.fileName} must contain a renderedDynamicImports array.`,
+      );
+    }
     if (
       new Set(chunk.imports).size !== chunk.imports.length ||
       new Set(chunk.dynamicImports).size !== chunk.dynamicImports.length ||
+      new Set(chunk.renderedDynamicImports).size !== chunk.renderedDynamicImports.length ||
       new Set(chunk.moduleIds).size !== chunk.moduleIds.length ||
       new Set(chunk.modules).size !== chunk.modules.length
     ) {
@@ -170,6 +199,7 @@ export const parseWebClientModuleManifest = (text: string): WebClientModuleManif
       imports: chunk.imports,
       moduleIds: chunk.moduleIds,
       modules: chunk.modules,
+      renderedDynamicImports: chunk.renderedDynamicImports,
     };
   });
 
@@ -189,7 +219,13 @@ export const scanWebClientModuleManifest = (
 ): readonly WebClientManifestViolation[] => {
   const violations: WebClientManifestViolation[] = [];
   for (const chunk of manifest.chunks) {
-    const clientReferences = new Set([...chunk.moduleIds, ...chunk.modules, ...chunk.imports, ...chunk.dynamicImports]);
+    const clientReferences = new Set([
+      ...chunk.moduleIds,
+      ...chunk.modules,
+      ...chunk.imports,
+      ...chunk.dynamicImports,
+      ...chunk.renderedDynamicImports,
+    ]);
     for (const moduleId of clientReferences) {
       for (const rule of forbiddenModuleRules) {
         if (rule.matches(moduleId)) {

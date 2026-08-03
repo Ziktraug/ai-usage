@@ -16,15 +16,27 @@ afterEach(async () => {
 
 const manifestText = (modules: readonly string[]): string =>
   JSON.stringify({
-    chunks: [{ dynamicImports: [], fileName: 'assets/entry.js', imports: [], moduleIds: modules, modules }],
+    chunks: [
+      {
+        dynamicImports: [],
+        fileName: 'assets/entry.js',
+        imports: [],
+        moduleIds: modules,
+        modules,
+        renderedDynamicImports: [],
+      },
+    ],
     format: 'ai-usage-web-client-modules',
     target: 'client',
-    version: 1,
+    version: 2,
   });
 
 describe('emitted Web client module manifest scanner', () => {
   test.each([
     ['direct import', 'node:fs', 'node builtin'],
+    ['bare Node builtin', 'fs', 'node builtin'],
+    ['bare Node builtin subpath', 'fs/promises', 'node builtin'],
+    ['bare Node path builtin', 'path', 'node builtin'],
     ['direct Bun import', 'bun:sqlite', 'Bun builtin'],
     ['indirect dependency', '../../node_modules/@orpc/server/dist/index.mjs', '@orpc/server'],
     ['re-exported workspace module', '../../packages/report-data/src/index.ts', 'report-data'],
@@ -63,6 +75,7 @@ describe('emitted Web client module manifest scanner', () => {
       manifestText([
         './src/routes/+page.svelte',
         './src/lib/rpc/client.ts',
+        './src/path.ts',
         '../../packages/report-core/src/index.ts',
         '../../packages/web-contract/src/contract.ts',
         '../../node_modules/@tanstack/svelte-query/dist/index.js',
@@ -90,7 +103,7 @@ describe('emitted Web client module manifest scanner', () => {
           chunks: [],
           format: 'ai-usage-web-client-modules',
           target: 'client',
-          version: 1,
+          version: 2,
         }),
       ),
     ).toThrow('at least one chunk');
@@ -101,7 +114,7 @@ describe('emitted Web client module manifest scanner', () => {
           chunks: [{ fileName: 'assets/entry.js', moduleIds: ['./a.ts'], modules: ['./a.ts'] }],
           format: 'ai-usage-web-client-modules',
           target: 'client',
-          version: 1,
+          version: 2,
         }),
       ),
     ).toThrow('must contain imports and dynamicImports arrays');
@@ -114,12 +127,31 @@ describe('emitted Web client module manifest scanner', () => {
               fileName: 'assets/entry.js',
               imports: [],
               moduleIds: ['./a.ts'],
-              modules: ['./b.ts'],
+              modules: ['./a.ts'],
             },
           ],
           format: 'ai-usage-web-client-modules',
           target: 'client',
-          version: 1,
+          version: 2,
+        }),
+      ),
+    ).toThrow('must contain a renderedDynamicImports array');
+    expect(() =>
+      parseWebClientModuleManifest(
+        JSON.stringify({
+          chunks: [
+            {
+              dynamicImports: [],
+              fileName: 'assets/entry.js',
+              imports: [],
+              moduleIds: ['./a.ts'],
+              modules: ['./b.ts'],
+              renderedDynamicImports: [],
+            },
+          ],
+          format: 'ai-usage-web-client-modules',
+          target: 'client',
+          version: 2,
         }),
       ),
     ).toThrow('incomplete module metadata');
