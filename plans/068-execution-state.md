@@ -12,11 +12,11 @@ authority for feature, operation, design, source-file, and test-title coverage.
 - Planning PR: `#26`, squash-merged as
   `2183270ebfbb886fafa7e6268893122db9b364c0`
 - `BASE_SHA`: `2183270ebfbb886fafa7e6268893122db9b364c0`
-- Current integration checkpoint: `6f639ab40969a9f9b7f4993f5f23f329fa635435`
-- Last reviewed green checkpoint: `6f639ab40969a9f9b7f4993f5f23f329fa635435`
+- Current integration checkpoint: `1096a4d`
+- Last reviewed green checkpoint: `1096a4d`
 - Active design bases: D1 `4862293`, D2 `fce5c1a`, D3 `e2f13cd`
 - Implementation PR: not opened
-- Exclusive process-test token: free after the P1 activated shadow-browser gate
+- Exclusive process-test token: free after the P6 activated shadow-browser gate
 
 The integration branch did not exist locally or remotely before this run. Local
 `main` and `origin/main` were clean and aligned at `BASE_SHA`; plans 066 and 067
@@ -126,7 +126,7 @@ Statuses are `BLOCKED`, `READY`, `IMPLEMENTING`, `REVIEW`, `REWORK`,
 | V4 | V0 | INTEGRATED | `bcff1ea`, `34e76eb`, `632ce8a`, `dcb8ecb`, `b59f264`, evidence `71dc320`, correction `4ddf145` | `/root/v0_impl`, `/root/d123_parity_review`, `/root/v5_parity_spec_review` / ACCEPT | `4ddf145` |
 | V5 | V1, V2, V3, V4 | INTEGRATED | `781901a`, `f6bde5a`, `b93b70c`, `9804135`, `3dcf2bb`, `0d4f20a`, `66bc4d0`, `8b6164f`, `b0a6518`, `0a21f62`, `1529101`, `bed49d9`, `067b4bb`, `c87054f`, `04bc076`, convergence `9799299`, `7e0c6ef`, `9b17da8`, `4ddf145` | `/root/v5_bounds_review`, `/root/v5_transport_review`, `/root/v5_abort_review`, `/root/v5_loopback_review`, `/root/d123_parity_review`, `/root/v5_parity_spec_review` / ACCEPT | `4ddf145e4d29f92e059fb8deec3513e8af076d5b` |
 | Q0 | V5 | INTEGRATED | `31c85a0`, correction `2f55410` | `/root/d123_parity_review`, `/root/v5_parity_spec_review` / ACCEPT | `2f55410ec9296dd2f66962d6ee3e4d2340e554b2` |
-| Q1 | Q0 | INTEGRATED | `97e34b4`, correction `9366ace`, correction `656ef4e` | `/root/v5_parity_spec_review`, `/root/q2_spec_review` / ACCEPT | `656ef4e` |
+| Q1 | Q0 | INTEGRATED | `97e34b4`, corrections `9366ace`, `656ef4e`, campaign-page corrections `ca0b058`, `b8188b2` | `/root/v5_parity_spec_review`, `/root/q2_spec_review`, `/root/d123_parity_review` / ACCEPT | `b8188b2` |
 | Q2 | Q0 | INTEGRATED | `3d0490a` | `/root/v34_parity`, `/root/q2_spec_review` / ACCEPT | `3d0490a8052a73da024ea523f3c0012d0e2aca9f` |
 | Q3 | Q1, Q2 | INTEGRATED | `614174f`, corrections `0ecbd21`, `c8fb80e`, `d925f4c` | `/root/d123_parity_review`, `/root/q2_spec_review` / ACCEPT | `276ca0e` |
 | D0 | F0 | INTEGRATED | `d476690`, `65d48b4`, `3cea781`, `f84ad2c`, evidence `bd948a7`, `a27764b`, correction `7e0c6ef` | `/root/v_vertical_audit`, `/root/v0_impl`, `/root/d123_parity_review`, `/root/v5_parity_spec_review` / ACCEPT | `4ddf145` |
@@ -137,15 +137,15 @@ Statuses are `BLOCKED`, `READY`, `IMPLEMENTING`, `REVIEW`, `REWORK`,
 | R0 | F0, V5, Q3, D4 | INTEGRATED | `435aa06`, evidence `88d56c9`, corrections `98235ab`, `4e46acc`, evidence `4f293e5`, `23635c7`; integrated as `affcee4`, `01fa070`, `688b629`, `fa92709`, `66a650e`, `c8b7c7e` | `/root/d123_parity_review`, `/root/q2_spec_review` / ACCEPT | `c8b7c7e872f25648dbf5df407f92e76d64948eff` |
 | R1 | R0 | INTEGRATED | `40116b5`, `121d78b`, corrections `95b67d6`, `7c85cf1`, evidence/checker `c5cc7ea`, `1befaef` | `/root/d123_parity_review`, `/root/q2_spec_review`, `/root/v34_parity` / ACCEPT | `1befaefd71ef5ffe59866021f216104b3f83f9ef` |
 | P1 | R1, V1, V2, Q1, D4 | INTEGRATED | `a19914b`, `874cb1b`, `2422c2c`, evidence `02782f8`, activation correction `5bc8055` | `/root/v34_parity`, `/root/d123_parity_review` / ACCEPT | `f3610aa` |
-| P2 | P1 | REWORK | `0f252ca`, evidence `8e41350` | `/root/q2_spec_review` / REWORK | - |
-| P3 | P1, V2, Q1, D4 | REWORK | `1e7fb76`, evidence `38bbbcc` | `/root/q2_spec_review` / REWORK | - |
+| P2 | P1 | REVIEW | `0f252ca`, evidence `8e41350`, corrections `5880b09`, `cb8552a` | `/root/q2_spec_review` / REWORK; correction re-review active | - |
+| P3 | P1, V2, Q1, D4 | REWORK | `1e7fb76`, `38bbbcc`, corrections `dddd96b`, `07db531`, `fe3357e`, `24b9bc6` | `/root/q2_spec_review` / REWORK; final two-item correction active | - |
 | P4 | P3 | BLOCKED | - | - | - |
 | P5 | R1, V3, Q2, D4 | INTEGRATED | `231f109`, `a5b657f`, `72c6a76`, `448c782`, activation `5c0e27e`; integrated as `c84b957`, `32533a7`, `e951cd1`, `a170123`, `0f6b118`, evidence `6f639ab` | `/root/d123_parity_review`, `/root/v34_parity` / ACCEPT | `6f639ab` |
-| P6 | R1, V4, Q2, D4, B2 | REWORK | fresh redispatch `7eba5bd` through `2d5b3fc` | `/root/q2_spec_review` / REWORK | - |
+| P6 | R1, V4, Q2, D4, B2 | INTEGRATED | accepted fresh range `e23bc9` through `414ea1a`; integrated `3c08e12` through `68dd82f`; evidence `eb2f669`; composition `79341c1`; browser corrections `db4eb57`, `1096a4d` | `/root/q2_spec_review` / ACCEPT | `1096a4d` |
 | P7 | R1, V4, Q2, D4 | REWORK | `d2486bd`, corrections `80a6db3`, evidence `ed0a76d` | `/root/q2_spec_review`, `/root/v34_parity` / REWORK | - |
 | P8 | P1 | IMPLEMENTING | - | `/root/q2_spec_review` | - |
 | P9 | P5 | READY | - | - | - |
-| P10 | P5 | READY | - | - | - |
+| P10 | P5 | IMPLEMENTING | - | `/root/v34_parity` | - |
 | X0 | P2, P8, P4, P9, P10, P6, P7 | BLOCKED | - | - | - |
 | X1 | X0 | BLOCKED | - | - | - |
 | X2 | X1 | BLOCKED | - | - | - |
@@ -993,6 +993,53 @@ Svelte 0/0, Ultracite, boundaries and parity. Original-author correction is
 queued after P2; no STOP condition exists. P1's browser gate held and released
 the only process-test token; neither P6 nor P7 used it.
 
+P6 was then redispatched again from the exact reviewed neutral seam `9105ee6`
+in `/tmp/ai-usage-068-p6-r2`. Its complete fresh range `e23bc9..414ea1a`
+consumes the sole framework-neutral source presentation owner, closes timeout
+cleanup and recursive package/alias closure traversal, and records exact current
+evidence. `/root/q2_spec_review` ACCEPTed both axes with 59 tests and 150
+expectations. The range integrated as `3c08e12..68dd82f`; `eb2f669` rewrites
+worker evidence to the integrated implementation. Coordinator composition
+`79341c1` places `WebQueryProvider` outside exactly one
+`SourceControlProvider`, renders the responsive summary only on Manage surfaces,
+and directly activates the sole-main `SourcesPage`. Making the accepted files
+reachable exposed Svelte's reserved-rune ambiguity for a local variable named
+`state` and named-snippet scoping at the provider boundary; the coordinator
+renamed the local projection to `controlState` and hoisted the snippet without
+changing behavior. Independent review ACCEPTed the complete composition.
+
+The first activated P6 shadow-browser gate found two deterministic integration
+contract misses rather than product failures: the direct Sources page no longer
+carried R1's SSR route marker, and the new `Sources ready` summary link made
+Playwright's substring name lookup collide with the exact `Sources` navigation
+link. `db4eb57` restores the marker on the existing sole `<main>` and makes the
+three destination clicks exact; `1096a4d` makes the active-destination assertion
+exact as well. No assertion, timeout, accessibility check or behavior was
+weakened. `/root/q2_spec_review` ACCEPTed the delta and the unchanged full shadow
+suite passed 6/6, including SSR/reload, accessibility, dirty navigation,
+history/scroll, error recovery and demo acquisition isolation. Repository lint,
+28/28 typecheck tasks, Svelte 0/0, shadow build, package boundaries and parity
+are green at `1096a4d`.
+
+P3's deep paging correction exposed that Q1's accepted campaign-children Query
+key kept the fingerprint cursor-independent but did not name the individual page
+destination. Coordinator corrections `ca0b058` and `b8188b2` add the canonical
+`campaign-children:initial|cursor:<JSON>` destination inside the Q1 owner, reuse
+the parsed request exactly once in options, and freeze both properties: cursor
+fingerprints remain equal while cursor keys differ. `/root/d123_parity_review`
+ACCEPTed both axes; five focused tests with 34 expectations, Ultracite and
+package boundaries pass. P3 can now remove its temporary local key shadow and
+consume Q1 unchanged.
+
+One orchestration incident did not justify stopping the run: a network command
+was treated as needing user approval even though the persistent `curl -sS`
+permission already covered it, and the normal escalation path was available for
+other sandbox failures. The coordinator resumed without changing scope or
+security policy. Recoverable sandbox limitations, missing host bubblewrap and
+truncated command output are henceforth documented and handled through bounded
+escalated shells/read-only process inspection; only a blocker that invalidates
+the complete migration can stop this run under the user's explicit instruction.
+
 ## Deviations, STOPs, and recovery
 
 - Reviewed deviations: the two Vite/Bun loopback proof substitutions above are
@@ -1047,6 +1094,8 @@ the only process-test token; neither P6 nor P7 used it.
   strict Svelte type errors while the additive shell was unreachable. The route
   was reverted before stacking work; reviewed correction `0f6b118` plus
   reachability fixture closes the gap, and all additive gates are green.
-- Recovery point: `6f639ab40969a9f9b7f4993f5f23f329fa635435` is the latest
-  independently reviewed green checkpoint. P1 and P5 are integrated; P9/P10 are
-  ready, while P2/P3/P6/P7/P8 remain recoverable in isolated worktrees.
+- Recovery point: `1096a4d` is the latest independently reviewed green
+  checkpoint. P1, P5 and P6 are integrated; Q1 owns exact campaign-child page
+  identity; P2 is in correction re-review, P3 is applying its final focused
+  correction, P8 and P10 are implementing, P9 is preserved ready, and P7 remains
+  recoverable pending fresh compatible redispatch.
