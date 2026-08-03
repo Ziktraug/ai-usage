@@ -4,7 +4,7 @@ import { defineParityShard, type ParityEvidence, type ParityRecord } from '../sc
 const owner = 'D0' as const;
 const foundationCommit = '6c6d6c4ebe134d980dd630a13ab53086e38aa142';
 const finalD0Commit = '8474f185f0bef832bae5bb0338f1af316ba02401';
-const d4Commit = '662182e8fba4e55c14aa2d26308adca2f70bf72d';
+const d4Commit = '6646fe568e8b4c1fba74ac1b4150d1480d15ca6f';
 const targetEvidence = (commit: string, kind: ParityEvidence['kind'], reference: string): ParityEvidence => ({
   commit,
   kind,
