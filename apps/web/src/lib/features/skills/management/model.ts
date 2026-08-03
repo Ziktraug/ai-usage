@@ -1,0 +1,145 @@
+import type { ProjectionAction, SkillManagementSnapshot } from '@ai-usage/skills';
+import { parseSkillReconcileResult } from '../../../../skills-client-contracts';
+import {
+  buildSkillMatrix,
+  describeReconcileActions,
+  filterMatrixRows,
+  type MatrixCellState,
+  type ReconcilePlanSummary,
+  type SkillCellStateFilter,
+  type SkillInvocation,
+  type SkillRowFilter,
+} from '../../../../skills-page-model';
+
+export const skillStateFilterOrder = [
+  'linked',
+  'not-linked',
+  'broken',
+  'blocked',
+  'disabled',
+] as const satisfies readonly SkillCellStateFilter[];
+
+export const skillStateFilterLabels: Readonly<Record<SkillCellStateFilter, string>> = {
+  blocked: 'Blocked',
+  broken: 'Broken',
+  disabled: 'Disabled',
+  linked: 'Linked',
+  'not-linked': 'Not linked',
+};
+
+export type MatrixDotTone = 'broken' | 'copy' | 'linked' | 'missing' | 'none';
+
+export const matrixDotTone = (state: MatrixCellState): MatrixDotTone => {
+  if (state === 'linked') {
+    return 'linked';
+  }
+  if (state === 'missing') {
+    return 'missing';
+  }
+  if (
+    state === 'broken-link' ||
+    state === 'wrong-target' ||
+    state === 'missing-target' ||
+    state === 'duplicate-name-conflict' ||
+    state === 'disabled-exposed'
+  ) {
+    return 'broken';
+  }
+  if (state === 'unmanaged-copy' || state === 'unmanaged-symlink' || state === 'duplicate-same-content') {
+    return 'copy';
+  }
+  return 'none';
+};
+
+export interface SkillsMatrixFilters {
+  readonly cellState?: SkillCellStateFilter;
+  readonly invocation?: SkillInvocation;
+  readonly origin?: string;
+  readonly query: string;
+}
+
+export const buildSkillsMatrixView = (snapshot: SkillManagementSnapshot, filters: SkillsMatrixFilters) => {
+  const matrix = buildSkillMatrix(snapshot);
+  const rowFilter: SkillRowFilter = { query: filters.query };
+  if (filters.cellState !== undefined) {
+    rowFilter.cellState = filters.cellState;
+  }
+  if (filters.invocation !== undefined) {
+    rowFilter.invocation = filters.invocation;
+  }
+  if (filters.origin !== undefined) {
+    rowFilter.origin = filters.origin;
+  }
+  const counts = new Map<SkillCellStateFilter, number>();
+  for (const state of skillStateFilterOrder) {
+    counts.set(state, filterMatrixRows(matrix.rows, { cellState: state }).length);
+  }
+  return {
+    allCount: matrix.rows.length,
+    autoCount: matrix.rows.filter((row) => row.invocation === 'auto').length,
+    manualCount: matrix.rows.filter((row) => row.invocation === 'manual').length,
+    matrix,
+    origins: [...new Set(matrix.rows.flatMap((row) => (row.origin === null ? [] : [row.origin])))].sort(),
+    rows: filterMatrixRows(matrix.rows, rowFilter),
+    stateFilterCounts: counts,
+  };
+};
+
+export type SkillsManagementOperation =
+  | 'preview-reconcile'
+  | 'reconcile-all'
+  | `reconcile:${string}`
+  | `toggle:${string}`;
+
+export interface SkillsManagementSuccess {
+  readonly actions: readonly ProjectionAction[];
+  readonly plan: ReconcilePlanSummary | null;
+  readonly snapshot: SkillManagementSnapshot;
+}
+
+export type SkillsManagementResult =
+  | { readonly error: string; readonly ok: false }
+  | ({ readonly ok: true } & SkillsManagementSuccess);
+
+export interface SkillsManagementClient {
+  previewReconcileAllManagedSkills(): Promise<unknown>;
+  reconcileAllManagedSkills(): Promise<unknown>;
+  reconcileManagedSkill(skillName: string): Promise<unknown>;
+  toggleManagedSkill(input: { enabled: boolean; skillName: string }): Promise<unknown>;
+}
+
+const unwrapReconcile = (wireResult: unknown, preview: boolean): SkillsManagementResult => {
+  const result = parseSkillReconcileResult(wireResult);
+  if (!result.ok) {
+    return { error: result.error.message, ok: false };
+  }
+  return {
+    actions: result.data.actions,
+    ok: true,
+    plan: preview ? describeReconcileActions(result.data.actions, result.data.snapshot.targets) : null,
+    snapshot: result.data.snapshot,
+  };
+};
+
+export const runSkillsManagementOperation = async (
+  client: SkillsManagementClient,
+  operation: SkillsManagementOperation,
+): Promise<SkillsManagementResult> => {
+  if (operation === 'preview-reconcile') {
+    return unwrapReconcile(await client.previewReconcileAllManagedSkills(), true);
+  }
+  if (operation === 'reconcile-all') {
+    return unwrapReconcile(await client.reconcileAllManagedSkills(), false);
+  }
+  if (operation.startsWith('reconcile:')) {
+    return unwrapReconcile(await client.reconcileManagedSkill(operation.slice('reconcile:'.length)), false);
+  }
+  const separator = operation.indexOf(':');
+  const payload = operation.slice(separator + 1);
+  const enabled = payload.startsWith('enable:');
+  const skillName = payload.slice(enabled ? 'enable:'.length : 'disable:'.length);
+  return unwrapReconcile(await client.toggleManagedSkill({ enabled, skillName }), false);
+};
+
+export const toggleOperation = (skillName: string, enabled: boolean): SkillsManagementOperation =>
+  `toggle:${enabled ? 'enable' : 'disable'}:${skillName}`;
