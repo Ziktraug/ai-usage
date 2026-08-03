@@ -58,8 +58,13 @@ describe('X0 Sync route composition', () => {
     expect(hook).toContain("process.once('sveltekit:shutdown', async () => {");
     expect(hook).toContain('await webReadObservabilityLifecycle.dispose()');
     expect(hook).not.toContain('setTimeout(() => process.exit(0)');
-    expect(hook).toContain("event.request.headers.get('host') === null");
-    expect(hook).toContain("event.request.headers.has('x-ai-usage-request-owner')");
+    expect(hook).toContain(
+      "import { normalizeOwnedRpcSubrequest } from '$lib/server/rpc/subrequest-normalization.server'",
+    );
+    expect(hook).toContain('const rpcRequest = normalizeOwnedRpcSubrequest({');
+    expect(hook).toContain('isSubRequest: event.isSubRequest');
+    expect(hook).toContain('request: event.request');
+    expect(hook).toContain('url: event.url');
     expect(hook).toContain("filterSerializedResponseHeaders: (name) => name === 'content-type'");
   });
 });
