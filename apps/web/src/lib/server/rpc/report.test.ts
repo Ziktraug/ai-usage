@@ -109,6 +109,13 @@ const createServices = (
   },
 });
 
+const publicErrorData = (error: unknown): unknown => {
+  if (!(typeof error === 'object' && error !== null && 'data' in error)) {
+    throw new Error('Expected public error data.');
+  }
+  return error.data;
+};
+
 const caught = async (promise: Promise<unknown>): Promise<unknown> => {
   try {
     await promise;
@@ -196,6 +203,27 @@ describe('report RPC handler', () => {
       data: { reason: 'warming' },
       message: 'Revision cache is warming.',
     });
+  });
+
+  test('filters service reasons through the public error schema', async () => {
+    const errorForReason = async (reason: string): Promise<unknown> => {
+      const router = createReportRpcRouter({
+        ...createServices(),
+        getReportRevisionManifest: () => {
+          throw new ReportRpcServiceError('Unavailable', 'Revision cache is unavailable.', reason);
+        },
+      });
+      return await caught(call(router.report.revisionManifest, {}));
+    };
+
+    const validError = await errorForReason('schema-too-new');
+    expect(validError).toMatchObject({ code: 'Unavailable' });
+    expect(publicErrorData(validError)).toEqual({ reason: 'schema-too-new' });
+    for (const invalidReason of ['schema.too-new', '0bad']) {
+      const invalidError = await errorForReason(invalidReason);
+      expect(invalidError).toMatchObject({ code: 'Unavailable' });
+      expect(publicErrorData(invalidError)).toEqual({});
+    }
   });
 
   test('preserves the exact cancellation reason before and after service awaits', async () => {

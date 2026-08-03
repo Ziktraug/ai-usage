@@ -19,7 +19,9 @@ import {
   reportContract,
   type SaveProjectGroupsInput,
 } from '@ai-usage/web-contract/report';
+import { publicReasonSchema } from '@ai-usage/web-contract/schema-conventions';
 import { implement } from '@orpc/server';
+import { safeParse } from 'valibot';
 
 interface ServiceCallOptions {
   readonly signal: AbortSignal | undefined;
@@ -76,23 +78,20 @@ interface PublicErrorOptions {
 type PublicErrorFactory = (options: PublicErrorOptions) => Error;
 type PublicErrorFactories = Readonly<Record<string, PublicErrorFactory>>;
 
-const SAFE_REASON_PATTERN = /^[a-z0-9][a-z0-9._:-]{0,127}$/u;
 const MAX_PUBLIC_MESSAGE_CHARACTERS = 512;
 
-const safeServiceOptions = (error: ReportRpcServiceError): PublicErrorOptions => ({
-  data:
-    error.reason && SAFE_REASON_PATTERN.test(error.reason)
-      ? {
-          reason: error.reason,
-        }
-      : {},
-  message:
-    error.message.length > 0 &&
-    error.message.length <= MAX_PUBLIC_MESSAGE_CHARACTERS &&
-    !(error.message.includes('\n') || error.message.includes('\r'))
-      ? error.message
-      : 'The report operation could not be completed.',
-});
+const safeServiceOptions = (error: ReportRpcServiceError): PublicErrorOptions => {
+  const parsedReason = safeParse(publicReasonSchema, error.reason);
+  return {
+    data: parsedReason.success ? { reason: parsedReason.output } : {},
+    message:
+      error.message.length > 0 &&
+      error.message.length <= MAX_PUBLIC_MESSAGE_CHARACTERS &&
+      !(error.message.includes('\n') || error.message.includes('\r'))
+        ? error.message
+        : 'The report operation could not be completed.',
+  };
+};
 
 const throwIfCancelled = (signal: AbortSignal | undefined): void => {
   if (signal?.aborted) {
