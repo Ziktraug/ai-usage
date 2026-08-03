@@ -2,7 +2,7 @@ import { currentRecord } from '../helpers';
 import { defineParityShard, type ParityRecord } from '../schema';
 
 const owner = 'P3' as const;
-const implementationCommit = '1e7fb7684ef24132fea810b08d9dbce460b7b0e0';
+const implementationCommit = 'dddd96bc6a37b084fd9ec4aa2fdc07d85d3ceaf6';
 const packetTestCommand =
   'bun test apps/web/src/lib/features/sessions/table/*.test.ts apps/web/src/session-{table-schema,row-window,query-client,query-operation-owner,surface-mode}.test.ts apps/web/src/lib/{rpc/session-client,query/options/session}.test.ts apps/web/src/served-report-session.test.ts';
 
@@ -68,18 +68,18 @@ export default defineParityShard({
       currentOwner: 'apps/web/src/session-table.tsx; apps/web/src/session-surface-mode.ts',
       id: 'SESSION-01',
       targetSource:
-        'apps/web/src/lib/features/sessions/table/{session-table.svelte,session-table-owner.svelte,session-table-model.ts,INTEGRATION.md}; apps/web/src/session-surface-mode.ts',
+        'apps/web/src/lib/features/sessions/table/{session-table.svelte,session-cell.svelte,session-cell-projection.ts,session-table-owner.svelte,session-table-model.ts,INTEGRATION.md}; apps/web/src/session-surface-mode.ts',
       targetTest:
-        'apps/web/src/lib/features/sessions/table/{session-table-components,session-table-model}.test.ts; apps/web/src/session-surface-mode.test.ts › one owner, responsive projections, retained stable state and keyboard focus',
+        'apps/web/src/lib/features/sessions/table/{session-table-components,session-table-model}.test.ts; apps/web/src/session-surface-mode.test.ts › one owner, exact responsive geometry, rendered 5,000-row bounded windows, retained stable expansion and keyboard focus',
     }),
     feature({
       baselineTest: 'apps/web/src/session-table-schema.test.ts; apps/web/e2e/dashboard.spec.ts › session presets',
       currentOwner: 'apps/web/src/session-columns.tsx; apps/web/src/session-table-schema.ts',
       id: 'SESSION-02',
       targetSource:
-        'apps/web/src/lib/features/sessions/table/{session-columns.ts,session-table.svelte}; apps/web/src/session-table-schema.ts',
+        'apps/web/src/lib/features/sessions/table/{session-columns.ts,session-cell.svelte,session-cell-projection.ts,session-table.svelte}; apps/web/src/session-table-schema.ts',
       targetTest:
-        'apps/web/src/lib/features/sessions/table/session-table-model.test.ts; apps/web/src/session-table-schema.test.ts › exact 25 columns, Work/Tokens/Reliability and legacy URL diffs',
+        'apps/web/src/lib/features/sessions/table/{session-table-model,session-table-components}.test.ts; apps/web/src/session-table-schema.test.ts › exact 25 columns, Work/Tokens/Reliability, cell filters/highlighting/provenance/campaign labels, sort defaults and legacy URL diffs',
     }),
     feature({
       baselineTest: 'apps/web/src/session-query-client.test.ts; apps/web/e2e/production-report.spec.ts › exact paging',
@@ -88,7 +88,7 @@ export default defineParityShard({
       targetSource:
         'apps/web/src/lib/features/sessions/table/{session-table-query-owner.ts,session-table-owner.svelte,INTEGRATION.md}; apps/web/src/lib/{rpc/session-client.ts,query/options/session.ts}; apps/web/src/session-query-operation-owner.ts',
       targetTest:
-        'apps/web/src/lib/features/sessions/table/session-table-query-owner.test.ts; apps/web/src/{session-query-client,session-query-operation-owner}.test.ts; apps/web/src/lib/{rpc/session-client,query/options/session}.test.ts › exact revision/fingerprint, one owner, dedupe, abort, supersession and campaign reachability',
+        'apps/web/src/lib/features/sessions/table/session-table-query-owner.test.ts; apps/web/src/{session-query-client,session-query-operation-owner}.test.ts; apps/web/src/lib/{rpc/session-client,query/options/session}.test.ts › exact revision/fingerprint, one owner, dedupe, abort, supersession, authoritative campaign identity, incremental one-retry recovery and failure preservation',
     }),
     feature({
       baselineTest: 'apps/web/e2e/session-scroll.scale.ts; apps/web/e2e/session-scroll-benchmark.scale.ts',
@@ -97,7 +97,7 @@ export default defineParityShard({
       targetSource:
         'apps/web/src/lib/features/sessions/table/{session-virtualization.ts,session-table.svelte,session-table-model.ts}; apps/web/src/session-row-window.ts',
       targetTest:
-        'apps/web/src/lib/features/sessions/table/{session-table-model,session-table-components}.test.ts; apps/web/src/session-row-window.test.ts › fixed geometry, desktop/mobile sentinels, 5,000-row bounded DOM/network/keyboard contract (X0 owns process scale/benchmark)',
+        'apps/web/src/lib/features/sessions/table/{session-table-model,session-table-components}.test.ts; apps/web/src/session-row-window.test.ts › exact 188/180 mobile geometry, desktop/mobile sentinels, actual rendered 5,000-row bounded DOM and shared keyboard focus contract (X0 owns process scale/benchmark)',
     }),
     productionRow({
       currentOwner: 'apps/web/src/session-columns.tsx',
@@ -108,7 +108,7 @@ export default defineParityShard({
     productionRow({
       currentOwner: 'apps/web/src/session-table.tsx',
       targetSource:
-        'apps/web/src/lib/features/sessions/table/{session-table.svelte,session-table-owner.svelte,session-table-model.ts,session-table-query-owner.ts,session-virtualization.ts,INTEGRATION.md}',
+        'apps/web/src/lib/features/sessions/table/{session-table.svelte,session-cell.svelte,session-cell-projection.ts,session-table-owner.svelte,session-table-model.ts,session-table-query-owner.ts,session-virtualization.ts,INTEGRATION.md}',
       targetTest:
         'apps/web/src/lib/features/sessions/table/{session-table-components,session-table-model,session-table-query-owner,session-client-closure}.test.ts',
     }),
