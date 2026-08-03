@@ -106,6 +106,26 @@ const httpRequest = async (
     request.end(options.body);
   });
 
+const closeFixtureServer = async (fixtureServer: ViteDevServer | undefined): Promise<void> => {
+  if (!fixtureServer) {
+    return;
+  }
+  await bounded(fixtureServer.close(), 'Nitro fixture close');
+  await bounded(
+    new Promise<void>((resolveClosed, rejectClosed) => {
+      setImmediate(() => {
+        const httpServer = fixtureServer.httpServer;
+        if (httpServer && (httpServer.listening || httpServer.address() !== null)) {
+          rejectClosed(new Error('Nitro fixture still owns a listening server after close.'));
+          return;
+        }
+        resolveClosed();
+      });
+    }),
+    'Nitro fixture post-close teardown',
+  );
+};
+
 const captureError = async (operation: Promise<unknown>): Promise<unknown> => {
   try {
     await operation;
@@ -280,7 +300,7 @@ try {
 }
 
 const cleanupErrors = await runCleanupTasks([
-  () => server?.close(),
+  async () => await closeFixtureServer(server),
   () => rm(temporaryDirectory, { force: true, recursive: true }),
 ]);
 for (const [key, value] of previousEnvironment) {

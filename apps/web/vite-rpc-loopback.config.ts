@@ -1,5 +1,6 @@
+import { createNitro } from 'nitro/builder';
 import { nitro } from 'nitro/vite';
-import { defineConfig } from 'vite';
+import { defineConfig, type Plugin } from 'vite';
 
 const requiredTemporaryPath = (name: string): string => {
   const value = process.env[name];
@@ -9,24 +10,38 @@ const requiredTemporaryPath = (name: string): string => {
   return value;
 };
 
+const nitroInstance = await createNitro({
+  buildDir: requiredTemporaryPath('AI_USAGE_RPC_LOOPBACK_BUILD_DIR'),
+  builder: 'vite',
+  dev: true,
+  handlers: [
+    {
+      handler: './server/routes/rpc.ts',
+      route: '/rpc/**',
+    },
+  ],
+  output: {
+    dir: requiredTemporaryPath('AI_USAGE_RPC_LOOPBACK_OUTPUT_DIR'),
+  },
+  preset: 'bun',
+  rootDir: import.meta.dir,
+});
+let nitroClosePromise: Promise<void> | undefined;
+const closeOwnedNitro = (): Promise<void> => {
+  nitroClosePromise ??= nitroInstance.close();
+  return nitroClosePromise;
+};
+const nitroTeardownPlugin: Plugin = {
+  name: 'ai-usage:rpc-loopback-nitro-teardown',
+  async closeBundle() {
+    await closeOwnedNitro();
+  },
+};
+
 export default defineConfig({
   cacheDir: requiredTemporaryPath('AI_USAGE_RPC_LOOPBACK_CACHE_DIR'),
   logLevel: 'silent',
-  plugins: [
-    nitro({
-      buildDir: requiredTemporaryPath('AI_USAGE_RPC_LOOPBACK_BUILD_DIR'),
-      handlers: [
-        {
-          handler: './server/routes/rpc.ts',
-          route: '/rpc/**',
-        },
-      ],
-      output: {
-        dir: requiredTemporaryPath('AI_USAGE_RPC_LOOPBACK_OUTPUT_DIR'),
-      },
-      preset: 'bun',
-    }),
-  ],
+  plugins: [nitro({ _nitro: nitroInstance }), nitroTeardownPlugin],
   server: {
     allowedHosts: true,
     host: '127.0.0.1',
