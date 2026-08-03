@@ -1,4 +1,8 @@
-import type { SessionPresentationRow, SessionQueryRequest } from '@ai-usage/report-core/session-query';
+import {
+  parseSessionQueryRequest,
+  type SessionPresentationRow,
+  type SessionQueryRequest,
+} from '@ai-usage/report-core/session-query';
 import type { CampaignSessionCollection } from './campaign-session-controls-model';
 
 export interface CampaignSessionControlsBinding {
@@ -6,6 +10,7 @@ export interface CampaignSessionControlsBinding {
   readonly collection: CampaignSessionCollection;
   readonly loadMore: () => void;
   readonly query: SessionQueryRequest;
+  readonly selectionQuery: SessionQueryRequest;
   readonly sessionCount: number;
   readonly visibleRows: readonly SessionPresentationRow[];
 }
@@ -23,11 +28,25 @@ export const campaignSessionsNeedInitialLoad = (
 export const campaignFilterMatchesBinding = (currentCampaignKey: string | undefined, campaignKey: string): boolean =>
   currentCampaignKey === campaignKey;
 
+export const campaignSessionSelectionQuery = (query: SessionQueryRequest, campaignKey: string): SessionQueryRequest =>
+  parseSessionQueryRequest({
+    ...query,
+    cursor: null,
+    filters: {
+      fields: { campaign: campaignKey },
+      harness: [],
+      machine: [],
+      origin: [],
+      query: '',
+    },
+    range: { from: null, to: null },
+  });
+
 export const campaignSessionSelectionFor = (
   binding: CampaignSessionControlsBinding,
   row: SessionPresentationRow,
 ): { readonly query: SessionQueryRequest; readonly row: SessionPresentationRow; readonly total: number } => ({
-  query: binding.query,
+  query: binding.selectionQuery,
   row,
   total: binding.sessionCount,
 });

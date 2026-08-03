@@ -1,10 +1,17 @@
 import { describe, expect, test } from 'bun:test';
-import { parseSessionQueryRequest } from '@ai-usage/report-core/session-query';
+import {
+  parseSessionQueryRequest,
+  projectSessionCampaignChildren,
+  projectSessionNeighbors,
+  projectSessionPage,
+} from '@ai-usage/report-core/session-query';
+import { demoReportPayload } from '../../../../report-data';
 import { syntheticCampaignRow, syntheticSessionRow } from '../../sessions/table/session-table.fixtures';
 import {
   type CampaignSessionControlsBinding,
   campaignFilterMatchesBinding,
   campaignSessionSelectionFor,
+  campaignSessionSelectionQuery,
   campaignSessionsNeedInitialLoad,
   createCampaignSessionControlsPublisher,
 } from './campaign-session-controls-binding';
@@ -30,8 +37,16 @@ const binding: CampaignSessionControlsBinding = {
   collection: { items: [campaign, hiddenSession], loading: false, nextCursor: null, totalCount: 2 },
   loadMore: () => undefined,
   query,
+  selectionQuery: campaignSessionSelectionQuery(query, campaign.campaignKey ?? ''),
   sessionCount: 1,
   visibleRows: [campaign],
+};
+
+const requireValue = <Value>(value: Value | undefined | null, label: string): Value => {
+  if (value == null) {
+    throw new Error(`Missing ${label} fixture.`);
+  }
+  return value;
 };
 
 describe('campaign session composition binding', () => {
@@ -49,8 +64,47 @@ describe('campaign session composition binding', () => {
     expect(campaignFilterMatchesBinding(undefined, 'campaign-a')).toBe(false);
   });
 
-  test('keeps hidden-child selection on the served query and its session count', () => {
-    expect(campaignSessionSelectionFor(binding, hiddenSession)).toEqual({ query, row: hiddenSession, total: 1 });
+  test('uses an exact campaign-scoped query and consistent total for hidden-child selection', () => {
+    const selection = campaignSessionSelectionFor(binding, hiddenSession);
+    expect(selection).toEqual({ query: binding.selectionQuery, row: hiddenSession, total: 1 });
+    expect(selection.query).toMatchObject({
+      cursor: null,
+      filters: {
+        fields: { campaign: campaign.campaignKey },
+        harness: [],
+        machine: [],
+        origin: [],
+        query: '',
+      },
+      range: { from: null, to: null },
+      revision: query.revision,
+      sort: query.sort,
+    });
+
+    const unfilteredPage = projectSessionPage(demoReportPayload.rows, {
+      ...query,
+      filters: { fields: {}, harness: [], machine: [], origin: [], query: '' },
+    });
+    const campaignWithChildren = requireValue(
+      unfilteredPage.items
+        .map((item) => ({
+          children: projectSessionCampaignChildren(demoReportPayload.rows, {
+            campaignKey: item.campaignKey,
+            query: campaignSessionSelectionQuery(query, item.campaignKey),
+          }),
+          item,
+        }))
+        .find(({ children }) => children.itemCount > 0),
+      'campaign with children',
+    );
+    const selectedHiddenRow = requireValue(campaignWithChildren.children.items[0], 'hidden campaign child');
+    const exactCampaignQuery = campaignSessionSelectionQuery(query, campaignWithChildren.item.campaignKey);
+    expect(
+      projectSessionNeighbors(demoReportPayload.rows, { query: exactCampaignQuery, rowId: selectedHiddenRow.rowId }),
+    ).toMatchObject({ found: true, revision: query.revision });
+    expect(projectSessionPage(demoReportPayload.rows, exactCampaignQuery).sessionCount).toBe(
+      campaignWithChildren.children.itemCount + 1,
+    );
   });
 
   test('publishes one null binding when the Sessions owner unmounts', () => {

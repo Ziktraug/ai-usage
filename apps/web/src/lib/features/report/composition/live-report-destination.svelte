@@ -36,6 +36,7 @@
   import { createSessionDetailController, type SessionSelectionInput } from '../../sessions/detail/controller';
   import { createSessionDetailQueryOwner } from '../../sessions/detail/query-owner';
   import SessionDetailSlot from '../../sessions/detail/session-detail-slot.svelte';
+  import { useSourceControl } from '../../sources/context.svelte';
   import CampaignLabelEditor from '../actions/campaign-label-editor.svelte';
   import CampaignSessionControls from '../actions/campaign-session-controls.svelte';
   import {
@@ -45,6 +46,7 @@
   } from '../actions/campaign-session-controls-binding';
   import { projectGroupsAfterWarningCleanup, saveProjectGroupsAtRevision } from '../actions/project';
   import QuotaHistoryOwner from '../actions/quota-history-owner.svelte';
+  import { reportMutationsEnabled } from '../actions/report-mutation-availability';
   import ActiveFilters from '../breakdown/active-filters.svelte';
   import DashboardBreakdown from '../breakdown/dashboard-breakdown.svelte';
   import FilterBar from '../breakdown/filter-bar.svelte';
@@ -101,6 +103,7 @@
   let projectWarningCleanupError = $state<string>();
   let campaignSessionControls = $state<CampaignSessionControlsBinding | null>(null);
   const initialDescriptor = untrack(() => initialFocusedReportDescriptor(bootstrapResult));
+  const sourceControl = useSourceControl();
   const descriptorSource = untrack(() =>
     createFocusedReportDescriptorSource({ client: reportClient, initial: initialDescriptor, queryClient }),
   );
@@ -155,6 +158,7 @@
       : (commit?.overview.summary.sessionCount ?? totalSessions),
   );
   const activeSeriesKeys = $derived(activeTimelineSeriesKeys(search, dimension));
+  const mutationsEnabled = $derived(reportMutationsEnabled(runtimeMode, sourceControl.state().connection));
   const selectedCampaignEditor = $derived.by(() => {
     const row = selection?.row;
     return row?.campaignKey ? campaignLabels.editorFor(row.campaignKey, row.sessionLabel) : undefined;
@@ -221,8 +225,8 @@
     groups: readonly ProjectGroupConfig[],
     revision = descriptorSource.current().revision,
   ): Promise<void> => {
-    if (runtimeMode !== 'live') {
-      throw new Error('Project groups can only be saved from a live report.');
+    if (!mutationsEnabled) {
+      throw new Error('Project groups can only be saved while source control is live.');
     }
     await saveProjectGroupsAtRevision(
       groups,
@@ -303,7 +307,7 @@
   {#snippet children(_owner)}
     <FocusedDestinationRefresh destination={destination.focused} owner={_owner} />
     <ReportWarnings
-      cleanupDisabled={runtimeMode !== 'live'}
+      cleanupDisabled={!mutationsEnabled}
       {omittedSupportItemCount}
       {...(cleaningProjectWarningGroupId === undefined ? {} : { cleaningProjectWarningGroupId })}
       onCleanupProjectWarning={(warning) => cleanupProjectWarning(warning, async () => {
@@ -384,7 +388,7 @@
             onFieldFilter={navigation.setFieldFilter}
             onHarnessFilter={(value) => navigation.setHarness(search.harness.includes(value) ? search.harness.filter((item) => item !== value) : [...search.harness, value])}
             projectEditor={{
-              disabled: runtimeMode !== 'live',
+              disabled: !mutationsEnabled,
               onSave: async (groups) => {
                 await persistProjectGroups(groups);
                 const focusedDestination = destination.focused;

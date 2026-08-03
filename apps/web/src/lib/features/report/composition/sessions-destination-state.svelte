@@ -4,6 +4,7 @@
   import type { SessionTableQueryOwner, SessionTableQueryState } from '../../sessions/table/session-table-query-owner';
   import {
     type CampaignSessionControlsBinding,
+    campaignSessionSelectionQuery,
     createCampaignSessionControlsPublisher,
   } from '../actions/campaign-session-controls-binding';
   import { campaignSessionControlsState } from '../actions/campaign-session-controls-model';
@@ -58,7 +59,8 @@
         queryOwner.loadCampaignSessions(campaignKey).catch(() => undefined);
       },
       query: queryState.query,
-      sessionCount: queryState.sessionCount,
+      selectionQuery: campaignSessionSelectionQuery(queryState.query, campaignKey),
+      sessionCount: campaignState.collection.totalCount,
       visibleRows: campaignState.visibleRows.map(presentRow),
     };
   });
