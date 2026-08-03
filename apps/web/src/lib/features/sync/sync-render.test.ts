@@ -53,6 +53,8 @@ const viteServer = await createServer({
   server: { hmr: false, middlewareMode: true, watch: null, ws: false },
   ssr: { noExternal: true },
 });
+const closeViteServer = (): Promise<void> => viteServer.close();
+afterAll(closeViteServer);
 const [rootModule, progressModule, serverModule] = await Promise.all([
   viteServer.ssrLoadModule('/apps/web/src/lib/features/sync/sync-root.fixture.svelte'),
   viteServer.ssrLoadModule('/apps/web/src/lib/features/sync/manual-transfer-progress.svelte'),
@@ -61,7 +63,6 @@ const [rootModule, progressModule, serverModule] = await Promise.all([
 const syncRoot = componentFrom(rootModule, 'Sync root fixture');
 const transferProgress = componentFrom(progressModule, 'Manual transfer progress');
 const { render } = rendererFrom(serverModule);
-afterAll(async () => viteServer.close());
 
 describe('Sync rendered SSR parity', () => {
   it('renders meaningful SyncRoot fleet HTML from the awaited dehydrated query without a second acquisition', async () => {

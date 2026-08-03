@@ -61,6 +61,8 @@ const viteServer = await createServer({
   server: { hmr: false, middlewareMode: true, watch: null, ws: false },
   ssr: { noExternal: true },
 });
+const closeViteServer = (): Promise<void> => viteServer.close();
+afterAll(closeViteServer);
 const [loadedOwnerModule, fixtureModule, serverModule] = await Promise.all([
   viteServer.ssrLoadModule('/apps/web/src/lib/features/report/lifecycle/served-report-session-owner.svelte.ts'),
   viteServer.ssrLoadModule('/apps/web/src/lib/features/report/lifecycle/report-lifecycle-owner.fixture.svelte'),
@@ -69,7 +71,6 @@ const [loadedOwnerModule, fixtureModule, serverModule] = await Promise.all([
 const ownerModule = loadedOwnerModule as OwnerModule;
 const lifecycleFixture = componentFrom(fixtureModule);
 const { render } = rendererFrom(serverModule);
-afterAll(async () => viteServer.close());
 
 const descriptor = (revision: string): ServedRevisionDescriptor => ({
   captureFingerprint: `capture-${revision}`,

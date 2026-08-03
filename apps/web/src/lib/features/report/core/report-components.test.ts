@@ -63,6 +63,8 @@ const viteServer = await createServer({
   server: { hmr: false, middlewareMode: true, watch: null, ws: false },
   ssr: { noExternal: true },
 });
+const closeViteServer = (): Promise<void> => viteServer.close();
+afterAll(closeViteServer);
 const [overviewModule, rootModule, serverModule] = await Promise.all([
   viteServer.ssrLoadModule('/apps/web/src/lib/features/report/core/report-bootstrap-overview.svelte'),
   viteServer.ssrLoadModule('/apps/web/src/lib/features/report/core/report-root.fixture.svelte'),
@@ -71,7 +73,6 @@ const [overviewModule, rootModule, serverModule] = await Promise.all([
 const overview = componentFrom(overviewModule, 'Report bootstrap overview');
 const reportRoot = componentFrom(rootModule, 'Hydrated report root fixture');
 const { render } = rendererFrom(serverModule);
-afterAll(async () => viteServer.close());
 
 const compatiblePublication = (): Extract<ReportRevisionBootstrapResult, { readonly ok: true }> => {
   const { rows: _rows, tableRows: _tableRows, ...reportSupport } = demoReportPayload;

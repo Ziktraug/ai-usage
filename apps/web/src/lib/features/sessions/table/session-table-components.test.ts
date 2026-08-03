@@ -35,13 +35,14 @@ const viteServer = await createServer({
   server: { hmr: false, middlewareMode: true, watch: null, ws: false },
   ssr: { noExternal: true },
 });
+const closeViteServer = (): Promise<void> => viteServer.close();
+afterAll(closeViteServer);
 const [fixtureModule, serverModule] = await Promise.all([
   viteServer.ssrLoadModule('/apps/web/src/lib/features/sessions/table/session-table.fixture.svelte'),
   viteServer.ssrLoadModule('svelte/server'),
 ]);
 const fixture = componentFrom(fixtureModule);
 const { render } = rendererFrom(serverModule);
-afterAll(async () => viteServer.close());
 
 describe('session table Svelte rendering', () => {
   test('compiles the responsive table and its concrete fixture without warnings', async () => {

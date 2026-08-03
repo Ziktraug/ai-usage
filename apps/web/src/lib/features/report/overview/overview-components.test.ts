@@ -52,13 +52,14 @@ const viteServer = await createServer({
   server: { hmr: false, middlewareMode: true, watch: null, ws: false },
   ssr: { noExternal: true },
 });
+const closeViteServer = (): Promise<void> => viteServer.close();
+afterAll(closeViteServer);
 const [fixtureModule, serverModule] = await Promise.all([
   viteServer.ssrLoadModule('/apps/web/src/lib/features/report/overview/overview-page.fixture.svelte'),
   viteServer.ssrLoadModule('svelte/server'),
 ]);
 const fixture = componentFrom(fixtureModule);
 const { render } = rendererFrom(serverModule);
-afterAll(async () => viteServer.close());
 
 const focusedOverview = () => {
   const { rows, tableRows: _tableRows, ...support } = demoReportPayload;
