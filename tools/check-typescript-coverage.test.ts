@@ -53,6 +53,13 @@ describe('TypeScript project coverage guard', () => {
     ).toEqual(['apps/web/migration-parity/schema.ts', 'apps/web/migration-parity/shards/p1.parity.ts']);
   });
 
+  test('uses only the canonical Web TypeScript projects', () => {
+    expect(TYPECHECK_PROJECTS.filter((project) => project.startsWith('apps/web/'))).toEqual([
+      'apps/web/tsconfig.json',
+      'apps/web/tsconfig.e2e.json',
+    ]);
+  });
+
   test(
     'covers every TypeScript file in the current repository',
     () => {
