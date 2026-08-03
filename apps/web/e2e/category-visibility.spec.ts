@@ -79,7 +79,7 @@ test('keeps every populated harness and machine visible with default dimension f
   const machineListboxId = await machineFilter.getAttribute('aria-controls');
   const machineSnapshot = await dateRange.evaluate<CategorySnapshot, string | null>((range, listboxId) => {
     const listbox = listboxId ? document.getElementById(listboxId) : null;
-    const legend = range.querySelector('[data-report-range-part=total-legend]');
+    const legend = range.querySelector('[aria-label="machine timeline legend"]');
     if (!(listbox && legend)) {
       throw new Error('Machine filter listbox or timeline legend is missing');
     }

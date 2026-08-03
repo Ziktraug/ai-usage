@@ -53,7 +53,7 @@ test('states each source health once and keeps source metadata concise', async (
   await openHydratedSources(page);
   await expect(page.getByRole('heading', { level: 1, name: 'Sources' })).toBeVisible();
 
-  const sourceCards = page.locator('[data-source-card]');
+  const sourceCards = page.locator('main [data-source-card]');
   const healthySummary = page.locator('[data-healthy-source-summary]');
   await expect(sourceCards).toHaveCount(0);
   await expect(healthySummary).toContainText(`${collectionSourceDefinitions.length} sources`);
