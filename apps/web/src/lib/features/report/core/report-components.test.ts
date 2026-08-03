@@ -8,6 +8,7 @@ import type { Component } from 'svelte';
 import { compile } from 'svelte/compiler';
 import { createServer } from 'vite';
 import { demoReportPayload } from '../../../../report-data';
+import { createWebQueryClient, dehydrateWebQueryClient } from '../../../query/client';
 import type { ReportQueryClient } from '../../../query/options/report';
 import { reportBootstrapKey } from '../../../query/options/report';
 import { loadReportPageData } from './report-bootstrap';
@@ -159,6 +160,21 @@ describe('report Svelte SSR components', () => {
     expect(body).toContain('Compatible stored publication');
     expect(body).toContain('2026-07-01 – 2026-08-01');
     expect(body).not.toContain('Loading report');
+  });
+
+  it('renders the unavailable ReportRoot with normalized empty warnings', () => {
+    const queryClient = createWebQueryClient();
+    queryClient.setQueryData(reportBootstrapKey(), {
+      error: { message: 'No compatible publication.', tag: 'RevisionUnavailable' },
+      ok: false,
+      requestFingerprint: 'report-manifest:v1:{}',
+    } satisfies ReportRevisionBootstrapResult);
+    const data = { mode: 'live', queryState: dehydrateWebQueryClient(queryClient) } as const;
+
+    const { body } = render(reportRoot, { props: { data } });
+    expect(body).toContain('Report payload unavailable');
+    expect(body).toContain('data-report-unavailable');
+    expect(body).not.toContain('Report warnings');
   });
 
   it('retains complete output while a destination refresh is pending', async () => {

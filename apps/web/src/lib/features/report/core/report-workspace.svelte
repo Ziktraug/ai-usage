@@ -9,7 +9,7 @@
     children,
     hasOutput,
     pending,
-    refreshError,
+    refreshError = null,
   }: { children?: Snippet; hasOutput: boolean; pending: boolean; refreshError?: string | null } = $props();
 
   const layout = css({ display: 'flex', flexDirection: 'column' });

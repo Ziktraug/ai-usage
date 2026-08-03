@@ -56,7 +56,10 @@ describe('report SSR view model', () => {
   });
 
   it('uses the established unavailable copy when no complete report exists', () => {
-    expect(liveReportShellModel(undefined).hasReportData).toBe(false);
+    const unavailable = liveReportShellModel(undefined);
+    const warnings: readonly unknown[] = unavailable.warnings;
+    expect(unavailable.hasReportData).toBe(false);
+    expect(warnings).toEqual([]);
     expect(reportGeneratedLabel(null, false)).toBe('Report payload unavailable');
   });
 });

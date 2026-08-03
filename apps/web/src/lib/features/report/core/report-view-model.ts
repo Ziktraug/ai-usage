@@ -1,4 +1,5 @@
 import type { FocusedSupportResult } from '@ai-usage/report-core/focused-report-query';
+import type { UsageReportWarning } from '@ai-usage/report-core/report-data';
 import type { ReportRevisionBootstrapResult } from '@ai-usage/web-contract/report';
 import type { WebReportPayload } from '../../../../web-report-payload';
 
@@ -16,7 +17,7 @@ export interface ReportShellModel {
   readonly publicationLabel: string;
   readonly revision: string | null;
   readonly support: FocusedSupportResult | null;
-  readonly warnings: FocusedSupportResult['support']['warnings'];
+  readonly warnings: readonly UsageReportWarning[];
 }
 
 const numberFormatter = new Intl.NumberFormat('en', { maximumFractionDigits: 0 });
@@ -48,7 +49,7 @@ export const liveReportShellModel = (result: ReportRevisionBootstrapResult | und
       publicationLabel: 'No compatible publication',
       revision: null,
       support: null,
-      warnings: undefined,
+      warnings: [],
     };
   }
   return {
@@ -70,7 +71,7 @@ export const liveReportShellModel = (result: ReportRevisionBootstrapResult | und
     publicationLabel: 'Compatible stored publication',
     revision: result.manifest.revision,
     support: result.bootstrap,
-    warnings: result.bootstrap.support.warnings,
+    warnings: result.bootstrap.support.warnings ?? [],
   };
 };
 
@@ -90,7 +91,7 @@ export const syntheticReportShellModel = (mode: 'demo' | 'e2e', payload: WebRepo
     publicationLabel: mode === 'demo' ? 'Synthetic demo publication' : 'Synthetic test publication',
     revision: null,
     support: null,
-    warnings: payload.warnings,
+    warnings: payload.warnings ?? [],
   };
 };
 
