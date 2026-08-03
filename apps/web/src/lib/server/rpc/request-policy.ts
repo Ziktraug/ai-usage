@@ -387,7 +387,7 @@ export const explicitHttpRequestPolicies = [
     requestSize: 'portable-usage-json',
     responseSize: 'bounded-json',
     source: 'explicit-http',
-    target: '/sync (temporary); final SvelteKit manual-merge upload endpoint is frozen by V4',
+    target: '/api/manual-merge/upload',
     transport: 'upload',
     trustedLocal: 'required',
   },

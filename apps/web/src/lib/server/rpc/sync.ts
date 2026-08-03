@@ -186,8 +186,9 @@ const explicitFailure = (status: number, reason: string, message: string): Respo
 
 const methodNotAllowed = (): Response => new Response(null, { headers: { allow: 'POST' }, status: 405 });
 
-export const createManualMergeExplicitHandlers = (dependencies: ManualMergeExplicitDependencies) => ({
-  download: async (request: Request): Promise<Response> => {
+export const createManualMergeDownloadHandler =
+  (dependencies: Pick<ManualMergeExplicitDependencies, 'canonicalizeExport' | 'exportBundle'>) =>
+  async (request: Request): Promise<Response> => {
     if (request.method !== 'POST') {
       return methodNotAllowed();
     }
@@ -237,11 +238,18 @@ export const createManualMergeExplicitHandlers = (dependencies: ManualMergeExpli
       },
       status: 200,
     });
-  },
-  upload: async (request: Request): Promise<Response> => {
+  };
+
+export const createManualMergeUploadHandler =
+  (handleUpload: ManualMergeExplicitDependencies['handleUpload']) =>
+  async (request: Request): Promise<Response> => {
     if (request.method !== 'POST') {
       return methodNotAllowed();
     }
-    return await dependencies.handleUpload(request);
-  },
+    return await handleUpload(request);
+  };
+
+export const createManualMergeExplicitHandlers = (dependencies: ManualMergeExplicitDependencies) => ({
+  download: createManualMergeDownloadHandler(dependencies),
+  upload: createManualMergeUploadHandler(dependencies.handleUpload),
 });

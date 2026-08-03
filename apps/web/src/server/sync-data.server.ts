@@ -1,4 +1,4 @@
-import { serializeUsageMergeBundle } from '@ai-usage/report-core/merge-bundle';
+import { parseUsageMergeBundle, serializeUsageMergeBundle } from '@ai-usage/report-core/merge-bundle';
 import type { UsageMachine } from '@ai-usage/report-core/snapshot';
 import {
   type QueryUsageSyncFleetResult,
@@ -79,4 +79,22 @@ export const exportManualMergeBundleForServer = async (
   } catch (error) {
     return usageStoreFailure(error);
   }
+};
+
+export const canonicalizeManualMergeExportForServer = (candidate: {
+  readonly text: string;
+}): {
+  readonly bytes: number;
+  readonly filename: string;
+  readonly rows: number;
+  readonly text: string;
+} => {
+  const bundle = parseUsageMergeBundle(candidate.text);
+  const text = serializeUsageMergeBundle(bundle);
+  return {
+    bytes: new TextEncoder().encode(text).byteLength,
+    filename: manualMergeFilenameForMachine(bundle.machine, bundle.generatedAt),
+    rows: bundle.rows.length,
+    text,
+  };
 };

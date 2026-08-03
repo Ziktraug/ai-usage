@@ -1,8 +1,13 @@
 import type { RuntimeMode } from '../runtime-mode';
 import { getServerRuntimeMode } from './runtime-mode.server';
 
-const SERVER_FUNCTION_PREFIX = '/_serverFn/';
-const SOURCE_CONTROL_PATHS = new Set(['/api/source-control', '/api/source-control/command']);
+const RPC_PREFIX = '/rpc/';
+const PROTECTED_HTTP_PATHS = new Set([
+  '/api/manual-merge/download',
+  '/api/manual-merge/upload',
+  '/api/source-control',
+  '/api/source-control/command',
+]);
 
 export const demoNotFoundResponse = (): Response =>
   new Response(null, {
@@ -12,11 +17,7 @@ export const demoNotFoundResponse = (): Response =>
 
 const isProtectedDemoRequest = (request: Request): boolean => {
   const pathname = new URL(request.url).pathname;
-  return (
-    pathname.startsWith(SERVER_FUNCTION_PREFIX) ||
-    SOURCE_CONTROL_PATHS.has(pathname) ||
-    (pathname === '/sync' && request.method === 'POST')
-  );
+  return pathname.startsWith(RPC_PREFIX) || PROTECTED_HTTP_PATHS.has(pathname);
 };
 
 export const rejectProtectedDemoRequest = (

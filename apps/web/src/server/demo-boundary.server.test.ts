@@ -6,10 +6,11 @@ import { resolveUsageReadModelForServer } from './usage-read-model-resolver.serv
 describe('demo server boundary', () => {
   test('returns one non-disclosing response for local reads and mutations', () => {
     const requests = [
-      new Request('http://127.0.0.1/_serverFn/report'),
+      new Request('http://127.0.0.1/rpc/report/revisionManifest'),
+      new Request('http://127.0.0.1/api/manual-merge/download', { method: 'POST' }),
+      new Request('http://127.0.0.1/api/manual-merge/upload', { method: 'POST' }),
       new Request('http://127.0.0.1/api/source-control'),
       new Request('http://127.0.0.1/api/source-control/command', { method: 'POST' }),
-      new Request('http://127.0.0.1/sync', { method: 'POST' }),
     ];
 
     for (const request of requests) {
@@ -32,7 +33,7 @@ describe('demo server boundary', () => {
     expect((response as Response).status).toBe(404);
   });
 
-  test('throws the same boundary response before a server-function adapter can load', () => {
+  test('throws the same boundary response before a protected adapter can load', () => {
     try {
       assertOutsideDemo('demo');
       throw new Error('Expected the demo boundary to reject the operation.');
