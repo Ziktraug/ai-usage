@@ -21,11 +21,11 @@
   import { banner, bannerError, ghostButton, headerActions, headerTop, statusPill } from './styles';
 
   const sourceControl = useSourceControl();
-  const state = $derived(sourceControl.state());
-  const snapshot = $derived(state.snapshot);
-  const pending = $derived(state.pendingCommand !== null);
-  const controlsAvailable = $derived(state.connection === 'live');
-  const liveSources = $derived(orderedSources(state));
+  const controlState = $derived(sourceControl.state());
+  const snapshot = $derived(controlState.snapshot);
+  const pending = $derived(controlState.pendingCommand !== null);
+  const controlsAvailable = $derived(controlState.connection === 'live');
+  const liveSources = $derived(orderedSources(controlState));
   const healthy = $derived(healthySources(liveSources));
   const deviations = $derived(deviationSources(liveSources));
   let copiedRevision: string | undefined = $state();
@@ -104,7 +104,7 @@
   const detailsSummary = css({ color: 'muted', fontSize: '12px', fontWeight: 650, cursor: 'pointer' });
 </script>
 
-<main class={page} data-hydrated={state.connection === 'stopped' ? 'false' : 'true'}>
+<main class={page} data-hydrated={controlState.connection === 'stopped' ? 'false' : 'true'}>
   <div class={shell}>
     <header class={header}>
       <div class={headerTop}>
@@ -133,13 +133,13 @@
         </div>
       </div>
     </header>
-    <div aria-atomic="true" aria-live="polite" class={meta} role="status">{conciseSourceStatus(state)}</div>
+    <div aria-atomic="true" aria-live="polite" class={meta} role="status">{conciseSourceStatus(controlState)}</div>
     <div class={pageStack}>
-      {#if state.connection === 'disconnected'}
+      {#if controlState.connection === 'disconnected'}
         <div class={banner}>Connection interrupted. Showing the last server snapshot while reconnecting.</div>
       {/if}
-      {#if state.commandError}
-        <div class={cx(banner, bannerError)}>{state.commandError}</div>
+      {#if controlState.commandError}
+        <div class={cx(banner, bannerError)}>{controlState.commandError}</div>
       {/if}
       {#if snapshot}
         <p class={meta}>

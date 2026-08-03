@@ -6,8 +6,8 @@
   import { ghostButton, statusPill } from './styles';
 
   const sourceControl = useSourceControl();
-  const state = $derived(sourceControl.state());
-  const snapshot = $derived(state.snapshot);
+  const controlState = $derived(sourceControl.state());
+  const snapshot = $derived(controlState.snapshot);
   const enabledSources = $derived(snapshot?.sources.filter((source) => source.policy === 'enabled') ?? []);
   const warningCount = $derived(
     enabledSources.filter((source) => ['danger', 'warning'].includes(presentSourceState(source).tone)).length,
@@ -23,12 +23,12 @@
   );
   const statusLabel = $derived.by(() => {
     if (!snapshot) {
-      return state.connection === 'connecting' ? 'Connecting' : 'Unavailable';
+      return controlState.connection === 'connecting' ? 'Connecting' : 'Unavailable';
     }
-    if (state.connection === 'protocol-mismatch') {
+    if (controlState.connection === 'protocol-mismatch') {
       return 'Incompatible';
     }
-    if (state.connection === 'disconnected') {
+    if (controlState.connection === 'disconnected') {
       return 'Reconnecting';
     }
     if (warningCount > 0) {
@@ -40,12 +40,12 @@
     return 'Sources ready';
   });
   const statusTone = $derived.by(() => {
-    if (!snapshot || state.connection === 'disconnected' || state.connection === 'protocol-mismatch') {
+    if (!snapshot || controlState.connection === 'disconnected' || controlState.connection === 'protocol-mismatch') {
       return 'warning';
     }
     return warningCount > 0 ? 'danger' : 'ok';
   });
-  const runPending = $derived(state.pendingCommand !== null);
+  const runPending = $derived(controlState.pendingCommand !== null);
   let hasFocus = $state(false);
   let isHovered = $state(false);
   let clock = $state(Date.now());
@@ -179,7 +179,7 @@
   <button
     {...pendingAriaBusyAttributes(runPending)}
     class={ghostButton}
-    disabled={!snapshot || state.connection !== 'live' || runPending}
+    disabled={!snapshot || controlState.connection !== 'live' || runPending}
     onclick={() => sourceControl.execute({ command: 'run-all' }).catch(() => undefined)}
     type="button"
   >

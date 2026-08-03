@@ -5,7 +5,11 @@
   import AppNavigation from './app-navigation.svelte';
   import { createDirtyGuardRegistry, provideDirtyGuardRegistry } from './dirty-navigation-context';
 
-  let { children, runtimeMode }: { children: Snippet; runtimeMode: RuntimeMode } = $props();
+  let {
+    children,
+    runtimeMode,
+    sourceControlSummary,
+  }: { children: Snippet; runtimeMode: RuntimeMode; sourceControlSummary?: Snippet } = $props();
   provideDirtyGuardRegistry(createDirtyGuardRegistry());
 
   const content = css({
@@ -16,7 +20,7 @@
   });
 </script>
 
-<AppNavigation {runtimeMode} />
+<AppNavigation {runtimeMode} {...(sourceControlSummary ? { sourceControlSummary } : {})} />
 <div class={content} data-app-shell-content>
   {@render children()}
 </div>
