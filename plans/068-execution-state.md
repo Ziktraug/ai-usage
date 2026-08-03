@@ -12,11 +12,11 @@ authority for feature, operation, design, source-file, and test-title coverage.
 - Planning PR: `#26`, squash-merged as
   `2183270ebfbb886fafa7e6268893122db9b364c0`
 - `BASE_SHA`: `2183270ebfbb886fafa7e6268893122db9b364c0`
-- Current integration checkpoint: `0ecf1df`
+- Current integration checkpoint: `db66cc0`
 - Last reviewed green checkpoint: `0ecf1df`
 - Active design bases: D1 `4862293`, D2 `fce5c1a`, D3 `e2f13cd`
 - Implementation PR: not opened
-- Exclusive process-test token: free after the P6 activated shadow-browser gate
+- Exclusive process-test token: free after the X0 Skills convergence browser gate
 
 The integration branch did not exist locally or remotely before this run. Local
 `main` and `origin/main` were clean and aligned at `BASE_SHA`; plans 066 and 067
@@ -1159,6 +1159,29 @@ range integrated as `6612030` through `054d656`; `0ecf1df` points evidence at
 integrated correction `f98f6b1`. The identical 66/303 suite and static/parity
 gates pass post-cherry. All pre-X0 packets are now independently accepted and
 integrated.
+
+X0 Skills convergence is committed as `db66cc0`. The canonical nested layout
+now awaits the P5 route load, renders exactly one P5 shell with the accepted P9
+editor and P10 health/matrix slots, and removes the temporary dirty-navigation
+fixture. The real oRPC hook handles both network and SvelteKit-owned internal
+requests without weakening external Host/Origin/CSRF validation; SvelteKit
+serializes the oRPC `content-type` header required by its SSR fetch replay.
+The browser readiness marker becomes true only after the first real Query cycle
+is mounted and idle, preventing route churn from aborting hydration requests.
+The real controlled editor also synchronizes its DOM buffer before publishing
+controller state, so rapid replacement preserves the exact draft. Gates passed
+35 focused tests/224 assertions, Svelte 0/0, scoped Ultracite, shadow production
+build and all 6 Chromium/Axe shell scenarios.
+
+The Skills activation exposed three local convergence issues which are retained
+as resolved evidence rather than STOPs: the browser gate initially served a
+stale pre-build artifact; SvelteKit internal SSR fetches omit the HTTP `Host`
+metadata and require explicit response-header serialization; and the shell
+test initially advanced from SSR HTML before hydration/query settlement,
+causing legitimate aborts plus a controlled-textarea replacement race. The
+final implementation uses owned internal-request normalization, the documented
+SvelteKit serialization filter and a state-derived readiness seam. No timeout,
+assertion, request trust rule or product behavior was weakened.
 
 Coordinator deltas `3f42bfa`, `8020703` and `9d24e5b` expose the neutral stable
 series-color helper to Svelte and use it for matching P2 timeline segments and
