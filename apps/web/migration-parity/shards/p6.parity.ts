@@ -2,10 +2,10 @@ import { currentRecord } from '../helpers';
 import { defineParityShard, type ParityEvidence } from '../schema';
 
 const owner = 'P6' as const;
-const implementationCommit = 'f02f29f3f8f260407d003426f0e44d884743d883';
-const lifecycleTestCommit = 'f598271e01c46edfe5213f6fb8479171810c7495';
-const reviewCorrectionCommit = 'afe31e1b035c95ec461236b6c2f29467a6714268';
-const renderedPendingTestCommit = '3f9985f2c0b3dec6055b6027a33705dff8b2bb8d';
+const implementationCommit = 'f79b421e9b2bc0491a89dad9dd6bddeccdb8b0f9';
+const lifecycleTestCommit = 'e7948bb908b93d0513c9d5e2ac23f54d8c0fa862';
+const reviewCorrectionCommit = '64b9b020ebe40dd4dfcf5bfec6ebb3e799255ff0';
+const renderedPendingTestCommit = 'f79b421e9b2bc0491a89dad9dd6bddeccdb8b0f9';
 const targetEvidence = (kind: ParityEvidence['kind'], reference: string): ParityEvidence => ({
   commit: implementationCommit,
   kind,
@@ -29,7 +29,7 @@ const feature = (
       ...extraEvidence,
       targetEvidence(
         'command',
-        'bun test scoped P6 tests (5 passed); bun run --cwd apps/web check:svelte (0 errors); bun x ultracite check scoped P6 files',
+        'bun test apps/web/src/lib/features/sources/*.test.ts (19 passed); bun run --cwd apps/web check:svelte; bun x ultracite check scoped P6 files',
       ),
     ],
     id,
@@ -58,7 +58,7 @@ export default defineParityShard({
           kind: 'test',
           phase: 'target',
           reference:
-            'apps/web/src/lib/features/sources/source-controls.ssr.test.ts › renders and omits per-source Run now aria-busy from actual Svelte SSR output',
+            'apps/web/src/lib/features/sources/source-controls.ssr.test.ts › exact pending disabled/aria-busy and idle enabled Run now Svelte SSR output; apps/web/src/lib/features/sources/client-closure.test.ts',
         },
       ],
     ),
@@ -74,7 +74,7 @@ export default defineParityShard({
           kind: 'test',
           phase: 'target',
           reference:
-            'apps/web/src/lib/features/sources/source-controls.ssr.test.ts › renders and omits summary Run all aria-busy from actual Svelte SSR output',
+            'apps/web/src/lib/features/sources/source-controls.ssr.test.ts › exact pending disabled/aria-busy and idle enabled Run all Svelte SSR output; apps/web/src/lib/features/sources/client-closure.test.ts',
         },
       ],
     ),
@@ -131,13 +131,14 @@ export default defineParityShard({
           kind: 'source',
           phase: 'target',
           reference:
-            'apps/web/src/lib/features/sources/context.ts; apps/web/src/lib/features/sources/service.ts; apps/web/src/lib/features/sources/source-control-provider.svelte',
+            'apps/web/src/lib/features/sources/context.svelte.ts; apps/web/src/lib/features/sources/service.ts; apps/web/src/lib/features/sources/source-control-provider.svelte',
         },
         {
           commit: reviewCorrectionCommit,
           kind: 'test',
           phase: 'target',
-          reference: 'apps/web/src/lib/features/sources/service.test.ts',
+          reference:
+            'apps/web/src/lib/features/sources/service.test.ts; apps/web/src/lib/features/sources/client-closure.test.ts',
         },
       ],
       id: 'tsx:apps/web/src/source-control-context.tsx',
