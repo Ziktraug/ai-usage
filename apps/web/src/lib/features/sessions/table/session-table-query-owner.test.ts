@@ -18,12 +18,14 @@ import {
   type SessionTableQueryScope,
   SessionTableRevisionExpiredError,
   sessionRowsForTableState,
+  unfilteredCampaignQuery,
 } from './session-table-query-owner';
 
 const cursor = 'sq1.0000000000000000.1';
 const secondCursor = 'sq1.0000000000000001.2';
 const thirdCursor = 'sq1.0000000000000002.3';
 const campaign = syntheticCampaignRow(1);
+const root = syntheticSessionRow(1);
 const child = syntheticSessionRow(2);
 
 const item = (row = campaign): SessionPageItem => ({
@@ -52,6 +54,7 @@ const successfulChildren = (request: SessionCampaignChildrenRequest, nextCursor:
     nextCursor,
     requestFingerprint: sessionCampaignChildrenFingerprint(request),
     revision: request.query.revision,
+    root,
     sessionCount: 1,
   };
   return { data, ok: true, requestFingerprint: data.requestFingerprint, revision: data.revision } as const;
@@ -478,6 +481,151 @@ describe('Svelte session exact-query owner', () => {
     expect(owner.snapshot?.query.revision).toBe('revision-b');
     expect(owner.snapshot?.items).toHaveLength(1);
     expect(owner.snapshot?.campaignChildren.get(campaign.campaignKey!)).toBeUndefined();
+    owner.close();
+  });
+
+  test('derives an all-campaign request without changing revision, sort, page size, or cursor', () => {
+    const filtered = parseSessionQueryRequest({
+      ...scope('needle'),
+      cursor,
+      filters: {
+        fields: { campaign: campaign.campaignKey!, provider: 'Synthetic provider' },
+        harness: ['codex'],
+        localTimeCell: { hour: 12, weekday: 1 },
+        machine: ['synthetic-machine'],
+        origin: ['human'],
+        query: 'needle',
+      },
+      range: { from: '2026-08-01T00:00:00.000Z', to: '2026-08-02T00:00:00.000Z' },
+      revision: 'revision-a',
+    });
+
+    expect(unfilteredCampaignQuery(filtered, secondCursor)).toEqual({
+      cursor: secondCursor,
+      filters: { fields: {}, harness: [], machine: [], origin: [], query: '' },
+      pageSize: filtered.pageSize,
+      range: { from: null, to: null },
+      revision: filtered.revision,
+      sort: filtered.sort,
+    });
+  });
+
+  test('loads one filtered and one unfiltered page through the sole owner without changing table semantics', async () => {
+    const hiddenChild = syntheticSessionRow(3);
+    const requests: SessionCampaignChildrenRequest[] = [];
+    const client = clientWith({
+      campaignChildren: (request) => {
+        requests.push(request);
+        const unfiltered = request.query.filters.query === '';
+        const data = {
+          campaignKey: request.campaignKey,
+          itemCount: 1,
+          items: [unfiltered ? hiddenChild : child],
+          nextCursor: null,
+          requestFingerprint: sessionCampaignChildrenFingerprint(request),
+          revision: request.query.revision,
+          root,
+          sessionCount: 1,
+        };
+        return Promise.resolve({
+          data,
+          ok: true as const,
+          requestFingerprint: data.requestFingerprint,
+          revision: data.revision,
+        });
+      },
+      page: (request) => Promise.resolve(successfulPage(request, [item()])),
+    });
+    const owner = createSessionTableQueryOwner({ client, queryClient: createWebQueryClient() });
+    owner.commit(await owner.prepare(scope('needle'), 'revision-a'));
+
+    const [first, duplicate] = await Promise.all([
+      owner.loadCampaignSessions(campaign.campaignKey!),
+      owner.loadCampaignSessions(campaign.campaignKey!),
+    ]);
+
+    expect(first).toBe(duplicate);
+    expect(requests).toHaveLength(2);
+    expect(requests[0]?.query.filters.query).toBe('needle');
+    expect(requests[1]?.query.filters).toEqual({ fields: {}, harness: [], machine: [], origin: [], query: '' });
+    expect(owner.snapshot?.query.filters.query).toBe('needle');
+    expect(owner.snapshot?.campaignChildren.get(campaign.campaignKey!)?.items).toEqual([child]);
+    expect(owner.snapshot?.campaignSessions.get(campaign.campaignKey!)).toMatchObject({
+      items: [hiddenChild],
+      nextCursor: null,
+      root,
+      totalCount: 1,
+    });
+    expect(sessionRowsForTableState(owner.snapshot)[0]?.children).toEqual([child]);
+    expect(owner.snapshot?.items[0]?.row).toBe(campaign);
+    owner.close();
+  });
+
+  test('replays loaded filtered and unfiltered campaign depth before retrying one expired all-session page', async () => {
+    const allChildren = [syntheticSessionRow(30), syntheticSessionRow(31)] as const;
+    const requests: string[] = [];
+    let revisionIndex = 0;
+    const client = clientWith({
+      campaignChildren: (request) => {
+        const unfiltered = request.query.filters.query === '';
+        requests.push(
+          `${request.query.revision}:${unfiltered ? 'all' : 'filtered'}:${request.query.cursor ?? 'first'}`,
+        );
+        if (!unfiltered) {
+          const result = successfulChildren(request);
+          return Promise.resolve({
+            ...result,
+            data: { ...result.data, items: [child], itemCount: 1, sessionCount: 1 },
+          });
+        }
+        if (request.query.revision === 'revision-a' && request.query.cursor === cursor) {
+          return Promise.resolve({
+            error: {
+              message: 'expired all-session page',
+              revision: request.query.revision,
+              tag: 'RevisionExpired' as const,
+            },
+            ok: false as const,
+            requestFingerprint: sessionCampaignChildrenFingerprint(request),
+            revision: request.query.revision,
+          });
+        }
+        return Promise.resolve(
+          successfulChildPage(
+            request,
+            request.query.cursor === null ? allChildren[0] : allChildren[1],
+            request.query.cursor === null ? cursor : null,
+          ),
+        );
+      },
+      page: (request) => Promise.resolve(successfulPage(request, [item()])),
+    });
+    const owner = createSessionTableQueryOwner({ client, queryClient: createWebQueryClient() });
+    const served = createServedReportSession(
+      createSessionTableServedAdapter({
+        acquire: () => {
+          const revision = revisionIndex === 0 ? 'revision-a' : 'revision-b';
+          revisionIndex += 1;
+          return Promise.resolve({ captureFingerprint: `capture-${revision}`, revision });
+        },
+        owner,
+      }),
+    );
+    owner.setRevisionRefresh(async (nextScope) => await served.refresh({ scope: nextScope }));
+    await served.refresh({ scope: scope('needle') });
+    await owner.loadCampaignSessions(campaign.campaignKey!);
+
+    await owner.loadCampaignSessions(campaign.campaignKey!);
+
+    expect(revisionIndex).toBe(2);
+    expect(owner.snapshot?.query.revision).toBe('revision-b');
+    expect(owner.snapshot?.campaignSessions.get(campaign.campaignKey!)?.items).toEqual(allChildren);
+    expect(owner.snapshot?.campaignChildren.get(campaign.campaignKey!)?.items).toEqual([child]);
+    expect(requests.slice(-3)).toEqual([
+      'revision-b:filtered:first',
+      'revision-b:all:first',
+      `revision-b:all:${cursor}`,
+    ]);
     owner.close();
   });
 });

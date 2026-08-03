@@ -1,7 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 import type { SessionQueryRequest } from '@ai-usage/report-core/session-query';
 import { syntheticCampaignRow, syntheticSessionRow } from '../../sessions/table/session-table.fixtures';
-import { campaignSessionControlsModel } from './campaign-session-controls-model';
+import type { SessionTableQueryState } from '../../sessions/table/session-table-query-owner';
+import { campaignSessionControlsModel, campaignSessionControlsState } from './campaign-session-controls-model';
 
 const campaignKey = 'machine-a:codex:root-a';
 const query = (campaign: string | null = campaignKey): SessionQueryRequest => ({
@@ -33,18 +34,67 @@ const campaignFixture = () => {
 };
 
 describe('campaign session controls model', () => {
+  test('adapts the real owner maps without making the aggregate selectable', () => {
+    const { campaign, hiddenChild, root, visibleChild } = campaignFixture();
+    const ownerState = {
+      campaignChildren: new Map([
+        [
+          campaignKey,
+          {
+            items: [visibleChild],
+            loading: false,
+            nextCursor: null,
+            root,
+            sessionCount: 1,
+            totalCount: 1,
+          },
+        ],
+      ]),
+      campaignSessions: new Map([
+        [
+          campaignKey,
+          {
+            items: [visibleChild, hiddenChild],
+            loading: false,
+            nextCursor: 'next-page',
+            root,
+            sessionCount: 3,
+            totalCount: 3,
+          },
+        ],
+      ]),
+      itemCount: 1,
+      items: [{ campaignKey, kind: 'campaign' as const, row: campaign }],
+      loadingMore: false,
+      nextCursor: null,
+      query: query(),
+      sessionCount: 2,
+    } satisfies SessionTableQueryState;
+
+    const adapted = campaignSessionControlsState(ownerState, campaign);
+
+    expect(adapted?.collection).toMatchObject({
+      loading: false,
+      nextCursor: 'next-page',
+      totalCount: 4,
+    });
+    expect(adapted?.collection.items).toEqual([root, visibleChild, hiddenChild]);
+    expect(adapted?.collection.items).not.toContain(campaign);
+    expect(adapted?.visibleRows).toEqual([root, visibleChild]);
+  });
+
   test('keeps partial pagination truthful and shows only loaded filtered sessions by default', () => {
     const { campaign, hiddenChild, root, visibleChild } = campaignFixture();
     const filtered = campaignSessionControlsModel({
       campaign,
-      collection: { items: [root, visibleChild, hiddenChild], loading: true, nextCursor: 'next-page' },
+      collection: { items: [root, visibleChild, hiddenChild], loading: true, nextCursor: 'next-page', totalCount: 4 },
       query: query(),
       showAll: false,
       visibleRows: [root, visibleChild],
     });
     const all = campaignSessionControlsModel({
       campaign,
-      collection: { items: [root, visibleChild, hiddenChild], loading: false, nextCursor: 'next-page' },
+      collection: { items: [root, visibleChild, hiddenChild], loading: false, nextCursor: 'next-page', totalCount: 4 },
       query: query(),
       showAll: true,
       visibleRows: [root, visibleChild],
@@ -76,7 +126,7 @@ describe('campaign session controls model', () => {
     const { campaign, root, visibleChild } = campaignFixture();
     const model = campaignSessionControlsModel({
       campaign,
-      collection: { items: [root, visibleChild, visibleChild], loading: false, nextCursor: null },
+      collection: { items: [root, visibleChild, visibleChild], loading: false, nextCursor: null, totalCount: 2 },
       query: query(),
       showAll: true,
       visibleRows: [root, visibleChild],
@@ -98,7 +148,7 @@ describe('campaign session controls model', () => {
     expect(
       campaignSessionControlsModel({
         campaign: fullyVisibleCampaign,
-        collection: { items: [root, visibleChild], loading: false, nextCursor: null },
+        collection: { items: [root, visibleChild], loading: false, nextCursor: null, totalCount: 2 },
         query: query(),
         showAll: false,
         visibleRows: [root, visibleChild],
@@ -107,7 +157,7 @@ describe('campaign session controls model', () => {
     expect(
       campaignSessionControlsModel({
         campaign,
-        collection: { items: [root], loading: false, nextCursor: null },
+        collection: { items: [root], loading: false, nextCursor: null, totalCount: 4 },
         query: query('machine-b:codex:root-b'),
         showAll: false,
         visibleRows: [root],
@@ -116,7 +166,7 @@ describe('campaign session controls model', () => {
     expect(
       campaignSessionControlsModel({
         campaign,
-        collection: { items: [root], loading: false, nextCursor: null },
+        collection: { items: [root], loading: false, nextCursor: null, totalCount: 4 },
         query: query(null),
         showAll: false,
         visibleRows: [root],
@@ -128,7 +178,7 @@ describe('campaign session controls model', () => {
     expect(
       campaignSessionControlsModel({
         campaign: syntheticSessionRow(9),
-        collection: { items: [], loading: false, nextCursor: null },
+        collection: { items: [], loading: false, nextCursor: null, totalCount: 0 },
         query: query(),
         showAll: false,
         visibleRows: [],

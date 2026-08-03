@@ -1,4 +1,5 @@
 import type { SessionPresentationRow, SessionQueryRequest } from '@ai-usage/report-core/session-query';
+import type { SessionTableQueryState } from '../../sessions/table/session-table-query-owner';
 
 export interface CampaignSessionControlItem {
   readonly hidden: boolean;
@@ -9,6 +10,7 @@ export interface CampaignSessionCollection {
   readonly items: readonly SessionPresentationRow[];
   readonly loading: boolean;
   readonly nextCursor: string | null;
+  readonly totalCount: number;
 }
 
 export interface CampaignSessionControlsModel {
@@ -45,6 +47,36 @@ const uniqueRows = (rows: readonly SessionPresentationRow[]): SessionPresentatio
   return unique;
 };
 
+export interface CampaignSessionControlsState {
+  readonly collection: CampaignSessionCollection;
+  readonly visibleRows: readonly SessionPresentationRow[];
+}
+
+export const campaignSessionControlsState = (
+  state: SessionTableQueryState | undefined,
+  campaign: SessionPresentationRow,
+): CampaignSessionControlsState | null => {
+  const campaignKey = campaign.campaignKey;
+  if (!campaignKey) {
+    return null;
+  }
+  const allPage = state?.campaignSessions.get(campaignKey);
+  if (!allPage?.root) {
+    return null;
+  }
+  const filteredPage = state?.campaignChildren.get(campaignKey);
+  const rootIsVisible = (campaign.campaignVisibleCount ?? 0) > (filteredPage?.sessionCount ?? 0);
+  return {
+    collection: {
+      items: uniqueRows([allPage.root, ...allPage.items]),
+      loading: allPage.loading,
+      nextCursor: allPage.nextCursor,
+      totalCount: allPage.totalCount + 1,
+    },
+    visibleRows: uniqueRows([...(rootIsVisible ? [allPage.root] : []), ...(filteredPage?.items ?? [])]),
+  };
+};
+
 export const campaignSessionControlsModel = (
   input: CampaignSessionControlsInput,
 ): CampaignSessionControlsModel | null => {
@@ -66,7 +98,7 @@ export const campaignSessionControlsModel = (
   }
 
   const visibleCount = input.campaign.campaignVisibleCount ?? visibleSessions.length;
-  const totalCount = input.campaign.campaignTotalCount ?? campaignRows.length;
+  const totalCount = input.collection.totalCount;
   return {
     allSessionsLoaded: input.collection.nextCursor === null,
     campaignKey,

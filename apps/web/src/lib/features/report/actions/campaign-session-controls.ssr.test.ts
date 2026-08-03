@@ -70,7 +70,7 @@ describe('campaign session controls SSR', () => {
     const html = render(CampaignSessionControls, {
       props: {
         campaign,
-        collection: { items: [root, child, hidden], loading: true, nextCursor: 'next-page' },
+        collection: { items: [root, child, hidden], loading: true, nextCursor: 'next-page', totalCount: 4 },
         onClearCampaignFilter: () => undefined,
         onLoadMoreCampaignSessions: () => undefined,
         onSelectSession: () => undefined,
@@ -99,7 +99,7 @@ describe('campaign session controls SSR', () => {
     const html = render(CampaignSessionControls, {
       props: {
         campaign: fullyVisibleCampaign,
-        collection: { items: [root, child], loading: false, nextCursor: null },
+        collection: { items: [root, child], loading: false, nextCursor: null, totalCount: 2 },
         onClearCampaignFilter: () => undefined,
         onLoadMoreCampaignSessions: () => undefined,
         onSelectSession: () => undefined,
@@ -118,7 +118,7 @@ describe('campaign session controls SSR', () => {
     const html = render(CampaignSessionControls, {
       props: {
         campaign,
-        collection: { items: [root, child, hidden], loading: false, nextCursor: null },
+        collection: { items: [root, child, hidden], loading: false, nextCursor: null, totalCount: 4 },
         onClearCampaignFilter: () => undefined,
         onLoadMoreCampaignSessions: () => undefined,
         onSelectSession: () => undefined,
