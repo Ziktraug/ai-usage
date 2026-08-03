@@ -746,6 +746,12 @@ const runCampaignChildren = (
     [request.campaignKey, ...filter.params, request.query.pageSize + 1, offset],
     trace,
   );
+  const rootRecord = executeGet<{ row_json: string }>(
+    database,
+    'SELECT row_json FROM session_rows WHERE campaign_key = ? AND campaign_root = 1 LIMIT 1',
+    [request.campaignKey],
+    trace,
+  );
   const hasMore = rows.length > request.query.pageSize;
   return {
     campaignKey: request.campaignKey,
@@ -756,6 +762,7 @@ const runCampaignChildren = (
       : null,
     requestFingerprint,
     revision: request.query.revision,
+    root: rootRecord ? parsePresentationRow(rootRecord.row_json) : null,
     sessionCount: count.session_count,
   };
 };

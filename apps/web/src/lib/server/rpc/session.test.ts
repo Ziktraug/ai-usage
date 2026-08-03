@@ -51,6 +51,7 @@ const campaignEnvelope = () => {
       nextCursor: null,
       requestFingerprint,
       revision: query.revision,
+      root: null,
       sessionCount: 0,
     },
     ok: true as const,

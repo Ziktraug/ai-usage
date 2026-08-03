@@ -581,9 +581,11 @@ describe('durable session query SQLite projections', () => {
       expect(executeMaterializedSessionQuery(database, 'campaign-children', childRequest, trace)).toEqual(
         projectSessionCampaignChildren(rows, childRequest),
       );
-      expect(traces).toHaveLength(2);
+      expect(traces).toHaveLength(3);
       expect(traces[1]?.sql).toContain('LIMIT ? OFFSET ?');
       expect(traces[1]?.params.slice(-2)).toEqual([2, 0]);
+      expect(traces[2]?.sql).toContain('campaign_root = 1 LIMIT 1');
+      expect(traces[2]?.params).toEqual([campaign.campaignKey]);
     } finally {
       database.close();
     }
