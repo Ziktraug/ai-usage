@@ -76,21 +76,6 @@
         {fieldLabels[filter.key]}: {filter.value} ×
       </button>
     {/each}
-    {#if search.origin.length > 0}
-      <button class={pill} onclick={navigation.clearOrigin} title="Clear Origin filter" type="button">
-        Origin selection ×
-      </button>
-    {/if}
-    {#if search.range.mode !== '30d'}
-      <button class={pill} onclick={navigation.clearDateRange} title="Clear Date filter" type="button">
-        Date: {search.range.mode} ×
-      </button>
-    {/if}
-    {#if search.cols.length > 0}
-      <button class={pill} onclick={navigation.clearColumnDiffs} title="Clear Column filters" type="button">
-        Columns: {search.cols.length} changes ×
-      </button>
-    {/if}
   </div>
   {#if hasActiveDashboardFilters(search)}
     <button class={button} onclick={navigation.clearAllFilters} type="button">Clear all</button>

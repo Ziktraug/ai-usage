@@ -1,12 +1,24 @@
 <script lang="ts">
+  import { css } from '@ai-usage/design-system/css';
   import { Drawer, SegmentedControl } from '@ai-usage/design-system/svelte';
   import type { ProviderQuotaHistoryResult } from '@ai-usage/report-core/provider-quota';
   import {
     buildProviderQuotaHistoryModel,
     type ProviderQuotaHistoryRange,
+    type ProviderQuotaHistorySeries,
   } from '../../../../provider-quota-history-model';
   import { fmtDate, fmtPct } from '../../../foundation/presentation/format';
   import { button, field, list, muted, panel, row, stack, table, tableCell, title } from '../breakdown/styles';
+
+  const chart = css({
+    w: 'full',
+    h: '180px',
+    bg: 'surface',
+    border: '1px solid token(colors.line)',
+    borderRadius: 'sm',
+  });
+  const tableWrap = css({ overflowX: 'auto' });
+  const srOnly = css({ srOnly: true });
 
   let {
     errorMessage = null,
@@ -26,6 +38,8 @@
     result: ProviderQuotaHistoryResult | null;
   } = $props();
 
+  let closeButton: HTMLButtonElement | undefined;
+  const previousFocus = typeof document === 'undefined' ? null : document.activeElement;
   const model = $derived(result ? buildProviderQuotaHistoryModel(result) : null);
   const rangeItems = ['24h', '7d', '30d'].map((value) => ({ label: value, value }));
   const changeRange = (value: string): void => {
@@ -56,10 +70,31 @@
     const minutes = Math.round(milliseconds / 60_000);
     return minutes < 60 ? `${minutes}m` : `${(minutes / 60).toFixed(1)}h`;
   };
+  const seriesX = (series: ProviderQuotaHistorySeries, observedAt: string): number => {
+    const firstTime = Date.parse(series.firstObservedAt);
+    const duration = Math.max(1, Date.parse(series.lastObservedAt) - firstTime);
+    return 20 + ((Date.parse(observedAt) - firstTime) / duration) * 560;
+  };
+  const seriesY = (usedPercent: number | null): number => 150 - ((usedPercent ?? 0) / 100) * 120;
+  const seriesPath = (series: ProviderQuotaHistorySeries, segmentIndex: number): string => {
+    const segment = series.segments[segmentIndex];
+    if (!segment?.points.length) {
+      return '';
+    }
+    return segment.points
+      .map((point, index) => {
+        const x = seriesX(series, point.firstObservedAt).toFixed(1);
+        const y = seriesY(point.usedPercent).toFixed(1);
+        return `${index === 0 ? 'M' : 'L'} ${x} ${y}`;
+      })
+      .join(' ');
+  };
 </script>
 
 <Drawer
   contentAriaLabel="Codex quota history"
+  finalFocusEl={() => (previousFocus instanceof HTMLElement && previousFocus.isConnected ? previousFocus : null)}
+  initialFocusEl={() => closeButton ?? null}
   modal
   onOpenChange={(nextOpen) => {
     if (!nextOpen) {
@@ -75,7 +110,15 @@
         <h2 class={title}>Codex quota history</h2>
         <p class={muted}>Provider-defined quota observations retained on this machine.</p>
       </div>
-      <button aria-label="Close Codex quota history" class={button} onclick={onClose} type="button">✕</button>
+      <button
+        aria-label="Close Codex quota history"
+        class={button}
+        onclick={onClose}
+        type="button"
+        bind:this={closeButton}
+      >
+        ✕
+      </button>
     </header>
     {#if errorMessage}
       <div class={panel} role="status">{errorMessage}</div>
@@ -138,22 +181,64 @@
             {series.summary}
             · largest gap {largestGapLabel(series.largestGapMs)} · {series.sourceKey} ({series.sourceConfidence})
           </p>
+          <svg aria-hidden="true" class={chart} preserveAspectRatio="none" viewBox="0 0 600 180">
+            <title>{series.label} quota observation chart</title>
+            <path
+              d="M 20 30 H 580 M 20 90 H 580 M 20 150 H 580"
+              fill="none"
+              stroke="currentColor"
+              stroke-opacity="0.12"
+            ></path>
+            {#each series.segments as _segment, segmentIndex}
+              <path d={seriesPath(series, segmentIndex)} fill="none" stroke="currentColor" stroke-width="3"></path>
+            {/each}
+            {#each series.points as point (`${point.windowId}:${point.firstObservedAt}`)}
+              <circle
+                cx={seriesX(series, point.firstObservedAt)}
+                cy={seriesY(point.usedPercent)}
+                fill="currentColor"
+                r="3"
+              ></circle>
+            {/each}
+            {#each series.segments.filter(({ breakReason }) => breakReason !== null) as segment}
+              {@const point = segment.points[0]}
+              {#if point}
+                {@const x = seriesX(series, point.firstObservedAt)}
+                <line stroke="currentColor" stroke-dasharray="5 4" x1={x} x2={x} y1="22" y2="158"></line>
+                <text font-size="11" x={x + 4} y="18">{segment.breakReason}</text>
+              {/if}
+            {/each}
+          </svg>
           <p class={muted}>
             First {fmtDate(series.firstObservedAt)} · Last {fmtDate(series.lastObservedAt)} · Next reset
             {series.nextResetAt ? fmtDate(series.nextResetAt) : 'unknown'}
           </p>
-          <table aria-label={`${series.label} quota observations`} class={table}>
-            <tbody>
-              {#each series.points as point (`${point.windowId}:${point.firstObservedAt}`)}
+          <div class={tableWrap}>
+            <table class={table}>
+              <caption class={srOnly}>
+                {series.label}
+                quota observations
+              </caption>
+              <thead>
                 <tr>
-                  <td class={tableCell}>{fmtDate(point.firstObservedAt)}</td>
-                  <td class={tableCell}>{point.usedPercent === null ? 'Unknown' : fmtPct(point.usedPercent)}</td>
-                  <td class={tableCell}>Reset {point.resetAt ? fmtDate(point.resetAt) : 'unknown'}</td>
-                  <td class={tableCell}>{point.source.key} ({point.source.confidence})</td>
+                  <th class={tableCell}>Observed</th>
+                  <th class={tableCell}>Used</th>
+                  <th class={tableCell}>Reset</th>
+                  <th class={tableCell}>Source</th>
                 </tr>
-              {/each}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {#each series.points as point (`${point.windowId}:${point.firstObservedAt}`)}
+                  <tr>
+                    <td class={tableCell}>{fmtDate(point.firstObservedAt)}</td>
+                    <td class={tableCell}>{point.usedPercent === null ? 'Unknown' : fmtPct(point.usedPercent)}</td>
+                    <td class={tableCell}>Reset {point.resetAt ? fmtDate(point.resetAt) : 'unknown'}</td>
+                    <td class={tableCell}>{point.source.key} ({point.source.confidence})</td>
+                  </tr>
+                {/each}
+              </tbody>
+            </table>
+          </div>
         </article>
       {/each}
     </div>

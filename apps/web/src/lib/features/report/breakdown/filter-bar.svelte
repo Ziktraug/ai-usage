@@ -1,29 +1,37 @@
 <script lang="ts">
-  import { MultiSelect } from '@ai-usage/design-system/svelte';
+  import { MultiSelect, Tooltip } from '@ai-usage/design-system/svelte';
   import type { SessionOrigin } from '@ai-usage/report-core/session-query';
-  import type { DashboardDateRangeSearch, DashboardSearch } from '../../../../dashboard-search';
+  import type { Snippet } from 'svelte';
+  import type { DashboardSearch } from '../../../../dashboard-search';
   import type { BreakdownNavigation } from './navigation';
   import OriginFilter from './origin-filter.svelte';
-  import { button, field, muted, toolbar } from './styles';
+  import { button, field, toolbar } from './styles';
 
   let {
     freshnessStatus = null,
+    freshnessUnavailable = false,
     harnessOptions,
+    inputRef,
+    isDemo = false,
     machineAttention = false,
     machineOptions,
     navigation,
     presentMachineLabel,
     search,
+    sourceControlSummary,
   }: {
     freshnessStatus?: string | null;
     harnessOptions: string[];
+    freshnessUnavailable?: boolean;
     machineAttention?: boolean;
+    inputRef?: (element: HTMLInputElement) => void;
+    isDemo?: boolean;
     machineOptions: string[];
     navigation: BreakdownNavigation;
     presentMachineLabel: (value: string) => string;
     search: DashboardSearch;
+    sourceControlSummary?: Snippet;
   } = $props();
-
   let editingQuery = false;
   const setQuery = (value: string): void => {
     navigation.setQuery(value, editingQuery);
@@ -32,17 +40,8 @@
   const commitQuery = (): void => {
     editingQuery = false;
   };
-  const setRangeMode = (mode: DashboardDateRangeSearch['mode']): void => {
-    navigation.setDateRange(mode === 'custom' ? { ...search.range, mode } : { mode });
-  };
-  const setCustomBound = (key: 'from' | 'to', value: string): void => {
-    const range: DashboardDateRangeSearch = { ...search.range, mode: 'custom' };
-    if (value) {
-      range[key] = value;
-    } else {
-      delete range[key];
-    }
-    navigation.setDateRange(range);
+  const setInputElement = (element: HTMLInputElement): void => {
+    inputRef?.(element);
   };
 </script>
 
@@ -59,6 +58,7 @@
     }}
     placeholder="Filter by title, project, model…  ( / )"
     value={search.q}
+    use:setInputElement
   >
   <MultiSelect
     label="Filter by harness"
@@ -80,54 +80,16 @@
       value={search.machine}
     />
   {/if}
-  <label>
-    <span class={muted}>Date range</span>
-    <select
-      class={field}
-      onchange={(event) => setRangeMode(event.currentTarget.value as DashboardDateRangeSearch['mode'])}
-      value={search.range.mode}
-    >
-      <option value="today">Today</option>
-      <option value="7d">7 days</option>
-      <option value="30d">30 days</option>
-      <option value="all">All time</option>
-      <option value="custom">Custom</option>
-    </select>
-  </label>
-  {#if search.range.mode === 'custom'}
-    <label
-      ><span class={muted}>From</span>
-      <input
-        class={field}
-        onchange={(event) => setCustomBound('from', event.currentTarget.value)}
-        type="date"
-        value={search.range.from ?? ''}
-      ></label
-    >
-    <label
-      ><span class={muted}>To</span>
-      <input
-        class={field}
-        onchange={(event) => setCustomBound('to', event.currentTarget.value)}
-        type="date"
-        value={search.range.to ?? ''}
-      ></label
-    >
-  {/if}
-  <label>
-    <span class={muted}>Columns</span>
-    <select
-      class={field}
-      onchange={(event) => navigation.setColumnBase(event.currentTarget.value as DashboardSearch['colsBase'])}
-      value={search.colsBase}
-    >
-      <option value="auto">Automatic</option>
-      <option value="work">Work</option>
-      <option value="tokens">Tokens</option>
-      <option value="reliability">Reliability</option>
-    </select>
-  </label>
   {#if freshnessStatus}
-    <span aria-live="polite" class={button}>{freshnessStatus}</span>
+    {#if freshnessUnavailable}
+      <Tooltip content="No source freshness observation is available for this report revision.">
+        <span aria-live="polite" class={button}>{freshnessStatus}</span>
+      </Tooltip>
+    {:else}
+      <span aria-live="polite" class={button}>{freshnessStatus}</span>
+    {/if}
+  {/if}
+  {#if !isDemo && sourceControlSummary}
+    {@render sourceControlSummary()}
   {/if}
 </div>
