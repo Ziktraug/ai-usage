@@ -134,7 +134,7 @@ Statuses are `BLOCKED`, `READY`, `IMPLEMENTING`, `REVIEW`, `REWORK`,
 | D2 | D0 | INTEGRATED | `fce5c1a`, `9935846`, evidence `b31c3af` | `/root/d123_parity_review` / ACCEPT | `b31c3af` |
 | D3 | D0 | INTEGRATED | `e2f13cd`, `0702203`, `70f5796`, evidence `b31c3af` | `/root/d123_parity_review` / ACCEPT | `b31c3af` |
 | D4 | D1, D2, D3 | INTEGRATED | `662182e`, bundle correction `6646fe5` | `/root/d4_review` / ACCEPT | `6646fe568e8b4c1fba74ac1b4150d1480d15ca6f` |
-| R0 | F0, V5, Q3, D4 | REVIEW | `435aa06`, evidence `88d56c9`, correction `98235ab`, evidence `4f293e5` | `/root/d123_parity_review`, `/root/q2_spec_review` / REWORK; correction re-review pending | candidate `4f293e5` in `/tmp/ai-usage-068-r0` |
+| R0 | F0, V5, Q3, D4 | REWORK | `435aa06`, evidence `88d56c9`, correction `98235ab`, evidence `4f293e5` | `/root/d123_parity_review` / ACCEPT; `/root/q2_spec_review` / REWORK | recoverable `4f293e5` in `/tmp/ai-usage-068-r0` |
 | R1 | R0 | BLOCKED | - | - | - |
 | P1 | R1, V1, V2, Q1, D4 | BLOCKED | - | - | - |
 | P2 | P1 | BLOCKED | - | - | - |
@@ -677,6 +677,21 @@ expanded; independent correction reviewers must explicitly accept or reject
 this documented size deviation. R1 must supply stable history-entry keys, the
 real post-render scheduler and dirty-cancellation wiring; it must not duplicate
 the lifecycle.
+
+The correction standards review ACCEPTed every prior quality finding and the
+documented size deviation. Spec/parity returned a second REWORK because named
+tests did not yet exercise every canonical/default/legacy/lifecycle clause that
+the evidence described as exact. Missing target variants included several
+Dashboard enum/default/legacy/history cases, Skills matrix tree scope and
+project basename/rename/reload behavior. The new structured drawer owner also
+used `undefined` for closed state and omitted the frozen target field rather
+than representing explicit null key/revision/target.
+
+The original worker resumed again for an evidence-focused correction: compact
+direct target assertions for every declared variant and lifecycle, a narrow
+P4-compatible drawer owner with explicit closed state and target, and fresh
+source/evidence commits. The accepted scroll, failure, URL-preservation and
+retry lifecycles remain frozen unless a direct test exposes a real defect.
 
 Three Q3 incidents are retained. The first complete repository test run hit the
 known D3 `ArrowRight` focus timeout; its one allowed exact rerun passed 10/10,
