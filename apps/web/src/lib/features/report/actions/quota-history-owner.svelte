@@ -10,7 +10,8 @@
   import { type QuotaQueryClient, quotaHistoryQueryOptions } from '../../../query/options/quota';
   import { createBrowserWebRpcClient } from '../../../rpc/client';
   import { createReportClient } from '../../../rpc/report-client';
-  import QuotaHistoryPanel from './quota-history-panel.svelte';
+
+  type QuotaHistoryPanelModule = typeof import('./quota-history-panel.svelte');
 
   let {
     client: injectedClient,
@@ -30,6 +31,9 @@
   let range: ProviderQuotaHistoryRange = $state('24h');
   let requestedAt = $state(new Date(0));
   let client: QuotaQueryClient | undefined;
+  let panelModule = $state<QuotaHistoryPanelModule>();
+  let panelLoadFailed = $state(false);
+  let panelLoad: Promise<void> | undefined;
   const lazyClient: QuotaQueryClient = {
     getProviderQuotaHistory: async (...parameters) => {
       client ??= injectedClient ?? createReportClient(createBrowserWebRpcClient('svelte-quota-history'));
@@ -57,14 +61,30 @@
     browser = true;
     requestedAt = new Date();
   });
+  $effect(() => {
+    if (open && !panelModule) {
+      panelLoad ??= import('./quota-history-panel.svelte')
+        .then((module) => {
+          panelModule = module;
+        })
+        .catch(() => {
+          panelLoadFailed = true;
+        });
+    }
+  });
 </script>
 
-<QuotaHistoryPanel
-  errorMessage={query.error?.message ?? null}
-  loading={query.isPending || query.isFetching}
-  {onClose}
-  onRangeChange={changeRange}
-  {open}
-  {range}
-  result={query.data ?? null}
-/>
+{#if open && panelModule}
+  {@const QuotaHistoryPanel = panelModule.default}
+  <QuotaHistoryPanel
+    errorMessage={query.error?.message ?? null}
+    loading={query.isPending || query.isFetching}
+    {onClose}
+    onRangeChange={changeRange}
+    {open}
+    {range}
+    result={query.data ?? null}
+  />
+{:else if open && panelLoadFailed}
+  <p role="status">Quota history is temporarily unavailable.</p>
+{/if}

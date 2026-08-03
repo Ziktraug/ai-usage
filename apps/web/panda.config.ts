@@ -6,9 +6,8 @@ const designSystemBuildInfo = require.resolve(designSystemBuildInfoPackage);
 
 export default defineConfig({
   preflight: true,
-  include: ['./src/**/*.{ts,tsx,svelte}', './svelte-shadow/**/*.svelte', designSystemBuildInfo],
+  include: ['./src/**/*.{ts,svelte}', designSystemBuildInfo],
   exclude: [],
-  jsxFramework: 'solid',
   outdir: 'styled-system',
   importMap: '@ai-usage/design-system',
   // '@pandacss/preset-panda' restores the default theme (colors, spacing,

@@ -1,4 +1,8 @@
 import {
+  type FocusedBreakdownRequest,
+  type FocusedBreakdownResult,
+  type FocusedOverviewRequest,
+  type FocusedOverviewResult,
   type FocusedReportSupport,
   type FocusedSupportResult,
   projectFocusedBreakdown,
@@ -6,16 +10,28 @@ import {
   projectFocusedSupport,
 } from '@ai-usage/report-core/focused-report-query';
 import type { SessionQueryServerResult } from '@ai-usage/report-core/session-query';
-import type { FocusedReportSource } from './focused-report-client';
 import { demoReportPayload } from './report-data';
 import {
   parseReportRevision,
   reportManifestRequestFingerprint,
+  type WebReportRevisionBootstrapResult,
   type WebReportRevisionManifestResult,
 } from './web-report-payload';
 
 export const FOCUSED_REPORT_E2E_CONTROL_KEY = '__aiUsageE2EFocusedReportControl';
 export const FOCUSED_REPORT_E2E_ENABLED_KEY = '__aiUsageE2EFocusedReportEnabled';
+
+interface FocusedReportSource {
+  readonly getBootstrap: (options?: { readonly signal?: AbortSignal }) => Promise<WebReportRevisionBootstrapResult>;
+  readonly getBreakdown: (
+    request: FocusedBreakdownRequest,
+    options?: { readonly signal?: AbortSignal },
+  ) => Promise<SessionQueryServerResult<FocusedBreakdownResult>>;
+  readonly getOverview: (
+    request: FocusedOverviewRequest,
+    options?: { readonly signal?: AbortSignal },
+  ) => Promise<SessionQueryServerResult<FocusedOverviewResult>>;
+}
 
 const FIXTURE_CAPTURE_FINGERPRINT = 'e'.repeat(64);
 const FIXTURE_REVISION = 'focused-e2e-revision';
@@ -29,6 +45,7 @@ interface FocusedResponseGate {
 export interface FocusedReportE2EFixture {
   bootstrap: FocusedSupportResult;
   source: FocusedReportSource;
+  waitForResponse: () => Promise<void>;
 }
 
 interface ResolvablePromise {
@@ -153,5 +170,6 @@ export const createFocusedReportE2EFixture = (): FocusedReportE2EFixture | undef
         return success(data);
       },
     },
+    waitForResponse: gate.waitForResponse,
   };
 };

@@ -9,13 +9,10 @@
       "!**/.output",
       "!**/.output-build",
       "!**/.output-dev",
-      "!**/.output-svelte-shadow",
       "!**/.svelte-kit",
-      "!**/.svelte-kit-shadow",
       "!**/.turbo",
       "!**/.worktrees",
       "!**/dist",
-      "!apps/web/src/routeTree.gen.ts",
       "!**/node_modules",
       "!**/styled-system"
     ]
@@ -133,7 +130,6 @@
   ],
   "extends": [
     "ultracite/biome/core",
-    "ultracite/biome/solid",
     "ultracite/biome/svelte",
     "ultracite/biome/tanstack",
     "ultracite/biome/vitest"

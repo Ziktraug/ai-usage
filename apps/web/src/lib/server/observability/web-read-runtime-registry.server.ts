@@ -39,5 +39,5 @@ export const createWebReadObservabilityRuntimeRegistry = (): WebReadObservabilit
   };
 };
 
-/** One framework-neutral runtime slot shared by the temporary Nitro and final SvelteKit adapters. */
+/** One framework-neutral runtime slot owned by the SvelteKit server lifecycle. */
 export const webReadObservabilityRuntimeRegistry = createWebReadObservabilityRuntimeRegistry();

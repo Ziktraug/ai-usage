@@ -6,7 +6,7 @@
   import SkillsMatrixSlot from '../management/skills-matrix-slot.svelte';
   import { createSkillsShellViewModel } from './model';
   import SkillsWorkspace from './skills-workspace.svelte';
-  import type { SkillsSnapshotUpdatePort } from './slot-context';
+  import type { SkillsShellSlotContext, SkillsSnapshotUpdatePort } from './slot-context';
   import {
     syntheticInventories,
     syntheticKnownPaths,
@@ -33,13 +33,13 @@
   };
 </script>
 
-{#snippet editorSlot(_context)}
+{#snippet editorSlot(_context: SkillsShellSlotContext)}
   <SkillsEditorSlot context={_context} />
 {/snippet}
-{#snippet healthSlot(_context)}
+{#snippet healthSlot(_context: SkillsShellSlotContext)}
   <SkillsHealthSlot context={_context} />
 {/snippet}
-{#snippet matrixSlot(_context)}
+{#snippet matrixSlot(_context: SkillsShellSlotContext)}
   <SkillsMatrixSlot context={_context} />
 {/snippet}
 
@@ -49,7 +49,7 @@
     {healthSlot}
     {matrixSlot}
     selectedDocument={syntheticManagedDocument}
-    {snapshot}
+    snapshot={view.snapshot}
     {snapshotUpdates}
     {view}
   />

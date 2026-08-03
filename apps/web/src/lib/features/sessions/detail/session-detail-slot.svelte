@@ -2,7 +2,8 @@
   import { type SessionPresentationRow, sessionNeighborFingerprint } from '@ai-usage/report-core/session-query';
   import { onMount, type Snippet, untrack } from 'svelte';
   import type { SessionDetailController, SessionDetailControllerSnapshot, SessionSelectionInput } from './controller';
-  import SessionDrawer from './session-drawer.svelte';
+
+  type SessionDrawerModule = typeof import('./session-drawer.svelte');
 
   let {
     campaignSlot,
@@ -20,6 +21,19 @@
 
   let snapshot = $state<SessionDetailControllerSnapshot>(untrack(() => controller.current()));
   let selectedIdentity = $state('');
+  let drawerModule = $state<SessionDrawerModule>();
+  let drawerLoadFailed = $state(false);
+  let drawerLoad: Promise<void> | undefined;
+
+  const ensureDrawer = (): void => {
+    drawerLoad ??= import('./session-drawer.svelte')
+      .then((module) => {
+        drawerModule = module;
+      })
+      .catch(() => {
+        drawerLoadFailed = true;
+      });
+  };
 
   const identityFor = (next: SessionSelectionInput | null): string => {
     if (!next) {
@@ -47,6 +61,12 @@
     }
   });
 
+  $effect(() => {
+    if (snapshot.row) {
+      ensureDrawer();
+    }
+  });
+
   onMount(() => {
     const unsubscribe = controller.subscribe((next) => {
       snapshot = next;
@@ -62,7 +82,8 @@
 </script>
 
 <div data-selected-row-id={snapshot.row?.rowId} data-session-detail-slot>
-  {#if snapshot.row}
+  {#if snapshot.row && drawerModule}
+    {@const SessionDrawer = drawerModule.default}
     <SessionDrawer
       {...(campaignSlot === undefined ? {} : { campaignSlot })}
       {controller}
@@ -70,5 +91,7 @@
       {rows}
       {snapshot}
     />
+  {:else if snapshot.row && drawerLoadFailed}
+    <p role="status">Session details are temporarily unavailable.</p>
   {/if}
 </div>

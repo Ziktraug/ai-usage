@@ -40,7 +40,7 @@ test('server-renders and reloads every Svelte shell route with accessible naviga
   for (const route of shellRoutes) {
     const response = await request.get(route.path);
     expect(response.status()).toBe(200);
-    expect(response.headers()['x-ai-usage-shadow']).toBe('sveltekit');
+    expect(response.headers()['x-ai-usage-sveltekit']).toBe('active');
     const html = await response.text();
     if (route.marker === null) {
       expect(html).toContain('data-skills-workspace');
@@ -235,7 +235,7 @@ test('restores Svelte history and scroll without feedback loops', async ({ page 
 });
 
 test('renders retryable route errors and the default accessible Not Found shell', async ({ context, page }) => {
-  await context.setExtraHTTPHeaders({ 'x-ai-usage-shadow-error': 'once' });
+  await context.setExtraHTTPHeaders({ 'x-ai-usage-sveltekit-error': 'once' });
   const failed = await page.goto('/');
   expect(failed?.status()).toBe(503);
   await expect(page.getByRole('heading', { level: 2, name: 'Report unavailable' })).toBeVisible();
@@ -251,7 +251,7 @@ test('renders retryable route errors and the default accessible Not Found shell'
 });
 
 test('redirects Svelte demo routes before protected acquisition', async ({ context, page, request }) => {
-  await context.setExtraHTTPHeaders({ 'x-ai-usage-shadow-mode': 'demo' });
+  await context.setExtraHTTPHeaders({ 'x-ai-usage-sveltekit-mode': 'demo' });
   const businessRequests: string[] = [];
   page.on('request', (candidate) => {
     const pathname = new URL(candidate.url()).pathname;
@@ -275,8 +275,8 @@ test('redirects Svelte demo routes before protected acquisition', async ({ conte
   ]) {
     const protectedResponse = await request.get(path, {
       headers: {
-        'x-ai-usage-shadow-acquisition-tripwire': 'armed',
-        'x-ai-usage-shadow-mode': 'demo',
+        'x-ai-usage-sveltekit-acquisition-tripwire': 'armed',
+        'x-ai-usage-sveltekit-mode': 'demo',
       },
     });
     expect(protectedResponse.status()).toBe(404);

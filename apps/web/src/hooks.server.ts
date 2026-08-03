@@ -1,0 +1,66 @@
+import type { Handle } from '@sveltejs/kit';
+import { demoRouteDecision } from '$lib/features/shell/demo-policy.server';
+import { webReadObservabilityLifecycle } from '$lib/server/observability/web-read-lifecycle.server';
+import { getServerRuntimeMode } from '../src/server/runtime-mode.server';
+
+const observabilityInitialization = webReadObservabilityLifecycle.initialize();
+
+process.once('sveltekit:shutdown', async () => {
+  await webReadObservabilityLifecycle.dispose();
+  process.exit(0);
+});
+
+export const handle: Handle = async ({ event, resolve }) => {
+  await observabilityInitialization;
+  const e2eOverridesEnabled = process.env.AI_USAGE_SVELTEKIT_PRIVATE_E2E_OVERRIDES === '1';
+  const runtimeMode =
+    e2eOverridesEnabled && event.request.headers.get('x-ai-usage-sveltekit-mode') === 'demo'
+      ? 'demo'
+      : getServerRuntimeMode();
+  event.locals.runtimeMode = runtimeMode;
+  const decision = demoRouteDecision(event.url.pathname, runtimeMode);
+  if (decision === 'not-found') {
+    return new Response(null, {
+      headers: {
+        'cache-control': 'no-store',
+        'x-ai-usage-sveltekit': 'active',
+      },
+      status: 404,
+    });
+  }
+  if (decision === 'redirect-report') {
+    return new Response(null, {
+      headers: {
+        location: '/',
+        'x-ai-usage-sveltekit': 'active',
+      },
+      status: 307,
+    });
+  }
+  if (e2eOverridesEnabled && event.request.headers.get('x-ai-usage-sveltekit-acquisition-tripwire') === 'armed') {
+    throw new Error('Synthetic acquisition tripwire reached resolve');
+  }
+  const errorFixtureRequested =
+    e2eOverridesEnabled &&
+    event.url.pathname === '/' &&
+    event.request.headers.get('x-ai-usage-sveltekit-error') === 'once' &&
+    !event.cookies.get('ai-usage-sveltekit-error-seen');
+  if (errorFixtureRequested) {
+    event.locals.shellE2eError = true;
+    event.cookies.set('ai-usage-sveltekit-error-seen', '1', {
+      httpOnly: true,
+      path: '/',
+      sameSite: 'strict',
+    });
+  }
+  const response = await resolve(event, {
+    filterSerializedResponseHeaders: (name) => name === 'content-type',
+  });
+  response.headers.set('x-ai-usage-sveltekit', 'active');
+  if (errorFixtureRequested && response.status === 503) {
+    response.headers.set('x-ai-usage-expected-error', 'shell-route');
+  } else if (e2eOverridesEnabled && event.url.pathname === '/definitely-missing' && response.status === 404) {
+    response.headers.set('x-ai-usage-expected-error', 'not-found-fixture');
+  }
+  return response;
+};

@@ -1,15 +1,12 @@
 {
   "extends": "../../tsconfig.json",
   "compilerOptions": {
-    "jsx": "preserve",
-    "jsxImportSource": "solid-js",
     "lib": ["DOM", "DOM.Iterable", "ES2023"],
     "types": ["bun"],
     "strictNullChecks": true
   },
   "include": [
     "src/**/*.ts",
-    "src/**/*.tsx",
     "src/**/*.svelte",
     "panda.config.ts",
     "styled-system"

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { page, shell } from '@ai-usage/design-system/svelte';
   import type { ReportRevisionBootstrapResult } from '@ai-usage/web-contract/report';
+  import { onMount } from 'svelte';
   import { browser } from '$app/environment';
   import ReportDestinationOwner from '../composition/report-destination-owner.svelte';
   import type { ReportPageData } from './report-bootstrap';
@@ -9,6 +10,10 @@
   import { liveReportShellModel, syntheticReportShellModel } from './report-view-model';
 
   let { data }: { data: ReportPageData } = $props();
+  let hydrated = $state(false);
+  onMount(() => {
+    hydrated = true;
+  });
   const liveQuery = createHydratedReportBootstrapQuery(() => browser && data.mode === 'live');
   const liveResult = $derived(liveQuery.data as ReportRevisionBootstrapResult | undefined);
   const model = $derived(
@@ -16,7 +21,7 @@
   );
 </script>
 
-<main class={page} data-route-shell="report">
+<main class={page} data-hydrated={hydrated ? 'true' : 'false'} data-route-shell="report">
   <div class={shell}>
     <ReportHeader generatedAt={model.generatedAt} hasReportData={model.hasReportData} isDemo={model.isDemo} />
     <ReportDestinationOwner {liveResult} mode={data.mode} {model} />

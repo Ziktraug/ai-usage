@@ -8,12 +8,14 @@
   } from '@ai-usage/report-core/focused-report-query';
   import { enrichSessionPresentationRow, type SessionPresentationRow } from '@ai-usage/report-core/session-query';
   import type { QueryClient } from '@tanstack/svelte-query';
-  import { untrack } from 'svelte';
+  import { onDestroy, untrack } from 'svelte';
+  import { browser } from '$app/environment';
   import {
     type DashboardSearch,
     primaryDashboardTabFor,
     serializeDashboardTimeCell,
   } from '../../../../dashboard-search';
+  import { createFocusedReportE2EFixture } from '../../../../focused-report-e2e-fixture';
   import { demoReportPayload } from '../../../../report-data';
   import type { RuntimeMode } from '../../../../runtime-mode';
   import {
@@ -27,15 +29,16 @@
   import { createSessionDetailController, type SessionSelectionInput } from '../../sessions/detail/controller';
   import { createSessionDetailQueryOwner } from '../../sessions/detail/query-owner';
   import SessionDetailSlot from '../../sessions/detail/session-detail-slot.svelte';
-  import SessionTable from '../../sessions/table/session-table.svelte';
   import ActiveFilters from '../breakdown/active-filters.svelte';
-  import DashboardBreakdown from '../breakdown/dashboard-breakdown.svelte';
   import FilterBar from '../breakdown/filter-bar.svelte';
   import { createBreakdownNavigation } from '../breakdown/navigation';
   import ReportWorkspace from '../core/report-workspace.svelte';
   import OverviewPage from '../overview/overview-page.svelte';
   import { activeTimelineSeriesKeys } from './active-timeline-series';
   import { reportDestinationForSearch } from './report-search';
+
+  type DashboardBreakdownModule = typeof import('../breakdown/dashboard-breakdown.svelte');
+  type SessionTableModule = typeof import('../../sessions/table/session-table.svelte');
 
   let {
     mode,
@@ -50,6 +53,42 @@
   } = $props();
 
   const revision = untrack(() => `synthetic-${mode}`);
+  const responseFixture = untrack(() => (browser && mode === 'e2e' ? createFocusedReportE2EFixture() : undefined));
+  let renderedSearch = $state<DashboardSearch>(untrack(() => search));
+  let renderedSearchKey = JSON.stringify(untrack(() => search));
+  let pending = $state(false);
+  let dashboardBreakdownModule = $state<DashboardBreakdownModule>();
+  let dashboardBreakdownLoadFailed = $state(false);
+  let dashboardBreakdownLoad: Promise<void> | undefined;
+  let sessionTableModule = $state<SessionTableModule>();
+  let sessionTableLoadFailed = $state(false);
+  let sessionTableLoad: Promise<void> | undefined;
+  let responseGeneration = 0;
+  $effect(() => {
+    const requestedSearch = search;
+    const requestedKey = JSON.stringify(requestedSearch);
+    if (!responseFixture) {
+      renderedSearch = requestedSearch;
+      renderedSearchKey = requestedKey;
+      return;
+    }
+    if (requestedKey === renderedSearchKey) {
+      return;
+    }
+    const generation = ++responseGeneration;
+    pending = true;
+    responseFixture.waitForResponse().then(() => {
+      if (generation !== responseGeneration) {
+        return;
+      }
+      renderedSearch = requestedSearch;
+      renderedSearchKey = requestedKey;
+      pending = false;
+    });
+  });
+  onDestroy(() => {
+    responseGeneration += 1;
+  });
   const { rows: serializedRows, tableRows: _tableRows, ...reportSupport } = demoReportPayload;
   const allRows = serializedRows.map(enrichSessionPresentationRow);
   const harnessOptions = [...new Set(allRows.map(({ harness }) => harness))].sort();
@@ -79,9 +118,9 @@
   let detailRows = $state<readonly SessionPresentationRow[]>([]);
   let selectedRowId = $state<string | null>(null);
   let selection = $state<SessionSelectionInput | null>(null);
-  const navigation = untrack(() => createBreakdownNavigation(navigate));
+  const navigation = createBreakdownNavigation((update, options) => navigate(update, options));
   const destination = $derived(
-    reportDestinationForSearch(search, reportSupport.generatedAt, { dimension, granularity }),
+    reportDestinationForSearch(renderedSearch, reportSupport.generatedAt, { dimension, granularity }),
   );
   const focusedQuery = $derived({
     filters: destination.sessions.filters,
@@ -96,13 +135,32 @@
     }),
   );
   const breakdown = $derived(projectFocusedBreakdown(serializedRows, reportSupport, { query: focusedQuery }));
-  const primary = $derived(primaryDashboardTabFor(search.tab));
+  const primary = $derived(primaryDashboardTabFor(renderedSearch.tab));
+  $effect(() => {
+    if (primary === 'breakdown' && !dashboardBreakdownModule) {
+      dashboardBreakdownLoad ??= import('../breakdown/dashboard-breakdown.svelte')
+        .then((module) => {
+          dashboardBreakdownModule = module;
+        })
+        .catch(() => {
+          dashboardBreakdownLoadFailed = true;
+        });
+    } else if (primary === 'sessions' && !sessionTableModule) {
+      sessionTableLoad ??= import('../../sessions/table/session-table.svelte')
+        .then((module) => {
+          sessionTableModule = module;
+        })
+        .catch(() => {
+          sessionTableLoadFailed = true;
+        });
+    }
+  });
   const visibleRows = $derived(
     allRows.filter((row) => matchesFocusedReportQuery(row, focusedQuery, reportSupport.timeZone)),
   );
-  const columnVisibility = $derived(columnVisibilityFromDiff(search.cols, search.colsBase));
-  const sorting = $derived([{ ...search.sort }]);
-  const activeSeriesKeys = $derived(activeTimelineSeriesKeys(search, dimension));
+  const columnVisibility = $derived(columnVisibilityFromDiff(renderedSearch.cols, renderedSearch.colsBase));
+  const sorting = $derived([{ ...renderedSearch.sort }]);
+  const activeSeriesKeys = $derived(activeTimelineSeriesKeys(renderedSearch, dimension));
   const unavailable = (): Promise<never> =>
     Promise.reject(new Error('Synthetic session detail transport is unavailable.'));
   const syntheticClient: SessionClientAdapter = {
@@ -151,12 +209,13 @@
 <ActiveFilters
   hidden={Math.max(0, support.support.analytics.sessionCount - overview.summary.sessionCount)}
   {navigation}
+  {pending}
   presentMachineLabel={(value) => machineOptions.find((option) => option.value === value)?.label ?? value}
   {search}
   total={support.support.analytics.sessionCount}
   visible={overview.summary.sessionCount}
 />
-<ReportWorkspace hasOutput pending={false}>
+<ReportWorkspace hasOutput={!pending} {pending}>
   {#snippet children()}
     {#if primary === 'overview'}
       <OverviewPage
@@ -176,11 +235,12 @@
         onSelectSession={selectOverviewSession}
         onSelectTimeCell={(cell) => navigate((current) => ({ ...current, tab: 'sessions', timeCell: serializeDashboardTimeCell(cell) }))}
         providers={[]}
-        range={search.range}
+        range={renderedSearch.range}
         result={overview}
         value={timelineValue}
       />
-    {:else if primary === 'breakdown'}
+    {:else if primary === 'breakdown' && dashboardBreakdownModule}
+      {@const DashboardBreakdown = dashboardBreakdownModule.default}
       <DashboardBreakdown
         data={{
           cursorRows: breakdown.context.cursorCommitAttribution,
@@ -193,18 +253,19 @@
         navigation={{
           onSortChange: navigation.setBreakdownSort,
           onTabChange: (tab) => navigate((current) => ({ ...current, tab: tab as DashboardSearch['tab'] })),
-          sort: search.breakdownSort,
-          tab: search.tab,
+          sort: renderedSearch.breakdownSort,
+          tab: renderedSearch.tab,
         }}
         onFieldFilter={navigation.setFieldFilter}
-        onHarnessFilter={(value) => navigation.setHarness(search.harness.includes(value) ? search.harness.filter((item) => item !== value) : [...search.harness, value])}
+        onHarnessFilter={(value) => navigation.setHarness(renderedSearch.harness.includes(value) ? renderedSearch.harness.filter((item) => item !== value) : [...renderedSearch.harness, value])}
         projectEditor={{
           disabled: true,
           onSave: () => Promise.reject(new Error('Synthetic project groups are read-only.')),
           payload: reportSupport,
         }}
       />
-    {:else}
+    {:else if primary === 'sessions' && sessionTableModule}
+      {@const SessionTable = sessionTableModule.default}
       <SessionTable
         {columnVisibility}
         onClearFilters={navigation.clearAllFilters}
@@ -213,7 +274,7 @@
           navigate((current) => ({ ...current, ...columnVisibilitySearchForVisibility(next) }), { replace: true });
         }}
         onFieldFilter={navigation.setFieldFilter}
-        onHarnessFilter={(value) => navigation.setHarness(search.harness.includes(value) ? search.harness.filter((item) => item !== value) : [...search.harness, value])}
+        onHarnessFilter={(value) => navigation.setHarness(renderedSearch.harness.includes(value) ? renderedSearch.harness.filter((item) => item !== value) : [...renderedSearch.harness, value])}
         onSelect={selectSessionRow}
         onSortingChange={(updater) => {
           const next = applyStateUpdate(updater, sorting);
@@ -221,11 +282,15 @@
         }}
         queryResetKey={JSON.stringify(destination.sessions)}
         rows={visibleRows}
-        searchQuery={search.q}
+        searchQuery={renderedSearch.q}
         {selectedRowId}
         {sorting}
         totalRows={visibleRows.length}
       />
+    {:else if dashboardBreakdownLoadFailed || sessionTableLoadFailed}
+      <p role="status">Report view is temporarily unavailable.</p>
+    {:else}
+      <p aria-live="polite" role="status">Loading report…</p>
     {/if}
   {/snippet}
 </ReportWorkspace>

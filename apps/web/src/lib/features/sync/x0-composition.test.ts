@@ -5,10 +5,10 @@ import { fileURLToPath } from 'node:url';
 const readWorkspaceFile = (relativePath: string): string =>
   readFileSync(fileURLToPath(new URL(`../../../../${relativePath}`, import.meta.url)), 'utf8');
 
-describe('X0 Sync route composition', () => {
+describe('canonical Sync route composition', () => {
   test('awaits one Sync fleet load and renders one context-connected Sync root', () => {
-    const load = readWorkspaceFile('svelte-shadow/routes/sync/+page.server.ts');
-    const page = readWorkspaceFile('svelte-shadow/routes/sync/+page.svelte');
+    const load = readWorkspaceFile('src/routes/sync/+page.server.ts');
+    const page = readWorkspaceFile('src/routes/sync/+page.svelte');
 
     expect(load).toContain("import { loadSyncPageData } from '$lib/features/sync/sync-load'");
     expect(load).toContain("await loadSyncPageData({ fetch, requestOwner: 'sync-root-ssr', url })");
@@ -23,8 +23,8 @@ describe('X0 Sync route composition', () => {
   });
 
   test('creates thin manual-merge leaves with per-request mode and no deep imports', () => {
-    const download = readWorkspaceFile('svelte-shadow/routes/api/manual-merge/download/+server.ts');
-    const upload = readWorkspaceFile('svelte-shadow/routes/api/manual-merge/upload/+server.ts');
+    const download = readWorkspaceFile('src/routes/api/manual-merge/download/+server.ts');
+    const upload = readWorkspaceFile('src/routes/api/manual-merge/upload/+server.ts');
 
     expect(download).toContain('handleManualMergeDownloadEndpoint');
     expect(download).toContain('export const POST: RequestHandler');
@@ -40,13 +40,14 @@ describe('X0 Sync route composition', () => {
   });
 
   test('initializes and disposes one observability owner while preserving hook seams', () => {
-    const hook = readWorkspaceFile('svelte-shadow/hooks.server.ts');
+    const hook = readWorkspaceFile('src/hooks.server.ts');
     const initialization = hook.indexOf(
       'const observabilityInitialization = webReadObservabilityLifecycle.initialize()',
     );
     const handle = hook.indexOf('export const handle: Handle');
     const awaited = hook.indexOf('await observabilityInitialization', handle);
-    const rpc = hook.indexOf("event.url.pathname === '/rpc'", handle);
+    const resolved = hook.indexOf('const response = await resolve', handle);
+    const rpcRoute = readWorkspaceFile('src/routes/rpc/[...rest]/+server.ts');
 
     expect(hook).toContain(
       "import { webReadObservabilityLifecycle } from '$lib/server/observability/web-read-lifecycle.server'",
@@ -54,17 +55,16 @@ describe('X0 Sync route composition', () => {
     expect(initialization).toBeGreaterThan(-1);
     expect(initialization).toBeLessThan(handle);
     expect(awaited).toBeGreaterThan(handle);
-    expect(awaited).toBeLessThan(rpc);
+    expect(awaited).toBeLessThan(resolved);
     expect(hook).toContain("process.once('sveltekit:shutdown', async () => {");
     expect(hook).toContain('await webReadObservabilityLifecycle.dispose()');
     expect(hook).not.toContain('setTimeout(() => process.exit(0)');
-    expect(hook).toContain(
+    expect(rpcRoute).toContain(
       "import { normalizeOwnedRpcSubrequest } from '$lib/server/rpc/subrequest-normalization.server'",
     );
-    expect(hook).toContain('const rpcRequest = normalizeOwnedRpcSubrequest({');
-    expect(hook).toContain('isSubRequest: event.isSubRequest');
-    expect(hook).toContain('request: event.request');
-    expect(hook).toContain('url: event.url');
+    expect(rpcRoute).toContain('const rpcRequest = normalizeOwnedRpcSubrequest({ isSubRequest, request, url })');
+    expect(rpcRoute).toContain('export const GET = handleRpcRequest');
+    expect(rpcRoute).toContain('export const POST = handleRpcRequest');
     expect(hook).toContain("filterSerializedResponseHeaders: (name) => name === 'content-type'");
   });
 });

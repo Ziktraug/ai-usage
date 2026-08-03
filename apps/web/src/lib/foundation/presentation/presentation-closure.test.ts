@@ -114,7 +114,7 @@ describe('framework-neutral presentation closure', () => {
     expect(isForbiddenRuntimeSpecifier('@ai-usage/report-core/session-query')).toBe(false);
 
     const presentationPath = path.join(sourceDirectory, 'lib/foundation/presentation/format.ts');
-    expect(isForbiddenLocalSource(await resolveLocalImport(presentationPath, '../../../shared'))).toBe(true);
+    expect(isForbiddenLocalSource(await resolveLocalImport(presentationPath, '../../../shared'))).toBe(false);
     expect(isForbiddenLocalSource(await resolveLocalImport(presentationPath, '../../features/shell/app-shell'))).toBe(
       true,
     );

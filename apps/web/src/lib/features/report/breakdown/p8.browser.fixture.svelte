@@ -6,10 +6,10 @@
   import type { ProjectGroup } from '../../../../dashboard-analytics';
   import {
     type BreakdownSort,
+    type BreakdownTab,
+    breakdownTabs,
     type DashboardSearch,
-    type DashboardTab,
     dashboardSearchDefaultsFor,
-    dashboardTabs,
     type FieldFilterKey,
   } from '../../../../dashboard-search';
   import { createE2EProviderQuotaHistoryFixture } from '../../../../provider-quota-e2e-fixture';
@@ -115,30 +115,32 @@
     navigationMode = options?.replace === true ? 'replace' : 'push';
   });
   const setTab = (value: string): void => {
-    if (dashboardTabs.includes(value as DashboardTab)) {
-      navigation.setBreakdownTab(value as DashboardTab);
+    if (breakdownTabs.includes(value as BreakdownTab)) {
+      navigation.setBreakdownTab(value as BreakdownTab);
     }
   };
   const setFieldFilter = (key: FieldFilterKey, value: string): void => navigation.setFieldFilter(key, value);
   const setSort = (sort: BreakdownSort): void => navigation.setBreakdownSort(sort);
 
-  const campaign = $state<CampaignLabelEditorState>({
+  let campaignLabel = $state('Campaign A');
+  let campaignHasOverride = $state(true);
+  const campaign = $derived<CampaignLabelEditorState>({
     campaignKey: 'campaign-a',
-    effectiveLabel: 'Campaign A',
-    hasOverride: true,
+    effectiveLabel: campaignLabel,
+    hasOverride: campaignHasOverride,
     loadError: null,
     loadStatus: 'ready',
     mutationError: null,
     mutationStatus: 'idle',
-    onRename: (label) => {
-      campaign.effectiveLabel = label;
-      campaign.hasOverride = true;
+    onRename: (label: string): Promise<string> => {
+      campaignLabel = label;
+      campaignHasOverride = true;
       return Promise.resolve(label);
     },
-    onReset: () => {
-      campaign.effectiveLabel = 'Campaign A';
-      campaign.hasOverride = false;
-      return Promise.resolve(campaign.effectiveLabel);
+    onReset: (): Promise<string> => {
+      campaignLabel = 'Campaign A';
+      campaignHasOverride = false;
+      return Promise.resolve(campaignLabel);
     },
     onRetry: () => Promise.resolve(true),
   });

@@ -1,19 +1,11 @@
 import { describe, expect, test } from 'bun:test';
-import { drawer } from '../../components/drawer';
-import { popoverContent } from '../../components/popover';
-import { tooltipContent } from '../../components/tooltip';
 import { drawerClass, popoverContentClass, tooltipContentClass } from './styles';
 
-describe('Svelte overlay Panda parity', () => {
-  test('reuses the exact generated Drawer class contract', () => {
-    expect(drawerClass).toBe(drawer);
-  });
+describe('Svelte overlay Panda styles', () => {
+  test('generates stable distinct classes for every overlay surface', () => {
+    const classes = [drawerClass, popoverContentClass, tooltipContentClass];
 
-  test('reuses the exact generated Popover class contract', () => {
-    expect(popoverContentClass).toBe(popoverContent);
-  });
-
-  test('reuses the exact generated Tooltip class contract', () => {
-    expect(tooltipContentClass).toBe(tooltipContent);
+    expect(classes.every((className) => className.startsWith('css-'))).toBe(true);
+    expect(new Set(classes).size).toBe(classes.length);
   });
 });

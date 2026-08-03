@@ -210,15 +210,17 @@
   });
 
   afterNavigate(() => {
-    currentEntryKey = seedCurrentEntry(pendingEntryKey || undefined);
-    if (pendingEntryKey) {
-      historyCursor = pendingHistoryCursor;
-    }
-    keysByHistoryCursor.set(historyCursor, currentEntryKey);
-    pendingEntryKey = '';
-    for (const listener of afterScrollListeners) {
-      listener({ toKey: currentEntryKey });
-    }
+    queueMicrotask(() => {
+      currentEntryKey = seedCurrentEntry(pendingEntryKey || undefined);
+      if (pendingEntryKey) {
+        historyCursor = pendingHistoryCursor;
+      }
+      keysByHistoryCursor.set(historyCursor, currentEntryKey);
+      pendingEntryKey = '';
+      for (const listener of afterScrollListeners) {
+        listener({ toKey: currentEntryKey });
+      }
+    });
   });
 
   const closeManageForNavigation = (_href: string): void => {

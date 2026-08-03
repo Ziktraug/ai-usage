@@ -1,7 +1,7 @@
 <script lang="ts">
   import { createSkillsShellViewModel } from './model';
   import SkillsWorkspace from './skills-workspace.svelte';
-  import type { SkillsSnapshotUpdatePort } from './slot-context';
+  import type { SkillsShellSlotContext, SkillsSnapshotUpdatePort } from './slot-context';
   import {
     syntheticInventories,
     syntheticKnownPaths,
@@ -35,17 +35,17 @@
   };
 </script>
 
-{#snippet editorSlot(_context)}
+{#snippet editorSlot(_context: SkillsShellSlotContext)}
   <section aria-label="Synthetic editor slot">
     <h3>Editable SKILL.md</h3>
     <pre>{_context.document?.content}</pre>
     <span data-p9-slot-contract>{_context.snapshotUpdates.pendingDecision ? 'pending' : 'settled'}</span>
   </section>
 {/snippet}
-{#snippet healthSlot(_context)}
+{#snippet healthSlot(_context: SkillsShellSlotContext)}
   <section aria-label="Synthetic health slot">Health integration · {_context.snapshot.summary.skillCount}</section>
 {/snippet}
-{#snippet matrixSlot(_context)}
+{#snippet matrixSlot(_context: SkillsShellSlotContext)}
   <section aria-label="Synthetic matrix slot">
     Matrix integration · {_context.snapshotUpdates.pendingDecision ? 'pending' : 'settled'}
   </section>

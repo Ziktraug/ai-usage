@@ -180,6 +180,23 @@
       {/if}
     </section>
   {:else}
+    <ReportRangeControl
+      {activeSeriesKeys}
+      dateDomain={result.dateDomain}
+      dimension={activeDimension}
+      generatedAt={result.metadata.generatedAt}
+      {granularity}
+      {machineFreshnessStatus}
+      {navigate}
+      {onDimensionFilter}
+      {onOptionsChange}
+      {onRangeChange}
+      {presentCampaignSeries}
+      {presentMachineSeries}
+      {range}
+      timeline={result.timeline}
+      {value}
+    />
     <p class={empty}>No sessions match the selected report range and filters.</p>
   {/if}
 </div>

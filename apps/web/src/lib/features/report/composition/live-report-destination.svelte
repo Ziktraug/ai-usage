@@ -48,7 +48,6 @@
   import QuotaHistoryOwner from '../actions/quota-history-owner.svelte';
   import { reportMutationsEnabled } from '../actions/report-mutation-availability';
   import ActiveFilters from '../breakdown/active-filters.svelte';
-  import DashboardBreakdown from '../breakdown/dashboard-breakdown.svelte';
   import FilterBar from '../breakdown/filter-bar.svelte';
   import { createBreakdownNavigation } from '../breakdown/navigation';
   import ReportWarnings from '../core/report-warnings.svelte';
@@ -66,7 +65,9 @@
     requireFocusedBreakdown,
   } from './report-destination';
   import { queryForDescriptor, reportDestinationForSearch } from './report-search';
-  import SessionsDestination from './sessions-destination.svelte';
+
+  type DashboardBreakdownModule = typeof import('../breakdown/dashboard-breakdown.svelte');
+  type SessionsDestinationModule = typeof import('./sessions-destination.svelte');
 
   let {
     bootstrapResult,
@@ -102,6 +103,12 @@
   let cleaningProjectWarningGroupId = $state<string>();
   let projectWarningCleanupError = $state<string>();
   let campaignSessionControls = $state<CampaignSessionControlsBinding | null>(null);
+  let dashboardBreakdownModule = $state<DashboardBreakdownModule>();
+  let dashboardBreakdownLoadFailed = $state(false);
+  let dashboardBreakdownLoad: Promise<void> | undefined;
+  let sessionsDestinationModule = $state<SessionsDestinationModule>();
+  let sessionsDestinationLoadFailed = $state(false);
+  let sessionsDestinationLoad: Promise<void> | undefined;
   const initialDescriptor = untrack(() => initialFocusedReportDescriptor(bootstrapResult));
   const sourceControl = useSourceControl();
   const descriptorSource = untrack(() =>
@@ -131,12 +138,31 @@
       rows: () => detailRows,
     }),
   );
-  const navigation = untrack(() => createBreakdownNavigation(navigate));
+  const navigation = createBreakdownNavigation((update, options) => navigate(update, options));
   const timeline = $derived({ dimension, granularity });
   const destination = $derived(
     reportDestinationForSearch(search, bootstrapResult.bootstrap.support.generatedAt, timeline),
   );
   const primary = $derived(primaryDashboardTabFor(search.tab));
+  $effect(() => {
+    if (primary === 'breakdown' && !dashboardBreakdownModule) {
+      dashboardBreakdownLoad ??= import('../breakdown/dashboard-breakdown.svelte')
+        .then((module) => {
+          dashboardBreakdownModule = module;
+        })
+        .catch(() => {
+          dashboardBreakdownLoadFailed = true;
+        });
+    } else if (primary === 'sessions' && !sessionsDestinationModule) {
+      sessionsDestinationLoad ??= import('./sessions-destination.svelte')
+        .then((module) => {
+          sessionsDestinationModule = module;
+        })
+        .catch(() => {
+          sessionsDestinationLoadFailed = true;
+        });
+    }
+  });
   const bootstrap = $derived(commit?.descriptor.bootstrap ?? initialDescriptor.bootstrap);
   const machineSnapshot = $derived(machineFreshnessSnapshotFromFocused(bootstrap.machineFreshness));
   const machinePresentations = $derived(
@@ -369,7 +395,8 @@
             result={commit.overview}
             value={timelineValue}
           />
-        {:else if primary === 'breakdown' && commit?.breakdown}
+        {:else if primary === 'breakdown' && commit?.breakdown && dashboardBreakdownModule}
+          {@const DashboardBreakdown = dashboardBreakdownModule.default}
           <DashboardBreakdown
             data={{
               cursorRows: commit.breakdown.context.cursorCommitAttribution,
@@ -400,7 +427,8 @@
               payload: projectPayload,
             }}
           />
-        {:else if primary === 'sessions'}
+        {:else if primary === 'sessions' && sessionsDestinationModule}
+          {@const SessionsDestination = sessionsDestinationModule.default}
           <SessionsDestination
             acquire={descriptorSource.acquire}
             client={sessionClient}
@@ -419,6 +447,10 @@
             selectedCampaignKey={selection?.row.campaignKey}
             {selectedRowId}
           />
+        {:else if dashboardBreakdownLoadFailed || sessionsDestinationLoadFailed}
+          <p role="status">Report view is temporarily unavailable.</p>
+        {:else}
+          <p aria-live="polite" role="status">Loading report…</p>
         {/if}
       {/snippet}
     </ReportWorkspace>
