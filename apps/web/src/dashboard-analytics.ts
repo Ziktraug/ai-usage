@@ -8,7 +8,7 @@ import {
   type LineMeasurementAccumulator,
 } from '@ai-usage/report-core/analytics';
 import { usageRowApiPriceMeasurement } from '@ai-usage/report-core/usage-row';
-import type { DashboardRow } from './shared';
+import type { DashboardRow } from './lib/foundation/presentation/report-value';
 
 export interface ProjectGroup extends LineMeasurementAccumulator {
   cache: number;

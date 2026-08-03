@@ -1,6 +1,6 @@
 import type { SessionPageItem } from '@ai-usage/report-core/session-query';
 import type { CampaignView } from './dashboard-model';
-import type { DashboardRow } from './shared';
+import type { DashboardRow } from './lib/foundation/presentation/report-value';
 
 export type SessionAnalysisTarget =
   | {

@@ -18,19 +18,16 @@ import {
 import type { Metric, MetricDelta } from './dashboard-metric-model';
 import type { FieldFilterKey, FieldFilters } from './dashboard-search';
 import { DAY_MS, type DateBounds, endOfDay, rowMatchesDateBounds } from './date-range';
-import type { TableSortingState } from './lib/foundation/table/state';
-import { isSessionColumnId, type SessionColumnId, sortValueForSessionColumn } from './session-table-schema';
+import { fmtCompact, fmtMoney, fmtNum, fmtPct } from './lib/foundation/presentation/format';
 import {
   aggregateApiPriceProvenance,
   aggregateApiValuePresentation,
   buildReportSummary,
   type DashboardRow,
-  fmtCompact,
-  fmtMoney,
-  fmtNum,
-  fmtPct,
   type ReportSummary,
-} from './shared';
+} from './lib/foundation/presentation/report-value';
+import type { TableSortingState } from './lib/foundation/table/state';
+import { isSessionColumnId, type SessionColumnId, sortValueForSessionColumn } from './session-table-schema';
 
 export const fieldValueForRow = (row: DashboardRow, key: FieldFilterKey) => {
   if (key === 'campaign') {

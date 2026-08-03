@@ -8,7 +8,7 @@ import {
   providerStatusScopeKey,
   providerStatusWithFreshness,
 } from '@ai-usage/report-core/provider-status';
-import type { DashboardRow } from './shared';
+import type { DashboardRow } from './lib/foundation/presentation/report-value';
 
 interface ProviderStatusPayload {
   datasets?: Record<string, unknown>;

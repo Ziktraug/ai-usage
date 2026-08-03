@@ -2,6 +2,7 @@ import { type SessionNeighborResult, sessionNeighborFingerprint } from '@ai-usag
 import { type Accessor, batch, createEffect, createSignal, onCleanup, untrack } from 'solid-js';
 import type { CampaignLabelContext } from './campaign-label-overrides';
 import type { CampaignView } from './dashboard-model';
+import { type DashboardRow, rowKey } from './lib/foundation/presentation/report-value';
 import {
   type SessionAnalysisTarget,
   sessionAnalysisTargetForSession,
@@ -9,7 +10,6 @@ import {
 } from './session-analysis-target';
 import { createSessionNeighborRequestController } from './session-neighbor-request-controller';
 import type { SessionQueryCoordinator, SessionQueryState } from './session-query-client';
-import { type DashboardRow, rowKey } from './shared';
 
 const FORM_CONTROL_TAG_PATTERN = /^(INPUT|SELECT|TEXTAREA)$/;
 

@@ -14,8 +14,11 @@ export const UNKNOWN_PRICE_HINT = 'No pricing data for this model';
 export const PARTIAL_PRICE_HINT = 'Known API-value subtotal; one or more model prices are unavailable';
 export const USAGE_UNAVAILABLE_HINT = 'Session found in prompt history; detailed local token counters are missing';
 
+// Harnesses report the same upstream model under different ids and mode suffixes
+// (gpt-5.4 vs openai/gpt-5.4-high); group on the shared base model.
 export const normalizeModelKey = (model: string): string => modelGroupKey(model);
 
+// "(OC)" is collector shorthand for sessions proxied through OpenCode.
 const OPENCODE_PROVIDER_SUFFIX = /\s*\(OC\)\s*$/;
 
 export const providerLabel = (provider: string): string =>
