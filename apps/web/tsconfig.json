@@ -10,6 +10,7 @@
   "include": [
     "src/**/*.ts",
     "src/**/*.tsx",
+    "rpc-test-transport.test.ts",
     "vite.config.ts",
     "vite-*.ts",
     "panda.config.ts",
