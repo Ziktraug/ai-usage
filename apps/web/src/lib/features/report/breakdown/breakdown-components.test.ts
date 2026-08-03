@@ -12,6 +12,7 @@ const svelteFiles = [breakdownDirectory, actionsDirectory].flatMap((directory) =
     .map((name) => join(directory, name)),
 );
 const sourceFor = (name: string): string => readFileSync(svelteFiles.find((path) => path.endsWith(name)) ?? '', 'utf8');
+const stylesSource = readFileSync(join(breakdownDirectory, 'styles.ts'), 'utf8');
 
 describe('P8 Svelte breakdown/action surfaces', () => {
   for (const path of svelteFiles) {
@@ -49,6 +50,29 @@ describe('P8 Svelte breakdown/action surfaces', () => {
     expect(quota).toContain('stroke-dasharray');
     expect(quota).toContain('<caption');
     expect(quota).toContain('Reset filters');
+  });
+  test('keeps mobile report filters in one coherent full-width stack without changing focus order', () => {
+    const filterBar = sourceFor('filter-bar.svelte');
+    const searchIndex = filterBar.indexOf(
+      'aria-label="Filter sessions by title, project, model, provider, or harness"',
+    );
+    const controlsIndex = filterBar.indexOf('<div class={controls}>');
+    const harnessIndex = filterBar.indexOf('label="Filter by harness"');
+    const originIndex = filterBar.indexOf('<OriginFilter');
+    const machineIndex = filterBar.indexOf('label="Filter by machine"');
+    const sourceSummaryIndex = filterBar.indexOf('{@render sourceControlSummary()}');
+
+    expect(searchIndex).toBeGreaterThanOrEqual(0);
+    expect(controlsIndex).toBeGreaterThan(searchIndex);
+    expect(harnessIndex).toBeGreaterThan(controlsIndex);
+    expect(originIndex).toBeGreaterThan(harnessIndex);
+    expect(machineIndex).toBeGreaterThan(originIndex);
+    expect(sourceSummaryIndex).toBeGreaterThan(machineIndex);
+    expect(stylesSource).toContain("flexDirection: { base: 'column', sm: 'row' }");
+    expect(stylesSource).toContain("flexWrap: { base: 'nowrap', sm: 'wrap' }");
+    expect(stylesSource).toContain("display: { base: 'grid', sm: 'contents' }");
+    expect(stylesSource).toContain("gridTemplateColumns: 'minmax(0, 1fr)'");
+    expect(stylesSource).toContain("w: { base: 'full', sm: 'auto' }");
   });
 });
 

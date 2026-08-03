@@ -86,14 +86,32 @@ export const toolbar = css({
   top: 0,
   zIndex: 20,
   display: 'flex',
-  flexWrap: 'wrap',
+  flexDirection: { base: 'column', sm: 'row' },
+  flexWrap: { base: 'nowrap', sm: 'wrap' },
   gap: '8px',
   alignItems: 'center',
   py: '10px',
   bg: 'canvas',
   borderBottom: '1px solid token(colors.line)',
   _print: { display: 'none' },
+  '& > input': {
+    flex: { base: 'none', sm: '0 1 auto' },
+    minW: { base: 0, sm: 'auto' },
+    w: { base: 'full', sm: 'auto' },
+  },
 });
+export const controls = css({
+  display: { base: 'grid', sm: 'contents' },
+  gridTemplateColumns: 'minmax(0, 1fr)',
+  w: { base: 'full', sm: 'auto' },
+  gap: { base: '8px', sm: 0 },
+  alignItems: 'center',
+  '& > *': {
+    minW: 0,
+    w: { base: 'full', sm: 'auto' },
+  },
+});
+
 export const table = css({ w: 'full', borderCollapse: 'collapse', fontSize: '12px' });
 export const tableCell = css({ borderTop: '1px solid token(colors.line)', p: '6px', textAlign: 'left' });
 export const noticeError = css({ color: 'status.danger' });

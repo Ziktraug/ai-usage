@@ -5,7 +5,7 @@
   import type { DashboardSearch } from '../../../../dashboard-search';
   import type { BreakdownNavigation } from './navigation';
   import OriginFilter from './origin-filter.svelte';
-  import { button, field, toolbar } from './styles';
+  import { button, controls, field, toolbar } from './styles';
 
   let {
     freshnessStatus = null,
@@ -60,36 +60,38 @@
     value={search.q}
     use:setInputElement
   >
-  <MultiSelect
-    label="Filter by harness"
-    noun="harnesses"
-    onValueChange={navigation.setHarness}
-    options={harnessOptions}
-    placeholder="All harnesses"
-    value={search.harness}
-  />
-  <OriginFilter onValueChange={(value: SessionOrigin[]) => navigation.setOrigin(value)} value={search.origin} />
-  {#if machineOptions.length > 1 || machineAttention}
+  <div class={controls}>
     <MultiSelect
-      label="Filter by machine"
-      noun="machines"
-      onValueChange={navigation.setMachine}
-      optionLabel={presentMachineLabel}
-      options={machineOptions}
-      placeholder="All machines"
-      value={search.machine}
+      label="Filter by harness"
+      noun="harnesses"
+      onValueChange={navigation.setHarness}
+      options={harnessOptions}
+      placeholder="All harnesses"
+      value={search.harness}
     />
-  {/if}
-  {#if freshnessStatus}
-    {#if freshnessUnavailable}
-      <Tooltip content="No source freshness observation is available for this report revision.">
-        <span aria-live="polite" class={button}>{freshnessStatus}</span>
-      </Tooltip>
-    {:else}
-      <span aria-live="polite" class={button}>{freshnessStatus}</span>
+    <OriginFilter onValueChange={(value: SessionOrigin[]) => navigation.setOrigin(value)} value={search.origin} />
+    {#if machineOptions.length > 1 || machineAttention}
+      <MultiSelect
+        label="Filter by machine"
+        noun="machines"
+        onValueChange={navigation.setMachine}
+        optionLabel={presentMachineLabel}
+        options={machineOptions}
+        placeholder="All machines"
+        value={search.machine}
+      />
     {/if}
-  {/if}
-  {#if !isDemo && sourceControlSummary}
-    {@render sourceControlSummary()}
-  {/if}
+    {#if freshnessStatus}
+      {#if freshnessUnavailable}
+        <Tooltip content="No source freshness observation is available for this report revision.">
+          <span aria-live="polite" class={button}>{freshnessStatus}</span>
+        </Tooltip>
+      {:else}
+        <span aria-live="polite" class={button}>{freshnessStatus}</span>
+      {/if}
+    {/if}
+    {#if !isDemo && sourceControlSummary}
+      {@render sourceControlSummary()}
+    {/if}
+  </div>
 </div>
