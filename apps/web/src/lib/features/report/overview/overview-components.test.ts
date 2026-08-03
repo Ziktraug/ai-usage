@@ -106,6 +106,8 @@ describe('P2 Overview Svelte surfaces', () => {
     expect(body).toContain('data-series-key="');
     expect(body).toContain('background: hsl(');
     expect(body).toContain('data-punchcard-cell-fill');
+    expect(body).toContain('Campaign · 3 sessions');
+    expect(body).not.toContain('3 campaign sessions');
     expect(body).not.toContain('Loading report');
   });
 

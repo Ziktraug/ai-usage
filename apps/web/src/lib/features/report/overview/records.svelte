@@ -121,10 +121,10 @@
               <span>{index + 1}</span>
               <span
                 >{item.label}
-                <span class={sub}>
-                  · {item.sessionCount} {item.kind === 'campaign' ? 'campaign sessions' : 'session'}</span
-                ></span
-              >
+                {#if item.kind === 'campaign'}
+                  <span class={sub}> · Campaign · {fmtNum(item.sessionCount)} sessions</span>
+                {/if}
+              </span>
               <span class={money}>{apiValuePresentation(item).label}</span>
             </button>
           </li>
