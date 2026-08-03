@@ -2,10 +2,10 @@ import { currentRecord } from '../helpers';
 import { defineParityShard, type ParityEvidence } from '../schema';
 
 const owner = 'P6' as const;
-const implementationCommit = 'f79b421e9b2bc0491a89dad9dd6bddeccdb8b0f9';
-const lifecycleTestCommit = 'e7948bb908b93d0513c9d5e2ac23f54d8c0fa862';
-const reviewCorrectionCommit = '64b9b020ebe40dd4dfcf5bfec6ebb3e799255ff0';
-const renderedPendingTestCommit = 'f79b421e9b2bc0491a89dad9dd6bddeccdb8b0f9';
+const implementationCommit = 'f2c9962609fac20875790426cf66444a15fb4ba8';
+const lifecycleTestCommit = 'f2c9962609fac20875790426cf66444a15fb4ba8';
+const reviewCorrectionCommit = 'f2c9962609fac20875790426cf66444a15fb4ba8';
+const renderedPendingTestCommit = 'f2c9962609fac20875790426cf66444a15fb4ba8';
 const targetEvidence = (kind: ParityEvidence['kind'], reference: string): ParityEvidence => ({
   commit: implementationCommit,
   kind,
@@ -29,7 +29,7 @@ const feature = (
       ...extraEvidence,
       targetEvidence(
         'command',
-        'bun test apps/web/src/lib/features/sources/*.test.ts (19 passed); bun run --cwd apps/web check:svelte; bun x ultracite check scoped P6 files',
+        'bun test apps/web/src/lib/features/sources/*.test.ts apps/web/src/source-control-client.test.ts apps/web/src/source-control-presentation.test.ts (59 pass, 0 fail, 149 expect calls); bun run --cwd apps/web check; bun run --cwd apps/web build:svelte; bun x ultracite check apps/web/src/lib/features/sources',
       ),
     ],
     id,
@@ -43,7 +43,7 @@ export default defineParityShard({
       'SOURCES-01',
       'apps/web/src/routes/sources.tsx; apps/web/src/source-control-client.ts',
       'apps/web/e2e/sources.spec.ts',
-      'apps/web/src/lib/features/sources/sources-page.svelte; apps/web/src/lib/features/sources/service.ts; apps/web/svelte-shadow/routes/api/source-control/+server.ts; apps/web/svelte-shadow/routes/api/source-control/command/+server.ts',
+      'apps/web/src/lib/features/sources/sources-page.svelte; apps/web/src/lib/features/sources/copy-feedback.ts; apps/web/src/lib/features/sources/presentation-model.ts; apps/web/src/lib/features/sources/service.ts; apps/web/svelte-shadow/routes/api/source-control/+server.ts; apps/web/svelte-shadow/routes/api/source-control/command/+server.ts',
       'apps/web/src/lib/features/sources/service.test.ts; apps/web/src/lib/features/sources/endpoint.server.test.ts',
       [
         {
@@ -58,7 +58,7 @@ export default defineParityShard({
           kind: 'test',
           phase: 'target',
           reference:
-            'apps/web/src/lib/features/sources/source-controls.ssr.test.ts › exact pending disabled/aria-busy and idle enabled Run now Svelte SSR output; apps/web/src/lib/features/sources/client-closure.test.ts',
+            'apps/web/src/lib/features/sources/source-controls.ssr.test.ts › exact pending disabled/aria-busy and idle enabled Run now Svelte SSR output; apps/web/src/lib/features/sources/copy-feedback.test.ts › repeat cancellation and registered destruction lifecycle; apps/web/src/lib/features/sources/presentation-model.test.ts › accepted legacy projection parity; apps/web/src/lib/features/sources/client-closure.test.ts › recursive aliases, workspace exports, barrels, and synthetic forbidden leaks',
         },
       ],
     ),
