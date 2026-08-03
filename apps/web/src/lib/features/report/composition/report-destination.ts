@@ -174,7 +174,7 @@ const requireOverview = (
   return result.data;
 };
 
-const requireBreakdown = (
+export const requireFocusedBreakdown = (
   result: Awaited<ReturnType<ReportQueryClient['getFocusedReportBreakdown']>>,
   request: FocusedBreakdownRequest,
 ): FocusedBreakdownResult => {
@@ -230,7 +230,7 @@ export const createFocusedReportSession = (options: {
         ),
       ]);
       return {
-        breakdown: requireBreakdown(breakdownResult, breakdownRequest),
+        breakdown: requireFocusedBreakdown(breakdownResult, breakdownRequest),
         overview: requireOverview(overviewResult, overviewRequest),
       };
     },

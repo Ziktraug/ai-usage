@@ -7,7 +7,6 @@
   import ReportHeader from './report-header.svelte';
   import { createHydratedReportBootstrapQuery } from './report-query.svelte';
   import { liveReportShellModel, syntheticReportShellModel } from './report-view-model';
-  import ReportWarnings from './report-warnings.svelte';
 
   let { data }: { data: ReportPageData } = $props();
   const liveQuery = createHydratedReportBootstrapQuery(() => browser && data.mode === 'live');
@@ -20,7 +19,6 @@
 <main class={page} data-route-shell="report">
   <div class={shell}>
     <ReportHeader generatedAt={model.generatedAt} hasReportData={model.hasReportData} isDemo={model.isDemo} />
-    <ReportWarnings omittedSupportItemCount={model.omittedSupportItemCount} warnings={model.warnings} />
     <ReportDestinationOwner {liveResult} mode={data.mode} {model} />
   </div>
 </main>

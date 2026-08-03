@@ -34,6 +34,7 @@
   import { createBreakdownNavigation } from '../breakdown/navigation';
   import ReportWorkspace from '../core/report-workspace.svelte';
   import OverviewPage from '../overview/overview-page.svelte';
+  import { activeTimelineSeriesKeys } from './active-timeline-series';
   import { reportDestinationForSearch } from './report-search';
 
   let {
@@ -101,6 +102,7 @@
   );
   const columnVisibility = $derived(columnVisibilityFromDiff(search.cols, search.colsBase));
   const sorting = $derived([{ ...search.sort }]);
+  const activeSeriesKeys = $derived(activeTimelineSeriesKeys(search, dimension));
   const unavailable = (): Promise<never> =>
     Promise.reject(new Error('Synthetic session detail transport is unavailable.'));
   const syntheticClient: SessionClientAdapter = {
@@ -158,6 +160,7 @@
   {#snippet children()}
     {#if primary === 'overview'}
       <OverviewPage
+        {activeSeriesKeys}
         {dimension}
         freshness={support.machineFreshness}
         {granularity}

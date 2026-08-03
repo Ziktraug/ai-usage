@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { FocusedOverviewSessionItem, FocusedTimelineSeries } from '@ai-usage/report-core/focused-report-query';
   import type { ProjectGroupConfig } from '@ai-usage/report-core/project-group';
+  import type { UsageReportWarning } from '@ai-usage/report-core/report-data';
   import type { LocalTimeCell, SessionPresentationRow } from '@ai-usage/report-core/session-query';
   import type { ReportRevisionBootstrapResult } from '@ai-usage/web-contract/report';
   import type { QueryClient } from '@tanstack/svelte-query';
@@ -28,21 +29,24 @@
   import type { RuntimeMode } from '../../../../runtime-mode';
   import type { WebReportPayloadWithoutRows } from '../../../../web-report-payload';
   import type { SearchNavigationIntent } from '../../../foundation/navigation/search-intent';
+  import { reportBreakdownQueryOptions } from '../../../query/options/report';
   import type { ReportClient } from '../../../rpc/report-client';
   import type { SessionClientAdapter } from '../../../rpc/session-client';
   import { createSessionDetailController, type SessionSelectionInput } from '../../sessions/detail/controller';
   import { createSessionDetailQueryOwner } from '../../sessions/detail/query-owner';
   import SessionDetailSlot from '../../sessions/detail/session-detail-slot.svelte';
   import CampaignLabelEditor from '../actions/campaign-label-editor.svelte';
-  import { saveProjectGroupsAtRevision } from '../actions/project';
+  import { projectGroupsAfterWarningCleanup, saveProjectGroupsAtRevision } from '../actions/project';
   import QuotaHistoryOwner from '../actions/quota-history-owner.svelte';
   import ActiveFilters from '../breakdown/active-filters.svelte';
   import DashboardBreakdown from '../breakdown/dashboard-breakdown.svelte';
   import FilterBar from '../breakdown/filter-bar.svelte';
   import { createBreakdownNavigation } from '../breakdown/navigation';
+  import ReportWarnings from '../core/report-warnings.svelte';
   import ReportWorkspace from '../core/report-workspace.svelte';
   import ReportLifecycleOwner from '../lifecycle/report-lifecycle-owner.svelte';
   import OverviewPage from '../overview/overview-page.svelte';
+  import { activeTimelineSeriesKeys } from './active-timeline-series';
   import { createCampaignLabelOwner } from './campaign-label-owner.svelte';
   import FocusedDestinationRefresh from './focused-destination-refresh.svelte';
   import {
@@ -50,8 +54,9 @@
     createFocusedReportSession,
     type FocusedReportCommit,
     initialFocusedReportDescriptor,
+    requireFocusedBreakdown,
   } from './report-destination';
-  import { reportDestinationForSearch } from './report-search';
+  import { queryForDescriptor, reportDestinationForSearch } from './report-search';
   import SessionsDestination from './sessions-destination.svelte';
 
   let {
@@ -62,6 +67,8 @@
     runtimeMode,
     search,
     sessionClient,
+    omittedSupportItemCount,
+    warnings,
   }: {
     bootstrapResult: Extract<ReportRevisionBootstrapResult, { readonly ok: true }>;
     navigate: SearchNavigationIntent<DashboardSearch>;
@@ -70,6 +77,8 @@
     runtimeMode: RuntimeMode;
     search: DashboardSearch;
     sessionClient: SessionClientAdapter;
+    omittedSupportItemCount: number;
+    warnings: readonly UsageReportWarning[];
   } = $props();
 
   let dimension = $state<TimelineDimension>('harness');
@@ -80,6 +89,9 @@
   let selectedRowId = $state<string | null>(null);
   let selection = $state<SessionSelectionInput | null>(null);
   let quotaHistoryOpen = $state(false);
+  let servedSessionCount = $state<number>();
+  let cleaningProjectWarningGroupId = $state<string>();
+  let projectWarningCleanupError = $state<string>();
   const initialDescriptor = untrack(() => initialFocusedReportDescriptor(bootstrapResult));
   const descriptorSource = untrack(() =>
     createFocusedReportDescriptorSource({ client: reportClient, initial: initialDescriptor, queryClient }),
@@ -129,7 +141,12 @@
     buildProviderStatusViews(bootstrap.support, bootstrap.providerRows, bootstrap.support.generatedAt),
   );
   const totalSessions = $derived(bootstrap.support.analytics.sessionCount);
-  const visibleSessions = $derived(commit?.overview.summary.sessionCount ?? totalSessions);
+  const visibleSessions = $derived(
+    primary === 'sessions'
+      ? (servedSessionCount ?? totalSessions)
+      : (commit?.overview.summary.sessionCount ?? totalSessions),
+  );
+  const activeSeriesKeys = $derived(activeTimelineSeriesKeys(search, dimension));
   const selectedCampaignEditor = $derived.by(() => {
     const row = selection?.row;
     return row?.campaignKey ? campaignLabels.editorFor(row.campaignKey, row.sessionLabel) : undefined;
@@ -194,6 +211,38 @@
       },
     );
   };
+  const loadProjectGroupConfigs = async (): Promise<readonly ProjectGroupConfig[]> => {
+    const committed = commit?.breakdown?.context.projectGroupConfigs;
+    if (committed !== undefined) {
+      return committed;
+    }
+    const revision = descriptorSource.current().revision;
+    const request = {
+      query: queryForDescriptor({ filters: destination.sessions.filters, range: destination.sessions.range }, revision),
+    };
+    const result = await queryClient.fetchQuery(reportBreakdownQueryOptions(reportClient, request, { browser: true }));
+    return requireFocusedBreakdown(result, request).context.projectGroupConfigs ?? [];
+  };
+  const cleanupProjectWarning = (warning: UsageReportWarning, refresh: () => Promise<void>): void => {
+    const groupId = warning.groupId;
+    if (!groupId || cleaningProjectWarningGroupId !== undefined) {
+      return;
+    }
+    cleaningProjectWarningGroupId = groupId;
+    projectWarningCleanupError = undefined;
+    const run = async (): Promise<void> => {
+      const groups = await loadProjectGroupConfigs();
+      await persistProjectGroups(projectGroupsAfterWarningCleanup(groups, warning));
+      await refresh();
+    };
+    run()
+      .catch((error: unknown) => {
+        projectWarningCleanupError = error instanceof Error ? error.message : 'Failed to clean up the project group.';
+      })
+      .finally(() => {
+        cleaningProjectWarningGroupId = undefined;
+      });
+  };
 
   onMount(() => {
     campaignLabels.load().catch(() => undefined);
@@ -209,6 +258,20 @@
 <ReportLifecycleOwner session={focusedSession}>
   {#snippet children(_owner)}
     <FocusedDestinationRefresh destination={destination.focused} owner={_owner} />
+    <ReportWarnings
+      cleanupDisabled={runtimeMode !== 'live'}
+      {omittedSupportItemCount}
+      {...(cleaningProjectWarningGroupId === undefined ? {} : { cleaningProjectWarningGroupId })}
+      onCleanupProjectWarning={(warning) => cleanupProjectWarning(warning, async () => {
+        if (destination.focused !== null) {
+          await _owner.refresh(destination.focused);
+        }
+      })}
+      {warnings}
+    />
+    {#if projectWarningCleanupError}
+      <p aria-live="polite" role="status">{projectWarningCleanupError}</p>
+    {/if}
     <FilterBar
       freshnessStatus={machineFreshnessStatusLabel(machineSnapshot)}
       freshnessUnavailable={machineSnapshot.kind === 'unavailable'}
@@ -237,7 +300,7 @@
       {#snippet children()}
         {#if primary === 'overview' && commit?.destination.kind === 'overview'}
           <OverviewPage
-            activeSeriesKeys={[]}
+            {activeSeriesKeys}
             {dimension}
             freshness={bootstrap.machineFreshness}
             {granularity}
@@ -300,6 +363,7 @@
               selection = nextSelection;
               selectedRowId = nextSelection?.row.rowId ?? null;
             }}
+            onSessionCountChange={(sessionCount) => (servedSessionCount = sessionCount)}
             presentRow={presentSessionRow}
             {queryClient}
             {search}

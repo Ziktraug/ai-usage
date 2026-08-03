@@ -1,9 +1,16 @@
 <script lang="ts">
-  import type { SessionPresentationRow, SessionQueryRequest } from '@ai-usage/report-core/session-query';
+  import type {
+    SessionPageItem,
+    SessionPresentationRow,
+    SessionQueryRequest,
+  } from '@ai-usage/report-core/session-query';
   import { sessionQueryFingerprint } from '@ai-usage/report-core/session-query';
   import type { QueryClient } from '@tanstack/svelte-query';
   import type { DashboardSearch } from '../../../../dashboard-search';
-  import { sessionAnalysisTargetForSession } from '../../../../session-analysis-target';
+  import {
+    sessionAnalysisTargetForPageItem,
+    sessionAnalysisTargetForSession,
+  } from '../../../../session-analysis-target';
   import {
     columnVisibilityFromDiff,
     columnVisibilitySearchForVisibility,
@@ -18,12 +25,14 @@
   import type { FocusedReportDescriptor } from './report-destination';
   import type { SessionQueryScopeSnapshot } from './report-search';
   import SessionDestinationRefresh from './session-destination-refresh.svelte';
+  import SessionsDestinationState from './sessions-destination-state.svelte';
 
   let {
     acquire,
     client,
     navigate,
     onRowsChange,
+    onSessionCountChange,
     onSelectionChange,
     presentRow,
     queryClient,
@@ -35,6 +44,7 @@
     client: SessionClientAdapter;
     navigate: SearchNavigationIntent<DashboardSearch>;
     onRowsChange: (rows: readonly SessionPresentationRow[]) => void;
+    onSessionCountChange: (sessionCount: number | undefined) => void;
     onSelectionChange: (selection: SessionSelectionInput | null) => void;
     presentRow: (row: SessionPresentationRow) => SessionPresentationRow;
     queryClient: QueryClient;
@@ -46,13 +56,12 @@
   const columnVisibility = $derived(columnVisibilityFromDiff(search.cols, search.colsBase));
   const sorting = $derived([{ ...search.sort }]);
 
-  const updateRows = (rows: readonly SessionPresentationRow[]): readonly SessionPresentationRow[] => {
-    const presented = rows.map(presentRow);
-    onRowsChange(presented);
-    return presented;
-  };
-
-  const selectRow = (row: SessionPresentationRow, query: SessionQueryRequest | undefined, total: number): void => {
+  const selectRow = (
+    row: SessionPresentationRow,
+    items: readonly SessionPageItem[],
+    query: SessionQueryRequest | undefined,
+    total: number,
+  ): void => {
     if (selectedRowId === row.rowId) {
       onSelectionChange(null);
       return;
@@ -60,10 +69,16 @@
     if (!query) {
       return;
     }
+    const pageItem = items.find((item) =>
+      row.campaignKey === undefined ? item.row.rowId === row.rowId : item.campaignKey === row.campaignKey,
+    );
     onSelectionChange({
       query,
       row,
-      target: sessionAnalysisTargetForSession(row),
+      target:
+        pageItem === undefined
+          ? sessionAnalysisTargetForSession(row)
+          : sessionAnalysisTargetForPageItem({ ...pageItem, row }),
       total,
     });
   };
@@ -71,39 +86,48 @@
 
 <SessionTableOwner {acquire} {client} {queryClient}>
   {#snippet children(_owned)}
-    {@const rows = updateRows(_owned.rows)}
     {@const query = _owned.snapshot?.query}
     {@const resetKey = query ? sessionQueryFingerprint(query) : JSON.stringify(destinationScope)}
     <SessionDestinationRefresh {destinationScope} owner={_owned.lifecycle} />
-    <SessionTable
-      {...(_owned.snapshot?.campaignChildren === undefined
-        ? {}
-        : { campaignChildren: _owned.snapshot.campaignChildren })}
-      {columnVisibility}
-      hasMoreRows={Boolean(_owned.snapshot?.nextCursor)}
-      loading={_owned.lifecycle.snapshot.pending && !_owned.snapshot}
-      loadingMoreRows={_owned.snapshot?.loadingMore ?? false}
-      onClearFilters={() => navigate((current) => ({ ...current, filters: {}, harness: [], machine: [], origin: [], q: '', range: { mode: '30d' } }))}
-      onColumnVisibilityChange={(updater) => {
-        const next = applyStateUpdate(updater, columnVisibility);
-        const columnSearch = columnVisibilitySearchForVisibility(next);
-        navigate((current) => ({ ...current, ...columnSearch }), { replace: true });
-      }}
-      onFieldFilter={(key, value) => navigate((current) => ({ ...current, filters: { ...current.filters, [key]: value } }))}
-      onHarnessFilter={(value) => navigate((current) => ({ ...current, harness: current.harness.includes(value) ? current.harness.filter((item) => item !== value) : [...current.harness, value] }))}
-      onLoadCampaignChildren={(campaignKey) => _owned.query.loadCampaignChildren(campaignKey).catch(() => undefined)}
-      onLoadMoreRows={() => _owned.query.loadMore().catch(() => undefined)}
-      onSelect={(row) => selectRow(row, query, _owned.snapshot?.sessionCount ?? rows.length)}
-      onSortingChange={(updater) => {
-        const next = applyStateUpdate(updater, sorting);
-        navigate((current) => ({ ...current, sort: sortFromSortingState(next, current.sort) }));
-      }}
-      queryResetKey={resetKey}
-      {rows}
-      searchQuery={query?.filters.query ?? ''}
-      {selectedRowId}
-      {sorting}
-      {...(_owned.snapshot?.itemCount === undefined ? {} : { totalRows: _owned.snapshot.itemCount })}
-    />
+    <SessionsDestinationState
+      {onRowsChange}
+      {onSessionCountChange}
+      {presentRow}
+      sessionCount={_owned.snapshot?.sessionCount}
+      sourceRows={_owned.rows}
+    >
+      {#snippet children(_rows)}
+        <SessionTable
+          {...(_owned.snapshot?.campaignChildren === undefined
+            ? {}
+            : { campaignChildren: _owned.snapshot.campaignChildren })}
+          {columnVisibility}
+          hasMoreRows={Boolean(_owned.snapshot?.nextCursor)}
+          loading={_owned.lifecycle.snapshot.pending && !_owned.snapshot}
+          loadingMoreRows={_owned.snapshot?.loadingMore ?? false}
+          onClearFilters={() => navigate((current) => ({ ...current, filters: {}, harness: [], machine: [], origin: [], q: '', range: { mode: '30d' } }))}
+          onColumnVisibilityChange={(updater) => {
+            const next = applyStateUpdate(updater, columnVisibility);
+            const columnSearch = columnVisibilitySearchForVisibility(next);
+            navigate((current) => ({ ...current, ...columnSearch }), { replace: true });
+          }}
+          onFieldFilter={(key, value) => navigate((current) => ({ ...current, filters: { ...current.filters, [key]: value } }))}
+          onHarnessFilter={(value) => navigate((current) => ({ ...current, harness: current.harness.includes(value) ? current.harness.filter((item) => item !== value) : [...current.harness, value] }))}
+          onLoadCampaignChildren={(campaignKey) => _owned.query.loadCampaignChildren(campaignKey).catch(() => undefined)}
+          onLoadMoreRows={() => _owned.query.loadMore().catch(() => undefined)}
+          onSelect={(row) => selectRow(row, _owned.snapshot?.items ?? [], query, _owned.snapshot?.sessionCount ?? _rows.length)}
+          onSortingChange={(updater) => {
+            const next = applyStateUpdate(updater, sorting);
+            navigate((current) => ({ ...current, sort: sortFromSortingState(next, current.sort) }));
+          }}
+          queryResetKey={resetKey}
+          rows={_rows}
+          searchQuery={query?.filters.query ?? ''}
+          {selectedRowId}
+          {sorting}
+          {...(_owned.snapshot?.itemCount === undefined ? {} : { totalRows: _owned.snapshot.itemCount })}
+        />
+      {/snippet}
+    </SessionsDestinationState>
   {/snippet}
 </SessionTableOwner>

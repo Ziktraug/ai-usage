@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { dashboardSearchDefaultsFor } from '../../../../dashboard-search';
 import { campaignRenameMutation, campaignResetMutation, preserveCampaignFilterIdentity } from './campaign';
+import { projectGroupsAfterWarningCleanup, saveProjectGroupsAtRevision } from './project';
 import { copyExactBreakdownUrl, exportVisibleBreakdown, type SharingEnvironment } from './sharing';
 
 const environment = (overrides: Partial<SharingEnvironment> = {}) => {
@@ -66,5 +67,61 @@ describe('P8 report actions', () => {
       filters: { campaign: 'campaign-key' },
     };
     expect(preserveCampaignFilterIdentity(search, 'campaign-key').filters.campaign).toBe('campaign-key');
+  });
+
+  test('cleans project warnings and preserves the exact served revision', async () => {
+    const groups = [
+      {
+        id: 'group-a',
+        name: 'Group A',
+        sources: [
+          { machineId: 'machine-a', project: '/workspace/a' },
+          { machineId: 'machine-a', project: '/workspace/b' },
+        ],
+      },
+    ];
+    const partial = projectGroupsAfterWarningCleanup(groups, {
+      groupId: 'group-a',
+      harness: 'claude-code',
+      message: 'One selector is stale.',
+      reason: 'partial-group',
+      selectors: [{ machineId: 'machine-a', project: '/workspace/a' }],
+    });
+    expect(partial).toEqual([
+      {
+        id: 'group-a',
+        name: 'Group A',
+        sources: [{ machineId: 'machine-a', project: '/workspace/b' }],
+      },
+    ]);
+    expect(
+      projectGroupsAfterWarningCleanup(groups, {
+        groupId: 'group-a',
+        harness: 'claude-code',
+        message: 'The group is unmatched.',
+        reason: 'unmatched-group',
+        selectors: [{ machineId: 'machine-a', project: '/workspace/a' }],
+      }),
+    ).toEqual([]);
+
+    const saved: string[] = [];
+    await saveProjectGroupsAtRevision(
+      partial,
+      'revision-a',
+      () => 'revision-a',
+      (_next, revision) => {
+        saved.push(revision);
+        return Promise.resolve();
+      },
+    );
+    expect(saved).toEqual(['revision-a']);
+    await expect(
+      saveProjectGroupsAtRevision(
+        partial,
+        'revision-a',
+        () => 'revision-b',
+        () => Promise.resolve(),
+      ),
+    ).rejects.toThrow('The report changed before project groups could be saved.');
   });
 });

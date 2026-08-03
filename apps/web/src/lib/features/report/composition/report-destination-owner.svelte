@@ -18,6 +18,7 @@
   import { dashboardSearchCodec } from '../../shell/navigation';
   import ReportBootstrapOverview from '../core/report-bootstrap-overview.svelte';
   import type { ReportShellModel } from '../core/report-view-model';
+  import ReportWarnings from '../core/report-warnings.svelte';
   import ReportWorkspace from '../core/report-workspace.svelte';
   import LiveReportDestination from './live-report-destination.svelte';
   import SyntheticReportDestination from './synthetic-report-destination.svelte';
@@ -74,15 +75,19 @@
   <LiveReportDestination
     bootstrapResult={liveResult}
     {navigate}
+    omittedSupportItemCount={model.omittedSupportItemCount}
     {queryClient}
     reportClient={runtime.reportClient}
     runtimeMode={mode}
     {search}
     sessionClient={runtime.sessionClient}
+    warnings={model.warnings}
   />
 {:else if mode !== 'live'}
+  <ReportWarnings omittedSupportItemCount={model.omittedSupportItemCount} warnings={model.warnings} />
   <SyntheticReportDestination {mode} {navigate} {queryClient} {search} />
 {:else}
+  <ReportWarnings omittedSupportItemCount={model.omittedSupportItemCount} warnings={model.warnings} />
   <ReportWorkspace hasOutput={model.hasReportData} pending={mode === 'live' && liveResult === undefined}>
     {#snippet children()}
       <ReportBootstrapOverview
