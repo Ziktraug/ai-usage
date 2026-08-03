@@ -10,7 +10,6 @@ Global backlog for known follow-ups that should survive individual refactor logs
 
 ## Report UI Models
 
-- Move the small `Hero` and `TokenAnatomy` presentation calculations out of `Overview.tsx` if those components grow again.
 - Keep adding pure model tests when dashboard or overview calculations change.
 
 ## Manual Transfer

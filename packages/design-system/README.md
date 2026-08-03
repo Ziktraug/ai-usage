@@ -22,7 +22,8 @@ It must not import app packages, data/runtime packages, local collectors, sync o
 
 ## Data Boundary
 
-The package exports styling primitives and class contracts only. It should receive display-ready props and must not fetch, derive, persist, or mutate report data.
+The package exports presentation components, styling helpers, and class
+contracts. It receives display-ready props and must not fetch, derive, persist, or mutate report data.
 
 ## Test Strategy
 

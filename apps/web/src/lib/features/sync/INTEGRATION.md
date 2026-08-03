@@ -15,7 +15,7 @@ listener, or timer.
 
 Manual transfer remains file-only through these explicit route leaves:
 
-- `apps/web/src/routes/api/manual-merge/download/+server.ts` exports `GET` and
+- `apps/web/src/routes/api/manual-merge/download/+server.ts` exports `POST` and
   delegates to `handleManualMergeDownloadEndpoint`.
 - `apps/web/src/routes/api/manual-merge/upload/+server.ts` exports `POST` and
   delegates to `handleManualMergeUploadEndpoint`.
