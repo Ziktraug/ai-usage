@@ -32,6 +32,7 @@ import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show }
 import { isServer } from 'solid-js/web';
 import { enforceReportOnlyDemoNavigation } from '../demo-route-guard';
 import { DiscardConfirmationDialog } from '../discard-confirmation-dialog';
+import { skillsKnownProjectPathsKey, skillsSnapshotKey, unwrapSkillsQueryResult } from '../lib/query/identities/skills';
 import { webQueryPolicies } from '../lib/query/policies';
 import type {
   getKnownSkillProjectPaths,
@@ -48,7 +49,7 @@ import {
 } from '../skills-page-model';
 import { createSkillsRouteController, type OperationNotice } from '../skills-route-controller';
 import { type ProjectInventoriesResult, type SkillMarkdownDraftGuard, SkillsWorkspace } from '../skills-workspace';
-import { loadSkillsInitialData, webQueryKeys } from '../web-query-options';
+import { solidSkillsQueryClient } from '../web-query-options';
 
 export const Route = createFileRoute('/skills')({
   beforeLoad: enforceReportOnlyDemoNavigation,
@@ -222,30 +223,45 @@ function SkillsLoadingShell() {
 function SkillsClientRoute() {
   const location = useLocation();
   let refreshButtonElement: HTMLButtonElement | undefined;
-  const initialQuery = createQuery(() => ({
+  const knownProjectPathsQuery = createQuery(() => ({
     ...webQueryPolicies.finiteSwr,
     enabled: !isServer,
-    queryFn: loadSkillsInitialData,
-    queryKey: webQueryKeys.skillsInitial,
+    queryFn: async ({ signal }) =>
+      unwrapSkillsQueryResult(await solidSkillsQueryClient.getKnownSkillProjectPaths({ signal })),
+    queryKey: skillsKnownProjectPathsKey(),
+  }));
+  const skillsSnapshotQuery = createQuery(() => ({
+    ...webQueryPolicies.finiteSwr,
+    enabled: !isServer,
+    queryFn: async ({ signal }) =>
+      unwrapSkillsQueryResult(await solidSkillsQueryClient.getSkillManagementSnapshot({ signal })),
+    queryKey: skillsSnapshotKey(),
   }));
   const data = createMemo<SkillsInitialData>(() => {
-    if (initialQuery.data) {
-      return initialQuery.data;
-    }
-    const message =
-      initialQuery.error instanceof Error ? initialQuery.error.message : 'Skill data could not be loaded.';
-    const failure = {
-      error: {
-        message: initialQuery.isPending ? 'Loading…' : message,
-        tag: initialQuery.isPending ? 'Loading' : 'ClientReadError',
-      },
-      ok: false,
-    } as const;
-    return { knownProjectPaths: failure, skills: failure };
+    const queryResult = <Value,>(
+      value: Value | undefined,
+      query: { readonly error: unknown; readonly isPending: boolean },
+    ) => {
+      if (value !== undefined) {
+        return { data: value, ok: true } as const;
+      }
+      const message = query.error instanceof Error ? query.error.message : 'Skill data could not be loaded.';
+      return {
+        error: {
+          message: query.isPending ? 'Loading…' : message,
+          tag: query.isPending ? 'Loading' : 'ClientReadError',
+        },
+        ok: false,
+      } as const;
+    };
+    return {
+      knownProjectPaths: queryResult(knownProjectPathsQuery.data, knownProjectPathsQuery),
+      skills: queryResult(skillsSnapshotQuery.data, skillsSnapshotQuery),
+    };
   });
   const [clientMounted, setClientMounted] = createSignal(false);
   onMount(() => setClientMounted(true));
-  const hydrated = () => clientMounted() && !initialQuery.isPending;
+  const hydrated = () => clientMounted() && !(knownProjectPathsQuery.isPending || skillsSnapshotQuery.isPending);
   const [activeCellStateFilter, setActiveCellStateFilter] = createSignal<SkillCellStateFilter | undefined>();
   const controller = createSkillsRouteController(data);
   const {
@@ -353,7 +369,7 @@ function SkillsClientRoute() {
               <ErrorPanel
                 message={errorMessage()}
                 onRetry={() => {
-                  initialQuery.refetch().catch(() => undefined);
+                  Promise.all([knownProjectPathsQuery.refetch(), skillsSnapshotQuery.refetch()]).catch(() => undefined);
                 }}
               />
             }

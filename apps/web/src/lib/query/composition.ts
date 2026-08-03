@@ -60,13 +60,13 @@ export const webQueryOwnership = [
     family: 'skills',
     policy: 'finite-swr',
     publication: 'none',
-    rendering: 'browser-only',
+    rendering: 'ssr-awaited',
   },
   {
     family: 'sync',
     policy: 'bounded-control-plane',
     publication: 'none',
-    rendering: 'browser-only',
+    rendering: 'ssr-awaited',
   },
 ] as const satisfies readonly WebQueryOwnership[];
 

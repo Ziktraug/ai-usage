@@ -1,19 +1,31 @@
 import type { SkillManagementSnapshot } from '@ai-usage/skills';
-import { createMutation, createQuery, useQueryClient } from '@tanstack/solid-query';
+import { createMutation, createQuery, type QueryClient, useQueryClient } from '@tanstack/solid-query';
 import { type Accessor, createEffect, createMemo, createSignal } from 'solid-js';
 import { isServer } from 'solid-js/web';
+import {
+  SkillsQueryError,
+  skillsKnownProjectPathsKey,
+  skillsProjectInventoriesKey,
+  skillsSnapshotKey,
+} from './lib/query/identities/skills';
 import { webQueryPolicies } from './lib/query/policies';
 import {
   type KnownProjectPathsResult,
   type ProjectInventoriesResult,
   parseKnownProjectPathsResult,
+  parseProjectInventoriesResult,
   parseSkillSnapshotResult,
   type SkillSnapshotResult,
 } from './skills-client-contracts';
 import type { ReconcilePlanSummary } from './skills-page-model';
 import { createSkillsRouteActions } from './skills-route-actions';
 import { createSkillsSnapshotOwner, runSkillsControllerOperation } from './skills-route-controller-state';
-import { loadSkillInventories, runSkillsMutation, type SkillsMutationRequest, webQueryKeys } from './web-query-options';
+import {
+  runSkillsMutation,
+  type SkillsMutationRequest,
+  solidSkillsQueryClient,
+  webQueryKeys,
+} from './web-query-options';
 
 export type { KnownProjectPathsResult, SkillSnapshotResult } from './skills-client-contracts';
 export type { OperationNotice } from './skills-route-controller-state';
@@ -37,6 +49,14 @@ const knownProjectPathsResultFrom = (value: unknown): KnownProjectPathsResult =>
   } catch {
     return { error: { message: 'Invalid known project paths response', tag: 'InvalidResponse' }, ok: false };
   }
+};
+
+export const refetchActiveSkillsProjectInventories = async (queryClient: QueryClient): Promise<void> => {
+  await queryClient.refetchQueries({
+    exact: true,
+    queryKey: skillsProjectInventoriesKey(),
+    type: 'active',
+  });
 };
 
 const operationLabel = (request: SkillsMutationRequest | undefined): string | null => {
@@ -72,23 +92,14 @@ export const createSkillsRouteController = (routeData: Accessor<SkillsRouteIniti
   let observedRouteDataFingerprint = JSON.stringify(initialData);
   const snapshotOwner = createSkillsSnapshotOwner({
     commitCache: (next) => {
-      queryClient.setQueryData<SkillsRouteInitialData>(webQueryKeys.skillsInitial, (current) => {
-        if (!(current && current.skills !== next)) {
-          return current;
-        }
-        const updated = { ...current, skills: next };
-        observedRouteDataFingerprint = JSON.stringify(updated);
-        return updated;
-      });
+      if (!next.ok) {
+        return;
+      }
+      observedRouteDataFingerprint = JSON.stringify({ ...routeData(), skills: next });
+      queryClient.setQueryData(skillsSnapshotKey(), next.data);
     },
     initialResult: snapshotResultFrom(initialData.skills),
-    refetchInventories: async () => {
-      await queryClient.refetchQueries({
-        exact: true,
-        queryKey: webQueryKeys.skillInventories,
-        type: 'active',
-      });
-    },
+    refetchInventories: async () => await refetchActiveSkillsProjectInventories(queryClient),
   });
   const {
     discardDirtySnapshot,
@@ -129,11 +140,31 @@ export const createSkillsRouteController = (routeData: Accessor<SkillsRouteIniti
   const projectInventoriesQuery = createQuery(() => ({
     ...webQueryPolicies.finiteSwr,
     enabled: !isServer && projectInventoriesKey() !== undefined,
-    queryFn: loadSkillInventories,
-    queryKey: [...webQueryKeys.skillInventories, projectInventoriesKey()] as const,
+    queryFn: async ({ signal }) => {
+      const result = parseProjectInventoriesResult(await solidSkillsQueryClient.getSkillProjectInventories({ signal }));
+      if (!result.ok) {
+        throw new SkillsQueryError(result.error);
+      }
+      return result.data;
+    },
+    queryKey: skillsProjectInventoriesKey(),
   }));
-  const projectInventories = (): ProjectInventoriesResult | undefined =>
-    isServer ? undefined : projectInventoriesQuery.data;
+  const projectInventories = (): ProjectInventoriesResult | undefined => {
+    if (isServer || projectInventoriesQuery.isPending) {
+      return;
+    }
+    if (projectInventoriesQuery.data) {
+      return { data: projectInventoriesQuery.data, ok: true };
+    }
+    const error = projectInventoriesQuery.error;
+    return {
+      error: {
+        message: error instanceof Error ? error.message : 'Skill project inventories are unavailable.',
+        tag: error instanceof SkillsQueryError ? error.tag : 'ClientReadError',
+      },
+      ok: false,
+    };
+  };
   const operationMutation = createMutation(() => ({
     mutationFn: runSkillsMutation,
     mutationKey: webQueryKeys.skillsMutation,
@@ -188,9 +219,11 @@ export const createSkillsRouteController = (routeData: Accessor<SkillsRouteIniti
     replaceSnapshot: requestSnapshotReplacement,
     setKnownProjectPaths: setKnownProjectPathsResult,
     setKnownProjectPathsCache: (knownProjectPaths) => {
-      queryClient.setQueryData<SkillsRouteInitialData>(webQueryKeys.skillsInitial, (current) =>
-        current ? { ...current, knownProjectPaths } : current,
-      );
+      if (!knownProjectPaths.ok) {
+        return;
+      }
+      observedRouteDataFingerprint = JSON.stringify({ ...routeData(), knownProjectPaths });
+      queryClient.setQueryData(skillsKnownProjectPathsKey(), knownProjectPaths.data);
     },
     setNotice: setOperationNotice,
     setProjectPathDraft,

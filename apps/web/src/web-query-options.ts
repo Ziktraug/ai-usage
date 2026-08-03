@@ -1,22 +1,23 @@
-import { type ProjectInventoriesResult, parseProjectInventoriesResult } from './skills-client-contracts';
+import type { SkillsQueryClient } from './lib/query/options/skills';
 import { createSkillsMutationRunner } from './skills-query-operations';
 
 export type { SkillsMutationRequest, SkillsMutationResult } from './skills-query-operations';
 export { webQueryKeys } from './web-query-keys';
 
-export const loadSkillsInitialData = async () => {
-  const client = await import('./lib/rpc/skills-solid-client');
-  const [knownProjectPaths, skills] = await Promise.all([
-    client.getKnownSkillProjectPaths(),
-    client.getSkillManagementSnapshot(),
-  ]);
-  return { knownProjectPaths, skills };
-};
+const resolveSkillsClient = async () =>
+  await (await import('./lib/rpc/skills-solid-client')).resolveSolidSkillsClient();
 
-export const loadSkillInventories = async (): Promise<ProjectInventoriesResult> => {
-  const { getSkillProjectInventories } = await import('./lib/rpc/skills-solid-client');
-  return parseProjectInventoriesResult(await getSkillProjectInventories());
-};
+export const solidSkillsQueryClient = {
+  getKnownSkillProjectPaths: async (options) => await (await resolveSkillsClient()).getKnownSkillProjectPaths(options),
+  getManagedSkillMarkdown: async (skillName, options) =>
+    await (await resolveSkillsClient()).getManagedSkillMarkdown(skillName, options),
+  getProjectSkillMarkdown: async (input, options) =>
+    await (await resolveSkillsClient()).getProjectSkillMarkdown(input, options),
+  getSkillManagementSnapshot: async (options) =>
+    await (await resolveSkillsClient()).getSkillManagementSnapshot(options),
+  getSkillProjectInventories: async (options) =>
+    await (await resolveSkillsClient()).getSkillProjectInventories(options),
+} satisfies SkillsQueryClient;
 
 export const runSkillsMutation = createSkillsMutationRunner({
   createTarget: async (input) =>

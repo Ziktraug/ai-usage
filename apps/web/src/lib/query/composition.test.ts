@@ -7,6 +7,8 @@ import { reportBootstrapKey, reportManifestKey } from './options/report';
 import { queryPolicy } from './policies';
 
 const invalidRpcResponse = (): Response => Response.json({ invalid: true });
+const BULK_GC_TIME_MS = 20;
+const BULK_GC_SETTLE_MS = 50;
 
 describe('Web Query composition', () => {
   test('QUERY-CONVERGENCE-REQUEST-RUNTIME: isolates request clients and injects each request fetch', async () => {
@@ -151,7 +153,7 @@ describe('Web Query composition', () => {
     queryClient.clear();
   });
 
-  test('QUERY-CONVERGENCE-OWNERSHIP: assigns every family a named finite-GC policy', () => {
+  test('QUERY-CONVERGENCE-OWNERSHIP: assigns every family a named finite-GC policy', async () => {
     expect(webQueryOwnership.map(({ family }) => family)).toEqual([
       'report-current',
       'report-exact',
@@ -173,11 +175,16 @@ describe('Web Query composition', () => {
     }
 
     const queryClient = createWebQueryClient();
+    const boundedFixtureKey = finiteSwrKey('bounded-fixture');
+    queryClient.setQueryDefaults(boundedFixtureKey, {
+      ...queryPolicy('finite-swr'),
+      gcTime: BULK_GC_TIME_MS,
+    });
     for (let index = 0; index < 1000; index += 1) {
       queryClient.setQueryData(finiteSwrKey('bounded-fixture', index), index);
     }
     expect(queryClient.getQueryCache().getAll()).toHaveLength(1000);
-    queryClient.clear();
+    await Bun.sleep(BULK_GC_SETTLE_MS);
     expect(queryClient.getQueryCache().getAll()).toEqual([]);
   });
 });

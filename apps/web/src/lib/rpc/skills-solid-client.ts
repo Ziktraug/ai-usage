@@ -14,7 +14,9 @@ type LegacySkillMarkdownSaveResult =
   | { readonly data: LegacySkillMarkdownSaveData; readonly ok: true }
   | { readonly error: { readonly message: string; readonly tag: string }; readonly ok: false };
 
-const skillsClient = async () => createSkillsClient((await resolveSolidWebRpcClient()).skills);
+export const resolveSolidSkillsClient = async () => createSkillsClient((await resolveSolidWebRpcClient()).skills);
+
+const skillsClient = resolveSolidSkillsClient;
 
 export const getSkillManagementSnapshot = async () => await (await skillsClient()).getSkillManagementSnapshot();
 

@@ -6,8 +6,26 @@ import type {
 import type { QueryClient } from '@tanstack/svelte-query';
 import { queryOptions } from '@tanstack/svelte-query';
 import type { SkillsClient, SkillsClientResult } from '../../rpc/skills-client';
-import { type FiniteSwrQueryKey, finiteSwrKey } from '../keys';
+import {
+  managedSkillMarkdownKey,
+  projectSkillMarkdownKey,
+  skillsKnownProjectPathsKey,
+  skillsProjectInventoriesKey,
+  skillsSnapshotKey,
+  unwrapSkillsQueryResult,
+} from '../identities/skills';
+import type { FiniteSwrQueryKey } from '../keys';
 import { webQueryPolicies } from '../policies';
+
+export {
+  managedSkillMarkdownKey,
+  projectSkillMarkdownKey,
+  SkillsQueryError,
+  skillsKnownProjectPathsKey,
+  skillsProjectInventoriesKey,
+  skillsSnapshotKey,
+  unwrapSkillsQueryResult,
+} from '../identities/skills';
 
 export type SkillsQueryClient = Pick<
   SkillsClient,
@@ -25,55 +43,11 @@ export interface SkillsQueryContext {
   readonly enabled: boolean;
 }
 
-export class SkillsQueryError extends Error {
-  readonly tag: string;
-
-  constructor(error: { readonly message: string; readonly tag: string }) {
-    super(error.message);
-    this.name = 'SkillsQueryError';
-    this.tag = error.tag;
-  }
-}
-
-const unwrapSkillsResult = <Value>(result: SkillsClientResult<Value>): Value => {
-  if (!result.ok) {
-    throw new SkillsQueryError(result.error);
-  }
-  return result.data;
-};
-
-export const skillsSnapshotKey = (): FiniteSwrQueryKey => finiteSwrKey('skills', 'snapshot');
-
-export const skillsKnownProjectPathsKey = (): FiniteSwrQueryKey => finiteSwrKey('skills', 'known-project-paths');
-
-export const skillsProjectInventoriesKey = (): FiniteSwrQueryKey => finiteSwrKey('skills', 'project-inventories');
-
-export const managedSkillMarkdownKey = (skillName: string): FiniteSwrQueryKey =>
-  finiteSwrKey('skills', 'markdown', 'scope', 'managed', 'skill', skillName);
-
-export const projectSkillMarkdownKey = ({
-  projectPath,
-  runtimeDirId,
-  skillName,
-}: ProjectSkillMarkdownInput): FiniteSwrQueryKey =>
-  finiteSwrKey(
-    'skills',
-    'markdown',
-    'scope',
-    'project',
-    'project-path',
-    projectPath,
-    'runtime-dir',
-    runtimeDirId,
-    'skill',
-    skillName,
-  );
-
 export const skillsSnapshotQueryOptions = (client: SkillsQueryClient, context: SkillsQueryContext) =>
   queryOptions({
     ...webQueryPolicies.finiteSwr,
     enabled: context.browser && context.enabled,
-    queryFn: async ({ signal }) => unwrapSkillsResult(await client.getSkillManagementSnapshot({ signal })),
+    queryFn: async ({ signal }) => unwrapSkillsQueryResult(await client.getSkillManagementSnapshot({ signal })),
     queryKey: skillsSnapshotKey(),
   });
 
@@ -81,7 +55,7 @@ export const skillsKnownProjectPathsQueryOptions = (client: SkillsQueryClient, c
   queryOptions({
     ...webQueryPolicies.finiteSwr,
     enabled: context.browser && context.enabled,
-    queryFn: async ({ signal }) => unwrapSkillsResult(await client.getKnownSkillProjectPaths({ signal })),
+    queryFn: async ({ signal }) => unwrapSkillsQueryResult(await client.getKnownSkillProjectPaths({ signal })),
     queryKey: skillsKnownProjectPathsKey(),
   });
 
@@ -89,7 +63,7 @@ export const skillsProjectInventoriesQueryOptions = (client: SkillsQueryClient, 
   queryOptions({
     ...webQueryPolicies.finiteSwr,
     enabled: context.browser && context.enabled,
-    queryFn: async ({ signal }) => unwrapSkillsResult(await client.getSkillProjectInventories({ signal })),
+    queryFn: async ({ signal }) => unwrapSkillsQueryResult(await client.getSkillProjectInventories({ signal })),
     queryKey: skillsProjectInventoriesKey(),
   });
 
@@ -101,7 +75,7 @@ export const managedSkillMarkdownQueryOptions = (
   queryOptions({
     ...webQueryPolicies.finiteSwr,
     enabled: context.browser && context.enabled,
-    queryFn: async ({ signal }) => unwrapSkillsResult(await client.getManagedSkillMarkdown(skillName, { signal })),
+    queryFn: async ({ signal }) => unwrapSkillsQueryResult(await client.getManagedSkillMarkdown(skillName, { signal })),
     queryKey: managedSkillMarkdownKey(skillName),
   });
 
@@ -113,7 +87,7 @@ export const projectSkillMarkdownQueryOptions = (
   queryOptions({
     ...webQueryPolicies.finiteSwr,
     enabled: context.browser && context.enabled,
-    queryFn: async ({ signal }) => unwrapSkillsResult(await client.getProjectSkillMarkdown(input, { signal })),
+    queryFn: async ({ signal }) => unwrapSkillsQueryResult(await client.getProjectSkillMarkdown(input, { signal })),
     queryKey: projectSkillMarkdownKey(input),
   });
 

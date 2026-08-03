@@ -1,7 +1,11 @@
 import { describe, expect, test } from 'bun:test';
 import type { SkillManagementSnapshot } from '@ai-usage/skills';
+import { QueryClient, QueryObserver } from '@tanstack/solid-query';
+import { skillsProjectInventoriesKey } from './lib/query/identities/skills';
+import { webQueryPolicies } from './lib/query/policies';
 import type { SkillSnapshotResult } from './skills-client-contracts';
 import type { SkillsMutationResult } from './skills-query-operations';
+import { refetchActiveSkillsProjectInventories } from './skills-route-controller';
 import {
   createSkillsSnapshotCoordinator,
   type OperationNotice,
@@ -32,6 +36,29 @@ const snapshot = (sourceRepoPath: string): SkillManagementSnapshot => ({
 });
 
 describe('Skills route controller state', () => {
+  test('refetches the exact active canonical project-inventories query after snapshot replacement', async () => {
+    const queryClient = new QueryClient();
+    let queryCalls = 0;
+    const options = {
+      ...webQueryPolicies.finiteSwr,
+      queryFn: () => {
+        queryCalls += 1;
+        return [];
+      },
+      queryKey: skillsProjectInventoriesKey(),
+    };
+    await queryClient.fetchQuery(options);
+    const observer = new QueryObserver(queryClient, options);
+    const unsubscribe = observer.subscribe(() => undefined);
+
+    await refetchActiveSkillsProjectInventories(queryClient);
+
+    expect(queryCalls).toBe(2);
+    expect(queryClient.getQueryData<readonly unknown[]>(skillsProjectInventoriesKey())).toEqual([]);
+    unsubscribe();
+    queryClient.clear();
+  });
+
   test('commits successful snapshots to visible state and the Query cache', async () => {
     const committed: unknown[] = [];
     let result: SkillSnapshotResult = { data: snapshot('/initial'), ok: true };

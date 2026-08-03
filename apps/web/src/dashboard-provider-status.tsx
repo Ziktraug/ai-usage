@@ -2,17 +2,16 @@ import type { ProviderQuotaHistoryResult } from '@ai-usage/report-core/provider-
 import { createQuery } from '@tanstack/solid-query';
 import { createMemo, createSignal, lazy, onMount, Show, Suspense } from 'solid-js';
 import { isServer } from 'solid-js/web';
+import { quotaHistoryKey } from './lib/query/identities/quota';
 import { webQueryPolicies } from './lib/query/policies';
 import { createServedProviderQuotaSource, type ProviderQuotaSource } from './provider-quota-client';
 import { createE2EProviderQuotaHistoryFixture } from './provider-quota-e2e-fixture';
-import type { ProviderQuotaHistoryRange } from './provider-quota-history-model';
-import { loadProviderQuotaHistory } from './provider-quota-query';
+import { type ProviderQuotaHistoryRange, providerQuotaHistoryRequest } from './provider-quota-history-model';
 import { createProviderStatusClock } from './provider-status-clock';
 import { buildProviderStatusViews, providerHistoryAvailable } from './provider-status-model';
 import { ProviderStatusPanel } from './provider-status-panel';
 import type { RuntimeMode } from './runtime-mode';
 import type { DashboardRow } from './shared';
-import { webQueryKeys } from './web-query-keys';
 import type { WebReportPayloadWithoutRows } from './web-report-payload';
 
 const ProviderQuotaHistoryPanel = lazy(async () => {
@@ -39,6 +38,7 @@ interface ProviderQuotaHistoryDialogProps {
 
 const ProviderQuotaHistoryDialog = (props: ProviderQuotaHistoryDialogProps) => {
   const [range, setRange] = createSignal<ProviderQuotaHistoryRange>('24h');
+  const request = createMemo(() => providerQuotaHistoryRequest(range(), new Date(), { providerKey: 'codex' }));
   const query = createQuery(() => ({
     ...webQueryPolicies.finiteSwr,
     enabled: !isServer && props.source !== undefined,
@@ -46,9 +46,9 @@ const ProviderQuotaHistoryDialog = (props: ProviderQuotaHistoryDialogProps) => {
       if (!props.source) {
         throw new Error('Quota history is unavailable.');
       }
-      return await loadProviderQuotaHistory(props.source, range(), signal);
+      return await props.source.history(request(), signal);
     },
-    queryKey: webQueryKeys.providerQuotaHistory(range()),
+    queryKey: quotaHistoryKey(request(), { range: range() }),
   }));
   const result = (): ProviderQuotaHistoryResult | null => props.fixture ?? query.data ?? null;
   const error = (): string | null => (query.error instanceof Error ? query.error.message : null);
