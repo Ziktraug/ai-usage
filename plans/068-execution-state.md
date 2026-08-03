@@ -142,7 +142,7 @@ Statuses are `BLOCKED`, `READY`, `IMPLEMENTING`, `REVIEW`, `REWORK`,
 | P4 | P3 | BLOCKED | - | - | - |
 | P5 | R1, V3, Q2, D4 | REVIEW | `231f109`, evidence `a5b657f` | pending | - |
 | P6 | R1, V4, Q2, D4, B2 | REWORK | `f02f29f`, evidence `3076673`, lifecycle `f598271`, evidence `11a2ec6` | `/root/q2_spec_review` / REWORK | - |
-| P7 | R1, V4, Q2, D4 | REVIEW | `d2486bd` | `/root/q2_spec_review` / pending | - |
+| P7 | R1, V4, Q2, D4 | REWORK | `d2486bd` | `/root/q2_spec_review` / REWORK | - |
 | P8 | P1 | BLOCKED | - | - | - |
 | P9 | P5 | BLOCKED | - | - | - |
 | P10 | P5 | BLOCKED | - | - | - |
@@ -844,8 +844,18 @@ prefixes and the no-usage-merge/no-identity-copy boundary. P1 and P6 are under
 cross-review; P5 queues for the next independent reviewer. Candidate `d2486bd`
 contains 16 owned files and 1,091 lines; targeted Ultracite, 39 focused/deep-
 owner/render tests and Svelte checking are green while its remaining long gates
-run. P6 awaits focused author rework. No feature packet has used the process-
-test token.
+run. Independent review returned REWORK: thread authoritative per-request demo
+mode through both manual-transfer endpoints and prove zero handler acquisition;
+restore abortable upload byte/percent progress, processing elapsed time,
+accessible progressbar and export row count; supply an exact route/provider/
+observability lifecycle composition request; replace compiler/source-string
+checks with awaited prefetch/dehydration/no-duplicate-hydration and rendered SSR
+proof; add target evidence for every owned ledger row; and run the omitted
+shadow build, boundary, parity and affected full gates. The existing deep
+staging, request identity/abort and serialized observability seams were
+accepted. No STOP condition was found. P7 is preserved clean at `d2486bd` until
+its original implementer finishes critical-path P1. P6 awaits focused author
+rework. No feature packet has used the process-test token.
 
 ## Deviations, STOPs, and recovery
 
