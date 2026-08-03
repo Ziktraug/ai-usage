@@ -117,7 +117,7 @@
   let viewportHeight = $state(520);
   let surfaceElement = $state<HTMLElement>();
   let sessionRegionStartElement = $state<HTMLElement>();
-  let hasAnchoredSessionRegion = $state(false);
+  let anchoredSurfaceElement = $state<HTMLElement>();
   let previousResetKey = $state('');
   let pagingSignature = $state('');
   let pendingFocusIndex = $state<number>();
@@ -214,14 +214,14 @@
   $effect(() => {
     const activeSurface = surfaceElement;
     const regionStart = sessionRegionStartElement;
-    if (hasAnchoredSessionRegion || !activeSurface || !regionStart) {
+    if (anchoredSurfaceElement === activeSurface || !activeSurface || !regionStart) {
       return;
     }
     const frame = window.requestAnimationFrame(() => {
-      hasAnchoredSessionRegion = true;
+      anchoredSurfaceElement = activeSurface;
       activeSurface.style.removeProperty('--session-surface-height');
       regionStart.scrollIntoView({ block: 'start' });
-      updateViewport();
+      updateViewportFor(activeSurface, activeMode);
     });
     return () => window.cancelAnimationFrame(frame);
   });

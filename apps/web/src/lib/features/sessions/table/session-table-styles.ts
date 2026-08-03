@@ -23,8 +23,8 @@ export const controlButton = css({
 });
 export const popoverGrid = css({ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '6px' });
 export const surface = css({
-  h: 'var(--session-surface-height, 520px)',
-  minH: '188px',
+  h: 'var(--session-surface-height, 100dvh)',
+  minH: 0,
   overflow: 'auto',
   border: '1px solid token(colors.line)',
   borderRadius: 'md',
@@ -33,7 +33,7 @@ export const surface = css({
 });
 export const table = css({
   w: '100%',
-  minW: 0,
+  minW: '1040px',
   borderCollapse: 'separate',
   borderSpacing: 0,
   tableLayout: 'fixed',
