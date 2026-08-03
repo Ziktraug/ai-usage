@@ -12,7 +12,7 @@ authority for feature, operation, design, source-file, and test-title coverage.
 - Planning PR: `#26`, squash-merged as
   `2183270ebfbb886fafa7e6268893122db9b364c0`
 - `BASE_SHA`: `2183270ebfbb886fafa7e6268893122db9b364c0`
-- Current integration checkpoint: `c8fb80e`
+- Current integration checkpoint: `d925f4c`
 - Last reviewed green checkpoint: `656ef4e`
 - Active design bases: D1 `4862293`, D2 `fce5c1a`, D3 `e2f13cd`
 - Implementation PR: not opened
@@ -128,7 +128,7 @@ Statuses are `BLOCKED`, `READY`, `IMPLEMENTING`, `REVIEW`, `REWORK`,
 | Q0 | V5 | INTEGRATED | `31c85a0`, correction `2f55410` | `/root/d123_parity_review`, `/root/v5_parity_spec_review` / ACCEPT | `2f55410ec9296dd2f66962d6ee3e4d2340e554b2` |
 | Q1 | Q0 | INTEGRATED | `97e34b4`, correction `9366ace`, correction `656ef4e` | `/root/v5_parity_spec_review`, `/root/q2_spec_review` / ACCEPT | `656ef4e` |
 | Q2 | Q0 | INTEGRATED | `3d0490a` | `/root/v34_parity`, `/root/q2_spec_review` / ACCEPT | `3d0490a8052a73da024ea523f3c0012d0e2aca9f` |
-| Q3 | Q1, Q2 | REVIEW | `614174f`, corrections `0ecbd21`, `c8fb80e` | `/root/q2_spec_review` / ACCEPT; `/root/d123_parity_review` / REWORK; second correction re-review pending | candidate checkpoint `c8fb80e` |
+| Q3 | Q1, Q2 | REVIEW | `614174f`, corrections `0ecbd21`, `c8fb80e`, `d925f4c` | `/root/d123_parity_review` / ACCEPT; `/root/q2_spec_review` / REWORK; third correction re-review pending | candidate checkpoint `d925f4c` |
 | D0 | F0 | INTEGRATED | `d476690`, `65d48b4`, `3cea781`, `f84ad2c`, evidence `bd948a7`, `a27764b`, correction `7e0c6ef` | `/root/v_vertical_audit`, `/root/v0_impl`, `/root/d123_parity_review`, `/root/v5_parity_spec_review` / ACCEPT | `4ddf145` |
 | D1 | D0 | INTEGRATED | `4862293`, `3b22c28`, evidence `b31c3af` | `/root/d123_parity_review` / ACCEPT | `b31c3af` |
 | D2 | D0 | INTEGRATED | `fce5c1a`, `9935846`, evidence `b31c3af` | `/root/d123_parity_review` / ACCEPT | `b31c3af` |
@@ -588,7 +588,22 @@ error surfaces. Regression tests cover both transitions. Its gates passed 45
 focused tests with 298 assertions, the complete Web suite at 719 tests and 3,282
 assertions, Web TypeScript with Svelte 0/0, Svelte build, boundaries, repository
 lint, Ultracite, parity and diff cleanliness. Both second correction re-reviews
-are pending.
+were requested; standards ACCEPTed.
+
+The spec/parity review then reproduced a fresh-cache reactivation edge: after
+unconfigured-to-configured or configured-A-to-configured-B transitions, the
+single canonical inventories key could remain fresh for 30 seconds, so enabling
+the observer alone performed no new read. This was distinct from the disabled
+projection fixed above. Correction `d925f4c` marks every successful add-path,
+remove-path and save-config snapshot replacement to refresh dependants. The
+coordinator still skips that exact refetch when the resulting snapshot is
+unconfigured. A real Solid Query observer now proves one new query call for
+unconfigured-to-configured and configured-A-to-configured-B transitions while
+the prior entry remains fresh; a second regression freezes all three action
+flags. Gates passed 47 focused tests with 303 assertions, the complete Web suite
+at 721 tests and 3,287 assertions, Web TypeScript with Svelte 0/0, Svelte build,
+boundaries, repository lint, Ultracite, parity and diff cleanliness. Third
+correction re-review is pending on both axes.
 
 Three Q3 incidents are retained. The first complete repository test run hit the
 known D3 `ArrowRight` focus timeout; its one allowed exact rerun passed 10/10,
@@ -641,10 +656,10 @@ edge, and the exact complete rerun passed 717/717 without exclusions.
   contracts; no test, assertion, timeout, cache bound or security policy was
   weakened.
 - Q3 correction recovery: initial candidate `614174f` and focused corrections
-  `0ecbd21`, `c8fb80e` are committed. The reviews, framework-version/build-graph
-  failures and retained-cache lifecycle regression are recorded above; R0
-  remains blocked until both correction re-reviews ACCEPT. P1 retains the
-  explicit awaited-prefetch/hydration seam.
+  `0ecbd21`, `c8fb80e`, `d925f4c` are committed. The reviews, framework-version/
+  build-graph failures and both retained-cache lifecycle regressions are
+  recorded above; R0 remains blocked until both correction re-reviews ACCEPT.
+  P1 retains the explicit awaited-prefetch/hydration seam.
 - Recovery point: `656ef4e` is the latest independently reviewed green
-  checkpoint. Candidate `c8fb80e` is fully gated and recoverable while Q3
+  checkpoint. Candidate `d925f4c` is fully gated and recoverable while Q3
   independent review runs; R0 remains blocked until both axes ACCEPT.
