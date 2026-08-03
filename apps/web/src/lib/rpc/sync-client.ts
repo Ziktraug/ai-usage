@@ -44,29 +44,128 @@ const parseFilename = (value: string | null): string => {
   return filename;
 };
 
+const cancelReader = async (reader: ReadableStreamDefaultReader<Uint8Array>): Promise<void> => {
+  try {
+    await reader.cancel();
+  } catch {
+    // The stream may already be errored by the same cancellation.
+  }
+};
+
+const cancelResponseBody = async (response: Response): Promise<void> => {
+  try {
+    await response.body?.cancel();
+  } catch {
+    // Metadata rejection may race with transport cancellation.
+  }
+};
+
+const readChunk = (
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  signal: AbortSignal | undefined,
+): ReturnType<ReadableStreamDefaultReader<Uint8Array>['read']> => {
+  signal?.throwIfAborted();
+  if (!signal) {
+    return reader.read();
+  }
+  return new Promise((resolve, reject) => {
+    const abort = (): void => reject(signal.reason);
+    signal.addEventListener('abort', abort, { once: true });
+    reader
+      .read()
+      .then(resolve, reject)
+      .finally(() => signal.removeEventListener('abort', abort));
+  });
+};
+
+const readManualMergeBytes = async (
+  response: Response,
+  declaredBytes: number,
+  signal: AbortSignal | undefined,
+): Promise<Uint8Array> => {
+  const reader = response.body?.getReader();
+  if (!reader) {
+    throw new Error('The manual export body is unavailable.');
+  }
+  const chunks: Uint8Array[] = [];
+  let byteLength = 0;
+  let complete = false;
+  try {
+    while (true) {
+      const chunk = await readChunk(reader, signal);
+      signal?.throwIfAborted();
+      if (chunk.done) {
+        if (byteLength !== declaredBytes) {
+          throw new Error('The manual export length did not match its body.');
+        }
+        complete = true;
+        break;
+      }
+      byteLength += chunk.value.byteLength;
+      if (byteLength > declaredBytes || byteLength > MAX_PORTABLE_USAGE_BYTES) {
+        throw new Error('The manual export exceeded its byte limit.');
+      }
+      chunks.push(chunk.value);
+    }
+  } finally {
+    if (!complete) {
+      await cancelReader(reader);
+    }
+    reader.releaseLock();
+  }
+
+  const bytes = new Uint8Array(byteLength);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
+};
+
 export const createSyncBrowserAdapter = (
   transport: SyncRpcTransport,
   fetchTransport: SyncFetch = globalThis.fetch,
 ): SyncBrowserAdapter => ({
   downloadManualMerge: async (signal) => {
     signal?.throwIfAborted();
-    const response = await fetchTransport(manualMergeDownloadTransport.path, {
-      method: manualMergeDownloadTransport.method,
-      ...(signal === undefined ? {} : { signal }),
-    });
+    let response: Response;
+    try {
+      response = await fetchTransport(manualMergeDownloadTransport.path, {
+        method: manualMergeDownloadTransport.method,
+        ...(signal === undefined ? {} : { signal }),
+      });
+    } catch (error) {
+      signal?.throwIfAborted();
+      throw error;
+    }
     signal?.throwIfAborted();
-    if (!response.ok) {
-      throw new Error('The manual export could not be downloaded safely.');
+    try {
+      if (!response.ok) {
+        throw new Error('The manual export could not be downloaded safely.');
+      }
+      if (response.headers.get('content-type') !== CANONICAL_CONTENT_TYPE) {
+        throw new Error('The manual export content type is invalid.');
+      }
+      const declaredBytes = parseContentLength(response.headers.get('content-length'));
+      const filename = parseFilename(response.headers.get('content-disposition'));
+      const bytes = await readManualMergeBytes(response, declaredBytes, signal);
+      signal?.throwIfAborted();
+      const replayBuffer = new ArrayBuffer(bytes.byteLength);
+      new Uint8Array(replayBuffer).set(bytes);
+      return {
+        filename,
+        response: new Response(replayBuffer, {
+          headers: response.headers,
+          status: response.status,
+          statusText: response.statusText,
+        }),
+      };
+    } catch (error) {
+      await cancelResponseBody(response);
+      signal?.throwIfAborted();
+      throw error;
     }
-    if (response.headers.get('content-type') !== CANONICAL_CONTENT_TYPE) {
-      throw new Error('The manual export content type is invalid.');
-    }
-    parseContentLength(response.headers.get('content-length'));
-    const filename = parseFilename(response.headers.get('content-disposition'));
-    if (!response.body) {
-      throw new Error('The manual export body is unavailable.');
-    }
-    return { filename, response };
   },
   fleet: async (signal) => {
     signal?.throwIfAborted();

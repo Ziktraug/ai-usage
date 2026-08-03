@@ -32,9 +32,9 @@ export interface ControlBrowserAdapter {
 
 const defaultCreateEventSource = (path: string): ControlEventSource => new EventSource(path);
 
-const parseContentLength = (value: string | null, maximumBytes: number): void => {
+const parseContentLength = (value: string | null, maximumBytes: number): number | null => {
   if (value === null) {
-    return;
+    return null;
   }
   if (!CONTENT_LENGTH_PATTERN.test(value)) {
     throw new Error('The source control response length is invalid.');
@@ -43,6 +43,7 @@ const parseContentLength = (value: string | null, maximumBytes: number): void =>
   if (!(Number.isSafeInteger(bytes) && bytes <= maximumBytes)) {
     throw new Error('The source control response exceeded its byte limit.');
   }
+  return bytes;
 };
 
 const cancelReader = async (reader: ReadableStreamDefaultReader<Uint8Array>): Promise<void> => {
@@ -53,13 +54,30 @@ const cancelReader = async (reader: ReadableStreamDefaultReader<Uint8Array>): Pr
   }
 };
 
+const readChunk = (
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  signal: AbortSignal | undefined,
+): ReturnType<ReadableStreamDefaultReader<Uint8Array>['read']> => {
+  signal?.throwIfAborted();
+  if (!signal) {
+    return reader.read();
+  }
+  return new Promise((resolve, reject) => {
+    const abort = (): void => reject(signal.reason);
+    signal.addEventListener('abort', abort, { once: true });
+    reader
+      .read()
+      .then(resolve, reject)
+      .finally(() => signal.removeEventListener('abort', abort));
+  });
+};
+
 const readBoundedJson = async (
   response: Response,
   maximumBytes: number,
   signal: AbortSignal | undefined,
 ): Promise<unknown> => {
   signal?.throwIfAborted();
-  parseContentLength(response.headers.get('content-length'), maximumBytes);
   const reader = response.body?.getReader();
   if (!reader) {
     throw new Error('The source control response body is unavailable.');
@@ -69,16 +87,19 @@ const readBoundedJson = async (
   let complete = false;
   try {
     try {
+      const declaredBytes = parseContentLength(response.headers.get('content-length'), maximumBytes);
       while (true) {
-        signal?.throwIfAborted();
-        const chunk = await reader.read();
+        const chunk = await readChunk(reader, signal);
         signal?.throwIfAborted();
         if (chunk.done) {
+          if (declaredBytes !== null && byteLength !== declaredBytes) {
+            throw new Error('The source control response length did not match its body.');
+          }
           complete = true;
           break;
         }
         byteLength += chunk.value.byteLength;
-        if (byteLength > maximumBytes) {
+        if (byteLength > maximumBytes || (declaredBytes !== null && byteLength > declaredBytes)) {
           throw new Error('The source control response exceeded its byte limit.');
         }
         chunks.push(chunk.value);

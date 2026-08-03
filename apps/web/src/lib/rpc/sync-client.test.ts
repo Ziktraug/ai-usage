@@ -53,7 +53,7 @@ describe('Sync browser adapter', () => {
     await expect(malformed.fleet()).rejects.toThrow();
   });
 
-  test('acquires a validated attachment without consuming file bytes', async () => {
+  test('consumes and replays a validated attachment within its declared byte budget', async () => {
     const response = exportResponse();
     let fetchInput: string | URL | Request | undefined;
     let fetchInit: RequestInit | undefined;
@@ -65,13 +65,15 @@ describe('Sync browser adapter', () => {
     });
 
     const download = await adapter.downloadManualMerge(controller.signal);
-    expect(download).toEqual({ filename: 'ai-usage-machine-a.json', response });
+    expect(download.filename).toBe('ai-usage-machine-a.json');
+    expect(download.response).not.toBe(response);
+    expect(await download.response.text()).toBe('{"portable":true}');
     expect(fetchInput).toBe('/api/manual-merge/download');
     expect(fetchInit).toEqual({ method: 'POST', signal: controller.signal });
-    expect(response.bodyUsed).toBe(false);
+    expect(response.bodyUsed).toBe(true);
   });
 
-  test('rejects unsafe status and attachment metadata without consuming bytes', async () => {
+  test('cancels rejected status and attachment metadata before returning bytes', async () => {
     const responses = [
       new Response('{}', { status: 503 }),
       new Response('{}', {
@@ -95,13 +97,90 @@ describe('Sync browser adapter', () => {
           'content-type': 'text/plain',
         },
       }),
+      new Response('{}', {
+        headers: {
+          'content-disposition': 'attachment; filename="safe.json"',
+          'content-type': 'application/json; charset=utf-8',
+        },
+      }),
     ];
 
     for (const response of responses) {
       const adapter = createSyncBrowserAdapter(defaultTransport(), () => Promise.resolve(response));
       await expect(adapter.downloadManualMerge()).rejects.toThrow();
-      expect(response.bodyUsed).toBe(false);
+      expect(response.bodyUsed).toBe(true);
     }
+  });
+
+  test('rejects truncated and lying manual-export streams without returning partial bytes', async () => {
+    const headers = {
+      'content-disposition': 'attachment; filename="safe.json"',
+      'content-length': '3',
+      'content-type': 'application/json; charset=utf-8',
+    };
+    const truncated = new Response('{}', { headers });
+    const truncatedAdapter = createSyncBrowserAdapter(defaultTransport(), () => Promise.resolve(truncated));
+
+    await expect(truncatedAdapter.downloadManualMerge()).rejects.toThrow('length did not match');
+    expect(truncated.body?.locked).toBe(false);
+
+    let cancellations = 0;
+    const lying = new Response(
+      new ReadableStream<Uint8Array>({
+        cancel: () => {
+          cancellations += 1;
+        },
+        start: (controller) => {
+          controller.enqueue(new TextEncoder().encode('{} '));
+        },
+      }),
+      { headers: { ...headers, 'content-length': '2' } },
+    );
+    const lyingAdapter = createSyncBrowserAdapter(defaultTransport(), () => Promise.resolve(lying));
+
+    await expect(lyingAdapter.downloadManualMerge()).rejects.toThrow('byte limit');
+    expect(cancellations).toBe(1);
+    expect(lying.body?.locked).toBe(false);
+  });
+
+  test('cancels a stalled manual-export body immediately with the caller abort reason', async () => {
+    const secondReadStarted = Promise.withResolvers<void>();
+    let cancellations = 0;
+    let pulls = 0;
+    const response = new Response(
+      new ReadableStream<Uint8Array>({
+        cancel: () => {
+          cancellations += 1;
+        },
+        pull: (controller) => {
+          pulls += 1;
+          if (pulls === 1) {
+            controller.enqueue(new TextEncoder().encode('{'));
+            return;
+          }
+          secondReadStarted.resolve();
+          return new Promise<void>(() => undefined);
+        },
+      }),
+      {
+        headers: {
+          'content-disposition': 'attachment; filename="safe.json"',
+          'content-length': '2',
+          'content-type': 'application/json; charset=utf-8',
+        },
+      },
+    );
+    const adapter = createSyncBrowserAdapter(defaultTransport(), () => Promise.resolve(response));
+    const controller = new AbortController();
+    const reason = { reason: 'manual-export-unmounted' };
+    const pending = adapter.downloadManualMerge(controller.signal);
+
+    await secondReadStarted.promise;
+    controller.abort(reason);
+
+    await expect(pending).rejects.toBe(reason);
+    expect(cancellations).toBe(1);
+    expect(response.body?.locked).toBe(false);
   });
 
   test('preserves pre-abort identity without acquiring RPC or file transport', async () => {

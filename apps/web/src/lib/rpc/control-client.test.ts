@@ -156,6 +156,47 @@ describe('control explicit browser adapter', () => {
     expect(response.body?.locked).toBe(false);
   });
 
+  test('rejects declared-length mismatches and releases the streamed command body', async () => {
+    const response = new Response('{}', { headers: { 'content-length': '3' } });
+    const adapter = createControlBrowserAdapter({ fetch: () => Promise.resolve(response) });
+
+    await expect(adapter.sendCommand({ command: 'run-all' })).rejects.toThrow('length did not match');
+    expect(response.body?.locked).toBe(false);
+  });
+
+  test('cancels a stalled command body immediately with the caller abort reason', async () => {
+    const secondReadStarted = Promise.withResolvers<void>();
+    let cancellations = 0;
+    let pulls = 0;
+    const response = new Response(
+      new ReadableStream<Uint8Array>({
+        cancel: () => {
+          cancellations += 1;
+        },
+        pull: (controller) => {
+          pulls += 1;
+          if (pulls === 1) {
+            controller.enqueue(new TextEncoder().encode('{'));
+            return;
+          }
+          secondReadStarted.resolve();
+          return new Promise<void>(() => undefined);
+        },
+      }),
+    );
+    const adapter = createControlBrowserAdapter({ fetch: () => Promise.resolve(response) });
+    const controller = new AbortController();
+    const reason = { reason: 'command-view-unmounted' };
+    const pending = adapter.sendCommand({ command: 'run-all' }, controller.signal);
+
+    await secondReadStarted.promise;
+    controller.abort(reason);
+
+    await expect(pending).rejects.toBe(reason);
+    expect(cancellations).toBe(1);
+    expect(response.body?.locked).toBe(false);
+  });
+
   test('rejects invalid commands before fetch and preserves pre-abort identity', async () => {
     let acquisitions = 0;
     const adapter = createControlBrowserAdapter({

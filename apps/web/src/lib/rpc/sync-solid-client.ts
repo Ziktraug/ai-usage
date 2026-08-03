@@ -24,12 +24,18 @@ export const getSyncFleet = async (): Promise<ManualOperationResult<SyncFleet>> 
   }
 };
 
-export const exportManualMergeBundle = async (): Promise<ManualOperationResult<ManualMergeExport>> => {
+export const exportManualMergeBundle = async (
+  signal?: AbortSignal,
+): Promise<ManualOperationResult<ManualMergeExport>> => {
   try {
+    signal?.throwIfAborted();
     const rpc = await resolveSolidWebRpcClient();
-    const { filename, response } = await createSyncBrowserAdapter(rpc.sync).downloadManualMerge();
+    signal?.throwIfAborted();
+    const { filename, response } = await createSyncBrowserAdapter(rpc.sync).downloadManualMerge(signal);
+    signal?.throwIfAborted();
     const text = await response.text();
     const parsed: unknown = JSON.parse(text);
+    signal?.throwIfAborted();
     if (!(typeof parsed === 'object' && parsed !== null && 'rows' in parsed && Array.isArray(parsed.rows))) {
       return unavailable();
     }

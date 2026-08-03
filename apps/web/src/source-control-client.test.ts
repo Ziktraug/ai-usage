@@ -3,7 +3,9 @@ import {
   collectionSourceDefinitions,
   type SourceControlCommand,
   type SourceControlView,
+  sourceControlBounds,
 } from '@ai-usage/report-core/source-control';
+import { createControlBrowserAdapter } from './lib/rpc/control-client';
 import {
   createSourceControlClient,
   createSourceControlClientForMode,
@@ -190,6 +192,65 @@ describe('source control client', () => {
     eventSource.emitPublication('revision-4');
     expect(client.getState().publication?.revision).toBe('revision-4');
     expect(publicationUpdates).toBe(1);
+  });
+
+  test('uses the bounded control adapter at the lifecycle seam and aborts it on stop', async () => {
+    const maximum = sourceControlBounds.maxSnapshotBytes + sourceControlBounds.maxEventBytes;
+    const eventSource = new FakeEventSource();
+    const oversizedAdapter = createControlBrowserAdapter({
+      fetch: () => Promise.resolve(new Response(new Uint8Array(maximum + 1))),
+    });
+    const oversizedClient = createSourceControlClient({
+      createEventSource: () => eventSource,
+      sendCommand: oversizedAdapter.sendCommand,
+    });
+    oversizedClient.start();
+    eventSource.emit(snapshot(1));
+
+    expect(await oversizedClient.execute({ command: 'run-all' })).toBe(false);
+    expect(oversizedClient.getState().commandError).toContain('byte limit');
+
+    const secondReadStarted = Promise.withResolvers<void>();
+    let cancellations = 0;
+    let pulls = 0;
+    const stalledResponse = new Response(
+      new ReadableStream<Uint8Array>({
+        cancel: () => {
+          cancellations += 1;
+        },
+        pull: (controller) => {
+          pulls += 1;
+          if (pulls === 1) {
+            controller.enqueue(new TextEncoder().encode('{'));
+            return;
+          }
+          secondReadStarted.resolve();
+          return new Promise<void>(() => undefined);
+        },
+      }),
+    );
+    const liveEventSource = new FakeEventSource();
+    const stalledAdapter = createControlBrowserAdapter({ fetch: () => Promise.resolve(stalledResponse) });
+    const client = createSourceControlClient({
+      createEventSource: () => liveEventSource,
+      sendCommand: stalledAdapter.sendCommand,
+    });
+    client.start();
+    liveEventSource.emit(snapshot(1));
+    const pending = client.execute({ command: 'run-all' });
+
+    await secondReadStarted.promise;
+    client.stop();
+
+    expect(await pending).toBe(false);
+    expect(cancellations).toBe(1);
+    expect(stalledResponse.body?.locked).toBe(false);
+    expect(client.getState()).toMatchObject({
+      commandError: null,
+      connection: 'stopped',
+      pendingCommand: null,
+      snapshot: { generation: 1 },
+    });
   });
 
   test('retains the last snapshot and disables mutations for disconnected and incompatible engines', async () => {
