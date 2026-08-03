@@ -96,7 +96,24 @@ describe('session table Svelte rendering', () => {
     expect(body).toContain('data-depth="0"');
     expect(body).toContain('data-session-paging-sentinel="mobile"');
     expect(body).toContain('tabindex="0"');
+    expect(body).toContain('aria-label="Inspect session: Synthetic session 1"');
+    expect(body).toContain('title="Filter by project synthetic-project"');
+    expect(body).toContain('title="Filter by model gpt-5.4"');
+    expect(body).toContain('title="Expand campaign"');
+    expect(body).toContain('root-session time');
+    expect(body).toContain(
+      'Campaign time uses the root session only. Sum of recorded Codex task-open spans. This includes time waiting for tools and subagents; it is not model runtime.',
+    );
     expect(body.match(/data-session-row-id/g)?.length ?? 0).toBeLessThan(24);
+  });
+
+  test('renders unavailable mobile hints and expanded aria set size from the full row model', () => {
+    const unavailable = render(fixture, { props: { mode: 'mobile', unavailable: true } }).body;
+    expect(unavailable).toContain('title="Session found in prompt history; detailed local token counters are missing"');
+    const expanded = render(fixture, { props: { expanded: true, mode: 'mobile' } }).body;
+    expect(expanded).toContain('aria-setsize="5001"');
+    expect(expanded).toContain('data-depth="1"');
+    expect(expanded).toContain('title="Collapse campaign"');
   });
 
   test('keeps one responsive owner and both fixed-geometry projections in the source contract', async () => {

@@ -5,11 +5,15 @@
   import SessionTable from './session-table.svelte';
 
   let {
+    expanded = false,
     mode = 'desktop',
+    unavailable = false,
   }: {
+    expanded?: boolean;
     mode?: Exclude<SessionSurfaceMode, 'pending'>;
+    unavailable?: boolean;
   } = $props();
-  const campaign = {
+  const campaign = $derived({
     ...syntheticCampaignRow(1, [syntheticSessionRow(2)]),
     campaignClassifierCount: 1,
     campaignClassifierFreshTokens: 1200,
@@ -17,13 +21,15 @@
     costKnown: false,
     partial: true,
     titleSource: 'first-prompt' as const,
-  };
-  const rows = [campaign, ...syntheticSessionRows(4999, 10)];
+    usageUnavailable: unavailable,
+  });
+  const rows = $derived([campaign, ...syntheticSessionRows(4999, 10)]);
   const noop = () => undefined;
 </script>
 
 <SessionTable
   columnVisibility={defaultColumnVisibility}
+  initialExpanded={expanded ? { [campaign.rowId]: true } : {}}
   initialSurfaceMode={mode}
   onClearFilters={noop}
   onColumnVisibilityChange={noop}

@@ -11,7 +11,12 @@ import { sessionDurationSemantics } from '../../../../session-analysis-model';
 import { boundedSessionListLabel, caseInsensitiveLiteralMatches } from '../../../../session-list-label';
 import type { SessionColumnId } from '../../../../session-table-schema';
 import { fmtCompact } from '../../../foundation/presentation/format';
-import { aggregateApiValuePresentation, apiValuePresentation } from '../../../foundation/presentation/report-value';
+import {
+  aggregateApiValuePresentation,
+  apiValuePresentation,
+  USAGE_UNAVAILABLE_HINT,
+} from '../../../foundation/presentation/report-value';
+import type { TableSortingState } from '../../../foundation/table/state';
 import { sessionColumnById } from './session-columns';
 
 export interface SessionHighlightSegment {
@@ -49,8 +54,31 @@ export type SessionCellProjection =
     };
 
 const TEXT_COLUMNS = new Set<SessionColumnId>(['session', 'harness', 'machine', 'provider', 'project', 'model']);
+const USAGE_UNAVAILABLE_COLUMNS = new Set<SessionColumnId>([
+  'tokIn',
+  'tokOut',
+  'cache',
+  'tokCw',
+  'fresh',
+  'total',
+  'cost',
+  'actual',
+  'quota',
+  'calls',
+  'turns',
+  'tools',
+]);
+const API_PRICE_PROVENANCE_KINDS = new Set(['partial-api-price', 'unknown-api-price']);
 
 export const sessionSortDescendingByDefault = (id: SessionColumnId): boolean => !TEXT_COLUMNS.has(id);
+export const sessionSortForColumnChange = (sorting: TableSortingState, id: SessionColumnId): TableSortingState => [
+  {
+    desc: sorting[0]?.desc ?? sessionSortDescendingByDefault(id),
+    id,
+  },
+];
+export const shouldSelectSessionRowForKey = (key: string, nativeButton: boolean): boolean =>
+  !nativeButton && (key === 'Enter' || key === ' ');
 
 export const applySessionFieldFilter = (
   event: Pick<Event, 'stopPropagation'>,
@@ -83,8 +111,12 @@ const highlightedSegments = (text: string, query: string): readonly SessionHighl
   return segments;
 };
 
-const provenanceTitle = (row: SessionPresentationRow, metric: UsageMetricKey): string | null => {
-  const facts = provenanceForMetric(row, metric);
+const provenanceTitle = (
+  row: SessionPresentationRow,
+  metric: UsageMetricKey,
+  excludeKinds: ReadonlySet<string> = new Set(),
+): string | null => {
+  const facts = provenanceForMetric(row, metric).filter((fact) => !excludeKinds.has(fact.kind));
   return facts.length === 0 ? null : facts.map((fact) => `${fact.label}: ${fact.description}`).join('\n');
 };
 
@@ -116,6 +148,13 @@ const metricForColumn = (id: SessionColumnId): UsageMetricKey | undefined => {
   return;
 };
 
+const valueTitle = (row: SessionPresentationRow, id: SessionColumnId): string | undefined => {
+  if (row.usageUnavailable && USAGE_UNAVAILABLE_COLUMNS.has(id)) {
+    return USAGE_UNAVAILABLE_HINT;
+  }
+  return id === 'rtkSaved' ? rtkSavedTitle(row) : undefined;
+};
+
 const valueProjection = (row: SessionPresentationRow, id: SessionColumnId): SessionCellProjection => {
   if (id === 'cost') {
     const presentation = row.priceMeasurement
@@ -124,8 +163,8 @@ const valueProjection = (row: SessionPresentationRow, id: SessionColumnId): Sess
     return {
       kind: 'value',
       label: row.usageUnavailable ? '—' : presentation.label,
-      provenanceTitle: provenanceTitle(row, 'api-value'),
-      title: row.usageUnavailable ? undefined : presentation.title,
+      provenanceTitle: provenanceTitle(row, 'api-value', API_PRICE_PROVENANCE_KINDS),
+      title: row.usageUnavailable ? USAGE_UNAVAILABLE_HINT : presentation.title,
     };
   }
   if (id === 'duration') {
@@ -143,7 +182,7 @@ const valueProjection = (row: SessionPresentationRow, id: SessionColumnId): Sess
     kind: 'value',
     label: sessionColumnById(id).meta.format(row),
     provenanceTitle: metric ? provenanceTitle(row, metric) : null,
-    title: id === 'rtkSaved' ? rtkSavedTitle(row) : undefined,
+    title: valueTitle(row, id),
   };
 };
 

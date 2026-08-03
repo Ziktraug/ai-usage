@@ -4,7 +4,14 @@ import {
   defaultColumnVisibility,
   sessionColumnPresets,
 } from '../../../../session-table-schema';
-import { applySessionFieldFilter, projectSessionCell, sessionSortDescendingByDefault } from './session-cell-projection';
+import { USAGE_UNAVAILABLE_HINT } from '../../../foundation/presentation/report-value';
+import {
+  applySessionFieldFilter,
+  projectSessionCell,
+  sessionSortDescendingByDefault,
+  sessionSortForColumnChange,
+  shouldSelectSessionRowForKey,
+} from './session-cell-projection';
 import { sessionTableColumns, visibleSessionTableColumns } from './session-columns';
 import { syntheticCampaignRow, syntheticSessionRow, syntheticSessionRows } from './session-table.fixtures';
 import { createSessionTableModel, toggleSessionRowExpanded } from './session-table-model';
@@ -121,6 +128,68 @@ describe('Svelte session table schema adapter', () => {
       label: '≥ $1.25',
       title: 'Known API-value subtotal; one or more model prices are unavailable',
     });
+    expect(projectSessionCell(row, 'cost', '')).not.toHaveProperty(
+      'provenanceTitle',
+      expect.stringContaining('Partial API value'),
+    );
+    expect(projectSessionCell({ ...row, costApprox: 0 }, 'cost', '')).not.toHaveProperty(
+      'provenanceTitle',
+      expect.stringContaining('Unknown API price'),
+    );
+  });
+
+  test('preserves exact headers, unavailable hints, RTK details, and compact line deltas', () => {
+    expect(sessionTableColumns.find(({ id }) => id === 'cost')?.meta.title).toBe(
+      'Estimated API-equivalent value at standard prices. Values prefixed with ≥ are lower bounds because some model prices are unavailable.',
+    );
+    expect(sessionTableColumns.find(({ id }) => id === 'actual')?.meta.title).toBe(
+      'Out-of-pocket spend reported by harnesses',
+    );
+    expect(sessionTableColumns.find(({ id }) => id === 'quota')?.meta.title).toBe(
+      'Cursor export value covered by the subscription quota',
+    );
+    expect(sessionTableColumns.find(({ id }) => id === 'rtkSaved')?.meta.title).toBe(
+      'RTK saved-token percentage; hover a cell for matched command details',
+    );
+    const unavailableRow = { ...syntheticSessionRow(8), usageUnavailable: true };
+    for (const id of [
+      'tokIn',
+      'tokOut',
+      'cache',
+      'tokCw',
+      'fresh',
+      'total',
+      'cost',
+      'actual',
+      'quota',
+      'calls',
+      'turns',
+      'tools',
+    ] as const) {
+      expect(projectSessionCell(unavailableRow, id, ''), id).toMatchObject({
+        kind: 'value',
+        label: '—',
+        title: USAGE_UNAVAILABLE_HINT,
+      });
+    }
+    const rtkRow = {
+      ...syntheticSessionRow(9),
+      rtkCommandCount: 3,
+      rtkInputTokens: 1000,
+      rtkOutputTokens: 400,
+      rtkSavedTokens: 600,
+    };
+    expect(projectSessionCell(rtkRow, 'rtkSaved', '')).toHaveProperty(
+      'title',
+      expect.stringContaining('3 matched RTK commands'),
+    );
+    const lines = { ...syntheticSessionRow(9), lineDelta: 4, linesAdded: 12, linesDeleted: 8 };
+    expect(sessionTableColumns.find(({ id }) => id === 'lines')?.meta.format(lines)).toBe('+12/-8');
+    expect(
+      sessionTableColumns
+        .find(({ id }) => id === 'lines')
+        ?.meta.format({ ...lines, lineDelta: null, linesAdded: 12, linesDeleted: 8 }),
+    ).toBe('—');
   });
 
   test('starts text sorts ascending while dates, metrics, and flags start descending', () => {
@@ -130,6 +199,12 @@ describe('Svelte session table schema adapter', () => {
     for (const id of ['date', 'tokIn', 'cost', 'duration', 'partial'] as const) {
       expect(sessionSortDescendingByDefault(id), id).toBe(true);
     }
+    expect(sessionSortForColumnChange([{ desc: true, id: 'date' }], 'project')).toEqual([
+      { desc: true, id: 'project' },
+    ]);
+    expect(sessionSortForColumnChange([{ desc: false, id: 'date' }], 'cost')).toEqual([{ desc: false, id: 'cost' }]);
+    expect(shouldSelectSessionRowForKey('Enter', false)).toBe(true);
+    expect(shouldSelectSessionRowForKey(' ', true)).toBe(false);
   });
 
   test('stops row activation before applying an exact field filter', () => {

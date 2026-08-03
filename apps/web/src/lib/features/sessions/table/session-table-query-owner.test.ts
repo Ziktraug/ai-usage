@@ -21,6 +21,8 @@ import {
 } from './session-table-query-owner';
 
 const cursor = 'sq1.0000000000000000.1';
+const secondCursor = 'sq1.0000000000000001.2';
+const thirdCursor = 'sq1.0000000000000002.3';
 const campaign = syntheticCampaignRow(1);
 const child = syntheticSessionRow(2);
 
@@ -53,6 +55,18 @@ const successfulChildren = (request: SessionCampaignChildrenRequest, nextCursor:
     sessionCount: 1,
   };
   return { data, ok: true, requestFingerprint: data.requestFingerprint, revision: data.revision } as const;
+};
+
+const successfulChildPage = (
+  request: SessionCampaignChildrenRequest,
+  row: ReturnType<typeof syntheticSessionRow>,
+  nextCursor: string | null,
+) => {
+  const result = successfulChildren(request, nextCursor);
+  return {
+    ...result,
+    data: { ...result.data, itemCount: 3, items: [row], sessionCount: 3 },
+  };
 };
 
 const scope = (query = ''): SessionTableQueryScope => {
@@ -299,6 +313,130 @@ describe('Svelte session exact-query owner', () => {
     expect(owner.snapshot?.query.revision).toBe('revision-b');
     expect(owner.snapshot?.items).toHaveLength(1);
     expect(owner.snapshot?.loadingMore).toBe(false);
+    owner.close();
+  });
+
+  test('replays every loaded top-level page before retrying an expiry beyond page three', async () => {
+    const requests: string[] = [];
+    const observedItemCounts: number[] = [];
+    let revisionIndex = 0;
+    const rows = [
+      syntheticCampaignRow(10),
+      syntheticCampaignRow(11),
+      syntheticCampaignRow(12),
+      syntheticCampaignRow(13),
+    ];
+    const client = clientWith({
+      page: (request) => {
+        requests.push(`${request.revision}:${request.cursor ?? 'first'}`);
+        if (request.revision === 'revision-a' && request.cursor === thirdCursor) {
+          return Promise.resolve({
+            error: { message: 'deep page expired', revision: request.revision, tag: 'RevisionExpired' },
+            ok: false,
+            requestFingerprint: sessionQueryFingerprint(request),
+            revision: request.revision,
+          });
+        }
+        if (request.cursor === null) {
+          return Promise.resolve(successfulPage(request, [item(rows[0])], cursor));
+        }
+        if (request.cursor === cursor) {
+          return Promise.resolve(successfulPage(request, [item(rows[1])], secondCursor));
+        }
+        if (request.cursor === secondCursor) {
+          return Promise.resolve(successfulPage(request, [item(rows[2])], thirdCursor));
+        }
+        return Promise.resolve(successfulPage(request, [item(rows[3])]));
+      },
+    });
+    const owner = createSessionTableQueryOwner({
+      client,
+      onStateChange: (next) => observedItemCounts.push(next?.items.length ?? 0),
+      queryClient: createWebQueryClient(),
+    });
+    const served = createServedReportSession(
+      createSessionTableServedAdapter({
+        acquire: () => {
+          const revision = revisionIndex === 0 ? 'revision-a' : 'revision-b';
+          revisionIndex += 1;
+          return Promise.resolve({ captureFingerprint: `capture-${revision}`, revision });
+        },
+        owner,
+      }),
+    );
+    owner.setRevisionRefresh(async (nextScope) => await served.refresh({ scope: nextScope }));
+    await served.refresh({ scope: scope() });
+    await owner.loadMore();
+    await owner.loadMore();
+    const observationsBeforeExpiry = observedItemCounts.length;
+
+    await owner.loadMore();
+
+    expect(owner.snapshot?.items.map(({ row }) => row.rowId)).toEqual(rows.map(({ rowId }) => rowId));
+    expect(owner.snapshot?.query.revision).toBe('revision-b');
+    expect(observedItemCounts.slice(observationsBeforeExpiry)).not.toContain(1);
+    expect(observedItemCounts.slice(observationsBeforeExpiry)).not.toContain(2);
+    expect(requests.slice(-4)).toEqual([
+      'revision-b:first',
+      `revision-b:${cursor}`,
+      `revision-b:${secondCursor}`,
+      `revision-b:${thirdCursor}`,
+    ]);
+    owner.close();
+  });
+
+  test('replays prior campaign child pages and preserves them when the retried page expires again', async () => {
+    const campaignRequests: string[] = [];
+    let revisionIndex = 0;
+    const children = [syntheticSessionRow(20), syntheticSessionRow(21)] as const;
+    const client = clientWith({
+      campaignChildren: (request) => {
+        campaignRequests.push(`${request.query.revision}:${request.query.cursor ?? 'first'}`);
+        if (request.query.cursor === null) {
+          return Promise.resolve(successfulChildPage(request, children[0], cursor));
+        }
+        if (request.query.cursor === cursor) {
+          return Promise.resolve(successfulChildPage(request, children[1], secondCursor));
+        }
+        return Promise.resolve({
+          error: { message: 'deep campaign page expired', revision: request.query.revision, tag: 'RevisionExpired' },
+          ok: false,
+          requestFingerprint: sessionCampaignChildrenFingerprint(request),
+          revision: request.query.revision,
+        });
+      },
+      page: (request) => Promise.resolve(successfulPage(request, [item()])),
+    });
+    const owner = createSessionTableQueryOwner({ client, queryClient: createWebQueryClient() });
+    const served = createServedReportSession(
+      createSessionTableServedAdapter({
+        acquire: () => {
+          const revision = revisionIndex === 0 ? 'revision-a' : 'revision-b';
+          revisionIndex += 1;
+          return Promise.resolve({ captureFingerprint: `capture-${revision}`, revision });
+        },
+        owner,
+      }),
+    );
+    owner.setRevisionRefresh(async (nextScope) => await served.refresh({ scope: nextScope }));
+    await served.refresh({ scope: scope() });
+    await owner.loadCampaignChildren(campaign.campaignKey!);
+    expect(owner.snapshot?.campaignChildren.get(campaign.campaignKey!)?.nextCursor).toBe(cursor);
+    await owner.loadCampaignChildren(campaign.campaignKey!);
+
+    const [result] = await Promise.allSettled([owner.loadCampaignChildren(campaign.campaignKey!)]);
+
+    expect(result?.status).toBe('rejected');
+    expect(revisionIndex).toBe(2);
+    expect(owner.snapshot?.query.revision).toBe('revision-b');
+    expect(owner.snapshot?.campaignChildren.get(campaign.campaignKey!)?.items.map(({ rowId }) => rowId)).toEqual(
+      children.map(({ rowId }) => rowId),
+    );
+    expect(campaignRequests.slice(-3)).toEqual([
+      'revision-b:first',
+      `revision-b:${cursor}`,
+      `revision-b:${secondCursor}`,
+    ]);
     owner.close();
   });
 

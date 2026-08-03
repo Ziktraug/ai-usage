@@ -17,11 +17,15 @@
     sessionColumnPresetForVisibility,
     sessionColumnPresets,
   } from '../../../../session-table-schema';
-  import { fmtCompact, fmtDate, fmtDuration } from '../../../foundation/presentation/format';
-  import { apiValuePresentation } from '../../../foundation/presentation/report-value';
+  import { fmtDate } from '../../../foundation/presentation/format';
   import type { StateChangeHandler, TableSortingState, TableVisibilityState } from '../../../foundation/table/state';
   import SessionCell from './session-cell.svelte';
-  import { projectSessionCell, sessionSortDescendingByDefault } from './session-cell-projection';
+  import {
+    projectSessionCell,
+    sessionSortDescendingByDefault,
+    sessionSortForColumnChange,
+    shouldSelectSessionRowForKey,
+  } from './session-cell-projection';
   import { sessionTableColumns, visibleSessionTableColumns } from './session-columns';
   import { createSessionTableModel, toggleSessionRowExpanded } from './session-table-model';
   import type { SessionCampaignPage } from './session-table-query-owner';
@@ -53,6 +57,7 @@
     campaignChildren?: ReadonlyMap<string, SessionCampaignPage>;
     columnVisibility: TableVisibilityState;
     hasMoreRows?: boolean;
+    initialExpanded?: ExpandedState;
     initialSurfaceMode?: Exclude<SessionSurfaceMode, 'pending'>;
     loading?: boolean;
     loadingMoreRows?: boolean;
@@ -76,6 +81,7 @@
     campaignChildren = new Map(),
     columnVisibility,
     hasMoreRows = false,
+    initialExpanded = {},
     loading = false,
     loadingMoreRows = false,
     onClearFilters,
@@ -95,7 +101,7 @@
     totalRows,
   }: Props = $props();
 
-  let expanded = $state<ExpandedState>({});
+  let expanded = $state<ExpandedState>(untrack(() => initialExpanded));
   let mode = $state<SessionSurfaceMode>(untrack(() => initialSurfaceMode));
   let scrollTop = $state(0);
   let viewportHeight = $state(520);
@@ -186,6 +192,9 @@
     const desc = current?.id === id ? !current.desc : sessionSortDescendingByDefault(id);
     onSortingChange([{ desc, id }]);
   };
+  const changeSortColumn = (id: SessionColumnId): void => {
+    onSortingChange(sessionSortForColumnChange(sorting, id));
+  };
 
   const setColumnVisible = (id: SessionColumnId, visible: boolean): void => {
     onColumnVisibilityChange((current) => ({ ...current, [id]: visible }));
@@ -199,8 +208,8 @@
     }
   };
 
-  const onRowKeydown = (event: KeyboardEvent, row: SessionPresentationRow, index: number): void => {
-    if (event.key === 'Enter' || event.key === ' ') {
+  const onRowKeydown = (event: KeyboardEvent, row: SessionPresentationRow, index: number, activate = true): void => {
+    if (shouldSelectSessionRowForKey(event.key, !activate)) {
       event.preventDefault();
       onSelect(row);
       return;
@@ -295,7 +304,7 @@
             <select
               aria-label="Sort mobile session summaries"
               class={select}
-              onchange={(event) => changeSort(event.currentTarget.value as SessionColumnId)}
+              onchange={(event) => changeSortColumn(event.currentTarget.value as SessionColumnId)}
               value={activeSort.id}
             >
               {#each sessionTableColumns as entry (entry.id)}
@@ -399,10 +408,13 @@
         {/if}
         {#each virtual.rows as virtualRow (virtualRow.row.id)}
           {@const mobileSession = projectSessionCell(virtualRow.row.original, 'session', searchQuery)}
-          {@const mobileValue = apiValuePresentation(virtualRow.row.original)}
+          {@const mobileValue = projectSessionCell(virtualRow.row.original, 'cost', searchQuery)}
+          {@const mobileFresh = projectSessionCell(virtualRow.row.original, 'fresh', searchQuery)}
+          {@const mobileCache = projectSessionCell(virtualRow.row.original, 'cache', searchQuery)}
+          {@const mobileDuration = projectSessionCell(virtualRow.row.original, 'duration', searchQuery)}
           <li
             aria-posinset={String(virtualRow.index + 1)}
-            aria-setsize={String(totalRows ?? model.rows.length)}
+            aria-setsize={String(Math.max(totalRows ?? 0, model.rows.length))}
             class={mobileRow}
             data-depth={virtualRow.row.depth}
             data-session-row-height="188"
@@ -422,10 +434,13 @@
                 />
               </header>
               <button
+                aria-label={mobileSession.kind === 'session'
+                  ? `Inspect session: ${mobileSession.segments.map(({ text }) => text).join('')}`
+                  : undefined}
                 class={mobileOpen}
                 data-session-index={virtualRow.index}
                 onclick={() => onSelect(virtualRow.row.original)}
-                onkeydown={(event) => onRowKeydown(event, virtualRow.row.original, virtualRow.index)}
+                onkeydown={(event) => onRowKeydown(event, virtualRow.row.original, virtualRow.index, false)}
                 tabindex="0"
                 type="button"
               >
@@ -440,15 +455,15 @@
                     {/each}
                   {/if}
                 </span>
-                <span title={virtualRow.row.original.usageUnavailable ? undefined : mobileValue.title}>
-                  {virtualRow.row.original.usageUnavailable ? '—' : mobileValue.label}
-                </span>
+                {#if mobileValue.kind === 'value'}
+                  <span title={mobileValue.title}>{mobileValue.label}</span>
+                {/if}
               </button>
               <div>
                 <button
                   class={controlButton}
                   onclick={() => onFieldFilter('project', virtualRow.row.original.projectKey)}
-                  title={`Filter by ${virtualRow.row.original.projectLabel === '(unknown)' ? 'No project' : virtualRow.row.original.projectLabel}`}
+                  title={`Filter by project ${virtualRow.row.original.projectLabel}`}
                   type="button"
                 >
                   {virtualRow.row.original.projectLabel === '(unknown)' ? 'No project' : virtualRow.row.original.projectLabel}
@@ -456,21 +471,28 @@
                 <button
                   class={controlButton}
                   onclick={() => onFieldFilter('model', virtualRow.row.original.modelKey)}
-                  title={`Filter by ${virtualRow.row.original.modelKey}`}
+                  title={`Filter by model ${virtualRow.row.original.modelKey}`}
                   type="button"
                 >
                   {virtualRow.row.original.modelLabel}
                 </button>
                 {#if virtualRow.row.getCanExpand()}
-                  <button class={controlButton} onclick={() => toggleExpanded(virtualRow.row.original)} type="button">
+                  <button
+                    class={controlButton}
+                    onclick={() => toggleExpanded(virtualRow.row.original)}
+                    title={virtualRow.row.getIsExpanded() ? 'Collapse campaign' : 'Expand campaign'}
+                    type="button"
+                  >
                     {virtualRow.row.getIsExpanded() ? 'Hide children' : 'Show children'}
                   </button>
                 {/if}
               </div>
               <footer class={mobileMeta}>
-                {fmtCompact(virtualRow.row.original.freshTokens)}
-                fresh · {fmtCompact(virtualRow.row.original.tokCr)} cache ·
-                {fmtDuration(virtualRow.row.original.durationMs)}
+                {#if mobileFresh.kind === 'value' && mobileCache.kind === 'value' && mobileDuration.kind === 'value'}
+                  <span title={mobileFresh.title}>{mobileFresh.label} fresh</span>
+                  · <span title={mobileCache.title}>{mobileCache.label} cache</span>
+                  · <span title={mobileDuration.title}>{mobileDuration.label}</span>
+                {/if}
               </footer>
             </article>
           </li>

@@ -1,6 +1,7 @@
 import { rtkSavingsPct } from '@ai-usage/report-core/csv';
 import type { SessionPresentationRow } from '@ai-usage/report-core/session-query';
 import type { ColumnDef } from '@tanstack/table-core';
+import { lineDeltaLabel } from '../../../../dashboard-sort';
 import {
   isSessionColumnVisible,
   type SessionColumnId,
@@ -31,11 +32,6 @@ const rtkLabel = (row: SessionPresentationRow): string => {
   const percentage = rtkSavingsPct(row);
   return percentage === null ? '—' : `${percentage.toFixed(percentage >= 10 ? 0 : 1)}%`;
 };
-const lineLabel = (row: SessionPresentationRow): string =>
-  row.linesAdded === null || row.linesDeleted === null
-    ? '—'
-    : `+${fmtNum(row.linesAdded)} /−${fmtNum(row.linesDeleted)}`;
-
 const column = (
   id: SessionColumnId,
   header: string,
@@ -116,24 +112,28 @@ export const sessionTableColumns = [
     align: 'right',
     format: rtkLabel,
     label: 'RTK savings',
-    title: 'RTK saved-token percentage',
+    title: 'RTK saved-token percentage; hover a cell for matched command details',
     widthPx: 86,
   }),
   column('cost', 'API value', {
     align: 'right',
     format: (row) => unavailable(row, apiValuePresentation(row).label),
+    title:
+      'Estimated API-equivalent value at standard prices. Values prefixed with ≥ are lower bounds because some model prices are unavailable.',
     widthPx: 92,
   }),
   column('actual', '$Actual', {
     align: 'right',
     format: (row) => unavailable(row, fmtMoney(row.costActual)),
     label: 'Actual cost',
+    title: 'Out-of-pocket spend reported by harnesses',
     widthPx: 88,
   }),
   column('quota', '$Sub', {
     align: 'right',
     format: (row) => unavailable(row, fmtMoney(row.costQuota)),
     label: 'Subscription value',
+    title: 'Cursor export value covered by the subscription quota',
     widthPx: 86,
   }),
   column('duration', 'Time', {
@@ -144,11 +144,11 @@ export const sessionTableColumns = [
     widthPx: 96,
   }),
   column('calls', 'Calls', { align: 'right', format: (row) => count(row, row.calls), widthPx: 76 }),
-  column('turns', 'Turns', { align: 'right', format: (row) => fmtNum(row.turns), widthPx: 76 }),
+  column('turns', 'Turns', { align: 'right', format: (row) => count(row, row.turns), widthPx: 76 }),
   column('tools', 'Tools', { align: 'right', format: (row) => count(row, row.tools), widthPx: 76 }),
   column('lines', 'Lines', {
     align: 'right',
-    format: lineLabel,
+    format: lineDeltaLabel,
     label: 'Lines changed',
     widthPx: 96,
   }),

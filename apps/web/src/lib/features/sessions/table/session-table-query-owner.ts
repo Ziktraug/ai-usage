@@ -73,6 +73,7 @@ export class SessionTableRevisionExpiredError extends Error {
 
 const PREPARE_OPERATION = 'prepare';
 const LOAD_MORE_OPERATION = 'load-more';
+const REVISION_REPLAY_OPERATION = 'revision-replay';
 const campaignOperation = (campaignKey: string): string => `campaign:${campaignKey}`;
 const pageItemKey = (item: SessionPageItem): string => item.campaignKey;
 const rowKey = (row: SessionPresentationRow): string => row.rowId;
@@ -133,13 +134,18 @@ export const createSessionTableQueryOwner = (options: {
   readonly queryClient: QueryClient;
 }): SessionTableQueryOwner => {
   const operationOwner = createSessionQueryOperationOwner();
+  let campaignPageDepth = new Map<string, number>();
+  let loadedPageDepth = 0;
   let revisionRefresh: SessionTableRevisionRefresh | undefined;
   let state: SessionTableQueryState | undefined;
+  let suppressStateChange = false;
 
   const publish = (nextState: SessionTableQueryState): SessionTableQueryState => {
     if (!operationOwner.isClosed()) {
       state = nextState;
-      options.onStateChange?.(nextState);
+      if (!suppressStateChange) {
+        options.onStateChange?.(nextState);
+      }
     }
     return nextState;
   };
@@ -152,6 +158,25 @@ export const createSessionTableQueryOwner = (options: {
         ...webQueryPolicies.immutableRevision,
         queryFn: async ({ signal }) => await options.client.page(request, signal),
         queryKey: query.queryKey,
+      });
+      if (!result.ok) {
+        throw errorFromResult(result);
+      }
+      return result.data;
+    } finally {
+      unlink();
+    }
+  };
+
+  const readCampaignPage = async (request: SessionCampaignChildrenRequest, operation: SessionQueryOperationContext) => {
+    const query = sessionCampaignChildrenQueryOptions(options.client, request, { browser: true });
+    const queryKey = [...query.queryKey, request.query.cursor ?? 'first'] as const;
+    const unlink = linkOperationAbort(operation, options.queryClient, queryKey);
+    try {
+      const result = await options.queryClient.fetchQuery({
+        ...webQueryPolicies.immutableRevision,
+        queryFn: async ({ signal }) => await options.client.campaignChildren(request, signal),
+        queryKey,
       });
       if (!result.ok) {
         throw errorFromResult(result);
@@ -198,8 +223,72 @@ export const createSessionTableQueryOwner = (options: {
     if (!operationOwner.canCommit(prepared.ticket)) {
       return false;
     }
+    loadedPageDepth = 1;
+    campaignPageDepth = new Map();
     publish(prepared.state);
     return true;
+  };
+
+  const replayLoadedDepth = async (
+    topLevelDepth: number,
+    campaignDepth: ReadonlyMap<string, number>,
+  ): Promise<void> => {
+    await operationOwner.run(REVISION_REPLAY_OPERATION, async (operation) => {
+      for (let pageIndex = 1; pageIndex < topLevelDepth; pageIndex += 1) {
+        const current = state;
+        if (!(current?.nextCursor && operation.owns())) {
+          break;
+        }
+        const request = parseSessionQueryRequest({ ...current.query, cursor: current.nextCursor });
+        const page = await readPage(request, operation);
+        if (!(operation.owns() && state?.query.revision === request.revision)) {
+          return;
+        }
+        loadedPageDepth += 1;
+        publish({
+          ...state,
+          itemCount: page.itemCount,
+          items: appendUnique(state.items, page.items, pageItemKey),
+          loadingMore: false,
+          nextCursor: page.nextCursor,
+          sessionCount: page.sessionCount,
+        });
+      }
+
+      for (const [campaignKey, depth] of campaignDepth) {
+        if (!(operation.owns() && state?.items.some((item) => item.campaignKey === campaignKey))) {
+          continue;
+        }
+        let items: readonly SessionPresentationRow[] = [];
+        let nextCursor: string | null = null;
+        let totalCount = 0;
+        let replayedPages = 0;
+        for (let pageIndex = 0; pageIndex < depth; pageIndex += 1) {
+          if (!(operation.owns() && state)) {
+            return;
+          }
+          const request = parseSessionCampaignChildrenRequest({
+            campaignKey,
+            query: parseSessionQueryRequest({ ...state.query, cursor: nextCursor }),
+          });
+          const page = await readCampaignPage(request, operation);
+          items = appendUnique(items, page.items, rowKey);
+          nextCursor = page.nextCursor;
+          totalCount = page.itemCount;
+          replayedPages += 1;
+          if (nextCursor === null) {
+            break;
+          }
+        }
+        if (!(operation.owns() && state)) {
+          return;
+        }
+        const children = new Map(state.campaignChildren);
+        children.set(campaignKey, { items, loading: false, nextCursor, totalCount });
+        campaignPageDepth.set(campaignKey, replayedPages);
+        publish({ ...state, campaignChildren: children });
+      }
+    });
   };
 
   const recoverExpiredRevision = async (cleanup: () => void): Promise<boolean> => {
@@ -208,20 +297,49 @@ export const createSessionTableQueryOwner = (options: {
       cleanup();
       return false;
     }
+    const preservedCampaignDepth = new Map(campaignPageDepth);
+    const preservedPageDepth = loadedPageDepth;
+    suppressStateChange = true;
     let outcome: ServedReportRefreshOutcome<ServedRevisionDescriptor>;
     try {
       outcome = await revisionRefresh(scopeFromQuery(current.query));
     } catch (error) {
+      state = current;
+      campaignPageDepth = preservedCampaignDepth;
+      loadedPageDepth = preservedPageDepth;
+      suppressStateChange = false;
       cleanup();
       throw error;
     }
     if (outcome.status === 'failed-preserving-previous') {
+      state = current;
+      campaignPageDepth = preservedCampaignDepth;
+      loadedPageDepth = preservedPageDepth;
+      suppressStateChange = false;
       cleanup();
       throw outcome.error;
     }
     if (outcome.status === 'superseded') {
+      state = current;
+      campaignPageDepth = preservedCampaignDepth;
+      loadedPageDepth = preservedPageDepth;
+      suppressStateChange = false;
       cleanup();
       return false;
+    }
+    try {
+      await replayLoadedDepth(preservedPageDepth, preservedCampaignDepth);
+    } catch (error) {
+      state = current;
+      campaignPageDepth = preservedCampaignDepth;
+      loadedPageDepth = preservedPageDepth;
+      suppressStateChange = false;
+      cleanup();
+      throw error;
+    }
+    suppressStateChange = false;
+    if (state) {
+      options.onStateChange?.(state);
     }
     return true;
   };
@@ -257,6 +375,8 @@ export const createSessionTableQueryOwner = (options: {
           if (!(operation.owns() && state?.query.revision === request.revision)) {
             return state;
           }
+          operation.release();
+          loadedPageDepth += 1;
           return publish({
             ...state,
             itemCount: page.itemCount,
@@ -308,27 +428,20 @@ export const createSessionTableQueryOwner = (options: {
             cursor: existing?.nextCursor ?? null,
           }),
         } satisfies SessionCampaignChildrenRequest);
-        const query = sessionCampaignChildrenQueryOptions(options.client, request, { browser: true });
-        const unlink = linkOperationAbort(operation, options.queryClient, query.queryKey);
         try {
-          const result = await options.queryClient.fetchQuery({
-            ...webQueryPolicies.immutableRevision,
-            queryFn: async ({ signal }) => await options.client.campaignChildren(request, signal),
-            queryKey: query.queryKey,
-          });
-          if (!result.ok) {
-            throw errorFromResult(result);
-          }
+          const page = await readCampaignPage(request, operation);
           if (!(operation.owns() && state)) {
             return state;
           }
+          operation.release();
           const children = new Map(state.campaignChildren);
           children.set(campaignKey, {
-            items: appendUnique(existing?.items ?? [], result.data.items, rowKey),
+            items: appendUnique(existing?.items ?? [], page.items, rowKey),
             loading: false,
-            nextCursor: result.data.nextCursor,
-            totalCount: result.data.itemCount,
+            nextCursor: page.nextCursor,
+            totalCount: page.itemCount,
           });
+          campaignPageDepth.set(campaignKey, (campaignPageDepth.get(campaignKey) ?? 0) + 1);
           return publish({ ...state, campaignChildren: children });
         } catch (error) {
           if (!(error instanceof SessionTableRevisionExpiredError && !recoveredRevision)) {
@@ -355,7 +468,6 @@ export const createSessionTableQueryOwner = (options: {
           }
           return await loadCampaignChildrenAttempt(campaignKey, true);
         } finally {
-          unlink();
           if (operation.owns() && state?.campaignChildren.get(campaignKey)?.loading) {
             const children = new Map(state.campaignChildren);
             if (existing) {
