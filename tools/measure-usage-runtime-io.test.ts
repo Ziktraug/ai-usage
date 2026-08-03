@@ -53,7 +53,7 @@ describe('usage runtime I/O measurement helpers', () => {
       AI_USAGE_HOME: '/runtime/home',
       AI_USAGE_LOG_DIR: '/runtime/logs',
       AI_USAGE_ROOT_DIR: '/repo',
-      AI_USAGE_SVELTEKIT_MODE: 'dev',
+      AI_USAGE_SVELTEKIT_PHASE: 'dev',
       AI_USAGE_TEMP_ROOT: '/runtime/tmp',
       BROWSER: 'none',
       CI: '1',

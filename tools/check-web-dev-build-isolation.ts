@@ -188,7 +188,7 @@ export const createWebBuildIsolationEnvironment = ({
   const environment: Record<string, string> = {
     AI_USAGE_LOG_DIR: path.join(runtimeRoot, 'logs'),
     AI_USAGE_ROOT_DIR: repositoryDirectory,
-    AI_USAGE_SVELTEKIT_MODE: 'dev',
+    AI_USAGE_SVELTEKIT_PHASE: 'dev',
     BROWSER: 'none',
     CI: '1',
     HOME: path.join(runtimeRoot, 'home'),

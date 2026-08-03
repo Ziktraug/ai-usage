@@ -21,7 +21,7 @@ export const createDemoEnvironment = (
   executablePath: string = process.env.PATH ?? '',
 ): DemoEnvironment => ({
   AI_USAGE_ROOT_DIR: temporaryHome,
-  AI_USAGE_SVELTEKIT_MODE: 'dev',
+  AI_USAGE_SVELTEKIT_PHASE: 'dev',
   BROWSER: 'none',
   HOME: temporaryHome,
   NO_COLOR: '1',

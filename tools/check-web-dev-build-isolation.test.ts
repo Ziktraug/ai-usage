@@ -83,7 +83,7 @@ describe('web dev/build isolation helpers', () => {
     expect(environment).toMatchObject({
       AI_USAGE_LOG_DIR: path.join(fixture, 'logs'),
       AI_USAGE_ROOT_DIR: '/synthetic/repository',
-      AI_USAGE_SVELTEKIT_MODE: 'dev',
+      AI_USAGE_SVELTEKIT_PHASE: 'dev',
       HOME: path.join(fixture, 'home'),
       PATH: '/synthetic/bin',
       PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH: '/synthetic/chrome',
