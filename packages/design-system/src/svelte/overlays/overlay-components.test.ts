@@ -56,6 +56,9 @@ describe('Svelte overlay components', () => {
       '{trapFocus}',
       'onOpenChange(details.open)',
       '<Portal>',
+      'modal !== false',
+      '<Drawer.Backdrop',
+      'pointer-events: auto',
       '<Drawer.Positioner>',
     ]) {
       expect(source).toContain(contract);
@@ -86,6 +89,29 @@ describe('Svelte overlay components', () => {
     expect(source).toContain("import Drawer from './drawer.svelte'");
     expect(source).toContain("import Popover from './popover.svelte'");
     expect(source).toContain("import Tooltip from './tooltip.svelte'");
+    expect(source).toContain('closeOnInteractOutside={true}');
+    expect(source).toContain('closeOnInteractOutside={false}');
+    expect(source).toContain('modal={true}');
+    expect(source).toContain('modal={false}');
+    expect(source).toContain('trapFocus={true}');
+    expect(source).toContain('trapFocus={false}');
+    expect(source).toContain('Outside overlay target');
+    expect(source).toContain('Popover fixture action');
     expect(source).toContain('<CellWithProvenance {facts}>');
+  });
+
+  test('the bounded system-Chrome proof owns error assertions and all-settled cleanup', async () => {
+    const source = await readOverlay('overlays.browser.ts');
+    for (const contract of [
+      "Bun.which('google-chrome')",
+      'CHROME_LAUNCH_TIMEOUT_MS',
+      'setDefaultNavigationTimeout(ACTION_TIMEOUT_MS)',
+      'setDefaultTimeout(ACTION_TIMEOUT_MS)',
+      'browserErrors.length',
+      'Promise.allSettled',
+      'Drawer/Popover/Tooltip focus, Escape, outside, lazy, portal, reduced-motion, provenance, and cleanup parity',
+    ]) {
+      expect(source).toContain(contract);
+    }
   });
 });

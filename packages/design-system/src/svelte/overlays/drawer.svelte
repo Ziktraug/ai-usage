@@ -41,6 +41,9 @@
   {trapFocus}
 >
   <Portal>
+    {#if modal !== false}
+      <Drawer.Backdrop />
+    {/if}
     <Drawer.Positioner>
       <Drawer.Content aria-label={contentAriaLabel} class={contentClass ?? drawerClass}>
         {@render children()}
@@ -50,6 +53,13 @@
 </Drawer.Root>
 
 <style>
+  :global([data-scope="drawer"][data-part="backdrop"]) {
+    position: fixed;
+    inset: 0;
+    z-index: 39;
+    pointer-events: auto;
+  }
+
   @media (prefers-reduced-motion: reduce) {
     :global([data-scope="drawer"][data-part="content"]) {
       animation: none !important;
