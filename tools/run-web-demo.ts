@@ -21,9 +21,9 @@ export const createDemoEnvironment = (
   executablePath: string = process.env.PATH ?? '',
 ): DemoEnvironment => ({
   AI_USAGE_ROOT_DIR: temporaryHome,
+  AI_USAGE_SVELTEKIT_MODE: 'dev',
   BROWSER: 'none',
   HOME: temporaryHome,
-  NITRO_DEV_RUNNER: 'self',
   NO_COLOR: '1',
   PATH: executablePath,
   TMPDIR: path.join(temporaryHome, 'tmp'),

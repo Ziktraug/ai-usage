@@ -515,8 +515,7 @@ const createProductionRuntimeFixture = async (
       AI_USAGE_TEMP_ROOT: temporaryDirectory,
       HOME: homeDirectory,
       HOST: '0.0.0.0',
-      NITRO_HOST: '0.0.0.0',
-      NITRO_PORT: String(webPort),
+      IDLE_TIMEOUT: '45',
       PORT: String(webPort),
       TMPDIR: temporaryDirectory,
       TURBO_CACHE_DIR: path.join(homeDirectory, 'turbo-cache'),
@@ -578,7 +577,6 @@ const runRootDevelopmentSmoke = async (): Promise<void> => {
         env: {
           ...fixture.childEnvironment,
           HOST: LOOPBACK_HOST,
-          NITRO_HOST: LOOPBACK_HOST,
         },
         port: webPort,
         shutdownSignal: 'SIGINT',

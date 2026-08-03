@@ -188,10 +188,10 @@ export const createWebBuildIsolationEnvironment = ({
   const environment: Record<string, string> = {
     AI_USAGE_LOG_DIR: path.join(runtimeRoot, 'logs'),
     AI_USAGE_ROOT_DIR: repositoryDirectory,
+    AI_USAGE_SVELTEKIT_MODE: 'dev',
     BROWSER: 'none',
     CI: '1',
     HOME: path.join(runtimeRoot, 'home'),
-    NITRO_DEV_RUNNER: 'self',
     NO_COLOR: '1',
     PATH: inheritedEnvironment.PATH ?? '',
     TMPDIR: path.join(runtimeRoot, 'tmp'),
@@ -601,7 +601,7 @@ export const runWebDevBuildIsolationCheck = async (
   const repositoryDirectory = options.repositoryDirectory ?? path.resolve(import.meta.dirname, '..');
   const webDirectory = path.join(repositoryDirectory, 'apps', 'web');
   const mode = options.mode ?? 'isolated';
-  const devOutputDirectory = path.join(webDirectory, mode === 'isolated' ? '.output-dev' : '.output');
+  const devOutputDirectory = path.join(webDirectory, '.svelte-kit', 'dev');
   const buildLockPath = path.join(webDirectory, '.output-build', 'build.lock');
   const runtimeRoot = await mkdtemp(
     path.join(options.runtimeParentDirectory ?? tmpdir(), 'plan052-web-build-isolation-'),

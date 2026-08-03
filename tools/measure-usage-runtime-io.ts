@@ -1272,7 +1272,7 @@ const copyDependencies = async (
     environment,
   );
   await Promise.all(
-    ['.nitro', '.vite', '.vite-temp'].map((entry) =>
+    ['.vite', '.vite-temp'].map((entry) =>
       rm(path.join(sourceDirectory, 'node_modules', entry), { force: true, recursive: true }),
     ),
   );
@@ -2072,19 +2072,6 @@ const measureConcurrentBuild = async (
   return { correctness, io };
 };
 
-const existingDirectory = async (...candidates: readonly string[]): Promise<string | undefined> => {
-  for (const candidate of candidates) {
-    try {
-      if ((await lstat(candidate)).isDirectory()) {
-        return candidate;
-      }
-    } catch {
-      // The next known output convention may exist instead.
-    }
-  }
-  return;
-};
-
 const readClockTicksPerSecond = async (
   repositoryDirectory: string,
   environment: Record<string, string>,
@@ -2437,10 +2424,7 @@ const runUsageRuntimeMeasurementScenarios = async (
   const runningEngineProcess = engineProcess;
   const runningWebProcess = webProcess;
   const runningSnapshotStream = snapshotStreamState.current;
-  const devOutputDirectory = await existingDirectory(
-    path.join(webDirectory, '.output-dev'),
-    path.join(webDirectory, '.output'),
-  );
+  const devOutputDirectory = path.join(webDirectory, '.svelte-kit', 'dev');
   const engineTarget = path.join(sourceDirectory, 'apps', 'usage-engine', 'src', 'main.ts');
   const engineTargetStat = await stat(engineTarget);
   const engineTargetContents = new Uint8Array(await Bun.file(engineTarget).arrayBuffer());

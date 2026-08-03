@@ -53,11 +53,11 @@ describe('usage runtime I/O measurement helpers', () => {
       AI_USAGE_HOME: '/runtime/home',
       AI_USAGE_LOG_DIR: '/runtime/logs',
       AI_USAGE_ROOT_DIR: '/repo',
+      AI_USAGE_SVELTEKIT_MODE: 'dev',
       AI_USAGE_TEMP_ROOT: '/runtime/tmp',
       BROWSER: 'none',
       CI: '1',
       HOME: '/runtime/home',
-      NITRO_DEV_RUNNER: 'self',
       NO_COLOR: '1',
       PATH: '/fixture/bin',
       PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH: '/fixture/chromium',
@@ -97,7 +97,7 @@ describe('usage runtime I/O measurement helpers', () => {
       collectionPathMutationsAreAttributable(['logs/wide-events-2026-07-31.ndjson', 'store/usage.sqlite-wal']),
     ).toBe(true);
     expect(
-      collectionPathMutationsAreAttributable(['source/apps/web/.output-dev/server.js', 'store/usage.sqlite-wal']),
+      collectionPathMutationsAreAttributable(['source/apps/web/.svelte-kit/dev/server.js', 'store/usage.sqlite-wal']),
     ).toBe(false);
     expect(collectionPathMutationsAreAttributable(['logs/wide-events-2026-07-31.ndjson'])).toBe(false);
   });

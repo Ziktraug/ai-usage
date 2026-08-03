@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
+import { MAX_PORTABLE_USAGE_BYTES } from '@ai-usage/report-core/portable-usage';
 import { createUsageEngineControlClient } from '@ai-usage/usage-engine-control/client';
 import {
   assertUsageEngineRendezvousTarget,
@@ -83,8 +84,24 @@ const absolutePath = (value: string, label: string): string => {
   return path.resolve(value);
 };
 
+const untrustedAdapterEnvironmentKeys = new Set([
+  'ADDRESS_HEADER',
+  'BODY_SIZE_LIMIT',
+  'HOST_HEADER',
+  'ORIGIN',
+  'PORT_HEADER',
+  'PROTOCOL_HEADER',
+  'SOCKET_PATH',
+  'XFF_DEPTH',
+]);
+
 const definedEnvironment = (environment: NodeJS.ProcessEnv): Record<string, string> =>
-  Object.fromEntries(Object.entries(environment).filter((entry): entry is [string, string] => entry[1] !== undefined));
+  Object.fromEntries(
+    Object.entries(environment).filter(
+      (entry): entry is [string, string] =>
+        entry[1] !== undefined && !entry[0].startsWith('NITRO_') && !untrustedAdapterEnvironmentKeys.has(entry[0]),
+    ),
+  );
 
 const resolveProductionRuntimePaths = (
   rootDirectoryValue: string,
@@ -133,9 +150,10 @@ export const createProductionEnvironment = (
     AI_USAGE_LOG_DIR: runtimePaths.logDirectory,
     AI_USAGE_ROOT_DIR: runtimePaths.configCwd,
     AI_USAGE_TEMP_ROOT: runtimePaths.temporaryRoot,
+    BODY_SIZE_LIMIT: String(MAX_PORTABLE_USAGE_BYTES),
     HOME: runtimePaths.homeDirectory,
     HOST: LOOPBACK_HOST,
-    NITRO_HOST: LOOPBACK_HOST,
+    IDLE_TIMEOUT: '45',
     NODE_ENV: 'production',
     TMPDIR: runtimePaths.temporaryRoot,
     VITE_AI_USAGE_DEMO: '0',

@@ -53,7 +53,7 @@ describe('web dev/build isolation helpers', () => {
 
   test('requires every recorded dev output inode while allowing new output', async () => {
     const fixture = await createFixture();
-    const retainedFile = path.join(fixture, 'nitro', 'server.mjs');
+    const retainedFile = path.join(fixture, 'generated', 'server.js');
     const replacedFile = path.join(fixture, 'vite', 'cache.bin');
     await Promise.all([mkdir(path.dirname(retainedFile), { recursive: true }), mkdir(path.dirname(replacedFile))]);
     await Promise.all([writeFile(retainedFile, 'server\n'), writeFile(replacedFile, 'cache\n')]);
@@ -83,6 +83,7 @@ describe('web dev/build isolation helpers', () => {
     expect(environment).toMatchObject({
       AI_USAGE_LOG_DIR: path.join(fixture, 'logs'),
       AI_USAGE_ROOT_DIR: '/synthetic/repository',
+      AI_USAGE_SVELTEKIT_MODE: 'dev',
       HOME: path.join(fixture, 'home'),
       PATH: '/synthetic/bin',
       PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH: '/synthetic/chrome',
