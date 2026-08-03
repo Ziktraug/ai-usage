@@ -24,7 +24,7 @@ import {
 import { createFileRoute } from '@tanstack/solid-router';
 import { createMemo, createSignal, For, Show } from 'solid-js';
 import { enforceReportOnlyDemoNavigation } from '../demo-route-guard';
-import { fmtDate, fmtNum } from '../shared';
+import { fmtDate, fmtNum } from '../lib/foundation/presentation/format';
 import { useSourceControl } from '../source-control-context';
 import { presentSourceProgress, presentSourceState, sourceToneClass } from '../source-control-presentation';
 

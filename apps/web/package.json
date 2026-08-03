@@ -26,6 +26,7 @@
     "@tanstack/solid-start": "1.168.26",
     "@tanstack/solid-table": "^8.21.3",
     "@tanstack/svelte-query": "6.1.38",
+    "@tanstack/table-core": "8.21.3",
     "effect": "^3.21.4",
     "lucide-solid": "^1.25.0",
     "solid-js": "^1.9.13",
