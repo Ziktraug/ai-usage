@@ -5,7 +5,9 @@ const webClientModuleManifestVersion = 1 as const;
 const serverModulePattern = /\.server(?:\.|\/|\?|$)/u;
 
 interface WebClientModuleManifestChunk {
+  dynamicImports: readonly string[];
   fileName: string;
+  imports: readonly string[];
   moduleIds: readonly string[];
   modules: readonly string[];
 }
@@ -35,6 +37,8 @@ const hasText = (value: unknown): value is string => typeof value === 'string' &
 
 const isNonEmptyStringArray = (value: unknown): value is readonly string[] =>
   Array.isArray(value) && value.length > 0 && value.every(hasText);
+
+const isStringArray = (value: unknown): value is readonly string[] => Array.isArray(value) && value.every(hasText);
 
 const sameStringSet = (left: readonly string[], right: readonly string[]): boolean => {
   if (left.length !== right.length) {
@@ -144,7 +148,14 @@ export const parseWebClientModuleManifest = (text: string): WebClientModuleManif
     if (!(isNonEmptyStringArray(chunk.moduleIds) && isNonEmptyStringArray(chunk.modules))) {
       throw new Error(`Web client module manifest chunk ${chunk.fileName} must contain moduleIds and modules.`);
     }
+    if (!(isStringArray(chunk.imports) && isStringArray(chunk.dynamicImports))) {
+      throw new Error(
+        `Web client module manifest chunk ${chunk.fileName} must contain imports and dynamicImports arrays.`,
+      );
+    }
     if (
+      new Set(chunk.imports).size !== chunk.imports.length ||
+      new Set(chunk.dynamicImports).size !== chunk.dynamicImports.length ||
       new Set(chunk.moduleIds).size !== chunk.moduleIds.length ||
       new Set(chunk.modules).size !== chunk.modules.length
     ) {
@@ -154,7 +165,9 @@ export const parseWebClientModuleManifest = (text: string): WebClientModuleManif
       throw new Error(`Web client module manifest chunk ${chunk.fileName} has incomplete module metadata.`);
     }
     return {
+      dynamicImports: chunk.dynamicImports,
       fileName: chunk.fileName,
+      imports: chunk.imports,
       moduleIds: chunk.moduleIds,
       modules: chunk.modules,
     };
@@ -176,7 +189,8 @@ export const scanWebClientModuleManifest = (
 ): readonly WebClientManifestViolation[] => {
   const violations: WebClientManifestViolation[] = [];
   for (const chunk of manifest.chunks) {
-    for (const moduleId of chunk.moduleIds) {
+    const clientReferences = new Set([...chunk.moduleIds, ...chunk.modules, ...chunk.imports, ...chunk.dynamicImports]);
+    for (const moduleId of clientReferences) {
       for (const rule of forbiddenModuleRules) {
         if (rule.matches(moduleId)) {
           violations.push({ chunk: chunk.fileName, moduleId, rule: rule.name });

@@ -6,7 +6,9 @@ export const webClientModuleManifestFormat = 'ai-usage-web-client-modules' as co
 export const webClientModuleManifestVersion = 1 as const;
 
 export interface WebClientModuleManifestChunk {
+  dynamicImports: readonly string[];
   fileName: string;
+  imports: readonly string[];
   moduleIds: readonly string[];
   modules: readonly string[];
 }
@@ -19,7 +21,9 @@ export interface WebClientModuleManifest {
 }
 
 interface ClientOutputChunk {
+  dynamicImports: readonly string[];
   fileName: string;
+  imports: readonly string[];
   moduleIds: readonly string[];
   modules: Readonly<Record<string, unknown>>;
   type: 'chunk';
@@ -29,6 +33,7 @@ type ClientOutputBundle = Readonly<Record<string, ClientOutputChunk | { type: 'a
 
 export interface WebClientModuleManifestPluginOptions {
   manifestFile: string;
+  root?: string;
 }
 
 const compareText = (left: string, right: string): number => {
@@ -58,7 +63,9 @@ export const createWebClientModuleManifest = (bundle: ClientOutputBundle, root: 
   chunks: Object.values(bundle)
     .filter((output): output is ClientOutputChunk => output.type === 'chunk')
     .map((chunk) => ({
+      dynamicImports: sortedModuleIds(chunk.dynamicImports, root),
       fileName: normalizeSeparators(chunk.fileName),
+      imports: sortedModuleIds(chunk.imports, root),
       moduleIds: sortedModuleIds(chunk.moduleIds, root),
       modules: sortedModuleIds(Object.keys(chunk.modules), root),
     }))
@@ -78,8 +85,8 @@ export const writeWebClientModuleManifest = async (
   await writeFile(manifestFile, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
 };
 
-export const webClientModuleManifest = ({ manifestFile }: WebClientModuleManifestPluginOptions): Plugin => {
-  let projectRoot = '';
+export const webClientModuleManifest = ({ manifestFile, root }: WebClientModuleManifestPluginOptions): Plugin => {
+  let projectRoot = root ?? '';
   return {
     apply: (_config, environment) => environment.command === 'build' && !environment.isSsrBuild,
     configResolved: (config) => {

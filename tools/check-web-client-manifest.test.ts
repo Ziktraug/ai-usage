@@ -16,7 +16,7 @@ afterEach(async () => {
 
 const manifestText = (modules: readonly string[]): string =>
   JSON.stringify({
-    chunks: [{ fileName: 'assets/entry.js', moduleIds: modules, modules }],
+    chunks: [{ dynamicImports: [], fileName: 'assets/entry.js', imports: [], moduleIds: modules, modules }],
     format: 'ai-usage-web-client-modules',
     target: 'client',
     version: 1,
@@ -98,7 +98,25 @@ describe('emitted Web client module manifest scanner', () => {
     expect(() =>
       parseWebClientModuleManifest(
         JSON.stringify({
-          chunks: [{ fileName: 'assets/entry.js', moduleIds: ['./a.ts'], modules: ['./b.ts'] }],
+          chunks: [{ fileName: 'assets/entry.js', moduleIds: ['./a.ts'], modules: ['./a.ts'] }],
+          format: 'ai-usage-web-client-modules',
+          target: 'client',
+          version: 1,
+        }),
+      ),
+    ).toThrow('must contain imports and dynamicImports arrays');
+    expect(() =>
+      parseWebClientModuleManifest(
+        JSON.stringify({
+          chunks: [
+            {
+              dynamicImports: [],
+              fileName: 'assets/entry.js',
+              imports: [],
+              moduleIds: ['./a.ts'],
+              modules: ['./b.ts'],
+            },
+          ],
           format: 'ai-usage-web-client-modules',
           target: 'client',
           version: 1,
