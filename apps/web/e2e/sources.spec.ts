@@ -254,7 +254,7 @@ test('renders only deviation cards beside the healthy-source summary', async ({ 
   });
 
   await openHydratedSources(page);
-  const sourceCards = page.locator('[data-source-card]');
+  const sourceCards = page.locator('main [data-source-card]');
   await expect(sourceCards).toHaveCount(1);
   await expect(sourceCards.getByRole('heading', { level: 3, name: 'Codex sessions' })).toBeVisible();
   await expect(sourceCards.getByText('Failed', { exact: true })).toBeVisible();
