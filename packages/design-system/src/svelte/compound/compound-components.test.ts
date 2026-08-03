@@ -1,14 +1,18 @@
 import { describe, expect, test } from 'bun:test';
-import { readdir, readFile } from 'node:fs/promises';
-import { dirname, resolve } from 'node:path';
+import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { dirname, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { svelte } from '@sveltejs/vite-plugin-svelte';
+import { chromium } from 'playwright';
+import { createServer } from 'vite';
 import { multiSelectSummary } from './multi-select';
 import { nextSegmentValue } from './segmented-control';
 import { keepTabPanelInTabOrder } from './tab-panel';
 
 const compoundDirectory = dirname(fileURLToPath(import.meta.url));
 const repositoryDirectory = resolve(compoundDirectory, '../../../../..');
-const SOLID_RUNTIME_IMPORT_PATTERN = /(?:from|import)s*['"]solid-js/u;
+const SOLID_RUNTIME_IMPORT_PATTERN = /(?:\bfrom\s*|\bimport\s*)['"]solid-js/u;
+const BROWSER_PROOF_TIMEOUT_MS = 15_000;
 
 const readCompound = async (name: string): Promise<string> => readFile(resolve(compoundDirectory, name), 'utf8');
 
@@ -43,9 +47,129 @@ describe('Svelte compound controls', () => {
     }
   });
 
+  test(
+    'the real fixture preserves keyboard, portal, form, and lazy-panel behavior in Chromium',
+    async () => {
+      const temporaryDirectory = await mkdtemp(resolve(compoundDirectory, '.browser-'));
+      const fixturePath = resolve(compoundDirectory, 'compound.fixture.svelte');
+      const fixtureUrlPath = relative(repositoryDirectory, temporaryDirectory);
+      await writeFile(
+        resolve(temporaryDirectory, 'index.html'),
+        '<div id="app"></div><script type="module" src="./main.ts"></script>',
+      );
+      await writeFile(
+        resolve(temporaryDirectory, 'main.ts'),
+        `import { mount } from 'svelte'; import '@ai-usage/design-system/styles.css'; import Fixture from ${JSON.stringify(
+          fixturePath,
+        )}; mount(Fixture, { target: document.querySelector('#app') });`,
+      );
+
+      const server = await createServer({
+        configFile: false,
+        logLevel: 'silent',
+        plugins: [svelte()],
+        root: repositoryDirectory,
+        server: { host: '127.0.0.1', port: 0, strictPort: false },
+      });
+      let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
+      const chromeExecutable = Bun.which('google-chrome');
+      if (!chromeExecutable) {
+        throw new Error('The D3 browser proof requires the installed google-chrome executable.');
+      }
+      try {
+        await server.listen();
+        browser = await chromium.launch({ executablePath: chromeExecutable, headless: true });
+        const address = server.httpServer?.address();
+        if (!(address && typeof address === 'object')) {
+          throw new Error('The synthetic D3 Vite server did not expose a TCP address.');
+        }
+        const page = await browser.newPage();
+        page.setDefaultTimeout(2000);
+        await page.goto(`http://127.0.0.1:${address.port}/${fixtureUrlPath}/`);
+
+        const multiFixture = page.getByTestId('multi-select-fixture');
+        const multiTrigger = page.getByRole('combobox', { name: 'Filter fixture machines' });
+        await multiTrigger.focus();
+        await multiTrigger.press('ArrowDown');
+        await page
+          .locator('[data-scope="select"][data-part="item"][data-highlighted]', { hasText: 'Alpha workstation' })
+          .waitFor();
+        const selectContent = page.locator('[data-scope="select"][data-part="content"]');
+        await selectContent.press('Enter');
+        await page.waitForFunction(
+          () =>
+            document.querySelector('[data-testid="multi-select-fixture"]')?.getAttribute('data-selection') === 'alpha',
+        );
+        expect(await multiFixture.getAttribute('data-selection')).toBe('alpha');
+        expect(await multiTrigger.getAttribute('data-state')).toBe('open');
+        const hiddenAlphaOption = page.locator('select[name="fixture-machines"] option[value="alpha"]');
+        expect(await hiddenAlphaOption.evaluate((option) => Reflect.get(option, 'selected'))).toBe(true);
+        const positioner = page.locator('body > [data-scope="select"][data-part="positioner"]');
+        expect(await positioner.count()).toBe(1);
+        expect(await positioner.evaluate((element) => getComputedStyle(element).zIndex)).toBe('50');
+        await selectContent.press('Home');
+        await selectContent.press('Enter');
+        await page.waitForFunction(
+          () => document.querySelector('[data-testid="multi-select-fixture"]')?.getAttribute('data-selection') === '',
+        );
+        expect(await multiFixture.getAttribute('data-selection')).toBe('');
+        await page.keyboard.press('Escape');
+        await page.getByRole('button', { name: 'Toggle dynamic option' }).click();
+        await multiTrigger.click();
+        expect(
+          await page.locator('[data-scope="select"][data-part="item"]', { hasText: 'Gamma workstation' }).count(),
+        ).toBe(1);
+
+        const segmentedFixture = page.getByTestId('segmented-control-fixture');
+        const week = page.getByRole('radio', { name: 'Week' });
+        await week.focus();
+        await page.keyboard.press('ArrowRight');
+        await page.waitForFunction(() => document.activeElement?.textContent?.trim() === 'Month');
+        await page.keyboard.press('Space');
+        await page.waitForFunction(
+          () =>
+            document.querySelector('[data-testid="segmented-control-fixture"]')?.getAttribute('data-value') === 'month',
+        );
+        expect(await segmentedFixture.getAttribute('data-value')).toBe('month');
+        await page.keyboard.press('Space');
+        await page.waitForFunction(
+          () =>
+            document.querySelector('[data-testid="segmented-control-fixture"]')?.getAttribute('data-value') === 'month',
+        );
+        expect(await segmentedFixture.getAttribute('data-value')).toBe('month');
+
+        const tabsFixture = page.getByTestId('tabs-fixture');
+        const overview = page.getByRole('tab', { name: 'Overview' });
+        await overview.focus();
+        await page.keyboard.press('ArrowRight');
+        await page.waitForFunction(
+          () => document.querySelector('[data-testid="tabs-fixture"]')?.getAttribute('data-value') === 'sessions',
+        );
+        expect(await tabsFixture.getAttribute('data-value')).toBe('sessions');
+        await page.getByText('Overview fixture panel').waitFor({ state: 'detached' });
+        expect(await page.getByText('Overview fixture panel').count()).toBe(0);
+        const activePanel = page.getByRole('tabpanel');
+        await activePanel.getByRole('button', { name: 'Focusable session fixture' }).waitFor();
+        await page.evaluate(() => new Promise<void>((resolveFrame) => requestAnimationFrame(() => resolveFrame())));
+        expect(await activePanel.getAttribute('tabindex')).toBe('0');
+        await page.keyboard.press('ArrowRight');
+        await page.waitForFunction(
+          () => document.querySelector('[data-testid="tabs-fixture"]')?.getAttribute('data-value') === 'overview',
+        );
+        expect(await tabsFixture.getAttribute('data-value')).toBe('overview');
+      } finally {
+        await browser?.close();
+        await server.close();
+        await rm(temporaryDirectory, { force: true, recursive: true });
+      }
+    },
+    BROWSER_PROOF_TIMEOUT_MS,
+  );
+
   test('MultiSelect preserves controlled multiple selection, hidden form state, open state, and stacking', async () => {
     const source = await readCompound('multi-select.svelte');
     for (const contract of [
+      'import { field } from \x27../../components/field\x27',
       'closeOnSelect={false}',
       '<Select.HiddenSelect />',
       'multiple',
@@ -144,6 +268,8 @@ describe('Svelte compound controls', () => {
   });
 
   test('the compound dependency closure cannot reach Solid', async () => {
+    expect('import \x27solid-js\x27').toMatch(SOLID_RUNTIME_IMPORT_PATTERN);
+    expect('import { createSignal } from \x27solid-js\x27').toMatch(SOLID_RUNTIME_IMPORT_PATTERN);
     const files = await readdir(compoundDirectory);
     for (const file of files.filter(
       (name) => (name.endsWith('.svelte') || name.endsWith('.ts')) && !name.endsWith('.test.ts'),

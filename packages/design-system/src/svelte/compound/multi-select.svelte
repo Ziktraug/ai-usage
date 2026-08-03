@@ -1,5 +1,6 @@
 <script lang="ts" module>
   import { css, cx } from '@ai-usage/design-system/css';
+  import { field } from '../../components/field';
 
   const selectRoot = css({
     display: 'inline-flex',
@@ -9,28 +10,14 @@
   });
 
   const selectControl = css({ display: 'flex', w: 'full' });
-
   const selectTrigger = cx(
-    css({
-      w: '100%',
-      minW: 0,
-      h: '36px',
-      px: '10px',
-      border: '1px solid token(colors.lineStrong)',
-      borderRadius: 'sm',
-      bg: 'surface',
-      color: 'ink',
-      fontSize: '13px',
-      _focusVisible: {
-        outline: '2px solid token(colors.accent)',
-        outlineOffset: '2px',
-      },
-    }),
+    field,
     css({
       display: 'inline-flex',
       alignItems: 'center',
       justifyContent: 'space-between',
       gap: '8px',
+      w: 'full',
       cursor: 'pointer',
       textAlign: 'left',
       _hover: { borderColor: 'lineStrong' },
