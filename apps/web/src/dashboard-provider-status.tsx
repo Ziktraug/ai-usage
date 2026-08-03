@@ -4,12 +4,13 @@ import { createMemo, createSignal, lazy, onMount, Show, Suspense } from 'solid-j
 import { createServedProviderQuotaSource, type ProviderQuotaSource } from './provider-quota-client';
 import { createE2EProviderQuotaHistoryFixture } from './provider-quota-e2e-fixture';
 import type { ProviderQuotaHistoryRange } from './provider-quota-history-model';
+import { loadProviderQuotaHistory } from './provider-quota-query';
 import { createProviderStatusClock } from './provider-status-clock';
 import { buildProviderStatusViews, providerHistoryAvailable } from './provider-status-model';
 import { ProviderStatusPanel } from './provider-status-panel';
 import type { RuntimeMode } from './runtime-mode';
 import type { DashboardRow } from './shared';
-import { loadProviderQuotaHistory, webQueryKeys } from './web-query-options';
+import { webQueryKeys } from './web-query-keys';
 import type { WebReportPayloadWithoutRows } from './web-report-payload';
 
 const ProviderQuotaHistoryPanel = lazy(async () => {

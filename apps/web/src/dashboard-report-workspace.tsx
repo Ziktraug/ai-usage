@@ -6,8 +6,13 @@ import { DashboardPendingSurface } from './dashboard-pending-surface';
 import type { DashboardTab } from './dashboard-search';
 import { DashboardStatus, type DashboardStatusProps } from './dashboard-status';
 import { Overview } from './overview';
-import { SessionDrawer } from './session-drawer';
+import type { SessionDrawer as SessionDrawerComponent } from './session-drawer';
 import type { SessionTable as SessionTableComponent } from './session-table';
+
+const SessionDrawer = lazy(async () => {
+  const module = await import('./session-drawer');
+  return { default: module.SessionDrawer };
+});
 
 const SessionTable = lazy(async () => {
   const module = await import('./session-table');
@@ -37,7 +42,7 @@ const status = css({
 
 export interface DashboardReportWorkspaceProps {
   breakdown: DashboardBreakdownProps;
-  drawer?: ComponentProps<typeof SessionDrawer> | undefined;
+  drawer?: ComponentProps<typeof SessionDrawerComponent> | undefined;
   overview: ComponentProps<typeof Overview>;
   pending: Accessor<boolean>;
   sessions: ComponentProps<typeof SessionTableComponent>;
@@ -84,6 +89,12 @@ export const DashboardReportWorkspace = (props: DashboardReportWorkspaceProps) =
         )}
       </Show>
     </div>
-    <Show when={props.drawer}>{(drawer) => <SessionDrawer {...drawer()} />}</Show>
+    <Show when={props.drawer}>
+      {(drawer) => (
+        <Suspense fallback={null}>
+          <SessionDrawer {...drawer()} />
+        </Suspense>
+      )}
+    </Show>
   </>
 );

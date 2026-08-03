@@ -7,7 +7,7 @@ import {
   type SourceControlClient,
   type SourceControlClientState,
 } from './source-control-client';
-import { webQueryKeys } from './web-query-options';
+import { webQueryKeys } from './web-query-keys';
 
 interface SourceControlContextValue {
   readonly execute: (command: SourceControlCommand) => Promise<boolean>;

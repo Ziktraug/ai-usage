@@ -20,7 +20,6 @@ import { parseUsageEngineMergePreviewOutput, type UsageEngineMergePreviewOutput 
 import { createFileRoute, useRouter } from '@tanstack/solid-router';
 import { createEffect, createSignal, onCleanup, Show } from 'solid-js';
 import { enforceReportOnlyDemoNavigation } from '../demo-route-guard';
-import { exportManualMergeBundle, getSyncFleet } from '../lib/rpc/sync-solid-client';
 import type { ManualOperationError, ManualOperationResult } from '../manual-transfer-contract';
 import {
   buildSyncFleetMachineViews,
@@ -35,7 +34,7 @@ import { MachineFleetPanel } from '../sync-machine-fleet';
 
 export const Route = createFileRoute('/sync')({
   beforeLoad: enforceReportOnlyDemoNavigation,
-  loader: async () => await getSyncFleet(),
+  loader: async () => await (await import('../lib/rpc/sync-solid-client')).getSyncFleet(),
   component: SyncRoute,
 });
 
@@ -425,7 +424,7 @@ function SyncRoute() {
     setOperationError(null);
     setOperationMessage(null);
     try {
-      const next = await exportManualMergeBundle();
+      const next = await (await import('../lib/rpc/sync-solid-client')).exportManualMergeBundle();
       if (next.ok) {
         downloadJsonFile(next.data.filename, next.data.text);
         setOperationMessage(

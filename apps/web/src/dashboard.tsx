@@ -71,8 +71,6 @@ import {
   type FocusedReportBootstrapDescriptor,
 } from './focused-report-client';
 import { createFocusedReportE2EFixture } from './focused-report-e2e-fixture';
-import { createReportClient } from './lib/rpc/report-client';
-import { resolveSolidWebRpcClient } from './lib/rpc/solid-client';
 import {
   type MachineFreshnessSnapshot,
   type MachineLabelPresentation,
@@ -600,12 +598,12 @@ export const Dashboard = (props: {
     if (sourceControl.state().connection !== 'live') {
       throw new Error('Project group mutations require a live compatible usage engine.');
     }
-    const [{ buildProjectGroupReferenceCommand }, rpc] = await Promise.all([
+    const [{ buildProjectGroupReferenceCommand }, { resolveSolidReportClient }] = await Promise.all([
       import('./project-group-control'),
-      resolveSolidWebRpcClient(),
+      import('./lib/rpc/solid-client'),
     ]);
     const command = await buildProjectGroupReferenceCommand(projectGroups, focusedStore.revision());
-    await createReportClient(rpc).saveProjectGroups(command);
+    await (await resolveSolidReportClient()).saveProjectGroups(command);
   };
   const projectWarningCleanup = createProjectWarningCleanup({
     focusedQueryScope,

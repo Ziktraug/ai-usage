@@ -1,5 +1,3 @@
-import { createReportClient } from './lib/rpc/report-client';
-import { resolveSolidWebRpcClient } from './lib/rpc/solid-client';
 import type { WebReportPayload, WebReportPayloadWithoutRows } from './web-report-payload';
 
 interface ReportRowsLike {
@@ -44,7 +42,8 @@ export const resolveClientPerfEnabled = async () => {
     return resolvedPerfEnabled;
   }
   resolvePerfPromise ??= (async () => {
-    const client = createReportClient(await resolveSolidWebRpcClient());
+    const { resolveSolidReportClient } = await import('./lib/rpc/solid-client');
+    const client = await resolveSolidReportClient();
     return await client.getReportPerfEnabled();
   })()
     .then((enabled) => {

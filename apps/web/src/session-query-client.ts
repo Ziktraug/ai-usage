@@ -21,9 +21,6 @@ import {
 import type { FieldFilters } from './dashboard-search';
 import type { DateBounds } from './date-range';
 import type { TableSortingState } from './lib/foundation/table/state';
-import { createReportClient } from './lib/rpc/report-client';
-import { createSessionClientAdapter } from './lib/rpc/session-client';
-import { resolveSolidWebRpcClient } from './lib/rpc/solid-client';
 import {
   createSessionQueryOperationOwner,
   type SessionQueryOperationContext,
@@ -619,9 +616,13 @@ export const createSessionQueryCoordinator = (options: {
 
 export const createServedSessionQuerySource = (): SessionQuerySource => {
   const clients = async () => {
+    const [{ createSessionClientAdapter }, { createSolidReportClient, resolveSolidWebRpcClient }] = await Promise.all([
+      import('./lib/rpc/session-client'),
+      import('./lib/rpc/solid-client'),
+    ]);
     const rpc = await resolveSolidWebRpcClient('session-query');
     return {
-      report: createReportClient(rpc),
+      report: await createSolidReportClient(rpc),
       session: createSessionClientAdapter(rpc.session),
     };
   };

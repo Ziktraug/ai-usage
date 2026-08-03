@@ -13,8 +13,6 @@ import {
 } from '@ai-usage/report-core/focused-report-query';
 import type { SessionQueryServerResult } from '@ai-usage/report-core/session-query';
 import { type Accessor, batch, createSignal } from 'solid-js';
-import { createReportClient } from './lib/rpc/report-client';
-import { resolveSolidWebRpcClient } from './lib/rpc/solid-client';
 import {
   normalizeWebReportRevisionBootstrapResult,
   reportManifestRequestFingerprint,
@@ -359,7 +357,10 @@ export const createFocusedReportStore = (initial: FocusedSupportResult): Focused
 };
 
 export const createServedFocusedReportSource = (): FocusedReportSource => {
-  const client = async () => createReportClient(await resolveSolidWebRpcClient('focused-report'));
+  const client = async () => {
+    const { resolveSolidReportClient } = await import('./lib/rpc/solid-client');
+    return await resolveSolidReportClient('focused-report');
+  };
   return {
     getBreakdown: async (request, options) => await (await client()).getFocusedReportBreakdown(request, options),
     getBootstrap: async (options) =>
