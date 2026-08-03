@@ -2,7 +2,7 @@ import { currentRecord } from '../helpers';
 import { defineParityShard, type ParityKind, type ParityRecord } from '../schema';
 
 const owner = 'P4' as const;
-const implementationCommit = '73fbce3650a4bdf7629084b16b44d5a791f14a16';
+const implementationCommit = 'ff683bf921d81f3e10ee7883585f43626189c038';
 
 interface TargetEvidence {
   readonly command?: string;
@@ -78,7 +78,7 @@ export default defineParityShard({
         command: detailTestCommand,
         source:
           'apps/web/src/lib/features/sessions/detail/controller.ts; apps/web/src/lib/features/sessions/detail/query-owner.ts; apps/web/src/lib/features/sessions/detail/session-detail-slot.svelte; apps/web/src/lib/features/sessions/detail/session-drawer.svelte; apps/web/src/lib/features/sessions/detail/INTEGRATION.md',
-        test: 'apps/web/src/lib/features/sessions/detail/controller.test.ts; apps/web/src/lib/features/sessions/detail/query-owner.test.ts; apps/web/src/lib/features/sessions/detail/components.ssr.test.ts; apps/web/src/lib/features/sessions/detail/client-closure.test.ts',
+        test: 'apps/web/src/lib/features/sessions/detail/controller.test.ts; apps/web/src/lib/features/sessions/detail/query-owner.test.ts; apps/web/src/lib/features/sessions/detail/components.ssr.test.ts; apps/web/src/lib/features/sessions/detail/composition.test.ts; apps/web/src/lib/features/sessions/detail/client-closure.test.ts',
       },
     }),
     replacementRecord({
@@ -90,8 +90,8 @@ export default defineParityShard({
       target: {
         command: detailTestCommand,
         source:
-          'apps/web/src/lib/features/sessions/detail/session-analysis.svelte; apps/web/src/lib/features/sessions/detail/session-vcs-summary.svelte; apps/web/src/lib/features/sessions/detail/drawer-detail-item.svelte; apps/web/src/lib/features/sessions/detail/highlighted-text.svelte',
-        test: 'apps/web/src/lib/features/sessions/detail/components.ssr.test.ts; apps/web/src/session-analysis-model.test.ts; apps/web/src/session-analysis-presentation.test.ts; apps/web/src/session-analysis-error.test.ts; apps/web/src/session-analysis-target.test.ts',
+          'apps/web/src/lib/features/sessions/detail/session-analysis.svelte; apps/web/src/lib/features/sessions/detail/session-vcs-summary.svelte; apps/web/src/lib/features/sessions/detail/external-link-icon.svelte; apps/web/src/lib/features/sessions/detail/drawer-detail-item.svelte; apps/web/src/lib/features/sessions/detail/highlighted-text.svelte',
+        test: 'apps/web/src/lib/features/sessions/detail/components.ssr.test.ts; apps/web/src/lib/features/sessions/detail/composition.test.ts; apps/web/src/session-analysis-model.test.ts; apps/web/src/session-analysis-presentation.test.ts; apps/web/src/session-analysis-error.test.ts; apps/web/src/session-analysis-target.test.ts',
       },
     }),
     sourceReplacement(
@@ -107,16 +107,16 @@ export default defineParityShard({
     sourceReplacement(
       'apps/web/src/session-analysis.tsx',
       'apps/web/src/lib/features/sessions/detail/session-analysis.svelte',
-      'apps/web/src/lib/features/sessions/detail/components.ssr.test.ts › renders recorded/partial chronology, compressed gaps, phase trust, and multi-harness labels; keeps unavailable Retry semantics and sanitized VCS links exact',
+      'apps/web/src/lib/features/sessions/detail/components.ssr.test.ts › renders recorded/partial chronology, compressed gaps, phase trust, and multi-harness labels; keeps unavailable Retry semantics and sanitized VCS links exact; apps/web/src/lib/features/sessions/detail/composition.test.ts › keeps phase keys collision-safe and phase bands on the selected timeline scale',
     ),
     sourceReplacement(
       'apps/web/src/session-drawer.tsx',
       'apps/web/src/lib/features/sessions/detail/controller.ts; apps/web/src/lib/features/sessions/detail/query-owner.ts; apps/web/src/lib/features/sessions/detail/session-detail-slot.svelte; apps/web/src/lib/features/sessions/detail/session-drawer.svelte',
-      'apps/web/src/lib/features/sessions/detail/controller.test.ts; apps/web/src/lib/features/sessions/detail/query-owner.test.ts; apps/web/src/lib/features/sessions/detail/components.ssr.test.ts › keeps the portal Drawer client-owned while its controlled selection is settled during SSR',
+      'apps/web/src/lib/features/sessions/detail/controller.test.ts; apps/web/src/lib/features/sessions/detail/query-owner.test.ts; apps/web/src/lib/features/sessions/detail/components.ssr.test.ts › keeps the portal Drawer client-owned while its controlled selection is settled during SSR; apps/web/src/lib/features/sessions/detail/composition.test.ts › keeps one Drawer and final-focus owner while selection moves between neighboring rows; keeps the P8 campaign slot between the comparison summary and the detail grid',
     ),
     sourceReplacement(
       'apps/web/src/session-vcs-summary.tsx',
-      'apps/web/src/lib/features/sessions/detail/session-vcs-summary.svelte',
+      'apps/web/src/lib/features/sessions/detail/session-vcs-summary.svelte; apps/web/src/lib/features/sessions/detail/external-link-icon.svelte',
       'apps/web/src/lib/features/sessions/detail/components.ssr.test.ts › keeps unavailable Retry semantics and sanitized VCS links exact',
     ),
     renderReplacement(
@@ -137,11 +137,11 @@ export default defineParityShard({
     renderReplacement(
       'apps/web/src/session-drawer.render.test.tsx',
       'apps/web/src/lib/features/sessions/detail/session-drawer.svelte; apps/web/src/lib/features/sessions/detail/session-detail-slot.svelte',
-      'apps/web/src/lib/features/sessions/detail/components.ssr.test.ts › keeps the portal Drawer client-owned while its controlled selection is settled during SSR; apps/web/src/lib/features/sessions/detail/controller.test.ts',
+      'apps/web/src/lib/features/sessions/detail/components.ssr.test.ts › keeps the portal Drawer client-owned while its controlled selection is settled during SSR; apps/web/src/lib/features/sessions/detail/controller.test.ts; apps/web/src/lib/features/sessions/detail/composition.test.ts',
     ),
     renderReplacement(
       'apps/web/src/session-vcs-summary.test.tsx',
-      'apps/web/src/lib/features/sessions/detail/session-vcs-summary.svelte',
+      'apps/web/src/lib/features/sessions/detail/session-vcs-summary.svelte; apps/web/src/lib/features/sessions/detail/external-link-icon.svelte',
       'apps/web/src/lib/features/sessions/detail/components.ssr.test.ts › keeps unavailable Retry semantics and sanitized VCS links exact',
     ),
   ],
