@@ -3,7 +3,7 @@
   import type { SkillManagementSnapshot } from '@ai-usage/skills';
   import { useQueryClient } from '@tanstack/svelte-query';
   import { untrack } from 'svelte';
-  import { skillsSnapshotKey } from '../../../query/options/skills';
+  import { invalidateSkillsQueries, skillsSnapshotKey } from '../../../query/options/skills';
   import { createBrowserWebRpcClient } from '../../../rpc/client';
   import { createSkillsClient } from '../../../rpc/skills-client';
   import type { SkillsShellSlotContext } from '../shell/slot-context';
@@ -13,6 +13,7 @@
     type SkillsConfigurationOperation,
     type SkillsManagementClient,
     skillsConfigInput,
+    skillsConfigurationInvalidationTargets,
     sourceRepositoryDraftFrom,
     syncSourceRepositoryDraft,
   } from './model';
@@ -61,6 +62,10 @@
         return;
       }
       queryClient.setQueryData(skillsSnapshotKey(), result.snapshot);
+      const invalidationTargets = skillsConfigurationInvalidationTargets(operation);
+      if (invalidationTargets.length > 0) {
+        await invalidateSkillsQueries(queryClient, invalidationTargets);
+      }
       operationMessage = { message: successMessage, tone: 'success' };
       return result.snapshot;
     } catch (error) {

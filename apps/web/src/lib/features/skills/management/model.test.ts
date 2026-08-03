@@ -8,6 +8,7 @@ import {
   runSkillsConfigurationOperation,
   runSkillsManagementOperation,
   skillsConfigInput,
+  skillsConfigurationInvalidationTargets,
   sourceRepositoryDraftFrom,
   syncSourceRepositoryDraft,
   toggleOperation,
@@ -131,6 +132,12 @@ describe('Skills management presentation and mutation seam', () => {
     };
 
     const config = skillsConfigInput(snapshot, { sourceRepoPath: '/synthetic/replacement' });
+    expect(skillsConfigurationInvalidationTargets({ config, type: 'save-config' })).toEqual([
+      'known-project-paths',
+      'project-inventories',
+    ]);
+    expect(skillsConfigurationInvalidationTargets({ targetId: 'codex', type: 'create-target' })).toEqual([]);
+
     expect(await runSkillsConfigurationOperation(client, { config, type: 'save-config' })).toEqual({
       ok: true,
       snapshot,

@@ -10,6 +10,7 @@ import {
   type SkillInvocation,
   type SkillRowFilter,
 } from '../../../../skills-page-model';
+import type { SkillsInvalidationTarget } from '../../../query/options/skills';
 
 export const skillStateFilterOrder = [
   'linked',
@@ -147,6 +148,14 @@ export const skillsConfigInput = (
 export type SkillsConfigurationOperation =
   | { readonly config: SkillManagementConfig; readonly type: 'save-config' }
   | { readonly targetId: string; readonly type: 'create-target' };
+const configurationDependentQueries = [
+  'known-project-paths',
+  'project-inventories',
+] as const satisfies readonly SkillsInvalidationTarget[];
+
+export const skillsConfigurationInvalidationTargets = (
+  operation: SkillsConfigurationOperation,
+): readonly SkillsInvalidationTarget[] => (operation.type === 'save-config' ? configurationDependentQueries : []);
 
 export type SkillsConfigurationResult =
   | { readonly error: string; readonly ok: false }
