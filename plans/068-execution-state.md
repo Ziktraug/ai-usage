@@ -12,7 +12,7 @@ authority for feature, operation, design, source-file, and test-title coverage.
 - Planning PR: `#26`, squash-merged as
   `2183270ebfbb886fafa7e6268893122db9b364c0`
 - `BASE_SHA`: `2183270ebfbb886fafa7e6268893122db9b364c0`
-- Current integration checkpoint: `e953bdc`
+- Current integration checkpoint: `325b25b`
 - Last reviewed green checkpoint: `e953bdc`
 - Active design bases: D1 `4862293`, D2 `fce5c1a`, D3 `e2f13cd`
 - Implementation PR: not opened
@@ -133,7 +133,7 @@ Statuses are `BLOCKED`, `READY`, `IMPLEMENTING`, `REVIEW`, `REWORK`,
 | D1 | D0 | INTEGRATED | `4862293`, `3b22c28`, evidence `b31c3af` | `/root/d123_parity_review` / ACCEPT | `b31c3af` |
 | D2 | D0 | INTEGRATED | `fce5c1a`, `9935846`, evidence `b31c3af` | `/root/d123_parity_review` / ACCEPT | `b31c3af` |
 | D3 | D0 | INTEGRATED | `e2f13cd`, `0702203`, `70f5796`, evidence `b31c3af` | `/root/d123_parity_review` / ACCEPT | `b31c3af` |
-| D4 | D1, D2, D3 | INTEGRATED | `662182e`, bundle correction `6646fe5`, series-color delta `3f42bfa`, evidence `216ec3b` | `/root/d4_review`, `/root/v34_parity` / ACCEPT; evidence follow-up pending | `216ec3b` |
+| D4 | D1, D2, D3 | INTEGRATED | `662182e`, bundle correction `6646fe5`, series-color delta `3f42bfa`, evidence `216ec3b` | `/root/d4_review`, `/root/v34_parity`, `/root/q2_spec_review` / ACCEPT | `216ec3b` |
 | R0 | F0, V5, Q3, D4 | INTEGRATED | `435aa06`, evidence `88d56c9`, corrections `98235ab`, `4e46acc`, evidence `4f293e5`, `23635c7`; integrated as `affcee4`, `01fa070`, `688b629`, `fa92709`, `66a650e`, `c8b7c7e` | `/root/d123_parity_review`, `/root/q2_spec_review` / ACCEPT | `c8b7c7e872f25648dbf5df407f92e76d64948eff` |
 | R1 | R0 | INTEGRATED | `40116b5`, `121d78b`, corrections `95b67d6`, `7c85cf1`, evidence/checker `c5cc7ea`, `1befaef` | `/root/d123_parity_review`, `/root/q2_spec_review`, `/root/v34_parity` / ACCEPT | `1befaefd71ef5ffe59866021f216104b3f83f9ef` |
 | P1 | R1, V1, V2, Q1, D4 | INTEGRATED | `a19914b`, `874cb1b`, `2422c2c`, evidence `02782f8`, activation correction `5bc8055` | `/root/v34_parity`, `/root/d123_parity_review` / ACCEPT | `f3610aa` |
@@ -143,7 +143,7 @@ Statuses are `BLOCKED`, `READY`, `IMPLEMENTING`, `REVIEW`, `REWORK`,
 | P5 | R1, V3, Q2, D4 | INTEGRATED | `231f109`, `a5b657f`, `72c6a76`, `448c782`, activation `5c0e27e`; integrated as `c84b957`, `32533a7`, `e951cd1`, `a170123`, `0f6b118`, evidence `6f639ab` | `/root/d123_parity_review`, `/root/v34_parity` / ACCEPT | `6f639ab` |
 | P6 | R1, V4, Q2, D4, B2 | INTEGRATED | accepted fresh range `e23bc9` through `414ea1a`; integrated `3c08e12` through `68dd82f`; evidence `eb2f669`; composition `79341c1`; browser corrections `db4eb57`, `1096a4d` | `/root/q2_spec_review` / ACCEPT | `1096a4d` |
 | P7 | R1, V4, Q2, D4 | REWORK | `d2486bd`, corrections `80a6db3`, evidence `ed0a76d` | `/root/q2_spec_review`, `/root/v34_parity` / REWORK | - |
-| P8 | P1 | REVIEW | `4dd9b93`, `12939b4`, evidence `caa138a` | independent review in progress | - |
+| P8 | P1 | REWORK | `4dd9b93`, `12939b4`, evidence `caa138a` | `/root/v34_parity` / REWORK | - |
 | P9 | P5 | INTEGRATED | `9d48303`, evidence `4cb0f0d`; integrated `82451ad`, `be5e49b`, evidence rewrite `c859f7f` | `/root/q2_spec_review` / ACCEPT | `c859f7f` |
 | P10 | P5 | INTEGRATED | `455b569`, evidence `dac69e0`; integrated `8e35926`, `3a43913`, evidence rewrite `e953bdc` | `/root/q2_spec_review` / ACCEPT | `e953bdc` |
 | X0 | P2, P8, P4, P9, P10, P6, P7 | BLOCKED | - | - | - |
@@ -1088,6 +1088,16 @@ Svelte 0/0, shadow build, Ultracite, TypeScript coverage, package boundaries,
 13/13 parity-checker tests and complete inventory. The implementer handoff's
 236-assertion count was a transcription error only; no committed evidence used
 that value and the independently observed count is recorded here.
+
+P8 candidate `4dd9b93`/`12939b4` plus evidence `caa138a` passed its 31
+tests/77 assertions, Svelte 0/0, Ultracite, boundaries and parity, but
+`/root/v34_parity` returned REWORK on two material evidence seams. The
+controlled quota panel captured final focus at component construction rather
+than the closed-to-open transition, so persistent closed mounting could restore
+the wrong element. The owned interactive surfaces also relied on pure/source
+assertions instead of rendered focus/a11y/interaction proof and exact per-row
+test references. The original author is correcting both without changing URL
+identity, filter state, query ownership or packet scope; this is not a STOP.
 
 Coordinator deltas `3f42bfa`, `8020703` and `9d24e5b` expose the neutral stable
 series-color helper to Svelte and use it for matching P2 timeline segments and
