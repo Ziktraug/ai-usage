@@ -2,7 +2,7 @@ import { currentRecord } from '../helpers';
 import { defineParityShard, type ParityKind, type ParityRecord } from '../schema';
 
 const owner = 'P5' as const;
-const implementationCommit = '72c6a761b926e36dd9906edfa497cd35f6e5ee81';
+const implementationCommit = 'e951cd1554efd8d459c517c2376e93a4c9669535';
 
 interface ReplacementEvidence {
   readonly command?: string;
