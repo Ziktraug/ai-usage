@@ -137,13 +137,13 @@ Statuses are `BLOCKED`, `READY`, `IMPLEMENTING`, `REVIEW`, `REWORK`,
 | R0 | F0, V5, Q3, D4 | INTEGRATED | `435aa06`, evidence `88d56c9`, corrections `98235ab`, `4e46acc`, evidence `4f293e5`, `23635c7`; integrated as `affcee4`, `01fa070`, `688b629`, `fa92709`, `66a650e`, `c8b7c7e` | `/root/d123_parity_review`, `/root/q2_spec_review` / ACCEPT | `c8b7c7e872f25648dbf5df407f92e76d64948eff` |
 | R1 | R0 | INTEGRATED | `40116b5`, `121d78b`, corrections `95b67d6`, `7c85cf1`, evidence/checker `c5cc7ea`, `1befaef` | `/root/d123_parity_review`, `/root/q2_spec_review`, `/root/v34_parity` / ACCEPT | `1befaefd71ef5ffe59866021f216104b3f83f9ef` |
 | P1 | R1, V1, V2, Q1, D4 | INTEGRATED | `a19914b`, `874cb1b`, `2422c2c`, evidence `02782f8`, activation correction `5bc8055` | `/root/v34_parity`, `/root/d123_parity_review` / ACCEPT | `f3610aa` |
-| P2 | P1 | READY | - | - | - |
-| P3 | P1, V2, Q1, D4 | READY | - | - | - |
+| P2 | P1 | IMPLEMENTING | - | `/root/v34_parity` | - |
+| P3 | P1, V2, Q1, D4 | IMPLEMENTING | - | `/root/d123_parity_review` | - |
 | P4 | P3 | BLOCKED | - | - | - |
 | P5 | R1, V3, Q2, D4 | REVIEW | `231f109`, `a5b657f`, corrections `72c6a76`, evidence `448c782` | `/root/d123_parity_review`, `/root/v34_parity` / REWORK; fresh review pending | - |
-| P6 | R1, V4, Q2, D4, B2 | REVIEW | fresh redispatch `7eba5bd` through `2d5b3fc` | `/root/q2_spec_review` / REWORK; fresh review pending | - |
+| P6 | R1, V4, Q2, D4, B2 | REWORK | fresh redispatch `7eba5bd` through `2d5b3fc` | `/root/q2_spec_review` / REWORK | - |
 | P7 | R1, V4, Q2, D4 | REWORK | `d2486bd`, corrections `80a6db3`, evidence `ed0a76d` | `/root/q2_spec_review`, `/root/v34_parity` / REWORK | - |
-| P8 | P1 | READY | - | - | - |
+| P8 | P1 | IMPLEMENTING | - | `/root/q2_spec_review` | - |
 | P9 | P5 | BLOCKED | - | - | - |
 | P10 | P5 | BLOCKED | - | - | - |
 | X0 | P2, P8, P4, P9, P10, P6, P7 | BLOCKED | - | - | - |
@@ -938,8 +938,17 @@ seam, asserts exact rendered pending-disabled and idle-enabled command states,
 adds recursive client closure coverage and rewrites every target evidence SHA.
 The clean handoff reports 19 tests with 153 assertions, Svelte check 0/0, Web
 type/build, shadow build, boundaries and aggregate parity green. Independent
-fresh review remains required. P1's browser gate held and released the only
-process-test token; neither P6 nor P7 used it.
+fresh review returned REWORK on three focused seams: the copy-feedback timeout
+survives navigation instead of being replaced/disposed; the closure scanner
+does not traverse workspace package exports or `$lib` aliases; and the Sources
+presentation adapter duplicates the legacy pure projection instead of consuming
+one framework-neutral owner. All endpoint policy, broker reuse, sole
+EventSource/provider, virtual lifecycle, invalidation, rendered command states,
+demo/SSR isolation, composition request and exact evidence were accepted. The
+review independently passed 42 tests with 246 expectations, full Web check,
+Svelte 0/0, Ultracite, boundaries and parity. Original-author correction is
+queued after P2; no STOP condition exists. P1's browser gate held and released
+the only process-test token; neither P6 nor P7 used it.
 
 ## Deviations, STOPs, and recovery
 
