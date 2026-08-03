@@ -155,6 +155,8 @@ describe('report Svelte SSR components', () => {
     expect(data.queryState.dehydratedState.queries[0]?.queryKey).toEqual(reportBootstrapKey());
     const { body } = render(reportRoot, { props: { data } });
     expect(bootstrapCount).toBe(1);
+    expect(body).toContain('<main');
+    expect(body).toContain('data-route-shell="report"');
     expect(body).toContain('data-report-bootstrap-overview');
     expect(body).toContain('data-report-revision="compatible-last-revision"');
     expect(body).toContain('Compatible stored publication');

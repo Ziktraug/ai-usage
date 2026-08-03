@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { page, shell } from '@ai-usage/design-system/svelte';
   import type { ReportRevisionBootstrapResult } from '@ai-usage/web-contract/report';
   import { browser } from '$app/environment';
   import type { ReportPageData } from './report-bootstrap';
@@ -23,14 +24,18 @@
   );
 </script>
 
-<ReportHeader generatedAt={model.generatedAt} hasReportData={model.hasReportData} isDemo={model.isDemo} />
-<ReportWarnings omittedSupportItemCount={model.omittedSupportItemCount} warnings={model.warnings} />
-<ReportWorkspace hasOutput={model.hasReportData} {pending} {refreshError}>
-  {#snippet children()}
-    <ReportBootstrapOverview
-      items={model.overviewItems}
-      publicationLabel={model.publicationLabel}
-      revision={model.revision}
-    />
-  {/snippet}
-</ReportWorkspace>
+<main class={page} data-route-shell="report">
+  <div class={shell}>
+    <ReportHeader generatedAt={model.generatedAt} hasReportData={model.hasReportData} isDemo={model.isDemo} />
+    <ReportWarnings omittedSupportItemCount={model.omittedSupportItemCount} warnings={model.warnings} />
+    <ReportWorkspace hasOutput={model.hasReportData} {pending} {refreshError}>
+      {#snippet children()}
+        <ReportBootstrapOverview
+          items={model.overviewItems}
+          publicationLabel={model.publicationLabel}
+          revision={model.revision}
+        />
+      {/snippet}
+    </ReportWorkspace>
+  </div>
+</main>
