@@ -134,7 +134,7 @@ Statuses are `BLOCKED`, `READY`, `IMPLEMENTING`, `REVIEW`, `REWORK`,
 | D2 | D0 | INTEGRATED | `fce5c1a`, `9935846`, evidence `b31c3af` | `/root/d123_parity_review` / ACCEPT | `b31c3af` |
 | D3 | D0 | INTEGRATED | `e2f13cd`, `0702203`, `70f5796`, evidence `b31c3af` | `/root/d123_parity_review` / ACCEPT | `b31c3af` |
 | D4 | D1, D2, D3 | INTEGRATED | `662182e`, bundle correction `6646fe5` | `/root/d4_review` / ACCEPT | `6646fe568e8b4c1fba74ac1b4150d1480d15ca6f` |
-| R0 | F0, V5, Q3, D4 | REWORK | `435aa06`, evidence `88d56c9`, correction `98235ab`, evidence `4f293e5` | `/root/d123_parity_review` / ACCEPT; `/root/q2_spec_review` / REWORK | recoverable `4f293e5` in `/tmp/ai-usage-068-r0` |
+| R0 | F0, V5, Q3, D4 | REVIEW | `435aa06`, evidence `88d56c9`, corrections `98235ab`, `4e46acc`, evidence `4f293e5`, `23635c7` | `/root/d123_parity_review` / ACCEPT; `/root/q2_spec_review` / REWORK; final delta re-review pending | candidate `23635c7` in `/tmp/ai-usage-068-r0` |
 | R1 | R0 | BLOCKED | - | - | - |
 | P1 | R1, V1, V2, Q1, D4 | BLOCKED | - | - | - |
 | P2 | P1 | BLOCKED | - | - | - |
@@ -692,6 +692,22 @@ direct target assertions for every declared variant and lifecycle, a narrow
 P4-compatible drawer owner with explicit closed state and target, and fresh
 source/evidence commits. The accepted scroll, failure, URL-preservation and
 retry lifecycles remain frozen unless a direct test exposes a real defect.
+
+Exhaustive R0 correction `4e46acc` plus evidence `23635c7` adds direct assertions
+for every clause of all 18 descriptors. No frozen URL/parser defect was found.
+The drawer seam now exposes explicit closed null key/revision/target state,
+local and served targets, exact revision/campaign/row disambiguation and owned
+neighbor/Escape commands. A narrow Skills projection proves Matrix keeps global
+tree scope while remaining its distinct destination. The evidence marks the
+earlier named smoke proof superseded and appends per-ID exhaustive references;
+descriptors, status and schema are unchanged.
+
+Final worker gates passed 33 R0 tests with 233 assertions and 69 frozen behavior
+tests with 233 assertions, plus Svelte check 0/0, Web typecheck, Svelte build,
+Ultracite, boundaries, 18/18 parity, diff and clean status. The same 12 files now
+total 1,647 lines, driven by the required exhaustive direct matrix; no assertion
+was weakened and no path/product scope expanded. Final spec/parity and standards
+delta re-reviews are running.
 
 Three Q3 incidents are retained. The first complete repository test run hit the
 known D3 `ArrowRight` focus timeout; its one allowed exact rerun passed 10/10,
