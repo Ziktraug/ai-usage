@@ -196,11 +196,13 @@
     granularity = options.granularity;
     timelineValue = options.value;
   };
-  const persistProjectGroups = async (groups: readonly ProjectGroupConfig[]): Promise<void> => {
+  const persistProjectGroups = async (
+    groups: readonly ProjectGroupConfig[],
+    revision = descriptorSource.current().revision,
+  ): Promise<void> => {
     if (runtimeMode !== 'live') {
       throw new Error('Project groups can only be saved from a live report.');
     }
-    const revision = descriptorSource.current().revision;
     await saveProjectGroupsAtRevision(
       groups,
       revision,
@@ -211,17 +213,23 @@
       },
     );
   };
-  const loadProjectGroupConfigs = async (): Promise<readonly ProjectGroupConfig[]> => {
+  const loadProjectGroupConfigs = async (): Promise<{
+    readonly groups: readonly ProjectGroupConfig[];
+    readonly revision: string;
+  }> => {
     const committed = commit?.breakdown?.context.projectGroupConfigs;
-    if (committed !== undefined) {
-      return committed;
+    if (committed !== undefined && commit?.breakdown !== undefined) {
+      return { groups: committed, revision: commit.breakdown.revision };
     }
     const revision = descriptorSource.current().revision;
     const request = {
       query: queryForDescriptor({ filters: destination.sessions.filters, range: destination.sessions.range }, revision),
     };
     const result = await queryClient.fetchQuery(reportBreakdownQueryOptions(reportClient, request, { browser: true }));
-    return requireFocusedBreakdown(result, request).context.projectGroupConfigs ?? [];
+    return {
+      groups: requireFocusedBreakdown(result, request).context.projectGroupConfigs ?? [],
+      revision,
+    };
   };
   const cleanupProjectWarning = (warning: UsageReportWarning, refresh: () => Promise<void>): void => {
     const groupId = warning.groupId;
@@ -231,8 +239,8 @@
     cleaningProjectWarningGroupId = groupId;
     projectWarningCleanupError = undefined;
     const run = async (): Promise<void> => {
-      const groups = await loadProjectGroupConfigs();
-      await persistProjectGroups(projectGroupsAfterWarningCleanup(groups, warning));
+      const loaded = await loadProjectGroupConfigs();
+      await persistProjectGroups(projectGroupsAfterWarningCleanup(loaded.groups, warning), loaded.revision);
       await refresh();
     };
     run()
