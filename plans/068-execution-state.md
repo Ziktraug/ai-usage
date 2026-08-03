@@ -12,8 +12,8 @@ authority for feature, operation, design, source-file, and test-title coverage.
 - Planning PR: `#26`, squash-merged as
   `2183270ebfbb886fafa7e6268893122db9b364c0`
 - `BASE_SHA`: `2183270ebfbb886fafa7e6268893122db9b364c0`
-- Current integration checkpoint: `8ce1a46`
-- Last reviewed green checkpoint: `e953bdc`
+- Current integration checkpoint: `c11d01a`
+- Last reviewed green checkpoint: `c11d01a`
 - Active design bases: D1 `4862293`, D2 `fce5c1a`, D3 `e2f13cd`
 - Implementation PR: not opened
 - Exclusive process-test token: free after the P6 activated shadow-browser gate
@@ -139,7 +139,7 @@ Statuses are `BLOCKED`, `READY`, `IMPLEMENTING`, `REVIEW`, `REWORK`,
 | P1 | R1, V1, V2, Q1, D4 | INTEGRATED | `a19914b`, `874cb1b`, `2422c2c`, evidence `02782f8`, activation correction `5bc8055` | `/root/v34_parity`, `/root/d123_parity_review` / ACCEPT | `f3610aa` |
 | P2 | P1 | INTEGRATED | `0f252ca`, `8e41350`, corrections `5880b09`, `cb8552a`; integrated `7b8d65a`, `11572e1`, `045e279`, `64128c4`; evidence `e593b70` | `/root/q2_spec_review` / ACCEPT | `e593b70` |
 | P3 | P1, V2, Q1, D4 | INTEGRATED | `1e7fb76`, `38bbbcc`, `dddd96b`, `07db531`, `fe3357e`, `24b9bc6`, final `7ce6027`, `a9fc2ff`; integrated `9460bc2` through `fe37669`; evidence `509b756` | `/root/q2_spec_review` / ACCEPT | `509b756` |
-| P4 | P3 | REWORK | `73fbce3`, evidence `5de8823` | `/root/v34_parity` / REWORK | - |
+| P4 | P3 | INTEGRATED | `73fbce3`, `5de8823`, corrections `ff683bf`, `f993bd8`, `d749135`; integrated `531f8b6`, `9c72353`, `1697adc`, `f05d17b`, `1970793`, evidence rewrite `c11d01a` | `/root/v34_parity` / ACCEPT | `c11d01a` |
 | P5 | R1, V3, Q2, D4 | INTEGRATED | `231f109`, `a5b657f`, `72c6a76`, `448c782`, activation `5c0e27e`; integrated as `c84b957`, `32533a7`, `e951cd1`, `a170123`, `0f6b118`, evidence `6f639ab` | `/root/d123_parity_review`, `/root/v34_parity` / ACCEPT | `6f639ab` |
 | P6 | R1, V4, Q2, D4, B2 | INTEGRATED | accepted fresh range `e23bc9` through `414ea1a`; integrated `3c08e12` through `68dd82f`; evidence `eb2f669`; composition `79341c1`; browser corrections `db4eb57`, `1096a4d` | `/root/q2_spec_review` / ACCEPT | `1096a4d` |
 | P7 | R1, V4, Q2, D4 | REWORK | `d2486bd`, corrections `80a6db3`, evidence `ed0a76d` | `/root/q2_spec_review`, `/root/v34_parity` / REWORK | - |
@@ -1114,6 +1114,18 @@ left recoverable in its fresh worktree while the original author returns to
 this critical-path correction. No process gate, assertion or product behavior
 was weakened and this is not a STOP.
 
+P4 corrections `ff683bf`, `f993bd8` and `d749135` close every review
+finding. The independent revision enables detail/VCS with zero neighbor calls;
+the selection echo is idempotent; one Drawer/final-focus owner survives
+neighbor changes; the P8 campaign slot is in the frozen position; and the full
+SESSION-06 timeline/orphan/phase/accessibility/icon semantics are restored with
+all five legacy render suites in the authoritative command. `/root/v34_parity`
+ACCEPTed both axes at 138 tests/541 assertions plus Svelte 0/0, build,
+Ultracite, boundaries, coverage and parity. The five commits integrated as
+`531f8b6` through `1970793`; `c11d01a` points evidence at integrated correction
+`1697adc`. The identical 138/541 suite and all static/parity gates pass
+post-cherry.
+
 Coordinator deltas `3f42bfa`, `8020703` and `9d24e5b` expose the neutral stable
 series-color helper to Svelte and use it for matching P2 timeline segments and
 legend swatches, extract the collector-free machine freshness presentation
@@ -1187,7 +1199,7 @@ incident is retained rather than treated as a feature STOP.
   strict Svelte type errors while the additive shell was unreachable. The route
   was reverted before stacking work; reviewed correction `0f6b118` plus
   reachability fixture closes the gap, and all additive gates are green.
-- Recovery point: `e953bdc` is the latest independently reviewed green
-  checkpoint. P1, P2, P3, P5, P6, P9 and P10 are integrated; P4 is
-  implementing, P8 is in original-author rework after an independent REWORK,
-  and P7 has a fresh compatible worktree ready for its original author.
+- Recovery point: `c11d01a` is the latest independently reviewed green
+  checkpoint. P1 through P6 except P7, plus P9 and P10, are integrated; P8 is
+  finishing original-author rework after its green synthetic browser gate, and
+  P7 has resumed in its recoverable compatible worktree.
