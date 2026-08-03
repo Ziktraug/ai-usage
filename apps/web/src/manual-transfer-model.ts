@@ -1,8 +1,19 @@
-import type { FocusedMachineFreshness } from '@ai-usage/report-core/focused-report-query';
 import type { UsageMachine } from '@ai-usage/report-core/snapshot';
 import type { UsageEngineMergePreviewOutput } from '@ai-usage/usage-engine-control';
 import type { UsageMachineFleetItem } from '@ai-usage/usage-store/reader';
+import { MACHINE_FLEET_FRESHNESS_WINDOW_DAYS, machineFreshnessIsStale } from './machine-freshness-presentation';
 import type { SourceControlConnectionState } from './source-control-client';
+
+export {
+  MACHINE_FLEET_STALE_AFTER_MS,
+  type MachineFreshnessObservation,
+  type MachineFreshnessSnapshot,
+  type MachineLabelPresentation,
+  machineFreshnessSnapshotFromFocused,
+  machineFreshnessStatusLabel,
+  machineLabelPresentation,
+  machineLabelPresentationForSnapshot,
+} from './machine-freshness-presentation';
 
 const BYTES_PER_UNIT = 1024;
 const SIZE_UNITS = ['KB', 'MB', 'GB', 'TB'] as const;
@@ -10,9 +21,6 @@ const SIZE_UNITS = ['KB', 'MB', 'GB', 'TB'] as const;
 const MILLISECONDS_PER_MINUTE = 60_000;
 const MILLISECONDS_PER_HOUR = 60 * MILLISECONDS_PER_MINUTE;
 const MILLISECONDS_PER_DAY = 24 * MILLISECONDS_PER_HOUR;
-const MACHINE_FLEET_FRESHNESS_WINDOW_DAYS = 30;
-export const MACHINE_FLEET_STALE_AFTER_MS = MACHINE_FLEET_FRESHNESS_WINDOW_DAYS * MILLISECONDS_PER_DAY;
-
 export const INVALID_STORED_ROWS_EXPLANATION = 'Rows failed stored-row validation; details were not retained.';
 
 export const invalidStoredRowsSummary = (skippedRows: number): string =>
@@ -22,51 +30,6 @@ export const STALE_MACHINE_COLLECTION_GUIDANCE = {
   command: 'bun run cli -- snapshot --out <path>',
   description: `This machine is outside the ${MACHINE_FLEET_FRESHNESS_WINDOW_DAYS}-day freshness window. Run this command on that machine, then import the snapshot here.`,
 } as const;
-
-export interface MachineFreshnessObservation {
-  id: string;
-  label: string;
-  lastSeenAt: string;
-}
-
-export type MachineFreshnessSnapshot =
-  | {
-      kind: 'available';
-      machines: readonly MachineFreshnessObservation[];
-      observedAt: number;
-      omittedMachines: number;
-      skippedRows: number;
-    }
-  | {
-      kind: 'unavailable';
-      observedAt: number;
-      omittedMachines: number;
-      reason: 'bootstrap-budget' | 'not-captured';
-      skippedRows: number;
-    };
-
-export const machineFreshnessSnapshotFromFocused = (freshness: FocusedMachineFreshness): MachineFreshnessSnapshot => {
-  const observedAt = Date.parse(freshness.observedAt);
-  if (!Number.isFinite(observedAt)) {
-    throw new Error('Focused report machine freshness has an invalid observation timestamp');
-  }
-  if (freshness.kind === 'unavailable') {
-    return {
-      kind: freshness.kind,
-      observedAt,
-      omittedMachines: freshness.omittedMachines,
-      reason: freshness.reason,
-      skippedRows: freshness.skippedRows,
-    };
-  }
-  return {
-    kind: freshness.kind,
-    machines: freshness.machines.map((machine) => ({ ...machine })),
-    observedAt,
-    omittedMachines: freshness.omittedMachines,
-    skippedRows: freshness.skippedRows,
-  };
-};
 
 export interface SyncFleetMachineView {
   current: boolean;
@@ -131,53 +94,6 @@ export const manualTransferMutationAvailability = (
   };
 };
 
-const fleetMachineIsStale = (lastSeenAt: string | null, now: number): boolean => {
-  if (lastSeenAt === null) {
-    return true;
-  }
-  const observedAt = Date.parse(lastSeenAt);
-  return !Number.isFinite(observedAt) || observedAt < now - MACHINE_FLEET_STALE_AFTER_MS;
-};
-
-export interface MachineLabelPresentation {
-  freshness: 'fresh' | 'stale' | 'unavailable';
-  label: string;
-  value: string;
-}
-
-export const machineLabelPresentation = (
-  machine: MachineFreshnessObservation,
-  now = Date.now(),
-): MachineLabelPresentation => {
-  const stale = fleetMachineIsStale(machine.lastSeenAt, now);
-  return {
-    freshness: stale ? 'stale' : 'fresh',
-    label: stale ? `${machine.label} · Stale` : machine.label,
-    value: machine.id,
-  };
-};
-
-export const machineFreshnessStatusLabel = (snapshot: MachineFreshnessSnapshot): string | null =>
-  snapshot.kind === 'unavailable' || snapshot.omittedMachines > 0 || snapshot.skippedRows > 0
-    ? 'Freshness unavailable'
-    : null;
-
-export const machineLabelPresentationForSnapshot = (
-  machine: Pick<MachineFreshnessObservation, 'id' | 'label'>,
-  snapshot: MachineFreshnessSnapshot,
-): MachineLabelPresentation => {
-  const observation =
-    snapshot.kind === 'available' ? snapshot.machines.find((candidate) => candidate.id === machine.id) : undefined;
-  if (observation) {
-    return machineLabelPresentation(observation, snapshot.observedAt);
-  }
-  return {
-    freshness: 'unavailable',
-    label: `${machine.label} · Freshness unavailable`,
-    value: machine.id,
-  };
-};
-
 export const buildSyncFleetMachineViews = (
   currentMachine: UsageMachine,
   machines: readonly UsageMachineFleetItem[],
@@ -186,7 +102,7 @@ export const buildSyncFleetMachineViews = (
   const views: SyncFleetMachineView[] = machines.map((machine) => ({
     ...machine,
     current: machine.id === currentMachine.id,
-    stale: fleetMachineIsStale(machine.lastSeenAt, now),
+    stale: machineFreshnessIsStale(machine.lastSeenAt, now),
   }));
   if (!views.some((machine) => machine.current)) {
     views.push({
