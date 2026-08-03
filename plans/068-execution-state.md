@@ -12,11 +12,11 @@ authority for feature, operation, design, source-file, and test-title coverage.
 - Planning PR: `#26`, squash-merged as
   `2183270ebfbb886fafa7e6268893122db9b364c0`
 - `BASE_SHA`: `2183270ebfbb886fafa7e6268893122db9b364c0`
-- Current integration checkpoint: `db66cc0`
-- Last reviewed green checkpoint: `0ecf1df`
+- Current integration checkpoint: `d2b8e6e8d74e83b47421d62bde452fe7c236f80b`
+- Last reviewed green checkpoint: `d2b8e6e8d74e83b47421d62bde452fe7c236f80b`
 - Active design bases: D1 `4862293`, D2 `fce5c1a`, D3 `e2f13cd`
 - Implementation PR: not opened
-- Exclusive process-test token: free after the X0 Skills convergence browser gate
+- Exclusive process-test token: coordinator, for the serialized X0 convergence gates
 
 The integration branch did not exist locally or remotely before this run. Local
 `main` and `origin/main` were clean and aligned at `BASE_SHA`; plans 066 and 067
@@ -146,7 +146,7 @@ Statuses are `BLOCKED`, `READY`, `IMPLEMENTING`, `REVIEW`, `REWORK`,
 | P8 | P1 | INTEGRATED | `4dd9b93`, `12939b4`, `caa138a`, corrections `2bf22ee`, `2665d04`, `cfae414`; integrated `22ff3ef`, `0b442e2`, `5702dca`, `6a92e8d`, `3d7763f`, `4c8766c`, evidence rewrite `3f7bfca` | `/root/v34_parity` / REWORK; `/root/d123_parity_review` / ACCEPT | `3f7bfca` |
 | P9 | P5 | INTEGRATED | `9d48303`, evidence `4cb0f0d`; integrated `82451ad`, `be5e49b`, evidence rewrite `c859f7f` | `/root/q2_spec_review` / ACCEPT | `c859f7f` |
 | P10 | P5 | INTEGRATED | `455b569`, evidence `dac69e0`; integrated `8e35926`, `3a43913`, evidence rewrite `e953bdc` | `/root/q2_spec_review` / ACCEPT | `e953bdc` |
-| X0 | P2, P8, P4, P9, P10, P6, P7 | BLOCKED | - | - | - |
+| X0 | P2, P8, P4, P9, P10, P6, P7 | REVIEW | `db66cc0` through `d2b8e6e` | Skills `/root/x0_sync_review` / ACCEPT; Report and campaign `/root/v34_parity` / ACCEPT; full-range `/root/x0_final_review` / ACCEPT | pending serialized convergence gates |
 | X1 | X0 | BLOCKED | - | - | - |
 | X2 | X1 | BLOCKED | - | - | - |
 
@@ -1259,3 +1259,66 @@ incident is retained rather than treated as a feature STOP.
 - Recovery point: `0ecf1df` is the latest independently reviewed green
   checkpoint. All 31 packets from B0 through P10 are integrated; X0 feature
   convergence is ready to begin from this clean base.
+
+## X0 convergence review and correction ledger
+
+The X0 implementation range is `0ecf1df..d2b8e6e`. Skills convergence landed
+as `db66cc0`, its evidence ledger as `9766aea`, and focused corrections as
+`86dfec4` and `6ff9b11`. The first readiness attempt based on render frames and
+fetch counts exposed legitimate aborted observers. The final seam publishes a
+deterministic hydration signature only after TanStack Query applies the exact
+dehydrated state and verifies the canonical key. Browser proof counts only the
+Query-owned `skills-shell` requests; the SvelteKit loader's intentional
+`skills-shell-ssr` request remains a separate owner. The deep-link test also
+waits for settlement before its intentional reload. `/root/x0_sync_review`
+ACCEPTed the final range with 48 tests, 302 assertions, Svelte 0/0, build and
+all six shadow browser scenarios green.
+
+Report convergence landed through `d609e91`, `64bd261` and `3ae5f8e`. Its
+first full review returned REWORK because served campaign selections lost the
+P3 page-item target, active timeline keys were disconnected, Sessions counts
+fell back to Overview/bootstrap, warning cleanup was not composed, and row
+synchronization mutated parent state during template evaluation. Corrections
+`9d48627` and `b5d76f7` restore authoritative targets and counts, live and
+synthetic active keys, an owned derived/effect bridge, and warning cleanup that
+pins one exact revision from Breakdown load through guarded save. The focused
+review ACCEPTed 49 tests and 318 assertions plus Svelte 0/0, build, boundaries
+and parity.
+
+Sync convergence landed as `27f3491`, `8a4bf77` and `78350ae`. It shares the
+single observability runtime lifecycle, preserves the owned RPC trust proof and
+was independently ACCEPTed after redispatch on the compatible Skills base.
+
+Campaign drawer recovery required the complete accepted five-commit chain
+`74fe900..aadd9e9`: the controls/model, actual campaign-root protocol and
+SQLite projection, same-owner filtered/unfiltered bounded paging and dual-depth
+revision replay, plus a zero-match correction that keeps the actual root even
+when current filters match no campaign row. An initial handoff accidentally
+omitted the first two component commits; the implementer corrected the ledger
+before integration and a reviewer ACCEPTed the complete original range. No
+partial chain was integrated.
+
+Coordinator composition `4bc2d83` then received focused REWORK: reselection
+could page implicitly, owner destruction retained a stale binding, clear was
+not scoped to the displayed key and hidden selection mixed the filtered query
+with the collection total. `0ca26ca` gates initial load on map absence, clears
+the binding exactly once on destruction, scopes clear to the current key and
+uses served query counts. A fresh full-X0 reviewer found two further parity
+gaps: hidden rows still could not belong to their neighbor query, and Report
+mutations ignored the shared Sources connection. Final correction `d2b8e6e`
+uses an exact revision-preserving campaign-scoped unfiltered selection query,
+proves neighbor membership and total consistency, consumes the existing
+source-control context without another owner, and enables cleanup/project saves
+only for live runtime plus live connection. `/root/x0_final_review` ACCEPTed
+both axes at 62 tests and 334 assertions with Svelte 0/0 and boundaries green.
+
+Two recoverable orchestration incidents are retained. During Skills review, a
+reviewer briefly attempted to claim the process token while another reviewer
+held it; the coordinator interrupted the attempt and verified no listener was
+created before serialized reruns passed. During full-X0 static review, the
+unchanged design-system compound Chromium test hit its two-second `page.goto`
+deadline and its one allowed isolated classification rerun reached a later
+two-second ArrowRight/Month wait; 9/10 isolated assertions passed. Other
+reviewer/build load was still concurrent. No timeout or assertion changed. The
+coordinator now holds the exclusive token and will run the complete X0 gate
+uncontended before accepting the checkpoint.
