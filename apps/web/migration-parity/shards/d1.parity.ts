@@ -1,7 +1,45 @@
 import { currentRecord, designExportRecords, sourceInventoryRecords } from '../helpers';
-import { defineParityShard } from '../schema';
+import { defineParityShard, type ParityEvidence, type ParityRecord } from '../schema';
 
 const owner = 'D1' as const;
+const sourceCommit = '4862293401157c5765f94b8afe1424f4ade3ecfa';
+const testCommit = '3b22c28accd448374a1ed94701e7041ddcc2da10';
+const d4Commit = '662182e8fba4e55c14aa2d26308adca2f70bf72d';
+const targetEvidence = (commit: string, kind: ParityEvidence['kind'], reference: string): ParityEvidence => ({
+  commit,
+  kind,
+  phase: 'target',
+  reference,
+});
+const reviewedRootRemoval = (record: ParityRecord): ParityRecord => ({
+  ...record,
+  evidence: [
+    ...record.evidence,
+    targetEvidence(
+      sourceCommit,
+      'source',
+      'packages/design-system/src/svelte/controls contains the D1 Svelte control implementations.',
+    ),
+    targetEvidence(
+      testCommit,
+      'test',
+      'D1 control unit and browser proofs cover controlled state, propagation, semantics, accessibility, and render parity.',
+    ),
+    targetEvidence(
+      d4Commit,
+      'source',
+      'packages/design-system/src/index.ts is framework-neutral; explicit compatibility and Svelte targets are exported from ./solid and ./svelte.',
+    ),
+    targetEvidence(
+      d4Commit,
+      'review',
+      '/root/d4_review ACCEPT covers the explicit framework entrypoints, neutral package root, and dependency closure.',
+    ),
+  ],
+  replacementReason:
+    'D4 intentionally removed framework components from the neutral package root; callers use the explicit ./solid or ./svelte entrypoint.',
+  status: 'reviewed-removal',
+});
 const designRow = (id: string, currentOwner: string) =>
   currentRecord(owner, {
     currentOwner,
@@ -90,6 +128,6 @@ export default defineParityShard({
         ],
         source: 'packages/design-system/src/components/segment-bar.tsx',
       },
-    ]),
+    ]).map((record) => (record.id.startsWith('design-export:.::') ? reviewedRootRemoval(record) : record)),
   ],
 });
