@@ -39,7 +39,14 @@
   } = $props();
 
   let closeButton: HTMLButtonElement | undefined;
-  const previousFocus = typeof document === 'undefined' ? null : document.activeElement;
+  let previousFocus: HTMLElement | null = $state(null);
+  let wasOpen = false;
+  $effect.pre(() => {
+    if (open && !wasOpen) {
+      previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    }
+    wasOpen = open;
+  });
   const model = $derived(result ? buildProviderQuotaHistoryModel(result) : null);
   const rangeItems = ['24h', '7d', '30d'].map((value) => ({ label: value, value }));
   const changeRange = (value: string): void => {
