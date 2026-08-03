@@ -2,6 +2,9 @@ import {
   focusedBreakdownFingerprint,
   focusedOverviewFingerprint,
   focusedRevisionFingerprint,
+  parseFocusedBreakdownRequest,
+  parseFocusedOverviewRequest,
+  parseFocusedRevisionRequest,
 } from '@ai-usage/report-core/focused-report-query';
 import type {
   FocusedBreakdownRequest,
@@ -62,37 +65,43 @@ export const reportSupportQueryOptions = (
   client: ReportQueryClient,
   request: FocusedRevisionRequest,
   execution: ReportQueryExecution,
-) =>
-  queryOptions({
+) => {
+  const parsed = parseFocusedRevisionRequest(request);
+  return queryOptions({
     ...webQueryPolicies.immutableRevision,
     enabled: execution.browser,
-    queryFn: async ({ signal }) => await client.getFocusedReportSupport(request, { signal }),
-    queryKey: reportSupportKey(request),
+    queryFn: async ({ signal }) => await client.getFocusedReportSupport(parsed, { signal }),
+    queryKey: reportSupportKey(parsed),
   });
+};
 
 export const reportOverviewQueryOptions = (
   client: ReportQueryClient,
   request: FocusedOverviewRequest,
   execution: ReportQueryExecution,
-) =>
-  queryOptions({
+) => {
+  const parsed = parseFocusedOverviewRequest(request);
+  return queryOptions({
     ...webQueryPolicies.immutableRevision,
     enabled: execution.browser,
-    queryFn: async ({ signal }) => await client.getFocusedReportOverview(request, { signal }),
-    queryKey: reportOverviewKey(request),
+    queryFn: async ({ signal }) => await client.getFocusedReportOverview(parsed, { signal }),
+    queryKey: reportOverviewKey(parsed),
   });
+};
 
 export const reportBreakdownQueryOptions = (
   client: ReportQueryClient,
   request: FocusedBreakdownRequest,
   execution: ReportQueryExecution,
-) =>
-  queryOptions({
+) => {
+  const parsed = parseFocusedBreakdownRequest(request);
+  return queryOptions({
     ...webQueryPolicies.immutableRevision,
     enabled: execution.browser,
-    queryFn: async ({ signal }) => await client.getFocusedReportBreakdown(request, { signal }),
-    queryKey: reportBreakdownKey(request),
+    queryFn: async ({ signal }) => await client.getFocusedReportBreakdown(parsed, { signal }),
+    queryKey: reportBreakdownKey(parsed),
   });
+};
 
 export const invalidateCurrentReportAliases = async (client: QueryClient): Promise<void> => {
   await Promise.all([

@@ -4,6 +4,7 @@ import type {
   FocusedBreakdownRequest,
   FocusedOverviewRequest,
   FocusedReportServerResult,
+  FocusedRevisionRequest,
   FocusedSupportResult,
   ReportRevisionBootstrapResult,
   ReportRevisionManifestResult,
@@ -18,9 +19,11 @@ import {
   reportBootstrapKey,
   reportBootstrapQueryOptions,
   reportBreakdownKey,
+  reportBreakdownQueryOptions,
   reportManifestKey,
   reportManifestQueryOptions,
   reportOverviewKey,
+  reportOverviewQueryOptions,
   reportSupportKey,
   reportSupportQueryOptions,
 } from './report';
@@ -111,6 +114,88 @@ describe('Report Query options', () => {
       retry: false,
       staleTime: Number.POSITIVE_INFINITY,
     });
+  });
+
+  test('captures one canonical request for both the exact key and deferred RPC after caller mutation', async () => {
+    const expectedSupport: FocusedRevisionRequest = { revision };
+    const mutableSupport: FocusedRevisionRequest = { ...expectedSupport };
+    const expectedOverview: FocusedOverviewRequest = {
+      ...overviewRequest,
+      query: {
+        ...overviewRequest.query,
+        filters: { ...overviewRequest.query.filters },
+        range: { ...overviewRequest.query.range },
+      },
+      timeline: { ...overviewRequest.timeline },
+    };
+    const mutableOverview: FocusedOverviewRequest = {
+      ...expectedOverview,
+      query: {
+        ...expectedOverview.query,
+        filters: { ...expectedOverview.query.filters },
+        range: { ...expectedOverview.query.range },
+      },
+      timeline: { ...expectedOverview.timeline },
+    };
+    const expectedBreakdown: FocusedBreakdownRequest = {
+      query: {
+        ...breakdownRequest.query,
+        filters: { ...breakdownRequest.query.filters },
+        range: { ...breakdownRequest.query.range },
+      },
+    };
+    const mutableBreakdown: FocusedBreakdownRequest = {
+      query: {
+        ...expectedBreakdown.query,
+        filters: { ...expectedBreakdown.query.filters },
+        range: { ...expectedBreakdown.query.range },
+      },
+    };
+    let receivedSupport: FocusedRevisionRequest | undefined;
+    let receivedOverview: FocusedOverviewRequest | undefined;
+    let receivedBreakdown: FocusedBreakdownRequest | undefined;
+    const client = createReportClientStub({
+      getFocusedReportBreakdown: (request) => {
+        receivedBreakdown = request;
+        return Promise.resolve(supportUnavailable);
+      },
+      getFocusedReportOverview: (request) => {
+        receivedOverview = request;
+        return Promise.resolve(supportUnavailable);
+      },
+      getFocusedReportSupport: (request) => {
+        receivedSupport = request;
+        return Promise.resolve(supportUnavailable);
+      },
+    });
+    const supportOptions = reportSupportQueryOptions(client, mutableSupport, { browser: false });
+    const overviewOptions = reportOverviewQueryOptions(client, mutableOverview, { browser: false });
+    const breakdownOptions = reportBreakdownQueryOptions(client, mutableBreakdown, { browser: false });
+
+    mutableSupport.revision = 'revision-mutated';
+    mutableOverview.query.revision = 'revision-mutated';
+    mutableOverview.query.filters.query = 'mutated-filter';
+    mutableOverview.timeline.dimension = 'model';
+    mutableBreakdown.query.revision = 'revision-mutated';
+    mutableBreakdown.query.filters.query = 'mutated-filter';
+
+    const queryClient = createWebQueryClient();
+    await Promise.all([
+      queryClient.fetchQuery(supportOptions),
+      queryClient.fetchQuery(overviewOptions),
+      queryClient.fetchQuery(breakdownOptions),
+    ]);
+
+    expect(receivedSupport).toEqual(expectedSupport);
+    expect(receivedOverview).toEqual(expectedOverview);
+    expect(receivedBreakdown).toEqual(expectedBreakdown);
+    expect([...supportOptions.queryKey]).toEqual([...reportSupportKey(expectedSupport)]);
+    expect([...overviewOptions.queryKey]).toEqual([...reportOverviewKey(expectedOverview)]);
+    expect([...breakdownOptions.queryKey]).toEqual([...reportBreakdownKey(expectedBreakdown)]);
+    expect([...supportOptions.queryKey]).not.toEqual([...reportSupportKey(mutableSupport)]);
+    expect([...overviewOptions.queryKey]).not.toEqual([...reportOverviewKey(mutableOverview)]);
+    expect([...breakdownOptions.queryKey]).not.toEqual([...reportBreakdownKey(mutableBreakdown)]);
+    queryClient.clear();
   });
 
   test('QUERY-REPORT-CURRENT-ALIAS: awaits the same SSR options and reuses hydration without a duplicate bootstrap', async () => {
