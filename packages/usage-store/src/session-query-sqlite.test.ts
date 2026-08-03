@@ -702,6 +702,41 @@ describe('durable session query SQLite projections', () => {
     }
   });
 
+  test('returns the actual campaign root when current filters match no campaign rows', async () => {
+    const fixtureRows = [
+      row('campaign-root', 10, { root: 'campaign-root' }),
+      row('campaign-child', 20, { parent: 'campaign-root', root: 'campaign-root' }),
+    ];
+    const { database } = await openRowsDatabase(fixtureRows);
+    const root = enrichSessionPresentationRow(fixtureRows[0]!);
+    const request = queryRequest({
+      filters: {
+        fields: {},
+        harness: [],
+        machine: [],
+        origin: [],
+        query: 'does-not-match-any-campaign-row',
+      },
+    });
+    const childrenRequest = {
+      campaignKey: sessionCampaignIdentityForRow(root).campaignKey,
+      query: request,
+    };
+    try {
+      const expected = projectSessionCampaignChildren(fixtureRows, childrenRequest);
+      const actual = executeMaterializedSessionQuery(database, 'campaign-children', childrenRequest);
+
+      expect(actual).toEqual(expected);
+      expect(actual).toMatchObject({
+        itemCount: 0,
+        items: [],
+        root,
+        sessionCount: 0,
+      });
+    } finally {
+      database.close();
+    }
+  });
   test('filters sessions by every attributed model segment', async () => {
     const segmentedRow: SerializedRow = {
       ...row('multi-model', 10),

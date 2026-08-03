@@ -1552,6 +1552,9 @@ export const projectSessionCampaignChildren = (
   const campaign = buildSessionCampaignViews(allRows, visibleRows).find(
     (candidate) => candidate.campaignKey === request.campaignKey,
   );
+  const root = buildSessionCampaignViews(allRows, allRows).find(
+    (candidate) => candidate.campaignKey === request.campaignKey,
+  )?.root;
   const children = campaign ? buildSortedSessionPresentationRows(campaign.visibleChildren, request.query.sort) : [];
   const visibleIds = new Set(visibleRows.map((row) => row.rowId));
   const visibleSessionCount = campaign?.allChildren.filter((row) => visibleIds.has(row.rowId)).length ?? 0;
@@ -1563,7 +1566,7 @@ export const projectSessionCampaignChildren = (
     nextCursor: page.hasMore ? sessionQueryNextCursor(request.query, requestFingerprint, page.nextOffset) : null,
     requestFingerprint,
     revision: request.query.revision,
-    root: campaign?.root ?? null,
+    root: root ?? null,
     sessionCount: visibleSessionCount,
   };
 };
