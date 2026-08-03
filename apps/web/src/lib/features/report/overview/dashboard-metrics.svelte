@@ -54,6 +54,7 @@
 
 <section aria-label="More report metrics">
   <div class={metricGrid} data-metric-grid>
+    <h2 class={valueTitle}>More report metrics</h2>
     <section class={valuePanel} data-value-bases-panel>
       <h2 class={valueTitle}>Value bases</h2>
       <dl class={valueRows}>

@@ -54,7 +54,13 @@
     <span class={muted}>{fmtNum(visibleRows.length)} {countLabel}</span>
   </header>
   <div class={row}>
-    <input aria-label="Search this breakdown" class={field} placeholder="Search this breakdown" bind:value={query}>
+    <input
+      aria-label="Search this breakdown"
+      class={field}
+      placeholder="Search this breakdown"
+      type="search"
+      bind:value={query}
+    >
     <SegmentedControl
       ariaLabel="Sort breakdown"
       defaultValue="value"

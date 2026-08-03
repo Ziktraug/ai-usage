@@ -207,8 +207,11 @@
   );
 
   const commitRange = (next: DashboardDateRangeSearch, replace = false): void => {
+    if (navigate) {
+      navigate((current) => ({ ...current, range: next }), { replace, resetScroll: false });
+      return;
+    }
     onRangeChange(next);
-    navigate?.((current) => ({ ...current, range: next }), { replace, resetScroll: false });
   };
 
   const synchronizeInputs = (indexes: TimeRangeSelectionIndexes): void => {

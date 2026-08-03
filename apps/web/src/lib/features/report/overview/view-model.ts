@@ -38,7 +38,7 @@ export const buildOverviewMetrics = (
   previous: FocusedReportSummary | null,
 ): Metric[] => {
   const apiValue = aggregateApiValuePresentation(summary.priceMeasurement);
-  const fullyPricedHint = `${apiValue.title} for ${fmtNum(summary.pricedSessions)} of ${fmtNum(summary.sessionCount)} fully priced sessions`;
+  const fullyPricedHint = `${apiValue.title} for ${fmtNum(summary.pricedSessions)} of ${fmtNum(summary.sessionCount)} fully priced sessions, including usage covered by subscriptions`;
   return [
     metric(
       'api-value',

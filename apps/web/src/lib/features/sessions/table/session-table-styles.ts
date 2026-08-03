@@ -33,7 +33,7 @@ export const surface = css({
 });
 export const table = css({
   w: '100%',
-  minW: '720px',
+  minW: 0,
   borderCollapse: 'separate',
   borderSpacing: 0,
   tableLayout: 'fixed',

@@ -18,7 +18,6 @@ const PROVIDER_CATEGORY_COUNT_PATTERN = /: (\d+) providers?$/;
 const PROVIDER_CATEGORY_TOTAL_PATTERN = /\((\d+) providers?\)$/;
 const PROVIDER_CATEGORIES_PATTERN = /^Provider categories/;
 const QUERY_URL_PATTERN = /q=ai-usage/;
-const NO_CELL_PATTERN = /^No$/;
 const RANGE_URL_PATTERN = /range=/;
 const RESET_COUNT_PATTERN = /1 reset/;
 const GAP_COUNT_PATTERN = /1 collection gap/;
@@ -29,6 +28,13 @@ const HIDDEN_FILTERS_PATTERN = /hidden by filters/;
 const NO_SESSIONS_PATTERN = /No sessions/;
 const SESSION_COUNTER_PATTERN = /^\d+ \/ \d+ sessions$/;
 type FocusedResponseControlAction = 'arm' | 'release' | 'waitUntilBlocked';
+const openHydratedReport = async (page: Page, url = '/'): Promise<Awaited<ReturnType<Page['goto']>>> => {
+  const response = await page.goto(url);
+  await expect(page.locator('main[data-hydrated="true"]')).toBeVisible({
+    timeout: HYDRATION_TIMEOUT_MS,
+  });
+  return response;
+};
 
 const controlFocusedResponse = async (page: Page, action: FocusedResponseControlAction): Promise<void> => {
   await page.evaluate(
@@ -177,39 +183,25 @@ test('locks definitive output while a focused filter response is pending', async
   await expect(page.getByText('0 / 6 sessions', { exact: true })).toBeVisible();
 });
 
-test('retries a failed report through the Router loading lifecycle', async ({ page }) => {
-  await page.goto('/');
-  await page.evaluate(async () => {
-    Reflect.set(globalThis, '__aiUsageE2EDisableReportPublicationRetry', true);
-    Reflect.set(globalThis, '__aiUsageE2EReportLoadFailures', 1);
-    const router = Reflect.get(globalThis, '__TSR_ROUTER__');
-    const invalidate = router && typeof router === 'object' ? Reflect.get(router, 'invalidate') : undefined;
-    if (typeof invalidate !== 'function') {
-      throw new Error('TanStack Router test handle is unavailable.');
-    }
-    try {
-      await Reflect.apply(invalidate, router, [
-        { filter: (match: { routeId?: unknown }) => match.routeId === '/', forcePending: true },
-      ]);
-    } catch {
-      // The route error boundary owns the synthetic loader failure.
-    }
-  });
+test('retries a failed report through the Router loading lifecycle', async ({ context, page }) => {
+  await context.setExtraHTTPHeaders({ 'x-ai-usage-sveltekit-error': 'once' });
+  const failed = await page.goto('/');
 
+  expect(failed?.status()).toBe(503);
   await expect(page.getByRole('heading', { level: 2, name: 'Report unavailable' })).toBeVisible();
-  await expect(page.getByText('Synthetic report load failed for retry coverage.')).toBeVisible();
+  await expect(page.getByText('Report data could not be loaded.')).toBeVisible();
   await page.getByRole('button', { name: 'Retry' }).click();
 
+  await context.setExtraHTTPHeaders({});
   await expect(page.getByRole('heading', { level: 1, name: 'Usage report' })).toBeVisible();
   await expect(reportViewsFor(page).getByRole('link', { exact: true, name: 'Overview' })).toHaveAttribute(
     'aria-current',
     'page',
   );
-  await expect.poll(() => page.evaluate(() => Reflect.get(globalThis, '__aiUsageE2EReportOwnerLoads'))).toBe(2);
 });
 
 test('uses one primary navigation while preserving Breakdown deep links and sub-tabs', async ({ page }) => {
-  await page.goto('/?tab=sessions');
+  await openHydratedReport(page, '/?tab=sessions');
 
   const reportViews = reportViewsFor(page);
   await expect(reportViews).toHaveCount(1);
@@ -221,7 +213,7 @@ test('uses one primary navigation while preserving Breakdown deep links and sub-
   );
   await expect(page.getByRole('table')).toBeVisible();
 
-  await page.goto('/?tab=models');
+  await openHydratedReport(page, '/?tab=models');
   await expect(reportViews.getByRole('link', { exact: true, name: 'Breakdown' })).toHaveAttribute(
     'aria-current',
     'page',
@@ -237,7 +229,7 @@ test('uses one primary navigation while preserving Breakdown deep links and sub-
 });
 
 test('copies the exact breakdown URL and exports only visible sorted model rows', async ({ page }) => {
-  await page.goto('/?tab=models&breakdownSort=sessions');
+  await openHydratedReport(page, '/?tab=models&breakdownSort=sessions');
   await expect(page.getByText('By model', { exact: true })).toBeVisible();
 
   const localSearch = page.getByRole('searchbox', { name: 'Search this breakdown' });
@@ -275,7 +267,7 @@ test('copies the exact breakdown URL and exports only visible sorted model rows'
 });
 
 test('shows analysis and report metrics without disclosure gates', async ({ page }) => {
-  await page.goto('/');
+  await openHydratedReport(page);
   await expect(page.locator('main[data-hydrated="true"]')).toBeVisible({ timeout: HYDRATION_TIMEOUT_MS });
 
   const apiValueHelp = page.getByRole('button', { name: 'About API value' });
@@ -311,7 +303,7 @@ test('shows analysis and report metrics without disclosure gates', async ({ page
 
 test('prioritizes the selected dashboard view before secondary status on mobile', async ({ page }) => {
   await page.setViewportSize({ height: 800, width: 390 });
-  await page.goto('/');
+  await openHydratedReport(page);
 
   const dashboardPanel = page.locator('[data-dashboard-panel]');
   const providerStatus = page.getByRole('heading', { level: 2, name: 'Provider status' });
@@ -326,7 +318,7 @@ test('prioritizes the selected dashboard view before secondary status on mobile'
 
 test('keeps the selected dashboard view ahead of secondary provider status on desktop', async ({ page }) => {
   await page.setViewportSize({ height: 900, width: 1280 });
-  await page.goto('/');
+  await openHydratedReport(page);
 
   const dashboardPanel = page.locator('[data-dashboard-panel]');
   const providerStatus = page.getByRole('heading', { level: 2, name: 'Provider status' });
@@ -337,7 +329,7 @@ test('keeps the selected dashboard view ahead of secondary provider status on de
 });
 
 test('keeps provider details collapsed until they are requested', async ({ page }) => {
-  await page.goto('/');
+  await openHydratedReport(page);
 
   const providerDetails = page.getByText(PROVIDER_DETAILS_PATTERN);
   const noQuotaDetail = page.getByText('No quota windows are available for this provider.').first();
@@ -358,7 +350,7 @@ test('keeps provider details collapsed until they are requested', async ({ page 
 });
 
 test('Codex quota history shows reset and gap-aware ranges on desktop and mobile', async ({ page }) => {
-  await page.goto('/');
+  await openHydratedReport(page);
 
   const historyButton = page.getByRole('button', { name: 'View Codex history' });
   await expect(historyButton).toHaveCount(1);
@@ -382,7 +374,7 @@ test('Codex quota history shows reset and gap-aware ranges on desktop and mobile
 });
 
 test('persists exploration state in the URL', async ({ page }) => {
-  await page.goto('/');
+  await openHydratedReport(page);
   await expect.poll(() => page.evaluate(() => Reflect.get(globalThis, '__aiUsageE2EReportOwnerLoads'))).toBeUndefined();
   await page.keyboard.press('/');
 
@@ -399,7 +391,7 @@ test('persists exploration state in the URL', async ({ page }) => {
 });
 
 test('shows the text query as a directly removable active filter', async ({ page }) => {
-  await page.goto('/');
+  await openHydratedReport(page);
 
   const search = page.getByRole('textbox', {
     name: 'Filter sessions by title, project, model, provider, or harness',
@@ -415,7 +407,7 @@ test('shows the text query as a directly removable active filter', async ({ page
 });
 
 test('updates the date range and opens a session drawer', async ({ page }) => {
-  await page.goto('/?origin=%5B%5D');
+  await openHydratedReport(page, '/?origin=%5B%5D');
   const range = page.getByRole('region', { name: 'Date range' });
 
   await range.getByRole('button', { exact: true, name: 'All' }).click();
@@ -430,7 +422,7 @@ test('updates the date range and opens a session drawer', async ({ page }) => {
 });
 
 test('opens a session from Overview without leaving the current analysis', async ({ page }) => {
-  await page.goto('/');
+  await openHydratedReport(page);
 
   await page.getByRole('button', { name: TOP_SESSION_PATTERN }).click();
 
@@ -442,7 +434,7 @@ test('opens a session from Overview without leaving the current analysis', async
 });
 
 test('navigates and closes the selected session with drawer keyboard commands', async ({ page }) => {
-  await page.goto('/');
+  await openHydratedReport(page);
   await page.getByRole('button', { name: TOP_SESSION_PATTERN }).click();
 
   const drawer = page.getByRole('dialog', { name: 'Session details' });
@@ -457,7 +449,7 @@ test('navigates and closes the selected session with drawer keyboard commands', 
 
 test('starts sessions with focused work columns and switches metric presets', async ({ page }) => {
   await page.setViewportSize({ height: 900, width: 1024 });
-  await page.goto('/');
+  await openHydratedReport(page);
   await reportViewsFor(page).getByRole('link', { exact: true, name: 'Sessions' }).click();
 
   const columnHeaders = page.getByRole('columnheader');
@@ -485,18 +477,21 @@ test('starts sessions with focused work columns and switches metric presets', as
 
 test('renders a human campaign root as not a subagent', async ({ page }) => {
   await page.setViewportSize({ height: 900, width: 1024 });
-  await page.goto('/?tab=sessions');
+  await openHydratedReport(page, '/?tab=sessions');
 
-  await page.getByRole('button', { name: ADVANCED_COLUMNS_PATTERN }).click();
+  const advancedColumns = page.getByRole('button', { name: ADVANCED_COLUMNS_PATTERN });
+  await advancedColumns.click();
   await page.getByText('Subagent', { exact: true }).click();
+  await expect(page).toHaveURL(COLUMN_URL_PATTERN);
+  await advancedColumns.click();
   await expect(page.getByRole('checkbox', { name: 'Subagent' })).toBeChecked();
 
   const humanCampaignRoot = page.getByRole('row').filter({ hasText: 'Build report UI' }).first();
-  await expect(humanCampaignRoot.getByRole('cell').filter({ hasText: NO_CELL_PATTERN })).toHaveCount(1);
+  await expect(humanCampaignRoot.getByRole('cell', { exact: true, name: 'No' })).toHaveCount(1);
 });
 
 test('uses the report range as the only graph viewport', async ({ page }) => {
-  await page.goto('/');
+  await openHydratedReport(page);
 
   const dateRange = page.getByRole('region', { name: 'Date range' });
   await expect(dateRange.getByRole('button', { name: 'Zoom chart' })).toHaveCount(0);
@@ -507,7 +502,7 @@ test('uses the report range as the only graph viewport', async ({ page }) => {
 
 test('offers keyboard-safe charts and mobile summaries at a narrow viewport', async ({ page }) => {
   await page.setViewportSize({ height: 800, width: 361 });
-  await page.goto('/');
+  await openHydratedReport(page);
 
   const calendar = page.getByRole('toolbar', { name: CALENDAR_NAME_PATTERN });
   const focusedCalendarDay = calendar.locator('button[tabindex="0"]');
@@ -542,7 +537,7 @@ test('offers keyboard-safe charts and mobile summaries at a narrow viewport', as
 
 test('keeps compact heatmap geometry at narrow and desktop viewports', async ({ page }) => {
   await page.setViewportSize({ height: 800, width: 361 });
-  await page.goto('/');
+  await openHydratedReport(page);
 
   const calendar = page.getByRole('toolbar', { name: CALENDAR_NAME_PATTERN });
   const cell = calendar.locator('button').first();
@@ -574,11 +569,11 @@ test('selects the same heatmap day with mouse and keyboard', async ({ page }) =>
   const selectedCell = () =>
     page.getByRole('toolbar', { name: CALENDAR_NAME_PATTERN }).locator(`button[data-heatmap-day="${selectedDay}"]`);
 
-  await page.goto('/');
+  await openHydratedReport(page);
   await selectedCell().click();
   await assertSelectedDay();
 
-  await page.goto('/');
+  await openHydratedReport(page);
   await selectedCell().focus();
   await selectedCell().press('Enter');
   await assertSelectedDay();
@@ -586,7 +581,7 @@ test('selects the same heatmap day with mouse and keyboard', async ({ page }) =>
 
 test('mounts one Sessions surface across viewport changes without losing state', async ({ page }) => {
   await page.setViewportSize({ height: 800, width: 361 });
-  await page.goto('/');
+  await openHydratedReport(page);
   await reportViewsFor(page).getByRole('link', { exact: true, name: 'Sessions' }).click();
   await page.getByRole('button', { name: 'Show children' }).click();
   const mobileSort = page.getByRole('combobox', { name: 'Sort mobile session summaries' });

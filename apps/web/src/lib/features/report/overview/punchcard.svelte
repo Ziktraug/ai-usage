@@ -31,6 +31,7 @@
   });
   const keyCell = css({ w: '10px', h: '10px', borderRadius: 'full', bg: 'accent' });
   const empty = css({ color: 'muted', fontSize: '12px' });
+  const srOnly = css({ srOnly: true });
 </script>
 
 <script lang="ts">
@@ -53,6 +54,15 @@
 
   const localTimeCell = (weekday: number, hour: number): LocalTimeCell | null =>
     isLocalTimeWeekday(weekday) && isLocalTimeHour(hour) ? { hour, weekday } : null;
+  const accessibleCells = $derived(
+    punchcard?.cells.flatMap((dayCells, weekday) =>
+      dayCells.flatMap((item, hour) =>
+        item.sessions > 0
+          ? [{ cost: item.cost, day: localTimeWeekdayNames[weekday] ?? '', hour, sessions: item.sessions }]
+          : [],
+      ),
+    ) ?? [],
+  );
   const ariaLabel = (cell: LocalTimeCell, sessions: number): string =>
     `Filter report to ${localTimeCellLabel(cell)}, ${fmtNum(sessions)} ${sessions === 1 ? 'session' : 'sessions'}`;
   const moveFocus = (event: KeyboardEvent, weekday: number, hour: number): void => {
@@ -128,6 +138,31 @@
     </div>
     <div class={key} data-punchcard-intensity-key>
       <span>Low</span><span class={keyCell} style:opacity="0.3"></span><span class={keyCell}></span><span>High</span>
+    </div>
+    <div class={srOnly}>
+      <table aria-label="Punchcard">
+        <caption>
+          Non-empty activity periods
+        </caption>
+        <thead>
+          <tr>
+            <th scope="col">Weekday</th>
+            <th scope="col">Hour</th>
+            <th scope="col">Sessions</th>
+            <th scope="col">Estimated API-equivalent value</th>
+          </tr>
+        </thead>
+        <tbody>
+          {#each accessibleCells as item (`${item.day}:${item.hour}`)}
+            <tr>
+              <th scope="row">{item.day}</th>
+              <td>{String(item.hour).padStart(2, '0')}:00</td>
+              <td>{fmtNum(item.sessions)}</td>
+              <td>{fmtMoney(item.cost)}</td>
+            </tr>
+          {/each}
+        </tbody>
+      </table>
     </div>
   {:else}
     <p class={empty}>No dated sessions in range</p>

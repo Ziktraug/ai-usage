@@ -54,6 +54,7 @@
   import ReportWorkspace from '../core/report-workspace.svelte';
   import ReportLifecycleOwner from '../lifecycle/report-lifecycle-owner.svelte';
   import OverviewPage from '../overview/overview-page.svelte';
+  import ReportRangeControl from '../range/report-range-control.svelte';
   import { activeTimelineSeriesKeys } from './active-timeline-series';
   import { createCampaignLabelOwner } from './campaign-label-owner.svelte';
   import FocusedDestinationRefresh from './focused-destination-refresh.svelte';
@@ -366,6 +367,25 @@
       total={totalSessions}
       visible={visibleSessions}
     />
+    {#if primary !== 'overview' && commit?.overview}
+      <ReportRangeControl
+        {activeSeriesKeys}
+        dateDomain={commit.overview.dateDomain}
+        {dimension}
+        generatedAt={bootstrap.support.generatedAt}
+        {granularity}
+        machineFreshnessStatus={machineFreshnessStatusLabel(machineSnapshot)}
+        {navigate}
+        onDimensionFilter={navigation.setTimelineDimensionFilter}
+        onOptionsChange={updateOverviewOptions}
+        onRangeChange={navigation.setDateRange}
+        {presentCampaignSeries}
+        {presentMachineSeries}
+        range={search.range}
+        timeline={commit.overview.timeline}
+        value={timelineValue}
+      />
+    {/if}
     <ReportWorkspace
       hasOutput={primary === 'sessions' || commit !== undefined}
       pending={primary === 'sessions' ? false : _owner.snapshot.pending}

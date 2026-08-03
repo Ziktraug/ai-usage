@@ -35,7 +35,8 @@
 
   const queryClient = useQueryClient();
   let navigationFailure = $state<string | null>(null);
-  let navigate = $state<SearchNavigationIntent<DashboardSearch>>(() => undefined);
+  let browserNavigate: SearchNavigationIntent<DashboardSearch> = () => undefined;
+  const navigate: SearchNavigationIntent<DashboardSearch> = (update, options) => browserNavigate(update, options);
   let runtime = $state<
     | {
         readonly reportClient: ReturnType<typeof createReportClient>;
@@ -54,7 +55,7 @@
         navigationFailure = cause instanceof Error ? cause.message : 'Report navigation failed.';
       },
     });
-    navigate = createDashboardSearchNavigation(port, dashboardSearchCodec, ({ cause }) => {
+    browserNavigate = createDashboardSearchNavigation(port, dashboardSearchCodec, ({ cause }) => {
       navigationFailure = cause instanceof Error ? cause.message : 'Report navigation failed.';
     });
     if (mode === 'live') {

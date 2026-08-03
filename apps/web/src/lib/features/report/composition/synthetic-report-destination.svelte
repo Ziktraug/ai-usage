@@ -10,12 +10,14 @@
   import type { QueryClient } from '@tanstack/svelte-query';
   import { onDestroy, untrack } from 'svelte';
   import { browser } from '$app/environment';
+  import { buildCampaignTableRows } from '../../../../dashboard-model';
   import {
     type DashboardSearch,
     primaryDashboardTabFor,
     serializeDashboardTimeCell,
   } from '../../../../dashboard-search';
   import { createFocusedReportE2EFixture } from '../../../../focused-report-e2e-fixture';
+  import { buildProviderStatusViews } from '../../../../provider-status-model';
   import { demoReportPayload } from '../../../../report-data';
   import type { RuntimeMode } from '../../../../runtime-mode';
   import {
@@ -29,11 +31,13 @@
   import { createSessionDetailController, type SessionSelectionInput } from '../../sessions/detail/controller';
   import { createSessionDetailQueryOwner } from '../../sessions/detail/query-owner';
   import SessionDetailSlot from '../../sessions/detail/session-detail-slot.svelte';
+  import QuotaHistoryOwner from '../actions/quota-history-owner.svelte';
   import ActiveFilters from '../breakdown/active-filters.svelte';
   import FilterBar from '../breakdown/filter-bar.svelte';
   import { createBreakdownNavigation } from '../breakdown/navigation';
   import ReportWorkspace from '../core/report-workspace.svelte';
   import OverviewPage from '../overview/overview-page.svelte';
+  import ReportRangeControl from '../range/report-range-control.svelte';
   import { activeTimelineSeriesKeys } from './active-timeline-series';
   import { reportDestinationForSearch } from './report-search';
 
@@ -112,12 +116,14 @@
     { revision },
     { providerRows: allRows },
   );
+  const providers = buildProviderStatusViews(reportSupport, allRows, reportSupport.generatedAt);
   let dimension = $state<'campaign' | 'harness' | 'machine' | 'model' | 'origin' | 'provider' | 'project'>('harness');
   let granularity = $state<'day' | 'month' | 'week'>('day');
   let timelineValue = $state<'cost' | 'sessions' | 'share'>('cost');
   let detailRows = $state<readonly SessionPresentationRow[]>([]);
   let selectedRowId = $state<string | null>(null);
   let selection = $state<SessionSelectionInput | null>(null);
+  let quotaHistoryOpen = $state(false);
   const navigation = createBreakdownNavigation((update, options) => navigate(update, options));
   const destination = $derived(
     reportDestinationForSearch(renderedSearch, reportSupport.generatedAt, { dimension, granularity }),
@@ -160,6 +166,13 @@
   );
   const columnVisibility = $derived(columnVisibilityFromDiff(renderedSearch.cols, renderedSearch.colsBase));
   const sorting = $derived([{ ...renderedSearch.sort }]);
+  const tableRows = $derived(buildCampaignTableRows(allRows, visibleRows, sorting));
+  const sessionResetKey = $derived(
+    JSON.stringify({
+      filters: destination.sessions.filters,
+      range: destination.sessions.range,
+    }),
+  );
   const activeSeriesKeys = $derived(activeTimelineSeriesKeys(renderedSearch, dimension));
   const unavailable = (): Promise<never> =>
     Promise.reject(new Error('Synthetic session detail transport is unavailable.'));
@@ -185,12 +198,12 @@
   );
 
   const selectOverviewSession = (item: FocusedOverviewSessionItem): void => {
-    detailRows = overview.view.topSessions.map((candidate) => candidate.row);
+    detailRows = visibleRows;
     selection = { row: item.row };
     selectedRowId = item.row.rowId;
   };
   const selectSessionRow = (row: SessionPresentationRow): void => {
-    detailRows = visibleRows;
+    detailRows = tableRows;
     selection = selectedRowId === row.rowId ? null : { row };
     selectedRowId = selection?.row.rowId ?? null;
   };
@@ -215,6 +228,26 @@
   total={support.support.analytics.sessionCount}
   visible={overview.summary.sessionCount}
 />
+{#if primary !== 'overview'}
+  <ReportRangeControl
+    {activeSeriesKeys}
+    dateDomain={overview.dateDomain}
+    {dimension}
+    generatedAt={reportSupport.generatedAt}
+    {granularity}
+    {navigate}
+    onDimensionFilter={navigation.setTimelineDimensionFilter}
+    onOptionsChange={(options) => {
+      dimension = options.dimension;
+      granularity = options.granularity;
+      timelineValue = options.value;
+    }}
+    onRangeChange={navigation.setDateRange}
+    range={renderedSearch.range}
+    timeline={overview.timeline}
+    value={timelineValue}
+  />
+{/if}
 <ReportWorkspace hasOutput={!pending} {pending}>
   {#snippet children()}
     {#if primary === 'overview'}
@@ -234,7 +267,8 @@
         onSelectDay={(date) => navigate((current) => ({ ...current, range: { from: date, mode: 'custom', to: date }, tab: 'sessions' }))}
         onSelectSession={selectOverviewSession}
         onSelectTimeCell={(cell) => navigate((current) => ({ ...current, tab: 'sessions', timeCell: serializeDashboardTimeCell(cell) }))}
-        providers={[]}
+        {...(mode === 'e2e' ? { onOpenQuotaHistory: () => (quotaHistoryOpen = true) } : {})}
+        providers={mode === 'e2e' ? providers : []}
         range={renderedSearch.range}
         result={overview}
         value={timelineValue}
@@ -280,8 +314,8 @@
           const next = applyStateUpdate(updater, sorting);
           navigate((current) => ({ ...current, sort: sortFromSortingState(next, current.sort) }));
         }}
-        queryResetKey={JSON.stringify(destination.sessions)}
-        rows={visibleRows}
+        queryResetKey={sessionResetKey}
+        rows={tableRows}
         searchQuery={renderedSearch.q}
         {selectedRowId}
         {sorting}
@@ -300,3 +334,11 @@
   rows={detailRows}
   {selection}
 />
+{#if mode === 'e2e'}
+  <QuotaHistoryOwner
+    generation={revision}
+    onClose={() => (quotaHistoryOpen = false)}
+    open={quotaHistoryOpen}
+    runtimeMode={mode}
+  />
+{/if}

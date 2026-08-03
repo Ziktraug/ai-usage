@@ -28,8 +28,8 @@ const summaryDayFormatter = new Intl.DateTimeFormat('en', { day: '2-digit', mont
 const summaryEndFormatter = new Intl.DateTimeFormat('en', { day: '2-digit', month: 'short', year: 'numeric' });
 
 const validDomainDate = (value: string | undefined, fallback: Date): Date => {
-  const parsed = value ? parseLocalDate(value) : null;
-  return parsed ?? fallback;
+  const parsed = value ? new Date(value) : fallback;
+  return Number.isFinite(parsed.getTime()) ? parsed : fallback;
 };
 
 export const rangeBounds = (

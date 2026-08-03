@@ -19,6 +19,15 @@ describe('report range projection', () => {
     expect(projection.summary).toBe('May 12 → Jun 11, 2026 · 30 days');
     expect(projection.selectionIndexes).toEqual([11, 41]);
   });
+  test('accepts the focused report ISO date domain for the all-time range', () => {
+    const projection = reportRangeProjection({ mode: 'all' }, generatedAt, {
+      first: '2026-04-12T10:05:00.000Z',
+      last: '2026-06-11T09:42:00.000Z',
+    });
+
+    expect(projection.displayFrom).toBe('Apr 12, 2026');
+    expect(projection.displayTo).toBe('Jun 11, 2026');
+  });
 
   test('rejects invalid or reversed text ranges without mutating state', () => {
     expect(customRangeFromInputs('2026-06-12', '2026-06-11')).toBeNull();

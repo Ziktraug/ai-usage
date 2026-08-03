@@ -85,7 +85,7 @@
             onclick={() => presentedRecords?.topCost && onSelectSession(presentedRecords.topCost)}
             type="button"
           >
-            <span class={label}>Top value</span><span class={value}>{presentedRecords.topCost.label}</span>
+            <span class={label}>Top session</span><span class={value}>{presentedRecords.topCost.label}</span>
             <span class={sub}
               >{apiValuePresentation(presentedRecords.topCost).label}
               · {presentedRecords.topCost.harness}</span
@@ -98,7 +98,7 @@
             onclick={() => presentedRecords?.longest && onSelectSession(presentedRecords.longest)}
             type="button"
           >
-            <span class={label}>Longest</span><span class={value}>{presentedRecords.longest.label}</span>
+            <span class={label}>Longest session</span><span class={value}>{presentedRecords.longest.label}</span>
             <span class={sub}
               >{fmtDuration(presentedRecords.longest.durationMs)}
               · {presentedRecords.longest.harness}</span

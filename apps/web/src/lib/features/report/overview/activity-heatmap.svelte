@@ -6,11 +6,11 @@
     display: 'grid',
     gridTemplateColumns: 'auto minmax(max-content, 1fr)',
     gap: '8px',
-    minW: '520px',
+    minW: 0,
   });
   const weekdays = css({
     display: 'grid',
-    gridTemplateRows: 'repeat(7, 14px)',
+    gridTemplateRows: { base: 'repeat(7, 18px)', md: 'repeat(7, 12px)' },
     gap: '3px',
     color: 'muted',
     fontSize: '9px',
@@ -18,13 +18,13 @@
   const grid = css({
     display: 'grid',
     gridAutoFlow: 'column',
-    gridAutoColumns: '14px',
-    gridTemplateRows: 'repeat(7, 14px)',
+    gridAutoColumns: { base: '18px', md: '12px' },
+    gridTemplateRows: { base: 'repeat(7, 18px)', md: 'repeat(7, 12px)' },
     gap: '3px',
   });
   const day = css({
-    w: '14px',
-    h: '14px',
+    w: { base: '18px', md: '12px' },
+    h: { base: '18px', md: '12px' },
     borderRadius: 'sm',
     bg: 'accent',
     cursor: 'pointer',
@@ -86,6 +86,7 @@
   };
   const currentDayAria = (date: string): { readonly 'aria-current'?: 'date' } =>
     date === heatmap?.todayKey ? { 'aria-current': 'date' } : {};
+  const dateKey = (date: string): string => date.slice(0, 10);
   const dayTitle = (item: FocusedHeatDay): string => {
     const value = aggregateApiValuePresentation(item.priceMeasurement);
     const provenance = aggregateApiPriceProvenance(item.priceMeasurement);
@@ -104,20 +105,20 @@
     <p class={panelSub}>Daily session activity in the report time zone</p>
   </div>
   {#if heatmap && days.length > 0}
-    <div aria-label="Daily activity calendar" class={scroll} role="toolbar">
+    <div class={scroll}>
       <div class={body}>
         <div aria-hidden="true" class={weekdays}>
           <span>Mon</span><span></span><span>Wed</span><span></span><span>Fri</span><span></span><span>Sun</span>
         </div>
-        <div class={grid}>
+        <div aria-label="Daily activity calendar. Use arrow keys to move by day or week." class={grid} role="toolbar">
           {#each days as item, index (item.date)}
             <button
               {...currentDayAria(item.date)}
               aria-label={`Filter report to ${fmtDateOnly(item.date)}, ${fmtNum(item.sessions)} ${item.sessions === 1 ? 'session' : 'sessions'}. ${dayTitle(item)}`}
               class={day}
-              data-heatmap-day
+              data-heatmap-day={dateKey(item.date)}
               data-price-state={item.priceMeasurement.state}
-              onclick={() => onSelectDay(item.date)}
+              onclick={() => onSelectDay(dateKey(item.date))}
               onfocus={() => (focusedIndex = index)}
               onkeydown={(event) => focusMovedDay(event, index)}
               tabindex={focusedIndex === index ? 0 : -1}

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { css } from '@ai-usage/design-system/css';
-  import { Drawer, SegmentedControl } from '@ai-usage/design-system/svelte';
+  import { Drawer } from '@ai-usage/design-system/svelte';
   import type { ProviderQuotaHistoryResult } from '@ai-usage/report-core/provider-quota';
   import {
     buildProviderQuotaHistoryModel,
@@ -17,8 +17,12 @@
     border: '1px solid token(colors.line)',
     borderRadius: 'sm',
   });
+  const rangeControls = css({ display: 'flex', flexWrap: 'wrap', gap: '8px', border: 0, m: 0, p: 0 });
+  const selectedRange = css({ borderColor: 'accent', bg: 'accentTint', color: 'accent' });
+
   const tableWrap = css({ overflowX: 'auto' });
   const srOnly = css({ srOnly: true });
+  const historyRanges = ['24h', '7d', '30d'] as const satisfies readonly ProviderQuotaHistoryRange[];
 
   let {
     errorMessage = null,
@@ -48,12 +52,13 @@
     wasOpen = open;
   });
   const model = $derived(result ? buildProviderQuotaHistoryModel(result) : null);
-  const rangeItems = ['24h', '7d', '30d'].map((value) => ({ label: value, value }));
   const changeRange = (value: string): void => {
     if (value === '24h' || value === '7d' || value === '30d') {
       onRangeChange(value);
     }
   };
+  const pressedAria = (item: ProviderQuotaHistoryRange) =>
+    ({ 'aria-pressed': range === item ? 'true' : 'false' }) as const;
   const providers = $derived([...new Set(model?.series.map(({ providerKey }) => providerKey) ?? [])]);
   const machines = $derived([...new Set(model?.series.map(({ machineId }) => machineId) ?? [])]);
   const accounts = $derived([...new Set(model?.series.map(({ accountScope }) => accountScope ?? 'unknown') ?? [])]);
@@ -131,13 +136,19 @@
       <div class={panel} role="status">{errorMessage}</div>
     {/if}
     <div class={row}>
-      <SegmentedControl
-        ariaLabel="History range"
-        defaultValue="24h"
-        items={rangeItems}
-        onValueChange={changeRange}
-        value={range}
-      />
+      <fieldset class={rangeControls}>
+        <legend>History range</legend>
+        {#each historyRanges as item (item)}
+          <button
+            {...pressedAria(item)}
+            class={[button, range === item ? selectedRange : undefined]}
+            onclick={() => changeRange(item)}
+            type="button"
+          >
+            {item}
+          </button>
+        {/each}
+      </fieldset>
       <label
         >Provider
         <select class={field} bind:value={provider}>

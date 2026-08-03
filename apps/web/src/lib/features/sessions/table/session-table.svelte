@@ -113,7 +113,15 @@
   const effectiveVisibility = $derived(
     rows.some((row) => Boolean(row.rtkSavedTokens)) ? columnVisibility : { ...columnVisibility, rtkSaved: false },
   );
-  const model = $derived(createSessionTableModel({ expanded, rows, sorting, visibility: effectiveVisibility }));
+  const model = $derived(
+    createSessionTableModel({
+      canLoadCampaignChildren: Boolean(onLoadCampaignChildren),
+      expanded,
+      rows,
+      sorting,
+      visibility: effectiveVisibility,
+    }),
+  );
   const visibleColumns = $derived(visibleSessionTableColumns(effectiveVisibility));
   const activeMode = $derived(mode === 'mobile' ? 'mobile' : 'desktop');
   const virtual = $derived(
@@ -121,6 +129,9 @@
   );
   const activeSort = $derived(sorting[0] ?? { desc: true, id: 'date' });
   const activePreset = $derived(sessionColumnPresetForVisibility(columnVisibility));
+  const visibleColumnWidthTotal = $derived(visibleColumns.reduce((total, entry) => total + entry.meta.widthPx, 0));
+  const columnWidth = (width: number): string =>
+    activePreset ? `${(width / visibleColumnWidthTotal) * 100}%` : `${width}px`;
 
   const ariaSortFor = (id: SessionColumnId): 'ascending' | 'descending' | 'none' => {
     if (activeSort.id !== id) {
@@ -274,7 +285,7 @@
               {preset.label}
             </button>
           {/each}
-          <Popover triggerAriaLabel="Choose visible session columns" triggerClass={controlButton}>
+          <Popover triggerClass={controlButton}>
             {#snippet trigger()}
               Advanced columns · {visibleColumns.length} ▾
             {/snippet}
@@ -337,7 +348,7 @@
                   class={entry.meta.align === 'right' ? numeric : undefined}
                   scope="col"
                   title={entry.meta.title}
-                  style:width={`${entry.meta.widthPx}px`}
+                  style:width={columnWidth(entry.meta.widthPx)}
                 >
                   <button class={sortButton} onclick={() => changeSort(entry.id)} type="button">
                     <span>{typeof entry.header === 'string' ? entry.header : entry.meta.label}</span>

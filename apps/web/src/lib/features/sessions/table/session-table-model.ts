@@ -4,6 +4,7 @@ import type { TableSortingState, TableVisibilityState } from '../../../foundatio
 import { sessionTableColumns } from './session-columns';
 
 export interface SessionTableModelInput {
+  readonly canLoadCampaignChildren?: boolean;
   readonly expanded: ExpandedState;
   readonly rows: readonly SessionPresentationRow[];
   readonly sorting: TableSortingState;
@@ -27,7 +28,8 @@ export const createSessionTableModel = (input: SessionTableModelInput): SessionT
     enableSortingRemoval: false,
     getCoreRowModel: getCoreRowModel(),
     getExpandedRowModel: getExpandedRowModel(),
-    getRowCanExpand: (row) => Boolean(row.original.campaignKey || row.original.children?.length),
+    getRowCanExpand: (row) =>
+      Boolean(row.original.children?.length || (row.original.campaignKey && input.canLoadCampaignChildren)),
     getRowId: (row) => row.rowId,
     getSubRows: (row) => row.children ?? [],
     onStateChange: () => undefined,
