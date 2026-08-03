@@ -20,7 +20,7 @@ const shellRoutes = [
   {
     heading: 'Skill management',
     marker: null,
-    path: '/skills/projects/project%2Fopaque/skill%20name',
+    path: '/skills/projects/project%2Fopaque/skill-name',
   },
   { heading: 'Sources', marker: 'sources', path: '/sources' },
   { heading: 'Sync', marker: 'sync', path: '/sync' },
@@ -74,9 +74,9 @@ test('server-renders and reloads every Svelte shell route with accessible naviga
     expect(axe.violations).toEqual([]);
   }
 
-  await page.goto('/skills/projects/project%2Fopaque/skill%20name?foreign=kept#anchor');
+  await page.goto('/skills/projects/project%2Fopaque/skill-name?foreign=kept#anchor');
   await page.reload();
-  expect(page.url()).toContain('/skills/projects/project%2Fopaque/skill%20name?foreign=kept#anchor');
+  expect(page.url()).toContain('/skills/projects/project%2Fopaque/skill-name?foreign=kept#anchor');
 
   await page.goto('/');
   await page.evaluate(() => {

@@ -1,5 +1,6 @@
 import type { Handle } from '@sveltejs/kit';
 import { demoRouteDecision } from '$lib/features/shell/demo-policy.server';
+import { normalizeOwnedRpcSubrequest } from '$lib/server/rpc/subrequest-normalization.server';
 import { getServerRuntimeMode } from '../src/server/runtime-mode.server';
 
 process.once('sveltekit:shutdown', () => {
@@ -33,18 +34,11 @@ export const handle: Handle = async ({ event, resolve }) => {
     });
   }
   if (event.url.pathname === '/rpc' || event.url.pathname.startsWith('/rpc/')) {
-    const isOwnedInternalRequest =
-      event.request.headers.get('host') === null && event.request.headers.has('x-ai-usage-request-owner');
-    const rpcRequest = isOwnedInternalRequest
-      ? new Request(event.request, {
-          headers: {
-            ...Object.fromEntries(event.request.headers),
-            host: event.url.host,
-            origin: event.url.origin,
-            'sec-fetch-site': 'same-origin',
-          },
-        })
-      : event.request;
+    const rpcRequest = normalizeOwnedRpcSubrequest({
+      isSubRequest: event.isSubRequest,
+      request: event.request,
+      url: event.url,
+    });
     const { handleWebRpcRequest } = await import('../src/lib/server/rpc/handler.server');
     const response = await handleWebRpcRequest(rpcRequest);
     response.headers.set('x-ai-usage-shadow', 'sveltekit');

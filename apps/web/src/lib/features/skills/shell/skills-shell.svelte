@@ -6,7 +6,7 @@
     ProjectSkillMarkdownInput,
     SkillMarkdownDocument,
   } from '@ai-usage/web-contract/skills';
-  import { createQuery } from '@tanstack/svelte-query';
+  import { createQuery, useIsFetching } from '@tanstack/svelte-query';
   import { onMount, type Snippet, untrack } from 'svelte';
   import { goto } from '$app/navigation';
   import type { RuntimeMode } from '../../../../runtime-mode';
@@ -52,7 +52,7 @@
     getSkillProjectInventories: (options) => resolveClient().getSkillProjectInventories(options),
   };
   let mounted = $state(false);
-  let browserQueryCycleStarted = $state(false);
+  let queryContractStable = $state(false);
   const queriesEnabled = $derived(mounted && runtimeMode !== 'demo');
   const snapshotQuery = createQuery(() =>
     skillsSnapshotQueryOptions(client, { browser: mounted, enabled: runtimeMode !== 'demo' }),
@@ -129,7 +129,9 @@
   });
 
   const view = $derived(
-    acceptedSnapshot && knownPathsQuery.data
+    acceptedSnapshot &&
+      knownPathsQuery.data &&
+      (acceptedSnapshot.configured !== true || inventoriesQuery.data !== undefined)
       ? createSkillsShellViewModel({
           inventories: inventoriesQuery.data ?? [],
           knownProjectPaths: knownPathsQuery.data,
@@ -172,14 +174,22 @@
   const selectedDocument = $derived<ProjectSkillMarkdownDocument | SkillMarkdownDocument | undefined>(
     managedSkillName === undefined ? projectDocumentQuery.data : managedDocumentQuery.data,
   );
-  const hydrated = $derived(
-    browserQueryCycleStarted &&
+  const skillsFetching = useIsFetching({ queryKey: ['web', 'finite-swr', 'skills'] });
+  const queryContractReady = $derived(
+    mounted &&
+      snapshotQuery.data !== undefined &&
+      knownPathsQuery.data !== undefined &&
+      (snapshotQuery.data.configured !== true || inventoriesQuery.data !== undefined) &&
+      (managedSkillName === undefined || managedDocumentQuery.data !== undefined) &&
+      (projectDocumentInput === undefined || projectDocumentQuery.data !== undefined) &&
       !snapshotQuery.isFetching &&
       !knownPathsQuery.isFetching &&
       !inventoriesQuery.isFetching &&
       !managedDocumentQuery.isFetching &&
-      !projectDocumentQuery.isFetching,
+      !projectDocumentQuery.isFetching &&
+      skillsFetching.current === 0,
   );
+  const hydrated = $derived(queryContractStable && queryContractReady);
   const loading = $derived(snapshotQuery.isPending || knownPathsQuery.isPending);
   const messageFromError = (error: unknown): string | undefined => (error instanceof Error ? error.message : undefined);
   const errorMessage = $derived(messageFromError(snapshotQuery.error) ?? messageFromError(knownPathsQuery.error));
@@ -195,11 +205,29 @@
   });
 
   onMount(() => {
-    mounted = true;
-    const queryCycleFrame = window.requestAnimationFrame(() => {
-      browserQueryCycleStarted = true;
+    const activationFrame = window.requestAnimationFrame(() => {
+      mounted = true;
     });
-    return () => window.cancelAnimationFrame(queryCycleFrame);
+    return () => window.cancelAnimationFrame(activationFrame);
+  });
+
+  $effect(() => {
+    if (!queryContractReady) {
+      queryContractStable = false;
+      return;
+    }
+    let secondFrame = 0;
+    const firstFrame = window.requestAnimationFrame(() => {
+      secondFrame = window.requestAnimationFrame(() => {
+        if (queryContractReady) {
+          queryContractStable = true;
+        }
+      });
+    });
+    return () => {
+      window.cancelAnimationFrame(firstFrame);
+      window.cancelAnimationFrame(secondFrame);
+    };
   });
 
   $effect(() => {
