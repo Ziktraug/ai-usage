@@ -12,7 +12,7 @@ authority for feature, operation, design, source-file, and test-title coverage.
 - Planning PR: `#26`, squash-merged as
   `2183270ebfbb886fafa7e6268893122db9b364c0`
 - `BASE_SHA`: `2183270ebfbb886fafa7e6268893122db9b364c0`
-- Current integration checkpoint: `614174f`
+- Current integration checkpoint: `0ecbd21`
 - Last reviewed green checkpoint: `656ef4e`
 - Active design bases: D1 `4862293`, D2 `fce5c1a`, D3 `e2f13cd`
 - Implementation PR: not opened
@@ -128,7 +128,7 @@ Statuses are `BLOCKED`, `READY`, `IMPLEMENTING`, `REVIEW`, `REWORK`,
 | Q0 | V5 | INTEGRATED | `31c85a0`, correction `2f55410` | `/root/d123_parity_review`, `/root/v5_parity_spec_review` / ACCEPT | `2f55410ec9296dd2f66962d6ee3e4d2340e554b2` |
 | Q1 | Q0 | INTEGRATED | `97e34b4`, correction `9366ace`, correction `656ef4e` | `/root/v5_parity_spec_review`, `/root/q2_spec_review` / ACCEPT | `656ef4e` |
 | Q2 | Q0 | INTEGRATED | `3d0490a` | `/root/v34_parity`, `/root/q2_spec_review` / ACCEPT | `3d0490a8052a73da024ea523f3c0012d0e2aca9f` |
-| Q3 | Q1, Q2 | REVIEW | `614174f` | independent standards/spec review pending | candidate checkpoint `614174f` |
+| Q3 | Q1, Q2 | REVIEW | `614174f`, correction `0ecbd21` | `/root/d123_parity_review`, `/root/q2_spec_review` / REWORK; correction re-review pending | candidate checkpoint `0ecbd21` |
 | D0 | F0 | INTEGRATED | `d476690`, `65d48b4`, `3cea781`, `f84ad2c`, evidence `bd948a7`, `a27764b`, correction `7e0c6ef` | `/root/v_vertical_audit`, `/root/v0_impl`, `/root/d123_parity_review`, `/root/v5_parity_spec_review` / ACCEPT | `4ddf145` |
 | D1 | D0 | INTEGRATED | `4862293`, `3b22c28`, evidence `b31c3af` | `/root/d123_parity_review` / ACCEPT | `b31c3af` |
 | D2 | D0 | INTEGRATED | `fce5c1a`, `9935846`, evidence `b31c3af` | `/root/d123_parity_review` / ACCEPT | `b31c3af` |
@@ -534,15 +534,46 @@ does not touch exact Report, Quota, Skills or Sync data. The legacy Solid root
 fallback no longer makes all queries infinitely fresh, and its Quota/Skills
 callers now use their accepted explicit Q1/Q2 policies and exact cancellation.
 
-Q3 gates passed 36 Query/RPC tests with 270 assertions, Web TypeScript with
-Svelte 0/0, the shadow production build and an HTTP 200 meaningful-HTML probe,
+Q3's initial gates passed 36 Query/RPC tests with 270 assertions, Web TypeScript
+with Svelte 0/0, the shadow production build and an HTTP 200 meaningful-HTML probe,
 repository check/lint/typecheck/build, the complete parity inventory, the
 production Report suite 7/7, Session scale 2/2 at 5,000 sessions, and the
 Session benchmark 4/4 with three retained samples. Current benchmark medians
 are initial 1533.787 ms, filter 224.403 ms, sort 1424.641 ms, heap delta
 33,272,824 bytes and maximum page payload 220,694 bytes; desktop renders
-33 items / 624 Session DOM nodes and mobile 19 / 288. Every frozen budget
-passed. Independent standards/spec review is pending before Q3 integration.
+33 items / 624 Session DOM nodes and mobile 19 / 288. Every absolute suite gate
+passed. The mobile sample crossed B1's 284-node investigation trigger by four
+nodes while remaining inside the absolute row, network, geometry, heap and page
+budgets. Q3 did not change the Solid Session table implementation, and B1 itself
+observed sample variance down to 18 items / 273 nodes. This is retained as a
+reviewed investigation rather than presented as an unconditional performance
+pass; X1 must remeasure the final Svelte implementation.
+
+Both first independent Q3 reviews returned REWORK. They found that the Solid
+Skills refresh targeted only a parent legacy key while the active key had an
+extra configuration segment; Solid Quota and Skills reused policies but not the
+accepted canonical Q1/Q2 identities; the Quota range-only identity could collide
+for different time windows; Skills combined snapshot and known-path reads and
+dropped abort signals; the ownership matrix incorrectly marked Skills and Sync
+browser-only; and the 1,000-entry cache test cleared entries manually instead of
+proving automatic GC. The standards reviewer also retained a forward seam for
+P1: awaited SSR prefetch and navigation hydration must populate the same
+request-owned client because the current Q3 layout intentionally dehydrates an
+empty client.
+
+Focused correction `0ecbd21` extracts framework-neutral Quota and Skills
+identities, so Solid Query and Svelte Query share keys and policies without
+sharing incompatible framework option objects. Solid Quota now keys the exact
+canonical request window and forwards abort. Solid Skills separates canonical
+snapshot and known-path reads, forwards abort, uses the exact canonical
+inventories key, and refreshes that active key. A real Solid Query observer
+regression proves the refresh invokes the query again. The matrix now marks
+Skills and Sync `ssr-awaited`, and the bulk-cache test proves all 1,000 entries
+expire automatically under a shortened production-equivalent finite policy.
+The correction gates passed 43 focused tests with 293 assertions, Web TypeScript
+with Svelte 0/0, Web production build, the complete Web suite at 717 tests and
+3,277 assertions, repository check/lint/typecheck/build, Ultracite, parity and
+diff cleanliness. Independent correction re-review is pending.
 
 Three Q3 incidents are retained. The first complete repository test run hit the
 known D3 `ArrowRight` focus timeout; its one allowed exact rerun passed 10/10,
@@ -557,6 +588,13 @@ explicitly, preserving the policy, and both viewports passed. A root-relative
 Playwright config invocation also failed before test discovery and was rerun
 from `apps/web`. Benchmark telemetry reported synthetic file-sink lock timeouts,
 but all four benchmark tests and retained budget assertions completed green.
+The first Q3 rework typecheck also exposed that Svelte Query 6 option objects
+cannot be passed into Solid Query 5 because their private Query Core types are
+intentionally incompatible. The correction now shares only plain identities
+and policies. The first complete Web rework suite then proved that importing a
+Svelte option module from a Solid entry leaks Svelte syntax into the Solid build;
+extracting the identities into framework-neutral modules removed that graph
+edge, and the exact complete rerun passed 717/717 without exclusions.
 
 ## Deviations, STOPs, and recovery
 
@@ -587,6 +625,10 @@ but all four benchmark tests and retained budget assertions completed green.
   corrections above preserve the production CSRF and request-isolation
   contracts; no test, assertion, timeout, cache bound or security policy was
   weakened.
+- Q3 correction recovery: initial candidate `614174f` and focused correction
+  `0ecbd21` are committed. Both first reviews and the framework-version/build-
+  graph failures are recorded above; R0 remains blocked until both correction
+  re-reviews ACCEPT. P1 retains the explicit awaited-prefetch/hydration seam.
 - Recovery point: `656ef4e` is the latest independently reviewed green
-  checkpoint. Candidate `614174f` is fully gated and recoverable while Q3
+  checkpoint. Candidate `0ecbd21` is fully gated and recoverable while Q3
   independent review runs; R0 remains blocked until both axes ACCEPT.
