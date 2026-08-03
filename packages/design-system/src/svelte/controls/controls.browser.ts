@@ -1,10 +1,10 @@
 import { svelte } from '@sveltejs/vite-plugin-svelte';
-import { chromium, type Locator } from 'playwright';
+import { type Browser, chromium, type Locator, type Page } from 'playwright';
 import { createServer, type ViteDevServer } from 'vite';
 
 const fixtureHtml = `<!doctype html>
 <html lang="en">
-  <head><meta charset="utf-8"><title>D1 controls fixture</title></head>
+  <head><meta charset="utf-8"><link rel="icon" href="data:," /><title>D1 controls fixture</title></head>
   <body>
     <main id="app"></main>
     <script type="module" src="/d1-controls-entry.ts"></script>
@@ -67,35 +67,40 @@ const fixtureServer = async (): Promise<ViteDevServer> => {
     root: process.cwd(),
     server: { host: '127.0.0.1', hmr: false, port: 0, strictPort: true, ws: false },
   });
-  await server.listen();
   return server;
 };
 
-const server = await fixtureServer();
-const address = server.httpServer?.address();
-const fixturePort = typeof address === 'object' && address !== null ? address.port : undefined;
-if (fixturePort === undefined) {
-  await server.close();
-  fail('Vite did not expose an ephemeral TCP port');
-}
-
-const systemChromium = Bun.which('google-chrome') ?? Bun.which('chromium');
-const browser = await chromium.launch(
-  systemChromium === null ? { headless: true } : { executablePath: systemChromium, headless: true },
-);
-const page = await browser.newPage();
+let browser: Browser | undefined;
+let cleanupErrors: unknown[] = [];
 const browserErrors: string[] = [];
-page.on('console', (message) => {
-  if (message.type() === 'error') {
-    browserErrors.push(message.text());
-  }
-});
-page.on('pageerror', (error) => browserErrors.push(error.message));
-page.on('requestfailed', (request) =>
-  browserErrors.push(`${request.url()}: ${request.failure()?.errorText ?? 'failed'}`),
-);
+let page: Page | undefined;
+let proofError: unknown;
+let server: ViteDevServer | undefined;
 
 try {
+  server = await fixtureServer();
+  await server.listen();
+  const address = server.httpServer?.address();
+  const fixturePort = typeof address === 'object' && address !== null ? address.port : undefined;
+  if (fixturePort === undefined) {
+    fail('Vite did not expose an ephemeral TCP port');
+  }
+
+  const systemChromium = Bun.which('google-chrome') ?? Bun.which('chromium');
+  browser = await chromium.launch(
+    systemChromium === null ? { headless: true } : { executablePath: systemChromium, headless: true },
+  );
+  page = await browser.newPage();
+  page.on('console', (message) => {
+    if (message.type() === 'error') {
+      browserErrors.push(message.text());
+    }
+  });
+  page.on('pageerror', (error) => browserErrors.push(error.message));
+  page.on('requestfailed', (request) =>
+    browserErrors.push(`${request.url()}: ${request.failure()?.errorText ?? 'failed'}`),
+  );
+
   await page.goto(`http://127.0.0.1:${fixturePort}/d1-controls`);
   try {
     await page.waitForFunction('window.__d1ControlsReady === true', undefined, { timeout: 5000 });
@@ -103,6 +108,7 @@ try {
     const body = await page.locator('body').innerText();
     fail(`fixture did not mount; browser errors=${JSON.stringify(browserErrors)}; body=${JSON.stringify(body)}`);
   }
+  assertEqual(browserErrors.length, 0, 'browser console, page, and request errors after mount');
 
   const toggleFixture = page.getByTestId('toggle-fixture');
   const toggle = page.getByRole('button', { name: 'Toggle synthetic feature' });
@@ -140,11 +146,22 @@ try {
   );
 
   const checkboxFixture = page.getByTestId('checkbox-fixture');
-  const checkbox = page.getByRole('checkbox', { name: 'Synthetic checkbox' });
+  const checkbox = page.getByRole('checkbox', { exact: true, name: 'Synthetic checkbox' });
   assertEqual(await checkbox.isChecked(), true, 'checkbox starts controlled and checked');
   await checkbox.press('Space');
   assertEqual(await checkbox.isChecked(), false, 'checkbox Space updates controlled state');
   await assertAttribute(checkboxFixture, 'data-changes', '1', 'checkbox callback fires exactly once');
+  const disabledCheckbox = page.getByRole('checkbox', { name: 'Disabled synthetic checkbox' });
+  assertEqual(await disabledCheckbox.isDisabled(), true, 'disabled checkbox exposes native disabled state');
+  await disabledCheckbox.evaluate((element) => {
+    if (!(element instanceof HTMLInputElement)) {
+      throw new Error('Disabled checkbox fixture did not render an input');
+    }
+    element.click();
+    element.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: ' ' }));
+  });
+  assertEqual(await disabledCheckbox.isChecked(), false, 'disabled checkbox remains unchecked');
+  await assertAttribute(checkboxFixture, 'data-disabled-changes', '0', 'disabled checkbox emits no change');
 
   const segmentFixture = page.getByTestId('segment-fixture');
   assertEqual(await segmentFixture.locator('[title="Alpha: 1"]').count(), 1, 'positive segment is rendered');
@@ -158,10 +175,29 @@ try {
   const metricFixture = page.getByTestId('metric-fixture');
   assertEqual(await metricFixture.getByText('Down 2%').count(), 1, 'metric comparison is rendered');
   await assertAttribute(metricFixture.locator('span'), 'aria-hidden', 'true', 'metric arrow is hidden from AT');
+  assertEqual(browserErrors.length, 0, 'browser console, page, and request errors after interactions');
+} catch (error) {
+  proofError = error;
 } finally {
-  await page.close();
-  await browser.close();
-  await server.close();
+  const cleanupTasks: Promise<unknown>[] = [];
+  if (page !== undefined) {
+    cleanupTasks.push(page.close());
+  }
+  if (browser !== undefined) {
+    cleanupTasks.push(browser.close());
+  }
+  if (server !== undefined) {
+    cleanupTasks.push(server.close());
+  }
+  const cleanupResults = await Promise.allSettled(cleanupTasks);
+  cleanupErrors = cleanupResults.flatMap((result) => (result.status === 'rejected' ? [result.reason] : []));
+}
+
+if (proofError !== undefined || cleanupErrors.length > 0) {
+  throw new AggregateError(
+    proofError === undefined ? cleanupErrors : [proofError, ...cleanupErrors],
+    'D1 browser proof or cleanup failed',
+  );
 }
 
 console.log(

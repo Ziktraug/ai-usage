@@ -36,17 +36,29 @@ const viteServer = await createServer({
   server: { hmr: false, middlewareMode: true, ws: false },
   ssr: { noExternal: true },
 });
+const closeViteServer = (): Promise<void> => viteServer.close();
+afterAll(closeViteServer);
 
-const [fixtureModule, metricModule, svelteServerModule] = await Promise.all([
-  viteServer.ssrLoadModule('/packages/design-system/src/svelte/controls/controls.fixture.svelte'),
-  viteServer.ssrLoadModule('/packages/design-system/src/svelte/controls/metric-tile.svelte'),
-  viteServer.ssrLoadModule('svelte/server'),
-]);
+const loadSsrModules = async (): Promise<readonly [unknown, unknown, unknown]> => {
+  try {
+    return await Promise.all([
+      viteServer.ssrLoadModule('/packages/design-system/src/svelte/controls/controls.fixture.svelte'),
+      viteServer.ssrLoadModule('/packages/design-system/src/svelte/controls/metric-tile.svelte'),
+      viteServer.ssrLoadModule('svelte/server'),
+    ]);
+  } catch (error) {
+    const [cleanup] = await Promise.allSettled([closeViteServer()]);
+    if (cleanup?.status === 'rejected') {
+      throw new AggregateError([error, cleanup.reason], 'Svelte SSR module load and Vite cleanup both failed');
+    }
+    throw error;
+  }
+};
+
+const [fixtureModule, metricModule, svelteServerModule] = await loadSsrModules();
 const fixture = componentFrom(fixtureModule, 'controls fixture');
 const metricTile = componentFrom(metricModule, 'metric tile');
 const { render } = rendererFrom(svelteServerModule);
-
-afterAll(async () => viteServer.close());
 
 const fixtureHtml = render(fixture).body;
 
@@ -76,6 +88,8 @@ describe('Svelte basic controls fixture', () => {
     expect(fixtureHtml).toContain('data-part="control" data-state="checked"');
     expect(fixtureHtml).toContain('data-part="label" data-state="checked"');
     expect(fixtureHtml).toContain('Synthetic checkbox');
+    expect(fixtureHtml).toContain('Disabled synthetic checkbox');
+    expect(fixtureHtml).toContain('data-disabled-changes="0"');
     expect(fixtureHtml).toContain('✓');
   });
 

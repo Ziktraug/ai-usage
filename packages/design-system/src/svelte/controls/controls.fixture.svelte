@@ -10,6 +10,7 @@
   let badgeParentClicks = $state(0);
   let checked = $state(true);
   let checkboxChanges = $state(0);
+  let disabledCheckboxChanges = $state(0);
   let pressed = $state(false);
   let toggleChanges = $state(0);
   let toggleOrder = $state('');
@@ -57,7 +58,12 @@
     </output>
   </div>
 
-  <div data-changes={checkboxChanges} data-checked={checked} data-testid="checkbox-fixture">
+  <div
+    data-changes={checkboxChanges}
+    data-checked={checked}
+    data-disabled-changes={disabledCheckboxChanges}
+    data-testid="checkbox-fixture"
+  >
     <Checkbox
       {checked}
       onCheckedChange={(nextChecked) => {
@@ -66,6 +72,9 @@
       }}
     >
       Synthetic checkbox
+    </Checkbox>
+    <Checkbox checked={false} disabled onCheckedChange={() => (disabledCheckboxChanges += 1)}>
+      Disabled synthetic checkbox
     </Checkbox>
   </div>
 
