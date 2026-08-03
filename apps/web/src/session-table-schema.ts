@@ -1,11 +1,13 @@
 import {
   isSessionSortField,
+  type SessionPresentationRow,
   type SessionSortField,
   sessionSortFields,
   sortValueForSessionColumn as sortValueForCoreSessionColumn,
 } from '@ai-usage/report-core/session-query';
 import type { TableSortingState, TableVisibilityState } from './lib/foundation/table/state';
-import type { DashboardRow } from './shared';
+
+type DashboardRow = SessionPresentationRow;
 
 export type SessionColumnId = SessionSortField;
 

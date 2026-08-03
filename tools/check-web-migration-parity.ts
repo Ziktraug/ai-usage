@@ -72,6 +72,7 @@ const playwrightCollections: readonly PlaywrightCollection[] = [
   { config: 'playwright.production.config.ts', files: ['e2e/production-report.spec.ts'] },
   { config: 'playwright.session-scroll.config.ts', files: ['e2e/session-scroll.scale.ts'] },
   { config: 'playwright.session-scroll.config.ts', files: ['e2e/session-scroll-benchmark.scale.ts'] },
+  { config: 'playwright.svelte-shadow.config.ts', files: ['e2e/svelte-shell.spec.ts'] },
 ];
 
 const normalizePath = (value: string): string => value.split(path.sep).join('/');

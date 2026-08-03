@@ -58,6 +58,7 @@
     "test:e2e": "playwright test",
     "test:e2e-demo": "playwright test --config playwright.demo.config.ts",
     "test:e2e-production": "bun --bun playwright test --config playwright.production.config.ts e2e/production-report.spec.ts && bun --bun playwright test --config playwright.session-scroll.config.ts e2e/session-scroll.scale.ts",
+    "test:e2e-svelte-shadow": "bun run build:svelte && bun --bun playwright test --config playwright.svelte-shadow.config.ts",
     "test:rpc-loopback": "bun src/lib/server/rpc/nitro-loopback.browser.ts",
     "benchmark:session-scroll": "bun --bun playwright test --config playwright.session-scroll.config.ts e2e/session-scroll-benchmark.scale.ts",
     "preview": "vite preview --host 127.0.0.1",

@@ -3,6 +3,12 @@ declare global {
   namespace App {
     interface Locals {
       readonly requestId?: string;
+      runtimeMode?: import('./runtime-mode').RuntimeMode;
+      shellE2eError?: boolean;
+    }
+
+    interface PageState {
+      readonly aiUsageNavigationKey?: string;
     }
   }
 }

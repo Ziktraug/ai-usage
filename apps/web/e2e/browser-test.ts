@@ -16,6 +16,8 @@ const INTENTIONAL_EVENT_SOURCE_ABORT = 'net::ERR_ABORTED';
 const REPORT_REQUEST_OWNER_HEADER = 'x-ai-usage-request-owner';
 const INTENTIONAL_REPORT_REQUEST_OWNERS = new Set(['focused-report', 'session-query']);
 const ROOT_ROUTE_MATCH_WARNING = 'Warning: Error in route match: __root__';
+const EXPECTED_SHELL_ERROR_HEADER = 'x-ai-usage-expected-error';
+const EXPECTED_SHELL_ERROR_VALUES = new Set(['not-found-fixture', 'shell-route']);
 
 const requestPath = (request: Request): string => new URL(request.url()).pathname;
 
@@ -61,18 +63,23 @@ export const test = base.extend<{ browserFailureGate: undefined }>({
         if (listenersByPage.has(page)) {
           return;
         }
+        const expectedShellErrorUrls = new Set<string>();
         const listeners: PageListeners = {
           console: (message) => {
             const messageType = message.type();
             const isRouteMatchWarning = messageType === 'warning' && message.text() === ROOT_ROUTE_MATCH_WARNING;
-            if (messageType !== 'error' && !isRouteMatchWarning) {
+            const location = message.location();
+            const isExpectedShellResourceError =
+              messageType === 'error' &&
+              message.text().startsWith('Failed to load resource: the server responded with a status of') &&
+              expectedShellErrorUrls.has(location.url);
+            if ((messageType !== 'error' && !isRouteMatchWarning) || isExpectedShellResourceError) {
               return;
             }
-            const location = message.location();
             const source = location.url ? ` at ${location.url}:${location.lineNumber}:${location.columnNumber}` : '';
             failures.push(`console ${messageType}${source}: ${message.text()}`);
           },
-          pageError: (error) => failures.push(`uncaught page error: ${error.message}`),
+          pageError: (error) => failures.push(`uncaught page error: ${error.stack ?? error.message}`),
           requestFailed: (request) => {
             if (!isCriticalRequest(request)) {
               return;
@@ -88,6 +95,10 @@ export const test = base.extend<{ browserFailureGate: undefined }>({
           },
           response: (response) => {
             if (response.status() < 400 || !isCriticalRequest(response.request())) {
+              return;
+            }
+            if (EXPECTED_SHELL_ERROR_VALUES.has(response.headers()[EXPECTED_SHELL_ERROR_HEADER] ?? '')) {
+              expectedShellErrorUrls.add(response.url());
               return;
             }
             if (

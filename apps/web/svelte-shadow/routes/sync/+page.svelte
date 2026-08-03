@@ -2,6 +2,6 @@
   import RouteFrame from '$lib/features/shell/route-frame.svelte';
 </script>
 
-<RouteFrame heading="Usage report">
-  <div data-route-shell="report"></div>
+<RouteFrame heading="Sync">
+  <div data-route-shell="sync"></div>
 </RouteFrame>

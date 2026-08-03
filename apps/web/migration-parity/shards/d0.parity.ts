@@ -261,6 +261,21 @@ export default defineParityShard({
     ]).map(completeForD4),
     ...designExportRecords(owner, [
       {
+        entrypoint: './svelte',
+        names: 'commandButton themeToggleButton',
+        source: 'packages/design-system/src/components/button.ts',
+      },
+      {
+        entrypoint: './svelte',
+        names: 'header meta page shell title titleBlock',
+        source: 'packages/design-system/src/components/layout.ts',
+      },
+      {
+        entrypoint: './svelte',
+        names: 'panel panelSub panelTitle',
+        source: 'packages/design-system/src/components/panel.ts',
+      },
+      {
         entrypoint: './solid',
         names: `
           HarnessBadge Checkbox CheckboxProps Drawer DrawerProps MetricTile MetricTileProps Popover PopoverProps BarSegment SegmentBar SegmentedControl SegmentedControlItem SegmentedControlProps MultiSelect MultiSelectProps TabItem Tabs TabsProps Toggle ToggleProps Tooltip TooltipProps

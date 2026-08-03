@@ -1,4 +1,4 @@
-import { currentRecord, sourceInventoryRecords } from '../helpers';
+import { currentRecord, playwrightTitleRecords, sourceInventoryRecords } from '../helpers';
 import { defineParityShard } from '../schema';
 
 const owner = 'R1' as const;
@@ -42,5 +42,16 @@ export default defineParityShard({
       'apps/web/src/router.tsx',
       'apps/web/src/routes/__root.tsx',
     ]),
+    ...playwrightTitleRecords(
+      owner,
+      [
+        'server-renders and reloads every Svelte shell route with accessible navigation',
+        'resolves stored and system theme before paint and toggles the named preference',
+        'restores Svelte history and scroll without feedback loops',
+        'renders retryable route errors and the default accessible Not Found shell',
+        'redirects Svelte demo routes before protected acquisition',
+        'blocks dirty navigation through Keep, Discard, reload, focus, and cleanup',
+      ].map((title) => ({ file: 'apps/web/e2e/svelte-shell.spec.ts', title })),
+    ),
   ],
 });
