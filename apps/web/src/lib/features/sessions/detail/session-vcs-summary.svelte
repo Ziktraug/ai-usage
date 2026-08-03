@@ -60,6 +60,7 @@
     type SessionVcsBranchSpan,
     type SessionVcsResolveResponse,
   } from '@ai-usage/report-core/session-vcs';
+  import ExternalLinkIcon from './external-link-icon.svelte';
 
   let {
     context: rawContext,
@@ -147,7 +148,7 @@
                 rel="noopener"
                 target="_blank"
               >
-                <span class={truncate}>{context.repository.ownerPath}</span><span aria-hidden="true">↗</span>
+                <span class={truncate}>{context.repository.ownerPath}</span><ExternalLinkIcon />
               </a>
             {:else}
               <span class={truncate}>{context.repository.ownerPath}</span>
@@ -168,7 +169,7 @@
                   href={branchUrl(branch) ?? undefined}
                   rel="noopener"
                   target="_blank"
-                  >{branch.name}<span aria-hidden="true">↗</span></a
+                  >{branch.name}<ExternalLinkIcon /></a
                 >
               {:else}
                 <span class={truncate}>{branch.name}</span>
@@ -196,7 +197,7 @@
                         href={branchUrl(branch) ?? undefined}
                         rel="noopener"
                         target="_blank"
-                        >{branch.name}<span aria-hidden="true">↗</span></a
+                        >{branch.name}<ExternalLinkIcon /></a
                       >
                     {:else}
                       {branch.name}
@@ -219,7 +220,7 @@
                 href={context.headCommit.webUrl}
                 rel="noopener"
                 target="_blank"
-                >{context.headCommit.hash.slice(0, 8)}<span aria-hidden="true">↗</span></a
+                >{context.headCommit.hash.slice(0, 8)}<ExternalLinkIcon /></a
               >
             {:else}
               {context.headCommit.hash.slice(0, 8)}
@@ -239,7 +240,7 @@
                 href={pullRequest.url}
                 rel="noopener"
                 target="_blank"
-                >{text}<span aria-hidden="true">↗</span></a
+                >{text}<ExternalLinkIcon /></a
               >
             {/each}
           </div>

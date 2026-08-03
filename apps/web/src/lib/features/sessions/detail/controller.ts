@@ -1,5 +1,9 @@
 import type { SessionDetailResponse } from '@ai-usage/report-core/session-detail';
-import type { SessionPresentationRow, SessionQueryRequest } from '@ai-usage/report-core/session-query';
+import {
+  type SessionPresentationRow,
+  type SessionQueryRequest,
+  sessionNeighborFingerprint,
+} from '@ai-usage/report-core/session-query';
 import type { SessionVcsResolveResponse } from '@ai-usage/report-core/session-vcs';
 import { classifySessionAnalysisError, type SessionAnalysisError } from '../../../../session-analysis-error';
 import { type SessionAnalysisTarget, sessionAnalysisTargetForSession } from '../../../../session-analysis-target';
@@ -30,6 +34,7 @@ export interface SessionDetailControllerSnapshot {
 
 export interface SessionSelectionInput {
   readonly query?: SessionQueryRequest;
+  readonly revision?: string;
   readonly row: SessionPresentationRow;
   readonly target?: SessionAnalysisTarget;
   readonly total?: number;
@@ -80,6 +85,7 @@ export const createSessionDetailController = (options: {
   let disposed = false;
   let analysisGeneration = 0;
   let selectedQuery: SessionQueryRequest | undefined;
+  let selectedIdentity = '';
   let selectionGeneration = 0;
   let snapshot = initialSnapshot();
   let vcsGeneration = 0;
@@ -150,10 +156,29 @@ export const createSessionDetailController = (options: {
     }
   };
 
+  const selectionIdentityFor = (selection: SessionSelectionInput): string => {
+    if (selection.query) {
+      return sessionNeighborFingerprint({ query: selection.query, rowId: selection.row.rowId });
+    }
+    return selection.revision
+      ? `revision:${selection.revision}:${selection.row.rowId}`
+      : `local:${selection.row.rowId}`;
+  };
+
   const select = (selection: SessionSelectionInput): void => {
+    const nextIdentity = selectionIdentityFor(selection);
+    if (nextIdentity === selectedIdentity) {
+      publish({
+        revision: selection.query?.revision ?? selection.revision ?? null,
+        row: selection.row,
+        target: selection.target ?? sessionAnalysisTargetForSession(selection.row),
+      });
+      return;
+    }
     resetDependentState();
+    selectedIdentity = nextIdentity;
     selectedQuery = selection.query;
-    const revision = selection.query?.revision ?? null;
+    const revision = selection.query?.revision ?? selection.revision ?? null;
     const target = selection.target ?? sessionAnalysisTargetForSession(selection.row);
     if (revision) {
       identity.select({
@@ -186,7 +211,11 @@ export const createSessionDetailController = (options: {
   };
 
   const close = (): void => {
+    if (!(selectedIdentity || snapshot.row)) {
+      return;
+    }
     resetDependentState();
+    selectedIdentity = '';
     identity.clear();
     selectedQuery = undefined;
     publish({ navigation: undefined, revision: null, row: null, target: null });

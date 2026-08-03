@@ -17,8 +17,10 @@ moving selection into P3 virtual rows or creating another report lifecycle.
    SessionTableQueryState.query, sessionCount, selected
    SessionPresentationRow, and its existing P3/page-item-derived
    SessionAnalysisTarget. For an Overview/local selection pass the row and
-   P1's accepted revision when one exists; never acquire a report or page from
-   the detail packet.
+   P1's accepted revision through the independent `revision` field when one
+   exists; do not fabricate a served query for Overview, and never acquire a
+   report or page from the detail packet. A revision without a query enables
+   detail/VCS while issuing zero neighbor requests.
 4. Feed onSelectedRowId from the controller back to P3's selectedRowId. Keep
    onSelect row identity as row.rowId; do not put selection, neighbor,
    analysis, or VCS state in either virtual projection.

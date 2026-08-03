@@ -58,6 +58,15 @@ const { render } = rendererFrom(serverModule);
 const row = syntheticSessionRow(7);
 const target = { kind: 'session' as const, reportRowId: row.rowId, summaryRow: row };
 const tokens = (total: number) => ({ cacheRead: 0, cacheWrite: 0, input: total, output: 0, total });
+const orphanPromptText = `${'Orphan prompt content '.repeat(9)}tail`;
+const dateTimeFormatter = new Intl.DateTimeFormat('en', {
+  day: '2-digit',
+  hour: '2-digit',
+  hourCycle: 'h23',
+  minute: '2-digit',
+  month: 'short',
+});
+const fmtDateTime = (value: string): string => dateTimeFormatter.format(new Date(value));
 const availableResponse: SessionDetailResponse = {
   consistency: { checkedFields: ['tokens'], status: 'matches-report' },
   detail: {
@@ -97,6 +106,12 @@ const availableResponse: SessionDetailResponse = {
         text: 'Explain the chronology clearly',
         timestamp: '2026-08-01T10:00:00.000Z',
         truncated: false,
+      },
+      {
+        id: 'prompt-orphan',
+        text: orphanPromptText,
+        timestamp: '2026-08-01T12:30:00.000Z',
+        truncated: true,
       },
     ],
     promptsTruncated: false,
@@ -210,6 +225,32 @@ describe('P4 Svelte detail rendering', () => {
     expect(html).toContain('data-session-analysis-item="partial-turns"');
     expect(html).toContain('≈ $0.1235');
     expect(html).toContain('price unknown');
+    const partialDuration = html.indexOf('data-session-analysis-item="partial-duration"');
+    const description = html.indexOf(
+      'Bars show recorded Claude turn intervals. Point markers show turns whose active duration is unavailable.',
+    );
+    const partialTurns = html.indexOf('data-session-analysis-item="partial-turns"');
+    const privacy = html.indexOf('data-session-analysis-item="privacy"');
+    const truncation = html.indexOf('data-session-analysis-item="prompt-truncation"');
+    expect([partialDuration, description, partialTurns, privacy, truncation]).toEqual(
+      [...[partialDuration, description, partialTurns, privacy, truncation]].sort((left, right) => left - right),
+    );
+    expect(partialDuration).toBeGreaterThan(-1);
+    expect(html.match(/Compressed gaps/g)).toHaveLength(2);
+    expect(html.match(/>Tokens<\/span>/g)).toHaveLength(1);
+    expect(html).toContain(
+      `from ${fmtDateTime('2026-08-01T10:00:00.000Z')} to ${fmtDateTime('2026-08-01T10:01:00.000Z')}`,
+    );
+    expect(html).toContain('67% of tokens');
+    expect(html).toContain('33% of tokens');
+    expect(html).toContain(`datetime="2026-08-01T12:30:00.000Z"`);
+    expect(html).toContain(fmtDateTime('2026-08-01T12:30:00.000Z'));
+    expect(html).toContain('prompt without task attribution');
+    expect(html).toContain('Truncated');
+    expect(html).toContain('orphan prompt');
+    expect(html).toContain(
+      `from ${fmtDateTime('2026-08-01T12:30:00.000Z')} to ${fmtDateTime('2026-08-01T12:30:00.000Z')}`,
+    );
   });
 
   test('keeps unavailable Retry semantics and sanitized VCS links exact', () => {
@@ -254,6 +295,8 @@ describe('P4 Svelte detail rendering', () => {
     expect(vcs).toContain('Session source control');
     expect(vcs).toContain('target="_blank"');
     expect(vcs).toContain('rel="noopener"');
+    expect(vcs).toContain('<svg');
+    expect(vcs).not.toContain('↗');
     expect(vcs).toContain('Some recorded source-control context could not be represented safely.');
     expect(invalid).not.toContain('PRIVATE');
     expect(invalid).not.toContain('javascript:');

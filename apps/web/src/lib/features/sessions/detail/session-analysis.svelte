@@ -39,6 +39,7 @@
     gap: '12px',
     alignItems: 'end',
   });
+  const timelineAxisSpacer = css({ display: { base: 'none', md: 'block' } });
   const axisLabels = css({
     display: 'flex',
     justifyContent: 'space-between',
@@ -46,14 +47,22 @@
     color: 'faint',
     fontFamily: 'mono',
     fontSize: '10px',
+    fontVariantNumeric: 'tabular-nums',
   });
   const axisTrack = css({ position: 'relative', minW: 0 });
+  const axisTokenHeading = css({
+    display: { base: 'none', md: 'block' },
+    color: 'faint',
+    fontSize: '10px',
+    fontWeight: 650,
+  });
   const scaleBreakClass = css({
     position: 'absolute',
     top: '-2px',
     color: 'ink',
     fontSize: '14px',
     fontWeight: 700,
+    lineHeight: 1,
     transform: 'translateX(-50%)',
   });
   const timelineList = css({ display: 'grid', gap: '7px', listStyle: 'none', m: 0, p: 0 });
@@ -64,6 +73,17 @@
     alignItems: 'center',
     minW: 0,
   });
+  const timelineLabel = css({ minW: 0 });
+  const timelineLabelTop = css({
+    display: 'flex',
+    gap: '6px',
+    alignItems: 'center',
+    minW: 0,
+    color: 'ink',
+    fontSize: '12px',
+    fontWeight: 650,
+  });
+  const timelineLabelText = css({ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' });
   const timelineMeta = css({ color: 'muted', fontSize: '10px', lineHeight: 1.4, overflowWrap: 'anywhere' });
   const timelineTrack = css({
     position: 'relative',
@@ -120,11 +140,17 @@
     p: '10px 12px',
     color: 'ink',
     cursor: 'pointer',
+    listStyle: 'none',
     fontSize: '12px',
+    '&::-webkit-details-marker': { display: 'none' },
+    _hover: { bg: 'accentTint' },
+    _focusVisible: { outline: '2px solid token(colors.accent)', outlineOffset: '-2px' },
   });
+  const promptChevron = css({ color: 'accent', fontSize: '11px', '[open] &': { transform: 'rotate(90deg)' } });
+  const promptLabelContent = css({ display: 'grid', gap: '2px', minW: 0 });
+  const promptTitleRow = css({ display: 'flex', gap: '7px', alignItems: 'baseline', minW: 0 });
+  const promptPreview = css({ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' });
   const promptBody = css({
-    display: 'grid',
-    gap: '10px',
     p: '12px',
     borderTop: '1px solid token(colors.line)',
     bg: 'surface',
@@ -135,6 +161,12 @@
     overflowWrap: 'anywhere',
     whiteSpace: 'pre-wrap',
   });
+  const promptEntry = css({
+    display: 'grid',
+    gap: '5px',
+    '& + &': { borderTop: '1px solid token(colors.line)', mt: '10px', pt: '10px' },
+  });
+  const promptEntryMeta = css({ display: 'flex', flexWrap: 'wrap', gap: '7px', alignItems: 'center' });
   const pill = css({
     px: '7px',
     py: '2px',
@@ -143,11 +175,18 @@
     color: 'status.warn',
     fontSize: '10px',
     fontWeight: 700,
+    whiteSpace: 'nowrap',
   });
   const tokenCell = css({ display: { base: 'none', md: 'flex' }, gap: '7px', alignItems: 'center', minW: 0 });
   const tokenTrack = css({ flex: '1 1 auto', h: '6px', overflow: 'hidden', borderRadius: 'sm', bg: 'track' });
   const tokenBar = css({ display: 'block', h: 'full', bg: 'accent' });
-  const tokenValue = css({ color: 'ink', fontFamily: 'mono', fontSize: '10px', fontVariantNumeric: 'tabular-nums' });
+  const tokenValue = css({
+    flex: '0 0 auto',
+    color: 'ink',
+    fontFamily: 'mono',
+    fontSize: '10px',
+    fontVariantNumeric: 'tabular-nums',
+  });
   const phaseLegend = css({ display: 'flex', flexWrap: 'wrap', gap: '6px', alignItems: 'center' });
   const scaleButton = css({
     justifySelf: 'start',
@@ -160,6 +199,8 @@
     cursor: 'pointer',
     fontSize: '11px',
     fontWeight: 650,
+    _hover: { borderColor: 'accent', color: 'accent' },
+    _focusVisible: { outline: '2px solid token(colors.accent)', outlineOffset: '2px' },
   });
   const statePanel = css({
     display: 'grid',
@@ -185,6 +226,8 @@
     cursor: 'pointer',
     fontSize: '12px',
     fontWeight: 650,
+    _hover: { borderColor: 'accent', color: 'accent' },
+    _focusVisible: { outline: '2px solid token(colors.accent)', outlineOffset: '2px' },
   });
 </script>
 
@@ -247,6 +290,8 @@
   });
   const fmtDateTime = (value: string): string => dateTimeFormatter.format(new Date(value));
   const fmtTokens = (value: number): string => compactNumberFormatter.format(value);
+  const fmtCount = (count: number, noun: string): string => `${fmtTokens(count)} ${count === 1 ? noun : `${noun}s`}`;
+  const fmtShare = (share: number): string => `${share >= 10 ? share.toFixed(0) : share.toFixed(1)}%`;
   const fmtEffort = (phase: Pick<SessionDetailPhase, 'effort' | 'effortKind'>): string =>
     phase.effort ?? (phase.effortKind === 'default' ? 'default effort' : 'effort not recorded');
   const formatCost = (phase: SessionDetailPhase): string => {
@@ -257,10 +302,23 @@
     return phase.costKind === 'approximate' ? `≈ ${value}` : `${value} reported`;
   };
   const phaseKey = (phase: SessionDetailPhase): string => `${phase.model}\0${phase.effortKind}\0${phase.effort ?? ''}`;
+  const phaseRenderKey = (phase: SessionDetailPhase, index: number): string =>
+    `${phaseKey(phase)}\0${phase.startAt}\0${phase.endAt}\0${index}`;
   const phaseToneIndex = (phase: SessionDetailPhase, phases: readonly SessionDetailPhase[]): number =>
     Math.max(0, [...new Set(phases.map(phaseKey))].indexOf(phaseKey(phase))) % phaseToneClasses.length;
   const phaseTone = (phase: SessionDetailPhase, phases: readonly SessionDetailPhase[]): string =>
     phaseToneClasses[phaseToneIndex(phase, phases)] ?? phaseToneClasses[0];
+  const phaseAt = (phases: readonly SessionDetailPhase[], timestamp: string): SessionDetailPhase | null => {
+    const timestampMs = Date.parse(timestamp);
+    const phase = phases.find(
+      (candidate) => timestampMs >= Date.parse(candidate.startAt) && timestampMs < Date.parse(candidate.endAt),
+    );
+    if (phase) {
+      return phase;
+    }
+    const lastPhase = phases.at(-1);
+    return lastPhase && timestampMs === Date.parse(lastPhase.endAt) ? lastPhase : null;
+  };
   const preview = (text: string): string => {
     const normalized = text.replace(/\s+/g, ' ').trim();
     return normalized.length > 120 ? `${normalized.slice(0, 120).trimEnd()}…` : normalized;
@@ -294,6 +352,12 @@
   const chronologicalPhases = $derived(
     detail ? [...detail.phases].sort((left, right) => Date.parse(left.startAt) - Date.parse(right.startAt)) : [],
   );
+  const dominantPhase = $derived(
+    chronologicalPhases.reduce<SessionDetailPhase | null>(
+      (dominant, phase) => (!dominant || phase.tokens.total > dominant.tokens.total ? phase : dominant),
+      null,
+    ),
+  );
   const timelineRows = $derived(detail ? buildSessionTimelineRows(detail) : []);
   const durationSemantics = $derived(sessionDurationSemantics(harnessKey, target.kind === 'campaign-root'));
   const burstCount = $derived(detail ? countActivityBursts(detail.turns) : 0);
@@ -319,15 +383,39 @@
     preview(row.prompts[0]?.text ?? '') || `${durationSemantics.rowNoun} ${row.index + 1}`;
   const rowDuration = (row: Extract<SessionTimelineRow, { kind: 'task' }>): string =>
     row.durationMs === null ? 'Recorded duration unavailable' : formatSessionDuration(row.durationMs);
+  const taskBounds = (
+    row: Extract<SessionTimelineRow, { kind: 'task' }>,
+  ): { readonly endAt: string; readonly startAt: string } | null => {
+    const intervals = [...row.intervals].sort((left, right) => Date.parse(left.startAt) - Date.parse(right.startAt));
+    const first = intervals[0];
+    if (!first) {
+      return null;
+    }
+    const endAt = intervals.reduce(
+      (latest, interval) => (Date.parse(interval.endAt) > Date.parse(latest) ? interval.endAt : latest),
+      first.endAt,
+    );
+    return { endAt, startAt: first.startAt };
+  };
   const taskTone = (row: Extract<SessionTimelineRow, { kind: 'task' }>): number | undefined => {
     if (chronologicalPhases.length < 2) {
       return;
     }
-    const timestamp = Date.parse(row.intervals[0]?.startAt ?? row.startAt);
-    const phase = chronologicalPhases.find(
-      (candidate) => timestamp >= Date.parse(candidate.startAt) && timestamp <= Date.parse(candidate.endAt),
-    );
+    const phase = phaseAt(chronologicalPhases, taskBounds(row)?.startAt ?? row.startAt);
     return phase ? phaseToneIndex(phase, chronologicalPhases) : undefined;
+  };
+  const showTaskPhaseMeta = (row: Extract<SessionTimelineRow, { kind: 'task' }>): boolean =>
+    chronologicalPhases.length > 1 &&
+    (!dominantPhase ||
+      row.model !== dominantPhase.model ||
+      row.effort !== dominantPhase.effort ||
+      row.effortKind !== dominantPhase.effortKind);
+  const taskAccessibleLabel = (row: Extract<SessionTimelineRow, { kind: 'task' }>, label: string): string => {
+    const bounds = taskBounds(row);
+    const timeBounds = bounds
+      ? `, from ${fmtDateTime(bounds.startAt)} to ${fmtDateTime(bounds.endAt)}`
+      : `, point event at ${fmtDateTime(row.startAt)}; recorded active time bounds unavailable`;
+    return `${label}, ${row.model}, ${fmtEffort(row)}, ${rowDuration(row)} across ${countLabel(row.intervals.length, 'segment')}, ${countLabel(row.tokens.total, 'token')}, ${countLabel(row.tools, 'tool')} and ${countLabel(row.prompts.length, 'prompt')}${timeBounds}`;
   };
   const boundPrefix = (bound: 'lower' | 'upper' | null): string => {
     if (bound === 'lower') {
@@ -349,6 +437,31 @@
     Boolean(onRetry && (analysisError?.kind === 'transient' || unavailable?.reason === 'history-unavailable')),
   );
 </script>
+
+{#snippet renderTimelineAxis(_showTokens: boolean)}
+  {#if detail && scale}
+    <div class={timelineAxis}>
+      <span aria-hidden="true" class={timelineAxisSpacer}></span>
+      <div class={axisTrack}>
+        <div class={axisLabels}>
+          <time datetime={detail.startedAt}>{fmtDateTime(detail.startedAt)}</time>
+          <span aria-hidden="true">{scaleMode === 'compressed' ? 'Compressed gaps' : 'Wall-clock time'}</span>
+          <time datetime={detail.endedAt}>{fmtDateTime(detail.endedAt)}</time>
+        </div>
+        {#each scale.breaks as scaleBreak (scaleBreak.atPercent)}
+          <span
+            aria-hidden="true"
+            class={scaleBreakClass}
+            title={formatSessionDuration(scaleBreak.gapMs)}
+            style:left={`${scaleBreak.atPercent}%`}
+            >⫽</span
+          >
+        {/each}
+      </div>
+      <span class={axisTokenHeading}>{_showTokens ? 'Tokens' : ''}</span>
+    </div>
+  {/if}
+{/snippet}
 
 <section aria-label="Session analysis" class={panel}>
   <div aria-atomic="true" aria-live="polite" class={visuallyHidden} data-session-analysis-live-status role="status">
@@ -424,25 +537,15 @@
               </span>
             {/each}
           </div>
-          {#each ['partial-duration', 'partial-turns', 'privacy', 'prompt-truncation'] as kind}
-            {#each items(kind as (typeof presentationItems)[number]['kind']) as item (item.text)}
-              {#if item.tone === 'warning'}
-                <div
-                  class={cx(notice, warningNotice)}
-                  data-session-analysis-item={item.kind}
-                  data-tone={item.tone}
-                  role="status"
-                >
-                  {item.text}
-                </div>
-              {:else}
-                <div class={muted} data-session-analysis-item={item.kind} data-tone={item.tone}>
-                  {item.text}
-                </div>
-              {/if}
-            {/each}
+          {#each items('partial-duration') as item (item.text)}
+            <div class={muted} data-session-analysis-item={item.kind} data-tone={item.tone}>{item.text}</div>
           {/each}
           <div class={muted}>{durationSemantics.timelineDescription}</div>
+          {#each ['partial-turns', 'privacy', 'prompt-truncation'] as kind}
+            {#each items(kind as (typeof presentationItems)[number]['kind']) as item (item.text)}
+              <div class={muted} data-session-analysis-item={item.kind} data-tone={item.tone}>{item.text}</div>
+            {/each}
+          {/each}
           {#if hasCompressibleGaps}
             <button
               aria-label="Show real gaps"
@@ -462,26 +565,7 @@
           </div>
         {:else}
           <div class={timelineShell} data-session-analysis-scale={scaleMode}>
-            <div class={timelineAxis}>
-              <span aria-hidden="true"></span>
-              <div class={axisTrack}>
-                <div class={axisLabels}>
-                  <time datetime={detail.startedAt}>{fmtDateTime(detail.startedAt)}</time>
-                  <span aria-hidden="true">{scaleMode === 'compressed' ? 'Compressed gaps' : 'Wall-clock time'}</span>
-                  <time datetime={detail.endedAt}>{fmtDateTime(detail.endedAt)}</time>
-                </div>
-                {#each scale.breaks as scaleBreak (scaleBreak.atPercent)}
-                  <span
-                    aria-hidden="true"
-                    class={scaleBreakClass}
-                    title={formatSessionDuration(scaleBreak.gapMs)}
-                    style:left={`${scaleBreak.atPercent}%`}
-                    >⫽</span
-                  >
-                {/each}
-              </div>
-              <span>Tokens</span>
-            </div>
+            {@render renderTimelineAxis(true)}
             <ol aria-label="Chronological session tasks and prompts" class={timelineList}>
               {#each timelineRows as row (`${row.kind}:${row.kind === 'task' ? row.index : row.prompt.id}`)}
                 {#if row.kind === 'task'}
@@ -490,16 +574,19 @@
                   <li class={timelineRow} data-session-analysis-row="task">
                     <details class={promptDisclosure}>
                       <summary class={promptSummary}>
-                        <span aria-hidden="true">▶</span>
-                        <span>
-                          <span>{row.prompts[0] ? `Prompt: ${label}` : label}</span>
-                          <span class={muted} title={durationSemantics.metricHint}> {rowDuration(row)}</span>
+                        <span aria-hidden="true" class={promptChevron}>▶</span>
+                        <span class={promptLabelContent}>
+                          <span class={promptTitleRow}>
+                            <span class={promptPreview}>{row.prompts[0] ? `Prompt: ${label}` : label}</span>
+                            <span class={muted} title={durationSemantics.metricHint}>{rowDuration(row)}</span>
+                          </span>
                           <span class={timelineMeta}>
-                            {#if chronologicalPhases.length > 1}
+                            {#if showTaskPhaseMeta(row)}
                               {row.model}
                               · {fmtEffort(row)} ·
                             {/if}
-                            {fmtTokens(row.tokens.total)} {row.tokens.total === 1 ? 'token' : 'tokens'} ·
+                            {fmtCount(row.tokens.total, 'token')}
+                            ·
                             {countLabel(row.tools, 'tool')}
                             · {countLabel(row.prompts.length, 'prompt')}
                           </span>
@@ -510,18 +597,20 @@
                           <span class={muted}>No prompt text was available in local history.</span>
                         {/if}
                         {#each row.prompts as prompt (prompt.id)}
-                          <div>
-                            <time class={muted} datetime={prompt.timestamp}>{fmtDateTime(prompt.timestamp)}</time>
-                            {#if prompt.truncated}
-                              <span class={pill}>Truncated</span>
-                            {/if}
-                            <div>{prompt.text}</div>
+                          <div class={promptEntry}>
+                            <div class={promptEntryMeta}>
+                              <time class={muted} datetime={prompt.timestamp}>{fmtDateTime(prompt.timestamp)}</time>
+                              {#if prompt.truncated}
+                                <span class={pill}>Truncated</span>
+                              {/if}
+                            </div>
+                            <span>{prompt.text}</span>
                           </div>
                         {/each}
                       </div>
                     </details>
                     <div
-                      aria-label={`${label}, ${row.model}, ${fmtEffort(row)}, ${rowDuration(row)} across ${countLabel(row.intervals.length, 'segment')}, ${countLabel(row.tokens.total, 'token')}, ${countLabel(row.tools, 'tool')} and ${countLabel(row.prompts.length, 'prompt')}`}
+                      aria-label={taskAccessibleLabel(row, label)}
                       class={cx(timelineTrack, scaleMode === 'wall-clock' && wallClockTrack)}
                       role="img"
                     >
@@ -557,16 +646,32 @@
                   <li class={timelineRow} data-session-analysis-row="orphan-prompt">
                     <details class={promptDisclosure}>
                       <summary class={promptSummary}>
-                        <span aria-hidden="true">▶</span
-                        ><span
-                          >Prompt: {label}<span class={timelineMeta}> · prompt without task attribution</span></span
-                        >
+                        <span aria-hidden="true" class={promptChevron}>▶</span>
+                        <span class={promptLabelContent}>
+                          <span class={promptPreview}>Prompt: {label}</span>
+                          <time class={timelineMeta} datetime={row.prompt.timestamp}>
+                            {fmtDateTime(row.prompt.timestamp)}
+                            · prompt without task attribution
+                          </time>
+                        </span>
                       </summary>
-                      <div class={promptBody}>{row.prompt.text}</div>
+                      <div class={promptBody}>
+                        <div class={promptEntry}>
+                          <div class={promptEntryMeta}>
+                            <time class={muted} datetime={row.prompt.timestamp}
+                              >{fmtDateTime(row.prompt.timestamp)}</time
+                            >
+                            {#if row.prompt.truncated}
+                              <span class={pill}>Truncated</span>
+                            {/if}
+                          </div>
+                          <span>{row.prompt.text}</span>
+                        </div>
+                      </div>
                     </details>
                     <div
-                      aria-label={`${label}, orphan prompt, 0s ${durationSemantics.turnSpanNoun}, tokens unavailable, 0 tools, point event with no task attribution`}
-                      class={timelineTrack}
+                      aria-label={`${label}, orphan prompt, 0s ${durationSemantics.turnSpanNoun}, tokens unavailable, 0 tools, point event with no task attribution, from ${fmtDateTime(row.prompt.timestamp)} to ${fmtDateTime(row.prompt.timestamp)}`}
+                      class={cx(timelineTrack, scaleMode === 'wall-clock' && wallClockTrack)}
                       role="img"
                     >
                       <span
@@ -587,23 +692,29 @@
 
       {#if chronologicalPhases.length > 1}
         <section aria-labelledby="session-model-phases" class={section}>
-          <h3 class={sectionHeading} id="session-model-phases">Model and effort phases</h3>
+          <div class={sectionHeader}>
+            <h3 class={sectionHeading} id="session-model-phases">Model and effort phases</h3>
+            <div class={muted}>
+              Band position follows the selected timeline scale; percentages show each phase's token share.
+            </div>
+          </div>
           <div class={timelineShell}>
+            {@render renderTimelineAxis(false)}
             <ol aria-label="Chronological model and effort phases" class={timelineList}>
-              {#each chronologicalPhases as phase (phaseKey(phase))}
+              {#each chronologicalPhases as phase, index (phaseRenderKey(phase, index))}
                 {@const position = positionOnScale(scale, phase.startAt, phase.endAt)}
+                {@const share = phaseTokenShare(phase, chronologicalPhases)}
                 <li class={timelineRow}>
-                  <div>
-                    <span aria-hidden="true" class={cx(phaseDot, phaseTone(phase, chronologicalPhases))}></span>
-                    {phase.model}
-                    <div class={timelineMeta}>
-                      {fmtEffort(phase)}
-                      · {phaseTokenShare(phase, chronologicalPhases).toFixed(1)}% tokens · {formatCost(phase)}
+                  <div class={timelineLabel}>
+                    <div class={timelineLabelTop}>
+                      <span aria-hidden="true" class={cx(phaseDot, phaseTone(phase, chronologicalPhases))}></span>
+                      <span class={timelineLabelText} title={phase.model}>{phase.model}</span>
                     </div>
+                    <div class={timelineMeta}>{fmtEffort(phase)} · {fmtShare(share)} tokens · {formatCost(phase)}</div>
                   </div>
                   <div
-                    aria-label={`${phase.model}, ${fmtEffort(phase)}, ${formatCost(phase)}`}
-                    class={timelineTrack}
+                    aria-label={`${phase.model}, ${fmtEffort(phase)}, ${fmtShare(share)} of tokens, ${formatCost(phase)}, from ${fmtDateTime(phase.startAt)} to ${fmtDateTime(phase.endAt)}`}
+                    class={cx(timelineTrack, scaleMode === 'wall-clock' && wallClockTrack)}
                     role="img"
                   >
                     <span
@@ -613,7 +724,7 @@
                       style:width={`${position.widthPercent}%`}
                     ></span>
                   </div>
-                  <span></span>
+                  <span aria-hidden="true"></span>
                 </li>
               {/each}
             </ol>

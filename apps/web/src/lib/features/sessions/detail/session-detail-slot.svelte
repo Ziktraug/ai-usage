@@ -28,6 +28,9 @@
     if (next.query) {
       return sessionNeighborFingerprint({ query: next.query, rowId: next.row.rowId });
     }
+    if (next.revision) {
+      return `revision:${next.revision}:${next.row.rowId}`;
+    }
     return `local:${next.row.rowId}`;
   };
 
@@ -60,8 +63,6 @@
 
 <div data-selected-row-id={snapshot.row?.rowId} data-session-detail-slot>
   {#if snapshot.row}
-    {#key snapshot.row.rowId}
-      <SessionDrawer {campaignSlot} {controller} {onFieldFilter} {rows} {snapshot} />
-    {/key}
+    <SessionDrawer {campaignSlot} {controller} {onFieldFilter} {rows} {snapshot} />
   {/if}
 </div>

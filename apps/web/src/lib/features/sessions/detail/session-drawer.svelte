@@ -286,6 +286,9 @@
           {/if}
         </div>
       {/if}
+      {#if campaignSlot}
+        {@render campaignSlot()}
+      {/if}
       <div class={drawerGrid}>
         <DrawerDetailItem label="Started" value={fmtDate(row.date)} />
         <DrawerDetailItem label="Ended" value={fmtDate(row.endDate)} />
@@ -338,9 +341,6 @@
           />
         {/if}
       </div>
-      {#if campaignSlot}
-        {@render campaignSlot()}
-      {/if}
       {#if row.source?.vcs}
         <SessionVcsSummary
           context={row.source.vcs}

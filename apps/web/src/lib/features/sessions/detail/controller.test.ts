@@ -47,6 +47,38 @@ const keyboard = (key: string, target: EventTarget | null = null) => {
 };
 
 describe('P4 Session detail controller', () => {
+  test('uses an independent Overview revision for detail and VCS without loading served neighbors', async () => {
+    const detailInputs: unknown[] = [];
+    const vcsInputs: unknown[] = [];
+    let neighborCalls = 0;
+    const controller = createSessionDetailController({
+      query: queryOwner({
+        loadDetail: (input) => {
+          detailInputs.push(input);
+          return Promise.resolve(undefined);
+        },
+        loadNeighbors: () => {
+          neighborCalls += 1;
+          return Promise.resolve(undefined);
+        },
+        loadVcs: (input) => {
+          vcsInputs.push(input);
+          return Promise.resolve(undefined);
+        },
+      }),
+      rows: () => rows,
+    });
+
+    controller.select({ revision: 'overview-revision', row: first });
+    await Promise.all([controller.toggleAnalysis(), controller.resolveVcs()]);
+
+    expect(controller.current()).toMatchObject({ revision: 'overview-revision', row: first });
+    expect(neighborCalls).toBe(0);
+    expect(detailInputs).toEqual([{ revision: 'overview-revision', rowId: first.rowId }]);
+    expect(vcsInputs).toEqual([{ revision: 'overview-revision', rowId: first.rowId }]);
+    controller.dispose();
+  });
+
   test('preserves one local row identity across next/previous/Escape and ignores editable targets', () => {
     const selected: (string | null)[] = [];
     const controller = createSessionDetailController({
@@ -128,6 +160,42 @@ describe('P4 Session detail controller', () => {
 
     controller.navigate(1);
     expect(controller.current().row?.rowId).toBe(third.rowId);
+    controller.dispose();
+  });
+
+  test('treats the external selection echo after internal navigation as idempotent', async () => {
+    const neighborRows: string[] = [];
+    const selected: string[] = [];
+    const controller = createSessionDetailController({
+      onSelectedRowId: (rowId) => {
+        if (rowId) {
+          selected.push(rowId);
+        }
+      },
+      query: queryOwner({
+        loadNeighbors: ({ rowId }) => {
+          neighborRows.push(rowId);
+          return Promise.resolve({
+            found: true,
+            next: rowId === first.rowId ? second : null,
+            previous: rowId === second.rowId ? first : null,
+            requestFingerprint: `fixture:${rowId}`,
+            revision: query.revision,
+          });
+        },
+      }),
+      rows: () => rows,
+    });
+
+    controller.select({ query, row: first });
+    await flush();
+    controller.navigate(1);
+    controller.select({ query, row: second });
+    await flush();
+
+    expect(controller.current().row?.rowId).toBe(second.rowId);
+    expect(neighborRows).toEqual([first.rowId, second.rowId]);
+    expect(selected).toEqual([first.rowId, second.rowId]);
     controller.dispose();
   });
 
