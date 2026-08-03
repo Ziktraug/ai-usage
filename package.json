@@ -31,6 +31,7 @@
     "test:tools": "bun test tools",
     "test:web-dev-build-isolation": "bun tools/check-web-dev-build-isolation.ts",
     "test:web-production": "bun tools/check-web-production-start.ts",
+    "test:web-rpc-loopback": "bun run --cwd apps/web test:rpc-loopback",
     "typecheck": "bun tools/check-typescript-coverage.ts && tsc -p tsconfig.tools.json --noEmit && turbo run check",
     "update": "bun update --interactive --recursive",
     "fix": "ultracite fix",
