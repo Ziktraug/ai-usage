@@ -68,7 +68,7 @@
 <script lang="ts">
   import { stableSeriesColor } from '@ai-usage/design-system/svelte';
   import type { FocusedTimelineData, FocusedTimelineSeries } from '@ai-usage/report-core/focused-report-query';
-  import { onMount } from 'svelte';
+  import { tick as afterDomUpdate, onMount } from 'svelte';
   import type { TimelineValue } from '../../../../overview-model';
   import { fmtDateOnly, fmtMoney, fmtNum, fmtPct } from '../../../foundation/presentation/format';
   import { aggregateApiPriceProvenance } from '../../../foundation/presentation/report-value';
@@ -85,6 +85,7 @@
     timelineSeriesValue,
     timelineSharePercent,
     timelineTickIndexes,
+    timelineTickMeasurementRevision,
     timelineUsesSessions,
   } from './timeline-model';
   import { originGapDescription } from './view-model';
@@ -127,6 +128,7 @@
     timeline ? Math.max(1, useSessions ? timeline.maxBucketSessions : timeline.maxBucketTotal) : 1,
   );
   const tickIndexes = $derived(timeline ? timelineTickIndexes(timeline.buckets.length) : []);
+  const tickMeasurementRevision = $derived(timeline ? timelineTickMeasurementRevision(timeline, tickIndexes) : '');
   const readoutData = $derived(
     timeline && inspectedIndex !== null ? timelineReadoutFor(timeline, value, inspectedIndex, presentedSeries) : null,
   );
@@ -196,6 +198,23 @@
     const boundaries = labelBoxes(boundaryRowElement, '[data-timeline-boundary]');
     retainedTickIds = new Set(retainTimelineTickLabels(ticks, boundaries).map(({ id }) => id));
   };
+  $effect(() => {
+    if (!tickMeasurementRevision) {
+      retainedTickIds = null;
+      return;
+    }
+
+    retainedTickIds = null;
+    let cancelled = false;
+    afterDomUpdate().then(() => {
+      if (!cancelled) {
+        measureTickCollisions();
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  });
 
   onMount(() => {
     let disposed = false;

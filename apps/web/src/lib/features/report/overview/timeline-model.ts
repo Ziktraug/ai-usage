@@ -131,6 +131,20 @@ export const timelineTickIndexes = (bucketCount: number, maximumTicks = 6): read
   return indexes;
 };
 
+export const timelineTickMeasurementRevision = (
+  timeline: {
+    readonly buckets: readonly Pick<FocusedTimelineBucket, 'date'>[];
+    readonly first: string;
+    readonly last: string;
+  },
+  tickIndexes: readonly number[],
+): string =>
+  JSON.stringify([
+    timeline.first,
+    tickIndexes.map((index) => [index, timeline.buckets[index]?.date ?? null]),
+    timeline.last,
+  ]);
+
 export const retainTimelineTickLabels = (
   ticks: readonly TimelineLabelBox[],
   boundaries: readonly TimelineLabelBox[],
