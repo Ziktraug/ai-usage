@@ -12,8 +12,8 @@ authority for feature, operation, design, source-file, and test-title coverage.
 - Planning PR: `#26`, squash-merged as
   `2183270ebfbb886fafa7e6268893122db9b364c0`
 - `BASE_SHA`: `2183270ebfbb886fafa7e6268893122db9b364c0`
-- Current integration checkpoint: `1096a4d`
-- Last reviewed green checkpoint: `1096a4d`
+- Current integration checkpoint: `509b756`
+- Last reviewed green checkpoint: `509b756`
 - Active design bases: D1 `4862293`, D2 `fce5c1a`, D3 `e2f13cd`
 - Implementation PR: not opened
 - Exclusive process-test token: free after the P6 activated shadow-browser gate
@@ -137,14 +137,14 @@ Statuses are `BLOCKED`, `READY`, `IMPLEMENTING`, `REVIEW`, `REWORK`,
 | R0 | F0, V5, Q3, D4 | INTEGRATED | `435aa06`, evidence `88d56c9`, corrections `98235ab`, `4e46acc`, evidence `4f293e5`, `23635c7`; integrated as `affcee4`, `01fa070`, `688b629`, `fa92709`, `66a650e`, `c8b7c7e` | `/root/d123_parity_review`, `/root/q2_spec_review` / ACCEPT | `c8b7c7e872f25648dbf5df407f92e76d64948eff` |
 | R1 | R0 | INTEGRATED | `40116b5`, `121d78b`, corrections `95b67d6`, `7c85cf1`, evidence/checker `c5cc7ea`, `1befaef` | `/root/d123_parity_review`, `/root/q2_spec_review`, `/root/v34_parity` / ACCEPT | `1befaefd71ef5ffe59866021f216104b3f83f9ef` |
 | P1 | R1, V1, V2, Q1, D4 | INTEGRATED | `a19914b`, `874cb1b`, `2422c2c`, evidence `02782f8`, activation correction `5bc8055` | `/root/v34_parity`, `/root/d123_parity_review` / ACCEPT | `f3610aa` |
-| P2 | P1 | REVIEW | `0f252ca`, evidence `8e41350`, corrections `5880b09`, `cb8552a` | `/root/q2_spec_review` / REWORK; correction re-review active | - |
-| P3 | P1, V2, Q1, D4 | REWORK | `1e7fb76`, `38bbbcc`, corrections `dddd96b`, `07db531`, `fe3357e`, `24b9bc6` | `/root/q2_spec_review` / REWORK; final two-item correction active | - |
-| P4 | P3 | BLOCKED | - | - | - |
+| P2 | P1 | INTEGRATED | `0f252ca`, `8e41350`, corrections `5880b09`, `cb8552a`; integrated `7b8d65a`, `11572e1`, `045e279`, `64128c4`; evidence `e593b70` | `/root/q2_spec_review` / ACCEPT | `e593b70` |
+| P3 | P1, V2, Q1, D4 | INTEGRATED | `1e7fb76`, `38bbbcc`, `dddd96b`, `07db531`, `fe3357e`, `24b9bc6`, final `7ce6027`, `a9fc2ff`; integrated `9460bc2` through `fe37669`; evidence `509b756` | `/root/q2_spec_review` / ACCEPT | `509b756` |
+| P4 | P3 | IMPLEMENTING | - | `/root/d123_parity_review` | - |
 | P5 | R1, V3, Q2, D4 | INTEGRATED | `231f109`, `a5b657f`, `72c6a76`, `448c782`, activation `5c0e27e`; integrated as `c84b957`, `32533a7`, `e951cd1`, `a170123`, `0f6b118`, evidence `6f639ab` | `/root/d123_parity_review`, `/root/v34_parity` / ACCEPT | `6f639ab` |
 | P6 | R1, V4, Q2, D4, B2 | INTEGRATED | accepted fresh range `e23bc9` through `414ea1a`; integrated `3c08e12` through `68dd82f`; evidence `eb2f669`; composition `79341c1`; browser corrections `db4eb57`, `1096a4d` | `/root/q2_spec_review` / ACCEPT | `1096a4d` |
 | P7 | R1, V4, Q2, D4 | REWORK | `d2486bd`, corrections `80a6db3`, evidence `ed0a76d` | `/root/q2_spec_review`, `/root/v34_parity` / REWORK | - |
 | P8 | P1 | IMPLEMENTING | - | `/root/q2_spec_review` | - |
-| P9 | P5 | READY | - | - | - |
+| P9 | P5 | REVIEW | `9d48303`, evidence `4cb0f0d` | independent review pending | - |
 | P10 | P5 | IMPLEMENTING | - | `/root/v34_parity` | - |
 | X0 | P2, P8, P4, P9, P10, P6, P7 | BLOCKED | - | - | - |
 | X1 | X0 | BLOCKED | - | - | - |
@@ -1031,6 +1031,31 @@ ACCEPTed both axes; five focused tests with 34 expectations, Ultracite and
 package boundaries pass. P3 can now remove its temporary local key shadow and
 consume Q1 unchanged.
 
+P2 correction `5880b09` plus evidence `cb8552a` closes every original review
+finding: cost/session share bases, interactive timeline legend/readout and
+collision retention, complete heatmap roving/day/provenance semantics, provider
+progress/reset presentation, Session Shape/campaign language, range pointer and
+Escape cleanup, machine presentation request, real target evidence and recursive
+client closure. `/root/q2_spec_review` ACCEPTed both axes with 95 tests and 352
+expectations, Svelte 0/0, Ultracite, boundaries and parity green. The four
+worker commits integrated as `7b8d65a`, `11572e1`, `045e279` and `64128c4`;
+`e593b70` points target evidence at the integrated implementation. The identical
+95/352 gate, Svelte check and aggregate parity pass post-cherry. Its bounded D4,
+root lifecycle/navigation, campaign/machine and P8 evidence requests remain for
+X0 and do not introduce a parallel state owner.
+
+P3's final correction `7ce6027` removes its temporary campaign-page key shadow
+and consumes the accepted Q1 options, query function and cancellation key
+unchanged. It also restores Solid's exact unavailable-column behavior: Turns
+remains numeric with partial-session provenance while only cost, token, call and
+tool columns use the unavailable hint. `/root/q2_spec_review` ACCEPTed both axes
+with the complete deep paging, presentation, keyboard, responsive and
+virtualization gate at 88 tests and 397 expectations. Eight P3 commits integrated
+as `9460bc2..fe37669`, intentionally excluding the worktree's duplicate Q1
+compatibility commits; `509b756` points evidence at integrated `198e7ee`. The
+same 88/397 gate, Svelte 0/0, boundaries and parity pass post-cherry. P4 was
+dispatched from this reviewed checkpoint.
+
 One orchestration incident did not justify stopping the run: a network command
 was treated as needing user approval even though the persistent `curl -sS`
 permission already covered it, and the normal escalation path was available for
@@ -1094,8 +1119,8 @@ the complete migration can stop this run under the user's explicit instruction.
   strict Svelte type errors while the additive shell was unreachable. The route
   was reverted before stacking work; reviewed correction `0f6b118` plus
   reachability fixture closes the gap, and all additive gates are green.
-- Recovery point: `1096a4d` is the latest independently reviewed green
-  checkpoint. P1, P5 and P6 are integrated; Q1 owns exact campaign-child page
-  identity; P2 is in correction re-review, P3 is applying its final focused
-  correction, P8 and P10 are implementing, P9 is preserved ready, and P7 remains
-  recoverable pending fresh compatible redispatch.
+- Recovery point: `509b756` is the latest independently reviewed green
+  checkpoint. P1, P2, P3, P5 and P6 are integrated; Q1 owns exact
+  campaign-child page identity; P4, P8 and P10 are implementing, P9 awaits
+  independent review, and P7 has a fresh compatible worktree ready for its
+  original author.
