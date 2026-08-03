@@ -22,6 +22,7 @@
   import type { SessionSelectionInput } from '../../sessions/detail/controller';
   import SessionTable from '../../sessions/table/session-table.svelte';
   import SessionTableOwner from '../../sessions/table/session-table-owner.svelte';
+  import type { CampaignSessionControlsBinding } from '../actions/campaign-session-controls-binding';
   import type { FocusedReportDescriptor } from './report-destination';
   import type { SessionQueryScopeSnapshot } from './report-search';
   import SessionDestinationRefresh from './session-destination-refresh.svelte';
@@ -31,6 +32,7 @@
     acquire,
     client,
     navigate,
+    onCampaignControlsChange,
     onRowsChange,
     onSessionCountChange,
     onSelectionChange,
@@ -38,11 +40,13 @@
     queryClient,
     destinationScope,
     search,
+    selectedCampaignKey,
     selectedRowId,
   }: {
     acquire: (signal: AbortSignal) => Promise<FocusedReportDescriptor>;
     client: SessionClientAdapter;
     navigate: SearchNavigationIntent<DashboardSearch>;
+    onCampaignControlsChange: (binding: CampaignSessionControlsBinding | null) => void;
     onRowsChange: (rows: readonly SessionPresentationRow[]) => void;
     onSessionCountChange: (sessionCount: number | undefined) => void;
     onSelectionChange: (selection: SessionSelectionInput | null) => void;
@@ -50,6 +54,7 @@
     queryClient: QueryClient;
     destinationScope: SessionQueryScopeSnapshot;
     search: DashboardSearch;
+    selectedCampaignKey: string | undefined;
     selectedRowId: string | null;
   } = $props();
 
@@ -90,9 +95,13 @@
     {@const resetKey = query ? sessionQueryFingerprint(query) : JSON.stringify(destinationScope)}
     <SessionDestinationRefresh {destinationScope} owner={_owned.lifecycle} />
     <SessionsDestinationState
+      {onCampaignControlsChange}
       {onRowsChange}
       {onSessionCountChange}
       {presentRow}
+      queryOwner={_owned.query}
+      queryState={_owned.snapshot}
+      {selectedCampaignKey}
       sessionCount={_owned.snapshot?.sessionCount}
       sourceRows={_owned.rows}
     >
@@ -115,7 +124,12 @@
           onHarnessFilter={(value) => navigate((current) => ({ ...current, harness: current.harness.includes(value) ? current.harness.filter((item) => item !== value) : [...current.harness, value] }))}
           onLoadCampaignChildren={(campaignKey) => _owned.query.loadCampaignChildren(campaignKey).catch(() => undefined)}
           onLoadMoreRows={() => _owned.query.loadMore().catch(() => undefined)}
-          onSelect={(row) => selectRow(row, _owned.snapshot?.items ?? [], query, _owned.snapshot?.sessionCount ?? _rows.length)}
+          onSelect={(row) => {
+            if (selectedRowId !== row.rowId && row.campaignKey !== undefined) {
+              _owned.query.loadCampaignSessions(row.campaignKey).catch(() => undefined);
+            }
+            selectRow(row, _owned.snapshot?.items ?? [], query, _owned.snapshot?.sessionCount ?? _rows.length);
+          }}
           onSortingChange={(updater) => {
             const next = applyStateUpdate(updater, sorting);
             navigate((current) => ({ ...current, sort: sortFromSortingState(next, current.sort) }));

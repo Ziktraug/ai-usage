@@ -27,6 +27,7 @@
   import { buildProjectGroupReferenceCommand } from '../../../../project-group-control';
   import { buildProviderStatusViews } from '../../../../provider-status-model';
   import type { RuntimeMode } from '../../../../runtime-mode';
+  import { sessionAnalysisTargetForSession } from '../../../../session-analysis-target';
   import type { WebReportPayloadWithoutRows } from '../../../../web-report-payload';
   import type { SearchNavigationIntent } from '../../../foundation/navigation/search-intent';
   import { reportBreakdownQueryOptions } from '../../../query/options/report';
@@ -36,6 +37,8 @@
   import { createSessionDetailQueryOwner } from '../../sessions/detail/query-owner';
   import SessionDetailSlot from '../../sessions/detail/session-detail-slot.svelte';
   import CampaignLabelEditor from '../actions/campaign-label-editor.svelte';
+  import CampaignSessionControls from '../actions/campaign-session-controls.svelte';
+  import type { CampaignSessionControlsBinding } from '../actions/campaign-session-controls-binding';
   import { projectGroupsAfterWarningCleanup, saveProjectGroupsAtRevision } from '../actions/project';
   import QuotaHistoryOwner from '../actions/quota-history-owner.svelte';
   import ActiveFilters from '../breakdown/active-filters.svelte';
@@ -92,6 +95,7 @@
   let servedSessionCount = $state<number>();
   let cleaningProjectWarningGroupId = $state<string>();
   let projectWarningCleanupError = $state<string>();
+  let campaignSessionControls = $state<CampaignSessionControlsBinding | null>(null);
   const initialDescriptor = untrack(() => initialFocusedReportDescriptor(bootstrapResult));
   const descriptorSource = untrack(() =>
     createFocusedReportDescriptorSource({ client: reportClient, initial: initialDescriptor, queryClient }),
@@ -183,6 +187,20 @@
     };
     selectedRowId = presented.row.rowId;
   };
+  const selectCampaignSession = (row: SessionPresentationRow): void => {
+    const controls = campaignSessionControls;
+    if (controls === null) {
+      return;
+    }
+    detailRows = controls.collection.items;
+    selection = {
+      query: controls.query,
+      row,
+      target: sessionAnalysisTargetForSession(row),
+      total: controls.collection.totalCount,
+    };
+    selectedRowId = row.rowId;
+  };
   const selectDay = (date: string): void =>
     navigate((current) => ({ ...current, range: { from: date, mode: 'custom', to: date }, tab: 'sessions' }));
   const selectTimeCell = (cell: LocalTimeCell): void =>
@@ -260,6 +278,17 @@
 {#snippet campaignSlot()}
   {#if selectedCampaignEditor}
     <CampaignLabelEditor editor={selectedCampaignEditor} />
+  {/if}
+  {#if campaignSessionControls}
+    <CampaignSessionControls
+      campaign={campaignSessionControls.campaign}
+      collection={campaignSessionControls.collection}
+      onClearCampaignFilter={() => navigation.clearFieldFilter('campaign')}
+      onLoadMoreCampaignSessions={() => campaignSessionControls?.loadMore()}
+      onSelectSession={selectCampaignSession}
+      query={campaignSessionControls.query}
+      visibleRows={campaignSessionControls.visibleRows}
+    />
   {/if}
 {/snippet}
 
@@ -366,6 +395,7 @@
             client={sessionClient}
             destinationScope={destination.sessions}
             {navigate}
+            onCampaignControlsChange={(binding) => (campaignSessionControls = binding)}
             onRowsChange={(rows) => (detailRows = rows)}
             onSelectionChange={(nextSelection) => {
               selection = nextSelection;
@@ -375,6 +405,7 @@
             presentRow={presentSessionRow}
             {queryClient}
             {search}
+            selectedCampaignKey={selection?.row.campaignKey}
             {selectedRowId}
           />
         {/if}

@@ -1,28 +1,67 @@
 <script lang="ts">
   import type { SessionPresentationRow } from '@ai-usage/report-core/session-query';
   import type { Snippet } from 'svelte';
+  import type { SessionTableQueryOwner, SessionTableQueryState } from '../../sessions/table/session-table-query-owner';
+  import type { CampaignSessionControlsBinding } from '../actions/campaign-session-controls-binding';
+  import { campaignSessionControlsState } from '../actions/campaign-session-controls-model';
 
   let {
     children,
+    onCampaignControlsChange,
     onRowsChange,
     onSessionCountChange,
     presentRow,
+    queryOwner,
+    queryState,
+    selectedCampaignKey,
     sessionCount,
     sourceRows,
   }: {
     children: Snippet<[readonly SessionPresentationRow[]]>;
+    onCampaignControlsChange: (binding: CampaignSessionControlsBinding | null) => void;
     onRowsChange: (rows: readonly SessionPresentationRow[]) => void;
     onSessionCountChange: (sessionCount: number | undefined) => void;
     presentRow: (row: SessionPresentationRow) => SessionPresentationRow;
+    queryOwner: SessionTableQueryOwner;
+    queryState: SessionTableQueryState | undefined;
+    selectedCampaignKey: string | undefined;
     sessionCount: number | undefined;
     sourceRows: readonly SessionPresentationRow[];
   } = $props();
 
   const rows = $derived(sourceRows.map(presentRow));
+  const selectedCampaign = $derived(
+    selectedCampaignKey === undefined ? undefined : rows.find((row) => row.campaignKey === selectedCampaignKey),
+  );
+  const campaignState = $derived(
+    selectedCampaign === undefined ? null : campaignSessionControlsState(queryState, selectedCampaign),
+  );
+  const campaignBinding = $derived.by((): CampaignSessionControlsBinding | null => {
+    if (!(campaignState && selectedCampaign && queryState)) {
+      return null;
+    }
+    const campaignKey = selectedCampaign.campaignKey;
+    if (campaignKey === undefined) {
+      return null;
+    }
+    return {
+      campaign: selectedCampaign,
+      collection: {
+        ...campaignState.collection,
+        items: campaignState.collection.items.map(presentRow),
+      },
+      loadMore: () => {
+        queryOwner.loadCampaignSessions(campaignKey).catch(() => undefined);
+      },
+      query: queryState.query,
+      visibleRows: campaignState.visibleRows.map(presentRow),
+    };
+  });
 
   $effect(() => {
     onRowsChange(rows);
     onSessionCountChange(sessionCount);
+    onCampaignControlsChange(campaignBinding);
   });
 </script>
 
