@@ -26,7 +26,7 @@
     "test:e2e": "bun run --cwd apps/web test:e2e",
     "test:e2e-demo": "bun run --cwd apps/web test:e2e-demo",
     "test:e2e-production": "bun run --cwd apps/web test:e2e-production",
-    "test:packages": "turbo run test",
+    "test:packages": "turbo run test --concurrency=1",
     "test:setup-loopback": "bun tools/check-setup-loopback.ts",
     "test:tools": "bun test tools",
     "test:web-dev-build-isolation": "bun tools/check-web-dev-build-isolation.ts",

@@ -75,7 +75,7 @@ describe('Svelte compound controls', () => {
           logLevel: 'silent',
           plugins: [svelte()],
           root: repositoryDirectory,
-          server: { host: '127.0.0.1', port: 0, strictPort: false },
+          server: { host: '127.0.0.1', port: 0, strictPort: false, watch: null },
         });
         const chromeExecutable = Bun.which('google-chrome');
         if (!chromeExecutable) {
