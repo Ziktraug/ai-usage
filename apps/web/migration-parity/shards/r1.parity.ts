@@ -44,15 +44,27 @@ const feature = (id: string, currentOwner: string, currentTest: string, targetSo
       reviewEvidence,
     ],
   );
-const productionReplacementBySource: Readonly<Record<string, string>> = {
-  'apps/web/src/app-navigation.tsx':
-    'apps/web/src/lib/features/shell/app-navigation.svelte; apps/web/src/lib/features/shell/navigation-link.svelte',
-  'apps/web/src/dashboard-theme.tsx':
-    'apps/web/src/lib/features/shell/theme-toggle.svelte; apps/web/src/lib/features/shell/theme.ts; apps/web/svelte-shadow/app.html',
-  'apps/web/src/router.tsx':
-    'apps/web/src/lib/features/shell/app-shell.svelte; apps/web/svelte-shadow/routes/+error.svelte',
-  'apps/web/src/routes/__root.tsx':
-    'apps/web/svelte-shadow/routes/+layout.svelte; apps/web/svelte-shadow/routes/+layout.server.ts',
+const productionReplacementBySource: Readonly<Record<string, { readonly source: string; readonly test: string }>> = {
+  'apps/web/src/app-navigation.tsx': {
+    source:
+      'apps/web/src/lib/features/shell/app-navigation.svelte; apps/web/src/lib/features/shell/app-shell.svelte; apps/web/src/lib/features/shell/navigation-link.svelte',
+    test: 'apps/web/e2e/svelte-shell.spec.ts › server-renders and reloads every Svelte shell route with accessible navigation; blocks dirty navigation through Keep, Discard, reload, focus, and cleanup',
+  },
+  'apps/web/src/dashboard-theme.tsx': {
+    source:
+      'apps/web/src/lib/features/shell/theme-toggle.svelte; apps/web/src/lib/features/shell/theme.ts; apps/web/svelte-shadow/app.html',
+    test: 'apps/web/src/lib/features/shell/theme.test.ts; apps/web/e2e/svelte-shell.spec.ts › resolves stored and system theme before paint and toggles the named preference',
+  },
+  'apps/web/src/router.tsx': {
+    source:
+      'apps/web/src/lib/features/shell/app-shell.svelte; apps/web/src/lib/features/shell/app-navigation.svelte; apps/web/src/lib/features/shell/navigation.ts; apps/web/src/lib/features/shell/error-shell.svelte; apps/web/svelte-shadow/routes/+error.svelte',
+    test: 'apps/web/e2e/svelte-shell.spec.ts › restores Svelte history and scroll without feedback loops; renders retryable route errors and the default accessible Not Found shell',
+  },
+  'apps/web/src/routes/__root.tsx': {
+    source:
+      'apps/web/svelte-shadow/routes/+layout.server.ts; apps/web/svelte-shadow/routes/+layout.ts; apps/web/svelte-shadow/routes/+layout.svelte; apps/web/src/lib/features/shell/app-shell.svelte; apps/web/src/lib/query/provider.svelte',
+    test: 'apps/web/src/lib/features/shell/query-load.test.ts; apps/web/e2e/svelte-shell.spec.ts › server-renders and reloads every Svelte shell route with accessible navigation',
+  },
 };
 const completeProductionReplacement = (record: ParityRecord): ParityRecord => {
   const replacement = productionReplacementBySource[record.currentOwner];
@@ -60,8 +72,12 @@ const completeProductionReplacement = (record: ParityRecord): ParityRecord => {
     throw new Error(`Missing R1 replacement evidence for ${record.currentOwner}`);
   }
   return completeRecord(record, [
-    targetEvidence('source', replacement),
-    targetEvidence('test', 'apps/web/e2e/svelte-shell.spec.ts'),
+    targetEvidence('source', replacement.source),
+    targetEvidence('test', replacement.test),
+    targetEvidence(
+      'command',
+      'bun run --cwd apps/web test:e2e-svelte-shadow (6 passed); bun run check; bun run lint; bun run typecheck; bun run test; bun run build',
+    ),
     reviewEvidence,
   ]);
 };
