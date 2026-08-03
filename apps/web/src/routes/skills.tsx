@@ -220,6 +220,13 @@ function SkillsLoadingShell() {
   );
 }
 
+const queryRefreshErrorMessage = (query: { readonly error: unknown; readonly isError: boolean }): string | null => {
+  if (!query.isError) {
+    return null;
+  }
+  return query.error instanceof Error ? query.error.message : 'Skill data could not be refreshed.';
+};
+
 function SkillsClientRoute() {
   const location = useLocation();
   let refreshButtonElement: HTMLButtonElement | undefined;
@@ -274,7 +281,7 @@ function SkillsClientRoute() {
     errorMessage,
     keepDirtySnapshot,
     knownProjectPaths,
-    knownProjectPathsError,
+    knownProjectPathsError: controllerKnownProjectPathsError,
     markdownRefreshVersion,
     operationNotice,
     pendingOperation,
@@ -282,6 +289,7 @@ function SkillsClientRoute() {
     previewReconcile,
     projectInventories,
     projectInventoriesLoading,
+    projectInventoriesRefreshError,
     projectPathDraft,
     projectPaths,
     reconcilePlan,
@@ -298,6 +306,10 @@ function SkillsClientRoute() {
     toggleSkill,
     updateSourceRepoPath,
   } = controller;
+  const knownProjectPathsError = createMemo(
+    () => queryRefreshErrorMessage(knownProjectPathsQuery) ?? controllerKnownProjectPathsError(),
+  );
+  const skillsSnapshotRefreshError = createMemo(() => queryRefreshErrorMessage(skillsSnapshotQuery));
 
   // Route keys resolve against every project the tree can display: discovered
   // paths plus scanned inventories (which include config-only paths).
@@ -364,6 +376,16 @@ function SkillsClientRoute() {
         </header>
 
         <div class={pageStack}>
+          <Show when={result().ok && skillsSnapshotRefreshError()}>
+            {(message) => (
+              <ErrorPanel
+                message={message()}
+                onRetry={() => {
+                  skillsSnapshotQuery.refetch().catch(() => undefined);
+                }}
+              />
+            )}
+          </Show>
           <Show
             fallback={
               <ErrorPanel
@@ -413,6 +435,7 @@ function SkillsClientRoute() {
                 pendingOperation={pendingOperation()}
                 projectInventories={projectInventories()}
                 projectInventoriesLoading={projectInventoriesLoading()}
+                projectInventoriesRefreshError={projectInventoriesRefreshError()}
                 projectPathDraft={projectPathDraft()}
                 projectPaths={projectPaths()}
                 projectScopes={knownProjectScopesFromPaths(knownProjectPaths())}
@@ -462,6 +485,7 @@ function ConfiguredSnapshot(props: {
   pendingOperation: string | null;
   projectInventories: ProjectInventoriesResult | undefined;
   projectInventoriesLoading: boolean;
+  projectInventoriesRefreshError: Extract<ProjectInventoriesResult, { readonly ok: false }> | undefined;
   projectPathDraft: string;
   projectPaths: readonly string[];
   projectScopes: readonly KnownProjectScope[];
@@ -488,6 +512,11 @@ function ConfiguredSnapshot(props: {
       <Show when={props.projectInventories?.ok === false}>
         <section class={panel}>
           <p class={meta}>{props.projectInventories?.ok === false ? props.projectInventories.error.message : ''}</p>
+        </section>
+      </Show>
+      <Show when={props.projectInventoriesRefreshError && props.projectInventories?.ok === true}>
+        <section class={panel}>
+          <p class={meta}>{props.projectInventoriesRefreshError?.error.message}</p>
         </section>
       </Show>
       <SkillsWorkspace

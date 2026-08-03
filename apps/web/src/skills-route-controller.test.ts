@@ -5,7 +5,11 @@ import { skillsProjectInventoriesKey } from './lib/query/identities/skills';
 import { webQueryPolicies } from './lib/query/policies';
 import type { SkillSnapshotResult } from './skills-client-contracts';
 import type { SkillsMutationResult } from './skills-query-operations';
-import { refetchActiveSkillsProjectInventories } from './skills-route-controller';
+import {
+  projectInventoriesRefreshErrorFromQuery,
+  projectInventoriesResultFromQuery,
+  refetchActiveSkillsProjectInventories,
+} from './skills-route-controller';
 import {
   createSkillsSnapshotCoordinator,
   type OperationNotice,
@@ -57,6 +61,28 @@ describe('Skills route controller state', () => {
     expect(queryClient.getQueryData<readonly unknown[]>(skillsProjectInventoriesKey())).toEqual([]);
     unsubscribe();
     queryClient.clear();
+  });
+
+  test('hides retained project inventories after configuration becomes unavailable', () => {
+    const retainedQuery = { data: [], error: null, isPending: false };
+
+    expect(projectInventoriesResultFromQuery(retainedQuery, true)).toEqual({ data: [], ok: true });
+    expect(projectInventoriesResultFromQuery(retainedQuery, false)).toBeUndefined();
+    expect(projectInventoriesRefreshErrorFromQuery(retainedQuery, false)).toBeUndefined();
+  });
+
+  test('retains project inventories while surfacing a failed SWR refresh', () => {
+    const retainedQuery = {
+      data: [],
+      error: new Error('Inventory refresh failed.'),
+      isPending: false,
+    };
+
+    expect(projectInventoriesResultFromQuery(retainedQuery, true)).toEqual({ data: [], ok: true });
+    expect(projectInventoriesRefreshErrorFromQuery(retainedQuery, true)).toEqual({
+      error: { message: 'Inventory refresh failed.', tag: 'ClientReadError' },
+      ok: false,
+    });
   });
 
   test('commits successful snapshots to visible state and the Query cache', async () => {

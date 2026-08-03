@@ -59,6 +59,43 @@ export const refetchActiveSkillsProjectInventories = async (queryClient: QueryCl
   });
 };
 
+interface ProjectInventoriesQueryState {
+  readonly data: Extract<ProjectInventoriesResult, { readonly ok: true }>['data'] | undefined;
+  readonly error: unknown;
+  readonly isPending: boolean;
+}
+
+type ProjectInventoriesErrorResult = Extract<ProjectInventoriesResult, { readonly ok: false }>;
+
+const projectInventoriesQueryError = (error: unknown): ProjectInventoriesErrorResult => ({
+  error: {
+    message: error instanceof Error ? error.message : 'Skill project inventories are unavailable.',
+    tag: error instanceof SkillsQueryError ? error.tag : 'ClientReadError',
+  },
+  ok: false,
+});
+
+export const projectInventoriesResultFromQuery = (
+  query: ProjectInventoriesQueryState,
+  enabled: boolean,
+): ProjectInventoriesResult | undefined => {
+  if (!(enabled && !query.isPending)) {
+    return;
+  }
+  if (query.data !== undefined) {
+    return { data: query.data, ok: true };
+  }
+  return projectInventoriesQueryError(query.error);
+};
+
+export const projectInventoriesRefreshErrorFromQuery = (
+  query: Pick<ProjectInventoriesQueryState, 'error'>,
+  enabled: boolean,
+): ProjectInventoriesErrorResult | undefined => {
+  const hasError = query.error !== null && query.error !== undefined;
+  return enabled && hasError ? projectInventoriesQueryError(query.error) : undefined;
+};
+
 const operationLabel = (request: SkillsMutationRequest | undefined): string | null => {
   if (!request) {
     return null;
@@ -150,20 +187,12 @@ export const createSkillsRouteController = (routeData: Accessor<SkillsRouteIniti
     queryKey: skillsProjectInventoriesKey(),
   }));
   const projectInventories = (): ProjectInventoriesResult | undefined => {
-    if (isServer || projectInventoriesQuery.isPending) {
-      return;
-    }
-    if (projectInventoriesQuery.data) {
-      return { data: projectInventoriesQuery.data, ok: true };
-    }
-    const error = projectInventoriesQuery.error;
-    return {
-      error: {
-        message: error instanceof Error ? error.message : 'Skill project inventories are unavailable.',
-        tag: error instanceof SkillsQueryError ? error.tag : 'ClientReadError',
-      },
-      ok: false,
-    };
+    const enabled = !isServer && projectInventoriesKey() !== undefined;
+    return projectInventoriesResultFromQuery(projectInventoriesQuery, enabled);
+  };
+  const projectInventoriesRefreshError = (): ProjectInventoriesErrorResult | undefined => {
+    const enabled = !isServer && projectInventoriesKey() !== undefined;
+    return projectInventoriesRefreshErrorFromQuery(projectInventoriesQuery, enabled);
   };
   const operationMutation = createMutation(() => ({
     mutationFn: runSkillsMutation,
@@ -253,6 +282,7 @@ export const createSkillsRouteController = (routeData: Accessor<SkillsRouteIniti
     pendingSnapshotReplacement,
     previewReconcile: actions.previewReconcile,
     projectInventories,
+    projectInventoriesRefreshError,
     projectInventoriesLoading: () => projectInventoriesQuery.isFetching,
     projectPathDraft,
     projectPaths,
