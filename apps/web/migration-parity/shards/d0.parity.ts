@@ -6,6 +6,7 @@ const foundationCommit = '6c6d6c4ebe134d980dd630a13ab53086e38aa142';
 const finalD0Commit = '8474f185f0bef832bae5bb0338f1af316ba02401';
 const d4Commit = '6646fe568e8b4c1fba74ac1b4150d1480d15ca6f';
 const r1Commit = '7c85cf198ca2af004b53eef182a727f59d4ab5e4';
+const seriesColorCommit = '3f42bfa8457659157ddbd89f720aa05a355bae4a';
 const targetEvidence = (commit: string, kind: ParityEvidence['kind'], reference: string): ParityEvidence => ({
   commit,
   kind,
@@ -83,6 +84,27 @@ const completeNewForR1 = (record: ParityRecord): ParityRecord => ({
       r1Commit,
       'review',
       '/root/d123_parity_review code-quality/seams ACCEPT and /root/q2_spec_review parity/spec ACCEPT cover the R1 public Svelte shell export delta',
+    ),
+  ],
+  status: 'complete',
+});
+const completeSeriesColorExport = (record: ParityRecord): ParityRecord => ({
+  ...record,
+  evidence: [
+    targetEvidence(
+      seriesColorCommit,
+      'source',
+      'packages/design-system/src/svelte.ts exports stableSeriesColor from the framework-neutral chart module.',
+    ),
+    targetEvidence(
+      seriesColorCommit,
+      'test',
+      'packages/design-system/src/design-entrypoints.test.ts; packages/design-system/src/components/chart.test.ts',
+    ),
+    targetEvidence(
+      seriesColorCommit,
+      'review',
+      '/root/v34_parity ACCEPT covers the public export, dependency closure, deterministic colors, and P2 segment/legend parity.',
     ),
   ],
   status: 'complete',
@@ -303,6 +325,13 @@ export default defineParityShard({
         source: 'packages/design-system/src/components/panel.ts',
       },
     ]).map(completeNewForR1),
+    ...designExportRecords(owner, [
+      {
+        entrypoint: './svelte',
+        names: ['stableSeriesColor'],
+        source: 'packages/design-system/src/svelte.ts',
+      },
+    ]).map(completeSeriesColorExport),
     ...designExportRecords(owner, [
       {
         entrypoint: './solid',
