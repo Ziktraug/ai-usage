@@ -77,6 +77,7 @@ const includesPathSegment = (moduleId: string, segment: string): boolean =>
   moduleId === segment ||
   moduleId.startsWith(`${segment}/`) ||
   moduleId.includes(`/${segment}/`) ||
+  moduleId.endsWith(`/${segment}`) ||
   moduleId.includes(`/node_modules/${segment}/`);
 
 const packageOrWorkspaceRule = (name: string, packageName: string, workspacePath: string): ForbiddenModuleRule => ({
@@ -106,6 +107,13 @@ const forbiddenModuleRules: readonly ForbiddenModuleRule[] = [
   {
     matches: (moduleId) => serverModulePattern.test(normalizedModuleId(moduleId)),
     name: '.server module',
+  },
+  {
+    matches: (moduleId) => {
+      const normalized = normalizedModuleId(moduleId);
+      return normalized.includes('@tanstack/start-') || includesPathSegment(normalized, '@tanstack/router-core');
+    },
+    name: 'retired TanStack Start/Router module',
   },
   {
     matches: (moduleId) => {

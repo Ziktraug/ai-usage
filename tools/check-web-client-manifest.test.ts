@@ -39,6 +39,13 @@ describe('emitted Web client module manifest scanner', () => {
     ['bare Node path builtin', 'path', 'node builtin'],
     ['direct Bun import', 'bun:sqlite', 'Bun builtin'],
     ['indirect dependency', '../../node_modules/@orpc/server/dist/index.mjs', '@orpc/server'],
+    ['terminal dependency', '../../node_modules/@orpc/server', '@orpc/server'],
+    [
+      'TanStack Start client core',
+      '../../node_modules/@tanstack/start-client-core',
+      'retired TanStack Start/Router module',
+    ],
+    ['TanStack router core', '../../node_modules/@tanstack/router-core', 'retired TanStack Start/Router module'],
     ['re-exported workspace module', '../../packages/report-data/src/index.ts', 'report-data'],
     ['dynamic workspace import', '../../packages/usage-merge/src/index.ts', 'usage-merge'],
     ['usage store', '../../packages/usage-store/src/reader.ts', 'usage-store'],

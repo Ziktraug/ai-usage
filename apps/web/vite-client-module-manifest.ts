@@ -114,9 +114,9 @@ export const webClientModuleManifest = ({ manifestFile }: WebClientModuleManifes
         recordDynamicImport(id, targetModuleId);
       }
     },
-    renderDynamicImport: ({ moduleId, targetModuleId }) => {
-      if (targetModuleId) {
-        recordDynamicImport(moduleId, targetModuleId);
+    resolveDynamicImport: (source, importer) => {
+      if (typeof source === 'string' && importer) {
+        recordDynamicImport(importer, source);
       }
       return null;
     },
