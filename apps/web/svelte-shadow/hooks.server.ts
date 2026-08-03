@@ -1,13 +1,18 @@
 import type { Handle } from '@sveltejs/kit';
 import { demoRouteDecision } from '$lib/features/shell/demo-policy.server';
+import { webReadObservabilityLifecycle } from '$lib/server/observability/web-read-lifecycle.server';
 import { normalizeOwnedRpcSubrequest } from '$lib/server/rpc/subrequest-normalization.server';
 import { getServerRuntimeMode } from '../src/server/runtime-mode.server';
 
-process.once('sveltekit:shutdown', () => {
-  setTimeout(() => process.exit(0), 0);
+const observabilityInitialization = webReadObservabilityLifecycle.initialize();
+
+process.once('sveltekit:shutdown', async () => {
+  await webReadObservabilityLifecycle.dispose();
+  process.exit(0);
 });
 
 export const handle: Handle = async ({ event, resolve }) => {
+  await observabilityInitialization;
   const e2eOverridesEnabled = process.env.AI_USAGE_SVELTEKIT_SHADOW_PRIVATE_E2E_OVERRIDES === '1';
   const runtimeMode =
     e2eOverridesEnabled && event.request.headers.get('x-ai-usage-shadow-mode') === 'demo'
