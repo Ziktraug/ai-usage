@@ -36,28 +36,3 @@ Do not create a second `SourceControlProvider`, source-control service,
 EventSource subscription or summary instance. The root provider is the sole
 owner of start, reconnect, publication invalidation and disposal for both the
 summary and Sources page.
-
-## Required framework-neutral presentation convergence
-
-P6's write allowlist excludes the legacy Solid owner
-apps/web/src/source-control-presentation.ts. Before accepting the P6 checkpoint
-or composing X0, the coordinator must perform this exact mechanical
-convergence:
-
-1. Move the pure SourcePresentation, SourcePresentationTone,
-   SourceProgressPresentation, presentSourceProgress, and presentSourceState
-   declarations from lib/features/sources/presentation-model.ts to the
-   framework-neutral apps/web/src/source-control-presentation-model.ts.
-2. Update the legacy source-control-presentation.ts to import and re-export
-   those declarations from the neutral owner. Keep only its existing
-   design-system /report tone-to-class mapping local.
-3. Update P6 presentation.ts and model.ts to import/re-export the same neutral
-   owner, keep only the Svelte tone-to-class mapping local, and delete the
-   temporary P6-owned model file.
-4. Preserve presentation-model.test.ts as an explicit accepted-product parity
-   proof until the legacy Solid route is retired; after the move, both suites
-   must import the single neutral owner.
-
-This is a source move only: copy, precedence, labels, explanations, progress
-bounds, and CSS classes must not change. Re-run both presentation suites, the
-P6 recursive client closure, Web typecheck/Svelte check, and the shadow build.

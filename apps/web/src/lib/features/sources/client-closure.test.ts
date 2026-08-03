@@ -254,6 +254,7 @@ describe('Sources client dependency closure', () => {
     expect(closureViolations(closure, repositoryRoot)).toEqual([]);
     expect(closure.files.has(join(featureDirectory, 'context.svelte.ts'))).toBe(true);
     expect(closure.files.has(join(repositoryRoot, 'apps/web/src/source-control-client.ts'))).toBe(true);
+    expect(closure.files.has(join(repositoryRoot, 'apps/web/src/source-control-presentation-model.ts'))).toBe(true);
     expect(closure.files.has(join(repositoryRoot, 'packages/report-core/src/source-control.ts'))).toBe(true);
     expect(closure.files.has(join(repositoryRoot, 'packages/web-contract/src/control.ts'))).toBe(true);
     expect(closure.files.has(join(repositoryRoot, 'packages/design-system/src/svelte.ts'))).toBe(true);
