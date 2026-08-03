@@ -6,21 +6,30 @@
   import SelectionLink from './selection-link.svelte';
 
   let {
+    ariaLabel = 'Skill scopes',
+    collapsedKeys,
+    expandedKeys,
+    filterQuery,
     idPrefix = 'skill',
     knownProjects,
     model,
+    onFilterChange,
+    onScopeToggle,
     selection,
   }: {
+    ariaLabel?: string;
+    collapsedKeys: ReadonlySet<string>;
+    expandedKeys: ReadonlySet<string>;
+    filterQuery: string;
     idPrefix?: string;
     knownProjects: readonly KnownProjectScope[];
     model: SkillTreeModel;
+    onFilterChange: (value: string) => void;
+    onScopeToggle: (scopeKey: string, expanded: boolean) => void;
     selection: SkillSelection;
   } = $props();
 
-  let query = $state('');
-  let expandedKeys = $state<ReadonlySet<string>>(new Set(['global']));
-  let collapsedKeys = $state<ReadonlySet<string>>(new Set());
-  const normalizedQuery = $derived(query.trim().toLowerCase());
+  const normalizedQuery = $derived(filterQuery.trim().toLowerCase());
   const visibleScopes = $derived(
     model.scopes
       .map((scope) => {
@@ -105,26 +114,9 @@
   const attention = css({ color: 'status.warn', fontSize: '11px', fontWeight: 700 });
   const emptySummary = css({ color: 'muted', cursor: 'pointer', fontSize: '13px', fontWeight: 650 });
   const filterInfo = css({ color: 'muted', fontSize: '12px', lineHeight: 1.5 });
-
-  const toggleScope = (scopeKey: string): void => {
-    const isExpanded =
-      normalizedQuery.length > 0 ||
-      (!collapsedKeys.has(scopeKey) && (expandedKeys.has(scopeKey) || activeScopeKey === scopeKey));
-    const nextExpanded = new Set(expandedKeys);
-    const nextCollapsed = new Set(collapsedKeys);
-    if (isExpanded) {
-      nextExpanded.delete(scopeKey);
-      nextCollapsed.add(scopeKey);
-    } else {
-      nextCollapsed.delete(scopeKey);
-      nextExpanded.add(scopeKey);
-    }
-    expandedKeys = nextExpanded;
-    collapsedKeys = nextCollapsed;
-  };
 </script>
 
-<aside aria-label="Skill scopes" class={cx(panel, treePanel)}>
+<aside aria-label={ariaLabel} class={cx(panel, treePanel)}>
   <div class={panelHeader}>
     <h2 class={panelTitle}>Skills</h2>
     <p class={panelSub}>Global and project scopes</p>
@@ -132,8 +124,9 @@
   <input
     aria-label="Filter scopes and skills"
     class={searchInput}
+    oninput={(event) => onFilterChange(event.currentTarget.value)}
     placeholder="Filter scopes or skills..."
-    bind:value={query}
+    value={filterQuery}
   >
   <div class={treeStack}>
     {#if visibleScopes.length + emptyScopes.length === 0}
@@ -152,7 +145,7 @@
                 aria-expanded="true"
                 aria-label={`Collapse ${scope.label}`}
                 class={toggleButton}
-                onclick={() => toggleScope(scope.key)}
+                onclick={() => onScopeToggle(scope.key, expanded)}
                 type="button"
               >
                 ▾
@@ -163,7 +156,7 @@
                 aria-expanded="false"
                 aria-label={`Expand ${scope.label}`}
                 class={toggleButton}
-                onclick={() => toggleScope(scope.key)}
+                onclick={() => onScopeToggle(scope.key, expanded)}
                 type="button"
               >
                 ▸

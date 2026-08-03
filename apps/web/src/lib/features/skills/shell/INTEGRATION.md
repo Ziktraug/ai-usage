@@ -61,3 +61,34 @@ layout owns the workspace. P9 and P10 replace the shell's `editorSlot`,
 `healthSlot`, and `matrixSlot` composition at X0; P5 must not implement those
 behaviors. Remove the temporary R1 dirty-navigation fixture only when P9's real
 blocker is composed.
+
+## Frozen slot contract
+
+Import `SkillsShellSlotContext` from
+`$lib/features/skills/shell/slot-context`. All three slots receive that exact
+context:
+
+- `editorSlot(context)` is P9-owned. On mount it calls
+  `context.snapshotUpdates.registerDraft(guard)` and its cleanup calls
+  `unregisterDraft(guard)` with the same guard identity.
+- When `context.snapshotUpdates.pendingDecision` exists, P9 renders the
+  keep/discard decision. `keep()` retains the dirty document, `discard()`
+  awaits the draft discard and applies the pending Query snapshot, and
+  `focus()` returns focus to the registered editor.
+- `healthSlot(context)` and `matrixSlot(context)` are P10-owned. They consume
+  `context.snapshot` and publish mutation snapshots through the canonical
+  Skills Query cache; they do not create another snapshot owner.
+
+P9's focused integration test must register a dirty real editor guard, update
+the canonical `skillsSnapshotKey()` cache with a snapshot that removes its
+skill, and assert retain, focus, awaited discard, and identity-safe unregister.
+P10's focused integration tests must render both slots with this unchanged
+context and assert that a smallest-key snapshot update is observed by the
+shipped shell. P9/P10 must not edit P5 shell files to add these capabilities.
+
+P5 freezes the route request above with
+`skills-workspace.ssr.test.ts`: the test runs the bounded awaited loader through
+the real oRPC HTTP handler, dehydrates its isolated client, creates a new
+`WebQueryProvider`, renders `SkillsShell`, and proves settled HTML with no
+second Skills acquisition. X0 should preserve that test unchanged while
+applying the two route files exactly as requested.

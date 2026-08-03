@@ -5,13 +5,16 @@
   import type { Snippet } from 'svelte';
   import { buildSkillHealthSummary, count } from '../../../../skills-page-model';
   import type { SkillsShellViewModel } from './model';
+  import type { SkillsShellSlotContext } from './slot-context';
 
   let {
     healthSlot,
+    slotContext,
     snapshot,
     view,
   }: {
-    healthSlot?: Snippet<[SkillsShellViewModel]>;
+    healthSlot?: Snippet<[SkillsShellSlotContext]>;
+    slotContext: SkillsShellSlotContext;
     snapshot: SkillManagementSnapshot;
     view: SkillsShellViewModel;
   } = $props();
@@ -89,7 +92,7 @@
       </div>
     {/if}
     {#if healthSlot}
-      <div class={section} data-skills-health-slot>{@render healthSlot(view)}</div>
+      <div class={section} data-skills-health-slot>{@render healthSlot(slotContext)}</div>
     {/if}
   </div>
 </aside>

@@ -4,15 +4,12 @@
   import type { SkillManagementSnapshot } from '@ai-usage/skills';
   import type { ProjectSkillMarkdownDocument, SkillMarkdownDocument } from '@ai-usage/web-contract/skills';
   import type { Snippet } from 'svelte';
+  import { type SkillSelection, selectionKey } from '../../../../skills-page-model';
+  import { SKILLS_MOBILE_MEDIA_QUERY } from '../../../../skills-responsive';
   import type { SkillsShellViewModel } from './model';
   import SkillsInspector from './skills-inspector.svelte';
   import SkillsTree from './skills-tree.svelte';
-
-  export interface SkillsShellSlotContext {
-    readonly document: ProjectSkillMarkdownDocument | SkillMarkdownDocument | undefined;
-    readonly snapshot: SkillManagementSnapshot;
-    readonly view: SkillsShellViewModel;
-  }
+  import type { SkillsShellSlotContext, SkillsSnapshotUpdatePort } from './slot-context';
 
   let {
     editorSlot,
@@ -20,17 +17,72 @@
     matrixSlot,
     selectedDocument,
     snapshot,
+    snapshotUpdates,
     view,
   }: {
     editorSlot?: Snippet<[SkillsShellSlotContext]>;
-    healthSlot?: Snippet<[SkillsShellViewModel]>;
+    healthSlot?: Snippet<[SkillsShellSlotContext]>;
     matrixSlot?: Snippet<[SkillsShellSlotContext]>;
     selectedDocument?: ProjectSkillMarkdownDocument | SkillMarkdownDocument | undefined;
     snapshot: SkillManagementSnapshot;
+    snapshotUpdates: SkillsSnapshotUpdatePort;
     view: SkillsShellViewModel;
   } = $props();
 
-  const slotContext = $derived({ document: selectedDocument, snapshot, view });
+  const slotContext = $derived({ document: selectedDocument, snapshot, snapshotUpdates, view });
+  let filterQuery = $state('');
+  let expandedKeys = $state<ReadonlySet<string>>(new Set(['global']));
+  let collapsedKeys = $state<ReadonlySet<string>>(new Set());
+  let mobilePickerElement = $state<HTMLDetailsElement | undefined>();
+  let selectedDetailElement = $state<HTMLElement | undefined>();
+  let previousSelectionKey = $state<string | undefined>();
+  const activeScopeKey = (selection: SkillSelection): string =>
+    selection.type === 'global-scope' || selection.type === 'global-skill'
+      ? 'global'
+      : selectionKey({ projectPath: selection.projectPath, type: 'project-scope' });
+  const toggleScope = (scopeKey: string, isExpanded: boolean): void => {
+    const nextExpanded = new Set(expandedKeys);
+    const nextCollapsed = new Set(collapsedKeys);
+    if (isExpanded) {
+      nextExpanded.delete(scopeKey);
+      nextCollapsed.add(scopeKey);
+    } else {
+      nextCollapsed.delete(scopeKey);
+      nextExpanded.add(scopeKey);
+    }
+    expandedKeys = nextExpanded;
+    collapsedKeys = nextCollapsed;
+  };
+
+  $effect(() => {
+    const scopeKey = activeScopeKey(view.selection);
+    if (!(expandedKeys.has(scopeKey) || collapsedKeys.has(scopeKey))) {
+      expandedKeys = new Set([...expandedKeys, scopeKey]);
+    }
+  });
+
+  $effect(() => {
+    const currentSelectionKey = selectionKey(view.selection);
+    if (previousSelectionKey === undefined) {
+      previousSelectionKey = currentSelectionKey;
+      return;
+    }
+    if (currentSelectionKey === previousSelectionKey) {
+      return;
+    }
+    previousSelectionKey = currentSelectionKey;
+    if (typeof window === 'undefined' || !window.matchMedia(SKILLS_MOBILE_MEDIA_QUERY).matches) {
+      return;
+    }
+    mobilePickerElement?.removeAttribute('open');
+    const frame = window.requestAnimationFrame(() => {
+      selectedDetailElement?.scrollIntoView({ block: 'start' });
+      selectedDetailElement?.focus({ preventScroll: true });
+    });
+    return () => {
+      window.cancelAnimationFrame(frame);
+    };
+  });
   const workspaceGrid = css({
     display: 'grid',
     gridTemplateColumns: { base: '1fr', lg: '240px minmax(0, 1fr)', xl: '240px minmax(0, 1fr) 288px' },
@@ -49,6 +101,12 @@
     cursor: 'pointer',
   });
   const mobilePickerBody = css({ maxH: '70vh', overflow: 'auto', p: '0 10px 10px' });
+  const mobilePickerSelection = css({
+    minW: 0,
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+  });
   const selectedDetail = css({ minW: 0, scrollMarginTop: '12px' });
   const detailStack = css({ display: 'grid', gap: '14px', minW: 0 });
   const detailHeader = css({ display: 'grid', gap: '5px' });
@@ -79,24 +137,39 @@
 
 <div class={workspaceGrid} data-skills-workspace>
   <div class={desktopTree}>
-    <SkillsTree knownProjects={view.knownProjects} model={view.tree} selection={view.selection} />
+    <SkillsTree
+      {collapsedKeys}
+      {expandedKeys}
+      {filterQuery}
+      idPrefix="desktop-skill"
+      knownProjects={view.knownProjects}
+      model={view.tree}
+      onFilterChange={(value) => (filterQuery = value)}
+      onScopeToggle={toggleScope}
+      selection={view.selection}
+    />
   </div>
-  <details aria-label="Skill picker" class={cx(panel, mobilePicker)}>
+  <details aria-label="Skill picker" class={cx(panel, mobilePicker)} bind:this={mobilePickerElement}>
     <summary class={mobilePickerSummary}>
-      <span><strong>{view.selectionLabel}</strong><span class={meta}> · Select a skill</span></span
-      ><span aria-hidden="true">▾</span>
+      <strong>Browse skills</strong><span class={cx(meta, mobilePickerSelection)}>{view.selectionLabel}</span>
     </summary>
     <div class={mobilePickerBody}>
       <SkillsTree
+        ariaLabel="Skill picker scopes"
+        {collapsedKeys}
+        {expandedKeys}
+        {filterQuery}
         idPrefix="mobile-skill"
         knownProjects={view.knownProjects}
         model={view.tree}
+        onFilterChange={(value) => (filterQuery = value)}
+        onScopeToggle={toggleScope}
         selection={view.selection}
       />
     </div>
   </details>
 
-  <section aria-label="Selected skill" class={centerStack}>
+  <div class={centerStack}>
     {#if view.matrixOpen}
       {#if matrixSlot}
         <div data-skills-matrix-slot>{@render matrixSlot(slotContext)}</div>
@@ -104,7 +177,12 @@
         <div class={placeholder}>Skill matrix integration slot</div>
       {/if}
     {:else}
-      <article class={cx(panel, selectedDetail)} tabindex="-1">
+      <section
+        aria-label="Selected skill detail"
+        class={cx(panel, selectedDetail)}
+        tabindex="-1"
+        bind:this={selectedDetailElement}
+      >
         <div class={detailStack}>
           <header class={detailHeader}>
             <p class={panelSub}>
@@ -142,11 +220,11 @@
             <p class={panelSub}>Select a global skill to edit its SKILL.md or inspect a project scope.</p>
           {/if}
         </div>
-      </article>
+      </section>
     {/if}
-  </section>
+  </div>
 
   <div class={mobileContext}>
-    <SkillsInspector {healthSlot} {snapshot} {view} />
+    <SkillsInspector {healthSlot} {slotContext} {snapshot} {view} />
   </div>
 </div>

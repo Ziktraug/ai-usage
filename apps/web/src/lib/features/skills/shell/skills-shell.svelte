@@ -1,5 +1,6 @@
 <script lang="ts">
   import { css } from '@ai-usage/design-system/css';
+  import type { SkillManagementSnapshot } from '@ai-usage/skills';
   import type {
     ProjectSkillMarkdownDocument,
     ProjectSkillMarkdownInput,
@@ -19,8 +20,10 @@
   } from '../../../query/options/skills';
   import { createBrowserWebRpcClient } from '../../../rpc/client';
   import { createSkillsClient } from '../../../rpc/skills-client';
-  import { createSkillsShellViewModel, type SkillsShellViewModel } from './model';
-  import SkillsWorkspace, { type SkillsShellSlotContext } from './skills-workspace.svelte';
+  import { createSkillsShellViewModel } from './model';
+  import SkillsWorkspace from './skills-workspace.svelte';
+  import type { SkillsShellSlotContext, SkillsSnapshotUpdatePort } from './slot-context';
+  import { createSkillsSnapshotController, type SkillsDraftGuardPort } from './snapshot-controller';
 
   let {
     editorSlot,
@@ -30,7 +33,7 @@
     runtimeMode,
   }: {
     editorSlot?: Snippet<[SkillsShellSlotContext]>;
-    healthSlot?: Snippet<[SkillsShellViewModel]>;
+    healthSlot?: Snippet<[SkillsShellSlotContext]>;
     matrixSlot?: Snippet<[SkillsShellSlotContext]>;
     pathname: string;
     runtimeMode: RuntimeMode;
@@ -62,13 +65,71 @@
       enabled: runtimeMode !== 'demo' && snapshotQuery.data?.configured === true,
     }),
   );
+  let acceptedSnapshot = $state<SkillManagementSnapshot | undefined>(snapshotQuery.data);
+  let pendingSnapshot = $state<SkillManagementSnapshot | undefined>();
+  const createSnapshotController = (initial: SkillManagementSnapshot) =>
+    createSkillsSnapshotController({
+      initial,
+      onCommit: (snapshot) => {
+        acceptedSnapshot = snapshot;
+      },
+    });
+  let snapshotController = snapshotQuery.data ? createSnapshotController(snapshotQuery.data) : undefined;
+  const synchronizePendingSnapshot = (): void => {
+    pendingSnapshot = snapshotController?.pending();
+  };
+  const registerDraft = (guard: SkillsDraftGuardPort): void => {
+    snapshotController?.registerDraft(guard);
+  };
+  const unregisterDraft = (guard: SkillsDraftGuardPort): void => {
+    snapshotController?.unregisterDraft(guard);
+  };
+  const discardPendingSnapshot = async (): Promise<boolean> => {
+    const discarded = (await snapshotController?.discardPending()) ?? false;
+    synchronizePendingSnapshot();
+    return discarded;
+  };
+  const focusDraft = (): void => {
+    snapshotController?.focusDraft();
+  };
+  const keepPendingSnapshot = (): void => {
+    snapshotController?.retainCurrent();
+    synchronizePendingSnapshot();
+  };
+  const snapshotUpdates = $derived<SkillsSnapshotUpdatePort>({
+    pendingDecision:
+      pendingSnapshot === undefined
+        ? undefined
+        : {
+            discard: discardPendingSnapshot,
+            focus: focusDraft,
+            keep: keepPendingSnapshot,
+            snapshot: pendingSnapshot,
+          },
+    registerDraft,
+    unregisterDraft,
+  });
+
+  $effect(() => {
+    const nextSnapshot = snapshotQuery.data;
+    if (nextSnapshot === undefined) {
+      return;
+    }
+    snapshotController ??= createSnapshotController(nextSnapshot);
+    if (snapshotController.current() !== nextSnapshot) {
+      snapshotController.apply(nextSnapshot);
+    }
+    acceptedSnapshot = snapshotController.current();
+    synchronizePendingSnapshot();
+  });
+
   const view = $derived(
-    snapshotQuery.data && knownPathsQuery.data
+    acceptedSnapshot && knownPathsQuery.data
       ? createSkillsShellViewModel({
           inventories: inventoriesQuery.data ?? [],
           knownProjectPaths: knownPathsQuery.data,
           pathname,
-          snapshot: snapshotQuery.data,
+          snapshot: acceptedSnapshot,
         })
       : undefined,
   );
@@ -132,8 +193,16 @@
   });
 </script>
 
-{#if view && snapshotQuery.data}
-  <SkillsWorkspace {editorSlot} {healthSlot} {matrixSlot} {selectedDocument} snapshot={view.snapshot} {view} />
+{#if view}
+  <SkillsWorkspace
+    {editorSlot}
+    {healthSlot}
+    {matrixSlot}
+    {selectedDocument}
+    snapshot={view.snapshot}
+    {snapshotUpdates}
+    {view}
+  />
 {:else if loading}
   <div aria-busy="true" class={statusPanel}>Loading skills…</div>
 {:else}

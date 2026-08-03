@@ -11,9 +11,11 @@ export interface SkillsSnapshotController {
   readonly apply: (snapshot: SkillManagementSnapshot) => 'applied' | 'deferred';
   readonly current: () => SkillManagementSnapshot;
   readonly discardPending: () => Promise<boolean>;
+  readonly focusDraft: () => void;
   readonly pending: () => SkillManagementSnapshot | undefined;
-  readonly registerDraft: (guard: SkillsDraftGuardPort | undefined) => void;
+  readonly registerDraft: (guard: SkillsDraftGuardPort) => void;
   readonly retainCurrent: () => void;
+  readonly unregisterDraft: (guard: SkillsDraftGuardPort) => void;
 }
 
 export const createSkillsSnapshotController = (input: {
@@ -25,6 +27,7 @@ export const createSkillsSnapshotController = (input: {
   let pending: SkillManagementSnapshot | undefined;
   const commit = (snapshot: SkillManagementSnapshot): void => {
     current = snapshot;
+    pending = undefined;
     input.onCommit(snapshot);
   };
   return {
@@ -45,10 +48,16 @@ export const createSkillsSnapshotController = (input: {
       }
       const next = pending;
       pending = undefined;
-      await dirtyDraft?.discard();
-      dirtyDraft = undefined;
+      const discardedDraft = dirtyDraft;
+      await discardedDraft?.discard();
+      if (dirtyDraft === discardedDraft) {
+        dirtyDraft = undefined;
+      }
       commit(next);
       return true;
+    },
+    focusDraft: () => {
+      dirtyDraft?.focus();
     },
     pending: () => pending,
     registerDraft: (guard) => {
@@ -56,7 +65,11 @@ export const createSkillsSnapshotController = (input: {
     },
     retainCurrent: () => {
       pending = undefined;
-      dirtyDraft?.focus();
+    },
+    unregisterDraft: (guard) => {
+      if (dirtyDraft === guard) {
+        dirtyDraft = undefined;
+      }
     },
   };
 };

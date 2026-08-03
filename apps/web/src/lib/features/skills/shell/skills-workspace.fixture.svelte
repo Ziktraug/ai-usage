@@ -1,6 +1,7 @@
 <script lang="ts">
   import { createSkillsShellViewModel } from './model';
   import SkillsWorkspace from './skills-workspace.svelte';
+  import type { SkillsSnapshotUpdatePort } from './slot-context';
   import {
     syntheticInventories,
     syntheticKnownPaths,
@@ -27,19 +28,35 @@
   const selectedDocument = $derived(
     view.selectionDetail.kind === 'project-skill' ? syntheticProjectDocument : syntheticManagedDocument,
   );
+  const snapshotUpdates: SkillsSnapshotUpdatePort = {
+    pendingDecision: undefined,
+    registerDraft: () => undefined,
+    unregisterDraft: () => undefined,
+  };
 </script>
 
 {#snippet editorSlot(_context)}
   <section aria-label="Synthetic editor slot">
     <h3>Editable SKILL.md</h3>
     <pre>{_context.document?.content}</pre>
+    <span data-p9-slot-contract>{_context.snapshotUpdates.pendingDecision ? 'pending' : 'settled'}</span>
   </section>
 {/snippet}
-{#snippet healthSlot()}
-  <section aria-label="Synthetic health slot">Health integration</section>
+{#snippet healthSlot(_context)}
+  <section aria-label="Synthetic health slot">Health integration · {_context.snapshot.summary.skillCount}</section>
 {/snippet}
-{#snippet matrixSlot()}
-  <section aria-label="Synthetic matrix slot">Matrix integration</section>
+{#snippet matrixSlot(_context)}
+  <section aria-label="Synthetic matrix slot">
+    Matrix integration · {_context.snapshotUpdates.pendingDecision ? 'pending' : 'settled'}
+  </section>
 {/snippet}
 
-<SkillsWorkspace {editorSlot} {healthSlot} {matrixSlot} {selectedDocument} snapshot={view.snapshot} {view} />
+<SkillsWorkspace
+  {editorSlot}
+  {healthSlot}
+  {matrixSlot}
+  {selectedDocument}
+  snapshot={view.snapshot}
+  {snapshotUpdates}
+  {view}
+/>
