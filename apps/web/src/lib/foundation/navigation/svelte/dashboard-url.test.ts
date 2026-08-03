@@ -59,35 +59,47 @@ describe('dashboard URL parity', () => {
     ).toBe('tokens');
   });
 
-  test('[url:dashboard.query] first edit pushes, continuing edit replaces, commit restarts the run', () => {
+  test('[url:dashboard.query] pushes/replaces, preserves params, and reports rejected navigation', async () => {
     const run = createSearchEditRun();
     expect(run.next()).toEqual({ replace: false, resetScroll: false });
     expect(run.next()).toEqual({ replace: true, resetScroll: false });
     run.commit();
     expect(run.next()).toEqual({ replace: false, resetScroll: false });
     const port = createMemoryNavigationPort('http://local/?utm=kept');
-    const navigate = createDashboardSearchNavigation(port, codec);
+    const failures: unknown[] = [];
+    const navigate = createDashboardSearchNavigation(port, codec, (failure) => failures.push(failure));
     navigate((current) => ({ ...current, q: '  report  ' }), run.next());
     expect(port.currentUrl().searchParams.get('q')).toBe('report');
     expect(port.currentUrl().searchParams.get('utm')).toBe('kept');
+    const failure = new Error('synthetic Dashboard navigation failure');
+    const rejectingPort = { ...port, navigate: () => Promise.reject(failure) };
+    createDashboardSearchNavigation(rejectingPort, codec, (reported) => failures.push(reported))(
+      (current) => ({ ...current, q: 'next' }),
+      { replace: true },
+    );
+    await Promise.resolve();
+    expect(failures).toEqual([{ cause: failure, url: new URL('http://local/?utm=kept&q=next') }]);
   });
 
-  test('[url:dashboard.harness] [url:dashboard.machine] accepts legacy scalars and emits unique arrays', () => {
-    const parsed = parseDashboardSearchUrl(new URL('http://local/?harness=Codex&machine=work-laptop'), codec);
-    expect(parsed.harness).toEqual(['Codex']);
-    expect(parsed.machine).toEqual(['work-laptop']);
-    const url = dashboardUrlFor(
-      new URL('http://local/'),
-      { ...defaults, harness: ['Codex'], machine: ['raw stale'] },
-      codec,
-    );
-    expect(parseDashboardSearchUrl(url, codec)).toMatchObject({ harness: ['Codex'], machine: ['raw stale'] });
+  test('[url:dashboard.harness] accepts legacy scalar, deduplicates, and strips all/default', () => {
+    expect(parseDashboardSearchUrl(new URL('http://local/?harness=Codex'), codec).harness).toEqual(['Codex']);
+    const url = dashboardUrlFor(new URL('http://local/'), { ...defaults, harness: ['Codex', 'Codex'] }, codec);
+    expect(parseDashboardSearchUrl(url, codec).harness).toEqual(['Codex']);
+    expect(parseDashboardSearchUrl(new URL('http://local/?harness=all'), codec).harness).toEqual([]);
+  });
+
+  test('[url:dashboard.machine] retains raw stale identity across direct/reload and strips all/default', () => {
+    const url = dashboardUrlFor(new URL('http://local/'), { ...defaults, machine: ['raw stale'] }, codec);
+    expect(parseDashboardSearchUrl(url, codec).machine).toEqual(['raw stale']);
+    expect(parseDashboardSearchUrl(new URL(url), codec).machine).toEqual(['raw stale']);
+    expect(parseDashboardSearchUrl(new URL('http://local/?machine=all'), codec).machine).toEqual([]);
   });
 
   test('[url:dashboard.origin] keeps canonical order and strips the neutral all selection', () => {
     expect(
       parseDashboardSearchUrl(new URL('http://local/?origin=%5B%22unknown%22%2C%22human%22%5D'), codec).origin,
     ).toEqual(['human']);
+    expect(parseDashboardSearchUrl(new URL('http://local/?origin=classifier'), codec).origin).toEqual(['classifier']);
     expect(dashboardUrlFor(new URL('http://local/'), { ...defaults, origin: [] }, codec).search).toBe('');
   });
 
@@ -104,34 +116,55 @@ describe('dashboard URL parity', () => {
     ).toBe('x');
   });
 
-  test('[url:dashboard.range] [url:dashboard.time-cell] validates bounds and strict cells', () => {
+  test('[url:dashboard.range] validates reversed bounds and round trips open custom ranges', () => {
     const invalid = parseDashboardSearchUrl(
       new URL(
-        'http://local/?range=%7B%22mode%22%3A%22custom%22%2C%22from%22%3A%222026-03-03%22%2C%22to%22%3A%222026-02-28%22%7D&timeCell=mon-4',
+        'http://local/?range=%7B%22mode%22%3A%22custom%22%2C%22from%22%3A%222026-03-03%22%2C%22to%22%3A%222026-02-28%22%7D',
       ),
       codec,
     );
     expect(invalid.range).toEqual(defaults.range);
-    expect(invalid.timeCell).toBeUndefined();
     const url = dashboardUrlFor(
       new URL('http://local/'),
-      { ...defaults, range: { mode: 'custom', from: '2026-02-01' }, timeCell: 'MON-04' },
+      { ...defaults, range: { mode: 'custom', from: '2026-02-01' } },
       codec,
     );
-    expect(parseDashboardSearchUrl(url, codec)).toMatchObject({
-      range: { mode: 'custom', from: '2026-02-01' },
-      timeCell: 'MON-04',
-    });
+    expect(parseDashboardSearchUrl(url, codec).range).toEqual({ mode: 'custom', from: '2026-02-01' });
   });
 
-  test('[url:dashboard.sort] [url:dashboard.columns] preserves legacy sort and visibility bases', () => {
-    const parsed = parseDashboardSearchUrl(
-      new URL('http://local/?sort=%5B%7B%22id%22%3A%22fresh%22%2C%22desc%22%3Afalse%7D%5D&cols=%5B%22tokIn%22%5D'),
-      codec,
+  test('[url:dashboard.time-cell] accepts strict cells and drops legacy lowercase/array values', () => {
+    expect(parseDashboardSearchUrl(new URL('http://local/?timeCell=MON-04'), codec).timeCell).toBe('MON-04');
+    expect(parseDashboardSearchUrl(new URL('http://local/?timeCell=mon-4'), codec).timeCell).toBeUndefined();
+    expect(
+      parseDashboardSearchUrl(new URL('http://local/?timeCell=MON-04&timeCell=TUE-05'), codec).timeCell,
+    ).toBeUndefined();
+  });
+
+  test('[url:dashboard.sort] accepts one-element legacy arrays and defaults invalid/missing fields', () => {
+    expect(
+      parseDashboardSearchUrl(
+        new URL('http://local/?sort=%5B%7B%22id%22%3A%22fresh%22%2C%22desc%22%3Afalse%7D%5D'),
+        codec,
+      ).sort,
+    ).toEqual({ desc: false, id: 'fresh' });
+    expect(parseDashboardSearchUrl(new URL('http://local/?sort=%7B%22id%22%3A%22bad%22%7D'), codec).sort).toEqual(
+      defaults.sort,
     );
-    expect(parsed.sort).toEqual({ desc: false, id: 'fresh' });
-    expect(parsed).toMatchObject({ cols: ['tokIn'], colsBase: 'auto' });
+  });
+
+  test('[url:dashboard.columns] versions legacy diffs and replaces without resetting scroll', () => {
+    expect(parseDashboardSearchUrl(new URL('http://local/?cols=%5B%22tokIn%22%5D'), codec)).toMatchObject({
+      cols: ['tokIn'],
+      colsBase: 'auto',
+    });
     const url = dashboardUrlFor(new URL('http://local/'), { ...defaults, cols: ['tokIn'], colsBase: 'legacy' }, codec);
     expect(parseDashboardSearchUrl(url, codec)).toMatchObject({ cols: ['tokIn'], colsBase: 'legacy' });
+    const port = createMemoryNavigationPort('http://local/');
+    createDashboardSearchNavigation(
+      port,
+      codec,
+      () => undefined,
+    )((current) => ({ ...current, cols: ['tokIn'] }), { replace: true, resetScroll: false });
+    expect(port.entries()).toHaveLength(1);
   });
 });

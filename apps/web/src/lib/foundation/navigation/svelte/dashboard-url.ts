@@ -25,6 +25,11 @@ export interface DashboardSearchCodec<Search extends DashboardUrlSearch> {
   readonly validate: (raw: Record<string, unknown>, defaults: Search) => Search;
 }
 
+export interface DashboardNavigationFailure {
+  readonly cause: unknown;
+  readonly url: URL;
+}
+
 const sameValue = (left: unknown, right: unknown): boolean => JSON.stringify(left) === JSON.stringify(right);
 
 const dashboardRecord = (search: DashboardUrlSearch): Record<string, unknown> =>
@@ -59,17 +64,19 @@ export const createDashboardSearchNavigation =
   <Search extends DashboardUrlSearch>(
     port: NavigationPort,
     codec: DashboardSearchCodec<Search>,
+    reportFailure: (failure: DashboardNavigationFailure) => void,
   ): SearchNavigationIntent<Search> =>
   (update, options) => {
     const currentUrl = port.currentUrl();
     const nextSearch = update(parseDashboardSearchUrl(currentUrl, codec));
+    const url = dashboardUrlFor(currentUrl, nextSearch, codec);
     port
       .navigate({
         ...(options?.replace === undefined ? {} : { replace: options.replace }),
         resetScroll: options?.resetScroll ?? false,
-        url: dashboardUrlFor(currentUrl, nextSearch, codec),
+        url,
       })
-      .catch(() => undefined);
+      .catch((cause: unknown) => reportFailure({ cause, url }));
   };
 
 export interface SearchEditRun {

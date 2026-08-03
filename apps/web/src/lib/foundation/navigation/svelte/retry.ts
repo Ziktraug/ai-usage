@@ -3,30 +3,63 @@ export interface RetryFailure {
 }
 
 export interface RetryController {
+  readonly cancel: () => void;
+  readonly dispose: () => void;
   readonly pending: () => boolean;
   readonly run: () => Promise<void>;
 }
 
 export const createRetryController = (dependencies: {
   readonly onFailure?: (failure: RetryFailure) => void;
-  readonly retry: () => Promise<void>;
+  readonly retry: (signal: AbortSignal) => Promise<void>;
 }): RetryController => {
-  let pending: Promise<void> | undefined;
-  const run = (): Promise<void> => {
-    if (pending) {
-      return pending;
+  let active: { readonly abort: AbortController; readonly generation: number; promise: Promise<void> } | undefined;
+  let disposed = false;
+  let generation = 0;
+  const cancel = (): void => {
+    generation += 1;
+    active?.abort.abort();
+    active = undefined;
+  };
+  const clearActive = (runGeneration: number): void => {
+    if (active?.generation === runGeneration) {
+      active = undefined;
     }
-    pending = (async () => {
+  };
+  const run = (): Promise<void> => {
+    if (disposed) {
+      return Promise.reject(new Error('Retry controller is disposed.'));
+    }
+    if (active) {
+      return active.promise;
+    }
+    const abort = new AbortController();
+    const runGeneration = ++generation;
+    const runState = { abort, generation: runGeneration, promise: Promise.resolve() };
+    active = runState;
+    runState.promise = (async () => {
       try {
-        await dependencies.retry();
+        await dependencies.retry(abort.signal);
       } catch (cause) {
-        dependencies.onFailure?.({ cause });
+        if (!(disposed || abort.signal.aborted)) {
+          dependencies.onFailure?.({ cause });
+        }
         throw cause;
       } finally {
-        pending = undefined;
+        clearActive(runGeneration);
       }
     })();
-    return pending;
+    return runState.promise;
   };
-  return { pending: () => pending !== undefined, run };
+  return {
+    cancel,
+    dispose: () => {
+      if (!disposed) {
+        disposed = true;
+        cancel();
+      }
+    },
+    pending: () => active !== undefined,
+    run,
+  };
 };

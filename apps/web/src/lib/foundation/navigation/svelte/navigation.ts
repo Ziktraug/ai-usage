@@ -28,6 +28,18 @@ export type ScrollDirective =
   | { readonly kind: 'reset' }
   | { readonly kind: 'restore'; readonly x: number; readonly y: number };
 
+export interface ScrollLifecycleEvent {
+  readonly fromKey: string;
+  readonly requestedReset?: boolean;
+  readonly toKey: string;
+  readonly type: 'enter' | 'form' | 'goto' | 'leave' | 'link' | 'popstate';
+}
+
+export interface ScrollLifecycle {
+  readonly cancel: () => void;
+  readonly dispose: () => void;
+}
+
 export const scrollDirectiveFor = (input: {
   readonly requestedReset?: boolean;
   readonly restoredPosition?: { readonly x: number; readonly y: number } | null;
@@ -43,6 +55,104 @@ export const scrollDirectiveFor = (input: {
     return { kind: 'reset' };
   }
   return { kind: 'framework' };
+};
+
+export const installScrollLifecycle = (dependencies: {
+  readonly afterNavigate: (listener: (event: Pick<ScrollLifecycleEvent, 'toKey'>) => void) => Disposer | undefined;
+  readonly afterRender: (callback: () => void) => Disposer | undefined;
+  readonly beforeNavigate: (listener: (event: ScrollLifecycleEvent) => void) => Disposer | undefined;
+  readonly position: () => { readonly x: number; readonly y: number };
+  readonly scrollTo: (position: { readonly x: number; readonly y: number }) => void;
+}): ScrollLifecycle => {
+  const positions = new Map<string, { readonly x: number; readonly y: number }>();
+  let generation = 0;
+  let disposed = false;
+  let pending:
+    | {
+        readonly generation: number;
+        readonly position: { x: number; y: number };
+        readonly toKey: string;
+      }
+    | undefined;
+  let cancelScheduled: Disposer | undefined;
+  const cancel = (): void => {
+    generation += 1;
+    pending = undefined;
+    cancelScheduled?.();
+    cancelScheduled = undefined;
+  };
+  const stopBefore = dependencies.beforeNavigate((event) => {
+    if (disposed) {
+      return;
+    }
+    cancel();
+    const outgoing = dependencies.position();
+    positions.set(event.fromKey, outgoing);
+    const restored = event.type === 'popstate' ? positions.get(event.toKey) : undefined;
+    const directive = scrollDirectiveFor({
+      ...(event.requestedReset === undefined ? {} : { requestedReset: event.requestedReset }),
+      ...(restored === undefined ? {} : { restoredPosition: restored }),
+      type: event.type,
+    });
+    if (directive.kind !== 'framework') {
+      let position = outgoing;
+      if (directive.kind === 'restore') {
+        position = directive;
+      } else if (directive.kind === 'reset') {
+        position = { x: 0, y: 0 };
+      }
+      pending = {
+        generation,
+        position,
+        toKey: event.toKey,
+      };
+    }
+  });
+  const stopAfter = dependencies.afterNavigate(({ toKey }) => {
+    const task = pending;
+    if (!(task && task.toKey === toKey && !disposed)) {
+      return;
+    }
+    pending = undefined;
+    let completedSynchronously = false;
+    const scheduled = dependencies.afterRender(() => {
+      completedSynchronously = true;
+      if (!(disposed || task.generation !== generation)) {
+        cancelScheduled = undefined;
+        dependencies.scrollTo(task.position);
+      }
+    });
+    cancelScheduled = completedSynchronously ? undefined : scheduled;
+  });
+  return {
+    cancel,
+    dispose: () => {
+      if (!disposed) {
+        disposed = true;
+        cancel();
+        stopBefore?.();
+        stopAfter?.();
+        positions.clear();
+      }
+    },
+  };
+};
+
+export type DrawerIdentity =
+  | { readonly kind: 'local'; readonly rowKey: string }
+  | { readonly campaignKey: string; readonly kind: 'served'; readonly revision: string; readonly rowKey: string };
+
+export const createDrawerIdentityOwner = () => {
+  let identity: DrawerIdentity | undefined;
+  return {
+    clear: () => {
+      identity = undefined;
+    },
+    current: () => identity,
+    select: (next: DrawerIdentity) => {
+      identity = next;
+    },
+  };
 };
 
 export const createSvelteNavigationPort = (dependencies: {
@@ -104,3 +214,5 @@ export const createMemoryNavigationPort = (initialUrl: string | URL): MemoryNavi
     },
   };
 };
+
+import type { Disposer } from '../../subscription';

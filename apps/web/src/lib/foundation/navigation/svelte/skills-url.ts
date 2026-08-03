@@ -41,8 +41,14 @@ export const skillDestinationFromUrl = (
 export const skillsFallbackIntent = (currentUrl: string | URL): NavigationIntent => ({
   replace: true,
   resetScroll: false,
-  url: new URL('/skills/global', currentUrl),
+  url: destinationUrl(currentUrl, '/skills/global'),
 });
+
+const destinationUrl = (currentUrl: string | URL, pathname: string): URL => {
+  const url = new URL(currentUrl);
+  url.pathname = pathname;
+  return url;
+};
 
 export const skillNavigationIntent = (
   currentUrl: string | URL,
@@ -50,5 +56,5 @@ export const skillNavigationIntent = (
   knownProjects: readonly KnownProjectScope[] = [],
 ): NavigationIntent => ({
   resetScroll: false,
-  url: new URL(skillHref(destination, knownProjects), currentUrl),
+  url: destinationUrl(currentUrl, skillHref(destination, knownProjects)),
 });
