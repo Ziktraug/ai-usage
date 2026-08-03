@@ -134,7 +134,7 @@ Statuses are `BLOCKED`, `READY`, `IMPLEMENTING`, `REVIEW`, `REWORK`,
 | D2 | D0 | INTEGRATED | `fce5c1a`, `9935846`, evidence `b31c3af` | `/root/d123_parity_review` / ACCEPT | `b31c3af` |
 | D3 | D0 | INTEGRATED | `e2f13cd`, `0702203`, `70f5796`, evidence `b31c3af` | `/root/d123_parity_review` / ACCEPT | `b31c3af` |
 | D4 | D1, D2, D3 | INTEGRATED | `662182e`, bundle correction `6646fe5` | `/root/d4_review` / ACCEPT | `6646fe568e8b4c1fba74ac1b4150d1480d15ca6f` |
-| R0 | F0, V5, Q3, D4 | READY | - | - | - |
+| R0 | F0, V5, Q3, D4 | IMPLEMENTING | - | - | worktree `/tmp/ai-usage-068-r0` from `774885c` |
 | R1 | R0 | BLOCKED | - | - | - |
 | P1 | R1, V1, V2, Q1, D4 | BLOCKED | - | - | - |
 | P2 | P1 | BLOCKED | - | - | - |
@@ -605,6 +605,14 @@ at 721 tests and 3,287 assertions, Web TypeScript with Svelte 0/0, Svelte build,
 boundaries, repository lint, Ultracite, parity and diff cleanliness. Third
 Both third correction re-reviews ACCEPTed the exact complete Q3 checkpoint at
 `276ca0e`; Q3 is integrated and R0 is ready.
+
+R0 was dispatched from clean integration head `774885c` to local-only branch
+`agent/068-r0-url-navigation` in isolated worktree `/tmp/ai-usage-068-r0`.
+Its mandatory card owns all 18 URL-contract IDs, permits new files only below
+`lib/foundation/navigation/svelte/**` plus symbol-limited R0 parity evidence,
+forbids route/layout composition and process suites, and requires the exact
+codec, navigation, history, scroll, retry, dirty-blocker, typecheck, build,
+boundary and parity gates. The worker has no process-test token and cannot push.
 
 Three Q3 incidents are retained. The first complete repository test run hit the
 known D3 `ArrowRight` focus timeout; its one allowed exact rerun passed 10/10,
