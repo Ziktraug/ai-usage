@@ -36,7 +36,7 @@ Global backlog for known follow-ups that should survive individual refactor logs
 ## Tooling And Generated Files
 
 - Revisit direct `bun --filter @ai-usage/design-system build` calls in `apps/web` scripts if all local workflows move through `turbo run`.
-- Keep `docs/generated-tooling-ownership.md` updated when Panda, TanStack Router, Vite, Nitro, or Turbo generated outputs change.
+- Keep `docs/generated-tooling-ownership.md` updated when Panda, SvelteKit, Vite, the Bun adapter, or Turbo generated outputs change.
 
 ## Dashboard And Product
 

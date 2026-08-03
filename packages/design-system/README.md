@@ -2,7 +2,7 @@
 
 ## Owns
 
-Reusable Solid/Panda primitives, report-specific style slots, the Panda preset export, generated Panda build metadata exports, and shared UI styling contracts.
+Reusable Svelte/Panda primitives, report-specific style slots, the Panda preset export, generated Panda build metadata exports, and shared UI styling contracts.
 
 ## Does Not Own
 
@@ -10,11 +10,11 @@ It does not own app routes, report data, local collection, sync or file-transfer
 
 ## Public Interface
 
-The package exposes declared exports for `.`, `./preset`, `./report`, `./css`, `./panda.buildinfo.json`, and `./styles.css`.
+The package exposes declared exports for `.`, `./svelte`, `./preset`, `./report`, `./css`, `./panda.buildinfo.json`, and `./styles.css`.
 
 ## Depends On
 
-Consumers provide `solid-js`. The package may use Panda tooling for build/check generation and Solid types/components for exported primitives.
+Consumers provide `svelte`. The package may use Panda tooling for build/check generation and Ark UI for tested Svelte primitives exported through `./svelte`.
 
 ## Must Not Import
 

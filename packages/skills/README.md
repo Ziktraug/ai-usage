@@ -15,7 +15,7 @@
 
 - Usage report row normalization and analytics stay in `@ai-usage/report-core`.
 - Local history collection stays in `@ai-usage/local-collectors`.
-- Web route rendering and TanStack Start server function facades stay in `apps/web`.
+- SvelteKit route rendering and oRPC transport adapters stay in `apps/web`.
 - Native rule formats are read-only diagnostics unless a later plan explicitly expands the mutation boundary.
 
 ## Dependencies

@@ -2,9 +2,10 @@
 
 ## Owns
 
-Solid/TanStack SSR and UI, the browser served-session coordinator, read-only
-report server functions, source-control command/status/event proxies, `/sync`,
-web read observability, and the unrelated `/skills` filesystem control plane.
+SvelteKit SSR and UI, the browser served-session coordinator, read-only report
+procedures through the explicit `/rpc/[...rest]` oRPC endpoint, source-control
+command/status/event proxies, `/sync`, web read observability, and the unrelated
+`/skills` filesystem control plane.
 
 ## Does not own
 
@@ -42,20 +43,16 @@ the built Web server without spawning an engine. Demo and ordinary browser E2E
 use synthetic adapters and cannot import production reader/control modules;
 production E2E uses an isolated real engine/store/runtime.
 
-Development and production outputs are isolated in `.output-dev` and
-`.output-build`; the production build lock never targets active dev output.
+SvelteKit check, development, and production intermediates are isolated in
+`.svelte-kit/{check,dev,build}`. The selected Bun adapter writes the production
+server to `.output-build/sveltekit`; the production build lock never targets
+active development output. `bun run --cwd apps/web check:svelte`, `build`,
+`dev`, and `preview` are the canonical framework commands.
 
-## SvelteKit migration shadow
-
-The shadow is build/typecheck scaffolding and may use only synthetic state until
-the reviewed cutover. Solid remains the production and ordinary test authority.
-
-- `bun run --cwd apps/web check:svelte` syncs and checks the shadow.
-- `bun run --cwd apps/web build:svelte` builds the selected Bun adapter output.
-- `bun run --cwd apps/web dev:svelte` starts only the isolated shadow dev server.
-
-Each command owns a separate ignored phase below `.svelte-kit-shadow` and
-`.output-svelte-shadow`; it does not mutate Solid `.output-*` trees.
+The route tree lives under `src/routes`. `src/routes/rpc/[...rest]/+server.ts`
+is the single oRPC HTTP entrypoint, while source-control SSE and manual-transfer
+file routes remain explicit SvelteKit `+server.ts` leaves. `src/hooks.server.ts`
+owns per-request runtime mode and the single web-observability lifecycle.
 
 ## Test strategy
 

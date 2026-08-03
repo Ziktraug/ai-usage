@@ -125,9 +125,11 @@ server, forwards signals, reports the first child failure, and reaps both
 process trees. `bun run start:web-only` is an explicit diagnostic mode that
 reads an existing store and never starts an engine.
 
-Nitro/Vite development and production builds use separate `.output-dev` and
-`.output-build` trees. A narrow production-build lock prevents concurrent
-builders; production cleanup never targets active development output.
+SvelteKit check, development, and production phases use separate
+`.svelte-kit/{check,dev,build}` trees. The Bun adapter writes the production
+server to `.output-build/sveltekit`. A narrow production-build lock prevents
+concurrent builders; production cleanup never targets active development
+output.
 
 Demo runs web alone with committed synthetic data. Its import boundary rejects
 production store readers, control clients, engine modules, local history, and
@@ -325,9 +327,11 @@ explicit exit so structured output and warning order remain unchanged.
 
 ### `apps/web`
 
-Owns Solid/TanStack SSR/UI, browser served-session coordination, source-control
-proxies, `/sync`, web read observability, and the unrelated `/skills` route.
-Report queries use `usage-store/reader` directly; commands use
+Owns SvelteKit SSR/UI, browser served-session coordination, the explicit oRPC
+endpoint at `apps/web/src/routes/rpc/[...rest]/+server.ts`, source-control SSE
+routes, manual-transfer file leaves, `/sync`, web read observability, and the
+unrelated `/skills` route. Report queries use the
+read-only server facades over `usage-store/reader`; commands use
 `usage-engine-control`. Web never imports collectors, engine-runtime, source
 adapters, or `usage-store/writer`.
 
@@ -335,7 +339,8 @@ The SSR support bootstrap shares a 512 KiB budget across filter options,
 provider representative rows/statuses, and warnings. It returns exact omission
 counts and the UI identifies truncation; row-derived Overview, Breakdown, and
 Session destination queries remain independent from those omissions. TanStack
-Query owns ordinary finite Skills, project-source, and quota reads/mutations,
+Svelte Query owns ordinary finite Skills, project-source, and quota
+reads/mutations,
 but never owns exact report revisions. Client-visible modules must not import
 `*.server.*`.
 
@@ -351,8 +356,10 @@ fixed budgets.
 
 ### `@ai-usage/design-system`
 
-Owns reusable Panda/Solid primitives, report style slots, and generated Panda
-consumer exports. See [generated tooling ownership](generated-tooling-ownership.md).
+Owns reusable Panda/Svelte primitives, report style slots, and generated Panda
+consumer exports. Its tested Svelte component surface is exported through
+`@ai-usage/design-system/svelte`. See
+[generated tooling ownership](generated-tooling-ownership.md).
 
 ## Wide-event observability
 

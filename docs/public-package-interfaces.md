@@ -193,7 +193,8 @@ client and never starts an app-owned provider timer.
 
 ## `@ai-usage/design-system`
 
-- `.`: reusable design-system primitives.
+- `.`: framework-neutral Panda preset entry.
+- `./svelte`: tested Svelte components and helpers.
 - `./preset`: Panda preset.
 - `./report`: report-specific styles/primitives.
 - `./css`: generated Panda CSS runtime.
