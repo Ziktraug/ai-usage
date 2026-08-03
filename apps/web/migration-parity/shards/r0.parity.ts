@@ -4,6 +4,7 @@ import { defineParityShard, type UrlContractDescriptor } from '../schema';
 const owner = 'R0' as const;
 const implementationCommit = '435aa06e595405ce384338db5106a902e99443ce';
 const correctionCommit = '98235abf62fc5d5e709a75581557d4449cd8f2c0';
+const exhaustiveCommit = '4e46acc07fcbee4a6e4e644b8bbe768af7e1beee';
 const targetReferences = (id: string): { readonly source: string; readonly test: string } => {
   if (id.startsWith('url:dashboard.')) {
     return {
@@ -66,7 +67,25 @@ const urlRecord = (id: string, currentOwner: string, urlContract: UrlContractDes
             commit: correctionCommit,
             kind: 'test' as const,
             phase: 'target' as const,
-            reference: `${correction.test}; exact [${id}] target test title`,
+            reference: `${correction.test}; named [${id}] target smoke test, superseded by exhaustive target evidence`,
+          },
+          {
+            commit: exhaustiveCommit,
+            kind: 'source' as const,
+            phase: 'target' as const,
+            reference: correction.source,
+          },
+          {
+            commit: exhaustiveCommit,
+            kind: 'test' as const,
+            phase: 'target' as const,
+            reference: `${correction.test}; exhaustive [${id}] canonical/default/legacy/lifecycle assertions`,
+          },
+          {
+            commit: exhaustiveCommit,
+            kind: 'command' as const,
+            phase: 'target' as const,
+            reference: 'bun test apps/web/src/lib/foundation/navigation/svelte/*.test.ts (33 pass, 233 assertions)',
           },
         ],
         id,
