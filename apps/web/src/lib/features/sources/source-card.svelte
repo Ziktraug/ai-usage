@@ -2,7 +2,7 @@
   import { css, cx } from '@ai-usage/design-system/css';
   import { meta, panel } from '@ai-usage/design-system/svelte';
   import type { SourceControlCommand, SourceControlEntryView } from '@ai-usage/report-core/source-control';
-  import { fmtDate, fmtNum } from '../../../shared';
+  import { fmtDate, fmtNum } from '../../foundation/presentation/format';
   import { presentSourceProgress, presentSourceState, sourceToneClass } from './presentation';
   import SourceActions from './source-actions.svelte';
   import { statusPill } from './styles';

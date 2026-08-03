@@ -7,7 +7,7 @@
     type SourceControlClient,
     type SourceControlClientState,
   } from '../../../source-control-client';
-  import { provideSourceControl } from './context';
+  import { provideSourceControl } from './context.svelte';
   import { createSourceControlService } from './service';
 
   let {

@@ -4,6 +4,8 @@ import { svelte } from '@sveltejs/vite-plugin-svelte';
 import type { Component } from 'svelte';
 import { createServer } from 'vite';
 
+const DISABLED_ATTRIBUTE_PATTERN = /\sdisabled(?:[\s=>])/u;
+
 interface SvelteServerModule {
   render: (component: Component, options?: { props?: Record<string, unknown> }) => { body: string };
 }
@@ -29,6 +31,15 @@ const fixtureBlock = (html: string, fixture: 'actions' | 'summary'): string => {
   }
   const nextFixture = fixture === 'actions' ? html.indexOf('data-source-summary-fixture', start + 1) : -1;
   return html.slice(start, nextFixture < 0 ? undefined : nextFixture);
+};
+
+const renderedButton = (html: string, label: 'Run all' | 'Run now'): string => {
+  const buttonPattern = new RegExp(`<button\\b[^>]*>[\\s\\S]*?${label}[\\s\\S]*?<\\/button>`, 'u');
+  const button = html.match(buttonPattern)?.[0];
+  if (!button) {
+    throw new Error(`Rendered ${label} button is missing.`);
+  }
+  return button;
 };
 
 const repositoryDirectory = fileURLToPath(new URL('../../../../../../', import.meta.url));
@@ -57,10 +68,12 @@ describe('rendered source-control pending semantics', () => {
     const actions = fixtureBlock(html, 'actions');
     const summary = fixtureBlock(html, 'summary');
 
-    expect(actions).toContain('Run now');
-    expect(actions).toContain('aria-busy="true"');
-    expect(summary).toContain('Run all');
-    expect(summary).toContain('aria-busy="true"');
+    const runNow = renderedButton(actions, 'Run now');
+    const runAll = renderedButton(summary, 'Run all');
+    expect(runNow).toContain('aria-busy="true"');
+    expect(DISABLED_ATTRIBUTE_PATTERN.test(runNow)).toBe(true);
+    expect(runAll).toContain('aria-busy="true"');
+    expect(DISABLED_ATTRIBUTE_PATTERN.test(runAll)).toBe(true);
   });
 
   test('omits aria-busy from both run actions while idle', () => {
@@ -68,9 +81,11 @@ describe('rendered source-control pending semantics', () => {
     const actions = fixtureBlock(html, 'actions');
     const summary = fixtureBlock(html, 'summary');
 
-    expect(actions).toContain('Run now');
-    expect(actions).not.toContain('aria-busy');
-    expect(summary).toContain('Run all');
-    expect(summary).not.toContain('aria-busy');
+    const runNow = renderedButton(actions, 'Run now');
+    const runAll = renderedButton(summary, 'Run all');
+    expect(runNow).not.toContain('aria-busy');
+    expect(DISABLED_ATTRIBUTE_PATTERN.test(runNow)).toBe(false);
+    expect(runAll).not.toContain('aria-busy');
+    expect(DISABLED_ATTRIBUTE_PATTERN.test(runAll)).toBe(false);
   });
 });

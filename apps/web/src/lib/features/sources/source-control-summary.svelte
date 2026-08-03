@@ -1,6 +1,6 @@
 <script lang="ts">
   import { css, cx } from '@ai-usage/design-system/css';
-  import { useSourceControl } from './context';
+  import { useSourceControl } from './context.svelte';
   import { pendingAriaBusyAttributes } from './model';
   import { presentSourceState, sourceToneClass } from './presentation';
   import { ghostButton, statusPill } from './styles';

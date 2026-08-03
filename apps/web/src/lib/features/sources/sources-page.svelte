@@ -2,8 +2,8 @@
   import { css, cx } from '@ai-usage/design-system/css';
   import { header, meta, page, panel, shell, title, titleBlock } from '@ai-usage/design-system/svelte';
   import type { CollectionSourceGroup, SourceControlCommand } from '@ai-usage/report-core/source-control';
-  import { fmtDate, fmtNum } from '../../../shared';
-  import { useSourceControl } from './context';
+  import { fmtDate, fmtNum } from '../../foundation/presentation/format';
+  import { useSourceControl } from './context.svelte';
   import {
     compactRevision,
     conciseSourceStatus,

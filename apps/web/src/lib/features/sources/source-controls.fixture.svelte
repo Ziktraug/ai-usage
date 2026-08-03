@@ -6,7 +6,7 @@
     type SourceControlView,
   } from '@ai-usage/report-core/source-control';
   import type { SourceControlClientState } from '../../../source-control-client';
-  import { provideSourceControl } from './context';
+  import { provideSourceControl } from './context.svelte';
   import SourceActions from './source-actions.svelte';
   import SourceControlSummary from './source-control-summary.svelte';
 
