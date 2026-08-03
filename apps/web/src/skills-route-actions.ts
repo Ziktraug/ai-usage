@@ -92,7 +92,7 @@ export const createSkillsRouteActions = (ports: SkillsRouteActionPorts) => {
     if (response?.type !== 'save-config') {
       return;
     }
-    await ports.replaceSnapshot(response.result, `Project path added: ${value}.`);
+    await ports.replaceSnapshot(response.result, `Project path added: ${value}.`, true);
     ports.setProjectPathDraft('');
   };
 
@@ -102,7 +102,7 @@ export const createSkillsRouteActions = (ports: SkillsRouteActionPorts) => {
       type: 'save-config',
     });
     if (response?.type === 'save-config') {
-      await ports.replaceSnapshot(response.result, `Project path removed: ${value}.`);
+      await ports.replaceSnapshot(response.result, `Project path removed: ${value}.`, true);
     }
   };
 
@@ -118,7 +118,7 @@ export const createSkillsRouteActions = (ports: SkillsRouteActionPorts) => {
       ports.setSourceRepoPathDirty(false);
       ports.setSourceRepoPath(response.result.data.config.sourceRepoPath ?? '');
     }
-    await ports.replaceSnapshot(response.result, 'Skill source saved.');
+    await ports.replaceSnapshot(response.result, 'Skill source saved.', true);
   };
 
   const toggleSkill = async (skillName: string, enabled: boolean): Promise<void> => {

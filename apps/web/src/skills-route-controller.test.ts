@@ -5,6 +5,7 @@ import { skillsProjectInventoriesKey } from './lib/query/identities/skills';
 import { webQueryPolicies } from './lib/query/policies';
 import type { SkillSnapshotResult } from './skills-client-contracts';
 import type { SkillsMutationResult } from './skills-query-operations';
+import { createSkillsRouteActions } from './skills-route-actions';
 import {
   projectInventoriesRefreshErrorFromQuery,
   projectInventoriesResultFromQuery,
@@ -39,6 +40,12 @@ const snapshot = (sourceRepoPath: string): SkillManagementSnapshot => ({
   unmanagedEntries: [],
 });
 
+const unconfiguredSnapshot = (): SkillManagementSnapshot => ({
+  ...snapshot(''),
+  config: {},
+  configured: false,
+});
+
 describe('Skills route controller state', () => {
   test('refetches the exact active canonical project-inventories query after snapshot replacement', async () => {
     const queryClient = new QueryClient();
@@ -61,6 +68,80 @@ describe('Skills route controller state', () => {
     expect(queryClient.getQueryData<readonly unknown[]>(skillsProjectInventoriesKey())).toEqual([]);
     unsubscribe();
     queryClient.clear();
+  });
+
+  test('refetches fresh canonical inventories when configuration is enabled or changed', async () => {
+    const queryClient = new QueryClient();
+    let queryCalls = 0;
+    const options = (enabled: boolean) => ({
+      ...webQueryPolicies.finiteSwr,
+      enabled,
+      queryFn: () => {
+        queryCalls += 1;
+        return [`inventory-${queryCalls}`];
+      },
+      queryKey: skillsProjectInventoriesKey(),
+    });
+    await queryClient.fetchQuery(options(true));
+    const observer = new QueryObserver(queryClient, options(false));
+    const unsubscribe = observer.subscribe(() => undefined);
+    const coordinator = createSkillsSnapshotCoordinator({
+      commitCache: () => undefined,
+      dirtyDraft: () => undefined,
+      incrementMarkdownRefreshVersion: () => undefined,
+      pendingReplacement: () => undefined,
+      refetchInventories: async () => await refetchActiveSkillsProjectInventories(queryClient),
+      setDirtyDraft: () => undefined,
+      setNotice: () => undefined,
+      setPendingReplacement: () => undefined,
+      setResult: (next) => {
+        observer.setOptions(options(next.ok && next.data.configured));
+      },
+    });
+
+    await coordinator.requestSnapshotReplacement(
+      { data: unconfiguredSnapshot(), ok: true },
+      'Skills unconfigured.',
+      true,
+    );
+    expect(queryCalls).toBe(1);
+    await coordinator.requestSnapshotReplacement({ data: snapshot('/config-b'), ok: true }, 'Configured.', true);
+    expect(queryCalls).toBe(2);
+    await coordinator.requestSnapshotReplacement({ data: snapshot('/config-c'), ok: true }, 'Reconfigured.', true);
+    expect(queryCalls).toBe(3);
+    expect(queryClient.getQueryData<readonly string[]>(skillsProjectInventoriesKey())).toEqual(['inventory-3']);
+    unsubscribe();
+    queryClient.clear();
+  });
+
+  test('marks every successful configuration action for dependent inventory refresh', async () => {
+    const refreshFlags: boolean[] = [];
+    const actions = createSkillsRouteActions({
+      mutate: async (request) =>
+        request.type === 'save-config'
+          ? { result: { data: snapshot(request.config.sourceRepoPath ?? '/configured'), ok: true }, type: request.type }
+          : undefined,
+      projectPathDraft: () => '/project-b',
+      projectPaths: () => ['/project-a'],
+      replaceSnapshot: (_next, _message, refreshDependents = false) => {
+        refreshFlags.push(refreshDependents);
+        return Promise.resolve(true);
+      },
+      setKnownProjectPaths: () => undefined,
+      setKnownProjectPathsCache: () => undefined,
+      setNotice: () => undefined,
+      setProjectPathDraft: () => undefined,
+      setReconcilePlan: () => undefined,
+      setSourceRepoPath: () => undefined,
+      setSourceRepoPathDirty: () => undefined,
+      snapshot: () => snapshot('/source-a'),
+    });
+
+    await actions.addProjectPath();
+    await actions.removeProjectPath('/project-a');
+    await actions.saveConfig('/source-b');
+
+    expect(refreshFlags).toEqual([true, true, true]);
   });
 
   test('hides retained project inventories after configuration becomes unavailable', () => {
