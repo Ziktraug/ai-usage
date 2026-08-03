@@ -5,10 +5,20 @@ export interface CampaignSessionControlItem {
   readonly row: SessionPresentationRow;
 }
 
+export interface CampaignSessionCollection {
+  readonly items: readonly SessionPresentationRow[];
+  readonly loading: boolean;
+  readonly nextCursor: string | null;
+}
+
 export interface CampaignSessionControlsModel {
+  readonly allSessionsLoaded: boolean;
   readonly campaignKey: string;
   readonly canClearCampaignFilter: boolean;
+  readonly canLoadMore: boolean;
   readonly hiddenCount: number;
+  readonly loadedCount: number;
+  readonly loading: boolean;
   readonly sessions: readonly CampaignSessionControlItem[];
   readonly totalCount: number;
   readonly visibleCount: number;
@@ -16,6 +26,7 @@ export interface CampaignSessionControlsModel {
 
 export interface CampaignSessionControlsInput {
   readonly campaign: SessionPresentationRow;
+  readonly collection: CampaignSessionCollection;
   readonly query: SessionQueryRequest;
   readonly showAll: boolean;
   readonly visibleRows: readonly SessionPresentationRow[];
@@ -42,7 +53,7 @@ export const campaignSessionControlsModel = (
     return null;
   }
 
-  const campaignRows = uniqueRows([input.campaign, ...(input.campaign.children ?? [])]);
+  const campaignRows = uniqueRows(input.collection.items);
   const visibleRowIds = new Set(input.visibleRows.map((row) => row.rowId));
   const visibleSessions: CampaignSessionControlItem[] = [];
   const hiddenSessions: CampaignSessionControlItem[] = [];
@@ -57,9 +68,13 @@ export const campaignSessionControlsModel = (
   const visibleCount = input.campaign.campaignVisibleCount ?? visibleSessions.length;
   const totalCount = input.campaign.campaignTotalCount ?? campaignRows.length;
   return {
+    allSessionsLoaded: input.collection.nextCursor === null,
     campaignKey,
     canClearCampaignFilter: input.query.filters.fields.campaign === campaignKey,
+    canLoadMore: input.collection.nextCursor !== null,
     hiddenCount: Math.max(0, totalCount - visibleCount),
+    loadedCount: campaignRows.length,
+    loading: input.collection.loading,
     sessions: input.showAll ? [...visibleSessions, ...hiddenSessions] : visibleSessions,
     totalCount,
     visibleCount,

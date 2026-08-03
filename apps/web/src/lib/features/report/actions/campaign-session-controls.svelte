@@ -24,20 +24,30 @@
   import { fmtCompact, fmtNum } from '../../../foundation/presentation/format';
   import { apiValuePresentation } from '../../../foundation/presentation/report-value';
   import { button, list, muted, row, stack, title } from '../breakdown/styles';
-  import { campaignSessionControlsModel } from './campaign-session-controls-model';
+  import { type CampaignSessionCollection, campaignSessionControlsModel } from './campaign-session-controls-model';
 
   interface Props {
     readonly campaign: SessionPresentationRow;
+    readonly collection: CampaignSessionCollection;
     readonly onClearCampaignFilter: (campaignKey: string) => void;
+    readonly onLoadMoreCampaignSessions: (campaignKey: string) => void;
     readonly onSelectSession: (row: SessionPresentationRow) => void;
     readonly query: SessionQueryRequest;
     readonly visibleRows: readonly SessionPresentationRow[];
   }
 
-  let { campaign, onClearCampaignFilter, onSelectSession, query, visibleRows }: Props = $props();
+  let {
+    campaign,
+    collection,
+    onClearCampaignFilter,
+    onLoadMoreCampaignSessions,
+    onSelectSession,
+    query,
+    visibleRows,
+  }: Props = $props();
   let showAll = $state(false);
   let previousCampaignKey = $state('');
-  const model = $derived(campaignSessionControlsModel({ campaign, query, showAll, visibleRows }));
+  const model = $derived(campaignSessionControlsModel({ campaign, collection, query, showAll, visibleRows }));
 
   $effect(() => {
     const campaignKey = campaign.campaignKey ?? '';
@@ -64,8 +74,15 @@
     <div>
       <div class={title}>Campaign</div>
       <div class={muted} data-campaign-session-counts>
-        {fmtNum(model.visibleCount)}
-        / {fmtNum(model.totalCount)} sessions shown
+        {#if model.allSessionsLoaded}
+          {fmtNum(model.visibleCount)}
+          / {fmtNum(model.totalCount)} sessions shown
+        {:else}
+          {fmtNum(model.visibleCount)}
+          / {fmtNum(model.totalCount)} sessions match current filters · {fmtNum(model.loadedCount)} /
+          {fmtNum(model.totalCount)}
+          sessions loaded
+        {/if}
         {#if model.hiddenCount > 0}
           · {fmtNum(model.hiddenCount)} hidden by current filters
         {/if}
@@ -92,11 +109,29 @@
       {/each}
     </div>
 
-    {#if model.hiddenCount > 0}
+    {#if model.hiddenCount > 0 || model.canLoadMore || model.loading || model.canClearCampaignFilter}
       <div class={row}>
-        <button class={button} onclick={() => (showAll = !showAll)} type="button">
-          {showAll ? 'Show filtered campaign sessions' : 'Show all campaign sessions'}
-        </button>
+        {#if model.hiddenCount > 0}
+          <button class={button} onclick={() => (showAll = !showAll)} type="button">
+            {#if showAll}
+              Show filtered campaign sessions
+            {:else if model.allSessionsLoaded}
+              Show all campaign sessions
+            {:else}
+              Show loaded campaign sessions
+            {/if}
+          </button>
+        {/if}
+        {#if model.canLoadMore || model.loading}
+          <button
+            class={button}
+            disabled={model.loading}
+            onclick={() => onLoadMoreCampaignSessions(model.campaignKey)}
+            type="button"
+          >
+            {model.loading ? 'Loading more campaign sessions…' : 'Load more campaign sessions'}
+          </button>
+        {/if}
         {#if model.canClearCampaignFilter}
           <button class={button} onclick={() => onClearCampaignFilter(model.campaignKey)} type="button">
             Clear campaign filter

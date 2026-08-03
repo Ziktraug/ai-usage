@@ -19,83 +19,108 @@ const query = (campaign: string | null = campaignKey): SessionQueryRequest => ({
 });
 
 const campaignFixture = () => {
+  const root = syntheticSessionRow(1);
   const visibleChild = syntheticSessionRow(2);
   const hiddenChild = syntheticSessionRow(3);
   const campaign = {
-    ...syntheticCampaignRow(1, [visibleChild, hiddenChild]),
+    ...syntheticCampaignRow(1),
     campaignKey,
-    campaignTotalCount: 3,
+    campaignTotalCount: 4,
     campaignVisibleCount: 2,
+    costApprox: 99,
   };
-  return { campaign, hiddenChild, visibleChild };
+  return { campaign, hiddenChild, root, visibleChild };
 };
 
 describe('campaign session controls model', () => {
-  test('shows only filtered campaign sessions until all loaded children are requested', () => {
-    const { campaign, hiddenChild, visibleChild } = campaignFixture();
+  test('keeps partial pagination truthful and shows only loaded filtered sessions by default', () => {
+    const { campaign, hiddenChild, root, visibleChild } = campaignFixture();
     const filtered = campaignSessionControlsModel({
       campaign,
+      collection: { items: [root, visibleChild, hiddenChild], loading: true, nextCursor: 'next-page' },
       query: query(),
       showAll: false,
-      visibleRows: [campaign, visibleChild],
+      visibleRows: [root, visibleChild],
     });
     const all = campaignSessionControlsModel({
       campaign,
+      collection: { items: [root, visibleChild, hiddenChild], loading: false, nextCursor: 'next-page' },
       query: query(),
       showAll: true,
-      visibleRows: [campaign, visibleChild],
+      visibleRows: [root, visibleChild],
     });
 
     expect(filtered).toMatchObject({
+      allSessionsLoaded: false,
       campaignKey,
       canClearCampaignFilter: true,
-      hiddenCount: 1,
-      totalCount: 3,
+      canLoadMore: true,
+      hiddenCount: 2,
+      loadedCount: 3,
+      loading: true,
+      totalCount: 4,
       visibleCount: 2,
     });
     expect(filtered?.sessions.map(({ hidden, row }) => [row.rowId, hidden])).toEqual([
-      [campaign.rowId, false],
+      [root.rowId, false],
       [visibleChild.rowId, false],
     ]);
     expect(all?.sessions.map(({ hidden, row }) => [row.rowId, hidden])).toEqual([
-      [campaign.rowId, false],
+      [root.rowId, false],
       [visibleChild.rowId, false],
       [hiddenChild.rowId, true],
     ]);
   });
 
-  test('preserves stable row identity, deduplicates children, and never substitutes the campaign label for its key', () => {
-    const { campaign, visibleChild } = campaignFixture();
+  test('never prepends the aggregate and preserves the exact actual root/session objects and metrics', () => {
+    const { campaign, root, visibleChild } = campaignFixture();
     const model = campaignSessionControlsModel({
-      campaign: { ...campaign, children: [visibleChild, visibleChild] },
+      campaign,
+      collection: { items: [root, visibleChild, visibleChild], loading: false, nextCursor: null },
       query: query(),
       showAll: true,
-      visibleRows: [campaign, visibleChild],
+      visibleRows: [root, visibleChild],
     });
 
     expect(model?.campaignKey).toBe(campaignKey);
     expect(model?.campaignKey).not.toBe(campaign.sessionLabel);
-    expect(model?.sessions.map(({ row }) => row.rowId)).toEqual([campaign.rowId, visibleChild.rowId]);
+    expect(model?.sessions.map(({ row }) => row)).toEqual([root, visibleChild]);
+    expect(model?.sessions[0]?.row).toBe(root);
+    expect(model?.sessions[0]?.row).not.toBe(campaign);
+    expect(model?.sessions[0]?.row.costApprox).toBe(root.costApprox);
+    expect(model).toMatchObject({ allSessionsLoaded: true, canLoadMore: false, loadedCount: 2 });
   });
 
-  test('offers only the scoped clear action for the selected raw campaign filter', () => {
-    const { campaign } = campaignFixture();
+  test('offers the scoped clear action for an exact active campaign even when no sessions are hidden', () => {
+    const { campaign, root, visibleChild } = campaignFixture();
+    const fullyVisibleCampaign = { ...campaign, campaignTotalCount: 2, campaignVisibleCount: 2 };
 
     expect(
-      campaignSessionControlsModel({ campaign, query: query(), showAll: false, visibleRows: [campaign] })
-        ?.canClearCampaignFilter,
-    ).toBe(true);
+      campaignSessionControlsModel({
+        campaign: fullyVisibleCampaign,
+        collection: { items: [root, visibleChild], loading: false, nextCursor: null },
+        query: query(),
+        showAll: false,
+        visibleRows: [root, visibleChild],
+      }),
+    ).toMatchObject({ canClearCampaignFilter: true, hiddenCount: 0 });
     expect(
       campaignSessionControlsModel({
         campaign,
+        collection: { items: [root], loading: false, nextCursor: null },
         query: query('machine-b:codex:root-b'),
         showAll: false,
-        visibleRows: [campaign],
+        visibleRows: [root],
       })?.canClearCampaignFilter,
     ).toBe(false);
     expect(
-      campaignSessionControlsModel({ campaign, query: query(null), showAll: false, visibleRows: [campaign] })
-        ?.canClearCampaignFilter,
+      campaignSessionControlsModel({
+        campaign,
+        collection: { items: [root], loading: false, nextCursor: null },
+        query: query(null),
+        showAll: false,
+        visibleRows: [root],
+      })?.canClearCampaignFilter,
     ).toBe(false);
   });
 
@@ -103,6 +128,7 @@ describe('campaign session controls model', () => {
     expect(
       campaignSessionControlsModel({
         campaign: syntheticSessionRow(9),
+        collection: { items: [], loading: false, nextCursor: null },
         query: query(),
         showAll: false,
         visibleRows: [],
