@@ -31,6 +31,8 @@ const manifestText = (modules: readonly string[]): string =>
     version: 2,
   });
 
+const workspaceModule = (...segments: readonly string[]): string => ['..', '..', 'packages', ...segments].join('/');
+
 describe('emitted Web client module manifest scanner', () => {
   test.each([
     ['direct import', 'node:fs', 'node builtin'],
@@ -46,11 +48,11 @@ describe('emitted Web client module manifest scanner', () => {
       'retired TanStack Start/Router module',
     ],
     ['TanStack router core', '../../node_modules/@tanstack/router-core', 'retired TanStack Start/Router module'],
-    ['re-exported workspace module', '../../packages/report-data/src/index.ts', 'report-data'],
-    ['dynamic workspace import', '../../packages/usage-merge/src/index.ts', 'usage-merge'],
-    ['usage store', '../../packages/usage-store/src/reader.ts', 'usage-store'],
-    ['local machine', '../../packages/local-machine/src/index.ts', 'local-machine'],
-    ['engine runtime', '../../packages/usage-engine-runtime/src/index.ts', 'usage-engine-runtime'],
+    ['re-exported workspace module', workspaceModule('report-data', 'src', 'index.ts'), 'report-data'],
+    ['dynamic workspace import', workspaceModule('usage-merge', 'src', 'index.ts'), 'usage-merge'],
+    ['usage store', workspaceModule('usage-store', 'src', 'reader.ts'), 'usage-store'],
+    ['local machine', workspaceModule('local-machine', 'src', 'index.ts'), 'local-machine'],
+    ['engine runtime', workspaceModule('usage-engine-runtime', 'src', 'index.ts'), 'usage-engine-runtime'],
     ['$lib server alias', '$lib/server/report.ts', '$lib/server'],
     ['resolved server directory', './src/lib/server/report.ts', '$lib/server'],
     ['server module suffix', './src/lib/report.server.ts', '.server module'],
@@ -83,8 +85,8 @@ describe('emitted Web client module manifest scanner', () => {
         './src/routes/+page.svelte',
         './src/lib/rpc/client.ts',
         './src/path.ts',
-        '../../packages/report-core/src/index.ts',
-        '../../packages/web-contract/src/contract.ts',
+        workspaceModule('report-core', 'src', 'index.ts'),
+        workspaceModule('web-contract', 'src', 'contract.ts'),
         '../../node_modules/@tanstack/svelte-query/dist/index.js',
       ]),
     );

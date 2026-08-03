@@ -2,10 +2,12 @@ import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 
 const ignoredDirectories = new Set([
+  '.direnv',
   '.git',
   '.output-build',
   '.svelte-kit',
   '.turbo',
+  '.worktrees',
   'dist',
   'node_modules',
   'styled-system',

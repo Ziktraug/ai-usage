@@ -9,10 +9,12 @@ const productionDependencyFields = new Set<DependencyField>([
   'optionalDependencies',
 ]);
 const ignoredDirectories = new Set([
+  '.direnv',
   '.git',
   '.output-build',
   '.svelte-kit',
   '.turbo',
+  '.worktrees',
   'dist',
   'node_modules',
   'styled-system',
