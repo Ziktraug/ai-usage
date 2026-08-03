@@ -2,10 +2,10 @@ import { currentRecord } from '../helpers';
 import { defineParityShard, type ParityEvidence } from '../schema';
 
 const owner = 'P6' as const;
-const implementationCommit = '8df877a6e73ed1730f93f9977cb19de83733cae9';
-const lifecycleTestCommit = '8df877a6e73ed1730f93f9977cb19de83733cae9';
-const reviewCorrectionCommit = '8df877a6e73ed1730f93f9977cb19de83733cae9';
-const renderedPendingTestCommit = '8df877a6e73ed1730f93f9977cb19de83733cae9';
+const implementationCommit = 'f996ece3f50d225ed3f374c4a06d6ee45718224e';
+const lifecycleTestCommit = 'f996ece3f50d225ed3f374c4a06d6ee45718224e';
+const reviewCorrectionCommit = 'f996ece3f50d225ed3f374c4a06d6ee45718224e';
+const renderedPendingTestCommit = 'f996ece3f50d225ed3f374c4a06d6ee45718224e';
 const targetEvidence = (kind: ParityEvidence['kind'], reference: string): ParityEvidence => ({
   commit: implementationCommit,
   kind,
