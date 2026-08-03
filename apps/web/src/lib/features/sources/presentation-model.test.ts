@@ -1,9 +1,5 @@
 import { describe, expect, test } from 'bun:test';
 import { collectionSourceDefinitions, type SourceControlEntryView } from '@ai-usage/report-core/source-control';
-import {
-  presentSourceProgress as presentLegacyProgress,
-  presentSourceState as presentLegacyState,
-} from '../../../source-control-presentation';
 import { presentSourceProgress, presentSourceState } from './presentation-model';
 
 const source = (overrides: Partial<SourceControlEntryView> = {}): SourceControlEntryView => ({
@@ -21,30 +17,29 @@ const source = (overrides: Partial<SourceControlEntryView> = {}): SourceControlE
 
 describe('Sources framework-neutral presentation model', () => {
   test.each([
-    { lifecycle: 'pausing', policy: 'disabled' },
-    { policy: 'disabled' },
-    { availability: 'misconfigured' },
-    { availability: 'not-detected' },
-    { availability: 'unsupported' },
-    { lastOutcome: 'timed-out' },
-    { lastOutcome: 'failed' },
-    { lifecycle: 'running' },
-    { lifecycle: 'queued' },
-    { lastOutcome: 'warning' },
-    { lastOutcome: 'not-run' },
-    { lastOutcome: 'skipped' },
-    {},
-  ] as const)('preserves the accepted legacy state projection for %o', (overrides) => {
-    const value = source(overrides as Partial<SourceControlEntryView>);
-    expect(presentSourceState(value)).toEqual(presentLegacyState(value));
+    [{ lifecycle: 'pausing', policy: 'disabled' }, 'Pausing after current run', 'warning'],
+    [{ policy: 'disabled' }, 'Disabled', 'info'],
+    [{ availability: 'misconfigured' }, 'Misconfigured', 'danger'],
+    [{ availability: 'not-detected' }, 'Not detected', 'warning'],
+    [{ availability: 'unsupported' }, 'Unsupported', 'warning'],
+    [{ lastOutcome: 'timed-out' }, 'Timed out', 'danger'],
+    [{ lastOutcome: 'failed' }, 'Failed', 'danger'],
+    [{ lifecycle: 'running' }, 'Running', 'ok'],
+    [{ lifecycle: 'queued' }, 'Queued', 'info'],
+    [{ lastOutcome: 'warning' }, 'Completed with warnings', 'warning'],
+    [{ lastOutcome: 'not-run' }, 'Not run yet', 'info'],
+    [{ lastOutcome: 'skipped' }, 'Skipped', 'info'],
+    [{}, 'Ready', 'ok'],
+  ] as const)('preserves the accepted product projection for %o', (overrides, label, tone) => {
+    expect(presentSourceState(source(overrides))).toMatchObject({ label, tone });
   });
 
   test('preserves indeterminate and bounded progress semantics', () => {
-    for (const value of [
-      source({ progress: { phase: 'reading' } }),
-      source({ progress: { completed: 12, phase: 'importing', total: 10 } }),
-    ]) {
-      expect(presentSourceProgress(value)).toEqual(presentLegacyProgress(value));
-    }
+    expect(presentSourceProgress(source({ progress: { phase: 'reading' } }))).toEqual({ kind: 'indeterminate' });
+    expect(presentSourceProgress(source({ progress: { completed: 12, phase: 'importing', total: 10 } }))).toEqual({
+      kind: 'determinate',
+      max: 10,
+      value: 10,
+    });
   });
 });

@@ -54,9 +54,9 @@ convergence:
 3. Update P6 presentation.ts and model.ts to import/re-export the same neutral
    owner, keep only the Svelte tone-to-class mapping local, and delete the
    temporary P6-owned model file.
-4. Preserve presentation-model.test.ts as a parity proof until the legacy Solid
-   route is retired; after the move, it must import the single neutral owner
-   rather than compare duplicated implementations.
+4. Preserve presentation-model.test.ts as an explicit accepted-product parity
+   proof until the legacy Solid route is retired; after the move, both suites
+   must import the single neutral owner.
 
 This is a source move only: copy, precedence, labels, explanations, progress
 bounds, and CSS classes must not change. Re-run both presentation suites, the
