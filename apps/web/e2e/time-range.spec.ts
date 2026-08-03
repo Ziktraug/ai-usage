@@ -165,10 +165,8 @@ test('groups the timeline by campaign, machine, and origin with matching legends
   await expect(
     chartOptions.getByText('Campaign · Day · Estimated API-equivalent value', { exact: true }),
   ).toBeVisible();
-  await expect(dateRange.getByTitle('Filter by Build report UI', { exact: true })).toContainText('Build report UI');
-  await expect(dateRange.getByTitle('Filter by Inspect OpenCode root', { exact: true })).toContainText(
-    'Inspect OpenCode root',
-  );
+  await expect(dateRange.getByTitle('Build report UI', { exact: true })).toContainText('Build report UI');
+  await expect(dateRange.getByTitle('Inspect OpenCode root', { exact: true })).toContainText('Inspect OpenCode root');
 
   await chartOptions.getByRole('radio', { exact: true, name: 'Machine' }).click();
   await expect(chartOptions.getByText('Machine · Day · Estimated API-equivalent value', { exact: true })).toBeVisible();

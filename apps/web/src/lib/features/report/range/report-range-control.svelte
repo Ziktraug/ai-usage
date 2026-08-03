@@ -71,6 +71,7 @@
     focusedTimelineDimensionLabel,
     isFocusedTimelineDimension,
   } from '@ai-usage/report-core/focused-report-query';
+  import { flushSync } from 'svelte';
   import type { DashboardDateRangeSearch, DashboardSearch } from '../../../../dashboard-search';
   import { dateFromIndex, dateRangePresets, parseLocalDate } from '../../../../date-range';
   import type { MigrationGranularity, TimelineDimension, TimelineValue } from '../../../../overview-model';
@@ -147,10 +148,20 @@
   let draftFrom = $state(initialFrom());
   let draftTo = $state(initialTo());
   let cancelledInput = $state<'end' | 'start' | null>(null);
+  let editingInput = $state<'end' | 'start' | null>(null);
+  let preserveInputDraftDuringNavigation = false;
   const editRun = createSearchEditRun();
-  const currentRangeKey = (): string => JSON.stringify(range);
-  const initialRangeKey = (): string => currentRangeKey();
-  let synchronizedRangeKey = $state(initialRangeKey());
+  const currentControlKey = (): string =>
+    JSON.stringify({
+      dimension,
+      granularity,
+      maximumIndex: projection.maxIndex,
+      range,
+      selectionIndexes: projection.selectionIndexes,
+      value,
+    });
+  const initialControlKey = (): string => currentControlKey();
+  let synchronizedControlKey = $state(initialControlKey());
   const dateForHandle = (handle: 'start' | 'end'): Date =>
     dateFromIndex(
       projection.domainFirst,
@@ -160,8 +171,8 @@
     draft === display ? inputValueForRange(dateForHandle(handle)) : draft;
 
   $effect(() => {
-    const key = currentRangeKey();
-    if (key === synchronizedRangeKey || controlState.interaction.type !== 'idle') {
+    const key = currentControlKey();
+    if (key === synchronizedControlKey || controlState.interaction.type !== 'idle') {
       return;
     }
     controlState = createTimeRangeControlState({
@@ -169,9 +180,13 @@
       options: { dimension, granularity, value },
       selectionIndexes: projection.selectionIndexes,
     });
-    draftFrom = projection.displayFrom;
-    draftTo = projection.displayTo;
-    synchronizedRangeKey = key;
+    if (editingInput !== 'start') {
+      draftFrom = projection.displayFrom;
+    }
+    if (editingInput !== 'end') {
+      draftTo = projection.displayTo;
+    }
+    synchronizedControlKey = key;
   });
 
   const percentFor = (index: number): number => (projection.maxIndex > 0 ? (index / projection.maxIndex) * 100 : 0);
@@ -425,12 +440,33 @@
       <input
         aria-label="Start date"
         class={input}
-        onblur={() => finishInput('start')}
-        onfocus={() => { cancelledInput = null; draftFrom = inputValueForRange(dateForHandle('start')); }}
+        onblur={() => {
+          if (preserveInputDraftDuringNavigation) {
+            preserveInputDraftDuringNavigation = false;
+            return;
+          }
+          finishInput('start');
+          editingInput = null;
+        }}
+        onfocus={(event) => {
+          cancelledInput = null;
+          editingInput = 'start';
+          const nextDraft = inputValueForRange(dateForHandle('start'));
+          flushSync(() => {
+            draftFrom = nextDraft;
+          });
+          event.currentTarget.select();
+        }}
         oninput={(event) => {
           draftFrom = event.currentTarget.value;
           if (parseLocalDate(draftFrom)) {
-            commitInputs(false);
+            preserveInputDraftDuringNavigation = true;
+            try {
+              commitInputs(false);
+            } catch (cause) {
+              preserveInputDraftDuringNavigation = false;
+              throw cause;
+            }
           }
         }}
         onkeydown={(event) => commitInputKey(event, 'start')}
@@ -443,12 +479,33 @@
       <input
         aria-label="End date"
         class={input}
-        onblur={() => finishInput('end')}
-        onfocus={() => { cancelledInput = null; draftTo = inputValueForRange(dateForHandle('end')); }}
+        onblur={() => {
+          if (preserveInputDraftDuringNavigation) {
+            preserveInputDraftDuringNavigation = false;
+            return;
+          }
+          finishInput('end');
+          editingInput = null;
+        }}
+        onfocus={(event) => {
+          cancelledInput = null;
+          editingInput = 'end';
+          const nextDraft = inputValueForRange(dateForHandle('end'));
+          flushSync(() => {
+            draftTo = nextDraft;
+          });
+          event.currentTarget.select();
+        }}
         oninput={(event) => {
           draftTo = event.currentTarget.value;
           if (parseLocalDate(draftTo)) {
-            commitInputs(false);
+            preserveInputDraftDuringNavigation = true;
+            try {
+              commitInputs(false);
+            } catch (cause) {
+              preserveInputDraftDuringNavigation = false;
+              throw cause;
+            }
           }
         }}
         onkeydown={(event) => commitInputKey(event, 'end')}

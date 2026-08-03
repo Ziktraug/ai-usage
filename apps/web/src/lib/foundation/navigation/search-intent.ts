@@ -1,4 +1,5 @@
 export interface SearchNavigationOptions {
+  keepFocus?: boolean;
   replace?: boolean;
   resetScroll?: boolean;
 }

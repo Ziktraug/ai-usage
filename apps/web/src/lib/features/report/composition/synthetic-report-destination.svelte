@@ -391,7 +391,7 @@
         onRangeChange={navigation.setDateRange}
         onSelectDay={(date) => navigate((current) => ({ ...current, range: { from: date, mode: 'custom', to: date }, tab: 'sessions' }))}
         onSelectSession={selectOverviewSession}
-        onSelectTimeCell={(cell) => navigate((current) => ({ ...current, tab: 'sessions', timeCell: serializeDashboardTimeCell(cell) }))}
+        onSelectTimeCell={(cell) => navigate((current) => ({ ...current, timeCell: serializeDashboardTimeCell(cell) }))}
         {...(mode === 'e2e' ? { onOpenQuotaHistory: () => (quotaHistoryOpen = true) } : {})}
         {presentCampaignSeries}
         {presentMachineSeries}

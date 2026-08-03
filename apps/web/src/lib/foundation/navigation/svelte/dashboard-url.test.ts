@@ -126,6 +126,7 @@ describe('dashboard URL parity', () => {
     const navigate = createDashboardSearchNavigation(port, codec, (failure) => failures.push(failure));
     navigate((current) => ({ ...current, q: '  report  ' }), run.next());
     expect(port.entries()).toHaveLength(2);
+    expect(run.next()).toEqual({ keepFocus: true, replace: true, resetScroll: false });
     navigate((current) => ({ ...current, q: 'reloaded' }), run.next());
     expect(port.entries()).toHaveLength(2);
     expect(parseDashboardSearchUrl(new URL(port.currentUrl()), codec).q).toBe('reloaded');

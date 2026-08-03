@@ -2,7 +2,7 @@
   import type { ReportRevisionBootstrapResult } from '@ai-usage/web-contract/report';
   import { useQueryClient } from '@tanstack/svelte-query';
   import { onMount } from 'svelte';
-  import { goto } from '$app/navigation';
+  import { goto, pushState, replaceState } from '$app/navigation';
   import { page } from '$app/state';
   import type { DashboardSearch } from '../../../../dashboard-search';
   import type { RuntimeMode } from '../../../../runtime-mode';
@@ -51,6 +51,13 @@
       getCurrentUrl: () => page.url,
       goto,
       history: window.history,
+      shallowNavigate: (url, replace) => {
+        if (replace) {
+          replaceState(url, page.state);
+        } else {
+          pushState(url, page.state);
+        }
+      },
       onFailure: ({ cause }) => {
         navigationFailure = cause instanceof Error ? cause.message : 'Report navigation failed.';
       },

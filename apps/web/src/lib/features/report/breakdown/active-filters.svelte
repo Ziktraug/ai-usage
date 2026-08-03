@@ -32,8 +32,8 @@
 
 <div class={stack} data-active-filters>
   {#if !pending}
-    <div aria-live="polite" class={row}>
-      <span>{fmtNum(visible)} / {fmtNum(total)} sessions</span>
+    <div class={row}>
+      <span aria-live="polite">{fmtNum(visible)} / {fmtNum(total)} sessions</span>
       {#if hidden > 0}
         <span class={muted}>{fmtNum(hidden)} hidden by filters</span>
       {/if}

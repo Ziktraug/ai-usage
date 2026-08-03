@@ -238,7 +238,7 @@
   const selectDay = (date: string): void =>
     navigate((current) => ({ ...current, range: { from: date, mode: 'custom', to: date }, tab: 'sessions' }));
   const selectTimeCell = (cell: LocalTimeCell): void =>
-    navigate((current) => ({ ...current, tab: 'sessions', timeCell: serializeDashboardTimeCell(cell) }));
+    navigate((current) => ({ ...current, timeCell: serializeDashboardTimeCell(cell) }));
   const updateOverviewOptions = (options: {
     dimension: TimelineDimension;
     granularity: MigrationGranularity;

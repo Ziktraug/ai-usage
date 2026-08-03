@@ -311,7 +311,6 @@
                 <span
                   class={segment}
                   data-series-key={series.key}
-                  title={`${series.label}: ${formattedAmount(amountFor(entry), bucketTotal(bucket))}`}
                   style:background={stableSeriesColor(series.key)}
                   style:height={`${heightFor(bucket, amountFor(entry))}%`}
                   style:opacity={hoveredKey === null || hoveredKey === series.key ? 1 : 0.26}

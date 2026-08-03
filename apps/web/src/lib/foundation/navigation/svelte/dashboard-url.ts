@@ -72,6 +72,7 @@ export const createDashboardSearchNavigation =
     const url = dashboardUrlFor(currentUrl, nextSearch, codec);
     port
       .navigate({
+        ...(options?.keepFocus === undefined ? {} : { keepFocus: options.keepFocus }),
         ...(options?.replace === undefined ? {} : { replace: options.replace }),
         resetScroll: options?.resetScroll ?? false,
         url,
@@ -93,7 +94,7 @@ export const createSearchEditRun = (): SearchEditRun => {
     next: () => {
       const replace = active;
       active = true;
-      return { replace, resetScroll: false };
+      return { keepFocus: true, replace, resetScroll: false };
     },
   };
 };
