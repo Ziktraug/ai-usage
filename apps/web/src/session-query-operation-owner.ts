@@ -15,6 +15,7 @@ export type SessionQueryOperationPolicy = 'coalesce' | 'replace';
 export interface SessionQueryRunOptions {
   generation?: number;
   policy?: SessionQueryOperationPolicy;
+  signal?: AbortSignal;
 }
 
 export interface SessionQueryOperationOwner {
@@ -81,12 +82,17 @@ export const createSessionQueryOperationOwner = (): SessionQueryOperationOwner =
     if (closed) {
       return Promise.reject(new DOMException('The session query operation owner is closed', 'AbortError'));
     }
+    if (options.signal?.aborted) {
+      return Promise.reject(options.signal.reason);
+    }
     const existing = activeOperations.get(key);
     if (options.policy === 'coalesce' && existing && owns(key, existing)) {
       return existing.promise as Promise<Result>;
     }
 
     const controller = new AbortController();
+    const abortFromOwner = (): void => controller.abort(options.signal?.reason);
+    options.signal?.addEventListener('abort', abortFromOwner, { once: true });
     const deferred = Promise.withResolvers<Result>();
     const operation: OwnedSessionQueryOperation = {
       controller,
@@ -107,6 +113,7 @@ export const createSessionQueryOperationOwner = (): SessionQueryOperationOwner =
       } catch (error) {
         deferred.reject(error);
       } finally {
+        options.signal?.removeEventListener('abort', abortFromOwner);
         context.release();
       }
     };

@@ -180,7 +180,7 @@ export interface SessionQueryCoordinator {
   loadCampaignChildren: (campaignKey: string) => Promise<SessionQueryState | undefined>;
   loadMore: () => Promise<SessionQueryState | undefined>;
   loadNeighbors: (rowId: string) => Promise<SessionNeighborResult | undefined>;
-  prepare: (scope: SessionQueryScope, revision: string) => Promise<PreparedSessionQueryState>;
+  prepare: (scope: SessionQueryScope, revision: string, signal?: AbortSignal) => Promise<PreparedSessionQueryState>;
   select: (rowId: string | null) => void;
   start: (scope: SessionQueryScope) => Promise<SessionQueryState | undefined>;
   state: () => SessionQueryState | undefined;
@@ -343,7 +343,11 @@ export const createSessionQueryCoordinator = (options: {
     );
   };
 
-  const prepare = async (scope: SessionQueryScope, revision: string): Promise<PreparedSessionQueryState> => {
+  const prepare = async (
+    scope: SessionQueryScope,
+    revision: string,
+    signal?: AbortSignal,
+  ): Promise<PreparedSessionQueryState> => {
     if (operationOwner.isClosed()) {
       throw new DOMException('The session query coordinator is closed', 'AbortError');
     }
@@ -373,7 +377,7 @@ export const createSessionQueryCoordinator = (options: {
           ticket,
         };
       },
-      { generation: ticket.generation },
+      { generation: ticket.generation, ...(signal === undefined ? {} : { signal }) },
     );
   };
 

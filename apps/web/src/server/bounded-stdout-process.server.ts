@@ -16,11 +16,13 @@ export interface BoundedStdoutProcessOptions {
   args: readonly string[];
   command: string;
   maximumOutputBytes: number;
+  signal?: AbortSignal;
   timeoutMs: number;
 }
 
-export const runBoundedStdoutProcess = (options: BoundedStdoutProcessOptions): Promise<{ stdout: string }> =>
-  new Promise((resolve, reject) => {
+export const runBoundedStdoutProcess = async (options: BoundedStdoutProcessOptions): Promise<{ stdout: string }> => {
+  options.signal?.throwIfAborted();
+  return await new Promise((resolve, reject) => {
     const child = spawn(options.command, [...options.args], {
       shell: false,
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -29,22 +31,36 @@ export const runBoundedStdoutProcess = (options: BoundedStdoutProcessOptions): P
     let bytes = 0;
     let failure: BoundedStdoutProcessError | null = null;
     let settled = false;
-    const finish = (result: { stdout: string } | BoundedStdoutProcessError): void => {
+    let aborted: unknown;
+    const cleanup = (): void => {
+      clearTimeout(timeout);
+      options.signal?.removeEventListener('abort', abort);
+    };
+    const finish = (result: { stdout: string } | Error): void => {
       if (settled) {
         return;
       }
       settled = true;
-      clearTimeout(timeout);
-      if (result instanceof BoundedStdoutProcessError) {
+      cleanup();
+      if (result instanceof Error) {
         reject(result);
       } else {
         resolve(result);
       }
     };
+    const abort = (): void => {
+      const reason = options.signal?.reason;
+      aborted = reason instanceof Error ? reason : new DOMException('The operation was aborted.', 'AbortError');
+      child.kill('SIGKILL');
+    };
     const timeout = setTimeout(() => {
       failure = new BoundedStdoutProcessError('timed-out');
       child.kill('SIGKILL');
     }, options.timeoutMs);
+    options.signal?.addEventListener('abort', abort, { once: true });
+    if (options.signal?.aborted) {
+      abort();
+    }
     child.stdout.on('data', (chunk: Buffer | string) => {
       const buffer = typeof chunk === 'string' ? Buffer.from(chunk) : chunk;
       bytes += buffer.byteLength;
@@ -59,7 +75,9 @@ export const runBoundedStdoutProcess = (options: BoundedStdoutProcessOptions): P
     child.stderr.on('data', () => undefined);
     child.once('error', () => finish(new BoundedStdoutProcessError('unavailable')));
     child.once('close', (code) => {
-      if (failure) {
+      if (aborted instanceof Error) {
+        finish(aborted);
+      } else if (failure) {
         finish(failure);
       } else if (code === 0) {
         try {
@@ -72,3 +90,4 @@ export const runBoundedStdoutProcess = (options: BoundedStdoutProcessOptions): P
       }
     });
   });
+};

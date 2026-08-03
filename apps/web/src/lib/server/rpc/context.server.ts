@@ -29,6 +29,9 @@ const phaseBound = async <Result>(
   return result;
 };
 
+const abortOptions = (signal: AbortSignal | undefined): { readonly signal?: AbortSignal } =>
+  signal === undefined ? {} : { signal };
+
 const normalizeSkillsResult = async <Output>(
   result: SkillsServerAdapterResult<unknown>,
   normalize: (value: unknown) => Output,
@@ -180,7 +183,7 @@ const createReportDependencies = (request: Request): WebRpcRouterDependencies['r
   getProviderQuotaHistory: async (input, { signal }) =>
     await phaseBound(signal, async () => {
       const server = await import('../../../server/provider-quota-resolver.server');
-      return await server.resolveProviderQuotaHistoryForServer(input);
+      return await server.resolveProviderQuotaHistoryForServer(input, undefined, undefined, abortOptions(signal));
     }),
   getReportPerfEnabled: async ({ signal }) =>
     await phaseBound(signal, async () => {
@@ -190,27 +193,27 @@ const createReportDependencies = (request: Request): WebRpcRouterDependencies['r
   getReportRevisionBootstrap: async ({ signal }) =>
     await phaseBound(signal, async () => {
       const server = await import('../../../server/report-payload.server');
-      return await server.getReportRevisionBootstrapForServer();
+      return await server.getReportRevisionBootstrapForServer(undefined, undefined, abortOptions(signal));
     }),
   getReportRevisionManifest: async ({ signal }) =>
     await phaseBound(signal, async () => {
       const server = await import('../../../server/report-payload.server');
-      return await server.getReportRevisionManifestForServer();
+      return await server.getReportRevisionManifestForServer(undefined, undefined, abortOptions(signal));
     }),
   runFocusedBreakdown: async (input, { signal }) =>
     await phaseBound(signal, async () => {
       const server = await import('../../../server/revision-query-runner.server');
-      return await server.runRevisionQueryForServer('breakdown', input);
+      return await server.runRevisionQueryForServer('breakdown', input, undefined, abortOptions(signal));
     }),
   runFocusedOverview: async (input, { signal }) =>
     await phaseBound(signal, async () => {
       const server = await import('../../../server/revision-query-runner.server');
-      return await server.runRevisionQueryForServer('overview', input);
+      return await server.runRevisionQueryForServer('overview', input, undefined, abortOptions(signal));
     }),
   runFocusedSupport: async (input, { signal }) =>
     await phaseBound(signal, async () => {
       const server = await import('../../../server/revision-query-runner.server');
-      return await server.runRevisionQueryForServer('support', input);
+      return await server.runRevisionQueryForServer('support', input, undefined, abortOptions(signal));
     }),
   saveProjectGroups: async (input, { signal }) =>
     await phaseBound(signal, async () => {
@@ -236,23 +239,38 @@ const createSessionDependencies = (): WebRpcRouterDependencies['session'] => ({
   getDetail: async (input, signal) =>
     await phaseBound(signal, async () => {
       const server = await import('../../../server/session-detail.server');
-      return await server.getLocalSessionDetailForServer(input);
+      return await server.getLocalSessionDetailForServer(input, undefined, abortOptions(signal));
     }),
   resolveVcs: async (input, signal) =>
     await phaseBound(signal, async () => {
       const server = await import('../../../server/session-vcs.server');
-      return await server.resolveSessionVcsForServer(input);
+      return await server.resolveSessionVcsForServer(input, undefined, abortOptions(signal));
     }),
   runRevisionQuery: async (kind, input, signal): Promise<unknown> =>
     await phaseBound(signal, async () => {
       const server = await import('../../../server/revision-query-runner.server');
       if (kind === 'campaign-children') {
-        return await server.runRevisionQueryForServer(kind, parseSessionCampaignChildrenRequest(input));
+        return await server.runRevisionQueryForServer(
+          kind,
+          parseSessionCampaignChildrenRequest(input),
+          undefined,
+          abortOptions(signal),
+        );
       }
       if (kind === 'neighbors') {
-        return await server.runRevisionQueryForServer(kind, parseSessionNeighborRequest(input));
+        return await server.runRevisionQueryForServer(
+          kind,
+          parseSessionNeighborRequest(input),
+          undefined,
+          abortOptions(signal),
+        );
       }
-      return await server.runRevisionQueryForServer(kind, parseSessionQueryRequest(input));
+      return await server.runRevisionQueryForServer(
+        kind,
+        parseSessionQueryRequest(input),
+        undefined,
+        abortOptions(signal),
+      );
     }),
 });
 
@@ -263,7 +281,10 @@ const createSyncDependencies = (): WebRpcRouterDependencies['sync'] => ({
         import('../../../server/sync-data.server'),
         import('../../../server/usage-read-model-resolver.server'),
       ]);
-      return await getSyncFleetForServer(await resolveUsageReadModelForServer());
+      return await getSyncFleetForServer(
+        await resolveUsageReadModelForServer(),
+        signal === undefined ? {} : { signal },
+      );
     }),
 });
 

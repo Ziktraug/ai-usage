@@ -32,7 +32,7 @@ interface ResolverInput {
 }
 
 export interface SessionVcsProviderResolver {
-  resolve(input: ResolverInput): Promise<SessionVcsResolveResponse>;
+  resolve(input: ResolverInput, options?: { readonly signal?: AbortSignal }): Promise<SessionVcsResolveResponse>;
 }
 
 export interface SessionVcsServerDependencies {
@@ -145,7 +145,8 @@ const processFailureReason = (error: unknown): 'resolver-unavailable' | 'timed-o
 export const createGhSessionVcsProviderResolver = (
   dependencies: GhResolverDependencies = defaultGhDependencies,
 ): SessionVcsProviderResolver => ({
-  resolve: async ({ branch, repository }) => {
+  resolve: async ({ branch, repository }, options = {}) => {
+    options.signal?.throwIfAborted();
     if (!(repository.host === 'github.com' && repository.webUrl)) {
       return unavailable('repository-unsupported');
     }
@@ -153,8 +154,10 @@ export const createGhSessionVcsProviderResolver = (
     try {
       executable = await dependencies.findExecutable(GH_EXECUTABLE);
     } catch {
+      options.signal?.throwIfAborted();
       executable = null;
     }
+    options.signal?.throwIfAborted();
     if (!executable) {
       return unavailable('resolver-unavailable');
     }
@@ -177,10 +180,13 @@ export const createGhSessionVcsProviderResolver = (
         ],
         command: executable,
         maximumOutputBytes: GH_MAXIMUM_OUTPUT_BYTES,
+        ...(options.signal === undefined ? {} : { signal: options.signal }),
         timeoutMs: GH_TIMEOUT_MS,
       });
       stdout = result.stdout;
+      options.signal?.throwIfAborted();
     } catch (error) {
+      options.signal?.throwIfAborted();
       return unavailable(processFailureReason(error));
     }
     const pullRequests = providerPullRequests(stdout, repository);
@@ -198,18 +204,24 @@ export const createGhSessionVcsProviderResolver = (
   },
 });
 
-const defaultDependencies = (): SessionVcsServerDependencies => ({
-  readMachine: async () => await (await resolveUsageReadModelForServer()).readLocalMachine(),
-  resolveAnchor: (request) => runRevisionQueryForServer('session-detail-anchor', request),
+const defaultDependencies = (signal?: AbortSignal): SessionVcsServerDependencies => ({
+  readMachine: async () =>
+    await (await resolveUsageReadModelForServer()).readLocalMachine(signal === undefined ? {} : { signal }),
+  resolveAnchor: (request) =>
+    runRevisionQueryForServer('session-detail-anchor', request, undefined, signal === undefined ? {} : { signal }),
   resolver: createGhSessionVcsProviderResolver(),
 });
 
 export const resolveSessionVcsForServer = async (
   input: SessionVcsResolveRequest,
-  dependencies: SessionVcsServerDependencies = defaultDependencies(),
+  dependencies?: SessionVcsServerDependencies,
+  options: { readonly signal?: AbortSignal } = {},
 ): Promise<SessionVcsResolveResponse> => {
+  options.signal?.throwIfAborted();
+  const activeDependencies = dependencies ?? defaultDependencies(options.signal);
   const request = parseSessionVcsResolveRequest(input);
-  const anchorResult = await dependencies.resolveAnchor(request);
+  const anchorResult = await activeDependencies.resolveAnchor(request);
+  options.signal?.throwIfAborted();
   if (!anchorResult.ok) {
     return unavailable('provenance-unavailable');
   }
@@ -217,7 +229,8 @@ export const resolveSessionVcsForServer = async (
   if (!anchor) {
     return unavailable('provenance-unavailable');
   }
-  const authorization = await authorizeLocalSessionAnchor(anchor, dependencies.readMachine);
+  const authorization = await authorizeLocalSessionAnchor(anchor, activeDependencies.readMachine);
+  options.signal?.throwIfAborted();
   if (authorization.status === 'unauthorized') {
     return unavailable(authorization.reason === 'provenance-unavailable' ? 'provenance-unavailable' : 'not-local');
   }
@@ -229,5 +242,10 @@ export const resolveSessionVcsForServer = async (
   if (repository.host !== 'github.com' || !repository.webUrl) {
     return unavailable('repository-unsupported');
   }
-  return parseSessionVcsResolveResponse(await dependencies.resolver.resolve({ branch, repository }));
+  const response = await activeDependencies.resolver.resolve(
+    { branch, repository },
+    options.signal === undefined ? {} : { signal: options.signal },
+  );
+  options.signal?.throwIfAborted();
+  return parseSessionVcsResolveResponse(response);
 };

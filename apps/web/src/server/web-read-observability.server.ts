@@ -14,7 +14,10 @@ type WebReadServices = WideEventResourceService | WideEventSink;
 
 export interface WebReadObservabilityRuntime {
   readonly dispose: () => Promise<void>;
-  readonly runEffect: <Value, Failure>(effect: Effect.Effect<Value, Failure, WebReadServices>) => Promise<Value>;
+  readonly runEffect: <Value, Failure>(
+    effect: Effect.Effect<Value, Failure, WebReadServices>,
+    options?: { readonly signal?: AbortSignal },
+  ) => Promise<Value>;
 }
 
 const webReadRuntimeProperty = '__aiUsageWebReadObservabilityRuntime' as const;
@@ -50,11 +53,14 @@ export const createWebReadObservabilityRuntime = async (
       disposal ??= Effect.runPromise(Scope.close(scope, Exit.void));
       return disposal;
     },
-    runEffect: (effect) => {
+    runEffect: (effect, options) => {
       if (disposal) {
         return Promise.reject(new Error('Web read observability has already stopped.'));
       }
-      return Effect.runPromise(effect.pipe(Effect.provide(context)));
+      return Effect.runPromise(
+        effect.pipe(Effect.provide(context)),
+        options?.signal === undefined ? undefined : { signal: options.signal },
+      );
     },
   };
 };
@@ -99,10 +105,11 @@ export const initializeWebReadObservabilityRuntime = async (
 
 export const runWebReadEffect = <Value, Failure>(
   effect: Effect.Effect<Value, Failure, WebReadServices>,
+  options?: { readonly signal?: AbortSignal },
 ): Promise<Value> => {
   const runtime = (useNitroApp() as WebReadNitroApp)[webReadRuntimeProperty];
   if (!runtime) {
     return Promise.reject(new Error('Web read observability has not started.'));
   }
-  return runtime.runEffect(effect);
+  return runtime.runEffect(effect, options);
 };

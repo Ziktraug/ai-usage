@@ -154,7 +154,7 @@ describe('direct revision query server', () => {
 
   for (const queryPath of revisionQueryParityPaths) {
     test(`${queryPath.name} preserves the exact revision query lifecycle`, async () => {
-      const executions: unknown[] = [];
+      const executions: Parameters<RevisionQueryRunnerDependencies['execute']>[0][] = [];
       const successful = await queryPath.run({
         execute: (execution) => {
           executions.push(execution);
@@ -162,7 +162,13 @@ describe('direct revision query server', () => {
         },
       });
 
-      expect(executions).toEqual([{ kind: queryPath.kind, request: queryPath.request, revision: queryPath.revision }]);
+      expect(executions).toHaveLength(1);
+      expect(executions[0]).toMatchObject({
+        kind: queryPath.kind,
+        request: queryPath.request,
+        revision: queryPath.revision,
+      });
+      expect(executions[0]?.signal).toBeInstanceOf(AbortSignal);
       expect(successful).toEqual({
         data: queryPath.successfulPayload,
         ok: true,

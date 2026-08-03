@@ -21,10 +21,17 @@ export interface SessionDetailServerDependencies {
   resolveAnchor(request: SessionDetailRequest): Promise<SessionQueryServerResult<SessionDetailAnchorResult>>;
 }
 
-const defaultDependencies = (): SessionDetailServerDependencies => ({
-  readAnalysis: (harnessKey, sourceSessionId) => readLocalSessionAnalysis({ harnessKey, sourceSessionId }),
-  readMachine: async () => await (await resolveUsageReadModelForServer()).readLocalMachine(),
-  resolveAnchor: (request) => runRevisionQueryForServer('session-detail-anchor', request),
+const defaultDependencies = (signal?: AbortSignal): SessionDetailServerDependencies => ({
+  readAnalysis: async (harnessKey, sourceSessionId) => {
+    signal?.throwIfAborted();
+    const analysis = await readLocalSessionAnalysis({ harnessKey, sourceSessionId });
+    signal?.throwIfAborted();
+    return analysis;
+  },
+  readMachine: async () =>
+    await (await resolveUsageReadModelForServer()).readLocalMachine(signal === undefined ? {} : { signal }),
+  resolveAnchor: (request) =>
+    runRevisionQueryForServer('session-detail-anchor', request, undefined, signal === undefined ? {} : { signal }),
 });
 
 const unavailable = (
@@ -40,10 +47,14 @@ const historyLabels = {
 
 export const getLocalSessionDetailForServer = async (
   input: SessionDetailRequest,
-  dependencies: SessionDetailServerDependencies = defaultDependencies(),
+  dependencies?: SessionDetailServerDependencies,
+  options: { readonly signal?: AbortSignal } = {},
 ): Promise<SessionDetailResponse> => {
+  options.signal?.throwIfAborted();
+  const activeDependencies = dependencies ?? defaultDependencies(options.signal);
   const request = parseSessionDetailRequest(input);
-  const anchorResult = await dependencies.resolveAnchor(request);
+  const anchorResult = await activeDependencies.resolveAnchor(request);
+  options.signal?.throwIfAborted();
   if (!anchorResult.ok) {
     if (anchorResult.error.tag === 'RevisionExpired') {
       return unavailable('revision-expired', 'This report revision is no longer available.');
@@ -64,7 +75,8 @@ export const getLocalSessionDetailForServer = async (
     return unavailable('unsupported', 'Detailed chronology is not available for this harness yet.');
   }
 
-  const authorization = await authorizeLocalSessionAnchor(anchor, dependencies.readMachine);
+  const authorization = await authorizeLocalSessionAnchor(anchor, activeDependencies.readMachine);
+  options.signal?.throwIfAborted();
   if (authorization.status === 'unauthorized') {
     if (authorization.reason === 'not-local') {
       return unavailable('not-local', 'Detailed chronology is only available on the session source machine.');
@@ -79,7 +91,8 @@ export const getLocalSessionDetailForServer = async (
   }
 
   try {
-    const analysis = await dependencies.readAnalysis(anchor.harnessKey, anchor.sourceSessionId);
+    const analysis = await activeDependencies.readAnalysis(anchor.harnessKey, anchor.sourceSessionId);
+    options.signal?.throwIfAborted();
     if (!analysis) {
       return unavailable(
         'not-found',
@@ -93,6 +106,7 @@ export const getLocalSessionDetailForServer = async (
       status: 'available',
     });
   } catch {
+    options.signal?.throwIfAborted();
     return unavailable(
       'history-unavailable',
       `The local ${historyLabels[anchor.harnessKey]} history could not be read safely.`,

@@ -112,10 +112,10 @@ export const createDashboardServedReportSession = (options: {
     DashboardPreparedDestination,
     DashboardServedRevisionDescriptor
   >({
-    acquire: async () => {
+    acquire: async (signal) => {
       const descriptor = initialDescriptor;
       initialDescriptor = undefined;
-      return descriptor ?? (await fetchFocusedReportBootstrapDescriptor(options.focusedSource));
+      return descriptor ?? (await fetchFocusedReportBootstrapDescriptor(options.focusedSource, { signal }));
     },
     commit: (prepared, descriptor, destination) => {
       const overviewDestination = { kind: 'overview' as const, ...prepared.overview };
@@ -170,16 +170,16 @@ export const createDashboardServedReportSession = (options: {
     destinationFingerprint,
     isRevisionExpired: (error) =>
       error instanceof FocusedRevisionExpiredError || error instanceof SessionRevisionExpiredError,
-    load: async (destination, descriptor) => {
+    load: async (destination, descriptor, signal) => {
       const overviewRequest = overviewRequestFor(destination, descriptor.revision);
-      const overviewPromise = fetchFocusedOverview(options.focusedSource, overviewRequest);
+      const overviewPromise = fetchFocusedOverview(options.focusedSource, overviewRequest, { signal });
       if (destination.kind === 'breakdown') {
         const breakdownRequest: FocusedBreakdownRequest = {
           query: queryForRevision(destination.query, descriptor.revision),
         };
         const [overviewResult, breakdownResult] = await Promise.all([
           overviewPromise,
-          fetchFocusedBreakdown(options.focusedSource, breakdownRequest),
+          fetchFocusedBreakdown(options.focusedSource, breakdownRequest, { signal }),
         ]);
         return {
           breakdown: { request: breakdownRequest, result: breakdownResult },
@@ -189,7 +189,7 @@ export const createDashboardServedReportSession = (options: {
       if (destination.kind === 'sessions') {
         const [overviewResult, sessions] = await Promise.all([
           overviewPromise,
-          options.sessionCoordinator.prepare(destination.sessions, descriptor.revision),
+          options.sessionCoordinator.prepare(destination.sessions, descriptor.revision, signal),
         ]);
         return {
           overview: { request: overviewRequest, result: overviewResult },

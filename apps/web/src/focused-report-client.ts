@@ -22,9 +22,15 @@ import {
 } from './web-report-payload';
 
 export interface FocusedReportSource {
-  getBootstrap: () => Promise<WebReportRevisionBootstrapResult>;
-  getBreakdown: (request: FocusedBreakdownRequest) => Promise<SessionQueryServerResult<FocusedBreakdownResult>>;
-  getOverview: (request: FocusedOverviewRequest) => Promise<SessionQueryServerResult<FocusedOverviewResult>>;
+  getBootstrap: (options?: { readonly signal?: AbortSignal }) => Promise<WebReportRevisionBootstrapResult>;
+  getBreakdown: (
+    request: FocusedBreakdownRequest,
+    options?: { readonly signal?: AbortSignal },
+  ) => Promise<SessionQueryServerResult<FocusedBreakdownResult>>;
+  getOverview: (
+    request: FocusedOverviewRequest,
+    options?: { readonly signal?: AbortSignal },
+  ) => Promise<SessionQueryServerResult<FocusedOverviewResult>>;
 }
 
 export class FocusedRevisionExpiredError extends Error {
@@ -82,8 +88,9 @@ export interface FocusedReportBootstrapDescriptor {
 
 export const fetchFocusedReportBootstrapDescriptor = async (
   source: FocusedReportSource,
+  options?: { readonly signal?: AbortSignal },
 ): Promise<FocusedReportBootstrapDescriptor> => {
-  const result = validatedBootstrap(await source.getBootstrap());
+  const result = validatedBootstrap(await source.getBootstrap(options));
   return {
     bootstrap: result.bootstrap,
     captureFingerprint: result.manifest.captureFingerprint,
@@ -97,23 +104,25 @@ export const fetchFocusedReportBootstrap = async (source: FocusedReportSource): 
 export const fetchFocusedOverview = async (
   source: FocusedReportSource,
   request: FocusedOverviewRequest,
+  options?: { readonly signal?: AbortSignal },
 ): Promise<FocusedOverviewResult> =>
   validateServerResult(
     'overview',
     request.query.revision,
     focusedOverviewFingerprint(request),
-    await source.getOverview(request),
+    await source.getOverview(request, options),
   );
 
 export const fetchFocusedBreakdown = async (
   source: FocusedReportSource,
   request: FocusedBreakdownRequest,
+  options?: { readonly signal?: AbortSignal },
 ): Promise<FocusedBreakdownResult> =>
   validateServerResult(
     'breakdown',
     request.query.revision,
     focusedBreakdownFingerprint(request),
-    await source.getBreakdown(request),
+    await source.getBreakdown(request, options),
   );
 
 export type FocusedStoreApplyResult =
@@ -352,9 +361,9 @@ export const createFocusedReportStore = (initial: FocusedSupportResult): Focused
 export const createServedFocusedReportSource = (): FocusedReportSource => {
   const client = async () => createReportClient(await resolveSolidWebRpcClient('focused-report'));
   return {
-    getBreakdown: async (request) => await (await client()).getFocusedReportBreakdown(request),
-    getBootstrap: async () =>
-      normalizeWebReportRevisionBootstrapResult(await (await client()).getReportRevisionBootstrap()),
-    getOverview: async (request) => await (await client()).getFocusedReportOverview(request),
+    getBreakdown: async (request, options) => await (await client()).getFocusedReportBreakdown(request, options),
+    getBootstrap: async (options) =>
+      normalizeWebReportRevisionBootstrapResult(await (await client()).getReportRevisionBootstrap(options)),
+    getOverview: async (request, options) => await (await client()).getFocusedReportOverview(request, options),
   };
 };

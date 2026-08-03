@@ -24,7 +24,9 @@ export default defineHandler(async (event) => {
     },
     exportBundle: async (signal) => {
       signal.throwIfAborted();
-      const result = await syncData.exportManualMergeBundleForServer(await resolveUsageReadModelForServer());
+      const result = await syncData.exportManualMergeBundleForServer(await resolveUsageReadModelForServer(), {
+        signal,
+      });
       signal.throwIfAborted();
       return result;
     },

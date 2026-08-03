@@ -94,6 +94,7 @@ export interface RevisionQueryExecutionRequest {
   readonly kind: RevisionQueryKind;
   readonly request: unknown;
   readonly revision: ReportRevision;
+  readonly signal?: AbortSignal;
 }
 
 interface RevisionQueryExecutionDiagnostics {
@@ -116,6 +117,7 @@ export interface RevisionQueryRunnerDependencies {
   readonly execute: (request: RevisionQueryExecutionRequest) => Promise<RevisionQueryExecutionResult>;
   readonly runEffect?: <Value, Failure>(
     effect: Effect.Effect<Value, Failure, WideEventResourceService | WideEventSink>,
+    options?: { readonly signal?: AbortSignal },
   ) => Promise<Value>;
 }
 
@@ -151,16 +153,20 @@ export const resolveRevisionQueryRunnerDependenciesForServer = async (
 ): Promise<RevisionQueryRunnerDependencies> => {
   const readModel = await resolveReadModel();
   return {
-    execute: async ({ kind, request, revision }) => {
+    execute: async ({ kind, request, revision, signal }) => {
       const startedAt = performance.now();
       try {
-        const value = await readModel.queryRevision({ kind, request, revision });
+        const value = await readModel.queryRevision(
+          { kind, request, revision },
+          signal === undefined ? {} : { signal },
+        );
         return {
           diagnostics: { sqliteReadMs: boundedPhaseDuration(performance.now() - startedAt) },
           ok: true,
           value,
         };
       } catch (error) {
+        signal?.throwIfAborted();
         return {
           diagnostics: { sqliteReadMs: boundedPhaseDuration(performance.now() - startedAt) },
           failure: isRevisionExpiry(error) ? 'revision-expired' : 'query-failed',
@@ -224,10 +230,17 @@ const runParsedRevisionQuery = <Result extends RevisionQueryResult>(
   kind: RevisionQueryKind,
   request: ParsedRevisionRequest<Result>,
   dependencies: RevisionQueryRunnerDependencies,
+  signal?: AbortSignal,
 ): Effect.Effect<SessionQueryServerResult<Result>, never> =>
   Effect.gen(function* () {
     const execution = yield* Effect.tryPromise({
-      try: () => dependencies.execute({ kind, request: request.request, revision: request.revision }),
+      try: (effectSignal) =>
+        dependencies.execute({
+          kind,
+          request: request.request,
+          revision: request.revision,
+          signal: signal ?? effectSignal,
+        }),
       catch: (error) => error,
     }).pipe(
       Effect.tap(({ diagnostics }) => annotateWideEventIfAvailable(executionAnnotations(diagnostics))),
@@ -364,52 +377,78 @@ export function runRevisionQueryForServer(
   kind: 'breakdown',
   input: FocusedBreakdownRequest,
   dependencies?: RevisionQueryRunnerDependencies,
+  options?: { readonly signal?: AbortSignal },
 ): Promise<SessionQueryServerResult<FocusedBreakdownResult>>;
 export function runRevisionQueryForServer(
   kind: 'campaign-children',
   input: SessionCampaignChildrenRequest,
   dependencies?: RevisionQueryRunnerDependencies,
+  options?: { readonly signal?: AbortSignal },
 ): Promise<SessionQueryServerResult<SessionCampaignChildrenResult>>;
 export function runRevisionQueryForServer(
   kind: 'neighbors',
   input: SessionNeighborRequest,
   dependencies?: RevisionQueryRunnerDependencies,
+  options?: { readonly signal?: AbortSignal },
 ): Promise<SessionQueryServerResult<SessionNeighborResult>>;
 export function runRevisionQueryForServer(
   kind: 'session-detail-anchor',
   input: SessionDetailRequest,
   dependencies?: RevisionQueryRunnerDependencies,
+  options?: { readonly signal?: AbortSignal },
 ): Promise<SessionQueryServerResult<SessionDetailAnchorResult>>;
 export function runRevisionQueryForServer(
   kind: 'overview',
   input: FocusedOverviewRequest,
   dependencies?: RevisionQueryRunnerDependencies,
+  options?: { readonly signal?: AbortSignal },
 ): Promise<SessionQueryServerResult<FocusedOverviewResult>>;
 export function runRevisionQueryForServer(
   kind: 'sessions',
   input: SessionQueryRequest,
   dependencies?: RevisionQueryRunnerDependencies,
+  options?: { readonly signal?: AbortSignal },
 ): Promise<SessionQueryServerResult<SessionPageResult>>;
 export function runRevisionQueryForServer(
   kind: 'support',
   input: FocusedRevisionRequest,
   dependencies?: RevisionQueryRunnerDependencies,
+  options?: { readonly signal?: AbortSignal },
 ): Promise<SessionQueryServerResult<FocusedSupportResult>>;
 export async function runRevisionQueryForServer(
   kind: RevisionQueryKind,
   input: unknown,
   dependencies?: RevisionQueryRunnerDependencies,
+  options: { readonly signal?: AbortSignal } = {},
 ): Promise<SessionQueryServerResult<RevisionQueryResult>> {
+  options.signal?.throwIfAborted();
   const activeDependencies = dependencies ?? (await resolveRevisionQueryRunnerDependenciesForServer());
   if (kind === 'sessions') {
     const request = parseRevisionRequest('sessions', input);
-    const query = runParsedRevisionQuery('sessions', request, activeDependencies);
+    const query = runParsedRevisionQuery('sessions', request, activeDependencies, options.signal);
     try {
-      return await (activeDependencies.runEffect ?? runWebReadEffect)(withSessionQueryBoundary(request, query));
+      const result = await (activeDependencies.runEffect ?? runWebReadEffect)(
+        withSessionQueryBoundary(request, query),
+        options.signal === undefined ? {} : { signal: options.signal },
+      );
+      options.signal?.throwIfAborted();
+      return result;
     } catch {
+      options.signal?.throwIfAborted();
       return queryFailedResult(request);
     }
   }
   const request = parseRevisionRequest(kind, input);
-  return await Effect.runPromise(runParsedRevisionQuery(kind, request, activeDependencies));
+  let result: SessionQueryServerResult<RevisionQueryResult>;
+  try {
+    result = await Effect.runPromise(
+      runParsedRevisionQuery(kind, request, activeDependencies, options.signal),
+      options.signal === undefined ? undefined : { signal: options.signal },
+    );
+  } catch (error) {
+    options.signal?.throwIfAborted();
+    throw error;
+  }
+  options.signal?.throwIfAborted();
+  return result;
 }

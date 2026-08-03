@@ -8,11 +8,11 @@ export interface ServedReportSessionAdapter<
   Prepared,
   Descriptor extends ServedRevisionDescriptor = ServedRevisionDescriptor,
 > {
-  acquire(): Promise<Descriptor>;
+  acquire(signal: AbortSignal): Promise<Descriptor>;
   commit(prepared: Prepared, descriptor: Descriptor, destination: Destination): void;
   destinationFingerprint(destination: Destination): string;
   isRevisionExpired(error: unknown): boolean;
-  load(destination: Destination, descriptor: Descriptor): Promise<Prepared>;
+  load(destination: Destination, descriptor: Descriptor, signal: AbortSignal): Promise<Prepared>;
 }
 
 export type ServedReportRefreshOutcome<Descriptor extends ServedRevisionDescriptor = ServedRevisionDescriptor> =
@@ -38,18 +38,24 @@ export const createServedReportSession = <
   adapter: ServedReportSessionAdapter<Destination, Prepared, Descriptor>,
 ): ServedReportSession<Destination, Descriptor> => {
   let requestId = 0;
+  let activeController: AbortController | undefined;
   let committed: { captureFingerprint: string; destinationFingerprint: string; revision: string } | undefined;
 
   const abort = (): void => {
     requestId += 1;
+    activeController?.abort();
+    activeController = undefined;
   };
 
   const refresh = async (destination: Destination): Promise<ServedReportRefreshOutcome<Descriptor>> => {
+    activeController?.abort();
+    const controller = new AbortController();
+    activeController = controller;
     const currentRequestId = ++requestId;
     const destinationFingerprint = adapter.destinationFingerprint(destination);
     for (let attempt = 0; attempt < 2; attempt += 1) {
       try {
-        const descriptor = await adapter.acquire();
+        const descriptor = await adapter.acquire(controller.signal);
         if (currentRequestId !== requestId) {
           return { status: 'superseded' };
         }
@@ -60,7 +66,7 @@ export const createServedReportSession = <
         ) {
           return { descriptor, status: 'no-change' };
         }
-        const prepared = await adapter.load(destination, descriptor);
+        const prepared = await adapter.load(destination, descriptor, controller.signal);
         if (currentRequestId !== requestId) {
           return { status: 'superseded' };
         }

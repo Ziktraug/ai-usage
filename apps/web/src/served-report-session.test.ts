@@ -18,16 +18,25 @@ describe('served report session', () => {
   test('prevents an older destination from committing after a newer request', async () => {
     const oldLoad = deferred<string>();
     const commits: string[] = [];
+    let oldSignal: AbortSignal | undefined;
     const session = createServedReportSession<string, string>({
       acquire: () => Promise.resolve(descriptor('r1')),
       commit: (prepared) => commits.push(prepared),
       destinationFingerprint: (destination: string) => destination,
       isRevisionExpired: () => false,
-      load: (destination: string) => (destination === 'old' ? oldLoad.promise : Promise.resolve(destination)),
+      load: (destination: string, _descriptor, signal) => {
+        if (destination === 'old') {
+          oldSignal = signal;
+          return oldLoad.promise;
+        }
+        return Promise.resolve(destination);
+      },
     });
 
     const oldResult = session.refresh('old');
+    await Promise.resolve();
     expect((await session.refresh('new')).status).toBe('committed');
+    expect(oldSignal?.aborted).toBe(true);
     oldLoad.resolve('old');
     expect((await oldResult).status).toBe('superseded');
     expect(commits).toEqual(['new']);
@@ -85,6 +94,7 @@ describe('served report session', () => {
   test('abort invalidates pending work without a late commit', async () => {
     const pending = deferred<string>();
     let commits = 0;
+    let loadSignal: AbortSignal | undefined;
     const session = createServedReportSession<string, string>({
       acquire: () => Promise.resolve(descriptor('r1')),
       commit: () => {
@@ -92,10 +102,15 @@ describe('served report session', () => {
       },
       destinationFingerprint: (destination: string) => destination,
       isRevisionExpired: () => false,
-      load: () => pending.promise,
+      load: (_destination, _descriptor, signal) => {
+        loadSignal = signal;
+        return pending.promise;
+      },
     });
     const result = session.refresh('sessions');
+    await Promise.resolve();
     session.abort();
+    expect(loadSignal?.aborted).toBe(true);
     pending.resolve('prepared');
     expect((await result).status).toBe('superseded');
     expect(commits).toBe(0);
