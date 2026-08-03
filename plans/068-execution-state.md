@@ -12,9 +12,9 @@ authority for feature, operation, design, source-file, and test-title coverage.
 - Planning PR: `#26`, squash-merged as
   `2183270ebfbb886fafa7e6268893122db9b364c0`
 - `BASE_SHA`: `2183270ebfbb886fafa7e6268893122db9b364c0`
-- Current integration checkpoint: `5c57503d315311cf839dfe9dc7f709b902bb59b3`
-- Last reviewed green checkpoint: `5c57503d315311cf839dfe9dc7f709b902bb59b3`
-- Active V1/V2/V3 dispatch base: `bae1af25efa85011db74d7437e4484aaf1884dce`
+- Current integration checkpoint: `1c0756086df55e328354228f2a733c8bc9756106`
+- Last reviewed green checkpoint: `1c0756086df55e328354228f2a733c8bc9756106`
+- Active design bases: D1 `ccd1d29`, D2 `32df0d7`
 - Implementation PR: not opened
 - Exclusive process-test token: free after the complete F0 tool-lifecycle gate
 
@@ -120,18 +120,18 @@ Statuses are `BLOCKED`, `READY`, `IMPLEMENTING`, `REVIEW`, `REWORK`,
 | B2 | B0 | INTEGRATED | `416ed3befda96e101763f129ddd32151a12f6ed2`, `f9fa43e3abff4ec14107cdd16272597e9bc8dc46` | `/root/b2_re_review` / ACCEPT | `28d2f42` |
 | F0 | B1, B2 | INTEGRATED | `dd1469a`, `ee9a24e` | `/root/f0_final_review` / ACCEPT; Vite seam: `/root/b2_re_review` / ACCEPT | `ee9a24e` |
 | V0 | F0 | INTEGRATED | `e95616f`, `848ad36`, `266d88d`, evidence `e76cc23`, `9b38bb2` | `/root/v_vertical_audit` / ACCEPT | `9b38bb260383d2743b0da1408c33d36b99f94d61` |
-| V1 | V0 | REVIEW | `a9ce980`, `8cccff8` | `/root/d0_impl` re-reviewing | - |
+| V1 | V0 | INTEGRATED | `a9ce980`, `8cccff8`, `46d2b58` | `/root/v_vertical_audit` / ACCEPT | `1c0756086df55e328354228f2a733c8bc9756106` |
 | V2 | V0 | INTEGRATED | `bfae6c6`, `ab1ae5f`, `0db6f75`, `7c790c1`, `19c4c3b` | `/root/v_vertical_audit` / REWORK; `/root/v0_impl` / ACCEPT | `5c57503d315311cf839dfe9dc7f709b902bb59b3` |
-| V3 | V0 | REWORK | `d465e65` | `/root/v0_impl` / REWORK | - |
-| V4 | V0 | REVIEW | `84624be`, `1baa94b`, `846b81e`, `108292a` | `/root/v0_impl` reviewing | - |
+| V3 | V0 | INTEGRATED | `d465e65`, `9545bb0`, `4e87ebe` | `/root/v0_impl` / ACCEPT | `f7b3f45` |
+| V4 | V0 | REWORK | `84624be`, `1baa94b`, `846b81e`, `108292a` | `/root/v0_impl` / REWORK | - |
 | V5 | V1, V2, V3, V4 | BLOCKED | - | - | - |
 | Q0 | V5 | BLOCKED | - | - | - |
 | Q1 | Q0 | BLOCKED | - | - | - |
 | Q2 | Q0 | BLOCKED | - | - | - |
 | Q3 | Q1, Q2 | BLOCKED | - | - | - |
 | D0 | F0 | INTEGRATED | `d476690`, `65d48b4`, `3cea781`, `f84ad2c`, evidence `bd948a7` | `/root/v_vertical_audit`, `/root/v0_impl` / ACCEPT | `bf94c6521bfa6528004096241a658f28db4a44ee` |
-| D1 | D0 | READY | - | - | - |
-| D2 | D0 | READY | - | - | - |
+| D1 | D0 | IMPLEMENTING | - | - | - |
+| D2 | D0 | IMPLEMENTING | - | - | - |
 | D3 | D0 | READY | - | - | - |
 | D4 | D1, D2, D3 | BLOCKED | - | - | - |
 | R0 | F0, V5, Q3, D4 | BLOCKED | - | - | - |
