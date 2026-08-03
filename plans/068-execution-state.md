@@ -12,7 +12,7 @@ authority for feature, operation, design, source-file, and test-title coverage.
 - Planning PR: `#26`, squash-merged as
   `2183270ebfbb886fafa7e6268893122db9b364c0`
 - `BASE_SHA`: `2183270ebfbb886fafa7e6268893122db9b364c0`
-- Current integration checkpoint: `0ecbd21`
+- Current integration checkpoint: `c8fb80e`
 - Last reviewed green checkpoint: `656ef4e`
 - Active design bases: D1 `4862293`, D2 `fce5c1a`, D3 `e2f13cd`
 - Implementation PR: not opened
@@ -128,7 +128,7 @@ Statuses are `BLOCKED`, `READY`, `IMPLEMENTING`, `REVIEW`, `REWORK`,
 | Q0 | V5 | INTEGRATED | `31c85a0`, correction `2f55410` | `/root/d123_parity_review`, `/root/v5_parity_spec_review` / ACCEPT | `2f55410ec9296dd2f66962d6ee3e4d2340e554b2` |
 | Q1 | Q0 | INTEGRATED | `97e34b4`, correction `9366ace`, correction `656ef4e` | `/root/v5_parity_spec_review`, `/root/q2_spec_review` / ACCEPT | `656ef4e` |
 | Q2 | Q0 | INTEGRATED | `3d0490a` | `/root/v34_parity`, `/root/q2_spec_review` / ACCEPT | `3d0490a8052a73da024ea523f3c0012d0e2aca9f` |
-| Q3 | Q1, Q2 | REVIEW | `614174f`, correction `0ecbd21` | `/root/d123_parity_review`, `/root/q2_spec_review` / REWORK; correction re-review pending | candidate checkpoint `0ecbd21` |
+| Q3 | Q1, Q2 | REVIEW | `614174f`, corrections `0ecbd21`, `c8fb80e` | `/root/q2_spec_review` / ACCEPT; `/root/d123_parity_review` / REWORK; second correction re-review pending | candidate checkpoint `c8fb80e` |
 | D0 | F0 | INTEGRATED | `d476690`, `65d48b4`, `3cea781`, `f84ad2c`, evidence `bd948a7`, `a27764b`, correction `7e0c6ef` | `/root/v_vertical_audit`, `/root/v0_impl`, `/root/d123_parity_review`, `/root/v5_parity_spec_review` / ACCEPT | `4ddf145` |
 | D1 | D0 | INTEGRATED | `4862293`, `3b22c28`, evidence `b31c3af` | `/root/d123_parity_review` / ACCEPT | `b31c3af` |
 | D2 | D0 | INTEGRATED | `fce5c1a`, `9935846`, evidence `b31c3af` | `/root/d123_parity_review` / ACCEPT | `b31c3af` |
@@ -570,10 +570,25 @@ inventories key, and refreshes that active key. A real Solid Query observer
 regression proves the refresh invokes the query again. The matrix now marks
 Skills and Sync `ssr-awaited`, and the bulk-cache test proves all 1,000 entries
 expire automatically under a shortened production-equivalent finite policy.
-The correction gates passed 43 focused tests with 293 assertions, Web TypeScript
-with Svelte 0/0, Web production build, the complete Web suite at 717 tests and
-3,277 assertions, repository check/lint/typecheck/build, Ultracite, parity and
-diff cleanliness. Independent correction re-review is pending.
+The first correction gates passed 43 focused tests with 293 assertions, Web
+TypeScript with Svelte 0/0, Web production build, the complete Web suite at 717
+tests and 3,277 assertions, repository check/lint/typecheck/build, Ultracite,
+parity and diff cleanliness. The spec/parity correction review ACCEPTed.
+
+The standards correction review returned a second focused REWORK. It proved
+that a configured-to-unconfigured Skills transition disabled the now-canonical
+inventories query while Solid Query retained its previous successful data under
+that same key; the adapter projected the stale inventory because it did not also
+test the business enablement gate. It also demonstrated that retained-data SWR
+errors were hidden when adapters prioritized data over the simultaneous Query
+error. Correction `c8fb80e` makes the projection return no inventory whenever
+configuration is unavailable, retains successful data during an enabled SWR
+refresh failure, and exposes the error independently in the existing Skills
+error surfaces. Regression tests cover both transitions. Its gates passed 45
+focused tests with 298 assertions, the complete Web suite at 719 tests and 3,282
+assertions, Web TypeScript with Svelte 0/0, Svelte build, boundaries, repository
+lint, Ultracite, parity and diff cleanliness. Both second correction re-reviews
+are pending.
 
 Three Q3 incidents are retained. The first complete repository test run hit the
 known D3 `ArrowRight` focus timeout; its one allowed exact rerun passed 10/10,
@@ -625,10 +640,11 @@ edge, and the exact complete rerun passed 717/717 without exclusions.
   corrections above preserve the production CSRF and request-isolation
   contracts; no test, assertion, timeout, cache bound or security policy was
   weakened.
-- Q3 correction recovery: initial candidate `614174f` and focused correction
-  `0ecbd21` are committed. Both first reviews and the framework-version/build-
-  graph failures are recorded above; R0 remains blocked until both correction
-  re-reviews ACCEPT. P1 retains the explicit awaited-prefetch/hydration seam.
+- Q3 correction recovery: initial candidate `614174f` and focused corrections
+  `0ecbd21`, `c8fb80e` are committed. The reviews, framework-version/build-graph
+  failures and retained-cache lifecycle regression are recorded above; R0
+  remains blocked until both correction re-reviews ACCEPT. P1 retains the
+  explicit awaited-prefetch/hydration seam.
 - Recovery point: `656ef4e` is the latest independently reviewed green
-  checkpoint. Candidate `0ecbd21` is fully gated and recoverable while Q3
+  checkpoint. Candidate `c8fb80e` is fully gated and recoverable while Q3
   independent review runs; R0 remains blocked until both axes ACCEPT.
