@@ -16,6 +16,7 @@ const environmentKeys = [
   'AI_USAGE_RPC_LOOPBACK_CACHE_DIR',
   'AI_USAGE_RPC_LOOPBACK_FIXTURE',
   'AI_USAGE_RPC_LOOPBACK_OUTPUT_DIR',
+  'AI_USAGE_RPC_LOOPBACK_WEB_ROOT',
   'VITE_AI_USAGE_E2E',
 ] as const;
 
@@ -278,6 +279,7 @@ try {
   process.env.AI_USAGE_RPC_LOOPBACK_CACHE_DIR = resolve(temporaryDirectory, 'vite-cache');
   process.env.AI_USAGE_RPC_LOOPBACK_FIXTURE = '1';
   process.env.AI_USAGE_RPC_LOOPBACK_OUTPUT_DIR = resolve(temporaryDirectory, 'nitro-output');
+  process.env.AI_USAGE_RPC_LOOPBACK_WEB_ROOT = webDirectory;
   process.env.VITE_AI_USAGE_E2E = '1';
 
   server = await bounded(

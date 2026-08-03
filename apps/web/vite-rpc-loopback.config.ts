@@ -2,7 +2,7 @@ import { createNitro } from 'nitro/builder';
 import { nitro } from 'nitro/vite';
 import { defineConfig, type Plugin } from 'vite';
 
-const requiredTemporaryPath = (name: string): string => {
+const requiredFixturePath = (name: string): string => {
   const value = process.env[name];
   if (!value) {
     throw new Error(`The V5 loopback fixture requires ${name}.`);
@@ -11,7 +11,7 @@ const requiredTemporaryPath = (name: string): string => {
 };
 
 const nitroInstance = await createNitro({
-  buildDir: requiredTemporaryPath('AI_USAGE_RPC_LOOPBACK_BUILD_DIR'),
+  buildDir: requiredFixturePath('AI_USAGE_RPC_LOOPBACK_BUILD_DIR'),
   builder: 'vite',
   dev: true,
   handlers: [
@@ -21,10 +21,10 @@ const nitroInstance = await createNitro({
     },
   ],
   output: {
-    dir: requiredTemporaryPath('AI_USAGE_RPC_LOOPBACK_OUTPUT_DIR'),
+    dir: requiredFixturePath('AI_USAGE_RPC_LOOPBACK_OUTPUT_DIR'),
   },
   preset: 'bun',
-  rootDir: import.meta.dir,
+  rootDir: requiredFixturePath('AI_USAGE_RPC_LOOPBACK_WEB_ROOT'),
 });
 let nitroClosePromise: Promise<void> | undefined;
 const closeOwnedNitro = (): Promise<void> => {
@@ -39,7 +39,7 @@ const nitroTeardownPlugin: Plugin = {
 };
 
 export default defineConfig({
-  cacheDir: requiredTemporaryPath('AI_USAGE_RPC_LOOPBACK_CACHE_DIR'),
+  cacheDir: requiredFixturePath('AI_USAGE_RPC_LOOPBACK_CACHE_DIR'),
   logLevel: 'silent',
   plugins: [nitro({ _nitro: nitroInstance }), nitroTeardownPlugin],
   server: {
