@@ -32,6 +32,7 @@ import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show }
 import { isServer } from 'solid-js/web';
 import { enforceReportOnlyDemoNavigation } from '../demo-route-guard';
 import { DiscardConfirmationDialog } from '../discard-confirmation-dialog';
+import { webQueryPolicies } from '../lib/query/policies';
 import type {
   getKnownSkillProjectPaths,
   getSkillManagementSnapshot,
@@ -222,6 +223,7 @@ function SkillsClientRoute() {
   const location = useLocation();
   let refreshButtonElement: HTMLButtonElement | undefined;
   const initialQuery = createQuery(() => ({
+    ...webQueryPolicies.finiteSwr,
     enabled: !isServer,
     queryFn: loadSkillsInitialData,
     queryKey: webQueryKeys.skillsInitial,

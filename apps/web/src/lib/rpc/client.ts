@@ -34,8 +34,10 @@ export const createWebRpcClient = ({ fetch, headers, url }: WebRpcClientOptions)
   return createORPCClient<WebContractClient>(link);
 };
 
+export const browserWebRpcUrl = (locationUrl: string | URL): URL => new URL('/rpc', locationUrl);
+
 export const createBrowserWebRpcClient = (requestOwner?: string): WebContractClient =>
   createWebRpcClient({
     ...(requestOwner === undefined ? {} : { headers: { 'x-ai-usage-request-owner': requestOwner } }),
-    url: '/rpc',
+    url: browserWebRpcUrl(globalThis.location.href),
   });

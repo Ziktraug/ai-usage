@@ -2,12 +2,12 @@ import type { SourceControlCommand } from '@ai-usage/report-core/source-control'
 import { useQueryClient } from '@tanstack/solid-query';
 import { createContext, createEffect, createSignal, type JSX, onCleanup, onMount, useContext } from 'solid-js';
 import { getBrowserRuntimeMode } from './browser-runtime-mode';
+import { currentReportAliasKeys } from './lib/query/publication';
 import {
   createSourceControlClientForMode,
   type SourceControlClient,
   type SourceControlClientState,
 } from './source-control-client';
-import { webQueryKeys } from './web-query-keys';
 
 interface SourceControlContextValue {
   readonly execute: (command: SourceControlCommand) => Promise<boolean>;
@@ -30,8 +30,9 @@ export const SourceControlProvider = (props: { children: JSX.Element; client?: S
       return;
     }
     observedPublication = publication.revision;
-    queryClient.invalidateQueries({ queryKey: webQueryKeys.providerQuotaHistory() }).catch(() => undefined);
-    queryClient.invalidateQueries({ queryKey: webQueryKeys.skills }).catch(() => undefined);
+    for (const queryKey of currentReportAliasKeys()) {
+      queryClient.invalidateQueries({ exact: true, queryKey }).catch(() => undefined);
+    }
   });
   onCleanup(() => {
     unsubscribe();

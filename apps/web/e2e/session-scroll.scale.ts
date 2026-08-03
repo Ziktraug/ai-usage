@@ -111,10 +111,12 @@ const captureSessionPages = (page: Page): { finish: () => Promise<CapturedSessio
 
 const disableCollectionSource = async (
   request: APIRequestContext,
+  requestOrigin: string,
   sourceId: (typeof collectionSourceDefinitions)[number]['id'],
 ): Promise<SourceControlView> => {
   const response = await request.post(SOURCE_CONTROL_COMMAND_PATH, {
     data: { command: 'set-enabled', enabled: false, sourceId },
+    headers: { origin: requestOrigin },
   });
   const result = parseSourceControlCommandResponse(await response.json());
   if (!(response.ok() && result.ok)) {
@@ -123,9 +125,9 @@ const disableCollectionSource = async (
   return result.snapshot;
 };
 
-const freezeCollectionSources = async (request: APIRequestContext): Promise<string> => {
+const freezeCollectionSources = async (request: APIRequestContext, requestOrigin: string): Promise<string> => {
   for (const { id } of collectionSourceDefinitions) {
-    await disableCollectionSource(request, id);
+    await disableCollectionSource(request, requestOrigin, id);
   }
 
   const probeSource = collectionSourceDefinitions[0];
@@ -135,7 +137,7 @@ const freezeCollectionSources = async (request: APIRequestContext): Promise<stri
   await expect
     .poll(
       async () => {
-        const snapshot = await disableCollectionSource(request, probeSource.id);
+        const snapshot = await disableCollectionSource(request, requestOrigin, probeSource.id);
         const { publication } = snapshot;
         return {
           allSourcesDormant:
@@ -161,7 +163,7 @@ const freezeCollectionSources = async (request: APIRequestContext): Promise<stri
       runningCount: 0,
     });
 
-  const settledSnapshot = await disableCollectionSource(request, probeSource.id);
+  const settledSnapshot = await disableCollectionSource(request, requestOrigin, probeSource.id);
   const revision = settledSnapshot.publication.revision;
   if (!revision) {
     throw new Error('The settled scale fixture must expose its publication revision');
@@ -300,7 +302,7 @@ const inspectAllSessions = async (
   const report = page.locator('main[data-hydrated="true"]');
   await expect(report).toBeVisible();
   await expect(page.getByText('5,000 / 5,000 sessions', { exact: true })).toBeVisible();
-  const frozenReportRevision = await freezeCollectionSources(request);
+  const frozenReportRevision = await freezeCollectionSources(request, new URL(page.url()).origin);
 
   // Close the previous document before strict response capture so its
   // navigation-cancelled requests cannot enter the new report's wire proof.

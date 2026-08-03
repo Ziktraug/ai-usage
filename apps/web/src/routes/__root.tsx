@@ -3,6 +3,7 @@ import { createRootRoute, HeadContent, Outlet, Scripts } from '@tanstack/solid-r
 import type { JSX } from 'solid-js';
 import { HydrationScript } from 'solid-js/web';
 import { AppNavigation, appNavigationContent } from '../app-navigation';
+import { webQueryClientDefaultOptions } from '../lib/query/policies';
 import { SourceControlProvider } from '../source-control-context';
 import '../index.css';
 
@@ -41,15 +42,7 @@ export const Route = createRootRoute({
 
 function RootRoute() {
   const queryClient = new QueryClient({
-    defaultOptions: {
-      queries: {
-        gcTime: 10 * 60 * 1000,
-        refetchOnReconnect: false,
-        refetchOnWindowFocus: false,
-        retry: false,
-        staleTime: (query) => (query.state.data === null ? 0 : Number.POSITIVE_INFINITY),
-      },
-    },
+    defaultOptions: webQueryClientDefaultOptions,
   });
 
   return (

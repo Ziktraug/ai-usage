@@ -19,6 +19,18 @@ export interface WebQueryPolicy {
   readonly staleTime: number;
 }
 
+export const webQueryClientDefaultOptions = Object.freeze({
+  mutations: Object.freeze({
+    retry: false,
+  }),
+  queries: Object.freeze({
+    gcTime: DEFAULT_BOUNDED_GC_TIME_MS,
+    refetchOnReconnect: false,
+    refetchOnWindowFocus: false,
+    retry: false,
+  }),
+});
+
 const policy = (options: WebQueryPolicy): WebQueryPolicy => Object.freeze(options);
 
 export const webQueryPolicies = {

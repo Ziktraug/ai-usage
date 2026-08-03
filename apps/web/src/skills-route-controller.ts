@@ -2,6 +2,7 @@ import type { SkillManagementSnapshot } from '@ai-usage/skills';
 import { createMutation, createQuery, useQueryClient } from '@tanstack/solid-query';
 import { type Accessor, createEffect, createMemo, createSignal } from 'solid-js';
 import { isServer } from 'solid-js/web';
+import { webQueryPolicies } from './lib/query/policies';
 import {
   type KnownProjectPathsResult,
   type ProjectInventoriesResult,
@@ -83,6 +84,7 @@ export const createSkillsRouteController = (routeData: Accessor<SkillsRouteIniti
     initialResult: snapshotResultFrom(initialData.skills),
     refetchInventories: async () => {
       await queryClient.refetchQueries({
+        exact: true,
         queryKey: webQueryKeys.skillInventories,
         type: 'active',
       });
@@ -125,6 +127,7 @@ export const createSkillsRouteController = (routeData: Accessor<SkillsRouteIniti
     return JSON.stringify([current.config.sourceRepoPath ?? '', ...(current.config.projectPaths ?? [])]);
   });
   const projectInventoriesQuery = createQuery(() => ({
+    ...webQueryPolicies.finiteSwr,
     enabled: !isServer && projectInventoriesKey() !== undefined,
     queryFn: loadSkillInventories,
     queryKey: [...webQueryKeys.skillInventories, projectInventoriesKey()] as const,

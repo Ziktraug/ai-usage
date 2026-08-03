@@ -1,7 +1,8 @@
 <script lang="ts">
-  import type { Snippet } from 'svelte';
+  import WebQueryProvider from '$lib/query/provider.svelte';
+  import type { LayoutProps } from './$types';
 
-  let { children }: { children: Snippet } = $props();
+  let { children, data }: LayoutProps = $props();
 </script>
 
-{@render children()}
+<WebQueryProvider hydrationState={data.queryState}> {@render children()} </WebQueryProvider>

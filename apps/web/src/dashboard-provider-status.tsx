@@ -1,6 +1,8 @@
 import type { ProviderQuotaHistoryResult } from '@ai-usage/report-core/provider-quota';
 import { createQuery } from '@tanstack/solid-query';
 import { createMemo, createSignal, lazy, onMount, Show, Suspense } from 'solid-js';
+import { isServer } from 'solid-js/web';
+import { webQueryPolicies } from './lib/query/policies';
 import { createServedProviderQuotaSource, type ProviderQuotaSource } from './provider-quota-client';
 import { createE2EProviderQuotaHistoryFixture } from './provider-quota-e2e-fixture';
 import type { ProviderQuotaHistoryRange } from './provider-quota-history-model';
@@ -38,12 +40,13 @@ interface ProviderQuotaHistoryDialogProps {
 const ProviderQuotaHistoryDialog = (props: ProviderQuotaHistoryDialogProps) => {
   const [range, setRange] = createSignal<ProviderQuotaHistoryRange>('24h');
   const query = createQuery(() => ({
-    enabled: props.source !== undefined,
-    queryFn: async () => {
+    ...webQueryPolicies.finiteSwr,
+    enabled: !isServer && props.source !== undefined,
+    queryFn: async ({ signal }) => {
       if (!props.source) {
         throw new Error('Quota history is unavailable.');
       }
-      return await loadProviderQuotaHistory(props.source, range());
+      return await loadProviderQuotaHistory(props.source, range(), signal);
     },
     queryKey: webQueryKeys.providerQuotaHistory(range()),
   }));

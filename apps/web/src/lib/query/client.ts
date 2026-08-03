@@ -5,7 +5,7 @@ import {
   type QueryClient,
   QueryClient as TanStackQueryClient,
 } from '@tanstack/svelte-query';
-import { DEFAULT_BOUNDED_GC_TIME_MS } from './policies';
+import { webQueryClientDefaultOptions } from './policies';
 
 export interface WebQueryHydrationState {
   readonly dehydratedState: DehydratedState;
@@ -13,17 +13,7 @@ export interface WebQueryHydrationState {
 
 export const createWebQueryClient = (): QueryClient =>
   new TanStackQueryClient({
-    defaultOptions: {
-      mutations: {
-        retry: false,
-      },
-      queries: {
-        gcTime: DEFAULT_BOUNDED_GC_TIME_MS,
-        refetchOnReconnect: false,
-        refetchOnWindowFocus: false,
-        retry: false,
-      },
-    },
+    defaultOptions: webQueryClientDefaultOptions,
   });
 
 export const dehydrateWebQueryClient = (client: QueryClient): WebQueryHydrationState => ({

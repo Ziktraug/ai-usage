@@ -13,11 +13,10 @@ import type {
 } from '@ai-usage/web-contract/report';
 import { type QueryClient, queryOptions } from '@tanstack/svelte-query';
 import type { ReportClient } from '../../rpc/report-client';
-import { currentAliasKey, immutableRevisionKey } from '../keys';
+import { immutableRevisionKey } from '../keys';
 import { webQueryPolicies } from '../policies';
+import { currentReportAliasKeys } from '../publication';
 
-const reportManifestFamily = 'report-manifest';
-const reportBootstrapFamily = 'report-bootstrap';
 const reportExactFamily = 'report';
 
 export interface ReportQueryExecution {
@@ -33,8 +32,8 @@ export type ReportQueryClient = Pick<
   | 'getReportRevisionManifest'
 >;
 
-export const reportManifestKey = () => currentAliasKey(reportManifestFamily);
-export const reportBootstrapKey = () => currentAliasKey(reportBootstrapFamily);
+export const reportManifestKey = () => currentReportAliasKeys()[0];
+export const reportBootstrapKey = () => currentReportAliasKeys()[1];
 
 export const reportSupportKey = (request: FocusedRevisionRequest) =>
   immutableRevisionKey(reportExactFamily, request.revision, focusedRevisionFingerprint('support', request), 'support');
@@ -104,8 +103,9 @@ export const reportBreakdownQueryOptions = (
 };
 
 export const invalidateCurrentReportAliases = async (client: QueryClient): Promise<void> => {
-  await Promise.all([
-    client.invalidateQueries({ exact: true, queryKey: reportManifestKey() }),
-    client.invalidateQueries({ exact: true, queryKey: reportBootstrapKey() }),
-  ]);
+  await Promise.all(
+    currentReportAliasKeys().map(async (queryKey) => {
+      await client.invalidateQueries({ exact: true, queryKey });
+    }),
+  );
 };
