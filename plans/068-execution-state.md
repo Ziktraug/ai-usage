@@ -12,8 +12,8 @@ authority for feature, operation, design, source-file, and test-title coverage.
 - Planning PR: `#26`, squash-merged as
   `2183270ebfbb886fafa7e6268893122db9b364c0`
 - `BASE_SHA`: `2183270ebfbb886fafa7e6268893122db9b364c0`
-- Current integration checkpoint: `2f55410ec9296dd2f66962d6ee3e4d2340e554b2`
-- Last reviewed green checkpoint: `2f55410ec9296dd2f66962d6ee3e4d2340e554b2`
+- Current integration checkpoint: `656ef4e`
+- Last reviewed green checkpoint: `656ef4e`
 - Active design bases: D1 `4862293`, D2 `fce5c1a`, D3 `e2f13cd`
 - Implementation PR: not opened
 - Exclusive process-test token: free after the V5 Nitro loopback and D4 browser gates
@@ -126,9 +126,9 @@ Statuses are `BLOCKED`, `READY`, `IMPLEMENTING`, `REVIEW`, `REWORK`,
 | V4 | V0 | INTEGRATED | `bcff1ea`, `34e76eb`, `632ce8a`, `dcb8ecb`, `b59f264`, evidence `71dc320`, correction `4ddf145` | `/root/v0_impl`, `/root/d123_parity_review`, `/root/v5_parity_spec_review` / ACCEPT | `4ddf145` |
 | V5 | V1, V2, V3, V4 | INTEGRATED | `781901a`, `f6bde5a`, `b93b70c`, `9804135`, `3dcf2bb`, `0d4f20a`, `66bc4d0`, `8b6164f`, `b0a6518`, `0a21f62`, `1529101`, `bed49d9`, `067b4bb`, `c87054f`, `04bc076`, convergence `9799299`, `7e0c6ef`, `9b17da8`, `4ddf145` | `/root/v5_bounds_review`, `/root/v5_transport_review`, `/root/v5_abort_review`, `/root/v5_loopback_review`, `/root/d123_parity_review`, `/root/v5_parity_spec_review` / ACCEPT | `4ddf145e4d29f92e059fb8deec3513e8af076d5b` |
 | Q0 | V5 | INTEGRATED | `31c85a0`, correction `2f55410` | `/root/d123_parity_review`, `/root/v5_parity_spec_review` / ACCEPT | `2f55410ec9296dd2f66962d6ee3e4d2340e554b2` |
-| Q1 | Q0 | READY | - | - | - |
-| Q2 | Q0 | READY | - | - | - |
-| Q3 | Q1, Q2 | BLOCKED | - | - | - |
+| Q1 | Q0 | INTEGRATED | `97e34b4`, correction `9366ace`, correction `656ef4e` | `/root/v5_parity_spec_review`, `/root/q2_spec_review` / ACCEPT | `656ef4e` |
+| Q2 | Q0 | INTEGRATED | `3d0490a` | `/root/v34_parity`, `/root/q2_spec_review` / ACCEPT | `3d0490a8052a73da024ea523f3c0012d0e2aca9f` |
+| Q3 | Q1, Q2 | READY | - | - | - |
 | D0 | F0 | INTEGRATED | `d476690`, `65d48b4`, `3cea781`, `f84ad2c`, evidence `bd948a7`, `a27764b`, correction `7e0c6ef` | `/root/v_vertical_audit`, `/root/v0_impl`, `/root/d123_parity_review`, `/root/v5_parity_spec_review` / ACCEPT | `4ddf145` |
 | D1 | D0 | INTEGRATED | `4862293`, `3b22c28`, evidence `b31c3af` | `/root/d123_parity_review` / ACCEPT | `b31c3af` |
 | D2 | D0 | INTEGRATED | `fce5c1a`, `9935846`, evidence `b31c3af` | `/root/d123_parity_review` / ACCEPT | `b31c3af` |
@@ -490,6 +490,39 @@ mutate beta. Both re-reviews returned ACCEPT. Post-cherry gates passed 7 tests
 and 71 assertions, Web TypeScript with Svelte 0/0, the shadow production build,
 architecture boundaries, parity, Ultracite and diff cleanliness.
 
+Q2 is integrated at `3d0490a`. Skills snapshot/path/inventory/markdown and Sync
+fleet options use explicit browser ownership, named finite policies, bounded GC
+and exact Query cancellation. Sanitized Skills error unions become typed Query
+errors so a failed SWR refresh retains prior cache data; dirty editor buffers
+never enter keys or cache. Save and invalidation helpers touch only the exact
+managed document, selected Skills leaves or compatible Sync generation. Both
+independent reviews ACCEPTed; post-cherry gates passed 8 domain tests, 15 Query
+tests, Web TypeScript with Svelte 0/0, the shadow build, boundaries, parity and
+Ultracite. Q3 retains the documented coordinator delta to apply these explicit
+policies to the two legacy Solid Skills query callsites before removing the
+root fallback.
+
+Q1 is integrated through `97e34b4`, focused identity correction `9366ace`
+and canonical-request correction `656ef4e`. Report, Session and Quota
+factories now derive every exact key dimension from validated requests, capture
+immutable canonical copies for deferred RPCs, forward exact abort signals and
+use only named finite policies. The first standards review found that
+caller-supplied identities could diverge from request payloads; after that
+correction, the spec re-review found mutable Report request closures could
+still diverge from their already-built keys. The second focused correction
+parses once and shares the same deep copy between key and RPC. This exceeded
+the original two-attempt local STOP threshold for one invariant, but the user's
+relaxed execution policy authorized continuing while preserving the evidence.
+Both final independent reviews returned ACCEPT. The first correction's
+typecheck exposed strict optional/literal fixtures, and the second exposed
+TanStack phantom-key readonly assertions; assertion-only fixture corrections
+made both complete gates green without casts or weakened behavior. A read-only
+`git status` probe in the packet worktree also stalled and was terminated;
+the coordinator verified all commits from the integration checkout. Post-
+cherry gates passed 15 Q1 tests with 121 assertions, all 30 Query tests with 235
+assertions, Web TypeScript with Svelte 0/0, the shadow build, repository lint,
+parity, Ultracite and diff cleanliness.
+
 ## Deviations, STOPs, and recovery
 
 - Reviewed deviations: the two Vite/Bun loopback proof substitutions above are
@@ -511,6 +544,10 @@ architecture boundaries, parity, Ultracite and diff cleanliness.
 - Resolved B2 correction: exact SvelteKit selected-adapter lifecycle coverage is
   independently accepted and integrated at `28d2f42`; adapter-node failure
   spikes remain recoverable evidence until final convergence.
-- Recovery point: `2f55410ec9296dd2f66962d6ee3e4d2340e554b2` is the latest
-  independently reviewed green checkpoint. V1-V5, Q0 and D0-D4 are integrated;
-  the complete transport/design parity and query-core post-cherry gates passed.
+- Resolved Q1 local STOP: exact request/key identity required two focused
+  corrections after the implementation commit. The immutable canonical-copy
+  result is independently accepted and integrated; no dependent work began
+  from either rejected checkpoint.
+- Recovery point: `656ef4e` is the latest independently reviewed green
+  checkpoint. V1-V5, Q0-Q2 and D0-D4 are integrated; all Q1 post-cherry gates
+  passed and Q3 is ready.
