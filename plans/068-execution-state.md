@@ -138,9 +138,9 @@ Statuses are `BLOCKED`, `READY`, `IMPLEMENTING`, `REVIEW`, `REWORK`,
 | R1 | R0 | INTEGRATED | `40116b5`, `121d78b`, corrections `95b67d6`, `7c85cf1`, evidence/checker `c5cc7ea`, `1befaef` | `/root/d123_parity_review`, `/root/q2_spec_review`, `/root/v34_parity` / ACCEPT | `1befaefd71ef5ffe59866021f216104b3f83f9ef` |
 | P1 | R1, V1, V2, Q1, D4 | INTEGRATED | `a19914b`, `874cb1b`, `2422c2c`, evidence `02782f8`, activation correction `5bc8055` | `/root/v34_parity`, `/root/d123_parity_review` / ACCEPT | `f3610aa` |
 | P2 | P1 | IMPLEMENTING | - | `/root/v34_parity` | - |
-| P3 | P1, V2, Q1, D4 | IMPLEMENTING | - | `/root/d123_parity_review` | - |
+| P3 | P1, V2, Q1, D4 | REWORK | `1e7fb76`, evidence `38bbbcc` | `/root/q2_spec_review` / REWORK | - |
 | P4 | P3 | BLOCKED | - | - | - |
-| P5 | R1, V3, Q2, D4 | REVIEW | `231f109`, `a5b657f`, corrections `72c6a76`, evidence `448c782` | `/root/d123_parity_review`, `/root/v34_parity` / REWORK; fresh review pending | - |
+| P5 | R1, V3, Q2, D4 | REWORK | `231f109`, `a5b657f`, `72c6a76`, evidence `448c782`; integrated as `c84b957`, `32533a7`, `e951cd1`, `a170123`, `9b577aa` | `/root/d123_parity_review` / ACCEPT; activation REWORK | `9b577aa` additive only |
 | P6 | R1, V4, Q2, D4, B2 | REWORK | fresh redispatch `7eba5bd` through `2d5b3fc` | `/root/q2_spec_review` / REWORK | - |
 | P7 | R1, V4, Q2, D4 | REWORK | `d2486bd`, corrections `80a6db3`, evidence `ed0a76d` | `/root/q2_spec_review`, `/root/v34_parity` / REWORK | - |
 | P8 | P1 | IMPLEMENTING | - | `/root/q2_spec_review` | - |
@@ -838,6 +838,20 @@ styles. Independent delta review ACCEPTed it. The final P1 gate passed 24 tests
 with 77 expectations, Svelte check 0/0, Ultracite, parity, shadow build and all
 6 shadow-browser tests. No assertion or accessibility gate was weakened.
 
+P3 candidate `1e7fb76` plus evidence `38bbbcc` contains 14 owned Sessions
+files and its shard. Its 75 focused/preserved tests with 573 expectations,
+Ultracite, full Web/Svelte 0/0, shadow build, boundaries and parity are green.
+Independent review accepted its 25-column inventory/presets, single Table Core
+owner, initial atomic prepare and expiry retry, operation coalescing/abort/
+supersession and bounded X0/P4 request, but returned REWORK on six concrete
+parity gaps: incremental paging/campaign expiry lacks the one reacquire/retry;
+cell adapters omit filter/highlight/provenance/label semantics and correct first
+sort direction; rendered mobile geometry does not match the 188px window math;
+mobile identity/keyboard and an actual 5,000-row bounded render are unproved;
+the closure scanner leaves aliases/workspace packages opaque; and authoritative
+envelope campaign keys are not projected onto rows. The original author is
+correcting these without a process token. No STOP condition exists.
+
 P5 candidate `231f109` plus current-status evidence `a5b657f` contains 16 owned
 feature files plus its shard, 1,454 implementation lines, and requests only the
 denied route composition documented in its owned `INTEGRATION.md`. Its 47
@@ -860,7 +874,17 @@ real loader-to-oRPC-to-dehydration-to-fresh-provider SSR without duplicate
 acquisition. Evidence commit `448c782` maps all three feature IDs, eleven TSX
 rows and the render row exactly. The candidate reports 67 tests with 284
 assertions plus type, Svelte 0/0, shadow build, boundaries and parity green;
-fresh independent review remains required.
+fresh independent review ACCEPTed both axes at actual head `448c782cc38e` (the
+long SHA in the dispatch handoff was a transcription error). The accepted range
+integrated as `c84b957`, `32533a7`, `e951cd1` and `a170123`; mechanical parity
+rewrite `9b577aa` points target evidence at the integrated implementation.
+Applying the exact coordinator route request then made the shipped shell
+reachable to SvelteKit and exposed eight exact-optional/type-shape errors in
+Inspector token counts, optional snippet forwarding and the dehydrated Skills
+snapshot boundary. The route delta was fully reverted and Svelte check/parity
+returned green. The original P5 author is correcting those activation-only
+types and adding a reachable feature fixture before route composition is tried
+again; P9/P10 remain blocked from the additive checkpoint.
 
 P6 candidate `f02f29f`, evidence `3076673`, virtual lifecycle proof `f598271`
 and evidence `11a2ec6` contains 16 owned files and 1,518 lines. It supplies the
