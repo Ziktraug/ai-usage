@@ -134,7 +134,7 @@ Statuses are `BLOCKED`, `READY`, `IMPLEMENTING`, `REVIEW`, `REWORK`,
 | D2 | D0 | INTEGRATED | `fce5c1a`, `9935846`, evidence `b31c3af` | `/root/d123_parity_review` / ACCEPT | `b31c3af` |
 | D3 | D0 | INTEGRATED | `e2f13cd`, `0702203`, `70f5796`, evidence `b31c3af` | `/root/d123_parity_review` / ACCEPT | `b31c3af` |
 | D4 | D1, D2, D3 | INTEGRATED | `662182e`, bundle correction `6646fe5` | `/root/d4_review` / ACCEPT | `6646fe568e8b4c1fba74ac1b4150d1480d15ca6f` |
-| R0 | F0, V5, Q3, D4 | REWORK | `435aa06`, evidence `88d56c9` | `/root/d123_parity_review`, `/root/q2_spec_review` / REWORK | recoverable `88d56c9` in `/tmp/ai-usage-068-r0` |
+| R0 | F0, V5, Q3, D4 | REVIEW | `435aa06`, evidence `88d56c9`, correction `98235ab`, evidence `4f293e5` | `/root/d123_parity_review`, `/root/q2_spec_review` / REWORK; correction re-review pending | candidate `4f293e5` in `/tmp/ai-usage-068-r0` |
 | R1 | R0 | BLOCKED | - | - | - |
 | P1 | R1, V1, V2, Q1, D4 | BLOCKED | - | - | - |
 | P2 | P1 | BLOCKED | - | - | - |
@@ -655,6 +655,28 @@ and cleanup tests; observable Dashboard navigation failure; cloned-current-URL
 Skills intents; retry disposal; explicit target tests/evidence for all 18 IDs;
 and fresh source/evidence commits. No R0 dependant is dispatched from the
 rejected checkpoint.
+
+Focused R0 correction `98235ab` plus append-only evidence `4f293e5` closes the
+review findings. The injected scroll lifecycle now records keyed outgoing
+positions, applies preserve/reset/restore after a supplied render boundary,
+restores zero coordinates, cancels superseded work and supports cancel,
+idempotent disposal and remount. Dashboard rejection reaches a required typed
+failure owner. Skills intents clone the current URL before changing pathname,
+preserving unrelated query and hash. Retry owns cancellation, disposal,
+generation-safe late suppression and post-disposal rejection. Every URL parity
+ID has a named target test, including real structured drawer identity and matrix
+blocker behavior, with evidence bound to the correction source.
+
+Correction gates passed 33 R0 tests with 119 assertions, 69 frozen behavior
+tests with 233 assertions, Svelte check with 0 errors/0 warnings, Web typecheck,
+Svelte build, Ultracite, package boundaries, complete 18/18 URL parity, diff
+cleanliness and a clean worktree. The required lifecycle and per-ID evidence
+expanded the same 12 owned source/test files from 980 to 1,357 lines, beyond the
+initial 1,000-line dispatch estimate. No path, product or architectural scope
+expanded; independent correction reviewers must explicitly accept or reject
+this documented size deviation. R1 must supply stable history-entry keys, the
+real post-render scheduler and dirty-cancellation wiring; it must not duplicate
+the lifecycle.
 
 Three Q3 incidents are retained. The first complete repository test run hit the
 known D3 `ArrowRight` focus timeout; its one allowed exact rerun passed 10/10,
