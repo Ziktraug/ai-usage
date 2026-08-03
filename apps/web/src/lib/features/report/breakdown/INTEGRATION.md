@@ -54,11 +54,14 @@ two accepted implementation commits in order:
 
 ```sh
 bun test apps/web/src/lib/features/report/breakdown/*.test.ts apps/web/src/lib/features/report/actions/*.test.ts
+bun apps/web/src/lib/features/report/breakdown/p8.browser.ts
 bun run --cwd apps/web check:svelte
 bun x ultracite check apps/web/src/lib/features/report/breakdown apps/web/src/lib/features/report/actions
 bun tools/check-package-boundaries.ts
 bun tools/check-web-migration-parity.ts
 ```
 
-The focused gate is 31 pass, 0 fail, 77 expectations; Svelte reports zero
-errors/warnings and Ultracite checks 30 owned files.
+The focused gate is 32 pass, 0 fail, 79 expectations. The synthetic Chrome
+gate covers the 11 retired TSX contracts with rendered interaction and Axe
+evidence. Svelte reports zero errors/warnings and Ultracite checks 32 owned
+files.
