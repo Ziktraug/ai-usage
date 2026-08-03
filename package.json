@@ -31,6 +31,7 @@
     "test:tools": "bun test tools",
     "test:web-dev-build-isolation": "bun tools/check-web-dev-build-isolation.ts",
     "test:web-client-manifest": "bun tools/check-web-client-manifest.ts apps/web/.svelte-kit/build/private/client-modules.json",
+    "test:web-migration-parity": "bun --no-env-file tools/check-web-migration-parity.ts --require-complete",
     "test:web-production": "bun tools/check-web-production-start.ts",
     "typecheck": "bun tools/check-typescript-coverage.ts && tsc -p tsconfig.tools.json --noEmit && turbo run check",
     "update": "bun update --interactive --recursive",
