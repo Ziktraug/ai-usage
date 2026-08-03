@@ -406,7 +406,7 @@
     <span>{projection.summary}</span>
     <span>Activity range follows report range</span>
   </div>
-  <div class={summary} data-report-range-part="total-legend">
+  <div class={summary}>
     <span>{chartSummary}</span>
     <span>{timeline?.grandSessions ?? 0} sessions</span>
   </div>

@@ -47,8 +47,13 @@ const validDomainDate = (value: string | undefined, fallback: Date): Date => {
 export const rangeBounds = (
   range: DashboardDateRangeSearch,
   generatedAt: Date,
-): { readonly from: Date | null; readonly to: Date | null } =>
-  dateBoundsForRange(range.mode, generatedAt, range.from ?? '', range.to ?? '');
+): { readonly from: Date | null; readonly to: Date | null } => {
+  const bounds = dateBoundsForRange(range.mode, generatedAt, range.from ?? '', range.to ?? '');
+  return {
+    from: bounds.from ? startOfDay(bounds.from) : null,
+    to: bounds.to ? endOfDay(bounds.to) : null,
+  };
+};
 
 export const reportRangeProjection = (
   range: DashboardDateRangeSearch,
@@ -57,12 +62,18 @@ export const reportRangeProjection = (
 ): ReportRangeProjection => {
   const fallbackLast = startOfDay(generatedAt);
   const fallbackFirst = rollingDaysAgo(fallbackLast, 30);
-  const domainFirst = startOfDay(validDomainDate(domain?.first, fallbackFirst));
-  const domainLast = startOfDay(validDomainDate(domain?.last, fallbackLast));
-  const maxIndex = Math.max(0, dateIndexFrom(domainLast, domainFirst));
   const bounds = rangeBounds(range, generatedAt);
-  const from = startOfDay(bounds.from ?? domainFirst);
-  const to = startOfDay(bounds.to ?? domainLast);
+  const selectedFrom = startOfDay(bounds.from ?? validDomainDate(domain?.first, fallbackFirst));
+  const selectedTo = startOfDay(
+    bounds.to ?? (range.mode === 'all' ? validDomainDate(domain?.last, fallbackLast) : fallbackLast),
+  );
+  const dataFirst = startOfDay(validDomainDate(domain?.first, selectedFrom));
+  const dataLast = startOfDay(validDomainDate(domain?.last, selectedTo));
+  const domainFirst = new Date(Math.min(dataFirst.getTime(), selectedFrom.getTime()));
+  const domainLast = new Date(Math.max(dataLast.getTime(), selectedTo.getTime()));
+  const maxIndex = Math.max(0, dateIndexFrom(domainLast, domainFirst));
+  const from = selectedFrom;
+  const to = selectedTo;
   const fromIndex = Math.max(0, Math.min(maxIndex, dateIndexFrom(from, domainFirst)));
   const toIndex = Math.max(fromIndex, Math.min(maxIndex, dateIndexFrom(to, domainFirst)));
   const days = Math.max(0, Math.round((to.getTime() - from.getTime()) / DAY_MS));

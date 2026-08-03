@@ -68,3 +68,26 @@ describe('Overview presentation adapters', () => {
     expect(description).toContain('Origin unavailable: 3 sessions');
   });
 });
+
+test('keeps the frozen Overview content and secondary-status order', async () => {
+  const pageSource = await Bun.file(new URL('./overview-page.svelte', import.meta.url)).text();
+  const orderedSurfaces = [
+    '<ReportRangeControl',
+    '<OverviewHero',
+    '<ActivityHeatmap',
+    '<TokenAnatomy',
+    '<Records',
+    '<section aria-labelledby="advanced-analysis-title"',
+    '<DashboardMetrics',
+    '<ProviderStatus',
+  ];
+  const positions = orderedSurfaces.map((surface) => pageSource.indexOf(surface));
+
+  expect(positions.every((position) => position >= 0)).toBe(true);
+  expect(positions).toEqual([...positions].sort((left, right) => left - right));
+
+  const heroSource = await Bun.file(new URL('./overview-hero.svelte', import.meta.url)).text();
+  expect(heroSource).toContain('This is a comparison value, not savings or ROI.');
+  expect(heroSource).toContain('Reported actual spend ·');
+  expect(heroSource).toContain('Spend coverage');
+});

@@ -3,6 +3,7 @@ import {
   customRangeFromIndexes,
   customRangeFromInputs,
   escapedRangeDraft,
+  rangeBounds,
   reportRangePointerFinishType,
   reportRangeProjection,
 } from './report-range-model';
@@ -19,6 +20,26 @@ describe('report range projection', () => {
     expect(projection.summary).toBe('May 12 → Jun 11, 2026 · 30 days');
     expect(projection.selectionIndexes).toEqual([11, 41]);
   });
+  test('keeps a canonical preset range when filtered data has a sparse domain', () => {
+    const projection = reportRangeProjection({ mode: '7d' }, generatedAt, {
+      first: '2026-06-11T09:42:00.000Z',
+      last: '2026-06-11T09:42:00.000Z',
+    });
+
+    expect(projection.maxIndex).toBe(7);
+    expect(projection.selectionIndexes).toEqual([0, 7]);
+    expect(projection.displayFrom).toBe('Jun 04, 2026');
+    expect(projection.displayTo).toBe('Jun 11, 2026');
+  });
+
+  test('normalizes report query bounds to the calendar days shown by the control', () => {
+    const bounds = rangeBounds({ mode: '30d' }, generatedAt);
+
+    expect(bounds.from?.getHours()).toBe(0);
+    expect(bounds.from?.getMinutes()).toBe(0);
+    expect(bounds.from?.getDate()).toBe(12);
+  });
+
   test('accepts the focused report ISO date domain for the all-time range', () => {
     const projection = reportRangeProjection({ mode: 'all' }, generatedAt, {
       first: '2026-04-12T10:05:00.000Z',

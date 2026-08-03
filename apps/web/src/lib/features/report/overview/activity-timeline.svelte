@@ -3,24 +3,41 @@
 
   const chart = css({ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: '8px', minW: 0 });
   const plot = css({
-    display: 'grid',
-    alignItems: 'end',
+    position: 'relative',
+    display: 'block',
     minH: '150px',
     p: '8px 4px 0',
     borderBottom: '1px solid token(colors.line)',
     cursor: 'crosshair',
+    _focus: { outline: '2px solid token(colors.accent)', outlineOffset: '2px' },
   });
+  const seriesStack = css({ display: 'grid', alignItems: 'end', w: 'full', h: '140px' });
   const bucketClass = css({ display: 'flex', flexDirection: 'column-reverse', h: '140px', minW: 0 });
-  const segment = css({ minH: '1px', bg: 'accent', borderTop: '1px solid token(colors.surface)' });
-  const unclassified = css({ minH: '1px', bg: 'muted', opacity: 0.55, borderTop: '1px solid token(colors.surface)' });
-  const tickRow = css({
+  const gapBands = css({
+    position: 'absolute',
+    insetInline: '4px',
+    bottom: '1px',
     display: 'grid',
+    h: '6px',
+    pointerEvents: 'none',
+  });
+  const gapBand = css({
+    minW: '2px',
+    border: '1px solid token(colors.lineStrong)',
+    borderRadius: '1px',
+    bg: 'surfaceMuted',
+    backgroundImage: 'repeating-linear-gradient(135deg, transparent 0 2px, token(colors.lineStrong) 2px 3px)',
+  });
+  const gapEmpty = css({ minW: '2px' });
+  const segment = css({ minH: '1px', bg: 'accent', borderTop: '1px solid token(colors.surface)' });
+  const tickRow = css({
+    position: 'relative',
     minH: '18px',
     overflow: 'hidden',
     color: 'muted',
     fontSize: '10px',
   });
-  const tick = css({ textAlign: 'center', overflow: 'visible', whiteSpace: 'nowrap' });
+  const tick = css({ position: 'absolute', top: 0, transform: 'translateX(-50%)', whiteSpace: 'nowrap' });
   const boundaries = css({ display: 'flex', justifyContent: 'space-between', color: 'muted', fontSize: '11px' });
   const legend = css({ display: 'flex', flexWrap: 'wrap', gap: '8px 12px', mt: '4px' });
   const legendButton = css({
@@ -181,12 +198,25 @@
   };
 
   onMount(() => {
-    measureTickCollisions();
+    let disposed = false;
+    const frame = requestAnimationFrame(measureTickCollisions);
+    document.fonts.ready.then(() => {
+      if (!disposed) {
+        measureTickCollisions();
+      }
+    });
     const observer = new ResizeObserver(measureTickCollisions);
     if (tickRowElement) {
       observer.observe(tickRowElement);
     }
-    return () => observer.disconnect();
+    if (boundaryRowElement) {
+      observer.observe(boundaryRowElement);
+    }
+    return () => {
+      disposed = true;
+      cancelAnimationFrame(frame);
+      observer.disconnect();
+    };
   });
 
   const pressedAria = (pressed: boolean): { readonly 'aria-pressed': 'false' | 'true' } => ({
@@ -197,71 +227,9 @@
     timeline?.dimension === 'machine' ? machinePresenter(series.key, series.label).freshness : undefined;
 </script>
 
-<div class={chart} data-report-range-part="chart">
+<div class={chart}>
   {#if timeline && timeline.buckets.length > 0}
-    <button
-      aria-label="Inspect activity timeline. Use arrow keys to inspect days."
-      class={plot}
-      data-bucket-index={inspectedIndex ?? 0}
-      onfocus={() => inspect(inspectedIndex ?? 0)}
-      onkeydown={onChartKeydown}
-      onmousemove={inspectFromPointer}
-      type="button"
-      style:grid-template-columns={`repeat(${timeline.buckets.length}, minmax(4px, 1fr))`}
-    >
-      {#each timeline.buckets as bucket, index (bucket.date)}
-        <span
-          aria-label={`${fmtDateOnly(bucket.date)} · ${formattedAmount(bucketTotal(bucket), bucketTotal(bucket))}`}
-          class={bucketClass}
-          role="img"
-        >
-          {#each presentedSeries as series (series.key)}
-            {@const entry = bucket.byKey[series.key]}
-            {#if entry}
-              <span
-                class={segment}
-                data-series-key={series.key}
-                title={`${series.label}: ${formattedAmount(amountFor(entry), bucketTotal(bucket))}`}
-                style:background={stableSeriesColor(series.key)}
-                style:height={`${heightFor(bucket, amountFor(entry))}%`}
-                style:opacity={hoveredKey === null || hoveredKey === series.key ? 1 : 0.26}
-              ></span>
-            {/if}
-          {/each}
-          {#if bucket.unclassified}
-            <span
-              class={unclassified}
-              data-series-key="unclassified"
-              title={originGapDescription(bucket.unclassified)}
-              style:height={`${heightFor(bucket, timelineGapValue(bucket.unclassified, useSessions))}%`}
-            ></span>
-          {/if}
-        </span>
-      {/each}
-    </button>
-    <div
-      class={tickRow}
-      data-report-range-part="chart-axis"
-      data-timeline-tick-row
-      bind:this={tickRowElement}
-      style:grid-template-columns={`repeat(${timeline.buckets.length}, minmax(0, 1fr))`}
-    >
-      {#each timeline.buckets as bucket, index (bucket.date)}
-        {@const tickId = `tick:${index}`}
-        <span
-          class={tick}
-          data-timeline-label-id={tickId}
-          data-timeline-tick={tickIndexes.includes(index) ? '' : undefined}
-          style:visibility={tickIndexes.includes(index) && retainedTickIds?.has(tickId) !== false ? undefined : 'hidden'}
-          >{fmtDateOnly(bucket.date)}</span
-        >
-      {/each}
-    </div>
-    <div class={boundaries} data-timeline-boundary-row bind:this={boundaryRowElement}>
-      <span data-timeline-boundary data-timeline-label-id="from">{fmtDateOnly(timeline.first)}</span>
-      <span data-timeline-boundary data-timeline-label-id="to">{fmtDateOnly(timeline.last)}</span>
-    </div>
-    <ul aria-label={`${timeline.dimension} timeline legend`} class={legend}>
+    <ul aria-label={`${timeline.dimension} timeline legend`} class={legend} data-report-range-part="total-legend">
       {#each presentedSeries as series (series.key)}
         {@const total = timelineSeriesValue(series, useSessions)}
         {@const active = activeSeriesKeys.includes(series.key)}
@@ -289,7 +257,7 @@
         </li>
       {/each}
       {#if timeline.unclassified}
-        <li class={legendButton} title={originGapDescription(timeline.unclassified)}>
+        <li class={legendButton} data-origin-unclassified-legend title={originGapDescription(timeline.unclassified)}>
           <span aria-hidden="true" class={gapSwatch}></span>Not classified
           <span class={percentage}
             >{fmtPct(timelineSharePercent(timelineGapValue(timeline.unclassified, useSessions), useSessions ? timeline.grandSessions : timeline.grandTotal))}</span
@@ -297,6 +265,82 @@
         </li>
       {/if}
     </ul>
+    <button
+      aria-label="Inspect activity timeline. Use arrow keys to inspect days."
+      class={plot}
+      data-bucket-index={inspectedIndex ?? 0}
+      data-report-range-part="chart"
+      onfocus={() => inspect(inspectedIndex ?? 0)}
+      onkeydown={onChartKeydown}
+      onmousemove={inspectFromPointer}
+      type="button"
+    >
+      <span
+        class={seriesStack}
+        data-origin-series-stack={timeline.dimension === 'origin' ? '' : undefined}
+        style:grid-template-columns={`repeat(${timeline.buckets.length}, minmax(4px, 1fr))`}
+      >
+        {#each timeline.buckets as bucket (bucket.date)}
+          <span
+            aria-label={`${fmtDateOnly(bucket.date)} · ${formattedAmount(bucketTotal(bucket), bucketTotal(bucket))}`}
+            class={bucketClass}
+            role="img"
+          >
+            {#each presentedSeries as series (series.key)}
+              {@const entry = bucket.byKey[series.key]}
+              {#if entry}
+                <span
+                  class={segment}
+                  data-series-key={series.key}
+                  title={`${series.label}: ${formattedAmount(amountFor(entry), bucketTotal(bucket))}`}
+                  style:background={stableSeriesColor(series.key)}
+                  style:height={`${heightFor(bucket, amountFor(entry))}%`}
+                  style:opacity={hoveredKey === null || hoveredKey === series.key ? 1 : 0.26}
+                ></span>
+              {/if}
+            {/each}
+          </span>
+        {/each}
+      </span>
+      {#if timeline.dimension === 'origin' && timeline.unclassified}
+        <span
+          aria-hidden="true"
+          class={gapBands}
+          data-origin-unclassified-band
+          style:grid-template-columns={`repeat(${timeline.buckets.length}, minmax(4px, 1fr))`}
+        >
+          {#each timeline.buckets as bucket (bucket.date)}
+            {#if bucket.unclassified}
+              <span
+                class={gapBand}
+                data-origin-gap-sessions={bucket.unclassified.sessions}
+                title={originGapDescription(bucket.unclassified)}
+              ></span>
+            {:else}
+              <span class={gapEmpty}></span>
+            {/if}
+          {/each}
+        </span>
+      {/if}
+    </button>
+    <div class={tickRow} data-report-range-part="chart-axis" data-timeline-tick-row bind:this={tickRowElement}>
+      {#each timeline.buckets as bucket, index (bucket.date)}
+        {@const tickId = `tick:${index}`}
+        <span
+          class={tick}
+          data-timeline-label-id={tickId}
+          data-timeline-tick={tickIndexes.includes(index) ? '' : undefined}
+          style:left={`${timeline.buckets.length > 1 ? (index / (timeline.buckets.length - 1)) * 100 : 50}%`}
+          style:visibility={tickIndexes.includes(index) && retainedTickIds?.has(tickId) !== false ? undefined : 'hidden'}
+          >{fmtDateOnly(bucket.date)}</span
+        >
+      {/each}
+    </div>
+    <div class={boundaries} data-timeline-boundary-row bind:this={boundaryRowElement}>
+      <span data-timeline-boundary data-timeline-label-id="from">{fmtDateOnly(timeline.first)}</span>
+      <span data-timeline-boundary data-timeline-label-id="to">{fmtDateOnly(timeline.last)}</span>
+    </div>
+
     {#if timeline.dimension === 'machine' && machineFreshnessStatus}
       <p class={percentage} data-machine-freshness-status>{machineFreshnessStatus}</p>
     {/if}

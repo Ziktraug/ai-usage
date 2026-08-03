@@ -120,8 +120,6 @@
 <div class={page} data-report-overview data-report-revision={result.revision}>
   <SourceFreshness {freshness} />
   {#if overviewHasContent(result)}
-    <OverviewHero summary={result.summary} />
-    <DashboardMetrics {comparisonState} {metrics} />
     <ReportRangeControl
       {activeSeriesKeys}
       dateDomain={result.dateDomain}
@@ -139,14 +137,9 @@
       timeline={result.timeline}
       {value}
     />
+    <OverviewHero {range} summary={result.summary} />
     <ActivityHeatmap heatmap={result.view.heatmap} {onSelectDay} />
-    <div class={twoColumns}>
-      <TokenAnatomy summary={result.summary} />
-      <ProviderStatus
-        {...(onOpenQuotaHistory === undefined ? {} : { onOpenHistory: onOpenQuotaHistory })}
-        {providers}
-      />
-    </div>
+    <TokenAnatomy summary={result.summary} />
     <Records
       {onSelectDay}
       {onSelectSession}
@@ -179,6 +172,8 @@
         <p class={empty}>No advanced analysis is available for these filters.</p>
       {/if}
     </section>
+    <DashboardMetrics {comparisonState} {metrics} />
+    <ProviderStatus {...(onOpenQuotaHistory === undefined ? {} : { onOpenHistory: onOpenQuotaHistory })} {providers} />
   {:else}
     <ReportRangeControl
       {activeSeriesKeys}
