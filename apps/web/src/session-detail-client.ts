@@ -5,6 +5,8 @@ import {
   type SessionDetailResponse,
   SessionDetailValidationError,
 } from '@ai-usage/report-core/session-detail';
+import { createSessionClientAdapter } from './lib/rpc/session-client';
+import { resolveSolidWebRpcClient } from './lib/rpc/solid-client';
 
 export interface SessionDetailSource {
   getDetail(request: SessionDetailRequest): Promise<unknown>;
@@ -20,8 +22,8 @@ export const canAnalyzeSession = ({ revision, rowId }: SessionAnalysisAvailabili
 
 const servedSessionDetailSource: SessionDetailSource = {
   getDetail: async (request) => {
-    const { getReportSessionDetail } = await import('./server/report-payload');
-    return await getReportSessionDetail({ data: request });
+    const rpc = await resolveSolidWebRpcClient();
+    return await createSessionClientAdapter(rpc.session).detail(request);
   },
 };
 

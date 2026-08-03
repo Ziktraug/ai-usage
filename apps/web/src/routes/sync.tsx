@@ -20,6 +20,7 @@ import { parseUsageEngineMergePreviewOutput, type UsageEngineMergePreviewOutput 
 import { createFileRoute, useRouter } from '@tanstack/solid-router';
 import { createEffect, createSignal, onCleanup, Show } from 'solid-js';
 import { enforceReportOnlyDemoNavigation } from '../demo-route-guard';
+import { exportManualMergeBundle, getSyncFleet } from '../lib/rpc/sync-solid-client';
 import type { ManualOperationError, ManualOperationResult } from '../manual-transfer-contract';
 import {
   buildSyncFleetMachineViews,
@@ -27,7 +28,6 @@ import {
   formatTransferBytes,
   manualTransferMutationAvailability,
 } from '../manual-transfer-model';
-import { exportManualMergeBundle, getSyncFleet } from '../server/sync';
 import { useSourceControl } from '../source-control-context';
 import { MachineFleetComparison } from '../sync-machine-comparison';
 import { buildSyncFleetComparisonRows } from '../sync-machine-comparison-model';
@@ -36,14 +36,6 @@ import { MachineFleetPanel } from '../sync-machine-fleet';
 export const Route = createFileRoute('/sync')({
   beforeLoad: enforceReportOnlyDemoNavigation,
   loader: async () => await getSyncFleet(),
-  server: {
-    handlers: {
-      POST: async ({ request }) => {
-        const { handleSyncUploadRequest } = await import('../server/sync-upload.server');
-        return await handleSyncUploadRequest(request);
-      },
-    },
-  },
   component: SyncRoute,
 });
 
@@ -375,7 +367,7 @@ const uploadManualMergeFile = <Value,>(
 ): Promise<ManualOperationResult<Value>> =>
   new Promise((resolve) => {
     const xhr = new XMLHttpRequest();
-    xhr.open('POST', '/sync');
+    xhr.open('POST', '/api/manual-merge/upload');
     xhr.setRequestHeader('Content-Type', 'application/json');
     xhr.setRequestHeader('X-Ai-Usage-Merge-Action', action);
     if (expected) {
@@ -433,7 +425,7 @@ function SyncRoute() {
     setOperationError(null);
     setOperationMessage(null);
     try {
-      const next = await exportManualMergeBundle({ data: {} });
+      const next = await exportManualMergeBundle();
       if (next.ok) {
         downloadJsonFile(next.data.filename, next.data.text);
         setOperationMessage(

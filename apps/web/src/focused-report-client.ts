@@ -13,7 +13,13 @@ import {
 } from '@ai-usage/report-core/focused-report-query';
 import type { SessionQueryServerResult } from '@ai-usage/report-core/session-query';
 import { type Accessor, batch, createSignal } from 'solid-js';
-import { reportManifestRequestFingerprint, type WebReportRevisionBootstrapResult } from './web-report-payload';
+import { createReportClient } from './lib/rpc/report-client';
+import { resolveSolidWebRpcClient } from './lib/rpc/solid-client';
+import {
+  normalizeWebReportRevisionBootstrapResult,
+  reportManifestRequestFingerprint,
+  type WebReportRevisionBootstrapResult,
+} from './web-report-payload';
 
 export interface FocusedReportSource {
   getBootstrap: () => Promise<WebReportRevisionBootstrapResult>;
@@ -344,20 +350,11 @@ export const createFocusedReportStore = (initial: FocusedSupportResult): Focused
 };
 
 export const createServedFocusedReportSource = (): FocusedReportSource => {
-  const serverApi = () => import('./server/report-payload');
-  const requestHeaders = { 'x-ai-usage-request-owner': 'focused-report' };
+  const client = async () => createReportClient(await resolveSolidWebRpcClient('focused-report'));
   return {
-    getBreakdown: async (request) => {
-      const { getFocusedReportBreakdown } = await serverApi();
-      return await getFocusedReportBreakdown({ data: request, headers: requestHeaders });
-    },
-    getBootstrap: async () => {
-      const { getReportRevisionBootstrap } = await serverApi();
-      return await getReportRevisionBootstrap({ headers: requestHeaders });
-    },
-    getOverview: async (request) => {
-      const { getFocusedReportOverview } = await serverApi();
-      return await getFocusedReportOverview({ data: request, headers: requestHeaders });
-    },
+    getBreakdown: async (request) => await (await client()).getFocusedReportBreakdown(request),
+    getBootstrap: async () =>
+      normalizeWebReportRevisionBootstrapResult(await (await client()).getReportRevisionBootstrap()),
+    getOverview: async (request) => await (await client()).getFocusedReportOverview(request),
   };
 };

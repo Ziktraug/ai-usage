@@ -21,12 +21,19 @@ import {
 import type { FieldFilters } from './dashboard-search';
 import type { DateBounds } from './date-range';
 import type { TableSortingState } from './lib/foundation/table/state';
+import { createReportClient } from './lib/rpc/report-client';
+import { createSessionClientAdapter } from './lib/rpc/session-client';
+import { resolveSolidWebRpcClient } from './lib/rpc/solid-client';
 import {
   createSessionQueryOperationOwner,
   type SessionQueryOperationContext,
   type SessionQueryPreparedTicket,
 } from './session-query-operation-owner';
-import { reportManifestRequestFingerprint, type WebReportRevisionManifestResult } from './web-report-payload';
+import {
+  normalizeWebReportRevisionManifestResult,
+  reportManifestRequestFingerprint,
+  type WebReportRevisionManifestResult,
+} from './web-report-payload';
 
 export const SERVED_SESSION_PAGE_SIZE = 100;
 
@@ -607,25 +614,19 @@ export const createSessionQueryCoordinator = (options: {
 };
 
 export const createServedSessionQuerySource = (): SessionQuerySource => {
-  const serverApi = () => import('./server/report-payload');
-  const requestHeaders = { 'x-ai-usage-request-owner': 'session-query' };
+  const clients = async () => {
+    const rpc = await resolveSolidWebRpcClient('session-query');
+    return {
+      report: createReportClient(rpc),
+      session: createSessionClientAdapter(rpc.session),
+    };
+  };
   return {
-    getCampaignChildren: async (request, signal) => {
-      const { getReportSessionCampaignChildren } = await serverApi();
-      return await getReportSessionCampaignChildren({ data: request, headers: requestHeaders, signal });
-    },
-    getManifest: async (signal) => {
-      const { getReportRevisionManifest } = await serverApi();
-      return await getReportRevisionManifest({ headers: requestHeaders, signal });
-    },
-    getNeighbors: async (request, signal) => {
-      const { getReportSessionNeighbors } = await serverApi();
-      return await getReportSessionNeighbors({ data: request, headers: requestHeaders, signal });
-    },
-    getPage: async (request, signal) => {
-      const { getReportSessionPage } = await serverApi();
-      return await getReportSessionPage({ data: request, headers: requestHeaders, signal });
-    },
+    getCampaignChildren: async (request, signal) => await (await clients()).session.campaignChildren(request, signal),
+    getManifest: async (signal) =>
+      normalizeWebReportRevisionManifestResult(await (await clients()).report.getReportRevisionManifest({ signal })),
+    getNeighbors: async (request, signal) => await (await clients()).session.neighbors(request, signal),
+    getPage: async (request, signal) => await (await clients()).session.page(request, signal),
   };
 };
 

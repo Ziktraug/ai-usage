@@ -4,6 +4,8 @@ import {
   type SessionVcsResolveRequest,
   type SessionVcsResolveResponse,
 } from '@ai-usage/report-core/session-vcs';
+import { createSessionClientAdapter } from './lib/rpc/session-client';
+import { resolveSolidWebRpcClient } from './lib/rpc/solid-client';
 
 export interface SessionVcsResolutionSource {
   resolve(request: SessionVcsResolveRequest): Promise<unknown>;
@@ -11,8 +13,8 @@ export interface SessionVcsResolutionSource {
 
 const servedSource: SessionVcsResolutionSource = {
   resolve: async (request) => {
-    const { resolveReportSessionVcs } = await import('./server/report-payload');
-    return await resolveReportSessionVcs({ data: request });
+    const rpc = await resolveSolidWebRpcClient();
+    return await createSessionClientAdapter(rpc.session).vcs(request);
   },
 };
 

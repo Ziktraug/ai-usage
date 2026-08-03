@@ -13,7 +13,7 @@ import type { SkillManagementSnapshot } from '@ai-usage/skills';
 import { useBlocker } from '@tanstack/solid-router';
 import { createEffect, createMemo, createSignal, onCleanup, Show } from 'solid-js';
 import { DiscardConfirmationDialog } from './discard-confirmation-dialog';
-import { getManagedSkillMarkdown, saveManagedSkillMarkdown } from './server/skills';
+import { getManagedSkillMarkdown, saveManagedSkillMarkdown } from './lib/rpc/skills-solid-client';
 import {
   createSkillMarkdownEditorController,
   runSkillMarkdownEditorAction,

@@ -32,7 +32,11 @@ import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show }
 import { isServer } from 'solid-js/web';
 import { enforceReportOnlyDemoNavigation } from '../demo-route-guard';
 import { DiscardConfirmationDialog } from '../discard-confirmation-dialog';
-import type { getKnownSkillProjectPaths, getSkillManagementSnapshot, KnownSkillProjectPath } from '../server/skills';
+import type {
+  getKnownSkillProjectPaths,
+  getSkillManagementSnapshot,
+  KnownSkillProjectPath,
+} from '../lib/rpc/skills-solid-client';
 import {
   buildSkillMatrix,
   count,

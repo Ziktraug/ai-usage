@@ -18,8 +18,8 @@ import {
 } from '@ai-usage/design-system/report';
 import type { ProjectSkillInventory, SkillManagementSnapshot, SourceSkill } from '@ai-usage/skills';
 import { createEffect, createMemo, createSignal, For, type JSX, Show } from 'solid-js';
+import { getProjectSkillMarkdown } from './lib/rpc/skills-solid-client';
 import { type ProjectRuntimeDirId, projectSkillDirectories } from './project-skill-directories';
-import { getProjectSkillMarkdown } from './server/skills';
 import { SkillDiagnostics } from './skill-diagnostics';
 import { SkillMarkdownEditor } from './skill-markdown-editor';
 import {

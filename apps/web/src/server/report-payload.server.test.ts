@@ -224,7 +224,7 @@ test('rejects project group mutations from an untrusted Host before engine admis
 
   try {
     await saveProjectGroupsFromRequestForServer(
-      new Request('http://attacker.example/_serverFn/saveProjectGroups', {
+      new Request('http://attacker.example/rpc/projectGroup/save', {
         headers: { host: 'attacker.example' },
         method: 'POST',
       }),
@@ -270,7 +270,7 @@ test('propagates an aborted project group request before engine admission', asyn
   };
   const abort = new AbortController();
   abort.abort();
-  const request = new Request('http://localhost:3000/_serverFn/saveProjectGroups', {
+  const request = new Request('http://localhost:3000/rpc/projectGroup/save', {
     headers: { host: 'localhost:3000', origin: 'http://localhost:3000' },
     method: 'POST',
     signal: abort.signal,

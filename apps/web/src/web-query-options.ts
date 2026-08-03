@@ -1,6 +1,3 @@
-import type { ProviderQuotaSource } from './provider-quota-client';
-import type { ProviderQuotaHistoryRange } from './provider-quota-history-model';
-import { providerQuotaHistoryRequest } from './provider-quota-history-model';
 import {
   createManagedSkillTargetDirectory,
   getKnownSkillProjectPaths,
@@ -12,7 +9,10 @@ import {
   refreshSkillManagementSnapshot,
   saveSkillManagementConfig,
   toggleManagedSkill,
-} from './server/skills';
+} from './lib/rpc/skills-solid-client';
+import type { ProviderQuotaSource } from './provider-quota-client';
+import type { ProviderQuotaHistoryRange } from './provider-quota-history-model';
+import { providerQuotaHistoryRequest } from './provider-quota-history-model';
 import { type ProjectInventoriesResult, parseProjectInventoriesResult } from './skills-client-contracts';
 import { createSkillsMutationRunner } from './skills-query-operations';
 

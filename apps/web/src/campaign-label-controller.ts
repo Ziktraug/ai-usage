@@ -6,6 +6,8 @@ import {
 } from '@ai-usage/report-core/campaign-label';
 import { type Accessor, createSignal } from 'solid-js';
 import { campaignLabelFor, indexCampaignLabelOverrides } from './campaign-label-overrides';
+import { createReportClient } from './lib/rpc/report-client';
+import { resolveSolidWebRpcClient } from './lib/rpc/solid-client';
 
 export interface CampaignLabelApiResponse {
   campaignLabelOverrides: CampaignLabelOverride[];
@@ -38,12 +40,12 @@ const errorMessage = (error: unknown, fallback: string): string => (error instan
 
 export const createLiveCampaignLabelApi = (): CampaignLabelApi => ({
   load: async () => {
-    const { getCampaignLabelOverrides } = await import('./server/report-payload');
-    return await getCampaignLabelOverrides();
+    const client = createReportClient(await resolveSolidWebRpcClient());
+    return await client.getCampaignLabelOverrides();
   },
   mutate: async (input) => {
-    const { setCampaignLabelOverride } = await import('./server/report-payload');
-    return await setCampaignLabelOverride({ data: input });
+    const client = createReportClient(await resolveSolidWebRpcClient());
+    return await client.setCampaignLabelOverride(input);
   },
 });
 
