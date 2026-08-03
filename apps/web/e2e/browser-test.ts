@@ -46,6 +46,7 @@ const isIntentionalReportRequestCancellation = (request: Request, errorText: str
 
 interface PageListeners {
   console: (message: ConsoleMessage) => void;
+  finalize: () => void;
   pageError: (error: Error) => void;
   requestFailed: (request: Request) => void;
   response: (response: Response) => void;
@@ -64,6 +65,11 @@ export const test = base.extend<{ browserFailureGate: undefined }>({
           return;
         }
         const expectedShellErrorUrls = new Set<string>();
+        const pendingResourceErrors: Array<{
+          readonly message: string;
+          readonly source: string;
+          readonly url: string;
+        }> = [];
         const listeners: PageListeners = {
           console: (message) => {
             const messageType = message.type();
@@ -77,7 +83,21 @@ export const test = base.extend<{ browserFailureGate: undefined }>({
               return;
             }
             const source = location.url ? ` at ${location.url}:${location.lineNumber}:${location.columnNumber}` : '';
+            if (
+              messageType === 'error' &&
+              message.text().startsWith('Failed to load resource: the server responded with a status of')
+            ) {
+              pendingResourceErrors.push({ message: message.text(), source, url: location.url });
+              return;
+            }
             failures.push(`console ${messageType}${source}: ${message.text()}`);
+          },
+          finalize: () => {
+            for (const error of pendingResourceErrors) {
+              if (!expectedShellErrorUrls.has(error.url)) {
+                failures.push(`console error${error.source}: ${error.message}`);
+              }
+            }
           },
           pageError: (error) => failures.push(`uncaught page error: ${error.stack ?? error.message}`),
           requestFailed: (request) => {
@@ -108,6 +128,7 @@ export const test = base.extend<{ browserFailureGate: undefined }>({
                 status: response.status(),
               })
             ) {
+              expectedShellErrorUrls.add(response.url());
               return;
             }
             failures.push(
@@ -131,6 +152,7 @@ export const test = base.extend<{ browserFailureGate: undefined }>({
 
       context.off('page', attach);
       for (const [page, listeners] of listenersByPage) {
+        listeners.finalize();
         page.off('console', listeners.console);
         page.off('pageerror', listeners.pageError);
         page.off('requestfailed', listeners.requestFailed);

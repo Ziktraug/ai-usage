@@ -45,7 +45,7 @@ export const requestWithConnectionSignal = (
   if (request.signal.aborted) {
     forwardRequestAbort();
   }
-  return new Request(request, { signal: controller.signal });
+  return new Request(request, { method: request.method, signal: controller.signal });
 };
 
 export default defineHandler(

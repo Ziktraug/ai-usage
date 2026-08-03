@@ -31,6 +31,7 @@ test.afterEach(async ({ request }) => {
   try {
     const response = await request.post('/api/source-control/command', {
       data: { command: 'set-enabled', enabled: true, sourceId: 'codex.sessions' },
+      headers: { origin: 'http://127.0.0.1:4174' },
     });
     const result = parseSourceControlCommandResponse(await response.json());
     if (!(response.ok() && result.ok)) {

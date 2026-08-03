@@ -25,6 +25,22 @@ describe('RPC route connection signal', () => {
     expect(response.listenerCount('finish')).toBe(0);
   });
 
+  test('preserves the HTTP request while attaching the connection signal', async () => {
+    const socket = new EventEmitter();
+    const response = new EventEmitter();
+    const original = new Request('http://127.0.0.1:3000/rpc/skills/saveConfig', {
+      body: JSON.stringify({ sourceRepoPath: '/synthetic/source' }),
+      headers: { 'content-type': 'application/json' },
+      method: 'POST',
+    });
+
+    const connected = requestWithConnectionSignal(original, socket, response);
+
+    expect(connected.method).toBe('POST');
+    expect(connected.headers.get('content-type')).toBe('application/json');
+    expect(await connected.text()).toBe('{"sourceRepoPath":"/synthetic/source"}');
+  });
+
   test('removes the socket listener after a normally finished response', () => {
     const socket = new EventEmitter();
     const response = new EventEmitter();
