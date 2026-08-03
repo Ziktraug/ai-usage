@@ -12,7 +12,7 @@ authority for feature, operation, design, source-file, and test-title coverage.
 - Planning PR: `#26`, squash-merged as
   `2183270ebfbb886fafa7e6268893122db9b364c0`
 - `BASE_SHA`: `2183270ebfbb886fafa7e6268893122db9b364c0`
-- Current integration checkpoint: `325b25b`
+- Current integration checkpoint: `8ce1a46`
 - Last reviewed green checkpoint: `e953bdc`
 - Active design bases: D1 `4862293`, D2 `fce5c1a`, D3 `e2f13cd`
 - Implementation PR: not opened
@@ -139,7 +139,7 @@ Statuses are `BLOCKED`, `READY`, `IMPLEMENTING`, `REVIEW`, `REWORK`,
 | P1 | R1, V1, V2, Q1, D4 | INTEGRATED | `a19914b`, `874cb1b`, `2422c2c`, evidence `02782f8`, activation correction `5bc8055` | `/root/v34_parity`, `/root/d123_parity_review` / ACCEPT | `f3610aa` |
 | P2 | P1 | INTEGRATED | `0f252ca`, `8e41350`, corrections `5880b09`, `cb8552a`; integrated `7b8d65a`, `11572e1`, `045e279`, `64128c4`; evidence `e593b70` | `/root/q2_spec_review` / ACCEPT | `e593b70` |
 | P3 | P1, V2, Q1, D4 | INTEGRATED | `1e7fb76`, `38bbbcc`, `dddd96b`, `07db531`, `fe3357e`, `24b9bc6`, final `7ce6027`, `a9fc2ff`; integrated `9460bc2` through `fe37669`; evidence `509b756` | `/root/q2_spec_review` / ACCEPT | `509b756` |
-| P4 | P3 | IMPLEMENTING | - | `/root/d123_parity_review` | - |
+| P4 | P3 | REWORK | `73fbce3`, evidence `5de8823` | `/root/v34_parity` / REWORK | - |
 | P5 | R1, V3, Q2, D4 | INTEGRATED | `231f109`, `a5b657f`, `72c6a76`, `448c782`, activation `5c0e27e`; integrated as `c84b957`, `32533a7`, `e951cd1`, `a170123`, `0f6b118`, evidence `6f639ab` | `/root/d123_parity_review`, `/root/v34_parity` / ACCEPT | `6f639ab` |
 | P6 | R1, V4, Q2, D4, B2 | INTEGRATED | accepted fresh range `e23bc9` through `414ea1a`; integrated `3c08e12` through `68dd82f`; evidence `eb2f669`; composition `79341c1`; browser corrections `db4eb57`, `1096a4d` | `/root/q2_spec_review` / ACCEPT | `1096a4d` |
 | P7 | R1, V4, Q2, D4 | REWORK | `d2486bd`, corrections `80a6db3`, evidence `ed0a76d` | `/root/q2_spec_review`, `/root/v34_parity` / REWORK | - |
@@ -1098,6 +1098,21 @@ the wrong element. The owned interactive surfaces also relied on pure/source
 assertions instead of rendered focus/a11y/interaction proof and exact per-row
 test references. The original author is correcting both without changing URL
 identity, filter state, query ownership or packet scope; this is not a STOP.
+
+P4 candidate `73fbce3` plus evidence `5de8823` passed its new/affected 63
+tests/273 assertions, the five legacy render suites at 52 tests/175
+assertions, Svelte 0/0, Web typecheck, shadow build, Ultracite, boundaries,
+coverage and parity. `/root/v34_parity` nevertheless returned REWORK on five
+material parity seams: Overview/local selections could not carry P1's accepted
+revision without a neighbor query; controller-to-P3 selection echo could
+cancel and duplicate an exact neighbor request; keying the complete Drawer by
+row could replace the original final-focus target during neighbor navigation;
+the campaign slot followed rather than preceded the detail grid; and the
+SESSION-06 renderer omitted frozen timeline, timestamp, orphan-prompt, phase,
+key and accessible-label semantics from the five authoritative suites. P7 was
+left recoverable in its fresh worktree while the original author returns to
+this critical-path correction. No process gate, assertion or product behavior
+was weakened and this is not a STOP.
 
 Coordinator deltas `3f42bfa`, `8020703` and `9d24e5b` expose the neutral stable
 series-color helper to Svelte and use it for matching P2 timeline segments and
