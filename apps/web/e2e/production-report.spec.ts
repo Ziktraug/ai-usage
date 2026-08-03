@@ -4,6 +4,7 @@ import {
   HARNESS_FIXTURE_PRIVATE_PROMPT_SENTINEL,
   HARNESS_FIXTURE_PROVIDER_STDERR_SENTINEL,
 } from '@ai-usage/local-machine/testing/harness-home';
+import type { Request } from '@playwright/test';
 import { expect, reportViewsFor, test } from './browser-test';
 import { isRpcPathname, RPC_ROUTE_GLOB, rpcStringFieldValues } from './rpc-test-transport';
 
@@ -22,6 +23,25 @@ interface ProtocolIdentity {
   fingerprints: string[];
   revisions: string[];
 }
+
+interface ObservedRequest {
+  readonly pathname: string;
+  readonly resourceType: string;
+  readonly startedAtEpochMs: number;
+  readonly url: string;
+}
+
+const REPORT_BOOTSTRAP_PATH = '/rpc/report/revisionBootstrap';
+
+const countOccurrences = (value: string, needle: string): number => value.split(needle).length - 1;
+
+const sortedCountRecord = (values: readonly string[]): Record<string, number> => {
+  const counts = new Map<string, number>();
+  for (const value of values) {
+    counts.set(value, (counts.get(value) ?? 0) + 1);
+  }
+  return Object.fromEntries([...counts].sort(([left], [right]) => left.localeCompare(right)));
+};
 
 const protocolIdentityFrom = (body: string): ProtocolIdentity => ({
   fingerprints: rpcStringFieldValues(body, 'requestFingerprint'),
@@ -47,6 +67,28 @@ const expectExactProtocolIdentity = (
 };
 
 test('renders the report timeline on the initial production Overview', async ({ page }) => {
+  const observedRequests: ObservedRequest[] = [];
+  const pendingServerQueries = new Set<Request>();
+  page.on('request', (request) => {
+    const url = new URL(request.url());
+    observedRequests.push({
+      pathname: url.pathname,
+      resourceType: request.resourceType(),
+      startedAtEpochMs: request.timing().startTime,
+      url: `${url.pathname}${url.search}`,
+    });
+    if (isRpcPathname(url.pathname) && request.resourceType() !== 'eventsource') {
+      pendingServerQueries.add(request);
+    }
+  });
+  const settleServerQuery = (request: Request): void => {
+    if (isRpcPathname(new URL(request.url()).pathname) && request.resourceType() !== 'eventsource') {
+      pendingServerQueries.delete(request);
+    }
+  };
+  page.on('requestfinished', settleServerQuery);
+  page.on('requestfailed', settleServerQuery);
+
   const initialResponse = await page.request.get('/');
   const initialHtml = await initialResponse.text();
   expect(initialResponse.ok()).toBe(true);
@@ -57,6 +99,16 @@ test('renders the report timeline on the initial production Overview', async ({ 
 
   await page.addInitScript(() => {
     Reflect.set(globalThis, '__aiUsageFalseEmptyRange', false);
+    let hydrationObserver: MutationObserver | undefined;
+    const recordHydration = () => {
+      if (
+        Reflect.get(globalThis, '__aiUsageHydratedAtEpochMs') === undefined &&
+        document.querySelector('main[data-hydrated="true"]')
+      ) {
+        Reflect.set(globalThis, '__aiUsageHydratedAtEpochMs', performance.timeOrigin + performance.now());
+        hydrationObserver?.disconnect();
+      }
+    };
     const recordFalseEmptyRange = () => {
       if (document.body?.textContent?.includes('No dated sessions match the current filters')) {
         Reflect.set(globalThis, '__aiUsageFalseEmptyRange', true);
@@ -67,7 +119,20 @@ test('renders the report timeline on the initial production Overview', async ({ 
       childList: true,
       subtree: true,
     });
-    window.addEventListener('DOMContentLoaded', recordFalseEmptyRange, { once: true });
+    hydrationObserver = new MutationObserver(recordHydration);
+    hydrationObserver.observe(document, {
+      attributes: true,
+      childList: true,
+      subtree: true,
+    });
+    window.addEventListener(
+      'DOMContentLoaded',
+      () => {
+        recordFalseEmptyRange();
+        recordHydration();
+      },
+      { once: true },
+    );
   });
   const overviewGate = Promise.withResolvers<void>();
   let rpcRequestCount = 0;
@@ -82,8 +147,10 @@ test('renders the report timeline on the initial production Overview', async ({ 
     await overviewGate.promise;
     await route.continue();
   });
-  await page.goto('/');
+  const navigationStartedAt = performance.now();
+  const navigationResponse = await page.goto('/');
   await expect(page.locator('main[data-hydrated="true"]')).toBeVisible();
+  const navigationToHydratedMs = performance.now() - navigationStartedAt;
   const dateRange = page.getByRole('region', { name: 'Date range' });
   try {
     await expect(dateRange).toContainText('Jun 3 → Jul 03, 2026');
@@ -97,6 +164,49 @@ test('renders the report timeline on the initial production Overview', async ({ 
   ).toBeVisible({ timeout: 5000 });
   await expect(page.getByText('No dated sessions match the current filters')).toHaveCount(0);
   expect(await page.evaluate(() => Reflect.get(globalThis, '__aiUsageFalseEmptyRange'))).toBe(false);
+  await expect.poll(() => pendingServerQueries.size).toBe(0);
+
+  if (!navigationResponse) {
+    throw new Error('Initial production navigation did not return a document response.');
+  }
+  const documentTiming = navigationResponse.request().timing();
+  const hydratedAtEpochMs = await page.evaluate(() => Reflect.get(globalThis, '__aiUsageHydratedAtEpochMs'));
+  if (typeof hydratedAtEpochMs !== 'number') {
+    throw new Error('Initial production navigation did not expose its hydration timestamp.');
+  }
+  const requestUrls = observedRequests.map(({ url }) => url);
+  const duplicateUrls = Object.entries(sortedCountRecord(requestUrls))
+    .filter(([, count]) => count > 1)
+    .map(([url, count]) => ({ count, url }));
+  const bootstrapRequestsAfterHydration = observedRequests
+    .filter(
+      ({ pathname, startedAtEpochMs }) => pathname === REPORT_BOOTSTRAP_PATH && startedAtEpochMs >= hydratedAtEpochMs,
+    )
+    .map(({ url }) => url)
+    .sort();
+  const dehydratedBootstrapKeyOccurrenceCount = countOccurrences(initialHtml, 'report-bootstrap');
+  const pendingNonSseServerQueries = [...pendingServerQueries].map((request) => request.url()).sort();
+
+  expect(documentTiming.responseStart).toBeGreaterThanOrEqual(0);
+  expect(documentTiming.responseEnd).toBeGreaterThanOrEqual(documentTiming.responseStart);
+  expect(bootstrapRequestsAfterHydration).toEqual([]);
+  expect(dehydratedBootstrapKeyOccurrenceCount).toBe(1);
+  expect(pendingNonSseServerQueries).toEqual([]);
+  process.stdout.write(
+    `${JSON.stringify({
+      bootstrapRequestsAfterHydration,
+      dehydratedBootstrapKeyOccurrenceCount,
+      documentCompletionMs: documentTiming.responseEnd,
+      documentTtfbMs: documentTiming.responseStart,
+      duplicateUrls,
+      navigationToHydratedMs,
+      pendingNonSseServerQueries,
+      requestClasses: sortedCountRecord(observedRequests.map(({ resourceType }) => resourceType)),
+      ssrHtmlBytes: new TextEncoder().encode(initialHtml).byteLength,
+      totalRequestCount: observedRequests.length,
+      type: 'production-overview-ssr-hydration',
+    })}\n`,
+  );
 });
 
 test('provides one accessible responsive source-control surface', async ({ page }) => {
