@@ -1345,3 +1345,37 @@ Correction `52163ed` sets `watch: null` on the complete five-file family, and
 `ssrLoadModule` call. This removes the unnecessary watcher and guarantees
 cleanup if module loading fails. The focused family passes 42/42 tests with 187
 assertions; no product code, timeout or assertion changed.
+
+Static X0 convergence then passed the complete repository `check`, `lint`,
+`typecheck`, `test`, `build`, parity and boundary gates. The full repository
+test includes 1,029 Web tests and the 170-second synthetic SvelteKit lifecycle
+fixture; all passed after the watcher correction. The shadow production/browser
+gate initially exposed two bounded Sync composition omissions: its SSR load did
+not declare the stable request owner needed for SvelteKit's framework-proven
+missing-Host normalization, and its existing `main` lacked the frozen
+`data-route-shell="sync"` marker. `9dc4385` adds the owner and marker without
+changing the external trust policy or adding another landmark. Targeted proof
+passed 10 tests/75 assertions and the exact shadow browser gate passed 6/6;
+`/root/x0_final_review` ACCEPTed both axes.
+
+The legacy Solid Playwright gate then revealed that Bun/Nitro reconstructing a
+native-socket request with `new Request(request, { signal })` changed POST to
+GET. Fresh loopback curl retained the exact contradictory evidence: HTTP 405,
+`Allow: POST`, and `MethodNotAllowed` for a POST. `c84d48c` explicitly preserves
+the original method while retaining URL, headers, body and the connection
+signal. Its regression proves POST JSON method/header/body identity; the
+existing tests prove abort/listener cleanup. The same correction adds exact
+same-origin CSRF evidence to the synthetic Sources cleanup request and makes the
+browser failure gate order-independent only for resource errors already proven
+intentional by exact path/status/header. RPC/policy proof passed 12/12 tests and
+80 assertions; Skills+Sources passed 21/21. `/root/x0_final_review` ACCEPTed the
+four-file correction with no trust or assertion weakening.
+
+The legacy Solid/Nitro server bootstrap remains intermittently unable to bind
+4174 before Playwright's unchanged 120-second startup bound. Two cold attempts
+left Vite alive in `epoll` with no listener; the same fixture started in under a
+second for the targeted 21-test gate. No timeout was increased. This is a
+temporary X0 convergence deviation confined to the runtime that X1 deletes;
+all spawned processes were stopped, the last reviewed checkpoint remains
+green, and X1 must close the deviation by proving the canonical SvelteKit
+dev/production lifecycle and the final `test:e2e` gate.
