@@ -136,12 +136,12 @@ Statuses are `BLOCKED`, `READY`, `IMPLEMENTING`, `REVIEW`, `REWORK`,
 | D4 | D1, D2, D3 | INTEGRATED | `662182e`, bundle correction `6646fe5` | `/root/d4_review` / ACCEPT | `6646fe568e8b4c1fba74ac1b4150d1480d15ca6f` |
 | R0 | F0, V5, Q3, D4 | INTEGRATED | `435aa06`, evidence `88d56c9`, corrections `98235ab`, `4e46acc`, evidence `4f293e5`, `23635c7`; integrated as `affcee4`, `01fa070`, `688b629`, `fa92709`, `66a650e`, `c8b7c7e` | `/root/d123_parity_review`, `/root/q2_spec_review` / ACCEPT | `c8b7c7e872f25648dbf5df407f92e76d64948eff` |
 | R1 | R0 | INTEGRATED | `40116b5`, `121d78b`, corrections `95b67d6`, `7c85cf1`, evidence/checker `c5cc7ea`, `1befaef` | `/root/d123_parity_review`, `/root/q2_spec_review`, `/root/v34_parity` / ACCEPT | `1befaefd71ef5ffe59866021f216104b3f83f9ef` |
-| P1 | R1, V1, V2, Q1, D4 | READY | - | - | - |
+| P1 | R1, V1, V2, Q1, D4 | IMPLEMENTING | - | - | - |
 | P2 | P1 | BLOCKED | - | - | - |
 | P3 | P1, V2, Q1, D4 | BLOCKED | - | - | - |
 | P4 | P3 | BLOCKED | - | - | - |
-| P5 | R1, V3, Q2, D4 | READY | - | - | - |
-| P6 | R1, V4, Q2, D4, B2 | READY | - | - | - |
+| P5 | R1, V3, Q2, D4 | IMPLEMENTING | - | - | - |
+| P6 | R1, V4, Q2, D4, B2 | IMPLEMENTING | - | - | - |
 | P7 | R1, V4, Q2, D4 | READY | - | - | - |
 | P8 | P1 | BLOCKED | - | - | - |
 | P9 | P5 | BLOCKED | - | - | - |
@@ -783,6 +783,17 @@ gates passed: `bun run check` (932 files), `bun run lint`, `bun run typecheck`
 build` (15/15), parity at 35 features, 30 retired operations, 72 production TSX
 owners, 15 design rows, 413 live/436 ledger exports, 11 render suites, 110
 Playwright titles and 18 URL contracts, and a clean diff/worktree.
+
+P1, P5 and P6 were dispatched concurrently from clean integration commit
+`407e835cd46fa7edb030e894ee839ef51620255e` to local-only branches and isolated
+worktrees `/tmp/ai-usage-068-p1`, `/tmp/ai-usage-068-p5` and
+`/tmp/ai-usage-068-p6`. Their complete mandatory cards freeze the assigned
+feature/source/render IDs, upstream R1/V/Q/D/B interfaces, disjoint feature
+prefixes, packet shards, coordinator-owned denylist, exact deterministic gates,
+local-failure policy and handoff shape. None holds the process-test token; P6
+uses virtual/injected stream time and may add only Sources-owned endpoint leaves.
+P7 remains ready and takes the first worker slot released by implementation or
+review scheduling.
 
 ## Deviations, STOPs, and recovery
 
