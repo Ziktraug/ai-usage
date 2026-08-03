@@ -144,7 +144,7 @@ export const sessionTableColumns = [
     widthPx: 96,
   }),
   column('calls', 'Calls', { align: 'right', format: (row) => count(row, row.calls), widthPx: 76 }),
-  column('turns', 'Turns', { align: 'right', format: (row) => count(row, row.turns), widthPx: 76 }),
+  column('turns', 'Turns', { align: 'right', format: (row) => fmtNum(row.turns), widthPx: 76 }),
   column('tools', 'Tools', { align: 'right', format: (row) => count(row, row.tools), widthPx: 76 }),
   column('lines', 'Lines', {
     align: 'right',

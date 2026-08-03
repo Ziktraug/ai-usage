@@ -163,7 +163,6 @@ describe('Svelte session table schema adapter', () => {
       'actual',
       'quota',
       'calls',
-      'turns',
       'tools',
     ] as const) {
       expect(projectSessionCell(unavailableRow, id, ''), id).toMatchObject({
@@ -172,6 +171,9 @@ describe('Svelte session table schema adapter', () => {
         title: USAGE_UNAVAILABLE_HINT,
       });
     }
+    const unavailableTurns = projectSessionCell({ ...unavailableRow, partial: true, turns: 17 }, 'turns', '');
+    expect(unavailableTurns).toMatchObject({ kind: 'value', label: '17', title: undefined });
+    expect(unavailableTurns).toHaveProperty('provenanceTitle', expect.stringContaining('Partial session'));
     const rtkRow = {
       ...syntheticSessionRow(9),
       rtkCommandCount: 3,

@@ -65,7 +65,6 @@ const USAGE_UNAVAILABLE_COLUMNS = new Set<SessionColumnId>([
   'actual',
   'quota',
   'calls',
-  'turns',
   'tools',
 ]);
 const API_PRICE_PROVENANCE_KINDS = new Set(['partial-api-price', 'unknown-api-price']);

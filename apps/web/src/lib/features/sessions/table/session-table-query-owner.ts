@@ -170,14 +170,9 @@ export const createSessionTableQueryOwner = (options: {
 
   const readCampaignPage = async (request: SessionCampaignChildrenRequest, operation: SessionQueryOperationContext) => {
     const query = sessionCampaignChildrenQueryOptions(options.client, request, { browser: true });
-    const queryKey = [...query.queryKey, request.query.cursor ?? 'first'] as const;
-    const unlink = linkOperationAbort(operation, options.queryClient, queryKey);
+    const unlink = linkOperationAbort(operation, options.queryClient, query.queryKey);
     try {
-      const result = await options.queryClient.fetchQuery({
-        ...webQueryPolicies.immutableRevision,
-        queryFn: async ({ signal }) => await options.client.campaignChildren(request, signal),
-        queryKey,
-      });
+      const result = await options.queryClient.fetchQuery(query);
       if (!result.ok) {
         throw errorFromResult(result);
       }
