@@ -71,7 +71,12 @@
   let selectedOrigin = $state<string | undefined>();
   let query = $state('');
   const view = $derived(
-    buildSkillsMatrixView(snapshot, { cellState: activeCellStateFilter, invocation, origin: selectedOrigin, query }),
+    buildSkillsMatrixView(snapshot, {
+      ...(activeCellStateFilter === undefined ? {} : { cellState: activeCellStateFilter }),
+      ...(invocation === undefined ? {} : { invocation }),
+      ...(selectedOrigin === undefined ? {} : { origin: selectedOrigin }),
+      query,
+    }),
   );
   const runtimeCopy = $derived(`${view.matrix.targets.length} enabled / ${snapshot.targets.length} configured`);
   const toggleStateFilter = (filter: SkillCellStateFilter): void =>

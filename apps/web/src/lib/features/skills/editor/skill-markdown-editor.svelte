@@ -15,11 +15,14 @@
   } = $props();
 
   const editorController = untrack(() => controller);
-  let state = $state(editorController.getState());
+  const initialEditorState = untrack(() => editorController.getState());
+  let editorState = $state(initialEditorState);
+  let draftValue = $state(initialEditorState.draft);
   let editorElement = $state<HTMLTextAreaElement>();
   let reloadRequested = $state(false);
   const stopState = editorController.subscribe((next) => {
-    state = next;
+    editorState = next;
+    draftValue = next.draft;
   });
   onDestroy(stopState);
 
@@ -156,13 +159,13 @@
     }
     return { error: false, label: 'Saved', tone: statusOk };
   };
-  const status = $derived(documentStatus(state));
+  const status = $derived(documentStatus(editorState));
 
   const saveDraft = async (): Promise<void> => {
     await editorController.save();
   };
   const reloadFromDisk = async (): Promise<void> => {
-    if (state.dirty) {
+    if (editorState.dirty) {
       reloadRequested = true;
       return;
     }
@@ -181,14 +184,16 @@
       return;
     }
     event.preventDefault();
-    if (state.dirty && !state.saving && !state.conflict) {
+    if (editorState.dirty && !editorState.saving && !editorState.conflict) {
       await saveDraft();
     }
   };
 </script>
 
 <section
-  {...(state.loading || state.saving || (state.document === undefined && state.error === null)
+  {...(editorState.loading ||
+  editorState.saving ||
+  (editorState.document === undefined && editorState.error === null)
     ? { 'aria-busy': 'true' as const }
     : {})}
   class={editorSection}
@@ -202,25 +207,29 @@
       <span aria-live="polite" class={cx(statusPill, status.tone)}>{status.label}</span>
     {/if}
   </div>
-  {#if state.document}
+  {#if editorState.document}
     <textarea
-      aria-label={`${state.skillName} SKILL.md`}
+      aria-label={`${editorState.skillName} SKILL.md`}
       class={editorArea}
-      disabled={state.saving}
+      disabled={editorState.saving}
       oninput={(event) => editorController.setDraft(event.currentTarget.value)}
       onkeydown={handleShortcut}
-      value={state.draft}
       wrap="soft"
       bind:this={editorElement}
+      bind:value={draftValue}
     ></textarea>
   {:else}
     <div aria-hidden="true" class={loadingBlock}></div>
   {/if}
   <div class={documentActions}>
     <button
-      {...(state.saving ? { 'aria-busy': 'true' as const } : {})}
+      {...(editorState.saving ? { 'aria-busy': 'true' as const } : {})}
       class={commandButton}
-      disabled={state.document === undefined || !state.dirty || state.loading || state.saving || state.conflict}
+      disabled={editorState.document === undefined ||
+        !editorState.dirty ||
+        editorState.loading ||
+        editorState.saving ||
+        editorState.conflict}
       onclick={saveDraft}
       type="button"
     >
@@ -228,7 +237,7 @@
     </button>
     <button
       class={ghostButton}
-      disabled={!state.dirty || state.loading || state.saving}
+      disabled={!editorState.dirty || editorState.loading || editorState.saving}
       onclick={editorController.discardDraft}
       type="button"
     >
@@ -236,7 +245,7 @@
     </button>
     <button
       class={ghostButton}
-      disabled={state.loading || state.saving || state.skillName === ''}
+      disabled={editorState.loading || editorState.saving || editorState.skillName === ''}
       onclick={reloadFromDisk}
       type="button"
     >

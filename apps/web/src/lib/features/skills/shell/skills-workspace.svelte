@@ -14,6 +14,7 @@
   let {
     editorSlot,
     healthSlot,
+    hydrated = false,
     matrixSlot,
     selectedDocument,
     snapshot,
@@ -22,6 +23,7 @@
   }: {
     editorSlot?: Snippet<[SkillsShellSlotContext]>;
     healthSlot?: Snippet<[SkillsShellSlotContext]>;
+    hydrated?: boolean;
     matrixSlot?: Snippet<[SkillsShellSlotContext]>;
     selectedDocument?: ProjectSkillMarkdownDocument | SkillMarkdownDocument | undefined;
     snapshot: SkillManagementSnapshot;
@@ -135,7 +137,7 @@
   const mobileContext = css({ display: { base: 'block', xl: 'contents' }, gridColumn: { lg: '2', xl: 'auto' } });
 </script>
 
-<div class={workspaceGrid} data-skills-workspace>
+<div class={workspaceGrid} data-skills-hydrated={hydrated} data-skills-workspace>
   <div class={desktopTree}>
     <SkillsTree
       {collapsedKeys}

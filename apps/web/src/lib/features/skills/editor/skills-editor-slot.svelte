@@ -18,7 +18,7 @@
   };
   let browserClient: ReturnType<typeof createSkillsClient> | undefined;
   const resolveClient = (): ReturnType<typeof createSkillsClient> => {
-    browserClient ??= createSkillsClient(createBrowserWebRpcClient('skills-editor'));
+    browserClient ??= createSkillsClient(createBrowserWebRpcClient('skills-editor').skills);
     return browserClient;
   };
   const queryClient = useQueryClient();

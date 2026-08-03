@@ -32,6 +32,24 @@ export const handle: Handle = async ({ event, resolve }) => {
       status: 307,
     });
   }
+  if (event.url.pathname === '/rpc' || event.url.pathname.startsWith('/rpc/')) {
+    const isOwnedInternalRequest =
+      event.request.headers.get('host') === null && event.request.headers.has('x-ai-usage-request-owner');
+    const rpcRequest = isOwnedInternalRequest
+      ? new Request(event.request, {
+          headers: {
+            ...Object.fromEntries(event.request.headers),
+            host: event.url.host,
+            origin: event.url.origin,
+            'sec-fetch-site': 'same-origin',
+          },
+        })
+      : event.request;
+    const { handleWebRpcRequest } = await import('../src/lib/server/rpc/handler.server');
+    const response = await handleWebRpcRequest(rpcRequest);
+    response.headers.set('x-ai-usage-shadow', 'sveltekit');
+    return response;
+  }
   if (e2eOverridesEnabled && event.request.headers.get('x-ai-usage-shadow-acquisition-tripwire') === 'armed') {
     throw new Error('Synthetic acquisition tripwire reached resolve');
   }
@@ -48,7 +66,9 @@ export const handle: Handle = async ({ event, resolve }) => {
       sameSite: 'strict',
     });
   }
-  const response = await resolve(event);
+  const response = await resolve(event, {
+    filterSerializedResponseHeaders: (name) => name === 'content-type',
+  });
   response.headers.set('x-ai-usage-shadow', 'sveltekit');
   if (errorFixtureRequested && response.status === 503) {
     response.headers.set('x-ai-usage-expected-error', 'shell-route');

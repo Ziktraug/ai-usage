@@ -52,13 +52,15 @@ const viteServer = await createServer({
 const closeViteServer = (): Promise<void> => viteServer.close();
 afterAll(closeViteServer);
 
-const [fixtureModule, hydrationFixtureModule, svelteServerModule] = await Promise.all([
+const [fixtureModule, hydrationFixtureModule, convergenceFixtureModule, svelteServerModule] = await Promise.all([
   viteServer.ssrLoadModule('/apps/web/src/lib/features/skills/shell/skills-workspace.fixture.svelte'),
   viteServer.ssrLoadModule('/apps/web/src/lib/features/skills/shell/skills-shell.hydration.fixture.svelte'),
+  viteServer.ssrLoadModule('/apps/web/src/lib/features/skills/shell/skills-convergence.fixture.svelte'),
   viteServer.ssrLoadModule('svelte/server'),
 ]);
 const fixture = componentFrom(fixtureModule);
 const hydrationFixture = componentFrom(hydrationFixtureModule);
+const convergenceFixture = componentFrom(convergenceFixtureModule);
 const { render } = rendererFrom(svelteServerModule);
 
 const ok = <Value>(data: Value): SkillsCapabilityResult<Value> => ({ data, ok: true });
@@ -111,6 +113,19 @@ describe('Svelte Skills workspace SSR', () => {
     expect(html).toContain('aria-label="Synthetic matrix slot"');
     expect(html).toContain('Matrix integration');
     expect(html).toContain('Matrix integration · settled');
+  });
+
+  test('composes the real editor, health, and matrix slots through one shell context', () => {
+    const html = render(convergenceFixture).body;
+    expect(html).toContain('data-skills-workspace');
+    expect(html).toContain('data-skill-markdown-editor');
+    expect(html).toContain('data-skills-management-health-slot');
+    expect(html).not.toContain('Synthetic editor slot');
+    expect(html).not.toContain('Health integration');
+
+    const matrixHtml = render(convergenceFixture, { props: { pathname: '/skills/matrix' } }).body;
+    expect(matrixHtml).toContain('data-skills-management-matrix-slot');
+    expect(matrixHtml).not.toContain('Synthetic matrix slot');
   });
 
   test('hydrates a bounded awaited route into a new provider without duplicate Skills acquisition', async () => {

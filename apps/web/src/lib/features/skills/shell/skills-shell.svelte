@@ -52,6 +52,7 @@
     getSkillProjectInventories: (options) => resolveClient().getSkillProjectInventories(options),
   };
   let mounted = $state(false);
+  let browserQueryCycleStarted = $state(false);
   const queriesEnabled = $derived(mounted && runtimeMode !== 'demo');
   const snapshotQuery = createQuery(() =>
     skillsSnapshotQueryOptions(client, { browser: mounted, enabled: runtimeMode !== 'demo' }),
@@ -171,6 +172,14 @@
   const selectedDocument = $derived<ProjectSkillMarkdownDocument | SkillMarkdownDocument | undefined>(
     managedSkillName === undefined ? projectDocumentQuery.data : managedDocumentQuery.data,
   );
+  const hydrated = $derived(
+    browserQueryCycleStarted &&
+      !snapshotQuery.isFetching &&
+      !knownPathsQuery.isFetching &&
+      !inventoriesQuery.isFetching &&
+      !managedDocumentQuery.isFetching &&
+      !projectDocumentQuery.isFetching,
+  );
   const loading = $derived(snapshotQuery.isPending || knownPathsQuery.isPending);
   const messageFromError = (error: unknown): string | undefined => (error instanceof Error ? error.message : undefined);
   const errorMessage = $derived(messageFromError(snapshotQuery.error) ?? messageFromError(knownPathsQuery.error));
@@ -187,6 +196,10 @@
 
   onMount(() => {
     mounted = true;
+    const queryCycleFrame = window.requestAnimationFrame(() => {
+      browserQueryCycleStarted = true;
+    });
+    return () => window.cancelAnimationFrame(queryCycleFrame);
   });
 
   $effect(() => {
@@ -201,6 +214,7 @@
   <SkillsWorkspace
     {...(editorSlot === undefined ? {} : { editorSlot })}
     {...(healthSlot === undefined ? {} : { healthSlot })}
+    {hydrated}
     {...(matrixSlot === undefined ? {} : { matrixSlot })}
     {selectedDocument}
     snapshot={view.snapshot}

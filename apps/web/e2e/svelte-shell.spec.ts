@@ -13,13 +13,13 @@ const activeDestinationFor = (path: string, heading: string): string => {
 
 const shellRoutes = [
   { heading: 'Usage report', marker: 'report', path: '/' },
-  { heading: 'Skill management', marker: 'skills-global', path: '/skills/global' },
-  { heading: 'Skill management', marker: 'skills-global-detail', path: '/skills/global/alpha%20skill' },
-  { heading: 'Skill management', marker: 'skills-matrix', path: '/skills/matrix' },
-  { heading: 'Skill management', marker: 'skills-project', path: '/skills/projects/project%2Fopaque' },
+  { heading: 'Skill management', marker: null, path: '/skills/global' },
+  { heading: 'Skill management', marker: null, path: '/skills/global/alpha-skill' },
+  { heading: 'Skill management', marker: null, path: '/skills/matrix' },
+  { heading: 'Skill management', marker: null, path: '/skills/projects/project%2Fopaque' },
   {
     heading: 'Skill management',
-    marker: 'skills-project-detail',
+    marker: null,
     path: '/skills/projects/project%2Fopaque/skill%20name',
   },
   { heading: 'Sources', marker: 'sources', path: '/sources' },
@@ -32,8 +32,17 @@ test('server-renders and reloads every Svelte shell route with accessible naviga
     expect(response.status()).toBe(200);
     expect(response.headers()['x-ai-usage-shadow']).toBe('sveltekit');
     const html = await response.text();
-    expect(html).toContain(`data-route-shell="${route.marker}"`);
+    if (route.marker === null) {
+      expect(html).toContain('data-skills-workspace');
+    } else {
+      expect(html).toContain(`data-route-shell="${route.marker}"`);
+    }
     expect(html).toContain(route.heading);
+    if (route.path === '/skills/global/alpha-skill') {
+      expect(html).toContain('data-skills-workspace');
+      expect(html).toContain('data-skill-markdown-editor');
+      expect(html).toContain('data-skills-management-health-slot');
+    }
   }
   const fallback = await request.get('/skills', { maxRedirects: 0 });
   expect(fallback.status()).toBe(307);
@@ -46,7 +55,12 @@ test('server-renders and reloads every Svelte shell route with accessible naviga
     await page.goto(route.path);
     await expect(page).toHaveTitle('ai-usage report');
     await expect(page.getByRole('heading', { level: 1, name: route.heading })).toBeVisible();
-    await expect(page.locator(`[data-route-shell="${route.marker}"]`)).toBeAttached();
+    if (route.marker === null) {
+      await expect(page.locator('[data-skills-workspace]')).toBeAttached();
+      await expect(page.locator('[data-skills-workspace]')).toHaveAttribute('data-skills-hydrated', 'true');
+    } else {
+      await expect(page.locator(`[data-route-shell="${route.marker}"]`)).toBeAttached();
+    }
     await expect(page.getByRole('complementary', { name: 'Application navigation' })).toBeVisible();
     const activeDestination = activeDestinationFor(route.path, route.heading);
     await expect(page.getByRole('link', { name: activeDestination, exact: true })).toHaveAttribute(
@@ -129,8 +143,9 @@ test('resolves stored and system theme before paint and toggles the named prefer
 
 test('blocks dirty navigation through Keep, Discard, reload, focus, and cleanup', async ({ page }) => {
   await page.setViewportSize({ height: 844, width: 390 });
-  await page.goto('/skills/global/alpha%20skill');
-  const editor = page.getByLabel('Synthetic SKILL.md draft');
+  await page.goto('/skills/global/alpha-skill');
+  await expect(page.locator('[data-skills-workspace]')).toHaveAttribute('data-skills-hydrated', 'true');
+  const editor = page.getByLabel('alpha-skill SKILL.md');
   await editor.fill('Unsaved synthetic draft');
   expect(
     await page.evaluate(() => {
@@ -142,7 +157,7 @@ test('blocks dirty navigation through Keep, Discard, reload, focus, and cleanup'
   const manage = page.getByRole('button', { name: 'Manage' });
   await manage.click();
   await page.getByRole('link', { name: 'Sources', exact: true }).click();
-  await expect(page).toHaveURL('/skills/global/alpha%20skill');
+  await expect(page).toHaveURL('/skills/global/alpha-skill');
   const prompt = page.getByRole('alertdialog', { name: 'Discard unsaved changes?' });
   await expect(prompt).toBeVisible();
   await expect(prompt).toHaveAttribute('aria-modal', 'true');
@@ -175,8 +190,9 @@ test('blocks dirty navigation through Keep, Discard, reload, focus, and cleanup'
   ).toBe(true);
 
   await page.goBack();
-  await expect(page).toHaveURL('/skills/global/alpha%20skill');
-  const remountedEditor = page.getByLabel('Synthetic SKILL.md draft');
+  await expect(page).toHaveURL('/skills/global/alpha-skill');
+  await expect(page.locator('[data-skills-workspace]')).toHaveAttribute('data-skills-hydrated', 'true');
+  const remountedEditor = page.getByLabel('alpha-skill SKILL.md');
   await remountedEditor.fill('Second synthetic draft');
   await page.getByRole('link', { name: 'Sync' }).click();
   await expect(page.getByRole('alertdialog', { name: 'Discard unsaved changes?' })).toHaveCount(1);

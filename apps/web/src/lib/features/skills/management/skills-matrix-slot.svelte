@@ -39,7 +39,9 @@
     }
     return actionCount === 0 ? 'Nothing to change.' : 'Skills updated.';
   };
-  const publish = (snapshot: typeof context.snapshot): void => queryClient.setQueryData(skillsSnapshotKey(), snapshot);
+  const publish = (snapshot: typeof context.snapshot): void => {
+    queryClient.setQueryData(skillsSnapshotKey(), snapshot);
+  };
   const execute = async (operation: SkillsManagementOperation, pendingLabel: string): Promise<void> => {
     if (pendingOperation !== null) {
       return;
@@ -65,8 +67,10 @@
 
 <div class={stack} data-skills-management-matrix-slot>
   <SkillsHealth
-    {activeFilter}
-    onFilterChange={(filter) => (activeFilter = activeFilter === filter ? undefined : filter)}
+    {...(activeFilter === undefined ? {} : { activeFilter })}
+    onFilterChange={(filter) => {
+      activeFilter = activeFilter === filter ? undefined : filter;
+    }}
     snapshot={context.snapshot}
     summary={health}
   />
@@ -76,10 +80,14 @@
     <p aria-live="polite" class={notice} role="status">{operationMessage.message}</p>
   {/if}
   <SkillsMatrix
-    activeCellStateFilter={activeFilter}
+    {...(activeFilter === undefined ? {} : { activeCellStateFilter: activeFilter })}
     onApplyReconcile={() => execute('reconcile-all', 'reconcile-all')}
-    onCancelReconcile={() => (reconcilePlan = null)}
-    onCellStateFilterChange={(filter) => (activeFilter = filter)}
+    onCancelReconcile={() => {
+      reconcilePlan = null;
+    }}
+    onCellStateFilterChange={(filter) => {
+      activeFilter = filter;
+    }}
     onPreviewReconcile={() => execute('preview-reconcile', 'preview-reconcile')}
     {pendingOperation}
     {reconcilePlan}
