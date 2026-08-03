@@ -12,8 +12,8 @@ authority for feature, operation, design, source-file, and test-title coverage.
 - Planning PR: `#26`, squash-merged as
   `2183270ebfbb886fafa7e6268893122db9b364c0`
 - `BASE_SHA`: `2183270ebfbb886fafa7e6268893122db9b364c0`
-- Current integration checkpoint: `c859f7f`
-- Last reviewed green checkpoint: `9d24e5b`
+- Current integration checkpoint: `e953bdc`
+- Last reviewed green checkpoint: `e953bdc`
 - Active design bases: D1 `4862293`, D2 `fce5c1a`, D3 `e2f13cd`
 - Implementation PR: not opened
 - Exclusive process-test token: free after the P6 activated shadow-browser gate
@@ -145,7 +145,7 @@ Statuses are `BLOCKED`, `READY`, `IMPLEMENTING`, `REVIEW`, `REWORK`,
 | P7 | R1, V4, Q2, D4 | REWORK | `d2486bd`, corrections `80a6db3`, evidence `ed0a76d` | `/root/q2_spec_review`, `/root/v34_parity` / REWORK | - |
 | P8 | P1 | REVIEW | `4dd9b93`, `12939b4`, evidence `caa138a` | independent review in progress | - |
 | P9 | P5 | INTEGRATED | `9d48303`, evidence `4cb0f0d`; integrated `82451ad`, `be5e49b`, evidence rewrite `c859f7f` | `/root/q2_spec_review` / ACCEPT | `c859f7f` |
-| P10 | P5 | REVIEW | `455b569`, evidence `dac69e0` | independent review in progress | - |
+| P10 | P5 | INTEGRATED | `455b569`, evidence `dac69e0`; integrated `8e35926`, `3a43913`, evidence rewrite `e953bdc` | `/root/q2_spec_review` / ACCEPT | `e953bdc` |
 | X0 | P2, P8, P4, P9, P10, P6, P7 | BLOCKED | - | - | - |
 | X1 | X0 | BLOCKED | - | - | - |
 | X2 | X1 | BLOCKED | - | - | - |
@@ -1077,6 +1077,18 @@ P2 series-color convergence. `216ec3b` records
 `./svelte::stableSeriesColor`, advances the frozen checker to 414 live/437
 ledger design exports and restores 13/13 checker tests plus 414/414 inventory.
 
+P10 candidate `455b569` plus evidence `dac69e0` ports Skills health,
+diagnostics, context, consolidation, reconcile and responsive matrix surfaces.
+`/root/q2_spec_review` ACCEPTed both axes: strict wire parsing, lazy browser RPC
+acquisition, smallest-key snapshot publication and the unchanged P5
+draft-decision owner all remain intact. It integrated as `8e35926` and
+`3a43913`; `e953bdc` rewrites target evidence to the integrated implementation.
+The exact post-cherry suite passed 70 tests and 237 assertions, followed by
+Svelte 0/0, shadow build, Ultracite, TypeScript coverage, package boundaries,
+13/13 parity-checker tests and complete inventory. The implementer handoff's
+236-assertion count was a transcription error only; no committed evidence used
+that value and the independently observed count is recorded here.
+
 Coordinator deltas `3f42bfa`, `8020703` and `9d24e5b` expose the neutral stable
 series-color helper to Svelte and use it for matching P2 timeline segments and
 legend swatches, extract the collector-free machine freshness presentation
@@ -1150,8 +1162,7 @@ incident is retained rather than treated as a feature STOP.
   strict Svelte type errors while the additive shell was unreachable. The route
   was reverted before stacking work; reviewed correction `0f6b118` plus
   reachability fixture closes the gap, and all additive gates are green.
-- Recovery point: `9d24e5b` is the latest independently reviewed green
-  implementation checkpoint; `c859f7f` is the current clean integration head
-  with P9 integrated and its post-cherry parity closure green. P1, P2, P3, P5,
-  P6 and P9 are integrated; P4 is implementing, P8 and P10 are in independent
-  review, and P7 has a fresh compatible worktree ready for its original author.
+- Recovery point: `e953bdc` is the latest independently reviewed green
+  checkpoint. P1, P2, P3, P5, P6, P9 and P10 are integrated; P4 is
+  implementing, P8 is in original-author rework after an independent REWORK,
+  and P7 has a fresh compatible worktree ready for its original author.
