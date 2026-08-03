@@ -140,8 +140,8 @@ Statuses are `BLOCKED`, `READY`, `IMPLEMENTING`, `REVIEW`, `REWORK`,
 | P2 | P1 | BLOCKED | - | - | - |
 | P3 | P1, V2, Q1, D4 | BLOCKED | - | - | - |
 | P4 | P3 | BLOCKED | - | - | - |
-| P5 | R1, V3, Q2, D4 | REVIEW | `231f109`, evidence `a5b657f` | pending | - |
-| P6 | R1, V4, Q2, D4, B2 | REWORK | `f02f29f`, evidence `3076673`, lifecycle `f598271`, evidence `11a2ec6` | `/root/q2_spec_review` / REWORK | - |
+| P5 | R1, V3, Q2, D4 | REVIEW | `231f109`, evidence `a5b657f` | `/root/v34_parity` / paused pending | - |
+| P6 | R1, V4, Q2, D4, B2 | REWORK | `f02f29f`, evidence `3076673`, lifecycle `f598271`, evidence `11a2ec6`, correction `afe31e1`, evidence `97cb207` | `/root/q2_spec_review` / REWORK | - |
 | P7 | R1, V4, Q2, D4 | REWORK | `d2486bd` | `/root/q2_spec_review` / REWORK | - |
 | P8 | P1 | BLOCKED | - | - | - |
 | P9 | P5 | BLOCKED | - | - | - |
@@ -836,6 +836,13 @@ rows; replace revision-length magic numbers with named constants; and remove
 the duplicated run action seam. The endpoint trust ordering, broker reuse,
 single EventSource ownership, Query invalidation boundary, SSR/demo isolation
 and virtual lifecycle evidence were accepted. No STOP condition was found.
+The first correction pair `afe31e1`/`97cb207` centralized per-source actions,
+named revision bounds, restored conditional busy attributes, added the bounded
+provider/route request and mapped all owned TSX rows. Focused re-review retained
+one local REWORK: source/helper assertions must become actual Svelte-rendered
+pending/non-pending `Run now` and `Run all` evidence, and the summary request
+must name the exact existing shell/navigation symbol and responsive placement.
+The original author is applying that correction; no STOP condition was found.
 
 The first released implementation slot took P7 from clean base `79881c1` in
 isolated worktree `/tmp/ai-usage-068-p7`. Its full dispatch card freezes
