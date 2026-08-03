@@ -12,11 +12,11 @@ authority for feature, operation, design, source-file, and test-title coverage.
 - Planning PR: `#26`, squash-merged as
   `2183270ebfbb886fafa7e6268893122db9b364c0`
 - `BASE_SHA`: `2183270ebfbb886fafa7e6268893122db9b364c0`
-- Current integration checkpoint: `a71819cbbbc259b8f8fdd6880aa82775d82774a8`
-- Last reviewed green checkpoint: `a71819cbbbc259b8f8fdd6880aa82775d82774a8`
+- Current integration checkpoint: `f3610aaf873a1e4baaabe43b61bdb0db4486ff98`
+- Last reviewed green checkpoint: `f3610aaf873a1e4baaabe43b61bdb0db4486ff98`
 - Active design bases: D1 `4862293`, D2 `fce5c1a`, D3 `e2f13cd`
 - Implementation PR: not opened
-- Exclusive process-test token: free after the R1 shadow-browser and full repository gates
+- Exclusive process-test token: free after the P1 activated shadow-browser gate
 
 The integration branch did not exist locally or remotely before this run. Local
 `main` and `origin/main` were clean and aligned at `BASE_SHA`; plans 066 and 067
@@ -136,14 +136,14 @@ Statuses are `BLOCKED`, `READY`, `IMPLEMENTING`, `REVIEW`, `REWORK`,
 | D4 | D1, D2, D3 | INTEGRATED | `662182e`, bundle correction `6646fe5` | `/root/d4_review` / ACCEPT | `6646fe568e8b4c1fba74ac1b4150d1480d15ca6f` |
 | R0 | F0, V5, Q3, D4 | INTEGRATED | `435aa06`, evidence `88d56c9`, corrections `98235ab`, `4e46acc`, evidence `4f293e5`, `23635c7`; integrated as `affcee4`, `01fa070`, `688b629`, `fa92709`, `66a650e`, `c8b7c7e` | `/root/d123_parity_review`, `/root/q2_spec_review` / ACCEPT | `c8b7c7e872f25648dbf5df407f92e76d64948eff` |
 | R1 | R0 | INTEGRATED | `40116b5`, `121d78b`, corrections `95b67d6`, `7c85cf1`, evidence/checker `c5cc7ea`, `1befaef` | `/root/d123_parity_review`, `/root/q2_spec_review`, `/root/v34_parity` / ACCEPT | `1befaefd71ef5ffe59866021f216104b3f83f9ef` |
-| P1 | R1, V1, V2, Q1, D4 | ACCEPTED | `a19914b`, corrections `874cb1b`, `2422c2c`, evidence `02782f8` | `/root/v34_parity` / ACCEPT | pending cherry-pick |
-| P2 | P1 | BLOCKED | - | - | - |
-| P3 | P1, V2, Q1, D4 | BLOCKED | - | - | - |
+| P1 | R1, V1, V2, Q1, D4 | INTEGRATED | `a19914b`, `874cb1b`, `2422c2c`, evidence `02782f8`, activation correction `5bc8055` | `/root/v34_parity`, `/root/d123_parity_review` / ACCEPT | `f3610aa` |
+| P2 | P1 | READY | - | - | - |
+| P3 | P1, V2, Q1, D4 | READY | - | - | - |
 | P4 | P3 | BLOCKED | - | - | - |
 | P5 | R1, V3, Q2, D4 | REWORK | `231f109`, evidence `a5b657f` | `/root/d123_parity_review`, `/root/v34_parity` / REWORK | - |
-| P6 | R1, V4, Q2, D4, B2 | REDISPATCH | original range through `584b2a0` | `/root/q2_spec_review` / REWORK | - |
-| P7 | R1, V4, Q2, D4 | REWORK | `d2486bd` | `/root/q2_spec_review` / REWORK | - |
-| P8 | P1 | BLOCKED | - | - | - |
+| P6 | R1, V4, Q2, D4, B2 | REVIEW | fresh redispatch `7eba5bd` through `2d5b3fc` | `/root/q2_spec_review` / REWORK; fresh review pending | - |
+| P7 | R1, V4, Q2, D4 | REVIEW | `d2486bd`, corrections `80a6db3`, evidence `ed0a76d` | `/root/q2_spec_review` / REWORK; `/root/v34_parity` reviewing | - |
+| P8 | P1 | READY | - | - | - |
 | P9 | P5 | BLOCKED | - | - | - |
 | P10 | P5 | BLOCKED | - | - | - |
 | X0 | P2, P8, P4, P9, P10, P6, P7 | BLOCKED | - | - | - |
@@ -818,8 +818,25 @@ and `02782f8` add the exact route contract, real generic-consumer destruction,
 loader-to-dehydrated-alias-to-ReportRoot SSR, exact timestamp and per-row target
 evidence. `/root/v34_parity` independently re-reviewed the complete range and
 returned ACCEPT on both axes; 27 focused tests with 86 expectations,
-Ultracite, parity, zero-NUL, allowlist and diff checks are green. P1 awaits
-cherry-pick behind the coordinator neutral-presentation checkpoint.
+Ultracite, parity, zero-NUL, allowlist and diff checks are green. The four
+accepted worker commits integrated as `52013fc`, `63d3866`, `20b2ad8` and
+`3f6af3d`; coordinator evidence rewrite `6ec1b26` points the mechanical parity
+ledger at the integrated source/test commit.
+
+Activating the exact requested root composition exposed two optional-value
+typing defects that had been unreachable behind the R1 marker. The route delta
+was reverted immediately, the original P1 author normalized warnings to an
+empty array and refresh errors to `null` in accepted commit `5bc8055`, and that
+fix integrated as `e8008d0`. Coordinator commit `9ff4162` then activated the
+awaited `+page.ts` loader and sole `ReportRoot`; `/root/d123_parity_review`
+returned ACCEPT on both axes. The first shadow-browser run exposed the retired
+marker assertion, and a diagnostic test adaptation exposed the underlying Axe
+failure: the shipped P1 root had no `main` landmark. The adaptation was fully
+reverted. Coordinator correction `f3610aa` instead preserves the R1 route
+identity and adds the semantic `main` with passive design-system page/shell
+styles. Independent delta review ACCEPTed it. The final P1 gate passed 24 tests
+with 77 expectations, Svelte check 0/0, Ultracite, parity, shadow build and all
+6 shadow-browser tests. No assertion or accessibility gate was weakened.
 
 P5 candidate `231f109` plus current-status evidence `a5b657f` contains 16 owned
 feature files plus its shard, 1,454 implementation lines, and requests only the
@@ -892,9 +909,23 @@ checks with awaited prefetch/dehydration/no-duplicate-hydration and rendered SSR
 proof; add target evidence for every owned ledger row; and run the omitted
 shadow build, boundary, parity and affected full gates. The existing deep
 staging, request identity/abort and serialized observability seams were
-accepted. No STOP condition was found. P7 is preserved clean at `d2486bd` until
-its original implementer finishes critical-path P1. P6 awaits focused author
-rework. No feature packet has used the process-test token.
+accepted. No STOP condition was found. P7 corrections `80a6db3` and `ed0a76d`
+now thread per-request runtime mode before acquisition, restore the complete
+transfer progress/elapsed/count interface, add the exact X0 request, prove real
+dehydrate/fresh hydration without duplicate acquisition, and attach exact
+current target evidence. Its 20 tests with 75 assertions and all static, type,
+build, boundary and parity gates are green; independent re-review is in
+progress.
+
+P6 was freshly redispatched from neutral-presentation checkpoint `6ec1b26` in
+`/tmp/ai-usage-068-p6-r1`. Its ten-commit range `7eba5bd..2d5b3fc` cleanly
+reapplies the accepted endpoint/service/UI work, imports only the neutral format
+seam, asserts exact rendered pending-disabled and idle-enabled command states,
+adds recursive client closure coverage and rewrites every target evidence SHA.
+The clean handoff reports 19 tests with 153 assertions, Svelte check 0/0, Web
+type/build, shadow build, boundaries and aggregate parity green. Independent
+fresh review remains required. P1's browser gate held and released the only
+process-test token; neither P6 nor P7 used it.
 
 ## Deviations, STOPs, and recovery
 
@@ -940,6 +971,12 @@ rework. No feature packet has used the process-test token.
   package processes exposed the two D3 fixture failures described above. Every
   correction is committed, independently reviewed and covered by the final
   gates; no real local state was acquired.
-- Recovery point: `1befaefd71ef5ffe59866021f216104b3f83f9ef` is the latest
-  independently reviewed green checkpoint. R1 is integrated; P1, P5, P6 and P7
-  are ready.
+- Resolved P1 activation incidents: optional component inputs were normalized
+  before route activation; the browser then caught a missing report landmark.
+  The final component preserves the route marker and exactly one `main`, and the
+  unchanged 6-test shadow suite is green. The grouped pre-browser gate also
+  once remained silent until manually interrupted; each constituent command
+  subsequently passed under an explicit bound.
+- Recovery point: `f3610aaf873a1e4baaabe43b61bdb0db4486ff98` is the latest
+  independently reviewed green checkpoint. P1 is integrated; P2, P3 and P8 are
+  ready, while P5/P6/P7 remain recoverable in their isolated worktrees.
