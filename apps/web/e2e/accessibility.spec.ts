@@ -1,6 +1,14 @@
 import AxeBuilder from '@axe-core/playwright';
 import type { Locator, Page } from '@playwright/test';
-import { expect, reportViewsFor, test } from './browser-test';
+import {
+  expect,
+  openHydratedReport,
+  openHydratedSkills,
+  reportViewsFor,
+  test,
+  waitForHydratedReport,
+  waitForHydratedSkills,
+} from './browser-test';
 
 const TOP_SESSION_PATTERN = /Top session/;
 const RGB_COMPONENT_PATTERN = /[\d.]+/g;
@@ -80,6 +88,11 @@ for (const route of routes) {
   test(`${route.heading} exposes shared navigation without narrow overflow`, async ({ page }) => {
     await page.setViewportSize({ height: 900, width: 1280 });
     await page.goto(route.path);
+    if (route.path === '/') {
+      await waitForHydratedReport(page);
+    } else if (route.path.startsWith('/skills')) {
+      await waitForHydratedSkills(page);
+    }
     await expect(page.getByRole('heading', { level: 1, name: route.heading })).toBeVisible();
 
     const desktopNavigation = page.getByRole('complementary', { name: 'Application navigation' });
@@ -114,7 +127,7 @@ for (const route of routes) {
 
 test('keeps the active report destination visible after deep scrolling', async ({ page }) => {
   await page.setViewportSize({ height: 900, width: 1280 });
-  await page.goto('/?tab=sessions');
+  await openHydratedReport(page, '/?tab=sessions');
 
   const navigation = page.getByRole('complementary', { name: 'Application navigation' });
   const activeDestination = navigation.getByRole('link', { exact: true, name: 'Sessions' });
@@ -130,7 +143,7 @@ for (const colorScheme of ['light', 'dark'] as const) {
     await page.addInitScript(() => {
       localStorage.clear();
     });
-    await page.goto('/');
+    await openHydratedReport(page);
 
     const timeline = page.getByRole('button', { name: 'Inspect activity timeline. Use arrow keys to inspect days.' });
     const dashboardPanel = page.locator('[data-dashboard-panel]');
@@ -147,7 +160,7 @@ for (const colorScheme of ['light', 'dark'] as const) {
 
 test('reduced motion keeps drawer feedback while making motion effectively immediate', async ({ page }) => {
   await page.emulateMedia({ reducedMotion: 'reduce' });
-  await page.goto('/');
+  await openHydratedReport(page);
 
   await page.getByRole('button', { name: TOP_SESSION_PATTERN }).click();
   const drawer = page.getByRole('dialog', { name: 'Session details' });
@@ -174,8 +187,7 @@ test('reduced motion keeps drawer feedback while making motion effectively immed
 });
 
 test('Overview has no detectable accessibility violations', async ({ page }) => {
-  await page.goto('/');
-  await expect(page.locator('main[data-hydrated="true"]')).toBeVisible();
+  await openHydratedReport(page);
   await expect(page.getByText('5 / 6 sessions', { exact: true })).toBeVisible();
   await expect(reportViewsFor(page).getByRole('link', { exact: true, name: 'Overview' })).toHaveAttribute(
     'aria-current',
@@ -186,7 +198,7 @@ test('Overview has no detectable accessibility violations', async ({ page }) => 
 });
 
 test('the open session drawer has no detectable accessibility violations', async ({ page }) => {
-  await page.goto('/');
+  await openHydratedReport(page);
   await expect(page.getByText('5 / 6 sessions', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: TOP_SESSION_PATTERN }).click();
   const drawer = page.getByRole('dialog', { name: 'Session details' });
@@ -197,8 +209,7 @@ test('the open session drawer has no detectable accessibility violations', async
 });
 
 test('Skills has no detectable accessibility violations', async ({ page }) => {
-  await page.goto('/skills/global/alpha-skill');
-  await expect(page.locator('main[data-hydrated="true"]')).toBeVisible();
+  await openHydratedSkills(page, '/skills/global/alpha-skill');
   await expect(page.getByRole('textbox', { name: 'alpha-skill SKILL.md' })).toBeVisible();
 
   await expectNoAxeViolations(page);

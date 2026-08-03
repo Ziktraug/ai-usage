@@ -1,4 +1,4 @@
-import { expect, test } from './browser-test';
+import { expect, openHydratedReport, test, waitForFocusedReportSettled } from './browser-test';
 
 interface CategorySnapshot {
   categories: string[];
@@ -9,12 +9,13 @@ const sortedCategoryLabels = (labels: readonly string[]): string[] =>
   [...labels].sort((left, right) => left.localeCompare(right));
 
 test('keeps every populated harness and machine visible with default dimension filters', async ({ page }) => {
-  await page.goto('/?tab=harnesses');
+  await openHydratedReport(page, '/?tab=harnesses');
 
   const dateRange = page.getByRole('region', { name: 'Date range' });
   // Use the all-time fixture range so every synthetic category is in scope while
   // origin, harness, and machine retain their dashboard defaults.
   await dateRange.getByRole('button', { exact: true, name: 'All' }).click();
+  await waitForFocusedReportSettled(page);
 
   const breakdownTabs = page.getByRole('tablist', { name: 'Breakdown dimension' });
   await expect(breakdownTabs.getByRole('tab', { name: 'Harnesses & providers' })).toHaveAttribute(

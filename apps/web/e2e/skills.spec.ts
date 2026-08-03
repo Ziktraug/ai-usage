@@ -1,5 +1,5 @@
 import type { Page } from '@playwright/test';
-import { expect, test } from './browser-test';
+import { expect, openHydratedSkills, test } from './browser-test';
 import { rpcRouteFulfillmentForClientResult, SKILLS_SAVE_RPC_PATH } from './rpc-test-transport';
 
 const ALPHA_SKILL_CONTENT = '# alpha-skill\n\nDeterministic Playwright fixture.\n';
@@ -38,7 +38,7 @@ const interceptSaveResultForDraft = async (page: Page, draftMarker: string, resu
 };
 
 test('opens a managed SKILL.md as an immediately editable document and saves with the pointer', async ({ page }) => {
-  await page.goto('/skills/global/alpha-skill');
+  await openHydratedSkills(page, '/skills/global/alpha-skill');
 
   const detail = page.getByRole('region', { name: 'Selected skill detail' });
   const editor = detail.getByRole('textbox', { name: 'alpha-skill SKILL.md' });
@@ -68,7 +68,7 @@ test('opens a managed SKILL.md as an immediately editable document and saves wit
 });
 
 test('saves with Control+S and Meta+S while accepting immediate follow-up edits', async ({ page }) => {
-  await page.goto('/skills/global/alpha-skill');
+  await openHydratedSkills(page, '/skills/global/alpha-skill');
 
   const detail = page.getByRole('region', { name: 'Selected skill detail' });
   const editor = detail.getByRole('textbox', { name: 'alpha-skill SKILL.md' });
@@ -99,7 +99,7 @@ test('saves with Control+S and Meta+S while accepting immediate follow-up edits'
 test('wraps long SKILL.md prose without changing the source value', async ({ page }) => {
   const longProse = `# Long prose\n\n${'Readable prose should wrap inside the authoring surface. '.repeat(180)}\n`;
   await page.setViewportSize(MOBILE_VIEWPORT);
-  await page.goto('/skills/global/alpha-skill');
+  await openHydratedSkills(page, '/skills/global/alpha-skill');
 
   const editor = page.getByRole('textbox', { name: 'alpha-skill SKILL.md' });
   await editor.fill(longProse);
@@ -127,7 +127,7 @@ test('preserves the exact local draft when SKILL.md changed on disk', async ({ p
     data: { reason: 'conflict' },
     ok: true,
   });
-  await page.goto('/skills/global/alpha-skill');
+  await openHydratedSkills(page, '/skills/global/alpha-skill');
 
   const detail = page.getByRole('region', { name: 'Selected skill detail' });
   const editor = detail.getByRole('textbox', { name: 'alpha-skill SKILL.md' });
@@ -148,7 +148,7 @@ test('preserves the exact local draft after another save failure', async ({ page
     error: { message: 'Storage unavailable', tag: 'E2ESaveFailure' },
     ok: false,
   });
-  await page.goto('/skills/global/alpha-skill');
+  await openHydratedSkills(page, '/skills/global/alpha-skill');
 
   const detail = page.getByRole('region', { name: 'Selected skill detail' });
   const editor = detail.getByRole('textbox', { name: 'alpha-skill SKILL.md' });
@@ -164,7 +164,7 @@ test('preserves the exact local draft after another save failure', async ({ page
 });
 
 test('saves SKILL.md source without installing it into runtimes', async ({ page }) => {
-  await page.goto('/skills/global/alpha-skill');
+  await openHydratedSkills(page, '/skills/global/alpha-skill');
 
   const detail = page.getByRole('region', { name: 'Selected skill detail' });
   const editor = detail.getByRole('textbox', { name: 'alpha-skill SKILL.md' });
@@ -188,8 +188,7 @@ test('saves SKILL.md source without installing it into runtimes', async ({ page 
 });
 
 test('protects an unsaved SKILL.md draft during navigation and reload', async ({ page }) => {
-  await page.goto('/skills/global/alpha-skill');
-  await expect(page.locator('main[data-hydrated="true"]')).toBeVisible();
+  await openHydratedSkills(page, '/skills/global/alpha-skill');
 
   await expect(page.getByRole('heading', { level: 2, name: 'alpha-skill' })).toBeVisible();
   const editor = page.getByRole('textbox', { name: 'alpha-skill SKILL.md' });
@@ -227,7 +226,7 @@ test('protects an unsaved SKILL.md draft during navigation and reload', async ({
 });
 
 test('refreshes the skills snapshot and inventories without silently replacing a draft', async ({ page }) => {
-  await page.goto('/skills/global/alpha-skill');
+  await openHydratedSkills(page, '/skills/global/alpha-skill');
   const editor = page.getByRole('textbox', { name: 'alpha-skill SKILL.md' });
   await editor.fill('# Preserve me during refresh\n');
   await expect(page.getByText('Unsaved changes', { exact: true })).toBeVisible();
@@ -271,7 +270,7 @@ test('refreshes the skills snapshot and inventories without silently replacing a
 });
 
 test('preserves a source repository draft across an unrelated snapshot refresh', async ({ page }) => {
-  await page.goto('/skills/global');
+  await openHydratedSkills(page, '/skills/global');
   await page.getByText('Configuration & runtimes').click();
 
   const sourceRepository = page.getByRole('textbox', { name: 'Source repository' });
@@ -282,7 +281,7 @@ test('preserves a source repository draft across an unrelated snapshot refresh',
 });
 
 test('keeps every Skills mutation inside the deterministic E2E backend', async ({ page }) => {
-  await page.goto('/skills/global');
+  await openHydratedSkills(page, '/skills/global');
   await page.getByText('Configuration & runtimes').click();
 
   await page.getByRole('button', { name: 'Save source' }).click();
@@ -298,14 +297,14 @@ test('keeps every Skills mutation inside the deterministic E2E backend', async (
   await inspector.getByRole('button', { name: 'Disable' }).click();
   await expect(inspector.getByRole('button', { name: 'Enable' })).toBeVisible();
 
-  await page.goto('/skills/matrix');
+  await openHydratedSkills(page, '/skills/matrix');
   await page.getByRole('button', { name: 'Preview reconcile' }).first().click();
   await page.getByRole('button', { name: APPLY_ACTION_PATTERN }).first().click();
   await expect(page.getByText('alpha-skill linked to Codex.')).toBeVisible();
 });
 
 test('shows the document inspector with actions in a single place', async ({ page }) => {
-  await page.goto('/skills/global/alpha-skill');
+  await openHydratedSkills(page, '/skills/global/alpha-skill');
 
   const inspector = page.getByRole('complementary', { name: 'Inspector' });
   await expect(inspector).toBeVisible();
@@ -324,7 +323,7 @@ test('shows the document inspector with actions in a single place', async ({ pag
 
 test('keeps the tree, editor, and Inspector in one bounded desktop workspace row', async ({ page }) => {
   await page.setViewportSize(DESKTOP_WORKSPACE_VIEWPORT);
-  await page.goto('/skills/global/alpha-skill');
+  await openHydratedSkills(page, '/skills/global/alpha-skill');
 
   const tree = page.getByRole('complementary', { name: 'Skill scopes' }).last();
   const detail = page.getByRole('region', { name: 'Selected skill detail' });
@@ -367,7 +366,7 @@ test('keeps the tree, editor, and Inspector in one bounded desktop workspace row
 });
 
 test('bounds long scope labels and makes validation findings individually identifiable', async ({ page }) => {
-  await page.goto('/skills/global/beta-skill');
+  await openHydratedSkills(page, '/skills/global/beta-skill');
 
   const tree = page.getByRole('complementary', { exact: true, name: 'Skill scopes' });
   await tree.getByText('Projects without skills').click();
@@ -414,7 +413,7 @@ test('bounds long scope labels and makes validation findings individually identi
 });
 
 test('presents unmanaged copies as neutral backlog rows with their reconciliation action', async ({ page }) => {
-  await page.goto('/skills/global');
+  await openHydratedSkills(page, '/skills/global');
 
   const consolidation = page.locator('[data-consolidation-panel]');
   await consolidation.locator(':scope > summary').click();
@@ -430,7 +429,7 @@ test('presents unmanaged copies as neutral backlog rows with their reconciliatio
 
 test('prioritizes the editor on mobile and keeps the compact picker behavior', async ({ page }) => {
   await page.setViewportSize(MOBILE_VIEWPORT);
-  await page.goto('/skills/global/alpha-skill');
+  await openHydratedSkills(page, '/skills/global/alpha-skill');
 
   const picker = page.getByRole('group', { name: 'Skill picker' });
   const editor = page.getByRole('textbox', { name: 'alpha-skill SKILL.md' });
@@ -493,7 +492,7 @@ test('prioritizes the editor on mobile and keeps the compact picker behavior', a
 
 test('renders matrix cards on mobile and preserves the desktop comparison table', async ({ page }) => {
   await page.setViewportSize(MOBILE_VIEWPORT);
-  await page.goto('/skills/matrix');
+  await openHydratedSkills(page, '/skills/matrix');
 
   await expect(page.getByRole('list', { name: 'Managed skills by runtime' })).toBeVisible();
   await expect(page.getByRole('table')).toBeHidden();

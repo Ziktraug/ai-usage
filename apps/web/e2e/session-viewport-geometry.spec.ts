@@ -1,4 +1,4 @@
-import { expect, test } from './browser-test';
+import { expect, openHydratedReport, test } from './browser-test';
 
 const SESSION_VIEWPORT_BOTTOM_INSET = 24;
 
@@ -24,7 +24,7 @@ const viewportCases = [
 test('anchors the virtual Session viewport inside the screen on desktop and mobile', async ({ page }) => {
   for (const viewportCase of viewportCases) {
     await page.setViewportSize({ height: viewportCase.height, width: viewportCase.width });
-    await page.goto('/?tab=sessions');
+    await openHydratedReport(page, '/?tab=sessions');
 
     const surface = page.locator(`[data-session-surface="${viewportCase.mode}"]`);
     const regionStart = page.locator('[data-session-region-start]');

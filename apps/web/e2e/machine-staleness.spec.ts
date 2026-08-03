@@ -1,9 +1,9 @@
-import { expect, test } from './browser-test';
+import { expect, openHydratedReport, test, waitForFocusedReportSettled } from './browser-test';
 
 const serializedSearchValues = (url: string): string => [...new URL(url).searchParams.values()].join(' ');
 
 test('surfaces a stale machine outside sync while preserving its raw filter value', async ({ page }) => {
-  await page.goto('/');
+  await openHydratedReport(page);
   expect(new URL(page.url()).pathname).toBe('/');
 
   const dateRange = page.getByRole('region', { name: 'Date range' });
@@ -19,7 +19,8 @@ test('surfaces a stale machine outside sync while preserving its raw filter valu
   const staleMachineOption = page.getByRole('option', { name: 'Fixture Machine · Stale' });
   await expect(staleMachineOption).toBeVisible();
   await staleMachineOption.click();
-  await expect(machineFilter).toContainText('Fixture Machine · Stale');
   await expect.poll(() => serializedSearchValues(page.url())).toContain('fixture-machine');
+  await waitForFocusedReportSettled(page);
+  await expect(machineFilter).toContainText('Fixture Machine · Stale');
   expect(serializedSearchValues(page.url())).not.toContain('Stale');
 });

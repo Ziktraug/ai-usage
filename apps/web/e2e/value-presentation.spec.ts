@@ -1,11 +1,13 @@
-import { expect, reportViewsFor, test } from './browser-test';
+import { expect, openHydratedReport, reportViewsFor, test, waitForFocusedReportSettled } from './browser-test';
 
 const PARTIALLY_MEASURED_PATTERN = /Partially measured/;
 
 test('renders measured, partially measured, and zero Breakdown bars distinctly', async ({ page }) => {
-  await page.goto('/?origin=%5B%5D');
+  await openHydratedReport(page, '/?origin=%5B%5D');
   await page.getByRole('region', { name: 'Date range' }).getByRole('button', { exact: true, name: 'All' }).click();
+  await waitForFocusedReportSettled(page);
   await reportViewsFor(page).getByRole('link', { exact: true, name: 'Breakdown' }).click();
+  await waitForFocusedReportSettled(page);
 
   const breakdown = page.getByRole('tabpanel', { name: 'Models' });
   await expect(breakdown).toBeVisible();

@@ -1,5 +1,5 @@
 import type { Page } from '@playwright/test';
-import { expect, reportViewsFor, test } from './browser-test';
+import { expect, openHydratedReport, reportViewsFor, test, waitForFocusedReportSettled } from './browser-test';
 
 const CALENDAR_NAME_PATTERN = /Daily activity calendar/;
 const CHART_VIEW_PATTERN = /Chart view:/;
@@ -13,7 +13,7 @@ const SESSION_SUMMARY_PATTERN = / sessions$/;
 const reportRangeValue = (page: Page): string | null => new URL(page.url()).searchParams.get('range');
 
 test('uses one report range for the dashboard and activity chart', async ({ page }) => {
-  await page.goto('/');
+  await openHydratedReport(page);
 
   const dateRange = page.getByRole('region', { name: 'Date range' });
   await expect(dateRange.getByRole('button', { exact: true, name: 'All' })).toBeVisible();
@@ -50,7 +50,7 @@ test('uses one report range for the dashboard and activity chart', async ({ page
 });
 
 test('uses clickable heatmap days as Rhythm activity-day controls without a native date input', async ({ page }) => {
-  await page.goto('/');
+  await openHydratedReport(page);
 
   const calendar = page.getByRole('toolbar', { name: CALENDAR_NAME_PATTERN });
   const rhythm = page.locator('section').filter({ has: calendar });
@@ -60,6 +60,7 @@ test('uses clickable heatmap days as Rhythm activity-day controls without a nati
   expect(await heatmapDays.count()).toBeGreaterThan(0);
 
   await heatmapDays.first().click();
+  await waitForFocusedReportSettled(page);
   await expect(reportViewsFor(page).getByRole('link', { exact: true, name: 'Sessions' })).toHaveAttribute(
     'aria-current',
     'page',
@@ -67,7 +68,7 @@ test('uses clickable heatmap days as Rhythm activity-day controls without a nati
 });
 
 test('filters the report from non-empty Punchcard cells with click and keyboard', async ({ page }) => {
-  await page.goto('/');
+  await openHydratedReport(page);
 
   const heading = page.getByRole('heading', { exact: true, name: 'Punchcard' });
   const punchcard = heading.locator('xpath=ancestor::section[1]');
@@ -104,28 +105,34 @@ test('filters the report from non-empty Punchcard cells with click and keyboard'
   const timeCellValue = `${weekdayCode}-${hour}`;
   const period = `${weekday} ${hour}:00–${hour}:59`;
   const timePill = page.getByTitle('Clear Time filter');
-  const summary = page.locator('span[aria-live="polite"]').filter({ hasText: SESSION_SUMMARY_PATTERN }).first();
+  const summary = page.locator('[data-active-filters] span[aria-live="polite"]').filter({
+    hasText: SESSION_SUMMARY_PATTERN,
+  });
   const firstTimeCell = punchcard.getByRole('button', { exact: true, name: ariaLabel });
 
   await firstTimeCell.focus();
   await firstTimeCell.press('Enter');
   await expect.poll(() => new URL(page.url()).searchParams.get('timeCell')).toBe(timeCellValue);
+  await waitForFocusedReportSettled(page);
   await expect(timePill).toHaveText(`Time · ${period} ×`);
   await expect(summary).toContainText(`${formattedCount} / `);
 
   await timePill.click();
   await expect.poll(() => new URL(page.url()).searchParams.get('timeCell')).toBeNull();
+  await waitForFocusedReportSettled(page);
   await expect(timePill).toHaveCount(0);
 
   await punchcard.getByRole('button', { exact: true, name: ariaLabel }).click();
   await expect.poll(() => new URL(page.url()).searchParams.get('timeCell')).toBe(timeCellValue);
+  await waitForFocusedReportSettled(page);
   await expect(timePill).toHaveText(`Time · ${period} ×`);
   await timePill.click();
   await expect.poll(() => new URL(page.url()).searchParams.get('timeCell')).toBeNull();
+  await waitForFocusedReportSettled(page);
 });
 
 test('changes every chart option from its segmented controls', async ({ page }) => {
-  await page.goto('/');
+  await openHydratedReport(page);
 
   const chartOptions = page.getByRole('region', { name: 'Date range' }).locator('details[aria-label="Chart options"]');
   await chartOptions.locator('summary').click();
@@ -148,7 +155,7 @@ test('changes every chart option from its segmented controls', async ({ page }) 
 });
 
 test('groups the timeline by campaign, machine, and origin with matching legends', async ({ page }) => {
-  await page.goto('/');
+  await openHydratedReport(page);
 
   const dateRange = page.getByRole('region', { name: 'Date range' });
   const chartOptions = dateRange.locator('details[aria-label="Chart options"]');
@@ -158,8 +165,12 @@ test('groups the timeline by campaign, machine, and origin with matching legends
   await expect(
     chartOptions.getByText('Campaign · Day · Estimated API-equivalent value', { exact: true }),
   ).toBeVisible();
-  await expect(dateRange.getByTitle('Build report UI')).toContainText('Build report UI');
-  await expect(dateRange.getByTitle('Inspect OpenCode root')).toContainText('Inspect OpenCode root');
+  await expect(
+    dateRange.locator('[data-report-range-part=total-legend]').getByTitle('Build report UI', { exact: true }),
+  ).toContainText('Build report UI');
+  await expect(
+    dateRange.locator('[data-report-range-part=total-legend]').getByTitle('Inspect OpenCode root', { exact: true }),
+  ).toContainText('Inspect OpenCode root');
 
   await chartOptions.getByRole('radio', { exact: true, name: 'Machine' }).click();
   await expect(chartOptions.getByText('Machine · Day · Estimated API-equivalent value', { exact: true })).toBeVisible();
@@ -174,7 +185,7 @@ test('groups the timeline by campaign, machine, and origin with matching legends
 });
 
 test('commits preset, text, keyboard, and pointer report ranges to the URL', async ({ page }) => {
-  await page.goto('/');
+  await openHydratedReport(page);
 
   const dateRange = page.getByRole('region', { name: 'Date range' });
   const startInput = dateRange.getByRole('textbox', { name: 'Start date' });
@@ -184,8 +195,10 @@ test('commits preset, text, keyboard, and pointer report ranges to the URL', asy
 
   await dateRange.getByRole('button', { exact: true, name: 'All' }).click();
   await expect.poll(() => reportRangeValue(page)).not.toBeNull();
+  await waitForFocusedReportSettled(page);
   await dateRange.getByRole('button', { exact: true, name: '30d' }).click();
   await expect.poll(() => reportRangeValue(page)).toBeNull();
+  await waitForFocusedReportSettled(page);
   await expect(startInput).toHaveValue('May 12, 2026');
   await expect(endInput).toHaveValue('Jun 11, 2026');
 
@@ -224,11 +237,12 @@ test('commits preset, text, keyboard, and pointer report ranges to the URL', asy
   await expect.poll(() => page.url()).not.toBe(keyboardUrl);
 
   await page.reload();
+  await waitForFocusedReportSettled(page);
   await expect(startInput).not.toHaveValue(pointerStart);
 });
 
 test('does not capture wheel scrolling over the activity chart', async ({ page }) => {
-  await page.goto('/');
+  await openHydratedReport(page);
 
   const dateRange = page.getByRole('region', { name: 'Date range' });
   const timeline = dateRange.getByRole('button', {
@@ -241,10 +255,11 @@ test('does not capture wheel scrolling over the activity chart', async ({ page }
 });
 
 test('keeps the report range canonical across granularity and domain changes', async ({ page }) => {
-  await page.goto('/');
+  await openHydratedReport(page);
 
   const dateRange = page.getByRole('region', { name: 'Date range' });
   await dateRange.getByRole('button', { exact: true, name: '7d' }).click();
+  await waitForFocusedReportSettled(page);
   const startInput = dateRange.getByRole('textbox', { name: 'Start date' });
   const endInput = dateRange.getByRole('textbox', { name: 'End date' });
   const selectedStart = await startInput.inputValue();
@@ -257,6 +272,7 @@ test('keeps the report range canonical across granularity and domain changes', a
   await expect(endInput).toHaveValue(selectedEnd);
 
   await dateRange.getByTitle('Filter by Codex').click();
+  await waitForFocusedReportSettled(page);
 
   const reportStart = dateRange.getByRole('slider', { name: 'Start date' });
   const reportEnd = dateRange.getByRole('slider', { name: 'End date' });

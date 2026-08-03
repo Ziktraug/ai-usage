@@ -54,6 +54,32 @@ interface PageListeners {
 
 export const reportViewsFor = (page: Page): Locator => page.getByRole('navigation', { name: 'Report views' });
 
+export const waitForHydratedReport = async (page: Page): Promise<void> => {
+  await playwrightExpect(page.locator('main[data-hydrated="true"][data-route-shell="report"]')).toBeVisible();
+};
+
+export const openHydratedReport = async (page: Page, url = '/'): Promise<Awaited<ReturnType<Page['goto']>>> => {
+  const response = await page.goto(url);
+  await waitForHydratedReport(page);
+  return response;
+};
+
+export const waitForFocusedReportSettled = async (page: Page): Promise<void> => {
+  await waitForHydratedReport(page);
+  await playwrightExpect(page.locator('[data-report-refresh-pending]')).toHaveCount(0);
+  await playwrightExpect(page.locator('[data-report-complete-output]')).toBeVisible();
+};
+
+export const waitForHydratedSkills = async (page: Page): Promise<void> => {
+  await playwrightExpect(page.locator('[data-skills-workspace][data-skills-hydrated="true"]')).toBeVisible();
+};
+
+export const openHydratedSkills = async (page: Page, url: string): Promise<Awaited<ReturnType<Page['goto']>>> => {
+  const response = await page.goto(url);
+  await waitForHydratedSkills(page);
+  return response;
+};
+
 export const test = base.extend<{ browserFailureGate: undefined }>({
   browserFailureGate: [
     async ({ context }, use) => {

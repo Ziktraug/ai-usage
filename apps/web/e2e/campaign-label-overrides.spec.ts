@@ -1,5 +1,5 @@
 import type { Locator, Page } from '@playwright/test';
-import { expect, reportViewsFor, test } from './browser-test';
+import { expect, openHydratedReport, reportViewsFor, test, waitForFocusedReportSettled } from './browser-test';
 
 const CAMPAIGN_KEY = 'fixture-machine:codex:campaign-root';
 const DERIVED_LABEL = 'Build report UI';
@@ -41,8 +41,7 @@ const collectCampaignLabelRpcRequests = (page: Page): string[] => {
 test('renames and resets one page-local campaign label without changing its filter key', async ({ page }) => {
   await page.setViewportSize({ height: 900, width: 1024 });
   const campaignLabelRpcRequests = collectCampaignLabelRpcRequests(page);
-  await page.goto(CAMPAIGN_FILTER_URL);
-  await expect(page.locator('main[data-hydrated="true"]')).toBeVisible();
+  await openHydratedReport(page, CAMPAIGN_FILTER_URL);
   await expect.poll(() => campaignFilterFromUrl(page)).toBe(CAMPAIGN_KEY);
   await expect(page.getByTitle('Clear Campaign filter')).toContainText(`Campaign: ${CAMPAIGN_KEY}`);
 
@@ -70,8 +69,7 @@ test('renames and resets one page-local campaign label without changing its filt
   const freshPage = await page.context().newPage();
   const freshPageCampaignLabelRpcRequests = collectCampaignLabelRpcRequests(freshPage);
   await freshPage.setViewportSize({ height: 900, width: 1024 });
-  await freshPage.goto(CAMPAIGN_FILTER_URL);
-  await expect(freshPage.locator('main[data-hydrated="true"]')).toBeVisible();
+  await openHydratedReport(freshPage, CAMPAIGN_FILTER_URL);
   await expect(campaignRow(freshPage, DERIVED_LABEL)).toBeVisible();
   await campaignRow(freshPage, DERIVED_LABEL).click();
   await expect(
@@ -81,6 +79,7 @@ test('renames and resets one page-local campaign label without changing its filt
   await freshPage.close();
 
   await reportViewsFor(page).getByRole('link', { exact: true, name: 'Overview' }).click();
+  await waitForFocusedReportSettled(page);
   await expect(campaignOverviewButton(page, RENAMED_LABEL)).toBeVisible();
   const dateRange = page.getByRole('region', { name: 'Date range' });
   const chartOptions = dateRange.locator('details[aria-label="Chart options"]');
@@ -101,6 +100,7 @@ test('renames and resets one page-local campaign label without changing its filt
   await expect(dateRange.getByTitle(DERIVED_LABEL, { exact: true })).toContainText(DERIVED_LABEL);
   await expect(dateRange.getByTitle(RENAMED_LABEL, { exact: true })).toHaveCount(0);
   await reportViewsFor(page).getByRole('link', { exact: true, name: 'Sessions' }).click();
+  await waitForFocusedReportSettled(page);
   await expect(campaignRow(page, DERIVED_LABEL)).toBeVisible();
   await expect.poll(() => campaignFilterFromUrl(page)).toBe(CAMPAIGN_KEY);
   expect(campaignLabelRpcRequests).toEqual([]);
