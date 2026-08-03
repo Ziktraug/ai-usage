@@ -34,9 +34,22 @@ with the coordinator. Integrate this packet exactly once as follows.
 
    The awaited disposal must finish before process exit. Do not create a second
    observability runtime, Effect scope, sink, shutdown listener or timer.
-5. Keep both manual-merge leaves passing the authoritative per-request
-   `locals.runtimeMode ?? 'live'` to their P7 endpoint adapter. Policy
-   enforcement must remain before either dynamic deep-handler import.
+5. Create the two currently missing manual-merge SvelteKit leaves; do not wait
+   for or retain a placeholder route:
+
+   - `svelte-shadow/routes/api/manual-merge/download/+server.ts` exports `GET`.
+     Import the P7 `handleManualMergeDownloadEndpoint` adapter from
+     `$lib/features/sync/server/manual-merge-endpoints.server` and return
+     `handleManualMergeDownloadEndpoint(request, locals.runtimeMode ?? 'live')`.
+   - `svelte-shadow/routes/api/manual-merge/upload/+server.ts` exports `POST`.
+     Import the P7 `handleManualMergeUploadEndpoint` adapter from the same
+     module and return
+     `handleManualMergeUploadEndpoint(request, locals.runtimeMode ?? 'live')`.
+
+   Each `RequestHandler` must pass the original `request` and the authoritative
+   per-request runtime mode exactly as shown. The P7 adapters enforce policy
+   before either dynamic deep-handler import; the route leaves must not acquire
+   or import those deep handlers themselves.
 
 The feature owns no process acquisition outside the coordinator hook, no
 database path, and no access to configured maintainer state.

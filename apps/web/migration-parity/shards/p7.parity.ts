@@ -2,7 +2,7 @@ import { currentRecord, sourceInventoryRecords } from '../helpers';
 import { defineParityShard, type ParityEvidence, type ParityRecord } from '../schema';
 
 const owner = 'P7' as const;
-const implementationCommit = '8ccb108141babcf37fbb25bfc5d55894277c3d3f';
+const implementationCommit = '10618fd5a73bb63eb0a96f7fda90217678e028ef';
 const targetEvidence = (kind: ParityEvidence['kind'], reference: string): ParityEvidence => ({
   commit: implementationCommit,
   kind,
@@ -15,7 +15,7 @@ const withTargetEvidence = (record: ParityRecord, evidence: readonly ParityEvide
 });
 const commandEvidence = targetEvidence(
   'command',
-  'bun test apps/web/src/lib/features/sync apps/web/src/sync.render.test.tsx apps/web/src/manual-transfer-model.test.ts apps/web/src/server/manual-merge-upload.server.test.ts apps/web/src/server/sync-upload.server.test.ts apps/web/src/server/sync.server.test.ts apps/web/src/server/sync-e2e-fixture.server.test.ts apps/web/src/server/web-read-observability.server.test.ts apps/web/src/lib/query/options/sync.test.ts apps/web/src/lib/rpc/sync-client.test.ts apps/web/src/lib/rpc/sync-solid-client.test.ts apps/web/src/lib/server/rpc/sync.test.ts (66 pass, 297 assertions); bun x ultracite check apps/web/src/lib/features/sync apps/web/migration-parity/shards/p7.parity.ts; bun run --cwd apps/web typecheck; bun run --cwd apps/web build:svelte; bun run --cwd apps/web build; bun tools/check-package-boundaries.ts; bun tools/check-typescript-coverage.ts; bun tools/check-web-migration-parity.ts',
+  'bun test apps/web/src/lib/features/sync apps/web/src/sync.render.test.tsx apps/web/src/manual-transfer-model.test.ts apps/web/src/server/manual-merge-upload.server.test.ts apps/web/src/server/sync-upload.server.test.ts apps/web/src/server/sync.server.test.ts apps/web/src/server/sync-e2e-fixture.server.test.ts apps/web/src/server/web-read-observability.server.test.ts apps/web/src/lib/query/options/sync.test.ts apps/web/src/lib/rpc/sync-client.test.ts apps/web/src/lib/rpc/sync-solid-client.test.ts apps/web/src/lib/server/rpc/sync.test.ts (66 pass, 303 assertions); bun x ultracite check apps/web/src/lib/features/sync apps/web/migration-parity/shards/p7.parity.ts; bun run --cwd apps/web typecheck; bun run --cwd apps/web build:svelte; bun run --cwd apps/web build; bun tools/check-package-boundaries.ts; bun tools/check-typescript-coverage.ts; bun tools/check-web-migration-parity.ts',
 );
 const evidencedFeature = (record: ParityRecord, source: string, test: string): ParityRecord =>
   withTargetEvidence(record, [targetEvidence('source', source), targetEvidence('test', test), commandEvidence]);
@@ -76,7 +76,7 @@ export default defineParityShard({
         kind: 'feature',
       }),
       'apps/web/src/lib/features/sync/manual-transfer.svelte; apps/web/src/lib/features/sync/manual-transfer-progress.svelte; apps/web/src/lib/features/sync/manual-transfer-client.ts; apps/web/src/lib/features/sync/server/manual-merge-endpoints.server.ts; apps/web/src/lib/features/sync/INTEGRATION.md',
-      'apps/web/src/lib/features/sync/manual-transfer-client.test.ts; apps/web/src/lib/features/sync/server/manual-merge-endpoints.server.test.ts; apps/web/src/server/manual-merge-upload.server.test.ts',
+      'apps/web/src/lib/features/sync/sync-render.test.ts; apps/web/src/lib/features/sync/manual-transfer-client.test.ts; apps/web/src/lib/features/sync/server/manual-merge-endpoints.server.test.ts; apps/web/src/server/manual-merge-upload.server.test.ts',
     ),
     evidencedFeature(
       currentRecord(owner, {
