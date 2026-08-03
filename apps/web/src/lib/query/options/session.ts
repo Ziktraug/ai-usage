@@ -1,3 +1,13 @@
+import { parseSessionDetailRequest, sessionDetailRequestFingerprint } from '@ai-usage/report-core/session-detail';
+import {
+  parseSessionCampaignChildrenRequest,
+  parseSessionNeighborRequest,
+  parseSessionQueryRequest,
+  sessionCampaignChildrenFingerprint,
+  sessionNeighborFingerprint,
+  sessionQueryFingerprint,
+} from '@ai-usage/report-core/session-query';
+import { parseSessionVcsResolveRequest } from '@ai-usage/report-core/session-vcs';
 import type {
   SessionCampaignChildrenRequest,
   SessionDetailRequest,
@@ -16,20 +26,15 @@ export interface SessionQueryExecution {
   readonly browser: boolean;
 }
 
-export interface ExactSessionQueryIdentity {
+const pageDestination = (cursor: string | null): string =>
+  cursor === null ? 'page:initial' : `page:cursor:${JSON.stringify(cursor)}`;
+
+interface SessionPageIdentity {
   readonly fingerprint: string;
   readonly revision: string;
 }
 
-export interface SessionRowQueryIdentity {
-  readonly revision: string;
-  readonly rowIdentity: string;
-}
-
-const pageDestination = (cursor: string | null): string =>
-  cursor === null ? 'page:initial' : `page:cursor:${JSON.stringify(cursor)}`;
-
-const isPageFromIdentity = (key: readonly unknown[] | undefined, identity: ExactSessionQueryIdentity): boolean =>
+const isPageFromIdentity = (key: readonly unknown[] | undefined, identity: SessionPageIdentity): boolean =>
   key?.[0] === 'web' &&
   key[1] === 'immutable-revision' &&
   key[2] === sessionFamily &&
@@ -38,84 +43,110 @@ const isPageFromIdentity = (key: readonly unknown[] | undefined, identity: Exact
   typeof key[5] === 'string' &&
   key[5].startsWith('page:');
 
-export const sessionPageKey = ({ fingerprint, revision }: ExactSessionQueryIdentity, cursor: string | null) =>
-  immutableRevisionKey(sessionFamily, revision, fingerprint, pageDestination(cursor));
+export const sessionPageKey = (request: SessionQueryRequest) => {
+  const parsed = parseSessionQueryRequest(request);
+  return immutableRevisionKey(
+    sessionFamily,
+    parsed.revision,
+    sessionQueryFingerprint(parsed),
+    pageDestination(parsed.cursor),
+  );
+};
 
-export const sessionCampaignChildrenKey = ({ fingerprint, revision }: ExactSessionQueryIdentity) =>
-  immutableRevisionKey(sessionFamily, revision, fingerprint, 'campaign-children');
+export const sessionCampaignChildrenKey = (request: SessionCampaignChildrenRequest) => {
+  const parsed = parseSessionCampaignChildrenRequest(request);
+  return immutableRevisionKey(
+    sessionFamily,
+    parsed.query.revision,
+    sessionCampaignChildrenFingerprint(parsed),
+    'campaign-children',
+  );
+};
 
-export const sessionNeighborsKey = ({ fingerprint, revision }: ExactSessionQueryIdentity) =>
-  immutableRevisionKey(sessionFamily, revision, fingerprint, 'neighbors');
+export const sessionNeighborsKey = (request: SessionNeighborRequest) => {
+  const parsed = parseSessionNeighborRequest(request);
+  return immutableRevisionKey(sessionFamily, parsed.query.revision, sessionNeighborFingerprint(parsed), 'neighbors');
+};
 
-export const sessionDetailKey = ({ revision, rowIdentity }: SessionRowQueryIdentity) =>
-  immutableRevisionKey(sessionFamily, revision, rowIdentity, 'detail');
+export const sessionDetailKey = (request: SessionDetailRequest) => {
+  const parsed = parseSessionDetailRequest(request);
+  return immutableRevisionKey(sessionFamily, parsed.revision, sessionDetailRequestFingerprint(parsed), 'detail');
+};
 
-export const sessionVcsKey = ({ revision, rowIdentity }: SessionRowQueryIdentity) =>
-  immutableRevisionKey(sessionFamily, revision, rowIdentity, 'vcs');
+export const sessionVcsKey = (request: SessionVcsResolveRequest) => {
+  const parsed = parseSessionVcsResolveRequest(request);
+  return immutableRevisionKey(sessionFamily, parsed.revision, parsed.rowId, 'vcs');
+};
 
 export const sessionPageQueryOptions = (
   client: SessionClientAdapter,
   request: SessionQueryRequest,
-  identity: ExactSessionQueryIdentity,
   execution: SessionQueryExecution,
-) =>
-  queryOptions({
+) => {
+  const parsed = parseSessionQueryRequest(request);
+  const identity = { fingerprint: sessionQueryFingerprint(parsed), revision: parsed.revision };
+  return queryOptions({
     ...webQueryPolicies.immutableRevision,
     enabled: execution.browser,
     placeholderData: (previousData, previousQuery) =>
       isPageFromIdentity(previousQuery?.queryKey, identity) ? keepPreviousData(previousData) : undefined,
-    queryFn: async ({ signal }) => await client.page(request, signal),
-    queryKey: sessionPageKey(identity, request.cursor),
+    queryFn: async ({ signal }) => await client.page(parsed, signal),
+    queryKey: sessionPageKey(parsed),
   });
+};
 
 export const sessionCampaignChildrenQueryOptions = (
   client: SessionClientAdapter,
   request: SessionCampaignChildrenRequest,
-  identity: ExactSessionQueryIdentity,
   execution: SessionQueryExecution,
-) =>
-  queryOptions({
+) => {
+  const parsed = parseSessionCampaignChildrenRequest(request);
+  return queryOptions({
     ...webQueryPolicies.immutableRevision,
     enabled: execution.browser,
-    queryFn: async ({ signal }) => await client.campaignChildren(request, signal),
-    queryKey: sessionCampaignChildrenKey(identity),
+    queryFn: async ({ signal }) => await client.campaignChildren(parsed, signal),
+    queryKey: sessionCampaignChildrenKey(parsed),
   });
+};
 
 export const sessionNeighborsQueryOptions = (
   client: SessionClientAdapter,
   request: SessionNeighborRequest,
-  identity: ExactSessionQueryIdentity,
   execution: SessionQueryExecution,
-) =>
-  queryOptions({
+) => {
+  const parsed = parseSessionNeighborRequest(request);
+  return queryOptions({
     ...webQueryPolicies.immutableRevision,
     enabled: execution.browser,
-    queryFn: async ({ signal }) => await client.neighbors(request, signal),
-    queryKey: sessionNeighborsKey(identity),
+    queryFn: async ({ signal }) => await client.neighbors(parsed, signal),
+    queryKey: sessionNeighborsKey(parsed),
   });
+};
 
 export const sessionDetailQueryOptions = (
   client: SessionClientAdapter,
   request: SessionDetailRequest,
-  identity: SessionRowQueryIdentity,
   execution: SessionQueryExecution,
-) =>
-  queryOptions({
+) => {
+  const parsed = parseSessionDetailRequest(request);
+  return queryOptions({
     ...webQueryPolicies.immutableRevision,
     enabled: execution.browser,
-    queryFn: async ({ signal }) => await client.detail(request, signal),
-    queryKey: sessionDetailKey(identity),
+    queryFn: async ({ signal }) => await client.detail(parsed, signal),
+    queryKey: sessionDetailKey(parsed),
   });
+};
 
 export const sessionVcsQueryOptions = (
   client: SessionClientAdapter,
   request: SessionVcsResolveRequest,
-  identity: SessionRowQueryIdentity,
   execution: SessionQueryExecution,
-) =>
-  queryOptions({
+) => {
+  const parsed = parseSessionVcsResolveRequest(request);
+  return queryOptions({
     ...webQueryPolicies.immutableRevision,
     enabled: execution.browser,
-    queryFn: async ({ signal }) => await client.vcs(request, signal),
-    queryKey: sessionVcsKey(identity),
+    queryFn: async ({ signal }) => await client.vcs(parsed, signal),
+    queryKey: sessionVcsKey(parsed),
   });
+};

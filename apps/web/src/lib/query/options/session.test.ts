@@ -2,9 +2,8 @@ import { describe, expect, test } from 'bun:test';
 import {
   parseSessionQueryRequest,
   type SessionPageResult,
+  type SessionQueryRequest,
   type SessionQueryServerResult,
-  sessionCampaignChildrenFingerprint,
-  sessionNeighborFingerprint,
   sessionQueryFingerprint,
 } from '@ai-usage/report-core/session-query';
 import { isCancelledError, QueryObserver } from '@tanstack/svelte-query';
@@ -62,22 +61,44 @@ const createSessionClientStub = (overrides: Partial<SessionClientAdapter> = {}):
 
 describe('Session Query options', () => {
   test('QUERY-SESSION-EXACT-IMMUTABLE: separates revision, fingerprint, destination, cursor, and row identity', () => {
-    const pageIdentity = { fingerprint: sessionQueryFingerprint(query), revision: query.revision };
-    const campaignIdentity = {
-      fingerprint: sessionCampaignChildrenFingerprint(campaignRequest),
-      revision: query.revision,
-    };
-    const neighborIdentity = { fingerprint: sessionNeighborFingerprint(neighborRequest), revision: query.revision };
-    const rowIdentity = { revision: query.revision, rowIdentity: 'row-1' };
+    const pageMutations: SessionQueryRequest[] = [
+      { ...query, cursor: 'cursor-1' },
+      { ...query, filters: { ...query.filters, query: 'changed' } },
+      { ...query, pageSize: 50 },
+      { ...query, range: { from: '2026-08-01T00:00:00.000Z', to: null } },
+      { ...query, revision: 'revision-2' },
+      { ...query, sort: [{ desc: false, id: 'date' }] },
+    ];
+    for (const mutation of pageMutations) {
+      expect(sessionPageKey(mutation)).not.toEqual(sessionPageKey(query));
+    }
+    expect(sessionPageKey({ ...query, cursor: 'cursor-1' })).not.toEqual(
+      sessionPageKey({ ...query, cursor: 'cursor-2' }),
+    );
+    expect(sessionCampaignChildrenKey(campaignRequest)).not.toEqual(sessionNeighborsKey(neighborRequest));
+    expect(sessionCampaignChildrenKey({ ...campaignRequest, campaignKey: 'campaign-2' })).not.toEqual(
+      sessionCampaignChildrenKey(campaignRequest),
+    );
+    expect(
+      sessionCampaignChildrenKey({
+        ...campaignRequest,
+        query: { ...query, filters: { ...query.filters, query: 'changed' } },
+      }),
+    ).not.toEqual(sessionCampaignChildrenKey(campaignRequest));
+    expect(sessionNeighborsKey({ ...neighborRequest, rowId: 'row-2' })).not.toEqual(
+      sessionNeighborsKey(neighborRequest),
+    );
+    expect(sessionNeighborsKey({ ...neighborRequest, query: { ...query, revision: 'revision-2' } })).not.toEqual(
+      sessionNeighborsKey(neighborRequest),
+    );
+    const rowRequest = { revision: query.revision, rowId: 'row-1' };
+    expect(sessionDetailKey(rowRequest)).not.toEqual(sessionVcsKey(rowRequest));
+    expect(sessionDetailKey({ ...rowRequest, rowId: 'row-2' })).not.toEqual(sessionDetailKey(rowRequest));
+    expect(sessionDetailKey({ ...rowRequest, revision: 'revision-2' })).not.toEqual(sessionDetailKey(rowRequest));
+    expect(sessionVcsKey({ ...rowRequest, rowId: 'row-2' })).not.toEqual(sessionVcsKey(rowRequest));
+    expect(sessionVcsKey({ ...rowRequest, revision: 'revision-2' })).not.toEqual(sessionVcsKey(rowRequest));
 
-    expect(sessionPageKey(pageIdentity, null)).not.toEqual(sessionPageKey(pageIdentity, 'cursor-1'));
-    expect(sessionPageKey(pageIdentity, 'cursor-1')).not.toEqual(sessionPageKey(pageIdentity, 'cursor-2'));
-    expect(sessionCampaignChildrenKey(campaignIdentity)).not.toEqual(sessionNeighborsKey(neighborIdentity));
-    expect(sessionDetailKey(rowIdentity)).not.toEqual(sessionVcsKey(rowIdentity));
-    expect(sessionDetailKey({ ...rowIdentity, rowIdentity: 'row-2' })).not.toEqual(sessionDetailKey(rowIdentity));
-    expect(sessionDetailKey({ ...rowIdentity, revision: 'revision-2' })).not.toEqual(sessionDetailKey(rowIdentity));
-
-    const options = sessionCampaignChildrenQueryOptions(createSessionClientStub(), campaignRequest, campaignIdentity, {
+    const options = sessionCampaignChildrenQueryOptions(createSessionClientStub(), campaignRequest, {
       browser: false,
     });
     expect(options).toMatchObject({
@@ -105,7 +126,6 @@ describe('Session Query options', () => {
         },
       }),
       query,
-      { fingerprint: sessionQueryFingerprint(query), revision: query.revision },
       { browser: false },
     );
     const pending = queryClient.fetchQuery(options).catch((error: unknown) => error);
@@ -123,7 +143,6 @@ describe('Session Query options', () => {
 
   test('QUERY-RETAINED-DATA: keeps the prior page while a new exact cursor is pending', async () => {
     const secondRequest = { ...query, cursor: 'cursor-2' };
-    const identity = { fingerprint: sessionQueryFingerprint(query), revision: query.revision };
     const secondStarted = Promise.withResolvers<AbortSignal>();
     const queryClient = createWebQueryClient();
     const client = createSessionClientStub({
@@ -140,8 +159,8 @@ describe('Session Query options', () => {
         });
       },
     });
-    const firstOptions = sessionPageQueryOptions(client, query, identity, { browser: true });
-    const secondOptions = sessionPageQueryOptions(client, secondRequest, identity, { browser: true });
+    const firstOptions = sessionPageQueryOptions(client, query, { browser: true });
+    const secondOptions = sessionPageQueryOptions(client, secondRequest, { browser: true });
     await queryClient.fetchQuery(firstOptions);
     const observer = new QueryObserver(queryClient, firstOptions);
     const unsubscribe = observer.subscribe(() => undefined);
@@ -162,14 +181,11 @@ describe('Session Query options', () => {
   });
 
   test('never retains a page across a different immutable fingerprint or revision', async () => {
-    const firstIdentity = { fingerprint: sessionQueryFingerprint(query), revision: query.revision };
     const cases = [
       {
-        identity: { ...firstIdentity, fingerprint: 'different-fingerprint' },
-        request: { ...query, cursor: 'cursor-fingerprint' },
+        request: { ...query, cursor: 'cursor-fingerprint', pageSize: 50 },
       },
       {
-        identity: { ...firstIdentity, revision: 'revision-2' },
         request: { ...query, cursor: 'cursor-revision', revision: 'revision-2' },
       },
     ];
@@ -191,8 +207,8 @@ describe('Session Query options', () => {
           });
         },
       });
-      const firstOptions = sessionPageQueryOptions(client, query, firstIdentity, { browser: true });
-      const nextOptions = sessionPageQueryOptions(client, testCase.request, testCase.identity, { browser: true });
+      const firstOptions = sessionPageQueryOptions(client, query, { browser: true });
+      const nextOptions = sessionPageQueryOptions(client, testCase.request, { browser: true });
       await queryClient.fetchQuery(firstOptions);
       const observer = new QueryObserver(queryClient, firstOptions);
       const unsubscribe = observer.subscribe(() => undefined);
@@ -212,7 +228,6 @@ describe('Session Query options', () => {
 
   test('retains successful exact page data when an explicit refresh fails', async () => {
     let shouldFail = false;
-    const identity = { fingerprint: sessionQueryFingerprint(query), revision: query.revision };
     const queryClient = createWebQueryClient();
     const options = sessionPageQueryOptions(
       createSessionClientStub({
@@ -220,7 +235,6 @@ describe('Session Query options', () => {
           shouldFail ? Promise.reject(new Error('typed refresh failure')) : Promise.resolve(pageResult(query)),
       }),
       query,
-      identity,
       { browser: false },
     );
     await queryClient.fetchQuery(options);

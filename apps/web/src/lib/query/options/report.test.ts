@@ -1,17 +1,20 @@
 import { describe, expect, test } from 'bun:test';
+import { focusedRevisionFingerprint } from '@ai-usage/report-core/focused-report-query';
 import type {
+  FocusedBreakdownRequest,
+  FocusedOverviewRequest,
   FocusedReportServerResult,
   FocusedSupportResult,
   ReportRevisionBootstrapResult,
   ReportRevisionManifestResult,
 } from '@ai-usage/web-contract/report';
 import { isCancelledError, QueryObserver } from '@tanstack/svelte-query';
-import type { ReportClient } from '../../rpc/report-client';
 import { createHydratedWebQueryClient, createWebQueryClient, dehydrateWebQueryClient } from '../client';
 import { controlPlaneKey, finiteSwrKey } from '../keys';
 import { DEFAULT_BOUNDED_GC_TIME_MS } from '../policies';
 import {
   invalidateCurrentReportAliases,
+  type ReportQueryClient,
   reportBootstrapKey,
   reportBootstrapQueryOptions,
   reportBreakdownKey,
@@ -35,45 +38,70 @@ const supportUnavailable: FocusedReportServerResult<FocusedSupportResult> = {
   requestFingerprint: 'focused-support-v1:fingerprint',
   revision,
 };
+const reportQuery: FocusedOverviewRequest['query'] = {
+  filters: { fields: {}, harness: [], machine: [], origin: [], query: '' },
+  range: { from: null, to: null },
+  revision,
+};
+const overviewRequest: FocusedOverviewRequest = {
+  includeAdvanced: false,
+  query: reportQuery,
+  timeline: { dimension: 'provider', granularity: 'day' },
+};
+const breakdownRequest: FocusedBreakdownRequest = { query: reportQuery };
 
 const unusedRpc = (): Promise<never> => Promise.reject(new Error('Unexpected ReportClient call'));
 
-const createReportClientStub = (overrides: Partial<ReportClient> = {}): ReportClient => ({
-  getCampaignLabelOverrides: unusedRpc,
+const createReportClientStub = (overrides: Partial<ReportQueryClient> = {}): ReportQueryClient => ({
   getFocusedReportBreakdown: unusedRpc,
   getFocusedReportOverview: unusedRpc,
   getFocusedReportSupport: unusedRpc,
-  getProviderQuotaHistory: unusedRpc,
-  getReportPerfEnabled: unusedRpc,
   getReportRevisionBootstrap: unusedRpc,
   getReportRevisionManifest: unusedRpc,
-  saveProjectGroups: unusedRpc,
-  setCampaignLabelOverride: unusedRpc,
   ...overrides,
 });
 
 describe('Report Query options', () => {
   test('QUERY-REPORT-EXACT-IMMUTABLE: keys exact revision, fingerprint, and destination without collisions', () => {
-    const identity = { fingerprint: 'fingerprint-1', revision };
-
     expect(reportManifestKey()).not.toEqual(reportBootstrapKey());
-    expect(reportSupportKey(identity)).toEqual([
+    expect(reportSupportKey({ revision })).toEqual([
       'web',
       'immutable-revision',
       'report',
       revision,
-      'fingerprint-1',
+      focusedRevisionFingerprint('support', { revision }),
       'support',
     ]);
-    expect(reportOverviewKey(identity)).not.toEqual(reportSupportKey(identity));
-    expect(reportBreakdownKey(identity)).not.toEqual(reportOverviewKey(identity));
-    expect(reportSupportKey({ ...identity, fingerprint: 'fingerprint-2' })).not.toEqual(reportSupportKey(identity));
-    expect(reportSupportKey({ ...identity, revision: 'revision-2' })).not.toEqual(reportSupportKey(identity));
+    expect(reportOverviewKey(overviewRequest)).not.toEqual(reportSupportKey({ revision }));
+    expect(reportBreakdownKey(breakdownRequest)).not.toEqual(reportOverviewKey(overviewRequest));
+
+    const overviewMutations: FocusedOverviewRequest[] = [
+      { ...overviewRequest, includeAdvanced: true },
+      { ...overviewRequest, query: { ...reportQuery, revision: 'revision-2' } },
+      { ...overviewRequest, query: { ...reportQuery, filters: { ...reportQuery.filters, query: 'changed' } } },
+      {
+        ...overviewRequest,
+        query: { ...reportQuery, range: { from: '2026-08-01T00:00:00.000Z', to: null } },
+      },
+      { ...overviewRequest, timeline: { ...overviewRequest.timeline, dimension: 'model' } },
+      { ...overviewRequest, timeline: { ...overviewRequest.timeline, granularity: 'week' } },
+    ];
+    for (const mutation of overviewMutations) {
+      expect(reportOverviewKey(mutation)).not.toEqual(reportOverviewKey(overviewRequest));
+    }
+    const breakdownMutations: FocusedBreakdownRequest[] = [
+      { query: { ...reportQuery, revision: 'revision-2' } },
+      { query: { ...reportQuery, filters: { ...reportQuery.filters, query: 'changed' } } },
+      { query: { ...reportQuery, range: { from: null, to: '2026-08-02T00:00:00.000Z' } } },
+    ];
+    for (const mutation of breakdownMutations) {
+      expect(reportBreakdownKey(mutation)).not.toEqual(reportBreakdownKey(breakdownRequest));
+    }
+    expect(reportSupportKey({ revision: 'revision-2' })).not.toEqual(reportSupportKey({ revision }));
 
     const options = reportSupportQueryOptions(
       createReportClientStub({ getFocusedReportSupport: () => Promise.resolve(supportUnavailable) }),
       { revision },
-      identity,
       { browser: false },
     );
     expect(options).toMatchObject({
@@ -146,7 +174,6 @@ describe('Report Query options', () => {
         },
       }),
       { revision },
-      { fingerprint: 'fingerprint-1', revision },
       { browser: false },
     );
     const pending = client.fetchQuery(options).catch((error: unknown) => error);
@@ -182,12 +209,7 @@ describe('Report Query options', () => {
     });
     const manifestOptions = reportManifestQueryOptions(reportClient, { browser: true });
     const bootstrapOptions = reportBootstrapQueryOptions(reportClient, { browser: true });
-    const exactOptions = reportSupportQueryOptions(
-      reportClient,
-      { revision },
-      { fingerprint: 'fingerprint-1', revision },
-      { browser: true },
-    );
+    const exactOptions = reportSupportQueryOptions(reportClient, { revision }, { browser: true });
     await Promise.all([
       queryClient.fetchQuery(manifestOptions),
       queryClient.fetchQuery(bootstrapOptions),

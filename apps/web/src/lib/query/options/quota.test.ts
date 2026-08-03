@@ -1,11 +1,16 @@
 import { describe, expect, test } from 'bun:test';
 import type { ProviderQuotaHistoryRequest, ProviderQuotaHistoryResult } from '@ai-usage/web-contract/report';
 import { isCancelledError, QueryObserver } from '@tanstack/svelte-query';
-import type { ReportClient } from '../../rpc/report-client';
 import { createWebQueryClient } from '../client';
 import { controlPlaneKey, finiteSwrKey } from '../keys';
 import { DEFAULT_BOUNDED_GC_TIME_MS, FINITE_SWR_STALE_TIME_MS } from '../policies';
-import { invalidateQuotaHistory, quotaHistoryKey, quotaHistoryQueryOptions, updateQuotaHistory } from './quota';
+import {
+  invalidateQuotaHistory,
+  type QuotaQueryClient,
+  quotaHistoryKey,
+  quotaHistoryQueryOptions,
+  updateQuotaHistory,
+} from './quota';
 
 const request: ProviderQuotaHistoryRequest = {
   from: '2026-08-01T00:00:00.000Z',
@@ -24,35 +29,60 @@ const quotaResult: ProviderQuotaHistoryResult = {
 
 const unusedRpc = (): Promise<never> => Promise.reject(new Error('Unexpected ReportClient call'));
 
-const createReportClientStub = (overrides: Partial<ReportClient> = {}): ReportClient => ({
-  getCampaignLabelOverrides: unusedRpc,
-  getFocusedReportBreakdown: unusedRpc,
-  getFocusedReportOverview: unusedRpc,
-  getFocusedReportSupport: unusedRpc,
+const createReportClientStub = (overrides: Partial<QuotaQueryClient> = {}): QuotaQueryClient => ({
   getProviderQuotaHistory: unusedRpc,
-  getReportPerfEnabled: unusedRpc,
-  getReportRevisionBootstrap: unusedRpc,
-  getReportRevisionManifest: unusedRpc,
-  saveProjectGroups: unusedRpc,
-  setCampaignLabelOverride: unusedRpc,
   ...overrides,
 });
 
 describe('Quota Query options', () => {
-  test('QUERY-QUOTA-FINITE-SWR: keys provider, range, and optional generation without collisions', () => {
-    const base = { provider: 'codex', range: '24h' as const };
+  test('QUERY-QUOTA-FINITE-SWR: keys every request and policy field without collisions', () => {
+    const basePolicy = { range: '24h' as const };
+    const baseKey = quotaHistoryKey(request, basePolicy);
 
-    expect(quotaHistoryKey(base)).toEqual(['web', 'finite-swr', 'quota', 'codex', '24h']);
-    expect(quotaHistoryKey({ ...base, generation: 1 })).not.toEqual(quotaHistoryKey(base));
-    expect(quotaHistoryKey({ ...base, generation: 2 })).not.toEqual(quotaHistoryKey({ ...base, generation: 1 }));
-    expect(quotaHistoryKey({ ...base, provider: 'claude' })).not.toEqual(quotaHistoryKey(base));
-    expect(quotaHistoryKey({ ...base, range: '7d' })).not.toEqual(quotaHistoryKey(base));
+    expect(baseKey).toEqual([
+      'web',
+      'finite-swr',
+      'quota',
+      'provider-present',
+      true,
+      'codex',
+      'machine-present',
+      false,
+      '',
+      'maximum-points',
+      1200,
+      'generation-present',
+      false,
+      '',
+      'from',
+      request.from,
+      'to',
+      request.to,
+      'range',
+      '24h',
+    ]);
+    const requestMutations: ProviderQuotaHistoryRequest[] = [
+      { ...request, providerKey: 'claude' },
+      { from: request.from, maximumPoints: 1200, to: request.to },
+      { ...request, machineId: 'machine-1' },
+      { ...request, from: '2026-07-31T00:00:00.000Z' },
+      { ...request, to: '2026-08-03T00:00:00.000Z' },
+      { ...request, maximumPoints: 800 },
+    ];
+    for (const mutation of requestMutations) {
+      expect(quotaHistoryKey(mutation, basePolicy)).not.toEqual(baseKey);
+    }
+    expect(quotaHistoryKey(request, { range: '7d' })).not.toEqual(baseKey);
+    expect(quotaHistoryKey(request, { generation: 1, range: '24h' })).not.toEqual(baseKey);
+    expect(quotaHistoryKey(request, { generation: 2, range: '24h' })).not.toEqual(
+      quotaHistoryKey(request, { generation: 1, range: '24h' }),
+    );
 
-    const disabled = quotaHistoryQueryOptions(createReportClientStub(), request, base, {
+    const disabled = quotaHistoryQueryOptions(createReportClientStub(), request, basePolicy, {
       browser: true,
       enabled: false,
     });
-    const server = quotaHistoryQueryOptions(createReportClientStub(), request, base, {
+    const server = quotaHistoryQueryOptions(createReportClientStub(), request, basePolicy, {
       browser: false,
       enabled: true,
     });
@@ -83,7 +113,7 @@ describe('Quota Query options', () => {
         },
       }),
       request,
-      { provider: 'codex', range: '24h' },
+      { range: '24h' },
       { browser: false, enabled: true },
     );
     const pending = queryClient.fetchQuery(options).catch((error: unknown) => error);
@@ -98,6 +128,7 @@ describe('Quota Query options', () => {
   });
 
   test('QUERY-RETAINED-DATA: keeps prior quota data during a finite-SWR range refresh and after a refresh error', async () => {
+    const scopedRequest = { ...request, machineId: 'machine-1' };
     let failRefresh = false;
     const nextStarted = Promise.withResolvers<AbortSignal>();
     const queryClient = createWebQueryClient();
@@ -106,7 +137,7 @@ describe('Quota Query options', () => {
         if (failRefresh) {
           return Promise.reject(new Error('typed quota refresh failure'));
         }
-        if (nextRequest.from === request.from) {
+        if (nextRequest.from === scopedRequest.from) {
           return Promise.resolve(quotaResult);
         }
         const signal = callOptions?.signal;
@@ -119,12 +150,19 @@ describe('Quota Query options', () => {
         });
       },
     });
-    const firstIdentity = { provider: 'codex', range: '24h' as const };
-    const nextIdentity = { provider: 'codex', range: '7d' as const };
-    const firstOptions = quotaHistoryQueryOptions(client, request, firstIdentity, { browser: true, enabled: true });
+    const firstIdentity = { generation: 'generation-1', range: '24h' as const };
+    const nextIdentity = { generation: 'generation-1', range: '7d' as const };
+    const firstOptions = quotaHistoryQueryOptions(client, scopedRequest, firstIdentity, {
+      browser: true,
+      enabled: true,
+    });
     const nextOptions = quotaHistoryQueryOptions(
       client,
-      { ...request, from: '2026-07-26T00:00:00.000Z' },
+      {
+        ...scopedRequest,
+        from: '2026-07-26T00:00:00.000Z',
+        to: '2026-08-03T00:00:00.000Z',
+      },
       nextIdentity,
       { browser: true, enabled: true },
     );
@@ -152,16 +190,25 @@ describe('Quota Query options', () => {
     queryClient.clear();
   });
 
-  test('never retains quota data across a different provider or durable generation', async () => {
-    const firstIdentity = { generation: 'generation-1', provider: 'codex', range: '24h' as const };
+  test('never retains quota data across provider, machine, generation, or resolution boundaries', async () => {
+    const scopedRequest = { ...request, machineId: 'machine-1' };
+    const firstIdentity = { generation: 'generation-1', range: '24h' as const };
     const cases = [
       {
-        identity: { ...firstIdentity, provider: 'claude', range: '7d' as const },
-        nextRequest: { ...request, from: '2026-07-25T00:00:00.000Z', providerKey: 'claude' },
+        identity: { ...firstIdentity, range: '7d' as const },
+        nextRequest: { ...scopedRequest, from: '2026-07-25T00:00:00.000Z', providerKey: 'claude' },
+      },
+      {
+        identity: { ...firstIdentity, range: '7d' as const },
+        nextRequest: { ...scopedRequest, from: '2026-07-25T00:00:00.000Z', machineId: 'machine-2' },
       },
       {
         identity: { ...firstIdentity, generation: 'generation-2', range: '7d' as const },
-        nextRequest: { ...request, from: '2026-07-26T00:00:00.000Z' },
+        nextRequest: { ...scopedRequest, from: '2026-07-26T00:00:00.000Z' },
+      },
+      {
+        identity: { ...firstIdentity, range: '7d' as const },
+        nextRequest: { ...scopedRequest, from: '2026-07-25T00:00:00.000Z', maximumPoints: 800 },
       },
     ];
 
@@ -170,7 +217,7 @@ describe('Quota Query options', () => {
       const queryClient = createWebQueryClient();
       const client = createReportClientStub({
         getProviderQuotaHistory: (nextRequest, callOptions) => {
-          if (nextRequest.from === request.from) {
+          if (nextRequest.from === scopedRequest.from) {
             return Promise.resolve(quotaResult);
           }
           const signal = callOptions?.signal;
@@ -183,7 +230,7 @@ describe('Quota Query options', () => {
           });
         },
       });
-      const firstOptions = quotaHistoryQueryOptions(client, request, firstIdentity, {
+      const firstOptions = quotaHistoryQueryOptions(client, scopedRequest, firstIdentity, {
         browser: true,
         enabled: true,
       });
@@ -210,39 +257,46 @@ describe('Quota Query options', () => {
 
   test('invalidates and updates only the exact quota identity, never other quota, Skills, or Sync keys', async () => {
     const queryClient = createWebQueryClient();
-    const target = { generation: 'generation-1', provider: 'codex', range: '24h' as const };
-    const otherGeneration = { ...target, generation: 'generation-2' };
-    const otherProvider = { ...target, provider: 'claude' };
-    const otherRange = { ...target, range: '7d' as const };
+    const targetRequest = { ...request, machineId: 'machine-1' };
+    const targetPolicy = { generation: 'generation-1', range: '24h' as const };
+    const otherEntries = [
+      [{ ...targetRequest, providerKey: 'claude' }, targetPolicy] as const,
+      [{ ...targetRequest, machineId: 'machine-2' }, targetPolicy] as const,
+      [{ ...targetRequest, from: '2026-07-31T00:00:00.000Z' }, targetPolicy] as const,
+      [{ ...targetRequest, to: '2026-08-03T00:00:00.000Z' }, targetPolicy] as const,
+      [{ ...targetRequest, maximumPoints: 800 }, targetPolicy] as const,
+      [targetRequest, { ...targetPolicy, generation: 'generation-2' }] as const,
+      [targetRequest, { ...targetPolicy, range: '7d' as const }] as const,
+    ];
     const skillsKey = finiteSwrKey('skills', 'snapshot');
     const syncKey = controlPlaneKey('sync', 'fleet');
     for (const key of [
-      quotaHistoryKey(target),
-      quotaHistoryKey(otherGeneration),
-      quotaHistoryKey(otherProvider),
-      quotaHistoryKey(otherRange),
+      quotaHistoryKey(targetRequest, targetPolicy),
+      ...otherEntries.map(([otherRequest, otherPolicy]) => quotaHistoryKey(otherRequest, otherPolicy)),
       skillsKey,
       syncKey,
     ]) {
       queryClient.setQueryData(key, { seeded: true });
     }
 
-    await invalidateQuotaHistory(queryClient, target);
-    expect(queryClient.getQueryState(quotaHistoryKey(target))?.isInvalidated).toBe(true);
-    expect(queryClient.getQueryState(quotaHistoryKey(otherGeneration))?.isInvalidated).toBe(false);
-    expect(queryClient.getQueryState(quotaHistoryKey(otherProvider))?.isInvalidated).toBe(false);
-    expect(queryClient.getQueryState(quotaHistoryKey(otherRange))?.isInvalidated).toBe(false);
+    await invalidateQuotaHistory(queryClient, targetRequest, targetPolicy);
+    expect(queryClient.getQueryState(quotaHistoryKey(targetRequest, targetPolicy))?.isInvalidated).toBe(true);
+    for (const [otherRequest, otherPolicy] of otherEntries) {
+      expect(queryClient.getQueryState(quotaHistoryKey(otherRequest, otherPolicy))?.isInvalidated).toBe(false);
+    }
     expect(queryClient.getQueryState(skillsKey)?.isInvalidated).toBe(false);
     expect(queryClient.getQueryState(syncKey)?.isInvalidated).toBe(false);
 
     const updated = { ...quotaResult, generatedAt: '2026-08-02T00:01:00.000Z' };
-    updateQuotaHistory(queryClient, target, updated);
+    updateQuotaHistory(queryClient, targetRequest, targetPolicy, updated);
 
-    expect(queryClient.getQueryData<ProviderQuotaHistoryResult>(quotaHistoryKey(target))).toEqual(updated);
-    expect(queryClient.getQueryState(quotaHistoryKey(target))?.isInvalidated).toBe(false);
-    expect(queryClient.getQueryState(quotaHistoryKey(otherGeneration))?.isInvalidated).toBe(false);
-    expect(queryClient.getQueryState(quotaHistoryKey(otherProvider))?.isInvalidated).toBe(false);
-    expect(queryClient.getQueryState(quotaHistoryKey(otherRange))?.isInvalidated).toBe(false);
+    expect(queryClient.getQueryData<ProviderQuotaHistoryResult>(quotaHistoryKey(targetRequest, targetPolicy))).toEqual(
+      updated,
+    );
+    expect(queryClient.getQueryState(quotaHistoryKey(targetRequest, targetPolicy))?.isInvalidated).toBe(false);
+    for (const [otherRequest, otherPolicy] of otherEntries) {
+      expect(queryClient.getQueryState(quotaHistoryKey(otherRequest, otherPolicy))?.isInvalidated).toBe(false);
+    }
     expect(queryClient.getQueryState(skillsKey)?.isInvalidated).toBe(false);
     expect(queryClient.getQueryState(syncKey)?.isInvalidated).toBe(false);
     queryClient.clear();
