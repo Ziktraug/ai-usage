@@ -559,6 +559,9 @@ export const validateParityShards = async (
       if (record.status === 'complete' && !hasTargetEvidence(record)) {
         issues.push(`${location} is complete without integrated target evidence.`);
       }
+      if (record.status === 'complete' && !hasTargetEvidence(record, 'review')) {
+        issues.push(`${location} is complete without integrated target review evidence.`);
+      }
       if (options.requireComplete && record.status === 'current') {
         issues.push(`${location} remains current at the complete-only gate.`);
       }

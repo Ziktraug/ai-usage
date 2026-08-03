@@ -5,6 +5,7 @@ const owner = 'D0' as const;
 const foundationCommit = '6c6d6c4ebe134d980dd630a13ab53086e38aa142';
 const finalD0Commit = '8474f185f0bef832bae5bb0338f1af316ba02401';
 const d4Commit = '6646fe568e8b4c1fba74ac1b4150d1480d15ca6f';
+const r1Commit = '7c85cf198ca2af004b53eef182a727f59d4ab5e4';
 const targetEvidence = (commit: string, kind: ParityEvidence['kind'], reference: string): ParityEvidence => ({
   commit,
   kind,
@@ -60,6 +61,32 @@ const d4CompositionEvidence = [
 ] as const;
 const completeForD4 = (record: ParityRecord): ParityRecord =>
   completeRecord(appendTargetEvidence(record, retainedPublicCompositionEvidence), d4CompositionEvidence);
+const completeNewForR1 = (record: ParityRecord): ParityRecord => ({
+  ...record,
+  evidence: [
+    targetEvidence(
+      r1Commit,
+      'source',
+      `packages/design-system/src/svelte.ts; ${record.currentOwner}; apps/web/src/lib/features/shell/theme-toggle.svelte; apps/web/src/lib/features/shell/error-shell.svelte; apps/web/src/lib/features/shell/route-frame.svelte`,
+    ),
+    targetEvidence(
+      r1Commit,
+      'test',
+      'packages/design-system/src/design-entrypoints.test.ts; apps/web/e2e/svelte-shell.spec.ts',
+    ),
+    targetEvidence(
+      r1Commit,
+      'command',
+      'bun run lint; bun run typecheck; bun run test; bun run build; bun run --cwd apps/web test:e2e-svelte-shadow (all green)',
+    ),
+    targetEvidence(
+      r1Commit,
+      'review',
+      '/root/d123_parity_review code-quality/seams ACCEPT and /root/q2_spec_review parity/spec ACCEPT cover the R1 public Svelte shell export delta',
+    ),
+  ],
+  status: 'complete',
+});
 const designRow = (id: string, currentOwner: string, evidence: string) =>
   currentRecord(owner, {
     currentOwner,
@@ -275,6 +302,8 @@ export default defineParityShard({
         names: 'panel panelSub panelTitle',
         source: 'packages/design-system/src/components/panel.ts',
       },
+    ]).map(completeNewForR1),
+    ...designExportRecords(owner, [
       {
         entrypoint: './solid',
         names: `

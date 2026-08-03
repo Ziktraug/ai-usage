@@ -72,7 +72,10 @@ describe('Web migration parity checker', () => {
     const current = validRecord();
     const replacement = validRecord({
       currentOwner: 'apps/web/src/retired.tsx',
-      evidence: [{ commit: targetEvidenceCommit, kind: 'test', phase: 'target', reference: 'replacement test' }],
+      evidence: [
+        { commit: targetEvidenceCommit, kind: 'test', phase: 'target', reference: 'replacement test' },
+        { commit: targetEvidenceCommit, kind: 'review', phase: 'target', reference: 'replacement ACCEPT' },
+      ],
       id: 'tsx:apps/web/src/retired.tsx',
       kind: 'production-tsx',
       status: 'complete',
@@ -135,6 +138,11 @@ describe('Web migration parity checker', () => {
 
   test('closes complete-without-target and required-feature removal loopholes', async () => {
     const completeWithoutTarget = validRecord({ id: 'COMPLETE-01', status: 'complete' });
+    const completeWithoutReview = validRecord({
+      evidence: [{ commit: targetEvidenceCommit, kind: 'test', phase: 'target', reference: 'target test' }],
+      id: 'COMPLETE-02',
+      status: 'complete',
+    });
     const removedFeature = validRecord({
       evidence: [
         {
@@ -148,11 +156,15 @@ describe('Web migration parity checker', () => {
       replacementReason: 'Reviewed replacement.',
       status: 'reviewed-removal',
     });
-    const result = await validate([loadedShard([completeWithoutTarget, removedFeature])], new Map());
+    const result = await validate(
+      [loadedShard([completeWithoutTarget, completeWithoutReview, removedFeature])],
+      new Map(),
+    );
 
     expect(result.issues).toEqual(
       expect.arrayContaining([
         expect.stringContaining('complete without integrated target evidence'),
+        expect.stringContaining('complete without integrated target review evidence'),
         expect.stringContaining('cannot remove a required feature ID'),
       ]),
     );
