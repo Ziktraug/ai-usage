@@ -3,17 +3,17 @@
   import type { SkillManagementSnapshot } from '@ai-usage/skills';
   import { useQueryClient } from '@tanstack/svelte-query';
   import { untrack } from 'svelte';
-  import { invalidateSkillsQueries, skillsSnapshotKey } from '../../../query/options/skills';
+  import { applySkillsConfigurationSnapshotToCache } from '../../../query/options/skills';
   import { createBrowserWebRpcClient } from '../../../rpc/client';
   import { createSkillsClient } from '../../../rpc/skills-client';
   import type { SkillsShellSlotContext } from '../shell/slot-context';
   import {
     editSourceRepositoryDraft,
     runSkillsConfigurationOperation,
+    type SkillsConfigurationClient,
     type SkillsConfigurationOperation,
-    type SkillsManagementClient,
     skillsConfigInput,
-    skillsConfigurationInvalidationTargets,
+    skillsConfigurationRefreshesDependents,
     sourceRepositoryDraftFrom,
     syncSourceRepositoryDraft,
   } from './model';
@@ -23,19 +23,19 @@
     client: injectedClient,
     context,
   }: {
-    client?: SkillsManagementClient;
+    client?: SkillsConfigurationClient;
     context: SkillsShellSlotContext;
   } = $props();
 
   const queryClient = useQueryClient();
-  let browserClient: SkillsManagementClient | undefined;
+  let browserClient: SkillsConfigurationClient | undefined;
   let observedSourceRepoPath = $state(untrack(() => context.snapshot.config.sourceRepoPath ?? ''));
   let sourceDraft = $state(untrack(() => sourceRepositoryDraftFrom(context.snapshot)));
   let projectPathDraft = $state('');
   let pendingOperation = $state<string | null>(null);
   let operationMessage = $state<{ message: string; tone: 'error' | 'success' } | null>(null);
 
-  const resolveClient = (): SkillsManagementClient => {
+  const resolveClient = (): SkillsConfigurationClient => {
     browserClient ??=
       injectedClient ?? createSkillsClient(createBrowserWebRpcClient('skills-management-configuration').skills);
     return browserClient;
@@ -56,16 +56,18 @@
     pendingOperation = pendingLabel;
     operationMessage = null;
     try {
-      const result = await runSkillsConfigurationOperation(resolveClient(), operation);
+      const client = resolveClient();
+      const result = await runSkillsConfigurationOperation(client, operation);
       if (!result.ok) {
         operationMessage = { message: result.error, tone: 'error' };
         return;
       }
-      queryClient.setQueryData(skillsSnapshotKey(), result.snapshot);
-      const invalidationTargets = skillsConfigurationInvalidationTargets(operation);
-      if (invalidationTargets.length > 0) {
-        await invalidateSkillsQueries(queryClient, invalidationTargets);
-      }
+      await applySkillsConfigurationSnapshotToCache(
+        queryClient,
+        client,
+        result.snapshot,
+        skillsConfigurationRefreshesDependents(operation),
+      );
       operationMessage = { message: successMessage, tone: 'success' };
       return result.snapshot;
     } catch (error) {

@@ -10,7 +10,7 @@ import {
   type SkillInvocation,
   type SkillRowFilter,
 } from '../../../../skills-page-model';
-import type { SkillsInvalidationTarget } from '../../../query/options/skills';
+import type { SkillsInventoryQueryClient } from '../../../query/options/skills';
 
 export const skillStateFilterOrder = [
   'linked',
@@ -110,6 +110,7 @@ export interface SkillsManagementClient {
   saveSkillManagementConfig(input: SkillManagementConfig): Promise<unknown>;
   toggleManagedSkill(input: { enabled: boolean; skillName: string }): Promise<unknown>;
 }
+export type SkillsConfigurationClient = SkillsManagementClient & SkillsInventoryQueryClient;
 
 export interface SkillsSourceRepositoryDraft {
   readonly dirty: boolean;
@@ -148,14 +149,8 @@ export const skillsConfigInput = (
 export type SkillsConfigurationOperation =
   | { readonly config: SkillManagementConfig; readonly type: 'save-config' }
   | { readonly targetId: string; readonly type: 'create-target' };
-const configurationDependentQueries = [
-  'known-project-paths',
-  'project-inventories',
-] as const satisfies readonly SkillsInvalidationTarget[];
-
-export const skillsConfigurationInvalidationTargets = (
-  operation: SkillsConfigurationOperation,
-): readonly SkillsInvalidationTarget[] => (operation.type === 'save-config' ? configurationDependentQueries : []);
+export const skillsConfigurationRefreshesDependents = (operation: SkillsConfigurationOperation): boolean =>
+  operation.type === 'save-config';
 
 export type SkillsConfigurationResult =
   | { readonly error: string; readonly ok: false }

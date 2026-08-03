@@ -1,3 +1,4 @@
+import type { SkillManagementSnapshot } from '@ai-usage/skills';
 import type {
   ProjectSkillMarkdownInput,
   SkillMarkdownDocument,
@@ -35,6 +36,7 @@ export type SkillsQueryClient = Pick<
   | 'getSkillManagementSnapshot'
   | 'getSkillProjectInventories'
 >;
+export type SkillsInventoryQueryClient = Pick<SkillsQueryClient, 'getSkillProjectInventories'>;
 
 export type SkillsInvalidationTarget = 'known-project-paths' | 'project-inventories' | 'snapshot';
 
@@ -59,7 +61,7 @@ export const skillsKnownProjectPathsQueryOptions = (client: SkillsQueryClient, c
     queryKey: skillsKnownProjectPathsKey(),
   });
 
-export const skillsProjectInventoriesQueryOptions = (client: SkillsQueryClient, context: SkillsQueryContext) =>
+export const skillsProjectInventoriesQueryOptions = (client: SkillsInventoryQueryClient, context: SkillsQueryContext) =>
   queryOptions({
     ...webQueryPolicies.finiteSwr,
     enabled: context.browser && context.enabled,
@@ -107,6 +109,22 @@ export const invalidateSkillsQueries = async (
       await client.invalidateQueries({ exact: true, queryKey: invalidationKeys[target]() });
     }),
   );
+};
+export const applySkillsConfigurationSnapshotToCache = async (
+  queryClient: QueryClient,
+  skillsClient: SkillsInventoryQueryClient,
+  snapshot: SkillManagementSnapshot,
+  refreshDependents: boolean,
+): Promise<void> => {
+  queryClient.setQueryData(skillsSnapshotKey(), snapshot);
+  if (!refreshDependents) {
+    return;
+  }
+  await invalidateSkillsQueries(queryClient, ['known-project-paths', 'project-inventories']);
+  if (!snapshot.configured) {
+    return;
+  }
+  await queryClient.fetchQuery(skillsProjectInventoriesQueryOptions(skillsClient, { browser: true, enabled: true }));
 };
 
 export const applyManagedMarkdownSaveToCache = (

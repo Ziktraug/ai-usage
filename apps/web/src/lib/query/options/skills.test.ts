@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import type { SkillManagementSnapshot as DomainSkillManagementSnapshot } from '@ai-usage/skills';
 import type {
   ProjectSkillMarkdownDocument,
   ProjectSkillMarkdownInput,
@@ -12,6 +13,7 @@ import { createWebQueryClient } from '../client';
 import { webQueryPolicies } from '../policies';
 import {
   applyManagedMarkdownSaveToCache,
+  applySkillsConfigurationSnapshotToCache,
   invalidateSkillsQueries,
   managedSkillMarkdownKey,
   managedSkillMarkdownQueryOptions,
@@ -258,6 +260,67 @@ describe('Skills query options', () => {
       tag: 'Unavailable',
     } satisfies Partial<SkillsQueryError>);
     expect(queryClient.getQueryData<SkillManagementSnapshot>(skillsSnapshotKey())).toBe(snapshot);
+  });
+
+  test('QUERY-SKILLS-CONFIGURATION: seeds inventories after an unconfigured save and skips target creation', async () => {
+    const queryClient = createWebQueryClient();
+    const configuredSnapshot = {
+      config: { sourceRepoPath: '/synthetic/source' },
+      configured: true,
+      diagnostics: [],
+      nativeRuleFindings: [],
+      projections: [],
+      skills: [],
+      sourceState: { skillEnabledByName: {}, version: 1 },
+      summary: snapshot.summary,
+      targets: [],
+      unmanagedEntries: [],
+    } satisfies DomainSkillManagementSnapshot;
+    const targetSnapshot = {
+      ...configuredSnapshot,
+      summary: { ...configuredSnapshot.summary, targetCount: 1 },
+    } satisfies DomainSkillManagementSnapshot;
+    const order: string[] = [];
+    const knownProjectPaths = [] as const;
+    queryClient.setQueryData(skillsSnapshotKey(), snapshot);
+    queryClient.setQueryData(skillsKnownProjectPathsKey(), knownProjectPaths, { updatedAt: Date.now() });
+    const knownPathsObserver = new QueryObserver(queryClient, {
+      ...webQueryPolicies.finiteSwr,
+      queryFn: () => {
+        expect(queryClient.getQueryData<DomainSkillManagementSnapshot>(skillsSnapshotKey())).toEqual(
+          configuredSnapshot,
+        );
+        order.push('known-project-paths');
+        return knownProjectPaths;
+      },
+      queryKey: skillsKnownProjectPathsKey(),
+    });
+    const unsubscribe = knownPathsObserver.subscribe(() => undefined);
+    const inventories = [] as const;
+    let inventoryFetches = 0;
+    const inventoryClient = {
+      getSkillProjectInventories: () => {
+        inventoryFetches += 1;
+        order.push('project-inventories');
+        expect(queryClient.getQueryData<DomainSkillManagementSnapshot>(skillsSnapshotKey())).toEqual(
+          configuredSnapshot,
+        );
+        return Promise.resolve({ data: inventories, ok: true } as const);
+      },
+    };
+
+    await applySkillsConfigurationSnapshotToCache(queryClient, inventoryClient, configuredSnapshot, true);
+    expect(order).toEqual(['known-project-paths', 'project-inventories']);
+    expect(queryClient.getQueryData<readonly []>(skillsProjectInventoriesKey())).toBe(inventories);
+
+    queryClient.removeQueries({ exact: true, queryKey: skillsProjectInventoriesKey() });
+    order.length = 0;
+    await applySkillsConfigurationSnapshotToCache(queryClient, inventoryClient, targetSnapshot, false);
+    expect(queryClient.getQueryData<DomainSkillManagementSnapshot>(skillsSnapshotKey())).toEqual(targetSnapshot);
+    expect(queryClient.getQueryData(skillsProjectInventoriesKey())).toBeUndefined();
+    expect(order).toEqual([]);
+    expect(inventoryFetches).toBe(1);
+    unsubscribe();
   });
 
   test('QUERY-SMALLEST-KEY-UPDATE: invalidates/refetches only selected exact Skills keys', async () => {

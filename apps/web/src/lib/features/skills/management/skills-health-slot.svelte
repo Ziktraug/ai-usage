@@ -24,7 +24,7 @@
     matrixDotTone,
     observeInspectorDisclosure,
     runSkillsManagementOperation,
-    type SkillsManagementClient,
+    type SkillsConfigurationClient,
     type SkillsManagementOperation,
     toggleOperation,
   } from './model';
@@ -49,10 +49,10 @@
     statusDot,
   } from './styles';
 
-  let { client: injectedClient, context }: { client?: SkillsManagementClient; context: SkillsShellSlotContext } =
+  let { client: injectedClient, context }: { client?: SkillsConfigurationClient; context: SkillsShellSlotContext } =
     $props();
   const queryClient = useQueryClient();
-  let browserClient: SkillsManagementClient | undefined;
+  let browserClient: SkillsConfigurationClient | undefined;
   let pendingOperation = $state<string | null>(null);
   let inspectorSectionsOpen = $state(false);
   let operationMessage = $state<{ message: string; tone: 'error' | 'success' } | null>(null);
@@ -64,7 +64,7 @@
   const diagnostics = $derived(selectedSkill ? groupSkillDiagnostics(selectedSkill.diagnostics) : []);
   const exposure = $derived(selectedSkill ? buildGlobalSkillExposure(context.snapshot, selectedSkill.name) : []);
   const installationAction = $derived(selectedSkill ? deriveInstallationAction(selectedSkill, exposure) : undefined);
-  const resolveClient = (): SkillsManagementClient => {
+  const resolveClient = (): SkillsConfigurationClient => {
     browserClient ??=
       injectedClient ?? createSkillsClient(createBrowserWebRpcClient('skills-management-inspector').skills);
     return browserClient;
