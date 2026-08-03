@@ -12,8 +12,8 @@ authority for feature, operation, design, source-file, and test-title coverage.
 - Planning PR: `#26`, squash-merged as
   `2183270ebfbb886fafa7e6268893122db9b364c0`
 - `BASE_SHA`: `2183270ebfbb886fafa7e6268893122db9b364c0`
-- Current integration checkpoint: `1befaefd71ef5ffe59866021f216104b3f83f9ef`
-- Last reviewed green checkpoint: `1befaefd71ef5ffe59866021f216104b3f83f9ef`
+- Current integration checkpoint: `a71819cbbbc259b8f8fdd6880aa82775d82774a8`
+- Last reviewed green checkpoint: `a71819cbbbc259b8f8fdd6880aa82775d82774a8`
 - Active design bases: D1 `4862293`, D2 `fce5c1a`, D3 `e2f13cd`
 - Implementation PR: not opened
 - Exclusive process-test token: free after the R1 shadow-browser and full repository gates
@@ -136,12 +136,12 @@ Statuses are `BLOCKED`, `READY`, `IMPLEMENTING`, `REVIEW`, `REWORK`,
 | D4 | D1, D2, D3 | INTEGRATED | `662182e`, bundle correction `6646fe5` | `/root/d4_review` / ACCEPT | `6646fe568e8b4c1fba74ac1b4150d1480d15ca6f` |
 | R0 | F0, V5, Q3, D4 | INTEGRATED | `435aa06`, evidence `88d56c9`, corrections `98235ab`, `4e46acc`, evidence `4f293e5`, `23635c7`; integrated as `affcee4`, `01fa070`, `688b629`, `fa92709`, `66a650e`, `c8b7c7e` | `/root/d123_parity_review`, `/root/q2_spec_review` / ACCEPT | `c8b7c7e872f25648dbf5df407f92e76d64948eff` |
 | R1 | R0 | INTEGRATED | `40116b5`, `121d78b`, corrections `95b67d6`, `7c85cf1`, evidence/checker `c5cc7ea`, `1befaef` | `/root/d123_parity_review`, `/root/q2_spec_review`, `/root/v34_parity` / ACCEPT | `1befaefd71ef5ffe59866021f216104b3f83f9ef` |
-| P1 | R1, V1, V2, Q1, D4 | REWORK | `a19914b` | `/root/v34_parity` / REWORK | - |
+| P1 | R1, V1, V2, Q1, D4 | ACCEPTED | `a19914b`, corrections `874cb1b`, `2422c2c`, evidence `02782f8` | `/root/v34_parity` / ACCEPT | pending cherry-pick |
 | P2 | P1 | BLOCKED | - | - | - |
 | P3 | P1, V2, Q1, D4 | BLOCKED | - | - | - |
 | P4 | P3 | BLOCKED | - | - | - |
-| P5 | R1, V3, Q2, D4 | REVIEW | `231f109`, evidence `a5b657f` | `/root/v34_parity` / paused pending | - |
-| P6 | R1, V4, Q2, D4, B2 | REWORK | `f02f29f`, evidence `3076673`, lifecycle `f598271`, evidence `11a2ec6`, correction `afe31e1`, evidence `97cb207` | `/root/q2_spec_review` / REWORK | - |
+| P5 | R1, V3, Q2, D4 | REWORK | `231f109`, evidence `a5b657f` | `/root/d123_parity_review`, `/root/v34_parity` / REWORK | - |
+| P6 | R1, V4, Q2, D4, B2 | REDISPATCH | original range through `584b2a0` | `/root/q2_spec_review` / REWORK | - |
 | P7 | R1, V4, Q2, D4 | REWORK | `d2486bd` | `/root/q2_spec_review` / REWORK | - |
 | P8 | P1 | BLOCKED | - | - | - |
 | P9 | P5 | BLOCKED | - | - | - |
@@ -805,8 +805,21 @@ owner rather than source-scanning it; retain the warning Cleanup interface;
 preserve month/day 24-hour dates; use only Svelte/passive design-system exports;
 remove workspace-wide live announcements; and add a real lifecycle consumer
 with disposal proof. Its root composition request was accepted in shape but
-must be reviewed after application. No STOP condition was found; the original
-implementer is correcting the packet while its shard stays `current`.
+must be reviewed after application. Correction `874cb1b` adds meaningful
+success/compatible-last Overview SSR, exact bootstrap alias hydration, tested
+rune-owner transitions, the warning Cleanup seam, exact Svelte/passive imports,
+scoped live regions and a generic lifecycle consumer. Re-review retained five
+focused gaps: add the owned root composition request; map exact target evidence
+for both features and eight TSX rows; mount/destroy the generic consumer; prove
+loader/dehydrated alias through the real ReportRoot; and assert the fixed date
+exactly. No STOP condition was found and the shard stays `current`. Final
+residual commits `2422c2c`
+and `02782f8` add the exact route contract, real generic-consumer destruction,
+loader-to-dehydrated-alias-to-ReportRoot SSR, exact timestamp and per-row target
+evidence. `/root/v34_parity` independently re-reviewed the complete range and
+returned ACCEPT on both axes; 27 focused tests with 86 expectations,
+Ultracite, parity, zero-NUL, allowlist and diff checks are green. P1 awaits
+cherry-pick behind the coordinator neutral-presentation checkpoint.
 
 P5 candidate `231f109` plus current-status evidence `a5b657f` contains 16 owned
 feature files plus its shard, 1,454 implementation lines, and requests only the
@@ -817,7 +830,12 @@ checks are green. The fresh worktree required frozen dependency links and
 ignored Panda generation. Missing host bubblewrap caused repeated direct patch
 helper failures; after one trivial scoped import rewrite, the coordinator
 required all further edits through `apply_patch` in an escalated shell. The
-candidate is clean and awaits independent review.
+candidate is clean. Independent review returned REWORK: wire the snapshot
+controller into the shipped shell and expose its dirty/pending decision port to
+P9; restore mobile close/scroll/focus and exact labels; hoist one responsive
+tree UI-state owner; prove real route dehydration through SkillsShell hydration
+without duplicate acquisition; and make frozen P9/P10 slot evidence exact per
+owned row. No STOP condition was found.
 
 P6 candidate `f02f29f`, evidence `3076673`, virtual lifecycle proof `f598271`
 and evidence `11a2ec6` contains 16 owned files and 1,518 lines. It supplies the
@@ -842,7 +860,21 @@ provider/route request and mapped all owned TSX rows. Focused re-review retained
 one local REWORK: source/helper assertions must become actual Svelte-rendered
 pending/non-pending `Run now` and `Run all` evidence, and the summary request
 must name the exact existing shell/navigation symbol and responsive placement.
-The original author is applying that correction; no STOP condition was found.
+The second correction pair `3f9985f`/`584b2a0` adds actual rendered busy proof
+and deterministic desktop/mobile AppNavigation placement. Re-review accepted
+those behaviors but found that the test still needs exact pending-disabled and
+idle-enabled button assertions. It also found P6 imports formatters through
+Solid-owning `shared.tsx`; P6 therefore cannot be cherry-picked from its stale
+base. Coordinator commits `b087a7f`, `d827867` and `a71819c` extract tested
+framework-neutral format and report-value seams, rewire every production `.ts`
+consumer away from Solid-owning `shared.tsx`, pin direct
+`@tanstack/table-core@8.21.3`, and recursively reject resolved TSX/Svelte,
+framework-runtime, Node and server edges. `/root/q2_spec_review` returned ACCEPT
+after two focused test/closure corrections. Repository lint/typecheck, 74
+affected tests with 388 expectations, aggregate parity and the shadow build are
+green. P6 will be redispatched from this reviewed checkpoint, consume the
+neutral seam, add its feature closure test, rewrite evidence SHAs and rerun all
+gates. No STOP condition was found.
 
 The first released implementation slot took P7 from clean base `79881c1` in
 isolated worktree `/tmp/ai-usage-068-p7`. Its full dispatch card freezes
