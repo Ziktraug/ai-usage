@@ -1,15 +1,3 @@
-import {
-  createManagedSkillTargetDirectory,
-  getKnownSkillProjectPaths,
-  getSkillManagementSnapshot,
-  getSkillProjectInventories,
-  previewReconcileAllManagedSkills,
-  reconcileAllManagedSkills,
-  reconcileManagedSkill,
-  refreshSkillManagementSnapshot,
-  saveSkillManagementConfig,
-  toggleManagedSkill,
-} from './lib/rpc/skills-solid-client';
 import type { ProviderQuotaSource } from './provider-quota-client';
 import type { ProviderQuotaHistoryRange } from './provider-quota-history-model';
 import { providerQuotaHistoryRequest } from './provider-quota-history-model';
@@ -28,22 +16,30 @@ export const webQueryKeys = {
 } as const;
 
 export const loadSkillsInitialData = async () => {
-  const [knownProjectPaths, skills] = await Promise.all([getKnownSkillProjectPaths(), getSkillManagementSnapshot()]);
+  const client = await import('./lib/rpc/skills-solid-client');
+  const [knownProjectPaths, skills] = await Promise.all([
+    client.getKnownSkillProjectPaths(),
+    client.getSkillManagementSnapshot(),
+  ]);
   return { knownProjectPaths, skills };
 };
 
-export const loadSkillInventories = async (): Promise<ProjectInventoriesResult> =>
-  parseProjectInventoriesResult(await getSkillProjectInventories());
+export const loadSkillInventories = async (): Promise<ProjectInventoriesResult> => {
+  const { getSkillProjectInventories } = await import('./lib/rpc/skills-solid-client');
+  return parseProjectInventoriesResult(await getSkillProjectInventories());
+};
 
 export const runSkillsMutation = createSkillsMutationRunner({
-  createTarget: createManagedSkillTargetDirectory,
-  knownProjectPaths: getKnownSkillProjectPaths,
-  previewReconcile: previewReconcileAllManagedSkills,
-  reconcileAll: reconcileAllManagedSkills,
-  reconcileOne: reconcileManagedSkill,
-  refresh: refreshSkillManagementSnapshot,
-  saveConfig: saveSkillManagementConfig,
-  toggle: toggleManagedSkill,
+  createTarget: async (input) =>
+    await (await import('./lib/rpc/skills-solid-client')).createManagedSkillTargetDirectory(input),
+  knownProjectPaths: async () => await (await import('./lib/rpc/skills-solid-client')).getKnownSkillProjectPaths(),
+  previewReconcile: async () =>
+    await (await import('./lib/rpc/skills-solid-client')).previewReconcileAllManagedSkills(),
+  reconcileAll: async () => await (await import('./lib/rpc/skills-solid-client')).reconcileAllManagedSkills(),
+  reconcileOne: async (input) => await (await import('./lib/rpc/skills-solid-client')).reconcileManagedSkill(input),
+  refresh: async () => await (await import('./lib/rpc/skills-solid-client')).refreshSkillManagementSnapshot(),
+  saveConfig: async (input) => await (await import('./lib/rpc/skills-solid-client')).saveSkillManagementConfig(input),
+  toggle: async (input) => await (await import('./lib/rpc/skills-solid-client')).toggleManagedSkill(input),
 });
 
 export const loadProviderQuotaHistory = async (source: ProviderQuotaSource, range: ProviderQuotaHistoryRange) =>
