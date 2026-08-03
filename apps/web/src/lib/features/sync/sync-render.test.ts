@@ -100,8 +100,10 @@ describe('Sync rendered SSR parity', () => {
       },
     }).body;
     expect(uploading).toContain('<progress');
+    expect(uploading).toContain('aria-label="Manual import upload progress"');
     expect(uploading).toContain('value="25"');
-    expect(uploading).toContain('25% uploaded');
+    expect(uploading).toContain('Uploading 25 B / 100 B');
+    expect(uploading).toContain('>25%</span>');
 
     const processing = render(transferProgress, {
       props: {
@@ -109,7 +111,11 @@ describe('Sync rendered SSR parity', () => {
         progress: { fileName: 'peer.json', fileSize: 100, phase: 'processing', startedAt: 7000 },
       },
     }).body;
-    expect(processing).toContain('Processing import on this machine');
-    expect(processing).toContain('5s elapsed');
+    expect(processing).toContain('<progress');
+    expect(processing).toContain('aria-label="Manual import processing"');
+    expect(processing).not.toContain('value=');
+    expect(processing).toContain('Merging into the local database…');
+    expect(processing).toContain('>5s</span>');
+    expect(processing).toContain('Large files take a moment while each usage row is written and deduplicated.');
   });
 });

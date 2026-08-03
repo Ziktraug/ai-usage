@@ -1,6 +1,5 @@
 <script lang="ts">
   import { css } from '@ai-usage/design-system/css';
-  import { panelSub } from '@ai-usage/design-system/svelte';
   import { formatTransferBytes } from '../../../manual-transfer-model';
   import type { ManualUploadProgress } from './manual-transfer-client';
   import { strongCell } from './styles';
@@ -21,19 +20,38 @@
     overflow: 'hidden',
     w: 'full',
   });
+  const progressHeader = css({
+    alignItems: 'center',
+    display: 'flex',
+    gap: '12px',
+    justifyContent: 'space-between',
+  });
+  const progressHint = css({
+    color: 'muted',
+    fontSize: '11px',
+    lineHeight: 1.5,
+  });
 </script>
 
 <div aria-live="polite">
   <div class={strongCell}>{progress.fileName} · {formatTransferBytes(progress.fileSize)}</div>
   {#if progress.phase === 'uploading'}
+    <div class={progressHeader}>
+      <span>Uploading {formatTransferBytes(progress.loaded)} / {formatTransferBytes(progress.total)}</span>
+      <span>{percent ?? 0}%</span>
+    </div>
     <progress
-      aria-label={`Uploading ${progress.fileName}`}
+      aria-label="Manual import upload progress"
       class={progressTrack}
       max="100"
       value={percent ?? 0}
     ></progress>
-    <div class={panelSub}>{percent ?? 0}% uploaded</div>
   {:else}
-    <div class={panelSub} role="status">Processing import on this machine · {elapsedSeconds}s elapsed</div>
+    <div class={progressHeader}>
+      <span>Merging into the local database…</span>
+      <span>{elapsedSeconds}s</span>
+    </div>
+    <progress aria-label="Manual import processing" class={progressTrack} max="100"></progress>
+    <span class={progressHint}>Large files take a moment while each usage row is written and deduplicated.</span>
   {/if}
 </div>
