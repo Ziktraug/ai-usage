@@ -51,7 +51,7 @@ describe('P8 Svelte breakdown/action surfaces', () => {
     expect(quota).toContain('<caption');
     expect(quota).toContain('Reset filters');
   });
-  test('keeps mobile report filters in one coherent full-width stack without changing focus order', () => {
+  test('keeps mobile report filters in one coherent two-column stack without changing focus order', () => {
     const filterBar = sourceFor('filter-bar.svelte');
     const searchIndex = filterBar.indexOf(
       'aria-label="Filter sessions by title, project, model, provider, or harness"',
@@ -71,7 +71,8 @@ describe('P8 Svelte breakdown/action surfaces', () => {
     expect(stylesSource).toContain("flexDirection: { base: 'column', sm: 'row' }");
     expect(stylesSource).toContain("flexWrap: { base: 'nowrap', sm: 'wrap' }");
     expect(stylesSource).toContain("display: { base: 'grid', sm: 'contents' }");
-    expect(stylesSource).toContain("gridTemplateColumns: 'minmax(0, 1fr)'");
+    expect(stylesSource).toContain("gridTemplateColumns: 'repeat(2, minmax(0, 1fr))'");
+    expect(stylesSource).toContain("'& > :last-child:nth-child(odd)': { gridColumn: { base: '1 / -1', sm: 'auto' } }");
     expect(stylesSource).toContain("w: { base: 'full', sm: 'auto' }");
   });
 });

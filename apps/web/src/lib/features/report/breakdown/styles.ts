@@ -102,7 +102,7 @@ export const toolbar = css({
 });
 export const controls = css({
   display: { base: 'grid', sm: 'contents' },
-  gridTemplateColumns: 'minmax(0, 1fr)',
+  gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
   w: { base: 'full', sm: 'auto' },
   gap: { base: '8px', sm: 0 },
   alignItems: 'center',
@@ -110,6 +110,7 @@ export const controls = css({
     minW: 0,
     w: { base: 'full', sm: 'auto' },
   },
+  '& > :last-child:nth-child(odd)': { gridColumn: { base: '1 / -1', sm: 'auto' } },
 });
 
 export const table = css({ w: 'full', borderCollapse: 'collapse', fontSize: '12px' });
