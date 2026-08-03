@@ -88,3 +88,20 @@ export const customRangeFromIndexes = (
 };
 
 export const inputValueForRange = (date: Date): string => toDateInputValue(date);
+
+export type ReportRangePointerFinishType = 'pointerCancel' | 'pointerCaptureLost' | 'pointerEnd';
+
+export const reportRangePointerFinishType = (eventType: string): ReportRangePointerFinishType => {
+  if (eventType === 'pointercancel') {
+    return 'pointerCancel';
+  }
+  if (eventType === 'lostpointercapture') {
+    return 'pointerCaptureLost';
+  }
+  return 'pointerEnd';
+};
+
+export const escapedRangeDraft = (
+  projection: Pick<ReportRangeProjection, 'displayFrom' | 'displayTo'>,
+  field: 'end' | 'start',
+): string => (field === 'start' ? projection.displayFrom : projection.displayTo);

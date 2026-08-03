@@ -75,3 +75,22 @@ isolated worktree and then ran Ultracite, recursive closure, strict targeted
 Svelte typecheck, SSR and pure model gates. No source, behavior or assertion was
 weakened because of the tooling incident, and the temporary typecheck config was
 deleted before commit.
+
+## Campaign and machine presentation seams
+
+- Build one campaign-label index from the accepted bootstrap overrides. Pass
+  `presentCampaignSeries` through `presentCampaignTimelineSeries`, and pass
+  `presentSessionItem` through `presentFocusedOverviewSessionItem`. These two
+  callbacks own display language only; stable campaign keys, row identities and
+  filter values remain unchanged.
+- Pass raw active legend keys and one `onDimensionFilter` callback from the
+  existing dashboard search owner. P2 never owns a second filter state.
+- Derive machine labels from the accepted `bootstrap.machineFreshness`, never
+  from a new history/fleet acquisition. At X0, extract the framework-neutral
+  snapshot/label/status helpers currently embedded in `manual-transfer-model.ts`
+  into a collector-free presentation leaf, retaining legacy re-exports. Build
+  `presentMachineSeries(key, label)` from that single snapshot and pass its exact
+  `fresh | stale | unavailable` value plus label. Pass
+  `machineFreshnessStatus` from the same snapshot. This avoids importing the
+  manual-transfer module's usage-store types into the client closure and avoids
+  duplicating P7's fleet owner.

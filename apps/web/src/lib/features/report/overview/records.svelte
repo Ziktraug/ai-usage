@@ -35,58 +35,91 @@
   import { fmtDateOnly, fmtDuration, fmtMoney, fmtNum } from '../../../foundation/presentation/format';
   import { apiValuePresentation } from '../../../foundation/presentation/report-value';
 
+  const unchangedItem = (item: FocusedOverviewSessionItem): FocusedOverviewSessionItem => item;
   let {
     onSelectDay = () => undefined,
     onSelectSession = () => undefined,
+    presentSessionItem = unchangedItem,
     records,
     topSessions,
   }: {
     onSelectDay?: (date: string) => void;
     onSelectSession?: (item: FocusedOverviewSessionItem) => void;
+    presentSessionItem?: (item: FocusedOverviewSessionItem) => FocusedOverviewSessionItem;
     records: FocusedOverviewRecords | null;
     topSessions: readonly FocusedOverviewSessionItem[];
   } = $props();
+  const presentedRecords = $derived(
+    records
+      ? {
+          ...records,
+          longest: records.longest ? presentSessionItem(records.longest) : null,
+          topCost: records.topCost ? presentSessionItem(records.topCost) : null,
+        }
+      : null,
+  );
+  const presentedTopSessions = $derived(topSessions.map(presentSessionItem));
 </script>
 
-{#if records || topSessions.length > 0}
+{#if presentedRecords || presentedTopSessions.length > 0}
   <section class={panel}>
     <div>
       <h2 class={panelTitle}>Records</h2>
       <p class={panelSub}>Notable activity in the selected report range</p>
     </div>
-    {#if records}
+    {#if presentedRecords}
       <div class={grid}>
-        {#if records.busiest}
-          <button class={card} onclick={() => onSelectDay(records.busiest?.date ?? '')} type="button">
-            <span class={label}>Busiest day</span><span class={value}>{fmtDateOnly(records.busiest.date)}</span>
-            <span class={sub}>{fmtNum(records.busiest.sessions)} sessions · {fmtMoney(records.busiest.cost)}</span>
+        {#if presentedRecords.busiest}
+          <button class={card} onclick={() => onSelectDay(presentedRecords.busiest?.date ?? '')} type="button">
+            <span class={label}>Busiest day</span
+            ><span class={value}>{fmtDateOnly(presentedRecords.busiest.date)}</span>
+            <span class={sub}
+              >{fmtNum(presentedRecords.busiest.sessions)}
+              sessions · {fmtMoney(presentedRecords.busiest.cost)}</span
+            >
           </button>
         {/if}
-        {#if records.topCost}
-          <button class={card} onclick={() => records?.topCost && onSelectSession(records.topCost)} type="button">
-            <span class={label}>Top value</span><span class={value}>{records.topCost.label}</span>
-            <span class={sub}>{apiValuePresentation(records.topCost).label} · {records.topCost.harness}</span>
+        {#if presentedRecords.topCost}
+          <button
+            class={card}
+            onclick={() => presentedRecords?.topCost && onSelectSession(presentedRecords.topCost)}
+            type="button"
+          >
+            <span class={label}>Top value</span><span class={value}>{presentedRecords.topCost.label}</span>
+            <span class={sub}
+              >{apiValuePresentation(presentedRecords.topCost).label}
+              · {presentedRecords.topCost.harness}</span
+            >
           </button>
         {/if}
-        {#if records.longest}
-          <button class={card} onclick={() => records?.longest && onSelectSession(records.longest)} type="button">
-            <span class={label}>Longest</span><span class={value}>{records.longest.label}</span>
-            <span class={sub}>{fmtDuration(records.longest.durationMs)} · {records.longest.harness}</span>
+        {#if presentedRecords.longest}
+          <button
+            class={card}
+            onclick={() => presentedRecords?.longest && onSelectSession(presentedRecords.longest)}
+            type="button"
+          >
+            <span class={label}>Longest</span><span class={value}>{presentedRecords.longest.label}</span>
+            <span class={sub}
+              >{fmtDuration(presentedRecords.longest.durationMs)}
+              · {presentedRecords.longest.harness}</span
+            >
           </button>
         {/if}
         <div class={card}>
-          <span class={label}>Longest streak</span><span class={value}>{fmtNum(records.streak)} days</span>
-          <span class={sub}>{records.streakEnd ? `Through ${fmtDateOnly(records.streakEnd)}` : 'No dated streak'}</span>
+          <span class={label}>Longest streak</span><span class={value}>{fmtNum(presentedRecords.streak)} days</span>
+          <span class={sub}
+            >{presentedRecords.streakEnd ? `Through ${fmtDateOnly(presentedRecords.streakEnd)}` : 'No dated streak'}</span
+          >
         </div>
       </div>
     {/if}
-    {#if topSessions.length > 0}
+    {#if presentedTopSessions.length > 0}
       <ol aria-label="Top sessions and campaigns" class={top}>
-        {#each topSessions as item, index (item.row.rowId)}
+        {#each presentedTopSessions as item, index (item.row.rowId)}
           <li>
             <button class={topItem} onclick={() => onSelectSession(item)} type="button">
-              <span>{index + 1}</span
-              ><span
+              <span>{index + 1}</span>
+              <span
                 >{item.label}
                 <span class={sub}>
                   · {item.sessionCount} {item.kind === 'campaign' ? 'campaign sessions' : 'session'}</span

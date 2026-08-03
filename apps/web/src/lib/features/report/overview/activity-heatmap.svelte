@@ -22,7 +22,6 @@
     gridTemplateRows: 'repeat(7, 14px)',
     gap: '3px',
   });
-  const cell = css({ w: '14px', h: '14px', borderRadius: 'sm', bg: 'track' });
   const day = css({
     w: '14px',
     h: '14px',
@@ -40,6 +39,8 @@
     fontSize: '10px',
   });
   const legendCell = css({ w: '12px', h: '12px', borderRadius: 'sm', bg: 'accent' });
+  const readout = css({ display: 'grid', gap: '3px', p: '8px', borderRadius: 'md', bg: 'track', fontSize: '11px' });
+  const muted = css({ color: 'muted' });
   const empty = css({ color: 'muted', fontSize: '12px' });
 </script>
 
@@ -47,7 +48,11 @@
   import { panel, panelSub, panelTitle } from '@ai-usage/design-system/svelte';
   import type { FocusedCalendarHeatmap, FocusedHeatDay } from '@ai-usage/report-core/focused-report-query';
   import { nextHeatmapFocusIndex } from '../../../../overview-model';
-  import { fmtDateOnly, fmtMoney, fmtNum } from '../../../foundation/presentation/format';
+  import { fmtDateOnly, fmtNum } from '../../../foundation/presentation/format';
+  import {
+    aggregateApiPriceProvenance,
+    aggregateApiValuePresentation,
+  } from '../../../foundation/presentation/report-value';
 
   let {
     heatmap,
@@ -56,6 +61,18 @@
   const days = $derived(
     heatmap?.weeks.flatMap((week) => week.days.filter((day): day is FocusedHeatDay => day !== null)) ?? [],
   );
+  const initialFocusIndex = (): number => {
+    const todayIndex = heatmap ? days.findIndex((day) => day.date === heatmap.todayKey) : -1;
+    return todayIndex >= 0 ? todayIndex : Math.max(0, days.length - 1);
+  };
+  let focusedIndex = $state(initialFocusIndex());
+  const focusedDay = $derived(days[focusedIndex] ?? days[0] ?? null);
+
+  $effect(() => {
+    if (focusedIndex >= days.length) {
+      focusedIndex = Math.max(0, days.length - 1);
+    }
+  });
 
   const focusMovedDay = (event: KeyboardEvent, index: number): void => {
     const next = nextHeatmapFocusIndex(index, days.length, event.key);
@@ -63,9 +80,21 @@
       return;
     }
     event.preventDefault();
+    focusedIndex = next;
     const toolbar = (event.currentTarget as HTMLElement).closest('[role="toolbar"]');
-    const target = toolbar?.querySelectorAll<HTMLButtonElement>('button[data-heatmap-day]')[next];
-    target?.focus();
+    toolbar?.querySelectorAll<HTMLButtonElement>('button[data-heatmap-day]')[next]?.focus();
+  };
+  const currentDayAria = (date: string): { readonly 'aria-current'?: 'date' } =>
+    date === heatmap?.todayKey ? { 'aria-current': 'date' } : {};
+  const dayTitle = (item: FocusedHeatDay): string => {
+    const value = aggregateApiValuePresentation(item.priceMeasurement);
+    const provenance = aggregateApiPriceProvenance(item.priceMeasurement);
+    return [
+      fmtDateOnly(item.date),
+      `${fmtNum(item.sessions)} ${item.sessions === 1 ? 'session' : 'sessions'}`,
+      value.label,
+      provenance?.description ?? value.title,
+    ].join(' · ');
   };
 </script>
 
@@ -82,31 +111,43 @@
         </div>
         <div class={grid}>
           {#each days as item, index (item.date)}
-            {#if item.sessions > 0}
-              <button
-                aria-label={`Filter report to ${fmtDateOnly(item.date)}, ${fmtNum(item.sessions)} ${item.sessions === 1 ? 'session' : 'sessions'}`}
-                class={day}
-                data-heatmap-day
-                onclick={() => onSelectDay(item.date)}
-                onkeydown={(event) => focusMovedDay(event, index)}
-                title={`${fmtDateOnly(item.date)} · ${fmtNum(item.sessions)} sessions · ${fmtMoney(item.cost)}`}
-                type="button"
-                style:opacity={0.2 + item.level * 0.2}
-              ></button>
-            {:else}
-              <span class={cell} title={`${fmtDateOnly(item.date)} · 0 sessions`}></span>
-            {/if}
+            <button
+              {...currentDayAria(item.date)}
+              aria-label={`Filter report to ${fmtDateOnly(item.date)}, ${fmtNum(item.sessions)} ${item.sessions === 1 ? 'session' : 'sessions'}. ${dayTitle(item)}`}
+              class={day}
+              data-heatmap-day
+              data-price-state={item.priceMeasurement.state}
+              onclick={() => onSelectDay(item.date)}
+              onfocus={() => (focusedIndex = index)}
+              onkeydown={(event) => focusMovedDay(event, index)}
+              tabindex={focusedIndex === index ? 0 : -1}
+              title={dayTitle(item)}
+              type="button"
+              style:opacity={item.sessions > 0 ? 0.2 + item.level * 0.2 : 0.12}
+            ></button>
           {/each}
         </div>
       </div>
     </div>
     <div class={legend}>
       <span>Less</span>
-      {#each [1, 2, 3, 4] as level (level)}
-        <span class={legendCell} style:opacity={0.2 + level * 0.2}></span>
+      {#each [0, 1, 2, 3, 4] as level (level)}
+        <span class={legendCell} style:opacity={level === 0 ? 0.12 : 0.2 + level * 0.2}></span>
       {/each}
       <span>More</span>
     </div>
+    {#if focusedDay}
+      {@const value = aggregateApiValuePresentation(focusedDay.priceMeasurement)}
+      {@const provenance = aggregateApiPriceProvenance(focusedDay.priceMeasurement)}
+      <div aria-live="polite" class={readout} data-heatmap-readout role="status">
+        <strong
+          >{fmtDateOnly(focusedDay.date)}
+          · {fmtNum(focusedDay.sessions)} {focusedDay.sessions === 1 ? 'session' : 'sessions'}</strong
+        >
+        <span>{value.label}</span>
+        <span class={muted}>{provenance?.description ?? value.title}</span>
+      </div>
+    {/if}
   {:else}
     <p class={empty}>No dated sessions in range</p>
   {/if}

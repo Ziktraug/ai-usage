@@ -66,6 +66,7 @@
   import {
     type FocusedDateDomain,
     type FocusedTimelineData,
+    type FocusedTimelineSeries,
     focusedTimelineDimensionDefinitions,
     focusedTimelineDimensionLabel,
     isFocusedTimelineDimension,
@@ -82,38 +83,51 @@
   import type { SearchNavigationIntent } from '../../../foundation/navigation/search-intent';
   import { createSearchEditRun } from '../../../foundation/navigation/svelte/dashboard-url';
   import ActivityTimeline from '../overview/activity-timeline.svelte';
+  import type { MachineSeriesPresenter } from '../overview/timeline-model';
   import {
     customRangeFromIndexes,
     customRangeFromInputs,
+    escapedRangeDraft,
     inputValueForRange,
+    reportRangePointerFinishType,
     reportRangeProjection,
   } from './report-range-model';
 
   interface Props {
+    activeSeriesKeys?: readonly string[];
     dateDomain: FocusedDateDomain | null;
     dimension: TimelineDimension;
     generatedAt: string;
     granularity: MigrationGranularity;
+    machineFreshnessStatus?: string | null;
     navigate?: SearchNavigationIntent<DashboardSearch> | undefined;
+    onDimensionFilter?: (dimension: TimelineDimension, key: string) => void;
     onOptionsChange?: (options: {
       dimension: TimelineDimension;
       granularity: MigrationGranularity;
       value: TimelineValue;
     }) => void;
     onRangeChange?: (range: DashboardDateRangeSearch) => void;
+    presentCampaignSeries?: (series: FocusedTimelineSeries) => FocusedTimelineSeries;
+    presentMachineSeries?: MachineSeriesPresenter;
     range: DashboardDateRangeSearch;
     timeline: FocusedTimelineData | null;
     value: TimelineValue;
   }
 
   let {
+    activeSeriesKeys = [],
     dateDomain,
     dimension,
     generatedAt,
     granularity,
+    machineFreshnessStatus = null,
     navigate,
+    onDimensionFilter = () => undefined,
     onOptionsChange = () => undefined,
     onRangeChange = () => undefined,
+    presentCampaignSeries,
+    presentMachineSeries,
     range,
     timeline,
     value,
@@ -132,6 +146,7 @@
   let controlState: TimeRangeControlState = $state(initialControlState());
   let draftFrom = $state(initialFrom());
   let draftTo = $state(initialTo());
+  let cancelledInput = $state<'end' | 'start' | null>(null);
   const editRun = createSearchEditRun();
   const currentRangeKey = (): string => JSON.stringify(range);
   const initialRangeKey = (): string => currentRangeKey();
@@ -204,10 +219,10 @@
     commitRange(next, editRun.next().replace);
   };
 
-  const applyTransition = (event: Parameters<typeof transitionTimeRangeControl>[1]): void => {
+  const applyTransition = (event: Parameters<typeof transitionTimeRangeControl>[1]): boolean => {
     const transition = transitionTimeRangeControl(controlState, event, { selectionMaxIndex: projection.maxIndex });
     if (!transition.handled) {
-      return;
+      return false;
     }
     controlState = transition.state;
     for (const command of transition.commands) {
@@ -217,6 +232,7 @@
         editRun.commit();
       }
     }
+    return true;
   };
 
   const selectPreset = (mode: DashboardDateRangeSearch['mode']): void => {
@@ -249,45 +265,96 @@
     }
   };
 
-  const commitInputKey = (event: KeyboardEvent): void => {
+  const finishInput = (field: 'end' | 'start'): void => {
+    if (cancelledInput === field) {
+      cancelledInput = null;
+      if (field === 'start') {
+        draftFrom = escapedRangeDraft(projection, field);
+      } else {
+        draftTo = escapedRangeDraft(projection, field);
+      }
+      return;
+    }
+    commitInputs(true);
+  };
+
+  const commitInputKey = (event: KeyboardEvent, field: 'end' | 'start'): void => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      cancelledInput = field;
+      if (field === 'start') {
+        draftFrom = escapedRangeDraft(projection, field);
+      } else {
+        draftTo = escapedRangeDraft(projection, field);
+      }
+      editRun.commit();
+      (event.currentTarget as HTMLInputElement).blur();
+      return;
+    }
     if (event.key === 'Enter') {
       commitInputs(true);
     }
   };
 
+  const captureHandledPointer = (event: PointerEvent, handled: boolean): void => {
+    if (!handled) {
+      return;
+    }
+    (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+    event.preventDefault();
+  };
+
   const beginHandle = (event: PointerEvent, handle: 'start' | 'end'): void => {
     const target = event.currentTarget as HTMLElement;
     const trackWidth = target.parentElement?.getBoundingClientRect().width ?? 0;
-    target.setPointerCapture(event.pointerId);
-    applyTransition({
-      button: event.button,
-      clientX: event.clientX,
-      handle,
-      interaction: 'selection-handle',
-      pointerId: event.pointerId,
-      trackWidth,
-      type: 'pointerStart',
-    });
+    captureHandledPointer(
+      event,
+      applyTransition({
+        button: event.button,
+        clientX: event.clientX,
+        handle,
+        interaction: 'selection-handle',
+        pointerId: event.pointerId,
+        trackWidth,
+        type: 'pointerStart',
+      }),
+    );
   };
 
   const beginPan = (event: PointerEvent): void => {
     const target = event.currentTarget as HTMLElement;
     const trackWidth = target.parentElement?.getBoundingClientRect().width ?? 0;
-    target.setPointerCapture(event.pointerId);
-    applyTransition({
-      button: event.button,
-      clientX: event.clientX,
-      interaction: 'selection-pan',
-      pointerId: event.pointerId,
-      trackWidth,
-      type: 'pointerStart',
-    });
+    captureHandledPointer(
+      event,
+      applyTransition({
+        button: event.button,
+        clientX: event.clientX,
+        interaction: 'selection-pan',
+        pointerId: event.pointerId,
+        trackWidth,
+        type: 'pointerStart',
+      }),
+    );
   };
 
-  const onPointerMove = (event: PointerEvent): void =>
-    applyTransition({ clientX: event.clientX, pointerId: event.pointerId, type: 'pointerMove' });
-  const onPointerEnd = (event: PointerEvent): void =>
-    applyTransition({ pointerId: event.pointerId, type: 'pointerEnd' });
+  const onPointerMove = (event: PointerEvent): void => {
+    if (applyTransition({ clientX: event.clientX, pointerId: event.pointerId, type: 'pointerMove' })) {
+      event.preventDefault();
+    }
+  };
+
+  const finishPointer = (event: PointerEvent): void => {
+    const finishType = reportRangePointerFinishType(event.type);
+    if (!applyTransition({ pointerId: event.pointerId, type: finishType })) {
+      return;
+    }
+    const target = event.currentTarget as HTMLElement;
+    if (finishType !== 'pointerCaptureLost' && target.hasPointerCapture(event.pointerId)) {
+      target.releasePointerCapture(event.pointerId);
+    }
+    event.preventDefault();
+  };
+
   const onHandleKeydown = (event: KeyboardEvent, handle: 'start' | 'end'): void => {
     applyTransition({ axis: 'selection', handle, key: event.key, shiftKey: event.shiftKey, type: 'keyboardMove' });
     if (['ArrowLeft', 'ArrowRight', 'ArrowDown', 'ArrowUp', 'PageDown', 'PageUp', 'Home', 'End'].includes(event.key)) {
@@ -340,22 +407,30 @@
     <span>{chartSummary}</span>
     <span>{timeline?.grandSessions ?? 0} sessions</span>
   </div>
-  <ActivityTimeline {timeline} {value} />
+  <ActivityTimeline
+    {activeSeriesKeys}
+    {machineFreshnessStatus}
+    {onDimensionFilter}
+    {...(presentCampaignSeries ? { presentCampaignSeries } : {})}
+    {...(presentMachineSeries ? { presentMachineSeries } : {})}
+    {timeline}
+    {value}
+  />
   <div class={fields} data-report-range-part="adjustments">
     <label class={field}
       >Start date
       <input
         aria-label="Start date"
         class={input}
-        onblur={() => commitInputs(true)}
-        onfocus={() => (draftFrom = inputValueForRange(dateForHandle('start')))}
+        onblur={() => finishInput('start')}
+        onfocus={() => { cancelledInput = null; draftFrom = inputValueForRange(dateForHandle('start')); }}
         oninput={(event) => {
           draftFrom = event.currentTarget.value;
           if (parseLocalDate(draftFrom)) {
             commitInputs(false);
           }
         }}
-        onkeydown={commitInputKey}
+        onkeydown={(event) => commitInputKey(event, 'start')}
         type="text"
         value={draftFrom}
       >
@@ -365,15 +440,15 @@
       <input
         aria-label="End date"
         class={input}
-        onblur={() => commitInputs(true)}
-        onfocus={() => (draftTo = inputValueForRange(dateForHandle('end')))}
+        onblur={() => finishInput('end')}
+        onfocus={() => { cancelledInput = null; draftTo = inputValueForRange(dateForHandle('end')); }}
         oninput={(event) => {
           draftTo = event.currentTarget.value;
           if (parseLocalDate(draftTo)) {
             commitInputs(false);
           }
         }}
-        onkeydown={commitInputKey}
+        onkeydown={(event) => commitInputKey(event, 'end')}
         type="text"
         value={draftTo}
       >
@@ -385,9 +460,11 @@
       aria-label="Selected report window"
       class={selection}
       data-dragging={controlState.interaction.type === 'selection-pan' ? 'true' : undefined}
+      onlostpointercapture={finishPointer}
+      onpointercancel={finishPointer}
       onpointerdown={beginPan}
       onpointermove={onPointerMove}
-      onpointerup={onPointerEnd}
+      onpointerup={finishPointer}
       type="button"
       style:left={`${startPercent}%`}
       style:width={`${Math.max(0, endPercent - startPercent)}%`}
@@ -401,9 +478,11 @@
         max={projection.maxIndex}
         min={0}
         onkeydown={(event) => onHandleKeydown(event, handle)}
+        onlostpointercapture={finishPointer}
+        onpointercancel={finishPointer}
         onpointerdown={(event) => beginHandle(event, handle)}
         onpointermove={onPointerMove}
-        onpointerup={onPointerEnd}
+        onpointerup={finishPointer}
         type="range"
         value={index}
         style:left={`${percentFor(index)}%`}
