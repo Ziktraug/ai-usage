@@ -2,7 +2,7 @@ import { currentRecord } from '../helpers';
 import { defineParityShard, type ParityRecord } from '../schema';
 
 const owner = 'P3' as const;
-const implementationCommit = 'fe3357e41c3d6c668af234f3dae0820b4bf76626';
+const implementationCommit = '7ce6027ecadc44a838817b26f2eb0c4fee9f0b86';
 const packetTestCommand =
   'bun test apps/web/src/lib/features/sessions/table/*.test.ts apps/web/src/session-{table-schema,row-window,query-client,query-operation-owner,surface-mode}.test.ts apps/web/src/lib/{rpc/session-client,query/options/session}.test.ts apps/web/src/served-report-session.test.ts';
 
@@ -79,7 +79,7 @@ export default defineParityShard({
       targetSource:
         'apps/web/src/lib/features/sessions/table/{session-columns.ts,session-cell.svelte,session-cell-projection.ts,session-table.svelte}; apps/web/src/session-table-schema.ts',
       targetTest:
-        'apps/web/src/lib/features/sessions/table/{session-table-model,session-table-components}.test.ts; apps/web/src/session-table-schema.test.ts › exact 25 columns, full header tooltips, Work/Tokens/Reliability, unavailable cost/token/count hints, partial/unknown API-price provenance filtering, full RTK details, compact line deltas, cell filters/highlighting/campaign labels, sort defaults and legacy URL diffs',
+        'apps/web/src/lib/features/sessions/table/{session-table-model,session-table-components}.test.ts; apps/web/src/session-table-schema.test.ts › exact 25 columns, full header tooltips, Work/Tokens/Reliability, unavailable cost/token/call/tool hints while Turns stays numeric with provenance, partial/unknown API-price provenance filtering, full RTK details, compact line deltas, cell filters/highlighting/campaign labels, sort defaults and legacy URL diffs',
     }),
     feature({
       baselineTest: 'apps/web/src/session-query-client.test.ts; apps/web/e2e/production-report.spec.ts › exact paging',
@@ -88,7 +88,7 @@ export default defineParityShard({
       targetSource:
         'apps/web/src/lib/features/sessions/table/{session-table-query-owner.ts,session-table-owner.svelte,INTEGRATION.md}; apps/web/src/lib/{rpc/session-client.ts,query/options/session.ts}; apps/web/src/session-query-operation-owner.ts',
       targetTest:
-        'apps/web/src/lib/features/sessions/table/session-table-query-owner.test.ts; apps/web/src/{session-query-client,session-query-operation-owner}.test.ts; apps/web/src/lib/{rpc/session-client,query/options/session}.test.ts › exact revision/fingerprint, one owner, dedupe, abort, supersession, authoritative campaign identity, replay of more than three loaded top-level pages and every loaded campaign-child page before one retry, and repeated-expiry preservation',
+        'apps/web/src/lib/features/sessions/table/session-table-query-owner.test.ts; apps/web/src/{session-query-client,session-query-operation-owner}.test.ts; apps/web/src/lib/{rpc/session-client,query/options/session}.test.ts › exact revision/fingerprint and canonical cursor-keyed campaign Query options, one owner, dedupe, abort, supersession, authoritative campaign identity, replay of more than three loaded top-level pages and every loaded campaign-child page before one retry, and repeated-expiry preservation',
     }),
     feature({
       baselineTest: 'apps/web/e2e/session-scroll.scale.ts; apps/web/e2e/session-scroll-benchmark.scale.ts',
