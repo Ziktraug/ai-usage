@@ -12,8 +12,8 @@ authority for feature, operation, design, source-file, and test-title coverage.
 - Planning PR: `#26`, squash-merged as
   `2183270ebfbb886fafa7e6268893122db9b364c0`
 - `BASE_SHA`: `2183270ebfbb886fafa7e6268893122db9b364c0`
-- Current integration checkpoint: `f3610aaf873a1e4baaabe43b61bdb0db4486ff98`
-- Last reviewed green checkpoint: `f3610aaf873a1e4baaabe43b61bdb0db4486ff98`
+- Current integration checkpoint: `6f639ab40969a9f9b7f4993f5f23f329fa635435`
+- Last reviewed green checkpoint: `6f639ab40969a9f9b7f4993f5f23f329fa635435`
 - Active design bases: D1 `4862293`, D2 `fce5c1a`, D3 `e2f13cd`
 - Implementation PR: not opened
 - Exclusive process-test token: free after the P1 activated shadow-browser gate
@@ -137,15 +137,15 @@ Statuses are `BLOCKED`, `READY`, `IMPLEMENTING`, `REVIEW`, `REWORK`,
 | R0 | F0, V5, Q3, D4 | INTEGRATED | `435aa06`, evidence `88d56c9`, corrections `98235ab`, `4e46acc`, evidence `4f293e5`, `23635c7`; integrated as `affcee4`, `01fa070`, `688b629`, `fa92709`, `66a650e`, `c8b7c7e` | `/root/d123_parity_review`, `/root/q2_spec_review` / ACCEPT | `c8b7c7e872f25648dbf5df407f92e76d64948eff` |
 | R1 | R0 | INTEGRATED | `40116b5`, `121d78b`, corrections `95b67d6`, `7c85cf1`, evidence/checker `c5cc7ea`, `1befaef` | `/root/d123_parity_review`, `/root/q2_spec_review`, `/root/v34_parity` / ACCEPT | `1befaefd71ef5ffe59866021f216104b3f83f9ef` |
 | P1 | R1, V1, V2, Q1, D4 | INTEGRATED | `a19914b`, `874cb1b`, `2422c2c`, evidence `02782f8`, activation correction `5bc8055` | `/root/v34_parity`, `/root/d123_parity_review` / ACCEPT | `f3610aa` |
-| P2 | P1 | IMPLEMENTING | - | `/root/v34_parity` | - |
+| P2 | P1 | REWORK | `0f252ca`, evidence `8e41350` | `/root/q2_spec_review` / REWORK | - |
 | P3 | P1, V2, Q1, D4 | REWORK | `1e7fb76`, evidence `38bbbcc` | `/root/q2_spec_review` / REWORK | - |
 | P4 | P3 | BLOCKED | - | - | - |
-| P5 | R1, V3, Q2, D4 | REWORK | `231f109`, `a5b657f`, `72c6a76`, evidence `448c782`; integrated as `c84b957`, `32533a7`, `e951cd1`, `a170123`, `9b577aa` | `/root/d123_parity_review` / ACCEPT; activation REWORK | `9b577aa` additive only |
+| P5 | R1, V3, Q2, D4 | INTEGRATED | `231f109`, `a5b657f`, `72c6a76`, `448c782`, activation `5c0e27e`; integrated as `c84b957`, `32533a7`, `e951cd1`, `a170123`, `0f6b118`, evidence `6f639ab` | `/root/d123_parity_review`, `/root/v34_parity` / ACCEPT | `6f639ab` |
 | P6 | R1, V4, Q2, D4, B2 | REWORK | fresh redispatch `7eba5bd` through `2d5b3fc` | `/root/q2_spec_review` / REWORK | - |
 | P7 | R1, V4, Q2, D4 | REWORK | `d2486bd`, corrections `80a6db3`, evidence `ed0a76d` | `/root/q2_spec_review`, `/root/v34_parity` / REWORK | - |
 | P8 | P1 | IMPLEMENTING | - | `/root/q2_spec_review` | - |
-| P9 | P5 | BLOCKED | - | - | - |
-| P10 | P5 | BLOCKED | - | - | - |
+| P9 | P5 | READY | - | - | - |
+| P10 | P5 | READY | - | - | - |
 | X0 | P2, P8, P4, P9, P10, P6, P7 | BLOCKED | - | - | - |
 | X1 | X0 | BLOCKED | - | - | - |
 | X2 | X1 | BLOCKED | - | - | - |
@@ -838,6 +838,19 @@ styles. Independent delta review ACCEPTed it. The final P1 gate passed 24 tests
 with 77 expectations, Svelte check 0/0, Ultracite, parity, shadow build and all
 6 shadow-browser tests. No assertion or accessibility gate was weakened.
 
+P2 candidate `0f252ca` plus evidence/integration request `8e41350` contains the
+owned Overview/range implementation and shard. Its 76 focused/preserved tests
+with 278 expectations, Ultracite, Svelte 0/0, shadow build, closure and parity
+are green. Independent review returned REWORK: share bars divide sessions by
+cost; timeline legend/filter/readout/boundary-tick interactions are incomplete;
+heatmap keyboard indexes hidden days and drops price provenance; provider
+progress DOM, Session Shape/campaign presentation and machine freshness labels
+are missing; pointer cancel/lost-capture/Escape transitions are not wired; the
+closure scanner leaves important packages/server classes opaque; and thirteen
+target evidence paths do not exist. The single lifecycle/bootstrap/provider and
+stable-series-color integration requests were accepted. Original-author
+correction is queued behind the longer P6→P7 chain. No STOP condition exists.
+
 P3 candidate `1e7fb76` plus evidence `38bbbcc` contains 14 owned Sessions
 files and its shard. Its 75 focused/preserved tests with 573 expectations,
 Ultracite, full Web/Svelte 0/0, shadow build, boundaries and parity are green.
@@ -882,9 +895,15 @@ Applying the exact coordinator route request then made the shipped shell
 reachable to SvelteKit and exposed eight exact-optional/type-shape errors in
 Inspector token counts, optional snippet forwarding and the dehydrated Skills
 snapshot boundary. The route delta was fully reverted and Svelte check/parity
-returned green. The original P5 author is correcting those activation-only
-types and adding a reachable feature fixture before route composition is tried
-again; P9/P10 remain blocked from the additive checkpoint.
+returned green. Activation correction `5c0e27e` validates the hydrated wire
+snapshot through the canonical parser, omits absent optional snippet props,
+restores the exact `Unknown` token fallback and adds a type-only reachability
+fixture. `/root/v34_parity` ACCEPTed both axes; 15 focused tests with 84
+expectations, Web typecheck/Svelte 0/0, Ultracite, boundaries and parity passed.
+It integrated as `0f6b118`; mechanical evidence `6f639ab` advances all P5
+targets to that reviewed implementation. The exact route/slot composition stays
+deferred to X0 as requested so P9/P10 can replace the temporary editor and
+management slots together; their frozen dependencies are now ready.
 
 P6 candidate `f02f29f`, evidence `3076673`, virtual lifecycle proof `f598271`
 and evidence `11a2ec6` contains 16 owned files and 1,518 lines. It supplies the
@@ -1024,6 +1043,10 @@ the only process-test token; neither P6 nor P7 used it.
   unchanged 6-test shadow suite is green. The grouped pre-browser gate also
   once remained silent until manually interrupted; each constituent command
   subsequently passed under an explicit bound.
-- Recovery point: `f3610aaf873a1e4baaabe43b61bdb0db4486ff98` is the latest
-  independently reviewed green checkpoint. P1 is integrated; P2, P3 and P8 are
-  ready, while P5/P6/P7 remain recoverable in their isolated worktrees.
+- Resolved P5 activation incident: the exact X0 route request exposed eight
+  strict Svelte type errors while the additive shell was unreachable. The route
+  was reverted before stacking work; reviewed correction `0f6b118` plus
+  reachability fixture closes the gap, and all additive gates are green.
+- Recovery point: `6f639ab40969a9f9b7f4993f5f23f329fa635435` is the latest
+  independently reviewed green checkpoint. P1 and P5 are integrated; P9/P10 are
+  ready, while P2/P3/P6/P7/P8 remain recoverable in isolated worktrees.
