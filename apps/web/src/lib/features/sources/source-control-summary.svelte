@@ -1,6 +1,7 @@
 <script lang="ts">
   import { css, cx } from '@ai-usage/design-system/css';
   import { useSourceControl } from './context';
+  import { pendingAriaBusyAttributes } from './model';
   import { presentSourceState, sourceToneClass } from './presentation';
   import { ghostButton, statusPill } from './styles';
 
@@ -176,6 +177,7 @@
     </div>
   </a>
   <button
+    {...pendingAriaBusyAttributes(runPending)}
     class={ghostButton}
     disabled={!snapshot || state.connection !== 'live' || runPending}
     onclick={() => sourceControl.execute({ command: 'run-all' }).catch(() => undefined)}

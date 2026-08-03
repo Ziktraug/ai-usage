@@ -1,11 +1,7 @@
 <script lang="ts">
   import { css, cx } from '@ai-usage/design-system/css';
   import { header, meta, page, panel, shell, title, titleBlock } from '@ai-usage/design-system/svelte';
-  import type {
-    CollectionSourceGroup,
-    SourceControlCommand,
-    SourceControlEntryView,
-  } from '@ai-usage/report-core/source-control';
+  import type { CollectionSourceGroup, SourceControlCommand } from '@ai-usage/report-core/source-control';
   import { fmtDate, fmtNum } from '../../../shared';
   import { useSourceControl } from './context';
   import {
@@ -15,14 +11,12 @@
     healthySources,
     orderedSources,
     publicationStatus,
-    sourceCanRun,
-    sourceMutationDisabledReason,
-    sourceRunDisabledReason,
     sourcesInGroup,
   } from './model';
   import { presentSourceState, sourceToneClass } from './presentation';
+  import SourceActions from './source-actions.svelte';
   import SourceCard from './source-card.svelte';
-  import { actionRow, banner, bannerError, ghostButton, headerActions, headerTop, statusPill } from './styles';
+  import { banner, bannerError, ghostButton, headerActions, headerTop, statusPill } from './styles';
 
   const sourceControl = useSourceControl();
   const state = $derived(sourceControl.state());
@@ -57,17 +51,6 @@
     } catch {
       copiedRevision = undefined;
     }
-  };
-
-  const setEnabled = (source: SourceControlEntryView, event: Event): void => {
-    if (!(event.currentTarget instanceof HTMLInputElement)) {
-      return;
-    }
-    executeCommand({
-      command: 'set-enabled',
-      enabled: event.currentTarget.checked,
-      sourceId: source.id,
-    });
   };
 
   const pageStack = css({ display: 'grid', gap: '18px' });
@@ -111,13 +94,6 @@
   const healthyName = css({ display: 'grid', gap: '3px', minW: 0 });
   const sourceName = css({ fontSize: '14px', fontWeight: 700, overflowWrap: 'anywhere' });
   const sourceId = css({ color: 'muted', fontFamily: 'mono', fontSize: '11px', overflowWrap: 'anywhere' });
-  const switchLabel = css({
-    display: 'inline-flex',
-    alignItems: 'center',
-    gap: '7px',
-    fontSize: '12px',
-    fontWeight: 650,
-  });
   const detailsSummary = css({ color: 'muted', fontSize: '12px', fontWeight: 650, cursor: 'pointer' });
 </script>
 
@@ -230,26 +206,7 @@
                 <span class={cx(statusPill, sourceToneClass(presentation.tone))} data-source-health
                   >{presentation.label}</span
                 >
-                <div class={actionRow}>
-                  <label class={switchLabel}
-                    ><input
-                      checked={source.policy === 'enabled'}
-                      disabled={!controlsAvailable || pending}
-                      onchange={(event) => setEnabled(source, event)}
-                      title={sourceMutationDisabledReason(pending, controlsAvailable)}
-                      type="checkbox"
-                    >Enabled</label
-                  >
-                  <button
-                    class={ghostButton}
-                    disabled={!controlsAvailable || pending || !sourceCanRun(source)}
-                    onclick={() => executeCommand({ command: 'run-now', sourceId: source.id })}
-                    title={sourceRunDisabledReason(source, pending, controlsAvailable)}
-                    type="button"
-                  >
-                    Run now
-                  </button>
-                </div>
+                <SourceActions available={controlsAvailable} execute={sourceControl.execute} {pending} {source} />
               </div>
             {/each}
           </div>

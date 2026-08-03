@@ -7,6 +7,15 @@ import {
 import type { SourceControlClientState } from '../../../source-control-client';
 import { presentSourceState } from './presentation';
 
+export const revisionDisplayBounds = { maxInlineLength: 24, prefixLength: 12, suffixLength: 8 } as const;
+
+export interface PendingAriaBusyAttributes {
+  readonly 'aria-busy'?: 'true';
+}
+
+export const pendingAriaBusyAttributes = (pending: boolean): PendingAriaBusyAttributes =>
+  pending ? { 'aria-busy': 'true' } : {};
+
 // Keep the catalogue order stable even when engine snapshots arrive out of order.
 export const orderedSources = (state: SourceControlClientState): readonly SourceControlEntryView[] => {
   const byId = new Map(state.snapshot?.sources.map((source) => [source.id, source] as const) ?? []);
@@ -92,4 +101,6 @@ export const conciseSourceStatus = (state: SourceControlClientState): string => 
 };
 
 export const compactRevision = (revision: string): string =>
-  revision.length <= 24 ? revision : `${revision.slice(0, 12)}…${revision.slice(-8)}`;
+  revision.length <= revisionDisplayBounds.maxInlineLength
+    ? revision
+    : `${revision.slice(0, revisionDisplayBounds.prefixLength)}…${revision.slice(-revisionDisplayBounds.suffixLength)}`;

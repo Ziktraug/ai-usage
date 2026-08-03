@@ -1,6 +1,6 @@
 <script lang="ts">
   import { useQueryClient } from '@tanstack/svelte-query';
-  import { onMount, type Snippet } from 'svelte';
+  import { onMount, type Snippet, untrack } from 'svelte';
   import type { RuntimeMode } from '../../../runtime-mode';
   import {
     createSourceControlClientForMode,
@@ -21,7 +21,7 @@
   } = $props();
 
   const queryClient = useQueryClient();
-  const client = injectedClient ?? createSourceControlClientForMode(runtimeMode);
+  const client = untrack(() => injectedClient ?? createSourceControlClientForMode(runtimeMode));
   const service = createSourceControlService({
     client,
     invalidateReportQuery: (queryKey) => {

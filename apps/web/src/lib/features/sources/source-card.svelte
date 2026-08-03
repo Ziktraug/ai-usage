@@ -3,9 +3,9 @@
   import { meta, panel } from '@ai-usage/design-system/svelte';
   import type { SourceControlCommand, SourceControlEntryView } from '@ai-usage/report-core/source-control';
   import { fmtDate, fmtNum } from '../../../shared';
-  import { sourceCanRun, sourceMutationDisabledReason, sourceRunDisabledReason } from './model';
   import { presentSourceProgress, presentSourceState, sourceToneClass } from './presentation';
-  import { actionRow, ghostButton, statusPill } from './styles';
+  import SourceActions from './source-actions.svelte';
+  import { statusPill } from './styles';
 
   let {
     available,
@@ -40,26 +40,8 @@
   const axisLabel = css({ color: 'muted', fontSize: '10px', fontWeight: 700, textTransform: 'uppercase' });
   const axisValue = css({ fontSize: '12px', overflowWrap: 'anywhere' });
   const detailList = css({ display: 'grid', gap: '5px', color: 'muted', fontSize: '12px', lineHeight: 1.5 });
-  const switchLabel = css({
-    display: 'inline-flex',
-    alignItems: 'center',
-    gap: '7px',
-    fontSize: '12px',
-    fontWeight: 650,
-  });
   const progressStack = css({ display: 'grid', gap: '5px' });
   const progressBar = css({ width: '100%', accentColor: 'accent' });
-
-  const setEnabled = (event: Event): void => {
-    if (!(event.currentTarget instanceof HTMLInputElement)) {
-      return;
-    }
-    execute({
-      command: 'set-enabled',
-      enabled: event.currentTarget.checked,
-      sourceId: source.id,
-    }).catch(() => undefined);
-  };
 </script>
 
 <article class={cx(panel, sourceCard)} data-source-card>
@@ -122,25 +104,5 @@
       <p>Warning: {warning.message ?? warning.code}</p>
     {/each}
   </div>
-  <div class={actionRow}>
-    <label class={switchLabel}>
-      <input
-        checked={source.policy === 'enabled'}
-        disabled={!available || pending}
-        onchange={setEnabled}
-        title={sourceMutationDisabledReason(pending, available)}
-        type="checkbox"
-      >
-      Enabled
-    </label>
-    <button
-      class={ghostButton}
-      disabled={!available || pending || !sourceCanRun(source)}
-      onclick={() => execute({ command: 'run-now', sourceId: source.id }).catch(() => undefined)}
-      title={sourceRunDisabledReason(source, pending, available)}
-      type="button"
-    >
-      Run now
-    </button>
-  </div>
+  <SourceActions {available} {execute} {pending} {source} />
 </article>
