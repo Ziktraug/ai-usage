@@ -40,7 +40,7 @@ const completeRecord = (record: ParityRecord, target: SkillsTarget): ParityRecor
     targetEvidence(
       skillsVerticalCommit,
       'source',
-      `packages/web-contract/src/skills.ts#skillsContract.${target.procedure} (${target.method} ${target.route}); apps/web/src/lib/server/rpc/skills.ts#createSkillsRouter; apps/web/src/lib/rpc/skills-client.ts#createSkillsClient`,
+      `packages/web-contract/src/skills.ts#skillsContract.${target.procedure} (${target.method} ${target.route}, output ${target.outputSchema}); apps/web/src/lib/server/rpc/skills.ts#createSkillsRouter; apps/web/src/lib/rpc/skills-client.ts#createSkillsClient`,
     ),
     targetEvidence(
       skillsSchemaCommit,
@@ -95,7 +95,7 @@ const completeRecord = (record: ParityRecord, target: SkillsTarget): ParityRecor
     targetEvidence(
       transportTypecheckCommit,
       'command',
-      'V5 integrated contract/server/client tests, parity check, typecheck, lint, Svelte build, and serialized Nitro loopback gate passed.',
+      'V5 integrated contract/server/client tests and Web transport typecheck passed at this checkpoint.',
     ),
     targetEvidence(
       skillsBoundaryCommit,
@@ -118,7 +118,6 @@ const completeRecord = (record: ParityRecord, target: SkillsTarget): ParityRecor
       `Independent V5 loopback review ACCEPTed ${nitroLoopbackCommit}..${v5Checkpoint}, including cleanup ${loopbackCleanupCommit}.`,
     ),
   ],
-  ...(record.operation === undefined ? {} : { operation: { ...record.operation, outputParser: target.outputSchema } }),
   status: 'complete',
 });
 
@@ -140,7 +139,7 @@ const operation = (
       operation: {
         ...descriptor,
         inputParser,
-        outputParser: target.outputSchema,
+        outputParser: 'TanStack serializer over Skills application results; add a runtime output schema in V3',
       },
     }),
     target,

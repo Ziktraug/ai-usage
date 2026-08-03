@@ -61,7 +61,7 @@ export default defineParityShard({
         currentMethod: 'GET',
         implementationOwner: 'apps/web/src/server/sync-data.server.ts#getSyncFleetForServer',
         inputParser: 'none',
-        outputParser: 'packages/web-contract/src/sync.ts#syncFleetOutputSchema',
+        outputParser: 'TanStack serializer over Sync fleet result; add a runtime output schema in V4',
         publicErrors: ['ForbiddenDemo', 'IncompatibleStore', 'Unavailable'],
         target: 'sync.fleet',
         transport: 'query',
@@ -110,7 +110,7 @@ export default defineParityShard({
         targetEvidence(
           transportTypecheckCommit,
           'command',
-          'bun test packages/web-contract/src/sync.test.ts apps/web/src/lib/server/rpc/sync.test.ts apps/web/src/lib/rpc/sync-client.test.ts apps/web/src/lib/rpc/sync-solid-client.test.ts; bun run test:web-rpc-loopback; bun tools/check-web-migration-parity.ts',
+          'bun test packages/web-contract/src/sync.test.ts apps/web/src/lib/server/rpc/sync.test.ts apps/web/src/lib/rpc/sync-client.test.ts apps/web/src/lib/rpc/sync-solid-client.test.ts; Web transport typecheck passed',
         ),
         targetEvidence(
           verticalCorrectionCommit,
@@ -139,8 +139,8 @@ export default defineParityShard({
       {
         currentMethod: 'POST',
         implementationOwner: 'apps/web/src/server/sync-data.server.ts#exportManualMergeBundleForServer',
-        inputParser: 'no request body; trusted-local and CSRF policy before handler acquisition',
-        outputParser: 'bounded attachment headers plus canonical portable-usage JSON body',
+        inputParser: 'identity input (replace with bounded explicit route input)',
+        outputParser: 'current server-function file result; file bytes are excluded from oRPC',
         publicErrors: ['ForbiddenDemo', 'Forbidden', 'InvalidInput', 'Unavailable'],
         target: 'explicit download route with optional bounded oRPC metadata',
         transport: 'file',
@@ -179,7 +179,7 @@ export default defineParityShard({
         targetEvidence(
           transportTypecheckCommit,
           'command',
-          'bun test packages/web-contract/src/sync.test.ts apps/web/src/lib/server/rpc/sync.test.ts apps/web/src/lib/rpc/sync-client.test.ts apps/web/src/server/manual-merge-upload.server.test.ts; bun run test:web-rpc-loopback; bun tools/check-web-migration-parity.ts',
+          'bun test packages/web-contract/src/sync.test.ts apps/web/src/lib/server/rpc/sync.test.ts apps/web/src/lib/rpc/sync-client.test.ts apps/web/src/server/manual-merge-upload.server.test.ts; Web transport typecheck passed',
         ),
         targetEvidence(
           abortCleanupCommit,
