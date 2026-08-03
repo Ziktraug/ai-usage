@@ -83,11 +83,15 @@
     {/if}
     {#if freshnessStatus}
       {#if freshnessUnavailable}
-        <Tooltip content="No source freshness observation is available for this report revision.">
-          <span aria-live="polite" class={button}>{freshnessStatus}</span>
-        </Tooltip>
+        <section aria-label="Collection source status" aria-live="polite" class={button}>
+          <Tooltip content="No source freshness observation is available for this report revision.">
+            <span>{freshnessStatus}</span>
+          </Tooltip>
+        </section>
       {:else}
-        <span aria-live="polite" class={button}>{freshnessStatus}</span>
+        <section aria-label="Collection source status" aria-live="polite" class={button}>
+          {freshnessStatus}
+        </section>
       {/if}
     {/if}
     {#if !isDemo && sourceControlSummary}

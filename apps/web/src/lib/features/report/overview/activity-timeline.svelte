@@ -246,7 +246,7 @@
     timeline?.dimension === 'machine' ? machinePresenter(series.key, series.label).freshness : undefined;
 </script>
 
-<div class={chart}>
+<div class={chart} data-timeline-labels-settled={retainedTickIds === null ? 'false' : 'true'}>
   {#if timeline && timeline.buckets.length > 0}
     <ul aria-label={`${timeline.dimension} timeline legend`} class={legend} data-report-range-part="total-legend">
       {#each presentedSeries as series (series.key)}

@@ -1,5 +1,5 @@
 import { FOCUSED_REPORT_E2E_ENABLED_KEY } from '../src/focused-report-e2e-fixture';
-import { expect, reportViewsFor, test } from './browser-test';
+import { expect, openHydratedReport, reportViewsFor, test } from './browser-test';
 
 const PREVIOUS_PERIOD_PATTERN = /vs previous period/i;
 const API_VALUE_HINT_PATTERN = /Estimated API-equivalent value at standard prices for \d+ of \d+ fully priced sessions/;
@@ -52,7 +52,7 @@ test('groups value bases while keeping the remaining metric deltas qualified and
 });
 
 test('keeps metric provenance visibly interactive and operable by keyboard', async ({ page }) => {
-  await page.goto('/');
+  await openHydratedReport(page);
 
   const help = page.getByRole('button', { name: 'About API value' });
   const box = await help.boundingBox();
@@ -182,6 +182,7 @@ test('separates timeline boundary dates and retains no horizontally intersecting
 
     const tickRow = page.locator('[data-timeline-tick-row]');
     const boundaryRow = page.locator('[data-timeline-boundary-row]');
+    await expect(page.locator('[data-timeline-labels-settled="true"]')).toBeVisible();
     const ticks = tickRow.locator('[data-timeline-tick]:visible');
     const boundaries = boundaryRow.locator('[data-timeline-boundary]');
     await expect(tickRow).toBeVisible();
