@@ -12,8 +12,8 @@ authority for feature, operation, design, source-file, and test-title coverage.
 - Planning PR: `#26`, squash-merged as
   `2183270ebfbb886fafa7e6268893122db9b364c0`
 - `BASE_SHA`: `2183270ebfbb886fafa7e6268893122db9b364c0`
-- Current integration checkpoint: `d2b8e6e8d74e83b47421d62bde452fe7c236f80b`
-- Last reviewed green checkpoint: `d2b8e6e8d74e83b47421d62bde452fe7c236f80b`
+- Current integration checkpoint: `c84d48c`
+- Last reviewed green checkpoint: `c84d48c`
 - Active design bases: D1 `4862293`, D2 `fce5c1a`, D3 `e2f13cd`
 - Implementation PR: not opened
 - Exclusive process-test token: coordinator, for the serialized X0 convergence gates
@@ -146,8 +146,8 @@ Statuses are `BLOCKED`, `READY`, `IMPLEMENTING`, `REVIEW`, `REWORK`,
 | P8 | P1 | INTEGRATED | `4dd9b93`, `12939b4`, `caa138a`, corrections `2bf22ee`, `2665d04`, `cfae414`; integrated `22ff3ef`, `0b442e2`, `5702dca`, `6a92e8d`, `3d7763f`, `4c8766c`, evidence rewrite `3f7bfca` | `/root/v34_parity` / REWORK; `/root/d123_parity_review` / ACCEPT | `3f7bfca` |
 | P9 | P5 | INTEGRATED | `9d48303`, evidence `4cb0f0d`; integrated `82451ad`, `be5e49b`, evidence rewrite `c859f7f` | `/root/q2_spec_review` / ACCEPT | `c859f7f` |
 | P10 | P5 | INTEGRATED | `455b569`, evidence `dac69e0`; integrated `8e35926`, `3a43913`, evidence rewrite `e953bdc` | `/root/q2_spec_review` / ACCEPT | `e953bdc` |
-| X0 | P2, P8, P4, P9, P10, P6, P7 | REVIEW | `db66cc0` through `d2b8e6e` | Skills `/root/x0_sync_review` / ACCEPT; Report and campaign `/root/v34_parity` / ACCEPT; full-range `/root/x0_final_review` / ACCEPT | pending serialized convergence gates |
-| X1 | X0 | BLOCKED | - | - | - |
+| X0 | P2, P8, P4, P9, P10, P6, P7 | INTEGRATED | `db66cc0` through `c84d48c` | Skills `/root/x0_sync_review` / ACCEPT; Report/campaign `/root/v34_parity` / ACCEPT; full range and corrections `/root/x0_final_review` / ACCEPT | `c84d48c` |
+| X1 | X0 | IMPLEMENTING | - | independent review pending | - |
 | X2 | X1 | BLOCKED | - | - | - |
 
 ## Review and integration ledger
@@ -1322,3 +1322,26 @@ two-second ArrowRight/Month wait; 9/10 isolated assertions passed. Other
 reviewer/build load was still concurrent. No timeout or assertion changed. The
 coordinator now holds the exclusive token and will run the complete X0 gate
 uncontended before accepting the checkpoint.
+
+The uncontended X0 repository test then reproduced the ArrowRight/Month failure,
+proving a deterministic fixture lifecycle defect rather than pure resource
+contention. The scenario reopened the dynamic MultiSelect but began the next
+SegmentedControl keyboard proof while its portalled positioner was still
+visible, so the prior overlay retained keyboard ownership. Focused correction
+`c0da876` closes the select through its real trigger and waits for the existing
+positioner to become hidden before the unchanged segmented assertions. The
+targeted browser proof passed 10/10 in 1.08 seconds; neither the two-second
+default, the 15-second test budget nor any behavior assertion changed. The
+attempt to load a global diagnostic Skill was rejected because Plan 068 forbids
+access to configured local Skills; diagnosis remained repository-local.
+
+The next complete repository-test pass reached 1,028 green Web tests before
+five one-shot Svelte SSR fixture servers emitted `EINVAL: invalid argument,
+watch`; the lifecycle fixture then tried to register `afterAll` after Bun had
+already finalized the failed file. Exactly five older fixtures still allowed
+Vite filesystem watching while the six newer fixtures already disabled it.
+Correction `52163ed` sets `watch: null` on the complete five-file family, and
+`3f61808` registers each stable server closer before any asynchronous
+`ssrLoadModule` call. This removes the unnecessary watcher and guarantees
+cleanup if module loading fails. The focused family passes 42/42 tests with 187
+assertions; no product code, timeout or assertion changed.
