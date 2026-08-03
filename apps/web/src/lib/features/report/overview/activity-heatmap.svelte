@@ -47,6 +47,7 @@
 <script lang="ts">
   import { panel, panelSub, panelTitle } from '@ai-usage/design-system/svelte';
   import type { FocusedCalendarHeatmap, FocusedHeatDay } from '@ai-usage/report-core/focused-report-query';
+  import { toDateInputValue } from '../../../../date-range';
   import { nextHeatmapFocusIndex } from '../../../../overview-model';
   import { fmtDateOnly, fmtNum } from '../../../foundation/presentation/format';
   import {
@@ -86,7 +87,7 @@
   };
   const currentDayAria = (date: string): { readonly 'aria-current'?: 'date' } =>
     date === heatmap?.todayKey ? { 'aria-current': 'date' } : {};
-  const dateKey = (date: string): string => date.slice(0, 10);
+  const dateKey = (date: string): string => toDateInputValue(new Date(date));
   const dayTitle = (item: FocusedHeatDay): string => {
     const value = aggregateApiValuePresentation(item.priceMeasurement);
     const provenance = aggregateApiPriceProvenance(item.priceMeasurement);

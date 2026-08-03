@@ -29,6 +29,16 @@ describe('report range projection', () => {
     expect(projection.displayTo).toBe('Jun 11, 2026');
   });
 
+  test('falls back safely for invalid canonical and timestamp domain dates', () => {
+    const projection = reportRangeProjection({ mode: 'all' }, generatedAt, {
+      first: '2026-02-31',
+      last: 'not-a-date',
+    });
+
+    expect(projection.displayFrom).toBe('May 12, 2026');
+    expect(projection.displayTo).toBe('Jun 11, 2026');
+  });
+
   test('rejects invalid or reversed text ranges without mutating state', () => {
     expect(customRangeFromInputs('2026-06-12', '2026-06-11')).toBeNull();
     expect(customRangeFromInputs('not-a-date', '2026-06-11')).toBeNull();

@@ -27,9 +27,21 @@ const inputDateFormatter = new Intl.DateTimeFormat('en', { day: '2-digit', month
 const summaryDayFormatter = new Intl.DateTimeFormat('en', { day: '2-digit', month: 'short' });
 const summaryEndFormatter = new Intl.DateTimeFormat('en', { day: '2-digit', month: 'short', year: 'numeric' });
 
+const CANONICAL_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
 const validDomainDate = (value: string | undefined, fallback: Date): Date => {
-  const parsed = value ? new Date(value) : fallback;
-  return Number.isFinite(parsed.getTime()) ? parsed : fallback;
+  if (!value) {
+    return fallback;
+  }
+  const localDate = parseLocalDate(value);
+  if (localDate) {
+    return localDate;
+  }
+  if (CANONICAL_DATE_PATTERN.test(value)) {
+    return fallback;
+  }
+  const parsedTimestamp = new Date(value);
+  return Number.isFinite(parsedTimestamp.getTime()) ? parsedTimestamp : fallback;
 };
 
 export const rangeBounds = (

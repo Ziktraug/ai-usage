@@ -5,6 +5,7 @@ import { svelte } from '@sveltejs/vite-plugin-svelte';
 import type { Component } from 'svelte';
 import { compile } from 'svelte/compiler';
 import { createServer } from 'vite';
+import { toDateInputValue } from '../../../../date-range';
 import type { ProviderStatusView } from '../../../../provider-status-model';
 import { demoReportPayload } from '../../../../report-data';
 
@@ -175,6 +176,30 @@ describe('P2 corrected interactive SSR contracts', () => {
     expect(body).toContain('aria-current="date"');
     expect(body).toContain('data-price-state=');
     expect(body).toContain('data-heatmap-readout');
+  });
+
+  test('preserves a local heatmap calendar day when its timestamp crosses the UTC boundary', () => {
+    const baseResult = focusedOverview();
+    const seedDay = baseResult.view.heatmap?.weeks.flatMap((week) => week.days).find((day) => day !== null);
+    if (!seedDay) {
+      throw new Error('P2 fixture heatmap is missing a local-day seed');
+    }
+    const serializedLocalMidnight = new Date(2026, 4, 25).toISOString();
+    const expectedLocalDateKey = toDateInputValue(new Date(serializedLocalMidnight));
+    const result = {
+      ...baseResult,
+      view: {
+        ...baseResult.view,
+        heatmap: {
+          monthLabels: ['May'],
+          todayKey: expectedLocalDateKey,
+          weeks: [{ days: [{ ...seedDay, date: serializedLocalMidnight }] }],
+        },
+      },
+    };
+    const { body } = render(fixture, { props: { result } });
+
+    expect(body).toContain(`data-heatmap-day="${expectedLocalDateKey}"`);
   });
 
   test('renders determined and indeterminate provider progress with remaining/reset copy', () => {
