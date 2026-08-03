@@ -2,9 +2,9 @@ import { currentRecord, sourceInventoryRecords } from '../helpers';
 import { defineParityShard, type ParityRecord } from '../schema';
 
 const owner = 'P8' as const;
-const implementationCommit = '12939b48df4bb362634287e8956996a781cbd1ca';
-const quotaFocusCommit = '2bf22ee1b20640b2003297800b906b516dd3c0e0';
-const browserEvidenceCommit = '2665d04182d965c6f57997ea008596049b5cc28b';
+const implementationCommit = '0b442e2f9bc6706ad2724379fb5f70d5164599aa';
+const quotaFocusCommit = '6a92e8dbcdcb5cc15269d85446b2dd2e6ad7256c';
+const browserEvidenceCommit = '3d7763f932b9c01f9eb0c5b7883446301ff1f46a';
 const focusedGate =
   'bun test apps/web/src/lib/features/report/breakdown/*.test.ts apps/web/src/lib/features/report/actions/*.test.ts (32 pass, 0 fail, 79 expect calls)';
 const withTarget = (record: ParityRecord, source: string): ParityRecord => ({
