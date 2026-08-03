@@ -1,17 +1,53 @@
 import { currentRecord, sourceInventoryRecords } from '../helpers';
-import { defineParityShard } from '../schema';
+import { defineParityShard, type ParityRecord } from '../schema';
 
 const owner = 'P8' as const;
+const implementationCommit = '12939b48df4bb362634287e8956996a781cbd1ca';
+const focusedGate =
+  'bun test apps/web/src/lib/features/report/breakdown/*.test.ts apps/web/src/lib/features/report/actions/*.test.ts (31 pass, 0 fail, 77 expect calls)';
+const withTarget = (record: ParityRecord, source: string): ParityRecord => ({
+  ...record,
+  evidence: [
+    ...record.evidence,
+    { commit: implementationCommit, kind: 'source', phase: 'target', reference: source },
+    { commit: implementationCommit, kind: 'test', phase: 'target', reference: focusedGate },
+  ],
+});
 const feature = (id: string, currentOwner: string, test: string) =>
-  currentRecord(owner, {
-    currentOwner,
-    evidence: [
-      { kind: 'source', reference: currentOwner },
-      { kind: 'test', reference: test },
-    ],
-    id,
-    kind: 'feature',
-  });
+  withTarget(
+    currentRecord(owner, {
+      currentOwner,
+      evidence: [
+        { kind: 'source', reference: currentOwner },
+        { kind: 'test', reference: test },
+      ],
+      id,
+      kind: 'feature',
+    }),
+    'apps/web/src/lib/features/report/{breakdown,actions}/**',
+  );
+
+const productionTargets: Record<string, string> = {
+  'apps/web/src/campaign-label-editor.tsx': 'apps/web/src/lib/features/report/actions/campaign-label-editor.svelte',
+  'apps/web/src/dashboard-active-filters.tsx': 'apps/web/src/lib/features/report/breakdown/active-filters.svelte',
+  'apps/web/src/dashboard-breakdown-harness-panel.tsx':
+    'apps/web/src/lib/features/report/breakdown/harness-provider-panel.svelte',
+  'apps/web/src/dashboard-breakdown-panels.tsx':
+    'apps/web/src/lib/features/report/breakdown/{breakdown-panel,project-summary,cursor-attribution-panel}.svelte',
+  'apps/web/src/dashboard-breakdown.tsx': 'apps/web/src/lib/features/report/breakdown/dashboard-breakdown.svelte',
+  'apps/web/src/dashboard-filter-bar.tsx': 'apps/web/src/lib/features/report/breakdown/filter-bar.svelte',
+  'apps/web/src/dashboard-filters.tsx':
+    'apps/web/src/lib/features/report/breakdown/{navigation.ts,active-filters.svelte}',
+  'apps/web/src/origin-filter.tsx': 'apps/web/src/lib/features/report/breakdown/origin-filter.svelte',
+  'apps/web/src/project-group-editor.tsx': 'apps/web/src/lib/features/report/actions/project-group-editor.svelte',
+  'apps/web/src/provider-quota-history-panel.tsx':
+    'apps/web/src/lib/features/report/actions/{quota-history-owner,quota-history-panel}.svelte',
+  'apps/web/src/report-sharing-actions.tsx': 'apps/web/src/lib/features/report/actions/report-sharing-actions.svelte',
+};
+const withProductionTarget = (record: ParityRecord): ParityRecord => {
+  const source = productionTargets[record.currentOwner];
+  return source ? withTarget(record, source) : record;
+};
 
 export default defineParityShard({
   owner,
@@ -58,6 +94,6 @@ export default defineParityShard({
       'apps/web/src/project-group-editor.tsx',
       'apps/web/src/provider-quota-history-panel.tsx',
       'apps/web/src/report-sharing-actions.tsx',
-    ]),
+    ]).map(withProductionTarget),
   ],
 });
