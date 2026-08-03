@@ -4,6 +4,7 @@ import { defineParityShard, type ParityEvidence, type ParityRecord } from '../sc
 const owner = 'D0' as const;
 const foundationCommit = '6c6d6c4ebe134d980dd630a13ab53086e38aa142';
 const finalD0Commit = '8474f185f0bef832bae5bb0338f1af316ba02401';
+const d4Commit = '662182e8fba4e55c14aa2d26308adca2f70bf72d';
 const targetEvidence = (commit: string, kind: ParityEvidence['kind'], reference: string): ParityEvidence => ({
   commit,
   kind,
@@ -30,8 +31,35 @@ const retainedPublicCompositionEvidence = [
     'D0 ACCEPT covers the neutral passive foundation only; Plan 068 D4 still owns public /solid, /svelte, and report composition.',
   ),
 ] as const;
-const retainForD4 = (record: ParityRecord): ParityRecord =>
-  appendTargetEvidence(record, retainedPublicCompositionEvidence);
+const d4CompositionEvidence = [
+  targetEvidence(
+    d4Commit,
+    'source',
+    'packages/design-system/package.json; packages/design-system/src/index.ts; packages/design-system/src/report.ts; packages/design-system/src/solid.ts; packages/design-system/src/svelte.ts; packages/design-system/panda.config.ts',
+  ),
+  targetEvidence(
+    d4Commit,
+    'test',
+    'packages/design-system/src/design-entrypoints.test.ts proves explicit framework entrypoints, Svelte dependency closure, and aggregate Panda source coverage',
+  ),
+  targetEvidence(
+    d4Commit,
+    'command',
+    'bun --filter @ai-usage/design-system build; bun --bun tsc -p packages/design-system/tsconfig.json --noEmit; bun test packages/design-system/src/design-entrypoints.test.ts packages/design-system/src/svelte/passive/passive-closure.test.ts; bun run --cwd apps/web check; bun run --cwd apps/web build:svelte (all green)',
+  ),
+  targetEvidence(
+    d4Commit,
+    'measurement',
+    'Generated CSS and panda.buildinfo remain unchanged; Svelte bundle 263392 bytes <= Solid baseline 282614 bytes.',
+  ),
+  targetEvidence(
+    d4Commit,
+    'review',
+    '/root/d4_review ACCEPT: public export composition, framework isolation, generated artifacts, and bundle budget accepted.',
+  ),
+] as const;
+const completeForD4 = (record: ParityRecord): ParityRecord =>
+  completeRecord(appendTargetEvidence(record, retainedPublicCompositionEvidence), d4CompositionEvidence);
 const designRow = (id: string, currentOwner: string, evidence: string) =>
   currentRecord(owner, {
     currentOwner,
@@ -68,8 +96,8 @@ export default defineParityShard({
         targetEvidence(finalD0Commit, 'review', 'D0 independent parity/spec and code-quality ACCEPT.'),
       ],
     ),
-    // D4 still owns public report and /solid-/svelte composition; D0 only proved the passive closure.
-    retainForD4(
+    // D4 completes public report and framework composition on top of D0 passive closure evidence.
+    completeForD4(
       designRow(
         'design:semantic-style-exports',
         'packages/design-system/src/report.ts',
@@ -107,31 +135,31 @@ export default defineParityShard({
       'apps/web/src/app-navigation.tsx; apps/web/src/skills-workspace.tsx',
       'apps/web/e2e/accessibility.spec.ts; apps/web/e2e/visual-regression.spec.ts',
     ),
-    // D4 owns package export-map and public report composition; D0 evidence records only neutral-foundation progress.
-    retainForD4(
+    // D4 completes the package export-map and public composition retained by D0.
+    completeForD4(
       currentRecord(owner, {
         currentOwner: 'packages/design-system/package.json',
         id: 'design-export:./css::<module>',
         kind: 'design-export',
       }),
     ),
-    // D4 owns package export-map and public report composition; D0 evidence records only neutral-foundation progress.
-    retainForD4(
+    // D4 completes the package export-map and public composition retained by D0.
+    completeForD4(
       currentRecord(owner, {
         currentOwner: 'packages/design-system/package.json',
         id: 'design-export:./panda.buildinfo.json::<asset>',
         kind: 'design-export',
       }),
     ),
-    // D4 owns package export-map and public report composition; D0 evidence records only neutral-foundation progress.
-    retainForD4(
+    // D4 completes the package export-map and public composition retained by D0.
+    completeForD4(
       currentRecord(owner, {
         currentOwner: 'packages/design-system/package.json',
         id: 'design-export:./styles.css::<asset>',
         kind: 'design-export',
       }),
     ),
-    // Named public exports also stay current until D4 composes and proves the /solid and /svelte surfaces.
+    // D4 completes the retained named exports and adds the explicit framework surfaces below.
     ...designExportRecords(owner, [
       {
         entrypoint: '.',
@@ -230,6 +258,22 @@ export default defineParityShard({
         `,
         source: 'packages/design-system/src/components/time-slider.ts',
       },
-    ]).map(retainForD4),
+    ]).map(completeForD4),
+    ...designExportRecords(owner, [
+      {
+        entrypoint: './solid',
+        names: `
+          HarnessBadge Checkbox CheckboxProps Drawer DrawerProps MetricTile MetricTileProps Popover PopoverProps BarSegment SegmentBar SegmentedControl SegmentedControlItem SegmentedControlProps MultiSelect MultiSelectProps TabItem Tabs TabsProps Toggle ToggleProps Tooltip TooltipProps
+        `,
+        source: 'packages/design-system/src/solid.ts',
+      },
+      {
+        entrypoint: './svelte',
+        names: `
+          MultiSelect SegmentedControl Tabs Checkbox HarnessBadge MetricTile BarSegment SegmentBar Toggle CellWithProvenance Drawer Popover ProvenanceMarkerFact provenanceMarkerGlyph provenanceTitle ProvenanceMarker Tooltip
+        `,
+        source: 'packages/design-system/src/svelte.ts',
+      },
+    ]).map(completeForD4),
   ],
 });
