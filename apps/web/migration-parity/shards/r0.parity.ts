@@ -3,6 +3,7 @@ import { defineParityShard, type UrlContractDescriptor } from '../schema';
 
 const owner = 'R0' as const;
 const implementationCommit = '435aa06e595405ce384338db5106a902e99443ce';
+const correctionCommit = '98235abf62fc5d5e709a75581557d4449cd8f2c0';
 const targetReferences = (id: string): { readonly source: string; readonly test: string } => {
   if (id.startsWith('url:dashboard.')) {
     return {
@@ -23,17 +24,50 @@ const targetReferences = (id: string): { readonly source: string; readonly test:
     test: 'apps/web/src/lib/foundation/navigation/svelte/navigation.test.ts; apps/web/src/lib/foundation/navigation/svelte/dirty-navigation.test.ts',
   };
 };
+const correctionReferences = (id: string): { readonly source: string; readonly test: string } => {
+  if (id.startsWith('url:dashboard.')) {
+    return targetReferences(id);
+  }
+  if (id.startsWith('url:skills.')) {
+    return {
+      source:
+        id === 'url:skills.matrix'
+          ? 'apps/web/src/lib/foundation/navigation/svelte/skills-url.ts; apps/web/src/lib/foundation/navigation/svelte/dirty-navigation.ts'
+          : 'apps/web/src/lib/foundation/navigation/svelte/skills-url.ts',
+      test: 'apps/web/src/lib/foundation/navigation/svelte/skills-url.test.ts',
+    };
+  }
+  if (id === 'url:session.drawer-identity') {
+    return {
+      source: 'apps/web/src/lib/foundation/navigation/svelte/navigation.ts#createDrawerIdentityOwner',
+      test: 'apps/web/src/lib/foundation/navigation/svelte/navigation.test.ts',
+    };
+  }
+  return {
+    source:
+      'apps/web/src/lib/foundation/navigation/svelte/navigation.ts; apps/web/src/lib/foundation/navigation/svelte/dirty-navigation.ts; apps/web/src/lib/foundation/navigation/svelte/retry.ts',
+    test: 'apps/web/src/lib/foundation/navigation/svelte/navigation.test.ts; apps/web/src/lib/foundation/navigation/svelte/dirty-navigation.test.ts; apps/web/src/lib/foundation/navigation/svelte/retry.test.ts',
+  };
+};
 const urlRecord = (id: string, currentOwner: string, urlContract: UrlContractDescriptor, tests: readonly string[]) =>
   currentRecord(
     owner,
     (() => {
       const target = targetReferences(id);
+      const correction = correctionReferences(id);
       return {
         currentOwner,
         evidence: [
           ...tests.map((reference) => ({ kind: 'test' as const, reference })),
           { commit: implementationCommit, kind: 'source' as const, phase: 'target' as const, reference: target.source },
           { commit: implementationCommit, kind: 'test' as const, phase: 'target' as const, reference: target.test },
+          { commit: correctionCommit, kind: 'source' as const, phase: 'target' as const, reference: correction.source },
+          {
+            commit: correctionCommit,
+            kind: 'test' as const,
+            phase: 'target' as const,
+            reference: `${correction.test}; exact [${id}] target test title`,
+          },
         ],
         id,
         kind: 'url-contract' as const,
