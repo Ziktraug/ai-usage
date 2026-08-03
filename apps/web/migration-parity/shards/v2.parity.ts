@@ -121,7 +121,7 @@ const sessionTargetEvidence = [
   targetEvidence(
     v5Checkpoint,
     'command',
-    'V5 integrated RPC contract/server/client tests, parity check, typecheck, lint, Svelte build, and serialized Nitro loopback gate passed.',
+    'bun run --cwd apps/web test:rpc-loopback passed with synthetic fixture roots at the accepted V5 checkpoint.',
   ),
   targetEvidence(
     clientCleanupCommit,
