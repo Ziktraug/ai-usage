@@ -79,6 +79,9 @@ describe('Session Query options', () => {
     expect(sessionCampaignChildrenKey({ ...campaignRequest, campaignKey: 'campaign-2' })).not.toEqual(
       sessionCampaignChildrenKey(campaignRequest),
     );
+    expect(sessionCampaignChildrenKey({ ...campaignRequest, query: { ...query, cursor: 'cursor-1' } })).not.toEqual(
+      sessionCampaignChildrenKey({ ...campaignRequest, query: { ...query, cursor: 'cursor-2' } }),
+    );
     expect(
       sessionCampaignChildrenKey({
         ...campaignRequest,

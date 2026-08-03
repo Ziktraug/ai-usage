@@ -29,6 +29,9 @@ export interface SessionQueryExecution {
 const pageDestination = (cursor: string | null): string =>
   cursor === null ? 'page:initial' : `page:cursor:${JSON.stringify(cursor)}`;
 
+const campaignChildrenDestination = (cursor: string | null): string =>
+  cursor === null ? 'campaign-children:initial' : `campaign-children:cursor:${JSON.stringify(cursor)}`;
+
 interface SessionPageIdentity {
   readonly fingerprint: string;
   readonly revision: string;
@@ -59,7 +62,7 @@ export const sessionCampaignChildrenKey = (request: SessionCampaignChildrenReque
     sessionFamily,
     parsed.query.revision,
     sessionCampaignChildrenFingerprint(parsed),
-    'campaign-children',
+    campaignChildrenDestination(parsed.query.cursor),
   );
 };
 
