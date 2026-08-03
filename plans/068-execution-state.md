@@ -140,9 +140,9 @@ Statuses are `BLOCKED`, `READY`, `IMPLEMENTING`, `REVIEW`, `REWORK`,
 | P2 | P1 | READY | - | - | - |
 | P3 | P1, V2, Q1, D4 | READY | - | - | - |
 | P4 | P3 | BLOCKED | - | - | - |
-| P5 | R1, V3, Q2, D4 | REWORK | `231f109`, evidence `a5b657f` | `/root/d123_parity_review`, `/root/v34_parity` / REWORK | - |
+| P5 | R1, V3, Q2, D4 | REVIEW | `231f109`, `a5b657f`, corrections `72c6a76`, evidence `448c782` | `/root/d123_parity_review`, `/root/v34_parity` / REWORK; fresh review pending | - |
 | P6 | R1, V4, Q2, D4, B2 | REVIEW | fresh redispatch `7eba5bd` through `2d5b3fc` | `/root/q2_spec_review` / REWORK; fresh review pending | - |
-| P7 | R1, V4, Q2, D4 | REVIEW | `d2486bd`, corrections `80a6db3`, evidence `ed0a76d` | `/root/q2_spec_review` / REWORK; `/root/v34_parity` reviewing | - |
+| P7 | R1, V4, Q2, D4 | REWORK | `d2486bd`, corrections `80a6db3`, evidence `ed0a76d` | `/root/q2_spec_review`, `/root/v34_parity` / REWORK | - |
 | P8 | P1 | READY | - | - | - |
 | P9 | P5 | BLOCKED | - | - | - |
 | P10 | P5 | BLOCKED | - | - | - |
@@ -852,7 +852,15 @@ controller into the shipped shell and expose its dirty/pending decision port to
 P9; restore mobile close/scroll/focus and exact labels; hoist one responsive
 tree UI-state owner; prove real route dehydration through SkillsShell hydration
 without duplicate acquisition; and make frozen P9/P10 slot evidence exact per
-owned row. No STOP condition was found.
+owned row. No STOP condition was found. Focused correction `72c6a76` now wires
+the shipped shell to the snapshot controller, exposes the identity-safe draft
+registration and pending keep/discard/focus port, hoists one responsive tree
+state owner, restores exact mobile labels/focus/close/scroll behavior, and proves
+real loader-to-oRPC-to-dehydration-to-fresh-provider SSR without duplicate
+acquisition. Evidence commit `448c782` maps all three feature IDs, eleven TSX
+rows and the render row exactly. The candidate reports 67 tests with 284
+assertions plus type, Svelte 0/0, shadow build, boundaries and parity green;
+fresh independent review remains required.
 
 P6 candidate `f02f29f`, evidence `3076673`, virtual lifecycle proof `f598271`
 and evidence `11a2ec6` contains 16 owned files and 1,518 lines. It supplies the
@@ -914,8 +922,14 @@ now thread per-request runtime mode before acquisition, restore the complete
 transfer progress/elapsed/count interface, add the exact X0 request, prove real
 dehydrate/fresh hydration without duplicate acquisition, and attach exact
 current target evidence. Its 20 tests with 75 assertions and all static, type,
-build, boundary and parity gates are green; independent re-review is in
-progress.
+build, boundary and parity gates are green. Independent re-review returned
+REWORK because all five Svelte components import the broad design-system report
+barrel, whose TSX exports reach Solid; the SSR fixture masks this with
+`vite-plugin-solid`, and the recursive scanner skips package imports. Its exact
+integration request also names P6's stale `context` path instead of accepted
+`context.svelte`. All transfer, runtime-mode, hydration, observability and
+evidence behavior was otherwise accepted. P7 stays recoverable for its original
+author and will be redispatched from the compatible accepted P6/D4 checkpoint.
 
 P6 was freshly redispatched from neutral-presentation checkpoint `6ec1b26` in
 `/tmp/ai-usage-068-p6-r1`. Its ten-commit range `7eba5bd..2d5b3fc` cleanly
