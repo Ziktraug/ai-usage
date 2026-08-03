@@ -1,5 +1,8 @@
 import { css, cx } from '@ai-usage/design-system/css';
+import { harnessFillFor as passiveHarnessFillFor } from '../svelte/passive/harness-fill';
 import { Toggle } from './toggle';
+
+export const harnessFillFor = passiveHarnessFillFor;
 
 const badge = css({
   display: 'inline-flex',
@@ -55,16 +58,6 @@ export const harnessFamily = (name: string) => {
 };
 
 export const badgeToneFor = (name: string) => badgeTones[harnessFamily(name)] ?? badgeNeutral;
-
-const harnessFillTones: Record<string, string> = {
-  claude: css({ bg: 'harness.claude.fg' }),
-  codex: css({ bg: 'harness.codex.fg' }),
-  cursor: css({ bg: 'harness.cursor.fg' }),
-  opencode: css({ bg: 'harness.opencode.fg' }),
-  gemini: css({ bg: 'harness.gemini.fg' }),
-};
-
-export const harnessFillFor = (name: string) => harnessFillTones[harnessFamily(name)];
 
 const harnessSvgFillTones: Record<string, string> = {
   claude: css({ fill: 'harness.claude.fg' }),
