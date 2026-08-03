@@ -751,7 +751,7 @@ describe('package boundary guard', () => {
   test('ignores every generated canonical SvelteKit tree', async () => {
     const root = await createFixture();
     await writePackage(root, 'apps', 'web', { name: '@ai-usage/web' });
-    const generatedDirectories = ['.output-build', '.output-dev', '.svelte-kit'];
+    const generatedDirectories = ['.output-build', '.svelte-kit'];
 
     for (const generatedDirectory of generatedDirectories) {
       const directory = path.join(root, 'apps/web', generatedDirectory);

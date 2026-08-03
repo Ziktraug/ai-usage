@@ -10,7 +10,7 @@ export default defineConfig({
   server: {
     host: '127.0.0.1',
     watch: {
-      ignored: ['**/.output-build/**', '**/.output-dev/**', '**/.svelte-kit/**', '**/dist/**', '**/styled-system/**'],
+      ignored: ['**/.output-build/**', '**/.svelte-kit/**', '**/dist/**', '**/styled-system/**'],
     },
   },
 });

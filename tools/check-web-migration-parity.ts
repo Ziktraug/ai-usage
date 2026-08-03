@@ -26,9 +26,7 @@ const playwrightListPattern = /^\s+(.+?):\d+:\d+\s+›\s+(.+)$/u;
 const sourceEntrypointPattern = /^\.\/src\/.*\.tsx?$/u;
 const ignoredInventoryDirectories = new Set([
   '.git',
-  '.output',
   '.output-build',
-  '.output-dev',
   '.svelte-kit',
   '.turbo',
   'dist',

@@ -1,11 +1,7 @@
 node_modules
 dist
-.output
 .output-build
-.output-dev
 .svelte-kit
-.svelte-kit-shadow
-.output-svelte-shadow
 styled-system
 .turbo
 .worktrees/

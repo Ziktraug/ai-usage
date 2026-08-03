@@ -3,9 +3,7 @@ import path from 'node:path';
 
 const ignoredDirectories = new Set([
   '.git',
-  '.output',
   '.output-build',
-  '.output-dev',
   '.svelte-kit',
   '.turbo',
   'dist',
