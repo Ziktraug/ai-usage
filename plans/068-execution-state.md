@@ -12,8 +12,8 @@ authority for feature, operation, design, source-file, and test-title coverage.
 - Planning PR: `#26`, squash-merged as
   `2183270ebfbb886fafa7e6268893122db9b364c0`
 - `BASE_SHA`: `2183270ebfbb886fafa7e6268893122db9b364c0`
-- Current integration checkpoint: `3f7bfca`
-- Last reviewed green checkpoint: `3f7bfca`
+- Current integration checkpoint: `0ecf1df`
+- Last reviewed green checkpoint: `0ecf1df`
 - Active design bases: D1 `4862293`, D2 `fce5c1a`, D3 `e2f13cd`
 - Implementation PR: not opened
 - Exclusive process-test token: free after the P6 activated shadow-browser gate
@@ -142,7 +142,7 @@ Statuses are `BLOCKED`, `READY`, `IMPLEMENTING`, `REVIEW`, `REWORK`,
 | P4 | P3 | INTEGRATED | `73fbce3`, `5de8823`, corrections `ff683bf`, `f993bd8`, `d749135`; integrated `531f8b6`, `9c72353`, `1697adc`, `f05d17b`, `1970793`, evidence rewrite `c11d01a` | `/root/v34_parity` / ACCEPT | `c11d01a` |
 | P5 | R1, V3, Q2, D4 | INTEGRATED | `231f109`, `a5b657f`, `72c6a76`, `448c782`, activation `5c0e27e`; integrated as `c84b957`, `32533a7`, `e951cd1`, `a170123`, `0f6b118`, evidence `6f639ab` | `/root/d123_parity_review`, `/root/v34_parity` / ACCEPT | `6f639ab` |
 | P6 | R1, V4, Q2, D4, B2 | INTEGRATED | accepted fresh range `e23bc9` through `414ea1a`; integrated `3c08e12` through `68dd82f`; evidence `eb2f669`; composition `79341c1`; browser corrections `db4eb57`, `1096a4d` | `/root/q2_spec_review` / ACCEPT | `1096a4d` |
-| P7 | R1, V4, Q2, D4 | REWORK | original `d2486bd`, `80a6db3`, `ed0a76d`; fresh `8ccb108`, evidence `a012190` | `/root/q2_spec_review`, `/root/v34_parity` / REWORK | - |
+| P7 | R1, V4, Q2, D4 | INTEGRATED | original `d2486bd`, `80a6db3`, `ed0a76d`; fresh `8ccb108`, `a012190`, corrections `10618fd`, `83fdd04`; integrated `6612030`, `f5f1e16`, `f98f6b1`, `054d656`, evidence rewrite `0ecf1df` | `/root/q2_spec_review`, `/root/v34_parity` / REWORK; `/root/v34_parity` / ACCEPT | `0ecf1df` |
 | P8 | P1 | INTEGRATED | `4dd9b93`, `12939b4`, `caa138a`, corrections `2bf22ee`, `2665d04`, `cfae414`; integrated `22ff3ef`, `0b442e2`, `5702dca`, `6a92e8d`, `3d7763f`, `4c8766c`, evidence rewrite `3f7bfca` | `/root/v34_parity` / REWORK; `/root/d123_parity_review` / ACCEPT | `3f7bfca` |
 | P9 | P5 | INTEGRATED | `9d48303`, evidence `4cb0f0d`; integrated `82451ad`, `be5e49b`, evidence rewrite `c859f7f` | `/root/q2_spec_review` / ACCEPT | `c859f7f` |
 | P10 | P5 | INTEGRATED | `455b569`, evidence `dac69e0`; integrated `8e35926`, `3a43913`, evidence rewrite `e953bdc` | `/root/q2_spec_review` / ACCEPT | `e953bdc` |
@@ -1148,6 +1148,18 @@ said to keep two manual-merge leaves that do not yet exist instead of naming
 their exact GET/POST creation and runtime-mode wiring. The original author is
 correcting these two bounded gaps; this is not a STOP.
 
+P7 corrections `10618fd` and `83fdd04` restore exact current/total byte and
+percent upload presentation, labelled determinate upload progress, labelled
+indeterminate processing progress, elapsed time and the large-file dedupe hint.
+They also name the exact missing SvelteKit GET/POST leaves X0 must create and
+freeze request plus `locals.runtimeMode` forwarding. `/root/v34_parity`
+ACCEPTed both axes at 66 tests/303 assertions, including 2 rendered tests/18
+assertions, plus Svelte 0/0, Ultracite, boundaries and parity. The accepted
+range integrated as `6612030` through `054d656`; `0ecf1df` points evidence at
+integrated correction `f98f6b1`. The identical 66/303 suite and static/parity
+gates pass post-cherry. All pre-X0 packets are now independently accepted and
+integrated.
+
 Coordinator deltas `3f42bfa`, `8020703` and `9d24e5b` expose the neutral stable
 series-color helper to Svelte and use it for matching P2 timeline segments and
 legend swatches, extract the collector-free machine freshness presentation
@@ -1221,7 +1233,6 @@ incident is retained rather than treated as a feature STOP.
   strict Svelte type errors while the additive shell was unreachable. The route
   was reverted before stacking work; reviewed correction `0f6b118` plus
   reachability fixture closes the gap, and all additive gates are green.
-- Recovery point: `3f7bfca` is the latest independently reviewed green
-  checkpoint. Every feature packet except P7 is integrated. P7 remains
-  recoverable in its compatible worktree and is undergoing two bounded
-  original-author corrections before X0 can begin.
+- Recovery point: `0ecf1df` is the latest independently reviewed green
+  checkpoint. All 31 packets from B0 through P10 are integrated; X0 feature
+  convergence is ready to begin from this clean base.
