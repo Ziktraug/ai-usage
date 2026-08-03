@@ -11,8 +11,9 @@ import { keepTabPanelInTabOrder } from './tab-panel';
 
 const compoundDirectory = dirname(fileURLToPath(import.meta.url));
 const repositoryDirectory = resolve(compoundDirectory, '../../../../..');
-const SOLID_RUNTIME_IMPORT_PATTERN = /(?:\bfrom\s*|\bimport\s*)['"]solid-js/u;
+const SOLID_RUNTIME_IMPORT_PATTERN = /(?:\bfrom\s+|\bimport\s*(?:\(\s*)?)['"`]solid-js(?:\/[^'"`]+)?['"`]/u;
 const BROWSER_PROOF_TIMEOUT_MS = 15_000;
+const POSITIONING_PIXEL_TOLERANCE = 1;
 
 const readCompound = async (name: string): Promise<string> => readFile(resolve(compoundDirectory, name), 'utf8');
 
@@ -51,32 +52,35 @@ describe('Svelte compound controls', () => {
     'the real fixture preserves keyboard, portal, form, and lazy-panel behavior in Chromium',
     async () => {
       const temporaryDirectory = await mkdtemp(resolve(compoundDirectory, '.browser-'));
-      const fixturePath = resolve(compoundDirectory, 'compound.fixture.svelte');
-      const fixtureUrlPath = relative(repositoryDirectory, temporaryDirectory);
-      await writeFile(
-        resolve(temporaryDirectory, 'index.html'),
-        '<div id="app"></div><script type="module" src="./main.ts"></script>',
-      );
-      await writeFile(
-        resolve(temporaryDirectory, 'main.ts'),
-        `import { mount } from 'svelte'; import '@ai-usage/design-system/styles.css'; import Fixture from ${JSON.stringify(
-          fixturePath,
-        )}; mount(Fixture, { target: document.querySelector('#app') });`,
-      );
-
-      const server = await createServer({
-        configFile: false,
-        logLevel: 'silent',
-        plugins: [svelte()],
-        root: repositoryDirectory,
-        server: { host: '127.0.0.1', port: 0, strictPort: false },
-      });
+      let server: Awaited<ReturnType<typeof createServer>> | undefined;
       let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
-      const chromeExecutable = Bun.which('google-chrome');
-      if (!chromeExecutable) {
-        throw new Error('The D3 browser proof requires the installed google-chrome executable.');
-      }
+      let executionError: unknown;
+      let executionFailed = false;
       try {
+        const fixturePath = resolve(compoundDirectory, 'compound.fixture.svelte');
+        const fixtureUrlPath = relative(repositoryDirectory, temporaryDirectory);
+        await writeFile(
+          resolve(temporaryDirectory, 'index.html'),
+          '<div id="app"></div><script type="module" src="./main.ts"></script>',
+        );
+        await writeFile(
+          resolve(temporaryDirectory, 'main.ts'),
+          `import { mount } from 'svelte'; import '@ai-usage/design-system/styles.css'; import Fixture from ${JSON.stringify(
+            fixturePath,
+          )}; mount(Fixture, { target: document.querySelector('#app') });`,
+        );
+
+        server = await createServer({
+          configFile: false,
+          logLevel: 'silent',
+          plugins: [svelte()],
+          root: repositoryDirectory,
+          server: { host: '127.0.0.1', port: 0, strictPort: false },
+        });
+        const chromeExecutable = Bun.which('google-chrome');
+        if (!chromeExecutable) {
+          throw new Error('The D3 browser proof requires the installed google-chrome executable.');
+        }
         await server.listen();
         browser = await chromium.launch({ executablePath: chromeExecutable, headless: true });
         const address = server.httpServer?.address();
@@ -107,6 +111,14 @@ describe('Svelte compound controls', () => {
         const positioner = page.locator('body > [data-scope="select"][data-part="positioner"]');
         expect(await positioner.count()).toBe(1);
         expect(await positioner.evaluate((element) => getComputedStyle(element).zIndex)).toBe('50');
+        const [triggerBounds, positionerBounds] = await Promise.all([
+          multiTrigger.boundingBox(),
+          positioner.boundingBox(),
+        ]);
+        if (!(triggerBounds && positionerBounds)) {
+          throw new Error('The open D3 Select trigger and positioner must both have measurable bounds.');
+        }
+        expect(Math.abs(triggerBounds.width - positionerBounds.width)).toBeLessThanOrEqual(POSITIONING_PIXEL_TOLERANCE);
         await selectContent.press('Home');
         await selectContent.press('Enter');
         await page.waitForFunction(
@@ -157,10 +169,34 @@ describe('Svelte compound controls', () => {
           () => document.querySelector('[data-testid="tabs-fixture"]')?.getAttribute('data-value') === 'overview',
         );
         expect(await tabsFixture.getAttribute('data-value')).toBe('overview');
-      } finally {
-        await browser?.close();
-        await server.close();
-        await rm(temporaryDirectory, { force: true, recursive: true });
+      } catch (error) {
+        executionError = error;
+        executionFailed = true;
+      }
+
+      const browserCleanupResults = await Promise.allSettled([Promise.resolve().then(() => browser?.close())]);
+      const remainingCleanupResults = await Promise.allSettled([
+        Promise.resolve().then(() => server?.close()),
+        Promise.resolve().then(() => rm(temporaryDirectory, { force: true, recursive: true })),
+      ]);
+      const cleanupResults = [...browserCleanupResults, ...remainingCleanupResults];
+      const cleanupErrors: unknown[] = [];
+      for (const result of cleanupResults) {
+        if (result.status === 'rejected') {
+          cleanupErrors.push(result.reason);
+        }
+      }
+      if (executionFailed) {
+        if (cleanupErrors.length > 0) {
+          throw new AggregateError(
+            [executionError, ...cleanupErrors],
+            'The D3 browser proof failed and its cleanup also encountered errors.',
+          );
+        }
+        throw executionError;
+      }
+      if (cleanupErrors.length > 0) {
+        throw new AggregateError(cleanupErrors, 'The D3 browser proof cleanup encountered errors.');
       }
     },
     BROWSER_PROOF_TIMEOUT_MS,
@@ -270,6 +306,9 @@ describe('Svelte compound controls', () => {
   test('the compound dependency closure cannot reach Solid', async () => {
     expect('import \x27solid-js\x27').toMatch(SOLID_RUNTIME_IMPORT_PATTERN);
     expect('import { createSignal } from \x27solid-js\x27').toMatch(SOLID_RUNTIME_IMPORT_PATTERN);
+    expect('import { render } from \x27solid-js/web\x27').toMatch(SOLID_RUNTIME_IMPORT_PATTERN);
+    expect('const solid = import(\x27solid-js\x27)').toMatch(SOLID_RUNTIME_IMPORT_PATTERN);
+    expect('const store = import(`solid-js/store`)').toMatch(SOLID_RUNTIME_IMPORT_PATTERN);
     const files = await readdir(compoundDirectory);
     for (const file of files.filter(
       (name) => (name.endsWith('.svelte') || name.endsWith('.ts')) && !name.endsWith('.test.ts'),
