@@ -2,7 +2,7 @@ import { currentRecord } from '../helpers';
 import { defineParityShard, type ParityRecord } from '../schema';
 
 const owner = 'P1' as const;
-const implementationCommit = '2422c2c64b914230b298260c9be5041d87ecbe89';
+const implementationCommit = '20b2ad8d7ae89737a9b5a948d9e9e69d4161b44a';
 const coreTestCommand =
   'bun test apps/web/src/lib/features/report/core/*.test.ts apps/web/src/lib/features/report/lifecycle/*.test.ts apps/web/src/served-report-session.test.ts';
 
