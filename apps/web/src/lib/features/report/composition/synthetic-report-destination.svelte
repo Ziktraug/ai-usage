@@ -1,6 +1,8 @@
 <script lang="ts">
+  import { applyCampaignLabelOverrideMutation, type CampaignLabelOverride } from '@ai-usage/report-core/campaign-label';
   import {
     type FocusedOverviewSessionItem,
+    type FocusedTimelineSeries,
     matchesFocusedReportQuery,
     projectFocusedBreakdown,
     projectFocusedOverview,
@@ -10,6 +12,14 @@
   import type { QueryClient } from '@tanstack/svelte-query';
   import { onDestroy, untrack } from 'svelte';
   import { browser } from '$app/environment';
+  import {
+    campaignLabelFor,
+    focusedCampaignLabelContext,
+    indexCampaignLabelOverrides,
+    presentCampaignTimelineSeries,
+    presentFocusedOverviewSessionItem,
+    presentServedCampaignDisplayRow,
+  } from '../../../../campaign-label-overrides';
   import { buildCampaignTableRows } from '../../../../dashboard-model';
   import {
     type DashboardSearch,
@@ -17,6 +27,11 @@
     serializeDashboardTimeCell,
   } from '../../../../dashboard-search';
   import { createFocusedReportE2EFixture } from '../../../../focused-report-e2e-fixture';
+  import {
+    machineFreshnessSnapshotFromFocused,
+    machineFreshnessStatusLabel,
+    machineLabelPresentationForSnapshot,
+  } from '../../../../machine-freshness-presentation';
   import { buildProviderStatusViews } from '../../../../provider-status-model';
   import { demoReportPayload } from '../../../../report-data';
   import type { RuntimeMode } from '../../../../runtime-mode';
@@ -31,6 +46,8 @@
   import { createSessionDetailController, type SessionSelectionInput } from '../../sessions/detail/controller';
   import { createSessionDetailQueryOwner } from '../../sessions/detail/query-owner';
   import SessionDetailSlot from '../../sessions/detail/session-detail-slot.svelte';
+  import CampaignLabelEditor from '../actions/campaign-label-editor.svelte';
+  import type { CampaignLabelEditorState } from '../actions/campaign-label-editor-state';
   import QuotaHistoryOwner from '../actions/quota-history-owner.svelte';
   import ActiveFilters from '../breakdown/active-filters.svelte';
   import FilterBar from '../breakdown/filter-bar.svelte';
@@ -56,7 +73,8 @@
     search: DashboardSearch;
   } = $props();
 
-  const revision = untrack(() => `synthetic-${mode}`);
+  const runtimeMode = untrack(() => mode);
+  const revision = untrack(() => `synthetic-${runtimeMode}`);
   const responseFixture = untrack(() => (browser && mode === 'e2e' ? createFocusedReportE2EFixture() : undefined));
   let renderedSearch = $state<DashboardSearch>(untrack(() => search));
   let renderedSearchKey = JSON.stringify(untrack(() => search));
@@ -95,6 +113,11 @@
   });
   const { rows: serializedRows, tableRows: _tableRows, ...reportSupport } = demoReportPayload;
   const allRows = serializedRows.map(enrichSessionPresentationRow);
+  const derivedCampaignLabels = new Map(
+    buildCampaignTableRows(allRows, allRows, [{ desc: true, id: 'date' }]).flatMap((row) =>
+      row.campaignKey ? ([[row.campaignKey, row.sessionLabel]] as const) : [],
+    ),
+  );
   const harnessOptions = [...new Set(allRows.map(({ harness }) => harness))].sort();
   const machineOptions = [
     ...new Map(
@@ -116,6 +139,22 @@
     { revision },
     { providerRows: allRows },
   );
+  const syntheticMachineFreshness = {
+    kind: 'available',
+    machines: [{ id: 'fixture-machine', label: 'Fixture Machine', lastSeenAt: reportSupport.generatedAt }],
+    observedAt: '2026-07-12T12:00:00.000Z',
+    omittedMachines: 0,
+    skippedRows: 0,
+  } as const;
+  const focusedMachineFreshness = runtimeMode === 'e2e' ? syntheticMachineFreshness : support.machineFreshness;
+  const machineSnapshot = machineFreshnessSnapshotFromFocused(focusedMachineFreshness);
+  const machineFreshnessStatus = runtimeMode === 'e2e' ? machineFreshnessStatusLabel(machineSnapshot) : null;
+  const machinePresentations = new Map(
+    machineOptions.map(({ label, value }) => [
+      value,
+      machineLabelPresentationForSnapshot({ id: value, label }, machineSnapshot),
+    ]),
+  );
   const providers = buildProviderStatusViews(reportSupport, allRows, reportSupport.generatedAt);
   let dimension = $state<'campaign' | 'harness' | 'machine' | 'model' | 'origin' | 'provider' | 'project'>('harness');
   let granularity = $state<'day' | 'month' | 'week'>('day');
@@ -124,6 +163,7 @@
   let selectedRowId = $state<string | null>(null);
   let selection = $state<SessionSelectionInput | null>(null);
   let quotaHistoryOpen = $state(false);
+  let campaignLabelOverrides = $state<readonly CampaignLabelOverride[]>([]);
   const navigation = createBreakdownNavigation((update, options) => navigate(update, options));
   const destination = $derived(
     reportDestinationForSearch(renderedSearch, reportSupport.generatedAt, { dimension, granularity }),
@@ -164,9 +204,14 @@
   const visibleRows = $derived(
     allRows.filter((row) => matchesFocusedReportQuery(row, focusedQuery, reportSupport.timeZone)),
   );
+  const campaignIndex = $derived(indexCampaignLabelOverrides(campaignLabelOverrides));
   const columnVisibility = $derived(columnVisibilityFromDiff(renderedSearch.cols, renderedSearch.colsBase));
   const sorting = $derived([{ ...renderedSearch.sort }]);
-  const tableRows = $derived(buildCampaignTableRows(allRows, visibleRows, sorting));
+  const tableRows = $derived(
+    buildCampaignTableRows(allRows, visibleRows, sorting).map((row) =>
+      presentServedCampaignDisplayRow(row, campaignIndex),
+    ),
+  );
   const sessionResetKey = $derived(
     JSON.stringify({
       filters: destination.sessions.filters,
@@ -174,6 +219,46 @@
     }),
   );
   const activeSeriesKeys = $derived(activeTimelineSeriesKeys(renderedSearch, dimension));
+  const selectedCampaignEditor = $derived.by((): CampaignLabelEditorState | undefined => {
+    const row = selection?.row;
+    const campaignKey = row?.campaignKey;
+    if (!campaignKey) {
+      return;
+    }
+    const derivedLabel = derivedCampaignLabels.get(campaignKey) ?? row.sessionLabel;
+    const mutate = (label: string | null): Promise<string> => {
+      campaignLabelOverrides = applyCampaignLabelOverrideMutation(campaignLabelOverrides, { campaignKey, label });
+      return Promise.resolve(
+        campaignLabelFor(indexCampaignLabelOverrides(campaignLabelOverrides), campaignKey, derivedLabel),
+      );
+    };
+    return {
+      campaignKey,
+      effectiveLabel: campaignLabelFor(campaignIndex, campaignKey, derivedLabel),
+      hasOverride: campaignIndex.has(campaignKey),
+      loadError: null,
+      loadStatus: 'ready',
+      mutationError: null,
+      mutationStatus: 'idle',
+      onRename: async (label) => await mutate(label),
+      onReset: async () => await mutate(null),
+      onRetry: async () => true,
+    };
+  });
+  const presentMachineLabel = (value: string): string =>
+    (runtimeMode === 'e2e' ? machinePresentations.get(value)?.label : undefined) ??
+    machineOptions.find((option) => option.value === value)?.label ??
+    value;
+  const presentMachineSeries = (key: string, label: string) =>
+    runtimeMode === 'e2e'
+      ? machineLabelPresentationForSnapshot({ id: key, label }, machineSnapshot)
+      : { freshness: 'unavailable' as const, label };
+  const presentCampaignSeries = (series: FocusedTimelineSeries): FocusedTimelineSeries =>
+    presentCampaignTimelineSeries(series, campaignIndex);
+  const presentSessionItem = (item: FocusedOverviewSessionItem): FocusedOverviewSessionItem =>
+    presentFocusedOverviewSessionItem(item, (campaignKey, derivedLabel) =>
+      campaignLabelFor(campaignIndex, campaignKey, derivedLabel),
+    );
   const unavailable = (): Promise<never> =>
     Promise.reject(new Error('Synthetic session detail transport is unavailable.'));
   const syntheticClient: SessionClientAdapter = {
@@ -198,9 +283,14 @@
   );
 
   const selectOverviewSession = (item: FocusedOverviewSessionItem): void => {
+    const presented = presentSessionItem(item);
+    const campaignContext = focusedCampaignLabelContext(presented);
+    const presentedRow = campaignContext
+      ? { ...presented.row, campaignKey: campaignContext.campaignKey, sessionLabel: presented.label }
+      : presented.row;
     detailRows = visibleRows;
-    selection = { row: item.row };
-    selectedRowId = item.row.rowId;
+    selection = { row: presentedRow };
+    selectedRowId = presentedRow.rowId;
   };
   const selectSessionRow = (row: SessionPresentationRow): void => {
     detailRows = tableRows;
@@ -208,22 +298,28 @@
     selectedRowId = selection?.row.rowId ?? null;
   };
 </script>
+{#snippet campaignSlot()}
+  {#if selectedCampaignEditor}
+    <CampaignLabelEditor editor={selectedCampaignEditor} />
+  {/if}
+{/snippet}
 
 <FilterBar
-  freshnessStatus="Synthetic data"
-  freshnessUnavailable
+  freshnessStatus={runtimeMode === 'demo' ? 'Synthetic data' : machineFreshnessStatus}
+  freshnessUnavailable={machineSnapshot.kind === 'unavailable'}
   {harnessOptions}
   isDemo={mode === 'demo'}
+  machineAttention={runtimeMode === 'e2e' && machineOptions.some(({ value }) => machinePresentations.get(value)?.freshness !== 'fresh')}
   machineOptions={machineOptions.map(({ value }) => value)}
   {navigation}
-  presentMachineLabel={(value) => machineOptions.find((option) => option.value === value)?.label ?? value}
+  {presentMachineLabel}
   {search}
 />
 <ActiveFilters
   hidden={Math.max(0, support.support.analytics.sessionCount - overview.summary.sessionCount)}
   {navigation}
   {pending}
-  presentMachineLabel={(value) => machineOptions.find((option) => option.value === value)?.label ?? value}
+  {presentMachineLabel}
   {search}
   total={support.support.analytics.sessionCount}
   visible={overview.summary.sessionCount}
@@ -235,6 +331,7 @@
     {dimension}
     generatedAt={reportSupport.generatedAt}
     {granularity}
+    {machineFreshnessStatus}
     {navigate}
     onDimensionFilter={navigation.setTimelineDimensionFilter}
     onOptionsChange={(options) => {
@@ -243,6 +340,8 @@
       timelineValue = options.value;
     }}
     onRangeChange={navigation.setDateRange}
+    {presentCampaignSeries}
+    {presentMachineSeries}
     range={renderedSearch.range}
     timeline={overview.timeline}
     value={timelineValue}
@@ -254,8 +353,9 @@
       <OverviewPage
         {activeSeriesKeys}
         {dimension}
-        freshness={support.machineFreshness}
+        freshness={focusedMachineFreshness}
         {granularity}
+        {machineFreshnessStatus}
         {navigate}
         onDimensionFilter={navigation.setTimelineDimensionFilter}
         onOptionsChange={(options) => {
@@ -268,6 +368,9 @@
         onSelectSession={selectOverviewSession}
         onSelectTimeCell={(cell) => navigate((current) => ({ ...current, tab: 'sessions', timeCell: serializeDashboardTimeCell(cell) }))}
         {...(mode === 'e2e' ? { onOpenQuotaHistory: () => (quotaHistoryOpen = true) } : {})}
+        {presentCampaignSeries}
+        {presentMachineSeries}
+        {presentSessionItem}
         providers={mode === 'e2e' ? providers : []}
         range={renderedSearch.range}
         result={overview}
@@ -329,6 +432,7 @@
   {/snippet}
 </ReportWorkspace>
 <SessionDetailSlot
+  {campaignSlot}
   controller={detailController}
   onFieldFilter={navigation.setFieldFilter}
   rows={detailRows}

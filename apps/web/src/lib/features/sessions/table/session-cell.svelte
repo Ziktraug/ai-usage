@@ -69,7 +69,9 @@
       <span class={sessionAnnotation} data-session-origin="classifier"> · {projection.originLabel}</span>
     {/if}
     {#if projection.campaignLabel}
-      <span class={sessionAnnotation} title={projection.campaignLabel}> · {projection.campaignLabel}</span>
+      <span class={sessionAnnotation} data-session-campaign-annotation title={projection.campaignLabel}>
+        {projection.campaignLabel}</span
+      >
     {/if}
     {#if projection.classifierLabel}
       <span class={sessionAnnotation} data-campaign-classifier-rollup title={projection.classifierLabel}>

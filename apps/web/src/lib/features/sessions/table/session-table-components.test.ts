@@ -6,6 +6,9 @@ import type { Component } from 'svelte';
 import { compile } from 'svelte/compiler';
 import { createServer } from 'vite';
 
+const CAMPAIGN_ANNOTATION_PATTERN = /data-session-campaign-annotation[^>]*>\s*Campaign · 1 session<\/span>/;
+const EXTRA_CAMPAIGN_SEPARATOR_PATTERN = /data-session-campaign-annotation[^>]*>\s*· Campaign/;
+
 interface SvelteServerModule {
   render(component: Component, options?: { props?: Record<string, unknown> }): { body: string };
 }
@@ -76,7 +79,8 @@ describe('session table Svelte rendering', () => {
     expect(body).toContain('Expand campaign Synthetic session 1');
     expect(body).toContain('data-session-row-id');
     expect(body).toContain('<mark');
-    expect(body).toContain('Campaign · 1 session');
+    expect(body).toMatch(CAMPAIGN_ANNOTATION_PATTERN);
+    expect(body).not.toMatch(EXTRA_CAMPAIGN_SEPARATOR_PATTERN);
     expect(body).toContain('+ 1 automated review · 1,200 fresh');
     expect(body).toContain('data-session-provenance');
     expect(body).toContain('aria-pressed="false"');
