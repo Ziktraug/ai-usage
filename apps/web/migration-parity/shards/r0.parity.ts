@@ -2,14 +2,45 @@ import { currentRecord } from '../helpers';
 import { defineParityShard, type UrlContractDescriptor } from '../schema';
 
 const owner = 'R0' as const;
+const implementationCommit = '435aa06e595405ce384338db5106a902e99443ce';
+const targetReferences = (id: string): { readonly source: string; readonly test: string } => {
+  if (id.startsWith('url:dashboard.')) {
+    return {
+      source:
+        'apps/web/src/lib/foundation/navigation/svelte/dashboard-url.ts; apps/web/src/lib/foundation/navigation/svelte/search-codec.ts',
+      test: 'apps/web/src/lib/foundation/navigation/svelte/dashboard-url.test.ts; apps/web/src/lib/foundation/navigation/svelte/search-codec.test.ts',
+    };
+  }
+  if (id.startsWith('url:skills.')) {
+    return {
+      source: 'apps/web/src/lib/foundation/navigation/svelte/skills-url.ts',
+      test: 'apps/web/src/lib/foundation/navigation/svelte/skills-url.test.ts',
+    };
+  }
+  return {
+    source:
+      'apps/web/src/lib/foundation/navigation/svelte/navigation.ts; apps/web/src/lib/foundation/navigation/svelte/dirty-navigation.ts',
+    test: 'apps/web/src/lib/foundation/navigation/svelte/navigation.test.ts; apps/web/src/lib/foundation/navigation/svelte/dirty-navigation.test.ts',
+  };
+};
 const urlRecord = (id: string, currentOwner: string, urlContract: UrlContractDescriptor, tests: readonly string[]) =>
-  currentRecord(owner, {
-    currentOwner,
-    evidence: tests.map((reference) => ({ kind: 'test' as const, reference })),
-    id,
-    kind: 'url-contract',
-    urlContract,
-  });
+  currentRecord(
+    owner,
+    (() => {
+      const target = targetReferences(id);
+      return {
+        currentOwner,
+        evidence: [
+          ...tests.map((reference) => ({ kind: 'test' as const, reference })),
+          { commit: implementationCommit, kind: 'source' as const, phase: 'target' as const, reference: target.source },
+          { commit: implementationCommit, kind: 'test' as const, phase: 'target' as const, reference: target.test },
+        ],
+        id,
+        kind: 'url-contract' as const,
+        urlContract,
+      };
+    })(),
+  );
 
 const dashboardOwner = 'apps/web/src/dashboard-search.ts; apps/web/src/dashboard-navigation-controller.ts';
 const dashboardTests = ['apps/web/src/dashboard-search.test.ts', 'apps/web/e2e/dashboard.spec.ts'];
