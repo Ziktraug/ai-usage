@@ -12,11 +12,11 @@ authority for feature, operation, design, source-file, and test-title coverage.
 - Planning PR: `#26`, squash-merged as
   `2183270ebfbb886fafa7e6268893122db9b364c0`
 - `BASE_SHA`: `2183270ebfbb886fafa7e6268893122db9b364c0`
-- Current integration checkpoint: `656ef4e`
+- Current integration checkpoint: `614174f`
 - Last reviewed green checkpoint: `656ef4e`
 - Active design bases: D1 `4862293`, D2 `fce5c1a`, D3 `e2f13cd`
 - Implementation PR: not opened
-- Exclusive process-test token: free after the V5 Nitro loopback and D4 browser gates
+- Exclusive process-test token: free after the Q3 production, scale, and benchmark gates
 
 The integration branch did not exist locally or remotely before this run. Local
 `main` and `origin/main` were clean and aligned at `BASE_SHA`; plans 066 and 067
@@ -128,7 +128,7 @@ Statuses are `BLOCKED`, `READY`, `IMPLEMENTING`, `REVIEW`, `REWORK`,
 | Q0 | V5 | INTEGRATED | `31c85a0`, correction `2f55410` | `/root/d123_parity_review`, `/root/v5_parity_spec_review` / ACCEPT | `2f55410ec9296dd2f66962d6ee3e4d2340e554b2` |
 | Q1 | Q0 | INTEGRATED | `97e34b4`, correction `9366ace`, correction `656ef4e` | `/root/v5_parity_spec_review`, `/root/q2_spec_review` / ACCEPT | `656ef4e` |
 | Q2 | Q0 | INTEGRATED | `3d0490a` | `/root/v34_parity`, `/root/q2_spec_review` / ACCEPT | `3d0490a8052a73da024ea523f3c0012d0e2aca9f` |
-| Q3 | Q1, Q2 | READY | - | - | - |
+| Q3 | Q1, Q2 | REVIEW | `614174f` | independent standards/spec review pending | candidate checkpoint `614174f` |
 | D0 | F0 | INTEGRATED | `d476690`, `65d48b4`, `3cea781`, `f84ad2c`, evidence `bd948a7`, `a27764b`, correction `7e0c6ef` | `/root/v_vertical_audit`, `/root/v0_impl`, `/root/d123_parity_review`, `/root/v5_parity_spec_review` / ACCEPT | `4ddf145` |
 | D1 | D0 | INTEGRATED | `4862293`, `3b22c28`, evidence `b31c3af` | `/root/d123_parity_review` / ACCEPT | `b31c3af` |
 | D2 | D0 | INTEGRATED | `fce5c1a`, `9935846`, evidence `b31c3af` | `/root/d123_parity_review` / ACCEPT | `b31c3af` |
@@ -523,6 +523,41 @@ cherry gates passed 15 Q1 tests with 121 assertions, all 30 Query tests with 235
 assertions, Web TypeScript with Svelte 0/0, the shadow build, repository lint,
 parity, Ultracite and diff cleanliness.
 
+Q3 candidate `614174f` composes one request-owned Svelte Query client and oRPC
+client per SSR load, returns only serializable dehydrated state through the
+SvelteKit boundary, and creates a separate browser client under the official
+Svelte Query provider. Solid and Svelte retain distinct framework clients while
+sharing only plain finite-GC defaults, key vocabulary and policies. The complete
+ownership matrix covers current/exact Report, Session, Quota, Skills and Sync;
+publication deduplication invalidates exactly the two current Report aliases and
+does not touch exact Report, Quota, Skills or Sync data. The legacy Solid root
+fallback no longer makes all queries infinitely fresh, and its Quota/Skills
+callers now use their accepted explicit Q1/Q2 policies and exact cancellation.
+
+Q3 gates passed 36 Query/RPC tests with 270 assertions, Web TypeScript with
+Svelte 0/0, the shadow production build and an HTTP 200 meaningful-HTML probe,
+repository check/lint/typecheck/build, the complete parity inventory, the
+production Report suite 7/7, Session scale 2/2 at 5,000 sessions, and the
+Session benchmark 4/4 with three retained samples. Current benchmark medians
+are initial 1533.787 ms, filter 224.403 ms, sort 1424.641 ms, heap delta
+33,272,824 bytes and maximum page payload 220,694 bytes; desktop renders
+33 items / 624 Session DOM nodes and mobile 19 / 288. Every frozen budget
+passed. Independent standards/spec review is pending before Q3 integration.
+
+Three Q3 incidents are retained. The first complete repository test run hit the
+known D3 `ArrowRight` focus timeout; its one allowed exact rerun passed 10/10,
+classifying a flake without changing timeouts or assertions. The first
+production Report run exposed a latent relative browser `/rpc` URL once the
+global infinite-stale fallback stopped hiding transport; the focused correction
+resolves `/rpc` against the exact browser origin, adds method/URL tests, and the
+full production gate passed 7/7. The first Session scale run then reached the
+real CSRF boundary without an Origin header and correctly received 403
+`CsrfRejected`; the fixture now derives the loaded page origin and sends it
+explicitly, preserving the policy, and both viewports passed. A root-relative
+Playwright config invocation also failed before test discovery and was rerun
+from `apps/web`. Benchmark telemetry reported synthetic file-sink lock timeouts,
+but all four benchmark tests and retained budget assertions completed green.
+
 ## Deviations, STOPs, and recovery
 
 - Reviewed deviations: the two Vite/Bun loopback proof substitutions above are
@@ -548,6 +583,10 @@ parity, Ultracite and diff cleanliness.
   corrections after the implementation commit. The immutable canonical-copy
   result is independently accepted and integrated; no dependent work began
   from either rejected checkpoint.
+- Resolved Q3 gate incidents: the browser RPC origin and Session scale fixture
+  corrections above preserve the production CSRF and request-isolation
+  contracts; no test, assertion, timeout, cache bound or security policy was
+  weakened.
 - Recovery point: `656ef4e` is the latest independently reviewed green
-  checkpoint. V1-V5, Q0-Q2 and D0-D4 are integrated; all Q1 post-cherry gates
-  passed and Q3 is ready.
+  checkpoint. Candidate `614174f` is fully gated and recoverable while Q3
+  independent review runs; R0 remains blocked until both axes ACCEPT.
