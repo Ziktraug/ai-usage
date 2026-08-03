@@ -3,21 +3,91 @@ import { QueryObserver } from '@tanstack/svelte-query';
 import { createHydratedWebQueryClient, createWebQueryClient, dehydrateWebQueryClient } from './client';
 import { currentAliasKey, immutableRevisionKey } from './keys';
 import { DEFAULT_BOUNDED_GC_TIME_MS, webQueryPolicies } from './policies';
+import { createQueryTestHarness } from './test-harness';
 
 describe('request-scoped Web QueryClient', () => {
-  test('QUERY-CORE-REQUEST-ISOLATION: creates independent caches for concurrent requests', () => {
-    const alpha = createWebQueryClient();
-    const beta = createWebQueryClient();
+  test('QUERY-CORE-REQUEST-ISOLATION: isolates overlapping same-key request work and caches', async () => {
+    const alpha = createQueryTestHarness();
+    const beta = createQueryTestHarness();
     const key = immutableRevisionKey('report', 'revision-1', 'fingerprint-1', 'overview');
+    const alphaResult = Promise.withResolvers<{ owner: 'alpha' }>();
+    const betaResult = Promise.withResolvers<{ owner: 'beta' }>();
+    const alphaStarted = Promise.withResolvers<AbortSignal>();
+    const betaStarted = Promise.withResolvers<AbortSignal>();
+    const alphaPending = alpha.fetch({
+      key,
+      policy: webQueryPolicies.immutableRevision,
+      resolve: ({ signal }) => {
+        alphaStarted.resolve(signal);
+        return alphaResult.promise;
+      },
+    });
+    const betaPending = beta.fetch({
+      key,
+      policy: webQueryPolicies.immutableRevision,
+      resolve: ({ signal }) => {
+        betaStarted.resolve(signal);
+        return betaResult.promise;
+      },
+    });
+    let betaSettlement: 'pending' | 'rejected' | 'resolved' = 'pending';
+    const betaOutcome = betaPending.then(
+      (value) => {
+        betaSettlement = 'resolved';
+        return { status: 'resolved', value } as const;
+      },
+      (error: unknown) => {
+        betaSettlement = 'rejected';
+        return { error, status: 'rejected' } as const;
+      },
+    );
+    const [alphaSignal, betaSignal] = await Promise.all([alphaStarted.promise, betaStarted.promise]);
 
-    alpha.setQueryData(key, { owner: 'alpha' });
-    beta.setQueryData(key, { owner: 'beta' });
+    expect(alpha.client).not.toBe(beta.client);
+    expect(alphaSignal).not.toBe(betaSignal);
+    expect(alpha.activeCalls()).toHaveLength(1);
+    expect(beta.activeCalls()).toHaveLength(1);
 
-    expect(alpha).not.toBe(beta);
-    expect(alpha.getQueryData<{ owner: string }>(key)).toEqual({ owner: 'alpha' });
-    expect(beta.getQueryData<{ owner: string }>(key)).toEqual({ owner: 'beta' });
-    alpha.clear();
-    expect(beta.getQueryData<{ owner: string }>(key)).toEqual({ owner: 'beta' });
+    alphaResult.resolve({ owner: 'alpha' });
+    await expect(alphaPending).resolves.toEqual({ owner: 'alpha' });
+    expect(betaSettlement).toBe('pending');
+    expect(betaSignal.aborted).toBe(false);
+    expect(beta.cacheEntries()).toMatchObject([{ fetchStatus: 'fetching', key, status: 'pending' }]);
+
+    await alpha.client.invalidateQueries({ exact: true, queryKey: key });
+    const alphaRefetchStarted = Promise.withResolvers<AbortSignal>();
+    const alphaRefetch = alpha.fetch({
+      key,
+      policy: webQueryPolicies.immutableRevision,
+      resolve: ({ signal }) => {
+        alphaRefetchStarted.resolve(signal);
+        return new Promise<never>((_resolve, reject) => {
+          signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+        });
+      },
+    });
+    const alphaRefetchOutcome = alphaRefetch.catch((error: unknown) => error);
+    const alphaRefetchSignal = await alphaRefetchStarted.promise;
+    expect(alphaRefetchSignal).not.toBe(betaSignal);
+    expect(alpha.activeCalls()).toHaveLength(1);
+
+    await alpha.cancel(key);
+    await alphaRefetchOutcome;
+    expect(alphaRefetchSignal.aborted).toBe(true);
+    expect(alpha.activeCalls()).toEqual([]);
+    alpha.client.clear();
+    await Promise.resolve();
+
+    expect(alpha.cacheEntries()).toEqual([]);
+    expect(betaSettlement).toBe('pending');
+    expect(betaSignal.aborted).toBe(false);
+    expect(beta.activeCalls()).toHaveLength(1);
+    expect(beta.cacheEntries()).toMatchObject([{ fetchStatus: 'fetching', key, status: 'pending' }]);
+
+    betaResult.resolve({ owner: 'beta' });
+    expect(await betaOutcome).toEqual({ status: 'resolved', value: { owner: 'beta' } });
+    expect(beta.activeCalls()).toEqual([]);
+    expect(beta.cacheEntries()).toMatchObject([{ data: { owner: 'beta' }, key, status: 'success' }]);
   });
 
   test('QUERY-CORE-NO-GLOBAL-STALE: keeps safety defaults explicit without a global stale policy', () => {
