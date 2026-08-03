@@ -1,7 +1,8 @@
 <script lang="ts">
-  import RouteFrame from '$lib/features/shell/route-frame.svelte';
+  import ReportRoot from '$lib/features/report/core/report-root.svelte';
+  import type { PageProps } from './$types';
+
+  let { data }: PageProps = $props();
 </script>
 
-<RouteFrame heading="Usage report">
-  <div data-route-shell="report"></div>
-</RouteFrame>
+<ReportRoot {data} />
