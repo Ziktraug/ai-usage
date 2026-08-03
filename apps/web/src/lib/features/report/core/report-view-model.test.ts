@@ -4,6 +4,8 @@ import { demoReportPayload } from '../../../../report-data';
 import { toWebReportPayload } from '../../../../web-report-payload';
 import { liveReportShellModel, reportGeneratedLabel, syntheticReportShellModel } from './report-view-model';
 
+const GENERATED_LABEL_PATTERN = /^Generated [A-Z][a-z]{2} \d{2}, \d{2}:\d{2}$/;
+
 const support = () => {
   const { rows: _rows, tableRows: _tableRows, ...reportSupport } = demoReportPayload;
   return projectFocusedSupport(
@@ -31,14 +33,28 @@ describe('report SSR view model', () => {
       requestFingerprint: 'report-manifest:v1:{}',
     });
 
-    expect(model).toMatchObject({ hasReportData: true, isDemo: false, revision: 'revision-a' });
-    expect(reportGeneratedLabel(model.generatedAt, model.hasReportData)).toStartWith('Generated ');
+    expect(model).toMatchObject({
+      hasReportData: true,
+      isDemo: false,
+      publicationLabel: 'Compatible stored publication',
+      revision: 'revision-a',
+    });
+    expect(model.overviewItems).toEqual(expect.arrayContaining([{ label: 'Harnesses', value: '0' }]));
+    expect(reportGeneratedLabel(model.generatedAt, model.hasReportData)).toMatch(GENERATED_LABEL_PATTERN);
   });
 
   it('keeps demo and E2E payloads meaningful without labelling E2E as demo', () => {
     const payload = toWebReportPayload(demoReportPayload);
-    expect(syntheticReportShellModel('demo', payload)).toMatchObject({ hasReportData: true, isDemo: true });
-    expect(syntheticReportShellModel('e2e', payload)).toMatchObject({ hasReportData: true, isDemo: false });
+    expect(syntheticReportShellModel('demo', payload)).toMatchObject({
+      hasReportData: true,
+      isDemo: true,
+      publicationLabel: 'Synthetic demo publication',
+    });
+    expect(syntheticReportShellModel('e2e', payload)).toMatchObject({
+      hasReportData: true,
+      isDemo: false,
+      publicationLabel: 'Synthetic test publication',
+    });
   });
 
   it('uses the established unavailable copy when no complete report exists', () => {

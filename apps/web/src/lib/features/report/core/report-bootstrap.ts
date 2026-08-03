@@ -4,6 +4,7 @@ import type { RuntimeMode } from '../../../../runtime-mode';
 import { toWebReportPayload, type WebReportPayload } from '../../../../web-report-payload';
 import type { WebQueryHydrationState } from '../../../query/client';
 import { createWebQueryLoadState, type WebQueryRuntimeOptions } from '../../../query/composition';
+import type { ReportQueryClient } from '../../../query/options/report';
 import { reportBootstrapQueryOptions } from '../../../query/options/report';
 import { createReportClient } from '../../../rpc/report-client';
 import { createAwaitedRouteQueryState } from '../../shell/query-load';
@@ -48,6 +49,7 @@ export const requireAvailableReportBootstrap = (
  */
 export const loadReportPageData = async (
   options: WebQueryRuntimeOptions & { readonly mode: RuntimeMode },
+  dependencies: { readonly createClient?: (rpc: Parameters<typeof createReportClient>[0]) => ReportQueryClient } = {},
 ): Promise<ReportPageData> => {
   const { mode, ...runtimeOptions } = options;
   if (mode !== 'live') {
@@ -59,7 +61,7 @@ export const loadReportPageData = async (
   }
 
   const queryState = await createAwaitedRouteQueryState(runtimeOptions, async (runtime) => {
-    const reportClient = createReportClient(runtime.rpc);
+    const reportClient = dependencies.createClient?.(runtime.rpc) ?? createReportClient(runtime.rpc);
     const result = await runtime.queryClient.fetchQuery(reportBootstrapQueryOptions(reportClient, { browser: false }));
     requireAvailableReportBootstrap(result);
   });

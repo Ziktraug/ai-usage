@@ -2,6 +2,7 @@
   import type { ReportRevisionBootstrapResult } from '@ai-usage/web-contract/report';
   import { browser } from '$app/environment';
   import type { ReportPageData } from './report-bootstrap';
+  import ReportBootstrapOverview from './report-bootstrap-overview.svelte';
   import ReportHeader from './report-header.svelte';
   import { createHydratedReportBootstrapQuery } from './report-query.svelte';
   import { liveReportShellModel, syntheticReportShellModel } from './report-view-model';
@@ -26,6 +27,10 @@
 <ReportWarnings omittedSupportItemCount={model.omittedSupportItemCount} warnings={model.warnings} />
 <ReportWorkspace hasOutput={model.hasReportData} {pending} {refreshError}>
   {#snippet children()}
-    <div data-report-bootstrap-ready data-report-revision={model.revision ?? undefined}>Report data is ready.</div>
+    <ReportBootstrapOverview
+      items={model.overviewItems}
+      publicationLabel={model.publicationLabel}
+      revision={model.revision}
+    />
   {/snippet}
 </ReportWorkspace>

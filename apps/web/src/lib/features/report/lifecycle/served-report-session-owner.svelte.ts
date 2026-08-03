@@ -12,6 +12,7 @@ export interface ServedReportOwnerSnapshot<Descriptor extends ServedRevisionDesc
 
 export interface ServedReportSessionOwner<Destination, Descriptor extends ServedRevisionDescriptor> {
   abort(): void;
+  dispose(): void;
   refresh(destination: Destination): Promise<ServedReportRefreshOutcome<Descriptor>>;
   readonly snapshot: ServedReportOwnerSnapshot<Descriptor>;
 }
@@ -31,11 +32,15 @@ export const createServedReportSessionOwner = <
   session: ServedReportSession<Destination, Descriptor>,
 ): ServedReportSessionOwner<Destination, Descriptor> => {
   let snapshot = $state<ServedReportOwnerSnapshot<Descriptor>>({ pending: false, refreshError: null });
+  let disposed = false;
 
   const refresh = async (destination: Destination): Promise<ServedReportRefreshOutcome<Descriptor>> => {
+    if (disposed) {
+      return { status: 'superseded' };
+    }
     snapshot = { ...snapshot, pending: true, refreshError: null };
     const outcome = await session.refresh(destination);
-    if (outcome.status === 'superseded') {
+    if (disposed || outcome.status === 'superseded') {
       return outcome;
     }
     if (outcome.status === 'failed-preserving-previous') {
@@ -46,10 +51,19 @@ export const createServedReportSessionOwner = <
     return outcome;
   };
 
+  const abort = (): void => {
+    session.abort();
+    snapshot = { ...snapshot, pending: false };
+  };
+
   return {
-    abort: () => {
-      session.abort();
-      snapshot = { ...snapshot, pending: false };
+    abort,
+    dispose: () => {
+      if (disposed) {
+        return;
+      }
+      disposed = true;
+      abort();
     },
     refresh,
     get snapshot() {

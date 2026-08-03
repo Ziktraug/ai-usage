@@ -1,18 +1,29 @@
 <script lang="ts">
-  import {
-    demoBadge,
-    eyebrow,
-    eyebrowRow,
-    header,
-    headerTop,
-    meta,
-    title,
-    titleBlock,
-  } from '@ai-usage/design-system/report';
+  import { css } from '@ai-usage/design-system/css';
+  import { header, meta, title, titleBlock } from '@ai-usage/design-system/svelte';
   import { reportGeneratedLabel } from './report-view-model';
 
   let { generatedAt, hasReportData, isDemo }: { generatedAt: string | null; hasReportData: boolean; isDemo: boolean } =
     $props();
+
+  const headerTop = css({ alignItems: 'flex-start', display: 'flex', justifyContent: 'space-between' });
+  const eyebrowRow = css({ alignItems: 'center', display: 'flex', gap: '8px' });
+  const eyebrow = css({
+    color: 'muted',
+    fontSize: '11px',
+    fontWeight: 700,
+    letterSpacing: '0.12em',
+    textTransform: 'uppercase',
+  });
+  const demoBadge = css({
+    bg: 'accentTint',
+    borderRadius: 'full',
+    color: 'accent',
+    fontSize: '10px',
+    fontWeight: 700,
+    px: '8px',
+    py: '2px',
+  });
 </script>
 
 <header class={header}>
