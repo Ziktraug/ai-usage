@@ -225,6 +225,6 @@
   </div>
 
   <div class={mobileContext}>
-    <SkillsInspector {healthSlot} {slotContext} {snapshot} {view} />
+    <SkillsInspector {...(healthSlot === undefined ? {} : { healthSlot })} {slotContext} {snapshot} {view} />
   </div>
 </div>

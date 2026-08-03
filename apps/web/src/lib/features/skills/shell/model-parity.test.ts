@@ -1,9 +1,32 @@
 import { describe, expect, test } from 'bun:test';
-import { createSkillsShellViewModel, knownProjectScopesFromPaths } from './model';
+import { createSkillsShellViewModel, knownProjectScopesFromPaths, normalizeSkillsQuerySnapshot } from './model';
 import { skillSelectionHref } from './navigation';
 import { syntheticInventories, syntheticKnownPaths, syntheticSnapshot } from './synthetic-fixture.test-helper';
 
 describe('Svelte Skills shell model', () => {
+  test('normalizes the hydrated Query wire shape before domain ownership', () => {
+    const snapshot = syntheticSnapshot();
+    const querySnapshot = {
+      ...snapshot,
+      diagnostics: [
+        {
+          code: 'synthetic-query-shape',
+          message: 'Synthetic optional field normalization',
+          path: undefined,
+          severity: 'info' as const,
+        },
+      ],
+      skills: snapshot.skills.map((skill) => ({ ...skill, diagnostics: [...skill.diagnostics] })),
+    };
+
+    const normalized = normalizeSkillsQuerySnapshot(querySnapshot);
+
+    expect(normalized.diagnostics).toEqual([
+      { code: 'synthetic-query-shape', message: 'Synthetic optional field normalization', severity: 'info' },
+    ]);
+    expect('path' in (normalized.diagnostics[0] ?? {})).toBe(false);
+  });
+
   test('preserves grouped project identity and encoded nested selection links', () => {
     const projects = knownProjectScopesFromPaths(syntheticKnownPaths);
     expect(projects).toEqual([

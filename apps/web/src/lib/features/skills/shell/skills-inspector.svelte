@@ -68,7 +68,7 @@
           >
         </div>
         <div class={row}>
-          <span class={muted}>Tokens</span><span>{view.selectionDetail.skill.tokenCount.total}</span>
+          <span class={muted}>Tokens</span><span>{view.selectionDetail.skill.tokenCount?.total ?? 'Unknown'}</span>
         </div>
         <span class={path}>{view.selectionDetail.skill.skillMdPath}</span>
       </div>

@@ -2,7 +2,6 @@ import type { ProjectSkillInventory, SkillManagementSnapshot } from '@ai-usage/s
 import type {
   KnownSkillProjectPath,
   ProjectSkillInventory as WireProjectSkillInventory,
-  SkillManagementSnapshot as WireSkillManagementSnapshot,
 } from '@ai-usage/web-contract/skills';
 import { parseProjectInventoriesResult, parseSkillSnapshotResult } from '../../../../skills-client-contracts';
 import {
@@ -47,7 +46,7 @@ export interface SkillsShellViewModel {
   readonly tree: SkillTreeModel;
 }
 
-const domainSnapshotFrom = (snapshot: WireSkillManagementSnapshot): SkillManagementSnapshot => {
+export const normalizeSkillsQuerySnapshot = (snapshot: unknown): SkillManagementSnapshot => {
   const result = parseSkillSnapshotResult({ data: snapshot, ok: true });
   if (!result.ok) {
     throw new Error('Invalid Skills snapshot for shell composition');
@@ -145,9 +144,9 @@ export const createSkillsShellViewModel = (input: {
   readonly inventories: readonly WireProjectSkillInventory[];
   readonly knownProjectPaths: readonly KnownSkillProjectPath[];
   readonly pathname: string;
-  readonly snapshot: WireSkillManagementSnapshot;
+  readonly snapshot: unknown;
 }): SkillsShellViewModel => {
-  const snapshot = domainSnapshotFrom(input.snapshot);
+  const snapshot = normalizeSkillsQuerySnapshot(input.snapshot);
   const inventories = domainInventoriesFrom(input.inventories);
   const discoveredProjects = knownProjectScopesFromPaths(input.knownProjectPaths);
   const tree = buildSkillTree(snapshot, inventories, discoveredProjects);

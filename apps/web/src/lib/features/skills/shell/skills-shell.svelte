@@ -7,7 +7,7 @@
     SkillMarkdownDocument,
   } from '@ai-usage/web-contract/skills';
   import { createQuery } from '@tanstack/svelte-query';
-  import { onMount, type Snippet } from 'svelte';
+  import { onMount, type Snippet, untrack } from 'svelte';
   import { goto } from '$app/navigation';
   import type { RuntimeMode } from '../../../../runtime-mode';
   import {
@@ -20,7 +20,7 @@
   } from '../../../query/options/skills';
   import { createBrowserWebRpcClient } from '../../../rpc/client';
   import { createSkillsClient } from '../../../rpc/skills-client';
-  import { createSkillsShellViewModel } from './model';
+  import { createSkillsShellViewModel, normalizeSkillsQuerySnapshot } from './model';
   import SkillsWorkspace from './skills-workspace.svelte';
   import type { SkillsShellSlotContext, SkillsSnapshotUpdatePort } from './slot-context';
   import { createSkillsSnapshotController, type SkillsDraftGuardPort } from './snapshot-controller';
@@ -65,7 +65,11 @@
       enabled: runtimeMode !== 'demo' && snapshotQuery.data?.configured === true,
     }),
   );
-  let acceptedSnapshot = $state<SkillManagementSnapshot | undefined>(snapshotQuery.data);
+  const querySnapshot = $derived(
+    snapshotQuery.data === undefined ? undefined : normalizeSkillsQuerySnapshot(snapshotQuery.data),
+  );
+  const initialSnapshot = untrack(() => querySnapshot);
+  let acceptedSnapshot = $state<SkillManagementSnapshot | undefined>(initialSnapshot);
   let pendingSnapshot = $state<SkillManagementSnapshot | undefined>();
   const createSnapshotController = (initial: SkillManagementSnapshot) =>
     createSkillsSnapshotController({
@@ -74,7 +78,7 @@
         acceptedSnapshot = snapshot;
       },
     });
-  let snapshotController = snapshotQuery.data ? createSnapshotController(snapshotQuery.data) : undefined;
+  let snapshotController = initialSnapshot ? createSnapshotController(initialSnapshot) : undefined;
   const synchronizePendingSnapshot = (): void => {
     pendingSnapshot = snapshotController?.pending();
   };
@@ -111,7 +115,7 @@
   });
 
   $effect(() => {
-    const nextSnapshot = snapshotQuery.data;
+    const nextSnapshot = querySnapshot;
     if (nextSnapshot === undefined) {
       return;
     }
@@ -195,9 +199,9 @@
 
 {#if view}
   <SkillsWorkspace
-    {editorSlot}
-    {healthSlot}
-    {matrixSlot}
+    {...(editorSlot === undefined ? {} : { editorSlot })}
+    {...(healthSlot === undefined ? {} : { healthSlot })}
+    {...(matrixSlot === undefined ? {} : { matrixSlot })}
     {selectedDocument}
     snapshot={view.snapshot}
     {snapshotUpdates}
