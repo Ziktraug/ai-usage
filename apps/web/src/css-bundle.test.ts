@@ -73,6 +73,14 @@ const initialAssetPaths = (appDir: string): string[] => {
   return [...assets].sort();
 };
 
+const readInitialAsset = (publicDir: string, assetPath: string) => {
+  const assetFile = path.join(publicDir, assetPath.replace(LEADING_SLASH_PATTERN, ''));
+  if (!existsSync(assetFile)) {
+    throw new Error(`Expected the initial client asset to exist: ${assetPath}`);
+  }
+  return readFileSync(assetFile);
+};
+
 describe('report app client bundle', () => {
   test(
     'emits generated Panda CSS and splits server-only route UI from the report entry',
@@ -81,15 +89,12 @@ describe('report app client bundle', () => {
       await $`bun run build`.cwd(appDir).quiet();
 
       const publicDir = path.join(appDir, '.output-build/sveltekit/client');
-      const assetsDir = path.join(publicDir, '_app/immutable/assets');
-      expect(existsSync(assetsDir)).toBe(true);
-
-      const cssFile = readdirSync(assetsDir).find((file) => file.endsWith('.css'));
-      if (!cssFile) {
-        throw new Error('Expected the report build to emit a CSS asset');
+      const rootAssets = initialAssetPaths(appDir);
+      const cssAssetPaths = rootAssets.filter((assetPath) => assetPath.endsWith('.css'));
+      if (cssAssetPaths.length === 0) {
+        throw new Error('Expected the initial client manifest closure to include a CSS asset');
       }
-
-      const css = readFileSync(path.join(assetsDir, cssFile), 'utf8');
+      const css = cssAssetPaths.map((assetPath) => readInitialAsset(publicDir, assetPath).toString('utf8')).join('\n');
       expect(css).toContain('--colors-canvas');
       expect(css).toContain('--colors-accent');
       expect(css).toContain('[data-theme=dark]');
@@ -105,12 +110,8 @@ describe('report app client bundle', () => {
       }
       expect(readFileSync(path.join(nodesDir, reportEntry)).byteLength).toBeLessThan(720_000);
 
-      const rootAssets = initialAssetPaths(appDir);
       const gzipClosureBytes = rootAssets.reduce(
-        (total, assetPath) =>
-          total +
-          gzipSync(readFileSync(path.join(publicDir, assetPath.replace(LEADING_SLASH_PATTERN, ''))), { level: 9 })
-            .byteLength,
+        (total, assetPath) => total + gzipSync(readInitialAsset(publicDir, assetPath), { level: 9 }).byteLength,
         0,
       );
       expect(gzipClosureBytes).toBeLessThanOrEqual(INITIAL_GZIP_CLOSURE_MAXIMUM_BYTES);
