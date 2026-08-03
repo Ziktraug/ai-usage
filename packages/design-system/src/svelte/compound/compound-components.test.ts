@@ -131,6 +131,8 @@ describe('Svelte compound controls', () => {
         expect(
           await page.locator('[data-scope="select"][data-part="item"]', { hasText: 'Gamma workstation' }).count(),
         ).toBe(1);
+        await multiTrigger.click();
+        await positioner.waitFor({ state: 'hidden' });
 
         const segmentedFixture = page.getByTestId('segmented-control-fixture');
         const week = page.getByRole('radio', { name: 'Week' });
