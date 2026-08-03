@@ -5,7 +5,17 @@ import { fileURLToPath } from 'node:url';
 
 const IMPORT_SPECIFIER_PATTERN = /(?:\bfrom\s*|\bimport\s*\(\s*|\bimport\s*)['"]([^'"]+)['"]/g;
 const SOURCE_EXTENSIONS = ['.ts', '.tsx', '.svelte'] as const;
-const FORBIDDEN_PACKAGES = ['solid-js', '@ai-usage/design-system/solid'] as const;
+const FORBIDDEN_RUNTIME_PREFIXES = [
+  'solid-js',
+  'svelte',
+  '@ark-ui/solid',
+  '@ark-ui/svelte',
+  '@ai-usage/design-system/solid',
+  '@ai-usage/design-system/svelte',
+  '@tanstack/solid',
+  '@tanstack/svelte',
+  '$app',
+] as const;
 const sourceDirectory = fileURLToPath(new URL('../../../', import.meta.url));
 const entryPaths = [
   'dashboard-analytics.ts',
@@ -30,7 +40,8 @@ const exists = async (filePath: string): Promise<boolean> => {
 
 const resolveLocalImport = async (sourcePath: string, specifier: string): Promise<string> => {
   const unresolvedPath = path.resolve(path.dirname(sourcePath), specifier);
-  const candidates = path.extname(unresolvedPath)
+  const hasSourceExtension = SOURCE_EXTENSIONS.some((extension) => unresolvedPath.endsWith(extension));
+  const candidates = hasSourceExtension
     ? [unresolvedPath]
     : SOURCE_EXTENSIONS.flatMap((extension) => [
         `${unresolvedPath}${extension}`,
@@ -47,6 +58,16 @@ const resolveLocalImport = async (sourcePath: string, specifier: string): Promis
 const importSpecifiers = (source: string): readonly string[] =>
   [...source.matchAll(IMPORT_SPECIFIER_PATTERN)].flatMap((match) => (match[1] ? [match[1]] : []));
 
+const isForbiddenRuntimeSpecifier = (specifier: string): boolean =>
+  specifier.startsWith('node:') ||
+  specifier.startsWith('$lib/server') ||
+  FORBIDDEN_RUNTIME_PREFIXES.some((forbidden) => specifier.startsWith(forbidden));
+
+const isForbiddenLocalSource = (sourcePath: string): boolean =>
+  path.extname(sourcePath) !== '.ts' ||
+  sourcePath.includes('.server.') ||
+  sourcePath.includes(`${path.sep}server${path.sep}`);
+
 describe('framework-neutral presentation closure', () => {
   test('reusable presentation and dashboard models cannot reach client frameworks or server modules', async () => {
     const pending = entryPaths.map((entryPath) => path.join(sourceDirectory, entryPath));
@@ -58,18 +79,11 @@ describe('framework-neutral presentation closure', () => {
         continue;
       }
       visited.add(sourcePath);
-      expect(path.extname(sourcePath), sourcePath).toBe('.ts');
-      expect(sourcePath.includes('.server.'), sourcePath).toBe(false);
-      expect(sourcePath.includes(`${path.sep}server${path.sep}`), sourcePath).toBe(false);
+      expect(isForbiddenLocalSource(sourcePath), sourcePath).toBe(false);
 
       const source = await readFile(sourcePath, 'utf8');
       for (const specifier of importSpecifiers(source)) {
-        expect(specifier.startsWith('node:'), `${sourcePath} imports ${specifier}`).toBe(false);
-        expect(specifier.startsWith('$lib/server'), `${sourcePath} imports ${specifier}`).toBe(false);
-        expect(
-          FORBIDDEN_PACKAGES.some((forbidden) => specifier === forbidden || specifier.startsWith(`${forbidden}/`)),
-          `${sourcePath} imports ${specifier}`,
-        ).toBe(false);
+        expect(isForbiddenRuntimeSpecifier(specifier), `${sourcePath} imports ${specifier}`).toBe(false);
         if (specifier.startsWith('.')) {
           pending.push(await resolveLocalImport(sourcePath, specifier));
         }
@@ -78,5 +92,34 @@ describe('framework-neutral presentation closure', () => {
 
     expect(visited.has(path.join(sourceDirectory, 'lib/foundation/presentation/report-value.ts'))).toBe(true);
     expect(visited.has(path.join(sourceDirectory, 'lib/foundation/presentation/format.ts'))).toBe(true);
+  });
+
+  test('classifies representative framework, TSX, Svelte, Node and server edges', async () => {
+    for (const specifier of [
+      'solid-js',
+      'svelte',
+      '@ark-ui/solid/dialog',
+      '@ark-ui/svelte/dialog',
+      '@ai-usage/design-system/solid',
+      '@ai-usage/design-system/svelte',
+      '@tanstack/solid-table',
+      '@tanstack/svelte-query',
+      '$app/state',
+      '$lib/server/report',
+      'node:path',
+    ]) {
+      expect(isForbiddenRuntimeSpecifier(specifier), specifier).toBe(true);
+    }
+    expect(isForbiddenRuntimeSpecifier('@tanstack/table-core')).toBe(false);
+    expect(isForbiddenRuntimeSpecifier('@ai-usage/report-core/session-query')).toBe(false);
+
+    const presentationPath = path.join(sourceDirectory, 'lib/foundation/presentation/format.ts');
+    expect(isForbiddenLocalSource(await resolveLocalImport(presentationPath, '../../../shared'))).toBe(true);
+    expect(isForbiddenLocalSource(await resolveLocalImport(presentationPath, '../../features/shell/app-shell'))).toBe(
+      true,
+    );
+    expect(
+      isForbiddenLocalSource(await resolveLocalImport(presentationPath, '../../../server/demo-boundary.server')),
+    ).toBe(true);
   });
 });
