@@ -1,4 +1,3 @@
-import { SegmentedControl } from '@ai-usage/design-system';
 import { css, cx } from '@ai-usage/design-system/css';
 import {
   actionRow,
@@ -19,6 +18,7 @@ import {
   strongCell,
   unavailableText,
 } from '@ai-usage/design-system/report';
+import { SegmentedControl } from '@ai-usage/design-system/solid';
 import { type AnalyticsGroup, compareAnalyticsKeys } from '@ai-usage/report-core/analytics';
 import { PARTIALLY_MEASURED_LABEL } from '@ai-usage/report-core/provenance';
 import { createMemo, createSignal, For, type JSX, Show } from 'solid-js';

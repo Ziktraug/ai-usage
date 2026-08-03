@@ -1,4 +1,3 @@
-import { SegmentedControl, Tooltip } from '@ai-usage/design-system';
 import { cx } from '@ai-usage/design-system/css';
 import {
   accentFill,
@@ -64,6 +63,7 @@ import {
   timeSliderTrack,
   timeSliderUnclassifiedBands,
 } from '@ai-usage/design-system/report';
+import { SegmentedControl, Tooltip } from '@ai-usage/design-system/solid';
 import {
   type FocusedTimelineData,
   type FocusedTimelineDimension,

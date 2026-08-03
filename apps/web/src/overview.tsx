@@ -1,4 +1,3 @@
-import { Tooltip } from '@ai-usage/design-system';
 import { css, cx } from '@ai-usage/design-system/css';
 import {
   accentFill,
@@ -79,6 +78,7 @@ import {
   topTitle,
   twoColumns,
 } from '@ai-usage/design-system/report';
+import { Tooltip } from '@ai-usage/design-system/solid';
 import type {
   FocusedCalendarHeatmap,
   FocusedOverviewRecords,

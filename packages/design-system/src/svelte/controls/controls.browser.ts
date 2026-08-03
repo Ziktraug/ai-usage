@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
 import { type Browser, chromium, type Locator, type Page } from 'playwright';
 import { createServer, type ViteDevServer } from 'vite';
@@ -16,6 +17,7 @@ import Fixture from '/packages/design-system/src/svelte/controls/controls.fixtur
 mount(Fixture, { target: document.querySelector('#app') });
 window.__d1ControlsReady = true;`;
 const virtualEntryId = '\0d1-controls-entry';
+const repositoryDirectory = fileURLToPath(new URL('../../../../../', import.meta.url));
 
 const fail = (message: string): never => {
   throw new Error(`D1 browser fixture: ${message}`);
@@ -64,7 +66,7 @@ const fixtureServer = async (): Promise<ViteDevServer> => {
       svelte(),
     ],
     resolve: { dedupe: ['svelte'] },
-    root: process.cwd(),
+    root: repositoryDirectory,
     server: { host: '127.0.0.1', hmr: false, port: 0, strictPort: true, ws: false },
   });
   return server;

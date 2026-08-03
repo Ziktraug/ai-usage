@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
 import { type Browser, chromium, type Locator, type Page } from 'playwright';
 import { createServer, type ViteDevServer } from 'vite';
@@ -29,6 +30,7 @@ const fixtureEntry = [
   'window.__d2OverlaysReady = true;',
 ].join('\n');
 const virtualEntryId = '\0d2-overlays-entry';
+const repositoryDirectory = fileURLToPath(new URL('../../../../../', import.meta.url));
 
 const fail = (message: string): never => {
   throw new Error(`D2 browser fixture: ${message}`);
@@ -111,7 +113,7 @@ const fixtureServer = async (): Promise<ViteDevServer> =>
       svelte(),
     ],
     resolve: { dedupe: ['svelte'] },
-    root: process.cwd(),
+    root: repositoryDirectory,
     server: { host: '127.0.0.1', hmr: false, port: 0, strictPort: true, ws: false },
   });
 
@@ -232,6 +234,7 @@ try {
     'Popover moves focus into its content',
   );
   await page.keyboard.press('Escape');
+  await assertHidden(popover, 'Popover did not hide after Escape');
   await assertCount(page.locator(popoverSelector), 0, 'Popover unmounts after Escape');
   await assertFocused(popoverTrigger, 'Popover Escape returns focus to its trigger');
 
@@ -260,11 +263,13 @@ try {
     'Tooltip trigger is associated with its content',
   );
   await page.keyboard.press('Escape');
+  await assertHidden(tooltip, 'Tooltip did not hide after Escape');
   await assertCount(page.locator(tooltipSelector), 0, 'Tooltip unmounts after Escape');
 
   await tooltipTarget.focus();
   await tooltip.waitFor({ state: 'visible' });
   await outsideTarget.focus();
+  await assertHidden(tooltip, 'Tooltip did not hide after focus left its trigger');
   await assertCount(page.locator(tooltipSelector), 0, 'Tooltip unmounts after focus leaves its trigger');
 
   const provenanceTitle = 'Partial data: The provider omitted part of this interval.';

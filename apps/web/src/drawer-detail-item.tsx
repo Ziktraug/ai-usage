@@ -1,6 +1,6 @@
-import { Popover } from '@ai-usage/design-system';
 import { css } from '@ai-usage/design-system/css';
 import { detailItem, detailLabel, detailValue, popoverContent } from '@ai-usage/design-system/report';
+import { Popover } from '@ai-usage/design-system/solid';
 import { Show } from 'solid-js';
 
 const detailLabelRow = css({

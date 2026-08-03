@@ -1,4 +1,5 @@
 import { afterAll, describe, expect, test } from 'bun:test';
+import { fileURLToPath } from 'node:url';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
 import type { Component } from 'svelte';
 import { createServer } from 'vite';
@@ -26,13 +27,14 @@ const rendererFrom = (loaded: unknown): SvelteServerModule => {
   return loaded as SvelteServerModule;
 };
 
+const repositoryDirectory = fileURLToPath(new URL('../../../../../', import.meta.url));
 const viteServer = await createServer({
   appType: 'custom',
   configFile: false,
   optimizeDeps: { exclude: ['svelte'], noDiscovery: true },
   plugins: [svelte()],
   resolve: { conditions: ['svelte'], dedupe: ['svelte'] },
-  root: process.cwd(),
+  root: repositoryDirectory,
   server: { hmr: false, middlewareMode: true, ws: false },
   ssr: { noExternal: true },
 });

@@ -1,4 +1,3 @@
-import { Popover } from '@ai-usage/design-system';
 import { css, cx } from '@ai-usage/design-system/css';
 import {
   metricDelta,
@@ -8,6 +7,7 @@ import {
   metricValue,
   popoverContent,
 } from '@ai-usage/design-system/report';
+import { Popover } from '@ai-usage/design-system/solid';
 import { For, Show } from 'solid-js';
 import {
   type Metric,

@@ -1,6 +1,6 @@
-import { Drawer } from '@ai-usage/design-system';
 import { css, cx } from '@ai-usage/design-system/css';
 import { drawer } from '@ai-usage/design-system/report';
+import { Drawer } from '@ai-usage/design-system/solid';
 import type { ProviderQuotaHistoryResult } from '@ai-usage/report-core/provider-quota';
 import { createMemo, createSignal, For, Show } from 'solid-js';
 import {

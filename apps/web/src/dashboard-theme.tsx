@@ -1,5 +1,5 @@
-import { Toggle } from '@ai-usage/design-system';
 import { themeToggleButton } from '@ai-usage/design-system/report';
+import { Toggle } from '@ai-usage/design-system/solid';
 import { ClientOnly } from '@tanstack/solid-router';
 import { createSignal, onCleanup, onMount, Show } from 'solid-js';
 

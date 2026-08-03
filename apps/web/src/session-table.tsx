@@ -1,4 +1,3 @@
-import { Checkbox, Popover } from '@ai-usage/design-system';
 import { cx } from '@ai-usage/design-system/css';
 import {
   desktopTableSurface,
@@ -37,6 +36,7 @@ import {
   tableControls,
   tableWrap,
 } from '@ai-usage/design-system/report';
+import { Checkbox, Popover } from '@ai-usage/design-system/solid';
 import type { Column, ExpandedState, Row } from '@tanstack/solid-table';
 import { createSolidTable, flexRender, getCoreRowModel, getExpandedRowModel } from '@tanstack/solid-table';
 import { type Accessor, createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from 'solid-js';

@@ -1,4 +1,3 @@
-import { Drawer } from '@ai-usage/design-system';
 import { css, cx } from '@ai-usage/design-system/css';
 import {
   drawer,
@@ -18,6 +17,7 @@ import {
   ghostButton,
   muted,
 } from '@ai-usage/design-system/report';
+import { Drawer } from '@ai-usage/design-system/solid';
 import { provenanceForUsageRow } from '@ai-usage/report-core/provenance';
 import type { SessionDetailResponse } from '@ai-usage/report-core/session-detail';
 import type { SessionVcsResolveResponse } from '@ai-usage/report-core/session-vcs';

@@ -3,7 +3,7 @@ import { aiUsagePreset } from './src/preset';
 
 export default defineConfig({
   preflight: true,
-  include: ['./src/**/*.{ts,tsx}'],
+  include: ['./src/**/*.{ts,tsx,svelte}'],
   exclude: [],
   jsxFramework: 'solid',
   outdir: 'styled-system',

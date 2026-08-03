@@ -1,5 +1,5 @@
-import { Tabs } from '@ai-usage/design-system';
 import { unavailableText } from '@ai-usage/design-system/report';
+import { Tabs } from '@ai-usage/design-system/solid';
 import type { AnalyticsGroup } from '@ai-usage/report-core/analytics';
 import type { ProjectGroupConfig } from '@ai-usage/report-core/project-group';
 import { lazy, Suspense } from 'solid-js';

@@ -1,6 +1,6 @@
-import { Checkbox, Popover } from '@ai-usage/design-system';
 import { css, cx } from '@ai-usage/design-system/css';
 import { ghostButton, popoverContent, popoverGrid, popoverHeader } from '@ai-usage/design-system/report';
+import { Checkbox, Popover } from '@ai-usage/design-system/solid';
 import { type SessionOrigin, sessionOriginLabel, sessionOrigins } from '@ai-usage/report-core/session-query';
 import { For } from 'solid-js';
 import { defaultDashboardOrigins, isDefaultDashboardOriginSelection } from './dashboard-search';

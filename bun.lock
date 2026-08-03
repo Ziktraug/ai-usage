@@ -89,13 +89,16 @@
       "version": "0.1.0",
       "dependencies": {
         "@ark-ui/solid": "^5.37.1",
+        "@ark-ui/svelte": "5.22.1",
       },
       "devDependencies": {
         "@pandacss/dev": "1.12.0",
         "solid-js": "^1.9.13",
+        "svelte": "5.56.8",
       },
       "peerDependencies": {
         "solid-js": "^1.9.13",
+        "svelte": "5.56.8",
       },
     },
     "packages/effect-runtime": {

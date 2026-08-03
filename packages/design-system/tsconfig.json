@@ -7,5 +7,11 @@
     "types": ["bun"],
     "strictNullChecks": true
   },
-  "include": ["src/**/*.ts", "src/**/*.tsx", "panda.config.ts", "styled-system"]
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.tsx",
+    "src/**/*.svelte",
+    "panda.config.ts",
+    "styled-system"
+  ]
 }

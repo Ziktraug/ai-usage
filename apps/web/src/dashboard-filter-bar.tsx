@@ -1,6 +1,6 @@
-import { MultiSelect, Tooltip } from '@ai-usage/design-system';
 import { css } from '@ai-usage/design-system/css';
 import { searchInput, summaryPill } from '@ai-usage/design-system/report';
+import { MultiSelect, Tooltip } from '@ai-usage/design-system/solid';
 import type { SessionOrigin } from '@ai-usage/report-core/session-query';
 import { Show } from 'solid-js';
 import { SourceControlSummary } from './components/source-control-summary';
