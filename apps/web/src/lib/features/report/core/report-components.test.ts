@@ -60,7 +60,7 @@ const viteServer = await createServer({
     dedupe: ['svelte'],
   },
   root: repositoryDirectory,
-  server: { hmr: false, middlewareMode: true, ws: false },
+  server: { hmr: false, middlewareMode: true, watch: null, ws: false },
   ssr: { noExternal: true },
 });
 const [overviewModule, rootModule, serverModule] = await Promise.all([

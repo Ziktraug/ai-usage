@@ -32,7 +32,7 @@ const viteServer = await createServer({
   plugins: [...svelte()],
   resolve: { conditions: ['svelte'], dedupe: ['svelte'] },
   root: repositoryDirectory,
-  server: { hmr: false, middlewareMode: true, ws: false },
+  server: { hmr: false, middlewareMode: true, watch: null, ws: false },
   ssr: { noExternal: true },
 });
 const [fixtureModule, serverModule] = await Promise.all([
