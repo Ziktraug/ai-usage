@@ -7,7 +7,7 @@ import {
   type Request,
   type Response,
 } from '@playwright/test';
-import { RPC_PATH_PREFIX } from './rpc-test-transport';
+import { isExpectedSkillsSaveFailureResponse, RPC_PATH_PREFIX } from './rpc-test-transport';
 
 const CRITICAL_RESOURCE_TYPES = new Set(['document', 'fetch', 'xhr']);
 const SOURCE_CONTROL_EVENTS_PATH = '/api/source-control';
@@ -88,6 +88,15 @@ export const test = base.extend<{ browserFailureGate: undefined }>({
           },
           response: (response) => {
             if (response.status() < 400 || !isCriticalRequest(response.request())) {
+              return;
+            }
+            if (
+              isExpectedSkillsSaveFailureResponse({
+                headers: response.headers(),
+                pathname: requestPath(response.request()),
+                status: response.status(),
+              })
+            ) {
               return;
             }
             failures.push(

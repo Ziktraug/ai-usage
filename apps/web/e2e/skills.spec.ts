@@ -1,6 +1,6 @@
 import type { Page } from '@playwright/test';
 import { expect, test } from './browser-test';
-import { rpcRouteFulfillmentForClientResult } from './rpc-test-transport';
+import { rpcRouteFulfillmentForClientResult, SKILLS_SAVE_RPC_PATH } from './rpc-test-transport';
 
 const ALPHA_SKILL_CONTENT = '# alpha-skill\n\nDeterministic Playwright fixture.\n';
 const ALPHA_SKILL_URL = /\/skills\/global\/alpha-skill$/;
@@ -14,7 +14,7 @@ const SKILLS_MATRIX_URL = /\/skills\/matrix$/;
 const CREATED_TARGET_PATTERN = /Created target directory/;
 const LONG_PROJECT_LABEL = 'customer-analytics-platform-with-an-exceptionally-long-scope-name';
 const MOBILE_VIEWPORT = { height: 844, width: 390 } as const;
-const SAVE_MANAGED_MARKDOWN_RPC_ROUTE = '**/rpc/skills/saveManagedMarkdown';
+const SAVE_MANAGED_MARKDOWN_RPC_ROUTE = `**${SKILLS_SAVE_RPC_PATH}`;
 const SKILL_TOGGLE_ACTION_PATTERN = /^(Disable|Enable)$/;
 const SUCCESS_NOTICE_DISMISS_DELAY_MS = 5000;
 const WHITESPACE_PATTERN = /\s+/g;
@@ -31,6 +31,7 @@ const interceptSaveResultForDraft = async (page: Page, draftMarker: string, resu
     await route.fulfill({
       body: fulfillment.body,
       contentType: 'application/json',
+      headers: fulfillment.headers,
       status: fulfillment.status,
     });
   });

@@ -4,8 +4,11 @@ export const RPC_PATH_PREFIX = '/rpc/';
 export const RPC_ROUTE_GLOB = '**/rpc/**';
 export const MANUAL_MERGE_DOWNLOAD_PATH = '/api/manual-merge/download';
 export const MANUAL_MERGE_UPLOAD_PATH = '/api/manual-merge/upload';
+export const SKILLS_SAVE_RPC_PATH = '/rpc/skills/saveManagedMarkdown';
 
 const DEFINED_INTERCEPTION_ERROR_STATUS = 503;
+const EXPECTED_RPC_FAILURE_HEADER = 'x-ai-usage-e2e-expected-rpc-failure';
+const SKILLS_SAVE_FAILURE_MARKER = 'skills-save-interception';
 const rpcSerializer = new StandardRPCSerializer(new StandardRPCJsonSerializer());
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -43,8 +46,19 @@ export const rpcStringFieldValues = (body: string, fieldName: string): string[] 
 
 export interface RpcRouteFulfillment {
   readonly body: string;
+  readonly headers: Record<string, string>;
   readonly status: number;
 }
+export interface RpcResponseIdentity {
+  readonly headers: Readonly<Record<string, string>>;
+  readonly pathname: string;
+  readonly status: number;
+}
+
+export const isExpectedSkillsSaveFailureResponse = (response: RpcResponseIdentity): boolean =>
+  response.status === DEFINED_INTERCEPTION_ERROR_STATUS &&
+  response.pathname === SKILLS_SAVE_RPC_PATH &&
+  response.headers[EXPECTED_RPC_FAILURE_HEADER] === SKILLS_SAVE_FAILURE_MARKER;
 
 export const rpcRouteFulfillmentForClientResult = (result: unknown): RpcRouteFulfillment => {
   if (!(isRecord(result) && typeof result.ok === 'boolean')) {
@@ -54,7 +68,7 @@ export const rpcRouteFulfillmentForClientResult = (result: unknown): RpcRouteFul
     if (!Object.hasOwn(result, 'data')) {
       throw new Error('An intercepted successful RPC client result must expose data.');
     }
-    return { body: encodeRpcResponseBody(result.data), status: 200 };
+    return { body: encodeRpcResponseBody(result.data), headers: {}, status: 200 };
   }
 
   const error = result.error;
@@ -70,5 +84,6 @@ export const rpcRouteFulfillmentForClientResult = (result: unknown): RpcRouteFul
       status: DEFINED_INTERCEPTION_ERROR_STATUS,
     }),
     status: DEFINED_INTERCEPTION_ERROR_STATUS,
+    headers: { [EXPECTED_RPC_FAILURE_HEADER]: SKILLS_SAVE_FAILURE_MARKER },
   };
 };

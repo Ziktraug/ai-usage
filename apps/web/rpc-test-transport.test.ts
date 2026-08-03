@@ -1,14 +1,16 @@
 import { describe, expect, test } from 'bun:test';
-import { createWebRpcClient } from '../src/lib/rpc/client';
-import { createSkillsClient } from '../src/lib/rpc/skills-client';
 import {
   decodeRpcResponseBody,
   encodeRpcResponseBody,
+  isExpectedSkillsSaveFailureResponse,
   isRpcPathname,
   type RpcRouteFulfillment,
   rpcRouteFulfillmentForClientResult,
   rpcStringFieldValues,
-} from './rpc-test-transport';
+  SKILLS_SAVE_RPC_PATH,
+} from './e2e/rpc-test-transport';
+import { createWebRpcClient } from './src/lib/rpc/client';
+import { createSkillsClient } from './src/lib/rpc/skills-client';
 
 const saveInput = {
   baseSha256: 'a'.repeat(64),
@@ -22,7 +24,7 @@ const skillsClientFor = (fulfillment: RpcRouteFulfillment) =>
       fetch: () =>
         Promise.resolve(
           new Response(fulfillment.body, {
-            headers: { 'content-type': 'application/json' },
+            headers: { 'content-type': 'application/json', ...fulfillment.headers },
             status: fulfillment.status,
           }),
         ),
@@ -71,6 +73,17 @@ describe('RPC test transport helpers', () => {
       ok: false,
     });
     expect(failure.status).toBe(503);
+    const expectedFailureResponse = {
+      headers: failure.headers,
+      pathname: SKILLS_SAVE_RPC_PATH,
+      status: failure.status,
+    };
+    expect(isExpectedSkillsSaveFailureResponse(expectedFailureResponse)).toBe(true);
+    expect(isExpectedSkillsSaveFailureResponse({ ...expectedFailureResponse, headers: {} })).toBe(false);
+    expect(isExpectedSkillsSaveFailureResponse({ ...expectedFailureResponse, pathname: '/rpc/report/overview' })).toBe(
+      false,
+    );
+    expect(isExpectedSkillsSaveFailureResponse({ ...expectedFailureResponse, status: 500 })).toBe(false);
     expect(await skillsClientFor(failure).saveManagedSkillMarkdown(saveInput)).toEqual({
       error: { message: 'Storage unavailable', tag: 'E2ESaveFailure' },
       ok: false,
