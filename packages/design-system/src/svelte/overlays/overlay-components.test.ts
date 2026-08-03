@@ -1,0 +1,91 @@
+import { describe, expect, test } from 'bun:test';
+import { readFile } from 'node:fs/promises';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const overlayDirectory = dirname(fileURLToPath(import.meta.url));
+const repositoryDirectory = resolve(overlayDirectory, '../../../../..');
+
+const readOverlay = async (name: string): Promise<string> => readFile(resolve(overlayDirectory, name), 'utf8');
+
+interface CompilerResult {
+  exitCode: number;
+  stderr: string;
+}
+
+const compileOverlay = async (name: string): Promise<CompilerResult> => {
+  const sourcePath = resolve(overlayDirectory, name);
+  const compilerProcess = Bun.spawn(
+    [
+      'bun',
+      '--no-env-file',
+      '-e',
+      `import { readFile } from "node:fs/promises"; import { compile } from "svelte/compiler"; const sourcePath = process.argv[1]; const source = await readFile(sourcePath, "utf8"); const result = compile(source, { filename: sourcePath, generate: "client", modernAst: true, runes: true }); const warnings = result.warnings.filter((warning) => warning.code !== "css_unused_selector"); if (warnings.length > 0) { console.error(JSON.stringify(warnings)); process.exit(1); }`,
+      sourcePath,
+    ],
+    { cwd: repositoryDirectory, stderr: 'pipe', stdout: 'pipe' },
+  );
+  const [exitCode, stderr] = await Promise.all([compilerProcess.exited, new Response(compilerProcess.stderr).text()]);
+  return { exitCode, stderr };
+};
+
+describe('Svelte overlay components', () => {
+  test('all public components and the real fixture compile with Svelte 5 runes', async () => {
+    for (const component of [
+      'drawer.svelte',
+      'popover.svelte',
+      'tooltip.svelte',
+      'provenance-marker.svelte',
+      'cell-with-provenance.svelte',
+      'overlay-fixture.svelte',
+    ]) {
+      const result = await compileOverlay(component);
+      expect(result.stderr).toBe('');
+      expect(result.exitCode).toBe(0);
+    }
+  });
+
+  test('Drawer delegates the complete controlled focus and dismissal contract to Ark', async () => {
+    const source = await readOverlay('drawer.svelte');
+    for (const contract of [
+      '{closeOnInteractOutside}',
+      '{finalFocusEl}',
+      '{initialFocusEl}',
+      '{modal}',
+      '{open}',
+      '{trapFocus}',
+      'onOpenChange(details.open)',
+      '<Portal>',
+      '<Drawer.Positioner>',
+    ]) {
+      expect(source).toContain(contract);
+    }
+    expect(source).toContain('prefers-reduced-motion: reduce');
+  });
+
+  test('Popover remains lazy, portalled, dismissible, and positioned with a four-pixel gutter', async () => {
+    const source = await readOverlay('popover.svelte');
+    expect(source).toContain('lazyMount positioning={{ gutter: 4 }} unmountOnExit');
+    expect(source).toContain('<Portal>');
+    expect(source).toContain('type="button"');
+    expect(source).toContain('triggerAriaLabel');
+    expect(source).toContain('triggerTitle');
+  });
+
+  test('Tooltip keeps the 300ms default, arbitrary content, span trigger, lazy portal, and cleanup owner', async () => {
+    const source = await readOverlay('tooltip.svelte');
+    expect(source).toContain('openDelay = 300');
+    expect(source).toContain('content: Snippet | string');
+    expect(source).toContain('<span {..._triggerProps()}>');
+    expect(source).toContain('lazyMount {openDelay} unmountOnExit');
+    expect(source).toContain('<Portal>');
+  });
+
+  test('the fixture directly consumes every overlay without a feature barrel', async () => {
+    const source = await readOverlay('overlay-fixture.svelte');
+    expect(source).toContain("import Drawer from './drawer.svelte'");
+    expect(source).toContain("import Popover from './popover.svelte'");
+    expect(source).toContain("import Tooltip from './tooltip.svelte'");
+    expect(source).toContain('<CellWithProvenance {facts}>');
+  });
+});
