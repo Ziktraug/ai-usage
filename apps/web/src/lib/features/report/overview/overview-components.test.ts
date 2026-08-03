@@ -102,6 +102,7 @@ describe('P2 Overview Svelte surfaces', () => {
     expect(body).toContain('Punchcard');
     expect(body).toContain('Campaign · Day · Estimated API-equivalent value');
     expect(body).toContain('data-series-key="');
+    expect(body).toContain('background: hsl(');
     expect(body).toContain('data-punchcard-cell-fill');
     expect(body).not.toContain('Loading report');
   });

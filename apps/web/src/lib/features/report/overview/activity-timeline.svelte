@@ -52,6 +52,7 @@
 </script>
 
 <script lang="ts">
+  import { stableSeriesColor } from '@ai-usage/design-system/svelte';
   import type { FocusedTimelineData, FocusedTimelineSeries } from '@ai-usage/report-core/focused-report-query';
   import { onMount } from 'svelte';
   import type { TimelineValue } from '../../../../overview-model';
@@ -223,6 +224,7 @@
                 class={segment}
                 data-series-key={series.key}
                 title={`${series.label}: ${formattedAmount(amountFor(entry), bucketTotal(bucket))}`}
+                style:background={stableSeriesColor(series.key)}
                 style:height={`${heightFor(bucket, amountFor(entry))}%`}
                 style:opacity={hoveredKey === null || hoveredKey === series.key ? 1 : 0.26}
               ></span>
@@ -274,7 +276,8 @@
             title={filterable ? `${active ? 'Clear or replace' : 'Filter by'} ${series.label}` : series.label}
             type="button"
           >
-            <span aria-hidden="true" class={swatch}></span>{series.label}
+            <span aria-hidden="true" class={swatch} style:background={stableSeriesColor(series.key)}></span>
+            {series.label}
             <span class={percentage}
               >{fmtPct(timelineSharePercent(total, useSessions ? timeline.grandSessions : timeline.grandTotal))}</span
             >

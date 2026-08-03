@@ -1,4 +1,5 @@
 export { commandButton, themeToggleButton } from './components/button';
+export { stableSeriesColor } from './components/chart';
 export { header, meta, page, shell, title, titleBlock } from './components/layout';
 export { panel, panelSub, panelTitle } from './components/panel';
 export { default as MultiSelect } from './svelte/compound/multi-select.svelte';

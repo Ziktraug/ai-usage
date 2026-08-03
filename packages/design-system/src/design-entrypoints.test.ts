@@ -58,6 +58,9 @@ test('public design entrypoints keep framework runtimes explicit', async () => {
   expect(await Bun.file(path.join(packageSourceDirectory, 'svelte.ts')).text()).toContain(
     "from './svelte/controls/toggle.svelte'",
   );
+  expect(await Bun.file(path.join(packageSourceDirectory, 'svelte.ts')).text()).toContain(
+    "export { stableSeriesColor } from './components/chart'",
+  );
 });
 
 test('the public Svelte dependency closure cannot reach Solid or Ark Solid', async () => {
