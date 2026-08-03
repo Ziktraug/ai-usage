@@ -126,6 +126,9 @@ try {
   await toggle.press('Enter');
   await assertAttribute(toggle, 'aria-pressed', 'true', 'Enter updates controlled state');
   await assertAttribute(toggleFixture, 'data-changes', '3', 'Enter invokes pressed callback once');
+  await page.getByRole('button', { name: 'Reset synthetic toggle' }).click();
+  await assertAttribute(toggle, 'aria-pressed', 'false', 'external controlled state updates the mounted toggle');
+  await assertAttribute(toggleFixture, 'data-changes', '3', 'external controlled state emits no callback');
   await disabledToggle.click({ force: true });
   await disabledToggle.press('Space');
   await assertAttribute(disabledToggle, 'aria-pressed', 'false', 'disabled toggle remains unpressed');

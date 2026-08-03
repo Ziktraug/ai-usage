@@ -26,8 +26,30 @@
     pressed,
     title,
   }: ToggleProps = $props();
+
+  const handleClick = (event: MouseEvent): void => {
+    onClick?.(event);
+    if (disabled || event.defaultPrevented) {
+      return;
+    }
+    event.preventDefault();
+    onPressedChange(!pressed);
+  };
+  const controlledStateAttributes = $derived({
+    'aria-pressed': pressed,
+    'data-pressed': pressed ? '' : undefined,
+    'data-state': pressed ? 'on' : 'off',
+  });
 </script>
 
-<Toggle.Root aria-label={ariaLabel} class={className} {disabled} onclick={onClick} {onPressedChange} {pressed} {title}>
+<Toggle.Root
+  {...controlledStateAttributes}
+  aria-label={ariaLabel}
+  class={className}
+  {disabled}
+  onclick={handleClick}
+  {pressed}
+  {title}
+>
   {@render children()}
 </Toggle.Root>

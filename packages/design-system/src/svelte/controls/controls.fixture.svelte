@@ -38,6 +38,7 @@
     >
       Synthetic toggle
     </Toggle>
+    <button onclick={() => (pressed = false)} type="button">Reset synthetic toggle</button>
     <Toggle ariaLabel="Disabled synthetic feature" disabled onPressedChange={retainDisabledState} pressed={false}>
       Disabled toggle
     </Toggle>

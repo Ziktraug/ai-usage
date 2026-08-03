@@ -102,6 +102,7 @@ test('resolves stored and system theme before paint and toggles the named prefer
   await page.getByRole('button', { name: 'Switch to dark theme' }).click();
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
   const toggle = page.getByRole('button', { name: 'Switch to light theme' });
+  await expect(toggle).toBeFocused();
   await expect(toggle).toHaveAttribute('aria-pressed', 'true');
   expect(await page.evaluate(() => localStorage.getItem('ai-usage-theme'))).toBe('dark');
   await page.reload();
