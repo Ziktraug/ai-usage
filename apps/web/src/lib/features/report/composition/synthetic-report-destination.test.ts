@@ -17,8 +17,18 @@ import {
   machineLabelPresentationForSnapshot,
 } from '../../../../machine-freshness-presentation';
 import { demoReportPayload } from '../../../../report-data';
+import { createSessionDetailController } from '../../sessions/detail/controller';
+import type { SessionDetailQueryOwner } from '../../sessions/detail/query-owner';
 
 const sourcePath = new URL('./synthetic-report-destination.svelte', import.meta.url);
+const syntheticDetailQueryOwner = (): SessionDetailQueryOwner => ({
+  close: () => undefined,
+  loadDetail: () => Promise.resolve(undefined),
+  loadNeighbors: () => Promise.resolve(undefined),
+  loadVcs: () => Promise.resolve(undefined),
+  resetDetail: () => undefined,
+  resetVcs: () => undefined,
+});
 
 describe('synthetic report campaign presentation', () => {
   test('renames every synthetic campaign projection locally and resets to the stable derived label after reopen', () => {
@@ -73,6 +83,60 @@ describe('synthetic report campaign presentation', () => {
     );
     expect(resetOverrides).toEqual([]);
   });
+  test('republishes an open drawer across rename and reset without changing selection or filter identity', () => {
+    const allRows = demoReportPayload.rows.map(enrichSessionPresentationRow);
+    const campaignRow = buildCampaignTableRows(allRows, allRows, [{ desc: true, id: 'date' }]).find(
+      ({ sessionLabel }) => sessionLabel === 'Build report UI',
+    );
+    if (!campaignRow?.campaignKey) {
+      throw new Error('Expected the synthetic Codex campaign drawer row');
+    }
+    const campaignKey = campaignRow.campaignKey;
+    const selectedRowIds: (string | null)[] = [];
+    const controller = createSessionDetailController({
+      onSelectedRowId: (rowId) => selectedRowIds.push(rowId),
+      query: syntheticDetailQueryOwner(),
+      rows: () => [campaignRow],
+    });
+    const publishedLabels: string[] = [];
+    const unsubscribe = controller.subscribe((snapshot) => {
+      if (snapshot.row) {
+        publishedLabels.push(snapshot.row.sessionLabel);
+      }
+    });
+    controller.select({ row: campaignRow });
+
+    const republish = (overrides: ReturnType<typeof applyCampaignLabelOverrideMutation>): void => {
+      const currentRow = controller.current().row;
+      if (!currentRow) {
+        throw new Error('Expected the campaign drawer to remain open');
+      }
+      const index = indexCampaignLabelOverrides(overrides);
+      const row = presentServedCampaignDisplayRow({ ...currentRow, sessionLabel: campaignRow.sessionLabel }, index);
+      controller.select({ row });
+    };
+    const renamedOverrides = applyCampaignLabelOverrideMutation([], { campaignKey, label: 'Release train' });
+    republish(renamedOverrides);
+    const renamed = controller.current().row;
+    expect(renamed).toMatchObject({
+      campaignKey,
+      rowId: campaignRow.rowId,
+      sessionLabel: 'Release train',
+    });
+
+    const resetOverrides = applyCampaignLabelOverrideMutation(renamedOverrides, { campaignKey, label: null });
+    republish(resetOverrides);
+    expect(controller.current().row).toMatchObject({
+      campaignKey,
+      rowId: campaignRow.rowId,
+      sessionLabel: 'Build report UI',
+    });
+    expect(publishedLabels).toEqual(['Build report UI', 'Release train', 'Build report UI']);
+    expect(selectedRowIds).toEqual([campaignRow.rowId]);
+
+    unsubscribe();
+    controller.dispose();
+  });
 
   test('keeps synthetic machine values stable while presenting frozen stale and unavailable labels', () => {
     const snapshot = machineFreshnessSnapshotFromFocused({
@@ -119,6 +183,9 @@ describe('synthetic report campaign presentation', () => {
     expect(source).toContain('let campaignLabelOverrides = $state<readonly CampaignLabelOverride[]>([])');
     expect(source).toContain('derivedCampaignLabels.get(campaignKey) ?? row.sessionLabel');
     expect(source).toContain('applyCampaignLabelOverrideMutation(campaignLabelOverrides');
+    expect(source).toContain('republishSelectedCampaign(campaignKey, nextIndex)');
+    expect(source).toContain('candidate.rowId === row.rowId ? row : presentCampaignRow(candidate, index)');
+    expect(source).toContain('detailController.select(nextSelection)');
     expect(source).toContain('{presentCampaignSeries}');
     expect(source).toContain('{presentSessionItem}');
     expect(source).toContain('focusedCampaignLabelContext(presented)');

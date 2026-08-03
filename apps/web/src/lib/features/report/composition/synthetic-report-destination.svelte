@@ -204,13 +204,22 @@
   const visibleRows = $derived(
     allRows.filter((row) => matchesFocusedReportQuery(row, focusedQuery, reportSupport.timeZone)),
   );
+  const presentCampaignRow = (
+    row: SessionPresentationRow,
+    index: ReadonlyMap<string, string>,
+  ): SessionPresentationRow => {
+    const campaignKey = row.campaignKey;
+    if (!campaignKey) {
+      return row;
+    }
+    const derivedLabel = derivedCampaignLabels.get(campaignKey) ?? row.sessionLabel;
+    return presentServedCampaignDisplayRow({ ...row, sessionLabel: derivedLabel }, index);
+  };
   const campaignIndex = $derived(indexCampaignLabelOverrides(campaignLabelOverrides));
   const columnVisibility = $derived(columnVisibilityFromDiff(renderedSearch.cols, renderedSearch.colsBase));
   const sorting = $derived([{ ...renderedSearch.sort }]);
   const tableRows = $derived(
-    buildCampaignTableRows(allRows, visibleRows, sorting).map((row) =>
-      presentServedCampaignDisplayRow(row, campaignIndex),
-    ),
+    buildCampaignTableRows(allRows, visibleRows, sorting).map((row) => presentCampaignRow(row, campaignIndex)),
   );
   const sessionResetKey = $derived(
     JSON.stringify({
@@ -227,10 +236,11 @@
     }
     const derivedLabel = derivedCampaignLabels.get(campaignKey) ?? row.sessionLabel;
     const mutate = (label: string | null): Promise<string> => {
-      campaignLabelOverrides = applyCampaignLabelOverrideMutation(campaignLabelOverrides, { campaignKey, label });
-      return Promise.resolve(
-        campaignLabelFor(indexCampaignLabelOverrides(campaignLabelOverrides), campaignKey, derivedLabel),
-      );
+      const nextOverrides = applyCampaignLabelOverrideMutation(campaignLabelOverrides, { campaignKey, label });
+      const nextIndex = indexCampaignLabelOverrides(nextOverrides);
+      campaignLabelOverrides = nextOverrides;
+      republishSelectedCampaign(campaignKey, nextIndex);
+      return Promise.resolve(campaignLabelFor(nextIndex, campaignKey, derivedLabel));
     };
     return {
       campaignKey,
@@ -281,6 +291,21 @@
       rows: () => detailRows,
     }),
   );
+  const republishSelectedCampaign = (campaignKey: string, index: ReadonlyMap<string, string>): void => {
+    const activeSelection = selection;
+    if (!(activeSelection && activeSelection.row.campaignKey === campaignKey)) {
+      return;
+    }
+    const row = presentCampaignRow(activeSelection.row, index);
+    const nextSelection = { ...activeSelection, row };
+    detailRows = detailRows.map((candidate) =>
+      candidate.rowId === row.rowId ? row : presentCampaignRow(candidate, index),
+    );
+    selection = nextSelection;
+    // SessionDetailSlot deduplicates equal identities, so use the
+    // controller's safe same-identity presentation republish seam.
+    detailController.select(nextSelection);
+  };
 
   const selectOverviewSession = (item: FocusedOverviewSessionItem): void => {
     const presented = presentSessionItem(item);
