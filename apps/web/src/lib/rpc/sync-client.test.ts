@@ -143,14 +143,15 @@ describe('Sync browser adapter', () => {
     expect(lying.body?.locked).toBe(false);
   });
 
-  test('cancels a stalled manual-export body immediately with the caller abort reason', async () => {
+  test('does not await never-settling manual-export cancellation cleanup', async () => {
     const secondReadStarted = Promise.withResolvers<void>();
-    let cancellations = 0;
+    const cancellationStarted = Promise.withResolvers<void>();
     let pulls = 0;
     const response = new Response(
       new ReadableStream<Uint8Array>({
         cancel: () => {
-          cancellations += 1;
+          cancellationStarted.resolve();
+          return new Promise<void>(() => undefined);
         },
         pull: (controller) => {
           pulls += 1;
@@ -173,13 +174,58 @@ describe('Sync browser adapter', () => {
     const adapter = createSyncBrowserAdapter(defaultTransport(), () => Promise.resolve(response));
     const controller = new AbortController();
     const reason = { reason: 'manual-export-unmounted' };
+    const outcome = adapter.downloadManualMerge(controller.signal).then(
+      () => ({ error: null, settled: true as const }),
+      (error: unknown) => ({ error, settled: true as const }),
+    );
+
+    await secondReadStarted.promise;
+    controller.abort(reason);
+    await cancellationStarted.promise;
+    const nextTask = new Promise<{ settled: false }>((resolve) => {
+      setTimeout(() => resolve({ settled: false }), 0);
+    });
+    const completion = await Promise.race([outcome, nextTask]);
+
+    expect(completion.settled).toBe(true);
+    expect('error' in completion ? completion.error : null).toBe(reason);
+    expect(response.body?.locked).toBe(false);
+  });
+
+  test('observes rejected manual-export cancellation cleanup without replacing the abort reason', async () => {
+    const secondReadStarted = Promise.withResolvers<void>();
+    let pulls = 0;
+    const response = new Response(
+      new ReadableStream<Uint8Array>({
+        cancel: () => Promise.reject(new Error('manual-export cleanup rejected')),
+        pull: (controller) => {
+          pulls += 1;
+          if (pulls === 1) {
+            controller.enqueue(new TextEncoder().encode('{'));
+            return;
+          }
+          secondReadStarted.resolve();
+          return new Promise<void>(() => undefined);
+        },
+      }),
+      {
+        headers: {
+          'content-disposition': 'attachment; filename="safe.json"',
+          'content-length': '2',
+          'content-type': 'application/json; charset=utf-8',
+        },
+      },
+    );
+    const adapter = createSyncBrowserAdapter(defaultTransport(), () => Promise.resolve(response));
+    const controller = new AbortController();
+    const reason = { reason: 'manual-export-replaced' };
     const pending = adapter.downloadManualMerge(controller.signal);
 
     await secondReadStarted.promise;
     controller.abort(reason);
 
     await expect(pending).rejects.toBe(reason);
-    expect(cancellations).toBe(1);
+    await Promise.resolve();
     expect(response.body?.locked).toBe(false);
   });
 

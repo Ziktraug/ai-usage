@@ -46,9 +46,9 @@ const parseContentLength = (value: string | null, maximumBytes: number): number 
   return bytes;
 };
 
-const cancelReader = async (reader: ReadableStreamDefaultReader<Uint8Array>): Promise<void> => {
+const scheduleReaderCancellation = (reader: ReadableStreamDefaultReader<Uint8Array>): void => {
   try {
-    await reader.cancel();
+    reader.cancel().catch(() => undefined);
   } catch {
     // The stream may already be errored by the same cancellation.
   }
@@ -106,7 +106,7 @@ const readBoundedJson = async (
       }
     } finally {
       if (!complete) {
-        await cancelReader(reader);
+        scheduleReaderCancellation(reader);
       }
       reader.releaseLock();
     }

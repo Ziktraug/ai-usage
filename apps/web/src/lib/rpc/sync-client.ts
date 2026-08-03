@@ -44,17 +44,17 @@ const parseFilename = (value: string | null): string => {
   return filename;
 };
 
-const cancelReader = async (reader: ReadableStreamDefaultReader<Uint8Array>): Promise<void> => {
+const scheduleReaderCancellation = (reader: ReadableStreamDefaultReader<Uint8Array>): void => {
   try {
-    await reader.cancel();
+    reader.cancel().catch(() => undefined);
   } catch {
     // The stream may already be errored by the same cancellation.
   }
 };
 
-const cancelResponseBody = async (response: Response): Promise<void> => {
+const scheduleResponseCancellation = (response: Response): void => {
   try {
-    await response.body?.cancel();
+    response.body?.cancel().catch(() => undefined);
   } catch {
     // Metadata rejection may race with transport cancellation.
   }
@@ -109,7 +109,7 @@ const readManualMergeBytes = async (
     }
   } finally {
     if (!complete) {
-      await cancelReader(reader);
+      scheduleReaderCancellation(reader);
     }
     reader.releaseLock();
   }
@@ -162,7 +162,7 @@ export const createSyncBrowserAdapter = (
         }),
       };
     } catch (error) {
-      await cancelResponseBody(response);
+      scheduleResponseCancellation(response);
       signal?.throwIfAborted();
       throw error;
     }

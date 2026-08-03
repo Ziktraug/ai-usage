@@ -49,6 +49,7 @@ export const exportManualMergeBundle = async (
       ok: true,
     };
   } catch {
+    signal?.throwIfAborted();
     return unavailable();
   }
 };
