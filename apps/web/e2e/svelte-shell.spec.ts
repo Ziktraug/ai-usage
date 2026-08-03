@@ -49,7 +49,10 @@ test('server-renders and reloads every Svelte shell route with accessible naviga
     await expect(page.locator(`[data-route-shell="${route.marker}"]`)).toBeAttached();
     await expect(page.getByRole('complementary', { name: 'Application navigation' })).toBeVisible();
     const activeDestination = activeDestinationFor(route.path, route.heading);
-    await expect(page.getByRole('link', { name: activeDestination })).toHaveAttribute('aria-current', 'page');
+    await expect(page.getByRole('link', { name: activeDestination, exact: true })).toHaveAttribute(
+      'aria-current',
+      'page',
+    );
     expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBe(
       0,
     );
