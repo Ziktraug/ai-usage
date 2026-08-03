@@ -2,6 +2,7 @@
   import { cx } from '@ai-usage/design-system/css';
   import { HarnessBadge } from '@ai-usage/design-system/svelte';
   import { useQueryClient } from '@tanstack/svelte-query';
+  import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { deriveInstallationAction, groupSkillDiagnostics } from '../../../../skill-document-inspector-model';
   import {
@@ -13,6 +14,7 @@
     skillDiagnosticLabel,
     skillInvocation,
   } from '../../../../skills-page-model';
+  import { SKILLS_DESKTOP_MEDIA_QUERY } from '../../../../skills-responsive';
   import { fmtNum } from '../../../foundation/presentation/format';
   import { skillsSnapshotKey } from '../../../query/options/skills';
   import { createBrowserWebRpcClient } from '../../../rpc/client';
@@ -20,11 +22,13 @@
   import type { SkillsShellSlotContext } from '../shell/slot-context';
   import {
     matrixDotTone,
+    observeInspectorDisclosure,
     runSkillsManagementOperation,
     type SkillsManagementClient,
     type SkillsManagementOperation,
     toggleOperation,
   } from './model';
+  import SkillsConfiguration from './skills-configuration.svelte';
   import SkillsConsolidate from './skills-consolidate.svelte';
   import {
     actionRow,
@@ -35,13 +39,11 @@
     diagnosticRow,
     errorNotice,
     heading,
-    infoPill,
     linkedDot,
     missingDot,
     muted,
     notice,
     pathText,
-    pill,
     primaryButton,
     stack,
     statusDot,
@@ -52,6 +54,7 @@
   const queryClient = useQueryClient();
   let browserClient: SkillsManagementClient | undefined;
   let pendingOperation = $state<string | null>(null);
+  let inspectorSectionsOpen = $state(false);
   let operationMessage = $state<{ message: string; tone: 'error' | 'success' } | null>(null);
   const health = $derived(buildSkillHealthSummary(context.snapshot));
   const unmanagedGroups = $derived(groupUnmanagedEntries(context.snapshot));
@@ -66,6 +69,11 @@
       injectedClient ?? createSkillsClient(createBrowserWebRpcClient('skills-management-inspector').skills);
     return browserClient;
   };
+  onMount(() =>
+    observeInspectorDisclosure(window.matchMedia(SKILLS_DESKTOP_MEDIA_QUERY), (open) => {
+      inspectorSectionsOpen = open;
+    }),
+  );
   const successMessage = (operation: SkillsManagementOperation, actionCount: number): string => {
     if (operation === 'preview-reconcile') {
       return 'Reconcile preview refreshed.';
@@ -137,8 +145,9 @@
       </button>
     </section>
     <SkillsConsolidate groups={unmanagedGroups} onReviewEntry={reviewConsolidation} total={health.consolidateCount} />
+    <SkillsConfiguration {...(injectedClient === undefined ? {} : { client: injectedClient })} {context} />
   {:else if selectedSkill}
-    <details class={compactStack} open>
+    <details class={compactStack} data-inspector-section="validation" open={inspectorSectionsOpen}>
       <summary><h3 class={heading}>Validation</h3></summary>
       {#if diagnostics.length === 0}
         <p class={muted}>No validation diagnostics.</p>
@@ -173,7 +182,7 @@
         </fieldset>
       {/each}
     </details>
-    <details class={compactStack} open>
+    <details class={compactStack} data-inspector-section="document" open={inspectorSectionsOpen}>
       <summary><h3 class={heading}>Document</h3></summary>
       <div>
         Total tokens <strong>{selectedSkill.tokenCount ? fmtNum(selectedSkill.tokenCount.total) : 'Unknown'}</strong>
@@ -181,14 +190,14 @@
       <div>Invocation <strong>{skillInvocation(selectedSkill) === 'auto' ? 'Auto' : 'Manual'}</strong></div>
       <div>State <strong>{selectedSkill.enabled ? 'Enabled' : 'Disabled'}</strong></div>
     </details>
-    <details class={compactStack} open>
+    <details class={compactStack} data-inspector-section="source" open={inspectorSectionsOpen}>
       <summary><h3 class={heading}>Source</h3></summary>
       <div class={muted}>Source path</div>
       <code class={pathText} title={selectedSkill.path}>{selectedSkill.path}</code>
       <div class={muted}>SKILL.md</div>
       <code class={pathText} title={selectedSkill.skillMdPath}>{selectedSkill.skillMdPath}</code>
     </details>
-    <details class={compactStack} open>
+    <details class={compactStack} data-inspector-section="installed-in" open={inspectorSectionsOpen}>
       <summary><h3 class={heading}>Installed in</h3></summary>
       <fieldset aria-label="Installed in">
         {#each exposure as item}
@@ -200,8 +209,8 @@
         {/each}
       </fieldset>
     </details>
-    <section class={compactStack}>
-      <h3 class={heading}>Actions</h3>
+    <details class={compactStack} data-inspector-section="actions" open={inspectorSectionsOpen}>
+      <summary><h3 class={heading}>Actions</h3></summary>
       <div class={actionRow}>
         <button
           class={button}
@@ -222,7 +231,7 @@
           </button>
         {/if}
       </div>
-    </section>
+    </details>
   {:else if context.view.selectionDetail.kind === 'project-scope'}
     <section class={compactStack}>
       <h3 class={heading}>Project scope</h3>

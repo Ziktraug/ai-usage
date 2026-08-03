@@ -97,6 +97,14 @@ describe('Svelte Skills workspace SSR', () => {
     expect(html).toContain('data-p9-slot-contract');
     expect(html).not.toContain('Loading skills');
   });
+  test('marks populated and empty scope names with their full labels', () => {
+    const html = render(fixture, { props: { includeEmptyScope: true, pathname: '/skills/global' } }).body;
+    const markers = html.match(/data-skill-scope-name/gu) ?? [];
+
+    expect(markers.length).toBeGreaterThanOrEqual(4);
+    expect(html).toContain('data-skill-scope-name="" title="Synthetic group"');
+    expect(html).toContain('data-skill-scope-name="" title="Synthetic empty project"');
+  });
 
   test('renders nested Project selection and its settled read-only document', () => {
     const html = render(fixture, {

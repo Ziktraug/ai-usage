@@ -51,6 +51,28 @@ describe('Svelte Skills management SSR', () => {
     expect(html).toContain('Disable');
     expect(html).not.toContain('SkillMarkdownTokenWarning');
   });
+  test('renders mobile-safe closed Inspector disclosures with Actions in the same responsive contract', () => {
+    const html = render(fixture).body;
+    const inspectorDisclosures = html.match(/<details[^>]+data-inspector-section="[^"]+"[^>]*>/gu) ?? [];
+
+    expect(inspectorDisclosures).toHaveLength(5);
+    expect(inspectorDisclosures.every((element) => !element.includes(' open'))).toBe(true);
+    expect(html).toContain('data-inspector-section="actions"');
+  });
+
+  test('renders Configuration & runtimes from the settled global snapshot without acquiring a browser client', () => {
+    const html = render(fixture, { props: { pathname: '/skills/global' } }).body;
+
+    expect(html).toContain('data-skills-configuration');
+    expect(html).toContain('Configuration &amp; runtimes');
+    expect(html).toContain('Source repository');
+    expect(html).toContain('value="/synthetic/source"');
+    expect(html).toContain('Project paths');
+    expect(html).toContain('/synthetic/project');
+    expect(html).toContain('Runtimes');
+    expect(html).toContain('Codex');
+    expect(html).toContain('Save source');
+  });
 
   test('renders the responsive matrix, filters, reconcile action, and both projections from settled data', () => {
     const html = render(fixture, { props: { pathname: '/skills/matrix' } }).body;

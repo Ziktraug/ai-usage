@@ -1,6 +1,17 @@
 import { describe, expect, test } from 'bun:test';
 import type { ProjectionAction } from '@ai-usage/skills';
-import { buildSkillsMatrixView, matrixDotTone, runSkillsManagementOperation, toggleOperation } from './model';
+import {
+  buildSkillsMatrixView,
+  editSourceRepositoryDraft,
+  matrixDotTone,
+  observeInspectorDisclosure,
+  runSkillsConfigurationOperation,
+  runSkillsManagementOperation,
+  skillsConfigInput,
+  sourceRepositoryDraftFrom,
+  syncSourceRepositoryDraft,
+  toggleOperation,
+} from './model';
 import { syntheticManagementSnapshot } from './synthetic-fixture.test-helper';
 
 describe('Skills management presentation and mutation seam', () => {
@@ -43,9 +54,11 @@ describe('Skills management presentation and mutation seam', () => {
     ];
     const result = await runSkillsManagementOperation(
       {
+        createManagedSkillTargetDirectory: () => Promise.resolve({ data: snapshot, ok: true }),
         previewReconcileAllManagedSkills: () => Promise.resolve({ data: { actions, snapshot }, ok: true }),
         reconcileAllManagedSkills: () => Promise.resolve({ data: { actions: [], snapshot }, ok: true }),
         reconcileManagedSkill: () => Promise.resolve({ data: { actions: [], snapshot }, ok: true }),
+        saveSkillManagementConfig: () => Promise.resolve({ data: snapshot, ok: true }),
         toggleManagedSkill: () => Promise.resolve({ data: { actions: [], snapshot }, ok: true }),
       },
       'preview-reconcile',
@@ -63,9 +76,11 @@ describe('Skills management presentation and mutation seam', () => {
     const snapshot = syntheticManagementSnapshot();
     const requests: unknown[] = [];
     const client = {
+      createManagedSkillTargetDirectory: () => Promise.resolve({ data: snapshot, ok: true } as const),
       previewReconcileAllManagedSkills: () => Promise.resolve({ data: { actions: [], snapshot }, ok: true } as const),
       reconcileAllManagedSkills: () => Promise.resolve({ data: { actions: [], snapshot }, ok: true } as const),
       reconcileManagedSkill: () => Promise.resolve({ data: { actions: [], snapshot }, ok: true } as const),
+      saveSkillManagementConfig: () => Promise.resolve({ data: snapshot, ok: true } as const),
       toggleManagedSkill: (input: unknown) => {
         requests.push(input);
         return Promise.resolve({ data: { actions: [], snapshot }, ok: true } as const);
@@ -77,5 +92,82 @@ describe('Skills management presentation and mutation seam', () => {
       { enabled: false, skillName: 'alpha-skill' },
       { enabled: true, skillName: 'alpha-skill' },
     ]);
+  });
+  test('preserves a dirty source repository draft across unrelated snapshot refreshes', () => {
+    const snapshot = syntheticManagementSnapshot();
+    const draft = editSourceRepositoryDraft('/synthetic/unsaved-source', snapshot);
+    const refreshedSnapshot = {
+      ...snapshot,
+      summary: { ...snapshot.summary, diagnosticCount: snapshot.summary.diagnosticCount + 1 },
+    };
+
+    expect(syncSourceRepositoryDraft(draft, refreshedSnapshot)).toBe(draft);
+    expect(syncSourceRepositoryDraft(sourceRepositoryDraftFrom(snapshot), refreshedSnapshot)).toEqual({
+      dirty: false,
+      value: '/synthetic/source',
+    });
+    expect(skillsConfigInput(snapshot, { sourceRepoPath: ' /synthetic/replacement ' })).toEqual({
+      ...snapshot.config,
+      sourceRepoPath: '/synthetic/replacement',
+    });
+  });
+
+  test('routes source saves and target creation through typed snapshot operations', async () => {
+    const snapshot = syntheticManagementSnapshot();
+    const requests: unknown[] = [];
+    const client = {
+      createManagedSkillTargetDirectory: (input: unknown) => {
+        requests.push({ input, type: 'create-target' });
+        return Promise.resolve({ data: snapshot, ok: true } as const);
+      },
+      previewReconcileAllManagedSkills: () => Promise.resolve({ data: { actions: [], snapshot }, ok: true } as const),
+      reconcileAllManagedSkills: () => Promise.resolve({ data: { actions: [], snapshot }, ok: true } as const),
+      reconcileManagedSkill: () => Promise.resolve({ data: { actions: [], snapshot }, ok: true } as const),
+      saveSkillManagementConfig: (input: unknown) => {
+        requests.push({ input, type: 'save-config' });
+        return Promise.resolve({ data: snapshot, ok: true } as const);
+      },
+      toggleManagedSkill: () => Promise.resolve({ data: { actions: [], snapshot }, ok: true } as const),
+    };
+
+    const config = skillsConfigInput(snapshot, { sourceRepoPath: '/synthetic/replacement' });
+    expect(await runSkillsConfigurationOperation(client, { config, type: 'save-config' })).toEqual({
+      ok: true,
+      snapshot,
+    });
+    expect(await runSkillsConfigurationOperation(client, { targetId: 'codex', type: 'create-target' })).toEqual({
+      ok: true,
+      snapshot,
+    });
+    expect(requests).toEqual([
+      { input: config, type: 'save-config' },
+      { input: { targetId: 'codex' }, type: 'create-target' },
+    ]);
+  });
+
+  test('synchronizes responsive Inspector disclosures and removes the media listener', () => {
+    let matches = true;
+    let listener: (() => void) | undefined;
+    let removedListener: (() => void) | undefined;
+    const mediaQuery = {
+      addEventListener: (_type: 'change', nextListener: () => void) => {
+        listener = nextListener;
+      },
+      get matches() {
+        return matches;
+      },
+      removeEventListener: (_type: 'change', nextListener: () => void) => {
+        removedListener = nextListener;
+      },
+    };
+    const observed: boolean[] = [];
+    const cleanup = observeInspectorDisclosure(mediaQuery, (open) => observed.push(open));
+
+    matches = false;
+    listener?.();
+    cleanup();
+
+    expect(observed).toEqual([true, false]);
+    expect(removedListener).toBe(listener);
   });
 });

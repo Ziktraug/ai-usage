@@ -11,16 +11,32 @@
   } from './synthetic-fixture.test-helper';
 
   let {
+    includeEmptyScope = false,
     pathname = '/skills/global/alpha-skill',
   }: {
+    includeEmptyScope?: boolean;
     pathname?: string;
   } = $props();
 
   const wireSnapshot = syntheticSnapshot();
+  const knownProjectPaths = $derived(
+    includeEmptyScope
+      ? [
+          ...syntheticKnownPaths,
+          {
+            label: 'Synthetic empty project',
+            path: '/synthetic/empty-project',
+            project: 'synthetic-empty-project',
+            sessions: 1,
+          },
+        ]
+      : syntheticKnownPaths,
+  );
+
   const view = $derived(
     createSkillsShellViewModel({
       inventories: syntheticInventories,
-      knownProjectPaths: syntheticKnownPaths,
+      knownProjectPaths,
       pathname,
       snapshot: wireSnapshot,
     }),

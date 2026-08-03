@@ -169,7 +169,8 @@
               selection={scope.selection}
               title={scope.path}
             >
-              <span class={label}>{scope.label}</span><span class={count}>{scope.skills.length}</span>
+              <span class={label} data-skill-scope-name title={scope.label}>{scope.label}</span
+              ><span class={count}>{scope.skills.length}</span>
             </SelectionLink>
           </div>
           {#if expanded}
@@ -205,7 +206,8 @@
               selection={scope.selection}
               title={scope.path}
             >
-              <span class={label}>{scope.label}</span><span class={count}>0</span>
+              <span class={label} data-skill-scope-name title={scope.label}>{scope.label}</span
+              ><span class={count}>0</span>
             </SelectionLink>
           {/each}
         </details>

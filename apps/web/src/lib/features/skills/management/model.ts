@@ -1,5 +1,5 @@
-import type { ProjectionAction, SkillManagementSnapshot } from '@ai-usage/skills';
-import { parseSkillReconcileResult } from '../../../../skills-client-contracts';
+import type { ProjectionAction, SkillManagementConfig, SkillManagementSnapshot } from '@ai-usage/skills';
+import { parseSkillReconcileResult, parseSkillSnapshotResult } from '../../../../skills-client-contracts';
 import {
   buildSkillMatrix,
   describeReconcileActions,
@@ -102,11 +102,83 @@ export type SkillsManagementResult =
   | ({ readonly ok: true } & SkillsManagementSuccess);
 
 export interface SkillsManagementClient {
+  createManagedSkillTargetDirectory(input: { targetId: string }): Promise<unknown>;
   previewReconcileAllManagedSkills(): Promise<unknown>;
   reconcileAllManagedSkills(): Promise<unknown>;
   reconcileManagedSkill(skillName: string): Promise<unknown>;
+  saveSkillManagementConfig(input: SkillManagementConfig): Promise<unknown>;
   toggleManagedSkill(input: { enabled: boolean; skillName: string }): Promise<unknown>;
 }
+
+export interface SkillsSourceRepositoryDraft {
+  readonly dirty: boolean;
+  readonly value: string;
+}
+
+export const sourceRepositoryDraftFrom = (snapshot: SkillManagementSnapshot): SkillsSourceRepositoryDraft => ({
+  dirty: false,
+  value: snapshot.config.sourceRepoPath ?? '',
+});
+
+export const editSourceRepositoryDraft = (
+  value: string,
+  snapshot: SkillManagementSnapshot,
+): SkillsSourceRepositoryDraft => ({ dirty: value !== (snapshot.config.sourceRepoPath ?? ''), value });
+
+export const syncSourceRepositoryDraft = (
+  draft: SkillsSourceRepositoryDraft,
+  snapshot: SkillManagementSnapshot,
+): SkillsSourceRepositoryDraft => (draft.dirty ? draft : sourceRepositoryDraftFrom(snapshot));
+
+export const skillsConfigInput = (
+  snapshot: SkillManagementSnapshot,
+  overrides: { readonly projectPaths?: readonly string[]; readonly sourceRepoPath?: string } = {},
+): SkillManagementConfig => {
+  const { projectPaths: _projectPaths, sourceRepoPath: _sourceRepoPath, ...retained } = snapshot.config;
+  const sourceRepoPath = (overrides.sourceRepoPath ?? snapshot.config.sourceRepoPath ?? '').trim();
+  const projectPaths = overrides.projectPaths ?? snapshot.config.projectPaths ?? [];
+  return {
+    ...retained,
+    ...(sourceRepoPath.length > 0 ? { sourceRepoPath } : {}),
+    ...(projectPaths.length > 0 ? { projectPaths } : {}),
+  };
+};
+
+export type SkillsConfigurationOperation =
+  | { readonly config: SkillManagementConfig; readonly type: 'save-config' }
+  | { readonly targetId: string; readonly type: 'create-target' };
+
+export type SkillsConfigurationResult =
+  | { readonly error: string; readonly ok: false }
+  | { readonly ok: true; readonly snapshot: SkillManagementSnapshot };
+
+export const runSkillsConfigurationOperation = async (
+  client: SkillsManagementClient,
+  operation: SkillsConfigurationOperation,
+): Promise<SkillsConfigurationResult> => {
+  const wireResult =
+    operation.type === 'save-config'
+      ? await client.saveSkillManagementConfig(operation.config)
+      : await client.createManagedSkillTargetDirectory({ targetId: operation.targetId });
+  const result = parseSkillSnapshotResult(wireResult);
+  return result.ok ? { ok: true, snapshot: result.data } : { error: result.error.message, ok: false };
+};
+
+export interface InspectorMediaQuery {
+  addEventListener(type: 'change', listener: () => void): void;
+  readonly matches: boolean;
+  removeEventListener(type: 'change', listener: () => void): void;
+}
+
+export const observeInspectorDisclosure = (
+  mediaQuery: InspectorMediaQuery,
+  onChange: (open: boolean) => void,
+): (() => void) => {
+  const synchronize = (): void => onChange(mediaQuery.matches);
+  synchronize();
+  mediaQuery.addEventListener('change', synchronize);
+  return () => mediaQuery.removeEventListener('change', synchronize);
+};
 
 const unwrapReconcile = (wireResult: unknown, preview: boolean): SkillsManagementResult => {
   const result = parseSkillReconcileResult(wireResult);
