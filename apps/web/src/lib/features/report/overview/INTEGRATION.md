@@ -4,7 +4,7 @@ P2 intentionally does not edit P1's report root or the coordinator-owned route.
 At X0, replace `ReportBootstrapOverview` in
 `features/report/core/report-root.svelte` with the focused Overview destination
 below. The candidate P2 implementation commit is
-`0f252cafffbdaf863da5a235c848143154231e07`.
+`5880b09ff810a1894f1366bf50a27abf6b7f40ec`.
 
 ## Compose one focused destination owner
 

@@ -2,9 +2,9 @@ import { currentRecord, sourceInventoryRecords } from '../helpers';
 import { defineParityShard, type ParityEvidence, type ParityRecord } from '../schema';
 
 const owner = 'P2' as const;
-const implementationCommit = '0f252cafffbdaf863da5a235c848143154231e07';
+const implementationCommit = '5880b09ff810a1894f1366bf50a27abf6b7f40ec';
 const focusedGate =
-  'bun test apps/web/src/dashboard-metrics.test.ts apps/web/src/date-range-controller.test.ts apps/web/src/date-range.test.ts apps/web/src/overview-model.test.ts apps/web/src/provider-status-clock.test.ts apps/web/src/provider-status-model.test.ts apps/web/src/provider-status-panel-model.test.ts apps/web/src/provider-status-progress.test.ts apps/web/src/time-range-control-state.test.ts apps/web/src/lib/features/report/overview/*.test.ts apps/web/src/lib/features/report/range/*.test.ts (76 pass, 0 fail, 278 expect calls)';
+  'bun test apps/web/src/dashboard-metrics.test.ts apps/web/src/date-range-controller.test.ts apps/web/src/date-range.test.ts apps/web/src/overview-model.test.ts apps/web/src/provider-status-clock.test.ts apps/web/src/provider-status-model.test.ts apps/web/src/provider-status-panel-model.test.ts apps/web/src/provider-status-progress.test.ts apps/web/src/time-range-control-state.test.ts apps/web/src/lib/features/report/overview/*.test.ts apps/web/src/lib/features/report/range/*.test.ts (95 pass, 0 fail, 352 expect calls)';
 
 const targetEvidence = (kind: ParityEvidence['kind'], reference: string): ParityEvidence => ({
   commit: implementationCommit,
@@ -36,21 +36,21 @@ const feature = (id: string, currentOwner: string, test: string) =>
 const productionTargets: Record<string, { source: string; test: string }> = {
   'apps/web/src/dashboard-metrics.tsx': {
     source: 'apps/web/src/lib/features/report/overview/dashboard-metrics.svelte',
-    test: 'apps/web/src/lib/features/report/overview/dashboard-metrics.test.ts',
+    test: 'apps/web/src/lib/features/report/overview/overview-components.test.ts; apps/web/src/lib/features/report/overview/view-model.test.ts',
   },
   'apps/web/src/overview.tsx': {
     source:
-      'apps/web/src/lib/features/report/overview/overview-page.svelte; apps/web/src/lib/features/report/overview/activity-timeline.svelte; apps/web/src/lib/features/report/overview/records-section.svelte',
-    test: 'apps/web/src/lib/features/report/overview/overview-page.ssr.test.ts; apps/web/src/lib/features/report/overview/activity-timeline.test.ts; apps/web/src/lib/features/report/overview/records-section.test.ts',
+      'apps/web/src/lib/features/report/overview/overview-page.svelte; apps/web/src/lib/features/report/overview/activity-timeline.svelte; apps/web/src/lib/features/report/overview/activity-heatmap.svelte; apps/web/src/lib/features/report/overview/session-shape.svelte; apps/web/src/lib/features/report/overview/records.svelte',
+    test: 'apps/web/src/lib/features/report/overview/overview-components.test.ts; apps/web/src/lib/features/report/overview/timeline-model.test.ts; apps/web/src/lib/features/report/overview/session-shape-model.test.ts',
   },
   'apps/web/src/provider-status-panel.tsx': {
     source: 'apps/web/src/lib/features/report/overview/provider-status.svelte',
-    test: 'apps/web/src/lib/features/report/overview/provider-status.test.ts',
+    test: 'apps/web/src/lib/features/report/overview/overview-components.test.ts; apps/web/src/lib/features/report/overview/provider-presentation.test.ts',
   },
   'apps/web/src/time-range-control.tsx': {
     source:
-      'apps/web/src/lib/features/report/range/report-range-control.svelte; apps/web/src/lib/features/report/range/report-range-navigation.ts; apps/web/src/lib/features/report/range/report-range-transition.ts',
-    test: 'apps/web/src/lib/features/report/range/report-range-control.ssr.test.ts; apps/web/src/lib/features/report/range/report-range-control.test.ts; apps/web/src/lib/features/report/range/report-range-navigation.test.ts; apps/web/src/lib/features/report/range/report-range-transition.test.ts',
+      'apps/web/src/lib/features/report/range/report-range-control.svelte; apps/web/src/lib/features/report/range/report-range-model.ts',
+    test: 'apps/web/src/lib/features/report/overview/overview-components.test.ts; apps/web/src/lib/features/report/range/report-range-model.test.ts',
   },
 };
 
@@ -66,11 +66,11 @@ const withProductionTarget = (record: ParityRecord): ParityRecord => {
 const renderTargets: Record<string, { source: string; test: string }> = {
   'apps/web/src/dashboard-metrics.render.test.tsx': {
     source: 'apps/web/src/lib/features/report/overview/dashboard-metrics.svelte',
-    test: 'apps/web/src/lib/features/report/overview/dashboard-metrics.ssr.test.ts',
+    test: 'apps/web/src/lib/features/report/overview/overview-components.test.ts; apps/web/src/lib/features/report/overview/view-model.test.ts',
   },
   'apps/web/src/overview.render.test.tsx': {
     source: 'apps/web/src/lib/features/report/overview/overview-page.svelte',
-    test: 'apps/web/src/lib/features/report/overview/overview-page.ssr.test.ts',
+    test: 'apps/web/src/lib/features/report/overview/overview-components.test.ts',
   },
 };
 
