@@ -89,7 +89,7 @@ test('server-renders and reloads every Svelte shell route with accessible naviga
   await expect(manage).toBeFocused();
   await expect(manage).toHaveAttribute('aria-expanded', 'false');
   await manage.click();
-  await page.getByRole('link', { name: 'Sources' }).click();
+  await page.getByRole('link', { name: 'Sources', exact: true }).click();
   await expect(page).toHaveURL('/sources');
   await expect(page.getByRole('navigation', { name: 'Manage destinations' })).toHaveCount(0);
 });
@@ -138,7 +138,7 @@ test('blocks dirty navigation through Keep, Discard, reload, focus, and cleanup'
 
   const manage = page.getByRole('button', { name: 'Manage' });
   await manage.click();
-  await page.getByRole('link', { name: 'Sources' }).click();
+  await page.getByRole('link', { name: 'Sources', exact: true }).click();
   await expect(page).toHaveURL('/skills/global/alpha%20skill');
   const prompt = page.getByRole('alertdialog', { name: 'Discard unsaved changes?' });
   await expect(prompt).toBeVisible();
@@ -159,7 +159,7 @@ test('blocks dirty navigation through Keep, Discard, reload, focus, and cleanup'
   await page.setViewportSize({ height: 900, width: 1280 });
 
   const historyLength = await page.evaluate(() => history.length);
-  await page.getByRole('link', { name: 'Sources' }).click();
+  await page.getByRole('link', { name: 'Sources', exact: true }).click();
   await page.getByRole('button', { name: 'Discard changes' }).click();
   await expect(page).toHaveURL('/sources');
   await expect(prompt).toHaveCount(0);

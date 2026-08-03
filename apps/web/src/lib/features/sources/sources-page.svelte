@@ -104,7 +104,7 @@
   const detailsSummary = css({ color: 'muted', fontSize: '12px', fontWeight: 650, cursor: 'pointer' });
 </script>
 
-<main class={page} data-hydrated={controlState.connection === 'stopped' ? 'false' : 'true'}>
+<main class={page} data-hydrated={controlState.connection === 'stopped' ? 'false' : 'true'} data-route-shell="sources">
   <div class={shell}>
     <header class={header}>
       <div class={headerTop}>
