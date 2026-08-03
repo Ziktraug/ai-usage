@@ -2,7 +2,7 @@ import { currentRecord, sourceInventoryRecords } from '../helpers';
 import { defineParityShard, type ParityEvidence, type ParityRecord } from '../schema';
 
 const owner = 'P2' as const;
-const implementationCommit = '5880b09ff810a1894f1366bf50a27abf6b7f40ec';
+const implementationCommit = '045e279242aeef7b76cf86a307974fc8722b3945';
 const focusedGate =
   'bun test apps/web/src/dashboard-metrics.test.ts apps/web/src/date-range-controller.test.ts apps/web/src/date-range.test.ts apps/web/src/overview-model.test.ts apps/web/src/provider-status-clock.test.ts apps/web/src/provider-status-model.test.ts apps/web/src/provider-status-panel-model.test.ts apps/web/src/provider-status-progress.test.ts apps/web/src/time-range-control-state.test.ts apps/web/src/lib/features/report/overview/*.test.ts apps/web/src/lib/features/report/range/*.test.ts (95 pass, 0 fail, 352 expect calls)';
 
