@@ -1,12 +1,18 @@
 import { sveltekit } from '@sveltejs/kit/vite';
 import { defineConfig } from 'vite';
 import { resolveSvelteKitOutputPaths } from './sveltekit-output-paths.ts';
+import { webClientModuleManifest } from './vite-client-module-manifest.ts';
 
-const { viteCacheDirectory } = resolveSvelteKitOutputPaths();
+const { intermediateDirectory, viteCacheDirectory } = resolveSvelteKitOutputPaths();
 
 export default defineConfig({
   cacheDir: viteCacheDirectory,
-  plugins: [sveltekit()],
+  plugins: [
+    sveltekit(),
+    webClientModuleManifest({
+      manifestFile: `${intermediateDirectory}/private/client-modules.json`,
+    }),
+  ],
   server: {
     host: '127.0.0.1',
     watch: {
