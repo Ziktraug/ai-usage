@@ -63,7 +63,7 @@ const renderReplacement = (currentOwner: string, source: string, test: string): 
   });
 
 const detailTestCommand =
-  'bun test apps/web/src/lib/features/sessions/detail/*.test.ts apps/web/src/dashboard-session-selection.test.ts apps/web/src/session-analysis.test.ts apps/web/src/session-analysis-model.test.ts apps/web/src/session-analysis-presentation.test.ts apps/web/src/session-analysis-error.test.ts apps/web/src/session-analysis-target.test.ts apps/web/src/session-neighbor-request-controller.test.ts apps/web/src/lib/query/options/session.test.ts';
+  'bun test apps/web/src/lib/features/sessions/detail/*.test.ts apps/web/src/drawer-detail-item.render.test.tsx apps/web/src/highlighted-text.render.test.tsx apps/web/src/session-analysis.render.test.tsx apps/web/src/session-drawer.render.test.tsx apps/web/src/session-vcs-summary.test.tsx apps/web/src/dashboard-session-selection.test.ts apps/web/src/session-analysis.test.ts apps/web/src/session-analysis-model.test.ts apps/web/src/session-analysis-presentation.test.ts apps/web/src/session-analysis-error.test.ts apps/web/src/session-analysis-target.test.ts apps/web/src/session-detail-client.test.ts apps/web/src/session-vcs-client.test.ts apps/web/src/session-neighbor-request-controller.test.ts apps/web/src/lib/query/options/session.test.ts apps/web/src/lib/rpc/session-client.test.ts apps/web/src/lib/server/rpc/session.test.ts';
 
 export default defineParityShard({
   owner,
