@@ -12,11 +12,11 @@ authority for feature, operation, design, source-file, and test-title coverage.
 - Planning PR: `#26`, squash-merged as
   `2183270ebfbb886fafa7e6268893122db9b364c0`
 - `BASE_SHA`: `2183270ebfbb886fafa7e6268893122db9b364c0`
-- Current integration checkpoint: `1c0756086df55e328354228f2a733c8bc9756106`
-- Last reviewed green checkpoint: `1c0756086df55e328354228f2a733c8bc9756106`
-- Active design bases: D1 `ccd1d29`, D2 `32df0d7`
+- Current integration checkpoint: `4ddf145e4d29f92e059fb8deec3513e8af076d5b`
+- Last reviewed green checkpoint: `4ddf145e4d29f92e059fb8deec3513e8af076d5b`
+- Active design bases: D1 `4862293`, D2 `fce5c1a`, D3 `e2f13cd`
 - Implementation PR: not opened
-- Exclusive process-test token: free after the complete F0 tool-lifecycle gate
+- Exclusive process-test token: free after the V5 Nitro loopback and D4 browser gates
 
 The integration branch did not exist locally or remotely before this run. Local
 `main` and `origin/main` were clean and aligned at `BASE_SHA`; plans 066 and 067
@@ -120,20 +120,20 @@ Statuses are `BLOCKED`, `READY`, `IMPLEMENTING`, `REVIEW`, `REWORK`,
 | B2 | B0 | INTEGRATED | `416ed3befda96e101763f129ddd32151a12f6ed2`, `f9fa43e3abff4ec14107cdd16272597e9bc8dc46` | `/root/b2_re_review` / ACCEPT | `28d2f42` |
 | F0 | B1, B2 | INTEGRATED | `dd1469a`, `ee9a24e` | `/root/f0_final_review` / ACCEPT; Vite seam: `/root/b2_re_review` / ACCEPT | `ee9a24e` |
 | V0 | F0 | INTEGRATED | `e95616f`, `848ad36`, `266d88d`, evidence `e76cc23`, `9b38bb2` | `/root/v_vertical_audit` / ACCEPT | `9b38bb260383d2743b0da1408c33d36b99f94d61` |
-| V1 | V0 | INTEGRATED | `a9ce980`, `8cccff8`, `46d2b58` | `/root/v_vertical_audit` / ACCEPT | `1c0756086df55e328354228f2a733c8bc9756106` |
-| V2 | V0 | INTEGRATED | `bfae6c6`, `ab1ae5f`, `0db6f75`, `7c790c1`, `19c4c3b` | `/root/v_vertical_audit` / REWORK; `/root/v0_impl` / ACCEPT | `5c57503d315311cf839dfe9dc7f709b902bb59b3` |
-| V3 | V0 | INTEGRATED | `d465e65`, `9545bb0`, `4e87ebe` | `/root/v0_impl` / ACCEPT | `f7b3f45` |
-| V4 | V0 | REWORK | `84624be`, `1baa94b`, `846b81e`, `108292a` | `/root/v0_impl` / REWORK | - |
-| V5 | V1, V2, V3, V4 | BLOCKED | - | - | - |
-| Q0 | V5 | BLOCKED | - | - | - |
+| V1 | V0 | INTEGRATED | `a9ce980`, `8cccff8`, `46d2b58`, evidence `d4c8457`, correction `9b17da8` | `/root/v_vertical_audit`, `/root/d123_parity_review`, `/root/v5_parity_spec_review` / ACCEPT | `4ddf145` |
+| V2 | V0 | INTEGRATED | `bfae6c6`, `ab1ae5f`, `0db6f75`, `7c790c1`, `19c4c3b`, evidence `d4c8457`, correction `9b17da8` | `/root/v_vertical_audit` / REWORK; `/root/v0_impl`, `/root/d123_parity_review`, `/root/v5_parity_spec_review` / ACCEPT | `4ddf145` |
+| V3 | V0 | INTEGRATED | `d465e65`, `9545bb0`, `4e87ebe`, evidence `71dc320`, correction `4ddf145` | `/root/v0_impl`, `/root/d123_parity_review`, `/root/v5_parity_spec_review` / ACCEPT | `4ddf145` |
+| V4 | V0 | INTEGRATED | `bcff1ea`, `34e76eb`, `632ce8a`, `dcb8ecb`, `b59f264`, evidence `71dc320`, correction `4ddf145` | `/root/v0_impl`, `/root/d123_parity_review`, `/root/v5_parity_spec_review` / ACCEPT | `4ddf145` |
+| V5 | V1, V2, V3, V4 | INTEGRATED | `781901a`, `f6bde5a`, `b93b70c`, `9804135`, `3dcf2bb`, `0d4f20a`, `66bc4d0`, `8b6164f`, `b0a6518`, `0a21f62`, `1529101`, `bed49d9`, `067b4bb`, `c87054f`, `04bc076`, convergence `9799299`, `7e0c6ef`, `9b17da8`, `4ddf145` | `/root/v5_bounds_review`, `/root/v5_transport_review`, `/root/v5_abort_review`, `/root/v5_loopback_review`, `/root/d123_parity_review`, `/root/v5_parity_spec_review` / ACCEPT | `4ddf145e4d29f92e059fb8deec3513e8af076d5b` |
+| Q0 | V5 | READY | - | - | - |
 | Q1 | Q0 | BLOCKED | - | - | - |
 | Q2 | Q0 | BLOCKED | - | - | - |
 | Q3 | Q1, Q2 | BLOCKED | - | - | - |
-| D0 | F0 | INTEGRATED | `d476690`, `65d48b4`, `3cea781`, `f84ad2c`, evidence `bd948a7` | `/root/v_vertical_audit`, `/root/v0_impl` / ACCEPT | `bf94c6521bfa6528004096241a658f28db4a44ee` |
-| D1 | D0 | IMPLEMENTING | - | - | - |
-| D2 | D0 | IMPLEMENTING | - | - | - |
-| D3 | D0 | READY | - | - | - |
-| D4 | D1, D2, D3 | BLOCKED | - | - | - |
+| D0 | F0 | INTEGRATED | `d476690`, `65d48b4`, `3cea781`, `f84ad2c`, evidence `bd948a7`, `a27764b`, correction `7e0c6ef` | `/root/v_vertical_audit`, `/root/v0_impl`, `/root/d123_parity_review`, `/root/v5_parity_spec_review` / ACCEPT | `4ddf145` |
+| D1 | D0 | INTEGRATED | `4862293`, `3b22c28`, evidence `b31c3af` | `/root/d123_parity_review` / ACCEPT | `b31c3af` |
+| D2 | D0 | INTEGRATED | `fce5c1a`, `9935846`, evidence `b31c3af` | `/root/d123_parity_review` / ACCEPT | `b31c3af` |
+| D3 | D0 | INTEGRATED | `e2f13cd`, `0702203`, `70f5796`, evidence `b31c3af` | `/root/d123_parity_review` / ACCEPT | `b31c3af` |
+| D4 | D1, D2, D3 | INTEGRATED | `662182e`, bundle correction `6646fe5` | `/root/d4_review` / ACCEPT | `6646fe568e8b4c1fba74ac1b4150d1480d15ca6f` |
 | R0 | F0, V5, Q3, D4 | BLOCKED | - | - | - |
 | R1 | R0 | BLOCKED | - | - | - |
 | P1 | R1, V1, V2, Q1, D4 | BLOCKED | - | - | - |
@@ -412,9 +412,80 @@ application code. The focused correction admits only exact pure `config` and
 `/root/v_vertical_audit` returned ACCEPT on both axes for
 `9b38bb2..ee6c59e`. V1-V4 are unblocked from reviewed checkpoint `bf94c65`.
 
+V1-V5 transport convergence is implemented and independently accepted on all
+review axes. Solid callers use oRPC or the frozen explicit SSE/file routes;
+production server-function wrappers and warmup code are gone. Browser response
+consumption is bounded, abort cleanup does not wait on a stuck reader, and the
+exact caller reason survives cancellation. Request cancellation reaches the
+actual report/quota/revision/sync Effect reads, Session local-history Effect
+runtime and VCS subprocess. The Session correction at `bed49d9` added an active
+acquire/use/release interruption proof and exact signal-identity assertion.
+
+The real Nitro loopback gate is permanently available as
+`bun run test:web-rpc-loopback`. It proves numeric-loopback registration and
+dynamic import, validation, typed/sanitized errors, uniform live/demo 404,
+Host/origin/CSRF policy, concurrent dependency isolation and oversized-response
+replacement. Two Vite/Bun adapter limitations were isolated rather than hidden:
+an oversized streamed upload does not settle within the frozen five-second
+loopback phase, so the exact 12 MiB + 1 byte stream remains proven at the real
+handler seam; Vite dev interposes socket lifecycle before `event.req.signal`,
+so the production `req.socket.close`/`res.finish` bridge and listener cleanup
+are proven by route integration tests. The first permanent run exposed a Nitro
+watcher leak after printing success. Commits `067b4bb` and `c87054f` make the
+fixture own and close its Nitro instance idempotently and pass a bundling-stable
+synthetic Web root. The integrated gate then exited naturally with status zero
+in 0.91 seconds. `/root/v5_loopback_review` re-reviewed both corrections and
+returned ACCEPT.
+
+D1-D4 are integrated. The design package root is framework-neutral, coexistence
+uses explicit `/solid` and `/svelte` entrypoints, and the recursive Svelte
+closure cannot reach TSX, Solid or Ark Solid. Panda scans TS, TSX and Svelte;
+generated CSS/token output is unchanged. `/root/d4_review` ACCEPTed both axes.
+The frozen root-route gzip closure is 263,392 bytes against the unchanged
+282,614-byte limit. Restoring this gate required moving Sync RPC out of the
+eager route graph, separating Report query keys from Skills implementation and
+lazy-loading the optional Session drawer; no threshold or assertion changed.
+
+Checkpoint validation through `04bc076` passed repository check/lint, all 28
+typecheck tasks with Svelte 0/0, the complete production build, 668 Web tests,
+the Nitro loopback gate and the exact D1-D3 browser fixtures. The first full
+repository test attempt encountered `EINVAL: watch` in D3 while Turbo ran
+packages concurrently; the single exact rerun passed 10/10 and 93 assertions,
+classifying the environment watcher failure without a timeout/assertion change.
+Its untracked two-file fixture directory was moved intact to
+`/tmp/ai-usage-068-d3-watch-artifact-xbGOHQ`. An independent D4 reviewer also
+accidentally selected one isolated Chromium test with a broad directory glob;
+it used no shared port/artifact and was not rerun. The first post-V5 typecheck
+correctly found `rpc-test-transport.test.ts` outside every project; `04bc076`
+adds it to the Web project and the complete coverage/typecheck gate is green.
+
+Final V1-V4/D0-D3 parity evidence landed through `a27764b`, `d4c8457`,
+`b31c3af` and `71dc320`; `9799299` updates the checker assertions to the exact
+retired/live inventory. The first independent convergence review returned
+REWORK because several command claims were attached to earlier SHAs and V3/V4
+had replaced frozen Wave-0 parser descriptions with target schemas. Focused
+corrections `7e0c6ef`, `9b17da8` and `4ddf145` restore the baseline inventory,
+retain target schemas only as target evidence and attach each command/review to
+the checkpoint where it actually passed. Both independent re-reviews returned
+ACCEPT. The final aggregate is 30 operation ledger records with no live legacy
+wrapper, plus 402/402 live design exports and 425 ledger records including 23
+reviewed removals.
+
+During the V1/V2 rework, the worker accidentally ran the intended cherry-pick
+from the integration workdir rather than its combined detached worktree. The
+resulting `9b17da8` touched only the two allowlisted shards, applied without a
+conflict and was retained after coordinator inspection, full parity gates and
+both independent re-reviews. No reset, branch overwrite or unrelated mutation
+was performed; the source correction remains recoverable as `4bcd9c0` in the
+isolated V1/V2 parity worktree.
+
 ## Deviations, STOPs, and recovery
 
-- Reviewed deviations: none.
+- Reviewed deviations: the two Vite/Bun loopback proof substitutions above are
+  accepted, deterministic and retain the same production invariants.
+- Resolved isolation incident: the V1/V2 evidence rework produced `9b17da8`
+  directly in the integration workdir. Its exact two-file delta was inspected,
+  independently accepted and retained; no semantic conflict occurred.
 - Resolved local STOP: B2 exhausted both original focused SSE-harness
   corrections. The user authorized autonomous correction of this class of
   technical blocker; the incident remains recorded above and B2 is integrated.
@@ -429,6 +500,7 @@ application code. The focused correction admits only exact pure `config` and
 - Resolved B2 correction: exact SvelteKit selected-adapter lifecycle coverage is
   independently accepted and integrated at `28d2f42`; adapter-node failure
   spikes remain recoverable evidence until final convergence.
-- Recovery point: `bf94c6521bfa6528004096241a658f28db4a44ee` is the latest
-  independently reviewed green checkpoint. V0 and D0 are integrated; the
-  vertical prerequisite checkpoint and every post-cherry gate passed.
+- Recovery point: `4ddf145e4d29f92e059fb8deec3513e8af076d5b` is the latest
+  independently reviewed green checkpoint. V1-V5 and D0-D4 are integrated;
+  the complete transport/design parity checkpoint and every focused
+  post-correction gate passed.
