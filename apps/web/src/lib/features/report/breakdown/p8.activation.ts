@@ -1,0 +1,20 @@
+import type { ComponentProps } from 'svelte';
+import type CampaignLabelEditor from '../actions/campaign-label-editor.svelte';
+import type ProjectGroupEditor from '../actions/project-group-editor.svelte';
+import type QuotaHistoryOwner from '../actions/quota-history-owner.svelte';
+import type QuotaHistoryPanel from '../actions/quota-history-panel.svelte';
+import type ReportSharingActions from '../actions/report-sharing-actions.svelte';
+import type ActiveFilters from './active-filters.svelte';
+import type BreakdownPanel from './breakdown-panel.svelte';
+import type FilterBar from './filter-bar.svelte';
+import type OriginFilter from './origin-filter.svelte';
+
+export type ActiveFiltersProps = ComponentProps<typeof ActiveFilters>;
+export type BreakdownPanelProps = ComponentProps<typeof BreakdownPanel>;
+export type CampaignLabelEditorProps = ComponentProps<typeof CampaignLabelEditor>;
+export type FilterBarProps = ComponentProps<typeof FilterBar>;
+export type OriginFilterProps = ComponentProps<typeof OriginFilter>;
+export type ProjectGroupEditorProps = ComponentProps<typeof ProjectGroupEditor>;
+export type QuotaHistoryOwnerProps = ComponentProps<typeof QuotaHistoryOwner>;
+export type QuotaHistoryPanelProps = ComponentProps<typeof QuotaHistoryPanel>;
+export type ReportSharingActionsProps = ComponentProps<typeof ReportSharingActions>;
