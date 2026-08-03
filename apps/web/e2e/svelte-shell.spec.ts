@@ -27,6 +27,16 @@ const shellRoutes = [
 ] as const;
 
 test('server-renders and reloads every Svelte shell route with accessible navigation', async ({ page, request }) => {
+  const browserSkillsRequests: string[] = [];
+  page.on('request', (browserRequest) => {
+    const pathname = new URL(browserRequest.url()).pathname;
+    if (
+      pathname.startsWith('/rpc/skills/') &&
+      browserRequest.headers()['x-ai-usage-request-owner'] === 'skills-shell'
+    ) {
+      browserSkillsRequests.push(pathname);
+    }
+  });
   for (const route of shellRoutes) {
     const response = await request.get(route.path);
     expect(response.status()).toBe(200);
@@ -73,9 +83,10 @@ test('server-renders and reloads every Svelte shell route with accessible naviga
     const axe = await new AxeBuilder({ page }).analyze();
     expect(axe.violations).toEqual([]);
   }
-
   await page.goto('/skills/projects/project%2Fopaque/skill-name?foreign=kept#anchor');
+  await expect(page.locator('[data-skills-workspace]')).toHaveAttribute('data-skills-hydrated', 'true');
   await page.reload();
+  await expect(page.locator('[data-skills-workspace]')).toHaveAttribute('data-skills-hydrated', 'true');
   expect(page.url()).toContain('/skills/projects/project%2Fopaque/skill-name?foreign=kept#anchor');
 
   await page.goto('/');
@@ -109,6 +120,7 @@ test('server-renders and reloads every Svelte shell route with accessible naviga
   await page.getByRole('link', { name: 'Sources', exact: true }).click();
   await expect(page).toHaveURL('/sources');
   await expect(page.getByRole('navigation', { name: 'Manage destinations' })).toHaveCount(0);
+  expect(browserSkillsRequests, 'SSR-hydrated Skills routes must not duplicate Query acquisition').toEqual([]);
 });
 
 test('resolves stored and system theme before paint and toggles the named preference', async ({ page }) => {

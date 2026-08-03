@@ -13,5 +13,5 @@
 </script>
 
 <WebQueryProvider {hydrationState}>
-  <SkillsShell {pathname} runtimeMode="e2e" />
+  <SkillsShell {hydrationState} {pathname} runtimeMode="e2e" />
 </WebQueryProvider>

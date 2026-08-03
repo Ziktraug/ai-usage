@@ -6,16 +6,23 @@
     ProjectSkillMarkdownInput,
     SkillMarkdownDocument,
   } from '@ai-usage/web-contract/skills';
-  import { createQuery, useIsFetching } from '@tanstack/svelte-query';
+  import { createQuery, useIsFetching, useQueryClient } from '@tanstack/svelte-query';
   import { onMount, type Snippet, untrack } from 'svelte';
   import { goto } from '$app/navigation';
   import type { RuntimeMode } from '../../../../runtime-mode';
+  import type { WebQueryHydrationState } from '../../../query/client';
+  import { useWebQueryHydrationContext, webQueryHydrationSignature } from '../../../query/hydration-context.svelte';
   import {
+    managedSkillMarkdownKey,
     managedSkillMarkdownQueryOptions,
+    projectSkillMarkdownKey,
     projectSkillMarkdownQueryOptions,
     type SkillsQueryClient,
+    skillsKnownProjectPathsKey,
     skillsKnownProjectPathsQueryOptions,
+    skillsProjectInventoriesKey,
     skillsProjectInventoriesQueryOptions,
+    skillsSnapshotKey,
     skillsSnapshotQueryOptions,
   } from '../../../query/options/skills';
   import { createBrowserWebRpcClient } from '../../../rpc/client';
@@ -28,12 +35,14 @@
   let {
     editorSlot,
     healthSlot,
+    hydrationState,
     matrixSlot,
     pathname,
     runtimeMode,
   }: {
     editorSlot?: Snippet<[SkillsShellSlotContext]>;
     healthSlot?: Snippet<[SkillsShellSlotContext]>;
+    hydrationState: WebQueryHydrationState;
     matrixSlot?: Snippet<[SkillsShellSlotContext]>;
     pathname: string;
     runtimeMode: RuntimeMode;
@@ -52,18 +61,34 @@
     getSkillProjectInventories: (options) => resolveClient().getSkillProjectInventories(options),
   };
   let mounted = $state(false);
-  let queryContractStable = $state(false);
-  const queriesEnabled = $derived(mounted && runtimeMode !== 'demo');
+  const hydrationContext = useWebQueryHydrationContext();
+  const queryClient = useQueryClient();
+  const hydrationApplied = $derived(hydrationContext.appliedSignature === webQueryHydrationSignature(hydrationState));
+  const queriesEnabled = $derived(mounted && hydrationApplied && runtimeMode !== 'demo');
   const snapshotQuery = createQuery(() =>
-    skillsSnapshotQueryOptions(client, { browser: mounted, enabled: runtimeMode !== 'demo' }),
+    skillsSnapshotQueryOptions(client, {
+      browser: mounted,
+      enabled:
+        hydrationApplied && runtimeMode !== 'demo' && queryClient.getQueryData(skillsSnapshotKey()) !== undefined,
+    }),
   );
   const knownPathsQuery = createQuery(() =>
-    skillsKnownProjectPathsQueryOptions(client, { browser: mounted, enabled: runtimeMode !== 'demo' }),
+    skillsKnownProjectPathsQueryOptions(client, {
+      browser: mounted,
+      enabled:
+        hydrationApplied &&
+        runtimeMode !== 'demo' &&
+        queryClient.getQueryData(skillsKnownProjectPathsKey()) !== undefined,
+    }),
   );
   const inventoriesQuery = createQuery(() =>
     skillsProjectInventoriesQueryOptions(client, {
       browser: mounted,
-      enabled: runtimeMode !== 'demo' && snapshotQuery.data?.configured === true,
+      enabled:
+        hydrationApplied &&
+        runtimeMode !== 'demo' &&
+        snapshotQuery.data?.configured === true &&
+        queryClient.getQueryData(skillsProjectInventoriesKey()) !== undefined,
     }),
   );
   const querySnapshot = $derived(
@@ -144,7 +169,10 @@
   const managedDocumentQuery = createQuery(() =>
     managedSkillMarkdownQueryOptions(client, managedSkillName ?? '', {
       browser: mounted,
-      enabled: queriesEnabled && managedSkillName !== undefined,
+      enabled:
+        queriesEnabled &&
+        managedSkillName !== undefined &&
+        queryClient.getQueryData(managedSkillMarkdownKey(managedSkillName)) !== undefined,
     }),
   );
   const projectDocumentInput = $derived.by<ProjectSkillMarkdownInput | undefined>(() => {
@@ -167,7 +195,10 @@
       projectDocumentInput ?? { projectPath: '', runtimeDirId: 'agents-project', skillName: '' },
       {
         browser: mounted,
-        enabled: queriesEnabled && projectDocumentInput !== undefined,
+        enabled:
+          queriesEnabled &&
+          projectDocumentInput !== undefined &&
+          queryClient.getQueryData(projectSkillMarkdownKey(projectDocumentInput)) !== undefined,
       },
     ),
   );
@@ -189,7 +220,7 @@
       !projectDocumentQuery.isFetching &&
       skillsFetching.current === 0,
   );
-  const hydrated = $derived(queryContractStable && queryContractReady);
+  const hydrated = $derived(hydrationApplied && queryContractReady);
   const loading = $derived(snapshotQuery.isPending || knownPathsQuery.isPending);
   const messageFromError = (error: unknown): string | undefined => (error instanceof Error ? error.message : undefined);
   const errorMessage = $derived(messageFromError(snapshotQuery.error) ?? messageFromError(knownPathsQuery.error));
@@ -209,25 +240,6 @@
       mounted = true;
     });
     return () => window.cancelAnimationFrame(activationFrame);
-  });
-
-  $effect(() => {
-    if (!queryContractReady) {
-      queryContractStable = false;
-      return;
-    }
-    let secondFrame = 0;
-    const firstFrame = window.requestAnimationFrame(() => {
-      secondFrame = window.requestAnimationFrame(() => {
-        if (queryContractReady) {
-          queryContractStable = true;
-        }
-      });
-    });
-    return () => {
-      window.cancelAnimationFrame(firstFrame);
-      window.cancelAnimationFrame(secondFrame);
-    };
   });
 
   $effect(() => {

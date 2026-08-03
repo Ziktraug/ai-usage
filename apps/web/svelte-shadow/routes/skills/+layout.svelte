@@ -22,5 +22,12 @@
 {/snippet}
 
 <RouteFrame heading="Skill management">
-  <SkillsShell {editorSlot} {healthSlot} {matrixSlot} pathname={page.url.pathname} runtimeMode={data.runtimeMode} />
+  <SkillsShell
+    {editorSlot}
+    {healthSlot}
+    hydrationState={data.queryState}
+    {matrixSlot}
+    pathname={page.url.pathname}
+    runtimeMode={data.runtimeMode}
+  />
 </RouteFrame>
