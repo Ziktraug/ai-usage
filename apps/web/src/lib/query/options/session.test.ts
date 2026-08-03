@@ -4,6 +4,7 @@ import {
   type SessionPageResult,
   type SessionQueryRequest,
   type SessionQueryServerResult,
+  sessionCampaignChildrenFingerprint,
   sessionQueryFingerprint,
 } from '@ai-usage/report-core/session-query';
 import { isCancelledError, QueryObserver } from '@tanstack/svelte-query';
@@ -79,9 +80,12 @@ describe('Session Query options', () => {
     expect(sessionCampaignChildrenKey({ ...campaignRequest, campaignKey: 'campaign-2' })).not.toEqual(
       sessionCampaignChildrenKey(campaignRequest),
     );
-    expect(sessionCampaignChildrenKey({ ...campaignRequest, query: { ...query, cursor: 'cursor-1' } })).not.toEqual(
-      sessionCampaignChildrenKey({ ...campaignRequest, query: { ...query, cursor: 'cursor-2' } }),
+    const campaignCursorOne = { ...campaignRequest, query: { ...query, cursor: 'cursor-1' } };
+    const campaignCursorTwo = { ...campaignRequest, query: { ...query, cursor: 'cursor-2' } };
+    expect(sessionCampaignChildrenFingerprint(campaignCursorOne)).toBe(
+      sessionCampaignChildrenFingerprint(campaignCursorTwo),
     );
+    expect(sessionCampaignChildrenKey(campaignCursorOne)).not.toEqual(sessionCampaignChildrenKey(campaignCursorTwo));
     expect(
       sessionCampaignChildrenKey({
         ...campaignRequest,

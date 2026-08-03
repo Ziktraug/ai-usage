@@ -56,14 +56,17 @@ export const sessionPageKey = (request: SessionQueryRequest) => {
   );
 };
 
+const sessionCampaignChildrenKeyFromParsed = (request: SessionCampaignChildrenRequest) =>
+  immutableRevisionKey(
+    sessionFamily,
+    request.query.revision,
+    sessionCampaignChildrenFingerprint(request),
+    campaignChildrenDestination(request.query.cursor),
+  );
+
 export const sessionCampaignChildrenKey = (request: SessionCampaignChildrenRequest) => {
   const parsed = parseSessionCampaignChildrenRequest(request);
-  return immutableRevisionKey(
-    sessionFamily,
-    parsed.query.revision,
-    sessionCampaignChildrenFingerprint(parsed),
-    campaignChildrenDestination(parsed.query.cursor),
-  );
+  return sessionCampaignChildrenKeyFromParsed(parsed);
 };
 
 export const sessionNeighborsKey = (request: SessionNeighborRequest) => {
@@ -108,7 +111,7 @@ export const sessionCampaignChildrenQueryOptions = (
     ...webQueryPolicies.immutableRevision,
     enabled: execution.browser,
     queryFn: async ({ signal }) => await client.campaignChildren(parsed, signal),
-    queryKey: sessionCampaignChildrenKey(parsed),
+    queryKey: sessionCampaignChildrenKeyFromParsed(parsed),
   });
 };
 
