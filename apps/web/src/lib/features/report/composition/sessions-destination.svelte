@@ -22,7 +22,10 @@
   import type { SessionSelectionInput } from '../../sessions/detail/controller';
   import SessionTable from '../../sessions/table/session-table.svelte';
   import SessionTableOwner from '../../sessions/table/session-table-owner.svelte';
-  import type { CampaignSessionControlsBinding } from '../actions/campaign-session-controls-binding';
+  import {
+    type CampaignSessionControlsBinding,
+    campaignSessionsNeedInitialLoad,
+  } from '../actions/campaign-session-controls-binding';
   import type { FocusedReportDescriptor } from './report-destination';
   import type { SessionQueryScopeSnapshot } from './report-search';
   import SessionDestinationRefresh from './session-destination-refresh.svelte';
@@ -125,7 +128,11 @@
           onLoadCampaignChildren={(campaignKey) => _owned.query.loadCampaignChildren(campaignKey).catch(() => undefined)}
           onLoadMoreRows={() => _owned.query.loadMore().catch(() => undefined)}
           onSelect={(row) => {
-            if (selectedRowId !== row.rowId && row.campaignKey !== undefined) {
+            if (
+              selectedRowId !== row.rowId &&
+              row.campaignKey !== undefined &&
+              campaignSessionsNeedInitialLoad(_owned.snapshot?.campaignSessions, row.campaignKey)
+            ) {
               _owned.query.loadCampaignSessions(row.campaignKey).catch(() => undefined);
             }
             selectRow(row, _owned.snapshot?.items ?? [], query, _owned.snapshot?.sessionCount ?? _rows.length);

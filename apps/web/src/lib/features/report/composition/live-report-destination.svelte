@@ -38,7 +38,11 @@
   import SessionDetailSlot from '../../sessions/detail/session-detail-slot.svelte';
   import CampaignLabelEditor from '../actions/campaign-label-editor.svelte';
   import CampaignSessionControls from '../actions/campaign-session-controls.svelte';
-  import type { CampaignSessionControlsBinding } from '../actions/campaign-session-controls-binding';
+  import {
+    type CampaignSessionControlsBinding,
+    campaignFilterMatchesBinding,
+    campaignSessionSelectionFor,
+  } from '../actions/campaign-session-controls-binding';
   import { projectGroupsAfterWarningCleanup, saveProjectGroupsAtRevision } from '../actions/project';
   import QuotaHistoryOwner from '../actions/quota-history-owner.svelte';
   import ActiveFilters from '../breakdown/active-filters.svelte';
@@ -192,12 +196,11 @@
     if (controls === null) {
       return;
     }
+    const selected = campaignSessionSelectionFor(controls, row);
     detailRows = controls.collection.items;
     selection = {
-      query: controls.query,
-      row,
+      ...selected,
       target: sessionAnalysisTargetForSession(row),
-      total: controls.collection.totalCount,
     };
     selectedRowId = row.rowId;
   };
@@ -283,7 +286,11 @@
     <CampaignSessionControls
       campaign={campaignSessionControls.campaign}
       collection={campaignSessionControls.collection}
-      onClearCampaignFilter={() => navigation.clearFieldFilter('campaign')}
+      onClearCampaignFilter={(campaignKey) => {
+        if (campaignFilterMatchesBinding(search.filters.campaign, campaignKey)) {
+          navigation.clearFieldFilter('campaign');
+        }
+      }}
       onLoadMoreCampaignSessions={() => campaignSessionControls?.loadMore()}
       onSelectSession={selectCampaignSession}
       query={campaignSessionControls.query}

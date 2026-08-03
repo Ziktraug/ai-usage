@@ -1,8 +1,11 @@
 <script lang="ts">
   import type { SessionPresentationRow } from '@ai-usage/report-core/session-query';
-  import type { Snippet } from 'svelte';
+  import { onDestroy, type Snippet, untrack } from 'svelte';
   import type { SessionTableQueryOwner, SessionTableQueryState } from '../../sessions/table/session-table-query-owner';
-  import type { CampaignSessionControlsBinding } from '../actions/campaign-session-controls-binding';
+  import {
+    type CampaignSessionControlsBinding,
+    createCampaignSessionControlsPublisher,
+  } from '../actions/campaign-session-controls-binding';
   import { campaignSessionControlsState } from '../actions/campaign-session-controls-model';
 
   let {
@@ -30,6 +33,7 @@
   } = $props();
 
   const rows = $derived(sourceRows.map(presentRow));
+  const campaignPublisher = untrack(() => createCampaignSessionControlsPublisher(() => onCampaignControlsChange));
   const selectedCampaign = $derived(
     selectedCampaignKey === undefined ? undefined : rows.find((row) => row.campaignKey === selectedCampaignKey),
   );
@@ -54,6 +58,7 @@
         queryOwner.loadCampaignSessions(campaignKey).catch(() => undefined);
       },
       query: queryState.query,
+      sessionCount: queryState.sessionCount,
       visibleRows: campaignState.visibleRows.map(presentRow),
     };
   });
@@ -61,8 +66,9 @@
   $effect(() => {
     onRowsChange(rows);
     onSessionCountChange(sessionCount);
-    onCampaignControlsChange(campaignBinding);
+    campaignPublisher.publish(campaignBinding);
   });
+  onDestroy(campaignPublisher.dispose);
 </script>
 
 {@render children(rows)}
