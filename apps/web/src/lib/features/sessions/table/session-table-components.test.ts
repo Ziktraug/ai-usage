@@ -123,7 +123,13 @@ describe('session table Svelte rendering', () => {
     const source = await readFile(new URL('./session-table.svelte', import.meta.url), 'utf8');
     expect(source).toContain('let mode = $state<SessionSurfaceMode>');
     expect(source).toContain("mode === 'mobile' ? 'mobile' : 'desktop'");
+    expect(source).toContain('SESSION_VIEWPORT_BOTTOM_INSET = 24');
+    expect(source).toContain('sessionVirtualBudgets.desktop.rowHeight * 3');
+    expect(source).toContain('sessionVirtualBudgets.mobile.rowHeight');
     expect(source).toContain('calculateSessionViewportHeight');
+    expect(source).toContain('new ResizeObserver(synchronize)');
+    expect(source).toContain("addEventListener('scroll', synchronize, { passive: true })");
+    expect(source).toContain("removeEventListener('scroll', synchronize)");
     expect(source).toContain('data-session-region-start');
     expect(source).toContain('scrollIntoView');
     expect(source).toContain('data-session-paging-sentinel="mobile"');

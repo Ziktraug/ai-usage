@@ -152,20 +152,29 @@
     return activeSort.desc ? 'descending' : 'ascending';
   };
 
-  const updateViewport = (): void => {
-    if (!surfaceElement) {
+  const updateViewportFor = (element: HTMLElement, surfaceMode: 'desktop' | 'mobile'): void => {
+    if (surfaceElement !== element || activeMode !== surfaceMode) {
       return;
     }
-    const minimumHeight = activeMode === 'desktop' ? DESKTOP_MINIMUM_VIEWPORT_HEIGHT : MOBILE_MINIMUM_VIEWPORT_HEIGHT;
+    const minimumHeight = surfaceMode === 'desktop' ? DESKTOP_MINIMUM_VIEWPORT_HEIGHT : MOBILE_MINIMUM_VIEWPORT_HEIGHT;
     const nextHeight = calculateSessionViewportHeight({
       bottomInset: SESSION_VIEWPORT_BOTTOM_INSET,
       minimumHeight,
-      surfaceTop: surfaceElement.getBoundingClientRect().top,
+      surfaceTop: element.getBoundingClientRect().top,
       viewportHeight: window.innerHeight,
     });
-    surfaceElement.style.setProperty('--session-surface-height', `${nextHeight}px`);
-    scrollTop = surfaceElement.scrollTop;
-    viewportHeight = surfaceElement.clientHeight || SESSION_VIEWPORT_FALLBACK_HEIGHT;
+    const cssHeight = `${nextHeight}px`;
+    if (element.style.getPropertyValue('--session-surface-height') !== cssHeight) {
+      element.style.setProperty('--session-surface-height', cssHeight);
+    }
+    scrollTop = element.scrollTop;
+    viewportHeight = element.clientHeight || SESSION_VIEWPORT_FALLBACK_HEIGHT;
+  };
+
+  const updateViewport = (): void => {
+    if (surfaceElement) {
+      updateViewportFor(surfaceElement, activeMode);
+    }
   };
 
   const setSurfaceElement = (element: HTMLElement): void => {
@@ -175,21 +184,30 @@
 
   onMount(() => {
     const controller = createSessionSurfaceModeController(browserSessionSurfaceModeEnvironment());
-    const stopMode = controller.start((nextMode) => {
+    return controller.start((nextMode) => {
       mode = nextMode;
       scrollTop = 0;
       surfaceElement?.scrollTo({ top: 0 });
       updateViewport();
     });
-    const observer = new ResizeObserver(updateViewport);
-    if (surfaceElement) {
-      observer.observe(surfaceElement);
+  });
+
+  $effect(() => {
+    const activeSurface = surfaceElement;
+    const observedMode = activeMode;
+    if (!activeSurface) {
+      return;
     }
-    window.addEventListener('resize', updateViewport);
+    const synchronize = (): void => updateViewportFor(activeSurface, observedMode);
+    synchronize();
+    const observer = new ResizeObserver(synchronize);
+    observer.observe(activeSurface);
+    window.addEventListener('resize', synchronize);
+    window.addEventListener('scroll', synchronize, { passive: true });
     return () => {
-      stopMode();
       observer.disconnect();
-      window.removeEventListener('resize', updateViewport);
+      window.removeEventListener('resize', synchronize);
+      window.removeEventListener('scroll', synchronize);
     };
   });
 
