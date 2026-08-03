@@ -134,7 +134,7 @@ Statuses are `BLOCKED`, `READY`, `IMPLEMENTING`, `REVIEW`, `REWORK`,
 | D2 | D0 | INTEGRATED | `fce5c1a`, `9935846`, evidence `b31c3af` | `/root/d123_parity_review` / ACCEPT | `b31c3af` |
 | D3 | D0 | INTEGRATED | `e2f13cd`, `0702203`, `70f5796`, evidence `b31c3af` | `/root/d123_parity_review` / ACCEPT | `b31c3af` |
 | D4 | D1, D2, D3 | INTEGRATED | `662182e`, bundle correction `6646fe5` | `/root/d4_review` / ACCEPT | `6646fe568e8b4c1fba74ac1b4150d1480d15ca6f` |
-| R0 | F0, V5, Q3, D4 | IMPLEMENTING | - | - | worktree `/tmp/ai-usage-068-r0` from `774885c` |
+| R0 | F0, V5, Q3, D4 | REVIEW | `435aa06`, evidence `88d56c9` | independent standards/spec review pending | candidate `88d56c9` in `/tmp/ai-usage-068-r0` |
 | R1 | R0 | BLOCKED | - | - | - |
 | P1 | R1, V1, V2, Q1, D4 | BLOCKED | - | - | - |
 | P2 | P1 | BLOCKED | - | - | - |
@@ -603,7 +603,8 @@ the prior entry remains fresh; a second regression freezes all three action
 flags. Gates passed 47 focused tests with 303 assertions, the complete Web suite
 at 721 tests and 3,287 assertions, Web TypeScript with Svelte 0/0, Svelte build,
 boundaries, repository lint, Ultracite, parity and diff cleanliness. Third
-Both third correction re-reviews ACCEPTed the exact complete Q3 checkpoint at
+correction re-reviews were requested on both axes. Both ACCEPTed the exact
+complete Q3 checkpoint at
 `276ca0e`; Q3 is integrated and R0 is ready.
 
 R0 was dispatched from clean integration head `774885c` to local-only branch
@@ -613,6 +614,29 @@ Its mandatory card owns all 18 URL-contract IDs, permits new files only below
 forbids route/layout composition and process suites, and requires the exact
 codec, navigation, history, scroll, retry, dirty-blocker, typecheck, build,
 boundary and parity gates. The worker has no process-test token and cannot push.
+
+R0 candidate `88d56c9` contains implementation commit `435aa06` plus a separate
+append-only parity-evidence commit. Its 12 new files total 980 lines under the
+exclusive navigation subtree; the only other delta appends target source/test
+evidence to the R0 shard. It provides injected navigation/history, a
+TanStack-compatible raw search codec, canonical Dashboard and Skills URL
+adapters, numeric history and scroll directives, deduplicated retry, and a
+dirty-navigation controller with synchronous cancellation, Keep focus,
+Discard replay-once and idempotent cleanup. All 18 URL records reference target
+evidence without claiming route composition.
+
+Worker gates passed 24 R0 tests with 86 assertions, 69 frozen behavior tests
+with 233 assertions, Svelte check with 0 errors/0 warnings, Web typecheck,
+Svelte production build, Ultracite, package boundaries, complete parity at
+18/18 URL contracts, diff cleanliness and a clean worktree. The fresh isolated
+worktree first lacked dependency and built design-system artifacts;
+`bun install --frozen-lockfile` restored the exact lock set. One test fixture
+then used invalid Session column IDs and was corrected to frozen valid IDs
+`fresh` and `tokIn`. A direct Dashboard parser import also pulled Solid JSX
+through a type-only shared path into Svelte diagnostics; R0 now injects the
+frozen validator through an opaque codec seam, preserving the real parser while
+keeping Solid out of the Svelte static closure. No invariant or product behavior
+changed. Independent standards and spec/parity reviews are running.
 
 Three Q3 incidents are retained. The first complete repository test run hit the
 known D3 `ArrowRight` focus timeout; its one allowed exact rerun passed 10/10,
