@@ -134,7 +134,7 @@ Statuses are `BLOCKED`, `READY`, `IMPLEMENTING`, `REVIEW`, `REWORK`,
 | D2 | D0 | INTEGRATED | `fce5c1a`, `9935846`, evidence `b31c3af` | `/root/d123_parity_review` / ACCEPT | `b31c3af` |
 | D3 | D0 | INTEGRATED | `e2f13cd`, `0702203`, `70f5796`, evidence `b31c3af` | `/root/d123_parity_review` / ACCEPT | `b31c3af` |
 | D4 | D1, D2, D3 | INTEGRATED | `662182e`, bundle correction `6646fe5` | `/root/d4_review` / ACCEPT | `6646fe568e8b4c1fba74ac1b4150d1480d15ca6f` |
-| R0 | F0, V5, Q3, D4 | REVIEW | `435aa06`, evidence `88d56c9` | independent standards/spec review pending | candidate `88d56c9` in `/tmp/ai-usage-068-r0` |
+| R0 | F0, V5, Q3, D4 | REWORK | `435aa06`, evidence `88d56c9` | `/root/d123_parity_review`, `/root/q2_spec_review` / REWORK | recoverable `88d56c9` in `/tmp/ai-usage-068-r0` |
 | R1 | R0 | BLOCKED | - | - | - |
 | P1 | R1, V1, V2, Q1, D4 | BLOCKED | - | - | - |
 | P2 | P1 | BLOCKED | - | - | - |
@@ -637,6 +637,24 @@ through a type-only shared path into Svelte diagnostics; R0 now injects the
 frozen validator through an opaque codec seam, preserving the real parser while
 keeping Solid out of the Svelte static closure. No invariant or product behavior
 changed. Independent standards and spec/parity reviews are running.
+
+Both first R0 reviews returned REWORK. Standards found that scroll ownership was
+only a pure directive classifier, with no installed lifecycle for recording,
+post-navigation application, stale-work cancellation or idempotent cleanup;
+Dashboard navigation swallowed rejected promises; and Skills intents discarded
+unrelated query/hash state. Spec independently reproduced the Skills loss and
+found target evidence too coarse: fallback URL, matrix push/scroll/blocker,
+drawer identity, several declared canonical/default/legacy variants and retry
+were not directly exercised by target tests even though the aggregate checker
+was syntactically green. The retry controller also retained a standards risk
+because it exposed no disposal or late-callback suppression.
+
+The original worker resumed the same isolated worktree. Its focused card requires
+a real dependency-injected SSR-safe scroll lifecycle with timing, cancellation
+and cleanup tests; observable Dashboard navigation failure; cloned-current-URL
+Skills intents; retry disposal; explicit target tests/evidence for all 18 IDs;
+and fresh source/evidence commits. No R0 dependant is dispatched from the
+rejected checkpoint.
 
 Three Q3 incidents are retained. The first complete repository test run hit the
 known D3 `ArrowRight` focus timeout; its one allowed exact rerun passed 10/10,
