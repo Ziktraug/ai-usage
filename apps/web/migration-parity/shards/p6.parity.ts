@@ -29,7 +29,7 @@ const feature = (
       ...extraEvidence,
       targetEvidence(
         'command',
-        'bun test apps/web/src/lib/features/sources/*.test.ts apps/web/src/source-control-client.test.ts apps/web/src/source-control-presentation.test.ts (59 pass, 0 fail, 149 expect calls); bun run --cwd apps/web check; bun run --cwd apps/web build:svelte; bun x ultracite check apps/web/src/lib/features/sources',
+        'bun test apps/web/src/lib/features/sources/*.test.ts apps/web/src/source-control-client.test.ts apps/web/src/source-control-presentation.test.ts (59 pass, 0 fail, 150 expect calls); bun run --cwd apps/web check; bun run --cwd apps/web build:svelte; bun x ultracite check apps/web/src/lib/features/sources',
       ),
     ],
     id,
