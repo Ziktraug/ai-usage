@@ -136,13 +136,13 @@ Statuses are `BLOCKED`, `READY`, `IMPLEMENTING`, `REVIEW`, `REWORK`,
 | D4 | D1, D2, D3 | INTEGRATED | `662182e`, bundle correction `6646fe5` | `/root/d4_review` / ACCEPT | `6646fe568e8b4c1fba74ac1b4150d1480d15ca6f` |
 | R0 | F0, V5, Q3, D4 | INTEGRATED | `435aa06`, evidence `88d56c9`, corrections `98235ab`, `4e46acc`, evidence `4f293e5`, `23635c7`; integrated as `affcee4`, `01fa070`, `688b629`, `fa92709`, `66a650e`, `c8b7c7e` | `/root/d123_parity_review`, `/root/q2_spec_review` / ACCEPT | `c8b7c7e872f25648dbf5df407f92e76d64948eff` |
 | R1 | R0 | INTEGRATED | `40116b5`, `121d78b`, corrections `95b67d6`, `7c85cf1`, evidence/checker `c5cc7ea`, `1befaef` | `/root/d123_parity_review`, `/root/q2_spec_review`, `/root/v34_parity` / ACCEPT | `1befaefd71ef5ffe59866021f216104b3f83f9ef` |
-| P1 | R1, V1, V2, Q1, D4 | IMPLEMENTING | - | - | - |
+| P1 | R1, V1, V2, Q1, D4 | REVIEW | `a19914b` | `/root/v34_parity` / pending | - |
 | P2 | P1 | BLOCKED | - | - | - |
 | P3 | P1, V2, Q1, D4 | BLOCKED | - | - | - |
 | P4 | P3 | BLOCKED | - | - | - |
-| P5 | R1, V3, Q2, D4 | IMPLEMENTING | - | - | - |
-| P6 | R1, V4, Q2, D4, B2 | IMPLEMENTING | - | - | - |
-| P7 | R1, V4, Q2, D4 | READY | - | - | - |
+| P5 | R1, V3, Q2, D4 | REVIEW | `231f109`, evidence `a5b657f` | pending | - |
+| P6 | R1, V4, Q2, D4, B2 | REVIEW | `f02f29f`, evidence `3076673`, lifecycle `f598271`, evidence `11a2ec6` | `/root/q2_spec_review` / pending | - |
+| P7 | R1, V4, Q2, D4 | IMPLEMENTING | - | - | - |
 | P8 | P1 | BLOCKED | - | - | - |
 | P9 | P5 | BLOCKED | - | - | - |
 | P10 | P5 | BLOCKED | - | - | - |
@@ -792,8 +792,44 @@ feature/source/render IDs, upstream R1/V/Q/D/B interfaces, disjoint feature
 prefixes, packet shards, coordinator-owned denylist, exact deterministic gates,
 local-failure policy and handoff shape. None holds the process-test token; P6
 uses virtual/injected stream time and may add only Sources-owned endpoint leaves.
-P7 remains ready and takes the first worker slot released by implementation or
-review scheduling.
+
+P1 candidate `a19914b` contains 14 owned files and 572 lines. Its focused and
+preserved lifecycle suite passed 20/20; Ultracite, Svelte check 0/0, Web
+typecheck, shadow build, boundaries, parity and diff checks are green. A first
+focused run exposed only harness/static defects (expected key literal, Svelte
+warnings and missing TypeScript preprocessing), which were corrected. Final
+seam inspection removed a module-global browser RPC client before handoff. P1
+requests only the coordinator-owned root load/page composition and remains
+unintegrated pending independent review and the composed browser proof.
+
+P5 candidate `231f109` plus current-status evidence `a5b657f` contains 16 owned
+feature files plus its shard, 1,454 implementation lines, and requests only the
+denied route composition documented in its owned `INTEGRATION.md`. Its 47
+focused/preserved Skills tests, SSR render cases, demo/no-duplicate acquisition,
+Ultracite, Web typecheck/Svelte 0/0, shadow build, boundaries, parity and diff
+checks are green. The fresh worktree required frozen dependency links and
+ignored Panda generation. Missing host bubblewrap caused repeated direct patch
+helper failures; after one trivial scoped import rewrite, the coordinator
+required all further edits through `apply_patch` in an escalated shell. The
+candidate is clean and awaits independent review.
+
+P6 candidate `f02f29f`, evidence `3076673`, virtual lifecycle proof `f598271`
+and evidence `11a2ec6` contains 16 owned files and 1,518 lines. It supplies the
+single explicit EventSource service/provider, Sources UI/summary and thin
+policy-first endpoint leaves while reusing the existing broker/command owners.
+Twenty-five focused tests with 100 assertions plus two virtual >30-second
+lifecycle tests with nine assertions pass; Web full check/Svelte 0/0, shadow
+build, boundaries, parity and diff checks are green. Frozen dependencies and
+ignored Panda output were generated locally; missing bubblewrap forced scoped
+escalated mechanical edits whose complete diff is in review. The shard remains
+current pending ACCEPT.
+
+The first released implementation slot took P7 from clean base `79881c1` in
+isolated worktree `/tmp/ai-usage-068-p7`. Its full dispatch card freezes
+SYNC-01, SYNC-02 and OPS-01, exclusive Sync/manual-transfer/observability
+prefixes and the no-usage-merge/no-identity-copy boundary. P1 and P6 are under
+cross-review; P5 queues for the next independent reviewer. No feature packet
+has used the process-test token.
 
 ## Deviations, STOPs, and recovery
 
