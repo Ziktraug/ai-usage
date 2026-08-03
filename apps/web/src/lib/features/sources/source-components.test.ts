@@ -50,6 +50,7 @@ describe('Sources Svelte components', () => {
     expect(actions).toContain('{...pendingAriaBusyAttributes(pending)}');
     expect(card).toContain('<SourceActions');
     expect(page).toContain('<SourceActions');
+    expect(page).toContain('registerCopyFeedbackDisposal(onDestroy, copyFeedback);');
     expect(summary).toContain('{...pendingAriaBusyAttributes(runPending)}');
   });
 });

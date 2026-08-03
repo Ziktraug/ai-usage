@@ -5,7 +5,7 @@ import {
   type SourcePublicationView,
 } from '@ai-usage/report-core/source-control';
 import type { SourceControlClientState } from '../../../source-control-client';
-import { presentSourceState } from './presentation';
+import { presentSourceState } from './presentation-model';
 
 export const revisionDisplayBounds = { maxInlineLength: 24, prefixLength: 12, suffixLength: 8 } as const;
 

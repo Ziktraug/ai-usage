@@ -2,8 +2,10 @@
   import { css, cx } from '@ai-usage/design-system/css';
   import { header, meta, page, panel, shell, title, titleBlock } from '@ai-usage/design-system/svelte';
   import type { CollectionSourceGroup, SourceControlCommand } from '@ai-usage/report-core/source-control';
+  import { onDestroy } from 'svelte';
   import { fmtDate, fmtNum } from '../../foundation/presentation/format';
   import { useSourceControl } from './context.svelte';
+  import { createCopyFeedback, registerCopyFeedbackDisposal } from './copy-feedback';
   import {
     compactRevision,
     conciseSourceStatus,
@@ -27,6 +29,16 @@
   const healthy = $derived(healthySources(liveSources));
   const deviations = $derived(deviationSources(liveSources));
   let copiedRevision: string | undefined = $state();
+  const copyFeedback = createCopyFeedback(
+    {
+      cancel: (handle) => window.clearTimeout(handle),
+      schedule: (callback, delayMs) => window.setTimeout(callback, delayMs),
+    },
+    (revision) => {
+      copiedRevision = revision;
+    },
+  );
+  registerCopyFeedbackDisposal(onDestroy, copyFeedback);
 
   const groupOrder: readonly CollectionSourceGroup[] = ['sessions', 'provider-usage', 'enrichments'];
   const groupLabels: Record<CollectionSourceGroup, string> = {
@@ -42,14 +54,9 @@
   const copyRevision = async (revision: string): Promise<void> => {
     try {
       await navigator.clipboard.writeText(revision);
-      copiedRevision = revision;
-      window.setTimeout(() => {
-        if (copiedRevision === revision) {
-          copiedRevision = undefined;
-        }
-      }, 1500);
+      copyFeedback.show(revision);
     } catch {
-      copiedRevision = undefined;
+      copyFeedback.clear();
     }
   };
 
