@@ -136,13 +136,13 @@ Statuses are `BLOCKED`, `READY`, `IMPLEMENTING`, `REVIEW`, `REWORK`,
 | D4 | D1, D2, D3 | INTEGRATED | `662182e`, bundle correction `6646fe5` | `/root/d4_review` / ACCEPT | `6646fe568e8b4c1fba74ac1b4150d1480d15ca6f` |
 | R0 | F0, V5, Q3, D4 | INTEGRATED | `435aa06`, evidence `88d56c9`, corrections `98235ab`, `4e46acc`, evidence `4f293e5`, `23635c7`; integrated as `affcee4`, `01fa070`, `688b629`, `fa92709`, `66a650e`, `c8b7c7e` | `/root/d123_parity_review`, `/root/q2_spec_review` / ACCEPT | `c8b7c7e872f25648dbf5df407f92e76d64948eff` |
 | R1 | R0 | INTEGRATED | `40116b5`, `121d78b`, corrections `95b67d6`, `7c85cf1`, evidence/checker `c5cc7ea`, `1befaef` | `/root/d123_parity_review`, `/root/q2_spec_review`, `/root/v34_parity` / ACCEPT | `1befaefd71ef5ffe59866021f216104b3f83f9ef` |
-| P1 | R1, V1, V2, Q1, D4 | REVIEW | `a19914b` | `/root/v34_parity` / pending | - |
+| P1 | R1, V1, V2, Q1, D4 | REWORK | `a19914b` | `/root/v34_parity` / REWORK | - |
 | P2 | P1 | BLOCKED | - | - | - |
 | P3 | P1, V2, Q1, D4 | BLOCKED | - | - | - |
 | P4 | P3 | BLOCKED | - | - | - |
 | P5 | R1, V3, Q2, D4 | REVIEW | `231f109`, evidence `a5b657f` | pending | - |
-| P6 | R1, V4, Q2, D4, B2 | REVIEW | `f02f29f`, evidence `3076673`, lifecycle `f598271`, evidence `11a2ec6` | `/root/q2_spec_review` / pending | - |
-| P7 | R1, V4, Q2, D4 | IMPLEMENTING | - | - | - |
+| P6 | R1, V4, Q2, D4, B2 | REWORK | `f02f29f`, evidence `3076673`, lifecycle `f598271`, evidence `11a2ec6` | `/root/q2_spec_review` / REWORK | - |
+| P7 | R1, V4, Q2, D4 | REVIEW | `d2486bd` | `/root/q2_spec_review` / pending | - |
 | P8 | P1 | BLOCKED | - | - | - |
 | P9 | P5 | BLOCKED | - | - | - |
 | P10 | P5 | BLOCKED | - | - | - |
@@ -799,8 +799,14 @@ typecheck, shadow build, boundaries, parity and diff checks are green. A first
 focused run exposed only harness/static defects (expected key literal, Svelte
 warnings and missing TypeScript preprocessing), which were corrected. Final
 seam inspection removed a module-global browser RPC client before handoff. P1
-requests only the coordinator-owned root load/page composition and remains
-unintegrated pending independent review and the composed browser proof.
+initial review returned focused REWORK: render and prove meaningful Overview and
+support SSR for success and compatible-last publication; exercise the rune
+owner rather than source-scanning it; retain the warning Cleanup interface;
+preserve month/day 24-hour dates; use only Svelte/passive design-system exports;
+remove workspace-wide live announcements; and add a real lifecycle consumer
+with disposal proof. Its root composition request was accepted in shape but
+must be reviewed after application. No STOP condition was found; the original
+implementer is correcting the packet while its shard stays `current`.
 
 P5 candidate `231f109` plus current-status evidence `a5b657f` contains 16 owned
 feature files plus its shard, 1,454 implementation lines, and requests only the
@@ -822,14 +828,24 @@ lifecycle tests with nine assertions pass; Web full check/Svelte 0/0, shadow
 build, boundaries, parity and diff checks are green. Frozen dependencies and
 ignored Panda output were generated locally; missing bubblewrap forced scoped
 escalated mechanical edits whose complete diff is in review. The shard remains
-current pending ACCEPT.
+current pending ACCEPT. Independent review returned focused REWORK: provide an
+exact bounded coordinator composition request for the root provider, shared
+summary and `/sources` route; restore and test the Solid controls' `aria-busy`
+pending semantics; add target evidence to all three owned production-TSX ledger
+rows; replace revision-length magic numbers with named constants; and remove
+the duplicated run action seam. The endpoint trust ordering, broker reuse,
+single EventSource ownership, Query invalidation boundary, SSR/demo isolation
+and virtual lifecycle evidence were accepted. No STOP condition was found.
 
 The first released implementation slot took P7 from clean base `79881c1` in
 isolated worktree `/tmp/ai-usage-068-p7`. Its full dispatch card freezes
 SYNC-01, SYNC-02 and OPS-01, exclusive Sync/manual-transfer/observability
 prefixes and the no-usage-merge/no-identity-copy boundary. P1 and P6 are under
-cross-review; P5 queues for the next independent reviewer. No feature packet
-has used the process-test token.
+cross-review; P5 queues for the next independent reviewer. Candidate `d2486bd`
+contains 16 owned files and 1,091 lines; targeted Ultracite, 39 focused/deep-
+owner/render tests and Svelte checking are green while its remaining long gates
+run. P6 awaits focused author rework. No feature packet has used the process-
+test token.
 
 ## Deviations, STOPs, and recovery
 
