@@ -7,11 +7,11 @@ import {
   type Request,
   type Response,
 } from '@playwright/test';
+import { RPC_PATH_PREFIX } from './rpc-test-transport';
 
 const CRITICAL_RESOURCE_TYPES = new Set(['document', 'fetch', 'xhr']);
 const SOURCE_CONTROL_EVENTS_PATH = '/api/source-control';
 const SOURCE_CONTROL_COMMAND_PATH = '/api/source-control/command';
-const SERVER_FUNCTION_PATH_PREFIX = '/_serverFn/';
 const INTENTIONAL_EVENT_SOURCE_ABORT = 'net::ERR_ABORTED';
 const REPORT_REQUEST_OWNER_HEADER = 'x-ai-usage-request-owner';
 const INTENTIONAL_REPORT_REQUEST_OWNERS = new Set(['focused-report', 'session-query']);
@@ -25,7 +25,7 @@ const isCriticalRequest = (request: Request): boolean => {
   }
   const pathname = requestPath(request);
   return (
-    pathname.startsWith(SERVER_FUNCTION_PATH_PREFIX) ||
+    pathname.startsWith(RPC_PATH_PREFIX) ||
     pathname === SOURCE_CONTROL_EVENTS_PATH ||
     pathname === SOURCE_CONTROL_COMMAND_PATH
   );
@@ -38,7 +38,7 @@ const isIntentionalSourceControlCancellation = (request: Request, errorText: str
 
 const isIntentionalReportRequestCancellation = (request: Request, errorText: string): boolean =>
   (request.resourceType() === 'fetch' || request.resourceType() === 'xhr') &&
-  requestPath(request).startsWith(SERVER_FUNCTION_PATH_PREFIX) &&
+  requestPath(request).startsWith(RPC_PATH_PREFIX) &&
   INTENTIONAL_REPORT_REQUEST_OWNERS.has(request.headers()[REPORT_REQUEST_OWNER_HEADER] ?? '') &&
   errorText === INTENTIONAL_EVENT_SOURCE_ABORT;
 

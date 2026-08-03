@@ -5,6 +5,7 @@ import {
   HARNESS_FIXTURE_PROVIDER_STDERR_SENTINEL,
 } from '@ai-usage/local-machine/testing/harness-home';
 import { expect, reportViewsFor, test } from './browser-test';
+import { isRpcPathname, RPC_ROUTE_GLOB, rpcStringFieldValues } from './rpc-test-transport';
 
 const NON_EMPTY_ATTRIBUTE_PATTERN = /.+/;
 const SESSION_QUERY_FINGERPRINT_PATTERN = /^session-query-v1:[0-9a-f]{16}$/;
@@ -12,7 +13,7 @@ const SESSION_NEIGHBOR_FINGERPRINT_PATTERN = /^session-neighbor-v1:[0-9a-f]{16}$
 const FOCUSED_OVERVIEW_FINGERPRINT_PREFIX = 'focused-overview-v1:';
 const SOURCES_URL_PATTERN = /\/sources$/;
 
-interface CapturedServerFunctionResponse {
+interface CapturedRpcResponse {
   body: Promise<string>;
   status: number;
 }
@@ -22,52 +23,10 @@ interface ProtocolIdentity {
   revisions: string[];
 }
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
-
-const wireString = (value: unknown): string | undefined => {
-  if (typeof value === 'string') {
-    return value;
-  }
-  if (isRecord(value) && typeof value.s === 'string') {
-    return value.s;
-  }
-  return;
-};
-
-const collectWireFieldValues = (value: unknown, fieldName: string, values: string[]): void => {
-  if (Array.isArray(value)) {
-    for (const item of value) {
-      collectWireFieldValues(item, fieldName, values);
-    }
-    return;
-  }
-  if (!isRecord(value)) {
-    return;
-  }
-  const properties = value.p;
-  if (isRecord(properties) && Array.isArray(properties.k) && Array.isArray(properties.v)) {
-    for (const [index, key] of properties.k.entries()) {
-      const propertyValue = properties.v[index];
-      if (key === fieldName) {
-        const stringValue = wireString(propertyValue);
-        if (stringValue !== undefined) {
-          values.push(stringValue);
-        }
-      }
-      collectWireFieldValues(propertyValue, fieldName, values);
-    }
-  }
-};
-
-const protocolIdentityFrom = (body: string): ProtocolIdentity => {
-  const serialized: unknown = JSON.parse(body);
-  const fingerprints: string[] = [];
-  const revisions: string[] = [];
-  collectWireFieldValues(serialized, 'requestFingerprint', fingerprints);
-  collectWireFieldValues(serialized, 'revision', revisions);
-  return { fingerprints, revisions };
-};
+const protocolIdentityFrom = (body: string): ProtocolIdentity => ({
+  fingerprints: rpcStringFieldValues(body, 'requestFingerprint'),
+  revisions: rpcStringFieldValues(body, 'revision'),
+});
 
 const expectExactProtocolIdentity = (
   body: string,
@@ -111,12 +70,12 @@ test('renders the report timeline on the initial production Overview', async ({ 
     window.addEventListener('DOMContentLoaded', recordFalseEmptyRange, { once: true });
   });
   const overviewGate = Promise.withResolvers<void>();
-  let serverFunctionRequestCount = 0;
-  await page.route('**/_serverFn/**', async (route) => {
-    serverFunctionRequestCount++;
+  let rpcRequestCount = 0;
+  await page.route(RPC_ROUTE_GLOB, async (route) => {
+    rpcRequestCount++;
     // A cold source-control bootstrap may return one pending manifest before
     // report-published prompts the exact-revision owner to retry.
-    if (serverFunctionRequestCount <= 3) {
+    if (rpcRequestCount <= 3) {
       await route.continue();
       return;
     }
@@ -181,7 +140,7 @@ test('keeps the Report range mounted while focused chart options refresh', async
   await expect(advancedAnalysis.getByRole('heading', { level: 2, name: 'Punchcard' })).toBeVisible();
   await dateRange.evaluate((element) => element.setAttribute('data-stability-marker', 'original-range'));
   await timeline.evaluate((element) => element.setAttribute('data-stability-marker', 'original-chart'));
-  await page.route('**/_serverFn/**', async (route) => {
+  await page.route(RPC_ROUTE_GLOB, async (route) => {
     await new Promise<void>((resolve) => {
       setTimeout(resolve, 250);
     });
@@ -208,7 +167,7 @@ test('keeps the last complete report visible while the report range changes', as
   await timeline.evaluate((element) => element.setAttribute('data-stability-marker', 'original-chart'));
 
   const overviewGate = Promise.withResolvers<void>();
-  await page.route('**/_serverFn/**', async (route) => {
+  await page.route(RPC_ROUTE_GLOB, async (route) => {
     await overviewGate.promise;
     await route.continue();
   });
@@ -228,14 +187,14 @@ test('keeps the last complete report visible while the report range changes', as
 });
 
 test('hydrates and automatically pages Sessions through the production revision protocol', async ({ page }) => {
-  const serverFunctionResponses: CapturedServerFunctionResponse[] = [];
+  const rpcResponses: CapturedRpcResponse[] = [];
   page.on('response', (response) => {
-    if (response.url().includes('/_serverFn/')) {
-      serverFunctionResponses.push({ body: response.text(), status: response.status() });
+    if (isRpcPathname(new URL(response.url()).pathname)) {
+      rpcResponses.push({ body: response.text(), status: response.status() });
     }
   });
   const overviewResponseCount = async (): Promise<number> =>
-    (await Promise.all(serverFunctionResponses.map(({ body }) => body))).filter((body) =>
+    (await Promise.all(rpcResponses.map(({ body }) => body))).filter((body) =>
       body.includes(FOCUSED_OVERVIEW_FINGERPRINT_PREFIX),
     ).length;
 
@@ -344,7 +303,7 @@ test('hydrates and automatically pages Sessions through the production revision 
   await expect(page.getByRole('heading', { level: 2, name: 'Punchcard' })).toBeVisible();
   await expect.poll(overviewResponseCount).toBe(2);
 
-  const responseBodies = await Promise.all(serverFunctionResponses.map(({ body }) => body));
+  const responseBodies = await Promise.all(rpcResponses.map(({ body }) => body));
   const sessionResponseBodies = responseBodies.filter((body) => body.includes('session-query-v1:'));
   expect(sessionResponseBodies.length).toBeGreaterThanOrEqual(2);
   for (const responseBody of sessionResponseBodies) {
@@ -360,8 +319,8 @@ test('hydrates and automatically pages Sessions through the production revision 
   for (const responseBody of detailResponseBodies) {
     expect(new Set(protocolIdentityFrom(responseBody).revisions)).toEqual(new Set([revision]));
   }
-  expect(serverFunctionResponses.length).toBeGreaterThanOrEqual(5);
-  expect(serverFunctionResponses.every(({ status }) => status === 200)).toBe(true);
+  expect(rpcResponses.length).toBeGreaterThanOrEqual(5);
+  expect(rpcResponses.every(({ status }) => status === 200)).toBe(true);
   const allResponseBodies = responseBodies.join('\n');
   expect(allResponseBodies).not.toContain(HARNESS_FIXTURE_CREDENTIAL_REMOTE_SENTINEL);
   expect(allResponseBodies).not.toContain(HARNESS_FIXTURE_DANGEROUS_URL_SENTINEL);

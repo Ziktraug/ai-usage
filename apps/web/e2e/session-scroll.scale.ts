@@ -6,11 +6,12 @@ import {
 } from '@ai-usage/report-core/source-control';
 import type { APIRequestContext, Locator, Page, Response, TestInfo } from '@playwright/test';
 import { expect, test } from './browser-test';
+import { rpcStringFieldValues } from './rpc-test-transport';
 import { afterAnimationFrame, type SessionSurfaceMode, sessionSurface } from './session-scroll-driver';
 import { SESSION_SCROLL_EXPECTED_CAMPAIGN_COUNT } from './session-scroll-fixture';
 
 const SESSION_ROUTE = '/?origin=%5B%5D&range=%7B%22mode%22%3A%22all%22%7D&tab=sessions';
-const SERVER_FUNCTION_PATH_PREFIX = '/_serverFn/';
+const SESSION_PAGE_RPC_PATH = '/rpc/session/page';
 const SESSION_QUERY_FINGERPRINT_PATTERN = /^session-query-v1:[0-9a-f]{16}$/;
 const NON_EMPTY_ATTRIBUTE_PATTERN = /.+/;
 const LOAD_MORE_SESSION_BUTTON_PATTERN = /load more sessions/i;
@@ -71,61 +72,15 @@ let desktopResult: ScrollResult | undefined;
 
 test.describe.configure({ mode: 'serial' });
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
-
-const wireString = (value: unknown): string | undefined => {
-  if (typeof value === 'string') {
-    return value;
-  }
-  if (isRecord(value) && typeof value.s === 'string') {
-    return value.s;
-  }
-  return;
-};
-
-const collectWireFieldValues = (value: unknown, fieldName: string, values: string[]): void => {
-  if (Array.isArray(value)) {
-    for (const item of value) {
-      collectWireFieldValues(item, fieldName, values);
-    }
-    return;
-  }
-  if (!isRecord(value)) {
-    return;
-  }
-  const properties = value.p;
-  if (isRecord(properties) && Array.isArray(properties.k) && Array.isArray(properties.v)) {
-    for (const [index, key] of properties.k.entries()) {
-      const propertyValue = properties.v[index];
-      if (key === fieldName) {
-        const stringValue = wireString(propertyValue);
-        if (stringValue !== undefined) {
-          values.push(stringValue);
-        }
-      }
-      collectWireFieldValues(propertyValue, fieldName, values);
-    }
-  }
-  if (Array.isArray(value.a)) {
-    for (const item of value.a) {
-      collectWireFieldValues(item, fieldName, values);
-    }
-  }
-};
-
 const readCapturedSessionPage = async (response: Response): Promise<CapturedSessionPage | undefined> => {
   const body = await response.body();
   if (!body.includes('session-query-v1:')) {
     return;
   }
-  const serialized: unknown = JSON.parse(body.toString('utf8'));
-  const fingerprints: string[] = [];
-  const revisions: string[] = [];
-  const rowIds: string[] = [];
-  collectWireFieldValues(serialized, 'requestFingerprint', fingerprints);
-  collectWireFieldValues(serialized, 'revision', revisions);
-  collectWireFieldValues(serialized, 'rowId', rowIds);
+  const responseBody = body.toString('utf8');
+  const fingerprints = rpcStringFieldValues(responseBody, 'requestFingerprint');
+  const revisions = rpcStringFieldValues(responseBody, 'revision');
+  const rowIds = rpcStringFieldValues(responseBody, 'rowId');
   return {
     bytes: body.byteLength,
     fingerprints,
@@ -138,7 +93,7 @@ const readCapturedSessionPage = async (response: Response): Promise<CapturedSess
 const captureSessionPages = (page: Page): { finish: () => Promise<CapturedSessionPage[]> } => {
   const pendingPages: Promise<CapturedSessionPage | undefined>[] = [];
   const onResponse = (response: Response): void => {
-    if (!new URL(response.url()).pathname.startsWith(SERVER_FUNCTION_PATH_PREFIX)) {
+    if (new URL(response.url()).pathname !== SESSION_PAGE_RPC_PATH) {
       return;
     }
     pendingPages.push(readCapturedSessionPage(response));

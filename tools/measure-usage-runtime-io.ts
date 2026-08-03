@@ -1766,7 +1766,7 @@ const SESSION_QUERY_SCRIPT = `
     process.stderr.write('sessions-query stage=navigate\\n');
     const page = await browser.newPage({ viewport: { height: 900, width: 1024 } });
     process.stderr.write('sessions-query stage=page-created\\n');
-    const serverFunctionStatuses = [];
+    const rpcStatuses = [];
     const clientErrors = [];
     const failedResponses = [];
     const pendingRequests = new Set();
@@ -1814,8 +1814,8 @@ const SESSION_QUERY_SCRIPT = `
       if (response.status() >= 400) {
         appendDiagnostic(failedResponses, boundedUrl(response.url()) + ':' + String(response.status()));
       }
-      if (response.url().includes('/_serverFn/')) {
-        appendDiagnostic(serverFunctionStatuses, new URL(response.url()).pathname + ':' + String(response.status()));
+      if (new URL(response.url()).pathname.startsWith('/rpc/')) {
+        appendDiagnostic(rpcStatuses, new URL(response.url()).pathname + ':' + String(response.status()));
         responseReads.push(
           response.text().then((body) => {
             if (body.includes(expectedRevision) && /session-query-v1:[0-9a-f]{16}/.test(body)) {
@@ -1850,8 +1850,8 @@ const SESSION_QUERY_SCRIPT = `
           new Error(
             'Sessions hydration diagnostics: main=' +
               JSON.stringify(mainState) +
-              '; serverFnStatuses=' +
-              JSON.stringify(serverFunctionStatuses.slice(-20)) +
+              '; rpcStatuses=' +
+              JSON.stringify(rpcStatuses.slice(-20)) +
               '; failedResponses=' +
               JSON.stringify(failedResponses.slice(-20)) +
               '; pendingRequests=' +
@@ -1874,8 +1874,8 @@ const SESSION_QUERY_SCRIPT = `
     if (!exactSessionResponse) {
       const unavailableCount = await page.getByText('Report data is unavailable.', { exact: true }).count();
       throw new Error(
-        'Sessions revision did not resolve; serverFnStatuses=' +
-          JSON.stringify(serverFunctionStatuses) +
+        'Sessions revision did not resolve; rpcStatuses=' +
+          JSON.stringify(rpcStatuses) +
           '; unavailableCount=' +
           String(unavailableCount) +
           '; clientErrors=' +

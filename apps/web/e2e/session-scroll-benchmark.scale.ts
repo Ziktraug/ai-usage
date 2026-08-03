@@ -21,7 +21,7 @@ interface SessionScrollSample {
 
 const LAST_CAMPAIGN_INDEX = SESSION_SCROLL_EXPECTED_CAMPAIGN_COUNT - 1;
 const SESSION_QUERY_FINGERPRINT_PATTERN = /^session-query-v1:/;
-const SERVER_FUNCTION_PATH = '/_serverFn/';
+const SESSION_PAGE_RPC_PATH = '/rpc/session/page';
 const samples: SessionScrollSample[] = [];
 
 test.describe.configure({ mode: 'serial' });
@@ -83,7 +83,7 @@ const responseBytes = async (response: Response): Promise<number> => {
 const runSample = async (page: Page): Promise<SessionScrollSample> => {
   const sessionResponseBytes: Promise<number>[] = [];
   page.on('response', (response) => {
-    if (new URL(response.url()).pathname.startsWith(SERVER_FUNCTION_PATH)) {
+    if (new URL(response.url()).pathname === SESSION_PAGE_RPC_PATH) {
       sessionResponseBytes.push(responseBytes(response));
     }
   });

@@ -1,5 +1,6 @@
 import type { Page } from '@playwright/test';
 import { expect, test } from './browser-test';
+import { rpcRouteFulfillmentForClientResult } from './rpc-test-transport';
 
 const ALPHA_SKILL_CONTENT = '# alpha-skill\n\nDeterministic Playwright fixture.\n';
 const ALPHA_SKILL_URL = /\/skills\/global\/alpha-skill$/;
@@ -13,6 +14,7 @@ const SKILLS_MATRIX_URL = /\/skills\/matrix$/;
 const CREATED_TARGET_PATTERN = /Created target directory/;
 const LONG_PROJECT_LABEL = 'customer-analytics-platform-with-an-exceptionally-long-scope-name';
 const MOBILE_VIEWPORT = { height: 844, width: 390 } as const;
+const SAVE_MANAGED_MARKDOWN_RPC_ROUTE = '**/rpc/skills/saveManagedMarkdown';
 const SKILL_TOGGLE_ACTION_PATTERN = /^(Disable|Enable)$/;
 const SUCCESS_NOTICE_DISMISS_DELAY_MS = 5000;
 const WHITESPACE_PATTERN = /\s+/g;
@@ -20,15 +22,16 @@ const WHITESPACE_PATTERN = /\s+/g;
 const normalizeText = (value: string): string => value.replace(WHITESPACE_PATTERN, ' ').trim();
 
 const interceptSaveResultForDraft = async (page: Page, draftMarker: string, result: unknown): Promise<void> => {
-  await page.route('**/_serverFn/**', async (route) => {
+  await page.route(SAVE_MANAGED_MARKDOWN_RPC_ROUTE, async (route) => {
     if (!route.request().postData()?.includes(draftMarker)) {
       await route.continue();
       return;
     }
+    const fulfillment = rpcRouteFulfillmentForClientResult(result);
     await route.fulfill({
-      body: JSON.stringify({ context: {}, result }),
+      body: fulfillment.body,
       contentType: 'application/json',
-      status: 200,
+      status: fulfillment.status,
     });
   });
 };

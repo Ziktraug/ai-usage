@@ -1,8 +1,11 @@
 import { expect, reportViewsFor, test } from './browser-test';
+import { MANUAL_MERGE_DOWNLOAD_PATH, MANUAL_MERGE_UPLOAD_PATH } from './rpc-test-transport';
 
 const BUSINESS_RESOURCE_TYPES = new Set(['eventsource', 'fetch', 'xhr']);
+const KNOWN_RPC_PROBE_PATH = '/rpc/report/revisionManifest';
 const NON_REPORT_NAVIGATION_PATTERN = /Skills|Sources|Sync/;
 const TOP_SESSION_PATTERN = /Top session/;
+const UNKNOWN_RPC_PROBE_PATH = '/rpc/demo-boundary-probe';
 
 test('serves only the synthetic report and keeps every local boundary inert', async ({ page, request }) => {
   const businessRequests: string[] = [];
@@ -41,10 +44,12 @@ test('serves only the synthetic report and keeps every local boundary inert', as
       data: { command: 'run-all' },
       headers: { 'content-type': 'application/json' },
     }),
-    request.post('/sync', { data: { rows: [] }, headers: { 'content-type': 'application/json' } }),
-    request.get('/_serverFn/demo-boundary-probe'),
+    request.get(KNOWN_RPC_PROBE_PATH),
+    request.get(UNKNOWN_RPC_PROBE_PATH),
+    request.post(MANUAL_MERGE_DOWNLOAD_PATH),
+    request.post(MANUAL_MERGE_UPLOAD_PATH, { data: {}, headers: { 'content-type': 'application/json' } }),
   ]);
-  expect(guardedResponses.map((response) => response.status())).toEqual([404, 404, 404, 404]);
+  expect(guardedResponses.map((response) => response.status())).toEqual([404, 404, 404, 404, 404, 404]);
 
   for (const pathname of ['/skills', '/sources', '/sync']) {
     await page.goto(pathname);
