@@ -241,4 +241,34 @@ describe('local session detail server', () => {
       status: 'unavailable',
     });
   });
+
+  test('forwards the exact request signal into the local history read and preserves its abort reason', async () => {
+    const controller = new AbortController();
+    const reason = new Error('session detail superseded');
+    let observedSignal: AbortSignal | undefined;
+    let markAnalysisStarted: (() => void) | undefined;
+    const analysisStarted = new Promise<void>((resolveStarted) => {
+      markAnalysisStarted = resolveStarted;
+    });
+    const response = getLocalSessionDetailForServer(
+      request,
+      dependencies({
+        readAnalysis: (_harnessKey, _sourceSessionId, signal) => {
+          observedSignal = signal;
+          markAnalysisStarted?.();
+          return new Promise((_resolve, reject) => {
+            signal?.addEventListener('abort', () => reject(signal.reason), { once: true });
+          });
+        },
+      }),
+      { signal: controller.signal },
+    );
+    const outcome = response.catch((error: unknown) => error);
+
+    await analysisStarted;
+    controller.abort(reason);
+
+    expect(observedSignal).toBe(controller.signal);
+    expect(await outcome).toBe(reason);
+  });
 });

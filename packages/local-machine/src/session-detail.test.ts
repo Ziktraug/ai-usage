@@ -3,8 +3,12 @@ import { createHash } from 'node:crypto';
 import { lstat, mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { Effect } from 'effect';
+import type { LocalHistoryError } from './errors';
+import type { LocalHistoryStorage } from './local-history';
 import { readLocalSessionAnalysis } from './session-detail';
 import { seedHarnessHome } from './testing/harness-home';
+import { TestMemoryStorage } from './testing/memory-storage';
 
 const roots: string[] = [];
 
@@ -73,5 +77,43 @@ describe('local session analysis', () => {
     }
 
     expect(await readdir(homePath)).toEqual([]);
+  });
+
+  test('interrupts the active history Effect and completes its finalizer', async () => {
+    let releaseRead: (() => void) | undefined;
+    const readStarted = new Promise<void>((resolveRead) => {
+      releaseRead = resolveRead;
+    });
+    let finalized = false;
+    class InterruptibleStorage extends TestMemoryStorage implements LocalHistoryStorage {
+      override readLines(): Effect.Effect<{ bytes: number; lines: number }, LocalHistoryError> {
+        return Effect.acquireUseRelease(
+          Effect.sync(() => {
+            releaseRead?.();
+          }),
+          () => Effect.never,
+          () =>
+            Effect.sync(() => {
+              finalized = true;
+            }),
+        );
+      }
+    }
+    const storage = new InterruptibleStorage();
+    storage.writeText('.claude/projects/project/session-a.jsonl', '{}');
+    const controller = new AbortController();
+    const reason = new Error('local history superseded');
+    const read = readLocalSessionAnalysis(
+      { harnessKey: 'claude', sourceSessionId: 'session-a' },
+      { signal: controller.signal, storage },
+    );
+
+    await readStarted;
+    controller.abort(reason);
+    const error = await read.catch((cause: unknown) => cause);
+
+    expect(error).toBeDefined();
+    expect(controller.signal.reason).toBe(reason);
+    expect(finalized).toBe(true);
   });
 });

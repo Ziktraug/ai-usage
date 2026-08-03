@@ -16,15 +16,22 @@ import { runRevisionQueryForServer } from './revision-query-runner.server';
 import { resolveUsageReadModelForServer } from './usage-read-model-resolver.server';
 
 export interface SessionDetailServerDependencies {
-  readAnalysis(harnessKey: SessionDetailHarnessKey, sourceSessionId: string): Promise<LocalSessionAnalysis | null>;
+  readAnalysis(
+    harnessKey: SessionDetailHarnessKey,
+    sourceSessionId: string,
+    signal?: AbortSignal,
+  ): Promise<LocalSessionAnalysis | null>;
   readMachine(): Promise<{ id: string }>;
   resolveAnchor(request: SessionDetailRequest): Promise<SessionQueryServerResult<SessionDetailAnchorResult>>;
 }
 
 const defaultDependencies = (signal?: AbortSignal): SessionDetailServerDependencies => ({
-  readAnalysis: async (harnessKey, sourceSessionId) => {
+  readAnalysis: async (harnessKey, sourceSessionId, requestSignal) => {
     signal?.throwIfAborted();
-    const analysis = await readLocalSessionAnalysis({ harnessKey, sourceSessionId });
+    const analysis = await readLocalSessionAnalysis(
+      { harnessKey, sourceSessionId },
+      requestSignal === undefined ? {} : { signal: requestSignal },
+    );
     signal?.throwIfAborted();
     return analysis;
   },
@@ -91,7 +98,7 @@ export const getLocalSessionDetailForServer = async (
   }
 
   try {
-    const analysis = await activeDependencies.readAnalysis(anchor.harnessKey, anchor.sourceSessionId);
+    const analysis = await activeDependencies.readAnalysis(anchor.harnessKey, anchor.sourceSessionId, options.signal);
     options.signal?.throwIfAborted();
     if (!analysis) {
       return unavailable(
