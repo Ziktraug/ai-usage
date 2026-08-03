@@ -42,8 +42,8 @@ const baseRow = (index: number): SerializedRow => ({
 export const syntheticSessionRow = (index: number): SessionPresentationRow =>
   enrichSessionPresentationRow(baseRow(index));
 
-export const syntheticSessionRows = (count: number): SessionPresentationRow[] =>
-  Array.from({ length: count }, (_, index) => syntheticSessionRow(index));
+export const syntheticSessionRows = (count: number, startIndex = 0): SessionPresentationRow[] =>
+  Array.from({ length: count }, (_, index) => syntheticSessionRow(startIndex + index));
 
 export const syntheticCampaignRow = (
   index: number,

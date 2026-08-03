@@ -7,7 +7,7 @@ import { compile } from 'svelte/compiler';
 import { createServer } from 'vite';
 
 interface SvelteServerModule {
-  render(component: Component): { body: string };
+  render(component: Component, options?: { props?: Record<string, unknown> }): { body: string };
 }
 
 const componentFrom = (loaded: unknown): Component => {
@@ -72,16 +72,47 @@ describe('session table Svelte rendering', () => {
     expect(body).toContain('Synthetic session 1');
     expect(body).toContain('Expand campaign Synthetic session 1');
     expect(body).toContain('data-session-row-id');
+    expect(body).toContain('<mark');
+    expect(body).toContain('Campaign · 1 session');
+    expect(body).toContain('+ 1 automated review · 1,200 fresh');
+    expect(body).toContain('data-session-provenance');
+    expect(body).toContain('aria-pressed="false"');
+    expect(body).toContain('title="Filter by synthetic-project"');
+    expect(body).toContain('title="Filter by gpt-5.4"');
+    expect(body.match(/data-session-row-id/g)?.length ?? 0).toBeLessThan(40);
+  });
+
+  test('server-renders the exact fixed mobile geometry and a bounded window from 5,000 actual rows', () => {
+    const { body } = render(fixture, { props: { mode: 'mobile' } });
+
+    expect(body).toContain('data-session-surface="mobile"');
+    expect(body).not.toContain('data-session-surface="desktop"');
+    expect(body).toContain('aria-setsize="5000"');
+    expect(body).toContain('data-session-list-gap="0"');
+    expect(body).toContain('data-session-list-padding="0"');
+    expect(body).toContain('data-session-row-height="188"');
+    expect(body).toContain('data-session-card-height="180"');
+    expect(body).toContain('data-session-row-id');
+    expect(body).toContain('data-depth="0"');
+    expect(body).toContain('data-session-paging-sentinel="mobile"');
+    expect(body).toContain('tabindex="0"');
+    expect(body.match(/data-session-row-id/g)?.length ?? 0).toBeLessThan(24);
   });
 
   test('keeps one responsive owner and both fixed-geometry projections in the source contract', async () => {
     const source = await readFile(new URL('./session-table.svelte', import.meta.url), 'utf8');
-    expect(source).toContain("let mode = $state<SessionSurfaceMode>('desktop')");
+    expect(source).toContain('let mode = $state<SessionSurfaceMode>');
     expect(source).toContain("mode === 'mobile' ? 'mobile' : 'desktop'");
     expect(source).toContain('data-session-paging-sentinel="mobile"');
     expect(source).toContain('data-virtual-spacer="top"');
     expect(source).toContain('data-virtual-spacer="bottom"');
     expect(source).toContain("event.key === 'ArrowDown'");
     expect(source).toContain("event.key !== 'ArrowUp'");
+  });
+
+  test('wires incremental revision recovery through the sole P1 lifecycle owner', async () => {
+    const source = await readFile(new URL('./session-table-owner.svelte', import.meta.url), 'utf8');
+    expect(source).toContain('query.setRevisionRefresh');
+    expect(source).toContain('lifecycle.refresh({ scope })');
   });
 });

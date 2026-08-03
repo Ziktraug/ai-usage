@@ -16,6 +16,7 @@ import {
   createSessionTableQueryOwner,
   createSessionTableServedAdapter,
   type SessionTableQueryScope,
+  SessionTableRevisionExpiredError,
   sessionRowsForTableState,
 } from './session-table-query-owner';
 
@@ -80,6 +81,24 @@ const clientWith = (overrides: Partial<SessionClientAdapter>): SessionClientAdap
 };
 
 describe('Svelte session exact-query owner', () => {
+  test('projects the authoritative page envelope campaign identity onto its presentation row', async () => {
+    const row = { ...syntheticCampaignRow(9), campaignKey: 'stale-row-campaign' };
+    const envelopeItem: SessionPageItem = {
+      campaignKey: 'authoritative-envelope-campaign',
+      kind: 'campaign',
+      row,
+    };
+    const client = clientWith({
+      page: (request) => Promise.resolve(successfulPage(request, [envelopeItem])),
+    });
+    const owner = createSessionTableQueryOwner({ client, queryClient: createWebQueryClient() });
+
+    owner.commit(await owner.prepare(scope(), 'revision-a'));
+
+    expect(sessionRowsForTableState(owner.snapshot)[0]?.campaignKey).toBe('authoritative-envelope-campaign');
+    owner.close();
+  });
+
   test('atomically commits an exact page, dedupes top-level paging, and reaches campaign children', async () => {
     const pageRequests: SessionQueryRequest[] = [];
     const campaignRequests: SessionCampaignChildrenRequest[] = [];
@@ -185,6 +204,142 @@ describe('Svelte session exact-query owner', () => {
     expect(acquisition).toBe(2);
     expect(revisions).toEqual(['expired-revision', 'accepted-revision']);
     expect(owner.snapshot?.query.revision).toBe('accepted-revision');
+    owner.close();
+  });
+
+  test('reacquires through the P1 lifecycle once before retrying expired top-level paging', async () => {
+    const acquisitions: string[] = [];
+    const requests: string[] = [];
+    let revisionIndex = 0;
+    const client = clientWith({
+      page: (request) => {
+        requests.push(`${request.revision}:${request.cursor ?? 'first'}`);
+        if (request.revision === 'revision-a' && request.cursor !== null) {
+          return Promise.resolve({
+            error: { message: 'expired paging revision', revision: request.revision, tag: 'RevisionExpired' },
+            ok: false,
+            requestFingerprint: sessionQueryFingerprint(request),
+            revision: request.revision,
+          });
+        }
+        return Promise.resolve(
+          request.cursor === null
+            ? successfulPage(request, [item()], cursor)
+            : successfulPage(request, [item(syntheticCampaignRow(3))]),
+        );
+      },
+    });
+    const observedItemCounts: number[] = [];
+    const owner = createSessionTableQueryOwner({
+      client,
+      onStateChange: (state) => observedItemCounts.push(state?.items.length ?? 0),
+      queryClient: createWebQueryClient(),
+    });
+    const served = createServedReportSession(
+      createSessionTableServedAdapter({
+        acquire: () => {
+          const revision = revisionIndex === 0 ? 'revision-a' : 'revision-b';
+          revisionIndex += 1;
+          acquisitions.push(revision);
+          return Promise.resolve({ captureFingerprint: `capture-${revision}`, revision });
+        },
+        owner,
+      }),
+    );
+    owner.setRevisionRefresh(async (nextScope) => await served.refresh({ scope: nextScope }));
+
+    expect((await served.refresh({ scope: scope() })).status).toBe('committed');
+    await owner.loadMore();
+
+    expect(acquisitions).toEqual(['revision-a', 'revision-b']);
+    expect(requests).toEqual(['revision-a:first', `revision-a:${cursor}`, 'revision-b:first', `revision-b:${cursor}`]);
+    expect(owner.snapshot?.query.revision).toBe('revision-b');
+    expect(owner.snapshot?.items).toHaveLength(2);
+    expect(observedItemCounts).not.toContain(0);
+    owner.close();
+  });
+
+  test('surfaces repeated top-level paging expiry after one recovery without clearing rows', async () => {
+    const pagingRevisions: string[] = [];
+    let revisionIndex = 0;
+    const client = clientWith({
+      page: (request) => {
+        if (request.cursor === null) {
+          return Promise.resolve(successfulPage(request, [item()], cursor));
+        }
+        pagingRevisions.push(request.revision);
+        return Promise.resolve({
+          error: { message: 'expired paging revision', revision: request.revision, tag: 'RevisionExpired' },
+          ok: false,
+          requestFingerprint: sessionQueryFingerprint(request),
+          revision: request.revision,
+        });
+      },
+    });
+    const owner = createSessionTableQueryOwner({ client, queryClient: createWebQueryClient() });
+    const served = createServedReportSession(
+      createSessionTableServedAdapter({
+        acquire: () => {
+          const revision = revisionIndex === 0 ? 'revision-a' : 'revision-b';
+          revisionIndex += 1;
+          return Promise.resolve({ captureFingerprint: `capture-${revision}`, revision });
+        },
+        owner,
+      }),
+    );
+    owner.setRevisionRefresh(async (nextScope) => await served.refresh({ scope: nextScope }));
+    await served.refresh({ scope: scope() });
+
+    const [result] = await Promise.allSettled([owner.loadMore()]);
+
+    expect(result?.status).toBe('rejected');
+    expect(result?.status === 'rejected' && result.reason).toBeInstanceOf(SessionTableRevisionExpiredError);
+    expect(revisionIndex).toBe(2);
+    expect(pagingRevisions).toEqual(['revision-a', 'revision-b']);
+    expect(owner.snapshot?.query.revision).toBe('revision-b');
+    expect(owner.snapshot?.items).toHaveLength(1);
+    expect(owner.snapshot?.loadingMore).toBe(false);
+    owner.close();
+  });
+
+  test('retries expired campaign paging once after lifecycle recovery and surfaces repeated expiry', async () => {
+    const campaignRevisions: string[] = [];
+    let revisionIndex = 0;
+    const client = clientWith({
+      campaignChildren: (request) => {
+        campaignRevisions.push(request.query.revision);
+        return Promise.resolve({
+          error: { message: 'expired campaign revision', revision: request.query.revision, tag: 'RevisionExpired' },
+          ok: false,
+          requestFingerprint: sessionCampaignChildrenFingerprint(request),
+          revision: request.query.revision,
+        });
+      },
+      page: (request) => Promise.resolve(successfulPage(request, [item()])),
+    });
+    const owner = createSessionTableQueryOwner({ client, queryClient: createWebQueryClient() });
+    const served = createServedReportSession(
+      createSessionTableServedAdapter({
+        acquire: () => {
+          const revision = revisionIndex === 0 ? 'revision-a' : 'revision-b';
+          revisionIndex += 1;
+          return Promise.resolve({ captureFingerprint: `capture-${revision}`, revision });
+        },
+        owner,
+      }),
+    );
+    owner.setRevisionRefresh(async (nextScope) => await served.refresh({ scope: nextScope }));
+    await served.refresh({ scope: scope() });
+
+    const [result] = await Promise.allSettled([owner.loadCampaignChildren(campaign.campaignKey!)]);
+
+    expect(result?.status).toBe('rejected');
+    expect(result?.status === 'rejected' && result.reason).toBeInstanceOf(SessionTableRevisionExpiredError);
+    expect(revisionIndex).toBe(2);
+    expect(campaignRevisions).toEqual(['revision-a', 'revision-b']);
+    expect(owner.snapshot?.query.revision).toBe('revision-b');
+    expect(owner.snapshot?.items).toHaveLength(1);
+    expect(owner.snapshot?.campaignChildren.get(campaign.campaignKey!)).toBeUndefined();
     owner.close();
   });
 });

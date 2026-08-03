@@ -49,11 +49,18 @@
   );
   const session = untrack(() => createServedReportSession(createSessionTableServedAdapter({ acquire, owner: query })));
   const rows = $derived(sessionRowsForTableState(snapshot));
+  const connectLifecycle = (
+    lifecycle: ServedReportSessionOwner<SessionTableDestination, Descriptor>,
+  ): OwnedSessionTable<Descriptor> => {
+    query.setRevisionRefresh(async (scope) => await lifecycle.refresh({ scope }));
+    return { lifecycle, query, rows, snapshot };
+  };
   onDestroy(() => query.close());
 </script>
 
 <ReportLifecycleOwner {session}>
   {#snippet children(_lifecycle)}
-    {@render children({ lifecycle: _lifecycle, query, rows, snapshot })}
+    {@const owned = connectLifecycle(_lifecycle)}
+    {@render children(owned)}
   {/snippet}
 </ReportLifecycleOwner>

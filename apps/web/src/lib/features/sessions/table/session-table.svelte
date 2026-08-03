@@ -3,7 +3,7 @@
   import { Checkbox, HarnessBadge, Popover } from '@ai-usage/design-system/svelte';
   import type { SessionPresentationRow } from '@ai-usage/report-core/session-query';
   import type { ExpandedState } from '@tanstack/table-core';
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import {
     browserSessionSurfaceModeEnvironment,
     createSessionSurfaceModeController,
@@ -20,6 +20,8 @@
   import { fmtCompact, fmtDate, fmtDuration } from '../../../foundation/presentation/format';
   import { apiValuePresentation } from '../../../foundation/presentation/report-value';
   import type { StateChangeHandler, TableSortingState, TableVisibilityState } from '../../../foundation/table/state';
+  import SessionCell from './session-cell.svelte';
+  import { projectSessionCell, sessionSortDescendingByDefault } from './session-cell-projection';
   import { sessionTableColumns, visibleSessionTableColumns } from './session-columns';
   import { createSessionTableModel, toggleSessionRowExpanded } from './session-table-model';
   import type { SessionCampaignPage } from './session-table-query-owner';
@@ -27,12 +29,13 @@
     controlButton,
     controls,
     empty,
-    expandButton,
+    highlightedMark,
     mobileCard,
     mobileHeader,
     mobileList,
     mobileMeta,
     mobileOpen,
+    mobileRow,
     mobileSort,
     numeric,
     paging,
@@ -50,6 +53,7 @@
     campaignChildren?: ReadonlyMap<string, SessionCampaignPage>;
     columnVisibility: TableVisibilityState;
     hasMoreRows?: boolean;
+    initialSurfaceMode?: Exclude<SessionSurfaceMode, 'pending'>;
     loading?: boolean;
     loadingMoreRows?: boolean;
     onClearFilters: () => void;
@@ -62,6 +66,7 @@
     onSortingChange: StateChangeHandler<TableSortingState>;
     queryResetKey: string;
     rows: readonly SessionPresentationRow[];
+    searchQuery?: string;
     selectedRowId: string | null;
     sorting: TableSortingState;
     totalRows?: number;
@@ -83,18 +88,21 @@
     onSortingChange,
     queryResetKey,
     rows,
+    searchQuery = '',
     selectedRowId,
     sorting,
+    initialSurfaceMode = 'desktop',
     totalRows,
   }: Props = $props();
 
   let expanded = $state<ExpandedState>({});
-  let mode = $state<SessionSurfaceMode>('desktop');
+  let mode = $state<SessionSurfaceMode>(untrack(() => initialSurfaceMode));
   let scrollTop = $state(0);
   let viewportHeight = $state(520);
   let surfaceElement = $state<HTMLElement>();
   let previousResetKey = $state('');
   let pagingSignature = $state('');
+  let pendingFocusIndex = $state<number>();
 
   const effectiveVisibility = $derived(
     rows.some((row) => Boolean(row.rtkSavedTokens)) ? columnVisibility : { ...columnVisibility, rtkSaved: false },
@@ -175,7 +183,7 @@
 
   const changeSort = (id: SessionColumnId): void => {
     const current = sorting[0];
-    const desc = current?.id === id ? !current.desc : id !== 'session';
+    const desc = current?.id === id ? !current.desc : sessionSortDescendingByDefault(id);
     onSortingChange([{ desc, id }]);
   };
 
@@ -204,11 +212,32 @@
     const targetIndex = Math.max(0, Math.min(model.rows.length - 1, index + (event.key === 'ArrowDown' ? 1 : -1)));
     const target = surfaceElement?.querySelector<HTMLElement>(`[data-session-index="${targetIndex}"]`);
     if (target) {
+      pendingFocusIndex = undefined;
       target.focus();
       return;
     }
+    pendingFocusIndex = targetIndex;
     surfaceElement?.scrollTo({ top: targetIndex * (activeMode === 'desktop' ? 43 : 188) });
   };
+
+  $effect(() => {
+    if (
+      pendingFocusIndex === undefined ||
+      typeof window === 'undefined' ||
+      pendingFocusIndex < virtual.startIndex ||
+      pendingFocusIndex >= virtual.endIndex
+    ) {
+      return;
+    }
+    const frame = window.requestAnimationFrame(() => {
+      const target = surfaceElement?.querySelector<HTMLElement>(`[data-session-index="${pendingFocusIndex}"]`);
+      if (target) {
+        pendingFocusIndex = undefined;
+        target.focus();
+      }
+    });
+    return () => window.cancelAnimationFrame(frame);
+  });
 </script>
 
 {#if rows.length === 0}
@@ -331,24 +360,17 @@
                   <td
                     class={[entry.meta.align === 'right' ? numeric : undefined, entry.id === 'session' ? sessionCell : undefined]}
                   >
-                    {#if entry.id === 'session'}
-                      <span style:padding-left={`${virtualRow.row.depth * 14}px`}>
-                        {#if virtualRow.row.getCanExpand()}
-                          <button
-                            aria-expanded={String(virtualRow.row.getIsExpanded())}
-                            aria-label={`${virtualRow.row.getIsExpanded() ? 'Collapse' : 'Expand'} campaign ${virtualRow.row.original.sessionLabel}`}
-                            class={expandButton}
-                            onclick={(event) => { event.stopPropagation(); toggleExpanded(virtualRow.row.original); }}
-                            type="button"
-                          >
-                            {virtualRow.row.getIsExpanded() ? '▾' : '▸'}
-                          </button>
-                        {/if}
-                        {entry.meta.format(virtualRow.row.original)}
-                      </span>
-                    {:else}
-                      {entry.meta.format(virtualRow.row.original)}
-                    {/if}
+                    <SessionCell
+                      canExpand={virtualRow.row.getCanExpand()}
+                      columnId={entry.id}
+                      depth={virtualRow.row.depth}
+                      expanded={virtualRow.row.getIsExpanded()}
+                      {onFieldFilter}
+                      {onHarnessFilter}
+                      onToggleExpanded={() => toggleExpanded(virtualRow.row.original)}
+                      query={searchQuery}
+                      row={virtualRow.row.original}
+                    />
                   </td>
                 {/each}
               </tr>
@@ -365,6 +387,8 @@
       <ul
         aria-label="Session summaries"
         class={[surface, mobileList]}
+        data-session-list-gap="0"
+        data-session-list-padding="0"
         data-session-surface="mobile"
         onscroll={updateViewport}
         bind:this={surfaceElement}
@@ -374,12 +398,22 @@
           <li aria-hidden="true" data-virtual-spacer="top" style:height={`${virtual.topHeight}px`}></li>
         {/if}
         {#each virtual.rows as virtualRow (virtualRow.row.id)}
+          {@const mobileSession = projectSessionCell(virtualRow.row.original, 'session', searchQuery)}
+          {@const mobileValue = apiValuePresentation(virtualRow.row.original)}
           <li
             aria-posinset={String(virtualRow.index + 1)}
             aria-setsize={String(totalRows ?? model.rows.length)}
-            data-session-index={virtualRow.index}
+            class={mobileRow}
+            data-depth={virtualRow.row.depth}
+            data-session-row-height="188"
+            data-session-row-id={virtualRow.row.id}
           >
-            <article class={mobileCard} data-selected={selectedRowId === virtualRow.row.id}>
+            <article
+              class={mobileCard}
+              data-depth={virtualRow.row.depth}
+              data-selected={selectedRowId === virtualRow.row.id}
+              data-session-card-height="180"
+            >
               <header class={mobileHeader}>
                 <span>{fmtDate(virtualRow.row.original.activeDate)}</span>
                 <HarnessBadge
@@ -387,16 +421,34 @@
                   onClick={() => onHarnessFilter(virtualRow.row.original.harness)}
                 />
               </header>
-              <button class={mobileOpen} onclick={() => onSelect(virtualRow.row.original)} type="button">
-                <span>{virtualRow.row.original.sessionLabel}</span>
-                <span
-                  >{virtualRow.row.original.usageUnavailable ? '—' : apiValuePresentation(virtualRow.row.original).label}</span
-                >
+              <button
+                class={mobileOpen}
+                data-session-index={virtualRow.index}
+                onclick={() => onSelect(virtualRow.row.original)}
+                onkeydown={(event) => onRowKeydown(event, virtualRow.row.original, virtualRow.index)}
+                tabindex="0"
+                type="button"
+              >
+                <span>
+                  {#if mobileSession.kind === 'session'}
+                    {#each mobileSession.segments as segment, index (`mobile:${index}:${segment.text}`)}
+                      {#if segment.match}
+                        <mark class={highlightedMark}>{segment.text}</mark>
+                      {:else}
+                        {segment.text}
+                      {/if}
+                    {/each}
+                  {/if}
+                </span>
+                <span title={virtualRow.row.original.usageUnavailable ? undefined : mobileValue.title}>
+                  {virtualRow.row.original.usageUnavailable ? '—' : mobileValue.label}
+                </span>
               </button>
               <div>
                 <button
                   class={controlButton}
                   onclick={() => onFieldFilter('project', virtualRow.row.original.projectKey)}
+                  title={`Filter by ${virtualRow.row.original.projectLabel === '(unknown)' ? 'No project' : virtualRow.row.original.projectLabel}`}
                   type="button"
                 >
                   {virtualRow.row.original.projectLabel === '(unknown)' ? 'No project' : virtualRow.row.original.projectLabel}
@@ -404,6 +456,7 @@
                 <button
                   class={controlButton}
                   onclick={() => onFieldFilter('model', virtualRow.row.original.modelKey)}
+                  title={`Filter by ${virtualRow.row.original.modelKey}`}
                   type="button"
                 >
                   {virtualRow.row.original.modelLabel}

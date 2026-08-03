@@ -4,6 +4,7 @@ import {
   defaultColumnVisibility,
   sessionColumnPresets,
 } from '../../../../session-table-schema';
+import { applySessionFieldFilter, projectSessionCell, sessionSortDescendingByDefault } from './session-cell-projection';
 import { sessionTableColumns, visibleSessionTableColumns } from './session-columns';
 import { syntheticCampaignRow, syntheticSessionRow, syntheticSessionRows } from './session-table.fixtures';
 import { createSessionTableModel, toggleSessionRowExpanded } from './session-table-model';
@@ -69,6 +70,77 @@ describe('Svelte session table schema adapter', () => {
     });
     expect(expanded.rows.map(({ id }) => id)).toEqual([campaign.rowId, child.rowId]);
     expect(expanded.rows[1]?.depth).toBe(1);
+  });
+
+  test('projects interactive filters, highlighted titles, provenance, and campaign semantics for Svelte cells', () => {
+    const row = {
+      ...syntheticSessionRow(7),
+      campaignClassifierCount: 2,
+      campaignClassifierFreshTokens: 4321,
+      campaignKey: 'campaign-seven',
+      campaignTotalCount: 4,
+      campaignVisibleCount: 3,
+      costApprox: 1.25,
+      costKnown: false,
+      origin: 'classifier' as const,
+      partial: true,
+      titleSource: 'first-prompt' as const,
+    };
+
+    expect(projectSessionCell(row, 'harness', 'session')).toMatchObject({
+      kind: 'harness-filter',
+      label: row.harness,
+      title: `Filter by ${row.harness}`,
+    });
+    expect(projectSessionCell(row, 'provider', 'session')).toMatchObject({
+      field: 'provider',
+      kind: 'field-filter',
+      label: row.providerDisplay,
+      value: row.providerDisplay,
+    });
+    expect(projectSessionCell(row, 'project', 'session')).toMatchObject({
+      field: 'project',
+      kind: 'field-filter',
+      value: row.projectKey,
+    });
+    expect(projectSessionCell(row, 'model', 'session')).toMatchObject({
+      field: 'model',
+      kind: 'field-filter',
+      value: row.modelKey,
+    });
+    expect(projectSessionCell(row, 'session', 'session')).toMatchObject({
+      campaignLabel: 'Campaign · 3 sessions',
+      classifierLabel: '+ 2 automated reviews · 4,321 fresh',
+      kind: 'session',
+      originLabel: 'Automated review',
+    });
+    expect(projectSessionCell(row, 'session', 'session')).toHaveProperty('segments.1.match', true);
+    expect(projectSessionCell(row, 'session', 'session')).toHaveProperty('provenanceTitle');
+    expect(projectSessionCell(row, 'cost', '')).toMatchObject({
+      kind: 'value',
+      label: '≥ $1.25',
+      title: 'Known API-value subtotal; one or more model prices are unavailable',
+    });
+  });
+
+  test('starts text sorts ascending while dates, metrics, and flags start descending', () => {
+    for (const id of ['session', 'harness', 'machine', 'provider', 'project', 'model'] as const) {
+      expect(sessionSortDescendingByDefault(id), id).toBe(false);
+    }
+    for (const id of ['date', 'tokIn', 'cost', 'duration', 'partial'] as const) {
+      expect(sessionSortDescendingByDefault(id), id).toBe(true);
+    }
+  });
+
+  test('stops row activation before applying an exact field filter', () => {
+    const calls: string[] = [];
+    applySessionFieldFilter(
+      { stopPropagation: () => calls.push('stop') },
+      (field, value) => calls.push(`${field}:${value}`),
+      'project',
+      'project-seven',
+    );
+    expect(calls).toEqual(['stop', 'project:project-seven']);
   });
 });
 

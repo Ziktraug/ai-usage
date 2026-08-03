@@ -68,6 +68,23 @@ export const sortButton = css({
 });
 export const numeric = css({ textAlign: 'right!', fontVariantNumeric: 'tabular-nums' });
 export const sessionCell = css({ fontWeight: 600, overflowWrap: 'anywhere' });
+export const sessionCellContent = css({ display: 'inline', lineHeight: 1.4 });
+export const sessionAnnotation = css({ color: 'muted', fontSize: '11px', fontWeight: 500 });
+export const highlightedMark = css({ bg: 'accentTint', color: 'ink', borderRadius: 'xs', px: '1px' });
+export const provenanceMarker = css({ color: 'status.warn', cursor: 'help', fontSize: '11px', fontWeight: 700 });
+export const filterButton = css({
+  maxW: '100%',
+  p: 0,
+  border: 0,
+  bg: 'transparent',
+  color: 'inherit',
+  cursor: 'pointer',
+  font: 'inherit',
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+  _focusVisible: { outline: '2px solid token(colors.accent)', outlineOffset: '2px' },
+});
 export const expandButton = css({
   display: 'inline-flex',
   alignItems: 'center',
@@ -80,16 +97,19 @@ export const expandButton = css({
   color: 'muted',
   cursor: 'pointer',
 });
-export const mobileList = css({ display: 'grid', gap: '10px', m: 0, p: '10px', listStyle: 'none' });
+export const mobileList = css({ display: 'grid', gap: 0, m: 0, p: 0, listStyle: 'none' });
+export const mobileRow = css({ h: '188px', p: '0 0 8px' });
 export const mobileCard = css({
   display: 'grid',
-  gap: '10px',
-  minH: '168px',
-  p: '14px',
+  gridTemplateRows: 'auto minmax(0, 1fr) auto',
+  gap: '8px',
+  h: '180px',
+  p: '12px',
   border: '1px solid token(colors.line)',
   borderRadius: 'md',
   bg: 'surface',
   '&[data-selected=true]': { borderColor: 'accent', bg: 'accentTint' },
+  '&[data-depth="1"]': { ml: '14px', borderLeft: '2px solid token(colors.accent)' },
 });
 export const mobileHeader = css({ display: 'flex', justifyContent: 'space-between', gap: '8px', alignItems: 'center' });
 export const mobileOpen = css({
