@@ -130,7 +130,7 @@ const manifestSchema = strictObject({
     ),
     maxLength(MAX_COLLECTION_ITEMS),
   ),
-  markdown: string(),
+  markdown: markdownContentSchema,
   name: optional(string()),
 });
 

@@ -263,6 +263,21 @@ describe('Skills oRPC contract', () => {
 
   test('enforces the markdown limit in UTF-8 bytes and a lowercase SHA-256', () => {
     const baseSha256 = 'a'.repeat(64);
+    const snapshotWithManifestMarkdown = (markdown: string) => ({
+      ...emptySnapshot,
+      skills: [
+        {
+          description: 'Synthetic skill',
+          diagnostics: [],
+          enabled: true,
+          manifest: { fields: [], markdown },
+          name: 'valid-skill',
+          path: '/synthetic/source/valid-skill',
+          skillMdPath: '/synthetic/source/valid-skill/SKILL.md',
+          validationStatus: 'valid',
+        },
+      ],
+    });
     expect(
       safeParse(saveSkillMarkdownInputSchema, {
         baseSha256,
@@ -301,6 +316,16 @@ describe('Skills oRPC contract', () => {
         truncated: true,
       }).success,
     ).toBe(false);
+
+    expect(safeParse(skillManagementSnapshotSchema, snapshotWithManifestMarkdown('a'.repeat(262_144))).success).toBe(
+      true,
+    );
+    expect(safeParse(skillManagementSnapshotSchema, snapshotWithManifestMarkdown('a'.repeat(262_145))).success).toBe(
+      false,
+    );
+    expect(safeParse(skillManagementSnapshotSchema, snapshotWithManifestMarkdown('é'.repeat(131_073))).success).toBe(
+      false,
+    );
   });
 
   test('keeps dirty-draft save outcomes in the successful output channel', () => {
