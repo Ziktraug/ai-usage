@@ -99,8 +99,8 @@ describe('navigation and scroll adapters', () => {
       shallowNavigate: (...call) => shallowCalls.push(call),
     });
 
-    await port.navigate({ keepFocus: true, replace: false, resetScroll: false, url: '/edited' });
-    await port.navigate({ keepFocus: true, replace: true, resetScroll: false, url: '/replaced' });
+    await port.navigate({ keepFocus: true, replace: false, resetScroll: false, shallow: true, url: '/edited' });
+    await port.navigate({ keepFocus: true, replace: true, resetScroll: false, shallow: true, url: '/replaced' });
 
     expect(shallowCalls).toEqual([
       ['/edited', false],

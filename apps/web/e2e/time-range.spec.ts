@@ -208,6 +208,7 @@ test('commits preset, text, keyboard, and pointer report ranges to the URL', asy
   await expect.poll(() => page.url()).not.toBe(presetUrl);
   await startInput.press('Enter');
   await expect(startInput).toHaveValue('May 25, 2026');
+  await expect(startInput).not.toBeFocused();
 
   const textUrl = page.url();
   const keyboardStart = await startHandle.getAttribute('aria-valuenow');
@@ -235,6 +236,21 @@ test('commits preset, text, keyboard, and pointer report ranges to the URL', asy
   await page.reload();
   await waitForFocusedReportSettled(page);
   await expect(startInput).not.toHaveValue(pointerStart);
+
+  await startInput.fill('2026-05-20');
+  await endInput.focus();
+  await expect(startInput).toHaveValue('May 20, 2026');
+  const firstBlurredEditUrl = page.url();
+
+  await startInput.fill('2026-05-21');
+  await endInput.focus();
+  await expect(startInput).toHaveValue('May 21, 2026');
+  const secondBlurredEditUrl = page.url();
+  expect(secondBlurredEditUrl).not.toBe(firstBlurredEditUrl);
+
+  await page.goBack();
+  await expect.poll(() => page.url()).toBe(firstBlurredEditUrl);
+  await expect(startInput).toHaveValue('May 20, 2026');
 });
 
 test('does not capture wheel scrolling over the activity chart', async ({ page }) => {

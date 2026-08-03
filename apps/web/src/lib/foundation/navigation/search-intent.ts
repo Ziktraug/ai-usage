@@ -2,6 +2,7 @@ export interface SearchNavigationOptions {
   keepFocus?: boolean;
   replace?: boolean;
   resetScroll?: boolean;
+  shallow?: boolean;
 }
 
 export type SearchNavigationIntent<Search> = (

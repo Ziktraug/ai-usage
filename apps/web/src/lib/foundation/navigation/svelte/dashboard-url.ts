@@ -74,6 +74,7 @@ export const createDashboardSearchNavigation =
       .navigate({
         ...(options?.keepFocus === undefined ? {} : { keepFocus: options.keepFocus }),
         ...(options?.replace === undefined ? {} : { replace: options.replace }),
+        ...(options?.shallow === undefined ? {} : { shallow: options.shallow }),
         resetScroll: options?.resetScroll ?? false,
         url,
       })
@@ -94,7 +95,7 @@ export const createSearchEditRun = (): SearchEditRun => {
     next: () => {
       const replace = active;
       active = true;
-      return { keepFocus: true, replace, resetScroll: false };
+      return { keepFocus: true, replace, resetScroll: false, shallow: true };
     },
   };
 };

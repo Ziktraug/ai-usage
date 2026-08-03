@@ -81,7 +81,7 @@
     type TimeRangeSelectionIndexes,
     transitionTimeRangeControl,
   } from '../../../../time-range-control-state';
-  import type { SearchNavigationIntent } from '../../../foundation/navigation/search-intent';
+  import type { SearchNavigationIntent, SearchNavigationOptions } from '../../../foundation/navigation/search-intent';
   import { createSearchEditRun } from '../../../foundation/navigation/svelte/dashboard-url';
   import ActivityTimeline from '../overview/activity-timeline.svelte';
   import type { MachineSeriesPresenter } from '../overview/timeline-model';
@@ -149,7 +149,6 @@
   let draftTo = $state(initialTo());
   let cancelledInput = $state<'end' | 'start' | null>(null);
   let editingInput = $state<'end' | 'start' | null>(null);
-  let preserveInputDraftDuringNavigation = false;
   const editRun = createSearchEditRun();
   const currentControlKey = (): string =>
     JSON.stringify({
@@ -221,9 +220,9 @@
     }`,
   );
 
-  const commitRange = (next: DashboardDateRangeSearch, replace = false): void => {
+  const commitRange = (next: DashboardDateRangeSearch, options: SearchNavigationOptions = {}): void => {
     if (navigate) {
-      navigate((current) => ({ ...current, range: next }), { replace, resetScroll: false });
+      navigate((current) => ({ ...current, range: next }), { ...options, resetScroll: false });
       return;
     }
     onRangeChange(next);
@@ -234,7 +233,7 @@
     const nextProjection = reportRangeProjection(next, generatedDate, dateDomain);
     draftFrom = nextProjection.displayFrom;
     draftTo = nextProjection.displayTo;
-    commitRange(next, editRun.next().replace);
+    commitRange(next, editRun.next());
   };
 
   const applyTransition = (event: Parameters<typeof transitionTimeRangeControl>[1]): boolean => {
@@ -274,7 +273,7 @@
     if (!next) {
       return;
     }
-    commitRange(next, editRun.next().replace);
+    commitRange(next, editRun.next());
     if (settle) {
       const nextProjection = reportRangeProjection(next, generatedDate, dateDomain);
       draftFrom = nextProjection.displayFrom;
@@ -310,7 +309,10 @@
       return;
     }
     if (event.key === 'Enter') {
+      event.preventDefault();
       commitInputs(true);
+      editingInput = null;
+      (event.currentTarget as HTMLInputElement).blur();
     }
   };
 
@@ -441,8 +443,7 @@
         aria-label="Start date"
         class={input}
         onblur={() => {
-          if (preserveInputDraftDuringNavigation) {
-            preserveInputDraftDuringNavigation = false;
+          if (editingInput !== 'start') {
             return;
           }
           finishInput('start');
@@ -460,13 +461,7 @@
         oninput={(event) => {
           draftFrom = event.currentTarget.value;
           if (parseLocalDate(draftFrom)) {
-            preserveInputDraftDuringNavigation = true;
-            try {
-              commitInputs(false);
-            } catch (cause) {
-              preserveInputDraftDuringNavigation = false;
-              throw cause;
-            }
+            commitInputs(false);
           }
         }}
         onkeydown={(event) => commitInputKey(event, 'start')}
@@ -480,8 +475,7 @@
         aria-label="End date"
         class={input}
         onblur={() => {
-          if (preserveInputDraftDuringNavigation) {
-            preserveInputDraftDuringNavigation = false;
+          if (editingInput !== 'end') {
             return;
           }
           finishInput('end');
@@ -499,13 +493,7 @@
         oninput={(event) => {
           draftTo = event.currentTarget.value;
           if (parseLocalDate(draftTo)) {
-            preserveInputDraftDuringNavigation = true;
-            try {
-              commitInputs(false);
-            } catch (cause) {
-              preserveInputDraftDuringNavigation = false;
-              throw cause;
-            }
+            commitInputs(false);
           }
         }}
         onkeydown={(event) => commitInputKey(event, 'end')}

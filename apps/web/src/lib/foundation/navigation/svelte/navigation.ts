@@ -2,6 +2,7 @@ export interface NavigationIntent {
   readonly keepFocus?: boolean;
   readonly replace?: boolean;
   readonly resetScroll?: boolean;
+  readonly shallow?: boolean;
   readonly url: string | URL;
 }
 
@@ -187,7 +188,7 @@ export const createSvelteNavigationPort = (dependencies: {
   currentUrl: () => new URL(dependencies.getCurrentUrl()),
   navigate: async (intent) => {
     try {
-      if (intent.keepFocus && dependencies.shallowNavigate) {
+      if (intent.shallow && dependencies.shallowNavigate) {
         dependencies.shallowNavigate(intent.url, intent.replace ?? false);
         return;
       }
