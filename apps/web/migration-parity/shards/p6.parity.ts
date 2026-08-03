@@ -2,10 +2,10 @@ import { currentRecord } from '../helpers';
 import { defineParityShard, type ParityEvidence } from '../schema';
 
 const owner = 'P6' as const;
-const implementationCommit = '29f5c1720a7d7169758433162b5f39b507a4059a';
-const lifecycleTestCommit = '29f5c1720a7d7169758433162b5f39b507a4059a';
-const reviewCorrectionCommit = '29f5c1720a7d7169758433162b5f39b507a4059a';
-const renderedPendingTestCommit = '29f5c1720a7d7169758433162b5f39b507a4059a';
+const implementationCommit = '8df877a6e73ed1730f93f9977cb19de83733cae9';
+const lifecycleTestCommit = '8df877a6e73ed1730f93f9977cb19de83733cae9';
+const reviewCorrectionCommit = '8df877a6e73ed1730f93f9977cb19de83733cae9';
+const renderedPendingTestCommit = '8df877a6e73ed1730f93f9977cb19de83733cae9';
 const targetEvidence = (kind: ParityEvidence['kind'], reference: string): ParityEvidence => ({
   commit: implementationCommit,
   kind,
@@ -43,7 +43,7 @@ export default defineParityShard({
       'SOURCES-01',
       'apps/web/src/routes/sources.tsx; apps/web/src/source-control-client.ts',
       'apps/web/e2e/sources.spec.ts',
-      'apps/web/src/lib/features/sources/sources-page.svelte; apps/web/src/lib/features/sources/copy-feedback.ts; apps/web/src/lib/features/sources/presentation-model.ts; apps/web/src/lib/features/sources/service.ts; apps/web/svelte-shadow/routes/api/source-control/+server.ts; apps/web/svelte-shadow/routes/api/source-control/command/+server.ts',
+      'apps/web/src/lib/features/sources/sources-page.svelte; apps/web/src/lib/features/sources/copy-feedback.ts; apps/web/src/source-control-presentation-model.ts; apps/web/src/lib/features/sources/service.ts; apps/web/svelte-shadow/routes/api/source-control/+server.ts; apps/web/svelte-shadow/routes/api/source-control/command/+server.ts',
       'apps/web/src/lib/features/sources/service.test.ts; apps/web/src/lib/features/sources/endpoint.server.test.ts',
       [
         {
