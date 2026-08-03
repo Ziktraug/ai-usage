@@ -2,9 +2,9 @@ import { currentRecord } from '../helpers';
 import { defineParityShard, type UrlContractDescriptor } from '../schema';
 
 const owner = 'R0' as const;
-const implementationCommit = '435aa06e595405ce384338db5106a902e99443ce';
-const correctionCommit = '98235abf62fc5d5e709a75581557d4449cd8f2c0';
-const exhaustiveCommit = '4e46acc07fcbee4a6e4e644b8bbe768af7e1beee';
+const implementationCommit = 'affcee466af2d8ee8b4626537be4a2187cf3d6f0';
+const correctionCommit = '688b6294654d20fa88e0a092e7f2ecee92912597';
+const exhaustiveCommit = '66a650e31ee504d4df31616a5e411a3d919a7f92';
 const targetReferences = (id: string): { readonly source: string; readonly test: string } => {
   if (id.startsWith('url:dashboard.')) {
     return {

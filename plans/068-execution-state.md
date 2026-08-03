@@ -12,8 +12,8 @@ authority for feature, operation, design, source-file, and test-title coverage.
 - Planning PR: `#26`, squash-merged as
   `2183270ebfbb886fafa7e6268893122db9b364c0`
 - `BASE_SHA`: `2183270ebfbb886fafa7e6268893122db9b364c0`
-- Current integration checkpoint: `d925f4c`
-- Last reviewed green checkpoint: `276ca0e`
+- Current integration checkpoint: `c8b7c7e872f25648dbf5df407f92e76d64948eff`
+- Last reviewed green checkpoint: `c8b7c7e872f25648dbf5df407f92e76d64948eff`
 - Active design bases: D1 `4862293`, D2 `fce5c1a`, D3 `e2f13cd`
 - Implementation PR: not opened
 - Exclusive process-test token: free after the Q3 production, scale, and benchmark gates
@@ -134,8 +134,8 @@ Statuses are `BLOCKED`, `READY`, `IMPLEMENTING`, `REVIEW`, `REWORK`,
 | D2 | D0 | INTEGRATED | `fce5c1a`, `9935846`, evidence `b31c3af` | `/root/d123_parity_review` / ACCEPT | `b31c3af` |
 | D3 | D0 | INTEGRATED | `e2f13cd`, `0702203`, `70f5796`, evidence `b31c3af` | `/root/d123_parity_review` / ACCEPT | `b31c3af` |
 | D4 | D1, D2, D3 | INTEGRATED | `662182e`, bundle correction `6646fe5` | `/root/d4_review` / ACCEPT | `6646fe568e8b4c1fba74ac1b4150d1480d15ca6f` |
-| R0 | F0, V5, Q3, D4 | REVIEW | `435aa06`, evidence `88d56c9`, corrections `98235ab`, `4e46acc`, evidence `4f293e5`, `23635c7` | `/root/d123_parity_review` / ACCEPT; `/root/q2_spec_review` / REWORK; final delta re-review pending | candidate `23635c7` in `/tmp/ai-usage-068-r0` |
-| R1 | R0 | BLOCKED | - | - | - |
+| R0 | F0, V5, Q3, D4 | INTEGRATED | `435aa06`, evidence `88d56c9`, corrections `98235ab`, `4e46acc`, evidence `4f293e5`, `23635c7`; integrated as `affcee4`, `01fa070`, `688b629`, `fa92709`, `66a650e`, `c8b7c7e` | `/root/d123_parity_review`, `/root/q2_spec_review` / ACCEPT | `c8b7c7e872f25648dbf5df407f92e76d64948eff` |
+| R1 | R0 | READY | - | - | - |
 | P1 | R1, V1, V2, Q1, D4 | BLOCKED | - | - | - |
 | P2 | P1 | BLOCKED | - | - | - |
 | P3 | P1, V2, Q1, D4 | BLOCKED | - | - | - |
@@ -707,7 +707,13 @@ tests with 233 assertions, plus Svelte check 0/0, Web typecheck, Svelte build,
 Ultracite, boundaries, 18/18 parity, diff and clean status. The same 12 files now
 total 1,647 lines, driven by the required exhaustive direct matrix; no assertion
 was weakened and no path/product scope expanded. Final spec/parity and standards
-delta re-reviews are running.
+delta re-reviews both returned ACCEPT. The six accepted commits were cherry-picked
+as `affcee4`, `01fa070`, `688b629`, `fa92709`, `66a650e`, and `c8b7c7e`.
+The parity source-SHA constants were then remapped from the local worker commits
+to their integration equivalents. Post-cherry focused tests passed 33/33 with
+233 assertions, the frozen matrix passed 69/69 with 233 assertions, and
+Ultracite, package boundaries, 18/18 parity, Svelte check 0/0, Web typecheck,
+Svelte build, repository lint and diff checks all passed. R1 is ready.
 
 Three Q3 incidents are retained. The first complete repository test run hit the
 known D3 `ArrowRight` focus timeout; its one allowed exact rerun passed 10/10,
@@ -764,5 +770,8 @@ edge, and the exact complete rerun passed 717/717 without exclusions.
   build-graph failures and both retained-cache lifecycle regressions are
   recorded above; both correction re-reviews ACCEPTed. P1 retains the explicit
   awaited-prefetch/hydration seam.
-- Recovery point: `276ca0e` is the latest independently reviewed green
-  checkpoint. Q3 is integrated; R0 is the next ready critical-path packet.
+- R0 recovery: the accepted worker range remains clean and recoverable in
+  `/tmp/ai-usage-068-r0`; its six commits are integrated through `c8b7c7e`.
+- Recovery point: `c8b7c7e872f25648dbf5df407f92e76d64948eff` is the latest
+  independently reviewed green checkpoint. R0 is integrated; R1 is the next
+  ready critical-path packet.
