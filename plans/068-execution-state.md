@@ -12,11 +12,11 @@ authority for feature, operation, design, source-file, and test-title coverage.
 - Planning PR: `#26`, squash-merged as
   `2183270ebfbb886fafa7e6268893122db9b364c0`
 - `BASE_SHA`: `2183270ebfbb886fafa7e6268893122db9b364c0`
-- Current integration checkpoint: `c8b7c7e872f25648dbf5df407f92e76d64948eff`
-- Last reviewed green checkpoint: `c8b7c7e872f25648dbf5df407f92e76d64948eff`
+- Current integration checkpoint: `1befaefd71ef5ffe59866021f216104b3f83f9ef`
+- Last reviewed green checkpoint: `1befaefd71ef5ffe59866021f216104b3f83f9ef`
 - Active design bases: D1 `4862293`, D2 `fce5c1a`, D3 `e2f13cd`
 - Implementation PR: not opened
-- Exclusive process-test token: free after the Q3 production, scale, and benchmark gates
+- Exclusive process-test token: free after the R1 shadow-browser and full repository gates
 
 The integration branch did not exist locally or remotely before this run. Local
 `main` and `origin/main` were clean and aligned at `BASE_SHA`; plans 066 and 067
@@ -135,14 +135,14 @@ Statuses are `BLOCKED`, `READY`, `IMPLEMENTING`, `REVIEW`, `REWORK`,
 | D3 | D0 | INTEGRATED | `e2f13cd`, `0702203`, `70f5796`, evidence `b31c3af` | `/root/d123_parity_review` / ACCEPT | `b31c3af` |
 | D4 | D1, D2, D3 | INTEGRATED | `662182e`, bundle correction `6646fe5` | `/root/d4_review` / ACCEPT | `6646fe568e8b4c1fba74ac1b4150d1480d15ca6f` |
 | R0 | F0, V5, Q3, D4 | INTEGRATED | `435aa06`, evidence `88d56c9`, corrections `98235ab`, `4e46acc`, evidence `4f293e5`, `23635c7`; integrated as `affcee4`, `01fa070`, `688b629`, `fa92709`, `66a650e`, `c8b7c7e` | `/root/d123_parity_review`, `/root/q2_spec_review` / ACCEPT | `c8b7c7e872f25648dbf5df407f92e76d64948eff` |
-| R1 | R0 | READY | - | - | - |
-| P1 | R1, V1, V2, Q1, D4 | BLOCKED | - | - | - |
+| R1 | R0 | INTEGRATED | `40116b5`, `121d78b`, corrections `95b67d6`, `7c85cf1`, evidence/checker `c5cc7ea`, `1befaef` | `/root/d123_parity_review`, `/root/q2_spec_review`, `/root/v34_parity` / ACCEPT | `1befaefd71ef5ffe59866021f216104b3f83f9ef` |
+| P1 | R1, V1, V2, Q1, D4 | READY | - | - | - |
 | P2 | P1 | BLOCKED | - | - | - |
 | P3 | P1, V2, Q1, D4 | BLOCKED | - | - | - |
 | P4 | P3 | BLOCKED | - | - | - |
-| P5 | R1, V3, Q2, D4 | BLOCKED | - | - | - |
-| P6 | R1, V4, Q2, D4, B2 | BLOCKED | - | - | - |
-| P7 | R1, V4, Q2, D4 | BLOCKED | - | - | - |
+| P5 | R1, V3, Q2, D4 | READY | - | - | - |
+| P6 | R1, V4, Q2, D4, B2 | READY | - | - | - |
+| P7 | R1, V4, Q2, D4 | READY | - | - | - |
 | P8 | P1 | BLOCKED | - | - | - |
 | P9 | P5 | BLOCKED | - | - | - |
 | P10 | P5 | BLOCKED | - | - | - |
@@ -736,6 +736,54 @@ Svelte option module from a Solid entry leaks Svelte syntax into the Solid build
 extracting the identities into framework-neutral modules removed that graph
 edge, and the exact complete rerun passed 717/717 without exclusions.
 
+R1 was implemented directly by the coordinator as the serialized SvelteKit
+composition packet. Implementation commits `121d78b` and `95b67d6` add the
+complete route skeleton, application shell, request-owned Query hydration,
+theme prepaint/controller, R0 navigation/scroll/retry/dirty integration,
+accessible error/404 UI, and demo policy selected before protected acquisition.
+Correction `7c85cf1` removes a keyed theme-control remount and hardens the D1
+controlled Toggle seam so external state changes preserve one DOM node, focus,
+callback ordering, disabled behavior, and propagation. The D1 SSR and Chromium
+fixtures prove both user activation and external controlled updates.
+
+The six-case shadow-browser gate proves the complete direct/reload/deep-link
+route matrix and Axe scan, light/dark/system prepaint plus named toggle and
+focus, mobile dirty navigation with modal Tab confinement/Keep/Discard/reload/
+cleanup, keyed history and scroll restoration, exact retry/404 handling, and
+demo redirects before the synthetic acquisition tripwire. The final run passed
+6/6 against a freshly built adapter-bun artifact. Focused shell tests passed
+13/13 with 47 assertions; D1 SSR passed 6/6 and its Chromium fixture passed.
+
+Independent review initially returned REWORK for a dirty registry mounted below
+navigation, missing shell-owned Keep/Discard composition, broad retry and error
+allowances, incomplete route/a11y evidence, modal focus leakage, and the keyed
+theme control. The coordinator corrected each finding without changing product
+behavior. `/root/d123_parity_review` ACCEPTed code quality, client/server seams,
+SSR, cleanup and the process-harness stabilization; `/root/q2_spec_review`
+ACCEPTed parity/spec over `31aa91d..7c85cf1`. The retained low-risk handoff is
+that P9 must decide and test Escape semantics while a real asynchronous discard
+is pending.
+
+Commit `40116b5` serializes package tests through Turbo and disables only the
+unneeded Vite watcher in the D3 Chromium fixture. This followed two classified
+parallel-process failures: one `EINVAL watch` and one 2-second ArrowRight focus
+timeout under concurrent CPU contention. The exact D3 fixture passed 10/10
+after `watch: null`; the complete serialized root test then passed without a
+timeout, skip, weakened assertion, or omitted task. The independent standards
+review ACCEPTed this stabilization.
+
+Parity commits `c5cc7ea` and `1befaef` mark the four R1 features, four replaced
+production TSX owners, six new Playwright titles and eleven new passive
+`./svelte` exports complete with fresh final-SHA source/test/command/review
+evidence. New inventory records no longer inherit baseline or D4 evidence, and
+the checker now requires integrated target review evidence for every complete
+record. `/root/v34_parity` ACCEPTed the final ledger range. Final checkpoint
+gates passed: `bun run check` (932 files), `bun run lint`, `bun run typecheck`
+(28/28), `bun run test` (all package tasks plus 93/93 tool tests), `bun run
+build` (15/15), parity at 35 features, 30 retired operations, 72 production TSX
+owners, 15 design rows, 413 live/436 ledger exports, 11 render suites, 110
+Playwright titles and 18 URL contracts, and a clean diff/worktree.
+
 ## Deviations, STOPs, and recovery
 
 - Reviewed deviations: the two Vite/Bun loopback proof substitutions above are
@@ -772,6 +820,14 @@ edge, and the exact complete rerun passed 717/717 without exclusions.
   awaited-prefetch/hydration seam.
 - R0 recovery: the accepted worker range remains clean and recoverable in
   `/tmp/ai-usage-068-r0`; its six commits are integrated through `c8b7c7e`.
-- Recovery point: `c8b7c7e872f25648dbf5df407f92e76d64948eff` is the latest
-  independently reviewed green checkpoint. R0 is integrated; R1 is the next
-  ready critical-path packet.
+- Resolved R1 gate incidents: the client type closure initially reached Solid
+  through the report entrypoint; synchronous history seeding caused hydration
+  failure; hash-preserving replacement and focus-after-tick were required;
+  popstate initially read the incoming history state instead of the outgoing
+  key; the browser failure gate initially allowed broad errors; and concurrent
+  package processes exposed the two D3 fixture failures described above. Every
+  correction is committed, independently reviewed and covered by the final
+  gates; no real local state was acquired.
+- Recovery point: `1befaefd71ef5ffe59866021f216104b3f83f9ef` is the latest
+  independently reviewed green checkpoint. R1 is integrated; P1, P5, P6 and P7
+  are ready.
