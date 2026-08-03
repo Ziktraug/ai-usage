@@ -1,5 +1,5 @@
-import { parseUsageMergeBundle } from '@ai-usage/report-core/merge-bundle';
 import { MAX_PORTABLE_USAGE_BYTES } from '@ai-usage/report-core/portable-usage';
+import { isJsonWireValue } from '@ai-usage/web-contract/schema-conventions';
 import { parseSyncFleet, type SyncFleet, syncContract } from '@ai-usage/web-contract/sync';
 import { implement } from '@orpc/server';
 
@@ -25,8 +25,8 @@ const hasExactKeys = (record: Record<string, unknown>, expected: readonly string
 };
 
 const parseOwnerResult = <Data>(value: unknown, parseData: (input: unknown) => Data): OwnerResult<Data> => {
-  if (!isRecord(value)) {
-    throw new Error('Sync owner result must be an object');
+  if (!(isJsonWireValue(value) && isRecord(value))) {
+    throw new Error('Sync owner result must be a JSON object');
   }
   if (value.ok === true) {
     if (!hasExactKeys(value, ['data', 'ok'])) {
@@ -110,7 +110,14 @@ interface ManualMergeExportData {
   readonly text: string;
 }
 
-const parseManualMergeExportData = (value: unknown): ManualMergeExportData => {
+export interface ManualMergeExportCandidate extends ManualMergeExportData {
+  readonly machine: unknown;
+}
+
+const parseManualMergeExportCandidate = (value: unknown): ManualMergeExportCandidate => {
+  if (!isJsonWireValue(value)) {
+    throw new Error('Manual merge export data is invalid');
+  }
   if (!(isRecord(value) && hasExactKeys(value, ['bytes', 'filename', 'machine', 'rows', 'text']))) {
     throw new Error('Manual merge export data is invalid');
   }
@@ -128,20 +135,48 @@ const parseManualMergeExportData = (value: unknown): ManualMergeExportData => {
     throw new Error('Manual merge export metadata is invalid');
   }
   const bytes = new TextEncoder().encode(value.text).byteLength;
-  const bundle = parseUsageMergeBundle(value.text);
-  if (
-    bytes !== value.bytes ||
-    bundle.rows.length !== value.rows ||
-    !isRecord(value.machine) ||
-    value.machine.id !== bundle.machine.id ||
-    value.machine.label !== bundle.machine.label
-  ) {
+  if (bytes !== value.bytes || !isRecord(value.machine)) {
     throw new Error('Manual merge export identity is invalid');
   }
-  return { bytes, filename: value.filename, rows: value.rows, text: value.text };
+  return { bytes, filename: value.filename, machine: value.machine, rows: Number(value.rows), text: value.text };
+};
+
+const parseCanonicalManualMergeExport = (value: unknown): ManualMergeExportData => {
+  if (!isJsonWireValue(value)) {
+    throw new Error('Canonical manual merge export is invalid');
+  }
+  if (!(isRecord(value) && hasExactKeys(value, ['bytes', 'filename', 'rows', 'text']))) {
+    throw new Error('Canonical manual merge export is invalid');
+  }
+  if (
+    typeof value.filename !== 'string' ||
+    !SAFE_FILENAME_PATTERN.test(value.filename) ||
+    !value.filename.endsWith('.json') ||
+    typeof value.text !== 'string' ||
+    !Number.isSafeInteger(value.bytes) ||
+    Number(value.bytes) <= 0 ||
+    Number(value.bytes) > MAX_PORTABLE_USAGE_BYTES ||
+    !Number.isSafeInteger(value.rows) ||
+    Number(value.rows) < 0
+  ) {
+    throw new Error('Canonical manual merge export metadata is invalid');
+  }
+  const bytes = new TextEncoder().encode(value.text).byteLength;
+  if (bytes !== value.bytes) {
+    throw new Error('Canonical manual merge export byte identity is invalid');
+  }
+  return { bytes, filename: value.filename, rows: Number(value.rows), text: value.text };
 };
 
 export interface ManualMergeExplicitDependencies {
+  /**
+   * The deep domain owner parses the candidate, serializes it authoritatively,
+   * and derives its canonical machine/generatedAt filename before returning it.
+   */
+  readonly canonicalizeExport: (
+    candidate: ManualMergeExportCandidate,
+    signal: AbortSignal,
+  ) => Promise<unknown> | unknown;
   readonly exportBundle: (signal: AbortSignal) => Promise<unknown>;
   readonly handleUpload: (request: Request) => Promise<Response>;
 }
@@ -162,9 +197,9 @@ export const createManualMergeExplicitHandlers = (dependencies: ManualMergeExpli
     if (request.signal.aborted) {
       return explicitFailure(499, 'aborted', 'The manual export was cancelled.');
     }
-    let result: OwnerResult<ManualMergeExportData>;
+    let result: OwnerResult<ManualMergeExportCandidate>;
     try {
-      result = parseOwnerResult(await dependencies.exportBundle(request.signal), parseManualMergeExportData);
+      result = parseOwnerResult(await dependencies.exportBundle(request.signal), parseManualMergeExportCandidate);
     } catch (error) {
       if (isAbortError(error, request.signal)) {
         return explicitFailure(499, 'aborted', 'The manual export was cancelled.');
@@ -180,11 +215,23 @@ export const createManualMergeExplicitHandlers = (dependencies: ManualMergeExpli
         ? explicitFailure(409, 'incompatible-store', 'Stored usage data is incompatible with this web application.')
         : explicitFailure(503, 'export-unavailable', 'The manual export could not be created safely.');
     }
-    return new Response(result.data.text, {
+    let canonical: ManualMergeExportData;
+    try {
+      canonical = parseCanonicalManualMergeExport(await dependencies.canonicalizeExport(result.data, request.signal));
+    } catch (error) {
+      if (isAbortError(error, request.signal)) {
+        return explicitFailure(499, 'aborted', 'The manual export was cancelled.');
+      }
+      return explicitFailure(503, 'export-unavailable', 'The manual export could not be created safely.');
+    }
+    if (request.signal.aborted) {
+      return explicitFailure(499, 'aborted', 'The manual export was cancelled.');
+    }
+    return new Response(canonical.text, {
       headers: {
         'cache-control': 'no-store',
-        'content-disposition': `attachment; filename="${result.data.filename}"`,
-        'content-length': String(result.data.bytes),
+        'content-disposition': `attachment; filename="${canonical.filename}"`,
+        'content-length': String(canonical.bytes),
         'content-type': 'application/json; charset=utf-8',
         'x-content-type-options': 'nosniff',
       },

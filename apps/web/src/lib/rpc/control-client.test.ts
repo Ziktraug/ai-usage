@@ -107,6 +107,55 @@ describe('control explicit browser adapter', () => {
     await expect(oversized.sendCommand({ command: 'run-all' })).rejects.toThrow('byte limit');
   });
 
+  test('cancels and releases a streamed response that exceeds its byte budget', async () => {
+    const maximum = sourceControlBounds.maxSnapshotBytes + sourceControlBounds.maxEventBytes;
+    let cancellations = 0;
+    const stream = new ReadableStream<Uint8Array>({
+      cancel: () => {
+        cancellations += 1;
+      },
+      start: (controller) => {
+        controller.enqueue(new Uint8Array(maximum + 1));
+      },
+    });
+    const response = new Response(stream);
+    const adapter = createControlBrowserAdapter({ fetch: () => Promise.resolve(response) });
+
+    await expect(adapter.sendCommand({ command: 'run-all' })).rejects.toThrow('byte limit');
+    expect(cancellations).toBe(1);
+    expect(response.body?.locked).toBe(false);
+  });
+
+  test('prefers the exact abort reason over a concurrent mid-body failure', async () => {
+    const secondReadStarted = Promise.withResolvers<void>();
+    const concurrentFailure = Promise.withResolvers<void>();
+    const encoder = new TextEncoder();
+    let pulls = 0;
+    const stream = new ReadableStream<Uint8Array>({
+      pull: (controller) => {
+        pulls += 1;
+        if (pulls === 1) {
+          controller.enqueue(encoder.encode('{'));
+          return;
+        }
+        secondReadStarted.resolve();
+        return concurrentFailure.promise;
+      },
+    });
+    const response = new Response(stream);
+    const adapter = createControlBrowserAdapter({ fetch: () => Promise.resolve(response) });
+    const controller = new AbortController();
+    const reason = { reason: 'superseded-command-body' };
+    const pending = adapter.sendCommand({ command: 'run-all' }, controller.signal);
+
+    await secondReadStarted.promise;
+    controller.abort(reason);
+    concurrentFailure.reject(new Error('concurrent body failure'));
+
+    await expect(pending).rejects.toBe(reason);
+    expect(response.body?.locked).toBe(false);
+  });
+
   test('rejects invalid commands before fetch and preserves pre-abort identity', async () => {
     let acquisitions = 0;
     const adapter = createControlBrowserAdapter({

@@ -45,7 +45,20 @@ const parseContentLength = (value: string | null, maximumBytes: number): void =>
   }
 };
 
-const readBoundedJson = async (response: Response, maximumBytes: number): Promise<unknown> => {
+const cancelReader = async (reader: ReadableStreamDefaultReader<Uint8Array>): Promise<void> => {
+  try {
+    await reader.cancel();
+  } catch {
+    // The stream may already be errored by the same cancellation.
+  }
+};
+
+const readBoundedJson = async (
+  response: Response,
+  maximumBytes: number,
+  signal: AbortSignal | undefined,
+): Promise<unknown> => {
+  signal?.throwIfAborted();
   parseContentLength(response.headers.get('content-length'), maximumBytes);
   const reader = response.body?.getReader();
   if (!reader) {
@@ -53,18 +66,34 @@ const readBoundedJson = async (response: Response, maximumBytes: number): Promis
   }
   const chunks: Uint8Array[] = [];
   let byteLength = 0;
-  while (true) {
-    const chunk = await reader.read();
-    if (chunk.done) {
-      break;
+  let complete = false;
+  try {
+    try {
+      while (true) {
+        signal?.throwIfAborted();
+        const chunk = await reader.read();
+        signal?.throwIfAborted();
+        if (chunk.done) {
+          complete = true;
+          break;
+        }
+        byteLength += chunk.value.byteLength;
+        if (byteLength > maximumBytes) {
+          throw new Error('The source control response exceeded its byte limit.');
+        }
+        chunks.push(chunk.value);
+      }
+    } finally {
+      if (!complete) {
+        await cancelReader(reader);
+      }
+      reader.releaseLock();
     }
-    byteLength += chunk.value.byteLength;
-    if (byteLength > maximumBytes) {
-      await reader.cancel();
-      throw new Error('The source control response exceeded its byte limit.');
-    }
-    chunks.push(chunk.value);
+  } catch (error) {
+    signal?.throwIfAborted();
+    throw error;
   }
+  signal?.throwIfAborted();
   const bytes = new Uint8Array(byteLength);
   let offset = 0;
   for (const chunk of chunks) {
@@ -88,14 +117,22 @@ export const createControlBrowserAdapter = (dependencies: ControlBrowserDependen
       if (new TextEncoder().encode(body).byteLength > MAX_COMMAND_BYTES) {
         throw new Error('The source control command exceeded its byte limit.');
       }
-      const response = await fetchTransport(sourceControlCommandTransport.path, {
-        body,
-        headers: { 'content-type': 'application/json' },
-        method: sourceControlCommandTransport.method,
-        ...(signal === undefined ? {} : { signal }),
-      });
+      let response: Response;
+      try {
+        response = await fetchTransport(sourceControlCommandTransport.path, {
+          body,
+          headers: { 'content-type': 'application/json' },
+          method: sourceControlCommandTransport.method,
+          ...(signal === undefined ? {} : { signal }),
+        });
+      } catch (error) {
+        signal?.throwIfAborted();
+        throw error;
+      }
       signal?.throwIfAborted();
-      const result = parseSourceControlCommandResponse(await readBoundedJson(response, MAX_COMMAND_RESPONSE_BYTES));
+      const result = parseSourceControlCommandResponse(
+        await readBoundedJson(response, MAX_COMMAND_RESPONSE_BYTES, signal),
+      );
       if (response.ok !== result.ok) {
         throw new Error('The source control command response status is inconsistent.');
       }

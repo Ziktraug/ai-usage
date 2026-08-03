@@ -6,7 +6,7 @@ import {
 } from '@ai-usage/report-core/merge-bundle';
 import { ORPCError } from '@orpc/client';
 import { call } from '@orpc/server';
-import { createManualMergeExplicitHandlers, createSyncRpcRouter } from './sync';
+import { createManualMergeExplicitHandlers, createSyncRpcRouter, type ManualMergeExportCandidate } from './sync';
 
 const fleet = {
   currentMachine: { id: 'machine-a', label: 'Machine A' },
@@ -36,13 +36,26 @@ const bundleText = serializeUsageMergeBundle(bundle);
 const exportSuccess = () => ({
   data: {
     bytes: new TextEncoder().encode(bundleText).byteLength,
-    filename: 'ai-usage-machine-a-2026-08-03.json',
+    filename: 'ai-usage-machine-a-2026-08-03T00-00-00-000Z.json',
     machine: bundle.machine,
     rows: bundle.rows.length,
     text: bundleText,
   },
   ok: true as const,
 });
+
+const canonicalizeExport = (candidate: ManualMergeExportCandidate, _signal?: AbortSignal) => {
+  const expected = exportSuccess().data;
+  if (JSON.stringify(candidate) !== JSON.stringify(expected)) {
+    throw new Error('The synthetic export is not canonical.');
+  }
+  return Promise.resolve({
+    bytes: expected.bytes,
+    filename: expected.filename,
+    rows: expected.rows,
+    text: expected.text,
+  });
+};
 
 const catchError = async (operation: Promise<unknown>): Promise<unknown> => {
   try {
@@ -142,6 +155,7 @@ describe('manual merge explicit HTTP adapters', () => {
   test('downloads validated canonical bundle bytes with safe attachment headers', async () => {
     let receivedSignal: AbortSignal | undefined;
     const handlers = createManualMergeExplicitHandlers({
+      canonicalizeExport,
       exportBundle: (signal) => {
         receivedSignal = signal;
         return Promise.resolve(exportSuccess());
@@ -154,7 +168,7 @@ describe('manual merge explicit HTTP adapters', () => {
     expect(response.status).toBe(200);
     expect(response.headers.get('content-type')).toBe('application/json; charset=utf-8');
     expect(response.headers.get('content-disposition')).toBe(
-      'attachment; filename="ai-usage-machine-a-2026-08-03.json"',
+      'attachment; filename="ai-usage-machine-a-2026-08-03T00-00-00-000Z.json"',
     );
     expect(response.headers.get('cache-control')).toBe('no-store');
     expect(await response.text()).toBe(bundleText);
@@ -165,6 +179,7 @@ describe('manual merge explicit HTTP adapters', () => {
     const privatePath = '/private/export.json';
     let exports = 0;
     const handlers = createManualMergeExplicitHandlers({
+      canonicalizeExport,
       exportBundle: () => {
         exports += 1;
         return Promise.resolve({
@@ -188,12 +203,72 @@ describe('manual merge explicit HTTP adapters', () => {
     expect(exports).toBe(1);
 
     const failureHandlers = createManualMergeExplicitHandlers({
+      canonicalizeExport,
       exportBundle: () => Promise.reject(new Error(privatePath)),
       handleUpload: () => Promise.resolve(new Response()),
     });
     const failure = await failureHandlers.download(postRequest('/api/manual-merge/download'));
     expect(failure.status).toBe(503);
     expect(await failure.text()).not.toContain(privatePath);
+  });
+
+  test('rejects safe but noncanonical filenames and serialized bundle bytes', async () => {
+    const prettyText = JSON.stringify(JSON.parse(bundleText) as unknown, null, 2);
+    const variants = [
+      { ...exportSuccess().data, filename: 'safe-export.json' },
+      {
+        ...exportSuccess().data,
+        bytes: new TextEncoder().encode(prettyText).byteLength,
+        text: prettyText,
+      },
+    ];
+
+    for (const data of variants) {
+      const handlers = createManualMergeExplicitHandlers({
+        canonicalizeExport,
+        exportBundle: () => Promise.resolve({ data, ok: true }),
+        handleUpload: () => Promise.resolve(new Response()),
+      });
+      const response = await handlers.download(postRequest('/api/manual-merge/download'));
+      expect(response.status).toBe(503);
+      expect(await response.text()).not.toContain(data.filename);
+    }
+  });
+
+  test('rejects accessor-backed owner results without invoking accessors', async () => {
+    let accessorReads = 0;
+    let canonicalizations = 0;
+    const rootAccessor: Record<string, unknown> = {};
+    Object.defineProperty(rootAccessor, 'ok', {
+      enumerable: true,
+      get: () => {
+        accessorReads += 1;
+        return true;
+      },
+    });
+    const nestedAccessor: Record<string, unknown> = {};
+    Object.defineProperty(nestedAccessor, 'text', {
+      enumerable: true,
+      get: () => {
+        accessorReads += 1;
+        return bundleText;
+      },
+    });
+    const results = [rootAccessor, { data: nestedAccessor, ok: true }];
+
+    for (const result of results) {
+      const handlers = createManualMergeExplicitHandlers({
+        canonicalizeExport: (candidate, signal) => {
+          canonicalizations += 1;
+          return canonicalizeExport(candidate, signal);
+        },
+        exportBundle: () => Promise.resolve(result),
+        handleUpload: () => Promise.resolve(new Response()),
+      });
+      expect((await handlers.download(postRequest('/api/manual-merge/download'))).status).toBe(503);
+    }
+    expect(accessorReads).toBe(0);
+    expect(canonicalizations).toBe(0);
   });
 
   test('returns a bounded cancellation response when download acquisition aborts', async () => {
@@ -203,6 +278,7 @@ describe('manual merge explicit HTTP adapters', () => {
       started = resolve;
     });
     const handlers = createManualMergeExplicitHandlers({
+      canonicalizeExport,
       exportBundle: async (signal) => {
         started?.();
         await new Promise<void>((_resolve, reject) => {
@@ -233,6 +309,7 @@ describe('manual merge explicit HTTP adapters', () => {
       resolveLateStaging = resolve;
     });
     const handlers = createManualMergeExplicitHandlers({
+      canonicalizeExport,
       exportBundle: () => Promise.resolve(exportSuccess()),
       handleUpload: async (request) => {
         receivedRequest = request;
