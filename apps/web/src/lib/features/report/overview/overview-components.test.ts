@@ -159,10 +159,11 @@ describe('P2 corrected interactive SSR contracts', () => {
   test('renders all heatmap cells as one roving collection with today and price provenance', () => {
     const baseResult = focusedOverview();
     const heatmap = baseResult.view.heatmap;
-    const todayKey = heatmap?.weeks.flatMap((week) => week.days).find((day) => day !== null)?.date;
-    if (!(heatmap && todayKey)) {
+    const todayDay = heatmap?.weeks.flatMap((week) => week.days).find((day) => day !== null);
+    if (!(heatmap && todayDay)) {
       throw new Error('P2 fixture heatmap is missing a current-day candidate');
     }
+    const todayKey = toDateInputValue(new Date(todayDay.date));
     const result = {
       ...baseResult,
       view: { ...baseResult.view, heatmap: { ...heatmap, todayKey } },
@@ -170,10 +171,13 @@ describe('P2 corrected interactive SSR contracts', () => {
     const { body } = render(fixture, { props: { result } });
     const dayCount = body.match(/data-heatmap-day/g)?.length ?? 0;
     const rovingTargetCount = body.match(/data-heatmap-day[^>]*tabindex="0"/g)?.length ?? 0;
+    const todayButton = body.match(new RegExp(`<button[^>]*data-heatmap-day="${todayKey}"[^>]*>`))?.[0] ?? '';
 
     expect(dayCount).toBeGreaterThan(20);
     expect(rovingTargetCount).toBe(1);
-    expect(body).toContain('aria-current="date"');
+    expect(body.match(/aria-current="date"/g)).toHaveLength(1);
+    expect(todayButton).toContain('tabindex="0"');
+    expect(todayButton).toContain('aria-current="date"');
     expect(body).toContain('data-price-state=');
     expect(body).toContain('data-heatmap-readout');
   });

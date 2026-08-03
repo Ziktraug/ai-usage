@@ -59,11 +59,12 @@
     heatmap,
     onSelectDay = () => undefined,
   }: { heatmap: FocusedCalendarHeatmap | null; onSelectDay?: (date: string) => void } = $props();
+  const dateKey = (date: string): string => toDateInputValue(new Date(date));
   const days = $derived(
     heatmap?.weeks.flatMap((week) => week.days.filter((day): day is FocusedHeatDay => day !== null)) ?? [],
   );
   const initialFocusIndex = (): number => {
-    const todayIndex = heatmap ? days.findIndex((day) => day.date === heatmap.todayKey) : -1;
+    const todayIndex = heatmap ? days.findIndex((day) => dateKey(day.date) === heatmap.todayKey) : -1;
     return todayIndex >= 0 ? todayIndex : Math.max(0, days.length - 1);
   };
   let focusedIndex = $state(initialFocusIndex());
@@ -86,8 +87,7 @@
     toolbar?.querySelectorAll<HTMLButtonElement>('button[data-heatmap-day]')[next]?.focus();
   };
   const currentDayAria = (date: string): { readonly 'aria-current'?: 'date' } =>
-    date === heatmap?.todayKey ? { 'aria-current': 'date' } : {};
-  const dateKey = (date: string): string => toDateInputValue(new Date(date));
+    dateKey(date) === heatmap?.todayKey ? { 'aria-current': 'date' } : {};
   const dayTitle = (item: FocusedHeatDay): string => {
     const value = aggregateApiValuePresentation(item.priceMeasurement);
     const provenance = aggregateApiPriceProvenance(item.priceMeasurement);
