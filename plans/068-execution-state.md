@@ -12,8 +12,8 @@ authority for feature, operation, design, source-file, and test-title coverage.
 - Planning PR: `#26`, squash-merged as
   `2183270ebfbb886fafa7e6268893122db9b364c0`
 - `BASE_SHA`: `2183270ebfbb886fafa7e6268893122db9b364c0`
-- Current integration checkpoint: `509b756`
-- Last reviewed green checkpoint: `509b756`
+- Current integration checkpoint: `c859f7f`
+- Last reviewed green checkpoint: `9d24e5b`
 - Active design bases: D1 `4862293`, D2 `fce5c1a`, D3 `e2f13cd`
 - Implementation PR: not opened
 - Exclusive process-test token: free after the P6 activated shadow-browser gate
@@ -133,7 +133,7 @@ Statuses are `BLOCKED`, `READY`, `IMPLEMENTING`, `REVIEW`, `REWORK`,
 | D1 | D0 | INTEGRATED | `4862293`, `3b22c28`, evidence `b31c3af` | `/root/d123_parity_review` / ACCEPT | `b31c3af` |
 | D2 | D0 | INTEGRATED | `fce5c1a`, `9935846`, evidence `b31c3af` | `/root/d123_parity_review` / ACCEPT | `b31c3af` |
 | D3 | D0 | INTEGRATED | `e2f13cd`, `0702203`, `70f5796`, evidence `b31c3af` | `/root/d123_parity_review` / ACCEPT | `b31c3af` |
-| D4 | D1, D2, D3 | INTEGRATED | `662182e`, bundle correction `6646fe5` | `/root/d4_review` / ACCEPT | `6646fe568e8b4c1fba74ac1b4150d1480d15ca6f` |
+| D4 | D1, D2, D3 | INTEGRATED | `662182e`, bundle correction `6646fe5`, series-color delta `3f42bfa`, evidence `216ec3b` | `/root/d4_review`, `/root/v34_parity` / ACCEPT; evidence follow-up pending | `216ec3b` |
 | R0 | F0, V5, Q3, D4 | INTEGRATED | `435aa06`, evidence `88d56c9`, corrections `98235ab`, `4e46acc`, evidence `4f293e5`, `23635c7`; integrated as `affcee4`, `01fa070`, `688b629`, `fa92709`, `66a650e`, `c8b7c7e` | `/root/d123_parity_review`, `/root/q2_spec_review` / ACCEPT | `c8b7c7e872f25648dbf5df407f92e76d64948eff` |
 | R1 | R0 | INTEGRATED | `40116b5`, `121d78b`, corrections `95b67d6`, `7c85cf1`, evidence/checker `c5cc7ea`, `1befaef` | `/root/d123_parity_review`, `/root/q2_spec_review`, `/root/v34_parity` / ACCEPT | `1befaefd71ef5ffe59866021f216104b3f83f9ef` |
 | P1 | R1, V1, V2, Q1, D4 | INTEGRATED | `a19914b`, `874cb1b`, `2422c2c`, evidence `02782f8`, activation correction `5bc8055` | `/root/v34_parity`, `/root/d123_parity_review` / ACCEPT | `f3610aa` |
@@ -143,9 +143,9 @@ Statuses are `BLOCKED`, `READY`, `IMPLEMENTING`, `REVIEW`, `REWORK`,
 | P5 | R1, V3, Q2, D4 | INTEGRATED | `231f109`, `a5b657f`, `72c6a76`, `448c782`, activation `5c0e27e`; integrated as `c84b957`, `32533a7`, `e951cd1`, `a170123`, `0f6b118`, evidence `6f639ab` | `/root/d123_parity_review`, `/root/v34_parity` / ACCEPT | `6f639ab` |
 | P6 | R1, V4, Q2, D4, B2 | INTEGRATED | accepted fresh range `e23bc9` through `414ea1a`; integrated `3c08e12` through `68dd82f`; evidence `eb2f669`; composition `79341c1`; browser corrections `db4eb57`, `1096a4d` | `/root/q2_spec_review` / ACCEPT | `1096a4d` |
 | P7 | R1, V4, Q2, D4 | REWORK | `d2486bd`, corrections `80a6db3`, evidence `ed0a76d` | `/root/q2_spec_review`, `/root/v34_parity` / REWORK | - |
-| P8 | P1 | IMPLEMENTING | - | `/root/q2_spec_review` | - |
-| P9 | P5 | REVIEW | `9d48303`, evidence `4cb0f0d` | independent review pending | - |
-| P10 | P5 | IMPLEMENTING | - | `/root/v34_parity` | - |
+| P8 | P1 | REVIEW | `4dd9b93`, `12939b4`, evidence `caa138a` | independent review in progress | - |
+| P9 | P5 | INTEGRATED | `9d48303`, evidence `4cb0f0d`; integrated `82451ad`, `be5e49b`, evidence rewrite `c859f7f` | `/root/q2_spec_review` / ACCEPT | `c859f7f` |
+| P10 | P5 | REVIEW | `455b569`, evidence `dac69e0` | independent review in progress | - |
 | X0 | P2, P8, P4, P9, P10, P6, P7 | BLOCKED | - | - | - |
 | X1 | X0 | BLOCKED | - | - | - |
 | X2 | X1 | BLOCKED | - | - | - |
@@ -1065,6 +1065,37 @@ truncated command output are henceforth documented and handled through bounded
 escalated shells/read-only process inspection; only a blocker that invalidates
 the complete migration can stop this run under the user's explicit instruction.
 
+P9 candidate `9d48303` plus evidence `4cb0f0d` ports the Markdown editor,
+draft/conflict controller, save shortcuts and dirty-navigation decision seam.
+`/root/q2_spec_review` ACCEPTed both axes with 38 tests and 202 expectations,
+Svelte 0/0, Ultracite, boundaries and parity green. It integrated as `82451ad`
+and `be5e49b`; `c859f7f` points P9 target evidence at the integrated
+implementation. Its X0 request is limited to filling the existing P5 editor
+slot and removing the temporary dirty-navigation fixture. A post-cherry parity
+run correctly discovered one new D4 public export introduced by the reviewed
+P2 series-color convergence. `216ec3b` records
+`./svelte::stableSeriesColor`, advances the frozen checker to 414 live/437
+ledger design exports and restores 13/13 checker tests plus 414/414 inventory.
+
+Coordinator deltas `3f42bfa`, `8020703` and `9d24e5b` expose the neutral stable
+series-color helper to Svelte and use it for matching P2 timeline segments and
+legend swatches, extract the collector-free machine freshness presentation
+owner requested by P2/P8, and freeze raw-ID/fresh/unavailable behavior plus its
+forbidden imports. `/root/v34_parity` independently ACCEPTed all three on both
+axes. Its gates passed 29 color/entrypoint/timeline tests with 233 assertions,
+14 freshness/runtime tests with 48 assertions, the direct leaf's 2 tests with 8
+assertions, Svelte 0/0, Ultracite, package boundaries and diff cleanliness.
+
+One repository-wide `bun run test` attempt during three simultaneous worker
+build/test gates timed out only in the pre-existing design-system Chromium
+segmented-control focus fixture at its unchanged two-second assertion. The one
+allowed standalone classification rerun failed the same focus wait while the
+workers were still contending for browser/build resources. No changed path
+touches that compound control, no timeout or assertion was changed, and every
+affected packet gate is green. The exact full command will be rerun in an
+uncontended clean worktree at convergence; this local resource-contention
+incident is retained rather than treated as a feature STOP.
+
 ## Deviations, STOPs, and recovery
 
 - Reviewed deviations: the two Vite/Bun loopback proof substitutions above are
@@ -1119,8 +1150,8 @@ the complete migration can stop this run under the user's explicit instruction.
   strict Svelte type errors while the additive shell was unreachable. The route
   was reverted before stacking work; reviewed correction `0f6b118` plus
   reachability fixture closes the gap, and all additive gates are green.
-- Recovery point: `509b756` is the latest independently reviewed green
-  checkpoint. P1, P2, P3, P5 and P6 are integrated; Q1 owns exact
-  campaign-child page identity; P4, P8 and P10 are implementing, P9 awaits
-  independent review, and P7 has a fresh compatible worktree ready for its
-  original author.
+- Recovery point: `9d24e5b` is the latest independently reviewed green
+  implementation checkpoint; `c859f7f` is the current clean integration head
+  with P9 integrated and its post-cherry parity closure green. P1, P2, P3, P5,
+  P6 and P9 are integrated; P4 is implementing, P8 and P10 are in independent
+  review, and P7 has a fresh compatible worktree ready for its original author.
