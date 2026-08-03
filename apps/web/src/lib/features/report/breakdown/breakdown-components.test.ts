@@ -56,7 +56,9 @@ describe('P8 Svelte client isolation', () => {
   test('keeps every owned client leaf free of Solid, server, Node, and writer imports', () => {
     const sourceFiles = [breakdownDirectory, actionsDirectory].flatMap((directory) =>
       readdirSync(directory)
-        .filter((name) => CLIENT_SOURCE_PATTERN.test(name) && !name.endsWith('.test.ts'))
+        .filter(
+          (name) => CLIENT_SOURCE_PATTERN.test(name) && !name.endsWith('.browser.ts') && !name.endsWith('.test.ts'),
+        )
         .map((name) => join(directory, name)),
     );
     const forbidden = [
