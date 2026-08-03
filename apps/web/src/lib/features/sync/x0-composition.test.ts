@@ -11,7 +11,7 @@ describe('X0 Sync route composition', () => {
     const page = readWorkspaceFile('svelte-shadow/routes/sync/+page.svelte');
 
     expect(load).toContain("import { loadSyncPageData } from '$lib/features/sync/sync-load'");
-    expect(load).toContain('=> await loadSyncPageData({ fetch, url })');
+    expect(load).toContain("await loadSyncPageData({ fetch, requestOwner: 'sync-root-ssr', url })");
     expect(page).toContain("import { useSourceControl } from '$lib/features/sources/context.svelte'");
     expect(page).toContain("import SyncRoot from '$lib/features/sync/sync-root.svelte'");
     expect(page).toContain('const sourceControl = useSourceControl()');

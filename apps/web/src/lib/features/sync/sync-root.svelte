@@ -37,7 +37,7 @@
       </div>
     </div>
   </header>
-  <main class={page}>
+  <main class={page} data-route-shell="sync">
     <div class={pageStack}>
       {#if fleet}
         <MachineFleet

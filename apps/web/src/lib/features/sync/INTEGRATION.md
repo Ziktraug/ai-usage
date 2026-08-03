@@ -4,9 +4,11 @@ Ownership of route leaves, the root query provider and `hooks.server.ts` remains
 with the coordinator. Integrate this packet exactly once as follows.
 
 1. Create `svelte-shadow/routes/sync/+page.server.ts`. Its awaited
-   `PageServerLoad` must return `loadSyncPageData({ fetch, url })`; do not start
-   an unawaited query, create a second QueryClient, or fetch fleet data in the
-   component.
+   `PageServerLoad` must return
+   `loadSyncPageData({ fetch, requestOwner: 'sync-root-ssr', url })`; the stable
+   request owner lets the SvelteKit hook restore same-origin evidence only for
+   this framework-proven internal RPC subrequest. Do not start an unawaited
+   query, create a second QueryClient, or fetch fleet data in the component.
 2. Replace the marker-only `svelte-shadow/routes/sync/+page.svelte` with one
    `SyncRoot` from `$lib/features/sync/sync-root.svelte`. Read the existing P6
    context with `useSourceControl()` from

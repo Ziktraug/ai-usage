@@ -85,6 +85,7 @@ describe('Sync rendered SSR parity', () => {
 
     const { body } = render(syncRoot, { props: { data } });
     expect(fleetCalls).toBe(1);
+    expect(body).toContain('data-route-shell="sync"');
     expect(body).toContain('<h1');
     expect(body).toContain('Sync');
     expect(body).toContain('Laptop');
