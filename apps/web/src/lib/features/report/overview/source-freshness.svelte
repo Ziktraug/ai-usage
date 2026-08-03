@@ -7,7 +7,7 @@
     py: '4px',
     borderRadius: 'full',
     bg: 'track',
-    color: 'muted',
+    color: 'ink',
     fontSize: '11px',
     fontWeight: 650,
   });
@@ -22,7 +22,7 @@
   const unavailableDescription = 'No source freshness observation is available for this report revision.';
 </script>
 
-<section aria-label="Collection source status" class={row}>
+<section aria-label="Report source freshness" class={row}>
   {#if freshness?.kind === 'available'}
     <Tooltip
       content={`Observed ${fmtDate(freshness.observedAt)} across ${fmtNum(freshness.machines.length)} machines.`}

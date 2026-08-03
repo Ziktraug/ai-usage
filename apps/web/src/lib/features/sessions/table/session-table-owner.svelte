@@ -36,7 +36,7 @@
     sessionRowsForTableState,
   } from './session-table-query-owner';
 
-  let { acquire, children, client, queryClient }: SessionTableOwnerProps<Descriptor> = $props();
+  let { acquire, children: renderTable, client, queryClient }: SessionTableOwnerProps<Descriptor> = $props();
   let snapshot = $state<SessionTableQueryState>();
   const query = untrack(() =>
     createSessionTableQueryOwner({
@@ -61,6 +61,6 @@
 <ReportLifecycleOwner {session}>
   {#snippet children(_lifecycle)}
     {@const owned = connectLifecycle(_lifecycle)}
-    {@render children(owned)}
+    {@render renderTable(owned)}
   {/snippet}
 </ReportLifecycleOwner>

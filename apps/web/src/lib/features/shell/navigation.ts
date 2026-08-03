@@ -23,7 +23,7 @@ export const shellManagementDestinations = [
   { href: '/sources', label: 'Sources' },
 ] as const satisfies readonly ShellDestination[];
 
-const dashboardSearchCodec: DashboardSearchCodec<DashboardSearch> = {
+export const dashboardSearchCodec: DashboardSearchCodec<DashboardSearch> = {
   defaults: dashboardSearchDefaultsFor('date'),
   validate: validateDashboardSearch,
 };

@@ -66,6 +66,7 @@
     machineFreshnessStatus?: string | null;
     navigate?: SearchNavigationIntent<DashboardSearch>;
     onDimensionFilter?: (dimension: TimelineDimension, key: string) => void;
+    onOpenQuotaHistory?: () => void;
     onOptionsChange?: (options: {
       dimension: TimelineDimension;
       granularity: MigrationGranularity;
@@ -98,6 +99,7 @@
     onDimensionFilter = () => undefined,
     onOptionsChange = () => undefined,
     onRangeChange = () => undefined,
+    onOpenQuotaHistory,
     onSelectDay = () => undefined,
     onSelectSession = () => undefined,
     onSelectTimeCell = () => undefined,
@@ -140,7 +142,10 @@
     <ActivityHeatmap heatmap={result.view.heatmap} {onSelectDay} />
     <div class={twoColumns}>
       <TokenAnatomy summary={result.summary} />
-      <ProviderStatus {providers} />
+      <ProviderStatus
+        {...(onOpenQuotaHistory === undefined ? {} : { onOpenHistory: onOpenQuotaHistory })}
+        {providers}
+      />
     </div>
     <Records
       {onSelectDay}

@@ -61,18 +61,20 @@
           <div class={valueRow} data-value-bases-row>
             <dt class={valueLabel}>{valueBasisLabelFor(metric)}</dt>
             <dd class={valueAmount}>{metric.value}</dd>
-            {#if metric.hint}
-              <Popover
-                triggerAriaLabel={`About ${metric.label}`}
-                triggerClass={help}
-                triggerTitle={`About ${metric.label}`}
-              >
-                {#snippet trigger()}
-                  <span aria-hidden="true">?</span>
-                {/snippet}
-                <p>{metric.hint}</p>
-              </Popover>
-            {/if}
+            <dd>
+              {#if metric.hint}
+                <Popover
+                  triggerAriaLabel={`About ${metric.label}`}
+                  triggerClass={help}
+                  triggerTitle={`About ${metric.label}`}
+                >
+                  {#snippet trigger()}
+                    <span aria-hidden="true">?</span>
+                  {/snippet}
+                  <p>{metric.hint}</p>
+                </Popover>
+              {/if}
+            </dd>
           </div>
         {/each}
       </dl>

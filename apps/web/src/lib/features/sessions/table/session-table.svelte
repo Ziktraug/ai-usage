@@ -265,7 +265,7 @@
         <fieldset aria-label="Session column presets" class={presetGroup}>
           {#each sessionColumnPresets as preset (preset.id)}
             <button
-              aria-pressed={String(activePreset === preset.id)}
+              aria-pressed={activePreset === preset.id}
               class={controlButton}
               data-default={preset.id === 'work'}
               onclick={() => onColumnVisibilityChange(columnVisibilityForSessionPreset(preset.id))}
@@ -328,7 +328,7 @@
         bind:this={surfaceElement}
         use:setSurfaceElement
       >
-        <table aria-rowcount={String(totalRows ?? model.rows.length)} class={table}>
+        <table aria-rowcount={totalRows ?? model.rows.length} class={table}>
           <thead>
             <tr>
               {#each visibleColumns as entry (entry.id)}
@@ -413,8 +413,8 @@
           {@const mobileCache = projectSessionCell(virtualRow.row.original, 'cache', searchQuery)}
           {@const mobileDuration = projectSessionCell(virtualRow.row.original, 'duration', searchQuery)}
           <li
-            aria-posinset={String(virtualRow.index + 1)}
-            aria-setsize={String(Math.max(totalRows ?? 0, model.rows.length))}
+            aria-posinset={virtualRow.index + 1}
+            aria-setsize={Math.max(totalRows ?? 0, model.rows.length)}
             class={mobileRow}
             data-depth={virtualRow.row.depth}
             data-session-row-height="188"

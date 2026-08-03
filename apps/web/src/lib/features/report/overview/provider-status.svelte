@@ -41,6 +41,17 @@
     textTransform: 'uppercase',
   });
   const empty = css({ color: 'muted', fontSize: '12px' });
+  const actions = css({ display: 'flex', justifyContent: 'flex-end', mt: '10px' });
+  const historyButton = css({
+    px: '10px',
+    py: '6px',
+    border: '1px solid token(colors.line)',
+    borderRadius: 'sm',
+    bg: 'surface',
+    color: 'ink',
+    cursor: 'pointer',
+    fontSize: '12px',
+  });
 </script>
 
 <script lang="ts">
@@ -56,7 +67,7 @@
     providerWindowAriaLabel,
   } from './provider-presentation';
 
-  let { providers }: { providers: readonly ProviderStatusView[] } = $props();
+  let { onOpenHistory, providers }: { onOpenHistory?: () => void; providers: readonly ProviderStatusView[] } = $props();
   const summary = $derived(buildProviderStatusPanelSummary([...providers]));
   const visibleProviders = $derived([
     ...summary.criticalProvidersWithoutQuota,
@@ -134,6 +145,11 @@
           {/each}
         </article>
       {/each}
+    </div>
+  {/if}
+  {#if onOpenHistory}
+    <div class={actions}>
+      <button class={historyButton} onclick={onOpenHistory} type="button">View Codex quota history</button>
     </div>
   {/if}
 </section>

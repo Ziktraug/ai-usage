@@ -43,12 +43,22 @@ const rendererFrom = (loaded: unknown): SvelteServerModule => {
 
 const repositoryDirectory = fileURLToPath(new URL('../../../../../../../', import.meta.url));
 const environmentFixture = fileURLToPath(new URL('./report-ssr-environment.fixture.ts', import.meta.url));
+const navigationFixture = fileURLToPath(new URL('./report-ssr-navigation.fixture.ts', import.meta.url));
+const stateFixture = fileURLToPath(new URL('./report-ssr-state.fixture.ts', import.meta.url));
 const viteServer = await createServer({
   appType: 'custom',
   configFile: false,
   optimizeDeps: { exclude: ['svelte'], noDiscovery: true },
   plugins: [...svelte()],
-  resolve: { alias: { '$app/environment': environmentFixture }, conditions: ['svelte'], dedupe: ['svelte'] },
+  resolve: {
+    alias: {
+      '$app/environment': environmentFixture,
+      '$app/navigation': navigationFixture,
+      '$app/state': stateFixture,
+    },
+    conditions: ['svelte'],
+    dedupe: ['svelte'],
+  },
   root: repositoryDirectory,
   server: { hmr: false, middlewareMode: true, ws: false },
   ssr: { noExternal: true },

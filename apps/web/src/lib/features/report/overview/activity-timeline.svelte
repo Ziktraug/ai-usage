@@ -1,11 +1,9 @@
 <script lang="ts" module>
   import { css } from '@ai-usage/design-system/css';
 
-  const chart = css({ display: 'grid', gap: '8px', minW: 0 });
+  const chart = css({ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap: '8px', minW: 0 });
   const plot = css({
     display: 'grid',
-    gridAutoFlow: 'column',
-    gridAutoColumns: 'minmax(4px, 1fr)',
     alignItems: 'end',
     minH: '150px',
     p: '8px 4px 0',
@@ -17,9 +15,8 @@
   const unclassified = css({ minH: '1px', bg: 'muted', opacity: 0.55, borderTop: '1px solid token(colors.surface)' });
   const tickRow = css({
     display: 'grid',
-    gridAutoFlow: 'column',
-    gridAutoColumns: '1fr',
     minH: '18px',
+    overflow: 'hidden',
     color: 'muted',
     fontSize: '10px',
   });
@@ -210,6 +207,7 @@
       onkeydown={onChartKeydown}
       onmousemove={inspectFromPointer}
       type="button"
+      style:grid-template-columns={`repeat(${timeline.buckets.length}, minmax(4px, 1fr))`}
     >
       {#each timeline.buckets as bucket, index (bucket.date)}
         <span
@@ -241,7 +239,13 @@
         </span>
       {/each}
     </button>
-    <div class={tickRow} data-report-range-part="chart-axis" data-timeline-tick-row bind:this={tickRowElement}>
+    <div
+      class={tickRow}
+      data-report-range-part="chart-axis"
+      data-timeline-tick-row
+      bind:this={tickRowElement}
+      style:grid-template-columns={`repeat(${timeline.buckets.length}, minmax(0, 1fr))`}
+    >
       {#each timeline.buckets as bucket, index (bucket.date)}
         {@const tickId = `tick:${index}`}
         <span

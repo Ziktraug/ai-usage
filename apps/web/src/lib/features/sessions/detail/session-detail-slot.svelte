@@ -1,6 +1,6 @@
 <script lang="ts">
   import { type SessionPresentationRow, sessionNeighborFingerprint } from '@ai-usage/report-core/session-query';
-  import { onMount, type Snippet } from 'svelte';
+  import { onMount, type Snippet, untrack } from 'svelte';
   import type { SessionDetailController, SessionDetailControllerSnapshot, SessionSelectionInput } from './controller';
   import SessionDrawer from './session-drawer.svelte';
 
@@ -18,7 +18,7 @@
     selection: SessionSelectionInput | null;
   } = $props();
 
-  let snapshot = $state<SessionDetailControllerSnapshot>(controller.current());
+  let snapshot = $state<SessionDetailControllerSnapshot>(untrack(() => controller.current()));
   let selectedIdentity = $state('');
 
   const identityFor = (next: SessionSelectionInput | null): string => {
@@ -63,6 +63,12 @@
 
 <div data-selected-row-id={snapshot.row?.rowId} data-session-detail-slot>
   {#if snapshot.row}
-    <SessionDrawer {campaignSlot} {controller} {onFieldFilter} {rows} {snapshot} />
+    <SessionDrawer
+      {...(campaignSlot === undefined ? {} : { campaignSlot })}
+      {controller}
+      {...(onFieldFilter === undefined ? {} : { onFieldFilter })}
+      {rows}
+      {snapshot}
+    />
   {/if}
 </div>

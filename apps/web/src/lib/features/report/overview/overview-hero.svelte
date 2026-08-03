@@ -42,10 +42,10 @@
       <dd class={amount} data-reported-actual-spend>
         {summary.unknownActual === summary.sessionCount ? '—' : fmtMoney(summary.actualCost)}
       </dd>
-      <p class={qualification} data-spend-coverage-legend>
+      <dd class={qualification} data-spend-coverage-legend>
         {fmtNum(actualKnownSessions)}
         of {fmtNum(summary.sessionCount)} sessions report actual spend
-      </p>
+      </dd>
     </div>
     <div class={item}>
       <dt class={label}>Subscription value</dt>

@@ -40,7 +40,7 @@
   });
   const legendCell = css({ w: '12px', h: '12px', borderRadius: 'sm', bg: 'accent' });
   const readout = css({ display: 'grid', gap: '3px', p: '8px', borderRadius: 'md', bg: 'track', fontSize: '11px' });
-  const muted = css({ color: 'muted' });
+  const muted = css({ color: 'ink' });
   const empty = css({ color: 'muted', fontSize: '12px' });
 </script>
 
