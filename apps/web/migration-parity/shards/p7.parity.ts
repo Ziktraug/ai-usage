@@ -2,7 +2,7 @@ import { currentRecord, sourceInventoryRecords } from '../helpers';
 import { defineParityShard, type ParityEvidence, type ParityRecord } from '../schema';
 
 const owner = 'P7' as const;
-const implementationCommit = '10618fd5a73bb63eb0a96f7fda90217678e028ef';
+const implementationCommit = 'f98f6b1d40f4cade8c7de47dc14475f6ad003461';
 const targetEvidence = (kind: ParityEvidence['kind'], reference: string): ParityEvidence => ({
   commit: implementationCommit,
   kind,
