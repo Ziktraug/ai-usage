@@ -6,6 +6,7 @@ import {
   type DirtyBeforeNavigate,
   installDirtyNavigationBridge,
 } from './dirty-navigation';
+import { createMemoryNavigationPort } from './navigation';
 
 const navigation = (overrides: Partial<DirtyBeforeNavigate> = {}) => {
   let cancelled = false;
@@ -50,6 +51,9 @@ describe('dirty navigation controller', () => {
     expect(controller.pending()).toBeUndefined();
     expect(replayed).toEqual([]);
     expect(focused).toBe(1);
+    const history = createMemoryNavigationPort('http://local/current?utm=kept');
+    expect(history.currentUrl().href).toBe('http://local/current?utm=kept');
+    expect(history.entries()).toHaveLength(1);
   });
 
   test('[url:history.replace-push-back-forward] Discard replays popstate exactly once after clearing dirty state', async () => {

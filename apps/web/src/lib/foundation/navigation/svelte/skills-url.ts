@@ -38,6 +38,14 @@ export const skillDestinationFromUrl = (
   return skillSelectionFromPath(parsed.pathname, knownProjects);
 };
 
+export const skillTreeSelectionFromUrl = (
+  url: string | URL,
+  knownProjects: readonly KnownProjectScope[] = [],
+): SkillSelection | undefined => {
+  const parsed = url instanceof URL ? url : new URL(url, 'http://localhost');
+  return skillSelectionFromPath(parsed.pathname, knownProjects);
+};
+
 export const skillsFallbackIntent = (currentUrl: string | URL): NavigationIntent => ({
   replace: true,
   resetScroll: false,

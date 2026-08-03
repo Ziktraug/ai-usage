@@ -3,6 +3,7 @@ import {
   createDrawerIdentityOwner,
   createMemoryNavigationPort,
   createSvelteNavigationPort,
+  drawerCommandForKey,
   installScrollLifecycle,
   type ScrollLifecycleEvent,
   scrollDirectiveFor,
@@ -86,37 +87,54 @@ describe('navigation and scroll adapters', () => {
   });
 
   test('[url:history.replace-push-back-forward] in-memory history preserves push, replace, back and forward', async () => {
-    const port = createMemoryNavigationPort('http://local/');
-    await port.navigate({ url: '/first' });
-    await port.navigate({ replace: true, url: '/replacement' });
-    await port.navigate({ url: '/last' });
+    const port = createMemoryNavigationPort('http://local/?utm=kept');
+    await port.navigate({ resetScroll: false, url: '/first?utm=kept&q=first' });
+    await port.navigate({ replace: true, resetScroll: false, url: '/replacement?utm=kept&q=replaced' });
+    await port.navigate({ resetScroll: false, url: '/last?utm=kept&q=last' });
     port.traverse(-1);
     expect(port.currentUrl().pathname).toBe('/replacement');
+    expect(port.currentUrl().searchParams.get('q')).toBe('replaced');
     port.traverse(-1);
     expect(port.currentUrl().pathname).toBe('/');
     port.traverse(1);
     expect(port.currentUrl().pathname).toBe('/replacement');
+    port.traverse(1);
+    expect(port.currentUrl().searchParams.get('q')).toBe('last');
+    expect(port.entries().every((url) => url.searchParams.get('utm') === 'kept')).toBe(true);
     expect(port.entries().map((url) => url.pathname)).toEqual(['/', '/replacement', '/last']);
   });
 
   test('[url:session.drawer-identity] retains structured local/exact identity without adding URL state', async () => {
     const port = createMemoryNavigationPort('http://local/?tab=sessions');
     const drawer = createDrawerIdentityOwner();
+    expect(drawer.current()).toEqual({ key: null, revision: null, target: null });
+    drawer.select({ kind: 'local', rowKey: 'local-row' });
+    expect(drawer.current()).toEqual({
+      key: 'local-row',
+      revision: null,
+      target: { kind: 'local', rowKey: 'local-row' },
+    });
     drawer.select({ campaignKey: 'campaign-a', kind: 'served', revision: 'revision-1', rowKey: 'same-row' });
     await port.navigate({ url: '/?tab=overview' });
     port.traverse(-1);
     expect(drawer.current()).toEqual({
-      campaignKey: 'campaign-a',
-      kind: 'served',
+      key: 'same-row',
       revision: 'revision-1',
-      rowKey: 'same-row',
+      target: { campaignKey: 'campaign-a', kind: 'served', revision: 'revision-1', rowKey: 'same-row' },
     });
     drawer.select({ campaignKey: 'campaign-b', kind: 'served', revision: 'revision-1', rowKey: 'same-row' });
     const collisionIdentity = drawer.current();
-    expect(collisionIdentity?.kind === 'served' && collisionIdentity.campaignKey).toBe('campaign-b');
+    expect(collisionIdentity.target?.kind === 'served' && collisionIdentity.target.campaignKey).toBe('campaign-b');
+    expect(['j', 'ArrowDown'].map(drawerCommandForKey)).toEqual(['next', 'next']);
+    expect(['k', 'ArrowUp'].map(drawerCommandForKey)).toEqual(['previous', 'previous']);
+    drawer.select({ campaignKey: 'campaign-b', kind: 'served', revision: 'revision-1', rowKey: 'next-row' });
+    expect(drawer.current().target).toMatchObject({ campaignKey: 'campaign-b', rowKey: 'next-row' });
+    expect(drawerCommandForKey('Escape')).toBe('close');
+    expect(drawerCommandForKey('Enter')).toBeUndefined();
     expect([...port.currentUrl().searchParams.keys()]).toEqual(['tab']);
     drawer.clear();
-    expect(drawer.current()).toBeUndefined();
+    expect(drawer.current()).toEqual({ key: null, revision: null, target: null });
+    expect(port.currentUrl().searchParams.get('tab')).toBe('sessions');
   });
 
   test('reports typed async navigation failures without swallowing rejection', async () => {

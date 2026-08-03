@@ -142,17 +142,39 @@ export type DrawerIdentity =
   | { readonly kind: 'local'; readonly rowKey: string }
   | { readonly campaignKey: string; readonly kind: 'served'; readonly revision: string; readonly rowKey: string };
 
+export interface DrawerIdentityState {
+  readonly key: string | null;
+  readonly revision: string | null;
+  readonly target: DrawerIdentity | null;
+}
+
+const closedDrawerIdentity: DrawerIdentityState = { key: null, revision: null, target: null };
+
 export const createDrawerIdentityOwner = () => {
-  let identity: DrawerIdentity | undefined;
+  let state = closedDrawerIdentity;
   return {
     clear: () => {
-      identity = undefined;
+      state = closedDrawerIdentity;
     },
-    current: () => identity,
+    current: () => state,
     select: (next: DrawerIdentity) => {
-      identity = next;
+      state = {
+        key: next.rowKey,
+        revision: next.kind === 'served' ? next.revision : null,
+        target: next,
+      };
     },
   };
+};
+
+export const drawerCommandForKey = (key: string): 'close' | 'next' | 'previous' | undefined => {
+  if (key === 'Escape') {
+    return 'close';
+  }
+  if (key === 'ArrowDown' || key === 'j') {
+    return 'next';
+  }
+  return key === 'ArrowUp' || key === 'k' ? 'previous' : undefined;
 };
 
 export const createSvelteNavigationPort = (dependencies: {
