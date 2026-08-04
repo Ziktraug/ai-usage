@@ -4,6 +4,7 @@
   import SkillsEditorSlot from '$lib/features/skills/editor/skills-editor-slot.svelte';
   import SkillsHealthSlot from '$lib/features/skills/management/skills-health-slot.svelte';
   import SkillsMatrixSlot from '$lib/features/skills/management/skills-matrix-slot.svelte';
+  import type { SkillsManagementPlanController } from '$lib/features/skills/shell/management-plan-controller';
   import SkillsShell from '$lib/features/skills/shell/skills-shell.svelte';
   import type { SkillsShellSlotContext } from '$lib/features/skills/shell/slot-context';
   import type { LayoutProps } from './$types';
@@ -14,11 +15,11 @@
 {#snippet editorSlot(_context: SkillsShellSlotContext)}
   <SkillsEditorSlot context={_context} />
 {/snippet}
-{#snippet healthSlot(_context: SkillsShellSlotContext)}
-  <SkillsHealthSlot context={_context} />
+{#snippet healthSlot(_context: SkillsShellSlotContext, _managementPlan: SkillsManagementPlanController)}
+  <SkillsHealthSlot context={_context} managementPlan={_managementPlan} />
 {/snippet}
-{#snippet matrixSlot(_context: SkillsShellSlotContext)}
-  <SkillsMatrixSlot context={_context} />
+{#snippet matrixSlot(_context: SkillsShellSlotContext, _managementPlan: SkillsManagementPlanController)}
+  <SkillsMatrixSlot context={_context} managementPlan={_managementPlan} />
 {/snippet}
 
 <RouteFrame heading="Skill management">
@@ -27,6 +28,7 @@
     {healthSlot}
     hydrationState={data.queryState}
     {matrixSlot}
+    navigationState={page.state}
     pathname={page.url.pathname}
     runtimeMode={data.runtimeMode}
   />
