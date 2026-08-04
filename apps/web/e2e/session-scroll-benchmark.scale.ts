@@ -1,6 +1,11 @@
 import type { CDPSession, Page, Response } from '@playwright/test';
 import { expect, test } from './browser-test';
-import { afterAnimationFrame, type SessionSurfaceMode, sessionSurface } from './session-scroll-driver';
+import {
+  afterAnimationFrame,
+  moveSessionSurface,
+  type SessionSurfaceMode,
+  sessionSurface,
+} from './session-scroll-driver';
 import {
   SESSION_SCROLL_EXPECTED_CAMPAIGN_COUNT,
   SESSION_SCROLL_EXPECTED_COUNT,
@@ -23,6 +28,9 @@ interface SessionScrollSample {
 const LAST_CAMPAIGN_INDEX = SESSION_SCROLL_EXPECTED_CAMPAIGN_COUNT - 1;
 const SESSION_QUERY_FINGERPRINT_PATTERN = /^session-query-v1:/;
 const SESSION_PAGE_RPC_PATH = '/rpc/session/page';
+const SESSION_SCROLL_POLL_INTERVAL_MS = 10;
+const DESKTOP_VIEWPORT = { height: 900, width: 1024 } as const;
+const MOBILE_VIEWPORT = { height: 844, width: 390 } as const;
 const samples: SessionScrollSample[] = [];
 
 const maximumValidCampaignIndex = (indices: readonly number[]): number => {
@@ -55,7 +63,6 @@ const waitForAllRows = async (
   surfaceMode: SessionSurfaceMode,
 ): Promise<{ maximumItems: number; maximumNodes: number }> => {
   const surface = sessionSurface(page, surfaceMode);
-  const mobileSentinel = page.locator('[data-session-paging-sentinel="mobile"]');
   let maximumIndex = -1;
   let maximumItems = 0;
   let maximumNodes = 0;
@@ -63,12 +70,8 @@ const waitForAllRows = async (
   await expect
     .poll(
       async () => {
-        if (surfaceMode === 'mobile') {
-          await mobileSentinel.evaluate((element) => element.scrollIntoView({ block: 'end' }));
-        }
         const snapshot = await surface.evaluate((element) => {
           const renderedItems = Array.from(element.querySelectorAll<HTMLElement>('[data-index]'));
-          element.scrollTop = element.scrollHeight;
           return {
             indices: renderedItems.map((item) => Number(item.dataset.index)),
             renderedItems: renderedItems.length,
@@ -78,12 +81,15 @@ const waitForAllRows = async (
         maximumIndex = Math.max(maximumIndex, maximumValidCampaignIndex(snapshot.indices));
         maximumItems = Math.max(maximumItems, snapshot.renderedItems);
         maximumNodes = Math.max(maximumNodes, snapshot.sessionDomNodes);
+        await moveSessionSurface(surface, 'end');
+        await afterAnimationFrame(page);
         return maximumIndex;
       },
-      { intervals: [25, 50, 100], timeout: 120_000 },
+      { intervals: [SESSION_SCROLL_POLL_INTERVAL_MS], timeout: 120_000 },
     )
     .toBe(LAST_CAMPAIGN_INDEX);
 
+  await expect(surface.locator(`[data-index="${LAST_CAMPAIGN_INDEX}"]`)).toBeVisible();
   expect(maximumIndex).toBe(LAST_CAMPAIGN_INDEX);
   return { maximumItems, maximumNodes };
 };
@@ -105,7 +111,7 @@ const runSample = async (page: Page): Promise<SessionScrollSample> => {
     }
   });
 
-  await page.setViewportSize({ height: 900, width: 1024 });
+  await page.setViewportSize(DESKTOP_VIEWPORT);
   const initialStartedAt = performance.now();
   await page.goto('/?origin=%5B%5D&tab=sessions');
   const report = page.locator('main[data-hydrated="true"]');
@@ -122,6 +128,22 @@ const runSample = async (page: Page): Promise<SessionScrollSample> => {
   const heapBefore = await readHeapBytes(client);
   const desktopMaximum = await waitForAllRows(page, 'desktop');
   const heapAfter = await readHeapBytes(client);
+
+  await page.setViewportSize(MOBILE_VIEWPORT);
+  const mobileSurface = sessionSurface(page, 'mobile');
+  await expect(mobileSurface).toBeVisible();
+  // This deterministic fixture uses uniform singleton campaign markup. The
+  // midpoint captures its steady-state mobile window, while the end probe owns
+  // LAST reachability; session-scroll.scale.ts remains the exhaustive authority.
+  const mobileMiddle = await mobileSurface.evaluate((element) =>
+    Math.floor(Math.max(0, element.scrollHeight - element.clientHeight) / 2),
+  );
+  await moveSessionSurface(mobileSurface, mobileMiddle);
+  await afterAnimationFrame(page);
+  const mobileMaximum = await waitForAllRows(page, 'mobile');
+  await page.setViewportSize(DESKTOP_VIEWPORT);
+  await expect(surface).toBeVisible();
+  await expect(page.getByText('5,000 / 5,000 sessions', { exact: true })).toBeVisible();
 
   await surface.evaluate((element) => {
     element.scrollTop = 0;
@@ -147,11 +169,6 @@ const runSample = async (page: Page): Promise<SessionScrollSample> => {
   await expect(report).not.toHaveAttribute('data-request-fingerprint', sortedFingerprint ?? '');
   await afterAnimationFrame(page);
   const filterMs = performance.now() - filterStartedAt;
-
-  await page.setViewportSize({ height: 844, width: 390 });
-  await page.goto('/?origin=%5B%5D&tab=sessions');
-  await expect(page.getByText('5,000 / 5,000 sessions', { exact: true })).toBeVisible();
-  const mobileMaximum = await waitForAllRows(page, 'mobile');
 
   const measuredPageBytes = await Promise.all(sessionResponseBytes);
   await client.detach();

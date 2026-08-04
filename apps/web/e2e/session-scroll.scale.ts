@@ -2,7 +2,12 @@ import { createHash } from 'node:crypto';
 import type { APIRequestContext, Locator, Page, Response, TestInfo } from '@playwright/test';
 import { expect, test } from './browser-test';
 import { rpcStringFieldValues } from './rpc-test-transport';
-import { afterAnimationFrame, type SessionSurfaceMode, sessionSurface } from './session-scroll-driver';
+import {
+  afterAnimationFrame,
+  moveSessionSurface,
+  type SessionSurfaceMode,
+  sessionSurface,
+} from './session-scroll-driver';
 import { SESSION_SCROLL_EXPECTED_CAMPAIGN_COUNT } from './session-scroll-fixture';
 import { freezeSessionScrollCollectionSources } from './session-scroll-source-control';
 
@@ -134,37 +139,6 @@ const readSurfaceSnapshot = (surface: Locator): Promise<SessionSurfaceSnapshot> 
       scrollTop: element.scrollTop,
     };
   });
-
-const moveSurface = (surface: Locator, target: 'end' | 'start' | number): Promise<boolean> =>
-  surface.evaluate((element, destination) => {
-    if (!(element instanceof HTMLElement)) {
-      throw new Error('The Session surface must be an HTML scroll container');
-    }
-    const maximumScrollTop = Math.max(0, element.scrollHeight - element.clientHeight);
-    let requestedScrollTop = typeof destination === 'number' ? destination : maximumScrollTop;
-    if (destination === 'start') {
-      requestedScrollTop = 0;
-    }
-    const nextScrollTop = Math.min(maximumScrollTop, Math.max(0, requestedScrollTop));
-    if (nextScrollTop === element.scrollTop) {
-      return false;
-    }
-    return new Promise<boolean>((resolve, reject) => {
-      let settled = false;
-      const handleScroll = (): void => {
-        settled = true;
-        resolve(true);
-      };
-      element.addEventListener('scroll', handleScroll, { once: true });
-      element.scrollTop = nextScrollTop;
-      requestAnimationFrame(() => {
-        element.removeEventListener('scroll', handleScroll);
-        if (!settled) {
-          reject(new Error(`The Session surface moved to ${nextScrollTop} without a native scroll event`));
-        }
-      });
-    });
-  }, target);
 
 const assertPageBudgets = (
   capturedPages: CapturedSessionPage[],
@@ -351,7 +325,7 @@ const inspectAllSessions = async (
       const previousHeight = snapshot.scrollHeight;
       const previousRowCount = indexToRowId.size;
       expect(
-        await moveSurface(surface, nextScrollTop),
+        await moveSessionSurface(surface, nextScrollTop),
         'The Session surface must advance to the next scroll step',
       ).toBe(true);
       await afterAnimationFrame(page);
@@ -406,9 +380,9 @@ const inspectAllSessions = async (
     throw new Error('Expected the session fixture to contain first and last row identifiers');
   }
 
-  await moveSurface(surface, 'start');
+  await moveSessionSurface(surface, 'start');
   await expect(surface.locator('[data-index="0"]')).toHaveAttribute('data-session-row-id', firstRowId);
-  await moveSurface(surface, 'end');
+  await moveSessionSurface(surface, 'end');
   await expect(surface.locator(`[data-index="${SESSION_SCROLL_EXPECTED_CAMPAIGN_COUNT - 1}"]`)).toHaveAttribute(
     'data-session-row-id',
     lastRowId,
