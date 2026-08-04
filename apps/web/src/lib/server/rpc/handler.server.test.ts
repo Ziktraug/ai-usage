@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { MAX_PORTABLE_USAGE_BYTES } from '@ai-usage/report-core/portable-usage';
 import { createWebRpcClient } from '../../rpc/client';
 import { createE2ESkillsCapability } from './context.server';
+import { E2E_SKILLS_FIXTURE_HEADER, e2eSkillsFixtureVariantForHeaders } from './e2e-fixture-profile';
 import { createWebRpcHttpHandler, enforceRpcResponseBound } from './handler.server';
 import {
   enforceRequestPolicy,
@@ -56,6 +57,14 @@ const procedureAtPath = (client: unknown, pathname: string): RpcProcedure => {
 };
 
 describe('Web RPC HTTP convergence', () => {
+  test('uses the extended Skills fixture unless a request explicitly selects visual data', () => {
+    expect(e2eSkillsFixtureVariantForHeaders(new Headers())).toBe('extended');
+    expect(e2eSkillsFixtureVariantForHeaders(new Headers({ [E2E_SKILLS_FIXTURE_HEADER]: 'visual' }))).toBe('visual');
+    expect(e2eSkillsFixtureVariantForHeaders(new Headers({ [E2E_SKILLS_FIXTURE_HEADER]: 'unsupported' }))).toBe(
+      'extended',
+    );
+  });
+
   test('routes every non-file operation through the real RPCLink and handler with its frozen method', async () => {
     let dependencyAcquisitions = 0;
     const observed: { method: string; pathname: string }[] = [];

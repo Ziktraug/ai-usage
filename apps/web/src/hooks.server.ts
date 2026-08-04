@@ -1,9 +1,23 @@
-import type { Handle } from '@sveltejs/kit';
+import type { Handle, HandleFetch } from '@sveltejs/kit';
 import { demoRouteDecision } from '$lib/features/shell/demo-policy.server';
 import { webReadObservabilityLifecycle } from '$lib/server/observability/web-read-lifecycle.server';
+import { E2E_SKILLS_FIXTURE_HEADER } from '$lib/server/rpc/e2e-fixture-profile';
 import { getServerRuntimeMode } from '../src/server/runtime-mode.server';
 
 const observabilityInitialization = webReadObservabilityLifecycle.initialize();
+
+export const handleFetch: HandleFetch = async ({ event, fetch, request }) => {
+  const visualSkillsFixtureRequested =
+    process.env.AI_USAGE_SVELTEKIT_PRIVATE_E2E_OVERRIDES === '1' &&
+    event.request.headers.get(E2E_SKILLS_FIXTURE_HEADER) === 'visual' &&
+    new URL(request.url).pathname.startsWith('/rpc/skills/');
+  if (!visualSkillsFixtureRequested) {
+    return await fetch(request);
+  }
+  const headers = new Headers(request.headers);
+  headers.set(E2E_SKILLS_FIXTURE_HEADER, 'visual');
+  return await fetch(new Request(request, { headers }));
+};
 
 process.once('sveltekit:shutdown', async () => {
   await webReadObservabilityLifecycle.dispose();

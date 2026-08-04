@@ -1,5 +1,6 @@
 import { collectionSourceDefinitions, type SourceControlView } from '@ai-usage/report-core/source-control';
 import type { Page } from '@playwright/test';
+import { E2E_SKILLS_FIXTURE_HEADER } from '../src/lib/server/rpc/e2e-fixture-profile';
 import { test as browserTest, expect, openHydratedReport, openHydratedSkills, reportViewsFor } from './browser-test';
 
 const DESKTOP_VIEWPORT = { height: 900, width: 1280 } as const;
@@ -155,6 +156,7 @@ test('matches the narrow Overview value proposition', async ({ page }) => {
 });
 
 test('matches the hydrated Skills workspace', async ({ page }) => {
+  await page.setExtraHTTPHeaders({ [E2E_SKILLS_FIXTURE_HEADER]: 'visual' });
   await openHydratedSkills(page, '/skills/global/alpha-skill');
   await expect(page.getByRole('textbox', { name: 'alpha-skill SKILL.md' })).toBeVisible();
   await waitForFonts(page);

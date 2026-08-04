@@ -45,9 +45,13 @@
 
   const editorSection = css({
     display: 'grid',
-    gridTemplateAreas: { base: '"header" "editor" "actions"', md: '"actions" "editor" "header"' },
-    gridTemplateColumns: '1fr',
-    columnGap: { base: '12px', md: 0 },
+    gridTemplateAreas: {
+      base: '"header" "editor" "actions"',
+      md: '"header" "actions" "editor"',
+      '2xl': '"header actions" "editor editor"',
+    },
+    gridTemplateColumns: { base: '1fr', '2xl': 'minmax(0, 1fr) auto' },
+    columnGap: { base: '12px', '2xl': 0 },
     rowGap: '12px',
     minW: 0,
   });
@@ -59,10 +63,10 @@
     alignItems: 'center',
     p: '10px 12px',
     border: '1px solid token(colors.line)',
-    borderRightWidth: '1px',
+    borderRightWidth: { base: '1px', '2xl': 0 },
     borderTopLeftRadius: 'sm',
-    borderTopRightRadius: 'sm',
-    borderBottomRightRadius: 'sm',
+    borderTopRightRadius: { base: 'sm', '2xl': 0 },
+    borderBottomRightRadius: { base: 'sm', '2xl': 0 },
     borderBottomLeftRadius: 'sm',
     bg: 'surfaceMuted',
   });
@@ -70,16 +74,15 @@
     gridArea: 'actions',
     display: 'flex',
     flexWrap: 'wrap',
-    minH: { base: 'auto', md: '196px' },
     gap: '8px',
     alignItems: 'center',
-    justifyContent: { base: 'flex-start', md: 'center' },
+    justifyContent: { base: 'flex-start', '2xl': 'flex-end' },
     p: '10px 12px',
     border: '1px solid token(colors.line)',
-    borderTopLeftRadius: 'sm',
+    borderTopLeftRadius: { base: 'sm', '2xl': 0 },
     borderTopRightRadius: 'sm',
     borderBottomRightRadius: 'sm',
-    borderBottomLeftRadius: 'sm',
+    borderBottomLeftRadius: { base: 'sm', '2xl': 0 },
     bg: 'surfaceMuted',
   });
   const editorArea = css({

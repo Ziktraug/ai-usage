@@ -16,6 +16,7 @@ import {
 import { parse } from 'valibot';
 import type { RuntimeMode } from '../../../runtime-mode';
 import type { SkillsServerAdapter, SkillsServerAdapterResult } from '../../../server/skills-contracts';
+import { type E2ESkillsFixtureVariant, e2eSkillsFixtureVariantForHeaders } from './e2e-fixture-profile';
 import type { WebRpcRouterDependencies } from './router';
 import type { SkillsCallOptions, SkillsCapability, SkillsCapabilityResult } from './skills';
 
@@ -135,9 +136,7 @@ const adaptSkillsCapability = (adapter: SkillsServerAdapter): SkillsCapability =
     ),
 });
 
-export type E2ESkillsFixtureVariant = 'extended' | 'visual';
-
-const e2eSkillsAdapter = async (variant: E2ESkillsFixtureVariant = 'visual'): Promise<SkillsServerAdapter> => {
+const e2eSkillsAdapter = async (variant: E2ESkillsFixtureVariant = 'extended'): Promise<SkillsServerAdapter> => {
   const fixture = await import('../../../server/skills-e2e-fixture.server');
   const extended = variant === 'extended';
   return {
@@ -170,10 +169,13 @@ const runtimeMode = async (options: SkillsCallOptions): Promise<RuntimeMode> =>
     return getServerRuntimeMode();
   });
 
-const selectSkillsCapability = async (options: SkillsCallOptions): Promise<SkillsCapability> => {
+const selectSkillsCapability = async (
+  options: SkillsCallOptions,
+  fixtureVariant: E2ESkillsFixtureVariant,
+): Promise<SkillsCapability> => {
   const mode = await runtimeMode(options);
   if (mode === 'e2e') {
-    return adaptSkillsCapability(await phaseBound(options.signal, e2eSkillsAdapter));
+    return adaptSkillsCapability(await phaseBound(options.signal, () => e2eSkillsAdapter(fixtureVariant)));
   }
   const server = await phaseBound(options.signal, async () => await import('../../../server/skills.server'));
   return adaptSkillsCapability(server.createSkillsServerAdapter(server.createSkillsServerDependencies()));
@@ -298,12 +300,15 @@ const createSyncDependencies = (): WebRpcRouterDependencies['sync'] => ({
     }),
 });
 
-export const createWebRpcRouterDependencies = async (request: Request): Promise<WebRpcRouterDependencies> => ({
-  report: createReportDependencies(request),
-  session: createSessionDependencies(),
-  skills: {
-    preflight: preflightSkills,
-    selectCapability: selectSkillsCapability,
-  },
-  sync: createSyncDependencies(),
-});
+export const createWebRpcRouterDependencies = (request: Request): Promise<WebRpcRouterDependencies> => {
+  const fixtureVariant = e2eSkillsFixtureVariantForHeaders(request.headers);
+  return Promise.resolve({
+    report: createReportDependencies(request),
+    session: createSessionDependencies(),
+    skills: {
+      preflight: preflightSkills,
+      selectCapability: async (options) => await selectSkillsCapability(options, fixtureVariant),
+    },
+    sync: createSyncDependencies(),
+  });
+};

@@ -328,22 +328,30 @@ test('keeps the tree, editor, and Inspector in one bounded desktop workspace row
   const tree = page.getByRole('complementary', { name: 'Skill scopes' }).last();
   const detail = page.getByRole('region', { name: 'Selected skill detail' });
   const editor = detail.getByRole('textbox', { name: 'alpha-skill SKILL.md' });
+  const editorStatus = detail.getByText('Saved', { exact: true });
+  const saveButton = detail.getByRole('button', { exact: true, name: 'Save' });
   const inspector = page.getByRole('complementary', { name: 'Inspector' });
   await expect(tree).toBeVisible();
   await expect(detail).toBeVisible();
   await expect(editor).toBeVisible();
+  await expect(editorStatus).toBeVisible();
+  await expect(saveButton).toBeVisible();
   await expect(inspector).toBeVisible();
 
-  const [treeBox, detailBox, editorBox, inspectorBox] = await Promise.all([
+  const [treeBox, detailBox, editorBox, editorStatusBox, saveButtonBox, inspectorBox] = await Promise.all([
     tree.boundingBox(),
     detail.boundingBox(),
     editor.boundingBox(),
+    editorStatus.boundingBox(),
+    saveButton.boundingBox(),
     inspector.boundingBox(),
   ]);
   expect(treeBox).not.toBeNull();
   expect(detailBox).not.toBeNull();
   expect(inspectorBox).not.toBeNull();
   expect(editorBox).not.toBeNull();
+  expect(editorStatusBox).not.toBeNull();
+  expect(saveButtonBox).not.toBeNull();
 
   const rowTops = [treeBox?.y ?? 0, detailBox?.y ?? 0, inspectorBox?.y ?? 0];
   expect(Math.max(...rowTops) - Math.min(...rowTops)).toBeLessThanOrEqual(1);
@@ -351,6 +359,10 @@ test('keeps the tree, editor, and Inspector in one bounded desktop workspace row
   expect(treeBox?.width ?? 0).toBeGreaterThanOrEqual(MIN_DESKTOP_TREE_WIDTH_PX);
   expect(editorBox?.width ?? 0).toBeGreaterThanOrEqual(MIN_DESKTOP_EDITOR_WIDTH_PX);
   expect(inspectorBox?.width ?? 0).toBeGreaterThanOrEqual(MIN_DESKTOP_INSPECTOR_WIDTH_PX);
+  expect(editorStatusBox?.y ?? 0).toBeLessThan(editorBox?.y ?? 0);
+  expect((editorStatusBox?.y ?? 0) + (editorStatusBox?.height ?? 0)).toBeLessThanOrEqual(editorBox?.y ?? 0);
+  expect(saveButtonBox?.y ?? 0).toBeLessThan(editorBox?.y ?? 0);
+  expect((saveButtonBox?.y ?? 0) + (saveButtonBox?.height ?? 0)).toBeLessThanOrEqual(editorBox?.y ?? 0);
   expect(editorBox?.x ?? 0).toBeGreaterThanOrEqual(detailBox?.x ?? 0);
   expect((editorBox?.x ?? 0) + (editorBox?.width ?? 0)).toBeLessThanOrEqual(
     (detailBox?.x ?? 0) + (detailBox?.width ?? 0),
