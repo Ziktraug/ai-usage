@@ -299,8 +299,8 @@ describe('Web migration parity checker', () => {
     expect(result.counts.get('operation')?.live).toBe(0);
     expect(result.counts.get('operation')?.ledger).toBe(30);
     expect(result.counts.get('production-tsx')?.live).toBe(0);
-    expect(result.counts.get('design-export')?.live).toBe(330);
-    expect(result.counts.get('design-export')?.ledger).toBe(437);
-    expect(result.counts.get('playwright-title')?.live).toBe(110);
+    expect(result.counts.get('design-export')?.live).toBe(353);
+    expect(result.counts.get('design-export')?.ledger).toBe(460);
+    expect(result.counts.get('playwright-title')?.live).toBe(111);
   });
 });
