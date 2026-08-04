@@ -4,7 +4,8 @@ import type { PageLoad } from './$types';
 
 export const load: PageLoad = async ({ fetch, parent, untrack, url }) => {
   const rpcBaseUrl = untrack(() => new URL(url.origin));
-  const parentData = await parent();
+  // Runtime mode is document-scoped; search navigation must not reacquire the report bootstrap.
+  const parentData = await untrack(() => parent());
   try {
     return await loadReportPageData({
       fetch: (request) => fetch(request),
