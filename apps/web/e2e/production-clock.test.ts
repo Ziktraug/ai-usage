@@ -67,6 +67,29 @@ describe('production fixture clock', () => {
     expect(new FixtureDate().getTime()).toBe(startedAt + 25);
   });
 
+  test('normalizes fractional monotonic time to coherent nondecreasing integer milliseconds', () => {
+    let monotonicTime = 100.25;
+    const FixtureDate = createProductionFixtureDate(fixtureEpoch, {
+      monotonicNow: () => monotonicTime,
+    });
+    const fixtureStartedAt = Date.parse(fixtureEpoch);
+
+    expect(Number.isInteger(FixtureDate.now())).toBe(true);
+    expect(FixtureDate.now()).toBe(new FixtureDate().getTime());
+
+    monotonicTime = 101.875;
+    expect(FixtureDate.now()).toBe(fixtureStartedAt + 1);
+    expect(FixtureDate.now()).toBe(new FixtureDate().getTime());
+
+    monotonicTime = 100.5;
+    expect(FixtureDate.now()).toBe(fixtureStartedAt + 1);
+    expect(FixtureDate.now()).toBe(new FixtureDate().getTime());
+
+    monotonicTime = 103.4;
+    expect(FixtureDate.now()).toBe(fixtureStartedAt + 3);
+    expect(FixtureDate.now()).toBe(new FixtureDate().getTime());
+  });
+
   test('rejects non-canonical and normalized fixture epochs before application startup', async () => {
     const invalidEpochs = ['not-a-date', '2026-07-03', '2026-02-30T00:00:00.000Z'];
     for (const invalidEpoch of invalidEpochs) {

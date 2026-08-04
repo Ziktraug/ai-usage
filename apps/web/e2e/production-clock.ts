@@ -14,7 +14,12 @@ const createProductionFixtureDate = (epoch: string, sources: ProductionFixtureCl
     throw new Error(`${CLOCK_EPOCH_ENVIRONMENT_KEY} must be a canonical ISO timestamp`);
   }
 
-  const fixtureNow = (): number => fixtureStartedAt + (monotonicNow() - monotonicStartedAt);
+  let elapsedMilliseconds = 0;
+  const fixtureNow = (): number => {
+    const currentElapsedMilliseconds = Math.max(0, Math.floor(monotonicNow() - monotonicStartedAt));
+    elapsedMilliseconds = Math.max(elapsedMilliseconds, currentElapsedMilliseconds);
+    return fixtureStartedAt + elapsedMilliseconds;
+  };
   let FixtureDate: DateConstructor;
   FixtureDate = new Proxy(SystemDate, {
     apply: (target) => new target(fixtureNow()).toString(),
