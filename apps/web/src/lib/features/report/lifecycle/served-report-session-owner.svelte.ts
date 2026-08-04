@@ -1,3 +1,4 @@
+import { untrack } from 'svelte';
 import type {
   ServedReportRefreshOutcome,
   ServedReportSession,
@@ -53,7 +54,11 @@ export const createServedReportSessionOwner = <
 
   const abort = (): void => {
     session.abort();
-    snapshot = { ...snapshot, pending: false };
+    const currentSnapshot = untrack(() => snapshot);
+    if (!currentSnapshot.pending) {
+      return;
+    }
+    snapshot = { ...currentSnapshot, pending: false };
   };
 
   return {

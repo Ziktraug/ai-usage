@@ -152,6 +152,34 @@ describe('ServedReportSession rune owner', () => {
     expect(refreshCount).toBe(1);
   });
 
+  it('publishes at most one settled snapshot across repeated aborts', () => {
+    let abortCount = 0;
+    const pending = deferred<ServedReportRefreshOutcome>();
+    const session: ServedReportSession<string> = {
+      abort: () => {
+        abortCount += 1;
+      },
+      refresh: () => pending.promise,
+    };
+    const owner = ownerModule.createServedReportSessionOwner(session);
+
+    const settledSnapshot = owner.snapshot;
+    owner.abort();
+    expect(owner.snapshot).toBe(settledSnapshot);
+
+    owner.refresh('sessions');
+    const pendingSnapshot = owner.snapshot;
+    expect(pendingSnapshot.pending).toBe(true);
+    owner.abort();
+    const abortedSnapshot = owner.snapshot;
+    expect(abortedSnapshot).not.toBe(pendingSnapshot);
+    expect(abortedSnapshot.pending).toBe(false);
+
+    owner.abort();
+    expect(owner.snapshot).toBe(abortedSnapshot);
+    expect(abortCount).toBe(3);
+  });
+
   it('renders and destroys the lifecycle consumer with exactly one delegated abort', () => {
     let abortCount = 0;
     const session: ServedReportSession<string> = {
