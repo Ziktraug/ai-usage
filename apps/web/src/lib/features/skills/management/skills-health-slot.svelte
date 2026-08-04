@@ -31,6 +31,7 @@
     type SkillsManagementOperation,
     type SkillsRefreshAcceptanceTarget,
     type SkillsRefreshClient,
+    type SkillsRefreshDecisionState,
     skillsManagementSuccessMessage,
     skillsSnapshotAcceptanceSignature,
     toggleOperation,
@@ -133,25 +134,27 @@
     }
   });
   $effect(() => {
-    const target = awaitingRefresh;
-    if (resolveSkillsRefreshAcceptance(target, context.snapshot, false) !== 'announce') {
-      return;
-    }
-    awaitingRefresh = undefined;
-    setSuccessMessage('Skills refreshed.');
-  });
-  $effect(() => {
     const decisionPending = context.snapshotUpdates.pendingDecision !== undefined;
     if (decisionPending && awaitingRefresh !== undefined) {
       refreshDecisionOpen = true;
-      return;
     }
-    if (!decisionPending && refreshDecisionOpen) {
+    const decisionClosed = !decisionPending && refreshDecisionOpen;
+    let decisionState: SkillsRefreshDecisionState = 'none';
+    if (decisionPending) {
+      decisionState = 'pending';
+    } else if (decisionClosed) {
+      decisionState = 'closed';
+    }
+    const acceptance = resolveSkillsRefreshAcceptance(awaitingRefresh, context.snapshot, decisionState);
+    if (acceptance === 'announce') {
+      awaitingRefresh = undefined;
+      setSuccessMessage('Skills refreshed.');
+    } else if (acceptance === 'clear') {
+      awaitingRefresh = undefined;
+    }
+    if (decisionClosed) {
       refreshDecisionOpen = false;
       scheduleRefreshFocus();
-      if (resolveSkillsRefreshAcceptance(awaitingRefresh, context.snapshot, true) === 'clear') {
-        awaitingRefresh = undefined;
-      }
     }
   });
   const refreshBusyAttributes = $derived({

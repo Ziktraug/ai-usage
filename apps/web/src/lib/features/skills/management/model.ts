@@ -121,13 +121,15 @@ export interface SkillsRefreshAcceptanceTarget {
   readonly signature: string;
 }
 
+export type SkillsRefreshDecisionState = 'closed' | 'none' | 'pending';
+
 export const skillsSnapshotAcceptanceSignature = (snapshot: SkillManagementSnapshot): string =>
   JSON.stringify(snapshot);
 
 export const resolveSkillsRefreshAcceptance = (
   target: SkillsRefreshAcceptanceTarget | undefined,
   snapshot: SkillManagementSnapshot,
-  decisionClosed: boolean,
+  decisionState: SkillsRefreshDecisionState,
 ): 'announce' | 'clear' | 'retain' => {
   if (target === undefined) {
     return 'retain';
@@ -136,7 +138,10 @@ export const resolveSkillsRefreshAcceptance = (
   if (snapshotMatches) {
     return target.publicationReady ? 'announce' : 'retain';
   }
-  if (decisionClosed) {
+  if (decisionState === 'closed') {
+    return 'clear';
+  }
+  if (target.publicationReady && decisionState === 'none') {
     return 'clear';
   }
   return 'retain';

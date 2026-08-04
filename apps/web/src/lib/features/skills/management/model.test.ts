@@ -133,12 +133,26 @@ describe('Skills management presentation and mutation seam', () => {
     } as const;
     const pendingTarget = { ...target, publicationReady: false } as const;
 
-    expect(resolveSkillsRefreshAcceptance(target, current, false)).toBe('retain');
-    expect(resolveSkillsRefreshAcceptance(target, current, true)).toBe('clear');
-    expect(resolveSkillsRefreshAcceptance(pendingTarget, current, true)).toBe('clear');
-    expect(resolveSkillsRefreshAcceptance(pendingTarget, refreshed, true)).toBe('retain');
-    expect(resolveSkillsRefreshAcceptance(undefined, refreshed, false)).toBe('retain');
-    expect(resolveSkillsRefreshAcceptance(target, refreshed, true)).toBe('announce');
+    const cases = [
+      { decision: 'none', expected: 'retain', snapshot: refreshed, target: undefined },
+      { decision: 'none', expected: 'retain', snapshot: current, target: pendingTarget },
+      { decision: 'pending', expected: 'retain', snapshot: current, target: pendingTarget },
+      { decision: 'closed', expected: 'clear', snapshot: current, target: pendingTarget },
+      { decision: 'none', expected: 'retain', snapshot: refreshed, target: pendingTarget },
+      { decision: 'closed', expected: 'retain', snapshot: refreshed, target: pendingTarget },
+      { decision: 'pending', expected: 'retain', snapshot: current, target },
+      { decision: 'none', expected: 'clear', snapshot: current, target },
+      { decision: 'closed', expected: 'clear', snapshot: current, target },
+      { decision: 'none', expected: 'announce', snapshot: refreshed, target },
+      { decision: 'pending', expected: 'announce', snapshot: refreshed, target },
+      { decision: 'closed', expected: 'announce', snapshot: refreshed, target },
+    ] as const;
+
+    expect(
+      cases.map(({ decision, snapshot: candidate, target: candidateTarget }) =>
+        resolveSkillsRefreshAcceptance(candidateTarget, candidate, decision),
+      ),
+    ).toEqual(cases.map(({ expected }) => expected));
   });
 
   test('maps enable and disable requests without changing skill identity', async () => {
