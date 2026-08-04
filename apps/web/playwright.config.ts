@@ -18,7 +18,7 @@ export default defineConfig({
   },
   webServer: {
     command:
-      'AI_USAGE_SVELTEKIT_PRIVATE_E2E_OVERRIDES=1 BROWSER=none TZ=UTC VITE_AI_USAGE_E2E=1 bun run dev:standalone -- --port 4174 --strictPort',
+      'AI_USAGE_SVELTEKIT_PRIVATE_E2E_OVERRIDES=1 BROWSER=none TZ=UTC VITE_AI_USAGE_E2E=1 bun run dev -- --port 4174 --strictPort',
     gracefulShutdown: { signal: 'SIGTERM', timeout: 8000 },
     reuseExistingServer: false,
     timeout: 120_000,

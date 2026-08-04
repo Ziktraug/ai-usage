@@ -45,7 +45,7 @@
     "check": "bun --filter @ai-usage/design-system build && bun run dev:prepare && bun run typecheck",
     "check:svelte": "AI_USAGE_SVELTEKIT_PHASE=check bun --no-env-file svelte-kit sync && AI_USAGE_SVELTEKIT_PHASE=check bun --no-env-file svelte-check --tsconfig ./tsconfig.json",
     "test": "bun --filter @ai-usage/design-system build && bun test src ./*.test.ts",
-    "test:e2e": "bun --bun playwright test",
+    "test:e2e": "bun --filter @ai-usage/design-system build && bun run dev:prepare && bun --bun playwright test",
     "test:e2e-demo": "playwright test --config playwright.demo.config.ts",
     "test:e2e-production": "bun --bun playwright test --config playwright.production.config.ts e2e/production-report.spec.ts && bun --bun playwright test --config playwright.session-scroll.config.ts e2e/session-scroll.scale.ts",
     "benchmark:session-scroll": "bun --bun playwright test --config playwright.session-scroll.config.ts e2e/session-scroll-benchmark.scale.ts",
