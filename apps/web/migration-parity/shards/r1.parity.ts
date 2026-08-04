@@ -3,6 +3,7 @@ import { defineParityShard, type ParityEvidence, type ParityRecord } from '../sc
 
 const owner = 'R1' as const;
 const implementationCommit = '7c85cf198ca2af004b53eef182a727f59d4ab5e4';
+const navigationCorrectionCommit = '3a57be5e3bc1549fd5c9305c4d08df04ab6a956c';
 const targetEvidence = (kind: ParityEvidence['kind'], reference: string): ParityEvidence => ({
   commit: implementationCommit,
   kind,
@@ -87,6 +88,28 @@ const completePlaywrightTitle = (record: ParityRecord): ParityRecord =>
     targetEvidence('command', 'bun run --cwd apps/web test:e2e-svelte-shadow (6 passed)'),
     reviewEvidence,
   ]);
+const completeNavigationCorrectionTitle = (record: ParityRecord): ParityRecord =>
+  completeNewRecord(record, [
+    {
+      commit: navigationCorrectionCommit,
+      kind: 'test',
+      phase: 'target',
+      reference: record.id.replace('pw:', '').replace('::', ' › '),
+    },
+    {
+      commit: navigationCorrectionCommit,
+      kind: 'command',
+      phase: 'target',
+      reference:
+        'CI=1 Playwright direct geometry plus intra-report and cross-route history stress (60 passed); bun run test:e2e (98 passed)',
+    },
+    {
+      commit: navigationCorrectionCommit,
+      kind: 'review',
+      phase: 'target',
+      reference: '/root/x2_parity_spec and /root/x2_quality_security ACCEPT the history-entry anchor correction.',
+    },
+  ]);
 
 export default defineParityShard({
   owner,
@@ -136,5 +159,11 @@ export default defineParityShard({
         'blocks dirty navigation through Keep, Discard, reload, focus, and cleanup',
       ].map((title) => ({ file: 'apps/web/e2e/svelte-shell.spec.ts', title })),
     ).map(completePlaywrightTitle),
+    ...playwrightTitleRecords(owner, [
+      {
+        file: 'apps/web/e2e/svelte-shell.spec.ts',
+        title: 'restores Session scroll after a cross-route history remount',
+      },
+    ]).map(completeNavigationCorrectionTitle),
   ],
 });
