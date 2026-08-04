@@ -62,7 +62,7 @@ missing/incompatible store, mismatch, expired revision, demo import privacy,
 and direct-query bounds.
 
 The migration boundary gates are `bun run test:web-migration-parity`,
-`bun run test:web-retired-stack`, `bun run test:web-retired-stack-build`, and
+`bun tools/check-web-retired-stack.ts`, `bun run test:web-retired-stack-build`, and
 `bun run test:web-client-manifest`. They cover the accepted parity ledger,
 retired source/emitted stacks, and the emitted browser import closure.
 The dev/build isolation gate is `bun run test:web-dev-build-isolation`; the

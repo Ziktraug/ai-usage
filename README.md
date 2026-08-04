@@ -332,6 +332,7 @@ After the build, verify migration parity and the emitted browser closure:
 
 ```sh
 bun run test:web-migration-parity
+bun tools/check-web-retired-stack.ts
 bun run test:web-client-manifest
 bun run test:web-retired-stack-build
 ```
