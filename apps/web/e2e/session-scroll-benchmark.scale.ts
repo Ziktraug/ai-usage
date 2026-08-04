@@ -28,7 +28,7 @@ interface SessionScrollSample {
 const LAST_CAMPAIGN_INDEX = SESSION_SCROLL_EXPECTED_CAMPAIGN_COUNT - 1;
 const SESSION_QUERY_FINGERPRINT_PATTERN = /^session-query-v1:/;
 const SESSION_PAGE_RPC_PATH = '/rpc/session/page';
-const SESSION_SCROLL_POLL_INTERVAL_MS = 10;
+const MAXIMUM_SESSION_SCROLL_STEPS = SESSION_SCROLL_EXPECTED_CAMPAIGN_COUNT;
 const DESKTOP_VIEWPORT = { height: 900, width: 1024 } as const;
 const MOBILE_VIEWPORT = { height: 844, width: 390 } as const;
 const samples: SessionScrollSample[] = [];
@@ -67,27 +67,46 @@ const waitForAllRows = async (
   let maximumItems = 0;
   let maximumNodes = 0;
 
-  await expect
-    .poll(
-      async () => {
-        const snapshot = await surface.evaluate((element) => {
-          const renderedItems = Array.from(element.querySelectorAll<HTMLElement>('[data-index]'));
-          return {
-            indices: renderedItems.map((item) => Number(item.dataset.index)),
-            renderedItems: renderedItems.length,
-            sessionDomNodes: element.querySelectorAll('*').length,
-          };
-        });
-        maximumIndex = Math.max(maximumIndex, maximumValidCampaignIndex(snapshot.indices));
-        maximumItems = Math.max(maximumItems, snapshot.renderedItems);
-        maximumNodes = Math.max(maximumNodes, snapshot.sessionDomNodes);
-        await moveSessionSurface(surface, 'end');
-        await afterAnimationFrame(page);
-        return maximumIndex;
-      },
-      { intervals: [SESSION_SCROLL_POLL_INTERVAL_MS], timeout: 120_000 },
-    )
-    .toBe(LAST_CAMPAIGN_INDEX);
+  const recordSnapshot = async (): Promise<{ maximumIndex: number; scrollHeight: number }> => {
+    const snapshot = await surface.evaluate((element) => {
+      const renderedItems = Array.from(element.querySelectorAll<HTMLElement>('[data-index]'));
+      return {
+        indices: renderedItems.map((item) => Number(item.dataset.index)),
+        renderedItems: renderedItems.length,
+        scrollHeight: element.scrollHeight,
+        sessionDomNodes: element.querySelectorAll('*').length,
+      };
+    });
+    maximumIndex = Math.max(maximumIndex, maximumValidCampaignIndex(snapshot.indices));
+    maximumItems = Math.max(maximumItems, snapshot.renderedItems);
+    maximumNodes = Math.max(maximumNodes, snapshot.sessionDomNodes);
+    return { maximumIndex, scrollHeight: snapshot.scrollHeight };
+  };
+
+  let scrollStep = 0;
+  while (maximumIndex < LAST_CAMPAIGN_INDEX) {
+    scrollStep += 1;
+    if (scrollStep > MAXIMUM_SESSION_SCROLL_STEPS) {
+      throw new Error(`Benchmark traversal exceeded ${MAXIMUM_SESSION_SCROLL_STEPS} bounded scroll steps`);
+    }
+    const previous = await recordSnapshot();
+    if (previous.maximumIndex === LAST_CAMPAIGN_INDEX) {
+      break;
+    }
+    await moveSessionSurface(surface, 'end');
+    await afterAnimationFrame(page);
+    await expect
+      .poll(
+        async () => {
+          const next = await recordSnapshot();
+          return next.maximumIndex > previous.maximumIndex || next.scrollHeight > previous.scrollHeight;
+        },
+        {
+          message: `Benchmark Session traversal stalled after campaign index ${previous.maximumIndex}`,
+        },
+      )
+      .toBe(true);
+  }
 
   await expect(surface.locator(`[data-index="${LAST_CAMPAIGN_INDEX}"]`)).toBeVisible();
   expect(maximumIndex).toBe(LAST_CAMPAIGN_INDEX);
