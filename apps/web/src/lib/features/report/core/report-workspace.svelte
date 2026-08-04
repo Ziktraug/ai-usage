@@ -9,8 +9,15 @@
     children,
     hasOutput,
     pending,
+    pendingContext,
     refreshError = null,
-  }: { children?: Snippet; hasOutput: boolean; pending: boolean; refreshError?: string | null } = $props();
+  }: {
+    children?: Snippet;
+    hasOutput: boolean;
+    pending: boolean;
+    pendingContext?: Snippet<[boolean]>;
+    refreshError?: string | null;
+  } = $props();
 
   const layout = css({ display: 'flex', flexDirection: 'column' });
   const panel = css({ minW: 0, _focus: { outline: '2px solid token(colors.accent)', outlineOffset: '4px' } });
@@ -22,14 +29,17 @@
 <div class={layout} data-report-workspace>
   <!-- svelte-ignore a11y_no_noninteractive_tabindex -- active report panel remains keyboard-reachable after removing primary tabs -->
   <div aria-label="Report results" class={panel} data-dashboard-panel role="region" tabindex="0">
-    {#if hasOutput}
+    {#if pending}
+      {#if pendingContext}
+        {@render pendingContext(pending)}
+      {/if}
+      <ReportPendingSurface />
+    {:else if hasOutput}
       <section class={section} data-report-complete-output>
         {#if children}
           {@render children()}
         {/if}
       </section>
-    {:else if pending}
-      <ReportPendingSurface />
     {:else}
       <section class={unavailablePanel} data-report-unavailable>
         <div class={unavailableText}>Report payload unavailable</div>

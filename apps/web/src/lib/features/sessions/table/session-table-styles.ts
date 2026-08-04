@@ -66,9 +66,9 @@ export const sortButton = css({
   font: 'inherit',
   textAlign: 'inherit',
 });
-export const numeric = css({ textAlign: 'right!', fontVariantNumeric: 'tabular-nums' });
+export const numeric = css({ textAlign: 'right!', fontSize: '12px', fontVariantNumeric: 'tabular-nums' });
 export const sessionCell = css({ fontWeight: 600, overflowWrap: 'anywhere' });
-export const sessionCellContent = css({ display: 'inline', lineHeight: 1.4 });
+export const sessionCellContent = css({ lineClamp: 2 });
 export const sessionAnnotation = css({ color: 'muted', fontSize: '11px', fontWeight: 500 });
 export const highlightedMark = css({ bg: 'accentTint', color: 'ink', borderRadius: 'xs', px: '1px' });
 export const provenanceMarker = css({ color: 'status.warn', cursor: 'help', fontSize: '11px', fontWeight: 700 });

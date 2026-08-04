@@ -39,7 +39,7 @@
 </script>
 
 {#if projection.kind === 'session'}
-  <span class={sessionCellContent} style:padding-left={`${depth * 14}px`}>
+  <div class={sessionCellContent} style:padding-left={`${depth * 14}px`}>
     {#if canExpand}
       <button
         aria-expanded={expanded ? 'true' : 'false'}
@@ -78,7 +78,7 @@
         · {projection.classifierLabel}
       </span>
     {/if}
-  </span>
+  </div>
 {:else if projection.kind === 'harness-filter'}
   <HarnessBadge name={projection.label} onClick={() => onHarnessFilter(projection.value)} title={projection.title} />
 {:else if projection.kind === 'field-filter'}

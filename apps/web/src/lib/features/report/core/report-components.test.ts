@@ -190,10 +190,11 @@ describe('report Svelte SSR components', () => {
     expect(body).not.toContain('Report warnings');
   });
 
-  it('retains complete output while a destination refresh is pending', async () => {
+  it('locks definitive output while preserving requested context during a pending refresh', async () => {
     const source = await readFile(new URL('./report-workspace.svelte', import.meta.url), 'utf8');
-    expect(source.indexOf('{#if hasOutput}')).toBeLessThan(source.indexOf('{:else if pending}'));
+    expect(source.indexOf('{#if pending}')).toBeLessThan(source.indexOf('{:else if hasOutput}'));
     expect(source).toContain('data-report-complete-output');
+    expect(source).toContain('{@render pendingContext(pending)}');
     expect(source).toContain('<ReportStatus {pending} {refreshError} />');
     expect(source).not.toContain('aria-live="polite" class={panel}');
   });

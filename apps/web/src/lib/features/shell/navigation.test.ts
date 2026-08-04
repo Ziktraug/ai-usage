@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { readFile } from 'node:fs/promises';
 import {
   activeReportTab,
   ensureHistoryEntryKey,
@@ -48,5 +49,23 @@ describe('Svelte application shell navigation', () => {
       shouldPreserveReportScroll(new URL('http://localhost/?tab=overview'), new URL('http://localhost/?tab=sessions')),
     ).toBe(true);
     expect(shouldPreserveReportScroll(new URL('http://localhost/'), new URL('http://localhost/skills'))).toBe(false);
+  });
+
+  test('keeps one hydrated retry and a same-URL progressive fallback', async () => {
+    const shellSource = await readFile(new URL('./error-shell.svelte', import.meta.url), 'utf8');
+    const routeSource = await readFile(new URL('../../../routes/+error.svelte', import.meta.url), 'utf8');
+
+    expect(shellSource).toContain('<form action={retryHref} class={retryForm} method="get" onsubmit={submitRetry}>');
+    expect(shellSource).toContain('event.preventDefault();');
+    expect(shellSource).toContain('retryParameters');
+    expect(shellSource).toContain('type="hidden"');
+    expect(shellSource).toContain('{name}');
+    expect(shellSource).toContain('{value}');
+    expect(shellSource).toContain('await onRetry();');
+    expect(routeSource).toContain('window.location.reload();');
+    expect(routeSource).toContain('retryHref=');
+    expect(routeSource).toContain('page.url.pathname');
+    expect(routeSource).toContain('page.url.search');
+    expect(routeSource).not.toContain('invalidateAll');
   });
 });

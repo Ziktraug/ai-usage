@@ -329,6 +329,17 @@
     />
   {/if}
 {/snippet}
+{#snippet activeFilterSummary(_filterPending: boolean)}
+  <ActiveFilters
+    hidden={Math.max(0, totalSessions - visibleSessions)}
+    {navigation}
+    pending={_filterPending}
+    {presentMachineLabel}
+    {search}
+    total={totalSessions}
+    visible={visibleSessions}
+  />
+{/snippet}
 
 <ReportLifecycleOwner session={focusedSession}>
   {#snippet children(_owner)}
@@ -361,6 +372,7 @@
     <ReportWorkspace
       hasOutput={primary === 'sessions' || commit !== undefined}
       pending={primary === 'sessions' ? false : _owner.snapshot.pending}
+      pendingContext={activeFilterSummary}
       refreshError={_owner.snapshot.refreshError}
     >
       {#snippet children()}
@@ -383,15 +395,7 @@
             value={timelineValue}
           />
         {/if}
-        <ActiveFilters
-          hidden={Math.max(0, totalSessions - visibleSessions)}
-          {navigation}
-          pending={_owner.snapshot.pending}
-          {presentMachineLabel}
-          {search}
-          total={totalSessions}
-          visible={visibleSessions}
-        />
+        {@render activeFilterSummary(_owner.snapshot.pending)}
         {#if primary === 'overview' && commit?.destination.kind === 'overview'}
           <OverviewPage
             {activeSeriesKeys}

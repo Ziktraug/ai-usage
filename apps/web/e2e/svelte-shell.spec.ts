@@ -236,12 +236,13 @@ test('restores Svelte history and scroll without feedback loops', async ({ page 
 
 test('renders retryable route errors and the default accessible Not Found shell', async ({ context, page }) => {
   await context.setExtraHTTPHeaders({ 'x-ai-usage-sveltekit-error': 'once' });
-  const failed = await page.goto('/');
+  const failed = await page.goto('/?foreign=kept');
   expect(failed?.status()).toBe(503);
   await expect(page.getByRole('heading', { level: 2, name: 'Report unavailable' })).toBeVisible();
   await expect(page.getByText('Report data could not be loaded.')).toBeVisible();
   await page.getByRole('button', { name: 'Retry' }).click();
   await expect(page.locator('[data-route-shell="report"]')).toBeAttached();
+  expect(new URL(page.url()).searchParams.get('foreign')).toBe('kept');
 
   await context.setExtraHTTPHeaders({});
   const missing = await page.goto('/definitely-missing');

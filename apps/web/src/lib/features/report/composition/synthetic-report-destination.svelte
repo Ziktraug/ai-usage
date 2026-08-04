@@ -373,6 +373,17 @@
     />
   {/if}
 {/snippet}
+{#snippet activeFilterSummary(_filterPending: boolean)}
+  <ActiveFilters
+    hidden={Math.max(0, support.support.analytics.sessionCount - overview.summary.sessionCount)}
+    {navigation}
+    pending={_filterPending}
+    {presentMachineLabel}
+    {search}
+    total={support.support.analytics.sessionCount}
+    visible={overview.summary.sessionCount}
+  />
+{/snippet}
 
 <FilterBar
   freshnessStatus={displayedFreshnessStatus}
@@ -385,7 +396,7 @@
   {presentMachineLabel}
   {search}
 />
-<ReportWorkspace hasOutput={!pending} {pending}>
+<ReportWorkspace hasOutput={!pending} {pending} pendingContext={activeFilterSummary}>
   {#snippet children()}
     <ReportRangeControl
       {activeSeriesKeys}
@@ -408,15 +419,7 @@
       timeline={overview.timeline}
       value={timelineValue}
     />
-    <ActiveFilters
-      hidden={Math.max(0, support.support.analytics.sessionCount - overview.summary.sessionCount)}
-      {navigation}
-      {pending}
-      {presentMachineLabel}
-      {search}
-      total={support.support.analytics.sessionCount}
-      visible={overview.summary.sessionCount}
-    />
+    {@render activeFilterSummary(pending)}
     {#if primary === 'overview'}
       <OverviewPage
         {activeSeriesKeys}

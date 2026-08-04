@@ -1,6 +1,5 @@
 <script lang="ts">
   import { onDestroy } from 'svelte';
-  import { invalidate } from '$app/navigation';
   import { page } from '$app/state';
   import ErrorShell from '$lib/features/shell/error-shell.svelte';
   import { createRetryController } from '$lib/foundation/navigation/svelte/retry';
@@ -8,10 +7,11 @@
   let pending = $state(false);
   let retryFailed = $state(false);
   const retryController = createRetryController({
-    retry: async (signal) => {
+    retry: (signal) => {
       signal.throwIfAborted();
-      await invalidate('ai-usage:report-root');
+      window.location.reload();
       signal.throwIfAborted();
+      return Promise.resolve();
     },
   });
   const retry = async (): Promise<void> => {
@@ -35,6 +35,8 @@
     message={retryFailed ? 'Retry failed. Try again.' : undefined}
     onRetry={retry}
     {pending}
+    retryHref={`${page.url.pathname}${page.url.search}`}
+    retryParameters={[...page.url.searchParams]}
     status={page.status}
   />
 {/if}
