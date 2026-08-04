@@ -52,6 +52,7 @@ jobs:
         with:
           bun-version: 1.3.13
       - run: bun install --frozen-lockfile
+      - run: bun run build
       - run: bun run test:web-production
       - run: bun run test:web-dev-build-isolation
       - run: bun run test:setup-loopback
@@ -79,6 +80,7 @@ jobs:
         with:
           bun-version: 1.3.13
       - run: bun install --frozen-lockfile
+      - run: bun run build
       - run: bun x playwright install --with-deps chromium
       - run: bun run test:e2e-demo
       - run: bun run test:e2e-production
