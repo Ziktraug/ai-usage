@@ -192,7 +192,7 @@ describe('report Svelte SSR components', () => {
 
   it('locks definitive output while preserving requested context during a pending refresh', async () => {
     const source = await readFile(new URL('./report-workspace.svelte', import.meta.url), 'utf8');
-    expect(source.indexOf('{#if pending}')).toBeLessThan(source.indexOf('{:else if hasOutput}'));
+    expect(source.indexOf('{#if hasOutput}')).toBeLessThan(source.indexOf('{:else if pending}'));
     expect(source).toContain('data-report-complete-output');
     expect(source).toContain('{@render pendingContext(pending)}');
     expect(source).toContain('<ReportStatus {pending} {refreshError} />');

@@ -29,17 +29,17 @@
 <div class={layout} data-report-workspace>
   <!-- svelte-ignore a11y_no_noninteractive_tabindex -- active report panel remains keyboard-reachable after removing primary tabs -->
   <div aria-label="Report results" class={panel} data-dashboard-panel role="region" tabindex="0">
-    {#if pending}
-      {#if pendingContext}
-        {@render pendingContext(pending)}
-      {/if}
-      <ReportPendingSurface />
-    {:else if hasOutput}
+    {#if hasOutput}
       <section class={section} data-report-complete-output>
         {#if children}
           {@render children()}
         {/if}
       </section>
+    {:else if pending}
+      {#if pendingContext}
+        {@render pendingContext(pending)}
+      {/if}
+      <ReportPendingSurface />
     {:else}
       <section class={unavailablePanel} data-report-unavailable>
         <div class={unavailableText}>Report payload unavailable</div>
