@@ -21,7 +21,9 @@ describe('served report session', () => {
     let oldSignal: AbortSignal | undefined;
     const session = createServedReportSession<string, string>({
       acquire: () => Promise.resolve(descriptor('r1')),
-      commit: (prepared) => commits.push(prepared),
+      commit: (prepared) => {
+        commits.push(prepared);
+      },
       destinationFingerprint: (destination: string) => destination,
       isRevisionExpired: () => false,
       load: (destination: string, _descriptor, signal) => {
@@ -67,7 +69,9 @@ describe('served report session', () => {
     const expired = new Error('expired');
     const session = createServedReportSession<string, string>({
       acquire: async () => descriptor(`r${++acquisitions}`),
-      commit: (prepared) => commits.push(prepared),
+      commit: (prepared) => {
+        commits.push(prepared);
+      },
       destinationFingerprint: (destination: string) => destination,
       isRevisionExpired: (error) => error === expired,
       load: (_destination, current) => {
@@ -83,7 +87,9 @@ describe('served report session', () => {
 
     const failing = createServedReportSession<string, string>({
       acquire: async () => descriptor('expired'),
-      commit: () => commits.push('unexpected'),
+      commit: () => {
+        commits.push('unexpected');
+      },
       destinationFingerprint: (destination: string) => destination,
       isRevisionExpired: (error) => error === expired,
       load: () => Promise.reject(expired),
@@ -114,5 +120,28 @@ describe('served report session', () => {
     pending.resolve('prepared');
     expect((await result).status).toBe('superseded');
     expect(commits).toBe(0);
+  });
+  test('does not dedupe a staged commit until the adapter reports it visible', async () => {
+    let loads = 0;
+    let finalizeVisibleCommit: (() => void) | undefined;
+    const session = createServedReportSession<string, string>({
+      acquire: () => Promise.resolve(descriptor('r1', 'capture')),
+      commit: (_prepared, _descriptor, _destination, finalize) => {
+        finalizeVisibleCommit = finalize;
+        return false;
+      },
+      destinationFingerprint: (destination) => destination,
+      isRevisionExpired: () => false,
+      load: () => {
+        loads += 1;
+        return Promise.resolve('staged');
+      },
+    });
+
+    expect((await session.refresh('sessions')).status).toBe('committed');
+    expect((await session.refresh('sessions')).status).toBe('committed');
+    finalizeVisibleCommit?.();
+    expect((await session.refresh('sessions')).status).toBe('no-change');
+    expect(loads).toBe(2);
   });
 });

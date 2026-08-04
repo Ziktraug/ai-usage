@@ -88,7 +88,7 @@ export default defineParityShard({
       currentOwner: 'apps/web/src/session-table.tsx; apps/web/src/session-surface-mode.ts',
       id: 'SESSION-01',
       targetSource:
-        'apps/web/src/lib/features/sessions/table/{session-table.svelte,session-cell.svelte,session-cell-projection.ts,session-table-owner.svelte,session-table-model.ts,INTEGRATION.md}; apps/web/src/session-surface-mode.ts',
+        'apps/web/src/lib/features/sessions/table/{session-table.svelte,session-cell.svelte,session-cell-projection.ts,session-table-model.ts,INTEGRATION.md}; apps/web/src/lib/features/report/composition/{live-report-destination.svelte,session-destination-refresh.svelte}; apps/web/src/session-surface-mode.ts',
       targetTest:
         'apps/web/src/lib/features/sessions/table/{session-table-components,session-table-model}.test.ts; apps/web/src/session-surface-mode.test.ts › one owner, exact responsive geometry, rendered 5,000-row bounded windows, retained stable expansion and keyboard focus',
     }),
@@ -106,7 +106,7 @@ export default defineParityShard({
       currentOwner: 'apps/web/src/session-query-client.ts; apps/web/src/session-query-operation-owner.ts',
       id: 'SESSION-03',
       targetSource:
-        'apps/web/src/lib/features/sessions/table/{session-table-query-owner.ts,session-table-owner.svelte,INTEGRATION.md}; apps/web/src/lib/{rpc/session-client.ts,query/options/session.ts}; apps/web/src/session-query-operation-owner.ts',
+        'apps/web/src/lib/features/sessions/table/{session-table-query-owner.ts,INTEGRATION.md}; apps/web/src/lib/features/report/composition/{live-report-destination.svelte,session-destination-refresh.svelte,sessions-destination.svelte}; apps/web/src/lib/{rpc/session-client.ts,query/options/session.ts}; apps/web/src/session-query-operation-owner.ts',
       targetTest:
         'apps/web/src/lib/features/sessions/table/session-table-query-owner.test.ts; apps/web/src/{session-query-client,session-query-operation-owner}.test.ts; apps/web/src/lib/{rpc/session-client,query/options/session}.test.ts › exact revision/fingerprint and canonical cursor-keyed campaign Query options, one owner, dedupe, abort, supersession, authoritative campaign identity, replay of more than three loaded top-level pages and every loaded campaign-child page before one retry, and repeated-expiry preservation',
     }),
@@ -128,7 +128,7 @@ export default defineParityShard({
     productionRow({
       currentOwner: 'apps/web/src/session-table.tsx',
       targetSource:
-        'apps/web/src/lib/features/sessions/table/{session-table.svelte,session-cell.svelte,session-cell-projection.ts,session-table-owner.svelte,session-table-model.ts,session-table-query-owner.ts,session-virtualization.ts,INTEGRATION.md}',
+        'apps/web/src/lib/features/sessions/table/{session-table.svelte,session-cell.svelte,session-cell-projection.ts,session-table-model.ts,session-table-query-owner.ts,session-virtualization.ts,INTEGRATION.md}; apps/web/src/lib/features/report/composition/{live-report-destination.svelte,session-destination-refresh.svelte,sessions-destination.svelte}',
       targetTest:
         'apps/web/src/lib/features/sessions/table/{session-table-components,session-table-model,session-table-query-owner,session-client-closure}.test.ts',
     }),

@@ -76,7 +76,10 @@ export const reportDestinationForSearch = (
   const scopes = scopesForSearch(search, generatedAt);
   const primary = primaryDashboardTabFor(search.tab);
   if (primary === 'sessions') {
-    return { focused: null, sessions: scopes.sessions };
+    return {
+      focused: { kind: 'sessions', query: scopes.focused, sessions: scopes.sessions, timeline },
+      sessions: scopes.sessions,
+    };
   }
   return {
     focused:

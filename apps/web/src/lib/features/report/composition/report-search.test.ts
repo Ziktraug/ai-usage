@@ -45,4 +45,21 @@ describe('report destination URL projection', () => {
     expect(Object.hasOwn(destination.sessions, 'cursor')).toBe(false);
     expect(Object.hasOwn(destination.sessions, 'revision')).toBe(false);
   });
+
+  test('keeps the timeline-only Overview acquisition while Sessions owns the visible destination', () => {
+    const search = { ...dashboardSearchDefaultsFor('date'), tab: 'sessions' as const };
+    const timeline = { dimension: 'harness' as const, granularity: 'day' as const };
+
+    const destination = reportDestinationForSearch(search, '2026-08-02T12:00:00.000Z', timeline);
+
+    expect(destination.focused).toEqual({
+      kind: 'sessions',
+      query: {
+        filters: { fields: {}, harness: [], machine: [], origin: [], query: '' },
+        range: { from: '2026-07-03T00:00:00.000Z', to: null },
+      },
+      sessions: destination.sessions,
+      timeline,
+    });
+  });
 });

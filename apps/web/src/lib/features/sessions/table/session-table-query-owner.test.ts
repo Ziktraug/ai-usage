@@ -8,13 +8,14 @@ import {
   sessionCampaignChildrenFingerprint,
   sessionQueryFingerprint,
 } from '@ai-usage/report-core/session-query';
-import { createServedReportSession } from '../../../../served-report-session';
+import { createServedReportSession, type ServedRevisionDescriptor } from '../../../../served-report-session';
 import { createWebQueryClient } from '../../../query/client';
 import type { SessionClientAdapter } from '../../../rpc/session-client';
 import { syntheticCampaignRow, syntheticSessionRow } from './session-table.fixtures';
 import {
   createSessionTableQueryOwner,
-  createSessionTableServedAdapter,
+  type PreparedSessionTableQuery,
+  type SessionTableQueryOwner,
   type SessionTableQueryScope,
   SessionTableRevisionExpiredError,
   sessionRowsForTableState,
@@ -27,6 +28,12 @@ const thirdCursor = 'sq1.0000000000000002.3';
 const campaign = syntheticCampaignRow(1);
 const root = syntheticSessionRow(1);
 const child = syntheticSessionRow(2);
+const nextCursorForTest = (currentCursor: string | null): string | null => {
+  if (currentCursor === null) {
+    return cursor;
+  }
+  return currentCursor === cursor ? secondCursor : null;
+};
 
 const item = (row = campaign): SessionPageItem => ({
   campaignKey: row.campaignKey ?? `campaign:${row.rowId}`,
@@ -96,6 +103,24 @@ const clientWith = (overrides: Partial<SessionClientAdapter>): SessionClientAdap
     ...overrides,
   };
 };
+
+const createTestSessionTableServedSession = (options: {
+  readonly acquire: (signal: AbortSignal) => Promise<ServedRevisionDescriptor>;
+  readonly owner: SessionTableQueryOwner;
+}) =>
+  createServedReportSession<{ readonly scope: SessionTableQueryScope }, PreparedSessionTableQuery>({
+    acquire: options.acquire,
+    commit: (prepared) => {
+      if (!options.owner.commit(prepared)) {
+        throw new Error('The prepared session table destination was superseded before commit');
+      }
+    },
+    destinationFingerprint: ({ scope: destinationScope }) =>
+      sessionQueryFingerprint(parseSessionQueryRequest({ ...destinationScope, cursor: null, revision: 'destination' })),
+    isRevisionExpired: (error) => error instanceof SessionTableRevisionExpiredError,
+    load: async ({ scope: destinationScope }, descriptor, signal) =>
+      await options.owner.prepare(destinationScope, descriptor.revision, signal),
+  });
 
 describe('Svelte session exact-query owner', () => {
   test('projects the authoritative page envelope campaign identity onto its presentation row', async () => {
@@ -202,18 +227,16 @@ describe('Svelte session exact-query owner', () => {
     });
     const owner = createSessionTableQueryOwner({ client, queryClient: createWebQueryClient() });
     let acquisition = 0;
-    const served = createServedReportSession(
-      createSessionTableServedAdapter({
-        acquire: () => {
-          acquisition += 1;
-          return Promise.resolve({
-            captureFingerprint: `capture-${acquisition}`,
-            revision: acquisition === 1 ? 'expired-revision' : 'accepted-revision',
-          });
-        },
-        owner,
-      }),
-    );
+    const served = createTestSessionTableServedSession({
+      acquire: () => {
+        acquisition += 1;
+        return Promise.resolve({
+          captureFingerprint: `capture-${acquisition}`,
+          revision: acquisition === 1 ? 'expired-revision' : 'accepted-revision',
+        });
+      },
+      owner,
+    });
 
     const outcome = await served.refresh({ scope: scope() });
 
@@ -252,17 +275,15 @@ describe('Svelte session exact-query owner', () => {
       onStateChange: (state) => observedItemCounts.push(state?.items.length ?? 0),
       queryClient: createWebQueryClient(),
     });
-    const served = createServedReportSession(
-      createSessionTableServedAdapter({
-        acquire: () => {
-          const revision = revisionIndex === 0 ? 'revision-a' : 'revision-b';
-          revisionIndex += 1;
-          acquisitions.push(revision);
-          return Promise.resolve({ captureFingerprint: `capture-${revision}`, revision });
-        },
-        owner,
-      }),
-    );
+    const served = createTestSessionTableServedSession({
+      acquire: () => {
+        const revision = revisionIndex === 0 ? 'revision-a' : 'revision-b';
+        revisionIndex += 1;
+        acquisitions.push(revision);
+        return Promise.resolve({ captureFingerprint: `capture-${revision}`, revision });
+      },
+      owner,
+    });
     owner.setRevisionRefresh(async (nextScope) => await served.refresh({ scope: nextScope }));
 
     expect((await served.refresh({ scope: scope() })).status).toBe('committed');
@@ -294,16 +315,14 @@ describe('Svelte session exact-query owner', () => {
       },
     });
     const owner = createSessionTableQueryOwner({ client, queryClient: createWebQueryClient() });
-    const served = createServedReportSession(
-      createSessionTableServedAdapter({
-        acquire: () => {
-          const revision = revisionIndex === 0 ? 'revision-a' : 'revision-b';
-          revisionIndex += 1;
-          return Promise.resolve({ captureFingerprint: `capture-${revision}`, revision });
-        },
-        owner,
-      }),
-    );
+    const served = createTestSessionTableServedSession({
+      acquire: () => {
+        const revision = revisionIndex === 0 ? 'revision-a' : 'revision-b';
+        revisionIndex += 1;
+        return Promise.resolve({ captureFingerprint: `capture-${revision}`, revision });
+      },
+      owner,
+    });
     owner.setRevisionRefresh(async (nextScope) => await served.refresh({ scope: nextScope }));
     await served.refresh({ scope: scope() });
 
@@ -357,16 +376,14 @@ describe('Svelte session exact-query owner', () => {
       onStateChange: (next) => observedItemCounts.push(next?.items.length ?? 0),
       queryClient: createWebQueryClient(),
     });
-    const served = createServedReportSession(
-      createSessionTableServedAdapter({
-        acquire: () => {
-          const revision = revisionIndex === 0 ? 'revision-a' : 'revision-b';
-          revisionIndex += 1;
-          return Promise.resolve({ captureFingerprint: `capture-${revision}`, revision });
-        },
-        owner,
-      }),
-    );
+    const served = createTestSessionTableServedSession({
+      acquire: () => {
+        const revision = revisionIndex === 0 ? 'revision-a' : 'revision-b';
+        revisionIndex += 1;
+        return Promise.resolve({ captureFingerprint: `capture-${revision}`, revision });
+      },
+      owner,
+    });
     owner.setRevisionRefresh(async (nextScope) => await served.refresh({ scope: nextScope }));
     await served.refresh({ scope: scope() });
     await owner.loadMore();
@@ -411,16 +428,14 @@ describe('Svelte session exact-query owner', () => {
       page: (request) => Promise.resolve(successfulPage(request, [item()])),
     });
     const owner = createSessionTableQueryOwner({ client, queryClient: createWebQueryClient() });
-    const served = createServedReportSession(
-      createSessionTableServedAdapter({
-        acquire: () => {
-          const revision = revisionIndex === 0 ? 'revision-a' : 'revision-b';
-          revisionIndex += 1;
-          return Promise.resolve({ captureFingerprint: `capture-${revision}`, revision });
-        },
-        owner,
-      }),
-    );
+    const served = createTestSessionTableServedSession({
+      acquire: () => {
+        const revision = revisionIndex === 0 ? 'revision-a' : 'revision-b';
+        revisionIndex += 1;
+        return Promise.resolve({ captureFingerprint: `capture-${revision}`, revision });
+      },
+      owner,
+    });
     owner.setRevisionRefresh(async (nextScope) => await served.refresh({ scope: nextScope }));
     await served.refresh({ scope: scope() });
     await owner.loadCampaignChildren(campaign.campaignKey!);
@@ -459,16 +474,14 @@ describe('Svelte session exact-query owner', () => {
       page: (request) => Promise.resolve(successfulPage(request, [item()])),
     });
     const owner = createSessionTableQueryOwner({ client, queryClient: createWebQueryClient() });
-    const served = createServedReportSession(
-      createSessionTableServedAdapter({
-        acquire: () => {
-          const revision = revisionIndex === 0 ? 'revision-a' : 'revision-b';
-          revisionIndex += 1;
-          return Promise.resolve({ captureFingerprint: `capture-${revision}`, revision });
-        },
-        owner,
-      }),
-    );
+    const served = createTestSessionTableServedSession({
+      acquire: () => {
+        const revision = revisionIndex === 0 ? 'revision-a' : 'revision-b';
+        revisionIndex += 1;
+        return Promise.resolve({ captureFingerprint: `capture-${revision}`, revision });
+      },
+      owner,
+    });
     owner.setRevisionRefresh(async (nextScope) => await served.refresh({ scope: nextScope }));
     await served.refresh({ scope: scope() });
 
@@ -601,16 +614,14 @@ describe('Svelte session exact-query owner', () => {
       page: (request) => Promise.resolve(successfulPage(request, [item()])),
     });
     const owner = createSessionTableQueryOwner({ client, queryClient: createWebQueryClient() });
-    const served = createServedReportSession(
-      createSessionTableServedAdapter({
-        acquire: () => {
-          const revision = revisionIndex === 0 ? 'revision-a' : 'revision-b';
-          revisionIndex += 1;
-          return Promise.resolve({ captureFingerprint: `capture-${revision}`, revision });
-        },
-        owner,
-      }),
-    );
+    const served = createTestSessionTableServedSession({
+      acquire: () => {
+        const revision = revisionIndex === 0 ? 'revision-a' : 'revision-b';
+        revisionIndex += 1;
+        return Promise.resolve({ captureFingerprint: `capture-${revision}`, revision });
+      },
+      owner,
+    });
     owner.setRevisionRefresh(async (nextScope) => await served.refresh({ scope: nextScope }));
     await served.refresh({ scope: scope('needle') });
     await owner.loadCampaignSessions(campaign.campaignKey!);
@@ -626,6 +637,194 @@ describe('Svelte session exact-query owner', () => {
       'revision-b:all:first',
       `revision-b:all:${cursor}`,
     ]);
+    owner.close();
+  });
+  test('keeps pair A visible until revision B replay completes, then publishes Sessions before Overview', async () => {
+    const replayStarted = Promise.withResolvers<void>();
+    const replayPage = Promise.withResolvers<ReturnType<typeof successfulPage>>();
+    const visibleEvents: string[] = [];
+    let visibleOverview = 'revision-a';
+    let visibleSessions = 'revision-a';
+    const client = clientWith({
+      page: (request) => {
+        if (request.revision === 'revision-a' && request.cursor === secondCursor) {
+          return Promise.resolve({
+            error: { message: 'expired', revision: request.revision, tag: 'RevisionExpired' as const },
+            ok: false as const,
+            requestFingerprint: sessionQueryFingerprint(request),
+            revision: request.revision,
+          });
+        }
+        if (request.revision === 'revision-b' && request.cursor === cursor) {
+          replayStarted.resolve();
+          return replayPage.promise;
+        }
+        const nextCursor = nextCursorForTest(request.cursor);
+        return Promise.resolve(
+          successfulPage(request, [item(syntheticCampaignRow(request.cursor === null ? 1 : 3))], nextCursor),
+        );
+      },
+    });
+    const owner = createSessionTableQueryOwner({
+      client,
+      onStateChange: (state) => {
+        visibleSessions = state?.query.revision ?? 'missing';
+        visibleEvents.push(`sessions:${visibleSessions}`);
+      },
+      queryClient: createWebQueryClient(),
+    });
+    owner.commit(await owner.prepare(scope(), 'revision-a'));
+    await owner.loadMore();
+    owner.setRevisionRefresh(async (nextScope) => {
+      const prepared = await owner.prepare(nextScope, 'revision-b');
+      const commitOutcome = owner.commitWithVisible(prepared, () => {
+        expect(visibleSessions).toBe('revision-b');
+        visibleOverview = 'revision-b';
+        visibleEvents.push('overview:revision-b');
+      });
+      expect(commitOutcome).toBe('staged');
+      return { descriptor: { captureFingerprint: 'capture-b', revision: 'revision-b' }, status: 'committed' };
+    });
+
+    const recovery = owner.loadMore();
+    await replayStarted.promise;
+    expect([visibleOverview, visibleSessions]).toEqual(['revision-a', 'revision-a']);
+
+    const replayedState = owner.snapshot;
+    if (!replayedState) {
+      throw new Error('Expected staged revision state');
+    }
+    const replayRequest = parseSessionQueryRequest({ ...replayedState.query, cursor });
+    replayPage.resolve(successfulPage(replayRequest, [item(syntheticCampaignRow(4))], secondCursor));
+    await recovery;
+
+    expect([visibleOverview, visibleSessions]).toEqual(['revision-b', 'revision-b']);
+    expect(visibleEvents.indexOf('sessions:revision-b')).toBeLessThan(visibleEvents.indexOf('overview:revision-b'));
+    owner.close();
+  });
+
+  test('clears a failed staged pair and reconstructs the same revision when recovery retries', async () => {
+    let combinedLoads = 0;
+    let replayAttempts = 0;
+    let visibleOverview = 'revision-a';
+    let visibleSessions = 'revision-a';
+    const client = clientWith({
+      page: (request) => {
+        if (request.revision === 'revision-a' && request.cursor === secondCursor) {
+          return Promise.resolve({
+            error: { message: 'expired', revision: request.revision, tag: 'RevisionExpired' as const },
+            ok: false as const,
+            requestFingerprint: sessionQueryFingerprint(request),
+            revision: request.revision,
+          });
+        }
+        if (request.revision === 'revision-b' && request.cursor === cursor) {
+          replayAttempts += 1;
+          if (replayAttempts === 1) {
+            return Promise.reject(new Error('replay failed'));
+          }
+        }
+        const nextCursor = nextCursorForTest(request.cursor);
+        return Promise.resolve(
+          successfulPage(request, [item(syntheticCampaignRow(request.cursor === null ? 1 : 5))], nextCursor),
+        );
+      },
+    });
+    const owner = createSessionTableQueryOwner({
+      client,
+      onStateChange: (state) => {
+        visibleSessions = state?.query.revision ?? 'missing';
+      },
+      queryClient: createWebQueryClient(),
+    });
+    owner.commit(await owner.prepare(scope(), 'revision-a'));
+    await owner.loadMore();
+    const served = createServedReportSession<{ readonly scope: SessionTableQueryScope }, PreparedSessionTableQuery>({
+      acquire: () => Promise.resolve({ captureFingerprint: 'capture-b', revision: 'revision-b' }),
+      commit: (prepared, _descriptor, _destination, finalizeVisibleCommit) => {
+        const outcome = owner.commitWithVisible(prepared, () => {
+          expect(visibleSessions).toBe('revision-b');
+          visibleOverview = 'revision-b';
+          finalizeVisibleCommit();
+        });
+        return outcome === 'published';
+      },
+      destinationFingerprint: ({ scope: destinationScope }) => JSON.stringify(destinationScope),
+      isRevisionExpired: () => false,
+      load: async ({ scope: destinationScope }, descriptor, signal) => {
+        combinedLoads += 1;
+        return await owner.prepare(destinationScope, descriptor.revision, signal);
+      },
+    });
+    owner.setRevisionRefresh(async (nextScope) => await served.refresh({ scope: nextScope }));
+
+    await expect(owner.loadMore()).rejects.toThrow('replay failed');
+    expect([visibleOverview, visibleSessions]).toEqual(['revision-a', 'revision-a']);
+
+    await owner.loadMore();
+    expect(combinedLoads).toBe(2);
+    expect(replayAttempts).toBe(2);
+    expect([visibleOverview, visibleSessions]).toEqual(['revision-b', 'revision-b']);
+    expect((await served.refresh({ scope: scope() })).status).toBe('no-change');
+    expect(combinedLoads).toBe(2);
+    owner.close();
+  });
+
+  test('restores the previous non-loading state when an external failed refresh abandons a blocked recovery', async () => {
+    const replayGate = Promise.withResolvers<void>();
+    const replayStarted = Promise.withResolvers<void>();
+    let revision = 'revision-a';
+    const client = clientWith({
+      page: async (request) => {
+        if (request.revision === 'revision-a' && request.cursor === secondCursor) {
+          return {
+            error: { message: 'expired', revision: request.revision, tag: 'RevisionExpired' as const },
+            ok: false as const,
+            requestFingerprint: sessionQueryFingerprint(request),
+            revision: request.revision,
+          };
+        }
+        if (request.revision === 'revision-b' && request.cursor === cursor) {
+          replayStarted.resolve();
+          await replayGate.promise;
+        }
+        if (request.revision === 'revision-c') {
+          throw new Error('external refresh failed');
+        }
+        return successfulPage(request, [item()], nextCursorForTest(request.cursor));
+      },
+    });
+    const owner = createSessionTableQueryOwner({ client, queryClient: createWebQueryClient() });
+    const served = createServedReportSession<{ readonly scope: SessionTableQueryScope }, PreparedSessionTableQuery>({
+      acquire: () => Promise.resolve({ captureFingerprint: `capture-${revision}`, revision }),
+      commit: (prepared, _descriptor, _destination, finalizeVisibleCommit) => {
+        const outcome = owner.commitWithVisible(prepared, finalizeVisibleCommit);
+        return outcome === 'published';
+      },
+      destinationFingerprint: ({ scope: destinationScope }) => JSON.stringify(destinationScope),
+      isRevisionExpired: () => false,
+      load: async ({ scope: destinationScope }, descriptor, signal) =>
+        await owner.prepare(destinationScope, descriptor.revision, signal),
+    });
+    owner.setRevisionRefresh(async (nextScope) => await served.refresh({ scope: nextScope }));
+    await served.refresh({ scope: scope('preserved') });
+    await owner.loadMore();
+
+    revision = 'revision-b';
+    const lateRecovery = owner.loadMore();
+    await replayStarted.promise;
+    revision = 'revision-c';
+    const externalOutcome = await served.refresh({ scope: scope('external') });
+
+    expect(externalOutcome.status).toBe('failed-preserving-previous');
+    expect(owner.snapshot?.query.revision).toBe('revision-a');
+    expect(owner.snapshot?.query.filters.query).toBe('preserved');
+    expect(owner.snapshot?.loadingMore).toBe(false);
+
+    replayGate.resolve();
+    await lateRecovery;
+    expect(owner.snapshot?.query.revision).toBe('revision-a');
+    expect(owner.snapshot?.loadingMore).toBe(false);
     owner.close();
   });
 });

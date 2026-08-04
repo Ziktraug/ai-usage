@@ -5,7 +5,7 @@
   import type { LocalTimeCell, SessionPresentationRow } from '@ai-usage/report-core/session-query';
   import type { ReportRevisionBootstrapResult } from '@ai-usage/web-contract/report';
   import type { QueryClient } from '@tanstack/svelte-query';
-  import { onMount, untrack } from 'svelte';
+  import { onDestroy, onMount, untrack } from 'svelte';
   import {
     campaignLabelFor,
     indexCampaignLabelOverrides,
@@ -36,6 +36,10 @@
   import { createSessionDetailController, type SessionSelectionInput } from '../../sessions/detail/controller';
   import { createSessionDetailQueryOwner } from '../../sessions/detail/query-owner';
   import SessionDetailSlot from '../../sessions/detail/session-detail-slot.svelte';
+  import {
+    createSessionTableQueryOwner,
+    type SessionTableQueryState,
+  } from '../../sessions/table/session-table-query-owner';
   import { useSourceControl } from '../../sources/context.svelte';
   import CampaignLabelEditor from '../actions/campaign-label-editor.svelte';
   import CampaignSessionControls from '../actions/campaign-session-controls.svelte';
@@ -66,6 +70,7 @@
     requireFocusedBreakdown,
   } from './report-destination';
   import { queryForDescriptor, reportDestinationForSearch } from './report-search';
+  import SessionDestinationRefresh from './session-destination-refresh.svelte';
 
   type DashboardBreakdownModule = typeof import('../breakdown/dashboard-breakdown.svelte');
   type SessionsDestinationModule = typeof import('./sessions-destination.svelte');
@@ -110,10 +115,20 @@
   let sessionsDestinationModule = $state<SessionsDestinationModule>();
   let sessionsDestinationLoadFailed = $state(false);
   let sessionsDestinationLoad: Promise<void> | undefined;
+  let sessionQueryState = $state<SessionTableQueryState>();
   const initialDescriptor = untrack(() => initialFocusedReportDescriptor(bootstrapResult));
   const sourceControl = useSourceControl();
   const descriptorSource = untrack(() =>
     createFocusedReportDescriptorSource({ client: reportClient, initial: initialDescriptor, queryClient }),
+  );
+  const sessionQuery = untrack(() =>
+    createSessionTableQueryOwner({
+      client: sessionClient,
+      onStateChange: (state) => {
+        sessionQueryState = state;
+      },
+      queryClient,
+    }),
   );
   const focusedSession = untrack(() =>
     createFocusedReportSession({
@@ -123,6 +138,7 @@
         commit = nextCommit;
       },
       queryClient,
+      sessionOwner: sessionQuery,
     }),
   );
   const campaignLabels = untrack(() => createCampaignLabelOwner(reportClient));
@@ -304,6 +320,7 @@
       });
   };
 
+  onDestroy(() => sessionQuery.close());
   onMount(() => {
     campaignLabels.load().catch(() => undefined);
   });
@@ -344,6 +361,7 @@
 <ReportLifecycleOwner session={focusedSession}>
   {#snippet children(_owner)}
     <FocusedDestinationRefresh destination={destination.focused} owner={_owner} />
+    <SessionDestinationRefresh destination={destination.focused} owner={_owner} queryOwner={sessionQuery} />
     <ReportWarnings
       cleanupDisabled={!mutationsEnabled}
       {omittedSupportItemCount}
@@ -454,8 +472,6 @@
         {:else if primary === 'sessions' && sessionsDestinationModule}
           {@const SessionsDestination = sessionsDestinationModule.default}
           <SessionsDestination
-            acquire={descriptorSource.acquire}
-            client={sessionClient}
             destinationScope={destination.sessions}
             {navigate}
             onCampaignControlsChange={(binding) => (campaignSessionControls = binding)}
@@ -465,8 +481,10 @@
               selectedRowId = nextSelection?.row.rowId ?? null;
             }}
             onSessionCountChange={(sessionCount) => (servedSessionCount = sessionCount)}
+            pending={_owner.snapshot.pending}
             presentRow={presentSessionRow}
-            {queryClient}
+            queryOwner={sessionQuery}
+            queryState={sessionQueryState}
             {search}
             selectedCampaignKey={selection?.row.campaignKey}
             {selectedRowId}

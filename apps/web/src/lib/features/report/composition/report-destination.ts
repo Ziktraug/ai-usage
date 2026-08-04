@@ -8,6 +8,7 @@ import {
   focusedOverviewFingerprint,
   focusedRevisionFingerprint,
 } from '@ai-usage/report-core/focused-report-query';
+import { sessionQueryFingerprint } from '@ai-usage/report-core/session-query';
 import type { ReportRevisionBootstrapResult } from '@ai-usage/web-contract/report';
 import type { QueryClient, QueryKey } from '@tanstack/svelte-query';
 import {
@@ -21,12 +22,18 @@ import {
   reportBreakdownQueryOptions,
   reportOverviewQueryOptions,
 } from '../../../query/options/report';
+import type {
+  PreparedSessionTableQuery,
+  SessionTableQueryOwner,
+  SessionTableQueryScope,
+} from '../../sessions/table/session-table-query-owner';
+import { SessionTableRevisionExpiredError } from '../../sessions/table/session-table-query-owner';
 
 export type FocusedQuerySnapshot = Omit<FocusedReportQueryScope, 'revision'>;
 
 export type FocusedReportDestination =
   | {
-      readonly includeAdvanced: true;
+      readonly includeAdvanced: boolean;
       readonly kind: 'overview';
       readonly query: FocusedQuerySnapshot;
       readonly timeline: FocusedOverviewRequest['timeline'];
@@ -34,6 +41,12 @@ export type FocusedReportDestination =
   | {
       readonly kind: 'breakdown';
       readonly query: FocusedQuerySnapshot;
+      readonly timeline: FocusedOverviewRequest['timeline'];
+    }
+  | {
+      readonly kind: 'sessions';
+      readonly query: FocusedQuerySnapshot;
+      readonly sessions: SessionTableQueryScope;
       readonly timeline: FocusedOverviewRequest['timeline'];
     };
 
@@ -56,6 +69,7 @@ export interface FocusedReportDescriptorSource {
 interface PreparedFocusedReport {
   readonly breakdown?: FocusedBreakdownResult;
   readonly overview: FocusedOverviewResult;
+  readonly sessions?: PreparedSessionTableQuery;
 }
 
 export class FocusedReportRevisionExpiredError extends Error {
@@ -117,7 +131,7 @@ const queryForRevision = (query: FocusedQuerySnapshot, revision: string): Focuse
 });
 
 const overviewRequestFor = (destination: FocusedReportDestination, revision: string): FocusedOverviewRequest => ({
-  includeAdvanced: destination.kind === 'overview',
+  includeAdvanced: destination.kind === 'overview' && destination.includeAdvanced,
   query: queryForRevision(destination.query, revision),
   timeline: destination.timeline,
 });
@@ -127,6 +141,9 @@ const destinationFingerprint = (destination: FocusedReportDestination): string =
   const overview = focusedOverviewFingerprint(overviewRequestFor(destination, revision));
   if (destination.kind === 'overview') {
     return overview;
+  }
+  if (destination.kind === 'sessions') {
+    return `${overview}|${sessionQueryFingerprint({ ...destination.sessions, cursor: null, revision })}`;
   }
   return `${overview}|${focusedBreakdownFingerprint({ query: queryForRevision(destination.query, revision) })}`;
 };
@@ -198,14 +215,33 @@ export const createFocusedReportSession = (options: {
   readonly client: ReportQueryClient;
   readonly onCommit: (commit: FocusedReportCommit) => void;
   readonly queryClient: QueryClient;
+  readonly sessionOwner: Pick<SessionTableQueryOwner, 'commitWithVisible' | 'prepare'>;
 }): ServedReportSession<FocusedReportDestination, FocusedReportDescriptor> =>
   createServedReportSession<FocusedReportDestination, PreparedFocusedReport, FocusedReportDescriptor>({
     acquire: options.acquire,
-    commit: (prepared, descriptor, destination) => {
-      options.onCommit({ ...prepared, descriptor, destination });
+    commit: (prepared, descriptor, destination, finalizeVisibleCommit) => {
+      const publishVisible = (): void => {
+        options.onCommit({
+          ...(prepared.breakdown === undefined ? {} : { breakdown: prepared.breakdown }),
+          descriptor,
+          destination,
+          overview: prepared.overview,
+        });
+        finalizeVisibleCommit();
+      };
+      if (!prepared.sessions) {
+        publishVisible();
+        return true;
+      }
+      const outcome = options.sessionOwner.commitWithVisible(prepared.sessions, publishVisible);
+      if (outcome === 'superseded') {
+        throw new Error('The prepared Sessions destination was superseded before commit');
+      }
+      return outcome === 'published';
     },
     destinationFingerprint,
-    isRevisionExpired: (error) => error instanceof FocusedReportRevisionExpiredError,
+    isRevisionExpired: (error) =>
+      error instanceof FocusedReportRevisionExpiredError || error instanceof SessionTableRevisionExpiredError,
     load: async (destination, descriptor, signal) => {
       const overviewRequest = overviewRequestFor(destination, descriptor.revision);
       const overviewQuery = reportOverviewQueryOptions(options.client, overviewRequest, { browser: true });
@@ -216,6 +252,13 @@ export const createFocusedReportSession = (options: {
       );
       if (destination.kind === 'overview') {
         return { overview: requireOverview(await overviewPromise, overviewRequest) };
+      }
+      if (destination.kind === 'sessions') {
+        const [overviewResult, sessions] = await Promise.all([
+          overviewPromise,
+          options.sessionOwner.prepare(destination.sessions, descriptor.revision, signal),
+        ]);
+        return { overview: requireOverview(overviewResult, overviewRequest), sessions };
       }
       const breakdownRequest: FocusedBreakdownRequest = {
         query: queryForRevision(destination.query, descriptor.revision),

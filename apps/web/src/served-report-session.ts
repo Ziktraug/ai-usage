@@ -9,7 +9,12 @@ export interface ServedReportSessionAdapter<
   Descriptor extends ServedRevisionDescriptor = ServedRevisionDescriptor,
 > {
   acquire(signal: AbortSignal): Promise<Descriptor>;
-  commit(prepared: Prepared, descriptor: Descriptor, destination: Destination): void;
+  commit(
+    prepared: Prepared,
+    descriptor: Descriptor,
+    destination: Destination,
+    finalizeVisibleCommit: () => void,
+  ): boolean | undefined;
   destinationFingerprint(destination: Destination): string;
   isRevisionExpired(error: unknown): boolean;
   load(destination: Destination, descriptor: Descriptor, signal: AbortSignal): Promise<Prepared>;
@@ -70,8 +75,18 @@ export const createServedReportSession = <
         if (currentRequestId !== requestId) {
           return { status: 'superseded' };
         }
-        adapter.commit(prepared, descriptor, destination);
-        committed = { ...descriptor, destinationFingerprint };
+        let visibleCommitFinalized = false;
+        const finalizeVisibleCommit = (): void => {
+          if (visibleCommitFinalized || currentRequestId !== requestId) {
+            return;
+          }
+          visibleCommitFinalized = true;
+          committed = { ...descriptor, destinationFingerprint };
+        };
+        const committedVisibly = adapter.commit(prepared, descriptor, destination, finalizeVisibleCommit) !== false;
+        if (committedVisibly) {
+          finalizeVisibleCommit();
+        }
         return { descriptor, status: 'committed' };
       } catch (error) {
         if (currentRequestId !== requestId) {

@@ -5,14 +5,9 @@ import {
   type SessionPageItem,
   type SessionPresentationRow,
   type SessionQueryRequest,
-  sessionQueryFingerprint,
 } from '@ai-usage/report-core/session-query';
 import type { QueryClient } from '@tanstack/svelte-query';
-import type {
-  ServedReportRefreshOutcome,
-  ServedReportSessionAdapter,
-  ServedRevisionDescriptor,
-} from '../../../../served-report-session';
+import type { ServedReportRefreshOutcome, ServedRevisionDescriptor } from '../../../../served-report-session';
 import {
   createSessionQueryOperationOwner,
   type SessionQueryOperationContext,
@@ -49,24 +44,24 @@ export interface PreparedSessionTableQuery {
   readonly ticket: SessionQueryPreparedTicket;
 }
 
+export type SessionTableCombinedCommitOutcome = 'published' | 'staged' | 'superseded';
+
 export interface SessionTableQueryOwner {
+  canCommit(prepared: PreparedSessionTableQuery): boolean;
   close(): void;
   commit(prepared: PreparedSessionTableQuery): boolean;
+  commitWithVisible(prepared: PreparedSessionTableQuery, publishVisible: () => void): SessionTableCombinedCommitOutcome;
   loadCampaignChildren(campaignKey: string): Promise<SessionTableQueryState | undefined>;
   loadCampaignSessions(campaignKey: string): Promise<SessionTableQueryState | undefined>;
   loadMore(): Promise<SessionTableQueryState | undefined>;
   prepare(scope: SessionTableQueryScope, revision: string, signal?: AbortSignal): Promise<PreparedSessionTableQuery>;
-  setRevisionRefresh(refresh: SessionTableRevisionRefresh): void;
+  setRevisionRefresh(refresh: SessionTableRevisionRefresh | undefined): void;
   readonly snapshot: SessionTableQueryState | undefined;
 }
 
 export type SessionTableRevisionRefresh = (
   scope: SessionTableQueryScope,
 ) => Promise<ServedReportRefreshOutcome<ServedRevisionDescriptor>>;
-
-export interface SessionTableDestination {
-  readonly scope: SessionTableQueryScope;
-}
 
 export class SessionTableRevisionExpiredError extends Error {
   constructor() {
@@ -78,6 +73,24 @@ export class SessionTableRevisionExpiredError extends Error {
 const PREPARE_OPERATION = 'prepare';
 const LOAD_MORE_OPERATION = 'load-more';
 const REVISION_REPLAY_OPERATION = 'revision-replay';
+const SESSION_RECOVERY_TOKEN = Symbol('session-recovery-token');
+interface RecoveryTaggedSessionScope extends SessionTableQueryScope {
+  readonly [SESSION_RECOVERY_TOKEN]?: object;
+}
+interface SessionRecoveryTransaction {
+  readonly campaignDepth: ReadonlyMap<string, number>;
+  readonly campaignSessionDepth: ReadonlyMap<string, number>;
+  readonly cleanup: () => void;
+  readonly pageDepth: number;
+  readonly previousState: SessionTableQueryState;
+  readonly token: object;
+}
+const recoveryTokenForScope = (scope: SessionTableQueryScope): object | undefined =>
+  (scope as RecoveryTaggedSessionScope)[SESSION_RECOVERY_TOKEN];
+const scopeForRecovery = (scope: SessionTableQueryScope, token: object): RecoveryTaggedSessionScope => ({
+  ...scope,
+  [SESSION_RECOVERY_TOKEN]: token,
+});
 const campaignOperation = (campaignKey: string): string => `campaign:${campaignKey}`;
 const campaignSessionsOperation = (campaignKey: string): string => `campaign-sessions:${campaignKey}`;
 const pageItemKey = (item: SessionPageItem): string => item.campaignKey;
@@ -150,8 +163,31 @@ export const createSessionTableQueryOwner = (options: {
   let campaignSessionPageDepth = new Map<string, number>();
   let loadedPageDepth = 0;
   let revisionRefresh: SessionTableRevisionRefresh | undefined;
+  let recoveryTransaction: SessionRecoveryTransaction | undefined;
   let state: SessionTableQueryState | undefined;
   let suppressStateChange = false;
+  let stagedVisibleCommit: (() => void) | undefined;
+
+  const takeStagedVisibleCommit = (): (() => void) | undefined => {
+    const visibleCommit = stagedVisibleCommit;
+    stagedVisibleCommit = undefined;
+    return visibleCommit;
+  };
+
+  const abandonRecovery = (transaction: SessionRecoveryTransaction): boolean => {
+    if (recoveryTransaction !== transaction) {
+      return false;
+    }
+    recoveryTransaction = undefined;
+    state = transaction.previousState;
+    campaignPageDepth = new Map(transaction.campaignDepth);
+    campaignSessionPageDepth = new Map(transaction.campaignSessionDepth);
+    loadedPageDepth = transaction.pageDepth;
+    stagedVisibleCommit = undefined;
+    suppressStateChange = false;
+    transaction.cleanup();
+    return true;
+  };
 
   const publish = (nextState: SessionTableQueryState): SessionTableQueryState => {
     if (!operationOwner.isClosed()) {
@@ -200,6 +236,11 @@ export const createSessionTableQueryOwner = (options: {
     revision: string,
     signal?: AbortSignal,
   ): Promise<PreparedSessionTableQuery> => {
+    const activeRecovery = recoveryTransaction;
+    if (activeRecovery && recoveryTokenForScope(scope) !== activeRecovery.token) {
+      abandonRecovery(activeRecovery);
+    }
+    stagedVisibleCommit = undefined;
     const generation = operationOwner.beginGeneration();
     const ticket = operationOwner.prepareTicket();
     const request = parseSessionQueryRequest({ ...scope, cursor: null, revision });
@@ -228,15 +269,35 @@ export const createSessionTableQueryOwner = (options: {
     );
   };
 
-  const commit = (prepared: PreparedSessionTableQuery): boolean => {
-    if (!operationOwner.canCommit(prepared.ticket)) {
-      return false;
-    }
+  const canCommit = (prepared: PreparedSessionTableQuery): boolean => operationOwner.canCommit(prepared.ticket);
+  const applyPrepared = (prepared: PreparedSessionTableQuery): void => {
     loadedPageDepth = 1;
     campaignPageDepth = new Map();
     campaignSessionPageDepth = new Map();
     publish(prepared.state);
+  };
+
+  const commit = (prepared: PreparedSessionTableQuery): boolean => {
+    if (!canCommit(prepared)) {
+      return false;
+    }
+    applyPrepared(prepared);
     return true;
+  };
+  const commitWithVisible = (
+    prepared: PreparedSessionTableQuery,
+    publishVisible: () => void,
+  ): SessionTableCombinedCommitOutcome => {
+    if (!canCommit(prepared)) {
+      return 'superseded';
+    }
+    applyPrepared(prepared);
+    if (suppressStateChange) {
+      stagedVisibleCommit = publishVisible;
+      return 'staged';
+    }
+    publishVisible();
+    return 'published';
   };
 
   const replayLoadedDepth = async (
@@ -364,55 +425,54 @@ export const createSessionTableQueryOwner = (options: {
       cleanup();
       return false;
     }
-    const preservedCampaignDepth = new Map(campaignPageDepth);
-    const preservedCampaignSessionDepth = new Map(campaignSessionPageDepth);
-    const preservedPageDepth = loadedPageDepth;
+    const transaction: SessionRecoveryTransaction = {
+      campaignDepth: new Map(campaignPageDepth),
+      campaignSessionDepth: new Map(campaignSessionPageDepth),
+      cleanup,
+      pageDepth: loadedPageDepth,
+      previousState: current,
+      token: {},
+    };
+    recoveryTransaction = transaction;
     suppressStateChange = true;
+    stagedVisibleCommit = undefined;
     let outcome: ServedReportRefreshOutcome<ServedRevisionDescriptor>;
     try {
-      outcome = await revisionRefresh(scopeFromQuery(current.query));
+      outcome = await revisionRefresh(scopeForRecovery(scopeFromQuery(current.query), transaction.token));
     } catch (error) {
-      state = current;
-      campaignPageDepth = preservedCampaignDepth;
-      campaignSessionPageDepth = preservedCampaignSessionDepth;
-      loadedPageDepth = preservedPageDepth;
-      suppressStateChange = false;
-      cleanup();
+      if (!abandonRecovery(transaction)) {
+        return false;
+      }
       throw error;
     }
+    if (recoveryTransaction !== transaction) {
+      return false;
+    }
     if (outcome.status === 'failed-preserving-previous') {
-      state = current;
-      campaignPageDepth = preservedCampaignDepth;
-      campaignSessionPageDepth = preservedCampaignSessionDepth;
-      loadedPageDepth = preservedPageDepth;
-      suppressStateChange = false;
-      cleanup();
+      abandonRecovery(transaction);
       throw outcome.error;
     }
     if (outcome.status === 'superseded') {
-      state = current;
-      campaignPageDepth = preservedCampaignDepth;
-      campaignSessionPageDepth = preservedCampaignSessionDepth;
-      loadedPageDepth = preservedPageDepth;
-      suppressStateChange = false;
-      cleanup();
+      abandonRecovery(transaction);
       return false;
     }
     try {
-      await replayLoadedDepth(preservedPageDepth, preservedCampaignDepth, preservedCampaignSessionDepth);
+      await replayLoadedDepth(transaction.pageDepth, transaction.campaignDepth, transaction.campaignSessionDepth);
     } catch (error) {
-      state = current;
-      campaignPageDepth = preservedCampaignDepth;
-      campaignSessionPageDepth = preservedCampaignSessionDepth;
-      loadedPageDepth = preservedPageDepth;
-      suppressStateChange = false;
-      cleanup();
+      if (!abandonRecovery(transaction)) {
+        return false;
+      }
       throw error;
     }
+    if (recoveryTransaction !== transaction) {
+      return false;
+    }
+    recoveryTransaction = undefined;
     suppressStateChange = false;
     if (state) {
       options.onStateChange?.(state);
     }
+    takeStagedVisibleCommit()?.();
     return true;
   };
 
@@ -669,8 +729,15 @@ export const createSessionTableQueryOwner = (options: {
   };
 
   return {
-    close: () => operationOwner.close(),
+    canCommit,
+    close: () => {
+      recoveryTransaction = undefined;
+      stagedVisibleCommit = undefined;
+      suppressStateChange = false;
+      operationOwner.close();
+    },
     commit,
+    commitWithVisible,
     loadCampaignChildren,
     loadCampaignSessions,
     loadMore,
@@ -682,23 +749,4 @@ export const createSessionTableQueryOwner = (options: {
       return state;
     },
   };
-};
-
-export const createSessionTableServedAdapter = <Descriptor extends ServedRevisionDescriptor>(options: {
-  readonly acquire: (signal: AbortSignal) => Promise<Descriptor>;
-  readonly owner: SessionTableQueryOwner;
-}): ServedReportSessionAdapter<SessionTableDestination, PreparedSessionTableQuery, Descriptor> => {
-  const adapter: ServedReportSessionAdapter<SessionTableDestination, PreparedSessionTableQuery, Descriptor> = {
-    acquire: options.acquire,
-    commit: (prepared) => {
-      if (!options.owner.commit(prepared)) {
-        throw new Error('The prepared session table destination was superseded before commit');
-      }
-    },
-    destinationFingerprint: ({ scope }) =>
-      sessionQueryFingerprint(parseSessionQueryRequest({ ...scope, cursor: null, revision: 'destination' })),
-    isRevisionExpired: (error) => error instanceof SessionTableRevisionExpiredError,
-    load: async ({ scope }, descriptor, signal) => await options.owner.prepare(scope, descriptor.revision, signal),
-  };
-  return adapter;
 };

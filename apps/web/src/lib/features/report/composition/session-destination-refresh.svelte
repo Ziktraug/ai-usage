@@ -1,24 +1,29 @@
 <script lang="ts">
-  import type { SessionTableDestination } from '../../sessions/table/session-table-query-owner';
+  import { onDestroy } from 'svelte';
+  import type { SessionTableQueryOwner } from '../../sessions/table/session-table-query-owner';
   import type { ServedReportSessionOwner } from '../lifecycle/served-report-session-owner.svelte';
-  import type { FocusedReportDescriptor } from './report-destination';
-  import type { SessionQueryScopeSnapshot } from './report-search';
+  import type { FocusedReportDescriptor, FocusedReportDestination } from './report-destination';
 
   let {
+    destination,
     owner,
-    destinationScope,
+    queryOwner,
   }: {
-    owner: ServedReportSessionOwner<SessionTableDestination, FocusedReportDescriptor>;
-    destinationScope: SessionQueryScopeSnapshot;
+    destination: FocusedReportDestination | null;
+    owner: ServedReportSessionOwner<FocusedReportDestination, FocusedReportDescriptor>;
+    queryOwner: SessionTableQueryOwner;
   } = $props();
 
-  let requestedFingerprint = '';
   $effect(() => {
-    const fingerprint = JSON.stringify(destinationScope);
-    if (fingerprint === requestedFingerprint) {
+    const activeDestination = destination;
+    if (activeDestination?.kind !== 'sessions') {
+      queryOwner.setRevisionRefresh(undefined);
       return;
     }
-    requestedFingerprint = fingerprint;
-    owner.refresh({ scope: destinationScope }).catch(() => undefined);
+    queryOwner.setRevisionRefresh(async (scope) => await owner.refresh({ ...activeDestination, sessions: scope }));
   });
+
+  onDestroy(() => queryOwner.setRevisionRefresh(undefined));
 </script>
+
+<!-- Binds exact paging expiry recovery back to the single combined report lifecycle. -->

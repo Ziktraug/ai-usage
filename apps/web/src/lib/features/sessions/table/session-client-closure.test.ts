@@ -26,8 +26,9 @@ const sourceDirectory = fileURLToPath(new URL('../../../../', import.meta.url));
 const repositoryDirectory = fileURLToPath(new URL('../../../../../../../', import.meta.url));
 const entryPaths = [
   path.join(sourceDirectory, 'lib/features/sessions/table/session-table.svelte'),
-  path.join(sourceDirectory, 'lib/features/sessions/table/session-table-owner.svelte'),
   path.join(sourceDirectory, 'lib/features/sessions/table/session-table-query-owner.ts'),
+  path.join(sourceDirectory, 'lib/features/report/composition/sessions-destination.svelte'),
+  path.join(sourceDirectory, 'lib/features/report/composition/session-destination-refresh.svelte'),
 ] as const;
 const temporaryDirectories: string[] = [];
 
@@ -209,7 +210,12 @@ describe('recursive Sessions Svelte client closure', () => {
     expect([...result.visited].some((sourcePath) => sourcePath.endsWith('/lib/rpc/session-client.ts'))).toBe(true);
     expect([...result.visited].some((sourcePath) => sourcePath.endsWith('/lib/query/options/session.ts'))).toBe(true);
     expect([...result.visited].some((sourcePath) => sourcePath.endsWith('/served-report-session.ts'))).toBe(true);
-    expect([...result.visited].some((sourcePath) => sourcePath.endsWith('/report-lifecycle-owner.svelte'))).toBe(true);
+    expect(
+      [...result.visited].some((sourcePath) => sourcePath.endsWith('/served-report-session-owner.svelte.ts')),
+    ).toBe(true);
+    expect([...result.visited].some((sourcePath) => sourcePath.endsWith('/sessions-destination-state.svelte'))).toBe(
+      true,
+    );
   });
 
   test('finds hidden Solid, server, Node, and writer leaks behind every supported resolution seam', async () => {
