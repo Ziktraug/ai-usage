@@ -2,6 +2,30 @@ import { currentRecord, designExportRecords } from '../helpers';
 import { defineParityShard, type ParityEvidence, type ParityRecord } from '../schema';
 
 const owner = 'D0' as const;
+const cutoverCommit = '75161d96109769a3f315565dfe4cf84ab398a708';
+const completeCurrentAtCutover = (record: ParityRecord): ParityRecord =>
+  record.status === 'current'
+    ? {
+        ...record,
+        evidence: [
+          ...record.evidence,
+          {
+            commit: cutoverCommit,
+            kind: 'test',
+            phase: 'target',
+            reference: 'Canonical Svelte icon consumers pass accessibility and settled visual parity gates.',
+          },
+          {
+            commit: cutoverCommit,
+            kind: 'review',
+            phase: 'target',
+            reference:
+              'Independent feature packet reviews and /root/x0_final_review ACCEPT the final icon presentation.',
+          },
+        ],
+        status: 'complete',
+      }
+    : record;
 const foundationCommit = '6c6d6c4ebe134d980dd630a13ab53086e38aa142';
 const finalD0Commit = '8474f185f0bef832bae5bb0338f1af316ba02401';
 const d4Commit = '6646fe568e8b4c1fba74ac1b4150d1480d15ca6f';
@@ -348,5 +372,5 @@ export default defineParityShard({
         source: 'packages/design-system/src/svelte.ts',
       },
     ]).map(completeForD4),
-  ],
+  ].map(completeCurrentAtCutover),
 });

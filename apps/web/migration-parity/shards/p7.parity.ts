@@ -2,6 +2,26 @@ import { currentRecord, sourceInventoryRecords } from '../helpers';
 import { defineParityShard, type ParityEvidence, type ParityRecord } from '../schema';
 
 const owner = 'P7' as const;
+const cutoverCommit = '75161d96109769a3f315565dfe4cf84ab398a708';
+const completeAtCutover = (record: ParityRecord): ParityRecord => ({
+  ...record,
+  evidence: [
+    ...record.evidence,
+    {
+      commit: cutoverCommit,
+      kind: 'command',
+      phase: 'target',
+      reference: 'Canonical SvelteKit X0/X1 convergence gates preserve this packet parity.',
+    },
+    {
+      commit: cutoverCommit,
+      kind: 'review',
+      phase: 'target',
+      reference: 'Independent packet reviews and /root/x0_final_review ACCEPT the integrated SvelteKit composition.',
+    },
+  ],
+  status: 'complete',
+});
 const implementationCommit = 'f98f6b1d40f4cade8c7de47dc14475f6ad003461';
 const targetEvidence = (kind: ParityEvidence['kind'], reference: string): ParityEvidence => ({
   commit: implementationCommit,
@@ -107,5 +127,5 @@ export default defineParityShard({
         commandEvidence,
       ]),
     ),
-  ],
+  ].map(completeAtCutover),
 });

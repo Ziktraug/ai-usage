@@ -2,6 +2,26 @@ import { currentRecord } from '../helpers';
 import { defineParityShard, type ParityKind, type ParityRecord } from '../schema';
 
 const owner = 'P4' as const;
+const cutoverCommit = '75161d96109769a3f315565dfe4cf84ab398a708';
+const completeAtCutover = (record: ParityRecord): ParityRecord => ({
+  ...record,
+  evidence: [
+    ...record.evidence,
+    {
+      commit: cutoverCommit,
+      kind: 'command',
+      phase: 'target',
+      reference: 'Canonical SvelteKit X0/X1 convergence gates preserve this packet parity.',
+    },
+    {
+      commit: cutoverCommit,
+      kind: 'review',
+      phase: 'target',
+      reference: 'Independent packet reviews and /root/x0_final_review ACCEPT the integrated SvelteKit composition.',
+    },
+  ],
+  status: 'complete',
+});
 const implementationCommit = '1697adceb9bbea7e415ec093c2fc663582d1b829';
 
 interface TargetEvidence {
@@ -144,5 +164,5 @@ export default defineParityShard({
       'apps/web/src/lib/features/sessions/detail/session-vcs-summary.svelte; apps/web/src/lib/features/sessions/detail/external-link-icon.svelte',
       'apps/web/src/lib/features/sessions/detail/components.ssr.test.ts › keeps unavailable Retry semantics and sanitized VCS links exact',
     ),
-  ],
+  ].map(completeAtCutover),
 });

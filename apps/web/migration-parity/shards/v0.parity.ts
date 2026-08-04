@@ -1,7 +1,27 @@
 import { currentRecord } from '../helpers';
-import { defineParityShard, parityEvidence } from '../schema';
+import { defineParityShard, type ParityRecord, parityEvidence } from '../schema';
 
 const owner = 'V0' as const;
+const cutoverCommit = '75161d96109769a3f315565dfe4cf84ab398a708';
+const completeAtCutover = (record: ParityRecord): ParityRecord => ({
+  ...record,
+  evidence: [
+    ...record.evidence,
+    {
+      commit: cutoverCommit,
+      kind: 'command',
+      phase: 'target',
+      reference: 'Canonical SvelteKit X0/X1 convergence gates preserve this frozen interface.',
+    },
+    {
+      commit: cutoverCommit,
+      kind: 'review',
+      phase: 'target',
+      reference: 'Independent packet reviews and /root/x0_final_review ACCEPT the integrated SvelteKit composition.',
+    },
+  ],
+  status: 'complete',
+});
 const implementationCommit = '26967ea7a70fe29503eb54175e11ddb70efd664e';
 const reworkCommit = '5f3af77db5f760760db6fd83e0908979ba293fde';
 const integratedCommit = '771197457b1db152934f427b09849a18c8e28981';
@@ -63,5 +83,5 @@ export default defineParityShard({
       ],
       status: 'current',
     },
-  ],
+  ].map(completeAtCutover),
 });

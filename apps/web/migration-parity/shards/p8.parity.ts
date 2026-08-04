@@ -2,6 +2,26 @@ import { currentRecord, sourceInventoryRecords } from '../helpers';
 import { defineParityShard, type ParityRecord } from '../schema';
 
 const owner = 'P8' as const;
+const cutoverCommit = '75161d96109769a3f315565dfe4cf84ab398a708';
+const completeAtCutover = (record: ParityRecord): ParityRecord => ({
+  ...record,
+  evidence: [
+    ...record.evidence,
+    {
+      commit: cutoverCommit,
+      kind: 'command',
+      phase: 'target',
+      reference: 'Canonical SvelteKit X0/X1 convergence gates preserve this packet parity.',
+    },
+    {
+      commit: cutoverCommit,
+      kind: 'review',
+      phase: 'target',
+      reference: 'Independent packet reviews and /root/x0_final_review ACCEPT the integrated SvelteKit composition.',
+    },
+  ],
+  status: 'complete',
+});
 const implementationCommit = '0b442e2f9bc6706ad2724379fb5f70d5164599aa';
 const quotaFocusCommit = '6a92e8dbcdcb5cc15269d85446b2dd2e6ad7256c';
 const browserEvidenceCommit = '3d7763f932b9c01f9eb0c5b7883446301ff1f46a';
@@ -140,5 +160,5 @@ export default defineParityShard({
       'apps/web/src/provider-quota-history-panel.tsx',
       'apps/web/src/report-sharing-actions.tsx',
     ]).map(withProductionTarget),
-  ],
+  ].map(completeAtCutover),
 });

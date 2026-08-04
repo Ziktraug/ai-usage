@@ -2,6 +2,26 @@ import { currentRecord } from '../helpers';
 import { defineParityShard, type ParityKind, type ParityRecord } from '../schema';
 
 const owner = 'P9' as const;
+const cutoverCommit = '75161d96109769a3f315565dfe4cf84ab398a708';
+const completeAtCutover = (record: ParityRecord): ParityRecord => ({
+  ...record,
+  evidence: [
+    ...record.evidence,
+    {
+      commit: cutoverCommit,
+      kind: 'command',
+      phase: 'target',
+      reference: 'Canonical SvelteKit X0/X1 convergence gates preserve this packet parity.',
+    },
+    {
+      commit: cutoverCommit,
+      kind: 'review',
+      phase: 'target',
+      reference: 'Independent packet reviews and /root/x0_final_review ACCEPT the integrated SvelteKit composition.',
+    },
+  ],
+  status: 'complete',
+});
 const implementationCommit = '82451ad4c0fb4ffd1714c329e4c084f0376b9659';
 const packetTestCommand =
   'bun test apps/web/src/lib/features/skills/editor/*.test.ts apps/web/src/skill-markdown-editor-model.test.ts apps/web/src/lib/features/skills/shell/snapshot-controller.test.ts apps/web/src/lib/features/shell/dirty-navigation-context.test.ts apps/web/src/lib/query/options/skills.test.ts';
@@ -97,5 +117,5 @@ export default defineParityShard({
         'apps/web/src/lib/features/skills/editor/controller.ts; apps/web/src/lib/features/skills/editor/skill-markdown-editor.svelte; apps/web/src/lib/features/skills/editor/slot-controller.ts; apps/web/src/lib/features/skills/editor/skills-editor-slot.svelte',
       test: 'apps/web/src/lib/features/skills/editor/controller.test.ts; apps/web/src/lib/features/skills/editor/slot-controller.test.ts; apps/web/src/lib/features/skills/editor/editor-components.ssr.test.ts; apps/web/src/lib/features/skills/editor/editor-client-closure.test.ts',
     }),
-  ],
+  ].map(completeAtCutover),
 });

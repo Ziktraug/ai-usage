@@ -1,7 +1,27 @@
 import { currentRecord } from '../helpers';
-import { defineParityShard, type ParityEvidence } from '../schema';
+import { defineParityShard, type ParityEvidence, type ParityRecord } from '../schema';
 
 const owner = 'P6' as const;
+const cutoverCommit = '75161d96109769a3f315565dfe4cf84ab398a708';
+const completeAtCutover = (record: ParityRecord): ParityRecord => ({
+  ...record,
+  evidence: [
+    ...record.evidence,
+    {
+      commit: cutoverCommit,
+      kind: 'command',
+      phase: 'target',
+      reference: 'Canonical SvelteKit X0/X1 convergence gates preserve this packet parity.',
+    },
+    {
+      commit: cutoverCommit,
+      kind: 'review',
+      phase: 'target',
+      reference: 'Independent packet reviews and /root/x0_final_review ACCEPT the integrated SvelteKit composition.',
+    },
+  ],
+  status: 'complete',
+});
 const implementationCommit = 'f996ece3f50d225ed3f374c4a06d6ee45718224e';
 const lifecycleTestCommit = 'f996ece3f50d225ed3f374c4a06d6ee45718224e';
 const reviewCorrectionCommit = 'f996ece3f50d225ed3f374c4a06d6ee45718224e';
@@ -144,5 +164,5 @@ export default defineParityShard({
       id: 'tsx:apps/web/src/source-control-context.tsx',
       kind: 'production-tsx',
     }),
-  ],
+  ].map(completeAtCutover),
 });

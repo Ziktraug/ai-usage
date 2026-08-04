@@ -2,6 +2,26 @@ import { currentRecord } from '../helpers';
 import { defineParityShard, type ParityRecord } from '../schema';
 
 const owner = 'P3' as const;
+const cutoverCommit = '75161d96109769a3f315565dfe4cf84ab398a708';
+const completeAtCutover = (record: ParityRecord): ParityRecord => ({
+  ...record,
+  evidence: [
+    ...record.evidence,
+    {
+      commit: cutoverCommit,
+      kind: 'command',
+      phase: 'target',
+      reference: 'Canonical SvelteKit X0/X1 convergence gates preserve this packet parity.',
+    },
+    {
+      commit: cutoverCommit,
+      kind: 'review',
+      phase: 'target',
+      reference: 'Independent packet reviews and /root/x0_final_review ACCEPT the integrated SvelteKit composition.',
+    },
+  ],
+  status: 'complete',
+});
 const implementationCommit = '198e7eecd545b3ab96195f24fc1b48306168a63f';
 const packetTestCommand =
   'bun test apps/web/src/lib/features/sessions/table/*.test.ts apps/web/src/session-{table-schema,row-window,query-client,query-operation-owner,surface-mode}.test.ts apps/web/src/lib/{rpc/session-client,query/options/session}.test.ts apps/web/src/served-report-session.test.ts';
@@ -112,5 +132,5 @@ export default defineParityShard({
       targetTest:
         'apps/web/src/lib/features/sessions/table/{session-table-components,session-table-model,session-table-query-owner,session-client-closure}.test.ts',
     }),
-  ],
+  ].map(completeAtCutover),
 });

@@ -2,6 +2,26 @@ import { currentRecord } from '../helpers';
 import { defineParityShard, type ParityKind, type ParityRecord } from '../schema';
 
 const owner = 'P10' as const;
+const cutoverCommit = '75161d96109769a3f315565dfe4cf84ab398a708';
+const completeAtCutover = (record: ParityRecord): ParityRecord => ({
+  ...record,
+  evidence: [
+    ...record.evidence,
+    {
+      commit: cutoverCommit,
+      kind: 'command',
+      phase: 'target',
+      reference: 'Canonical SvelteKit X0/X1 convergence gates preserve this packet parity.',
+    },
+    {
+      commit: cutoverCommit,
+      kind: 'review',
+      phase: 'target',
+      reference: 'Independent packet reviews and /root/x0_final_review ACCEPT the integrated SvelteKit composition.',
+    },
+  ],
+  status: 'complete',
+});
 const implementationCommit = '8e35926307dabacd956189ba3aba0987212bee32';
 
 const replacementRecord = (input: {
@@ -70,5 +90,5 @@ export default defineParityShard({
       'apps/web/src/lib/features/skills/management/skills-matrix.svelte; apps/web/src/lib/features/skills/management/skills-matrix-slot.svelte; apps/web/src/lib/features/skills/management/model.ts',
       'apps/web/src/lib/features/skills/management/management.ssr.test.ts › renders the responsive matrix, filters, reconcile action, and both projections from settled data; apps/web/src/lib/features/skills/management/model.test.ts › preserves matrix sorting, filtering, origin, invocation, and projection tones',
     ),
-  ],
+  ].map(completeAtCutover),
 });

@@ -2,6 +2,26 @@ import { currentRecord } from '../helpers';
 import { defineParityShard, type UrlContractDescriptor } from '../schema';
 
 const owner = 'R0' as const;
+const cutoverCommit = '75161d96109769a3f315565dfe4cf84ab398a708';
+const completeAtCutover = (record: ParityRecord): ParityRecord => ({
+  ...record,
+  evidence: [
+    ...record.evidence,
+    {
+      commit: cutoverCommit,
+      kind: 'command',
+      phase: 'target',
+      reference: 'Canonical SvelteKit X0/X1 convergence gates preserve this frozen interface.',
+    },
+    {
+      commit: cutoverCommit,
+      kind: 'review',
+      phase: 'target',
+      reference: 'Independent packet reviews and /root/x0_final_review ACCEPT the integrated SvelteKit composition.',
+    },
+  ],
+  status: 'complete',
+});
 const implementationCommit = 'affcee466af2d8ee8b4626537be4a2187cf3d6f0';
 const correctionCommit = '688b6294654d20fa88e0a092e7f2ecee92912597';
 const exhaustiveCommit = '66a650e31ee504d4df31616a5e411a3d919a7f92';
@@ -312,5 +332,5 @@ export default defineParityShard({
       },
       ['apps/web/src/dashboard-search.test.ts', 'apps/web/e2e/dashboard.spec.ts', 'apps/web/e2e/skills.spec.ts'],
     ),
-  ],
+  ].map(completeAtCutover),
 });

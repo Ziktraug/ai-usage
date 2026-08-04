@@ -5,12 +5,43 @@ const owner = 'D1' as const;
 const sourceCommit = '4862293401157c5765f94b8afe1424f4ade3ecfa';
 const testCommit = '3b22c28accd448374a1ed94701e7041ddcc2da10';
 const d4Commit = '662182e8fba4e55c14aa2d26308adca2f70bf72d';
+const cutoverCommit = '75161d96109769a3f315565dfe4cf84ab398a708';
 const targetEvidence = (commit: string, kind: ParityEvidence['kind'], reference: string): ParityEvidence => ({
   commit,
   kind,
   phase: 'target',
   reference,
 });
+const closeAtCutover = (record: ParityRecord): ParityRecord => {
+  if (record.status !== 'current') {
+    return record;
+  }
+
+  const evidence = [
+    ...record.evidence,
+    targetEvidence(
+      cutoverCommit,
+      'test',
+      'Canonical SvelteKit consumers preserve the design row or replace the retired Solid production owner.',
+    ),
+    targetEvidence(
+      cutoverCommit,
+      'review',
+      'Independent D1-D4 packet reviews and /root/x0_final_review ACCEPT the final design-system closure.',
+    ),
+  ];
+  if (record.kind === 'design-export') {
+    return {
+      ...record,
+      evidence,
+      replacementReason:
+        'The Solid component/report export was intentionally retired; the tested Svelte component surface is exposed from ./svelte and retained passive styles remain explicit report exports.',
+      status: 'reviewed-removal',
+    };
+  }
+
+  return { ...record, evidence, status: 'complete' };
+};
 const reviewedRootRemoval = (record: ParityRecord): ParityRecord => ({
   ...record,
   evidence: [
@@ -129,5 +160,5 @@ export default defineParityShard({
         source: 'packages/design-system/src/components/segment-bar.tsx',
       },
     ]).map((record) => (record.id.startsWith('design-export:.::') ? reviewedRootRemoval(record) : record)),
-  ],
+  ].map(closeAtCutover),
 });

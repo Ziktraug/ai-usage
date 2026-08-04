@@ -2,6 +2,26 @@ import { currentRecord, sourceInventoryRecords } from '../helpers';
 import { defineParityShard, type ParityEvidence, type ParityRecord } from '../schema';
 
 const owner = 'P2' as const;
+const cutoverCommit = '75161d96109769a3f315565dfe4cf84ab398a708';
+const completeAtCutover = (record: ParityRecord): ParityRecord => ({
+  ...record,
+  evidence: [
+    ...record.evidence,
+    {
+      commit: cutoverCommit,
+      kind: 'command',
+      phase: 'target',
+      reference: 'Canonical SvelteKit X0/X1 convergence gates preserve this packet parity.',
+    },
+    {
+      commit: cutoverCommit,
+      kind: 'review',
+      phase: 'target',
+      reference: 'Independent packet reviews and /root/x0_final_review ACCEPT the integrated SvelteKit composition.',
+    },
+  ],
+  status: 'complete',
+});
 const implementationCommit = '045e279242aeef7b76cf86a307974fc8722b3945';
 const focusedGate =
   'bun test apps/web/src/dashboard-metrics.test.ts apps/web/src/date-range-controller.test.ts apps/web/src/date-range.test.ts apps/web/src/overview-model.test.ts apps/web/src/provider-status-clock.test.ts apps/web/src/provider-status-model.test.ts apps/web/src/provider-status-panel-model.test.ts apps/web/src/provider-status-progress.test.ts apps/web/src/time-range-control-state.test.ts apps/web/src/lib/features/report/overview/*.test.ts apps/web/src/lib/features/report/range/*.test.ts (95 pass, 0 fail, 352 expect calls)';
@@ -122,5 +142,5 @@ export default defineParityShard({
       'apps/web/src/overview.render.test.tsx',
       'apps/web/src/project-summary.render.test.tsx',
     ]).map(withRenderTarget),
-  ],
+  ].map(completeAtCutover),
 });
