@@ -49,7 +49,9 @@ export const timelineEntryValue = (
   return useSessions ? entry.sessions : entry.cost;
 };
 
-export const timelineBucketValue = (
+// Internal to the readout: the chart itself reads classified bucket values from
+// `timeline-window`, which excludes the unclassified gap.
+const timelineBucketValue = (
   bucket: Pick<FocusedTimelineBucket, 'sessions' | 'total'>,
   useSessions: boolean,
 ): number => (useSessions ? bucket.sessions : bucket.total);
@@ -118,32 +120,6 @@ export const timelineReadoutFor = (
     .sort((left, right) => right.value - left.value);
   return { bucket, rows, total: timelineBucketValue(bucket, useSessions), useSessions };
 };
-
-export const timelineTickIndexes = (bucketCount: number, maximumTicks = 6): readonly number[] => {
-  if (bucketCount <= 2) {
-    return [];
-  }
-  const step = Math.max(1, Math.ceil(bucketCount / maximumTicks));
-  const indexes: number[] = [];
-  for (let index = step; index < bucketCount - 1; index += step) {
-    indexes.push(index);
-  }
-  return indexes;
-};
-
-export const timelineTickMeasurementRevision = (
-  timeline: {
-    readonly buckets: readonly Pick<FocusedTimelineBucket, 'date'>[];
-    readonly first: string;
-    readonly last: string;
-  },
-  tickIndexes: readonly number[],
-): string =>
-  JSON.stringify([
-    timeline.first,
-    tickIndexes.map((index) => [index, timeline.buckets[index]?.date ?? null]),
-    timeline.last,
-  ]);
 
 export const retainTimelineTickLabels = (
   ticks: readonly TimelineLabelBox[],

@@ -85,6 +85,7 @@
   import { fmtDateOnly } from '../../../foundation/presentation/format';
   import ActivityTimeline from '../overview/activity-timeline.svelte';
   import type { MachineSeriesPresenter } from '../overview/timeline-model';
+  import { timelineRangeForSelection } from '../overview/timeline-window';
   import {
     customRangeFromIndexes,
     customRangeFromInputs,
@@ -191,6 +192,14 @@
   const percentFor = (index: number): number => (projection.maxIndex > 0 ? (index / projection.maxIndex) * 100 : 0);
   const startPercent = $derived(percentFor(controlState.selectionIndexes[0]));
   const endPercent = $derived(percentFor(controlState.selectionIndexes[1]));
+  // The brush addresses calendar days over the whole domain; the chart draws
+  // buckets. Translate the live selection into the bucket window it covers so
+  // the Activity chart honours the promise printed above it.
+  const visibleRange = $derived(
+    timeline
+      ? timelineRangeForSelection(timeline.buckets, projection.domainFirst, controlState.selectionIndexes)
+      : null,
+  );
   const dimensionItems = focusedTimelineDimensionDefinitions;
   // Carrying the label with the edge keeps the markup free of repeated
   // `handle === 'start'` branches, and the binding name stays clear of every
@@ -464,6 +473,7 @@
     {...(presentMachineSeries ? { presentMachineSeries } : {})}
     {timeline}
     {value}
+    {visibleRange}
   />
   <div class={fields} data-report-range-part="adjustments">
     <label class={field}

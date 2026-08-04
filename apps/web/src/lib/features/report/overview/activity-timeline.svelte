@@ -6,29 +6,37 @@
     position: 'relative',
     display: 'block',
     minH: '150px',
+    // A dense window must never escape the panel, whatever the bucket count.
+    overflow: 'hidden',
     p: '8px 4px 0',
     borderBottom: '1px solid token(colors.line)',
     cursor: 'crosshair',
     _focus: { outline: '2px solid token(colors.accent)', outlineOffset: '2px' },
   });
-  const seriesStack = css({ display: 'grid', alignItems: 'end', w: 'full', h: '140px' });
-  const bucketClass = css({ display: 'flex', flexDirection: 'column-reverse', h: '140px', minW: 0 });
+  // Flex, not a `repeat(N, minmax(4px, 1fr))` grid: a minmax floor multiplies
+  // into a minimum width the container cannot honour, so 249 day buckets pushed
+  // the bars about a thousand pixels past the panel. Flex items shrink instead,
+  // and `timelineBucketLayout` caps the per-bucket minimum at its fair share.
+  const seriesStack = css({ display: 'flex', alignItems: 'flex-end', w: 'full', h: '140px', minW: 0 });
+  const bucketClass = css({ display: 'flex', flex: '1 1 0', flexDirection: 'column-reverse', h: '140px', minW: 0 });
   const gapBands = css({
     position: 'absolute',
     insetInline: '4px',
     bottom: '1px',
-    display: 'grid',
+    display: 'flex',
     h: '6px',
+    minW: 0,
     pointerEvents: 'none',
   });
   const gapBand = css({
-    minW: '2px',
+    flex: '1 1 0',
+    minW: 0,
     border: '1px solid token(colors.lineStrong)',
     borderRadius: '1px',
     bg: 'surfaceMuted',
     backgroundImage: 'repeating-linear-gradient(135deg, transparent 0 2px, token(colors.lineStrong) 2px 3px)',
   });
-  const gapEmpty = css({ minW: '2px' });
+  const gapEmpty = css({ flex: '1 1 0', minW: 0 });
   const segment = css({ minH: '1px', bg: 'accent', borderTop: '1px solid token(colors.surface)' });
   const tickRow = css({
     position: 'relative',
@@ -70,6 +78,7 @@
   import type { FocusedTimelineData, FocusedTimelineSeries } from '@ai-usage/report-core/focused-report-query';
   import { tick as afterDomUpdate, onMount } from 'svelte';
   import type { TimelineValue } from '../../../../overview-model';
+  import type { TimeRangeIndexRange } from '../../../../time-range-control-state';
   import { fmtDateOnly, fmtMoney, fmtNum, fmtPct } from '../../../foundation/presentation/format';
   import { aggregateApiPriceProvenance } from '../../../foundation/presentation/report-value';
   import {
@@ -77,17 +86,22 @@
     type MachineSeriesPresenter,
     presentTimelineSeries,
     retainTimelineTickLabels,
-    timelineBucketValue,
     timelineEntryValue,
     timelineGapValue,
     timelineReadoutFor,
     timelineSeriesIsFilterable,
     timelineSeriesValue,
     timelineSharePercent,
-    timelineTickIndexes,
-    timelineTickMeasurementRevision,
     timelineUsesSessions,
   } from './timeline-model';
+  import {
+    timelineBucketLayout,
+    timelineMonthTickId,
+    visibleTimelineBars,
+    visibleTimelineBounds,
+    visibleTimelineMaximum,
+    visibleTimelineMonthTicks,
+  } from './timeline-window';
   import { originGapDescription } from './view-model';
 
   interface Props {
@@ -99,6 +113,8 @@
     presentMachineSeries?: MachineSeriesPresenter;
     timeline: FocusedTimelineData | null;
     value: TimelineValue;
+    /** Bucket indexes the report range selects; the whole domain when absent. */
+    visibleRange?: TimeRangeIndexRange | null;
   }
 
   const unchangedCampaignSeries: CampaignSeriesPresenter = (series) => series;
@@ -113,6 +129,7 @@
     presentMachineSeries: machinePresenter = unchangedMachineSeries,
     timeline,
     value,
+    visibleRange = null,
   }: Props = $props();
 
   let inspectedIndex = $state<number | null>(null);
@@ -124,23 +141,31 @@
     timeline ? presentTimelineSeries(timeline, campaignPresenter, machinePresenter) : [],
   );
   const useSessions = $derived(timeline ? timelineUsesSessions(timeline, value) : value === 'sessions');
-  const maxBucket = $derived(
-    timeline ? Math.max(1, useSessions ? timeline.maxBucketSessions : timeline.maxBucketTotal) : 1,
+  // The report range owns which buckets are on screen. Everything downstream —
+  // scale, ticks, boundary dates, pointer hit-testing — reads this one window.
+  const visibleWindow = $derived<TimeRangeIndexRange>(
+    timeline ? (visibleRange ?? { from: 0, to: Math.max(0, timeline.buckets.length - 1) }) : { from: 0, to: 0 },
   );
-  const tickIndexes = $derived(timeline ? timelineTickIndexes(timeline.buckets.length) : []);
-  const tickMeasurementRevision = $derived(timeline ? timelineTickMeasurementRevision(timeline, tickIndexes) : '');
+  const bars = $derived(timeline ? visibleTimelineBars(timeline, visibleWindow, useSessions) : []);
+  const layout = $derived(timelineBucketLayout(bars.length));
+  // Scale against the tallest bucket inside the window, so narrowing the range
+  // rescales the chart instead of flattening it against a domain-wide peak.
+  const windowMaximum = $derived(
+    timeline ? Math.max(1, visibleTimelineMaximum(timeline, visibleWindow, useSessions)) : 1,
+  );
+  const monthTicks = $derived(timeline ? visibleTimelineMonthTicks(timeline, visibleWindow) : []);
+  const bounds = $derived(timeline ? visibleTimelineBounds(timeline, visibleWindow) : { first: '', last: '' });
+  const tickMeasurementRevision = $derived(monthTicks.map(timelineMonthTickId).join('|'));
   const readoutData = $derived(
     timeline && inspectedIndex !== null ? timelineReadoutFor(timeline, value, inspectedIndex, presentedSeries) : null,
   );
 
-  const bucketTotal = (bucket: FocusedTimelineData['buckets'][number]): number =>
-    timelineBucketValue(bucket, useSessions);
   const amountFor = (entry: { cost: number; sessions: number }): number => timelineEntryValue(entry, useSessions);
-  const heightFor = (bucket: FocusedTimelineData['buckets'][number], amount: number): number => {
+  const heightFor = (barTotal: number, amount: number): number => {
     if (value === 'share') {
-      return timelineSharePercent(amount, bucketTotal(bucket));
+      return timelineSharePercent(amount, barTotal);
     }
-    return (amount / maxBucket) * 100;
+    return (amount / windowMaximum) * 100;
   };
   const formattedAmount = (amount: number, total: number): string => {
     if (value === 'share') {
@@ -152,34 +177,41 @@
     inspectedIndex = index;
     onInspect(index);
   };
+  // Pointer and keyboard address the buckets actually drawn, so inspection can
+  // never land on a day the report range excluded.
   const inspectFromPointer = (event: MouseEvent): void => {
-    if (!timeline) {
+    if (bars.length === 0) {
       return;
     }
     const box = (event.currentTarget as HTMLElement).getBoundingClientRect();
     if (box.width <= 0) {
       return;
     }
-    const index = Math.min(
-      timeline.buckets.length - 1,
-      Math.max(0, Math.floor(((event.clientX - box.left) / box.width) * timeline.buckets.length)),
+    const offset = Math.min(
+      bars.length - 1,
+      Math.max(0, Math.floor(((event.clientX - box.left) / box.width) * bars.length)),
     );
-    inspect(index);
+    const bar = bars[offset];
+    if (bar) {
+      inspect(bar.index);
+    }
   };
   const onChartKeydown = (event: KeyboardEvent): void => {
-    if (!timeline) {
+    if (bars.length === 0) {
       return;
     }
-    const current = inspectedIndex ?? 0;
+    const firstIndex = bars[0]?.index ?? 0;
+    const lastIndex = bars.at(-1)?.index ?? firstIndex;
+    const current = inspectedIndex ?? firstIndex;
     let next: number | null = null;
     if (event.key === 'ArrowLeft') {
-      next = Math.max(0, current - 1);
+      next = Math.max(firstIndex, current - 1);
     } else if (event.key === 'ArrowRight') {
-      next = Math.min(timeline.buckets.length - 1, current + 1);
+      next = Math.min(lastIndex, current + 1);
     } else if (event.key === 'Home') {
-      next = 0;
+      next = firstIndex;
     } else if (event.key === 'End') {
-      next = timeline.buckets.length - 1;
+      next = lastIndex;
     }
     if (next !== null) {
       event.preventDefault();
@@ -289,7 +321,7 @@
       class={plot}
       data-bucket-index={inspectedIndex ?? 0}
       data-report-range-part="chart"
-      onfocus={() => inspect(inspectedIndex ?? 0)}
+      onfocus={() => inspect(inspectedIndex ?? (bars[0]?.index ?? 0))}
       onkeydown={onChartKeydown}
       onmousemove={inspectFromPointer}
       type="button"
@@ -297,66 +329,60 @@
       <span
         class={seriesStack}
         data-origin-series-stack={timeline.dimension === 'origin' ? '' : undefined}
-        style:grid-template-columns={`repeat(${timeline.buckets.length}, minmax(4px, 1fr))`}
+        style:gap={layout.bucketGap}
       >
-        {#each timeline.buckets as bucket (bucket.date)}
+        {#each bars as bar (bar.bucket.date)}
           <span
-            aria-label={`${fmtDateOnly(bucket.date)} · ${formattedAmount(bucketTotal(bucket), bucketTotal(bucket))}`}
+            aria-label={`${fmtDateOnly(bar.bucket.date)} · ${formattedAmount(bar.total, bar.total)}`}
             class={bucketClass}
             role="img"
+            style:min-width={layout.bucketMinWidth}
           >
-            {#each presentedSeries as series (series.key)}
-              {@const entry = bucket.byKey[series.key]}
-              {#if entry}
-                <span
-                  class={segment}
-                  data-series-key={series.key}
-                  style:background={stableSeriesColor(series.key)}
-                  style:height={`${heightFor(bucket, amountFor(entry))}%`}
-                  style:opacity={hoveredKey === null || hoveredKey === series.key ? 1 : 0.26}
-                ></span>
-              {/if}
+            {#each bar.segments as segmentEntry (segmentEntry.key)}
+              <span
+                class={segment}
+                data-series-key={segmentEntry.key}
+                style:background={stableSeriesColor(segmentEntry.key)}
+                style:height={`${heightFor(bar.total, segmentEntry.value)}%`}
+                style:opacity={hoveredKey === null || hoveredKey === segmentEntry.key ? 1 : 0.26}
+              ></span>
             {/each}
           </span>
         {/each}
       </span>
       {#if timeline.dimension === 'origin' && timeline.unclassified}
-        <span
-          aria-hidden="true"
-          class={gapBands}
-          data-origin-unclassified-band
-          style:grid-template-columns={`repeat(${timeline.buckets.length}, minmax(4px, 1fr))`}
-        >
-          {#each timeline.buckets as bucket (bucket.date)}
-            {#if bucket.unclassified}
+        <span aria-hidden="true" class={gapBands} data-origin-unclassified-band style:gap={layout.bucketGap}>
+          {#each bars as bar (bar.bucket.date)}
+            {#if bar.bucket.unclassified}
               <span
                 class={gapBand}
-                data-origin-gap-sessions={bucket.unclassified.sessions}
-                title={originGapDescription(bucket.unclassified)}
+                data-origin-gap-sessions={bar.bucket.unclassified.sessions}
+                title={originGapDescription(bar.bucket.unclassified)}
+                style:min-width={layout.bucketMinWidth}
               ></span>
             {:else}
-              <span class={gapEmpty}></span>
+              <span class={gapEmpty} style:min-width={layout.bucketMinWidth}></span>
             {/if}
           {/each}
         </span>
       {/if}
     </button>
     <div class={tickRow} data-report-range-part="chart-axis" data-timeline-tick-row bind:this={tickRowElement}>
-      {#each timeline.buckets as bucket, index (bucket.date)}
-        {@const tickId = `tick:${index}`}
+      {#each monthTicks as monthTick (timelineMonthTickId(monthTick))}
+        {@const tickId = timelineMonthTickId(monthTick)}
         <span
           class={tick}
           data-timeline-label-id={tickId}
-          data-timeline-tick={tickIndexes.includes(index) ? '' : undefined}
-          style:left={`${timeline.buckets.length > 1 ? (index / (timeline.buckets.length - 1)) * 100 : 50}%`}
-          style:visibility={tickIndexes.includes(index) && retainedTickIds?.has(tickId) !== false ? undefined : 'hidden'}
-          >{fmtDateOnly(bucket.date)}</span
+          data-timeline-tick
+          style:left={`${monthTick.pct}%`}
+          style:visibility={retainedTickIds?.has(tickId) === false ? 'hidden' : undefined}
+          >{monthTick.label}</span
         >
       {/each}
     </div>
     <div class={boundaries} data-timeline-boundary-row bind:this={boundaryRowElement}>
-      <span data-timeline-boundary data-timeline-label-id="from">{fmtDateOnly(timeline.first)}</span>
-      <span data-timeline-boundary data-timeline-label-id="to">{fmtDateOnly(timeline.last)}</span>
+      <span data-timeline-boundary data-timeline-label-id="from">{fmtDateOnly(bounds.first)}</span>
+      <span data-timeline-boundary data-timeline-label-id="to">{fmtDateOnly(bounds.last)}</span>
     </div>
 
     {#if timeline.dimension === 'machine' && machineFreshnessStatus}

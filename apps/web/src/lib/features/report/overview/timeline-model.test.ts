@@ -7,8 +7,6 @@ import {
   timelineReadoutFor,
   timelineSeriesIsFilterable,
   timelineSharePercent,
-  timelineTickIndexes,
-  timelineTickMeasurementRevision,
   timelineUsesSessions,
 } from './timeline-model';
 
@@ -104,7 +102,6 @@ describe('P2 timeline presentation model', () => {
   });
 
   test('retains spaced ticks only when they do not collide with boundary labels', () => {
-    expect(timelineTickIndexes(31)).toEqual([6, 12, 18, 24]);
     expect(
       retainTimelineTickLabels(
         [
@@ -119,40 +116,12 @@ describe('P2 timeline presentation model', () => {
       ).map(({ id }) => id),
     ).toEqual(['middle']);
   });
-
-  test('changes the measurement revision when same-sized timeline labels change', () => {
-    const labels = {
-      buckets: [{ date: '2026-06-01' }, { date: '2026-06-08' }, { date: '2026-06-15' }],
-      first: '2026-06-01',
-      last: '2026-06-15',
-    };
-    const tickIndexes = [1] as const;
-    const revision = timelineTickMeasurementRevision(labels, tickIndexes);
-
-    expect(
-      timelineTickMeasurementRevision(
-        { ...labels, buckets: labels.buckets.map((bucket) => ({ ...bucket })) },
-        tickIndexes,
-      ),
-    ).toBe(revision);
-    expect(timelineTickMeasurementRevision({ ...labels, first: '2026-05-31' }, tickIndexes)).not.toBe(revision);
-    expect(timelineTickMeasurementRevision({ ...labels, last: '2026-06-16' }, tickIndexes)).not.toBe(revision);
-    expect(
-      timelineTickMeasurementRevision(
-        {
-          ...labels,
-          buckets: labels.buckets.map((bucket, index) => (index === 1 ? { date: '2026-06-09' } : bucket)),
-        },
-        tickIndexes,
-      ),
-    ).not.toBe(revision);
-  });
 });
 
 test('wires legend buttons, keyboard inspection, live readout, and collision measurement in the Svelte leaf', async () => {
   const source = await Bun.file(new URL('./activity-timeline.svelte', import.meta.url)).text();
   expect(source).toContain('onkeydown={onChartKeydown}');
-  expect(source).toContain('onfocus={() => inspect(inspectedIndex ?? 0)}');
+  expect(source).toContain('onfocus={() => inspect(inspectedIndex ?? (bars[0]?.index ?? 0))}');
   expect(source).toContain('aria-live="polite"');
   expect(source).toContain('data-timeline-readout');
   expect(source).toContain('{...pressedAria(active)}');
@@ -169,7 +138,7 @@ test('wires legend buttons, keyboard inspection, live readout, and collision mea
 test('remeasures tick collisions when timeline labels change without a resize', async () => {
   const source = await Bun.file(new URL('./activity-timeline.svelte', import.meta.url)).text();
   expect(source).toContain('const tickMeasurementRevision = $derived(');
-  expect(source).toContain('timelineTickMeasurementRevision(timeline, tickIndexes)');
+  expect(source).toContain("monthTicks.map(timelineMonthTickId).join('|')");
   expect(source).toContain('retainedTickIds = null');
   expect(source).toContain('afterDomUpdate().then(() =>');
   expect(source).toContain('cancelled = true');

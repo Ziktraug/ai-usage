@@ -463,6 +463,48 @@ test('drags a brush handle with the pointer and keeps it on the selection edge',
   await expect(brush.locator('[data-dragging="true"]')).toHaveCount(0);
 });
 
+test('draws only the selected report range and never overflows the plot', async ({ page }) => {
+  await openHydratedReport(page);
+
+  const dateRange = page.getByRole('region', { name: 'Date range' });
+  const chart = dateRange.locator('[data-report-range-part="chart"]');
+  const readChart = () =>
+    chart.evaluate((element) => {
+      const boundaryRow = document.querySelector('[data-timeline-boundary-row]');
+      return {
+        boundaries: [...(boundaryRow?.querySelectorAll('[data-timeline-boundary]') ?? [])].map((node) =>
+          (node.textContent ?? '').trim(),
+        ),
+        buckets: element.querySelectorAll('[role="img"]').length,
+        clientWidth: element.clientWidth,
+        // A per-bucket minimum that ignores the container turned 249 days into
+        // roughly a thousand pixels of overflow past the panel.
+        scrollWidth: element.scrollWidth,
+      };
+    });
+
+  for (const preset of ['30d', '7d', 'All'] as const) {
+    await dateRange.getByRole('button', { exact: true, name: preset }).click();
+    await waitForFocusedReportSettled(page);
+
+    const summary = await dateRange.locator('[data-report-range-part="summary"]').first().innerText();
+    const days = Number(/·\s*(\d+)\s*days?/.exec(summary)?.[1] ?? Number.NaN);
+    expect(days, summary).not.toBeNaN();
+
+    const geometry = await readChart();
+    // One bucket per calendar day the range covers, inclusive of both ends.
+    expect(geometry.buckets, preset).toBe(days + 1);
+    expect(geometry.scrollWidth, preset).toBeLessThanOrEqual(geometry.clientWidth);
+    // The axis must report the window, not the domain the brush can address.
+    expect(geometry.boundaries[0], preset).toBe(
+      await dateRange.getByRole('textbox', { name: 'Start date' }).inputValue(),
+    );
+    expect(geometry.boundaries[1], preset).toBe(
+      await dateRange.getByRole('textbox', { name: 'End date' }).inputValue(),
+    );
+  }
+});
+
 test('announces each brush handle as a slider over the day it selects', async ({ page }) => {
   await openHydratedReport(page);
 
