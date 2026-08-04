@@ -1,5 +1,5 @@
 import { currentRecord } from '../helpers';
-import { defineParityShard, type UrlContractDescriptor } from '../schema';
+import { defineParityShard, type ParityRecord, type UrlContractDescriptor } from '../schema';
 
 const owner = 'R0' as const;
 const cutoverCommit = '75161d96109769a3f315565dfe4cf84ab398a708';

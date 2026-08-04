@@ -12,6 +12,18 @@ const targetEvidence = (commit: string, kind: ParityEvidence['kind'], reference:
   phase: 'target',
   reference,
 });
+const publicSvelteExports = new Set(['BarSegment', 'Checkbox', 'HarnessBadge', 'MetricTile', 'SegmentBar']);
+const solidOnlyTypeExports = new Set(['CheckboxProps', 'MetricTileProps']);
+const reportRemovalReason = (record: ParityRecord): string => {
+  const exportName = record.id.slice(record.id.lastIndexOf('::') + 2);
+  if (publicSvelteExports.has(exportName)) {
+    return `The Solid ./report export ${exportName} was replaced by the tested D1 public component or type at ./svelte.`;
+  }
+  if (solidOnlyTypeExports.has(exportName)) {
+    return `The Solid-only ${exportName} contract was intentionally removed; the D1 Svelte component owns its typed props.`;
+  }
+  return `The Solid ./report implementation export ${exportName} was internalized by the D1 Svelte control or its passive styles and has no remaining public consumer.`;
+};
 const closeAtCutover = (record: ParityRecord): ParityRecord => {
   if (record.status !== 'current') {
     return record;
@@ -20,22 +32,26 @@ const closeAtCutover = (record: ParityRecord): ParityRecord => {
   const evidence = [
     ...record.evidence,
     targetEvidence(
-      cutoverCommit,
+      sourceCommit,
+      'source',
+      'packages/design-system/src/svelte/controls contains the D1 Svelte replacements for the retired Solid controls.',
+    ),
+    targetEvidence(
+      testCommit,
       'test',
-      'Canonical SvelteKit consumers preserve the design row or replace the retired Solid production owner.',
+      'D1 unit and browser proofs cover controlled state, propagation, semantics, accessibility, and render parity.',
     ),
     targetEvidence(
       cutoverCommit,
       'review',
-      'Independent D1-D4 packet reviews and /root/x0_final_review ACCEPT the final design-system closure.',
+      '/root/d123_parity_review and /root/x0_final_review ACCEPT the D1 Svelte controls and final consumer closure.',
     ),
   ];
   if (record.kind === 'design-export') {
     return {
       ...record,
       evidence,
-      replacementReason:
-        'The Solid component/report export was intentionally retired; the tested Svelte component surface is exposed from ./svelte and retained passive styles remain explicit report exports.',
+      replacementReason: reportRemovalReason(record),
       status: 'reviewed-removal',
     };
   }

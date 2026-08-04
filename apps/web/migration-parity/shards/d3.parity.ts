@@ -13,6 +13,18 @@ const targetEvidence = (commit: string, kind: ParityEvidence['kind'], reference:
   phase: 'target',
   reference,
 });
+const publicSvelteExports = new Set(['Tabs']);
+const solidOnlyTypeExports = new Set(['TabItem', 'TabsProps']);
+const reportRemovalReason = (record: ParityRecord): string => {
+  const exportName = record.id.slice(record.id.lastIndexOf('::') + 2);
+  if (publicSvelteExports.has(exportName)) {
+    return `The Solid ./report export ${exportName} was replaced by the tested D3 public component at ./svelte.`;
+  }
+  if (solidOnlyTypeExports.has(exportName)) {
+    return `The Solid-only ${exportName} contract was intentionally removed; the D3 Svelte compound control owns its typed items and props.`;
+  }
+  return `The Solid ./report implementation export ${exportName} was internalized by the D3 Svelte compound control or its styles and has no remaining public consumer.`;
+};
 const closeAtCutover = (record: ParityRecord): ParityRecord => {
   if (record.status !== 'current') {
     return record;
@@ -21,22 +33,31 @@ const closeAtCutover = (record: ParityRecord): ParityRecord => {
   const evidence = [
     ...record.evidence,
     targetEvidence(
-      cutoverCommit,
+      sourceCommit,
+      'source',
+      'packages/design-system/src/svelte/compound contains the D3 Svelte replacements for the retired Solid compound controls.',
+    ),
+    targetEvidence(
+      unitTestCommit,
       'test',
-      'Canonical SvelteKit consumers preserve the design row or replace the retired Solid production owner.',
+      'D3 unit proofs cover keyboard, hidden-input, open-state, focus/tabindex, and selection parity.',
+    ),
+    targetEvidence(
+      browserTestCommit,
+      'test',
+      'D3 browser proofs validate compound-control interaction behavior and cleanup.',
     ),
     targetEvidence(
       cutoverCommit,
       'review',
-      'Independent D1-D4 packet reviews and /root/x0_final_review ACCEPT the final design-system closure.',
+      '/root/d123_parity_review and /root/x0_final_review ACCEPT the D3 Svelte controls and final consumer closure.',
     ),
   ];
   if (record.kind === 'design-export') {
     return {
       ...record,
       evidence,
-      replacementReason:
-        'The Solid component/report export was intentionally retired; the tested Svelte component surface is exposed from ./svelte and retained passive styles remain explicit report exports.',
+      replacementReason: reportRemovalReason(record),
       status: 'reviewed-removal',
     };
   }
