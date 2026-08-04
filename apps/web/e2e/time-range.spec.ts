@@ -240,11 +240,13 @@ test('commits preset, text, keyboard, and pointer report ranges to the URL', asy
   await startInput.fill('2026-05-20');
   await endInput.focus();
   await expect(startInput).toHaveValue('May 20, 2026');
+  await expect.poll(() => reportRangeValue(page)).toContain('"from":"2026-05-20"');
   const firstBlurredEditUrl = page.url();
 
   await startInput.fill('2026-05-21');
   await endInput.focus();
   await expect(startInput).toHaveValue('May 21, 2026');
+  await expect.poll(() => reportRangeValue(page)).toContain('"from":"2026-05-21"');
   const secondBlurredEditUrl = page.url();
   expect(secondBlurredEditUrl).not.toBe(firstBlurredEditUrl);
 

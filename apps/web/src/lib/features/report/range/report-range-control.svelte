@@ -274,8 +274,13 @@
       return;
     }
     commitRange(next, editRun.next());
+    const nextProjection = reportRangeProjection(next, generatedDate, dateDomain);
+    controlState = transitionTimeRangeControl(
+      controlState,
+      { selectionIndexes: nextProjection.selectionIndexes, source: 'input', type: 'selectionSynchronized' },
+      { selectionMaxIndex: nextProjection.maxIndex },
+    ).state;
     if (settle) {
-      const nextProjection = reportRangeProjection(next, generatedDate, dateDomain);
       draftFrom = nextProjection.displayFrom;
       draftTo = nextProjection.displayTo;
       editRun.commit();

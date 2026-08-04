@@ -2,7 +2,6 @@ export interface NavigationIntent {
   readonly keepFocus?: boolean;
   readonly replace?: boolean;
   readonly resetScroll?: boolean;
-  readonly shallow?: boolean;
   readonly url: string | URL;
 }
 
@@ -181,17 +180,12 @@ export const drawerCommandForKey = (key: string): 'close' | 'next' | 'previous' 
 export const createSvelteNavigationPort = (dependencies: {
   readonly getCurrentUrl: () => URL;
   readonly goto: (url: string | URL, options?: SvelteGotoOptions) => Promise<void>;
-  readonly shallowNavigate?: (url: string | URL, replace: boolean) => void;
   readonly history: Pick<History, 'go'>;
   readonly onFailure?: (failure: NavigationFailure) => void;
 }): NavigationPort => ({
   currentUrl: () => new URL(dependencies.getCurrentUrl()),
   navigate: async (intent) => {
     try {
-      if (intent.shallow && dependencies.shallowNavigate) {
-        dependencies.shallowNavigate(intent.url, intent.replace ?? false);
-        return;
-      }
       await dependencies.goto(intent.url, {
         ...(intent.keepFocus === undefined ? {} : { keepFocus: intent.keepFocus }),
         ...(intent.replace === undefined ? {} : { replaceState: intent.replace }),

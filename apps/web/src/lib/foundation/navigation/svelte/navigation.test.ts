@@ -86,29 +86,6 @@ describe('navigation and scroll adapters', () => {
     expect(deltas).toEqual([-1, 1]);
   });
 
-  test('[url:history.replace-push-back-forward] keeps continuous edits shallow and focused', async () => {
-    const gotoCalls: unknown[] = [];
-    const shallowCalls: unknown[] = [];
-    const port = createSvelteNavigationPort({
-      getCurrentUrl: () => new URL('http://local/current'),
-      goto: (...call) => {
-        gotoCalls.push(call);
-        return Promise.resolve();
-      },
-      history: { go: () => undefined },
-      shallowNavigate: (...call) => shallowCalls.push(call),
-    });
-
-    await port.navigate({ keepFocus: true, replace: false, resetScroll: false, shallow: true, url: '/edited' });
-    await port.navigate({ keepFocus: true, replace: true, resetScroll: false, shallow: true, url: '/replaced' });
-
-    expect(shallowCalls).toEqual([
-      ['/edited', false],
-      ['/replaced', true],
-    ]);
-    expect(gotoCalls).toEqual([]);
-  });
-
   test('[url:history.replace-push-back-forward] in-memory history preserves push, replace, back and forward', async () => {
     const port = createMemoryNavigationPort('http://local/?utm=kept');
     await port.navigate({ resetScroll: false, url: '/first?utm=kept&q=first' });
