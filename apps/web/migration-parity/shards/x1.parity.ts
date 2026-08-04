@@ -4,6 +4,7 @@ import { defineParityShard, type ParityRecord } from '../schema';
 const owner = 'X1' as const;
 const cutoverCommit = '75161d96109769a3f315565dfe4cf84ab398a708';
 const visualConvergenceCommit = '2b70f10c050b2bc8ed5e8750e84f627a947df861';
+const filterCorrectionCommit = '006d1065ab7f57e00ac95fd39ea07f0ecf109dfb';
 const completeAtCutover = (record: ParityRecord): ParityRecord => ({
   ...record,
   evidence: [
@@ -39,6 +40,34 @@ const completeAtVisualConvergence = (record: ParityRecord): ParityRecord => ({
       kind: 'review',
       phase: 'target',
       reference: '/root/visual_diff_advisor ACCEPT covers visual convergence parity and code quality.',
+    },
+  ],
+  status: 'complete',
+});
+
+const completeAtFilterCorrection = (record: ParityRecord): ParityRecord => ({
+  ...record,
+  evidence: [
+    ...record.evidence,
+    {
+      commit: filterCorrectionCommit,
+      kind: 'source',
+      phase: 'target',
+      reference:
+        'apps/web/e2e/production-report.spec.ts proves one revision bootstrap per Sessions filter and sort with no route-load duplicate.',
+    },
+    {
+      commit: filterCorrectionCommit,
+      kind: 'command',
+      phase: 'target',
+      reference: 'Targeted route-load and Sessions tests, Web check/typecheck, Ultracite, and diff-check are green.',
+    },
+    {
+      commit: filterCorrectionCommit,
+      kind: 'review',
+      phase: 'target',
+      reference:
+        'Independent filter correction review ACCEPT covers exact acquisition counts and search-param load isolation.',
     },
   ],
   status: 'complete',
@@ -90,5 +119,11 @@ export default defineParityShard({
         title: 'wraps chart options without horizontal clipping below the frozen narrow viewport',
       },
     ]).map(completeAtVisualConvergence),
+    ...playwrightTitleRecords(owner, [
+      {
+        file: 'apps/web/e2e/production-report.spec.ts',
+        title: 'acquires one revision bootstrap per Sessions filter and sort without route-load duplicates',
+      },
+    ]).map(completeAtFilterCorrection),
   ],
 });
