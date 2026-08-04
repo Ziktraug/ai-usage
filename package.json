@@ -34,7 +34,7 @@
     "test:web-migration-parity": "bun --no-env-file tools/check-web-migration-parity.ts --require-complete",
     "test:web-production": "bun tools/check-web-production-start.ts",
     "test:web-retired-stack-build": "bun --no-env-file tools/check-web-retired-stack.ts --require-build-output",
-    "typecheck": "bun tools/check-typescript-coverage.ts && tsc -p tsconfig.tools.json --noEmit && turbo run check",
+    "typecheck": "turbo run check && bun tools/check-typescript-coverage.ts && tsc -p tsconfig.tools.json --noEmit",
     "update": "bun update --interactive --recursive",
     "fix": "ultracite fix",
     "prepare": "lefthook install"

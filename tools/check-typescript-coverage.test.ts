@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import {
   collectUncoveredTypeScriptFiles,
@@ -58,6 +59,38 @@ describe('TypeScript project coverage guard', () => {
       'apps/web/tsconfig.json',
       'apps/web/tsconfig.e2e.json',
     ]);
+  });
+
+  test('generates workspace TypeScript projects before checking repository coverage', () => {
+    const packageJson = JSON.parse(readFileSync(path.join(repositoryRoot, 'package.json'), 'utf8')) as {
+      scripts: { typecheck: string };
+    };
+
+    expect(packageJson.scripts.typecheck.split(' && ')).toEqual([
+      'turbo run check',
+      'bun tools/check-typescript-coverage.ts',
+      'tsc -p tsconfig.tools.json --noEmit',
+    ]);
+  });
+
+  test('prepares generated Web sources before running the Web typecheck', () => {
+    const webPackageJson = JSON.parse(readFileSync(path.join(repositoryRoot, 'apps/web/package.json'), 'utf8')) as {
+      scripts: { check: string };
+    };
+
+    expect(webPackageJson.scripts.check.split(' && ')).toEqual([
+      'bun --filter @ai-usage/design-system build',
+      'bun run dev:prepare',
+      'bun run typecheck',
+    ]);
+  });
+
+  test('restores the generated SvelteKit check project from the Web check cache', () => {
+    const turboConfig = JSON.parse(readFileSync(path.join(repositoryRoot, 'turbo.json'), 'utf8')) as {
+      tasks: Record<string, { outputs?: string[] }>;
+    };
+
+    expect(turboConfig.tasks['@ai-usage/web#check']?.outputs).toContain('.svelte-kit/check/**');
   });
 
   test(
