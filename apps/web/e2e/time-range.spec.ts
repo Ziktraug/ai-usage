@@ -10,6 +10,50 @@ const PUNCHCARD_CELL_LABEL_PATTERN =
   /^Filter report to (Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday) ([0-9]{2}):00–[0-9]{2}:59, ([0-9,]+) sessions?$/;
 const SESSION_SUMMARY_PATTERN = / sessions$/;
 
+// Every Panda atomic class carries a `_` or `-`; a bare word means the class
+// binding resolved to a domain value instead of the generated style.
+const PANDA_CLASS_PATTERN = /[_-]/;
+const BRUSH_GEOMETRY_VIEWPORTS = [
+  { height: 1000, width: 1440 },
+  { height: 900, width: 1024 },
+  { height: 900, width: 768 },
+  { height: 800, width: 361 },
+] as const;
+
+interface BrushHandleGeometry {
+  centerX: number;
+  classes: string[];
+  label: string | null;
+  position: string;
+}
+
+interface BrushGeometry {
+  handles: BrushHandleGeometry[];
+  offsets: number[];
+}
+
+const readBrushGeometry = (element: Element): BrushGeometry => {
+  const selection = element.querySelector('[aria-label="Selected report window"]');
+  if (!selection) {
+    throw new Error('Expected the selected report window');
+  }
+  const selectionBox = selection.getBoundingClientRect();
+  const handles = [...element.querySelectorAll('[role="slider"], input[type="range"]')].map((handle) => {
+    const box = handle.getBoundingClientRect();
+    return {
+      centerX: box.left + box.width / 2,
+      classes: [...handle.classList],
+      label: handle.getAttribute('aria-label'),
+      position: getComputedStyle(handle).position,
+    };
+  });
+  const edgeFor = (label: string): number => (label === 'Start date' ? selectionBox.left : selectionBox.right);
+  return {
+    handles,
+    offsets: handles.map((handle) => Math.round(handle.centerX - edgeFor(handle.label ?? ''))),
+  };
+};
+
 const reportRangeValue = (page: Page): string | null => new URL(page.url()).searchParams.get('range');
 
 const navigationEntryKey = async (page: Page): Promise<string | null> =>
@@ -340,4 +384,35 @@ test('keeps the report range canonical across granularity and domain changes', a
   await expect(reportStart).toHaveAttribute('aria-valuenow', '0');
   await expect(reportEnd).toHaveAttribute('aria-valuenow', '7');
   await expect(dateRange.getByRole('slider', { name: 'Graph view start' })).toHaveCount(0);
+});
+
+test('anchors the brush handles to the selected report window at every viewport', async ({ page }) => {
+  await openHydratedReport(page);
+
+  const brush = page.getByRole('region', { name: 'Date range' }).locator('[data-report-range-part="brush"]');
+  const measureBrush = (): Promise<BrushGeometry> => brush.evaluate(readBrushGeometry);
+
+  for (const viewport of BRUSH_GEOMETRY_VIEWPORTS) {
+    await page.setViewportSize(viewport);
+
+    // The handles are positioned from the same percentages as the selection, so
+    // their centres must land on its edges however wide the track becomes.
+    await expect.poll(async () => (await measureBrush()).offsets).toEqual([0, 0]);
+
+    const geometry = await measureBrush();
+    expect(geometry.handles).toHaveLength(2);
+    for (const handle of geometry.handles) {
+      // A bare `start`/`end` class means a loop binding shadowed the Panda
+      // class and the thumb silently lost its absolute positioning.
+      expect(handle.classes.some((token) => PANDA_CLASS_PATTERN.test(token))).toBe(true);
+      expect(handle.position).toBe('absolute');
+    }
+  }
+
+  await page.setViewportSize(BRUSH_GEOMETRY_VIEWPORTS[0]);
+  const startHandle = brush.getByRole('slider', { name: 'Start date' });
+  const before = await measureBrush();
+  await startHandle.press('ArrowRight');
+  await expect.poll(async () => (await measureBrush()).offsets).toEqual([0, 0]);
+  expect((await measureBrush()).handles[0]?.centerX).not.toBe(before.handles[0]?.centerX);
 });

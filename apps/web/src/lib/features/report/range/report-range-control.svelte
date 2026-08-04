@@ -45,7 +45,9 @@
     opacity: 0.3,
     cursor: 'grab',
   });
-  const handle = css({
+  // Named distinctly from the `'start' | 'end'` handle domain value so an each
+  // binding can never shadow this class and silently drop the thumb styling.
+  const handleThumb = css({
     position: 'absolute',
     top: '7px',
     w: '22px',
@@ -544,7 +546,7 @@
       <input
         aria-label={handle === 'start' ? 'Start date' : 'End date'}
         {...sliderAria(index)}
-        class={handle}
+        class={handleThumb}
         max={projection.maxIndex}
         min={0}
         onkeydown={(event) => onHandleKeydown(event, handle)}
