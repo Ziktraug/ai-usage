@@ -1,3 +1,6 @@
+import { execFileSync } from 'node:child_process';
+import path from 'node:path';
+
 export const svelteKitPhases = ['build', 'check', 'dev'] as const;
 
 export type SvelteKitPhase = (typeof svelteKitPhases)[number];
@@ -8,6 +11,23 @@ export interface SvelteKitOutputPaths {
   phase: SvelteKitPhase;
   viteCacheDirectory: string;
 }
+
+const isCompleteGitRevision = (value: string): boolean =>
+  value.length === 40 && [...value].every((character) => '0123456789abcdef'.includes(character));
+
+export const resolveSvelteKitVersionName = (
+  repositoryDirectory: string = path.resolve(import.meta.dirname, '../..'),
+): string => {
+  const versionName = execFileSync('git', ['rev-parse', '--verify', 'HEAD'], {
+    cwd: repositoryDirectory,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'ignore'],
+  }).trim();
+  if (!isCompleteGitRevision(versionName)) {
+    throw new Error('SvelteKit build version must be a complete Git revision.');
+  }
+  return versionName;
+};
 
 const isSvelteKitPhase = (value: string): value is SvelteKitPhase =>
   svelteKitPhases.some((candidate) => candidate === value);

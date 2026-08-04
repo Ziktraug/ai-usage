@@ -1,7 +1,8 @@
 import adapter from 'svelte-adapter-bun';
-import { resolveSvelteKitOutputPaths } from './sveltekit-output-paths.ts';
+import { resolveSvelteKitOutputPaths, resolveSvelteKitVersionName } from './sveltekit-output-paths.ts';
 
 const { adapterDirectory, intermediateDirectory } = resolveSvelteKitOutputPaths();
+const versionName = resolveSvelteKitVersionName();
 
 /** @type {import('@sveltejs/kit').Config} */
 const config = {
@@ -9,6 +10,7 @@ const config = {
     env: { privatePrefix: 'AI_USAGE_SVELTEKIT_PRIVATE_' },
     adapter: adapter({ out: adapterDirectory, precompress: false }),
     outDir: intermediateDirectory,
+    version: { name: versionName },
   },
 };
 

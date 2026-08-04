@@ -1,5 +1,7 @@
 import { describe, expect, test } from 'bun:test';
-import { resolveSvelteKitOutputPaths, svelteKitPhases } from './sveltekit-output-paths';
+import { execFileSync } from 'node:child_process';
+import path from 'node:path';
+import { resolveSvelteKitOutputPaths, resolveSvelteKitVersionName, svelteKitPhases } from './sveltekit-output-paths';
 
 describe('SvelteKit output ownership', () => {
   test('isolates every supported phase', () => {
@@ -32,5 +34,18 @@ describe('SvelteKit output ownership', () => {
   test('fails closed for an unknown or empty phase', () => {
     expect(() => resolveSvelteKitOutputPaths('preview')).toThrow('Invalid SvelteKit phase: preview');
     expect(() => resolveSvelteKitOutputPaths('')).toThrow('Invalid SvelteKit phase:');
+  });
+
+  test('pins emitted asset identity to the complete source revision', () => {
+    const repositoryDirectory = path.resolve(import.meta.dirname, '../..');
+    const revision = execFileSync('git', ['rev-parse', '--verify', 'HEAD'], {
+      cwd: repositoryDirectory,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+
+    expect(resolveSvelteKitVersionName(repositoryDirectory)).toBe(revision);
+    expect(revision).toHaveLength(40);
+    expect([...revision].every((character) => '0123456789abcdef'.includes(character))).toBe(true);
   });
 });
