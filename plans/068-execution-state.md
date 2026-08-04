@@ -13,11 +13,11 @@ authority for feature, operation, design, source-file, and test-title coverage.
   `2183270ebfbb886fafa7e6268893122db9b364c0`
 - `BASE_SHA`: `2183270ebfbb886fafa7e6268893122db9b364c0`
 - Current integration checkpoint:
-  `200677b996da18795c26fefdf12ed4125bb681c8` (X1 corrections,
-  performance, process gates, and clean-typecheck correction green; clean full
-  gate pending; this ledger commit is its documentation-only descendant)
+  `c733f797fc441e72b835527641c4f609de82bfe9` (X1 corrections,
+  performance, clean-typecheck, isolated dev-port, canonical production probe,
+  and trusted-local hook corrections green; clean full gate pending)
 - Last independently reviewed implementation checkpoint:
-  `200677b996da18795c26fefdf12ed4125bb681c8`
+  `c733f797fc441e72b835527641c4f609de82bfe9`
 - Active design bases: D1 `4862293`, D2 `fce5c1a`, D3 `e2f13cd`
 - Implementation PR: not opened
 - Exclusive process-test token: coordinator `/root`, for serialized browser,
@@ -152,7 +152,7 @@ Statuses are `BLOCKED`, `READY`, `IMPLEMENTING`, `REVIEW`, `REWORK`,
 | P9 | P5 | INTEGRATED | `9d48303`, evidence `4cb0f0d`; integrated `82451ad`, `be5e49b`, evidence rewrite `c859f7f` | `/root/q2_spec_review` / ACCEPT | `c859f7f` |
 | P10 | P5 | INTEGRATED | `455b569`, evidence `dac69e0`; integrated `8e35926`, `3a43913`, evidence rewrite `e953bdc` | `/root/q2_spec_review` / ACCEPT | `e953bdc` |
 | X0 | P2, P8, P4, P9, P10, P6, P7 | INTEGRATED | `db66cc0` through `c84d48c` | Skills `/root/x0_sync_review` / ACCEPT; Report/campaign `/root/v34_parity` / ACCEPT; full range and corrections `/root/x0_final_review` / ACCEPT | `c84d48c` |
-| X1 | X0 | REVIEW | `c84d48c..200677b9` | `/root/x1_final_criteria_audit`, `/root/review_combined_destination_atomicity`, `/root/repair_session_owner_contract_refs` / visual, combined Sessions, report retention, navigation/load, performance, and clean-typecheck corrections ACCEPT; clean full gate pending | `200677b9` candidate checkpoint |
+| X1 | X0 | REVIEW | `c84d48c..c733f797` | `/root/x1_final_criteria_audit`, `/root/review_combined_destination_atomicity`, `/root/repair_session_owner_contract_refs` / visual, combined Sessions, report retention, navigation/load, performance, clean-typecheck, isolated dev-port, canonical Skills probe, and trusted-local hook corrections ACCEPT; clean full gate pending | `c733f797` candidate checkpoint |
 | X2 | X1 | BLOCKED | - | - | - |
 
 ## Review and integration ledger
@@ -1549,5 +1549,41 @@ exact generated directory was moved aside, the next cache HIT restored its
 timeout was weakened. The unavailable Bubblewrap/apply-patch incident remained
 local to the execution environment; bounded edits were independently reviewed.
 
-X1 remains REVIEW until a new clean worktree completes the entire frozen gate
-at `200677b9` (or its documentation-only descendant).
+The clean gate at documentation checkpoint `cfbfd40` passed the frozen install,
+static checks, 898 Web tests, 28/28 workspace tasks, 153 tools tests, build
+15/15, complete parity/client/retirement scanners, functional Playwright 97/97,
+demo 1/1, production 8/8 plus scale 2/2, and the four-test benchmark. The new
+benchmark medians were 1563.288 ms initial, 291.831 ms filter, 1489.281 ms sort,
+27,639,784 bytes heap delta, 220,694 maximum page bytes, desktop 33 items/624
+nodes, and mobile 17 items/275 nodes. These remain within the reviewed
+performance classifications and absolute gates.
+
+`test:web-production` then failed twice at the same root-development probe.
+Both failures showed Vite healthy on its default `127.0.0.1:5173` while the
+synthetic fixture correctly probed its reserved isolated `PORT`: Turbo passed
+the variable, but bare Vite did not consume it. Focused correction `c733f797`
+maps only Vite serve to a canonical 1..65535 `PORT`, numeric loopback and strict
+binding, while preserving explicit CLI override and build isolation. The same
+gate then exposed two further cutover omissions rather than stopping the run:
+its health probe still targeted the intentional `/skills` 307 instead of the
+canonical `/skills/global`, and the global SvelteKit hook did not enforce the
+existing trusted-local validator for external document reads. The accepted
+correction probes the canonical structural Skills workspace, replaces a retired
+Solid-only privacy marker with synthetic private-path leakage checks, and
+sequences external trusted-local validation before demo/acquisition/resolve.
+Framework-proven `event.isSubRequest` calls retain their SSR seam and all deep
+RPC/file/SSE trust and CSRF policies remain intact. Observability initialization
+is lazy, singleton and lifecycle-owned after early trust/demo rejection.
+
+Independent review ACCEPTed `c733f797` on both axes after 12 focused tests,
+Web/Svelte typecheck 0/0, exact production lifecycle/collision cleanup, and the
+dev/build-isolation gate with 78 healthy requests. Retained low risks are that
+the selected Bun adapter serves immutable public assets before Svelte hooks
+(application/data/API routes remain protected and no local state is exposed),
+and `vite preview` inherits serve-mode strict-port validation. Neither changes
+the production supervisor, frozen product behavior, or current SECURITY-01
+scope. Bubblewrap remained unavailable; bounded inspected edit fallbacks were
+reviewed. No real user state was accessed.
+
+X1 remains REVIEW until a fresh clean worktree completes the entire frozen gate
+at `c733f797` (or its documentation-only descendant).
