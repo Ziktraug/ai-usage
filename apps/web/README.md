@@ -60,3 +60,8 @@ Keep model tests near models and server adapter tests under `src/server`. Use
 isolated synthetic homes/stores/ports for E2E. Cover engine available/stopped,
 missing/incompatible store, mismatch, expired revision, demo import privacy,
 and direct-query bounds.
+
+The migration boundary gates are `bun run test:web-migration-parity`,
+`bun run test:web-retired-stack`, `bun run test:web-retired-stack-build`, and
+`bun run test:web-client-manifest`. They cover the accepted parity ledger,
+retired source/emitted stacks, and the emitted browser import closure.

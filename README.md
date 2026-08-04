@@ -322,8 +322,10 @@ direct revision-keyed SQLite query path:
 
 ```sh
 bun run test:web-production
+bun run test:web-dev-build-isolation
 bun run test:setup-loopback
 bun run test:e2e-production
+bun run --cwd apps/web benchmark:session-scroll
 ```
 
 The ordinary suite includes axe accessibility checks and four focused visual snapshots. The demo suite proves the synthetic runtime makes no business requests. The production suite exercises exact-revision oRPC procedures and the 5,000-session scroll proof.
