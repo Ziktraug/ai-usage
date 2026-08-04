@@ -7,6 +7,10 @@ import {
   type Request,
   type Response,
 } from '@playwright/test';
+import {
+  type BrowserRequestAbortExpectation,
+  createBrowserRequestAbortAllowance,
+} from './browser-request-abort-allowance';
 import { isExpectedSkillsSaveFailureResponse, RPC_PATH_PREFIX } from './rpc-test-transport';
 
 const CRITICAL_RESOURCE_TYPES = new Set(['document', 'fetch', 'xhr']);
@@ -14,7 +18,7 @@ const SOURCE_CONTROL_EVENTS_PATH = '/api/source-control';
 const SOURCE_CONTROL_COMMAND_PATH = '/api/source-control/command';
 const INTENTIONAL_EVENT_SOURCE_ABORT = 'net::ERR_ABORTED';
 const REPORT_REQUEST_OWNER_HEADER = 'x-ai-usage-request-owner';
-const INTENTIONAL_REPORT_REQUEST_OWNERS = new Set(['focused-report', 'session-query']);
+const INTENTIONAL_REPORT_REQUEST_OWNERS = new Set(['focused-report', 'session-query', 'svelte-report-root']);
 const ROOT_ROUTE_MATCH_WARNING = 'Warning: Error in route match: __root__';
 const EXPECTED_SHELL_ERROR_HEADER = 'x-ai-usage-expected-error';
 const EXPECTED_SHELL_ERROR_VALUES = new Set(['not-found-fixture', 'shell-route']);
@@ -52,6 +56,10 @@ interface PageListeners {
   response: (response: Response) => void;
 }
 
+export interface BrowserFailureGate {
+  allowRequestAbortOnce: (expectation: BrowserRequestAbortExpectation) => () => void;
+}
+
 export const reportViewsFor = (page: Page): Locator => page.getByRole('navigation', { name: 'Report views' });
 
 export const waitForHydratedReport = async (page: Page): Promise<void> => {
@@ -80,10 +88,11 @@ export const openHydratedSkills = async (page: Page, url: string): Promise<Await
   return response;
 };
 
-export const test = base.extend<{ browserFailureGate: undefined }>({
+export const test = base.extend<{ browserFailureGate: BrowserFailureGate }>({
   browserFailureGate: [
     async ({ context }, use) => {
       const failures: string[] = [];
+      const requestAbortAllowance = createBrowserRequestAbortAllowance();
       const listenersByPage = new Map<Page, PageListeners>();
 
       const attach = (page: Page): void => {
@@ -133,7 +142,12 @@ export const test = base.extend<{ browserFailureGate: undefined }>({
             const errorText = request.failure()?.errorText ?? 'unknown transport failure';
             if (
               isIntentionalSourceControlCancellation(request, errorText) ||
-              isIntentionalReportRequestCancellation(request, errorText)
+              isIntentionalReportRequestCancellation(request, errorText) ||
+              requestAbortAllowance.consume({
+                errorText,
+                pathname: requestPath(request),
+                resourceType: request.resourceType(),
+              })
             ) {
               return;
             }
@@ -174,7 +188,7 @@ export const test = base.extend<{ browserFailureGate: undefined }>({
       }
       context.on('page', attach);
 
-      await use(undefined);
+      await use({ allowRequestAbortOnce: requestAbortAllowance.allowOnce });
 
       context.off('page', attach);
       for (const [page, listeners] of listenersByPage) {

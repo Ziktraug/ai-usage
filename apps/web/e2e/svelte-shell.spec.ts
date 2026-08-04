@@ -153,7 +153,10 @@ test('resolves stored and system theme before paint and toggles the named prefer
   expect(transitionDuration).toBeLessThanOrEqual(0.001);
 });
 
-test('blocks dirty navigation through Keep, Discard, reload, focus, and cleanup', async ({ page }) => {
+test('blocks dirty navigation through Keep, Discard, reload, focus, and cleanup', async ({
+  browserFailureGate,
+  page,
+}) => {
   await page.setViewportSize({ height: 844, width: 390 });
   await page.goto('/skills/global/alpha-skill');
   await expect(page.locator('[data-skills-workspace]')).toHaveAttribute('data-skills-hydrated', 'true');
@@ -206,11 +209,19 @@ test('blocks dirty navigation through Keep, Discard, reload, focus, and cleanup'
   await expect(page.locator('[data-skills-workspace]')).toHaveAttribute('data-skills-hydrated', 'true');
   const remountedEditor = page.getByLabel('alpha-skill SKILL.md');
   await remountedEditor.fill('Second synthetic draft');
-  await page.getByRole('link', { name: 'Sync' }).click();
-  await expect(page.getByRole('alertdialog', { name: 'Discard unsaved changes?' })).toHaveCount(1);
-  await expect(page.getByRole('button', { name: 'Keep editing' })).toBeFocused();
-  await page.getByRole('button', { name: 'Keep editing' }).click();
-  await expect(remountedEditor).toBeFocused();
+  const releaseSyncDataAbort = browserFailureGate.allowRequestAbortOnce({
+    pathname: '/sync/__data.json',
+    resourceType: 'fetch',
+  });
+  try {
+    await page.getByRole('link', { name: 'Sync' }).click();
+    await expect(page.getByRole('alertdialog', { name: 'Discard unsaved changes?' })).toHaveCount(1);
+    await expect(page.getByRole('button', { name: 'Keep editing' })).toBeFocused();
+    await page.getByRole('button', { name: 'Keep editing' }).click();
+    await expect(remountedEditor).toBeFocused();
+  } finally {
+    releaseSyncDataAbort();
+  }
 });
 
 test('restores Svelte history and scroll without feedback loops', async ({ page }) => {

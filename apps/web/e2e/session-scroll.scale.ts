@@ -1,14 +1,10 @@
 import { createHash } from 'node:crypto';
-import {
-  collectionSourceDefinitions,
-  parseSourceControlCommandResponse,
-  type SourceControlView,
-} from '@ai-usage/report-core/source-control';
 import type { APIRequestContext, Locator, Page, Response, TestInfo } from '@playwright/test';
 import { expect, test } from './browser-test';
 import { rpcStringFieldValues } from './rpc-test-transport';
 import { afterAnimationFrame, type SessionSurfaceMode, sessionSurface } from './session-scroll-driver';
 import { SESSION_SCROLL_EXPECTED_CAMPAIGN_COUNT } from './session-scroll-fixture';
+import { freezeSessionScrollCollectionSources } from './session-scroll-source-control';
 
 const SESSION_ROUTE = '/?origin=%5B%5D&range=%7B%22mode%22%3A%22all%22%7D&tab=sessions';
 const SESSION_PAGE_RPC_PATH = '/rpc/session/page';
@@ -22,7 +18,6 @@ const MAXIMUM_SESSION_RESPONSE_BYTES = 2 * 1024 * 1024;
 const MAXIMUM_SCROLL_ITERATIONS = 10_000;
 const MAXIMUM_STALLED_SCROLL_MS = 20_000;
 const DESKTOP_SCROLL_STEP_RATIO = 0.75;
-const SOURCE_CONTROL_COMMAND_PATH = '/api/source-control/command';
 
 interface CapturedSessionPage {
   bytes: number;
@@ -107,68 +102,6 @@ const captureSessionPages = (page: Page): { finish: () => Promise<CapturedSessio
       );
     },
   };
-};
-
-const disableCollectionSource = async (
-  request: APIRequestContext,
-  requestOrigin: string,
-  sourceId: (typeof collectionSourceDefinitions)[number]['id'],
-): Promise<SourceControlView> => {
-  const response = await request.post(SOURCE_CONTROL_COMMAND_PATH, {
-    data: { command: 'set-enabled', enabled: false, sourceId },
-    headers: { origin: requestOrigin },
-  });
-  const result = parseSourceControlCommandResponse(await response.json());
-  if (!(response.ok() && result.ok)) {
-    throw new Error(`Could not disable the ${sourceId} collection source`);
-  }
-  return result.snapshot;
-};
-
-const freezeCollectionSources = async (request: APIRequestContext, requestOrigin: string): Promise<string> => {
-  for (const { id } of collectionSourceDefinitions) {
-    await disableCollectionSource(request, requestOrigin, id);
-  }
-
-  const probeSource = collectionSourceDefinitions[0];
-  if (!probeSource) {
-    throw new Error('The production fixture must declare at least one collection source');
-  }
-  await expect
-    .poll(
-      async () => {
-        const snapshot = await disableCollectionSource(request, requestOrigin, probeSource.id);
-        const { publication } = snapshot;
-        return {
-          allSourcesDormant:
-            snapshot.sources.length === collectionSourceDefinitions.length &&
-            snapshot.sources.every(({ lifecycle, policy }) => lifecycle === 'dormant' && policy === 'disabled'),
-          publicationSettled:
-            !(publication.dirty || publication.pendingDemand || publication.queued || publication.running) &&
-            publication.publishedGeneration >= publication.dirtyGeneration &&
-            publication.acknowledgedRequestGeneration >= publication.requestedGeneration,
-          queueDepth: snapshot.queueDepth,
-          runningCount: snapshot.runningCount,
-        };
-      },
-      {
-        message: 'The scale fixture collection sources must become fully dormant before traversal',
-        timeout: 60_000,
-      },
-    )
-    .toEqual({
-      allSourcesDormant: true,
-      publicationSettled: true,
-      queueDepth: 0,
-      runningCount: 0,
-    });
-
-  const settledSnapshot = await disableCollectionSource(request, requestOrigin, probeSource.id);
-  const revision = settledSnapshot.publication.revision;
-  if (!revision) {
-    throw new Error('The settled scale fixture must expose its publication revision');
-  }
-  return revision;
 };
 
 const readSurfaceSnapshot = (surface: Locator): Promise<SessionSurfaceSnapshot> =>
@@ -302,7 +235,7 @@ const inspectAllSessions = async (
   const report = page.locator('main[data-hydrated="true"]');
   await expect(report).toBeVisible();
   await expect(page.getByText('5,000 / 5,000 sessions', { exact: true })).toBeVisible();
-  const frozenReportRevision = await freezeCollectionSources(request, new URL(page.url()).origin);
+  const frozenReportRevision = await freezeSessionScrollCollectionSources(request, new URL(page.url()).origin);
 
   // Close the previous document before strict response capture so its
   // navigation-cancelled requests cannot enter the new report's wire proof.

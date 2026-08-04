@@ -5,6 +5,7 @@ import {
   collectUncoveredTypeScriptFiles,
   filterExistingRepositoryFiles,
   findUncoveredTypeScriptFiles,
+  needsTransitiveProjectDiscovery,
   selectSupplementalTypeScriptFiles,
   TYPECHECK_PROJECTS,
 } from './check-typescript-coverage';
@@ -52,6 +53,16 @@ describe('TypeScript project coverage guard', () => {
         'tools/check-web-migration-parity.ts',
       ]),
     ).toEqual(['apps/web/migration-parity/schema.ts', 'apps/web/migration-parity/shards/p1.parity.ts']);
+  });
+
+  test('falls back to transitive project discovery only for unresolved repository files', () => {
+    const projectFiles = new Set(['apps/web/src/root.ts']);
+
+    expect(needsTransitiveProjectDiscovery(['apps/web/src/root.ts'], projectFiles)).toBe(false);
+    expect(needsTransitiveProjectDiscovery(['apps/web/src/root.ts', 'apps/web/src/imported.ts'], projectFiles)).toBe(
+      true,
+    );
+    expect(needsTransitiveProjectDiscovery(undefined, projectFiles)).toBe(true);
   });
 
   test('uses only the canonical Web TypeScript projects', () => {

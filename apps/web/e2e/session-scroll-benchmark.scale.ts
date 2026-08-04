@@ -6,6 +6,7 @@ import {
   SESSION_SCROLL_EXPECTED_COUNT,
   SESSION_SCROLL_FILTER_QUERY,
 } from './session-scroll-fixture';
+import { freezeSessionScrollCollectionSources } from './session-scroll-source-control';
 
 interface SessionScrollSample {
   desktopMaximumRenderedItems: number;
@@ -24,7 +25,20 @@ const SESSION_QUERY_FINGERPRINT_PATTERN = /^session-query-v1:/;
 const SESSION_PAGE_RPC_PATH = '/rpc/session/page';
 const samples: SessionScrollSample[] = [];
 
+const maximumValidCampaignIndex = (indices: readonly number[]): number => {
+  for (const index of indices) {
+    if (!(Number.isSafeInteger(index) && index >= 0 && index <= LAST_CAMPAIGN_INDEX)) {
+      throw new Error('Benchmark observed an invalid campaign index');
+    }
+  }
+  return Math.max(...indices, -1);
+};
+
 test.describe.configure({ mode: 'serial' });
+
+test.beforeAll(async ({ request }) => {
+  await freezeSessionScrollCollectionSources(request, 'http://127.0.0.1:4177');
+});
 
 const readHeapBytes = async (client: CDPSession): Promise<number | null> => {
   try {
@@ -42,6 +56,7 @@ const waitForAllRows = async (
 ): Promise<{ maximumItems: number; maximumNodes: number }> => {
   const surface = sessionSurface(page, surfaceMode);
   const mobileSentinel = page.locator('[data-session-paging-sentinel="mobile"]');
+  let maximumIndex = -1;
   let maximumItems = 0;
   let maximumNodes = 0;
 
@@ -55,19 +70,21 @@ const waitForAllRows = async (
           const renderedItems = Array.from(element.querySelectorAll<HTMLElement>('[data-index]'));
           element.scrollTop = element.scrollHeight;
           return {
-            maximumIndex: Math.max(...renderedItems.map((item) => Number(item.dataset.index)), -1),
+            indices: renderedItems.map((item) => Number(item.dataset.index)),
             renderedItems: renderedItems.length,
             sessionDomNodes: element.querySelectorAll('*').length,
           };
         });
+        maximumIndex = Math.max(maximumIndex, maximumValidCampaignIndex(snapshot.indices));
         maximumItems = Math.max(maximumItems, snapshot.renderedItems);
         maximumNodes = Math.max(maximumNodes, snapshot.sessionDomNodes);
-        return snapshot.maximumIndex;
+        return maximumIndex;
       },
       { intervals: [25, 50, 100], timeout: 120_000 },
     )
     .toBe(LAST_CAMPAIGN_INDEX);
 
+  expect(maximumIndex).toBe(LAST_CAMPAIGN_INDEX);
   return { maximumItems, maximumNodes };
 };
 
