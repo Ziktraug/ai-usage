@@ -13,7 +13,6 @@ const SVELTE_RUNTIME_PREFIXES = [
 const FORBIDDEN_PACKAGE_PREFIXES = [
   '$app/server',
   '$lib/server',
-  '@ai-usage/design-system/report',
   '@ai-usage/design-system/solid',
   '@ai-usage/local-machine',
   '@ai-usage/report-data',
@@ -238,7 +237,10 @@ const repositoryRoot = resolve(import.meta.dir, '../../../../../../../');
 const appLibRoot = join(repositoryRoot, 'apps/web/src/lib');
 const featureDirectory = import.meta.dir;
 const rangeDirectory = resolve(featureDirectory, '../range');
-const entryPaths = [join(featureDirectory, 'overview-page.svelte')];
+const entryPaths = [
+  join(featureDirectory, 'overview-page.svelte'),
+  join(rangeDirectory, 'report-range-control.svelte'),
+];
 const realOptions: ClosureOptions = {
   access: realFileAccess,
   appLibRoot,

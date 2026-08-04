@@ -5,6 +5,7 @@
     FocusedTimelineSeries,
   } from '@ai-usage/report-core/focused-report-query';
   import type { ProviderStatusView } from '../../../../provider-status-model';
+  import ReportRangeControl from '../range/report-range-control.svelte';
   import OverviewPage from './overview-page.svelte';
   import type { MachineSeriesPresenter } from './timeline-model';
 
@@ -27,6 +28,19 @@
   } = $props();
 </script>
 
+<ReportRangeControl
+  {activeSeriesKeys}
+  {machineFreshnessStatus}
+  {...(presentCampaignSeries ? { presentCampaignSeries } : {})}
+  {...(presentMachineSeries ? { presentMachineSeries } : {})}
+  dateDomain={result.dateDomain}
+  dimension={result.timeline?.dimension ?? 'harness'}
+  generatedAt={result.metadata.generatedAt}
+  granularity="day"
+  range={{ mode: '30d' }}
+  timeline={result.timeline}
+  value="cost"
+/>
 <OverviewPage
   {activeSeriesKeys}
   {machineFreshnessStatus}

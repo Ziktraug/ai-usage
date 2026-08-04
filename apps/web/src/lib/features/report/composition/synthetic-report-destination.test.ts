@@ -193,7 +193,13 @@ describe('synthetic report campaign presentation', () => {
     expect(source).toContain('{presentMachineLabel}');
     expect(source).toContain('{presentMachineSeries}');
     expect(source).toContain("runtimeMode === 'e2e' ? syntheticMachineFreshness : support.machineFreshness");
-    expect(source).toContain("runtimeMode === 'demo' ? 'Synthetic data' : machineFreshnessStatus");
+    expect(source).toContain(`  const displayedFreshnessStatus = $derived.by(() => {
+    if (runtimeMode === 'demo') {
+      return 'Synthetic data';
+    }
+    return responseFixture ? machineFreshnessStatusLabel(supportMachineSnapshot) : machineFreshnessStatus;
+  });`);
+    expect(source).toContain('freshnessStatus={displayedFreshnessStatus}');
     expect(source).toContain("runtimeMode === 'e2e' ? machinePresentations.get(value)?.label : undefined");
     expect(source).not.toContain('setCampaignLabelOverride');
     expect(source).not.toContain('createCampaignLabelOwner');

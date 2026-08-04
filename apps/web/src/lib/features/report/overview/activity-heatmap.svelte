@@ -157,7 +157,7 @@
         </div>
       </div>
     </div>
-    <div class={heatDayControl}>
+    <div aria-live="polite" class={heatDayControl} data-heatmap-readout role="status">
       <span class={heatDayDetail}
         >{focusedDay ? describeHeatDay(focusedDay) : 'Choose a day in the activity range.'}</span
       >
