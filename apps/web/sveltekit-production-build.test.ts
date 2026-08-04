@@ -303,3 +303,28 @@ describe('production web build command', () => {
     await expect(Bun.file(productionBuildLockPath(webDirectory)).exists()).resolves.toBe(false);
   });
 });
+
+describe('production web runtime bootstrap', () => {
+  test('rebuilds a trusted HTTP loopback origin after purging inherited adapter configuration', async () => {
+    const bootstrapPath = path.join(import.meta.dirname, 'start.mjs');
+    const source = await readFile(bootstrapPath, 'utf8');
+    const purgeIndex = source.indexOf('delete process.env[key]');
+    const trustedOriginIndex = source.indexOf('process.env.ORIGIN =');
+
+    expect(purgeIndex).toBeGreaterThanOrEqual(0);
+    expect(trustedOriginIndex).toBeGreaterThan(purgeIndex);
+
+    const invalidPortProcess = Bun.spawn([process.execPath, '--no-env-file', bootstrapPath], {
+      cwd: import.meta.dirname,
+      env: {
+        PATH: process.env.PATH ?? '',
+        PORT: '65536',
+      },
+      stderr: 'pipe',
+      stdout: 'ignore',
+    });
+    const stderr = await new Response(invalidPortProcess.stderr).text();
+    expect(await invalidPortProcess.exited).not.toBe(0);
+    expect(stderr).toContain('PORT must be a canonical integer between 1 and 65535.');
+  });
+});
