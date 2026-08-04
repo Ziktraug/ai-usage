@@ -1676,7 +1676,7 @@ the SHA unchanged through the complete gate and both final reviewer verdicts.
 | `bun run typecheck` | PASS; 28/28, genuine Web cache MISS, Svelte 0 errors/0 warnings |
 | `bun test apps/web/src apps/web/*.test.ts` | PASS; 904 tests, 4,429 assertions, 177 files |
 | `bun run test` | PASS; 28/28 package tasks and 155 tools tests |
-| `bun run build` | PASS twice; 15/15 and byte-stable selected-adapter output digest `9fc863921cf52c15997074dc9b63cfeb662e0383b00a229ee84b3e4a2ad7ea86` |
+| `bun run build` | PASS twice; 15/15 and byte-stable 146-file `adapter-bun` content-hash-chain digest `9fc863921cf52c15997074dc9b63cfeb662e0383b00a229ee84b3e4a2ad7ea86` |
 | migration parity / client manifest / retired stack | PASS; complete 35 features, 30 operations, 72 former TSX records, 15 design rows, 353 current exports, 11 render suites, 112 titles and 18 URLs |
 | `bun run test:e2e` | PASS; 97/97 on the one permitted unchanged classification rerun |
 | `bun run test:e2e-demo` | PASS; 1/1 |
@@ -1706,3 +1706,9 @@ Five old Vite fixture servers from earlier migration worktrees were found on
 reserved ports 42642-42646 during the final audit. Their exact PIDs and working
 directories were verified as repository-owned, terminated gracefully, and all
 five listeners disappeared. This cleanup did not touch unrelated processes.
+
+The X2 gate digest above hashes the sorted per-file content hashes for the 146
+files in the selected `adapter-bun` directory. It is intentionally distinct
+from the separately retained 292-entry aggregate `path:size` manifest, which
+also includes SvelteKit intermediate client/server output. Recomputing the same
+content-hash chain after all process gates still returned `9fc8639…`.
