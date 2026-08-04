@@ -8,7 +8,11 @@
     projectFocusedOverview,
     projectFocusedSupport,
   } from '@ai-usage/report-core/focused-report-query';
-  import { enrichSessionPresentationRow, type SessionPresentationRow } from '@ai-usage/report-core/session-query';
+  import {
+    enrichSessionPresentationRow,
+    type SessionPresentationRow,
+    sessionQueryFingerprint,
+  } from '@ai-usage/report-core/session-query';
   import type { QueryClient } from '@tanstack/svelte-query';
   import { onDestroy, untrack } from 'svelte';
   import { browser } from '$app/environment';
@@ -57,6 +61,8 @@
   import ReportRangeControl from '../range/report-range-control.svelte';
   import { activeTimelineSeriesKeys } from './active-timeline-series';
   import { reportDestinationForSearch } from './report-search';
+
+  import SessionIdentityPublisher from './session-identity-publisher.svelte';
 
   type DashboardBreakdownModule = typeof import('../breakdown/dashboard-breakdown.svelte');
   type SessionTableModule = typeof import('../../sessions/table/session-table.svelte');
@@ -168,6 +174,7 @@
   const destination = $derived(
     reportDestinationForSearch(renderedSearch, reportSupport.generatedAt, { dimension, granularity }),
   );
+  const syntheticSessionQuery = $derived({ ...destination.sessions, cursor: null, revision });
   const focusedQuery = $derived({
     filters: destination.sessions.filters,
     range: destination.sessions.range,
@@ -428,6 +435,10 @@
       />
     {:else if primary === 'sessions' && sessionTableModule}
       {@const SessionTable = sessionTableModule.default}
+      <SessionIdentityPublisher
+        requestFingerprint={sessionQueryFingerprint(syntheticSessionQuery)}
+        revision={syntheticSessionQuery.revision}
+      />
       <SessionTable
         {columnVisibility}
         onClearFilters={navigation.clearAllFilters}

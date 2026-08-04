@@ -4,6 +4,7 @@
   import type { RuntimeMode } from '../../../runtime-mode';
   import AppNavigation from './app-navigation.svelte';
   import { createDirtyGuardRegistry, provideDirtyGuardRegistry } from './dirty-navigation-context';
+  import { provideSourceControlSummary } from './source-control-summary-context';
 
   let {
     children,
@@ -11,6 +12,7 @@
     sourceControlSummary,
   }: { children: Snippet; runtimeMode: RuntimeMode; sourceControlSummary?: Snippet } = $props();
   provideDirtyGuardRegistry(createDirtyGuardRegistry());
+  provideSourceControlSummary(() => sourceControlSummary);
 
   const content = css({
     minW: 0,
@@ -20,7 +22,7 @@
   });
 </script>
 
-<AppNavigation {runtimeMode} {...(sourceControlSummary ? { sourceControlSummary } : {})} />
+<AppNavigation {runtimeMode} />
 <div class={content} data-app-shell-content>
   {@render children()}
 </div>

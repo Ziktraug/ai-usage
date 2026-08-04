@@ -3,6 +3,7 @@
   import type { SessionOrigin } from '@ai-usage/report-core/session-query';
   import type { Snippet } from 'svelte';
   import type { DashboardSearch } from '../../../../dashboard-search';
+  import { useSourceControlSummary } from '../../shell/source-control-summary-context';
   import type { BreakdownNavigation } from './navigation';
   import OriginFilter from './origin-filter.svelte';
   import { button, controls, field, toolbar } from './styles';
@@ -18,7 +19,7 @@
     navigation,
     presentMachineLabel,
     search,
-    sourceControlSummary,
+    sourceControlSummary = useSourceControlSummary(),
   }: {
     freshnessStatus?: string | null;
     harnessOptions: string[];

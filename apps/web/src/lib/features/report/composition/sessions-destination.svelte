@@ -29,6 +29,7 @@
   import type { FocusedReportDescriptor } from './report-destination';
   import type { SessionQueryScopeSnapshot } from './report-search';
   import SessionDestinationRefresh from './session-destination-refresh.svelte';
+  import SessionIdentityPublisher from './session-identity-publisher.svelte';
   import SessionsDestinationState from './sessions-destination-state.svelte';
 
   let {
@@ -97,6 +98,10 @@
     {@const query = _owned.snapshot?.query}
     {@const resetKey = query ? sessionQueryFingerprint(query) : JSON.stringify(destinationScope)}
     <SessionDestinationRefresh {destinationScope} owner={_owned.lifecycle} />
+    <SessionIdentityPublisher
+      requestFingerprint={query ? sessionQueryFingerprint(query) : undefined}
+      revision={query?.revision}
+    />
     <SessionsDestinationState
       {onCampaignControlsChange}
       {onRowsChange}

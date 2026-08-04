@@ -1,6 +1,6 @@
 <script lang="ts">
   import { css, cx } from '@ai-usage/design-system/css';
-  import { onMount, type Snippet, tick } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { afterNavigate, beforeNavigate, goto, replaceState } from '$app/navigation';
   import { page } from '$app/state';
   import type { RuntimeMode } from '../../../runtime-mode';
@@ -36,7 +36,7 @@
   import NavigationLink from './navigation-link.svelte';
   import ThemeToggle from './theme-toggle.svelte';
 
-  let { runtimeMode, sourceControlSummary }: { runtimeMode: RuntimeMode; sourceControlSummary?: Snippet } = $props();
+  let { runtimeMode }: { runtimeMode: RuntimeMode } = $props();
 
   const desktopRail = css({
     position: 'fixed',
@@ -396,9 +396,6 @@
           />
         {/each}
       </nav>
-      {#if sourceControlSummary}
-        {@render sourceControlSummary()}
-      {/if}
     {/if}
     <div class={railFooter}><span class={navigationGroupLabel}>Theme</span><ThemeToggle /></div>
   </aside>
@@ -437,9 +434,6 @@
           label={destination.label}
         />
       {/each}
-      {#if sourceControlSummary}
-        {@render sourceControlSummary()}
-      {/if}
       <ThemeToggle />
     </nav>
   {/if}
