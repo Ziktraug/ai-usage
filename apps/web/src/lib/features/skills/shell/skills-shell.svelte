@@ -29,6 +29,7 @@
   import { createSkillsClient } from '../../../rpc/skills-client';
   import type { SkillsManagementPlanController } from './management-plan-controller';
   import { createSkillsShellViewModel, normalizeSkillsQuerySnapshot } from './model';
+  import { createSkillsFallbackNavigationRequest } from './skills-fallback-navigation';
   import SkillsWorkspace from './skills-workspace.svelte';
   import type { SkillsShellSlotContext, SkillsSnapshotUpdatePort } from './slot-context';
   import { createSkillsSnapshotController, type SkillsDraftGuardPort } from './snapshot-controller';
@@ -38,6 +39,7 @@
     healthSlot,
     hydrationState,
     matrixSlot,
+    navigationState,
     pathname,
     runtimeMode,
   }: {
@@ -45,6 +47,7 @@
     healthSlot?: Snippet<[SkillsShellSlotContext, SkillsManagementPlanController]>;
     hydrationState: WebQueryHydrationState;
     matrixSlot?: Snippet<[SkillsShellSlotContext, SkillsManagementPlanController]>;
+    navigationState: App.PageState;
     pathname: string;
     runtimeMode: RuntimeMode;
   } = $props();
@@ -247,9 +250,8 @@
     if (!(mounted && view?.fallbackHref)) {
       return;
     }
-    const fallbackUrl = new URL(window.location.href);
-    fallbackUrl.pathname = view.fallbackHref;
-    replaceState(fallbackUrl, {});
+    const request = createSkillsFallbackNavigationRequest(window.location.href, navigationState);
+    replaceState(request.intent.url, request.state);
   });
 </script>
 

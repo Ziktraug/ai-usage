@@ -5,13 +5,15 @@
 
   let {
     hydrationState,
+    navigationState = { aiUsageNavigationKey: 'skills-hydration-fixture' },
     pathname = '/skills/global/alpha-skill',
   }: {
     hydrationState: WebQueryHydrationState;
+    navigationState?: App.PageState;
     pathname?: string;
   } = $props();
 </script>
 
 <WebQueryProvider {hydrationState}>
-  <SkillsShell {hydrationState} {pathname} runtimeMode="e2e" />
+  <SkillsShell {hydrationState} {navigationState} {pathname} runtimeMode="e2e" />
 </WebQueryProvider>
