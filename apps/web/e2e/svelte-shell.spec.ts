@@ -104,6 +104,7 @@ test('server-renders and reloads every Svelte shell route with accessible naviga
   expect(await page.evaluate(() => history.length)).toBe(historyLength + 1);
   await page.goBack();
   await expect(page).toHaveURL('/');
+  await waitForHydratedReport(page);
 
   await page.setViewportSize({ height: 844, width: 390 });
   await expect(page.locator('[data-app-navigation="mobile"]')).toBeVisible();
