@@ -93,14 +93,25 @@ test('keeps the frozen Overview content and secondary-status order', async () =>
 
 test('keeps report range before filters and Overview content in both destination compositions', async () => {
   const destinationFiles = [
-    '../composition/live-report-destination.svelte',
-    '../composition/synthetic-report-destination.svelte',
-  ];
-  for (const relativePath of destinationFiles) {
+    {
+      filterMarker: '{@render activeFilterSummary(_owner.snapshot.pending)}',
+      relativePath: '../composition/live-report-destination.svelte',
+    },
+    {
+      filterMarker: '{@render activeFilterSummary(pending)}',
+      relativePath: '../composition/synthetic-report-destination.svelte',
+    },
+  ] as const;
+  for (const { filterMarker, relativePath } of destinationFiles) {
     const source = await Bun.file(new URL(relativePath, import.meta.url)).text();
-    const positions = ['<ReportRangeControl', '<ActiveFilters', '<OverviewPage'].map((surface) =>
-      source.indexOf(surface),
-    );
+    const filterSnippetStart = source.indexOf('{#snippet activeFilterSummary');
+    const filterSnippetEnd = source.indexOf('{/snippet}', filterSnippetStart);
+    const activeFiltersComponent = source.indexOf('<ActiveFilters', filterSnippetStart);
+    expect(filterSnippetStart, relativePath).toBeGreaterThanOrEqual(0);
+    expect(filterSnippetEnd, relativePath).toBeGreaterThan(filterSnippetStart);
+    expect(activeFiltersComponent, relativePath).toBeGreaterThan(filterSnippetStart);
+    expect(activeFiltersComponent, relativePath).toBeLessThan(filterSnippetEnd);
+    const positions = ['<ReportRangeControl', filterMarker, '<OverviewPage'].map((surface) => source.indexOf(surface));
     expect(
       positions.every((position) => position >= 0),
       relativePath,

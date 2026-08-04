@@ -2,14 +2,15 @@ import { error } from '@sveltejs/kit';
 import { loadReportPageData, ReportBootstrapUnavailableError } from '$lib/features/report/core/report-bootstrap';
 import type { PageLoad } from './$types';
 
-export const load: PageLoad = async ({ fetch, parent, url }) => {
+export const load: PageLoad = async ({ fetch, parent, untrack, url }) => {
+  const rpcBaseUrl = untrack(() => new URL(url.origin));
   const parentData = await parent();
   try {
     return await loadReportPageData({
       fetch: (request) => fetch(request),
       mode: parentData.runtimeMode,
       requestOwner: 'report-root-ssr',
-      url,
+      url: rpcBaseUrl,
     });
   } catch (cause) {
     if (cause instanceof ReportBootstrapUnavailableError) {

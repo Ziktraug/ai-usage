@@ -115,7 +115,7 @@
   let sessionsDestinationModule = $state<SessionsDestinationModule>();
   let sessionsDestinationLoadFailed = $state(false);
   let sessionsDestinationLoad: Promise<void> | undefined;
-  let sessionQueryState = $state<SessionTableQueryState>();
+  let sessionQueryState = $state.raw<SessionTableQueryState>();
   const initialDescriptor = untrack(() => initialFocusedReportDescriptor(bootstrapResult));
   const sourceControl = useSourceControl();
   const descriptorSource = untrack(() =>

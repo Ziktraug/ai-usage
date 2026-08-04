@@ -12,6 +12,7 @@ const NON_EMPTY_ATTRIBUTE_PATTERN = /.+/;
 const SESSION_QUERY_FINGERPRINT_PATTERN = /^session-query-v1:[0-9a-f]{16}$/;
 const SESSION_NEIGHBOR_FINGERPRINT_PATTERN = /^session-neighbor-v1:[0-9a-f]{16}$/;
 const FOCUSED_OVERVIEW_FINGERPRINT_PREFIX = 'focused-overview-v1:';
+const PROJECT_COLUMN_PATTERN = /Project/;
 const SOURCES_URL_PATTERN = /\/sources$/;
 
 interface CapturedRpcResponse {
@@ -207,6 +208,42 @@ test('renders the report timeline on the initial production Overview', async ({ 
       type: 'production-overview-ssr-hydration',
     })}\n`,
   );
+});
+
+test('acquires one revision bootstrap per Sessions filter and sort without route-load duplicates', async ({ page }) => {
+  const browserBootstrapRequests: string[] = [];
+  const routeDataRequests: string[] = [];
+  page.on('request', (request) => {
+    const url = new URL(request.url());
+    if (url.pathname === REPORT_BOOTSTRAP_PATH) {
+      browserBootstrapRequests.push(`${url.pathname}${url.search}`);
+    } else if (url.pathname.endsWith('/__data.json')) {
+      routeDataRequests.push(`${url.pathname}${url.search}`);
+    }
+  });
+
+  await page.goto('/?tab=sessions');
+  await expect(page.locator('main[data-hydrated="true"]')).toBeVisible();
+  await expect(page.locator('[data-session-surface="desktop"]')).toBeVisible();
+  await expect(page.locator('[data-report-refresh-pending]')).toHaveCount(0);
+  browserBootstrapRequests.length = 0;
+  routeDataRequests.length = 0;
+
+  const search = page.getByRole('textbox', {
+    name: 'Filter sessions by title, project, model, provider, or harness',
+  });
+  await search.fill('codex');
+  await expect.poll(() => new URL(page.url()).searchParams.get('q')).toBe('codex');
+  await expect.poll(() => browserBootstrapRequests.length).toBe(1);
+  await expect(page.locator('[data-report-refresh-pending]')).toHaveCount(0);
+  expect(browserBootstrapRequests).toHaveLength(1);
+
+  await page.getByRole('columnheader', { name: PROJECT_COLUMN_PATTERN }).getByRole('button').click();
+  await expect.poll(() => new URL(page.url()).searchParams.get('sort')).not.toBeNull();
+  await expect.poll(() => browserBootstrapRequests.length).toBe(2);
+  await expect(page.locator('[data-report-refresh-pending]')).toHaveCount(0);
+  expect(browserBootstrapRequests).toHaveLength(2);
+  expect(routeDataRequests).toEqual([]);
 });
 
 test('provides one accessible responsive source-control surface', async ({ page }) => {
