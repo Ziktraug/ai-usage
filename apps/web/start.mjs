@@ -39,10 +39,8 @@ if (!pinnedBunVersion || Bun.version !== pinnedBunVersion) {
   );
 }
 
-for (const key of Object.keys(process.env)) {
-  if (key.startsWith('NITRO_') || untrustedAdapterEnvironmentKeys.has(key)) {
-    delete process.env[key];
-  }
+for (const key of untrustedAdapterEnvironmentKeys) {
+  delete process.env[key];
 }
 process.env.BODY_SIZE_LIMIT = String(MAX_PORTABLE_USAGE_BYTES);
 process.env.HOST = LOOPBACK_HOST;

@@ -373,8 +373,6 @@ describe('production environment', () => {
     const environment = createProductionEnvironment(rootDirectory, {
       AI_USAGE_HOME: homeDirectory,
       HOST: '0.0.0.0',
-      NITRO_HOST: 'localhost',
-      NITRO_PORT: '9999',
       ORIGIN: 'https://attacker.example',
       SOCKET_PATH: '/tmp/attacker.sock',
       PATH: '/fixture/bin',
@@ -399,8 +397,6 @@ describe('production environment', () => {
     expect(environment.AI_USAGE_ENGINE_INSTANCE_ID).toMatch(uuidV4Pattern);
     expect(environment.AI_USAGE_TEMP_ROOT).toBe('/var/tmp/ai-usage-fixture');
     expect(environment.AI_USAGE_LOG_DIR).toBe(path.join(rootDirectory, 'logs'));
-    expect(environment.NITRO_HOST).toBeUndefined();
-    expect(environment.NITRO_PORT).toBeUndefined();
     expect(environment.ORIGIN).toBeUndefined();
     expect(environment.SOCKET_PATH).toBeUndefined();
   });

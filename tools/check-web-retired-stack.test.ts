@@ -54,6 +54,7 @@ describe('Web retired-stack scanner', () => {
     ['_serverFn', 'const route = "/_serverFn/report";', '_serverFn route'],
     ['warmup', 'const warmup = async () => undefined;', 'server-function warmup'],
     ['Nitro runner', 'const runner = "nitro-loopback.browser.ts";', 'Nitro runner workaround'],
+    ['Nitro environment', 'const legacyHost = process.env.NITRO_HOST;', 'Nitro environment marker'],
   ])('rejects the retired %s marker', (_scenario, source, rule) => {
     expect(scanWebProductionSource('apps/web/src/server/example.server.ts', source)).toContainEqual(
       expect.objectContaining({ rule, surface: 'source-marker' }),

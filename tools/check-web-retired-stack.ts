@@ -85,6 +85,7 @@ const sourceMarkerRules = [
   { name: '_serverFn route', pattern: /_serverFn/gu },
   { name: 'server-function warmup', pattern: /\bwarmup\b/giu },
   { name: 'Nitro runner workaround', pattern: /nitro-loopback/giu },
+  { name: 'Nitro environment marker', pattern: /NITRO_/gu },
 ] as const;
 
 const emittedPackagePatterns = [

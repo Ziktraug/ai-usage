@@ -98,8 +98,7 @@ const untrustedAdapterEnvironmentKeys = new Set([
 const definedEnvironment = (environment: NodeJS.ProcessEnv): Record<string, string> =>
   Object.fromEntries(
     Object.entries(environment).filter(
-      (entry): entry is [string, string] =>
-        entry[1] !== undefined && !entry[0].startsWith('NITRO_') && !untrustedAdapterEnvironmentKeys.has(entry[0]),
+      (entry): entry is [string, string] => entry[1] !== undefined && !untrustedAdapterEnvironmentKeys.has(entry[0]),
     ),
   );
 
