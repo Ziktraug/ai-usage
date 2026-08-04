@@ -16,6 +16,7 @@
     "src/**/*.svelte",
     "src/**/*.ts",
     "panda.config.ts",
+    "production-clock.test.ts",
     "rpc-test-transport.test.ts",
     "sveltekit-*.ts",
     "vite-*.ts",
