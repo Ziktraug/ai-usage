@@ -172,9 +172,9 @@ titles across demo, production, scale, and benchmark configurations.
 
 The retained client/session/startup measurements use Svelte checkpoint
 `aa992c6c864be6e7087b414dbfd8e83eb548dd92`; final artifact, SSR, lifecycle and
-clean-gate closure use implementation checkpoint
-`c733f797fc441e72b835527641c4f609de82bfe9` through documentation descendant
-`a161860376a4bcd6a1d61443588a57e4e5e1255f`. All use Bun 1.3.13, the pinned
+clean-gate closure use implementation checkpoints
+`c733f797fc441e72b835527641c4f609de82bfe9` and deterministic-artifact correction
+`6d0f35f3a893c0cb349c8f14c9d7aab700c2e883`. All use Bun 1.3.13, the pinned
 repository/browser dependencies, clean worktrees, deterministic fixtures and
 isolated runtime roots.
 A delta is `(Svelte - Solid) / Solid * 100`; lower is better for time,
@@ -237,12 +237,12 @@ du -sb apps/web/.output-build/sveltekit/server
 | --- | ---: | ---: | --- |
 | Selected output | `.output-build/nitro` | `.output-build/sveltekit` | Adapter cutover |
 | File count | 118 | 292 | +147.458%; reviewed topology |
-| Total bytes | 4,931,722 | 7,998,992 | +62.195%; reviewed topology |
-| Public/client bytes | 1,200,533 | 1,178,660 | -1.822% |
-| Server bytes | 3,730,859 | 6,795,658 | +82.147%; reviewed topology |
-| Sorted `path:size` SHA-256 | `495de210cb7051c7415d5ac506f255f5e68c7fd74d0a6005d718d0d12f564a7c` | `b7bd2d9be988dc906e2674c274515cdfd1754ff2924ad9045b19c0adb696e439` | Identity |
+| Total bytes | 4,931,722 | 7,999,079 | +62.196%; reviewed topology |
+| Public/client bytes | 1,200,533 | 1,178,718 | -1.817% |
+| Server bytes | 3,730,859 | 6,795,687 | +82.148%; reviewed topology |
+| Sorted `path:size` SHA-256 | `495de210cb7051c7415d5ac506f255f5e68c7fd74d0a6005d718d0d12f564a7c` | `7ab9de1edcd79b2ce3017cd16ef75cf0ecf159177ba9e3e2ceb16c5e146034c1` | Reproduced twice at `6d0f35f` |
 
-The Svelte server contains 112 source maps totaling 4,375,388 bytes, or 64.4%
+The Svelte server contains 112 source maps totaling 4,375,416 bytes, or 64.4%
 of server bytes; 176 JavaScript files plus those maps explain most of the
 file-count increase. Client bytes are lower. The source, emitted-retired-stack,
 and client-manifest scanners are green, so this is server/debug chunk topology,
@@ -269,7 +269,7 @@ The rebuilt final artifact passed the eight production report tests and both
 
 Svelte request classes were one document, one EventSource, four fetches, one
 other request, 31 scripts, and two stylesheets. The extra requests are asset
-splitting, not data duplication; client bytes are 1.822% lower. Hydration is
+splitting, not data duplication; client bytes are 1.817% lower. Hydration is
 37.559 ms slower while HTML and server response measurements are lower. All
 exact SSR, dehydration, settlement, and browser-failure gates pass. Reviewers
 accepted the hydration/request deviations; no overall performance claim is
@@ -339,3 +339,12 @@ captured medians of 1563.288 ms initial, 291.831 ms filter, 1489.281 ms sort,
 27,639,784 bytes heap, 220,694 bytes maximum page, desktop 33/624 and mobile
 17/275. No client or Session implementation changed between that captured run
 and the final clean gate.
+
+The cold X2 audit found that SvelteKit default timestamp app version changed
+72 content-hashed manifest paths across same-SHA builds even though file counts
+and aggregate bytes were stable. Correction `6d0f35f` pins `kit.version.name`
+to the complete Git revision through an argument-array subprocess, preserving
+SvelteKit deployment-version semantics without shell interpolation. Two
+consecutive committed-checkpoint builds produced byte-identical sorted
+`path:size` manifests with the `7ab9de1e…` digest above. The earlier observed
+`b7bd2d9b…` digest remains an honest pre-correction sample, not final identity.

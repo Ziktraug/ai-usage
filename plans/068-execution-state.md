@@ -13,7 +13,7 @@ authority for feature, operation, design, source-file, and test-title coverage.
   `2183270ebfbb886fafa7e6268893122db9b364c0`
 - `BASE_SHA`: `2183270ebfbb886fafa7e6268893122db9b364c0`
 - Current integration checkpoint:
-  `a161860376a4bcd6a1d61443588a57e4e5e1255f` (X1 corrections,
+  `6d0f35f3a893c0cb349c8f14c9d7aab700c2e883` (X2 artifact correction,
   performance, clean-typecheck, isolated dev-port, canonical production probe,
   trusted-local hook corrections, and the complete clean-worktree gate green)
 - Last independently reviewed implementation checkpoint:
@@ -153,7 +153,7 @@ Statuses are `BLOCKED`, `READY`, `IMPLEMENTING`, `REVIEW`, `REWORK`,
 | P10 | P5 | INTEGRATED | `455b569`, evidence `dac69e0`; integrated `8e35926`, `3a43913`, evidence rewrite `e953bdc` | `/root/q2_spec_review` / ACCEPT | `e953bdc` |
 | X0 | P2, P8, P4, P9, P10, P6, P7 | INTEGRATED | `db66cc0` through `c84d48c` | Skills `/root/x0_sync_review` / ACCEPT; Report/campaign `/root/v34_parity` / ACCEPT; full range and corrections `/root/x0_final_review` / ACCEPT | `c84d48c` |
 | X1 | X0 | INTEGRATED | `c84d48c..c733f797`, evidence `a161860` | `/root/x1_final_criteria_audit`, `/root/review_combined_destination_atomicity`, `/root/repair_session_owner_contract_refs`, `/root/implement_combined_sessions_destination/docs_standards_axis` / visual, combined Sessions, report retention, navigation/load, performance, clean-typecheck, isolated dev-port, canonical Skills probe, trusted-local hook, documentation, and complete clean full gate ACCEPT | `a161860` |
-| X2 | X1 | READY | - | fresh-context reviewer pending | - |
+| X2 | X1 | REWORK | `6d0f35f` correction pending review | `/root/x2_parity_spec` / REWORK on timestamp-based artifact identity; `/root/x2_quality_security` / ACCEPT at `0d12d79`, delta review pending | `6d0f35f` candidate |
 
 ## Review and integration ledger
 
@@ -1630,3 +1630,35 @@ heap, 220,694 bytes maximum page, desktop 33/624 and mobile 17/275; no client or
 Session implementation changed afterward. This execution-environment evidence
 loss is retained explicitly rather than inventing replacement samples or
 running an unplanned duplicate measurement.
+
+### X2 cold review and deterministic-artifact correction
+
+Fresh-context reviewers independently pinned `origin/main`, merge base and
+candidate HEAD, reran the static parity, client-manifest, retired-stack, lint,
+trust/RPC/query/revision/SSE/file-transfer suites, and reviewed the complete
+754-path merge-base-to-HEAD diff. The quality/security axis found no additional
+blocking issue. The parity/spec axis returned one focused REWORK: SvelteKit
+default timestamp `kit.version.name` changed 72 hashed artifact paths across
+same-SHA builds, making the recorded single-run identity non-reproducible.
+
+The originally recorded `b7bd2d9b…` digest was a real observation. Repeated
+diagnostic builds then produced different digests with the same 292 files,
+aggregate bytes and 112 maps, proving version-driven name churn rather than
+fabricated evidence or bundle growth. Correction `6d0f35f` resolves the app
+version from the complete current Git revision with `execFileSync` argument
+arrays, validates its 40 lowercase hexadecimal characters, and configures
+SvelteKit explicitly. Its focused tests pass 17/17, Svelte check reports 0/0,
+and two consecutive committed-checkpoint builds have byte-identical sorted
+`path:size` manifests at
+`7ab9de1edcd79b2ce3017cd16ef75cf0ecf159177ba9e3e2ceb16c5e146034c1`.
+Final X2 remains REWORK until both fresh reviewers ACCEPT this correction and
+its documentation delta.
+
+Two execution-environment incidents are retained. The standard patch helper
+again failed before file access because Bubblewrap is unavailable; one bounded
+Perl fallback mangled two regex end anchors, Ultracite caught both immediately,
+and the files were repaired before any test or commit. The GitHub publication
+skill could not be read because Plan 068 forbids access to configured local
+Skills; policy rejected the read. Publication will use the already authorized
+minimal GitHub CLI flow after X2 ACCEPT, without accessing or circumventing the
+forbidden local state.
