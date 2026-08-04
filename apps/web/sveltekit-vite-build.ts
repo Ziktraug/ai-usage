@@ -1,7 +1,7 @@
 const viteProcess = Bun.spawn({
   cmd: ['bun', '--no-env-file', '--bun', 'vite', 'build'],
   cwd: import.meta.dir,
-  env: { ...process.env, AI_USAGE_SVELTEKIT_PHASE: 'build' },
+  env: { ...process.env, AI_USAGE_SVELTEKIT_PHASE: 'build', NODE_ENV: 'production' },
   stderr: 'inherit',
   stdin: 'inherit',
   stdout: 'inherit',
