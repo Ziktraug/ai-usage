@@ -1,6 +1,6 @@
 # ADR 0010: SvelteKit with a contract-first browser boundary
 
-- **Status**: Proposed; architecture locked by Plan 068, acceptance deferred to the verified cutover
+- **Status**: Accepted by the verified Plan 068 cutover
 - **Date**: 2026-08-02
 - **Amends**: the Web framework and browser transport only
 - **Preserves**: ADR 0007 and ADR 0009 (sole-writer usage engine and direct SQLite readers)
@@ -134,12 +134,14 @@ JSON never carries file bytes.
 
 ## Evidence required for acceptance
 
-Pre-PR implementation evidence is integrated through
-`aa992c6c864be6e7087b414dbfd8e83eb548dd92`. It includes atomic combined
+Plan 068 is integrated through implementation checkpoint
+`ac63cf8bb2e4623d62f949d2991a853b3e4826f7`. It includes atomic combined
 Overview/Sessions revision handling, retained report DOM during refresh,
 replacement-only immutable Session state, search-navigation load isolation, and
-a complete 112/112 Playwright ledger. Acceptance still requires the clean final
-gate, X2 ACCEPT, and the first implementation-PR CI success.
+a complete 113/113 Playwright-title inventory. Independent X2 review ACCEPTed
+both required axes. The sole draft implementation PR `#27` passed all five
+Actions lanes in run `30947971788`, attempt 3, including 98/98 functional
+browser tests.
 
 - [Plan 068](../../plans/068-migrate-web-to-sveltekit-orpc.md)
 - [ADR 0007](0007-server-render-report-bootstrap.md)

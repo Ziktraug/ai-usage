@@ -26,10 +26,10 @@
 - **Depends on**: plans 066 and 067 (both DONE)
 - **Category**: migration, tech-debt, performance, tests, dx
 - **Planned at**: commit `72c648e`, 2026-08-02
-- **State**: EXECUTING. X2 is independently ACCEPTed at `6391883`; the complete
-  clean-worktree gate and repeated-build proof are green. Publication of the
-  sole draft implementation PR and its first complete green CI remain. Mark
-  this plan DONE only after that PR's first complete CI is green.
+- **State**: DONE. The migration is integrated through implementation checkpoint
+  `ac63cf8`, independently reviewed, and green in the sole draft implementation
+  PR `#27` (Actions run `30947971788`, attempt 3). The PR remains draft and
+  unmerged.
 
 ## Why this matters
 
@@ -1426,53 +1426,53 @@ Final delivery sequence is strict:
 
 ## Final done criteria
 
-- [ ] `bun run check`, `bun run lint`, `bun run typecheck`, `bun run test` and
+- [x] `bun run check`, `bun run lint`, `bun run typecheck`, `bun run test` and
   `bun run build` exit 0.
-- [ ] `bun run test:e2e`, `bun run test:e2e-demo`,
+- [x] `bun run test:e2e`, `bun run test:e2e-demo`,
   `bun run test:e2e-production`, `bun run test:web-production`,
   `bun run test:web-dev-build-isolation` and `bun run test:setup-loopback` exit 0.
-- [ ] `bun run --cwd apps/web benchmark:session-scroll` exits 0 and its retained
+- [x] `bun run --cwd apps/web benchmark:session-scroll` exits 0 and its retained
   DOM/heap/network/timing values remain within the approved Wave 0 budgets.
-- [ ] `git diff --check` emits no output.
-- [ ] A clean worktree at the final integration SHA completes
+- [x] `git diff --check` emits no output.
+- [x] A clean worktree at the final integration SHA completes
   `bun install --frozen-lockfile` and the exact PR workflow commands without
   relying on another worktree's generated files.
-- [ ] `plans/068-execution-state.md` records every packet as independently
+- [x] `plans/068-execution-state.md` records every packet as independently
   reviewed and integrated, with accepted commit SHAs and no unresolved
   deviation/STOP; the sole implementation PR's CI is green.
-- [ ] No production match remains for `createServerFn`, `_serverFn`, TanStack
+- [x] No production match remains for `createServerFn`, `_serverFn`, TanStack
   Solid/Start/Router/Query/Table, `solid-js`, Solid Vite/icons/Ark, Nitro or the
   Nitro runner workaround.
-- [ ] Client manifest contains no `node:*`, `bun:*`, `@orpc/server`, usage-store,
+- [x] Client manifest contains no `node:*`, `bun:*`, `@orpc/server`, usage-store,
   report-data, local-machine, engine implementation, `$lib/server` or `.server`
   module.
-- [ ] Web source and emitted manifests contain no `@ai-usage/usage-merge` or
+- [x] Web source and emitted manifests contain no `@ai-usage/usage-merge` or
   usage-engine-runtime import; reader access remains on the explicit usage-store
   reader facade.
-- [ ] Every Wave 0 operation is implemented or explicitly classified as file/SSE;
+- [x] Every Wave 0 operation is implemented or explicitly classified as file/SSE;
   none is lost.
-- [ ] The parity checker reports every feature ID COMPLETE, 30/30 server
+- [x] The parity checker reports every feature ID COMPLETE, 30/30 server
   operations mapped, every former production TSX file ported/preserved/reviewed,
   and every current Playwright title retained or linked to a reviewed equivalent.
-- [ ] Every design-system export is framework-neutral or has a tested Svelte
+- [x] Every design-system export is framework-neutral or has a tested Svelte
   implementation/consumer; the final design-system/Web dependency closure has
   no Solid/Ark Solid runtime.
-- [ ] Initial `/` and `/skills` HTML has settled content and no duplicate fetch.
-- [ ] Exact revision retry/supersession/atomic commit matches characterization.
-- [ ] Publication does not invalidate Skills or immutable exact revision; quota
+- [x] Initial `/` and `/skills` HTML has settled content and no duplicate fetch.
+- [x] Exact revision retry/supersession/atomic commit matches characterization.
+- [x] Publication does not invalidate Skills or immutable exact revision; quota
   is independently owned.
-- [ ] Manual transfer preserves abort before/during staging, cleans staging that
+- [x] Manual transfer preserves abort before/during staging, cleans staging that
   succeeds after abort and retains identity-validated recovery on cleanup
   failure; source SSE still delegates snapshot waiting/fan-out to the engine.
-- [ ] Web build/runtime adapters reuse the shared
+- [x] Web build/runtime adapters reuse the shared
   `@ai-usage/usage-engine-control/node` identity/liveness helpers instead of
   duplicating them.
-- [ ] ADRs 0007/0009 remain true and tested.
-- [ ] Architecture/export/workspace scanners cover `.svelte` files and fail on
+- [x] ADRs 0007/0009 remain true and tested.
+- [x] Architecture/export/workspace scanners cover `.svelte` files and fail on
   direct, indirect, re-exported and dynamic client-to-server reachability.
-- [ ] Final measurements are recorded; every >10% regression is fixed or
+- [x] Final measurements are recorded; every >10% regression is fixed or
   explicitly approved with evidence.
-- [ ] Plan 068 is marked DONE only after all checks.
+- [x] Plan 068 is marked DONE only after all checks.
 
 ## STOP conditions
 

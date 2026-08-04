@@ -13,12 +13,13 @@ authority for feature, operation, design, source-file, and test-title coverage.
   `2183270ebfbb886fafa7e6268893122db9b364c0`
 - `BASE_SHA`: `2183270ebfbb886fafa7e6268893122db9b364c0`
 - Current integration checkpoint:
-  `639188324a958095573110af2100cba07fdd7030` (X2 ACCEPT, deterministic
-  artifact correction, documentation delta, and complete clean-worktree gate)
+  `ac63cf8bb2e4623d62f949d2991a853b3e4826f7` (post-PR corrections
+  independently ACCEPTed and complete implementation CI green)
 - Last independently reviewed implementation checkpoint:
-  `6d0f35f3a893c0cb349c8f14c9d7aab700c2e883`
+  `ac63cf8bb2e4623d62f949d2991a853b3e4826f7`
 - Active design bases: D1 `4862293`, D2 `fce5c1a`, D3 `e2f13cd`
-- Implementation PR: not opened
+- Implementation PR: [`#27`](https://github.com/Ziktraug/ai-usage/pull/27),
+  draft and unmerged
 - Exclusive process-test token: coordinator `/root`, for serialized browser,
   production, SSE, lifecycle, benchmark, and performance suites
 
@@ -152,7 +153,7 @@ Statuses are `BLOCKED`, `READY`, `IMPLEMENTING`, `REVIEW`, `REWORK`,
 | P10 | P5 | INTEGRATED | `455b569`, evidence `dac69e0`; integrated `8e35926`, `3a43913`, evidence rewrite `e953bdc` | `/root/q2_spec_review` / ACCEPT | `e953bdc` |
 | X0 | P2, P8, P4, P9, P10, P6, P7 | INTEGRATED | `db66cc0` through `c84d48c` | Skills `/root/x0_sync_review` / ACCEPT; Report/campaign `/root/v34_parity` / ACCEPT; full range and corrections `/root/x0_final_review` / ACCEPT | `c84d48c` |
 | X1 | X0 | INTEGRATED | `c84d48c..c733f797`, evidence `a161860` | `/root/x1_final_criteria_audit`, `/root/review_combined_destination_atomicity`, `/root/repair_session_owner_contract_refs`, `/root/implement_combined_sessions_destination/docs_standards_axis` / visual, combined Sessions, report retention, navigation/load, performance, clean-typecheck, isolated dev-port, canonical Skills probe, trusted-local hook, documentation, and complete clean full gate ACCEPT | `a161860` |
-| X2 | X1 | INTEGRATED | `6d0f35f`, documentation `6391883` | `/root/x2_parity_spec` / ACCEPT; `/root/x2_quality_security` / ACCEPT | `639188324a958095573110af2100cba07fdd7030` |
+| X2 | X1 | INTEGRATED | `6d0f35f`, documentation `6391883`, publication and reviewed CI corrections `b89fe28..ac63cf8` | `/root/x2_parity_spec` / ACCEPT; `/root/x2_quality_security` / ACCEPT on the final implementation delta | `ac63cf8bb2e4623d62f949d2991a853b3e4826f7` |
 
 ## Review and integration ledger
 
@@ -1718,3 +1719,78 @@ intentionally distinct from the separately retained 292-entry aggregate
 output. Recomputing that exact command from repository root after all process
 gates still returned `9fc8639…`; changing cwd or path spelling intentionally
 changes the outer hash.
+
+## Post-PR CI correction and finalization
+
+The coordinator pushed only `agent/migrate-web-sveltekit-orpc` and opened
+exactly one implementation PR:
+[`#27`](https://github.com/Ziktraug/ai-usage/pull/27), targeting `main`.
+It remains draft and unmerged. No packet branch or additional remote branch was
+pushed. Latest `origin/main` and the merge base remained
+`2183270ebfbb886fafa7e6268893122db9b364c0`, so no final semantic
+reconciliation was required.
+
+The first hosted runs exposed release-harness defects and exact browser
+rendezvous gaps that did not reproduce as red product behavior in the complete
+local gates. Every correction stayed on PR `#27`, retained the original
+assertions and budgets, passed its affected local gate, and received independent
+delta review before integration.
+
+| Commit | Correction |
+| --- | --- |
+| `b89fe28`–`3f65d83` | Published and clarified the accepted X2 artifact evidence and exact digest provenance. |
+| `5cfc8fc` | Fetched the history required by the TypeScript parity-coverage evidence guard. |
+| `347f341` | Stabilized generated design outputs and release-gate fixture ownership. |
+| `3a57be5`, `e8a7fd` | Closed navigation cleanup and cross-route scroll parity gaps. |
+| `86d0c25`, `40ea45d` | Awaited detached runtime shutdown and retained signal ownership through cleanup. |
+| `5b23c22`, `c9c35f` | Synchronized the Session benchmark and bounded each page step by real index or scroll-height progress. |
+| `7dd8309`, `cf9f083` | Isolated browser-server readiness and separated demo preparation from readiness. |
+| `639a5b6`, `42dc7a2`, `d812bae`, `ac63cf8` | Classified exact navigation aborts and made restored report history await both transport completion and hydration. |
+
+The final report-history helper arms an exact `fetch /__data.json`
+`requestfinished` rendezvous before `goBack`, immediately owns it in the
+same `Promise.all`, and then requires the exact URL and hydrated report. It is
+used for both root and Sessions-query restoration. Targeted history tests passed
+20/20, the complete local functional suite passed 98/98 twice during correction,
+Svelte check reported 0 errors and 0 warnings, Ultracite passed, and
+`git diff --check` was empty. Independent review returned ACCEPT on both
+parity/spec and quality/security axes at
+`ac63cf8bb2e4623d62f949d2991a853b3e4826f7`.
+
+Actions run
+[`30947971788`](https://github.com/Ziktraug/ai-usage/actions/runs/30947971788)
+is the first complete green implementation-PR checkpoint at `ac63cf8`.
+Attempt 3 passed all five lanes:
+
+| Lane | Result |
+| --- | --- |
+| Static, Types, Parity | PASS; check, lint, typecheck and migration parity |
+| Unit, Build, Client Boundary | PASS; unit suite, build, client manifest and retired-stack scan |
+| Production and Lifecycle | PASS; production, dev/build isolation and loopback |
+| Functional Browser | PASS; 98/98 |
+| Demo, Production, Performance | PASS; demo 1/1, production 8/8 plus scale 2/2, benchmark 4/4 |
+
+The hosted benchmark used the unchanged 180-second outer product cap and the
+existing 20-second assertion timeout for each progress step. A step must advance
+the Session index or scroll height, and the final index must still be exactly
+`4998`; the correction removed only coupling to a global 120-second driver
+deadline. The three hosted samples at `ac63cf8` had medians of 2160.883 ms
+initial load, 313.722 ms filter, 1562.129 ms sort, 27,746,240 bytes heap delta,
+227,094 maximum page bytes, desktop 33 items/624 nodes, and mobile
+19 items/307 nodes. All absolute gates and cleanup assertions passed.
+
+Three execution incidents are retained rather than hidden. Attempt 1 of run
+`30947971788` timed out waiting 120 seconds for the functional Playwright
+webServer before tests. Attempt 2 spent about ten minutes without visible
+progress in the Playwright system-dependency installation; the coordinator
+submitted cancellation as the runner recovered, so cancellation reached the
+functional test step without a product result. Under the user-relaxed local STOP
+policy, attempt 3 ran on a fresh runner and passed without code changes. The
+standard patch helper also remained unavailable because Bubblewrap was absent;
+each documentation edit first attempted that helper, then used a bounded
+exact-match Bun replacement with cardinality checks. This affected tooling only,
+not source semantics or validation.
+
+Plan 068 is complete after this first green implementation CI. The remaining
+coordinator-only documentation commit must itself pass the same PR workflow;
+that second run is final release evidence, not a reopening of feature scope.

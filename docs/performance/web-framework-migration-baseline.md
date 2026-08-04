@@ -348,3 +348,35 @@ SvelteKit deployment-version semantics without shell interpolation. Two
 consecutive committed-checkpoint builds produced byte-identical sorted
 `path:size` manifests with the `7ab9de1e…` digest above. The earlier observed
 `b7bd2d9b…` digest remains an honest pre-correction sample, not final identity.
+
+## Hosted implementation-PR release evidence
+
+The local Solid/Svelte comparison above remains the controlled comparative
+record. Hosted GitHub runner timings are recorded separately because runner
+hardware and scheduling are not controlled; no cross-environment percentage
+delta is calculated.
+
+At implementation checkpoint
+`ac63cf8bb2e4623d62f949d2991a853b3e4826f7`, Actions run
+[`30947971788`](https://github.com/Ziktraug/ai-usage/actions/runs/30947971788)
+passed the complete performance lane with a 5,000-Session synthetic fixture,
+four of four benchmark tests, and three retained samples.
+
+| Hosted metric | Median |
+| --- | ---: |
+| Initial settled load | 2160.883 ms |
+| Filter response | 313.722 ms |
+| Sort response | 1562.129 ms |
+| Heap delta after desktop traversal | 27,746,240 B |
+| Maximum Session page payload | 227,094 B |
+| Desktop rendered items / nodes | 33 / 624 |
+| Mobile rendered items / nodes | 19 / 307 |
+
+The hosted traversal keeps the 180-second outer benchmark cap and the existing
+20-second assertion timeout. Each page step must make observable progress by
+advancing either the Session index or scroll height, and completion still
+requires final index `4998`. This prevents a fixed 120-second driver deadline
+from expiring while a large but progressing traversal is inside the approved
+product budget; it does not increase a timeout, weaken the final assertion, or
+accept a stalled traversal. Production scale, process cleanup, listener cleanup,
+payload and DOM limits all remained green.
