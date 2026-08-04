@@ -2,12 +2,13 @@ import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 
 const dependencyFields = ['dependencies', 'devDependencies', 'optionalDependencies', 'peerDependencies'] as const;
-const sourceExtensions = new Set(['.cjs', '.js', '.jsx', '.mjs', '.svelte', '.ts', '.tsx']);
+const sourceExtensions = new Set(['.cjs', '.cts', '.js', '.jsx', '.mjs', '.mts', '.svelte', '.ts', '.tsx']);
 const emittedTextExtensions = new Set(['.cjs', '.css', '.html', '.js', '.json', '.map', '.mjs']);
 const moduleQueryPattern = /[?#].*$/u;
 const testOnlySourcePattern = /(?:^|\/)(?:__tests__|e2e|fixtures?|tests?)(?:\/|$)|(?:^|[.-])(?:spec|test)\.[^/]+$/u;
-const moduleImportPattern =
-  /\b(?:import|export)\s+(?:type\s+)?(?:[^'";]+?\s+from\s*)?['"]([^'"]+)['"]|\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)|\brequire\s*\(\s*['"]([^'"]+)['"]\s*\)/gu;
+const moduleDeclarationPattern = /\b(?:import|export)\s+(?:type\s+)?(?:[^'";]+?\s+from\s*)?['"]([^'"]+)['"]/gu;
+const moduleStringCallPattern = /\b(?:import|require(?:\.resolve)?)\s*\(\s*(['"])([^'"]*?)\1\s*\)/gu;
+const moduleTemplateCallPattern = /\b(?:import|require(?:\.resolve)?)\s*\(\s*`([^`]*)`\s*\)/gu;
 
 type DependencyField = (typeof dependencyFields)[number];
 
@@ -87,21 +88,30 @@ const sourceMarkerRules = [
 ] as const;
 
 const emittedPackagePatterns = [
-  { name: 'TanStack Solid adapter', pattern: /@tanstack\/solid-[A-Za-z0-9._/-]*/gu },
-  { name: 'TanStack Start package', pattern: /@tanstack\/start-[A-Za-z0-9._/-]*/gu },
-  { name: 'TanStack Router package', pattern: /@tanstack\/router-[A-Za-z0-9._/-]*/gu },
-  { name: 'Solid runtime', pattern: /(?:^|[^A-Za-z0-9_/-])(solid-js(?:\/[A-Za-z0-9._/-]*)?)/gu },
-  { name: 'Solid support package', pattern: /@(?:solidjs|solid-primitives)\/[A-Za-z0-9._/-]+/gu },
+  { name: 'TanStack Solid adapter', pattern: /@tanstack\/solid-[A-Za-z0-9._/-]+/gu },
+  { name: 'TanStack Start package', pattern: /@tanstack\/start-[A-Za-z0-9._/-]+/gu },
+  { name: 'TanStack Router package', pattern: /@tanstack\/router-[A-Za-z0-9._/-]+/gu },
+  {
+    name: 'Solid runtime',
+    pattern: /(?:^|[^A-Za-z0-9_/-])(solid-js(?:\/[A-Za-z0-9._/-]+)?)(?=$|[^A-Za-z0-9_/-])/gu,
+  },
+  {
+    name: 'Solid support package',
+    pattern: /@(?:solidjs|solid-primitives)\/[A-Za-z0-9._/-]+(?=$|[^A-Za-z0-9_/-])/gu,
+  },
   {
     name: 'Solid Vite package',
     pattern:
-      /(?:^|[^A-Za-z0-9_/-])((?:babel-preset-solid|solid-refresh|vite-plugin-solid|vite-solid)(?:\/[A-Za-z0-9._/-]*)?)/gu,
+      /(?:^|[^A-Za-z0-9_/-])((?:babel-preset-solid|solid-refresh|vite-plugin-solid|vite-solid)(?:\/[A-Za-z0-9._/-]+)?)(?=$|[^A-Za-z0-9_/-])/gu,
   },
   {
     name: 'Solid icon package',
-    pattern: /(?:^|[^A-Za-z0-9_/-])(lucide-solid(?:\/[A-Za-z0-9._/-]*)?)/gu,
+    pattern: /(?:^|[^A-Za-z0-9_/-])(lucide-solid(?:\/[A-Za-z0-9._/-]+)?)(?=$|[^A-Za-z0-9_/-])/gu,
   },
-  { name: 'Ark Solid package', pattern: /@(?:ark-ui|zag-js)\/solid(?:\/[A-Za-z0-9._/-]*)?/gu },
+  {
+    name: 'Ark Solid package',
+    pattern: /@(?:ark-ui|zag-js)\/solid(?:\/[A-Za-z0-9._/-]+)?(?=$|[^A-Za-z0-9_/-])/gu,
+  },
   {
     name: 'Nitro package',
     pattern: /(?:^|[^A-Za-z0-9_/-])((?:nitro|nitropack)(?:\/[A-Za-z0-9._/-]*)?)(?=$|[^A-Za-z0-9_/-])/gu,
@@ -153,8 +163,46 @@ export const scanWebProductionSource = (file: string, text: string): readonly We
       value: file,
     });
   }
-  for (const match of text.matchAll(moduleImportPattern)) {
-    const specifier = match[1] ?? match[2] ?? match[3];
+  // Production comments are intentionally scanned. Historical import examples and retired markers in comments are
+  // migration residue too, and rejecting them prevents source-search gates from becoming ambiguous.
+  for (const match of text.matchAll(moduleDeclarationPattern)) {
+    const specifier = match[1];
+    const rule = specifier ? matchingRetiredPackageRule(specifier) : undefined;
+    if (specifier && rule) {
+      violations.push({
+        file,
+        line: lineAt(text, match.index),
+        rule: rule.name,
+        surface: 'source-import',
+        value: specifier,
+      });
+    }
+  }
+  for (const match of text.matchAll(moduleStringCallPattern)) {
+    const specifier = match[2];
+    const rule = specifier ? matchingRetiredPackageRule(specifier) : undefined;
+    if (specifier && rule) {
+      violations.push({
+        file,
+        line: lineAt(text, match.index),
+        rule: rule.name,
+        surface: 'source-import',
+        value: specifier,
+      });
+    }
+  }
+  for (const match of text.matchAll(moduleTemplateCallPattern)) {
+    const specifier = match[1];
+    if (specifier?.includes('${')) {
+      violations.push({
+        file,
+        line: lineAt(text, match.index),
+        rule: 'interpolated module edge',
+        surface: 'source-import',
+        value: specifier,
+      });
+      continue;
+    }
     const rule = specifier ? matchingRetiredPackageRule(specifier) : undefined;
     if (specifier && rule) {
       violations.push({
@@ -334,8 +382,12 @@ export const checkWebRetiredStack = async (
         cause: error,
       });
     }
-    if (emittedFiles.length === 0) {
-      throw new Error(`The selected SvelteKit output at ${outputDirectory} contains no scannable emitted files.`);
+    for (const requiredTree of ['client', 'server'] as const) {
+      const requiredDirectory = path.join(outputDirectory, requiredTree);
+      const hasScannableFile = emittedFiles.some((file) => file.startsWith(`${requiredDirectory}${path.sep}`));
+      if (!hasScannableFile) {
+        throw new Error(`The selected SvelteKit ${requiredTree} output contains no scannable emitted files.`);
+      }
     }
     for (const emittedFile of emittedFiles) {
       const relativeFile = normalizeSeparators(path.relative(workspaceRoot, emittedFile));
