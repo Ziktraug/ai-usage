@@ -1,7 +1,9 @@
 import { describe, expect, test } from 'bun:test';
+import { EventEmitter } from 'node:events';
 import path from 'node:path';
 import {
   createUsageEngineDevChanges,
+  createUsageEngineDevTermination,
   createUsageEngineDevWatchTargets,
   superviseUsageEngineDevelopment,
   type UsageEngineDevChild,
@@ -53,6 +55,25 @@ const waitFor = async (predicate: () => boolean): Promise<boolean> => {
 };
 
 describe('development usage engine supervisor', () => {
+  test('keeps signal ownership until detached child cleanup completes', async () => {
+    const emitter = new EventEmitter();
+    const termination = createUsageEngineDevTermination(emitter);
+
+    emitter.emit('SIGINT');
+    expect(await termination.signal).toBe('SIGINT');
+    expect(emitter.listenerCount('SIGINT')).toBe(1);
+    expect(emitter.listenerCount('SIGTERM')).toBe(1);
+
+    emitter.emit('SIGTERM');
+    expect(await termination.signal).toBe('SIGINT');
+    expect(emitter.listenerCount('SIGINT')).toBe(1);
+    expect(emitter.listenerCount('SIGTERM')).toBe(1);
+
+    termination.dispose();
+    expect(emitter.listenerCount('SIGINT')).toBe(0);
+    expect(emitter.listenerCount('SIGTERM')).toBe(0);
+  });
+
   test('fully stops and reaps the previous engine before spawning its replacement', async () => {
     const changes = createUsageEngineDevChanges();
     const first = new FixtureChild(5101);
