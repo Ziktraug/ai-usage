@@ -13,10 +13,11 @@ authority for feature, operation, design, source-file, and test-title coverage.
   `2183270ebfbb886fafa7e6268893122db9b364c0`
 - `BASE_SHA`: `2183270ebfbb886fafa7e6268893122db9b364c0`
 - Current integration checkpoint:
-  `aa992c6c864be6e7087b414dbfd8e83eb548dd92` (X1 corrections,
-  performance, and process gates green; clean full gate pending)
+  `200677b996da18795c26fefdf12ed4125bb681c8` (X1 corrections,
+  performance, process gates, and clean-typecheck correction green; clean full
+  gate pending; this ledger commit is its documentation-only descendant)
 - Last independently reviewed implementation checkpoint:
-  `aa992c6c864be6e7087b414dbfd8e83eb548dd92`
+  `200677b996da18795c26fefdf12ed4125bb681c8`
 - Active design bases: D1 `4862293`, D2 `fce5c1a`, D3 `e2f13cd`
 - Implementation PR: not opened
 - Exclusive process-test token: coordinator `/root`, for serialized browser,
@@ -151,7 +152,7 @@ Statuses are `BLOCKED`, `READY`, `IMPLEMENTING`, `REVIEW`, `REWORK`,
 | P9 | P5 | INTEGRATED | `9d48303`, evidence `4cb0f0d`; integrated `82451ad`, `be5e49b`, evidence rewrite `c859f7f` | `/root/q2_spec_review` / ACCEPT | `c859f7f` |
 | P10 | P5 | INTEGRATED | `455b569`, evidence `dac69e0`; integrated `8e35926`, `3a43913`, evidence rewrite `e953bdc` | `/root/q2_spec_review` / ACCEPT | `e953bdc` |
 | X0 | P2, P8, P4, P9, P10, P6, P7 | INTEGRATED | `db66cc0` through `c84d48c` | Skills `/root/x0_sync_review` / ACCEPT; Report/campaign `/root/v34_parity` / ACCEPT; full range and corrections `/root/x0_final_review` / ACCEPT | `c84d48c` |
-| X1 | X0 | REVIEW | `c84d48c..aa992c6` | `/root/x1_final_criteria_audit`, `/root/review_combined_destination_atomicity`, `/root/repair_session_owner_contract_refs` / visual, combined Sessions, report retention, navigation/load, and performance corrections ACCEPT; clean full gate pending | `aa992c6` candidate checkpoint |
+| X1 | X0 | REVIEW | `c84d48c..200677b9` | `/root/x1_final_criteria_audit`, `/root/review_combined_destination_atomicity`, `/root/repair_session_owner_contract_refs` / visual, combined Sessions, report retention, navigation/load, performance, and clean-typecheck corrections ACCEPT; clean full gate pending | `200677b9` candidate checkpoint |
 | X2 | X1 | BLOCKED | - | - | - |
 
 ## Review and integration ledger
@@ -1533,3 +1534,20 @@ X1 still requires the coordinator documentation commit, a clean-worktree
 frozen install and complete static/process gate at the resulting SHA, latest
 `origin/main` reconciliation, and fresh-context independent X2 review before
 the sole draft implementation PR.
+
+The first clean-worktree final gate at `dfcafca` exposed a real ordering defect:
+`bun run typecheck` invoked the repository coverage guard before SvelteKit had
+generated `apps/web/.svelte-kit/check/tsconfig.json`, so TypeScript stopped with
+TS5083. This was not reproducible in an already-generated coordinator worktree.
+Accepted correction `200677b9` runs Turbo workspace checks before the coverage
+guard and tools TypeScript check, makes the Web check use its existing
+`dev:prepare` synchronization seam, and declares `.svelte-kit/check/**` as a
+Turbo output. Independent review ACCEPTed both axes. A genuine cache MISS with
+the check project absent passed 28/28 with Svelte 0 errors/0 warnings; after the
+exact generated directory was moved aside, the next cache HIT restored its
+`tsconfig.json` and passed 28/28 entirely from cache. No check, assertion, or
+timeout was weakened. The unavailable Bubblewrap/apply-patch incident remained
+local to the execution environment; bounded edits were independently reviewed.
+
+X1 remains REVIEW until a new clean worktree completes the entire frozen gate
+at `200677b9` (or its documentation-only descendant).
