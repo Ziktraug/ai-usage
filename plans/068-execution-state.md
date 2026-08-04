@@ -1707,8 +1707,14 @@ reserved ports 42642-42646 during the final audit. Their exact PIDs and working
 directories were verified as repository-owned, terminated gracefully, and all
 five listeners disappeared. This cleanup did not touch unrelated processes.
 
-The X2 gate digest above hashes the sorted per-file content hashes for the 146
-files in the selected `adapter-bun` directory. It is intentionally distinct
-from the separately retained 292-entry aggregate `path:size` manifest, which
-also includes SvelteKit intermediate client/server output. Recomputing the same
-content-hash chain after all process gates still returned `9fc8639…`.
+From repository-root cwd, the exact X2 digest command was:
+
+`find apps/web/.svelte-kit/build/adapter-bun -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum`
+
+It hashes the sorted per-file content hashes and
+their repository-relative names for 146 files totaling 2,199,312 bytes. It is
+intentionally distinct from the separately retained 292-entry aggregate
+`path:size` manifest, which also includes SvelteKit intermediate client/server
+output. Recomputing that exact command from repository root after all process
+gates still returned `9fc8639…`; changing cwd or path spelling intentionally
+changes the outer hash.
