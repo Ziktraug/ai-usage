@@ -12,11 +12,11 @@ authority for feature, operation, design, source-file, and test-title coverage.
 - Planning PR: `#26`, squash-merged as
   `2183270ebfbb886fafa7e6268893122db9b364c0`
 - `BASE_SHA`: `2183270ebfbb886fafa7e6268893122db9b364c0`
-- Current integration checkpoint: `c84d48c`
+- Current integration checkpoint: `9b086f3` (targeted X1 gates green; full X1 gate pending)
 - Last reviewed green checkpoint: `c84d48c`
 - Active design bases: D1 `4862293`, D2 `fce5c1a`, D3 `e2f13cd`
 - Implementation PR: not opened
-- Exclusive process-test token: coordinator, for the serialized X0 convergence gates
+- Exclusive process-test token: `/root/skills_convergence_review`, for serialized X1 visual and production convergence
 
 The integration branch did not exist locally or remotely before this run. Local
 `main` and `origin/main` were clean and aligned at `BASE_SHA`; plans 066 and 067
@@ -147,7 +147,7 @@ Statuses are `BLOCKED`, `READY`, `IMPLEMENTING`, `REVIEW`, `REWORK`,
 | P9 | P5 | INTEGRATED | `9d48303`, evidence `4cb0f0d`; integrated `82451ad`, `be5e49b`, evidence rewrite `c859f7f` | `/root/q2_spec_review` / ACCEPT | `c859f7f` |
 | P10 | P5 | INTEGRATED | `455b569`, evidence `dac69e0`; integrated `8e35926`, `3a43913`, evidence rewrite `e953bdc` | `/root/q2_spec_review` / ACCEPT | `e953bdc` |
 | X0 | P2, P8, P4, P9, P10, P6, P7 | INTEGRATED | `db66cc0` through `c84d48c` | Skills `/root/x0_sync_review` / ACCEPT; Report/campaign `/root/v34_parity` / ACCEPT; full range and corrections `/root/x0_final_review` / ACCEPT | `c84d48c` |
-| X1 | X0 | IMPLEMENTING | - | independent review pending | - |
+| X1 | X0 | IMPLEMENTING | `c84d48c..9b086f3` | `/root/x1_final_criteria_audit` / provisional static ACCEPT; overall REWORK pending visual, performance and ledger closure | `9b086f3` targeted checkpoint |
 | X2 | X1 | BLOCKED | - | - | - |
 
 ## Review and integration ledger
@@ -1379,3 +1379,65 @@ temporary X0 convergence deviation confined to the runtime that X1 deletes;
 all spawned processes were stopped, the last reviewed checkpoint remains
 green, and X1 must close the deviation by proving the canonical SvelteKit
 dev/production lifecycle and the final `test:e2e` gate.
+
+
+## X1 cutover and correction ledger (in progress)
+
+The integrated X1 range currently spans `c84d48c..9b086f3`. Canonical runtime,
+build and lifecycle ownership moved to SvelteKit and oRPC; Solid, Start, Nitro,
+retired TSX production sources and old generated-output paths were removed. The
+machine ledger now closes 35 feature IDs, 30 operations, 72 former TSX files,
+15 design rows, 437 design exports or reviewed removals, 11 render suites, 110
+Playwright titles and 18 URL contracts. Source and emitted scanners enforce the
+retired stack and the emitted client manifest remains closed to server modules.
+
+Retirement and parity enforcement landed at `8b8b1c8`, `77abf38`, `200918c`
+and `c659f9e`. `/root/x1_parity_review` independently ACCEPTed the scanner and
+ledger corrections on parity/spec and quality/seam axes. Production bootstrap,
+clean-build determinism, production Vite mode and lifecycle abort cleanup landed
+at `7adbf1e`, `626e0c2`, `6799f5d` and `32ee18d`; their focused implementer and
+independent reviews ACCEPTed the unchanged loopback, artifact and cleanup
+invariants.
+
+The deterministic production clock landed through `d82e791`, `e03178e` and
+`7458724`. The Bun unit suite was initially placed under `e2e`, where Playwright
+collected it while normal Web unit CI omitted it. Accepted correction `5e2760e`
+moves the suite to the Web package root, and coordinator composition `a40b197`
+adds that exact file to TypeScript ownership. `/root/production_fixture_review`
+and `/root/x1_final_criteria_audit` independently ACCEPTed the result: 877 Web
+tests passed, the four clock tests remained strict, Playwright listed 96 tests
+without the Bun suite, parity remained complete, TypeScript coverage passed and
+Svelte check reported 0 errors and 0 warnings.
+
+Split PR workflow jobs initially relied on ignored production output built in a
+different job. `6b75dd5` adds an uncached build to both isolated production
+consumers; `/root/x1_final_criteria_audit` ACCEPTed job independence and workflow
+maintainability. Operational README commits `ce328db`, `65cfcb4` and `49c33b1`
+received one REWORK because they named a nonexistent source-scanner script. The
+final explicit commit set documents the exact source and emitted scanners,
+client closure, isolation and benchmark commands and was ACCEPTed by
+`/root/x1_docs_audit`.
+
+A literal final-criterion audit found obsolete `NITRO_` environment handling in
+both the Svelte production launcher and its supervisor. `9b086f3` removes that
+retired prefix knowledge while preserving the explicit untrusted adapter keys
+and canonical loopback reconstruction, and adds a source/emitted scanner marker.
+Focused validation passed 53 tests and 177 assertions; source scanning and the
+production grep were clean. `/root/x1_final_criteria_audit` independently
+ACCEPTed the correction on both axes.
+
+Resolved local execution incidents retained for audit include unavailable
+`apply_patch` sandbox support requiring narrow inspected Perl edits, temporary
+bundle instrumentation that was removed and rebuilt away, one malformed local
+Perl insertion caught by Ultracite before commit, two cold Vite startup
+classification timeouts resolved by prewarming without timeout changes, an
+exclusive-process-token collision stopped before a second fixture launched and
+three focused fixture-clock corrections preserving strict ISO, monotonic and
+integer-millisecond behavior. No real home, database, history, prompt, Skill or
+configured state was accessed.
+
+`/root/x1_final_criteria_audit` provisionally ACCEPTed the complete static
+parity/spec and code-quality/seam axes through `9b086f3`. Overall X1 remains
+REWORK only while the independently reviewed X1-V visual/production correction,
+final Svelte performance measurements and classifications, clean full gates and
+this ledger finalization remain pending.
