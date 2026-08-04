@@ -1,9 +1,9 @@
 import { describe, expect, test } from 'bun:test';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { CLOCK_EPOCH_ENVIRONMENT_KEY, createProductionFixtureDate } from './production-clock';
+import { CLOCK_EPOCH_ENVIRONMENT_KEY, createProductionFixtureDate } from './e2e/production-clock';
 
-const clockPath = path.join(import.meta.dir, 'production-clock.ts');
+const clockPath = path.join(import.meta.dir, 'e2e', 'production-clock.ts');
 const clockUrl = pathToFileURL(clockPath).href;
 const fixtureEpoch = '2026-07-03T12:00:00.000Z';
 
