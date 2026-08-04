@@ -67,7 +67,7 @@ try {
       HOST: '127.0.0.1',
       IDLE_TIMEOUT: '45',
       NO_COLOR: '1',
-      BUN_OPTIONS: [process.env.BUN_OPTIONS, `--preload=${productionClockUrl}`].filter(Boolean).join(' '),
+      BUN_OPTIONS: `--preload=${productionClockUrl}`,
       PATH: `${fixtureBinDirectory}${path.delimiter}${process.env.PATH ?? ''}`,
       PORT: listenerPort,
       TMPDIR: temporaryDirectory,

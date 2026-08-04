@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { CLOCK_EPOCH_ENVIRONMENT_KEY } from './production-clock';
+import { CLOCK_EPOCH_ENVIRONMENT_KEY, createProductionFixtureDate } from './production-clock';
 
 const clockPath = path.join(import.meta.dir, 'production-clock.ts');
 const clockUrl = pathToFileURL(clockPath).href;
@@ -20,7 +20,7 @@ describe('production fixture clock', () => {
         env: {
           ...process.env,
           [CLOCK_EPOCH_ENVIRONMENT_KEY]: fixtureEpoch,
-          BUN_OPTIONS: [process.env.BUN_OPTIONS, `--preload=${clockUrl}`].filter(Boolean).join(' '),
+          BUN_OPTIONS: `--preload=${clockUrl}`,
         },
         stderr: 'pipe',
         stdout: 'pipe',
@@ -47,23 +47,46 @@ describe('production fixture clock', () => {
     expect(result.advancedBy).toBeGreaterThanOrEqual(10);
   });
 
-  test('rejects an invalid fixture epoch before application startup', async () => {
-    const child = Bun.spawn(
-      [process.execPath, '--no-env-file', '--preload', clockPath, '-e', 'console.log("started")'],
-      {
-        env: { ...process.env, [CLOCK_EPOCH_ENVIRONMENT_KEY]: 'not-a-date' },
-        stderr: 'pipe',
-        stdout: 'pipe',
-      },
-    );
-    const [exitCode, stdout, stderr] = await Promise.all([
-      child.exited,
-      new Response(child.stdout).text(),
-      new Response(child.stderr).text(),
-    ]);
+  test('advances from a monotonic source without following wall-clock jumps', () => {
+    let monotonicTime = 100;
+    let wallClockTime = Date.parse('2026-07-03T12:00:00.000Z');
+    const WallClockDate = new Proxy(Date, {
+      get: (target, property, receiver) =>
+        property === 'now' ? () => wallClockTime : Reflect.get(target, property, receiver),
+    });
+    const FixtureDate = createProductionFixtureDate(fixtureEpoch, {
+      monotonicNow: () => monotonicTime,
+      systemDate: WallClockDate,
+    });
+    const startedAt = FixtureDate.now();
 
-    expect(exitCode).not.toBe(0);
-    expect(stdout).toBe('');
-    expect(stderr).toContain(`${CLOCK_EPOCH_ENVIRONMENT_KEY} must be an ISO timestamp`);
+    wallClockTime += 30 * 24 * 60 * 60 * 1000;
+    monotonicTime += 25;
+
+    expect(FixtureDate.now()).toBe(startedAt + 25);
+    expect(new FixtureDate().getTime()).toBe(startedAt + 25);
+  });
+
+  test('rejects non-canonical and normalized fixture epochs before application startup', async () => {
+    const invalidEpochs = ['not-a-date', '2026-07-03', '2026-02-30T00:00:00.000Z'];
+    for (const invalidEpoch of invalidEpochs) {
+      const child = Bun.spawn(
+        [process.execPath, '--no-env-file', '--preload', clockPath, '-e', 'console.log("started")'],
+        {
+          env: { ...process.env, [CLOCK_EPOCH_ENVIRONMENT_KEY]: invalidEpoch },
+          stderr: 'pipe',
+          stdout: 'pipe',
+        },
+      );
+      const [exitCode, stdout, stderr] = await Promise.all([
+        child.exited,
+        new Response(child.stdout).text(),
+        new Response(child.stderr).text(),
+      ]);
+
+      expect(exitCode).not.toBe(0);
+      expect(stdout).toBe('');
+      expect(stderr).toContain(`${CLOCK_EPOCH_ENVIRONMENT_KEY} must be a canonical ISO timestamp`);
+    }
   });
 });
