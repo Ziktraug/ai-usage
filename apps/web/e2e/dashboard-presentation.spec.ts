@@ -1,5 +1,5 @@
 import { FOCUSED_REPORT_E2E_ENABLED_KEY } from '../src/focused-report-e2e-fixture';
-import { expect, openHydratedReport, reportViewsFor, test } from './browser-test';
+import { expect, openHydratedReport, reportViewsFor, test, waitForHydratedReport } from './browser-test';
 
 const PREVIOUS_PERIOD_PATTERN = /vs previous period/i;
 const API_VALUE_HINT_PATTERN = /Estimated API-equivalent value at standard prices for \d+ of \d+ fully priced sessions/;
@@ -85,6 +85,7 @@ test('explains unavailable source freshness without replacing its compact pill',
   });
   try {
     await reportViewsFor(page).getByRole('link', { exact: true, name: 'Overview' }).click();
+    await waitForHydratedReport(page);
   } finally {
     releaseOverviewDataAbort();
   }

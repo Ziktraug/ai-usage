@@ -102,9 +102,17 @@ test('server-renders and reloads every Svelte shell route with accessible naviga
   await page.getByRole('link', { name: 'Skills' }).click();
   await expect(page).toHaveURL('/skills/global');
   expect(await page.evaluate(() => history.length)).toBe(historyLength + 1);
-  await page.goBack();
-  await expect(page).toHaveURL('/');
-  await waitForHydratedReport(page);
+  const restoredOverviewDataFinished = page.waitForEvent('requestfinished', {
+    predicate: (request) => request.resourceType() === 'fetch' && new URL(request.url()).pathname === '/__data.json',
+  });
+  await Promise.all([
+    restoredOverviewDataFinished,
+    (async () => {
+      await page.goBack();
+      await expect(page).toHaveURL('/');
+      await waitForHydratedReport(page);
+    })(),
+  ]);
 
   await page.setViewportSize({ height: 844, width: 390 });
   await expect(page.locator('[data-app-navigation="mobile"]')).toBeVisible();
