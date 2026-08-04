@@ -10,15 +10,18 @@ const PUNCHCARD_CELL_LABEL_PATTERN =
   /^Filter report to (Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday) ([0-9]{2}):00–[0-9]{2}:59, ([0-9,]+) sessions?$/;
 const SESSION_SUMMARY_PATTERN = / sessions$/;
 
-// Every Panda atomic class carries a `_` or `-`; a bare word means the class
-// binding resolved to a domain value instead of the generated style.
-const PANDA_CLASS_PATTERN = /[_-]/;
-// WCAG 2.5.8 minimum pointer target, matching the Solid thumb this replaced.
+// The bug this guards against bound the class to the `'start' | 'end'` edge
+// name, so the generated style never applied. Assert the edge name itself never
+// reaches the class list rather than pattern-matching a Panda atom, which a
+// hyphenated domain value would also satisfy.
+const HANDLE_EDGE_NAMES = ['start', 'end'] as const;
+// WCAG 2.5.5 Target Size (Enhanced); `timeSliderThumb` is sized for it.
 const HANDLE_MINIMUM_TARGET_PX = 44;
 const BRUSH_GEOMETRY_VIEWPORTS = [
   { height: 1000, width: 1440 },
   { height: 900, width: 1024 },
   { height: 900, width: 768 },
+  // The frozen narrow viewport the responsive suites use elsewhere.
   { height: 800, width: 361 },
 ] as const;
 
@@ -44,7 +47,7 @@ const readBrushGeometry = (element: Element): BrushGeometry => {
     throw new Error('Expected the selected report window');
   }
   const selectionBox = selection.getBoundingClientRect();
-  const handles = [...element.querySelectorAll('[role="slider"], input[type="range"]')].map((handle) => {
+  const handles = [...element.querySelectorAll('[role="slider"]')].map((handle) => {
     const box = handle.getBoundingClientRect();
     return {
       centerX: box.left + box.width / 2,
@@ -412,9 +415,9 @@ test('anchors the brush handles to the selected report window at every viewport'
     const geometry = await measureBrush();
     expect(geometry.handles).toHaveLength(2);
     for (const handle of geometry.handles) {
-      // A bare `start`/`end` class means a loop binding shadowed the Panda
+      // An edge name in the class list means a loop binding shadowed the Panda
       // class and the thumb silently lost its absolute positioning.
-      expect(handle.classes.some((token) => PANDA_CLASS_PATTERN.test(token))).toBe(true);
+      expect(handle.classes.filter((token) => HANDLE_EDGE_NAMES.includes(token as 'end' | 'start'))).toEqual([]);
       expect(handle.position).toBe('absolute');
     }
   }
@@ -424,7 +427,40 @@ test('anchors the brush handles to the selected report window at every viewport'
   const before = await measureBrush();
   await startHandle.press('ArrowRight');
   await expect.poll(async () => (await measureBrush()).offsets).toEqual([0, 0]);
-  expect((await measureBrush()).handles[0]?.centerX).not.toBe(before.handles[0]?.centerX);
+  // One day later must move the thumb rightwards, not merely somewhere else.
+  const afterKeyboard = await measureBrush();
+  expect(afterKeyboard.handles[0]?.centerX ?? 0).toBeGreaterThan(before.handles[0]?.centerX ?? 0);
+});
+
+test('drags a brush handle with the pointer and keeps it on the selection edge', async ({ page }) => {
+  await openHydratedReport(page);
+
+  const dateRange = page.getByRole('region', { name: 'Date range' });
+  const brush = dateRange.locator('[data-report-range-part="brush"]');
+  const startHandle = brush.getByRole('slider', { name: 'Start date' });
+  const startInput = dateRange.getByRole('textbox', { name: 'Start date' });
+  // `page.mouse` works in viewport coordinates and does not scroll, so the
+  // handle has to be in view before its box is turned into a pointer position.
+  await startHandle.scrollIntoViewIfNeeded();
+  const before = await startHandle.boundingBox();
+  const startedAt = await startInput.inputValue();
+  expect(before).not.toBeNull();
+  if (!before) {
+    return;
+  }
+
+  // The handle became a `<button>`; prove pointer capture still drags it.
+  await page.mouse.move(before.x + before.width / 2, before.y + before.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(before.x + before.width / 2 - 120, before.y + before.height / 2, { steps: 6 });
+  await page.mouse.up();
+
+  await expect.poll(async () => await startInput.inputValue()).not.toBe(startedAt);
+  await expect.poll(async () => (await brush.evaluate(readBrushGeometry)).offsets).toEqual([0, 0]);
+  const after = await startHandle.boundingBox();
+  expect(after?.x ?? 0).toBeLessThan(before.x);
+  // Dragging must not leave the pointer captured on the thumb.
+  await expect(brush.locator('[data-dragging="true"]')).toHaveCount(0);
 });
 
 test('announces each brush handle as a slider over the day it selects', async ({ page }) => {

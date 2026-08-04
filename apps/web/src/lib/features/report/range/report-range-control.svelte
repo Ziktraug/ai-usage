@@ -162,13 +162,11 @@
     });
   const initialControlKey = (): string => currentControlKey();
   let synchronizedControlKey = $state(initialControlKey());
-  const dateForHandle = (handle: 'start' | 'end'): Date =>
-    dateFromIndex(
-      projection.domainFirst,
-      handle === 'start' ? controlState.selectionIndexes[0] : controlState.selectionIndexes[1],
-    );
-  const normalizedDraft = (draft: string, display: string, handle: 'start' | 'end'): string =>
-    draft === display ? inputValueForRange(dateForHandle(handle)) : draft;
+  const selectionIndexFor = (edge: 'end' | 'start'): number =>
+    edge === 'start' ? controlState.selectionIndexes[0] : controlState.selectionIndexes[1];
+  const dateForHandle = (edge: 'end' | 'start'): Date => dateFromIndex(projection.domainFirst, selectionIndexFor(edge));
+  const normalizedDraft = (draft: string, display: string, edge: 'end' | 'start'): string =>
+    draft === display ? inputValueForRange(dateForHandle(edge)) : draft;
 
   $effect(() => {
     const key = currentControlKey();
@@ -194,12 +192,18 @@
   const startPercent = $derived(percentFor(controlState.selectionIndexes[0]));
   const endPercent = $derived(percentFor(controlState.selectionIndexes[1]));
   const dimensionItems = focusedTimelineDimensionDefinitions;
-  const rangeHandles = ['start', 'end'] as const;
+  // Carrying the label with the edge keeps the markup free of repeated
+  // `handle === 'start'` branches, and the binding name stays clear of every
+  // style constant in this file.
+  const rangeHandles = [
+    { edge: 'start', label: 'Start date' },
+    { edge: 'end', label: 'End date' },
+  ] as const satisfies readonly { edge: 'end' | 'start'; label: string }[];
   const pressedAria = (mode: DashboardDateRangeSearch['mode']) => ({ 'aria-pressed': range.mode === mode });
   // A bucket index announces nothing useful on its own, so each handle also
   // exposes the day it resolves to. Assistive technology prefers
   // `aria-valuetext` over `aria-valuenow` whenever both are present.
-  const handleValueText = (handle: 'end' | 'start'): string => fmtDateOnly(dateForHandle(handle));
+  const handleValueText = (edge: 'end' | 'start'): string => fmtDateOnly(dateForHandle(edge));
   const granularityItems = [
     { label: 'Day', value: 'day' },
     { label: 'Week', value: 'week' },
@@ -389,11 +393,22 @@
     event.preventDefault();
   };
 
-  const onHandleKeydown = (event: KeyboardEvent, handle: 'start' | 'end'): void => {
-    applyTransition({ axis: 'selection', handle, key: event.key, shiftKey: event.shiftKey, type: 'keyboardMove' });
-    if (['ArrowLeft', 'ArrowRight', 'ArrowDown', 'ArrowUp', 'PageDown', 'PageUp', 'Home', 'End'].includes(event.key)) {
-      event.preventDefault();
+  // Only claim the key the state module actually consumed, so an unrelated key
+  // still reaches the page and the surrounding region never sees a duplicate.
+  const onHandleKeydown = (event: KeyboardEvent, edge: 'end' | 'start'): void => {
+    if (
+      !applyTransition({
+        axis: 'selection',
+        handle: edge,
+        key: event.key,
+        shiftKey: event.shiftKey,
+        type: 'keyboardMove',
+      })
+    ) {
+      return;
     }
+    event.preventDefault();
+    event.stopPropagation();
   };
 
   const changeDimension = (next: string): void => {
@@ -527,27 +542,28 @@
       onpointerdown={beginPan}
       onpointermove={onPointerMove}
       onpointerup={finishPointer}
+      tabindex={-1}
+      title="Drag selected range"
       type="button"
       style:left={`${startPercent}%`}
       style:width={`${Math.max(0, endPercent - startPercent)}%`}
     ></button>
-    {#each rangeHandles as handle (handle)}
-      {@const index = handle === 'start' ? controlState.selectionIndexes[0] : controlState.selectionIndexes[1]}
+    {#each rangeHandles as { edge, label } (edge)}
+      {@const index = selectionIndexFor(edge)}
       <button
-        aria-label={handle === 'start' ? 'Start date' : 'End date'}
+        aria-label={label}
         aria-valuemax={projection.maxIndex}
         aria-valuemin={0}
         aria-valuenow={index}
-        aria-valuetext={handleValueText(handle)}
+        aria-valuetext={handleValueText(edge)}
         class={timeSliderThumb}
-        onkeydown={(event) => onHandleKeydown(event, handle)}
+        onkeydown={(event) => onHandleKeydown(event, edge)}
         onlostpointercapture={finishPointer}
         onpointercancel={finishPointer}
-        onpointerdown={(event) => beginHandle(event, handle)}
+        onpointerdown={(event) => beginHandle(event, edge)}
         onpointermove={onPointerMove}
         onpointerup={finishPointer}
         role="slider"
-        title={handle === 'start' ? 'Drag or arrow the range start' : 'Drag or arrow the range end'}
         type="button"
         style:left={`${percentFor(index)}%`}
       ></button>
