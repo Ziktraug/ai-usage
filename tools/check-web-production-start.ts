@@ -23,6 +23,7 @@ const FORCE_EXIT_DEADLINE_MS = 2000;
 const LOG_DRAIN_DEADLINE_MS = 2000;
 const OVERALL_DEADLINE_MS = 30_000;
 const EVENT_LOOP_PROBE_BUDGET_MS = 1250;
+const OWNED_PROCESS_POLL_INTERVAL_MS = 25;
 const REPRESENTATIVE_SESSION_COUNT = 64;
 export const SKILLS_PRODUCTION_SMOKE_PATH = '/skills/global';
 const SKILLS_SHELL_MARKER = 'data-skills-workspace';
@@ -380,19 +381,48 @@ const ownedProcessGroupIsAlive = (child: Bun.Subprocess): boolean => {
   }
 };
 
-const waitForOwnedProcessGroupExit = async (child: Bun.Subprocess, deadlineMs: number): Promise<boolean> => {
-  const deadline = Date.now() + deadlineMs;
-  while (ownedProcessGroupIsAlive(child) && Date.now() < deadline) {
-    await Bun.sleep(Math.min(25, Math.max(1, deadline - Date.now())));
+type ShutdownCondition = () => boolean | Promise<boolean>;
+
+type ShutdownObservation =
+  | { readonly complete: boolean; readonly kind: 'observed' }
+  | { readonly error: unknown; readonly kind: 'error' };
+
+const waitForConditionUntil = async (condition: ShutdownCondition, deadline: number): Promise<boolean> => {
+  while (Date.now() < deadline) {
+    const conditionMet = await condition();
+    if (conditionMet) {
+      return Date.now() < deadline;
+    }
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) {
+      return false;
+    }
+    await Bun.sleep(Math.min(OWNED_PROCESS_POLL_INTERVAL_MS, remainingMs));
   }
-  return !ownedProcessGroupIsAlive(child);
+  return false;
 };
+
+const observeShutdownUntil = async (
+  isShutdownComplete: ShutdownCondition,
+  deadline: number,
+): Promise<ShutdownObservation> => {
+  try {
+    return { complete: await waitForConditionUntil(isShutdownComplete, deadline), kind: 'observed' };
+  } catch (error) {
+    return { error, kind: 'error' };
+  }
+};
+
+const waitForOwnedProcessGroupExit = async (child: Bun.Subprocess, deadlineMs: number): Promise<boolean> =>
+  await waitForConditionUntil(() => !ownedProcessGroupIsAlive(child), Date.now() + deadlineMs);
 
 const stopChild = async (
   child: Bun.Subprocess,
   deadlines: OwnedProcessDeadlines,
   gracefulSignal: NodeJS.Signals,
+  isShutdownComplete?: ShutdownCondition,
 ): Promise<void> => {
+  const gracefulDeadline = Date.now() + deadlines.gracefulShutdownMs;
   if (ownedProcessGroupIsAlive(child)) {
     if (gracefulSignal === 'SIGINT') {
       signalOwnedProcessGroup(child, gracefulSignal);
@@ -400,13 +430,25 @@ const stopChild = async (
       child.kill(gracefulSignal);
     }
   }
-  if (!(await waitForOwnedProcessGroupExit(child, deadlines.gracefulShutdownMs))) {
+  const shutdownObservation = isShutdownComplete
+    ? observeShutdownUntil(isShutdownComplete, gracefulDeadline)
+    : undefined;
+  if (!(await waitForOwnedProcessGroupExit(child, Math.max(0, gracefulDeadline - Date.now())))) {
     signalOwnedProcessGroup(child, 'SIGKILL');
     if (!(await waitForOwnedProcessGroupExit(child, deadlines.forceExitMs))) {
       throw new Error('Owned process group survived forced shutdown.');
     }
   }
   await within('owned direct child exit', deadlines.forceExitMs, child.exited);
+  if (shutdownObservation) {
+    const observation = await shutdownObservation;
+    if (observation.kind === 'error') {
+      throw observation.error;
+    }
+    if (!observation.complete) {
+      throw new Error('Owned process cleanup did not converge before its graceful shutdown deadline.');
+    }
+  }
 };
 
 const assertPortReusable = async (port: number): Promise<void> =>
@@ -418,6 +460,18 @@ const assertPortReusable = async (port: number): Promise<void> =>
     });
   });
 
+const portIsReusable = async (port: number): Promise<boolean> => {
+  try {
+    await assertPortReusable(port);
+    return true;
+  } catch (error) {
+    if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'EADDRINUSE') {
+      return false;
+    }
+    throw error;
+  }
+};
+
 export const withOwnedProcess = async (
   options: {
     command: string[];
@@ -425,6 +479,7 @@ export const withOwnedProcess = async (
     deadlines?: OwnedProcessDeadlines;
     env: Record<string, string>;
     port: number;
+    isShutdownComplete?: ShutdownCondition;
     shutdownSignal?: NodeJS.Signals;
   },
   verify: (child: Bun.Subprocess, logs: OwnedProcessResult) => Promise<void>,
@@ -454,7 +509,7 @@ export const withOwnedProcess = async (
     verificationError = error;
   }
   try {
-    await stopChild(child, deadlines, options.shutdownSignal ?? 'SIGTERM');
+    await stopChild(child, deadlines, options.shutdownSignal ?? 'SIGTERM', options.isShutdownComplete);
     await Promise.all([
       within('stdout drain', deadlines.logDrainMs, stdout.done),
       within('stderr drain', deadlines.logDrainMs, stderr.done),
@@ -570,6 +625,28 @@ const waitForRootDevelopmentEngine = async (
   throw new Error(`Root development engine did not become ready: ${reason}`);
 };
 
+interface RuntimeReleaseState {
+  readonly rendezvousReleased: boolean;
+  readonly writerLockReleased: boolean;
+}
+
+const readRuntimeReleaseState = async (fixture: ProductionRuntimeFixture): Promise<RuntimeReleaseState> => ({
+  rendezvousReleased: !(await Bun.file(fixture.rendezvousPath).exists()),
+  writerLockReleased: !(await Bun.file(fixture.lockPath).exists()),
+});
+
+const isRootDevelopmentRuntimeReleased = async (
+  fixture: ProductionRuntimeFixture,
+  enginePort: number | undefined,
+): Promise<boolean> => {
+  const releaseState = await readRuntimeReleaseState(fixture);
+  return (
+    releaseState.rendezvousReleased &&
+    releaseState.writerLockReleased &&
+    (enginePort === undefined || (await portIsReusable(enginePort)))
+  );
+};
+
 const runRootDevelopmentSmoke = async (): Promise<void> => {
   const webPort = await reserveFreePort();
   const fixture = await createProductionRuntimeFixture('plan052-root-development-', webPort, 0);
@@ -586,6 +663,7 @@ const runRootDevelopmentSmoke = async (): Promise<void> => {
           HOST: LOOPBACK_HOST,
         },
         port: webPort,
+        isShutdownComplete: async () => await isRootDevelopmentRuntimeReleased(fixture, enginePort),
         shutdownSignal: 'SIGINT',
       },
       async (child) => {
@@ -615,10 +693,11 @@ const runRootDevelopmentSmoke = async (): Promise<void> => {
 };
 
 const assertRuntimeReleased = async (fixture: ProductionRuntimeFixture, label: string): Promise<void> => {
-  if (await Bun.file(fixture.rendezvousPath).exists()) {
+  const releaseState = await readRuntimeReleaseState(fixture);
+  if (!releaseState.rendezvousReleased) {
     throw new Error(`${label} left its engine rendezvous after shutdown.`);
   }
-  if (await Bun.file(fixture.lockPath).exists()) {
+  if (!releaseState.writerLockReleased) {
     throw new Error(`${label} left its engine writer lock after shutdown.`);
   }
 };

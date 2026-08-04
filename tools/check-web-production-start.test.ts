@@ -7,6 +7,9 @@ import {
   withOwnedProcess,
 } from './check-web-production-start';
 
+const DELAYED_RUNTIME_CLEANUP_MS = 75;
+const SHORT_GRACEFUL_SHUTDOWN_MS = 100;
+
 test('uses the canonical nested Skills route for the production smoke', () => {
   expect(SKILLS_PRODUCTION_SMOKE_PATH).toBe('/skills/global');
 });
@@ -75,4 +78,100 @@ test('cleans up the owned listener and drains its pipes after an assertion failu
 
   expect(childPid).toBeGreaterThan(0);
   expect(() => process.kill(childPid, 0)).toThrow();
+});
+
+test('waits for detached runtime cleanup within the existing graceful deadline', async () => {
+  const port = await reservePort();
+  let cleanupComplete = false;
+  let cleanupChecks = 0;
+
+  await withOwnedProcess(
+    {
+      command: [
+        process.execPath,
+        path.join(import.meta.dir, 'fixtures', 'production-smoke-listener.mjs'),
+        String(port),
+      ],
+      cwd: import.meta.dir,
+      deadlines: { forceExitMs: 500, gracefulShutdownMs: 1000, logDrainMs: 500 },
+      env: { PATH: process.env.PATH ?? '', PORT: String(port) },
+      port,
+      isShutdownComplete: () => {
+        cleanupChecks += 1;
+        return Promise.resolve(cleanupComplete);
+      },
+    },
+    () => {
+      setTimeout(() => {
+        cleanupComplete = true;
+      }, DELAYED_RUNTIME_CLEANUP_MS);
+      return Promise.resolve();
+    },
+  );
+
+  expect(cleanupComplete).toBe(true);
+  expect(cleanupChecks).toBeGreaterThan(1);
+});
+
+test('rejects detached runtime cleanup that misses the graceful deadline', async () => {
+  const port = await reservePort();
+  await expect(
+    withOwnedProcess(
+      {
+        command: [
+          process.execPath,
+          path.join(import.meta.dir, 'fixtures', 'production-smoke-listener.mjs'),
+          String(port),
+        ],
+        cwd: import.meta.dir,
+        deadlines: {
+          forceExitMs: 500,
+          gracefulShutdownMs: SHORT_GRACEFUL_SHUTDOWN_MS,
+          logDrainMs: 500,
+        },
+        env: { PATH: process.env.PATH ?? '', PORT: String(port) },
+        isShutdownComplete: () => Promise.resolve(false),
+        port,
+      },
+      () => Promise.resolve(),
+    ),
+  ).rejects.toThrow('Owned process cleanup did not converge before its graceful shutdown deadline.');
+});
+
+test('preserves verification and detached cleanup failures in one aggregate error', async () => {
+  const port = await reservePort();
+  let caughtError: unknown;
+  try {
+    await withOwnedProcess(
+      {
+        command: [
+          process.execPath,
+          path.join(import.meta.dir, 'fixtures', 'production-smoke-listener.mjs'),
+          String(port),
+        ],
+        cwd: import.meta.dir,
+        deadlines: {
+          forceExitMs: 500,
+          gracefulShutdownMs: SHORT_GRACEFUL_SHUTDOWN_MS,
+          logDrainMs: 500,
+        },
+        env: { PATH: process.env.PATH ?? '', PORT: String(port) },
+        isShutdownComplete: () => Promise.resolve(false),
+        port,
+      },
+      () => Promise.reject(new Error('deliberate verification failure')),
+    );
+  } catch (error) {
+    caughtError = error;
+  }
+
+  expect(caughtError).toBeInstanceOf(AggregateError);
+  if (!(caughtError instanceof AggregateError)) {
+    throw new Error('Expected process verification and cleanup to reject with AggregateError');
+  }
+  expect(caughtError.message).toBe('Process verification and cleanup both failed.');
+  expect(caughtError.errors.map((error) => (error instanceof Error ? error.message : String(error)))).toEqual([
+    'deliberate verification failure',
+    'Owned process cleanup did not converge before its graceful shutdown deadline.',
+  ]);
 });
