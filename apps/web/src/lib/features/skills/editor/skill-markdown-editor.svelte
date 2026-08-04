@@ -45,7 +45,7 @@
 
   const editorSection = css({
     display: 'grid',
-    gridTemplateAreas: { base: '"header" "editor" "actions"', md: '"actions" "editor"' },
+    gridTemplateAreas: { base: '"header" "editor" "actions"', md: '"actions" "editor" "header"' },
     gridTemplateColumns: '1fr',
     columnGap: { base: '12px', md: 0 },
     rowGap: '12px',
@@ -53,16 +53,16 @@
   });
   const documentToolbar = css({
     gridArea: 'header',
-    display: { base: 'flex', md: 'none' },
+    display: 'flex',
     flexWrap: 'wrap',
     gap: '8px',
     alignItems: 'center',
     p: '10px 12px',
     border: '1px solid token(colors.line)',
-    borderRightWidth: { base: '1px', md: 0 },
+    borderRightWidth: '1px',
     borderTopLeftRadius: 'sm',
-    borderTopRightRadius: { base: 'sm', md: 0 },
-    borderBottomRightRadius: { base: 'sm', md: 0 },
+    borderTopRightRadius: 'sm',
+    borderBottomRightRadius: 'sm',
     borderBottomLeftRadius: 'sm',
     bg: 'surfaceMuted',
   });

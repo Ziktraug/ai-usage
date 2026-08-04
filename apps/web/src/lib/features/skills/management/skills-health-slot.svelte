@@ -220,7 +220,7 @@
     const acceptance = resolveSkillsRefreshAcceptance(awaitingRefresh, context.snapshot, decisionState);
     if (acceptance === 'announce') {
       awaitingRefresh = undefined;
-      setSuccessMessage('Skills reloaded.');
+      setSuccessMessage('Skills refreshed.');
     } else if (acceptance === 'clear') {
       awaitingRefresh = undefined;
     }

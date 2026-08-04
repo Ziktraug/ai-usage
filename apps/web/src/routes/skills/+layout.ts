@@ -16,5 +16,5 @@ export const load: LayoutLoad = async ({ fetch, parent, url }) => {
   if (result.decision === 'redirect-report') {
     redirect(307, '/');
   }
-  return { ...parentData, queryState: result.queryState };
+  return { ...parentData, queryState: result.queryState, source: result.source };
 };

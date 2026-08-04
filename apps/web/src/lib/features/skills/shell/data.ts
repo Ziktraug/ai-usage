@@ -19,18 +19,20 @@ export type SkillsShellRouteLoadResult =
   | {
       readonly decision: 'render';
       readonly queryState: WebQueryHydrationState;
+      readonly source: string;
     };
 
 type SkillsPrefetchRuntime = Pick<WebQueryRuntime, 'queryClient'> & {
   readonly rpc: Pick<WebQueryRuntime['rpc'], 'skills'>;
 };
 
-export const prefetchSkillsShellQueries = async (runtime: SkillsPrefetchRuntime, pathname: string): Promise<void> => {
+export const prefetchSkillsShellQueries = async (runtime: SkillsPrefetchRuntime, pathname: string): Promise<string> => {
   const client = createSkillsClient(runtime.rpc.skills);
   const [snapshot, knownProjectPaths] = await Promise.all([
     runtime.queryClient.fetchQuery(skillsSnapshotQueryOptions(client, serverQueryContext)),
     runtime.queryClient.fetchQuery(skillsKnownProjectPathsQueryOptions(client, serverQueryContext)),
   ]);
+  const source = snapshot.config.sourceRepoPath ?? 'not configured';
   const inventories = snapshot.configured
     ? await runtime.queryClient.fetchQuery(skillsProjectInventoriesQueryOptions(client, serverQueryContext))
     : [];
@@ -39,14 +41,14 @@ export const prefetchSkillsShellQueries = async (runtime: SkillsPrefetchRuntime,
     await runtime.queryClient.fetchQuery(
       managedSkillMarkdownQueryOptions(client, view.selectionDetail.skill.name, serverQueryContext),
     );
-    return;
+    return source;
   }
   if (view.selectionDetail.kind !== 'project-skill') {
-    return;
+    return source;
   }
   const observation = view.selectionDetail.skill.observations.at(0);
   if (observation === undefined) {
-    return;
+    return source;
   }
   await runtime.queryClient.fetchQuery(
     projectSkillMarkdownQueryOptions(
@@ -59,6 +61,7 @@ export const prefetchSkillsShellQueries = async (runtime: SkillsPrefetchRuntime,
       serverQueryContext,
     ),
   );
+  return source;
 };
 
 export const loadSkillsShellRoute = async (input: {
@@ -69,10 +72,9 @@ export const loadSkillsShellRoute = async (input: {
   if (input.mode === 'demo') {
     return { decision: 'redirect-report' };
   }
-  return {
-    decision: 'render',
-    queryState: await createAwaitedRouteQueryState(input.options, async (runtime) => {
-      await prefetchSkillsShellQueries(runtime, input.pathname);
-    }),
-  };
+  let source = 'not configured';
+  const queryState = await createAwaitedRouteQueryState(input.options, async (runtime) => {
+    source = await prefetchSkillsShellQueries(runtime, input.pathname);
+  });
+  return { decision: 'render', queryState, source };
 };

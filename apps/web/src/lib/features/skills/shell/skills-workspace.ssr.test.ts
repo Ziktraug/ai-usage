@@ -138,7 +138,8 @@ describe('Svelte Skills workspace SSR', () => {
 
   test('hydrates a bounded awaited route into a new provider without duplicate Skills acquisition', async () => {
     const calls = { acquisitions: 0, inventories: 0, knownPaths: 0, managed: 0, snapshot: 0 };
-    const snapshot = syntheticSnapshot();
+    const baseSnapshot = syntheticSnapshot();
+    const snapshot = { ...baseSnapshot, config: { ...baseSnapshot.config, sourceRepoPath: '/fixture/source' } };
     const capability: SkillsCapability = {
       createTargetDirectory: unavailable,
       previewReconcileAll: unavailable,
@@ -194,10 +195,12 @@ describe('Svelte Skills workspace SSR', () => {
     }
     const callsAfterRoute = { ...calls };
     const html = render(hydrationFixture, {
-      props: { hydrationState: result.queryState },
+      props: { hydrationState: result.queryState, source: result.source },
     }).body;
 
     expect(html).toContain('data-skills-workspace');
+    expect(html).toContain('Source /fixture/source');
+    expect(html).not.toContain('Source not configured');
     expect(html).toContain('alpha-skill');
     expect(html).toContain('aria-label="Selected skill detail"');
     expect(html).not.toContain('Loading skills');

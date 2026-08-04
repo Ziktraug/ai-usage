@@ -63,8 +63,9 @@ describe('Svelte Skills SSR data adapter', () => {
       rpc: { skills: createRouterClient(createSkillsRouter(() => capability)) },
     };
 
+    const source = await prefetchSkillsShellQueries(runtime, '/skills/global/alpha-skill');
     await prefetchSkillsShellQueries(runtime, '/skills/global/alpha-skill');
-    await prefetchSkillsShellQueries(runtime, '/skills/global/alpha-skill');
+    expect(source).toBe('/synthetic/source');
     expect(calls).toEqual({ inventories: 1, knownPaths: 1, managed: 1, project: 0, snapshot: 1 });
     expect(queryClient.getQueryData<SkillMarkdownDocument>(managedSkillMarkdownKey('alpha-skill'))).toEqual(
       syntheticManagedDocument,
