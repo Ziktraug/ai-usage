@@ -20,6 +20,16 @@ describe('report range projection', () => {
     expect(projection.summary).toBe('May 12 → Jun 11, 2026 · 30 days');
     expect(projection.selectionIndexes).toEqual([11, 41]);
   });
+
+  test('preserves the unpadded Solid start-day summary', () => {
+    const projection = reportRangeProjection({ mode: '30d' }, new Date('2026-07-03T12:00:00.000Z'), {
+      first: '2026-06-01',
+      last: '2026-07-03',
+    });
+
+    expect(projection.summary).toBe('Jun 3 → Jul 03, 2026 · 30 days');
+  });
+
   test('keeps a canonical preset range when filtered data has a sparse domain', () => {
     const projection = reportRangeProjection({ mode: '7d' }, generatedAt, {
       first: '2026-06-11T09:42:00.000Z',

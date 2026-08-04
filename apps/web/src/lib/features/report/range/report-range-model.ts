@@ -24,7 +24,7 @@ export interface ReportRangeProjection {
 }
 
 const inputDateFormatter = new Intl.DateTimeFormat('en', { day: '2-digit', month: 'short', year: 'numeric' });
-const summaryDayFormatter = new Intl.DateTimeFormat('en', { day: '2-digit', month: 'short' });
+const summaryDayFormatter = new Intl.DateTimeFormat('en', { day: 'numeric', month: 'short' });
 const summaryEndFormatter = new Intl.DateTimeFormat('en', { day: '2-digit', month: 'short', year: 'numeric' });
 
 const CANONICAL_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
