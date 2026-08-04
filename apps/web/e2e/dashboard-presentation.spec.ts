@@ -71,12 +71,23 @@ test('keeps metric provenance visibly interactive and operable by keyboard', asy
   await expect(hint).toBeVisible();
 });
 
-test('explains unavailable source freshness without replacing its compact pill', async ({ page }) => {
+test('explains unavailable source freshness without replacing its compact pill', async ({
+  browserFailureGate,
+  page,
+}) => {
   await page.goto('/skills');
   await page.evaluate((enabledKey) => {
     Reflect.set(globalThis, enabledKey, true);
   }, FOCUSED_REPORT_E2E_ENABLED_KEY);
-  await reportViewsFor(page).getByRole('link', { exact: true, name: 'Overview' }).click();
+  const releaseOverviewDataAbort = browserFailureGate.allowRequestAbortOnce({
+    pathname: '/__data.json',
+    resourceType: 'fetch',
+  });
+  try {
+    await reportViewsFor(page).getByRole('link', { exact: true, name: 'Overview' }).click();
+  } finally {
+    releaseOverviewDataAbort();
+  }
 
   const freshnessPill = page.getByText('Freshness unavailable', { exact: true });
   await expect(freshnessPill).toBeVisible();
