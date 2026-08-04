@@ -70,12 +70,14 @@
     hasMoreRows?: boolean;
     initialExpanded?: ExpandedState;
     initialSurfaceMode?: Exclude<SessionSurfaceMode, 'pending'>;
+    initialWindowAnchor: boolean;
     loading?: boolean;
     loadingMoreRows?: boolean;
     onClearFilters: () => void;
     onColumnVisibilityChange: StateChangeHandler<TableVisibilityState>;
     onFieldFilter: (key: 'campaign' | 'model' | 'project' | 'provider', value: string) => void;
     onHarnessFilter: (value: string) => void;
+    onInitialWindowAnchor: () => void;
     onLoadCampaignChildren?: (campaignKey: string) => void;
     onLoadMoreRows?: () => void;
     onSelect: (row: SessionPresentationRow) => void;
@@ -93,12 +95,14 @@
     columnVisibility,
     hasMoreRows = false,
     initialExpanded = {},
+    initialWindowAnchor,
     loading = false,
     loadingMoreRows = false,
     onClearFilters,
     onColumnVisibilityChange,
     onFieldFilter,
     onHarnessFilter,
+    onInitialWindowAnchor,
     onLoadCampaignChildren,
     onLoadMoreRows,
     onSelect,
@@ -118,7 +122,8 @@
   let viewportHeight = $state(520);
   let surfaceElement = $state<HTMLElement>();
   let sessionRegionStartElement = $state<HTMLElement>();
-  let anchoredSurfaceElement = $state<HTMLElement>();
+  let initializedSurfaceElement = $state<HTMLElement>();
+  let windowAnchorConsumed = $state(false);
   let previousResetKey = $state('');
   let pagingSignature = $state('');
   let pendingFocusIndex = $state<number>();
@@ -218,13 +223,18 @@
   $effect(() => {
     const activeSurface = surfaceElement;
     const regionStart = sessionRegionStartElement;
-    if (anchoredSurfaceElement === activeSurface || !activeSurface || !regionStart) {
+    const shouldAnchorWindow = initialWindowAnchor && !windowAnchorConsumed;
+    if (initializedSurfaceElement === activeSurface || !activeSurface || (shouldAnchorWindow && !regionStart)) {
       return;
     }
     const frame = window.requestAnimationFrame(() => {
-      anchoredSurfaceElement = activeSurface;
+      initializedSurfaceElement = activeSurface;
       activeSurface.style.removeProperty('--session-surface-height');
-      regionStart.scrollIntoView({ block: 'start' });
+      if (shouldAnchorWindow) {
+        windowAnchorConsumed = true;
+        regionStart?.scrollIntoView({ block: 'start' });
+        onInitialWindowAnchor();
+      }
       updateViewportFor(activeSurface, activeMode);
     });
     return () => window.cancelAnimationFrame(frame);

@@ -31,10 +31,12 @@
   columnVisibility={defaultColumnVisibility}
   initialExpanded={expanded ? { [campaign.rowId]: true } : {}}
   initialSurfaceMode={mode}
+  initialWindowAnchor
   onClearFilters={noop}
   onColumnVisibilityChange={noop}
   onFieldFilter={noop}
   onHarnessFilter={noop}
+  onInitialWindowAnchor={noop}
   onSelect={noop}
   onSortingChange={noop}
   queryResetKey="synthetic-query"

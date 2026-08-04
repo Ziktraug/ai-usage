@@ -138,16 +138,23 @@ test('loads a deterministic report overview', async ({ page }) => {
   );
 });
 
-test('locks definitive output while a focused filter response is pending', async ({ page }) => {
+test('locks definitive output while a focused filter response is pending', async ({ browserFailureGate, page }) => {
   await page.goto('/skills');
   await page.evaluate((enabledKey) => {
     Reflect.set(globalThis, enabledKey, true);
   }, FOCUSED_REPORT_E2E_ENABLED_KEY);
-  await reportViewsFor(page).getByRole('link', { exact: true, name: 'Overview' }).click();
-
-  await expect(page.locator('main[data-hydrated="true"]')).toBeVisible({
-    timeout: HYDRATION_TIMEOUT_MS,
+  const releaseOverviewDataAbort = browserFailureGate.allowRequestAbortOnce({
+    pathname: '/__data.json',
+    resourceType: 'fetch',
   });
+  try {
+    await reportViewsFor(page).getByRole('link', { exact: true, name: 'Overview' }).click();
+    await expect(page.locator('main[data-hydrated="true"]')).toBeVisible({
+      timeout: HYDRATION_TIMEOUT_MS,
+    });
+  } finally {
+    releaseOverviewDataAbort();
+  }
   await expect(page.getByText('5 / 6 sessions', { exact: true })).toBeVisible();
   const pendingSurface = page.locator('[data-report-pending]');
   await expect(pendingSurface).toHaveCount(0);

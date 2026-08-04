@@ -78,7 +78,7 @@
     focusedTimelineDimensionLabel,
     isFocusedTimelineDimension,
   } from '@ai-usage/report-core/focused-report-query';
-  import { flushSync } from 'svelte';
+  import { flushSync, untrack } from 'svelte';
   import type { DashboardDateRangeSearch, DashboardSearch } from '../../../../dashboard-search';
   import { dateFromIndex, dateRangePresets, parseLocalDate } from '../../../../date-range';
   import type { MigrationGranularity, TimelineDimension, TimelineValue } from '../../../../overview-model';
@@ -97,6 +97,7 @@
     customRangeFromInputs,
     escapedRangeDraft,
     inputValueForRange,
+    reportRangeEditKey,
     reportRangePointerFinishType,
     reportRangeProjection,
   } from './report-range-model';
@@ -156,7 +157,7 @@
   let draftTo = $state(initialTo());
   let cancelledInput = $state<'end' | 'start' | null>(null);
   let editingInput = $state<'end' | 'start' | null>(null);
-  const editRun = createSearchEditRun();
+  const editRun = createSearchEditRun(untrack(() => reportRangeEditKey(range)));
   const currentControlKey = (): string =>
     JSON.stringify({
       dimension,
@@ -192,6 +193,7 @@
     if (editingInput !== 'end') {
       draftTo = projection.displayTo;
     }
+    editRun.synchronize(reportRangeEditKey(range));
     synchronizedControlKey = key;
   });
 
@@ -240,7 +242,10 @@
     const nextProjection = reportRangeProjection(next, generatedDate, dateDomain);
     draftFrom = nextProjection.displayFrom;
     draftTo = nextProjection.displayTo;
-    commitRange(next, editRun.next());
+    const options = editRun.next(reportRangeEditKey(next));
+    if (options) {
+      commitRange(next, options);
+    }
   };
 
   const applyTransition = (event: Parameters<typeof transitionTimeRangeControl>[1]): boolean => {
@@ -270,6 +275,8 @@
     });
     draftFrom = nextProjection.displayFrom;
     draftTo = nextProjection.displayTo;
+    editRun.commit();
+    editRun.synchronize(reportRangeEditKey(next));
   };
 
   const commitInputs = (settle: boolean): void => {
@@ -280,7 +287,10 @@
     if (!next) {
       return;
     }
-    commitRange(next, editRun.next());
+    const options = editRun.next(reportRangeEditKey(next));
+    if (options) {
+      commitRange(next, options);
+    }
     const nextProjection = reportRangeProjection(next, generatedDate, dateDomain);
     controlState = transitionTimeRangeControl(
       controlState,

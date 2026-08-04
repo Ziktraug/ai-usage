@@ -34,6 +34,7 @@
     shouldPreserveReportScroll,
   } from './navigation';
   import NavigationLink from './navigation-link.svelte';
+  import { useSessionWindowAnchorOwner } from './session-window-anchor-context';
   import ThemeToggle from './theme-toggle.svelte';
 
   let { runtimeMode }: { runtimeMode: RuntimeMode } = $props();
@@ -147,6 +148,7 @@
   ] as const;
   const showManage = $derived(runtimeMode !== 'demo');
   const dirtyRegistry = useDirtyGuardRegistry();
+  const sessionWindowAnchorOwner = useSessionWindowAnchorOwner();
 
   let surfaceMode = $state<SessionSurfaceMode>('pending');
   let manageOpen = $state(false);
@@ -161,6 +163,7 @@
   let entrySequence = 0;
   const keysByHistoryCursor = new Map<number, string>();
   let scrollLifecycle: ScrollLifecycle | undefined;
+  let navigationHydrated = $state(false);
   const beforeScrollListeners = new Set<(event: ScrollLifecycleEvent) => void>();
   const afterScrollListeners = new Set<(event: Pick<ScrollLifecycleEvent, 'toKey'>) => void>();
   const beforeDirtyListeners = new Set<(event: DirtyBeforeNavigate) => void>();
@@ -182,15 +185,15 @@
   beforeNavigate((navigation) => {
     const fromKey = currentEntryKey || seedCurrentEntry();
     const isHistoryTraversal = navigation.type === 'popstate' && navigation.delta !== undefined;
+    const preserveReportScroll = shouldPreserveReportScroll(navigation.from?.url ?? null, navigation.to?.url ?? null);
+    sessionWindowAnchorOwner.beginNavigation(preserveReportScroll);
     pendingHistoryCursor = isHistoryTraversal ? historyCursor + navigation.delta : historyCursor + 1;
     pendingEntryKey = isHistoryTraversal
       ? (keysByHistoryCursor.get(pendingHistoryCursor) ?? createEntryKey())
       : createEntryKey();
     const scrollEvent: ScrollLifecycleEvent = {
       fromKey,
-      ...(shouldPreserveReportScroll(navigation.from?.url ?? null, navigation.to?.url ?? null)
-        ? { requestedReset: false }
-        : {}),
+      ...(preserveReportScroll ? { requestedReset: false } : {}),
       toKey: pendingEntryKey,
       type: navigationTypeForScroll(navigation.type),
     };
@@ -216,6 +219,7 @@
         historyCursor = pendingHistoryCursor;
       }
       keysByHistoryCursor.set(historyCursor, currentEntryKey);
+      sessionWindowAnchorOwner.settleNavigation();
       pendingEntryKey = '';
       for (const listener of afterScrollListeners) {
         listener({ toKey: currentEntryKey });
@@ -293,6 +297,7 @@
       goto,
       history: window.history,
       onFailure: () => {
+        sessionWindowAnchorOwner.cancelNavigation();
         navigationFailure = true;
       },
     });
@@ -327,6 +332,7 @@
           const blocked = controller.handle(navigation);
           if (blocked) {
             scrollLifecycle?.cancel();
+            sessionWindowAnchorOwner.cancelNavigation();
             blockedNavigation = controller.pending() !== undefined;
           }
           return blocked;
@@ -335,10 +341,13 @@
       dirty: dirtyRegistry.dirty,
       window,
     });
+    navigationHydrated = true;
     return () => {
       stopDirtyBridge();
       scrollLifecycle?.dispose();
       scrollLifecycle = undefined;
+      sessionWindowAnchorOwner.cancelNavigation();
+      navigationHydrated = false;
       dirtyController = undefined;
       stopSurface();
     };
@@ -370,7 +379,12 @@
 <DiscardNavigationDialog onDiscard={discardBlockedNavigation} onKeep={keepBlockedNavigation} open={blockedNavigation} />
 
 {#if surfaceMode === 'desktop'}
-  <aside aria-label="Application navigation" class={desktopRail} data-app-navigation="desktop">
+  <aside
+    aria-label="Application navigation"
+    class={desktopRail}
+    data-app-navigation="desktop"
+    data-hydrated={navigationHydrated ? 'true' : 'false'}
+  >
     <div class={productName}>ai-usage</div>
     <nav aria-label="Report views" class={navigationGroup}>
       <div class={navigationGroupLabel}>Report</div>
@@ -404,6 +418,7 @@
     aria-label="Report views"
     class={cx(mobileNavigation, !showManage && mobileNavigationReportOnly)}
     data-app-navigation="mobile"
+    data-hydrated={navigationHydrated ? 'true' : 'false'}
   >
     {#each reportTabs as destination (destination.tab)}
       <NavigationLink

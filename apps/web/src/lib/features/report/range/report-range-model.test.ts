@@ -4,6 +4,7 @@ import {
   customRangeFromInputs,
   escapedRangeDraft,
   rangeBounds,
+  reportRangeEditKey,
   reportRangePointerFinishType,
   reportRangeProjection,
 } from './report-range-model';
@@ -12,6 +13,12 @@ const generatedAt = new Date('2026-06-11T12:00:00.000Z');
 const domain = { first: '2026-05-01', last: '2026-06-11' } as const;
 
 describe('report range projection', () => {
+  test('uses one edit key regardless of producer property order', () => {
+    expect(reportRangeEditKey({ mode: 'custom', from: '2026-05-20', to: '2026-06-08' })).toBe(
+      reportRangeEditKey({ from: '2026-05-20', mode: 'custom', to: '2026-06-08' }),
+    );
+  });
+
   test('projects the shared 30-day report range onto the chart domain', () => {
     const projection = reportRangeProjection({ mode: '30d' }, generatedAt, domain);
 

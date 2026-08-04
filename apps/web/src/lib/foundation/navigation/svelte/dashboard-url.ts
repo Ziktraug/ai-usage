@@ -70,6 +70,9 @@ export const createDashboardSearchNavigation =
     const currentUrl = port.currentUrl();
     const nextSearch = update(parseDashboardSearchUrl(currentUrl, codec));
     const url = dashboardUrlFor(currentUrl, nextSearch, codec);
+    if (url.href === currentUrl.href) {
+      return;
+    }
     port
       .navigate({
         ...(options?.keepFocus === undefined ? {} : { keepFocus: options.keepFocus }),
@@ -82,19 +85,32 @@ export const createDashboardSearchNavigation =
 
 export interface SearchEditRun {
   readonly commit: () => void;
-  readonly next: () => SearchNavigationOptions;
+  readonly next: (key?: string) => SearchNavigationOptions | undefined;
+  readonly synchronize: (key: string) => void;
 }
 
-export const createSearchEditRun = (): SearchEditRun => {
+export const createSearchEditRun = (initialKey?: string): SearchEditRun => {
   let active = false;
+  let key = initialKey;
   return {
     commit: () => {
       active = false;
     },
-    next: () => {
+    next: (nextKey) => {
+      if (nextKey !== undefined && nextKey === key) {
+        return;
+      }
       const replace = active;
       active = true;
+      key = nextKey;
       return { keepFocus: true, replace, resetScroll: false };
+    },
+    synchronize: (nextKey) => {
+      if (nextKey === key) {
+        return;
+      }
+      active = false;
+      key = nextKey;
     },
   };
 };

@@ -50,6 +50,7 @@
   import { createSessionDetailController, type SessionSelectionInput } from '../../sessions/detail/controller';
   import { createSessionDetailQueryOwner } from '../../sessions/detail/query-owner';
   import SessionDetailSlot from '../../sessions/detail/session-detail-slot.svelte';
+  import { useSessionWindowAnchorOwner } from '../../shell/session-window-anchor-context';
   import CampaignLabelEditor from '../actions/campaign-label-editor.svelte';
   import type { CampaignLabelEditorState } from '../actions/campaign-label-editor-state';
   import CampaignSessionControls from '../actions/campaign-session-controls.svelte';
@@ -80,6 +81,7 @@
     search: DashboardSearch;
   } = $props();
 
+  const sessionWindowAnchorOwner = useSessionWindowAnchorOwner();
   const runtimeMode = untrack(() => mode);
   const revision = untrack(() => `synthetic-${runtimeMode}`);
   const responseFixture = untrack(() => (browser && mode === 'e2e' ? createFocusedReportE2EFixture() : undefined));
@@ -480,6 +482,7 @@
       />
       <SessionTable
         {columnVisibility}
+        initialWindowAnchor={sessionWindowAnchorOwner.available()}
         onClearFilters={navigation.clearAllFilters}
         onColumnVisibilityChange={(updater) => {
           const next = applyStateUpdate(updater, columnVisibility);
@@ -487,6 +490,7 @@
         }}
         onFieldFilter={navigation.setFieldFilter}
         onHarnessFilter={(value) => navigation.setHarness(renderedSearch.harness.includes(value) ? renderedSearch.harness.filter((item) => item !== value) : [...renderedSearch.harness, value])}
+        onInitialWindowAnchor={sessionWindowAnchorOwner.consume}
         onSelect={selectSessionRow}
         onSortingChange={(updater) => {
           const next = applyStateUpdate(updater, sorting);

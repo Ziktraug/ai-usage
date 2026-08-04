@@ -13,6 +13,9 @@ import {
 } from '../../../../date-range';
 import type { TimeRangeSelectionIndexes } from '../../../../time-range-control-state';
 
+export const reportRangeEditKey = (range: DashboardDateRangeSearch): string =>
+  JSON.stringify([range.mode, range.from ?? null, range.to ?? null]);
+
 export interface ReportRangeProjection {
   readonly displayFrom: string;
   readonly displayTo: string;

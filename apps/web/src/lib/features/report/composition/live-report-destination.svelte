@@ -40,6 +40,7 @@
     createSessionTableQueryOwner,
     type SessionTableQueryState,
   } from '../../sessions/table/session-table-query-owner';
+  import { useSessionWindowAnchorOwner } from '../../shell/session-window-anchor-context';
   import { useSourceControl } from '../../sources/context.svelte';
   import CampaignLabelEditor from '../actions/campaign-label-editor.svelte';
   import CampaignSessionControls from '../actions/campaign-session-controls.svelte';
@@ -97,6 +98,7 @@
     warnings: readonly UsageReportWarning[];
   } = $props();
 
+  const sessionWindowAnchorOwner = useSessionWindowAnchorOwner();
   let dimension = $state<TimelineDimension>('harness');
   let granularity = $state<MigrationGranularity>('day');
   let timelineValue = $state<TimelineValue>('cost');
@@ -473,8 +475,10 @@
           {@const SessionsDestination = sessionsDestinationModule.default}
           <SessionsDestination
             destinationScope={destination.sessions}
+            initialSessionWindowAnchor={sessionWindowAnchorOwner.available()}
             {navigate}
             onCampaignControlsChange={(binding) => (campaignSessionControls = binding)}
+            onInitialSessionWindowAnchor={sessionWindowAnchorOwner.consume}
             onRowsChange={(rows) => (detailRows = rows)}
             onSelectionChange={(nextSelection) => {
               selection = nextSelection;

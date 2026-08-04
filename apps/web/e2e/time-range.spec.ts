@@ -12,6 +12,16 @@ const SESSION_SUMMARY_PATTERN = / sessions$/;
 
 const reportRangeValue = (page: Page): string | null => new URL(page.url()).searchParams.get('range');
 
+const navigationEntryKey = async (page: Page): Promise<string | null> =>
+  await page.evaluate(() => {
+    const states = Reflect.get(history.state ?? {}, 'sveltekit:states');
+    if (!(states && typeof states === 'object')) {
+      return null;
+    }
+    const key = Reflect.get(states, 'aiUsageNavigationKey');
+    return typeof key === 'string' ? key : null;
+  });
+
 test('uses one report range for the dashboard and activity chart', async ({ page }) => {
   await openHydratedReport(page);
 
@@ -263,20 +273,30 @@ test('commits preset, text, keyboard, and pointer report ranges to the URL', asy
   await waitForFocusedReportSettled(page);
   await expect(startInput).not.toHaveValue(pointerStart);
 
+  const beforeFirstBlurKey = await navigationEntryKey(page);
   await startInput.fill('2026-05-20');
   await endInput.focus();
   await expect(startInput).toHaveValue('May 20, 2026');
   await expect.poll(() => reportRangeValue(page)).toContain('"from":"2026-05-20"');
+  await expect.poll(() => navigationEntryKey(page)).not.toBe(beforeFirstBlurKey);
+  const firstBlurredEditKey = await navigationEntryKey(page);
+  expect(firstBlurredEditKey).not.toBeNull();
   const firstBlurredEditUrl = page.url();
 
   await startInput.fill('2026-05-21');
   await endInput.focus();
   await expect(startInput).toHaveValue('May 21, 2026');
   await expect.poll(() => reportRangeValue(page)).toContain('"from":"2026-05-21"');
+  await expect.poll(() => navigationEntryKey(page)).not.toBe(firstBlurredEditKey);
+  const secondBlurredEditKey = await navigationEntryKey(page);
+  expect(secondBlurredEditKey).not.toBeNull();
   const secondBlurredEditUrl = page.url();
   expect(secondBlurredEditUrl).not.toBe(firstBlurredEditUrl);
 
   await page.goBack();
+  await expect.poll(() => page.url()).toBe(firstBlurredEditUrl);
+  await expect.poll(() => navigationEntryKey(page)).not.toBe(secondBlurredEditKey);
+  await waitForFocusedReportSettled(page);
   await expect.poll(() => page.url()).toBe(firstBlurredEditUrl);
   await expect(startInput).toHaveValue('May 20, 2026');
 });

@@ -1,5 +1,5 @@
 import AxeBuilder from '@axe-core/playwright';
-import { expect, test } from './browser-test';
+import { expect, test, waitForHydratedReport } from './browser-test';
 
 const ANY_VALUE_PATTERN = /.+/;
 const MANAGEMENT_DESTINATION_PATTERN = /Skills|Sources|Sync/;
@@ -226,6 +226,8 @@ test('blocks dirty navigation through Keep, Discard, reload, focus, and cleanup'
 
 test('restores Svelte history and scroll without feedback loops', async ({ page }) => {
   await page.goto('/?foreign=kept#anchor');
+  await waitForHydratedReport(page);
+  await expect(page.locator('[data-app-navigation][data-hydrated="true"]')).toBeVisible();
   await page.evaluate(() => {
     document.body.style.minHeight = '4000px';
   });
@@ -243,6 +245,27 @@ test('restores Svelte history and scroll without feedback loops', async ({ page 
   await page.goForward();
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(1200);
   expect(await page.evaluate(() => history.length)).toBe(historyLength + 1);
+});
+
+test('restores Session scroll after a cross-route history remount', async ({ page }) => {
+  await page.goto('/?tab=sessions');
+  await waitForHydratedReport(page);
+  await expect(page.locator('[data-app-navigation][data-hydrated="true"]')).toBeVisible();
+  await expect(page.locator('[data-session-table-owner]')).toBeVisible();
+  await page.evaluate(() => {
+    document.body.style.minHeight = '4000px';
+    window.scrollTo(0, 300);
+  });
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(300);
+
+  await page.getByRole('link', { name: 'Skills' }).click();
+  await expect(page).toHaveURL('/skills/global');
+  await page.goBack();
+
+  await expect(page).toHaveURL('/?tab=sessions');
+  await waitForHydratedReport(page);
+  await expect(page.locator('[data-session-table-owner]')).toBeVisible();
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(300);
 });
 
 test('renders retryable route errors and the default accessible Not Found shell', async ({ context, page }) => {

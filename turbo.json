@@ -30,6 +30,10 @@
       "dependsOn": ["^build"],
       "outputs": []
     },
+    "@ai-usage/design-system#test": {
+      "dependsOn": ["build"],
+      "outputs": []
+    },
     "lint": {
       "outputs": []
     },

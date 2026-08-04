@@ -9,6 +9,7 @@ declare global {
 
     interface PageState {
       readonly aiUsageNavigationKey?: string;
+      readonly aiUsageSessionWindowAnchorConsumed?: true;
     }
   }
 }

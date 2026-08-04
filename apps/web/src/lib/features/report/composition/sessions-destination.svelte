@@ -34,7 +34,9 @@
 
   let {
     navigate,
+    initialSessionWindowAnchor,
     onCampaignControlsChange,
+    onInitialSessionWindowAnchor,
     onRowsChange,
     onSessionCountChange,
     onSelectionChange,
@@ -47,8 +49,10 @@
     selectedCampaignKey,
     selectedRowId,
   }: {
+    initialSessionWindowAnchor: boolean;
     navigate: SearchNavigationIntent<DashboardSearch>;
     onCampaignControlsChange: (binding: CampaignSessionControlsBinding | null) => void;
+    onInitialSessionWindowAnchor: () => void;
     onRowsChange: (rows: readonly SessionPresentationRow[]) => void;
     onSessionCountChange: (sessionCount: number | undefined) => void;
     onSelectionChange: (selection: SessionSelectionInput | null) => void;
@@ -117,6 +121,7 @@
         : { campaignChildren: queryState.campaignChildren })}
       {columnVisibility}
       hasMoreRows={Boolean(queryState?.nextCursor)}
+      initialWindowAnchor={initialSessionWindowAnchor}
       loading={pending && !queryState}
       loadingMoreRows={queryState?.loadingMore ?? false}
       onClearFilters={() => navigate((current) => ({ ...current, filters: {}, harness: [], machine: [], origin: [], q: '', range: { mode: '30d' } }))}
@@ -127,6 +132,7 @@
       }}
       onFieldFilter={(key, value) => navigate((current) => ({ ...current, filters: { ...current.filters, [key]: value } }))}
       onHarnessFilter={(value) => navigate((current) => ({ ...current, harness: current.harness.includes(value) ? current.harness.filter((item) => item !== value) : [...current.harness, value] }))}
+      onInitialWindowAnchor={onInitialSessionWindowAnchor}
       onLoadCampaignChildren={(campaignKey) => queryOwner.loadCampaignChildren(campaignKey).catch(() => undefined)}
       onLoadMoreRows={() => queryOwner.loadMore().catch(() => undefined)}
       onSelect={(row) => {

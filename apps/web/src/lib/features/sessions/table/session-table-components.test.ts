@@ -140,7 +140,9 @@ describe('session table Svelte rendering', () => {
     expect(source).toContain("addEventListener('scroll', synchronize, { passive: true })");
     expect(source).toContain("removeEventListener('scroll', synchronize)");
     expect(source).toContain('data-session-region-start');
-    expect(source).toContain('scrollIntoView');
+    expect(source).toContain('initialWindowAnchor && !windowAnchorConsumed');
+    expect(source).toContain("regionStart?.scrollIntoView({ block: 'start' })");
+    expect(source).toContain('onInitialWindowAnchor()');
     expect(source).toContain('data-session-paging-sentinel="mobile"');
     expect(source).toContain('data-virtual-spacer="top"');
     expect(source).toContain('data-virtual-spacer="bottom"');

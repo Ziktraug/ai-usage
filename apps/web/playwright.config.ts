@@ -24,5 +24,5 @@ export default defineConfig({
     timeout: 120_000,
     url: 'http://127.0.0.1:4174',
   },
-  workers: 4,
+  workers: process.env.CI ? 2 : 4,
 });

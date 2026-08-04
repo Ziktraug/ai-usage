@@ -145,6 +145,27 @@ describe('dashboard URL parity', () => {
     expect(failures).toEqual([{ cause: failure, url: new URL('http://local/?utm=kept&q=next') }]);
   });
 
+  test('[url:dashboard.query] avoids navigation when canonical URL is unchanged', () => {
+    const fixture = trackedNavigation('http://local/?utm=kept&q=report');
+    fixture.navigate((current) => ({ ...current, q: 'report' }));
+    expect(fixture.intents).toEqual([]);
+    expect(fixture.memory.entries()).toHaveLength(1);
+  });
+
+  test('[url:dashboard.query] an unchanged edit does not consume the first push', async () => {
+    const port = createMemoryNavigationPort('http://local/current');
+    const run = createSearchEditRun('same');
+    expect(run.next('same')).toBeUndefined();
+    const firstChange = run.next('changed');
+    expect(firstChange).toEqual({ keepFocus: true, replace: false, resetScroll: false });
+    await port.navigate({ ...firstChange, url: 'http://local/changed' });
+    expect(port.entries().map((url) => url.pathname)).toEqual(['/current', '/changed']);
+    run.synchronize('changed');
+    expect(run.next('changed-again')?.replace).toBe(true);
+    run.synchronize('external');
+    expect(run.next('after-external')?.replace).toBe(false);
+  });
+
   test('[url:dashboard.harness] accepts legacy scalar, deduplicates, and strips all/default', () => {
     expect(parseDashboardSearchUrl(new URL('http://local/?harness=Codex'), codec).harness).toEqual(['Codex']);
     const url = dashboardUrlFor(new URL('http://local/'), { ...defaults, harness: ['Codex', 'Codex'] }, codec);
