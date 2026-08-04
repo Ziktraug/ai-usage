@@ -5,6 +5,7 @@ import {
   editSourceRepositoryDraft,
   matrixDotTone,
   observeInspectorDisclosure,
+  resolveSkillsRefreshAcceptance,
   runSkillsConfigurationOperation,
   runSkillsManagementOperation,
   runSkillsRefreshOperation,
@@ -118,6 +119,23 @@ describe('Skills management presentation and mutation seam', () => {
     expect(
       skillsSnapshotAcceptanceSignature({ ...snapshot, config: { ...snapshot.config, sourceRepoPath: '/changed' } }),
     ).not.toBe(skillsSnapshotAcceptanceSignature(snapshot));
+  });
+
+  test('disarms a kept refresh before a later matching cache publication', () => {
+    const refreshed = syntheticManagementSnapshot();
+    const current = {
+      ...refreshed,
+      config: { ...refreshed.config, sourceRepoPath: '/kept-current-snapshot' },
+    };
+    const target = {
+      publicationReady: true,
+      signature: skillsSnapshotAcceptanceSignature(refreshed),
+    } as const;
+
+    expect(resolveSkillsRefreshAcceptance(target, current, false)).toBe('retain');
+    expect(resolveSkillsRefreshAcceptance(target, current, true)).toBe('clear');
+    expect(resolveSkillsRefreshAcceptance(undefined, refreshed, false)).toBe('retain');
+    expect(resolveSkillsRefreshAcceptance(target, refreshed, true)).toBe('announce');
   });
 
   test('maps enable and disable requests without changing skill identity', async () => {

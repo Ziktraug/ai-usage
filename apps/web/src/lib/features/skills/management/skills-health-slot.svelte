@@ -24,10 +24,12 @@
   import {
     matrixDotTone,
     observeInspectorDisclosure,
+    resolveSkillsRefreshAcceptance,
     runSkillsManagementOperation,
     runSkillsRefreshOperation,
     type SkillsConfigurationClient,
     type SkillsManagementOperation,
+    type SkillsRefreshAcceptanceTarget,
     type SkillsRefreshClient,
     skillsManagementSuccessMessage,
     skillsSnapshotAcceptanceSignature,
@@ -71,10 +73,7 @@
   let pendingOperation = $state<string | null>(null);
   let inspectorSectionsOpen = $state(false);
   let operationMessage = $state<{ message: string; tone: 'error' | 'success' } | null>(null);
-  let awaitingRefresh = $state<{
-    readonly publicationReady: boolean;
-    readonly signature: string;
-  }>();
+  let awaitingRefresh = $state<SkillsRefreshAcceptanceTarget>();
   let refreshDecisionOpen = $state(false);
   let refreshButtonElement = $state<HTMLButtonElement>();
   let dismissTimer: ReturnType<typeof setTimeout> | undefined;
@@ -135,7 +134,7 @@
   });
   $effect(() => {
     const target = awaitingRefresh;
-    if (!target?.publicationReady || skillsSnapshotAcceptanceSignature(context.snapshot) !== target.signature) {
+    if (resolveSkillsRefreshAcceptance(target, context.snapshot, false) !== 'announce') {
       return;
     }
     awaitingRefresh = undefined;
@@ -150,6 +149,9 @@
     if (!decisionPending && refreshDecisionOpen) {
       refreshDecisionOpen = false;
       scheduleRefreshFocus();
+      if (resolveSkillsRefreshAcceptance(awaitingRefresh, context.snapshot, true) === 'clear') {
+        awaitingRefresh = undefined;
+      }
     }
   });
   const refreshBusyAttributes = $derived({

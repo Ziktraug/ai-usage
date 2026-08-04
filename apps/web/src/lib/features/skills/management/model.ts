@@ -116,8 +116,27 @@ export const runSkillsRefreshOperation = async (client: SkillsRefreshClient): Pr
   return result.ok ? { ok: true, snapshot: result.data } : { error: result.error.message, ok: false };
 };
 
+export interface SkillsRefreshAcceptanceTarget {
+  readonly publicationReady: boolean;
+  readonly signature: string;
+}
+
 export const skillsSnapshotAcceptanceSignature = (snapshot: SkillManagementSnapshot): string =>
   JSON.stringify(snapshot);
+
+export const resolveSkillsRefreshAcceptance = (
+  target: SkillsRefreshAcceptanceTarget | undefined,
+  snapshot: SkillManagementSnapshot,
+  decisionClosed: boolean,
+): 'announce' | 'clear' | 'retain' => {
+  if (!target?.publicationReady) {
+    return 'retain';
+  }
+  if (skillsSnapshotAcceptanceSignature(snapshot) === target.signature) {
+    return 'announce';
+  }
+  return decisionClosed ? 'clear' : 'retain';
+};
 
 const targetLabel = (snapshot: SkillManagementSnapshot, targetId: string): string =>
   snapshot.targets.find((target) => target.id === targetId)?.label ?? targetId;
