@@ -26,9 +26,11 @@
 - **Depends on**: plans 066 and 067 (both DONE)
 - **Category**: migration, tech-debt, performance, tests, dx
 - **Planned at**: commit `72c648e`, 2026-08-02
-- **State**: READY FOR ORCHESTRATED EXECUTION after the entry gate below. The
-  architecture and execution topology are locked; adapter/version pins are
-  intentionally resolved by packet B2 against the then-current ecosystem.
+- **State**: EXECUTING. X0 is integrated and the X1 correction candidate is
+  staged through `aa992c6c864be6e7087b414dbfd8e83eb548dd92`. X1 still
+  requires its clean-worktree gate; latest-main reconciliation, independent X2
+  ACCEPT, and the sole draft implementation PR then remain. Mark this plan DONE
+  only after that PR's first complete CI is green.
 
 ## Why this matters
 

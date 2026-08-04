@@ -338,11 +338,27 @@ adapters, or `usage-store/writer`.
 The SSR support bootstrap shares a 512 KiB budget across filter options,
 provider representative rows/statuses, and warnings. It returns exact omission
 counts and the UI identifies truncation; row-derived Overview, Breakdown, and
-Session destination queries remain independent from those omissions. TanStack
-Svelte Query owns ordinary finite Skills, project-source, and quota
-reads/mutations,
-but never owns exact report revisions. Client-visible modules must not import
+Session destination queries remain independent from those omissions.
+
+TanStack Svelte Query owns browser execution and caching for both named finite
+SWR reads and immutable exact-revision reads. Exact report and Session keys
+include the revision and canonical request fingerprint and are never swept by
+publication invalidation. Query does not decide which revision becomes
+visible: `ServedReportSession` owns descriptor acquisition, destination
+fingerprinting, supersession, one expiry retry, last-good retention, and atomic
+visible commit. The Session table query owner additionally owns bounded paging
+and replay under that lifecycle. Client-visible modules must not import
 `*.server.*`.
+
+The universal root layout remains URL-tracked so SvelteKit propagates live
+search navigation, back/forward state, focus, and scroll restoration. The
+report page captures only the untracked RPC origin and document-scoped runtime
+metadata, so search-only navigation cannot reacquire a bootstrap through the
+route load or request `__data.json`. Each browser destination transition still
+intentionally acquires exactly one current bootstrap through
+`ServedReportSession`; initial SSR awaits and dehydrates its own current
+bootstrap once. Committed Session table state is projected into Svelte with
+replacement-only `$state.raw` reactivity.
 
 On-demand Session Analysis first resolves a private `local-observed` anchor
 from the exact served revision, validates its local machine identity, and only

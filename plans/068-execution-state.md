@@ -12,11 +12,15 @@ authority for feature, operation, design, source-file, and test-title coverage.
 - Planning PR: `#26`, squash-merged as
   `2183270ebfbb886fafa7e6268893122db9b364c0`
 - `BASE_SHA`: `2183270ebfbb886fafa7e6268893122db9b364c0`
-- Current integration checkpoint: `9b086f3` (targeted X1 gates green; full X1 gate pending)
-- Last reviewed green checkpoint: `c84d48c`
+- Current integration checkpoint:
+  `aa992c6c864be6e7087b414dbfd8e83eb548dd92` (X1 corrections,
+  performance, and process gates green; clean full gate pending)
+- Last independently reviewed implementation checkpoint:
+  `aa992c6c864be6e7087b414dbfd8e83eb548dd92`
 - Active design bases: D1 `4862293`, D2 `fce5c1a`, D3 `e2f13cd`
 - Implementation PR: not opened
-- Exclusive process-test token: `/root/skills_convergence_review`, for serialized X1 visual and production convergence
+- Exclusive process-test token: coordinator `/root`, for serialized browser,
+  production, SSE, lifecycle, benchmark, and performance suites
 
 The integration branch did not exist locally or remotely before this run. Local
 `main` and `origin/main` were clean and aligned at `BASE_SHA`; plans 066 and 067
@@ -147,7 +151,7 @@ Statuses are `BLOCKED`, `READY`, `IMPLEMENTING`, `REVIEW`, `REWORK`,
 | P9 | P5 | INTEGRATED | `9d48303`, evidence `4cb0f0d`; integrated `82451ad`, `be5e49b`, evidence rewrite `c859f7f` | `/root/q2_spec_review` / ACCEPT | `c859f7f` |
 | P10 | P5 | INTEGRATED | `455b569`, evidence `dac69e0`; integrated `8e35926`, `3a43913`, evidence rewrite `e953bdc` | `/root/q2_spec_review` / ACCEPT | `e953bdc` |
 | X0 | P2, P8, P4, P9, P10, P6, P7 | INTEGRATED | `db66cc0` through `c84d48c` | Skills `/root/x0_sync_review` / ACCEPT; Report/campaign `/root/v34_parity` / ACCEPT; full range and corrections `/root/x0_final_review` / ACCEPT | `c84d48c` |
-| X1 | X0 | IMPLEMENTING | `c84d48c..9b086f3` | `/root/x1_final_criteria_audit` / provisional static ACCEPT; overall REWORK pending visual, performance and ledger closure | `9b086f3` targeted checkpoint |
+| X1 | X0 | REVIEW | `c84d48c..aa992c6` | `/root/x1_final_criteria_audit`, `/root/review_combined_destination_atomicity`, `/root/repair_session_owner_contract_refs` / visual, combined Sessions, report retention, navigation/load, and performance corrections ACCEPT; clean full gate pending | `aa992c6` candidate checkpoint |
 | X2 | X1 | BLOCKED | - | - | - |
 
 ## Review and integration ledger
@@ -1383,7 +1387,7 @@ dev/production lifecycle and the final `test:e2e` gate.
 
 ## X1 cutover and correction ledger (in progress)
 
-The integrated X1 range currently spans `c84d48c..9b086f3`. Canonical runtime,
+At checkpoint `9b086f3`, the integrated X1 range spanned `c84d48c..9b086f3`. Canonical runtime,
 build and lifecycle ownership moved to SvelteKit and oRPC; Solid, Start, Nitro,
 retired TSX production sources and old generated-output paths were removed. The
 machine ledger now closes 35 feature IDs, 30 operations, 72 former TSX files,
@@ -1436,8 +1440,96 @@ three focused fixture-clock corrections preserving strict ISO, monotonic and
 integer-millisecond behavior. No real home, database, history, prompt, Skill or
 configured state was accessed.
 
-`/root/x1_final_criteria_audit` provisionally ACCEPTed the complete static
-parity/spec and code-quality/seam axes through `9b086f3`. Overall X1 remains
-REWORK only while the independently reviewed X1-V visual/production correction,
-final Svelte performance measurements and classifications, clean full gates and
-this ledger finalization remain pending.
+At `9b086f3`, `/root/x1_final_criteria_audit` provisionally ACCEPTed the
+complete static parity/spec and code-quality/seam axes. X1 was then REWORK while
+visual/production corrections, performance classification, clean full gates,
+and ledger finalization remained. The following section closes the first three;
+current X1 status is REVIEW solely while its clean full gate is pending.
+
+
+### X1 post-`9b086f3` correction and validation ledger
+
+The final X1 correction range is `9b086f3..aa992c6`.
+
+| Commit | Correction / evidence |
+| --- | --- |
+| `8647ee5` | Recorded the first X1 correction checkpoint. |
+| `eb5b589` through `e1dfd06` | Converged stable report identity, visual presentation, responsive geometry, Skills SSR/hydration, and parity evidence. |
+| `2c056d1` through `af31bf3` | Preserved deterministic Skills fixtures, report/client closure, browser parity, and Session row geometry. |
+| `7f250399` | Restored one atomic Overview/Sessions destination and exact-revision paging recovery after independent REWORK. |
+| `89abdef` | Kept the last complete report subtree mounted during destination refresh; rebuilt production DOM identity passed 2/2. |
+| `006d106` | Made immutable Session state replacement-only with `$state.raw` and introduced search-load isolation plus the one-bootstrap production contract. |
+| `1d61fa3` | Advanced the frozen Playwright inventory to 112/112 with complete evidence. |
+| `aa992c6` | Kept the root layout URL-reactive while the report page untracks its RPC origin and document-scoped parent metadata; history/scroll 2/2, source contract 1/1, and one-bootstrap/no-`__data` production proof 1/1. |
+
+The machine ledger now owns 35/35 features, all 30 retired operations, all 72
+retired production TSX records, 15/15 design rows, 353 current exports with 460
+ledger records, all 11 retired render suites, 112/112 Playwright titles, and
+18/18 URL contracts.
+
+TanStack Svelte Query owns transport execution, exact query keys, immutable
+result caching, cancellation/deduplication, and named freshness/GC policies. It
+does not decide which report revision becomes visible. `ServedReportSession`
+owns descriptor acquisition, destination identity, supersession, one expiry
+retry, last-good retention, and atomic visible commit. The Session table query
+owner owns bounded paging and transaction-owned replay; the combined
+Overview/Sessions destination publishes one synchronous immutable snapshot.
+
+Resolved local incidents retained for audit:
+
+- The host image lacked Bubblewrap, so the normal sandboxed `apply_patch`
+  helper failed before file access. Affected corrections first attempted that helper, then
+  used bounded inspected Perl replacement outside the unavailable sandbox.
+  Ultracite and `git diff --check` caught one malformed local substitution
+  before commit.
+- An early targeted production rerun used an ignored stale Svelte artifact and
+  reproduced old DOM-remount failures. Rebuilding the selected output made the
+  unchanged two-test command pass 2/2. Later process measurements verified the
+  artifact timestamp preceded the final benchmark.
+- Untracking both universal loads removed duplicate bootstraps but broke
+  back/forward input resynchronization and made scroll restoration race a
+  component anchor. The minimized split keeps the layout URL-tracked and
+  untracks only the report page's origin and document-scoped parent. The final
+  functional suite passed 97/97 and the network contract proves one bootstrap
+  per filter/sort with no route-data request.
+- One production pass observed a navigation-cancelled Session-page fetch; the
+  single classification rerun did not reproduce it. That rerun then observed a
+  startup rendezvous that rendered 0/0 before the 5,000-row publication. Its
+  single exact scale rerun passed 2/2 in 1.7 minutes. No timeout, assertion, or
+  browser-failure policy changed. A later rebuilt-artifact composite gate
+  passed production 8/8 and scale 2/2 in one run.
+- The final benchmark passed 4/4. Its synthetic telemetry sink emitted bounded
+  lock-timeout messages with `dropped=0`; all product measurements, cleanup,
+  process, and listener assertions passed.
+- The first manual cold-start fixture used the wrong Bun script argument order.
+  It was interrupted, its one exact listener process group was reaped, and the
+  six corrected direct-Vite measurements returned HTTP 200 on isolated ports.
+  Temporary fixture roots remain recoverable until final cleanup.
+
+Final measured Svelte medians at `aa992c6` are initial 1525.805 ms, filter
+300.274 ms, sort 1510.573 ms, heap delta 27,639,644 bytes, maximum Session page
+220,694 bytes, desktop 33 items/624 nodes, and mobile 18 items/291 nodes. Two
+independent audits ACCEPTed the filter (+33.055%) and mobile-node (+12.791%)
+triggers with their raw samples and absolute gates. They also ACCEPTed cold
+startup 4258 ms (+19.864%), warm startup 4211 ms (+22.470%), server/debug
+artifact growth, hydration 146.231 ms (+24.452%), and 40-request asset fan-out.
+The performance ledger records every explanation and makes no composite claim.
+
+Current serialized gate evidence:
+
+| Command | Result |
+| --- | --- |
+| `bun run test:e2e` | PASS; 97/97 |
+| `bun run test:e2e-demo` | PASS; 1/1 |
+| `bun run test:e2e-production` | PASS on rebuilt final artifact; 8/8 + 2/2 |
+| `bun run --cwd apps/web benchmark:session-scroll` | PASS; 4/4 and three samples |
+| `bun run test:web-production` | PASS |
+| `bun run test:web-dev-build-isolation` | PASS; 77 healthy requests, zero HMR/deleted descriptors, process count 2 to 2 |
+| `bun run test:setup-loopback` | PASS |
+| client manifest / retired stack / migration parity | PASS; parity counts complete |
+| `git diff --check` | PASS at each committed correction |
+
+X1 still requires the coordinator documentation commit, a clean-worktree
+frozen install and complete static/process gate at the resulting SHA, latest
+`origin/main` reconciliation, and fresh-context independent X2 review before
+the sole draft implementation PR.

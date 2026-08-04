@@ -1,4 +1,4 @@
-# Web framework migration performance baseline
+# Web framework migration performance baseline and final comparison
 
 This is the Wave-0 Solid baseline for Plan 068. It is a comparison ledger, not
 a composite score or a claim that the Svelte application is faster.
@@ -166,3 +166,163 @@ Retained counts are 585 focused Web tests, 90 functional browser tests, one
 destructive-negative demo test, seven production-report tests, two scale tests,
 and four benchmark tests. The parity ledger separately freezes all 104 browser
 titles across demo, production, scale, and benchmark configurations.
+
+
+## Final SvelteKit comparison
+
+The final measurements use Svelte checkpoint
+`aa992c6c864be6e7087b414dbfd8e83eb548dd92`, Bun 1.3.13, the pinned
+repository/browser dependencies, and a clean worktree. They were recorded on
+2026-08-04 with the same deterministic fixtures and isolated runtime roots.
+A delta is `(Svelte - Solid) / Solid * 100`; lower is better for time,
+bytes, heap, payload, and DOM counts. This remains a per-metric ledger, not a
+composite score or a claim that either application is uniformly faster.
+
+### Final Session scale
+
+The final benchmark passed its warm-up and three samples.
+
+| Session metric | Solid B1-C median | Svelte median | Delta | Classification |
+| --- | ---: | ---: | ---: | --- |
+| Initial settled load | 1526.194 ms | 1525.805 ms | -0.025% | Within trigger |
+| Filter response | 225.676 ms | 300.274 ms | +33.055% | Reviewed deviation |
+| Sort response | 1390.970 ms | 1510.573 ms | +8.599% | Within trigger |
+| Heap delta after desktop traversal | 32,059,716 B | 27,639,644 B | -13.787% | Lower |
+| Maximum Session page payload | 321,397 B | 220,694 B | -31.333% | Lower |
+| Desktop rendered items / nodes | 33 / 624 | 33 / 624 | 0% / 0% | Equal |
+| Mobile rendered items / nodes | 17 / 258 | 18 / 291 | +5.882% / +12.791% | Nodes reviewed |
+
+| Sample | Initial | Filter | Sort | Heap | Page | Desktop items/nodes | Mobile items/nodes |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 1525.805 ms | 300.274 ms | 1479.236 ms | 27,639,644 B | 220,694 B | 33 / 624 | 18 / 291 |
+| 2 | 1556.740 ms | 316.921 ms | 1510.573 ms | 27,636,988 B | 220,694 B | 33 / 624 | 19 / 307 |
+| 3 | 1508.989 ms | 298.268 ms | 1510.580 ms | 27,643,676 B | 220,694 B | 33 / 624 | 12 / 194 |
+
+The filter trigger is real because the Svelte samples are clustered. It remains
+below the 1.5-second absolute interaction budget, is 9.774% below the retained
+Solid B0 median of 332.803 ms, and preserves exactly one report bootstrap plus
+zero route `__data.json` requests per filter or sort transition. The cost
+includes the layout rerun required for correct live URL, back/forward, input,
+focus, and scroll synchronization. Two independent reviewers accepted this
+deviation; it is not a performance win.
+
+The mobile-node trigger combines a one-item median virtual-window difference
+with one additional semantic element per card. At the same 18-card count, Solid
+recorded 273 nodes and Svelte records 291, a 6.59% structural delta. The extra
+element keeps fresh/cache/duration explanations separate. The worst final
+sample remains 19 items and 307 nodes, far below the 600-item absolute cap.
+Reachability, row identity, wire, geometry, memory, and cleanup assertions all
+pass. Two independent reviewers accepted this deviation.
+
+The final deterministic audit emitted 261 nodes for Overview advanced analysis,
+80/79 nodes for the 1024 px desktop Session surface/table, and 48 summary and
+surface nodes with no table at 361 px. The benchmark's bounded synthetic-log
+lock-timeout messages reported `dropped=0`; all four tests passed and every
+measured listener was reaped.
+
+### Final artifact closure
+
+```sh
+bun run build
+find apps/web/.output-build/sveltekit -type f -printf '%P:%s\n' | LC_ALL=C sort | sha256sum
+du -sb apps/web/.output-build/sveltekit
+du -sb apps/web/.output-build/sveltekit/client
+du -sb apps/web/.output-build/sveltekit/server
+```
+
+| Artifact | Solid | Svelte | Delta / classification |
+| --- | ---: | ---: | --- |
+| Selected output | `.output-build/nitro` | `.output-build/sveltekit` | Adapter cutover |
+| File count | 118 | 292 | +147.458%; reviewed topology |
+| Total bytes | 4,931,722 | 7,986,116 | +61.934%; reviewed topology |
+| Public/client bytes | 1,200,533 | 1,178,660 | -1.822% |
+| Server bytes | 3,730,859 | 6,782,782 | +81.802%; reviewed topology |
+| Sorted `path:size` SHA-256 | `495de210cb7051c7415d5ac506f255f5e68c7fd74d0a6005d718d0d12f564a7c` | `1c91521ee33bce8f306510056d48c56f026e1ffaa9dcc0472da71b47763fc0bb` | Identity |
+
+The Svelte server contains 112 source maps totaling 4,368,215 bytes, or 64.4%
+of server bytes; 176 JavaScript files plus those maps explain most of the
+file-count increase. Client bytes are lower. The source, emitted-retired-stack,
+and client-manifest scanners are green, so this is server/debug chunk topology,
+not client shipping or retired/server leakage. Both independent reviewers
+accepted the artifact deviations without claiming non-map superiority because
+the Solid source-map split was not retained.
+
+### Final SSR, hydration, and requests
+
+The rebuilt final artifact passed the eight production report tests and both
+5,000-session scale tests in one serialized gate.
+
+| Measurement | Solid | Svelte | Delta / classification |
+| --- | ---: | ---: | --- |
+| Initial HTML | 36,995 B | 11,602 B | -68.639% |
+| TTFB | 9.5 ms | 5.710 ms | -39.895% |
+| Response complete | 10.1 ms | 8.360 ms | -17.228% |
+| Hydration marker | 117.5 ms | 146.231 ms | +24.452%; reviewed |
+| Initial requests | 15 | 40 | +166.667%; reviewed chunking |
+| Dehydrated bootstrap | 1 | 1 | Exact gate |
+| Bootstrap after hydration | 0 | 0 | Exact gate |
+| Pending server queries | 0 | 0 | Exact gate |
+| Filter/sort route-data reloads | not measured | 0 | Exact gate |
+
+Svelte request classes were one document, one EventSource, four fetches, one
+other request, 31 scripts, and two stylesheets. The extra requests are asset
+splitting, not data duplication; client bytes are 1.822% lower. Hydration is
+28.731 ms slower while HTML and server response measurements are lower. All
+exact SSR, dehydration, settlement, and browser-failure gates pass. Reviewers
+accepted the hydration/request deviations; no overall performance claim is
+made.
+
+### Final startup and lifecycle
+
+Three isolated direct-Vite pairs used `VITE_AI_USAGE_E2E=1`, unique ports,
+fresh HOME/TMP/XDG roots, an absent phase-specific
+`apps/web/.svelte-kit/dev` tree for cold runs, and the generated tree for warm
+runs. Every listener returned HTTP 200 and its exact process group was reaped.
+
+| Run | Solid cold | Solid warm | Svelte cold | Svelte warm |
+| --- | ---: | ---: | ---: | ---: |
+| 1 | 3552.362 ms | 3376.101 ms | 4612 ms | 4293 ms |
+| 2 | 3606.445 ms | 3438.394 ms | 4202 ms | 4163 ms |
+| 3 | 3491.509 ms | 3499.788 ms | 4258 ms | 4211 ms |
+| Median | 3552.362 ms | 3438.394 ms | 4258 ms | 4211 ms |
+| Delta | — | — | +19.864% | +22.470% |
+
+The stable cold/warm deltas show fixed SvelteKit/Vite plugin and module-graph
+startup cost rather than a cache miss. Absolute startup remains about 4.2
+seconds and no readiness budget fails. Removing phase graph generation or
+sharing check/dev/build output would violate the accepted output-isolation
+seam. Both independent reviewers accepted the startup deviations.
+
+The final isolation gate emitted `devReadyDurationMs=7864.074`,
+`buildDurationMs=21389.764`, 77 healthy requests, zero HMR messages, zero
+deleted output descriptors, process count 2 to 2, and the expected rejected
+competing build. Production lifecycle, long SSE, port collision, root
+supervision, loopback, and cleanup gates passed.
+
+### Required clean reproducibility gate
+
+The final candidate must pass this complete sequence from a clean worktree:
+
+```sh
+bun install --frozen-lockfile
+bun run check
+bun run lint
+bun run typecheck
+bun test apps/web/src apps/web/*.test.ts
+bun run test
+bun run build
+bun run test:web-migration-parity
+bun run test:web-client-manifest
+bun run test:web-retired-stack-build
+bun run test:e2e
+bun run test:e2e-demo
+bun run test:e2e-production
+bun run --cwd apps/web benchmark:session-scroll
+bun run test:web-production
+bun run test:web-dev-build-isolation
+bun run test:setup-loopback
+git diff --check
+```
+
+Every greater-than-10% delta is separately explained and independently
+approved. No individual metric is used to claim an overall win.

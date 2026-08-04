@@ -48,6 +48,23 @@ hydration does not duplicate the request. Current aliases may be invalidated by
 a newer publication, but immutable revision/fingerprint keys are never swept.
 Skills, quota, Sync, and source control retain independent ownership.
 
+TanStack Query owns request execution, exact query keys, immutable result
+caching, cancellation, deduplication, and named freshness/garbage-collection
+policies. It does not decide which report revision becomes visible.
+`ServedReportSession` owns descriptor acquisition, destination identity,
+supersession, exactly one expiry retry, preservation of the last complete
+result, and atomic visible commit. The Session table query owner owns bounded
+paging and transaction-owned replay under the same lifecycle. Svelte component
+state is only a replacement-only projection of the accepted immutable snapshot.
+
+The universal root layout intentionally tracks the navigation URL so SvelteKit
+propagates live search state and back/forward restoration. The report page
+captures the RPC origin and document-scoped parent metadata with
+`LoadEvent.untrack`; filter, sort, range, and destination changes therefore do
+not reacquire a bootstrap through a route load or request `__data.json`. The
+browser destination still intentionally acquires exactly one current bootstrap
+for each transition.
+
 SvelteKit remote functions and application server/form actions are not the RPC
 layer. Native actions remain available only for a future explicitly reviewed
 progressive-HTML form requirement.
@@ -116,6 +133,13 @@ JSON never carries file bytes.
   abort, byte, cleanup, and backpressure semantics are explicit interfaces.
 
 ## Evidence required for acceptance
+
+Pre-PR implementation evidence is integrated through
+`aa992c6c864be6e7087b414dbfd8e83eb548dd92`. It includes atomic combined
+Overview/Sessions revision handling, retained report DOM during refresh,
+replacement-only immutable Session state, search-navigation load isolation, and
+a complete 112/112 Playwright ledger. Acceptance still requires the clean final
+gate, X2 ACCEPT, and the first implementation-PR CI success.
 
 - [Plan 068](../../plans/068-migrate-web-to-sveltekit-orpc.md)
 - [ADR 0007](0007-server-render-report-bootstrap.md)
