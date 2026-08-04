@@ -33,6 +33,7 @@ export {
   timeChartOptionsSummary,
   timeChartOptionsTitle,
   timeRangeViewControls,
+  timeSliderThumb,
 } from './components/time-slider';
 export { default as MultiSelect } from './svelte/compound/multi-select.svelte';
 export { default as SegmentedControl } from './svelte/compound/segmented-control.svelte';

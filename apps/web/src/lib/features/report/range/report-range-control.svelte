@@ -1,3 +1,4 @@
+<!-- biome-ignore-all lint/a11y/useValidAriaValues: Svelte emits the numeric slider bounds and position from typed state; time-range.spec.ts asserts the rendered values -->
 <script lang="ts" module>
   import { css } from '@ai-usage/design-system/css';
 
@@ -45,18 +46,6 @@
     opacity: 0.3,
     cursor: 'grab',
   });
-  // Named distinctly from the `'start' | 'end'` handle domain value so an each
-  // binding can never shadow this class and silently drop the thumb styling.
-  const handleThumb = css({
-    position: 'absolute',
-    top: '7px',
-    w: '22px',
-    h: '22px',
-    border: '2px solid token(colors.accent)',
-    borderRadius: 'full',
-    bg: 'surface',
-    transform: 'translateX(-50%)',
-  });
 </script>
 
 <script lang="ts">
@@ -71,6 +60,7 @@
     timeChartOptionsSummary,
     timeChartOptionsTitle,
     timeRangeViewControls,
+    timeSliderThumb,
   } from '@ai-usage/design-system/svelte';
   import {
     type FocusedDateDomain,
@@ -92,6 +82,7 @@
   } from '../../../../time-range-control-state';
   import type { SearchNavigationIntent, SearchNavigationOptions } from '../../../foundation/navigation/search-intent';
   import { createSearchEditRun } from '../../../foundation/navigation/svelte/dashboard-url';
+  import { fmtDateOnly } from '../../../foundation/presentation/format';
   import ActivityTimeline from '../overview/activity-timeline.svelte';
   import type { MachineSeriesPresenter } from '../overview/timeline-model';
   import {
@@ -205,11 +196,10 @@
   const dimensionItems = focusedTimelineDimensionDefinitions;
   const rangeHandles = ['start', 'end'] as const;
   const pressedAria = (mode: DashboardDateRangeSearch['mode']) => ({ 'aria-pressed': range.mode === mode });
-  const sliderAria = (index: number) => ({
-    'aria-valuemax': projection.maxIndex,
-    'aria-valuemin': 0,
-    'aria-valuenow': index,
-  });
+  // A bucket index announces nothing useful on its own, so each handle also
+  // exposes the day it resolves to. Assistive technology prefers
+  // `aria-valuetext` over `aria-valuenow` whenever both are present.
+  const handleValueText = (handle: 'end' | 'start'): string => fmtDateOnly(dateForHandle(handle));
   const granularityItems = [
     { label: 'Day', value: 'day' },
     { label: 'Week', value: 'week' },
@@ -543,22 +533,24 @@
     ></button>
     {#each rangeHandles as handle (handle)}
       {@const index = handle === 'start' ? controlState.selectionIndexes[0] : controlState.selectionIndexes[1]}
-      <input
+      <button
         aria-label={handle === 'start' ? 'Start date' : 'End date'}
-        {...sliderAria(index)}
-        class={handleThumb}
-        max={projection.maxIndex}
-        min={0}
+        aria-valuemax={projection.maxIndex}
+        aria-valuemin={0}
+        aria-valuenow={index}
+        aria-valuetext={handleValueText(handle)}
+        class={timeSliderThumb}
         onkeydown={(event) => onHandleKeydown(event, handle)}
         onlostpointercapture={finishPointer}
         onpointercancel={finishPointer}
         onpointerdown={(event) => beginHandle(event, handle)}
         onpointermove={onPointerMove}
         onpointerup={finishPointer}
-        type="range"
-        value={index}
+        role="slider"
+        title={handle === 'start' ? 'Drag or arrow the range start' : 'Drag or arrow the range end'}
+        type="button"
         style:left={`${percentFor(index)}%`}
-      >
+      ></button>
     {/each}
   </div>
   <details aria-label="Chart options" class={timeChartOptions} data-report-range-part="chart-options">

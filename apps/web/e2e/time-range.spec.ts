@@ -13,6 +13,8 @@ const SESSION_SUMMARY_PATTERN = / sessions$/;
 // Every Panda atomic class carries a `_` or `-`; a bare word means the class
 // binding resolved to a domain value instead of the generated style.
 const PANDA_CLASS_PATTERN = /[_-]/;
+// WCAG 2.5.8 minimum pointer target, matching the Solid thumb this replaced.
+const HANDLE_MINIMUM_TARGET_PX = 44;
 const BRUSH_GEOMETRY_VIEWPORTS = [
   { height: 1000, width: 1440 },
   { height: 900, width: 1024 },
@@ -23,8 +25,12 @@ const BRUSH_GEOMETRY_VIEWPORTS = [
 interface BrushHandleGeometry {
   centerX: number;
   classes: string[];
+  height: number;
   label: string | null;
   position: string;
+  role: string | null;
+  valueText: string | null;
+  width: number;
 }
 
 interface BrushGeometry {
@@ -43,8 +49,12 @@ const readBrushGeometry = (element: Element): BrushGeometry => {
     return {
       centerX: box.left + box.width / 2,
       classes: [...handle.classList],
+      height: box.height,
       label: handle.getAttribute('aria-label'),
       position: getComputedStyle(handle).position,
+      role: handle.getAttribute('role'),
+      valueText: handle.getAttribute('aria-valuetext'),
+      width: box.width,
     };
   });
   const edgeFor = (label: string): number => (label === 'Start date' ? selectionBox.left : selectionBox.right);
@@ -415,4 +425,25 @@ test('anchors the brush handles to the selected report window at every viewport'
   await startHandle.press('ArrowRight');
   await expect.poll(async () => (await measureBrush()).offsets).toEqual([0, 0]);
   expect((await measureBrush()).handles[0]?.centerX).not.toBe(before.handles[0]?.centerX);
+});
+
+test('announces each brush handle as a slider over the day it selects', async ({ page }) => {
+  await openHydratedReport(page);
+
+  const dateRange = page.getByRole('region', { name: 'Date range' });
+  const brush = dateRange.locator('[data-report-range-part="brush"]');
+  const handles = (await brush.evaluate(readBrushGeometry)).handles;
+
+  expect(handles.map((handle) => handle.label)).toEqual(['Start date', 'End date']);
+  for (const handle of handles) {
+    expect(handle.role).toBe('slider');
+    // A raw bucket index announces nothing useful, so the resolved day must be
+    // exposed, and the pointer target must stay reachable on touch.
+    expect(handle.valueText).toBe(handle.label === 'Start date' ? 'May 12, 2026' : 'Jun 11, 2026');
+    expect(handle.width).toBeGreaterThanOrEqual(HANDLE_MINIMUM_TARGET_PX);
+    expect(handle.height).toBeGreaterThanOrEqual(HANDLE_MINIMUM_TARGET_PX);
+  }
+
+  await brush.getByRole('slider', { name: 'Start date' }).press('ArrowRight');
+  await expect(brush.getByRole('slider', { name: 'Start date' })).toHaveAttribute('aria-valuetext', 'May 13, 2026');
 });
