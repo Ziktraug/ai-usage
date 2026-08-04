@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { activeFilters, filterSummary, ghostButton, summaryPill } from '@ai-usage/design-system/svelte';
   import {
     type DashboardSearch,
     dashboardTimeCellLabel,
@@ -7,7 +8,7 @@
   import { fmtNum } from '../../../foundation/presentation/format';
   import type { BreakdownNavigation } from './navigation';
   import { activeFieldFilters, selectedTimeCell } from './navigation';
-  import { button, muted, pill, row, stack } from './styles';
+  import { pill } from './styles';
 
   let {
     hidden,
@@ -30,16 +31,14 @@
   const fieldLabels = { campaign: 'Campaign', model: 'Model', project: 'Project', provider: 'Provider' } as const;
 </script>
 
-<div class={stack} data-active-filters>
+<div class={filterSummary} data-active-filters data-pending={pending}>
   {#if !pending}
-    <div class={row}>
-      <span aria-live="polite">{fmtNum(visible)} / {fmtNum(total)} sessions</span>
-      {#if hidden > 0}
-        <span class={muted}>{fmtNum(hidden)} hidden by filters</span>
-      {/if}
-    </div>
+    <span aria-live="polite" class={summaryPill}>{fmtNum(visible)} / {fmtNum(total)} sessions</span>
+    {#if hidden > 0}
+      <span>{fmtNum(hidden)} hidden by filters</span>
+    {/if}
   {/if}
-  <div class={row}>
+  <div class={activeFilters}>
     {#if search.q}
       <button class={pill} onclick={() => navigation.setQuery('')} title="Clear Query filter" type="button">
         Query: {search.q} ×
@@ -78,6 +77,6 @@
     {/each}
   </div>
   {#if hasActiveDashboardFilters(search)}
-    <button class={button} onclick={navigation.clearAllFilters} type="button">Clear all</button>
+    <button class={ghostButton} onclick={navigation.clearAllFilters} type="button">Clear all</button>
   {/if}
 </div>

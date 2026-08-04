@@ -1,5 +1,8 @@
 import { css, cx } from '@ai-usage/design-system/css';
 
+// Keeps the mobile chart-options control at the frozen two-row touch-target height.
+const MOBILE_CHART_OPTIONS_SUMMARY_MIN_HEIGHT = '73px';
+
 export const timeRangePanel = css({
   display: 'grid',
   gap: '14px',
@@ -120,9 +123,13 @@ export const timeChartOptionsSummary = css({
   display: 'flex',
   flexWrap: 'wrap',
   alignItems: 'center',
+  alignContent: { base: 'flex-end', sm: 'stretch' },
   justifyContent: 'flex-start',
   gap: '4px 12px',
-  p: '9px 10px',
+  minH: { base: MOBILE_CHART_OPTIONS_SUMMARY_MIN_HEIGHT, sm: 'auto' },
+  px: { base: '4px', sm: '10px' },
+  pt: { base: '13px', sm: '9px' },
+  pb: { base: '5px', sm: '9px' },
   color: 'ink',
   cursor: 'pointer',
   fontSize: '12px',
@@ -151,10 +158,13 @@ export const timeChartOptionsTitle = css({
 });
 
 export const timeChartOptionsCurrent = css({
+  minW: { base: 'max-content', sm: 'auto' },
   color: 'muted',
   fontSize: '11px',
   fontWeight: 600,
   marginInlineStart: 'auto',
+  whiteSpace: { base: 'nowrap', sm: 'normal' },
+  '@media screen and (max-width: 359px)': { minW: 0, whiteSpace: 'normal' },
 });
 
 export const dateEditRow = css({

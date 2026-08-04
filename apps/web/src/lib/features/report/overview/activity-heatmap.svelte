@@ -1,51 +1,31 @@
 <script lang="ts" module>
-  import { css } from '@ai-usage/design-system/css';
+  import { css, cx } from '@ai-usage/design-system/css';
+  import {
+    heatBody,
+    heatCell,
+    heatCellToday,
+    heatCellZero,
+    heatDayControl,
+    heatDayDetail,
+    heatGrid,
+    heatLegend,
+    heatLegendCell,
+    heatMonths,
+    heatScroll,
+    heatWeekColumn,
+    heatWeekdays,
+    panel,
+    panelHeader,
+    panelSub,
+    panelTitle,
+  } from '@ai-usage/design-system/report';
 
-  const scroll = css({ overflowX: 'auto', pb: '4px' });
-  const body = css({
-    display: 'grid',
-    gridTemplateColumns: 'auto minmax(max-content, 1fr)',
-    gap: '8px',
-    minW: 0,
-  });
-  const weekdays = css({
-    display: 'grid',
-    gridTemplateRows: { base: 'repeat(7, 18px)', md: 'repeat(7, 12px)' },
-    gap: '3px',
-    color: 'muted',
-    fontSize: '9px',
-  });
-  const grid = css({
-    display: 'grid',
-    gridAutoFlow: 'column',
-    gridAutoColumns: { base: '18px', md: '12px' },
-    gridTemplateRows: { base: 'repeat(7, 18px)', md: 'repeat(7, 12px)' },
-    gap: '3px',
-  });
-  const day = css({
-    w: { base: '18px', md: '12px' },
-    h: { base: '18px', md: '12px' },
-    borderRadius: 'sm',
-    bg: 'accent',
-    cursor: 'pointer',
-    _focusVisible: { outline: '2px solid token(colors.accent)', outlineOffset: '2px' },
-  });
-  const legend = css({
-    display: 'flex',
-    gap: '5px',
-    alignItems: 'center',
-    justifyContent: 'flex-end',
-    color: 'muted',
-    fontSize: '10px',
-  });
-  const legendCell = css({ w: '12px', h: '12px', borderRadius: 'sm', bg: 'accent' });
-  const readout = css({ display: 'grid', gap: '3px', p: '8px', borderRadius: 'md', bg: 'track', fontSize: '11px' });
-  const muted = css({ color: 'ink' });
-  const empty = css({ color: 'muted', fontSize: '12px' });
+  const accentFill = css({ bg: 'accent' });
+  const emptyPanel = css({ color: 'muted', fontSize: '12px' });
+  const heatOpacity = [0.28, 0.52, 0.76, 1] as const;
 </script>
 
 <script lang="ts">
-  import { panel, panelSub, panelTitle } from '@ai-usage/design-system/svelte';
   import type { FocusedCalendarHeatmap, FocusedHeatDay } from '@ai-usage/report-core/focused-report-query';
   import { toDateInputValue } from '../../../../date-range';
   import { nextHeatmapFocusIndex } from '../../../../overview-model';
@@ -59,6 +39,8 @@
     heatmap,
     onSelectDay = () => undefined,
   }: { heatmap: FocusedCalendarHeatmap | null; onSelectDay?: (date: string) => void } = $props();
+  let scrollElement = $state<HTMLDivElement>();
+  const cellElements = new Map<string, HTMLButtonElement>();
   const dateKey = (date: string): string => toDateInputValue(new Date(date));
   const days = $derived(
     heatmap?.weeks.flatMap((week) => week.days.filter((day): day is FocusedHeatDay => day !== null)) ?? [],
@@ -68,89 +50,126 @@
     return todayIndex >= 0 ? todayIndex : Math.max(0, days.length - 1);
   };
   let focusedIndex = $state(initialFocusIndex());
-  const focusedDay = $derived(days[focusedIndex] ?? days[0] ?? null);
+  const focusedDay = $derived(days[focusedIndex] ?? days[0]);
 
   $effect(() => {
     if (focusedIndex >= days.length) {
       focusedIndex = Math.max(0, days.length - 1);
     }
   });
+  $effect(() => {
+    if (heatmap && scrollElement) {
+      scrollElement.scrollLeft = scrollElement.scrollWidth;
+    }
+  });
 
-  const focusMovedDay = (event: KeyboardEvent, index: number): void => {
-    const next = nextHeatmapFocusIndex(index, days.length, event.key);
-    if (next === null) {
+  const describeHeatDay = (item: FocusedHeatDay): string => {
+    const value = aggregateApiValuePresentation(item.priceMeasurement).label;
+    const provenance = aggregateApiPriceProvenance(item.priceMeasurement);
+    return `${fmtDateOnly(item.date)} — ${value} · ${fmtNum(item.sessions)} sessions${provenance ? ` · ${provenance.label}` : ''}`;
+  };
+  const describeHeatDayWithProvenance = (item: FocusedHeatDay): string => {
+    const description = describeHeatDay(item);
+    const provenance = aggregateApiPriceProvenance(item.priceMeasurement);
+    return provenance ? `${description}. ${provenance.description}` : description;
+  };
+  const focusDay = (item: FocusedHeatDay, moveDomFocus = false): void => {
+    const index = days.findIndex((candidate) => candidate.date === item.date);
+    if (index < 0) {
+      return;
+    }
+    focusedIndex = index;
+    if (moveDomFocus) {
+      cellElements.get(dateKey(item.date))?.focus();
+    }
+  };
+  const focusMovedDay = (event: KeyboardEvent, item: FocusedHeatDay): void => {
+    const currentIndex = days.findIndex((candidate) => candidate.date === item.date);
+    const nextIndex = nextHeatmapFocusIndex(currentIndex, days.length, event.key);
+    if (nextIndex === null) {
+      return;
+    }
+    const nextDay = days[nextIndex];
+    if (!nextDay) {
       return;
     }
     event.preventDefault();
-    focusedIndex = next;
-    const toolbar = (event.currentTarget as HTMLElement).closest('[role="toolbar"]');
-    toolbar?.querySelectorAll<HTMLButtonElement>('button[data-heatmap-day]')[next]?.focus();
+    focusDay(nextDay, true);
+  };
+  const registerCell = (element: HTMLButtonElement, key: string): { destroy: () => void } => {
+    cellElements.set(key, element);
+    return { destroy: () => cellElements.delete(key) };
   };
   const currentDayAria = (date: string): { readonly 'aria-current'?: 'date' } =>
     dateKey(date) === heatmap?.todayKey ? { 'aria-current': 'date' } : {};
-  const dayTitle = (item: FocusedHeatDay): string => {
-    const value = aggregateApiValuePresentation(item.priceMeasurement);
-    const provenance = aggregateApiPriceProvenance(item.priceMeasurement);
-    return [
-      fmtDateOnly(item.date),
-      `${fmtNum(item.sessions)} ${item.sessions === 1 ? 'session' : 'sessions'}`,
-      value.label,
-      provenance?.description ?? value.title,
-    ].join(' · ');
-  };
 </script>
 
 <section class={panel}>
-  <div>
+  <header class={panelHeader}>
     <h2 class={panelTitle}>Rhythm</h2>
-    <p class={panelSub}>Daily session activity in the report time zone</p>
-  </div>
+    <div class={panelSub}>
+      Daily activity across the whole filtered history — choose a day to focus the dashboard on it
+    </div>
+  </header>
   {#if heatmap && days.length > 0}
-    <div class={scroll}>
-      <div class={body}>
-        <div aria-hidden="true" class={weekdays}>
-          <span>Mon</span><span></span><span>Wed</span><span></span><span>Fri</span><span></span><span>Sun</span>
+    <div class={heatBody}>
+      <div aria-hidden="true" class={heatWeekdays}>
+        <span>Mon</span><span></span><span>Wed</span><span></span><span>Fri</span><span></span><span></span>
+      </div>
+      <div class={heatScroll} bind:this={scrollElement}>
+        <div aria-hidden="true" class={heatMonths}>
+          {#each heatmap.monthLabels as label, index (`${label}-${index}`)}
+            <span>{label}</span>
+          {/each}
         </div>
-        <div aria-label="Daily activity calendar. Use arrow keys to move by day or week." class={grid} role="toolbar">
-          {#each days as item, index (item.date)}
-            <button
-              {...currentDayAria(item.date)}
-              aria-label={`Filter report to ${fmtDateOnly(item.date)}, ${fmtNum(item.sessions)} ${item.sessions === 1 ? 'session' : 'sessions'}. ${dayTitle(item)}`}
-              class={day}
-              data-heatmap-day={dateKey(item.date)}
-              data-price-state={item.priceMeasurement.state}
-              onclick={() => onSelectDay(dateKey(item.date))}
-              onfocus={() => (focusedIndex = index)}
-              onkeydown={(event) => focusMovedDay(event, index)}
-              tabindex={focusedIndex === index ? 0 : -1}
-              title={dayTitle(item)}
-              type="button"
-              style:opacity={item.sessions > 0 ? 0.2 + item.level * 0.2 : 0.12}
-            ></button>
+        <div
+          aria-label="Daily activity calendar. Use arrow keys to move by day or week."
+          class={heatGrid}
+          role="toolbar"
+        >
+          {#each heatmap.weeks as week, weekIndex (weekIndex)}
+            <div class={heatWeekColumn}>
+              {#each week.days as item, dayIndex (`${weekIndex}-${dayIndex}`)}
+                {#if item}
+                  {@const key = dateKey(item.date)}
+                  {@const description = describeHeatDayWithProvenance(item)}
+                  <button
+                    {...currentDayAria(item.date)}
+                    aria-label={`${description}. Focus dashboard on this day.`}
+                    class={cx(heatCell, item.level === 0 ? heatCellZero : accentFill, key === heatmap.todayKey ? heatCellToday : undefined)}
+                    data-heatmap-day={key}
+                    data-price-state={item.priceMeasurement.state}
+                    onclick={() => onSelectDay(key)}
+                    onfocus={() => focusDay(item)}
+                    onkeydown={(event) => focusMovedDay(event, item)}
+                    tabindex={focusedDay?.date === item.date ? 0 : -1}
+                    title={description}
+                    type="button"
+                    style:opacity={item.level > 0 ? heatOpacity[item.level - 1] : undefined}
+                    use:registerCell={key}
+                  ></button>
+                {:else}
+                  <span></span>
+                {/if}
+              {/each}
+            </div>
           {/each}
         </div>
       </div>
     </div>
-    <div class={legend}>
-      <span>Less</span>
-      {#each [0, 1, 2, 3, 4] as level (level)}
-        <span class={legendCell} style:opacity={level === 0 ? 0.12 : 0.2 + level * 0.2}></span>
-      {/each}
-      <span>More</span>
+    <div class={heatDayControl}>
+      <span class={heatDayDetail}
+        >{focusedDay ? describeHeatDay(focusedDay) : 'Choose a day in the activity range.'}</span
+      >
     </div>
-    {#if focusedDay}
-      {@const value = aggregateApiValuePresentation(focusedDay.priceMeasurement)}
-      {@const provenance = aggregateApiPriceProvenance(focusedDay.priceMeasurement)}
-      <div aria-live="polite" class={readout} data-heatmap-readout role="status">
-        <strong
-          >{fmtDateOnly(focusedDay.date)}
-          · {fmtNum(focusedDay.sessions)} {focusedDay.sessions === 1 ? 'session' : 'sessions'}</strong
-        >
-        <span>{value.label}</span>
-        <span class={muted}>{provenance?.description ?? value.title}</span>
-      </div>
-    {/if}
+    <div class={heatLegend}>
+      <span>Less</span><span class={cx(heatLegendCell, heatCellZero)}></span>
+      {#each heatOpacity as opacity (opacity)}
+        <span class={cx(heatLegendCell, accentFill)} style:opacity></span>
+      {/each}
+      <span>More</span><span style="margin-left: auto">scaled by sessions</span>
+    </div>
   {:else}
-    <p class={empty}>No dated sessions in range</p>
+    <div class={emptyPanel}>No dated sessions match the current filters</div>
   {/if}
 </section>

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { css, cx } from '@ai-usage/design-system/css';
-  import { meta, panel, panelSub, panelTitle } from '@ai-usage/design-system/svelte';
+  import { meta, muted, panel, panelSub, panelTitle, statusPill, statusPillOk } from '@ai-usage/design-system/svelte';
   import type { SkillManagementSnapshot } from '@ai-usage/skills';
   import type { ProjectSkillMarkdownDocument, SkillMarkdownDocument } from '@ai-usage/web-contract/skills';
   import { onDestroy, type Snippet, tick } from 'svelte';
@@ -20,6 +20,7 @@
     healthSlot,
     hydrated = false,
     matrixSlot,
+    onSourceChange,
     selectedDocument,
     snapshot,
     snapshotUpdates,
@@ -29,6 +30,7 @@
     healthSlot?: Snippet<[SkillsShellSlotContext, SkillsManagementPlanController]>;
     hydrated?: boolean;
     matrixSlot?: Snippet<[SkillsShellSlotContext, SkillsManagementPlanController]>;
+    onSourceChange?: (source: string) => void;
     selectedDocument?: ProjectSkillMarkdownDocument | SkillMarkdownDocument | undefined;
     snapshot: SkillManagementSnapshot;
     snapshotUpdates: SkillsSnapshotUpdatePort;
@@ -36,6 +38,7 @@
   } = $props();
 
   const managementPlan = createSkillsManagementPlanController();
+  $effect(() => onSourceChange?.(snapshot.config.sourceRepoPath ?? 'not configured'));
   const slotContext = $derived({ document: selectedDocument, snapshot, snapshotUpdates, view });
   let filterQuery = $state('');
   let expandedKeys = $state<ReadonlySet<string>>(new Set(['global']));
@@ -109,7 +112,8 @@
   const workspaceGrid = css({
     display: 'grid',
     gridTemplateColumns: { base: '1fr', lg: '240px minmax(0, 1fr)', xl: '240px minmax(0, 1fr) 288px' },
-    gap: '16px',
+    columnGap: '16px',
+    rowGap: '16px',
     alignItems: 'start',
   });
   const centerStack = css({ display: 'grid', gap: '16px', minW: 0 });
@@ -136,7 +140,9 @@
     _focusVisible: { outline: '2px solid token(colors.accent)', outlineOffset: '3px' },
   });
   const detailStack = css({ display: 'grid', gap: '14px', minW: 0 });
+  const hero = css({ display: 'grid', gap: '8px' });
   const detailHeader = css({ display: 'grid', gap: '5px' });
+  const titleRow = css({ display: 'flex', flexWrap: 'wrap', gap: '8px 10px', alignItems: 'center' });
   const detailTitle = css({ fontSize: { base: '22px', md: '28px' }, fontWeight: 750, overflowWrap: 'anywhere' });
   const placeholder = css({
     display: 'grid',
@@ -211,40 +217,51 @@
         bind:this={selectedDetailElement}
       >
         <div class={detailStack}>
-          <header class={detailHeader}>
-            <p class={panelSub}>
-              {#if view.selectionDetail.kind === 'global-scope'}
-                Global source overview
-              {:else if view.selectionDetail.kind === 'global-skill'}
-                Global skill
-              {:else if view.selectionDetail.kind === 'project-scope'}
-                Project scope
-              {:else}
-                Project skill · read-only
-              {/if}
-            </p>
-            <h2 class={detailTitle}>{view.selectionLabel}</h2>
-          </header>
           {#if view.selectionDetail.kind === 'global-skill'}
-            <p>{view.selectionDetail.skill.description || 'No description provided.'}</p>
+            <div class={hero}>
+              <header class={detailHeader}>
+                <div class={titleRow}>
+                  <h2 class={detailTitle}>{view.selectionLabel}</h2>
+                  <span class={cx(statusPill, statusPillOk)}>{view.selectionDetail.skill.validationStatus}</span>
+                  <span class={cx(statusPill, statusPillOk)}
+                    >{view.selectionDetail.skill.enabled ? 'Enabled' : 'Disabled'}</span
+                  >
+                </div>
+              </header>
+              <p class={muted}>{view.selectionDetail.skill.description || 'No description provided.'}</p>
+            </div>
             {#if editorSlot}
               <div data-skills-editor-slot>{@render editorSlot(slotContext)}</div>
             {:else}
               <div class={placeholder}>SKILL.md editor integration slot</div>
             {/if}
-          {:else if view.selectionDetail.kind === 'project-skill'}
-            <p>{view.selectionDetail.skill.description || 'No description provided.'}</p>
-            {#if selectedDocument && 'truncated' in selectedDocument}
-              <pre class={preview}>{selectedDocument.content}</pre>
-            {:else}
-              <div class={placeholder}>Project SKILL.md preview unavailable</div>
-            {/if}
-          {:else if view.selectionDetail.kind === 'project-scope'}
-            <p class={meta}>{view.selectionDetail.project.path}</p>
-            <p>{view.selectionDetail.inventories.length} scanned project inventories.</p>
           {:else}
-            <h3 class={panelTitle}>Choose a skill</h3>
-            <p class={panelSub}>Select a global skill to edit its SKILL.md or inspect a project scope.</p>
+            <header class={detailHeader}>
+              <p class={panelSub}>
+                {#if view.selectionDetail.kind === 'global-scope'}
+                  Global source overview
+                {:else if view.selectionDetail.kind === 'project-scope'}
+                  Project scope
+                {:else}
+                  Project skill · read-only
+                {/if}
+              </p>
+              <h2 class={detailTitle}>{view.selectionLabel}</h2>
+            </header>
+            {#if view.selectionDetail.kind === 'project-skill'}
+              <p class={muted}>{view.selectionDetail.skill.description || 'No description provided.'}</p>
+              {#if selectedDocument && 'truncated' in selectedDocument}
+                <pre class={preview}>{selectedDocument.content}</pre>
+              {:else}
+                <div class={placeholder}>Project SKILL.md preview unavailable</div>
+              {/if}
+            {:else if view.selectionDetail.kind === 'project-scope'}
+              <p class={meta}>{view.selectionDetail.project.path}</p>
+              <p>{view.selectionDetail.inventories.length} scanned project inventories.</p>
+            {:else}
+              <h3 class={panelTitle}>Choose a skill</h3>
+              <p class={panelSub}>Select a global skill to edit its SKILL.md or inspect a project scope.</p>
+            {/if}
           {/if}
         </div>
       </section>

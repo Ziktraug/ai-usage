@@ -3,7 +3,7 @@
   import { Checkbox, Popover } from '@ai-usage/design-system/svelte';
   import { type SessionOrigin, sessionOriginLabel, sessionOrigins } from '@ai-usage/report-core/session-query';
   import { defaultDashboardOrigins, isDefaultDashboardOriginSelection } from '../../../../dashboard-search';
-  import { button, selectedButton } from './styles';
+  import { button } from './styles';
 
   const originTrigger = css({
     minW: { base: 0, sm: '190px' },
@@ -70,11 +70,7 @@
   contentClass={popoverContent}
   {trigger}
   triggerAriaLabel="Filter by origin"
-  triggerClass={cx(
-    button,
-    originTrigger,
-    value.length > 0 ? selectedButton : neutralOriginTrigger,
-  )}
+  triggerClass={value.length > 0 ? originTrigger : cx(originTrigger, neutralOriginTrigger)}
 >
   <div class={popoverHeader}>
     <span>Session origin</span>

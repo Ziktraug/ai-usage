@@ -1,7 +1,7 @@
 <script lang="ts" module>
   import { css } from '@ai-usage/design-system/css';
 
-  const page = css({ display: 'grid', gap: '16px' });
+  const page = css({ display: 'grid', gap: '14px' });
   const twoColumns = css({
     display: 'grid',
     gap: '16px',
@@ -45,7 +45,6 @@
   import type { MigrationGranularity, TimelineDimension, TimelineValue } from '../../../../overview-model';
   import type { ProviderStatusView } from '../../../../provider-status-model';
   import type { SearchNavigationIntent } from '../../../foundation/navigation/search-intent';
-  import ReportRangeControl from '../range/report-range-control.svelte';
   import ActivityHeatmap from './activity-heatmap.svelte';
   import DashboardMetrics from './dashboard-metrics.svelte';
   import OverviewHero from './overview-hero.svelte';
@@ -53,7 +52,6 @@
   import Punchcard from './punchcard.svelte';
   import Records from './records.svelte';
   import SessionShape from './session-shape.svelte';
-  import SourceFreshness from './source-freshness.svelte';
   import type { MachineSeriesPresenter } from './timeline-model';
   import TokenAnatomy from './token-anatomy.svelte';
   import { buildOverviewMetrics, overviewHasContent } from './view-model';
@@ -118,25 +116,7 @@
 </script>
 
 <div class={page} data-report-overview data-report-revision={result.revision}>
-  <SourceFreshness {freshness} />
   {#if overviewHasContent(result)}
-    <ReportRangeControl
-      {activeSeriesKeys}
-      dateDomain={result.dateDomain}
-      dimension={activeDimension}
-      generatedAt={result.metadata.generatedAt}
-      {granularity}
-      {machineFreshnessStatus}
-      {navigate}
-      {onDimensionFilter}
-      {onOptionsChange}
-      {onRangeChange}
-      {presentCampaignSeries}
-      {presentMachineSeries}
-      {range}
-      timeline={result.timeline}
-      {value}
-    />
     <OverviewHero {range} summary={result.summary} />
     <ActivityHeatmap heatmap={result.view.heatmap} {onSelectDay} />
     <TokenAnatomy summary={result.summary} />
@@ -175,23 +155,6 @@
     <DashboardMetrics {comparisonState} {metrics} />
     <ProviderStatus {...(onOpenQuotaHistory === undefined ? {} : { onOpenHistory: onOpenQuotaHistory })} {providers} />
   {:else}
-    <ReportRangeControl
-      {activeSeriesKeys}
-      dateDomain={result.dateDomain}
-      dimension={activeDimension}
-      generatedAt={result.metadata.generatedAt}
-      {granularity}
-      {machineFreshnessStatus}
-      {navigate}
-      {onDimensionFilter}
-      {onOptionsChange}
-      {onRangeChange}
-      {presentCampaignSeries}
-      {presentMachineSeries}
-      {range}
-      timeline={result.timeline}
-      {value}
-    />
     <p class={empty}>No sessions match the selected report range and filters.</p>
   {/if}
 </div>

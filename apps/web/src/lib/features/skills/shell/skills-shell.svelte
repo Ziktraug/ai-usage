@@ -40,6 +40,7 @@
     hydrationState,
     matrixSlot,
     navigationState,
+    onSourceChange,
     pathname,
     runtimeMode,
   }: {
@@ -48,6 +49,7 @@
     hydrationState: WebQueryHydrationState;
     matrixSlot?: Snippet<[SkillsShellSlotContext, SkillsManagementPlanController]>;
     navigationState: App.PageState;
+    onSourceChange?: (source: string) => void;
     pathname: string;
     runtimeMode: RuntimeMode;
   } = $props();
@@ -262,6 +264,7 @@
     {hydrated}
     {...(matrixSlot === undefined ? {} : { matrixSlot })}
     {selectedDocument}
+    {...(onSourceChange === undefined ? {} : { onSourceChange })}
     snapshot={view.snapshot}
     {snapshotUpdates}
     {view}

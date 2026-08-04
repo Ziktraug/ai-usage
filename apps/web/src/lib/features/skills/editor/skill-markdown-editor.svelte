@@ -1,6 +1,14 @@
 <script lang="ts">
   import { css, cx } from '@ai-usage/design-system/css';
-  import { commandButton } from '@ai-usage/design-system/svelte';
+  import {
+    commandButton,
+    ghostButton,
+    statusPill,
+    statusPillDanger,
+    statusPillInfo,
+    statusPillOk,
+    statusPillWarn,
+  } from '@ai-usage/design-system/svelte';
   import { onDestroy, untrack } from 'svelte';
   import type { SkillMarkdownEditorController, SkillMarkdownEditorState } from './controller';
   import { isSkillMarkdownSaveShortcut } from './controller';
@@ -37,15 +45,15 @@
 
   const editorSection = css({
     display: 'grid',
-    gridTemplateAreas: { base: '"header" "editor" "actions"', md: '"header actions" "editor editor"' },
-    gridTemplateColumns: { base: '1fr', md: 'minmax(0, 1fr) auto' },
+    gridTemplateAreas: { base: '"header" "editor" "actions"', md: '"actions" "editor"' },
+    gridTemplateColumns: '1fr',
     columnGap: { base: '12px', md: 0 },
     rowGap: '12px',
     minW: 0,
   });
   const documentToolbar = css({
     gridArea: 'header',
-    display: 'flex',
+    display: { base: 'flex', md: 'none' },
     flexWrap: 'wrap',
     gap: '8px',
     alignItems: 'center',
@@ -62,15 +70,16 @@
     gridArea: 'actions',
     display: 'flex',
     flexWrap: 'wrap',
+    minH: { base: 'auto', md: '196px' },
     gap: '8px',
     alignItems: 'center',
-    justifyContent: { base: 'flex-start', md: 'flex-end' },
+    justifyContent: { base: 'flex-start', md: 'center' },
     p: '10px 12px',
     border: '1px solid token(colors.line)',
-    borderTopLeftRadius: { base: 'sm', md: 0 },
+    borderTopLeftRadius: 'sm',
     borderTopRightRadius: 'sm',
     borderBottomRightRadius: 'sm',
-    borderBottomLeftRadius: { base: 'sm', md: 0 },
+    borderBottomLeftRadius: 'sm',
     bg: 'surfaceMuted',
   });
   const editorArea = css({
@@ -105,30 +114,6 @@
     bg: 'surfaceMuted',
   });
   const titleStyle = css({ fontWeight: 700 });
-  const ghostButton = css({
-    minH: '36px',
-    px: '11px',
-    border: '1px solid token(colors.line)',
-    borderRadius: 'md',
-    bg: 'surface',
-    color: 'ink',
-    fontWeight: 650,
-    _disabled: { cursor: 'not-allowed', opacity: 0.55 },
-    _focusVisible: { outline: '2px solid token(colors.accent)', outlineOffset: '2px' },
-  });
-  const statusPill = css({
-    display: 'inline-flex',
-    alignItems: 'center',
-    minH: '24px',
-    px: '8px',
-    borderRadius: 'full',
-    fontSize: '12px',
-    fontWeight: 700,
-  });
-  const statusInfo = css({ bg: 'surface', color: 'muted' });
-  const statusDanger = css({ bg: 'status.dangerSoft', color: 'status.danger' });
-  const statusWarn = css({ bg: 'status.warnSoft', color: 'status.warn' });
-  const statusOk = css({ bg: 'status.okSoft', color: 'status.ok' });
 
   interface DocumentStatus {
     readonly error: boolean;
@@ -137,27 +122,27 @@
   }
   const documentStatus = (next: SkillMarkdownEditorState): DocumentStatus => {
     if (next.loading || (next.document === undefined && next.error === null)) {
-      return { error: false, label: 'Loading…', tone: statusInfo };
+      return { error: false, label: 'Loading…', tone: statusPillInfo };
     }
     if (next.saving) {
-      return { error: false, label: 'Saving…', tone: statusInfo };
+      return { error: false, label: 'Saving…', tone: statusPillInfo };
     }
     if (next.conflict) {
-      return { error: true, label: 'Changed on disk', tone: statusDanger };
+      return { error: true, label: 'Changed on disk', tone: statusPillDanger };
     }
     if (next.error !== null) {
-      return { error: true, label: next.error, tone: statusDanger };
+      return { error: true, label: next.error, tone: statusPillDanger };
     }
     if (next.message === 'SKILL.md saved; newer edits remain unsaved.') {
-      return { error: false, label: next.message, tone: statusWarn };
+      return { error: false, label: next.message, tone: statusPillWarn };
     }
     if (next.message !== null && next.message !== 'SKILL.md saved.') {
-      return { error: true, label: next.message, tone: statusDanger };
+      return { error: true, label: next.message, tone: statusPillDanger };
     }
     if (next.dirty) {
-      return { error: false, label: 'Unsaved changes', tone: statusWarn };
+      return { error: false, label: 'Unsaved changes', tone: statusPillWarn };
     }
-    return { error: false, label: 'Saved', tone: statusOk };
+    return { error: false, label: 'Saved', tone: statusPillOk };
   };
   const status = $derived(documentStatus(editorState));
 

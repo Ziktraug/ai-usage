@@ -95,8 +95,10 @@
     </span>
     <div class={legend} data-spend-coverage-legend>
       <span>
-        Spend coverage
-        <span class={legendValue}>{fmtNum(actualKnownSessions)}/{fmtNum(summary.sessionCount)} sessions</span>
+        Spend coverage<span class={legendValue}
+          >{fmtNum(actualKnownSessions)}/{fmtNum(summary.sessionCount)}
+          sessions</span
+        >
       </span>
       {#if summary.costQuota > 0}
         <span>

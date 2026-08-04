@@ -1,8 +1,20 @@
 <script lang="ts">
-  import { cx } from '@ai-usage/design-system/css';
-  import { HarnessBadge } from '@ai-usage/design-system/svelte';
+  import { css, cx } from '@ai-usage/design-system/css';
+  import {
+    banner,
+    bannerError,
+    bannerOk,
+    commandButton,
+    ghostButton,
+    meta,
+    pendingButton,
+    statusPill,
+    statusPillOk,
+    statusPillWarn,
+    strongCell,
+  } from '@ai-usage/design-system/svelte';
   import { useQueryClient } from '@tanstack/svelte-query';
-  import { onDestroy, onMount, tick } from 'svelte';
+  import { onDestroy, onMount, tick, untrack } from 'svelte';
   import { goto } from '$app/navigation';
   import { deriveInstallationAction, groupSkillDiagnostics } from '../../../../skill-document-inspector-model';
   import {
@@ -22,7 +34,6 @@
   import type { SkillsManagementPlanController } from '../shell/management-plan-controller';
   import type { SkillsShellSlotContext } from '../shell/slot-context';
   import {
-    matrixDotTone,
     observeInspectorDisclosure,
     resolveSkillsRefreshAcceptance,
     runSkillsManagementOperation,
@@ -32,6 +43,7 @@
     type SkillsRefreshAcceptanceTarget,
     type SkillsRefreshClient,
     type SkillsRefreshDecisionState,
+    shouldAnnounceSkillsHydrationReload,
     skillsManagementSuccessMessage,
     skillsSnapshotAcceptanceSignature,
     toggleOperation,
@@ -39,23 +51,15 @@
   import SkillsConfiguration from './skills-configuration.svelte';
   import SkillsConsolidate from './skills-consolidate.svelte';
   import {
-    actionRow,
-    brokenDot,
     button,
     compactStack,
-    copyDot,
     diagnosticRow,
-    errorNotice,
     heading,
-    linkedDot,
-    missingDot,
     muted,
-    notice,
+    operationNotice,
     passiveOperationNotice,
     pathText,
-    primaryButton,
     stack,
-    statusDot,
   } from './styles';
 
   type SkillsHealthClient = SkillsConfigurationClient & SkillsRefreshClient;
@@ -64,10 +68,16 @@
     client: injectedClient,
     context,
     managementPlan,
+    onRefreshFocus,
+    onRefreshPendingChange,
+    onRefreshReady,
   }: {
     client?: SkillsHealthClient;
     context: SkillsShellSlotContext;
     managementPlan: SkillsManagementPlanController;
+    onRefreshFocus?: () => void;
+    onRefreshPendingChange?: (pending: boolean) => void;
+    onRefreshReady?: (action: () => Promise<void>) => void;
   } = $props();
   const queryClient = useQueryClient();
   let browserClient: SkillsHealthClient | undefined;
@@ -76,7 +86,9 @@
   let operationMessage = $state<{ message: string; tone: 'error' | 'success' } | null>(null);
   let awaitingRefresh = $state<SkillsRefreshAcceptanceTarget>();
   let refreshDecisionOpen = $state(false);
-  let refreshButtonElement = $state<HTMLButtonElement>();
+  let mounted = $state(false);
+  let hydrationReloadAnnounced = $state(false);
+  const hydrationSnapshot = untrack(() => context.snapshot);
   let dismissTimer: ReturnType<typeof setTimeout> | undefined;
   let restoreFocusFrame: number | undefined;
   const health = $derived(buildSkillHealthSummary(context.snapshot));
@@ -92,6 +104,53 @@
       injectedClient ?? createSkillsClient(createBrowserWebRpcClient('skills-management-inspector').skills);
     return browserClient;
   };
+  const inspectorSection = css({ borderTop: '1px solid token(colors.line)', display: 'grid', gap: '8px', pt: '12px' });
+  const inspectorRow = css({
+    display: 'grid',
+    gridTemplateColumns: 'minmax(0, 1fr) auto',
+    gap: '8px',
+    alignItems: 'center',
+  });
+  const metricList = css({ display: 'grid', gap: '6px' });
+  const metricRow = css({
+    display: 'grid',
+    gridTemplateColumns: 'minmax(0, 1fr) auto',
+    gap: '8px',
+    alignItems: 'baseline',
+    fontSize: '13px',
+  });
+  const inspectorHeading = css({ fontSize: '13px', fontWeight: 700 });
+  const inspectorMeta = css({ color: 'muted', fontSize: '13px' });
+  const inspectorValue = css({ minW: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' });
+  const sourceValue = css({
+    display: 'block',
+    minW: 0,
+    overflow: 'hidden',
+    color: 'muted',
+    fontFamily: 'mono',
+    fontSize: '11px',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+  });
+  const runtimeSummary = css({
+    display: 'grid',
+    gridTemplateColumns: 'minmax(0, 1fr) auto',
+    gap: '8px',
+    alignItems: 'center',
+    py: '8px',
+    cursor: 'pointer',
+  });
+  const runtimeDisclosure = css({ borderTop: '1px solid token(colors.line)', _first: { borderTop: '0' } });
+  const runtimePaths = css({
+    display: 'grid',
+    gap: '4px',
+    pb: '8px',
+    color: 'muted',
+    fontFamily: 'mono',
+    fontSize: '11px',
+    overflowWrap: 'anywhere',
+  });
+  const actionGrid = css({ display: 'grid', gap: '8px' });
   const clearDismissTimer = (): void => {
     if (dismissTimer !== undefined) {
       clearTimeout(dismissTimer);
@@ -119,18 +178,31 @@
     }
     restoreFocusFrame = window.requestAnimationFrame(() => {
       restoreFocusFrame = undefined;
-      refreshButtonElement?.focus();
+      onRefreshFocus?.();
     });
   };
-  onMount(() =>
-    observeInspectorDisclosure(window.matchMedia(SKILLS_DESKTOP_MEDIA_QUERY), (open) => {
+  onMount(() => {
+    mounted = true;
+    onRefreshReady?.(refreshSkills);
+    return observeInspectorDisclosure(window.matchMedia(SKILLS_DESKTOP_MEDIA_QUERY), (open) => {
       inspectorSectionsOpen = open;
-    }),
-  );
+    });
+  });
   onDestroy(() => {
     clearDismissTimer();
     if (restoreFocusFrame !== undefined) {
       window.cancelAnimationFrame(restoreFocusFrame);
+    }
+  });
+  $effect(() => onRefreshPendingChange?.(pendingOperation !== null));
+  $effect(() => {
+    const nextSnapshot = context.snapshot;
+    if (!(mounted && !hydrationReloadAnnounced && nextSnapshot !== hydrationSnapshot)) {
+      return;
+    }
+    hydrationReloadAnnounced = true;
+    if (shouldAnnounceSkillsHydrationReload(hydrationSnapshot, nextSnapshot, operationMessage !== null)) {
+      setSuccessMessage('Skills reloaded.');
     }
   });
   $effect(() => {
@@ -148,7 +220,7 @@
     const acceptance = resolveSkillsRefreshAcceptance(awaitingRefresh, context.snapshot, decisionState);
     if (acceptance === 'announce') {
       awaitingRefresh = undefined;
-      setSuccessMessage('Skills refreshed.');
+      setSuccessMessage('Skills reloaded.');
     } else if (acceptance === 'clear') {
       awaitingRefresh = undefined;
     }
@@ -157,9 +229,6 @@
       scheduleRefreshFocus();
     }
   });
-  const refreshBusyAttributes = $derived({
-    'aria-busy': pendingOperation === 'refresh-skills' ? 'true' : 'false',
-  } as const);
   const previewBusyAttributes = $derived({
     'aria-busy': pendingOperation === 'preview-reconcile' ? 'true' : 'false',
   } as const);
@@ -219,37 +288,12 @@
   const reviewConsolidation = async (): Promise<void> => {
     await goto('/skills/matrix');
   };
-  const dotClass = (state: Parameters<typeof matrixDotTone>[0]): string | undefined => {
-    const tone = matrixDotTone(state);
-    if (tone === 'linked') {
-      return linkedDot;
-    }
-    if (tone === 'missing') {
-      return missingDot;
-    }
-    if (tone === 'broken') {
-      return brokenDot;
-    }
-    if (tone === 'copy') {
-      return copyDot;
-    }
-    return;
+  const copyText = async (value: string): Promise<void> => {
+    await navigator.clipboard.writeText(value);
   };
 </script>
 
 <div class={stack} data-skills-management-health-slot>
-  <div class={actionRow}>
-    <button
-      {...refreshBusyAttributes}
-      class={button}
-      disabled={pendingOperation !== null}
-      onclick={refreshSkills}
-      type="button"
-      bind:this={refreshButtonElement}
-    >
-      Refresh skills
-    </button>
-  </div>
   {#if context.view.selectionDetail.kind === 'global-scope'}
     <section class={compactStack}>
       <h3 class={heading}>Source health</h3>
@@ -269,10 +313,10 @@
     <SkillsConsolidate groups={unmanagedGroups} onReviewEntry={reviewConsolidation} total={health.consolidateCount} />
     <SkillsConfiguration {...(injectedClient === undefined ? {} : { client: injectedClient })} {context} />
   {:else if selectedSkill}
-    <details class={compactStack} data-inspector-section="validation" open={inspectorSectionsOpen}>
-      <summary><h3 class={heading}>Validation</h3></summary>
+    <details class={inspectorSection} data-inspector-section="validation" open={inspectorSectionsOpen}>
+      <summary><h3 class={inspectorHeading}>Validation</h3></summary>
       {#if diagnostics.length === 0}
-        <p class={muted}>No validation diagnostics.</p>
+        <p class={meta}>No validation diagnostics.</p>
       {/if}
       {#each diagnostics as diagnostic, index}
         <fieldset
@@ -304,54 +348,94 @@
         </fieldset>
       {/each}
     </details>
-    <details class={compactStack} data-inspector-section="document" open={inspectorSectionsOpen}>
-      <summary><h3 class={heading}>Document</h3></summary>
-      <div>
-        Total tokens <strong>{selectedSkill.tokenCount ? fmtNum(selectedSkill.tokenCount.total) : 'Unknown'}</strong>
-      </div>
-      <div>Invocation <strong>{skillInvocation(selectedSkill) === 'auto' ? 'Auto' : 'Manual'}</strong></div>
-      <div>State <strong>{selectedSkill.enabled ? 'Enabled' : 'Disabled'}</strong></div>
-    </details>
-    <details class={compactStack} data-inspector-section="source" open={inspectorSectionsOpen}>
-      <summary><h3 class={heading}>Source</h3></summary>
-      <div class={muted}>Source path</div>
-      <code class={pathText} title={selectedSkill.path}>{selectedSkill.path}</code>
-      <div class={muted}>SKILL.md</div>
-      <code class={pathText} title={selectedSkill.skillMdPath}>{selectedSkill.skillMdPath}</code>
-    </details>
-    <details class={compactStack} data-inspector-section="installed-in" open={inspectorSectionsOpen}>
-      <summary><h3 class={heading}>Installed in</h3></summary>
-      <fieldset aria-label="Installed in">
-        {#each exposure as item}
-          <div class={actionRow}>
-            <HarnessBadge
-              name={context.snapshot.targets.find((target) => target.id === item.targetId)?.label ?? item.targetId}
-            /><span class={cx(statusDot, dotClass(item.state))}></span><span>{item.label}</span>
+    <details class={inspectorSection} data-inspector-section="document" open={inspectorSectionsOpen}>
+      <summary><h3 class={inspectorHeading}>Document</h3></summary>
+      <div class={metricList}>
+        <div class={metricRow}>
+          <span class={inspectorMeta}>Total tokens</span>
+          <strong>{selectedSkill.tokenCount ? fmtNum(selectedSkill.tokenCount.total) : 'Unknown'}</strong>
+        </div>
+        {#if selectedSkill.tokenCount}
+          <div class={metricRow}>
+            <span class={inspectorMeta}>SKILL.md tokens</span>
+            <strong>{fmtNum(selectedSkill.tokenCount.skillMd)}</strong>
           </div>
-        {/each}
-      </fieldset>
+        {/if}
+        <div class={metricRow}>
+          <span class={inspectorMeta}>Invocation</span>
+          <strong>{skillInvocation(selectedSkill) === 'auto' ? 'Auto' : 'Manual'}</strong>
+        </div>
+        <div class={metricRow}>
+          <span class={inspectorMeta}>State</span>
+          <strong>{selectedSkill.enabled ? 'Enabled' : 'Disabled'}</strong>
+        </div>
+      </div>
     </details>
-    <details class={compactStack} data-inspector-section="actions" open={inspectorSectionsOpen}>
-      <summary><h3 class={heading}>Actions</h3></summary>
-      <div class={actionRow}>
+    <details class={inspectorSection} data-inspector-section="source" open={inspectorSectionsOpen}>
+      <summary><h3 class={inspectorHeading}>Source</h3></summary>
+      <div class={inspectorRow}>
+        <div class={inspectorValue}>
+          <div class={meta}>Source path</div>
+          <code class={sourceValue} title={selectedSkill.path}>{selectedSkill.path}</code>
+        </div>
+        <button class={ghostButton} onclick={() => copyText(selectedSkill.path)} type="button">Copy source path</button>
+      </div>
+      <div class={inspectorRow}>
+        <div class={inspectorValue}>
+          <div class={meta}>SKILL.md</div>
+          <code class={sourceValue} title={selectedSkill.skillMdPath}>{selectedSkill.skillMdPath}</code>
+        </div>
+        <button class={ghostButton} onclick={() => copyText(selectedSkill.skillMdPath)} type="button">
+          Copy SKILL.md path
+        </button>
+      </div>
+    </details>
+    <details class={inspectorSection} data-inspector-section="installed-in" open={inspectorSectionsOpen}>
+      <summary><h3 class={inspectorHeading}>Installed in</h3></summary>
+      {#each exposure as item}
+        <details class={runtimeDisclosure}>
+          <summary class={runtimeSummary}>
+            <span class={strongCell}
+              >{context.snapshot.targets.find((target) => target.id === item.targetId)?.label ?? item.targetId}</span
+            >
+            <span class={cx(statusPill, item.state === 'linked' ? statusPillOk : statusPillWarn)}>{item.label}</span>
+          </summary>
+          <div class={runtimePaths}>
+            <div>Expected: {item.expectedPath}</div>
+            {#if item.actualPath}
+              <div>Actual: {item.actualPath}</div>
+            {/if}
+          </div>
+        </details>
+      {/each}
+    </details>
+    <details class={inspectorSection} data-inspector-section="actions" open={inspectorSectionsOpen}>
+      <summary><h3 class={inspectorHeading}>Actions</h3></summary>
+      <div class={actionGrid}>
         <button
-          class={button}
+          class={cx(ghostButton, pendingButton)}
           disabled={pendingOperation !== null}
           onclick={() => execute(toggleOperation(selectedSkill.name, !selectedSkill.enabled), `toggle:${selectedSkill.name}`)}
           type="button"
         >
           {selectedSkill.enabled ? 'Disable' : 'Enable'}
         </button>
-        {#if installationAction && installationAction.mode !== 'none'}
-          <button
-            class={cx(button, primaryButton)}
-            disabled={pendingOperation !== null}
-            onclick={() => execute(installationAction.mode === 'preview' ? 'preview-reconcile' : `reconcile:${selectedSkill.name}`, installationAction.mode === 'preview' ? 'preview-reconcile' : `reconcile:${selectedSkill.name}`)}
-            type="button"
-          >
-            {installationAction.label}
-          </button>
-        {/if}
+        <button
+          class={cx(commandButton, pendingButton)}
+          disabled={pendingOperation !== null || installationAction?.mode === 'none'}
+          onclick={() => {
+            if (!installationAction || installationAction.mode === 'none') {
+              return;
+            }
+            execute(
+              installationAction.mode === 'preview' ? 'preview-reconcile' : `reconcile:${selectedSkill.name}`,
+              installationAction.mode === 'preview' ? 'preview-reconcile' : `reconcile:${selectedSkill.name}`,
+            );
+          }}
+          type="button"
+        >
+          {installationAction?.label ?? 'Install'}
+        </button>
       </div>
     </details>
   {:else if context.view.selectionDetail.kind === 'project-scope'}
@@ -367,8 +451,10 @@
     </section>
   {/if}
   {#if operationMessage?.tone === 'error'}
-    <p class={cx(notice, errorNotice)} role="alert">{operationMessage.message}</p>
+    <p class={cx(banner, bannerError, operationNotice)} role="alert">{operationMessage.message}</p>
   {:else if operationMessage}
-    <p aria-live="polite" class={cx(notice, passiveOperationNotice)} role="status">{operationMessage.message}</p>
+    <p aria-live="polite" class={cx(banner, bannerOk, operationNotice, passiveOperationNotice)} role="status">
+      {operationMessage.message}
+    </p>
   {/if}
 </div>

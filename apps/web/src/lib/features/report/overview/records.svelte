@@ -1,36 +1,21 @@
-<script lang="ts" module>
-  import { css } from '@ai-usage/design-system/css';
-
-  const grid = css({
-    display: 'grid',
-    gap: '10px',
-    gridTemplateColumns: { base: '1fr', sm: 'repeat(2, minmax(0, 1fr))' },
-  });
-  const card = css({
-    display: 'grid',
-    gap: '4px',
-    p: '12px',
-    border: '1px solid token(colors.line)',
-    borderRadius: 'md',
-    textAlign: 'left',
-  });
-  const label = css({ color: 'muted', fontSize: '11px', textTransform: 'uppercase' });
-  const value = css({ fontSize: '14px', fontWeight: 650, overflowWrap: 'anywhere' });
-  const sub = css({ color: 'muted', fontSize: '11px' });
-  const top = css({ display: 'grid', gap: '6px', mt: '8px' });
-  const topItem = css({
-    display: 'grid',
-    gridTemplateColumns: '24px minmax(0, 1fr) auto',
-    gap: '8px',
-    alignItems: 'baseline',
-    p: '7px 0',
-    borderTop: '1px solid token(colors.line)',
-  });
-  const money = css({ fontWeight: 650, textStyle: 'numeric' });
-</script>
-
 <script lang="ts">
-  import { panel, panelSub, panelTitle } from '@ai-usage/design-system/svelte';
+  import {
+    muted,
+    panel,
+    panelSub,
+    panelTitle,
+    recordCard,
+    recordLabel,
+    recordSub,
+    recordsGrid,
+    recordValue,
+    topList,
+    topMoney,
+    topRank,
+    topRow,
+    topTitle,
+  } from '@ai-usage/design-system/report';
+  import { HarnessBadge } from '@ai-usage/design-system/svelte';
   import type { FocusedOverviewRecords, FocusedOverviewSessionItem } from '@ai-usage/report-core/focused-report-query';
   import { fmtDateOnly, fmtDuration, fmtMoney, fmtNum } from '../../../foundation/presentation/format';
   import { apiValuePresentation } from '../../../foundation/presentation/report-value';
@@ -61,75 +46,68 @@
   const presentedTopSessions = $derived(topSessions.map(presentSessionItem));
 </script>
 
-{#if presentedRecords || presentedTopSessions.length > 0}
+{#if presentedRecords}
+  <div class={recordsGrid}>
+    {#if presentedRecords.topCost}
+      <button class={recordCard} onclick={() => onSelectSession(presentedRecords.topCost!)} type="button">
+        <span class={recordLabel}>Top session</span>
+        <span class={recordValue} title={apiValuePresentation(presentedRecords.topCost).title}
+          >{apiValuePresentation(presentedRecords.topCost).label}</span
+        >
+        <span class={recordSub}>{presentedRecords.topCost.label}</span>
+      </button>
+    {/if}
+    {#if presentedRecords.longest}
+      <button class={recordCard} onclick={() => onSelectSession(presentedRecords.longest!)} type="button">
+        <span class={recordLabel}>Longest session</span>
+        <span class={recordValue}>{fmtDuration(presentedRecords.longest.durationMs)}</span>
+        <span class={recordSub}>{presentedRecords.longest.label}</span>
+      </button>
+    {/if}
+    {#if presentedRecords.busiest}
+      <button class={recordCard} onclick={() => onSelectDay(presentedRecords.busiest!.date)} type="button">
+        <span class={recordLabel}>Busiest day</span>
+        <span class={recordValue}>{fmtMoney(presentedRecords.busiest.cost)}</span>
+        <span class={recordSub}
+          >{fmtDateOnly(presentedRecords.busiest.date)}
+          · {fmtNum(presentedRecords.busiest.sessions)} sessions</span
+        >
+      </button>
+    {/if}
+    {#if presentedRecords.streak > 0 && presentedRecords.streakEnd}
+      <button class={recordCard} onclick={() => onSelectDay(presentedRecords.streakEnd!)} type="button">
+        <span class={recordLabel}>Streak</span>
+        <span class={recordValue}
+          >{fmtNum(presentedRecords.streak)} {presentedRecords.streak === 1 ? 'day' : 'days'}</span
+        >
+        <span class={recordSub}>consecutive days with sessions, ending {fmtDateOnly(presentedRecords.streakEnd)}</span>
+      </button>
+    {/if}
+  </div>
+{/if}
+
+{#if presentedTopSessions.length > 0}
   <section class={panel}>
     <div>
-      <h2 class={panelTitle}>Records</h2>
-      <p class={panelSub}>Notable activity in the selected report range</p>
+      <h2 class={panelTitle}>Top sessions</h2>
+      <p class={panelSub}>
+        The five highest estimated API-equivalent values for sessions or campaigns in range — click to inspect
+      </p>
     </div>
-    {#if presentedRecords}
-      <div class={grid}>
-        {#if presentedRecords.busiest}
-          <button class={card} onclick={() => onSelectDay(presentedRecords.busiest?.date ?? '')} type="button">
-            <span class={label}>Busiest day</span
-            ><span class={value}>{fmtDateOnly(presentedRecords.busiest.date)}</span>
-            <span class={sub}
-              >{fmtNum(presentedRecords.busiest.sessions)}
-              sessions · {fmtMoney(presentedRecords.busiest.cost)}</span
-            >
-          </button>
-        {/if}
-        {#if presentedRecords.topCost}
-          <button
-            class={card}
-            onclick={() => presentedRecords?.topCost && onSelectSession(presentedRecords.topCost)}
-            type="button"
-          >
-            <span class={label}>Top session</span><span class={value}>{presentedRecords.topCost.label}</span>
-            <span class={sub}
-              >{apiValuePresentation(presentedRecords.topCost).label}
-              · {presentedRecords.topCost.harness}</span
-            >
-          </button>
-        {/if}
-        {#if presentedRecords.longest}
-          <button
-            class={card}
-            onclick={() => presentedRecords?.longest && onSelectSession(presentedRecords.longest)}
-            type="button"
-          >
-            <span class={label}>Longest session</span><span class={value}>{presentedRecords.longest.label}</span>
-            <span class={sub}
-              >{fmtDuration(presentedRecords.longest.durationMs)}
-              · {presentedRecords.longest.harness}</span
-            >
-          </button>
-        {/if}
-        <div class={card}>
-          <span class={label}>Longest streak</span><span class={value}>{fmtNum(presentedRecords.streak)} days</span>
-          <span class={sub}
-            >{presentedRecords.streakEnd ? `Through ${fmtDateOnly(presentedRecords.streakEnd)}` : 'No dated streak'}</span
-          >
-        </div>
-      </div>
-    {/if}
-    {#if presentedTopSessions.length > 0}
-      <ol aria-label="Top sessions and campaigns" class={top}>
-        {#each presentedTopSessions as item, index (item.row.rowId)}
-          <li>
-            <button class={topItem} onclick={() => onSelectSession(item)} type="button">
-              <span>{index + 1}</span>
-              <span
-                >{item.label}
-                {#if item.kind === 'campaign'}
-                  <span class={sub}> · Campaign · {fmtNum(item.sessionCount)} sessions</span>
-                {/if}
-              </span>
-              <span class={money}>{apiValuePresentation(item).label}</span>
-            </button>
-          </li>
-        {/each}
-      </ol>
-    {/if}
+    <div class={topList}>
+      {#each presentedTopSessions as item, index (item.row.rowId)}
+        <button class={topRow} onclick={() => onSelectSession(item)} type="button">
+          <span class={topRank}>{index + 1}</span>
+          <span class={topTitle}>
+            {item.label}
+            {#if item.kind === 'campaign'}
+              <span class={muted}> · Campaign · {fmtNum(item.sessionCount)} sessions</span>
+            {/if}
+          </span>
+          <HarnessBadge name={item.harness} />
+          <span class={topMoney} title={apiValuePresentation(item).title}>{apiValuePresentation(item).label}</span>
+        </button>
+      {/each}
+    </div>
   </section>
 {/if}

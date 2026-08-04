@@ -60,6 +60,7 @@
 
   const SESSION_VIEWPORT_BOTTOM_INSET = 24;
   const SESSION_VIEWPORT_FALLBACK_HEIGHT = 520;
+  const MIN_SESSION_TABLE_WIDTH = 720;
   const DESKTOP_MINIMUM_VIEWPORT_HEIGHT = sessionVirtualBudgets.desktop.rowHeight * 3;
   const MOBILE_MINIMUM_VIEWPORT_HEIGHT = sessionVirtualBudgets.mobile.rowHeight;
 
@@ -142,6 +143,9 @@
   const activeSort = $derived(sorting[0] ?? { desc: true, id: 'date' });
   const activePreset = $derived(sessionColumnPresetForVisibility(columnVisibility));
   const visibleColumnWidthTotal = $derived(visibleColumns.reduce((total, entry) => total + entry.meta.widthPx, 0));
+  const tableMinWidth = $derived(
+    activePreset ? MIN_SESSION_TABLE_WIDTH : Math.max(MIN_SESSION_TABLE_WIDTH, visibleColumnWidthTotal),
+  );
   const columnWidth = (width: number): string =>
     activePreset ? `${(width / visibleColumnWidthTotal) * 100}%` : `${width}px`;
 
@@ -392,7 +396,7 @@
         bind:this={surfaceElement}
         use:setSurfaceElement
       >
-        <table aria-rowcount={totalRows ?? model.rows.length} class={table}>
+        <table aria-rowcount={totalRows ?? model.rows.length} class={table} style:min-width={`${tableMinWidth}px`}>
           <thead>
             <tr>
               {#each visibleColumns as entry (entry.id)}

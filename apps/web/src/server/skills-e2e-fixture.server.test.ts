@@ -4,6 +4,8 @@ import {
   previewE2EReconcileAllSkills,
   readE2EKnownSkillProjectPaths,
   readE2ESkillProjectInventories,
+  readExtendedE2EKnownSkillProjectPaths,
+  readExtendedE2ESkillProjectInventories,
   reconcileAllE2ESkills,
   reconcileE2ESkill,
   toggleE2ESkill,
@@ -12,9 +14,16 @@ import {
 } from './skills-e2e-fixture.server';
 
 describe('Skills E2E mutation backend', () => {
-  test('keeps the opaque project routes backed by synthetic data', () => {
+  test('keeps the stable visual fixture free of opaque route data', () => {
     const knownPaths = readE2EKnownSkillProjectPaths();
     const inventories = readE2ESkillProjectInventories();
+    expect(knownPaths.ok && knownPaths.data.some((entry) => entry.groupId === 'project/opaque')).toBe(false);
+    expect(inventories.ok && inventories.data.some((entry) => entry.projectPath.includes('opaque'))).toBe(false);
+  });
+
+  test('keeps the opaque project routes backed by synthetic data', () => {
+    const knownPaths = readExtendedE2EKnownSkillProjectPaths();
+    const inventories = readExtendedE2ESkillProjectInventories();
     expect(knownPaths.ok && knownPaths.data[0]).toMatchObject({
       groupId: 'project/opaque',
       path: '/fixture/projects/opaque-project-source',

@@ -24,7 +24,7 @@
     presentFocusedOverviewSessionItem,
     presentServedCampaignDisplayRow,
   } from '../../../../campaign-label-overrides';
-  import { buildCampaignTableRows } from '../../../../dashboard-model';
+  import { buildCampaignTableRows, buildCampaignViews } from '../../../../dashboard-model';
   import {
     type DashboardSearch,
     primaryDashboardTabFor,
@@ -52,6 +52,7 @@
   import SessionDetailSlot from '../../sessions/detail/session-detail-slot.svelte';
   import CampaignLabelEditor from '../actions/campaign-label-editor.svelte';
   import type { CampaignLabelEditorState } from '../actions/campaign-label-editor-state';
+  import CampaignSessionControls from '../actions/campaign-session-controls.svelte';
   import QuotaHistoryOwner from '../actions/quota-history-owner.svelte';
   import ActiveFilters from '../breakdown/active-filters.svelte';
   import FilterBar from '../breakdown/filter-bar.svelte';
@@ -154,7 +155,17 @@
   } as const;
   const focusedMachineFreshness = runtimeMode === 'e2e' ? syntheticMachineFreshness : support.machineFreshness;
   const machineSnapshot = machineFreshnessSnapshotFromFocused(focusedMachineFreshness);
+  const supportMachineSnapshot = machineFreshnessSnapshotFromFocused(support.machineFreshness);
   const machineFreshnessStatus = runtimeMode === 'e2e' ? machineFreshnessStatusLabel(machineSnapshot) : null;
+  const displayedFreshnessStatus = $derived.by(() => {
+    if (runtimeMode === 'demo') {
+      return 'Synthetic data';
+    }
+    return responseFixture ? machineFreshnessStatusLabel(supportMachineSnapshot) : machineFreshnessStatus;
+  });
+  const displayedFreshnessUnavailable = $derived(
+    responseFixture ? supportMachineSnapshot.kind === 'unavailable' : machineSnapshot.kind === 'unavailable',
+  );
   const machinePresentations = new Map(
     machineOptions.map(({ label, value }) => [
       value,
@@ -228,6 +239,13 @@
   const tableRows = $derived(
     buildCampaignTableRows(allRows, visibleRows, sorting).map((row) => presentCampaignRow(row, campaignIndex)),
   );
+  const selectedCampaignView = $derived.by(() => {
+    const campaignKey = selection?.row.campaignKey;
+    if (!campaignKey) {
+      return;
+    }
+    return buildCampaignViews(allRows, visibleRows).find((campaign) => campaign.campaignKey === campaignKey);
+  });
   const sessionResetKey = $derived(
     JSON.stringify({
       filters: destination.sessions.filters,
@@ -334,11 +352,31 @@
   {#if selectedCampaignEditor}
     <CampaignLabelEditor editor={selectedCampaignEditor} />
   {/if}
+  {#if selectedCampaignView && selection?.row}
+    <CampaignSessionControls
+      campaign={selection.row}
+      collection={{
+        items: selectedCampaignView.allRows,
+        loading: false,
+        nextCursor: null,
+        totalCount: selectedCampaignView.totalCount,
+      }}
+      onClearCampaignFilter={(campaignKey) => {
+        if (renderedSearch.filters.campaign === campaignKey) {
+          navigation.clearFieldFilter('campaign');
+        }
+      }}
+      onLoadMoreCampaignSessions={() => undefined}
+      onSelectSession={selectSessionRow}
+      query={syntheticSessionQuery}
+      visibleRows={selectedCampaignView.visibleRows}
+    />
+  {/if}
 {/snippet}
 
 <FilterBar
-  freshnessStatus={runtimeMode === 'demo' ? 'Synthetic data' : machineFreshnessStatus}
-  freshnessUnavailable={machineSnapshot.kind === 'unavailable'}
+  freshnessStatus={displayedFreshnessStatus}
+  freshnessUnavailable={displayedFreshnessUnavailable}
   {harnessOptions}
   isDemo={mode === 'demo'}
   machineAttention={runtimeMode === 'e2e' && machineOptions.some(({ value }) => machinePresentations.get(value)?.freshness !== 'fresh')}
@@ -347,40 +385,38 @@
   {presentMachineLabel}
   {search}
 />
-<ActiveFilters
-  hidden={Math.max(0, support.support.analytics.sessionCount - overview.summary.sessionCount)}
-  {navigation}
-  {pending}
-  {presentMachineLabel}
-  {search}
-  total={support.support.analytics.sessionCount}
-  visible={overview.summary.sessionCount}
-/>
-{#if primary !== 'overview'}
-  <ReportRangeControl
-    {activeSeriesKeys}
-    dateDomain={overview.dateDomain}
-    {dimension}
-    generatedAt={reportSupport.generatedAt}
-    {granularity}
-    {machineFreshnessStatus}
-    {navigate}
-    onDimensionFilter={navigation.setTimelineDimensionFilter}
-    onOptionsChange={(options) => {
-      dimension = options.dimension;
-      granularity = options.granularity;
-      timelineValue = options.value;
-    }}
-    onRangeChange={navigation.setDateRange}
-    {presentCampaignSeries}
-    {presentMachineSeries}
-    range={renderedSearch.range}
-    timeline={overview.timeline}
-    value={timelineValue}
-  />
-{/if}
 <ReportWorkspace hasOutput={!pending} {pending}>
   {#snippet children()}
+    <ReportRangeControl
+      {activeSeriesKeys}
+      dateDomain={overview.dateDomain}
+      {dimension}
+      generatedAt={reportSupport.generatedAt}
+      {granularity}
+      {machineFreshnessStatus}
+      {navigate}
+      onDimensionFilter={navigation.setTimelineDimensionFilter}
+      onOptionsChange={(options) => {
+        dimension = options.dimension;
+        granularity = options.granularity;
+        timelineValue = options.value;
+      }}
+      onRangeChange={navigation.setDateRange}
+      {presentCampaignSeries}
+      {presentMachineSeries}
+      range={renderedSearch.range}
+      timeline={overview.timeline}
+      value={timelineValue}
+    />
+    <ActiveFilters
+      hidden={Math.max(0, support.support.analytics.sessionCount - overview.summary.sessionCount)}
+      {navigation}
+      {pending}
+      {presentMachineLabel}
+      {search}
+      total={support.support.analytics.sessionCount}
+      visible={overview.summary.sessionCount}
+    />
     {#if primary === 'overview'}
       <OverviewPage
         {activeSeriesKeys}

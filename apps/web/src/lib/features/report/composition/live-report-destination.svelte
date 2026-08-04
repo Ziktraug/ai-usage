@@ -358,40 +358,40 @@
       {presentMachineLabel}
       {search}
     />
-    <ActiveFilters
-      hidden={Math.max(0, totalSessions - visibleSessions)}
-      {navigation}
-      pending={_owner.snapshot.pending}
-      {presentMachineLabel}
-      {search}
-      total={totalSessions}
-      visible={visibleSessions}
-    />
-    {#if primary !== 'overview' && commit?.overview}
-      <ReportRangeControl
-        {activeSeriesKeys}
-        dateDomain={commit.overview.dateDomain}
-        {dimension}
-        generatedAt={bootstrap.support.generatedAt}
-        {granularity}
-        machineFreshnessStatus={machineFreshnessStatusLabel(machineSnapshot)}
-        {navigate}
-        onDimensionFilter={navigation.setTimelineDimensionFilter}
-        onOptionsChange={updateOverviewOptions}
-        onRangeChange={navigation.setDateRange}
-        {presentCampaignSeries}
-        {presentMachineSeries}
-        range={search.range}
-        timeline={commit.overview.timeline}
-        value={timelineValue}
-      />
-    {/if}
     <ReportWorkspace
       hasOutput={primary === 'sessions' || commit !== undefined}
       pending={primary === 'sessions' ? false : _owner.snapshot.pending}
       refreshError={_owner.snapshot.refreshError}
     >
       {#snippet children()}
+        {#if commit?.overview}
+          <ReportRangeControl
+            {activeSeriesKeys}
+            dateDomain={commit.overview.dateDomain}
+            {dimension}
+            generatedAt={bootstrap.support.generatedAt}
+            {granularity}
+            machineFreshnessStatus={machineFreshnessStatusLabel(machineSnapshot)}
+            {navigate}
+            onDimensionFilter={navigation.setTimelineDimensionFilter}
+            onOptionsChange={updateOverviewOptions}
+            onRangeChange={navigation.setDateRange}
+            {presentCampaignSeries}
+            {presentMachineSeries}
+            range={search.range}
+            timeline={commit.overview.timeline}
+            value={timelineValue}
+          />
+        {/if}
+        <ActiveFilters
+          hidden={Math.max(0, totalSessions - visibleSessions)}
+          {navigation}
+          pending={_owner.snapshot.pending}
+          {presentMachineLabel}
+          {search}
+          total={totalSessions}
+          visible={visibleSessions}
+        />
         {#if primary === 'overview' && commit?.destination.kind === 'overview'}
           <OverviewPage
             {activeSeriesKeys}

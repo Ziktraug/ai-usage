@@ -24,7 +24,7 @@
 
   const health = $derived(buildSkillHealthSummary(snapshot));
   const contextPanel = css({ alignSelf: 'start', position: { base: 'static', xl: 'sticky' }, top: '16px' });
-  const panelHeader = css({ display: 'grid', gap: '4px', mb: '12px' });
+  const panelHeader = css({ display: 'grid', gap: '2px' });
   const stack = css({ display: 'grid', gap: '12px' });
   const section = css({ display: 'grid', gap: '7px', pt: '12px', borderTop: '1px solid token(colors.line)' });
   const row = css({ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto', gap: '8px', fontSize: '13px' });
@@ -52,28 +52,14 @@
     </p>
   </div>
   <div class={stack}>
-    <div class={row}><span class={muted}>Selection</span><strong>{view.selectionLabel}</strong></div>
+    {#if view.selectionDetail.kind !== 'global-skill'}
+      <div class={row}><span class={muted}>Selection</span><strong>{view.selectionLabel}</strong></div>
+    {/if}
     {#if view.selectionDetail.kind === 'global-scope'}
       <div class={section}>
         <div class={row}><span class={muted}>Skills</span><span>{snapshot.summary.skillCount}</span></div>
         <div class={row}><span class={muted}>Active</span><span>{snapshot.summary.activeSkillCount}</span></div>
         <div class={row}><span class={muted}>Not linked</span><span>{health.toLinkCount}</span></div>
-      </div>
-    {:else if view.selectionDetail.kind === 'global-skill'}
-      <div class={section}>
-        <div class={row}>
-          <span class={muted}>Status</span><span class={status}>{view.selectionDetail.skill.validationStatus}</span>
-        </div>
-        <div class={row}>
-          <span class={muted}>Invocation</span>
-          <span
-            >{view.selectionDetail.skill.manifest.fields.some((field) => field.key === 'disable-model-invocation' && field.value === true) ? 'Manual' : 'Automatic'}</span
-          >
-        </div>
-        <div class={row}>
-          <span class={muted}>Tokens</span><span>{view.selectionDetail.skill.tokenCount?.total ?? 'Unknown'}</span>
-        </div>
-        <span class={path}>{view.selectionDetail.skill.skillMdPath}</span>
       </div>
     {:else if view.selectionDetail.kind === 'project-scope'}
       <div class={section}>
@@ -82,7 +68,7 @@
           <span class={muted}>Inventories</span><span>{view.selectionDetail.inventories.length}</span>
         </div>
       </div>
-    {:else}
+    {:else if view.selectionDetail.kind === 'project-skill'}
       <div class={section}>
         <span class={path}>{view.selectionDetail.project.path}</span>
         <div class={row}>
@@ -95,7 +81,11 @@
       </div>
     {/if}
     {#if healthSlot}
-      <div class={section} data-skills-health-slot>{@render healthSlot(slotContext, managementPlan)}</div>
+      {#if view.selectionDetail.kind === 'global-skill'}
+        <div data-skills-health-slot>{@render healthSlot(slotContext, managementPlan)}</div>
+      {:else}
+        <div class={section} data-skills-health-slot>{@render healthSlot(slotContext, managementPlan)}</div>
+      {/if}
     {/if}
   </div>
 </aside>

@@ -135,14 +135,21 @@ const adaptSkillsCapability = (adapter: SkillsServerAdapter): SkillsCapability =
     ),
 });
 
-const e2eSkillsAdapter = async (): Promise<SkillsServerAdapter> => {
+export type E2ESkillsFixtureVariant = 'extended' | 'visual';
+
+const e2eSkillsAdapter = async (variant: E2ESkillsFixtureVariant = 'visual'): Promise<SkillsServerAdapter> => {
   const fixture = await import('../../../server/skills-e2e-fixture.server');
+  const extended = variant === 'extended';
   return {
     createTargetDirectory: fixture.createE2ESkillTargetDirectory,
     previewReconcileAll: fixture.previewE2EReconcileAllSkills,
-    readKnownProjectPaths: fixture.readE2EKnownSkillProjectPaths,
+    readKnownProjectPaths: extended
+      ? fixture.readExtendedE2EKnownSkillProjectPaths
+      : fixture.readE2EKnownSkillProjectPaths,
     readMarkdown: fixture.readE2ESkillMarkdown,
-    readProjectInventories: fixture.readE2ESkillProjectInventories,
+    readProjectInventories: extended
+      ? fixture.readExtendedE2ESkillProjectInventories
+      : fixture.readE2ESkillProjectInventories,
     readProjectMarkdown: fixture.readE2EProjectSkillMarkdown,
     readSnapshot: fixture.readE2ESkillManagementSnapshot,
     reconcileAll: fixture.reconcileAllE2ESkills,
@@ -153,6 +160,9 @@ const e2eSkillsAdapter = async (): Promise<SkillsServerAdapter> => {
     toggleSkill: fixture.toggleE2ESkill,
   };
 };
+
+export const createE2ESkillsCapability = async (variant: E2ESkillsFixtureVariant): Promise<SkillsCapability> =>
+  adaptSkillsCapability(await e2eSkillsAdapter(variant));
 
 const runtimeMode = async (options: SkillsCallOptions): Promise<RuntimeMode> =>
   await phaseBound(options.signal, async () => {

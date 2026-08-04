@@ -55,14 +55,21 @@
     bg: 'surface',
     transform: 'translateX(-50%)',
   });
-  const details = css({ borderTop: '1px solid token(colors.line)', pt: '10px' });
-  const detailsSummary = css({ color: 'muted', cursor: 'pointer', fontSize: '12px' });
-  const optionGrid = css({ display: 'grid', gap: '12px', mt: '12px' });
 </script>
 
 <script lang="ts">
   import { cx } from '@ai-usage/design-system/css';
-  import { panel, panelSub, panelTitle, SegmentedControl } from '@ai-usage/design-system/svelte';
+  import {
+    panel,
+    panelSub,
+    panelTitle,
+    SegmentedControl,
+    timeChartOptions,
+    timeChartOptionsCurrent,
+    timeChartOptionsSummary,
+    timeChartOptionsTitle,
+    timeRangeViewControls,
+  } from '@ai-usage/design-system/svelte';
   import {
     type FocusedDateDomain,
     type FocusedTimelineData,
@@ -542,9 +549,12 @@
       >
     {/each}
   </div>
-  <details aria-label="Chart options" class={details} data-report-range-part="chart-options">
-    <summary class={detailsSummary}>{chartSummary}</summary>
-    <div class={optionGrid}>
+  <details aria-label="Chart options" class={timeChartOptions} data-report-range-part="chart-options">
+    <summary class={timeChartOptionsSummary}>
+      <span class={timeChartOptionsTitle}>Chart options</span>
+      <span class={timeChartOptionsCurrent}>{chartSummary}</span>
+    </summary>
+    <div class={timeRangeViewControls}>
       <SegmentedControl
         ariaLabel="Group by"
         items={dimensionItems}

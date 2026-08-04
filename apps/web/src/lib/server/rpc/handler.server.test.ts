@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { MAX_PORTABLE_USAGE_BYTES } from '@ai-usage/report-core/portable-usage';
 import { createWebRpcClient } from '../../rpc/client';
+import { createE2ESkillsCapability } from './context.server';
 import { createWebRpcHttpHandler, enforceRpcResponseBound } from './handler.server';
 import {
   enforceRequestPolicy,
@@ -85,6 +86,37 @@ describe('Web RPC HTTP convergence', () => {
 
     expect(observed).toHaveLength(29);
     expect(dependencyAcquisitions).toBe(29);
+  });
+  test('serves opaque project identity through the real Skills RPC routes only in an injected extended context', async () => {
+    const capability = await createE2ESkillsCapability('extended');
+    const handler = createWebRpcHttpHandler({
+      createDependencies: () =>
+        Promise.resolve({
+          ...dependencies(),
+          skills: {
+            preflight: () => ({ allowed: true }),
+            selectCapability: () => capability,
+          },
+        }),
+    });
+    const client = createWebRpcClient({
+      fetch: trustedHandlerFetch(handler),
+      url: 'http://127.0.0.1:3000/rpc',
+    });
+
+    const [knownPaths, inventories] = await Promise.all([
+      client.skills.knownProjectPaths({}),
+      client.skills.projectInventories({}),
+    ]);
+
+    expect(knownPaths[0]).toMatchObject({
+      groupId: 'project/opaque',
+      path: '/fixture/projects/opaque-project-source',
+    });
+    expect(inventories[0]).toMatchObject({
+      observations: [{ name: 'skill-name' }],
+      projectPath: '/fixture/projects/opaque-project-source',
+    });
   });
 
   test('rejects demo, unknown, false-prefix, method, trust, CSRF, URL, and body failures before acquisition', async () => {

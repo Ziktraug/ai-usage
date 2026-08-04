@@ -1,7 +1,39 @@
-export { commandButton, themeToggleButton } from './components/button';
+export { commandButton, ghostButton, pendingButton, themeToggleButton } from './components/button';
 export { stableSeriesColor } from './components/chart';
-export { header, meta, page, shell, title, titleBlock } from './components/layout';
+export { searchInput } from './components/field';
+
+export {
+  activeFilters,
+  filterSummary,
+  header,
+  headerActions,
+  headerTop,
+  meta,
+  page,
+  shell,
+  summaryPill,
+  title,
+  titleBlock,
+} from './components/layout';
 export { panel, panelSub, panelTitle } from './components/panel';
+export {
+  banner,
+  bannerError,
+  bannerOk,
+  statusPill,
+  statusPillDanger,
+  statusPillInfo,
+  statusPillOk,
+  statusPillWarn,
+} from './components/status';
+export { muted, strongCell } from './components/table';
+export {
+  timeChartOptions,
+  timeChartOptionsCurrent,
+  timeChartOptionsSummary,
+  timeChartOptionsTitle,
+  timeRangeViewControls,
+} from './components/time-slider';
 export { default as MultiSelect } from './svelte/compound/multi-select.svelte';
 export { default as SegmentedControl } from './svelte/compound/segmented-control.svelte';
 export { default as Tabs } from './svelte/compound/tabs.svelte';

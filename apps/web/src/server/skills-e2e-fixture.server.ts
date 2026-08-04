@@ -156,8 +156,24 @@ export const readE2ERefreshedSkillManagementSnapshot = (): SkillsServerResult<Sk
     ok: true,
   };
 };
-
 export const readE2EKnownSkillProjectPaths = (): SkillsServerResult<readonly KnownSkillProjectPath[]> => ({
+  data: [
+    {
+      label: 'customer-analytics-platform-with-an-exceptionally-long-scope-name',
+      path: '/fixture/projects/customer-analytics-platform-with-an-exceptionally-long-scope-name',
+      project: 'customer-analytics-platform',
+      sessions: 1,
+    },
+  ],
+  ok: true,
+});
+
+export const readE2ESkillProjectInventories = (): SkillsServerResult<readonly ProjectSkillInventory[]> => ({
+  data: [],
+  ok: true,
+});
+
+export const readExtendedE2EKnownSkillProjectPaths = (): SkillsServerResult<readonly KnownSkillProjectPath[]> => ({
   data: [
     {
       groupId: 'project/opaque',
@@ -177,7 +193,7 @@ export const readE2EKnownSkillProjectPaths = (): SkillsServerResult<readonly Kno
   ok: true,
 });
 
-export const readE2ESkillProjectInventories = (): SkillsServerResult<readonly ProjectSkillInventory[]> => ({
+export const readExtendedE2ESkillProjectInventories = (): SkillsServerResult<readonly ProjectSkillInventory[]> => ({
   data: [
     {
       diagnostics: [],

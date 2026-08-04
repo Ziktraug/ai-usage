@@ -1,6 +1,6 @@
 <script lang="ts">
   import { css, cx } from '@ai-usage/design-system/css';
-  import { panel, panelSub, panelTitle } from '@ai-usage/design-system/svelte';
+  import { panel, panelSub, panelTitle, strongCell } from '@ai-usage/design-system/svelte';
   import type { KnownProjectScope, SkillSelection, SkillTreeModel } from '../../../../skills-page-model';
   import { selectionKey } from '../../../../skills-page-model';
   import SelectionLink from './selection-link.svelte';
@@ -72,18 +72,27 @@
     maxH: { base: 'none', lg: 'calc(100vh - 32px)' },
     overflow: 'auto',
   });
-  const panelHeader = css({ display: 'grid', gap: '4px', mb: '12px' });
-  const treeStack = css({ display: 'grid', gap: '12px', mt: '12px' });
+  const panelHeader = css({ display: 'grid', gap: '2px' });
+  const treeStack = css({ display: 'grid', gap: '12px' });
   const scopeGroup = css({ display: 'grid', gap: '6px' });
-  const scopeRow = css({ display: 'grid', gridTemplateColumns: '32px minmax(0, 1fr)', gap: '4px' });
+  const scopeRow = css({
+    display: 'grid',
+    gridTemplateColumns: '32px minmax(0, 1fr)',
+    gap: '4px',
+    alignItems: 'stretch',
+  });
   const searchInput = css({
+    flex: '1 1 240px',
+    minW: '180px',
     w: '100%',
     h: '36px',
-    px: '10px',
-    border: '1px solid token(colors.line)',
+    px: '12px',
+    border: '1px solid token(colors.lineStrong)',
     borderRadius: 'sm',
     bg: 'surface',
     color: 'ink',
+    fontSize: '13px',
+    outline: 'none',
   });
   const treeButton = css({
     display: 'grid',
@@ -110,9 +119,40 @@
     _focusVisible: { outline: '2px solid token(colors.accent)', outlineOffset: '2px' },
   });
   const label = css({ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' });
+  const scopeLabel = css({
+    display: 'flex',
+    minW: 0,
+    gap: '6px',
+    alignItems: 'baseline',
+    overflow: 'hidden',
+    whiteSpace: 'nowrap',
+  });
+  const scopeName = css({
+    display: 'block',
+    minW: 0,
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+  });
+  const scopePath = css({
+    minW: 0,
+    color: 'muted',
+    fontSize: '12px',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+  });
   const count = css({ color: 'muted', fontSize: '11px', fontWeight: 650 });
   const attention = css({ color: 'status.warn', fontSize: '11px', fontWeight: 700 });
-  const emptySummary = css({ color: 'muted', cursor: 'pointer', fontSize: '13px', fontWeight: 650 });
+  const emptyFold = css({ display: 'grid', gap: '6px' });
+  const emptySummary = css({
+    color: 'muted',
+    cursor: 'pointer',
+    fontSize: '13px',
+    fontWeight: 650,
+    listStyle: 'none',
+    _marker: { display: 'none' },
+  });
   const filterInfo = css({ color: 'muted', fontSize: '12px', lineHeight: 1.5 });
 </script>
 
@@ -169,8 +209,13 @@
               selection={scope.selection}
               title={scope.path}
             >
-              <span class={label} data-skill-scope-name title={scope.label}>{scope.label}</span
-              ><span class={count}>{scope.skills.length}</span>
+              <span class={scopeLabel}>
+                <span class={cx(strongCell, scopeName)} data-skill-scope-name title={scope.label}>{scope.label}</span>
+                {#if scope.shortPath}
+                  <span class={scopePath}>{scope.shortPath}</span>
+                {/if}
+              </span>
+              <span class={count}>{scope.skills.length}</span>
             </SelectionLink>
           </div>
           {#if expanded}
@@ -196,7 +241,7 @@
         </section>
       {/each}
       {#if emptyScopes.length > 0}
-        <details>
+        <details class={emptyFold}>
           <summary class={emptySummary}>Projects without skills ({emptyScopes.length})</summary>
           {#each emptyScopes as scope (scope.key)}
             <SelectionLink
@@ -206,7 +251,7 @@
               selection={scope.selection}
               title={scope.path}
             >
-              <span class={label} data-skill-scope-name title={scope.label}>{scope.label}</span
+              <span class={cx(label, scopeName)} data-skill-scope-name title={scope.label}>{scope.label}</span
               ><span class={count}>0</span>
             </SelectionLink>
           {/each}

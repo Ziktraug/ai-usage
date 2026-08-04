@@ -20,13 +20,16 @@ export const panelHeader = css({
 export const title = css({ fontSize: '16px', fontWeight: 700 });
 export const muted = css({ color: 'muted', fontSize: '12px' });
 export const field = css({
-  minH: '34px',
-  border: '1px solid token(colors.line)',
+  h: '36px',
+  border: '1px solid token(colors.lineStrong)',
   borderRadius: 'sm',
   bg: 'surface',
   color: 'ink',
-  px: '10px',
+  px: '12px',
   fontSize: '13px',
+  outline: 'none',
+  _placeholder: { color: 'faint' },
+  _focusVisible: { borderColor: 'accent', boxShadow: '0 0 0 3px token(colors.focusRing)' },
 });
 export const button = css({
   appearance: 'none',
@@ -88,15 +91,15 @@ export const toolbar = css({
   display: 'flex',
   flexDirection: { base: 'column', sm: 'row' },
   flexWrap: { base: 'nowrap', sm: 'wrap' },
-  gap: '8px',
+  gap: { base: '8px', sm: '10px' },
   alignItems: 'center',
-  py: '10px',
+  py: { base: '8px', sm: '12px' },
   bg: 'canvas',
   borderBottom: '1px solid token(colors.line)',
   _print: { display: 'none' },
   '& > input': {
-    flex: { base: 'none', sm: '0 1 auto' },
-    minW: { base: 0, sm: 'auto' },
+    flex: { base: 'none', sm: '1 1 240px' },
+    minW: { base: 0, sm: '180px' },
     w: { base: 'full', sm: 'auto' },
   },
 });
@@ -104,7 +107,7 @@ export const controls = css({
   display: { base: 'grid', sm: 'contents' },
   gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
   w: { base: 'full', sm: 'auto' },
-  gap: { base: '8px', sm: 0 },
+  gap: { base: '8px', sm: '0' },
   alignItems: 'center',
   '& > *': {
     minW: 0,

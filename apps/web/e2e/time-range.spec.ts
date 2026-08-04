@@ -49,6 +49,32 @@ test('uses one report range for the dashboard and activity chart', async ({ page
   await expect(chartOptions.getByText('Metric', { exact: true })).toBeVisible();
 });
 
+test('wraps chart options without horizontal clipping below the frozen narrow viewport', async ({ page }) => {
+  await page.setViewportSize({ height: 844, width: 320 });
+  await openHydratedReport(page);
+
+  const summary = page
+    .getByRole('region', { name: 'Date range' })
+    .locator('details[aria-label="Chart options"] summary');
+  const geometry = await summary.evaluate((element) => {
+    const current = element.querySelector('span:last-child');
+    if (!(current instanceof HTMLElement)) {
+      throw new Error('Expected the current chart-options summary');
+    }
+    const currentStyle = getComputedStyle(current);
+    return {
+      clientWidth: element.clientWidth,
+      currentMinWidth: currentStyle.minWidth,
+      currentWhiteSpace: currentStyle.whiteSpace,
+      scrollWidth: element.scrollWidth,
+    };
+  });
+
+  expect(geometry.scrollWidth).toBeLessThanOrEqual(geometry.clientWidth);
+  expect(geometry.currentMinWidth).toBe('0px');
+  expect(geometry.currentWhiteSpace).toBe('normal');
+});
+
 test('uses clickable heatmap days as Rhythm activity-day controls without a native date input', async ({ page }) => {
   await openHydratedReport(page);
 

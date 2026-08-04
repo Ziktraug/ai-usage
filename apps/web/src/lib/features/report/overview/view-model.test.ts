@@ -72,7 +72,6 @@ describe('Overview presentation adapters', () => {
 test('keeps the frozen Overview content and secondary-status order', async () => {
   const pageSource = await Bun.file(new URL('./overview-page.svelte', import.meta.url)).text();
   const orderedSurfaces = [
-    '<ReportRangeControl',
     '<OverviewHero',
     '<ActivityHeatmap',
     '<TokenAnatomy',
@@ -90,4 +89,22 @@ test('keeps the frozen Overview content and secondary-status order', async () =>
   expect(heroSource).toContain('This is a comparison value, not savings or ROI.');
   expect(heroSource).toContain('Reported actual spend ·');
   expect(heroSource).toContain('Spend coverage');
+});
+
+test('keeps report range before filters and Overview content in both destination compositions', async () => {
+  const destinationFiles = [
+    '../composition/live-report-destination.svelte',
+    '../composition/synthetic-report-destination.svelte',
+  ];
+  for (const relativePath of destinationFiles) {
+    const source = await Bun.file(new URL(relativePath, import.meta.url)).text();
+    const positions = ['<ReportRangeControl', '<ActiveFilters', '<OverviewPage'].map((surface) =>
+      source.indexOf(surface),
+    );
+    expect(
+      positions.every((position) => position >= 0),
+      relativePath,
+    ).toBe(true);
+    expect(positions, relativePath).toEqual([...positions].sort((left, right) => left - right));
+  }
 });
