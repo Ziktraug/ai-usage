@@ -41,17 +41,17 @@ describe('canonical Sync route composition', () => {
 
   test('initializes and disposes one observability owner while preserving hook seams', () => {
     const hook = readWorkspaceFile('src/hooks.server.ts');
-    const initialization = hook.indexOf(
-      'const observabilityInitialization = webReadObservabilityLifecycle.initialize()',
-    );
-    const handle = hook.indexOf('export const handle: Handle');
-    const awaited = hook.indexOf('await observabilityInitialization', handle);
+    const initialization = hook.indexOf('observabilityInitialization ??= webReadObservabilityLifecycle.initialize()');
+    const handle = hook.indexOf('const handleApplicationRequest: Handle');
+    const awaited = hook.indexOf('await initializeObservability()', handle);
     const resolved = hook.indexOf('const response = await resolve', handle);
     const rpcRoute = readWorkspaceFile('src/routes/rpc/[...rest]/+server.ts');
 
     expect(hook).toContain(
       "import { webReadObservabilityLifecycle } from '$lib/server/observability/web-read-lifecycle.server'",
     );
+    expect(hook).toContain("import { handleTrustedLocalRequest } from '../src/server/trusted-local-hook.server'");
+    expect(hook).toContain('sequence(handleTrustedLocalRequest, handleApplicationRequest)');
     expect(initialization).toBeGreaterThan(-1);
     expect(initialization).toBeLessThan(handle);
     expect(awaited).toBeGreaterThan(handle);

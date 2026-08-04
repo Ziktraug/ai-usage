@@ -1,7 +1,24 @@
 import { expect, test } from 'bun:test';
 import { createServer } from 'node:net';
 import path from 'node:path';
-import { withOwnedProcess } from './check-web-production-start';
+import {
+  assertSyntheticSkillsProductionPrivacy,
+  SKILLS_PRODUCTION_SMOKE_PATH,
+  withOwnedProcess,
+} from './check-web-production-start';
+
+test('uses the canonical nested Skills route for the production smoke', () => {
+  expect(SKILLS_PRODUCTION_SMOKE_PATH).toBe('/skills/global');
+});
+
+test('rejects synthetic private paths in the canonical Skills HTML', () => {
+  expect(() =>
+    assertSyntheticSkillsProductionPrivacy('<div data-skills-workspace></div>', ['/synthetic/private']),
+  ).not.toThrow();
+  expect(() =>
+    assertSyntheticSkillsProductionPrivacy('<div>/synthetic/private/project</div>', ['/synthetic/private']),
+  ).toThrow('/skills/global embedded synthetic private data in its initial HTML.');
+});
 
 const reservePort = (): Promise<number> =>
   new Promise((resolve, reject) => {

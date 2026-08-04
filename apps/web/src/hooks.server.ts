@@ -1,10 +1,16 @@
 import type { Handle, HandleFetch } from '@sveltejs/kit';
+import { sequence } from '@sveltejs/kit/hooks';
 import { demoRouteDecision } from '$lib/features/shell/demo-policy.server';
 import { webReadObservabilityLifecycle } from '$lib/server/observability/web-read-lifecycle.server';
 import { E2E_SKILLS_FIXTURE_HEADER } from '$lib/server/rpc/e2e-fixture-profile';
 import { getServerRuntimeMode } from '../src/server/runtime-mode.server';
+import { handleTrustedLocalRequest } from '../src/server/trusted-local-hook.server';
 
-const observabilityInitialization = webReadObservabilityLifecycle.initialize();
+let observabilityInitialization: Promise<void> | undefined;
+const initializeObservability = (): Promise<void> => {
+  observabilityInitialization ??= webReadObservabilityLifecycle.initialize().then(() => undefined);
+  return observabilityInitialization;
+};
 
 export const handleFetch: HandleFetch = async ({ event, fetch, request }) => {
   const visualSkillsFixtureRequested =
@@ -24,8 +30,7 @@ process.once('sveltekit:shutdown', async () => {
   process.exit(0);
 });
 
-export const handle: Handle = async ({ event, resolve }) => {
-  await observabilityInitialization;
+const handleApplicationRequest: Handle = async ({ event, resolve }) => {
   const e2eOverridesEnabled = process.env.AI_USAGE_SVELTEKIT_PRIVATE_E2E_OVERRIDES === '1';
   const runtimeMode =
     e2eOverridesEnabled && event.request.headers.get('x-ai-usage-sveltekit-mode') === 'demo'
@@ -54,6 +59,7 @@ export const handle: Handle = async ({ event, resolve }) => {
   if (e2eOverridesEnabled && event.request.headers.get('x-ai-usage-sveltekit-acquisition-tripwire') === 'armed') {
     throw new Error('Synthetic acquisition tripwire reached resolve');
   }
+  await initializeObservability();
   const errorFixtureRequested =
     e2eOverridesEnabled &&
     event.url.pathname === '/' &&
@@ -78,3 +84,5 @@ export const handle: Handle = async ({ event, resolve }) => {
   }
   return response;
 };
+
+export const handle: Handle = sequence(handleTrustedLocalRequest, handleApplicationRequest);

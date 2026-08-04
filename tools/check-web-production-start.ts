@@ -24,8 +24,15 @@ const LOG_DRAIN_DEADLINE_MS = 2000;
 const OVERALL_DEADLINE_MS = 30_000;
 const EVENT_LOOP_PROBE_BUDGET_MS = 1250;
 const REPRESENTATIVE_SESSION_COUNT = 64;
-const SKILLS_BUSINESS_DATA_MARKER = 'data-known-project-paths-status="ok"';
-const SKILLS_SHELL_MARKER = 'Skill management';
+export const SKILLS_PRODUCTION_SMOKE_PATH = '/skills/global';
+const SKILLS_SHELL_MARKER = 'data-skills-workspace';
+
+export const assertSyntheticSkillsProductionPrivacy = (html: string, privateMarkers: readonly string[]): void => {
+  const leakedMarker = privateMarkers.find((marker) => marker.length > 0 && html.includes(marker));
+  if (leakedMarker !== undefined) {
+    throw new Error(`${SKILLS_PRODUCTION_SMOKE_PATH} embedded synthetic private data in its initial HTML.`);
+  }
+};
 const RUNNER_FAILURE_PATTERN =
   /Invalid ai-usage workspace root|Unable to discover the ai-usage workspace|ENOENT[^\n]*revision-query-runner|revisionQueryRunner failed/;
 
@@ -674,10 +681,13 @@ const runHealthyProductionSmoke = async (): Promise<void> => {
                   `Production event-loop probe took ${probeDurationMs.toFixed(0)}ms with status ${probe.status}; budget is ${EVENT_LOOP_PROBE_BUDGET_MS}ms.`,
                 );
               }
-              const skills = await waitForApplicationPage(port, child, '/skills', SKILLS_SHELL_MARKER);
-              if (skills.body.includes(SKILLS_BUSINESS_DATA_MARKER)) {
-                throw new Error('/skills embedded business data in its initial HTML.');
-              }
+              const skills = await waitForApplicationPage(
+                port,
+                child,
+                SKILLS_PRODUCTION_SMOKE_PATH,
+                SKILLS_SHELL_MARKER,
+              );
+              assertSyntheticSkillsProductionPrivacy(skills.body, [homeDirectory, '/work/project-']);
 
               const localHost = `localhost:${port}`;
               await requireRejected(

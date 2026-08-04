@@ -2,7 +2,8 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { build } from 'vite';
+import { build, mergeConfig } from 'vite';
+import { resolveViteDevelopmentServerBinding } from './vite.config';
 import {
   createWebClientModuleManifest,
   webClientModuleManifest,
@@ -173,5 +174,38 @@ describe('Web client module manifest plugin', () => {
     expect(stderr).toContain('fs (node builtin)');
     expect(stderr).toContain('path (node builtin)');
     expect(stderr).toContain('@orpc/server (@orpc/server)');
+  });
+});
+
+describe('Vite development server binding', () => {
+  test('maps the isolated root port and defaults to the canonical Vite port', () => {
+    expect(resolveViteDevelopmentServerBinding('serve', '43123')).toEqual({
+      host: '127.0.0.1',
+      port: 43_123,
+      strictPort: true,
+    });
+    expect(resolveViteDevelopmentServerBinding('serve', undefined)).toEqual({
+      host: '127.0.0.1',
+      port: 5173,
+      strictPort: true,
+    });
+  });
+
+  test('fails closed for noncanonical or out-of-range development ports', () => {
+    for (const requestedPort of ['', '0', '05173', '65536', 'localhost']) {
+      expect(() => resolveViteDevelopmentServerBinding('serve', requestedPort)).toThrow(
+        'PORT must be a canonical integer between 1 and 65535.',
+      );
+    }
+  });
+
+  test('ignores stray build PORT and keeps an explicit CLI port authoritative', () => {
+    expect(resolveViteDevelopmentServerBinding('build', 'invalid')).toEqual({ host: '127.0.0.1' });
+    const resolved = mergeConfig(
+      { server: resolveViteDevelopmentServerBinding('serve', '5173') },
+      { server: { port: 4174, strictPort: true } },
+    );
+
+    expect(resolved.server).toMatchObject({ host: '127.0.0.1', port: 4174, strictPort: true });
   });
 });
