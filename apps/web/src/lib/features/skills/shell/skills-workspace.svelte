@@ -3,9 +3,13 @@
   import { meta, panel, panelSub, panelTitle } from '@ai-usage/design-system/svelte';
   import type { SkillManagementSnapshot } from '@ai-usage/skills';
   import type { ProjectSkillMarkdownDocument, SkillMarkdownDocument } from '@ai-usage/web-contract/skills';
-  import type { Snippet } from 'svelte';
+  import { onDestroy, type Snippet, tick } from 'svelte';
   import { type SkillSelection, selectionKey } from '../../../../skills-page-model';
   import { SKILLS_MOBILE_MEDIA_QUERY } from '../../../../skills-responsive';
+  import {
+    createSkillsManagementPlanController,
+    type SkillsManagementPlanController,
+  } from './management-plan-controller';
   import type { SkillsShellViewModel } from './model';
   import SkillsInspector from './skills-inspector.svelte';
   import SkillsTree from './skills-tree.svelte';
@@ -22,22 +26,31 @@
     view,
   }: {
     editorSlot?: Snippet<[SkillsShellSlotContext]>;
-    healthSlot?: Snippet<[SkillsShellSlotContext]>;
+    healthSlot?: Snippet<[SkillsShellSlotContext, SkillsManagementPlanController]>;
     hydrated?: boolean;
-    matrixSlot?: Snippet<[SkillsShellSlotContext]>;
+    matrixSlot?: Snippet<[SkillsShellSlotContext, SkillsManagementPlanController]>;
     selectedDocument?: ProjectSkillMarkdownDocument | SkillMarkdownDocument | undefined;
     snapshot: SkillManagementSnapshot;
     snapshotUpdates: SkillsSnapshotUpdatePort;
     view: SkillsShellViewModel;
   } = $props();
 
+  const managementPlan = createSkillsManagementPlanController();
   const slotContext = $derived({ document: selectedDocument, snapshot, snapshotUpdates, view });
   let filterQuery = $state('');
   let expandedKeys = $state<ReadonlySet<string>>(new Set(['global']));
   let collapsedKeys = $state<ReadonlySet<string>>(new Set());
   let mobilePickerElement = $state<HTMLDetailsElement | undefined>();
   let selectedDetailElement = $state<HTMLElement | undefined>();
-  let previousSelectionKey = $state<string | undefined>();
+  let previousSelectionKey: string | undefined;
+  let mobileFocusFrame: number | undefined;
+  let destroyed = false;
+  onDestroy(() => {
+    destroyed = true;
+    if (mobileFocusFrame !== undefined) {
+      window.cancelAnimationFrame(mobileFocusFrame);
+    }
+  });
   const activeScopeKey = (selection: SkillSelection): string =>
     selection.type === 'global-scope' || selection.type === 'global-skill'
       ? 'global'
@@ -54,6 +67,20 @@
     }
     expandedKeys = nextExpanded;
     collapsedKeys = nextCollapsed;
+  };
+  const focusSelectedMobileDetail = async (): Promise<void> => {
+    await tick();
+    if (destroyed) {
+      return;
+    }
+    if (mobileFocusFrame !== undefined) {
+      window.cancelAnimationFrame(mobileFocusFrame);
+    }
+    mobileFocusFrame = window.requestAnimationFrame(() => {
+      mobileFocusFrame = undefined;
+      selectedDetailElement?.scrollIntoView({ block: 'start' });
+      selectedDetailElement?.focus({ preventScroll: true });
+    });
   };
 
   $effect(() => {
@@ -77,13 +104,7 @@
       return;
     }
     mobilePickerElement?.removeAttribute('open');
-    const frame = window.requestAnimationFrame(() => {
-      selectedDetailElement?.scrollIntoView({ block: 'start' });
-      selectedDetailElement?.focus({ preventScroll: true });
-    });
-    return () => {
-      window.cancelAnimationFrame(frame);
-    };
+    focusSelectedMobileDetail().catch(() => undefined);
   });
   const workspaceGrid = css({
     display: 'grid',
@@ -109,7 +130,11 @@
     textOverflow: 'ellipsis',
     whiteSpace: 'nowrap',
   });
-  const selectedDetail = css({ minW: 0, scrollMarginTop: '12px' });
+  const selectedDetail = css({
+    minW: 0,
+    scrollMarginTop: '12px',
+    _focusVisible: { outline: '2px solid token(colors.accent)', outlineOffset: '3px' },
+  });
   const detailStack = css({ display: 'grid', gap: '14px', minW: 0 });
   const detailHeader = css({ display: 'grid', gap: '5px' });
   const detailTitle = css({ fontSize: { base: '22px', md: '28px' }, fontWeight: 750, overflowWrap: 'anywhere' });
@@ -174,7 +199,7 @@
   <div class={centerStack}>
     {#if view.matrixOpen}
       {#if matrixSlot}
-        <div data-skills-matrix-slot>{@render matrixSlot(slotContext)}</div>
+        <div data-skills-matrix-slot>{@render matrixSlot(slotContext, managementPlan)}</div>
       {:else}
         <div class={placeholder}>Skill matrix integration slot</div>
       {/if}
@@ -227,6 +252,12 @@
   </div>
 
   <div class={mobileContext}>
-    <SkillsInspector {...(healthSlot === undefined ? {} : { healthSlot })} {slotContext} {snapshot} {view} />
+    <SkillsInspector
+      {...(healthSlot === undefined ? {} : { healthSlot })}
+      {managementPlan}
+      {slotContext}
+      {snapshot}
+      {view}
+    />
   </div>
 </div>

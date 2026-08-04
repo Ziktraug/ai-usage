@@ -2,6 +2,7 @@ import type { ProjectionAction, SkillManagementConfig, SkillManagementSnapshot }
 import { parseSkillReconcileResult, parseSkillSnapshotResult } from '../../../../skills-client-contracts';
 import {
   buildSkillMatrix,
+  count,
   describeReconcileActions,
   filterMatrixRows,
   type MatrixCellState,
@@ -101,6 +102,64 @@ export interface SkillsManagementSuccess {
 export type SkillsManagementResult =
   | { readonly error: string; readonly ok: false }
   | ({ readonly ok: true } & SkillsManagementSuccess);
+
+export interface SkillsRefreshClient {
+  refreshSkillManagementSnapshot(): Promise<unknown>;
+}
+
+export type SkillsRefreshResult =
+  | { readonly error: string; readonly ok: false }
+  | { readonly ok: true; readonly snapshot: SkillManagementSnapshot };
+
+export const runSkillsRefreshOperation = async (client: SkillsRefreshClient): Promise<SkillsRefreshResult> => {
+  const result = parseSkillSnapshotResult(await client.refreshSkillManagementSnapshot());
+  return result.ok ? { ok: true, snapshot: result.data } : { error: result.error.message, ok: false };
+};
+
+export const skillsSnapshotAcceptanceSignature = (snapshot: SkillManagementSnapshot): string =>
+  JSON.stringify(snapshot);
+
+const targetLabel = (snapshot: SkillManagementSnapshot, targetId: string): string =>
+  snapshot.targets.find((target) => target.id === targetId)?.label ?? targetId;
+
+const managementFallbackMessage = (operation: SkillsManagementOperation): string => {
+  if (operation === 'reconcile-all') {
+    return 'Reconciled active skills';
+  }
+  if (operation.startsWith('reconcile:')) {
+    return `Reconciled ${operation.slice('reconcile:'.length)}`;
+  }
+  const payload = operation.slice('toggle:'.length);
+  const enabled = payload.startsWith('enable:');
+  const skillName = payload.slice(enabled ? 'enable:'.length : 'disable:'.length);
+  return `${enabled ? 'Enabled' : 'Disabled'} ${skillName}`;
+};
+
+export const skillsManagementSuccessMessage = (
+  operation: SkillsManagementOperation,
+  result: SkillsManagementSuccess,
+): string => {
+  if (operation === 'preview-reconcile') {
+    return 'Reconcile preview refreshed.';
+  }
+  const applied = result.actions.filter(
+    (action) => action.type !== 'noop' && action.type !== 'refuse-unmanaged-mutation',
+  );
+  if (applied.length === 0) {
+    return 'Nothing to change.';
+  }
+  const action = applied.length === 1 ? applied[0] : undefined;
+  if (action?.type === 'create-symlink') {
+    return `${action.skillName} linked to ${targetLabel(result.snapshot, action.targetId)}.`;
+  }
+  if (action?.type === 'repair-symlink') {
+    return `${action.skillName} repaired in ${targetLabel(result.snapshot, action.targetId)}.`;
+  }
+  if (action?.type === 'unlink-managed-symlink') {
+    return `${action.skillName} unlinked from ${targetLabel(result.snapshot, action.targetId)}.`;
+  }
+  return `${managementFallbackMessage(operation)}: ${count(applied.length, 'change')} applied.`;
+};
 
 export interface SkillsManagementClient {
   createManagedSkillTargetDirectory(input: { targetId: string }): Promise<unknown>;

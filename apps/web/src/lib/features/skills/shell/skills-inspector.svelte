@@ -4,16 +4,19 @@
   import type { SkillManagementSnapshot } from '@ai-usage/skills';
   import type { Snippet } from 'svelte';
   import { buildSkillHealthSummary, count } from '../../../../skills-page-model';
+  import type { SkillsManagementPlanController } from './management-plan-controller';
   import type { SkillsShellViewModel } from './model';
   import type { SkillsShellSlotContext } from './slot-context';
 
   let {
     healthSlot,
+    managementPlan,
     slotContext,
     snapshot,
     view,
   }: {
-    healthSlot?: Snippet<[SkillsShellSlotContext]>;
+    healthSlot?: Snippet<[SkillsShellSlotContext, SkillsManagementPlanController]>;
+    managementPlan: SkillsManagementPlanController;
     slotContext: SkillsShellSlotContext;
     snapshot: SkillManagementSnapshot;
     view: SkillsShellViewModel;
@@ -92,7 +95,7 @@
       </div>
     {/if}
     {#if healthSlot}
-      <div class={section} data-skills-health-slot>{@render healthSlot(slotContext)}</div>
+      <div class={section} data-skills-health-slot>{@render healthSlot(slotContext, managementPlan)}</div>
     {/if}
   </div>
 </aside>

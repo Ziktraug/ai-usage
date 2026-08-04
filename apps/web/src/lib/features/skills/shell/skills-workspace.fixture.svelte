@@ -1,4 +1,5 @@
 <script lang="ts">
+  import type { SkillsManagementPlanController } from './management-plan-controller';
   import { createSkillsShellViewModel } from './model';
   import SkillsWorkspace from './skills-workspace.svelte';
   import type { SkillsShellSlotContext, SkillsSnapshotUpdatePort } from './slot-context';
@@ -58,10 +59,16 @@
     <span data-p9-slot-contract>{_context.snapshotUpdates.pendingDecision ? 'pending' : 'settled'}</span>
   </section>
 {/snippet}
-{#snippet healthSlot(_context: SkillsShellSlotContext)}
+{#snippet healthSlot(
+  _context: SkillsShellSlotContext,
+  _managementPlan: SkillsManagementPlanController,
+)}
   <section aria-label="Synthetic health slot">Health integration · {_context.snapshot.summary.skillCount}</section>
 {/snippet}
-{#snippet matrixSlot(_context: SkillsShellSlotContext)}
+{#snippet matrixSlot(
+  _context: SkillsShellSlotContext,
+  _managementPlan: SkillsManagementPlanController,
+)}
   <section aria-label="Synthetic matrix slot">
     Matrix integration · {_context.snapshotUpdates.pendingDecision ? 'pending' : 'settled'}
   </section>

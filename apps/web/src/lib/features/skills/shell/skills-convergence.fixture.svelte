@@ -4,6 +4,7 @@
   import SkillsEditorSlot from '../editor/skills-editor-slot.svelte';
   import SkillsHealthSlot from '../management/skills-health-slot.svelte';
   import SkillsMatrixSlot from '../management/skills-matrix-slot.svelte';
+  import type { SkillsManagementPlanController } from './management-plan-controller';
   import { createSkillsShellViewModel } from './model';
   import SkillsWorkspace from './skills-workspace.svelte';
   import type { SkillsShellSlotContext, SkillsSnapshotUpdatePort } from './slot-context';
@@ -36,11 +37,11 @@
 {#snippet editorSlot(_context: SkillsShellSlotContext)}
   <SkillsEditorSlot context={_context} />
 {/snippet}
-{#snippet healthSlot(_context: SkillsShellSlotContext)}
-  <SkillsHealthSlot context={_context} />
+{#snippet healthSlot(_context: SkillsShellSlotContext, _managementPlan: SkillsManagementPlanController)}
+  <SkillsHealthSlot context={_context} managementPlan={_managementPlan} />
 {/snippet}
-{#snippet matrixSlot(_context: SkillsShellSlotContext)}
-  <SkillsMatrixSlot context={_context} />
+{#snippet matrixSlot(_context: SkillsShellSlotContext, _managementPlan: SkillsManagementPlanController)}
+  <SkillsMatrixSlot context={_context} managementPlan={_managementPlan} />
 {/snippet}
 
 <WebQueryProvider>

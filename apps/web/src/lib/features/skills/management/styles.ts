@@ -168,3 +168,13 @@ export const planList = css({
 });
 export const notice = css({ p: '8px', borderRadius: 'sm', bg: 'accentTint', fontSize: '12px' });
 export const errorNotice = css({ bg: 'status.dangerSoft', color: 'status.danger' });
+export const passiveOperationNotice = css({
+  position: 'fixed',
+  zIndex: 50,
+  bottom: { base: '80px', lg: '16px' },
+  right: { base: '12px', sm: '16px' },
+  w: { base: 'calc(100vw - 24px)', sm: 'auto' },
+  maxW: '420px',
+  boxShadow: 'overlay',
+  pointerEvents: 'none',
+});

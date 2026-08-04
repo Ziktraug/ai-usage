@@ -8,7 +8,7 @@
   } from '@ai-usage/web-contract/skills';
   import { createQuery, useIsFetching, useQueryClient } from '@tanstack/svelte-query';
   import { onMount, type Snippet, untrack } from 'svelte';
-  import { goto } from '$app/navigation';
+  import { replaceState } from '$app/navigation';
   import type { RuntimeMode } from '../../../../runtime-mode';
   import type { WebQueryHydrationState } from '../../../query/client';
   import { useWebQueryHydrationContext, webQueryHydrationSignature } from '../../../query/hydration-context.svelte';
@@ -27,6 +27,7 @@
   } from '../../../query/options/skills';
   import { createBrowserWebRpcClient } from '../../../rpc/client';
   import { createSkillsClient } from '../../../rpc/skills-client';
+  import type { SkillsManagementPlanController } from './management-plan-controller';
   import { createSkillsShellViewModel, normalizeSkillsQuerySnapshot } from './model';
   import SkillsWorkspace from './skills-workspace.svelte';
   import type { SkillsShellSlotContext, SkillsSnapshotUpdatePort } from './slot-context';
@@ -41,9 +42,9 @@
     runtimeMode,
   }: {
     editorSlot?: Snippet<[SkillsShellSlotContext]>;
-    healthSlot?: Snippet<[SkillsShellSlotContext]>;
+    healthSlot?: Snippet<[SkillsShellSlotContext, SkillsManagementPlanController]>;
     hydrationState: WebQueryHydrationState;
-    matrixSlot?: Snippet<[SkillsShellSlotContext]>;
+    matrixSlot?: Snippet<[SkillsShellSlotContext, SkillsManagementPlanController]>;
     pathname: string;
     runtimeMode: RuntimeMode;
   } = $props();
@@ -246,7 +247,9 @@
     if (!(mounted && view?.fallbackHref)) {
       return;
     }
-    goto(view.fallbackHref, { replaceState: true }).catch(() => undefined);
+    const fallbackUrl = new URL(window.location.href);
+    fallbackUrl.pathname = view.fallbackHref;
+    replaceState(fallbackUrl, {});
   });
 </script>
 

@@ -1,5 +1,6 @@
 <script lang="ts">
   import WebQueryProvider from '../../../query/provider.svelte';
+  import { createSkillsManagementPlanController } from '../shell/management-plan-controller';
   import { createSkillsShellViewModel } from '../shell/model';
   import type { SkillsShellSlotContext, SkillsSnapshotUpdatePort } from '../shell/slot-context';
   import { syntheticInventories, syntheticKnownPaths } from '../shell/synthetic-fixture.test-helper';
@@ -22,13 +23,14 @@
     registerDraft: () => undefined,
     unregisterDraft: () => undefined,
   };
+  const managementPlan = createSkillsManagementPlanController();
   const context = $derived<SkillsShellSlotContext>({ document: undefined, snapshot, snapshotUpdates, view });
 </script>
 
 <WebQueryProvider>
   {#if pathname === '/skills/matrix'}
-    <SkillsMatrixSlot {context} />
+    <SkillsMatrixSlot {context} {managementPlan} />
   {:else}
-    <SkillsHealthSlot {context} />
+    <SkillsHealthSlot {context} {managementPlan} />
   {/if}
 </WebQueryProvider>

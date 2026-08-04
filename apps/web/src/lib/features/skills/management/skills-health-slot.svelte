@@ -2,7 +2,7 @@
   import { cx } from '@ai-usage/design-system/css';
   import { HarnessBadge } from '@ai-usage/design-system/svelte';
   import { useQueryClient } from '@tanstack/svelte-query';
-  import { onMount } from 'svelte';
+  import { onDestroy, onMount, tick } from 'svelte';
   import { goto } from '$app/navigation';
   import { deriveInstallationAction, groupSkillDiagnostics } from '../../../../skill-document-inspector-model';
   import {
@@ -16,16 +16,21 @@
   } from '../../../../skills-page-model';
   import { SKILLS_DESKTOP_MEDIA_QUERY } from '../../../../skills-responsive';
   import { fmtNum } from '../../../foundation/presentation/format';
-  import { skillsSnapshotKey } from '../../../query/options/skills';
+  import { applySkillsConfigurationSnapshotToCache, skillsSnapshotKey } from '../../../query/options/skills';
   import { createBrowserWebRpcClient } from '../../../rpc/client';
   import { createSkillsClient } from '../../../rpc/skills-client';
+  import type { SkillsManagementPlanController } from '../shell/management-plan-controller';
   import type { SkillsShellSlotContext } from '../shell/slot-context';
   import {
     matrixDotTone,
     observeInspectorDisclosure,
     runSkillsManagementOperation,
+    runSkillsRefreshOperation,
     type SkillsConfigurationClient,
     type SkillsManagementOperation,
+    type SkillsRefreshClient,
+    skillsManagementSuccessMessage,
+    skillsSnapshotAcceptanceSignature,
     toggleOperation,
   } from './model';
   import SkillsConfiguration from './skills-configuration.svelte';
@@ -43,19 +48,37 @@
     missingDot,
     muted,
     notice,
+    passiveOperationNotice,
     pathText,
     primaryButton,
     stack,
     statusDot,
   } from './styles';
 
-  let { client: injectedClient, context }: { client?: SkillsConfigurationClient; context: SkillsShellSlotContext } =
-    $props();
+  type SkillsHealthClient = SkillsConfigurationClient & SkillsRefreshClient;
+
+  let {
+    client: injectedClient,
+    context,
+    managementPlan,
+  }: {
+    client?: SkillsHealthClient;
+    context: SkillsShellSlotContext;
+    managementPlan: SkillsManagementPlanController;
+  } = $props();
   const queryClient = useQueryClient();
-  let browserClient: SkillsConfigurationClient | undefined;
+  let browserClient: SkillsHealthClient | undefined;
   let pendingOperation = $state<string | null>(null);
   let inspectorSectionsOpen = $state(false);
   let operationMessage = $state<{ message: string; tone: 'error' | 'success' } | null>(null);
+  let awaitingRefresh = $state<{
+    readonly publicationReady: boolean;
+    readonly signature: string;
+  }>();
+  let refreshDecisionOpen = $state(false);
+  let refreshButtonElement = $state<HTMLButtonElement>();
+  let dismissTimer: ReturnType<typeof setTimeout> | undefined;
+  let restoreFocusFrame: number | undefined;
   const health = $derived(buildSkillHealthSummary(context.snapshot));
   const unmanagedGroups = $derived(groupUnmanagedEntries(context.snapshot));
   const selectedSkill = $derived(
@@ -64,22 +87,74 @@
   const diagnostics = $derived(selectedSkill ? groupSkillDiagnostics(selectedSkill.diagnostics) : []);
   const exposure = $derived(selectedSkill ? buildGlobalSkillExposure(context.snapshot, selectedSkill.name) : []);
   const installationAction = $derived(selectedSkill ? deriveInstallationAction(selectedSkill, exposure) : undefined);
-  const resolveClient = (): SkillsConfigurationClient => {
+  const resolveClient = (): SkillsHealthClient => {
     browserClient ??=
       injectedClient ?? createSkillsClient(createBrowserWebRpcClient('skills-management-inspector').skills);
     return browserClient;
+  };
+  const clearDismissTimer = (): void => {
+    if (dismissTimer !== undefined) {
+      clearTimeout(dismissTimer);
+      dismissTimer = undefined;
+    }
+  };
+  const setErrorMessage = (message: string): void => {
+    clearDismissTimer();
+    operationMessage = { message, tone: 'error' };
+  };
+  const setSuccessMessage = (message: string): void => {
+    clearDismissTimer();
+    operationMessage = { message, tone: 'success' };
+    dismissTimer = setTimeout(() => {
+      dismissTimer = undefined;
+      operationMessage = null;
+    }, 5000);
+  };
+  const scheduleRefreshFocus = (): void => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    if (restoreFocusFrame !== undefined) {
+      window.cancelAnimationFrame(restoreFocusFrame);
+    }
+    restoreFocusFrame = window.requestAnimationFrame(() => {
+      restoreFocusFrame = undefined;
+      refreshButtonElement?.focus();
+    });
   };
   onMount(() =>
     observeInspectorDisclosure(window.matchMedia(SKILLS_DESKTOP_MEDIA_QUERY), (open) => {
       inspectorSectionsOpen = open;
     }),
   );
-  const successMessage = (operation: SkillsManagementOperation, actionCount: number): string => {
-    if (operation === 'preview-reconcile') {
-      return 'Reconcile preview refreshed.';
+  onDestroy(() => {
+    clearDismissTimer();
+    if (restoreFocusFrame !== undefined) {
+      window.cancelAnimationFrame(restoreFocusFrame);
     }
-    return actionCount === 0 ? 'Nothing to change.' : 'Skills updated.';
-  };
+  });
+  $effect(() => {
+    const target = awaitingRefresh;
+    if (!target?.publicationReady || skillsSnapshotAcceptanceSignature(context.snapshot) !== target.signature) {
+      return;
+    }
+    awaitingRefresh = undefined;
+    setSuccessMessage('Skills refreshed.');
+  });
+  $effect(() => {
+    const decisionPending = context.snapshotUpdates.pendingDecision !== undefined;
+    if (decisionPending && awaitingRefresh !== undefined) {
+      refreshDecisionOpen = true;
+      return;
+    }
+    if (!decisionPending && refreshDecisionOpen) {
+      refreshDecisionOpen = false;
+      scheduleRefreshFocus();
+    }
+  });
+  const refreshBusyAttributes = $derived({
+    'aria-busy': pendingOperation === 'refresh-skills' ? 'true' : 'false',
+  } as const);
   const previewBusyAttributes = $derived({
     'aria-busy': pendingOperation === 'preview-reconcile' ? 'true' : 'false',
   } as const);
@@ -88,20 +163,50 @@
       return;
     }
     pendingOperation = pendingLabel;
+    managementPlan.clear();
     operationMessage = null;
     try {
       const result = await runSkillsManagementOperation(resolveClient(), operation);
       if (!result.ok) {
-        operationMessage = { message: result.error, tone: 'error' };
+        setErrorMessage(result.error);
         return;
       }
+      managementPlan.publish(result.plan);
       queryClient.setQueryData(skillsSnapshotKey(), result.snapshot);
-      operationMessage = { message: successMessage(operation, result.actions.length), tone: 'success' };
+      setSuccessMessage(skillsManagementSuccessMessage(operation, result));
       if (operation === 'preview-reconcile') {
+        await tick();
         await goto('/skills/matrix');
       }
     } catch (error) {
-      operationMessage = { message: error instanceof Error ? error.message : 'Skills are unavailable.', tone: 'error' };
+      setErrorMessage(error instanceof Error ? error.message : 'Skills are unavailable.');
+    } finally {
+      pendingOperation = null;
+    }
+  };
+  const refreshSkills = async (): Promise<void> => {
+    if (pendingOperation !== null) {
+      return;
+    }
+    pendingOperation = 'refresh-skills';
+    operationMessage = null;
+    clearDismissTimer();
+    try {
+      const client = resolveClient();
+      const result = await runSkillsRefreshOperation(client);
+      if (!result.ok) {
+        setErrorMessage(result.error);
+        return;
+      }
+      const signature = skillsSnapshotAcceptanceSignature(result.snapshot);
+      awaitingRefresh = { publicationReady: false, signature };
+      await applySkillsConfigurationSnapshotToCache(queryClient, client, result.snapshot, true);
+      if (awaitingRefresh?.signature === signature) {
+        awaitingRefresh = { publicationReady: true, signature };
+      }
+    } catch (error) {
+      awaitingRefresh = undefined;
+      setErrorMessage(error instanceof Error ? error.message : 'Skills are unavailable.');
     } finally {
       pendingOperation = null;
     }
@@ -128,6 +233,18 @@
 </script>
 
 <div class={stack} data-skills-management-health-slot>
+  <div class={actionRow}>
+    <button
+      {...refreshBusyAttributes}
+      class={button}
+      disabled={pendingOperation !== null}
+      onclick={refreshSkills}
+      type="button"
+      bind:this={refreshButtonElement}
+    >
+      Refresh skills
+    </button>
+  </div>
   {#if context.view.selectionDetail.kind === 'global-scope'}
     <section class={compactStack}>
       <h3 class={heading}>Source health</h3>
@@ -247,6 +364,6 @@
   {#if operationMessage?.tone === 'error'}
     <p class={cx(notice, errorNotice)} role="alert">{operationMessage.message}</p>
   {:else if operationMessage}
-    <p aria-live="polite" class={notice} role="status">{operationMessage.message}</p>
+    <p aria-live="polite" class={cx(notice, passiveOperationNotice)} role="status">{operationMessage.message}</p>
   {/if}
 </div>

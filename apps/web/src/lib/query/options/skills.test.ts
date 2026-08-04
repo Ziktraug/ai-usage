@@ -102,6 +102,7 @@ describe('Skills query options', () => {
       queryKey: skillsSnapshotKey(),
       retry: false,
       staleTime: webQueryPolicies.finiteSwr.staleTime,
+      structuralSharing: false,
     });
     expect(skillsKnownProjectPathsKey()).not.toEqual(skillsSnapshotKey());
     expect(skillsProjectInventoriesKey()).not.toEqual(skillsSnapshotKey());
@@ -125,6 +126,22 @@ describe('Skills query options', () => {
     expect(calls.sort()).toEqual(['inventories', 'known-paths', 'snapshot']);
     expect(signals).toHaveLength(3);
     expect(new Set(signals).size).toBe(3);
+
+    const publishedSnapshots: SkillManagementSnapshot[] = [];
+    const snapshotObserver = new QueryObserver(
+      queryClient,
+      skillsSnapshotQueryOptions(client, { browser: true, enabled: true }),
+    );
+    const unsubscribeSnapshot = snapshotObserver.subscribe((result) => {
+      if (result.data) {
+        publishedSnapshots.push(result.data);
+      }
+    });
+    const equalRefreshPublication = structuredClone(snapshot);
+    queryClient.setQueryData(skillsSnapshotKey(), equalRefreshPublication);
+    expect(queryClient.getQueryData<SkillManagementSnapshot>(skillsSnapshotKey())).toBe(equalRefreshPublication);
+    expect(publishedSnapshots.at(-1)).toBe(equalRefreshPublication);
+    unsubscribeSnapshot();
   });
 
   test('QUERY-SKILLS-MARKDOWN: keys managed/project documents by canonical scope and exact identity', async () => {

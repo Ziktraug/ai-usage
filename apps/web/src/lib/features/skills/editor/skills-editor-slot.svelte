@@ -48,9 +48,6 @@
   const discardPendingSnapshot = async (): Promise<void> => {
     await context.snapshotUpdates.pendingDecision?.discard();
   };
-  const focusEditor = (): void => {
-    context.snapshotUpdates.pendingDecision?.focus();
-  };
 </script>
 
 <SkillMarkdownEditor controller={slot.editor} onFocusReady={slot.setFocus} />
@@ -60,5 +57,4 @@
   onDiscard={discardPendingSnapshot}
   onKeep={keepPendingSnapshot}
   open={pendingDecision !== undefined}
-  restoreFocus={focusEditor}
 />

@@ -7,8 +7,11 @@ import {
   observeInspectorDisclosure,
   runSkillsConfigurationOperation,
   runSkillsManagementOperation,
+  runSkillsRefreshOperation,
   skillsConfigInput,
   skillsConfigurationRefreshesDependents,
+  skillsManagementSuccessMessage,
+  skillsSnapshotAcceptanceSignature,
   sourceRepositoryDraftFrom,
   syncSourceRepositoryDraft,
   toggleOperation,
@@ -71,6 +74,50 @@ describe('Skills management presentation and mutation seam', () => {
     expect(result.snapshot).toEqual(snapshot);
     expect(result.plan?.apply).toEqual(['link alpha-skill @ Codex → /synthetic/runtime/skills/alpha-skill']);
     expect(result.plan?.skipped).toEqual(['legacy-local-copy @ Codex — unmanaged copy']);
+  });
+
+  test('preserves action-specific reconciliation copy and parses refresh snapshots', async () => {
+    const snapshot = syntheticManagementSnapshot();
+    const action: ProjectionAction = {
+      path: '/synthetic/runtime/skills/alpha-skill',
+      skillName: 'alpha-skill',
+      sourcePath: '/synthetic/source/skills/alpha-skill',
+      targetId: 'codex',
+      type: 'create-symlink',
+    };
+    expect(
+      skillsManagementSuccessMessage('reconcile:alpha-skill', {
+        actions: [action],
+        plan: null,
+        snapshot,
+      }),
+    ).toBe('alpha-skill linked to Codex.');
+    expect(
+      skillsManagementSuccessMessage('reconcile:alpha-skill', {
+        actions: [],
+        plan: null,
+        snapshot,
+      }),
+    ).toBe('Nothing to change.');
+
+    expect(
+      await runSkillsRefreshOperation({
+        refreshSkillManagementSnapshot: () => Promise.resolve({ data: snapshot, ok: true }),
+      }),
+    ).toEqual({ ok: true, snapshot });
+    expect(
+      await runSkillsRefreshOperation({
+        refreshSkillManagementSnapshot: () =>
+          Promise.resolve({ error: { message: 'Synthetic refresh failure', tag: 'Unavailable' }, ok: false }),
+      }),
+    ).toEqual({ error: 'Synthetic refresh failure', ok: false });
+
+    expect(skillsSnapshotAcceptanceSignature(structuredClone(snapshot))).toBe(
+      skillsSnapshotAcceptanceSignature(snapshot),
+    );
+    expect(
+      skillsSnapshotAcceptanceSignature({ ...snapshot, config: { ...snapshot.config, sourceRepoPath: '/changed' } }),
+    ).not.toBe(skillsSnapshotAcceptanceSignature(snapshot));
   });
 
   test('maps enable and disable requests without changing skill identity', async () => {

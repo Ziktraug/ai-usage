@@ -51,6 +51,7 @@ export const skillsSnapshotQueryOptions = (client: SkillsQueryClient, context: S
     enabled: context.browser && context.enabled,
     queryFn: async ({ signal }) => unwrapSkillsQueryResult(await client.getSkillManagementSnapshot({ signal })),
     queryKey: skillsSnapshotKey(),
+    structuralSharing: false,
   });
 
 export const skillsKnownProjectPathsQueryOptions = (client: SkillsQueryClient, context: SkillsQueryContext) =>

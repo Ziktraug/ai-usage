@@ -9,35 +9,44 @@
   import { skillsSnapshotKey } from '../../../query/options/skills';
   import { createBrowserWebRpcClient } from '../../../rpc/client';
   import { createSkillsClient } from '../../../rpc/skills-client';
+  import type { SkillsManagementPlanController } from '../shell/management-plan-controller';
   import type { SkillsShellSlotContext } from '../shell/slot-context';
   import {
     runSkillsManagementOperation,
     type SkillsManagementClient,
     type SkillsManagementOperation,
+    skillsManagementSuccessMessage,
     toggleOperation,
   } from './model';
   import SkillsHealth from './skills-health.svelte';
   import SkillsMatrix from './skills-matrix.svelte';
   import { errorNotice, notice, stack } from './styles';
 
-  let { client: injectedClient, context }: { client?: SkillsManagementClient; context: SkillsShellSlotContext } =
-    $props();
+  let {
+    client: injectedClient,
+    context,
+    managementPlan,
+  }: {
+    client?: SkillsManagementClient;
+    context: SkillsShellSlotContext;
+    managementPlan: SkillsManagementPlanController;
+  } = $props();
   const queryClient = useQueryClient();
   let browserClient: SkillsManagementClient | undefined;
   let activeFilter = $state<SkillCellStateFilter | undefined>();
   let pendingOperation = $state<string | null>(null);
   let reconcilePlan = $state<ReconcilePlanSummary | null>(null);
+  $effect(() => {
+    reconcilePlan = managementPlan.getState();
+    return managementPlan.subscribe((plan) => {
+      reconcilePlan = plan;
+    });
+  });
   let operationMessage = $state<{ message: string; tone: 'error' | 'success' } | null>(null);
   const health = $derived(buildSkillHealthSummary(context.snapshot));
   const resolveClient = (): SkillsManagementClient => {
     browserClient ??= injectedClient ?? createSkillsClient(createBrowserWebRpcClient('skills-management').skills);
     return browserClient;
-  };
-  const successMessage = (operation: SkillsManagementOperation, actionCount: number): string => {
-    if (operation === 'preview-reconcile') {
-      return 'Reconcile preview refreshed.';
-    }
-    return actionCount === 0 ? 'Nothing to change.' : 'Skills updated.';
   };
   const publish = (snapshot: typeof context.snapshot): void => {
     queryClient.setQueryData(skillsSnapshotKey(), snapshot);
@@ -47,6 +56,7 @@
       return;
     }
     pendingOperation = pendingLabel;
+    managementPlan.clear();
     operationMessage = null;
     try {
       const result = await runSkillsManagementOperation(resolveClient(), operation);
@@ -55,8 +65,8 @@
         return;
       }
       publish(result.snapshot);
-      reconcilePlan = result.plan;
-      operationMessage = { message: successMessage(operation, result.actions.length), tone: 'success' };
+      managementPlan.publish(result.plan);
+      operationMessage = { message: skillsManagementSuccessMessage(operation, result), tone: 'success' };
     } catch (error) {
       operationMessage = { message: error instanceof Error ? error.message : 'Skills are unavailable.', tone: 'error' };
     } finally {
@@ -83,7 +93,7 @@
     {...(activeFilter === undefined ? {} : { activeCellStateFilter: activeFilter })}
     onApplyReconcile={() => execute('reconcile-all', 'reconcile-all')}
     onCancelReconcile={() => {
-      reconcilePlan = null;
+      managementPlan.clear();
     }}
     onCellStateFilterChange={(filter) => {
       activeFilter = filter;
