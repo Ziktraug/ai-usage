@@ -1,4 +1,5 @@
 import AxeBuilder from '@axe-core/playwright';
+import type { Page } from '@playwright/test';
 import { expect, test, waitForHydratedReport } from './browser-test';
 
 const ANY_VALUE_PATTERN = /.+/;
@@ -9,6 +10,20 @@ const activeDestinationFor = (path: string, heading: string): string => {
     return 'Overview';
   }
   return path.startsWith('/skills') ? 'Skills' : heading;
+};
+
+const restoreReportHistory = async (page: Page, expectedUrl: string): Promise<void> => {
+  const restoredReportDataFinished = page.waitForEvent('requestfinished', {
+    predicate: (request) => request.resourceType() === 'fetch' && new URL(request.url()).pathname === '/__data.json',
+  });
+  await Promise.all([
+    restoredReportDataFinished,
+    (async () => {
+      await page.goBack();
+      await expect(page).toHaveURL(expectedUrl);
+      await waitForHydratedReport(page);
+    })(),
+  ]);
 };
 
 const shellRoutes = [
@@ -102,17 +117,7 @@ test('server-renders and reloads every Svelte shell route with accessible naviga
   await page.getByRole('link', { name: 'Skills' }).click();
   await expect(page).toHaveURL('/skills/global');
   expect(await page.evaluate(() => history.length)).toBe(historyLength + 1);
-  const restoredOverviewDataFinished = page.waitForEvent('requestfinished', {
-    predicate: (request) => request.resourceType() === 'fetch' && new URL(request.url()).pathname === '/__data.json',
-  });
-  await Promise.all([
-    restoredOverviewDataFinished,
-    (async () => {
-      await page.goBack();
-      await expect(page).toHaveURL('/');
-      await waitForHydratedReport(page);
-    })(),
-  ]);
+  await restoreReportHistory(page, '/');
 
   await page.setViewportSize({ height: 844, width: 390 });
   await expect(page.locator('[data-app-navigation="mobile"]')).toBeVisible();
@@ -269,10 +274,7 @@ test('restores Session scroll after a cross-route history remount', async ({ pag
 
   await page.getByRole('link', { name: 'Skills' }).click();
   await expect(page).toHaveURL('/skills/global');
-  await page.goBack();
-
-  await expect(page).toHaveURL('/?tab=sessions');
-  await waitForHydratedReport(page);
+  await restoreReportHistory(page, '/?tab=sessions');
   await expect(page.locator('[data-session-table-owner]')).toBeVisible();
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(300);
 });
