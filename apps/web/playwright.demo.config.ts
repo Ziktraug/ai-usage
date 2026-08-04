@@ -17,7 +17,7 @@ export default defineConfig({
     trace: 'retain-on-failure',
   },
   webServer: {
-    command: 'bun --no-env-file ../../tools/run-web-demo.ts',
+    command: 'bun --no-env-file ../../tools/run-web-demo.ts --serve-only',
     gracefulShutdown: { signal: 'SIGTERM', timeout: 5000 },
     reuseExistingServer: false,
     timeout: 240_000,
