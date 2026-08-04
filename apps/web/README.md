@@ -65,3 +65,5 @@ The migration boundary gates are `bun run test:web-migration-parity`,
 `bun run test:web-retired-stack`, `bun run test:web-retired-stack-build`, and
 `bun run test:web-client-manifest`. They cover the accepted parity ledger,
 retired source/emitted stacks, and the emitted browser import closure.
+The dev/build isolation gate is `bun run test:web-dev-build-isolation`; the
+5,000-session budget is `bun run --cwd apps/web benchmark:session-scroll`.

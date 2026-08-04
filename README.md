@@ -328,6 +328,14 @@ bun run test:e2e-production
 bun run --cwd apps/web benchmark:session-scroll
 ```
 
+After the build, verify migration parity and the emitted browser closure:
+
+```sh
+bun run test:web-migration-parity
+bun run test:web-client-manifest
+bun run test:web-retired-stack-build
+```
+
 The ordinary suite includes axe accessibility checks and four focused visual snapshots. The demo suite proves the synthetic runtime makes no business requests. The production suite exercises exact-revision oRPC procedures and the 5,000-session scroll proof.
 
 Run the report app in development:
