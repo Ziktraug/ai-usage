@@ -131,9 +131,12 @@ describe('Skills management presentation and mutation seam', () => {
       publicationReady: true,
       signature: skillsSnapshotAcceptanceSignature(refreshed),
     } as const;
+    const pendingTarget = { ...target, publicationReady: false } as const;
 
     expect(resolveSkillsRefreshAcceptance(target, current, false)).toBe('retain');
     expect(resolveSkillsRefreshAcceptance(target, current, true)).toBe('clear');
+    expect(resolveSkillsRefreshAcceptance(pendingTarget, current, true)).toBe('clear');
+    expect(resolveSkillsRefreshAcceptance(pendingTarget, refreshed, true)).toBe('retain');
     expect(resolveSkillsRefreshAcceptance(undefined, refreshed, false)).toBe('retain');
     expect(resolveSkillsRefreshAcceptance(target, refreshed, true)).toBe('announce');
   });

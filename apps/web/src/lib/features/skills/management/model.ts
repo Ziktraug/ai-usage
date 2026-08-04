@@ -129,13 +129,17 @@ export const resolveSkillsRefreshAcceptance = (
   snapshot: SkillManagementSnapshot,
   decisionClosed: boolean,
 ): 'announce' | 'clear' | 'retain' => {
-  if (!target?.publicationReady) {
+  if (target === undefined) {
     return 'retain';
   }
-  if (skillsSnapshotAcceptanceSignature(snapshot) === target.signature) {
-    return 'announce';
+  const snapshotMatches = skillsSnapshotAcceptanceSignature(snapshot) === target.signature;
+  if (snapshotMatches) {
+    return target.publicationReady ? 'announce' : 'retain';
   }
-  return decisionClosed ? 'clear' : 'retain';
+  if (decisionClosed) {
+    return 'clear';
+  }
+  return 'retain';
 };
 
 const targetLabel = (snapshot: SkillManagementSnapshot, targetId: string): string =>
