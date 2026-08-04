@@ -13,9 +13,9 @@ authority for feature, operation, design, source-file, and test-title coverage.
   `2183270ebfbb886fafa7e6268893122db9b364c0`
 - `BASE_SHA`: `2183270ebfbb886fafa7e6268893122db9b364c0`
 - Current integration checkpoint:
-  `c733f797fc441e72b835527641c4f609de82bfe9` (X1 corrections,
+  `a161860376a4bcd6a1d61443588a57e4e5e1255f` (X1 corrections,
   performance, clean-typecheck, isolated dev-port, canonical production probe,
-  and trusted-local hook corrections green; clean full gate pending)
+  trusted-local hook corrections, and the complete clean-worktree gate green)
 - Last independently reviewed implementation checkpoint:
   `c733f797fc441e72b835527641c4f609de82bfe9`
 - Active design bases: D1 `4862293`, D2 `fce5c1a`, D3 `e2f13cd`
@@ -152,8 +152,8 @@ Statuses are `BLOCKED`, `READY`, `IMPLEMENTING`, `REVIEW`, `REWORK`,
 | P9 | P5 | INTEGRATED | `9d48303`, evidence `4cb0f0d`; integrated `82451ad`, `be5e49b`, evidence rewrite `c859f7f` | `/root/q2_spec_review` / ACCEPT | `c859f7f` |
 | P10 | P5 | INTEGRATED | `455b569`, evidence `dac69e0`; integrated `8e35926`, `3a43913`, evidence rewrite `e953bdc` | `/root/q2_spec_review` / ACCEPT | `e953bdc` |
 | X0 | P2, P8, P4, P9, P10, P6, P7 | INTEGRATED | `db66cc0` through `c84d48c` | Skills `/root/x0_sync_review` / ACCEPT; Report/campaign `/root/v34_parity` / ACCEPT; full range and corrections `/root/x0_final_review` / ACCEPT | `c84d48c` |
-| X1 | X0 | REVIEW | `c84d48c..c733f797` | `/root/x1_final_criteria_audit`, `/root/review_combined_destination_atomicity`, `/root/repair_session_owner_contract_refs` / visual, combined Sessions, report retention, navigation/load, performance, clean-typecheck, isolated dev-port, canonical Skills probe, and trusted-local hook corrections ACCEPT; clean full gate pending | `c733f797` candidate checkpoint |
-| X2 | X1 | BLOCKED | - | - | - |
+| X1 | X0 | INTEGRATED | `c84d48c..c733f797`, evidence `a161860` | `/root/x1_final_criteria_audit`, `/root/review_combined_destination_atomicity`, `/root/repair_session_owner_contract_refs`, `/root/implement_combined_sessions_destination/docs_standards_axis` / visual, combined Sessions, report retention, navigation/load, performance, clean-typecheck, isolated dev-port, canonical Skills probe, trusted-local hook, documentation, and complete clean full gate ACCEPT | `a161860` |
+| X2 | X1 | READY | - | fresh-context reviewer pending | - |
 
 ## Review and integration ledger
 
@@ -1585,5 +1585,48 @@ the production supervisor, frozen product behavior, or current SECURITY-01
 scope. Bubblewrap remained unavailable; bounded inspected edit fallbacks were
 reviewed. No real user state was accessed.
 
-X1 remains REVIEW until a fresh clean worktree completes the entire frozen gate
-at `c733f797` (or its documentation-only descendant).
+The fresh detached worktree `/tmp/ai-usage-068-final-gate-3` completed the
+entire frozen gate at documentation descendant `a161860`; X1 is integrated and
+X2 is ready.
+
+### X1 clean-worktree final gate
+
+The coordinator created a detached worktree at `a161860`, installed only the
+frozen lockfile, and ran every required command without relying on generated
+files from another worktree. `origin/main` was fetched afterward and remained at
+`2183270ebfbb886fafa7e6268893122db9b364c0`, exactly the recorded `BASE_SHA` and
+merge base, so no rebase or semantic reconciliation was required.
+
+| Command | Result |
+| --- | --- |
+| `bun install --frozen-lockfile` | PASS |
+| `bun run check` / `bun run lint` | PASS; 1,035 files and architecture/package boundaries green |
+| `bun run typecheck` | PASS; 28/28, genuine Web cache MISS, Svelte 0 errors/0 warnings |
+| `bun test apps/web/src apps/web/*.test.ts` | PASS; 903 tests, 4,426 assertions, 177 files |
+| `bun run test` | PASS; 28/28 package tasks and 155 tools tests |
+| `bun run build` | PASS; 15/15 with uncached Web production build |
+| migration parity / client manifest / retired stack | PASS; 35/35 features, 30 operations, 72 former TSX records, 15 design rows, 353/353 current exports, 11 retired render suites, 112/112 titles and 18/18 URLs |
+| `bun run test:e2e` | PASS; 97/97 on the single permitted classification rerun |
+| `bun run test:e2e-demo` | PASS; 1/1 |
+| `bun run test:e2e-production` | PASS; 8/8 plus scale 2/2; one bootstrap, no post-hydration bootstrap |
+| `bun run --cwd apps/web benchmark:session-scroll` | PASS; durable Playwright result 4/4 with no failed tests and complete process cleanup |
+| `bun run test:web-production` | PASS; root and production health/trust plus both clean collision failures |
+| `bun run test:web-dev-build-isolation` | PASS; 78 healthy requests, zero HMR/deleted descriptors, process count 2 to 2, expected second-build rejection |
+| `bun run test:setup-loopback` | PASS; numeric IPv4 loopback only |
+| `git diff --check` / status / process-listener audit | PASS; no output, clean detached worktree, no retained fixture process or measured listener |
+
+The first functional Playwright pass reached 96/97 because the unchanged
+scroll-restoration assertion observed 764 px instead of 700 px. No relevant
+source changed and the one allowed unchanged full rerun passed 97/97, so this is
+classified as a one-shot browser geometry scheduling fluctuation. No timeout,
+assertion or product code changed.
+
+The benchmark process survived a coordinator context compaction, but its
+original terminal stream did not. The Playwright-owned durable result records
+`passed` with no failed tests, and the exact server/browser/process/listener
+audit was empty. The immediately preceding clean checkpoint retained medians
+of 1563.288 ms initial, 291.831 ms filter, 1489.281 ms sort, 27,639,784 bytes
+heap, 220,694 bytes maximum page, desktop 33/624 and mobile 17/275; no client or
+Session implementation changed afterward. This execution-environment evidence
+loss is retained explicitly rather than inventing replacement samples or
+running an unplanned duplicate measurement.

@@ -170,10 +170,13 @@ titles across demo, production, scale, and benchmark configurations.
 
 ## Final SvelteKit comparison
 
-The final measurements use Svelte checkpoint
-`aa992c6c864be6e7087b414dbfd8e83eb548dd92`, Bun 1.3.13, the pinned
-repository/browser dependencies, and a clean worktree. They were recorded on
-2026-08-04 with the same deterministic fixtures and isolated runtime roots.
+The retained client/session/startup measurements use Svelte checkpoint
+`aa992c6c864be6e7087b414dbfd8e83eb548dd92`; final artifact, SSR, lifecycle and
+clean-gate closure use implementation checkpoint
+`c733f797fc441e72b835527641c4f609de82bfe9` through documentation descendant
+`a161860376a4bcd6a1d61443588a57e4e5e1255f`. All use Bun 1.3.13, the pinned
+repository/browser dependencies, clean worktrees, deterministic fixtures and
+isolated runtime roots.
 A delta is `(Svelte - Solid) / Solid * 100`; lower is better for time,
 bytes, heap, payload, and DOM counts. This remains a per-metric ledger, not a
 composite score or a claim that either application is uniformly faster.
@@ -234,12 +237,12 @@ du -sb apps/web/.output-build/sveltekit/server
 | --- | ---: | ---: | --- |
 | Selected output | `.output-build/nitro` | `.output-build/sveltekit` | Adapter cutover |
 | File count | 118 | 292 | +147.458%; reviewed topology |
-| Total bytes | 4,931,722 | 7,986,116 | +61.934%; reviewed topology |
+| Total bytes | 4,931,722 | 7,998,992 | +62.195%; reviewed topology |
 | Public/client bytes | 1,200,533 | 1,178,660 | -1.822% |
-| Server bytes | 3,730,859 | 6,782,782 | +81.802%; reviewed topology |
-| Sorted `path:size` SHA-256 | `495de210cb7051c7415d5ac506f255f5e68c7fd74d0a6005d718d0d12f564a7c` | `1c91521ee33bce8f306510056d48c56f026e1ffaa9dcc0472da71b47763fc0bb` | Identity |
+| Server bytes | 3,730,859 | 6,795,658 | +82.147%; reviewed topology |
+| Sorted `path:size` SHA-256 | `495de210cb7051c7415d5ac506f255f5e68c7fd74d0a6005d718d0d12f564a7c` | `b7bd2d9be988dc906e2674c274515cdfd1754ff2924ad9045b19c0adb696e439` | Identity |
 
-The Svelte server contains 112 source maps totaling 4,368,215 bytes, or 64.4%
+The Svelte server contains 112 source maps totaling 4,375,388 bytes, or 64.4%
 of server bytes; 176 JavaScript files plus those maps explain most of the
 file-count increase. Client bytes are lower. The source, emitted-retired-stack,
 and client-manifest scanners are green, so this is server/debug chunk topology,
@@ -255,9 +258,9 @@ The rebuilt final artifact passed the eight production report tests and both
 | Measurement | Solid | Svelte | Delta / classification |
 | --- | ---: | ---: | --- |
 | Initial HTML | 36,995 B | 11,602 B | -68.639% |
-| TTFB | 9.5 ms | 5.710 ms | -39.895% |
-| Response complete | 10.1 ms | 8.360 ms | -17.228% |
-| Hydration marker | 117.5 ms | 146.231 ms | +24.452%; reviewed |
+| TTFB | 9.5 ms | 5.788 ms | -39.074% |
+| Response complete | 10.1 ms | 8.677 ms | -14.089% |
+| Hydration marker | 117.5 ms | 155.059 ms | +31.965%; reviewed |
 | Initial requests | 15 | 40 | +166.667%; reviewed chunking |
 | Dehydrated bootstrap | 1 | 1 | Exact gate |
 | Bootstrap after hydration | 0 | 0 | Exact gate |
@@ -267,7 +270,7 @@ The rebuilt final artifact passed the eight production report tests and both
 Svelte request classes were one document, one EventSource, four fetches, one
 other request, 31 scripts, and two stylesheets. The extra requests are asset
 splitting, not data duplication; client bytes are 1.822% lower. Hydration is
-28.731 ms slower while HTML and server response measurements are lower. All
+37.559 ms slower while HTML and server response measurements are lower. All
 exact SSR, dehydration, settlement, and browser-failure gates pass. Reviewers
 accepted the hydration/request deviations; no overall performance claim is
 made.
@@ -293,8 +296,8 @@ seconds and no readiness budget fails. Removing phase graph generation or
 sharing check/dev/build output would violate the accepted output-isolation
 seam. Both independent reviewers accepted the startup deviations.
 
-The final isolation gate emitted `devReadyDurationMs=7864.074`,
-`buildDurationMs=21389.764`, 77 healthy requests, zero HMR messages, zero
+The final isolation gate emitted `devReadyDurationMs=8017.215`,
+`buildDurationMs=21639.521`, 78 healthy requests, zero HMR messages, zero
 deleted output descriptors, process count 2 to 2, and the expected rejected
 competing build. Production lifecycle, long SSE, port collision, root
 supervision, loopback, and cleanup gates passed.
@@ -326,3 +329,13 @@ git diff --check
 
 Every greater-than-10% delta is separately explained and independently
 approved. No individual metric is used to claim an overall win.
+
+The final detached clean gate at `a161860` passed all four Session benchmark
+tests, the eight production tests plus both scale tests, and every lifecycle
+gate. A coordinator context compaction discarded only the last benchmark
+terminal stream; Playwright retained a durable `passed` result with no failed
+tests and the process/listener audit was empty. The preceding clean checkpoint
+captured medians of 1563.288 ms initial, 291.831 ms filter, 1489.281 ms sort,
+27,639,784 bytes heap, 220,694 bytes maximum page, desktop 33/624 and mobile
+17/275. No client or Session implementation changed between that captured run
+and the final clean gate.
