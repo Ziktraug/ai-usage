@@ -261,6 +261,9 @@ describe('production web build command', () => {
 
     expect(turboConfig.tasks?.['@ai-usage/web#build']?.cache).toBe(false);
     expect(packageManifest.scripts?.build).toBe('bun --no-env-file sveltekit-production-build.ts');
+    expect(packageManifest.scripts?.['dev:prepare']).toStartWith(
+      'AI_USAGE_SVELTEKIT_PHASE=check bun --no-env-file svelte-kit sync &&',
+    );
   });
 
   test('runs every build phase under the lock and cleans only production output', async () => {
