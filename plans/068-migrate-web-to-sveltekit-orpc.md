@@ -26,11 +26,10 @@
 - **Depends on**: plans 066 and 067 (both DONE)
 - **Category**: migration, tech-debt, performance, tests, dx
 - **Planned at**: commit `72c648e`, 2026-08-02
-- **State**: EXECUTING. X1 and its clean-worktree gate are integrated. The cold
-  X2 review found one deterministic-artifact correction at `6d0f35f`; its
-  focused tests and repeated-build proof are green, and independent delta
-  review remains before the sole draft implementation PR. Mark this plan DONE
-  only after that PR's first complete CI is green.
+- **State**: EXECUTING. X2 is independently ACCEPTed at `6391883`; the complete
+  clean-worktree gate and repeated-build proof are green. Publication of the
+  sole draft implementation PR and its first complete green CI remain. Mark
+  this plan DONE only after that PR's first complete CI is green.
 
 ## Why this matters
 

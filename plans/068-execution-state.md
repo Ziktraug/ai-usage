@@ -13,11 +13,10 @@ authority for feature, operation, design, source-file, and test-title coverage.
   `2183270ebfbb886fafa7e6268893122db9b364c0`
 - `BASE_SHA`: `2183270ebfbb886fafa7e6268893122db9b364c0`
 - Current integration checkpoint:
-  `6d0f35f3a893c0cb349c8f14c9d7aab700c2e883` (X2 artifact correction,
-  performance, clean-typecheck, isolated dev-port, canonical production probe,
-  trusted-local hook corrections, and the complete clean-worktree gate green)
+  `639188324a958095573110af2100cba07fdd7030` (X2 ACCEPT, deterministic
+  artifact correction, documentation delta, and complete clean-worktree gate)
 - Last independently reviewed implementation checkpoint:
-  `c733f797fc441e72b835527641c4f609de82bfe9`
+  `6d0f35f3a893c0cb349c8f14c9d7aab700c2e883`
 - Active design bases: D1 `4862293`, D2 `fce5c1a`, D3 `e2f13cd`
 - Implementation PR: not opened
 - Exclusive process-test token: coordinator `/root`, for serialized browser,
@@ -153,7 +152,7 @@ Statuses are `BLOCKED`, `READY`, `IMPLEMENTING`, `REVIEW`, `REWORK`,
 | P10 | P5 | INTEGRATED | `455b569`, evidence `dac69e0`; integrated `8e35926`, `3a43913`, evidence rewrite `e953bdc` | `/root/q2_spec_review` / ACCEPT | `e953bdc` |
 | X0 | P2, P8, P4, P9, P10, P6, P7 | INTEGRATED | `db66cc0` through `c84d48c` | Skills `/root/x0_sync_review` / ACCEPT; Report/campaign `/root/v34_parity` / ACCEPT; full range and corrections `/root/x0_final_review` / ACCEPT | `c84d48c` |
 | X1 | X0 | INTEGRATED | `c84d48c..c733f797`, evidence `a161860` | `/root/x1_final_criteria_audit`, `/root/review_combined_destination_atomicity`, `/root/repair_session_owner_contract_refs`, `/root/implement_combined_sessions_destination/docs_standards_axis` / visual, combined Sessions, report retention, navigation/load, performance, clean-typecheck, isolated dev-port, canonical Skills probe, trusted-local hook, documentation, and complete clean full gate ACCEPT | `a161860` |
-| X2 | X1 | REWORK | `6d0f35f` correction pending review | `/root/x2_parity_spec` / REWORK on timestamp-based artifact identity; `/root/x2_quality_security` / ACCEPT at `0d12d79`, delta review pending | `6d0f35f` candidate |
+| X2 | X1 | INTEGRATED | `6d0f35f`, documentation `6391883` | `/root/x2_parity_spec` / ACCEPT; `/root/x2_quality_security` / ACCEPT | `639188324a958095573110af2100cba07fdd7030` |
 
 ## Review and integration ledger
 
@@ -1651,8 +1650,8 @@ SvelteKit explicitly. Its focused tests pass 17/17, Svelte check reports 0/0,
 and two consecutive committed-checkpoint builds have byte-identical sorted
 `path:size` manifests at
 `7ab9de1edcd79b2ce3017cd16ef75cf0ecf159177ba9e3e2ceb16c5e146034c1`.
-Final X2 remains REWORK until both fresh reviewers ACCEPT this correction and
-its documentation delta.
+Both fresh reviewers independently ACCEPTed the correction and documentation
+delta at clean HEAD `6391883` on the parity/spec and quality/security axes.
 
 Two execution-environment incidents are retained. The standard patch helper
 again failed before file access because Bubblewrap is unavailable; one bounded
@@ -1662,3 +1661,48 @@ skill could not be read because Plan 068 forbids access to configured local
 Skills; policy rejected the read. Publication will use the already authorized
 minimal GitHub CLI flow after X2 ACCEPT, without accessing or circumventing the
 forbidden local state.
+
+### X2 clean-worktree final gate
+
+The coordinator created detached worktree `/tmp/ai-usage-068-x2-final` at exact
+HEAD `639188324a958095573110af2100cba07fdd7030`, ran a frozen install, and kept
+the SHA unchanged through the complete gate and both final reviewer verdicts.
+`origin/main` and the merge base remained the recorded `BASE_SHA`.
+
+| Command | Result |
+| --- | --- |
+| `bun install --frozen-lockfile` | PASS |
+| `bun run check` / `bun run lint` | PASS; 1,035 files and all architecture/package boundaries green |
+| `bun run typecheck` | PASS; 28/28, genuine Web cache MISS, Svelte 0 errors/0 warnings |
+| `bun test apps/web/src apps/web/*.test.ts` | PASS; 904 tests, 4,429 assertions, 177 files |
+| `bun run test` | PASS; 28/28 package tasks and 155 tools tests |
+| `bun run build` | PASS twice; 15/15 and byte-stable selected-adapter output digest `9fc863921cf52c15997074dc9b63cfeb662e0383b00a229ee84b3e4a2ad7ea86` |
+| migration parity / client manifest / retired stack | PASS; complete 35 features, 30 operations, 72 former TSX records, 15 design rows, 353 current exports, 11 render suites, 112 titles and 18 URLs |
+| `bun run test:e2e` | PASS; 97/97 on the one permitted unchanged classification rerun |
+| `bun run test:e2e-demo` | PASS; 1/1 |
+| `bun run test:e2e-production` | PASS; 8/8 plus scale 2/2 on the one permitted unchanged classification rerun |
+| `bun run --cwd apps/web benchmark:session-scroll` | PASS; 4/4 with three durable samples |
+| `bun run test:web-production` | PASS; root and production health/trust plus clean engine/Web collision failures |
+| `bun run test:web-dev-build-isolation` | PASS; 79 healthy requests, zero HMR/deleted descriptors, process count 2 to 2, expected second-build rejection |
+| `bun run test:setup-loopback` | PASS; numeric IPv4 loopback only |
+| `git diff --check` / status / process-listener audit | PASS; clean detached worktree and no retained measured listener |
+
+The first functional Playwright pass had two transient history/geometry
+observations: scroll restoration returned 764 instead of 1200, and one date
+history assertion retained May 21 instead of May 20. The unchanged complete
+rerun passed 97/97. The first production scale pass completed all eight SSR
+tests, then its 5,000-session fixture missed the initial published-count
+rendezvous before the unchanged 20-second assertion. The unchanged complete
+rerun passed 8/8 plus 2/2. No product code, assertion or timeout changed.
+
+Final benchmark medians were 1,575.794 ms initial, 273.875 ms filter,
+1,459.147 ms sort, 27,635,076 bytes heap delta, 220,694 maximum page bytes,
+desktop 33 items/624 nodes, and mobile 17 items/275 nodes. The synthetic
+wide-event file sink opened its bounded failure circuit during the benchmark;
+the benchmark, application requests and cleanup completed successfully, and no
+real user log or state was involved.
+
+Five old Vite fixture servers from earlier migration worktrees were found on
+reserved ports 42642-42646 during the final audit. Their exact PIDs and working
+directories were verified as repository-owned, terminated gracefully, and all
+five listeners disappeared. This cleanup did not touch unrelated processes.
