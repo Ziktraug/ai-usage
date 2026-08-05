@@ -170,21 +170,50 @@ test('renders secondary status only on Overview and puts Projects before closed 
 });
 
 test('uses one fixed-size Punchcard intensity channel with a low/high key', async ({ page }) => {
+  await page.setViewportSize({ height: 1000, width: 1440 });
   await page.goto('/');
+  await expect(page.locator('main[data-hydrated="true"]')).toBeVisible();
 
+  const advancedAnalysis = page.locator('[data-overview-advanced-analysis]');
+  const punchcardPanel = page
+    .getByRole('heading', { level: 2, name: 'Punchcard' })
+    .locator('xpath=ancestor::section[1]');
+  const punchcardHeader = punchcardPanel.locator(':scope > header');
   const punchcardKey = page.locator('[data-punchcard-intensity-key]');
+  const punchcardVisual = page.locator('[data-punchcard-visual]');
   const punchcardCells = page.locator('[data-punchcard-cell-fill]');
   await expect(punchcardKey).toContainText('Low');
   await expect(punchcardKey).toContainText('High');
+  await expect(punchcardKey).toContainText('session count');
+  await expect(punchcardKey).toHaveAttribute('aria-label', 'Punchcard session-count intensity');
+  await expect(punchcardKey).toHaveAttribute('role', 'img');
+  await expect(punchcardVisual).toHaveCSS('column-gap', '2px');
+  await expect(punchcardVisual).toHaveCSS('row-gap', '2px');
+  await expect(punchcardHeader).toHaveCSS('display', 'grid');
+  await expect(punchcardHeader).toHaveCSS('row-gap', '2px');
   expect(await punchcardCells.count()).toBeGreaterThan(0);
-  const cellGeometry = await punchcardCells.evaluateAll((elements) =>
+
+  const tuesdayEveningCell = punchcardPanel.locator('button[data-weekday="1"][data-hour="18"]');
+  await tuesdayEveningCell.focus();
+  await tuesdayEveningCell.press('ArrowDown');
+  await expect(tuesdayEveningCell).toBeFocused();
+
+  const presentation = await punchcardCells.evaluateAll((elements) =>
     elements.map((element) => {
       const box = element.getBoundingClientRect();
-      return { height: Math.round(box.height), width: Math.round(box.width) };
+      return {
+        borderRadius: getComputedStyle(element).borderRadius,
+        height: Math.round(box.height),
+        width: Math.round(box.width),
+      };
     }),
   );
-  expect(new Set(cellGeometry.map((box) => box.width)).size).toBe(1);
-  expect(new Set(cellGeometry.map((box) => box.height)).size).toBe(1);
+  expect(new Set(presentation.map((cell) => cell.width))).toEqual(new Set([24]));
+  expect(new Set(presentation.map((cell) => cell.height))).toEqual(new Set([24]));
+  expect(new Set(presentation.map((cell) => cell.borderRadius))).toEqual(new Set(['2px']));
+
+  const [advancedBox, punchcardBox] = await Promise.all([advancedAnalysis.boundingBox(), punchcardPanel.boundingBox()]);
+  expect(punchcardBox?.width ?? 0).toBeGreaterThanOrEqual((advancedBox?.width ?? 0) - 32);
 });
 
 test('separates timeline boundary dates and retains no horizontally intersecting tick', async ({ page }) => {

@@ -1,35 +1,13 @@
 <script lang="ts" module>
-  import { css } from '@ai-usage/design-system/css';
-
-  const page = css({ display: 'grid', gap: '14px' });
-  const twoColumns = css({
-    display: 'grid',
-    gap: '16px',
-    gridTemplateColumns: { base: '1fr', lg: 'repeat(2, minmax(0, 1fr))' },
-  });
-  const advanced = css({
-    display: 'grid',
-    gap: '12px',
-    p: '12px',
-    border: '1px solid token(colors.line)',
-    borderRadius: 'md',
-  });
-  const advancedHeader = css({
-    display: 'flex',
-    flexWrap: 'wrap',
-    justifyContent: 'space-between',
-    gap: '8px',
-    alignItems: 'baseline',
-  });
-  const advancedTitle = css({ fontSize: '15px', fontWeight: 750 });
-  const advancedSummary = css({ color: 'muted', fontSize: '11px' });
-  const empty = css({
-    p: '24px',
-    border: '1px solid token(colors.line)',
-    borderRadius: 'md',
-    color: 'muted',
-    textAlign: 'center',
-  });
+  import {
+    advancedAnalysis,
+    advancedAnalysisContent,
+    advancedAnalysisHeader,
+    advancedAnalysisHeaderText,
+    emptyPanel,
+    overviewGrid,
+    twoColumns,
+  } from '@ai-usage/design-system/report';
 </script>
 
 <script lang="ts">
@@ -115,7 +93,7 @@
   const activeDimension = $derived(dimension ?? result.timeline?.dimension ?? 'harness');
 </script>
 
-<div class={page} data-report-overview data-report-revision={result.revision}>
+<div class={overviewGrid} data-report-overview data-report-revision={result.revision}>
   {#if overviewHasContent(result)}
     <OverviewHero {range} summary={result.summary} />
     <ActivityHeatmap heatmap={result.view.heatmap} {onSelectDay} />
@@ -127,34 +105,36 @@
       records={result.view.records}
       topSessions={result.view.topSessions}
     />
-    <section aria-labelledby="advanced-analysis-title" class={advanced} data-overview-advanced-analysis>
-      <header class={advancedHeader}>
-        <h2 class={advancedTitle} id="advanced-analysis-title">Advanced analysis</h2>
-        <span class={advancedSummary}
+    <section aria-labelledby="advanced-analysis-title" class={advancedAnalysis} data-overview-advanced-analysis>
+      <header class={advancedAnalysisHeader}>
+        <h2 id="advanced-analysis-title">Advanced analysis</h2>
+        <span class={advancedAnalysisHeaderText}
           >{result.view.advancedSummary?.summary ?? 'Session shape and weekly/hourly activity'}</span
         >
       </header>
-      {#if result.view.advancedSummary}
-        <div class={twoColumns}>
-          {#if result.view.advancedSummary.hasSessionShape}
-            <SessionShape
-              advancedSummary={result.view.advancedSummary}
-              {onSelectSession}
-              {presentSessionItem}
-              shape={result.view.sessionShape}
-            />
-          {/if}
-          {#if result.view.advancedSummary.hasPunchcard}
-            <Punchcard {onSelectTimeCell} punchcard={result.view.punchcard} />
-          {/if}
-        </div>
-      {:else}
-        <p class={empty}>No advanced analysis is available for these filters.</p>
-      {/if}
+      <div class={advancedAnalysisContent}>
+        {#if result.view.advancedSummary}
+          <div class={twoColumns}>
+            {#if result.view.advancedSummary.hasSessionShape}
+              <SessionShape
+                advancedSummary={result.view.advancedSummary}
+                {onSelectSession}
+                {presentSessionItem}
+                shape={result.view.sessionShape}
+              />
+            {/if}
+            {#if result.view.advancedSummary.hasPunchcard}
+              <Punchcard {onSelectTimeCell} punchcard={result.view.punchcard} />
+            {/if}
+          </div>
+        {:else}
+          <p class={emptyPanel}>No advanced analysis is available for these filters.</p>
+        {/if}
+      </div>
     </section>
     <DashboardMetrics {comparisonState} {metrics} />
     <ProviderStatus {...(onOpenQuotaHistory === undefined ? {} : { onOpenHistory: onOpenQuotaHistory })} {providers} />
   {:else}
-    <p class={empty}>No sessions match the selected report range and filters.</p>
+    <p class={emptyPanel}>No sessions match the selected report range and filters.</p>
   {/if}
 </div>

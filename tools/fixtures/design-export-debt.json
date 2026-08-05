@@ -237,22 +237,6 @@
   },
   {
     "module": "overview",
-    "name": "advancedAnalysis"
-  },
-  {
-    "module": "overview",
-    "name": "advancedAnalysisContent"
-  },
-  {
-    "module": "overview",
-    "name": "advancedAnalysisHeader"
-  },
-  {
-    "module": "overview",
-    "name": "advancedAnalysisHeaderText"
-  },
-  {
-    "module": "overview",
     "name": "heroLabel"
   },
   {
@@ -282,42 +266,6 @@
   {
     "module": "overview",
     "name": "heroValue"
-  },
-  {
-    "module": "overview",
-    "name": "overviewGrid"
-  },
-  {
-    "module": "overview",
-    "name": "punchCell"
-  },
-  {
-    "module": "overview",
-    "name": "punchCellButton"
-  },
-  {
-    "module": "overview",
-    "name": "punchDayLabel"
-  },
-  {
-    "module": "overview",
-    "name": "punchDot"
-  },
-  {
-    "module": "overview",
-    "name": "punchGrid"
-  },
-  {
-    "module": "overview",
-    "name": "punchHourLabel"
-  },
-  {
-    "module": "overview",
-    "name": "punchIntensityKey"
-  },
-  {
-    "module": "overview",
-    "name": "punchIntensityKeyCell"
   },
   {
     "module": "overview",

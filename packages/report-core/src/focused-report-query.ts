@@ -1318,6 +1318,7 @@ export const projectFocusedOverviewFromPresentationRows = (
     ...(sessionShape ? ['Duration/value patterns'] : []),
     ...(punchcard ? ['weekly/hourly activity'] : []),
   ];
+  const analysisSummary = availableAnalyses.join(' and ');
   return {
     dateDomain: buildFocusedDateDomain(
       timelineRows.flatMap((row) => (row.activeTime === null ? [] : [row.activeTime])),
@@ -1339,7 +1340,7 @@ export const projectFocusedOverviewFromPresentationRows = (
           : {
               hasPunchcard: punchcard !== null,
               hasSessionShape: sessionShape !== null,
-              summary: `${availableAnalyses.join(' and ')} · ${visible.length} ${visible.length === 1 ? 'session' : 'sessions'}`,
+              summary: `${analysisSummary.charAt(0).toUpperCase()}${analysisSummary.slice(1)} · ${visible.length} ${visible.length === 1 ? 'session' : 'sessions'}`,
             },
       heatmap: buildHeatmap(timelineRows),
       previousSummary: previousPeriodSummary(timelineRows, request.query, support.generatedAt),

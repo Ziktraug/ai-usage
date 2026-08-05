@@ -1,41 +1,26 @@
 <script lang="ts" module>
-  import { css } from '@ai-usage/design-system/css';
+  import { css, cx } from '@ai-usage/design-system/css';
+  import {
+    accentFill,
+    emptyPanel,
+    panel,
+    panelHeader,
+    panelSub,
+    panelTitle,
+    punchCell,
+    punchCellButton,
+    punchDayLabel,
+    punchDot,
+    punchGrid,
+    punchHourLabel,
+    punchIntensityKey,
+    punchIntensityKeyCell,
+  } from '@ai-usage/design-system/report';
 
-  const scroll = css({ overflowX: 'auto', pb: '4px' });
-  const grid = css({
-    display: 'grid',
-    gridTemplateColumns: '34px repeat(24, 18px)',
-    gap: '3px',
-    minW: '560px',
-    alignItems: 'center',
-  });
-  const dayLabel = css({ color: 'muted', fontSize: '9px' });
-  const cell = css({ display: 'grid', placeItems: 'center', w: '18px', h: '18px' });
-  const button = css({
-    display: 'grid',
-    placeItems: 'center',
-    w: '18px',
-    h: '18px',
-    cursor: 'pointer',
-    _focusVisible: { outline: '2px solid token(colors.accent)', outlineOffset: '1px' },
-  });
-  const dot = css({ display: 'block', w: '10px', h: '10px', borderRadius: 'full', bg: 'accent' });
-  const hourLabel = css({ color: 'muted', fontSize: '8px', textAlign: 'center' });
-  const key = css({
-    display: 'flex',
-    gap: '5px',
-    alignItems: 'center',
-    justifyContent: 'flex-end',
-    color: 'muted',
-    fontSize: '10px',
-  });
-  const keyCell = css({ w: '10px', h: '10px', borderRadius: 'full', bg: 'accent' });
-  const empty = css({ color: 'muted', fontSize: '12px' });
   const srOnly = css({ srOnly: true });
 </script>
 
 <script lang="ts">
-  import { panel, panelSub, panelTitle } from '@ai-usage/design-system/svelte';
   import type { FocusedPunchcard } from '@ai-usage/report-core/focused-report-query';
   import {
     isLocalTimeHour,
@@ -44,7 +29,7 @@
     localTimeCellLabel,
     localTimeWeekdayNames,
   } from '@ai-usage/report-core/session-query';
-  import { PUNCH_DAYS, punchcardSessionOpacity } from '../../../../overview-model';
+  import { PUNCH_DAYS, PUNCHCARD_MIN_SESSION_OPACITY, punchcardSessionOpacity } from '../../../../overview-model';
   import { fmtMoney, fmtNum } from '../../../foundation/presentation/format';
 
   let {
@@ -65,79 +50,59 @@
   );
   const ariaLabel = (cell: LocalTimeCell, sessions: number): string =>
     `Filter report to ${localTimeCellLabel(cell)}, ${fmtNum(sessions)} ${sessions === 1 ? 'session' : 'sessions'}`;
-  const moveFocus = (event: KeyboardEvent, weekday: number, hour: number): void => {
-    let nextWeekday = weekday;
-    let nextHour = hour;
-    if (event.key === 'ArrowLeft') {
-      nextHour = Math.max(0, hour - 1);
-    } else if (event.key === 'ArrowRight') {
-      nextHour = Math.min(23, hour + 1);
-    } else if (event.key === 'ArrowUp') {
-      nextWeekday = Math.max(0, weekday - 1);
-    } else if (event.key === 'ArrowDown') {
-      nextWeekday = Math.min(6, weekday + 1);
-    } else if (event.key === 'Home') {
-      nextHour = 0;
-    } else if (event.key === 'End') {
-      nextHour = 23;
-    } else {
-      return;
-    }
-    event.preventDefault();
-    const section = (event.currentTarget as HTMLElement).closest('section');
-    const exact = section?.querySelector<HTMLButtonElement>(
-      `button[data-weekday="${nextWeekday}"][data-hour="${nextHour}"]`,
-    );
-    const fallback = section?.querySelector<HTMLButtonElement>('button[data-punchcard-cell]');
-    (exact ?? fallback)?.focus();
-  };
 </script>
 
 <section class={panel}>
-  <div>
+  <header class={panelHeader}>
     <h2 class={panelTitle}>Punchcard</h2>
     <p class={panelSub}>When the sessions happen — hour of day × weekday</p>
-  </div>
+  </header>
   {#if punchcard}
-    <div class={scroll}>
-      <div class={grid} data-punchcard-visual>
-        {#each punchcard.cells as dayCells, weekday (weekday)}
-          <span class={dayLabel}>{PUNCH_DAYS[weekday]}</span>
-          {#each dayCells as item, hour (`${weekday}:${hour}`)}
-            {@const timeCell = item.sessions > 0 ? localTimeCell(weekday, hour) : null}
-            <span
-              class={cell}
-              title={`${localTimeWeekdayNames[weekday]} ${String(hour).padStart(2, '0')}:00 — ${fmtNum(item.sessions)} sessions · ${fmtMoney(item.cost)}`}
-            >
-              {#if timeCell}
-                <button
-                  aria-label={ariaLabel(timeCell, item.sessions)}
-                  class={button}
-                  data-hour={hour}
-                  data-punchcard-cell
-                  data-weekday={weekday}
-                  onclick={() => onSelectTimeCell(timeCell)}
-                  onkeydown={(event) => moveFocus(event, weekday, hour)}
-                  type="button"
-                >
-                  <span
-                    class={dot}
-                    data-punchcard-cell-fill
-                    style:opacity={punchcardSessionOpacity(item.sessions, punchcard.maxSessions)}
-                  ></span>
-                </button>
-              {/if}
-            </span>
-          {/each}
+    <div class={punchGrid} data-punchcard-visual>
+      {#each punchcard.cells as dayCells, weekday (weekday)}
+        <span aria-hidden="true" class={punchDayLabel}>{PUNCH_DAYS[weekday]}</span>
+        {#each dayCells as item, hour (`${weekday}:${hour}`)}
+          {@const timeCell = item.sessions > 0 ? localTimeCell(weekday, hour) : null}
+          <span
+            class={punchCell}
+            title={`${PUNCH_DAYS[weekday]} ${String(hour).padStart(2, '0')}:00 — ${fmtNum(item.sessions)} sessions · ${fmtMoney(item.cost)}`}
+          >
+            {#if timeCell}
+              <button
+                aria-label={ariaLabel(timeCell, item.sessions)}
+                class={punchCellButton}
+                data-hour={hour}
+                data-punchcard-cell
+                data-weekday={weekday}
+                onclick={() => onSelectTimeCell(timeCell)}
+                type="button"
+              >
+                <span
+                  class={cx(punchDot, accentFill)}
+                  data-punchcard-cell-fill
+                  style:opacity={punchcardSessionOpacity(item.sessions, punchcard.maxSessions)}
+                ></span>
+              </button>
+            {/if}
+          </span>
         {/each}
-        <span></span>
-        {#each Array.from({ length: 24 }, (_, hour) => hour) as hour (hour)}
-          <span class={hourLabel}>{hour % 3 === 0 ? String(hour).padStart(2, '0') : ''}</span>
-        {/each}
-      </div>
+      {/each}
+      <span></span>
+      {#each Array.from({ length: 24 }, (_, hour) => hour) as hour (hour)}
+        <span aria-hidden="true" class={punchHourLabel}>{hour % 3 === 0 ? hour : ''}</span>
+      {/each}
     </div>
-    <div class={key} data-punchcard-intensity-key>
-      <span>Low</span><span class={keyCell} style:opacity="0.3"></span><span class={keyCell}></span><span>High</span>
+    <div
+      aria-label="Punchcard session-count intensity"
+      class={punchIntensityKey}
+      data-punchcard-intensity-key
+      role="img"
+    >
+      <span>Low</span>
+      <span class={cx(punchIntensityKeyCell, accentFill)} style:opacity={PUNCHCARD_MIN_SESSION_OPACITY}></span>
+      <span class={cx(punchIntensityKeyCell, accentFill)}></span>
+      <span>High</span>
+      <span>session count</span>
     </div>
     <div class={srOnly}>
       <table aria-label="Punchcard">
@@ -165,6 +130,6 @@
       </table>
     </div>
   {:else}
-    <p class={empty}>No dated sessions in range</p>
+    <p class={emptyPanel}>No dated sessions in range</p>
   {/if}
 </section>
