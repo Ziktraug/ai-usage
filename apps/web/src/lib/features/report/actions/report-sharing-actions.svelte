@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { button, noticeError, row } from '../breakdown/styles';
+  import { css, cx } from '@ai-usage/design-system/css';
+  import { ghostButton } from '@ai-usage/design-system/svelte';
   import {
     browserSharingEnvironment,
     copyExactBreakdownUrl,
@@ -8,6 +9,18 @@
     type SharingEnvironment,
     type SharingNotice,
   } from './sharing';
+
+  const actions = css({
+    display: 'flex',
+    flexWrap: 'wrap',
+    gap: '8px',
+    alignItems: 'center',
+    minW: 0,
+    ml: { base: '0', md: 'auto' },
+    _print: { display: 'none' },
+  });
+  const noticeText = css({ color: 'muted', fontSize: '12px' });
+  const errorNoticeText = css({ color: 'status.danger' });
 
   let {
     createExport,
@@ -27,12 +40,12 @@
   };
 </script>
 
-<div class={row} data-report-sharing-actions>
-  <button class={button} onclick={copyLink} type="button">Copy link</button>
-  <button class={button} onclick={exportCsv} type="button">Export CSV</button>
+<div class={actions} data-report-sharing-actions>
+  <button class={ghostButton} onclick={copyLink} type="button">Copy link</button>
+  <button class={ghostButton} onclick={exportCsv} type="button">Export CSV</button>
   {#if notice?.tone === 'error'}
-    <span aria-live="assertive" class={noticeError} role="alert">{notice.message}</span>
+    <span aria-live="assertive" class={cx(noticeText, errorNoticeText)} role="alert">{notice.message}</span>
   {:else if notice}
-    <span aria-live="polite" role="status">{notice.message}</span>
+    <span aria-live="polite" class={noticeText} role="status">{notice.message}</span>
   {/if}
 </div>

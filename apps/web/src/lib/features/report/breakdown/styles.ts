@@ -68,22 +68,7 @@ export const item = css({
   borderTop: '1px solid token(colors.line)',
   pt: '10px',
 });
-export const identityButton = css({
-  appearance: 'none',
-  border: 0,
-  bg: 'transparent',
-  color: 'ink',
-  p: 0,
-  fontWeight: 700,
-  textAlign: 'left',
-  cursor: 'pointer',
-  _hover: { color: 'accent' },
-  _focusVisible: { outline: '2px solid token(colors.accent)', outlineOffset: '2px' },
-});
-export const barTrack = css({ h: '7px', mt: '6px', overflow: 'hidden', borderRadius: 'full', bg: 'surfaceMuted' });
 export const partialBarTrack = css({ border: '1px dashed token(colors.accent)' });
-export const barFill = css({ h: 'full', bg: 'accent' });
-export const metric = css({ textAlign: 'right', fontVariantNumeric: 'tabular-nums' });
 export const toolbar = css({
   position: { base: 'static', md: 'sticky' },
   top: 0,
@@ -118,4 +103,3 @@ export const controls = css({
 
 export const table = css({ w: 'full', borderCollapse: 'collapse', fontSize: '12px' });
 export const tableCell = css({ borderTop: '1px solid token(colors.line)', p: '6px', textAlign: 'left' });
-export const noticeError = css({ color: 'status.danger' });

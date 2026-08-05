@@ -1,5 +1,17 @@
 <script lang="ts">
-  import { SegmentedControl } from '@ai-usage/design-system/svelte';
+  import { css } from '@ai-usage/design-system/css';
+  import {
+    actionRow,
+    groupCount,
+    groupHeader,
+    groupPanel,
+    groupRow,
+    groupRows,
+    groupTitle,
+    SegmentedControl,
+    searchInput,
+    unavailableText,
+  } from '@ai-usage/design-system/svelte';
   import type { AnalyticsGroup } from '@ai-usage/report-core/analytics';
   import { analyticsBreakdownCsv, reportCsvFilename } from '@ai-usage/report-core/csv';
   import type { BreakdownSort } from '../../../../dashboard-search';
@@ -8,7 +20,6 @@
   import BreakdownRow from './breakdown-row.svelte';
   import { harnessProviderView, providerPairCountLabel } from './harness-provider-model';
   import { projectBreakdownRow } from './model';
-  import { field, list, muted, panel, panelHeader, row, title } from './styles';
 
   let {
     generatedAt,
@@ -51,49 +62,61 @@
     csv: analyticsBreakdownCsv(view.exportRows),
     filename: reportCsvFilename('harnesses', generatedAt),
   });
+  const hierarchyBlock = css({
+    borderBottom: '1px solid token(colors.line)',
+    _last: { borderBottom: '0' },
+  });
+  const hierarchyChildren = css({ minW: 0, border: '0', m: 0, p: 0 });
 </script>
 
-<section class={panel} data-breakdown-panel="harness-providers">
-  <header class={panelHeader}>
-    <h2 class={title}>Harnesses & providers</h2>
-    <span class={muted}>{fmtNum(view.parents.length)} harnesses · {providerPairCountLabel(view.pairCount)}</span>
-  </header>
-  <div class={row}>
-    <input
-      aria-label="Search this breakdown"
-      class={field}
-      placeholder="Search this breakdown"
-      type="search"
-      bind:value={query}
+<section class={groupPanel} data-breakdown-panel="harness-providers">
+  <header class={groupHeader}>
+    <h2 class={groupTitle}>Harnesses & providers</h2>
+    <span
+      class={groupCount}
+      title={`${fmtNum(view.parents.length)} harnesses · ${providerPairCountLabel(view.pairCount)}`}
+      >{fmtNum(view.parents.length)}
+      harnesses · {providerPairCountLabel(view.pairCount)}</span
     >
-    <SegmentedControl
-      ariaLabel="Sort breakdown"
-      defaultValue="value"
-      items={sortItems}
-      onValueChange={changeSort}
-      value={sort}
-    />
-    <ReportSharingActions {createExport} />
-  </div>
-  {#if view.parents.length === 0}
-    <p class={muted} role="status">No breakdown rows match this search</p>
-  {:else}
-    <div class={list}>
+    <div class={actionRow} style:grid-column="1 / -1">
+      <input
+        aria-label="Search this breakdown"
+        class={searchInput}
+        placeholder="Search this breakdown"
+        type="search"
+        bind:value={query}
+      >
+      <SegmentedControl
+        ariaLabel="Sort breakdown"
+        defaultValue="value"
+        items={sortItems}
+        onValueChange={changeSort}
+        value={sort}
+      />
+      <ReportSharingActions {createExport} />
+    </div>
+  </header>
+  <div class={groupRows}>
+    {#if view.parents.length === 0}
+      <div class={groupRow} role="status"><div class={unavailableText}>No breakdown rows match this search</div></div>
+    {:else}
       {#each view.parents as parent (parent.group.key)}
         {@const parentView = projectBreakdownRow(parent.group, parent.group.key, maxKnownCost)}
-        <section data-harness-total={parent.group.harness}>
+        <section class={hierarchyBlock} data-harness-total={parent.group.harness}>
           <BreakdownRow
             controlsId={parent.controlsId}
             expanded={parent.expanded}
+            hierarchy
             onFilter={() => onHarnessFilter(parent.group.key)}
             {...(!view.searchActive ? { onToggle: () => toggleHarness(parent.group.key) } : {})}
             view={parentView}
           />
           {#if parent.children.length > 0}
-            <fieldset aria-label={`Providers for ${parent.group.key}`} id={parent.controlsId}>
+            <fieldset aria-label={`Providers for ${parent.group.key}`} class={hierarchyChildren} id={parent.controlsId}>
               {#each parent.children as child (child.group.provider)}
                 <BreakdownRow
                   child
+                  hierarchy
                   onFilter={() => onProviderFilter(child.group.provider)}
                   view={projectBreakdownRow(child.group, child.label, maxKnownCost)}
                 />
@@ -102,6 +125,6 @@
           {/if}
         </section>
       {/each}
-    </div>
-  {/if}
+    {/if}
+  </div>
 </section>

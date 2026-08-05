@@ -7,6 +7,7 @@ export * from './components/layout';
 export * from './components/overview';
 export * from './components/panel';
 export * from './components/refresh';
+export * from './components/segment-bar';
 export * from './components/skills';
 export * from './components/status';
 export * from './components/table';

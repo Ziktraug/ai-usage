@@ -1,5 +1,16 @@
 <script lang="ts">
-  import { SegmentedControl } from '@ai-usage/design-system/svelte';
+  import {
+    actionRow,
+    groupCount,
+    groupHeader,
+    groupPanel,
+    groupRow,
+    groupRows,
+    groupTitle,
+    SegmentedControl,
+    searchInput,
+    unavailableText,
+  } from '@ai-usage/design-system/svelte';
   import type { AnalyticsGroup } from '@ai-usage/report-core/analytics';
   import { analyticsBreakdownCsv, reportCsvFilename } from '@ai-usage/report-core/csv';
   import type { BreakdownSort, FieldFilterKey } from '../../../../dashboard-search';
@@ -7,7 +18,6 @@
   import ReportSharingActions from '../actions/report-sharing-actions.svelte';
   import BreakdownRow from './breakdown-row.svelte';
   import { analyticsExportRows, breakdownRows } from './model';
-  import { field, item, list, muted, panel, panelHeader, row, title } from './styles';
 
   let {
     countLabel,
@@ -48,37 +58,39 @@
   });
 </script>
 
-<section class={panel} data-breakdown-panel={dimension}>
-  <header class={panelHeader}>
-    <h2 class={title}>{panelTitle}</h2>
-    <span class={muted}>{fmtNum(visibleRows.length)} {countLabel}</span>
-  </header>
-  <div class={row}>
-    <input
-      aria-label="Search this breakdown"
-      class={field}
-      placeholder="Search this breakdown"
-      type="search"
-      bind:value={query}
+<section class={groupPanel} data-breakdown-panel={dimension}>
+  <header class={groupHeader}>
+    <h2 class={groupTitle}>{panelTitle}</h2>
+    <span class={groupCount} title={`${fmtNum(visibleRows.length)} ${countLabel}`}
+      >{fmtNum(visibleRows.length)} {countLabel}</span
     >
-    <SegmentedControl
-      ariaLabel="Sort breakdown"
-      defaultValue="value"
-      items={sortItems}
-      onValueChange={changeSort}
-      value={sort}
-    />
-    <ReportSharingActions {createExport} />
-  </div>
-  {#if visibleRows.length === 0}
-    <p class={muted}>{query.trim() ? 'No matching groups' : `No ${countLabel}`}</p>
-  {:else}
-    <div class={list}>
-      {#each visibleRows as view (view.group.key)}
-        <article class={item}>
-          <BreakdownRow onFilter={() => onFilter?.(filterKey, view.group.key)} {view} />
-        </article>
-      {/each}
+    <div class={actionRow} style:grid-column="1 / -1">
+      <input
+        aria-label="Search this breakdown"
+        class={searchInput}
+        placeholder="Search this breakdown"
+        type="search"
+        bind:value={query}
+      >
+      <SegmentedControl
+        ariaLabel="Sort breakdown"
+        defaultValue="value"
+        items={sortItems}
+        onValueChange={changeSort}
+        value={sort}
+      />
+      <ReportSharingActions {createExport} />
     </div>
-  {/if}
+  </header>
+  <div class={groupRows}>
+    {#if visibleRows.length === 0}
+      <div class={groupRow} role="status">
+        <div class={unavailableText}>{query.trim() ? 'No matching groups' : `No ${countLabel}`}</div>
+      </div>
+    {:else}
+      {#each visibleRows as view (view.group.key)}
+        <BreakdownRow onFilter={() => onFilter?.(filterKey, view.group.key)} {view} />
+      {/each}
+    {/if}
+  </div>
 </section>

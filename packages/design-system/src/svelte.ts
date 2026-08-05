@@ -6,9 +6,11 @@ export {
   migrationCrosshair,
   stableSeriesColor,
 } from './components/chart';
+export { unavailableText } from './components/empty-state';
 export { searchInput } from './components/field';
 
 export {
+  actionRow,
   activeFilters,
   filterSummary,
   header,
@@ -21,7 +23,22 @@ export {
   title,
   titleBlock,
 } from './components/layout';
-export { panel, panelSub, panelTitle } from './components/panel';
+
+export {
+  groupCount,
+  groupHeader,
+  groupPanel,
+  groupPct,
+  groupRow,
+  groupRows,
+  groupSub,
+  groupTitle,
+  groupValue,
+  panel,
+  panelSub,
+  panelTitle,
+} from './components/panel';
+export { barFill, barTrack } from './components/segment-bar';
 export {
   banner,
   bannerError,
@@ -32,7 +49,8 @@ export {
   statusPillOk,
   statusPillWarn,
 } from './components/status';
-export { muted, strongCell } from './components/table';
+
+export { groupKeyButton, muted, right, strongCell } from './components/table';
 export {
   monthGridline,
   timeChartOptions,
