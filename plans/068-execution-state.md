@@ -2450,3 +2450,16 @@ have level-4 measurement records in this reopening section. Focused validation
 for the final repairs reports zero Svelte typecheck errors or warnings, 81/81
 Overview/report-core tests, 20/20 Overview SSR/compile tests, green
 red-to-green browser titles and an unchanged unconsumed-export debt of 103.
+
+The first complete deterministic browser run then caught one integration
+regression from moving Date range outside the workspace: while a changed
+focused filter request was blocked, the previous range remained visible even
+though Solid's `focusedTimelineFiltersAreStale()` wrapper and the existing
+browser contract require no stale control. Commit
+`d4460595131aacbbcd093cd39c72f22ccf008e58` ports that exact
+filter-only predicate to both live and synthetic destinations. The title first
+failed with one Date-range region versus zero and is green after repair.
+Requested and committed filters are compared independently of range and
+timeline options, so the production contracts still keep the original control
+mounted across chart-option and date-range refreshes; all eight production
+report titles pass.
