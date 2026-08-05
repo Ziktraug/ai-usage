@@ -150,6 +150,35 @@ const recordOverviewRepair = (record: ParityRecord): ParityRecord =>
         ],
       }
     : record;
+const skillsRepairCommit = '0e5b16f8682d687fc9e37b436e35daebb51d4abf';
+const skillsRepairTitleIds = new Set([
+  'pw:apps/web/e2e/skills.spec.ts::keeps the tree, editor, and Inspector in one bounded desktop workspace row',
+  'pw:apps/web/e2e/skills.spec.ts::presents unmanaged copies as neutral backlog rows with their reconciliation action',
+  'pw:apps/web/e2e/skills.spec.ts::renders matrix cards on mobile and preserves the desktop comparison table',
+]);
+const recordSkillsRepair = (record: ParityRecord): ParityRecord =>
+  skillsRepairTitleIds.has(record.id)
+    ? {
+        ...record,
+        evidence: [
+          ...record.evidence,
+          {
+            commit: skillsRepairCommit,
+            kind: 'command',
+            phase: 'target',
+            reference:
+              'bun run --cwd apps/web test:e2e -- e2e/skills.spec.ts (16/16 green after the strengthened contracts first failed on a 58px desktop editor offset, break-word instead of anywhere wrapping, absent mobile Auto/4 tok metadata, and a 95px disclosure-row offset)',
+          },
+          {
+            commit: skillsRepairCommit,
+            kind: 'review',
+            phase: 'target',
+            reference:
+              'Solid 2183270e differential confirms exact editor, matrix and global-management geometry at 361/768/1024/1440 in light/dark. The duplicate hidden desktop Skills tree is a shared Solid defect and remains documented rather than redesigned.',
+          },
+        ],
+      }
+    : record;
 const inFile = (file: string, titles: readonly string[]): readonly PlaywrightTitle[] =>
   titles.map((title) => ({ file: `apps/web/e2e/${file}`, title }));
 
@@ -300,5 +329,6 @@ export default defineParityShard({
     .map(recordBreakdownRepair)
     .map(recordSessionsRepair)
     .map(recordDrawerRepair)
-    .map(recordOverviewRepair),
+    .map(recordOverviewRepair)
+    .map(recordSkillsRepair),
 });

@@ -126,6 +126,37 @@ const restoreOverviewMetricExport = (record: ParityRecord): ParityRecord => {
     status: 'complete',
   };
 };
+const skillsRepairCommit = '0e5b16f8682d687fc9e37b436e35daebb51d4abf';
+const restoreSkillsMetricGridExport = (record: ParityRecord): ParityRecord => {
+  if (record.id !== 'design-export:./report::metricGrid') {
+    return record;
+  }
+
+  const restoredRecord = { ...record, replacementReason: undefined };
+  return {
+    ...restoredRecord,
+    currentOwner: 'packages/design-system/src/components/metric-tile.ts',
+    evidence: [
+      ...record.evidence,
+      targetEvidence(
+        skillsRepairCommit,
+        'command',
+        'bun run --cwd apps/web typecheck; bun test apps/web/src apps/web/*.test.ts; bun run --cwd apps/web test:e2e -- e2e/skills.spec.ts (16/16 green); bun tools/check-design-export-consumers.ts (green)',
+      ),
+      targetEvidence(
+        skillsRepairCommit,
+        'measurement',
+        'Solid 2183270e differential restores exact Skills editor, matrix and global-management geometry at 361/768/1024/1440 in light/dark after the browser contracts first exposed 58px header overflow, absent mobile matrix metadata and a 95px disclosure-row offset.',
+      ),
+      targetEvidence(
+        skillsRepairCommit,
+        'review',
+        'metricGrid has a live SkillsHealth consumer; retained Skills semantics replaced local presentation copies and the orphan-export debt fell to 103 without deleting an export.',
+      ),
+    ],
+    status: 'complete',
+  };
+};
 const reviewedRootRemoval = (record: ParityRecord): ParityRecord => ({
   ...record,
   evidence: [
@@ -249,5 +280,6 @@ export default defineParityShard({
   ]
     .map(closeAtCutover)
     .map(restoreBreakdownBarExport)
-    .map(restoreOverviewMetricExport),
+    .map(restoreOverviewMetricExport)
+    .map(restoreSkillsMetricGridExport),
 });

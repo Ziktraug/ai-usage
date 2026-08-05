@@ -1,10 +1,6 @@
 [
   {
     "module": "button",
-    "name": "activeFilterButton"
-  },
-  {
-    "module": "button",
     "name": "navButton"
   },
   {
@@ -225,43 +221,7 @@
   },
   {
     "module": "overview",
-    "name": "heroLabel"
-  },
-  {
-    "module": "overview",
-    "name": "heroLegend"
-  },
-  {
-    "module": "overview",
-    "name": "heroLegendValue"
-  },
-  {
-    "module": "overview",
-    "name": "heroMultiple"
-  },
-  {
-    "module": "overview",
-    "name": "heroPanel"
-  },
-  {
-    "module": "overview",
-    "name": "heroSide"
-  },
-  {
-    "module": "overview",
-    "name": "heroText"
-  },
-  {
-    "module": "overview",
-    "name": "heroValue"
-  },
-  {
-    "module": "overview",
     "name": "scatterWrap"
-  },
-  {
-    "module": "panel",
-    "name": "panelHeaderRow"
   },
   {
     "module": "refresh",
@@ -306,42 +266,6 @@
   {
     "module": "skills",
     "name": "skillsDiagnosticRow"
-  },
-  {
-    "module": "skills",
-    "name": "skillsDisclosurePanel"
-  },
-  {
-    "module": "skills",
-    "name": "skillsDisclosureSummary"
-  },
-  {
-    "module": "skills",
-    "name": "skillsPathText"
-  },
-  {
-    "module": "skills",
-    "name": "skillsReconcilePlanList"
-  },
-  {
-    "module": "status",
-    "name": "statusDotBroken"
-  },
-  {
-    "module": "status",
-    "name": "statusDotCopy"
-  },
-  {
-    "module": "status",
-    "name": "statusDotLinked"
-  },
-  {
-    "module": "status",
-    "name": "statusDotMissing"
-  },
-  {
-    "module": "status",
-    "name": "statusDotNone"
   },
   {
     "module": "table",

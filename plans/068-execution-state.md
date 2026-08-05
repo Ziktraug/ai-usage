@@ -2208,3 +2208,75 @@ than being misreported as Overview tile or Token-anatomy parity.
 
 Skills, Sources/Sync, the duplicated Skills tree, reduced motion and the
 remaining cross-surface responsive review have not yet been reached.
+
+### Skills workspace presentation-parity audit
+
+The pre-change comparison drove Solid `2183270e` and Svelte at `de246b4`
+through 361, 768, 1024 and 1440 pixels, light and dark themes, and both SSR and
+hydration. Ninety-six state captures covered the editor, matrix and global
+management routes. The probe recorded page and workspace geometry, rendered
+text/classes, table and card content, computed grid/display/wrapping/theme
+values, focusable descendants and document height.
+
+| Surface and property | Solid `2183270e` | Svelte before repair | Svelte after repair |
+| --- | ---: | ---: | ---: |
+| Editor workspace at 361px | 321 x 1382.89px | exact | exact |
+| Editor workspace at 768 / 1024px | 480 x 1416.5 / 736 x 1662px | 8px shorter; editor 8px too high | exact |
+| Editor workspace at 1440px | 1152 x 860px | 1152 x 900px; editor 40px too low | exact |
+| Editor shell at 1440px | 554 x 738px | 554 x 778px | exact |
+| Matrix workspace at 361px | 321 x 1696.5px | 321 x 1741px | exact |
+| Matrix cards at 361px | 283 x 402px with Auto and `4 tok` metadata | 283 x 298px; metadata absent | exact |
+| Matrix table at 768 / 1024 / 1440px | 860 x 224px | 860 x 238px | exact |
+| Matrix Inspector at 361 / 768 / 1440px | 321 / 480 / 288 x 328.5px | 321 x 574 / 480 x 550 / 288 x 574px | exact |
+| Global detail at 361 / 768 / 1440px | 321 x 974 / 480 x 766 / 592 x 626px | 321 / 480 / 592 x 175 / 166 / 166px placeholder | exact |
+| Global consolidation row | 283 / 442 / 554 x 100px | content absent | exact |
+| Disabled and Configuration disclosures | one responsive row with 16px gap | stacked; second row 95px too low | exact |
+| Light/dark target geometry | identical by theme | same divergences in both themes | exact |
+
+The editor root cause was a local breakpoint reconstruction in
+`editor/skill-markdown-editor.svelte`. It kept the header, editor and actions
+on three rows until `2xl`, whereas Solid switches to the two-row
+`"header actions" / "editor editor"` grid at `md`. The first repair exposed a
+second difference: the local heading style used `overflow-wrap: break-word`,
+while the retained `strongCell` uses `anywhere` in the constrained toolbar.
+Lines 47–57 and 180–196 now carry the exact grid and shared heading semantic.
+
+The matrix root cause was the local presentation layer in
+`management/skills-matrix.svelte`: it changed table cell height, badges,
+separators and responsive cards, and omitted the Auto and token metadata on
+mobile. Lines 42–75 and 285–330 now restore the measured card/table split,
+860px table, retained badges and complete mobile content.
+
+The global-scope branch in `shell/skills-workspace.svelte` rendered only an
+integration placeholder, while the shared health slot owned the entire
+management page inside the Inspector. Lines 297–379 restore the Solid detail
+hero, metadata and Needs-attention content and place management detail and
+Inspector summaries deliberately. `management/skills-health-slot.svelte`
+lines 175–182 and 344–405 restore the 14px stacks, responsive two-column
+disclosures and compact Inspector. `management/skills-health.svelte` lines
+1–55 consume the restored shared `metricGrid` and metric semantics. Refresh
+ownership remains reactive across Overview, matrix and skill transitions, so
+this presentation repair does not reopen the settled lifecycle outcome.
+
+Three existing Skills browser contracts were strengthened and shown red before
+the implementation: the desktop workspace title failed on a 58px editor
+offset and then `break-word` versus `anywhere`; the matrix title failed because
+Auto and `4 tok` were absent on mobile; and the unmanaged-copy title exposed
+the 95px disclosure offset. Commit
+`0e5b16f8682d687fc9e37b436e35daebb51d4abf` makes all 16 Skills browser tests
+green. Web typecheck reports 0 errors and 0 warnings, the final differential
+is exact for every target in both themes, and the unconsumed design-export
+debt fell to 103 without deleting an export. The migration ledger is complete
+at 440/440 live exports with 538 records.
+
+Both implementations still contain two `Skills` headings at desktop widths.
+The mobile-picker tree is hidden by its outer `display: none`; its seven
+descendant controls have zero rendered focus stops, but the descendants are
+not individually `aria-hidden` or inert. This is a shared Solid accessibility
+defect, so it is recorded rather than changed without product approval. Solid
+also renders no Skills workspace with JavaScript disabled while Svelte emits
+meaningful SSR content; that difference belongs to the already-settled
+SSR/hydration outcome and was not rejudged.
+
+Sources/Sync, reduced motion and the remaining cross-surface responsive review
+have not yet been reached.
