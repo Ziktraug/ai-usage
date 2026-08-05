@@ -99,7 +99,7 @@ describe('P2 Overview Svelte surfaces', () => {
     expect(body).toContain('Estimated API-equivalent value');
     expect(body).toContain('Value bases');
     expect(body).toContain('Token anatomy');
-    expect(body).toContain('Provider status');
+    expect(body).not.toContain('Provider status');
     expect(body).toContain('Rhythm');
     expect(body).toContain('Punchcard');
     expect(body).toContain('Campaign · Day · Estimated API-equivalent value');
@@ -208,7 +208,7 @@ describe('P2 corrected interactive SSR contracts', () => {
     expect(body).toContain(`data-heatmap-day="${expectedLocalDateKey}"`);
   });
 
-  test('renders determined and indeterminate provider progress with remaining/reset copy', () => {
+  test('renders determined and indeterminate provider progress with reset copy and full aria semantics', () => {
     const determined = quotaWindow();
     const unknown = quotaWindow({
       id: 'unknown',
@@ -227,7 +227,7 @@ describe('P2 corrected interactive SSR contracts', () => {
     expect(body.match(/<progress/g)).toHaveLength(2);
     expect(body).toContain('value="75"');
     expect(body).toContain('Unknown usage');
-    expect(body).toContain('Remaining unknown');
+    expect(body).not.toContain('Remaining unknown');
     expect(body).toContain('Reset time unknown');
     expect(body).toContain('unknown used percent, unknown remaining percent, reset time unknown');
   });

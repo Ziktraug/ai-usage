@@ -367,14 +367,25 @@ test('keeps the selected dashboard view ahead of secondary provider status on de
 });
 
 test('keeps provider details collapsed until they are requested', async ({ page }) => {
+  await page.setViewportSize({ height: 1000, width: 1440 });
   await openHydratedReport(page);
 
+  const providerPanel = page
+    .getByRole('heading', { level: 2, name: 'Provider status' })
+    .locator('xpath=ancestor::section[1]');
   const providerDetails = page.getByText(PROVIDER_DETAILS_PATTERN);
   const noQuotaDetail = page.getByText('No quota windows are available for this provider.').first();
+  const attentionProviders = page.getByRole('list', { name: 'Providers requiring attention' });
+  const providerCategories = page.getByRole('list', { name: PROVIDER_CATEGORIES_PATTERN });
+
+  await expect(providerPanel).toContainText('Quota usage and operational issues at a glance.');
+  await expect(providerPanel).toHaveCSS('height', '260px');
+  await expect(attentionProviders).toHaveCSS('height', '24px');
+  await expect(providerCategories).toHaveCSS('height', '54px');
+  await expect(providerDetails).toHaveCSS('height', '38px');
 
   await expect(providerDetails).toBeVisible();
-  await expect(page.getByRole('list', { name: 'Providers requiring attention' })).toBeVisible();
-  const providerCategories = page.getByRole('list', { name: PROVIDER_CATEGORIES_PATTERN });
+  await expect(attentionProviders).toBeVisible();
   const categoryLabel = await providerCategories.getAttribute('aria-label');
   const providerTotal = Number(categoryLabel?.match(PROVIDER_CATEGORY_TOTAL_PATTERN)?.[1]);
   const categoryCounts = (await providerCategories.getByRole('listitem').allTextContents()).map((text) =>
@@ -383,8 +394,15 @@ test('keeps provider details collapsed until they are requested', async ({ page 
   expect(categoryCounts.every(Number.isFinite)).toBe(true);
   expect(categoryCounts.reduce((total, count) => total + count, 0)).toBe(providerTotal);
   await expect(noQuotaDetail).not.toBeVisible();
+
+  await page.setViewportSize({ height: 844, width: 361 });
+  await expect(providerPanel).toHaveCSS('height', '547px');
+  await expect(attentionProviders).toHaveCSS('height', '123px');
+  await expect(providerCategories).toHaveCSS('height', '162px');
+  await expect(providerDetails).toHaveCSS('height', '38px');
   await providerDetails.click();
   await expect(noQuotaDetail).toBeVisible();
+  await expect(providerPanel).toHaveCSS('height', '1255px');
 });
 
 test('Codex quota history shows reset and gap-aware ranges on desktop and mobile', async ({ page }) => {
