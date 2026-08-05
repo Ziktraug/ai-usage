@@ -505,6 +505,32 @@ test('draws only the selected report range and never overflows the plot', async 
   }
 });
 
+test('fills harness series with their branded tokens rather than one hashed hue', async ({ page }) => {
+  await openHydratedReport(page);
+
+  const dateRange = page.getByRole('region', { name: 'Date range' });
+  const fills = await dateRange.evaluate((element) => {
+    const swatchFill = (key: string): string | null => {
+      const node = element.querySelector(`[data-report-range-part="total-legend"] [data-series-key="${key}"] span`);
+      return node ? getComputedStyle(node).backgroundColor : null;
+    };
+    const keys = [...element.querySelectorAll('[data-report-range-part="total-legend"] [data-series-key]')].map(
+      (node) => node.getAttribute('data-series-key') ?? '',
+    );
+    return Object.fromEntries(keys.map((key) => [key, swatchFill(key)]));
+  });
+
+  const values = Object.values(fills).filter((fill): fill is string => typeof fill === 'string');
+  expect(values.length).toBeGreaterThan(1);
+  // A hash-derived palette produced neighbouring tans that read as one colour;
+  // every harness must resolve to its own semantic token instead.
+  expect(new Set(values).size).toBe(values.length);
+  for (const [key, fill] of Object.entries(fills)) {
+    expect(fill, key).not.toBeNull();
+    expect(fill, key).not.toBe('rgba(0, 0, 0, 0)');
+  }
+});
+
 test('announces each brush handle as a slider over the day it selects', async ({ page }) => {
   await openHydratedReport(page);
 

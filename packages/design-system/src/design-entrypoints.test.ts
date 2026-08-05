@@ -57,9 +57,14 @@ test('public design entrypoints keep framework runtimes explicit', async () => {
   expect(await Bun.file(path.join(packageSourceDirectory, 'svelte.ts')).text()).toContain(
     "from './svelte/controls/toggle.svelte'",
   );
-  expect(await Bun.file(path.join(packageSourceDirectory, 'svelte.ts')).text()).toContain(
-    "export { stableSeriesColor } from './components/chart'",
-  );
+  // The chart module is framework-neutral, so `/svelte` re-exports it directly.
+  // Assert the source and the series-colour surface rather than one exact export
+  // list, which changes whenever a consumer needs another neutral helper.
+  const svelteSource = await Bun.file(path.join(packageSourceDirectory, 'svelte.ts')).text();
+  expect(svelteSource).toContain("from './components/chart'");
+  for (const name of ['accentFill', 'dimensionSwatch', 'stableSeriesColor']) {
+    expect(svelteSource, name).toContain(name);
+  }
 });
 
 test('the public Svelte dependency closure cannot reach Solid or Ark Solid', async () => {

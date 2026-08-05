@@ -39,7 +39,9 @@ export type MachineSeriesPresenter = (key: string, label: string) => MachineTime
 export const timelineUsesSessions = (timeline: FocusedTimelineData, value: TimelineValue): boolean =>
   value === 'sessions' || (value === 'share' && timeline.grandTotal <= 0);
 
-export const timelineEntryValue = (
+// Internal to the readout: bars read their own segment values from
+// `timeline-window`, which already filtered the empty entries out.
+const timelineEntryValue = (
   entry: Pick<FocusedTimelineBucketEntry, 'cost' | 'sessions'> | null | undefined,
   useSessions: boolean,
 ): number => {

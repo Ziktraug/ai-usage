@@ -73,6 +73,14 @@ export const stableSeriesColor = (value: string) => `hsl(${stableHueFor(value)} 
 export const stableSeriesIndex = (value: string, itemCount: number) =>
   itemCount > 0 ? stableHueFor(value) % itemCount : 0;
 
+/**
+ * Neutral series fill. Callers use it as the sibling fallback when a swatch
+ * carries no branded class — never as a base layer under one, because Panda's
+ * `cx` only joins class names and two equal-specificity `bg` atoms are resolved
+ * by stylesheet order, not attribute order.
+ */
+export const accentFill = css({ bg: 'accent' });
+
 export interface DimensionSwatch {
   className?: string;
   style?: { background: string };

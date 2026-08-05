@@ -1,5 +1,5 @@
 export { commandButton, ghostButton, pendingButton, themeToggleButton } from './components/button';
-export { stableSeriesColor } from './components/chart';
+export { accentFill, type DimensionSwatch, dimensionSwatch, stableSeriesColor } from './components/chart';
 export { searchInput } from './components/field';
 
 export {

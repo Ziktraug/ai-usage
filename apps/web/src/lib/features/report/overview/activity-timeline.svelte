@@ -37,7 +37,9 @@
     backgroundImage: 'repeating-linear-gradient(135deg, transparent 0 2px, token(colors.lineStrong) 2px 3px)',
   });
   const gapEmpty = css({ flex: '1 1 0', minW: 0 });
-  const segment = css({ minH: '1px', bg: 'accent', borderTop: '1px solid token(colors.surface)' });
+  // No `bg` here: the series swatch owns the fill, and a base `bg` atom would
+  // race it on stylesheet order rather than losing to it.
+  const segment = css({ minH: '1px', borderTop: '1px solid token(colors.surface)' });
   const tickRow = css({
     position: 'relative',
     minH: '18px',
@@ -58,7 +60,7 @@
     _hover: { bg: 'track' },
     _disabled: { cursor: 'default', opacity: 0.8 },
   });
-  const swatch = css({ display: 'inline-block', w: '9px', h: '9px', borderRadius: 'sm', bg: 'accent' });
+  const swatch = css({ display: 'inline-block', w: '9px', h: '9px', borderRadius: 'sm' });
   const gapSwatch = css({
     display: 'inline-block',
     w: '9px',
@@ -74,7 +76,8 @@
 </script>
 
 <script lang="ts">
-  import { stableSeriesColor } from '@ai-usage/design-system/svelte';
+  import { cx } from '@ai-usage/design-system/css';
+  import { accentFill, type DimensionSwatch, dimensionSwatch } from '@ai-usage/design-system/svelte';
   import type { FocusedTimelineData, FocusedTimelineSeries } from '@ai-usage/report-core/focused-report-query';
   import { tick as afterDomUpdate, onMount } from 'svelte';
   import type { TimelineValue } from '../../../../overview-model';
@@ -86,7 +89,6 @@
     type MachineSeriesPresenter,
     presentTimelineSeries,
     retainTimelineTickLabels,
-    timelineEntryValue,
     timelineGapValue,
     timelineReadoutFor,
     timelineSeriesIsFilterable,
@@ -160,7 +162,6 @@
     timeline && inspectedIndex !== null ? timelineReadoutFor(timeline, value, inspectedIndex, presentedSeries) : null,
   );
 
-  const amountFor = (entry: { cost: number; sessions: number }): number => timelineEntryValue(entry, useSessions);
   const heightFor = (barTotal: number, amount: number): number => {
     if (value === 'share') {
       return timelineSharePercent(amount, barTotal);
@@ -276,6 +277,11 @@
 
   const seriesFreshness = (series: FocusedTimelineSeries): string | undefined =>
     timeline?.dimension === 'machine' ? machinePresenter(series.key, series.label).freshness : undefined;
+
+  // Harness and model series carry branded semantic tokens; only the open-ended
+  // dimensions fall back to a hash-derived hue. Calling the hash directly for
+  // every dimension collapsed Codex and OpenCode onto neighbouring tans.
+  const swatchFor = (key: string): DimensionSwatch => (timeline ? dimensionSwatch(timeline.dimension, key) : {});
 </script>
 
 <div class={chart} data-timeline-labels-settled={retainedTickIds === null ? 'false' : 'true'}>
@@ -285,6 +291,7 @@
         {@const total = timelineSeriesValue(series, useSessions)}
         {@const active = activeSeriesKeys.includes(series.key)}
         {@const filterable = timelineSeriesIsFilterable(timeline.dimension, series)}
+        {@const marker = swatchFor(series.key)}
         <li>
           <button
             {...pressedAria(active)}
@@ -299,7 +306,11 @@
             title={filterable ? `${active ? 'Clear or replace' : 'Filter by'} ${series.label}` : series.label}
             type="button"
           >
-            <span aria-hidden="true" class={swatch} style:background={stableSeriesColor(series.key)}></span>
+            <span
+              aria-hidden="true"
+              class={cx(swatch, marker.className ?? accentFill)}
+              style:background={marker.style?.background}
+            ></span>
             {series.label}
             <span class={percentage}
               >{fmtPct(timelineSharePercent(total, useSessions ? timeline.grandSessions : timeline.grandTotal))}</span
@@ -339,10 +350,11 @@
             style:min-width={layout.bucketMinWidth}
           >
             {#each bar.segments as segmentEntry (segmentEntry.key)}
+              {@const marker = swatchFor(segmentEntry.key)}
               <span
-                class={segment}
+                class={cx(segment, marker.className ?? accentFill)}
                 data-series-key={segmentEntry.key}
-                style:background={stableSeriesColor(segmentEntry.key)}
+                style:background={marker.style?.background}
                 style:height={`${heightFor(bar.total, segmentEntry.value)}%`}
                 style:opacity={hoveredKey === null || hoveredKey === segmentEntry.key ? 1 : 0.26}
               ></span>
