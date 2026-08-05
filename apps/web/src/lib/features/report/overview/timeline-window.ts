@@ -1,5 +1,5 @@
 import type { FocusedTimelineBucket, FocusedTimelineData } from '@ai-usage/report-core/focused-report-query';
-import { dateFromIndex } from '../../../../date-range';
+import { clampNumber, dateFromIndex } from '../../../../date-range';
 import type { TimeRangeIndexRange, TimeRangeSelectionIndexes } from '../../../../time-range-control-state';
 
 /**
@@ -13,6 +13,8 @@ const MONTH_TICK_MINIMUM_BUCKETS = 8;
 const MAX_VISUAL_TICKS = 14;
 const SPACED_BUCKET_MIN_WIDTH_PX = 2;
 const SPACED_BUCKET_GAP_PX = 2;
+const TIMELINE_PLOT_INSET_PX = 8;
+const PLOT_OFFSET_EPSILON = 0.0001;
 
 const monthTickFormatter = new Intl.DateTimeFormat('en', { month: 'short' });
 
@@ -202,3 +204,26 @@ export const visibleTimelineBounds = (
 });
 
 export const timelineMonthTickId = (tick: TimelineMonthTick): string => `${tick.pct}:${tick.label}`;
+
+/** Horizontal centre of one visible bucket, as a percentage of the window. */
+export const timelineBucketCenterPercent = (offsetInWindow: number, visibleCount: number): number =>
+  visibleCount > 0 ? ((offsetInWindow + 0.5) / visibleCount) * 100 : 50;
+
+const cssNumber = (value: number): string => Number(value.toFixed(4)).toString();
+
+/**
+ * Bars and hover hit-testing live inside the plot's 8px inset while the
+ * crosshair is positioned against the outer container, so a day-wide bucket
+ * would otherwise appear to highlight its neighbour. Correct by the equivalent
+ * pixel offset, which is largest at the edges and zero at the centre.
+ */
+export const timelinePlotLeft = (pct: number): string => {
+  const clampedPct = clampNumber(pct, 0, 100);
+  const plotRatio = clampedPct / 100;
+  const offsetPx = TIMELINE_PLOT_INSET_PX - 2 * TIMELINE_PLOT_INSET_PX * plotRatio;
+  if (Math.abs(offsetPx) < PLOT_OFFSET_EPSILON) {
+    return `${cssNumber(clampedPct)}%`;
+  }
+  const sign = offsetPx < 0 ? '-' : '+';
+  return `calc(${cssNumber(clampedPct)}% ${sign} ${cssNumber(Math.abs(offsetPx))}px)`;
+};

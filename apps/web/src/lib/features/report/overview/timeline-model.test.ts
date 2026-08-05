@@ -127,7 +127,7 @@ test('wires legend buttons, keyboard inspection, live readout, and collision mea
   expect(source).toContain('{...pressedAria(active)}');
   expect(source).toContain('onclick={() => filterable && onDimensionFilter(timeline.dimension, series.key)}');
   expect(source).toContain('new ResizeObserver(measureTickCollisions)');
-  expect(source).toContain("_focus: { outline: '2px solid token(colors.accent)'");
+  expect(source).toContain('class={timelineHoverLayer}');
   expect(source).toContain('data-origin-series-stack');
   expect(source).toContain('data-origin-unclassified-band');
   expect(source).toContain('data-origin-unclassified-legend');

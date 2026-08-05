@@ -2,7 +2,9 @@ import { describe, expect, test } from 'bun:test';
 import type { FocusedTimelineBucket, FocusedTimelineData } from '@ai-usage/report-core/focused-report-query';
 import {
   classifiedBucketValue,
+  timelineBucketCenterPercent,
   timelineBucketLayout,
+  timelinePlotLeft,
   timelineRangeForSelection,
   visibleTimelineBars,
   visibleTimelineBounds,
@@ -195,6 +197,25 @@ describe('window summary', () => {
         ['beta', 1],
       ]),
     });
+  });
+});
+
+describe('plot positioning', () => {
+  test('aligns the hovered day-bucket crosshair to the inset plot area', () => {
+    expect(timelinePlotLeft(1.25)).toBe('calc(1.25% + 7.8px)');
+    expect(timelinePlotLeft(50)).toBe('50%');
+    expect(timelinePlotLeft(98.75)).toBe('calc(98.75% - 7.8px)');
+  });
+
+  test('clamps a position outside the plot', () => {
+    expect(timelinePlotLeft(-20)).toBe('calc(0% + 8px)');
+    expect(timelinePlotLeft(140)).toBe('calc(100% - 8px)');
+  });
+
+  test('centres the crosshair on the bucket it inspects', () => {
+    expect(timelineBucketCenterPercent(0, 4)).toBe(12.5);
+    expect(timelineBucketCenterPercent(3, 4)).toBe(87.5);
+    expect(timelineBucketCenterPercent(0, 0)).toBe(50);
   });
 });
 

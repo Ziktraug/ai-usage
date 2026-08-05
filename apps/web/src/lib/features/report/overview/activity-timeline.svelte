@@ -8,16 +8,23 @@
     minH: '150px',
     // A dense window must never escape the panel, whatever the bucket count.
     overflow: 'hidden',
-    p: '8px 4px 0',
+    // 8px horizontal inset matches the hover overlay and the crosshair correction.
+    p: '8px 8px 0',
     borderBottom: '1px solid token(colors.line)',
-    cursor: 'crosshair',
-    _focus: { outline: '2px solid token(colors.accent)', outlineOffset: '2px' },
   });
   // Flex, not a `repeat(N, minmax(4px, 1fr))` grid: a minmax floor multiplies
   // into a minimum width the container cannot honour, so 249 day buckets pushed
   // the bars about a thousand pixels past the panel. Flex items shrink instead,
   // and `timelineBucketLayout` caps the per-bucket minimum at its fair share.
-  const seriesStack = css({ display: 'flex', alignItems: 'flex-end', w: 'full', h: '140px', minW: 0 });
+  const seriesStack = css({
+    display: 'flex',
+    alignItems: 'flex-end',
+    w: 'full',
+    h: '140px',
+    minW: 0,
+    // Marks only; the hover overlay above owns pointer input.
+    pointerEvents: 'none',
+  });
   const bucketClass = css({ display: 'flex', flex: '1 1 0', flexDirection: 'column-reverse', h: '140px', minW: 0 });
   const gapBands = css({
     position: 'absolute',
@@ -78,7 +85,14 @@
 
 <script lang="ts">
   import { cx } from '@ai-usage/design-system/css';
-  import { accentFill, type DimensionSwatch, dimensionSwatch } from '@ai-usage/design-system/svelte';
+  import {
+    accentFill,
+    type DimensionSwatch,
+    dimensionSwatch,
+    migrationCrosshair,
+    monthGridline,
+    timelineHoverLayer,
+  } from '@ai-usage/design-system/svelte';
   import type { FocusedTimelineData, FocusedTimelineSeries } from '@ai-usage/report-core/focused-report-query';
   import { tick as afterDomUpdate, onMount } from 'svelte';
   import type { TimelineValue } from '../../../../overview-model';
@@ -97,8 +111,10 @@
     timelineUsesSessions,
   } from './timeline-model';
   import {
+    timelineBucketCenterPercent,
     timelineBucketLayout,
     timelineMonthTickId,
+    timelinePlotLeft,
     visibleTimelineBars,
     visibleTimelineBounds,
     visibleTimelineMaximum,
@@ -337,16 +353,15 @@
         </li>
       {/if}
     </ul>
-    <button
-      aria-label="Inspect activity timeline. Use arrow keys to inspect days."
-      class={plot}
-      data-bucket-index={inspectedIndex ?? 0}
-      data-report-range-part="chart"
-      onfocus={() => inspect(inspectedIndex ?? (bars[0]?.index ?? 0))}
-      onkeydown={onChartKeydown}
-      onmousemove={inspectFromPointer}
-      type="button"
-    >
+    <div class={plot} data-bucket-index={inspectedIndex ?? 0} data-report-range-part="chart">
+      {#each monthTicks as monthTick (timelineMonthTickId(monthTick))}
+        <span
+          aria-hidden="true"
+          class={monthGridline}
+          data-month-gridline
+          style:left={timelinePlotLeft(monthTick.pct)}
+        ></span>
+      {/each}
       <span
         class={seriesStack}
         data-origin-series-stack={timeline.dimension === 'origin' ? '' : undefined}
@@ -388,7 +403,27 @@
           {/each}
         </span>
       {/if}
-    </button>
+      <!-- Inspection lives on its own transparent overlay so the bars stay
+      non-interactive marks and the crosshair can sit above them. -->
+      <button
+        aria-label="Inspect activity timeline. Use arrow keys to inspect days."
+        class={timelineHoverLayer}
+        onfocus={() => inspect(inspectedIndex ?? (bars[0]?.index ?? 0))}
+        onkeydown={onChartKeydown}
+        onmouseleave={() => (inspectedIndex = null)}
+        onmousemove={inspectFromPointer}
+        title="Inspect activity in the selected report range"
+        type="button"
+      ></button>
+      {#if inspectedIndex !== null}
+        <span
+          aria-hidden="true"
+          class={migrationCrosshair}
+          data-timeline-crosshair
+          style:left={timelinePlotLeft(timelineBucketCenterPercent(inspectedIndex - visibleWindow.from, bars.length))}
+        ></span>
+      {/if}
+    </div>
     <div class={tickRow} data-report-range-part="chart-axis" data-timeline-tick-row bind:this={tickRowElement}>
       {#each monthTicks as monthTick (timelineMonthTickId(monthTick))}
         {@const tickId = timelineMonthTickId(monthTick)}

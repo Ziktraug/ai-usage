@@ -1,5 +1,11 @@
 export { commandButton, ghostButton, pendingButton, themeToggleButton } from './components/button';
-export { accentFill, type DimensionSwatch, dimensionSwatch, stableSeriesColor } from './components/chart';
+export {
+  accentFill,
+  type DimensionSwatch,
+  dimensionSwatch,
+  migrationCrosshair,
+  stableSeriesColor,
+} from './components/chart';
 export { searchInput } from './components/field';
 
 export {
@@ -28,10 +34,12 @@ export {
 } from './components/status';
 export { muted, strongCell } from './components/table';
 export {
+  monthGridline,
   timeChartOptions,
   timeChartOptionsCurrent,
   timeChartOptionsSummary,
   timeChartOptionsTitle,
+  timelineHoverLayer,
   timeRangeViewControls,
   timeSliderThumb,
 } from './components/time-slider';
