@@ -24,6 +24,10 @@ const reportRemovalReason = (record: ParityRecord): string => {
   }
   return `The Solid ./report implementation export ${exportName} was internalized by the D1 Svelte control or its passive styles and has no remaining public consumer.`;
 };
+const withoutReplacementReason = (record: ParityRecord): Omit<ParityRecord, 'replacementReason'> => {
+  const { replacementReason: _replacementReason, ...restoredRecord } = record;
+  return restoredRecord;
+};
 const closeAtCutover = (record: ParityRecord): ParityRecord => {
   if (record.status !== 'current') {
     return record;
@@ -65,7 +69,7 @@ const restoreBreakdownBarExport = (record: ParityRecord): ParityRecord => {
     return record;
   }
 
-  const restoredRecord = { ...record, replacementReason: undefined };
+  const restoredRecord = withoutReplacementReason(record);
   return {
     ...restoredRecord,
     currentOwner: 'packages/design-system/src/components/segment-bar.ts',
@@ -101,7 +105,7 @@ const restoreOverviewMetricExport = (record: ParityRecord): ParityRecord => {
     return record;
   }
 
-  const restoredRecord = { ...record, replacementReason: undefined };
+  const restoredRecord = withoutReplacementReason(record);
   return {
     ...restoredRecord,
     currentOwner: 'packages/design-system/src/components/metric-tile.ts',
@@ -132,7 +136,7 @@ const restoreSkillsMetricGridExport = (record: ParityRecord): ParityRecord => {
     return record;
   }
 
-  const restoredRecord = { ...record, replacementReason: undefined };
+  const restoredRecord = withoutReplacementReason(record);
   return {
     ...restoredRecord,
     currentOwner: 'packages/design-system/src/components/metric-tile.ts',
