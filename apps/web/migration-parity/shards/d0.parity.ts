@@ -133,6 +133,42 @@ const completeSeriesColorExport = (record: ParityRecord): ParityRecord => ({
   ],
   status: 'complete',
 });
+const punchcardRepairCommit = '68b9a8c6ee43c771804747c0125ed8419ef1f50d';
+const punchcardRepairExportIds = new Set([
+  'design-export:./report::advancedAnalysis',
+  'design-export:./report::advancedAnalysisContent',
+  'design-export:./report::advancedAnalysisHeader',
+  'design-export:./report::advancedAnalysisHeaderText',
+  'design-export:./report::overviewGrid',
+  'design-export:./report::punchCell',
+  'design-export:./report::punchCellButton',
+  'design-export:./report::punchDayLabel',
+  'design-export:./report::punchDot',
+  'design-export:./report::punchGrid',
+  'design-export:./report::punchHourLabel',
+  'design-export:./report::punchIntensityKey',
+  'design-export:./report::punchIntensityKeyCell',
+]);
+const recordPunchcardRepair = (record: ParityRecord): ParityRecord =>
+  punchcardRepairExportIds.has(record.id)
+    ? appendTargetEvidence(record, [
+        targetEvidence(
+          punchcardRepairCommit,
+          'command',
+          'bun run --cwd apps/web test:e2e -- e2e/dashboard-presentation.spec.ts --grep "uses one fixed-size Punchcard intensity channel"; bun tools/check-design-export-consumers.ts; bun run test:web-migration-parity (green)',
+        ),
+        targetEvidence(
+          punchcardRepairCommit,
+          'measurement',
+          'Solid 2183270e differential at 361/768/1024/1440 in light/dark and SSR/hydrated: 24px square fills, 2px grid gap and radius, full-row sole panel, matching semantic colors and legend.',
+        ),
+        targetEvidence(
+          punchcardRepairCommit,
+          'review',
+          'Presentation-parity review against the running Solid control confirmed the restored export consumers across all 16 viewport/theme/runtime combinations; the orphan-export debt fell from 167 to 154.',
+        ),
+      ])
+    : record;
 const designRow = (id: string, currentOwner: string, evidence: string) =>
   currentRecord(owner, {
     currentOwner,
@@ -331,7 +367,9 @@ export default defineParityShard({
         `,
         source: 'packages/design-system/src/components/time-slider.ts',
       },
-    ]).map(completeForD4),
+    ])
+      .map(completeForD4)
+      .map(recordPunchcardRepair),
     ...designExportRecords(owner, [
       {
         entrypoint: './svelte',

@@ -22,6 +22,31 @@ const completeAtCutover = (record: ParityRecord): ParityRecord => ({
   ],
   status: 'complete',
 });
+const punchcardRepairCommit = '68b9a8c6ee43c771804747c0125ed8419ef1f50d';
+const recordPunchcardRepair = (record: ParityRecord): ParityRecord =>
+  record.id ===
+  'pw:apps/web/e2e/dashboard-presentation.spec.ts::uses one fixed-size Punchcard intensity channel with a low/high key'
+    ? {
+        ...record,
+        evidence: [
+          ...record.evidence,
+          {
+            commit: punchcardRepairCommit,
+            kind: 'command',
+            phase: 'target',
+            reference:
+              'bun run --cwd apps/web test:e2e -- e2e/dashboard-presentation.spec.ts --grep "uses one fixed-size Punchcard intensity channel" (green after failing on legend, header geometry, and hydrated Arrow-key focus)',
+          },
+          {
+            commit: punchcardRepairCommit,
+            kind: 'review',
+            phase: 'target',
+            reference:
+              'Solid 2183270e presentation review confirms the strengthened title now guards exact 24px/2px square geometry, session-count legend, full-row placement, and baseline keyboard behavior.',
+          },
+        ],
+      }
+    : record;
 const inFile = (file: string, titles: readonly string[]): readonly PlaywrightTitle[] =>
   titles.map((title) => ({ file: `apps/web/e2e/${file}`, title }));
 
@@ -166,5 +191,5 @@ const titles = [
 
 export default defineParityShard({
   owner,
-  records: playwrightTitleRecords(owner, titles).map(completeAtCutover),
+  records: playwrightTitleRecords(owner, titles).map(completeAtCutover).map(recordPunchcardRepair),
 });

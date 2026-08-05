@@ -1858,3 +1858,58 @@ are layout belonging in the consumer is a product call. Surfaces beyond the
 Activity panel — Punchcard, Breakdown bars, the Sessions table, the drawer, dark
 theme and reduced motion — have not been compared to `2183270e` and remain
 unverified at level 4.
+
+### Punchcard and Rhythm presentation-parity audit
+
+The reopened audit next compared the running Solid control at `2183270e`
+against Svelte at `c1b019ad` before changing source. A single Playwright driver
+measured both implementations at 361, 768, 1024 and 1440 pixels, in light and
+dark themes, with JavaScript disabled and after hydration. It also captured 32
+before screenshots and repeated the full 16-point DOM/geometry/style matrix
+after repair.
+
+Rhythm was already at presentation parity. Its measured cells were 18 × 18px at
+361px and 12 × 12px at the three wider viewports, with a 3px gap, 61 days in 10
+week columns, and the same intensity endpoints: light `rgb(172, 75, 18)` /
+`rgb(236, 232, 224)` and dark `rgb(224, 131, 60)` / `rgb(44, 46, 51)`.
+Hydration retained one roving target; Right moved May 25 to June 1 and Enter
+selected May 25 in both implementations. No Rhythm source changed.
+
+Punchcard was not at parity before `68b9a8c6ee43c771804747c0125ed8419ef1f50d`:
+
+| Property | Solid `2183270e` | Svelte before repair | Svelte after repair |
+| --- | ---: | ---: | ---: |
+| Grid columns / gap | 24px / 2px | 18px / 3px | 24px / 2px |
+| Intrinsic grid width | 658px | 560px | 658px |
+| Active target / fill | 24 × 24px / 24 × 24px | 18 × 18px / 10 × 10px | 24 × 24px / 24 × 24px |
+| Fill shape | 2px-radius square | circular (`9999px`) | 2px-radius square |
+| Panel height at 361 / wider | 341.5px / 323.5px | 297px / 279px | 341.5px / 323.5px |
+| Intensity key | `Low High session count` | `Low High` | `Low High session count` |
+| Sole panel at 1024/1440 | spans advanced-analysis row | half row | spans advanced-analysis row |
+| Arrow key on populated button | browser default; focus stays | focus moved to neighbour | browser default; focus stays |
+
+The first root cause was the local 18px grid and 10px circular dot in
+`apps/web/src/lib/features/report/overview/punchcard.svelte`, replacing rather
+than consuming the retained `punch*` semantic exports. The second was the local
+advanced-analysis reconstruction in `overview-page.svelte`, which omitted both
+the semantic wrapper chrome and `twoColumns`' only-child span. The third was a
+Svelte-only Arrow-key focus handler absent from the Solid control. Finally, the
+focused projection lowercased a Punchcard-only advanced-analysis summary in
+`packages/report-core/src/focused-report-query.ts`.
+
+The repair restores the semantic Overview/Punchcard consumers, uses the
+sibling-fallback `cx(punchDot, accentFill)` shape, restores the full intensity
+key and advanced-analysis wrapper, removes only the extra Arrow behavior, and
+capitalizes the shared summary. Thirteen exports regained live consumers, so
+the recorded unconsumed-export debt shrank from 167 to 154 without adding or
+deleting an export.
+
+The strengthened `dashboard-presentation.spec.ts` title failed before repair on
+the missing legend and header geometry, and its hydrated keyboard assertion
+failed with the Tuesday 18:00 button inactive after ArrowDown. The focused query
+test separately failed on `weekly/hourly activity`. After repair, the browser
+test, focused query suite (28/28), Web typecheck (0 errors/0 warnings), consumer
+ratchet (154), migration-parity gate, and the full 16-point differential matrix
+all passed. Breakdown bars, Sessions, the session drawer, Overview tiles/token
+anatomy, Skills, Sources/Sync, the duplicated Skills tree, reduced motion and
+the remaining cross-surface dark/responsive review have not yet been reached.
