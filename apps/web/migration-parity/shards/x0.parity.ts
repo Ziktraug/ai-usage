@@ -101,6 +101,31 @@ const recordSessionsRepair = (record: ParityRecord): ParityRecord =>
         ],
       }
     : record;
+const drawerRepairCommit = 'bfcbe0c1491625e3e44f5256bd65ef37ed1141f1';
+const recordDrawerRepair = (record: ParityRecord): ParityRecord =>
+  record.id ===
+  'pw:apps/web/e2e/dashboard.spec.ts::navigates and closes the selected session with drawer keyboard commands'
+    ? {
+        ...record,
+        evidence: [
+          ...record.evidence,
+          {
+            commit: drawerRepairCommit,
+            kind: 'command',
+            phase: 'target',
+            reference:
+              'bun run --cwd apps/web test:e2e -- e2e/dashboard.spec.ts --grep "navigates and closes the selected session" (green after failing at 21px close-button line-height versus the 14px Solid invariant)',
+          },
+          {
+            commit: drawerRepairCommit,
+            kind: 'review',
+            phase: 'target',
+            reference:
+              'Solid 2183270e differential confirms exact drawer/sheet, body, grid, VCS, chronology, theme and responsive geometry after restoring semantic consumers. Both controls remain explicitly nonmodal and share the same focus-return defect.',
+          },
+        ],
+      }
+    : record;
 const inFile = (file: string, titles: readonly string[]): readonly PlaywrightTitle[] =>
   titles.map((title) => ({ file: `apps/web/e2e/${file}`, title }));
 
@@ -249,5 +274,6 @@ export default defineParityShard({
     .map(completeAtCutover)
     .map(recordPunchcardRepair)
     .map(recordBreakdownRepair)
-    .map(recordSessionsRepair),
+    .map(recordSessionsRepair)
+    .map(recordDrawerRepair),
 });

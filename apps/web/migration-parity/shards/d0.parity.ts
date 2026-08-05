@@ -247,6 +247,30 @@ const sessionsRepairEvidence = [
 const recordSessionsRepair = (record: ParityRecord): ParityRecord =>
   sessionsRepairExportIds.has(record.id) ? appendTargetEvidence(record, sessionsRepairEvidence) : record;
 const completeNewForSessions = (record: ParityRecord): ParityRecord => completeRecord(record, sessionsRepairEvidence);
+const drawerRepairCommit = 'bfcbe0c1491625e3e44f5256bd65ef37ed1141f1';
+const drawerRepairEvidence = [
+  targetEvidence(
+    drawerRepairCommit,
+    'source',
+    'packages/design-system/src/components/button.ts; packages/design-system/src/svelte/overlays/styles.ts; packages/design-system/src/svelte.ts; apps/web/src/lib/features/sessions/detail/session-drawer.svelte',
+  ),
+  targetEvidence(
+    drawerRepairCommit,
+    'command',
+    'bun --filter @ai-usage/design-system build; bun run --cwd apps/web typecheck; bun test apps/web/src apps/web/*.test.ts; bun test packages/design-system/src/svelte/overlays packages/design-system/src/design-entrypoints.test.ts; bun run --cwd apps/web test:e2e -- e2e/dashboard.spec.ts --grep "navigates and closes the selected session"; bun tools/check-design-export-consumers.ts (green)',
+  ),
+  targetEvidence(
+    drawerRepairCommit,
+    'measurement',
+    'Solid 2183270e differential at 361/768/1024/1440 in light/dark and SSR/hydrated: exact sheet/drawer, body, detail-grid, legend and action geometry after repair; close target 30x30px with exact 14px line-height. Production chronology and VCS regions are exact at all responsive widths.',
+  ),
+  targetEvidence(
+    drawerRepairCommit,
+    'review',
+    'Presentation-parity review confirms every restored drawer semantic export has a live Svelte consumer. The existing 122-export orphan debt did not grow; working served campaign controls remain the accepted Sessions exception, while nonmodal focus behavior matches the Solid reference.',
+  ),
+] as const;
+const completeNewForDrawer = (record: ParityRecord): ParityRecord => completeRecord(record, drawerRepairEvidence);
 const designRow = (id: string, currentOwner: string, evidence: string) =>
   currentRecord(owner, {
     currentOwner,
@@ -525,6 +549,20 @@ export default defineParityShard({
         source: 'packages/design-system/src/components/time-slider.ts',
       },
     ]).map(completeNewForSessions),
+    ...designExportRecords(owner, [
+      {
+        entrypoint: './svelte',
+        names: 'drawerClose',
+        source: 'packages/design-system/src/components/button.ts',
+      },
+      {
+        entrypoint: './svelte',
+        names: `
+          drawer drawerActions drawerBody drawerCompare drawerGrid drawerLegend drawerLegendItem drawerLegendSwatch drawerLegendValue drawerNav drawerPosition drawerTitle drawerTop
+        `,
+        source: 'packages/design-system/src/svelte/overlays/styles.ts',
+      },
+    ]).map(completeNewForDrawer),
     ...designExportRecords(owner, [
       {
         entrypoint: './svelte',

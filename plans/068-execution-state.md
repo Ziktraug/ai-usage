@@ -2059,3 +2059,77 @@ records.
 The session drawer, Overview tiles/token anatomy, Skills, Sources/Sync, the
 duplicated Skills tree, reduced motion and the remaining cross-surface
 responsive review have not yet been reached.
+
+### Session drawer presentation-parity audit
+
+The next comparison drove the running Solid control at `2183270e` and Svelte
+at `91734a3` before changing drawer source. The ordinary deterministic fixture
+covered SSR and hydration at 361, 768, 1024 and 1440 pixels in light and dark
+themes. The isolated synthetic production fixture then opened the same recorded
+Claude revision on both sides, including source control and loaded chronology.
+In total, 32 ordinary-fixture and 32 production-fixture screenshots accompanied
+the DOM, geometry, computed-style and focus measurements; SSR was DOM-measured
+because no drawer exists before hydration.
+
+Before `bfcbe0c1491625e3e44f5256bd65ef37ed1141f1`, nearly all presentation was
+already exact:
+
+| Property | Solid `2183270e` | Svelte before repair | Svelte after repair |
+| --- | ---: | ---: | ---: |
+| SSR dialogs | 0 | 0 | 0 |
+| 361px sheet | 361 x 624px | exact | exact |
+| 768/1024/1440 drawer | 440px, full viewport height | exact | exact |
+| Body padding / gap | 16px 18px / 14px | exact | exact |
+| Detail grid / gaps | two columns / 12px 14px | exact | exact |
+| Close target / glyph line-height | 30 x 30px / 14px | 30 x 30px / 21px | exact |
+| VCS region, narrow / wide | 325 x 204.70px / 403 x 188.77px | exact | exact |
+| Chronology at 361 / 768 / 1024+ | 325 x 960.88px / 684.91 x 753.38px / 923 x 693.38px | exact | exact |
+| Initial focus / Tab behavior | Close / leaves after 12 internal stops | exact | exact |
+| Immediate Escape return | `body` | exact shared defect | unchanged |
+| Served campaign controls | absent | 164.25px block plus 14px gap | retained exception |
+
+The sheet/right-drawer breakpoint, border side and radius, body overflow,
+two-column details, navigation and action geometry, token anatomy, comparison
+hint, VCS ordering, chronology tracks and notices, prompt disclosures, model
+phases, and all light/dark semantic colours matched. Framework whitespace and
+text-wrapper nodes differed, but their rendered region dimensions and computed
+styles did not.
+
+The one presentation regression came from the local semantic reconstruction in
+`session-drawer.svelte:6` through line 84 at `91734a3`. Its local `drawerClose`
+omitted the Solid semantic style's `lineHeight: 1`, transition and disabled-hover
+state, leaving the glyph at the inherited 21px line-height. The same block
+duplicated the retained drawer shell, body, grid, navigation, legend, comparison
+and action semantics even where their current values happened to remain exact.
+
+The repair restores those semantics as live Svelte exports in
+`packages/design-system/src/svelte/overlays/styles.ts:24` through line 85 and
+uses the retained close control at
+`packages/design-system/src/components/button.ts:293`. The public composition is
+declared in `packages/design-system/src/svelte.ts`, and the consumer imports are
+visible in `session-drawer.svelte:16`. Only the 960px analysis width and token
+segment tone classes remain local because they were local in the Solid source.
+All 14 restored exports have consumers; the live/ledger counts grew from
+420/524 to 434/538 while the unconsumed-export debt stayed at 122.
+
+Two measured differences were deliberately not changed. First, the working
+Svelte served-campaign controls add 164.25px plus the shared 14px grid gap before
+the detail grid. Solid intentionally returns no selected campaign while a served
+query is active. This is the same accepted working campaign-expansion exception
+recorded by the Sessions audit, and removing it would regress product behavior.
+Second, both implementations explicitly set `modal={false}` and
+`trapFocus={false}`. Tab leaves after the same 12 internal controls, and even an
+immediate Escape leaves focus on `body` rather than returning it to the focused
+row/card trigger. That focus-return failure is shared by Solid; changing the
+interaction requires product approval and was not smuggled into a parity repair.
+
+The strengthened existing title at `dashboard.spec.ts:444` failed before repair
+with expected `14px`, received `21px`, then passed with the exact 30 x 30px and
+14px invariant. Web typecheck reported 0 errors and 0 warnings; 932 Web tests and
+12 focused design-system tests passed; the consumer ratchet remained 122; and
+the complete post-fix viewport/theme/SSR/hydration matrix matched. The migration
+ledger is complete at 434/434 live exports with 538 records.
+
+Overview tiles/token anatomy, Skills, Sources/Sync, the duplicated Skills tree,
+reduced motion and the remaining cross-surface responsive review have not yet
+been reached.
