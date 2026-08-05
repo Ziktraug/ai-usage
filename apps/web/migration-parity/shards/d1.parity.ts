@@ -90,6 +90,42 @@ const restoreBreakdownBarExport = (record: ParityRecord): ParityRecord => {
     status: 'complete',
   };
 };
+const overviewRepairCommit = '81aaa189319d3bac0a5a76225140d4486028cd62';
+const overviewMetricExportIds = new Set(
+  ['metricDelta', 'metricDeltaArrow', 'metricLabel', 'metricTile', 'metricValue'].map(
+    (name) => `design-export:./report::${name}`,
+  ),
+);
+const restoreOverviewMetricExport = (record: ParityRecord): ParityRecord => {
+  if (!overviewMetricExportIds.has(record.id)) {
+    return record;
+  }
+
+  const restoredRecord = { ...record, replacementReason: undefined };
+  return {
+    ...restoredRecord,
+    currentOwner: 'packages/design-system/src/components/metric-tile.ts',
+    evidence: [
+      ...record.evidence,
+      targetEvidence(
+        overviewRepairCommit,
+        'command',
+        'bun run --cwd apps/web typecheck; bun test apps/web/src apps/web/*.test.ts; bun test packages/design-system/src/svelte/controls packages/design-system/src/design-entrypoints.test.ts; bun run --cwd apps/web test:e2e -- e2e/dashboard.spec.ts --grep "shows analysis and report metrics without disclosure gates"; bun tools/check-design-export-consumers.ts (green)',
+      ),
+      targetEvidence(
+        overviewRepairCommit,
+        'measurement',
+        'Solid 2183270e differential restores exact shared MetricTile, value and delta geometry at 361/768/1024/1440 in light/dark and SSR/hydrated.',
+      ),
+      targetEvidence(
+        overviewRepairCommit,
+        'review',
+        'The five restored semantic exports have live generic and Overview Svelte consumers; no removed export was deleted and the orphan-export debt fell by eight.',
+      ),
+    ],
+    status: 'complete',
+  };
+};
 const reviewedRootRemoval = (record: ParityRecord): ParityRecord => ({
   ...record,
   evidence: [
@@ -212,5 +248,6 @@ export default defineParityShard({
     ]).map((record) => (record.id.startsWith('design-export:.::') ? reviewedRootRemoval(record) : record)),
   ]
     .map(closeAtCutover)
-    .map(restoreBreakdownBarExport),
+    .map(restoreBreakdownBarExport)
+    .map(restoreOverviewMetricExport),
 });

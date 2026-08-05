@@ -126,6 +126,30 @@ const recordDrawerRepair = (record: ParityRecord): ParityRecord =>
         ],
       }
     : record;
+const overviewRepairCommit = '81aaa189319d3bac0a5a76225140d4486028cd62';
+const recordOverviewRepair = (record: ParityRecord): ParityRecord =>
+  record.id === 'pw:apps/web/e2e/dashboard.spec.ts::shows analysis and report metrics without disclosure gates'
+    ? {
+        ...record,
+        evidence: [
+          ...record.evidence,
+          {
+            commit: overviewRepairCommit,
+            kind: 'command',
+            phase: 'target',
+            reference:
+              'bun run --cwd apps/web test:e2e -- e2e/dashboard.spec.ts --grep "shows analysis and report metrics without disclosure gates" (green after first failing because the Solid secondary header/count was absent)',
+          },
+          {
+            commit: overviewRepairCommit,
+            kind: 'review',
+            phase: 'target',
+            reference:
+              'Solid 2183270e differential confirms exact five-tile order, hint affordances, condensed deltas, grid/value-panel geometry, hero provenance/spend coverage and Token anatomy at every frozen viewport/theme/SSR state.',
+          },
+        ],
+      }
+    : record;
 const inFile = (file: string, titles: readonly string[]): readonly PlaywrightTitle[] =>
   titles.map((title) => ({ file: `apps/web/e2e/${file}`, title }));
 
@@ -275,5 +299,6 @@ export default defineParityShard({
     .map(recordPunchcardRepair)
     .map(recordBreakdownRepair)
     .map(recordSessionsRepair)
-    .map(recordDrawerRepair),
+    .map(recordDrawerRepair)
+    .map(recordOverviewRepair),
 });

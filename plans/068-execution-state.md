@@ -2133,3 +2133,78 @@ ledger is complete at 434/434 live exports with 538 records.
 Overview tiles/token anatomy, Skills, Sources/Sync, the duplicated Skills tree,
 reduced motion and the remaining cross-surface responsive review have not yet
 been reached.
+
+### Overview tiles and token-anatomy presentation-parity audit
+
+The next pre-change comparison drove Solid `2183270e` and Svelte at `e39ee68e`
+through 361, 768, 1024 and 1440 pixels, light and dark themes, and both SSR and
+hydration. Ninety-six screenshots covered the full page, metric region and
+Token anatomy panel for all 32 implementation/state combinations. The probe
+captured rendered text and classes, element counts, bounding boxes, computed
+grid/style/theme values and document height.
+
+The Overview hero and Token anatomy were already exact. The secondary metric
+surface was not:
+
+| Property | Solid `2183270e` | Svelte before repair | Svelte after repair |
+| --- | ---: | ---: | ---: |
+| Hero at 361 / 768 / 1024 / 1440 | 321 x 231 / 480 x 206.89 / 736 x 151.39 / 1152 x 151.39px | exact | exact |
+| Token anatomy at 361 / 768 / 1024 / 1440 | 321 x 279.5 / 480 x 260 / 736 x 240.5 / 1152 x 240.5px | exact | exact |
+| Secondary shell | bordered card, separate header and count `8` | absent | exact |
+| Grid columns at 361 / 768 / 1024 / 1440 | 2 / 4 / 4 / 4 with 10px gaps | 1 / 2 / 4 / 4 with 12px gaps | exact |
+| Value bases at 361px | 291 x 252px, full grid width | 321 x 140px | exact |
+| Value bases at 768 / 1024 / 1440 | 220 x 285 / 348 x 226.5 / 556 x 208.5px, two columns | 480 / 736 / 1152 x 140px, full width | exact |
+| Remaining metric tiles | 5 in Sessions, Mean, Fresh, Turns, Tools order | 6 in a different order, including zero RTK | exact |
+| Tile widths at 361 / 768 / 1024 / 1440 | 140.5 / 105 / 169 / 273px | 321 / 234 / 175 / 279px | exact |
+| Tile hint controls | labelled `i` buttons on all five tiles | absent | exact |
+| Value-basis hint controls | labelled bordered `i` buttons | borderless `?` buttons | exact |
+| Large deltas | `×5.0`, `×11`, `×9.5`, `×17` | `400%`, `994%`, `850%`, `1611%` | exact |
+| Light/dark surface, line, shadow, ink and accent | semantic theme tokens | Token anatomy/hero exact; metric shell divergent | exact |
+| SSR versus hydrated target geometry and copy | identical | same divergences in both states | exact |
+
+The hero's API-equivalent qualifier, price provenance, reported-spend badge and
+5/5 spend coverage were exact before and after repair. Token anatomy likewise
+kept its 61% headline, four-row order, exact token values/percentages, 8px
+swatches with four accent opacities, row geometry and dark tokens. The shared
+Solid narrow flex behavior can shrink nominal 24px hint buttons to 14–22px in
+the most constrained cells; Svelte now reproduces those measured dimensions
+instead of silently changing the shared design.
+
+The main root cause was the local reconstruction in
+`dashboard-metrics.svelte:1` through line 104 at `e39ee68`. It omitted the
+secondary card/header/count, changed grid breakpoints and gaps, made Value bases
+full-width, weakened its hint controls, and nested the shared `MetricTile`
+inside marker wrappers. The parallel reconstruction in `view-model.ts:36`
+through line 109 changed frozen labels and order, always emitted RTK even at
+zero, and discarded the Solid factor formatter for deltas of at least 400%.
+`overview-hero.svelte:1` through line 41 duplicated eight retained semantics;
+its values happened to be exact, but all eight shared exports had lost this
+consumer.
+
+Commit `81aaa189319d3bac0a5a76225140d4486028cd62` restores the original
+composition. The secondary shell, grid and Value-bases structure are visible in
+`dashboard-metrics.svelte:12` through line 136. The exact frozen projection and
+factor formatter live in `view-model.ts:31` through line 129. The app-specific
+hint/tile leaves consume the restored shared metric styles from
+`packages/design-system/src/components/metric-tile.ts:3`, while the generic
+Svelte `MetricTile` consumes the same module. `overview-hero.svelte:2` now uses
+the retained hero semantics directly. Five `./report` metric exports returned
+to current ownership, eight existing hero exports regained consumers, and the
+unconsumed-export debt fell from 122 to 114 without deleting an export.
+
+The strengthened existing browser title at `dashboard.spec.ts:277` first
+failed because the Solid secondary header/count did not exist. It now guards
+the count, five-tile projection, Sessions hint, `×5.0` delta, four-column
+desktop grid, two-column 361px grid, 10px gaps and full/half-width Value-bases
+invariant. Web typecheck reported 0 errors and 0 warnings; 932 Web tests and 9
+focused design-system tests passed; the browser title passed; and the final
+96-screenshot matrix matched for every targeted element. The migration ledger
+is complete at 439/439 live exports with 538 records.
+
+The document height still differs outside these target bounds by 530px at 361,
+268px at 768, 414px at 1024 and 402px at 1440. No target element accounts for
+that remainder; it is carried into the remaining cross-surface review rather
+than being misreported as Overview tile or Token-anatomy parity.
+
+Skills, Sources/Sync, the duplicated Skills tree, reduced motion and the
+remaining cross-surface responsive review have not yet been reached.

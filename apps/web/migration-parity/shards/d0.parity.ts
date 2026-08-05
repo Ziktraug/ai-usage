@@ -271,6 +271,36 @@ const drawerRepairEvidence = [
   ),
 ] as const;
 const completeNewForDrawer = (record: ParityRecord): ParityRecord => completeRecord(record, drawerRepairEvidence);
+const overviewRepairCommit = '81aaa189319d3bac0a5a76225140d4486028cd62';
+const overviewRepairEvidence = [
+  targetEvidence(
+    overviewRepairCommit,
+    'source',
+    'packages/design-system/src/components/metric-tile.ts; apps/web/src/lib/features/report/overview/dashboard-metrics.svelte; apps/web/src/lib/features/report/overview/dashboard-metric-hint.svelte; apps/web/src/lib/features/report/overview/dashboard-metric-tile.svelte; apps/web/src/lib/features/report/overview/overview-hero.svelte; apps/web/src/lib/features/report/overview/view-model.ts',
+  ),
+  targetEvidence(
+    overviewRepairCommit,
+    'command',
+    'bun run --cwd apps/web typecheck; bun test apps/web/src apps/web/*.test.ts; bun test packages/design-system/src/svelte/controls packages/design-system/src/design-entrypoints.test.ts; bun run --cwd apps/web test:e2e -- e2e/dashboard.spec.ts --grep "shows analysis and report metrics without disclosure gates"; bun tools/check-design-export-consumers.ts (green)',
+  ),
+  targetEvidence(
+    overviewRepairCommit,
+    'measurement',
+    'Solid 2183270e differential at 361/768/1024/1440 in light/dark and SSR/hydrated: exact hero, five-tile grid, value-bases panel, hint controls, delta labels and Token anatomy geometry, copy and semantic colours.',
+  ),
+  targetEvidence(
+    overviewRepairCommit,
+    'review',
+    'Presentation-parity review confirms the eight retained hero semantics have a live Svelte consumer again and the unconsumed-export debt fell from 122 to 114 without deleting an export.',
+  ),
+] as const;
+const overviewHeroExportIds = new Set(
+  ['heroLabel', 'heroLegend', 'heroLegendValue', 'heroMultiple', 'heroPanel', 'heroSide', 'heroText', 'heroValue'].map(
+    (name) => `design-export:./report::${name}`,
+  ),
+);
+const recordOverviewRepair = (record: ParityRecord): ParityRecord =>
+  overviewHeroExportIds.has(record.id) ? appendTargetEvidence(record, overviewRepairEvidence) : record;
 const designRow = (id: string, currentOwner: string, evidence: string) =>
   currentRecord(owner, {
     currentOwner,
@@ -586,5 +616,7 @@ export default defineParityShard({
         source: 'packages/design-system/src/svelte.ts',
       },
     ]).map(completeForD4),
-  ].map(completeCurrentAtCutover),
+  ]
+    .map(completeCurrentAtCutover)
+    .map(recordOverviewRepair),
 });
