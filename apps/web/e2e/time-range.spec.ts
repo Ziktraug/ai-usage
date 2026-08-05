@@ -10,6 +10,8 @@ const PUNCHCARD_CELL_LABEL_PATTERN =
   /^Filter report to (Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday) ([0-9]{2}):00–[0-9]{2}:59, ([0-9,]+) sessions?$/;
 const SESSION_SUMMARY_PATTERN = / sessions$/;
 
+const CURRENCY_PATTERN = /^\$[0-9,.]+$/;
+const RANGE_DAYS_PATTERN = /·\s*(\d+)\s*days?/;
 // The bug this guards against bound the class to the `'start' | 'end'` edge
 // name, so the generated style never applied. Assert the edge name itself never
 // reaches the class list rather than pattern-matching a Panda atom, which a
@@ -488,7 +490,7 @@ test('draws only the selected report range and never overflows the plot', async 
     await waitForFocusedReportSettled(page);
 
     const summary = await dateRange.locator('[data-report-range-part="summary"]').first().innerText();
-    const days = Number(/·\s*(\d+)\s*days?/.exec(summary)?.[1] ?? Number.NaN);
+    const days = Number(RANGE_DAYS_PATTERN.exec(summary)?.[1] ?? Number.NaN);
     expect(days, summary).not.toBeNaN();
 
     const geometry = await readChart();
@@ -503,6 +505,35 @@ test('draws only the selected report range and never overflows the plot', async 
       await dateRange.getByRole('textbox', { name: 'End date' }).inputValue(),
     );
   }
+});
+
+test('reports legend shares and the range total over the selected window', async ({ page }) => {
+  await openHydratedReport(page);
+
+  const dateRange = page.getByRole('region', { name: 'Date range' });
+  const legend = dateRange.locator('[data-report-range-part="total-legend"]');
+  const readLegend = () =>
+    legend.evaluate((element) => ({
+      series: [...element.querySelectorAll('[data-series-key]')].map((node) =>
+        (node.textContent ?? '').trim().replace(/\s+/g, ' '),
+      ),
+      total: element.querySelector('[data-report-range-total]')?.textContent?.trim() ?? null,
+    }));
+
+  const initial = await readLegend();
+  // The panel lost its total in the port; it is the figure the shares divide.
+  expect(initial.total).not.toBeNull();
+  expect(initial.total).toMatch(CURRENCY_PATTERN);
+  // A series with nothing inside the window is noise, not information.
+  expect(initial.series.filter((entry) => entry.endsWith('0.0%'))).toEqual([]);
+  expect(initial.series.length).toBeGreaterThan(0);
+
+  await dateRange.getByRole('button', { exact: true, name: 'Today' }).click();
+  await waitForFocusedReportSettled(page);
+
+  const narrowed = await readLegend();
+  expect(narrowed.total).not.toBe(initial.total);
+  expect(narrowed.series.length).toBeLessThanOrEqual(initial.series.length);
 });
 
 test('fills harness series with their branded tokens rather than one hashed hue', async ({ page }) => {

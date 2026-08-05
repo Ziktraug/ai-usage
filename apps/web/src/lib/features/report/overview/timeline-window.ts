@@ -161,6 +161,37 @@ export const visibleTimelineMonthTicks = (
   return ticks.filter((_, index) => index % step === 0);
 };
 
+export interface VisibleTimelineSummary {
+  gap: number;
+  total: number;
+  totalsByKey: ReadonlyMap<string, number>;
+}
+
+/**
+ * Totals for the selected window only. Legend shares and the range total both
+ * read these, so a series carrying nothing inside the range reports zero instead
+ * of borrowing its domain-wide figure.
+ */
+export const visibleTimelineSummary = (
+  timeline: FocusedTimelineData,
+  range: TimeRangeIndexRange,
+  useSessions: boolean,
+): VisibleTimelineSummary => {
+  const totalsByKey = new Map<string, number>();
+  let total = 0;
+  let gap = 0;
+  for (const bucket of timeline.buckets.slice(range.from, range.to + 1)) {
+    total += useSessions ? bucket.sessions : bucket.total;
+    if (bucket.unclassified) {
+      gap += useSessions ? bucket.unclassified.sessions : bucket.unclassified.total;
+    }
+    for (const [key, entry] of Object.entries(bucket.byKey)) {
+      totalsByKey.set(key, (totalsByKey.get(key) ?? 0) + (useSessions ? entry.sessions : entry.cost));
+    }
+  }
+  return { gap, total, totalsByKey };
+};
+
 /** The dates the window actually starts and ends on. */
 export const visibleTimelineBounds = (
   timeline: FocusedTimelineData,

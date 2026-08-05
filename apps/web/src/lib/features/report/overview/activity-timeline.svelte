@@ -70,6 +70,7 @@
     opacity: 0.55,
   });
   const percentage = css({ color: 'muted', textStyle: 'numeric' });
+  const rangeTotal = css({ fontWeight: 600, textStyle: 'numeric', mr: '4px' });
   const readout = css({ display: 'grid', gap: '5px', p: '9px', borderRadius: 'md', bg: 'track', fontSize: '11px' });
   const readoutRow = css({ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', gap: '8px' });
   const empty = css({ display: 'grid', placeItems: 'center', minH: '150px', color: 'muted', fontSize: '12px' });
@@ -92,7 +93,6 @@
     timelineGapValue,
     timelineReadoutFor,
     timelineSeriesIsFilterable,
-    timelineSeriesValue,
     timelineSharePercent,
     timelineUsesSessions,
   } from './timeline-model';
@@ -103,6 +103,7 @@
     visibleTimelineBounds,
     visibleTimelineMaximum,
     visibleTimelineMonthTicks,
+    visibleTimelineSummary,
   } from './timeline-window';
   import { originGapDescription } from './view-model';
 
@@ -154,6 +155,18 @@
   // rescales the chart instead of flattening it against a domain-wide peak.
   const windowMaximum = $derived(
     timeline ? Math.max(1, visibleTimelineMaximum(timeline, visibleWindow, useSessions)) : 1,
+  );
+  const summary = $derived(
+    timeline
+      ? visibleTimelineSummary(timeline, visibleWindow, useSessions)
+      : { gap: 0, total: 0, totalsByKey: new Map<string, number>() },
+  );
+  // A series carrying nothing in the window is noise, but an active filter must
+  // stay visible so it can be cleared.
+  const legendSeries = $derived(
+    presentedSeries.filter(
+      (series) => (summary.totalsByKey.get(series.key) ?? 0) > 0 || activeSeriesKeys.includes(series.key),
+    ),
   );
   const monthTicks = $derived(timeline ? visibleTimelineMonthTicks(timeline, visibleWindow) : []);
   const bounds = $derived(timeline ? visibleTimelineBounds(timeline, visibleWindow) : { first: '', last: '' });
@@ -287,8 +300,9 @@
 <div class={chart} data-timeline-labels-settled={retainedTickIds === null ? 'false' : 'true'}>
   {#if timeline && timeline.buckets.length > 0}
     <ul aria-label={`${timeline.dimension} timeline legend`} class={legend} data-report-range-part="total-legend">
-      {#each presentedSeries as series (series.key)}
-        {@const total = timelineSeriesValue(series, useSessions)}
+      <li class={rangeTotal} data-report-range-total>{formattedAmount(summary.total, summary.total)}</li>
+      {#each legendSeries as series (series.key)}
+        {@const total = summary.totalsByKey.get(series.key) ?? 0}
         {@const active = activeSeriesKeys.includes(series.key)}
         {@const filterable = timelineSeriesIsFilterable(timeline.dimension, series)}
         {@const marker = swatchFor(series.key)}
@@ -312,18 +326,14 @@
               style:background={marker.style?.background}
             ></span>
             {series.label}
-            <span class={percentage}
-              >{fmtPct(timelineSharePercent(total, useSessions ? timeline.grandSessions : timeline.grandTotal))}</span
-            >
+            <span class={percentage}>{fmtPct(timelineSharePercent(total, summary.total))}</span>
           </button>
         </li>
       {/each}
-      {#if timeline.unclassified}
+      {#if timeline.unclassified && summary.gap > 0}
         <li class={legendButton} data-origin-unclassified-legend title={originGapDescription(timeline.unclassified)}>
           <span aria-hidden="true" class={gapSwatch}></span>Not classified
-          <span class={percentage}
-            >{fmtPct(timelineSharePercent(timelineGapValue(timeline.unclassified, useSessions), useSessions ? timeline.grandSessions : timeline.grandTotal))}</span
-          >
+          <span class={percentage}>{fmtPct(timelineSharePercent(summary.gap, summary.total))}</span>
         </li>
       {/if}
     </ul>

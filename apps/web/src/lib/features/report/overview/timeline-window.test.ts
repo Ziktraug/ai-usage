@@ -8,6 +8,7 @@ import {
   visibleTimelineBounds,
   visibleTimelineMaximum,
   visibleTimelineMonthTicks,
+  visibleTimelineSummary,
 } from './timeline-window';
 
 const measurement = (knownCost: number) => ({
@@ -139,6 +140,61 @@ describe('visible bar projection', () => {
 
   test('returns a zero maximum for an empty window', () => {
     expect(visibleTimelineMaximum(timeline([]), { from: 0, to: 0 }, false)).toBe(0);
+  });
+});
+
+describe('window summary', () => {
+  const early = bucket('2026-01-01T00:00:00.000Z', {
+    byKey: { alpha: { cost: 90, priceMeasurement: measurement(90), sessions: 9 } },
+    sessions: 9,
+    total: 90,
+  });
+  const late = bucket('2026-01-02T00:00:00.000Z', {
+    byKey: {
+      alpha: { cost: 3, priceMeasurement: measurement(3), sessions: 2 },
+      beta: { cost: 2, priceMeasurement: measurement(2), sessions: 1 },
+    },
+    sessions: 4,
+    total: 13,
+    unclassified: {
+      causes: [{ kind: 'origin-unsupported' as const, sessions: 1 }],
+      priceMeasurement: measurement(8),
+      sessions: 1,
+      total: 8,
+    },
+  });
+
+  test('totals only the buckets inside the window', () => {
+    const data = timeline([early, late], ['alpha', 'beta']);
+
+    expect(visibleTimelineSummary(data, { from: 1, to: 1 }, false)).toEqual({
+      gap: 8,
+      total: 13,
+      totalsByKey: new Map([
+        ['alpha', 3],
+        ['beta', 2],
+      ]),
+    });
+  });
+
+  test('reports zero for a series that carries nothing inside the window', () => {
+    const data = timeline([early, late], ['alpha', 'beta']);
+
+    expect(visibleTimelineSummary(data, { from: 0, to: 0 }, false).totalsByKey.get('beta')).toBeUndefined();
+    expect(visibleTimelineSummary(data, { from: 0, to: 0 }, false).gap).toBe(0);
+  });
+
+  test('switches to session counts without changing the window', () => {
+    const data = timeline([early, late], ['alpha', 'beta']);
+
+    expect(visibleTimelineSummary(data, { from: 0, to: 1 }, true)).toEqual({
+      gap: 1,
+      total: 13,
+      totalsByKey: new Map([
+        ['alpha', 11],
+        ['beta', 1],
+      ]),
+    });
   });
 });
 
