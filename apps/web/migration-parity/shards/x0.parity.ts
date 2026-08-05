@@ -179,6 +179,60 @@ const recordSkillsRepair = (record: ParityRecord): ParityRecord =>
         ],
       }
     : record;
+const sourcesSyncRepairCommit = 'ad1da6c8d0a7adb3ceae3db8910e3fb90e7fd11e';
+const sourcesSyncRepairTitleIds = new Set([
+  'pw:apps/web/e2e/accessibility.spec.ts::Sync exposes shared navigation without narrow overflow',
+  'pw:apps/web/e2e/dashboard.spec.ts::keeps sync limited to explicit file transfers',
+]);
+const recordSourcesSyncRepair = (record: ParityRecord): ParityRecord =>
+  sourcesSyncRepairTitleIds.has(record.id)
+    ? {
+        ...record,
+        evidence: [
+          ...record.evidence,
+          {
+            commit: sourcesSyncRepairCommit,
+            kind: 'command',
+            phase: 'target',
+            reference:
+              'Focused accessibility and dashboard browser titles are green after first failing at max-width none versus 1380px, an 8px borderless progress track versus 6px bordered, and Previewing copy producing a 112px versus 128px narrow drop target.',
+          },
+          {
+            commit: sourcesSyncRepairCommit,
+            kind: 'review',
+            phase: 'target',
+            reference:
+              'Solid 2183270e differential confirms Sources initial/expanded/degraded parity and exact hydrated Sync shell, fleet, comparison, transfer and progress geometry at 361/768/1024/1440 in light/dark.',
+          },
+        ],
+      }
+    : record;
+const syncSsrNoticeRepairCommit = '7c45bee9ab4f4e39dfb078f9b84215d793e577a2';
+const syncAccessibilityTitleId =
+  'pw:apps/web/e2e/accessibility.spec.ts::Sync exposes shared navigation without narrow overflow';
+const recordSyncSsrNoticeRepair = (record: ParityRecord): ParityRecord =>
+  record.id === syncAccessibilityTitleId
+    ? {
+        ...record,
+        evidence: [
+          ...record.evidence,
+          {
+            commit: syncSsrNoticeRepairCommit,
+            kind: 'command',
+            phase: 'target',
+            reference:
+              'The strengthened no-JavaScript accessibility title is green after first failing with display block instead of grid for the Sync connection notice.',
+          },
+          {
+            commit: syncSsrNoticeRepairCommit,
+            kind: 'review',
+            phase: 'target',
+            reference:
+              'Solid 2183270e differential confirms the SSR connection notice is full-width before Machine fleet with exact padding, border, radius, font and 16px following gap at 361/768/1024/1440 in light/dark; connection state and ownership are unchanged.',
+          },
+        ],
+      }
+    : record;
 const inFile = (file: string, titles: readonly string[]): readonly PlaywrightTitle[] =>
   titles.map((title) => ({ file: `apps/web/e2e/${file}`, title }));
 
@@ -330,5 +384,7 @@ export default defineParityShard({
     .map(recordSessionsRepair)
     .map(recordDrawerRepair)
     .map(recordOverviewRepair)
-    .map(recordSkillsRepair),
+    .map(recordSkillsRepair)
+    .map(recordSourcesSyncRepair)
+    .map(recordSyncSsrNoticeRepair),
 });

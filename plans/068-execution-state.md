@@ -2280,3 +2280,72 @@ SSR/hydration outcome and was not rejudged.
 
 Sources/Sync, reduced motion and the remaining cross-surface responsive review
 have not yet been reached.
+
+### Sources and Sync presentation-parity audit
+
+The pre-change comparison drove Solid `2183270e` and Svelte at `5004715`
+through 361, 768, 1024 and 1440 pixels, light and dark themes, and both SSR and
+hydration. The base matrix captured 80 states and 160 full/target screenshots
+across Sources default, expanded and degraded-SSE states plus Sync. Sixteen
+additional live-upload states measured progress, and 16 no-JavaScript probes
+isolated the Sync connection notice.
+
+Sources was already at level-4 presentation parity and required no source
+change. Sync was not:
+
+| Surface and property | Solid `2183270e` | Svelte before repair | Svelte after repair |
+| --- | ---: | ---: | ---: |
+| Sources route at 361 / 768 / 1024 / 1440px | 321 x 511.59 / 480 x 532 / 736 x 512.5 / 1152 x 466.5px | exact | exact |
+| Sources healthy summary, closed / expanded | 100px / 1034.5, 596, 558.5, 558.5px high | exact | exact |
+| Sources degraded Codex card at 361 / 768 / 1024 / 1440px | 321 x 349.5 / 480 x 287.5 / 362 x 320.5 / 570 x 287.5px | exact | exact |
+| Sync route at 361px | 321 x 687.5px at x20, y96.09 | 361 x 687.5px at x0, y72.09 | exact |
+| Sync route at 768 / 1024 / 1440px | 480 x 1000.5 / 736 x 955.5 / 1152 x 875.5px at x252, y108.5 | 552 x 985.5 / 808 x 907.5 / 1224 x 875.5px at x216, y76.5 | exact |
+| Fleet at 361 / 768 / 1024 / 1440px | 321 x 335.5 / 480 x 362.5 / 736 x 317.5 / 1152 x 237.5px | too wide with the route | exact |
+| Live progress region | 283 / 442 / 698 / 1114 x 54px | 257 / 416 / 672 / 1088 x 72px | exact |
+| Live progress track | full region width, 6px, bordered | inset, 8px, borderless native `progress` | exact |
+| Narrow pending drop target | 283 x 128px with frozen drop copy | 283 x 112px with `Previewing merge file…` | exact |
+| SSR connection notice at 361 / 768 / 1024 / 1440px | full-width 321 x 80.5 / 480 x 61 / 736 x 41.5 / 1152 x 41.5px before fleet | inset 12px paragraph inside Manual transfer | exact |
+| Light/dark target colours, borders and shadows | semantic theme tokens | same geometry divergences in both themes | exact |
+
+The Sources default panels, publication time, expanded per-source details,
+deviation cards, missing-source copy, degraded-SSE notice, legend/order and all
+measured computed styles were exact. The only text-node difference was
+framework whitespace, with no rendered geometry or accessible-copy effect.
+
+Sync's first root cause was the local `css({ minW: 0 })` shell at
+`sync-root.svelte:28` in the pre-repair revision, replacing the retained
+bounded shell. Commit `ad1da6c8d0a7adb3ceae3db8910e3fb90e7fd11e` restores
+the shared shell, now consumed at `sync-root.svelte:3` and line 39. The same
+commit replaces the locally reconstructed native progress element from
+`manual-transfer-progress.svelte:16` through line 55 in the pre-repair
+revision with the exact semantic 6px track at lines 18–75, and restores its
+position after the drop target at `manual-transfer.svelte:252`.
+
+That comparison also exposed two browser-only defects in the reconstructed
+transfer flow. Reading `event.currentTarget` after an await at pre-repair
+`manual-transfer.svelte:205` lost the element under Svelte event dispatch;
+lines 193–197 now retain it before awaiting. The conditional pending label at
+pre-repair lines 228–230 shortened the narrow drop target, so lines 217–218 now
+keep the frozen Solid copy while the progress region communicates pending
+state.
+
+Finally, the no-JavaScript probe showed that the connection-state message was
+passed into Manual transfer and rendered at pre-repair
+`manual-transfer.svelte:188` as an inset paragraph. Commit
+`7c45bee9ab4f4e39dfb078f9b84215d793e577a2` keeps the same derived state and
+ownership but restores the Solid presentation at `sync-root.svelte:28` and
+lines 50–53: a full-width bordered status before Machine fleet. No transport,
+boundary, cache, lifecycle or hydration outcome was reopened.
+
+The strengthened existing title at `accessibility.spec.ts:88` first failed
+on `max-width: none` versus 1380px, then its no-JavaScript branch at line 106
+failed on `display: block` versus grid. The strengthened transfer title at
+`dashboard.spec.ts:691` first failed on the 8px track, then exposed the stale
+event target and 112px pending drop target. Both titles are green. Web
+typecheck reports 0 errors and 0 warnings, 21 focused Sync and 57 combined
+Sources/Sync unit tests pass, the Sources browser spec passes 5/5, the
+unconsumed-export debt remains 103, and the migration ledger remains complete
+at 440/440 live exports with 538 records.
+
+Reduced motion and the remaining cross-surface responsive review have not yet
+been reached.
