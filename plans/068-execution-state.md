@@ -1794,3 +1794,67 @@ not source semantics or validation.
 Plan 068 is complete after this first green implementation CI. The remaining
 coordinator-only documentation commit must itself pass the same PR workflow;
 that second run is final release evidence, not a reopening of feature scope.
+
+## Reopened for presentation parity, 2026-08-05
+
+The maintainer reported the Activity brush handles rendering incorrectly and the
+Activity chart being broken. Both reproduced at `0f2f18ef` in a real browser
+against deterministic E2E fixtures, and both were present in the SSR HTML, so
+neither was a hydration, resize or measurement-order problem.
+
+The audit compared the panel against the retired Solid control at merge-base
+`2183270e`, served from a detached worktree with the same fixtures. Eight
+divergences were measured, not inferred:
+
+| Property | Solid `2183270e` | Svelte `0f2f18ef` |
+| --- | ---: | ---: |
+| Chart buckets for a 30-day range | 31 | 61 |
+| Axis boundary labels | window | domain |
+| Tick spans in the DOM | 1 month tick | 61 full dates |
+| Month gridlines / crosshair | present | absent |
+| Legend series | non-zero only | all, including `0.0%` |
+| Range total | present | absent |
+| Codex / OpenCode fill | branded teal / blue | two hashed tans, 10/255 apart |
+| Brush handle | `button[role=slider]`, 44px, anchored | `input[type=range]`, `position: static` |
+
+Two root causes account for most of it. `{#each rangeHandles as handle}` shadowed
+the module-scope `handle` Panda class, so both thumbs emitted `class="start"` /
+`class="end"` and fell back to static positioning. And the pure window
+projections the Solid control owned — `chartRangeForSelection`,
+`buildVisibleTimelineBars`, `visibleMaximum`, `timelineBucketLayout`,
+`visibleMonthTicksFor` — were deleted with `time-range-control.tsx` rather than
+ported, together with the seven-case test file that described them. One of those
+cases was named "keeps dense day buckets inside the plot instead of overflowing
+horizontally"; without it, `repeat(N, minmax(4px, 1fr))` pushed 249 day buckets
+about a thousand pixels past the panel on the maintainer's own data.
+
+Why the gates missed it: the E2E suite asserts roles, accessible names, text and
+`data-*` attributes, which survive a framework change while CSS does not.
+`getByRole('slider', { name: 'Start date' })` resolved to an unstyled
+`input[type=range]` through its implicit role. The only settled Overview
+screenshot scrolls the Activity panel out of frame. And `designExportRecords`
+built its evidence as "the file exports this name", so 183 orphaned semantic
+exports were all recorded COMPLETE.
+
+Repairs, all on PR `#27`, each measured against the Solid baseline:
+
+| Commit | Scope |
+| --- | --- |
+| `01d8fb05` | Anchor the brush handles; geometry gate at four viewports |
+| `c613f4ac` | `role="slider"`, `aria-valuetext`, 44px target, `timeSliderThumb` |
+| `17adb903` | Independent review rework: invented copy, focus order, keyboard semantics |
+| `f544e626` | Clip the chart to the range; restore the window projections and their tests |
+| `a0c1a840` | `dimensionSwatch` and `accentFill` for branded series fills |
+| `e5bfb4dd` | Window-scoped legend shares and the restored range total |
+| `434a563c` | Month gridlines, separate hover layer, crosshair |
+| `e7766363` | Brush track, dim regions and pan grip from the design system |
+| `4f7093e5` | Pin the index origin for one drag (pre-existing, found by review) |
+| `962569dd` | Repository check for Svelte bindings shadowing style constants |
+| `9ddfd4b4` | Require a real consumer for design exports; record 167 as ratcheted debt |
+
+Deliberately not done: the 167 unconsumed exports are ratcheted rather than
+deleted, because deciding which encode visual identity worth restoring and which
+are layout belonging in the consumer is a product call. Surfaces beyond the
+Activity panel — Punchcard, Breakdown bars, the Sessions table, the drawer, dark
+theme and reduced motion — have not been compared to `2183270e` and remain
+unverified at level 4.

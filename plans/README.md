@@ -112,7 +112,7 @@ plan; waves are milestones rather than PR or worker boundaries.
 | 065 | Expose the Harness–Provider Joint Distribution | P3 | M | 054, 062 | DONE |
 | 066 | Split the Usage Engine From the Web and CLI Runtimes | P0 | XL | 022-024, 043-044 | DONE |
 | 067 | Close the Post-Cutover Usage-Engine Runtime Review Gaps | P1 | L | 066 | DONE |
-| 068 | Migrate Web to SvelteKit With Contract-First oRPC | P1 | XL | 066, 067 | DONE |
+| 068 | Migrate Web to SvelteKit With Contract-First oRPC | P1 | XL | 066, 067 | REOPENED |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) |
 REJECTED (with one-line rationale).
