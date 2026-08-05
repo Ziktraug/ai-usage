@@ -188,11 +188,6 @@
   {#if mutationMessage}
     <p class={panelSub} role="status">{mutationMessage}</p>
   {/if}
-  {#if progress}
-    <div class={operationPanel}>
-      <ManualTransferProgress now={progressNow} {progress} />
-    </div>
-  {/if}
   <div class={actionRow}>
     <button class={ghostButton} disabled={pending !== null} onclick={exportCurrentMachine} type="button">
       {pending === 'export' ? 'Exporting' : 'Export current machine'}
@@ -203,8 +198,9 @@
     disabled={!mutationAvailable || pending !== null}
     hidden
     onchange={async (event) => {
-      await previewFile(event.currentTarget.files?.[0]);
-      event.currentTarget.value = '';
+      const input = event.currentTarget;
+      await previewFile(input.files?.[0]);
+      input.value = '';
     }}
     type="file"
     bind:this={fileInput}
@@ -225,9 +221,7 @@
     }}
     type="button"
   >
-    <span class={strongCell}
-      >{pending === 'preview' ? 'Previewing merge file…' : 'Drop a merge file here or choose a file'}</span
-    >
+    <span class={strongCell}>Drop a merge file here or choose a file</span>
     <span class={panelSub}>JSON only. The file is previewed before any local usage changes.</span>
   </button>
   {#if preview}
@@ -260,5 +254,8 @@
         </button>
       </div>
     </div>
+  {/if}
+  {#if progress}
+    <ManualTransferProgress now={progressNow} {progress} />
   {/if}
 </section>

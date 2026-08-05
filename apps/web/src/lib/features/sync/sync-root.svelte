@@ -1,6 +1,5 @@
 <script lang="ts">
-  import { css } from '@ai-usage/design-system/css';
-  import { header, meta, page, title, titleBlock } from '@ai-usage/design-system/svelte';
+  import { header, meta, page, shell, title, titleBlock } from '@ai-usage/design-system/svelte';
   import { useQueryClient } from '@tanstack/svelte-query';
   import { browser } from '$app/environment';
   import { buildSyncFleetMachineViews, manualTransferMutationAvailability } from '../../../manual-transfer-model';
@@ -25,7 +24,6 @@
     fleet ? buildSyncFleetComparisonRows(fleet.currentMachine, fleet.machines, data.renderedAt) : [],
   );
   const mutation = $derived(manualTransferMutationAvailability(connection));
-  const shell = css({ minW: 0 });
 </script>
 
 <div class={shell}>

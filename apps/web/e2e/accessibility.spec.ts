@@ -95,6 +95,15 @@ for (const route of routes) {
     }
     await expect(page.getByRole('heading', { level: 1, name: route.heading })).toBeVisible();
 
+    if (route.path === '/sync') {
+      const syncShell = page.locator('[data-route-shell="sync"]').locator('..');
+      await expect(syncShell).toHaveCSS('max-width', '1380px');
+      await expect(syncShell).toHaveCSS('padding-left', '36px');
+      await expect(syncShell).toHaveCSS('padding-right', '36px');
+      await expect(syncShell).toHaveCSS('padding-top', '32px');
+      await expect(syncShell).toHaveCSS('padding-bottom', '32px');
+    }
+
     const desktopNavigation = page.getByRole('complementary', { name: 'Application navigation' });
     await expect(desktopNavigation).toBeVisible();
     for (const label of NAVIGATION_DESTINATIONS) {
@@ -106,6 +115,13 @@ for (const route of routes) {
     await expect.poll(() => page.evaluate(documentOverflow)).toBeLessThanOrEqual(0);
 
     await page.setViewportSize({ height: 844, width: 390 });
+    if (route.path === '/sync') {
+      const syncShell = page.locator('[data-route-shell="sync"]').locator('..');
+      await expect(syncShell).toHaveCSS('padding-left', '20px');
+      await expect(syncShell).toHaveCSS('padding-right', '20px');
+      await expect(syncShell).toHaveCSS('padding-top', '24px');
+      await expect(syncShell).toHaveCSS('padding-bottom', '24px');
+    }
     const mobileNavigation = page.locator('[data-app-navigation="mobile"]');
     await expect(mobileNavigation).toBeVisible();
     await expect(desktopNavigation).toHaveCount(0);

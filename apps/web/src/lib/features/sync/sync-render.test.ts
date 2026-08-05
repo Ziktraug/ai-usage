@@ -101,9 +101,11 @@ describe('Sync rendered SSR parity', () => {
         progress: { fileName: 'peer.json', fileSize: 100, loaded: 25, phase: 'uploading', total: 100 },
       },
     }).body;
-    expect(uploading).toContain('<progress');
+    expect(uploading).not.toContain('<progress');
+    expect(uploading).toContain('role="progressbar"');
     expect(uploading).toContain('aria-label="Manual import upload progress"');
-    expect(uploading).toContain('value="25"');
+    expect(uploading).toContain('aria-valuenow="25"');
+    expect(uploading).toContain('style="width: 25%;"');
     expect(uploading).toContain('Uploading 25 B / 100 B');
     expect(uploading).toContain('>25%</span>');
 
@@ -113,9 +115,10 @@ describe('Sync rendered SSR parity', () => {
         progress: { fileName: 'peer.json', fileSize: 100, phase: 'processing', startedAt: 7000 },
       },
     }).body;
-    expect(processing).toContain('<progress');
+    expect(processing).not.toContain('<progress');
+    expect(processing).toContain('role="progressbar"');
     expect(processing).toContain('aria-label="Manual import processing"');
-    expect(processing).not.toContain('value=');
+    expect(processing).not.toContain('aria-valuenow');
     expect(processing).toContain('Merging into the local database…');
     expect(processing).toContain('>5s</span>');
     expect(processing).toContain('Large files take a moment while each usage row is written and deduplicated.');

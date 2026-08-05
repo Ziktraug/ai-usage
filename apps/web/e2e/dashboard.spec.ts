@@ -689,15 +689,68 @@ test('mounts one Sessions surface across viewport changes without losing state',
 });
 
 test('keeps sync limited to explicit file transfers', async ({ page }) => {
+  let releaseUpload = (): void => undefined;
+  const pendingUpload = new Promise<void>((resolve) => {
+    releaseUpload = resolve;
+  });
+  await page.route('**/api/manual-merge/upload', async (route) => {
+    await pendingUpload;
+    await route.fulfill({
+      body: JSON.stringify({
+        data: {
+          bytes: 2,
+          confirmationToken: 'opaque-confirmation',
+          documentDigest: 'a'.repeat(64),
+          kind: 'merge-preview',
+          result: {
+            deleted: 0,
+            fleetChanged: true,
+            inserted: 1,
+            superseded: 0,
+            unchanged: 0,
+            updated: 0,
+            warnings: 0,
+          },
+          rows: 1,
+          warningCount: 0,
+        },
+        ok: true,
+      }),
+      contentType: 'application/json',
+      status: 200,
+    });
+  });
   await page.goto('/sync');
 
   await expect(page.getByRole('heading', { level: 1, name: 'Sync' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Export current machine' })).toBeVisible();
   await expect(page.getByRole('heading', { level: 2, name: 'Machine fleet' })).toBeVisible();
   await expect(page.getByLabel('Machine fleet').getByText('Current machine', { exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Drop a merge file here or choose a file' })).toBeVisible();
+  await page.setViewportSize({ height: 844, width: 361 });
+  const fileInput = page.locator('input[type="file"]');
+  const dropTarget = fileInput.locator('xpath=following-sibling::button[1]');
+  await expect(dropTarget).toBeVisible();
+  await expect(dropTarget).toContainText('Drop a merge file here or choose a file');
   await expect(page.getByRole('button', { name: 'Start LAN merge' })).toHaveCount(0);
   await expect(page.getByLabel('Scan host')).toHaveCount(0);
   await expect(page.getByText('Pair nearby machine')).toHaveCount(0);
   expect(await page.locator('main').innerText()).not.toMatch(UUID_PATTERN);
+
+  await expect(fileInput).toBeEnabled();
+  await fileInput.setInputFiles({ buffer: Buffer.from('{}'), mimeType: 'application/json', name: 'peer.json' });
+  const progress = page.getByRole('progressbar', { name: 'Manual import upload progress' });
+  await expect(progress).toBeVisible();
+  await expect(progress).toHaveCSS('height', '6px');
+  await expect(progress).toHaveCSS('border-top-width', '1px');
+  await expect(progress).toHaveCSS('border-radius', '999px');
+  await expect(dropTarget).toContainText('Drop a merge file here or choose a file');
+  await expect(dropTarget).toHaveCSS('height', '128px');
+  const dropTargetBox = await dropTarget.boundingBox();
+  const progressBox = await progress.boundingBox();
+  expect(dropTargetBox).not.toBeNull();
+  expect(progressBox).not.toBeNull();
+  expect(progressBox?.width).toBe(dropTargetBox?.width);
+  expect(progressBox?.y).toBeGreaterThan((dropTargetBox?.y ?? 0) + (dropTargetBox?.height ?? 0));
+  releaseUpload();
+  await expect(page.getByText('Preview ready. Review the changes before confirming.')).toBeVisible();
 });
