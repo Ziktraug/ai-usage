@@ -380,3 +380,43 @@ from expiring while a large but progressing traversal is inside the approved
 product budget; it does not increase a timeout, weaken the final assertion, or
 accept a stalled traversal. Production scale, process cleanup, listener cleanup,
 payload and DOM limits all remained green.
+
+## Session surface scroll correction, 2026-08-05
+
+`calculateSessionViewportHeight` sized the surface from its own
+`getBoundingClientRect().top`. That is circular: the height is part of the
+document, so each pixel scrolled moved the surface up a pixel, grew it a pixel,
+grew the document a pixel, and the reader gained nothing. Measured on the
+deterministic fixture at 1440x900, asking for scroll position 400 landed at 163
+and asking for 1000 landed at 235, while the document walked 1063 to 1231 px. The
+retired Solid table did the same and was worse — 400 landed at 35, 1000 at 99 —
+so this was pre-existing rather than a migration regression.
+
+The height now follows the viewport alone. The same probe honours every requested
+position and holds the document at 1810 px and the surface at 876 px throughout.
+
+| Session metric | Recorded Svelte | Corrected | Delta | Classification |
+| --- | ---: | ---: | ---: | --- |
+| Initial settled load | 1525.805 ms | 1519.008 ms | -0.445% | Within trigger |
+| Filter response | 300.274 ms | 177.933 ms | -40.743% | Lower |
+| Sort response | 1510.573 ms | 1487.344 ms | -1.538% | Within trigger |
+| Heap delta after desktop traversal | 27,639,644 B | 27,538,740 B | -0.365% | Lower |
+| Maximum Session page payload | 220,694 B | 220,694 B | 0% | Equal |
+| Desktop rendered items / nodes | 33 / 624 | 37 / 696 | +12.121% / +11.538% | Reviewed deviation |
+| Mobile rendered items / nodes | 19 / 307 | 21 / 339 | +10.526% / +10.423% | Reviewed deviation |
+
+The DOM triggers are explained by the correction rather than by new work. The
+recorded maxima were artificially low: under the treadmill the surface was still
+growing while the benchmark traversed, so it never reached the height it was
+converging on. It now starts at that height — 876 px for a 900 px viewport less
+the 24 px inset, the same value the old formula saturated at — so the virtual
+window reaches its maximum on the first frame. Four extra desktop rows and two
+extra mobile cards follow directly from a surface that is finally the size it
+always intended to be. Both remain far below the 600-item absolute cap, and the
+scale suite's reachability, row-identity, wire, geometry and memory assertions all
+pass.
+
+The 40.743% filter improvement is the same cause seen from the other side:
+removing the window `scroll` listener removes a style write and a forced layout
+from every scroll event, so the filter path no longer competes with it. This is a
+measured consequence of deleting work, not a tuning claim.

@@ -169,7 +169,6 @@
     const nextHeight = calculateSessionViewportHeight({
       bottomInset: SESSION_VIEWPORT_BOTTOM_INSET,
       minimumHeight,
-      surfaceTop: element.getBoundingClientRect().top,
       viewportHeight: window.innerHeight,
     });
     const cssHeight = `${nextHeight}px`;
@@ -209,14 +208,15 @@
     }
     const synchronize = (): void => updateViewportFor(activeSurface, observedMode);
     synchronize();
+    // No window `scroll` listener: the height no longer depends on where the
+    // surface sits, and recomputing it on scroll is what made the document grow
+    // under the reader. The surface's own `onscroll` still drives the row window.
     const observer = new ResizeObserver(synchronize);
     observer.observe(activeSurface);
     window.addEventListener('resize', synchronize);
-    window.addEventListener('scroll', synchronize, { passive: true });
     return () => {
       observer.disconnect();
       window.removeEventListener('resize', synchronize);
-      window.removeEventListener('scroll', synchronize);
     };
   });
 

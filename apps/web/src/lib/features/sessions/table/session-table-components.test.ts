@@ -137,8 +137,11 @@ describe('session table Svelte rendering', () => {
     expect(source).toContain('sessionVirtualBudgets.mobile.rowHeight');
     expect(source).toContain('calculateSessionViewportHeight');
     expect(source).toContain('new ResizeObserver(synchronize)');
-    expect(source).toContain("addEventListener('scroll', synchronize, { passive: true })");
-    expect(source).toContain("removeEventListener('scroll', synchronize)");
+    expect(source).toContain("addEventListener('resize', synchronize)");
+    expect(source).toContain("removeEventListener('resize', synchronize)");
+    // A window scroll listener is what made the surface height chase the scroll
+    // position and the document grow under the reader.
+    expect(source).not.toContain("addEventListener('scroll'");
     expect(source).toContain('data-session-region-start');
     expect(source).toContain('initialWindowAnchor && !windowAnchorConsumed');
     expect(source).toContain("regionStart?.scrollIntoView({ block: 'start' })");

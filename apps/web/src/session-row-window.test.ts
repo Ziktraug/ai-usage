@@ -13,42 +13,25 @@ const windowFor = (overrides: Partial<Parameters<typeof calculateSessionRowWindo
   });
 
 describe('session row window', () => {
-  test('sizes the internal viewport from its real on-screen position', () => {
-    expect(
-      calculateSessionViewportHeight({
-        bottomInset: 24,
-        minimumHeight: 129,
-        surfaceTop: 64,
-        viewportHeight: 900,
-      }),
-    ).toBe(812);
-    expect(
-      calculateSessionViewportHeight({
-        bottomInset: 24,
-        minimumHeight: 188,
-        surfaceTop: 112,
-        viewportHeight: 844,
-      }),
-    ).toBe(708);
+  test('sizes the internal viewport from the viewport alone', () => {
+    expect(calculateSessionViewportHeight({ bottomInset: 24, minimumHeight: 129, viewportHeight: 900 })).toBe(876);
+    expect(calculateSessionViewportHeight({ bottomInset: 24, minimumHeight: 188, viewportHeight: 844 })).toBe(820);
   });
 
-  test('reserves enough height to anchor a surface that starts below the viewport', () => {
-    expect(
-      calculateSessionViewportHeight({
-        bottomInset: 24,
-        minimumHeight: 129,
-        surfaceTop: 1200,
-        viewportHeight: 900,
-      }),
-    ).toBe(876);
-    expect(
-      calculateSessionViewportHeight({
-        bottomInset: 24,
-        minimumHeight: 320,
-        surfaceTop: Number.NaN,
-        viewportHeight: 280,
-      }),
-    ).toBe(256);
+  test('never lets the surface height follow the scroll position', () => {
+    // Sizing from `getBoundingClientRect().top` was circular: the height is part
+    // of the document, so every pixel scrolled grew the page by a pixel and the
+    // bottom stayed out of reach. One viewport must yield one height.
+    const heights = [900, 900, 900].map(() =>
+      calculateSessionViewportHeight({ bottomInset: 24, minimumHeight: 129, viewportHeight: 900 }),
+    );
+
+    expect(new Set(heights).size).toBe(1);
+  });
+
+  test('keeps a usable surface in a viewport shorter than the minimum', () => {
+    expect(calculateSessionViewportHeight({ bottomInset: 24, minimumHeight: 320, viewportHeight: 280 })).toBe(320);
+    expect(calculateSessionViewportHeight({ bottomInset: 24, minimumHeight: 129, viewportHeight: 100 })).toBe(129);
   });
 
   test('returns an empty window for an empty collection', () => {
