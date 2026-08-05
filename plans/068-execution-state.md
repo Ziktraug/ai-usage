@@ -2349,3 +2349,104 @@ at 440/440 live exports with 538 records.
 
 Reduced motion and the remaining cross-surface responsive review have not yet
 been reached.
+
+### Provider status and cross-cutting presentation-parity audit
+
+The final comparison drove Solid `2183270e` and the integrated Svelte branch
+through the frozen 361, 768, 1024 and 1440px widths. Provider status was
+captured in light and dark themes, with JavaScript disabled and hydrated, and
+with its provider details closed and open: 32 states before and 32 after the
+repair. The cross-cutting probe added 160 states across Overview, Skills
+editor, Skills matrix, Sources and Sync: both frameworks, all four widths,
+both themes, and normal versus reduced motion. A one-second settled Sync probe
+separated asynchronous layout settling from presentation geometry.
+
+Provider status was the last unmeasured part of REPORT-03 and was not at
+parity:
+
+| Property | Solid `2183270e` | Svelte before repair | Svelte after repair |
+| --- | ---: | ---: | ---: |
+| Closed panel at 361 / 768 / 1024 / 1440px | 547 / 454 / 320 / 260px | 877 / 600 / 576 / 504px | exact |
+| Open panel at 361 / 768 / 1024 / 1440px | 1255 / 1004 / 870 / 810px | 1551 / 1032.5 / 938 / 866px | exact |
+| Attention group at the four widths | 123 / 84 / 54 / 24px | 316 / 153 / 153 / 153px | exact |
+| Provider categories at the four widths | 162 / 144 / 84 / 54px | 362 / 266 / 242 / 170px | exact |
+| Details summary | 38px | 24px | exact |
+| Frozen subtitle | Quota usage and operational issues at a glance. | Quota windows and collection quality… | exact |
+| Quota-history action | header action | after provider details | exact |
+| Theme and SSR/hydrated geometry | invariant | same divergences in every state | exact in all 32 states |
+
+The root cause was the local card-grid reconstruction in
+`provider-status.svelte:1-197`. It replaced the compact Solid category and
+issue composition, moved the history action and changed frozen copy. Commit
+`12b47b39778aaa1fdf423fc5be9291a9b83da59c` restores the original
+composition at `provider-status.svelte:200-370` while retaining the typed
+provider projection and quota semantics. The strengthened existing browser
+title first failed at 504px versus the 260px desktop invariant and now guards
+the closed/open panel, attention/category groups, 38px disclosure summary,
+frozen subtitle and the 361px responsive state.
+
+That repair made the remaining whole-page difference legible. Svelte had
+placed the Date range, active-filter summary, More report metrics and Provider
+status inside the focusable `data-dashboard-panel`, while Solid places range
+and filters before the active report view and secondary status after it. The
+local workspace section also added 16px top and bottom padding that the
+retained `section` semantic never had.
+
+| Composition property | Solid `2183270e` | Svelte before repair | Svelte after repair |
+| --- | ---: | ---: | ---: |
+| Date-range ancestry | outside dashboard panel | inside | outside |
+| Active-filter ancestry | outside dashboard panel | inside | outside |
+| Metrics/provider ancestry | outside dashboard panel | inside | outside |
+| Dashboard-panel start | exactly at Overview hero | before Date range | exactly at Overview hero |
+| Secondary-status separation | 20px after dashboard panel | nested plus local grid gaps | exact |
+| Dashboard height at 361 / 768 / 1024 / 1440px | 1815 / 1654.89 / 1424.89 / 1424.89px | included range/filter/padding | exact |
+| Date-range y at the four widths | 287.59 / 300 / 254 / 208px | desktop 2px late inside padded panel | exact |
+
+Commit `5e839aa2a89b0de02e27b18f8900237ca11a2bb2` restores
+those ownership seams. The live ordering is explicit at
+`live-report-destination.svelte:396-454`; the synthetic destination carries
+the same boundary. `report-workspace.svelte:29-50` now owns only the active
+report view and the following status snippet and consumes the retained
+zero-padding `section` export. `overview-status.svelte:1-27` owns the
+secondary metrics/provider projection instead of leaving it embedded in
+Overview content. The strengthened provider-status browser title first failed
+because Date range still had a dashboard-panel ancestor; it now guards all
+four ancestry boundaries, exact hero/panel alignment and the 20px status gap.
+
+The resulting primary stack still differed by 2px. The differential localized
+that remainder to Top sessions: Solid's shared `Panel` applies
+`panelHeader`, while `records.svelte` had rebuilt the header as an unstyled
+`div`. The new browser title failed at 172px versus Solid's 174px. Commit
+`2e74ebfacfccfeb662fe42899ec5c177480a24b5` restores the semantic
+header consumer at `records.svelte:90-98`; the title is green and the entire
+dashboard-panel height is now exact at all four widths.
+
+After these repairs the only whole-document height remainder is the
+already-closed Activity range outcome: Svelte is 156px taller at 361px, 78px
+at 768px and 114px at 1024/1440px, exactly matching the measured Date-range
+height difference at each width. Date-range top positions are exact and no
+other element accounts for any remainder. Per the reopening scope, Activity
+was not redone or rejudged.
+
+Reduced-motion behavior is exact across the 80 reduced states: the maximum
+computed animation or transition duration is `0.00001s` in both
+implementations. All 80 normal-motion states top out at `0.15s`. Theme and
+motion preference do not move target geometry. Skills, Sources and the
+one-second settled Sync layout remain exact in light and dark at every frozen
+width; the initial Sync difference at 100ms was asynchronous settling, not a
+stable presentation divergence.
+
+The shared Solid defects and accepted working differences remain explicit:
+the duplicate hidden desktop Skills tree remains in both accessibility trees
+without rendered focus stops; both nonmodal session drawers fail to return
+focus; Solid campaign expansion remains inert while Svelte's working
+expansion is retained; and the closed Activity outcome remains out of scope.
+Changing any of those requires product approval.
+
+No requested surface was left unreached. Punchcard/Rhythm, Breakdown,
+Sessions, drawer, Overview metrics/token anatomy, Skills, Sources/Sync,
+Provider status, dark theme, reduced motion and all four responsive widths
+have level-4 measurement records in this reopening section. Focused validation
+for the final repairs reports zero Svelte typecheck errors or warnings, 81/81
+Overview/report-core tests, 20/20 Overview SSR/compile tests, green
+red-to-green browser titles and an unchanged unconsumed-export debt of 103.

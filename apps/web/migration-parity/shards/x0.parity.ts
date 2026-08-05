@@ -233,6 +233,71 @@ const recordSyncSsrNoticeRepair = (record: ParityRecord): ParityRecord =>
         ],
       }
     : record;
+const providerStatusRepairCommit = '12b47b39778aaa1fdf423fc5be9291a9b83da59c';
+const reportCompositionRepairCommit = '5e839aa2a89b0de02e27b18f8900237ca11a2bb2';
+const providerStatusTitleId =
+  'pw:apps/web/e2e/dashboard.spec.ts::keeps provider details collapsed until they are requested';
+const recordProviderStatusRepair = (record: ParityRecord): ParityRecord =>
+  record.id === providerStatusTitleId
+    ? {
+        ...record,
+        evidence: [
+          ...record.evidence,
+          {
+            commit: providerStatusRepairCommit,
+            kind: 'command',
+            phase: 'target',
+            reference:
+              'bun run --cwd apps/web test:e2e -- e2e/dashboard.spec.ts --grep "keeps provider details collapsed until they are requested" (green after first failing at 504px versus the 260px Solid desktop panel height)',
+          },
+          {
+            commit: providerStatusRepairCommit,
+            kind: 'review',
+            phase: 'target',
+            reference:
+              'Solid 2183270e differential confirms exact closed/open Provider status, attention/category groups, 38px details summary, frozen copy/action order and responsive geometry in all 32 viewport/theme/SSR/hydrated states.',
+          },
+          {
+            commit: reportCompositionRepairCommit,
+            kind: 'command',
+            phase: 'target',
+            reference:
+              'The strengthened title is green after first failing because Date range resolved to a data-dashboard-panel ancestor; it now guards range/filter/status ownership, hero/panel alignment and the 20px secondary-status gap.',
+          },
+          {
+            commit: reportCompositionRepairCommit,
+            kind: 'review',
+            phase: 'target',
+            reference:
+              'Solid 2183270e differential confirms the active dashboard panel owns only the selected report view and matches the primary Solid stack at 361/768/1024/1440 after removing local 16px vertical padding.',
+          },
+        ],
+      }
+    : record;
+const topSessionsRepairCommit = '2e74ebfacfccfeb662fe42899ec5c177480a24b5';
+const recordTopSessionsRepair = (record: ParityRecord): ParityRecord =>
+  record.id === 'pw:apps/web/e2e/dashboard.spec.ts::keeps the Top sessions panel header geometry at desktop width'
+    ? {
+        ...record,
+        evidence: [
+          ...record.evidence,
+          {
+            commit: topSessionsRepairCommit,
+            kind: 'command',
+            phase: 'target',
+            reference:
+              'bun run --cwd apps/web test:e2e -- e2e/dashboard.spec.ts --grep "keeps the Top sessions panel header geometry at desktop width" (green after first failing at 172px versus the 174px Solid panel height)',
+          },
+          {
+            commit: topSessionsRepairCommit,
+            kind: 'review',
+            phase: 'target',
+            reference:
+              'Solid 2183270e differential localizes the 2px loss to the missing retained panelHeader gap; restoring that consumer makes the complete dashboard-panel height exact at all four frozen widths.',
+          },
+        ],
+      }
+    : record;
 const inFile = (file: string, titles: readonly string[]): readonly PlaywrightTitle[] =>
   titles.map((title) => ({ file: `apps/web/e2e/${file}`, title }));
 
@@ -291,6 +356,7 @@ const titles = [
     'uses the report range as the only graph viewport',
     'offers keyboard-safe charts and mobile summaries at a narrow viewport',
     'keeps compact heatmap geometry at narrow and desktop viewports',
+    'keeps the Top sessions panel header geometry at desktop width',
     'selects the same heatmap day with mouse and keyboard',
     'mounts one Sessions surface across viewport changes without losing state',
     'keeps sync limited to explicit file transfers',
@@ -386,5 +452,7 @@ export default defineParityShard({
     .map(recordOverviewRepair)
     .map(recordSkillsRepair)
     .map(recordSourcesSyncRepair)
-    .map(recordSyncSsrNoticeRepair),
+    .map(recordSyncSsrNoticeRepair)
+    .map(recordProviderStatusRepair)
+    .map(recordTopSessionsRepair),
 });
