@@ -2463,3 +2463,24 @@ Requested and committed filters are compared independently of range and
 timeline options, so the production contracts still keep the original control
 mounted across chart-option and date-range refreshes; all eight production
 report titles pass.
+
+The required final Session benchmark passed 4/4. Its only greater-than-10%
+movement is filter response: 346.492 ms versus the corrected 177.933 ms baseline
+(+94.7%), from samples 346.492/189.778/357.743 ms. A controlled warm-up plus
+sample at pre-correction `92a35624` recorded 205.118 ms. The benchmark includes
+the parity-required stale Activity-range unmount and post-commit timeline rebuild
+inside its completion frame; every other timing, heap, payload, item and DOM
+metric remained within the corrected triggers. The complete measurement and
+cause are retained in `docs/performance/web-framework-migration-baseline.md`.
+
+One release gate remains blocked pending product direction. The production
+report half passes 8/8, but `session-scroll.scale.ts` intermittently stalls after
+59 reached desktop rows. The captured state proves Chromium accepted the next
+programmatic scroll and then restored `scrollTop` from about 1520px to 865px
+while the live virtual window stayed at indices 12-48. Desktop
+`sessionViewportSurface` lacks `overflow-anchor: none`; the Solid reference has
+the same omission, so this is a shared scroll-treadmill defect rather than a
+migration regression. The constraint against silently changing shared product
+behavior prevents adding the one-property correction without approval. No
+timeout or assertion was raised or weakened, and temporary diagnostics were
+removed.

@@ -420,3 +420,28 @@ The 40.743% filter improvement is the same cause seen from the other side:
 removing the window `scroll` listener removes a style write and a forced layout
 from every scroll event, so the filter path no longer competes with it. This is a
 measured consequence of deleting work, not a tuning claim.
+
+## Presentation-parity audit benchmark, 2026-08-05
+
+The final presentation-parity tree passed the four-test benchmark with these
+medians: 1534.222 ms initial, 346.492 ms filter, 1484.558 ms sort, 27,942,532
+bytes heap, 220,694 bytes maximum page, desktop 37/733 and mobile 21/360. All
+metrics remain within 10% of the corrected baseline above except filter response,
+which is +94.7% against 177.933 ms.
+
+The filter samples were 346.492, 189.778 and 357.743 ms rather than a uniformly
+shifted cluster. A controlled detached run at `92a35624`, immediately before the
+filter-only stale-range correction, used the same warm-up and production fixture
+and recorded 205.118 ms. The low final sample therefore overlaps the predecessor;
+the median trigger is transition variance amplified by the presentation-parity
+work, not evidence of a transport or pagination regression.
+
+The timing boundary starts when text is entered and ends one animation frame
+after both the 1/5,000 count and new Session fingerprint are visible. Commit
+`d4460595131aacbbcd093cd39c72f22ccf008e58` must remove the stale Activity range
+during that filter request to match Solid and the browser contract, then rebuild
+the timeline when the committed response arrives. That unmount/remount and its
+layout now fall inside the measured frame. Initial load, sort, heap, page bytes,
+rendered items and DOM-node counts did not cross their corrected triggers, and
+the benchmark's four tests and absolute budgets passed unchanged. This records
+the cost as a reviewed parity consequence; it is not a performance improvement.
