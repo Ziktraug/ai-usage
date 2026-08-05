@@ -72,7 +72,7 @@
     initialFocusedReportDescriptor,
     requireFocusedBreakdown,
   } from './report-destination';
-  import { queryForDescriptor, reportDestinationForSearch } from './report-search';
+  import { queryForDescriptor, reportDestinationForSearch, reportFilterFingerprint } from './report-search';
   import SessionDestinationRefresh from './session-destination-refresh.svelte';
 
   const rangePlacement = css({ mt: '14px' });
@@ -166,6 +166,13 @@
   const destination = $derived(
     reportDestinationForSearch(search, bootstrapResult.bootstrap.support.generatedAt, timeline),
   );
+  const requestedFilterFingerprint = $derived(
+    destination.focused === null ? undefined : reportFilterFingerprint(destination.focused.query.filters),
+  );
+  const committedFilterFingerprint = $derived(
+    commit === undefined ? undefined : reportFilterFingerprint(commit.destination.query.filters),
+  );
+  const focusedTimelineFiltersChanged = $derived(requestedFilterFingerprint !== committedFilterFingerprint);
   const primary = $derived(primaryDashboardTabFor(search.tab));
   $effect(() => {
     if (primary === 'breakdown' && !dashboardBreakdownModule) {
@@ -393,7 +400,7 @@
       {presentMachineLabel}
       {search}
     />
-    {#if commit?.overview}
+    {#if commit?.overview && !(_owner.snapshot.pending && focusedTimelineFiltersChanged)}
       <div class={rangePlacement}>
         <ReportRangeControl
           {activeSeriesKeys}

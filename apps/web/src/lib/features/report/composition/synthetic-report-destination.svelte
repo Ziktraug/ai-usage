@@ -64,7 +64,7 @@
   import OverviewStatus from '../overview/overview-status.svelte';
   import ReportRangeControl from '../range/report-range-control.svelte';
   import { activeTimelineSeriesKeys } from './active-timeline-series';
-  import { reportDestinationForSearch } from './report-search';
+  import { reportDestinationForSearch, reportFilterFingerprint } from './report-search';
 
   import SessionIdentityPublisher from './session-identity-publisher.svelte';
 
@@ -190,6 +190,14 @@
   const navigation = createBreakdownNavigation((update, options) => navigate(update, options));
   const destination = $derived(
     reportDestinationForSearch(renderedSearch, reportSupport.generatedAt, { dimension, granularity }),
+  );
+  const requestedDestination = $derived(
+    reportDestinationForSearch(search, reportSupport.generatedAt, { dimension, granularity }),
+  );
+  const focusedTimelineFiltersAreStale = $derived(
+    pending &&
+      reportFilterFingerprint(requestedDestination.sessions.filters) !==
+        reportFilterFingerprint(destination.sessions.filters),
   );
   const syntheticSessionQuery = $derived({ ...destination.sessions, cursor: null, revision });
   const focusedQuery = $derived({
@@ -402,29 +410,31 @@
   {presentMachineLabel}
   {search}
 />
-<div class={rangePlacement}>
-  <ReportRangeControl
-    {activeSeriesKeys}
-    dateDomain={overview.dateDomain}
-    {dimension}
-    generatedAt={reportSupport.generatedAt}
-    {granularity}
-    {machineFreshnessStatus}
-    {navigate}
-    onDimensionFilter={navigation.setTimelineDimensionFilter}
-    onOptionsChange={(options) => {
-      dimension = options.dimension;
-      granularity = options.granularity;
-      timelineValue = options.value;
-    }}
-    onRangeChange={navigation.setDateRange}
-    {presentCampaignSeries}
-    {presentMachineSeries}
-    range={renderedSearch.range}
-    timeline={overview.timeline}
-    value={timelineValue}
-  />
-</div>
+{#if !focusedTimelineFiltersAreStale}
+  <div class={rangePlacement}>
+    <ReportRangeControl
+      {activeSeriesKeys}
+      dateDomain={overview.dateDomain}
+      {dimension}
+      generatedAt={reportSupport.generatedAt}
+      {granularity}
+      {machineFreshnessStatus}
+      {navigate}
+      onDimensionFilter={navigation.setTimelineDimensionFilter}
+      onOptionsChange={(options) => {
+        dimension = options.dimension;
+        granularity = options.granularity;
+        timelineValue = options.value;
+      }}
+      onRangeChange={navigation.setDateRange}
+      {presentCampaignSeries}
+      {presentMachineSeries}
+      range={renderedSearch.range}
+      timeline={overview.timeline}
+      value={timelineValue}
+    />
+  </div>
+{/if}
 {@render activeFilterSummary(pending)}
 <ReportWorkspace hasOutput={!pending} {pending}>
   {#snippet status()}

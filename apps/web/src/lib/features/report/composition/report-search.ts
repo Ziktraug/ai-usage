@@ -22,6 +22,8 @@ export interface ReportDestinationSnapshot {
 
 const SERVED_SESSION_PAGE_SIZE = 100;
 
+export const reportFilterFingerprint = (filters: FocusedQuerySnapshot['filters']): string => JSON.stringify(filters);
+
 const canonicalDate = (value: Date | null): string | null => {
   if (value === null) {
     return null;
