@@ -199,6 +199,54 @@ const breakdownRepairEvidence = [
 const recordBreakdownRepair = (record: ParityRecord): ParityRecord =>
   breakdownRepairExportIds.has(record.id) ? appendTargetEvidence(record, breakdownRepairEvidence) : record;
 const completeNewForBreakdown = (record: ParityRecord): ParityRecord => completeRecord(record, breakdownRepairEvidence);
+const sessionsRepairCommit = 'e7c64a86417ca12590e79c49357253dd7b181130';
+const sessionsRepairExportIds = new Set([
+  'design-export:./report::dateCell',
+  'design-export:./report::emptyActions',
+  'design-export:./report::filterTextButton',
+  'design-export:./report::modelCell',
+  'design-export:./report::sessionPagingLoadMore',
+  'design-export:./report::sessionsTable',
+  'design-export:./report::sessionSummaryCard',
+  'design-export:./report::sessionSummaryDate',
+  'design-export:./report::sessionSummaryFilter',
+  'design-export:./report::sessionSummaryFilters',
+  'design-export:./report::sessionSummaryFooter',
+  'design-export:./report::sessionSummaryHeader',
+  'design-export:./report::sessionSummaryMobileSort',
+  'design-export:./report::sessionSummaryMobileSortField',
+  'design-export:./report::sessionSummaryMobileSortSelect',
+  'design-export:./report::sessionSummaryOpen',
+  'design-export:./report::sessionSummaryRow',
+  'design-export:./report::sessionSummaryStats',
+  'design-export:./report::sessionSummaryTitle',
+  'design-export:./report::sessionSummaryValue',
+  'design-export:./report::sessionSummaryViewport',
+  'design-export:./report::sessionTitleClamp',
+  'design-export:./report::sessionViewportSurface',
+  'design-export:./report::sortArrow',
+  'design-export:./report::tableControls',
+]);
+const sessionsRepairEvidence = [
+  targetEvidence(
+    sessionsRepairCommit,
+    'command',
+    'bun run --cwd apps/web typecheck; bun test apps/web/src apps/web/*.test.ts; bun run --cwd apps/web test:e2e -- e2e/dashboard.spec.ts; bun tools/check-design-export-consumers.ts (green)',
+  ),
+  targetEvidence(
+    sessionsRepairCommit,
+    'measurement',
+    'Solid 2183270e differential at 361/768/1024/1440 in light/dark and SSR/hydrated: exact responsive mode, controls, presets, schema, row/card geometry, table widths, semantic colours, and sort affordance. The settled viewport-only Session height and working Svelte campaign expansion remain intentional exceptions.',
+  ),
+  targetEvidence(
+    sessionsRepairCommit,
+    'review',
+    'Presentation-parity review confirmed 36 public Svelte composition exports and 25 retained report semantics have live Sessions consumers; the orphan-export debt fell from 147 to 122 without deleting an export.',
+  ),
+] as const;
+const recordSessionsRepair = (record: ParityRecord): ParityRecord =>
+  sessionsRepairExportIds.has(record.id) ? appendTargetEvidence(record, sessionsRepairEvidence) : record;
+const completeNewForSessions = (record: ParityRecord): ParityRecord => completeRecord(record, sessionsRepairEvidence);
 const designRow = (id: string, currentOwner: string, evidence: string) =>
   currentRecord(owner, {
     currentOwner,
@@ -400,7 +448,8 @@ export default defineParityShard({
     ])
       .map(completeForD4)
       .map(recordPunchcardRepair)
-      .map(recordBreakdownRepair),
+      .map(recordBreakdownRepair)
+      .map(recordSessionsRepair),
     ...designExportRecords(owner, [
       {
         entrypoint: './svelte',
@@ -447,6 +496,35 @@ export default defineParityShard({
         source: 'packages/design-system/src/components/table.ts',
       },
     ]).map(completeNewForBreakdown),
+    ...designExportRecords(owner, [
+      {
+        entrypoint: './svelte',
+        names: 'filterTextButton presetButton sortButton',
+        source: 'packages/design-system/src/components/button.ts',
+      },
+      {
+        entrypoint: './svelte',
+        names: 'highlightMark sortArrow',
+        source: 'packages/design-system/src/components/chart.ts',
+      },
+      {
+        entrypoint: './svelte',
+        names: 'empty emptyActions',
+        source: 'packages/design-system/src/components/empty-state.ts',
+      },
+      {
+        entrypoint: './svelte',
+        names: `
+          dateCell desktopTableSurface mobileSummarySurface modelCell numCell sessionCell sessionPagingLoadMore sessionsTable sessionSummaryCard sessionSummaryDate sessionSummaryFilter sessionSummaryFilters sessionSummaryFooter sessionSummaryHeader sessionSummaryMobileSort sessionSummaryMobileSortField sessionSummaryMobileSortSelect sessionSummaryOpen sessionSummaryRow sessionSummaryStats sessionSummaryTitle sessionSummaryValue sessionSummaryViewport sessionTitleClamp sessionViewportSurface table tableControls tableWrap
+        `,
+        source: 'packages/design-system/src/components/table.ts',
+      },
+      {
+        entrypoint: './svelte',
+        names: 'presetGroup',
+        source: 'packages/design-system/src/components/time-slider.ts',
+      },
+    ]).map(completeNewForSessions),
     ...designExportRecords(owner, [
       {
         entrypoint: './svelte',

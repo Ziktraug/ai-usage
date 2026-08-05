@@ -72,6 +72,35 @@ const recordBreakdownRepair = (record: ParityRecord): ParityRecord =>
         ],
       }
     : record;
+const sessionsRepairCommit = 'e7c64a86417ca12590e79c49357253dd7b181130';
+const sessionsRepairTitleIds = new Set([
+  'pw:apps/web/e2e/dashboard.spec.ts::offers keyboard-safe charts and mobile summaries at a narrow viewport',
+  'pw:apps/web/e2e/dashboard.spec.ts::renders a human campaign root as not a subagent',
+  'pw:apps/web/e2e/dashboard.spec.ts::starts sessions with focused work columns and switches metric presets',
+]);
+const recordSessionsRepair = (record: ParityRecord): ParityRecord =>
+  sessionsRepairTitleIds.has(record.id)
+    ? {
+        ...record,
+        evidence: [
+          ...record.evidence,
+          {
+            commit: sessionsRepairCommit,
+            kind: 'command',
+            phase: 'target',
+            reference:
+              'bun run --cwd apps/web test:e2e -- e2e/dashboard.spec.ts (23/23 green after the strengthened geometry assertions first failed at 6px versus 2px preset gap and 36px versus 44px mobile select height)',
+          },
+          {
+            commit: sessionsRepairCommit,
+            kind: 'review',
+            phase: 'target',
+            reference:
+              'Solid 2183270e differential review confirms the strengthened titles guard the 25-column chooser, preset/sort/row geometry, responsive surface/card presentation, and the restored final-cell affordance without regressing working Svelte campaign expansion.',
+          },
+        ],
+      }
+    : record;
 const inFile = (file: string, titles: readonly string[]): readonly PlaywrightTitle[] =>
   titles.map((title) => ({ file: `apps/web/e2e/${file}`, title }));
 
@@ -219,5 +248,6 @@ export default defineParityShard({
   records: playwrightTitleRecords(owner, titles)
     .map(completeAtCutover)
     .map(recordPunchcardRepair)
-    .map(recordBreakdownRepair),
+    .map(recordBreakdownRepair)
+    .map(recordSessionsRepair),
 });

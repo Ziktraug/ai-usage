@@ -299,10 +299,10 @@ describe('Web migration parity checker', () => {
     expect(result.counts.get('operation')?.live).toBe(0);
     expect(result.counts.get('operation')?.ledger).toBe(30);
     expect(result.counts.get('production-tsx')?.live).toBe(0);
-    // Grew when the Activity, Punchcard, and Breakdown repairs put semantic
+    // Grew when the Activity, Punchcard, Breakdown, and Sessions repairs put semantic
     // exports back into service and recorded their browser evidence.
-    expect(result.counts.get('design-export')?.live).toBe(384);
-    expect(result.counts.get('design-export')?.ledger).toBe(488);
+    expect(result.counts.get('design-export')?.live).toBe(420);
+    expect(result.counts.get('design-export')?.ledger).toBe(524);
     expect(result.counts.get('playwright-title')?.live).toBe(121);
   });
 });

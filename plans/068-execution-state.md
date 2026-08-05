@@ -1981,3 +1981,81 @@ hydrated Solid/Svelte matrix is exact at all eight viewport/theme points.
 Sessions, the session drawer, Overview tiles/token anatomy, Skills,
 Sources/Sync, the duplicated Skills tree, reduced motion and the remaining
 cross-surface responsive review have not yet been reached.
+
+### Sessions table presentation-parity audit
+
+The next comparison drove the running Solid control at `2183270e` and Svelte
+at `af88b84` before changing Sessions source. The same Playwright driver
+captured 32 states at 361, 768, 1024 and 1440 pixels in light and dark themes,
+both with JavaScript disabled and after hydration, then repeated the complete
+matrix after repair. Direct SSR is recorded rather than conflated with the
+hydrated surface: Solid emits its pending Session shell, while Svelte emits no
+Session table before the report owner settles. That is part of the settled
+transport/lifecycle outcome and was not reworked.
+
+Before `e7c64a86417ca12590e79c49357253dd7b181130`, the hydrated Sessions
+surface was not at presentation parity:
+
+| Property | Solid `2183270e` | Svelte before repair | Svelte after repair |
+| --- | ---: | ---: | ---: |
+| Advanced chooser on the zero-RTK fixture | 23 choices; `7 of 25` | 24 choices including empty RTK; no schema count | exact |
+| Preset gap / preset / Advanced height | 2px / 26px / 30px | 6px / 36px / 36px | exact |
+| First campaign row at 1440px | 75px | 67.19px | 75px |
+| First campaign row at 768/1024px | 93px | 93px | 93px |
+| Sorted arrow, light | accent `rgb(172, 75, 18)`, 10/10px | muted `rgb(110, 106, 96)`, 13/19.5px | exact |
+| Mobile controls / inspect target at 361px | 60.5px / 52px | 92px / 16px | 60.5px / 52px |
+| Mobile surface / first card width | transparent, no border/shadow / 321px | bordered card shell / 319px | exact |
+| Responsive projection | mobile at 361; desktop at 768+ | exact | exact |
+| Dark surface, line, shadow and accent tokens | semantic dark tokens | exact | exact |
+
+Column widths and the 25-column schema itself were already intact. Work,
+Tokens and Reliability also selected the correct columns; their retained
+semantic chrome and the Advanced chooser presentation were missing. The main
+root cause was the 134-line local reconstruction in
+`apps/web/src/lib/features/sessions/table/session-table-styles.ts:3` through
+line 135 at `af88b84`, consumed by
+`session-table.svelte:332` through line 603 at that revision. It replaced the
+retained table, control, mobile-summary, typography and sort semantics with
+smaller local values. The same reconstruction flattened shared provenance into
+a local title/glyph in `session-cell-projection.ts:113` and
+`session-cell.svelte:65`, added 11px campaign annotations and a 28px expansion
+button, and offered the empty RTK column without the Solid schema summary.
+
+The repair makes the public Svelte composition expose and consume the retained
+semantics. The live consumers are visible in
+`session-table.svelte:3`, the zero-RTK/schema projection at line 152, the
+desktop controls and chooser at line 360, the table at line 442 and the mobile
+summary at line 527. `session-cell.svelte:3` now uses
+`CellWithProvenance`, `ProvenanceMarker`, `filterTextButton`,
+`sessionTitleClamp`, `highlightMark` and `muted` instead of recreating
+them. Only the exact Solid popover header/grid layout remains local in
+`session-table-styles.ts:3`; every other local Session style was removed.
+Thirty-six live `./svelte` exports received ledger records and 25 retained
+semantics regained consumers, shrinking the unconsumed-export debt from 147 to
+122 without adding dead code or deleting an export.
+
+Two measured differences are intentionally retained. The Svelte viewport is
+776px at 361px, 876px at 768/1024px and 976px at 1440px, versus Solid's
+629.41/646/694/794px. That is the approved viewport-only Session treadmill fix
+already documented in the performance baseline, not a presentation regression.
+Also, clicking the Solid campaign disclosure never changed its three rows or
+issued a request during a two-second trace; Svelte correctly expands three rows
+to five, including two depth-one children. The audit records that Solid defect
+and does not regress the working Svelte behavior. Svelte's `aria-sort` is
+likewise retained as an accepted accessibility improvement.
+
+The strengthened existing titles at `dashboard.spec.ts:458` and line 533
+failed before repair on the 6px preset gap and 36px mobile select, respectively.
+They now guard the chooser schema, preset/Advanced geometry, 75px campaign row,
+accent 10px sort arrow, non-overflowing table, 44/48px mobile sort pair,
+transparent mobile surface, full-width card and inspect target. Restoring the
+Solid last-cell affordance exposed `No ›` as its accessible name; the campaign
+business invariant at line 508 now asserts the exact DOM text `No` instead of
+removing the affordance. Web typecheck reported 0 errors and 0 warnings, 932 web
+tests passed, the full dashboard browser spec passed 23/23, the consumer ratchet
+is 122, and the migration ledger is complete at 420/420 live exports with 524
+records.
+
+The session drawer, Overview tiles/token anatomy, Skills, Sources/Sync, the
+duplicated Skills tree, reduced motion and the remaining cross-surface
+responsive review have not yet been reached.
