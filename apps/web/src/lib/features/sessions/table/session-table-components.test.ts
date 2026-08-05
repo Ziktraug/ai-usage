@@ -87,7 +87,7 @@ describe('session table Svelte rendering', () => {
     expect(body).toMatch(CAMPAIGN_ANNOTATION_PATTERN);
     expect(body).not.toMatch(EXTRA_CAMPAIGN_SEPARATOR_PATTERN);
     expect(body).toContain('+ 1 automated review · 1,200 fresh');
-    expect(body).toContain('data-session-provenance');
+    expect(body).toContain('role="img"');
     expect(body).toContain('aria-pressed="false"');
     expect(body).toContain('title="Filter by synthetic-project"');
     expect(body).toContain('title="Filter by gpt-5.4"');

@@ -1,4 +1,4 @@
-import type { UsageMetricKey } from '@ai-usage/report-core/provenance';
+import type { UsageMetricKey, UsageRowProvenance } from '@ai-usage/report-core/provenance';
 import { provenanceForMetric } from '@ai-usage/report-core/provenance';
 import {
   campaignBadgeLabelForSessionRow,
@@ -43,13 +43,13 @@ export type SessionCellProjection =
       readonly classifierLabel: string | null;
       readonly kind: 'session';
       readonly originLabel: string | null;
-      readonly provenanceTitle: string | null;
+      readonly provenanceFacts: readonly UsageRowProvenance[];
       readonly segments: readonly SessionHighlightSegment[];
     }
   | {
       readonly kind: 'value';
       readonly label: string;
-      readonly provenanceTitle: string | null;
+      readonly provenanceFacts: readonly UsageRowProvenance[];
       readonly title: string | undefined;
     };
 
@@ -110,14 +110,11 @@ const highlightedSegments = (text: string, query: string): readonly SessionHighl
   return segments;
 };
 
-const provenanceTitle = (
+const provenanceFacts = (
   row: SessionPresentationRow,
   metric: UsageMetricKey,
   excludeKinds: ReadonlySet<string> = new Set(),
-): string | null => {
-  const facts = provenanceForMetric(row, metric).filter((fact) => !excludeKinds.has(fact.kind));
-  return facts.length === 0 ? null : facts.map((fact) => `${fact.label}: ${fact.description}`).join('\n');
-};
+): readonly UsageRowProvenance[] => provenanceForMetric(row, metric).filter((fact) => !excludeKinds.has(fact.kind));
 
 const metricForColumn = (id: SessionColumnId): UsageMetricKey | undefined => {
   if (['tokIn', 'tokOut', 'cache', 'tokCw', 'fresh', 'total'].includes(id)) {
@@ -162,7 +159,7 @@ const valueProjection = (row: SessionPresentationRow, id: SessionColumnId): Sess
     return {
       kind: 'value',
       label: row.usageUnavailable ? '—' : presentation.label,
-      provenanceTitle: provenanceTitle(row, 'api-value', API_PRICE_PROVENANCE_KINDS),
+      provenanceFacts: provenanceFacts(row, 'api-value', API_PRICE_PROVENANCE_KINDS),
       title: row.usageUnavailable ? USAGE_UNAVAILABLE_HINT : presentation.title,
     };
   }
@@ -172,7 +169,7 @@ const valueProjection = (row: SessionPresentationRow, id: SessionColumnId): Sess
     return {
       kind: 'value',
       label: `${sessionColumnById(id).meta.format(row)}${rootSessionOnly ? ' root-session time' : ''}`,
-      provenanceTitle: provenanceTitle(row, 'duration'),
+      provenanceFacts: provenanceFacts(row, 'duration'),
       title: semantics.metricHint,
     };
   }
@@ -180,7 +177,7 @@ const valueProjection = (row: SessionPresentationRow, id: SessionColumnId): Sess
   return {
     kind: 'value',
     label: sessionColumnById(id).meta.format(row),
-    provenanceTitle: metric ? provenanceTitle(row, metric) : null,
+    provenanceFacts: metric ? provenanceFacts(row, metric) : [],
     title: valueTitle(row, id),
   };
 };
@@ -231,7 +228,7 @@ export const projectSessionCell = (
           : `${classifierRollup} · ${fmtCompact(row.campaignClassifierFreshTokens ?? 0)} fresh`,
       kind: 'session',
       originLabel: row.origin === 'classifier' ? sessionOriginLabel(row.origin) : null,
-      provenanceTitle: provenanceTitle(row, 'title'),
+      provenanceFacts: provenanceFacts(row, 'title'),
       segments: highlightedSegments(row.sessionLabel, query),
     };
   }

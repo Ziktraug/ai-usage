@@ -7,6 +7,7 @@ const ADVANCED_COLUMNS_PATTERN = /Advanced columns/;
 const CALENDAR_NAME_PATTERN = /Daily activity calendar/;
 const COLUMN_URL_PATTERN = /cols=/;
 const DATE_HEADER_PATTERN = /Date/;
+const TOKEN_SESSION_HEADERS = [DATE_HEADER_PATTERN, /Session\s*↑/, /Input/, /Output/, /Cache/, /Fresh/];
 const ESTIMATED_API_VALUE_HELP_PATTERN =
   /Estimated API-equivalent value at standard prices for \d+ of \d+ fully priced sessions, including usage covered by subscriptions/;
 const HYDRATION_TIMEOUT_MS = 15_000;
@@ -460,7 +461,8 @@ test('starts sessions with focused work columns and switches metric presets', as
   await reportViewsFor(page).getByRole('link', { exact: true, name: 'Sessions' }).click();
 
   const columnHeaders = page.getByRole('columnheader');
-  await expect(page.getByRole('button', { exact: true, name: 'Work' })).toHaveAttribute('aria-pressed', 'true');
+  const workPreset = page.getByRole('button', { exact: true, name: 'Work' });
+  await expect(workPreset).toHaveAttribute('aria-pressed', 'true');
   await expect(columnHeaders).toHaveText([
     DATE_HEADER_PATTERN,
     'Session',
@@ -470,6 +472,27 @@ test('starts sessions with focused work columns and switches metric presets', as
     'API value',
     'Time',
   ]);
+  const presetGroup = page.getByRole('group', { name: 'Session column presets' });
+  await expect(presetGroup).toHaveCSS('gap', '2px');
+  expect(Math.round((await workPreset.boundingBox())?.height ?? 0)).toBe(26);
+  const advancedColumns = page.getByRole('button', { name: ADVANCED_COLUMNS_PATTERN });
+  expect(Math.round((await advancedColumns.boundingBox())?.height ?? 0)).toBe(30);
+  await advancedColumns.click();
+  await expect(page.getByText('7 of 25 columns shown', { exact: true })).toBeVisible();
+  await expect(page.getByRole('checkbox', { name: 'RTK savings' })).toHaveCount(0);
+  await page.keyboard.press('Escape');
+
+  await page.setViewportSize({ height: 1000, width: 1440 });
+  const campaignRow = page.getByRole('row').filter({ hasText: 'Build report UI' }).first();
+  expect(Math.round((await campaignRow.boundingBox())?.height ?? 0)).toBe(75);
+  await page.setViewportSize({ height: 900, width: 1024 });
+
+  const sessionHeader = page.getByRole('columnheader', { name: 'Session' });
+  await sessionHeader.getByRole('button').click();
+  const sessionSortArrow = sessionHeader.locator('[aria-hidden="true"]');
+  await expect(sessionSortArrow).toHaveCSS('color', 'rgb(172, 75, 18)');
+  await expect(sessionSortArrow).toHaveCSS('font-size', '10px');
+  await expect(sessionSortArrow).toHaveCSS('line-height', '10px');
   expect(
     await page.getByRole('table').evaluate((table) => table.scrollWidth <= (table.parentElement?.clientWidth ?? 0)),
   ).toBe(true);
@@ -479,7 +502,7 @@ test('starts sessions with focused work columns and switches metric presets', as
   await expect(page.getByRole('button', { exact: true, name: 'Tokens' })).toHaveAttribute('aria-pressed', 'true');
   await expect(page.getByRole('table')).toHaveAttribute('data-stability-marker', 'session-table');
   await expect(page.getByText('Preparing sessions…', { exact: true })).toHaveCount(0);
-  await expect(columnHeaders).toHaveText([DATE_HEADER_PATTERN, 'Session', 'Input', 'Output', 'Cache', 'Fresh']);
+  await expect(columnHeaders).toHaveText(TOKEN_SESSION_HEADERS);
 });
 
 test('renders a human campaign root as not a subagent', async ({ page }) => {
@@ -494,7 +517,7 @@ test('renders a human campaign root as not a subagent', async ({ page }) => {
   await expect(page.getByRole('checkbox', { name: 'Subagent' })).toBeChecked();
 
   const humanCampaignRoot = page.getByRole('row').filter({ hasText: 'Build report UI' }).first();
-  await expect(humanCampaignRoot.getByRole('cell', { exact: true, name: 'No' })).toHaveCount(1);
+  await expect(humanCampaignRoot.getByRole('cell').last()).toHaveText('No');
 });
 
 test('uses the report range as the only graph viewport', async ({ page }) => {
@@ -527,10 +550,23 @@ test('offers keyboard-safe charts and mobile summaries at a narrow viewport', as
   await expect(page.locator('[data-session-surface="desktop"]')).toHaveCount(0);
   await expect(page.getByRole('table')).toHaveCount(0);
   const mobileSort = page.getByRole('combobox', { name: 'Sort mobile session summaries' });
+  expect(Math.round((await mobileSort.boundingBox())?.height ?? 0)).toBe(44);
+  const sortDirection = page.getByRole('button', { name: 'Sort ascending' });
+  expect(Math.round((await sortDirection.boundingBox())?.height ?? 0)).toBe(48);
+  await expect(sessionSummaries).toHaveCSS('border-top-width', '0px');
+  await expect(sessionSummaries).toHaveCSS('box-shadow', 'none');
+  const firstSummary = sessionSummaries.locator('article').first();
+  const firstSummaryWidthDelta = await firstSummary.evaluate(
+    (article) =>
+      article.parentElement!.parentElement!.getBoundingClientRect().width - article.getBoundingClientRect().width,
+  );
+  expect(firstSummaryWidthDelta).toBe(0);
+  const inspectSession = sessionSummaries.getByRole('button', { name: INSPECT_SESSION_PATTERN }).first();
+  expect(Math.round((await inspectSession.boundingBox())?.height ?? 0)).toBeGreaterThanOrEqual(44);
   await mobileSort.selectOption('fresh');
   await expect(mobileSort).toHaveValue('fresh');
   await expect(page).toHaveURL(SORT_URL_PATTERN);
-  await sessionSummaries.getByRole('button', { name: INSPECT_SESSION_PATTERN }).first().click();
+  await inspectSession.click();
   await expect(page.getByRole('dialog')).toBeVisible();
   await page.keyboard.press('Escape');
 

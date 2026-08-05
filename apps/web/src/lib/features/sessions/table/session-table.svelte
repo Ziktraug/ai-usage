@@ -1,6 +1,47 @@
 <!-- biome-ignore-all lint/a11y/noNoninteractiveTabindex lint/a11y/useValidAriaValues: virtualized rows preserve the legacy keyboard surface; Svelte emits the closed dynamic WAI-ARIA values asserted by SSR tests -->
 <script lang="ts">
-  import { Checkbox, HarnessBadge, Popover } from '@ai-usage/design-system/svelte';
+  import { cx } from '@ai-usage/design-system/css';
+  import {
+    Checkbox,
+    dateCell,
+    desktopTableSurface,
+    empty,
+    emptyActions,
+    ghostButton,
+    HarnessBadge,
+    highlightMark,
+    mobileSummarySurface,
+    modelCell,
+    numCell,
+    Popover,
+    presetButton,
+    presetGroup,
+    right,
+    sessionCell,
+    sessionPagingLoadMore,
+    sessionSummaryCard,
+    sessionSummaryDate,
+    sessionSummaryFilter,
+    sessionSummaryFilters,
+    sessionSummaryFooter,
+    sessionSummaryHeader,
+    sessionSummaryMobileSort,
+    sessionSummaryMobileSortField,
+    sessionSummaryMobileSortSelect,
+    sessionSummaryOpen,
+    sessionSummaryRow,
+    sessionSummaryStats,
+    sessionSummaryTitle,
+    sessionSummaryValue,
+    sessionSummaryViewport,
+    sessionsTable,
+    sessionViewportSurface,
+    sortArrow,
+    sortButton,
+    table as tableClass,
+    tableControls,
+    tableWrap,
+  } from '@ai-usage/design-system/svelte';
   import type { SessionPresentationRow } from '@ai-usage/report-core/session-query';
   import type { ExpandedState } from '@tanstack/table-core';
   import { onMount, untrack } from 'svelte';
@@ -17,6 +58,7 @@
     type SessionColumnId,
     sessionColumnPresetForVisibility,
     sessionColumnPresets,
+    sessionColumnSchema,
   } from '../../../../session-table-schema';
   import { fmtDate } from '../../../foundation/presentation/format';
   import type { StateChangeHandler, TableSortingState, TableVisibilityState } from '../../../foundation/table/state';
@@ -30,28 +72,7 @@
   import { sessionTableColumns, visibleSessionTableColumns } from './session-columns';
   import { createSessionTableModel, toggleSessionRowExpanded } from './session-table-model';
   import type { SessionCampaignPage } from './session-table-query-owner';
-  import {
-    controlButton,
-    controls,
-    empty,
-    highlightedMark,
-    mobileCard,
-    mobileHeader,
-    mobileList,
-    mobileMeta,
-    mobileOpen,
-    mobileRow,
-    mobileSort,
-    numeric,
-    paging,
-    popoverGrid,
-    presetGroup,
-    select,
-    sessionCell,
-    sortButton,
-    surface,
-    table,
-  } from './session-table-styles';
+  import { popoverGrid, popoverHeader } from './session-table-styles';
   import {
     isSessionPagePrefetchRequired,
     projectSessionVirtualRows,
@@ -128,8 +149,10 @@
   let pagingSignature = $state('');
   let pendingFocusIndex = $state<number>();
 
-  const effectiveVisibility = $derived(
-    rows.some((row) => Boolean(row.rtkSavedTokens)) ? columnVisibility : { ...columnVisibility, rtkSaved: false },
+  const hasRtkData = $derived(rows.some((row) => Boolean(row.rtkSavedTokens)));
+  const effectiveVisibility = $derived(hasRtkData ? columnVisibility : { ...columnVisibility, rtkSaved: false });
+  const chooserColumns = $derived(
+    sessionTableColumns.filter((entry) => entry.id !== 'session' && (entry.id !== 'rtkSaved' || hasRtkData)),
   );
   const model = $derived(
     createSessionTableModel({
@@ -153,6 +176,13 @@
   );
   const columnWidth = (width: number): string =>
     activePreset ? `${(width / visibleColumnWidthTotal) * 100}%` : `${width}px`;
+  const cellClass = (id: SessionColumnId, align: 'left' | 'right'): string =>
+    cx(
+      align === 'right' ? numCell : undefined,
+      id === 'date' ? dateCell : undefined,
+      id === 'model' ? modelCell : undefined,
+      id === 'session' ? sessionCell : undefined,
+    );
 
   const ariaSortFor = (id: SessionColumnId): 'ascending' | 'descending' | 'none' => {
     if (activeSort.id !== id) {
@@ -332,32 +362,46 @@
     {#if loading}
       <span aria-live="polite">Loading sessions…</span>
     {:else}
-      <span>No sessions match the current filters</span>
-      <button class={controlButton} onclick={onClearFilters} type="button">Clear filters</button>
+      <div class={emptyActions}>
+        <span>No sessions match the current filters</span>
+        <button class={ghostButton} onclick={onClearFilters} type="button">Clear filters</button>
+      </div>
     {/if}
   </div>
 {:else}
   <section aria-label="Sessions" data-session-mode={activeMode} data-session-table-owner>
-    <div class={controls} data-session-region-start bind:this={sessionRegionStartElement}>
+    <div class={tableControls} data-session-region-start bind:this={sessionRegionStartElement}>
       {#if activeMode === 'desktop'}
         <fieldset aria-label="Session column presets" class={presetGroup}>
           {#each sessionColumnPresets as preset (preset.id)}
+            {@const active = activePreset === preset.id}
             <button
-              aria-pressed={activePreset === preset.id}
-              class={controlButton}
-              data-default={preset.id === 'work'}
+              aria-pressed={active}
+              class={presetButton}
+              data-active={String(active)}
+              data-default={String(preset.id === 'work')}
               onclick={() => onColumnVisibilityChange(columnVisibilityForSessionPreset(preset.id))}
               type="button"
             >
               {preset.label}
             </button>
           {/each}
-          <Popover triggerClass={controlButton}>
+          <Popover triggerClass={ghostButton}>
             {#snippet trigger()}
               Advanced columns · {visibleColumns.length} ▾
             {/snippet}
+            <div class={popoverHeader}>
+              <span>{visibleColumns.length} of {sessionColumnSchema.length} columns shown</span>
+              <button
+                class={ghostButton}
+                onclick={() => onColumnVisibilityChange(defaultColumnVisibility)}
+                type="button"
+              >
+                Reset
+              </button>
+            </div>
             <div class={popoverGrid}>
-              {#each sessionTableColumns.filter((entry) => entry.id !== 'session') as entry (entry.id)}
+              {#each chooserColumns as entry (entry.id)}
                 <Checkbox
                   checked={isSessionColumnVisible(columnVisibility, entry.id)}
                   onCheckedChange={(checked) => setColumnVisible(entry.id, checked)}
@@ -365,23 +409,16 @@
                   {entry.meta.label}
                 </Checkbox>
               {/each}
-              <button
-                class={controlButton}
-                onclick={() => onColumnVisibilityChange(defaultColumnVisibility)}
-                type="button"
-              >
-                Reset
-              </button>
             </div>
           </Popover>
         </fieldset>
       {:else}
-        <div class={mobileSort}>
-          <label>
-            <span>Sort by </span>
+        <div class={sessionSummaryMobileSort}>
+          <label class={sessionSummaryMobileSortField}>
+            <span>Sort by</span>
             <select
               aria-label="Sort mobile session summaries"
-              class={select}
+              class={sessionSummaryMobileSortSelect}
               onchange={(event) => changeSortColumn(event.currentTarget.value as SessionColumnId)}
               value={activeSort.id}
             >
@@ -390,29 +427,37 @@
               {/each}
             </select>
           </label>
-          <button class={controlButton} onclick={() => changeSort(activeSort.id as SessionColumnId)} type="button">
+          <button
+            aria-label={activeSort.desc ? 'Sort ascending' : 'Sort descending'}
+            class={ghostButton}
+            onclick={() => changeSort(activeSort.id as SessionColumnId)}
+            type="button"
+          >
             {activeSort.desc ? 'Descending ↓' : 'Ascending ↑'}
           </button>
         </div>
       {/if}
-      <span aria-live="polite">{totalRows ?? rows.length} sessions</span>
     </div>
 
     {#if activeMode === 'desktop'}
       <div
-        class={surface}
+        class={cx(tableWrap, sessionViewportSurface, desktopTableSurface)}
         data-session-surface="desktop"
         onscroll={updateViewport}
         bind:this={surfaceElement}
         use:setSurfaceElement
       >
-        <table aria-rowcount={totalRows ?? model.rows.length} class={table} style:min-width={`${tableMinWidth}px`}>
+        <table
+          aria-rowcount={totalRows ?? model.rows.length}
+          class={cx(tableClass, sessionsTable)}
+          style:min-width={`${tableMinWidth}px`}
+        >
           <thead>
             <tr>
               {#each visibleColumns as entry (entry.id)}
                 <th
                   aria-sort={ariaSortFor(entry.id)}
-                  class={entry.meta.align === 'right' ? numeric : undefined}
+                  class={entry.meta.align === 'right' ? right : undefined}
                   scope="col"
                   title={entry.meta.title}
                   style:width={columnWidth(entry.meta.widthPx)}
@@ -420,7 +465,7 @@
                   <button class={sortButton} onclick={() => changeSort(entry.id)} type="button">
                     <span>{typeof entry.header === 'string' ? entry.header : entry.meta.label}</span>
                     {#if activeSort.id === entry.id}
-                      <span aria-hidden="true">{activeSort.desc ? '↓' : '↑'}</span>
+                      <span aria-hidden="true" class={sortArrow}>{activeSort.desc ? '↓' : '↑'}</span>
                     {/if}
                   </button>
                 </th>
@@ -430,7 +475,12 @@
           <tbody>
             {#if virtual.topHeight > 0}
               <tr aria-hidden="true" data-virtual-spacer="top">
-                <td colspan={visibleColumns.length} style:height={`${virtual.topHeight}px`}></td>
+                <td
+                  colspan={visibleColumns.length}
+                  style:border="0"
+                  style:height={`${virtual.topHeight}px`}
+                  style:padding="0"
+                ></td>
               </tr>
             {/if}
             {#each virtual.rows as virtualRow (virtualRow.row.id)}
@@ -445,9 +495,7 @@
                 tabindex="0"
               >
                 {#each visibleColumns as entry (entry.id)}
-                  <td
-                    class={[entry.meta.align === 'right' ? numeric : undefined, entry.id === 'session' ? sessionCell : undefined]}
-                  >
+                  <td class={cellClass(entry.id, entry.meta.align)}>
                     <SessionCell
                       canExpand={virtualRow.row.getCanExpand()}
                       columnId={entry.id}
@@ -465,7 +513,12 @@
             {/each}
             {#if virtual.bottomHeight > 0}
               <tr aria-hidden="true" data-virtual-spacer="bottom">
-                <td colspan={visibleColumns.length} style:height={`${virtual.bottomHeight}px`}></td>
+                <td
+                  colspan={visibleColumns.length}
+                  style:border="0"
+                  style:height={`${virtual.bottomHeight}px`}
+                  style:padding="0"
+                ></td>
               </tr>
             {/if}
           </tbody>
@@ -474,7 +527,7 @@
     {:else}
       <ul
         aria-label="Session summaries"
-        class={[surface, mobileList]}
+        class={cx(mobileSummarySurface, sessionSummaryViewport, sessionViewportSurface)}
         data-session-list-gap="0"
         data-session-list-padding="0"
         data-session-surface="mobile"
@@ -494,20 +547,20 @@
           <li
             aria-posinset={virtualRow.index + 1}
             aria-setsize={Math.max(totalRows ?? 0, model.rows.length)}
-            class={mobileRow}
+            class={sessionSummaryRow}
             data-depth={virtualRow.row.depth}
             data-index={virtualRow.index}
             data-session-row-height="188"
             data-session-row-id={virtualRow.row.id}
           >
             <article
-              class={mobileCard}
+              class={sessionSummaryCard}
               data-depth={virtualRow.row.depth}
               data-selected={selectedRowId === virtualRow.row.id}
               data-session-card-height="180"
             >
-              <header class={mobileHeader}>
-                <span>{fmtDate(virtualRow.row.original.activeDate)}</span>
+              <header class={sessionSummaryHeader}>
+                <span class={sessionSummaryDate}>{fmtDate(virtualRow.row.original.activeDate)}</span>
                 <HarnessBadge
                   name={virtualRow.row.original.harness}
                   onClick={() => onHarnessFilter(virtualRow.row.original.harness)}
@@ -517,18 +570,18 @@
                 aria-label={mobileSession.kind === 'session'
                   ? `Inspect session: ${mobileSession.segments.map(({ text }) => text).join('')}`
                   : undefined}
-                class={mobileOpen}
+                class={sessionSummaryOpen}
                 data-session-index={virtualRow.index}
                 onclick={() => onSelect(virtualRow.row.original)}
                 onkeydown={(event) => onRowKeydown(event, virtualRow.row.original, virtualRow.index, false)}
                 tabindex="0"
                 type="button"
               >
-                <span>
+                <span class={sessionSummaryTitle}>
                   {#if mobileSession.kind === 'session'}
                     {#each mobileSession.segments as segment, index (`mobile:${index}:${segment.text}`)}
                       {#if segment.match}
-                        <mark class={highlightedMark}>{segment.text}</mark>
+                        <mark class={highlightMark}>{segment.text}</mark>
                       {:else}
                         {segment.text}
                       {/if}
@@ -536,43 +589,47 @@
                   {/if}
                 </span>
                 {#if mobileValue.kind === 'value'}
-                  <span title={mobileValue.title}>{mobileValue.label}</span>
+                  <span class={sessionSummaryValue} title={mobileValue.title}>{mobileValue.label}</span>
                 {/if}
               </button>
-              <div>
-                <button
-                  class={controlButton}
-                  onclick={() => onFieldFilter('project', virtualRow.row.original.projectKey)}
-                  title={`Filter by project ${virtualRow.row.original.projectLabel}`}
-                  type="button"
-                >
-                  {virtualRow.row.original.projectLabel === '(unknown)' ? 'No project' : virtualRow.row.original.projectLabel}
-                </button>
-                <button
-                  class={controlButton}
-                  onclick={() => onFieldFilter('model', virtualRow.row.original.modelKey)}
-                  title={`Filter by model ${virtualRow.row.original.modelKey}`}
-                  type="button"
-                >
-                  {virtualRow.row.original.modelLabel}
-                </button>
-                {#if virtualRow.row.getCanExpand()}
+              <footer class={sessionSummaryFooter}>
+                <div class={sessionSummaryFilters}>
                   <button
-                    class={controlButton}
-                    onclick={() => toggleExpanded(virtualRow.row.original)}
-                    title={virtualRow.row.getIsExpanded() ? 'Collapse campaign' : 'Expand campaign'}
+                    class={sessionSummaryFilter}
+                    onclick={() => onFieldFilter('project', virtualRow.row.original.projectKey)}
+                    title={`Filter by project ${virtualRow.row.original.projectLabel}`}
                     type="button"
                   >
-                    {virtualRow.row.getIsExpanded() ? 'Hide children' : 'Show children'}
+                    {virtualRow.row.original.projectLabel === '(unknown)'
+                      ? 'No project'
+                      : virtualRow.row.original.projectLabel}
                   </button>
-                {/if}
-              </div>
-              <footer class={mobileMeta}>
-                {#if mobileFresh.kind === 'value' && mobileCache.kind === 'value' && mobileDuration.kind === 'value'}
-                  <span title={mobileFresh.title}>{mobileFresh.label} fresh</span>
-                  · <span title={mobileCache.title}>{mobileCache.label} cache</span>
-                  · <span title={mobileDuration.title}>{mobileDuration.label}</span>
-                {/if}
+                  <button
+                    class={sessionSummaryFilter}
+                    onclick={() => onFieldFilter('model', virtualRow.row.original.modelKey)}
+                    title={`Filter by model ${virtualRow.row.original.modelKey}`}
+                    type="button"
+                  >
+                    {virtualRow.row.original.modelLabel}
+                  </button>
+                  {#if virtualRow.row.getCanExpand()}
+                    <button
+                      class={sessionSummaryFilter}
+                      onclick={() => toggleExpanded(virtualRow.row.original)}
+                      title={virtualRow.row.getIsExpanded() ? 'Collapse campaign' : 'Expand campaign'}
+                      type="button"
+                    >
+                      {virtualRow.row.getIsExpanded() ? 'Hide children' : 'Show children'}
+                    </button>
+                  {/if}
+                </div>
+                <span class={sessionSummaryStats}>
+                  {#if mobileFresh.kind === 'value' && mobileCache.kind === 'value' && mobileDuration.kind === 'value'}
+                    <span title={mobileFresh.title}>{mobileFresh.label} fresh</span>
+                    · <span title={mobileCache.title}>{mobileCache.label} cache</span>
+                    · <span title={mobileDuration.title}>{mobileDuration.label}</span>
+                  {/if}
+                </span>
               </footer>
             </article>
           </li>
@@ -587,9 +644,9 @@
     {#each rows.filter((row) => row.campaignKey && (typeof expanded === 'object' && expanded[row.rowId])) as row (row.rowId)}
       {@const campaign = row.campaignKey ? campaignChildren.get(row.campaignKey) : undefined}
       {#if row.campaignKey && (campaign?.loading || campaign?.nextCursor)}
-        <div class={paging}>
+        <div class={sessionPagingLoadMore}>
           <button
-            class={controlButton}
+            class={ghostButton}
             disabled={campaign.loading}
             onclick={() => onLoadCampaignChildren?.(row.campaignKey!)}
             type="button"
@@ -600,7 +657,7 @@
       {/if}
     {/each}
     {#if loadingMoreRows}
-      <div aria-live="polite" class={paging}>Loading more sessions…</div>
+      <div aria-live="polite" class={sessionPagingLoadMore}>Loading more sessions…</div>
     {/if}
   </section>
 {/if}

@@ -1,17 +1,17 @@
 <!-- biome-ignore-all lint/a11y/useValidAriaValues: Svelte emits the closed boolean WAI-ARIA value asserted by SSR tests -->
 <script lang="ts">
-  import { HarnessBadge } from '@ai-usage/design-system/svelte';
+  import {
+    CellWithProvenance,
+    filterTextButton,
+    HarnessBadge,
+    highlightMark,
+    muted,
+    ProvenanceMarker,
+    sessionTitleClamp,
+  } from '@ai-usage/design-system/svelte';
   import type { SessionPresentationRow } from '@ai-usage/report-core/session-query';
   import type { SessionColumnId } from '../../../../session-table-schema';
   import { applySessionFieldFilter, projectSessionCell } from './session-cell-projection';
-  import {
-    expandButton,
-    filterButton,
-    highlightedMark,
-    provenanceMarker,
-    sessionAnnotation,
-    sessionCellContent,
-  } from './session-table-styles';
 
   let {
     canExpand,
@@ -39,12 +39,12 @@
 </script>
 
 {#if projection.kind === 'session'}
-  <div class={sessionCellContent} style:padding-left={`${depth * 14}px`}>
+  <div class={sessionTitleClamp} style:padding-left={`${depth * 14}px`}>
     {#if canExpand}
       <button
         aria-expanded={expanded ? 'true' : 'false'}
         aria-label={`${expanded ? 'Collapse' : 'Expand'} campaign ${row.sessionLabel}`}
-        class={expandButton}
+        class={filterTextButton}
         onclick={(event) => {
           event.stopPropagation();
           onToggleExpanded();
@@ -57,25 +57,25 @@
     {/if}
     {#each projection.segments as segment, index (`${index}:${segment.text}`)}
       {#if segment.match}
-        <mark class={highlightedMark}>{segment.text}</mark>
+        <mark class={highlightMark}>{segment.text}</mark>
       {:else}
         {segment.text}
       {/if}
     {/each}
-    {#if projection.provenanceTitle}
-      <span class={provenanceMarker} data-session-provenance title={projection.provenanceTitle}> ⓘ</span>
+    {#if projection.provenanceFacts.length > 0}
+      {' '}<ProvenanceMarker facts={projection.provenanceFacts} />
     {/if}
     {#if depth > 0 && projection.originLabel}
-      <span class={sessionAnnotation} data-session-origin="classifier"> · {projection.originLabel}</span>
+      <span class={muted} data-session-origin="classifier"> {projection.originLabel}</span>
     {/if}
     {#if projection.campaignLabel}
-      <span class={sessionAnnotation} data-session-campaign-annotation title={projection.campaignLabel}>
+      <span class={muted} data-session-campaign-annotation title={projection.campaignLabel}>
         {projection.campaignLabel}</span
       >
     {/if}
     {#if projection.classifierLabel}
-      <span class={sessionAnnotation} data-campaign-classifier-rollup title={projection.classifierLabel}>
-        · {projection.classifierLabel}
+      <span class={muted} data-campaign-classifier-rollup title={projection.classifierLabel}>
+        {projection.classifierLabel}
       </span>
     {/if}
   </div>
@@ -84,7 +84,7 @@
 {:else if projection.kind === 'field-filter'}
   <button
     aria-pressed="false"
-    class={filterButton}
+    class={filterTextButton}
     onclick={(event) => applySessionFieldFilter(event, onFieldFilter, projection.field, projection.value)}
     title={projection.title}
     type="button"
@@ -92,8 +92,7 @@
     {projection.label}
   </button>
 {:else}
-  <span title={projection.title}>{projection.label}</span>
-  {#if projection.provenanceTitle}
-    <span class={provenanceMarker} data-session-provenance title={projection.provenanceTitle}> ⓘ</span>
-  {/if}
+  <CellWithProvenance facts={projection.provenanceFacts}>
+    <span title={projection.title}>{projection.label}</span>
+  </CellWithProvenance>
 {/if}

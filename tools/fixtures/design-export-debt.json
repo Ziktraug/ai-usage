@@ -5,10 +5,6 @@
   },
   {
     "module": "button",
-    "name": "filterTextButton"
-  },
-  {
-    "module": "button",
     "name": "navButton"
   },
   {
@@ -192,14 +188,6 @@
     "name": "scatterSummary"
   },
   {
-    "module": "chart",
-    "name": "sortArrow"
-  },
-  {
-    "module": "empty-state",
-    "name": "emptyActions"
-  },
-  {
     "module": "empty-state",
     "name": "unavailableTitle"
   },
@@ -357,99 +345,11 @@
   },
   {
     "module": "table",
-    "name": "dateCell"
-  },
-  {
-    "module": "table",
-    "name": "modelCell"
-  },
-  {
-    "module": "table",
     "name": "sessionDesktopControl"
   },
   {
     "module": "table",
-    "name": "sessionPagingLoadMore"
-  },
-  {
-    "module": "table",
-    "name": "sessionsTable"
-  },
-  {
-    "module": "table",
-    "name": "sessionSummaryCard"
-  },
-  {
-    "module": "table",
-    "name": "sessionSummaryDate"
-  },
-  {
-    "module": "table",
-    "name": "sessionSummaryFilter"
-  },
-  {
-    "module": "table",
-    "name": "sessionSummaryFilters"
-  },
-  {
-    "module": "table",
-    "name": "sessionSummaryFooter"
-  },
-  {
-    "module": "table",
-    "name": "sessionSummaryHeader"
-  },
-  {
-    "module": "table",
     "name": "sessionSummaryLoadMore"
-  },
-  {
-    "module": "table",
-    "name": "sessionSummaryMobileSort"
-  },
-  {
-    "module": "table",
-    "name": "sessionSummaryMobileSortField"
-  },
-  {
-    "module": "table",
-    "name": "sessionSummaryMobileSortSelect"
-  },
-  {
-    "module": "table",
-    "name": "sessionSummaryOpen"
-  },
-  {
-    "module": "table",
-    "name": "sessionSummaryRow"
-  },
-  {
-    "module": "table",
-    "name": "sessionSummaryStats"
-  },
-  {
-    "module": "table",
-    "name": "sessionSummaryTitle"
-  },
-  {
-    "module": "table",
-    "name": "sessionSummaryValue"
-  },
-  {
-    "module": "table",
-    "name": "sessionSummaryViewport"
-  },
-  {
-    "module": "table",
-    "name": "sessionTitleClamp"
-  },
-  {
-    "module": "table",
-    "name": "sessionViewportSurface"
-  },
-  {
-    "module": "table",
-    "name": "tableControls"
   },
   {
     "module": "time-slider",

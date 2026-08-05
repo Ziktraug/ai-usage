@@ -1,12 +1,22 @@
-export { commandButton, ghostButton, pendingButton, themeToggleButton } from './components/button';
+export {
+  commandButton,
+  filterTextButton,
+  ghostButton,
+  pendingButton,
+  presetButton,
+  sortButton,
+  themeToggleButton,
+} from './components/button';
 export {
   accentFill,
   type DimensionSwatch,
   dimensionSwatch,
+  highlightMark,
   migrationCrosshair,
+  sortArrow,
   stableSeriesColor,
 } from './components/chart';
-export { unavailableText } from './components/empty-state';
+export { empty, emptyActions, unavailableText } from './components/empty-state';
 export { searchInput } from './components/field';
 
 export {
@@ -50,9 +60,43 @@ export {
   statusPillWarn,
 } from './components/status';
 
-export { groupKeyButton, muted, right, strongCell } from './components/table';
+export {
+  dateCell,
+  desktopTableSurface,
+  groupKeyButton,
+  mobileSummarySurface,
+  modelCell,
+  muted,
+  numCell,
+  right,
+  sessionCell,
+  sessionPagingLoadMore,
+  sessionSummaryCard,
+  sessionSummaryDate,
+  sessionSummaryFilter,
+  sessionSummaryFilters,
+  sessionSummaryFooter,
+  sessionSummaryHeader,
+  sessionSummaryMobileSort,
+  sessionSummaryMobileSortField,
+  sessionSummaryMobileSortSelect,
+  sessionSummaryOpen,
+  sessionSummaryRow,
+  sessionSummaryStats,
+  sessionSummaryTitle,
+  sessionSummaryValue,
+  sessionSummaryViewport,
+  sessionsTable,
+  sessionTitleClamp,
+  sessionViewportSurface,
+  strongCell,
+  table,
+  tableControls,
+  tableWrap,
+} from './components/table';
 export {
   monthGridline,
+  presetGroup,
   timeChartOptions,
   timeChartOptionsCurrent,
   timeChartOptionsSummary,

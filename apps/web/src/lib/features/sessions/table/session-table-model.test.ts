@@ -122,19 +122,19 @@ describe('Svelte session table schema adapter', () => {
       originLabel: 'Automated review',
     });
     expect(projectSessionCell(row, 'session', 'session')).toHaveProperty('segments.1.match', true);
-    expect(projectSessionCell(row, 'session', 'session')).toHaveProperty('provenanceTitle');
+    expect(projectSessionCell(row, 'session', 'session')).toHaveProperty('provenanceFacts');
     expect(projectSessionCell(row, 'cost', '')).toMatchObject({
       kind: 'value',
       label: '≥ $1.25',
       title: 'Known API-value subtotal; one or more model prices are unavailable',
     });
     expect(projectSessionCell(row, 'cost', '')).not.toHaveProperty(
-      'provenanceTitle',
-      expect.stringContaining('Partial API value'),
+      'provenanceFacts',
+      expect.arrayContaining([expect.objectContaining({ kind: 'partial-api-price' })]),
     );
     expect(projectSessionCell({ ...row, costApprox: 0 }, 'cost', '')).not.toHaveProperty(
-      'provenanceTitle',
-      expect.stringContaining('Unknown API price'),
+      'provenanceFacts',
+      expect.arrayContaining([expect.objectContaining({ kind: 'unknown-api-price' })]),
     );
   });
 
@@ -173,7 +173,10 @@ describe('Svelte session table schema adapter', () => {
     }
     const unavailableTurns = projectSessionCell({ ...unavailableRow, partial: true, turns: 17 }, 'turns', '');
     expect(unavailableTurns).toMatchObject({ kind: 'value', label: '17', title: undefined });
-    expect(unavailableTurns).toHaveProperty('provenanceTitle', expect.stringContaining('Partial session'));
+    expect(unavailableTurns).toHaveProperty(
+      'provenanceFacts',
+      expect.arrayContaining([expect.objectContaining({ label: 'Partial session' })]),
+    );
     const rtkRow = {
       ...syntheticSessionRow(9),
       rtkCommandCount: 3,
