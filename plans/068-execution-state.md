@@ -2488,3 +2488,15 @@ repair Chromium restored `scrollTop` from about 1520px to 865px while the live
 virtual window stayed at indices 12-48 and the traversal stalled after 59 rows;
 after the repair every top-level campaign is reached exactly once. This closes
 the final release-gate blocker recorded by the presentation-parity audit.
+
+Invalidating the full-test cache exposed one deterministic fixture drift in the
+Skills SSR suite: 3/5 titles passed because `management.fixture.svelte` omitted
+the production `SkillsHealthSlot` placement and therefore inherited the
+`inspector` default for global scope. Production already selects `detail` for
+that state. Commit `d2ba92966bf3f96be761c061a0107f3c7bed5494` mirrors the
+production placement in the fixture only; the focused suite is now 5/5 and no
+product behavior changed. The complete final gates are green, including 107/107
+deterministic browser titles, demo 1/1, production report 8/8, production scale
+2/2, and the 4/4 Session benchmark. The post-fix benchmark medians move by at
+most 7.4% from the recorded run, with identical DOM and payload bounds, so no
+new performance-baseline explanation is required.
