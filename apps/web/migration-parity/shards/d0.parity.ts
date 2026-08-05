@@ -169,6 +169,36 @@ const recordPunchcardRepair = (record: ParityRecord): ParityRecord =>
         ),
       ])
     : record;
+const breakdownRepairCommit = '2eee573caaa4cd6f38ec67c34797e56bb614e1c6';
+const breakdownRepairExportIds = new Set([
+  'design-export:./report::groupCount',
+  'design-export:./report::groupPanel',
+  'design-export:./report::groupPct',
+  'design-export:./report::groupRow',
+  'design-export:./report::groupRows',
+  'design-export:./report::groupSub',
+  'design-export:./report::groupValue',
+]);
+const breakdownRepairEvidence = [
+  targetEvidence(
+    breakdownRepairCommit,
+    'command',
+    'bun run --cwd apps/web typecheck; bun test apps/web/src/lib/features/report/breakdown packages/design-system/src/design-entrypoints.test.ts; bun run --cwd apps/web test:e2e -- e2e/value-presentation.spec.ts; bun tools/check-design-export-consumers.ts (green)',
+  ),
+  targetEvidence(
+    breakdownRepairCommit,
+    'measurement',
+    'Hydrated Solid 2183270e differential at 361/768/1024/1440 in light/dark: exact row and track geometry, semantic harness colours, integer shares, rounded fills, partial-state inset, and 30px narrow sharing actions at all eight points.',
+  ),
+  targetEvidence(
+    breakdownRepairCommit,
+    'review',
+    'Presentation-parity review against the running Solid control confirmed the restored Breakdown export consumers; the orphan-export debt fell from 154 to 147. Direct Svelte SSR remains the settled loading fallback and was recorded rather than reworked.',
+  ),
+] as const;
+const recordBreakdownRepair = (record: ParityRecord): ParityRecord =>
+  breakdownRepairExportIds.has(record.id) ? appendTargetEvidence(record, breakdownRepairEvidence) : record;
+const completeNewForBreakdown = (record: ParityRecord): ParityRecord => completeRecord(record, breakdownRepairEvidence);
 const designRow = (id: string, currentOwner: string, evidence: string) =>
   currentRecord(owner, {
     currentOwner,
@@ -369,7 +399,8 @@ export default defineParityShard({
       },
     ])
       .map(completeForD4)
-      .map(recordPunchcardRepair),
+      .map(recordPunchcardRepair)
+      .map(recordBreakdownRepair),
     ...designExportRecords(owner, [
       {
         entrypoint: './svelte',
@@ -387,6 +418,35 @@ export default defineParityShard({
         source: 'packages/design-system/src/components/panel.ts',
       },
     ]).map(completeNewForR1),
+    ...designExportRecords(owner, [
+      {
+        entrypoint: './svelte',
+        names: 'unavailableText',
+        source: 'packages/design-system/src/components/empty-state.ts',
+      },
+      {
+        entrypoint: './svelte',
+        names: 'actionRow',
+        source: 'packages/design-system/src/components/layout.ts',
+      },
+      {
+        entrypoint: './svelte',
+        names: `
+          groupCount groupHeader groupPanel groupPct groupRow groupRows groupSub groupTitle groupValue
+        `,
+        source: 'packages/design-system/src/components/panel.ts',
+      },
+      {
+        entrypoint: './svelte',
+        names: 'barFill barTrack',
+        source: 'packages/design-system/src/components/segment-bar.ts',
+      },
+      {
+        entrypoint: './svelte',
+        names: 'groupKeyButton right',
+        source: 'packages/design-system/src/components/table.ts',
+      },
+    ]).map(completeNewForBreakdown),
     ...designExportRecords(owner, [
       {
         entrypoint: './svelte',

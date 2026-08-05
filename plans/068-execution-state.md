@@ -1913,3 +1913,71 @@ ratchet (154), migration-parity gate, and the full 16-point differential matrix
 all passed. Breakdown bars, Sessions, the session drawer, Overview tiles/token
 anatomy, Skills, Sources/Sync, the duplicated Skills tree, reduced motion and
 the remaining cross-surface dark/responsive review have not yet been reached.
+
+### Breakdown bars presentation-parity audit
+
+The next comparison drove the running Solid control at `2183270e` and Svelte
+at `1794ca1` with the same synthetic E2E report before changing Breakdown
+source. Hydrated geometry and computed style were measured at 361, 768, 1024 and
+1440 pixels in both themes. Direct JavaScript-disabled routes were also checked:
+Solid rendered the selected Breakdown panel in SSR, while Svelte rendered the
+settled `Loading report` fallback. That runtime distinction belongs to the
+already-settled transport and lifecycle outcome, so this audit records it as not
+presentation-comparable and does not rework it.
+
+Before `2eee573caaa4cd6f38ec67c34797e56bb614e1c6`, Breakdown was not at
+presentation parity:
+
+| Property | Solid `2183270e` | Svelte before repair | Svelte after repair |
+| --- | ---: | ---: | ---: |
+| 1440px row width | 1150px | 1112px | 1150px |
+| Measured / hierarchy row height | 83px / 90px | 55px / 63px | 83px / 90px |
+| Metric column / column gap | fixed 96px / 14px | auto 30.5–50.6px / 12px | fixed 96px / 14px |
+| Track height / top margin | 6px / 8px | 7px / 6px | 6px / 8px |
+| Fill end shape | rounded | square | rounded |
+| Codex / OpenCode / Claude / Cursor | teal / blue / purple / violet | one orange accent | teal / blue / purple / violet |
+| Known-value shares | 66% / 34% / 0.0% | 65.6% / 34.4% / 0.0% | 66% / 34% / 0.0% |
+| Models / harness panel height | 346px / 370px | 328px / 319px | 346px / 370px |
+| Narrow Copy / Export height | 30px | 32px | 30px |
+
+The all-range partial fixture exposed the same reconstruction: Solid used an
+82px row, a 6px dashed track and a 4px inner fill, while Svelte used a 55px row,
+a 7px track and a 5px fill. Both controls agreed on legend order and on the
+measured, partially measured and zero categories; the presentation of those
+states was what diverged.
+
+The root cause was the local Breakdown layer in
+`apps/web/src/lib/features/report/breakdown/styles.ts` and the local row/panel
+markup in `breakdown-row.svelte` and `harness-provider-panel.svelte`. They
+reconstructed the retained `group*`, `bar*`, alignment, action and
+unavailable-state semantics with smaller local geometry, and
+`breakdown-row.svelte` applied one universal `accentFill` instead of the
+Solid harness colour projection. The local sharing buttons likewise kept a
+32px minimum rather than consuming `ghostButton`.
+
+The repair restores the shared group shell and row consumers, the 6px
+`barTrack` and rounded `barFill`, fixed value alignment, unavailable-state
+and action semantics. The fill uses
+`cx(barFill, fill.className ?? accentFill)`, so the base does not compete with
+a semantic background in Panda's cascade. Harness colours now come from
+`dimensionSwatch`; model rows retain their series colours; shares use the
+Solid integer percentage formatter; and the narrow sharing actions consume
+`ghostButton`. Fifteen Svelte exports were added to the public composition and
+two report bar exports returned from reviewed removal to live use. Seven
+previously orphaned exports regained consumers, shrinking debt from 154 to 147;
+no export was deleted.
+
+The strengthened existing `value-presentation.spec.ts` title first failed
+with a 1112px row where the Solid invariant required at least 1148px. After the
+main repair, its narrow action assertion failed at 32px instead of 30px, proving
+that follow-up independently before the final fix. It now guards row and column
+geometry, track and fill geometry, semantic colours, integer shares, legend
+order, measured/partial/zero distinction and narrow action sizing. Web
+typecheck reported 0 errors and 0 warnings; 40 focused component and
+entrypoint tests passed; the focused browser test passed; the migration ledger
+is complete at 384/384 live exports; the consumer ratchet is 147; and the
+hydrated Solid/Svelte matrix is exact at all eight viewport/theme points.
+
+Sessions, the session drawer, Overview tiles/token anatomy, Skills,
+Sources/Sync, the duplicated Skills tree, reduced motion and the remaining
+cross-surface responsive review have not yet been reached.

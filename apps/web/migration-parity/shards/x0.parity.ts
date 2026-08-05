@@ -47,6 +47,31 @@ const recordPunchcardRepair = (record: ParityRecord): ParityRecord =>
         ],
       }
     : record;
+const breakdownRepairCommit = '2eee573caaa4cd6f38ec67c34797e56bb614e1c6';
+const recordBreakdownRepair = (record: ParityRecord): ParityRecord =>
+  record.id ===
+  'pw:apps/web/e2e/value-presentation.spec.ts::renders measured, partially measured, and zero Breakdown bars distinctly'
+    ? {
+        ...record,
+        evidence: [
+          ...record.evidence,
+          {
+            commit: breakdownRepairCommit,
+            kind: 'command',
+            phase: 'target',
+            reference:
+              'bun run --cwd apps/web test:e2e -- e2e/value-presentation.spec.ts (green after failing on the 1440px row width and 361px sharing-action height)',
+          },
+          {
+            commit: breakdownRepairCommit,
+            kind: 'review',
+            phase: 'target',
+            reference:
+              'Solid 2183270e presentation review confirms the strengthened title now guards row/column/track geometry, rounded and semantic fills, measured/partial/zero distinction, integer shares, legend order, and narrow action sizing.',
+          },
+        ],
+      }
+    : record;
 const inFile = (file: string, titles: readonly string[]): readonly PlaywrightTitle[] =>
   titles.map((title) => ({ file: `apps/web/e2e/${file}`, title }));
 
@@ -191,5 +216,8 @@ const titles = [
 
 export default defineParityShard({
   owner,
-  records: playwrightTitleRecords(owner, titles).map(completeAtCutover).map(recordPunchcardRepair),
+  records: playwrightTitleRecords(owner, titles)
+    .map(completeAtCutover)
+    .map(recordPunchcardRepair)
+    .map(recordBreakdownRepair),
 });

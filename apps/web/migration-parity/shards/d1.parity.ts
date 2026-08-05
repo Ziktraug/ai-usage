@@ -58,6 +58,38 @@ const closeAtCutover = (record: ParityRecord): ParityRecord => {
 
   return { ...record, evidence, status: 'complete' };
 };
+const breakdownRepairCommit = '2eee573caaa4cd6f38ec67c34797e56bb614e1c6';
+const breakdownBarExportIds = new Set(['design-export:./report::barFill', 'design-export:./report::barTrack']);
+const restoreBreakdownBarExport = (record: ParityRecord): ParityRecord => {
+  if (!breakdownBarExportIds.has(record.id)) {
+    return record;
+  }
+
+  const restoredRecord = { ...record, replacementReason: undefined };
+  return {
+    ...restoredRecord,
+    currentOwner: 'packages/design-system/src/components/segment-bar.ts',
+    evidence: [
+      ...record.evidence,
+      targetEvidence(
+        breakdownRepairCommit,
+        'command',
+        'bun run --cwd apps/web typecheck; bun test apps/web/src/lib/features/report/breakdown packages/design-system/src/design-entrypoints.test.ts; bun run --cwd apps/web test:e2e -- e2e/value-presentation.spec.ts; bun tools/check-design-export-consumers.ts (green)',
+      ),
+      targetEvidence(
+        breakdownRepairCommit,
+        'measurement',
+        'Hydrated Solid 2183270e differential at 361/768/1024/1440 in light/dark: the restored 6px bar track and rounded semantic fill match at all eight points.',
+      ),
+      targetEvidence(
+        breakdownRepairCommit,
+        'review',
+        'Presentation-parity review confirmed barTrack and barFill are live shared semantic exports again, with Svelte consumers in BreakdownRow and HarnessProviderPanel.',
+      ),
+    ],
+    status: 'complete',
+  };
+};
 const reviewedRootRemoval = (record: ParityRecord): ParityRecord => ({
   ...record,
   evidence: [
@@ -178,5 +210,7 @@ export default defineParityShard({
         source: 'packages/design-system/src/components/segment-bar.tsx',
       },
     ]).map((record) => (record.id.startsWith('design-export:.::') ? reviewedRootRemoval(record) : record)),
-  ].map(closeAtCutover),
+  ]
+    .map(closeAtCutover)
+    .map(restoreBreakdownBarExport),
 });
