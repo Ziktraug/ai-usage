@@ -83,6 +83,40 @@ const completeAtActivityRepair = (record: ParityRecord): ParityRecord => ({
   status: 'complete',
 });
 
+// The Session surface sized itself from its own viewport-relative top, so the
+// document grew as the reader scrolled. Pre-existing: the Solid table at
+// 2183270e did the same and measured worse. Corrected on the maintainer's call,
+// which makes this a deliberate behaviour change rather than restored parity.
+const sessionScrollCorrectionCommit = '077a281044b6af40a48946f1932612c8cfcf2e79';
+const completeAtSessionScrollCorrection = (record: ParityRecord): ParityRecord => ({
+  ...record,
+  evidence: [
+    ...record.evidence,
+    {
+      commit: sessionScrollCorrectionCommit,
+      kind: 'source',
+      phase: 'target',
+      reference:
+        'apps/web/src/session-row-window.ts sizes the surface from the viewport alone, and session-table.svelte no longer recomputes it on window scroll.',
+    },
+    {
+      commit: sessionScrollCorrectionCommit,
+      kind: 'command',
+      phase: 'target',
+      reference:
+        'bun run test:e2e; bun run test:e2e-production; bun run --cwd apps/web benchmark:session-scroll — 4/4 with the two DOM triggers recorded in docs/performance/web-framework-migration-baseline.md.',
+    },
+    {
+      commit: sessionScrollCorrectionCommit,
+      kind: 'review',
+      phase: 'target',
+      reference:
+        'Maintainer-reported, reproduced and measured on both the Svelte HEAD and the Solid baseline; the maintainer selected the constant-height correction over deferring it to a follow-up plan.',
+    },
+  ],
+  status: 'complete',
+});
+
 const completeAtFilterCorrection = (record: ParityRecord): ParityRecord => ({
   ...record,
   evidence: [
@@ -195,5 +229,11 @@ export default defineParityShard({
         'reports legend shares and the range total over the selected window',
       ].map((title) => ({ file: 'apps/web/e2e/time-range.spec.ts', title })),
     ).map(completeAtActivityRepair),
+    ...playwrightTitleRecords(owner, [
+      {
+        file: 'apps/web/e2e/session-viewport-geometry.spec.ts',
+        title: 'keeps the document height still while the Session surface is scrolled past',
+      },
+    ]).map(completeAtSessionScrollCorrection),
   ],
 });

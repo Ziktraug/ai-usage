@@ -304,6 +304,6 @@ describe('Web migration parity checker', () => {
     // brush behaviour it restored.
     expect(result.counts.get('design-export')?.live).toBe(367);
     expect(result.counts.get('design-export')?.ledger).toBe(473);
-    expect(result.counts.get('playwright-title')?.live).toBe(120);
+    expect(result.counts.get('playwright-title')?.live).toBe(121);
   });
 });
