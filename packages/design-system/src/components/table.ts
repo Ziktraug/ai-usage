@@ -96,6 +96,7 @@ export const sessionViewportSurface = css({
   '--ai-usage-table-min-height': '0px',
   h: 'var(--session-surface-height, 100dvh)',
   minH: 0,
+  overflowAnchor: 'none',
   _print: { h: 'auto' },
 });
 

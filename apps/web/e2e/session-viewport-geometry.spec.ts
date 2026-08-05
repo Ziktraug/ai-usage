@@ -46,6 +46,7 @@ test('anchors the virtual Session viewport inside the screen on desktop and mobi
               fillsViewportHeight: Math.abs(element.clientHeight - expectedHeight) <= 2,
               maxHeight: getComputedStyle(element).maxHeight,
               minHeight: getComputedStyle(element).minHeight,
+              overflowAnchor: getComputedStyle(element).overflowAnchor,
               regionStartsInViewport: Boolean(
                 regionRect && regionRect.top >= -1 && regionRect.top < window.innerHeight * 0.2,
               ),
@@ -59,6 +60,7 @@ test('anchors the virtual Session viewport inside the screen on desktop and mobi
         fillsViewportHeight: true,
         maxHeight: 'none',
         minHeight: '0px',
+        overflowAnchor: 'none',
         regionStartsInViewport: true,
         surfaceStartsInViewport: true,
         windowScrolledPastChrome: true,
