@@ -507,6 +507,46 @@ test('draws only the selected report range and never overflows the plot', async 
   }
 });
 
+test('holds the brush scale still while dragging a range that starts before the data', async ({ page }) => {
+  await openHydratedReport(page);
+
+  const dateRange = page.getByRole('region', { name: 'Date range' });
+  const startInput = dateRange.getByRole('textbox', { name: 'Start date' });
+  const startHandle = dateRange.getByRole('slider', { name: 'Start date' });
+
+  // A custom range opening before the first dated session makes the index origin
+  // `selectedFrom` instead of the data start, so committing on every pointermove
+  // used to move the origin — and the scale — underneath the drag.
+  await startInput.fill('2026-01-01');
+  await startInput.press('Enter');
+  await waitForFocusedReportSettled(page);
+
+  const scaleBefore = await startHandle.getAttribute('aria-valuemax');
+  expect(scaleBefore).not.toBeNull();
+
+  await startHandle.scrollIntoViewIfNeeded();
+  const box = await startHandle.boundingBox();
+  expect(box).not.toBeNull();
+  if (!box) {
+    return;
+  }
+  const originX = box.x + box.width / 2;
+  const originY = box.y + box.height / 2;
+  await page.mouse.move(originX, originY);
+  await page.mouse.down();
+  for (const step of [45, 90, 135, 180]) {
+    await page.mouse.move(originX + step, originY);
+    // The scale must not move, and the day the handle announces must be the day
+    // the committed range reports.
+    await expect(startHandle).toHaveAttribute('aria-valuemax', scaleBefore ?? '');
+    expect(await startHandle.getAttribute('aria-valuetext')).toBe(await startInput.inputValue());
+  }
+  await page.mouse.up();
+  await waitForFocusedReportSettled(page);
+
+  expect(await startHandle.getAttribute('aria-valuetext')).toBe(await startInput.inputValue());
+});
+
 test('reports legend shares and the range total over the selected window', async ({ page }) => {
   await openHydratedReport(page);
 

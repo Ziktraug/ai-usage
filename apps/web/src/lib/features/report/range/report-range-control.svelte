@@ -86,6 +86,7 @@
     customRangeFromInputs,
     escapedRangeDraft,
     inputValueForRange,
+    type ReportRangeProjection,
     reportRangeEditKey,
     reportRangePointerFinishType,
     reportRangeProjection,
@@ -160,7 +161,8 @@
   let synchronizedControlKey = $state(initialControlKey());
   const selectionIndexFor = (edge: 'end' | 'start'): number =>
     edge === 'start' ? controlState.selectionIndexes[0] : controlState.selectionIndexes[1];
-  const dateForHandle = (edge: 'end' | 'start'): Date => dateFromIndex(projection.domainFirst, selectionIndexFor(edge));
+  const dateForHandle = (edge: 'end' | 'start'): Date =>
+    dateFromIndex(activeProjection.domainFirst, selectionIndexFor(edge));
   const normalizedDraft = (draft: string, display: string, edge: 'end' | 'start'): string =>
     draft === display ? inputValueForRange(dateForHandle(edge)) : draft;
 
@@ -184,7 +186,11 @@
     synchronizedControlKey = key;
   });
 
-  const percentFor = (index: number): number => (projection.maxIndex > 0 ? (index / projection.maxIndex) * 100 : 0);
+  // Held for the lifetime of one pointer interaction; see `applyTransition`.
+  let pinnedProjection = $state<ReportRangeProjection | null>(null);
+  const activeProjection = $derived(pinnedProjection ?? projection);
+  const percentFor = (index: number): number =>
+    activeProjection.maxIndex > 0 ? (index / activeProjection.maxIndex) * 100 : 0;
   const startPercent = $derived(percentFor(controlState.selectionIndexes[0]));
   const endPercent = $derived(percentFor(controlState.selectionIndexes[1]));
   // The brush addresses calendar days over the whole domain; the chart draws
@@ -192,7 +198,7 @@
   // the Activity chart honours the promise printed above it.
   const visibleRange = $derived(
     timeline
-      ? timelineRangeForSelection(timeline.buckets, projection.domainFirst, controlState.selectionIndexes)
+      ? timelineRangeForSelection(timeline.buckets, activeProjection.domainFirst, controlState.selectionIndexes)
       : null,
   );
   const dimensionItems = focusedTimelineDimensionDefinitions;
@@ -237,8 +243,8 @@
     onRangeChange(next);
   };
 
-  const synchronizeInputs = (indexes: TimeRangeSelectionIndexes): void => {
-    const next = customRangeFromIndexes(projection, indexes);
+  const synchronizeInputs = (indexes: TimeRangeSelectionIndexes, basis: ReportRangeProjection): void => {
+    const next = customRangeFromIndexes(basis, indexes);
     const nextProjection = reportRangeProjection(next, generatedDate, dateDomain);
     draftFrom = nextProjection.displayFrom;
     draftTo = nextProjection.displayTo;
@@ -249,14 +255,23 @@
   };
 
   const applyTransition = (event: Parameters<typeof transitionTimeRangeControl>[1]): boolean => {
-    const transition = transitionTimeRangeControl(controlState, event, { selectionMaxIndex: projection.maxIndex });
+    // Selection indexes count from `projection.domainFirst`, which is
+    // `min(dataFirst, selectedFrom)` over the committed range. A pointer drag
+    // commits a custom range on every move, so once the selection crosses
+    // `dataFirst` the origin — and the whole scale — moves underneath the
+    // interaction: `aria-valuemax` walks, and the pointer drifts away from the
+    // announced day. Resolve every event of one interaction against the
+    // projection that started it.
+    const basis = pinnedProjection ?? projection;
+    const transition = transitionTimeRangeControl(controlState, event, { selectionMaxIndex: basis.maxIndex });
     if (!transition.handled) {
       return false;
     }
     controlState = transition.state;
+    pinnedProjection = controlState.interaction.type === 'idle' ? null : basis;
     for (const command of transition.commands) {
       if (command.type === 'setSelectionIndexes') {
-        synchronizeInputs(command.indexes);
+        synchronizeInputs(command.indexes, basis);
       } else {
         editRun.commit();
       }
@@ -564,7 +579,7 @@
         {@const index = selectionIndexFor(edge)}
         <button
           aria-label={label}
-          aria-valuemax={projection.maxIndex}
+          aria-valuemax={activeProjection.maxIndex}
           aria-valuemin={0}
           aria-valuenow={index}
           aria-valuetext={handleValueText(edge)}
