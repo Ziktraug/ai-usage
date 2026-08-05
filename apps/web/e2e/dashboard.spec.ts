@@ -377,12 +377,28 @@ test('keeps provider details collapsed until they are requested', async ({ page 
   const noQuotaDetail = page.getByText('No quota windows are available for this provider.').first();
   const attentionProviders = page.getByRole('list', { name: 'Providers requiring attention' });
   const providerCategories = page.getByRole('list', { name: PROVIDER_CATEGORIES_PATTERN });
+  const dashboardPanel = page.locator('[data-dashboard-panel]');
+  const dateRange = page.getByRole('region', { name: 'Date range' });
+  const activeFilters = page.locator('[data-active-filters]');
+  const overviewHero = page.getByRole('region', { name: 'Estimated API-equivalent value' });
+  const reportMetrics = page.getByRole('region', { name: 'More report metrics' });
 
   await expect(providerPanel).toContainText('Quota usage and operational issues at a glance.');
   await expect(providerPanel).toHaveCSS('height', '260px');
   await expect(attentionProviders).toHaveCSS('height', '24px');
   await expect(providerCategories).toHaveCSS('height', '54px');
   await expect(providerDetails).toHaveCSS('height', '38px');
+  expect(await providerPanel.evaluate((element) => element.closest('[data-dashboard-panel]') === null)).toBe(true);
+  expect(await reportMetrics.evaluate((element) => element.closest('[data-dashboard-panel]') === null)).toBe(true);
+  expect(await dateRange.evaluate((element) => element.closest('[data-dashboard-panel]') === null)).toBe(true);
+  expect(await activeFilters.evaluate((element) => element.closest('[data-dashboard-panel]') === null)).toBe(true);
+  const [dashboardBox, metricsBox, heroBox] = await Promise.all([
+    dashboardPanel.boundingBox(),
+    reportMetrics.boundingBox(),
+    overviewHero.boundingBox(),
+  ]);
+  expect(dashboardBox?.y).toBe(heroBox?.y);
+  expect(metricsBox?.y).toBe((dashboardBox?.y ?? 0) + (dashboardBox?.height ?? 0) + 20);
 
   await expect(providerDetails).toBeVisible();
   await expect(attentionProviders).toBeVisible();

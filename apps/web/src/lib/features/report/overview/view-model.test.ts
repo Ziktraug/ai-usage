@@ -77,13 +77,18 @@ test('keeps the frozen Overview content and secondary-status order', async () =>
     '<TokenAnatomy',
     '<Records',
     '<section aria-labelledby="advanced-analysis-title"',
-    '<DashboardMetrics',
-    '<ProviderStatus',
   ];
   const positions = orderedSurfaces.map((surface) => pageSource.indexOf(surface));
 
   expect(positions.every((position) => position >= 0)).toBe(true);
   expect(positions).toEqual([...positions].sort((left, right) => left - right));
+  expect(pageSource).not.toContain('<DashboardMetrics');
+  expect(pageSource).not.toContain('<ProviderStatus');
+
+  const statusSource = await Bun.file(new URL('./overview-status.svelte', import.meta.url)).text();
+  const statusPositions = ['<DashboardMetrics', '<ProviderStatus'].map((surface) => statusSource.indexOf(surface));
+  expect(statusPositions.every((position) => position >= 0)).toBe(true);
+  expect(statusPositions).toEqual([...statusPositions].sort((left, right) => left - right));
 
   const heroSource = await Bun.file(new URL('./overview-hero.svelte', import.meta.url)).text();
   expect(heroSource).toContain('This is a comparison value, not savings or ROI.');
@@ -111,6 +116,11 @@ test('keeps report range before filters and Overview content in both destination
     expect(filterSnippetEnd, relativePath).toBeGreaterThan(filterSnippetStart);
     expect(activeFiltersComponent, relativePath).toBeGreaterThan(filterSnippetStart);
     expect(activeFiltersComponent, relativePath).toBeLessThan(filterSnippetEnd);
+    const statusSnippetStart = source.indexOf('{#snippet status');
+    const statusSnippetEnd = source.indexOf('{/snippet}', statusSnippetStart);
+    const overviewStatus = source.indexOf('<OverviewStatus', statusSnippetStart);
+    expect(overviewStatus, relativePath).toBeGreaterThan(statusSnippetStart);
+    expect(overviewStatus, relativePath).toBeLessThan(statusSnippetEnd);
     const positions = ['<ReportRangeControl', filterMarker, '<OverviewPage'].map((surface) => source.indexOf(surface));
     expect(
       positions.every((position) => position >= 0),

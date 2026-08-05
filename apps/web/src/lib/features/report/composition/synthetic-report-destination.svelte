@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { css } from '@ai-usage/design-system/css';
   import { applyCampaignLabelOverrideMutation, type CampaignLabelOverride } from '@ai-usage/report-core/campaign-label';
   import {
     type FocusedOverviewSessionItem,
@@ -60,11 +61,14 @@
   import { createBreakdownNavigation } from '../breakdown/navigation';
   import ReportWorkspace from '../core/report-workspace.svelte';
   import OverviewPage from '../overview/overview-page.svelte';
+  import OverviewStatus from '../overview/overview-status.svelte';
   import ReportRangeControl from '../range/report-range-control.svelte';
   import { activeTimelineSeriesKeys } from './active-timeline-series';
   import { reportDestinationForSearch } from './report-search';
 
   import SessionIdentityPublisher from './session-identity-publisher.svelte';
+
+  const rangePlacement = css({ mt: '14px' });
 
   type DashboardBreakdownModule = typeof import('../breakdown/dashboard-breakdown.svelte');
   type SessionTableModule = typeof import('../../sessions/table/session-table.svelte');
@@ -398,30 +402,42 @@
   {presentMachineLabel}
   {search}
 />
-<ReportWorkspace hasOutput={!pending} {pending} pendingContext={activeFilterSummary}>
+<div class={rangePlacement}>
+  <ReportRangeControl
+    {activeSeriesKeys}
+    dateDomain={overview.dateDomain}
+    {dimension}
+    generatedAt={reportSupport.generatedAt}
+    {granularity}
+    {machineFreshnessStatus}
+    {navigate}
+    onDimensionFilter={navigation.setTimelineDimensionFilter}
+    onOptionsChange={(options) => {
+      dimension = options.dimension;
+      granularity = options.granularity;
+      timelineValue = options.value;
+    }}
+    onRangeChange={navigation.setDateRange}
+    {presentCampaignSeries}
+    {presentMachineSeries}
+    range={renderedSearch.range}
+    timeline={overview.timeline}
+    value={timelineValue}
+  />
+</div>
+{@render activeFilterSummary(pending)}
+<ReportWorkspace hasOutput={!pending} {pending}>
+  {#snippet status()}
+    {#if primary === 'overview' && !pending}
+      <OverviewStatus
+        {...(mode === 'e2e' ? { onOpenQuotaHistory: () => (quotaHistoryOpen = true) } : {})}
+        providers={mode === 'e2e' ? providers : []}
+        range={renderedSearch.range}
+        result={overview}
+      />
+    {/if}
+  {/snippet}
   {#snippet children()}
-    <ReportRangeControl
-      {activeSeriesKeys}
-      dateDomain={overview.dateDomain}
-      {dimension}
-      generatedAt={reportSupport.generatedAt}
-      {granularity}
-      {machineFreshnessStatus}
-      {navigate}
-      onDimensionFilter={navigation.setTimelineDimensionFilter}
-      onOptionsChange={(options) => {
-        dimension = options.dimension;
-        granularity = options.granularity;
-        timelineValue = options.value;
-      }}
-      onRangeChange={navigation.setDateRange}
-      {presentCampaignSeries}
-      {presentMachineSeries}
-      range={renderedSearch.range}
-      timeline={overview.timeline}
-      value={timelineValue}
-    />
-    {@render activeFilterSummary(pending)}
     {#if primary === 'overview'}
       <OverviewPage
         {activeSeriesKeys}
@@ -440,11 +456,9 @@
         onSelectDay={(date) => navigate((current) => ({ ...current, range: { from: date, mode: 'custom', to: date }, tab: 'sessions' }))}
         onSelectSession={selectOverviewSession}
         onSelectTimeCell={(cell) => navigate((current) => ({ ...current, timeCell: serializeDashboardTimeCell(cell) }))}
-        {...(mode === 'e2e' ? { onOpenQuotaHistory: () => (quotaHistoryOpen = true) } : {})}
         {presentCampaignSeries}
         {presentMachineSeries}
         {presentSessionItem}
-        providers={mode === 'e2e' ? providers : []}
         range={renderedSearch.range}
         result={overview}
         value={timelineValue}

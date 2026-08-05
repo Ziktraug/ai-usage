@@ -7,6 +7,7 @@
   import type { ProviderStatusView } from '../../../../provider-status-model';
   import ReportRangeControl from '../range/report-range-control.svelte';
   import OverviewPage from './overview-page.svelte';
+  import OverviewStatus from './overview-status.svelte';
   import type { MachineSeriesPresenter } from './timeline-model';
 
   let {
@@ -47,7 +48,7 @@
   {...(presentCampaignSeries ? { presentCampaignSeries } : {})}
   {...(presentMachineSeries ? { presentMachineSeries } : {})}
   {...(presentSessionItem ? { presentSessionItem } : {})}
-  {providers}
   range={{ mode: '30d' }}
   {result}
 />
+<OverviewStatus {providers} range={{ mode: '30d' }} {result} />

@@ -1,6 +1,7 @@
 <!-- biome-ignore-all lint/a11y/noNoninteractiveTabindex lint/a11y/useSemanticElements: the active report region must remain keyboard-reachable after removing primary tabs -->
 <script lang="ts">
   import { css } from '@ai-usage/design-system/css';
+  import { section } from '@ai-usage/design-system/report';
   import type { Snippet } from 'svelte';
   import ReportPendingSurface from './report-pending-surface.svelte';
   import ReportStatus from './report-status.svelte';
@@ -9,19 +10,18 @@
     children,
     hasOutput,
     pending,
-    pendingContext,
     refreshError = null,
+    status,
   }: {
     children?: Snippet;
     hasOutput: boolean;
     pending: boolean;
-    pendingContext?: Snippet<[boolean]>;
     refreshError?: string | null;
+    status?: Snippet;
   } = $props();
 
   const layout = css({ display: 'flex', flexDirection: 'column' });
   const panel = css({ minW: 0, _focus: { outline: '2px solid token(colors.accent)', outlineOffset: '4px' } });
-  const section = css({ minW: 0, py: '16px' });
   const unavailablePanel = css({ border: '1px solid token(colors.border)', borderRadius: 'lg', p: '24px' });
   const unavailableText = css({ color: 'muted', fontSize: '13px' });
 </script>
@@ -36,9 +36,6 @@
         {/if}
       </section>
     {:else if pending}
-      {#if pendingContext}
-        {@render pendingContext(pending)}
-      {/if}
       <ReportPendingSurface />
     {:else}
       <section class={unavailablePanel} data-report-unavailable>
@@ -46,5 +43,10 @@
       </section>
     {/if}
   </div>
+  {#if status}
+    <div data-report-secondary-status>
+      {@render status()}
+    </div>
+  {/if}
   <ReportStatus {pending} {refreshError} />
 </div>

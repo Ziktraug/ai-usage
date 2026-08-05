@@ -15,6 +15,7 @@ const components = [
   'dashboard-metrics.svelte',
   'overview-hero.svelte',
   'overview-page.svelte',
+  'overview-status.svelte',
   'provider-status.svelte',
   'punchcard.svelte',
   'records.svelte',

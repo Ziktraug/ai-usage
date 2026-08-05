@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { css } from '@ai-usage/design-system/css';
   import type { FocusedOverviewSessionItem, FocusedTimelineSeries } from '@ai-usage/report-core/focused-report-query';
   import type { ProjectGroupConfig } from '@ai-usage/report-core/project-group';
   import type { UsageReportWarning } from '@ai-usage/report-core/report-data';
@@ -59,6 +60,7 @@
   import ReportWorkspace from '../core/report-workspace.svelte';
   import ReportLifecycleOwner from '../lifecycle/report-lifecycle-owner.svelte';
   import OverviewPage from '../overview/overview-page.svelte';
+  import OverviewStatus from '../overview/overview-status.svelte';
   import ReportRangeControl from '../range/report-range-control.svelte';
   import { activeTimelineSeriesKeys } from './active-timeline-series';
   import { createCampaignLabelOwner } from './campaign-label-owner.svelte';
@@ -72,6 +74,8 @@
   } from './report-destination';
   import { queryForDescriptor, reportDestinationForSearch } from './report-search';
   import SessionDestinationRefresh from './session-destination-refresh.svelte';
+
+  const rangePlacement = css({ mt: '14px' });
 
   type DashboardBreakdownModule = typeof import('../breakdown/dashboard-breakdown.svelte');
   type SessionsDestinationModule = typeof import('./sessions-destination.svelte');
@@ -389,33 +393,44 @@
       {presentMachineLabel}
       {search}
     />
+    {#if commit?.overview}
+      <div class={rangePlacement}>
+        <ReportRangeControl
+          {activeSeriesKeys}
+          dateDomain={commit.overview.dateDomain}
+          {dimension}
+          generatedAt={bootstrap.support.generatedAt}
+          {granularity}
+          machineFreshnessStatus={machineFreshnessStatusLabel(machineSnapshot)}
+          {navigate}
+          onDimensionFilter={navigation.setTimelineDimensionFilter}
+          onOptionsChange={updateOverviewOptions}
+          onRangeChange={navigation.setDateRange}
+          {presentCampaignSeries}
+          {presentMachineSeries}
+          range={search.range}
+          timeline={commit.overview.timeline}
+          value={timelineValue}
+        />
+      </div>
+    {/if}
+    {@render activeFilterSummary(_owner.snapshot.pending)}
     <ReportWorkspace
       hasOutput={primary === 'sessions' || commit !== undefined}
       pending={primary === 'sessions' ? false : _owner.snapshot.pending}
-      pendingContext={activeFilterSummary}
       refreshError={_owner.snapshot.refreshError}
     >
-      {#snippet children()}
-        {#if commit?.overview}
-          <ReportRangeControl
-            {activeSeriesKeys}
-            dateDomain={commit.overview.dateDomain}
-            {dimension}
-            generatedAt={bootstrap.support.generatedAt}
-            {granularity}
-            machineFreshnessStatus={machineFreshnessStatusLabel(machineSnapshot)}
-            {navigate}
-            onDimensionFilter={navigation.setTimelineDimensionFilter}
-            onOptionsChange={updateOverviewOptions}
-            onRangeChange={navigation.setDateRange}
-            {presentCampaignSeries}
-            {presentMachineSeries}
+      {#snippet status()}
+        {#if primary === 'overview' && commit?.destination.kind === 'overview' && !_owner.snapshot.pending}
+          <OverviewStatus
+            onOpenQuotaHistory={() => (quotaHistoryOpen = true)}
+            {providers}
             range={search.range}
-            timeline={commit.overview.timeline}
-            value={timelineValue}
+            result={commit.overview}
           />
         {/if}
-        {@render activeFilterSummary(_owner.snapshot.pending)}
+      {/snippet}
+      {#snippet children()}
         {#if primary === 'overview' && commit?.destination.kind === 'overview'}
           <OverviewPage
             {activeSeriesKeys}
@@ -425,7 +440,6 @@
             machineFreshnessStatus={machineFreshnessStatusLabel(machineSnapshot)}
             {navigate}
             onDimensionFilter={navigation.setTimelineDimensionFilter}
-            onOpenQuotaHistory={() => (quotaHistoryOpen = true)}
             onOptionsChange={updateOverviewOptions}
             onRangeChange={navigation.setDateRange}
             onSelectDay={selectDay}
@@ -434,7 +448,6 @@
             {presentCampaignSeries}
             {presentMachineSeries}
             {presentSessionItem}
-            {providers}
             range={search.range}
             result={commit.overview}
             value={timelineValue}

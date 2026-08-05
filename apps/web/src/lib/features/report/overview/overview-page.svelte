@@ -18,21 +18,17 @@
     FocusedTimelineSeries,
   } from '@ai-usage/report-core/focused-report-query';
   import type { LocalTimeCell } from '@ai-usage/report-core/session-query';
-  import { metricComparisonStateFor } from '../../../../dashboard-metric-model';
   import type { DashboardDateRangeSearch, DashboardSearch } from '../../../../dashboard-search';
   import type { MigrationGranularity, TimelineDimension, TimelineValue } from '../../../../overview-model';
-  import type { ProviderStatusView } from '../../../../provider-status-model';
   import type { SearchNavigationIntent } from '../../../foundation/navigation/search-intent';
   import ActivityHeatmap from './activity-heatmap.svelte';
-  import DashboardMetrics from './dashboard-metrics.svelte';
   import OverviewHero from './overview-hero.svelte';
-  import ProviderStatus from './provider-status.svelte';
   import Punchcard from './punchcard.svelte';
   import Records from './records.svelte';
   import SessionShape from './session-shape.svelte';
   import type { MachineSeriesPresenter } from './timeline-model';
   import TokenAnatomy from './token-anatomy.svelte';
-  import { buildOverviewMetrics, overviewHasContent } from './view-model';
+  import { overviewHasContent } from './view-model';
 
   interface Props {
     activeSeriesKeys?: readonly string[];
@@ -42,7 +38,6 @@
     machineFreshnessStatus?: string | null;
     navigate?: SearchNavigationIntent<DashboardSearch>;
     onDimensionFilter?: (dimension: TimelineDimension, key: string) => void;
-    onOpenQuotaHistory?: () => void;
     onOptionsChange?: (options: {
       dimension: TimelineDimension;
       granularity: MigrationGranularity;
@@ -55,7 +50,6 @@
     presentCampaignSeries?: (series: FocusedTimelineSeries) => FocusedTimelineSeries;
     presentMachineSeries?: MachineSeriesPresenter;
     presentSessionItem?: (item: FocusedOverviewSessionItem) => FocusedOverviewSessionItem;
-    providers?: readonly ProviderStatusView[];
     range: DashboardDateRangeSearch;
     result: FocusedOverviewResult;
     value?: TimelineValue;
@@ -75,21 +69,17 @@
     onDimensionFilter = () => undefined,
     onOptionsChange = () => undefined,
     onRangeChange = () => undefined,
-    onOpenQuotaHistory,
     onSelectDay = () => undefined,
     onSelectSession = () => undefined,
     onSelectTimeCell = () => undefined,
     presentCampaignSeries = unchangedCampaignSeries,
     presentMachineSeries = unchangedMachineSeries,
     presentSessionItem = unchangedSessionItem,
-    providers = [],
     range,
     result,
     value = 'cost',
   }: Props = $props();
 
-  const metrics = $derived(buildOverviewMetrics(result.summary, result.view.previousSummary));
-  const comparisonState = $derived(metricComparisonStateFor(range.mode, result.view.previousSummary));
   const activeDimension = $derived(dimension ?? result.timeline?.dimension ?? 'harness');
 </script>
 
@@ -132,8 +122,6 @@
         {/if}
       </div>
     </section>
-    <DashboardMetrics {comparisonState} {metrics} />
-    <ProviderStatus {...(onOpenQuotaHistory === undefined ? {} : { onOpenHistory: onOpenQuotaHistory })} {providers} />
   {:else}
     <p class={emptyPanel}>No sessions match the selected report range and filters.</p>
   {/if}
