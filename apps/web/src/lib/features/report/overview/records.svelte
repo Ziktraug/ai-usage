@@ -2,6 +2,7 @@
   import {
     muted,
     panel,
+    panelHeader,
     panelSub,
     panelTitle,
     recordCard,
@@ -88,12 +89,12 @@
 
 {#if presentedTopSessions.length > 0}
   <section class={panel}>
-    <div>
+    <header class={panelHeader}>
       <h2 class={panelTitle}>Top sessions</h2>
       <p class={panelSub}>
         The five highest estimated API-equivalent values for sessions or campaigns in range — click to inspect
       </p>
-    </div>
+    </header>
     <div class={topList}>
       {#each presentedTopSessions as item, index (item.row.rowId)}
         <button class={topRow} onclick={() => onSelectSession(item)} type="button">

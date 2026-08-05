@@ -664,6 +664,16 @@ test('keeps compact heatmap geometry at narrow and desktop viewports', async ({ 
   await expect(calendar).toHaveCSS('column-gap', '3px');
 });
 
+test('keeps the Top sessions panel header geometry at desktop width', async ({ page }) => {
+  await page.setViewportSize({ height: 900, width: 1440 });
+  await openHydratedReport(page);
+
+  const topSessionsPanel = page
+    .getByRole('heading', { level: 2, name: 'Top sessions' })
+    .locator('xpath=ancestor::section[1]');
+  await expect(topSessionsPanel).toHaveCSS('height', '174px');
+});
+
 test('selects the same heatmap day with mouse and keyboard', async ({ page }) => {
   const selectedDay = '2026-05-25';
   const selectedDayDisplay = 'May 25, 2026';
