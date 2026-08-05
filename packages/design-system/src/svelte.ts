@@ -41,6 +41,12 @@ export {
   timeChartOptionsTitle,
   timelineHoverLayer,
   timeRangeViewControls,
+  timeSliderBrushColumn,
+  timeSliderBrushTrack,
+  timeSliderDimLeft,
+  timeSliderDimRight,
+  timeSliderRange,
+  timeSliderRangeDrag,
   timeSliderThumb,
 } from './components/time-slider';
 export { default as MultiSelect } from './svelte/compound/multi-select.svelte';

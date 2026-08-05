@@ -35,17 +35,6 @@
     color: 'ink',
     fontSize: '12px',
   });
-  const brush = css({ position: 'relative', h: '36px', mx: '10px' });
-  const track = css({ position: 'absolute', insetInline: 0, top: '16px', h: '4px', borderRadius: 'full', bg: 'track' });
-  const selection = css({
-    position: 'absolute',
-    top: '10px',
-    h: '16px',
-    borderRadius: 'full',
-    bg: 'accent',
-    opacity: 0.3,
-    cursor: 'grab',
-  });
 </script>
 
 <script lang="ts">
@@ -60,6 +49,12 @@
     timeChartOptionsSummary,
     timeChartOptionsTitle,
     timeRangeViewControls,
+    timeSliderBrushColumn,
+    timeSliderBrushTrack,
+    timeSliderDimLeft,
+    timeSliderDimRight,
+    timeSliderRange,
+    timeSliderRangeDrag,
     timeSliderThumb,
   } from '@ai-usage/design-system/svelte';
   import {
@@ -541,43 +536,51 @@
       >
     </label>
   </div>
-  <div class={brush} data-report-range-part="brush">
-    <span class={track}></span>
-    <button
-      aria-label="Selected report window"
-      class={selection}
-      data-dragging={controlState.interaction.type === 'selection-pan' ? 'true' : undefined}
-      onlostpointercapture={finishPointer}
-      onpointercancel={finishPointer}
-      onpointerdown={beginPan}
-      onpointermove={onPointerMove}
-      onpointerup={finishPointer}
-      tabindex={-1}
-      title="Drag selected range"
-      type="button"
-      style:left={`${startPercent}%`}
-      style:width={`${Math.max(0, endPercent - startPercent)}%`}
-    ></button>
-    {#each rangeHandles as { edge, label } (edge)}
-      {@const index = selectionIndexFor(edge)}
+  <div class={timeSliderBrushColumn} data-report-range-part="brush">
+    <!-- The dim, range and pan classes all read these two custom properties, so
+    the track is the single place the selection is expressed geometrically. -->
+    <div
+      class={timeSliderBrushTrack}
+      style:--slider-range-end={`${100 - endPercent}%`}
+      style:--slider-range-start={`${startPercent}%`}
+    >
+      <div aria-hidden="true" class={timeSliderRange}></div>
+      <div aria-hidden="true" class={timeSliderDimLeft}></div>
+      <div aria-hidden="true" class={timeSliderDimRight}></div>
       <button
-        aria-label={label}
-        aria-valuemax={projection.maxIndex}
-        aria-valuemin={0}
-        aria-valuenow={index}
-        aria-valuetext={handleValueText(edge)}
-        class={timeSliderThumb}
-        onkeydown={(event) => onHandleKeydown(event, edge)}
+        aria-label="Selected report window"
+        class={timeSliderRangeDrag}
+        data-dragging={controlState.interaction.type === 'selection-pan' ? 'true' : undefined}
         onlostpointercapture={finishPointer}
         onpointercancel={finishPointer}
-        onpointerdown={(event) => beginHandle(event, edge)}
+        onpointerdown={beginPan}
         onpointermove={onPointerMove}
         onpointerup={finishPointer}
-        role="slider"
+        tabindex={-1}
+        title="Drag selected range"
         type="button"
-        style:left={`${percentFor(index)}%`}
       ></button>
-    {/each}
+      {#each rangeHandles as { edge, label } (edge)}
+        {@const index = selectionIndexFor(edge)}
+        <button
+          aria-label={label}
+          aria-valuemax={projection.maxIndex}
+          aria-valuemin={0}
+          aria-valuenow={index}
+          aria-valuetext={handleValueText(edge)}
+          class={timeSliderThumb}
+          onkeydown={(event) => onHandleKeydown(event, edge)}
+          onlostpointercapture={finishPointer}
+          onpointercancel={finishPointer}
+          onpointerdown={(event) => beginHandle(event, edge)}
+          onpointermove={onPointerMove}
+          onpointerup={finishPointer}
+          role="slider"
+          type="button"
+          style:left={`${percentFor(index)}%`}
+        ></button>
+      {/each}
+    </div>
   </div>
   <details aria-label="Chart options" class={timeChartOptions} data-report-range-part="chart-options">
     <summary class={timeChartOptionsSummary}>
