@@ -31,6 +31,10 @@
   {#if pathname === '/skills/matrix'}
     <SkillsMatrixSlot {context} {managementPlan} />
   {:else}
-    <SkillsHealthSlot {context} {managementPlan} />
+    <SkillsHealthSlot
+      {context}
+      {managementPlan}
+      placement={view.selectionDetail.kind === 'global-scope' ? 'detail' : 'inspector'}
+    />
   {/if}
 </WebQueryProvider>
