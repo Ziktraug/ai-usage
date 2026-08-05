@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { css } from '@ai-usage/design-system/css';
   import { header, meta, page, shell, title, titleBlock } from '@ai-usage/design-system/svelte';
   import { useQueryClient } from '@tanstack/svelte-query';
   import { browser } from '$app/environment';
@@ -24,6 +25,15 @@
     fleet ? buildSyncFleetComparisonRows(fleet.currentMachine, fleet.machines, data.renderedAt) : [],
   );
   const mutation = $derived(manualTransferMutationAvailability(connection));
+  const operationPanel = css({
+    bg: 'surfaceMuted',
+    border: '1px solid token(colors.line)',
+    borderRadius: 'sm',
+    display: 'grid',
+    fontSize: '13px',
+    gap: '4px',
+    p: '10px 12px',
+  });
 </script>
 
 <div class={shell}>
@@ -38,6 +48,9 @@
   <main class={page} data-route-shell="sync">
     <div class={pageStack}>
       {#if fleet}
+        {#if mutation.message}
+          <div class={operationPanel} role="status">{mutation.message}</div>
+        {/if}
         <MachineFleet
           {machines}
           now={data.renderedAt}
@@ -56,7 +69,6 @@
       {/if}
       <ManualTransfer
         mutationAvailable={mutation.available}
-        mutationMessage={mutation.message}
         onCompleted={async () => await invalidateSyncFleet(queryClient, data.compatibleGeneration)}
       />
     </div>

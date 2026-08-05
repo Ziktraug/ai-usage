@@ -85,7 +85,7 @@ const expectNoAxeViolations = async (page: Page): Promise<void> => {
 };
 
 for (const route of routes) {
-  test(`${route.heading} exposes shared navigation without narrow overflow`, async ({ page }) => {
+  test(`${route.heading} exposes shared navigation without narrow overflow`, async ({ browser, page }) => {
     await page.setViewportSize({ height: 900, width: 1280 });
     await page.goto(route.path);
     if (route.path === '/') {
@@ -102,6 +102,32 @@ for (const route of routes) {
       await expect(syncShell).toHaveCSS('padding-right', '36px');
       await expect(syncShell).toHaveCSS('padding-top', '32px');
       await expect(syncShell).toHaveCSS('padding-bottom', '32px');
+
+      const ssrContext = await browser.newContext({
+        baseURL: new URL(page.url()).origin,
+        javaScriptEnabled: false,
+        viewport: { height: 900, width: 1024 },
+      });
+      try {
+        const ssrPage = await ssrContext.newPage();
+        await ssrPage.goto('/sync');
+        const notice = ssrPage.getByRole('status').filter({ hasText: 'Connecting to the usage engine.' });
+        const fleet = ssrPage.getByRole('heading', { level: 2, name: 'Machine fleet' }).locator('..');
+        await expect(notice).toHaveCSS('display', 'grid');
+        await expect(notice).toHaveCSS('padding', '10px 12px');
+        await expect(notice).toHaveCSS('border-top-width', '1px');
+        await expect(notice).toHaveCSS('border-radius', '8px');
+        await expect(notice).toHaveCSS('font-size', '13px');
+        const noticeBox = await notice.boundingBox();
+        const fleetBox = await fleet.boundingBox();
+        expect(noticeBox).not.toBeNull();
+        expect(fleetBox).not.toBeNull();
+        expect(noticeBox?.x).toBe(fleetBox?.x);
+        expect(noticeBox?.width).toBe(fleetBox?.width);
+        expect(fleetBox?.y).toBe((noticeBox?.y ?? 0) + (noticeBox?.height ?? 0) + 16);
+      } finally {
+        await ssrContext.close();
+      }
     }
 
     const desktopNavigation = page.getByRole('complementary', { name: 'Application navigation' });

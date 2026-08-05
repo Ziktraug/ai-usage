@@ -8,11 +8,7 @@
   import ManualTransferProgress from './manual-transfer-progress.svelte';
   import { actionRow, ghostButton, panelHeader, strongCell } from './styles';
 
-  let {
-    mutationAvailable,
-    mutationMessage,
-    onCompleted,
-  }: { mutationAvailable: boolean; mutationMessage: string | null; onCompleted?: () => Promise<void> | void } =
+  let { mutationAvailable, onCompleted }: { mutationAvailable: boolean; onCompleted?: () => Promise<void> | void } =
     $props();
 
   type PendingOperation = 'confirm' | 'export' | 'preview';
@@ -184,9 +180,6 @@
     <div class={operationPanel} role="alert">{notice.message}</div>
   {:else if notice}
     <div class={operationPanel} role="status">{notice.message}</div>
-  {/if}
-  {#if mutationMessage}
-    <p class={panelSub} role="status">{mutationMessage}</p>
   {/if}
   <div class={actionRow}>
     <button class={ghostButton} disabled={pending !== null} onclick={exportCurrentMachine} type="button">
