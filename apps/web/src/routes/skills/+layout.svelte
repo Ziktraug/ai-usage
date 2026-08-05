@@ -9,7 +9,7 @@
   import SkillsMatrixSlot from '$lib/features/skills/management/skills-matrix-slot.svelte';
   import type { SkillsManagementPlanController } from '$lib/features/skills/shell/management-plan-controller';
   import SkillsShell from '$lib/features/skills/shell/skills-shell.svelte';
-  import type { SkillsShellSlotContext } from '$lib/features/skills/shell/slot-context';
+  import type { SkillsHealthSlotPlacement, SkillsShellSlotContext } from '$lib/features/skills/shell/slot-context';
   import type { LayoutProps } from './$types';
 
   let { children, data }: LayoutProps = $props();
@@ -54,13 +54,18 @@
   </button>
 {/snippet}
 
-{#snippet healthSlot(_context: SkillsShellSlotContext, _managementPlan: SkillsManagementPlanController)}
+{#snippet healthSlot(
+  _context: SkillsShellSlotContext,
+  _managementPlan: SkillsManagementPlanController,
+  _placement: SkillsHealthSlotPlacement,
+)}
   <SkillsHealthSlot
     context={_context}
     managementPlan={_managementPlan}
     onRefreshFocus={() => refreshButtonElement?.focus()}
     onRefreshPendingChange={(pending) => (refreshPending = pending)}
     onRefreshReady={(action) => (refreshAction = action)}
+    placement={_placement}
   />
 {/snippet}
 {#snippet matrixSlot(_context: SkillsShellSlotContext, _managementPlan: SkillsManagementPlanController)}

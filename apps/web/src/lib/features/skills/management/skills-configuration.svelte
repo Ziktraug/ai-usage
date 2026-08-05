@@ -1,5 +1,6 @@
 <script lang="ts">
   import { css, cx } from '@ai-usage/design-system/css';
+  import { panel, skillsDisclosurePanel, skillsDisclosureSummary } from '@ai-usage/design-system/report';
   import type { SkillManagementSnapshot } from '@ai-usage/skills';
   import { useQueryClient } from '@tanstack/svelte-query';
   import { untrack } from 'svelte';
@@ -139,15 +140,6 @@
     sourceDraft = syncSourceRepositoryDraft(sourceDraft, context.snapshot);
   });
 
-  const disclosure = css({ borderTop: '1px solid token(colors.line)' });
-  const summary = css({
-    display: 'flex',
-    alignItems: 'baseline',
-    justifyContent: 'space-between',
-    gap: '8px',
-    py: '8px',
-    cursor: 'pointer',
-  });
   const body = css({ display: 'grid', gap: '16px', pt: '8px' });
   const formRow = css({ display: 'grid', gap: '8px' });
   const label = css({ display: 'grid', gap: '5px', color: 'muted', fontSize: '12px', fontWeight: 650 });
@@ -171,8 +163,8 @@
   const targetRow = css({ display: 'grid', gap: '5px', pt: '8px', borderTop: '1px solid token(colors.line)' });
 </script>
 
-<details class={disclosure} data-skills-configuration>
-  <summary class={summary}>
+<details class={cx(panel, skillsDisclosurePanel)} data-skills-configuration>
+  <summary class={skillsDisclosureSummary}>
     <strong>Configuration &amp; runtimes</strong>
     <span class={muted}>
       {context.snapshot.targets.filter((target) => target.enabled).length}

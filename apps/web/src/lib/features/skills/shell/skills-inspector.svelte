@@ -1,28 +1,24 @@
 <script lang="ts">
   import { css, cx } from '@ai-usage/design-system/css';
   import { panel, panelSub, panelTitle } from '@ai-usage/design-system/svelte';
-  import type { SkillManagementSnapshot } from '@ai-usage/skills';
   import type { Snippet } from 'svelte';
-  import { buildSkillHealthSummary, count } from '../../../../skills-page-model';
+  import { count } from '../../../../skills-page-model';
   import type { SkillsManagementPlanController } from './management-plan-controller';
   import type { SkillsShellViewModel } from './model';
-  import type { SkillsShellSlotContext } from './slot-context';
+  import type { SkillsHealthSlotPlacement, SkillsShellSlotContext } from './slot-context';
 
   let {
     healthSlot,
     managementPlan,
     slotContext,
-    snapshot,
     view,
   }: {
-    healthSlot?: Snippet<[SkillsShellSlotContext, SkillsManagementPlanController]>;
+    healthSlot?: Snippet<[SkillsShellSlotContext, SkillsManagementPlanController, SkillsHealthSlotPlacement]>;
     managementPlan: SkillsManagementPlanController;
     slotContext: SkillsShellSlotContext;
-    snapshot: SkillManagementSnapshot;
     view: SkillsShellViewModel;
   } = $props();
 
-  const health = $derived(buildSkillHealthSummary(snapshot));
   const contextPanel = css({ alignSelf: 'start', position: { base: 'static', xl: 'sticky' }, top: '16px' });
   const panelHeader = css({ display: 'grid', gap: '2px' });
   const stack = css({ display: 'grid', gap: '12px' });
@@ -52,16 +48,10 @@
     </p>
   </div>
   <div class={stack}>
-    {#if view.selectionDetail.kind !== 'global-skill'}
+    {#if view.selectionDetail.kind === 'project-scope' || view.selectionDetail.kind === 'project-skill'}
       <div class={row}><span class={muted}>Selection</span><strong>{view.selectionLabel}</strong></div>
     {/if}
-    {#if view.selectionDetail.kind === 'global-scope'}
-      <div class={section}>
-        <div class={row}><span class={muted}>Skills</span><span>{snapshot.summary.skillCount}</span></div>
-        <div class={row}><span class={muted}>Active</span><span>{snapshot.summary.activeSkillCount}</span></div>
-        <div class={row}><span class={muted}>Not linked</span><span>{health.toLinkCount}</span></div>
-      </div>
-    {:else if view.selectionDetail.kind === 'project-scope'}
+    {#if view.selectionDetail.kind === 'project-scope'}
       <div class={section}>
         <span class={path}>{view.selectionDetail.project.path}</span>
         <div class={row}>
@@ -81,10 +71,12 @@
       </div>
     {/if}
     {#if healthSlot}
-      {#if view.selectionDetail.kind === 'global-skill'}
-        <div data-skills-health-slot>{@render healthSlot(slotContext, managementPlan)}</div>
+      {#if view.selectionDetail.kind === 'global-skill' || view.selectionDetail.kind === 'global-scope'}
+        <div data-skills-health-slot>{@render healthSlot(slotContext, managementPlan, 'inspector')}</div>
       {:else}
-        <div class={section} data-skills-health-slot>{@render healthSlot(slotContext, managementPlan)}</div>
+        <div class={section} data-skills-health-slot>
+          {@render healthSlot(slotContext, managementPlan, 'inspector')}
+        </div>
       {/if}
     {/if}
   </div>

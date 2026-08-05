@@ -31,7 +31,7 @@
   import { createSkillsShellViewModel, normalizeSkillsQuerySnapshot } from './model';
   import { createSkillsFallbackNavigationRequest } from './skills-fallback-navigation';
   import SkillsWorkspace from './skills-workspace.svelte';
-  import type { SkillsShellSlotContext, SkillsSnapshotUpdatePort } from './slot-context';
+  import type { SkillsHealthSlotPlacement, SkillsShellSlotContext, SkillsSnapshotUpdatePort } from './slot-context';
   import { createSkillsSnapshotController, type SkillsDraftGuardPort } from './snapshot-controller';
 
   let {
@@ -45,7 +45,7 @@
     runtimeMode,
   }: {
     editorSlot?: Snippet<[SkillsShellSlotContext]>;
-    healthSlot?: Snippet<[SkillsShellSlotContext, SkillsManagementPlanController]>;
+    healthSlot?: Snippet<[SkillsShellSlotContext, SkillsManagementPlanController, SkillsHealthSlotPlacement]>;
     hydrationState: WebQueryHydrationState;
     matrixSlot?: Snippet<[SkillsShellSlotContext, SkillsManagementPlanController]>;
     navigationState: App.PageState;

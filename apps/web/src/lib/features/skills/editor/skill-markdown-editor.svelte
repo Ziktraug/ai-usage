@@ -8,6 +8,7 @@
     statusPillInfo,
     statusPillOk,
     statusPillWarn,
+    strongCell,
   } from '@ai-usage/design-system/svelte';
   import { onDestroy, untrack } from 'svelte';
   import type { SkillMarkdownEditorController, SkillMarkdownEditorState } from './controller';
@@ -47,11 +48,10 @@
     display: 'grid',
     gridTemplateAreas: {
       base: '"header" "editor" "actions"',
-      md: '"header" "actions" "editor"',
-      '2xl': '"header actions" "editor editor"',
+      md: '"header actions" "editor editor"',
     },
-    gridTemplateColumns: { base: '1fr', '2xl': 'minmax(0, 1fr) auto' },
-    columnGap: { base: '12px', '2xl': 0 },
+    gridTemplateColumns: { base: '1fr', md: 'minmax(0, 1fr) auto' },
+    columnGap: { base: '12px', md: 0 },
     rowGap: '12px',
     minW: 0,
   });
@@ -63,10 +63,10 @@
     alignItems: 'center',
     p: '10px 12px',
     border: '1px solid token(colors.line)',
-    borderRightWidth: { base: '1px', '2xl': 0 },
+    borderRightWidth: { base: '1px', md: 0 },
     borderTopLeftRadius: 'sm',
-    borderTopRightRadius: { base: 'sm', '2xl': 0 },
-    borderBottomRightRadius: { base: 'sm', '2xl': 0 },
+    borderTopRightRadius: { base: 'sm', md: 0 },
+    borderBottomRightRadius: { base: 'sm', md: 0 },
     borderBottomLeftRadius: 'sm',
     bg: 'surfaceMuted',
   });
@@ -76,13 +76,13 @@
     flexWrap: 'wrap',
     gap: '8px',
     alignItems: 'center',
-    justifyContent: { base: 'flex-start', '2xl': 'flex-end' },
+    justifyContent: { base: 'flex-start', md: 'flex-end' },
     p: '10px 12px',
     border: '1px solid token(colors.line)',
-    borderTopLeftRadius: { base: 'sm', '2xl': 0 },
+    borderTopLeftRadius: { base: 'sm', md: 0 },
     borderTopRightRadius: 'sm',
     borderBottomRightRadius: 'sm',
-    borderBottomLeftRadius: { base: 'sm', '2xl': 0 },
+    borderBottomLeftRadius: { base: 'sm', md: 0 },
     bg: 'surfaceMuted',
   });
   const editorArea = css({
@@ -116,7 +116,6 @@
     borderRadius: 'sm',
     bg: 'surfaceMuted',
   });
-  const titleStyle = css({ fontWeight: 700 });
 
   interface DocumentStatus {
     readonly error: boolean;
@@ -188,7 +187,7 @@
   data-skill-markdown-editor
 >
   <div class={documentToolbar}>
-    <h3 class={titleStyle}>SKILL.md</h3>
+    <h3 class={strongCell}>SKILL.md</h3>
     {#if status.error}
       <span class={cx(statusPill, status.tone)} role="alert">{status.label}</span>
     {:else}

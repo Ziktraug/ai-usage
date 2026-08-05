@@ -3,6 +3,8 @@ import type { ProjectSkillMarkdownDocument, SkillMarkdownDocument } from '@ai-us
 import type { SkillsShellViewModel } from './model';
 import type { SkillsDraftGuardPort } from './snapshot-controller';
 
+export type SkillsHealthSlotPlacement = 'detail' | 'inspector';
+
 export interface SkillsPendingSnapshotDecision {
   readonly discard: () => Promise<boolean>;
   readonly focus: () => void;

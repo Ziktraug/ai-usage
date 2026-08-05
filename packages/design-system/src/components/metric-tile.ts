@@ -1,5 +1,16 @@
 import { css } from '@ai-usage/design-system/css';
 
+export const metricGrid = css({
+  display: 'grid',
+  gridTemplateColumns: {
+    base: 'repeat(2, minmax(0, 1fr))',
+    md: 'repeat(4, minmax(0, 1fr))',
+    xl: 'repeat(7, minmax(0, 1fr))',
+  },
+  gap: '10px',
+  my: '20px',
+});
+
 export const metricTile = css({
   minH: '88px',
   p: '14px 16px',

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { css, cx } from '@ai-usage/design-system/css';
+  import { panel, skillsDisclosurePanel, skillsDisclosureSummary } from '@ai-usage/design-system/report';
   import {
     banner,
     bannerError,
@@ -32,7 +33,7 @@
   import { createBrowserWebRpcClient } from '../../../rpc/client';
   import { createSkillsClient } from '../../../rpc/skills-client';
   import type { SkillsManagementPlanController } from '../shell/management-plan-controller';
-  import type { SkillsShellSlotContext } from '../shell/slot-context';
+  import type { SkillsHealthSlotPlacement, SkillsShellSlotContext } from '../shell/slot-context';
   import {
     observeInspectorDisclosure,
     resolveSkillsRefreshAcceptance,
@@ -51,7 +52,6 @@
   import SkillsConfiguration from './skills-configuration.svelte';
   import SkillsConsolidate from './skills-consolidate.svelte';
   import {
-    button,
     compactStack,
     diagnosticRow,
     heading,
@@ -68,6 +68,7 @@
     client: injectedClient,
     context,
     managementPlan,
+    placement = 'inspector',
     onRefreshFocus,
     onRefreshPendingChange,
     onRefreshReady,
@@ -75,6 +76,7 @@
     client?: SkillsHealthClient;
     context: SkillsShellSlotContext;
     managementPlan: SkillsManagementPlanController;
+    placement?: SkillsHealthSlotPlacement;
     onRefreshFocus?: () => void;
     onRefreshPendingChange?: (pending: boolean) => void;
     onRefreshReady?: (action: () => Promise<void>) => void;
@@ -91,7 +93,11 @@
   const hydrationSnapshot = untrack(() => context.snapshot);
   let dismissTimer: ReturnType<typeof setTimeout> | undefined;
   let restoreFocusFrame: number | undefined;
+  const ownsRefreshRegistration = $derived(
+    placement === 'detail' || context.view.selectionDetail.kind !== 'global-scope' || context.view.matrixOpen,
+  );
   const health = $derived(buildSkillHealthSummary(context.snapshot));
+  const disabledSkills = $derived(context.snapshot.skills.filter((skill) => !skill.enabled));
   const unmanagedGroups = $derived(groupUnmanagedEntries(context.snapshot));
   const selectedSkill = $derived(
     context.view.selectionDetail.kind === 'global-skill' ? context.view.selectionDetail.skill : undefined,
@@ -112,6 +118,22 @@
     alignItems: 'center',
   });
   const metricList = css({ display: 'grid', gap: '6px' });
+  const sourceHealthRow = css({
+    appearance: 'none',
+    display: 'grid',
+    gridTemplateColumns: 'minmax(0, 1fr) auto',
+    gap: '8px',
+    alignItems: 'baseline',
+    border: '1px solid transparent',
+    borderRadius: 'sm',
+    bg: 'transparent',
+    color: 'ink',
+    fontSize: '13px',
+    textAlign: 'left',
+    cursor: 'pointer',
+    _hover: { bg: 'surfaceMuted', borderColor: 'line' },
+    _focusVisible: { outline: '2px solid token(colors.accent)', outlineOffset: '2px' },
+  });
   const metricRow = css({
     display: 'grid',
     gridTemplateColumns: 'minmax(0, 1fr) auto',
@@ -151,6 +173,21 @@
     overflowWrap: 'anywhere',
   });
   const actionGrid = css({ display: 'grid', gap: '8px' });
+  const foldBody = css({ display: 'grid', gap: '14px', p: '0 16px 16px' });
+  const detailSlotStack = css({ display: 'grid', gap: '14px' });
+  const foldsGrid = css({
+    display: 'grid',
+    gridTemplateColumns: { base: '1fr', xl: 'minmax(0, 0.75fr) minmax(360px, 1.25fr)' },
+    gap: '16px',
+  });
+  const disabledRow = css({
+    display: 'grid',
+    gridTemplateColumns: 'minmax(0, 1fr) auto',
+    gap: '10px',
+    alignItems: 'center',
+    p: '10px 0',
+    borderTop: '1px solid token(colors.line)',
+  });
   const clearDismissTimer = (): void => {
     if (dismissTimer !== undefined) {
       clearTimeout(dismissTimer);
@@ -183,7 +220,6 @@
   };
   onMount(() => {
     mounted = true;
-    onRefreshReady?.(refreshSkills);
     return observeInspectorDisclosure(window.matchMedia(SKILLS_DESKTOP_MEDIA_QUERY), (open) => {
       inspectorSectionsOpen = open;
     });
@@ -194,13 +230,25 @@
       window.cancelAnimationFrame(restoreFocusFrame);
     }
   });
-  $effect(() => onRefreshPendingChange?.(pendingOperation !== null));
+  $effect(() => {
+    if (mounted && ownsRefreshRegistration) {
+      onRefreshReady?.(refreshSkills);
+    }
+  });
+  $effect(() => {
+    if (ownsRefreshRegistration) {
+      onRefreshPendingChange?.(pendingOperation !== null);
+    }
+  });
   $effect(() => {
     const nextSnapshot = context.snapshot;
     if (!(mounted && !hydrationReloadAnnounced && nextSnapshot !== hydrationSnapshot)) {
       return;
     }
     hydrationReloadAnnounced = true;
+    if (!ownsRefreshRegistration) {
+      return;
+    }
     if (shouldAnnounceSkillsHydrationReload(hydrationSnapshot, nextSnapshot, operationMessage !== null)) {
       setSuccessMessage('Skills reloaded.');
     }
@@ -293,25 +341,88 @@
   };
 </script>
 
-<div class={stack} data-skills-management-health-slot>
+<div
+  class={context.view.selectionDetail.kind === 'global-scope' && placement === 'detail' ? detailSlotStack : stack}
+  data-skills-management-health-slot
+>
   {#if context.view.selectionDetail.kind === 'global-scope'}
-    <section class={compactStack}>
-      <h3 class={heading}>Source health</h3>
-      <a href="/skills/matrix">Healthy links {health.healthyLinkCount}/{health.expectedLinkCount}</a>
-      <a href="/skills/matrix">To repair {health.toRepairCount}</a>
-      <a href="/skills/matrix">Blocked {health.blockedCount}</a>
-      <button
-        {...previewBusyAttributes}
-        class={button}
-        disabled={pendingOperation !== null || !canReconcileAll(context.snapshot)}
-        onclick={() => execute('preview-reconcile', 'preview-reconcile')}
-        type="button"
-      >
-        Preview reconcile
-      </button>
-    </section>
-    <SkillsConsolidate groups={unmanagedGroups} onReviewEntry={reviewConsolidation} total={health.consolidateCount} />
-    <SkillsConfiguration {...(injectedClient === undefined ? {} : { client: injectedClient })} {context} />
+    {#if placement === 'detail'}
+      <SkillsConsolidate groups={unmanagedGroups} onReviewEntry={reviewConsolidation} total={health.consolidateCount} />
+      <div class={foldsGrid}>
+        <details class={cx(panel, skillsDisclosurePanel)}>
+          <summary class={skillsDisclosureSummary}>
+            <span class={strongCell}>Disabled</span>
+            <span class={meta}>{disabledSkills.length}</span>
+          </summary>
+          <div class={foldBody}>
+            {#if disabledSkills.length === 0}
+              <p class={meta}>No disabled skills.</p>
+            {:else}
+              {#each disabledSkills as skill (skill.name)}
+                <div class={disabledRow}>
+                  <div>
+                    <div class={strongCell}>{skill.name}</div>
+                    <div class={meta}>{skill.description || 'No description'}</div>
+                  </div>
+                  <button
+                    class={cx(ghostButton, pendingButton)}
+                    disabled={pendingOperation !== null}
+                    onclick={() => execute(toggleOperation(skill.name, true), `toggle:${skill.name}`)}
+                    type="button"
+                  >
+                    Enable
+                  </button>
+                </div>
+              {/each}
+            {/if}
+          </div>
+        </details>
+        <SkillsConfiguration {...(injectedClient === undefined ? {} : { client: injectedClient })} {context} />
+      </div>
+    {:else}
+      <section class={stack}>
+        <div>
+          <div class={strongCell}>Source health</div>
+          <div class={meta}>Managed runtime exposure</div>
+        </div>
+        <div class={metricList}>
+          <button class={sourceHealthRow} onclick={() => goto('/skills/matrix')} type="button">
+            <span class={meta}>Healthy links</span>
+            <strong>{health.healthyLinkCount}/{health.expectedLinkCount}</strong>
+          </button>
+          <button class={sourceHealthRow} onclick={() => goto('/skills/matrix')} type="button">
+            <span class={meta}>To repair</span>
+            <strong>{health.toRepairCount}</strong>
+          </button>
+          <button class={sourceHealthRow} onclick={() => goto('/skills/matrix')} type="button">
+            <span class={meta}>Blocked</span>
+            <strong>{health.blockedCount}</strong>
+          </button>
+          <button class={sourceHealthRow} onclick={() => goto('/skills/global')} type="button">
+            <span class={meta}>To consolidate</span>
+            <strong>{health.consolidateCount}</strong>
+          </button>
+        </div>
+      </section>
+      <section class={actionGrid}>
+        <button
+          class={ghostButton}
+          onclick={() => goto(context.view.matrixOpen ? '/skills/global' : '/skills/matrix')}
+          type="button"
+        >
+          {context.view.matrixOpen ? 'Close matrix' : 'Exposure matrix'}
+        </button>
+        <button
+          {...previewBusyAttributes}
+          class={cx(ghostButton, pendingButton)}
+          disabled={pendingOperation !== null || !canReconcileAll(context.snapshot)}
+          onclick={() => execute('preview-reconcile', 'preview-reconcile')}
+          type="button"
+        >
+          Preview reconcile
+        </button>
+      </section>
+    {/if}
   {:else if selectedSkill}
     <details class={inspectorSection} data-inspector-section="validation" open={inspectorSectionsOpen}>
       <summary><h3 class={inspectorHeading}>Validation</h3></summary>
