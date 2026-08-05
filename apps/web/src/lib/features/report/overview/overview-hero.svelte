@@ -1,42 +1,14 @@
 <script lang="ts" module>
-  import { css } from '@ai-usage/design-system/css';
-
-  const hero = css({
-    display: 'grid',
-    gridTemplateColumns: { base: '1fr', md: 'minmax(0, 1.2fr) minmax(0, 1fr)' },
-    gap: '18px 32px',
-    alignItems: 'center',
-    p: '20px 22px',
-    border: '1px solid token(colors.line)',
-    borderRadius: 'md',
-    bg: 'surface',
-    boxShadow: 'card',
-  });
-  const eyebrow = css({ textStyle: 'eyebrow', color: 'accent' });
-  const value = css({
-    textStyle: 'numeric',
-    mt: '8px',
-    fontSize: { base: '30px', md: '38px' },
-    fontWeight: 650,
-    lineHeight: '1.05',
-  });
-  const detail = css({ mt: '6px', color: 'muted', fontSize: '13px' });
-  const side = css({ display: 'grid', gap: '10px' });
-  const reportedSpend = css({
-    textStyle: 'numeric',
-    display: 'inline-flex',
-    alignItems: 'center',
-    h: '24px',
-    justifySelf: 'start',
-    px: '10px',
-    borderRadius: 'full',
-    bg: 'accentSoft',
-    color: 'accent',
-    fontSize: '12px',
-    fontWeight: 650,
-  });
-  const legend = css({ display: 'flex', flexWrap: 'wrap', gap: '4px 16px', color: 'muted', fontSize: '11px' });
-  const legendValue = css({ textStyle: 'numeric', ml: '5px', color: 'ink' });
+  import {
+    heroLabel,
+    heroLegend,
+    heroLegendValue,
+    heroMultiple,
+    heroPanel,
+    heroSide,
+    heroText,
+    heroValue,
+  } from '@ai-usage/design-system/report';
 </script>
 
 <script lang="ts">
@@ -75,27 +47,27 @@
   });
 </script>
 
-<section aria-label="Estimated API-equivalent value" class={hero}>
+<section aria-label="Estimated API-equivalent value" class={heroPanel}>
   <div>
-    <p class={eyebrow}>Estimated API-equivalent value</p>
-    <p class={value}>{apiValue.label}</p>
+    <p class={heroLabel}>Estimated API-equivalent value</p>
+    <p class={heroValue}>{apiValue.label}</p>
     {#if provenance}
       <Tooltip content={provenance.description}>
-        <span class={detail}>{provenance.label}</span>
+        <span class={heroText}>{provenance.label}</span>
       </Tooltip>
     {/if}
-    <p class={detail}>
+    <p class={heroText}>
       Standard API-price estimate for {fmtNum(summary.pricedSessions)} of {fmtNum(summary.sessionCount)} sessions ({rangeLabel}).
       This is a comparison value, not savings or ROI.
     </p>
   </div>
-  <div class={side}>
-    <span class={reportedSpend} data-reported-actual-spend>
+  <div class={heroSide}>
+    <span class={heroMultiple} data-reported-actual-spend>
       Reported actual spend · {fmtMoney(summary.actualCost)}
     </span>
-    <div class={legend} data-spend-coverage-legend>
+    <div class={heroLegend} data-spend-coverage-legend>
       <span>
-        Spend coverage<span class={legendValue}
+        Spend coverage<span class={heroLegendValue}
           >{fmtNum(actualKnownSessions)}/{fmtNum(summary.sessionCount)}
           sessions</span
         >
@@ -103,7 +75,7 @@
       {#if summary.costQuota > 0}
         <span>
           Quota-covered value reported
-          <span class={legendValue}>{fmtMoney(summary.costQuota)}</span>
+          <span class={heroLegendValue}>{fmtMoney(summary.costQuota)}</span>
         </span>
       {/if}
     </div>

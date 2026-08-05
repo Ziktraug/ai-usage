@@ -307,6 +307,36 @@ test('shows analysis and report metrics without disclosure gates', async ({ page
   await expect(reportMetrics.getByRole('heading', { level: 2, name: 'More report metrics' })).toBeVisible();
   await expect(reportMetrics.getByRole('button', { name: 'More report metrics' })).toHaveCount(0);
   await expect(reportMetrics.getByText('Fresh tokens', { exact: true })).toBeVisible();
+  await expect(reportMetrics.locator(':scope > header')).toContainText('8');
+  await expect(reportMetrics.locator('[data-metric-tile]')).toHaveCount(5);
+  await expect(reportMetrics.getByRole('button', { name: 'About Sessions' })).toBeVisible();
+  await expect(reportMetrics.locator('[data-metric-delta]').first()).toContainText('×5.0 vs previous period');
+
+  const metricGrid = reportMetrics.locator('[data-metric-grid]');
+  const valueBases = reportMetrics.locator('[data-value-bases-panel]');
+  const firstMetric = reportMetrics.locator('[data-metric-tile]').first();
+  const desktopGeometry = await Promise.all([
+    metricGrid.evaluate((element) => {
+      const style = getComputedStyle(element);
+      return { columns: style.gridTemplateColumns.split(' ').length, gap: style.gap };
+    }),
+    valueBases.boundingBox(),
+    firstMetric.boundingBox(),
+  ]);
+  expect(desktopGeometry[0]).toEqual({ columns: 4, gap: '10px' });
+  expect(desktopGeometry[1]?.width).toBeCloseTo((desktopGeometry[2]?.width ?? 0) * 2 + 10, 0);
+
+  await page.setViewportSize({ height: 800, width: 361 });
+  const narrowGeometry = await Promise.all([
+    metricGrid.evaluate((element) => {
+      const style = getComputedStyle(element);
+      return { columns: style.gridTemplateColumns.split(' ').length, gap: style.gap };
+    }),
+    metricGrid.boundingBox(),
+    valueBases.boundingBox(),
+  ]);
+  expect(narrowGeometry[0]).toEqual({ columns: 2, gap: '10px' });
+  expect(narrowGeometry[2]?.width).toBeCloseTo(narrowGeometry[1]?.width ?? 0, 0);
 });
 
 test('prioritizes the selected dashboard view before secondary status on mobile', async ({ page }) => {

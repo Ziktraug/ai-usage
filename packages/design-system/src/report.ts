@@ -4,6 +4,7 @@ export * from './components/chart';
 export * from './components/empty-state';
 export * from './components/field';
 export * from './components/layout';
+export * from './components/metric-tile';
 export * from './components/overview';
 export * from './components/panel';
 export * from './components/refresh';

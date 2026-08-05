@@ -6,7 +6,10 @@ import type {
 import { originProvenanceFor } from '@ai-usage/report-core/provenance';
 import type { Metric, MetricDelta } from '../../../../dashboard-metric-model';
 import { fmtCompact, fmtMoney, fmtNum, fmtPct } from '../../../foundation/presentation/format';
-import { aggregateApiValuePresentation } from '../../../foundation/presentation/report-value';
+import {
+  aggregateApiPriceProvenance,
+  aggregateApiValuePresentation,
+} from '../../../foundation/presentation/report-value';
 
 export interface TokenAnatomyRow {
   readonly key: 'cache-read' | 'cache-write' | 'input' | 'output';
@@ -16,97 +19,114 @@ export interface TokenAnatomyRow {
 }
 
 const comparisonDelta = (current: number, previous: number, format: (value: number) => string): MetricDelta | null => {
-  if (previous === 0) {
+  if (previous <= 0) {
     return null;
   }
   return {
     hint: `Previous period of equal length: ${format(previous)}`,
-    pct: ((current - previous) / Math.abs(previous)) * 100,
+    pct: ((current - previous) / previous) * 100,
   };
 };
-
-const metric = (
-  kind: Metric['kind'],
-  label: string,
-  value: string,
-  hint: string | undefined,
-  delta: MetricDelta | null,
-): Metric => ({ kind, label, value, ...(hint ? { hint } : {}), ...(delta ? { delta } : {}) });
 
 export const buildOverviewMetrics = (
   summary: FocusedReportSummary,
   previous: FocusedReportSummary | null,
 ): Metric[] => {
   const apiValue = aggregateApiValuePresentation(summary.priceMeasurement);
-  const fullyPricedHint = `${apiValue.title} for ${fmtNum(summary.pricedSessions)} of ${fmtNum(summary.sessionCount)} fully priced sessions, including usage covered by subscriptions`;
-  return [
-    metric(
-      'api-value',
-      summary.priceMeasurement.state === 'partially measured' ? 'API value · partially measured' : 'API value',
-      apiValue.label,
-      fullyPricedHint,
-      previous ? comparisonDelta(summary.totalCost, previous.totalCost, fmtMoney) : null,
-    ),
-    metric(
-      'actual-cost',
-      'Actual cost',
-      summary.unknownActual === summary.sessionCount ? '—' : fmtMoney(summary.actualCost),
-      `${fmtNum(Math.max(0, summary.sessionCount - summary.unknownActual))} of ${fmtNum(summary.sessionCount)} sessions report actual spend`,
-      previous ? comparisonDelta(summary.actualCost, previous.actualCost, fmtMoney) : null,
-    ),
-    metric(
-      'subscription-value',
-      'Subscription value',
-      fmtMoney(summary.costQuota),
-      'Value covered by subscription quota',
-      previous ? comparisonDelta(summary.costQuota, previous.costQuota, fmtMoney) : null,
-    ),
-    metric(
-      'sessions',
-      'Sessions',
-      fmtNum(summary.sessionCount),
-      undefined,
-      previous ? comparisonDelta(summary.sessionCount, previous.sessionCount, fmtNum) : null,
-    ),
-    metric(
-      'fresh-tokens',
-      'Fresh tokens',
-      fmtCompact(summary.fresh),
-      'Input and output tokens excluding cache reads and writes',
-      previous ? comparisonDelta(summary.fresh, previous.fresh, fmtCompact) : null,
-    ),
-    metric(
-      'mean-cost',
-      'Mean session value',
-      fmtMoney(summary.meanCost),
-      'Mean API-equivalent value across fully priced sessions',
-      previous ? comparisonDelta(summary.meanCost, previous.meanCost, fmtMoney) : null,
-    ),
-    metric(
-      'tool-calls',
-      'Tool calls',
-      fmtNum(summary.tools),
-      undefined,
-      previous ? comparisonDelta(summary.tools, previous.tools, fmtNum) : null,
-    ),
-    metric(
-      'turns',
-      'Turns',
-      fmtNum(summary.turns),
-      undefined,
-      previous ? comparisonDelta(summary.turns, previous.turns, fmtNum) : null,
-    ),
-    metric(
-      'rtk-savings',
-      'RTK savings',
-      fmtCompact(summary.rtkSaved),
-      `${fmtNum(summary.rtkSessions)} sessions include RTK accounting`,
-      previous ? comparisonDelta(summary.rtkSaved, previous.rtkSaved, fmtCompact) : null,
-    ),
+  const apiValueProvenance = aggregateApiPriceProvenance(summary.priceMeasurement);
+  const metrics: Metric[] = [
+    {
+      kind: 'sessions',
+      label: 'Sessions',
+      value: fmtNum(summary.sessionCount),
+      hint: 'Sessions in the current filter',
+      delta: previous ? comparisonDelta(summary.sessionCount, previous.sessionCount, fmtNum) : null,
+    },
+    {
+      kind: 'api-value',
+      label: apiValueProvenance ? `API value · ${apiValueProvenance.label}` : 'API value',
+      value: apiValue.label,
+      hint: [
+        `Estimated API-equivalent value at standard prices for ${fmtNum(summary.pricedSessions)} of ${fmtNum(summary.sessionCount)} fully priced sessions, including usage covered by subscriptions`,
+        apiValueProvenance?.description,
+      ]
+        .filter((line): line is string => Boolean(line))
+        .join('\n'),
+      delta: previous ? comparisonDelta(summary.totalCost, previous.totalCost, fmtMoney) : null,
+    },
+    {
+      kind: 'actual-cost',
+      label: 'Actual cost',
+      value: fmtMoney(summary.actualCost),
+      hint: `Out-of-pocket spend reported by harnesses; subscription usage counts as $0${
+        summary.unknownActual ? ` (${fmtNum(summary.unknownActual)} sessions unknown)` : ''
+      }`,
+      delta: previous ? comparisonDelta(summary.actualCost, previous.actualCost, fmtMoney) : null,
+    },
+    {
+      kind: 'subscription-value',
+      label: 'Sub value',
+      value: fmtMoney(summary.costQuota),
+      hint: 'Cursor export value covered by the subscription quota',
+      delta: previous ? comparisonDelta(summary.costQuota, previous.costQuota, fmtMoney) : null,
+    },
+    {
+      kind: 'mean-cost',
+      label: 'Mean / sess',
+      value: fmtMoney(summary.meanCost),
+      hint: 'Mean API value per priced session',
+    },
+    {
+      kind: 'fresh-tokens',
+      label: 'Fresh tokens',
+      value: fmtCompact(summary.fresh),
+      hint: `Tokens processed without cache: ${fmtNum(summary.fresh)}`,
+      delta: previous ? comparisonDelta(summary.fresh, previous.fresh, fmtCompact) : null,
+    },
   ];
+
+  if (summary.rtkSaved) {
+    metrics.push({
+      kind: 'rtk-savings',
+      label: 'RTK savings',
+      value: fmtPct(summary.rtkInput ? (summary.rtkSaved / summary.rtkInput) * 100 : 0),
+      hint: [
+        `${fmtNum(summary.rtkSaved)} tokens saved in matched sessions`,
+        `${fmtNum(summary.rtkInput)} RTK input tokens before filtering`,
+        `${fmtNum(summary.rtkOutput)} RTK output tokens after filtering`,
+      ].join('\n'),
+    });
+  }
+
+  metrics.push(
+    {
+      kind: 'turns',
+      label: 'Turns',
+      value: fmtNum(summary.turns),
+      hint: 'Assistant turns across the filtered sessions',
+      delta: previous ? comparisonDelta(summary.turns, previous.turns, fmtNum) : null,
+    },
+    {
+      kind: 'tool-calls',
+      label: 'Tool calls',
+      value: fmtNum(summary.tools),
+      hint: 'Tool invocations across the filtered sessions',
+      delta: previous ? comparisonDelta(summary.tools, previous.tools, fmtNum) : null,
+    },
+  );
+
+  return metrics;
 };
 
-export const metricDeltaLabel = (delta: MetricDelta): string => `${fmtPct(Math.abs(delta.pct))} vs previous period`;
+export const fmtDeltaPct = (percentage: number): string => {
+  if (percentage >= 400) {
+    const factor = percentage / 100 + 1;
+    return `×${factor >= 10 ? Math.round(factor) : factor.toFixed(1)}`;
+  }
+  return fmtPct(Math.abs(percentage));
+};
+
+export const metricDeltaLabel = (delta: MetricDelta): string => `${fmtDeltaPct(delta.pct)} vs previous period`;
 
 export const tokenAnatomyRows = (summary: FocusedReportSummary): TokenAnatomyRow[] => {
   const values = [summary.cacheRead, summary.cacheWrite, summary.tokIn, summary.tokOut] as const;
