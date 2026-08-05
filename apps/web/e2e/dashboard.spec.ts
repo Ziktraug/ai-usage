@@ -447,6 +447,9 @@ test('navigates and closes the selected session with drawer keyboard commands', 
 
   const drawer = page.getByRole('dialog', { name: 'Session details' });
   await expect(drawer.getByText('Build report UI', { exact: true }).first()).toBeVisible();
+  const closeButton = drawer.getByRole('button', { name: 'Close session details' });
+  await expect(closeButton).toHaveCSS('line-height', '14px');
+  expect(await closeButton.boundingBox()).toMatchObject({ height: 30, width: 30 });
   await page.keyboard.press('j');
   await expect(drawer.getByText('Review analytics model', { exact: true }).first()).toBeVisible();
   await page.keyboard.press('k');

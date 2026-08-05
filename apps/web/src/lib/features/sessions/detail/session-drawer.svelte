@@ -3,85 +3,6 @@
   import { css } from '@ai-usage/design-system/css';
 
   const analysisDrawer = css({ w: { base: '100vw', md: 'min(960px, 94vw)' } });
-  const drawer = css({
-    position: 'fixed',
-    right: '0',
-    bottom: '0',
-    top: { base: 'auto', sm: '0' },
-    left: { base: '0', sm: 'auto' },
-    w: { base: '100%', sm: '440px' },
-    maxW: '100vw',
-    maxH: { base: '78dvh', sm: 'none' },
-    display: 'flex',
-    flexDirection: 'column',
-    bg: 'surface',
-    borderLeft: { base: '0', sm: '1px solid token(colors.line)' },
-    borderTop: { base: '1px solid token(colors.line)', sm: '0' },
-    roundedTop: { base: 'md', sm: '0' },
-    boxShadow: 'overlay',
-    zIndex: 40,
-    animation: { base: 'sheetIn 0.2s ease-out', sm: 'drawerIn 0.18s ease-out' },
-    _print: { display: 'none' },
-  });
-  const drawerTop = css({
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    gap: '10px',
-    p: '12px 16px',
-    borderBottom: '1px solid token(colors.line)',
-  });
-  const drawerBody = css({ display: 'grid', gap: '14px', alignContent: 'start', p: '16px 18px', overflowY: 'auto' });
-  const drawerTitle = css({ fontSize: '15px', fontWeight: 650, lineHeight: '1.35', overflowWrap: 'anywhere' });
-  const drawerGrid = css({ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '14px 12px' });
-  const drawerNav = css({ display: 'flex', alignItems: 'center', gap: '6px' });
-  const drawerPosition = css({ textStyle: 'numeric', color: 'faint', fontSize: '11px', mr: '4px' });
-  const drawerLegend = css({
-    display: 'grid',
-    gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
-    gap: '4px 12px',
-    color: 'muted',
-    fontSize: '11px',
-  });
-  const drawerLegendItem = css({ display: 'flex', alignItems: 'center', gap: '6px', minW: 0 });
-  const drawerLegendSwatch = css({ w: '8px', h: '8px', borderRadius: '2px', flexShrink: 0 });
-  const drawerLegendValue = css({ textStyle: 'numeric', color: 'ink', ml: 'auto' });
-  const drawerCompare = css({ color: 'muted', fontSize: '12px' });
-  const drawerActions = css({ display: 'flex', flexWrap: 'wrap', gap: '8px' });
-  const drawerClose = css({
-    display: 'inline-flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    w: '30px',
-    h: '30px',
-    flexShrink: 0,
-    border: '1px solid token(colors.line)',
-    borderRadius: 'sm',
-    bg: 'transparent',
-    color: 'muted',
-    fontSize: '14px',
-    cursor: 'pointer',
-    _hover: { color: 'accent', borderColor: 'accent' },
-    _focusVisible: { outline: '2px solid token(colors.accent)', outlineOffset: '2px' },
-    _disabled: { opacity: 0.4, cursor: 'default' },
-  });
-  const ghostButton = css({
-    display: 'inline-flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    border: '1px solid token(colors.line)',
-    borderRadius: 'sm',
-    bg: 'surface',
-    color: 'muted',
-    px: '12px',
-    py: '5px',
-    fontSize: '12px',
-    fontWeight: 600,
-    cursor: 'pointer',
-    _hover: { borderColor: 'accent', color: 'accent' },
-    _focusVisible: { outline: '2px solid token(colors.accent)', outlineOffset: '2px' },
-  });
-  const muted = css({ color: 'muted' });
   const tokenSegmentClasses = {
     cacheRead: css({ bg: 'accent', opacity: 0.22 }),
     cacheWrite: css({ bg: 'accent', opacity: 0.42 }),
@@ -92,8 +13,30 @@
 
 <script lang="ts">
   import { cx } from '@ai-usage/design-system/css';
-  import { type BarSegment, Drawer, HarnessBadge, SegmentBar } from '@ai-usage/design-system/svelte';
+  import {
+    type BarSegment,
+    Drawer,
+    drawer,
+    drawerActions,
+    drawerBody,
+    drawerClose,
+    drawerCompare,
+    drawerGrid,
+    drawerLegend,
+    drawerLegendItem,
+    drawerLegendSwatch,
+    drawerLegendValue,
+    drawerNav,
+    drawerPosition,
+    drawerTitle,
+    drawerTop,
+    ghostButton,
+    HarnessBadge,
+    muted,
+    SegmentBar,
+  } from '@ai-usage/design-system/svelte';
   import { provenanceForUsageRow } from '@ai-usage/report-core/provenance';
+
   import type { SessionPresentationRow } from '@ai-usage/report-core/session-query';
   import type { Snippet } from 'svelte';
   import { lineDeltaLabel, rtkSavedLabel, rtkSavedTitle } from '../../../../dashboard-sort';

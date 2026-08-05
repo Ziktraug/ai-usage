@@ -1,5 +1,6 @@
 export {
   commandButton,
+  drawerClose,
   filterTextButton,
   ghostButton,
   pendingButton,
@@ -129,4 +130,19 @@ export {
   provenanceTitle,
 } from './svelte/overlays/provenance';
 export { default as ProvenanceMarker } from './svelte/overlays/provenance-marker.svelte';
+export {
+  drawer,
+  drawerActions,
+  drawerBody,
+  drawerCompare,
+  drawerGrid,
+  drawerLegend,
+  drawerLegendItem,
+  drawerLegendSwatch,
+  drawerLegendValue,
+  drawerNav,
+  drawerPosition,
+  drawerTitle,
+  drawerTop,
+} from './svelte/overlays/styles';
 export { default as Tooltip } from './svelte/overlays/tooltip.svelte';
