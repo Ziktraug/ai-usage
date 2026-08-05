@@ -247,6 +247,30 @@ const sessionsRepairEvidence = [
 const recordSessionsRepair = (record: ParityRecord): ParityRecord =>
   sessionsRepairExportIds.has(record.id) ? appendTargetEvidence(record, sessionsRepairEvidence) : record;
 const completeNewForSessions = (record: ParityRecord): ParityRecord => completeRecord(record, sessionsRepairEvidence);
+const sessionScrollRepairCommit = '41b0c4a6d710c24efbbe7bc00b5cd9c9952d34f3';
+const sessionScrollRepairExportIds = new Set([
+  'design-export:./report::sessionViewportSurface',
+  'design-export:./svelte::sessionViewportSurface',
+]);
+const sessionScrollRepairEvidence = [
+  targetEvidence(
+    sessionScrollRepairCommit,
+    'command',
+    'bun run --cwd apps/web test:e2e -- e2e/session-viewport-geometry.spec.ts (2/2); bun run test:e2e-production (8/8 report + 2/2 5,000-session traversal); bun run --cwd apps/web typecheck; bun test packages/design-system/src/design-entrypoints.test.ts (green)',
+  ),
+  targetEvidence(
+    sessionScrollRepairCommit,
+    'measurement',
+    'Before repair, computed overflowAnchor was auto and Chromium restored desktop scrollTop from about 1520px to 865px with virtual indices 12-48, stalling after 59 reached rows. After repair, computed overflowAnchor is none and both desktop and mobile reach every top-level campaign exactly once on the synthetic 5,000-session fixture.',
+  ),
+  targetEvidence(
+    sessionScrollRepairCommit,
+    'review',
+    'The product owner approved correcting the shared Solid scroll-treadmill defect with option 1. The change is scoped to the virtual Sessions viewport, keeps the virtualizer authoritative over scroll position, and does not alter timeouts or weaken assertions.',
+  ),
+] as const;
+const recordSessionScrollRepair = (record: ParityRecord): ParityRecord =>
+  sessionScrollRepairExportIds.has(record.id) ? appendTargetEvidence(record, sessionScrollRepairEvidence) : record;
 const drawerRepairCommit = 'bfcbe0c1491625e3e44f5256bd65ef37ed1141f1';
 const drawerRepairEvidence = [
   targetEvidence(
@@ -503,7 +527,8 @@ export default defineParityShard({
       .map(completeForD4)
       .map(recordPunchcardRepair)
       .map(recordBreakdownRepair)
-      .map(recordSessionsRepair),
+      .map(recordSessionsRepair)
+      .map(recordSessionScrollRepair),
     ...designExportRecords(owner, [
       {
         entrypoint: './svelte',
@@ -578,7 +603,9 @@ export default defineParityShard({
         names: 'presetGroup',
         source: 'packages/design-system/src/components/time-slider.ts',
       },
-    ]).map(completeNewForSessions),
+    ])
+      .map(completeNewForSessions)
+      .map(recordSessionScrollRepair),
     ...designExportRecords(owner, [
       {
         entrypoint: './svelte',

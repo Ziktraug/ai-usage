@@ -2473,14 +2473,18 @@ inside its completion frame; every other timing, heap, payload, item and DOM
 metric remained within the corrected triggers. The complete measurement and
 cause are retained in `docs/performance/web-framework-migration-baseline.md`.
 
-One release gate remains blocked pending product direction. The production
-report half passes 8/8, but `session-scroll.scale.ts` intermittently stalls after
-59 reached desktop rows. The captured state proves Chromium accepted the next
-programmatic scroll and then restored `scrollTop` from about 1520px to 865px
-while the live virtual window stayed at indices 12-48. Desktop
-`sessionViewportSurface` lacks `overflow-anchor: none`; the Solid reference has
-the same omission, so this is a shared scroll-treadmill defect rather than a
-migration regression. The constraint against silently changing shared product
-behavior prevents adding the one-property correction without approval. No
-timeout or assertion was raised or weakened, and temporary diagnostics were
-removed.
+The product owner then selected option 1 and approved correcting the shared
+Solid scroll-treadmill defect. Commit
+`41b0c4a6d710c24efbbe7bc00b5cd9c9952d34f3` sets
+`overflow-anchor: none` on `sessionViewportSurface`, leaving the virtualizer as
+the sole owner of Session scroll position. A computed-style browser assertion
+first failed with `auto` on desktop and now passes with `none` on desktop and
+mobile.
+
+The original production-scale signal is also green without a timeout or
+assertion change: the report contracts pass 8/8, followed by 2/2 complete
+desktop/mobile traversals of the synthetic 5,000-session fixture. Before the
+repair Chromium restored `scrollTop` from about 1520px to 865px while the live
+virtual window stayed at indices 12-48 and the traversal stalled after 59 rows;
+after the repair every top-level campaign is reached exactly once. This closes
+the final release-gate blocker recorded by the presentation-parity audit.
