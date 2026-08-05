@@ -1,0 +1,670 @@
+[
+  {
+    "module": "button",
+    "name": "activeFilterButton"
+  },
+  {
+    "module": "button",
+    "name": "filterTextButton"
+  },
+  {
+    "module": "button",
+    "name": "navButton"
+  },
+  {
+    "module": "button",
+    "name": "refreshIconButton"
+  },
+  {
+    "module": "chart",
+    "name": "chartAxis"
+  },
+  {
+    "module": "chart",
+    "name": "chartLegendItem"
+  },
+  {
+    "module": "chart",
+    "name": "chartLegendList"
+  },
+  {
+    "module": "chart",
+    "name": "chartLegendPct"
+  },
+  {
+    "module": "chart",
+    "name": "chartLegendSwatch"
+  },
+  {
+    "module": "chart",
+    "name": "chartUnclassifiedSwatch"
+  },
+  {
+    "module": "chart",
+    "name": "migrationBar"
+  },
+  {
+    "module": "chart",
+    "name": "migrationBars"
+  },
+  {
+    "module": "chart",
+    "name": "migrationGrid"
+  },
+  {
+    "module": "chart",
+    "name": "migrationGridLabel"
+  },
+  {
+    "module": "chart",
+    "name": "migrationGridLine"
+  },
+  {
+    "module": "chart",
+    "name": "migrationLegendButton"
+  },
+  {
+    "module": "chart",
+    "name": "migrationLegendMore"
+  },
+  {
+    "module": "chart",
+    "name": "migrationPlot"
+  },
+  {
+    "module": "chart",
+    "name": "migrationReadout"
+  },
+  {
+    "module": "chart",
+    "name": "migrationReadoutDate"
+  },
+  {
+    "module": "chart",
+    "name": "migrationReadoutHint"
+  },
+  {
+    "module": "chart",
+    "name": "migrationReadoutItem"
+  },
+  {
+    "module": "chart",
+    "name": "migrationReadoutItemActive"
+  },
+  {
+    "module": "chart",
+    "name": "migrationReadoutSwatch"
+  },
+  {
+    "module": "chart",
+    "name": "migrationReadoutTotal"
+  },
+  {
+    "module": "chart",
+    "name": "migrationReadoutValue"
+  },
+  {
+    "module": "chart",
+    "name": "migrationSeg"
+  },
+  {
+    "module": "chart",
+    "name": "migrationToolbar"
+  },
+  {
+    "module": "chart",
+    "name": "migrationToolbarSpacer"
+  },
+  {
+    "module": "chart",
+    "name": "migrationTotal"
+  },
+  {
+    "module": "chart",
+    "name": "migrationTrend"
+  },
+  {
+    "module": "chart",
+    "name": "migrationTrendDown"
+  },
+  {
+    "module": "chart",
+    "name": "migrationTrendUp"
+  },
+  {
+    "module": "chart",
+    "name": "migrationXAxis"
+  },
+  {
+    "module": "chart",
+    "name": "migrationXTick"
+  },
+  {
+    "module": "chart",
+    "name": "overflowSeriesColor"
+  },
+  {
+    "module": "chart",
+    "name": "scatterAxisText"
+  },
+  {
+    "module": "chart",
+    "name": "scatterDistribution"
+  },
+  {
+    "module": "chart",
+    "name": "scatterDistributionList"
+  },
+  {
+    "module": "chart",
+    "name": "scatterDistributionMeta"
+  },
+  {
+    "module": "chart",
+    "name": "scatterDistributionRow"
+  },
+  {
+    "module": "chart",
+    "name": "scatterGridline"
+  },
+  {
+    "module": "chart",
+    "name": "scatterLegend"
+  },
+  {
+    "module": "chart",
+    "name": "scatterOutlierButton"
+  },
+  {
+    "module": "chart",
+    "name": "scatterOutlierMeta"
+  },
+  {
+    "module": "chart",
+    "name": "scatterOutliers"
+  },
+  {
+    "module": "chart",
+    "name": "scatterPoint"
+  },
+  {
+    "module": "chart",
+    "name": "scatterSummary"
+  },
+  {
+    "module": "chart",
+    "name": "sortArrow"
+  },
+  {
+    "module": "empty-state",
+    "name": "emptyActions"
+  },
+  {
+    "module": "empty-state",
+    "name": "unavailableTitle"
+  },
+  {
+    "module": "field",
+    "name": "dateFieldGroup"
+  },
+  {
+    "module": "field",
+    "name": "dateInput"
+  },
+  {
+    "module": "field",
+    "name": "formField"
+  },
+  {
+    "module": "field",
+    "name": "inlineFieldLabel"
+  },
+  {
+    "module": "field",
+    "name": "selectInput"
+  },
+  {
+    "module": "layout",
+    "name": "chartLegend"
+  },
+  {
+    "module": "layout",
+    "name": "headerNavigation"
+  },
+  {
+    "module": "layout",
+    "name": "unavailableCell"
+  },
+  {
+    "module": "overview",
+    "name": "advancedAnalysis"
+  },
+  {
+    "module": "overview",
+    "name": "advancedAnalysisContent"
+  },
+  {
+    "module": "overview",
+    "name": "advancedAnalysisHeader"
+  },
+  {
+    "module": "overview",
+    "name": "advancedAnalysisHeaderText"
+  },
+  {
+    "module": "overview",
+    "name": "heroLabel"
+  },
+  {
+    "module": "overview",
+    "name": "heroLegend"
+  },
+  {
+    "module": "overview",
+    "name": "heroLegendValue"
+  },
+  {
+    "module": "overview",
+    "name": "heroMultiple"
+  },
+  {
+    "module": "overview",
+    "name": "heroPanel"
+  },
+  {
+    "module": "overview",
+    "name": "heroSide"
+  },
+  {
+    "module": "overview",
+    "name": "heroText"
+  },
+  {
+    "module": "overview",
+    "name": "heroValue"
+  },
+  {
+    "module": "overview",
+    "name": "overviewGrid"
+  },
+  {
+    "module": "overview",
+    "name": "punchCell"
+  },
+  {
+    "module": "overview",
+    "name": "punchCellButton"
+  },
+  {
+    "module": "overview",
+    "name": "punchDayLabel"
+  },
+  {
+    "module": "overview",
+    "name": "punchDot"
+  },
+  {
+    "module": "overview",
+    "name": "punchGrid"
+  },
+  {
+    "module": "overview",
+    "name": "punchHourLabel"
+  },
+  {
+    "module": "overview",
+    "name": "punchIntensityKey"
+  },
+  {
+    "module": "overview",
+    "name": "punchIntensityKeyCell"
+  },
+  {
+    "module": "overview",
+    "name": "scatterWrap"
+  },
+  {
+    "module": "panel",
+    "name": "groupCount"
+  },
+  {
+    "module": "panel",
+    "name": "groupPanel"
+  },
+  {
+    "module": "panel",
+    "name": "groupPct"
+  },
+  {
+    "module": "panel",
+    "name": "groupRow"
+  },
+  {
+    "module": "panel",
+    "name": "groupRows"
+  },
+  {
+    "module": "panel",
+    "name": "groupSub"
+  },
+  {
+    "module": "panel",
+    "name": "groupValue"
+  },
+  {
+    "module": "panel",
+    "name": "panelHeaderRow"
+  },
+  {
+    "module": "refresh",
+    "name": "refreshRing"
+  },
+  {
+    "module": "refresh",
+    "name": "refreshRingDelayed"
+  },
+  {
+    "module": "refresh",
+    "name": "refreshRingError"
+  },
+  {
+    "module": "refresh",
+    "name": "refreshRingIdle"
+  },
+  {
+    "module": "refresh",
+    "name": "refreshRingPaused"
+  },
+  {
+    "module": "refresh",
+    "name": "refreshRingRefreshing"
+  },
+  {
+    "module": "refresh",
+    "name": "refreshRingStatic"
+  },
+  {
+    "module": "refresh",
+    "name": "refreshRingSuccess"
+  },
+  {
+    "module": "refresh",
+    "name": "refreshStatus"
+  },
+  {
+    "module": "refresh",
+    "name": "refreshStatusError"
+  },
+  {
+    "module": "skills",
+    "name": "skillsDiagnosticRow"
+  },
+  {
+    "module": "skills",
+    "name": "skillsDisclosurePanel"
+  },
+  {
+    "module": "skills",
+    "name": "skillsDisclosureSummary"
+  },
+  {
+    "module": "skills",
+    "name": "skillsPathText"
+  },
+  {
+    "module": "skills",
+    "name": "skillsReconcilePlanList"
+  },
+  {
+    "module": "status",
+    "name": "statusDotBroken"
+  },
+  {
+    "module": "status",
+    "name": "statusDotCopy"
+  },
+  {
+    "module": "status",
+    "name": "statusDotLinked"
+  },
+  {
+    "module": "status",
+    "name": "statusDotMissing"
+  },
+  {
+    "module": "status",
+    "name": "statusDotNone"
+  },
+  {
+    "module": "table",
+    "name": "dateCell"
+  },
+  {
+    "module": "table",
+    "name": "modelCell"
+  },
+  {
+    "module": "table",
+    "name": "sessionDesktopControl"
+  },
+  {
+    "module": "table",
+    "name": "sessionPagingLoadMore"
+  },
+  {
+    "module": "table",
+    "name": "sessionsTable"
+  },
+  {
+    "module": "table",
+    "name": "sessionSummaryCard"
+  },
+  {
+    "module": "table",
+    "name": "sessionSummaryDate"
+  },
+  {
+    "module": "table",
+    "name": "sessionSummaryFilter"
+  },
+  {
+    "module": "table",
+    "name": "sessionSummaryFilters"
+  },
+  {
+    "module": "table",
+    "name": "sessionSummaryFooter"
+  },
+  {
+    "module": "table",
+    "name": "sessionSummaryHeader"
+  },
+  {
+    "module": "table",
+    "name": "sessionSummaryLoadMore"
+  },
+  {
+    "module": "table",
+    "name": "sessionSummaryMobileSort"
+  },
+  {
+    "module": "table",
+    "name": "sessionSummaryMobileSortField"
+  },
+  {
+    "module": "table",
+    "name": "sessionSummaryMobileSortSelect"
+  },
+  {
+    "module": "table",
+    "name": "sessionSummaryOpen"
+  },
+  {
+    "module": "table",
+    "name": "sessionSummaryRow"
+  },
+  {
+    "module": "table",
+    "name": "sessionSummaryStats"
+  },
+  {
+    "module": "table",
+    "name": "sessionSummaryTitle"
+  },
+  {
+    "module": "table",
+    "name": "sessionSummaryValue"
+  },
+  {
+    "module": "table",
+    "name": "sessionSummaryViewport"
+  },
+  {
+    "module": "table",
+    "name": "sessionTitleClamp"
+  },
+  {
+    "module": "table",
+    "name": "sessionViewportSurface"
+  },
+  {
+    "module": "table",
+    "name": "tableControls"
+  },
+  {
+    "module": "time-slider",
+    "name": "dateEditRow"
+  },
+  {
+    "module": "time-slider",
+    "name": "timeAxis"
+  },
+  {
+    "module": "time-slider",
+    "name": "timeAxisTick"
+  },
+  {
+    "module": "time-slider",
+    "name": "timeBucket"
+  },
+  {
+    "module": "time-slider",
+    "name": "timeBucketSegment"
+  },
+  {
+    "module": "time-slider",
+    "name": "timeBucketUnclassifiedBand"
+  },
+  {
+    "module": "time-slider",
+    "name": "timeBucketUnclassifiedEmpty"
+  },
+  {
+    "module": "time-slider",
+    "name": "timeChartToolbar"
+  },
+  {
+    "module": "time-slider",
+    "name": "timeChartZoomButton"
+  },
+  {
+    "module": "time-slider",
+    "name": "timeChartZoomControls"
+  },
+  {
+    "module": "time-slider",
+    "name": "timeChartZoomSummary"
+  },
+  {
+    "module": "time-slider",
+    "name": "timeRangeAdjustments"
+  },
+  {
+    "module": "time-slider",
+    "name": "timeRangeArrow"
+  },
+  {
+    "module": "time-slider",
+    "name": "timeRangeDuration"
+  },
+  {
+    "module": "time-slider",
+    "name": "timeRangeHeader"
+  },
+  {
+    "module": "time-slider",
+    "name": "timeRangeMeta"
+  },
+  {
+    "module": "time-slider",
+    "name": "timeRangePanel"
+  },
+  {
+    "module": "time-slider",
+    "name": "timeRangeSummary"
+  },
+  {
+    "module": "time-slider",
+    "name": "timeRangeSummaryDates"
+  },
+  {
+    "module": "time-slider",
+    "name": "timeRangeTitle"
+  },
+  {
+    "module": "time-slider",
+    "name": "timeSliderBars"
+  },
+  {
+    "module": "time-slider",
+    "name": "timeSliderBrushHeader"
+  },
+  {
+    "module": "time-slider",
+    "name": "timeSliderBrushRow"
+  },
+  {
+    "module": "time-slider",
+    "name": "timeSliderControl"
+  },
+  {
+    "module": "time-slider",
+    "name": "timeSliderDateChip"
+  },
+  {
+    "module": "time-slider",
+    "name": "timeSliderDateInputs"
+  },
+  {
+    "module": "time-slider",
+    "name": "timeSliderFrame"
+  },
+  {
+    "module": "time-slider",
+    "name": "timeSliderHandleLabelEnd"
+  },
+  {
+    "module": "time-slider",
+    "name": "timeSliderHandleLabels"
+  },
+  {
+    "module": "time-slider",
+    "name": "timeSliderHandleLabelStart"
+  },
+  {
+    "module": "time-slider",
+    "name": "timeSliderQuickRanges"
+  },
+  {
+    "module": "time-slider",
+    "name": "timeSliderRoot"
+  },
+  {
+    "module": "time-slider",
+    "name": "timeSliderTrack"
+  },
+  {
+    "module": "time-slider",
+    "name": "timeSliderUnclassifiedBands"
+  }
+]

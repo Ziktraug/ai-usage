@@ -1,0 +1,145 @@
+import { readdir, readFile } from 'node:fs/promises';
+import path from 'node:path';
+
+/**
+ * The migration parity ledger accepts a design export as complete when the file
+ * still declares it, which is satisfied by the declaration alone. That let the
+ * Activity chart and brush be rebuilt with local `css()` while 183 semantic
+ * exports quietly lost every consumer, and the checker stayed green.
+ *
+ * This measures the real graph: a semantic style export counts as consumed when
+ * something outside its own module and the entrypoint barrels imports it. The
+ * recorded baseline is known debt, not an allowance — it may shrink freely, and
+ * growing it fails.
+ */
+
+const COMPONENT_MODULES = [
+  'button',
+  'chart',
+  'empty-state',
+  'field',
+  'layout',
+  'overview',
+  'panel',
+  'refresh',
+  'skills',
+  'status',
+  'table',
+  'time-slider',
+] as const;
+const EXPORTED_CONSTANT = /^export const ([A-Za-z_$][\w$]*)/gm;
+const IGNORED_DIRECTORIES = new Set([
+  '.direnv',
+  '.git',
+  '.output-build',
+  '.output-dev',
+  '.svelte-kit',
+  '.turbo',
+  '.worktrees',
+  'dist',
+  'node_modules',
+  'styled-system',
+]);
+const CONSUMED_EXTENSIONS = new Set(['.svelte', '.ts']);
+/** Barrels re-export by name, so they prove nothing about consumption. */
+const BARREL_FILES = new Set(['index.ts', 'report.ts', 'solid.ts', 'svelte.ts']);
+
+export interface DesignExport {
+  module: string;
+  name: string;
+}
+
+const identifiersIn = (source: string): Set<string> => new Set(source.match(/[A-Za-z_$][\w$]*/g) ?? []);
+
+const collectSources = async (directory: string, skip: (file: string) => boolean): Promise<string[]> => {
+  const entries = await readdir(directory, { withFileTypes: true });
+  const sources: string[] = [];
+  for (const entry of entries) {
+    const entryPath = path.join(directory, entry.name);
+    if (entry.isDirectory()) {
+      if (!IGNORED_DIRECTORIES.has(entry.name)) {
+        sources.push(...(await collectSources(entryPath, skip)));
+      }
+      continue;
+    }
+    if (!(entry.isFile() && CONSUMED_EXTENSIONS.has(path.extname(entry.name))) || skip(entryPath)) {
+      continue;
+    }
+    sources.push(await readFile(entryPath, 'utf8'));
+  }
+  return sources;
+};
+
+export const unconsumedDesignExports = async (root: string): Promise<DesignExport[]> => {
+  const componentDirectory = path.join(root, 'packages/design-system/src/components');
+  const declared: DesignExport[] = [];
+  const ownModuleSource = new Map<string, string>();
+  for (const module of COMPONENT_MODULES) {
+    const source = await readFile(path.join(componentDirectory, `${module}.ts`), 'utf8');
+    ownModuleSource.set(module, source);
+    for (const [, name] of source.matchAll(EXPORTED_CONSTANT)) {
+      declared.push({ module, name: name as string });
+    }
+  }
+
+  const isOwnOrBarrel = (file: string): boolean => {
+    const base = path.basename(file);
+    if (base.endsWith('.test.ts') || base.endsWith('.spec.ts')) {
+      return true;
+    }
+    return (
+      path.dirname(file) === componentDirectory ||
+      (BARREL_FILES.has(base) && file.includes(path.join('design-system', 'src')))
+    );
+  };
+
+  const consumers = [
+    ...(await collectSources(path.join(root, 'apps/web/src'), isOwnOrBarrel)),
+    ...(await collectSources(path.join(root, 'packages/design-system/src'), isOwnOrBarrel)),
+  ];
+  const consumed = new Set<string>();
+  for (const source of consumers) {
+    for (const identifier of identifiersIn(source)) {
+      consumed.add(identifier);
+    }
+  }
+
+  return declared
+    .filter(({ module, name }) => {
+      if (consumed.has(name)) {
+        return false;
+      }
+      // An export used only inside its own module is internal, not dead; that is
+      // a separate finding from having no consumer at all.
+      const own = ownModuleSource.get(module) ?? '';
+      return (own.match(new RegExp(`\\b${name}\\b`, 'g')) ?? []).length <= 1;
+    })
+    .sort((left, right) => left.module.localeCompare(right.module) || left.name.localeCompare(right.name));
+};
+
+if (import.meta.main) {
+  const root = process.cwd();
+  const baselinePath = path.join(root, 'tools/fixtures/design-export-debt.json');
+  const baseline: DesignExport[] = JSON.parse(await readFile(baselinePath, 'utf8'));
+  const current = await unconsumedDesignExports(root);
+  const baselineKeys = new Set(baseline.map(({ module, name }) => `${module}::${name}`));
+  const added = current.filter(({ module, name }) => !baselineKeys.has(`${module}::${name}`));
+
+  if (process.argv.includes('--write')) {
+    await Bun.write(baselinePath, `${JSON.stringify(current, null, 2)}\n`);
+    console.log(`Recorded ${current.length} unconsumed design exports.`);
+  } else if (added.length > 0) {
+    console.error(
+      'These design-system exports lost their last consumer. Consume them, un-export them, or delete them — do not widen the recorded debt.',
+    );
+    for (const entry of added) {
+      console.error(`${entry.module}::${entry.name}`);
+    }
+    process.exitCode = 1;
+  } else {
+    const removed = baseline.length - current.length;
+    console.log(
+      `Unconsumed design exports: ${current.length}${removed > 0 ? ` (${removed} fewer than recorded)` : ''}.`,
+    );
+  }
+}

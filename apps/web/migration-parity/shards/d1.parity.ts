@@ -163,9 +163,11 @@ export default defineParityShard({
       {
         entrypoint: './report',
         names: [
+          // `accentFill` is no longer a removal: the Activity chart needs a
+          // neutral series fill again, so it lives in the chart module and is
+          // recorded as a live export in the X1 shard.
           'BarSegment',
           'SegmentBar',
-          'accentFill',
           'barFill',
           'barTrack',
           'inkFill',

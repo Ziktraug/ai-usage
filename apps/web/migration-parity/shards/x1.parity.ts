@@ -45,6 +45,44 @@ const completeAtVisualConvergence = (record: ParityRecord): ParityRecord => ({
   status: 'complete',
 });
 
+// Plan 068 reopened after the maintainer reported the Activity brush handles
+// rendering unstyled and the chart drawing the whole domain. Unlike the records
+// above, this evidence names the consuming module: an export nothing imports
+// proves no presentation parity, which is how the semantic layer went dark.
+const activityRepairCommits = {
+  chrome: '434a563c87c822f3897aedd10f169335ef6b1336',
+  colours: 'a0c1a84046e4b98f6ed08a6a42f3ccacf5f63a28',
+  brush: 'e7766363f4f9f4343e5248b86bb20469f503f002',
+} as const;
+const completeAtActivityRepair = (record: ParityRecord): ParityRecord => ({
+  ...record,
+  evidence: [
+    ...record.evidence,
+    {
+      commit: activityRepairCommits.brush,
+      kind: 'source',
+      phase: 'target',
+      reference:
+        'apps/web/src/lib/features/report/overview/activity-timeline.svelte and apps/web/src/lib/features/report/range/report-range-control.svelte import these classes; tools/check-design-export-consumers.ts fails if any loses its last consumer.',
+    },
+    {
+      commit: activityRepairCommits.chrome,
+      kind: 'test',
+      phase: 'target',
+      reference:
+        'apps/web/e2e/time-range.spec.ts asserts window clipping, no horizontal overflow, distinct branded series fills, window-scoped legend shares and total, thumb anchoring, pointer drag and a stable drag scale.',
+    },
+    {
+      commit: activityRepairCommits.colours,
+      kind: 'review',
+      phase: 'target',
+      reference:
+        'Independent parity and code-quality reviews of the handle work ACCEPTed after rework; every later commit was measured against the Solid baseline at 2183270e with the instrumented capture in the session log.',
+    },
+  ],
+  status: 'complete',
+});
+
 const completeAtFilterCorrection = (record: ParityRecord): ParityRecord => ({
   ...record,
   evidence: [
@@ -125,5 +163,37 @@ export default defineParityShard({
         title: 'acquires one revision bootstrap per Sessions filter and sort without route-load duplicates',
       },
     ]).map(completeAtFilterCorrection),
+    ...designExportRecords(owner, [
+      {
+        entrypoint: './report',
+        names: 'accentFill',
+        source: 'packages/design-system/src/components/chart.ts',
+      },
+      {
+        entrypoint: './svelte',
+        names: 'accentFill DimensionSwatch dimensionSwatch migrationCrosshair',
+        source: 'packages/design-system/src/components/chart.ts',
+      },
+      {
+        entrypoint: './svelte',
+        names: `
+          monthGridline timelineHoverLayer timeSliderBrushColumn timeSliderBrushTrack timeSliderDimLeft
+          timeSliderDimRight timeSliderRange timeSliderRangeDrag timeSliderThumb
+        `,
+        source: 'packages/design-system/src/components/time-slider.ts',
+      },
+    ]).map(completeAtActivityRepair),
+    ...playwrightTitleRecords(
+      owner,
+      [
+        'anchors the brush handles to the selected report window at every viewport',
+        'announces each brush handle as a slider over the day it selects',
+        'drags a brush handle with the pointer and keeps it on the selection edge',
+        'draws only the selected report range and never overflows the plot',
+        'fills harness series with their branded tokens rather than one hashed hue',
+        'holds the brush scale still while dragging a range that starts before the data',
+        'reports legend shares and the range total over the selected window',
+      ].map((title) => ({ file: 'apps/web/e2e/time-range.spec.ts', title })),
+    ).map(completeAtActivityRepair),
   ],
 });
