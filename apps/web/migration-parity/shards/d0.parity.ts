@@ -489,13 +489,6 @@ export default defineParityShard({
       {
         entrypoint: './report',
         names: `
-          refreshRing refreshRingDelayed refreshRingError refreshRingIdle refreshRingPaused refreshRingRefreshing refreshRingStatic refreshRingSuccess refreshStatus refreshStatusError
-        `,
-        source: 'packages/design-system/src/components/refresh.ts',
-      },
-      {
-        entrypoint: './report',
-        names: `
           skillsDiagnosticRow skillsDisclosurePanel skillsDisclosureSummary skillsPathText skillsReconcilePlanList
         `,
         source: 'packages/design-system/src/components/skills.ts',

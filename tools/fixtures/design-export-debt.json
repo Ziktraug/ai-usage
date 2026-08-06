@@ -224,46 +224,6 @@
     "name": "scatterWrap"
   },
   {
-    "module": "refresh",
-    "name": "refreshRing"
-  },
-  {
-    "module": "refresh",
-    "name": "refreshRingDelayed"
-  },
-  {
-    "module": "refresh",
-    "name": "refreshRingError"
-  },
-  {
-    "module": "refresh",
-    "name": "refreshRingIdle"
-  },
-  {
-    "module": "refresh",
-    "name": "refreshRingPaused"
-  },
-  {
-    "module": "refresh",
-    "name": "refreshRingRefreshing"
-  },
-  {
-    "module": "refresh",
-    "name": "refreshRingStatic"
-  },
-  {
-    "module": "refresh",
-    "name": "refreshRingSuccess"
-  },
-  {
-    "module": "refresh",
-    "name": "refreshStatus"
-  },
-  {
-    "module": "refresh",
-    "name": "refreshStatusError"
-  },
-  {
     "module": "skills",
     "name": "skillsDiagnosticRow"
   },

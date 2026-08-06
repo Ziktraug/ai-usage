@@ -7,7 +7,6 @@ export * from './components/layout';
 export * from './components/metric-tile';
 export * from './components/overview';
 export * from './components/panel';
-export * from './components/refresh';
 export * from './components/segment-bar';
 export * from './components/skills';
 export * from './components/status';

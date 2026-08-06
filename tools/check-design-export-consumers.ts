@@ -13,21 +13,16 @@ import path from 'node:path';
  * growing it fails.
  */
 
-const COMPONENT_MODULES = [
-  'button',
-  'chart',
-  'empty-state',
-  'field',
-  'layout',
-  'overview',
-  'panel',
-  'refresh',
-  'skills',
-  'status',
-  'table',
-  'time-slider',
-] as const;
+const TS_SUFFIX = /\.ts$/;
 const EXPORTED_CONSTANT = /^export const ([A-Za-z_$][\w$]*)/gm;
+
+// Discovered, not listed: a module that loses its last export gets deleted, and a
+// hardcoded name would then crash the very check that reported it emptying.
+const componentModules = async (directory: string): Promise<string[]> =>
+  (await readdir(directory, { withFileTypes: true }))
+    .filter((entry) => entry.isFile() && entry.name.endsWith('.ts') && !entry.name.endsWith('.test.ts'))
+    .map((entry) => entry.name.replace(TS_SUFFIX, ''))
+    .sort();
 const IGNORED_DIRECTORIES = new Set([
   '.direnv',
   '.git',
@@ -74,7 +69,7 @@ export const unconsumedDesignExports = async (root: string): Promise<DesignExpor
   const componentDirectory = path.join(root, 'packages/design-system/src/components');
   const declared: DesignExport[] = [];
   const ownModuleSource = new Map<string, string>();
-  for (const module of COMPONENT_MODULES) {
+  for (const module of await componentModules(componentDirectory)) {
     const source = await readFile(path.join(componentDirectory, `${module}.ts`), 'utf8');
     ownModuleSource.set(module, source);
     for (const [, name] of source.matchAll(EXPORTED_CONSTANT)) {

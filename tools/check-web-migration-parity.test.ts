@@ -301,8 +301,10 @@ describe('Web migration parity checker', () => {
     expect(result.counts.get('production-tsx')?.live).toBe(0);
     // Grew when the Activity, Punchcard, Breakdown, Sessions, drawer, Overview, and Skills repairs
     // put semantic exports back into service and recorded their browser evidence.
-    expect(result.counts.get('design-export')?.live).toBe(440);
-    expect(result.counts.get('design-export')?.ledger).toBe(538);
+    // Fell from 440 when the refresh module was deleted: all ten of its exports
+    // were already dead at 2183270e, so the module emptied entirely.
+    expect(result.counts.get('design-export')?.live).toBe(430);
+    expect(result.counts.get('design-export')?.ledger).toBe(528);
     expect(result.counts.get('playwright-title')?.live).toBe(122);
   });
 });

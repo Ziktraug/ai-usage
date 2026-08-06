@@ -12,7 +12,6 @@ const PASSIVE_MODULES = [
   '../../components/layout.ts',
   '../../components/overview.ts',
   '../../components/panel.ts',
-  '../../components/refresh.ts',
   '../../components/skills.ts',
   '../../components/status.ts',
   '../../components/table.ts',
