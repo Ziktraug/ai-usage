@@ -445,3 +445,21 @@ layout now fall inside the measured frame. Initial load, sort, heap, page bytes,
 rendered items and DOM-node counts did not cross their corrected triggers, and
 the benchmark's four tests and absolute budgets passed unchanged. This records
 the cost as a reviewed parity consequence; it is not a performance improvement.
+
+## Branch-review remediation measurement, 2026-08-06
+
+The stale-range parity contract still removes the Date-range region from the
+visible and accessibility trees during a pending filter response. The wrapper
+now uses `hidden` while retaining the mounted Activity control, avoiding the
+extra unmount/remount and preserving the same browser contract.
+
+The unchanged four-test production benchmark passed with filter samples
+295.468, 191.603 and 309.931 ms, for a 295.468 ms median. That is 14.7% below
+the presentation-audit median of 346.492 ms and 1.6% below the reviewed final
+Svelte comparison of 300.274 ms. Initial load was 1531.531 ms, sort 1537.771 ms,
+heap delta 27,924,928 bytes, page payload 220,694 bytes, desktop 37/733 and
+mobile 21/360. No absolute gate changed.
+
+The filter result is therefore back inside the previously reviewed Svelte
+deviation rather than a new unapproved movement. The low and high samples remain
+split, so this record makes no throughput win claim.

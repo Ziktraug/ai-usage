@@ -291,15 +291,6 @@ export const heatDayDetail = css({
   overflowWrap: 'anywhere',
 });
 
-export const scatterWrap = css({
-  position: 'relative',
-  h: '240px',
-  border: '1px solid token(colors.line)',
-  borderRadius: 'sm',
-  bg: 'surfaceMuted',
-  overflow: 'hidden',
-});
-
 export const PUNCHCARD_INTERACTIVE_TARGET_SIZE_PX = 24;
 const PUNCHCARD_INTERACTIVE_TARGET_SIZE = `${PUNCHCARD_INTERACTIVE_TARGET_SIZE_PX}px`;
 

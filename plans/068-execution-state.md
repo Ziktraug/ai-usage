@@ -2539,3 +2539,35 @@ separate a deterministic break from a flake; use at least three runs per step.
 And a regex-based export remover silently produced `export export const` and
 swallowed a non-exported helper, so `tools/`-quality guards belong in any script
 that edits these modules.
+
+### Resolved: autonomous branch-review remediation, 2026-08-06
+
+The blocked design-export cleanup was caused by Panda atomic rule order, not a
+hidden consumer. Removing `migrationLegendMore` moved existing `p_0`, `c_accent`
+and border/color rules relative to other atoms. Skills disclosures composed both
+`panel` padding and `p: 0`, while active navigation links composed inactive and
+active foreground/border colors. The rendered result therefore depended on which
+declaration Panda encountered first.
+
+The conflicting declarations are now structurally exclusive. The two Skills
+overrides that previously lost to `panel` were removed, and navigation active/
+inactive styles no longer share competing color or border-color atoms. All 90
+recorded dead exports plus the newly exposed internal orphan were deleted. The
+baseline fixture was removed and `tools/check-design-export-consumers.ts` now
+fails on any unconsumed export; its measured result is zero. The full Skills
+geometry title, Axe contrast probe and four visual snapshots are green.
+
+The rest of the review is closed in the same working tree: the Session drawer
+returns focus to its connected opener; `+error.svelte` delegates lifecycle state
+to a feature owner; the P8 harness is an explicit `.server.ts` leaf and tolerates
+an occupied development port; Control and Sync share one bounded response-body
+reader; and `time-range.spec.ts` renders a deterministic two-bucket Activity
+trend and asserts the actual `data-timeline-trend` DOM.
+
+The stale Activity range remains absent while a focused filter response is
+pending, but `hidden` now preserves the mounted control instead of unmounting and
+rebuilding it. The 5,000-session benchmark passed 4/4 with filter samples
+295.468/191.603/309.931 ms and a 295.468 ms median, 14.7% below the previously
+recorded 346.492 ms median and within 1.6% of the already-reviewed final Svelte
+comparison at 300.274 ms. This restores the measurement to the reviewed
+deviation; it is not classified as a performance improvement.

@@ -91,7 +91,7 @@ const fixtureServer = async (): Promise<ViteDevServer> =>
     ],
     resolve: { dedupe: ['svelte'] },
     root: repositoryDirectory,
-    server: { host: '127.0.0.1', hmr: false, port: 0, strictPort: true, ws: false },
+    server: { host: '127.0.0.1', hmr: false, port: 0, strictPort: false, ws: false },
   });
 
 type CleanupTask = () => Promise<unknown>;
@@ -303,7 +303,7 @@ try {
     () => document.querySelector('main[data-quota-requests]')?.getAttribute('data-quota-requests') === '1',
   );
   await assertFocused(closeQuota, 'live quota open applies initial focus');
-  await quotaDialog.getByRole('radio', { name: '7d' }).click();
+  await quotaDialog.getByRole('button', { name: '7d' }).click();
   await page.waitForFunction(
     () => document.querySelector('main[data-quota-requests]')?.getAttribute('data-quota-requests') === '2',
   );

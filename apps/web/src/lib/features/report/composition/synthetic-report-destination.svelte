@@ -124,7 +124,8 @@
   onDestroy(() => {
     responseGeneration += 1;
   });
-  const { rows: serializedRows, tableRows: _tableRows, ...reportSupport } = demoReportPayload;
+  const { rows: demoSerializedRows, tableRows: _tableRows, ...reportSupport } = demoReportPayload;
+  const serializedRows = responseFixture?.overviewRows ?? demoSerializedRows;
   const allRows = serializedRows.map(enrichSessionPresentationRow);
   const derivedCampaignLabels = new Map(
     buildCampaignTableRows(allRows, allRows, [{ desc: true, id: 'date' }]).flatMap((row) =>
@@ -410,31 +411,29 @@
   {presentMachineLabel}
   {search}
 />
-{#if !focusedTimelineFiltersAreStale}
-  <div class={rangePlacement}>
-    <ReportRangeControl
-      {activeSeriesKeys}
-      dateDomain={overview.dateDomain}
-      {dimension}
-      generatedAt={reportSupport.generatedAt}
-      {granularity}
-      {machineFreshnessStatus}
-      {navigate}
-      onDimensionFilter={navigation.setTimelineDimensionFilter}
-      onOptionsChange={(options) => {
+<div class={rangePlacement} hidden={focusedTimelineFiltersAreStale}>
+  <ReportRangeControl
+    {activeSeriesKeys}
+    dateDomain={overview.dateDomain}
+    {dimension}
+    generatedAt={reportSupport.generatedAt}
+    {granularity}
+    {machineFreshnessStatus}
+    {navigate}
+    onDimensionFilter={navigation.setTimelineDimensionFilter}
+    onOptionsChange={(options) => {
         dimension = options.dimension;
         granularity = options.granularity;
         timelineValue = options.value;
       }}
-      onRangeChange={navigation.setDateRange}
-      {presentCampaignSeries}
-      {presentMachineSeries}
-      range={renderedSearch.range}
-      timeline={overview.timeline}
-      value={timelineValue}
-    />
-  </div>
-{/if}
+    onRangeChange={navigation.setDateRange}
+    {presentCampaignSeries}
+    {presentMachineSeries}
+    range={renderedSearch.range}
+    timeline={overview.timeline}
+    value={timelineValue}
+  />
+</div>
 {@render activeFilterSummary(pending)}
 <ReportWorkspace hasOutput={!pending} {pending}>
   {#snippet status()}

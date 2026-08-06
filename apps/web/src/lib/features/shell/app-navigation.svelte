@@ -76,9 +76,9 @@
     alignItems: 'center',
     minH: '38px',
     px: '10px',
-    border: '1px solid transparent',
+    borderWidth: '1px',
+    borderStyle: 'solid',
     borderRadius: 'md',
-    color: 'muted',
     fontSize: '13px',
     fontWeight: 650,
     textDecoration: 'none',
@@ -86,6 +86,7 @@
     _hover: { bg: 'surfaceMuted', color: 'ink' },
     _focusVisible: { outline: '2px solid token(colors.accent)', outlineOffset: '2px' },
   });
+  const navigationLinkInactive = css({ borderColor: 'transparent', color: 'muted' });
   const navigationLinkActive = css({ borderColor: 'lineStrong', bg: 'accentSoft', color: 'ink' });
   const railFooter = css({
     mt: 'auto',
@@ -117,13 +118,13 @@
     px: '5px',
     border: 0,
     bg: 'transparent',
-    color: 'muted',
     fontFamily: 'sans',
     fontSize: '11px',
     fontWeight: 700,
     textDecoration: 'none',
     _focusVisible: { outline: '2px solid token(colors.accent)', outlineOffset: '-2px' },
   });
+  const mobileLinkInactive = css({ color: 'muted' });
   const mobileLinkActive = css({ color: 'accent' });
   const managePopover = css({
     position: 'fixed',
@@ -368,8 +369,12 @@
     }
   };
 
-  const linkClass = (active: boolean, mobile = false): string =>
-    cx(mobile ? mobileLink : navigationLink, active && (mobile ? mobileLinkActive : navigationLinkActive));
+  const linkClass = (active: boolean, mobile = false): string => {
+    if (mobile) {
+      return cx(mobileLink, active ? mobileLinkActive : mobileLinkInactive);
+    }
+    return cx(navigationLink, active ? navigationLinkActive : navigationLinkInactive);
+  };
 </script>
 
 {#if navigationFailure}
@@ -431,7 +436,12 @@
     {/each}
     {#if showManage}
       <ManageButton
-        class={cx(mobileLink, shellManagementDestinations.some(({ href }) => isActiveManagementDestination(page.url.pathname, href)) && mobileLinkActive)}
+        class={cx(
+          mobileLink,
+          shellManagementDestinations.some(({ href }) => isActiveManagementDestination(page.url.pathname, href))
+            ? mobileLinkActive
+            : mobileLinkInactive,
+        )}
         controls={managePopoverId}
         onToggle={() => { manageOpen = !manageOpen; }}
         open={manageOpen}

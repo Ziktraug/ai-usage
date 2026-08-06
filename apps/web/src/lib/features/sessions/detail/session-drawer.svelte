@@ -126,6 +126,13 @@
       : '',
   );
 
+  const closeDrawer = (): void => {
+    if (previousFocus instanceof HTMLElement && previousFocus.isConnected) {
+      previousFocus.focus({ preventScroll: true });
+    }
+    controller.close();
+  };
+
   const toggleAnalysis = async (): Promise<void> => {
     await controller.toggleAnalysis();
     if (controller.current().analysisOpen) {
@@ -144,7 +151,7 @@
     modal={false}
     onOpenChange={(open) => {
       if (!open) {
-        controller.close();
+        closeDrawer();
       }
     }}
     open
@@ -191,7 +198,7 @@
         <button
           aria-label="Close session details"
           class={drawerClose}
-          onclick={() => controller.close()}
+          onclick={closeDrawer}
           type="button"
           bind:this={closeButton}
         >

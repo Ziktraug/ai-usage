@@ -9,8 +9,8 @@ import path from 'node:path';
  *
  * This measures the real graph: a semantic style export counts as consumed when
  * something outside its own module and the entrypoint barrels imports it. The
- * recorded baseline is known debt, not an allowance — it may shrink freely, and
- * growing it fails.
+ * repository now carries no baseline allowance: any unconsumed semantic export
+ * fails the check.
  */
 
 const TS_SUFFIX = /\.ts$/;
@@ -113,28 +113,14 @@ export const unconsumedDesignExports = async (root: string): Promise<DesignExpor
 };
 
 if (import.meta.main) {
-  const root = process.cwd();
-  const baselinePath = path.join(root, 'tools/fixtures/design-export-debt.json');
-  const baseline: DesignExport[] = JSON.parse(await readFile(baselinePath, 'utf8'));
-  const current = await unconsumedDesignExports(root);
-  const baselineKeys = new Set(baseline.map(({ module, name }) => `${module}::${name}`));
-  const added = current.filter(({ module, name }) => !baselineKeys.has(`${module}::${name}`));
-
-  if (process.argv.includes('--write')) {
-    await Bun.write(baselinePath, `${JSON.stringify(current, null, 2)}\n`);
-    console.log(`Recorded ${current.length} unconsumed design exports.`);
-  } else if (added.length > 0) {
-    console.error(
-      'These design-system exports lost their last consumer. Consume them, un-export them, or delete them — do not widen the recorded debt.',
-    );
-    for (const entry of added) {
+  const current = await unconsumedDesignExports(process.cwd());
+  if (current.length > 0) {
+    console.error('These design-system exports have no consumer. Consume them, make them internal, or delete them.');
+    for (const entry of current) {
       console.error(`${entry.module}::${entry.name}`);
     }
     process.exitCode = 1;
   } else {
-    const removed = baseline.length - current.length;
-    console.log(
-      `Unconsumed design exports: ${current.length}${removed > 0 ? ` (${removed} fewer than recorded)` : ''}.`,
-    );
+    console.log('Unconsumed design exports: 0.');
   }
 }

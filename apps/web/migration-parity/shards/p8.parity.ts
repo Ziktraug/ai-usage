@@ -68,27 +68,27 @@ const productionTargets: Record<string, string> = {
 };
 const productionBrowserEvidence: Record<string, string> = {
   'apps/web/src/campaign-label-editor.tsx':
-    'apps/web/src/lib/features/report/breakdown/p8.browser.ts › campaign rename and reset update the effective label',
+    'apps/web/src/lib/features/report/breakdown/p8.browser.server.ts › campaign rename and reset update the effective label',
   'apps/web/src/dashboard-active-filters.tsx':
-    'apps/web/src/lib/features/report/breakdown/p8.browser.ts › labelled machine pill and Clear all mutate canonical URL state',
+    'apps/web/src/lib/features/report/breakdown/p8.browser.server.ts › labelled machine pill and Clear all mutate canonical URL state',
   'apps/web/src/dashboard-breakdown-harness-panel.tsx':
-    'apps/web/src/lib/features/report/breakdown/p8.browser.ts › controlled harness disclosure, child search and visible sorted CSV',
+    'apps/web/src/lib/features/report/breakdown/p8.browser.server.ts › controlled harness disclosure, child search and visible sorted CSV',
   'apps/web/src/dashboard-breakdown-panels.tsx':
-    'apps/web/src/lib/features/report/breakdown/p8.browser.ts › measured, partial, unavailable and zero rows plus responsive project and Cursor projections',
+    'apps/web/src/lib/features/report/breakdown/p8.browser.server.ts › measured, partial, unavailable and zero rows plus responsive project and Cursor projections',
   'apps/web/src/dashboard-breakdown.tsx':
-    'apps/web/src/lib/features/report/breakdown/p8.browser.ts › four controlled breakdown tabs and sort interaction',
+    'apps/web/src/lib/features/report/breakdown/p8.browser.server.ts › four controlled breakdown tabs and sort interaction',
   'apps/web/src/dashboard-filter-bar.tsx':
-    'apps/web/src/lib/features/report/breakdown/p8.browser.ts › query replace run, raw machine identity and rendered Origin controls',
+    'apps/web/src/lib/features/report/breakdown/p8.browser.server.ts › query replace run, raw machine identity and rendered Origin controls',
   'apps/web/src/dashboard-filters.tsx':
-    'apps/web/src/lib/features/report/breakdown/p8.browser.ts › URL-backed query, active pills and clear-all interaction',
+    'apps/web/src/lib/features/report/breakdown/p8.browser.server.ts › URL-backed query, active pills and clear-all interaction',
   'apps/web/src/origin-filter.tsx':
-    'apps/web/src/lib/features/report/breakdown/p8.browser.ts › Popover, keyboard Checkbox, Default and All interactions',
+    'apps/web/src/lib/features/report/breakdown/p8.browser.server.ts › Popover, keyboard Checkbox, Default and All interactions',
   'apps/web/src/project-group-editor.tsx':
-    'apps/web/src/lib/features/report/breakdown/p8.browser.ts › quality action focuses management and project save recovers after announced failure',
+    'apps/web/src/lib/features/report/breakdown/p8.browser.server.ts › quality action focuses management and project save recovers after announced failure',
   'apps/web/src/provider-quota-history-panel.tsx':
-    'apps/web/src/lib/features/report/breakdown/p8.browser.ts › demo/live acquisition, responsive range/filter/reset/gap/table and per-open focus restoration',
+    'apps/web/src/lib/features/report/breakdown/p8.browser.server.ts › demo/live acquisition, responsive range/filter/reset/gap/table and per-open focus restoration',
   'apps/web/src/report-sharing-actions.tsx':
-    'apps/web/src/lib/features/report/breakdown/p8.browser.ts › exact URL and visible CSV success plus independent failure announcements',
+    'apps/web/src/lib/features/report/breakdown/p8.browser.server.ts › exact URL and visible CSV success plus independent failure announcements',
 };
 const withProductionTarget = (record: ParityRecord): ParityRecord => {
   const source = productionTargets[record.currentOwner];

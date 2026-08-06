@@ -5,6 +5,7 @@ import {
   type SyncContractClient,
   type SyncFleet,
 } from '@ai-usage/web-contract/sync';
+import { readBoundedResponseBytes } from './bounded-response-reader';
 
 const SAFE_ATTACHMENT_PATTERN = /^attachment; filename="([a-zA-Z0-9][a-zA-Z0-9._-]{0,254})"$/u;
 const CANONICAL_CONTENT_TYPE = 'application/json; charset=utf-8';
@@ -44,83 +45,12 @@ const parseFilename = (value: string | null): string => {
   return filename;
 };
 
-const scheduleReaderCancellation = (reader: ReadableStreamDefaultReader<Uint8Array>): void => {
-  try {
-    reader.cancel().catch(() => undefined);
-  } catch {
-    // The stream may already be errored by the same cancellation.
-  }
-};
-
 const scheduleResponseCancellation = (response: Response): void => {
   try {
     response.body?.cancel().catch(() => undefined);
   } catch {
     // Metadata rejection may race with transport cancellation.
   }
-};
-
-const readChunk = (
-  reader: ReadableStreamDefaultReader<Uint8Array>,
-  signal: AbortSignal | undefined,
-): ReturnType<ReadableStreamDefaultReader<Uint8Array>['read']> => {
-  signal?.throwIfAborted();
-  if (!signal) {
-    return reader.read();
-  }
-  return new Promise((resolve, reject) => {
-    const abort = (): void => reject(signal.reason);
-    signal.addEventListener('abort', abort, { once: true });
-    reader
-      .read()
-      .then(resolve, reject)
-      .finally(() => signal.removeEventListener('abort', abort));
-  });
-};
-
-const readManualMergeBytes = async (
-  response: Response,
-  declaredBytes: number,
-  signal: AbortSignal | undefined,
-): Promise<Uint8Array> => {
-  const reader = response.body?.getReader();
-  if (!reader) {
-    throw new Error('The manual export body is unavailable.');
-  }
-  const chunks: Uint8Array[] = [];
-  let byteLength = 0;
-  let complete = false;
-  try {
-    while (true) {
-      const chunk = await readChunk(reader, signal);
-      signal?.throwIfAborted();
-      if (chunk.done) {
-        if (byteLength !== declaredBytes) {
-          throw new Error('The manual export length did not match its body.');
-        }
-        complete = true;
-        break;
-      }
-      byteLength += chunk.value.byteLength;
-      if (byteLength > declaredBytes || byteLength > MAX_PORTABLE_USAGE_BYTES) {
-        throw new Error('The manual export exceeded its byte limit.');
-      }
-      chunks.push(chunk.value);
-    }
-  } finally {
-    if (!complete) {
-      scheduleReaderCancellation(reader);
-    }
-    reader.releaseLock();
-  }
-
-  const bytes = new Uint8Array(byteLength);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return bytes;
 };
 
 export const createSyncBrowserAdapter = (
@@ -149,7 +79,14 @@ export const createSyncBrowserAdapter = (
       }
       const declaredBytes = parseContentLength(response.headers.get('content-length'));
       const filename = parseFilename(response.headers.get('content-disposition'));
-      const bytes = await readManualMergeBytes(response, declaredBytes, signal);
+      const bytes = await readBoundedResponseBytes(response, {
+        bodyUnavailableMessage: 'The manual export body is unavailable.',
+        byteLimitMessage: 'The manual export exceeded its byte limit.',
+        declaredBytes,
+        lengthMismatchMessage: 'The manual export length did not match its body.',
+        maximumBytes: MAX_PORTABLE_USAGE_BYTES,
+        ...(signal === undefined ? {} : { signal }),
+      });
       signal?.throwIfAborted();
       const replayBuffer = new ArrayBuffer(bytes.byteLength);
       new Uint8Array(replayBuffer).set(bytes);

@@ -170,7 +170,7 @@
   });
   const centerStack = css({ display: 'grid', gap: '16px', minW: 0 });
   const desktopTree = css({ display: { base: 'none', lg: 'block' } });
-  const mobilePicker = css({ display: { base: 'block', lg: 'none' }, p: 0, overflow: 'hidden' });
+  const mobilePicker = css({ display: { base: 'block', lg: 'none' }, overflow: 'hidden' });
   const mobilePickerSummary = css({
     display: 'flex',
     justifyContent: 'space-between',

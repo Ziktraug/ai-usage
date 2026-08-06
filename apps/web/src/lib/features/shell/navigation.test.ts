@@ -54,6 +54,7 @@ describe('Svelte application shell navigation', () => {
   test('keeps one hydrated retry and a same-URL progressive fallback', async () => {
     const shellSource = await readFile(new URL('./error-shell.svelte', import.meta.url), 'utf8');
     const routeSource = await readFile(new URL('../../../routes/+error.svelte', import.meta.url), 'utf8');
+    const ownerSource = await readFile(new URL('./error-route-owner.svelte', import.meta.url), 'utf8');
 
     expect(shellSource).toContain('<form action={retryHref} class={retryForm} method="get" onsubmit={submitRetry}>');
     expect(shellSource).toContain('event.preventDefault();');
@@ -62,10 +63,11 @@ describe('Svelte application shell navigation', () => {
     expect(shellSource).toContain('{name}');
     expect(shellSource).toContain('{value}');
     expect(shellSource).toContain('await onRetry();');
-    expect(routeSource).toContain('window.location.reload();');
-    expect(routeSource).toContain('retryHref=');
-    expect(routeSource).toContain('page.url.pathname');
-    expect(routeSource).toContain('page.url.search');
-    expect(routeSource).not.toContain('invalidateAll');
+    expect(routeSource).toContain('<ErrorRouteOwner />');
+    expect(ownerSource).toContain('window.location.reload();');
+    expect(ownerSource).toContain('retryHref=');
+    expect(ownerSource).toContain('page.url.pathname');
+    expect(ownerSource).toContain('page.url.search');
+    expect(ownerSource).not.toContain('invalidateAll');
   });
 });

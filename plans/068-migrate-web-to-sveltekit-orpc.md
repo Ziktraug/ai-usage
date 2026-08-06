@@ -1462,12 +1462,10 @@ Final delivery sequence is strict:
   **Incomplete**: REPORT-04 and REPORT-05 were reported COMPLETE against specs
   that assert semantics only. Their geometry now has gates; the register rows are
   reopened until the remaining Overview surfaces are compared to `2183270e`.
-- [ ] Every design-system export is framework-neutral or has a tested Svelte
-  implementation/consumer; the final design-system/Web dependency closure has
-  no Solid/Ark Solid runtime. **False as checked**: the ledger accepted a
-  declaration as evidence, and 167 exports still have no consumer. The closure
-  claim holds; the consumer claim does not. Tracked by
-  `tools/check-design-export-consumers.ts`.
+- [x] Every design-system export is framework-neutral and consumed; the final
+  design-system/Web dependency closure has no Solid/Ark Solid runtime.
+  `tools/check-design-export-consumers.ts` now enforces zero unconsumed exports
+  without a debt baseline.
 - [x] Initial `/` and `/skills` HTML has settled content and no duplicate fetch.
 - [x] Exact revision retry/supersession/atomic commit matches characterization.
 - [x] Publication does not invalidate Skills or immutable exact revision; quota

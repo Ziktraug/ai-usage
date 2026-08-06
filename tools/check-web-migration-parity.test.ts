@@ -299,11 +299,9 @@ describe('Web migration parity checker', () => {
     expect(result.counts.get('operation')?.live).toBe(0);
     expect(result.counts.get('operation')?.ledger).toBe(30);
     expect(result.counts.get('production-tsx')?.live).toBe(0);
-    // Grew when the Activity, Punchcard, Breakdown, Sessions, drawer, Overview, and Skills repairs
-    // put semantic exports back into service and recorded their browser evidence.
-    // Fell from 440 when the refresh module was deleted: all ten of its exports
-    // were already dead at 2183270e, so the module emptied entirely.
-    expect(result.counts.get('design-export')?.live).toBe(433);
+    // The branch-review remediation removed every export without a real consumer.
+    // Keep the live count exact so new dead exports cannot hide in the inventory.
+    expect(result.counts.get('design-export')?.live).toBe(342);
     expect(result.counts.get('design-export')?.ledger).toBe(531);
     expect(result.counts.get('playwright-title')?.live).toBe(122);
   });

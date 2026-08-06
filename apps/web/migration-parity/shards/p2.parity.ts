@@ -72,7 +72,7 @@ const productionTargets: Record<string, ReplacementTarget> = {
   'apps/web/src/cursor-attribution-panel.tsx': {
     commit: cutoverCommit,
     source: 'apps/web/src/lib/features/report/breakdown/cursor-attribution-panel.svelte',
-    test: 'apps/web/src/lib/features/report/breakdown/cursor.test.ts; apps/web/src/lib/features/report/breakdown/breakdown-components.test.ts; apps/web/src/lib/features/report/breakdown/p8.browser.ts',
+    test: 'apps/web/src/lib/features/report/breakdown/cursor.test.ts; apps/web/src/lib/features/report/breakdown/breakdown-components.test.ts; apps/web/src/lib/features/report/breakdown/p8.browser.server.ts',
   },
   'apps/web/src/dashboard-metrics.tsx': {
     source: 'apps/web/src/lib/features/report/overview/dashboard-metrics.svelte',
@@ -82,7 +82,7 @@ const productionTargets: Record<string, ReplacementTarget> = {
     commit: cutoverCommit,
     source:
       'apps/web/src/lib/features/report/breakdown/{breakdown-panel.svelte,breakdown-row.svelte,harness-provider-panel.svelte,model.ts,harness-provider-model.ts}',
-    test: 'apps/web/src/lib/features/report/breakdown/{breakdown-components,model,harness-provider-model}.test.ts; apps/web/src/lib/features/report/breakdown/p8.browser.ts',
+    test: 'apps/web/src/lib/features/report/breakdown/{breakdown-components,model,harness-provider-model}.test.ts; apps/web/src/lib/features/report/breakdown/p8.browser.server.ts',
   },
   'apps/web/src/overview.tsx': {
     source:
@@ -92,7 +92,7 @@ const productionTargets: Record<string, ReplacementTarget> = {
   'apps/web/src/project-summary.tsx': {
     commit: cutoverCommit,
     source: 'apps/web/src/lib/features/report/breakdown/{project-summary.svelte,projects-panel.svelte}',
-    test: 'apps/web/src/lib/features/report/breakdown/breakdown-components.test.ts; apps/web/src/lib/features/report/breakdown/p8.browser.ts',
+    test: 'apps/web/src/lib/features/report/breakdown/breakdown-components.test.ts; apps/web/src/lib/features/report/breakdown/p8.browser.server.ts',
   },
   'apps/web/src/provider-status-panel.tsx': {
     source: 'apps/web/src/lib/features/report/overview/provider-status.svelte',
@@ -129,7 +129,7 @@ const renderTargets: Record<string, ReplacementTarget> = {
     commit: cutoverCommit,
     source:
       'apps/web/src/lib/features/report/breakdown/{breakdown-panel.svelte,breakdown-row.svelte,harness-provider-panel.svelte}',
-    test: 'apps/web/src/lib/features/report/breakdown/{breakdown-components,model,harness-provider-model}.test.ts; apps/web/src/lib/features/report/breakdown/p8.browser.ts',
+    test: 'apps/web/src/lib/features/report/breakdown/{breakdown-components,model,harness-provider-model}.test.ts; apps/web/src/lib/features/report/breakdown/p8.browser.server.ts',
   },
   'apps/web/src/overview.render.test.tsx': {
     source: 'apps/web/src/lib/features/report/overview/overview-page.svelte',
@@ -138,7 +138,7 @@ const renderTargets: Record<string, ReplacementTarget> = {
   'apps/web/src/project-summary.render.test.tsx': {
     commit: cutoverCommit,
     source: 'apps/web/src/lib/features/report/breakdown/{project-summary.svelte,projects-panel.svelte}',
-    test: 'apps/web/src/lib/features/report/breakdown/breakdown-components.test.ts; apps/web/src/lib/features/report/breakdown/p8.browser.ts',
+    test: 'apps/web/src/lib/features/report/breakdown/breakdown-components.test.ts; apps/web/src/lib/features/report/breakdown/p8.browser.server.ts',
   },
 };
 

@@ -9,6 +9,7 @@ import {
   sourceControlCommandTransport,
   sourceControlSseTransport,
 } from '@ai-usage/web-contract/control';
+import { readBoundedResponseBytes } from './bounded-response-reader';
 
 const MAX_COMMAND_BYTES = 4 * 1024;
 const CONTENT_LENGTH_PATTERN = /^[0-9]+$/u;
@@ -46,81 +47,19 @@ const parseContentLength = (value: string | null, maximumBytes: number): number 
   return bytes;
 };
 
-const scheduleReaderCancellation = (reader: ReadableStreamDefaultReader<Uint8Array>): void => {
-  try {
-    reader.cancel().catch(() => undefined);
-  } catch {
-    // The stream may already be errored by the same cancellation.
-  }
-};
-
-const readChunk = (
-  reader: ReadableStreamDefaultReader<Uint8Array>,
-  signal: AbortSignal | undefined,
-): ReturnType<ReadableStreamDefaultReader<Uint8Array>['read']> => {
-  signal?.throwIfAborted();
-  if (!signal) {
-    return reader.read();
-  }
-  return new Promise((resolve, reject) => {
-    const abort = (): void => reject(signal.reason);
-    signal.addEventListener('abort', abort, { once: true });
-    reader
-      .read()
-      .then(resolve, reject)
-      .finally(() => signal.removeEventListener('abort', abort));
-  });
-};
-
 const readBoundedJson = async (
   response: Response,
   maximumBytes: number,
   signal: AbortSignal | undefined,
 ): Promise<unknown> => {
-  signal?.throwIfAborted();
-  const reader = response.body?.getReader();
-  if (!reader) {
-    throw new Error('The source control response body is unavailable.');
-  }
-  const chunks: Uint8Array[] = [];
-  let byteLength = 0;
-  let complete = false;
-  try {
-    try {
-      const declaredBytes = parseContentLength(response.headers.get('content-length'), maximumBytes);
-      while (true) {
-        const chunk = await readChunk(reader, signal);
-        signal?.throwIfAborted();
-        if (chunk.done) {
-          if (declaredBytes !== null && byteLength !== declaredBytes) {
-            throw new Error('The source control response length did not match its body.');
-          }
-          complete = true;
-          break;
-        }
-        byteLength += chunk.value.byteLength;
-        if (byteLength > maximumBytes || (declaredBytes !== null && byteLength > declaredBytes)) {
-          throw new Error('The source control response exceeded its byte limit.');
-        }
-        chunks.push(chunk.value);
-      }
-    } finally {
-      if (!complete) {
-        scheduleReaderCancellation(reader);
-      }
-      reader.releaseLock();
-    }
-  } catch (error) {
-    signal?.throwIfAborted();
-    throw error;
-  }
-  signal?.throwIfAborted();
-  const bytes = new Uint8Array(byteLength);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
+  const bytes = await readBoundedResponseBytes(response, {
+    bodyUnavailableMessage: 'The source control response body is unavailable.',
+    byteLimitMessage: 'The source control response exceeded its byte limit.',
+    declaredBytes: parseContentLength(response.headers.get('content-length'), maximumBytes),
+    lengthMismatchMessage: 'The source control response length did not match its body.',
+    maximumBytes,
+    ...(signal === undefined ? {} : { signal }),
+  });
   const text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
   return JSON.parse(text) as unknown;
 };

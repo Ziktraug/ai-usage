@@ -1,4 +1,8 @@
 import type { Page } from '@playwright/test';
+import {
+  FOCUSED_REPORT_E2E_ENABLED_KEY,
+  FOCUSED_REPORT_E2E_VISIBLE_TREND_KEY,
+} from '../src/focused-report-e2e-fixture';
 import { expect, openHydratedReport, reportViewsFor, test, waitForFocusedReportSettled } from './browser-test';
 
 const CALENDAR_NAME_PATTERN = /Daily activity calendar/;
@@ -82,7 +86,15 @@ const navigationEntryKey = async (page: Page): Promise<string | null> =>
   });
 
 test('uses one report range for the dashboard and activity chart', async ({ page }) => {
+  await page.addInitScript(
+    ({ enabledKey, trendKey }) => {
+      Reflect.set(globalThis, enabledKey, true);
+      Reflect.set(globalThis, trendKey, true);
+    },
+    { enabledKey: FOCUSED_REPORT_E2E_ENABLED_KEY, trendKey: FOCUSED_REPORT_E2E_VISIBLE_TREND_KEY },
+  );
   await openHydratedReport(page);
+  await waitForFocusedReportSettled(page);
 
   const dateRange = page.getByRole('region', { name: 'Date range' });
   await expect(dateRange.getByRole('button', { exact: true, name: 'All' })).toBeVisible();
@@ -116,6 +128,15 @@ test('uses one report range for the dashboard and activity chart', async ({ page
   await expect(chartOptions.getByText('Group by', { exact: true })).toBeVisible();
   await expect(chartOptions.getByText('Interval', { exact: true })).toBeVisible();
   await expect(chartOptions.getByText('Metric', { exact: true })).toBeVisible();
+
+  const timeline = dateRange.getByRole('button', {
+    name: 'Inspect activity timeline. Use arrow keys to inspect days.',
+  });
+  await timeline.focus();
+  await timeline.press('End');
+  const trend = dateRange.locator('[data-timeline-trend]');
+  await expect(trend).toBeVisible();
+  await expect(trend).toHaveText('▲ 100%');
 });
 
 test('wraps chart options without horizontal clipping below the frozen narrow viewport', async ({ page }) => {

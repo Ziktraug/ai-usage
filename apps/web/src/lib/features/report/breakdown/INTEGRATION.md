@@ -54,7 +54,7 @@ two accepted implementation commits in order:
 
 ```sh
 bun test apps/web/src/lib/features/report/breakdown/*.test.ts apps/web/src/lib/features/report/actions/*.test.ts
-bun apps/web/src/lib/features/report/breakdown/p8.browser.ts
+bun apps/web/src/lib/features/report/breakdown/p8.browser.server.ts
 bun run --cwd apps/web check:svelte
 bun x ultracite check apps/web/src/lib/features/report/breakdown apps/web/src/lib/features/report/actions
 bun tools/check-package-boundaries.ts

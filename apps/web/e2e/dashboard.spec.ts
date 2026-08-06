@@ -507,7 +507,8 @@ test('opens a session from Overview without leaving the current analysis', async
 
 test('navigates and closes the selected session with drawer keyboard commands', async ({ page }) => {
   await openHydratedReport(page);
-  await page.getByRole('button', { name: TOP_SESSION_PATTERN }).click();
+  const sessionTrigger = page.getByRole('button', { name: TOP_SESSION_PATTERN });
+  await sessionTrigger.click();
 
   const drawer = page.getByRole('dialog', { name: 'Session details' });
   await expect(drawer.getByText('Build report UI', { exact: true }).first()).toBeVisible();
@@ -520,6 +521,7 @@ test('navigates and closes the selected session with drawer keyboard commands', 
   await expect(drawer.getByText('Build report UI', { exact: true }).first()).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(drawer).not.toBeVisible();
+  await expect(sessionTrigger).toBeFocused();
 });
 
 test('starts sessions with focused work columns and switches metric presets', async ({ page }) => {

@@ -218,10 +218,6 @@ export const projectSummaryMetric = css({
   },
 });
 
-export const sessionDesktopControl = css({
-  display: { base: 'none', md: 'block' },
-});
-
 export const sessionSummaryMobileSort = css({
   display: { base: 'flex', md: 'none' },
   flex: '1 0 100%',
@@ -391,15 +387,6 @@ export const sessionSummaryStats = css({
   color: 'faint',
   fontSize: '10px',
   whiteSpace: 'nowrap',
-});
-
-export const sessionSummaryLoadMore = css({
-  display: { base: 'flex', md: 'none' },
-  justifyContent: 'center',
-  pt: '10px',
-  '& button': {
-    minH: '44px',
-  },
 });
 
 export const sessionPagingLoadMore = css({

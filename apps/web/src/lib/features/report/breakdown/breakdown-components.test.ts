@@ -82,7 +82,11 @@ describe('P8 Svelte client isolation', () => {
     const sourceFiles = [breakdownDirectory, actionsDirectory].flatMap((directory) =>
       readdirSync(directory)
         .filter(
-          (name) => CLIENT_SOURCE_PATTERN.test(name) && !name.endsWith('.browser.ts') && !name.endsWith('.test.ts'),
+          (name) =>
+            CLIENT_SOURCE_PATTERN.test(name) &&
+            !name.endsWith('.browser.ts') &&
+            !name.endsWith('.server.ts') &&
+            !name.endsWith('.test.ts'),
         )
         .map((name) => join(directory, name)),
     );

@@ -400,8 +400,8 @@
       {presentMachineLabel}
       {search}
     />
-    {#if commit?.overview && !(_owner.snapshot.pending && focusedTimelineFiltersChanged)}
-      <div class={rangePlacement}>
+    {#if commit?.overview}
+      <div class={rangePlacement} hidden={_owner.snapshot.pending && focusedTimelineFiltersChanged}>
         <ReportRangeControl
           {activeSeriesKeys}
           dateDomain={commit.overview.dateDomain}

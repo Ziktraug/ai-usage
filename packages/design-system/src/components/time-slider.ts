@@ -3,73 +3,6 @@ import { css, cx } from '@ai-usage/design-system/css';
 // Keeps the mobile chart-options control at the frozen two-row touch-target height.
 const MOBILE_CHART_OPTIONS_SUMMARY_MIN_HEIGHT = '73px';
 
-export const timeRangePanel = css({
-  display: 'grid',
-  gap: '14px',
-  mt: '14px',
-  p: { base: '12px', sm: '14px 16px 16px' },
-  border: '1px solid token(colors.line)',
-  borderRadius: 'md',
-  bg: 'surface',
-  boxShadow: 'card',
-});
-
-export const timeRangeAdjustments = css({
-  display: 'grid',
-  gap: '10px',
-  pt: '14px',
-  borderTop: '1px solid token(colors.line)',
-});
-
-export const timeRangeHeader = css({
-  display: 'grid',
-  gridTemplateColumns: { base: '1fr', md: 'max-content minmax(0, 1fr)' },
-  gap: '12px',
-  alignItems: 'start',
-});
-
-export const timeRangeTitle = css({
-  fontSize: '14px',
-  fontWeight: 650,
-  whiteSpace: 'nowrap',
-});
-
-export const timeRangeMeta = css({
-  color: 'muted',
-  fontSize: '12px',
-  mt: '2px',
-});
-
-export const timeRangeSummary = css({
-  display: 'flex',
-  flexWrap: 'wrap',
-  alignItems: 'center',
-  gap: '6px 10px',
-  mt: '6px',
-});
-
-export const timeRangeSummaryDates = css({
-  display: 'inline-grid',
-  gridTemplateColumns: 'auto auto auto',
-  alignItems: 'center',
-  gap: '7px',
-  minW: 0,
-  color: 'ink',
-  fontSize: '13px',
-  fontWeight: 650,
-});
-
-export const timeRangeArrow = css({
-  color: 'muted',
-  fontWeight: 500,
-});
-
-export const timeRangeDuration = css({
-  color: 'muted',
-  fontSize: '11px',
-  fontWeight: 600,
-});
-
 export const presetGroup = css({
   display: 'flex',
   flexWrap: 'wrap',
@@ -167,101 +100,6 @@ export const timeChartOptionsCurrent = css({
   '@media screen and (max-width: 359px)': { minW: 0, whiteSpace: 'normal' },
 });
 
-export const dateEditRow = css({
-  display: 'flex',
-  flexWrap: 'wrap',
-  gap: '10px',
-  alignItems: 'end',
-});
-
-export const timeSliderRoot = css({
-  display: 'grid',
-  gap: '10px',
-});
-
-export const timeSliderFrame = css({
-  display: 'grid',
-  gap: '10px',
-});
-
-export const timeSliderControl = css({
-  position: 'relative',
-  h: '118px',
-});
-
-export const timeChartToolbar = css({
-  display: 'flex',
-  flexWrap: 'wrap',
-  alignItems: 'center',
-  justifyContent: 'space-between',
-  gap: '6px 10px',
-});
-
-export const timeChartZoomSummary = css({
-  color: 'muted',
-  fontSize: '11px',
-  fontWeight: 600,
-});
-
-export const timeChartZoomControls = css({
-  display: 'flex',
-  flexWrap: 'wrap',
-  justifyContent: 'flex-end',
-  gap: '4px',
-});
-
-export const timeChartZoomButton = css({
-  appearance: 'none',
-  h: '32px',
-  px: '8px',
-  border: '1px solid token(colors.line)',
-  borderRadius: 'full',
-  bg: 'surface',
-  color: 'muted',
-  cursor: 'pointer',
-  fontSize: '11px',
-  fontWeight: 650,
-  lineHeight: 1,
-  transition: 'border-color 0.15s, color 0.15s, transform 0.15s',
-  _hover: {
-    borderColor: 'accent',
-    color: 'ink',
-    transform: 'translateY(-1px)',
-  },
-  _focusVisible: {
-    outline: '2px solid token(colors.ink)',
-    outlineOffset: '2px',
-  },
-  _disabled: {
-    cursor: 'not-allowed',
-    opacity: 0.48,
-    transform: 'none',
-  },
-});
-
-export const timeSliderTrack = css({
-  position: 'relative',
-  h: '118px',
-  border: '1px solid rgba(255, 255, 255, 0.04)',
-  borderRadius: 'sm',
-  bg: 'surface',
-  overflow: 'hidden',
-  boxShadow: 'inset 0 0 0 1px rgba(255, 255, 255, 0.18)',
-  _focusWithin: {
-    boxShadow: '0 0 0 3px token(colors.focusRing)',
-  },
-});
-
-export const timeSliderBars = css({
-  position: 'absolute',
-  inset: '8px',
-  display: 'flex',
-  alignItems: 'flex-end',
-  gap: '2px',
-  pointerEvents: 'none',
-  zIndex: 2,
-});
-
 export const timelineHoverLayer = css({
   appearance: 'none',
   position: 'absolute',
@@ -282,49 +120,6 @@ export const timelineHoverLayer = css({
   '&[data-dragging="true"]': {
     cursor: 'grabbing',
   },
-});
-
-export const timeBucket = css({
-  flex: '1 1 0',
-  minW: '2px',
-  h: '100%',
-  display: 'flex',
-  flexDirection: 'column',
-  justifyContent: 'flex-end',
-  gap: '1px',
-});
-
-export const timeBucketSegment = css({
-  w: '100%',
-  minH: '1px',
-  borderRadius: '1px',
-});
-
-export const timeSliderUnclassifiedBands = css({
-  position: 'absolute',
-  left: '8px',
-  right: '8px',
-  bottom: '8px',
-  h: '6px',
-  display: 'flex',
-  alignItems: 'stretch',
-  gap: '2px',
-  pointerEvents: 'none',
-  zIndex: 2,
-});
-
-export const timeBucketUnclassifiedBand = css({
-  flex: '1 1 0',
-  minW: '2px',
-  border: '1px solid token(colors.lineStrong)',
-  borderRadius: '1px',
-  bg: 'surfaceMuted',
-  backgroundImage: 'repeating-linear-gradient(135deg, transparent 0 2px, token(colors.lineStrong) 2px 3px)',
-});
-
-export const timeBucketUnclassifiedEmpty = css({
-  flex: '1 1 0',
-  minW: '2px',
 });
 
 export const timeSliderRange = css({
@@ -352,43 +147,9 @@ export const timeSliderDim = css({
 export const timeSliderDimLeft = cx(timeSliderDim, css({ left: 0, w: 'var(--slider-range-start)' }));
 export const timeSliderDimRight = cx(timeSliderDim, css({ right: 0, w: 'var(--slider-range-end)' }));
 
-export const timeSliderBrushRow = css({
-  display: 'grid',
-  gridTemplateColumns: { base: '1fr', lg: 'max-content minmax(0, 1fr)' },
-  gap: '10px',
-  alignItems: 'end',
-});
-
-export const timeSliderDateInputs = css({
-  display: 'flex',
-  flexWrap: 'wrap',
-  gap: '10px',
-  alignItems: 'end',
-});
-
 export const timeSliderBrushColumn = css({
   display: 'grid',
   gap: '6px',
-  minW: 0,
-});
-
-export const timeSliderBrushHeader = css({
-  display: { base: 'grid', sm: 'flex' },
-  gridTemplateColumns: '1fr',
-  flexWrap: 'wrap',
-  alignItems: 'baseline',
-  justifyContent: 'space-between',
-  gap: '6px 12px',
-  color: 'muted',
-  fontSize: '11px',
-  fontWeight: 600,
-});
-
-export const timeSliderQuickRanges = css({
-  display: 'flex',
-  flexWrap: 'wrap',
-  gap: '2px',
-  justifyContent: { base: 'flex-start', sm: 'flex-end' },
   minW: 0,
 });
 
@@ -521,81 +282,4 @@ export const timeSliderThumb = css({
     outline: '2px solid token(colors.ink)',
     outlineOffset: '-2px',
   },
-});
-
-export const timeAxis = css({
-  position: 'relative',
-  display: 'flex',
-  justifyContent: 'space-between',
-  gap: '8px',
-  color: 'muted',
-  fontSize: '11px',
-  fontFamily: 'mono',
-});
-
-export const timeSliderHandleLabels = css({
-  position: 'relative',
-  display: { base: 'grid', md: 'block' },
-  gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
-  gap: '8px',
-  h: { base: 'auto', md: '28px' },
-  mt: '-2px',
-});
-
-export const timeSliderHandleLabel = css({
-  position: { base: 'static', md: 'absolute' },
-  top: 0,
-  display: 'grid',
-  gap: '2px',
-});
-
-export const timeSliderHandleLabelStart = cx(
-  timeSliderHandleLabel,
-  css({
-    left: { base: 'auto', md: 'var(--slider-range-start)' },
-    transform: { base: 'none', md: 'translateX(-8px)' },
-  }),
-);
-
-export const timeSliderHandleLabelEnd = cx(
-  timeSliderHandleLabel,
-  css({
-    left: { base: 'auto', md: 'calc(100% - var(--slider-range-end))' },
-    transform: { base: 'none', md: 'translateX(calc(-100% + 8px))' },
-  }),
-);
-
-export const timeSliderDateChip = css({
-  appearance: 'none',
-  h: '32px',
-  w: { base: '100%', md: '126px' },
-  px: '8px',
-  border: '1px solid token(colors.line)',
-  borderRadius: 'full',
-  bg: 'surface',
-  color: 'ink',
-  fontFamily: 'mono',
-  fontSize: '10.5px',
-  fontWeight: 650,
-  lineHeight: 1,
-  outline: 'none',
-  boxShadow: 'none',
-  transition: 'border-color 0.15s, box-shadow 0.15s, transform 0.15s',
-  _hover: {
-    borderColor: 'accent',
-    transform: 'translateY(-1px)',
-  },
-  _focusVisible: {
-    borderColor: 'accent',
-    boxShadow: '0 0 0 3px token(colors.focusRing)',
-  },
-});
-
-export const timeAxisTick = css({
-  position: 'absolute',
-  display: { base: 'none', sm: 'inline' },
-  top: 0,
-  transform: 'translateX(-50%)',
-  color: 'muted',
-  whiteSpace: 'nowrap',
 });
