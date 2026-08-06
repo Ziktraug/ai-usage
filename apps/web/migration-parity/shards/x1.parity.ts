@@ -145,6 +145,39 @@ const completeAtFilterCorrection = (record: ParityRecord): ParityRecord => ({
   status: 'complete',
 });
 
+// The orphaned-export list doubles as a lost-feature detector: these three had no
+// consumer and no live equivalent, because the Svelte readout had dropped the
+// day-over-day change they styled.
+const trendRestorationCommit = '68ddc86002863af047319b54dea70c665931f856';
+const completeAtTrendRestoration = (record: ParityRecord): ParityRecord => ({
+  ...record,
+  evidence: [
+    ...record.evidence,
+    {
+      commit: trendRestorationCommit,
+      kind: 'source',
+      phase: 'target',
+      reference:
+        'apps/web/src/lib/features/report/overview/activity-timeline.svelte renders the per-series trend from timelineReadoutFor delta and timelineTrendIsVisible.',
+    },
+    {
+      commit: trendRestorationCommit,
+      kind: 'test',
+      phase: 'target',
+      reference:
+        'apps/web/src/lib/features/report/overview/timeline-model.test.ts covers the previous-bucket comparison, the first bucket, a newly appearing series and both visibility thresholds; the deterministic fixture cannot render a visible trend.',
+    },
+    {
+      commit: trendRestorationCommit,
+      kind: 'review',
+      phase: 'target',
+      reference:
+        'Restored to the retired Solid contract at 2183270e: ((value - prior) / prior) * 100, null without a prior value, hidden below one percent and at or above a thousand.',
+    },
+  ],
+  status: 'complete',
+});
+
 export default defineParityShard({
   owner,
   records: [
@@ -235,5 +268,12 @@ export default defineParityShard({
         title: 'keeps the document height still while the Session surface is scrolled past',
       },
     ]).map(completeAtSessionScrollCorrection),
+    ...designExportRecords(owner, [
+      {
+        entrypoint: './svelte',
+        names: 'migrationTrend migrationTrendDown migrationTrendUp',
+        source: 'packages/design-system/src/components/chart.ts',
+      },
+    ]).map(completeAtTrendRestoration),
   ],
 });

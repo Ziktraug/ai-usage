@@ -303,8 +303,8 @@ describe('Web migration parity checker', () => {
     // put semantic exports back into service and recorded their browser evidence.
     // Fell from 440 when the refresh module was deleted: all ten of its exports
     // were already dead at 2183270e, so the module emptied entirely.
-    expect(result.counts.get('design-export')?.live).toBe(430);
-    expect(result.counts.get('design-export')?.ledger).toBe(528);
+    expect(result.counts.get('design-export')?.live).toBe(433);
+    expect(result.counts.get('design-export')?.ledger).toBe(531);
     expect(result.counts.get('playwright-title')?.live).toBe(122);
   });
 });
