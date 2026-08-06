@@ -113,18 +113,6 @@
   },
   {
     "module": "chart",
-    "name": "migrationTrend"
-  },
-  {
-    "module": "chart",
-    "name": "migrationTrendDown"
-  },
-  {
-    "module": "chart",
-    "name": "migrationTrendUp"
-  },
-  {
-    "module": "chart",
     "name": "migrationXAxis"
   },
   {

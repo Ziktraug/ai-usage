@@ -2500,3 +2500,42 @@ deterministic browser titles, demo 1/1, production report 8/8, production scale
 2/2, and the 4/4 Session benchmark. The post-fix benchmark medians move by at
 most 7.4% from the recorded run, with identical DOM and payload bounds, so no
 new performance-baseline explanation is required.
+
+### Blocked: deleting further orphaned design exports, 2026-08-06
+
+The `refresh` module was deleted cleanly in
+`a6e63e3b9cc5d9759ce766de2e6c87ce30bb4b7d` — all ten exports were already dead at
+`2183270e`, and every gate including the full browser suite stayed green.
+Unconsumed exports fell from 103 to 93.
+
+The remaining 93 are blocked on an unexplained result. Deleting
+`migrationLegendMore` from `chart.ts` — an export with no consumer anywhere —
+deterministically breaks `skills.spec.ts:451`, which measures the Skills detail
+panel at 562px against a `> 600` floor:
+
+| Experiment | Result |
+| --- | --- |
+| Isolated Skills title, 8 runs, at HEAD | 8 pass |
+| Isolated Skills title, 8 runs, `migrationLegendMore` deleted | 8 fail |
+| Selectors lost in `apps/web/styled-system/styles.css` | none (914 to 914) |
+| Selectors lost in `packages/design-system/styled-system/styles.css` | none (645 to 645) |
+
+Those four cannot all be true under the assumption that Panda emits one atom per
+declared property and deduplicates by name. Something else carries the effect —
+rule order rather than rule presence, the shipped `panda.buildinfo.json`, or a
+cache that neither `cssgen` nor the design-system build refreshes.
+
+Next step is to measure rather than reason: diff both stylesheets in full,
+comparing rule order and rule bodies rather than the selector set, and inspect the
+Skills panel at 562px to name the property that is actually missing. Until that is
+understood, deleting a design export is not a safe operation, however
+comprehensively it is proven unreferenced — a reference check cannot see this
+class of effect.
+
+Two method notes for whoever picks this up. Bisecting with a single run per step
+produced a false answer twice, once because the probe grepped a neighbouring title
+(`skills.spec.ts:147` instead of `:451`) and once because a single sample cannot
+separate a deterministic break from a flake; use at least three runs per step.
+And a regex-based export remover silently produced `export export const` and
+swallowed a non-exported helper, so `tools/`-quality guards belong in any script
+that edits these modules.

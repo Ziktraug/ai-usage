@@ -14,6 +14,9 @@ export {
   dimensionSwatch,
   highlightMark,
   migrationCrosshair,
+  migrationTrend,
+  migrationTrendDown,
+  migrationTrendUp,
   sortArrow,
   stableSeriesColor,
 } from './components/chart';

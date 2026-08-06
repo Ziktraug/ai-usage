@@ -20,6 +20,8 @@ export interface TimelineLabelBox {
 }
 
 export interface TimelineReadoutRow {
+  /** Percentage change against the previous bucket; null without a prior value. */
+  readonly delta: number | null;
   readonly key: string;
   readonly label: string;
   readonly priceMeasurement: ApiPriceMeasurement;
@@ -28,6 +30,7 @@ export interface TimelineReadoutRow {
 
 export interface TimelineReadout {
   readonly bucket: FocusedTimelineBucket;
+  readonly hasPrevious: boolean;
   readonly rows: readonly TimelineReadoutRow[];
   readonly total: number;
   readonly useSessions: boolean;
@@ -97,6 +100,15 @@ export const timelineSeriesIsFilterable = (
   return dimension !== 'machine' || series.key.length > 0;
 };
 
+/** Below this the change is noise; at or above it the ratio stops being useful. */
+const MINIMUM_TREND_PCT = 1;
+const MAXIMUM_TREND_PCT = 1000;
+const NEGLIGIBLE_PRIOR = 1e-9;
+
+/** Whether a series change is worth showing next to its value. */
+export const timelineTrendIsVisible = (delta: number | null): boolean =>
+  delta !== null && Math.abs(delta) >= MINIMUM_TREND_PCT && Math.abs(delta) < MAXIMUM_TREND_PCT;
+
 export const timelineReadoutFor = (
   timeline: FocusedTimelineData,
   value: TimelineValue,
@@ -108,19 +120,31 @@ export const timelineReadoutFor = (
     return null;
   }
   const useSessions = timelineUsesSessions(timeline, value);
+  // The bucket before this one, when there is one, is what each series change is
+  // measured against.
+  const previous = index > 0 ? timeline.buckets[index - 1] : undefined;
   const rows = series
     .map((series) => {
       const entry = bucket.byKey[series.key];
+      const current = timelineEntryValue(entry, useSessions);
+      const prior = previous ? timelineEntryValue(previous.byKey[series.key], useSessions) : 0;
       return {
+        delta: prior > NEGLIGIBLE_PRIOR ? ((current - prior) / prior) * 100 : null,
         key: series.key,
         label: series.label,
         priceMeasurement: entry?.priceMeasurement ?? series.priceMeasurement,
-        value: timelineEntryValue(entry, useSessions),
+        value: current,
       };
     })
     .filter((row) => row.value > 0)
     .sort((left, right) => right.value - left.value);
-  return { bucket, rows, total: timelineBucketValue(bucket, useSessions), useSessions };
+  return {
+    bucket,
+    hasPrevious: previous !== undefined,
+    rows,
+    total: timelineBucketValue(bucket, useSessions),
+    useSessions,
+  };
 };
 
 export const retainTimelineTickLabels = (

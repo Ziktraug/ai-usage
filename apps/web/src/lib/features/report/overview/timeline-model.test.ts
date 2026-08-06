@@ -7,6 +7,7 @@ import {
   timelineReadoutFor,
   timelineSeriesIsFilterable,
   timelineSharePercent,
+  timelineTrendIsVisible,
   timelineUsesSessions,
 } from './timeline-model';
 
@@ -142,4 +143,60 @@ test('remeasures tick collisions when timeline labels change without a resize', 
   expect(source).toContain('retainedTickIds = null');
   expect(source).toContain('afterDomUpdate().then(() =>');
   expect(source).toContain('cancelled = true');
+});
+
+describe('readout series trend', () => {
+  const bucketWith = (date: string, alpha: number, beta: number) => ({
+    byKey: {
+      alpha: { cost: alpha, priceMeasurement: measured, sessions: alpha },
+      beta: { cost: beta, priceMeasurement: measured, sessions: beta },
+    },
+    date,
+    priceMeasurement: measured,
+    sessions: alpha + beta,
+    total: alpha + beta,
+    unclassified: null,
+  });
+  const twoDays = (): FocusedTimelineData => ({
+    ...timeline(10),
+    buckets: [bucketWith('2026-06-01', 10, 4), bucketWith('2026-06-02', 15, 2)],
+  });
+
+  test('measures each series against the same series in the previous bucket', () => {
+    const readout = timelineReadoutFor(twoDays(), 'cost', 1);
+
+    expect(readout?.hasPrevious).toBe(true);
+    expect(readout?.rows.map((row) => [row.key, row.delta])).toEqual([
+      ['alpha', 50],
+      ['beta', -50],
+    ]);
+  });
+
+  test('reports no comparison for the first bucket in the timeline', () => {
+    const readout = timelineReadoutFor(twoDays(), 'cost', 0);
+
+    expect(readout?.hasPrevious).toBe(false);
+    expect(readout?.rows.every((row) => row.delta === null)).toBe(true);
+  });
+
+  test('leaves the delta null when the series carried nothing to compare against', () => {
+    const appeared: FocusedTimelineData = {
+      ...timeline(10),
+      buckets: [bucketWith('2026-06-01', 10, 0), bucketWith('2026-06-02', 10, 7)],
+    };
+
+    expect(timelineReadoutFor(appeared, 'cost', 1)?.rows.find((row) => row.key === 'beta')?.delta).toBeNull();
+  });
+
+  test('hides a change that is noise or an unusable ratio', () => {
+    // Under one percent reads as movement that is not there; a thousandfold jump
+    // stops describing anything a reader can use.
+    expect(timelineTrendIsVisible(null)).toBe(false);
+    expect(timelineTrendIsVisible(0.4)).toBe(false);
+    expect(timelineTrendIsVisible(-0.9)).toBe(false);
+    expect(timelineTrendIsVisible(1)).toBe(true);
+    expect(timelineTrendIsVisible(-42)).toBe(true);
+    expect(timelineTrendIsVisible(999.9)).toBe(true);
+    expect(timelineTrendIsVisible(1000)).toBe(false);
+  });
 });

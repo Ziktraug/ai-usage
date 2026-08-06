@@ -90,6 +90,9 @@
     type DimensionSwatch,
     dimensionSwatch,
     migrationCrosshair,
+    migrationTrend,
+    migrationTrendDown,
+    migrationTrendUp,
     monthGridline,
     timelineHoverLayer,
   } from '@ai-usage/design-system/svelte';
@@ -108,6 +111,7 @@
     timelineReadoutFor,
     timelineSeriesIsFilterable,
     timelineSharePercent,
+    timelineTrendIsVisible,
     timelineUsesSessions,
   } from './timeline-model';
   import {
@@ -456,12 +460,19 @@
           {/if}
         </div>
         {#each readoutData.rows as row (row.key)}
+          {@const showTrend = readoutData.hasPrevious && timelineTrendIsVisible(row.delta)}
           <div class={readoutRow} data-active={hoveredKey === row.key ? 'true' : 'false'}>
             <span>{row.label}</span>
-            <span
-              >{formattedAmount(row.value, readoutData.total)}
-              · {fmtPct(timelineSharePercent(row.value, readoutData.total))}</span
-            >
+            <span>
+              {formattedAmount(row.value, readoutData.total)}
+              · {fmtPct(timelineSharePercent(row.value, readoutData.total))}
+              {#if showTrend}
+                {@const rose = (row.delta ?? 0) >= 0}
+                <span class={cx(migrationTrend, rose ? migrationTrendUp : migrationTrendDown)} data-timeline-trend
+                  >{rose ? '▲' : '▼'} {fmtPct(Math.abs(row.delta ?? 0))}</span
+                >
+              {/if}
+            </span>
           </div>
         {/each}
         {#if readoutData.bucket.unclassified}
