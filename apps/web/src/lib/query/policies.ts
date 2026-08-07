@@ -48,7 +48,9 @@ export const webQueryPolicies = {
     refetchOnReconnect: false,
     refetchOnWindowFocus: false,
     retry: false,
-    staleTime: 0,
+    // Publication events explicitly invalidate aliases. Keeping them fresh between events avoids
+    // reacquiring the same bootstrap for every tab, filter, sort, and range transition.
+    staleTime: Number.POSITIVE_INFINITY,
   }),
   finiteSwr: policy({
     gcTime: DEFAULT_BOUNDED_GC_TIME_MS,

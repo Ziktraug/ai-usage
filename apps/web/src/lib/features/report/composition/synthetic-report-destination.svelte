@@ -121,6 +121,17 @@
       pending = false;
     });
   });
+  // Once the rendered payload describes the committed range, the local preview has nothing left to
+  // add, so it retires here rather than on pointerup — the same contract as the live destination.
+  let previewRetiredForRangeKey = '';
+  $effect(() => {
+    const committedRangeKey = JSON.stringify(renderedSearch.range);
+    if (committedRangeKey === previewRetiredForRangeKey) {
+      return;
+    }
+    previewRetiredForRangeKey = committedRangeKey;
+    draggedWindowApiValue = null;
+  });
   onDestroy(() => {
     responseGeneration += 1;
   });
@@ -183,6 +194,10 @@
   let dimension = $state<'campaign' | 'harness' | 'machine' | 'model' | 'origin' | 'provider' | 'project'>('harness');
   let granularity = $state<'day' | 'month' | 'week'>('day');
   let timelineValue = $state<'cost' | 'sessions' | 'share'>('cost');
+  // Headline value of the window under the pointer, so the hero keeps tracking the brush now that a
+  // gesture only commits on release. This payload recomputes in memory, so the committed range
+  // itself is the signal to retire the preview.
+  let draggedWindowApiValue = $state<number | null>(null);
   let detailRows = $state<readonly SessionPresentationRow[]>([]);
   let selectedRowId = $state<string | null>(null);
   let selection = $state<SessionSelectionInput | null>(null);
@@ -427,6 +442,7 @@
         timelineValue = options.value;
       }}
     onRangeChange={navigation.setDateRange}
+    onWindowPreview={(apiValue) => (draggedWindowApiValue = apiValue)}
     {presentCampaignSeries}
     {presentMachineSeries}
     range={renderedSearch.range}
@@ -451,6 +467,7 @@
       <OverviewPage
         {activeSeriesKeys}
         {dimension}
+        {draggedWindowApiValue}
         freshness={focusedMachineFreshness}
         {granularity}
         {machineFreshnessStatus}

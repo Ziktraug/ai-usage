@@ -320,7 +320,11 @@
 <div class={chart} data-timeline-labels-settled={retainedTickIds === null ? 'false' : 'true'}>
   {#if timeline && timeline.buckets.length > 0}
     <ul aria-label={`${timeline.dimension} timeline legend`} class={legend} data-report-range-part="total-legend">
-      <li class={rangeTotal} data-report-range-total>{formattedAmount(summary.total, summary.total)}</li>
+      <!-- Only the session count earns a slot here. In value mode this restated the hero verbatim,
+           and in share mode it was a constant 100%; the per-series shares below carry the split. -->
+      {#if useSessions}
+        <li class={rangeTotal} data-report-range-total>{fmtNum(summary.total)}</li>
+      {/if}
       {#each legendSeries as series (series.key)}
         {@const total = summary.totalsByKey.get(series.key) ?? 0}
         {@const active = activeSeriesKeys.includes(series.key)}

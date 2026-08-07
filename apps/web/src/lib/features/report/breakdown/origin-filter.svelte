@@ -3,17 +3,26 @@
   import { Checkbox, Popover } from '@ai-usage/design-system/svelte';
   import { type SessionOrigin, sessionOriginLabel, sessionOrigins } from '@ai-usage/report-core/session-query';
   import { defaultDashboardOrigins, isDefaultDashboardOriginSelection } from '../../../../dashboard-search';
-  import { button } from './styles';
+  import { button, field } from './styles';
 
-  const originTrigger = css({
-    minW: { base: 0, sm: '190px' },
-    flex: { base: '1 1 190px', sm: '0 1 220px' },
-    justifyContent: 'space-between',
-    borderColor: 'accent',
-    bg: 'accentTint',
-    color: 'ink',
-  });
-  const neutralOriginTrigger = css({ borderColor: 'line', bg: 'surface' });
+  // Composed from the shared field so Origin keeps the same height, border and padding as the
+  // harness and machine selects beside it — on its own it rendered as borderless tinted text.
+  // The accent treatment is additive and now means one thing only: this filter is narrowing.
+  const originTrigger = cx(
+    field,
+    css({
+      display: 'inline-flex',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: '8px',
+      minW: { base: 0, sm: '190px' },
+      flex: { base: '1 1 190px', sm: '0 1 220px' },
+      cursor: 'pointer',
+      textAlign: 'left',
+      _hover: { borderColor: 'lineStrong' },
+    }),
+  );
+  const narrowedOriginTrigger = css({ borderColor: 'accent', bg: 'accentTint' });
   const popoverContent = css({
     zIndex: 50,
     display: 'grid',
@@ -70,7 +79,7 @@
   contentClass={popoverContent}
   {trigger}
   triggerAriaLabel="Filter by origin"
-  triggerClass={value.length > 0 ? originTrigger : cx(originTrigger, neutralOriginTrigger)}
+  triggerClass={value.length > 0 ? cx(originTrigger, narrowedOriginTrigger) : originTrigger}
 >
   <div class={popoverHeader}>
     <span>Session origin</span>

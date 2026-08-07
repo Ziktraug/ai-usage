@@ -10,6 +10,7 @@ import {
 } from '@ai-usage/report-core/session-query';
 import { createServedReportSession, type ServedRevisionDescriptor } from '../../../../served-report-session';
 import { createWebQueryClient } from '../../../query/client';
+import { sessionPageKey } from '../../../query/options/session';
 import type { SessionClientAdapter } from '../../../rpc/session-client';
 import { syntheticCampaignRow, syntheticSessionRow } from './session-table.fixtures';
 import {
@@ -18,6 +19,7 @@ import {
   type SessionTableQueryOwner,
   type SessionTableQueryScope,
   SessionTableRevisionExpiredError,
+  seedSessionTableQueryState,
   sessionRowsForTableState,
   unfilteredCampaignQuery,
 } from './session-table-query-owner';
@@ -123,6 +125,24 @@ const createTestSessionTableServedSession = (options: {
   });
 
 describe('Svelte session exact-query owner', () => {
+  test('seeds the first Sessions table synchronously from the exact SSR page', () => {
+    const queryClient = createWebQueryClient();
+    const queryScope = scope('seeded');
+    const request = parseSessionQueryRequest({ ...queryScope, cursor: null, revision: 'revision-seeded' });
+    queryClient.setQueryData(sessionPageKey(request), successfulPage(request, [item()]));
+
+    const seeded = seedSessionTableQueryState({
+      queryClient,
+      revision: request.revision,
+      scope: queryScope,
+    });
+
+    expect(seeded?.query).toEqual(request);
+    expect(seeded?.items).toEqual([item()]);
+    expect(seeded?.loadingMore).toBe(false);
+    queryClient.clear();
+  });
+
   test('projects the authoritative page envelope campaign identity onto its presentation row', async () => {
     const row = { ...syntheticCampaignRow(9), campaignKey: 'stale-row-campaign' };
     const envelopeItem: SessionPageItem = {

@@ -161,7 +161,8 @@ describe('session table Svelte rendering', () => {
     ]);
 
     expect(liveSource).toContain('createSessionTableQueryOwner');
-    expect(liveSource).toContain('sessionQueryState = $state.raw<SessionTableQueryState>()');
+    expect(liveSource).toContain('sessionQueryState = $state.raw<SessionTableQueryState | undefined>(');
+    expect(liveSource).toContain('seedSessionTableQueryState');
     expect(liveSource).toContain('sessionOwner: sessionQuery');
     expect(liveSource).toContain('<ReportLifecycleOwner session={focusedSession}>');
     expect(liveSource).toContain(

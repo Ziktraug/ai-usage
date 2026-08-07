@@ -14,4 +14,27 @@ describe('report route load invalidation', () => {
     expect(pageSource).toContain('url: rpcBaseUrl');
     expect(pageSource).not.toContain('searchParams');
   });
+
+  test('acquires the report on the server so hydration never repeats the request', async () => {
+    const pageSource = await readFile(new URL('+page.ts', import.meta.url), 'utf8');
+    const serverSource = await readFile(new URL('+page.server.ts', import.meta.url), 'utf8');
+
+    // The universal load must stay free of report acquisition: it runs again in the browser.
+    expect(pageSource).not.toContain('acquireLiveReportQueryState');
+    expect(serverSource).toContain('acquireLiveReportQueryState');
+    expect(serverSource).toContain("depends('ai-usage:report-root')");
+    // Serialised server data is what the hydrating client adopts.
+    expect(pageSource).toContain('data.reportQueryState');
+  });
+
+  test('keeps the server load document-scoped so filters and ranges stay client-side', async () => {
+    const serverSource = await readFile(new URL('+page.server.ts', import.meta.url), 'utf8');
+
+    // A tracked url read makes the load search-scoped: every filter or range change would refetch
+    // __data.json and re-acquire the report the mounted component already owns.
+    expect(serverSource).toContain('untrack(() => new URL(url.href))');
+    expect(serverSource).toContain('untrack(() => new URL(url.origin))');
+    expect(serverSource).not.toContain('pageUrl: url');
+    expect(serverSource).not.toContain('searchParams');
+  });
 });

@@ -11,7 +11,13 @@ import { demoReportPayload } from '../../../../report-data';
 import { createWebQueryClient, dehydrateWebQueryClient } from '../../../query/client';
 import type { ReportQueryClient } from '../../../query/options/report';
 import { reportBootstrapKey } from '../../../query/options/report';
-import { loadReportPageData } from './report-bootstrap';
+import { acquireLiveReportQueryState } from './report-bootstrap';
+
+const liveAcquisitionOptions = () => ({
+  fetch: () => Promise.reject(new Error('The injected report client owns this test acquisition')),
+  pageUrl: new URL('http://report.invalid/'),
+  url: new URL('http://report.invalid/'),
+});
 
 const components = [
   'report-bootstrap-overview.svelte',
@@ -65,13 +71,15 @@ const viteServer = await createServer({
 });
 const closeViteServer = (): Promise<void> => viteServer.close();
 afterAll(closeViteServer);
-const [overviewModule, rootModule, serverModule] = await Promise.all([
+const [overviewModule, rootModule, workspaceModule, serverModule] = await Promise.all([
   viteServer.ssrLoadModule('/apps/web/src/lib/features/report/core/report-bootstrap-overview.svelte'),
   viteServer.ssrLoadModule('/apps/web/src/lib/features/report/core/report-root.fixture.svelte'),
+  viteServer.ssrLoadModule('/apps/web/src/lib/features/report/core/report-workspace.svelte'),
   viteServer.ssrLoadModule('svelte/server'),
 ]);
 const overview = componentFrom(overviewModule, 'Report bootstrap overview');
 const reportRoot = componentFrom(rootModule, 'Hydrated report root fixture');
+const reportWorkspace = componentFrom(workspaceModule, 'Report workspace');
 const { render } = rendererFrom(serverModule);
 
 const compatiblePublication = (): Extract<ReportRevisionBootstrapResult, { readonly ok: true }> => {
@@ -147,32 +155,52 @@ describe('report Svelte SSR components', () => {
     expect(body).toContain('Machines');
   });
 
-  it('renders ReportRoot from the awaited dehydrated current alias without a second bootstrap', async () => {
+  it('renders the live report shell server-side from the awaited alias without a second bootstrap', async () => {
     let bootstrapCount = 0;
-    const data = await loadReportPageData(
-      {
-        fetch: () => Promise.reject(new Error('The injected report client owns this test acquisition')),
-        mode: 'live',
-        url: new URL('http://report.invalid/'),
-      },
-      {
+    const data = {
+      mode: 'live',
+      queryState: await acquireLiveReportQueryState(liveAcquisitionOptions(), {
         createClient: () =>
           reportClientFixture(compatiblePublication(), () => {
             bootstrapCount += 1;
           }),
-      },
-    );
+      }),
+    } as const;
 
     expect(data.queryState.dehydratedState.queries[0]?.queryKey).toEqual(reportBootstrapKey());
     const { body } = render(reportRoot, { props: { data } });
     expect(bootstrapCount).toBe(1);
     expect(body).toContain('<main');
     expect(body).toContain('data-route-shell="report"');
-    expect(body).toContain('data-report-bootstrap-overview');
-    expect(body).toContain('data-report-revision="compatible-last-revision"');
-    expect(body).toContain('Compatible stored publication');
-    expect(body).toContain('2026-07-01 – 2026-08-01');
-    expect(body).not.toContain('Loading report');
+    // The live destination — not the bootstrap placeholder — is what the server now emits.
+    expect(body).toContain('data-dashboard-filter-stack');
+    expect(body).not.toContain('data-report-bootstrap-overview');
+  });
+
+  it('marks retained output as stale while a refresh is in flight', () => {
+    // A range change rescales the Activity chart locally while every figure inside the workspace
+    // still describes the previous request. Both must not read as equally definitive.
+    const refreshing = render(reportWorkspace, { props: { hasOutput: true, pending: true } });
+    expect(refreshing.body).toContain('data-report-stale="true"');
+    expect(refreshing.body).toContain('aria-busy="true"');
+
+    const settled = render(reportWorkspace, { props: { hasOutput: true, pending: false } });
+    expect(settled.body).toContain('data-report-complete-output');
+    expect(settled.body).not.toContain('data-report-stale');
+    expect(settled.body).not.toContain('aria-busy');
+  });
+
+  it('shows the pending surface rather than an unavailable panel while the first commit is missing', async () => {
+    const data = {
+      mode: 'live',
+      queryState: await acquireLiveReportQueryState(liveAcquisitionOptions(), {
+        createClient: () => reportClientFixture(compatiblePublication(), () => undefined),
+      }),
+    } as const;
+
+    const { body } = render(reportRoot, { props: { data } });
+    expect(body).toContain('data-report-pending');
+    expect(body).not.toContain('data-report-unavailable');
   });
 
   it('renders the unavailable ReportRoot with normalized empty warnings', () => {

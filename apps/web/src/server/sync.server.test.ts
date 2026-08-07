@@ -17,6 +17,7 @@ const readModel = (overrides: Partial<UsageReadModel>): UsageReadModel => ({
   readCurrentBootstrap: () => Promise.reject(new Error('Unexpected bootstrap query')),
   readCurrentLocalProjectSources: () => Promise.reject(new Error('Unexpected source query')),
   readCurrentManifest: () => Promise.reject(new Error('Unexpected manifest query')),
+  readLatestProviderQuota: () => Promise.reject(new Error('Unexpected provider quota query')),
   readLocalMergeBundle: () => Promise.resolve(bundle),
   readLocalMachine: () => Promise.resolve(bundle.machine),
   readSyncFleet: () =>

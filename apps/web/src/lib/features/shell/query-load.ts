@@ -8,6 +8,11 @@ export const createAwaitedRouteQueryState = async (
   prefetch: RoutePrefetch,
 ): Promise<WebQueryHydrationState> => {
   const runtime = createWebQueryRuntime(options);
-  await prefetch(runtime);
-  return dehydrateWebQueryClient(runtime.queryClient);
+  try {
+    await prefetch(runtime);
+    return dehydrateWebQueryClient(runtime.queryClient);
+  } finally {
+    // Request-owned clients must not retain query data or timers after serialization (or failure).
+    runtime.queryClient.clear();
+  }
 };

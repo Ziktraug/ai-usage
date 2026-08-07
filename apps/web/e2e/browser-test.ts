@@ -66,6 +66,15 @@ export const waitForHydratedReport = async (page: Page): Promise<void> => {
   await playwrightExpect(page.locator('main[data-hydrated="true"][data-route-shell="report"]')).toBeVisible();
 };
 
+/**
+ * The navigation rail is server-rendered, so its links are clickable before the router exists —
+ * a click landing that early is a full document navigation, which discards any browser state the
+ * test installed. Await this before any click that must stay a client-side navigation.
+ */
+export const waitForHydratedNavigation = async (page: Page): Promise<void> => {
+  await playwrightExpect(page.locator('[data-app-navigation="desktop"][data-hydrated="true"]')).toBeVisible();
+};
+
 export const openHydratedReport = async (page: Page, url = '/'): Promise<Awaited<ReturnType<Page['goto']>>> => {
   const response = await page.goto(url);
   await waitForHydratedReport(page);

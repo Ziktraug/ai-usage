@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import type { Page } from '@playwright/test';
 import { FOCUSED_REPORT_E2E_CONTROL_KEY, FOCUSED_REPORT_E2E_ENABLED_KEY } from '../src/focused-report-e2e-fixture';
-import { expect, reportViewsFor, test } from './browser-test';
+import { expect, reportViewsFor, test, waitForHydratedNavigation } from './browser-test';
 
 const ADVANCED_COLUMNS_PATTERN = /Advanced columns/;
 const CALENDAR_NAME_PATTERN = /Daily activity calendar/;
@@ -141,6 +141,7 @@ test('loads a deterministic report overview', async ({ page }) => {
 
 test('locks definitive output while a focused filter response is pending', async ({ browserFailureGate, page }) => {
   await page.goto('/skills');
+  await waitForHydratedNavigation(page);
   await page.evaluate((enabledKey) => {
     Reflect.set(globalThis, enabledKey, true);
   }, FOCUSED_REPORT_E2E_ENABLED_KEY);
@@ -180,6 +181,11 @@ test('locks definitive output while a focused filter response is pending', async
     await expect(page.getByText('$0.00', { exact: true })).toHaveCount(0);
     await expect(page.locator('[data-metric-grid]')).toHaveCount(0);
     await expect(page.getByRole('region', { name: 'Date range' })).toHaveCount(0);
+    // Withholding the counts must not collapse their slot: dropping the boxes threw "Clear all"
+    // ~300px sideways for the length of the request. The pills stay, emptied and marked busy.
+    const counterSlot = page.locator('[data-active-filters] > span').first();
+    await expect(counterSlot).toHaveAttribute('aria-busy', 'true');
+    expect((await counterSlot.boundingBox())?.width ?? 0).toBeGreaterThan(0);
   } finally {
     violations = await finishPendingClaimAudit(page);
     await controlFocusedResponse(page, 'release');
@@ -284,7 +290,7 @@ test('shows analysis and report metrics without disclosure gates', async ({ page
   await expect(page.getByText(ESTIMATED_API_VALUE_HELP_PATTERN)).toBeVisible();
 
   const advancedSummary = page.locator('summary').filter({ hasText: 'Advanced analysis' });
-  const punchcard = page.getByRole('heading', { level: 2, name: 'Punchcard' });
+  const punchcard = page.getByRole('heading', { level: 3, name: 'Punchcard' });
   await expect(page.getByRole('heading', { level: 2, name: 'Advanced analysis' })).toBeVisible();
   await expect(advancedSummary).toHaveCount(0);
   await expect(punchcard).toBeVisible();

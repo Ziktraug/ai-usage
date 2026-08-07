@@ -5,6 +5,7 @@ import {
   type SessionPageItem,
   type SessionPresentationRow,
   type SessionQueryRequest,
+  sessionQueryFingerprint,
 } from '@ai-usage/report-core/session-query';
 import type { QueryClient } from '@tanstack/svelte-query';
 import type { ServedReportRefreshOutcome, ServedRevisionDescriptor } from '../../../../served-report-session';
@@ -13,7 +14,11 @@ import {
   type SessionQueryOperationContext,
   type SessionQueryPreparedTicket,
 } from '../../../../session-query-operation-owner';
-import { sessionCampaignChildrenQueryOptions, sessionPageQueryOptions } from '../../../query/options/session';
+import {
+  sessionCampaignChildrenQueryOptions,
+  sessionPageKey,
+  sessionPageQueryOptions,
+} from '../../../query/options/session';
 import { webQueryPolicies } from '../../../query/policies';
 import type { SessionClientAdapter } from '../../../rpc/session-client';
 
@@ -152,6 +157,37 @@ export const sessionRowsForTableState = (
       ...(children === undefined ? {} : { children: [...children] }),
     };
   }) ?? [];
+
+/** Rebuilds the first Sessions table state from the exact page dehydrated by the route. */
+export const seedSessionTableQueryState = (options: {
+  readonly queryClient: QueryClient;
+  readonly revision: string;
+  readonly scope: SessionTableQueryScope;
+}): SessionTableQueryState | undefined => {
+  const request = parseSessionQueryRequest({ ...options.scope, cursor: null, revision: options.revision });
+  const result = options.queryClient.getQueryData<Awaited<ReturnType<SessionClientAdapter['page']>>>(
+    sessionPageKey(request),
+  );
+  if (
+    !result?.ok ||
+    result.revision !== request.revision ||
+    result.requestFingerprint !== sessionQueryFingerprint(request) ||
+    result.data.revision !== request.revision ||
+    result.data.requestFingerprint !== sessionQueryFingerprint(request)
+  ) {
+    return;
+  }
+  return {
+    campaignChildren: new Map(),
+    campaignSessions: new Map(),
+    itemCount: result.data.itemCount,
+    items: result.data.items,
+    loadingMore: false,
+    nextCursor: result.data.nextCursor,
+    query: request,
+    sessionCount: result.data.sessionCount,
+  };
+};
 
 export const createSessionTableQueryOwner = (options: {
   readonly client: SessionClientAdapter;

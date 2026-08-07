@@ -8,7 +8,7 @@ export interface ServedReportSessionAdapter<
   Prepared,
   Descriptor extends ServedRevisionDescriptor = ServedRevisionDescriptor,
 > {
-  acquire(signal: AbortSignal): Promise<Descriptor>;
+  acquire(signal: AbortSignal, force: boolean): Promise<Descriptor>;
   commit(
     prepared: Prepared,
     descriptor: Descriptor,
@@ -60,7 +60,7 @@ export const createServedReportSession = <
     const destinationFingerprint = adapter.destinationFingerprint(destination);
     for (let attempt = 0; attempt < 2; attempt += 1) {
       try {
-        const descriptor = await adapter.acquire(controller.signal);
+        const descriptor = await adapter.acquire(controller.signal, attempt > 0);
         if (currentRequestId !== requestId) {
           return { status: 'superseded' };
         }

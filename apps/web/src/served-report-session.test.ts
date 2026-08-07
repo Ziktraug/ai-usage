@@ -65,10 +65,14 @@ describe('served report session', () => {
 
   test('reacquires exactly once after expiry and preserves the previous commit on a second failure', async () => {
     let acquisitions = 0;
+    const forcedAcquisitions: boolean[] = [];
     const commits: string[] = [];
     const expired = new Error('expired');
     const session = createServedReportSession<string, string>({
-      acquire: async () => descriptor(`r${++acquisitions}`),
+      acquire: (_signal, force) => {
+        forcedAcquisitions.push(force);
+        return Promise.resolve(descriptor(`r${++acquisitions}`));
+      },
       commit: (prepared) => {
         commits.push(prepared);
       },
@@ -83,6 +87,7 @@ describe('served report session', () => {
     });
     expect((await session.refresh('overview')).status).toBe('committed');
     expect(acquisitions).toBe(2);
+    expect(forcedAcquisitions).toEqual([false, true]);
     expect(commits).toEqual(['r2']);
 
     const failing = createServedReportSession<string, string>({

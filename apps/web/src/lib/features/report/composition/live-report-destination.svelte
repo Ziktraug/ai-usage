@@ -40,6 +40,7 @@
   import {
     createSessionTableQueryOwner,
     type SessionTableQueryState,
+    seedSessionTableQueryState,
   } from '../../sessions/table/session-table-query-owner';
   import { useSessionWindowAnchorOwner } from '../../shell/session-window-anchor-context';
   import { useSourceControl } from '../../sources/context.svelte';
@@ -59,6 +60,7 @@
   import ReportWarnings from '../core/report-warnings.svelte';
   import ReportWorkspace from '../core/report-workspace.svelte';
   import ReportLifecycleOwner from '../lifecycle/report-lifecycle-owner.svelte';
+  import type { ServedReportOwnerSnapshot } from '../lifecycle/served-report-session-owner.svelte';
   import OverviewPage from '../overview/overview-page.svelte';
   import OverviewStatus from '../overview/overview-status.svelte';
   import ReportRangeControl from '../range/report-range-control.svelte';
@@ -69,8 +71,11 @@
     createFocusedReportDescriptorSource,
     createFocusedReportSession,
     type FocusedReportCommit,
+    type FocusedReportDescriptor,
+    INITIAL_REPORT_TIMELINE,
     initialFocusedReportDescriptor,
     requireFocusedBreakdown,
+    seedFocusedReportCommit,
   } from './report-destination';
   import { queryForDescriptor, reportDestinationForSearch, reportFilterFingerprint } from './report-search';
   import SessionDestinationRefresh from './session-destination-refresh.svelte';
@@ -103,10 +108,28 @@
   } = $props();
 
   const sessionWindowAnchorOwner = useSessionWindowAnchorOwner();
-  let dimension = $state<TimelineDimension>('harness');
-  let granularity = $state<MigrationGranularity>('day');
+  let dimension = $state<TimelineDimension>(INITIAL_REPORT_TIMELINE.dimension);
+  let granularity = $state<MigrationGranularity>(INITIAL_REPORT_TIMELINE.granularity);
   let timelineValue = $state<TimelineValue>('cost');
-  let commit = $state<FocusedReportCommit>();
+  // Headline value of the window currently under the pointer, so the hero tracks the brush instead
+  // of waiting for the release-triggered round trip. Null whenever the brush is not being dragged.
+  let draggedWindowApiValue = $state<number | null>(null);
+  // The route load hands us warm exact data for the landing destination. Reading it synchronously
+  // lets Overview paint during SSR and lets destination chunks mount without a data waterfall.
+  // The session below still owns every later commit; this seed is discarded as soon as it commits.
+  const initialDescriptor = untrack(() => initialFocusedReportDescriptor(bootstrapResult));
+  const initialDestination = untrack(() =>
+    reportDestinationForSearch(search, bootstrapResult.bootstrap.support.generatedAt, INITIAL_REPORT_TIMELINE),
+  );
+  let commit = $state<FocusedReportCommit | undefined>(
+    untrack(() =>
+      seedFocusedReportCommit({
+        descriptor: initialDescriptor,
+        destination: initialDestination.focused,
+        queryClient,
+      }),
+    ),
+  );
   let detailRows = $state<readonly SessionPresentationRow[]>([]);
   let selectedRowId = $state<string | null>(null);
   let selection = $state<SessionSelectionInput | null>(null);
@@ -121,12 +144,39 @@
   let sessionsDestinationModule = $state<SessionsDestinationModule>();
   let sessionsDestinationLoadFailed = $state(false);
   let sessionsDestinationLoad: Promise<void> | undefined;
-  let sessionQueryState = $state.raw<SessionTableQueryState>();
-  const initialDescriptor = untrack(() => initialFocusedReportDescriptor(bootstrapResult));
+  let deferredModuleCommit: FocusedReportCommit | undefined;
+  let sessionQueryState = $state.raw<SessionTableQueryState | undefined>(
+    untrack(() =>
+      initialDestination.focused?.kind === 'sessions'
+        ? seedSessionTableQueryState({
+            queryClient,
+            revision: initialDescriptor.revision,
+            scope: initialDestination.focused.sessions,
+          })
+        : undefined,
+    ),
+  );
   const sourceControl = useSourceControl();
   const descriptorSource = untrack(() =>
     createFocusedReportDescriptorSource({ client: reportClient, initial: initialDescriptor, queryClient }),
   );
+  const showCommit = (nextCommit: FocusedReportCommit): void => {
+    deferredModuleCommit = undefined;
+    commit = nextCommit;
+    // The committed figures now describe the dragged window, so the local preview retires here
+    // rather than on release — otherwise the headline briefly shows the range just left behind.
+    draggedWindowApiValue = null;
+  };
+  const acceptCommit = (nextCommit: FocusedReportCommit): void => {
+    const modulePending =
+      (nextCommit.destination.kind === 'breakdown' && !dashboardBreakdownModule) ||
+      (nextCommit.destination.kind === 'sessions' && !sessionsDestinationModule);
+    if (modulePending) {
+      deferredModuleCommit = nextCommit;
+      return;
+    }
+    showCommit(nextCommit);
+  };
   const sessionQuery = untrack(() =>
     createSessionTableQueryOwner({
       client: sessionClient,
@@ -140,9 +190,7 @@
     createFocusedReportSession({
       acquire: descriptorSource.acquire,
       client: reportClient,
-      onCommit: (nextCommit) => {
-        commit = nextCommit;
-      },
+      onCommit: acceptCommit,
       queryClient,
       sessionOwner: sessionQuery,
     }),
@@ -174,11 +222,32 @@
   );
   const focusedTimelineFiltersChanged = $derived(requestedFilterFingerprint !== committedFilterFingerprint);
   const primary = $derived(primaryDashboardTabFor(search.tab));
+  // The URL changes immediately, while the newly requested exact-revision data commits atomically.
+  // Keep rendering the last complete destination during that gap instead of replacing it with a
+  // page-sized loading message. The navigation still reflects the user's requested destination.
+  const visiblePrimary = $derived(commit?.destination.kind ?? primary);
+  /**
+   * Before the first commit there is no data and no error yet — the honest state is "loading".
+   * Without this the workspace falls through to "Report payload unavailable", which reads as a
+   * failure; the effect that would raise `pending` never runs during the server render.
+   */
+  const workspacePending = (snapshot: ServedReportOwnerSnapshot<FocusedReportDescriptor>): boolean => {
+    if (visiblePrimary === 'sessions') {
+      return false;
+    }
+    if (commit === undefined) {
+      return snapshot.refreshError === null;
+    }
+    return snapshot.pending;
+  };
   $effect(() => {
     if (primary === 'breakdown' && !dashboardBreakdownModule) {
       dashboardBreakdownLoad ??= import('../breakdown/dashboard-breakdown.svelte')
         .then((module) => {
           dashboardBreakdownModule = module;
+          if (deferredModuleCommit?.destination.kind === 'breakdown' && primary === 'breakdown') {
+            showCommit(deferredModuleCommit);
+          }
         })
         .catch(() => {
           dashboardBreakdownLoadFailed = true;
@@ -187,6 +256,9 @@
       sessionsDestinationLoad ??= import('./sessions-destination.svelte')
         .then((module) => {
           sessionsDestinationModule = module;
+          if (deferredModuleCommit?.destination.kind === 'sessions' && primary === 'sessions') {
+            showCommit(deferredModuleCommit);
+          }
         })
         .catch(() => {
           sessionsDestinationLoadFailed = true;
@@ -209,7 +281,7 @@
   );
   const totalSessions = $derived(bootstrap.support.analytics.sessionCount);
   const visibleSessions = $derived(
-    primary === 'sessions'
+    visiblePrimary === 'sessions'
       ? (servedSessionCount ?? totalSessions)
       : (commit?.overview.summary.sessionCount ?? totalSessions),
   );
@@ -373,7 +445,11 @@
 
 <ReportLifecycleOwner session={focusedSession}>
   {#snippet children(_owner)}
-    <FocusedDestinationRefresh destination={destination.focused} owner={_owner} />
+    <FocusedDestinationRefresh
+      destination={destination.focused}
+      owner={_owner}
+      publicationRevision={sourceControl.state().publication?.revision}
+    />
     <SessionDestinationRefresh destination={destination.focused} owner={_owner} queryOwner={sessionQuery} />
     <ReportWarnings
       cleanupDisabled={!mutationsEnabled}
@@ -413,6 +489,7 @@
           onDimensionFilter={navigation.setTimelineDimensionFilter}
           onOptionsChange={updateOverviewOptions}
           onRangeChange={navigation.setDateRange}
+          onWindowPreview={(apiValue) => (draggedWindowApiValue = apiValue)}
           {presentCampaignSeries}
           {presentMachineSeries}
           range={search.range}
@@ -423,12 +500,12 @@
     {/if}
     {@render activeFilterSummary(_owner.snapshot.pending)}
     <ReportWorkspace
-      hasOutput={primary === 'sessions' || commit !== undefined}
-      pending={primary === 'sessions' ? false : _owner.snapshot.pending}
+      hasOutput={visiblePrimary === 'sessions' || commit !== undefined}
+      pending={workspacePending(_owner.snapshot)}
       refreshError={_owner.snapshot.refreshError}
     >
       {#snippet status()}
-        {#if primary === 'overview' && commit?.destination.kind === 'overview' && !_owner.snapshot.pending}
+        {#if visiblePrimary === 'overview' && commit?.destination.kind === 'overview' && !_owner.snapshot.pending}
           <OverviewStatus
             onOpenQuotaHistory={() => (quotaHistoryOpen = true)}
             {providers}
@@ -438,10 +515,11 @@
         {/if}
       {/snippet}
       {#snippet children()}
-        {#if primary === 'overview' && commit?.destination.kind === 'overview'}
+        {#if visiblePrimary === 'overview' && commit?.destination.kind === 'overview'}
           <OverviewPage
             {activeSeriesKeys}
             {dimension}
+            {draggedWindowApiValue}
             freshness={bootstrap.machineFreshness}
             {granularity}
             machineFreshnessStatus={machineFreshnessStatusLabel(machineSnapshot)}
@@ -459,7 +537,7 @@
             result={commit.overview}
             value={timelineValue}
           />
-        {:else if primary === 'breakdown' && commit?.breakdown && dashboardBreakdownModule}
+        {:else if visiblePrimary === 'breakdown' && commit?.breakdown && dashboardBreakdownModule}
           {@const DashboardBreakdown = dashboardBreakdownModule.default}
           <DashboardBreakdown
             data={{
@@ -491,10 +569,10 @@
               payload: projectPayload,
             }}
           />
-        {:else if primary === 'sessions' && sessionsDestinationModule}
+        {:else if visiblePrimary === 'sessions' && sessionsDestinationModule}
           {@const SessionsDestination = sessionsDestinationModule.default}
           <SessionsDestination
-            destinationScope={destination.sessions}
+            destinationScope={commit?.destination.kind === 'sessions' ? commit.destination.sessions : destination.sessions}
             initialSessionWindowAnchor={sessionWindowAnchorOwner.available()}
             {navigate}
             onCampaignControlsChange={(binding) => (campaignSessionControls = binding)}

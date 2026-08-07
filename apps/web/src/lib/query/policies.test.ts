@@ -33,7 +33,7 @@ describe('Web query key and policy vocabulary', () => {
     expect(webQueryPolicies.currentAlias).toMatchObject({
       gcTime: DEFAULT_BOUNDED_GC_TIME_MS,
       retry: false,
-      staleTime: 0,
+      staleTime: Number.POSITIVE_INFINITY,
     });
     expect(webQueryPolicies.immutableRevision).toMatchObject({
       gcTime: DEFAULT_BOUNDED_GC_TIME_MS,

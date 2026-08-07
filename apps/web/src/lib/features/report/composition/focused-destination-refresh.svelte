@@ -5,9 +5,11 @@
   let {
     destination,
     owner,
+    publicationRevision,
   }: {
     destination: FocusedReportDestination | null;
     owner: ServedReportSessionOwner<FocusedReportDestination, FocusedReportDescriptor>;
+    publicationRevision: string | undefined;
   } = $props();
 
   let requestedFingerprint = '';
@@ -17,7 +19,7 @@
       requestedFingerprint = '';
       return;
     }
-    const fingerprint = JSON.stringify(destination);
+    const fingerprint = JSON.stringify({ destination, publicationRevision });
     if (fingerprint === requestedFingerprint) {
       return;
     }

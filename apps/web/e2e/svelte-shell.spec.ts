@@ -1,6 +1,6 @@
 import AxeBuilder from '@axe-core/playwright';
 import type { Page } from '@playwright/test';
-import { expect, test, waitForHydratedReport } from './browser-test';
+import { expect, test, waitForFocusedReportSettled, waitForHydratedReport } from './browser-test';
 
 const ANY_VALUE_PATTERN = /.+/;
 const MANAGEMENT_DESTINATION_PATTERN = /Skills|Sources|Sync/;
@@ -12,18 +12,13 @@ const activeDestinationFor = (path: string, heading: string): string => {
   return path.startsWith('/skills') ? 'Skills' : heading;
 };
 
+// Report acquisition is document-scoped, so a history restore reuses the data it already holds
+// instead of refetching `/__data.json`. Wait on the restored report itself rather than on a network
+// round trip that correctly no longer happens.
 const restoreReportHistory = async (page: Page, expectedUrl: string): Promise<void> => {
-  const restoredReportDataFinished = page.waitForEvent('requestfinished', {
-    predicate: (request) => request.resourceType() === 'fetch' && new URL(request.url()).pathname === '/__data.json',
-  });
-  await Promise.all([
-    restoredReportDataFinished,
-    (async () => {
-      await page.goBack();
-      await expect(page).toHaveURL(expectedUrl);
-      await waitForHydratedReport(page);
-    })(),
-  ]);
+  await page.goBack();
+  await expect(page).toHaveURL(expectedUrl);
+  await waitForFocusedReportSettled(page);
 };
 
 const shellRoutes = [
@@ -137,6 +132,41 @@ test('server-renders and reloads every Svelte shell route with accessible naviga
   expect(browserSkillsRequests, 'SSR-hydrated Skills routes must not duplicate Query acquisition').toEqual([]);
 });
 
+test('collapses the rail to an icon column with instant hover labels below the labelled breakpoint', async ({
+  page,
+}) => {
+  const rail = page.getByRole('complementary', { name: 'Application navigation' });
+  const syncLink = rail.getByRole('link', { name: 'Sync', exact: true });
+  const hoverLabel = syncLink.locator('[data-rail-tooltip]');
+  // Reading the style straight after `hover()` resolves is the delay assertion: a tooltip gated on
+  // a timer would still be hidden here, the way the native `title` it replaced was.
+  const hoverLabelDisplay = (): Promise<string> => hoverLabel.evaluate((node) => getComputedStyle(node).display);
+
+  await page.setViewportSize({ height: 900, width: 1080 });
+  await page.goto('/');
+  await expect(rail).toBeVisible();
+  expect((await rail.boundingBox())?.width).toBe(56);
+  // The label is painted away, never removed: role/name lookups must keep resolving it.
+  await expect(syncLink).toHaveAccessibleName('Sync');
+  expect(await hoverLabelDisplay()).toBe('none');
+  await syncLink.hover();
+  expect(await hoverLabelDisplay()).toBe('block');
+  expect(await hoverLabel.evaluate((node) => getComputedStyle(node, '::before').content)).toBe('"Sync"');
+  // The hover label is a second rendering of the text. Chrome folds an unhidden copy into the
+  // link's accessible name, so this guards against the rail announcing "Sync Sync" while hovered,
+  // and against the copy leaking into the text content the primary-navigation suite asserts on.
+  await expect(syncLink).toHaveAccessibleName('Sync');
+  await expect(syncLink).toHaveText('Sync');
+
+  await page.setViewportSize({ height: 900, width: 1280 });
+  expect((await rail.boundingBox())?.width).toBe(216);
+  await syncLink.hover();
+  // The visible label is back, so the hover label must stay down.
+  expect(await hoverLabelDisplay()).toBe('none');
+  await expect(syncLink).toHaveAccessibleName('Sync');
+  await expect(syncLink).not.toHaveAttribute('title', ANY_VALUE_PATTERN);
+});
+
 test('resolves stored and system theme before paint and toggles the named preference', async ({ page }) => {
   await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce' });
   await page.goto('/');
@@ -241,7 +271,7 @@ test('blocks dirty navigation through Keep, Discard, reload, focus, and cleanup'
 test('restores Svelte history and scroll without feedback loops', async ({ page }) => {
   await page.goto('/?foreign=kept#anchor');
   await waitForHydratedReport(page);
-  await expect(page.locator('[data-app-navigation][data-hydrated="true"]')).toBeVisible();
+  await expect(page.locator('[data-app-navigation="desktop"][data-hydrated="true"]')).toBeVisible();
   await page.evaluate(() => {
     document.body.style.minHeight = '4000px';
   });
@@ -264,7 +294,7 @@ test('restores Svelte history and scroll without feedback loops', async ({ page 
 test('restores Session scroll after a cross-route history remount', async ({ page }) => {
   await page.goto('/?tab=sessions');
   await waitForHydratedReport(page);
-  await expect(page.locator('[data-app-navigation][data-hydrated="true"]')).toBeVisible();
+  await expect(page.locator('[data-app-navigation="desktop"][data-hydrated="true"]')).toBeVisible();
   await expect(page.locator('[data-session-table-owner]')).toBeVisible();
   await page.evaluate(() => {
     document.body.style.minHeight = '4000px';

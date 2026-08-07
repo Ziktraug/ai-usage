@@ -33,6 +33,8 @@
   interface Props {
     activeSeriesKeys?: readonly string[];
     dimension?: TimelineDimension;
+    /** Headline value of the window being dragged, or null when the brush is settled. */
+    draggedWindowApiValue?: number | null;
     freshness?: FocusedMachineFreshness;
     granularity?: MigrationGranularity;
     machineFreshnessStatus?: string | null;
@@ -62,6 +64,7 @@
   let {
     activeSeriesKeys = [],
     dimension,
+    draggedWindowApiValue = null,
     freshness,
     granularity = 'day',
     machineFreshnessStatus = null,
@@ -85,7 +88,7 @@
 
 <div class={overviewGrid} data-report-overview data-report-revision={result.revision}>
   {#if overviewHasContent(result)}
-    <OverviewHero {range} summary={result.summary} />
+    <OverviewHero {draggedWindowApiValue} {range} summary={result.summary} />
     <ActivityHeatmap heatmap={result.view.heatmap} {onSelectDay} />
     <TokenAnatomy summary={result.summary} />
     <Records

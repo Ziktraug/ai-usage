@@ -6,11 +6,13 @@ const readWorkspaceFile = (relativePath: string): string =>
   readFileSync(fileURLToPath(new URL(`../../../../${relativePath}`, import.meta.url)), 'utf8');
 
 describe('canonical Sync route composition', () => {
-  test('awaits one Sync fleet load and renders one context-connected Sync root', () => {
+  test('awaits one document fleet load, defers SPA entry, and renders one context-connected Sync root', () => {
     const load = readWorkspaceFile('src/routes/sync/+page.server.ts');
     const page = readWorkspaceFile('src/routes/sync/+page.svelte');
 
-    expect(load).toContain("import { loadSyncPageData } from '$lib/features/sync/sync-load'");
+    expect(load).toContain('deferredSyncPageData, loadSyncPageData');
+    expect(load).toContain('if (isDataRequest)');
+    expect(load).toContain('return deferredSyncPageData()');
     expect(load).toContain("await loadSyncPageData({ fetch, requestOwner: 'sync-root-ssr', url })");
     expect(page).toContain("import { useSourceControl } from '$lib/features/sources/context.svelte'");
     expect(page).toContain("import SyncRoot from '$lib/features/sync/sync-root.svelte'");
@@ -51,7 +53,8 @@ describe('canonical Sync route composition', () => {
       "import { webReadObservabilityLifecycle } from '$lib/server/observability/web-read-lifecycle.server'",
     );
     expect(hook).toContain("import { handleTrustedLocalRequest } from '../src/server/trusted-local-hook.server'");
-    expect(hook).toContain('sequence(handleTrustedLocalRequest, handleApplicationRequest)');
+    // Compression wraps the trust seam so short-circuited responses are encoded too.
+    expect(hook).toContain('sequence(handleResponseCompression, handleTrustedLocalRequest, handleApplicationRequest)');
     expect(initialization).toBeGreaterThan(-1);
     expect(initialization).toBeLessThan(handle);
     expect(awaited).toBeGreaterThan(handle);

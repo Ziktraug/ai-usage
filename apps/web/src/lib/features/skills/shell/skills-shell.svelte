@@ -6,23 +6,18 @@
     ProjectSkillMarkdownInput,
     SkillMarkdownDocument,
   } from '@ai-usage/web-contract/skills';
-  import { createQuery, useIsFetching, useQueryClient } from '@tanstack/svelte-query';
+  import { createQuery, useIsFetching } from '@tanstack/svelte-query';
   import { onMount, type Snippet, untrack } from 'svelte';
   import { replaceState } from '$app/navigation';
   import type { RuntimeMode } from '../../../../runtime-mode';
   import type { WebQueryHydrationState } from '../../../query/client';
   import { useWebQueryHydrationContext, webQueryHydrationSignature } from '../../../query/hydration-context.svelte';
   import {
-    managedSkillMarkdownKey,
     managedSkillMarkdownQueryOptions,
-    projectSkillMarkdownKey,
     projectSkillMarkdownQueryOptions,
     type SkillsQueryClient,
-    skillsKnownProjectPathsKey,
     skillsKnownProjectPathsQueryOptions,
-    skillsProjectInventoriesKey,
     skillsProjectInventoriesQueryOptions,
-    skillsSnapshotKey,
     skillsSnapshotQueryOptions,
   } from '../../../query/options/skills';
   import { createBrowserWebRpcClient } from '../../../rpc/client';
@@ -68,33 +63,24 @@
   };
   let mounted = $state(false);
   const hydrationContext = useWebQueryHydrationContext();
-  const queryClient = useQueryClient();
   const hydrationApplied = $derived(hydrationContext.appliedSignature === webQueryHydrationSignature(hydrationState));
   const queriesEnabled = $derived(mounted && hydrationApplied && runtimeMode !== 'demo');
   const snapshotQuery = createQuery(() =>
     skillsSnapshotQueryOptions(client, {
       browser: mounted,
-      enabled:
-        hydrationApplied && runtimeMode !== 'demo' && queryClient.getQueryData(skillsSnapshotKey()) !== undefined,
+      enabled: queriesEnabled,
     }),
   );
   const knownPathsQuery = createQuery(() =>
     skillsKnownProjectPathsQueryOptions(client, {
       browser: mounted,
-      enabled:
-        hydrationApplied &&
-        runtimeMode !== 'demo' &&
-        queryClient.getQueryData(skillsKnownProjectPathsKey()) !== undefined,
+      enabled: queriesEnabled,
     }),
   );
   const inventoriesQuery = createQuery(() =>
     skillsProjectInventoriesQueryOptions(client, {
       browser: mounted,
-      enabled:
-        hydrationApplied &&
-        runtimeMode !== 'demo' &&
-        snapshotQuery.data?.configured === true &&
-        queryClient.getQueryData(skillsProjectInventoriesKey()) !== undefined,
+      enabled: queriesEnabled && snapshotQuery.data?.configured === true,
     }),
   );
   const querySnapshot = $derived(
@@ -175,10 +161,7 @@
   const managedDocumentQuery = createQuery(() =>
     managedSkillMarkdownQueryOptions(client, managedSkillName ?? '', {
       browser: mounted,
-      enabled:
-        queriesEnabled &&
-        managedSkillName !== undefined &&
-        queryClient.getQueryData(managedSkillMarkdownKey(managedSkillName)) !== undefined,
+      enabled: queriesEnabled && managedSkillName !== undefined,
     }),
   );
   const projectDocumentInput = $derived.by<ProjectSkillMarkdownInput | undefined>(() => {
@@ -201,10 +184,7 @@
       projectDocumentInput ?? { projectPath: '', runtimeDirId: 'agents-project', skillName: '' },
       {
         browser: mounted,
-        enabled:
-          queriesEnabled &&
-          projectDocumentInput !== undefined &&
-          queryClient.getQueryData(projectSkillMarkdownKey(projectDocumentInput)) !== undefined,
+        enabled: queriesEnabled && projectDocumentInput !== undefined,
       },
     ),
   );

@@ -100,6 +100,35 @@ const sessionClientWithPage = (page: SessionClientAdapter['page']): SessionClien
 };
 
 describe('focused Svelte report destination', () => {
+  test('reuses the current bootstrap until publication invalidation or a forced expiry recovery', async () => {
+    const queryClient = createWebQueryClient();
+    let bootstrapCalls = 0;
+    const client: ReportQueryClient = {
+      getFocusedReportBreakdown: () => Promise.reject(new Error('Unexpected Breakdown query')),
+      getFocusedReportOverview: () => Promise.reject(new Error('Unexpected Overview query')),
+      getFocusedReportSupport: () => Promise.reject(new Error('Unexpected support query')),
+      getReportRevisionBootstrap: () => {
+        bootstrapCalls += 1;
+        return Promise.resolve(bootstrap(bootstrapCalls === 1 ? 'revision-two' : 'revision-three'));
+      },
+      getReportRevisionManifest: () => Promise.reject(new Error('Unexpected manifest query')),
+    };
+    const descriptorSource = createFocusedReportDescriptorSource({
+      client,
+      initial: initialFocusedReportDescriptor(bootstrap('revision-one')),
+      queryClient,
+    });
+    const signal = new AbortController().signal;
+
+    expect((await descriptorSource.acquire(signal, false)).revision).toBe('revision-one');
+    expect((await descriptorSource.acquire(signal, false)).revision).toBe('revision-two');
+    expect((await descriptorSource.acquire(signal, false)).revision).toBe('revision-two');
+    expect(bootstrapCalls).toBe(1);
+
+    expect((await descriptorSource.acquire(signal, true)).revision).toBe('revision-three');
+    expect(bootstrapCalls).toBe(2);
+  });
+
   test('preserves timeline-only versus advanced Overview request ownership', async () => {
     const queryClient = createWebQueryClient();
     const includeAdvancedRequests: boolean[] = [];

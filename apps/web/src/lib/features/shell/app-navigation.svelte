@@ -5,11 +5,6 @@
   import { page } from '$app/state';
   import type { RuntimeMode } from '../../../runtime-mode';
   import {
-    browserSessionSurfaceModeEnvironment,
-    createSessionSurfaceModeController,
-    type SessionSurfaceMode,
-  } from '../../../session-surface-mode';
-  import {
     createDirtyNavigationController,
     type DirtyBeforeNavigate,
     type DirtyNavigationController,
@@ -34,35 +29,57 @@
     shouldPreserveReportScroll,
   } from './navigation';
   import NavigationLink from './navigation-link.svelte';
+  import type { ProviderQuotaRailEntry } from './provider-quota-rail';
+  import ProviderQuotaRail from './provider-quota-rail.svelte';
   import { useSessionWindowAnchorOwner } from './session-window-anchor-context';
   import ThemeToggle from './theme-toggle.svelte';
 
-  let { runtimeMode }: { runtimeMode: RuntimeMode } = $props();
+  let {
+    providerQuota = [],
+    runtimeMode,
+  }: { providerQuota?: readonly ProviderQuotaRailEntry[]; runtimeMode: RuntimeMode } = $props();
 
+  // Both rails render on the server; the viewport breakpoint alone decides which one is visible, so
+  // navigation is present in the very first paint instead of waiting for matchMedia after hydration.
+  //
+  // Between `md` and `xl` the desktop rail narrows to an icon column. A 216px rail spends a fifth of
+  // a 1080px-wide portrait display on navigation chrome, and the 160px it gives back is worth more
+  // than the labels; at `xl` and above (1920 and 4K displays) the labelled rail is unchanged.
   const desktopRail = css({
     position: 'fixed',
     insetBlock: 0,
     insetInlineStart: 0,
     zIndex: 40,
-    display: 'flex',
+    display: { base: 'none', md: 'flex' },
     flexDirection: 'column',
-    w: '216px',
-    p: '24px 16px',
+    w: { md: '56px', xl: '216px' },
+    p: { md: '20px 8px', xl: '24px 16px' },
     borderRight: '1px solid token(colors.line)',
     bg: 'surface',
     color: 'ink',
     _print: { display: 'none' },
   });
   const productName = css({
-    px: '10px',
-    pb: '24px',
+    px: { md: 0, xl: '10px' },
+    pb: { md: '18px', xl: '24px' },
     color: 'accent',
     fontSize: '15px',
     fontWeight: 750,
     letterSpacing: '-0.01em',
+    textAlign: { md: 'center', xl: 'start' },
   });
-  const navigationGroup = css({ display: 'grid', gap: '6px', mb: '22px' });
+  // The wordmark stays in the accessibility tree at every width; the short mark is the visual
+  // stand-in the icon rail draws in its place.
+  const productMark = css({ display: { md: 'block', xl: 'none' } });
+  const productWordmark = css({ srOnly: { md: true, xl: false } });
+  const navigationGroup = css({ display: 'grid', gap: '6px', mb: { md: '16px', xl: '22px' } });
+  // The icon rail drops the group headings, so a hairline carries the grouping the labels used to.
+  const navigationGroupDivider = css({
+    md: { pt: '16px', borderTop: '1px solid token(colors.line)' },
+    xl: { pt: 0, borderTop: 'none' },
+  });
   const navigationGroupLabel = css({
+    display: { md: 'none', xl: 'block' },
     px: '10px',
     pb: '3px',
     color: 'muted',
@@ -72,10 +89,13 @@
     textTransform: 'uppercase',
   });
   const navigationLink = css({
+    position: 'relative',
     display: 'flex',
     alignItems: 'center',
-    minH: '38px',
-    px: '10px',
+    justifyContent: { md: 'center', xl: 'flex-start' },
+    gap: '10px',
+    minH: { base: '38px', md: '40px', xl: '38px' },
+    px: { base: '10px', md: 0, xl: '10px' },
     borderWidth: '1px',
     borderStyle: 'solid',
     borderRadius: 'md',
@@ -85,14 +105,26 @@
     transition: 'background-color 0.12s ease, border-color 0.12s ease, color 0.12s ease',
     _hover: { bg: 'surfaceMuted', color: 'ink' },
     _focusVisible: { outline: '2px solid token(colors.accent)', outlineOffset: '2px' },
+    // Only the icon rail needs a hover label, and it needs it on the first frame: the native
+    // `title` it replaces waits about a second, which is unusable when the icon is the sole
+    // affordance. The label is styled from the same tokens as the design system's
+    // `tooltipContentClass` so it reads as the same object, but it is not an Ark `Tooltip`: the
+    // text is already this link's accessible name, so a `role="tooltip"` would only repeat it, and
+    // six tooltip machines would be mounted in the shell on every route to say what the markup
+    // already says. Revealing it is pure CSS, so there is no open delay to tune away.
+    md: { '&:hover [data-rail-tooltip], &:focus-visible [data-rail-tooltip]': { display: 'block' } },
+    xl: { '&:hover [data-rail-tooltip], &:focus-visible [data-rail-tooltip]': { display: 'none' } },
   });
   const navigationLinkInactive = css({ borderColor: 'transparent', color: 'muted' });
   const navigationLinkActive = css({ borderColor: 'lineStrong', bg: 'accentSoft', color: 'ink' });
+  // One `mt: auto` for the whole bottom stack: the quota panel renders conditionally, so hanging the
+  // push off the panel itself would drop the theme toggle back up against the navigation links
+  // whenever no provider reports a quota.
+  const railBottom = css({ mt: 'auto' });
   const railFooter = css({
-    mt: 'auto',
     display: 'flex',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    justifyContent: { md: 'center', xl: 'space-between' },
     gap: '8px',
   });
   const mobileNavigation = css({
@@ -100,7 +132,7 @@
     insetInline: 0,
     bottom: 0,
     zIndex: 50,
-    display: 'grid',
+    display: { base: 'grid', md: 'none' },
     gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
     minH: '64px',
     px: '8px',
@@ -131,7 +163,7 @@
     right: '10px',
     bottom: '70px',
     zIndex: 51,
-    display: 'grid',
+    display: { base: 'grid', md: 'none' },
     gap: '6px',
     minW: '190px',
     p: '10px',
@@ -143,15 +175,14 @@
 
   const managePopoverId = 'app-manage-navigation';
   const reportTabs = [
-    { label: 'Overview', tab: 'overview' },
-    { label: 'Sessions', tab: 'sessions' },
-    { label: 'Breakdown', tab: 'breakdown' },
+    { icon: 'overview', label: 'Overview', tab: 'overview' },
+    { icon: 'sessions', label: 'Sessions', tab: 'sessions' },
+    { icon: 'breakdown', label: 'Breakdown', tab: 'breakdown' },
   ] as const;
   const showManage = $derived(runtimeMode !== 'demo');
   const dirtyRegistry = useDirtyGuardRegistry();
   const sessionWindowAnchorOwner = useSessionWindowAnchorOwner();
 
-  let surfaceMode = $state<SessionSurfaceMode>('pending');
   let manageOpen = $state(false);
   let manageButton = $state<HTMLButtonElement>();
   let navigationFailure = $state(false);
@@ -255,10 +286,6 @@
   });
 
   onMount(() => {
-    const surfaceController = createSessionSurfaceModeController(browserSessionSurfaceModeEnvironment());
-    const stopSurface = surfaceController.start((mode) => {
-      surfaceMode = mode;
-    });
     scrollLifecycle = installScrollLifecycle({
       afterNavigate: (listener) => {
         afterScrollListeners.add(listener);
@@ -350,7 +377,6 @@
       sessionWindowAnchorOwner.cancelNavigation();
       navigationHydrated = false;
       dirtyController = undefined;
-      stopSurface();
     };
   });
 
@@ -383,83 +409,89 @@
 
 <DiscardNavigationDialog onDiscard={discardBlockedNavigation} onKeep={keepBlockedNavigation} open={blockedNavigation} />
 
-{#if surfaceMode === 'desktop'}
-  <aside
-    aria-label="Application navigation"
-    class={desktopRail}
-    data-app-navigation="desktop"
-    data-hydrated={navigationHydrated ? 'true' : 'false'}
-  >
-    <div class={productName}>ai-usage</div>
-    <nav aria-label="Report views" class={navigationGroup}>
-      <div class={navigationGroupLabel}>Report</div>
-      {#each reportTabs as destination (destination.tab)}
-        <NavigationLink
-          active={page.url.pathname === '/' && activeReportTab(page.url) === destination.tab}
-          class={linkClass(page.url.pathname === '/' && activeReportTab(page.url) === destination.tab)}
-          href={reportDestinationUrl(page.url, destination.tab).href}
-          label={destination.label}
-          preserveScroll
-        />
-      {/each}
-    </nav>
-    {#if showManage}
-      <nav aria-label="Manage destinations" class={navigationGroup}>
-        <div class={navigationGroupLabel}>Manage</div>
-        {#each shellManagementDestinations as destination (destination.href)}
-          <NavigationLink
-            active={isActiveManagementDestination(page.url.pathname, destination.href)}
-            class={linkClass(isActiveManagementDestination(page.url.pathname, destination.href))}
-            href={destination.href}
-            label={destination.label}
-          />
-        {/each}
-      </nav>
-    {/if}
-    <div class={railFooter}><span class={navigationGroupLabel}>Theme</span><ThemeToggle /></div>
-  </aside>
-{:else if surfaceMode === 'mobile'}
-  <nav
-    aria-label="Report views"
-    class={cx(mobileNavigation, !showManage && mobileNavigationReportOnly)}
-    data-app-navigation="mobile"
-    data-hydrated={navigationHydrated ? 'true' : 'false'}
-  >
+<aside
+  aria-label="Application navigation"
+  class={desktopRail}
+  data-app-navigation="desktop"
+  data-hydrated={navigationHydrated ? 'true' : 'false'}
+>
+  <div class={productName}>
+    <span aria-hidden="true" class={productMark}>ai</span><span class={productWordmark}>ai-usage</span>
+  </div>
+  <nav aria-label="Report views" class={navigationGroup}>
+    <div class={navigationGroupLabel}>Report</div>
     {#each reportTabs as destination (destination.tab)}
       <NavigationLink
         active={page.url.pathname === '/' && activeReportTab(page.url) === destination.tab}
-        class={linkClass(page.url.pathname === '/' && activeReportTab(page.url) === destination.tab, true)}
+        class={linkClass(page.url.pathname === '/' && activeReportTab(page.url) === destination.tab)}
         href={reportDestinationUrl(page.url, destination.tab).href}
+        icon={destination.icon}
         label={destination.label}
         preserveScroll
       />
     {/each}
-    {#if showManage}
-      <ManageButton
-        class={cx(
-          mobileLink,
-          shellManagementDestinations.some(({ href }) => isActiveManagementDestination(page.url.pathname, href))
-            ? mobileLinkActive
-            : mobileLinkInactive,
-        )}
-        controls={managePopoverId}
-        onToggle={() => { manageOpen = !manageOpen; }}
-        open={manageOpen}
-        bind:element={manageButton}
-      />
-    {/if}
   </nav>
-  {#if showManage && manageOpen}
-    <nav aria-label="Manage destinations" class={managePopover} id={managePopoverId}>
+  {#if showManage}
+    <nav aria-label="Manage destinations" class={cx(navigationGroup, navigationGroupDivider)}>
+      <div class={navigationGroupLabel}>Manage</div>
       {#each shellManagementDestinations as destination (destination.href)}
         <NavigationLink
           active={isActiveManagementDestination(page.url.pathname, destination.href)}
           class={linkClass(isActiveManagementDestination(page.url.pathname, destination.href))}
           href={destination.href}
+          icon={destination.icon}
           label={destination.label}
         />
       {/each}
-      <ThemeToggle />
     </nav>
   {/if}
+  <div class={railBottom}>
+    <ProviderQuotaRail entries={providerQuota} />
+    <div class={railFooter}><span class={navigationGroupLabel}>Theme</span><ThemeToggle /></div>
+  </div>
+</aside>
+
+<nav
+  aria-label="Report views"
+  class={cx(mobileNavigation, !showManage && mobileNavigationReportOnly)}
+  data-app-navigation="mobile"
+  data-hydrated={navigationHydrated ? 'true' : 'false'}
+>
+  {#each reportTabs as destination (destination.tab)}
+    <NavigationLink
+      active={page.url.pathname === '/' && activeReportTab(page.url) === destination.tab}
+      class={linkClass(page.url.pathname === '/' && activeReportTab(page.url) === destination.tab, true)}
+      href={reportDestinationUrl(page.url, destination.tab).href}
+      label={destination.label}
+      preserveScroll
+    />
+  {/each}
+  {#if showManage}
+    <ManageButton
+      class={cx(
+          mobileLink,
+          shellManagementDestinations.some(({ href }) => isActiveManagementDestination(page.url.pathname, href))
+            ? mobileLinkActive
+            : mobileLinkInactive,
+        )}
+      controls={managePopoverId}
+      onToggle={() => { manageOpen = !manageOpen; }}
+      open={manageOpen}
+      bind:element={manageButton}
+    />
+  {/if}
+</nav>
+{#if showManage && manageOpen}
+  <nav aria-label="Manage destinations" class={managePopover} id={managePopoverId}>
+    {#each shellManagementDestinations as destination (destination.href)}
+      <NavigationLink
+        active={isActiveManagementDestination(page.url.pathname, destination.href)}
+        class={linkClass(isActiveManagementDestination(page.url.pathname, destination.href))}
+        href={destination.href}
+        icon={destination.icon}
+        label={destination.label}
+      />
+    {/each}
+    <ThemeToggle />
+  </nav>
 {/if}

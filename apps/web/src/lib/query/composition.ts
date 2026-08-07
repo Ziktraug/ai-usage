@@ -84,10 +84,11 @@ export const createWebQueryRuntime = ({
     queryClient,
     rpc: createWebRpcClient({
       fetch,
-      headers: {
-        origin: url.origin,
-        ...(requestOwner === undefined ? {} : { 'x-ai-usage-request-owner': requestOwner }),
-      },
+      // Only headers a browser can reproduce may be sent here. `load` runs on the server and again
+      // during hydration, and SvelteKit keys its serialised SSR fetch cache on the request headers.
+      // `Origin` is a forbidden header name the browser silently drops, so setting it server-side
+      // desynchronises the two cache keys and forces the hydrating client to refetch over the network.
+      headers: requestOwner === undefined ? {} : { 'x-ai-usage-request-owner': requestOwner },
       url: new URL('/rpc', url),
     }),
   };

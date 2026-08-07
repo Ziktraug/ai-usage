@@ -6,6 +6,7 @@ import {
   openHydratedSkills,
   reportViewsFor,
   test,
+  waitForHydratedNavigation,
   waitForHydratedReport,
   waitForHydratedSkills,
 } from './browser-test';
@@ -43,6 +44,8 @@ const focusContrast = async (page: Page, target: Locator): Promise<number> => {
   const tabIndex = await target.evaluate((element) => (element as HTMLElement).tabIndex);
   expect(tabIndex).toBeGreaterThanOrEqual(0);
   await target.focus();
+  await page.keyboard.press('Shift+Tab');
+  await page.keyboard.press('Tab');
   await expect(target).toBeFocused();
   const focusStyle = await target.evaluate((element) => {
     const style = getComputedStyle(element);
@@ -88,6 +91,9 @@ for (const route of routes) {
   test(`${route.heading} exposes shared navigation without narrow overflow`, async ({ browser, page }) => {
     await page.setViewportSize({ height: 900, width: 1280 });
     await page.goto(route.path);
+    // Both rails are server-rendered, so their presence no longer implies a live router: the Manage
+    // popover asserted below is driven by client state and stays inert until the navigation hydrates.
+    await waitForHydratedNavigation(page);
     if (route.path === '/') {
       await waitForHydratedReport(page);
     } else if (route.path.startsWith('/skills')) {
@@ -177,6 +183,25 @@ test('keeps the active report destination visible after deep scrolling', async (
   await page.evaluate(() => window.scrollTo({ top: 3000 }));
   await expect(navigation).toBeVisible();
   await expect(activeDestination).toBeVisible();
+});
+
+test('shows the report panel focus indicator only for keyboard navigation', async ({ page }) => {
+  await openHydratedReport(page);
+
+  const dashboardPanel = page.locator('[data-dashboard-panel]');
+  await dashboardPanel.locator(':scope > *').evaluateAll((elements) => {
+    for (const element of elements) {
+      (element as HTMLElement).style.pointerEvents = 'none';
+    }
+  });
+  await dashboardPanel.click();
+  await expect(dashboardPanel).toBeFocused();
+  await expect(dashboardPanel).toHaveCSS('outline-style', 'none');
+
+  await page.keyboard.press('Shift+Tab');
+  await page.keyboard.press('Tab');
+  await expect(dashboardPanel).toBeFocused();
+  await expect(dashboardPanel).toHaveCSS('outline-style', 'solid');
 });
 
 for (const colorScheme of ['light', 'dark'] as const) {

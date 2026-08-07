@@ -18,6 +18,12 @@ export interface SyncPageLoadDependencies {
   readonly now?: () => number;
 }
 
+export const deferredSyncPageData = (now: () => number = Date.now): SyncPageData => ({
+  compatibleGeneration: SYNC_COMPATIBLE_GENERATION,
+  queryState: { dehydratedState: { mutations: [], queries: [] } },
+  renderedAt: now(),
+});
+
 /** Awaits the bounded fleet under the exact finite-SWR key used by the component. */
 export const loadSyncPageData = async (
   options: WebQueryRuntimeOptions,

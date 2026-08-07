@@ -1,5 +1,7 @@
 import type { FocusedSupportResult } from '@ai-usage/report-core/focused-report-query';
 import type { UsageMergeBundle } from '@ai-usage/report-core/merge-bundle';
+import { projectProviderQuotaObservation } from '@ai-usage/report-core/provider-quota';
+import { createProviderStatusDataset, type ProviderStatusDataset } from '@ai-usage/report-core/provider-status';
 import {
   queryServedRevisionData,
   type ServedRevisionQueryError,
@@ -12,6 +14,7 @@ import {
   queryCurrentServedLocalProjectSources,
   queryCurrentServedReportRevision,
   queryCurrentServedReportRevisionBootstrap,
+  queryLatestProviderQuotaObservations,
   queryLocalMergeBundle,
   queryUsageLocalMachine,
   queryUsageSyncFleet,
@@ -48,12 +51,25 @@ export interface UsageReadModel {
     options?: UsageReadModelCallOptions,
   ) => Promise<CurrentServedLocalProjectSources>;
   readonly readCurrentManifest: (options?: UsageReadModelCallOptions) => Promise<ServedReportRevisionManifest>;
+  /**
+   * Current quota heads only. This deliberately bypasses the report bootstrap: the navigation rail
+   * renders on every route, and `readCurrentBootstrap` would make each of them pay for the whole
+   * support blob to read a handful of percentages.
+   */
+  readonly readLatestProviderQuota: (options?: UsageReadModelCallOptions) => Promise<ProviderStatusDataset>;
   readonly readLocalMachine: (
     options?: UsageReadModelCallOptions,
   ) => Promise<{ readonly id: string; readonly label: string }>;
   readonly readLocalMergeBundle: (options?: UsageReadModelCallOptions) => Promise<UsageMergeBundle>;
   readonly readSyncFleet: (options?: UsageReadModelCallOptions) => Promise<QueryUsageSyncFleetResult>;
 }
+
+/**
+ * One head exists per provider × machine × account scope. A handful is the realistic ceiling, and
+ * the rail collapses them per provider anyway, so a small budget keeps a corrupt table from being
+ * read into the shell of every page.
+ */
+const MAXIMUM_RAIL_QUOTA_OBSERVATIONS = 64;
 
 export interface SqliteUsageReadModelOptions {
   readonly dbPath: string;
@@ -122,6 +138,19 @@ export const createSqliteUsageReadModel = (options: SqliteUsageReadModelOptions)
       }),
       callOptions,
     ),
+  readLatestProviderQuota: async (callOptions) => {
+    const result = await runReadEffect(
+      queryLatestProviderQuotaObservations({
+        dbPath: options.dbPath,
+        maximumObservations: MAXIMUM_RAIL_QUOTA_OBSERVATIONS,
+      }),
+      callOptions,
+    );
+    return createProviderStatusDataset(
+      result.observations.map(({ observation }) => projectProviderQuotaObservation(observation)),
+      options.now === undefined ? undefined : new Date(options.now()),
+    );
+  },
   readLocalMergeBundle: (callOptions) =>
     runReadEffect(
       queryLocalMergeBundle({

@@ -12,6 +12,7 @@
 </script>
 
 <script lang="ts">
+  import { css, cx } from '@ai-usage/design-system/css';
   import { Tooltip } from '@ai-usage/design-system/svelte';
   import type { FocusedReportSummary } from '@ai-usage/report-core/focused-report-query';
   import type { DashboardDateRangeSearch } from '../../../../dashboard-search';
@@ -22,9 +23,31 @@
     aggregateApiValuePresentation,
   } from '../../../foundation/presentation/report-value';
 
-  let { range, summary }: { range: DashboardDateRangeSearch; summary: FocusedReportSummary } = $props();
-  const apiValue = $derived(aggregateApiValuePresentation(summary.priceMeasurement));
-  const provenance = $derived(aggregateApiPriceProvenance(summary.priceMeasurement));
+  let {
+    draggedWindowApiValue = null,
+    range,
+    summary,
+  }: {
+    draggedWindowApiValue?: number | null;
+    range: DashboardDateRangeSearch;
+    summary: FocusedReportSummary;
+  } = $props();
+  // While the brush is dragged the value is summed from the buckets already on screen, so the
+  // headline tracks the handle. Only the amount is knowable locally: how much of it is priced, the
+  // session counts and the reported spend all come from the server and stay on the last commit —
+  // hence the busy marking on that block rather than a silently mismatched set of figures.
+  const previewing = $derived(draggedWindowApiValue !== null);
+  const measurement = $derived(
+    draggedWindowApiValue === null
+      ? summary.priceMeasurement
+      : { ...summary.priceMeasurement, knownCost: draggedWindowApiValue },
+  );
+  const apiValue = $derived(aggregateApiValuePresentation(measurement));
+  const provenance = $derived(aggregateApiPriceProvenance(measurement));
+  const provisional = css({ opacity: 0.45, transition: 'opacity 120ms ease' });
+  const provisionalAttributes = $derived(
+    previewing ? ({ 'aria-busy': 'true', 'data-hero-provisional': 'true' } as const) : {},
+  );
   const actualKnownSessions = $derived(Math.max(0, summary.sessionCount - summary.unknownActual));
   const formattedRangeDate = (value: string | undefined, fallback: string): string => {
     const date = value ? parseLocalDate(value) : null;
@@ -53,15 +76,15 @@
     <p class={heroValue}>{apiValue.label}</p>
     {#if provenance}
       <Tooltip content={provenance.description}>
-        <span class={heroText}>{provenance.label}</span>
+        <span {...provisionalAttributes} class={cx(heroText, previewing && provisional)}>{provenance.label}</span>
       </Tooltip>
     {/if}
-    <p class={heroText}>
+    <p {...provisionalAttributes} class={cx(heroText, previewing && provisional)}>
       Standard API-price estimate for {fmtNum(summary.pricedSessions)} of {fmtNum(summary.sessionCount)} sessions ({rangeLabel}).
       This is a comparison value, not savings or ROI.
     </p>
   </div>
-  <div class={heroSide}>
+  <div {...provisionalAttributes} class={cx(heroSide, previewing && provisional)}>
     <span class={heroMultiple} data-reported-actual-spend>
       Reported actual spend · {fmtMoney(summary.actualCost)}
     </span>

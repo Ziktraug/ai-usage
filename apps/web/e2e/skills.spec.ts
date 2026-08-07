@@ -396,9 +396,21 @@ test('keeps the tree, editor, and Inspector in one bounded desktop workspace row
   await page.setViewportSize({ height: 900, width: 768 });
   const narrowEditorHeading = detail.getByRole('heading', { level: 3, name: 'SKILL.md' });
   await expect(narrowEditorHeading).toHaveCSS('overflow-wrap', 'anywhere');
-  const narrowEditorHeadingBox = await narrowEditorHeading.boundingBox();
+  const narrowEditorToolbar = narrowEditorHeading.locator('..');
+  const [narrowEditorHeadingBox, narrowEditorToolbarBox] = await Promise.all([
+    narrowEditorHeading.boundingBox(),
+    narrowEditorToolbar.boundingBox(),
+  ]);
   expect(narrowEditorHeadingBox).not.toBeNull();
-  expect(narrowEditorHeadingBox?.height ?? 0).toBeGreaterThanOrEqual(72);
+  expect(narrowEditorToolbarBox).not.toBeNull();
+  // The heading has to wrap inside its toolbar rather than spill past it. How many lines that takes
+  // depends on how much room the rail leaves the editor, so assert containment, not a line count.
+  expect((narrowEditorHeadingBox?.x ?? 0) + (narrowEditorHeadingBox?.width ?? 0)).toBeLessThanOrEqual(
+    (narrowEditorToolbarBox?.x ?? 0) + (narrowEditorToolbarBox?.width ?? 0),
+  );
+  await expect
+    .poll(() => page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth))
+    .toBe(true);
 });
 
 test('bounds long scope labels and makes validation findings individually identifiable', async ({ page }) => {

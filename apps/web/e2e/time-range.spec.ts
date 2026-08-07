@@ -14,7 +14,7 @@ const PUNCHCARD_CELL_LABEL_PATTERN =
   /^Filter report to (Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday) ([0-9]{2}):00–[0-9]{2}:59, ([0-9,]+) sessions?$/;
 const SESSION_SUMMARY_PATTERN = / sessions$/;
 
-const CURRENCY_PATTERN = /^\$[0-9,.]+$/;
+const SESSION_COUNT_PATTERN = /^[0-9,]+$/;
 const RANGE_DAYS_PATTERN = /·\s*(\d+)\s*days?/;
 // The bug this guards against bound the class to the `'start' | 'end'` edge
 // name, so the generated style never applied. Assert the edge name itself never
@@ -568,6 +568,51 @@ test('holds the brush scale still while dragging a range that starts before the 
   expect(await startHandle.getAttribute('aria-valuetext')).toBe(await startInput.inputValue());
 });
 
+test('lands the dragged range once on release while the headline follows the handle', async ({ page }) => {
+  await openHydratedReport(page);
+
+  const dateRange = page.getByRole('region', { name: 'Date range' });
+  const endHandle = dateRange.getByRole('slider', { name: 'End date' });
+  const hero = page.getByRole('region', { name: 'Estimated API-equivalent value' });
+  const headline = hero.locator('p').nth(1);
+  const urlBeforeDrag = page.url();
+
+  await endHandle.scrollIntoViewIfNeeded();
+  const box = await endHandle.boundingBox();
+  expect(box).not.toBeNull();
+  if (!box) {
+    return;
+  }
+  const originX = box.x + box.width / 2;
+  const originY = box.y + box.height / 2;
+  await page.mouse.move(originX, originY);
+  await page.mouse.down();
+  for (const step of [30, 60, 90, 120]) {
+    await page.mouse.move(originX - step, originY);
+  }
+  // The range is what a commit writes, so an unchanged URL is the drag having committed nothing.
+  // Committing per pointermove refetched the report on every day boundary and made `pending`
+  // flicker under the pointer, so the whole body dimmed and the counters above blinked.
+  expect(page.url()).toBe(urlBeforeDrag);
+  // The amount is summed locally from the buckets already drawn, so the headline stays live while
+  // its qualifiers — which only the server knows — say they are lagging rather than mismatching.
+  await expect(hero.locator('[data-hero-provisional]').first()).toBeVisible();
+  // The live figure must never be dimmed along with the stale body around it.
+  await expect(page.locator('[data-report-complete-output]')).toHaveCSS('opacity', '1');
+
+  const dragged = await headline.textContent();
+  await page.mouse.up();
+  // Whatever the gesture ended on must survive the release: the preview retires on commit, not on
+  // pointerup, so the headline cannot rebound to the range that was left behind.
+  expect(await headline.textContent()).toBe(dragged);
+  await waitForFocusedReportSettled(page);
+
+  // Exactly one commit, and it happened on release.
+  expect(page.url()).not.toBe(urlBeforeDrag);
+  expect(new URL(page.url()).searchParams.get('range')).not.toBeNull();
+  await expect(hero.locator('[data-hero-provisional]')).toHaveCount(0);
+});
+
 test('reports legend shares and the range total over the selected window', async ({ page }) => {
   await openHydratedReport(page);
 
@@ -582,9 +627,9 @@ test('reports legend shares and the range total over the selected window', async
     }));
 
   const initial = await readLegend();
-  // The panel lost its total in the port; it is the figure the shares divide.
-  expect(initial.total).not.toBeNull();
-  expect(initial.total).toMatch(CURRENCY_PATTERN);
+  // In value mode the total restated the hero verbatim, so only the shares remain here. The session
+  // count is a different quantity the hero never states, so it keeps its slot — see below.
+  expect(initial.total).toBeNull();
   // A series with nothing inside the window is noise, not information.
   expect(initial.series.filter((entry) => entry.endsWith('0.0%'))).toEqual([]);
   expect(initial.series.length).toBeGreaterThan(0);
@@ -593,8 +638,19 @@ test('reports legend shares and the range total over the selected window', async
   await waitForFocusedReportSettled(page);
 
   const narrowed = await readLegend();
-  expect(narrowed.total).not.toBe(initial.total);
+  expect(narrowed.total).toBeNull();
   expect(narrowed.series.length).toBeLessThanOrEqual(initial.series.length);
+
+  const chartOptions = dateRange.locator('details[aria-label="Chart options"]');
+  await chartOptions.locator('summary').click();
+  await chartOptions.getByRole('radio', { exact: true, name: 'Sessions' }).click();
+  await waitForFocusedReportSettled(page);
+  expect((await readLegend()).total).toMatch(SESSION_COUNT_PATTERN);
+
+  await chartOptions.getByRole('radio', { exact: true, name: 'Share' }).click();
+  await waitForFocusedReportSettled(page);
+  // Share mode made this a constant 100%.
+  expect((await readLegend()).total).toBeNull();
 });
 
 test('fills harness series with their branded tokens rather than one hashed hue', async ({ page }) => {

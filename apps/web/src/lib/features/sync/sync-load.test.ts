@@ -2,7 +2,7 @@ import { describe, expect, it } from 'bun:test';
 import type { SyncFleet } from '@ai-usage/web-contract/sync';
 import { createHydratedWebQueryClient } from '../../query/client';
 import { syncFleetKey, syncFleetQueryOptions } from '../../query/options/sync';
-import { loadSyncPageData, SYNC_COMPATIBLE_GENERATION } from './sync-load';
+import { deferredSyncPageData, loadSyncPageData, SYNC_COMPATIBLE_GENERATION } from './sync-load';
 
 const fleet: SyncFleet = {
   currentMachine: { id: 'machine-a', label: 'Machine A' },
@@ -32,6 +32,14 @@ describe('Sync SSR load identity', () => {
       'compatible-generation',
       'sync-fleet:v1',
     ]);
+  });
+
+  it('returns an empty hydration delta for SPA entry so the persistent browser cache stays authoritative', () => {
+    expect(deferredSyncPageData(() => 43)).toEqual({
+      compatibleGeneration: SYNC_COMPATIBLE_GENERATION,
+      queryState: { dehydratedState: { mutations: [], queries: [] } },
+      renderedAt: 43,
+    });
   });
 
   it('awaits once, dehydrates, and serves a fresh hydrated client without a duplicate fleet acquisition', async () => {

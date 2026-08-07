@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { ReportRevisionBootstrapResult } from '@ai-usage/web-contract/report';
   import { useQueryClient } from '@tanstack/svelte-query';
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
   import type { DashboardSearch } from '../../../../dashboard-search';
@@ -15,6 +15,7 @@
   import { createBrowserWebRpcClient } from '../../../rpc/client';
   import { createReportClient } from '../../../rpc/report-client';
   import { createSessionClientAdapter } from '../../../rpc/session-client';
+  import { ssrUnavailableClient } from '../../../rpc/ssr-placeholder';
   import { dashboardSearchCodec } from '../../shell/navigation';
   import ReportBootstrapOverview from '../core/report-bootstrap-overview.svelte';
   import type { ReportShellModel } from '../core/report-view-model';
@@ -37,14 +38,23 @@
   let navigationFailure = $state<string | null>(null);
   let browserNavigate: SearchNavigationIntent<DashboardSearch> = () => undefined;
   const navigate: SearchNavigationIntent<DashboardSearch> = (update, options) => browserNavigate(update, options);
-  let runtime = $state<
-    | {
-        readonly reportClient: ReturnType<typeof createReportClient>;
-        readonly sessionClient: ReturnType<typeof createSessionClientAdapter>;
-      }
-    | undefined
-  >();
   const search = $derived(parseDashboardSearchUrl(page.url, dashboardSearchCodec));
+  // Built eagerly rather than in onMount so the report renders during SSR too. Report owners only
+  // store these clients at construction; every call site sits behind an effect or an event handler,
+  // and neither runs on the server — hence the placeholder that rejects loudly if that ever changes.
+  const runtime = untrack(() => {
+    if (mode !== 'live') {
+      return;
+    }
+    if (typeof globalThis.location === 'undefined') {
+      return {
+        reportClient: ssrUnavailableClient<ReturnType<typeof createReportClient>>('report'),
+        sessionClient: ssrUnavailableClient<ReturnType<typeof createSessionClientAdapter>>('session'),
+      };
+    }
+    const rpc = createBrowserWebRpcClient('svelte-report-root');
+    return { reportClient: createReportClient(rpc), sessionClient: createSessionClientAdapter(rpc.session) };
+  });
 
   onMount(() => {
     const port = createSvelteNavigationPort({
@@ -58,13 +68,6 @@
     browserNavigate = createDashboardSearchNavigation(port, dashboardSearchCodec, ({ cause }) => {
       navigationFailure = cause instanceof Error ? cause.message : 'Report navigation failed.';
     });
-    if (mode === 'live') {
-      const rpc = createBrowserWebRpcClient('svelte-report-root');
-      runtime = {
-        reportClient: createReportClient(rpc),
-        sessionClient: createSessionClientAdapter(rpc.session),
-      };
-    }
   });
 </script>
 

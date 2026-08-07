@@ -29,14 +29,45 @@
   } = $props();
   const timeCell = $derived(selectedTimeCell(search));
   const fieldLabels = { campaign: 'Campaign', model: 'Model', project: 'Project', provider: 'Provider' } as const;
+  // A pending response must not restate counts it can no longer vouch for, but dropping them
+  // collapsed the row and threw "Clear all" ~300px sideways for the length of the request. Holding
+  // each slot at the width it last measured empties the text without moving anything around it.
+  //
+  // `offsetWidth`, not `clientWidth`: these boxes are border-box, so reserving a border-excluding
+  // measurement shrinks the slot by its border on every observation — a slow collapse, not a hold.
+  // The reservation is also latched off the settled render, so nothing re-measures under itself.
+  let visibleCountWidth = $state(0);
+  let hiddenCountWidth = $state(0);
+  let reservedWidths = $state({ hidden: 0, visible: 0 });
+  $effect(() => {
+    if (!pending) {
+      reservedWidths = { hidden: hiddenCountWidth, visible: visibleCountWidth };
+    }
+  });
+  const reserved = (width: number): string | undefined => (pending && width > 0 ? `${width}px` : undefined);
+  const busyAttributes = $derived(pending ? ({ 'aria-busy': 'true' } as const) : {});
 </script>
 
 <div class={filterSummary} data-active-filters data-pending={pending}>
-  {#if !pending}
-    <span aria-live="polite" class={summaryPill}>{fmtNum(visible)} / {fmtNum(total)} sessions</span>
-    {#if hidden > 0}
-      <span>{fmtNum(hidden)} hidden by filters</span>
+  <span
+    {...busyAttributes}
+    aria-live="polite"
+    class={summaryPill}
+    style:min-width={reserved(reservedWidths.visible)}
+    bind:offsetWidth={visibleCountWidth}
+  >
+    {#if !pending}
+      {fmtNum(visible)}
+      / {fmtNum(total)} sessions
     {/if}
+  </span>
+  {#if hidden > 0}
+    <span {...busyAttributes} style:min-width={reserved(reservedWidths.hidden)} bind:offsetWidth={hiddenCountWidth}>
+      {#if !pending}
+        {fmtNum(hidden)}
+        hidden by filters
+      {/if}
+    </span>
   {/if}
   <div class={activeFilters}>
     {#if search.q}

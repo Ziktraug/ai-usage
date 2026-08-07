@@ -212,7 +212,7 @@ describe('Report Query options', () => {
     );
 
     expect(serverOptions.enabled).toBe(false);
-    expect(serverOptions.staleTime).toBe(0);
+    expect(serverOptions.staleTime).toBe(Number.POSITIVE_INFINITY);
     expect(serverOptions.gcTime).toBe(DEFAULT_BOUNDED_GC_TIME_MS);
     expect(await serverClient.fetchQuery(serverOptions)).toEqual(bootstrapUnavailable);
 

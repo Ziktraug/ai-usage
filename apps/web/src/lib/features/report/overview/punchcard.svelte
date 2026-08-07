@@ -54,7 +54,8 @@
 
 <section class={panel}>
   <header class={panelHeader}>
-    <h2 class={panelTitle}>Punchcard</h2>
+    <!-- h3: this panel only ever renders inside the "Advanced analysis" h2 section. -->
+    <h3 class={panelTitle}>Punchcard</h3>
     <p class={panelSub}>When the sessions happen — hour of day × weekday</p>
   </header>
   {#if punchcard}

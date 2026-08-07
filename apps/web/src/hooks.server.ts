@@ -3,6 +3,7 @@ import { sequence } from '@sveltejs/kit/hooks';
 import { demoRouteDecision } from '$lib/features/shell/demo-policy.server';
 import { webReadObservabilityLifecycle } from '$lib/server/observability/web-read-lifecycle.server';
 import { E2E_SKILLS_FIXTURE_HEADER } from '$lib/server/rpc/e2e-fixture-profile';
+import { handleResponseCompression } from '../src/server/response-compression.server';
 import { getServerRuntimeMode } from '../src/server/runtime-mode.server';
 import { handleTrustedLocalRequest } from '../src/server/trusted-local-hook.server';
 
@@ -85,4 +86,5 @@ const handleApplicationRequest: Handle = async ({ event, resolve }) => {
   return response;
 };
 
-export const handle: Handle = sequence(handleTrustedLocalRequest, handleApplicationRequest);
+// Compression is outermost so it also covers the trust-rejection and demo-policy short circuits.
+export const handle: Handle = sequence(handleResponseCompression, handleTrustedLocalRequest, handleApplicationRequest);

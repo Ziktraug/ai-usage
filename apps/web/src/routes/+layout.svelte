@@ -20,6 +20,8 @@
 
 <WebQueryProvider hydrationState={page.data.queryState ?? data.queryState}>
   <SourceControlProvider runtimeMode={data.runtimeMode}>
-    <AppShell runtimeMode={data.runtimeMode} {sourceControlSummary}> {@render children()} </AppShell>
+    <AppShell providerQuota={data.providerQuota} runtimeMode={data.runtimeMode} {sourceControlSummary}>
+      {@render children()}
+    </AppShell>
   </SourceControlProvider>
 </WebQueryProvider>

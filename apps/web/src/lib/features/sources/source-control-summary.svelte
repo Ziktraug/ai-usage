@@ -21,9 +21,18 @@
       .filter((source) => source.nextDueAt !== undefined)
       .toSorted((left, right) => String(left.nextDueAt).localeCompare(String(right.nextDueAt)))[0],
   );
+  // 'stopped' is the state before the client has even been started — which is what the server render
+  // and every frame before hydration see. Reporting that as "Unavailable" told the user sources were
+  // broken when nothing had been attempted yet, so not-yet-known reads as its own neutral state.
+  const awaitingFirstSnapshot = $derived(
+    !snapshot && (controlState.connection === 'stopped' || controlState.connection === 'connecting'),
+  );
   const statusLabel = $derived.by(() => {
+    if (awaitingFirstSnapshot) {
+      return 'Checking sources…';
+    }
     if (!snapshot) {
-      return controlState.connection === 'connecting' ? 'Connecting' : 'Unavailable';
+      return controlState.connection === 'protocol-mismatch' ? 'Incompatible' : 'Unavailable';
     }
     if (controlState.connection === 'protocol-mismatch') {
       return 'Incompatible';
@@ -40,6 +49,9 @@
     return 'Sources ready';
   });
   const statusTone = $derived.by(() => {
+    if (awaitingFirstSnapshot) {
+      return 'info';
+    }
     if (!snapshot || controlState.connection === 'disconnected' || controlState.connection === 'protocol-mismatch') {
       return 'warning';
     }
@@ -98,6 +110,7 @@
   const summaryDot = css({ w: '8px', h: '8px', borderRadius: 'full', bg: 'status.ok' });
   const summaryDotWarn = css({ bg: 'status.warn' });
   const summaryDotDanger = css({ bg: 'status.danger' });
+  const summaryDotPending = css({ bg: 'faint' });
   const summaryLabel = css({ minW: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' });
   const card = css({
     display: 'none',
@@ -138,7 +151,12 @@
   >
     <span
       aria-hidden="true"
-      class={cx(summaryDot, statusTone === 'warning' ? summaryDotWarn : undefined, statusTone === 'danger' ? summaryDotDanger : undefined)}
+      class={cx(
+        summaryDot,
+        statusTone === 'info' ? summaryDotPending : undefined,
+        statusTone === 'warning' ? summaryDotWarn : undefined,
+        statusTone === 'danger' ? summaryDotDanger : undefined,
+      )}
     ></span>
     <span class={summaryLabel}>{statusLabel}</span>
     <div class={card} data-source-card>

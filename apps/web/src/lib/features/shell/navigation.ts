@@ -12,15 +12,18 @@ import {
   parseDashboardSearchUrl,
 } from '../../foundation/navigation/svelte/dashboard-url';
 
+export type ShellIconName = 'breakdown' | 'overview' | 'sessions' | 'skills' | 'sources' | 'sync';
+
 export interface ShellDestination {
   readonly href: string;
+  readonly icon: ShellIconName;
   readonly label: string;
 }
 
 export const shellManagementDestinations = [
-  { href: '/skills', label: 'Skills' },
-  { href: '/sync', label: 'Sync' },
-  { href: '/sources', label: 'Sources' },
+  { href: '/skills', icon: 'skills', label: 'Skills' },
+  { href: '/sync', icon: 'sync', label: 'Sync' },
+  { href: '/sources', icon: 'sources', label: 'Sources' },
 ] as const satisfies readonly ShellDestination[];
 
 export const dashboardSearchCodec: DashboardSearchCodec<DashboardSearch> = {

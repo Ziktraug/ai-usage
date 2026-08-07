@@ -80,7 +80,7 @@
   import { fmtDateOnly } from '../../../foundation/presentation/format';
   import ActivityTimeline from '../overview/activity-timeline.svelte';
   import type { MachineSeriesPresenter } from '../overview/timeline-model';
-  import { timelineRangeForSelection } from '../overview/timeline-window';
+  import { timelineRangeForSelection, visibleTimelineSummary } from '../overview/timeline-window';
   import {
     customRangeFromIndexes,
     customRangeFromInputs,
@@ -107,6 +107,8 @@
       value: TimelineValue;
     }) => void;
     onRangeChange?: (range: DashboardDateRangeSearch) => void;
+    /** Estimated API-equivalent value of the window being dragged, or null once the brush settles. */
+    onWindowPreview?: (apiValue: number | null) => void;
     presentCampaignSeries?: (series: FocusedTimelineSeries) => FocusedTimelineSeries;
     presentMachineSeries?: MachineSeriesPresenter;
     range: DashboardDateRangeSearch;
@@ -125,6 +127,7 @@
     onDimensionFilter = () => undefined,
     onOptionsChange = () => undefined,
     onRangeChange = () => undefined,
+    onWindowPreview = () => undefined,
     presentCampaignSeries,
     presentMachineSeries,
     range,
@@ -201,6 +204,26 @@
       ? timelineRangeForSelection(timeline.buckets, activeProjection.domainFirst, controlState.selectionIndexes)
       : null,
   );
+  // Dragging the brush only commits a range on release, so the server-backed figures below cannot
+  // follow the handle. The bucket costs are already in memory, so the headline value can — always
+  // summed over cost, never sessions, because that is the quantity the hero states.
+  const draggedWindowApiValue = $derived(
+    timeline && visibleRange && controlState.interaction.type !== 'idle'
+      ? visibleTimelineSummary(timeline, visibleRange, false).total
+      : null,
+  );
+  // Releasing the handle stops the preview here, but the committed figures only arrive a round trip
+  // later. Withholding that null lets the previewed amount stand until the commit replaces it, so
+  // the headline never flashes the range the user just dragged away from. When the release commits
+  // nothing — dragging back to where it started — no commit is coming, so the null must go through.
+  let previewAwaitsCommit = false;
+  $effect(() => {
+    const apiValue = draggedWindowApiValue;
+    if (apiValue === null && previewAwaitsCommit) {
+      return;
+    }
+    onWindowPreview(apiValue);
+  });
   const dimensionItems = focusedTimelineDimensionDefinitions;
   // Carrying the label with the edge keeps the markup free of repeated
   // `handle === 'start'` branches, and the binding name stays clear of every
@@ -243,25 +266,41 @@
     onRangeChange(next);
   };
 
-  const synchronizeInputs = (indexes: TimeRangeSelectionIndexes, basis: ReportRangeProjection): void => {
+  // The range a pointer gesture has moved to but not yet landed on.
+  let uncommittedPointerRange: DashboardDateRangeSearch | undefined;
+
+  const commitSelection = (next: DashboardDateRangeSearch): boolean => {
+    const options = editRun.next(reportRangeEditKey(next));
+    if (!options) {
+      return false;
+    }
+    commitRange(next, options);
+    return true;
+  };
+
+  const synchronizeInputs = (
+    indexes: TimeRangeSelectionIndexes,
+    basis: ReportRangeProjection,
+    dragging: boolean,
+  ): void => {
     const next = customRangeFromIndexes(basis, indexes);
     const nextProjection = reportRangeProjection(next, generatedDate, dateDomain);
     draftFrom = nextProjection.displayFrom;
     draftTo = nextProjection.displayTo;
-    const options = editRun.next(reportRangeEditKey(next));
-    if (options) {
-      commitRange(next, options);
+    // Mid-gesture the date inputs and the chart follow locally; navigating here would refetch the
+    // whole report once per day boundary crossed and make `pending` flicker under the pointer.
+    if (dragging) {
+      uncommittedPointerRange = next;
+      return;
     }
+    commitSelection(next);
   };
 
   const applyTransition = (event: Parameters<typeof transitionTimeRangeControl>[1]): boolean => {
     // Selection indexes count from `projection.domainFirst`, which is
-    // `min(dataFirst, selectedFrom)` over the committed range. A pointer drag
-    // commits a custom range on every move, so once the selection crosses
-    // `dataFirst` the origin — and the whole scale — moves underneath the
-    // interaction: `aria-valuemax` walks, and the pointer drifts away from the
-    // announced day. Resolve every event of one interaction against the
-    // projection that started it.
+    // `min(dataFirst, selectedFrom)` over the committed range. Were the origin to move underneath a
+    // live gesture, `aria-valuemax` would walk and the pointer would drift away from the announced
+    // day. Resolve every event of one interaction against the projection that started it.
     const basis = pinnedProjection ?? projection;
     const transition = transitionTimeRangeControl(controlState, event, { selectionMaxIndex: basis.maxIndex });
     if (!transition.handled) {
@@ -269,10 +308,15 @@
     }
     controlState = transition.state;
     pinnedProjection = controlState.interaction.type === 'idle' ? null : basis;
+    // A keyboard step emits both commands at once, so it still lands immediately; a pointer drag
+    // only emits `commitReportRange` when it ends, which is where its range finally lands.
+    const dragging = controlState.interaction.type !== 'idle';
     for (const command of transition.commands) {
       if (command.type === 'setSelectionIndexes') {
-        synchronizeInputs(command.indexes, basis);
+        synchronizeInputs(command.indexes, basis, dragging);
       } else {
+        previewAwaitsCommit = uncommittedPointerRange !== undefined && commitSelection(uncommittedPointerRange);
+        uncommittedPointerRange = undefined;
         editRun.commit();
       }
     }

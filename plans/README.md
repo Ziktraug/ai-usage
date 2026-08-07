@@ -43,6 +43,13 @@ Implementation uses one coordinator-owned integration branch, local isolated
 worktrees, independently reviewed packet commits and exactly one final GitHub
 PR. The packet DAG, exclusive ownership matrix and convergence gates live in the
 plan; waves are milestones rather than PR or worker boundaries.
+Plan 069 records the 2026-08-07 ownership follow-up at `c1eef7b0`, also
+reconciled against the active dirty data-loading worktree. It makes TanStack
+Query the sole browser server-state owner, uses the installed oRPC Query
+utilities for procedure identities, reduces SvelteKit loads to initial SSR
+prefetch, and replaces `ServedReportSession`/Session table result state with
+Query-native atomic destination and paging lifecycles. It must begin from a
+clean checkpoint and does not touch concurrent sidebar or presentation work.
 
 ## Execution order & status
 
@@ -113,6 +120,7 @@ plan; waves are milestones rather than PR or worker boundaries.
 | 066 | Split the Usage Engine From the Web and CLI Runtimes | P0 | XL | 022-024, 043-044 | DONE |
 | 067 | Close the Post-Cutover Usage-Engine Runtime Review Gaps | P1 | L | 066 | DONE |
 | 068 | Migrate Web to SvelteKit With Contract-First oRPC | P1 | XL | 066, 067 | REOPENED |
+| 069 | Centralize Web Server-State Ownership in TanStack Query and oRPC | P1 | XL | 068 Query/oRPC foundation + clean active-worktree checkpoint | TODO |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) |
 REJECTED (with one-line rationale).
@@ -309,6 +317,15 @@ plan is parallelized and nothing is pushed until every plan and final gate pass.
   wave gates still serialize transport/cache/design convergence before dependent
   Svelte features and the final cutover. Packet branches never receive PRs; one
   reviewed integration branch produces the sole implementation PR.
+- Plan 069 supersedes plans 018 and 068 only for browser server-state
+  ownership. Immutable exact revisions, one expiry recovery, supersession,
+  last-good retention, atomic Overview/secondary-leg visibility, and Session
+  loaded-depth replay remain required, but TanStack Query owns their data and
+  request lifecycle instead of `ServedReportSession` or a Session table result
+  store. ADR 0009's direct SQLite/sole-writer split and ADR 0010's oRPC,
+  SvelteKit, SSE, file-transfer, privacy, and security boundaries remain
+  unchanged. Execute it from a clean checkpoint without touching concurrent
+  sidebar/presentation paths.
 - Plan 036 adds Effect-native wide-event observability without an OTLP exporter
   so operators can see what Effect boundaries do, especially collectors:
   business outcome, duration, measured hops, and allowlisted local context. The

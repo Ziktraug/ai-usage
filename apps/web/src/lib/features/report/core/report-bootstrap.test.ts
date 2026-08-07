@@ -1,13 +1,27 @@
 import { describe, expect, it } from 'bun:test';
-import { projectFocusedSupport } from '@ai-usage/report-core/focused-report-query';
+import {
+  focusedBreakdownFingerprint,
+  focusedOverviewFingerprint,
+  projectFocusedBreakdown,
+  projectFocusedOverview,
+  projectFocusedSupport,
+} from '@ai-usage/report-core/focused-report-query';
+import { sessionQueryFingerprint } from '@ai-usage/report-core/session-query';
 import type { ReportRevisionBootstrapResult } from '@ai-usage/web-contract/report';
 import { demoReportPayload } from '../../../../report-data';
 import { type ReportQueryClient, reportBootstrapKey } from '../../../query/options/report';
 import {
-  loadReportPageData,
+  acquireLiveReportQueryState,
   ReportBootstrapUnavailableError,
+  reportPageDataFor,
   requireAvailableReportBootstrap,
 } from './report-bootstrap';
+
+const liveOptions = () => ({
+  fetch: () => Promise.reject(new Error('The injected report client owns this test acquisition')),
+  pageUrl: new URL('http://report.invalid/'),
+  url: new URL('http://report.invalid/'),
+});
 
 const unavailableResult: ReportRevisionBootstrapResult = {
   error: { message: 'private engine detail', tag: 'RevisionUnavailable' },
@@ -38,11 +52,16 @@ const successfulResult = (): Extract<ReportRevisionBootstrapResult, { readonly o
   };
 };
 
-const reportClientFixture = (result: ReportRevisionBootstrapResult): ReportQueryClient => {
+const reportClientFixture = (
+  result: ReportRevisionBootstrapResult,
+  overview: ReportQueryClient['getFocusedReportOverview'] = () => Promise.reject(new Error('Unexpected report query')),
+  breakdown: ReportQueryClient['getFocusedReportBreakdown'] = () =>
+    Promise.reject(new Error('Unexpected report query')),
+): ReportQueryClient => {
   const unavailable = () => Promise.reject(new Error('Unexpected report query'));
   return {
-    getFocusedReportBreakdown: unavailable,
-    getFocusedReportOverview: unavailable,
+    getFocusedReportBreakdown: breakdown,
+    getFocusedReportOverview: overview,
     getFocusedReportSupport: unavailable,
     getReportRevisionBootstrap: () => Promise.resolve(result),
     getReportRevisionManifest: unavailable,
@@ -55,16 +74,19 @@ describe('report bootstrap', () => {
     expect(() => requireAvailableReportBootstrap(unavailableResult)).toThrow('Report data is temporarily unavailable.');
   });
 
-  it.each(['demo', 'e2e'] as const)('selects the %s payload before report acquisition', async (mode) => {
+  it.each(['demo', 'e2e'] as const)('selects the %s payload without acquiring server state', (mode) => {
     let fetchCount = 0;
-    const data = await loadReportPageData({
-      fetch: () => {
-        fetchCount += 1;
-        return Promise.reject(new Error('Synthetic report mode must not acquire RPC data'));
-      },
+    const data = reportPageDataFor(
       mode,
-      url: new URL('http://synthetic.invalid/'),
-    });
+      {
+        fetch: () => {
+          fetchCount += 1;
+          return Promise.reject(new Error('Synthetic report mode must not acquire RPC data'));
+        },
+        url: new URL('http://synthetic.invalid/'),
+      },
+      undefined,
+    );
 
     expect(data.mode).toBe(mode);
     expect(fetchCount).toBe(0);
@@ -72,41 +94,146 @@ describe('report bootstrap', () => {
     expect(data.mode === 'live' ? undefined : data.payload.rows.length).toBeGreaterThan(0);
   });
 
+  it('refuses live page data the server never acquired', () => {
+    expect(() =>
+      reportPageDataFor(
+        'live',
+        { fetch: () => Promise.reject(new Error('unused')), url: new URL('http://report.invalid/') },
+        undefined,
+      ),
+    ).toThrow(ReportBootstrapUnavailableError);
+  });
+
   it('awaits a successful compatible publication and dehydrates the exact current alias key', async () => {
     let acquisitionCount = 0;
     const result = successfulResult();
-    const data = await loadReportPageData(
-      {
-        fetch: () => Promise.reject(new Error('The injected report client owns this test acquisition')),
-        mode: 'live',
-        url: new URL('http://report.invalid/'),
+    const queryState = await acquireLiveReportQueryState(liveOptions(), {
+      createClient: () => {
+        acquisitionCount += 1;
+        return reportClientFixture(result);
       },
-      {
-        createClient: () => {
-          acquisitionCount += 1;
-          return reportClientFixture(result);
-        },
-      },
-    );
+    });
 
     expect(acquisitionCount).toBe(1);
-    expect(data.mode).toBe('live');
-    expect(data.queryState.dehydratedState.queries).toHaveLength(1);
-    const [query] = data.queryState.dehydratedState.queries;
+    const [query] = queryState.dehydratedState.queries;
     expect(query?.queryKey).toEqual(reportBootstrapKey());
     expect(query?.state.data).toEqual(result);
   });
 
   it('rejects typed live unavailability without dehydrating it as successful report data', async () => {
     await expect(
-      loadReportPageData(
-        {
-          fetch: () => Promise.reject(new Error('The injected report client owns this test acquisition')),
-          mode: 'live',
-          url: new URL('http://report.invalid/'),
-        },
-        { createClient: () => reportClientFixture(unavailableResult) },
-      ),
+      acquireLiveReportQueryState(liveOptions(), { createClient: () => reportClientFixture(unavailableResult) }),
     ).rejects.toBeInstanceOf(ReportBootstrapUnavailableError);
+  });
+
+  it('dehydrates the landing Overview beside the bootstrap so the first paint needs no round trip', async () => {
+    let overviewCount = 0;
+    const queryState = await acquireLiveReportQueryState(liveOptions(), {
+      createClient: () =>
+        reportClientFixture(successfulResult(), () => {
+          overviewCount += 1;
+          return Promise.resolve({ error: { message: 'stub', tag: 'RevisionUnavailable' }, ok: false } as never);
+        }),
+    });
+
+    expect(overviewCount).toBe(1);
+    const keys = queryState.dehydratedState.queries.map((query) => query.queryKey);
+    expect(keys).toHaveLength(2);
+    expect(keys).toContainEqual(reportBootstrapKey());
+  });
+
+  it('keeps the route usable when the Overview prefetch fails', async () => {
+    const queryState = await acquireLiveReportQueryState(liveOptions(), {
+      createClient: () =>
+        reportClientFixture(successfulResult(), () => Promise.reject(new Error('Overview acquisition failed'))),
+    });
+
+    const keys = queryState.dehydratedState.queries.map((query) => query.queryKey);
+    expect(keys).toEqual([reportBootstrapKey()]);
+  });
+
+  it('dehydrates both exact legs for a Breakdown deep link', async () => {
+    const result = successfulResult();
+    let breakdownCount = 0;
+    const queryState = await acquireLiveReportQueryState(
+      { ...liveOptions(), pageUrl: new URL('http://report.invalid/?tab=projects') },
+      {
+        createClient: () =>
+          reportClientFixture(
+            result,
+            (request) => {
+              const data = projectFocusedOverview(demoReportPayload.rows, result.bootstrap.support, request);
+              return Promise.resolve({
+                data,
+                ok: true,
+                requestFingerprint: focusedOverviewFingerprint(request),
+                revision: request.query.revision,
+              });
+            },
+            (request) => {
+              breakdownCount += 1;
+              const data = projectFocusedBreakdown(demoReportPayload.rows, result.bootstrap.support, request);
+              return Promise.resolve({
+                data,
+                ok: true,
+                requestFingerprint: focusedBreakdownFingerprint(request),
+                revision: request.query.revision,
+              });
+            },
+          ),
+      },
+    );
+
+    expect(breakdownCount).toBe(1);
+    expect(queryState.dehydratedState.queries).toHaveLength(3);
+  });
+
+  it('dehydrates the exact first page for a Sessions deep link', async () => {
+    const result = successfulResult();
+    let sessionPageCount = 0;
+    const queryState = await acquireLiveReportQueryState(
+      { ...liveOptions(), pageUrl: new URL('http://report.invalid/?tab=sessions') },
+      {
+        createClient: () =>
+          reportClientFixture(result, (request) => {
+            const data = projectFocusedOverview(demoReportPayload.rows, result.bootstrap.support, request);
+            return Promise.resolve({
+              data,
+              ok: true,
+              requestFingerprint: focusedOverviewFingerprint(request),
+              revision: request.query.revision,
+            });
+          }),
+        createSessionClient: () => {
+          const unavailable = () => Promise.reject(new Error('Unexpected Sessions query'));
+          return {
+            campaignChildren: unavailable,
+            detail: unavailable,
+            neighbors: unavailable,
+            page: (request) => {
+              sessionPageCount += 1;
+              const requestFingerprint = sessionQueryFingerprint(request);
+              return Promise.resolve({
+                data: {
+                  itemCount: 0,
+                  items: [],
+                  nextCursor: null,
+                  requestFingerprint,
+                  revision: request.revision,
+                  sessionCount: 0,
+                },
+                ok: true,
+                requestFingerprint,
+                revision: request.revision,
+              });
+            },
+            vcs: unavailable,
+          };
+        },
+      },
+    );
+
+    expect(sessionPageCount).toBe(1);
+    expect(queryState.dehydratedState.queries).toHaveLength(3);
   });
 });

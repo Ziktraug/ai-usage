@@ -19,7 +19,9 @@ import {
 import {
   type ReportQueryClient,
   reportBootstrapQueryOptions,
+  reportBreakdownKey,
   reportBreakdownQueryOptions,
+  reportOverviewKey,
   reportOverviewQueryOptions,
 } from '../../../query/options/report';
 import type {
@@ -62,7 +64,7 @@ export interface FocusedReportCommit {
 }
 
 export interface FocusedReportDescriptorSource {
-  readonly acquire: (signal: AbortSignal) => Promise<FocusedReportDescriptor>;
+  readonly acquire: (signal: AbortSignal, force: boolean) => Promise<FocusedReportDescriptor>;
   readonly current: () => FocusedReportDescriptor;
 }
 
@@ -110,12 +112,16 @@ export const createFocusedReportDescriptorSource = (options: {
   let current = options.initial;
   let useInitial = true;
   return {
-    acquire: async (signal) => {
-      if (useInitial) {
+    acquire: async (signal, force) => {
+      if (useInitial && !force) {
         useInitial = false;
         return current;
       }
+      useInitial = false;
       const query = reportBootstrapQueryOptions(options.client, { browser: true });
+      if (force) {
+        await options.queryClient.invalidateQueries({ exact: true, queryKey: query.queryKey, refetchType: 'none' });
+      }
       current = descriptorFromBootstrap(
         await readExactQuery<ReportRevisionBootstrapResult>(options.queryClient, query, signal),
       );
@@ -130,10 +136,22 @@ const queryForRevision = (query: FocusedQuerySnapshot, revision: string): Focuse
   revision,
 });
 
-const overviewRequestFor = (destination: FocusedReportDestination, revision: string): FocusedOverviewRequest => ({
+export const overviewRequestFor = (
+  destination: FocusedReportDestination,
+  revision: string,
+): FocusedOverviewRequest => ({
   includeAdvanced: destination.kind === 'overview' && destination.includeAdvanced,
   query: queryForRevision(destination.query, revision),
   timeline: destination.timeline,
+});
+
+/**
+ * Timeline the report opens on. Shared by the server prefetch and the hydrated component so both
+ * derive the same Overview request fingerprint — a mismatch would silently miss the seeded cache.
+ */
+export const INITIAL_REPORT_TIMELINE: FocusedOverviewRequest['timeline'] = Object.freeze({
+  dimension: 'harness',
+  granularity: 'day',
 });
 
 const destinationFingerprint = (destination: FocusedReportDestination): string => {
@@ -210,8 +228,60 @@ export const requireFocusedBreakdown = (
   return result.data;
 };
 
+/**
+ * Rebuilds the first visible commit straight from an already-populated query cache, with no await.
+ * The async session below stays the sole owner of every *subsequent* commit; this only lets the
+ * server — and the hydrating client — adopt the exact destination data instead of a pending surface.
+ * Returns undefined whenever the cache cannot satisfy the destination exactly, so the normal
+ * asynchronous path takes over unchanged.
+ */
+export const seedFocusedReportCommit = (options: {
+  readonly descriptor: FocusedReportDescriptor;
+  readonly destination: FocusedReportDestination | null;
+  readonly queryClient: QueryClient;
+}): FocusedReportCommit | undefined => {
+  if (options.destination === null) {
+    return;
+  }
+  const request = overviewRequestFor(options.destination, options.descriptor.revision);
+  const cached = options.queryClient.getQueryData(reportOverviewKey(request));
+  if (cached === undefined) {
+    return;
+  }
+  try {
+    if (options.destination.kind === 'breakdown') {
+      const breakdownRequest: FocusedBreakdownRequest = {
+        query: queryForRevision(options.destination.query, options.descriptor.revision),
+      };
+      const breakdown = options.queryClient.getQueryData(reportBreakdownKey(breakdownRequest));
+      if (breakdown === undefined) {
+        return;
+      }
+      return {
+        breakdown: requireFocusedBreakdown(
+          breakdown as Awaited<ReturnType<ReportQueryClient['getFocusedReportBreakdown']>>,
+          breakdownRequest,
+        ),
+        descriptor: options.descriptor,
+        destination: options.destination,
+        overview: requireOverview(
+          cached as Awaited<ReturnType<ReportQueryClient['getFocusedReportOverview']>>,
+          request,
+        ),
+      };
+    }
+    return {
+      descriptor: options.descriptor,
+      destination: options.destination,
+      overview: requireOverview(cached as Awaited<ReturnType<ReportQueryClient['getFocusedReportOverview']>>, request),
+    };
+  } catch {
+    return;
+  }
+};
+
 export const createFocusedReportSession = (options: {
-  readonly acquire: (signal: AbortSignal) => Promise<FocusedReportDescriptor>;
+  readonly acquire: (signal: AbortSignal, force: boolean) => Promise<FocusedReportDescriptor>;
   readonly client: ReportQueryClient;
   readonly onCommit: (commit: FocusedReportCommit) => void;
   readonly queryClient: QueryClient;
