@@ -15,6 +15,7 @@ const SESSION_NEIGHBOR_FINGERPRINT_PATTERN = /^session-neighbor-v1:[0-9a-f]{16}$
 const FOCUSED_OVERVIEW_FINGERPRINT_PREFIX = 'focused-overview-v1:';
 const PROJECT_COLUMN_PATTERN = /Project/;
 const SOURCES_URL_PATTERN = /\/sources$/;
+const SESSION_PAGE_PATH = '/rpc/session/page';
 const INITIAL_HTML_SECRET_SENTINELS = [
   HARNESS_FIXTURE_PRIVATE_PROMPT_SENTINEL,
   HARNESS_FIXTURE_CREDENTIAL_REMOTE_SENTINEL,
@@ -255,14 +256,22 @@ test('reuses the current revision bootstrap across Sessions filter and sort with
   const search = page.getByRole('textbox', {
     name: 'Filter sessions by title, project, model, provider, or harness',
   });
+  const filteredSessionsResponse = page.waitForResponse(
+    (response) => new URL(response.url()).pathname === SESSION_PAGE_PATH,
+  );
   await search.fill('codex');
+  await filteredSessionsResponse;
   await expect.poll(() => new URL(page.url()).searchParams.get('q')).toBe('codex');
   await expect.poll(() => browserBootstrapRequests.length).toBe(0);
   await expect(page.locator('[data-report-refresh-pending]')).toHaveCount(0);
   await expect.poll(() => trace.counts('session-actions').operations['session.page'] ?? 0).toBe(1);
   expect(browserBootstrapRequests).toHaveLength(0);
 
+  const sortedSessionsResponse = page.waitForResponse(
+    (response) => new URL(response.url()).pathname === SESSION_PAGE_PATH,
+  );
   await page.getByRole('columnheader', { name: PROJECT_COLUMN_PATTERN }).getByRole('button').click();
+  await sortedSessionsResponse;
   await expect.poll(() => new URL(page.url()).searchParams.get('sort') ?? '').toContain('project');
   await expect.poll(() => browserBootstrapRequests.length).toBe(0);
   await expect(page.locator('[data-report-refresh-pending]')).toHaveCount(0);
@@ -323,13 +332,25 @@ test('records filter range sort and history request counts without route data', 
   const search = page.getByRole('textbox', {
     name: 'Filter sessions by title, project, model, provider, or harness',
   });
+  const filteredSessionsResponse = page.waitForResponse(
+    (response) => new URL(response.url()).pathname === SESSION_PAGE_PATH,
+  );
   await search.fill('codex');
+  await filteredSessionsResponse;
   await expect.poll(() => new URL(page.url()).searchParams.get('q')).toBe('codex');
   await expect(page.locator('[data-report-refresh-pending]')).toHaveCount(0);
+  const sortedSessionsResponse = page.waitForResponse(
+    (response) => new URL(response.url()).pathname === SESSION_PAGE_PATH,
+  );
   await page.getByRole('columnheader', { name: PROJECT_COLUMN_PATTERN }).getByRole('button').click();
+  await sortedSessionsResponse;
   await expect.poll(() => new URL(page.url()).searchParams.get('sort')).not.toBeNull();
   await expect(page.locator('[data-report-refresh-pending]')).toHaveCount(0);
+  const rangedSessionsResponse = page.waitForResponse(
+    (response) => new URL(response.url()).pathname === SESSION_PAGE_PATH,
+  );
   await page.getByRole('region', { name: 'Date range' }).getByRole('button', { exact: true, name: '7d' }).click();
+  await rangedSessionsResponse;
   await expect.poll(() => new URL(page.url()).searchParams.get('range')).not.toBeNull();
   await expect(page.locator('[data-report-refresh-pending]')).toHaveCount(0);
   const rangedUrl = page.url();
