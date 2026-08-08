@@ -76,7 +76,7 @@ const sessionPagesItemCount = (data: unknown): number => {
 export const countDehydratedSessionPagePayloads = (state: WebQueryHydrationState): number => {
   let count = 0;
   for (const query of state.dehydratedState.queries) {
-    const key = query.queryKey as readonly unknown[];
+    const key = query.queryKey;
     if (isSessionPagesQueryKey(key) && sessionPagesItemCount(query.state.data) > 0) {
       count += 1;
       continue;
@@ -123,7 +123,7 @@ const destinationCarriesSessionWindow = (data: unknown): boolean =>
 export const canonicalizeReportSessionHydration = (state: WebQueryHydrationState): WebQueryHydrationState => {
   const canonicalIdentities = new Set<string>();
   for (const query of state.dehydratedState.queries) {
-    const key = query.queryKey as readonly unknown[];
+    const key = query.queryKey;
     if (!isSessionPagesQueryKey(key)) {
       continue;
     }
@@ -140,7 +140,7 @@ export const canonicalizeReportSessionHydration = (state: WebQueryHydrationState
     dehydratedState: {
       ...state.dehydratedState,
       queries: state.dehydratedState.queries.map((query) => {
-        const key = query.queryKey as readonly unknown[];
+        const key = query.queryKey;
         if (!(isReportDestinationQueryKey(key) && destinationCarriesSessionWindow(query.state.data))) {
           return query;
         }
@@ -168,7 +168,7 @@ const seedDestinationSessionsFromSessionPages = (client: QueryClient): void => {
   const cache = client.getQueryCache().getAll();
   const sessionPagesByIdentity = new Map<string, unknown>();
   for (const query of cache) {
-    const key = query.queryKey as readonly unknown[];
+    const key = query.queryKey;
     if (!isSessionPagesQueryKey(key) || query.state.data === undefined) {
       continue;
     }
@@ -179,7 +179,7 @@ const seedDestinationSessionsFromSessionPages = (client: QueryClient): void => {
     }
   }
   for (const query of cache) {
-    const key = query.queryKey as readonly unknown[];
+    const key = query.queryKey;
     if (!isReportDestinationQueryKey(key)) {
       continue;
     }

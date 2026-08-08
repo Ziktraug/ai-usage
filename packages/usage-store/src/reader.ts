@@ -83,14 +83,3 @@ export {
   buildSessionQuerySqlOrder,
   executeMaterializedSessionQuery,
 } from './session-query-sqlite';
-
-import type { SessionQueryPerfSnapshot } from './session-query-perf';
-import { resetSessionQueryPerf, sessionQueryPerfEnabled, snapshotSessionQueryPerf } from './session-query-perf';
-
-export const isSessionQueryPerformanceCaptureEnabled = (): boolean => sessionQueryPerfEnabled();
-
-export const readSessionQueryPerformanceCapture = (): SessionQueryPerfSnapshot => snapshotSessionQueryPerf();
-
-export const resetSessionQueryPerformanceCapture = (): void => {
-  resetSessionQueryPerf();
-};

@@ -1,1545 +1,2641 @@
 {
-  "controlArtifact": {
-    "ingestPath": "docs/performance/artifacts/plan072-control.json",
-    "exactResidualIncludesSlice": true,
-    "medianSliceTotalMs": 0.087,
-    "medianSqliteResidualTotalMs": 172.04500000000002,
-    "rawSampleSliceTotalsMs": [0.079, 0.087, 0.097],
-    "rawSampleSqliteResidualTotalsMs": [
-      165.25100000000003, 177.583, 172.04500000000002
-    ],
-    "sliceToResidualRatio": 0.0005056816530558865
-  },
-  "probeConfiguration": {
+  "configuration": {
+    "fixtureSizes": [5000, 20000],
     "pageSize": 200,
-    "probeSizes": [5000, 20000, 50000],
-    "samplesPerScenario": 7,
-    "warmUpCount": 1
+    "recordedSampleCount": 3,
+    "warmupCount": 1
   },
-  "scalingRatios": [
+  "decision": {
+    "keysetRejected": true,
+    "reason": "STOP A1: JavaScript projection slicing is below 10% of residual SQLite cost at 5k and 20k does not grow superlinearly.",
+    "sliceGrowthRatio": 1.6216216216216217,
+    "sliceShareAtFiveThousand": 0.0002674009351805679,
+    "sliceShareAtTwentyThousand": 0.0001075598436079874,
+    "superlinearGrowthObserved": false
+  },
+  "revisionTransition": {
+    "firstRevisionProjectionMisses": 1,
+    "identitiesOverlap": 0,
+    "secondRevisionProjectionMisses": 1
+  },
+  "scenarios": [
     {
-      "label": "date-ascending",
-      "ratios": [
+      "fixtureSize": 5000,
+      "label": "date-desc",
+      "median": {
+        "duplicateIdentityCount": 0,
+        "firstIdentity": "session-row-v1:b6074141ec0dfafd",
+        "lastIdentity": "session-row-v1:183f5e2a1264d176",
+        "missingIdentityCount": 0,
+        "pageCount": 19,
+        "serializationMs": 5.262,
+        "sqlite": {
+          "counters": {
+            "identityChecks": 19,
+            "projectionCacheHits": 18,
+            "projectionCacheMisses": 1,
+            "totalsCacheHits": 18,
+            "totalsCacheMisses": 1
+          },
+          "phases": {
+            "count": {
+              "count": 1,
+              "p50Ms": 0.841,
+              "p95Ms": 0.841,
+              "totalMs": 0.841
+            },
+            "identity": {
+              "count": 19,
+              "p50Ms": 0.033,
+              "p95Ms": 0.11,
+              "totalMs": 0.709
+            },
+            "materialize": {
+              "count": 19,
+              "p50Ms": 2.971,
+              "p95Ms": 3.5,
+              "totalMs": 56.386
+            },
+            "projection": {
+              "count": 1,
+              "p50Ms": 80.396,
+              "p95Ms": 80.396,
+              "totalMs": 80.396
+            },
+            "slice": {
+              "count": 19,
+              "p50Ms": 0.001,
+              "p95Ms": 0.007,
+              "totalMs": 0.037
+            }
+          },
+          "samples": 59
+        },
+        "totalMs": 153.09,
+        "transferBytes": 6845646,
+        "uniqueIdentityCount": 3750
+      },
+      "samples": [
         {
-          "from": 5000,
-          "rawItemRatio": 4,
-          "sliceMsRatio": 4.2561,
-          "superlinear": false,
-          "to": 20000
+          "duplicateIdentityCount": 0,
+          "firstIdentity": "session-row-v1:b6074141ec0dfafd",
+          "lastIdentity": "session-row-v1:183f5e2a1264d176",
+          "missingIdentityCount": 0,
+          "pageCount": 19,
+          "serializationMs": 5.262,
+          "sqlite": {
+            "counters": {
+              "identityChecks": 19,
+              "projectionCacheHits": 18,
+              "projectionCacheMisses": 1,
+              "totalsCacheHits": 18,
+              "totalsCacheMisses": 1
+            },
+            "phases": {
+              "count": {
+                "count": 1,
+                "p50Ms": 0.82,
+                "p95Ms": 0.82,
+                "totalMs": 0.82
+              },
+              "identity": {
+                "count": 19,
+                "p50Ms": 0.032,
+                "p95Ms": 0.055,
+                "totalMs": 0.637
+              },
+              "materialize": {
+                "count": 19,
+                "p50Ms": 2.847,
+                "p95Ms": 3.06,
+                "totalMs": 53.59
+              },
+              "projection": {
+                "count": 1,
+                "p50Ms": 75.254,
+                "p95Ms": 75.254,
+                "totalMs": 75.254
+              },
+              "slice": {
+                "count": 19,
+                "p50Ms": 0.001,
+                "p95Ms": 0.004,
+                "totalMs": 0.026
+              }
+            },
+            "samples": 59
+          },
+          "totalMs": 145.78,
+          "transferBytes": 6845646,
+          "uniqueIdentityCount": 3750
         },
         {
-          "from": 20000,
-          "rawItemRatio": 2.5,
-          "sliceMsRatio": 2.3413,
-          "superlinear": false,
-          "to": 50000
+          "duplicateIdentityCount": 0,
+          "firstIdentity": "session-row-v1:b6074141ec0dfafd",
+          "lastIdentity": "session-row-v1:183f5e2a1264d176",
+          "missingIdentityCount": 0,
+          "pageCount": 19,
+          "serializationMs": 4.746,
+          "sqlite": {
+            "counters": {
+              "identityChecks": 19,
+              "projectionCacheHits": 18,
+              "projectionCacheMisses": 1,
+              "totalsCacheHits": 18,
+              "totalsCacheMisses": 1
+            },
+            "phases": {
+              "count": {
+                "count": 1,
+                "p50Ms": 0.841,
+                "p95Ms": 0.841,
+                "totalMs": 0.841
+              },
+              "identity": {
+                "count": 19,
+                "p50Ms": 0.033,
+                "p95Ms": 0.11,
+                "totalMs": 0.709
+              },
+              "materialize": {
+                "count": 19,
+                "p50Ms": 2.971,
+                "p95Ms": 3.5,
+                "totalMs": 56.386
+              },
+              "projection": {
+                "count": 1,
+                "p50Ms": 80.396,
+                "p95Ms": 80.396,
+                "totalMs": 80.396
+              },
+              "slice": {
+                "count": 19,
+                "p50Ms": 0.001,
+                "p95Ms": 0.007,
+                "totalMs": 0.037
+              }
+            },
+            "samples": 59
+          },
+          "totalMs": 153.09,
+          "transferBytes": 6845646,
+          "uniqueIdentityCount": 3750
+        },
+        {
+          "duplicateIdentityCount": 0,
+          "firstIdentity": "session-row-v1:b6074141ec0dfafd",
+          "lastIdentity": "session-row-v1:183f5e2a1264d176",
+          "missingIdentityCount": 0,
+          "pageCount": 19,
+          "serializationMs": 5.425,
+          "sqlite": {
+            "counters": {
+              "identityChecks": 19,
+              "projectionCacheHits": 18,
+              "projectionCacheMisses": 1,
+              "totalsCacheHits": 18,
+              "totalsCacheMisses": 1
+            },
+            "phases": {
+              "count": {
+                "count": 1,
+                "p50Ms": 0.777,
+                "p95Ms": 0.777,
+                "totalMs": 0.777
+              },
+              "identity": {
+                "count": 19,
+                "p50Ms": 0.033,
+                "p95Ms": 0.064,
+                "totalMs": 0.696
+              },
+              "materialize": {
+                "count": 19,
+                "p50Ms": 3.174,
+                "p95Ms": 4.554,
+                "totalMs": 62.456
+              },
+              "projection": {
+                "count": 1,
+                "p50Ms": 72.195,
+                "p95Ms": 72.195,
+                "totalMs": 72.195
+              },
+              "slice": {
+                "count": 19,
+                "p50Ms": 0.001,
+                "p95Ms": 0.003,
+                "totalMs": 0.026
+              }
+            },
+            "samples": 59
+          },
+          "totalMs": 156.568,
+          "transferBytes": 6845646,
+          "uniqueIdentityCount": 3750
         }
       ]
     },
     {
-      "label": "date-descending",
-      "ratios": [
+      "fixtureSize": 5000,
+      "label": "date-asc",
+      "median": {
+        "duplicateIdentityCount": 0,
+        "firstIdentity": "session-row-v1:183f5e2a1264d176",
+        "lastIdentity": "session-row-v1:b6074141ec0dfafd",
+        "missingIdentityCount": 0,
+        "pageCount": 19,
+        "serializationMs": 5.426,
+        "sqlite": {
+          "counters": {
+            "identityChecks": 19,
+            "projectionCacheHits": 18,
+            "projectionCacheMisses": 1,
+            "totalsCacheHits": 18,
+            "totalsCacheMisses": 1
+          },
+          "phases": {
+            "count": {
+              "count": 1,
+              "p50Ms": 0.815,
+              "p95Ms": 0.815,
+              "totalMs": 0.815
+            },
+            "identity": {
+              "count": 19,
+              "p50Ms": 0.032,
+              "p95Ms": 0.057,
+              "totalMs": 0.677
+            },
+            "materialize": {
+              "count": 19,
+              "p50Ms": 3.098,
+              "p95Ms": 6.29,
+              "totalMs": 61.202
+            },
+            "projection": {
+              "count": 1,
+              "p50Ms": 72.953,
+              "p95Ms": 72.953,
+              "totalMs": 72.953
+            },
+            "slice": {
+              "count": 19,
+              "p50Ms": 0.001,
+              "p95Ms": 0.004,
+              "totalMs": 0.022
+            }
+          },
+          "samples": 59
+        },
+        "totalMs": 151.496,
+        "transferBytes": 6845646,
+        "uniqueIdentityCount": 3750
+      },
+      "samples": [
         {
-          "from": 5000,
-          "rawItemRatio": 4,
-          "sliceMsRatio": 4.0915,
-          "superlinear": false,
-          "to": 20000
+          "duplicateIdentityCount": 0,
+          "firstIdentity": "session-row-v1:183f5e2a1264d176",
+          "lastIdentity": "session-row-v1:b6074141ec0dfafd",
+          "missingIdentityCount": 0,
+          "pageCount": 19,
+          "serializationMs": 4.927,
+          "sqlite": {
+            "counters": {
+              "identityChecks": 19,
+              "projectionCacheHits": 18,
+              "projectionCacheMisses": 1,
+              "totalsCacheHits": 18,
+              "totalsCacheMisses": 1
+            },
+            "phases": {
+              "count": {
+                "count": 1,
+                "p50Ms": 0.815,
+                "p95Ms": 0.815,
+                "totalMs": 0.815
+              },
+              "identity": {
+                "count": 19,
+                "p50Ms": 0.032,
+                "p95Ms": 0.057,
+                "totalMs": 0.677
+              },
+              "materialize": {
+                "count": 19,
+                "p50Ms": 3.098,
+                "p95Ms": 6.29,
+                "totalMs": 61.202
+              },
+              "projection": {
+                "count": 1,
+                "p50Ms": 72.953,
+                "p95Ms": 72.953,
+                "totalMs": 72.953
+              },
+              "slice": {
+                "count": 19,
+                "p50Ms": 0.001,
+                "p95Ms": 0.004,
+                "totalMs": 0.022
+              }
+            },
+            "samples": 59
+          },
+          "totalMs": 151.496,
+          "transferBytes": 6845646,
+          "uniqueIdentityCount": 3750
         },
         {
-          "from": 20000,
-          "rawItemRatio": 2.5,
-          "sliceMsRatio": 2.4941,
-          "superlinear": false,
-          "to": 50000
+          "duplicateIdentityCount": 0,
+          "firstIdentity": "session-row-v1:183f5e2a1264d176",
+          "lastIdentity": "session-row-v1:b6074141ec0dfafd",
+          "missingIdentityCount": 0,
+          "pageCount": 19,
+          "serializationMs": 9.941,
+          "sqlite": {
+            "counters": {
+              "identityChecks": 19,
+              "projectionCacheHits": 18,
+              "projectionCacheMisses": 1,
+              "totalsCacheHits": 18,
+              "totalsCacheMisses": 1
+            },
+            "phases": {
+              "count": {
+                "count": 1,
+                "p50Ms": 0.841,
+                "p95Ms": 0.841,
+                "totalMs": 0.841
+              },
+              "identity": {
+                "count": 19,
+                "p50Ms": 0.031,
+                "p95Ms": 0.049,
+                "totalMs": 0.621
+              },
+              "materialize": {
+                "count": 19,
+                "p50Ms": 2.963,
+                "p95Ms": 5.707,
+                "totalMs": 59.298
+              },
+              "projection": {
+                "count": 1,
+                "p50Ms": 72.847,
+                "p95Ms": 72.847,
+                "totalMs": 72.847
+              },
+              "slice": {
+                "count": 19,
+                "p50Ms": 0.001,
+                "p95Ms": 0.003,
+                "totalMs": 0.019
+              }
+            },
+            "samples": 59
+          },
+          "totalMs": 153.794,
+          "transferBytes": 6845646,
+          "uniqueIdentityCount": 3750
+        },
+        {
+          "duplicateIdentityCount": 0,
+          "firstIdentity": "session-row-v1:183f5e2a1264d176",
+          "lastIdentity": "session-row-v1:b6074141ec0dfafd",
+          "missingIdentityCount": 0,
+          "pageCount": 19,
+          "serializationMs": 5.426,
+          "sqlite": {
+            "counters": {
+              "identityChecks": 19,
+              "projectionCacheHits": 18,
+              "projectionCacheMisses": 1,
+              "totalsCacheHits": 18,
+              "totalsCacheMisses": 1
+            },
+            "phases": {
+              "count": {
+                "count": 1,
+                "p50Ms": 0.963,
+                "p95Ms": 0.963,
+                "totalMs": 0.963
+              },
+              "identity": {
+                "count": 19,
+                "p50Ms": 0.032,
+                "p95Ms": 0.046,
+                "totalMs": 0.63
+              },
+              "materialize": {
+                "count": 19,
+                "p50Ms": 2.821,
+                "p95Ms": 4.241,
+                "totalMs": 55.811
+              },
+              "projection": {
+                "count": 1,
+                "p50Ms": 72.85,
+                "p95Ms": 72.85,
+                "totalMs": 72.85
+              },
+              "slice": {
+                "count": 19,
+                "p50Ms": 0.001,
+                "p95Ms": 0.002,
+                "totalMs": 0.016
+              }
+            },
+            "samples": 59
+          },
+          "totalMs": 145.734,
+          "transferBytes": 6845646,
+          "uniqueIdentityCount": 3750
         }
       ]
     },
     {
-      "label": "project-ties-12-teams",
-      "ratios": [
+      "fixtureSize": 5000,
+      "label": "project-rank-ties",
+      "median": {
+        "duplicateIdentityCount": 0,
+        "firstIdentity": "session-row-v1:183f5e2a1264d176",
+        "lastIdentity": "session-row-v1:8283601034ba328f",
+        "missingIdentityCount": 0,
+        "pageCount": 19,
+        "serializationMs": 5.429,
+        "sqlite": {
+          "counters": {
+            "identityChecks": 19,
+            "projectionCacheHits": 18,
+            "projectionCacheMisses": 1,
+            "totalsCacheHits": 18,
+            "totalsCacheMisses": 1
+          },
+          "phases": {
+            "count": {
+              "count": 1,
+              "p50Ms": 0.843,
+              "p95Ms": 0.843,
+              "totalMs": 0.843
+            },
+            "identity": {
+              "count": 19,
+              "p50Ms": 0.034,
+              "p95Ms": 0.083,
+              "totalMs": 0.77
+            },
+            "materialize": {
+              "count": 19,
+              "p50Ms": 3.362,
+              "p95Ms": 6.227,
+              "totalMs": 69.347
+            },
+            "projection": {
+              "count": 1,
+              "p50Ms": 75.343,
+              "p95Ms": 75.343,
+              "totalMs": 75.343
+            },
+            "slice": {
+              "count": 19,
+              "p50Ms": 0.001,
+              "p95Ms": 0.002,
+              "totalMs": 0.021
+            }
+          },
+          "samples": 59
+        },
+        "totalMs": 164.339,
+        "transferBytes": 6845646,
+        "uniqueIdentityCount": 3750
+      },
+      "samples": [
         {
-          "from": 5000,
-          "rawItemRatio": 4,
-          "sliceMsRatio": 3.7438,
-          "superlinear": false,
-          "to": 20000
+          "duplicateIdentityCount": 0,
+          "firstIdentity": "session-row-v1:183f5e2a1264d176",
+          "lastIdentity": "session-row-v1:8283601034ba328f",
+          "missingIdentityCount": 0,
+          "pageCount": 19,
+          "serializationMs": 4.658,
+          "sqlite": {
+            "counters": {
+              "identityChecks": 19,
+              "projectionCacheHits": 18,
+              "projectionCacheMisses": 1,
+              "totalsCacheHits": 18,
+              "totalsCacheMisses": 1
+            },
+            "phases": {
+              "count": {
+                "count": 1,
+                "p50Ms": 0.785,
+                "p95Ms": 0.785,
+                "totalMs": 0.785
+              },
+              "identity": {
+                "count": 19,
+                "p50Ms": 0.031,
+                "p95Ms": 0.038,
+                "totalMs": 0.603
+              },
+              "materialize": {
+                "count": 19,
+                "p50Ms": 3.127,
+                "p95Ms": 3.902,
+                "totalMs": 59.036
+              },
+              "projection": {
+                "count": 1,
+                "p50Ms": 76.277,
+                "p95Ms": 76.277,
+                "totalMs": 76.277
+              },
+              "slice": {
+                "count": 19,
+                "p50Ms": 0.001,
+                "p95Ms": 0.006,
+                "totalMs": 0.022
+              }
+            },
+            "samples": 59
+          },
+          "totalMs": 151.097,
+          "transferBytes": 6845646,
+          "uniqueIdentityCount": 3750
         },
         {
-          "from": 20000,
-          "rawItemRatio": 2.5,
-          "sliceMsRatio": 2.5547,
-          "superlinear": false,
-          "to": 50000
+          "duplicateIdentityCount": 0,
+          "firstIdentity": "session-row-v1:183f5e2a1264d176",
+          "lastIdentity": "session-row-v1:8283601034ba328f",
+          "missingIdentityCount": 0,
+          "pageCount": 19,
+          "serializationMs": 5.429,
+          "sqlite": {
+            "counters": {
+              "identityChecks": 19,
+              "projectionCacheHits": 18,
+              "projectionCacheMisses": 1,
+              "totalsCacheHits": 18,
+              "totalsCacheMisses": 1
+            },
+            "phases": {
+              "count": {
+                "count": 1,
+                "p50Ms": 0.793,
+                "p95Ms": 0.793,
+                "totalMs": 0.793
+              },
+              "identity": {
+                "count": 19,
+                "p50Ms": 0.033,
+                "p95Ms": 0.071,
+                "totalMs": 0.715
+              },
+              "materialize": {
+                "count": 19,
+                "p50Ms": 3.448,
+                "p95Ms": 13.435,
+                "totalMs": 79.618
+              },
+              "projection": {
+                "count": 1,
+                "p50Ms": 77.574,
+                "p95Ms": 77.574,
+                "totalMs": 77.574
+              },
+              "slice": {
+                "count": 19,
+                "p50Ms": 0.001,
+                "p95Ms": 0.003,
+                "totalMs": 0.021
+              }
+            },
+            "samples": 59
+          },
+          "totalMs": 176.067,
+          "transferBytes": 6845646,
+          "uniqueIdentityCount": 3750
+        },
+        {
+          "duplicateIdentityCount": 0,
+          "firstIdentity": "session-row-v1:183f5e2a1264d176",
+          "lastIdentity": "session-row-v1:8283601034ba328f",
+          "missingIdentityCount": 0,
+          "pageCount": 19,
+          "serializationMs": 5.986,
+          "sqlite": {
+            "counters": {
+              "identityChecks": 19,
+              "projectionCacheHits": 18,
+              "projectionCacheMisses": 1,
+              "totalsCacheHits": 18,
+              "totalsCacheMisses": 1
+            },
+            "phases": {
+              "count": {
+                "count": 1,
+                "p50Ms": 0.843,
+                "p95Ms": 0.843,
+                "totalMs": 0.843
+              },
+              "identity": {
+                "count": 19,
+                "p50Ms": 0.034,
+                "p95Ms": 0.083,
+                "totalMs": 0.77
+              },
+              "materialize": {
+                "count": 19,
+                "p50Ms": 3.362,
+                "p95Ms": 6.227,
+                "totalMs": 69.347
+              },
+              "projection": {
+                "count": 1,
+                "p50Ms": 75.343,
+                "p95Ms": 75.343,
+                "totalMs": 75.343
+              },
+              "slice": {
+                "count": 19,
+                "p50Ms": 0.001,
+                "p95Ms": 0.002,
+                "totalMs": 0.021
+              }
+            },
+            "samples": 59
+          },
+          "totalMs": 164.339,
+          "transferBytes": 6845646,
+          "uniqueIdentityCount": 3750
         }
       ]
     },
     {
-      "label": "no-result-filter",
-      "ratios": []
-    },
-    {
-      "label": "highly-selective-filter",
-      "ratios": [
+      "fixtureSize": 5000,
+      "label": "zero-matches",
+      "median": {
+        "duplicateIdentityCount": 0,
+        "firstIdentity": null,
+        "lastIdentity": null,
+        "missingIdentityCount": 0,
+        "pageCount": 1,
+        "serializationMs": 0.006,
+        "sqlite": {
+          "counters": {
+            "identityChecks": 1,
+            "projectionCacheHits": 0,
+            "projectionCacheMisses": 1,
+            "totalsCacheHits": 0,
+            "totalsCacheMisses": 1
+          },
+          "phases": {
+            "count": {
+              "count": 1,
+              "p50Ms": 4.586,
+              "p95Ms": 4.586,
+              "totalMs": 4.586
+            },
+            "identity": {
+              "count": 1,
+              "p50Ms": 0.036,
+              "p95Ms": 0.036,
+              "totalMs": 0.036
+            },
+            "materialize": {
+              "count": 1,
+              "p50Ms": 0.004,
+              "p95Ms": 0.004,
+              "totalMs": 0.004
+            },
+            "projection": {
+              "count": 1,
+              "p50Ms": 10.584,
+              "p95Ms": 10.584,
+              "totalMs": 10.584
+            },
+            "slice": {
+              "count": 1,
+              "p50Ms": 0.002,
+              "p95Ms": 0.002,
+              "totalMs": 0.002
+            }
+          },
+          "samples": 5
+        },
+        "totalMs": 15.848,
+        "transferBytes": 150,
+        "uniqueIdentityCount": 0
+      },
+      "samples": [
         {
-          "from": 5000,
-          "rawItemRatio": 4,
-          "sliceMsRatio": 4.3748,
-          "superlinear": false,
-          "to": 20000
+          "duplicateIdentityCount": 0,
+          "firstIdentity": null,
+          "lastIdentity": null,
+          "missingIdentityCount": 0,
+          "pageCount": 1,
+          "serializationMs": 0.005,
+          "sqlite": {
+            "counters": {
+              "identityChecks": 1,
+              "projectionCacheHits": 0,
+              "projectionCacheMisses": 1,
+              "totalsCacheHits": 0,
+              "totalsCacheMisses": 1
+            },
+            "phases": {
+              "count": {
+                "count": 1,
+                "p50Ms": 4.804,
+                "p95Ms": 4.804,
+                "totalMs": 4.804
+              },
+              "identity": {
+                "count": 1,
+                "p50Ms": 0.045,
+                "p95Ms": 0.045,
+                "totalMs": 0.045
+              },
+              "materialize": {
+                "count": 1,
+                "p50Ms": 0.003,
+                "p95Ms": 0.003,
+                "totalMs": 0.003
+              },
+              "projection": {
+                "count": 1,
+                "p50Ms": 10.048,
+                "p95Ms": 10.048,
+                "totalMs": 10.048
+              },
+              "slice": {
+                "count": 1,
+                "p50Ms": 0.001,
+                "p95Ms": 0.001,
+                "totalMs": 0.001
+              }
+            },
+            "samples": 5
+          },
+          "totalMs": 15.676,
+          "transferBytes": 150,
+          "uniqueIdentityCount": 0
         },
         {
-          "from": 20000,
-          "rawItemRatio": 2.5,
-          "sliceMsRatio": 2.5048,
-          "superlinear": false,
-          "to": 50000
+          "duplicateIdentityCount": 0,
+          "firstIdentity": null,
+          "lastIdentity": null,
+          "missingIdentityCount": 0,
+          "pageCount": 1,
+          "serializationMs": 0.006,
+          "sqlite": {
+            "counters": {
+              "identityChecks": 1,
+              "projectionCacheHits": 0,
+              "projectionCacheMisses": 1,
+              "totalsCacheHits": 0,
+              "totalsCacheMisses": 1
+            },
+            "phases": {
+              "count": {
+                "count": 1,
+                "p50Ms": 4.586,
+                "p95Ms": 4.586,
+                "totalMs": 4.586
+              },
+              "identity": {
+                "count": 1,
+                "p50Ms": 0.036,
+                "p95Ms": 0.036,
+                "totalMs": 0.036
+              },
+              "materialize": {
+                "count": 1,
+                "p50Ms": 0.004,
+                "p95Ms": 0.004,
+                "totalMs": 0.004
+              },
+              "projection": {
+                "count": 1,
+                "p50Ms": 10.584,
+                "p95Ms": 10.584,
+                "totalMs": 10.584
+              },
+              "slice": {
+                "count": 1,
+                "p50Ms": 0.002,
+                "p95Ms": 0.002,
+                "totalMs": 0.002
+              }
+            },
+            "samples": 5
+          },
+          "totalMs": 15.848,
+          "transferBytes": 150,
+          "uniqueIdentityCount": 0
+        },
+        {
+          "duplicateIdentityCount": 0,
+          "firstIdentity": null,
+          "lastIdentity": null,
+          "missingIdentityCount": 0,
+          "pageCount": 1,
+          "serializationMs": 0.006,
+          "sqlite": {
+            "counters": {
+              "identityChecks": 1,
+              "projectionCacheHits": 0,
+              "projectionCacheMisses": 1,
+              "totalsCacheHits": 0,
+              "totalsCacheMisses": 1
+            },
+            "phases": {
+              "count": {
+                "count": 1,
+                "p50Ms": 5.662,
+                "p95Ms": 5.662,
+                "totalMs": 5.662
+              },
+              "identity": {
+                "count": 1,
+                "p50Ms": 0.037,
+                "p95Ms": 0.037,
+                "totalMs": 0.037
+              },
+              "materialize": {
+                "count": 1,
+                "p50Ms": 0.003,
+                "p95Ms": 0.003,
+                "totalMs": 0.003
+              },
+              "projection": {
+                "count": 1,
+                "p50Ms": 10.814,
+                "p95Ms": 10.814,
+                "totalMs": 10.814
+              },
+              "slice": {
+                "count": 1,
+                "p50Ms": 0.001,
+                "p95Ms": 0.001,
+                "totalMs": 0.001
+              }
+            },
+            "samples": 5
+          },
+          "totalMs": 17.149,
+          "transferBytes": 150,
+          "uniqueIdentityCount": 0
         }
       ]
     },
     {
-      "label": "low-selectivity-filter",
-      "ratios": [
+      "fixtureSize": 5000,
+      "label": "harness-codex",
+      "median": {
+        "duplicateIdentityCount": 0,
+        "firstIdentity": "session-row-v1:69e1a1ca2ef3e4f9",
+        "lastIdentity": "session-row-v1:183f5e2a1264d176",
+        "missingIdentityCount": 0,
+        "pageCount": 4,
+        "serializationMs": 1.193,
+        "sqlite": {
+          "counters": {
+            "identityChecks": 4,
+            "projectionCacheHits": 3,
+            "projectionCacheMisses": 1,
+            "totalsCacheHits": 3,
+            "totalsCacheMisses": 1
+          },
+          "phases": {
+            "count": {
+              "count": 1,
+              "p50Ms": 1.415,
+              "p95Ms": 1.415,
+              "totalMs": 1.415
+            },
+            "identity": {
+              "count": 4,
+              "p50Ms": 0.033,
+              "p95Ms": 0.036,
+              "totalMs": 0.132
+            },
+            "materialize": {
+              "count": 4,
+              "p50Ms": 2.95,
+              "p95Ms": 3.569,
+              "totalMs": 11.738
+            },
+            "projection": {
+              "count": 1,
+              "p50Ms": 73.314,
+              "p95Ms": 73.314,
+              "totalMs": 73.314
+            },
+            "slice": {
+              "count": 4,
+              "p50Ms": 0.001,
+              "p95Ms": 0.001,
+              "totalMs": 0.003
+            }
+          },
+          "samples": 14
+        },
+        "totalMs": 90.052,
+        "transferBytes": 1357253,
+        "uniqueIdentityCount": 750
+      },
+      "samples": [
         {
-          "from": 5000,
-          "rawItemRatio": 4,
-          "sliceMsRatio": 3.9355,
-          "superlinear": false,
-          "to": 20000
+          "duplicateIdentityCount": 0,
+          "firstIdentity": "session-row-v1:69e1a1ca2ef3e4f9",
+          "lastIdentity": "session-row-v1:183f5e2a1264d176",
+          "missingIdentityCount": 0,
+          "pageCount": 4,
+          "serializationMs": 1.193,
+          "sqlite": {
+            "counters": {
+              "identityChecks": 4,
+              "projectionCacheHits": 3,
+              "projectionCacheMisses": 1,
+              "totalsCacheHits": 3,
+              "totalsCacheMisses": 1
+            },
+            "phases": {
+              "count": {
+                "count": 1,
+                "p50Ms": 1.415,
+                "p95Ms": 1.415,
+                "totalMs": 1.415
+              },
+              "identity": {
+                "count": 4,
+                "p50Ms": 0.033,
+                "p95Ms": 0.036,
+                "totalMs": 0.132
+              },
+              "materialize": {
+                "count": 4,
+                "p50Ms": 2.95,
+                "p95Ms": 3.569,
+                "totalMs": 11.738
+              },
+              "projection": {
+                "count": 1,
+                "p50Ms": 73.314,
+                "p95Ms": 73.314,
+                "totalMs": 73.314
+              },
+              "slice": {
+                "count": 4,
+                "p50Ms": 0.001,
+                "p95Ms": 0.001,
+                "totalMs": 0.003
+              }
+            },
+            "samples": 14
+          },
+          "totalMs": 90.052,
+          "transferBytes": 1357253,
+          "uniqueIdentityCount": 750
         },
         {
-          "from": 20000,
-          "rawItemRatio": 2.5,
-          "sliceMsRatio": 2.4924,
-          "superlinear": false,
-          "to": 50000
+          "duplicateIdentityCount": 0,
+          "firstIdentity": "session-row-v1:69e1a1ca2ef3e4f9",
+          "lastIdentity": "session-row-v1:183f5e2a1264d176",
+          "missingIdentityCount": 0,
+          "pageCount": 4,
+          "serializationMs": 1.357,
+          "sqlite": {
+            "counters": {
+              "identityChecks": 4,
+              "projectionCacheHits": 3,
+              "projectionCacheMisses": 1,
+              "totalsCacheHits": 3,
+              "totalsCacheMisses": 1
+            },
+            "phases": {
+              "count": {
+                "count": 1,
+                "p50Ms": 1.474,
+                "p95Ms": 1.474,
+                "totalMs": 1.474
+              },
+              "identity": {
+                "count": 4,
+                "p50Ms": 0.03,
+                "p95Ms": 0.043,
+                "totalMs": 0.134
+              },
+              "materialize": {
+                "count": 4,
+                "p50Ms": 2.795,
+                "p95Ms": 3.335,
+                "totalMs": 11.882
+              },
+              "projection": {
+                "count": 1,
+                "p50Ms": 72.02,
+                "p95Ms": 72.02,
+                "totalMs": 72.02
+              },
+              "slice": {
+                "count": 4,
+                "p50Ms": 0.001,
+                "p95Ms": 0.002,
+                "totalMs": 0.006
+              }
+            },
+            "samples": 14
+          },
+          "totalMs": 89.051,
+          "transferBytes": 1357253,
+          "uniqueIdentityCount": 750
+        },
+        {
+          "duplicateIdentityCount": 0,
+          "firstIdentity": "session-row-v1:69e1a1ca2ef3e4f9",
+          "lastIdentity": "session-row-v1:183f5e2a1264d176",
+          "missingIdentityCount": 0,
+          "pageCount": 4,
+          "serializationMs": 1.142,
+          "sqlite": {
+            "counters": {
+              "identityChecks": 4,
+              "projectionCacheHits": 3,
+              "projectionCacheMisses": 1,
+              "totalsCacheHits": 3,
+              "totalsCacheMisses": 1
+            },
+            "phases": {
+              "count": {
+                "count": 1,
+                "p50Ms": 2.043,
+                "p95Ms": 2.043,
+                "totalMs": 2.043
+              },
+              "identity": {
+                "count": 4,
+                "p50Ms": 0.032,
+                "p95Ms": 0.078,
+                "totalMs": 0.187
+              },
+              "materialize": {
+                "count": 4,
+                "p50Ms": 2.899,
+                "p95Ms": 3.124,
+                "totalMs": 11.226
+              },
+              "projection": {
+                "count": 1,
+                "p50Ms": 72.538,
+                "p95Ms": 72.538,
+                "totalMs": 72.538
+              },
+              "slice": {
+                "count": 4,
+                "p50Ms": 0.001,
+                "p95Ms": 0.002,
+                "totalMs": 0.004
+              }
+            },
+            "samples": 14
+          },
+          "totalMs": 90.686,
+          "transferBytes": 1357253,
+          "uniqueIdentityCount": 750
         }
       ]
     },
     {
-      "label": "revision-change-seq",
-      "ratios": [
+      "fixtureSize": 5000,
+      "label": "origin-classifier",
+      "median": {
+        "duplicateIdentityCount": 0,
+        "firstIdentity": "session-row-v1:b6074141ec0dfafd",
+        "lastIdentity": "session-row-v1:1fff5238a07afc02",
+        "missingIdentityCount": 0,
+        "pageCount": 7,
+        "serializationMs": 1.756,
+        "sqlite": {
+          "counters": {
+            "identityChecks": 7,
+            "projectionCacheHits": 6,
+            "projectionCacheMisses": 1,
+            "totalsCacheHits": 6,
+            "totalsCacheMisses": 1
+          },
+          "phases": {
+            "count": {
+              "count": 1,
+              "p50Ms": 5.267,
+              "p95Ms": 5.267,
+              "totalMs": 5.267
+            },
+            "identity": {
+              "count": 7,
+              "p50Ms": 0.031,
+              "p95Ms": 0.036,
+              "totalMs": 0.22
+            },
+            "materialize": {
+              "count": 7,
+              "p50Ms": 2.837,
+              "p95Ms": 3.043,
+              "totalMs": 18.101
+            },
+            "projection": {
+              "count": 1,
+              "p50Ms": 114.981,
+              "p95Ms": 114.981,
+              "totalMs": 114.981
+            },
+            "slice": {
+              "count": 7,
+              "p50Ms": 0.001,
+              "p95Ms": 0.004,
+              "totalMs": 0.009
+            }
+          },
+          "samples": 23
+        },
+        "totalMs": 143.784,
+        "transferBytes": 2259865,
+        "uniqueIdentityCount": 1250
+      },
+      "samples": [
         {
-          "from": 5000,
-          "rawItemRatio": 4,
-          "sliceMsRatio": 4.0218,
-          "superlinear": false,
-          "to": 20000
+          "duplicateIdentityCount": 0,
+          "firstIdentity": "session-row-v1:b6074141ec0dfafd",
+          "lastIdentity": "session-row-v1:1fff5238a07afc02",
+          "missingIdentityCount": 0,
+          "pageCount": 7,
+          "serializationMs": 1.764,
+          "sqlite": {
+            "counters": {
+              "identityChecks": 7,
+              "projectionCacheHits": 6,
+              "projectionCacheMisses": 1,
+              "totalsCacheHits": 6,
+              "totalsCacheMisses": 1
+            },
+            "phases": {
+              "count": {
+                "count": 1,
+                "p50Ms": 5.14,
+                "p95Ms": 5.14,
+                "totalMs": 5.14
+              },
+              "identity": {
+                "count": 7,
+                "p50Ms": 0.032,
+                "p95Ms": 0.036,
+                "totalMs": 0.225
+              },
+              "materialize": {
+                "count": 7,
+                "p50Ms": 2.733,
+                "p95Ms": 2.901,
+                "totalMs": 18.286
+              },
+              "projection": {
+                "count": 1,
+                "p50Ms": 114.474,
+                "p95Ms": 114.474,
+                "totalMs": 114.474
+              },
+              "slice": {
+                "count": 7,
+                "p50Ms": 0.001,
+                "p95Ms": 0.001,
+                "totalMs": 0.006
+              }
+            },
+            "samples": 23
+          },
+          "totalMs": 143.566,
+          "transferBytes": 2259865,
+          "uniqueIdentityCount": 1250
         },
         {
-          "from": 20000,
-          "rawItemRatio": 2.5,
-          "sliceMsRatio": 2.2911,
-          "superlinear": false,
-          "to": 50000
+          "duplicateIdentityCount": 0,
+          "firstIdentity": "session-row-v1:b6074141ec0dfafd",
+          "lastIdentity": "session-row-v1:1fff5238a07afc02",
+          "missingIdentityCount": 0,
+          "pageCount": 7,
+          "serializationMs": 1.756,
+          "sqlite": {
+            "counters": {
+              "identityChecks": 7,
+              "projectionCacheHits": 6,
+              "projectionCacheMisses": 1,
+              "totalsCacheHits": 6,
+              "totalsCacheMisses": 1
+            },
+            "phases": {
+              "count": {
+                "count": 1,
+                "p50Ms": 5.164,
+                "p95Ms": 5.164,
+                "totalMs": 5.164
+              },
+              "identity": {
+                "count": 7,
+                "p50Ms": 0.032,
+                "p95Ms": 0.039,
+                "totalMs": 0.233
+              },
+              "materialize": {
+                "count": 7,
+                "p50Ms": 2.826,
+                "p95Ms": 6.544,
+                "totalMs": 21.974
+              },
+              "projection": {
+                "count": 1,
+                "p50Ms": 113.622,
+                "p95Ms": 113.622,
+                "totalMs": 113.622
+              },
+              "slice": {
+                "count": 7,
+                "p50Ms": 0.001,
+                "p95Ms": 0.003,
+                "totalMs": 0.01
+              }
+            },
+            "samples": 23
+          },
+          "totalMs": 146.628,
+          "transferBytes": 2259865,
+          "uniqueIdentityCount": 1250
+        },
+        {
+          "duplicateIdentityCount": 0,
+          "firstIdentity": "session-row-v1:b6074141ec0dfafd",
+          "lastIdentity": "session-row-v1:1fff5238a07afc02",
+          "missingIdentityCount": 0,
+          "pageCount": 7,
+          "serializationMs": 1.738,
+          "sqlite": {
+            "counters": {
+              "identityChecks": 7,
+              "projectionCacheHits": 6,
+              "projectionCacheMisses": 1,
+              "totalsCacheHits": 6,
+              "totalsCacheMisses": 1
+            },
+            "phases": {
+              "count": {
+                "count": 1,
+                "p50Ms": 5.267,
+                "p95Ms": 5.267,
+                "totalMs": 5.267
+              },
+              "identity": {
+                "count": 7,
+                "p50Ms": 0.031,
+                "p95Ms": 0.036,
+                "totalMs": 0.22
+              },
+              "materialize": {
+                "count": 7,
+                "p50Ms": 2.837,
+                "p95Ms": 3.043,
+                "totalMs": 18.101
+              },
+              "projection": {
+                "count": 1,
+                "p50Ms": 114.981,
+                "p95Ms": 114.981,
+                "totalMs": 114.981
+              },
+              "slice": {
+                "count": 7,
+                "p50Ms": 0.001,
+                "p95Ms": 0.004,
+                "totalMs": 0.009
+              }
+            },
+            "samples": 23
+          },
+          "totalMs": 143.784,
+          "transferBytes": 2259865,
+          "uniqueIdentityCount": 1250
+        }
+      ]
+    },
+    {
+      "fixtureSize": 20000,
+      "label": "date-desc",
+      "median": {
+        "duplicateIdentityCount": 0,
+        "firstIdentity": "session-row-v1:823c2793e999e295",
+        "lastIdentity": "session-row-v1:183f5e2a1264d176",
+        "missingIdentityCount": 0,
+        "pageCount": 75,
+        "serializationMs": 23.069,
+        "sqlite": {
+          "counters": {
+            "identityChecks": 75,
+            "projectionCacheHits": 74,
+            "projectionCacheMisses": 1,
+            "totalsCacheHits": 74,
+            "totalsCacheMisses": 1
+          },
+          "phases": {
+            "count": {
+              "count": 1,
+              "p50Ms": 3.083,
+              "p95Ms": 3.083,
+              "totalMs": 3.083
+            },
+            "identity": {
+              "count": 75,
+              "p50Ms": 0.031,
+              "p95Ms": 0.046,
+              "totalMs": 2.43
+            },
+            "materialize": {
+              "count": 75,
+              "p50Ms": 3.052,
+              "p95Ms": 3.723,
+              "totalMs": 229.004
+            },
+            "projection": {
+              "count": 1,
+              "p50Ms": 323.252,
+              "p95Ms": 323.252,
+              "totalMs": 323.252
+            },
+            "slice": {
+              "count": 75,
+              "p50Ms": 0.001,
+              "p95Ms": 0.001,
+              "totalMs": 0.06
+            }
+          },
+          "samples": 227
+        },
+        "totalMs": 615.458,
+        "transferBytes": 27462633,
+        "uniqueIdentityCount": 15000
+      },
+      "samples": [
+        {
+          "duplicateIdentityCount": 0,
+          "firstIdentity": "session-row-v1:823c2793e999e295",
+          "lastIdentity": "session-row-v1:183f5e2a1264d176",
+          "missingIdentityCount": 0,
+          "pageCount": 75,
+          "serializationMs": 20.336,
+          "sqlite": {
+            "counters": {
+              "identityChecks": 75,
+              "projectionCacheHits": 74,
+              "projectionCacheMisses": 1,
+              "totalsCacheHits": 74,
+              "totalsCacheMisses": 1
+            },
+            "phases": {
+              "count": {
+                "count": 1,
+                "p50Ms": 3.083,
+                "p95Ms": 3.083,
+                "totalMs": 3.083
+              },
+              "identity": {
+                "count": 75,
+                "p50Ms": 0.031,
+                "p95Ms": 0.046,
+                "totalMs": 2.43
+              },
+              "materialize": {
+                "count": 75,
+                "p50Ms": 3.052,
+                "p95Ms": 3.723,
+                "totalMs": 229.004
+              },
+              "projection": {
+                "count": 1,
+                "p50Ms": 323.252,
+                "p95Ms": 323.252,
+                "totalMs": 323.252
+              },
+              "slice": {
+                "count": 75,
+                "p50Ms": 0.001,
+                "p95Ms": 0.001,
+                "totalMs": 0.06
+              }
+            },
+            "samples": 227
+          },
+          "totalMs": 615.458,
+          "transferBytes": 27462633,
+          "uniqueIdentityCount": 15000
+        },
+        {
+          "duplicateIdentityCount": 0,
+          "firstIdentity": "session-row-v1:823c2793e999e295",
+          "lastIdentity": "session-row-v1:183f5e2a1264d176",
+          "missingIdentityCount": 0,
+          "pageCount": 75,
+          "serializationMs": 23.069,
+          "sqlite": {
+            "counters": {
+              "identityChecks": 75,
+              "projectionCacheHits": 74,
+              "projectionCacheMisses": 1,
+              "totalsCacheHits": 74,
+              "totalsCacheMisses": 1
+            },
+            "phases": {
+              "count": {
+                "count": 1,
+                "p50Ms": 3.38,
+                "p95Ms": 3.38,
+                "totalMs": 3.38
+              },
+              "identity": {
+                "count": 75,
+                "p50Ms": 0.031,
+                "p95Ms": 0.041,
+                "totalMs": 2.42
+              },
+              "materialize": {
+                "count": 75,
+                "p50Ms": 3.222,
+                "p95Ms": 5.204,
+                "totalMs": 255.89
+              },
+              "projection": {
+                "count": 1,
+                "p50Ms": 317.787,
+                "p95Ms": 317.787,
+                "totalMs": 317.787
+              },
+              "slice": {
+                "count": 75,
+                "p50Ms": 0.001,
+                "p95Ms": 0.002,
+                "totalMs": 0.067
+              }
+            },
+            "samples": 227
+          },
+          "totalMs": 642.379,
+          "transferBytes": 27462633,
+          "uniqueIdentityCount": 15000
+        },
+        {
+          "duplicateIdentityCount": 0,
+          "firstIdentity": "session-row-v1:823c2793e999e295",
+          "lastIdentity": "session-row-v1:183f5e2a1264d176",
+          "missingIdentityCount": 0,
+          "pageCount": 75,
+          "serializationMs": 24.518,
+          "sqlite": {
+            "counters": {
+              "identityChecks": 75,
+              "projectionCacheHits": 74,
+              "projectionCacheMisses": 1,
+              "totalsCacheHits": 74,
+              "totalsCacheMisses": 1
+            },
+            "phases": {
+              "count": {
+                "count": 1,
+                "p50Ms": 3.116,
+                "p95Ms": 3.116,
+                "totalMs": 3.116
+              },
+              "identity": {
+                "count": 75,
+                "p50Ms": 0.031,
+                "p95Ms": 0.046,
+                "totalMs": 2.429
+              },
+              "materialize": {
+                "count": 75,
+                "p50Ms": 3.018,
+                "p95Ms": 3.62,
+                "totalMs": 228.676
+              },
+              "projection": {
+                "count": 1,
+                "p50Ms": 317.476,
+                "p95Ms": 317.476,
+                "totalMs": 317.476
+              },
+              "slice": {
+                "count": 75,
+                "p50Ms": 0.001,
+                "p95Ms": 0.003,
+                "totalMs": 0.087
+              }
+            },
+            "samples": 227
+          },
+          "totalMs": 614.453,
+          "transferBytes": 27462633,
+          "uniqueIdentityCount": 15000
+        }
+      ]
+    },
+    {
+      "fixtureSize": 20000,
+      "label": "date-asc",
+      "median": {
+        "duplicateIdentityCount": 0,
+        "firstIdentity": "session-row-v1:183f5e2a1264d176",
+        "lastIdentity": "session-row-v1:823c2793e999e295",
+        "missingIdentityCount": 0,
+        "pageCount": 75,
+        "serializationMs": 22.842,
+        "sqlite": {
+          "counters": {
+            "identityChecks": 75,
+            "projectionCacheHits": 74,
+            "projectionCacheMisses": 1,
+            "totalsCacheHits": 74,
+            "totalsCacheMisses": 1
+          },
+          "phases": {
+            "count": {
+              "count": 1,
+              "p50Ms": 3.478,
+              "p95Ms": 3.478,
+              "totalMs": 3.478
+            },
+            "identity": {
+              "count": 75,
+              "p50Ms": 0.03,
+              "p95Ms": 0.047,
+              "totalMs": 2.43
+            },
+            "materialize": {
+              "count": 75,
+              "p50Ms": 2.832,
+              "p95Ms": 3.547,
+              "totalMs": 220.368
+            },
+            "projection": {
+              "count": 1,
+              "p50Ms": 296.563,
+              "p95Ms": 296.563,
+              "totalMs": 296.563
+            },
+            "slice": {
+              "count": 75,
+              "p50Ms": 0.001,
+              "p95Ms": 0.002,
+              "totalMs": 0.065
+            }
+          },
+          "samples": 227
+        },
+        "totalMs": 585.482,
+        "transferBytes": 27462633,
+        "uniqueIdentityCount": 15000
+      },
+      "samples": [
+        {
+          "duplicateIdentityCount": 0,
+          "firstIdentity": "session-row-v1:183f5e2a1264d176",
+          "lastIdentity": "session-row-v1:823c2793e999e295",
+          "missingIdentityCount": 0,
+          "pageCount": 75,
+          "serializationMs": 22.842,
+          "sqlite": {
+            "counters": {
+              "identityChecks": 75,
+              "projectionCacheHits": 74,
+              "projectionCacheMisses": 1,
+              "totalsCacheHits": 74,
+              "totalsCacheMisses": 1
+            },
+            "phases": {
+              "count": {
+                "count": 1,
+                "p50Ms": 3.508,
+                "p95Ms": 3.508,
+                "totalMs": 3.508
+              },
+              "identity": {
+                "count": 75,
+                "p50Ms": 0.03,
+                "p95Ms": 0.044,
+                "totalMs": 2.401
+              },
+              "materialize": {
+                "count": 75,
+                "p50Ms": 3.229,
+                "p95Ms": 4.022,
+                "totalMs": 261.992
+              },
+              "projection": {
+                "count": 1,
+                "p50Ms": 295.98,
+                "p95Ms": 295.98,
+                "totalMs": 295.98
+              },
+              "slice": {
+                "count": 75,
+                "p50Ms": 0.001,
+                "p95Ms": 0.002,
+                "totalMs": 0.077
+              }
+            },
+            "samples": 227
+          },
+          "totalMs": 625.759,
+          "transferBytes": 27462633,
+          "uniqueIdentityCount": 15000
+        },
+        {
+          "duplicateIdentityCount": 0,
+          "firstIdentity": "session-row-v1:183f5e2a1264d176",
+          "lastIdentity": "session-row-v1:823c2793e999e295",
+          "missingIdentityCount": 0,
+          "pageCount": 75,
+          "serializationMs": 22.869,
+          "sqlite": {
+            "counters": {
+              "identityChecks": 75,
+              "projectionCacheHits": 74,
+              "projectionCacheMisses": 1,
+              "totalsCacheHits": 74,
+              "totalsCacheMisses": 1
+            },
+            "phases": {
+              "count": {
+                "count": 1,
+                "p50Ms": 3.067,
+                "p95Ms": 3.067,
+                "totalMs": 3.067
+              },
+              "identity": {
+                "count": 75,
+                "p50Ms": 0.031,
+                "p95Ms": 0.043,
+                "totalMs": 2.396
+              },
+              "materialize": {
+                "count": 75,
+                "p50Ms": 2.795,
+                "p95Ms": 3.474,
+                "totalMs": 219.377
+              },
+              "projection": {
+                "count": 1,
+                "p50Ms": 289.452,
+                "p95Ms": 289.452,
+                "totalMs": 289.452
+              },
+              "slice": {
+                "count": 75,
+                "p50Ms": 0.001,
+                "p95Ms": 0.002,
+                "totalMs": 0.067
+              }
+            },
+            "samples": 227
+          },
+          "totalMs": 577.952,
+          "transferBytes": 27462633,
+          "uniqueIdentityCount": 15000
+        },
+        {
+          "duplicateIdentityCount": 0,
+          "firstIdentity": "session-row-v1:183f5e2a1264d176",
+          "lastIdentity": "session-row-v1:823c2793e999e295",
+          "missingIdentityCount": 0,
+          "pageCount": 75,
+          "serializationMs": 22.357,
+          "sqlite": {
+            "counters": {
+              "identityChecks": 75,
+              "projectionCacheHits": 74,
+              "projectionCacheMisses": 1,
+              "totalsCacheHits": 74,
+              "totalsCacheMisses": 1
+            },
+            "phases": {
+              "count": {
+                "count": 1,
+                "p50Ms": 3.478,
+                "p95Ms": 3.478,
+                "totalMs": 3.478
+              },
+              "identity": {
+                "count": 75,
+                "p50Ms": 0.03,
+                "p95Ms": 0.047,
+                "totalMs": 2.43
+              },
+              "materialize": {
+                "count": 75,
+                "p50Ms": 2.832,
+                "p95Ms": 3.547,
+                "totalMs": 220.368
+              },
+              "projection": {
+                "count": 1,
+                "p50Ms": 296.563,
+                "p95Ms": 296.563,
+                "totalMs": 296.563
+              },
+              "slice": {
+                "count": 75,
+                "p50Ms": 0.001,
+                "p95Ms": 0.002,
+                "totalMs": 0.065
+              }
+            },
+            "samples": 227
+          },
+          "totalMs": 585.482,
+          "transferBytes": 27462633,
+          "uniqueIdentityCount": 15000
+        }
+      ]
+    },
+    {
+      "fixtureSize": 20000,
+      "label": "project-rank-ties",
+      "median": {
+        "duplicateIdentityCount": 0,
+        "firstIdentity": "session-row-v1:183f5e2a1264d176",
+        "lastIdentity": "session-row-v1:ba113f704ba892d8",
+        "missingIdentityCount": 0,
+        "pageCount": 75,
+        "serializationMs": 22.057,
+        "sqlite": {
+          "counters": {
+            "identityChecks": 75,
+            "projectionCacheHits": 74,
+            "projectionCacheMisses": 1,
+            "totalsCacheHits": 74,
+            "totalsCacheMisses": 1
+          },
+          "phases": {
+            "count": {
+              "count": 1,
+              "p50Ms": 3.222,
+              "p95Ms": 3.222,
+              "totalMs": 3.222
+            },
+            "identity": {
+              "count": 75,
+              "p50Ms": 0.032,
+              "p95Ms": 0.065,
+              "totalMs": 2.724
+            },
+            "materialize": {
+              "count": 75,
+              "p50Ms": 3.576,
+              "p95Ms": 4.71,
+              "totalMs": 269.353
+            },
+            "projection": {
+              "count": 1,
+              "p50Ms": 294.12,
+              "p95Ms": 294.12,
+              "totalMs": 294.12
+            },
+            "slice": {
+              "count": 75,
+              "p50Ms": 0.001,
+              "p95Ms": 0.003,
+              "totalMs": 0.079
+            }
+          },
+          "samples": 227
+        },
+        "totalMs": 637.292,
+        "transferBytes": 27462633,
+        "uniqueIdentityCount": 15000
+      },
+      "samples": [
+        {
+          "duplicateIdentityCount": 0,
+          "firstIdentity": "session-row-v1:183f5e2a1264d176",
+          "lastIdentity": "session-row-v1:ba113f704ba892d8",
+          "missingIdentityCount": 0,
+          "pageCount": 75,
+          "serializationMs": 23.072,
+          "sqlite": {
+            "counters": {
+              "identityChecks": 75,
+              "projectionCacheHits": 74,
+              "projectionCacheMisses": 1,
+              "totalsCacheHits": 74,
+              "totalsCacheMisses": 1
+            },
+            "phases": {
+              "count": {
+                "count": 1,
+                "p50Ms": 3.223,
+                "p95Ms": 3.223,
+                "totalMs": 3.223
+              },
+              "identity": {
+                "count": 75,
+                "p50Ms": 0.031,
+                "p95Ms": 0.051,
+                "totalMs": 2.558
+              },
+              "materialize": {
+                "count": 75,
+                "p50Ms": 3.257,
+                "p95Ms": 4.54,
+                "totalMs": 284.9
+              },
+              "projection": {
+                "count": 1,
+                "p50Ms": 304.146,
+                "p95Ms": 304.146,
+                "totalMs": 304.146
+              },
+              "slice": {
+                "count": 75,
+                "p50Ms": 0.001,
+                "p95Ms": 0.002,
+                "totalMs": 0.066
+              }
+            },
+            "samples": 227
+          },
+          "totalMs": 662.255,
+          "transferBytes": 27462633,
+          "uniqueIdentityCount": 15000
+        },
+        {
+          "duplicateIdentityCount": 0,
+          "firstIdentity": "session-row-v1:183f5e2a1264d176",
+          "lastIdentity": "session-row-v1:ba113f704ba892d8",
+          "missingIdentityCount": 0,
+          "pageCount": 75,
+          "serializationMs": 21.516,
+          "sqlite": {
+            "counters": {
+              "identityChecks": 75,
+              "projectionCacheHits": 74,
+              "projectionCacheMisses": 1,
+              "totalsCacheHits": 74,
+              "totalsCacheMisses": 1
+            },
+            "phases": {
+              "count": {
+                "count": 1,
+                "p50Ms": 3.198,
+                "p95Ms": 3.198,
+                "totalMs": 3.198
+              },
+              "identity": {
+                "count": 75,
+                "p50Ms": 0.03,
+                "p95Ms": 0.068,
+                "totalMs": 2.662
+              },
+              "materialize": {
+                "count": 75,
+                "p50Ms": 3.211,
+                "p95Ms": 4.587,
+                "totalMs": 256.877
+              },
+              "projection": {
+                "count": 1,
+                "p50Ms": 296.876,
+                "p95Ms": 296.876,
+                "totalMs": 296.876
+              },
+              "slice": {
+                "count": 75,
+                "p50Ms": 0.001,
+                "p95Ms": 0.002,
+                "totalMs": 0.074
+              }
+            },
+            "samples": 227
+          },
+          "totalMs": 622.321,
+          "transferBytes": 27462633,
+          "uniqueIdentityCount": 15000
+        },
+        {
+          "duplicateIdentityCount": 0,
+          "firstIdentity": "session-row-v1:183f5e2a1264d176",
+          "lastIdentity": "session-row-v1:ba113f704ba892d8",
+          "missingIdentityCount": 0,
+          "pageCount": 75,
+          "serializationMs": 22.057,
+          "sqlite": {
+            "counters": {
+              "identityChecks": 75,
+              "projectionCacheHits": 74,
+              "projectionCacheMisses": 1,
+              "totalsCacheHits": 74,
+              "totalsCacheMisses": 1
+            },
+            "phases": {
+              "count": {
+                "count": 1,
+                "p50Ms": 3.222,
+                "p95Ms": 3.222,
+                "totalMs": 3.222
+              },
+              "identity": {
+                "count": 75,
+                "p50Ms": 0.032,
+                "p95Ms": 0.065,
+                "totalMs": 2.724
+              },
+              "materialize": {
+                "count": 75,
+                "p50Ms": 3.576,
+                "p95Ms": 4.71,
+                "totalMs": 269.353
+              },
+              "projection": {
+                "count": 1,
+                "p50Ms": 294.12,
+                "p95Ms": 294.12,
+                "totalMs": 294.12
+              },
+              "slice": {
+                "count": 75,
+                "p50Ms": 0.001,
+                "p95Ms": 0.003,
+                "totalMs": 0.079
+              }
+            },
+            "samples": 227
+          },
+          "totalMs": 637.292,
+          "transferBytes": 27462633,
+          "uniqueIdentityCount": 15000
+        }
+      ]
+    },
+    {
+      "fixtureSize": 20000,
+      "label": "zero-matches",
+      "median": {
+        "duplicateIdentityCount": 0,
+        "firstIdentity": null,
+        "lastIdentity": null,
+        "missingIdentityCount": 0,
+        "pageCount": 1,
+        "serializationMs": 0.006,
+        "sqlite": {
+          "counters": {
+            "identityChecks": 1,
+            "projectionCacheHits": 0,
+            "projectionCacheMisses": 1,
+            "totalsCacheHits": 0,
+            "totalsCacheMisses": 1
+          },
+          "phases": {
+            "count": {
+              "count": 1,
+              "p50Ms": 19.786,
+              "p95Ms": 19.786,
+              "totalMs": 19.786
+            },
+            "identity": {
+              "count": 1,
+              "p50Ms": 0.037,
+              "p95Ms": 0.037,
+              "totalMs": 0.037
+            },
+            "materialize": {
+              "count": 1,
+              "p50Ms": 0.003,
+              "p95Ms": 0.003,
+              "totalMs": 0.003
+            },
+            "projection": {
+              "count": 1,
+              "p50Ms": 38.948,
+              "p95Ms": 38.948,
+              "totalMs": 38.948
+            },
+            "slice": {
+              "count": 1,
+              "p50Ms": 0.001,
+              "p95Ms": 0.001,
+              "totalMs": 0.001
+            }
+          },
+          "samples": 5
+        },
+        "totalMs": 59.421,
+        "transferBytes": 150,
+        "uniqueIdentityCount": 0
+      },
+      "samples": [
+        {
+          "duplicateIdentityCount": 0,
+          "firstIdentity": null,
+          "lastIdentity": null,
+          "missingIdentityCount": 0,
+          "pageCount": 1,
+          "serializationMs": 0.009,
+          "sqlite": {
+            "counters": {
+              "identityChecks": 1,
+              "projectionCacheHits": 0,
+              "projectionCacheMisses": 1,
+              "totalsCacheHits": 0,
+              "totalsCacheMisses": 1
+            },
+            "phases": {
+              "count": {
+                "count": 1,
+                "p50Ms": 19.766,
+                "p95Ms": 19.766,
+                "totalMs": 19.766
+              },
+              "identity": {
+                "count": 1,
+                "p50Ms": 0.033,
+                "p95Ms": 0.033,
+                "totalMs": 0.033
+              },
+              "materialize": {
+                "count": 1,
+                "p50Ms": 0.005,
+                "p95Ms": 0.005,
+                "totalMs": 0.005
+              },
+              "projection": {
+                "count": 1,
+                "p50Ms": 38.947,
+                "p95Ms": 38.947,
+                "totalMs": 38.947
+              },
+              "slice": {
+                "count": 1,
+                "p50Ms": 0.002,
+                "p95Ms": 0.002,
+                "totalMs": 0.002
+              }
+            },
+            "samples": 5
+          },
+          "totalMs": 59.418,
+          "transferBytes": 150,
+          "uniqueIdentityCount": 0
+        },
+        {
+          "duplicateIdentityCount": 0,
+          "firstIdentity": null,
+          "lastIdentity": null,
+          "missingIdentityCount": 0,
+          "pageCount": 1,
+          "serializationMs": 0.005,
+          "sqlite": {
+            "counters": {
+              "identityChecks": 1,
+              "projectionCacheHits": 0,
+              "projectionCacheMisses": 1,
+              "totalsCacheHits": 0,
+              "totalsCacheMisses": 1
+            },
+            "phases": {
+              "count": {
+                "count": 1,
+                "p50Ms": 18.482,
+                "p95Ms": 18.482,
+                "totalMs": 18.482
+              },
+              "identity": {
+                "count": 1,
+                "p50Ms": 0.043,
+                "p95Ms": 0.043,
+                "totalMs": 0.043
+              },
+              "materialize": {
+                "count": 1,
+                "p50Ms": 0.003,
+                "p95Ms": 0.003,
+                "totalMs": 0.003
+              },
+              "projection": {
+                "count": 1,
+                "p50Ms": 41.171,
+                "p95Ms": 41.171,
+                "totalMs": 41.171
+              },
+              "slice": {
+                "count": 1,
+                "p50Ms": 0.001,
+                "p95Ms": 0.001,
+                "totalMs": 0.001
+              }
+            },
+            "samples": 5
+          },
+          "totalMs": 60.489,
+          "transferBytes": 150,
+          "uniqueIdentityCount": 0
+        },
+        {
+          "duplicateIdentityCount": 0,
+          "firstIdentity": null,
+          "lastIdentity": null,
+          "missingIdentityCount": 0,
+          "pageCount": 1,
+          "serializationMs": 0.006,
+          "sqlite": {
+            "counters": {
+              "identityChecks": 1,
+              "projectionCacheHits": 0,
+              "projectionCacheMisses": 1,
+              "totalsCacheHits": 0,
+              "totalsCacheMisses": 1
+            },
+            "phases": {
+              "count": {
+                "count": 1,
+                "p50Ms": 19.786,
+                "p95Ms": 19.786,
+                "totalMs": 19.786
+              },
+              "identity": {
+                "count": 1,
+                "p50Ms": 0.037,
+                "p95Ms": 0.037,
+                "totalMs": 0.037
+              },
+              "materialize": {
+                "count": 1,
+                "p50Ms": 0.003,
+                "p95Ms": 0.003,
+                "totalMs": 0.003
+              },
+              "projection": {
+                "count": 1,
+                "p50Ms": 38.948,
+                "p95Ms": 38.948,
+                "totalMs": 38.948
+              },
+              "slice": {
+                "count": 1,
+                "p50Ms": 0.001,
+                "p95Ms": 0.001,
+                "totalMs": 0.001
+              }
+            },
+            "samples": 5
+          },
+          "totalMs": 59.421,
+          "transferBytes": 150,
+          "uniqueIdentityCount": 0
+        }
+      ]
+    },
+    {
+      "fixtureSize": 20000,
+      "label": "harness-codex",
+      "median": {
+        "duplicateIdentityCount": 0,
+        "firstIdentity": "session-row-v1:3ffa917c08189445",
+        "lastIdentity": "session-row-v1:183f5e2a1264d176",
+        "missingIdentityCount": 0,
+        "pageCount": 15,
+        "serializationMs": 4.876,
+        "sqlite": {
+          "counters": {
+            "identityChecks": 15,
+            "projectionCacheHits": 14,
+            "projectionCacheMisses": 1,
+            "totalsCacheHits": 14,
+            "totalsCacheMisses": 1
+          },
+          "phases": {
+            "count": {
+              "count": 1,
+              "p50Ms": 5.46,
+              "p95Ms": 5.46,
+              "totalMs": 5.46
+            },
+            "identity": {
+              "count": 15,
+              "p50Ms": 0.031,
+              "p95Ms": 0.046,
+              "totalMs": 0.482
+            },
+            "materialize": {
+              "count": 15,
+              "p50Ms": 3.099,
+              "p95Ms": 8.203,
+              "totalMs": 53.651
+            },
+            "projection": {
+              "count": 1,
+              "p50Ms": 712.03,
+              "p95Ms": 712.03,
+              "totalMs": 712.03
+            },
+            "slice": {
+              "count": 15,
+              "p50Ms": 0.001,
+              "p95Ms": 0.002,
+              "totalMs": 0.013
+            }
+          },
+          "samples": 47
+        },
+        "totalMs": 784.599,
+        "transferBytes": 5444931,
+        "uniqueIdentityCount": 3000
+      },
+      "samples": [
+        {
+          "duplicateIdentityCount": 0,
+          "firstIdentity": "session-row-v1:3ffa917c08189445",
+          "lastIdentity": "session-row-v1:183f5e2a1264d176",
+          "missingIdentityCount": 0,
+          "pageCount": 15,
+          "serializationMs": 4.288,
+          "sqlite": {
+            "counters": {
+              "identityChecks": 15,
+              "projectionCacheHits": 14,
+              "projectionCacheMisses": 1,
+              "totalsCacheHits": 14,
+              "totalsCacheMisses": 1
+            },
+            "phases": {
+              "count": {
+                "count": 1,
+                "p50Ms": 5.753,
+                "p95Ms": 5.753,
+                "totalMs": 5.753
+              },
+              "identity": {
+                "count": 15,
+                "p50Ms": 0.031,
+                "p95Ms": 0.049,
+                "totalMs": 0.487
+              },
+              "materialize": {
+                "count": 15,
+                "p50Ms": 2.854,
+                "p95Ms": 3.117,
+                "totalMs": 42.662
+              },
+              "projection": {
+                "count": 1,
+                "p50Ms": 708.595,
+                "p95Ms": 708.595,
+                "totalMs": 708.595
+              },
+              "slice": {
+                "count": 15,
+                "p50Ms": 0.001,
+                "p95Ms": 0.002,
+                "totalMs": 0.012
+              }
+            },
+            "samples": 47
+          },
+          "totalMs": 769.292,
+          "transferBytes": 5444931,
+          "uniqueIdentityCount": 3000
+        },
+        {
+          "duplicateIdentityCount": 0,
+          "firstIdentity": "session-row-v1:3ffa917c08189445",
+          "lastIdentity": "session-row-v1:183f5e2a1264d176",
+          "missingIdentityCount": 0,
+          "pageCount": 15,
+          "serializationMs": 4.876,
+          "sqlite": {
+            "counters": {
+              "identityChecks": 15,
+              "projectionCacheHits": 14,
+              "projectionCacheMisses": 1,
+              "totalsCacheHits": 14,
+              "totalsCacheMisses": 1
+            },
+            "phases": {
+              "count": {
+                "count": 1,
+                "p50Ms": 5.46,
+                "p95Ms": 5.46,
+                "totalMs": 5.46
+              },
+              "identity": {
+                "count": 15,
+                "p50Ms": 0.031,
+                "p95Ms": 0.046,
+                "totalMs": 0.482
+              },
+              "materialize": {
+                "count": 15,
+                "p50Ms": 3.099,
+                "p95Ms": 8.203,
+                "totalMs": 53.651
+              },
+              "projection": {
+                "count": 1,
+                "p50Ms": 712.03,
+                "p95Ms": 712.03,
+                "totalMs": 712.03
+              },
+              "slice": {
+                "count": 15,
+                "p50Ms": 0.001,
+                "p95Ms": 0.002,
+                "totalMs": 0.013
+              }
+            },
+            "samples": 47
+          },
+          "totalMs": 784.599,
+          "transferBytes": 5444931,
+          "uniqueIdentityCount": 3000
+        },
+        {
+          "duplicateIdentityCount": 0,
+          "firstIdentity": "session-row-v1:3ffa917c08189445",
+          "lastIdentity": "session-row-v1:183f5e2a1264d176",
+          "missingIdentityCount": 0,
+          "pageCount": 15,
+          "serializationMs": 5.111,
+          "sqlite": {
+            "counters": {
+              "identityChecks": 15,
+              "projectionCacheHits": 14,
+              "projectionCacheMisses": 1,
+              "totalsCacheHits": 14,
+              "totalsCacheMisses": 1
+            },
+            "phases": {
+              "count": {
+                "count": 1,
+                "p50Ms": 5.863,
+                "p95Ms": 5.863,
+                "totalMs": 5.863
+              },
+              "identity": {
+                "count": 15,
+                "p50Ms": 0.033,
+                "p95Ms": 0.041,
+                "totalMs": 0.505
+              },
+              "materialize": {
+                "count": 15,
+                "p50Ms": 3.114,
+                "p95Ms": 3.569,
+                "totalMs": 47.312
+              },
+              "projection": {
+                "count": 1,
+                "p50Ms": 718.639,
+                "p95Ms": 718.639,
+                "totalMs": 718.639
+              },
+              "slice": {
+                "count": 15,
+                "p50Ms": 0.001,
+                "p95Ms": 0.002,
+                "totalMs": 0.018
+              }
+            },
+            "samples": 47
+          },
+          "totalMs": 786.071,
+          "transferBytes": 5444931,
+          "uniqueIdentityCount": 3000
+        }
+      ]
+    },
+    {
+      "fixtureSize": 20000,
+      "label": "origin-classifier",
+      "median": {
+        "duplicateIdentityCount": 0,
+        "firstIdentity": "session-row-v1:823c2793e999e295",
+        "lastIdentity": "session-row-v1:1fff5238a07afc02",
+        "missingIdentityCount": 0,
+        "pageCount": 25,
+        "serializationMs": 7.148,
+        "sqlite": {
+          "counters": {
+            "identityChecks": 25,
+            "projectionCacheHits": 24,
+            "projectionCacheMisses": 1,
+            "totalsCacheHits": 24,
+            "totalsCacheMisses": 1
+          },
+          "phases": {
+            "count": {
+              "count": 1,
+              "p50Ms": 19.79,
+              "p95Ms": 19.79,
+              "totalMs": 19.79
+            },
+            "identity": {
+              "count": 25,
+              "p50Ms": 0.032,
+              "p95Ms": 0.042,
+              "totalMs": 0.822
+            },
+            "materialize": {
+              "count": 25,
+              "p50Ms": 3.159,
+              "p95Ms": 3.603,
+              "totalMs": 82.257
+            },
+            "projection": {
+              "count": 1,
+              "p50Ms": 1128.461,
+              "p95Ms": 1128.461,
+              "totalMs": 1128.461
+            },
+            "slice": {
+              "count": 25,
+              "p50Ms": 0.001,
+              "p95Ms": 0.001,
+              "totalMs": 0.02
+            }
+          },
+          "samples": 77
+        },
+        "totalMs": 1252.037,
+        "transferBytes": 9065661,
+        "uniqueIdentityCount": 5000
+      },
+      "samples": [
+        {
+          "duplicateIdentityCount": 0,
+          "firstIdentity": "session-row-v1:823c2793e999e295",
+          "lastIdentity": "session-row-v1:1fff5238a07afc02",
+          "missingIdentityCount": 0,
+          "pageCount": 25,
+          "serializationMs": 7.011,
+          "sqlite": {
+            "counters": {
+              "identityChecks": 25,
+              "projectionCacheHits": 24,
+              "projectionCacheMisses": 1,
+              "totalsCacheHits": 24,
+              "totalsCacheMisses": 1
+            },
+            "phases": {
+              "count": {
+                "count": 1,
+                "p50Ms": 19.978,
+                "p95Ms": 19.978,
+                "totalMs": 19.978
+              },
+              "identity": {
+                "count": 25,
+                "p50Ms": 0.032,
+                "p95Ms": 0.048,
+                "totalMs": 0.862
+              },
+              "materialize": {
+                "count": 25,
+                "p50Ms": 3.151,
+                "p95Ms": 4.013,
+                "totalMs": 90.36
+              },
+              "projection": {
+                "count": 1,
+                "p50Ms": 1116.178,
+                "p95Ms": 1116.178,
+                "totalMs": 1116.178
+              },
+              "slice": {
+                "count": 25,
+                "p50Ms": 0.001,
+                "p95Ms": 0.002,
+                "totalMs": 0.023
+              }
+            },
+            "samples": 77
+          },
+          "totalMs": 1247.641,
+          "transferBytes": 9065661,
+          "uniqueIdentityCount": 5000
+        },
+        {
+          "duplicateIdentityCount": 0,
+          "firstIdentity": "session-row-v1:823c2793e999e295",
+          "lastIdentity": "session-row-v1:1fff5238a07afc02",
+          "missingIdentityCount": 0,
+          "pageCount": 25,
+          "serializationMs": 7.997,
+          "sqlite": {
+            "counters": {
+              "identityChecks": 25,
+              "projectionCacheHits": 24,
+              "projectionCacheMisses": 1,
+              "totalsCacheHits": 24,
+              "totalsCacheMisses": 1
+            },
+            "phases": {
+              "count": {
+                "count": 1,
+                "p50Ms": 19.79,
+                "p95Ms": 19.79,
+                "totalMs": 19.79
+              },
+              "identity": {
+                "count": 25,
+                "p50Ms": 0.032,
+                "p95Ms": 0.042,
+                "totalMs": 0.822
+              },
+              "materialize": {
+                "count": 25,
+                "p50Ms": 3.159,
+                "p95Ms": 3.603,
+                "totalMs": 82.257
+              },
+              "projection": {
+                "count": 1,
+                "p50Ms": 1128.461,
+                "p95Ms": 1128.461,
+                "totalMs": 1128.461
+              },
+              "slice": {
+                "count": 25,
+                "p50Ms": 0.001,
+                "p95Ms": 0.001,
+                "totalMs": 0.02
+              }
+            },
+            "samples": 77
+          },
+          "totalMs": 1252.037,
+          "transferBytes": 9065661,
+          "uniqueIdentityCount": 5000
+        },
+        {
+          "duplicateIdentityCount": 0,
+          "firstIdentity": "session-row-v1:823c2793e999e295",
+          "lastIdentity": "session-row-v1:1fff5238a07afc02",
+          "missingIdentityCount": 0,
+          "pageCount": 25,
+          "serializationMs": 7.148,
+          "sqlite": {
+            "counters": {
+              "identityChecks": 25,
+              "projectionCacheHits": 24,
+              "projectionCacheMisses": 1,
+              "totalsCacheHits": 24,
+              "totalsCacheMisses": 1
+            },
+            "phases": {
+              "count": {
+                "count": 1,
+                "p50Ms": 20.63,
+                "p95Ms": 20.63,
+                "totalMs": 20.63
+              },
+              "identity": {
+                "count": 25,
+                "p50Ms": 0.033,
+                "p95Ms": 0.045,
+                "totalMs": 0.871
+              },
+              "materialize": {
+                "count": 25,
+                "p50Ms": 3.448,
+                "p95Ms": 5.045,
+                "totalMs": 90.641
+              },
+              "projection": {
+                "count": 1,
+                "p50Ms": 1128.481,
+                "p95Ms": 1128.481,
+                "totalMs": 1128.481
+              },
+              "slice": {
+                "count": 25,
+                "p50Ms": 0.001,
+                "p95Ms": 0.003,
+                "totalMs": 0.027
+              }
+            },
+            "samples": 77
+          },
+          "totalMs": 1262.674,
+          "transferBytes": 9065661,
+          "uniqueIdentityCount": 5000
         }
       ]
     }
   ],
-  "scenarioResults": [
-    {
-      "identityVerification": {
-        "5000": {
-          "duplicateIdentityCount": 0,
-          "missingIdentityCount": 0,
-          "totalExpectedCount": 5000,
-          "uniqueIdentityCount": 5000
-        },
-        "20000": {
-          "duplicateIdentityCount": 0,
-          "missingIdentityCount": 0,
-          "totalExpectedCount": 20000,
-          "uniqueIdentityCount": 20000
-        },
-        "50000": {
-          "duplicateIdentityCount": 0,
-          "missingIdentityCount": 0,
-          "totalExpectedCount": 50000,
-          "uniqueIdentityCount": 50000
-        }
-      },
-      "label": "date-ascending",
-      "rawProjectionItemCount": 50000,
-      "scaling": [
-        {
-          "identityVerification": {
-            "duplicateIdentityCount": 0,
-            "missingIdentityCount": 0,
-            "totalExpectedCount": 5000,
-            "uniqueIdentityCount": 5000
-          },
-          "itemCount": 5000,
-          "medianPerTraversalMs": 0.003606990300000001,
-          "pageCount": 25,
-          "probeSize": 5000,
-          "rawSamples": [
-            {
-              "fullTraversalCount": 10000,
-              "normalizedTraversalSliceMs": 0.003606990300000001,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 36.06990300000001
-            },
-            {
-              "fullTraversalCount": 10000,
-              "normalizedTraversalSliceMs": 0.003735650799999999,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 37.35650799999999
-            },
-            {
-              "fullTraversalCount": 10000,
-              "normalizedTraversalSliceMs": 0.003599419599999999,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 35.99419599999999
-            },
-            {
-              "fullTraversalCount": 10000,
-              "normalizedTraversalSliceMs": 0.0035879384000000016,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 35.879384000000016
-            },
-            {
-              "fullTraversalCount": 10000,
-              "normalizedTraversalSliceMs": 0.003582066900000001,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 35.82066900000001
-            },
-            {
-              "fullTraversalCount": 10000,
-              "normalizedTraversalSliceMs": 0.003926725299999999,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 39.26725299999998
-            },
-            {
-              "fullTraversalCount": 10000,
-              "normalizedTraversalSliceMs": 0.003934552700000001,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 39.345527000000004
-            }
-          ]
-        },
-        {
-          "identityVerification": {
-            "duplicateIdentityCount": 0,
-            "missingIdentityCount": 0,
-            "totalExpectedCount": 20000,
-            "uniqueIdentityCount": 20000
-          },
-          "itemCount": 20000,
-          "medianPerTraversalMs": 0.015351874399999996,
-          "pageCount": 100,
-          "probeSize": 20000,
-          "rawSamples": [
-            {
-              "fullTraversalCount": 2500,
-              "normalizedTraversalSliceMs": 0.015052307999999993,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 37.630769999999984
-            },
-            {
-              "fullTraversalCount": 2500,
-              "normalizedTraversalSliceMs": 0.015685533999999963,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 39.213834999999904
-            },
-            {
-              "fullTraversalCount": 2500,
-              "normalizedTraversalSliceMs": 0.01605461399999999,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 40.13653499999998
-            },
-            {
-              "fullTraversalCount": 2500,
-              "normalizedTraversalSliceMs": 0.013931836399999975,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 34.82959099999994
-            },
-            {
-              "fullTraversalCount": 2500,
-              "normalizedTraversalSliceMs": 0.015351874399999996,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 38.37968599999999
-            },
-            {
-              "fullTraversalCount": 2500,
-              "normalizedTraversalSliceMs": 0.0147642828,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 36.910707
-            },
-            {
-              "fullTraversalCount": 2500,
-              "normalizedTraversalSliceMs": 0.01551337880000001,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 38.783447000000024
-            }
-          ]
-        },
-        {
-          "identityVerification": {
-            "duplicateIdentityCount": 0,
-            "missingIdentityCount": 0,
-            "totalExpectedCount": 50000,
-            "uniqueIdentityCount": 50000
-          },
-          "itemCount": 50000,
-          "medianPerTraversalMs": 0.03594344700000011,
-          "pageCount": 250,
-          "probeSize": 50000,
-          "rawSamples": [
-            {
-              "fullTraversalCount": 1000,
-              "normalizedTraversalSliceMs": 0.03746115499999996,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 37.46115499999996
-            },
-            {
-              "fullTraversalCount": 1000,
-              "normalizedTraversalSliceMs": 0.0349142139999999,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 34.9142139999999
-            },
-            {
-              "fullTraversalCount": 1000,
-              "normalizedTraversalSliceMs": 0.03594344700000011,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 35.943447000000106
-            },
-            {
-              "fullTraversalCount": 1000,
-              "normalizedTraversalSliceMs": 0.03692828499999996,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 36.92828499999996
-            },
-            {
-              "fullTraversalCount": 1000,
-              "normalizedTraversalSliceMs": 0.03332562300000018,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 33.32562300000018
-            },
-            {
-              "fullTraversalCount": 1000,
-              "normalizedTraversalSliceMs": 0.03583879800000023,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 35.838798000000224
-            },
-            {
-              "fullTraversalCount": 1000,
-              "normalizedTraversalSliceMs": 0.03912664300000006,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 39.12664300000006
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "identityVerification": {
-        "5000": {
-          "duplicateIdentityCount": 0,
-          "missingIdentityCount": 0,
-          "totalExpectedCount": 5000,
-          "uniqueIdentityCount": 5000
-        },
-        "20000": {
-          "duplicateIdentityCount": 0,
-          "missingIdentityCount": 0,
-          "totalExpectedCount": 20000,
-          "uniqueIdentityCount": 20000
-        },
-        "50000": {
-          "duplicateIdentityCount": 0,
-          "missingIdentityCount": 0,
-          "totalExpectedCount": 50000,
-          "uniqueIdentityCount": 50000
-        }
-      },
-      "label": "date-descending",
-      "rawProjectionItemCount": 50000,
-      "scaling": [
-        {
-          "identityVerification": {
-            "duplicateIdentityCount": 0,
-            "missingIdentityCount": 0,
-            "totalExpectedCount": 5000,
-            "uniqueIdentityCount": 5000
-          },
-          "itemCount": 5000,
-          "medianPerTraversalMs": 0.0036444596999999704,
-          "pageCount": 25,
-          "probeSize": 5000,
-          "rawSamples": [
-            {
-              "fullTraversalCount": 10000,
-              "normalizedTraversalSliceMs": 0.0034999623000000154,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 34.999623000000156
-            },
-            {
-              "fullTraversalCount": 10000,
-              "normalizedTraversalSliceMs": 0.0037048675000000003,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 37.048675
-            },
-            {
-              "fullTraversalCount": 10000,
-              "normalizedTraversalSliceMs": 0.003732378400000016,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 37.32378400000016
-            },
-            {
-              "fullTraversalCount": 10000,
-              "normalizedTraversalSliceMs": 0.003949106699999993,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 39.49106699999993
-            },
-            {
-              "fullTraversalCount": 10000,
-              "normalizedTraversalSliceMs": 0.003514839000000029,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 35.14839000000029
-            },
-            {
-              "fullTraversalCount": 10000,
-              "normalizedTraversalSliceMs": 0.0036004421999999976,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 36.00442199999998
-            },
-            {
-              "fullTraversalCount": 10000,
-              "normalizedTraversalSliceMs": 0.0036444596999999704,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 36.4445969999997
-            }
-          ]
-        },
-        {
-          "identityVerification": {
-            "duplicateIdentityCount": 0,
-            "missingIdentityCount": 0,
-            "totalExpectedCount": 20000,
-            "uniqueIdentityCount": 20000
-          },
-          "itemCount": 20000,
-          "medianPerTraversalMs": 0.014911444400000255,
-          "pageCount": 100,
-          "probeSize": 20000,
-          "rawSamples": [
-            {
-              "fullTraversalCount": 2500,
-              "normalizedTraversalSliceMs": 0.014362565600000016,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 35.90641400000004
-            },
-            {
-              "fullTraversalCount": 2500,
-              "normalizedTraversalSliceMs": 0.015091481199999908,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 37.72870299999977
-            },
-            {
-              "fullTraversalCount": 2500,
-              "normalizedTraversalSliceMs": 0.015020643200000086,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 37.551608000000215
-            },
-            {
-              "fullTraversalCount": 2500,
-              "normalizedTraversalSliceMs": 0.016324902399999883,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 40.81225599999971
-            },
-            {
-              "fullTraversalCount": 2500,
-              "normalizedTraversalSliceMs": 0.014772480800000085,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 36.93120200000021
-            },
-            {
-              "fullTraversalCount": 2500,
-              "normalizedTraversalSliceMs": 0.01470221560000009,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 36.755539000000226
-            },
-            {
-              "fullTraversalCount": 2500,
-              "normalizedTraversalSliceMs": 0.014911444400000255,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 37.27861100000064
-            }
-          ]
-        },
-        {
-          "identityVerification": {
-            "duplicateIdentityCount": 0,
-            "missingIdentityCount": 0,
-            "totalExpectedCount": 50000,
-            "uniqueIdentityCount": 50000
-          },
-          "itemCount": 50000,
-          "medianPerTraversalMs": 0.03719117300000016,
-          "pageCount": 250,
-          "probeSize": 50000,
-          "rawSamples": [
-            {
-              "fullTraversalCount": 1000,
-              "normalizedTraversalSliceMs": 0.03755812900000001,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 37.55812900000001
-            },
-            {
-              "fullTraversalCount": 1000,
-              "normalizedTraversalSliceMs": 0.03597119199999997,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 35.971191999999974
-            },
-            {
-              "fullTraversalCount": 1000,
-              "normalizedTraversalSliceMs": 0.036039710000000016,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 36.039710000000014
-            },
-            {
-              "fullTraversalCount": 1000,
-              "normalizedTraversalSliceMs": 0.03359177400000044,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 33.59177400000044
-            },
-            {
-              "fullTraversalCount": 1000,
-              "normalizedTraversalSliceMs": 0.03719117300000016,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 37.19117300000016
-            },
-            {
-              "fullTraversalCount": 1000,
-              "normalizedTraversalSliceMs": 0.044178571000000375,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 44.178571000000375
-            },
-            {
-              "fullTraversalCount": 1000,
-              "normalizedTraversalSliceMs": 0.04042209600000024,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 40.42209600000024
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "identityVerification": {
-        "5000": {
-          "duplicateIdentityCount": 0,
-          "missingIdentityCount": 0,
-          "totalExpectedCount": 5000,
-          "uniqueIdentityCount": 5000
-        },
-        "20000": {
-          "duplicateIdentityCount": 0,
-          "missingIdentityCount": 0,
-          "totalExpectedCount": 20000,
-          "uniqueIdentityCount": 20000
-        },
-        "50000": {
-          "duplicateIdentityCount": 0,
-          "missingIdentityCount": 0,
-          "totalExpectedCount": 50000,
-          "uniqueIdentityCount": 50000
-        }
-      },
-      "label": "project-ties-12-teams",
-      "rawProjectionItemCount": 50000,
-      "scaling": [
-        {
-          "identityVerification": {
-            "duplicateIdentityCount": 0,
-            "missingIdentityCount": 0,
-            "totalExpectedCount": 5000,
-            "uniqueIdentityCount": 5000
-          },
-          "itemCount": 5000,
-          "medianPerTraversalMs": 0.0037441270999999687,
-          "pageCount": 25,
-          "probeSize": 5000,
-          "rawSamples": [
-            {
-              "fullTraversalCount": 10000,
-              "normalizedTraversalSliceMs": 0.003869083899999987,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 38.69083899999987
-            },
-            {
-              "fullTraversalCount": 10000,
-              "normalizedTraversalSliceMs": 0.0034350258999999825,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 34.350258999999824
-            },
-            {
-              "fullTraversalCount": 10000,
-              "normalizedTraversalSliceMs": 0.0033610522999999374,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 33.610522999999375
-            },
-            {
-              "fullTraversalCount": 10000,
-              "normalizedTraversalSliceMs": 0.003816899900000044,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 38.16899900000044
-            },
-            {
-              "fullTraversalCount": 10000,
-              "normalizedTraversalSliceMs": 0.0037441270999999687,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 37.44127099999969
-            },
-            {
-              "fullTraversalCount": 10000,
-              "normalizedTraversalSliceMs": 0.003508726999999999,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 35.08726999999999
-            },
-            {
-              "fullTraversalCount": 10000,
-              "normalizedTraversalSliceMs": 0.0038493341999999756,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 38.49334199999976
-            }
-          ]
-        },
-        {
-          "identityVerification": {
-            "duplicateIdentityCount": 0,
-            "missingIdentityCount": 0,
-            "totalExpectedCount": 20000,
-            "uniqueIdentityCount": 20000
-          },
-          "itemCount": 20000,
-          "medianPerTraversalMs": 0.014017143199999919,
-          "pageCount": 100,
-          "probeSize": 20000,
-          "rawSamples": [
-            {
-              "fullTraversalCount": 2500,
-              "normalizedTraversalSliceMs": 0.01559342519999991,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 38.983562999999776
-            },
-            {
-              "fullTraversalCount": 2500,
-              "normalizedTraversalSliceMs": 0.014395108799999798,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 35.987771999999495
-            },
-            {
-              "fullTraversalCount": 2500,
-              "normalizedTraversalSliceMs": 0.013395161999999981,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 33.487904999999955
-            },
-            {
-              "fullTraversalCount": 2500,
-              "normalizedTraversalSliceMs": 0.014017143199999919,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 35.0428579999998
-            },
-            {
-              "fullTraversalCount": 2500,
-              "normalizedTraversalSliceMs": 0.01512484480000021,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 37.812112000000525
-            },
-            {
-              "fullTraversalCount": 2500,
-              "normalizedTraversalSliceMs": 0.013978104800000073,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 34.945262000000184
-            },
-            {
-              "fullTraversalCount": 2500,
-              "normalizedTraversalSliceMs": 0.01275794679999999,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 31.894866999999977
-            }
-          ]
-        },
-        {
-          "identityVerification": {
-            "duplicateIdentityCount": 0,
-            "missingIdentityCount": 0,
-            "totalExpectedCount": 50000,
-            "uniqueIdentityCount": 50000
-          },
-          "itemCount": 50000,
-          "medianPerTraversalMs": 0.0358089400000008,
-          "pageCount": 250,
-          "probeSize": 50000,
-          "rawSamples": [
-            {
-              "fullTraversalCount": 1000,
-              "normalizedTraversalSliceMs": 0.033942992000000234,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 33.94299200000023
-            },
-            {
-              "fullTraversalCount": 1000,
-              "normalizedTraversalSliceMs": 0.03565228899999966,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 35.652288999999655
-            },
-            {
-              "fullTraversalCount": 1000,
-              "normalizedTraversalSliceMs": 0.03489176099999895,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 34.89176099999895
-            },
-            {
-              "fullTraversalCount": 1000,
-              "normalizedTraversalSliceMs": 0.037954709999999975,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 37.95470999999998
-            },
-            {
-              "fullTraversalCount": 1000,
-              "normalizedTraversalSliceMs": 0.03974749399999928,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 39.74749399999928
-            },
-            {
-              "fullTraversalCount": 1000,
-              "normalizedTraversalSliceMs": 0.0358089400000008,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 35.8089400000008
-            },
-            {
-              "fullTraversalCount": 1000,
-              "normalizedTraversalSliceMs": 0.03791661999999996,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 37.916619999999966
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "identityVerification": {
-        "5000": {
-          "duplicateIdentityCount": 0,
-          "missingIdentityCount": 0,
-          "totalExpectedCount": 0,
-          "uniqueIdentityCount": 0
-        },
-        "20000": {
-          "duplicateIdentityCount": 0,
-          "missingIdentityCount": 0,
-          "totalExpectedCount": 0,
-          "uniqueIdentityCount": 0
-        },
-        "50000": {
-          "duplicateIdentityCount": 0,
-          "missingIdentityCount": 0,
-          "totalExpectedCount": 0,
-          "uniqueIdentityCount": 0
-        }
-      },
-      "label": "no-result-filter",
-      "rawProjectionItemCount": 0,
-      "scaling": [
-        {
-          "identityVerification": {
-            "duplicateIdentityCount": 0,
-            "missingIdentityCount": 0,
-            "totalExpectedCount": 0,
-            "uniqueIdentityCount": 0
-          },
-          "itemCount": 0,
-          "medianPerTraversalMs": 0,
-          "pageCount": 0,
-          "probeSize": 5000,
-          "rawSamples": [
-            {
-              "fullTraversalCount": 50,
-              "normalizedTraversalSliceMs": 0.000002320000021427404,
-              "sliceCallCount": 0,
-              "totalSliceMs": 0.0001160000010713702
-            },
-            {
-              "fullTraversalCount": 50,
-              "normalizedTraversalSliceMs": 0.0000028000000020256267,
-              "sliceCallCount": 0,
-              "totalSliceMs": 0.00014000000010128133
-            },
-            {
-              "fullTraversalCount": 50,
-              "normalizedTraversalSliceMs": 0.0000025400000231456943,
-              "sliceCallCount": 0,
-              "totalSliceMs": 0.00012700000115728471
-            },
-            {
-              "fullTraversalCount": 50,
-              "normalizedTraversalSliceMs": 0.0000021999999808031135,
-              "sliceCallCount": 0,
-              "totalSliceMs": 0.00010999999904015567
-            },
-            {
-              "fullTraversalCount": 50,
-              "normalizedTraversalSliceMs": 0.0000028200000087963415,
-              "sliceCallCount": 0,
-              "totalSliceMs": 0.00014100000043981709
-            },
-            {
-              "fullTraversalCount": 50,
-              "normalizedTraversalSliceMs": 0.0000023800000053597616,
-              "sliceCallCount": 0,
-              "totalSliceMs": 0.00011900000026798807
-            },
-            {
-              "fullTraversalCount": 50,
-              "normalizedTraversalSliceMs": 0.000002879999992728699,
-              "sliceCallCount": 0,
-              "totalSliceMs": 0.00014399999963643495
-            }
-          ]
-        },
-        {
-          "identityVerification": {
-            "duplicateIdentityCount": 0,
-            "missingIdentityCount": 0,
-            "totalExpectedCount": 0,
-            "uniqueIdentityCount": 0
-          },
-          "itemCount": 0,
-          "medianPerTraversalMs": 0,
-          "pageCount": 0,
-          "probeSize": 20000,
-          "rawSamples": [
-            {
-              "fullTraversalCount": 50,
-              "normalizedTraversalSliceMs": 0.0000027799999952549113,
-              "sliceCallCount": 0,
-              "totalSliceMs": 0.00013899999976274557
-            },
-            {
-              "fullTraversalCount": 50,
-              "normalizedTraversalSliceMs": 0.0000025800000003073364,
-              "sliceCallCount": 0,
-              "totalSliceMs": 0.00012900000001536682
-            },
-            {
-              "fullTraversalCount": 50,
-              "normalizedTraversalSliceMs": 0.0000022600000011152586,
-              "sliceCallCount": 0,
-              "totalSliceMs": 0.00011300000005576294
-            },
-            {
-              "fullTraversalCount": 50,
-              "normalizedTraversalSliceMs": 0.000002080000012938399,
-              "sliceCallCount": 0,
-              "totalSliceMs": 0.00010400000064691994
-            },
-            {
-              "fullTraversalCount": 50,
-              "normalizedTraversalSliceMs": 0.000001740000006975606,
-              "sliceCallCount": 0,
-              "totalSliceMs": 0.0000870000003487803
-            },
-            {
-              "fullTraversalCount": 50,
-              "normalizedTraversalSliceMs": 0.000002300000014656689,
-              "sliceCallCount": 0,
-              "totalSliceMs": 0.00011500000073283445
-            },
-            {
-              "fullTraversalCount": 50,
-              "normalizedTraversalSliceMs": 0.0000024399999892921186,
-              "sliceCallCount": 0,
-              "totalSliceMs": 0.00012199999946460593
-            }
-          ]
-        },
-        {
-          "identityVerification": {
-            "duplicateIdentityCount": 0,
-            "missingIdentityCount": 0,
-            "totalExpectedCount": 0,
-            "uniqueIdentityCount": 0
-          },
-          "itemCount": 0,
-          "medianPerTraversalMs": 0,
-          "pageCount": 0,
-          "probeSize": 50000,
-          "rawSamples": [
-            {
-              "fullTraversalCount": 50,
-              "normalizedTraversalSliceMs": 0.0000017800000205170363,
-              "sliceCallCount": 0,
-              "totalSliceMs": 0.00008900000102585182
-            },
-            {
-              "fullTraversalCount": 50,
-              "normalizedTraversalSliceMs": 0.000001959999972314108,
-              "sliceCallCount": 0,
-              "totalSliceMs": 0.00009799999861570541
-            },
-            {
-              "fullTraversalCount": 50,
-              "normalizedTraversalSliceMs": 0.0000018199999976786784,
-              "sliceCallCount": 0,
-              "totalSliceMs": 0.00009099999988393392
-            },
-            {
-              "fullTraversalCount": 50,
-              "normalizedTraversalSliceMs": 0.0000017600000137463212,
-              "sliceCallCount": 0,
-              "totalSliceMs": 0.00008800000068731606
-            },
-            {
-              "fullTraversalCount": 50,
-              "normalizedTraversalSliceMs": 0.0000017800000205170363,
-              "sliceCallCount": 0,
-              "totalSliceMs": 0.00008900000102585182
-            },
-            {
-              "fullTraversalCount": 50,
-              "normalizedTraversalSliceMs": 0.000001720000000204891,
-              "sliceCallCount": 0,
-              "totalSliceMs": 0.00008600000001024455
-            },
-            {
-              "fullTraversalCount": 50,
-              "normalizedTraversalSliceMs": 0.0000016799999866634607,
-              "sliceCallCount": 0,
-              "totalSliceMs": 0.00008399999933317304
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "identityVerification": {
-        "5000": {
-          "duplicateIdentityCount": 0,
-          "missingIdentityCount": 0,
-          "totalExpectedCount": 250,
-          "uniqueIdentityCount": 250
-        },
-        "20000": {
-          "duplicateIdentityCount": 0,
-          "missingIdentityCount": 0,
-          "totalExpectedCount": 1000,
-          "uniqueIdentityCount": 1000
-        },
-        "50000": {
-          "duplicateIdentityCount": 0,
-          "missingIdentityCount": 0,
-          "totalExpectedCount": 2500,
-          "uniqueIdentityCount": 2500
-        }
-      },
-      "label": "highly-selective-filter",
-      "rawProjectionItemCount": 2500,
-      "scaling": [
-        {
-          "identityVerification": {
-            "duplicateIdentityCount": 0,
-            "missingIdentityCount": 0,
-            "totalExpectedCount": 250,
-            "uniqueIdentityCount": 250
-          },
-          "itemCount": 250,
-          "medianPerTraversalMs": 0.00017108090399998763,
-          "pageCount": 2,
-          "probeSize": 5000,
-          "rawSamples": [
-            {
-              "fullTraversalCount": 125000,
-              "normalizedTraversalSliceMs": 0.00017967234399999144,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 22.45904299999893
-            },
-            {
-              "fullTraversalCount": 125000,
-              "normalizedTraversalSliceMs": 0.00016009295999999448,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 20.01161999999931
-            },
-            {
-              "fullTraversalCount": 125000,
-              "normalizedTraversalSliceMs": 0.0001571982879999996,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 19.64978599999995
-            },
-            {
-              "fullTraversalCount": 125000,
-              "normalizedTraversalSliceMs": 0.0001869365439999965,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 23.367067999999563
-            },
-            {
-              "fullTraversalCount": 125000,
-              "normalizedTraversalSliceMs": 0.00015902859999999055,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 19.87857499999882
-            },
-            {
-              "fullTraversalCount": 125000,
-              "normalizedTraversalSliceMs": 0.00018322152000000642,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 22.902690000000803
-            },
-            {
-              "fullTraversalCount": 125000,
-              "normalizedTraversalSliceMs": 0.00017108090399998763,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 21.385112999998455
-            }
-          ]
-        },
-        {
-          "identityVerification": {
-            "duplicateIdentityCount": 0,
-            "missingIdentityCount": 0,
-            "totalExpectedCount": 1000,
-            "uniqueIdentityCount": 1000
-          },
-          "itemCount": 1000,
-          "medianPerTraversalMs": 0.0007484511599999678,
-          "pageCount": 5,
-          "probeSize": 20000,
-          "rawSamples": [
-            {
-              "fullTraversalCount": 50000,
-              "normalizedTraversalSliceMs": 0.0007015894599999956,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 35.07947299999978
-            },
-            {
-              "fullTraversalCount": 50000,
-              "normalizedTraversalSliceMs": 0.0007394578200000251,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 36.972891000001255
-            },
-            {
-              "fullTraversalCount": 50000,
-              "normalizedTraversalSliceMs": 0.0007240567200000078,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 36.20283600000039
-            },
-            {
-              "fullTraversalCount": 50000,
-              "normalizedTraversalSliceMs": 0.0007484511599999678,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 37.42255799999839
-            },
-            {
-              "fullTraversalCount": 50000,
-              "normalizedTraversalSliceMs": 0.0007718790399999853,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 38.59395199999926
-            },
-            {
-              "fullTraversalCount": 50000,
-              "normalizedTraversalSliceMs": 0.0007962908600000082,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 39.81454300000041
-            },
-            {
-              "fullTraversalCount": 50000,
-              "normalizedTraversalSliceMs": 0.0007557443000000058,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 37.78721500000029
-            }
-          ]
-        },
-        {
-          "identityVerification": {
-            "duplicateIdentityCount": 0,
-            "missingIdentityCount": 0,
-            "totalExpectedCount": 2500,
-            "uniqueIdentityCount": 2500
-          },
-          "itemCount": 2500,
-          "medianPerTraversalMs": 0.0018747513909833043,
-          "pageCount": 13,
-          "probeSize": 50000,
-          "rawSamples": [
-            {
-              "fullTraversalCount": 19231,
-              "normalizedTraversalSliceMs": 0.0018747513909833043,
-              "sliceCallCount": 250003,
-              "totalSliceMs": 36.053343999999925
-            },
-            {
-              "fullTraversalCount": 19231,
-              "normalizedTraversalSliceMs": 0.0020489908481098095,
-              "sliceCallCount": 250003,
-              "totalSliceMs": 39.40414299999975
-            },
-            {
-              "fullTraversalCount": 19231,
-              "normalizedTraversalSliceMs": 0.0020386542561489224,
-              "sliceCallCount": 250003,
-              "totalSliceMs": 39.20535999999993
-            },
-            {
-              "fullTraversalCount": 19231,
-              "normalizedTraversalSliceMs": 0.0018009093650875713,
-              "sliceCallCount": 250003,
-              "totalSliceMs": 34.633287999999084
-            },
-            {
-              "fullTraversalCount": 19231,
-              "normalizedTraversalSliceMs": 0.002124585044979418,
-              "sliceCallCount": 250003,
-              "totalSliceMs": 40.85789499999919
-            },
-            {
-              "fullTraversalCount": 19231,
-              "normalizedTraversalSliceMs": 0.0017278732255213314,
-              "sliceCallCount": 250003,
-              "totalSliceMs": 33.22873000000072
-            },
-            {
-              "fullTraversalCount": 19231,
-              "normalizedTraversalSliceMs": 0.0017973256720919377,
-              "sliceCallCount": 250003,
-              "totalSliceMs": 34.56437000000005
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "identityVerification": {
-        "5000": {
-          "duplicateIdentityCount": 0,
-          "missingIdentityCount": 0,
-          "totalExpectedCount": 5000,
-          "uniqueIdentityCount": 5000
-        },
-        "20000": {
-          "duplicateIdentityCount": 0,
-          "missingIdentityCount": 0,
-          "totalExpectedCount": 20000,
-          "uniqueIdentityCount": 20000
-        },
-        "50000": {
-          "duplicateIdentityCount": 0,
-          "missingIdentityCount": 0,
-          "totalExpectedCount": 50000,
-          "uniqueIdentityCount": 50000
-        }
-      },
-      "label": "low-selectivity-filter",
-      "rawProjectionItemCount": 50000,
-      "scaling": [
-        {
-          "identityVerification": {
-            "duplicateIdentityCount": 0,
-            "missingIdentityCount": 0,
-            "totalExpectedCount": 5000,
-            "uniqueIdentityCount": 5000
-          },
-          "itemCount": 5000,
-          "medianPerTraversalMs": 0.0037533048000001146,
-          "pageCount": 25,
-          "probeSize": 5000,
-          "rawSamples": [
-            {
-              "fullTraversalCount": 10000,
-              "normalizedTraversalSliceMs": 0.0036098300999999992,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 36.09830099999999
-            },
-            {
-              "fullTraversalCount": 10000,
-              "normalizedTraversalSliceMs": 0.0037733524999999644,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 37.733524999999645
-            },
-            {
-              "fullTraversalCount": 10000,
-              "normalizedTraversalSliceMs": 0.0035228892999999515,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 35.228892999999516
-            },
-            {
-              "fullTraversalCount": 10000,
-              "normalizedTraversalSliceMs": 0.003845575599999938,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 38.45575599999938
-            },
-            {
-              "fullTraversalCount": 10000,
-              "normalizedTraversalSliceMs": 0.0037533048000001146,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 37.533048000001145
-            },
-            {
-              "fullTraversalCount": 10000,
-              "normalizedTraversalSliceMs": 0.003373786199999995,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 33.73786199999995
-            },
-            {
-              "fullTraversalCount": 10000,
-              "normalizedTraversalSliceMs": 0.003876252300000124,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 38.76252300000124
-            }
-          ]
-        },
-        {
-          "identityVerification": {
-            "duplicateIdentityCount": 0,
-            "missingIdentityCount": 0,
-            "totalExpectedCount": 20000,
-            "uniqueIdentityCount": 20000
-          },
-          "itemCount": 20000,
-          "medianPerTraversalMs": 0.014771116400000029,
-          "pageCount": 100,
-          "probeSize": 20000,
-          "rawSamples": [
-            {
-              "fullTraversalCount": 2500,
-              "normalizedTraversalSliceMs": 0.015247476400000596,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 38.11869100000149
-            },
-            {
-              "fullTraversalCount": 2500,
-              "normalizedTraversalSliceMs": 0.01561915799999988,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 39.0478949999997
-            },
-            {
-              "fullTraversalCount": 2500,
-              "normalizedTraversalSliceMs": 0.014771116400000029,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 36.92779100000007
-            },
-            {
-              "fullTraversalCount": 2500,
-              "normalizedTraversalSliceMs": 0.013468070000000443,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 33.67017500000111
-            },
-            {
-              "fullTraversalCount": 2500,
-              "normalizedTraversalSliceMs": 0.014230930799999623,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 35.57732699999906
-            },
-            {
-              "fullTraversalCount": 2500,
-              "normalizedTraversalSliceMs": 0.013848608799999784,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 34.62152199999946
-            },
-            {
-              "fullTraversalCount": 2500,
-              "normalizedTraversalSliceMs": 0.015309634799999913,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 38.27408699999978
-            }
-          ]
-        },
-        {
-          "identityVerification": {
-            "duplicateIdentityCount": 0,
-            "missingIdentityCount": 0,
-            "totalExpectedCount": 50000,
-            "uniqueIdentityCount": 50000
-          },
-          "itemCount": 50000,
-          "medianPerTraversalMs": 0.03681587000000036,
-          "pageCount": 250,
-          "probeSize": 50000,
-          "rawSamples": [
-            {
-              "fullTraversalCount": 1000,
-              "normalizedTraversalSliceMs": 0.044244534999999814,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 44.244534999999814
-            },
-            {
-              "fullTraversalCount": 1000,
-              "normalizedTraversalSliceMs": 0.03603849400000036,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 36.038494000000355
-            },
-            {
-              "fullTraversalCount": 1000,
-              "normalizedTraversalSliceMs": 0.03681587000000036,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 36.81587000000036
-            },
-            {
-              "fullTraversalCount": 1000,
-              "normalizedTraversalSliceMs": 0.038123485000000075,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 38.12348500000007
-            },
-            {
-              "fullTraversalCount": 1000,
-              "normalizedTraversalSliceMs": 0.0358292249999995,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 35.8292249999995
-            },
-            {
-              "fullTraversalCount": 1000,
-              "normalizedTraversalSliceMs": 0.033386536999998495,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 33.3865369999985
-            },
-            {
-              "fullTraversalCount": 1000,
-              "normalizedTraversalSliceMs": 0.03898367700000017,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 38.98367700000017
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "identityVerification": {
-        "5000": {
-          "duplicateIdentityCount": 0,
-          "missingIdentityCount": 0,
-          "totalExpectedCount": 5000,
-          "uniqueIdentityCount": 5000
-        },
-        "20000": {
-          "duplicateIdentityCount": 0,
-          "missingIdentityCount": 0,
-          "totalExpectedCount": 20000,
-          "uniqueIdentityCount": 20000
-        },
-        "50000": {
-          "duplicateIdentityCount": 0,
-          "missingIdentityCount": 0,
-          "totalExpectedCount": 50000,
-          "uniqueIdentityCount": 50000
-        }
-      },
-      "label": "revision-change-seq",
-      "rawProjectionItemCount": 50000,
-      "revisionVerification": {
-        "5000": {
-          "revisionV1Count": 5000,
-          "revisionV2Count": 5000,
-          "sequencesVerified": true,
-          "sharedIdentityCount": 0
-        },
-        "20000": {
-          "revisionV1Count": 20000,
-          "revisionV2Count": 20000,
-          "sequencesVerified": true,
-          "sharedIdentityCount": 0
-        },
-        "50000": {
-          "revisionV1Count": 50000,
-          "revisionV2Count": 50000,
-          "sequencesVerified": true,
-          "sharedIdentityCount": 0
-        }
-      },
-      "scaling": [
-        {
-          "identityVerification": {
-            "duplicateIdentityCount": 0,
-            "missingIdentityCount": 0,
-            "totalExpectedCount": 5000,
-            "uniqueIdentityCount": 5000
-          },
-          "itemCount": 5000,
-          "medianPerTraversalMs": 0.0037092185999999857,
-          "pageCount": 25,
-          "probeSize": 5000,
-          "rawSamples": [
-            {
-              "fullTraversalCount": 10000,
-              "normalizedTraversalSliceMs": 0.0052530907000000295,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 52.5309070000003
-            },
-            {
-              "fullTraversalCount": 10000,
-              "normalizedTraversalSliceMs": 0.00365459950000004,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 36.5459950000004
-            },
-            {
-              "fullTraversalCount": 10000,
-              "normalizedTraversalSliceMs": 0.0037092185999999857,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 37.092185999999856
-            },
-            {
-              "fullTraversalCount": 10000,
-              "normalizedTraversalSliceMs": 0.0037423085000000355,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 37.423085000000356
-            },
-            {
-              "fullTraversalCount": 10000,
-              "normalizedTraversalSliceMs": 0.0035248199999999997,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 35.2482
-            },
-            {
-              "fullTraversalCount": 10000,
-              "normalizedTraversalSliceMs": 0.0035574617000000215,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 35.57461700000022
-            },
-            {
-              "fullTraversalCount": 10000,
-              "normalizedTraversalSliceMs": 0.0037312192000001233,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 37.31219200000123
-            }
-          ],
-          "revisionVerification": {
-            "revisionV1Count": 5000,
-            "revisionV2Count": 5000,
-            "sequencesVerified": true,
-            "sharedIdentityCount": 0
-          }
-        },
-        {
-          "identityVerification": {
-            "duplicateIdentityCount": 0,
-            "missingIdentityCount": 0,
-            "totalExpectedCount": 20000,
-            "uniqueIdentityCount": 20000
-          },
-          "itemCount": 20000,
-          "medianPerTraversalMs": 0.01491756000000023,
-          "pageCount": 100,
-          "probeSize": 20000,
-          "rawSamples": [
-            {
-              "fullTraversalCount": 2500,
-              "normalizedTraversalSliceMs": 0.01615847120000035,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 40.39617800000087
-            },
-            {
-              "fullTraversalCount": 2500,
-              "normalizedTraversalSliceMs": 0.013623255600000266,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 34.058139000000665
-            },
-            {
-              "fullTraversalCount": 2500,
-              "normalizedTraversalSliceMs": 0.014947399600000062,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 37.368499000000156
-            },
-            {
-              "fullTraversalCount": 2500,
-              "normalizedTraversalSliceMs": 0.015324863199999527,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 38.31215799999882
-            },
-            {
-              "fullTraversalCount": 2500,
-              "normalizedTraversalSliceMs": 0.013184986400000343,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 32.96246600000086
-            },
-            {
-              "fullTraversalCount": 2500,
-              "normalizedTraversalSliceMs": 0.014809060400000454,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 37.02265100000113
-            },
-            {
-              "fullTraversalCount": 2500,
-              "normalizedTraversalSliceMs": 0.01491756000000023,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 37.293900000000576
-            }
-          ],
-          "revisionVerification": {
-            "revisionV1Count": 20000,
-            "revisionV2Count": 20000,
-            "sequencesVerified": true,
-            "sharedIdentityCount": 0
-          }
-        },
-        {
-          "identityVerification": {
-            "duplicateIdentityCount": 0,
-            "missingIdentityCount": 0,
-            "totalExpectedCount": 50000,
-            "uniqueIdentityCount": 50000
-          },
-          "itemCount": 50000,
-          "medianPerTraversalMs": 0.0341771090000002,
-          "pageCount": 250,
-          "probeSize": 50000,
-          "rawSamples": [
-            {
-              "fullTraversalCount": 1000,
-              "normalizedTraversalSliceMs": 0.03388610300000073,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 33.88610300000073
-            },
-            {
-              "fullTraversalCount": 1000,
-              "normalizedTraversalSliceMs": 0.03408628500000123,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 34.086285000001226
-            },
-            {
-              "fullTraversalCount": 1000,
-              "normalizedTraversalSliceMs": 0.034743350000000645,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 34.743350000000646
-            },
-            {
-              "fullTraversalCount": 1000,
-              "normalizedTraversalSliceMs": 0.03100778900000114,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 31.00778900000114
-            },
-            {
-              "fullTraversalCount": 1000,
-              "normalizedTraversalSliceMs": 0.03792087800000081,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 37.92087800000081
-            },
-            {
-              "fullTraversalCount": 1000,
-              "normalizedTraversalSliceMs": 0.0341771090000002,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 34.1771090000002
-            },
-            {
-              "fullTraversalCount": 1000,
-              "normalizedTraversalSliceMs": 0.03707823400000052,
-              "sliceCallCount": 250000,
-              "totalSliceMs": 37.07823400000052
-            }
-          ],
-          "revisionVerification": {
-            "revisionV1Count": 50000,
-            "revisionV2Count": 50000,
-            "sequencesVerified": true,
-            "sharedIdentityCount": 0
-          }
-        }
-      ]
-    }
-  ],
-  "sourceAssertion": {
-    "campaignChildrenHasSqlOffset": true,
-    "resolveSessionQueryProjectionSqlContainsLimitOrOffset": false,
-    "runSessionPageHasJsSlice": true,
-    "runSessionPageUsesCachedProjection": true
-  },
   "tool": "plan072-keyset-a1",
-  "version": 1
+  "version": 2
 }

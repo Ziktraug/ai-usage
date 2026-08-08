@@ -271,6 +271,19 @@ describe('package boundary guard', () => {
     );
   });
 
+  test('allows web to consume explicit usage-store performance instrumentation', async () => {
+    const root = await createFixture();
+    await writePackage(
+      root,
+      'apps',
+      'web',
+      { name: '@ai-usage/web' },
+      "import '@ai-usage/usage-store/performance-testing';\n",
+    );
+
+    expect(await collectViolations(root)).toEqual([]);
+  });
+
   test('allows only usage-engine-runtime to depend on the writer-capable usage-merge package', async () => {
     const root = await createFixture();
     await writePackage(

@@ -1,4 +1,14 @@
-export type SessionQueryPerfPhase = 'count' | 'identity' | 'materialize' | 'projection' | 'slice';
+export const SESSION_QUERY_PERF_PHASES = ['count', 'identity', 'materialize', 'projection', 'slice'] as const;
+export type SessionQueryPerfPhase = (typeof SESSION_QUERY_PERF_PHASES)[number];
+
+export const SESSION_QUERY_PERF_COUNTERS = [
+  'identityChecks',
+  'projectionCacheHits',
+  'projectionCacheMisses',
+  'totalsCacheHits',
+  'totalsCacheMisses',
+] as const;
+export type SessionQueryPerfCounter = (typeof SESSION_QUERY_PERF_COUNTERS)[number];
 
 export interface SessionQueryPerfPhaseStats {
   readonly count: number;
@@ -8,6 +18,7 @@ export interface SessionQueryPerfPhaseStats {
 }
 
 export interface SessionQueryPerfSnapshot {
+  readonly counters: Record<SessionQueryPerfCounter, number>;
   readonly phases: Record<SessionQueryPerfPhase, SessionQueryPerfPhaseStats>;
   readonly samples: number;
 }
@@ -25,6 +36,13 @@ const phaseSamples: Record<SessionQueryPerfPhase, number[]> = {
   materialize: [],
   projection: [],
   slice: [],
+};
+const counters: Record<SessionQueryPerfCounter, number> = {
+  identityChecks: 0,
+  projectionCacheHits: 0,
+  projectionCacheMisses: 0,
+  totalsCacheHits: 0,
+  totalsCacheMisses: 0,
 };
 
 export const sessionQueryPerfEnabled = (): boolean =>
@@ -58,6 +76,12 @@ export const recordSessionQueryPerfPhase = (phase: SessionQueryPerfPhase, durati
   phaseSamples[phase].push(durationMs);
 };
 
+export const recordSessionQueryPerfCounter = (counter: SessionQueryPerfCounter): void => {
+  if (sessionQueryPerfEnabled()) {
+    counters[counter] += 1;
+  }
+};
+
 export const measureSessionQueryPerfPhase = <Value>(phase: SessionQueryPerfPhase, run: () => Value): Value => {
   if (!sessionQueryPerfEnabled()) {
     return run();
@@ -71,6 +95,7 @@ export const measureSessionQueryPerfPhase = <Value>(phase: SessionQueryPerfPhase
 };
 
 export const snapshotSessionQueryPerf = (): SessionQueryPerfSnapshot => ({
+  counters: { ...counters },
   phases: {
     count: summarizePhase(phaseSamples.count),
     identity: summarizePhase(phaseSamples.identity),
@@ -78,18 +103,14 @@ export const snapshotSessionQueryPerf = (): SessionQueryPerfSnapshot => ({
     projection: summarizePhase(phaseSamples.projection),
     slice: summarizePhase(phaseSamples.slice),
   },
-  samples:
-    phaseSamples.count.length +
-    phaseSamples.identity.length +
-    phaseSamples.materialize.length +
-    phaseSamples.projection.length +
-    phaseSamples.slice.length,
+  samples: SESSION_QUERY_PERF_PHASES.reduce((total, phase) => total + phaseSamples[phase].length, 0),
 });
 
 export const resetSessionQueryPerf = (): void => {
-  phaseSamples.count.length = 0;
-  phaseSamples.identity.length = 0;
-  phaseSamples.materialize.length = 0;
-  phaseSamples.projection.length = 0;
-  phaseSamples.slice.length = 0;
+  for (const phase of SESSION_QUERY_PERF_PHASES) {
+    phaseSamples[phase].length = 0;
+  }
+  for (const counter of SESSION_QUERY_PERF_COUNTERS) {
+    counters[counter] = 0;
+  }
 };

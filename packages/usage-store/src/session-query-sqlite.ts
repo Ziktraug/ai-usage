@@ -30,7 +30,7 @@ import {
 import { parseSessionVcsContext, type SessionVcsContext } from '@ai-usage/report-core/session-vcs';
 import { usageRowApiPriceMeasurement } from '@ai-usage/report-core/usage-row';
 import { createSessionQueryExactRevisionCache } from './session-query-exact-revision-cache';
-import { measureSessionQueryPerfPhase } from './session-query-perf';
+import { measureSessionQueryPerfPhase, recordSessionQueryPerfCounter } from './session-query-perf';
 
 export type SessionQueryKind = 'campaign-children' | 'neighbors' | 'session-detail-anchor' | 'sessions';
 
@@ -708,7 +708,10 @@ const sessionQueryPageIdentity = (
   revision: string,
   requestFingerprint: string,
   trace?: SessionQuerySqliteTrace,
-): string => `${revision}\0${sessionQueryCaptureFingerprint(database, trace)}\0${requestFingerprint}`;
+): string => {
+  recordSessionQueryPerfCounter('identityChecks');
+  return `${revision}\0${sessionQueryCaptureFingerprint(database, trace)}\0${requestFingerprint}`;
+};
 
 export const resetSessionQueryTotalsCacheForTests = (): void => {
   sessionQueryExactRevisionCache.reset();
@@ -724,9 +727,11 @@ const resolveSessionQueryTotals = (
   if (request.cursor !== null) {
     const cached = sessionQueryExactRevisionCache.totals(identity);
     if (cached) {
+      recordSessionQueryPerfCounter('totalsCacheHits');
       return cached;
     }
   }
+  recordSessionQueryPerfCounter('totalsCacheMisses');
   const countSql = `SELECT
     COUNT(*) AS session_count,
     COUNT(DISTINCT campaign_key) AS item_count
@@ -755,8 +760,10 @@ const resolveSessionQueryProjection = (
 ): ItemRecord[] => {
   const cached = sessionQueryExactRevisionCache.projection(identity);
   if (cached) {
+    recordSessionQueryPerfCounter('projectionCacheHits');
     return cached;
   }
+  recordSessionQueryPerfCounter('projectionCacheMisses');
   const campaignCtes = [
     campaignFilteredCte(filter.where),
     campaignRollupCte(filter.where !== '1 = 1'),

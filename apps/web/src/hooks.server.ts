@@ -2,7 +2,7 @@ import {
   isSessionQueryPerformanceCaptureEnabled,
   readSessionQueryPerformanceCapture,
   resetSessionQueryPerformanceCapture,
-} from '@ai-usage/usage-store/reader';
+} from '@ai-usage/usage-store/performance-testing';
 import type { Handle, HandleFetch } from '@sveltejs/kit';
 import { sequence } from '@sveltejs/kit/hooks';
 import { demoRouteDecision } from '$lib/features/shell/demo-policy.server';
