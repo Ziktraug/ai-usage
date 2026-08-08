@@ -15,7 +15,7 @@ const MAX_RPC_URL_BYTES = 16 * 1024;
 const MAX_SOURCE_CONTROL_COMMAND_BYTES = 4 * 1024;
 const textEncoder = new TextEncoder();
 const CONTENT_LENGTH_PATTERN = /^(?:0|[1-9][0-9]*)$/u;
-const rpcPathByOperation = {
+export const rpcPathByOperation = {
   createManagedSkillTargetDirectory: '/skills/createTargetDirectory',
   getCampaignLabelOverrides: '/campaign/labelOverrides',
   getFocusedReportBreakdown: '/report/focusedBreakdown',

@@ -15,6 +15,12 @@ const SESSION_NEIGHBOR_FINGERPRINT_PATTERN = /^session-neighbor-v1:[0-9a-f]{16}$
 const FOCUSED_OVERVIEW_FINGERPRINT_PREFIX = 'focused-overview-v1:';
 const PROJECT_COLUMN_PATTERN = /Project/;
 const SOURCES_URL_PATTERN = /\/sources$/;
+const INITIAL_HTML_SECRET_SENTINELS = [
+  HARNESS_FIXTURE_PRIVATE_PROMPT_SENTINEL,
+  HARNESS_FIXTURE_CREDENTIAL_REMOTE_SENTINEL,
+  HARNESS_FIXTURE_DANGEROUS_URL_SENTINEL,
+  HARNESS_FIXTURE_PROVIDER_STDERR_SENTINEL,
+] as const;
 
 interface CapturedRpcResponse {
   body: Promise<string>;
@@ -102,10 +108,11 @@ test('renders the report timeline on the initial production Overview', async ({ 
   expect(initialHtml).toContain('Usage report');
   expect(initialHtml).not.toContain('Loading report data');
   expect(initialHtml).toContain('focused-overview-v1:');
-  expect(initialHtml).not.toContain(HARNESS_FIXTURE_PRIVATE_PROMPT_SENTINEL);
-  expect(initialHtml).not.toContain(HARNESS_FIXTURE_CREDENTIAL_REMOTE_SENTINEL);
-  expect(initialHtml).not.toContain(HARNESS_FIXTURE_DANGEROUS_URL_SENTINEL);
-  expect(initialHtml).not.toContain(HARNESS_FIXTURE_PROVIDER_STDERR_SENTINEL);
+  // Useful bounded report/query data belongs in SSR. Only explicit secret-bearing
+  // fixture values are forbidden from the serialized initial HTML.
+  for (const secretSentinel of INITIAL_HTML_SECRET_SENTINELS) {
+    expect(initialHtml).not.toContain(secretSentinel);
+  }
 
   await page.addInitScript(() => {
     Reflect.set(globalThis, '__aiUsageFalseEmptyRange', false);

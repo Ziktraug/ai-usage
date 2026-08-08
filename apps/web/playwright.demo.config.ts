@@ -6,7 +6,7 @@ export default defineConfig({
   expect: { timeout: 10_000 },
   reporter: process.env.CI ? 'github' : 'line',
   testDir: './e2e',
-  testMatch: 'demo-privacy.spec.ts',
+  testMatch: 'demo-isolation.spec.ts',
   timeout: 60_000,
   use: {
     baseURL: 'http://127.0.0.1:4176',

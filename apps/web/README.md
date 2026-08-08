@@ -58,12 +58,14 @@ owns per-request runtime mode and the single web-observability lifecycle.
 
 Keep model tests near models and server adapter tests under `src/server`. Use
 isolated synthetic homes/stores/ports for E2E. Cover engine available/stopped,
-missing/incompatible store, mismatch, expired revision, demo import privacy,
+missing/incompatible store, mismatch, expired revision, synthetic demo isolation,
 and direct-query bounds.
 
-The migration boundary gates are `bun run test:web-migration-parity`,
-`bun tools/check-web-retired-stack.ts`, `bun run test:web-retired-stack-build`, and
-`bun run test:web-client-manifest`. They cover the accepted parity ledger,
-retired source/emitted stacks, and the emitted browser import closure.
+The permanent browser boundary gate is `bun run test:web-client-manifest`; it
+rejects server-only capabilities in the emitted client graph. Request-policy
+tests cover every live RPC path plus explicit file/SSE/command routes. The demo
+suite proves synthetic-runtime isolation, while the production suite keeps
+explicit secret sentinels out of SSR HTML without forbidding useful bounded
+initial report data.
 The dev/build isolation gate is `bun run test:web-dev-build-isolation`; the
 5,000-session budget is `bun run --cwd apps/web benchmark:session-scroll`.

@@ -7,7 +7,7 @@ const NON_REPORT_NAVIGATION_PATTERN = /Skills|Sources|Sync/;
 const TOP_SESSION_PATTERN = /Top session/;
 const UNKNOWN_RPC_PROBE_PATH = '/rpc/demo-boundary-probe';
 
-test('serves only the synthetic report and keeps every local boundary inert', async ({ page, request }) => {
+test('isolates the synthetic demo from every local data and control capability', async ({ page, request }) => {
   const businessRequests: string[] = [];
   page.on('request', (browserRequest) => {
     if (BUSINESS_RESOURCE_TYPES.has(browserRequest.resourceType())) {

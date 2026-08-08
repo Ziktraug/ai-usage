@@ -3,10 +3,6 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "exports": {
-    "./migration-parity/aggregate": "./migration-parity/aggregate.ts",
-    "./migration-parity/schema": "./migration-parity/schema.ts"
-  },
   "dependencies": {
     "@ai-usage/design-system": "workspace:*",
     "@ai-usage/effect-runtime": "workspace:*",

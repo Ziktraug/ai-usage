@@ -58,10 +58,9 @@ bun apps/web/src/lib/features/report/breakdown/p8.browser.server.ts
 bun run --cwd apps/web check:svelte
 bun x ultracite check apps/web/src/lib/features/report/breakdown apps/web/src/lib/features/report/actions
 bun tools/check-package-boundaries.ts
-bun tools/check-web-migration-parity.ts
 ```
 
 The focused gate is 32 pass, 0 fail, 79 expectations. The synthetic Chrome
-gate covers the 11 retired TSX contracts with rendered interaction and Axe
+gate covers the 11 breakdown interaction contracts with rendered interaction and Axe
 evidence. Svelte reports zero errors/warnings and Ultracite checks 32 owned
 files.

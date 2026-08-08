@@ -1,79 +1,53 @@
 import { describe, expect, test } from 'bun:test';
-import type { OperationDescriptor, ParityRecord, ParityShard } from '../../../../migration-parity/schema';
-import v1Shard from '../../../../migration-parity/shards/v1.parity';
-import v2Shard from '../../../../migration-parity/shards/v2.parity';
-import v3Shard from '../../../../migration-parity/shards/v3.parity';
-import v4Shard from '../../../../migration-parity/shards/v4.parity';
 import {
   explicitHttpRequestPolicies,
   observableErrorFamiliesFor,
   operationRequestPolicies,
   requestPolicyMatrix,
 } from './request-policy';
-
-interface FrozenOperation {
-  readonly descriptor: OperationDescriptor;
-  readonly name: string;
-}
-
-const frozenShards: readonly ParityShard[] = [v1Shard, v2Shard, v3Shard, v4Shard];
-
-const isOperationRecord = (
-  record: ParityRecord,
-): record is ParityRecord & { readonly operation: OperationDescriptor } =>
-  record.kind === 'operation' && record.id.startsWith('op:') && record.operation !== undefined;
-
-const frozenOperations = frozenShards.flatMap((shard) =>
-  shard.records.filter(isOperationRecord).map(
-    (record): FrozenOperation => ({
-      descriptor: record.operation,
-      name: record.id.slice('op:'.length),
-    }),
-  ),
-);
+import { rpcPathByOperation } from './request-policy-handler';
 
 const sorted = (values: readonly string[]): readonly string[] =>
   [...values].sort((left, right) => left.localeCompare(right));
 
 describe('request policy matrix', () => {
-  test('covers every frozen V1-V4 operation exactly once without importing an implementation', () => {
-    const frozenNames = frozenOperations.map(({ name }) => name);
-    const policyNames = operationRequestPolicies.map(({ operation }) => operation);
+  test('covers every live RPC path exactly once', () => {
+    const liveOperationNames = Object.keys(rpcPathByOperation);
+    const livePaths = Object.values(rpcPathByOperation);
+    const rpcPolicyNames = operationRequestPolicies
+      .filter(({ transport }) => transport !== 'file')
+      .map(({ operation }) => operation);
 
-    expect(frozenNames).toHaveLength(30);
-    expect(new Set(frozenNames).size).toBe(30);
-    expect(policyNames).toHaveLength(30);
-    expect(new Set(policyNames).size).toBe(30);
-    expect(sorted(policyNames)).toEqual(sorted(frozenNames));
+    expect(new Set(liveOperationNames).size).toBe(liveOperationNames.length);
+    expect(new Set(livePaths).size).toBe(livePaths.length);
+    expect(new Set(rpcPolicyNames).size).toBe(rpcPolicyNames.length);
+    expect(sorted(rpcPolicyNames)).toEqual(sorted(liveOperationNames));
   });
 
-  test('freezes transport, target, public errors, method normalization, and size classes from the inventory', () => {
-    const policiesByOperation = new Map(operationRequestPolicies.map((policy) => [policy.operation, policy]));
-
-    for (const { descriptor, name } of frozenOperations) {
-      const policy = policiesByOperation.get(name);
-      expect(policy).toBeDefined();
-      if (!policy) {
-        continue;
-      }
-
-      expect(policy.target).toBe(descriptor.target);
-      expect(policy.transport).toBe(descriptor.transport);
-      expect(sorted(policy.applicationErrorFamilies)).toEqual(sorted(descriptor.publicErrors));
-      expect(policy.method).toBe(descriptor.transport === 'mutation' ? 'POST' : descriptor.currentMethod);
+  test('keeps transport, method, CSRF, and size classes internally coherent', () => {
+    for (const policy of operationRequestPolicies) {
+      expect(policy.target.length).toBeGreaterThan(0);
       expect(policy.csrf).toBe(
-        descriptor.transport === 'mutation' || descriptor.transport === 'file' ? 'required' : 'not-required',
+        policy.transport === 'mutation' || policy.transport === 'file' ? 'required' : 'not-required',
       );
 
-      if (descriptor.transport === 'file') {
+      if (policy.transport === 'file') {
+        expect(policy.method).toBe('POST');
         expect(policy.requestSize).toBe('none');
         expect(policy.responseSize).toBe('portable-usage-json');
-      } else if (descriptor.inputParser === 'none') {
-        expect(policy.requestSize).toBe('none');
       } else {
-        expect(policy.requestSize).toBe(policy.method === 'GET' ? 'bounded-url' : 'bounded-rpc-json');
+        expect(policy.responseSize).toBe('bounded-json');
       }
-      expect(policy.responseSize).toBe(descriptor.transport === 'file' ? 'portable-usage-json' : 'bounded-json');
+
+      if (policy.transport === 'mutation') {
+        expect(policy.method).toBe('POST');
+      }
+      if (policy.requestSize === 'bounded-url') {
+        expect(policy.method).toBe('GET');
+      }
+      if (policy.requestSize === 'bounded-rpc-json') {
+        expect(policy.method).toBe('POST');
+      }
     }
   });
 
@@ -101,7 +75,7 @@ describe('request policy matrix', () => {
     const rpcPolicies = operationRequestPolicies.filter(({ transport }) => transport !== 'file');
     const filePolicies = operationRequestPolicies.filter(({ transport }) => transport === 'file');
 
-    expect(rpcPolicies).toHaveLength(29);
+    expect(rpcPolicies).toHaveLength(Object.keys(rpcPathByOperation).length);
     expect(filePolicies).toEqual([
       expect.objectContaining({
         operation: 'exportManualMergeBundle',
@@ -159,10 +133,12 @@ describe('request policy matrix', () => {
     }
   });
 
-  test('keeps the inventory error vocabulary closed over the public contract families', () => {
-    const inventoryErrors = sorted([...new Set(frozenOperations.flatMap(({ descriptor }) => descriptor.publicErrors))]);
+  test('keeps the operation-policy error vocabulary closed over the public contract families', () => {
+    const policyErrors = sorted([
+      ...new Set(operationRequestPolicies.flatMap(({ applicationErrorFamilies }) => applicationErrorFamilies)),
+    ]);
 
-    expect(inventoryErrors).toEqual([
+    expect(policyErrors).toEqual([
       'Conflict',
       'EngineUnavailable',
       'Forbidden',
