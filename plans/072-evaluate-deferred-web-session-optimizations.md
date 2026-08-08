@@ -6,7 +6,7 @@
 > rationalized. This plan authorizes local implementation, push, and PR description
 > updates for the same single working branch; do not merge.
 
-**Status:** IN PROGRESS
+**Status:** DONE
 
 **Priority:** P1
 
@@ -184,7 +184,7 @@ Before the candidates are evaluated, the following are added (gated by
 into a public response):
 
 - TTFB and time-to-first-content for `/`, `/?tab=sessions`,
-  `/?tab=breakdown`, a filtered Sessions URL, and a dimensioned Breakdown
+  `/?tab=models`, a filtered Sessions URL, and a dimensioned Breakdown
   URL.
 - A "first usable render" marker for each destination, defined below.
 - Bytes loaded before / after the first Drawer open.
@@ -414,7 +414,7 @@ Measure, in order:
 
 - `/`
 - `/?tab=sessions`
-- `/?tab=breakdown`
+- `/?tab=models`
 - A Sessions URL with a non-trivial filter and a non-default sort.
 - A Breakdown URL with a non-default dimension and a non-default sort.
 
@@ -628,20 +628,54 @@ recover them from `git log`.
 
 ### Wave 1 — Attribution
 
-TBD
+- Added canonical SQLite phase and counter names for identity checks,
+  projection-cache hits/misses, and totals-cache hits/misses.
+- Exposed benchmark-only instrumentation from the explicit
+  `@ai-usage/usage-store/performance-testing` subpath instead of the reader
+  barrel.
+- Extended the destination harness with canonical routes, browser-native
+  useful/usable markers, layout shift, complete business-RPC accounting, and
+  raw/gzip/Brotli JS/CSS closure accounting.
+- Extended the bundle map with recursive destination closures, Ark/Zag module
+  occurrence counts, and Drawer-open attribution.
 
 ### Experience A — Keyset
 
-TBD
+Rejected at STOP A1. The real SQLite probe measured date-desc traversal at
+153.090 ms for 5,000 rows and 615.458 ms for 20,000 rows. Projection slicing
+was respectively 0.037 ms and 0.060 ms, or 0.0267% and 0.0108% of residual
+SQLite work. Slice growth was 1.62x for a 4x fixture increase, with no duplicate
+or missing identities and the expected revision-scoped cache forfeiture. No
+cursor contract or ADR was introduced.
 
 ### Experience B — Design-system split
 
-TBD
+Rejected. Overview already loads the shared Ark/Zag runtime through active
+Tooltip and Popover primitives; the map found no duplicated runtime modules.
+Sessions adds 25,592 B gzip over Overview and Drawer open adds 13,163 B gzip,
+but the earlier isolated Drawer/Tabs trial grew initial gzip by 2.13 KiB.
+Meeting the 10 KiB gate would require replacing active accessible primitives,
+not merely moving a chunk boundary, so no prototype remains in source.
 
 ### Experience C — Destination SSR
 
-TBD
+No new optimization retained. Direct destination prefetch was already present
+at the planned-against commit. The no-prefetch control did not yield a stable
+10% first-usable improvement and introduced a browser Session RPC before first
+scroll, violating the existing zero-refetch contract. The original query owner
+and prefetch path remain unchanged.
 
 ### Final
 
-TBD
+The final exhaustive benchmark retained 489,216 hydration bytes, 26 Session
+RPCs, 29 desktop items, and 581 desktop nodes. Relative to the fresh control,
+desktop traversal changed -3.2%, sort +1.4%, and heap +0.02%; no regression
+crossed the 10% gate. Raw samples, environment, hashes, byte terminology, and
+reproduction commands are recorded in
+`docs/performance/web-session-deferred-optimizations.md`.
+
+Validation passed: `check`, `lint`, `typecheck` (28/28), package tests, tools
+(120/120), build (15/15), client manifest, production start,
+dev/build isolation, setup loopback, demo e2e (1/1), production e2e (11/11
+plus desktop/mobile scale), dev e2e (112 passed, 19 benchmark-only skipped),
+and the dedicated Session benchmark (4/4).
