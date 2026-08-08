@@ -696,13 +696,39 @@ const rememberLru = <Value>(cache: Map<string, Value>, identity: string, value: 
 };
 
 const sessionQueryPayloadSeal = (database: SessionQuerySqliteDatabase, trace?: SessionQuerySqliteTrace): string => {
-  const metadata = executeGet<{ row_count: number; schema_version: number }>(
+  const metadata = executeGet<{ row_count: number; schema_version: number; support_json: string }>(
     database,
-    'SELECT schema_version, row_count FROM metadata LIMIT 1',
+    'SELECT schema_version, row_count, support_json FROM metadata LIMIT 1',
     [],
     trace,
   );
-  return `${metadata?.schema_version ?? 'missing'}\0${metadata?.row_count ?? 'missing'}`;
+  const rowsDigest = executeGet<{
+    max_ordinal: number | null;
+    min_ordinal: number | null;
+    payload_bytes: number | null;
+    row_count: number;
+  }>(
+    database,
+    `SELECT
+      COUNT(*) AS row_count,
+      COALESCE(SUM(LENGTH(row_json)), 0) AS payload_bytes,
+      MIN(ordinal) AS min_ordinal,
+      MAX(ordinal) AS max_ordinal
+     FROM session_rows`,
+    [],
+    trace,
+  );
+  // Seal must distinguish distinct SQLite payloads that reuse the same revision string
+  // (common in tests and unsafe if only row_count is compared).
+  return [
+    metadata?.schema_version ?? 'missing',
+    metadata?.row_count ?? 'missing',
+    fnv1a64(metadata?.support_json ?? ''),
+    rowsDigest?.row_count ?? 'missing',
+    rowsDigest?.payload_bytes ?? 'missing',
+    rowsDigest?.min_ordinal ?? 'missing',
+    rowsDigest?.max_ordinal ?? 'missing',
+  ].join('\0');
 };
 
 const sessionQueryPageIdentity = (
