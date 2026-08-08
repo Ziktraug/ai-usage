@@ -1,4 +1,5 @@
 const INTENTIONAL_REQUEST_ABORT = 'net::ERR_ABORTED';
+const SVELTEKIT_ROUTE_DATA_SUFFIX = '/__data.json';
 
 export type BrowserRequestAbortResourceType = 'fetch' | 'xhr';
 
@@ -12,6 +13,15 @@ export interface BrowserRequestAbortObservation {
   readonly pathname: string;
   readonly resourceType: string;
 }
+
+export const isCancelledSvelteKitRouteDataRequest = ({
+  errorText,
+  pathname,
+  resourceType,
+}: BrowserRequestAbortObservation): boolean =>
+  errorText === INTENTIONAL_REQUEST_ABORT &&
+  (resourceType === 'fetch' || resourceType === 'xhr') &&
+  pathname.endsWith(SVELTEKIT_ROUTE_DATA_SUFFIX);
 
 const expectationKey = ({
   pathname,

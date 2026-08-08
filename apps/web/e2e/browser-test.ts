@@ -10,6 +10,7 @@ import {
 import {
   type BrowserRequestAbortExpectation,
   createBrowserRequestAbortAllowance,
+  isCancelledSvelteKitRouteDataRequest,
 } from './browser-request-abort-allowance';
 import { isExpectedSkillsSaveFailureResponse, RPC_PATH_PREFIX } from './rpc-test-transport';
 
@@ -157,6 +158,11 @@ export const test = base.extend<{ browserFailureGate: BrowserFailureGate }>({
             if (
               isIntentionalSourceControlCancellation(request, errorText) ||
               isIntentionalReportRequestCancellation(request, errorText) ||
+              isCancelledSvelteKitRouteDataRequest({
+                errorText,
+                pathname: requestPath(request),
+                resourceType: request.resourceType(),
+              }) ||
               requestAbortAllowance.consume({
                 errorText,
                 pathname: requestPath(request),

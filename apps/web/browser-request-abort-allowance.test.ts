@@ -1,5 +1,8 @@
 import { describe, expect, test } from 'bun:test';
-import { createBrowserRequestAbortAllowance } from './e2e/browser-request-abort-allowance';
+import {
+  createBrowserRequestAbortAllowance,
+  isCancelledSvelteKitRouteDataRequest,
+} from './e2e/browser-request-abort-allowance';
 
 const syncDataAbort = {
   errorText: 'net::ERR_ABORTED',
@@ -8,6 +11,13 @@ const syncDataAbort = {
 } as const;
 
 describe('browser request abort allowance', () => {
+  test('recognizes only cancelled SvelteKit route-data requests', () => {
+    expect(isCancelledSvelteKitRouteDataRequest(syncDataAbort)).toBe(true);
+    expect(isCancelledSvelteKitRouteDataRequest({ ...syncDataAbort, pathname: '/rpc/session/page' })).toBe(false);
+    expect(isCancelledSvelteKitRouteDataRequest({ ...syncDataAbort, resourceType: 'document' })).toBe(false);
+    expect(isCancelledSvelteKitRouteDataRequest({ ...syncDataAbort, errorText: 'net::ERR_FAILED' })).toBe(false);
+  });
+
   test('consumes one exact intentional abort', () => {
     const allowance = createBrowserRequestAbortAllowance();
     allowance.allowOnce(syncDataAbort);
