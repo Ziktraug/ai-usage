@@ -1,0 +1,27 @@
+{
+  "adapterPrecompress": true,
+  "artifact": {
+    "bytes": 9087981,
+    "files": 414,
+    "codeBytes": 8372115,
+    "br": 56,
+    "gz": 56,
+    "brBytes": 331964,
+    "gzBytes": 383902
+  },
+  "initialStaticClosure": {
+    "assetCount": 36,
+    "brotliBytes": 241695,
+    "gzipBytes": 279228,
+    "rawBytes": 891131
+  },
+  "sampleAsset": {
+    "path": "/_app/immutable/chunks/EardQyRL.js",
+    "note": "Verified earlier in wave6: Accept-Encoding br/gzip served with correct Content-Encoding, Vary, immutable cache, and byte-identical decode."
+  },
+  "rejected": {
+    "designSystemSplit": "Initial gzip rose +2.13 KiB; session-table Popover shares Ark focus-trap with Drawer so the shared chunk remained a node3 preload.",
+    "syntheticIsolation": "Only trivial synthetic string references in the initial node; not a material closure cost.",
+    "destinationSsr": "Deferred; initial Sessions path already hydrates without business refetch and no measured loading-shell cost justified the Overview closure risk."
+  }
+}

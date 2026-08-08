@@ -8,7 +8,7 @@ const versionName = resolveSvelteKitVersionName();
 const config = {
   kit: {
     env: { privatePrefix: 'AI_USAGE_SVELTEKIT_PRIVATE_' },
-    adapter: adapter({ out: adapterDirectory, precompress: false }),
+    adapter: adapter({ out: adapterDirectory, precompress: true }),
     outDir: intermediateDirectory,
     version: { name: versionName },
   },
