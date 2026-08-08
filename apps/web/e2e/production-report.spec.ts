@@ -259,12 +259,14 @@ test('reuses the current revision bootstrap across Sessions filter and sort with
   await expect.poll(() => new URL(page.url()).searchParams.get('q')).toBe('codex');
   await expect.poll(() => browserBootstrapRequests.length).toBe(0);
   await expect(page.locator('[data-report-refresh-pending]')).toHaveCount(0);
+  await expect.poll(() => trace.counts('session-actions').operations['session.page'] ?? 0).toBe(1);
   expect(browserBootstrapRequests).toHaveLength(0);
 
   await page.getByRole('columnheader', { name: PROJECT_COLUMN_PATTERN }).getByRole('button').click();
-  await expect.poll(() => new URL(page.url()).searchParams.get('sort')).not.toBeNull();
+  await expect.poll(() => new URL(page.url()).searchParams.get('sort') ?? '').toContain('project');
   await expect.poll(() => browserBootstrapRequests.length).toBe(0);
   await expect(page.locator('[data-report-refresh-pending]')).toHaveCount(0);
+  await expect.poll(() => trace.counts('session-actions').operations['session.page'] ?? 0).toBe(2);
   expect(browserBootstrapRequests).toHaveLength(0);
   expect(routeDataRequests).toEqual([]);
   const counts = trace.counts('session-actions');
@@ -341,9 +343,9 @@ test('records filter range sort and history request counts without route data', 
 
   await expect(workspace).toHaveAttribute('data-plan-069-workspace', 'history');
   const counts = trace.counts('filter-range-sort-history');
-  // Filter + sort + range still complete without route data; one Sessions page is
-  // satisfied from the browser Query cache after Plan 071 paging/projection work.
-  expect(counts.operations).toEqual({ 'report.focusedOverview': 2, 'session.page': 2 });
+  // Filter, sort, and range have distinct semantic query identities. History reuses those
+  // completed entries without adding route data or another Sessions request.
+  expect(counts.operations).toEqual({ 'report.focusedOverview': 2, 'session.page': 3 });
   expect(counts.routeData).toBe(0);
   writeCharacterization('filter-range-sort-back-forward', {
     counts,

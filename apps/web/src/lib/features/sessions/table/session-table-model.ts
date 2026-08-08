@@ -6,7 +6,7 @@ import { sessionTableColumns } from './session-columns';
 export interface SessionTableModelInput {
   readonly canLoadCampaignChildren?: boolean;
   readonly expanded: ExpandedState;
-  readonly rows: readonly SessionPresentationRow[];
+  readonly rows: SessionPresentationRow[];
   readonly sorting: TableSortingState;
   readonly visibility: TableVisibilityState;
 }
@@ -24,7 +24,7 @@ export const createSessionTableModel = (input: SessionTableModelInput): SessionT
   const table = createTable<SessionPresentationRow>({
     columns: [...sessionTableColumns],
     // Table Core reads this array; keep the caller-owned reference to avoid a full copy on each append.
-    data: input.rows as SessionPresentationRow[],
+    data: input.rows,
     enableMultiSort: false,
     enableSortingRemoval: false,
     getCoreRowModel: getCoreRowModel(),

@@ -211,7 +211,9 @@ export const app = Effect.gen(function* () {
         if (paused.length === sources.length) {
           return yield* Effect.fail(
             new CliArgumentError({
-              message: `Provider usage-limit collection is paused; re-enable ${paused.map(({ id }) => id).join(' or ')} first.`,
+              message: `Provider usage-limit collection is paused; re-enable ${paused
+                .map(({ sourceId }) => sourceId)
+                .join(' or ')} first.`,
             }),
           );
         }

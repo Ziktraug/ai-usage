@@ -189,7 +189,7 @@ test('saves SKILL.md source without installing it into runtimes', async ({ page 
   await expect(page.getByText('alpha-skill linked to Codex.', { exact: true })).toHaveCount(0);
 });
 
-test('protects an unsaved SKILL.md draft during navigation and reload', async ({ page }) => {
+test('protects an unsaved SKILL.md draft during navigation and reload', async ({ browserFailureGate, page }) => {
   await openHydratedSkills(page, '/skills/global/alpha-skill');
 
   await expect(page.getByRole('heading', { level: 2, name: 'alpha-skill' })).toBeVisible();
@@ -198,9 +198,14 @@ test('protects an unsaved SKILL.md draft during navigation and reload', async ({
   await editor.fill('# Unsaved local draft\n');
   await expect(page.getByText('Unsaved changes', { exact: true })).toBeVisible();
 
+  const releaseGuardedNavigationAbort = browserFailureGate.allowRequestAbortOnce({
+    pathname: '/skills/global/beta-skill/__data.json',
+    resourceType: 'fetch',
+  });
   await betaSkillLink.press('Enter');
   const discardDialog = page.getByRole('alertdialog', { name: 'Discard unsaved changes?' });
   await expect(discardDialog).toBeVisible();
+  releaseGuardedNavigationAbort();
   await discardDialog.getByRole('button', { name: 'Keep editing' }).click();
   await expect(page).toHaveURL(ALPHA_SKILL_URL);
   await expect(editor).toHaveValue('# Unsaved local draft\n');

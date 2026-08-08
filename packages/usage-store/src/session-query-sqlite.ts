@@ -29,6 +29,7 @@ import {
 } from '@ai-usage/report-core/session-query';
 import { parseSessionVcsContext, type SessionVcsContext } from '@ai-usage/report-core/session-vcs';
 import { usageRowApiPriceMeasurement } from '@ai-usage/report-core/usage-row';
+import { createSessionQueryExactRevisionCache } from './session-query-exact-revision-cache';
 import { measureSessionQueryPerfPhase } from './session-query-perf';
 
 export type SessionQueryKind = 'campaign-children' | 'neighbors' | 'session-detail-anchor' | 'sessions';
@@ -673,74 +674,44 @@ interface SessionQueryTotalsCacheEntry {
 
 /**
  * Exact-revision reuse across OFFSET pages. Readers open a fresh SQLite connection per
- * request, so identity is revision + payload seal + query fingerprint rather than the
+ * request, so identity is revision + capture fingerprint + query fingerprint rather than the
  * ephemeral database object.
  */
-const sessionQueryTotalsByIdentity = new Map<string, SessionQueryTotalsCacheEntry>();
-const sessionQueryProjectionByIdentity = new Map<string, ItemRecord[]>();
 const SESSION_QUERY_TOTALS_CACHE_LIMIT = 64;
 const SESSION_QUERY_PROJECTION_CACHE_LIMIT = 8;
+const sessionQueryExactRevisionCache = createSessionQueryExactRevisionCache<SessionQueryTotalsCacheEntry, ItemRecord[]>(
+  {
+    projections: SESSION_QUERY_PROJECTION_CACHE_LIMIT,
+    totals: SESSION_QUERY_TOTALS_CACHE_LIMIT,
+  },
+);
 
-const rememberLru = <Value>(cache: Map<string, Value>, identity: string, value: Value, limit: number): void => {
-  if (cache.has(identity)) {
-    cache.delete(identity);
-  }
-  cache.set(identity, value);
-  while (cache.size > limit) {
-    const oldest = cache.keys().next().value;
-    if (oldest === undefined) {
-      break;
+const sessionQueryCaptureFingerprint = (
+  database: SessionQuerySqliteDatabase,
+  trace?: SessionQuerySqliteTrace,
+): string =>
+  measureSessionQueryPerfPhase('identity', () => {
+    const metadata = executeGet<{ capture_fingerprint: string }>(
+      database,
+      'SELECT capture_fingerprint FROM metadata LIMIT 1',
+      [],
+      trace,
+    );
+    if (!metadata?.capture_fingerprint) {
+      throw new Error('Session query database omitted its capture fingerprint');
     }
-    cache.delete(oldest);
-  }
-};
-
-const sessionQueryPayloadSeal = (database: SessionQuerySqliteDatabase, trace?: SessionQuerySqliteTrace): string => {
-  const metadata = executeGet<{ row_count: number; schema_version: number; support_json: string }>(
-    database,
-    'SELECT schema_version, row_count, support_json FROM metadata LIMIT 1',
-    [],
-    trace,
-  );
-  const rowsDigest = executeGet<{
-    max_ordinal: number | null;
-    min_ordinal: number | null;
-    payload_bytes: number | null;
-    row_count: number;
-  }>(
-    database,
-    `SELECT
-      COUNT(*) AS row_count,
-      COALESCE(SUM(LENGTH(row_json)), 0) AS payload_bytes,
-      MIN(ordinal) AS min_ordinal,
-      MAX(ordinal) AS max_ordinal
-     FROM session_rows`,
-    [],
-    trace,
-  );
-  // Seal must distinguish distinct SQLite payloads that reuse the same revision string
-  // (common in tests and unsafe if only row_count is compared).
-  return [
-    metadata?.schema_version ?? 'missing',
-    metadata?.row_count ?? 'missing',
-    fnv1a64(metadata?.support_json ?? ''),
-    rowsDigest?.row_count ?? 'missing',
-    rowsDigest?.payload_bytes ?? 'missing',
-    rowsDigest?.min_ordinal ?? 'missing',
-    rowsDigest?.max_ordinal ?? 'missing',
-  ].join('\0');
-};
+    return metadata.capture_fingerprint;
+  });
 
 const sessionQueryPageIdentity = (
   database: SessionQuerySqliteDatabase,
   revision: string,
   requestFingerprint: string,
   trace?: SessionQuerySqliteTrace,
-): string => `${revision}\0${sessionQueryPayloadSeal(database, trace)}\0${requestFingerprint}`;
+): string => `${revision}\0${sessionQueryCaptureFingerprint(database, trace)}\0${requestFingerprint}`;
 
 export const resetSessionQueryTotalsCacheForTests = (): void => {
-  sessionQueryTotalsByIdentity.clear();
-  sessionQueryProjectionByIdentity.clear();
+  sessionQueryExactRevisionCache.reset();
 };
 
 const resolveSessionQueryTotals = (
@@ -751,7 +722,7 @@ const resolveSessionQueryTotals = (
   trace?: SessionQuerySqliteTrace,
 ): SessionQueryTotalsCacheEntry => {
   if (request.cursor !== null) {
-    const cached = sessionQueryTotalsByIdentity.get(identity);
+    const cached = sessionQueryExactRevisionCache.totals(identity);
     if (cached) {
       return cached;
     }
@@ -770,7 +741,7 @@ const resolveSessionQueryTotals = (
       },
   );
   const totals = { itemCount: counts.item_count, sessionCount: counts.session_count };
-  rememberLru(sessionQueryTotalsByIdentity, identity, totals, SESSION_QUERY_TOTALS_CACHE_LIMIT);
+  sessionQueryExactRevisionCache.rememberTotals(identity, totals);
   return totals;
 };
 
@@ -782,9 +753,8 @@ const resolveSessionQueryProjection = (
   useExactCostSort: boolean,
   trace?: SessionQuerySqliteTrace,
 ): ItemRecord[] => {
-  const cached = sessionQueryProjectionByIdentity.get(identity);
+  const cached = sessionQueryExactRevisionCache.projection(identity);
   if (cached) {
-    rememberLru(sessionQueryProjectionByIdentity, identity, cached, SESSION_QUERY_PROJECTION_CACHE_LIMIT);
     return cached;
   }
   const campaignCtes = [
@@ -799,7 +769,7 @@ const resolveSessionQueryProjection = (
   const records = measureSessionQueryPerfPhase('projection', () =>
     executeAll<ItemRecord>(database, pageSql, [...filter.params], trace),
   );
-  rememberLru(sessionQueryProjectionByIdentity, identity, records, SESSION_QUERY_PROJECTION_CACHE_LIMIT);
+  sessionQueryExactRevisionCache.rememberProjection(identity, records);
   return records;
 };
 

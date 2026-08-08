@@ -21,7 +21,7 @@
     sessionCount,
     sourceRows,
   }: {
-    children: Snippet<[readonly SessionPresentationRow[]]>;
+    children: Snippet<[SessionPresentationRow[]]>;
     onCampaignControlsChange: (binding: CampaignSessionControlsBinding | null) => void;
     onRowsChange: (rows: readonly SessionPresentationRow[]) => void;
     onSessionCountChange: (sessionCount: number | undefined) => void;
@@ -33,7 +33,7 @@
     queryState: SessionWindowView | undefined;
     selectedCampaignKey: string | undefined;
     sessionCount: number | undefined;
-    sourceRows: readonly SessionPresentationRow[];
+    sourceRows: SessionPresentationRow[];
   } = $props();
 
   // presentRow is identity-preserving when labels are unchanged; always remap so label-index updates apply.

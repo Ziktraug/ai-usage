@@ -432,6 +432,8 @@ test('quota reports a paused policy without invoking the provider', async () => 
     expect(result.exitCode).toBe(1);
     expect(result.stdout).toBe('');
     expect(result.stderr).toContain('Provider usage-limit collection is paused');
+    expect(result.stderr).toContain('claude.usage-limits');
+    expect(result.stderr).toContain('codex.usage-limits');
     expect(result.stderr).not.toContain('[wide-event]');
     const events = await readWideEvents(logDirectory);
     const cliEvents = events.filter((event) => event.resource?.surface === 'cli');

@@ -1,5 +1,5 @@
 import AxeBuilder from '@axe-core/playwright';
-import type { Page } from '@playwright/test';
+import type { Locator, Page } from '@playwright/test';
 import {
   expect,
   test,
@@ -12,6 +12,16 @@ import { createServerStateNetworkTrace } from './server-state-network';
 
 const ANY_VALUE_PATTERN = /.+/;
 const MANAGEMENT_DESTINATION_PATTERN = /Skills|Sources|Sync/;
+
+const navigateAndWaitForRouteData = async (page: Page, link: Locator, pathname: string): Promise<void> => {
+  const responsePromise = page.waitForResponse((response) => {
+    const url = new URL(response.url());
+    return url.pathname === pathname && response.request().resourceType() === 'fetch';
+  });
+  await link.click();
+  const response = await responsePromise;
+  expect(response.ok()).toBe(true);
+};
 
 const activeDestinationFor = (path: string, heading: string): string => {
   if (path === '/') {
@@ -141,6 +151,7 @@ test('server-renders and reloads every Svelte shell route with accessible naviga
 });
 
 test('collapses the rail to an icon column with instant hover labels below the labelled breakpoint', async ({
+  browserFailureGate,
   page,
 }) => {
   const rail = page.getByRole('complementary', { name: 'Application navigation' });
@@ -166,7 +177,13 @@ test('collapses the rail to an icon column with instant hover labels below the l
   await expect(syncLink).toHaveAccessibleName('Sync');
   await expect(syncLink).toHaveText('Sync');
 
+  const releasePreloadAbort = browserFailureGate.allowRequestAbortOnce({
+    pathname: '/sync/__data.json',
+    resourceType: 'fetch',
+  });
   await page.setViewportSize({ height: 900, width: 1280 });
+  await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
+  releasePreloadAbort();
   expect((await rail.boundingBox())?.width).toBe(216);
   await syncLink.hover();
   // The visible label is back, so the hover label must stay down.
@@ -324,14 +341,18 @@ test('reuses one browser cache across Skills children and Report Skills Sync nav
   await waitForHydratedNavigation(page);
   trace.checkpoint('cross-route-navigation');
 
-  await page.getByRole('link', { exact: true, name: 'Skills' }).click();
+  await navigateAndWaitForRouteData(
+    page,
+    page.getByRole('link', { exact: true, name: 'Skills' }),
+    '/skills/__data.json',
+  );
   await waitForHydratedSkills(page);
   await page.locator('a[href="/skills/global/alpha-skill"]').first().click();
   await expect(page).toHaveURL('/skills/global/alpha-skill');
   await waitForHydratedSkills(page);
-  await page.getByRole('link', { exact: true, name: 'Sync' }).click();
+  await navigateAndWaitForRouteData(page, page.getByRole('link', { exact: true, name: 'Sync' }), '/sync/__data.json');
   await expect(page.locator('main[data-route-shell="sync"]')).toBeVisible();
-  await page.getByRole('link', { exact: true, name: 'Overview' }).click();
+  await navigateAndWaitForRouteData(page, page.getByRole('link', { exact: true, name: 'Overview' }), '/__data.json');
   await waitForFocusedReportSettled(page);
 
   const counts = trace.counts('cross-route-navigation');

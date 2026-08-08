@@ -1,4 +1,8 @@
-import { resetSessionQueryPerf, sessionQueryPerfEnabled, snapshotSessionQueryPerf } from '@ai-usage/usage-store/reader';
+import {
+  isSessionQueryPerformanceCaptureEnabled,
+  readSessionQueryPerformanceCapture,
+  resetSessionQueryPerformanceCapture,
+} from '@ai-usage/usage-store/reader';
 import type { Handle, HandleFetch } from '@sveltejs/kit';
 import { sequence } from '@sveltejs/kit/hooks';
 import { demoRouteDecision } from '$lib/features/shell/demo-policy.server';
@@ -18,7 +22,7 @@ const initializeObservability = (): Promise<void> => {
 const SESSION_QUERY_PERF_PATH = '/__ai-usage/perf/session-query';
 
 const handleSessionQueryPerfSnapshot = (request: Request): Response | undefined => {
-  if (!sessionQueryPerfEnabled()) {
+  if (!isSessionQueryPerformanceCaptureEnabled()) {
     return;
   }
   const { pathname } = new URL(request.url);
@@ -26,7 +30,7 @@ const handleSessionQueryPerfSnapshot = (request: Request): Response | undefined 
     return;
   }
   if (request.method === 'DELETE') {
-    resetSessionQueryPerf();
+    resetSessionQueryPerformanceCapture();
     resetReportHydrationBytes();
     return new Response(null, {
       headers: { 'cache-control': 'no-store', 'x-ai-usage-sveltekit': 'active' },
@@ -42,7 +46,7 @@ const handleSessionQueryPerfSnapshot = (request: Request): Response | undefined 
   return new Response(
     JSON.stringify({
       hydration: snapshotReportHydrationBytes(),
-      sqlite: snapshotSessionQueryPerf(),
+      sqlite: readSessionQueryPerformanceCapture(),
     }),
     {
       headers: {

@@ -22,12 +22,81 @@ interface SessionQueryPerfPhaseStats {
   totalMs: number;
 }
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+const requireNonNegativeNumber = (value: unknown, label: string): number => {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+    throw new Error(`Expected ${label} to be a non-negative finite number`);
+  }
+  return value;
+};
+
+const requireNonNegativeInteger = (value: unknown, label: string): number => {
+  if (!(typeof value === 'number' && Number.isSafeInteger(value) && value >= 0)) {
+    throw new Error(`Expected ${label} to be a non-negative safe integer`);
+  }
+  return value;
+};
+
+const parsePhaseStats = (value: unknown, label: string): SessionQueryPerfPhaseStats => {
+  if (!isRecord(value)) {
+    throw new Error(`Expected ${label} to be an object`);
+  }
+  return {
+    count: requireNonNegativeInteger(value.count, `${label}.count`),
+    p50Ms: requireNonNegativeNumber(value.p50Ms, `${label}.p50Ms`),
+    p95Ms: requireNonNegativeNumber(value.p95Ms, `${label}.p95Ms`),
+    totalMs: requireNonNegativeNumber(value.totalMs, `${label}.totalMs`),
+  };
+};
+
+const parsePerfSnapshot = (
+  value: unknown,
+): {
+  hydration: {
+    families: Record<string, { bytes: number; queryCount: number }>;
+    totalBytes: number;
+  };
+  sqlite: { phases: Record<string, SessionQueryPerfPhaseStats> };
+} => {
+  if (!(isRecord(value) && isRecord(value.hydration) && isRecord(value.sqlite))) {
+    throw new Error('Expected the Session performance snapshot to contain hydration and SQLite data');
+  }
+  if (!(isRecord(value.hydration.families) && isRecord(value.sqlite.phases))) {
+    throw new Error('Expected the Session performance snapshot to contain family and phase records');
+  }
+  const families: Record<string, { bytes: number; queryCount: number }> = {};
+  for (const [family, candidate] of Object.entries(value.hydration.families)) {
+    if (!isRecord(candidate)) {
+      throw new Error(`Expected hydration family ${family} to be an object`);
+    }
+    families[family] = {
+      bytes: requireNonNegativeNumber(candidate.bytes, `hydration.${family}.bytes`),
+      queryCount: requireNonNegativeInteger(candidate.queryCount, `hydration.${family}.queryCount`),
+    };
+  }
+  const phases: Record<string, SessionQueryPerfPhaseStats> = {};
+  for (const [phase, candidate] of Object.entries(value.sqlite.phases)) {
+    phases[phase] = parsePhaseStats(candidate, `sqlite.${phase}`);
+  }
+  return {
+    hydration: {
+      families,
+      totalBytes: requireNonNegativeNumber(value.hydration.totalBytes, 'hydration.totalBytes'),
+    },
+    sqlite: { phases },
+  };
+};
+
 interface SessionScrollSample {
   browserSessionRpcCount: number;
   cumulativeSessionResponseBytes: number;
   desktopFullTraversalMs: number;
   desktopMaximumRenderedItems: number;
   desktopMaximumSessionDomNodes: number;
+  desktopSessionPageCount: number;
+  desktopSessionRpcCount: number;
   desktopSettledRenderedItems: number;
   desktopSettledSessionDomNodes: number;
   duplicateIdentityCount: number;
@@ -61,9 +130,10 @@ const MAXIMUM_SESSION_PAGE_ITEMS = 200;
 const MAXIMUM_SESSION_RESPONSE_BYTES = 2 * 1024 * 1024;
 const MAXIMUM_DESKTOP_RENDERED_ITEMS = 300;
 const MAXIMUM_MOBILE_RENDERED_ITEMS = 600;
+const EXPECTED_TOTAL_SESSION_PAGES = Math.ceil(SESSION_SCROLL_EXPECTED_CAMPAIGN_COUNT / MAXIMUM_SESSION_PAGE_ITEMS);
+const EXPECTED_DESKTOP_SESSION_RPCS = EXPECTED_TOTAL_SESSION_PAGES - 1;
 const DESKTOP_VIEWPORT = { height: 900, width: 1024 } as const;
 const MOBILE_VIEWPORT = { height: 844, width: 390 } as const;
-const SESSION_ROW_ID_PATTERN = /session-row-v1:[0-9a-f]{16}/g;
 const BASE_URL = 'http://127.0.0.1:4177';
 const samples: SessionScrollSample[] = [];
 
@@ -108,13 +178,7 @@ const readPerfSnapshot = async (
 }> => {
   const response = await request.get(`${BASE_URL}${SESSION_PERF_PATH}`);
   expect(response.ok()).toBe(true);
-  return (await response.json()) as {
-    hydration: {
-      families: Record<string, { bytes: number; queryCount: number }>;
-      totalBytes: number;
-    };
-    sqlite: { phases: Record<string, SessionQueryPerfPhaseStats> };
-  };
+  return parsePerfSnapshot(await response.json());
 };
 
 const waitForAllRows = async (
@@ -212,6 +276,67 @@ const waitForAllRows = async (
   };
 };
 
+const verifyEveryVirtualizedCampaign = async (
+  page: Page,
+  surfaceMode: SessionSurfaceMode,
+): Promise<{ firstIdentity: string; lastIdentity: string; uniqueIdentityCount: number }> => {
+  const surface = sessionSurface(page, surfaceMode);
+  const identitiesByIndex = new Map<number, string>();
+  const geometry = await surface.evaluate((element) => ({
+    clientHeight: element.clientHeight,
+    maximumScrollTop: Math.max(0, element.scrollHeight - element.clientHeight),
+  }));
+  const scrollIncrement = Math.max(1, Math.floor(geometry.clientHeight / 2));
+
+  for (let scrollTop = 0; scrollTop < geometry.maximumScrollTop; scrollTop += scrollIncrement) {
+    await moveSessionSurface(surface, scrollTop);
+    await afterAnimationFrame(page);
+    const rendered = await surface.evaluate((element) =>
+      Array.from(element.querySelectorAll<HTMLElement>('[data-index]')).map((item) => ({
+        index: Number(item.dataset.index),
+        rowId: item.dataset.sessionRowId ?? '',
+      })),
+    );
+    for (const { index, rowId } of rendered) {
+      maximumValidCampaignIndex([index]);
+      expect(rowId).not.toBe('');
+      const previous = identitiesByIndex.get(index);
+      if (previous !== undefined) {
+        expect(rowId).toBe(previous);
+      }
+      identitiesByIndex.set(index, rowId);
+    }
+  }
+
+  await moveSessionSurface(surface, geometry.maximumScrollTop);
+  await afterAnimationFrame(page);
+  const finalRendered = await surface.evaluate((element) =>
+    Array.from(element.querySelectorAll<HTMLElement>('[data-index]')).map((item) => ({
+      index: Number(item.dataset.index),
+      rowId: item.dataset.sessionRowId ?? '',
+    })),
+  );
+  for (const { index, rowId } of finalRendered) {
+    maximumValidCampaignIndex([index]);
+    expect(rowId).not.toBe('');
+    const previous = identitiesByIndex.get(index);
+    if (previous !== undefined) {
+      expect(rowId).toBe(previous);
+    }
+    identitiesByIndex.set(index, rowId);
+  }
+
+  expect(identitiesByIndex.size).toBe(SESSION_SCROLL_EXPECTED_CAMPAIGN_COUNT);
+  const uniqueIdentities = new Set(identitiesByIndex.values());
+  expect(uniqueIdentities.size).toBe(SESSION_SCROLL_EXPECTED_CAMPAIGN_COUNT);
+  const firstIdentity = identitiesByIndex.get(0);
+  const lastIdentity = identitiesByIndex.get(LAST_CAMPAIGN_INDEX);
+  if (!(firstIdentity && lastIdentity)) {
+    throw new Error('Benchmark virtualized identity sweep omitted an endpoint');
+  }
+  return { firstIdentity, lastIdentity, uniqueIdentityCount: uniqueIdentities.size };
+};
+
 const readCapturedSessionPage = async (
   response: Response,
 ): Promise<{ bytes: number; rowIds: string[] } | undefined> => {
@@ -258,7 +383,6 @@ const runSample = async (page: Page, request: APIRequestContext): Promise<Sessio
     }
     const initialHtml = await navigation.body();
     const initialHtmlBytes = initialHtml.byteLength;
-    const documentRowIds = [...new Set(initialHtml.toString('utf8').match(SESSION_ROW_ID_PATTERN) ?? [])];
     const report = page.locator('main[data-hydrated="true"]');
     await expect(report).toBeVisible();
     const surface = page.locator('[data-session-surface="desktop"]');
@@ -278,6 +402,16 @@ const runSample = async (page: Page, request: APIRequestContext): Promise<Sessio
     const desktopTraversal = await waitForAllRows(page, 'desktop');
     const heapAfter = await readHeapBytes(client);
     expect(desktopTraversal.maximumItems).toBeLessThanOrEqual(MAXIMUM_DESKTOP_RENDERED_ITEMS);
+
+    const desktopCapturedPages = (await Promise.all(pendingPages.slice())).flatMap((pageCapture) =>
+      pageCapture === undefined ? [] : [pageCapture],
+    );
+    expect(browserSessionRpcCount).toBe(EXPECTED_DESKTOP_SESSION_RPCS);
+    expect(desktopCapturedPages).toHaveLength(EXPECTED_DESKTOP_SESSION_RPCS);
+    expect(desktopCapturedPages.length + 1).toBe(EXPECTED_TOTAL_SESSION_PAGES);
+    const desktopIdentitySweep = await verifyEveryVirtualizedCampaign(page, 'desktop');
+    expect(desktopTraversal.firstIdentity).toBe(desktopIdentitySweep.firstIdentity);
+    expect(desktopTraversal.lastIdentity).toBe(desktopIdentitySweep.lastIdentity);
 
     await page.setViewportSize(MOBILE_VIEWPORT);
     const mobileSurface = sessionSurface(page, 'mobile');
@@ -327,19 +461,12 @@ const runSample = async (page: Page, request: APIRequestContext): Promise<Sessio
       expect(pageCapture.bytes).toBeLessThanOrEqual(MAXIMUM_SESSION_RESPONSE_BYTES);
     }
 
-    const wireRowIds = [...documentRowIds, ...capturedPages.flatMap((pageCapture) => pageCapture.rowIds)];
-    const uniqueWireIds = new Set(wireRowIds);
-    const uniqueIdentityCount = uniqueWireIds.size;
-    const duplicateIdentityCount = Math.max(0, wireRowIds.length - uniqueIdentityCount);
-    const missingIdentityCount = Math.max(0, SESSION_SCROLL_EXPECTED_CAMPAIGN_COUNT - uniqueIdentityCount);
-
-    expect(missingIdentityCount).toBe(0);
-    expect(uniqueIdentityCount).toBeGreaterThanOrEqual(SESSION_SCROLL_EXPECTED_CAMPAIGN_COUNT);
     expect(desktopTraversal.firstIdentity).not.toBeNull();
     expect(desktopTraversal.lastIdentity).not.toBeNull();
     expect(desktopTraversal.firstIdentity).not.toBe(desktopTraversal.lastIdentity);
 
     const sqliteSnapshot = await readPerfSnapshot(request);
+    expect(sqliteSnapshot.sqlite.phases.identity?.count).toBe(EXPECTED_TOTAL_SESSION_PAGES + 2);
 
     await client.detach();
     return {
@@ -350,7 +477,9 @@ const runSample = async (page: Page, request: APIRequestContext): Promise<Sessio
       desktopMaximumSessionDomNodes: desktopTraversal.maximumNodes,
       desktopSettledRenderedItems: desktopTraversal.settledItems,
       desktopSettledSessionDomNodes: desktopTraversal.settledNodes,
-      duplicateIdentityCount,
+      desktopSessionPageCount: desktopCapturedPages.length + 1,
+      desktopSessionRpcCount: desktopCapturedPages.length,
+      duplicateIdentityCount: 0,
       filterMs: Number(filterMs.toFixed(3)),
       firstSessionIdentity: desktopTraversal.firstIdentity,
       heapDeltaBytes: heapBefore === null || heapAfter === null ? null : Math.max(0, heapAfter - heapBefore),
@@ -360,7 +489,7 @@ const runSample = async (page: Page, request: APIRequestContext): Promise<Sessio
       initialMs: Number(initialMs.toFixed(3)),
       lastSessionIdentity: desktopTraversal.lastIdentity,
       maximumPageBytes: Math.max(...measuredPageBytes, 0),
-      missingIdentityCount,
+      missingIdentityCount: 0,
       mobileFullTraversalMs: Number(mobileTraversal.elapsedMs.toFixed(3)),
       mobileMaximumRenderedItems: mobileTraversal.maximumItems,
       mobileMaximumSessionDomNodes: mobileTraversal.maximumNodes,
@@ -369,7 +498,7 @@ const runSample = async (page: Page, request: APIRequestContext): Promise<Sessio
       sessionPageCount: capturedPages.length,
       sortMs: Number(sortMs.toFixed(3)),
       sqlitePhases: sqliteSnapshot.sqlite.phases,
-      uniqueIdentityCount,
+      uniqueIdentityCount: desktopIdentitySweep.uniqueIdentityCount,
     };
   } finally {
     page.off('request', onRequest);
@@ -407,6 +536,8 @@ test.afterAll(() => {
       desktopFullTraversalMs: median(samples.map((sample) => sample.desktopFullTraversalMs)),
       desktopMaximumRenderedItems: median(samples.map((sample) => sample.desktopMaximumRenderedItems)),
       desktopMaximumSessionDomNodes: median(samples.map((sample) => sample.desktopMaximumSessionDomNodes)),
+      desktopSessionPageCount: median(samples.map((sample) => sample.desktopSessionPageCount)),
+      desktopSessionRpcCount: median(samples.map((sample) => sample.desktopSessionRpcCount)),
       filterMs: median(samples.map((sample) => sample.filterMs)),
       heapDeltaBytes: supportedHeapDeltas.length > 0 ? median(supportedHeapDeltas) : null,
       hydrationTotalBytes: median(samples.map((sample) => sample.hydrationTotalBytes)),

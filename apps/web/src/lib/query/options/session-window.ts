@@ -388,31 +388,47 @@ interface AppendItemsCache<Item> {
  * Appends visit only newly arrived page items when the exact revision/query identity and page prefix
  * are unchanged. This is derived-view memoization, not a second remote-state owner.
  */
-const appendItemsByFirstPage = new WeakMap<object, AppendItemsCache<unknown>>();
+const createAppendAwareItemsProjector = <Item>() => {
+  const cacheByFirstPage = new WeakMap<object, AppendItemsCache<Item>>();
 
-const projectAppendAwareItems = <Item>(
-  pages: readonly { readonly items: readonly Item[] }[],
-  identity: string,
-  keyFor: (item: Item) => string,
-  visit: (count: number) => void,
-): readonly Item[] => {
-  const firstPage = pages[0];
-  if (firstPage === undefined) {
-    return [];
-  }
-  const cached = appendItemsByFirstPage.get(firstPage) as AppendItemsCache<Item> | undefined;
-  if (
-    cached &&
-    cached.identity === identity &&
-    pages.length >= cached.pages.length &&
-    cached.pages.every((page, index) => page === pages[index])
-  ) {
-    if (pages.length === cached.pages.length) {
-      return cached.items;
+  return (
+    pages: readonly { readonly items: readonly Item[] }[],
+    identity: string,
+    keyFor: (item: Item) => string,
+    visit: (count: number) => void,
+  ): readonly Item[] => {
+    const firstPage = pages[0];
+    if (firstPage === undefined) {
+      return [];
     }
-    const items = cached.items.slice();
-    const seen = cached.seen;
-    for (const page of pages.slice(cached.pages.length)) {
+    const cached = cacheByFirstPage.get(firstPage);
+    if (
+      cached &&
+      cached.identity === identity &&
+      pages.length >= cached.pages.length &&
+      cached.pages.every((page, index) => page === pages[index])
+    ) {
+      if (pages.length === cached.pages.length) {
+        return cached.items;
+      }
+      const items = cached.items.slice();
+      const seen = cached.seen;
+      for (const page of pages.slice(cached.pages.length)) {
+        visit(page.items.length);
+        for (const item of page.items) {
+          const key = keyFor(item);
+          if (!seen.has(key)) {
+            seen.add(key);
+            items.push(item);
+          }
+        }
+      }
+      cacheByFirstPage.set(firstPage, { identity, items, pages, seen });
+      return items;
+    }
+    const seen = new Set<string>();
+    const items: Item[] = [];
+    for (const page of pages) {
       visit(page.items.length);
       for (const item of page.items) {
         const key = keyFor(item);
@@ -422,25 +438,13 @@ const projectAppendAwareItems = <Item>(
         }
       }
     }
-    const next: AppendItemsCache<Item> = { identity, items, pages, seen };
-    appendItemsByFirstPage.set(firstPage, next as AppendItemsCache<unknown>);
+    cacheByFirstPage.set(firstPage, { identity, items, pages, seen });
     return items;
-  }
-  const seen = new Set<string>();
-  const items: Item[] = [];
-  for (const page of pages) {
-    visit(page.items.length);
-    for (const item of page.items) {
-      const key = keyFor(item);
-      if (!seen.has(key)) {
-        seen.add(key);
-        items.push(item);
-      }
-    }
-  }
-  appendItemsByFirstPage.set(firstPage, { identity, items, pages, seen } as AppendItemsCache<unknown>);
-  return items;
+  };
 };
+
+const projectAppendAwarePageItems = createAppendAwareItemsProjector<SessionPageItem>();
+const projectAppendAwarePresentationRows = createAppendAwareItemsProjector<SessionPresentationRow>();
 
 const topLevelProjectionIdentity = (data: SessionWindowQueryData, intent: SessionWindowIntent): string =>
   `${data.query.revision}\0${sessionQueryFingerprint(data.query)}\0${sessionWindowIntentFingerprint(intent)}\0top-level`;
@@ -467,7 +471,7 @@ const campaignPageFor = (
     throw new Error('Campaign root changed while paging one exact revision');
   }
   return {
-    items: projectAppendAwareItems(
+    items: projectAppendAwarePresentationRows(
       window.data.pages,
       campaignProjectionIdentity(data, requestedIntent, family, window.campaignKey),
       (row) => row.rowId,
@@ -538,7 +542,7 @@ export const sessionWindowView = (
       fetching,
     ),
     itemCount: totalsPage?.itemCount ?? 0,
-    items: projectAppendAwareItems(
+    items: projectAppendAwarePageItems(
       data.topLevel.pages,
       topLevelProjectionIdentity(data, requestedIntent),
       (item) => item.campaignKey,
@@ -556,7 +560,7 @@ export const sessionWindowView = (
 interface DestinationRowsCache {
   campaignChildren: ReadonlyMap<string, SessionCampaignPage>;
   items: readonly SessionPageItem[];
-  rows: readonly SessionPresentationRow[];
+  rows: SessionPresentationRow[];
 }
 
 const destinationRowsByFirstItem = new WeakMap<object, DestinationRowsCache>();
@@ -585,7 +589,7 @@ const destinationRowForItem = (
  * Expands campaign children onto top-level page items without unconditional full-array clones.
  * Reuses prior destination rows when the projected item prefix and child-page identities are stable.
  */
-export const projectSessionDestinationRows = (view: SessionWindowView): readonly SessionPresentationRow[] => {
+export const projectSessionDestinationRows = (view: SessionWindowView): SessionPresentationRow[] => {
   const firstItem = view.items[0];
   if (firstItem === undefined) {
     return [];

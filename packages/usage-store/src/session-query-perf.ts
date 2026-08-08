@@ -1,4 +1,4 @@
-export type SessionQueryPerfPhase = 'count' | 'materialize' | 'projection';
+export type SessionQueryPerfPhase = 'count' | 'identity' | 'materialize' | 'projection';
 
 export interface SessionQueryPerfPhaseStats {
   readonly count: number;
@@ -21,6 +21,7 @@ const EMPTY_PHASE: SessionQueryPerfPhaseStats = {
 
 const phaseSamples: Record<SessionQueryPerfPhase, number[]> = {
   count: [],
+  identity: [],
   materialize: [],
   projection: [],
 };
@@ -71,6 +72,7 @@ export const measureSessionQueryPerfPhase = <Value>(phase: SessionQueryPerfPhase
 export const snapshotSessionQueryPerf = (): SessionQueryPerfSnapshot => ({
   phases: {
     count: summarizePhase(phaseSamples.count),
+    identity: summarizePhase(phaseSamples.identity),
     materialize: summarizePhase(phaseSamples.materialize),
     projection: summarizePhase(phaseSamples.projection),
   },
@@ -79,6 +81,7 @@ export const snapshotSessionQueryPerf = (): SessionQueryPerfSnapshot => ({
 
 export const resetSessionQueryPerf = (): void => {
   phaseSamples.count.length = 0;
+  phaseSamples.identity.length = 0;
   phaseSamples.materialize.length = 0;
   phaseSamples.projection.length = 0;
 };

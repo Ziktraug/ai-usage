@@ -562,6 +562,7 @@ scoped_session_model_filter_keys AS (
 ),
 scoped_metadata AS (
   SELECT
+    revisions.capture_fingerprint,
     revisions.projection_schema_version AS schema_version,
     revisions.row_count,
     support.support_json

@@ -104,7 +104,7 @@
     onSelect: (row: SessionPresentationRow) => void;
     onSortingChange: StateChangeHandler<TableSortingState>;
     queryResetKey: string;
-    rows: readonly SessionPresentationRow[];
+    rows: SessionPresentationRow[];
     searchQuery?: string;
     selectedRowId: string | null;
     sorting: TableSortingState;

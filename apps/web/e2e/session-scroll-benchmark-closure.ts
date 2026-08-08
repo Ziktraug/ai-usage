@@ -13,6 +13,36 @@ interface ClientManifestEntry {
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
+const optionalStringArray = (value: unknown, label: string): readonly string[] | undefined => {
+  if (value === undefined) {
+    return;
+  }
+  if (!(Array.isArray(value) && value.every((entry) => typeof entry === 'string'))) {
+    throw new Error(`Expected ${label} to be an array of strings`);
+  }
+  return value;
+};
+
+const parseClientManifest = (value: unknown): ReadonlyMap<string, ClientManifestEntry> => {
+  if (!isRecord(value)) {
+    throw new Error('Expected the SvelteKit client manifest to be an object');
+  }
+  const entries = new Map<string, ClientManifestEntry>();
+  for (const [key, candidate] of Object.entries(value)) {
+    if (!(isRecord(candidate) && typeof candidate.file === 'string')) {
+      throw new Error(`Expected the SvelteKit client manifest entry ${key} to expose a file`);
+    }
+    const css = optionalStringArray(candidate.css, `${key}.css`);
+    const imports = optionalStringArray(candidate.imports, `${key}.imports`);
+    entries.set(key, {
+      ...(css === undefined ? {} : { css }),
+      file: candidate.file,
+      ...(imports === undefined ? {} : { imports }),
+    });
+  }
+  return entries;
+};
+
 export interface InitialStaticClosureBytes {
   readonly assetCount: number;
   readonly brotliBytes: number;
@@ -25,11 +55,8 @@ const initialAssetPaths = (appDir: string): string[] => {
   if (!existsSync(manifestPath)) {
     throw new Error(`Expected the SvelteKit client manifest at ${manifestPath}`);
   }
-  const parsed: unknown = JSON.parse(readFileSync(manifestPath, 'utf8'));
-  if (!isRecord(parsed)) {
-    throw new Error('Expected the SvelteKit client manifest to be an object');
-  }
-  const manifest = parsed as Record<string, ClientManifestEntry>;
+  const parsedManifest: unknown = JSON.parse(readFileSync(manifestPath, 'utf8'));
+  const manifest = parseClientManifest(parsedManifest);
   const pending = [
     '../../node_modules/@sveltejs/kit/src/runtime/client/entry.js',
     '.svelte-kit/build/generated/client-optimized/app.js',
@@ -44,8 +71,8 @@ const initialAssetPaths = (appDir: string): string[] => {
       continue;
     }
     visited.add(key);
-    const entry = manifest[key];
-    if (!(entry && typeof entry.file === 'string')) {
+    const entry = manifest.get(key);
+    if (!entry) {
       throw new Error(`Expected the SvelteKit client manifest to include ${key}`);
     }
     assets.add(entry.file);

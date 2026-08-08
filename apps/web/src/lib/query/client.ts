@@ -21,6 +21,8 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 
 const SESSION_PAGES_SEED = 'session-pages' as const;
 
+const sessionQueryIdentity = (revision: string, fingerprint: string): string => `${revision}\0${fingerprint}`;
+
 interface SessionPagesSeedMarker {
   readonly campaignChildren: readonly [];
   readonly campaignSessions: readonly [];
@@ -128,7 +130,7 @@ export const canonicalizeReportSessionHydration = (state: WebQueryHydrationState
     const revision = typeof key[3] === 'string' ? key[3] : '';
     const fingerprint = typeof key[4] === 'string' ? key[4] : '';
     if (revision && fingerprint) {
-      canonicalIdentities.add(`${revision}\0${fingerprint}`);
+      canonicalIdentities.add(sessionQueryIdentity(revision, fingerprint));
     }
   }
   if (canonicalIdentities.size === 0) {
@@ -146,7 +148,7 @@ export const canonicalizeReportSessionHydration = (state: WebQueryHydrationState
         if (!sessionsQuery) {
           return query;
         }
-        const identity = `${sessionsQuery.revision}\0${sessionQueryFingerprint(sessionsQuery)}`;
+        const identity = sessionQueryIdentity(sessionsQuery.revision, sessionQueryFingerprint(sessionsQuery));
         if (!canonicalIdentities.has(identity)) {
           return query;
         }
@@ -173,7 +175,7 @@ const seedDestinationSessionsFromSessionPages = (client: QueryClient): void => {
     const revision = typeof key[3] === 'string' ? key[3] : '';
     const fingerprint = typeof key[4] === 'string' ? key[4] : '';
     if (revision && fingerprint) {
-      sessionPagesByIdentity.set(`${revision}\0${fingerprint}`, query.state.data);
+      sessionPagesByIdentity.set(sessionQueryIdentity(revision, fingerprint), query.state.data);
     }
   }
   for (const query of cache) {
@@ -186,7 +188,9 @@ const seedDestinationSessionsFromSessionPages = (client: QueryClient): void => {
       continue;
     }
     const sessionsQuery = parseSessionQueryRequest(data.sessions.query);
-    const topLevel = sessionPagesByIdentity.get(`${sessionsQuery.revision}\0${sessionQueryFingerprint(sessionsQuery)}`);
+    const topLevel = sessionPagesByIdentity.get(
+      sessionQueryIdentity(sessionsQuery.revision, sessionQueryFingerprint(sessionsQuery)),
+    );
     if (topLevel === undefined) {
       continue;
     }

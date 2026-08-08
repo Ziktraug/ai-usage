@@ -906,6 +906,26 @@ describe('durable session query SQLite projections', () => {
     }
   });
 
+  test('does not reuse a cached projection for a different equal-sized payload with the same revision', async () => {
+    const firstFixture = [row('cache-alpha', 10)];
+    const secondFixture = [row('cache-bravo', 10)];
+    expect(JSON.stringify(firstFixture).length).toBe(JSON.stringify(secondFixture).length);
+
+    const firstDatabase = await openRowsDatabase(firstFixture, undefined, 'shared-revision');
+    const secondDatabase = await openRowsDatabase(secondFixture, undefined, 'shared-revision');
+    const request = queryRequest({ pageSize: 10 });
+    try {
+      const first = executeMaterializedSessionQuery(firstDatabase.database, 'sessions', request);
+      const second = executeMaterializedSessionQuery(secondDatabase.database, 'sessions', request);
+
+      expect(first.items[0]?.row.source?.sourceSessionId).toBe('cache-alpha');
+      expect(second.items[0]?.row.source?.sourceSessionId).toBe('cache-bravo');
+    } finally {
+      firstDatabase.database.close();
+      secondDatabase.database.close();
+    }
+  });
+
   test('returns a bounded page through the exact-revision read API', async () => {
     const request = queryRequest();
     const { database, dbPath } = await openFixtureDatabase();
