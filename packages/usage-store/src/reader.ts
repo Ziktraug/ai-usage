@@ -71,6 +71,18 @@ export {
 export type { ServedRevisionQueryKind, ServedRevisionQueryResult } from './served-query-catalog';
 export type { ServedRevisionQueryTrace } from './served-revision';
 export type {
+  SessionQueryPerfPhase,
+  SessionQueryPerfPhaseStats,
+  SessionQueryPerfSnapshot,
+} from './session-query-perf';
+export {
+  measureSessionQueryPerfPhase,
+  recordSessionQueryPerfPhase,
+  resetSessionQueryPerf,
+  sessionQueryPerfEnabled,
+  snapshotSessionQueryPerf,
+} from './session-query-perf';
+export type {
   SessionQueryKind,
   SessionQuerySqliteDatabase,
   SessionQuerySqliteStatement,

@@ -76,6 +76,7 @@ try {
       XDG_CONFIG_HOME: path.join(temporaryHome, '.config'),
       XDG_DATA_HOME: path.join(temporaryHome, '.local', 'share'),
       ...(process.env.CI === undefined ? {} : { CI: process.env.CI }),
+      ...(process.env.AI_USAGE_PERF === undefined ? {} : { AI_USAGE_PERF: process.env.AI_USAGE_PERF }),
     },
     stderr: 'inherit',
     stdout: 'inherit',

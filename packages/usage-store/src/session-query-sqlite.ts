@@ -29,6 +29,7 @@ import {
 } from '@ai-usage/report-core/session-query';
 import { parseSessionVcsContext, type SessionVcsContext } from '@ai-usage/report-core/session-vcs';
 import { usageRowApiPriceMeasurement } from '@ai-usage/report-core/usage-row';
+import { measureSessionQueryPerfPhase } from './session-query-perf';
 
 export type SessionQueryKind = 'campaign-children' | 'neighbors' | 'session-detail-anchor' | 'sessions';
 
@@ -679,10 +680,14 @@ const runSessionPage = (
     COUNT(DISTINCT campaign_key) AS item_count
     FROM session_rows
     WHERE ${filter.where}`;
-  const counts = executeGet<CountRecord>(database, countSql, filter.params, trace) ?? {
-    item_count: 0,
-    session_count: 0,
-  };
+  const counts = measureSessionQueryPerfPhase(
+    'count',
+    () =>
+      executeGet<CountRecord>(database, countSql, filter.params, trace) ?? {
+        item_count: 0,
+        session_count: 0,
+      },
+  );
   const order = buildSessionQuerySqlOrder(request.sort, 'item_identity_rank', 'item_ordinal');
   const useExactCostSort = request.sort.some(({ id }) => CAMPAIGN_EXACT_COST_SORT_FIELDS.has(id));
   const campaignCtes = [
@@ -694,21 +699,20 @@ const runSessionPage = (
   ].join(',\n');
   const pageSql = `WITH${useExactCostSort ? ' RECURSIVE' : ''} ${campaignCtes}
     SELECT * FROM campaign_items ORDER BY ${order} LIMIT ? OFFSET ?`;
-  const pageWithSentinel = executeAll<ItemRecord>(
-    database,
-    pageSql,
-    [...filter.params, request.pageSize + 1, offset],
-    trace,
+  const pageWithSentinel = measureSessionQueryPerfPhase('projection', () =>
+    executeAll<ItemRecord>(database, pageSql, [...filter.params, request.pageSize + 1, offset], trace),
   );
   const hasMore = pageWithSentinel.length > request.pageSize;
   const pageRecords = pageWithSentinel.slice(0, request.pageSize);
-  hydrateCampaignRoots(database, pageRecords, trace);
-  hydrateExactCampaignCosts(database, pageRecords, filter, trace);
-  const items: SessionPageItem[] = pageRecords.map((record) => ({
-    campaignKey: record.campaign_key!,
-    kind: 'campaign',
-    row: campaignDisplayRow(record),
-  }));
+  const items: SessionPageItem[] = measureSessionQueryPerfPhase('materialize', () => {
+    hydrateCampaignRoots(database, pageRecords, trace);
+    hydrateExactCampaignCosts(database, pageRecords, filter, trace);
+    return pageRecords.map((record) => ({
+      campaignKey: record.campaign_key!,
+      kind: 'campaign' as const,
+      row: campaignDisplayRow(record),
+    }));
+  });
   return {
     itemCount: counts.item_count,
     items,

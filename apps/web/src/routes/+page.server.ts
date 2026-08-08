@@ -4,6 +4,7 @@ import {
   deferredLiveReportQueryState,
   ReportBootstrapUnavailableError,
 } from '$lib/features/report/core/report-bootstrap';
+import { recordReportHydrationBytes } from '$lib/server/perf/report-hydration-perf';
 import type { PageServerLoad } from './$types';
 
 /**
@@ -28,14 +29,14 @@ export const load: PageServerLoad = async ({ depends, fetch, isDataRequest, loca
   const pageUrl = untrack(() => new URL(url.href));
   const rpcBaseUrl = untrack(() => new URL(url.origin));
   try {
-    return {
-      reportQueryState: await acquireLiveReportQueryState({
-        fetch: (request) => fetch(request),
-        pageUrl,
-        requestOwner: 'report-root-ssr',
-        url: rpcBaseUrl,
-      }),
-    };
+    const reportQueryState = await acquireLiveReportQueryState({
+      fetch: (request) => fetch(request),
+      pageUrl,
+      requestOwner: 'report-root-ssr',
+      url: rpcBaseUrl,
+    });
+    recordReportHydrationBytes(reportQueryState);
+    return { reportQueryState };
   } catch (cause) {
     if (cause instanceof ReportBootstrapUnavailableError) {
       error(cause.status, cause.message);

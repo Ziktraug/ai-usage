@@ -1,7 +1,9 @@
+import { resetSessionQueryPerf, sessionQueryPerfEnabled, snapshotSessionQueryPerf } from '@ai-usage/usage-store/reader';
 import type { Handle, HandleFetch } from '@sveltejs/kit';
 import { sequence } from '@sveltejs/kit/hooks';
 import { demoRouteDecision } from '$lib/features/shell/demo-policy.server';
 import { webReadObservabilityLifecycle } from '$lib/server/observability/web-read-lifecycle.server';
+import { resetReportHydrationBytes, snapshotReportHydrationBytes } from '$lib/server/perf/report-hydration-perf';
 import { E2E_SKILLS_FIXTURE_HEADER } from '$lib/server/rpc/e2e-fixture-profile';
 import { handleResponseCompression } from '../src/server/response-compression.server';
 import { getServerRuntimeMode } from '../src/server/runtime-mode.server';
@@ -11,6 +13,46 @@ let observabilityInitialization: Promise<void> | undefined;
 const initializeObservability = (): Promise<void> => {
   observabilityInitialization ??= webReadObservabilityLifecycle.initialize().then(() => undefined);
   return observabilityInitialization;
+};
+
+const SESSION_QUERY_PERF_PATH = '/__ai-usage/perf/session-query';
+
+const handleSessionQueryPerfSnapshot = (request: Request): Response | undefined => {
+  if (!sessionQueryPerfEnabled()) {
+    return;
+  }
+  const { pathname } = new URL(request.url);
+  if (pathname !== SESSION_QUERY_PERF_PATH) {
+    return;
+  }
+  if (request.method === 'DELETE') {
+    resetSessionQueryPerf();
+    resetReportHydrationBytes();
+    return new Response(null, {
+      headers: { 'cache-control': 'no-store', 'x-ai-usage-sveltekit': 'active' },
+      status: 204,
+    });
+  }
+  if (request.method !== 'GET') {
+    return new Response(null, {
+      headers: { 'cache-control': 'no-store', 'x-ai-usage-sveltekit': 'active' },
+      status: 405,
+    });
+  }
+  return new Response(
+    JSON.stringify({
+      hydration: snapshotReportHydrationBytes(),
+      sqlite: snapshotSessionQueryPerf(),
+    }),
+    {
+      headers: {
+        'cache-control': 'no-store',
+        'content-type': 'application/json; charset=utf-8',
+        'x-ai-usage-sveltekit': 'active',
+      },
+      status: 200,
+    },
+  );
 };
 
 export const handleFetch: HandleFetch = async ({ event, fetch, request }) => {
@@ -32,6 +74,10 @@ process.once('sveltekit:shutdown', async () => {
 });
 
 const handleApplicationRequest: Handle = async ({ event, resolve }) => {
+  const perfSnapshot = handleSessionQueryPerfSnapshot(event.request);
+  if (perfSnapshot) {
+    return perfSnapshot;
+  }
   const e2eOverridesEnabled = process.env.AI_USAGE_SVELTEKIT_PRIVATE_E2E_OVERRIDES === '1';
   const runtimeMode =
     e2eOverridesEnabled && event.request.headers.get('x-ai-usage-sveltekit-mode') === 'demo'

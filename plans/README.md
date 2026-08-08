@@ -56,6 +56,13 @@ cutover. It preserves the durable request-policy, browser/server capability,
 demo-isolation and SSR secret-boundary gates, and explicitly allows useful bounded
 report data in the initial SSR payload.
 
+Plan 071 records the end-to-end Web Session performance program at `724387ea`.
+It first adds traversal, request, SQLite, hydration and bundle attribution, then
+evaluates virtual-window, paging, projection, SSR serialization, query and delivery
+optimizations behind quantitative retention and correctness gates. It preserves
+continuous 5,000-row scrolling, exact revisions, TanStack Query ownership, direct
+read-only SQLite and the permanent browser/server and demo-isolation boundaries.
+
 ## Execution order & status
 
 | Plan | Title | Priority | Effort | Depends on | Status |
@@ -127,6 +134,7 @@ report data in the initial SSR payload.
 | 068 | Migrate Web to SvelteKit With Contract-First oRPC | P1 | XL | 066, 067 | REOPENED |
 | 069 | Centralize Web Server-State Ownership in TanStack Query and oRPC | P1 | XL | 068 Query/oRPC foundation + clean active-worktree checkpoint | TODO |
 | 070 | Retire Completed Web Migration Guardrails and Clarify Lasting Safety Gates | P1 | M | 068 migration integrated; 069 browser ownership integrated | DONE |
+| 071 | Measure and Optimize the Web Session Pipeline End to End | P1 | XL | current Plan 069 Query ownership; 070 | IN PROGRESS |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) |
 REJECTED (with one-line rationale).
@@ -332,6 +340,11 @@ plan is parallelized and nothing is pushed until every plan and final gate pass.
   SvelteKit, SSE, file-transfer, privacy, and security boundaries remain
   unchanged. Execute it from a clean checkpoint without touching concurrent
   sidebar/presentation paths.
+- Plan 071 starts from Plan 069's currently integrated Query ownership even
+  while the historical status rows are being reconciled. It optimizes only
+  after adding end-to-end attribution, retains experiments behind explicit
+  performance and correctness gates, and must not reopen the migration or add
+  browser server-state outside TanStack Query.
 - Plan 036 adds Effect-native wide-event observability without an OTLP exporter
   so operators can see what Effect boundaries do, especially collectors:
   business outcome, duration, measured hops, and allowlisted local context. The
