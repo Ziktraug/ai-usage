@@ -22,26 +22,40 @@
  */
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { brotliCompressSync, gzipSync } from 'node:zlib';
 import type { APIRequestContext, Page, Request, Response } from '@playwright/test';
 import { expect, test } from './browser-test';
 
 declare global {
   interface Window {
+    __plan072FirstUsefulContentMs?: number | null;
     __plan072HydrationTimestamp?: number | null;
+    __plan072LayoutShift?: number;
+    __plan072LoadingShellObserved?: boolean;
   }
 }
 
 const PERF_PATH = '/__ai-usage/perf/session-query';
-const SESSION_PAGE_RPC_PATH = '/rpc/session/page';
-const REPORT_BOOTSTRAP_PATH = '/rpc/report/revisionBootstrap';
 const JS_FILE_PATTERN = /\.js$/u;
+const CSS_FILE_PATTERN = /\.css$/u;
 const SVELTEKIT_APP_PATH_PATTERN = /_app\//u;
+const CONTROL_MODE = process.env.AI_USAGE_PLAN072_CONTROL === '1';
 
 interface RouteSample {
+  readonly brotliClosureBytes: number;
   readonly businessRpcCountAfterHydration: number;
+  readonly businessRpcCountBeforeHydration: number;
+  readonly chunkCount: number;
+  readonly cssRequestCount: number;
   readonly firstUsableRenderMs: number;
+  readonly firstUsefulContentMs: number;
+  readonly gzipClosureBytes: number;
   readonly htmlBytes: number;
   readonly hydrationTotalBytes: number;
+  readonly jsRequestCount: number;
+  readonly layoutShift: number;
+  readonly loadingShellObserved: boolean;
+  readonly rawClosureBytes: number;
   readonly sqlitePhases: Record<string, { count: number; p50Ms: number; p95Ms: number; totalMs: number }>;
   readonly ttfbMs: number;
   readonly url: string;
@@ -66,34 +80,51 @@ interface PerfSnapshot {
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
-const ROUTES = [
-  '/',
-  '/?tab=sessions',
-  '/?tab=breakdown',
-  '/?filters=%7B%22query%22%3A%22codex%22%7D&sort=%5B%7B%22id%22%3A%22date%22%2C%22desc%22%3Atrue%7D%5D&tab=sessions',
-  '/?sort=%5B%7B%22id%22%3A%22cost%22%2C%22desc%22%3Atrue%7D%5D&tab=models',
-] as const;
+interface RouteScenario {
+  readonly kind: 'breakdown' | 'overview' | 'sessions';
+  readonly label: string;
+  readonly readySelector: string;
+  readonly url: string;
+  readonly usefulSelector: string;
+}
 
-const BASELINE_ROUTES = new Set(['/', '/?tab=sessions', '/?tab=breakdown']);
-
-const DESTINATION_READY_SELECTOR: Readonly<Record<string, string>> = {
-  '/': 'main[data-hydrated="true"][data-route-shell="report"] [data-report-workspace]',
-  '/?tab=sessions': '[data-session-surface="desktop"]',
-  // `breakdown` is not a canonical Dashboard tab today; keep measuring the
-  // literal requested URL, which resolves to the report fallback.
-  '/?tab=breakdown': '[data-report-complete-output]',
-  '/?tab=models': '[data-breakdown-panel="models"]',
-};
-
-const getReadySelector = (route: string): string | null => {
-  const exact = DESTINATION_READY_SELECTOR[route];
-  if (exact) {
-    return exact;
-  }
-  const parsed = new URL(`http://localhost${route}`);
-  const tab = parsed.searchParams.get('tab');
-  return tab ? (DESTINATION_READY_SELECTOR[`/?tab=${tab}`] ?? null) : null;
-};
+const ROUTE_SCENARIOS: readonly RouteScenario[] = [
+  {
+    kind: 'overview',
+    label: 'overview',
+    readySelector: 'main[data-hydrated="true"][data-route-shell="report"] [data-report-workspace]',
+    url: '/',
+    usefulSelector: '[data-report-complete-output]',
+  },
+  {
+    kind: 'sessions',
+    label: 'sessions',
+    readySelector: '[data-session-surface="desktop"]',
+    url: '/?tab=sessions',
+    usefulSelector: '[data-session-row-id]',
+  },
+  {
+    kind: 'breakdown',
+    label: 'breakdown-models',
+    readySelector: '[data-breakdown-panel="models"]',
+    url: '/?tab=models',
+    usefulSelector: '[data-breakdown-panel="models"] h2',
+  },
+  {
+    kind: 'sessions',
+    label: 'sessions-filtered',
+    readySelector: '[data-session-surface="desktop"]',
+    url: '/?q=codex&sort=%7B%22id%22%3A%22project%22%2C%22desc%22%3Afalse%7D&tab=sessions',
+    usefulSelector: '[data-session-row-id]',
+  },
+  {
+    kind: 'breakdown',
+    label: 'breakdown-projects-sorted',
+    readySelector: '[data-projects-panel]',
+    url: '/?breakdownSort=sessions&tab=projects',
+    usefulSelector: '[data-projects-panel]',
+  },
+];
 
 const readPerfSnapshot = async (request: APIRequestContext): Promise<PerfSnapshot> => {
   const response = await request.get(PERF_PATH);
@@ -150,90 +181,168 @@ const resetPerfSnapshot = async (request: APIRequestContext): Promise<void> => {
   expect(response.status()).toBe(204);
 };
 
-const HYDRATION_INIT_SCRIPT = /* javascript */ `
-window.__plan072HydrationTimestamp = null;
-var hydrationObserver;
-function recordPlan072Hydration() {
-  if (
-    window.__plan072HydrationTimestamp === null &&
-    document.querySelector('main[data-route-shell="report"][data-hydrated="true"]')
-  ) {
-    window.__plan072HydrationTimestamp = performance.timeOrigin + performance.now();
-    if (hydrationObserver) {
-      hydrationObserver.disconnect();
+const installRenderObservers = (usefulSelector: string): void => {
+  window.__plan072HydrationTimestamp = null;
+  window.__plan072FirstUsefulContentMs = null;
+  window.__plan072LayoutShift = 0;
+  window.__plan072LoadingShellObserved = false;
+  const recordRenderState = (): void => {
+    if (document.querySelector('[data-report-pending]')) {
+      window.__plan072LoadingShellObserved = true;
     }
-  }
-}
-hydrationObserver = new MutationObserver(recordPlan072Hydration);
-hydrationObserver.observe(document, { attributes: true, childList: true, subtree: true });
-window.addEventListener('DOMContentLoaded', recordPlan072Hydration, { once: true });
-`;
+    if (window.__plan072FirstUsefulContentMs === null && document.querySelector(usefulSelector)) {
+      window.__plan072FirstUsefulContentMs = performance.now();
+    }
+    if (
+      window.__plan072HydrationTimestamp === null &&
+      document.querySelector('main[data-route-shell="report"][data-hydrated="true"]')
+    ) {
+      window.__plan072HydrationTimestamp = performance.timeOrigin + performance.now();
+    }
+  };
+  const renderObserver = new MutationObserver(recordRenderState);
+  renderObserver.observe(document, { attributes: true, childList: true, subtree: true });
+  const layoutObserver = new PerformanceObserver((entries) => {
+    for (const entry of entries.getEntries()) {
+      if ('value' in entry && typeof entry.value === 'number' && !('hadRecentInput' in entry && entry.hadRecentInput)) {
+        window.__plan072LayoutShift = (window.__plan072LayoutShift ?? 0) + entry.value;
+      }
+    }
+  });
+  layoutObserver.observe({ type: 'layout-shift', buffered: true });
+  window.addEventListener('DOMContentLoaded', recordRenderState, { once: true });
+};
 
-const measureRoute = async (page: Page, request: APIRequestContext, route: string): Promise<RouteSample> => {
+const readResponseBody = async (
+  response: Response,
+): Promise<{ body: Buffer; pathname: string; type: 'css' | 'js' } | null> => {
+  const url = new URL(response.url());
+  let type: 'css' | 'js' | null = null;
+  if (JS_FILE_PATTERN.test(url.pathname)) {
+    type = 'js';
+  } else if (CSS_FILE_PATTERN.test(url.pathname)) {
+    type = 'css';
+  }
+  if (!(type && SVELTEKIT_APP_PATH_PATTERN.test(url.pathname))) {
+    return null;
+  }
+  try {
+    return { body: await response.body(), pathname: url.pathname, type };
+  } catch {
+    return null;
+  }
+};
+
+const readDrawerJavaScript = async (response: Response): Promise<{ bytes: number; pathname: string } | null> => {
+  const resource = await readResponseBody(response);
+  return resource?.type === 'js' ? { bytes: resource.body.byteLength, pathname: resource.pathname } : null;
+};
+
+const measureRoute = async (page: Page, request: APIRequestContext, scenario: RouteScenario): Promise<RouteSample> => {
   await resetPerfSnapshot(request);
   await page.goto('about:blank');
-
-  await page.addInitScript(HYDRATION_INIT_SCRIPT);
+  await page.addInitScript(installRenderObservers, scenario.usefulSelector);
 
   const timedRPCs: Array<{ pathname: string; startedAt: number }> = [];
+  const resourceBodies: Promise<{ body: Buffer; pathname: string; type: 'css' | 'js' } | null>[] = [];
   const requestHandler = (candidate: Request): void => {
     if (candidate.resourceType() !== 'fetch' && candidate.resourceType() !== 'xhr') {
       return;
     }
     const requestUrl = new URL(candidate.url());
-    if (requestUrl.pathname === SESSION_PAGE_RPC_PATH || requestUrl.pathname === REPORT_BOOTSTRAP_PATH) {
+    if (requestUrl.pathname.startsWith('/rpc/')) {
       timedRPCs.push({ pathname: requestUrl.pathname, startedAt: candidate.timing().startTime });
     }
   };
+  const responseHandler = (response: Response): void => {
+    resourceBodies.push(readResponseBody(response));
+  };
 
   page.on('request', requestHandler);
+  page.on('response', responseHandler);
   try {
-    const usableStart = performance.now();
-    const navigation = await page.goto(route);
+    const navigation = await page.goto(scenario.url);
     if (!navigation) {
       throw new Error('Expected the plan072 navigation to return a document response');
     }
-    const readySelector = getReadySelector(route);
-    if (!readySelector) {
-      throw new Error(`No ready selector is registered for ${route}`);
+    await expect(page.locator(scenario.readySelector).first()).toBeVisible();
+    await expect(page.locator(scenario.usefulSelector).first()).toBeVisible();
+    await expect(page.locator('[data-report-pending]')).toHaveCount(0);
+    if (scenario.kind === 'sessions') {
+      await expect(page.getByLabel('Filter sessions by title, project, model, provider, or harness')).toBeEnabled();
+      await expect(page.locator('[data-session-row-id]').first()).toBeVisible();
     }
-    await expect(page.locator(readySelector).first()).toBeVisible();
-    const firstUsableRenderMs = performance.now() - usableStart;
+    if (scenario.kind === 'breakdown') {
+      await expect(page.getByRole('tablist', { name: 'Breakdown dimension' })).toBeVisible();
+    }
+    const firstUsableRenderMs = await page.evaluate(() => performance.now());
+    await page.waitForTimeout(50);
 
     await expect(page.locator('main[data-hydrated="true"][data-route-shell="report"]')).toBeVisible();
     const htmlBytes = (await navigation.body()).byteLength;
     const ttfbMs = navigation.request().timing().responseStart;
 
-    const hydrationTimestamp = await page.evaluate(() => {
-      const ts = window.__plan072HydrationTimestamp;
-      return typeof ts === 'number' ? ts : null;
+    const browserMetrics = await page.evaluate(() => {
+      const hydrationTimestamp = window.__plan072HydrationTimestamp;
+      const firstUsefulContentMs = window.__plan072FirstUsefulContentMs;
+      return {
+        firstUsefulContentMs: typeof firstUsefulContentMs === 'number' ? firstUsefulContentMs : null,
+        hydrationTimestamp: typeof hydrationTimestamp === 'number' ? hydrationTimestamp : null,
+        layoutShift: window.__plan072LayoutShift ?? 0,
+        loadingShellObserved: window.__plan072LoadingShellObserved ?? false,
+      };
     });
-    if (hydrationTimestamp === null) {
-      throw new Error('Expected the browser to record its hydration timestamp');
+    if (browserMetrics.hydrationTimestamp === null || browserMetrics.firstUsefulContentMs === null) {
+      throw new Error('Expected the browser to record hydration and first useful content');
     }
+    const hydrationTimestamp = browserMetrics.hydrationTimestamp;
     const postHydrationRPCs = timedRPCs.filter((rpc) => rpc.startedAt > hydrationTimestamp);
+    const preHydrationRPCs = timedRPCs.filter((rpc) => rpc.startedAt <= hydrationTimestamp);
+    const loadedResources = (await Promise.all(resourceBodies)).filter(
+      (entry): entry is { body: Buffer; pathname: string; type: 'css' | 'js' } => entry !== null,
+    );
+    const uniqueResources = [...new Map(loadedResources.map((entry) => [entry.pathname, entry])).values()];
+    const rawClosureBytes = uniqueResources.reduce((total, entry) => total + entry.body.byteLength, 0);
+    const gzipClosureBytes = uniqueResources.reduce(
+      (total, entry) => total + gzipSync(entry.body, { level: 9 }).byteLength,
+      0,
+    );
+    const brotliClosureBytes = uniqueResources.reduce(
+      (total, entry) => total + brotliCompressSync(entry.body).byteLength,
+      0,
+    );
 
     const perfSnapshot = await readPerfSnapshot(request);
-    const isSessionsRoute = route.includes('tab=sessions');
-    if (isSessionsRoute) {
+    if (scenario.kind === 'sessions') {
       const slicePhase = perfSnapshot.sqlite.phases.slice;
       expect(slicePhase?.count).toBeGreaterThan(0);
     }
-    if (BASELINE_ROUTES.has(route)) {
+    if (!CONTROL_MODE) {
       expect(postHydrationRPCs).toHaveLength(0);
     }
 
     return {
+      businessRpcCountBeforeHydration: preHydrationRPCs.length,
       businessRpcCountAfterHydration: postHydrationRPCs.length,
+      brotliClosureBytes,
+      chunkCount: uniqueResources.length,
+      cssRequestCount: uniqueResources.filter((entry) => entry.type === 'css').length,
+      firstUsefulContentMs: Number(browserMetrics.firstUsefulContentMs.toFixed(3)),
       firstUsableRenderMs: Number(firstUsableRenderMs.toFixed(3)),
+      gzipClosureBytes,
       htmlBytes,
       hydrationTotalBytes: perfSnapshot.hydration.totalBytes,
+      jsRequestCount: uniqueResources.filter((entry) => entry.type === 'js').length,
+      layoutShift: Number(browserMetrics.layoutShift.toFixed(6)),
+      loadingShellObserved: browserMetrics.loadingShellObserved,
+      rawClosureBytes,
       sqlitePhases: perfSnapshot.sqlite.phases,
       ttfbMs: Number(ttfbMs.toFixed(3)),
-      url: route,
+      url: scenario.url,
     };
   } finally {
     page.off('request', requestHandler);
+    page.off('response', responseHandler);
   }
 };
 
@@ -254,12 +363,7 @@ const measureDrawerOpen = async (page: Page, request: APIRequestContext): Promis
   const responseCollector = (response: Response): void => {
     const url = new URL(response.url());
     if (JS_FILE_PATTERN.test(url.pathname) && SVELTEKIT_APP_PATH_PATTERN.test(url.pathname)) {
-      deferredJsBodies.push(
-        response
-          .body()
-          .then((body) => ({ bytes: body.byteLength, pathname: url.pathname }))
-          .catch(() => null),
-      );
+      deferredJsBodies.push(readDrawerJavaScript(response));
     }
   };
 
@@ -309,17 +413,19 @@ const median = (values: readonly number[]): number => {
 
 const routeSamples: RouteSample[] = [];
 const drawerSamples: DrawerOpenSample[] = [];
+const SAMPLE_NUMBERS = [1, 2, 3] as const;
 
+// biome-ignore lint/suspicious/noSkippedTests: this benchmark requires the dedicated production perf server.
+test.skip(
+  process.env.AI_USAGE_PLAN072_OUTPUT === undefined,
+  'Plan 072 destination measurements run only through the dedicated benchmark command',
+);
 test.describe.configure({ mode: 'serial' });
 
 test('warm-up: navigates the production fixture without recording samples', async ({ page, request }) => {
-  for (const route of ROUTES) {
-    await page.goto(route);
-    const readySelector = getReadySelector(route);
-    if (!readySelector) {
-      throw new Error(`No ready selector is registered for ${route}`);
-    }
-    await expect(page.locator(readySelector).first()).toBeVisible();
+  for (const scenario of ROUTE_SCENARIOS) {
+    await page.goto(scenario.url);
+    await expect(page.locator(scenario.readySelector).first()).toBeVisible();
   }
   await page.goto('/?origin=%5B%5D&tab=sessions');
   const firstRow = page.locator('[data-index="0"]').first();
@@ -329,46 +435,45 @@ test('warm-up: navigates the production fixture without recording samples', asyn
   await resetPerfSnapshot(request);
 });
 
-for (let sampleIndex = 1; sampleIndex <= 3; sampleIndex += 1) {
-  for (const route of ROUTES) {
-    test(`records route ${route} sample ${sampleIndex}`, async ({ page, request }) => {
-      routeSamples.push(await measureRoute(page, request, route));
+for (const sampleIndex of SAMPLE_NUMBERS) {
+  for (const scenario of ROUTE_SCENARIOS) {
+    test(`records route ${scenario.label} sample ${sampleIndex}`, async ({ page, request }) => {
+      routeSamples.push(await measureRoute(page, request, scenario));
     });
   }
 }
 
-for (let sampleIndex = 1; sampleIndex <= 3; sampleIndex += 1) {
+for (const sampleIndex of SAMPLE_NUMBERS) {
   test(`records the first drawer open sample ${sampleIndex}`, async ({ page, request }) => {
     drawerSamples.push(await measureDrawerOpen(page, request));
   });
 }
 
 test.afterAll(async ({ request }) => {
-  const routeEntries = routeSamples.map((sample) => ({
-    businessRpcCountAfterHydration: sample.businessRpcCountAfterHydration,
-    firstUsableRenderMs: sample.firstUsableRenderMs,
-    htmlBytes: sample.htmlBytes,
-    hydrationTotalBytes: sample.hydrationTotalBytes,
-    sqlitePhases: sample.sqlitePhases,
-    ttfbMs: sample.ttfbMs,
-    url: sample.url,
-  }));
-  const mediansByRoute = ROUTES.map((route) => {
-    const matching = routeSamples.filter((sample) => sample.url === route);
+  const mediansByRoute = ROUTE_SCENARIOS.map((scenario) => {
+    const matching = routeSamples.filter((sample) => sample.url === scenario.url);
     return {
+      brotliClosureBytes: median(matching.map((sample) => sample.brotliClosureBytes)),
+      chunkCount: median(matching.map((sample) => sample.chunkCount)),
+      cssRequestCount: median(matching.map((sample) => sample.cssRequestCount)),
+      firstUsefulContentMs: median(matching.map((sample) => sample.firstUsefulContentMs)),
       firstUsableRenderMs: median(matching.map((sample) => sample.firstUsableRenderMs)),
+      gzipClosureBytes: median(matching.map((sample) => sample.gzipClosureBytes)),
       htmlBytes: median(matching.map((sample) => sample.htmlBytes)),
       hydrationTotalBytes: median(matching.map((sample) => sample.hydrationTotalBytes)),
+      jsRequestCount: median(matching.map((sample) => sample.jsRequestCount)),
+      layoutShift: median(matching.map((sample) => sample.layoutShift)),
+      rawClosureBytes: median(matching.map((sample) => sample.rawClosureBytes)),
       ttfbMs: median(matching.map((sample) => sample.ttfbMs)),
-      url: route,
+      url: scenario.url,
     };
   });
   const output = {
     drawer: drawerSamples,
     medians: mediansByRoute,
-    samples: routeEntries,
+    samples: routeSamples,
   };
-  expect(routeSamples).toHaveLength(ROUTES.length * 3);
+  expect(routeSamples).toHaveLength(ROUTE_SCENARIOS.length * 3);
   expect(drawerSamples).toHaveLength(3);
   const outputFile = process.env.AI_USAGE_PLAN072_OUTPUT;
   if (outputFile) {

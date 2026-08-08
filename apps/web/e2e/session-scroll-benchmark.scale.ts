@@ -1,3 +1,5 @@
+import { mkdirSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
 import type { APIRequestContext, CDPSession, Page, Request, Response } from '@playwright/test';
 import { expect, test } from './browser-test';
 import { rpcStringFieldValues } from './rpc-test-transport';
@@ -553,5 +555,12 @@ test.afterAll(() => {
     },
     samples,
   };
-  process.stdout.write(`${JSON.stringify({ sessionScrollBenchmark: output })}\n`);
+  const serializedOutput = `${JSON.stringify({ sessionScrollBenchmark: output })}\n`;
+  const outputPath = process.env.AI_USAGE_SESSION_BENCHMARK_OUTPUT;
+  if (outputPath) {
+    mkdirSync(path.dirname(outputPath), { recursive: true });
+    writeFileSync(outputPath, serializedOutput, 'utf8');
+    return;
+  }
+  process.stdout.write(serializedOutput);
 });

@@ -17,14 +17,16 @@
  * The output is intentionally deterministic and committed as an artifact so
  * the next reviewer can diff bundle composition between candidates.
  */
-import { readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { brotliCompressSync, gzipSync } from 'node:zlib';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const DEFAULT_MANIFEST_PATH = path.join(ROOT, 'apps/web/.svelte-kit/build/private/client-modules.json');
 const DEFAULT_VITE_MANIFEST_PATH = path.join(ROOT, 'apps/web/.svelte-kit/build/output/client/.vite/manifest.json');
 const DEFAULT_OUTPUT_JSON = path.join(ROOT, 'docs/performance/artifacts/plan072-bundle-map.json');
 const DEFAULT_OUTPUT_MD = path.join(ROOT, 'docs/performance/artifacts/plan072-bundle-map.md');
+const DEFAULT_CLIENT_OUTPUT = path.join(ROOT, 'apps/web/.output-build/sveltekit/client');
 // biome-ignore lint/suspicious/noUndeclaredEnvVars: tooling override for isolated test runs
 const MANIFEST_PATH = process.env.AI_USAGE_PLAN072_MANIFEST ?? DEFAULT_MANIFEST_PATH;
 // biome-ignore lint/suspicious/noUndeclaredEnvVars: tooling override for isolated test runs
@@ -33,12 +35,18 @@ const VITE_MANIFEST_PATH = process.env.AI_USAGE_PLAN072_VITE_MANIFEST ?? DEFAULT
 const OUTPUT_JSON = process.env.AI_USAGE_PLAN072_OUTPUT_JSON ?? DEFAULT_OUTPUT_JSON;
 // biome-ignore lint/suspicious/noUndeclaredEnvVars: tooling override for isolated test runs
 const OUTPUT_MD = process.env.AI_USAGE_PLAN072_OUTPUT_MD ?? DEFAULT_OUTPUT_MD;
+// biome-ignore lint/suspicious/noUndeclaredEnvVars: tooling override for isolated test runs
+const CLIENT_OUTPUT = process.env.AI_USAGE_PLAN072_CLIENT_OUTPUT ?? DEFAULT_CLIENT_OUTPUT;
 
 const ARK_MODULE_PATTERNS = [/(?:\.\.\/)+node_modules\/@ark-ui\/svelte\//u] as const;
 const ARK_COMPONENT_PATTERNS = [
   /(?:\.\.\/)+node_modules\/@ark-ui\/svelte\/dist\/components\/(drawer|popover|tabs|toggle|select|toggle-group|tooltip|checkbox|portal|dialog|popper|presence|focus-trap|remove-scroll|dismissable|aria-hidden)/u,
 ] as const;
 const ZAG_PACKAGE_PATTERNS = [/(?:\.\.\/)+node_modules\/@zag-js\//u] as const;
+const SESSIONS_DESTINATION_MODULE_PATTERN = /\/sessions-destination\.svelte$/u;
+const BREAKDOWN_DESTINATION_MODULE_PATTERN = /\/dashboard-breakdown\.svelte$/u;
+const SESSION_DRAWER_MODULE_PATTERN = /\/session-drawer\.svelte$/u;
+const WORKSPACE_RELATIVE_PREFIX_PATTERN = /^(?:\.\.\/)+(?=packages\/)/u;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -57,12 +65,13 @@ interface ManifestChunk {
 
 interface Manifest {
   readonly chunks: readonly ManifestChunk[];
-  readonly format: string;
-  readonly target: string;
+  readonly format: 'ai-usage-web-client-modules';
+  readonly target: 'client';
   readonly version: number;
 }
 
 interface ViteManifestEntry {
+  readonly css: readonly string[];
   readonly file: string;
   readonly imports: readonly string[];
 }
@@ -98,8 +107,8 @@ const parseManifest = (value: unknown): Manifest => {
   }
   return {
     chunks,
-    format: value.format as string,
-    target: value.target as string,
+    format: 'ai-usage-web-client-modules',
+    target: 'client',
     version: typeof value.version === 'number' ? value.version : 0,
   };
 };
@@ -114,6 +123,7 @@ const parseViteManifest = (value: unknown): ReadonlyMap<string, ViteManifestEntr
       throw new Error(`Expected Vite manifest entry ${key} to expose a file`);
     }
     entries.set(key, {
+      css: isNonEmptyStringArray(candidate.css) ? candidate.css : [],
       file: candidate.file,
       imports: isNonEmptyStringArray(candidate.imports) ? candidate.imports : [],
     });
@@ -127,6 +137,7 @@ const matchesAny = (moduleId: string, patterns: readonly RegExp[]): boolean =>
 const isArkModule = (moduleId: string): boolean => matchesAny(moduleId, ARK_MODULE_PATTERNS);
 const isZagModule = (moduleId: string): boolean => matchesAny(moduleId, ZAG_PACKAGE_PATTERNS);
 const isArkComponent = (moduleId: string): boolean => matchesAny(moduleId, ARK_COMPONENT_PATTERNS);
+const workspaceStableModuleId = (moduleId: string): string => moduleId.replace(WORKSPACE_RELATIVE_PREFIX_PATTERN, '');
 
 const INITIAL_VITE_ENTRY_KEYS = [
   '../../node_modules/@sveltejs/kit/src/runtime/client/entry.js',
@@ -138,7 +149,7 @@ const INITIAL_VITE_ENTRY_KEYS = [
 const deriveInitialClosure = (viteManifest: ReadonlyMap<string, ViteManifestEntry>): ReadonlySet<string> => {
   const closure = new Set<string>();
   const visitedKeys = new Set<string>();
-  const queue = [...INITIAL_VITE_ENTRY_KEYS];
+  const queue: string[] = [...INITIAL_VITE_ENTRY_KEYS];
 
   while (queue.length > 0) {
     const key = queue.shift();
@@ -179,6 +190,25 @@ interface ChunkSummary {
 interface ModuleOccurrence {
   readonly chunkFileNames: readonly string[];
   readonly moduleId: string;
+}
+
+interface ClosureAsset {
+  readonly brotliBytes: number;
+  readonly fileName: string;
+  readonly gzipBytes: number;
+  readonly rawBytes: number;
+}
+
+interface DestinationClosure {
+  readonly arkModuleIds: readonly string[];
+  readonly assets: readonly ClosureAsset[];
+  readonly brotliBytes: number;
+  readonly chunkCount: number;
+  readonly designSystemArkImporters: readonly string[];
+  readonly gzipBytes: number;
+  readonly label: string;
+  readonly rawBytes: number;
+  readonly zagModuleIds: readonly string[];
 }
 
 const buildSummary = (
@@ -246,13 +276,128 @@ const initialChunkSummary = (summaries: readonly ChunkSummary[]): ChunkSummary[]
 const lazyChunkSummary = (summaries: readonly ChunkSummary[]): ChunkSummary[] =>
   summaries.filter((summary) => summary.lazyLabel !== null);
 
+const importedChunkClosure = (chunks: readonly ManifestChunk[], roots: ReadonlySet<string>): ReadonlySet<string> => {
+  const byFileName = new Map(chunks.map((chunk) => [chunk.fileName, chunk]));
+  const closure = new Set<string>();
+  const pending = [...roots];
+  while (pending.length > 0) {
+    const fileName = pending.pop();
+    if (!fileName || closure.has(fileName)) {
+      continue;
+    }
+    closure.add(fileName);
+    const chunk = byFileName.get(fileName);
+    if (chunk) {
+      pending.push(...chunk.imports);
+    }
+  }
+  return closure;
+};
+
+const chunkFilesMatching = (chunks: readonly ManifestChunk[], pattern: RegExp): Set<string> =>
+  new Set(
+    chunks.filter((chunk) => chunk.moduleIds.some((moduleId) => pattern.test(moduleId))).map((chunk) => chunk.fileName),
+  );
+
+const assetFilesForClosure = (
+  chunkFiles: ReadonlySet<string>,
+  viteManifest: ReadonlyMap<string, ViteManifestEntry>,
+): readonly string[] => {
+  const assets = new Set(chunkFiles);
+  for (const entry of viteManifest.values()) {
+    if (chunkFiles.has(entry.file)) {
+      for (const cssFile of entry.css) {
+        assets.add(cssFile);
+      }
+    }
+  }
+  return [...assets].sort();
+};
+
+const measureAsset = (fileName: string): ClosureAsset => {
+  const filePath = path.join(CLIENT_OUTPUT, fileName);
+  if (!existsSync(filePath)) {
+    throw new Error(`Expected built client asset ${fileName}`);
+  }
+  const body = readFileSync(filePath);
+  return {
+    brotliBytes: brotliCompressSync(body).byteLength,
+    fileName,
+    gzipBytes: gzipSync(body, { level: 9 }).byteLength,
+    rawBytes: body.byteLength,
+  };
+};
+
+const summarizeClosure = (
+  label: string,
+  chunkFiles: ReadonlySet<string>,
+  chunks: readonly ManifestChunk[],
+  viteManifest: ReadonlyMap<string, ViteManifestEntry>,
+): DestinationClosure => {
+  const closureChunks = chunks.filter((chunk) => chunkFiles.has(chunk.fileName));
+  const moduleIds = closureChunks.flatMap((chunk) => chunk.moduleIds);
+  const arkModuleIds = [...new Set(moduleIds.filter(isArkModule))].sort();
+  const zagModuleIds = [...new Set(moduleIds.filter(isZagModule))].sort();
+  const designSystemArkImporters = [
+    ...new Set(
+      closureChunks
+        .filter((chunk) => chunk.moduleIds.some((moduleId) => isArkModule(moduleId) || isZagModule(moduleId)))
+        .flatMap((chunk) =>
+          chunk.moduleIds
+            .filter((moduleId) => moduleId.includes('/packages/design-system/src/'))
+            .map(workspaceStableModuleId),
+        ),
+    ),
+  ].sort();
+  const assets = assetFilesForClosure(chunkFiles, viteManifest).map(measureAsset);
+  return {
+    arkModuleIds,
+    assets,
+    brotliBytes: assets.reduce((total, asset) => total + asset.brotliBytes, 0),
+    chunkCount: assets.length,
+    designSystemArkImporters,
+    gzipBytes: assets.reduce((total, asset) => total + asset.gzipBytes, 0),
+    label,
+    rawBytes: assets.reduce((total, asset) => total + asset.rawBytes, 0),
+    zagModuleIds,
+  };
+};
+
+const buildDestinationClosures = (
+  chunks: readonly ManifestChunk[],
+  viteManifest: ReadonlyMap<string, ViteManifestEntry>,
+): readonly DestinationClosure[] => {
+  const initial = deriveInitialClosure(viteManifest);
+  const sessionsRoots = new Set([...initial, ...chunkFilesMatching(chunks, SESSIONS_DESTINATION_MODULE_PATTERN)]);
+  const breakdownRoots = new Set([...initial, ...chunkFilesMatching(chunks, BREAKDOWN_DESTINATION_MODULE_PATTERN)]);
+  const drawerRoots = new Set([...sessionsRoots, ...chunkFilesMatching(chunks, SESSION_DRAWER_MODULE_PATTERN)]);
+  return [
+    summarizeClosure('overview', importedChunkClosure(chunks, initial), chunks, viteManifest),
+    summarizeClosure('sessions', importedChunkClosure(chunks, sessionsRoots), chunks, viteManifest),
+    summarizeClosure('breakdown', importedChunkClosure(chunks, breakdownRoots), chunks, viteManifest),
+    summarizeClosure('sessions-after-drawer', importedChunkClosure(chunks, drawerRoots), chunks, viteManifest),
+  ];
+};
+
 const buildMarkdown = (
   manifest: Manifest,
   summaries: readonly ChunkSummary[],
   occurrences: readonly ModuleOccurrence[],
+  destinationClosures: readonly DestinationClosure[],
 ): string => {
   const lines: string[] = [];
   lines.push('# Plan 072 — Bundle cartography');
+  lines.push('');
+
+  lines.push('## Destination closures');
+  lines.push('');
+  lines.push('| Destination | Assets | Raw | Gzip | Brotli | Ark | Zag |');
+  lines.push('| --- | ---: | ---: | ---: | ---: | ---: | ---: |');
+  for (const closure of destinationClosures) {
+    lines.push(
+      `| ${closure.label} | ${closure.chunkCount} | ${closure.rawBytes} | ${closure.gzipBytes} | ${closure.brotliBytes} | ${closure.arkModuleIds.length} | ${closure.zagModuleIds.length} |`,
+    );
+  }
   lines.push('');
   lines.push(
     `Manifest: \`${path.relative(ROOT, MANIFEST_PATH)}\` (format=${manifest.format}, version=${manifest.version})`,
@@ -327,6 +472,7 @@ const main = (): void => {
   const viteManifest = parseViteManifest(JSON.parse(rawViteManifest));
   const summaries = buildSummary(manifest.chunks, viteManifest);
   const occurrences = buildOccurrences(manifest.chunks);
+  const destinationClosures = buildDestinationClosures(manifest.chunks, viteManifest);
   const initial = initialChunkSummary(summaries);
   const lazy = lazyChunkSummary(summaries);
   const duplicatedArkOrZag = occurrences.filter(
@@ -336,6 +482,7 @@ const main = (): void => {
     chunkCount: manifest.chunks.length,
     duplicatedArkOrZagCount: duplicatedArkOrZag.length,
     duplicatedModuleCount: occurrences.length,
+    destinationClosures,
     initialChunkCount: initial.length,
     initialChunks: initial,
     lazyChunkCount: lazy.length,
@@ -346,7 +493,7 @@ const main = (): void => {
     occurrences,
   };
   writeFileSync(OUTPUT_JSON, `${JSON.stringify(summary, null, 2)}\n`, 'utf8');
-  writeFileSync(OUTPUT_MD, buildMarkdown(manifest, summaries, occurrences), 'utf8');
+  writeFileSync(OUTPUT_MD, buildMarkdown(manifest, summaries, occurrences, destinationClosures), 'utf8');
   process.stdout.write(
     `plan072-bundle-map: ${summary.chunkCount} chunks, ${summary.duplicatedArkOrZagCount} duplicated Ark/Zag modules, ${summary.initialChunkCount} initial chunks.\n`,
   );

@@ -1,10 +1,57 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const SCRIPT_PATH = path.join(ROOT, 'tools/plan072-bundle-map.ts');
+
+interface BundleMapOutput {
+  readonly duplicatedArkOrZagCount: number;
+  readonly initialChunkCount: number;
+  readonly initialChunks: ReadonlyArray<{ arkComponents: readonly string[]; fileName: string; isInitial: boolean }>;
+  readonly lazyChunks: ReadonlyArray<{ fileName: string; isInitial: boolean }>;
+}
+
+const parseChunk = (value: unknown): BundleMapOutput['initialChunks'][number] => {
+  if (
+    typeof value !== 'object' ||
+    value === null ||
+    !('arkComponents' in value) ||
+    !Array.isArray(value.arkComponents) ||
+    !value.arkComponents.every((component) => typeof component === 'string') ||
+    !('fileName' in value) ||
+    typeof value.fileName !== 'string' ||
+    !('isInitial' in value) ||
+    typeof value.isInitial !== 'boolean'
+  ) {
+    throw new Error('Expected a valid bundle-map chunk');
+  }
+  return { arkComponents: value.arkComponents, fileName: value.fileName, isInitial: value.isInitial };
+};
+
+const parseBundleMapOutput = (value: unknown): BundleMapOutput => {
+  if (
+    typeof value !== 'object' ||
+    value === null ||
+    !('duplicatedArkOrZagCount' in value) ||
+    typeof value.duplicatedArkOrZagCount !== 'number' ||
+    !('initialChunkCount' in value) ||
+    typeof value.initialChunkCount !== 'number' ||
+    !('initialChunks' in value) ||
+    !Array.isArray(value.initialChunks) ||
+    !('lazyChunks' in value) ||
+    !Array.isArray(value.lazyChunks)
+  ) {
+    throw new Error('Expected a valid bundle-map output');
+  }
+  return {
+    duplicatedArkOrZagCount: value.duplicatedArkOrZagCount,
+    initialChunkCount: value.initialChunkCount,
+    initialChunks: value.initialChunks.map(parseChunk),
+    lazyChunks: value.lazyChunks.map(parseChunk),
+  };
+};
 
 const writeMinimalManifests = (manifestPath: string, viteManifestPath: string): void => {
   const manifest = {
@@ -89,11 +136,24 @@ describe('plan072 bundle-map', () => {
     const viteManifestPath = path.join(tempDirectory, 'vite-manifest.json');
     const outputJson = path.join(tempDirectory, 'plan072-bundle-map.json');
     const outputMd = path.join(tempDirectory, 'plan072-bundle-map.md');
+    const clientOutput = path.join(tempDirectory, 'client');
     writeMinimalManifests(manifestPath, viteManifestPath);
+    for (const asset of [
+      '_app/immutable/entry/start.hash.js',
+      '_app/immutable/entry/app.hash.js',
+      '_app/immutable/nodes/0.hash.js',
+      '_app/immutable/nodes/3.hash.js',
+      '_app/immutable/chunks/EardQyRL.js',
+    ]) {
+      const assetPath = path.join(clientOutput, asset);
+      mkdirSync(path.dirname(assetPath), { recursive: true });
+      writeFileSync(assetPath, `fixture:${asset}`, 'utf8');
+    }
     const proc = Bun.spawn(['bun', SCRIPT_PATH], {
       cwd: ROOT,
       env: {
         ...process.env,
+        AI_USAGE_PLAN072_CLIENT_OUTPUT: clientOutput,
         AI_USAGE_PLAN072_MANIFEST: manifestPath,
         AI_USAGE_PLAN072_OUTPUT_JSON: outputJson,
         AI_USAGE_PLAN072_OUTPUT_MD: outputMd,
@@ -105,12 +165,7 @@ describe('plan072 bundle-map', () => {
     await proc.exited;
     expect(proc.exitCode).toBe(0);
     expect(existsSync(outputJson)).toBe(true);
-    const parsed = JSON.parse(readFileSync(outputJson, 'utf8')) as {
-      duplicatedArkOrZagCount: number;
-      initialChunkCount: number;
-      initialChunks: ReadonlyArray<{ arkComponents: readonly string[]; fileName: string; isInitial: boolean }>;
-      lazyChunks: ReadonlyArray<{ fileName: string; isInitial: boolean }>;
-    };
+    const parsed = parseBundleMapOutput(JSON.parse(readFileSync(outputJson, 'utf8')));
     expect(parsed.duplicatedArkOrZagCount).toBe(0);
     expect(parsed.initialChunkCount).toBe(2);
     const initialWithArk = parsed.initialChunks.find((entry) => entry.arkComponents.length > 0);

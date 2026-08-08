@@ -3,17 +3,17 @@
     "drawer": [
       {
         "bytesLoadedAfterDrawerOpen": 41297,
-        "drawerOpenMs": 96.006,
+        "drawerOpenMs": 82.62,
         "newChunkFileNames": ["/_app/immutable/chunks/DXm_Fk5_2.js"]
       },
       {
         "bytesLoadedAfterDrawerOpen": 41297,
-        "drawerOpenMs": 84.738,
+        "drawerOpenMs": 78.324,
         "newChunkFileNames": ["/_app/immutable/chunks/DXm_Fk5_2.js"]
       },
       {
         "bytesLoadedAfterDrawerOpen": 41297,
-        "drawerOpenMs": 70.554,
+        "drawerOpenMs": 63.079,
         "newChunkFileNames": ["/_app/immutable/chunks/DXm_Fk5_2.js"]
       }
     ],
@@ -22,75 +22,75 @@
         "brotliClosureBytes": 242995,
         "chunkCount": 37,
         "cssRequestCount": 2,
-        "firstUsefulContentMs": 165,
-        "firstUsableRenderMs": 354.2,
+        "firstUsefulContentMs": 147.1,
+        "firstUsableRenderMs": 363.1,
         "gzipClosureBytes": 280896,
         "htmlBytes": 126266,
         "hydrationTotalBytes": 58926,
         "jsRequestCount": 35,
         "layoutShift": 0.001134,
         "rawClosureBytes": 894322,
-        "ttfbMs": 153.186,
+        "ttfbMs": 134.052,
         "url": "/"
       },
       {
         "brotliClosureBytes": 265573,
         "chunkCount": 40,
         "cssRequestCount": 2,
-        "firstUsefulContentMs": 444,
-        "firstUsableRenderMs": 525.5,
+        "firstUsefulContentMs": 386,
+        "firstUsableRenderMs": 480.6,
         "gzipClosureBytes": 306488,
-        "htmlBytes": 482613,
-        "hydrationTotalBytes": 489216,
+        "htmlBytes": 25755,
+        "hydrationTotalBytes": 3850,
         "jsRequestCount": 38,
-        "layoutShift": 0.001134,
+        "layoutShift": 0.321994,
         "rawClosureBytes": 978193,
-        "ttfbMs": 183.905,
+        "ttfbMs": 26.61,
         "url": "/?tab=sessions"
       },
       {
         "brotliClosureBytes": 252126,
         "chunkCount": 38,
         "cssRequestCount": 2,
-        "firstUsefulContentMs": 368.5,
-        "firstUsableRenderMs": 407.5,
+        "firstUsefulContentMs": 374.4,
+        "firstUsableRenderMs": 415,
         "gzipClosureBytes": 291408,
-        "htmlBytes": 74430,
-        "hydrationTotalBytes": 60356,
+        "htmlBytes": 25798,
+        "hydrationTotalBytes": 3850,
         "jsRequestCount": 36,
-        "layoutShift": 0.001134,
+        "layoutShift": 0.066578,
         "rawClosureBytes": 923436,
-        "ttfbMs": 204.848,
+        "ttfbMs": 25.414,
         "url": "/?tab=models"
       },
       {
         "brotliClosureBytes": 265573,
         "chunkCount": 40,
         "cssRequestCount": 2,
-        "firstUsefulContentMs": 441.7,
-        "firstUsableRenderMs": 531.3,
+        "firstUsefulContentMs": 391.1,
+        "firstUsableRenderMs": 480.6,
         "gzipClosureBytes": 306488,
-        "htmlBytes": 483810,
-        "hydrationTotalBytes": 489438,
+        "htmlBytes": 26790,
+        "hydrationTotalBytes": 3850,
         "jsRequestCount": 38,
-        "layoutShift": 0.001134,
+        "layoutShift": 0.327208,
         "rawClosureBytes": 978193,
-        "ttfbMs": 209.574,
+        "ttfbMs": 26.596,
         "url": "/?q=codex&sort=%7B%22id%22%3A%22project%22%2C%22desc%22%3Afalse%7D&tab=sessions"
       },
       {
         "brotliClosureBytes": 252126,
         "chunkCount": 38,
         "cssRequestCount": 2,
-        "firstUsefulContentMs": 419.4,
-        "firstUsableRenderMs": 459.6,
+        "firstUsefulContentMs": 376.1,
+        "firstUsableRenderMs": 418.2,
         "gzipClosureBytes": 291408,
-        "htmlBytes": 74588,
-        "hydrationTotalBytes": 60356,
+        "htmlBytes": 25956,
+        "hydrationTotalBytes": 3850,
         "jsRequestCount": 36,
-        "layoutShift": 0.001134,
+        "layoutShift": 0.066578,
         "rawClosureBytes": 923436,
-        "ttfbMs": 237.405,
+        "ttfbMs": 26.792,
         "url": "/?breakdownSort=sessions&tab=projects"
       }
     ],
@@ -101,8 +101,8 @@
         "brotliClosureBytes": 242995,
         "chunkCount": 37,
         "cssRequestCount": 2,
-        "firstUsefulContentMs": 165,
-        "firstUsableRenderMs": 358.6,
+        "firstUsefulContentMs": 146.9,
+        "firstUsableRenderMs": 363.1,
         "gzipClosureBytes": 280896,
         "htmlBytes": 126266,
         "hydrationTotalBytes": 58926,
@@ -117,195 +117,30 @@
           "projection": { "count": 0, "p50Ms": 0, "p95Ms": 0, "totalMs": 0 },
           "slice": { "count": 0, "p50Ms": 0, "p95Ms": 0, "totalMs": 0 }
         },
-        "ttfbMs": 153.186,
+        "ttfbMs": 132.382,
         "url": "/"
       },
       {
-        "businessRpcCountBeforeHydration": 4,
+        "businessRpcCountBeforeHydration": 6,
         "businessRpcCountAfterHydration": 0,
         "brotliClosureBytes": 265573,
         "chunkCount": 40,
         "cssRequestCount": 2,
-        "firstUsefulContentMs": 460.3,
-        "firstUsableRenderMs": 559.2,
+        "firstUsefulContentMs": 399.5,
+        "firstUsableRenderMs": 490.7,
         "gzipClosureBytes": 306488,
-        "htmlBytes": 482613,
-        "hydrationTotalBytes": 489216,
+        "htmlBytes": 25755,
+        "hydrationTotalBytes": 3850,
         "jsRequestCount": 38,
-        "layoutShift": 0.001134,
+        "layoutShift": 0.321994,
         "loadingShellObserved": false,
         "rawClosureBytes": 978193,
         "sqlitePhases": {
           "count": {
             "count": 1,
-            "p50Ms": 11.667,
-            "p95Ms": 11.667,
-            "totalMs": 11.667
-          },
-          "identity": {
-            "count": 1,
-            "p50Ms": 0.034,
-            "p95Ms": 0.034,
-            "totalMs": 0.034
-          },
-          "materialize": {
-            "count": 1,
-            "p50Ms": 6.892,
-            "p95Ms": 6.892,
-            "totalMs": 6.892
-          },
-          "projection": { "count": 0, "p50Ms": 0, "p95Ms": 0, "totalMs": 0 },
-          "slice": {
-            "count": 1,
-            "p50Ms": 0.011,
-            "p95Ms": 0.011,
-            "totalMs": 0.011
-          }
-        },
-        "ttfbMs": 204.273,
-        "url": "/?tab=sessions"
-      },
-      {
-        "businessRpcCountBeforeHydration": 4,
-        "businessRpcCountAfterHydration": 0,
-        "brotliClosureBytes": 252126,
-        "chunkCount": 38,
-        "cssRequestCount": 2,
-        "firstUsefulContentMs": 368.5,
-        "firstUsableRenderMs": 407.5,
-        "gzipClosureBytes": 291408,
-        "htmlBytes": 74430,
-        "hydrationTotalBytes": 60356,
-        "jsRequestCount": 36,
-        "layoutShift": 0.001134,
-        "loadingShellObserved": false,
-        "rawClosureBytes": 923436,
-        "sqlitePhases": {
-          "count": { "count": 0, "p50Ms": 0, "p95Ms": 0, "totalMs": 0 },
-          "identity": { "count": 0, "p50Ms": 0, "p95Ms": 0, "totalMs": 0 },
-          "materialize": { "count": 0, "p50Ms": 0, "p95Ms": 0, "totalMs": 0 },
-          "projection": { "count": 0, "p50Ms": 0, "p95Ms": 0, "totalMs": 0 },
-          "slice": { "count": 0, "p50Ms": 0, "p95Ms": 0, "totalMs": 0 }
-        },
-        "ttfbMs": 204.848,
-        "url": "/?tab=models"
-      },
-      {
-        "businessRpcCountBeforeHydration": 4,
-        "businessRpcCountAfterHydration": 0,
-        "brotliClosureBytes": 265573,
-        "chunkCount": 40,
-        "cssRequestCount": 2,
-        "firstUsefulContentMs": 437.2,
-        "firstUsableRenderMs": 517.8,
-        "gzipClosureBytes": 306488,
-        "htmlBytes": 483810,
-        "hydrationTotalBytes": 489438,
-        "jsRequestCount": 38,
-        "layoutShift": 0.001134,
-        "loadingShellObserved": false,
-        "rawClosureBytes": 978193,
-        "sqlitePhases": {
-          "count": {
-            "count": 1,
-            "p50Ms": 7.169,
-            "p95Ms": 7.169,
-            "totalMs": 7.169
-          },
-          "identity": {
-            "count": 1,
-            "p50Ms": 0.034,
-            "p95Ms": 0.034,
-            "totalMs": 0.034
-          },
-          "materialize": {
-            "count": 1,
-            "p50Ms": 4.229,
-            "p95Ms": 4.229,
-            "totalMs": 4.229
-          },
-          "projection": { "count": 0, "p50Ms": 0, "p95Ms": 0, "totalMs": 0 },
-          "slice": {
-            "count": 1,
-            "p50Ms": 0.006,
-            "p95Ms": 0.006,
-            "totalMs": 0.006
-          }
-        },
-        "ttfbMs": 185.674,
-        "url": "/?q=codex&sort=%7B%22id%22%3A%22project%22%2C%22desc%22%3Afalse%7D&tab=sessions"
-      },
-      {
-        "businessRpcCountBeforeHydration": 4,
-        "businessRpcCountAfterHydration": 0,
-        "brotliClosureBytes": 252126,
-        "chunkCount": 38,
-        "cssRequestCount": 2,
-        "firstUsefulContentMs": 374.1,
-        "firstUsableRenderMs": 419.5,
-        "gzipClosureBytes": 291408,
-        "htmlBytes": 74588,
-        "hydrationTotalBytes": 60356,
-        "jsRequestCount": 36,
-        "layoutShift": 0.001134,
-        "loadingShellObserved": false,
-        "rawClosureBytes": 923436,
-        "sqlitePhases": {
-          "count": { "count": 0, "p50Ms": 0, "p95Ms": 0, "totalMs": 0 },
-          "identity": { "count": 0, "p50Ms": 0, "p95Ms": 0, "totalMs": 0 },
-          "materialize": { "count": 0, "p50Ms": 0, "p95Ms": 0, "totalMs": 0 },
-          "projection": { "count": 0, "p50Ms": 0, "p95Ms": 0, "totalMs": 0 },
-          "slice": { "count": 0, "p50Ms": 0, "p95Ms": 0, "totalMs": 0 }
-        },
-        "ttfbMs": 204.85,
-        "url": "/?breakdownSort=sessions&tab=projects"
-      },
-      {
-        "businessRpcCountBeforeHydration": 4,
-        "businessRpcCountAfterHydration": 0,
-        "brotliClosureBytes": 242995,
-        "chunkCount": 37,
-        "cssRequestCount": 2,
-        "firstUsefulContentMs": 165.3,
-        "firstUsableRenderMs": 350.6,
-        "gzipClosureBytes": 280896,
-        "htmlBytes": 126266,
-        "hydrationTotalBytes": 58926,
-        "jsRequestCount": 35,
-        "layoutShift": 0.001134,
-        "loadingShellObserved": false,
-        "rawClosureBytes": 894322,
-        "sqlitePhases": {
-          "count": { "count": 0, "p50Ms": 0, "p95Ms": 0, "totalMs": 0 },
-          "identity": { "count": 0, "p50Ms": 0, "p95Ms": 0, "totalMs": 0 },
-          "materialize": { "count": 0, "p50Ms": 0, "p95Ms": 0, "totalMs": 0 },
-          "projection": { "count": 0, "p50Ms": 0, "p95Ms": 0, "totalMs": 0 },
-          "slice": { "count": 0, "p50Ms": 0, "p95Ms": 0, "totalMs": 0 }
-        },
-        "ttfbMs": 153.898,
-        "url": "/"
-      },
-      {
-        "businessRpcCountBeforeHydration": 4,
-        "businessRpcCountAfterHydration": 0,
-        "brotliClosureBytes": 265573,
-        "chunkCount": 40,
-        "cssRequestCount": 2,
-        "firstUsefulContentMs": 390.7,
-        "firstUsableRenderMs": 465.1,
-        "gzipClosureBytes": 306488,
-        "htmlBytes": 482613,
-        "hydrationTotalBytes": 489216,
-        "jsRequestCount": 38,
-        "layoutShift": 0.001134,
-        "loadingShellObserved": false,
-        "rawClosureBytes": 978193,
-        "sqlitePhases": {
-          "count": {
-            "count": 1,
-            "p50Ms": 6.697,
-            "p95Ms": 6.697,
-            "totalMs": 6.697
+            "p50Ms": 6.733,
+            "p95Ms": 6.733,
+            "totalMs": 6.733
           },
           "identity": {
             "count": 1,
@@ -315,35 +150,35 @@
           },
           "materialize": {
             "count": 1,
-            "p50Ms": 3.86,
-            "p95Ms": 3.86,
-            "totalMs": 3.86
+            "p50Ms": 4.887,
+            "p95Ms": 4.887,
+            "totalMs": 4.887
           },
           "projection": { "count": 0, "p50Ms": 0, "p95Ms": 0, "totalMs": 0 },
           "slice": {
             "count": 1,
-            "p50Ms": 0.004,
-            "p95Ms": 0.004,
-            "totalMs": 0.004
+            "p50Ms": 0.006,
+            "p95Ms": 0.006,
+            "totalMs": 0.006
           }
         },
-        "ttfbMs": 181.577,
+        "ttfbMs": 27.813,
         "url": "/?tab=sessions"
       },
       {
-        "businessRpcCountBeforeHydration": 4,
+        "businessRpcCountBeforeHydration": 6,
         "businessRpcCountAfterHydration": 0,
         "brotliClosureBytes": 252126,
         "chunkCount": 38,
         "cssRequestCount": 2,
-        "firstUsefulContentMs": 358.1,
-        "firstUsableRenderMs": 405.3,
+        "firstUsefulContentMs": 370,
+        "firstUsableRenderMs": 406.9,
         "gzipClosureBytes": 291408,
-        "htmlBytes": 74430,
-        "hydrationTotalBytes": 60356,
+        "htmlBytes": 25798,
+        "hydrationTotalBytes": 3850,
         "jsRequestCount": 36,
-        "layoutShift": 0.001134,
-        "loadingShellObserved": false,
+        "layoutShift": 0.066578,
+        "loadingShellObserved": true,
         "rawClosureBytes": 923436,
         "sqlitePhases": {
           "count": { "count": 0, "p50Ms": 0, "p95Ms": 0, "totalMs": 0 },
@@ -352,68 +187,68 @@
           "projection": { "count": 0, "p50Ms": 0, "p95Ms": 0, "totalMs": 0 },
           "slice": { "count": 0, "p50Ms": 0, "p95Ms": 0, "totalMs": 0 }
         },
-        "ttfbMs": 200.934,
+        "ttfbMs": 26.049,
         "url": "/?tab=models"
       },
       {
-        "businessRpcCountBeforeHydration": 4,
+        "businessRpcCountBeforeHydration": 6,
         "businessRpcCountAfterHydration": 0,
         "brotliClosureBytes": 265573,
         "chunkCount": 40,
         "cssRequestCount": 2,
-        "firstUsefulContentMs": 441.9,
-        "firstUsableRenderMs": 531.3,
+        "firstUsefulContentMs": 388.2,
+        "firstUsableRenderMs": 473.8,
         "gzipClosureBytes": 306488,
-        "htmlBytes": 483810,
-        "hydrationTotalBytes": 489438,
+        "htmlBytes": 26790,
+        "hydrationTotalBytes": 3850,
         "jsRequestCount": 38,
-        "layoutShift": 0.001134,
+        "layoutShift": 0.327208,
         "loadingShellObserved": false,
         "rawClosureBytes": 978193,
         "sqlitePhases": {
           "count": {
             "count": 1,
-            "p50Ms": 7.769,
-            "p95Ms": 7.769,
-            "totalMs": 7.769
+            "p50Ms": 6.44,
+            "p95Ms": 6.44,
+            "totalMs": 6.44
           },
           "identity": {
             "count": 1,
-            "p50Ms": 0.033,
-            "p95Ms": 0.033,
-            "totalMs": 0.033
+            "p50Ms": 0.037,
+            "p95Ms": 0.037,
+            "totalMs": 0.037
           },
           "materialize": {
             "count": 1,
-            "p50Ms": 4.741,
-            "p95Ms": 4.741,
-            "totalMs": 4.741
+            "p50Ms": 4.443,
+            "p95Ms": 4.443,
+            "totalMs": 4.443
           },
           "projection": { "count": 0, "p50Ms": 0, "p95Ms": 0, "totalMs": 0 },
           "slice": {
             "count": 1,
-            "p50Ms": 0.008,
-            "p95Ms": 0.008,
-            "totalMs": 0.008
+            "p50Ms": 0.005,
+            "p95Ms": 0.005,
+            "totalMs": 0.005
           }
         },
-        "ttfbMs": 211.517,
+        "ttfbMs": 26.596,
         "url": "/?q=codex&sort=%7B%22id%22%3A%22project%22%2C%22desc%22%3Afalse%7D&tab=sessions"
       },
       {
-        "businessRpcCountBeforeHydration": 4,
+        "businessRpcCountBeforeHydration": 6,
         "businessRpcCountAfterHydration": 0,
         "brotliClosureBytes": 252126,
         "chunkCount": 38,
         "cssRequestCount": 2,
-        "firstUsefulContentMs": 419.4,
-        "firstUsableRenderMs": 459.6,
+        "firstUsefulContentMs": 376.1,
+        "firstUsableRenderMs": 418.2,
         "gzipClosureBytes": 291408,
-        "htmlBytes": 74588,
-        "hydrationTotalBytes": 60356,
+        "htmlBytes": 25956,
+        "hydrationTotalBytes": 3850,
         "jsRequestCount": 36,
-        "layoutShift": 0.001134,
-        "loadingShellObserved": false,
+        "layoutShift": 0.066578,
+        "loadingShellObserved": true,
         "rawClosureBytes": 923436,
         "sqlitePhases": {
           "count": { "count": 0, "p50Ms": 0, "p95Ms": 0, "totalMs": 0 },
@@ -422,7 +257,7 @@
           "projection": { "count": 0, "p50Ms": 0, "p95Ms": 0, "totalMs": 0 },
           "slice": { "count": 0, "p50Ms": 0, "p95Ms": 0, "totalMs": 0 }
         },
-        "ttfbMs": 256.772,
+        "ttfbMs": 25.727,
         "url": "/?breakdownSort=sessions&tab=projects"
       },
       {
@@ -431,8 +266,8 @@
         "brotliClosureBytes": 242995,
         "chunkCount": 37,
         "cssRequestCount": 2,
-        "firstUsefulContentMs": 162.8,
-        "firstUsableRenderMs": 354.2,
+        "firstUsefulContentMs": 154.3,
+        "firstUsableRenderMs": 367.2,
         "gzipClosureBytes": 280896,
         "htmlBytes": 126266,
         "hydrationTotalBytes": 58926,
@@ -447,100 +282,30 @@
           "projection": { "count": 0, "p50Ms": 0, "p95Ms": 0, "totalMs": 0 },
           "slice": { "count": 0, "p50Ms": 0, "p95Ms": 0, "totalMs": 0 }
         },
-        "ttfbMs": 152.545,
+        "ttfbMs": 139.101,
         "url": "/"
       },
       {
-        "businessRpcCountBeforeHydration": 4,
+        "businessRpcCountBeforeHydration": 6,
         "businessRpcCountAfterHydration": 0,
         "brotliClosureBytes": 265573,
         "chunkCount": 40,
         "cssRequestCount": 2,
-        "firstUsefulContentMs": 444,
-        "firstUsableRenderMs": 525.5,
+        "firstUsefulContentMs": 372.8,
+        "firstUsableRenderMs": 456.1,
         "gzipClosureBytes": 306488,
-        "htmlBytes": 482613,
-        "hydrationTotalBytes": 489216,
+        "htmlBytes": 25755,
+        "hydrationTotalBytes": 3850,
         "jsRequestCount": 38,
-        "layoutShift": 0.001134,
+        "layoutShift": 0.321994,
         "loadingShellObserved": false,
         "rawClosureBytes": 978193,
         "sqlitePhases": {
           "count": {
             "count": 1,
-            "p50Ms": 6.99,
-            "p95Ms": 6.99,
-            "totalMs": 6.99
-          },
-          "identity": {
-            "count": 1,
-            "p50Ms": 0.027,
-            "p95Ms": 0.027,
-            "totalMs": 0.027
-          },
-          "materialize": {
-            "count": 1,
-            "p50Ms": 4.56,
-            "p95Ms": 4.56,
-            "totalMs": 4.56
-          },
-          "projection": { "count": 0, "p50Ms": 0, "p95Ms": 0, "totalMs": 0 },
-          "slice": {
-            "count": 1,
-            "p50Ms": 0.006,
-            "p95Ms": 0.006,
-            "totalMs": 0.006
-          }
-        },
-        "ttfbMs": 183.905,
-        "url": "/?tab=sessions"
-      },
-      {
-        "businessRpcCountBeforeHydration": 4,
-        "businessRpcCountAfterHydration": 0,
-        "brotliClosureBytes": 252126,
-        "chunkCount": 38,
-        "cssRequestCount": 2,
-        "firstUsefulContentMs": 406.1,
-        "firstUsableRenderMs": 455.5,
-        "gzipClosureBytes": 291408,
-        "htmlBytes": 74430,
-        "hydrationTotalBytes": 60356,
-        "jsRequestCount": 36,
-        "layoutShift": 0.001134,
-        "loadingShellObserved": false,
-        "rawClosureBytes": 923436,
-        "sqlitePhases": {
-          "count": { "count": 0, "p50Ms": 0, "p95Ms": 0, "totalMs": 0 },
-          "identity": { "count": 0, "p50Ms": 0, "p95Ms": 0, "totalMs": 0 },
-          "materialize": { "count": 0, "p50Ms": 0, "p95Ms": 0, "totalMs": 0 },
-          "projection": { "count": 0, "p50Ms": 0, "p95Ms": 0, "totalMs": 0 },
-          "slice": { "count": 0, "p50Ms": 0, "p95Ms": 0, "totalMs": 0 }
-        },
-        "ttfbMs": 239.261,
-        "url": "/?tab=models"
-      },
-      {
-        "businessRpcCountBeforeHydration": 4,
-        "businessRpcCountAfterHydration": 0,
-        "brotliClosureBytes": 265573,
-        "chunkCount": 40,
-        "cssRequestCount": 2,
-        "firstUsefulContentMs": 441.7,
-        "firstUsableRenderMs": 539.3,
-        "gzipClosureBytes": 306488,
-        "htmlBytes": 483810,
-        "hydrationTotalBytes": 489438,
-        "jsRequestCount": 38,
-        "layoutShift": 0.001134,
-        "loadingShellObserved": false,
-        "rawClosureBytes": 978193,
-        "sqlitePhases": {
-          "count": {
-            "count": 1,
-            "p50Ms": 7.736,
-            "p95Ms": 7.736,
-            "totalMs": 7.736
+            "p50Ms": 6.166,
+            "p95Ms": 6.166,
+            "totalMs": 6.166
           },
           "identity": {
             "count": 1,
@@ -550,35 +315,35 @@
           },
           "materialize": {
             "count": 1,
-            "p50Ms": 4.389,
-            "p95Ms": 4.389,
-            "totalMs": 4.389
+            "p50Ms": 4.019,
+            "p95Ms": 4.019,
+            "totalMs": 4.019
           },
           "projection": { "count": 0, "p50Ms": 0, "p95Ms": 0, "totalMs": 0 },
           "slice": {
             "count": 1,
-            "p50Ms": 0.009,
-            "p95Ms": 0.009,
-            "totalMs": 0.009
+            "p50Ms": 0.005,
+            "p95Ms": 0.005,
+            "totalMs": 0.005
           }
         },
-        "ttfbMs": 209.574,
-        "url": "/?q=codex&sort=%7B%22id%22%3A%22project%22%2C%22desc%22%3Afalse%7D&tab=sessions"
+        "ttfbMs": 25.747,
+        "url": "/?tab=sessions"
       },
       {
-        "businessRpcCountBeforeHydration": 4,
+        "businessRpcCountBeforeHydration": 6,
         "businessRpcCountAfterHydration": 0,
         "brotliClosureBytes": 252126,
         "chunkCount": 38,
         "cssRequestCount": 2,
-        "firstUsefulContentMs": 429,
-        "firstUsableRenderMs": 472.1,
+        "firstUsefulContentMs": 381.8,
+        "firstUsableRenderMs": 415,
         "gzipClosureBytes": 291408,
-        "htmlBytes": 74588,
-        "hydrationTotalBytes": 60356,
+        "htmlBytes": 25798,
+        "hydrationTotalBytes": 3850,
         "jsRequestCount": 36,
-        "layoutShift": 0.001134,
-        "loadingShellObserved": false,
+        "layoutShift": 0.066578,
+        "loadingShellObserved": true,
         "rawClosureBytes": 923436,
         "sqlitePhases": {
           "count": { "count": 0, "p50Ms": 0, "p95Ms": 0, "totalMs": 0 },
@@ -587,7 +352,242 @@
           "projection": { "count": 0, "p50Ms": 0, "p95Ms": 0, "totalMs": 0 },
           "slice": { "count": 0, "p50Ms": 0, "p95Ms": 0, "totalMs": 0 }
         },
-        "ttfbMs": 237.405,
+        "ttfbMs": 25.414,
+        "url": "/?tab=models"
+      },
+      {
+        "businessRpcCountBeforeHydration": 6,
+        "businessRpcCountAfterHydration": 0,
+        "brotliClosureBytes": 265573,
+        "chunkCount": 40,
+        "cssRequestCount": 2,
+        "firstUsefulContentMs": 391.1,
+        "firstUsableRenderMs": 480.6,
+        "gzipClosureBytes": 306488,
+        "htmlBytes": 26790,
+        "hydrationTotalBytes": 3850,
+        "jsRequestCount": 38,
+        "layoutShift": 0.327208,
+        "loadingShellObserved": false,
+        "rawClosureBytes": 978193,
+        "sqlitePhases": {
+          "count": {
+            "count": 1,
+            "p50Ms": 6.383,
+            "p95Ms": 6.383,
+            "totalMs": 6.383
+          },
+          "identity": {
+            "count": 1,
+            "p50Ms": 0.033,
+            "p95Ms": 0.033,
+            "totalMs": 0.033
+          },
+          "materialize": {
+            "count": 1,
+            "p50Ms": 4.11,
+            "p95Ms": 4.11,
+            "totalMs": 4.11
+          },
+          "projection": { "count": 0, "p50Ms": 0, "p95Ms": 0, "totalMs": 0 },
+          "slice": {
+            "count": 1,
+            "p50Ms": 0.004,
+            "p95Ms": 0.004,
+            "totalMs": 0.004
+          }
+        },
+        "ttfbMs": 25.273,
+        "url": "/?q=codex&sort=%7B%22id%22%3A%22project%22%2C%22desc%22%3Afalse%7D&tab=sessions"
+      },
+      {
+        "businessRpcCountBeforeHydration": 6,
+        "businessRpcCountAfterHydration": 0,
+        "brotliClosureBytes": 252126,
+        "chunkCount": 38,
+        "cssRequestCount": 2,
+        "firstUsefulContentMs": 373.2,
+        "firstUsableRenderMs": 410.4,
+        "gzipClosureBytes": 291408,
+        "htmlBytes": 25956,
+        "hydrationTotalBytes": 3850,
+        "jsRequestCount": 36,
+        "layoutShift": 0.066578,
+        "loadingShellObserved": true,
+        "rawClosureBytes": 923436,
+        "sqlitePhases": {
+          "count": { "count": 0, "p50Ms": 0, "p95Ms": 0, "totalMs": 0 },
+          "identity": { "count": 0, "p50Ms": 0, "p95Ms": 0, "totalMs": 0 },
+          "materialize": { "count": 0, "p50Ms": 0, "p95Ms": 0, "totalMs": 0 },
+          "projection": { "count": 0, "p50Ms": 0, "p95Ms": 0, "totalMs": 0 },
+          "slice": { "count": 0, "p50Ms": 0, "p95Ms": 0, "totalMs": 0 }
+        },
+        "ttfbMs": 26.792,
+        "url": "/?breakdownSort=sessions&tab=projects"
+      },
+      {
+        "businessRpcCountBeforeHydration": 4,
+        "businessRpcCountAfterHydration": 0,
+        "brotliClosureBytes": 242995,
+        "chunkCount": 37,
+        "cssRequestCount": 2,
+        "firstUsefulContentMs": 147.1,
+        "firstUsableRenderMs": 360.7,
+        "gzipClosureBytes": 280896,
+        "htmlBytes": 126266,
+        "hydrationTotalBytes": 58926,
+        "jsRequestCount": 35,
+        "layoutShift": 0.001134,
+        "loadingShellObserved": false,
+        "rawClosureBytes": 894322,
+        "sqlitePhases": {
+          "count": { "count": 0, "p50Ms": 0, "p95Ms": 0, "totalMs": 0 },
+          "identity": { "count": 0, "p50Ms": 0, "p95Ms": 0, "totalMs": 0 },
+          "materialize": { "count": 0, "p50Ms": 0, "p95Ms": 0, "totalMs": 0 },
+          "projection": { "count": 0, "p50Ms": 0, "p95Ms": 0, "totalMs": 0 },
+          "slice": { "count": 0, "p50Ms": 0, "p95Ms": 0, "totalMs": 0 }
+        },
+        "ttfbMs": 134.052,
+        "url": "/"
+      },
+      {
+        "businessRpcCountBeforeHydration": 6,
+        "businessRpcCountAfterHydration": 0,
+        "brotliClosureBytes": 265573,
+        "chunkCount": 40,
+        "cssRequestCount": 2,
+        "firstUsefulContentMs": 386,
+        "firstUsableRenderMs": 480.6,
+        "gzipClosureBytes": 306488,
+        "htmlBytes": 25755,
+        "hydrationTotalBytes": 3850,
+        "jsRequestCount": 38,
+        "layoutShift": 0.321994,
+        "loadingShellObserved": false,
+        "rawClosureBytes": 978193,
+        "sqlitePhases": {
+          "count": {
+            "count": 1,
+            "p50Ms": 6.703,
+            "p95Ms": 6.703,
+            "totalMs": 6.703
+          },
+          "identity": {
+            "count": 1,
+            "p50Ms": 0.036,
+            "p95Ms": 0.036,
+            "totalMs": 0.036
+          },
+          "materialize": {
+            "count": 1,
+            "p50Ms": 3.87,
+            "p95Ms": 3.87,
+            "totalMs": 3.87
+          },
+          "projection": { "count": 0, "p50Ms": 0, "p95Ms": 0, "totalMs": 0 },
+          "slice": {
+            "count": 1,
+            "p50Ms": 0.005,
+            "p95Ms": 0.005,
+            "totalMs": 0.005
+          }
+        },
+        "ttfbMs": 26.61,
+        "url": "/?tab=sessions"
+      },
+      {
+        "businessRpcCountBeforeHydration": 6,
+        "businessRpcCountAfterHydration": 0,
+        "brotliClosureBytes": 252126,
+        "chunkCount": 38,
+        "cssRequestCount": 2,
+        "firstUsefulContentMs": 374.4,
+        "firstUsableRenderMs": 485.3,
+        "gzipClosureBytes": 291408,
+        "htmlBytes": 25798,
+        "hydrationTotalBytes": 3850,
+        "jsRequestCount": 36,
+        "layoutShift": 0.066578,
+        "loadingShellObserved": true,
+        "rawClosureBytes": 923436,
+        "sqlitePhases": {
+          "count": { "count": 0, "p50Ms": 0, "p95Ms": 0, "totalMs": 0 },
+          "identity": { "count": 0, "p50Ms": 0, "p95Ms": 0, "totalMs": 0 },
+          "materialize": { "count": 0, "p50Ms": 0, "p95Ms": 0, "totalMs": 0 },
+          "projection": { "count": 0, "p50Ms": 0, "p95Ms": 0, "totalMs": 0 },
+          "slice": { "count": 0, "p50Ms": 0, "p95Ms": 0, "totalMs": 0 }
+        },
+        "ttfbMs": 25.368,
+        "url": "/?tab=models"
+      },
+      {
+        "businessRpcCountBeforeHydration": 6,
+        "businessRpcCountAfterHydration": 0,
+        "brotliClosureBytes": 265573,
+        "chunkCount": 40,
+        "cssRequestCount": 2,
+        "firstUsefulContentMs": 397.3,
+        "firstUsableRenderMs": 492.6,
+        "gzipClosureBytes": 306488,
+        "htmlBytes": 26790,
+        "hydrationTotalBytes": 3850,
+        "jsRequestCount": 38,
+        "layoutShift": 0.327208,
+        "loadingShellObserved": false,
+        "rawClosureBytes": 978193,
+        "sqlitePhases": {
+          "count": {
+            "count": 1,
+            "p50Ms": 6.547,
+            "p95Ms": 6.547,
+            "totalMs": 6.547
+          },
+          "identity": {
+            "count": 1,
+            "p50Ms": 0.042,
+            "p95Ms": 0.042,
+            "totalMs": 0.042
+          },
+          "materialize": {
+            "count": 1,
+            "p50Ms": 4.354,
+            "p95Ms": 4.354,
+            "totalMs": 4.354
+          },
+          "projection": { "count": 0, "p50Ms": 0, "p95Ms": 0, "totalMs": 0 },
+          "slice": {
+            "count": 1,
+            "p50Ms": 0.005,
+            "p95Ms": 0.005,
+            "totalMs": 0.005
+          }
+        },
+        "ttfbMs": 32.066,
+        "url": "/?q=codex&sort=%7B%22id%22%3A%22project%22%2C%22desc%22%3Afalse%7D&tab=sessions"
+      },
+      {
+        "businessRpcCountBeforeHydration": 6,
+        "businessRpcCountAfterHydration": 0,
+        "brotliClosureBytes": 252126,
+        "chunkCount": 38,
+        "cssRequestCount": 2,
+        "firstUsefulContentMs": 395.5,
+        "firstUsableRenderMs": 430.8,
+        "gzipClosureBytes": 291408,
+        "htmlBytes": 25956,
+        "hydrationTotalBytes": 3850,
+        "jsRequestCount": 36,
+        "layoutShift": 0.066578,
+        "loadingShellObserved": true,
+        "rawClosureBytes": 923436,
+        "sqlitePhases": {
+          "count": { "count": 0, "p50Ms": 0, "p95Ms": 0, "totalMs": 0 },
+          "identity": { "count": 0, "p50Ms": 0, "p95Ms": 0, "totalMs": 0 },
+          "materialize": { "count": 0, "p50Ms": 0, "p95Ms": 0, "totalMs": 0 },
+          "projection": { "count": 0, "p50Ms": 0, "p95Ms": 0, "totalMs": 0 },
+          "slice": { "count": 0, "p50Ms": 0, "p95Ms": 0, "totalMs": 0 }
+        },
+        "ttfbMs": 30.865,
         "url": "/?breakdownSort=sessions&tab=projects"
       }
     ]
