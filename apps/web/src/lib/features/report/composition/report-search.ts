@@ -20,7 +20,7 @@ export interface ReportDestinationSnapshot {
   readonly sessions: SessionQueryScopeSnapshot;
 }
 
-const SERVED_SESSION_PAGE_SIZE = 100;
+export const SERVED_SESSION_PAGE_SIZE = 200;
 
 export const reportFilterFingerprint = (filters: FocusedQuerySnapshot['filters']): string => JSON.stringify(filters);
 
