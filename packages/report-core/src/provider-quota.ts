@@ -185,6 +185,188 @@ export const normalizeCodexAppServerQuotaObservation = (
   };
 };
 
+export interface NormalizeClaudeAgentSdkQuotaInput {
+  accountScope?: string | null;
+  machineId: string;
+  machineLabel?: string | null;
+  observedAt: Date | string;
+  result: unknown;
+}
+
+/**
+ * The `limits[]` entries the SDK returns are named by `kind`. These are display names only — `kind`
+ * is what identifies a window, so an unknown kind still produces a usable window rather than being
+ * dropped.
+ */
+const CLAUDE_WINDOW_LABELS: Readonly<Record<string, string>> = {
+  session: '5h',
+  weekly_all: 'Weekly',
+  weekly_opus: 'Weekly · Opus',
+  weekly_sonnet: 'Weekly · Sonnet',
+};
+
+const CLAUDE_WINDOW_GROUPS: Readonly<Record<string, string>> = {
+  monthly: 'monthly',
+  session: '5h',
+  weekly: 'weekly',
+};
+
+const FIRST_CHARACTER_PATTERN = /^./;
+
+const humanizeWindowKind = (kind: string): string =>
+  kind.replaceAll('_', ' ').replace(FIRST_CHARACTER_PATTERN, (character) => character.toUpperCase());
+
+/**
+ * The SDK never reports a window duration, so `limitSeconds` stays null rather than being guessed
+ * from the group — an invented duration would flow into labels and history bucketing as if measured.
+ */
+const claudeWindow = (raw: unknown): ProviderLimitWindow | null => {
+  if (!isRecord(raw)) {
+    return null;
+  }
+  const kind = nonEmptyString(raw.kind);
+  if (!kind) {
+    return null;
+  }
+  const usedPercent = clampPercent(raw.percent);
+  const resetsAt = normalizeIsoTimestamp(raw.resets_at);
+  if (usedPercent === null && resetsAt === null) {
+    return null;
+  }
+  const group = nonEmptyString(raw.group);
+  const scope = nonEmptyString(raw.scope);
+  return {
+    // `severity` is graded, not binary — it already reads `warning` around 75% — so it must not drive
+    // `blocked`, which the UI renders as critical. Exhaustion is the only unambiguous signal, and on
+    // an API this unstable an unrecognised future severity would over-report rather than under-report.
+    // The percentage still carries the pressure; the report's own warning band starts at 80%.
+    blocked: usedPercent === 100,
+    group: group === null ? null : (CLAUDE_WINDOW_GROUPS[group] ?? group),
+    id: kind,
+    label: CLAUDE_WINDOW_LABELS[kind] ?? humanizeWindowKind(kind),
+    limitSeconds: null,
+    remainingPercent: remainingPercentFromUsed(usedPercent),
+    resetsAt,
+    scope: scope === null ? 'global' : 'model',
+    usedPercent,
+  };
+};
+
+/** Repli quand `limits[]` est absent : les membres nommés portent la même donnée, en moins riche. */
+const claudeNamedWindow = (raw: unknown, id: string, label: string, group: string): ProviderLimitWindow | null => {
+  if (!isRecord(raw)) {
+    return null;
+  }
+  const usedPercent = clampPercent(raw.utilization);
+  const resetsAt = normalizeIsoTimestamp(raw.resets_at);
+  if (usedPercent === null && resetsAt === null) {
+    return null;
+  }
+  return {
+    blocked: usedPercent === 100,
+    group,
+    id,
+    label,
+    limitSeconds: null,
+    remainingPercent: remainingPercentFromUsed(usedPercent),
+    resetsAt,
+    scope: 'global',
+    usedPercent,
+  };
+};
+
+const claudeModelScopedWindows = (raw: unknown): ProviderLimitWindow[] => {
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  const windows: ProviderLimitWindow[] = [];
+  for (const entry of raw) {
+    if (!isRecord(entry)) {
+      continue;
+    }
+    const displayName = nonEmptyString(entry.display_name);
+    const usedPercent = clampPercent(entry.utilization);
+    const resetsAt = normalizeIsoTimestamp(entry.resets_at);
+    if (!displayName || (usedPercent === null && resetsAt === null)) {
+      continue;
+    }
+    windows.push({
+      blocked: usedPercent === 100,
+      group: 'weekly',
+      id: `model:${displayName}`,
+      label: `${displayName} · Weekly`,
+      limitSeconds: null,
+      remainingPercent: remainingPercentFromUsed(usedPercent),
+      resetsAt,
+      scope: 'model',
+      usedPercent,
+    });
+  }
+  return windows;
+};
+
+/**
+ * Normalises the Agent SDK's experimental usage payload. Everything is treated as untrusted: the API
+ * is explicitly unstable, so a renamed or removed field must degrade to a window-less `unsupported`
+ * observation rather than throw and take the whole refresh down with it.
+ */
+export const normalizeClaudeAgentSdkQuotaObservation = (
+  input: NormalizeClaudeAgentSdkQuotaInput,
+): ProviderQuotaObservation | null => {
+  if (!isRecord(input.result)) {
+    return null;
+  }
+  const observedAt = normalizeIsoTimestamp(input.observedAt);
+  if (!(observedAt && nonEmptyString(input.machineId))) {
+    return null;
+  }
+  const root = input.result.rate_limits;
+  const available = input.result.rate_limits_available !== false && isRecord(root);
+  const windows = new Map<string, ProviderLimitWindow>();
+  if (isRecord(root)) {
+    // `limits[]` is preferred: it is the flat, extensible shape, and it alone carries severity.
+    for (const entry of Array.isArray(root.limits) ? root.limits : []) {
+      const window = claudeWindow(entry);
+      if (window && !windows.has(window.id)) {
+        windows.set(window.id, window);
+      }
+    }
+    if (windows.size === 0) {
+      const named = [
+        claudeNamedWindow(root.five_hour, 'session', '5h', '5h'),
+        claudeNamedWindow(root.seven_day, 'weekly_all', 'Weekly', 'weekly'),
+      ];
+      for (const window of named) {
+        if (window) {
+          windows.set(window.id, window);
+        }
+      }
+    }
+    for (const window of claudeModelScopedWindows(root.model_scoped)) {
+      if (!windows.has(window.id)) {
+        windows.set(window.id, window);
+      }
+    }
+  }
+  const normalizedWindows = [...windows.values()];
+  const incomplete = normalizedWindows.length === 0 || normalizedWindows.some((window) => window.blocked);
+  const measuredState: ProviderStatusState = incomplete ? 'partial' : 'ok';
+  const state: ProviderStatusState = available ? measuredState : 'unsupported';
+  return {
+    accountScope: input.accountScope ?? null,
+    machineId: input.machineId,
+    machineLabel: input.machineLabel ?? null,
+    observedAt,
+    plan: nonEmptyString(input.result.subscription_type),
+    providerGeneratedAt: null,
+    providerKey: 'claude',
+    providerLabel: 'Claude',
+    source: { confidence: 'authoritative', key: 'claude-agent-sdk', mode: 'poll' },
+    state,
+    windows: normalizedWindows,
+  };
+};
+
 const SOURCE_CONFIDENCES = new Set(['authoritative', 'historical', 'derived']);
 const SOURCE_MODES = new Set(['poll', 'push', 'backfill']);
 const STATUS_STATES = new Set(['ok', 'partial', 'auth-required', 'unsupported', 'stale', 'error']);

@@ -26,7 +26,8 @@
 - **Category**: architecture, performance, correctness, tests, dx
 - **Planned at**: commit `c1eef7b0`, 2026-08-07; current dirty worktree also
   inspected and must be reconciled before execution
-- **Status**: IN PROGRESS — Gate 5 functionally green; integrated parity evidence pending
+- **Status**: IN PROGRESS — Gate 5 functionally green; shared-worktree browser
+  reconciliation pending
 
 ## Why this matters
 
@@ -676,3 +677,9 @@ family is added.
   are committed and integrated. Plan 069 and its plans-index row therefore
   remain in progress/TODO; after integration, add the real evidence SHA, rerun
   `bun run test`, then mark the plan DONE.
+- 2026-08-08 — Plan 070 retired the one-time parity ledger rather than extending
+  it after cutover. Request-policy coverage now derives from the live RPC path
+  map, and the package/tool suites are green without evidence bookkeeping. Plan
+  069 remains open only for current shared-worktree browser reconciliation: two
+  route-data requests are reported as aborted in sidebar/history scenarios while
+  concurrent presentation work is active.

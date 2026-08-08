@@ -13,7 +13,7 @@ concurrency:
 
 jobs:
   static-types:
-    name: Static, Types, Parity
+    name: Static and Types
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -27,7 +27,6 @@ jobs:
       - run: bun run check
       - run: bun run lint
       - run: bun run typecheck
-      - run: bun run test:web-migration-parity
 
   unit-build:
     name: Unit, Build, Client Boundary
@@ -44,7 +43,6 @@ jobs:
       - run: bun run test
       - run: bun run build
       - run: bun run test:web-client-manifest
-      - run: bun run test:web-retired-stack-build
 
   lifecycle:
     name: Production and Lifecycle

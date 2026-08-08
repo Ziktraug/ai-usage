@@ -154,8 +154,14 @@ browser tests.
 - [Plan 068](../../plans/068-migrate-web-to-sveltekit-orpc.md)
 - [ADR 0007](0007-server-render-report-bootstrap.md)
 - [ADR 0009](0009-sole-writer-usage-engine-and-direct-sqlite-readers.md)
-- [Wave-0 parity ledger](../../apps/web/migration-parity/CONVENTIONS.md)
+- Wave-0 parity ledger (retired after cutover; acceptance evidence remains in
+  Plan 068 and its execution state)
 - [Wave-0 performance baseline](../performance/web-framework-migration-baseline.md)
 - Contract, boundary, SSR/hydration, cache-policy, demo, production lifecycle,
   long-SSE, file-transfer, browser, scale, and client-manifest gates named by
   Plan 068
+
+The operation ledger and retired Solid/TanStack Start/Nitro scanners were
+migration acceptance scaffolding. Plan 070 removed their executable forms after
+cutover; current request-policy tests and capability-based client-manifest checks
+own the lasting boundaries.

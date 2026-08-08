@@ -108,45 +108,6 @@ const forbiddenModuleRules: readonly ForbiddenModuleRule[] = [
     matches: (moduleId) => serverModulePattern.test(normalizedModuleId(moduleId)),
     name: '.server module',
   },
-  {
-    matches: (moduleId) => {
-      const normalized = normalizedModuleId(moduleId);
-      return normalized.includes('@tanstack/start-') || includesPathSegment(normalized, '@tanstack/router-core');
-    },
-    name: 'retired TanStack Start/Router module',
-  },
-  {
-    matches: (moduleId) => {
-      const normalized = normalizedModuleId(moduleId);
-      return (
-        includesPathSegment(normalized, 'solid-js') ||
-        normalized.includes('@tanstack/solid') ||
-        includesPathSegment(normalized, 'vite-solid') ||
-        includesPathSegment(normalized, 'vite-plugin-solid') ||
-        includesPathSegment(normalized, 'lucide-solid') ||
-        includesPathSegment(normalized, '@ark-ui/solid')
-      );
-    },
-    name: 'retired Solid/TanStack module',
-  },
-  {
-    matches: (moduleId) => {
-      const normalized = normalizedModuleId(moduleId);
-      return (
-        includesPathSegment(normalized, 'nitro') ||
-        includesPathSegment(normalized, 'nitropack') ||
-        normalized.includes('nitro-loopback')
-      );
-    },
-    name: 'retired Nitro module',
-  },
-  {
-    matches: (moduleId) => {
-      const normalized = normalizedModuleId(moduleId);
-      return normalized.includes('createserverfn') || normalized.includes('_serverfn');
-    },
-    name: 'retired createServerFn module',
-  },
 ];
 
 export const parseWebClientModuleManifest = (text: string): WebClientModuleManifest => {

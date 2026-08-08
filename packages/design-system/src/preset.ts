@@ -136,6 +136,16 @@ export const aiUsagePreset = definePreset({
             c6: dual('#0F6FA8', '#5FB5E2'),
           },
 
+          // Provider identity marks, taken from each vendor's own published favicon. These are not
+          // series colors: `harness.*` below stays the validated categorical palette charts use to
+          // separate N series, while these identify one provider on its own badge. Cursor and
+          // OpenCode publish monochrome marks, so they have no entry and fall back to `harness.*`.
+          // Both are contrast-checked against the light and dark chart surfaces.
+          brand: {
+            claude: dual('#C4603F', '#D97757'),
+            codex: dual('#0068C9', '#3D9DFA'),
+          },
+
           // Harness badge pairs, recalibrated per scheme.
           harness: {
             claude: { fg: dual('#8C3E74', '#D98ABC'), bg: dual('#F5E5EF', '#351E2F') },

@@ -18,11 +18,16 @@ export interface ProviderQuotaRailWindow {
   blocked: boolean;
   id: string;
   label: string;
+  /** Carried alongside the used figure so the readout can state both directions explicitly. */
+  remainingPercent: number | null;
   resetsAt: string | null;
+  severity: ProviderQuotaSeverity;
   usedPercent: number | null;
 }
 
 export interface ProviderQuotaRailEntry {
+  /** How long ago the reading was taken, in milliseconds; null when nothing was ever read. */
+  ageMs: number | null;
   key: HarnessKey;
   label: string;
   machineLabel: string | null;
@@ -31,6 +36,12 @@ export interface ProviderQuotaRailEntry {
   planLabel: string | null;
   reason: string;
   severity: ProviderQuotaSeverity;
+  /**
+   * The reading has aged past the provider-status freshness cutoff. A stale percentage is still
+   * information, but it must not be drawn as confidently as a live one — quota moves fast enough that
+   * a reading from two hours ago can be tens of points wrong.
+   */
+  stale: boolean;
   usedPercent: number | null;
   windows: ProviderQuotaRailWindow[];
 }
@@ -71,15 +82,26 @@ const nextResetAt = (windows: readonly ProviderLimitWindow[], now: Date): string
   return nextIso;
 };
 
+/**
+ * One window's own pressure. The provider-level severity below folds the worst of these together,
+ * but each window keeps its own so a five-hour allowance that is barely touched does not inherit the
+ * alarm of an almost-spent weekly one.
+ */
+export const severityForWindow = (usedPercent: number | null, blocked: boolean): ProviderQuotaSeverity => {
+  if (blocked) {
+    return 'danger';
+  }
+  if (usedPercent === null) {
+    return 'unknown';
+  }
+  return usedPercent >= WARNING_USED_PERCENT ? 'warning' : 'ok';
+};
+
 const severityFor = (state: ProviderStatusState, windows: readonly ProviderLimitWindow[]): ProviderQuotaSeverity => {
   if (state === 'error' || state === 'auth-required' || windows.some((window) => window.blocked)) {
     return 'danger';
   }
-  const used = worstUsedPercent(windows);
-  if (used === null) {
-    return 'unknown';
-  }
-  return used >= WARNING_USED_PERCENT ? 'warning' : 'ok';
+  return severityForWindow(worstUsedPercent(windows), false);
 };
 
 const reasonFor = (status: ProviderStatus, windows: readonly ProviderLimitWindow[]): string => {
@@ -121,6 +143,7 @@ const preferredStatus = (candidates: readonly ProviderStatus[]): ProviderStatus 
 };
 
 const unmeasuredEntry = (key: HarnessKey): ProviderQuotaRailEntry => ({
+  ageMs: null,
   key,
   label: RAIL_PROVIDER_LABELS[key],
   machineLabel: null,
@@ -129,6 +152,7 @@ const unmeasuredEntry = (key: HarnessKey): ProviderQuotaRailEntry => ({
   planLabel: null,
   reason: 'No quota source',
   severity: 'unknown',
+  stale: false,
   usedPercent: null,
   windows: [],
 });
@@ -137,14 +161,20 @@ const toRailWindow = (window: ProviderLimitWindow): ProviderQuotaRailWindow => (
   blocked: window.blocked,
   id: window.id,
   label: window.label,
+  // Derived rather than trusted: providers disagree on which direction they publish, and a stored
+  // remaining figure that contradicts its own used figure would be worse than no figure at all.
+  remainingPercent: window.usedPercent === null ? null : Math.max(0, 100 - window.usedPercent),
   resetsAt: window.resetsAt,
+  severity: severityForWindow(window.usedPercent, window.blocked),
   usedPercent: window.usedPercent,
 });
 
 const toRailEntry = (key: HarnessKey, status: ProviderStatus, now: Date): ProviderQuotaRailEntry => {
   const fresh = providerStatusWithFreshness(status, now);
   const planParts = [fresh.plan, fresh.accountLabel].filter((value) => value?.trim());
+  const generatedAt = new Date(fresh.generatedAt).getTime();
   return {
+    ageMs: Number.isFinite(generatedAt) ? Math.max(0, now.getTime() - generatedAt) : null,
     key,
     label: RAIL_PROVIDER_LABELS[key],
     machineLabel: fresh.machineLabel ?? null,
@@ -153,6 +183,7 @@ const toRailEntry = (key: HarnessKey, status: ProviderStatus, now: Date): Provid
     planLabel: planParts.length > 0 ? planParts.join(' · ') : null,
     reason: reasonFor(fresh, fresh.windows),
     severity: severityFor(fresh.state, fresh.windows),
+    stale: fresh.state === 'stale',
     usedPercent: worstUsedPercent(fresh.windows),
     windows: fresh.windows.map(toRailWindow),
   };

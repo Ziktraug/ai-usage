@@ -417,8 +417,11 @@ test('quota reports a paused policy without invoking the provider', async () => 
     await mkdir(configDirectory, { mode: 0o700, recursive: true });
     await writeFile(
       path.join(configDirectory, 'config.json'),
+      // Every provider-usage source, not just one: the command is only fatal when they are all
+      // paused, and leaving one enabled would have this sandbox poll a live provider.
       JSON.stringify({
         sourcePolicies: {
+          'claude.usage-limits': { enabled: false },
           'codex.usage-limits': { enabled: false },
         },
       }),
@@ -428,7 +431,7 @@ test('quota reports a paused policy without invoking the provider', async () => 
 
     expect(result.exitCode).toBe(1);
     expect(result.stdout).toBe('');
-    expect(result.stderr).toContain('Codex usage-limit collection is paused');
+    expect(result.stderr).toContain('Provider usage-limit collection is paused');
     expect(result.stderr).not.toContain('[wide-event]');
     const events = await readWideEvents(logDirectory);
     const cliEvents = events.filter((event) => event.resource?.surface === 'cli');
@@ -505,7 +508,7 @@ test('quota persists a failed boundary when refresh fails without durable data',
     });
 
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toContain('No stored Codex usage-limit observation is available.');
+    expect(result.stdout).toContain('No stored provider usage-limit observation is available.');
     expect(result.stderr).toBe('');
     const events = await readWideEvents(logDirectory);
     const cliEvent = events.find((event) => event.resource?.surface === 'cli');

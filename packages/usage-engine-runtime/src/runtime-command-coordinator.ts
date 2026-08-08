@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { sourceControlBounds } from '@ai-usage/report-core/source-control';
+import { providerUsageSourceIds, sourceControlBounds } from '@ai-usage/report-core/source-control';
 import {
   parseUsageEngineCommand,
   parseUsageEngineCommandCancellationResult,
@@ -341,7 +341,7 @@ export const createRuntimeCommandCoordinator = (
       case 'run-all-enabled':
         return true;
       case 'collect-fresh-quota':
-        return command.sourceId === 'codex.usage-limits';
+        return providerUsageSourceIds.includes(command.sourceId);
       case 'import-cursor':
         return command.sourceId === 'cursor.sessions';
       default:

@@ -19,6 +19,7 @@ import {
 import { Cause, Deferred, Effect, Exit, Fiber, Option, Ref } from 'effect';
 import { queryLocalProviderQuotaHistory, refreshLocalProviderQuotas } from './provider-quota';
 import {
+  CODEX_QUOTA_SOURCE_IDENTITY,
   createProviderQuotaRefresh,
   type ProviderQuotaPersistence,
   type ResolvedProviderQuotaRefreshInput,
@@ -75,6 +76,7 @@ const refreshInput = (
 ): ResolvedProviderQuotaRefreshInput<never> => ({
   backfillSource: null,
   dbPath: '/private/provider-quota-test.sqlite',
+  identity: CODEX_QUOTA_SOURCE_IDENTITY,
   liveCadenceMs: 0,
   liveSource: { collect: () => Effect.succeed(emptyBatch) },
   machine: { id: 'machine-1', label: 'Laptop' },
@@ -518,6 +520,7 @@ describe('provider quota orchestration', () => {
     const input: ResolvedProviderQuotaRefreshInput<Error> = {
       backfillSource: null,
       dbPath: '/private/provider-quota-test.sqlite',
+      identity: CODEX_QUOTA_SOURCE_IDENTITY,
       liveCadenceMs: 0,
       liveSource: { collect: () => Effect.fail(new Error('live failed')) },
       machine: { id: 'machine-1', label: 'Laptop' },
@@ -545,6 +548,7 @@ describe('provider quota orchestration', () => {
     const input: ResolvedProviderQuotaRefreshInput<Error> = {
       backfillSource: null,
       dbPath: '/private/provider-quota-test.sqlite',
+      identity: CODEX_QUOTA_SOURCE_IDENTITY,
       liveCadenceMs: 0,
       liveSource: { collect: () => Effect.fail(new Error('live failed')) },
       machine: { id: 'machine-1', label: 'Laptop' },
@@ -562,5 +566,54 @@ describe('provider quota orchestration', () => {
       outcome: 'success',
       services: [{ name: 'quota.refresh', outcome: 'failure' }],
     });
+  });
+
+  test('keeps two providers on one machine in separate flights', async () => {
+    // Without the provider in the flight key these two share an in-flight refresh, and the second
+    // caller silently receives the first one's windows under its own provider identity.
+    const claudeIdentity = {
+      backfillSourceKey: 'claude-none',
+      cursorKey: 'refresh',
+      liveSourceKey: 'claude-agent-sdk',
+      providerKey: 'claude',
+      providerLabel: 'Claude',
+    };
+    const collectedBy: string[] = [];
+    const recordedProviderKeys: string[] = [];
+    const persistence: ProviderQuotaPersistence<never> = {
+      ...fakePersistence(() => Effect.succeed({ coalesced: 0, inserted: 0, unchanged: 0 })),
+      recordAttempt: (input) =>
+        Effect.sync(() => {
+          recordedProviderKeys.push(input.providerKey);
+        }),
+    };
+    const refresh = createProviderQuotaRefresh(persistence);
+    const entered = await Effect.runPromise(Deferred.make<void>());
+    const release = await Effect.runPromise(Deferred.make<void>());
+    const blockingSource = (label: string) => ({
+      collect: () =>
+        Effect.sync(() => collectedBy.push(label)).pipe(
+          Effect.andThen(Deferred.succeed(entered, undefined)),
+          Effect.andThen(Deferred.await(release)),
+          Effect.as(emptyBatch),
+        ),
+    });
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const codex = yield* Effect.fork(refresh(refreshInput({ liveSource: blockingSource('codex') })));
+        yield* Deferred.await(entered);
+        const claude = yield* Effect.fork(
+          refresh(refreshInput({ identity: claudeIdentity, liveSource: blockingSource('claude') })),
+        );
+        yield* Effect.sleep('5 millis');
+        yield* Deferred.succeed(release, undefined);
+        yield* Fiber.await(codex);
+        yield* Fiber.await(claude);
+      }),
+    );
+
+    expect(collectedBy.toSorted()).toEqual(['claude', 'codex']);
+    expect(recordedProviderKeys.toSorted()).toEqual(['claude', 'codex']);
   });
 });

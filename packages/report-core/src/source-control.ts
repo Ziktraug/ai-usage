@@ -6,6 +6,7 @@ export const collectionSourceIds = [
   'opencode.sessions',
   'cursor.sessions',
   'codex.usage-limits',
+  'claude.usage-limits',
   'rtk.savings',
   'cursor.commit-attribution',
 ] as const;
@@ -70,6 +71,14 @@ export const collectionSourceDefinitions = [
     label: 'Codex usage limits',
   },
   {
+    cadenceMs: fiveMinutesMs,
+    defaultEnabled: true,
+    group: 'provider-usage',
+    id: 'claude.usage-limits',
+    kind: 'producer',
+    label: 'Claude usage limits',
+  },
+  {
     cadenceMs: oneMinuteMs,
     defaultEnabled: true,
     group: 'enrichments',
@@ -94,6 +103,15 @@ const collectionSourceDefinitionById = new Map(
 
 export const isCollectionSourceId = (value: unknown): value is CollectionSourceId =>
   typeof value === 'string' && collectionSourceIdSet.has(value);
+
+/**
+ * Every source that polls a provider for its remaining allowance. Derived from the catalogue rather
+ * than listed by hand: a quota refresh means "refresh the providers", and hardcoding one id made the
+ * second provider silently invisible to the CLI and to the on-demand refresh.
+ */
+export const providerUsageSourceIds: readonly CollectionSourceId[] = collectionSourceDefinitions
+  .filter((definition) => definition.group === 'provider-usage')
+  .map((definition) => definition.id);
 
 export const getCollectionSourceDefinition = (id: CollectionSourceId): CollectionSourceDefinition => {
   const definition = collectionSourceDefinitionById.get(id);

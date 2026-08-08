@@ -20,5 +20,5 @@ Hiding navigation alone was rejected because presentation is not a privacy bound
 
 - [Owned demo launcher](../../tools/run-web-demo.ts)
 - [Server boundary](../../apps/web/src/server/demo-boundary.server.ts)
-- [Browser privacy test](../../apps/web/e2e/demo-privacy.spec.ts)
+- [Browser isolation test](../../apps/web/e2e/demo-isolation.spec.ts)
 - [Boundary construction test](../../apps/web/src/server/demo-boundary.server.test.ts)

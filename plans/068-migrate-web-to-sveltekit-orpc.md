@@ -1514,6 +1514,10 @@ Stop and report if:
 
 ## Maintenance notes
 
+- Post-cutover Plan 070 retired the operation parity ledger and the Solid,
+  TanStack Start and Nitro scanners. Their historical acceptance evidence stays
+  in this plan and its execution state; live gates now protect request policies
+  and browser/server capabilities directly.
 - A procedure exists because the browser needs a Web capability, not because a
   server function happens to exist.
 - New queries must classify identity as current, immutable revision, filesystem

@@ -7,7 +7,7 @@ import type { ProjectGroupConfig } from '@ai-usage/report-core/project-group';
 import type { ProviderStatus } from '@ai-usage/report-core/provider-status';
 import type { UsageReportWarning } from '@ai-usage/report-core/report-data';
 import { serializeUsageSnapshot, type UsageSnapshot } from '@ai-usage/report-core/snapshot';
-import { sanitizeSourceWarningCodes } from '@ai-usage/report-core/source-control';
+import { providerUsageSourceIds, sanitizeSourceWarningCodes } from '@ai-usage/report-core/source-control';
 import {
   assembleMergedUsageReport,
   collectProjectSourcesFromSnapshots,
@@ -45,7 +45,8 @@ import {
 
 interface CliQuotaBoundaryResult {
   readonly latest: readonly ProviderStatus[];
-  readonly source: CliSourceExecutionOutcome;
+  /** One per provider-usage source. The command refreshes every provider, not a nominated one. */
+  readonly sources: readonly CliSourceExecutionOutcome[];
 }
 
 const CLI_QUOTA_ERROR_POLICY = {
@@ -60,24 +61,27 @@ const classifyCliQuotaOutcome = (exit: Exit.Exit<CliQuotaBoundaryResult, unknown
       annotations: { failureKind: 'quota-command-failed' },
     };
   }
-  const sourceStatus = exit.value.source.status;
-  const hasUsableLatest = exit.value.latest.length > 0;
-  const warningCodes = sanitizeSourceWarningCodes(exit.value.source.warnings);
+  const { latest, sources } = exit.value;
+  const hasUsableLatest = latest.length > 0;
+  const warningCodes = sanitizeSourceWarningCodes(sources.flatMap(({ warnings }) => warnings));
+  // One provider failing while another refreshed is a degraded run, not a failed one — the report
+  // still gained a fresh reading. Only a run where nothing succeeded and nothing is stored fails.
+  const failed = sources.find(({ status }) => status === 'failed');
+  const allSucceeded = sources.length > 0 && sources.every(({ status }) => status === 'success');
   let outcome: BoundaryClassification['outcome'] = 'failure';
-  if (sourceStatus === 'success') {
+  if (allSucceeded) {
     outcome = 'success';
   } else if (hasUsableLatest) {
     outcome = 'degraded';
   }
+  const unavailable = sources.find(({ result }) => result?.unavailable !== undefined)?.result?.unavailable;
   return {
     outcome,
     annotations: {
-      domainOutcome: sourceStatus,
-      outputCount: exit.value.latest.length,
-      ...(sourceStatus === 'failed' ? { failureKind: 'quota-refresh-failed' } : {}),
-      ...(exit.value.source.result?.unavailable === undefined
-        ? {}
-        : { unavailableCode: exit.value.source.result.unavailable.code }),
+      domainOutcome: allSucceeded ? 'success' : (failed?.status ?? sources[0]?.status ?? 'unavailable'),
+      outputCount: latest.length,
+      ...(failed === undefined ? {} : { failureKind: 'quota-refresh-failed' }),
+      ...(unavailable === undefined ? {} : { unavailableCode: unavailable.code }),
       ...(warningCodes.length === 0 ? {} : { warningCodes }),
     },
   };
@@ -196,21 +200,24 @@ export const app = Effect.gen(function* () {
       Effect.gen(function* () {
         yield* Effect.sync(() => setColor(command.color === null ? runtime.stdoutIsTTY : command.color));
         const execution = yield* executeEngine(runtime, { command: 'collect-fresh-quota' });
-        const collection = requiredCollectionOutput(execution, ['codex.usage-limits']);
-        const source = sourceExecutionOutcomes(collection.sources, ['codex.usage-limits'])[0];
-        if (!source) {
-          return yield* Effect.fail(new CliArgumentError({ message: 'Codex usage-limit source is unavailable.' }));
+        const quotaSourceIds = [...providerUsageSourceIds];
+        const collection = requiredCollectionOutput(execution, quotaSourceIds);
+        const sources = sourceExecutionOutcomes(collection.sources, quotaSourceIds);
+        if (sources.length === 0) {
+          return yield* Effect.fail(new CliArgumentError({ message: 'No provider usage-limit source is available.' }));
         }
-        if (source.status === 'paused') {
+        // Paused is only fatal when every provider is paused; one live source still has news.
+        const paused = sources.filter(({ status }) => status === 'paused');
+        if (paused.length === sources.length) {
           return yield* Effect.fail(
             new CliArgumentError({
-              message: 'Codex usage-limit collection is paused; re-enable codex.usage-limits first.',
+              message: `Provider usage-limit collection is paused; re-enable ${paused.map(({ id }) => id).join(' or ')} first.`,
             }),
           );
         }
         const latest = yield* fromPromise(() => readLatestProviderQuotas(runtime.paths.databasePath));
         yield* Console.log(renderQuota(latest));
-        return { latest, source };
+        return { latest, sources };
       }),
     );
     return;

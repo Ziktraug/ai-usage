@@ -328,16 +328,19 @@ bun run test:e2e-production
 bun run --cwd apps/web benchmark:session-scroll
 ```
 
-After the build, verify migration parity and the emitted browser closure:
+After the build, verify that server-only capabilities stay out of the emitted
+browser closure:
 
 ```sh
-bun run test:web-migration-parity
-bun tools/check-web-retired-stack.ts
 bun run test:web-client-manifest
-bun run test:web-retired-stack-build
 ```
 
-The ordinary suite includes axe accessibility checks and four focused visual snapshots. The demo suite proves the synthetic runtime makes no business requests. The production suite exercises exact-revision oRPC procedures and the 5,000-session scroll proof.
+The ordinary suite includes request-policy coverage, axe accessibility checks,
+and four focused visual snapshots. The demo-isolation suite proves the synthetic
+runtime cannot reach local data or control capabilities. The production suite
+exercises exact-revision oRPC procedures, verifies explicit secret sentinels stay
+out of initial SSR HTML, and runs the 5,000-session scroll proof. Useful bounded
+report data is intentionally allowed in the initial payload.
 
 Run the report app in development:
 

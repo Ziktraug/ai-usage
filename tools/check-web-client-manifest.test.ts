@@ -42,12 +42,6 @@ describe('emitted Web client module manifest scanner', () => {
     ['direct Bun import', 'bun:sqlite', 'Bun builtin'],
     ['indirect dependency', '../../node_modules/@orpc/server/dist/index.mjs', '@orpc/server'],
     ['terminal dependency', '../../node_modules/@orpc/server', '@orpc/server'],
-    [
-      'TanStack Start client core',
-      '../../node_modules/@tanstack/start-client-core',
-      'retired TanStack Start/Router module',
-    ],
-    ['TanStack router core', '../../node_modules/@tanstack/router-core', 'retired TanStack Start/Router module'],
     ['re-exported workspace module', workspaceModule('report-data', 'src', 'index.ts'), 'report-data'],
     ['dynamic workspace import', workspaceModule('usage-merge', 'src', 'index.ts'), 'usage-merge'],
     ['usage store', workspaceModule('usage-store', 'src', 'reader.ts'), 'usage-store'],
@@ -56,19 +50,6 @@ describe('emitted Web client module manifest scanner', () => {
     ['$lib server alias', '$lib/server/report.ts', '$lib/server'],
     ['resolved server directory', './src/lib/server/report.ts', '$lib/server'],
     ['server module suffix', './src/lib/report.server.ts', '.server module'],
-    ['Solid package', '../../node_modules/solid-js/dist/solid.js', 'retired Solid/TanStack module'],
-    [
-      'TanStack Solid package',
-      '../../node_modules/@tanstack/solid-query/dist/index.js',
-      'retired Solid/TanStack module',
-    ],
-    ['Solid Vite package', '../../node_modules/vite-plugin-solid/dist/index.js', 'retired Solid/TanStack module'],
-    ['Solid icon package', '../../node_modules/lucide-solid/dist/index.js', 'retired Solid/TanStack module'],
-    ['Ark Solid package', '../../node_modules/@ark-ui/solid/dist/index.js', 'retired Solid/TanStack module'],
-    ['Nitro package', '../../node_modules/nitro/dist/index.js', 'retired Nitro module'],
-    ['Nitro workaround', './src/lib/server/rpc/nitro-loopback.browser.ts', 'retired Nitro module'],
-    ['createServerFn wrapper', './src/lib/report-createServerFn.ts', 'retired createServerFn module'],
-    ['legacy serverFn route', './src/routes/_serverFn/report.ts', 'retired createServerFn module'],
   ])('rejects a %s present in a client chunk', (_scenario, moduleId, rule) => {
     const manifest = parseWebClientModuleManifest(manifestText([moduleId]));
 

@@ -302,9 +302,11 @@ deleted output descriptors, process count 2 to 2, and the expected rejected
 competing build. Production lifecycle, long SSE, port collision, root
 supervision, loopback, and cleanup gates passed.
 
-### Required clean reproducibility gate
+### Migration acceptance reproducibility gate
 
-The final candidate must pass this complete sequence from a clean worktree:
+The final migration candidate passed this sequence from a clean worktree. The
+one-time parity ledger and retired-framework scan were removed after cutover by
+Plan 070; the remaining commands are the current reproducibility gates:
 
 ```sh
 bun install --frozen-lockfile
@@ -314,9 +316,7 @@ bun run typecheck
 bun test apps/web/src apps/web/*.test.ts
 bun run test
 bun run build
-bun run test:web-migration-parity
 bun run test:web-client-manifest
-bun run test:web-retired-stack-build
 bun run test:e2e
 bun run test:e2e-demo
 bun run test:e2e-production

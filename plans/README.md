@@ -51,6 +51,11 @@ prefetch, and replaces `ServedReportSession`/Session table result state with
 Query-native atomic destination and paging lifecycles. It must begin from a
 clean checkpoint and does not touch concurrent sidebar or presentation work.
 
+Plan 070 retired the parity ledger and Solid/TanStack Start/Nitro scanners after
+cutover. It preserves the durable request-policy, browser/server capability,
+demo-isolation and SSR secret-boundary gates, and explicitly allows useful bounded
+report data in the initial SSR payload.
+
 ## Execution order & status
 
 | Plan | Title | Priority | Effort | Depends on | Status |
@@ -121,6 +126,7 @@ clean checkpoint and does not touch concurrent sidebar or presentation work.
 | 067 | Close the Post-Cutover Usage-Engine Runtime Review Gaps | P1 | L | 066 | DONE |
 | 068 | Migrate Web to SvelteKit With Contract-First oRPC | P1 | XL | 066, 067 | REOPENED |
 | 069 | Centralize Web Server-State Ownership in TanStack Query and oRPC | P1 | XL | 068 Query/oRPC foundation + clean active-worktree checkpoint | TODO |
+| 070 | Retire Completed Web Migration Guardrails and Clarify Lasting Safety Gates | P1 | M | 068 migration integrated; 069 browser ownership integrated | DONE |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) |
 REJECTED (with one-line rationale).
