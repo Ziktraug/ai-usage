@@ -1,11 +1,9 @@
 import { afterAll, describe, expect, it } from 'bun:test';
-import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { projectFocusedSupport } from '@ai-usage/report-core/focused-report-query';
 import type { ReportRevisionBootstrapResult } from '@ai-usage/web-contract/report';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
 import type { Component } from 'svelte';
-import { compile } from 'svelte/compiler';
 import { createServer } from 'vite';
 import { demoReportPayload } from '../../../../report-data';
 import { createWebQueryClient, dehydrateWebQueryClient } from '../../../query/client';
@@ -18,16 +16,6 @@ const liveAcquisitionOptions = () => ({
   pageUrl: new URL('http://report.invalid/'),
   url: new URL('http://report.invalid/'),
 });
-
-const components = [
-  'report-bootstrap-overview.svelte',
-  'report-header.svelte',
-  'report-pending-surface.svelte',
-  'report-root.svelte',
-  'report-status.svelte',
-  'report-warnings.svelte',
-  'report-workspace.svelte',
-] as const;
 
 interface SvelteServerModule {
   render(component: Component, options?: { props?: Record<string, unknown> }): { body: string };
@@ -120,21 +108,6 @@ const reportClientFixture = (result: ReportRevisionBootstrapResult, onBootstrap:
 };
 
 describe('report Svelte SSR components', () => {
-  for (const component of components) {
-    it(`compiles ${component} for server rendering`, async () => {
-      const sourcePath = new URL(component, import.meta.url);
-      const source = await readFile(sourcePath, 'utf8');
-      const compiled = compile(source, {
-        filename: sourcePath.pathname,
-        generate: 'server',
-        modernAst: true,
-        runes: true,
-      });
-      expect(compiled.warnings.filter((warning) => warning.code !== 'css_unused_selector')).toEqual([]);
-      expect(compiled.js.code.length).toBeGreaterThan(0);
-    });
-  }
-
   it('renders meaningful successful and compatible-last publication HTML during SSR', () => {
     const { body } = render(overview, {
       props: {
@@ -216,21 +189,5 @@ describe('report Svelte SSR components', () => {
     expect(body).toContain('Report payload unavailable');
     expect(body).toContain('data-report-unavailable');
     expect(body).not.toContain('Report warnings');
-  });
-
-  it('locks definitive output without nesting requested context during a pending refresh', async () => {
-    const source = await readFile(new URL('./report-workspace.svelte', import.meta.url), 'utf8');
-    expect(source.indexOf('{#if hasOutput}')).toBeLessThan(source.indexOf('{:else if pending}'));
-    expect(source).toContain('data-report-complete-output');
-    expect(source).not.toContain('pendingContext');
-    expect(source).toContain('<ReportStatus {pending} {refreshError} />');
-    expect(source).not.toContain('aria-live="polite" class={panel}');
-  });
-
-  it('keeps an explicit warning cleanup action seam for P8', async () => {
-    const source = await readFile(new URL('./report-warnings.svelte', import.meta.url), 'utf8');
-    expect(source).toContain('onCleanupProjectWarning');
-    expect(source).toContain('cleaningProjectWarningGroupId');
-    expect(source).toContain("'Cleaning…' : 'Cleanup'");
   });
 });

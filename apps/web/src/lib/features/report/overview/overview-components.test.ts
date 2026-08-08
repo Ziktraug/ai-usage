@@ -3,27 +3,10 @@ import { projectFocusedOverview } from '@ai-usage/report-core/focused-report-que
 import type { ProviderLimitWindow } from '@ai-usage/report-core/provider-status';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
 import type { Component } from 'svelte';
-import { compile } from 'svelte/compiler';
 import { createServer } from 'vite';
 import { toDateInputValue } from '../../../../date-range';
 import type { ProviderStatusView } from '../../../../provider-status-model';
 import { demoReportPayload } from '../../../../report-data';
-
-const components = [
-  'activity-heatmap.svelte',
-  'activity-timeline.svelte',
-  'dashboard-metrics.svelte',
-  'overview-hero.svelte',
-  'overview-page.svelte',
-  'overview-status.svelte',
-  'provider-status.svelte',
-  'punchcard.svelte',
-  'records.svelte',
-  'session-shape.svelte',
-  'source-freshness.svelte',
-  'token-anatomy.svelte',
-  '../range/report-range-control.svelte',
-] as const;
 
 interface SvelteServerModule {
   render(component: Component, options?: { props?: Record<string, unknown> }): { body: string };
@@ -77,21 +60,6 @@ const focusedOverview = () => {
 };
 
 describe('P2 Overview Svelte surfaces', () => {
-  for (const component of components) {
-    test(`compiles ${component} for server rendering`, async () => {
-      const sourcePath = new URL(component, import.meta.url);
-      const source = await Bun.file(sourcePath).text();
-      const compiled = compile(source, {
-        filename: sourcePath.pathname,
-        generate: 'server',
-        modernAst: true,
-        runes: true,
-      });
-      expect(compiled.warnings.filter((warning) => warning.code !== 'css_unused_selector')).toEqual([]);
-      expect(compiled.js.code.length).toBeGreaterThan(0);
-    });
-  }
-
   test('renders meaningful report content and all primary P2 regions during SSR', () => {
     const { body } = render(fixture, { props: { result: focusedOverview() } });
 

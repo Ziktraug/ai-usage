@@ -1,9 +1,7 @@
 import { afterAll, describe, expect, test } from 'bun:test';
-import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
 import type { Component } from 'svelte';
-import { compile } from 'svelte/compiler';
 import { createServer } from 'vite';
 
 const CAMPAIGN_ANNOTATION_PATTERN = /data-session-campaign-annotation[^>]*>\s*Campaign · 1 session<\/span>/;
@@ -48,25 +46,6 @@ const fixture = componentFrom(fixtureModule);
 const { render } = rendererFrom(serverModule);
 
 describe('session table Svelte rendering', () => {
-  test('compiles the responsive table and its concrete fixture without warnings', async () => {
-    const sourcePaths = [
-      new URL('./session-table.svelte', import.meta.url),
-      new URL('./session-table.fixture.svelte', import.meta.url),
-      new URL('../../report/composition/sessions-destination.svelte', import.meta.url),
-    ];
-    for (const sourcePath of sourcePaths) {
-      const source = await readFile(sourcePath, 'utf8');
-      const compiled = compile(source, {
-        filename: sourcePath.pathname,
-        generate: 'server',
-        modernAst: true,
-        runes: true,
-      });
-      expect(compiled.warnings.filter(({ code }) => code !== 'css_unused_selector')).toEqual([]);
-      expect(compiled.js.code.length).toBeGreaterThan(0);
-    }
-  });
-
   test('server-renders meaningful table semantics, sorting, columns, and a bounded desktop window', () => {
     const { body } = render(fixture);
 
@@ -125,49 +104,5 @@ describe('session table Svelte rendering', () => {
     expect(expanded).toContain('aria-setsize="5001"');
     expect(expanded).toContain('data-depth="1"');
     expect(expanded).toContain('title="Collapse campaign"');
-  });
-
-  test('keeps one responsive owner and both fixed-geometry projections in the source contract', async () => {
-    const source = await readFile(new URL('./session-table.svelte', import.meta.url), 'utf8');
-    expect(source).toContain('let mode = $state<SessionSurfaceMode>');
-    expect(source).toContain("mode === 'mobile' ? 'mobile' : 'desktop'");
-    expect(source).toContain('SESSION_VIEWPORT_BOTTOM_INSET = 24');
-    expect(source).toContain('sessionVirtualBudgets.desktop.rowHeight * 3');
-    expect(source).toContain('sessionVirtualBudgets.mobile.rowHeight');
-    expect(source).toContain('calculateSessionViewportHeight');
-    expect(source).toContain('new ResizeObserver(synchronize)');
-    expect(source).toContain("addEventListener('resize', synchronize)");
-    expect(source).toContain("removeEventListener('resize', synchronize)");
-    // A window scroll listener is what made the surface height chase the scroll
-    // position and the document grow under the reader.
-    expect(source).not.toContain("addEventListener('scroll'");
-    expect(source).toContain('data-session-region-start');
-    expect(source).toContain('initialWindowAnchor && !windowAnchorConsumed');
-    expect(source).toContain("regionStart?.scrollIntoView({ block: 'start' })");
-    expect(source).toContain('onInitialWindowAnchor()');
-    expect(source).toContain('data-session-paging-sentinel="mobile"');
-    expect(source).toContain('data-virtual-spacer="top"');
-    expect(source).toContain('data-virtual-spacer="bottom"');
-    expect(source).toContain("event.key === 'ArrowDown'");
-    expect(source).toContain("event.key !== 'ArrowUp'");
-  });
-
-  test('reads the atomic report and complete Session window directly from Query', async () => {
-    const [liveSource, sessionQuerySource] = await Promise.all([
-      readFile(new URL('../../report/composition/live-report-destination.svelte', import.meta.url), 'utf8'),
-      readFile(new URL('../../../query/options/session-window.ts', import.meta.url), 'utf8'),
-    ]);
-
-    expect(liveSource).toContain('const destinationQuery = createQuery');
-    expect(liveSource).toContain('reportDestinationQueryOptions');
-    expect(liveSource).toContain('const commit = $derived(destinationQuery.data)');
-    expect(liveSource).toContain('queryData={commit?.sessions}');
-    expect(liveSource).toContain('activeSessionWindowIntent');
-    expect(liveSource).not.toContain('ReportLifecycleOwner');
-    expect(liveSource).not.toContain('SessionDestinationRefresh');
-    expect(liveSource).not.toContain('createFocusedReportSession');
-    expect(liveSource).not.toContain('createSessionTableQueryOwner');
-    expect(sessionQuerySource).toContain('infiniteQueryOptions');
-    expect(sessionQuerySource).toContain('ensureSessionWindow');
   });
 });

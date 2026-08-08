@@ -25,9 +25,8 @@ tooling; it is not an application ecosystem decision.
 
 ## Decision
 
-Use the exact ecosystem pins exported by
-`tools/sveltekit-runtime-decision.ts` and select
-`svelte-adapter-bun@1.0.1`.
+Use the exact ecosystem pins declared by the Web workspace manifests and lockfile,
+and select `svelte-adapter-bun@1.0.1`.
 
 Production must:
 

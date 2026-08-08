@@ -720,7 +720,7 @@ green and any CI-driven fix has been re-reviewed.
 Before dispatching any implementation packet, the coordinator must:
 
 1. Confirm plans 066/067 and this plan are present in `origin/main` and record
-   the exact `BASE_SHA` in `plans/068-execution-state.md`.
+   the exact `BASE_SHA` in the implementation PR and commit history.
 2. Run the complete current Solid verification commands from a clean worktree.
    The base must be green with no allowlisted migration failure. At plan
    reconciliation, `bun run check` and `bun run lint` pass on `72c648e`; B0 must
@@ -731,10 +731,11 @@ Before dispatching any implementation packet, the coordinator must:
 4. Create one local integration branch named
    `agent/migrate-web-sveltekit-orpc`. Only the coordinator may check it out,
    merge into it, rebase it, push it or open its PR.
-5. Create `plans/068-execution-state.md` with the base SHA, integration HEAD,
-   frozen decisions, packet states, worker/reviewer commit SHAs, accepted gates,
-   deviations and current integration checkpoint. This is execution evidence,
-   not a substitute for the machine-readable parity ledger.
+5. Maintain a coordinator-owned execution record with the base SHA, integration
+   HEAD, packet states, reviews, accepted gates, deviations and current
+   checkpoint. This temporary audit record may be retired after final acceptance
+   once durable decisions and evidence live in the implementation PR, Git
+   history, ADRs and permanent regression gates.
 6. Confirm each worker can create an isolated worktree with its own temporary
    home, store, ports, logs, rendezvous and build-output paths.
 
@@ -1442,9 +1443,10 @@ Final delivery sequence is strict:
 - [x] A clean worktree at the final integration SHA completes
   `bun install --frozen-lockfile` and the exact PR workflow commands without
   relying on another worktree's generated files.
-- [x] `plans/068-execution-state.md` records every packet as independently
-  reviewed and integrated, with accepted commit SHAs and no unresolved
-  deviation/STOP; the sole implementation PR's CI is green.
+- [x] The implementation PR and commit history record every packet as
+  independently reviewed and integrated, with accepted commit SHAs and no
+  unresolved deviation/STOP; the sole implementation PR's accepted migration
+  checkpoint passed CI.
 - [x] No production match remains for `createServerFn`, `_serverFn`, TanStack
   Solid/Start/Router/Query/Table, `solid-js`, Solid Vite/icons/Ark, Nitro or the
   Nitro runner workaround.
@@ -1516,8 +1518,11 @@ Stop and report if:
 
 - Post-cutover Plan 070 retired the operation parity ledger and the Solid,
   TanStack Start and Nitro scanners. Their historical acceptance evidence stays
-  in this plan and its execution state; live gates now protect request policies
-  and browser/server capabilities directly.
+  in this plan, the implementation PR and Git history; live gates now protect
+  request policies and browser/server capabilities directly. The temporary
+  coordinator execution ledger was retired before merge after its durable
+  architecture, runtime and performance conclusions were captured in ADRs
+  0010-0012 and `docs/performance/web-framework-migration-baseline.md`.
 - A procedure exists because the browser needs a Web capability, not because a
   server function happens to exist.
 - New queries must classify identity as current, immutable revision, filesystem

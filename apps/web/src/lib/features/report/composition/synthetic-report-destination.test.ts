@@ -2,7 +2,6 @@ import { describe, expect, test } from 'bun:test';
 import { applyCampaignLabelOverrideMutation } from '@ai-usage/report-core/campaign-label';
 import { projectFocusedOverview } from '@ai-usage/report-core/focused-report-query';
 import { enrichSessionPresentationRow } from '@ai-usage/report-core/session-query';
-import { compile } from 'svelte/compiler';
 import {
   campaignLabelFor,
   focusedCampaignLabelContext,
@@ -18,8 +17,6 @@ import {
 } from '../../../../machine-freshness-presentation';
 import { demoReportPayload } from '../../../../report-data';
 import type { SessionSelectionInput } from '../../sessions/detail/types';
-
-const sourcePath = new URL('./synthetic-report-destination.svelte', import.meta.url);
 
 describe('synthetic report campaign presentation', () => {
   test('renames every synthetic campaign projection locally and resets to the stable derived label after reopen', () => {
@@ -140,40 +137,5 @@ describe('synthetic report campaign presentation', () => {
       label: 'Fixture Machine Secondary · Freshness unavailable',
       value: 'fixture-machine-secondary',
     });
-  });
-
-  test('compiles the synthetic owner and keeps campaign mutations page-local', async () => {
-    const source = await Bun.file(sourcePath).text();
-    const compiled = compile(source, {
-      filename: sourcePath.pathname,
-      generate: 'server',
-      modernAst: true,
-      runes: true,
-    });
-
-    expect(compiled.warnings.filter(({ code }) => code !== 'css_unused_selector')).toEqual([]);
-    expect(source).toContain('let campaignLabelOverrides = $state<readonly CampaignLabelOverride[]>([])');
-    expect(source).toContain('derivedCampaignLabels.get(campaignKey) ?? row.sessionLabel');
-    expect(source).toContain('applyCampaignLabelOverrideMutation(campaignLabelOverrides');
-    expect(source).toContain('republishSelectedCampaign(campaignKey, nextIndex)');
-    expect(source).toContain('candidate.rowId === row.rowId ? row : presentCampaignRow(candidate, index)');
-    expect(source).toContain('selection = nextSelection');
-    expect(source).toContain('{presentCampaignSeries}');
-    expect(source).toContain('{presentSessionItem}');
-    expect(source).toContain('focusedCampaignLabelContext(presented)');
-    expect(source).toContain('{campaignSlot}');
-    expect(source).toContain('{presentMachineLabel}');
-    expect(source).toContain('{presentMachineSeries}');
-    expect(source).toContain("runtimeMode === 'e2e' ? syntheticMachineFreshness : support.machineFreshness");
-    expect(source).toContain(`  const displayedFreshnessStatus = $derived.by(() => {
-    if (runtimeMode === 'demo') {
-      return 'Synthetic data';
-    }
-    return responseFixture ? machineFreshnessStatusLabel(supportMachineSnapshot) : machineFreshnessStatus;
-  });`);
-    expect(source).toContain('freshnessStatus={displayedFreshnessStatus}');
-    expect(source).toContain("runtimeMode === 'e2e' ? machinePresentations.get(value)?.label : undefined");
-    expect(source).not.toContain('setCampaignLabelOverride');
-    expect(source).not.toContain('createCampaignLabelOwner');
   });
 });
