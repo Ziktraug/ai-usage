@@ -135,6 +135,7 @@ read-only SQLite and the permanent browser/server and demo-isolation boundaries.
 | 069 | Centralize Web Server-State Ownership in TanStack Query and oRPC | P1 | XL | 068 Query/oRPC foundation + clean active-worktree checkpoint | TODO |
 | 070 | Retire Completed Web Migration Guardrails and Clarify Lasting Safety Gates | P1 | M | 068 migration integrated; 069 browser ownership integrated | DONE |
 | 071 | Measure and Optimize the Web Session Pipeline End to End | P1 | XL | current Plan 069 Query ownership; 070 | DONE |
+| 072 | Evaluate Deferred Web Session Optimizations (keyset, Ark split, direct destination SSR) | P1 | XL | 071 reviewed final | IN PROGRESS |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) |
 REJECTED (with one-line rationale).
