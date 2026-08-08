@@ -732,9 +732,26 @@ Executed on `agent/migrate-web-sveltekit-orpc` (PR #27) rather than
 | `63e78224` | 5.1 totals reuse | retained with 5.2 |
 | `1b2f7245` | 5.2 projection cache | retained (−99% sqlite vs Wave 4) |
 | `04e88d3b` | 6.1 precompress | retained |
+| `271b41d` | 5 cache seal fix | retained (parallel-test isolation) |
+| `50f283fa` | post-implementation certification | retained: authoritative cache identity, typed cache boundaries, exhaustive benchmark proof, CLI/E2E fixes |
 
 Rejected without remaining source: Wave 1.2 scroll rAF path; Wave 6.2 design-system
 split (+2.13 KiB gzip); Wave 6.3 synthetic isolation (immaterial); Wave 6.4 destination
 SSR (unmeasured materiality); Wave 5.3 keyset (STOP / ADR).
 
 Durable record: `docs/performance/web-session-optimization.md`.
+
+### Final validation matrix (2026-08-08)
+
+Green: ultracite, `git diff --check`, root `check`, `lint`, `typecheck`, `test`, and
+`build`; `test:web-client-manifest`, `test:web-production`,
+`test:web-dev-build-isolation`, `test:setup-loopback`, `test:e2e-demo`,
+`test:e2e-production`, the complete dev `test:e2e` suite, and the reviewed
+session-scroll benchmark (one warm-up + three recorded samples).
+
+The certification pass removed the two former blockers: the CLI source-result
+property mismatch is fixed with integration coverage, and dev route-data aborts
+are handled as exact, one-time navigation races. The final artifact
+`docs/performance/artifacts/wave7-reviewed-final.json` records 4,999/4,999 campaign
+identities with zero missing or duplicate identities, 25 desktop traversal pages,
+24 post-SSR traversal RPCs, and 26 total benchmark RPCs.

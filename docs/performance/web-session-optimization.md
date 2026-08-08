@@ -7,21 +7,23 @@ from prior docs and are not rewritten here.
 
 | Item | Value |
 | --- | --- |
-| Measured commit | `04e88d3b77a47e3e39b8f11d692d9cd79c7d1c7c` |
+| Measured commit | `50f283faf7d09622dca4ea4843045c5c1238d4b5` |
 | Branch | `agent/migrate-web-sveltekit-orpc` (PR #27) |
 | Bun | 1.3.13 |
 | Playwright | 1.61.1 |
 | Browser | Chromium via Playwright (host Chrome 151.0.7922.75) |
 | Fixture | synthetic 5,000 Codex sessions (`AI_USAGE_SESSION_SCALE_E2E=1`) |
-| Artifact SHA-256 (uncompressed code files, no `.br`/`.gz`/`.map`) | `8b5b3cd98ad873d5ee761a560f02432b36115ddb07a9f4671794901f5b9317e8` |
-| Deployed artifact size | 9,087,981 bytes (414 files including 56 `.br` + 56 `.gz`) |
-| Uncompressed code bytes in artifact | 8,372,115 bytes |
-| Precompressed copies | 331,964 bytes `.br` + 383,902 bytes `.gz` |
+| Artifact SHA-256 (uncompressed code files, no `.br`/`.gz`/`.map`) | `e3ab70d523ddae14eccd22356ffdf86a254211f5be30b0143696848f98b065f3` |
+| Deployed artifact size | 9,090,652 bytes (414 files including 56 `.br` + 56 `.gz`) |
+| Uncompressed files in artifact | 8,374,873 bytes |
+| Precompressed copies | 331,866 bytes `.br` + 383,913 bytes `.gz` |
 
 Methodology: one warm-up sample (not recorded), then three recorded samples on the
 same machine and browser. Comparisons use medians, never a single best run.
 Control artifact: `docs/performance/artifacts/wave0-control.json`.
-Final artifact: `docs/performance/artifacts/wave6-session-scroll.json`.
+Reviewed final artifact:
+`docs/performance/artifacts/wave7-reviewed-final.json` (SHA-256
+`1cfed2e567c55e858f286fcde8cfaa545b08e5213af2b9e049aac2b85c6f7bd8`).
 
 ### Reproduce
 
@@ -43,36 +45,40 @@ same-toolchain control versus Plan 071 final.
 
 | Metric | Control | Final | Δ |
 | --- | ---: | ---: | ---: |
-| `initialMs` | 1389.457 | 456.853 | −67.1% |
-| `desktopFullTraversalMs` | 101211.722 | 3660.341 | −96.4% |
-| `mobileFullTraversalMs` | 56.393 | 58.262 | +3.3% |
+| `initialMs` | 1389.457 | 439.268 | −68.4% |
+| `desktopFullTraversalMs` | 101211.722 | 3470.330 | −96.6% |
+| `mobileFullTraversalMs` | 56.393 | 55.773 | −1.1% |
 | Desktop max rendered items | 37 | 29 | −21.6% |
 | Desktop max session DOM nodes | 733 | 581 | −20.7% |
 | Mobile max rendered items | 21 | 13 | −38.1% |
 | Mobile max session DOM nodes | 360 | 224 | −37.8% |
 | Browser session RPCs | 51 | 26 | −49.0% |
-| Session pages | 51 | 26 | −49.0% |
+| Session pages / total benchmark RPCs | 51 / 51 | 26 / 26 | −49.0% / −49.0% |
+| Desktop traversal pages / RPCs after SSR | — | 25 / 24 | structural proof |
 | Hydration total bytes | 709898 | 489216 | −31.1% |
-| Heap Δ bytes | 28296316 | 25464364 | −10.0% |
+| Heap Δ bytes | 28296316 | 25461664 | −10.0% |
 | Max page bytes | 220694 | 441050 | +99.8% (still ≪ 2 MiB) |
-| Filter ms | 193.214 | 124.874 | −35.4% |
-| Sort ms | 1541.88 | 216.1 | −86.0% |
-| Initial closure raw | 888907 | 891131 | +0.3% |
-| Initial closure gzip (computed) | 278229 | 279228 | +0.4% |
-| Initial closure brotli (computed) | 241084 | 241695 | +0.3% |
+| Filter ms | 193.214 | 126.628 | −34.5% |
+| Sort ms | 1541.88 | 208.003 | −86.5% |
+| Initial closure raw | 888907 | 891157 | +0.3% |
+| Initial closure gzip (computed) | 278229 | 279242 | +0.4% |
+| Initial closure brotli (computed) | 241084 | 241588 | +0.2% |
 
 SQLite phase totals (sample 0, warm long-lived server for final):
 
 | Phase | Control totalMs | Final totalMs |
 | --- | ---: | ---: |
-| count | 448.689 | 19.36 |
+| count | 448.689 | 16.509 |
+| identity | not attributed | 1.087 |
 | projection | 49765.287 | 0 (warm projection cache) |
-| materialize | 115.054 | 137.474 |
+| materialize | 115.054 | 124.430 |
 
-Final projection work is paid once per query identity on the long-lived production
-server (warm-up + first miss). Recorded samples after warm-up reuse the exact-revision
-ordered projection; median sqlite work across the traversal falls by much more than
-the 15% retention gate.
+The reviewed implementation derives its cache identity from authoritative capture
+metadata before consulting the exact-revision cache. The recorded traversal makes
+27 bounded identity checks (1.087 ms total in sample 0), then reuses the sealed
+ordered projection. This avoids the former unmeasured full-table fingerprint scan
+and makes same-revision content changes unable to collide. Median SQLite work still
+falls by much more than the 15% retention gate.
 
 ### Size vocabulary
 
@@ -95,7 +101,7 @@ br 62,209 (−75.7%), gzip 74,731, identity 255,848; decode integrity verified.
 | 2 | `SERVED_SESSION_PAGE_SIZE` 100 → 200 | RPCs 51→26 (−49%), desktop traversal ~−51%, max page 441 KiB < 2 MiB. `7eba6336` |
 | 3 | Append-aware browser projection | Heap −6.3% vs Wave 2 (≥5% gate). `eabdb0f5` |
 | 4 | Canonicalize hydration: destination queries drop Session payloads; reseed from `session-pages` | Hydration 1,370,990→489,216 (−64% vs Wave 3); zero post-hydration session RPCs. `438c89a6` |
-| 5.1+5.2 | Reuse invariant totals; materialize ordered campaign projection per revision+seal+fingerprint | SQLite median total −99% vs Wave 4; traversal −92.5%. `63e78224`, `1b2f7245` |
+| 5.1+5.2 | Reuse invariant totals; materialize ordered campaign projection per authoritative revision+seal+fingerprint | SQLite median total −99% vs Wave 4; traversal −92.5%. `63e78224`, `1b2f7245`, reviewed in `50f283fa` |
 | 6.1 | `precompress: true` on `svelte-adapter-bun` | Static assets served with `Content-Encoding`, `Vary: Accept-Encoding`, immutable cache; transfer falls. `04e88d3b` |
 
 ## Rejected experiments
@@ -110,7 +116,10 @@ br 62,209 (−75.7%), gzip 74,731, identity 255,848; decode integrity verified.
 
 ## Correctness invariants observed
 
-- 5,000 unique campaign identities reachable; no missing IDs in recorded samples.
+- All 4,999 campaign identities in the 5,000-session fixture are reached exactly
+  once during the exhaustive desktop sweep; zero missing or duplicate identities.
+- The 25-page desktop traversal performs 24 post-SSR page RPCs. The benchmark's 26
+  total session RPCs include the subsequent filter and sort requests.
 - Exact revision + request fingerprint unchanged.
 - Page size ≤ 200; serialized page ≤ 2 MiB.
 - Desktop/mobile rendered-item ceilings (300 / 600) held; retained overscan also met
@@ -141,3 +150,21 @@ Raw JSON under `docs/performance/artifacts/`:
 - `wave5-projection-cache.json`
 - `wave6-precompress.json`
 - `wave6-session-scroll.json`
+- `wave7-reviewed-final.json`
+
+## Post-implementation review
+
+The certification pass also corrected issues outside the headline timing table:
+
+- the exact-revision cache now owns its LRU lifecycle in a focused module and uses
+  authoritative metadata for collision-resistant identity;
+- benchmark payloads and client manifests are runtime-validated, and the exhaustive
+  identity assertion no longer mistakes expected revisit traffic for duplicates;
+- readonly table inputs and append memoization retain their TypeScript contracts
+  without unchecked generic assertions;
+- the pre-existing CLI source-result type error and the dev Playwright route-data
+  abort race are fixed and covered, so they are no longer documented blockers.
+
+The full repository validation matrix and all production/demo/dev E2E suites pass
+at the measured commit. Plan 070's integrated migration work remains separate
+history; this record does not rewrite its results.
