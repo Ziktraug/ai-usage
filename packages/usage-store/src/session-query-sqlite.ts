@@ -787,7 +787,9 @@ const runSessionPage = (
   const order = buildSessionQuerySqlOrder(request.sort, 'item_identity_rank', 'item_ordinal');
   const useExactCostSort = request.sort.some(({ id }) => CAMPAIGN_EXACT_COST_SORT_FIELDS.has(id));
   const orderedRecords = resolveSessionQueryProjection(database, identity, filter, order, useExactCostSort, trace);
-  const pageWithSentinel = orderedRecords.slice(offset, offset + request.pageSize + 1);
+  const pageWithSentinel = measureSessionQueryPerfPhase('slice', () =>
+    orderedRecords.slice(offset, offset + request.pageSize + 1),
+  );
   const hasMore = pageWithSentinel.length > request.pageSize;
   const pageRecords = pageWithSentinel.slice(0, request.pageSize);
   const items: SessionPageItem[] = measureSessionQueryPerfPhase('materialize', () => {

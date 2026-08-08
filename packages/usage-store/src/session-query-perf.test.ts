@@ -43,11 +43,14 @@ describe('session query perf attribution', () => {
     measureSessionQueryPerfPhase('identity', () => true);
     measureSessionQueryPerfPhase('projection', () => true);
     measureSessionQueryPerfPhase('materialize', () => true);
+    measureSessionQueryPerfPhase('slice', () => true);
     const snapshot = snapshotSessionQueryPerf();
+    expect(snapshot.samples).toBe(5);
     expect(snapshot.phases.count.count).toBe(1);
     expect(snapshot.phases.identity.count).toBe(1);
     expect(snapshot.phases.projection.count).toBe(1);
     expect(snapshot.phases.materialize.count).toBe(1);
+    expect(snapshot.phases.slice.count).toBe(1);
     expect(snapshot.phases.count.totalMs).toBeGreaterThan(0);
     resetSessionQueryPerf();
     expect(snapshotSessionQueryPerf().samples).toBe(0);

@@ -1,0 +1,125 @@
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+
+const ROOT = path.resolve(import.meta.dirname, '..');
+const SCRIPT_PATH = path.join(ROOT, 'tools/plan072-bundle-map.ts');
+
+const writeMinimalManifests = (manifestPath: string, viteManifestPath: string): void => {
+  const manifest = {
+    chunks: [
+      {
+        dynamicImports: [],
+        fileName: '_app/immutable/entry/start.hash.js',
+        imports: ['_app/immutable/chunks/EardQyRL.js'],
+        moduleIds: [],
+        modules: [],
+        renderedDynamicImports: [],
+      },
+      {
+        dynamicImports: [],
+        fileName: '_app/immutable/chunks/EardQyRL.js',
+        imports: [],
+        moduleIds: [
+          '../../node_modules/@ark-ui/svelte/dist/components/drawer/drawer-backdrop.svelte',
+          '../../node_modules/@ark-ui/svelte/dist/components/popover/popover-root.svelte',
+          '../../node_modules/@zag-js/focus-trap/dist/index.js',
+        ],
+        modules: [],
+        renderedDynamicImports: [],
+      },
+      {
+        dynamicImports: [],
+        fileName: '_app/immutable/chunks/DrrDGPOk2.js',
+        imports: ['_app/immutable/chunks/EardQyRL.js'],
+        moduleIds: ['./src/lib/features/sessions/table/session-table.svelte'],
+        modules: [],
+        renderedDynamicImports: [],
+      },
+    ],
+    format: 'ai-usage-web-client-modules',
+    target: 'client',
+    version: 2,
+  };
+  writeFileSync(manifestPath, JSON.stringify(manifest), 'utf8');
+  const viteManifest = {
+    '../../node_modules/@sveltejs/kit/src/runtime/client/entry.js': {
+      file: '_app/immutable/entry/start.hash.js',
+      imports: ['shared-runtime'],
+    },
+    '.svelte-kit/build/generated/client-optimized/app.js': {
+      file: '_app/immutable/entry/app.hash.js',
+      imports: ['shared-runtime'],
+    },
+    '.svelte-kit/build/generated/client-optimized/nodes/0.js': {
+      file: '_app/immutable/nodes/0.hash.js',
+      imports: ['shared-runtime'],
+    },
+    '.svelte-kit/build/generated/client-optimized/nodes/3.js': {
+      file: '_app/immutable/nodes/3.hash.js',
+      imports: ['shared-runtime'],
+    },
+    'shared-runtime': {
+      file: '_app/immutable/chunks/EardQyRL.js',
+      imports: [],
+    },
+  };
+  writeFileSync(viteManifestPath, JSON.stringify(viteManifest), 'utf8');
+};
+
+describe('plan072 bundle-map', () => {
+  let tempDirectory: string | null = null;
+
+  beforeEach(() => {
+    tempDirectory = mkdtempSync(path.join(tmpdir(), 'plan072-bundle-map-'));
+  });
+
+  afterEach(() => {
+    if (tempDirectory && existsSync(tempDirectory)) {
+      rmSync(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
+  test('classifies Ark/Zag in the initial chunk and reports no duplicates', async () => {
+    if (!tempDirectory) {
+      throw new Error('Expected a temp directory');
+    }
+    const manifestPath = path.join(tempDirectory, 'client-modules.json');
+    const viteManifestPath = path.join(tempDirectory, 'vite-manifest.json');
+    const outputJson = path.join(tempDirectory, 'plan072-bundle-map.json');
+    const outputMd = path.join(tempDirectory, 'plan072-bundle-map.md');
+    writeMinimalManifests(manifestPath, viteManifestPath);
+    const proc = Bun.spawn(['bun', SCRIPT_PATH], {
+      cwd: ROOT,
+      env: {
+        ...process.env,
+        AI_USAGE_PLAN072_MANIFEST: manifestPath,
+        AI_USAGE_PLAN072_OUTPUT_JSON: outputJson,
+        AI_USAGE_PLAN072_OUTPUT_MD: outputMd,
+        AI_USAGE_PLAN072_VITE_MANIFEST: viteManifestPath,
+      },
+      stderr: 'pipe',
+      stdout: 'pipe',
+    });
+    await proc.exited;
+    expect(proc.exitCode).toBe(0);
+    expect(existsSync(outputJson)).toBe(true);
+    const parsed = JSON.parse(readFileSync(outputJson, 'utf8')) as {
+      duplicatedArkOrZagCount: number;
+      initialChunkCount: number;
+      initialChunks: ReadonlyArray<{ arkComponents: readonly string[]; fileName: string; isInitial: boolean }>;
+      lazyChunks: ReadonlyArray<{ fileName: string; isInitial: boolean }>;
+    };
+    expect(parsed.duplicatedArkOrZagCount).toBe(0);
+    expect(parsed.initialChunkCount).toBe(2);
+    const initialWithArk = parsed.initialChunks.find((entry) => entry.arkComponents.length > 0);
+    expect(initialWithArk).toBeDefined();
+    expect(initialWithArk?.arkComponents).toContain('drawer');
+    expect(initialWithArk?.arkComponents).toContain('popover');
+    expect(initialWithArk?.isInitial).toBe(true);
+    expect(parsed.lazyChunks).toContainEqual(
+      expect.objectContaining({ fileName: '_app/immutable/chunks/DrrDGPOk2.js', isInitial: false }),
+    );
+  });
+});
