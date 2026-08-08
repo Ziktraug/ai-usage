@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'bun:test';
+import { parseSessionQueryRequest, sessionQueryFingerprint } from '@ai-usage/report-core/session-query';
 import { QueryObserver } from '@tanstack/svelte-query';
 import {
+  countDehydratedSessionPagePayloads,
   createHydratedWebQueryClient,
   createWebQueryClient,
   dehydrateWebQueryClient,
@@ -142,6 +144,115 @@ describe('request-scoped Web QueryClient', () => {
     expect(browserRequests).toBe(0);
     expect(observer.getCurrentResult().data).toEqual({ revision: 'revision-2' });
     unsubscribe();
+  });
+
+  test('canonicalizes Session payloads onto session-pages and seeds destination aliases without refetch', () => {
+    const serverClient = createWebQueryClient();
+    const query = parseSessionQueryRequest({
+      cursor: null,
+      filters: { fields: {}, harness: [], machine: [], origin: [], query: '' },
+      pageSize: 200,
+      range: { from: null, to: null },
+      revision: 'revision-hydrate',
+      sort: [{ desc: true, id: 'date' }],
+    });
+    const fingerprint = sessionQueryFingerprint(query);
+    const sessionItem = {
+      campaignKey: 'campaign:hydrate',
+      kind: 'campaign' as const,
+      row: {
+        calls: 1,
+        campaignKey: 'campaign:hydrate',
+        costActual: 0,
+        costApprox: 0,
+        costKnown: true,
+        costQuota: 0,
+        durationMs: 1,
+        endTime: 2,
+        freshTokens: 1,
+        harness: 'codex',
+        machineId: 'machine-a',
+        model: 'model',
+        origin: 'interactive' as const,
+        project: 'project',
+        provider: 'openai',
+        rowId: 'row-hydrate',
+        sessionLabel: 'Hydrate',
+        startTime: 1,
+        title: 'Hydrate',
+        tokIn: 1,
+        tokOut: 1,
+        tokenTotal: 2,
+        tools: 0,
+        turns: 1,
+      },
+    };
+    const topLevel = {
+      pageParams: [null],
+      pages: [
+        {
+          itemCount: 1,
+          items: [sessionItem],
+          nextCursor: null,
+          requestFingerprint: fingerprint,
+          revision: query.revision,
+          sessionCount: 1,
+        },
+      ],
+    };
+    const sessions = {
+      campaignChildren: [],
+      campaignSessions: [],
+      query,
+      topLevel,
+    };
+    const destinationData = {
+      descriptor: { captureFingerprint: 'c'.repeat(64), revision: query.revision },
+      destination: { kind: 'sessions' as const, sessions: query },
+      overview: { revision: query.revision },
+      sessions,
+    };
+    const sessionPagesKey = immutableRevisionKey('session-pages', query.revision, fingerprint, 'infinite');
+    const exactDestinationKey = [
+      'web',
+      'immutable-revision',
+      'report-destination',
+      query.revision,
+      'c'.repeat(64),
+      'sessions-destination',
+      'no-session-window',
+    ] as const;
+    serverClient.setQueryData(sessionPagesKey, topLevel);
+    serverClient.setQueryData(exactDestinationKey, destinationData);
+    serverClient.setQueryData(currentAliasKey('report-destination'), destinationData);
+
+    const hydrationState = dehydrateWebQueryClient(serverClient);
+    expect(countDehydratedSessionPagePayloads(hydrationState)).toBe(1);
+
+    let browserRequests = 0;
+    const browserClient = createHydratedWebQueryClient(hydrationState);
+    const observer = new QueryObserver(browserClient, {
+      ...webQueryPolicies.currentAliasSwr,
+      queryFn: () => {
+        browserRequests += 1;
+        return destinationData;
+      },
+      queryKey: currentAliasKey('report-destination'),
+    });
+    const unsubscribe = observer.subscribe(() => undefined);
+    const hydratedDestination = browserClient.getQueryData<typeof destinationData>(
+      currentAliasKey('report-destination'),
+    );
+
+    expect(browserRequests).toBe(0);
+    expect(hydratedDestination?.sessions?.topLevel.pages[0]?.items[0]).toEqual(sessionItem);
+    expect(browserClient.getQueryData<typeof destinationData>(exactDestinationKey)?.sessions?.topLevel).toEqual(
+      topLevel,
+    );
+    expect(browserClient.getQueryData<typeof topLevel>(sessionPagesKey)).toEqual(topLevel);
+    unsubscribe();
+    serverClient.clear();
+    browserClient.clear();
   });
 
   test('merges document and page hydration by query hash while retaining the newest exact value', () => {

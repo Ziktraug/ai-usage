@@ -6,9 +6,10 @@ import {
   projectFocusedOverview,
   projectFocusedSupport,
 } from '@ai-usage/report-core/focused-report-query';
-import { sessionQueryFingerprint } from '@ai-usage/report-core/session-query';
+import { enrichSessionPresentationRow, sessionQueryFingerprint } from '@ai-usage/report-core/session-query';
 import type { ReportRevisionBootstrapResult } from '@ai-usage/web-contract/report';
 import { demoReportPayload } from '../../../../report-data';
+import { countDehydratedSessionPagePayloads, createHydratedWebQueryClient } from '../../../query/client';
 import { type ReportQueryClient, reportBootstrapKey } from '../../../query/options/report';
 import { reportDestinationKey } from '../../../query/options/report-destination';
 import {
@@ -222,14 +223,25 @@ describe('report bootstrap', () => {
             page: (request) => {
               sessionPageCount += 1;
               const requestFingerprint = sessionQueryFingerprint(request);
+              const sourceRow = demoReportPayload.rows[0];
+              if (!sourceRow) {
+                throw new Error('Demo payload must include a Sessions row for hydration coverage');
+              }
+              const row = enrichSessionPresentationRow(sourceRow);
               return Promise.resolve({
                 data: {
-                  itemCount: 0,
-                  items: [],
+                  itemCount: 1,
+                  items: [
+                    {
+                      campaignKey: row.campaignKey ?? `campaign:${row.rowId}`,
+                      kind: 'campaign' as const,
+                      row,
+                    },
+                  ],
                   nextCursor: null,
                   requestFingerprint,
                   revision: request.revision,
-                  sessionCount: 0,
+                  sessionCount: 1,
                 },
                 ok: true,
                 requestFingerprint,
@@ -245,5 +257,19 @@ describe('report bootstrap', () => {
     expect(sessionPageCount).toBe(1);
     expect(queryState.dehydratedState.queries).toHaveLength(5);
     expect(queryState.dehydratedState.queries.map((query) => query.queryKey)).toContainEqual(reportDestinationKey());
+    // Production invariant: Session row payloads serialize once (canonical session-pages).
+    expect(countDehydratedSessionPagePayloads(queryState)).toBe(1);
+
+    let browserRequests = 0;
+    const browserClient = createHydratedWebQueryClient(queryState);
+    const destination = browserClient.getQueryData<{ sessions?: { topLevel: { pages: { items: unknown[] }[] } } }>(
+      reportDestinationKey(),
+    );
+    browserClient.getQueryCache().subscribe(() => {
+      browserRequests += 1;
+    });
+    expect(destination?.sessions?.topLevel.pages[0]?.items).toHaveLength(1);
+    expect(browserRequests).toBe(0);
+    browserClient.clear();
   });
 });
