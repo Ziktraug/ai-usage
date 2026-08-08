@@ -666,15 +666,70 @@ const hydrateExactCampaignCosts = (
   }
 };
 
-const runSessionPage = (
+interface SessionQueryTotalsCacheEntry {
+  itemCount: number;
+  sessionCount: number;
+}
+
+/**
+ * Exact-revision reuse across OFFSET pages. Readers open a fresh SQLite connection per
+ * request, so identity is revision + payload seal + query fingerprint rather than the
+ * ephemeral database object.
+ */
+const sessionQueryTotalsByIdentity = new Map<string, SessionQueryTotalsCacheEntry>();
+const sessionQueryProjectionByIdentity = new Map<string, ItemRecord[]>();
+const SESSION_QUERY_TOTALS_CACHE_LIMIT = 64;
+const SESSION_QUERY_PROJECTION_CACHE_LIMIT = 8;
+
+const rememberLru = <Value>(cache: Map<string, Value>, identity: string, value: Value, limit: number): void => {
+  if (cache.has(identity)) {
+    cache.delete(identity);
+  }
+  cache.set(identity, value);
+  while (cache.size > limit) {
+    const oldest = cache.keys().next().value;
+    if (oldest === undefined) {
+      break;
+    }
+    cache.delete(oldest);
+  }
+};
+
+const sessionQueryPayloadSeal = (database: SessionQuerySqliteDatabase, trace?: SessionQuerySqliteTrace): string => {
+  const metadata = executeGet<{ row_count: number; schema_version: number }>(
+    database,
+    'SELECT schema_version, row_count FROM metadata LIMIT 1',
+    [],
+    trace,
+  );
+  return `${metadata?.schema_version ?? 'missing'}\0${metadata?.row_count ?? 'missing'}`;
+};
+
+const sessionQueryPageIdentity = (
   database: SessionQuerySqliteDatabase,
-  input: SessionQueryRequest,
+  revision: string,
+  requestFingerprint: string,
   trace?: SessionQuerySqliteTrace,
-): SessionPageResult => {
-  const request = parseSessionQueryRequest(input);
-  const requestFingerprint = sessionQueryFingerprint(request);
-  const offset = offsetFromCursor(request.cursor, request.revision, requestFingerprint);
-  const filter = buildSessionQuerySqlFilter(request);
+): string => `${revision}\0${sessionQueryPayloadSeal(database, trace)}\0${requestFingerprint}`;
+
+export const resetSessionQueryTotalsCacheForTests = (): void => {
+  sessionQueryTotalsByIdentity.clear();
+  sessionQueryProjectionByIdentity.clear();
+};
+
+const resolveSessionQueryTotals = (
+  database: SessionQuerySqliteDatabase,
+  request: SessionQueryRequest,
+  identity: string,
+  filter: ReturnType<typeof buildSessionQuerySqlFilter>,
+  trace?: SessionQuerySqliteTrace,
+): SessionQueryTotalsCacheEntry => {
+  if (request.cursor !== null) {
+    const cached = sessionQueryTotalsByIdentity.get(identity);
+    if (cached) {
+      return cached;
+    }
+  }
   const countSql = `SELECT
     COUNT(*) AS session_count,
     COUNT(DISTINCT campaign_key) AS item_count
@@ -688,8 +743,24 @@ const runSessionPage = (
         session_count: 0,
       },
   );
-  const order = buildSessionQuerySqlOrder(request.sort, 'item_identity_rank', 'item_ordinal');
-  const useExactCostSort = request.sort.some(({ id }) => CAMPAIGN_EXACT_COST_SORT_FIELDS.has(id));
+  const totals = { itemCount: counts.item_count, sessionCount: counts.session_count };
+  rememberLru(sessionQueryTotalsByIdentity, identity, totals, SESSION_QUERY_TOTALS_CACHE_LIMIT);
+  return totals;
+};
+
+const resolveSessionQueryProjection = (
+  database: SessionQuerySqliteDatabase,
+  identity: string,
+  filter: ReturnType<typeof buildSessionQuerySqlFilter>,
+  order: string,
+  useExactCostSort: boolean,
+  trace?: SessionQuerySqliteTrace,
+): ItemRecord[] => {
+  const cached = sessionQueryProjectionByIdentity.get(identity);
+  if (cached) {
+    rememberLru(sessionQueryProjectionByIdentity, identity, cached, SESSION_QUERY_PROJECTION_CACHE_LIMIT);
+    return cached;
+  }
   const campaignCtes = [
     campaignFilteredCte(filter.where),
     campaignRollupCte(filter.where !== '1 = 1'),
@@ -698,10 +769,29 @@ const runSessionPage = (
     campaignItemCte(useExactCostSort),
   ].join(',\n');
   const pageSql = `WITH${useExactCostSort ? ' RECURSIVE' : ''} ${campaignCtes}
-    SELECT * FROM campaign_items ORDER BY ${order} LIMIT ? OFFSET ?`;
-  const pageWithSentinel = measureSessionQueryPerfPhase('projection', () =>
-    executeAll<ItemRecord>(database, pageSql, [...filter.params, request.pageSize + 1, offset], trace),
+    SELECT * FROM campaign_items ORDER BY ${order}`;
+  const records = measureSessionQueryPerfPhase('projection', () =>
+    executeAll<ItemRecord>(database, pageSql, [...filter.params], trace),
   );
+  rememberLru(sessionQueryProjectionByIdentity, identity, records, SESSION_QUERY_PROJECTION_CACHE_LIMIT);
+  return records;
+};
+
+const runSessionPage = (
+  database: SessionQuerySqliteDatabase,
+  input: SessionQueryRequest,
+  trace?: SessionQuerySqliteTrace,
+): SessionPageResult => {
+  const request = parseSessionQueryRequest(input);
+  const requestFingerprint = sessionQueryFingerprint(request);
+  const offset = offsetFromCursor(request.cursor, request.revision, requestFingerprint);
+  const filter = buildSessionQuerySqlFilter(request);
+  const identity = sessionQueryPageIdentity(database, request.revision, requestFingerprint, trace);
+  const counts = resolveSessionQueryTotals(database, request, identity, filter, trace);
+  const order = buildSessionQuerySqlOrder(request.sort, 'item_identity_rank', 'item_ordinal');
+  const useExactCostSort = request.sort.some(({ id }) => CAMPAIGN_EXACT_COST_SORT_FIELDS.has(id));
+  const orderedRecords = resolveSessionQueryProjection(database, identity, filter, order, useExactCostSort, trace);
+  const pageWithSentinel = orderedRecords.slice(offset, offset + request.pageSize + 1);
   const hasMore = pageWithSentinel.length > request.pageSize;
   const pageRecords = pageWithSentinel.slice(0, request.pageSize);
   const items: SessionPageItem[] = measureSessionQueryPerfPhase('materialize', () => {
@@ -714,12 +804,12 @@ const runSessionPage = (
     }));
   });
   return {
-    itemCount: counts.item_count,
+    itemCount: counts.itemCount,
     items,
     nextCursor: hasMore ? createPageCursor(request.revision, requestFingerprint, offset + request.pageSize) : null,
     requestFingerprint,
     revision: request.revision,
-    sessionCount: counts.session_count,
+    sessionCount: counts.sessionCount,
   };
 };
 
