@@ -1,8 +1,8 @@
 import { calculateSessionRowWindow } from '../../../../session-row-window';
 
 export const sessionVirtualBudgets = {
-  desktop: { maxRows: 300, overscanRows: 8, prefetchRows: 12, rowHeight: 43 },
-  mobile: { maxRows: 600, overscanRows: 8, prefetchRows: 3, rowHeight: 188 },
+  desktop: { maxRows: 300, overscanRows: 4, prefetchRows: 12, rowHeight: 43 },
+  mobile: { maxRows: 600, overscanRows: 4, prefetchRows: 3, rowHeight: 188 },
 } as const;
 
 export interface SessionVirtualProjection<Row> {
