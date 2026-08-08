@@ -1,13 +1,15 @@
 <script lang="ts">
   import { page } from '$app/state';
-  import AppShell from '$lib/features/shell/app-shell.svelte';
+  import ProviderQuotaQueryShell from '$lib/features/shell/provider-quota-query-shell.svelte';
   import SourceControlProvider from '$lib/features/sources/source-control-provider.svelte';
   import SourceControlSummary from '$lib/features/sources/source-control-summary.svelte';
+  import { mergeWebQueryHydrationStates } from '$lib/query/client';
   import WebQueryProvider from '$lib/query/provider.svelte';
   import type { LayoutProps } from './$types';
   import '../../src/index.css';
 
   let { children, data }: LayoutProps = $props();
+  const hydrationState = $derived(mergeWebQueryHydrationStates(data.quotaQueryState, page.data.queryState));
 </script>
 
 <svelte:head>
@@ -18,10 +20,10 @@
   <SourceControlSummary />
 {/snippet}
 
-<WebQueryProvider hydrationState={page.data.queryState ?? data.queryState}>
+<WebQueryProvider {hydrationState}>
   <SourceControlProvider runtimeMode={data.runtimeMode}>
-    <AppShell providerQuota={data.providerQuota} runtimeMode={data.runtimeMode} {sourceControlSummary}>
+    <ProviderQuotaQueryShell runtimeMode={data.runtimeMode} {sourceControlSummary}>
       {@render children()}
-    </AppShell>
+    </ProviderQuotaQueryShell>
   </SourceControlProvider>
 </WebQueryProvider>

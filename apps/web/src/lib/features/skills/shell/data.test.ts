@@ -12,7 +12,7 @@ import { createRouterClient } from '@orpc/server';
 import { createWebQueryClient } from '../../../query/client';
 import { managedSkillMarkdownKey, projectSkillMarkdownKey } from '../../../query/options/skills';
 import { createSkillsRouter, type SkillsCapability, type SkillsCapabilityResult } from '../../../server/rpc/skills';
-import { loadSkillsShellRoute, prefetchSkillsShellQueries } from './data';
+import { deferredSkillsShellRoute, loadSkillsShellRoute, prefetchSkillsShellQueries } from './data';
 import {
   syntheticInventories,
   syntheticKnownPaths,
@@ -100,5 +100,13 @@ describe('Svelte Skills SSR data adapter', () => {
     });
     expect(result).toEqual({ decision: 'redirect-report' });
     expect(requests).toBe(0);
+  });
+
+  test('returns an empty SPA hydration delta without constructing a route Query runtime', () => {
+    expect(deferredSkillsShellRoute()).toEqual({
+      decision: 'render',
+      queryState: { dehydratedState: { mutations: [], queries: [] } },
+      source: 'not configured',
+    });
   });
 });

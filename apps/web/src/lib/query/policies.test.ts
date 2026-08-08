@@ -25,15 +25,18 @@ describe('Web query key and policy vocabulary', () => {
   });
 
   test('requires named policies with explicit lifecycle behavior and bounded collection', () => {
-    expect(queryPolicy('current-alias')).toBe(webQueryPolicies.currentAlias);
+    expect(queryPolicy('current-alias-swr')).toBe(webQueryPolicies.currentAliasSwr);
     expect(queryPolicy('immutable-revision')).toBe(webQueryPolicies.immutableRevision);
     expect(queryPolicy('finite-swr')).toBe(webQueryPolicies.finiteSwr);
     expect(queryPolicy('bounded-control-plane')).toBe(webQueryPolicies.boundedControlPlane);
 
-    expect(webQueryPolicies.currentAlias).toMatchObject({
+    expect(webQueryPolicies.currentAliasSwr).toMatchObject({
       gcTime: DEFAULT_BOUNDED_GC_TIME_MS,
+      refetchOnMount: true,
+      refetchOnReconnect: true,
+      refetchOnWindowFocus: true,
       retry: false,
-      staleTime: Number.POSITIVE_INFINITY,
+      staleTime: FINITE_SWR_STALE_TIME_MS,
     });
     expect(webQueryPolicies.immutableRevision).toMatchObject({
       gcTime: DEFAULT_BOUNDED_GC_TIME_MS,
@@ -53,9 +56,15 @@ describe('Web query key and policy vocabulary', () => {
 
     for (const selectedPolicy of Object.values(webQueryPolicies)) {
       expect(Number.isFinite(selectedPolicy.gcTime)).toBe(true);
+      expect(selectedPolicy.retry).toBe(false);
+    }
+    for (const selectedPolicy of [
+      webQueryPolicies.boundedControlPlane,
+      webQueryPolicies.finiteSwr,
+      webQueryPolicies.immutableRevision,
+    ]) {
       expect(selectedPolicy.refetchOnReconnect).toBe(false);
       expect(selectedPolicy.refetchOnWindowFocus).toBe(false);
-      expect(selectedPolicy.retry).toBe(false);
     }
   });
 });

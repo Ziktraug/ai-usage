@@ -6,8 +6,7 @@ import { svelte } from '@sveltejs/vite-plugin-svelte';
 import type { Component } from 'svelte';
 import { createServer } from 'vite';
 import { syntheticSessionRow } from '../table/session-table.fixtures';
-import { createSessionDetailController } from './controller';
-import type { SessionDetailQueryOwner } from './query-owner';
+import { emptySessionDetailSnapshot, type SessionDetailController } from './types';
 
 interface SvelteServerModule {
   readonly render: (component: Component, options?: { props?: Record<string, unknown> }) => { body: string };
@@ -303,29 +302,29 @@ describe('P4 Svelte detail rendering', () => {
   });
 
   test('keeps the portal Drawer client-owned while its controlled selection is settled during SSR', () => {
-    const query: SessionDetailQueryOwner = {
-      close: () => undefined,
-      loadDetail: () => Promise.resolve(undefined),
-      loadNeighbors: () => Promise.resolve(undefined),
-      loadVcs: () => Promise.resolve(undefined),
-      resetDetail: () => undefined,
-      resetVcs: () => undefined,
+    const snapshot = {
+      ...emptySessionDetailSnapshot(),
+      row,
+      target: { kind: 'session' as const, reportRowId: row.rowId, summaryRow: row },
     };
-    const controller = createSessionDetailController({ query, rows: () => [row] });
-    controller.select({ row });
-    const html = render(SessionDrawer, {
-      props: {
-        controller,
-        rows: [row],
-        snapshot: controller.current(),
-      },
-    }).body;
-    expect(controller.current()).toMatchObject({
+    const controller: SessionDetailController = {
+      close: () => undefined,
+      current: () => snapshot,
+      dispose: () => undefined,
+      handleKeyDown: () => undefined,
+      navigate: () => undefined,
+      resolveVcs: () => Promise.resolve(),
+      retryAnalysis: () => Promise.resolve(),
+      select: () => undefined,
+      subscribe: () => () => undefined,
+      toggleAnalysis: () => Promise.resolve(),
+    };
+    const html = render(SessionDrawer, { props: { controller, rows: [row], snapshot } }).body;
+    expect(snapshot).toMatchObject({
       row: { rowId: row.rowId },
       target: { kind: 'session', reportRowId: row.rowId },
     });
     expect(html).not.toContain(row.sessionLabel);
     expect(html).not.toContain('Loading');
-    controller.dispose();
   });
 });

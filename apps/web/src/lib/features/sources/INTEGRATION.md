@@ -5,6 +5,12 @@
 `AppShell`. The provider owns start, reconnect, current-report invalidation, and
 disposal for both the navigation summary and Sources page.
 
+The explicit EventSource service owns one connection and reconnect lifecycle.
+Each bounded state publication is written to the named Sources Query key, which
+is the value consumed by the provider context and UI. Commands use one Query
+mutation; pending/error state comes from its observer. A new publication
+invalidates only the current Report bootstrap/manifest aliases.
+
 The layout defines one `SourceControlSummary` snippet and passes it through
 `AppShell` to `AppNavigation`. Navigation renders that snippet once in each
 mutually exclusive responsive branch and never in demo mode. Feature code does

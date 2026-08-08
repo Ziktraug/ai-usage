@@ -1,6 +1,7 @@
 <script lang="ts">
   import { QueryClientProvider } from '@tanstack/svelte-query';
   import { type Snippet, untrack } from 'svelte';
+  import { createBrowserWebRpcClient, createWebRpcQueryUtils } from '../rpc/client';
   import {
     createHydratedWebQueryClient,
     createWebQueryClient,
@@ -8,6 +9,7 @@
     type WebQueryHydrationState,
   } from './client';
   import { installWebQueryHydrationContext, webQueryHydrationSignature } from './hydration-context.svelte';
+  import { installWebQueryRpcContext } from './rpc-context.svelte';
 
   let {
     children,
@@ -23,6 +25,14 @@
   let observedHydrationState = untrack(() => hydrationState);
   let appliedHydrationSignature = $state(webQueryHydrationSignature(observedHydrationState));
   installWebQueryHydrationContext(() => appliedHydrationSignature);
+
+  if (typeof window !== 'undefined') {
+    const rpc = untrack(() => createBrowserWebRpcClient('web-query-browser'));
+    installWebQueryRpcContext({
+      orpc: createWebRpcQueryUtils(rpc),
+      rpc,
+    });
+  }
 
   $effect(() => {
     if (hydrationState && hydrationState !== observedHydrationState) {

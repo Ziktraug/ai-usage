@@ -1,10 +1,14 @@
 # Canonical Skills shell integration
 
-`apps/web/src/routes/skills/+layout.ts` awaits `loadSkillsShellRoute` with the
-parent runtime mode, route `fetch`, current URL, stable `skills-shell-ssr`
-request owner, and current pathname. Demo mode redirects to `/` before runtime
-construction. The loader returns dehydrated canonical Skills query state so SSR
-renders settled content and hydration does not acquire the snapshot again.
+`apps/web/src/routes/skills/+layout.server.ts` redirects demo mode before any
+acquisition. A document request awaits `loadSkillsShellRoute` with the stable
+`skills-shell-ssr` owner and dehydrates snapshot, known paths, configured
+inventories, and the selected document under their canonical finite-SWR keys.
+Hydration therefore performs no duplicate acquisition.
+
+A SvelteKit data request returns an empty hydration delta. The persistent root
+Query client serves fresh Skills data immediately and revalidates stale or
+missing entries through the mounted observers without a route-owned client.
 
 `apps/web/src/routes/skills/+layout.svelte` renders one `SkillsShell` inside the
 shared `RouteFrame`. Nested Skills route leaves retain addressability and typed

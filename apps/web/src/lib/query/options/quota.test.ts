@@ -9,6 +9,9 @@ import {
   type QuotaQueryClient,
   quotaHistoryKey,
   quotaHistoryQueryOptions,
+  quotaRailHistoryRequest,
+  quotaRailKey,
+  quotaRailQueryOptions,
   updateQuotaHistory,
 } from './quota';
 
@@ -35,6 +38,44 @@ const createReportClientStub = (overrides: Partial<QuotaQueryClient> = {}): Quot
 });
 
 describe('Quota Query options', () => {
+  test('QUERY-QUOTA-RAIL: uses one stable finite-SWR key and a two-point all-provider history request', async () => {
+    const requests: ProviderQuotaHistoryRequest[] = [];
+    const signals: AbortSignal[] = [];
+    const queryClient = createWebQueryClient();
+    const options = quotaRailQueryOptions(
+      createReportClientStub({
+        getProviderQuotaHistory: (input, callOptions) => {
+          requests.push(input);
+          if (callOptions?.signal) {
+            signals.push(callOptions.signal);
+          }
+          return Promise.resolve(quotaResult);
+        },
+      }),
+      { browser: false, enabled: true },
+    );
+
+    await expect(queryClient.fetchQuery(options)).resolves.toEqual(quotaResult);
+
+    expect(quotaRailKey()).toEqual(['web', 'finite-swr', 'quota', 'rail']);
+    expect(options).toMatchObject({
+      gcTime: DEFAULT_BOUNDED_GC_TIME_MS,
+      queryKey: quotaRailKey(),
+      staleTime: FINITE_SWR_STALE_TIME_MS,
+    });
+    expect(requests).toHaveLength(1);
+    expect(requests[0]).toMatchObject({ maximumPoints: 2 });
+    expect(requests[0]?.machineId).toBeUndefined();
+    expect(requests[0]?.providerKey).toBeUndefined();
+    expect(Date.parse(requests[0]?.to ?? '') - Date.parse(requests[0]?.from ?? '')).toBe(30 * 24 * 60 * 60 * 1000);
+    expect(signals).toHaveLength(1);
+    expect(quotaRailHistoryRequest(new Date('2026-08-08T00:00:00.000Z'))).toEqual({
+      from: '2026-07-09T00:00:00.000Z',
+      maximumPoints: 2,
+      to: '2026-08-08T00:00:00.000Z',
+    });
+  });
+
   test('QUERY-QUOTA-FINITE-SWR: keys every request and policy field without collisions', () => {
     const basePolicy = { range: '24h' as const };
     const baseKey = quotaHistoryKey(request, basePolicy);

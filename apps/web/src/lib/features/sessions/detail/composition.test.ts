@@ -6,11 +6,17 @@ const source = (name: string): string => readFileSync(fileURLToPath(new URL(name
 
 describe('P4 stable Drawer composition', () => {
   test('keeps one Drawer and final-focus owner while selection moves between neighboring rows', () => {
-    const slot = source('./session-detail-slot.svelte');
+    const slot = source('./session-detail-query-slot.svelte');
     const drawer = source('./session-drawer.svelte');
 
     expect(slot).not.toContain('{#key');
     expect(slot.match(/<SessionDrawer\b/g)).toHaveLength(1);
+    expect(slot.match(/createQuery\(/g)).toHaveLength(3);
+    expect(slot).toContain('optionalSessionNeighborsQueryOptions');
+    expect(slot).toContain('optionalSessionDetailQueryOptions');
+    expect(slot).toContain('optionalSessionVcsQueryOptions');
+    expect(slot).not.toContain('createSessionDetailController');
+    expect(slot).not.toContain('createSessionDetailQueryOwner');
     expect(drawer.match(/const previousFocus\b/g)).toHaveLength(1);
     expect(drawer).toContain('finalFocusEl={() =>');
     expect(drawer).toContain('previousFocus instanceof HTMLElement && previousFocus.isConnected');

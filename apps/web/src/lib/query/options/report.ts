@@ -1,3 +1,4 @@
+import { type CampaignLabelOverrideMutation, parseCampaignLabelOverrides } from '@ai-usage/report-core/campaign-label';
 import {
   focusedBreakdownFingerprint,
   focusedOverviewFingerprint,
@@ -10,10 +11,11 @@ import type {
   FocusedBreakdownRequest,
   FocusedOverviewRequest,
   FocusedRevisionRequest,
+  SaveProjectGroupsInput,
 } from '@ai-usage/web-contract/report';
-import { type QueryClient, queryOptions } from '@tanstack/svelte-query';
+import { mutationOptions, type QueryClient, queryOptions } from '@tanstack/svelte-query';
 import type { ReportClient } from '../../rpc/report-client';
-import { immutableRevisionKey } from '../keys';
+import { finiteSwrKey, immutableRevisionKey } from '../keys';
 import { webQueryPolicies } from '../policies';
 import { currentReportAliasKeys } from '../publication';
 
@@ -32,8 +34,14 @@ export type ReportQueryClient = Pick<
   | 'getReportRevisionManifest'
 >;
 
+export type ReportMutationClient = Pick<
+  ReportClient,
+  'getCampaignLabelOverrides' | 'saveProjectGroups' | 'setCampaignLabelOverride'
+>;
+
 export const reportManifestKey = () => currentReportAliasKeys()[0];
 export const reportBootstrapKey = () => currentReportAliasKeys()[1];
+export const campaignLabelOverridesKey = () => finiteSwrKey('campaign-label-overrides');
 
 export const reportSupportKey = (request: FocusedRevisionRequest) =>
   immutableRevisionKey(reportExactFamily, request.revision, focusedRevisionFingerprint('support', request), 'support');
@@ -44,9 +52,21 @@ export const reportOverviewKey = (request: FocusedOverviewRequest) =>
 export const reportBreakdownKey = (request: FocusedBreakdownRequest) =>
   immutableRevisionKey(reportExactFamily, request.query.revision, focusedBreakdownFingerprint(request), 'breakdown');
 
+export const campaignLabelOverridesQueryOptions = (
+  client: Pick<ReportMutationClient, 'getCampaignLabelOverrides'>,
+  execution: ReportQueryExecution,
+) =>
+  queryOptions({
+    ...webQueryPolicies.finiteSwr,
+    enabled: execution.browser,
+    queryFn: async ({ signal }) =>
+      parseCampaignLabelOverrides((await client.getCampaignLabelOverrides({ signal })).campaignLabelOverrides),
+    queryKey: campaignLabelOverridesKey(),
+  });
+
 export const reportManifestQueryOptions = (client: ReportQueryClient, execution: ReportQueryExecution) =>
   queryOptions({
-    ...webQueryPolicies.currentAlias,
+    ...webQueryPolicies.currentAliasSwr,
     enabled: execution.browser,
     queryFn: async ({ signal }) => await client.getReportRevisionManifest({ signal }),
     queryKey: reportManifestKey(),
@@ -54,7 +74,7 @@ export const reportManifestQueryOptions = (client: ReportQueryClient, execution:
 
 export const reportBootstrapQueryOptions = (client: ReportQueryClient, execution: ReportQueryExecution) =>
   queryOptions({
-    ...webQueryPolicies.currentAlias,
+    ...webQueryPolicies.currentAliasSwr,
     enabled: execution.browser,
     queryFn: async ({ signal }) => await client.getReportRevisionBootstrap({ signal }),
     queryKey: reportBootstrapKey(),
@@ -101,6 +121,39 @@ export const reportBreakdownQueryOptions = (
     queryKey: reportBreakdownKey(parsed),
   });
 };
+
+export const fetchReportBreakdown = async (
+  queryClient: QueryClient,
+  client: ReportQueryClient,
+  request: FocusedBreakdownRequest,
+) => await queryClient.fetchQuery(reportBreakdownQueryOptions(client, request, { browser: true }));
+
+export const setCampaignLabelOverrideMutationOptions = (
+  client: Pick<ReportMutationClient, 'setCampaignLabelOverride'>,
+  queryClient: QueryClient,
+) =>
+  mutationOptions({
+    mutationFn: async (input: CampaignLabelOverrideMutation) =>
+      parseCampaignLabelOverrides((await client.setCampaignLabelOverride(input)).campaignLabelOverrides),
+    mutationKey: ['web', 'mutation', 'campaign-label-override'],
+    onSuccess: (overrides) => {
+      queryClient.setQueryData(campaignLabelOverridesKey(), overrides);
+    },
+    retry: false,
+  });
+
+export const saveProjectGroupsMutationOptions = (
+  client: Pick<ReportMutationClient, 'saveProjectGroups'>,
+  queryClient: QueryClient,
+) =>
+  mutationOptions({
+    mutationFn: async (input: SaveProjectGroupsInput) => await client.saveProjectGroups(input),
+    mutationKey: ['web', 'mutation', 'project-groups'],
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['web', 'current-alias'] });
+    },
+    retry: false,
+  });
 
 export const invalidateCurrentReportAliases = async (client: QueryClient): Promise<void> => {
   await Promise.all(

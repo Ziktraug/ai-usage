@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { useQueryClient } from '@tanstack/svelte-query';
+  import { createMutation, createQuery, useQueryClient } from '@tanstack/svelte-query';
   import { onMount, type Snippet, untrack } from 'svelte';
   import type { RuntimeMode } from '../../../runtime-mode';
   import {
@@ -7,6 +7,11 @@
     type SourceControlClient,
     type SourceControlClientState,
   } from '../../../source-control-client';
+  import {
+    sourceControlCommandMutationOptions,
+    sourceControlStateQueryOptions,
+    updateSourceControlState,
+  } from '../../query/options/source-control';
   import { provideSourceControl } from './context.svelte';
   import { createSourceControlService } from './service';
 
@@ -28,12 +33,29 @@
       queryClient.invalidateQueries({ exact: true, queryKey }).catch(() => undefined);
     },
   });
-  let state: SourceControlClientState = $state(service.getState());
+  const stateQuery = createQuery(() => sourceControlStateQueryOptions(service.getState()));
+  const commandMutation = createMutation(() =>
+    sourceControlCommandMutationOptions({
+      execute: service.execute,
+      rejectedError: () => service.getState().commandError,
+    }),
+  );
   const unsubscribe = service.subscribe((nextState) => {
-    state = nextState;
+    updateSourceControlState(queryClient, nextState);
+  });
+  const state = $derived<SourceControlClientState>({
+    ...(stateQuery.data ?? service.getState()),
+    commandError:
+      commandMutation.error instanceof Error
+        ? commandMutation.error.message
+        : (stateQuery.data?.commandError ?? service.getState().commandError),
+    pendingCommand: commandMutation.isPending ? (commandMutation.variables ?? null) : null,
   });
 
-  provideSourceControl({ execute: service.execute, state: () => state });
+  provideSourceControl({
+    execute: async (command) => await commandMutation.mutateAsync(command),
+    state: () => state,
+  });
 
   onMount(() => {
     service.start();

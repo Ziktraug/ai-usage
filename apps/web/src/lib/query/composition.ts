@@ -1,6 +1,6 @@
 import type { WebContractClient } from '@ai-usage/web-contract';
 import type { QueryClient } from '@tanstack/svelte-query';
-import { createWebRpcClient } from '../rpc/client';
+import { createWebRpcClient, createWebRpcQueryUtils, type WebRpcQueryUtils } from '../rpc/client';
 import {
   createWebQueryClient,
   dehydrateWebQueryClient,
@@ -11,6 +11,7 @@ import { invalidateCurrentReportAliases } from './options/report';
 import type { WebQueryPolicyName } from './policies';
 
 export interface WebQueryRuntime {
+  readonly orpc: WebRpcQueryUtils;
   readonly queryClient: QueryClient;
   readonly rpc: WebContractClient;
 }
@@ -25,7 +26,7 @@ export interface WebQueryRuntimeOptions {
 export type PublicationQueryEffect = 'invalidate-current-alias' | 'none';
 
 export interface WebQueryOwnership {
-  readonly family: 'quota' | 'report-current' | 'report-exact' | 'session' | 'skills' | 'sync';
+  readonly family: 'quota' | 'report-current' | 'report-exact' | 'session' | 'skills' | 'sources' | 'sync';
   readonly policy: WebQueryPolicyName;
   readonly publication: PublicationQueryEffect;
   readonly rendering: 'browser-only' | 'ssr-awaited';
@@ -34,7 +35,7 @@ export interface WebQueryOwnership {
 export const webQueryOwnership = [
   {
     family: 'report-current',
-    policy: 'current-alias',
+    policy: 'current-alias-swr',
     publication: 'invalidate-current-alias',
     rendering: 'ssr-awaited',
   },
@@ -54,7 +55,7 @@ export const webQueryOwnership = [
     family: 'quota',
     policy: 'finite-swr',
     publication: 'none',
-    rendering: 'browser-only',
+    rendering: 'ssr-awaited',
   },
   {
     family: 'skills',
@@ -68,6 +69,12 @@ export const webQueryOwnership = [
     publication: 'none',
     rendering: 'ssr-awaited',
   },
+  {
+    family: 'sources',
+    policy: 'bounded-control-plane',
+    publication: 'none',
+    rendering: 'browser-only',
+  },
 ] as const satisfies readonly WebQueryOwnership[];
 
 export const createWebQueryRuntime = ({
@@ -80,23 +87,25 @@ export const createWebQueryRuntime = ({
   if (hydrationState) {
     hydrateWebQueryClient(queryClient, hydrationState);
   }
-  return {
-    queryClient,
-    rpc: createWebRpcClient({
-      fetch,
-      // Only headers a browser can reproduce may be sent here. `load` runs on the server and again
-      // during hydration, and SvelteKit keys its serialised SSR fetch cache on the request headers.
-      // `Origin` is a forbidden header name the browser silently drops, so setting it server-side
-      // desynchronises the two cache keys and forces the hydrating client to refetch over the network.
-      headers: requestOwner === undefined ? {} : { 'x-ai-usage-request-owner': requestOwner },
-      url: new URL('/rpc', url),
-    }),
-  };
+  const rpc = createWebRpcClient({
+    fetch,
+    // Only headers a browser can reproduce may be sent here. `load` runs on the server and again
+    // during hydration, and SvelteKit keys its serialised SSR fetch cache on the request headers.
+    // `Origin` is a forbidden header name the browser silently drops, so setting it server-side
+    // desynchronises the two cache keys and forces the hydrating client to refetch over the network.
+    headers: requestOwner === undefined ? {} : { 'x-ai-usage-request-owner': requestOwner },
+    url: new URL('/rpc', url),
+  });
+  return { orpc: createWebRpcQueryUtils(rpc), queryClient, rpc };
 };
 
 export const createWebQueryLoadState = (options: WebQueryRuntimeOptions): WebQueryHydrationState => {
   const runtime = createWebQueryRuntime(options);
-  return dehydrateWebQueryClient(runtime.queryClient);
+  try {
+    return dehydrateWebQueryClient(runtime.queryClient);
+  } finally {
+    runtime.queryClient.clear();
+  }
 };
 
 export const createPublicationQueryInvalidator = (queryClient: QueryClient) => {

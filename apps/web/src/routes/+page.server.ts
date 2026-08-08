@@ -1,6 +1,7 @@
 import { error } from '@sveltejs/kit';
 import {
   acquireLiveReportQueryState,
+  deferredLiveReportQueryState,
   ReportBootstrapUnavailableError,
 } from '$lib/features/report/core/report-bootstrap';
 import type { PageServerLoad } from './$types';
@@ -10,13 +11,16 @@ import type { PageServerLoad } from './$types';
  * A universal `load` would re-run during hydration and re-acquire everything over the network — the
  * serialised SSR fetch cache cannot replay the Overview, whose request body is a Blob by then.
  */
-export const load: PageServerLoad = async ({ depends, fetch, locals, untrack, url }) => {
+export const load: PageServerLoad = async ({ depends, fetch, isDataRequest, locals, untrack, url }) => {
   depends('ai-usage:report-root');
   if (locals.shellE2eError) {
     error(503, 'Synthetic shell route failure');
   }
   if ((locals.runtimeMode ?? 'live') !== 'live') {
     return {};
+  }
+  if (isDataRequest) {
+    return { reportQueryState: deferredLiveReportQueryState() };
   }
   // Detached copies. Reading a tracked `url` property here would make this load search-scoped, so
   // every filter and range change would refetch __data.json and re-acquire the whole report — work

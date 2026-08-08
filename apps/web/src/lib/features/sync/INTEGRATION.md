@@ -1,10 +1,11 @@
 # Canonical Sync integration
 
-`apps/web/src/routes/sync/+page.server.ts` awaits `loadSyncPageData` with the
-route `fetch`, current URL, and stable `sync-root-ssr` request owner. The page
-component renders one `SyncRoot`, consumes the existing source-control context,
-and relies on the root `WebQueryProvider` to hydrate the returned query state.
-It does not acquire fleet data or create another query client.
+For a document request, `apps/web/src/routes/sync/+page.server.ts` awaits the
+bounded fleet under its compatible-generation Query key and dehydrates it with
+the stable `sync-root-ssr` owner. For SPA entry it returns an empty hydration
+delta, so the persistent browser observer serves a fresh fleet or performs a
+background finite refresh. The page renders one `SyncRoot`, consumes the shared
+source-control context, and never creates another client or fleet result owner.
 
 `apps/web/src/hooks.server.ts` owns the singleton
 `webReadObservabilityLifecycle`. Module initialization starts it once, the

@@ -22,6 +22,12 @@ export type SkillsShellRouteLoadResult =
       readonly source: string;
     };
 
+export const deferredSkillsShellRoute = (): Extract<SkillsShellRouteLoadResult, { readonly decision: 'render' }> => ({
+  decision: 'render',
+  queryState: { dehydratedState: { mutations: [], queries: [] } },
+  source: 'not configured',
+});
+
 type SkillsPrefetchRuntime = Pick<WebQueryRuntime, 'queryClient'> & {
   readonly rpc: Pick<WebQueryRuntime['rpc'], 'skills'>;
 };

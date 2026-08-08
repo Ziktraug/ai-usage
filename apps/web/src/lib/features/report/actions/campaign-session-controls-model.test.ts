@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import type { SessionQueryRequest } from '@ai-usage/report-core/session-query';
+import type { SessionWindowView } from '../../../query/options/session-window';
 import { syntheticCampaignRow, syntheticSessionRow } from '../../sessions/table/session-table.fixtures';
-import type { SessionTableQueryState } from '../../sessions/table/session-table-query-owner';
 import { campaignSessionControlsModel, campaignSessionControlsState } from './campaign-session-controls-model';
 
 const campaignKey = 'machine-a:codex:root-a';
@@ -34,7 +34,7 @@ const campaignFixture = () => {
 };
 
 describe('campaign session controls model', () => {
-  test('adapts the real owner maps without making the aggregate selectable', () => {
+  test('adapts the Query window maps without making the aggregate selectable', () => {
     const { campaign, hiddenChild, root, visibleChild } = campaignFixture();
     const ownerState = {
       campaignChildren: new Map([
@@ -69,7 +69,7 @@ describe('campaign session controls model', () => {
       nextCursor: null,
       query: query(),
       sessionCount: 2,
-    } satisfies SessionTableQueryState;
+    } satisfies SessionWindowView;
 
     const adapted = campaignSessionControlsState(ownerState, campaign);
 

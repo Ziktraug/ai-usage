@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 
 const IMPORT_SPECIFIER_PATTERN = /(?:\bfrom\s*|\bimport\s*\(\s*|\bimport\s*)['"]([^'"]+)['"]/g;
 const TYPE_ONLY_IMPORT_PATTERN = /\bimport\s+type\s+[\s\S]*?\s+from\s+['"][^'"]+['"];?/g;
-const SOURCE_EXTENSIONS = ['.ts', '.svelte'] as const;
+const SOURCE_EXTENSIONS = ['.ts', '.svelte.ts', '.svelte'] as const;
 const FORBIDDEN_SPECIFIER_PREFIXES = [
   'solid-js',
   '@ark-ui/solid',
@@ -34,12 +34,13 @@ const exists = async (filePath: string): Promise<boolean> => {
 };
 const resolveLocalImport = async (sourcePath: string, specifier: string): Promise<string> => {
   const unresolvedPath = path.resolve(path.dirname(sourcePath), specifier);
-  const candidates = SOURCE_EXTENSIONS.some((extension) => unresolvedPath.endsWith(extension))
-    ? [unresolvedPath]
-    : SOURCE_EXTENSIONS.flatMap((extension) => [
-        `${unresolvedPath}${extension}`,
-        path.join(unresolvedPath, `index${extension}`),
-      ]);
+  const candidates = [
+    unresolvedPath,
+    ...SOURCE_EXTENSIONS.flatMap((extension) => [
+      `${unresolvedPath}${extension}`,
+      path.join(unresolvedPath, `index${extension}`),
+    ]),
+  ];
   for (const candidate of candidates) {
     if (await exists(candidate)) {
       return candidate;

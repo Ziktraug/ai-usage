@@ -1,28 +1,20 @@
-# P2 Overview integration request
+# Canonical Overview integration
 
-P2 intentionally does not edit P1's report root or the coordinator-owned route.
-At X0, replace `ReportBootstrapOverview` in
-`features/report/core/report-root.svelte` with the focused Overview destination
-below. The candidate P2 implementation commit is
-`5880b09ff810a1894f1366bf50a27abf6b7f40ec`.
+`live-report-destination.svelte` projects the requested Overview identity from
+the URL and small local timeline intent. `reportDestinationQueryOptions` owns
+the current descriptor and exact Overview result under the same persistent
+Query client used by every Report destination.
 
-## Compose one focused destination owner
+## Query ownership
 
-- Create the `ServedReportSession` in the browser and consume it only through
-  `ReportLifecycleOwner`. Do not serialize it through page data and do not add a
-  second Query provider.
-- The adapter must acquire the current descriptor once, load the exact Overview
-  with `reportOverviewQueryOptions`, and commit only the matching revision and
-  request fingerprint. Reuse P1's expiry/supersession/abort owner. Do not import
-  `dashboard-served-report-session.ts`; that legacy adapter imports Solid.
-- The Overview destination is `{ includeAdvanced: true, query, timeline }`.
-  Keep one destination snapshot for range, filters, timeline dimension and
-  granularity. A destination refresh retains the last complete
-  `FocusedOverviewResult` while pending or failed.
-- Render `overview/overview-page.svelte` only from the accepted focused result.
-  Pass `snapshot.pending` and `snapshot.refreshError` back to the existing
-  `ReportWorkspace` status seam; never replace complete output with global
-  loading UI.
+- Render `overview-page.svelte` directly from the complete destination result
+  and expose pending/error/retained status from its Query observer.
+- A stale or failed refresh retains the previous complete Overview; do not copy
+  it into component state or replace the workspace with global loading UI.
+- Range, filters, timeline dimension, value, selection, and drag preview remain
+  component/URL interaction intent and are not server-state caches.
+- Publication and typed expiry change only named current aliases and produce a
+  new immutable exact key; never write a new revision under an old key.
 
 ## Navigation and support inputs
 
@@ -40,12 +32,9 @@ below. The candidate P2 implementation commit is
 
 ## SSR and query ownership
 
-P1's awaited bootstrap remains the meaningful SSR surface. The client-created
-session starts after hydration from that accepted descriptor, and the exact
-immutable Overview query remains owned by Q1. There must still be exactly one
-bootstrap request and one global Query provider. A later coordinator enhancement
-may dehydrate the exact Overview result, but must use the identical Q1 key and
-must not introduce a second acquisition path.
+A document request dehydrates the bootstrap and exact initial Overview under
+the same keys used by the browser. Hydration performs no duplicate acquisition;
+there is exactly one root Query provider and one browser oRPC client.
 
 ## D4 chart-color delta
 

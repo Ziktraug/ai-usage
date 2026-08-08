@@ -14,6 +14,7 @@ import { freezeSessionScrollCollectionSources } from './session-scroll-source-co
 const SESSION_ROUTE = '/?origin=%5B%5D&range=%7B%22mode%22%3A%22all%22%7D&tab=sessions';
 const SESSION_PAGE_RPC_PATH = '/rpc/session/page';
 const SESSION_QUERY_FINGERPRINT_PATTERN = /^session-query-v1:[0-9a-f]{16}$/;
+const SESSION_ROW_ID_PATTERN = /session-row-v1:[0-9a-f]{16}/g;
 const NON_EMPTY_ATTRIBUTE_PATTERN = /.+/;
 const LOAD_MORE_SESSION_BUTTON_PATTERN = /load more sessions/i;
 const LOAD_MORE_SESSION_TEXT_PATTERN = /^Load more sessions/;
@@ -30,6 +31,11 @@ interface CapturedSessionPage {
   revisions: string[];
   rowIds: string[];
   url: string;
+}
+
+interface CapturedSessionTraffic {
+  documentRowIds: string[];
+  pages: CapturedSessionPage[];
 }
 
 interface RenderedSessionRow {
@@ -90,10 +96,18 @@ const readCapturedSessionPage = async (response: Response): Promise<CapturedSess
   };
 };
 
-const captureSessionPages = (page: Page): { finish: () => Promise<CapturedSessionPage[]> } => {
+const captureSessionPages = (page: Page): { finish: () => Promise<CapturedSessionTraffic> } => {
   const pendingPages: Promise<CapturedSessionPage | undefined>[] = [];
+  const pendingDocuments: Promise<string[]>[] = [];
   const onResponse = (response: Response): void => {
-    if (new URL(response.url()).pathname !== SESSION_PAGE_RPC_PATH) {
+    const pathname = new URL(response.url()).pathname;
+    if (response.request().resourceType() === 'document' && pathname === '/') {
+      pendingDocuments.push(
+        response.body().then((body) => [...new Set(body.toString('utf8').match(SESSION_ROW_ID_PATTERN) ?? [])]),
+      );
+      return;
+    }
+    if (pathname !== SESSION_PAGE_RPC_PATH) {
       return;
     }
     pendingPages.push(readCapturedSessionPage(response));
@@ -102,9 +116,12 @@ const captureSessionPages = (page: Page): { finish: () => Promise<CapturedSessio
   return {
     finish: async () => {
       page.off('response', onResponse);
-      return (await Promise.all(pendingPages)).filter(
-        (capturedPage): capturedPage is CapturedSessionPage => capturedPage !== undefined,
-      );
+      return {
+        documentRowIds: (await Promise.all(pendingDocuments)).flat(),
+        pages: (await Promise.all(pendingPages)).filter(
+          (capturedPage): capturedPage is CapturedSessionPage => capturedPage !== undefined,
+        ),
+      };
     },
   };
 };
@@ -141,12 +158,12 @@ const readSurfaceSnapshot = (surface: Locator): Promise<SessionSurfaceSnapshot> 
   });
 
 const assertPageBudgets = (
-  capturedPages: CapturedSessionPage[],
+  capturedTraffic: CapturedSessionTraffic,
   orderedRowIds: string[],
   requestFingerprint: string,
   reportRevision: string,
 ): { maximumBytes: number; pageCount: number } => {
-  const revisionPages = capturedPages.filter(
+  const revisionPages = capturedTraffic.pages.filter(
     ({ fingerprints, revisions, rowIds }) =>
       rowIds.length > 0 && fingerprints.includes(requestFingerprint) && revisions.includes(reportRevision),
   );
@@ -154,7 +171,10 @@ const assertPageBudgets = (
     revisionPages.length,
     'At least one focused Session page for the completed report revision must cross the production wire',
   ).toBeGreaterThan(0);
-  const wireRowIds = new Set<string>();
+  const expectedRowIds = new Set(orderedRowIds);
+  const documentRowIds = new Set(capturedTraffic.documentRowIds.filter((rowId) => expectedRowIds.has(rowId)));
+  expect(documentRowIds.size, 'The initial document must hydrate a bounded Session page').toBeGreaterThan(0);
+  const rpcRowIds = new Set<string>();
   let maximumBytes = 0;
   for (const capturedPage of revisionPages) {
     maximumBytes = Math.max(maximumBytes, capturedPage.bytes);
@@ -188,14 +208,18 @@ const assertPageBudgets = (
       expect(fingerprint).toBe(requestFingerprint);
     }
     for (const rowId of uniquePageRowIds) {
-      if (wireRowIds.has(rowId)) {
+      if (rpcRowIds.has(rowId)) {
         throw new Error(`Session row ID ${rowId} crossed the production wire more than once`);
       }
-      wireRowIds.add(rowId);
+      rpcRowIds.add(rowId);
     }
   }
-  expect(wireRowIds).toEqual(new Set(orderedRowIds));
-  return { maximumBytes, pageCount: revisionPages.length };
+  expect(new Set([...documentRowIds, ...rpcRowIds])).toEqual(expectedRowIds);
+  expect(
+    orderedRowIds.some((rowId) => !rpcRowIds.has(rowId)),
+    'At least one focused Session page must be delivered by the initial document',
+  ).toBe(true);
+  return { maximumBytes, pageCount: revisionPages.length + 1 };
 };
 
 const inspectAllSessions = async (

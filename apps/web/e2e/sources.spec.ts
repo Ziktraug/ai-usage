@@ -1,6 +1,8 @@
 import { collectionSourceDefinitions, parseSourceControlCommandResponse } from '@ai-usage/report-core/source-control';
 import type { Page } from '@playwright/test';
-import { expect, openHydratedReport, test } from './browser-test';
+import { FOCUSED_REPORT_E2E_CONTROL_KEY, FOCUSED_REPORT_E2E_ENABLED_KEY } from '../src/focused-report-e2e-fixture';
+import { expect, openHydratedReport, reportViewsFor, test, waitForHydratedNavigation } from './browser-test';
+import { createServerStateNetworkTrace } from './server-state-network';
 
 test.describe.configure({ mode: 'serial' });
 
@@ -10,6 +12,21 @@ const FULL_REVISION_PATTERN = /^e2e-revision-(\d+)-[a-f\d]{32}$/;
 const RUNNING_ELAPSED_PATTERN = /Running: Codex sessions \(\d+s elapsed\)/;
 const NEXT_DUE_PATTERN = /Next due: .* at \d{4}-\d{2}-\d{2}T/;
 let shouldRestoreCodexSessions = false;
+type FocusedResponseControlAction = 'arm' | 'release' | 'waitUntilBlocked';
+
+const controlFocusedResponse = async (page: Page, action: FocusedResponseControlAction): Promise<void> => {
+  await page.evaluate(
+    async ({ action: requestedAction, controlKey }) => {
+      const control = Reflect.get(globalThis, controlKey);
+      const command = control && typeof control === 'object' ? Reflect.get(control, requestedAction) : undefined;
+      if (typeof command !== 'function') {
+        throw new Error(`Focused E2E response control cannot ${requestedAction}`);
+      }
+      await Promise.resolve(Reflect.apply(command, control, []));
+    },
+    { action, controlKey: FOCUSED_REPORT_E2E_CONTROL_KEY },
+  );
+};
 
 const openHydratedSources = async (page: Page): Promise<void> => {
   await page.goto('/sources');
@@ -152,6 +169,62 @@ test('keeps business sources independent through a picked disable and publishes 
     .toBe(initialRevision + 1);
   await expect(summaryCard.getByText('Codex sessions', { exact: true })).toHaveCount(0);
 
+  await reportPage.close();
+});
+
+test('records a publication while a report destination is pending', async ({ context, page }) => {
+  await openHydratedSources(page);
+  await page.locator('[data-healthy-source-summary] > summary').click();
+  await page.locator('[data-publication-details] > summary').click();
+  const revisionCode = page.locator('code[title]').first();
+  const initialRevision = publicationRevisionNumber(await revisionCode.getAttribute('title'));
+  const sessions = sourceSurface(page, 'Codex sessions');
+
+  const reportPage = await context.newPage();
+  const trace = createServerStateNetworkTrace(reportPage);
+  await reportPage.goto('/skills');
+  await waitForHydratedNavigation(reportPage);
+  await reportPage.evaluate((enabledKey) => {
+    Reflect.set(globalThis, enabledKey, true);
+  }, FOCUSED_REPORT_E2E_ENABLED_KEY);
+  await reportViewsFor(reportPage).getByRole('link', { exact: true, name: 'Overview' }).click();
+  await expect(reportPage.locator('[data-report-complete-output]')).toBeVisible();
+  const workspace = reportPage.locator('[data-report-workspace]');
+  await workspace.evaluate((element) => element.setAttribute('data-plan-069-workspace', 'pending-publication'));
+  trace.checkpoint('pending-publication');
+
+  await controlFocusedResponse(reportPage, 'arm');
+  const search = reportPage.getByRole('textbox', {
+    name: 'Filter sessions by title, project, model, provider, or harness',
+  });
+  try {
+    await search.fill('pending-publication');
+    await controlFocusedResponse(reportPage, 'waitUntilBlocked');
+    await sessions.getByRole('button', { name: 'Run now' }).click();
+    await expect(sessions.getByText('Running', { exact: true })).toBeVisible();
+    shouldRestoreCodexSessions = true;
+    await sessions.getByRole('checkbox', { name: 'Enabled' }).uncheck();
+    await expect(sessions.getByText('Pausing after current run', { exact: true })).toBeVisible();
+    await expect
+      .poll(async () => publicationRevisionNumber(await revisionCode.getAttribute('title')))
+      .toBe(initialRevision + 1);
+  } finally {
+    await controlFocusedResponse(reportPage, 'release');
+  }
+
+  await expect(reportPage.locator('[data-report-refresh-pending]')).toHaveCount(0);
+  const workspaceWasRetained =
+    (await reportPage.locator('[data-report-workspace]').getAttribute('data-plan-069-workspace')) ===
+    'pending-publication';
+  expect(workspaceWasRetained).toBe(true);
+  process.stdout.write(
+    `${JSON.stringify({
+      scenario: 'publication-while-destination-pending',
+      type: 'plan-069-gate-0',
+      value: { counts: trace.counts('pending-publication'), workspaceWasRetained },
+    })}\n`,
+  );
+  trace.dispose();
   await reportPage.close();
 });
 

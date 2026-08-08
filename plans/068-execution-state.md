@@ -2571,3 +2571,13 @@ rebuilding it. The 5,000-session benchmark passed 4/4 with filter samples
 recorded 346.492 ms median and within 1.6% of the already-reviewed final Svelte
 comparison at 300.274 ms. This restores the measurement to the reviewed
 deviation; it is not classified as a performance improvement.
+
+### Reconciled by Plan 069: Query server-state ownership, 2026-08-08
+
+Plan 068's SvelteKit/oRPC cutover remains the accepted framework, transport,
+security, direct-read, SSE, file-transfer, and presentation foundation. Plan
+069 supersedes only its browser lifecycle allocation: the migrated
+`ServedReportSession`, Report lifecycle adapter, Session table owner, and
+Session detail operation owners were compatibility owners, not the final
+architecture. TanStack Query now owns those remote results and lifecycles under
+one persistent browser client; the historical packet record above is unchanged.

@@ -10,8 +10,10 @@ import { sessionQueryFingerprint } from '@ai-usage/report-core/session-query';
 import type { ReportRevisionBootstrapResult } from '@ai-usage/web-contract/report';
 import { demoReportPayload } from '../../../../report-data';
 import { type ReportQueryClient, reportBootstrapKey } from '../../../query/options/report';
+import { reportDestinationKey } from '../../../query/options/report-destination';
 import {
   acquireLiveReportQueryState,
+  deferredLiveReportQueryState,
   ReportBootstrapUnavailableError,
   reportPageDataFor,
   requireAvailableReportBootstrap,
@@ -92,6 +94,12 @@ describe('report bootstrap', () => {
     expect(fetchCount).toBe(0);
     expect(data.queryState.dehydratedState.queries).toHaveLength(0);
     expect(data.mode === 'live' ? undefined : data.payload.rows.length).toBeGreaterThan(0);
+  });
+
+  it('represents SPA entry as an empty hydration delta for the persistent browser cache', () => {
+    expect(deferredLiveReportQueryState()).toEqual({
+      dehydratedState: { mutations: [], queries: [] },
+    });
   });
 
   it('refuses live page data the server never acquired', () => {
@@ -185,7 +193,8 @@ describe('report bootstrap', () => {
     );
 
     expect(breakdownCount).toBe(1);
-    expect(queryState.dehydratedState.queries).toHaveLength(3);
+    expect(queryState.dehydratedState.queries).toHaveLength(5);
+    expect(queryState.dehydratedState.queries.map((query) => query.queryKey)).toContainEqual(reportDestinationKey());
   });
 
   it('dehydrates the exact first page for a Sessions deep link', async () => {
@@ -234,6 +243,7 @@ describe('report bootstrap', () => {
     );
 
     expect(sessionPageCount).toBe(1);
-    expect(queryState.dehydratedState.queries).toHaveLength(3);
+    expect(queryState.dehydratedState.queries).toHaveLength(5);
+    expect(queryState.dehydratedState.queries.map((query) => query.queryKey)).toContainEqual(reportDestinationKey());
   });
 });

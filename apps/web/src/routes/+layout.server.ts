@@ -1,21 +1,25 @@
-import { buildProviderQuotaRail, type ProviderQuotaRailEntry } from '$lib/features/shell/provider-quota-rail';
+import { createAwaitedRouteQueryState } from '$lib/features/shell/query-load';
+import type { WebQueryHydrationState } from '$lib/query/client';
+import { prefetchQuotaRail } from '$lib/query/options/quota';
+import { createReportClient } from '$lib/rpc/report-client';
 import type { LayoutServerLoad } from './$types';
 
-/**
- * The quota rail sits in the navigation shell, so it is loaded here rather than per route. The store
- * module is imported lazily for the same reason `context.server.ts` does it: demo and e2e runtimes
- * have no durable database to open, and they should not pay to link one.
- */
-const loadProviderQuotaRail = async (): Promise<ProviderQuotaRailEntry[]> => {
-  const { getProviderQuotaRailForServer } = await import('../server/provider-quota-rail.server');
-  return await getProviderQuotaRailForServer();
-};
+const emptyQueryState: WebQueryHydrationState = { dehydratedState: { mutations: [], queries: [] } };
 
-export const load: LayoutServerLoad = async ({ depends, locals }) => {
+export const load: LayoutServerLoad = async ({ depends, fetch, isDataRequest, locals, untrack, url }) => {
   depends('ai-usage:provider-quota');
   const runtimeMode = locals.runtimeMode ?? 'live';
+  if (isDataRequest || runtimeMode !== 'live') {
+    return { quotaQueryState: emptyQueryState, runtimeMode };
+  }
+  const rpcBaseUrl = untrack(() => new URL(url.origin));
+
+  const quotaQueryState = await createAwaitedRouteQueryState(
+    { fetch, requestOwner: 'quota-rail-ssr', url: rpcBaseUrl },
+    async (runtime) => await prefetchQuotaRail(runtime.queryClient, createReportClient(runtime.rpc)),
+  );
   return {
-    providerQuota: runtimeMode === 'live' ? await loadProviderQuotaRail() : buildProviderQuotaRail(null, new Date()),
+    quotaQueryState,
     runtimeMode,
   };
 };

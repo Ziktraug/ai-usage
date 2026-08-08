@@ -62,6 +62,7 @@
   } from '../../../../session-table-schema';
   import { fmtDate } from '../../../foundation/presentation/format';
   import type { StateChangeHandler, TableSortingState, TableVisibilityState } from '../../../foundation/table/state';
+  import type { SessionCampaignPage } from '../../../query/options/session-window';
   import SessionCell from './session-cell.svelte';
   import {
     projectSessionCell,
@@ -71,7 +72,6 @@
   } from './session-cell-projection';
   import { sessionTableColumns, visibleSessionTableColumns } from './session-columns';
   import { createSessionTableModel, toggleSessionRowExpanded } from './session-table-model';
-  import type { SessionCampaignPage } from './session-table-query-owner';
   import { popoverGrid, popoverHeader } from './session-table-styles';
   import {
     isSessionPagePrefetchRequired,

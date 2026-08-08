@@ -1,4 +1,3 @@
-import { parseSessionQueryRequest } from '@ai-usage/report-core/session-query';
 import type { ReportRevisionBootstrapResult } from '@ai-usage/web-contract/report';
 import { demoReportPayload } from '../../../../report-data';
 import type { RuntimeMode } from '../../../../runtime-mode';
@@ -7,21 +6,13 @@ import { parseDashboardSearchUrl } from '../../../foundation/navigation/svelte/d
 import type { WebQueryHydrationState } from '../../../query/client';
 import { createWebQueryLoadState, type WebQueryRuntime, type WebQueryRuntimeOptions } from '../../../query/composition';
 import type { ReportQueryClient } from '../../../query/options/report';
-import {
-  reportBootstrapQueryOptions,
-  reportBreakdownQueryOptions,
-  reportOverviewQueryOptions,
-} from '../../../query/options/report';
-import { sessionPageQueryOptions } from '../../../query/options/session';
+import { reportBootstrapQueryOptions } from '../../../query/options/report';
+import { reportDestinationQueryOptions } from '../../../query/options/report-destination';
 import { createReportClient } from '../../../rpc/report-client';
 import { createSessionClientAdapter, type SessionClientAdapter } from '../../../rpc/session-client';
 import { dashboardSearchCodec } from '../../shell/navigation';
 import { createAwaitedRouteQueryState } from '../../shell/query-load';
-import {
-  INITIAL_REPORT_TIMELINE,
-  initialFocusedReportDescriptor,
-  overviewRequestFor,
-} from '../composition/report-destination';
+import { INITIAL_REPORT_TIMELINE } from '../composition/report-destination';
 import { reportDestinationForSearch } from '../composition/report-search';
 
 export interface LiveReportPageData {
@@ -36,6 +27,10 @@ export interface SyntheticReportPageData {
 }
 
 export type ReportPageData = LiveReportPageData | SyntheticReportPageData;
+
+export const deferredLiveReportQueryState = (): WebQueryHydrationState => ({
+  dehydratedState: { mutations: [], queries: [] },
+});
 
 export class ReportBootstrapUnavailableError extends Error {
   readonly status = 503;
@@ -75,10 +70,13 @@ export const acquireLiveReportQueryState = async (
     const sessionClient =
       dependencies.createSessionClient?.(runtime.rpc) ?? createSessionClientAdapter(runtime.rpc.session);
     const result = await runtime.queryClient.fetchQuery(reportBootstrapQueryOptions(reportClient, { browser: false }));
-    const bootstrap = requireAvailableReportBootstrap(result);
-    // Every destination needs its timeline Overview; Breakdown and Sessions add one exact query.
-    // Acquiring both legs together removes the browser-side request waterfall.
-    await prefetchInitialDestination(runtime, reportClient, sessionClient, bootstrap, pageUrl);
+    await prefetchInitialDestination(
+      runtime,
+      reportClient,
+      sessionClient,
+      requireAvailableReportBootstrap(result),
+      pageUrl,
+    );
   });
 };
 
@@ -101,11 +99,6 @@ export const reportPageDataFor = (
   return { mode, queryState: serverQueryState };
 };
 
-/**
- * Best-effort. The bootstrap carries the report identity and must fail the route when it is missing;
- * destination queries are first-paint optimizations. A failure leaves those cache entries unseeded
- * and the mounted report acquires them normally, so it must never turn a usable page into a route error.
- */
 const prefetchInitialDestination = async (
   runtime: WebQueryRuntime,
   reportClient: ReportQueryClient,
@@ -114,46 +107,20 @@ const prefetchInitialDestination = async (
   pageUrl: URL,
 ): Promise<void> => {
   try {
-    const descriptor = initialFocusedReportDescriptor(bootstrap);
     const search = parseDashboardSearchUrl(pageUrl, dashboardSearchCodec);
     const { focused } = reportDestinationForSearch(
       search,
-      descriptor.bootstrap.support.generatedAt,
+      bootstrap.bootstrap.support.generatedAt,
       INITIAL_REPORT_TIMELINE,
     );
     if (focused === null) {
       return;
     }
-    const request = overviewRequestFor(focused, descriptor.revision);
-    const overview = runtime.queryClient.fetchQuery(
-      reportOverviewQueryOptions(reportClient, request, { browser: false }),
+    await runtime.queryClient.fetchQuery(
+      reportDestinationQueryOptions({ queryClient: runtime.queryClient, reportClient, sessionClient }, focused, {
+        browser: false,
+      }),
     );
-    if (focused.kind !== 'breakdown') {
-      if (focused.kind === 'overview') {
-        await overview;
-        return;
-      }
-      const sessionRequest = parseSessionQueryRequest({
-        ...focused.sessions,
-        cursor: null,
-        revision: descriptor.revision,
-      });
-      await Promise.all([
-        overview,
-        runtime.queryClient.fetchQuery(sessionPageQueryOptions(sessionClient, sessionRequest, { browser: false })),
-      ]);
-      return;
-    }
-    await Promise.all([
-      overview,
-      runtime.queryClient.fetchQuery(
-        reportBreakdownQueryOptions(
-          reportClient,
-          { query: { ...focused.query, revision: descriptor.revision } },
-          { browser: false },
-        ),
-      ),
-    ]);
   } catch {
     return;
   }

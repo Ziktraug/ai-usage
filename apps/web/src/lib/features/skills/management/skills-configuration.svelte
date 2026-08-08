@@ -2,10 +2,10 @@
   import { css, cx } from '@ai-usage/design-system/css';
   import { panel, skillsDisclosurePanel, skillsDisclosureSummary } from '@ai-usage/design-system/report';
   import type { SkillManagementSnapshot } from '@ai-usage/skills';
-  import { useQueryClient } from '@tanstack/svelte-query';
+  import { createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { untrack } from 'svelte';
-  import { applySkillsConfigurationSnapshotToCache } from '../../../query/options/skills';
-  import { createBrowserWebRpcClient } from '../../../rpc/client';
+  import { applySkillsConfigurationSnapshotToCache, skillsMutationOptions } from '../../../query/options/skills';
+  import { useOptionalWebQueryRpcContext } from '../../../query/rpc-context.svelte';
   import { createSkillsClient } from '../../../rpc/skills-client';
   import type { SkillsShellSlotContext } from '../shell/slot-context';
   import {
@@ -29,18 +29,46 @@
   } = $props();
 
   const queryClient = useQueryClient();
+  const rpc = useOptionalWebQueryRpcContext()?.rpc;
   let browserClient: SkillsConfigurationClient | undefined;
   let observedSourceRepoPath = $state(untrack(() => context.snapshot.config.sourceRepoPath ?? ''));
   let sourceDraft = $state(untrack(() => sourceRepositoryDraftFrom(context.snapshot)));
   let projectPathDraft = $state('');
-  let pendingOperation = $state<string | null>(null);
   let operationMessage = $state<{ message: string; tone: 'error' | 'success' } | null>(null);
 
   const resolveClient = (): SkillsConfigurationClient => {
-    browserClient ??=
-      injectedClient ?? createSkillsClient(createBrowserWebRpcClient('skills-management-configuration').skills);
+    if (injectedClient) {
+      return injectedClient;
+    }
+    if (!rpc) {
+      throw new Error('The shared browser RPC context is unavailable.');
+    }
+    browserClient ??= createSkillsClient(rpc.skills);
     return browserClient;
   };
+  const operationMutation = createMutation(() =>
+    skillsMutationOptions(
+      'configuration',
+      async (variables: { operation: SkillsConfigurationOperation; pendingLabel: string; successMessage: string }) => {
+        const client = resolveClient();
+        const result = await runSkillsConfigurationOperation(client, variables.operation);
+        if (!result.ok) {
+          throw new Error(result.error);
+        }
+        await applySkillsConfigurationSnapshotToCache(
+          queryClient,
+          client,
+          result.snapshot,
+          skillsConfigurationRefreshesDependents(variables.operation),
+        );
+        return { ...result, ...variables };
+      },
+    ),
+  );
+  const pendingOperation = $derived(
+    operationMutation.isPending ? (operationMutation.variables?.pendingLabel ?? null) : null,
+  );
+  const operationError = $derived(operationMutation.error instanceof Error ? operationMutation.error.message : null);
   const busyAttributes = (busy: boolean) =>
     ({
       'aria-busy': busy ? 'true' : 'false',
@@ -51,34 +79,16 @@
     pendingLabel: string,
     successMessage: string,
   ): Promise<SkillManagementSnapshot | undefined> => {
-    if (pendingOperation !== null) {
+    if (operationMutation.isPending) {
       return;
     }
-    pendingOperation = pendingLabel;
     operationMessage = null;
     try {
-      const client = resolveClient();
-      const result = await runSkillsConfigurationOperation(client, operation);
-      if (!result.ok) {
-        operationMessage = { message: result.error, tone: 'error' };
-        return;
-      }
-      await applySkillsConfigurationSnapshotToCache(
-        queryClient,
-        client,
-        result.snapshot,
-        skillsConfigurationRefreshesDependents(operation),
-      );
+      const result = await operationMutation.mutateAsync({ operation, pendingLabel, successMessage });
       operationMessage = { message: successMessage, tone: 'success' };
       return result.snapshot;
-    } catch (error) {
-      operationMessage = {
-        message: error instanceof Error ? error.message : 'Skills are unavailable.',
-        tone: 'error',
-      };
+    } catch {
       return;
-    } finally {
-      pendingOperation = null;
     }
   };
 
@@ -307,8 +317,8 @@
   </div>
 </details>
 
-{#if operationMessage?.tone === 'error'}
-  <p class={cx(notice, errorNotice)} role="alert">{operationMessage.message}</p>
+{#if operationError}
+  <p class={cx(notice, errorNotice)} role="alert">{operationError}</p>
 {:else if operationMessage}
   <p aria-live="polite" class={notice} role="status">{operationMessage.message}</p>
 {/if}

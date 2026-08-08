@@ -1,6 +1,7 @@
 import type { WebContractClient } from '@ai-usage/web-contract';
 import { createORPCClient } from '@orpc/client';
 import { RPCLink } from '@orpc/client/fetch';
+import { createORPCSvelteQueryUtils, type RouterUtils } from '@orpc/svelte-query';
 
 const GET_RPC_PATHS = new Set([
   'campaign/labelOverrides',
@@ -14,6 +15,11 @@ const GET_RPC_PATHS = new Set([
   'skills/snapshot',
   'sync/fleet',
 ]);
+
+export type WebRpcQueryUtils = RouterUtils<WebContractClient>;
+
+export const createWebRpcQueryUtils = (client: WebContractClient): WebRpcQueryUtils =>
+  createORPCSvelteQueryUtils(client);
 
 export interface WebRpcClientOptions {
   readonly fetch?: (request: Request) => Promise<Response>;

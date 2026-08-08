@@ -12,7 +12,7 @@
     parseDashboardSearchUrl,
   } from '../../../foundation/navigation/svelte/dashboard-url';
   import { createSvelteNavigationPort } from '../../../foundation/navigation/svelte/navigation';
-  import { createBrowserWebRpcClient } from '../../../rpc/client';
+  import { useOptionalWebQueryRpcContext } from '../../../query/rpc-context.svelte';
   import { createReportClient } from '../../../rpc/report-client';
   import { createSessionClientAdapter } from '../../../rpc/session-client';
   import { ssrUnavailableClient } from '../../../rpc/ssr-placeholder';
@@ -39,6 +39,7 @@
   let browserNavigate: SearchNavigationIntent<DashboardSearch> = () => undefined;
   const navigate: SearchNavigationIntent<DashboardSearch> = (update, options) => browserNavigate(update, options);
   const search = $derived(parseDashboardSearchUrl(page.url, dashboardSearchCodec));
+  const browserRpc = useOptionalWebQueryRpcContext()?.rpc;
   // Built eagerly rather than in onMount so the report renders during SSR too. Report owners only
   // store these clients at construction; every call site sits behind an effect or an event handler,
   // and neither runs on the server — hence the placeholder that rejects loudly if that ever changes.
@@ -52,8 +53,13 @@
         sessionClient: ssrUnavailableClient<ReturnType<typeof createSessionClientAdapter>>('session'),
       };
     }
-    const rpc = createBrowserWebRpcClient('svelte-report-root');
-    return { reportClient: createReportClient(rpc), sessionClient: createSessionClientAdapter(rpc.session) };
+    if (!browserRpc) {
+      throw new Error('The shared browser RPC context is unavailable.');
+    }
+    return {
+      reportClient: createReportClient(browserRpc),
+      sessionClient: createSessionClientAdapter(browserRpc.session),
+    };
   });
 
   onMount(() => {

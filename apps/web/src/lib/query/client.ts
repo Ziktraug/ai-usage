@@ -23,6 +23,25 @@ export const dehydrateWebQueryClient = (client: QueryClient): WebQueryHydrationS
   }),
 });
 
+export const mergeWebQueryHydrationStates = (
+  ...states: readonly (WebQueryHydrationState | undefined)[]
+): WebQueryHydrationState => {
+  const queries = new Map<string, DehydratedState['queries'][number]>();
+  const mutations: DehydratedState['mutations'] = [];
+  for (const state of states) {
+    if (!state) {
+      continue;
+    }
+    for (const query of state.dehydratedState.queries) {
+      const current = queries.get(query.queryHash);
+      if (!current || query.state.dataUpdatedAt >= current.state.dataUpdatedAt) {
+        queries.set(query.queryHash, query);
+      }
+    }
+  }
+  return { dehydratedState: { mutations, queries: [...queries.values()] } };
+};
+
 export const hydrateWebQueryClient = (client: QueryClient, state: WebQueryHydrationState): QueryClient => {
   hydrate(client, state.dehydratedState);
   return client;

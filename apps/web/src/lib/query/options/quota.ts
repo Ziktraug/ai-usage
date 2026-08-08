@@ -8,6 +8,7 @@ import {
   quotaHistoryKey,
   quotaRetentionIdentity,
 } from '../identities/quota';
+import { finiteSwrKey } from '../keys';
 import { webQueryPolicies } from '../policies';
 
 export { type QuotaHistoryPolicyIdentity, type QuotaHistoryRange, quotaHistoryKey } from '../identities/quota';
@@ -18,6 +19,22 @@ export interface QuotaQueryExecution {
 }
 
 export type QuotaQueryClient = Pick<ReportClient, 'getProviderQuotaHistory'>;
+export const quotaRailKey = () => finiteSwrKey('quota', 'rail');
+
+export const quotaRailHistoryRequest = (now: Date): ProviderQuotaHistoryRequest => ({
+  from: new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString(),
+  maximumPoints: 2,
+  to: now.toISOString(),
+});
+
+export const quotaRailQueryOptions = (client: QuotaQueryClient, execution: QuotaQueryExecution) =>
+  queryOptions({
+    ...webQueryPolicies.finiteSwr,
+    enabled: execution.browser && execution.enabled,
+    queryFn: async ({ signal }) =>
+      await client.getProviderQuotaHistory(quotaRailHistoryRequest(new Date()), { signal }),
+    queryKey: quotaRailKey(),
+  });
 
 export const quotaHistoryQueryOptions = (
   client: QuotaQueryClient,
@@ -52,3 +69,7 @@ export const updateQuotaHistory = (
   value: ProviderQuotaHistoryResult,
 ): ProviderQuotaHistoryResult | undefined =>
   client.setQueryData<ProviderQuotaHistoryResult>(quotaHistoryKey(request, policyIdentity), value);
+
+export const prefetchQuotaRail = async (queryClient: QueryClient, client: QuotaQueryClient): Promise<void> => {
+  await queryClient.fetchQuery(quotaRailQueryOptions(client, { browser: false, enabled: true }));
+};

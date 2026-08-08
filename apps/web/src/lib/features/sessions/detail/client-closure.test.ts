@@ -24,9 +24,8 @@ const FORBIDDEN_SPECIFIERS = [
 const sourceDirectory = fileURLToPath(new URL('../../../../', import.meta.url));
 const repositoryDirectory = fileURLToPath(new URL('../../../../../../../', import.meta.url));
 const entries = [
-  path.join(sourceDirectory, 'lib/features/sessions/detail/controller.ts'),
-  path.join(sourceDirectory, 'lib/features/sessions/detail/query-owner.ts'),
-  path.join(sourceDirectory, 'lib/features/sessions/detail/session-detail-slot.svelte'),
+  path.join(sourceDirectory, 'lib/features/sessions/detail/types.ts'),
+  path.join(sourceDirectory, 'lib/features/sessions/detail/session-detail-query-slot.svelte'),
   path.join(sourceDirectory, 'lib/features/sessions/detail/session-drawer.svelte'),
   path.join(sourceDirectory, 'lib/features/sessions/detail/session-analysis.svelte'),
   path.join(sourceDirectory, 'lib/features/sessions/detail/session-vcs-summary.svelte'),

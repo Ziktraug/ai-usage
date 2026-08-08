@@ -14,7 +14,7 @@
     statusPillWarn,
     strongCell,
   } from '@ai-usage/design-system/svelte';
-  import { useQueryClient } from '@tanstack/svelte-query';
+  import { createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { onDestroy, onMount, tick, untrack } from 'svelte';
   import { goto } from '$app/navigation';
   import { deriveInstallationAction, groupSkillDiagnostics } from '../../../../skill-document-inspector-model';
@@ -29,8 +29,12 @@
   } from '../../../../skills-page-model';
   import { SKILLS_DESKTOP_MEDIA_QUERY } from '../../../../skills-responsive';
   import { fmtNum } from '../../../foundation/presentation/format';
-  import { applySkillsConfigurationSnapshotToCache, skillsSnapshotKey } from '../../../query/options/skills';
-  import { createBrowserWebRpcClient } from '../../../rpc/client';
+  import {
+    applySkillsConfigurationSnapshotToCache,
+    skillsMutationOptions,
+    skillsSnapshotKey,
+  } from '../../../query/options/skills';
+  import { useOptionalWebQueryRpcContext } from '../../../query/rpc-context.svelte';
   import { createSkillsClient } from '../../../rpc/skills-client';
   import type { SkillsManagementPlanController } from '../shell/management-plan-controller';
   import type { SkillsHealthSlotPlacement, SkillsShellSlotContext } from '../shell/slot-context';
@@ -82,8 +86,8 @@
     onRefreshReady?: (action: () => Promise<void>) => void;
   } = $props();
   const queryClient = useQueryClient();
+  const rpc = useOptionalWebQueryRpcContext()?.rpc;
   let browserClient: SkillsHealthClient | undefined;
-  let pendingOperation = $state<string | null>(null);
   let inspectorSectionsOpen = $state(false);
   let operationMessage = $state<{ message: string; tone: 'error' | 'success' } | null>(null);
   let awaitingRefresh = $state<SkillsRefreshAcceptanceTarget>();
@@ -106,10 +110,50 @@
   const exposure = $derived(selectedSkill ? buildGlobalSkillExposure(context.snapshot, selectedSkill.name) : []);
   const installationAction = $derived(selectedSkill ? deriveInstallationAction(selectedSkill, exposure) : undefined);
   const resolveClient = (): SkillsHealthClient => {
-    browserClient ??=
-      injectedClient ?? createSkillsClient(createBrowserWebRpcClient('skills-management-inspector').skills);
+    if (injectedClient) {
+      return injectedClient;
+    }
+    if (!rpc) {
+      throw new Error('The shared browser RPC context is unavailable.');
+    }
+    browserClient ??= createSkillsClient(rpc.skills);
     return browserClient;
   };
+  const managementMutation = createMutation(() =>
+    skillsMutationOptions(
+      'health-management',
+      async (variables: { operation: SkillsManagementOperation; pendingLabel: string }) => {
+        const result = await runSkillsManagementOperation(resolveClient(), variables.operation);
+        if (!result.ok) {
+          throw new Error(result.error);
+        }
+        return { ...result, ...variables };
+      },
+    ),
+  );
+  const refreshMutation = createMutation(() =>
+    skillsMutationOptions('refresh-snapshot', async (_variables: undefined) => {
+      const client = resolveClient();
+      const result = await runSkillsRefreshOperation(client);
+      if (!result.ok) {
+        throw new Error(result.error);
+      }
+      await applySkillsConfigurationSnapshotToCache(queryClient, client, result.snapshot, true);
+      return result;
+    }),
+  );
+  const pendingOperation = $derived.by<string | null>(() => {
+    if (refreshMutation.isPending) {
+      return 'refresh-skills';
+    }
+    return managementMutation.isPending ? (managementMutation.variables?.pendingLabel ?? null) : null;
+  });
+  const operationError = $derived.by<string | null>(() => {
+    if (managementMutation.error instanceof Error) {
+      return managementMutation.error.message;
+    }
+    return refreshMutation.error instanceof Error ? refreshMutation.error.message : null;
+  });
   const inspectorSection = css({ borderTop: '1px solid token(colors.line)', display: 'grid', gap: '8px', pt: '12px' });
   const inspectorRow = css({
     display: 'grid',
@@ -194,10 +238,6 @@
       dismissTimer = undefined;
     }
   };
-  const setErrorMessage = (message: string): void => {
-    clearDismissTimer();
-    operationMessage = { message, tone: 'error' };
-  };
   const setSuccessMessage = (message: string): void => {
     clearDismissTimer();
     operationMessage = { message, tone: 'success' };
@@ -249,7 +289,13 @@
     if (!ownsRefreshRegistration) {
       return;
     }
-    if (shouldAnnounceSkillsHydrationReload(hydrationSnapshot, nextSnapshot, operationMessage !== null)) {
+    if (
+      shouldAnnounceSkillsHydrationReload(
+        hydrationSnapshot,
+        nextSnapshot,
+        operationMessage !== null || operationError !== null,
+      )
+    ) {
       setSuccessMessage('Skills reloaded.');
     }
   });
@@ -281,18 +327,14 @@
     'aria-busy': pendingOperation === 'preview-reconcile' ? 'true' : 'false',
   } as const);
   const execute = async (operation: SkillsManagementOperation, pendingLabel: string): Promise<void> => {
-    if (pendingOperation !== null) {
+    if (managementMutation.isPending || refreshMutation.isPending) {
       return;
     }
-    pendingOperation = pendingLabel;
     managementPlan.clear();
     operationMessage = null;
+    clearDismissTimer();
     try {
-      const result = await runSkillsManagementOperation(resolveClient(), operation);
-      if (!result.ok) {
-        setErrorMessage(result.error);
-        return;
-      }
+      const result = await managementMutation.mutateAsync({ operation, pendingLabel });
       managementPlan.publish(result.plan);
       queryClient.setQueryData(skillsSnapshotKey(), result.snapshot);
       setSuccessMessage(skillsManagementSuccessMessage(operation, result));
@@ -300,37 +342,25 @@
         await tick();
         await goto('/skills/matrix');
       }
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'Skills are unavailable.');
-    } finally {
-      pendingOperation = null;
+    } catch {
+      return;
     }
   };
   const refreshSkills = async (): Promise<void> => {
-    if (pendingOperation !== null) {
+    if (managementMutation.isPending || refreshMutation.isPending) {
       return;
     }
-    pendingOperation = 'refresh-skills';
     operationMessage = null;
     clearDismissTimer();
     try {
-      const client = resolveClient();
-      const result = await runSkillsRefreshOperation(client);
-      if (!result.ok) {
-        setErrorMessage(result.error);
-        return;
-      }
+      const result = await refreshMutation.mutateAsync(undefined);
       const signature = skillsSnapshotAcceptanceSignature(result.snapshot);
       awaitingRefresh = { publicationReady: false, signature };
-      await applySkillsConfigurationSnapshotToCache(queryClient, client, result.snapshot, true);
       if (awaitingRefresh?.signature === signature) {
         awaitingRefresh = { publicationReady: true, signature };
       }
-    } catch (error) {
+    } catch {
       awaitingRefresh = undefined;
-      setErrorMessage(error instanceof Error ? error.message : 'Skills are unavailable.');
-    } finally {
-      pendingOperation = null;
     }
   };
   const reviewConsolidation = async (): Promise<void> => {
@@ -561,8 +591,8 @@
       <p class={muted}>Read-only runtime observation.</p>
     </section>
   {/if}
-  {#if operationMessage?.tone === 'error'}
-    <p class={cx(banner, bannerError, operationNotice)} role="alert">{operationMessage.message}</p>
+  {#if operationError}
+    <p class={cx(banner, bannerError, operationNotice)} role="alert">{operationError}</p>
   {:else if operationMessage}
     <p aria-live="polite" class={cx(banner, bannerOk, operationNotice, passiveOperationNotice)} role="status">
       {operationMessage.message}

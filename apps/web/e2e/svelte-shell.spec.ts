@@ -1,6 +1,14 @@
 import AxeBuilder from '@axe-core/playwright';
 import type { Page } from '@playwright/test';
-import { expect, test, waitForFocusedReportSettled, waitForHydratedReport } from './browser-test';
+import {
+  expect,
+  test,
+  waitForFocusedReportSettled,
+  waitForHydratedNavigation,
+  waitForHydratedReport,
+  waitForHydratedSkills,
+} from './browser-test';
+import { createServerStateNetworkTrace } from './server-state-network';
 
 const ANY_VALUE_PATTERN = /.+/;
 const MANAGEMENT_DESTINATION_PATTERN = /Skills|Sources|Sync/;
@@ -307,6 +315,52 @@ test('restores Session scroll after a cross-route history remount', async ({ pag
   await restoreReportHistory(page, '/?tab=sessions');
   await expect(page.locator('[data-session-table-owner]')).toBeVisible();
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(300);
+});
+
+test('reuses one browser cache across Skills children and Report Skills Sync navigation', async ({ page }) => {
+  const trace = createServerStateNetworkTrace(page);
+  await page.goto('/');
+  await waitForHydratedReport(page);
+  await waitForHydratedNavigation(page);
+  trace.checkpoint('cross-route-navigation');
+
+  await page.getByRole('link', { exact: true, name: 'Skills' }).click();
+  await waitForHydratedSkills(page);
+  await page.locator('a[href="/skills/global/alpha-skill"]').first().click();
+  await expect(page).toHaveURL('/skills/global/alpha-skill');
+  await waitForHydratedSkills(page);
+  await page.getByRole('link', { exact: true, name: 'Sync' }).click();
+  await expect(page.locator('main[data-route-shell="sync"]')).toBeVisible();
+  await page.getByRole('link', { exact: true, name: 'Overview' }).click();
+  await waitForFocusedReportSettled(page);
+
+  const counts = trace.counts('cross-route-navigation');
+  expect(counts).toEqual({
+    operations: {
+      'skills.knownProjectPaths': 1,
+      'skills.managedMarkdown': 1,
+      'skills.projectInventories': 1,
+      'skills.snapshot': 1,
+      'sync.fleet': 1,
+    },
+    owners: { 'web-query-browser': 5 },
+    routeData: 4,
+    totalRpc: 5,
+  });
+  process.stdout.write(
+    `${JSON.stringify({ scenario: 'report-skills-children-sync-report', type: 'plan-069-gate-4', value: counts })}\n`,
+  );
+
+  trace.checkpoint('fresh-skills-revisit');
+  await page.getByRole('link', { exact: true, name: 'Skills' }).click();
+  await waitForHydratedSkills(page);
+  expect(trace.counts('fresh-skills-revisit')).toEqual({
+    operations: {},
+    owners: {},
+    routeData: 2,
+    totalRpc: 0,
+  });
+  trace.dispose();
 });
 
 test('renders retryable route errors and the default accessible Not Found shell', async ({ context, page }) => {

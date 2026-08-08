@@ -48,9 +48,8 @@
   import type { SearchNavigationIntent } from '../../../foundation/navigation/search-intent';
   import { applyStateUpdate } from '../../../foundation/table/state';
   import type { SessionClientAdapter } from '../../../rpc/session-client';
-  import { createSessionDetailController, type SessionSelectionInput } from '../../sessions/detail/controller';
-  import { createSessionDetailQueryOwner } from '../../sessions/detail/query-owner';
-  import SessionDetailSlot from '../../sessions/detail/session-detail-slot.svelte';
+  import SessionDetailQuerySlot from '../../sessions/detail/session-detail-query-slot.svelte';
+  import type { SessionSelectionInput } from '../../sessions/detail/types';
   import { useSessionWindowAnchorOwner } from '../../shell/session-window-anchor-context';
   import CampaignLabelEditor from '../actions/campaign-label-editor.svelte';
   import type { CampaignLabelEditorState } from '../actions/campaign-label-editor-state';
@@ -333,19 +332,6 @@
     page: unavailable,
     vcs: unavailable,
   };
-  const detailQuery = untrack(() => createSessionDetailQueryOwner({ client: syntheticClient, queryClient }));
-  const detailController = untrack(() =>
-    createSessionDetailController({
-      onSelectedRowId: (rowId) => {
-        selectedRowId = rowId;
-        if (rowId === null) {
-          selection = null;
-        }
-      },
-      query: detailQuery,
-      rows: () => detailRows,
-    }),
-  );
   const republishSelectedCampaign = (campaignKey: string, index: ReadonlyMap<string, string>): void => {
     const activeSelection = selection;
     if (!(activeSelection && activeSelection.row.campaignKey === campaignKey)) {
@@ -357,9 +343,6 @@
       candidate.rowId === row.rowId ? row : presentCampaignRow(candidate, index),
     );
     selection = nextSelection;
-    // SessionDetailSlot deduplicates equal identities, so use the
-    // controller's safe same-identity presentation republish seam.
-    detailController.select(nextSelection);
   };
 
   const selectOverviewSession = (item: FocusedOverviewSessionItem): void => {
@@ -550,10 +533,15 @@
     {/if}
   {/snippet}
 </ReportWorkspace>
-<SessionDetailSlot
+<SessionDetailQuerySlot
   {campaignSlot}
-  controller={detailController}
+  client={syntheticClient}
   onFieldFilter={navigation.setFieldFilter}
+  onSelectionChange={(nextSelection) => {
+    selection = nextSelection;
+    selectedRowId = nextSelection?.row.rowId ?? null;
+  }}
+  {queryClient}
   rows={detailRows}
   {selection}
 />

@@ -1,4 +1,4 @@
-import { expect, reportViewsFor, test } from './browser-test';
+import { expect, reportViewsFor, test, waitForHydratedReport } from './browser-test';
 import { MANUAL_MERGE_DOWNLOAD_PATH, MANUAL_MERGE_UPLOAD_PATH } from './rpc-test-transport';
 
 const BUSINESS_RESOURCE_TYPES = new Set(['eventsource', 'fetch', 'xhr']);
@@ -16,6 +16,7 @@ test('serves only the synthetic report and keeps every local boundary inert', as
   });
 
   await page.goto('/');
+  await waitForHydratedReport(page);
   await expect(page.getByText('Demo data', { exact: true })).toBeVisible();
   await expect(page.getByRole('heading', { level: 1, name: 'Usage report' })).toBeVisible();
   await expect(reportViewsFor(page).getByRole('link', { exact: true, name: 'Overview' })).toHaveAttribute(
@@ -27,6 +28,7 @@ test('serves only the synthetic report and keeps every local boundary inert', as
     name: 'Filter sessions by title, project, model, provider, or harness',
   });
   await filter.fill('Build report UI');
+  await expect.poll(() => new URL(page.url()).searchParams.get('q')).toBe('Build report UI');
   await expect(page.getByText('1 / 6 sessions', { exact: true })).toBeVisible();
   await filter.fill('');
 

@@ -20,7 +20,7 @@
     skillsProjectInventoriesQueryOptions,
     skillsSnapshotQueryOptions,
   } from '../../../query/options/skills';
-  import { createBrowserWebRpcClient } from '../../../rpc/client';
+  import { useWebQueryRpcContext } from '../../../query/rpc-context.svelte';
   import { createSkillsClient } from '../../../rpc/skills-client';
   import type { SkillsManagementPlanController } from './management-plan-controller';
   import { createSkillsShellViewModel, normalizeSkillsQuerySnapshot } from './model';
@@ -49,9 +49,15 @@
     runtimeMode: RuntimeMode;
   } = $props();
 
+  const browserRpc = untrack(() =>
+    typeof globalThis.location === 'undefined' ? undefined : useWebQueryRpcContext().rpc,
+  );
   let browserClient: ReturnType<typeof createSkillsClient> | undefined;
   const resolveClient = (): ReturnType<typeof createSkillsClient> => {
-    browserClient ??= createSkillsClient(createBrowserWebRpcClient('skills-shell').skills);
+    if (!browserRpc) {
+      throw new Error('The shared browser RPC context is unavailable.');
+    }
+    browserClient ??= createSkillsClient(browserRpc.skills);
     return browserClient;
   };
   const client: SkillsQueryClient = {

@@ -1,42 +1,28 @@
-# P4 Session detail integration request
+# Canonical Session detail integration
 
-P4 owns the Session selection, neighbor/detail/VCS query owner, controlled
-Drawer, chronology, and VCS presentation. X0 composes these modules without
-moving selection into P3 virtual rows or creating another report lifecycle.
+`session-detail-query-slot.svelte` owns the dependent Query observers for
+neighbors, detail, and VCS. Selection and Drawer focus remain local interaction
+state; remote values and their pending/error states are never copied into a
+controller snapshot.
 
 ## Sole report composition
 
-1. Create one SessionDetailQueryOwner from the existing request/navigation
-   QueryClient and the same browser SessionClientAdapter already used by P3.
-   Create one SessionDetailController beside the sole P3 table owner and
-   dispose both with the report destination.
-2. Mount one session-detail-slot.svelte outside the desktop/mobile virtual
-   projections. Pass P3's flattened visible rows and a nullable
-   SessionSelectionInput.
-3. For a served P3 selection, pass the exact current
-   SessionTableQueryState.query, sessionCount, selected
-   SessionPresentationRow, and its existing P3/page-item-derived
-   SessionAnalysisTarget. For an Overview/local selection pass the row and
-   P1's accepted revision through the independent `revision` field when one
-   exists; do not fabricate a served query for Overview, and never acquire a
-   report or page from the detail packet. A revision without a query enables
-   detail/VCS while issuing zero neighbor requests.
-4. Feed onSelectedRowId from the controller back to P3's selectedRowId. Keep
-   onSelect row identity as row.rowId; do not put selection, neighbor,
-   analysis, or VCS state in either virtual projection.
-5. Wire project/model filter actions to the existing R0 dashboard search
-   adapter with preserved focus and scroll. Closing the Drawer clears only
-   selection. R0's structured Drawer identity deliberately adds no new query
-   parameter, so unrelated URL history/back-forward entries retain their
-   canonical dashboard meaning.
-6. Render P8's accepted campaign-label editor and campaign-session controls
-   through `campaignSlot`. The slot sits in the legacy location between the
-   comparison summary and detail grid; P4 deliberately does not duplicate P8
-   mutation ownership or show a global "Clear filters" action.
+1. Mount one `session-detail-query-slot.svelte` outside the desktop/mobile
+   virtual projections and pass a nullable `SessionSelectionInput`.
+2. A served selection carries the exact current query, selected row, count, and
+   page-item-derived analysis target. An Overview selection carries the row and
+   accepted revision without fabricating a served page query.
+3. Create neighbors, detail, and VCS observers from the same persistent Query
+   client and `SessionClientAdapter` used by the report destination.
+4. Query keys include immutable revision and canonical row/query identity.
+   Replacing selection supersedes stale work without late publication.
+5. Local rows issue no neighbor/detail/VCS call without an accepted revision.
+6. Feed selected row identity back to the table without putting selection or
+   remote data in either virtual projection.
+7. Wire project/model filters, closing, history, and focus restoration to the
+   existing dashboard interaction adapters.
 
-The owner consumes Q1's exact immutable neighbor/detail/VCS keys unchanged.
-Selection replacement cancels stale operations, and local rows never issue
-neighbor/detail/VCS calls without an accepted revision.
+Campaign-label and campaign-session controls remain in `campaignSlot` between
 
 ## X0 process-token evidence
 

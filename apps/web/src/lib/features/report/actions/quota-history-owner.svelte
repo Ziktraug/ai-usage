@@ -8,7 +8,7 @@
   } from '../../../../provider-quota-history-model';
   import type { RuntimeMode } from '../../../../runtime-mode';
   import { type QuotaQueryClient, quotaHistoryQueryOptions } from '../../../query/options/quota';
-  import { createBrowserWebRpcClient } from '../../../rpc/client';
+  import { useOptionalWebQueryRpcContext } from '../../../query/rpc-context.svelte';
   import { createReportClient } from '../../../rpc/report-client';
 
   type QuotaHistoryPanelModule = typeof import('./quota-history-panel.svelte');
@@ -34,11 +34,23 @@
   let panelModule = $state<QuotaHistoryPanelModule>();
   let panelLoadFailed = $state(false);
   let panelLoad: Promise<void> | undefined;
+  const rpc = useOptionalWebQueryRpcContext()?.rpc;
+  const resolveClient = (): QuotaQueryClient => {
+    if (client) {
+      return client;
+    }
+    if (injectedClient) {
+      client = injectedClient;
+      return client;
+    }
+    if (!rpc) {
+      throw new Error('The shared browser RPC context is unavailable.');
+    }
+    client = createReportClient(rpc);
+    return client;
+  };
   const lazyClient: QuotaQueryClient = {
-    getProviderQuotaHistory: async (...parameters) => {
-      client ??= injectedClient ?? createReportClient(createBrowserWebRpcClient('svelte-quota-history'));
-      return await client.getProviderQuotaHistory(...parameters);
-    },
+    getProviderQuotaHistory: async (...parameters) => await resolveClient().getProviderQuotaHistory(...parameters),
   };
   const request = $derived(providerQuotaHistoryRequest(range, requestedAt, { providerKey: 'codex' }));
   const query = createQuery(() => ({

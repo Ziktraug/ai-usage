@@ -6,7 +6,8 @@ import {
 } from '@ai-usage/local-machine/testing/harness-home';
 import type { Request } from '@playwright/test';
 import { expect, reportViewsFor, test } from './browser-test';
-import { isRpcPathname, RPC_ROUTE_GLOB, rpcStringFieldValues } from './rpc-test-transport';
+import { encodeRpcResponseBody, isRpcPathname, RPC_ROUTE_GLOB, rpcStringFieldValues } from './rpc-test-transport';
+import { createServerStateNetworkTrace } from './server-state-network';
 
 const NON_EMPTY_ATTRIBUTE_PATTERN = /.+/;
 const SESSION_QUERY_FINGERPRINT_PATTERN = /^session-query-v1:[0-9a-f]{16}$/;
@@ -33,6 +34,10 @@ interface ObservedRequest {
 }
 
 const REPORT_BOOTSTRAP_PATH = '/rpc/report/revisionBootstrap';
+
+const writeCharacterization = (scenario: string, value: unknown): void => {
+  process.stdout.write(`${JSON.stringify({ scenario, type: 'plan-069-gate-0', value })}\n`);
+};
 
 const countOccurrences = (value: string, needle: string): number => value.split(needle).length - 1;
 
@@ -68,6 +73,7 @@ const expectExactProtocolIdentity = (
 };
 
 test('renders the report timeline on the initial production Overview', async ({ page }) => {
+  const serverStateTrace = createServerStateNetworkTrace(page);
   const observedRequests: ObservedRequest[] = [];
   const pendingServerQueries = new Set<Request>();
   page.on('request', (request) => {
@@ -95,8 +101,11 @@ test('renders the report timeline on the initial production Overview', async ({ 
   expect(initialResponse.ok()).toBe(true);
   expect(initialHtml).toContain('Usage report');
   expect(initialHtml).not.toContain('Loading report data');
-  expect(initialHtml).not.toContain('Implement fixture root');
-  expect(initialHtml).not.toContain('codex-root-025');
+  expect(initialHtml).toContain('focused-overview-v1:');
+  expect(initialHtml).not.toContain(HARNESS_FIXTURE_PRIVATE_PROMPT_SENTINEL);
+  expect(initialHtml).not.toContain(HARNESS_FIXTURE_CREDENTIAL_REMOTE_SENTINEL);
+  expect(initialHtml).not.toContain(HARNESS_FIXTURE_DANGEROUS_URL_SENTINEL);
+  expect(initialHtml).not.toContain(HARNESS_FIXTURE_PROVIDER_STDERR_SENTINEL);
 
   await page.addInitScript(() => {
     Reflect.set(globalThis, '__aiUsageFalseEmptyRange', false);
@@ -185,13 +194,14 @@ test('renders the report timeline on the initial production Overview', async ({ 
     )
     .map(({ url }) => url)
     .sort();
+  // One dehydrated Query entry serializes the identity once in queryKey and once in queryHash.
   const dehydratedBootstrapKeyOccurrenceCount = countOccurrences(initialHtml, 'report-bootstrap');
   const pendingNonSseServerQueries = [...pendingServerQueries].map((request) => request.url()).sort();
 
   expect(documentTiming.responseStart).toBeGreaterThanOrEqual(0);
   expect(documentTiming.responseEnd).toBeGreaterThanOrEqual(documentTiming.responseStart);
   expect(bootstrapRequestsAfterHydration).toEqual([]);
-  expect(dehydratedBootstrapKeyOccurrenceCount).toBe(1);
+  expect(dehydratedBootstrapKeyOccurrenceCount).toBe(2);
   expect(pendingNonSseServerQueries).toEqual([]);
   process.stdout.write(
     `${JSON.stringify({
@@ -206,11 +216,16 @@ test('renders the report timeline on the initial production Overview', async ({ 
       ssrHtmlBytes: new TextEncoder().encode(initialHtml).byteLength,
       totalRequestCount: observedRequests.length,
       type: 'production-overview-ssr-hydration',
+      serverStateCounts: serverStateTrace.counts(),
     })}\n`,
   );
+  serverStateTrace.dispose();
 });
 
-test('acquires one revision bootstrap per Sessions filter and sort without route-load duplicates', async ({ page }) => {
+test('reuses the current revision bootstrap across Sessions filter and sort without route-load duplicates', async ({
+  page,
+}) => {
+  const trace = createServerStateNetworkTrace(page);
   const browserBootstrapRequests: string[] = [];
   const routeDataRequests: string[] = [];
   page.on('request', (request) => {
@@ -226,6 +241,7 @@ test('acquires one revision bootstrap per Sessions filter and sort without route
   await expect(page.locator('main[data-hydrated="true"]')).toBeVisible();
   await expect(page.locator('[data-session-surface="desktop"]')).toBeVisible();
   await expect(page.locator('[data-report-refresh-pending]')).toHaveCount(0);
+  trace.checkpoint('session-actions');
   browserBootstrapRequests.length = 0;
   routeDataRequests.length = 0;
 
@@ -234,16 +250,157 @@ test('acquires one revision bootstrap per Sessions filter and sort without route
   });
   await search.fill('codex');
   await expect.poll(() => new URL(page.url()).searchParams.get('q')).toBe('codex');
-  await expect.poll(() => browserBootstrapRequests.length).toBe(1);
+  await expect.poll(() => browserBootstrapRequests.length).toBe(0);
   await expect(page.locator('[data-report-refresh-pending]')).toHaveCount(0);
-  expect(browserBootstrapRequests).toHaveLength(1);
+  expect(browserBootstrapRequests).toHaveLength(0);
 
   await page.getByRole('columnheader', { name: PROJECT_COLUMN_PATTERN }).getByRole('button').click();
   await expect.poll(() => new URL(page.url()).searchParams.get('sort')).not.toBeNull();
-  await expect.poll(() => browserBootstrapRequests.length).toBe(2);
+  await expect.poll(() => browserBootstrapRequests.length).toBe(0);
   await expect(page.locator('[data-report-refresh-pending]')).toHaveCount(0);
-  expect(browserBootstrapRequests).toHaveLength(2);
+  expect(browserBootstrapRequests).toHaveLength(0);
   expect(routeDataRequests).toEqual([]);
+  const counts = trace.counts('session-actions');
+  expect(counts.operations).toEqual({ 'report.focusedOverview': 1, 'session.page': 2 });
+  expect(counts.routeData).toBe(0);
+  writeCharacterization('sessions-filter-sort', counts);
+  trace.dispose();
+});
+
+test('records destination request counts and report DOM identity', async ({ page }) => {
+  const trace = createServerStateNetworkTrace(page);
+  await page.goto('/');
+  const workspace = page.locator('[data-report-workspace]');
+  const graph = page.locator('[data-report-range-part="chart"]');
+  await expect(workspace).toBeVisible();
+  await expect(graph).toBeVisible();
+  await workspace.evaluate((element) => element.setAttribute('data-plan-069-workspace', 'baseline'));
+  await graph.evaluate((element) => element.setAttribute('data-plan-069-graph', 'baseline'));
+  trace.checkpoint('destination-navigation');
+
+  const views = reportViewsFor(page);
+  await views.getByRole('link', { exact: true, name: 'Breakdown' }).click();
+  await expect(page.getByText('By model', { exact: true })).toBeVisible();
+  await views.getByRole('link', { exact: true, name: 'Sessions' }).click();
+  await expect(page.locator('[data-session-surface="desktop"]')).toBeVisible();
+  await views.getByRole('link', { exact: true, name: 'Overview' }).click();
+  await expect(page.getByRole('heading', { level: 2, name: 'Advanced analysis' })).toBeVisible();
+
+  await expect(workspace).toHaveAttribute('data-plan-069-workspace', 'baseline');
+  const graphIdentity = await page.locator('[data-report-range-part="chart"]').getAttribute('data-plan-069-graph');
+  const counts = trace.counts('destination-navigation');
+  expect(counts.operations).toEqual({
+    'report.focusedBreakdown': 1,
+    'report.focusedOverview': 1,
+    'session.page': 1,
+  });
+  expect(counts.routeData).toBe(0);
+  writeCharacterization('overview-breakdown-sessions-overview', {
+    counts,
+    graphRetainedAcrossDestinations: graphIdentity === 'baseline',
+    workspaceRetainedAcrossDestinations: true,
+  });
+  trace.dispose();
+});
+
+test('records filter range sort and history request counts without route data', async ({ page }) => {
+  const trace = createServerStateNetworkTrace(page);
+  await page.goto('/?tab=sessions');
+  const workspace = page.locator('[data-report-workspace]');
+  await expect(page.locator('[data-session-surface="desktop"]')).toBeVisible();
+  await workspace.evaluate((element) => element.setAttribute('data-plan-069-workspace', 'history'));
+  trace.checkpoint('filter-range-sort-history');
+
+  const search = page.getByRole('textbox', {
+    name: 'Filter sessions by title, project, model, provider, or harness',
+  });
+  await search.fill('codex');
+  await expect.poll(() => new URL(page.url()).searchParams.get('q')).toBe('codex');
+  await expect(page.locator('[data-report-refresh-pending]')).toHaveCount(0);
+  await page.getByRole('columnheader', { name: PROJECT_COLUMN_PATTERN }).getByRole('button').click();
+  await expect.poll(() => new URL(page.url()).searchParams.get('sort')).not.toBeNull();
+  await expect(page.locator('[data-report-refresh-pending]')).toHaveCount(0);
+  await page.getByRole('region', { name: 'Date range' }).getByRole('button', { exact: true, name: '7d' }).click();
+  await expect.poll(() => new URL(page.url()).searchParams.get('range')).not.toBeNull();
+  await expect(page.locator('[data-report-refresh-pending]')).toHaveCount(0);
+  const rangedUrl = page.url();
+
+  await page.goBack();
+  await expect(page).not.toHaveURL(rangedUrl);
+  await expect(page.locator('[data-report-refresh-pending]')).toHaveCount(0);
+  await page.goForward();
+  await expect(page).toHaveURL(rangedUrl);
+  await expect(page.locator('[data-report-refresh-pending]')).toHaveCount(0);
+
+  await expect(workspace).toHaveAttribute('data-plan-069-workspace', 'history');
+  const counts = trace.counts('filter-range-sort-history');
+  expect(counts.operations).toEqual({ 'report.focusedOverview': 2, 'session.page': 3 });
+  expect(counts.routeData).toBe(0);
+  writeCharacterization('filter-range-sort-back-forward', {
+    counts,
+    workspaceRetainedAcrossHistory: true,
+  });
+  trace.dispose();
+});
+
+test('records one exact expiry and one failed background refresh while retaining the complete report', async ({
+  page,
+}) => {
+  const trace = createServerStateNetworkTrace(page);
+  await page.goto('/');
+  const workspace = page.locator('[data-report-workspace]');
+  const completeOutput = page.locator('[data-report-complete-output]');
+  await expect(completeOutput).toBeVisible();
+  await workspace.evaluate((element) => element.setAttribute('data-plan-069-workspace', 'last-good'));
+
+  let interceptedOutcome: 'QueryFailed' | 'RevisionExpired' = 'RevisionExpired';
+  let interceptedCount = 0;
+  await page.route('**/rpc/report/focusedOverview', async (route) => {
+    interceptedCount += 1;
+    if (interceptedCount > 2) {
+      await route.continue();
+      return;
+    }
+    const response = await route.fetch();
+    const identity = protocolIdentityFrom(await response.text());
+    const revision = identity.revisions[0];
+    const requestFingerprint = identity.fingerprints[0];
+    if (!(revision && requestFingerprint)) {
+      throw new Error('The intercepted focused Overview response did not expose exact identity.');
+    }
+    await route.fulfill({
+      body: encodeRpcResponseBody({
+        error: { message: `Characterized ${interceptedOutcome}`, revision, tag: interceptedOutcome },
+        ok: false,
+        requestFingerprint,
+        revision,
+      }),
+      contentType: 'application/json',
+      status: 200,
+    });
+  });
+
+  trace.checkpoint('expiry');
+  await page.getByRole('region', { name: 'Date range' }).getByRole('button', { exact: true, name: '7d' }).click();
+  await expect(page.locator('[data-report-refresh-error]')).toBeVisible();
+  await expect(completeOutput).toBeVisible();
+  await expect(workspace).toHaveAttribute('data-plan-069-workspace', 'last-good');
+  const expiryCounts = trace.counts('expiry');
+  expect(expiryCounts.operations).toEqual({ 'report.focusedOverview': 1, 'report.revisionBootstrap': 1 });
+  writeCharacterization('exact-revision-expiry', expiryCounts);
+
+  interceptedOutcome = 'QueryFailed';
+  trace.checkpoint('background-failure');
+  const chartOptions = page.getByRole('region', { name: 'Date range' }).locator('details[aria-label="Chart options"]');
+  await chartOptions.locator('summary').click();
+  await chartOptions.getByRole('radio', { exact: true, name: 'Model' }).click();
+  await expect(page.locator('[data-report-refresh-error]')).toBeVisible();
+  await expect(completeOutput).toBeVisible();
+  await expect(workspace).toHaveAttribute('data-plan-069-workspace', 'last-good');
+  const failureCounts = trace.counts('background-failure');
+  expect(failureCounts.operations).toEqual({ 'report.focusedOverview': 1 });
+  writeCharacterization('failed-background-refresh', failureCounts);
+  trace.dispose();
 });
 
 test('provides one accessible responsive source-control surface', async ({ page }) => {
@@ -441,14 +598,14 @@ test('hydrates and automatically pages Sessions through the production revision 
   await expect(page.getByRole('button', { name: 'Previous session' })).toBeEnabled();
   await expect(report).toHaveAttribute('data-report-revision', revision);
   await expect(report).toHaveAttribute('data-request-fingerprint', requestFingerprint);
-  await expect.poll(overviewResponseCount).toBe(1);
+  await expect.poll(overviewResponseCount).toBe(0);
 
   await page.keyboard.press('Escape');
   await reportViewsFor(page).getByRole('link', { exact: true, name: 'Overview' }).click();
   await expect(page.getByRole('heading', { level: 2, name: 'Advanced analysis' })).toBeVisible();
   await expect(page.locator('summary').filter({ hasText: 'Advanced analysis' })).toHaveCount(0);
   await expect(page.getByRole('heading', { level: 3, name: 'Punchcard' })).toBeVisible();
-  await expect.poll(overviewResponseCount).toBe(2);
+  await expect.poll(overviewResponseCount).toBe(1);
 
   const responseBodies = await Promise.all(rpcResponses.map(({ body }) => body));
   const sessionResponseBodies = responseBodies.filter((body) => body.includes('session-query-v1:'));

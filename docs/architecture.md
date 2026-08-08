@@ -327,7 +327,7 @@ explicit exit so structured output and warning order remain unchanged.
 
 ### `apps/web`
 
-Owns SvelteKit SSR/UI, browser served-session coordination, the explicit oRPC
+Owns SvelteKit SSR/UI, browser Query composition, the explicit oRPC
 endpoint at `apps/web/src/routes/rpc/[...rest]/+server.ts`, source-control SSE
 routes, manual-transfer file leaves, `/sync`, web read observability, and the
 unrelated `/skills` route. Report queries use the
@@ -340,25 +340,34 @@ provider representative rows/statuses, and warnings. It returns exact omission
 counts and the UI identifies truncation; row-derived Overview, Breakdown, and
 Session destination queries remain independent from those omissions.
 
-TanStack Svelte Query owns browser execution and caching for both named finite
-SWR reads and immutable exact-revision reads. Exact report and Session keys
-include the revision and canonical request fingerprint and are never swept by
-publication invalidation. Query does not decide which revision becomes
-visible: `ServedReportSession` owns descriptor acquisition, destination
-fingerprinting, supersession, one expiry retry, last-good retention, and atomic
-visible commit. The Session table query owner additionally owns bounded paging
-and replay under that lifecycle. Client-visible modules must not import
-`*.server.*`.
+One root document-scoped TanStack Svelte Query client is the sole browser owner
+of remote results, freshness, request and mutation status, errors,
+cancellation, retained data, invalidation, hydration, and bounded collection.
+The shared contract-first oRPC client transports typed calls and exposes one
+generated Svelte Query utility tree; it does not decide visibility or
+freshness. Client-visible modules must not import `*.server.*`.
 
-The universal root layout remains URL-tracked so SvelteKit propagates live
-search navigation, back/forward state, focus, and scroll restoration. The
-report page captures only the untracked RPC origin and document-scoped runtime
-metadata, so search-only navigation cannot reacquire a bootstrap through the
-route load or request `__data.json`. Each browser destination transition still
-intentionally acquires exactly one current bootstrap through
-`ServedReportSession`; initial SSR awaits and dehydrates its own current
-bootstrap once. Committed Session table state is projected into Svelte with
-replacement-only `$state.raw` reactivity.
+Current report aliases and finite reads use named 30-second SWR policies.
+Exact report and Session keys include the immutable revision and canonical
+request fingerprint, remain fresh indefinitely, and are never swept by
+publication invalidation. The composite report-destination Query publishes one
+validated descriptor plus Overview and optional Breakdown or complete requested
+Session window atomically. Its single typed expiry recovery refreshes the
+bootstrap once. Failed background work retains the last complete Query value.
+
+Initial document loads create an isolated request Query client, await bounded
+Report, Skills, Sync, and quota data where useful, dehydrate the same keys, and
+clear the request cache. SPA route loads return empty hydration deltas rather
+than prefetching business data. The persistent browser client therefore serves
+fresh tab revisits immediately and revalidates stale entries in the background.
+Search, filter, range, sort, and report destination changes stay client-side and
+request no route data.
+
+Session paging rows and cursors remain in exact Query page data. Components own
+only requested depth, expansion, selection, focus, URL intent, and
+virtualization. The source EventSource retains one explicit connection and
+writes its latest bounded snapshot into Query; publication invalidates only
+current report aliases.
 
 On-demand Session Analysis first resolves a private `local-observed` anchor
 from the exact served revision, validates its local machine identity, and only

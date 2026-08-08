@@ -18,7 +18,12 @@ const SOURCE_CONTROL_EVENTS_PATH = '/api/source-control';
 const SOURCE_CONTROL_COMMAND_PATH = '/api/source-control/command';
 const INTENTIONAL_EVENT_SOURCE_ABORT = 'net::ERR_ABORTED';
 const REPORT_REQUEST_OWNER_HEADER = 'x-ai-usage-request-owner';
-const INTENTIONAL_REPORT_REQUEST_OWNERS = new Set(['focused-report', 'session-query', 'svelte-report-root']);
+const INTENTIONAL_REPORT_REQUEST_OWNERS = new Set([
+  'focused-report',
+  'session-query',
+  'svelte-report-root',
+  'web-query-browser',
+]);
 const ROOT_ROUTE_MATCH_WARNING = 'Warning: Error in route match: __root__';
 const EXPECTED_SHELL_ERROR_HEADER = 'x-ai-usage-expected-error';
 const EXPECTED_SHELL_ERROR_VALUES = new Set(['not-found-fixture', 'shell-route']);

@@ -1,5 +1,5 @@
 import type { SessionPresentationRow, SessionQueryRequest } from '@ai-usage/report-core/session-query';
-import type { SessionTableQueryState } from '../../sessions/table/session-table-query-owner';
+import type { SessionWindowView } from '../../../query/options/session-window';
 
 export interface CampaignSessionControlItem {
   readonly hidden: boolean;
@@ -53,7 +53,7 @@ export interface CampaignSessionControlsState {
 }
 
 export const campaignSessionControlsState = (
-  state: SessionTableQueryState | undefined,
+  state: SessionWindowView | undefined,
   campaign: SessionPresentationRow,
 ): CampaignSessionControlsState | null => {
   const campaignKey = campaign.campaignKey;

@@ -7,6 +7,8 @@
 - **Date**: 2026-08-02
 - **Amends**: the Web framework and browser transport only
 - **Preserves**: ADR 0007 and ADR 0009 (sole-writer usage engine and direct SQLite readers)
+- **Superseded in part by**: ADR 0012 for browser report visibility, retry,
+  paging, replay, mutation state, and SPA cache ownership
 
 ## Context
 
@@ -50,6 +52,9 @@ loads await critical prefetches and dehydrate the exact keys components use, so
 hydration does not duplicate the request. Current aliases may be invalidated by
 a newer publication, but immutable revision/fingerprint keys are never swept.
 Skills, quota, Sync, and source control retain independent ownership.
+
+The following lifecycle paragraph records the migration-era decision and is
+superseded by ADR 0012; it is retained as historical context.
 
 TanStack Query owns request execution, exact query keys, immutable result
 caching, cancellation, deduplication, and named freshness/garbage-collection

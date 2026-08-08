@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { SessionPresentationRow } from '@ai-usage/report-core/session-query';
   import { onDestroy, type Snippet, untrack } from 'svelte';
-  import type { SessionTableQueryOwner, SessionTableQueryState } from '../../sessions/table/session-table-query-owner';
+  import type { SessionWindowView } from '../../../query/options/session-window';
   import {
     type CampaignSessionControlsBinding,
     campaignSessionSelectionQuery,
@@ -15,7 +15,7 @@
     onRowsChange,
     onSessionCountChange,
     presentRow,
-    queryOwner,
+    onIncreaseQueryDepth,
     queryState,
     selectedCampaignKey,
     sessionCount,
@@ -26,8 +26,11 @@
     onRowsChange: (rows: readonly SessionPresentationRow[]) => void;
     onSessionCountChange: (sessionCount: number | undefined) => void;
     presentRow: (row: SessionPresentationRow) => SessionPresentationRow;
-    queryOwner: SessionTableQueryOwner;
-    queryState: SessionTableQueryState | undefined;
+    onIncreaseQueryDepth: (
+      family: 'campaign-children' | 'campaign-sessions' | 'top-level',
+      campaignKey?: string,
+    ) => void;
+    queryState: SessionWindowView | undefined;
     selectedCampaignKey: string | undefined;
     sessionCount: number | undefined;
     sourceRows: readonly SessionPresentationRow[];
@@ -56,7 +59,7 @@
         items: campaignState.collection.items.map(presentRow),
       },
       loadMore: () => {
-        queryOwner.loadCampaignSessions(campaignKey).catch(() => undefined);
+        onIncreaseQueryDepth('campaign-sessions', campaignKey);
       },
       query: queryState.query,
       selectionQuery: campaignSessionSelectionQuery(queryState.query, campaignKey),

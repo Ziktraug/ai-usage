@@ -94,6 +94,22 @@ export const projectSkillMarkdownQueryOptions = (
     queryKey: projectSkillMarkdownKey(input),
   });
 
+export const fetchManagedSkillMarkdown = async (
+  queryClient: QueryClient,
+  client: SkillsQueryClient,
+  skillName: string,
+): Promise<SkillMarkdownDocument> =>
+  await queryClient.fetchQuery(managedSkillMarkdownQueryOptions(client, skillName, { browser: true, enabled: true }));
+
+export const skillsMutationOptions = <Variables, Result>(
+  identity: string,
+  mutationFn: (variables: Variables) => Promise<Result>,
+) => ({
+  mutationFn,
+  mutationKey: ['web', 'mutation', 'skills', identity] as const,
+  retry: false as const,
+});
+
 const invalidationKeys = {
   'known-project-paths': skillsKnownProjectPathsKey,
   'project-inventories': skillsProjectInventoriesKey,

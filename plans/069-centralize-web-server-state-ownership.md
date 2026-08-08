@@ -26,7 +26,7 @@
 - **Category**: architecture, performance, correctness, tests, dx
 - **Planned at**: commit `c1eef7b0`, 2026-08-07; current dirty worktree also
   inspected and must be reconciled before execution
-- **Status**: TODO
+- **Status**: IN PROGRESS — Gate 5 functionally green; integrated parity evidence pending
 
 ## Why this matters
 
@@ -521,3 +521,158 @@ family is added.
   Query policies and exact keys, but report visibility and Session replay remain
   owned by parallel state machines. Execution has not started. The first
   required entry is the clean reconciled baseline SHA and Gate 0 measurements.
+- 2026-08-08 — **Gate 0 STOPPED; no checkpoint commit created.** Execution began
+  from clean baseline `8442e40b3b1a12eb10ee501a1a5c48ebfc0fb9b7`
+  (`Stabilize SSR data loading and report hydration`), the direct child of the
+  planning SHA `c1eef7b0`. The worktree was clean and contained no unintegrated
+  report/query/route changes; the drift was the single attributable integrated
+  data-loading commit. The complete pre-edit targeted baseline passed: Query
+  35/35, ServedReportSession 5/5, its Svelte owner 5/5, report destination 8/8,
+  Session table owner 16/16, Session detail owner 2/2, route-load invalidation
+  3/3, Skills 46/46, Sync 22/22, and Sources 36/36.
+- 2026-08-08 — Gate 0 added uncommitted characterization instrumentation in
+  `apps/web/e2e/server-state-network.ts` with unit coverage in
+  `apps/web/server-state-network.test.ts`, and extended the existing production,
+  shell, and Sources Playwright suites without changing product presentation.
+  Successful baseline measurements before the STOP were: Overview -> Breakdown
+  -> Sessions -> Overview issued `report.focusedBreakdown=1`,
+  `report.focusedOverview=1`, `session.page=1`, and `__data.json=0`; the report
+  workspace and graph DOM nodes both retained identity. Filter/range/sort plus
+  back/forward issued `report.focusedOverview=2`, `session.page=3`, and
+  `__data.json=0`; the workspace retained identity. One intercepted exact expiry
+  issued `report.focusedOverview=1` and `report.revisionBootstrap=1`; one failed
+  background refresh issued `report.focusedOverview=1`; both retained the last
+  complete workspace. Destination navigation, history, expiry, and failure
+  characterization cases were green. The direct-load, pending-publication, and
+  cross-family navigation records are incomplete because Gate 0 stopped before
+  those cases could all finish green.
+- 2026-08-08 — The production characterization gate failed twice, reaching the
+  plan's two-attempt STOP condition. Attempt 1 passed 8/11 and exposed three
+  assertions invalidated by integrated commit `8442e40b`: initial SSR now embeds
+  the exact Overview, filter/sort performs zero bootstrap calls, and hydrated
+  Sessions performs zero duplicate Overview calls. The focused correction kept
+  and strengthened private-sentinel assertions and updated only the no-duplicate
+  network expectations. Attempt 2 again passed 8/11 but the unchanged initial
+  SSR privacy assertion found `codex-root-025` (and the serialized exact Overview
+  also contains local `sourcePath` values) in the document HTML. This cannot be
+  waived under the plan's privacy and browser-boundary rules. Two newly frozen
+  count expectations also measured lower cache reuse than their first-run sample:
+  filter/sort was `report.focusedOverview=1`, `session.page=2`; the combined
+  history case was `report.focusedOverview=2`, `session.page=3`. The latter are
+  characterization adjustments, but no further correction is authorized after
+  the second gate failure. Required decision: reconcile `8442e40b`'s exact
+  Overview SSR serialization with the existing no-private-identity/path contract
+  (or explicitly amend the governing privacy contract), then restart Gate 0 from
+  this documented uncommitted state. No Gate 1 work began.
+
+- 2026-08-08 — **Maintainer decision resolving the Gate 0 privacy STOP.** The
+  trusted local browser may receive as much bounded initial report data as is
+  useful for a fast first paint. ADR 0007 now permits the initially requested
+  exact focused result in the dehydrated HTML, including its browser-visible
+  labels, stable identities, machine/project metadata, local source paths, and
+  validated VCS links. Raw prompt bodies, credentials/tokens, provider stderr,
+  unsafe URLs, local file contents, and values outside the focused-result
+  contract remain forbidden. The obsolete no-title/no-source-identity HTML
+  assertions were replaced with a positive exact-Overview hydration assertion;
+  the secret sentinels remain. Gate 0 is unblocked and must restart from this
+  worktree, reconcile the two measured count expectations, and complete its
+  direct-load, pending-publication, and cross-family scenarios before Gate 1.
+
+- 2026-08-08 — The amended initial-production characterization passed 1/1 in
+  5.1 seconds: the exact Overview fingerprint was present in the 134,845-byte
+  initial HTML, all raw-secret sentinels remained absent, hydration issued no
+  duplicate bootstrap, no route-data request occurred, and the single
+  dehydrated bootstrap entry appeared through its expected queryKey/queryHash
+  pair. This resolves only the privacy decision; the remaining Gate 0 scenarios
+  and count reconciliation are still required.
+
+- 2026-08-08 — **Gate 0 complete.** The full production report characterization
+  passed 11/11 in 13.7 seconds after reconciling observed request counts. The
+  isolated pending-publication scenario passed with the report workspace identity
+  retained while the focused destination was pending. The cross-family Report ->
+  Skills -> child -> Sync -> Report scenario passed and measured
+  `skills.snapshot=3`, `skills.knownProjectPaths=3`,
+  `skills.projectInventories=3`, `skills.managedMarkdown=2`, `sync.fleet=1`,
+  `__data.json=2`, and 12 total browser oRPC calls. The trace map now covers the
+  canonical Skills procedure paths, guarded by unit tests. Gate 1 may begin from
+  these frozen measurements; `docs/provider-quota-data-sources.md` remains an
+  unrelated pre-existing worktree change.
+
+- 2026-08-08 — **Gate 1 complete.** The request-scoped runtime now exposes one
+  `createORPCSvelteQueryUtils` tree beside its injected contract client, and the
+  root provider owns one document-scoped browser RPC/Query utility tree. The
+  root universal load no longer constructs an empty competing QueryClient; SSR
+  helpers clear request clients after dehydration. `current-alias-swr` is bounded
+  to 30 seconds, retains successful data during background work, refetches on
+  focus/reconnect, remains publication-invalidated, and never retries. Exact
+  revision policies remain infinite-stale with finite GC. The executable ownership
+  test rejects new imperative acquisition outside Query/SSR helpers and freezes
+  five legacy owners for Gates 2-3. Query/boundary tests passed 40/40, Web
+  typecheck passed with zero Svelte diagnostics, and the production Sessions
+  filter/sort characterization remained `overview=1`, `session.page=2`, and
+  `__data.json=0`.
+
+- 2026-08-08 — **Gate 2 complete.** `reportDestinationQueryOptions` now owns
+  descriptor acquisition, complete Overview/Breakdown/Session-window results,
+  supersession, cancellation, one typed expiry recovery, and last-good
+  retention. Live composition renders its Query result directly. The served
+  report session, Svelte lifecycle owner, refresh components, and their mirrored
+  commits were deleted. Atomicity, exact-revision retry, late-work
+  supersession, and retained-error tests pass; tab/search transitions retain the
+  report workspace and request no route data.
+
+- 2026-08-08 — **Gate 3 complete.** Exact Session window queries now own
+  top-level, campaign-child, and unfiltered campaign pages. Requested depth and
+  expansion remain local intent; page data, cursors, loading, expiry, replay,
+  and cancellation remain in Query. Session detail, neighbors, and VCS are
+  dependent observers. The table, operation, and detail owners were deleted.
+  Paging tests prove one new cursor request, concurrent deduplication, abort,
+  revision-separated replay, and atomic outer publication; the 5,000-row DOM
+  budgets remain green.
+
+- 2026-08-08 — **Gate 4 complete.** Skills reads use named finite-SWR options;
+  writes use Query mutations and exact typed cache helpers while drafts and
+  dirty/conflict decisions remain local. Report/Skills/Sync server loads now
+  await bounded data only for document requests and return empty hydration
+  deltas for SPA entry. The provider quota rail is prefetched through the
+  existing bounded two-point `quota.history` Query and merged into the initial
+  root hydration state. Source control retains one EventSource connection,
+  publishes its bounded state into Query, and executes commands through a Query
+  mutation. Campaign-label and project-group writes also moved to Query with
+  exact cache update/current-alias invalidation tests.
+
+- 2026-08-08 — The Gate 4 cross-family browser measurement improved from 12
+  browser RPC calls to 5: one each for Skills snapshot, known paths,
+  inventories, selected Markdown, and Sync fleet. Return to the still-fresh
+  Skills tab issued zero business RPC calls. SvelteKit issued lightweight route
+  data requests, but their server loads acquired no business data and created no
+  Query client. The integrated Query/Report/Session/Skills/Sources/Sync run
+  passed 347/348 before one static assertion was updated from the deleted
+  lifecycle owner's pending marker to `destinationQuery.isFetching`; the
+  functional and ownership tests were already green.
+
+- 2026-08-08 — **Gate 5 implementation and functional validation complete; final
+  parity evidence pending.** The root Query provider now owns one long-lived
+  browser cache; document loads prefetch bounded initial data, including the
+  first requested Session page, and SPA search/tab changes acquire no route
+  data. The production filter/range/sort scenarios measured `__data.json=0`;
+  fresh cross-family return issued zero business RPC calls, and the 5,000-row
+  scale proof covers the union of the hydrated first page and unique cursor RPC
+  pages on desktop and mobile.
+- 2026-08-08 — Final successful commands: `bun run check`, `bun run lint`
+  (against a temporary index so the shared staging area was untouched),
+  `bun run typecheck`, `bun run test:packages`, `bun run build`,
+  `bun run test:web-client-manifest`, `bun run test:e2e` (112/112),
+  `bun run test:e2e-demo` (1/1), `bun run test:e2e-production` (11/11 report
+  scenarios plus 2/2 scale scenarios), and `git diff --check`. The production
+  harness accepts only the narrowly classified aborted superseded report
+  request owned by `web-query-browser`; all other browser failures remain fatal.
+- 2026-08-08 — The only non-green final command is the repository-wide test
+  aggregate: all package tests pass, while `bun run test:tools` is 166/167
+  because the migration-parity inventory requires ledger entries for ten new
+  Playwright titles. Four titles belong concurrent presentation/sidebar work;
+  six belong this ownership migration. The ledger rejects evidence from an
+  unintegrated commit, so no honest record can be added before these changes
+  are committed and integrated. Plan 069 and its plans-index row therefore
+  remain in progress/TODO; after integration, add the real evidence SHA, rerun
+  `bun run test`, then mark the plan DONE.

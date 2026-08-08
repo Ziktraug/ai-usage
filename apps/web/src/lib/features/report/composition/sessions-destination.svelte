@@ -17,13 +17,14 @@
   } from '../../../../session-table-schema';
   import type { SearchNavigationIntent } from '../../../foundation/navigation/search-intent';
   import { applyStateUpdate } from '../../../foundation/table/state';
-  import type { SessionSelectionInput } from '../../sessions/detail/controller';
-  import SessionTable from '../../sessions/table/session-table.svelte';
   import {
-    type SessionTableQueryOwner,
-    type SessionTableQueryState,
-    sessionRowsForTableState,
-  } from '../../sessions/table/session-table-query-owner';
+    type SessionWindowIntent,
+    type SessionWindowQueryData,
+    type SessionWindowView,
+    sessionWindowView,
+  } from '../../../query/options/session-window';
+  import type { SessionSelectionInput } from '../../sessions/detail/types';
+  import SessionTable from '../../sessions/table/session-table.svelte';
   import {
     type CampaignSessionControlsBinding,
     campaignSessionsNeedInitialLoad,
@@ -42,8 +43,9 @@
     onSelectionChange,
     presentRow,
     pending,
-    queryOwner,
-    queryState,
+    onIncreaseQueryDepth,
+    queryData,
+    queryIntent,
     destinationScope,
     search,
     selectedCampaignKey,
@@ -58,8 +60,12 @@
     onSelectionChange: (selection: SessionSelectionInput | null) => void;
     presentRow: (row: SessionPresentationRow) => SessionPresentationRow;
     pending: boolean;
-    queryOwner: SessionTableQueryOwner;
-    queryState: SessionTableQueryState | undefined;
+    onIncreaseQueryDepth: (
+      family: 'campaign-children' | 'campaign-sessions' | 'top-level',
+      campaignKey?: string,
+    ) => void;
+    queryData: SessionWindowQueryData | undefined;
+    queryIntent: SessionWindowIntent;
     destinationScope: SessionQueryScopeSnapshot;
     search: DashboardSearch;
     selectedCampaignKey: string | undefined;
@@ -68,6 +74,9 @@
 
   const columnVisibility = $derived(columnVisibilityFromDiff(search.cols, search.colsBase));
   const sorting = $derived([{ ...search.sort }]);
+  const queryState = $derived<SessionWindowView | undefined>(
+    queryData === undefined ? undefined : sessionWindowView(queryData, queryIntent, pending),
+  );
   const query = $derived(queryState?.query);
   const resetKey = $derived(query ? sessionQueryFingerprint(query) : JSON.stringify(destinationScope));
 
@@ -105,14 +114,20 @@
 />
 <SessionsDestinationState
   {onCampaignControlsChange}
+  {onIncreaseQueryDepth}
   {onRowsChange}
   {onSessionCountChange}
   {presentRow}
-  {queryOwner}
   {queryState}
   {selectedCampaignKey}
   sessionCount={queryState?.sessionCount}
-  sourceRows={sessionRowsForTableState(queryState)}
+  sourceRows={queryState?.items.map((item) => ({
+      ...item.row,
+      campaignKey: item.campaignKey,
+      ...(queryState.campaignChildren.get(item.campaignKey)?.items === undefined
+        ? {}
+        : { children: [...(queryState.campaignChildren.get(item.campaignKey)?.items ?? [])] }),
+    })) ?? []}
 >
   {#snippet children(_rows)}
     <SessionTable
@@ -133,15 +148,15 @@
       onFieldFilter={(key, value) => navigate((current) => ({ ...current, filters: { ...current.filters, [key]: value } }))}
       onHarnessFilter={(value) => navigate((current) => ({ ...current, harness: current.harness.includes(value) ? current.harness.filter((item) => item !== value) : [...current.harness, value] }))}
       onInitialWindowAnchor={onInitialSessionWindowAnchor}
-      onLoadCampaignChildren={(campaignKey) => queryOwner.loadCampaignChildren(campaignKey).catch(() => undefined)}
-      onLoadMoreRows={() => queryOwner.loadMore().catch(() => undefined)}
+      onLoadCampaignChildren={(campaignKey) => onIncreaseQueryDepth('campaign-children', campaignKey)}
+      onLoadMoreRows={() => onIncreaseQueryDepth('top-level')}
       onSelect={(row) => {
         if (
           selectedRowId !== row.rowId &&
           row.campaignKey !== undefined &&
           campaignSessionsNeedInitialLoad(queryState?.campaignSessions, row.campaignKey)
         ) {
-          queryOwner.loadCampaignSessions(row.campaignKey).catch(() => undefined);
+          onIncreaseQueryDepth('campaign-sessions', row.campaignKey);
         }
         selectRow(row, queryState?.items ?? [], query, queryState?.sessionCount ?? _rows.length);
       }}

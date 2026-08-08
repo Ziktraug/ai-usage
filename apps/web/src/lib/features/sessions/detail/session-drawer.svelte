@@ -43,10 +43,10 @@
   import { sessionDurationSemantics } from '../../../../session-analysis-model';
   import { fmtCompact, fmtDate, fmtDuration, fmtMoney, fmtNum } from '../../../foundation/presentation/format';
   import { apiValuePresentation } from '../../../foundation/presentation/report-value';
-  import type { SessionDetailController, SessionDetailControllerSnapshot } from './controller';
   import DrawerDetailItem from './drawer-detail-item.svelte';
   import SessionAnalysis from './session-analysis.svelte';
   import SessionVcsSummary from './session-vcs-summary.svelte';
+  import type { SessionDetailController, SessionDetailControllerSnapshot } from './types';
 
   let {
     campaignSlot,

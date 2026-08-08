@@ -6,7 +6,8 @@ describe('report route load invalidation', () => {
     const layoutSource = await readFile(new URL('+layout.ts', import.meta.url), 'utf8');
     const pageSource = await readFile(new URL('+page.ts', import.meta.url), 'utf8');
 
-    expect(layoutSource).toContain('createWebQueryLoadState({ fetch, url })');
+    expect(layoutSource).toContain('({ data }) => data');
+    expect(layoutSource).not.toContain('createWebQuery');
     expect(layoutSource).not.toContain('untrack');
     expect(layoutSource).not.toContain('searchParams');
     expect(pageSource).toContain('untrack(() => new URL(url.origin))');
@@ -22,6 +23,8 @@ describe('report route load invalidation', () => {
     // The universal load must stay free of report acquisition: it runs again in the browser.
     expect(pageSource).not.toContain('acquireLiveReportQueryState');
     expect(serverSource).toContain('acquireLiveReportQueryState');
+    expect(serverSource).toContain('if (isDataRequest)');
+    expect(serverSource).toContain('deferredLiveReportQueryState()');
     expect(serverSource).toContain("depends('ai-usage:report-root')");
     // Serialised server data is what the hydrating client adopts.
     expect(pageSource).toContain('data.reportQueryState');
@@ -36,5 +39,16 @@ describe('report route load invalidation', () => {
     expect(serverSource).toContain('untrack(() => new URL(url.origin))');
     expect(serverSource).not.toContain('pageUrl: url');
     expect(serverSource).not.toContain('searchParams');
+  });
+
+  test('keeps root quota prefetch document-scoped so report search stays local', async () => {
+    const layoutServerSource = await readFile(new URL('+layout.server.ts', import.meta.url), 'utf8');
+
+    expect(layoutServerSource).toContain('if (isDataRequest');
+    expect(layoutServerSource).toContain('quotaQueryState: emptyQueryState');
+    expect(layoutServerSource).toContain('untrack(() => new URL(url.origin))');
+    expect(layoutServerSource).toContain('url: rpcBaseUrl');
+    expect(layoutServerSource).not.toContain("requestOwner: 'quota-rail-ssr', url }");
+    expect(layoutServerSource).not.toContain('searchParams');
   });
 });

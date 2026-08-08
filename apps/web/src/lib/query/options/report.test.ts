@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import type { CampaignLabelOverride } from '@ai-usage/report-core/campaign-label';
 import { focusedRevisionFingerprint } from '@ai-usage/report-core/focused-report-query';
 import type {
   FocusedBreakdownRequest,
@@ -9,12 +10,15 @@ import type {
   ReportRevisionBootstrapResult,
   ReportRevisionManifestResult,
 } from '@ai-usage/web-contract/report';
-import { isCancelledError, QueryObserver } from '@tanstack/svelte-query';
+import { isCancelledError, MutationObserver, QueryObserver } from '@tanstack/svelte-query';
 import { createHydratedWebQueryClient, createWebQueryClient, dehydrateWebQueryClient } from '../client';
 import { controlPlaneKey, finiteSwrKey } from '../keys';
-import { DEFAULT_BOUNDED_GC_TIME_MS } from '../policies';
+import { DEFAULT_BOUNDED_GC_TIME_MS, FINITE_SWR_STALE_TIME_MS } from '../policies';
 import {
+  campaignLabelOverridesKey,
+  campaignLabelOverridesQueryOptions,
   invalidateCurrentReportAliases,
+  type ReportMutationClient,
   type ReportQueryClient,
   reportBootstrapKey,
   reportBootstrapQueryOptions,
@@ -26,6 +30,8 @@ import {
   reportOverviewQueryOptions,
   reportSupportKey,
   reportSupportQueryOptions,
+  saveProjectGroupsMutationOptions,
+  setCampaignLabelOverrideMutationOptions,
 } from './report';
 
 const revision = 'revision-1';
@@ -212,7 +218,7 @@ describe('Report Query options', () => {
     );
 
     expect(serverOptions.enabled).toBe(false);
-    expect(serverOptions.staleTime).toBe(Number.POSITIVE_INFINITY);
+    expect(serverOptions.staleTime).toBe(FINITE_SWR_STALE_TIME_MS);
     expect(serverOptions.gcTime).toBe(DEFAULT_BOUNDED_GC_TIME_MS);
     expect(await serverClient.fetchQuery(serverOptions)).toEqual(bootstrapUnavailable);
 
@@ -325,6 +331,51 @@ describe('Report Query options', () => {
     for (const unsubscribe of unsubscribers) {
       unsubscribe();
     }
+    queryClient.clear();
+  });
+
+  test('QUERY-REPORT-MUTATIONS: updates labels exactly and invalidates only current report aliases', async () => {
+    const queryClient = createWebQueryClient();
+    const labels = [{ campaignKey: 'campaign-a', label: 'Alpha' }];
+    const client: ReportMutationClient = {
+      getCampaignLabelOverrides: () => Promise.resolve({ campaignLabelOverrides: [] }),
+      saveProjectGroups: () => Promise.resolve({ accepted: true }),
+      setCampaignLabelOverride: () => Promise.resolve({ campaignLabelOverrides: labels }),
+    };
+    const labelOptions = campaignLabelOverridesQueryOptions(client, { browser: true });
+    expect(labelOptions).toMatchObject({
+      queryKey: campaignLabelOverridesKey(),
+      staleTime: FINITE_SWR_STALE_TIME_MS,
+    });
+
+    const skillsKey = finiteSwrKey('skills', 'snapshot');
+    const exactKey = reportSupportKey({ revision });
+    const destinationKey = ['web', 'current-alias', 'report-destination'] as const;
+    queryClient.setQueryData(skillsKey, { scope: 'skills' });
+    queryClient.setQueryData(exactKey, supportUnavailable);
+    queryClient.setQueryData(destinationKey, { scope: 'destination' });
+
+    const labelMutation = new MutationObserver(
+      queryClient,
+      setCampaignLabelOverrideMutationOptions(client, queryClient),
+    );
+    await labelMutation.mutate({ campaignKey: 'campaign-a', label: 'Alpha' });
+
+    expect(queryClient.getQueryData<CampaignLabelOverride[]>(campaignLabelOverridesKey())).toEqual(labels);
+    expect(queryClient.getQueryState(skillsKey)?.isInvalidated).toBe(false);
+    expect(queryClient.getQueryState(exactKey)?.isInvalidated).toBe(false);
+    expect(queryClient.getQueryState(destinationKey)?.isInvalidated).toBe(false);
+
+    const projectMutation = new MutationObserver(queryClient, saveProjectGroupsMutationOptions(client, queryClient));
+    await projectMutation.mutate({
+      command: 'replace-project-groups-by-reference',
+      projectGroups: [],
+      revision,
+    });
+
+    expect(queryClient.getQueryState(destinationKey)?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(skillsKey)?.isInvalidated).toBe(false);
+    expect(queryClient.getQueryState(exactKey)?.isInvalidated).toBe(false);
     queryClient.clear();
   });
 });

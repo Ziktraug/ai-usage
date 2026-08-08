@@ -53,7 +53,6 @@ describe('session table Svelte rendering', () => {
       new URL('./session-table.svelte', import.meta.url),
       new URL('./session-table.fixture.svelte', import.meta.url),
       new URL('../../report/composition/sessions-destination.svelte', import.meta.url),
-      new URL('../../report/composition/session-destination-refresh.svelte', import.meta.url),
     ];
     for (const sourcePath of sourcePaths) {
       const source = await readFile(sourcePath, 'utf8');
@@ -153,25 +152,22 @@ describe('session table Svelte rendering', () => {
     expect(source).toContain("event.key !== 'ArrowUp'");
   });
 
-  test('wires incremental revision recovery through one combined focused lifecycle owner', async () => {
-    const [liveSource, refreshSource, queryOwnerSource] = await Promise.all([
+  test('reads the atomic report and complete Session window directly from Query', async () => {
+    const [liveSource, sessionQuerySource] = await Promise.all([
       readFile(new URL('../../report/composition/live-report-destination.svelte', import.meta.url), 'utf8'),
-      readFile(new URL('../../report/composition/session-destination-refresh.svelte', import.meta.url), 'utf8'),
-      readFile(new URL('./session-table-query-owner.ts', import.meta.url), 'utf8'),
+      readFile(new URL('../../../query/options/session-window.ts', import.meta.url), 'utf8'),
     ]);
 
-    expect(liveSource).toContain('createSessionTableQueryOwner');
-    expect(liveSource).toContain('sessionQueryState = $state.raw<SessionTableQueryState | undefined>(');
-    expect(liveSource).toContain('seedSessionTableQueryState');
-    expect(liveSource).toContain('sessionOwner: sessionQuery');
-    expect(liveSource).toContain('<ReportLifecycleOwner session={focusedSession}>');
-    expect(liveSource).toContain(
-      '<SessionDestinationRefresh destination={destination.focused} owner={_owner} queryOwner={sessionQuery} />',
-    );
-    expect(liveSource).toContain('queryOwner={sessionQuery}');
-    expect(liveSource).not.toContain('createServedReportSession');
-    expect(refreshSource).toContain('queryOwner.setRevisionRefresh');
-    expect(refreshSource).toContain('owner.refresh({ ...activeDestination, sessions: scope })');
-    expect(queryOwnerSource).toContain('setRevisionRefresh');
+    expect(liveSource).toContain('const destinationQuery = createQuery');
+    expect(liveSource).toContain('reportDestinationQueryOptions');
+    expect(liveSource).toContain('const commit = $derived(destinationQuery.data)');
+    expect(liveSource).toContain('queryData={commit?.sessions}');
+    expect(liveSource).toContain('activeSessionWindowIntent');
+    expect(liveSource).not.toContain('ReportLifecycleOwner');
+    expect(liveSource).not.toContain('SessionDestinationRefresh');
+    expect(liveSource).not.toContain('createFocusedReportSession');
+    expect(liveSource).not.toContain('createSessionTableQueryOwner');
+    expect(sessionQuerySource).toContain('infiniteQueryOptions');
+    expect(sessionQuerySource).toContain('ensureSessionWindow');
   });
 });

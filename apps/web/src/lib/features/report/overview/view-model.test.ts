@@ -99,7 +99,7 @@ test('keeps the frozen Overview content and secondary-status order', async () =>
 test('keeps report range before filters and Overview content in both destination compositions', async () => {
   const destinationFiles = [
     {
-      filterMarker: '{@render activeFilterSummary(_owner.snapshot.pending)}',
+      filterMarker: '{@render activeFilterSummary(destinationQuery.isFetching)}',
       relativePath: '../composition/live-report-destination.svelte',
     },
     {

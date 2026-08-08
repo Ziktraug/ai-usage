@@ -1,8 +1,10 @@
 import { describe, expect, test } from 'bun:test';
+import type { Client } from '@orpc/client';
+import { createORPCSvelteQueryUtils } from '@orpc/svelte-query';
 import { QueryObserver } from '@tanstack/svelte-query';
 import { createWebQueryClient, dehydrateWebQueryClient } from './client';
 import { createPublicationQueryInvalidator, createWebQueryRuntime, webQueryOwnership } from './composition';
-import { controlPlaneKey, finiteSwrKey, immutableRevisionKey } from './keys';
+import { controlPlaneKey, currentAliasKey, finiteSwrKey, immutableRevisionKey } from './keys';
 import { reportBootstrapKey, reportManifestKey } from './options/report';
 import { queryPolicy } from './policies';
 
@@ -53,7 +55,7 @@ describe('Web Query composition', () => {
     const serverClient = createWebQueryClient();
     let serverRequests = 0;
     await serverClient.fetchQuery({
-      ...queryPolicy('current-alias'),
+      ...queryPolicy('current-alias-swr'),
       queryFn: () => {
         serverRequests += 1;
         return { revision: 'revision-hydrated' };
@@ -68,7 +70,7 @@ describe('Web Query composition', () => {
     });
     let browserRequests = 0;
     const observer = new QueryObserver(runtime.queryClient, {
-      ...queryPolicy('current-alias'),
+      ...queryPolicy('current-alias-swr'),
       queryFn: () => {
         browserRequests += 1;
         return { revision: 'unexpected-duplicate' };
@@ -95,7 +97,7 @@ describe('Web Query composition', () => {
       manifest: 0,
     };
     const bootstrapOptions = {
-      ...queryPolicy('current-alias'),
+      ...queryPolicy('current-alias-swr'),
       queryFn: () => {
         calls.bootstrap += 1;
         return 'bootstrap';
@@ -103,7 +105,7 @@ describe('Web Query composition', () => {
       queryKey: reportBootstrapKey(),
     };
     const manifestOptions = {
-      ...queryPolicy('current-alias'),
+      ...queryPolicy('current-alias-swr'),
       queryFn: () => {
         calls.manifest += 1;
         return 'manifest';
@@ -127,6 +129,7 @@ describe('Web Query composition', () => {
       finiteSwrKey('quota', '24h'),
       finiteSwrKey('skills', 'snapshot'),
       controlPlaneKey('sync', 'fleet', 'generation-1'),
+      controlPlaneKey('sources', 'snapshot'),
     ] as const;
     for (const key of unrelatedKeys) {
       queryClient.setQueryData(key, 'unrelated');
@@ -161,11 +164,12 @@ describe('Web Query composition', () => {
       'quota',
       'skills',
       'sync',
+      'sources',
     ]);
     expect(webQueryOwnership.filter(({ publication }) => publication !== 'none')).toEqual([
       {
         family: 'report-current',
-        policy: 'current-alias',
+        policy: 'current-alias-swr',
         publication: 'invalidate-current-alias',
         rendering: 'ssr-awaited',
       },
@@ -186,5 +190,100 @@ describe('Web Query composition', () => {
     expect(queryClient.getQueryCache().getAll()).toHaveLength(1000);
     await Bun.sleep(BULK_GC_SETTLE_MS);
     expect(queryClient.getQueryCache().getAll()).toEqual([]);
+  });
+
+  test('QUERY-ORPC-IDENTITY: derives stable keys, deduplicates calls, and forwards cancellation', async () => {
+    interface FixtureInput {
+      readonly filters: {
+        readonly alpha: number;
+        readonly beta: number;
+      };
+      readonly id: string;
+    }
+
+    const calls: FixtureInput[] = [];
+    const signals: AbortSignal[] = [];
+    const gates = new Map<string, PromiseWithResolvers<{ id: string }>>();
+    const procedure: Client<Record<never, never>, FixtureInput, { id: string }, Error> = (input, options) => {
+      calls.push(input);
+      const signal = options?.signal;
+      if (signal === undefined) {
+        throw new Error('TanStack Query did not forward its AbortSignal to oRPC.');
+      }
+      signals.push(signal);
+      const gate = Promise.withResolvers<{ id: string }>();
+      gates.set(input.id, gate);
+      return gate.promise;
+    };
+    const orpc = createORPCSvelteQueryUtils({ fixture: { byId: procedure } });
+    const queryClient = createWebQueryClient();
+    const firstInput = { filters: { alpha: 1, beta: 2 }, id: 'shared' };
+    const firstOptions = orpc.fixture.byId.queryOptions({
+      ...queryPolicy('finite-swr'),
+      input: firstInput,
+    });
+    const secondOptions = orpc.fixture.byId.queryOptions({
+      ...queryPolicy('finite-swr'),
+      input: { filters: { beta: 2, alpha: 1 }, id: 'shared' },
+    });
+
+    expect(firstOptions.queryKey).toEqual([['fixture', 'byId'], { input: firstInput, type: 'query' }]);
+    expect(orpc.fixture.byId.key({ input: firstInput })).toEqual([['fixture', 'byId'], { input: firstInput }]);
+
+    const first = queryClient.fetchQuery(firstOptions);
+    const second = queryClient.fetchQuery(secondOptions);
+    await Promise.resolve();
+    expect(calls).toHaveLength(1);
+    expect(signals).toHaveLength(1);
+    gates.get('shared')?.resolve({ id: 'shared' });
+    await expect(Promise.all([first, second])).resolves.toEqual([{ id: 'shared' }, { id: 'shared' }]);
+
+    const cancelledInput = { filters: { alpha: 3, beta: 4 }, id: 'cancelled' };
+    const aborted = queryClient.fetchQuery(
+      orpc.fixture.byId.queryOptions({
+        ...queryPolicy('finite-swr'),
+        input: cancelledInput,
+      }),
+    );
+    await Promise.resolve();
+    await queryClient.cancelQueries({ queryKey: orpc.fixture.byId.key({ input: cancelledInput }) });
+    expect(signals[1]?.aborted).toBe(true);
+    await expect(aborted).rejects.toBeDefined();
+    queryClient.clear();
+  });
+
+  test('QUERY-CURRENT-ALIAS-SWR: renders cached data while an invalidated alias revalidates', async () => {
+    const queryClient = createWebQueryClient();
+    const refresh = Promise.withResolvers<{ revision: string }>();
+    let calls = 0;
+    const options = {
+      ...queryPolicy('current-alias-swr'),
+      queryFn: () => {
+        calls += 1;
+        return calls === 1 ? Promise.resolve({ revision: 'cached' }) : refresh.promise;
+      },
+      queryKey: currentAliasKey('swr-fixture'),
+    };
+    await queryClient.fetchQuery(options);
+    const observer = new QueryObserver(queryClient, options);
+    const unsubscribe = observer.subscribe(() => undefined);
+
+    const invalidation = queryClient.invalidateQueries({ exact: true, queryKey: options.queryKey });
+    await Promise.resolve();
+    expect(observer.getCurrentResult()).toMatchObject({
+      data: { revision: 'cached' },
+      fetchStatus: 'fetching',
+      isStale: true,
+      status: 'success',
+    });
+    refresh.resolve({ revision: 'refreshed' });
+    await invalidation;
+    expect(observer.getCurrentResult()).toMatchObject({
+      data: { revision: 'refreshed' },
+      fetchStatus: 'idle',
+      status: 'success',
+    });
+    unsubscribe();
+    queryClient.clear();
   });
 });

@@ -156,3 +156,39 @@ export const sessionVcsQueryOptions = (
     queryKey: sessionVcsKey(parsed),
   });
 };
+
+const disabledSessionRequest = parseSessionQueryRequest({
+  cursor: null,
+  filters: { fields: {}, harness: [], machine: [], origin: [], query: '' },
+  pageSize: 1,
+  range: { from: null, to: null },
+  revision: 'disabled-session-query',
+  sort: [{ desc: true, id: 'date' }],
+});
+
+export const optionalSessionNeighborsQueryOptions = (
+  client: SessionClientAdapter,
+  request: SessionNeighborRequest | undefined,
+  execution: SessionQueryExecution,
+) =>
+  sessionNeighborsQueryOptions(client, request ?? { query: disabledSessionRequest, rowId: 'disabled-session-row' }, {
+    browser: execution.browser && request !== undefined,
+  });
+
+export const optionalSessionDetailQueryOptions = (
+  client: SessionClientAdapter,
+  request: SessionDetailRequest | undefined,
+  execution: SessionQueryExecution,
+) =>
+  sessionDetailQueryOptions(client, request ?? { revision: 'disabled-session-query', rowId: 'disabled-session-row' }, {
+    browser: execution.browser && request !== undefined,
+  });
+
+export const optionalSessionVcsQueryOptions = (
+  client: SessionClientAdapter,
+  request: SessionVcsResolveRequest | undefined,
+  execution: SessionQueryExecution,
+) =>
+  sessionVcsQueryOptions(client, request ?? { revision: 'disabled-session-query', rowId: 'disabled-session-row' }, {
+    browser: execution.browser && request !== undefined,
+  });

@@ -17,6 +17,7 @@
     "src/**/*.ts",
     "browser-request-abort-allowance.test.ts",
     "panda.config.ts",
+    "server-state-*.test.ts",
     "production-clock.test.ts",
     "rpc-test-transport.test.ts",
     "sveltekit-*.ts",

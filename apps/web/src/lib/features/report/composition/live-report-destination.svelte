@@ -5,8 +5,8 @@
   import type { UsageReportWarning } from '@ai-usage/report-core/report-data';
   import type { LocalTimeCell, SessionPresentationRow } from '@ai-usage/report-core/session-query';
   import type { ReportRevisionBootstrapResult } from '@ai-usage/web-contract/report';
-  import type { QueryClient } from '@tanstack/svelte-query';
-  import { onDestroy, onMount, untrack } from 'svelte';
+  import { createMutation, createQuery, type QueryClient } from '@tanstack/svelte-query';
+  import { untrack } from 'svelte';
   import {
     campaignLabelFor,
     indexCampaignLabelOverrides,
@@ -31,20 +31,29 @@
   import { sessionAnalysisTargetForSession } from '../../../../session-analysis-target';
   import type { WebReportPayloadWithoutRows } from '../../../../web-report-payload';
   import type { SearchNavigationIntent } from '../../../foundation/navigation/search-intent';
-  import { reportBreakdownQueryOptions } from '../../../query/options/report';
+  import {
+    campaignLabelOverridesQueryOptions,
+    fetchReportBreakdown,
+    saveProjectGroupsMutationOptions,
+    setCampaignLabelOverrideMutationOptions,
+  } from '../../../query/options/report';
+  import { refreshReportDestination, reportDestinationQueryOptions } from '../../../query/options/report-destination';
+  import {
+    increaseSessionWindowDepth,
+    initialSessionWindowIntent,
+    type SessionWindowIntent,
+    sessionWindowIntentFingerprint,
+    sessionWindowSatisfiesIntent,
+  } from '../../../query/options/session-window';
   import type { ReportClient } from '../../../rpc/report-client';
   import type { SessionClientAdapter } from '../../../rpc/session-client';
-  import { createSessionDetailController, type SessionSelectionInput } from '../../sessions/detail/controller';
-  import { createSessionDetailQueryOwner } from '../../sessions/detail/query-owner';
-  import SessionDetailSlot from '../../sessions/detail/session-detail-slot.svelte';
-  import {
-    createSessionTableQueryOwner,
-    type SessionTableQueryState,
-    seedSessionTableQueryState,
-  } from '../../sessions/table/session-table-query-owner';
+  import SessionDetailQuerySlot from '../../sessions/detail/session-detail-query-slot.svelte';
+  import type { SessionSelectionInput } from '../../sessions/detail/types';
   import { useSessionWindowAnchorOwner } from '../../shell/session-window-anchor-context';
   import { useSourceControl } from '../../sources/context.svelte';
+  import { campaignRenameMutation, campaignResetMutation } from '../actions/campaign';
   import CampaignLabelEditor from '../actions/campaign-label-editor.svelte';
+  import type { CampaignLabelEditorState } from '../actions/campaign-label-editor-state';
   import CampaignSessionControls from '../actions/campaign-session-controls.svelte';
   import {
     type CampaignSessionControlsBinding,
@@ -59,26 +68,18 @@
   import { createBreakdownNavigation } from '../breakdown/navigation';
   import ReportWarnings from '../core/report-warnings.svelte';
   import ReportWorkspace from '../core/report-workspace.svelte';
-  import ReportLifecycleOwner from '../lifecycle/report-lifecycle-owner.svelte';
-  import type { ServedReportOwnerSnapshot } from '../lifecycle/served-report-session-owner.svelte';
   import OverviewPage from '../overview/overview-page.svelte';
   import OverviewStatus from '../overview/overview-status.svelte';
   import ReportRangeControl from '../range/report-range-control.svelte';
   import { activeTimelineSeriesKeys } from './active-timeline-series';
-  import { createCampaignLabelOwner } from './campaign-label-owner.svelte';
-  import FocusedDestinationRefresh from './focused-destination-refresh.svelte';
   import {
-    createFocusedReportDescriptorSource,
-    createFocusedReportSession,
-    type FocusedReportCommit,
-    type FocusedReportDescriptor,
+    destinationFingerprint,
+    type FocusedReportDestination,
     INITIAL_REPORT_TIMELINE,
     initialFocusedReportDescriptor,
     requireFocusedBreakdown,
-    seedFocusedReportCommit,
   } from './report-destination';
   import { queryForDescriptor, reportDestinationForSearch, reportFilterFingerprint } from './report-search';
-  import SessionDestinationRefresh from './session-destination-refresh.svelte';
 
   const rangePlacement = css({ mt: '14px' });
 
@@ -114,21 +115,9 @@
   // Headline value of the window currently under the pointer, so the hero tracks the brush instead
   // of waiting for the release-triggered round trip. Null whenever the brush is not being dragged.
   let draggedWindowApiValue = $state<number | null>(null);
-  // The route load hands us warm exact data for the landing destination. Reading it synchronously
-  // lets Overview paint during SSR and lets destination chunks mount without a data waterfall.
-  // The session below still owns every later commit; this seed is discarded as soon as it commits.
   const initialDescriptor = untrack(() => initialFocusedReportDescriptor(bootstrapResult));
   const initialDestination = untrack(() =>
     reportDestinationForSearch(search, bootstrapResult.bootstrap.support.generatedAt, INITIAL_REPORT_TIMELINE),
-  );
-  let commit = $state<FocusedReportCommit | undefined>(
-    untrack(() =>
-      seedFocusedReportCommit({
-        descriptor: initialDescriptor,
-        destination: initialDestination.focused,
-        queryClient,
-      }),
-    ),
   );
   let detailRows = $state<readonly SessionPresentationRow[]>([]);
   let selectedRowId = $state<string | null>(null);
@@ -144,76 +133,120 @@
   let sessionsDestinationModule = $state<SessionsDestinationModule>();
   let sessionsDestinationLoadFailed = $state(false);
   let sessionsDestinationLoad: Promise<void> | undefined;
-  let deferredModuleCommit: FocusedReportCommit | undefined;
-  let sessionQueryState = $state.raw<SessionTableQueryState | undefined>(
-    untrack(() =>
-      initialDestination.focused?.kind === 'sessions'
-        ? seedSessionTableQueryState({
-            queryClient,
-            revision: initialDescriptor.revision,
-            scope: initialDestination.focused.sessions,
-          })
-        : undefined,
-    ),
-  );
   const sourceControl = useSourceControl();
-  const descriptorSource = untrack(() =>
-    createFocusedReportDescriptorSource({ client: reportClient, initial: initialDescriptor, queryClient }),
+  const defaultSessionWindowIntent = initialSessionWindowIntent();
+  let sessionWindowState = $state.raw<{
+    readonly destinationFingerprint: string;
+    readonly intent: SessionWindowIntent;
+  }>({
+    destinationFingerprint:
+      initialDestination.focused?.kind === 'sessions' ? destinationFingerprint(initialDestination.focused) : '',
+    intent: defaultSessionWindowIntent,
+  });
+  const campaignLabelsQuery = createQuery(() =>
+    campaignLabelOverridesQueryOptions(reportClient, { browser: typeof globalThis.location !== 'undefined' }),
   );
-  const showCommit = (nextCommit: FocusedReportCommit): void => {
-    deferredModuleCommit = undefined;
-    commit = nextCommit;
-    // The committed figures now describe the dragged window, so the local preview retires here
-    // rather than on release — otherwise the headline briefly shows the range just left behind.
-    draggedWindowApiValue = null;
-  };
-  const acceptCommit = (nextCommit: FocusedReportCommit): void => {
-    const modulePending =
-      (nextCommit.destination.kind === 'breakdown' && !dashboardBreakdownModule) ||
-      (nextCommit.destination.kind === 'sessions' && !sessionsDestinationModule);
-    if (modulePending) {
-      deferredModuleCommit = nextCommit;
-      return;
-    }
-    showCommit(nextCommit);
-  };
-  const sessionQuery = untrack(() =>
-    createSessionTableQueryOwner({
-      client: sessionClient,
-      onStateChange: (state) => {
-        sessionQueryState = state;
-      },
-      queryClient,
-    }),
+  const campaignLabelMutation = createMutation(() =>
+    setCampaignLabelOverrideMutationOptions(reportClient, queryClient),
   );
-  const focusedSession = untrack(() =>
-    createFocusedReportSession({
-      acquire: descriptorSource.acquire,
-      client: reportClient,
-      onCommit: acceptCommit,
-      queryClient,
-      sessionOwner: sessionQuery,
-    }),
-  );
-  const campaignLabels = untrack(() => createCampaignLabelOwner(reportClient));
-  const detailQuery = untrack(() => createSessionDetailQueryOwner({ client: sessionClient, queryClient }));
-  const detailController = untrack(() =>
-    createSessionDetailController({
-      onSelectedRowId: (rowId) => {
-        selectedRowId = rowId;
-        if (rowId === null) {
-          selection = null;
-        }
-      },
-      query: detailQuery,
-      rows: () => detailRows,
-    }),
-  );
+  const projectGroupsMutation = createMutation(() => saveProjectGroupsMutationOptions(reportClient, queryClient));
   const navigation = createBreakdownNavigation((update, options) => navigate(update, options));
   const timeline = $derived({ dimension, granularity });
   const destination = $derived(
     reportDestinationForSearch(search, bootstrapResult.bootstrap.support.generatedAt, timeline),
   );
+  const focusedDestination = $derived.by(() => {
+    if (destination.focused === null) {
+      throw new Error('The live report requires one focused destination.');
+    }
+    return destination.focused;
+  });
+  const activeSessionWindowIntent = $derived.by(() => {
+    if (focusedDestination.kind !== 'sessions') {
+      return defaultSessionWindowIntent;
+    }
+    return sessionWindowState.destinationFingerprint === destinationFingerprint(focusedDestination)
+      ? sessionWindowState.intent
+      : defaultSessionWindowIntent;
+  });
+  const destinationDependencies = untrack(() => ({ queryClient, reportClient, sessionClient }));
+  const destinationQuery = createQuery(() =>
+    reportDestinationQueryOptions(
+      destinationDependencies,
+      focusedDestination,
+      { browser: typeof globalThis.location !== 'undefined' },
+      activeSessionWindowIntent,
+    ),
+  );
+  const commit = $derived(destinationQuery.data);
+  const increaseSessionDepth = (
+    family: 'campaign-children' | 'campaign-sessions' | 'top-level',
+    campaignKey?: string,
+  ): void => {
+    if (focusedDestination.kind !== 'sessions') {
+      return;
+    }
+    sessionWindowState = {
+      destinationFingerprint: destinationFingerprint(focusedDestination),
+      intent: increaseSessionWindowDepth(activeSessionWindowIntent, family, campaignKey),
+    };
+  };
+  const refreshIdentityFor = (
+    focused: FocusedReportDestination,
+    publicationRevision: string | undefined,
+    sessionIntent: SessionWindowIntent,
+  ): string =>
+    JSON.stringify({
+      destination: destinationFingerprint(focused),
+      publicationRevision,
+      sessionWindow: focused.kind === 'sessions' ? sessionWindowIntentFingerprint(sessionIntent) : undefined,
+    });
+  let requestedRefreshIdentity = untrack(() => {
+    if (initialDestination.focused === null) {
+      return '';
+    }
+    return refreshIdentityFor(
+      initialDestination.focused,
+      sourceControl.state().publication?.revision,
+      activeSessionWindowIntent,
+    );
+  });
+  let visibleCommitIdentity = '';
+  $effect(() => {
+    const publicationRevision = sourceControl.state().publication?.revision;
+    const refreshIdentity = refreshIdentityFor(focusedDestination, publicationRevision, activeSessionWindowIntent);
+    if (refreshIdentity === requestedRefreshIdentity) {
+      return;
+    }
+    requestedRefreshIdentity = refreshIdentity;
+    const visible = destinationQuery.data;
+    const sessionWindowIsCurrent =
+      focusedDestination.kind !== 'sessions' ||
+      (visible?.sessions !== undefined && sessionWindowSatisfiesIntent(visible.sessions, activeSessionWindowIntent));
+    if (
+      visible !== undefined &&
+      publicationRevision === visible.descriptor.revision &&
+      destinationFingerprint(focusedDestination) === destinationFingerprint(visible.destination) &&
+      sessionWindowIsCurrent
+    ) {
+      return;
+    }
+    refreshReportDestination(destinationDependencies, focusedDestination, activeSessionWindowIntent).catch(
+      () => undefined,
+    );
+  });
+  $effect(() => {
+    const nextCommit = commit;
+    if (nextCommit === undefined) {
+      return;
+    }
+    const identity = `${nextCommit.descriptor.revision}:${destinationFingerprint(nextCommit.destination)}`;
+    if (identity === visibleCommitIdentity) {
+      return;
+    }
+    visibleCommitIdentity = identity;
+    draggedWindowApiValue = null;
+  });
   const requestedFilterFingerprint = $derived(
     destination.focused === null ? undefined : reportFilterFingerprint(destination.focused.query.filters),
   );
@@ -226,28 +259,20 @@
   // Keep rendering the last complete destination during that gap instead of replacing it with a
   // page-sized loading message. The navigation still reflects the user's requested destination.
   const visiblePrimary = $derived(commit?.destination.kind ?? primary);
-  /**
-   * Before the first commit there is no data and no error yet — the honest state is "loading".
-   * Without this the workspace falls through to "Report payload unavailable", which reads as a
-   * failure; the effect that would raise `pending` never runs during the server render.
-   */
-  const workspacePending = (snapshot: ServedReportOwnerSnapshot<FocusedReportDescriptor>): boolean => {
+  const workspacePending = (): boolean => {
     if (visiblePrimary === 'sessions') {
       return false;
     }
     if (commit === undefined) {
-      return snapshot.refreshError === null;
+      return destinationQuery.error === null;
     }
-    return snapshot.pending;
+    return destinationQuery.isFetching;
   };
   $effect(() => {
     if (primary === 'breakdown' && !dashboardBreakdownModule) {
       dashboardBreakdownLoad ??= import('../breakdown/dashboard-breakdown.svelte')
         .then((module) => {
           dashboardBreakdownModule = module;
-          if (deferredModuleCommit?.destination.kind === 'breakdown' && primary === 'breakdown') {
-            showCommit(deferredModuleCommit);
-          }
         })
         .catch(() => {
           dashboardBreakdownLoadFailed = true;
@@ -256,9 +281,6 @@
       sessionsDestinationLoad ??= import('./sessions-destination.svelte')
         .then((module) => {
           sessionsDestinationModule = module;
-          if (deferredModuleCommit?.destination.kind === 'sessions' && primary === 'sessions') {
-            showCommit(deferredModuleCommit);
-          }
         })
         .catch(() => {
           sessionsDestinationLoadFailed = true;
@@ -275,7 +297,7 @@
       ]),
     ),
   );
-  const campaignIndex = $derived(indexCampaignLabelOverrides(campaignLabels.snapshot.overrides));
+  const campaignIndex = $derived(indexCampaignLabelOverrides(campaignLabelsQuery.data ?? []));
   const providers = $derived(
     buildProviderStatusViews(bootstrap.support, bootstrap.providerRows, bootstrap.support.generatedAt),
   );
@@ -287,9 +309,54 @@
   );
   const activeSeriesKeys = $derived(activeTimelineSeriesKeys(search, dimension));
   const mutationsEnabled = $derived(reportMutationsEnabled(runtimeMode, sourceControl.state().connection));
+  const mutateCampaignLabel = async (
+    campaignKey: string,
+    derivedLabel: string,
+    label: string | null,
+  ): Promise<string | null> => {
+    if (campaignLabelMutation.isPending) {
+      return null;
+    }
+    try {
+      const overrides = await campaignLabelMutation.mutateAsync(
+        label === null ? campaignResetMutation(campaignKey) : campaignRenameMutation(campaignKey, label),
+      );
+      return campaignLabelFor(indexCampaignLabelOverrides(overrides), campaignKey, label ?? derivedLabel);
+    } catch {
+      return null;
+    }
+  };
+  const campaignLabelLoadStatus = (): CampaignLabelEditorState['loadStatus'] => {
+    if (campaignLabelsQuery.data) {
+      return 'ready';
+    }
+    return campaignLabelsQuery.isError ? 'error' : 'loading';
+  };
+  const campaignLabelMutationStatus = (): CampaignLabelEditorState['mutationStatus'] => {
+    if (campaignLabelMutation.isPending) {
+      return 'saving';
+    }
+    return campaignLabelMutation.isError ? 'error' : 'idle';
+  };
   const selectedCampaignEditor = $derived.by(() => {
     const row = selection?.row;
-    return row?.campaignKey ? campaignLabels.editorFor(row.campaignKey, row.sessionLabel) : undefined;
+    if (!row?.campaignKey) {
+      return;
+    }
+    const index = campaignIndex;
+    const campaignKey = row.campaignKey;
+    return {
+      campaignKey,
+      effectiveLabel: campaignLabelFor(index, campaignKey, row.sessionLabel),
+      hasOverride: index.has(campaignKey),
+      loadError: campaignLabelsQuery.error?.message ?? null,
+      loadStatus: campaignLabelLoadStatus(),
+      mutationError: campaignLabelMutation.error?.message ?? null,
+      mutationStatus: campaignLabelMutationStatus(),
+      onRename: async (label: string) => await mutateCampaignLabel(campaignKey, row.sessionLabel, label),
+      onReset: async () => await mutateCampaignLabel(campaignKey, row.sessionLabel, null),
+      onRetry: async () => (await campaignLabelsQuery.refetch()).isSuccess,
+    } satisfies CampaignLabelEditorState;
   });
   const projectPayload = $derived<Pick<WebReportPayloadWithoutRows, 'projectGroupConfigs' | 'projectGroups'>>({
     ...(commit?.breakdown?.context.projectGroupConfigs
@@ -349,9 +416,10 @@
     granularity = options.granularity;
     timelineValue = options.value;
   };
+  const currentRevision = (): string => commit?.descriptor.revision ?? initialDescriptor.revision;
   const persistProjectGroups = async (
     groups: readonly ProjectGroupConfig[],
-    revision = descriptorSource.current().revision,
+    revision = currentRevision(),
   ): Promise<void> => {
     if (!mutationsEnabled) {
       throw new Error('Project groups can only be saved while source control is live.');
@@ -359,10 +427,10 @@
     await saveProjectGroupsAtRevision(
       groups,
       revision,
-      () => descriptorSource.current().revision,
+      () => currentRevision(),
       async (next, current) => {
         const command = await buildProjectGroupReferenceCommand(next, current);
-        await reportClient.saveProjectGroups(command);
+        await projectGroupsMutation.mutateAsync(command);
       },
     );
   };
@@ -374,11 +442,11 @@
     if (committed !== undefined && commit?.breakdown !== undefined) {
       return { groups: committed, revision: commit.breakdown.revision };
     }
-    const revision = descriptorSource.current().revision;
+    const revision = currentRevision();
     const request = {
       query: queryForDescriptor({ filters: destination.sessions.filters, range: destination.sessions.range }, revision),
     };
-    const result = await queryClient.fetchQuery(reportBreakdownQueryOptions(reportClient, request, { browser: true }));
+    const result = await fetchReportBreakdown(queryClient, reportClient, request);
     return {
       groups: requireFocusedBreakdown(result, request).context.projectGroupConfigs ?? [],
       revision,
@@ -404,11 +472,6 @@
         cleaningProjectWarningGroupId = undefined;
       });
   };
-
-  onDestroy(() => sessionQuery.close());
-  onMount(() => {
-    campaignLabels.load().catch(() => undefined);
-  });
 </script>
 
 {#snippet campaignSlot()}
@@ -443,174 +506,170 @@
   />
 {/snippet}
 
-<ReportLifecycleOwner session={focusedSession}>
-  {#snippet children(_owner)}
-    <FocusedDestinationRefresh
-      destination={destination.focused}
-      owner={_owner}
-      publicationRevision={sourceControl.state().publication?.revision}
+<ReportWarnings
+  cleanupDisabled={!mutationsEnabled}
+  {omittedSupportItemCount}
+  {...(cleaningProjectWarningGroupId === undefined ? {} : { cleaningProjectWarningGroupId })}
+  onCleanupProjectWarning={(warning) =>
+    cleanupProjectWarning(warning, async () => {
+      await destinationQuery.refetch();
+    })}
+  {warnings}
+/>
+{#if projectWarningCleanupError}
+  <p aria-live="polite" role="status">{projectWarningCleanupError}</p>
+{/if}
+<FilterBar
+  freshnessStatus={machineFreshnessStatusLabel(machineSnapshot)}
+  freshnessUnavailable={machineSnapshot.kind === 'unavailable'}
+  harnessOptions={bootstrap.filterOptions.harness}
+  isDemo={false}
+  machineAttention={machineSnapshot.kind === 'unavailable'}
+  machineOptions={bootstrap.filterOptions.machine.map(({ value }) => value)}
+  {navigation}
+  {presentMachineLabel}
+  {search}
+/>
+{#if commit?.overview}
+  <div class={rangePlacement} hidden={destinationQuery.isFetching && focusedTimelineFiltersChanged}>
+    <ReportRangeControl
+      {activeSeriesKeys}
+      dateDomain={commit.overview.dateDomain}
+      {dimension}
+      generatedAt={bootstrap.support.generatedAt}
+      {granularity}
+      machineFreshnessStatus={machineFreshnessStatusLabel(machineSnapshot)}
+      {navigate}
+      onDimensionFilter={navigation.setTimelineDimensionFilter}
+      onOptionsChange={updateOverviewOptions}
+      onRangeChange={navigation.setDateRange}
+      onWindowPreview={(apiValue) => (draggedWindowApiValue = apiValue)}
+      {presentCampaignSeries}
+      {presentMachineSeries}
+      range={search.range}
+      timeline={commit.overview.timeline}
+      value={timelineValue}
     />
-    <SessionDestinationRefresh destination={destination.focused} owner={_owner} queryOwner={sessionQuery} />
-    <ReportWarnings
-      cleanupDisabled={!mutationsEnabled}
-      {omittedSupportItemCount}
-      {...(cleaningProjectWarningGroupId === undefined ? {} : { cleaningProjectWarningGroupId })}
-      onCleanupProjectWarning={(warning) => cleanupProjectWarning(warning, async () => {
-        if (destination.focused !== null) {
-          await _owner.refresh(destination.focused);
-        }
-      })}
-      {warnings}
-    />
-    {#if projectWarningCleanupError}
-      <p aria-live="polite" role="status">{projectWarningCleanupError}</p>
+  </div>
+{/if}
+{@render activeFilterSummary(destinationQuery.isFetching)}
+<ReportWorkspace
+  hasOutput={visiblePrimary === 'sessions' || commit !== undefined}
+  pending={workspacePending()}
+  refreshError={destinationQuery.error?.message ?? null}
+>
+  {#snippet status()}
+    {#if visiblePrimary === 'overview' && commit?.destination.kind === 'overview' && !destinationQuery.isFetching}
+      <OverviewStatus
+        onOpenQuotaHistory={() => (quotaHistoryOpen = true)}
+        {providers}
+        range={search.range}
+        result={commit.overview}
+      />
     {/if}
-    <FilterBar
-      freshnessStatus={machineFreshnessStatusLabel(machineSnapshot)}
-      freshnessUnavailable={machineSnapshot.kind === 'unavailable'}
-      harnessOptions={bootstrap.filterOptions.harness}
-      isDemo={false}
-      machineAttention={machineSnapshot.kind === 'unavailable'}
-      machineOptions={bootstrap.filterOptions.machine.map(({ value }) => value)}
-      {navigation}
-      {presentMachineLabel}
-      {search}
-    />
-    {#if commit?.overview}
-      <div class={rangePlacement} hidden={_owner.snapshot.pending && focusedTimelineFiltersChanged}>
-        <ReportRangeControl
-          {activeSeriesKeys}
-          dateDomain={commit.overview.dateDomain}
-          {dimension}
-          generatedAt={bootstrap.support.generatedAt}
-          {granularity}
-          machineFreshnessStatus={machineFreshnessStatusLabel(machineSnapshot)}
-          {navigate}
-          onDimensionFilter={navigation.setTimelineDimensionFilter}
-          onOptionsChange={updateOverviewOptions}
-          onRangeChange={navigation.setDateRange}
-          onWindowPreview={(apiValue) => (draggedWindowApiValue = apiValue)}
-          {presentCampaignSeries}
-          {presentMachineSeries}
-          range={search.range}
-          timeline={commit.overview.timeline}
-          value={timelineValue}
-        />
-      </div>
-    {/if}
-    {@render activeFilterSummary(_owner.snapshot.pending)}
-    <ReportWorkspace
-      hasOutput={visiblePrimary === 'sessions' || commit !== undefined}
-      pending={workspacePending(_owner.snapshot)}
-      refreshError={_owner.snapshot.refreshError}
-    >
-      {#snippet status()}
-        {#if visiblePrimary === 'overview' && commit?.destination.kind === 'overview' && !_owner.snapshot.pending}
-          <OverviewStatus
-            onOpenQuotaHistory={() => (quotaHistoryOpen = true)}
-            {providers}
-            range={search.range}
-            result={commit.overview}
-          />
-        {/if}
-      {/snippet}
-      {#snippet children()}
-        {#if visiblePrimary === 'overview' && commit?.destination.kind === 'overview'}
-          <OverviewPage
-            {activeSeriesKeys}
-            {dimension}
-            {draggedWindowApiValue}
-            freshness={bootstrap.machineFreshness}
-            {granularity}
-            machineFreshnessStatus={machineFreshnessStatusLabel(machineSnapshot)}
-            {navigate}
-            onDimensionFilter={navigation.setTimelineDimensionFilter}
-            onOptionsChange={updateOverviewOptions}
-            onRangeChange={navigation.setDateRange}
-            onSelectDay={selectDay}
-            onSelectSession={selectOverviewSession}
-            onSelectTimeCell={selectTimeCell}
-            {presentCampaignSeries}
-            {presentMachineSeries}
-            {presentSessionItem}
-            range={search.range}
-            result={commit.overview}
-            value={timelineValue}
-          />
-        {:else if visiblePrimary === 'breakdown' && commit?.breakdown && dashboardBreakdownModule}
-          {@const DashboardBreakdown = dashboardBreakdownModule.default}
-          <DashboardBreakdown
-            data={{
-              cursorRows: commit.breakdown.context.cursorCommitAttribution,
-              generatedAt: bootstrap.support.generatedAt,
-              harnesses: commit.breakdown.groups.harnesses,
-              harnessProviders: commit.breakdown.groups.harnessProviders,
-              models: commit.breakdown.groups.models,
-              projects: commit.breakdown.groups.projects,
-            }}
-            navigation={{
-              onSortChange: navigation.setBreakdownSort,
-              onTabChange: (tab) => navigation.setBreakdownTab(tab as Parameters<typeof navigation.setBreakdownTab>[0]),
-              sort: search.breakdownSort,
-              tab: search.tab,
-            }}
-            onFieldFilter={navigation.setFieldFilter}
-            onHarnessFilter={(value) => navigation.setHarness(search.harness.includes(value) ? search.harness.filter((item) => item !== value) : [...search.harness, value])}
-            projectEditor={{
-              disabled: !mutationsEnabled,
-              onSave: async (groups) => {
-                await persistProjectGroups(groups);
-                const focusedDestination = destination.focused;
-                if (focusedDestination === null) {
-                  throw new Error('Project groups require a focused report destination.');
-                }
-                await _owner.refresh(focusedDestination);
-              },
-              payload: projectPayload,
-            }}
-          />
-        {:else if visiblePrimary === 'sessions' && sessionsDestinationModule}
-          {@const SessionsDestination = sessionsDestinationModule.default}
-          <SessionsDestination
-            destinationScope={commit?.destination.kind === 'sessions' ? commit.destination.sessions : destination.sessions}
-            initialSessionWindowAnchor={sessionWindowAnchorOwner.available()}
-            {navigate}
-            onCampaignControlsChange={(binding) => (campaignSessionControls = binding)}
-            onInitialSessionWindowAnchor={sessionWindowAnchorOwner.consume}
-            onRowsChange={(rows) => (detailRows = rows)}
-            onSelectionChange={(nextSelection) => {
-              selection = nextSelection;
-              selectedRowId = nextSelection?.row.rowId ?? null;
-            }}
-            onSessionCountChange={(sessionCount) => (servedSessionCount = sessionCount)}
-            pending={_owner.snapshot.pending}
-            presentRow={presentSessionRow}
-            queryOwner={sessionQuery}
-            queryState={sessionQueryState}
-            {search}
-            selectedCampaignKey={selection?.row.campaignKey}
-            {selectedRowId}
-          />
-        {:else if dashboardBreakdownLoadFailed || sessionsDestinationLoadFailed}
-          <p role="status">Report view is temporarily unavailable.</p>
-        {:else}
-          <p aria-live="polite" role="status">Loading report…</p>
-        {/if}
-      {/snippet}
-    </ReportWorkspace>
-    <SessionDetailSlot
-      {campaignSlot}
-      controller={detailController}
-      onFieldFilter={(key, value) => navigation.setFieldFilter(key, value)}
-      rows={detailRows}
-      {selection}
-    />
-    <QuotaHistoryOwner
-      client={reportClient}
-      generation={commit?.descriptor.revision ?? initialDescriptor.revision}
-      onClose={() => (quotaHistoryOpen = false)}
-      open={quotaHistoryOpen}
-      {runtimeMode}
-    />
   {/snippet}
-</ReportLifecycleOwner>
+  {#snippet children()}
+    {#if visiblePrimary === 'overview' && commit?.destination.kind === 'overview'}
+      <OverviewPage
+        {activeSeriesKeys}
+        {dimension}
+        {draggedWindowApiValue}
+        freshness={bootstrap.machineFreshness}
+        {granularity}
+        machineFreshnessStatus={machineFreshnessStatusLabel(machineSnapshot)}
+        {navigate}
+        onDimensionFilter={navigation.setTimelineDimensionFilter}
+        onOptionsChange={updateOverviewOptions}
+        onRangeChange={navigation.setDateRange}
+        onSelectDay={selectDay}
+        onSelectSession={selectOverviewSession}
+        onSelectTimeCell={selectTimeCell}
+        {presentCampaignSeries}
+        {presentMachineSeries}
+        {presentSessionItem}
+        range={search.range}
+        result={commit.overview}
+        value={timelineValue}
+      />
+    {:else if visiblePrimary === 'breakdown' && commit?.breakdown && dashboardBreakdownModule}
+      {@const DashboardBreakdown = dashboardBreakdownModule.default}
+      <DashboardBreakdown
+        data={{
+          cursorRows: commit.breakdown.context.cursorCommitAttribution,
+          generatedAt: bootstrap.support.generatedAt,
+          harnesses: commit.breakdown.groups.harnesses,
+          harnessProviders: commit.breakdown.groups.harnessProviders,
+          models: commit.breakdown.groups.models,
+          projects: commit.breakdown.groups.projects,
+        }}
+        navigation={{
+          onSortChange: navigation.setBreakdownSort,
+          onTabChange: (tab) => navigation.setBreakdownTab(tab as Parameters<typeof navigation.setBreakdownTab>[0]),
+          sort: search.breakdownSort,
+          tab: search.tab,
+        }}
+        onFieldFilter={navigation.setFieldFilter}
+        onHarnessFilter={(value) =>
+          navigation.setHarness(
+            search.harness.includes(value)
+              ? search.harness.filter((item) => item !== value)
+              : [...search.harness, value],
+          )}
+        projectEditor={{
+          disabled: !mutationsEnabled,
+          onSave: async (groups) => {
+            await persistProjectGroups(groups);
+            await destinationQuery.refetch();
+          },
+          payload: projectPayload,
+        }}
+      />
+    {:else if visiblePrimary === 'sessions' && sessionsDestinationModule}
+      {@const SessionsDestination = sessionsDestinationModule.default}
+      <SessionsDestination
+        destinationScope={commit?.destination.kind === 'sessions' ? commit.destination.sessions : destination.sessions}
+        initialSessionWindowAnchor={sessionWindowAnchorOwner.available()}
+        {navigate}
+        onCampaignControlsChange={(binding) => (campaignSessionControls = binding)}
+        onIncreaseQueryDepth={increaseSessionDepth}
+        onInitialSessionWindowAnchor={sessionWindowAnchorOwner.consume}
+        onRowsChange={(rows) => (detailRows = rows)}
+        onSelectionChange={(nextSelection) => {
+          selection = nextSelection;
+          selectedRowId = nextSelection?.row.rowId ?? null;
+        }}
+        onSessionCountChange={(sessionCount) => (servedSessionCount = sessionCount)}
+        pending={destinationQuery.isFetching}
+        presentRow={presentSessionRow}
+        queryData={commit?.sessions}
+        queryIntent={activeSessionWindowIntent}
+        {search}
+        selectedCampaignKey={selection?.row.campaignKey}
+        {selectedRowId}
+      />
+    {:else if dashboardBreakdownLoadFailed || sessionsDestinationLoadFailed}
+      <p role="status">Report view is temporarily unavailable.</p>
+    {:else}
+      <p aria-live="polite" role="status">Loading report…</p>
+    {/if}
+  {/snippet}
+</ReportWorkspace>
+<SessionDetailQuerySlot
+  {campaignSlot}
+  client={sessionClient}
+  onFieldFilter={(key, value) => navigation.setFieldFilter(key, value)}
+  onSelectionChange={(nextSelection) => {
+    selection = nextSelection;
+    selectedRowId = nextSelection?.row.rowId ?? null;
+  }}
+  {queryClient}
+  rows={detailRows}
+  {selection}
+/>
+<QuotaHistoryOwner
+  client={reportClient}
+  generation={commit?.descriptor.revision ?? initialDescriptor.revision}
+  onClose={() => (quotaHistoryOpen = false)}
+  open={quotaHistoryOpen}
+  {runtimeMode}
+/>

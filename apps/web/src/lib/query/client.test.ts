@@ -1,6 +1,11 @@
 import { describe, expect, test } from 'bun:test';
 import { QueryObserver } from '@tanstack/svelte-query';
-import { createHydratedWebQueryClient, createWebQueryClient, dehydrateWebQueryClient } from './client';
+import {
+  createHydratedWebQueryClient,
+  createWebQueryClient,
+  dehydrateWebQueryClient,
+  mergeWebQueryHydrationStates,
+} from './client';
 import { currentAliasKey, immutableRevisionKey } from './keys';
 import { DEFAULT_BOUNDED_GC_TIME_MS, webQueryPolicies } from './policies';
 import { createQueryTestHarness } from './test-harness';
@@ -109,7 +114,7 @@ describe('request-scoped Web QueryClient', () => {
     const key = currentAliasKey('report');
     let serverRequests = 0;
     await serverClient.fetchQuery({
-      ...webQueryPolicies.currentAlias,
+      ...webQueryPolicies.currentAliasSwr,
       queryFn: () => {
         serverRequests += 1;
         return { revision: 'revision-2' };
@@ -121,7 +126,7 @@ describe('request-scoped Web QueryClient', () => {
     const browserClient = createHydratedWebQueryClient(hydrationState);
     let browserRequests = 0;
     const observer = new QueryObserver(browserClient, {
-      ...webQueryPolicies.currentAlias,
+      ...webQueryPolicies.currentAliasSwr,
       queryFn: () => {
         browserRequests += 1;
         return { revision: 'unexpected-duplicate' };
@@ -137,5 +142,27 @@ describe('request-scoped Web QueryClient', () => {
     expect(browserRequests).toBe(0);
     expect(observer.getCurrentResult().data).toEqual({ revision: 'revision-2' });
     unsubscribe();
+  });
+
+  test('merges document and page hydration by query hash while retaining the newest exact value', () => {
+    const documentClient = createWebQueryClient();
+    const pageClient = createWebQueryClient();
+    const sharedKey = currentAliasKey('shared');
+    const documentOnlyKey = currentAliasKey('document-only');
+    const pageOnlyKey = currentAliasKey('page-only');
+    documentClient.setQueryData(sharedKey, 'older', { updatedAt: 100 });
+    documentClient.setQueryData(documentOnlyKey, 'document', { updatedAt: 200 });
+    pageClient.setQueryData(sharedKey, 'newer', { updatedAt: 300 });
+    pageClient.setQueryData(pageOnlyKey, 'page', { updatedAt: 200 });
+    const merged = mergeWebQueryHydrationStates(
+      dehydrateWebQueryClient(documentClient),
+      dehydrateWebQueryClient(pageClient),
+    );
+    const hydrated = createHydratedWebQueryClient(merged);
+
+    expect(merged.dehydratedState.queries).toHaveLength(3);
+    expect(hydrated.getQueryData<string>(sharedKey)).toBe('newer');
+    expect(hydrated.getQueryData<string>(documentOnlyKey)).toBe('document');
+    expect(hydrated.getQueryData<string>(pageOnlyKey)).toBe('page');
   });
 });

@@ -1,5 +1,3 @@
-import type { QueryObserverOptions } from '@tanstack/svelte-query';
-
 export const MILLISECONDS_PER_SECOND = 1000;
 export const SECONDS_PER_MINUTE = 60;
 
@@ -8,7 +6,7 @@ export const FINITE_SWR_STALE_TIME_MS = 30 * MILLISECONDS_PER_SECOND;
 export const SHORT_CONTROL_GC_TIME_MS = 2 * SECONDS_PER_MINUTE * MILLISECONDS_PER_SECOND;
 export const DEFAULT_BOUNDED_GC_TIME_MS = 10 * SECONDS_PER_MINUTE * MILLISECONDS_PER_SECOND;
 
-export type WebQueryPolicyName = 'bounded-control-plane' | 'current-alias' | 'finite-swr' | 'immutable-revision';
+export type WebQueryPolicyName = 'bounded-control-plane' | 'current-alias-swr' | 'finite-swr' | 'immutable-revision';
 
 export interface WebQueryPolicy {
   readonly gcTime: number;
@@ -42,15 +40,13 @@ export const webQueryPolicies = {
     retry: false,
     staleTime: SHORT_CONTROL_STALE_TIME_MS,
   }),
-  currentAlias: policy({
+  currentAliasSwr: policy({
     gcTime: DEFAULT_BOUNDED_GC_TIME_MS,
-    refetchOnMount: false,
-    refetchOnReconnect: false,
-    refetchOnWindowFocus: false,
+    refetchOnMount: true,
+    refetchOnReconnect: true,
+    refetchOnWindowFocus: true,
     retry: false,
-    // Publication events explicitly invalidate aliases. Keeping them fresh between events avoids
-    // reacquiring the same bootstrap for every tab, filter, sort, and range transition.
-    staleTime: Number.POSITIVE_INFINITY,
+    staleTime: FINITE_SWR_STALE_TIME_MS,
   }),
   finiteSwr: policy({
     gcTime: DEFAULT_BOUNDED_GC_TIME_MS,
@@ -70,14 +66,11 @@ export const webQueryPolicies = {
   }),
 } as const satisfies Record<string, WebQueryPolicy>;
 
-export type PolicyQueryOptions = Pick<
-  QueryObserverOptions,
-  'gcTime' | 'refetchOnMount' | 'refetchOnReconnect' | 'refetchOnWindowFocus' | 'retry' | 'staleTime'
->;
+export type PolicyQueryOptions = WebQueryPolicy;
 
 const policiesByName = {
   'bounded-control-plane': webQueryPolicies.boundedControlPlane,
-  'current-alias': webQueryPolicies.currentAlias,
+  'current-alias-swr': webQueryPolicies.currentAliasSwr,
   'finite-swr': webQueryPolicies.finiteSwr,
   'immutable-revision': webQueryPolicies.immutableRevision,
 } as const satisfies Record<WebQueryPolicyName, PolicyQueryOptions>;

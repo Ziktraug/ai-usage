@@ -1,8 +1,9 @@
 <script lang="ts">
-  import type { SkillMarkdownDocument } from '@ai-usage/web-contract/skills';
-  import { useQueryClient } from '@tanstack/svelte-query';
+  import type { SaveSkillMarkdownInput, SkillMarkdownDocument } from '@ai-usage/web-contract/skills';
+  import { createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { onMount, untrack } from 'svelte';
-  import { createBrowserWebRpcClient } from '../../../rpc/client';
+  import { fetchManagedSkillMarkdown, skillsMutationOptions } from '../../../query/options/skills';
+  import { useOptionalWebQueryRpcContext } from '../../../query/rpc-context.svelte';
   import { createSkillsClient } from '../../../rpc/skills-client';
   import { useDirtyGuardRegistry } from '../../shell/dirty-navigation-context';
   import type { SkillsShellSlotContext } from '../shell/slot-context';
@@ -16,17 +17,45 @@
     const document = context.document;
     return document && 'sha256' in document ? document : undefined;
   };
+  const rpc = useOptionalWebQueryRpcContext()?.rpc;
   let browserClient: ReturnType<typeof createSkillsClient> | undefined;
   const resolveClient = (): ReturnType<typeof createSkillsClient> => {
-    browserClient ??= createSkillsClient(createBrowserWebRpcClient('skills-editor').skills);
+    if (!rpc) {
+      throw new Error('The shared browser RPC context is unavailable.');
+    }
+    browserClient ??= createSkillsClient(rpc.skills);
     return browserClient;
   };
   const queryClient = useQueryClient();
+  const saveMutation = createMutation(() =>
+    skillsMutationOptions('save-managed-markdown', async (input: SaveSkillMarkdownInput) => {
+      const result = await resolveClient().saveManagedSkillMarkdown(input);
+      if (!result.ok) {
+        throw new Error(result.error.message);
+      }
+      return result;
+    }),
+  );
   const initialContext = untrack(() => context);
   const slot = createSkillsEditorSlotController({
     client: {
-      getManagedSkillMarkdown: async (skillName) => await resolveClient().getManagedSkillMarkdown(skillName),
-      saveManagedSkillMarkdown: async (input) => await resolveClient().saveManagedSkillMarkdown(input),
+      getManagedSkillMarkdown: async (skillName) => {
+        try {
+          return {
+            data: await fetchManagedSkillMarkdown(queryClient, resolveClient(), skillName),
+            ok: true as const,
+          };
+        } catch (error) {
+          return {
+            error: {
+              message: error instanceof Error ? error.message : 'Skills are unavailable.',
+              tag: 'Unavailable',
+            },
+            ok: false as const,
+          };
+        }
+      },
+      saveManagedSkillMarkdown: async (input) => await saveMutation.mutateAsync(input),
     },
     dirtyRegistry: useDirtyGuardRegistry(),
     document: untrack(managedDocument),
