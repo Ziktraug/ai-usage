@@ -18,6 +18,7 @@
   import type { SearchNavigationIntent } from '../../../foundation/navigation/search-intent';
   import { applyStateUpdate } from '../../../foundation/table/state';
   import {
+    projectSessionDestinationRows,
     type SessionWindowIntent,
     type SessionWindowQueryData,
     type SessionWindowView,
@@ -121,13 +122,7 @@
   {queryState}
   {selectedCampaignKey}
   sessionCount={queryState?.sessionCount}
-  sourceRows={queryState?.items.map((item) => ({
-      ...item.row,
-      campaignKey: item.campaignKey,
-      ...(queryState.campaignChildren.get(item.campaignKey)?.items === undefined
-        ? {}
-        : { children: [...(queryState.campaignChildren.get(item.campaignKey)?.items ?? [])] }),
-    })) ?? []}
+  sourceRows={queryState === undefined ? [] : projectSessionDestinationRows(queryState)}
 >
   {#snippet children(_rows)}
     <SessionTable

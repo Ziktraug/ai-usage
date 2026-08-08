@@ -36,6 +36,7 @@
     sourceRows: readonly SessionPresentationRow[];
   } = $props();
 
+  // presentRow is identity-preserving when labels are unchanged; always remap so label-index updates apply.
   const rows = $derived(sourceRows.map(presentRow));
   const campaignPublisher = untrack(() => createCampaignSessionControlsPublisher(() => onCampaignControlsChange));
   const selectedCampaign = $derived(

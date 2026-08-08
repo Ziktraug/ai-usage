@@ -23,7 +23,8 @@ export interface SessionTableModel {
 export const createSessionTableModel = (input: SessionTableModelInput): SessionTableModel => {
   const table = createTable<SessionPresentationRow>({
     columns: [...sessionTableColumns],
-    data: [...input.rows],
+    // Table Core reads this array; keep the caller-owned reference to avoid a full copy on each append.
+    data: input.rows as SessionPresentationRow[],
     enableMultiSort: false,
     enableSortingRemoval: false,
     getCoreRowModel: getCoreRowModel(),

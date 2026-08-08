@@ -151,7 +151,7 @@ const requireCampaignPage = (
   return result.data;
 };
 
-const sessionPagesKey = (request: SessionQueryRequest): QueryKey =>
+export const sessionPagesKey = (request: SessionQueryRequest): QueryKey =>
   immutableRevisionKey('session-pages', request.revision, sessionQueryFingerprint(request), 'infinite');
 
 const sessionCampaignPagesKey = (
@@ -356,21 +356,108 @@ export const sessionWindowSatisfiesIntent = (data: SessionWindowQueryData, inten
   campaignDepthsSatisfied(data.campaignChildren, intent.campaignChildrenDepth) &&
   campaignDepthsSatisfied(data.campaignSessions, intent.campaignSessionsDepth);
 
-const uniqueBy = <Value>(values: readonly Value[], keyFor: (value: Value) => string): readonly Value[] => {
-  const seen = new Set<string>();
-  const unique: Value[] = [];
-  for (const value of values) {
-    const key = keyFor(value);
-    if (!seen.has(key)) {
-      seen.add(key);
-      unique.push(value);
-    }
-  }
-  return unique;
+interface AppendProjectionStats {
+  campaignRowVisits: number;
+  destinationRowVisits: number;
+  topLevelRowVisits: number;
+}
+
+const projectionStats: AppendProjectionStats = {
+  campaignRowVisits: 0,
+  destinationRowVisits: 0,
+  topLevelRowVisits: 0,
 };
 
+export const sessionWindowProjectionStats = (): Readonly<AppendProjectionStats> => ({ ...projectionStats });
+
+export const resetSessionWindowProjectionStats = (): void => {
+  projectionStats.campaignRowVisits = 0;
+  projectionStats.destinationRowVisits = 0;
+  projectionStats.topLevelRowVisits = 0;
+};
+
+interface AppendItemsCache<Item> {
+  identity: string;
+  items: readonly Item[];
+  pages: readonly { readonly items: readonly Item[] }[];
+  seen: Set<string>;
+}
+
+/**
+ * Memoizes flattened infinite pages against the stable first-page object owned by TanStack Query.
+ * Appends visit only newly arrived page items when the exact revision/query identity and page prefix
+ * are unchanged. This is derived-view memoization, not a second remote-state owner.
+ */
+const appendItemsByFirstPage = new WeakMap<object, AppendItemsCache<unknown>>();
+
+const projectAppendAwareItems = <Item>(
+  pages: readonly { readonly items: readonly Item[] }[],
+  identity: string,
+  keyFor: (item: Item) => string,
+  visit: (count: number) => void,
+): readonly Item[] => {
+  const firstPage = pages[0];
+  if (firstPage === undefined) {
+    return [];
+  }
+  const cached = appendItemsByFirstPage.get(firstPage) as AppendItemsCache<Item> | undefined;
+  if (
+    cached &&
+    cached.identity === identity &&
+    pages.length >= cached.pages.length &&
+    cached.pages.every((page, index) => page === pages[index])
+  ) {
+    if (pages.length === cached.pages.length) {
+      return cached.items;
+    }
+    const items = cached.items.slice();
+    const seen = cached.seen;
+    for (const page of pages.slice(cached.pages.length)) {
+      visit(page.items.length);
+      for (const item of page.items) {
+        const key = keyFor(item);
+        if (!seen.has(key)) {
+          seen.add(key);
+          items.push(item);
+        }
+      }
+    }
+    const next: AppendItemsCache<Item> = { identity, items, pages, seen };
+    appendItemsByFirstPage.set(firstPage, next as AppendItemsCache<unknown>);
+    return items;
+  }
+  const seen = new Set<string>();
+  const items: Item[] = [];
+  for (const page of pages) {
+    visit(page.items.length);
+    for (const item of page.items) {
+      const key = keyFor(item);
+      if (!seen.has(key)) {
+        seen.add(key);
+        items.push(item);
+      }
+    }
+  }
+  appendItemsByFirstPage.set(firstPage, { identity, items, pages, seen } as AppendItemsCache<unknown>);
+  return items;
+};
+
+const topLevelProjectionIdentity = (data: SessionWindowQueryData, intent: SessionWindowIntent): string =>
+  `${data.query.revision}\0${sessionQueryFingerprint(data.query)}\0${sessionWindowIntentFingerprint(intent)}\0top-level`;
+
+const campaignProjectionIdentity = (
+  data: SessionWindowQueryData,
+  intent: SessionWindowIntent,
+  family: 'campaign-children' | 'campaign-sessions',
+  campaignKey: string,
+): string =>
+  `${data.query.revision}\0${sessionQueryFingerprint(data.query)}\0${sessionWindowIntentFingerprint(intent)}\0${family}\0${campaignKey}`;
+
 const campaignPageFor = (
+  data: SessionWindowQueryData,
   window: SessionCampaignWindow,
+  requestedIntent: SessionWindowIntent,
+  family: 'campaign-children' | 'campaign-sessions',
   requestedDepth: number,
   fetching: boolean,
 ): SessionCampaignPage => {
@@ -380,9 +467,13 @@ const campaignPageFor = (
     throw new Error('Campaign root changed while paging one exact revision');
   }
   return {
-    items: uniqueBy(
-      window.data.pages.flatMap((page) => page.items),
+    items: projectAppendAwareItems(
+      window.data.pages,
+      campaignProjectionIdentity(data, requestedIntent, family, window.campaignKey),
       (row) => row.rowId,
+      (count) => {
+        projectionStats.campaignRowVisits += count;
+      },
     ),
     loading: fetching && requestedDepth > window.data.pages.length,
     nextCursor: last?.nextCursor ?? null,
@@ -393,7 +484,10 @@ const campaignPageFor = (
 };
 
 const campaignMapFor = (
+  data: SessionWindowQueryData,
   windows: readonly SessionCampaignWindow[],
+  requestedIntent: SessionWindowIntent,
+  family: 'campaign-children' | 'campaign-sessions',
   requestedDepths: Readonly<Record<string, number>>,
   fetching: boolean,
 ): ReadonlyMap<string, SessionCampaignPage> => {
@@ -402,7 +496,7 @@ const campaignMapFor = (
   for (const [campaignKey, requestedDepth] of normalizedDepthEntries(requestedDepths)) {
     const window = byCampaign.get(campaignKey);
     if (window) {
-      result.set(campaignKey, campaignPageFor(window, requestedDepth, fetching));
+      result.set(campaignKey, campaignPageFor(data, window, requestedIntent, family, requestedDepth, fetching));
     } else if (fetching) {
       result.set(campaignKey, {
         items: [],
@@ -423,17 +517,106 @@ export const sessionWindowView = (
   fetching: boolean,
 ): SessionWindowView => {
   const last = data.topLevel.pages.at(-1);
+  const firstPage = data.topLevel.pages[0];
+  // Prefer totals from the first exact-revision page when present; later pages reuse the same identity.
+  const totalsPage = firstPage ?? last;
   return {
-    campaignChildren: campaignMapFor(data.campaignChildren, requestedIntent.campaignChildrenDepth, fetching),
-    campaignSessions: campaignMapFor(data.campaignSessions, requestedIntent.campaignSessionsDepth, fetching),
-    itemCount: last?.itemCount ?? 0,
-    items: uniqueBy(
-      data.topLevel.pages.flatMap((page) => page.items),
+    campaignChildren: campaignMapFor(
+      data,
+      data.campaignChildren,
+      requestedIntent,
+      'campaign-children',
+      requestedIntent.campaignChildrenDepth,
+      fetching,
+    ),
+    campaignSessions: campaignMapFor(
+      data,
+      data.campaignSessions,
+      requestedIntent,
+      'campaign-sessions',
+      requestedIntent.campaignSessionsDepth,
+      fetching,
+    ),
+    itemCount: totalsPage?.itemCount ?? 0,
+    items: projectAppendAwareItems(
+      data.topLevel.pages,
+      topLevelProjectionIdentity(data, requestedIntent),
       (item) => item.campaignKey,
+      (count) => {
+        projectionStats.topLevelRowVisits += count;
+      },
     ),
     loadingMore: fetching && requestedIntent.topLevelDepth > data.topLevel.pages.length,
     nextCursor: last?.nextCursor ?? null,
     query: data.query,
-    sessionCount: last?.sessionCount ?? 0,
+    sessionCount: totalsPage?.sessionCount ?? 0,
   };
+};
+
+interface DestinationRowsCache {
+  campaignChildren: ReadonlyMap<string, SessionCampaignPage>;
+  items: readonly SessionPageItem[];
+  rows: readonly SessionPresentationRow[];
+}
+
+const destinationRowsByFirstItem = new WeakMap<object, DestinationRowsCache>();
+
+const destinationRowForItem = (
+  item: SessionPageItem,
+  campaignChildren: ReadonlyMap<string, SessionCampaignPage>,
+): SessionPresentationRow => {
+  projectionStats.destinationRowVisits += 1;
+  const childPage = campaignChildren.get(item.campaignKey);
+  const children = childPage?.items;
+  if (children === undefined) {
+    if (item.row.campaignKey === item.campaignKey) {
+      return item.row;
+    }
+    return { ...item.row, campaignKey: item.campaignKey };
+  }
+  return {
+    ...item.row,
+    campaignKey: item.campaignKey,
+    children: [...children],
+  };
+};
+
+/**
+ * Expands campaign children onto top-level page items without unconditional full-array clones.
+ * Reuses prior destination rows when the projected item prefix and child-page identities are stable.
+ */
+export const projectSessionDestinationRows = (view: SessionWindowView): readonly SessionPresentationRow[] => {
+  const firstItem = view.items[0];
+  if (firstItem === undefined) {
+    return [];
+  }
+  const cached = destinationRowsByFirstItem.get(firstItem);
+  if (
+    cached &&
+    view.items.length >= cached.items.length &&
+    cached.items.every((item, index) => item === view.items[index])
+  ) {
+    const prefixChildrenStable = cached.items.every(
+      (item) => cached.campaignChildren.get(item.campaignKey) === view.campaignChildren.get(item.campaignKey),
+    );
+    if (prefixChildrenStable && view.items.length === cached.items.length) {
+      return cached.rows;
+    }
+    if (prefixChildrenStable) {
+      const rows = cached.rows.slice();
+      for (const item of view.items.slice(cached.items.length)) {
+        rows.push(destinationRowForItem(item, view.campaignChildren));
+      }
+      const next = { campaignChildren: view.campaignChildren, items: view.items, rows };
+      destinationRowsByFirstItem.set(firstItem, next);
+      return rows;
+    }
+  }
+  const rows = view.items.map((item) => destinationRowForItem(item, view.campaignChildren));
+  destinationRowsByFirstItem.set(firstItem, {
+    campaignChildren: view.campaignChildren,
+    items: view.items,
+    rows,
+  });
+  return rows;
 };

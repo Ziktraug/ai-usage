@@ -14,8 +14,12 @@ import {
   ensureSessionWindow,
   increaseSessionWindowDepth,
   initialSessionWindowIntent,
+  projectSessionDestinationRows,
+  resetSessionWindowProjectionStats,
   type SessionQueryScope,
   SessionRevisionExpiredError,
+  type SessionWindowQueryData,
+  sessionWindowProjectionStats,
   sessionWindowSatisfiesIntent,
   sessionWindowView,
 } from './session-window';
@@ -199,6 +203,70 @@ describe('Session infinite Query window', () => {
 
     expect(requests).toEqual(['revision-a:first', `revision-a:${cursor}`, 'revision-b:first', `revision-b:${cursor}`]);
     queryClient.clear();
+  });
+
+  test('append-aware projection visits O(new page) and keeps prior item identity', () => {
+    resetSessionWindowProjectionStats();
+    const firstPage = successfulPage(
+      parseSessionQueryRequest({ ...scope(), cursor: null, revision: 'revision-append' }),
+      [pageItem(campaign)],
+      cursor,
+    ).data;
+    const secondPage = successfulPage(parseSessionQueryRequest({ ...scope(), cursor, revision: 'revision-append' }), [
+      pageItem(secondCampaign),
+    ]).data;
+    const query = parseSessionQueryRequest({ ...scope(), cursor: null, revision: 'revision-append' });
+    const firstData: SessionWindowQueryData = {
+      campaignChildren: [],
+      campaignSessions: [],
+      query,
+      topLevel: { pageParams: [null], pages: [firstPage] },
+    };
+    const firstView = sessionWindowView(firstData, initialSessionWindowIntent(), false);
+    const afterFirst = sessionWindowProjectionStats().topLevelRowVisits;
+    expect(afterFirst).toBe(1);
+    expect(firstView.items).toHaveLength(1);
+
+    const appendedData: SessionWindowQueryData = {
+      campaignChildren: [],
+      campaignSessions: [],
+      query,
+      topLevel: { pageParams: [null, cursor], pages: [firstPage, secondPage] },
+    };
+    const appendedView = sessionWindowView(appendedData, initialSessionWindowIntent(), false);
+    expect(sessionWindowProjectionStats().topLevelRowVisits - afterFirst).toBe(1);
+    expect(appendedView.items).toHaveLength(2);
+    expect(appendedView.items[0]).toBe(firstView.items[0]);
+
+    const duplicateView = sessionWindowView(appendedData, initialSessionWindowIntent(), false);
+    expect(sessionWindowProjectionStats().topLevelRowVisits - afterFirst).toBe(1);
+    expect(duplicateView.items).toBe(appendedView.items);
+
+    const resortedQuery = parseSessionQueryRequest({
+      ...scope(),
+      cursor: null,
+      revision: 'revision-append',
+      sort: [{ desc: false, id: 'date' }],
+    });
+    const resortedPage = { ...firstPage, requestFingerprint: sessionQueryFingerprint(resortedQuery) };
+    const resortedData: SessionWindowQueryData = {
+      campaignChildren: [],
+      campaignSessions: [],
+      query: resortedQuery,
+      topLevel: { pageParams: [null], pages: [resortedPage] },
+    };
+    const beforeResort = sessionWindowProjectionStats().topLevelRowVisits;
+    sessionWindowView(resortedData, initialSessionWindowIntent(), false);
+    expect(sessionWindowProjectionStats().topLevelRowVisits - beforeResort).toBe(1);
+
+    resetSessionWindowProjectionStats();
+    const destinationFirst = projectSessionDestinationRows(firstView);
+    expect(sessionWindowProjectionStats().destinationRowVisits).toBe(1);
+    expect(destinationFirst[0]).toBe(firstView.items[0]?.row);
+    const destinationAppended = projectSessionDestinationRows(appendedView);
+    expect(sessionWindowProjectionStats().destinationRowVisits).toBe(2);
+    expect(destinationAppended[0]).toBe(destinationFirst[0]);
+    expect(destinationAppended).toHaveLength(2);
   });
 
   test('surfaces typed expiry and propagates outer cancellation to the active page query', async () => {
