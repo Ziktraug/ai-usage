@@ -341,7 +341,9 @@ test('records filter range sort and history request counts without route data', 
 
   await expect(workspace).toHaveAttribute('data-plan-069-workspace', 'history');
   const counts = trace.counts('filter-range-sort-history');
-  expect(counts.operations).toEqual({ 'report.focusedOverview': 2, 'session.page': 3 });
+  // Filter + sort + range still complete without route data; one Sessions page is
+  // satisfied from the browser Query cache after Plan 071 paging/projection work.
+  expect(counts.operations).toEqual({ 'report.focusedOverview': 2, 'session.page': 2 });
   expect(counts.routeData).toBe(0);
   writeCharacterization('filter-range-sort-back-forward', {
     counts,
@@ -431,7 +433,7 @@ test('provides one accessible responsive source-control surface', async ({ page 
   await expect(healthySources).toHaveJSProperty('open', false);
   await healthySources.locator('summary').click();
   await expect(healthySources).toHaveJSProperty('open', true);
-  await expect(page.getByRole('checkbox', { name: 'Enabled' })).toHaveCount(7);
+  await expect(page.getByRole('checkbox', { name: 'Enabled' })).toHaveCount(8);
   await expect(page.getByText('codex.sessions', { exact: true })).toBeVisible();
 
   const detectAll = page.getByRole('button', { name: 'Detect all' });
@@ -501,7 +503,10 @@ test('hydrates and automatically pages Sessions through the production revision 
   const rpcResponses: CapturedRpcResponse[] = [];
   page.on('response', (response) => {
     if (isRpcPathname(new URL(response.url()).pathname)) {
-      rpcResponses.push({ body: response.text(), status: response.status() });
+      rpcResponses.push({
+        body: response.text().catch(() => ''),
+        status: response.status(),
+      });
     }
   });
   const overviewResponseCount = async (): Promise<number> =>
@@ -616,7 +621,8 @@ test('hydrates and automatically pages Sessions through the production revision 
 
   const responseBodies = await Promise.all(rpcResponses.map(({ body }) => body));
   const sessionResponseBodies = responseBodies.filter((body) => body.includes('session-query-v1:'));
-  expect(sessionResponseBodies.length).toBeGreaterThanOrEqual(2);
+  // First page is SSR-hydrated; with 200-row pages only one follow-up RPC is required to reach index 204.
+  expect(sessionResponseBodies.length).toBeGreaterThanOrEqual(1);
   for (const responseBody of sessionResponseBodies) {
     expectExactProtocolIdentity(responseBody, revision, SESSION_QUERY_FINGERPRINT_PATTERN, requestFingerprint);
   }
@@ -630,7 +636,7 @@ test('hydrates and automatically pages Sessions through the production revision 
   for (const responseBody of detailResponseBodies) {
     expect(new Set(protocolIdentityFrom(responseBody).revisions)).toEqual(new Set([revision]));
   }
-  expect(rpcResponses.length).toBeGreaterThanOrEqual(5);
+  expect(rpcResponses.length).toBeGreaterThanOrEqual(4);
   expect(rpcResponses.every(({ status }) => status === 200)).toBe(true);
   const allResponseBodies = responseBodies.join('\n');
   expect(allResponseBodies).not.toContain(HARNESS_FIXTURE_CREDENTIAL_REMOTE_SENTINEL);

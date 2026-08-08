@@ -6,7 +6,7 @@
 > rationalized. This plan authorizes local implementation and verification only; do
 > not push or update a pull request unless the user explicitly asks.
 
-**Status:** IN PROGRESS
+**Status:** DONE
 
 **Priority:** P1
 
@@ -715,3 +715,26 @@ evidence.
 - When future code changes the fixture, browser version, page contract, or benchmark
   methodology, record the discontinuity before comparing numbers.
 - Prefer adding a new performance record over mutating historical measurements.
+
+## Implementation record
+
+Executed on `agent/migrate-web-sveltekit-orpc` (PR #27) rather than
+`perf/web-session-pipeline` so retained commits join the active migration PR.
+
+| Commit | Wave | Result |
+| --- | --- | --- |
+| `f7d143f5` | 0 instrumentation | retained |
+| `250416ca` | 0 control | retained |
+| `42b40bb7` | 1 overscan 4 | retained (scroll-path rejected) |
+| `7eba6336` | 2 page size 200 | retained |
+| `eabdb0f5` | 3 append projection | retained |
+| `438c89a6` | 4 hydration canonicalize | retained (−64% hydration vs Wave 3) |
+| `63e78224` | 5.1 totals reuse | retained with 5.2 |
+| `1b2f7245` | 5.2 projection cache | retained (−99% sqlite vs Wave 4) |
+| `04e88d3b` | 6.1 precompress | retained |
+
+Rejected without remaining source: Wave 1.2 scroll rAF path; Wave 6.2 design-system
+split (+2.13 KiB gzip); Wave 6.3 synthetic isolation (immaterial); Wave 6.4 destination
+SSR (unmeasured materiality); Wave 5.3 keyset (STOP / ADR).
+
+Durable record: `docs/performance/web-session-optimization.md`.
