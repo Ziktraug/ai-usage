@@ -1,9 +1,10 @@
 <script lang="ts">
-  import type { Snippet } from 'svelte';
+  import { type Snippet, tick } from 'svelte';
   import { popoverContentClass } from './styles';
 
   interface Props {
     children: Snippet;
+    closeOnInteract?: boolean;
     contentClass?: string;
     trigger: Snippet;
     triggerAriaLabel?: string;
@@ -11,7 +12,15 @@
     triggerTitle?: string;
   }
 
-  let { children, contentClass, trigger, triggerAriaLabel, triggerClass, triggerTitle }: Props = $props();
+  let {
+    children,
+    closeOnInteract = false,
+    contentClass,
+    trigger,
+    triggerAriaLabel,
+    triggerClass,
+    triggerTitle,
+  }: Props = $props();
 
   const propsId = $props.id();
   const popoverId = `ai-usage-popover-${propsId}`;
@@ -23,6 +32,7 @@
 
   let popoverElement = $state<HTMLElement | null>(null);
   let triggerElement = $state<HTMLButtonElement | null>(null);
+  let isMounted = $state(false);
   let isOpen = $state(false);
   let topPosition = $state(0);
   let leftPosition = $state(0);
@@ -36,6 +46,15 @@
         if (node.parentElement === document.body) {
           document.body.removeChild(node);
         }
+      },
+    };
+  };
+
+  const closeOnContentInteraction = (node: HTMLElement): { destroy: () => void } => {
+    node.addEventListener('click', onContentClick);
+    return {
+      destroy(): void {
+        node.removeEventListener('click', onContentClick);
       },
     };
   };
@@ -87,6 +106,16 @@
     firstFocusable?.focus();
   };
 
+  const onTriggerClick = async (): Promise<void> => {
+    if (isOpen) {
+      popoverElement?.hidePopover();
+      return;
+    }
+    isMounted = true;
+    await tick();
+    popoverElement?.showPopover();
+  };
+
   const onToggle = (event: Event): void => {
     const target = event.currentTarget;
     if (!(target instanceof HTMLElement)) {
@@ -99,6 +128,8 @@
         computePosition();
         focusFirstContentControl();
       });
+    } else {
+      isMounted = false;
     }
   };
 
@@ -116,6 +147,14 @@
     }
     computePlacement();
     computePosition();
+  };
+
+  const onContentClick = (): void => {
+    if (!closeOnInteract) {
+      return;
+    }
+    popoverElement?.hidePopover();
+    triggerElement?.focus();
   };
 
   $effect(() => {
@@ -146,7 +185,7 @@
   aria-label={triggerAriaLabel}
   class={triggerClass}
   id={`${popoverId}-trigger`}
-  popovertarget={popoverId}
+  onclick={onTriggerClick}
   title={triggerTitle}
   type="button"
   bind:this={triggerElement}
@@ -154,24 +193,27 @@
   {@render trigger()}
 </button>
 
-<div
-  aria-labelledby={`${popoverId}-trigger`}
-  id={popoverId}
-  ontoggle={onToggle}
-  popover="auto"
-  role="dialog"
-  bind:this={popoverElement}
-  style:left={`${leftPosition}px`}
-  style:top={`${topPosition}px`}
-  style:transform="translateX(-50%)"
-  use:portalElement
->
-  {#if isOpen}
-    <div class={contentClass ?? popoverContentClass}>
-      {@render children()}
-    </div>
-  {/if}
-</div>
+{#if isMounted}
+  <div
+    aria-labelledby={`${popoverId}-trigger`}
+    id={popoverId}
+    ontoggle={onToggle}
+    popover="auto"
+    role="dialog"
+    bind:this={popoverElement}
+    style:left={`${leftPosition}px`}
+    style:top={`${topPosition}px`}
+    style:transform="translateX(-50%)"
+    use:closeOnContentInteraction
+    use:portalElement
+  >
+    {#if isOpen}
+      <div class={contentClass ?? popoverContentClass}>
+        {@render children()}
+      </div>
+    {/if}
+  </div>
+{/if}
 
 <style>
   div[popover] {

@@ -33,7 +33,9 @@ describe('Svelte overlay components', () => {
   test('Popover uses the native HTML popover API, SSR-safe ids, 4px gutter, focus return, dialog semantics, and live repositioning', async () => {
     const source = await readOverlay('popover.svelte');
     expect(source).toContain('popover="auto"');
-    expect(source).toContain('popovertarget={popoverId}');
+    expect(source).toContain('onclick={onTriggerClick}');
+    expect(source).toContain('isMounted = true');
+    expect(source).not.toContain('popovertarget={popoverId}');
     expect(source).toContain('POPOVER_GUTTER_PX = 4');
     expect(source).toContain('type="button"');
     expect(source).toContain('triggerAriaLabel');

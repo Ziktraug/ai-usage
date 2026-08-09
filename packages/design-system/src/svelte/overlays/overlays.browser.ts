@@ -218,15 +218,7 @@ try {
 
   const popoverSelector = 'div[popover="auto"]';
   const popoverTrigger = page.getByRole('button', { name: 'Open fixture popover' });
-  await assertEqual(
-    await page
-      .locator(popoverSelector)
-      .first()
-      .evaluate((element) => getComputedStyle(element).display),
-    'none',
-    'Popover is hidden before opening',
-  );
-  await assertCount(page.locator(`${popoverSelector} > *`), 0, 'Popover retains only its empty native container');
+  await assertCount(page.locator(popoverSelector), 0, 'Popover leaves no closed container in document layout');
   await popoverTrigger.click();
   const popover = page.locator(popoverSelector);
   await popover.waitFor({ state: 'visible' });
@@ -281,7 +273,8 @@ try {
   await popover.evaluate(async (element) => {
     const MAX_OBSERVER_FRAMES = 10;
     for (let frame = 0; frame < MAX_OBSERVER_FRAMES; frame += 1) {
-      if (element.scrollHeight > element.clientHeight) {
+      const rect = element.getBoundingClientRect();
+      if (element.scrollHeight > element.clientHeight && rect.top >= 4 && rect.bottom <= window.innerHeight - 4) {
         return;
       }
       await new Promise<void>((resolveFrame) => requestAnimationFrame(() => resolveFrame()));
