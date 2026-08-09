@@ -43,3 +43,44 @@ export const moveSessionSurface = (surface: Locator, target: 'end' | 'start' | n
       });
     });
   }, target);
+
+export const readExpandedCampaignChildIdentity = async (
+  page: Page,
+  mode: SessionSurfaceMode,
+  campaignLabel: string,
+  childLabel: string,
+  expectedChildIndex: number,
+): Promise<string> => {
+  const surface = sessionSurface(page, mode);
+  const campaignRow = surface
+    .locator('[data-depth="0"][data-index][data-session-row-id]')
+    .filter({ hasText: campaignLabel });
+  const expand =
+    mode === 'desktop'
+      ? page.getByRole('button', { name: `Expand campaign ${campaignLabel}` })
+      : campaignRow.getByRole('button', { name: 'Show children' });
+  await expand.waitFor({ state: 'visible' });
+  await expand.click();
+
+  const child = surface.locator('[data-depth="1"][data-index][data-session-row-id]').filter({ hasText: childLabel });
+  await child.waitFor({ state: 'visible' });
+  if ((await child.count()) !== 1) {
+    throw new Error(`Expected exactly one expanded child for campaign ${campaignLabel}`);
+  }
+  const childIndex = Number(await child.getAttribute('data-index'));
+  if (childIndex !== expectedChildIndex) {
+    throw new Error(`Expected expanded child index ${expectedChildIndex}, received ${childIndex}`);
+  }
+  const childIdentity = await child.getAttribute('data-session-row-id');
+  if (!childIdentity) {
+    throw new Error(`Expanded child for campaign ${campaignLabel} did not expose an identity`);
+  }
+
+  const collapse =
+    mode === 'desktop'
+      ? page.getByRole('button', { name: `Collapse campaign ${campaignLabel}` })
+      : campaignRow.getByRole('button', { name: 'Hide children' });
+  await collapse.click();
+  await child.waitFor({ state: 'detached' });
+  return childIdentity;
+};

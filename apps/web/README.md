@@ -2,7 +2,7 @@
 
 ## Owns
 
-SvelteKit SSR and UI, the browser served-session coordinator, read-only report
+SvelteKit SSR and UI, TanStack Query-owned report and Session state, read-only report
 procedures through the explicit `/rpc/[...rest]` oRPC endpoint, source-control
 command/status/event proxies, `/sync`, web read observability, and the unrelated
 `/skills` filesystem control plane.

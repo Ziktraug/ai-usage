@@ -87,8 +87,9 @@ Publication requests use monotonic demand, and timed-out work aborts at the
 provider boundary before later writes. Disabling, missing input, empty output,
 or failure never deletes prior contributions. The browser strictly decodes
 sanitized replacement status plus publication events through one SSE
-connection. TanStack Svelte Query owns ordinary finite Skills and quota reads;
-the served-report session remains the sole browser exact-revision owner.
+connection. TanStack Svelte Query owns finite Skills and quota reads as well as
+immutable exact-revision report and Session results; composite report queries
+publish one complete revision atomically.
 
 ### Runtime ownership and backups
 

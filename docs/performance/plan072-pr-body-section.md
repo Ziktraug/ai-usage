@@ -24,7 +24,7 @@ The second review recalculated all three decisions from corrected evidence.
 The corrected artifacts include explicit disjoint initial/lazy chunk sets,
 Overview, Sessions, Breakdown, and Sessions-after-Drawer closures, all raw B
 samples, and SHA-256 values. The final 5,000-session proof traverses all 4,999
-campaigns in 25 pages with no missing or duplicate identity; its median desktop
-traversal is 3,823.692 ms. The Plan remains in progress because the requested
-triple-dot whitespace check cannot observe the repaired Plan 070 lines until a
-commit is authorized.
+top-level campaigns in 25 pages, expands the fixture child, and therefore
+proves all 5,000 session identities with no missing or duplicate identity. Its
+reviewed median desktop traversal is 3,823.692 ms. The whitespace repair is now
+committed on the branch, the auditable matrix is green, and Plan 072 is DONE.

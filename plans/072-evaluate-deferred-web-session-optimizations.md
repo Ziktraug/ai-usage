@@ -6,7 +6,7 @@
 > rationalized. This plan authorizes local implementation, push, and PR description
 > updates for the same single working branch; do not merge.
 
-**Status:** IN PROGRESS
+**Status:** DONE
 
 **Priority:** P1
 
@@ -71,7 +71,7 @@ Key reference numbers (from `wave7-reviewed-final.json`):
 | Initial closure brotli | 241,588 B |
 | Desktop / Mobile items | 29 / 13 |
 | Desktop / Mobile DOM nodes | 581 / 224 |
-| Unique identities | 4,999 |
+| Unique top-level campaign identities | 4,999 |
 | Missing / Duplicates | 0 / 0 |
 
 SQLite phase attribution (sample 0 of the reviewed run):
@@ -694,17 +694,16 @@ and prefetch path remain unchanged.
 
 ### Final
 
-The post-rejection Session benchmark is current: one warm-up and three recorded
-samples traverse all 4,999 campaign identities in exactly 25 desktop pages,
-with zero missing or duplicate identities. Median desktop traversal is
-3,528.125 ms, median initial hydration is 459.544 ms, and cumulative Session
-response bytes remain 11,026,467 B.
+The reviewed post-rejection Session benchmark used one warm-up and three
+recorded samples. They traverse all 4,999 top-level campaign identities in
+exactly 25 desktop pages with no campaign gap or duplicate. Its median desktop
+traversal is 3,528.125 ms, median initial hydration is 459.544 ms, and cumulative
+Session response bytes remain 11,026,467 B. The current executable scale and
+benchmark gates additionally expand the fixture child and compute all 5,000
+unique session identities with zero missing or duplicate identities.
 
 The runtime, unit, build, browser, production, and E2E checks are green. The
-review's exact `git diff --check origin/main...HEAD` command still reports five
-trailing-space lines already stored in the immutable starting HEAD; the
-working-tree repair passes both `git diff --check` and
-`git diff --check origin/main`. Because committing is explicitly prohibited
-without confirmation, that triple-dot proof cannot observe the repair yet.
-This plan therefore remains `IN PROGRESS` rather than claiming a fully green
-auditable matrix.
+previously uncommitted trailing-space repair is now part of the branch, so both
+the working-tree and branch triple-dot diff checks can observe it. The rejected
+experiments remain reverted, the retained source matches the measured final,
+and the auditable matrix is complete.

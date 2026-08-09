@@ -5,10 +5,16 @@ import { rpcStringFieldValues } from './rpc-test-transport';
 import {
   afterAnimationFrame,
   moveSessionSurface,
+  readExpandedCampaignChildIdentity,
   type SessionSurfaceMode,
   sessionSurface,
 } from './session-scroll-driver';
-import { SESSION_SCROLL_EXPECTED_CAMPAIGN_COUNT } from './session-scroll-fixture';
+import {
+  SESSION_SCROLL_CHILD_LABEL,
+  SESSION_SCROLL_EXPECTED_CAMPAIGN_COUNT,
+  SESSION_SCROLL_EXPECTED_COUNT,
+  SESSION_SCROLL_FILTER_QUERY,
+} from './session-scroll-fixture';
 import { freezeSessionScrollCollectionSources } from './session-scroll-source-control';
 
 const SESSION_ROUTE = '/?origin=%5B%5D&range=%7B%22mode%22%3A%22all%22%7D&tab=sessions';
@@ -54,6 +60,7 @@ interface SessionSurfaceSnapshot {
 }
 
 interface ScrollResult {
+  expandedChildRowId: string;
   maximumRenderedItems: number;
   orderedRowIds: string[];
   requestFingerprint: string;
@@ -134,8 +141,8 @@ const readSurfaceSnapshot = (surface: Locator): Promise<SessionSurfaceSnapshot> 
     const rowElements = Array.from(element.querySelectorAll<HTMLElement>('[data-session-row-id][data-index]'));
     const lastRow = rowElements.at(-1);
     const maximumScrollTop = Math.max(0, element.scrollHeight - element.clientHeight);
-    const lastObservedRowTop = lastRow
-      ? element.scrollTop + lastRow.getBoundingClientRect().top - element.getBoundingClientRect().top
+    const lastObservedRowBottom = lastRow
+      ? element.scrollTop + lastRow.getBoundingClientRect().bottom - element.getBoundingClientRect().top
       : element.scrollTop + element.clientHeight;
     const report = document.querySelector<HTMLElement>('main[data-hydrated="true"]');
     const reportRevision = report?.dataset.reportRevision;
@@ -145,7 +152,7 @@ const readSurfaceSnapshot = (surface: Locator): Promise<SessionSurfaceSnapshot> 
     }
     return {
       clientHeight: element.clientHeight,
-      nextScrollTop: Math.min(maximumScrollTop, Math.max(element.scrollTop, lastObservedRowTop)),
+      nextScrollTop: Math.min(maximumScrollTop, Math.max(element.scrollTop, lastObservedRowBottom)),
       reportRevision,
       requestFingerprint,
       rows: rowElements.map((row) => ({
@@ -334,9 +341,9 @@ const inspectAllSessions = async (
     if (indexToRowId.size === SESSION_SCROLL_EXPECTED_CAMPAIGN_COUNT) {
       break;
     }
-    // Mobile cards have a fixed row geometry. The last rendered card has
-    // already been recorded, so its top advances the window without skipping
-    // unseen rows. Keep the table's established viewport step on desktop.
+    // The last rendered mobile card has already been recorded, so advancing to
+    // its bottom crosses the virtualization threshold without skipping an
+    // unseen row. Keep the table's established viewport step on desktop.
     const maximumScrollTop = Math.max(0, snapshot.scrollHeight - snapshot.clientHeight);
     const nextScrollTop =
       viewportCase.mode === 'mobile'
@@ -404,6 +411,17 @@ const inspectAllSessions = async (
     throw new Error('Expected the session fixture to contain first and last row identifiers');
   }
 
+  const expandedChildRowId = await readExpandedCampaignChildIdentity(
+    page,
+    viewportCase.mode,
+    SESSION_SCROLL_FILTER_QUERY,
+    SESSION_SCROLL_CHILD_LABEL,
+    SESSION_SCROLL_EXPECTED_COUNT - 1,
+  );
+  const sessionRowIds = [...orderedRowIds, expandedChildRowId];
+  expect(sessionRowIds).toHaveLength(SESSION_SCROLL_EXPECTED_COUNT);
+  expect(new Set(sessionRowIds).size).toBe(SESSION_SCROLL_EXPECTED_COUNT);
+
   await moveSessionSurface(surface, 'start');
   await expect(surface.locator('[data-index="0"]')).toHaveAttribute('data-session-row-id', firstRowId);
   await moveSessionSurface(surface, 'end');
@@ -424,6 +442,7 @@ const inspectAllSessions = async (
   const pageBudgets = assertPageBudgets(await capture.finish(), orderedRowIds, requestFingerprint, reportRevision);
   const sequenceFingerprint = createHash('sha256').update(JSON.stringify(orderedRowIds)).digest('hex');
   const result = {
+    expandedChildRowId,
     maximumRenderedItems,
     orderedRowIds,
     requestFingerprint,
@@ -440,6 +459,7 @@ const inspectAllSessions = async (
         sessionPageCount: pageBudgets.pageCount,
         sessionResponseMaximumBytes: pageBudgets.maximumBytes,
         topLevelCampaignsReached: orderedRowIds.length,
+        uniqueSessionsReached: sessionRowIds.length,
         viewport: { height: viewportCase.height, width: viewportCase.width },
       },
       null,
@@ -466,5 +486,6 @@ for (const viewportCase of viewportCases) {
     expect(result.requestFingerprint).toBe(desktopResult.requestFingerprint);
     expect(result.sequenceFingerprint).toBe(desktopResult.sequenceFingerprint);
     expect(result.orderedRowIds).toEqual(desktopResult.orderedRowIds);
+    expect(result.expandedChildRowId).toBe(desktopResult.expandedChildRowId);
   });
 }

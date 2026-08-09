@@ -26,8 +26,8 @@
 - **Category**: architecture, performance, correctness, tests, dx
 - **Planned at**: commit `c1eef7b0`, 2026-08-07; current dirty worktree also
   inspected and must be reconciled before execution
-- **Status**: IN PROGRESS — Gate 5 functionally green; shared-worktree browser
-  reconciliation pending
+- **Status**: DONE — all five ownership gates, browser reconciliation, and the
+  permanent repository checks are green.
 
 ## Why this matters
 
@@ -463,25 +463,25 @@ confirm its port is reusable before marking DONE.
 
 ## Done criteria
 
-- [ ] TanStack Query is the only browser owner of remote result, request, error,
+- [x] TanStack Query is the only browser owner of remote result, request, error,
       freshness, placeholder, retry, invalidation, and mutation state.
-- [ ] One-to-one procedure options use `@orpc/svelte-query`; composite options
+- [x] One-to-one procedure options use `@orpc/svelte-query`; composite options
       exist only for atomic multi-procedure report reads.
-- [ ] SvelteKit server loads only prefetch the same Query identities for initial
+- [x] SvelteKit server loads only prefetch the same Query identities for initial
       SSR and do not act as a client-navigation cache.
-- [ ] Current aliases have bounded SWR fallback plus event invalidation.
-- [ ] Immutable results remain revision/fingerprint keyed and never refetch from
+- [x] Current aliases have bounded SWR fallback plus event invalidation.
+- [x] Immutable results remain revision/fingerprint keyed and never refetch from
       publication invalidation.
-- [ ] `ServedReportSession`, `SessionTableQueryOwner`, and their mirrored remote
+- [x] `ServedReportSession`, `SessionTableQueryOwner`, and their mirrored remote
       state are deleted.
-- [ ] Exact-revision supersession, one expiry recovery, last-good retention,
+- [x] Exact-revision supersession, one expiry recovery, last-good retention,
       atomic visibility, and loaded-depth replay remain covered and green.
-- [ ] Skills, Sync, quota, source snapshots, Session detail, and mutations obey
+- [x] Skills, Sync, quota, source snapshots, Session detail, and mutations obey
       the ownership matrix.
-- [ ] Sidebar/navigation/presentation and the direct SQLite/control/file/SSE
+- [x] Sidebar/navigation/presentation and the direct SQLite/control/file/SSE
       boundaries are unchanged.
-- [ ] Acceptance budgets and every final verification command pass.
-- [ ] ADR 0012, architecture/integration docs, Plan 068 reconciliation, and the
+- [x] Acceptance budgets and every final verification command pass.
+- [x] ADR 0012, architecture/integration docs, Plan 068 reconciliation, and the
       plans index match the shipped code.
 
 ## STOP conditions
@@ -683,3 +683,10 @@ family is added.
   069 remains open only for current shared-worktree browser reconciliation: two
   route-data requests are reported as aborted in sidebar/history scenarios while
   concurrent presentation work is active.
+- 2026-08-09 — **Final reconciliation complete.** The later browser integration
+  removed the two route-data abort discrepancies, the retired ledger no longer
+  blocks the repository aggregate, and the Query-owned report/session paths,
+  direct SQLite/control/file/SSE boundaries, scale budgets, and permanent
+  browser gates pass together. The deleted served-session and table owners have
+  no surviving production references; Plan 068, ADR 0010, ADR 0012, and the
+  plans index now describe the shipped ownership model consistently.

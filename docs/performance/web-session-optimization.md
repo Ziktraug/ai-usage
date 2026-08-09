@@ -116,8 +116,13 @@ br 62,209 (−75.7%), gzip 74,731, identity 255,848; decode integrity verified.
 
 ## Correctness invariants observed
 
-- All 4,999 campaign identities in the 5,000-session fixture are reached exactly
-  once during the exhaustive desktop sweep; zero missing or duplicate identities.
+- All 4,999 top-level campaign identities are reached exactly once during the
+  exhaustive desktop sweep. Expanding the fixture campaign then reaches its one
+  child, proving all 5,000 session identities exactly once with zero missing or
+  duplicate identities.
+- Historical Wave JSON fields named `uniqueIdentityCount` contain the 4,999
+  top-level campaign count. The current executable benchmark corrects that
+  ambiguity and reports 5,000 after including the expanded child.
 - The 25-page desktop traversal performs 24 post-SSR page RPCs. The benchmark's 26
   total session RPCs include the subsequent filter and sort requests.
 - Exact revision + request fingerprint unchanged.

@@ -7,10 +7,12 @@ import { measureInitialStaticClosureBytes } from './session-scroll-benchmark-clo
 import {
   afterAnimationFrame,
   moveSessionSurface,
+  readExpandedCampaignChildIdentity,
   type SessionSurfaceMode,
   sessionSurface,
 } from './session-scroll-driver';
 import {
+  SESSION_SCROLL_CHILD_LABEL,
   SESSION_SCROLL_EXPECTED_CAMPAIGN_COUNT,
   SESSION_SCROLL_EXPECTED_COUNT,
   SESSION_SCROLL_FILTER_QUERY,
@@ -281,7 +283,7 @@ const waitForAllRows = async (
 const verifyEveryVirtualizedCampaign = async (
   page: Page,
   surfaceMode: SessionSurfaceMode,
-): Promise<{ firstIdentity: string; lastIdentity: string; uniqueIdentityCount: number }> => {
+): Promise<{ firstIdentity: string; identities: string[]; lastIdentity: string }> => {
   const surface = sessionSurface(page, surfaceMode);
   const identitiesByIndex = new Map<number, string>();
   const geometry = await surface.evaluate((element) => ({
@@ -336,7 +338,14 @@ const verifyEveryVirtualizedCampaign = async (
   if (!(firstIdentity && lastIdentity)) {
     throw new Error('Benchmark virtualized identity sweep omitted an endpoint');
   }
-  return { firstIdentity, lastIdentity, uniqueIdentityCount: uniqueIdentities.size };
+  const identities = Array.from({ length: SESSION_SCROLL_EXPECTED_CAMPAIGN_COUNT }, (_, index) => {
+    const identity = identitiesByIndex.get(index);
+    if (!identity) {
+      throw new Error(`Benchmark virtualized identity sweep omitted campaign index ${index}`);
+    }
+    return identity;
+  });
+  return { firstIdentity, identities, lastIdentity };
 };
 
 const readCapturedSessionPage = async (
@@ -414,6 +423,20 @@ const runSample = async (page: Page, request: APIRequestContext): Promise<Sessio
     const desktopIdentitySweep = await verifyEveryVirtualizedCampaign(page, 'desktop');
     expect(desktopTraversal.firstIdentity).toBe(desktopIdentitySweep.firstIdentity);
     expect(desktopTraversal.lastIdentity).toBe(desktopIdentitySweep.lastIdentity);
+    const expandedChildIdentity = await readExpandedCampaignChildIdentity(
+      page,
+      'desktop',
+      SESSION_SCROLL_FILTER_QUERY,
+      SESSION_SCROLL_CHILD_LABEL,
+      SESSION_SCROLL_EXPECTED_COUNT - 1,
+    );
+    const observedSessionIdentities = [...desktopIdentitySweep.identities, expandedChildIdentity];
+    const uniqueSessionIdentities = new Set(observedSessionIdentities);
+    const duplicateIdentityCount = observedSessionIdentities.length - uniqueSessionIdentities.size;
+    const missingIdentityCount = Math.max(0, SESSION_SCROLL_EXPECTED_COUNT - uniqueSessionIdentities.size);
+    expect(observedSessionIdentities).toHaveLength(SESSION_SCROLL_EXPECTED_COUNT);
+    expect(duplicateIdentityCount).toBe(0);
+    expect(missingIdentityCount).toBe(0);
 
     await page.setViewportSize(MOBILE_VIEWPORT);
     const mobileSurface = sessionSurface(page, 'mobile');
@@ -481,17 +504,17 @@ const runSample = async (page: Page, request: APIRequestContext): Promise<Sessio
       desktopSettledSessionDomNodes: desktopTraversal.settledNodes,
       desktopSessionPageCount: desktopCapturedPages.length + 1,
       desktopSessionRpcCount: desktopCapturedPages.length,
-      duplicateIdentityCount: 0,
+      duplicateIdentityCount,
       filterMs: Number(filterMs.toFixed(3)),
-      firstSessionIdentity: desktopTraversal.firstIdentity,
+      firstSessionIdentity: observedSessionIdentities[0] ?? null,
       heapDeltaBytes: heapBefore === null || heapAfter === null ? null : Math.max(0, heapAfter - heapBefore),
       hydrationFamilyBytes: hydrationSnapshot.hydration.families,
       hydrationTotalBytes: hydrationSnapshot.hydration.totalBytes,
       initialHtmlBytes,
       initialMs: Number(initialMs.toFixed(3)),
-      lastSessionIdentity: desktopTraversal.lastIdentity,
+      lastSessionIdentity: observedSessionIdentities.at(-1) ?? null,
       maximumPageBytes: Math.max(...measuredPageBytes, 0),
-      missingIdentityCount: 0,
+      missingIdentityCount,
       mobileFullTraversalMs: Number(mobileTraversal.elapsedMs.toFixed(3)),
       mobileMaximumRenderedItems: mobileTraversal.maximumItems,
       mobileMaximumSessionDomNodes: mobileTraversal.maximumNodes,
@@ -500,7 +523,7 @@ const runSample = async (page: Page, request: APIRequestContext): Promise<Sessio
       sessionPageCount: capturedPages.length,
       sortMs: Number(sortMs.toFixed(3)),
       sqlitePhases: sqliteSnapshot.sqlite.phases,
-      uniqueIdentityCount: desktopIdentitySweep.uniqueIdentityCount,
+      uniqueIdentityCount: uniqueSessionIdentities.size,
     };
   } finally {
     page.off('request', onRequest);

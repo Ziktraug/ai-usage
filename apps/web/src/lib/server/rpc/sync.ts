@@ -114,12 +114,17 @@ export interface ManualMergeExportCandidate extends ManualMergeExportData {
   readonly machine: unknown;
 }
 
-const parseManualMergeExportCandidate = (value: unknown): ManualMergeExportCandidate => {
+const parseManualMergeExportData = (
+  value: unknown,
+  expectedKeys: readonly string[],
+  errorPrefix: string,
+  byteIdentityError: string,
+): ManualMergeExportData => {
   if (!isJsonWireValue(value)) {
-    throw new Error('Manual merge export data is invalid');
+    throw new Error(`${errorPrefix} is invalid`);
   }
-  if (!(isRecord(value) && hasExactKeys(value, ['bytes', 'filename', 'machine', 'rows', 'text']))) {
-    throw new Error('Manual merge export data is invalid');
+  if (!(isRecord(value) && hasExactKeys(value, expectedKeys))) {
+    throw new Error(`${errorPrefix} is invalid`);
   }
   if (
     typeof value.filename !== 'string' ||
@@ -132,41 +137,41 @@ const parseManualMergeExportCandidate = (value: unknown): ManualMergeExportCandi
     !Number.isSafeInteger(value.rows) ||
     Number(value.rows) < 0
   ) {
-    throw new Error('Manual merge export metadata is invalid');
-  }
-  const bytes = new TextEncoder().encode(value.text).byteLength;
-  if (bytes !== value.bytes || !isRecord(value.machine)) {
-    throw new Error('Manual merge export identity is invalid');
-  }
-  return { bytes, filename: value.filename, machine: value.machine, rows: Number(value.rows), text: value.text };
-};
-
-const parseCanonicalManualMergeExport = (value: unknown): ManualMergeExportData => {
-  if (!isJsonWireValue(value)) {
-    throw new Error('Canonical manual merge export is invalid');
-  }
-  if (!(isRecord(value) && hasExactKeys(value, ['bytes', 'filename', 'rows', 'text']))) {
-    throw new Error('Canonical manual merge export is invalid');
-  }
-  if (
-    typeof value.filename !== 'string' ||
-    !SAFE_FILENAME_PATTERN.test(value.filename) ||
-    !value.filename.endsWith('.json') ||
-    typeof value.text !== 'string' ||
-    !Number.isSafeInteger(value.bytes) ||
-    Number(value.bytes) <= 0 ||
-    Number(value.bytes) > MAX_PORTABLE_USAGE_BYTES ||
-    !Number.isSafeInteger(value.rows) ||
-    Number(value.rows) < 0
-  ) {
-    throw new Error('Canonical manual merge export metadata is invalid');
+    throw new Error(`${errorPrefix} metadata is invalid`);
   }
   const bytes = new TextEncoder().encode(value.text).byteLength;
   if (bytes !== value.bytes) {
-    throw new Error('Canonical manual merge export byte identity is invalid');
+    throw new Error(byteIdentityError);
   }
   return { bytes, filename: value.filename, rows: Number(value.rows), text: value.text };
 };
+
+const parseManualMergeExportCandidate = (value: unknown): ManualMergeExportCandidate => {
+  const data = parseManualMergeExportData(
+    value,
+    ['bytes', 'filename', 'machine', 'rows', 'text'],
+    'Manual merge export data',
+    'Manual merge export identity is invalid',
+  );
+  if (!(isRecord(value) && isRecord(value.machine))) {
+    throw new Error('Manual merge export identity is invalid');
+  }
+  return {
+    bytes: data.bytes,
+    filename: data.filename,
+    machine: value.machine,
+    rows: data.rows,
+    text: data.text,
+  };
+};
+
+const parseCanonicalManualMergeExport = (value: unknown): ManualMergeExportData =>
+  parseManualMergeExportData(
+    value,
+    ['bytes', 'filename', 'rows', 'text'],
+    'Canonical manual merge export',
+    'Canonical manual merge export byte identity is invalid',
+  );
 
 export interface ManualMergeExplicitDependencies {
   /**

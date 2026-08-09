@@ -754,4 +754,6 @@ property mismatch is fixed with integration coverage, and dev route-data aborts
 are handled as exact, one-time navigation races. The final artifact
 `docs/performance/artifacts/wave7-reviewed-final.json` records 4,999/4,999 campaign
 identities with zero missing or duplicate identities, 25 desktop traversal pages,
-24 post-SSR traversal RPCs, and 26 total benchmark RPCs.
+24 post-SSR traversal RPCs, and 26 total benchmark RPCs. That historical field
+counts top-level campaigns. The current executable scale and benchmark gates
+also expand the fixture child and assert 5,000/5,000 unique session identities.

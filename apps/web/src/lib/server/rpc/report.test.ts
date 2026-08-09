@@ -270,6 +270,18 @@ describe('report RPC handler', () => {
     expect(await caught(request)).toBe(postAwaitReason);
   });
 
+  test('normalizes a non-Error cancellation reason', async () => {
+    const controller = new AbortController();
+    const reason = { operation: 'report.revisionManifest', reason: 'superseded' };
+    controller.abort(reason);
+    const router = createReportRpcRouter(createServices());
+
+    const error = await caught(call(router.report.revisionManifest, {}, { signal: controller.signal }));
+
+    expect(error).toBeInstanceOf(Error);
+    expect(error).toMatchObject({ cause: reason, message: 'The report operation was cancelled.' });
+  });
+
   test('never exposes raw unknown service failures', async () => {
     const services = createServices();
     const router = createReportRpcRouter({

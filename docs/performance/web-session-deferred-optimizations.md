@@ -15,13 +15,14 @@ The second review rejects every new optimization candidate:
   no-prefetch trial, while removing it violates the existing no-refetch
   invariant.
 
-The Plan remains `IN PROGRESS` until the complete final validation matrix and
-the post-rejection Session benchmark are current and green.
+The Plan is `DONE`: the complete final validation matrix and post-rejection
+Session benchmark are current and green.
 
 ## Environment and source identity
 
 - Branch: `agent/migrate-web-sveltekit-orpc`
-- Worktree HEAD: `dfa5b66ed02f2fe25fa14764faa7b874e3cde8f7`
+- Measurement baseline: `dfa5b66ed02f2fe25fa14764faa7b874e3cde8f7`
+- Reviewed retained-source checkpoint: `1060c2d58a88d9f43573ea89deb4c0c57ba86a27`
 - B control product source: `9bbcc90d2e7edf8ccdfcda327b566208466c34c7`
 - Bun: `1.3.13`
 - Playwright: `1.61.1`
@@ -31,8 +32,8 @@ the post-rejection Session benchmark are current and green.
 - Vite: `8.2.0`
 - Date and timezone: 2026-08-09, Europe/Paris
 
-No measurement commit was created because the review explicitly prohibited
-commits without confirmation. The B artifact therefore records
+The measurement and rejection record was committed after confirmation at the
+reviewed retained-source checkpoint above. The B artifact records
 `worktreeDirty: true`; its product-source composition is HEAD plus the review
 fixes described below. The control is the pinned commit above. Both production
 outputs were deleted and rebuilt by `sveltekit-production-build.ts` immediately
@@ -90,7 +91,7 @@ response bytes, and an actual revision change.
 
 | Date-desc traversal | 5k | 20k |
 | --- | ---: | ---: |
-| Unique identities | 4,999 | 19,996 |
+| Unique top-level campaign identities | 4,999 | 19,996 |
 | Missing / duplicate identities | 0 / 0 | 0 / 0 |
 | Median traversal | 190.807 ms | 814.772 ms |
 | Projection slice | 0.050 ms | 0.105 ms |
@@ -191,10 +192,13 @@ package-boundary tests reject every general Web consumer.
 
 ## Final exhaustive Session proof
 
-The post-rejection source was measured with one warm-up followed by three
-recorded production samples. The fixture contains 5,000 sessions and 4,999
-campaigns. Every sample traverses exactly 25 desktop pages, observes 4,999
-unique campaign identities, and reports zero missing or duplicate identities.
+The retained post-rejection artifact was measured with one warm-up followed by
+three production samples. The fixture contains 5,000 sessions and 4,999
+top-level campaigns. Every retained sample traverses exactly 25 desktop pages
+and observes all 4,999 campaign identities without a campaign gap or duplicate.
+The current executable scale and benchmark gates additionally expand the fixture
+child and compute 5,000 unique session identities with zero missing or duplicate
+identities.
 
 | Metric | Control | Final | Delta |
 | --- | ---: | ---: | ---: |

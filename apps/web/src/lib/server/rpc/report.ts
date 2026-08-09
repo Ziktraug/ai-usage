@@ -95,7 +95,10 @@ const safeServiceOptions = (error: ReportRpcServiceError): PublicErrorOptions =>
 
 const throwIfCancelled = (signal: AbortSignal | undefined): void => {
   if (signal?.aborted) {
-    throw signal.reason;
+    if (signal.reason instanceof Error) {
+      throw signal.reason;
+    }
+    throw new Error('The report operation was cancelled.', { cause: signal.reason });
   }
 };
 

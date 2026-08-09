@@ -131,11 +131,11 @@ read-only SQLite and the permanent browser/server and demo-isolation boundaries.
 | 065 | Expose the Harness–Provider Joint Distribution | P3 | M | 054, 062 | DONE |
 | 066 | Split the Usage Engine From the Web and CLI Runtimes | P0 | XL | 022-024, 043-044 | DONE |
 | 067 | Close the Post-Cutover Usage-Engine Runtime Review Gaps | P1 | L | 066 | DONE |
-| 068 | Migrate Web to SvelteKit With Contract-First oRPC | P1 | XL | 066, 067 | REOPENED |
-| 069 | Centralize Web Server-State Ownership in TanStack Query and oRPC | P1 | XL | 068 Query/oRPC foundation + clean active-worktree checkpoint | TODO |
+| 068 | Migrate Web to SvelteKit With Contract-First oRPC | P1 | XL | 066, 067 | DONE |
+| 069 | Centralize Web Server-State Ownership in TanStack Query and oRPC | P1 | XL | 068 Query/oRPC foundation + clean active-worktree checkpoint | DONE |
 | 070 | Retire Completed Web Migration Guardrails and Clarify Lasting Safety Gates | P1 | M | 068 migration integrated; 069 browser ownership integrated | DONE |
 | 071 | Measure and Optimize the Web Session Pipeline End to End | P1 | XL | current Plan 069 Query ownership; 070 | DONE |
-| 072 | Evaluate Deferred Web Session Optimizations (keyset, Ark split, direct destination SSR) | P1 | XL | 071 reviewed final | IN PROGRESS |
+| 072 | Evaluate Deferred Web Session Optimizations (keyset, Ark split, direct destination SSR) | P1 | XL | 071 reviewed final | DONE |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) |
 REJECTED (with one-line rationale).

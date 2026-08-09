@@ -1,9 +1,8 @@
 # ADR 0010: SvelteKit with a contract-first browser boundary
 
-- **Status**: Proposed. Acceptance withdrawn 2026-08-05: the presentation-parity
-  evidence below was invalidated by a maintainer-reported Activity regression. The
-  transport, boundary, SSR/hydration, cache-ownership and lifecycle decisions this
-  ADR records are unaffected and remain in force.
+- **Status**: Accepted. Re-accepted 2026-08-09 after the reported Activity
+  regression was repaired and the permanent presentation, browser, and export
+  gates replaced the retired migration ledger.
 - **Date**: 2026-08-02
 - **Amends**: the Web framework and browser transport only
 - **Preserves**: ADR 0007 and ADR 0009 (sole-writer usage engine and direct SQLite readers)
@@ -124,7 +123,7 @@ JSON never carries file bytes.
 - Routes, URL/default/legacy behavior, calculations, copy, accessibility,
   keyboard/focus behavior, responsive geometry, Panda semantics, demo privacy,
   and local trust do not change as part of this decision.
-- This ADR becomes Accepted only after Plan 068's cutover and final green gates.
+- This ADR was accepted after Plan 068's cutover and final green gates.
 
 ## Rejected alternatives
 

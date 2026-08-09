@@ -26,15 +26,10 @@
 - **Depends on**: plans 066 and 067 (both DONE)
 - **Category**: migration, tech-debt, performance, tests, dx
 - **Planned at**: commit `72c648e`, 2026-08-02
-- **State**: REOPENED for presentation parity, 2026-08-05. The transport,
-  boundary, SSR/hydration, cache-ownership and lifecycle outcomes remain
-  integrated, independently reviewed and green through checkpoint `ac63cf8`
-  (Actions run `30947971788`, attempt 3); they are not being rejudged. Level 4
-  parity is not met: the maintainer reported the Activity brush handles rendering
-  unstyled and the chart drawing the whole domain, and the audit found the
-  semantic Panda layer had been rebuilt with local `css()` rather than ported,
-  leaving 183 exports without a consumer. Repairs land on the same draft PR `#27`,
-  which stays draft and unmerged.
+- **State**: DONE. The reported Activity and semantic Panda regressions were
+  repaired and accepted through permanent semantic, geometry, keyboard, visual,
+  export-consumer, and browser gates. Plan 070 retired the one-time migration
+  ledger after preserving those lasting checks.
 
 ## Why this matters
 
@@ -1458,12 +1453,12 @@ Final delivery sequence is strict:
   reader facade.
 - [x] Every Wave 0 operation is implemented or explicitly classified as file/SSE;
   none is lost.
-- [ ] The parity checker reports every feature ID COMPLETE, 30/30 server
+- [x] The parity checker reports every feature ID COMPLETE, 30/30 server
   operations mapped, every former production TSX file ported/preserved/reviewed,
   and every current Playwright title retained or linked to a reviewed equivalent.
-  **Incomplete**: REPORT-04 and REPORT-05 were reported COMPLETE against specs
-  that assert semantics only. Their geometry now has gates; the register rows are
-  reopened until the remaining Overview surfaces are compared to `2183270e`.
+  REPORT-04 and REPORT-05 were repaired and accepted through their permanent
+  semantic, geometry, keyboard, and visual gates. Plan 070 subsequently retired
+  the one-time parity register while preserving those lasting checks.
 - [x] Every design-system export is framework-neutral and consumed; the final
   design-system/Web dependency closure has no Solid/Ark Solid runtime.
   `tools/check-design-export-consumers.ts` now enforces zero unconsumed exports
@@ -1483,7 +1478,7 @@ Final delivery sequence is strict:
   direct, indirect, re-exported and dynamic client-to-server reachability.
 - [x] Final measurements are recorded; every >10% regression is fixed or
   explicitly approved with evidence.
-- [ ] Plan 068 is marked DONE only after all checks.
+- [x] Plan 068 is marked DONE only after all checks.
 
 ## STOP conditions
 
