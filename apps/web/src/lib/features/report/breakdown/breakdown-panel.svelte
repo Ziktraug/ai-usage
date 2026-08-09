@@ -1,5 +1,4 @@
 <script lang="ts">
-  import SegmentedControl from '@ai-usage/design-system/svelte/segmented-control';
   import {
     actionRow,
     groupCount,
@@ -11,6 +10,7 @@
     searchInput,
     unavailableText,
   } from '@ai-usage/design-system/svelte/passive';
+  import SegmentedControl from '@ai-usage/design-system/svelte/segmented-control';
   import type { AnalyticsGroup } from '@ai-usage/report-core/analytics';
   import { analyticsBreakdownCsv, reportCsvFilename } from '@ai-usage/report-core/csv';
   import type { BreakdownSort, FieldFilterKey } from '../../../../dashboard-search';

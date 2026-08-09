@@ -2,13 +2,8 @@
 <script lang="ts">
   import CellWithProvenance from '@ai-usage/design-system/svelte/cell-with-provenance';
   import HarnessBadge from '@ai-usage/design-system/svelte/harness-badge';
+  import { filterTextButton, highlightMark, muted, sessionTitleClamp } from '@ai-usage/design-system/svelte/passive';
   import ProvenanceMarker from '@ai-usage/design-system/svelte/provenance-marker';
-  import {
-    filterTextButton,
-    highlightMark,
-    muted,
-    sessionTitleClamp,
-  } from '@ai-usage/design-system/svelte/passive';
   import type { SessionPresentationRow } from '@ai-usage/report-core/session-query';
   import type { SessionColumnId } from '../../../../session-table-schema';
   import { applySessionFieldFilter, projectSessionCell } from './session-cell-projection';

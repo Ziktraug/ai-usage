@@ -17,7 +17,6 @@
   import HarnessBadge from '@ai-usage/design-system/svelte/harness-badge';
   import {
     type BarSegment,
-    SegmentBar,
     drawer,
     drawerActions,
     drawerBody,
@@ -34,6 +33,7 @@
     drawerTop,
     ghostButton,
     muted,
+    SegmentBar,
   } from '@ai-usage/design-system/svelte/passive';
   import { provenanceForUsageRow } from '@ai-usage/report-core/provenance';
 

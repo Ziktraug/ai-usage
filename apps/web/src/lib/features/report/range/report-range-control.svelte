@@ -39,7 +39,6 @@
 
 <script lang="ts">
   import { cx } from '@ai-usage/design-system/css';
-  import SegmentedControl from '@ai-usage/design-system/svelte/segmented-control';
   import {
     panel,
     panelSub,
@@ -57,6 +56,7 @@
     timeSliderRangeDrag,
     timeSliderThumb,
   } from '@ai-usage/design-system/svelte/passive';
+  import SegmentedControl from '@ai-usage/design-system/svelte/segmented-control';
   import {
     type FocusedDateDomain,
     type FocusedTimelineData,

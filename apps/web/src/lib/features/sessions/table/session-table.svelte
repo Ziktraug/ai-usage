@@ -3,7 +3,6 @@
   import { cx } from '@ai-usage/design-system/css';
   import Checkbox from '@ai-usage/design-system/svelte/checkbox';
   import HarnessBadge from '@ai-usage/design-system/svelte/harness-badge';
-  import Popover from '@ai-usage/design-system/svelte/popover';
   import {
     dateCell,
     desktopTableSurface,
@@ -42,6 +41,7 @@
     tableControls,
     tableWrap,
   } from '@ai-usage/design-system/svelte/passive';
+  import Popover from '@ai-usage/design-system/svelte/popover';
   import type { SessionPresentationRow } from '@ai-usage/report-core/session-query';
   import type { ExpandedState } from '@tanstack/table-core';
   import { onMount, untrack } from 'svelte';
