@@ -2,37 +2,37 @@
   "sessionScrollBenchmark": {
     "fixture": { "campaigns": 4999, "sessions": 5000 },
     "initialStaticClosure": {
-      "assetCount": 47,
-      "brotliBytes": 232976,
-      "gzipBytes": 265686,
-      "rawBytes": 810954
+      "assetCount": 36,
+      "brotliBytes": 241604,
+      "gzipBytes": 279246,
+      "rawBytes": 891161
     },
     "medians": {
       "browserSessionRpcCount": 26,
       "cumulativeSessionResponseBytes": 11026467,
-      "desktopFullTraversalMs": 4195.681,
+      "desktopFullTraversalMs": 4654.428,
       "desktopMaximumRenderedItems": 29,
       "desktopMaximumSessionDomNodes": 581,
       "desktopSessionPageCount": 25,
       "desktopSessionRpcCount": 24,
-      "filterMs": 234.474,
-      "heapDeltaBytes": 25251488,
+      "filterMs": 217.3,
+      "heapDeltaBytes": 25466132,
       "hydrationTotalBytes": 489216,
-      "initialHtmlBytes": 482556,
-      "initialMs": 606.573,
+      "initialHtmlBytes": 482613,
+      "initialMs": 579.901,
       "maximumPageBytes": 441050,
-      "mobileFullTraversalMs": 94.318,
+      "mobileFullTraversalMs": 93.224,
       "mobileMaximumRenderedItems": 13,
       "mobileMaximumSessionDomNodes": 224,
       "sessionPageCount": 26,
-      "sortMs": 281.78,
+      "sortMs": 271.265,
       "uniqueIdentityCount": 4999
     },
     "samples": [
       {
         "browserSessionRpcCount": 26,
         "cumulativeSessionResponseBytes": 11026467,
-        "desktopFullTraversalMs": 4003.634,
+        "desktopFullTraversalMs": 4654.428,
         "desktopMaximumRenderedItems": 29,
         "desktopMaximumSessionDomNodes": 581,
         "desktopSettledRenderedItems": 25,
@@ -40,9 +40,9 @@
         "desktopSessionPageCount": 25,
         "desktopSessionRpcCount": 24,
         "duplicateIdentityCount": 0,
-        "filterMs": 242.678,
-        "firstSessionIdentity": "session-row-v1:d24138e5378a8d9b",
-        "heapDeltaBytes": 25265472,
+        "filterMs": 214,
+        "firstSessionIdentity": "session-row-v1:845aaa036e0c357d",
+        "heapDeltaBytes": 25547552,
         "hydrationFamilyBytes": {
           "bootstrap": { "bytes": 3850, "queryCount": 1 },
           "destination-current": { "bytes": 15681, "queryCount": 1 },
@@ -52,107 +52,43 @@
           "session-pages": { "bytes": 441538, "queryCount": 1 }
         },
         "hydrationTotalBytes": 489216,
-        "initialHtmlBytes": 482556,
-        "initialMs": 534.422,
-        "lastSessionIdentity": "session-row-v1:cb4f395b273ed5e6",
+        "initialHtmlBytes": 482613,
+        "initialMs": 579.901,
+        "lastSessionIdentity": "session-row-v1:7988c1c3757b3666",
         "maximumPageBytes": 441050,
         "missingIdentityCount": 0,
-        "mobileFullTraversalMs": 94.318,
+        "mobileFullTraversalMs": 68.272,
         "mobileMaximumRenderedItems": 13,
         "mobileMaximumSessionDomNodes": 224,
         "mobileSettledRenderedItems": 9,
         "mobileSettledSessionDomNodes": 155,
         "sessionPageCount": 26,
-        "sortMs": 280.34,
+        "sortMs": 233.741,
         "sqlitePhases": {
           "count": {
             "count": 3,
-            "p50Ms": 10.796,
-            "p95Ms": 11.24,
-            "totalMs": 29.665
+            "p50Ms": 8.16,
+            "p95Ms": 9.746,
+            "totalMs": 24.907
           },
           "identity": {
             "count": 27,
-            "p50Ms": 0.055,
-            "p95Ms": 0.129,
-            "totalMs": 1.735
+            "p50Ms": 0.067,
+            "p95Ms": 0.13,
+            "totalMs": 1.985
           },
           "materialize": {
             "count": 27,
-            "p50Ms": 6.083,
-            "p95Ms": 7.85,
-            "totalMs": 162.697
-          },
-          "projection": { "count": 0, "p50Ms": 0, "p95Ms": 0, "totalMs": 0 },
-          "slice": {
-            "count": 27,
-            "p50Ms": 0.004,
-            "p95Ms": 0.006,
-            "totalMs": 0.12
-          }
-        },
-        "uniqueIdentityCount": 4999
-      },
-      {
-        "browserSessionRpcCount": 26,
-        "cumulativeSessionResponseBytes": 11026467,
-        "desktopFullTraversalMs": 4439.438,
-        "desktopMaximumRenderedItems": 29,
-        "desktopMaximumSessionDomNodes": 581,
-        "desktopSettledRenderedItems": 25,
-        "desktopSettledSessionDomNodes": 507,
-        "desktopSessionPageCount": 25,
-        "desktopSessionRpcCount": 24,
-        "duplicateIdentityCount": 0,
-        "filterMs": 234.474,
-        "firstSessionIdentity": "session-row-v1:d24138e5378a8d9b",
-        "heapDeltaBytes": 25251488,
-        "hydrationFamilyBytes": {
-          "bootstrap": { "bytes": 3850, "queryCount": 1 },
-          "destination-current": { "bytes": 15681, "queryCount": 1 },
-          "destination-exact": { "bytes": 16233, "queryCount": 1 },
-          "other": { "bytes": 0, "queryCount": 0 },
-          "overview": { "bytes": 11914, "queryCount": 1 },
-          "session-pages": { "bytes": 441538, "queryCount": 1 }
-        },
-        "hydrationTotalBytes": 489216,
-        "initialHtmlBytes": 482556,
-        "initialMs": 606.573,
-        "lastSessionIdentity": "session-row-v1:cb4f395b273ed5e6",
-        "maximumPageBytes": 441050,
-        "missingIdentityCount": 0,
-        "mobileFullTraversalMs": 111.108,
-        "mobileMaximumRenderedItems": 13,
-        "mobileMaximumSessionDomNodes": 224,
-        "mobileSettledRenderedItems": 9,
-        "mobileSettledSessionDomNodes": 155,
-        "sessionPageCount": 26,
-        "sortMs": 329.308,
-        "sqlitePhases": {
-          "count": {
-            "count": 3,
-            "p50Ms": 8.568,
-            "p95Ms": 10.591,
-            "totalMs": 27.406
-          },
-          "identity": {
-            "count": 27,
-            "p50Ms": 0.058,
-            "p95Ms": 0.127,
-            "totalMs": 1.922
-          },
-          "materialize": {
-            "count": 27,
-            "p50Ms": 7.587,
-            "p95Ms": 10.005,
-            "totalMs": 206.134
+            "p50Ms": 6.654,
+            "p95Ms": 8.911,
+            "totalMs": 178.971
           },
           "projection": { "count": 0, "p50Ms": 0, "p95Ms": 0, "totalMs": 0 },
           "slice": {
             "count": 27,
             "p50Ms": 0.005,
-            "p95Ms": 0.011,
-            "totalMs": 0.15
+            "p95Ms": 0.008,
+            "totalMs": 0.145
           }
         },
         "uniqueIdentityCount": 4999
@@ -160,7 +96,7 @@
       {
         "browserSessionRpcCount": 26,
         "cumulativeSessionResponseBytes": 11026467,
-        "desktopFullTraversalMs": 4195.681,
+        "desktopFullTraversalMs": 4185.914,
         "desktopMaximumRenderedItems": 29,
         "desktopMaximumSessionDomNodes": 581,
         "desktopSettledRenderedItems": 25,
@@ -168,9 +104,9 @@
         "desktopSessionPageCount": 25,
         "desktopSessionRpcCount": 24,
         "duplicateIdentityCount": 0,
-        "filterMs": 203.4,
-        "firstSessionIdentity": "session-row-v1:d24138e5378a8d9b",
-        "heapDeltaBytes": 25232592,
+        "filterMs": 252.533,
+        "firstSessionIdentity": "session-row-v1:845aaa036e0c357d",
+        "heapDeltaBytes": 25427844,
         "hydrationFamilyBytes": {
           "bootstrap": { "bytes": 3850, "queryCount": 1 },
           "destination-current": { "bytes": 15681, "queryCount": 1 },
@@ -180,43 +116,107 @@
           "session-pages": { "bytes": 441538, "queryCount": 1 }
         },
         "hydrationTotalBytes": 489216,
-        "initialHtmlBytes": 482556,
-        "initialMs": 646.72,
-        "lastSessionIdentity": "session-row-v1:cb4f395b273ed5e6",
+        "initialHtmlBytes": 482613,
+        "initialMs": 567.847,
+        "lastSessionIdentity": "session-row-v1:7988c1c3757b3666",
         "maximumPageBytes": 441050,
         "missingIdentityCount": 0,
-        "mobileFullTraversalMs": 74.071,
+        "mobileFullTraversalMs": 94.789,
         "mobileMaximumRenderedItems": 13,
         "mobileMaximumSessionDomNodes": 224,
         "mobileSettledRenderedItems": 9,
         "mobileSettledSessionDomNodes": 155,
         "sessionPageCount": 26,
-        "sortMs": 281.78,
+        "sortMs": 271.265,
         "sqlitePhases": {
           "count": {
             "count": 3,
-            "p50Ms": 8.306,
-            "p95Ms": 10.027,
-            "totalMs": 25.382
+            "p50Ms": 7.38,
+            "p95Ms": 10.176,
+            "totalMs": 23.71
+          },
+          "identity": {
+            "count": 27,
+            "p50Ms": 0.046,
+            "p95Ms": 0.079,
+            "totalMs": 1.365
+          },
+          "materialize": {
+            "count": 27,
+            "p50Ms": 5.958,
+            "p95Ms": 8.805,
+            "totalMs": 163.56
+          },
+          "projection": { "count": 0, "p50Ms": 0, "p95Ms": 0, "totalMs": 0 },
+          "slice": {
+            "count": 27,
+            "p50Ms": 0.004,
+            "p95Ms": 0.007,
+            "totalMs": 0.108
+          }
+        },
+        "uniqueIdentityCount": 4999
+      },
+      {
+        "browserSessionRpcCount": 26,
+        "cumulativeSessionResponseBytes": 11026467,
+        "desktopFullTraversalMs": 5055.611,
+        "desktopMaximumRenderedItems": 29,
+        "desktopMaximumSessionDomNodes": 581,
+        "desktopSettledRenderedItems": 25,
+        "desktopSettledSessionDomNodes": 507,
+        "desktopSessionPageCount": 25,
+        "desktopSessionRpcCount": 24,
+        "duplicateIdentityCount": 0,
+        "filterMs": 217.3,
+        "firstSessionIdentity": "session-row-v1:845aaa036e0c357d",
+        "heapDeltaBytes": 25466132,
+        "hydrationFamilyBytes": {
+          "bootstrap": { "bytes": 3850, "queryCount": 1 },
+          "destination-current": { "bytes": 15681, "queryCount": 1 },
+          "destination-exact": { "bytes": 16233, "queryCount": 1 },
+          "other": { "bytes": 0, "queryCount": 0 },
+          "overview": { "bytes": 11914, "queryCount": 1 },
+          "session-pages": { "bytes": 441538, "queryCount": 1 }
+        },
+        "hydrationTotalBytes": 489216,
+        "initialHtmlBytes": 482613,
+        "initialMs": 624.196,
+        "lastSessionIdentity": "session-row-v1:7988c1c3757b3666",
+        "maximumPageBytes": 441050,
+        "missingIdentityCount": 0,
+        "mobileFullTraversalMs": 93.224,
+        "mobileMaximumRenderedItems": 13,
+        "mobileMaximumSessionDomNodes": 224,
+        "mobileSettledRenderedItems": 9,
+        "mobileSettledSessionDomNodes": 155,
+        "sessionPageCount": 26,
+        "sortMs": 326.097,
+        "sqlitePhases": {
+          "count": {
+            "count": 3,
+            "p50Ms": 9.306,
+            "p95Ms": 9.961,
+            "totalMs": 27.212
           },
           "identity": {
             "count": 27,
             "p50Ms": 0.051,
-            "p95Ms": 0.085,
-            "totalMs": 1.432
+            "p95Ms": 0.118,
+            "totalMs": 1.735
           },
           "materialize": {
             "count": 27,
-            "p50Ms": 7.1,
-            "p95Ms": 8.586,
-            "totalMs": 179.476
+            "p50Ms": 6.688,
+            "p95Ms": 11.748,
+            "totalMs": 188.761
           },
           "projection": { "count": 0, "p50Ms": 0, "p95Ms": 0, "totalMs": 0 },
           "slice": {
             "count": 27,
             "p50Ms": 0.005,
             "p95Ms": 0.012,
-            "totalMs": 0.145
+            "totalMs": 0.153
           }
         },
         "uniqueIdentityCount": 4999

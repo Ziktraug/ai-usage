@@ -651,12 +651,12 @@ cursor contract or ADR was introduced.
 ### Experience B — Design-system split
 
 Retained. Focused design-system entry points and local Tooltip/Popover
-primitives reduce the initial gzip closure from 279,234 B to 265,762 B
-(-13,472 B). The exact cumulative total through first Drawer open changes from
-292,397 B to 295,724 B (+1.138%), below the 5% ceiling. After timing variance
-crossed the gate in a three-sample run, seven candidate samples produced a
-92.417 ms median versus 84.738 ms control (+9.06%, below the 10% ceiling). The
-bundle map reports zero duplicated Ark/Zag modules. Keyboard focus, Escape,
+primitives reduce the initial gzip closure from 279,234 B to 265,686 B
+(-13,548 B). The exact cumulative total through first Drawer open changes from
+292,397 B to 295,648 B (+1.112%), below the 5% ceiling. Matched seven-sample
+Drawer runs produced a 108.312 ms candidate median versus 105.033 ms control
+(+3.12%, below the 10% ceiling). The bundle map reports zero duplicated Ark/Zag
+modules. Keyboard focus, Escape,
 light dismiss, focus return, viewport positioning, scroll behavior, and Tooltip
 lifecycle tests pass. The retained commits are `633323bb`, `88384202`, and the
 post-matrix lifecycle fix `a6365f5d`.
@@ -672,10 +672,11 @@ and prefetch path remain unchanged.
 ### Final
 
 The post-integration exhaustive benchmark retained 489,216 hydration bytes, 26
-Session RPCs, 29 desktop items, and 581 desktop nodes. Relative to the fresh
-control, desktop traversal changed -7.4%, mobile traversal +3.1%, sort +1.5%,
-and heap -1.0%; no regression crossed the 10% gate. Raw samples, environment,
-hashes, byte terminology, and reproduction commands are recorded in
+Session RPCs, 29 desktop items, and 581 desktop nodes. A sequential matched
+control/candidate pair records initial +4.6%, desktop traversal -9.9%, mobile
+traversal +1.2%, filter +7.9%, sort +3.9%, and heap -0.8%; no regression crossed
+the 10% gate. Raw samples, environment, hashes, byte terminology, and
+reproduction commands are recorded in
 `docs/performance/web-session-deferred-optimizations.md`.
 
 Validation passed: `check`, `lint`, `typecheck` (28/28), package tests, tools

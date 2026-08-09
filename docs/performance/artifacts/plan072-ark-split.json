@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-08-09T09:56:43.818Z",
+  "generatedAt": "2026-08-09T10:18:33.651Z",
   "source": {
-    "artifactSourceCommit": "a6365f5d52d8f2766625bdda6b536354faa36ed7",
-    "worktreeHead": "a6365f5d52d8f2766625bdda6b536354faa36ed7",
-    "worktreeDirty": true
+    "artifactSourceCommit": "084108fa2f9091524d11a08a7aa4d58c862440a3",
+    "worktreeHead": "084108fa2f9091524d11a08a7aa4d58c862440a3",
+    "worktreeDirty": false
   },
   "tools": {
     "bun": "1.3.13",
@@ -17,19 +17,18 @@
   },
   "sources": {
     "controlInitial": "docs/performance/artifacts/plan072-control.json",
-    "controlDrawer": "git show 9bbcc90d2e7edf8ccdfcda327b566208466c34c7:docs/performance/artifacts/plan072-destination-render.json",
+    "controlDrawer": "docs/performance/artifacts/plan072-ark-control-7.json",
     "candidateBundleMap": "docs/performance/artifacts/plan072-bundle-map.json",
     "candidateDestination": "docs/performance/artifacts/plan072-destination-render.json"
   },
   "method": {
     "initial": "Control bytes are read from plan072-control.json. Candidate bytes are recomputed from the Vite initial closure with gzip level 9 and default Brotli.",
-    "incrementalDrawer": "Raw bytes come from destination-render response bodies. Candidate gzip is recomputed from the exact built Drawer files. Control gzip is recomputed from the closest clean-HEAD rebuilt Drawer chunk; rebuild raw drift is recorded.",
+    "incrementalDrawer": "Raw bytes come from destination-render response bodies. Candidate and control gzip are recomputed from the exact recorded Drawer chunk identities in their respective builds.",
     "totalThroughDrawer": "initial + incremental Drawer bytes; cumulative total is authoritative.",
     "controlDrawerGzipRebuild": {
-      "file": "_app/immutable/chunks/DXm_Fk5_2.js",
+      "files": ["_app/immutable/chunks/DXm_Fk5_2.js"],
       "gzip": 13163,
-      "raw": 41297,
-      "rawDriftFromArtifact": 0
+      "raw": 41297
     }
   },
   "metrics": {
@@ -40,22 +39,22 @@
         "raw": 891157
       },
       "candidate": {
-        "brotli": 233035,
-        "gzip": 265762,
-        "raw": 811150
+        "brotli": 232976,
+        "gzip": 265686,
+        "raw": 810954
       },
       "delta": {
         "brotli": {
-          "bytes": -8543,
-          "percent": -3.536332
+          "bytes": -8602,
+          "percent": -3.560755
         },
         "gzip": {
-          "bytes": -13472,
-          "percent": -4.824627
+          "bytes": -13548,
+          "percent": -4.851845
         },
         "raw": {
-          "bytes": -80007,
-          "percent": -8.977879
+          "bytes": -80203,
+          "percent": -8.999873
         }
       }
     },
@@ -85,32 +84,34 @@
         "raw": 932454
       },
       "candidate": {
-        "gzip": 295724,
-        "raw": 906703
+        "gzip": 295648,
+        "raw": 906507
       },
       "delta": {
         "gzip": {
-          "bytes": 3327,
-          "percent": 1.137837
+          "bytes": 3251,
+          "percent": 1.111845
         },
         "raw": {
-          "bytes": -25751,
-          "percent": -2.761638
+          "bytes": -25947,
+          "percent": -2.782657
         }
       }
     },
     "drawerOpenMs": {
       "control": {
-        "samples": [96.006, 84.738, 70.554],
-        "median": 84.738
+        "samples": [76.804, 82.688, 112.186, 105.033, 73.741, 111.176, 107.077],
+        "median": 105.033
       },
       "candidate": {
-        "samples": [97.027, 96.839, 78.845, 105.038, 92.417, 91.725, 88.273],
-        "median": 92.417
+        "samples": [
+          108.497, 77.299, 124.155, 108.312, 1284.577, 104.84, 81.186
+        ],
+        "median": 108.312
       },
       "delta": {
-        "bytes": 7.679000000000002,
-        "percent": 9.06205
+        "bytes": 3.2789999999999964,
+        "percent": 3.121876
       }
     },
     "duplicatedArkOrZagCount": 0
@@ -121,6 +122,7 @@
     "initialGzipDecreaseAtLeast10KiB": true,
     "totalThroughDrawerGzipGrowthAtMost5Percent": true,
     "drawerOpenRegressionAtMost10Percent": true,
+    "noDuplicatedArkOrZag": true,
     "passes": true
   }
 }

@@ -5,7 +5,7 @@
 Plan 072 retained the design-system split from candidate B. Focused local
 Popover and Tooltip primitives remove non-initial Ark overlay code from the
 initial closure while the existing Drawer remains lazy. Initial gzip falls by
-13,472 B and cumulative gzip through the first Drawer open grows by 1.138%, so
+13,548 B and cumulative gzip through the first Drawer open grows by 1.112%, so
 the candidate passes both byte gates without duplicating Ark or Zag runtimes.
 
 Keyset pagination stops at A1, and a direct-destination SSR experiment does not
@@ -21,12 +21,13 @@ zero-refetch invariant, so the pre-existing behavior remains unchanged.
 - Planned-against commit: `67ca9b0e060c0359628a8c2721401bd973c8ce4f`
 - Candidate B control commit: `9bbcc90d2e7edf8ccdfcda327b566208466c34c7`
 - Retained source commit: `88384202`
-- Measured source commit: `a6365f5d`
+- Gate source commit: `084108fa`
 - Bun: `1.3.13`
 - Playwright: `1.61.1`
 - Browser: Playwright Chromium from the repository lockfile
 - Date: 2026-08-09
-- Samples: one warm-up followed by three recorded samples; medians are reported
+- Samples: one warm-up followed by seven Drawer samples or three exhaustive
+  Session samples; medians are reported
 
 The committed JSON files contain every raw sample. Timing comparisons remain
 machine-local and are not cross-host performance claims.
@@ -44,6 +45,10 @@ AI_USAGE_SESSION_BENCHMARK_OUTPUT=../../docs/performance/artifacts/plan072-final
   bun --bun playwright test --config playwright.session-scroll.config.ts \
   e2e/session-scroll-benchmark.scale.ts
 ```
+
+The final control uses the same Session command from the pinned `9bbcc90d`
+worktree and writes `plan072-final-control.json`. It runs immediately before
+the candidate to keep machine conditions comparable.
 
 `tools/plan072-bundle-map.ts` runs after a production web build and writes both
 the JSON and Markdown bundle maps.
@@ -86,20 +91,19 @@ occurrences, and design-system modules co-located with those runtimes.
 
 | Closure | Assets | Raw | Gzip | Brotli |
 | --- | ---: | ---: | ---: | ---: |
-| Overview | 47 | 811,150 B | 265,762 B | 233,035 B |
-| Sessions | 50 | 896,007 B | 291,778 B | 255,942 B |
-| Breakdown | 49 | 853,972 B | 280,759 B | 246,223 B |
-| Sessions after Drawer | 54 | 991,759 B | 321,897 B | 282,530 B |
+| Overview | 47 | 810,954 B | 265,686 B | 232,976 B |
+| Sessions | 50 | 895,792 B | 291,686 B | 255,887 B |
+| Breakdown | 49 | 853,776 B | 280,683 B | 246,164 B |
+| Sessions after Drawer | 54 | 991,544 B | 321,805 B | 282,505 B |
 
 The authoritative gate uses the exact initial closure plus the runtime files
 loaded by opening the Drawer, rather than subtracting static destination
-closures. Initial gzip changes from 279,234 B to 265,762 B (-13,472 B). The
+closures. Initial gzip changes from 279,234 B to 265,686 B (-13,548 B). The
 incremental Drawer load changes from 13,163 B to 29,962 B gzip, making the
-cumulative total 292,397 B control versus 295,724 B candidate (+1.138%). After
-the initial three-sample run crossed the timing ceiling amid overlapping
-variance, the candidate was increased to seven samples. Its Drawer median is
-92.417 ms versus the 84.738 ms control (+9.06%, below the 10% ceiling). There
-are no duplicated Ark/Zag modules between chunks.
+cumulative total 292,397 B control versus 295,648 B candidate (+1.112%). The
+matched seven-sample Drawer medians are 105.033 ms control and 108.312 ms
+candidate (+3.12%, below the 10% ceiling). There are no duplicated Ark/Zag
+modules between chunks.
 
 Behavioral tests cover keyboard focus, Escape, light dismiss, focus return,
 viewport clamping, scroll positioning, Tooltip hover/focus delay, and cleanup.
@@ -149,19 +153,20 @@ owner and no additional post-hydration business RPC.
 
 | Metric | Control | Final | Delta |
 | --- | ---: | ---: | ---: |
-| Initial | 481.794 ms | 440.641 ms | -8.5% |
-| Desktop traversal | 3,752.577 ms | 3,474.547 ms | -7.4% |
-| Mobile traversal | 78.668 ms | 81.100 ms | +3.1% |
-| Filter | 200.315 ms | 123.620 ms | -38.3% |
-| Sort | 234.733 ms | 238.213 ms | +1.5% |
-| Heap delta | 25,485,104 B | 25,229,172 B | -1.0% |
+| Initial | 579.901 ms | 606.573 ms | +4.6% |
+| Desktop traversal | 4,654.428 ms | 4,195.681 ms | -9.9% |
+| Mobile traversal | 93.224 ms | 94.318 ms | +1.2% |
+| Filter | 217.300 ms | 234.474 ms | +7.9% |
+| Sort | 271.265 ms | 281.780 ms | +3.9% |
+| Heap delta | 25,466,132 B | 25,251,488 B | -0.8% |
 | Hydration | 489,216 B | 489,216 B | 0% |
 | Session RPCs | 26 | 26 | 0% |
 | Desktop items / nodes | 29 / 581 | 29 / 581 | 0% |
 
-Timing changes other than the directly attributed bundle reduction are treated
-as run variance. The +3.1% mobile change is below the 10% regression threshold;
-all byte, request, identity, and DOM contracts remain unchanged.
+The control and candidate were run sequentially after an unmatched rerun showed
+machine-time drift. Every matched timing change remains below the 10%
+regression threshold; all byte, request, identity, and DOM contracts remain
+unchanged.
 
 ## Byte terminology
 
@@ -180,12 +185,14 @@ all byte, request, identity, and DOM contracts remain unchanged.
 | --- | --- |
 | `plan072-control.json` | `bb9023df3c78573151197a4e30d1f7825a048404ae3141966ac7082852dcc5e8` |
 | `plan072-keyset-a1.json` | `9f20ef78382080db148d00b7d7cdbbeb07507cd02677f6034c1eff6a3e472610` |
-| `plan072-bundle-map.json` | `cb807dd8071d86b02221d54eb9c0f68b57514ef2d0fef68b30cd3d7555f58999` |
-| `plan072-destination-render.json` | `105708230b0cb4e91f622d828f74c39c085ccecd664b973c3b6f75b1152617a5` |
-| `plan072-ark-split.json` | `923d4ee8dd1c4f92b3ac064d2dcf2c409383392fc68227f8c3607ac923b36464` |
+| `plan072-ark-control-7.json` | `d387ab81ad6326dcb8665ea79b82e996587ef6bc2ca256a002cfe013b6280c34` |
+| `plan072-bundle-map.json` | `04353380ce1d0faa6fdf1ca3ecab55124a5450c879bbcd76efe0bb63cc5fad40` |
+| `plan072-destination-render.json` | `17af1d726f3dcb5c68a45315cc30e8dae2a545183c8805813cf92d7872d6b3bd` |
+| `plan072-ark-split.json` | `bc5435199ed71529488c4088491563df5b736e08f1b60666f8ad05e140aab9a3` |
 | `plan072-destination-ssr-control.json` | `dff84030317861d8aab2474f6c8ccb38870af7529d64fa0386a063f77414ae26` |
 | `plan072-destination-final.json` | `72fdb5d007930935ce599407f0548cca39d0be2ff8344f8a74a270dc8799becd` |
-| `plan072-final.json` | `24540c4245aca529d99baceccc012dc23d37b4339eb4e93bbf5c1dbe37ac397f` |
+| `plan072-final-control.json` | `47a940d4cf8f2942adbf7c1cba0e3e0ee33ca7fe6689e2f5546bd2bc5babea77` |
+| `plan072-final.json` | `dd182c1690092b0bf8e43e8df92675e45c65f578787de99cf0ef516acd3ef488` |
 
 ## Remaining candidates
 
