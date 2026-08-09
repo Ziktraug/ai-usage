@@ -12,11 +12,13 @@
     fontSize: '12px',
   });
   const explorerContent = css({ display: 'grid', gap: '12px', pt: '12px' });
+  const activityPanel = css({ display: 'grid', gap: '12px', p: { base: '14px', md: '18px' } });
 </script>
 
 <script lang="ts">
+  import { cx } from '@ai-usage/design-system/css';
+  import { containedInteractive } from '@ai-usage/design-system/report';
   import {
-    panel,
     panelSub,
     panelTitle,
     SegmentedControl,
@@ -359,7 +361,12 @@
   };
 </script>
 
-<section aria-labelledby="activity-title" class={panel} data-activity-explorer data-executive-chart>
+<section
+  aria-labelledby="activity-title"
+  class={cx(containedInteractive, activityPanel)}
+  data-activity-explorer
+  data-executive-chart
+>
   <div class={heading}>
     <h2 class={panelTitle} id="activity-title">Activity</h2>
     <p class={panelSub}>Daily evidence for the selected report period</p>

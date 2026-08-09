@@ -56,8 +56,9 @@
   import QuotaHistoryOwner from '../actions/quota-history-owner.svelte';
   import ActiveFilters from '../breakdown/active-filters.svelte';
   import { createBreakdownNavigation } from '../breakdown/navigation';
-  import OverviewStatus from '../overview/overview-status.svelte';
   import { activeTimelineSeriesKeys } from './active-timeline-series';
+  import { importReportLazyModule } from './lazy-module-e2e-fixture';
+  import { createLazyModuleLoader } from './lazy-module-loader';
   import ReportDestinationPresentation from './report-destination-presentation.svelte';
   import { reportDestinationForSearch } from './report-search';
 
@@ -68,11 +69,13 @@
 
   let {
     mode,
+    modelsHref,
     navigate,
     queryClient,
     search,
   }: {
     mode: Extract<RuntimeMode, 'demo' | 'e2e'>;
+    modelsHref: string;
     navigate: SearchNavigationIntent<DashboardSearch>;
     queryClient: QueryClient;
     search: DashboardSearch;
@@ -87,10 +90,28 @@
   let pending = $state(false);
   let dashboardBreakdownModule = $state<DashboardBreakdownModule>();
   let dashboardBreakdownLoadFailed = $state(false);
-  let dashboardBreakdownLoad: Promise<void> | undefined;
   let sessionTableModule = $state<SessionTableModule>();
   let sessionTableLoadFailed = $state(false);
-  let sessionTableLoad: Promise<void> | undefined;
+  const dashboardBreakdownLoader = createLazyModuleLoader({
+    importModule: () =>
+      importReportLazyModule({
+        enabled: runtimeMode === 'e2e',
+        importModule: () => import('../breakdown/dashboard-breakdown.svelte'),
+        target: 'breakdown',
+      }),
+    onFailureChange: (failed) => (dashboardBreakdownLoadFailed = failed),
+    onLoaded: (module) => (dashboardBreakdownModule = module),
+  });
+  const sessionTableLoader = createLazyModuleLoader({
+    importModule: () =>
+      importReportLazyModule({
+        enabled: runtimeMode === 'e2e',
+        importModule: () => import('../../sessions/table/session-table.svelte'),
+        target: 'sessions',
+      }),
+    onFailureChange: (failed) => (sessionTableLoadFailed = failed),
+    onLoaded: (module) => (sessionTableModule = module),
+  });
   let responseGeneration = 0;
   $effect(() => {
     const requestedSearch = search;
@@ -217,23 +238,23 @@
   const primary = $derived(primaryDashboardTabFor(renderedSearch.tab));
   $effect(() => {
     if (primary === 'breakdown' && !dashboardBreakdownModule) {
-      dashboardBreakdownLoad ??= import('../breakdown/dashboard-breakdown.svelte')
-        .then((module) => {
-          dashboardBreakdownModule = module;
-        })
-        .catch(() => {
-          dashboardBreakdownLoadFailed = true;
-        });
+      dashboardBreakdownLoader.start();
     } else if (primary === 'sessions' && !sessionTableModule) {
-      sessionTableLoad ??= import('../../sessions/table/session-table.svelte')
-        .then((module) => {
-          sessionTableModule = module;
-        })
-        .catch(() => {
-          sessionTableLoadFailed = true;
-        });
+      sessionTableLoader.start();
     }
   });
+  const retryReportDestination = async (): Promise<void> => {
+    if (primary === 'breakdown' && dashboardBreakdownLoadFailed) {
+      await dashboardBreakdownLoader.retry();
+      return;
+    }
+    if (primary === 'sessions' && sessionTableLoadFailed) {
+      await sessionTableLoader.retry();
+    }
+  };
+  const activeDestinationLoadFailed = $derived(
+    (primary === 'breakdown' && dashboardBreakdownLoadFailed) || (primary === 'sessions' && sessionTableLoadFailed),
+  );
   const visibleRows = $derived(
     allRows.filter((row) => matchesFocusedReportQuery(row, focusedQuery, reportSupport.timeZone)),
   );
@@ -424,41 +445,43 @@
     />
   {/if}
 {/snippet}
+{#snippet breakdownDestination()}
+  {#if dashboardBreakdownModule}
+    {@const DashboardBreakdown = dashboardBreakdownModule.default}
+    <DashboardBreakdown
+      data={{
+        cursorRows: breakdown.context.cursorCommitAttribution,
+        generatedAt: reportSupport.generatedAt,
+        harnesses: breakdown.groups.harnesses,
+        harnessProviders: breakdown.groups.harnessProviders,
+        models: breakdown.groups.models,
+        projects: breakdown.groups.projects,
+      }}
+      navigation={{
+        onSortChange: navigation.setBreakdownSort,
+        onTabChange: (tab) => navigate((current) => ({ ...current, tab })),
+        sort: renderedSearch.breakdownSort,
+        tab: renderedSearch.tab,
+      }}
+      onFieldFilter={navigation.setFieldFilter}
+      onHarnessFilter={(value) =>
+        navigation.setHarness(
+          renderedSearch.harness.includes(value)
+            ? renderedSearch.harness.filter((item) => item !== value)
+            : [...renderedSearch.harness, value],
+        )}
+      projectEditor={{
+        disabled: true,
+        onSave: () => Promise.reject(new Error('Synthetic project groups are read-only.')),
+        payload: reportSupport,
+      }}
+    />
+  {/if}
+{/snippet}
 <ReportDestinationPresentation
   activeView={primary}
-  breakdown={primary === 'breakdown' && dashboardBreakdownModule
-    ? {
-        component: dashboardBreakdownModule.default,
-        props: {
-          data: {
-            cursorRows: breakdown.context.cursorCommitAttribution,
-            generatedAt: reportSupport.generatedAt,
-            harnesses: breakdown.groups.harnesses,
-            harnessProviders: breakdown.groups.harnessProviders,
-            models: breakdown.groups.models,
-            projects: breakdown.groups.projects,
-          },
-          navigation: {
-            onSortChange: navigation.setBreakdownSort,
-            onTabChange: (tab) => navigate((current) => ({ ...current, tab })),
-            sort: renderedSearch.breakdownSort,
-            tab: renderedSearch.tab,
-          },
-          onFieldFilter: navigation.setFieldFilter,
-          onHarnessFilter: (value) =>
-            navigation.setHarness(
-              renderedSearch.harness.includes(value)
-                ? renderedSearch.harness.filter((item) => item !== value)
-                : [...renderedSearch.harness, value],
-            ),
-          projectEditor: {
-            disabled: true,
-            onSave: () => Promise.reject(new Error('Synthetic project groups are read-only.')),
-            payload: reportSupport,
-          },
-        },
-      }
-    : null}
+  breakdown={breakdownDestination}
+  breakdownReady={dashboardBreakdownModule !== undefined}
   filters={{
     freshnessStatus: displayedFreshnessStatus,
     freshnessUnavailable: displayedFreshnessUnavailable,
@@ -472,8 +495,9 @@
     presentMachineLabel,
     search,
   }}
-  hasOutput={!pending}
-  loadFailed={dashboardBreakdownLoadFailed || sessionTableLoadFailed}
+  hasOutput={true}
+  loadFailed={activeDestinationLoadFailed}
+  onRetry={retryReportDestination}
   overview={primary === 'overview'
     ? {
         activity: {
@@ -500,6 +524,10 @@
           value: timelineValue,
         },
         draggedWindowApiValue,
+        modelsHref,
+        onClearFilters: navigation.clearAllFilters,
+        onOpenModels: () => navigation.setBreakdownTab('models'),
+        ...(mode === 'e2e' ? { onOpenQuotaHistory: () => (quotaHistoryOpen = true) } : {}),
         onSelectDay: (date) =>
           navigate((current) => ({
             ...current,
@@ -510,8 +538,10 @@
         onSelectTimeCell: (cell) =>
           navigate((current) => ({ ...current, timeCell: serializeDashboardTimeCell(cell) })),
         presentSessionItem,
+        providers: mode === 'e2e' ? providers : [],
         range: renderedSearch.range,
         result: overview,
+        totalSessionCount: support.support.analytics.sessionCount,
       }
     : null}
   {pending}
@@ -528,18 +558,7 @@
   {sessions}
   sessionsReady={sessionTableModule !== undefined}
   {summary}
->
-  {#snippet status()}
-    {#if primary === 'overview' && !pending}
-      <OverviewStatus
-        {...(mode === 'e2e' ? { onOpenQuotaHistory: () => (quotaHistoryOpen = true) } : {})}
-        providers={mode === 'e2e' ? providers : []}
-        range={renderedSearch.range}
-        result={overview}
-      />
-    {/if}
-  {/snippet}
-</ReportDestinationPresentation>
+/>
 <SessionDetailQuerySlot
   {campaignSlot}
   client={syntheticClient}

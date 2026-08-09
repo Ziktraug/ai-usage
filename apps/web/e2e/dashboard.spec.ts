@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import type { Page } from '@playwright/test';
 import { FOCUSED_REPORT_E2E_CONTROL_KEY, FOCUSED_REPORT_E2E_ENABLED_KEY } from '../src/focused-report-e2e-fixture';
+import { REPORT_LAZY_MODULE_E2E_FAILURE_KEY } from '../src/lib/features/report/composition/lazy-module-e2e-fixture';
 import { expect, reportViewsFor, test, waitForHydratedNavigation } from './browser-test';
 
 const ADVANCED_COLUMNS_PATTERN = /Advanced columns/;
@@ -8,11 +9,10 @@ const CALENDAR_NAME_PATTERN = /Daily activity calendar/;
 const COLUMN_URL_PATTERN = /cols=/;
 const DATE_HEADER_PATTERN = /Date/;
 const TOKEN_SESSION_HEADERS = [DATE_HEADER_PATTERN, /Session\s*↑/, /Input/, /Output/, /Cache/, /Fresh/];
-const ESTIMATED_API_VALUE_HELP_PATTERN =
-  /Estimated API-equivalent value at standard prices for \d+ of \d+ fully priced sessions, including usage covered by subscriptions/;
 const HYDRATION_TIMEOUT_MS = 15_000;
 const INSPECT_SESSION_PATTERN = /Inspect session/;
 const LEGACY_PROJECT_TAB_URL_PATTERN = /tab=projects/;
+const MODELS_TAB_URL_PATTERN = /tab=models/;
 const PROVIDER_DETAILS_PATTERN = /^Provider details \(/;
 const PUNCHCARD_FILTER_PATTERN = /^Filter report to /;
 const PROVIDER_CATEGORY_COUNT_PATTERN = /: (\d+) providers?$/;
@@ -23,7 +23,6 @@ const RANGE_URL_PATTERN = /range=/;
 const RESET_COUNT_PATTERN = /1 reset/;
 const GAP_COUNT_PATTERN = /1 collection gap/;
 const SORT_URL_PATTERN = /sort=/;
-const TOP_SESSION_PATTERN = /Top session/;
 const UUID_PATTERN = /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/i;
 const HIDDEN_FILTERS_PATTERN = /hidden by filters/;
 const NO_SESSIONS_PATTERN = /No sessions/;
@@ -36,6 +35,12 @@ const openHydratedReport = async (page: Page, url = '/'): Promise<Awaited<Return
   });
   return response;
 };
+const overviewTopSessionTrigger = (page: Page) =>
+  page
+    .getByRole('heading', { level: 2, name: 'Top sessions' })
+    .locator('xpath=ancestor::section[1]')
+    .getByRole('button')
+    .first();
 
 const controlFocusedResponse = async (page: Page, action: FocusedResponseControlAction): Promise<void> => {
   await page.evaluate(
@@ -53,75 +58,6 @@ const controlFocusedResponse = async (page: Page, action: FocusedResponseControl
     { action, controlKey: FOCUSED_REPORT_E2E_CONTROL_KEY },
   );
 };
-
-const PENDING_CLAIM_AUDIT_KEY = '__aiUsageE2EPendingClaimViolations';
-const PENDING_CLAIM_OBSERVER_KEY = '__aiUsageE2EPendingClaimObserver';
-
-const startPendingClaimAudit = async (page: Page, query: string): Promise<void> => {
-  await page.evaluate(
-    ({ auditKey, observerKey, requestedQuery }) => {
-      const violations = new Set<string>();
-      Reflect.set(globalThis, auditKey, violations);
-      const record = (): void => {
-        if (new URLSearchParams(window.location.search).get('q') !== requestedQuery) {
-          return;
-        }
-        const main = document.querySelector('main');
-        if (!main) {
-          return;
-        }
-        const text = main.textContent ?? '';
-        const hasSessionCounter = [...main.querySelectorAll('span')].some((element) => {
-          const value = element.textContent?.trim() ?? '';
-          return value.includes(' / ') && value.endsWith(' sessions');
-        });
-        if (hasSessionCounter) {
-          violations.add('session counter');
-        }
-        if (text.includes('hidden by filters')) {
-          violations.add('hidden by filters');
-        }
-        if (text.includes('No sessions')) {
-          violations.add('No sessions');
-        }
-        if (text.includes('$0.00')) {
-          violations.add('$0.00');
-        }
-        if (main.querySelector('[data-metric-grid]')) {
-          violations.add('metric tiles');
-        }
-      };
-      const observer = new MutationObserver(record);
-      observer.observe(document.body, {
-        characterData: true,
-        childList: true,
-        subtree: true,
-      });
-      Reflect.set(globalThis, observerKey, observer);
-      record();
-    },
-    { auditKey: PENDING_CLAIM_AUDIT_KEY, observerKey: PENDING_CLAIM_OBSERVER_KEY, requestedQuery: query },
-  );
-};
-
-const finishPendingClaimAudit = async (page: Page): Promise<string[]> =>
-  await page.evaluate(
-    ({ auditKey, observerKey }) => {
-      const observer = Reflect.get(globalThis, observerKey);
-      if (observer instanceof MutationObserver) {
-        observer.disconnect();
-      }
-      const violations = Reflect.get(globalThis, auditKey);
-      if (!(violations instanceof Set)) {
-        return ['Pending claim audit unavailable'];
-      }
-      return [...violations].filter((value): value is string => typeof value === 'string');
-    },
-    {
-      auditKey: PENDING_CLAIM_AUDIT_KEY,
-      observerKey: PENDING_CLAIM_OBSERVER_KEY,
-    },
-  );
 
 test('loads a deterministic report overview', async ({ page }) => {
   const response = await page.goto('/');
@@ -159,27 +95,35 @@ test('locks definitive output while a focused filter response is pending', async
   }
   await expect(page.getByText('5 / 6 sessions', { exact: true })).toBeVisible();
   const pendingSurface = page.locator('[data-report-pending]');
+  const completeOutput = page.locator('[data-report-complete-output]');
+  const overview = page.locator('[data-report-overview]');
+  const kpi = page.locator('[data-executive-kpi]');
+  const chart = page.locator('[data-executive-chart]');
+  const metrics = page.locator('[data-executive-metrics]');
   await expect(pendingSurface).toHaveCount(0);
+  const retainedRevision = await overview.getAttribute('data-report-revision');
+  const retainedKpi = await kpi.textContent();
 
   const query = 'pending-filter';
   const search = page.getByRole('textbox', {
     name: 'Filter sessions by title, project, model, provider, or harness',
   });
-  await startPendingClaimAudit(page, query);
   await controlFocusedResponse(page, 'arm');
-  let violations: string[] = [];
   try {
     await search.fill(query);
     await controlFocusedResponse(page, 'waitUntilBlocked');
 
-    await expect(pendingSurface).toHaveCount(1);
-    await expect(pendingSurface).toHaveText('Loading report…');
+    await expect(pendingSurface).toHaveCount(0);
+    await expect(completeOutput).toHaveAttribute('aria-busy', 'true');
+    await expect(completeOutput).toHaveAttribute('data-report-stale', 'true');
+    await expect(overview).toHaveAttribute('data-report-revision', retainedRevision ?? '');
+    await expect(kpi).toHaveText(retainedKpi ?? '');
+    await expect(chart).toBeVisible();
+    await expect(metrics).toBeVisible();
     await expect(page.getByRole('button', { name: `Query: ${query} ×` })).toBeVisible();
     await expect(page.getByText(SESSION_COUNTER_PATTERN)).toHaveCount(0);
     await expect(page.getByText(HIDDEN_FILTERS_PATTERN)).toHaveCount(0);
     await expect(page.getByText(NO_SESSIONS_PATTERN)).toHaveCount(0);
-    await expect(page.getByText('$0.00', { exact: true })).toHaveCount(0);
-    await expect(page.locator('[data-metric-grid]')).toHaveCount(0);
     await expect(page.getByRole('region', { name: 'Report period' })).toBeVisible();
     // Withholding the counts must not collapse their slot: dropping the boxes threw "Clear all"
     // ~300px sideways for the length of the request. The pills stay, emptied and marked busy.
@@ -187,14 +131,17 @@ test('locks definitive output while a focused filter response is pending', async
     await expect(counterSlot).toHaveAttribute('aria-busy', 'true');
     expect((await counterSlot.boundingBox())?.width ?? 0).toBeGreaterThan(0);
   } finally {
-    violations = await finishPendingClaimAudit(page);
     await controlFocusedResponse(page, 'release');
   }
 
-  expect(violations).toEqual([]);
   await expect(pendingSurface).toHaveCount(0);
+  await expect(completeOutput).not.toHaveAttribute('aria-busy');
   await expect(page.getByRole('region', { name: 'Report period' })).toBeVisible();
   await expect(page.getByText('0 / 6 sessions', { exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'No sessions match these filters' })).toBeVisible();
+  await page.getByRole('button', { name: 'Clear filters' }).click();
+  await expect(page.getByText('5 / 6 sessions', { exact: true })).toBeVisible();
+  await expect(kpi).toBeVisible();
 });
 
 test('retries a failed report through the Router loading lifecycle', async ({ context, page }) => {
@@ -212,6 +159,48 @@ test('retries a failed report through the Router loading lifecycle', async ({ co
     'aria-current',
     'page',
   );
+});
+
+test('retries a failed lazy Analysis module without reloading the page', async ({ page }) => {
+  await openHydratedReport(page);
+  await page.evaluate(
+    ({ documentKey, failureKey }) => {
+      Reflect.set(globalThis, documentKey, 'retained');
+      Reflect.set(globalThis, failureKey, 'breakdown');
+    },
+    {
+      documentKey: '__aiUsageLazyRetryDocument',
+      failureKey: REPORT_LAZY_MODULE_E2E_FAILURE_KEY,
+    },
+  );
+
+  await reportViewsFor(page).getByRole('link', { exact: true, name: 'Breakdown' }).click();
+  await expect(page.getByText('Report view is temporarily unavailable.', { exact: true })).toBeVisible();
+  await page.getByRole('button', { exact: true, name: 'Retry' }).click();
+  await expect(page.getByRole('tabpanel', { name: 'Models' })).toBeVisible();
+  await expect(page.getByText('Report view is temporarily unavailable.', { exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { exact: true, name: 'Retry' })).toHaveCount(0);
+  await expect(page).toHaveURL(MODELS_TAB_URL_PATTERN);
+  expect(await page.evaluate(() => Reflect.get(globalThis, '__aiUsageLazyRetryDocument'))).toBe('retained');
+});
+
+test('opens the existing Models deep state from the executive link and preserves history', async ({ page }) => {
+  await openHydratedReport(page);
+  const modelsLink = page.getByRole('link', { name: 'Open Analysis → Models' });
+  await expect(modelsLink).toHaveAttribute('href', MODELS_TAB_URL_PATTERN);
+  await modelsLink.click();
+  await expect(page).toHaveURL(MODELS_TAB_URL_PATTERN);
+  await expect(page.getByRole('tabpanel', { name: 'Models' })).toBeVisible();
+
+  await page.goBack();
+  await expect(reportViewsFor(page).getByRole('link', { exact: true, name: 'Overview' })).toHaveAttribute(
+    'aria-current',
+    'page',
+  );
+  await page.goForward();
+  await expect(page.getByRole('tabpanel', { name: 'Models' })).toBeVisible();
+  await page.reload();
+  await expect(page.getByRole('tabpanel', { name: 'Models' })).toBeVisible();
 });
 
 test('uses one primary navigation while preserving Breakdown deep links and sub-tabs', async ({ page }) => {
@@ -284,14 +273,43 @@ test('copies the exact breakdown URL and exports only visible sorted model rows'
   );
 });
 
-test('shows analysis and report metrics without disclosure gates', async ({ page }) => {
+test('shows the executive answer, evidence, four metrics, and investigation in order', async ({ page }) => {
+  await page.setViewportSize({ height: 1000, width: 1440 });
   await openHydratedReport(page);
   await expect(page.locator('main[data-hydrated="true"]')).toBeVisible({ timeout: HYDRATION_TIMEOUT_MS });
 
-  const apiValueHelp = page.getByRole('button', { name: 'About API value' });
-  await expect(apiValueHelp).toBeVisible();
-  await apiValueHelp.click();
-  await expect(page.getByText(ESTIMATED_API_VALUE_HELP_PATTERN)).toBeVisible();
+  const kpi = page.locator('[data-executive-kpi]');
+  const chart = page.locator('[data-executive-chart]');
+  const metrics = page.locator('[data-executive-metrics]');
+  const investigation = page.getByRole('heading', { level: 2, name: 'Investigate' });
+  await expect(kpi).toBeVisible();
+  await expect(kpi).toContainText('Estimated API-equivalent value');
+  await expect(kpi).toContainText('By harness');
+  await expect(chart).toBeVisible();
+  await expect(metrics.locator(':scope > div')).toHaveCount(4);
+  await expect(metrics.locator('dt')).toHaveText([
+    'Processed tokens',
+    'Cache volume',
+    'Output tokens',
+    'Pricing coverage',
+  ]);
+  await expect(investigation).toBeVisible();
+  for (const forbiddenCopy of ['Value bases', 'Actual recorded cost', 'Subscription value', 'More report metrics']) {
+    await expect(page.getByText(forbiddenCopy, { exact: true })).toHaveCount(0);
+  }
+
+  const readingOrder = await page.locator('[data-report-overview]').evaluate((element) => {
+    const markers = [
+      element.querySelector('[data-executive-kpi]'),
+      element.querySelector('[data-executive-chart]'),
+      element.querySelector('[data-executive-metrics]'),
+      [...element.querySelectorAll('h2')].find((heading) => heading.textContent?.trim() === 'Investigate') ?? null,
+      [...element.querySelectorAll('h2')].find((heading) => heading.textContent?.trim() === 'Provider status') ?? null,
+    ];
+    return markers.map((marker) => marker?.getBoundingClientRect().top ?? -1);
+  });
+  expect(readingOrder.every((position) => position >= 0)).toBe(true);
+  expect(readingOrder).toEqual([...readingOrder].sort((left, right) => left - right));
 
   const advancedSummary = page.locator('summary').filter({ hasText: 'Advanced analysis' });
   const punchcard = page.getByRole('heading', { level: 3, name: 'Punchcard' });
@@ -313,67 +331,36 @@ test('shows analysis and report metrics without disclosure gates', async ({ page
   await expect(punchcardVisual).not.toHaveAttribute('aria-hidden', 'true');
   expect(await punchcardVisual.getByRole('button', { name: PUNCHCARD_FILTER_PATTERN }).count()).toBeGreaterThan(0);
 
-  const reportMetrics = page.getByRole('region', { name: 'More report metrics' });
-  await expect(reportMetrics.getByRole('heading', { level: 2, name: 'More report metrics' })).toBeVisible();
-  await expect(reportMetrics.getByRole('button', { name: 'More report metrics' })).toHaveCount(0);
-  await expect(reportMetrics.getByText('Fresh tokens', { exact: true })).toBeVisible();
-  await expect(reportMetrics.locator(':scope > header')).toContainText('6');
-  await expect(reportMetrics.locator('[data-metric-tile]')).toHaveCount(5);
-  await expect(reportMetrics.getByRole('button', { name: 'About Sessions' })).toBeVisible();
-  await expect(reportMetrics.locator('[data-metric-delta]').first()).toContainText('×5.0 vs previous period');
+  expect(await metrics.evaluate((element) => getComputedStyle(element).gridTemplateColumns.split(' ').length)).toBe(4);
 
-  const metricGrid = reportMetrics.locator('[data-metric-grid]');
-  const valueBases = reportMetrics.locator('[data-value-bases-panel]');
-  const firstMetric = reportMetrics.locator('[data-metric-tile]').first();
-  const desktopGeometry = await Promise.all([
-    metricGrid.evaluate((element) => {
-      const style = getComputedStyle(element);
-      return { columns: style.gridTemplateColumns.split(' ').length, gap: style.gap };
-    }),
-    valueBases.boundingBox(),
-    firstMetric.boundingBox(),
-  ]);
-  expect(desktopGeometry[0]).toEqual({ columns: 4, gap: '10px' });
-  expect(desktopGeometry[1]?.width).toBeCloseTo((desktopGeometry[2]?.width ?? 0) * 2 + 10, 0);
-
-  await page.setViewportSize({ height: 800, width: 361 });
-  const narrowGeometry = await Promise.all([
-    metricGrid.evaluate((element) => {
-      const style = getComputedStyle(element);
-      return { columns: style.gridTemplateColumns.split(' ').length, gap: style.gap };
-    }),
-    metricGrid.boundingBox(),
-    valueBases.boundingBox(),
-  ]);
-  expect(narrowGeometry[0]).toEqual({ columns: 2, gap: '10px' });
-  expect(narrowGeometry[2]?.width).toBeCloseTo(narrowGeometry[1]?.width ?? 0, 0);
+  await page.setViewportSize({ height: 844, width: 390 });
+  expect(await metrics.evaluate((element) => getComputedStyle(element).gridTemplateColumns.split(' ').length)).toBe(1);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
 });
 
 test('prioritizes the selected dashboard view before secondary status on mobile', async ({ page }) => {
   await page.setViewportSize({ height: 800, width: 390 });
   await openHydratedReport(page);
 
-  const dashboardPanel = page.locator('[data-dashboard-panel]');
+  const kpi = page.locator('[data-executive-kpi]');
   const providerStatus = page.getByRole('heading', { level: 2, name: 'Provider status' });
-  const [dashboardBox, providerBox] = await Promise.all([dashboardPanel.boundingBox(), providerStatus.boundingBox()]);
+  const [kpiBox, providerBox] = await Promise.all([kpi.boundingBox(), providerStatus.boundingBox()]);
 
-  expect(dashboardBox?.y).toBeLessThan(providerBox?.y ?? 0);
-  const reportMetrics = page.getByRole('region', { name: 'More report metrics' });
-  await expect(reportMetrics).toBeVisible();
-  await expect(reportMetrics.getByText('Fresh tokens', { exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'About API value' })).toBeVisible();
+  expect(kpiBox?.y).toBeLessThan(providerBox?.y ?? 0);
+  await expect(page.locator('[data-executive-metrics]')).toBeVisible();
+  await expect(kpi).toContainText('Estimated API-equivalent value');
 });
 
 test('keeps the selected dashboard view ahead of secondary provider status on desktop', async ({ page }) => {
   await page.setViewportSize({ height: 900, width: 1280 });
   await openHydratedReport(page);
 
-  const dashboardPanel = page.locator('[data-dashboard-panel]');
+  const kpi = page.locator('[data-executive-kpi]');
   const providerStatus = page.getByRole('heading', { level: 2, name: 'Provider status' });
-  const [dashboardBox, providerBox] = await Promise.all([dashboardPanel.boundingBox(), providerStatus.boundingBox()]);
+  const [kpiBox, providerBox] = await Promise.all([kpi.boundingBox(), providerStatus.boundingBox()]);
 
-  await expect(page.getByRole('button', { name: 'About API value' })).toBeVisible();
-  expect(dashboardBox?.y).toBeLessThan(providerBox?.y ?? 0);
+  await expect(kpi).toBeVisible();
+  expect(kpiBox?.y).toBeLessThan(providerBox?.y ?? 0);
 });
 
 test('keeps provider details collapsed until they are requested', async ({ page }) => {
@@ -384,31 +371,23 @@ test('keeps provider details collapsed until they are requested', async ({ page 
     .getByRole('heading', { level: 2, name: 'Provider status' })
     .locator('xpath=ancestor::section[1]');
   const providerDetails = page.getByText(PROVIDER_DETAILS_PATTERN);
+  const providerDisclosure = providerDetails.locator('xpath=..');
   const noQuotaDetail = page.getByText('No quota windows are available for this provider.').first();
   const attentionProviders = page.getByRole('list', { name: 'Providers requiring attention' });
   const providerCategories = page.getByRole('list', { name: PROVIDER_CATEGORIES_PATTERN });
-  const dashboardPanel = page.locator('[data-dashboard-panel]');
   const dateRange = page.getByRole('region', { name: 'Report period' });
   const activeFilters = page.locator('[data-active-filters]');
   const overviewHero = page.getByRole('region', { name: 'Estimated API-equivalent value' });
-  const reportMetrics = page.getByRole('region', { name: 'More report metrics' });
+  const executiveMetrics = page.locator('[data-executive-metrics]');
 
   await expect(providerPanel).toContainText('Quota usage and operational issues at a glance.');
-  await expect(providerPanel).toHaveCSS('height', '260px');
-  await expect(attentionProviders).toHaveCSS('height', '24px');
-  await expect(providerCategories).toHaveCSS('height', '54px');
-  await expect(providerDetails).toHaveCSS('height', '38px');
-  expect(await providerPanel.evaluate((element) => element.closest('[data-dashboard-panel]') === null)).toBe(true);
-  expect(await reportMetrics.evaluate((element) => element.closest('[data-dashboard-panel]') === null)).toBe(true);
+  await expect(providerDisclosure).not.toHaveAttribute('open', '');
+  expect(await providerPanel.evaluate((element) => element.closest('[data-report-overview]') !== null)).toBe(true);
+  expect(await executiveMetrics.evaluate((element) => element.closest('[data-dashboard-panel]') !== null)).toBe(true);
   expect(await dateRange.evaluate((element) => element.closest('[data-dashboard-panel]') === null)).toBe(true);
   expect(await activeFilters.evaluate((element) => element.closest('[data-dashboard-panel]') === null)).toBe(true);
-  const [dashboardBox, metricsBox, heroBox] = await Promise.all([
-    dashboardPanel.boundingBox(),
-    reportMetrics.boundingBox(),
-    overviewHero.boundingBox(),
-  ]);
-  expect(dashboardBox?.y).toBe(heroBox?.y);
-  expect(metricsBox?.y).toBe((dashboardBox?.y ?? 0) + (dashboardBox?.height ?? 0) + 20);
+  const [providerBox, heroBox] = await Promise.all([providerPanel.boundingBox(), overviewHero.boundingBox()]);
+  expect(heroBox?.y).toBeLessThan(providerBox?.y ?? 0);
 
   await expect(providerDetails).toBeVisible();
   await expect(attentionProviders).toBeVisible();
@@ -421,14 +400,14 @@ test('keeps provider details collapsed until they are requested', async ({ page 
   expect(categoryCounts.reduce((total, count) => total + count, 0)).toBe(providerTotal);
   await expect(noQuotaDetail).not.toBeVisible();
 
-  await page.setViewportSize({ height: 844, width: 361 });
-  await expect(providerPanel).toHaveCSS('height', '547px');
-  await expect(attentionProviders).toHaveCSS('height', '123px');
-  await expect(providerCategories).toHaveCSS('height', '162px');
-  await expect(providerDetails).toHaveCSS('height', '38px');
+  await page.setViewportSize({ height: 844, width: 390 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
   await providerDetails.click();
+  await expect(providerDisclosure).toHaveAttribute('open', '');
   await expect(noQuotaDetail).toBeVisible();
-  await expect(providerPanel).toHaveCSS('height', '1255px');
+  expect(await providerPanel.evaluate((element) => element.scrollWidth)).toBeLessThanOrEqual(
+    await providerPanel.evaluate((element) => element.clientWidth),
+  );
 });
 
 test('Codex quota history shows reset and gap-aware ranges on desktop and mobile', async ({ page }) => {
@@ -506,7 +485,7 @@ test('updates the date range and opens a session drawer', async ({ page }) => {
 test('opens a session from Overview without leaving the current analysis', async ({ page }) => {
   await openHydratedReport(page);
 
-  await page.getByRole('button', { name: TOP_SESSION_PATTERN }).click();
+  await overviewTopSessionTrigger(page).click();
 
   await expect(page.getByRole('dialog')).toBeVisible();
   await expect(reportViewsFor(page).getByRole('link', { exact: true, name: 'Overview' })).toHaveAttribute(
@@ -517,7 +496,7 @@ test('opens a session from Overview without leaving the current analysis', async
 
 test('navigates and closes the selected session with drawer keyboard commands', async ({ page }) => {
   await openHydratedReport(page);
-  const sessionTrigger = page.getByRole('button', { name: TOP_SESSION_PATTERN });
+  const sessionTrigger = overviewTopSessionTrigger(page);
   await sessionTrigger.click();
 
   const drawer = page.getByRole('dialog', { name: 'Session details' });
@@ -676,14 +655,18 @@ test('keeps compact heatmap geometry at narrow and desktop viewports', async ({ 
   await expect(calendar).toHaveCSS('column-gap', '3px');
 });
 
-test('keeps the Top sessions panel header geometry at desktop width', async ({ page }) => {
+test('keeps the Top sessions panel readable without horizontal overflow at desktop width', async ({ page }) => {
   await page.setViewportSize({ height: 900, width: 1440 });
   await openHydratedReport(page);
 
   const topSessionsPanel = page
     .getByRole('heading', { level: 2, name: 'Top sessions' })
     .locator('xpath=ancestor::section[1]');
-  await expect(topSessionsPanel).toHaveCSS('height', '174px');
+  await expect(topSessionsPanel).toBeVisible();
+  expect(await topSessionsPanel.evaluate((element) => element.scrollWidth)).toBeLessThanOrEqual(
+    await topSessionsPanel.evaluate((element) => element.clientWidth),
+  );
+  expect(await topSessionsPanel.getByRole('button').count()).toBeGreaterThan(0);
 });
 
 test('selects the same heatmap day with mouse and keyboard', async ({ page }) => {

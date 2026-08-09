@@ -45,11 +45,18 @@
       : null,
   );
   const presentedTopSessions = $derived(topSessions.map(presentSessionItem));
+  const topCostRepeatsFirstSession = $derived.by((): boolean => {
+    const topCost = presentedRecords?.topCost;
+    const firstSession = presentedTopSessions[0];
+    return Boolean(
+      topCost && firstSession && topCost.kind === firstSession.kind && topCost.row.rowId === firstSession.row.rowId,
+    );
+  });
 </script>
 
 {#if presentedRecords}
   <div class={recordsGrid}>
-    {#if presentedRecords.topCost}
+    {#if presentedRecords.topCost && !topCostRepeatsFirstSession}
       <button class={recordCard} onclick={() => onSelectSession(presentedRecords.topCost!)} type="button">
         <span class={recordLabel}>Top session</span>
         <span class={recordValue} title={apiValuePresentation(presentedRecords.topCost).title}

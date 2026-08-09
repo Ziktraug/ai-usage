@@ -163,6 +163,22 @@ describe('report Svelte SSR components', () => {
     expect(settled.body).not.toContain('aria-busy');
   });
 
+  it('keeps refresh failure recoverable without replacing retained output', () => {
+    const failedRefresh = render(reportWorkspace, {
+      props: {
+        hasOutput: true,
+        onRetry: () => Promise.resolve(),
+        pending: false,
+        refreshError: 'The report refresh failed.',
+      },
+    });
+
+    expect(failedRefresh.body).toContain('data-report-complete-output');
+    expect(failedRefresh.body).toContain('data-report-refresh-error');
+    expect(failedRefresh.body).toContain('The report refresh failed.');
+    expect(failedRefresh.body).toContain('>Retry</button>');
+  });
+
   it('shows the pending surface rather than an unavailable panel while the first commit is missing', async () => {
     const data = {
       mode: 'live',

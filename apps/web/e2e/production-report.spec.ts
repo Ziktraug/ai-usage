@@ -170,7 +170,8 @@ test('renders the report timeline on the initial production Overview', async ({ 
   const navigationResponse = await page.goto('/');
   await expect(page.locator('main[data-hydrated="true"]')).toBeVisible();
   const navigationToHydratedMs = performance.now() - navigationStartedAt;
-  const dateRange = page.getByRole('region', { name: 'Date range' });
+  const dateRange = page.getByRole('region', { name: 'Report period' });
+  const activity = page.getByRole('region', { name: 'Activity' });
   try {
     await expect(dateRange).toContainText('Jun 3 → Jul 03, 2026');
     await expect(dateRange).toContainText('Jul 03, 2026');
@@ -179,7 +180,7 @@ test('renders the report timeline on the initial production Overview', async ({ 
     overviewGate.resolve();
   }
   await expect(
-    dateRange.getByRole('button', { name: 'Inspect activity timeline. Use arrow keys to inspect days.' }),
+    activity.getByRole('button', { name: 'Inspect activity timeline. Use arrow keys to inspect days.' }),
   ).toBeVisible({ timeout: 5000 });
   await expect(page.getByText('No dated sessions match the current filters')).toHaveCount(0);
   expect(await page.evaluate(() => Reflect.get(globalThis, '__aiUsageFalseEmptyRange'))).toBe(false);
@@ -350,7 +351,7 @@ test('records filter range sort and history request counts without route data', 
   const rangedSessionsResponse = page.waitForResponse(
     (response) => new URL(response.url()).pathname === SESSION_PAGE_PATH,
   );
-  await page.getByRole('region', { name: 'Date range' }).getByRole('button', { exact: true, name: '7d' }).click();
+  await page.getByRole('region', { name: 'Report period' }).getByRole('button', { exact: true, name: '7d' }).click();
   await rangedSessionsResponse;
   await expect.poll(() => new URL(page.url()).searchParams.get('range')).not.toBeNull();
   await expect(page.locator('[data-report-refresh-pending]')).toHaveCount(0);
@@ -414,7 +415,7 @@ test('records one exact expiry and one failed background refresh while retaining
   });
 
   trace.checkpoint('expiry');
-  await page.getByRole('region', { name: 'Date range' }).getByRole('button', { exact: true, name: '7d' }).click();
+  await page.getByRole('region', { name: 'Report period' }).getByRole('button', { exact: true, name: '7d' }).click();
   await expect(page.locator('[data-report-refresh-error]')).toBeVisible();
   await expect(completeOutput).toBeVisible();
   await expect(workspace).toHaveAttribute('data-plan-069-workspace', 'last-good');
@@ -424,7 +425,7 @@ test('records one exact expiry and one failed background refresh while retaining
 
   interceptedOutcome = 'QueryFailed';
   trace.checkpoint('background-failure');
-  const chartOptions = page.getByRole('region', { name: 'Date range' }).locator('details[aria-label="Chart options"]');
+  const chartOptions = page.getByRole('region', { name: 'Activity' }).locator('details[aria-label="Explore activity"]');
   await chartOptions.locator('summary').click();
   await chartOptions.getByRole('radio', { exact: true, name: 'Model' }).click();
   await expect(page.locator('[data-report-refresh-error]')).toBeVisible();
@@ -468,8 +469,9 @@ test('provides one accessible responsive source-control surface', async ({ page 
 
 test('keeps the Report range mounted while focused chart options refresh', async ({ page }) => {
   await page.goto('/');
-  const dateRange = page.getByRole('region', { name: 'Date range' });
-  const timeline = dateRange.getByRole('button', {
+  const dateRange = page.getByRole('region', { name: 'Report period' });
+  const activity = page.getByRole('region', { name: 'Activity' });
+  const timeline = activity.getByRole('button', {
     name: 'Inspect activity timeline. Use arrow keys to inspect days.',
   });
   await expect(timeline).toBeVisible({ timeout: 5000 });
@@ -483,7 +485,7 @@ test('keeps the Report range mounted while focused chart options refresh', async
     });
     await route.continue();
   });
-  const chartOptions = dateRange.locator('details[aria-label="Chart options"]');
+  const chartOptions = activity.locator('details[aria-label="Explore activity"]');
   await chartOptions.locator('summary').click();
   await chartOptions.getByRole('radio', { exact: true, name: 'Model' }).click();
   await expect(dateRange).toHaveAttribute('data-stability-marker', 'original-range', { timeout: 1000 });
@@ -495,8 +497,8 @@ test('keeps the Report range mounted while focused chart options refresh', async
 
 test('keeps the last complete report visible while the report range changes', async ({ page }) => {
   await page.goto('/');
-  const dateRange = page.getByRole('region', { name: 'Date range' });
-  const timeline = dateRange.getByRole('button', {
+  const dateRange = page.getByRole('region', { name: 'Report period' });
+  const timeline = page.getByRole('region', { name: 'Activity' }).getByRole('button', {
     name: 'Inspect activity timeline. Use arrow keys to inspect days.',
   });
   await expect(timeline).toBeVisible({ timeout: 5000 });
@@ -519,7 +521,8 @@ test('keeps the last complete report visible while the report range changes', as
     overviewGate.resolve();
   }
 
-  await expect(dateRange.getByRole('textbox', { name: 'Start date' })).toHaveValue('Jun 26, 2026');
+  await expect(dateRange.getByRole('button', { exact: true, name: '7d' })).toHaveAttribute('aria-pressed', 'true');
+  await expect(dateRange).toContainText('Jun 26 → Jul 03, 2026 · 7 days');
   await expect(timeline).toHaveAttribute('data-stability-marker', 'original-chart');
 });
 

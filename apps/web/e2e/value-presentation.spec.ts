@@ -6,7 +6,10 @@ const PARTIALLY_MEASURED_PATTERN = /Partially measured/;
 test('renders measured, partially measured, and zero Breakdown bars distinctly', async ({ page }) => {
   await page.setViewportSize({ height: 1200, width: 1440 });
   await openHydratedReport(page, '/?origin=%5B%5D');
-  await page.getByRole('region', { name: 'Date range' }).getByRole('button', { exact: true, name: 'All' }).click();
+  await page
+    .getByRole('region', { name: 'Report period' })
+    .getByRole('button', { exact: true, name: 'All time' })
+    .click();
   await waitForFocusedReportSettled(page);
   await reportViewsFor(page).getByRole('link', { exact: true, name: 'Breakdown' }).click();
   await waitForFocusedReportSettled(page);

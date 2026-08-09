@@ -9,6 +9,7 @@
   import type { SearchNavigationIntent } from '../../../foundation/navigation/search-intent';
   import {
     createDashboardSearchNavigation,
+    dashboardUrlFor,
     parseDashboardSearchUrl,
   } from '../../../foundation/navigation/svelte/dashboard-url';
   import { createSvelteNavigationPort } from '../../../foundation/navigation/svelte/navigation';
@@ -39,6 +40,11 @@
   let browserNavigate: SearchNavigationIntent<DashboardSearch> = () => undefined;
   const navigate: SearchNavigationIntent<DashboardSearch> = (update, options) => browserNavigate(update, options);
   const search = $derived(parseDashboardSearchUrl(page.url, dashboardSearchCodec));
+  const modelsHref = $derived.by((): string => {
+    const modelsSearch: DashboardSearch = { ...search, tab: 'models' };
+    const url = dashboardUrlFor(page.url, modelsSearch, dashboardSearchCodec);
+    return `${url.pathname}${url.search}${url.hash}`;
+  });
   const browserRpc = useOptionalWebQueryRpcContext()?.rpc;
   // Built eagerly rather than in onMount so the report renders during SSR too. Report owners only
   // store these clients at construction; every call site sits behind an effect or an event handler,
@@ -84,6 +90,7 @@
 {#if mode === 'live' && liveResult?.ok && runtime}
   <LiveReportDestination
     bootstrapResult={liveResult}
+    {modelsHref}
     {navigate}
     omittedSupportItemCount={model.omittedSupportItemCount}
     {queryClient}
@@ -95,7 +102,7 @@
   />
 {:else if mode !== 'live'}
   <ReportWarnings omittedSupportItemCount={model.omittedSupportItemCount} warnings={model.warnings} />
-  <SyntheticReportDestination {mode} {navigate} {queryClient} {search} />
+  <SyntheticReportDestination {mode} {modelsHref} {navigate} {queryClient} {search} />
 {:else}
   <ReportWarnings omittedSupportItemCount={model.omittedSupportItemCount} warnings={model.warnings} />
   <ReportWorkspace hasOutput={model.hasReportData} pending={mode === 'live' && liveResult === undefined}>

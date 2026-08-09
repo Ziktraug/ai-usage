@@ -9,15 +9,15 @@
   let {
     children,
     hasOutput,
+    onRetry = () => Promise.resolve(),
     pending,
     refreshError = null,
-    status,
   }: {
     children?: Snippet;
     hasOutput: boolean;
+    onRetry?: () => Promise<void>;
     pending: boolean;
     refreshError?: string | null;
-    status?: Snippet;
   } = $props();
 
   const layout = css({ display: 'flex', flexDirection: 'column' });
@@ -54,10 +54,5 @@
       </section>
     {/if}
   </div>
-  {#if status}
-    <div data-report-secondary-status>
-      {@render status()}
-    </div>
-  {/if}
-  <ReportStatus {pending} {refreshError} />
+  <ReportStatus {onRetry} {pending} {refreshError} />
 </div>

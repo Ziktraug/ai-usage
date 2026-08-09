@@ -20,7 +20,7 @@ export const panelHeader = css({
 export const title = css({ fontSize: '16px', fontWeight: 700 });
 export const muted = css({ color: 'muted', fontSize: '12px' });
 export const field = css({
-  h: '36px',
+  h: { base: '44px', sm: '36px' },
   border: '1px solid token(colors.lineStrong)',
   borderRadius: 'sm',
   bg: 'surface',
@@ -84,19 +84,26 @@ export const toolbar = css({
   _print: { display: 'none' },
   '& > input': {
     flex: { base: 'none', sm: '1 1 240px' },
+    minH: { base: '44px', sm: '36px' },
     minW: { base: 0, sm: '180px' },
     w: { base: 'full', sm: 'auto' },
   },
 });
 export const controls = css({
   display: { base: 'grid', sm: 'contents' },
-  gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+  gridTemplateColumns: 'minmax(0, 0.85fr) minmax(0, 1.15fr)',
   w: { base: 'full', sm: 'auto' },
   gap: { base: '8px', sm: '0' },
   alignItems: 'center',
   '& > *': {
     minW: 0,
     w: { base: 'full', sm: 'auto' },
+  },
+  '& button, & a': { minH: { base: '44px', sm: '36px' } },
+  '& > [aria-label="Collection source status"]': {
+    gap: { base: '4px', sm: '8px' },
+    '& > a, & > button': { px: { base: '6px', sm: '10px' } },
+    '& > button': { whiteSpace: 'nowrap' },
   },
   '& > :last-child:nth-child(odd)': { gridColumn: { base: '1 / -1', sm: 'auto' } },
 });

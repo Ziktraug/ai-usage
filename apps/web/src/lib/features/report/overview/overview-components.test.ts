@@ -59,14 +59,26 @@ const focusedOverview = () => {
   });
 };
 
-describe('P2 Overview Svelte surfaces', () => {
-  test('renders meaningful report content and all primary P2 regions during SSR', () => {
+describe('decision-first Overview Svelte surfaces', () => {
+  test('renders the executive answer before evidence and investigation during SSR', () => {
     const { body } = render(fixture, { props: { result: focusedOverview() } });
 
     expect(body).toContain('data-report-overview');
     expect(body).toContain('data-report-revision="p2-fixture-revision"');
+    expect(body).toContain('data-executive-kpi');
+    expect(body).toContain('data-executive-chart');
+    expect(body).toContain('data-executive-metrics');
     expect(body).toContain('Estimated API-equivalent value');
-    expect(body).toContain('Value bases');
+    expect(body).toContain('By harness');
+    expect(body).toContain('Processed tokens');
+    expect(body).toContain('Cache volume');
+    expect(body).toContain('Output tokens');
+    expect(body).toContain('Pricing coverage');
+    expect(body).toContain('Open Analysis');
+    expect(body).not.toContain('Value bases');
+    expect(body).not.toContain('Reported actual spend');
+    expect(body).not.toContain('Actual recorded cost');
+    expect(body).not.toContain('Subscription value');
     expect(body).toContain('Token anatomy');
     expect(body).not.toContain('Provider status');
     expect(body).toContain('Rhythm');
@@ -78,6 +90,59 @@ describe('P2 Overview Svelte surfaces', () => {
     expect(body).toContain('Campaign · 3 sessions');
     expect(body).not.toContain('3 campaign sessions');
     expect(body).not.toContain('Loading report');
+
+    const readingOrder = [
+      'data-executive-kpi',
+      'data-executive-chart',
+      'data-executive-metrics',
+      'Open Analysis',
+      'Investigate',
+      'Top sessions',
+      'Rhythm',
+      'Token anatomy',
+      'Advanced analysis',
+    ].map((marker) => body.indexOf(marker));
+    expect(readingOrder.every((position) => position >= 0)).toBe(true);
+    expect(readingOrder).toEqual([...readingOrder].sort((left, right) => left - right));
+    expect(body).not.toContain('>Top session</span>');
+  });
+
+  test('distinguishes no local data from a filtered zero result', () => {
+    const emptyResult = focusedOverview();
+    const summary = {
+      ...emptyResult.summary,
+      cacheRead: 0,
+      cacheWrite: 0,
+      fresh: 0,
+      meanCost: 0,
+      pricedSessions: 0,
+      priceMeasurement: { knownCost: 0, state: 'measured' as const, unpricedFreshTokens: 0 },
+      sessionCount: 0,
+      tokIn: 0,
+      tokOut: 0,
+      tools: 0,
+      totalCost: 0,
+      turns: 0,
+    };
+    const result = {
+      ...emptyResult,
+      summary,
+      view: {
+        ...emptyResult.view,
+        executive: { harnesses: [], models: [] },
+        topSessions: [],
+      },
+    };
+
+    const noLocal = render(fixture, { props: { result, totalSessionCount: 0 } }).body;
+    const filtered = render(fixture, { props: { result, totalSessionCount: 12 } }).body;
+
+    expect(noLocal).toContain('No local usage yet');
+    expect(noLocal).toContain('Open Sources');
+    expect(noLocal).not.toContain('Clear filters');
+    expect(filtered).toContain('No sessions match these filters');
+    expect(filtered).toContain('Clear filters');
+    expect(filtered).not.toContain('Open Sources');
   });
 
   test('retains campaign-shaped series identities and does not relabel human roots as subagents', () => {

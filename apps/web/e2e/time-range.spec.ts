@@ -635,7 +635,7 @@ test('lands the dragged range once on release while the headline follows the han
 
   const endHandle = (await openActivityExplorer(page)).getByRole('slider', { name: 'End date' });
   const hero = page.getByRole('region', { name: 'Estimated API-equivalent value' });
-  const headline = hero.locator('p').nth(1);
+  const headline = hero.locator('strong').first();
   const urlBeforeDrag = page.url();
 
   await endHandle.scrollIntoViewIfNeeded();
@@ -657,7 +657,7 @@ test('lands the dragged range once on release while the headline follows the han
   expect(page.url()).toBe(urlBeforeDrag);
   // The amount is summed locally from the buckets already drawn, so the headline stays live while
   // its qualifiers — which only the server knows — say they are lagging rather than mismatching.
-  await expect(hero.locator('[data-hero-provisional]').first()).toBeVisible();
+  await expect(hero.locator('[aria-busy="true"]').first()).toBeVisible();
   // The live figure must never be dimmed along with the stale body around it.
   await expect(page.locator('[data-report-complete-output]')).toHaveCSS('opacity', '1');
 
@@ -671,7 +671,7 @@ test('lands the dragged range once on release while the headline follows the han
   // Exactly one commit, and it happened on release.
   expect(page.url()).not.toBe(urlBeforeDrag);
   expect(new URL(page.url()).searchParams.get('range')).not.toBeNull();
-  await expect(hero.locator('[data-hero-provisional]')).toHaveCount(0);
+  await expect(hero.locator('[aria-busy="true"]')).toHaveCount(0);
 });
 
 test('reports legend shares and the range total over the selected window', async ({ page }) => {

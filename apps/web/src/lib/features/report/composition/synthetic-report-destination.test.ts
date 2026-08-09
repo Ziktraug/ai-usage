@@ -145,14 +145,38 @@ test('keeps the compact period control global and mounts activity exploration on
     new URL('./report-destination-presentation.svelte', import.meta.url),
   ).text();
   const overviewSource = await Bun.file(new URL('../overview/overview-page.svelte', import.meta.url)).text();
+  const executiveSource = await Bun.file(new URL('../overview/executive-overview.svelte', import.meta.url)).text();
   const liveSource = await Bun.file(new URL('./live-report-destination.svelte', import.meta.url)).text();
   const syntheticSource = await Bun.file(new URL('./synthetic-report-destination.svelte', import.meta.url)).text();
 
   expect(presentationSource).toContain("import ReportPeriodControl from '../range/report-period-control.svelte'");
   expect(presentationSource).toContain('<ReportPeriodControl {...range.props} />');
   expect(presentationSource).not.toContain('ActivityExplorer');
-  expect(overviewSource).toContain("import ActivityExplorer from '../range/activity-explorer.svelte'");
-  expect(overviewSource).toContain('<ActivityExplorer {...activity} />');
+  expect(overviewSource).toContain("import ExecutiveOverview from './executive-overview.svelte'");
+  expect(executiveSource).toContain("import ActivityExplorer from '../range/activity-explorer.svelte'");
+  expect(executiveSource).toContain('<ActivityExplorer {...activity} />');
   expect(liveSource).toContain('activity: {');
   expect(syntheticSource).toContain('activity: {');
+});
+
+test('keeps executive composition presentation-only and threads retained state through both owners', async () => {
+  const overviewSource = await Bun.file(new URL('../overview/overview-page.svelte', import.meta.url)).text();
+  const executiveSource = await Bun.file(new URL('../overview/executive-overview.svelte', import.meta.url)).text();
+  const liveSource = await Bun.file(new URL('./live-report-destination.svelte', import.meta.url)).text();
+  const syntheticSource = await Bun.file(new URL('./synthetic-report-destination.svelte', import.meta.url)).text();
+
+  for (const source of [overviewSource, executiveSource]) {
+    expect(source).not.toContain('createQuery');
+    expect(source).not.toContain('fetchReport');
+    expect(source).not.toContain('/rpc/');
+  }
+  for (const source of [liveSource, syntheticSource]) {
+    expect(source).toContain('onClearFilters: navigation.clearAllFilters');
+    expect(source).toContain("onOpenModels: () => navigation.setBreakdownTab('models')");
+    expect(source).toContain('totalSessionCount:');
+    expect(source).toContain('activeDestinationLoadFailed');
+    expect(source).toContain('onRetry={retryReportDestination}');
+  }
+  expect(syntheticSource).toContain('hasOutput={true}');
+  expect(syntheticSource).not.toContain('hasOutput={!pending}');
 });

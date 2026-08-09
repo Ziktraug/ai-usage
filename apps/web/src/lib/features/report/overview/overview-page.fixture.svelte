@@ -7,8 +7,9 @@
   import type { ProviderStatusView } from '../../../../provider-status-model';
   import ReportPeriodControl from '../range/report-period-control.svelte';
   import OverviewPage from './overview-page.svelte';
-  import OverviewStatus from './overview-status.svelte';
   import type { MachineSeriesPresenter } from './timeline-model';
+
+  const openModels = (): void => undefined;
 
   let {
     activeSeriesKeys = [],
@@ -18,6 +19,7 @@
     presentSessionItem,
     providers = [],
     result,
+    totalSessionCount = result.summary.sessionCount,
   }: {
     activeSeriesKeys?: readonly string[];
     machineFreshnessStatus?: string | null;
@@ -26,6 +28,7 @@
     presentSessionItem?: (item: FocusedOverviewSessionItem) => FocusedOverviewSessionItem;
     providers?: readonly ProviderStatusView[];
     result: FocusedOverviewResult;
+    totalSessionCount?: number;
   } = $props();
 </script>
 
@@ -46,7 +49,10 @@
     value: 'cost',
   }}
   {...(presentSessionItem ? { presentSessionItem } : {})}
+  modelsHref="?tab=models"
+  onOpenModels={openModels}
+  {providers}
   range={{ mode: '30d' }}
   {result}
+  {totalSessionCount}
 />
-<OverviewStatus {providers} range={{ mode: '30d' }} {result} />
