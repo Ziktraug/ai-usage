@@ -1,17 +1,17 @@
 #!/usr/bin/env bun
 import { execFileSync } from 'node:child_process';
-import { readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { brotliCompressSync, gzipSync } from 'node:zlib';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const CONTROL_PATH = path.join(ROOT, 'docs/performance/artifacts/plan072-control.json');
+const CONTROL_DESTINATION_PATH = path.join(ROOT, 'docs/performance/artifacts/plan072-ark-control-7.json');
 const DESTINATION_PATH = path.join(ROOT, 'docs/performance/artifacts/plan072-destination-render.json');
 const BUNDLE_MAP_PATH = path.join(ROOT, 'docs/performance/artifacts/plan072-bundle-map.json');
 const OUTPUT_PATH = path.join(ROOT, 'docs/performance/artifacts/plan072-ark-split.json');
 const CLIENT_DIRECTORY = path.join(ROOT, 'apps/web/.output-build/sveltekit/client');
-const CONTROL_DESTINATION_REPOSITORY_PATH = 'docs/performance/artifacts/plan072-destination-render.json';
-const MAX_CONTROL_REBUILD_RAW_DRIFT_BYTES = 32;
+const LEADING_SLASH_PATTERN = /^\/+/u;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -121,36 +121,29 @@ const candidateIncremental = (samples: readonly DrawerSample[]): { gzip: number;
 
 const deriveControlDrawerGzip = (
   controlClientDirectory: string,
-  artifactRawBytes: number,
-): { file: string; gzip: number; raw: number; rawDriftFromArtifact: number } => {
-  const chunkDirectory = path.join(controlClientDirectory, '_app/immutable/chunks');
-  const candidates = readdirSync(chunkDirectory)
-    .filter((fileName) => fileName.endsWith('.js'))
-    .map((fileName) => {
-      const file = path.join(chunkDirectory, fileName);
-      return { file, raw: statSync(file).size };
-    })
-    .sort(
-      (left, right) =>
-        Math.abs(left.raw - artifactRawBytes) - Math.abs(right.raw - artifactRawBytes) ||
-        left.file.localeCompare(right.file),
-    );
-  const closest = candidates[0];
-  if (!closest) {
-    throw new Error(`Expected control chunks in ${chunkDirectory}`);
+  samples: readonly DrawerSample[],
+): { files: readonly string[]; gzip: number; raw: number } => {
+  const firstSample = samples[0];
+  if (!firstSample) {
+    throw new Error('Expected at least one control Drawer sample');
   }
-  const rawDriftFromArtifact = closest.raw - artifactRawBytes;
-  if (Math.abs(rawDriftFromArtifact) > MAX_CONTROL_REBUILD_RAW_DRIFT_BYTES) {
+  const files = firstSample.newChunkFileNames.map((fileName) => fileName.replace(LEADING_SLASH_PATTERN, ''));
+  if (samples.some((sample) => sample.newChunkFileNames.join('\n') !== firstSample.newChunkFileNames.join('\n'))) {
+    throw new Error('Expected every control Drawer sample to report the same chunk identities');
+  }
+  let raw = 0;
+  let gzip = 0;
+  for (const fileName of files) {
+    const body = readFileSync(path.join(controlClientDirectory, fileName));
+    raw += body.byteLength;
+    gzip += gzipSync(body, { level: 9 }).byteLength;
+  }
+  if (raw !== firstSample.bytesLoadedAfterDrawerOpen) {
     throw new Error(
-      `Closest rebuilt control chunk differs from artifact by ${rawDriftFromArtifact} bytes, exceeding ${MAX_CONTROL_REBUILD_RAW_DRIFT_BYTES}`,
+      `Control Drawer artifact reports ${firstSample.bytesLoadedAfterDrawerOpen} raw bytes; built files total ${raw}`,
     );
   }
-  return {
-    file: path.relative(controlClientDirectory, closest.file),
-    gzip: gzipSync(readFileSync(closest.file), { level: 9 }).byteLength,
-    raw: closest.raw,
-    rawDriftFromArtifact,
-  };
+  return { files, gzip, raw };
 };
 
 const main = (): void => {
@@ -159,20 +152,13 @@ const main = (): void => {
   const control = parseJson(readFileSync(CONTROL_PATH, 'utf8'), 'plan072-control.json');
   const controlBenchmark = requiredRecord(control.sessionScrollBenchmark, 'control.sessionScrollBenchmark');
   const controlInitial = requiredRecord(controlBenchmark.initialStaticClosure, 'control.initialStaticClosure');
-  // biome-ignore lint/suspicious/noUndeclaredEnvVars: explicit immutable revision for the pre-candidate control artifact
-  const controlCommit = process.env.AI_USAGE_PLAN072_CONTROL_COMMIT;
-  if (!controlCommit) {
-    throw new Error('AI_USAGE_PLAN072_CONTROL_COMMIT must identify the pre-candidate control revision');
-  }
-  const controlDestination = parseJson(
-    execFileSync('git', ['show', `${controlCommit}:${CONTROL_DESTINATION_REPOSITORY_PATH}`], {
-      cwd: ROOT,
-      encoding: 'utf8',
-    }),
-    `${controlCommit}:${CONTROL_DESTINATION_REPOSITORY_PATH}`,
-  );
+  const controlDestination = parseJson(readFileSync(CONTROL_DESTINATION_PATH, 'utf8'), 'plan072-ark-control-7.json');
   const candidateDestination = parseJson(readFileSync(DESTINATION_PATH, 'utf8'), 'plan072-destination-render.json');
   const bundleMap = parseJson(readFileSync(BUNDLE_MAP_PATH, 'utf8'), 'plan072-bundle-map.json');
+  const duplicatedArkOrZagCount = requiredNumber(
+    bundleMap.duplicatedArkOrZagCount,
+    'bundleMap.duplicatedArkOrZagCount',
+  );
   const controlDrawerSamples = parseDrawerSamples(controlDestination, 'control destination');
   const candidateDrawerSamples = parseDrawerSamples(candidateDestination, 'candidate destination');
   const controlDrawerRaw = controlDrawerSamples[0]?.bytesLoadedAfterDrawerOpen ?? 0;
@@ -185,7 +171,7 @@ const main = (): void => {
   if (!controlClientDirectory) {
     throw new Error('AI_USAGE_PLAN072_CONTROL_CLIENT_DIR must point to a clean HEAD control client build');
   }
-  const controlDrawerGzip = deriveControlDrawerGzip(controlClientDirectory, controlDrawerRaw);
+  const controlDrawerGzip = deriveControlDrawerGzip(controlClientDirectory, controlDrawerSamples);
   const candidateInitial = findDestinationClosure(bundleMap, 'overview');
   const candidateDrawer = candidateIncremental(candidateDrawerSamples);
   const initial = {
@@ -241,7 +227,7 @@ const main = (): void => {
     },
     sources: {
       controlInitial: 'docs/performance/artifacts/plan072-control.json',
-      controlDrawer: `git show ${controlCommit}:${CONTROL_DESTINATION_REPOSITORY_PATH}`,
+      controlDrawer: 'docs/performance/artifacts/plan072-ark-control-7.json',
       candidateBundleMap: 'docs/performance/artifacts/plan072-bundle-map.json',
       candidateDestination: 'docs/performance/artifacts/plan072-destination-render.json',
     },
@@ -249,7 +235,7 @@ const main = (): void => {
       initial:
         'Control bytes are read from plan072-control.json. Candidate bytes are recomputed from the Vite initial closure with gzip level 9 and default Brotli.',
       incrementalDrawer:
-        'Raw bytes come from destination-render response bodies. Candidate gzip is recomputed from the exact built Drawer files. Control gzip is recomputed from the closest clean-HEAD rebuilt Drawer chunk; rebuild raw drift is recorded.',
+        'Raw bytes come from destination-render response bodies. Candidate and control gzip are recomputed from the exact recorded Drawer chunk identities in their respective builds.',
       totalThroughDrawer: 'initial + incremental Drawer bytes; cumulative total is authoritative.',
       controlDrawerGzipRebuild: controlDrawerGzip,
     },
@@ -287,7 +273,7 @@ const main = (): void => {
         },
         delta: drawerOpenDelta,
       },
-      duplicatedArkOrZagCount: requiredNumber(bundleMap.duplicatedArkOrZagCount, 'bundleMap.duplicatedArkOrZagCount'),
+      duplicatedArkOrZagCount,
     },
     gate: {
       wording: 'total chargé après ouverture du Drawer',
@@ -296,7 +282,12 @@ const main = (): void => {
       initialGzipDecreaseAtLeast10KiB: initialGzipDelta.bytes <= -(10 * 1024),
       totalThroughDrawerGzipGrowthAtMost5Percent: totalGzipDelta.percent <= 5,
       drawerOpenRegressionAtMost10Percent: drawerOpenDelta.percent <= 10,
-      passes: initialGzipDelta.bytes <= -(10 * 1024) && totalGzipDelta.percent <= 5 && drawerOpenDelta.percent <= 10,
+      noDuplicatedArkOrZag: duplicatedArkOrZagCount === 0,
+      passes:
+        initialGzipDelta.bytes <= -(10 * 1024) &&
+        totalGzipDelta.percent <= 5 &&
+        drawerOpenDelta.percent <= 10 &&
+        duplicatedArkOrZagCount === 0,
     },
   };
   writeFileSync(OUTPUT_PATH, `${JSON.stringify(artifact, null, 2)}\n`, 'utf8');
