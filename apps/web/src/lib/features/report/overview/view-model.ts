@@ -55,22 +55,6 @@ export const buildOverviewMetrics = (
       delta: previous ? comparisonDelta(summary.totalCost, previous.totalCost, fmtMoney) : null,
     },
     {
-      kind: 'actual-cost',
-      label: 'Actual cost',
-      value: fmtMoney(summary.actualCost),
-      hint: `Out-of-pocket spend reported by harnesses; subscription usage counts as $0${
-        summary.unknownActual ? ` (${fmtNum(summary.unknownActual)} sessions unknown)` : ''
-      }`,
-      delta: previous ? comparisonDelta(summary.actualCost, previous.actualCost, fmtMoney) : null,
-    },
-    {
-      kind: 'subscription-value',
-      label: 'Sub value',
-      value: fmtMoney(summary.costQuota),
-      hint: 'Cursor export value covered by the subscription quota',
-      delta: previous ? comparisonDelta(summary.costQuota, previous.costQuota, fmtMoney) : null,
-    },
-    {
       kind: 'mean-cost',
       label: 'Mean / sess',
       value: fmtMoney(summary.meanCost),

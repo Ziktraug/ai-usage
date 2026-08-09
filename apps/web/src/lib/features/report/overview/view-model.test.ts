@@ -27,14 +27,13 @@ const summary = (overrides: Partial<FocusedReportSummary> = {}): FocusedReportSu
 });
 
 describe('Overview presentation adapters', () => {
-  test('keeps three distinct value bases and qualifies every available comparison', () => {
+  test('does not promote actual cost or subscription value in the remaining legacy metric adapter', () => {
     const metrics = buildOverviewMetrics(
       summary(),
       summary({ actualCost: 1, costQuota: 3, sessionCount: 1, totalCost: 4 }),
     );
-    expect(
-      metrics.filter((metric) => ['api-value', 'actual-cost', 'subscription-value'].includes(metric.kind)),
-    ).toHaveLength(3);
+    expect(metrics.some((metric) => metric.kind === 'actual-cost')).toBe(false);
+    expect(metrics.some((metric) => metric.kind === 'subscription-value')).toBe(false);
     expect(metrics.find((metric) => metric.kind === 'api-value')?.hint).toContain('2 of 3 fully priced sessions');
     expect(
       metrics
@@ -92,7 +91,6 @@ test('keeps the frozen Overview content and secondary-status order', async () =>
 
   const heroSource = await Bun.file(new URL('./overview-hero.svelte', import.meta.url)).text();
   expect(heroSource).toContain('This is a comparison value, not savings or ROI.');
-  expect(heroSource).toContain('Reported actual spend ·');
   expect(heroSource).toContain('Spend coverage');
 });
 
