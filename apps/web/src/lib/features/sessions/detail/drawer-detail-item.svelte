@@ -38,7 +38,7 @@
     overflowWrap: 'anywhere',
   });
   const popoverContent = css({
-    zIndex: 50,
+    zIndex: 70,
     display: 'grid',
     gap: '10px',
     w: 'min(560px, calc(100vw - 32px))',

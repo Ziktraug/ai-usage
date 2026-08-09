@@ -6,6 +6,7 @@ import {
 } from '@ai-usage/local-machine/testing/harness-home';
 import type { Request } from '@playwright/test';
 import { expect, reportViewsFor, test } from './browser-test';
+import { capturePlan073Smoke } from './plan073-smoke';
 import { encodeRpcResponseBody, isRpcPathname, RPC_ROUTE_GLOB, rpcStringFieldValues } from './rpc-test-transport';
 import { createServerStateNetworkTrace } from './server-state-network';
 
@@ -705,7 +706,7 @@ test('opens Claude chronology and recorded source control from the production re
   await expect(claudeAnalysis).toContainText('Recorded duration unavailable');
 });
 
-test('automatically pages mobile Sessions while scrolling', async ({ page }) => {
+test('automatically pages mobile Sessions and keeps modal analysis usable', async ({ page }, testInfo) => {
   await page.setViewportSize({ height: 844, width: 390 });
   await page.goto('/?tab=sessions');
 
@@ -731,4 +732,71 @@ test('automatically pages mobile Sessions while scrolling', async ({ page }) => 
     .toBe(204);
   expect(await summaries.locator('[data-session-row-id][data-index]').count()).toBeLessThanOrEqual(600);
   await expect(page.getByRole('button', { name: 'Load more sessions' })).toHaveCount(0);
+
+  const rootTrigger = summaries.getByRole('button', { exact: true, name: 'Inspect session: Implement fixture root' });
+  await expect(rootTrigger).toBeVisible();
+  await rootTrigger.focus();
+  await rootTrigger.click();
+
+  const drawer = page.getByRole('dialog', { name: 'Session details' });
+  const drawerBody = drawer.locator('[data-session-drawer-body]');
+  const drawerHeader = drawer.locator('[data-session-drawer-header]');
+  await expect(drawer).toBeVisible();
+  await expect(drawer).toHaveAttribute('aria-modal', 'true');
+  const analyzeButton = drawer.getByRole('button', { name: 'Analyze root session chronology' });
+  await expect(analyzeButton).toBeVisible();
+  const headerActionGeometry = await drawerHeader.locator('button:visible').evaluateAll((elements) =>
+    elements.map((element) => {
+      const rect = element.getBoundingClientRect();
+      return { height: Math.round(rect.height), width: Math.round(rect.width) };
+    }),
+  );
+  expect(headerActionGeometry).toHaveLength(4);
+  expect(headerActionGeometry.every(({ height, width }) => height >= 44 && width >= 44)).toBe(true);
+
+  await analyzeButton.click();
+  const analysis = drawer.getByRole('region', { name: 'Session analysis' });
+  await expect(analysis).toBeVisible();
+  await expect(drawer.getByRole('button', { name: 'Hide session chronology' })).toBeVisible();
+  await expect(drawer.locator('[aria-label="Token anatomy"]')).toBeVisible();
+  const bodyControlGeometry = await drawerBody
+    .locator('button:visible, a[href]:visible, summary:visible, input:visible, select:visible, textarea:visible')
+    .evaluateAll((elements) =>
+      elements.map((element) => {
+        const rect = element.getBoundingClientRect();
+        return {
+          height: Math.round(rect.height),
+          name: element.getAttribute('aria-label') ?? element.textContent?.trim() ?? '',
+          ordinaryAction: element.matches('button, a[href]'),
+          tagName: element.tagName,
+          width: Math.round(rect.width),
+        };
+      }),
+    );
+  expect(bodyControlGeometry.length).toBeGreaterThan(0);
+  expect(
+    bodyControlGeometry.filter(({ height, ordinaryAction, width }) =>
+      ordinaryAction ? height < 44 || width < 44 : height < 44,
+    ),
+  ).toEqual([]);
+  const analysisGeometry = await drawerBody.evaluate((element) => ({
+    clientHeight: element.clientHeight,
+    scrollHeight: element.scrollHeight,
+  }));
+  expect(analysisGeometry.scrollHeight).toBeGreaterThan(analysisGeometry.clientHeight);
+  await expect
+    .poll(
+      async () =>
+        await drawerBody.evaluate((element) => {
+          element.scrollTop = element.scrollHeight;
+          return element.scrollTop;
+        }),
+    )
+    .toBeGreaterThan(0);
+  await expect(drawer.getByRole('button', { name: 'Close session details' })).toBeVisible();
+  await capturePlan073Smoke(page, testInfo, 'step7-drawer-analysis-390x844-light');
+
+  await page.keyboard.press('Escape');
+  await expect(drawer).toBeHidden();
+  await expect(rootTrigger).toBeFocused();
 });

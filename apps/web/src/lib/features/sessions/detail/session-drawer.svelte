@@ -39,6 +39,7 @@
 
   import type { SessionPresentationRow } from '@ai-usage/report-core/session-query';
   import type { Snippet } from 'svelte';
+  import { MediaQuery } from 'svelte/reactivity';
   import { lineDeltaLabel, rtkSavedLabel, rtkSavedTitle } from '../../../../dashboard-sort';
   import { sessionDurationSemantics } from '../../../../session-analysis-model';
   import { fmtCompact, fmtDate, fmtDuration, fmtMoney, fmtNum } from '../../../foundation/presentation/format';
@@ -64,9 +65,15 @@
 
   let closeButton = $state<HTMLButtonElement>();
   let analysisPanel = $state<HTMLDivElement>();
-  const previousFocus = typeof document === 'undefined' ? null : document.activeElement;
-  const row = $derived(snapshot.row);
-  const target = $derived(snapshot.target);
+  const desktopViewport = new MediaQuery('(min-width: 48rem)', false);
+  const mobileDrawer = $derived(!desktopViewport.current);
+  let previousFocus = $state<Element | null>(typeof document === 'undefined' ? null : document.activeElement);
+  let presentedRow = $state<SessionPresentationRow | null>(null);
+  let presentedTarget = $state<SessionDetailControllerSnapshot['target']>(null);
+  let drawerWasOpen = false;
+  const drawerOpen = $derived(snapshot.row !== null && snapshot.target !== null);
+  const row = $derived(snapshot.row ?? presentedRow);
+  const target = $derived(snapshot.target ?? presentedTarget);
   const position = $derived(row ? rows.findIndex((candidate) => candidate.rowId === row.rowId) : -1);
   const median = (values: readonly number[]): number => {
     const sorted = [...values].sort((left, right) => left - right);
@@ -126,10 +133,57 @@
       : '',
   );
 
-  const closeDrawer = (): void => {
-    if (previousFocus instanceof HTMLElement && previousFocus.isConnected) {
-      previousFocus.focus({ preventScroll: true });
+  $effect.pre(() => {
+    const currentOpen = drawerOpen;
+    if (currentOpen && !drawerWasOpen) {
+      previousFocus = typeof document === 'undefined' ? null : document.activeElement;
     }
+    drawerWasOpen = currentOpen;
+  });
+
+  $effect(() => {
+    if (snapshot.row && snapshot.target) {
+      presentedRow = snapshot.row;
+      presentedTarget = snapshot.target;
+    }
+  });
+
+  const visibleSessionTrigger = (): HTMLElement | null => {
+    if (typeof document === 'undefined' || !row) {
+      return null;
+    }
+
+    const candidates = document.querySelectorAll<HTMLElement>('[data-session-row-id]');
+    for (const candidate of candidates) {
+      if (candidate.dataset.sessionRowId !== row.rowId || candidate.getClientRects().length === 0) {
+        continue;
+      }
+
+      if (candidate.matches('[data-session-index]')) {
+        return candidate;
+      }
+
+      const mobileTrigger = candidate.querySelector<HTMLElement>('[data-session-index]');
+      if (mobileTrigger && mobileTrigger.getClientRects().length > 0) {
+        return mobileTrigger;
+      }
+    }
+
+    return null;
+  };
+
+  const previousFocusElement = (): HTMLElement | null => {
+    if (
+      previousFocus instanceof HTMLElement &&
+      previousFocus.isConnected &&
+      previousFocus.getClientRects().length > 0
+    ) {
+      return previousFocus;
+    }
+    return visibleSessionTrigger();
+  };
+
+  const closeDrawer = (): void => {
     controller.close();
   };
 
@@ -141,25 +195,26 @@
   };
 </script>
 
-{#if row && target}
-  <Drawer
-    closeOnInteractOutside
-    contentAriaLabel="Session details"
-    contentClass={snapshot.analysisOpen ? cx(drawer, analysisDrawer) : drawer}
-    finalFocusEl={() => previousFocus instanceof HTMLElement && previousFocus.isConnected ? previousFocus : null}
-    initialFocusEl={() => closeButton ?? null}
-    modal={false}
-    onOpenChange={(open) => {
-      if (!open) {
-        closeDrawer();
-      }
-    }}
-    open
-    trapFocus={false}
-  >
-    <div class={drawerTop}>
+<Drawer
+  closeOnInteractOutside={mobileDrawer}
+  contentAriaLabel="Session details"
+  contentClass={snapshot.analysisOpen ? cx(drawer, analysisDrawer) : drawer}
+  finalFocusEl={previousFocusElement}
+  initialFocusEl={() => (mobileDrawer ? (closeButton ?? null) : previousFocusElement())}
+  modal={mobileDrawer}
+  onOpenChange={(open) => {
+    if (!open) {
+      closeDrawer();
+    }
+  }}
+  open={drawerOpen}
+  preventScroll={mobileDrawer}
+  trapFocus={mobileDrawer}
+>
+  {#if row && target}
+    <div class={drawerTop} data-session-drawer-header>
       <HarnessBadge name={row.harness} />
-      <div class={drawerNav}>
+      <nav aria-label={`Session navigation, ${positionLabel()}`} class={drawerNav} data-session-drawer-navigation>
         <span class={drawerPosition}>
           {positionLabel()}
         </span>
@@ -204,9 +259,9 @@
         >
           ✕
         </button>
-      </div>
+      </nav>
     </div>
-    <div class={drawerBody}>
+    <div class={drawerBody} data-session-drawer-body>
       <div>
         <div class={drawerTitle}>{row.sessionLabel}</div>
         <div class={muted}>{row.providerDisplay} · {row.modelLabel}</div>
@@ -320,5 +375,5 @@
         </div>
       {/if}
     </div>
-  </Drawer>
-{/if}
+  {/if}
+</Drawer>

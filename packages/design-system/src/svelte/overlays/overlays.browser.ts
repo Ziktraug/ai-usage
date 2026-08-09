@@ -152,11 +152,12 @@ try {
   });
   systemChromeVersion = browser.version();
   page = await browser.newPage();
+  await page.setViewportSize({ height: 844, width: 390 });
   page.setDefaultNavigationTimeout(ACTION_TIMEOUT_MS);
   page.setDefaultTimeout(ACTION_TIMEOUT_MS);
   await page.emulateMedia({ reducedMotion: 'reduce' });
   page.on('console', (message) => {
-    if (message.type() === 'error') {
+    if (message.type() === 'error' || message.text().includes('derived_inert')) {
       browserErrors.push(message.text());
     }
   });
@@ -183,7 +184,24 @@ try {
   await drawer.waitFor({ state: 'visible' });
   await assertPortalled(drawer, 'Drawer content is portalled under body');
   await assertReducedMotion(drawer, 'Drawer disables animation for reduced motion');
+  assertEqual(await drawer.getAttribute('aria-modal'), 'true', 'mobile Drawer is modal');
+  const drawerBackdrop = page.locator('[data-scope="drawer"][data-part="backdrop"][data-state="open"]');
+  await assertCount(drawerBackdrop, 1, 'mobile Drawer mounts one backdrop');
+  assertEqual(
+    Number(await drawer.evaluate((element) => getComputedStyle(element).zIndex)) > 50,
+    true,
+    'mobile Drawer is above application navigation',
+  );
+  assertEqual(
+    Number(await drawerBackdrop.evaluate((element) => getComputedStyle(element).zIndex)) > 50,
+    true,
+    'mobile Drawer backdrop is above application navigation',
+  );
   await assertFocused(drawer.getByRole('button', { name: 'Close drawer' }), 'Drawer applies initial focus');
+  await page.keyboard.press('Tab');
+  await assertFocused(drawer.getByRole('button', { name: 'Close drawer' }), 'mobile Drawer wraps Tab');
+  await page.keyboard.press('Shift+Tab');
+  await assertFocused(drawer.getByRole('button', { name: 'Close drawer' }), 'mobile Drawer wraps Shift+Tab');
   await outsideTarget.evaluate((element) => (element as HTMLElement).focus());
   await assertContainsFocus(drawer, 'modal Drawer trap prevents background focus leakage');
   await page.keyboard.press('Escape');
@@ -193,11 +211,50 @@ try {
   await drawerTrigger.click();
   await drawer.waitFor({ state: 'visible' });
   const drawerBox = (await drawer.boundingBox()) ?? fail('Drawer did not expose responsive geometry');
-  assertEqual(drawerBox.width <= 440, true, 'Drawer uses its bounded desktop width');
-  const drawerBackdrop = page.locator('[data-scope="drawer"][data-part="backdrop"][data-state="open"]');
-  await drawerBackdrop.click({ position: { x: Math.max(1, drawerBox.x / 2), y: Math.max(1, drawerBox.y + 8) } });
+  assertEqual(Math.round(drawerBox.width), 390, 'mobile Drawer spans the viewport');
+  await drawerBackdrop.click({ position: { x: 195, y: Math.max(1, drawerBox.y / 2) } });
   await assertHidden(drawer, 'Drawer did not close on outside interaction');
+  await page
+    .locator('[data-scope="drawer"][data-part="content"][data-state="closed"]')
+    .first()
+    .waitFor({ state: 'attached' });
   await assertFocused(drawerTrigger, 'Drawer outside dismissal returns focus to its trigger');
+
+  await page.setViewportSize({ height: 900, width: 1024 });
+  await page.locator('[data-mobile-drawer="false"]').waitFor();
+  await drawerTrigger.click();
+  await page.locator('[data-drawer-open="true"]').waitFor();
+  try {
+    await drawer.waitFor({ state: 'visible' });
+  } catch {
+    const drawerStates = await page.locator('[data-scope="drawer"]').evaluateAll((elements) =>
+      elements.map((element) => ({
+        ariaModal: element.getAttribute('aria-modal'),
+        display: getComputedStyle(element).display,
+        part: element.getAttribute('data-part'),
+        state: element.getAttribute('data-state'),
+        visibility: getComputedStyle(element).visibility,
+      })),
+    );
+    const fixtureState = await page.getByRole('region', { name: 'Overlay component fixture' }).evaluate((element) => ({
+      drawerOpen: element.getAttribute('data-drawer-open'),
+      mobileDrawer: element.getAttribute('data-mobile-drawer'),
+    }));
+    fail(
+      `desktop Drawer did not become visible; fixture=${JSON.stringify(fixtureState)}; states=${JSON.stringify(drawerStates)}`,
+    );
+  }
+  assertEqual(await drawer.getAttribute('aria-modal'), 'false', 'desktop Drawer is non-modal');
+  await assertCount(drawerBackdrop, 0, 'desktop Drawer omits the backdrop');
+  await assertFocused(drawerTrigger, 'desktop Drawer preserves its outside trigger focus');
+  const desktopDrawerBox = (await drawer.boundingBox()) ?? fail('desktop Drawer did not expose responsive geometry');
+  assertEqual(Math.round(desktopDrawerBox.width), 440, 'desktop Drawer uses its bounded width');
+  await outsideTarget.focus();
+  await assertFocused(outsideTarget, 'desktop non-modal Drawer permits outside focus');
+  await drawer.waitFor({ state: 'visible' });
+  await page.keyboard.press('Escape');
+  await assertHidden(drawer, 'desktop Drawer did not close on Escape');
+  await assertFocused(drawerTrigger, 'desktop Drawer Escape returns focus to its trigger');
 
   const persistentDrawerTrigger = page.getByRole('button', { name: 'Open persistent drawer' });
   await persistentDrawerTrigger.click();
@@ -220,8 +277,8 @@ try {
   await assertReducedMotion(popover, 'Popover disables animation for reduced motion');
   assertEqual(
     await popover.locator('xpath=..').evaluate((element) => getComputedStyle(element).zIndex),
-    '50',
-    'Popover occupies the documented z-50 layer',
+    '70',
+    'Popover occupies the documented layer above Drawer',
   );
   await assertFocused(
     popover.getByRole('button', { name: 'Popover fixture action' }),
@@ -259,6 +316,11 @@ try {
   await tooltip.waitFor({ state: 'visible' });
   await assertPortalled(tooltip, 'Tooltip content is portalled under body');
   await assertReducedMotion(tooltip, 'Tooltip disables animation for reduced motion');
+  assertEqual(
+    await tooltip.evaluate((element) => getComputedStyle(element).zIndex),
+    '70',
+    'Tooltip occupies the documented layer above Drawer',
+  );
   const tooltipId = await tooltip.getAttribute('id');
   assertEqual(
     await tooltipTarget.getAttribute('aria-describedby'),

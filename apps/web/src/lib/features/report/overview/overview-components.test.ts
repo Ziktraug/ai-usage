@@ -12,6 +12,8 @@ interface SvelteServerModule {
   render(component: Component, options?: { props?: Record<string, unknown> }): { body: string };
 }
 
+const RECORD_DISCLOSURE_PATTERN = /aria-hidden="true" class="[^"]+">↗<\/span>/;
+
 const componentFrom = (loaded: unknown): Component => {
   if (typeof loaded !== 'object' || loaded === null || !('default' in loaded) || typeof loaded.default !== 'function') {
     throw new Error('Overview fixture did not expose a Svelte component');
@@ -61,7 +63,8 @@ const focusedOverview = () => {
 
 describe('decision-first Overview Svelte surfaces', () => {
   test('renders the executive answer before evidence and investigation during SSR', () => {
-    const { body } = render(fixture, { props: { result: focusedOverview() } });
+    const result = focusedOverview();
+    const { body } = render(fixture, { props: { result } });
 
     expect(body).toContain('data-report-overview');
     expect(body).toContain('data-report-revision="p2-fixture-revision"');
@@ -105,6 +108,17 @@ describe('decision-first Overview Svelte surfaces', () => {
     expect(readingOrder.every((position) => position >= 0)).toBe(true);
     expect(readingOrder).toEqual([...readingOrder].sort((left, right) => left - right));
     expect(body).not.toContain('>Top session</span>');
+    for (const item of result.view.topSessions) {
+      expect(body).toContain(`Open details for ${item.label}.`);
+    }
+    const firstTopSession = result.view.topSessions[0];
+    if (!firstTopSession) {
+      throw new Error('Expected the Overview fixture to include a top session');
+    }
+    expect(body.split(`Open details for ${firstTopSession.label}.`).length - 1).toBe(1);
+    expect(body).toContain('Open activity for');
+    expect(body).not.toContain('aria-label="Open details for');
+    expect(body).toMatch(RECORD_DISCLOSURE_PATTERN);
   });
 
   test('distinguishes no local data from a filtered zero result', () => {

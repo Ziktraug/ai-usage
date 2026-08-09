@@ -11,15 +11,51 @@ describe('P4 stable Drawer composition', () => {
 
     expect(slot).not.toContain('{#key');
     expect(slot.match(/<SessionDrawer\b/g)).toHaveLength(1);
+    expect(slot).toContain('{#if drawerModule}');
+    expect(slot).not.toContain('{#if selection?.row && drawerModule}');
     expect(slot.match(/createQuery\(/g)).toHaveLength(3);
     expect(slot).toContain('optionalSessionNeighborsQueryOptions');
     expect(slot).toContain('optionalSessionDetailQueryOptions');
     expect(slot).toContain('optionalSessionVcsQueryOptions');
     expect(slot).not.toContain('createSessionDetailController');
     expect(slot).not.toContain('createSessionDetailQueryOwner');
-    expect(drawer.match(/const previousFocus\b/g)).toHaveLength(1);
-    expect(drawer).toContain('finalFocusEl={() =>');
-    expect(drawer).toContain('previousFocus instanceof HTMLElement && previousFocus.isConnected');
+    expect(drawer.match(/let previousFocus\b/g)).toHaveLength(1);
+    expect(drawer).toContain('const drawerOpen = $derived');
+    expect(drawer).toContain('$effect.pre(() =>');
+    expect(drawer).toContain('finalFocusEl={previousFocusElement}');
+    expect(drawer).toContain('open={drawerOpen}');
+    expect(drawer).toContain('previousFocus instanceof HTMLElement');
+    expect(drawer).toContain('previousFocus.isConnected');
+    expect(drawer).toContain('previousFocus.getClientRects().length > 0');
+    expect(drawer).toContain("document.querySelectorAll<HTMLElement>('[data-session-row-id]')");
+    expect(drawer).toContain('candidate.dataset.sessionRowId !== row.rowId');
+    expect(drawer).toContain('candidate.getClientRects().length === 0');
+  });
+
+  test('drives one responsive Drawer as a modal sheet below md and a non-modal panel at md', () => {
+    const drawer = source('./session-drawer.svelte');
+
+    expect(drawer.match(/<Drawer\b/g)).toHaveLength(1);
+    expect(drawer).toContain("new MediaQuery('(min-width: 48rem)', false)");
+    expect(drawer).toContain('closeOnInteractOutside={mobileDrawer}');
+    expect(drawer).toContain('modal={mobileDrawer}');
+    expect(drawer).toContain('preventScroll={mobileDrawer}');
+    expect(drawer).toContain('trapFocus={mobileDrawer}');
+    expect(drawer).toContain('mobileDrawer ? (closeButton ?? null) : previousFocusElement()');
+    expect(drawer).not.toContain('modal={false}');
+    expect(drawer).not.toContain('trapFocus={false}');
+  });
+
+  test('leaves Escape from an open Drawer content to Ark while retaining global keyboard commands', () => {
+    const slot = source('./session-detail-query-slot.svelte');
+
+    expect(slot).toContain('[data-scope="drawer"][data-part="content"][data-state="open"][role="dialog"]');
+    expect(slot).toContain("event.key !== 'Escape'");
+    expect(slot).toContain("Pick<KeyboardEvent, 'defaultPrevented' | 'key' | 'target'>");
+    expect(slot).toContain('event.defaultPrevented');
+    expect(slot).toContain('escapeBelongsToActiveOverlay(event)');
+    expect(slot).toContain("command === 'next'");
+    expect(slot).toContain("command === 'previous'");
   });
 
   test('keeps the P8 campaign slot between the comparison summary and the detail grid', () => {

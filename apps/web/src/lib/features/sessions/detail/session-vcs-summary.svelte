@@ -31,7 +31,14 @@
     _focusVisible: { outline: '2px solid token(colors.accent)', outlineOffset: '2px' },
   });
   const details = css({ minW: 0, mt: '4px' });
-  const detailsSummary = css({ color: 'muted', cursor: 'pointer', fontSize: '11px' });
+  const detailsSummary = css({
+    minH: '44px',
+    display: 'flex',
+    alignItems: 'center',
+    color: 'muted',
+    cursor: 'pointer',
+    fontSize: '11px',
+  });
   const branchList = css({ display: 'grid', gap: '4px', listStyle: 'none', m: 0, mt: '6px', p: 0, minW: 0 });
   const note = css({ color: 'muted', fontSize: '11px', lineHeight: 1.45, m: 0 });
   const actions = css({ display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center' });

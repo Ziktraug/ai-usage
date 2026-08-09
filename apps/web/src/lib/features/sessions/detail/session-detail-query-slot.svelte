@@ -15,6 +15,18 @@
 
   type SessionDrawerModule = typeof import('./session-drawer.svelte');
   const interactiveElementTagPattern = /^(INPUT|SELECT|TEXTAREA)$/;
+  const openDrawerContentSelector = '[data-scope="drawer"][data-part="content"][data-state="open"][role="dialog"]';
+
+  const escapeBelongsToActiveOverlay = (event: Pick<KeyboardEvent, 'defaultPrevented' | 'key' | 'target'>): boolean => {
+    if (event.key !== 'Escape') {
+      return false;
+    }
+    if (event.defaultPrevented) {
+      return true;
+    }
+    const targetElement = event.target;
+    return targetElement instanceof Element && targetElement.closest(openDrawerContentSelector) !== null;
+  };
 
   let {
     campaignSlot,
@@ -138,6 +150,9 @@
       if (!snapshot.row) {
         return;
       }
+      if (escapeBelongsToActiveOverlay(event)) {
+        return;
+      }
       const targetElement = event.target;
       const tagName: unknown = targetElement ? Reflect.get(targetElement, 'tagName') : undefined;
       const editable: unknown = targetElement ? Reflect.get(targetElement, 'isContentEditable') : undefined;
@@ -199,7 +214,7 @@
 </script>
 
 <div data-selected-row-id={selection?.row.rowId} data-session-detail-slot>
-  {#if selection?.row && drawerModule}
+  {#if drawerModule}
     {@const SessionDrawer = drawerModule.default}
     <SessionDrawer
       {...(campaignSlot === undefined ? {} : { campaignSlot })}

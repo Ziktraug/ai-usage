@@ -293,6 +293,7 @@ test('Analysis has no detectable accessibility violations', async ({ page }) => 
 });
 
 test('the open session drawer has no detectable accessibility violations', async ({ page }) => {
+  await page.setViewportSize({ height: 844, width: 390 });
   await openHydratedReport(page);
   await expect(page.getByText('5 / 6 sessions', { exact: true })).toBeVisible();
   await overviewTopSessionTrigger(page).click();

@@ -15,9 +15,17 @@ describe('Svelte overlay components', () => {
       '{finalFocusEl}',
       '{initialFocusEl}',
       '{modal}',
-      '{open}',
+      'bind:open={machineOpen}',
+      '{preventScroll}',
       '{trapFocus}',
-      'onOpenChange(details.open)',
+      'onExitComplete={handleExitComplete}',
+      'pendingExternalClose',
+      'onOpenChange(false)',
+      'const reenterMachine',
+      '$state(untrack(() => open))',
+      'await tick()',
+      'machineOpen = false',
+      'machineOpen = true',
       '<Portal>',
       'modal !== false',
       '<Drawer.Backdrop',
@@ -26,6 +34,8 @@ describe('Svelte overlay components', () => {
     ]) {
       expect(source).toContain(contract);
     }
+    expect(source).not.toContain('onDestroy(() =>');
+    expect(source).not.toContain('{#key');
     expect(source).toContain('prefers-reduced-motion: reduce');
   });
 
@@ -53,11 +63,13 @@ describe('Svelte overlay components', () => {
     expect(source).toContain("import Drawer from './drawer.svelte'");
     expect(source).toContain("import Popover from './popover.svelte'");
     expect(source).toContain("import Tooltip from './tooltip.svelte'");
-    expect(source).toContain('closeOnInteractOutside={true}');
+    expect(source).toContain("new MediaQuery('(min-width: 48rem)', false)");
+    expect(source).toContain('closeOnInteractOutside={mobileDrawer}');
     expect(source).toContain('closeOnInteractOutside={false}');
-    expect(source).toContain('modal={true}');
+    expect(source).toContain('modal={mobileDrawer}');
     expect(source).toContain('modal={false}');
-    expect(source).toContain('trapFocus={true}');
+    expect(source).toContain('preventScroll={mobileDrawer}');
+    expect(source).toContain('trapFocus={mobileDrawer}');
     expect(source).toContain('trapFocus={false}');
     expect(source).toContain('Outside overlay target');
     expect(source).toContain('Popover fixture action');
@@ -72,6 +84,7 @@ describe('Svelte overlay components', () => {
       'setDefaultNavigationTimeout(ACTION_TIMEOUT_MS)',
       'setDefaultTimeout(ACTION_TIMEOUT_MS)',
       'browserErrors.length',
+      'derived_inert',
       'Promise.allSettled',
       'Drawer/Popover/Tooltip focus, Tab, Shift+Tab, Escape, outside, lazy, portal, reduced-motion, provenance, and cleanup parity',
     ]) {

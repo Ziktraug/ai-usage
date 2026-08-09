@@ -8,6 +8,8 @@ const ADVANCED_COLUMNS_PATTERN = /Advanced columns/;
 const CALENDAR_NAME_PATTERN = /Daily activity calendar/;
 const COLUMN_URL_PATTERN = /cols=/;
 const DATE_HEADER_PATTERN = /Date/;
+const OPEN_BUILD_REPORT_UI_ACCESSIBLE_NAME_PATTERN = /^Open details for Build report UI\..*Campaign.*\$4\.04/;
+const OPEN_BUILD_REPORT_UI_PATTERN = /^Open details for Build report UI\./;
 const TOKEN_SESSION_HEADERS = [DATE_HEADER_PATTERN, /Session\s*↑/, /Input/, /Output/, /Cache/, /Fresh/];
 const HYDRATION_TIMEOUT_MS = 15_000;
 const INSPECT_SESSION_PATTERN = /Inspect session/;
@@ -487,7 +489,11 @@ test('updates the date range and opens a session drawer', async ({ page }) => {
 test('opens a session from Overview without leaving the current analysis', async ({ page }) => {
   await openHydratedReport(page);
 
-  await overviewTopSessionTrigger(page).click();
+  const sessionTrigger = overviewTopSessionTrigger(page);
+  await expect(sessionTrigger).toHaveAccessibleName(OPEN_BUILD_REPORT_UI_ACCESSIBLE_NAME_PATTERN);
+  await expect(page.getByRole('button', { name: OPEN_BUILD_REPORT_UI_PATTERN })).toHaveCount(1);
+  await expect(sessionTrigger.locator('span[aria-hidden="true"]', { hasText: '↗' })).toHaveCount(1);
+  await sessionTrigger.click();
 
   await expect(page.getByRole('dialog')).toBeVisible();
   await expect(reportViewsFor(page).getByRole('link', { exact: true, name: 'Overview' })).toHaveAttribute(
@@ -503,9 +509,16 @@ test('navigates and closes the selected session with drawer keyboard commands', 
 
   const drawer = page.getByRole('dialog', { name: 'Session details' });
   await expect(drawer.getByText('Build report UI', { exact: true }).first()).toBeVisible();
-  const closeButton = drawer.getByRole('button', { name: 'Close session details' });
-  await expect(closeButton).toHaveCSS('line-height', '14px');
-  expect(await closeButton.boundingBox()).toMatchObject({ height: 30, width: 30 });
+  const headerActions = [
+    drawer.getByRole('button', { name: 'Previous session (k)' }),
+    drawer.getByRole('button', { name: 'Next session (j)' }),
+    drawer.getByRole('button', { name: 'Close session details' }),
+  ];
+  for (const action of headerActions) {
+    const actionBox = await action.boundingBox();
+    expect(actionBox?.height ?? 0).toBeGreaterThanOrEqual(44);
+    expect(actionBox?.width ?? 0).toBeGreaterThanOrEqual(44);
+  }
   await page.keyboard.press('j');
   await expect(drawer.getByText('Review analytics model', { exact: true }).first()).toBeVisible();
   await page.keyboard.press('k');

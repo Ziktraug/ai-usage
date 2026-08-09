@@ -86,7 +86,7 @@
   });
 </script>
 
-{#if open && panelModule}
+{#if panelModule}
   {@const QuotaHistoryPanel = panelModule.default}
   <QuotaHistoryPanel
     errorMessage={query.error?.message ?? null}
