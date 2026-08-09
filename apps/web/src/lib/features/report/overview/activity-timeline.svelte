@@ -95,7 +95,7 @@
     migrationTrendUp,
     monthGridline,
     timelineHoverLayer,
-  } from '@ai-usage/design-system/svelte';
+  } from '@ai-usage/design-system/svelte/passive';
   import type { FocusedTimelineData, FocusedTimelineSeries } from '@ai-usage/report-core/focused-report-query';
   import { tick as afterDomUpdate, onMount } from 'svelte';
   import type { TimelineValue } from '../../../../overview-model';

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { css, cx } from '@ai-usage/design-system/css';
-  import { panel, panelSub, panelTitle, strongCell } from '@ai-usage/design-system/svelte';
+  import { panel, panelSub, panelTitle, strongCell } from '@ai-usage/design-system/svelte/passive';
   import type { KnownProjectScope, SkillSelection, SkillTreeModel } from '../../../../skills-page-model';
   import { selectionKey } from '../../../../skills-page-model';
   import SelectionLink from './selection-link.svelte';

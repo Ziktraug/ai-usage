@@ -13,7 +13,7 @@
     statusPillWarn,
     strongCell,
   } from '@ai-usage/design-system/report';
-  import { HarnessBadge } from '@ai-usage/design-system/svelte';
+  import HarnessBadge from '@ai-usage/design-system/svelte/harness-badge';
   import { count, type UnmanagedGroup } from '../../../../skills-page-model';
 
   const body = css({ display: 'grid', gap: '12px', p: '0 16px 16px' });

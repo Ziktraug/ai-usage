@@ -13,7 +13,7 @@
     statusPillOk,
     statusPillWarn,
     strongCell,
-  } from '@ai-usage/design-system/svelte';
+  } from '@ai-usage/design-system/svelte/passive';
   import { createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { onDestroy, onMount, tick, untrack } from 'svelte';
   import { goto } from '$app/navigation';

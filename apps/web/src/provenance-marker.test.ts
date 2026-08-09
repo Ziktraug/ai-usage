@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { provenanceMarkerGlyph } from '@ai-usage/design-system/svelte';
+import { provenanceMarkerGlyph } from '@ai-usage/design-system/svelte/passive';
 
 describe('provenance marker glyph', () => {
   test('uses an information glyph when every fact is informational', () => {

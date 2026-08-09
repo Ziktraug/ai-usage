@@ -1,6 +1,6 @@
 <script lang="ts">
   import { css, cx } from '@ai-usage/design-system/css';
-  import { ghostButton, searchInput } from '@ai-usage/design-system/svelte';
+  import { ghostButton, searchInput } from '@ai-usage/design-system/svelte/passive';
   import { MAX_CAMPAIGN_LABEL_LENGTH } from '@ai-usage/report-core/campaign-label';
   import { untrack } from 'svelte';
   import type { CampaignLabelEditorState } from './campaign-label-editor-state';

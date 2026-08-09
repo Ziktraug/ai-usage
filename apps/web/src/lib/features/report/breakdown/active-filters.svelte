@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { activeFilters, filterSummary, ghostButton, summaryPill } from '@ai-usage/design-system/svelte';
+  import { activeFilters, filterSummary, ghostButton, summaryPill } from '@ai-usage/design-system/svelte/passive';
   import {
     type DashboardSearch,
     dashboardTimeCellLabel,

@@ -14,7 +14,7 @@
 </script>
 
 <script lang="ts">
-  import { Tooltip } from '@ai-usage/design-system/svelte';
+  import Tooltip from '@ai-usage/design-system/svelte/tooltip';
   import type { FocusedMachineFreshness } from '@ai-usage/report-core/focused-report-query';
   import { fmtDate, fmtNum } from '../../../foundation/presentation/format';
 

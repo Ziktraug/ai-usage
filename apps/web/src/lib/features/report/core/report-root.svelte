@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { page, shell } from '@ai-usage/design-system/svelte';
+  import { page, shell } from '@ai-usage/design-system/svelte/passive';
   import type { ReportRevisionBootstrapResult } from '@ai-usage/web-contract/report';
   import { onMount } from 'svelte';
   import { browser } from '$app/environment';

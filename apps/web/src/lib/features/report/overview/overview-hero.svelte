@@ -13,7 +13,7 @@
 
 <script lang="ts">
   import { css, cx } from '@ai-usage/design-system/css';
-  import { Tooltip } from '@ai-usage/design-system/svelte';
+  import Tooltip from '@ai-usage/design-system/svelte/tooltip';
   import type { FocusedReportSummary } from '@ai-usage/report-core/focused-report-query';
   import type { DashboardDateRangeSearch } from '../../../../dashboard-search';
   import { parseLocalDate } from '../../../../date-range';

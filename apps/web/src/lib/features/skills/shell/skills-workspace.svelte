@@ -12,7 +12,7 @@
     statusPillOk,
     statusPillWarn,
     strongCell,
-  } from '@ai-usage/design-system/svelte';
+  } from '@ai-usage/design-system/svelte/passive';
   import type { SkillManagementSnapshot } from '@ai-usage/skills';
   import type { ProjectSkillMarkdownDocument, SkillMarkdownDocument } from '@ai-usage/web-contract/skills';
   import { onDestroy, type Snippet, tick } from 'svelte';

@@ -1,46 +1,53 @@
-export {
-  commandButton,
-  drawerClose,
-  filterTextButton,
-  ghostButton,
-  pendingButton,
-  presetButton,
-  sortButton,
-  themeToggleButton,
-} from './components/button';
+export { default as MultiSelect } from './svelte/compound/multi-select.svelte';
+export { default as SegmentedControl } from './svelte/compound/segmented-control.svelte';
+export { default as Tabs } from './svelte/compound/tabs.svelte';
+export { default as Checkbox } from './svelte/controls/checkbox.svelte';
+export { default as HarnessBadge } from './svelte/controls/harness-badge.svelte';
+export { default as MetricTile } from './svelte/controls/metric-tile.svelte';
+export type { BarSegment } from './svelte/controls/segment-bar';
+export { default as SegmentBar } from './svelte/controls/segment-bar.svelte';
+export { default as Toggle } from './svelte/controls/toggle.svelte';
+export { default as CellWithProvenance } from './svelte/overlays/cell-with-provenance.svelte';
+export { default as Drawer } from './svelte/overlays/drawer.svelte';
+export { default as Popover } from './svelte/overlays/popover.svelte';
+export { default as ProvenanceMarker } from './svelte/overlays/provenance-marker.svelte';
+export { default as Tooltip } from './svelte/overlays/tooltip.svelte';
 export {
   accentFill,
-  type DimensionSwatch,
-  dimensionSwatch,
-  highlightMark,
-  migrationCrosshair,
-  migrationTrend,
-  migrationTrendDown,
-  migrationTrendUp,
-  sortArrow,
-  stableSeriesColor,
-} from './components/chart';
-export { empty, emptyActions, unavailableText } from './components/empty-state';
-export { searchInput } from './components/field';
-
-export {
   actionRow,
   activeFilters,
+  banner,
+  bannerError,
+  bannerOk,
+  barFill,
+  barTrack,
+  commandButton,
+  type DimensionSwatch,
+  dateCell,
+  desktopTableSurface,
+  dimensionSwatch,
+  drawer,
+  drawerActions,
+  drawerBody,
+  drawerClose,
+  drawerCompare,
+  drawerGrid,
+  drawerLegend,
+  drawerLegendItem,
+  drawerLegendSwatch,
+  drawerLegendValue,
+  drawerNav,
+  drawerPosition,
+  drawerTitle,
+  drawerTop,
+  empty,
+  emptyActions,
   filterSummary,
-  header,
-  headerActions,
-  headerTop,
-  meta,
-  page,
-  shell,
-  summaryPill,
-  title,
-  titleBlock,
-} from './components/layout';
-
-export {
+  filterTextButton,
+  ghostButton,
   groupCount,
   groupHeader,
+  groupKeyButton,
   groupPanel,
   groupPct,
   groupRow,
@@ -48,31 +55,32 @@ export {
   groupSub,
   groupTitle,
   groupValue,
+  header,
+  headerActions,
+  headerTop,
+  highlightMark,
+  meta,
+  migrationCrosshair,
+  migrationTrend,
+  migrationTrendDown,
+  migrationTrendUp,
+  mobileSummarySurface,
+  modelCell,
+  monthGridline,
+  muted,
+  numCell,
+  type ProvenanceMarkerFact,
+  page,
   panel,
   panelSub,
   panelTitle,
-} from './components/panel';
-export { barFill, barTrack } from './components/segment-bar';
-export {
-  banner,
-  bannerError,
-  bannerOk,
-  statusPill,
-  statusPillDanger,
-  statusPillInfo,
-  statusPillOk,
-  statusPillWarn,
-} from './components/status';
-
-export {
-  dateCell,
-  desktopTableSurface,
-  groupKeyButton,
-  mobileSummarySurface,
-  modelCell,
-  muted,
-  numCell,
+  pendingButton,
+  presetButton,
+  presetGroup,
+  provenanceMarkerGlyph,
+  provenanceTitle,
   right,
+  searchInput,
   sessionCell,
   sessionPagingLoadMore,
   sessionSummaryCard,
@@ -93,14 +101,21 @@ export {
   sessionsTable,
   sessionTitleClamp,
   sessionViewportSurface,
+  shell,
+  sortArrow,
+  sortButton,
+  stableSeriesColor,
+  statusPill,
+  statusPillDanger,
+  statusPillInfo,
+  statusPillOk,
+  statusPillWarn,
   strongCell,
+  summaryPill,
   table,
   tableControls,
   tableWrap,
-} from './components/table';
-export {
-  monthGridline,
-  presetGroup,
+  themeToggleButton,
   timeChartOptions,
   timeChartOptionsCurrent,
   timeChartOptionsSummary,
@@ -114,38 +129,7 @@ export {
   timeSliderRange,
   timeSliderRangeDrag,
   timeSliderThumb,
-} from './components/time-slider';
-export { default as MultiSelect } from './svelte/compound/multi-select.svelte';
-export { default as SegmentedControl } from './svelte/compound/segmented-control.svelte';
-export { default as Tabs } from './svelte/compound/tabs.svelte';
-export { default as Checkbox } from './svelte/controls/checkbox.svelte';
-export { default as HarnessBadge } from './svelte/controls/harness-badge.svelte';
-export { default as MetricTile } from './svelte/controls/metric-tile.svelte';
-export type { BarSegment } from './svelte/controls/segment-bar';
-export { default as SegmentBar } from './svelte/controls/segment-bar.svelte';
-export { default as Toggle } from './svelte/controls/toggle.svelte';
-export { default as CellWithProvenance } from './svelte/overlays/cell-with-provenance.svelte';
-export { default as Drawer } from './svelte/overlays/drawer.svelte';
-export { default as Popover } from './svelte/overlays/popover.svelte';
-export {
-  type ProvenanceMarkerFact,
-  provenanceMarkerGlyph,
-  provenanceTitle,
-} from './svelte/overlays/provenance';
-export { default as ProvenanceMarker } from './svelte/overlays/provenance-marker.svelte';
-export {
-  drawer,
-  drawerActions,
-  drawerBody,
-  drawerCompare,
-  drawerGrid,
-  drawerLegend,
-  drawerLegendItem,
-  drawerLegendSwatch,
-  drawerLegendValue,
-  drawerNav,
-  drawerPosition,
-  drawerTitle,
-  drawerTop,
-} from './svelte/overlays/styles';
-export { default as Tooltip } from './svelte/overlays/tooltip.svelte';
+  title,
+  titleBlock,
+  unavailableText,
+} from './svelte-passive';

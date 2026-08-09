@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { MultiSelect, Tooltip } from '@ai-usage/design-system/svelte';
+  import MultiSelect from '@ai-usage/design-system/svelte/multi-select';
+  import Tooltip from '@ai-usage/design-system/svelte/tooltip';
   import type { SessionOrigin } from '@ai-usage/report-core/session-query';
   import type { Snippet } from 'svelte';
   import type { DashboardSearch } from '../../../../dashboard-search';

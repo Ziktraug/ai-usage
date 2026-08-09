@@ -1,6 +1,6 @@
 <script lang="ts">
   import { css } from '@ai-usage/design-system/css';
-  import { Tabs } from '@ai-usage/design-system/svelte';
+  import Tabs from '@ai-usage/design-system/svelte/tabs';
   import type { AnalyticsGroup } from '@ai-usage/report-core/analytics';
   import type { ProjectGroupConfig } from '@ai-usage/report-core/project-group';
   import type { ProjectGroup } from '../../../../dashboard-analytics';

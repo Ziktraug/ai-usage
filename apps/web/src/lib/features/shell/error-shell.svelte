@@ -11,7 +11,7 @@
     shell,
     title,
     titleBlock,
-  } from '@ai-usage/design-system/svelte';
+  } from '@ai-usage/design-system/svelte/passive';
 
   let {
     message = 'Report data could not be loaded.',

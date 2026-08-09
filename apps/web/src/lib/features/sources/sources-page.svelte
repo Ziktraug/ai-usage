@@ -1,6 +1,6 @@
 <script lang="ts">
   import { css, cx } from '@ai-usage/design-system/css';
-  import { header, meta, page, panel, shell, title, titleBlock } from '@ai-usage/design-system/svelte';
+  import { header, meta, page, panel, shell, title, titleBlock } from '@ai-usage/design-system/svelte/passive';
   import type { CollectionSourceGroup, SourceControlCommand } from '@ai-usage/report-core/source-control';
   import { onDestroy } from 'svelte';
   import { fmtDate, fmtNum } from '../../foundation/presentation/format';

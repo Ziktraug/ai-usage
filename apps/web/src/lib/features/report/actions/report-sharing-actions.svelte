@@ -1,6 +1,6 @@
 <script lang="ts">
   import { css, cx } from '@ai-usage/design-system/css';
-  import { ghostButton } from '@ai-usage/design-system/svelte';
+  import { ghostButton } from '@ai-usage/design-system/svelte/passive';
   import {
     browserSharingEnvironment,
     copyExactBreakdownUrl,

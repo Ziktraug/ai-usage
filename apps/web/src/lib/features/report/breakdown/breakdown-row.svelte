@@ -11,7 +11,7 @@
     groupSub,
     groupValue,
     right,
-  } from '@ai-usage/design-system/svelte';
+  } from '@ai-usage/design-system/svelte/passive';
   import { fmtPct } from '../../../foundation/presentation/format';
   import type { BreakdownRowView } from './model';
   import { partialBarTrack } from './styles';

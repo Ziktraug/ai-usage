@@ -12,6 +12,54 @@
       "types": "./src/svelte.ts",
       "import": "./src/svelte.ts"
     },
+    "./svelte/passive": {
+      "types": "./src/svelte-passive.ts",
+      "import": "./src/svelte-passive.ts"
+    },
+    "./svelte/cell-with-provenance": {
+      "types": "./src/svelte/overlays/cell-with-provenance.svelte",
+      "import": "./src/svelte/overlays/cell-with-provenance.svelte"
+    },
+    "./svelte/checkbox": {
+      "types": "./src/svelte/controls/checkbox.svelte",
+      "import": "./src/svelte/controls/checkbox.svelte"
+    },
+    "./svelte/drawer": {
+      "types": "./src/svelte/overlays/drawer.svelte",
+      "import": "./src/svelte/overlays/drawer.svelte"
+    },
+    "./svelte/harness-badge": {
+      "types": "./src/svelte/controls/harness-badge.svelte",
+      "import": "./src/svelte/controls/harness-badge.svelte"
+    },
+    "./svelte/multi-select": {
+      "types": "./src/svelte/compound/multi-select.svelte",
+      "import": "./src/svelte/compound/multi-select.svelte"
+    },
+    "./svelte/popover": {
+      "types": "./src/svelte/overlays/popover.svelte",
+      "import": "./src/svelte/overlays/popover.svelte"
+    },
+    "./svelte/provenance-marker": {
+      "types": "./src/svelte/overlays/provenance-marker.svelte",
+      "import": "./src/svelte/overlays/provenance-marker.svelte"
+    },
+    "./svelte/segmented-control": {
+      "types": "./src/svelte/compound/segmented-control.svelte",
+      "import": "./src/svelte/compound/segmented-control.svelte"
+    },
+    "./svelte/tabs": {
+      "types": "./src/svelte/compound/tabs.svelte",
+      "import": "./src/svelte/compound/tabs.svelte"
+    },
+    "./svelte/toggle": {
+      "types": "./src/svelte/controls/toggle.svelte",
+      "import": "./src/svelte/controls/toggle.svelte"
+    },
+    "./svelte/tooltip": {
+      "types": "./src/svelte/overlays/tooltip.svelte",
+      "import": "./src/svelte/overlays/tooltip.svelte"
+    },
     "./preset": {
       "types": "./src/preset.ts",
       "import": "./src/preset.ts"

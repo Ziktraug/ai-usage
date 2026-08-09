@@ -51,7 +51,7 @@
 </script>
 
 <script lang="ts">
-  import { Popover } from '@ai-usage/design-system/svelte';
+  import Popover from '@ai-usage/design-system/svelte/popover';
 
   let { hint, label, value }: { hint?: string; label: string; value: string } = $props();
 </script>

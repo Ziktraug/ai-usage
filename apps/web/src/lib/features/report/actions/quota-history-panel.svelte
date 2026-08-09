@@ -1,6 +1,6 @@
 <script lang="ts">
   import { css } from '@ai-usage/design-system/css';
-  import { Drawer } from '@ai-usage/design-system/svelte';
+  import Drawer from '@ai-usage/design-system/svelte/drawer';
   import type { ProviderQuotaHistoryResult } from '@ai-usage/report-core/provider-quota';
   import {
     buildProviderQuotaHistoryModel,

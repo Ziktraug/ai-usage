@@ -1,14 +1,14 @@
 <!-- biome-ignore-all lint/a11y/useValidAriaValues: Svelte emits the closed boolean WAI-ARIA value asserted by SSR tests -->
 <script lang="ts">
+  import CellWithProvenance from '@ai-usage/design-system/svelte/cell-with-provenance';
+  import HarnessBadge from '@ai-usage/design-system/svelte/harness-badge';
+  import ProvenanceMarker from '@ai-usage/design-system/svelte/provenance-marker';
   import {
-    CellWithProvenance,
     filterTextButton,
-    HarnessBadge,
     highlightMark,
     muted,
-    ProvenanceMarker,
     sessionTitleClamp,
-  } from '@ai-usage/design-system/svelte';
+  } from '@ai-usage/design-system/svelte/passive';
   import type { SessionPresentationRow } from '@ai-usage/report-core/session-query';
   import type { SessionColumnId } from '../../../../session-table-schema';
   import { applySessionFieldFilter, projectSessionCell } from './session-cell-projection';

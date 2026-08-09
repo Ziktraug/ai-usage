@@ -1,6 +1,6 @@
 <script lang="ts">
   import { css } from '@ai-usage/design-system/css';
-  import { MetricTile } from '@ai-usage/design-system/svelte';
+  import { MetricTile } from '@ai-usage/design-system/svelte/passive';
   import type { CursorCommitAttributionFacet } from '../../../../report-data';
   import { fmtDate, fmtNum, fmtPct } from '../../../foundation/presentation/format';
   import { summarizeCursorAiPercentage } from './cursor';

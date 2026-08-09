@@ -1,6 +1,6 @@
 <script lang="ts">
   import { css, cx } from '@ai-usage/design-system/css';
-  import { panel, panelSub, panelTitle } from '@ai-usage/design-system/svelte';
+  import { panel, panelSub, panelTitle } from '@ai-usage/design-system/svelte/passive';
   import type { Snippet } from 'svelte';
   import { count } from '../../../../skills-page-model';
   import type { SkillsManagementPlanController } from './management-plan-controller';
