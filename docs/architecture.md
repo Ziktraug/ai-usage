@@ -238,6 +238,10 @@ source adapter, artifact runner, or filesystem lease.
 Owns the durable SQLite schema and explicitly separate exports:
 
 - `./reader`: existing-store compatibility and bounded query-only reads;
+- `./performance-testing`: benchmark-only, server-only Session query
+  instrumentation. It is inert unless `AI_USAGE_PERF=1`, may be imported only
+  by the Web server hook (plus repository benchmark tooling), and is never a
+  browser or general production API;
 - `./writer`: migrations, normalized imports, enrichment, merge mutations,
   checkpoints, atomic served-revision publication, recovery, and retention;
 - `./testing`: mixed temporary-store fixtures for tests only.

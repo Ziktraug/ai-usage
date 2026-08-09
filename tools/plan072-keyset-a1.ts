@@ -27,8 +27,28 @@ const DEFAULT_OUTPUT = path.join(ROOT, 'docs/performance/artifacts/plan072-keyse
 const FIXTURE_SIZES = [5000, 20_000] as const;
 const PAGE_SIZE = 200;
 const RECORDED_SAMPLE_COUNT = 3;
+const PRODUCTION_SESSIONS_PER_CLASSIFIER_CAMPAIGN = 5000;
+const STOP_A1_SLICE_SHARE_THRESHOLD = 0.1;
+const FOUR_TIMES_FIXTURE_GROWTH = 4;
+const SUPERLINEAR_GROWTH_TOLERANCE = 1.1;
+const CODEX_SESSION_INTERVAL = 5;
+const TOKEN_UNIT_PERIOD = 1000;
+const PROJECT_VARIETY = 40;
+const SESSION_INTERVAL_MS = 60_000;
+const REVISION_TTL_MS = 600_000;
+const REVISION_A_NOW_MS = 1000;
+const REVISION_B_NOW_MS = 2000;
+const DATE_BASE_YEAR = 2026;
+const DATE_BASE_MONTH_INDEX = 0;
+const DATE_BASE_DAY = 1;
+const COST_UNIT_DIVISOR = 100;
+const DURATION_UNIT_MS = 10;
+const TOKEN_TOTAL_MULTIPLIER = 3;
+const MODEL_PROVIDER_VARIANT_COUNT = 2;
 const REVISION_A = 'plan072-revision-a';
 const REVISION_B = 'plan072-revision-b';
+const REVISION_TRANSITION_FIXTURE_SIZE = FIXTURE_SIZES[0];
+const LARGE_FIXTURE_SIZE = FIXTURE_SIZES[1];
 
 type FixtureSize = (typeof FIXTURE_SIZES)[number];
 
@@ -63,6 +83,11 @@ interface ScenarioMeasurement {
 
 export interface ProbeOutput {
   readonly configuration: {
+    readonly fixtures: readonly {
+      readonly campaignCount: number;
+      readonly classifierSessionCount: number;
+      readonly sessionCount: FixtureSize;
+    }[];
     readonly fixtureSizes: readonly FixtureSize[];
     readonly pageSize: number;
     readonly recordedSampleCount: number;
@@ -83,7 +108,7 @@ export interface ProbeOutput {
   };
   readonly scenarios: readonly ScenarioMeasurement[];
   readonly tool: 'plan072-keyset-a1';
-  readonly version: 2;
+  readonly version: 3;
 }
 
 const baseFilters = (): SessionQueryRequest['filters'] => ({
@@ -152,34 +177,36 @@ const supportFor = (sessionCount: number): FocusedReportSupport => ({
 
 const fixtureRow = (index: number, revision: string): SerializedRow => {
   const sourceSessionId = `${revision}-session-${index}`;
-  const classifier = index % 4 === 3;
+  const classifier = index > 0 && (index + 1) % PRODUCTION_SESSIONS_PER_CLASSIFIER_CAMPAIGN === 0;
   const rootIndex = classifier ? index - 1 : index;
   const rootSourceSessionId = `${revision}-session-${rootIndex}`;
-  const harness = rootIndex % 5 === 0 ? 'Codex' : 'Claude Code';
-  const harnessKey = rootIndex % 5 === 0 ? 'codex' : 'claude';
-  const date = new Date(Date.UTC(2026, 0, 1) + index * 60_000).toISOString();
-  const tokenUnit = (index % 1000) + 1;
+  const harness = rootIndex % CODEX_SESSION_INTERVAL === 0 ? 'Codex' : 'Claude Code';
+  const harnessKey = rootIndex % CODEX_SESSION_INTERVAL === 0 ? 'codex' : 'claude';
+  const date = new Date(
+    Date.UTC(DATE_BASE_YEAR, DATE_BASE_MONTH_INDEX, DATE_BASE_DAY) + index * SESSION_INTERVAL_MS,
+  ).toISOString();
+  const tokenUnit = (index % TOKEN_UNIT_PERIOD) + 1;
   return {
     activeDate: date,
     calls: tokenUnit,
-    costActual: tokenUnit / 100,
-    costApprox: tokenUnit / 100,
+    costActual: tokenUnit / COST_UNIT_DIVISOR,
+    costApprox: tokenUnit / COST_UNIT_DIVISOR,
     costKnown: true,
-    costQuota: tokenUnit / 100,
+    costQuota: tokenUnit / COST_UNIT_DIVISOR,
     date,
-    durationMs: tokenUnit * 10,
+    durationMs: tokenUnit * DURATION_UNIT_MS,
     endDate: date,
-    freshTokens: tokenUnit * 3,
+    freshTokens: tokenUnit * TOKEN_TOTAL_MULTIPLIER,
     harness,
     lineDelta: 1,
     linesAdded: 1,
     linesDeleted: 0,
-    model: index % 2 === 0 ? 'gpt-5.4' : 'claude-opus-4-6',
+    model: index % MODEL_PROVIDER_VARIANT_COUNT === 0 ? 'gpt-5.4' : 'claude-opus-4-6',
     name: sourceSessionId,
     origin: classifier ? 'classifier' : 'human',
     partial: false,
-    project: `project-${index % 40}`,
-    provider: index % 2 === 0 ? 'Codex API' : 'Anthropic',
+    project: `project-${index % PROJECT_VARIETY}`,
+    provider: index % MODEL_PROVIDER_VARIANT_COUNT === 0 ? 'Codex API' : 'Anthropic',
     rtkCommandCount: 0,
     rtkInputTokens: 0,
     rtkOutputTokens: 0,
@@ -198,7 +225,7 @@ const fixtureRow = (index: number, revision: string): SerializedRow => {
     tokCw: tokenUnit,
     tokIn: tokenUnit,
     tokOut: tokenUnit,
-    tokenTotal: tokenUnit * 3,
+    tokenTotal: tokenUnit * TOKEN_TOTAL_MULTIPLIER,
     tools: tokenUnit,
     turns: tokenUnit,
   };
@@ -218,9 +245,9 @@ const publishFixture = async (dbPath: string, size: FixtureSize, revision: strin
         support: supportFor(rows.length),
       }),
       dbPath,
-      now: revision === REVISION_A ? 1000 : 2000,
+      now: revision === REVISION_A ? REVISION_A_NOW_MS : REVISION_B_NOW_MS,
       revision,
-      ttlMs: 600_000,
+      ttlMs: REVISION_TTL_MS,
     }),
   );
 };
@@ -359,7 +386,7 @@ export const runProbe = async (outputPath = DEFAULT_OUTPUT): Promise<ProbeOutput
         }),
       );
       await publishFixture(dbPath, fixtureSize, REVISION_A);
-      if (fixtureSize === 5000) {
+      if (fixtureSize === REVISION_TRANSITION_FIXTURE_SIZE) {
         await publishFixture(dbPath, fixtureSize, REVISION_B);
         revisionTransition = measureRevisionTransition(dbPath);
       }
@@ -368,13 +395,15 @@ export const runProbe = async (outputPath = DEFAULT_OUTPUT): Promise<ProbeOutput
       }
     }
     if (!revisionTransition) {
-      throw new Error('The 5,000-row revision transition was not measured');
+      throw new Error(
+        `The ${REVISION_TRANSITION_FIXTURE_SIZE.toLocaleString()}-row revision transition was not measured`,
+      );
     }
     const dateFiveThousand = scenarios.find(
-      (scenario) => scenario.fixtureSize === 5000 && scenario.label === 'date-desc',
+      (scenario) => scenario.fixtureSize === REVISION_TRANSITION_FIXTURE_SIZE && scenario.label === 'date-desc',
     );
     const dateTwentyThousand = scenarios.find(
-      (scenario) => scenario.fixtureSize === 20_000 && scenario.label === 'date-desc',
+      (scenario) => scenario.fixtureSize === LARGE_FIXTURE_SIZE && scenario.label === 'date-desc',
     );
     if (!(dateFiveThousand && dateTwentyThousand)) {
       throw new Error('Both date-desc fixture sizes must be measured');
@@ -384,10 +413,21 @@ export const runProbe = async (outputPath = DEFAULT_OUTPUT): Promise<ProbeOutput
     const sliceAtFiveThousand = dateFiveThousand.median.sqlite.phases.slice.totalMs;
     const sliceAtTwentyThousand = dateTwentyThousand.median.sqlite.phases.slice.totalMs;
     const sliceGrowthRatio = sliceAtFiveThousand === 0 ? 0 : sliceAtTwentyThousand / sliceAtFiveThousand;
-    const superlinearGrowthObserved = sliceGrowthRatio > 4.4;
-    const keysetRejected = shareAtFiveThousand < 0.1 && !superlinearGrowthObserved;
+    const superlinearGrowthObserved = sliceGrowthRatio > FOUR_TIMES_FIXTURE_GROWTH * SUPERLINEAR_GROWTH_TOLERANCE;
+    const keysetRejected =
+      shareAtFiveThousand < STOP_A1_SLICE_SHARE_THRESHOLD &&
+      shareAtTwentyThousand < STOP_A1_SLICE_SHARE_THRESHOLD &&
+      !superlinearGrowthObserved;
     const output: ProbeOutput = {
       configuration: {
+        fixtures: FIXTURE_SIZES.map((sessionCount) => {
+          const classifierSessionCount = Math.floor(sessionCount / PRODUCTION_SESSIONS_PER_CLASSIFIER_CAMPAIGN);
+          return {
+            campaignCount: sessionCount - classifierSessionCount,
+            classifierSessionCount,
+            sessionCount,
+          };
+        }),
         fixtureSizes: FIXTURE_SIZES,
         pageSize: PAGE_SIZE,
         recordedSampleCount: RECORDED_SAMPLE_COUNT,
@@ -406,7 +446,7 @@ export const runProbe = async (outputPath = DEFAULT_OUTPUT): Promise<ProbeOutput
       revisionTransition,
       scenarios,
       tool: 'plan072-keyset-a1',
-      version: 2,
+      version: 3,
     };
     await writeFile(outputPath, `${JSON.stringify(output, null, 2)}\n`, 'utf8');
     return output;

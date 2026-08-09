@@ -1,6 +1,6 @@
 <script lang="ts">
   import { css } from '@ai-usage/design-system/css';
-  import { header, meta, page, shell, title, titleBlock } from '@ai-usage/design-system/svelte/passive';
+  import { header, meta, page, shell, title, titleBlock } from '@ai-usage/design-system/svelte';
   import { useQueryClient } from '@tanstack/svelte-query';
   import { browser } from '$app/environment';
   import { buildSyncFleetMachineViews, manualTransferMutationAvailability } from '../../../manual-transfer-model';

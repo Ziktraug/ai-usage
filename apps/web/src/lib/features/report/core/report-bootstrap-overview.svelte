@@ -1,6 +1,6 @@
 <script lang="ts">
   import { css } from '@ai-usage/design-system/css';
-  import { panel, panelSub, panelTitle } from '@ai-usage/design-system/svelte/passive';
+  import { panel, panelSub, panelTitle } from '@ai-usage/design-system/svelte';
   import type { ReportOverviewItem } from './report-view-model';
 
   let {

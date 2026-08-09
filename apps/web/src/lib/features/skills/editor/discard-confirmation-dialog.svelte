@@ -1,6 +1,6 @@
 <script lang="ts">
   import { css } from '@ai-usage/design-system/css';
-  import { commandButton, panelSub, panelTitle } from '@ai-usage/design-system/svelte/passive';
+  import { commandButton, panelSub, panelTitle } from '@ai-usage/design-system/svelte';
   import { onDestroy, tick } from 'svelte';
   import { createDiscardDialogController } from './discard-dialog-controller';
 

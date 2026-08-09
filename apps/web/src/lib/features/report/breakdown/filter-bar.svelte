@@ -1,6 +1,5 @@
 <script lang="ts">
-  import MultiSelect from '@ai-usage/design-system/svelte/multi-select';
-  import Tooltip from '@ai-usage/design-system/svelte/tooltip';
+  import { MultiSelect, Tooltip } from '@ai-usage/design-system/svelte';
   import type { SessionOrigin } from '@ai-usage/report-core/session-query';
   import type { Snippet } from 'svelte';
   import type { DashboardSearch } from '../../../../dashboard-search';
@@ -85,11 +84,19 @@
     {/if}
     {#if freshnessStatus}
       {#if freshnessUnavailable}
-        <section aria-label="Collection source status" aria-live="polite" class={button}>
-          <Tooltip content="No source freshness observation is available for this report revision.">
-            <span>{freshnessStatus}</span>
-          </Tooltip>
-        </section>
+        <Tooltip content="No source freshness observation is available for this report revision.">
+          {#snippet trigger(_triggerProps)}
+            <button
+              {..._triggerProps}
+              aria-label="Collection source status"
+              aria-live="polite"
+              class={button}
+              type="button"
+            >
+              {freshnessStatus}
+            </button>
+          {/snippet}
+        </Tooltip>
       {:else}
         <section aria-label="Collection source status" aria-live="polite" class={button}>
           {freshnessStatus}

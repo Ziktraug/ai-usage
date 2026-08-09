@@ -4,7 +4,6 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const overlayDirectory = dirname(fileURLToPath(import.meta.url));
-const POPOVER_LABELLED_BY_PATTERN = /aria-labelledby=\{`\$\{popoverId\}-trigger`\}/u;
 
 const readOverlay = async (name: string): Promise<string> => readFile(resolve(overlayDirectory, name), 'utf8');
 
@@ -30,60 +29,23 @@ describe('Svelte overlay components', () => {
     expect(source).toContain('prefers-reduced-motion: reduce');
   });
 
-  test('Popover uses the native HTML popover API, SSR-safe ids, 4px gutter, focus return, dialog semantics, and live repositioning', async () => {
+  test('Popover remains lazy, portalled, dismissible, and positioned with a four-pixel gutter', async () => {
     const source = await readOverlay('popover.svelte');
-    expect(source).toContain('popover="auto"');
-    expect(source).toContain('onclick={onTriggerClick}');
-    expect(source).toContain('isMounted = true');
-    expect(source).not.toContain('popovertarget={popoverId}');
-    expect(source).toContain('POPOVER_GUTTER_PX = 4');
+    expect(source).toContain('lazyMount positioning={{ gutter: 4 }} unmountOnExit');
+    expect(source).toContain('<Portal>');
     expect(source).toContain('type="button"');
     expect(source).toContain('triggerAriaLabel');
     expect(source).toContain('triggerTitle');
-    expect(source).toContain('$props.id()');
-    expect(source).not.toContain('Math.random');
-    expect(source).toContain('role="dialog"');
-    expect(source).toMatch(POPOVER_LABELLED_BY_PATTERN);
-    expect(source).toContain("addEventListener('resize', onResize)");
-    expect(source).toContain("addEventListener('scroll', onCaptureScroll, { capture: true, passive: true })");
-    expect(source).toContain('popoverElement.getBoundingClientRect().height');
-    expect(source).not.toContain('+ 200 < viewportHeight');
-    expect(source).toContain('inset: auto');
-    expect(source).toContain('margin: 0');
-    expect(source).toContain('position: fixed');
-    expect(source).toContain('new ResizeObserver');
-    expect(source).toContain('resizeObserver.disconnect()');
-    expect(source).toContain('max-height: calc(100vh - 8px)');
-    expect(source).toContain('overflow: auto');
-    expect(source).not.toContain('popoverPositionerClass');
-    expect(source).not.toContain('@ark-ui');
-    expect(source).not.toContain('<Portal>');
   });
 
-  test('Tooltip is a lightweight local implementation with SSR-safe ids, 300ms delay, focusable-child aria-describedby, scroll/resize close, and portal placement', async () => {
+  test('Tooltip keeps the 300ms default, arbitrary content, caller-owned trigger, lazy portal, and cleanup owner', async () => {
     const source = await readOverlay('tooltip.svelte');
     expect(source).toContain('openDelay = 300');
     expect(source).toContain('content: Snippet | string');
-    expect(source).toContain('role="tooltip"');
-    expect(source).toContain('use:describeFocusable={isOpen ? tooltipId : null}');
-    expect(source).toContain('onfocusin={onFocusIn}');
-    expect(source).toContain('onmouseenter={onMouseEnter}');
-    expect(source).toContain('onmouseleave={onMouseLeave}');
-    expect(source).toContain('TOOLTIP_GUTTER_PX = 4');
-    expect(source).toContain('use:portalElement');
-    expect(source).toContain('style:pointer-events="none"');
-    expect(source).toContain("addEventListener('resize', hide)");
-    expect(source).toContain("addEventListener('scroll', hide, { capture: true, passive: true })");
-    expect(source).toContain('$props.id()');
-    expect(source).not.toContain('Math.random');
-    expect(source).not.toContain('aria-describedby={isOpen ? tooltipId : undefined}');
-    expect(source).toContain('FOCUSABLE_SELECTOR');
-    expect(source).toContain('MutationObserver');
-    expect(source).toContain('new ResizeObserver');
-    expect(source).toContain('resizeObserver.disconnect()');
-    expect(source).not.toContain('@ark-ui');
-    expect(source).not.toContain('<Portal>');
-    expect(source).toContain('prefers-reduced-motion: reduce');
+    expect(source).toContain('{@render trigger(_getTriggerProps())}');
+    expect(source).not.toContain('<span');
+    expect(source).toContain('lazyMount {openDelay} unmountOnExit');
+    expect(source).toContain('<Portal>');
   });
 
   test('the fixture directly consumes every overlay without a feature barrel', async () => {
@@ -102,7 +64,7 @@ describe('Svelte overlay components', () => {
     expect(source).toContain('<CellWithProvenance {facts}>');
   });
 
-  test('the bounded system-Chrome proof asserts popover geometry, focusable-describedby, top-layer placement, and reposition/close', async () => {
+  test('the bounded system-Chrome proof owns error assertions and all-settled cleanup', async () => {
     const source = await readOverlay('overlays.browser.ts');
     for (const contract of [
       "Bun.which('google-chrome')",
@@ -111,15 +73,9 @@ describe('Svelte overlay components', () => {
       'setDefaultTimeout(ACTION_TIMEOUT_MS)',
       'browserErrors.length',
       'Promise.allSettled',
-      'getBoundingClientRect',
-      "getAttribute('aria-describedby')",
-      'parentElement?.tagName',
-      "matches(':popover-open')",
-      "window.dispatchEvent(new Event('resize'))",
-      'Drawer/Popover/Tooltip focus, Escape, outside, lazy, portal, reduced-motion, provenance, and cleanup parity',
+      'Drawer/Popover/Tooltip focus, Tab, Shift+Tab, Escape, outside, lazy, portal, reduced-motion, provenance, and cleanup parity',
     ]) {
       expect(source).toContain(contract);
     }
-    expect(source).not.toContain('outsideTarget.click({ force: true })');
   });
 });

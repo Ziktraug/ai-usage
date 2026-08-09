@@ -268,6 +268,12 @@
     target: SessionAnalysisTarget;
   } = $props();
 
+  const PROMPT_PREVIEW_CHARACTER_LIMIT = 120;
+  const INTEGER_PERCENT_THRESHOLD = 10;
+  const SUB_DOLLAR_THRESHOLD = 1;
+  const MULTIPLE_PHASE_THRESHOLD = 2;
+  const FULL_PERCENT = 100;
+
   const dateTimeFormatter = new Intl.DateTimeFormat('en', {
     day: '2-digit',
     hour: '2-digit',
@@ -291,14 +297,15 @@
   const fmtDateTime = (value: string): string => dateTimeFormatter.format(new Date(value));
   const fmtTokens = (value: number): string => compactNumberFormatter.format(value);
   const fmtCount = (count: number, noun: string): string => `${fmtTokens(count)} ${count === 1 ? noun : `${noun}s`}`;
-  const fmtShare = (share: number): string => `${share >= 10 ? share.toFixed(0) : share.toFixed(1)}%`;
+  const fmtShare = (share: number): string =>
+    `${share >= INTEGER_PERCENT_THRESHOLD ? share.toFixed(0) : share.toFixed(1)}%`;
   const fmtEffort = (phase: Pick<SessionDetailPhase, 'effort' | 'effortKind'>): string =>
     phase.effort ?? (phase.effortKind === 'default' ? 'default effort' : 'effort not recorded');
   const formatCost = (phase: SessionDetailPhase): string => {
     if (phase.cost === null) {
       return 'price unknown';
     }
-    const value = (phase.cost >= 1 ? moneyFormatter : subDollarFormatter).format(phase.cost);
+    const value = (phase.cost >= SUB_DOLLAR_THRESHOLD ? moneyFormatter : subDollarFormatter).format(phase.cost);
     return phase.costKind === 'approximate' ? `≈ ${value}` : `${value} reported`;
   };
   const phaseKey = (phase: SessionDetailPhase): string => `${phase.model}\0${phase.effortKind}\0${phase.effort ?? ''}`;
@@ -321,7 +328,9 @@
   };
   const preview = (text: string): string => {
     const normalized = text.replace(/\s+/g, ' ').trim();
-    return normalized.length > 120 ? `${normalized.slice(0, 120).trimEnd()}…` : normalized;
+    return normalized.length > PROMPT_PREVIEW_CHARACTER_LIMIT
+      ? `${normalized.slice(0, PROMPT_PREVIEW_CHARACTER_LIMIT).trimEnd()}…`
+      : normalized;
   };
   const unavailableTitles = {
     'history-unavailable': 'Local history unavailable',
@@ -398,14 +407,14 @@
     return { endAt, startAt: first.startAt };
   };
   const taskTone = (row: Extract<SessionTimelineRow, { kind: 'task' }>): number | undefined => {
-    if (chronologicalPhases.length < 2) {
+    if (chronologicalPhases.length < MULTIPLE_PHASE_THRESHOLD) {
       return;
     }
     const phase = phaseAt(chronologicalPhases, taskBounds(row)?.startAt ?? row.startAt);
     return phase ? phaseToneIndex(phase, chronologicalPhases) : undefined;
   };
   const showTaskPhaseMeta = (row: Extract<SessionTimelineRow, { kind: 'task' }>): boolean =>
-    chronologicalPhases.length > 1 &&
+    chronologicalPhases.length >= MULTIPLE_PHASE_THRESHOLD &&
     (!dominantPhase ||
       row.model !== dominantPhase.model ||
       row.effort !== dominantPhase.effort ||
@@ -636,7 +645,7 @@
                     </div>
                     <div class={tokenCell}>
                       <span aria-hidden="true" class={tokenTrack}
-                        ><span class={tokenBar} style:width={`${row.tokenShareOfMax * 100}%`}></span></span
+                        ><span class={tokenBar} style:width={`${row.tokenShareOfMax * FULL_PERCENT}%`}></span></span
                       ><span class={tokenValue}>{fmtTokens(row.tokens.total)}</span>
                     </div>
                   </li>
@@ -690,7 +699,7 @@
         {/if}
       </section>
 
-      {#if chronologicalPhases.length > 1}
+      {#if chronologicalPhases.length >= MULTIPLE_PHASE_THRESHOLD}
         <section aria-labelledby="session-model-phases" class={section}>
           <div class={sectionHeader}>
             <h3 class={sectionHeading} id="session-model-phases">Model and effort phases</h3>
@@ -735,7 +744,7 @@
           <span aria-hidden="true" class={cx(phaseDot, phaseTone(chronologicalPhases[0], chronologicalPhases))}></span>
           <span
             >{chronologicalPhases[0].model}
-            · {fmtEffort(chronologicalPhases[0])} · 100% tokens · {formatCost(chronologicalPhases[0])}</span
+            · {fmtEffort(chronologicalPhases[0])} · {FULL_PERCENT}% tokens · {formatCost(chronologicalPhases[0])}</span
           >
         </div>
       {/if}

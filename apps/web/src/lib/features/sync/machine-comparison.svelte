@@ -1,7 +1,7 @@
 <!-- biome-ignore-all lint/a11y/noNoninteractiveTabindex: the horizontally scrollable comparison must remain keyboard-reachable -->
 <script lang="ts">
   import { css, cx } from '@ai-usage/design-system/css';
-  import { panelSub, panelTitle } from '@ai-usage/design-system/svelte/passive';
+  import { panelSub, panelTitle } from '@ai-usage/design-system/svelte';
   import type { SyncFleetComparisonRow } from '../../../sync-machine-comparison-model';
   import {
     desktopTableSurface,

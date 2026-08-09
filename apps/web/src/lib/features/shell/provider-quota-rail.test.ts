@@ -75,27 +75,6 @@ describe('provider quota rail', () => {
     expect(severityAt(12, true)).toBe('danger');
   });
 
-  test('gives each window its own severity instead of the provider headline', () => {
-    const entries = buildProviderQuotaRail(
-      dataset([
-        status({
-          key: 'codex',
-          windows: [
-            window({ id: '5h', label: '5h', usedPercent: 12 }),
-            window({ id: 'weekly', label: 'Weekly', usedPercent: 94 }),
-          ],
-        }),
-      ]),
-      NOW,
-    );
-    const codex = entries.find((entry) => entry.key === 'codex');
-
-    // The provider reads as warning because of its worst window, but a barely-touched 5h allowance
-    // must not inherit that alarm — the two bars have to look different.
-    expect(codex?.severity).toBe('warning');
-    expect(codex?.windows.map((entryWindow) => entryWindow.severity)).toEqual(['ok', 'warning']);
-  });
-
   test('treats a sign-in failure as danger rather than an empty ring', () => {
     const entries = buildProviderQuotaRail(dataset([status({ key: 'codex', state: 'auth-required' })]), NOW);
     const codex = entries.find((entry) => entry.key === 'codex');
@@ -124,27 +103,15 @@ describe('provider quota rail', () => {
     expect(codex?.usedPercent).toBe(71);
   });
 
-  test('flags an aged reading and reports how old it is', () => {
+  test('demotes a live reading that has aged out to a stale explanation', () => {
     const entries = buildProviderQuotaRail(
       dataset([status({ generatedAt: '2026-08-07T11:00:00.000Z', key: 'codex', windows: [window()] })]),
       NOW,
     );
     const codex = entries.find((entry) => entry.key === 'codex');
 
-    // Quota moves fast: a reading an hour old can be tens of points wrong, so the percentage must
-    // never be presented as confidently as a live one.
-    expect(codex?.stale).toBe(true);
-    expect(codex?.ageMs).toBe(3_600_000);
     expect(codex?.reason).toBe('Last reading is out of date');
     expect(codex?.severity).toBe('ok');
-  });
-
-  test('leaves a fresh reading unflagged', () => {
-    const entries = buildProviderQuotaRail(dataset([status({ key: 'codex', windows: [window()] })]), NOW);
-    const codex = entries.find((entry) => entry.key === 'codex');
-
-    expect(codex?.stale).toBe(false);
-    expect(codex?.ageMs).toBe(0);
   });
 
   test('survives a missing dataset and reports that nothing is measured', () => {

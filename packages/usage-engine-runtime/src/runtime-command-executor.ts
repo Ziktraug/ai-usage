@@ -3,7 +3,6 @@ import type {
   SourceControlEntryView,
   SourceControlView,
 } from '@ai-usage/report-core/source-control';
-import { providerUsageSourceIds } from '@ai-usage/report-core/source-control';
 import {
   type UsageEngineCollectionOutput,
   type UsageEngineCommand,
@@ -115,7 +114,7 @@ export const createRuntimeCommandExecutor = (
         await dependencies.mutation.setCampaignLabelOverride(command, signal);
         return;
       case 'collect-fresh-quota':
-        return await collectSources([...providerUsageSourceIds]);
+        return await collectSources(['codex.usage-limits']);
       case 'import-cursor': {
         const output = await dependencies.mutation.importCursor(command, signal);
         try {

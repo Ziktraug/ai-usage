@@ -12,6 +12,8 @@
   import type { SkillsManagementPlanController } from '../shell/management-plan-controller';
   import type { SkillsShellSlotContext } from '../shell/slot-context';
   import {
+    previewReconcileOperation,
+    reconcileAllOperation,
     runSkillsManagementOperation,
     type SkillsManagementClient,
     type SkillsManagementOperation,
@@ -106,14 +108,14 @@
   {/if}
   <SkillsMatrix
     {...(activeFilter === undefined ? {} : { activeCellStateFilter: activeFilter })}
-    onApplyReconcile={() => execute('reconcile-all', 'reconcile-all')}
+    onApplyReconcile={() => execute(reconcileAllOperation, 'reconcile-all')}
     onCancelReconcile={() => {
       managementPlan.clear();
     }}
     onCellStateFilterChange={(filter) => {
       activeFilter = filter;
     }}
-    onPreviewReconcile={() => execute('preview-reconcile', 'preview-reconcile')}
+    onPreviewReconcile={() => execute(previewReconcileOperation, 'preview-reconcile')}
     {pendingOperation}
     {reconcilePlan}
     snapshot={context.snapshot}

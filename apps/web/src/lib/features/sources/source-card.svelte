@@ -1,6 +1,6 @@
 <script lang="ts">
   import { css, cx } from '@ai-usage/design-system/css';
-  import { meta, panel } from '@ai-usage/design-system/svelte/passive';
+  import { meta, panel } from '@ai-usage/design-system/svelte';
   import type { SourceControlCommand, SourceControlEntryView } from '@ai-usage/report-core/source-control';
   import { fmtDate, fmtNum } from '../../foundation/presentation/format';
   import { presentSourceProgress, presentSourceState, sourceToneClass } from './presentation';

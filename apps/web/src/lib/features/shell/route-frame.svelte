@@ -9,7 +9,7 @@
     shell,
     title,
     titleBlock,
-  } from '@ai-usage/design-system/svelte/passive';
+  } from '@ai-usage/design-system/svelte';
   import type { Snippet } from 'svelte';
 
   let {

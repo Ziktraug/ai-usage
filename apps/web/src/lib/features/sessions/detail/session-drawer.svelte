@@ -13,10 +13,9 @@
 
 <script lang="ts">
   import { cx } from '@ai-usage/design-system/css';
-  import Drawer from '@ai-usage/design-system/svelte/drawer';
-  import HarnessBadge from '@ai-usage/design-system/svelte/harness-badge';
   import {
     type BarSegment,
+    Drawer,
     drawer,
     drawerActions,
     drawerBody,
@@ -32,9 +31,10 @@
     drawerTitle,
     drawerTop,
     ghostButton,
+    HarnessBadge,
     muted,
     SegmentBar,
-  } from '@ai-usage/design-system/svelte/passive';
+  } from '@ai-usage/design-system/svelte';
   import { provenanceForUsageRow } from '@ai-usage/report-core/provenance';
 
   import type { SessionPresentationRow } from '@ai-usage/report-core/session-query';

@@ -1,6 +1,5 @@
 <script lang="ts">
-  import { themeToggleButton } from '@ai-usage/design-system/svelte/passive';
-  import Toggle from '@ai-usage/design-system/svelte/toggle';
+  import { Toggle, themeToggleButton } from '@ai-usage/design-system/svelte';
   import { onMount } from 'svelte';
   import { browserThemePort, createThemeController, type Theme } from './theme';
 

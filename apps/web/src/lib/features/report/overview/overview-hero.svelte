@@ -13,7 +13,7 @@
 
 <script lang="ts">
   import { css, cx } from '@ai-usage/design-system/css';
-  import Tooltip from '@ai-usage/design-system/svelte/tooltip';
+  import { Tooltip } from '@ai-usage/design-system/svelte';
   import type { FocusedReportSummary } from '@ai-usage/report-core/focused-report-query';
   import type { DashboardDateRangeSearch } from '../../../../dashboard-search';
   import { parseLocalDate } from '../../../../date-range';
@@ -37,6 +37,16 @@
   // session counts and the reported spend all come from the server and stay on the last commit —
   // hence the busy marking on that block rather than a silently mismatched set of figures.
   const previewing = $derived(draggedWindowApiValue !== null);
+  const provenanceTrigger = css({
+    appearance: 'none',
+    border: 0,
+    bg: 'transparent',
+    cursor: 'help',
+    font: 'inherit',
+    p: 0,
+    textAlign: 'left',
+    _focusVisible: { outline: '2px solid token(colors.accent)', outlineOffset: '2px' },
+  });
   const measurement = $derived(
     draggedWindowApiValue === null
       ? summary.priceMeasurement
@@ -76,7 +86,16 @@
     <p class={heroValue}>{apiValue.label}</p>
     {#if provenance}
       <Tooltip content={provenance.description}>
-        <span {...provisionalAttributes} class={cx(heroText, previewing && provisional)}>{provenance.label}</span>
+        {#snippet trigger(_triggerProps)}
+          <button
+            {...provisionalAttributes}
+            {..._triggerProps}
+            class={cx(heroText, provenanceTrigger, previewing && provisional)}
+            type="button"
+          >
+            {provenance.label}
+          </button>
+        {/snippet}
       </Tooltip>
     {/if}
     <p {...provisionalAttributes} class={cx(heroText, previewing && provisional)}>

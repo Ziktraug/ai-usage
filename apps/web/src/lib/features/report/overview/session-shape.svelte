@@ -26,8 +26,7 @@
 </script>
 
 <script lang="ts">
-  import HarnessBadge from '@ai-usage/design-system/svelte/harness-badge';
-  import { panel, panelSub, panelTitle } from '@ai-usage/design-system/svelte/passive';
+  import { HarnessBadge, panel, panelSub, panelTitle } from '@ai-usage/design-system/svelte';
   import type {
     FocusedOverviewSessionItem,
     FocusedOverviewView,

@@ -88,10 +88,17 @@ export const buildSkillsMatrixView = (snapshot: SkillManagementSnapshot, filters
 };
 
 export type SkillsManagementOperation =
-  | 'preview-reconcile'
-  | 'reconcile-all'
-  | `reconcile:${string}`
-  | `toggle:${string}`;
+  | { readonly type: 'preview-reconcile' }
+  | { readonly type: 'reconcile-all' }
+  | { readonly skillName: string; readonly type: 'reconcile-skill' }
+  | { readonly enabled: boolean; readonly skillName: string; readonly type: 'toggle-skill' };
+
+export const previewReconcileOperation = { type: 'preview-reconcile' } as const;
+export const reconcileAllOperation = { type: 'reconcile-all' } as const;
+export const reconcileSkillOperation = (skillName: string): SkillsManagementOperation => ({
+  skillName,
+  type: 'reconcile-skill',
+});
 
 export interface SkillsManagementSuccess {
   readonly actions: readonly ProjectionAction[];
@@ -159,23 +166,23 @@ const targetLabel = (snapshot: SkillManagementSnapshot, targetId: string): strin
   snapshot.targets.find((target) => target.id === targetId)?.label ?? targetId;
 
 const managementFallbackMessage = (operation: SkillsManagementOperation): string => {
-  if (operation === 'reconcile-all') {
+  if (operation.type === 'reconcile-all') {
     return 'Reconciled active skills';
   }
-  if (operation.startsWith('reconcile:')) {
-    return `Reconciled ${operation.slice('reconcile:'.length)}`;
+  if (operation.type === 'reconcile-skill') {
+    return `Reconciled ${operation.skillName}`;
   }
-  const payload = operation.slice('toggle:'.length);
-  const enabled = payload.startsWith('enable:');
-  const skillName = payload.slice(enabled ? 'enable:'.length : 'disable:'.length);
-  return `${enabled ? 'Enabled' : 'Disabled'} ${skillName}`;
+  if (operation.type === 'toggle-skill') {
+    return `${operation.enabled ? 'Enabled' : 'Disabled'} ${operation.skillName}`;
+  }
+  return 'Reconcile preview refreshed';
 };
 
 export const skillsManagementSuccessMessage = (
   operation: SkillsManagementOperation,
   result: SkillsManagementSuccess,
 ): string => {
-  if (operation === 'preview-reconcile') {
+  if (operation.type === 'preview-reconcile') {
     return 'Reconcile preview refreshed.';
   }
   const applied = result.actions.filter(
@@ -296,21 +303,23 @@ export const runSkillsManagementOperation = async (
   client: SkillsManagementClient,
   operation: SkillsManagementOperation,
 ): Promise<SkillsManagementResult> => {
-  if (operation === 'preview-reconcile') {
+  if (operation.type === 'preview-reconcile') {
     return unwrapReconcile(await client.previewReconcileAllManagedSkills(), true);
   }
-  if (operation === 'reconcile-all') {
+  if (operation.type === 'reconcile-all') {
     return unwrapReconcile(await client.reconcileAllManagedSkills(), false);
   }
-  if (operation.startsWith('reconcile:')) {
-    return unwrapReconcile(await client.reconcileManagedSkill(operation.slice('reconcile:'.length)), false);
+  if (operation.type === 'reconcile-skill') {
+    return unwrapReconcile(await client.reconcileManagedSkill(operation.skillName), false);
   }
-  const separator = operation.indexOf(':');
-  const payload = operation.slice(separator + 1);
-  const enabled = payload.startsWith('enable:');
-  const skillName = payload.slice(enabled ? 'enable:'.length : 'disable:'.length);
-  return unwrapReconcile(await client.toggleManagedSkill({ enabled, skillName }), false);
+  return unwrapReconcile(
+    await client.toggleManagedSkill({ enabled: operation.enabled, skillName: operation.skillName }),
+    false,
+  );
 };
 
-export const toggleOperation = (skillName: string, enabled: boolean): SkillsManagementOperation =>
-  `toggle:${enabled ? 'enable' : 'disable'}:${skillName}`;
+export const toggleOperation = (skillName: string, enabled: boolean): SkillsManagementOperation => ({
+  enabled,
+  skillName,
+  type: 'toggle-skill',
+});

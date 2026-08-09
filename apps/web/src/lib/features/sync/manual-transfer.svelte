@@ -1,6 +1,6 @@
 <script lang="ts">
   import { css, cx } from '@ai-usage/design-system/css';
-  import { panel, panelSub, panelTitle } from '@ai-usage/design-system/svelte/passive';
+  import { panel, panelSub, panelTitle } from '@ai-usage/design-system/svelte';
   import type { UsageEngineMergePreviewOutput } from '@ai-usage/usage-engine-control';
   import { onDestroy } from 'svelte';
   import { formatManualImportSummary, formatTransferBytes } from '../../../manual-transfer-model';

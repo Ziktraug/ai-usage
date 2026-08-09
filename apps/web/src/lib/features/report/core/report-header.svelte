@@ -1,6 +1,6 @@
 <script lang="ts">
   import { css } from '@ai-usage/design-system/css';
-  import { header, meta, title, titleBlock } from '@ai-usage/design-system/svelte/passive';
+  import { header, meta, title, titleBlock } from '@ai-usage/design-system/svelte';
   import { reportGeneratedLabel } from './report-view-model';
 
   let { generatedAt, hasReportData, isDemo }: { generatedAt: string | null; hasReportData: boolean; isDemo: boolean } =

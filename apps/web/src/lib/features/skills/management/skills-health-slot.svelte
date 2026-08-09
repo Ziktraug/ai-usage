@@ -13,7 +13,7 @@
     statusPillOk,
     statusPillWarn,
     strongCell,
-  } from '@ai-usage/design-system/svelte/passive';
+  } from '@ai-usage/design-system/svelte';
   import { createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { onDestroy, onMount, tick, untrack } from 'svelte';
   import { goto } from '$app/navigation';
@@ -40,6 +40,8 @@
   import type { SkillsHealthSlotPlacement, SkillsShellSlotContext } from '../shell/slot-context';
   import {
     observeInspectorDisclosure,
+    previewReconcileOperation,
+    reconcileSkillOperation,
     resolveSkillsRefreshAcceptance,
     runSkillsManagementOperation,
     runSkillsRefreshOperation,
@@ -219,6 +221,7 @@
   const actionGrid = css({ display: 'grid', gap: '8px' });
   const foldBody = css({ display: 'grid', gap: '14px', p: '0 16px 16px' });
   const detailSlotStack = css({ display: 'grid', gap: '14px' });
+  const SUCCESS_MESSAGE_DURATION_MS = 5000;
   const foldsGrid = css({
     display: 'grid',
     gridTemplateColumns: { base: '1fr', xl: 'minmax(0, 0.75fr) minmax(360px, 1.25fr)' },
@@ -244,7 +247,7 @@
     dismissTimer = setTimeout(() => {
       dismissTimer = undefined;
       operationMessage = null;
-    }, 5000);
+    }, SUCCESS_MESSAGE_DURATION_MS);
   };
   const scheduleRefreshFocus = (): void => {
     if (typeof window === 'undefined') {
@@ -338,7 +341,7 @@
       managementPlan.publish(result.plan);
       queryClient.setQueryData(skillsSnapshotKey(), result.snapshot);
       setSuccessMessage(skillsManagementSuccessMessage(operation, result));
-      if (operation === 'preview-reconcile') {
+      if (operation.type === 'preview-reconcile') {
         await tick();
         await goto('/skills/matrix');
       }
@@ -446,7 +449,7 @@
           {...previewBusyAttributes}
           class={cx(ghostButton, pendingButton)}
           disabled={pendingOperation !== null || !canReconcileAll(context.snapshot)}
-          onclick={() => execute('preview-reconcile', 'preview-reconcile')}
+          onclick={() => execute(previewReconcileOperation, 'preview-reconcile')}
           type="button"
         >
           Preview reconcile
@@ -569,7 +572,9 @@
               return;
             }
             execute(
-              installationAction.mode === 'preview' ? 'preview-reconcile' : `reconcile:${selectedSkill.name}`,
+              installationAction.mode === 'preview'
+                ? previewReconcileOperation
+                : reconcileSkillOperation(selectedSkill.name),
               installationAction.mode === 'preview' ? 'preview-reconcile' : `reconcile:${selectedSkill.name}`,
             );
           }}

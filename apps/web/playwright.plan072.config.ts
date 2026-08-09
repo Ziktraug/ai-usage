@@ -6,7 +6,7 @@ export default defineConfig({
   expect: { timeout: 20_000 },
   reporter: process.env.CI ? 'github' : 'line',
   testDir: './e2e',
-  testMatch: '**/plan072-*.spec.ts',
+  testMatch: '**/plan072-*.benchmark.ts',
   timeout: 120_000,
   use: {
     baseURL: 'http://127.0.0.1:4178',

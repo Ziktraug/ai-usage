@@ -45,6 +45,7 @@ describe('emitted Web client module manifest scanner', () => {
     ['re-exported workspace module', workspaceModule('report-data', 'src', 'index.ts'), 'report-data'],
     ['dynamic workspace import', workspaceModule('usage-merge', 'src', 'index.ts'), 'usage-merge'],
     ['usage store', workspaceModule('usage-store', 'src', 'reader.ts'), 'usage-store'],
+    ['usage-store performance facade', workspaceModule('usage-store', 'src', 'performance-testing.ts'), 'usage-store'],
     ['local machine', workspaceModule('local-machine', 'src', 'index.ts'), 'local-machine'],
     ['engine runtime', workspaceModule('usage-engine-runtime', 'src', 'index.ts'), 'usage-engine-runtime'],
     ['$lib server alias', '$lib/server/report.ts', '$lib/server'],

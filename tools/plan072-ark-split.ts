@@ -5,10 +5,10 @@ import path from 'node:path';
 import { brotliCompressSync, gzipSync } from 'node:zlib';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
-const CONTROL_PATH = path.join(ROOT, 'docs/performance/artifacts/plan072-control.json');
+const CONTROL_BUNDLE_MAP_PATH = path.join(ROOT, 'docs/performance/artifacts/plan072-control-bundle-map.json');
 const CONTROL_DESTINATION_PATH = path.join(ROOT, 'docs/performance/artifacts/plan072-ark-control-7.json');
 const DESTINATION_PATH = path.join(ROOT, 'docs/performance/artifacts/plan072-destination-render.json');
-const BUNDLE_MAP_PATH = path.join(ROOT, 'docs/performance/artifacts/plan072-bundle-map.json');
+const BUNDLE_MAP_PATH = path.join(ROOT, 'docs/performance/artifacts/plan072-bundle-map-rejected-b.json');
 const OUTPUT_PATH = path.join(ROOT, 'docs/performance/artifacts/plan072-ark-split.json');
 const CLIENT_DIRECTORY = path.join(ROOT, 'apps/web/.output-build/sveltekit/client');
 const LEADING_SLASH_PATTERN = /^\/+/u;
@@ -149,12 +149,11 @@ const deriveControlDrawerGzip = (
 const main = (): void => {
   const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: ROOT, encoding: 'utf8' }).trim();
   const status = execFileSync('git', ['status', '--porcelain'], { cwd: ROOT, encoding: 'utf8' });
-  const control = parseJson(readFileSync(CONTROL_PATH, 'utf8'), 'plan072-control.json');
-  const controlBenchmark = requiredRecord(control.sessionScrollBenchmark, 'control.sessionScrollBenchmark');
-  const controlInitial = requiredRecord(controlBenchmark.initialStaticClosure, 'control.initialStaticClosure');
+  const controlBundleMap = parseJson(readFileSync(CONTROL_BUNDLE_MAP_PATH, 'utf8'), 'plan072-control-bundle-map.json');
+  const controlInitial = findDestinationClosure(controlBundleMap, 'overview');
   const controlDestination = parseJson(readFileSync(CONTROL_DESTINATION_PATH, 'utf8'), 'plan072-ark-control-7.json');
   const candidateDestination = parseJson(readFileSync(DESTINATION_PATH, 'utf8'), 'plan072-destination-render.json');
-  const bundleMap = parseJson(readFileSync(BUNDLE_MAP_PATH, 'utf8'), 'plan072-bundle-map.json');
+  const bundleMap = parseJson(readFileSync(BUNDLE_MAP_PATH, 'utf8'), 'plan072-bundle-map-rejected-b.json');
   const duplicatedArkOrZagCount = requiredNumber(
     bundleMap.duplicatedArkOrZagCount,
     'bundleMap.duplicatedArkOrZagCount',
@@ -226,14 +225,14 @@ const main = (): void => {
       vite: webDevDependencies.vite,
     },
     sources: {
-      controlInitial: 'docs/performance/artifacts/plan072-control.json',
+      controlBundleMap: 'docs/performance/artifacts/plan072-control-bundle-map.json',
       controlDrawer: 'docs/performance/artifacts/plan072-ark-control-7.json',
-      candidateBundleMap: 'docs/performance/artifacts/plan072-bundle-map.json',
+      candidateBundleMap: 'docs/performance/artifacts/plan072-bundle-map-rejected-b.json',
       candidateDestination: 'docs/performance/artifacts/plan072-destination-render.json',
     },
     method: {
       initial:
-        'Control bytes are read from plan072-control.json. Candidate bytes are recomputed from the Vite initial closure with gzip level 9 and default Brotli.',
+        'Control and candidate bytes are recomputed from their clean-build Vite Overview closures with gzip level 9 and default Brotli.',
       incrementalDrawer:
         'Raw bytes come from destination-render response bodies. Candidate and control gzip are recomputed from the exact recorded Drawer chunk identities in their respective builds.',
       totalThroughDrawer: 'initial + incremental Drawer bytes; cumulative total is authoritative.',

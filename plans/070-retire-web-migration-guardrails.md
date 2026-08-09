@@ -1,10 +1,10 @@
 # Plan 070 — Retire Completed Web Migration Guardrails and Clarify Lasting Safety Gates
 
-**Status:** DONE  
-**Priority:** P1  
-**Effort:** M  
-**Risk:** MED  
-**Planned against:** `f5b26a95` (2026-08-08)  
+**Status:** DONE
+**Priority:** P1
+**Effort:** M
+**Risk:** MED
+**Planned against:** `f5b26a95` (2026-08-08)
 **Depends on:** Plan 068 migration integrated; Plan 069 browser-state ownership integrated
 
 ## Outcome
@@ -233,3 +233,11 @@ Also verify:
   provider sources after concurrent provider work introduced an eighth; the
   ordinary browser suite is 110/112 with two aborted route-data requests in
   concurrent sidebar/history scenarios. None is in Plan 070's changed surface.
+- 2026-08-09 — Second-review scope audit traced the Anthropic collector and
+  multi-provider quota expansion to mixed commit `373544f6`. Plan 021 authorizes
+  Codex quota history only; the earlier provider research describes Claude as a
+  future feature-flagged experiment, but the implementation was enabled by
+  auto-detection without that flag. The collector, dependency, source-control
+  entry, quota model/UI expansion, CLI multi-provider behavior, and related tests
+  were therefore removed from this branch. They are not Plan 070 work and Plan 070
+  makes no ownership claim over them.

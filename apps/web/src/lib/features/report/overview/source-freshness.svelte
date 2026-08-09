@@ -14,7 +14,7 @@
 </script>
 
 <script lang="ts">
-  import Tooltip from '@ai-usage/design-system/svelte/tooltip';
+  import { Tooltip } from '@ai-usage/design-system/svelte';
   import type { FocusedMachineFreshness } from '@ai-usage/report-core/focused-report-query';
   import { fmtDate, fmtNum } from '../../../foundation/presentation/format';
 
@@ -27,7 +27,9 @@
     <Tooltip
       content={`Observed ${fmtDate(freshness.observedAt)} across ${fmtNum(freshness.machines.length)} machines.`}
     >
-      <span class={pill}>Sources observed</span>
+      {#snippet trigger(_triggerProps)}
+        <button {..._triggerProps} class={pill} type="button">Sources observed</button>
+      {/snippet}
     </Tooltip>
     {#if freshness.omittedMachines > 0 || freshness.skippedRows > 0}
       <span class={pill}
@@ -37,7 +39,9 @@
     {/if}
   {:else}
     <Tooltip content={unavailableDescription}>
-      <span class={pill}>Freshness unavailable</span>
+      {#snippet trigger(_triggerProps)}
+        <button {..._triggerProps} class={pill} type="button">Freshness unavailable</button>
+      {/snippet}
     </Tooltip>
   {/if}
 </section>

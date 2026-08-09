@@ -133,6 +133,7 @@ const boundaryPolicies: BoundaryPolicy[] = [
 
 const usageStorePackage = '@ai-usage/usage-store';
 const usageStorePerformanceTesting = `${usageStorePackage}/performance-testing`;
+const webPerformanceTestingImporter = 'apps/web/src/hooks.server.ts';
 const usageStoreReader = `${usageStorePackage}/reader`;
 const usageStoreWriter = `${usageStorePackage}/writer`;
 const usageStoreTesting = `${usageStorePackage}/testing`;
@@ -229,9 +230,13 @@ const targetImportReason = (
     (packageName === '@ai-usage/web' || packageName === '@ai-usage/cli') &&
     specifier.startsWith(`${usageStorePackage}/`) &&
     specifier !== usageStoreReader &&
-    !(packageName === '@ai-usage/web' && specifier === usageStorePerformanceTesting)
+    !(
+      packageName === '@ai-usage/web' &&
+      relativeFile === webPerformanceTestingImporter &&
+      specifier === usageStorePerformanceTesting
+    )
   ) {
-    return 'Web and CLI may import only the usage-store reader facade; web may also consume explicit performance instrumentation.';
+    return 'Web and CLI may import only the usage-store reader facade; only the server hook may consume benchmark-only performance instrumentation.';
   }
   if (isPackageOrSubpath(specifier, usageMergePackage) && packageName !== engineRuntimePackage) {
     return 'Only usage-engine-runtime may import the writer-capable usage-merge package.';

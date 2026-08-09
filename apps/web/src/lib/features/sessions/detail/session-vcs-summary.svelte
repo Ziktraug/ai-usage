@@ -35,6 +35,7 @@
   const branchList = css({ display: 'grid', gap: '4px', listStyle: 'none', m: 0, mt: '6px', p: 0, minW: 0 });
   const note = css({ color: 'muted', fontSize: '11px', lineHeight: 1.45, m: 0 });
   const actions = css({ display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center' });
+  const SHORT_COMMIT_HASH_LENGTH = 8;
   const ghostButton = css({
     display: 'inline-flex',
     alignItems: 'center',
@@ -220,10 +221,10 @@
                 href={context.headCommit.webUrl}
                 rel="noopener"
                 target="_blank"
-                >{context.headCommit.hash.slice(0, 8)}<ExternalLinkIcon /></a
+                >{context.headCommit.hash.slice(0, SHORT_COMMIT_HASH_LENGTH)}<ExternalLinkIcon /></a
               >
             {:else}
-              {context.headCommit.hash.slice(0, 8)}
+              {context.headCommit.hash.slice(0, SHORT_COMMIT_HASH_LENGTH)}
             {/if}
           </div>
         </div>

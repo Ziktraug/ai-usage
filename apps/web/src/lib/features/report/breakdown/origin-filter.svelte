@@ -1,7 +1,6 @@
 <script lang="ts">
   import { css, cx } from '@ai-usage/design-system/css';
-  import Checkbox from '@ai-usage/design-system/svelte/checkbox';
-  import Popover from '@ai-usage/design-system/svelte/popover';
+  import { Checkbox, Popover } from '@ai-usage/design-system/svelte';
   import { type SessionOrigin, sessionOriginLabel, sessionOrigins } from '@ai-usage/report-core/session-query';
   import { defaultDashboardOrigins, isDefaultDashboardOriginSelection } from '../../../../dashboard-search';
   import { button, field } from './styles';

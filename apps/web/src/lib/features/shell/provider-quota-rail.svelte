@@ -1,7 +1,6 @@
 <script lang="ts" module>
   import { css } from '@ai-usage/design-system/css';
   import type { HarnessKey } from '@ai-usage/report-core/harness-metadata';
-  import type { ProviderQuotaSeverity } from './provider-quota-rail';
 
   const panel = css({
     position: 'relative',
@@ -67,16 +66,11 @@
     fontVariantNumeric: 'tabular-nums',
   });
   const providerValueAbsent = css({ color: 'faint', fontWeight: 600 });
-  // An aged reading keeps its number — it is still what the quota was — but drops to muted so it
-  // never sits at the same weight as a live one.
-  const providerValueStale = css({ color: 'muted' });
-  // Identity lives on the mark; the ring around it is then free to carry pressure without the two
-  // encodings colliding. Claude and Codex wear the colour their own vendor publishes. Cursor and
-  // OpenCode publish monochrome marks, so there is no brand hue to be faithful to and they keep the
-  // report's curated one — their shapes are what separate them anyway.
+  // Identity lives on the mark, wearing the harness token that names the same provider throughout the
+  // report. The ring around it is then free to carry pressure without the two encodings colliding.
   const markTones: Record<HarnessKey, string> = {
-    claude: css({ color: 'brand.claude' }),
-    codex: css({ color: 'brand.codex' }),
+    claude: css({ color: 'harness.claude.fg' }),
+    codex: css({ color: 'harness.codex.fg' }),
     cursor: css({ color: 'harness.cursor.fg' }),
     opencode: css({ color: 'harness.opencode.fg' }),
   };
@@ -116,47 +110,7 @@
   // Window labels run long — a per-model weekly cap is named after the model. Pinning the percentage
   // on the label's own line and dropping the reset time beneath it lets the name wrap without ever
   // colliding with its value, which is the same two-line shape the Overview panel uses.
-  const windowRow = css({ display: 'grid', gap: '3px' });
-  // One meter per window, so a barely-touched 5h and an almost-spent weekly read as two different
-  // lengths before either number is read. Same construction as the ring above it: the fill carries
-  // pressure, the track is the same hue a few steps lighter.
-  const windowBar = css({
-    appearance: 'none',
-    display: 'block',
-    w: 'full',
-    h: '5px',
-    border: 0,
-    borderRadius: 'full',
-    overflow: 'hidden',
-    '&::-moz-progress-bar': { borderRadius: 'full' },
-    '&::-webkit-progress-value': { borderRadius: 'full' },
-  });
-  const windowBarTones: Record<ProviderQuotaSeverity, string> = {
-    danger: css({
-      bg: 'status.dangerSoft',
-      '&::-moz-progress-bar': { bg: 'status.danger' },
-      '&::-webkit-progress-bar': { bg: 'status.dangerSoft' },
-      '&::-webkit-progress-value': { bg: 'status.danger' },
-    }),
-    ok: css({
-      bg: 'status.okSoft',
-      '&::-moz-progress-bar': { bg: 'status.ok' },
-      '&::-webkit-progress-bar': { bg: 'status.okSoft' },
-      '&::-webkit-progress-value': { bg: 'status.ok' },
-    }),
-    unknown: css({
-      bg: 'track',
-      '&::-moz-progress-bar': { bg: 'muted' },
-      '&::-webkit-progress-bar': { bg: 'track' },
-      '&::-webkit-progress-value': { bg: 'muted' },
-    }),
-    warning: css({
-      bg: 'status.warnSoft',
-      '&::-moz-progress-bar': { bg: 'status.warn' },
-      '&::-webkit-progress-bar': { bg: 'status.warnSoft' },
-      '&::-webkit-progress-value': { bg: 'status.warn' },
-    }),
-  };
+  const windowRow = css({ display: 'grid', gap: '1px' });
   const windowTop = css({
     display: 'flex',
     alignItems: 'baseline',
@@ -188,7 +142,7 @@
 
 <script lang="ts">
   import { cx } from '@ai-usage/design-system/css';
-  import { fmtDate, fmtDuration, fmtPct } from '../../foundation/presentation/format';
+  import { fmtDate, fmtPct } from '../../foundation/presentation/format';
   import ProviderMark from './provider-mark.svelte';
   import type { ProviderQuotaRailEntry } from './provider-quota-rail';
   import QuotaRing from './quota-ring.svelte';
@@ -205,21 +159,13 @@
   const reported = $derived(entries.filter((entry) => entry.measured || entry.severity === 'danger'));
   const unreported = $derived(entries.filter((entry) => !(entry.measured || entry.severity === 'danger')));
   const worthShowing = $derived(reported.length > 0);
-  // Named rather than counted, and with no claim about who *does* publish one — that sentence went
-  // stale the moment a second provider was wired.
-  const unmeasuredNoteText = $derived(`No quota source for ${unreported.map((entry) => entry.label).join(', ')}.`);
+  const unmeasuredNoteText = $derived(
+    `No quota source for ${unreported.map((entry) => entry.label).join(', ')}. Codex is the only provider publishing one today.`,
+  );
   const headline = (entry: ProviderQuotaRailEntry): string =>
     entry.usedPercent === null ? '—' : fmtPct(entry.usedPercent);
-  // A concrete age beats "out of date": two hours is a different problem from twenty minutes, and
-  // quota moves fast enough that the reader needs to know which one they are looking at.
-  // Only when it is bad news. A fresh reading already says so through its source label, and repeating
-  // "live" beside "Live quota" spends a line to say nothing.
-  const freshness = (entry: ProviderQuotaRailEntry): string | null =>
-    entry.stale && entry.ageMs !== null ? `read ${fmtDuration(entry.ageMs)} ago` : null;
   const context = (entry: ProviderQuotaRailEntry): string =>
-    [entry.stale ? null : entry.reason, freshness(entry), entry.planLabel, entry.machineLabel]
-      .filter((value) => value !== null)
-      .join(' · ');
+    [entry.reason, entry.planLabel, entry.machineLabel].filter((value) => value !== null).join(' · ');
 
   $effect(() => {
     if (!detailsOpen) {
@@ -241,30 +187,16 @@
       <ProviderMark name={_entry.key} size={_size <= 26 ? 12 : 13} />
     </span>
   {/snippet}
-  <QuotaRing
-    center={centerMark}
-    severity={_entry.severity}
-    size={_size}
-    stale={_entry.stale}
-    usedPercent={_entry.usedPercent}
-  />
+  <QuotaRing center={centerMark} severity={_entry.severity} size={_size} usedPercent={_entry.usedPercent} />
 {/snippet}
 
 {#snippet triggerBody()}
-  <!-- The direction belongs in the heading. Providers publish quota in both directions, and Codex's
-       own CLI shows what is left, so a bare percentage beside a ring is genuinely ambiguous. -->
-  <span aria-hidden="true" class={groupLabel}>Quota used</span>
+  <span aria-hidden="true" class={groupLabel}>Quota</span>
   {#each entries as entry (entry.key)}
     <span aria-hidden="true" class={providerRow} data-provider-quota={entry.key}>
       {@render providerRing(entry, 26)}
       <span class={providerName}>{entry.label}</span>
-      <span
-        class={cx(
-          providerValue,
-          entry.usedPercent === null ? providerValueAbsent : undefined,
-          entry.stale ? providerValueStale : undefined,
-        )}
-      >
+      <span class={cx(providerValue, entry.usedPercent === null ? providerValueAbsent : undefined)}>
         {headline(entry)}
       </span>
     </span>
@@ -304,7 +236,7 @@
     {/if}
 
     <div class={flyout} data-quota-flyout id={flyoutId}>
-      <div class={flyoutTitle}>Quota used</div>
+      <div class={flyoutTitle}>Current quota</div>
       {#each reported as entry (entry.key)}
         <div class={flyoutProvider}>
           <div class={flyoutTop}>
@@ -319,24 +251,8 @@
                 <span class={windowLabel}>{window.label}{window.blocked ? ' · blocked' : ''}</span>
                 <span class={windowValue}>{window.usedPercent === null ? '—' : fmtPct(window.usedPercent)}</span>
               </div>
-              {#if window.usedPercent !== null}
-                <!-- Decorative: the label, the used figure and the remaining figure around it already
-                     say everything the bar shows, so announcing it again would only add noise. An
-                     unmeasured window draws no bar at all — an indeterminate one would animate, which
-                     reads as "working on it" rather than "nothing is being read". -->
-                <progress
-                  aria-hidden="true"
-                  class={cx(windowBar, windowBarTones[window.severity])}
-                  max={100}
-                  value={window.usedPercent}
-                ></progress>
-              {/if}
-              <!-- Both directions, stated together: "how much is left" is the question a quota
-                   readout is actually asked, and spelling it out removes any doubt about which way
-                   the headline percentage runs. -->
               <div class={windowMeta}>
-                {window.remainingPercent === null ? 'Remaining unknown' : `${fmtPct(window.remainingPercent)} left`}
-                · {window.resetsAt ? `resets ${fmtDate(window.resetsAt)}` : 'reset time unknown'}
+                {window.resetsAt ? `Resets ${fmtDate(window.resetsAt)}` : 'Reset time unknown'}
               </div>
             </div>
           {/each}

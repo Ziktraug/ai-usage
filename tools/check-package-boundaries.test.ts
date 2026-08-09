@@ -13,6 +13,7 @@ const localMachineRoot = ['@ai-usage', 'local-machine'].join('/');
 const reportDataPackage = `${workspacePackageScope}report-data`;
 const reportDataPortableReport = `${reportDataPackage}/portable-report`;
 const usageStoreInternal = `${workspacePackageScope}usage-store/internal`;
+const usageStorePerformanceTesting = `${workspacePackageScope}usage-store/performance-testing`;
 const retiredLanPackage = `${workspacePackageScope}lan-pairing`;
 const retiredSyncPackage = `${workspacePackageScope}sync`;
 const webBridgePackage = ['@ai-usage', 'web-bridge'].join('/');
@@ -271,7 +272,18 @@ describe('package boundary guard', () => {
     );
   });
 
-  test('allows web to consume explicit usage-store performance instrumentation', async () => {
+  test('allows only the Web server hook to consume explicit usage-store performance instrumentation', async () => {
+    const root = await createFixture();
+    await writePackage(root, 'apps', 'web', { name: '@ai-usage/web' });
+    await writeFile(
+      path.join(root, 'apps/web/src/hooks.server.ts'),
+      "import '@ai-usage/usage-store/performance-testing';\n",
+    );
+
+    expect(await collectViolations(root)).toEqual([]);
+  });
+
+  test('rejects performance instrumentation from general server and client Web modules', async () => {
     const root = await createFixture();
     await writePackage(
       root,
@@ -280,8 +292,21 @@ describe('package boundary guard', () => {
       { name: '@ai-usage/web' },
       "import '@ai-usage/usage-store/performance-testing';\n",
     );
+    await writeFile(
+      path.join(root, 'apps/web/src/general.server.ts'),
+      "import '@ai-usage/usage-store/performance-testing';\n",
+    );
 
-    expect(await collectViolations(root)).toEqual([]);
+    const violations = await collectViolations(root);
+    expect(violations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ file: 'apps/web/src/index.ts', specifier: usageStorePerformanceTesting }),
+        expect.objectContaining({
+          file: 'apps/web/src/general.server.ts',
+          specifier: usageStorePerformanceTesting,
+        }),
+      ]),
+    );
   });
 
   test('allows only usage-engine-runtime to depend on the writer-capable usage-merge package', async () => {

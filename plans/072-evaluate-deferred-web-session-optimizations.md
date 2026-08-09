@@ -6,7 +6,7 @@
 > rationalized. This plan authorizes local implementation, push, and PR description
 > updates for the same single working branch; do not merge.
 
-**Status:** DONE
+**Status:** IN PROGRESS
 
 **Priority:** P1
 
@@ -328,10 +328,27 @@ The cartography is committed as
 `docs/performance/artifacts/plan072-bundle-map.json` and a companion
 `docs/performance/artifacts/plan072-bundle-map.md`.
 
-### B2 — Independent, reversible experiments
+### STOP B0 — Composite feasibility spike
 
-Each trial is implemented in isolation, measured, then either kept or
-reverted. The trials, in order:
+Before paying for five isolated production trials, a disposable composite
+spike may exercise the proposed boundaries together. It is a feasibility gate,
+not evidence for any individual trial: its deltas must never be attributed to
+one of the changes below.
+
+Stop B entirely, restore the control implementation, and do not enter B2 when
+the composite spike fails either mandatory product gate:
+
+- initial gzip decreases by less than 10 KiB; or
+- median Drawer-open latency regresses by more than 10%.
+
+This stop exists to avoid five expensive branches when the combined upper
+bound is already unacceptable. Passing STOP B0 does not retain any code; it
+only authorizes the isolated experiments.
+
+### B2 — Independent, reversible experiments (only after STOP B0 passes)
+
+When STOP B0 passes, each trial is implemented in isolation, measured, then
+either kept or reverted. The trials, in order:
 
 1. Replace the root design-system barrel with focused subpath exports for
    the `Checkbox` / `Toggle` / `Tooltip` / `SegmentedControl` /
@@ -641,25 +658,31 @@ recover them from `git log`.
 
 ### Experience A — Keyset
 
-Rejected at STOP A1. The real SQLite probe measured date-desc traversal at
-153.090 ms for 5,000 rows and 615.458 ms for 20,000 rows. Projection slicing
-was respectively 0.037 ms and 0.060 ms, or 0.0267% and 0.0108% of residual
-SQLite work. Slice growth was 1.62x for a 4x fixture increase, with no duplicate
-or missing identities and the expected revision-scoped cache forfeiture. No
-cursor contract or ADR was introduced.
+Rejected at STOP A1 after correcting fixture density. The probe now publishes
+5,000 sessions / 4,999 campaigns and 20,000 sessions / 19,996 campaigns. The
+date-desc traversals cover exactly 25 and 100 pages and return 4,999 / 19,996
+unique identities with no duplicate or gap. Their medians are 190.807 ms and
+814.772 ms; projection slicing is 0.050 ms and 0.105 ms, or 0.0298% and
+0.0147% of residual SQLite work. Slice growth is 2.10x for a 4x fixture
+increase, with the expected revision-scoped cache forfeiture. No cursor
+contract or ADR was introduced.
 
 ### Experience B — Design-system split
 
-Retained. Focused design-system entry points and local Tooltip/Popover
-primitives reduce the initial gzip closure from 279,234 B to 265,686 B
-(-13,548 B). The exact cumulative total through first Drawer open changes from
-292,397 B to 295,648 B (+1.112%), below the 5% ceiling. Matched seven-sample
-Drawer runs produced a 108.312 ms candidate median versus 105.033 ms control
-(+3.12%, below the 10% ceiling). The bundle map reports zero duplicated Ark/Zag
-modules. Keyboard focus, Escape,
-light dismiss, focus return, viewport positioning, scroll behavior, and Tooltip
-lifecycle tests pass. The retained commits are `633323bb`, `88384202`, and the
-post-matrix lifecycle fix `a6365f5d`.
+Rejected at STOP B0 after the second review restored the global Ark Popover
+and Tooltip and limited the no-Ark prototype to the column disclosure. The
+spike combined several proposed boundaries, so its deltas are deliberately not
+attributed to trials 1–5 and B2 was never entered. On the same machine, both
+clean builds used Bun 1.3.13 and Chrome 151.0.7922.75, then one warm-up and
+seven samples. Initial gzip changes from 279,246 B to 271,935 B (-7,311 B),
+which misses the required 10 KiB reduction. The exact cumulative total through
+first Drawer open changes from 292,409 B to 297,494 B (+1.739%), but the Drawer
+median regresses from 97.021 ms to 122.689 ms (+26.46%), above the 10% ceiling.
+The bundle map reports zero duplicated Ark/Zag modules. Since both STOP B0
+conditions fire, no isolated B2 branch is justified. The granular export split
+and local disclosure are removed; the global Ark components and their
+portal/positioning ownership are restored. The rejected feasibility spike and
+its raw evidence remain only in the artifacts.
 
 ### Experience C — Destination SSR
 
@@ -671,16 +694,17 @@ and prefetch path remain unchanged.
 
 ### Final
 
-The post-integration exhaustive benchmark retained 489,216 hydration bytes, 26
-Session RPCs, 29 desktop items, and 581 desktop nodes. A sequential matched
-control/candidate pair records initial +4.6%, desktop traversal -9.9%, mobile
-traversal +1.2%, filter +7.9%, sort +3.9%, and heap -0.8%; no regression crossed
-the 10% gate. Raw samples, environment, hashes, byte terminology, and
-reproduction commands are recorded in
-`docs/performance/web-session-deferred-optimizations.md`.
+The post-rejection Session benchmark is current: one warm-up and three recorded
+samples traverse all 4,999 campaign identities in exactly 25 desktop pages,
+with zero missing or duplicate identities. Median desktop traversal is
+3,528.125 ms, median initial hydration is 459.544 ms, and cumulative Session
+response bytes remain 11,026,467 B.
 
-Validation passed: `check`, `lint`, `typecheck` (28/28), package tests, tools
-(120/120), build (15/15), client manifest, production start,
-dev/build isolation, setup loopback, demo e2e (1/1), production e2e (11/11
-plus desktop/mobile scale), dev e2e (112 passed, 19 benchmark-only skipped),
-and the dedicated Session benchmark (4/4).
+The runtime, unit, build, browser, production, and E2E checks are green. The
+review's exact `git diff --check origin/main...HEAD` command still reports five
+trailing-space lines already stored in the immutable starting HEAD; the
+working-tree repair passes both `git diff --check` and
+`git diff --check origin/main`. Because committing is explicitly prohibited
+without confirmation, that triple-dot proof cannot observe the repair yet.
+This plan therefore remains `IN PROGRESS` rather than claiming a fully green
+auditable matrix.

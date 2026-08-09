@@ -8,10 +8,10 @@
     groupRow,
     groupRows,
     groupTitle,
+    SegmentedControl,
     searchInput,
     unavailableText,
-  } from '@ai-usage/design-system/svelte/passive';
-  import SegmentedControl from '@ai-usage/design-system/svelte/segmented-control';
+  } from '@ai-usage/design-system/svelte';
   import type { AnalyticsGroup } from '@ai-usage/report-core/analytics';
   import { analyticsBreakdownCsv, reportCsvFilename } from '@ai-usage/report-core/csv';
   import type { BreakdownSort } from '../../../../dashboard-search';
@@ -47,7 +47,7 @@
     { label: 'Value', value: 'value' },
     { label: 'Tokens', value: 'tokens' },
     { label: 'Sessions', value: 'sessions' },
-  ];
+  ] as const satisfies readonly { readonly label: string; readonly value: BreakdownSort }[];
   const changeSort = (value: string): void => {
     if (value === 'value' || value === 'tokens' || value === 'sessions') {
       onSortChange(value);

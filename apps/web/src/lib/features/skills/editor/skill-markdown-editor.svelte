@@ -9,7 +9,7 @@
     statusPillOk,
     statusPillWarn,
     strongCell,
-  } from '@ai-usage/design-system/svelte/passive';
+  } from '@ai-usage/design-system/svelte';
   import { onDestroy, untrack } from 'svelte';
   import type { SkillMarkdownEditorController, SkillMarkdownEditorState } from './controller';
   import { isSkillMarkdownSaveShortcut } from './controller';

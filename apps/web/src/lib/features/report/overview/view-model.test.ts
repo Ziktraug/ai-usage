@@ -96,7 +96,7 @@ test('keeps the frozen Overview content and secondary-status order', async () =>
   expect(heroSource).toContain('Spend coverage');
 });
 
-test('keeps report range before filters and Overview content in both destination compositions', async () => {
+test('keeps report range before filter summary and Overview content in the shared destination presentation', async () => {
   const destinationFiles = [
     {
       filterMarker: '{@render activeFilterSummary(destinationQuery.isFetching)}',
@@ -121,11 +121,20 @@ test('keeps report range before filters and Overview content in both destination
     const overviewStatus = source.indexOf('<OverviewStatus', statusSnippetStart);
     expect(overviewStatus, relativePath).toBeGreaterThan(statusSnippetStart);
     expect(overviewStatus, relativePath).toBeLessThan(statusSnippetEnd);
-    const positions = ['<ReportRangeControl', filterMarker, '<OverviewPage'].map((surface) => source.indexOf(surface));
-    expect(
-      positions.every((position) => position >= 0),
-      relativePath,
-    ).toBe(true);
-    expect(positions, relativePath).toEqual([...positions].sort((left, right) => left - right));
+    for (const normalizedPresentationProp of ['filters={{', 'overview={', 'range={']) {
+      expect(source, relativePath).toContain(normalizedPresentationProp);
+    }
+    expect(source, relativePath).toContain(filterMarker);
   }
+
+  const presentationPath = '../composition/report-destination-presentation.svelte';
+  const presentationSource = await Bun.file(new URL(presentationPath, import.meta.url)).text();
+  const positions = ['<FilterBar', '<ReportRangeControl', '{@render summary()}', '<OverviewPage'].map((surface) =>
+    presentationSource.indexOf(surface),
+  );
+  expect(
+    positions.every((position) => position >= 0),
+    presentationPath,
+  ).toBe(true);
+  expect(positions, presentationPath).toEqual([...positions].sort((left, right) => left - right));
 });

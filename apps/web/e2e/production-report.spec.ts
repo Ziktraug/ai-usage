@@ -16,6 +16,7 @@ const FOCUSED_OVERVIEW_FINGERPRINT_PREFIX = 'focused-overview-v1:';
 const PROJECT_COLUMN_PATTERN = /Project/;
 const SOURCES_URL_PATTERN = /\/sources$/;
 const SESSION_PAGE_PATH = '/rpc/session/page';
+const EXPECTED_ENABLED_SOURCE_COUNT = 7;
 const INITIAL_HTML_SECRET_SENTINELS = [
   HARNESS_FIXTURE_PRIVATE_PROMPT_SENTINEL,
   HARNESS_FIXTURE_CREDENTIAL_REMOTE_SENTINEL,
@@ -456,7 +457,7 @@ test('provides one accessible responsive source-control surface', async ({ page 
   await expect(healthySources).toHaveJSProperty('open', false);
   await healthySources.locator('summary').click();
   await expect(healthySources).toHaveJSProperty('open', true);
-  await expect(page.getByRole('checkbox', { name: 'Enabled' })).toHaveCount(8);
+  await expect(page.getByRole('checkbox', { name: 'Enabled' })).toHaveCount(EXPECTED_ENABLED_SOURCE_COUNT);
   await expect(page.getByText('codex.sessions', { exact: true })).toBeVisible();
 
   const detectAll = page.getByRole('button', { name: 'Detect all' });

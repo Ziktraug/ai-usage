@@ -15,43 +15,11 @@ import type {
 } from '@ai-usage/usage-store/writer';
 import { Cause, Data, Deferred, Effect, Exit, Option } from 'effect';
 
+const LIVE_SOURCE_KEY = 'codex-app-server';
+const LIVE_CURSOR_KEY = 'refresh';
+const BACKFILL_SOURCE_KEY = 'codex-rollout';
 const BACKFILL_DAYS = 35;
 const DAY_MS = 86_400_000;
-
-/**
- * Who a refresh is refreshing. The orchestration below is provider-agnostic in shape — it collects
- * from an injected source — so this carries the identity it must not invent: the keys written to the
- * store, and the name spoken in warnings.
- */
-export interface ProviderQuotaSourceIdentity {
-  /** Source key for the backfill pass. Unused when `backfillSource` is null. */
-  readonly backfillSourceKey: string;
-  /** Cursor key for the live pass. */
-  readonly cursorKey: string;
-  /** Source key for the live pass, recorded against every observation and attempt. */
-  readonly liveSourceKey: string;
-  /** Stable provider key: the value `providerStatusKeyForUsage` produces. */
-  readonly providerKey: string;
-  /** Human name used in warnings, such as `Codex` or `Claude`. */
-  readonly providerLabel: string;
-}
-
-export const CODEX_QUOTA_SOURCE_IDENTITY: ProviderQuotaSourceIdentity = {
-  backfillSourceKey: 'codex-rollout',
-  cursorKey: 'refresh',
-  liveSourceKey: 'codex-app-server',
-  providerKey: 'codex',
-  providerLabel: 'Codex',
-};
-
-/** Claude has no local quota history, so `backfillSourceKey` is declared but never written. */
-export const CLAUDE_QUOTA_SOURCE_IDENTITY: ProviderQuotaSourceIdentity = {
-  backfillSourceKey: 'claude-none',
-  cursorKey: 'refresh',
-  liveSourceKey: 'claude-agent-sdk',
-  providerKey: 'claude',
-  providerLabel: 'Claude',
-};
 
 export interface ProviderQuotaRefreshResult {
   backfill: 'advanced' | 'complete' | 'failed' | 'skipped';
@@ -63,7 +31,6 @@ export interface ProviderQuotaRefreshResult {
 export interface ResolvedProviderQuotaRefreshInput<SourceError = unknown> {
   backfillSource: ProviderQuotaBatchSource<SourceError> | null;
   dbPath: string;
-  identity: ProviderQuotaSourceIdentity;
   liveCadenceMs: number;
   liveSource: ProviderQuotaBatchSource<SourceError>;
   machine: UsageMachine;
@@ -155,14 +122,14 @@ const batchItems = (batch: ProviderQuotaBatch): ProviderQuotaImportItem[] => {
   });
 };
 
-const liveWarning = (live: ProviderQuotaRefreshResult['live'], providerLabel: string): string => {
+const liveWarning = (live: ProviderQuotaRefreshResult['live']): string => {
   if (live === 'auth-required') {
-    return `${providerLabel} authentication is required to refresh quota history.`;
+    return 'Codex authentication is required to refresh quota history.';
   }
   if (live === 'unsupported') {
-    return `The ${providerLabel} CLI is unavailable, so stored quota history may be stale.`;
+    return 'The Codex CLI is unavailable, so stored quota history may be stale.';
   }
-  return `${providerLabel} quota refresh failed; the last successful history remains available.`;
+  return 'Codex quota refresh failed; the last successful history remains available.';
 };
 
 const runRefresh = <PersistenceError, SourceError>(
@@ -171,15 +138,14 @@ const runRefresh = <PersistenceError, SourceError>(
 ): Effect.Effect<ProviderQuotaRefreshResult, PersistenceError, never> =>
   Effect.gen(function* () {
     const warnings: string[] = [];
-    const { backfillSourceKey, cursorKey, liveSourceKey, providerKey, providerLabel } = input.identity;
     let live: ProviderQuotaRefreshResult['live'] = 'skipped';
     let backfill: ProviderQuotaRefreshResult['backfill'] = 'skipped';
     const liveState = yield* persistence.queryLiveState({
-      cursorKey,
+      cursorKey: LIVE_CURSOR_KEY,
       dbPath: input.dbPath,
       machineId: input.machine.id,
-      providerKey,
-      sourceKey: liveSourceKey,
+      providerKey: 'codex',
+      sourceKey: LIVE_SOURCE_KEY,
     });
     const lastSuccess = liveState?.lastSuccessAt ? Date.parse(liveState.lastSuccessAt) : Number.NEGATIVE_INFINITY;
     if (input.now.getTime() - lastSuccess >= input.liveCadenceMs) {
@@ -198,26 +164,26 @@ const runRefresh = <PersistenceError, SourceError>(
         });
         yield* persistence.recordAttempt({
           attemptedAt: input.now,
-          cursorKey,
+          cursorKey: LIVE_CURSOR_KEY,
           dbPath: input.dbPath,
           machineId: input.machine.id,
-          providerKey,
-          sourceKey: liveSourceKey,
+          providerKey: 'codex',
+          sourceKey: LIVE_SOURCE_KEY,
           succeeded: true,
         });
         return 'refreshed' as const;
       }).pipe(
         Effect.catchAll((error) => {
           const failure = errorReason(error);
-          warnings.push(liveWarning(failure, providerLabel));
+          warnings.push(liveWarning(failure));
           return persistence
             .recordAttempt({
               attemptedAt: input.now,
-              cursorKey,
+              cursorKey: LIVE_CURSOR_KEY,
               dbPath: input.dbPath,
               machineId: input.machine.id,
-              providerKey,
-              sourceKey: liveSourceKey,
+              providerKey: 'codex',
+              sourceKey: LIVE_SOURCE_KEY,
               succeeded: false,
             })
             .pipe(Effect.as(failure));
@@ -232,8 +198,8 @@ const runRefresh = <PersistenceError, SourceError>(
         const states = yield* persistence.queryBackfillStates({
           dbPath: input.dbPath,
           machineId: input.machine.id,
-          providerKey,
-          sourceKey: backfillSourceKey,
+          providerKey: 'codex',
+          sourceKey: BACKFILL_SOURCE_KEY,
         });
         const cursors = Object.fromEntries(states.map((state) => [state.cursorKey, state.cursor]));
         const batch = yield* backfillSource.collect({
@@ -249,8 +215,8 @@ const runRefresh = <PersistenceError, SourceError>(
             cursor: checkpoint.value,
             cursorKey: checkpoint.key,
             machineId: input.machine.id,
-            providerKey,
-            sourceKey: backfillSourceKey,
+            providerKey: 'codex',
+            sourceKey: BACKFILL_SOURCE_KEY,
           })),
           dbPath: input.dbPath,
           items: batchItems(batch),
@@ -260,7 +226,7 @@ const runRefresh = <PersistenceError, SourceError>(
       }).pipe(
         Effect.catchAll(() => {
           warnings.push(
-            `${providerLabel} backfill could not advance; live and previously stored history remain available.`,
+            'Codex rollout backfill could not advance; live and previously stored history remain available.',
           );
           return Effect.succeed('failed' as const);
         }),
@@ -270,7 +236,7 @@ const runRefresh = <PersistenceError, SourceError>(
     const latest = yield* persistence.queryLatest({
       dbPath: input.dbPath,
       machineId: input.machine.id,
-      providerKey,
+      providerKey: 'codex',
     });
     return {
       backfill,
@@ -296,10 +262,7 @@ export const createProviderQuotaRefresh = <PersistenceError>(
         ProviderQuotaRefreshResult,
         PersistenceError | ProviderQuotaRefreshAborted
       >();
-      // The provider belongs in the key. Without it two providers refreshing the same machine share
-      // one in-flight refresh, and the second caller receives the first one's windows — written under
-      // the wrong provider identity.
-      const key = `${input.dbPath}|${input.machine.id}|${input.identity.providerKey}`;
+      const key = `${input.dbPath}|${input.machine.id}`;
       const selection = yield* Effect.sync(() => {
         const existing = flights.get(key);
         if (existing) {

@@ -40,6 +40,10 @@ const JS_FILE_PATTERN = /\.js$/u;
 const CSS_FILE_PATTERN = /\.css$/u;
 const SVELTEKIT_APP_PATH_PATTERN = /_app\//u;
 const CONTROL_MODE = process.env.AI_USAGE_PLAN072_CONTROL === '1';
+const PERF_RESET_STATUS = 204;
+const POST_RENDER_SETTLE_MS = 50;
+const MAXIMUM_GZIP_COMPRESSION_LEVEL = 9;
+const RECORDED_SAMPLE_COUNT = 7;
 
 interface RouteSample {
   readonly brotliClosureBytes: number;
@@ -178,7 +182,7 @@ const readPerfSnapshot = async (request: APIRequestContext): Promise<PerfSnapsho
 
 const resetPerfSnapshot = async (request: APIRequestContext): Promise<void> => {
   const response = await request.delete(PERF_PATH);
-  expect(response.status()).toBe(204);
+  expect(response.status()).toBe(PERF_RESET_STATUS);
 };
 
 const installRenderObservers = (usefulSelector: string): void => {
@@ -276,7 +280,7 @@ const measureRoute = async (page: Page, request: APIRequestContext, scenario: Ro
       await expect(page.getByRole('tablist', { name: 'Breakdown dimension' })).toBeVisible();
     }
     const firstUsableRenderMs = await page.evaluate(() => performance.now());
-    await page.waitForTimeout(50);
+    await page.waitForTimeout(POST_RENDER_SETTLE_MS);
 
     await expect(page.locator('main[data-hydrated="true"][data-route-shell="report"]')).toBeVisible();
     const htmlBytes = (await navigation.body()).byteLength;
@@ -304,7 +308,7 @@ const measureRoute = async (page: Page, request: APIRequestContext, scenario: Ro
     const uniqueResources = [...new Map(loadedResources.map((entry) => [entry.pathname, entry])).values()];
     const rawClosureBytes = uniqueResources.reduce((total, entry) => total + entry.body.byteLength, 0);
     const gzipClosureBytes = uniqueResources.reduce(
-      (total, entry) => total + gzipSync(entry.body, { level: 9 }).byteLength,
+      (total, entry) => total + gzipSync(entry.body, { level: MAXIMUM_GZIP_COMPRESSION_LEVEL }).byteLength,
       0,
     );
     const brotliClosureBytes = uniqueResources.reduce(
@@ -413,13 +417,8 @@ const median = (values: readonly number[]): number => {
 
 const routeSamples: RouteSample[] = [];
 const drawerSamples: DrawerOpenSample[] = [];
-const SAMPLE_NUMBERS = [1, 2, 3, 4, 5, 6, 7] as const;
+const SAMPLE_NUMBERS = Array.from({ length: RECORDED_SAMPLE_COUNT }, (_, index) => index + 1);
 
-// biome-ignore lint/suspicious/noSkippedTests: this benchmark requires the dedicated production perf server.
-test.skip(
-  process.env.AI_USAGE_PLAN072_OUTPUT === undefined,
-  'Plan 072 destination measurements run only through the dedicated benchmark command',
-);
 test.describe.configure({ mode: 'serial' });
 
 test('warm-up: navigates the production fixture without recording samples', async ({ page, request }) => {

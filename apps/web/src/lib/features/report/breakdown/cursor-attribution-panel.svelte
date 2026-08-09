@@ -1,6 +1,6 @@
 <script lang="ts">
   import { css } from '@ai-usage/design-system/css';
-  import { MetricTile } from '@ai-usage/design-system/svelte/passive';
+  import { MetricTile } from '@ai-usage/design-system/svelte';
   import type { CursorCommitAttributionFacet } from '../../../../report-data';
   import { fmtDate, fmtNum, fmtPct } from '../../../foundation/presentation/format';
   import { summarizeCursorAiPercentage } from './cursor';
@@ -22,6 +22,8 @@
   const right = css({ textAlign: 'right' });
   const numCell = css({ textAlign: 'right', textStyle: 'numeric' });
   const strongCell = css({ fontWeight: 700 });
+  const CURSOR_ATTRIBUTION_TABLE_MIN_WIDTH_PX = 1120;
+  const COMMIT_HASH_PREVIEW_LENGTH = 10;
 
   let { rows }: { rows: readonly CursorCommitAttributionFacet[] } = $props();
   const aiPercentage = $derived(summarizeCursorAiPercentage(rows));
@@ -52,7 +54,7 @@
     <MetricTile hint="Lines Cursor classified as human-authored" label="Human lines" value={fmtNum(humanLines)} />
   </div>
   <div class={tableWrap}>
-    <table class={table} style:min-width="1120px">
+    <table class={table} style:min-width={`${CURSOR_ATTRIBUTION_TABLE_MIN_WIDTH_PX}px`}>
       <thead>
         <tr>
           <th>Commit</th>
@@ -69,8 +71,8 @@
         {#each rows as row (`${row.commitHash}:${row.branchName}`)}
           <tr>
             <td class={strongCell} title={row.commitHash}>
-              <div>{row.commitMessage || row.commitHash.slice(0, 10)}</div>
-              <div class={meta}>{row.commitHash.slice(0, 10)}</div>
+              <div>{row.commitMessage || row.commitHash.slice(0, COMMIT_HASH_PREVIEW_LENGTH)}</div>
+              <div class={meta}>{row.commitHash.slice(0, COMMIT_HASH_PREVIEW_LENGTH)}</div>
             </td>
             <td>{row.branchName}</td>
             <td class={numCell}>{row.v2AiPercentage === null ? '—' : fmtPct(row.v2AiPercentage)}</td>

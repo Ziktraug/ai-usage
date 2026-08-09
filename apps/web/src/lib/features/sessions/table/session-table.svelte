@@ -1,18 +1,19 @@
 <!-- biome-ignore-all lint/a11y/noNoninteractiveTabindex lint/a11y/useValidAriaValues: virtualized rows preserve the legacy keyboard surface; Svelte emits the closed dynamic WAI-ARIA values asserted by SSR tests -->
 <script lang="ts">
   import { cx } from '@ai-usage/design-system/css';
-  import Checkbox from '@ai-usage/design-system/svelte/checkbox';
-  import HarnessBadge from '@ai-usage/design-system/svelte/harness-badge';
   import {
+    Checkbox,
     dateCell,
     desktopTableSurface,
     empty,
     emptyActions,
     ghostButton,
+    HarnessBadge,
     highlightMark,
     mobileSummarySurface,
     modelCell,
     numCell,
+    Popover,
     presetButton,
     presetGroup,
     right,
@@ -40,8 +41,7 @@
     table as tableClass,
     tableControls,
     tableWrap,
-  } from '@ai-usage/design-system/svelte/passive';
-  import Popover from '@ai-usage/design-system/svelte/popover';
+  } from '@ai-usage/design-system/svelte';
   import type { SessionPresentationRow } from '@ai-usage/report-core/session-query';
   import type { ExpandedState } from '@tanstack/table-core';
   import { onMount, untrack } from 'svelte';

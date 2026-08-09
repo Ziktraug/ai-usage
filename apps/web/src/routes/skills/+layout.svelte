@@ -1,6 +1,6 @@
 <script lang="ts">
   import { css } from '@ai-usage/design-system/css';
-  import { meta } from '@ai-usage/design-system/svelte/passive';
+  import { meta } from '@ai-usage/design-system/svelte';
   import { untrack } from 'svelte';
   import { page } from '$app/state';
   import RouteFrame from '$lib/features/shell/route-frame.svelte';

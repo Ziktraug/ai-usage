@@ -84,7 +84,10 @@ export const drawerCompare = css({ color: 'muted', fontSize: '12px' });
 
 export const drawerActions = css({ display: 'flex', flexWrap: 'wrap', gap: '8px' });
 
+export const popoverPositionerClass = css({ zIndex: 50 });
+
 export const popoverContentClass = css({
+  zIndex: 50,
   display: 'grid',
   gap: '10px',
   w: 'min(560px, calc(100vw - 32px))',
@@ -119,6 +122,7 @@ export const provenanceCellClass = css({
 });
 
 export const provenanceMarkerClass = css({
+  appearance: 'none',
   display: 'inline-flex',
   alignItems: 'center',
   justifyContent: 'center',
@@ -127,10 +131,14 @@ export const provenanceMarkerClass = css({
   flexShrink: 0,
   borderRadius: 'full',
   border: '1px solid token(colors.lineStrong)',
+  bg: 'transparent',
   color: 'muted',
+  cursor: 'help',
   fontSize: '10px',
   fontWeight: 700,
   lineHeight: 1,
+  p: 0,
+  _focusVisible: { outline: '2px solid token(colors.accent)', outlineOffset: '2px' },
 });
 
 export const provenanceMarkerWarningClass = css({

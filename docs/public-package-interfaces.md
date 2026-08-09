@@ -116,6 +116,10 @@ lease, or subprocess exports. Production `report-data` code may import only
 
 ## `@ai-usage/usage-store`
 
+- `./performance-testing`: benchmark-only, server-only Session query counters
+  and resets, active only under `AI_USAGE_PERF=1`. Production Web consumption
+  is restricted to `apps/web/src/hooks.server.ts`; it must never enter a client
+  chunk or become a general report API.
 - `./reader`: compatible-schema inspection, current/exact served-revision
   queries, stored report/quota/fleet reads, and typed read failures. Opens only
   an existing database read-only and query-only; never creates, migrates,

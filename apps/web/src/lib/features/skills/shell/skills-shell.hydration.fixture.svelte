@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { meta } from '@ai-usage/design-system/svelte/passive';
+  import { meta } from '@ai-usage/design-system/svelte';
   import type { WebQueryHydrationState } from '../../../query/client';
   import WebQueryProvider from '../../../query/provider.svelte';
   import SkillsShell from './skills-shell.svelte';

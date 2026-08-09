@@ -12,7 +12,7 @@
     statusPillOk,
     statusPillWarn,
     strongCell,
-  } from '@ai-usage/design-system/svelte/passive';
+  } from '@ai-usage/design-system/svelte';
   import type { SkillManagementSnapshot } from '@ai-usage/skills';
   import type { ProjectSkillMarkdownDocument, SkillMarkdownDocument } from '@ai-usage/web-contract/skills';
   import { onDestroy, type Snippet, tick } from 'svelte';
@@ -57,6 +57,7 @@
   } = $props();
 
   const managementPlan = createSkillsManagementPlanController();
+  const ATTENTION_SKILL_LIMIT = 6;
   $effect(() => onSourceChange?.(snapshot.config.sourceRepoPath ?? 'not configured'));
   const slotContext = $derived({ document: selectedDocument, snapshot, snapshotUpdates, view });
   const health = $derived(buildSkillHealthSummary(snapshot));
@@ -72,7 +73,7 @@
         }
         return left.skill.name.localeCompare(right.skill.name);
       })
-      .slice(0, 6),
+      .slice(0, ATTENTION_SKILL_LIMIT),
   );
   const attentionPillClass = (enabled: boolean, validationStatus: string, issueCount: number): string => {
     if (!enabled) {

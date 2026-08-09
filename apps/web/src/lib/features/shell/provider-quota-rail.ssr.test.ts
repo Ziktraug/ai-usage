@@ -89,15 +89,7 @@ describe('rendered provider quota rail', () => {
       expect(html).toContain(`data-provider-quota="${key}"`);
     }
     expect(html).toContain('71%');
-    expect(html).toContain('resets');
-  });
-
-  test('states which direction the percentage runs, in both the heading and each window', () => {
-    const html = renderRail(measuredEntries());
-
-    // A bare "71%" beside a ring is ambiguous: some providers publish what is left, not what is used.
-    expect(html).toContain('Quota used');
-    expect(html).toContain('29% left');
+    expect(html).toContain('Resets');
   });
 
   test('ships the detail flyout collapsed rather than absent, so hover has nothing to fetch', () => {

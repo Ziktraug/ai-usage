@@ -220,7 +220,9 @@ const buildSummary = (
   for (const chunk of chunks) {
     const isInitial = initialClosure.has(chunk.fileName);
     const chunkIdentity = `${chunk.fileName}\n${chunk.moduleIds.join('\n')}`;
-    const lazyLabel = LAZY_CHUNK_PATTERNS.find((entry) => entry.pattern.test(chunkIdentity))?.label ?? null;
+    const lazyLabel = isInitial
+      ? null
+      : (LAZY_CHUNK_PATTERNS.find((entry) => entry.pattern.test(chunkIdentity))?.label ?? null);
     const arkModuleIds = chunk.moduleIds.filter(isArkModule);
     const arkComponents = Array.from(
       new Set(arkModuleIds.filter(isArkComponent).map((moduleId) => extractArkComponent(moduleId))),
@@ -475,6 +477,13 @@ const main = (): void => {
   const destinationClosures = buildDestinationClosures(manifest.chunks, viteManifest);
   const initial = initialChunkSummary(summaries);
   const lazy = lazyChunkSummary(summaries);
+  const initialChunkFileNames = initial.map((chunk) => chunk.fileName).sort();
+  const lazyChunkFileNames = lazy.map((chunk) => chunk.fileName).sort();
+  const initialFileNameSet = new Set(initialChunkFileNames);
+  const overlappingChunkFileNames = lazyChunkFileNames.filter((fileName) => initialFileNameSet.has(fileName));
+  if (overlappingChunkFileNames.length > 0) {
+    throw new Error(`Initial and lazy chunk sets must be disjoint: ${overlappingChunkFileNames.join(', ')}`);
+  }
   const duplicatedArkOrZag = occurrences.filter(
     (occurrence) => isArkModule(occurrence.moduleId) || isZagModule(occurrence.moduleId),
   );
@@ -484,8 +493,10 @@ const main = (): void => {
     duplicatedModuleCount: occurrences.length,
     destinationClosures,
     initialChunkCount: initial.length,
+    initialChunkFileNames,
     initialChunks: initial,
     lazyChunkCount: lazy.length,
+    lazyChunkFileNames,
     lazyChunks: lazy,
     manifestFormat: manifest.format,
     manifestPath: path.relative(ROOT, MANIFEST_PATH),

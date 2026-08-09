@@ -43,6 +43,7 @@
     panel,
     panelSub,
     panelTitle,
+    SegmentedControl,
     timeChartOptions,
     timeChartOptionsCurrent,
     timeChartOptionsSummary,
@@ -55,8 +56,7 @@
     timeSliderRange,
     timeSliderRangeDrag,
     timeSliderThumb,
-  } from '@ai-usage/design-system/svelte/passive';
-  import SegmentedControl from '@ai-usage/design-system/svelte/segmented-control';
+  } from '@ai-usage/design-system/svelte';
   import {
     type FocusedDateDomain,
     type FocusedTimelineData,

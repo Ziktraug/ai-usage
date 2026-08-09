@@ -1,6 +1,6 @@
 <script lang="ts">
   import { css } from '@ai-usage/design-system/css';
-  import Drawer from '@ai-usage/design-system/svelte/drawer';
+  import { Drawer } from '@ai-usage/design-system/svelte';
   import type { ProviderQuotaHistoryResult } from '@ai-usage/report-core/provider-quota';
   import {
     buildProviderQuotaHistoryModel,
@@ -23,6 +23,22 @@
   const tableWrap = css({ overflowX: 'auto' });
   const srOnly = css({ srOnly: true });
   const historyRanges = ['24h', '7d', '30d'] as const satisfies readonly ProviderQuotaHistoryRange[];
+  const MILLISECONDS_PER_MINUTE = 60_000;
+  const MINUTES_PER_HOUR = 60;
+  const CHART_WIDTH = 600;
+  const CHART_HEIGHT = 180;
+  const CHART_LEFT = 20;
+  const CHART_RIGHT = 580;
+  const CHART_TOP = 30;
+  const CHART_MIDDLE = 90;
+  const CHART_BOTTOM = 150;
+  const CHART_PLOT_WIDTH = CHART_RIGHT - CHART_LEFT;
+  const CHART_PLOT_HEIGHT = CHART_BOTTOM - CHART_TOP;
+  const FULL_PERCENT = 100;
+  const BREAK_LINE_TOP = 22;
+  const BREAK_LINE_BOTTOM = 158;
+  const BREAK_LABEL_OFFSET_X = 4;
+  const BREAK_LABEL_Y = 18;
 
   let {
     errorMessage = null,
@@ -79,15 +95,16 @@
     account = '';
   };
   const largestGapLabel = (milliseconds: number): string => {
-    const minutes = Math.round(milliseconds / 60_000);
-    return minutes < 60 ? `${minutes}m` : `${(minutes / 60).toFixed(1)}h`;
+    const minutes = Math.round(milliseconds / MILLISECONDS_PER_MINUTE);
+    return minutes < MINUTES_PER_HOUR ? `${minutes}m` : `${(minutes / MINUTES_PER_HOUR).toFixed(1)}h`;
   };
   const seriesX = (series: ProviderQuotaHistorySeries, observedAt: string): number => {
     const firstTime = Date.parse(series.firstObservedAt);
     const duration = Math.max(1, Date.parse(series.lastObservedAt) - firstTime);
-    return 20 + ((Date.parse(observedAt) - firstTime) / duration) * 560;
+    return CHART_LEFT + ((Date.parse(observedAt) - firstTime) / duration) * CHART_PLOT_WIDTH;
   };
-  const seriesY = (usedPercent: number | null): number => 150 - ((usedPercent ?? 0) / 100) * 120;
+  const seriesY = (usedPercent: number | null): number =>
+    CHART_BOTTOM - ((usedPercent ?? 0) / FULL_PERCENT) * CHART_PLOT_HEIGHT;
   const seriesPath = (series: ProviderQuotaHistorySeries, segmentIndex: number): string => {
     const segment = series.segments[segmentIndex];
     if (!segment?.points.length) {
@@ -199,10 +216,15 @@
             {series.summary}
             · largest gap {largestGapLabel(series.largestGapMs)} · {series.sourceKey} ({series.sourceConfidence})
           </p>
-          <svg aria-hidden="true" class={chart} preserveAspectRatio="none" viewBox="0 0 600 180">
+          <svg
+            aria-hidden="true"
+            class={chart}
+            preserveAspectRatio="none"
+            viewBox={`0 0 ${CHART_WIDTH} ${CHART_HEIGHT}`}
+          >
             <title>{series.label} quota observation chart</title>
             <path
-              d="M 20 30 H 580 M 20 90 H 580 M 20 150 H 580"
+              d={`M ${CHART_LEFT} ${CHART_TOP} H ${CHART_RIGHT} M ${CHART_LEFT} ${CHART_MIDDLE} H ${CHART_RIGHT} M ${CHART_LEFT} ${CHART_BOTTOM} H ${CHART_RIGHT}`}
               fill="none"
               stroke="currentColor"
               stroke-opacity="0.12"
@@ -222,8 +244,15 @@
               {@const point = segment.points[0]}
               {#if point}
                 {@const x = seriesX(series, point.firstObservedAt)}
-                <line stroke="currentColor" stroke-dasharray="5 4" x1={x} x2={x} y1="22" y2="158"></line>
-                <text font-size="11" x={x + 4} y="18">{segment.breakReason}</text>
+                <line
+                  stroke="currentColor"
+                  stroke-dasharray="5 4"
+                  x1={x}
+                  x2={x}
+                  y1={BREAK_LINE_TOP}
+                  y2={BREAK_LINE_BOTTOM}
+                ></line>
+                <text font-size="11" x={x + BREAK_LABEL_OFFSET_X} y={BREAK_LABEL_Y}>{segment.breakReason}</text>
               {/if}
             {/each}
           </svg>

@@ -78,34 +78,6 @@ describe('scheduled source adapters', () => {
     }
   });
 
-  test('never polls Claude for quota on a home that has never run it', async () => {
-    const home = mkdtempSync(path.join(tmpdir(), 'plan052-engine-claude-quota-'));
-    try {
-      // The executable being installed is not consent to open a session. Against a profile with no
-      // Claude history, opening one waits on an onboarding prompt, which would stall every isolated
-      // environment — test sandboxes included — for the whole collection timeout.
-      const withoutHistory = await createRegistry(home, { claudeLiveAvailable: () => true });
-      expect(
-        (await Effect.runPromise(withoutHistory.get('claude.usage-limits')?.detect ?? Effect.die('missing')))
-          .availability,
-      ).toBe('not-detected');
-
-      writeClaudeSession(home);
-      const withHistory = await createRegistry(home, { claudeLiveAvailable: () => true });
-      expect(
-        (await Effect.runPromise(withHistory.get('claude.usage-limits')?.detect ?? Effect.die('missing'))).availability,
-      ).toBe('detected');
-
-      const withoutBinary = await createRegistry(home, { claudeLiveAvailable: () => false });
-      expect(
-        (await Effect.runPromise(withoutBinary.get('claude.usage-limits')?.detect ?? Effect.die('missing')))
-          .availability,
-      ).toBe('not-detected');
-    } finally {
-      rmSync(home, { force: true, recursive: true });
-    }
-  });
-
   test('normalizes and imports one session source without global enrichment', async () => {
     const home = mkdtempSync(path.join(tmpdir(), 'plan052-engine-source-claude-'));
     try {

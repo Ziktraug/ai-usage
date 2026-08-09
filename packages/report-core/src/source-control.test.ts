@@ -3,13 +3,13 @@ import {
   chooseNewestSourceControlSnapshot,
   collectionSourceDefinitions,
   collectionSourceIds,
+  getCollectionSourceDefinition,
   isCollectionSourceId,
   isSourcePolicyOverrides,
   parseReportPublishedEvent,
   parseSourceControlCommand,
   parseSourceControlCommandResponse,
   parseSourceControlSnapshot,
-  providerUsageSourceIds,
   resolveSourceEnabled,
   sanitizeSourceWarningCode,
   sanitizeSourceWarningCodes,
@@ -57,28 +57,13 @@ describe('collection source contracts', () => {
   test('defines every stable source exactly once with the agreed defaults', () => {
     expect(collectionSourceDefinitions.map(({ id }) => id)).toEqual([...collectionSourceIds]);
     expect(new Set(collectionSourceIds).size).toBe(collectionSourceIds.length);
-    // Provider quota is polled against a remote allowance, so it runs on a slower cadence than the
-    // local-file sources; everything else reads the filesystem every minute.
+    expect(getCollectionSourceDefinition('codex.usage-limits').cadenceMs).toBe(300_000);
     expect(
       collectionSourceDefinitions
-        .filter(({ group }) => group === 'provider-usage')
-        .every(({ cadenceMs }) => cadenceMs === 300_000),
-    ).toBe(true);
-    expect(
-      collectionSourceDefinitions
-        .filter(({ group }) => group !== 'provider-usage')
+        .filter(({ id }) => id !== 'codex.usage-limits')
         .every(({ cadenceMs }) => cadenceMs === 60_000),
     ).toBe(true);
-  });
-
-  test('enables every source by default', () => {
     expect(collectionSourceDefinitions.every(({ defaultEnabled }) => defaultEnabled)).toBe(true);
-  });
-
-  test('derives the provider-usage group rather than naming one source', () => {
-    // A quota refresh means "refresh the providers". Hardcoding a single id is what made the second
-    // provider invisible to the CLI and to the on-demand refresh.
-    expect(providerUsageSourceIds).toEqual(['codex.usage-limits', 'claude.usage-limits']);
   });
 
   test('validates stable ids and strict sparse overrides', () => {

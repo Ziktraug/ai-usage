@@ -1,7 +1,7 @@
 import { fileURLToPath } from 'node:url';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
 import { type Browser, chromium, type Locator, type Page } from 'playwright';
-import { createServer, type ViteDevServer } from 'vite';
+import { type BrowserFixtureServer, startBrowserFixtureServer } from '../browser-fixture-server';
 
 const fixtureHtml = `<!doctype html>
 <html lang="en">
@@ -33,8 +33,8 @@ const assertAttribute = async (locator: Locator, name: string, expected: string,
   assertEqual(await locator.getAttribute(name), expected, label);
 };
 
-const fixtureServer = async (): Promise<ViteDevServer> => {
-  const server = await createServer({
+const fixtureServer = (): Promise<BrowserFixtureServer> =>
+  startBrowserFixtureServer({
     appType: 'custom',
     configFile: false,
     optimizeDeps: { exclude: ['svelte'], noDiscovery: true },
@@ -67,26 +67,18 @@ const fixtureServer = async (): Promise<ViteDevServer> => {
     ],
     resolve: { dedupe: ['svelte'] },
     root: repositoryDirectory,
-    server: { host: '127.0.0.1', hmr: false, port: 0, strictPort: true, ws: false },
   });
-  return server;
-};
 
 let browser: Browser | undefined;
-let cleanupErrors: unknown[] = [];
+const cleanupErrors: unknown[] = [];
 const browserErrors: string[] = [];
 let page: Page | undefined;
 let proofError: unknown;
-let server: ViteDevServer | undefined;
+let server: BrowserFixtureServer | undefined;
 
 try {
   server = await fixtureServer();
-  await server.listen();
-  const address = server.httpServer?.address();
-  const fixturePort = typeof address === 'object' && address !== null ? address.port : undefined;
-  if (fixturePort === undefined) {
-    fail('Vite did not expose an ephemeral TCP port');
-  }
+  const fixturePort = server.port;
 
   const systemChromium = Bun.which('google-chrome') ?? Bun.which('chromium');
   browser = await chromium.launch(
@@ -184,18 +176,22 @@ try {
 } catch (error) {
   proofError = error;
 } finally {
-  const cleanupTasks: Promise<unknown>[] = [];
+  const cleanupTasks: (() => Promise<unknown>)[] = [];
   if (page !== undefined) {
-    cleanupTasks.push(page.close());
+    cleanupTasks.push(() => page?.close() ?? Promise.resolve());
   }
   if (browser !== undefined) {
-    cleanupTasks.push(browser.close());
+    cleanupTasks.push(() => browser?.close() ?? Promise.resolve());
   }
   if (server !== undefined) {
-    cleanupTasks.push(server.close());
+    cleanupTasks.push(() => server?.close() ?? Promise.resolve());
   }
-  const cleanupResults = await Promise.allSettled(cleanupTasks);
-  cleanupErrors = cleanupResults.flatMap((result) => (result.status === 'rejected' ? [result.reason] : []));
+  for (const task of cleanupTasks) {
+    const [cleanupResult] = await Promise.allSettled([task()]);
+    if (cleanupResult?.status === 'rejected') {
+      cleanupErrors.push(cleanupResult.reason);
+    }
+  }
 }
 
 if (proofError !== undefined || cleanupErrors.length > 0) {

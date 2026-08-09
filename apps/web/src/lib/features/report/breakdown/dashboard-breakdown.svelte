@@ -1,11 +1,12 @@
 <script lang="ts">
   import { css } from '@ai-usage/design-system/css';
-  import Tabs from '@ai-usage/design-system/svelte/tabs';
+  import { Tabs } from '@ai-usage/design-system/svelte';
   import type { AnalyticsGroup } from '@ai-usage/report-core/analytics';
   import type { ProjectGroupConfig } from '@ai-usage/report-core/project-group';
   import type { ProjectGroup } from '../../../../dashboard-analytics';
   import {
     type BreakdownSort,
+    type BreakdownTab,
     breakdownTabFor,
     type DashboardTab,
     type FieldFilterKey,
@@ -36,7 +37,7 @@
     };
     navigation: {
       onSortChange: (sort: BreakdownSort) => void;
-      onTabChange: (tab: string) => void;
+      onTabChange: (tab: BreakdownTab) => void;
       sort: BreakdownSort;
       tab: DashboardTab;
     };
@@ -51,7 +52,10 @@
 
   const selectedTab = $derived(breakdownTabFor(navigation.tab));
   const changeTab = (value: string): void => {
-    if (value !== selectedTab) {
+    if (
+      value !== selectedTab &&
+      (value === 'models' || value === 'harness-providers' || value === 'projects' || value === 'cursor-ai')
+    ) {
       navigation.onTabChange(value);
     }
   };

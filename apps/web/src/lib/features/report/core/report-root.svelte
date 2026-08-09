@@ -1,6 +1,5 @@
 <script lang="ts">
-  import { page, shell } from '@ai-usage/design-system/svelte/passive';
-  import type { ReportRevisionBootstrapResult } from '@ai-usage/web-contract/report';
+  import { page, shell } from '@ai-usage/design-system/svelte';
   import { onMount } from 'svelte';
   import { browser } from '$app/environment';
   import ReportDestinationOwner from '../composition/report-destination-owner.svelte';
@@ -29,7 +28,7 @@
     hydrated = true;
   });
   const liveQuery = createHydratedReportBootstrapQuery(() => browser && data.mode === 'live');
-  const liveResult = $derived(liveQuery.data as ReportRevisionBootstrapResult | undefined);
+  const liveResult = $derived(liveQuery.data);
   const model = $derived(
     data.mode === 'live' ? liveReportShellModel(liveResult) : syntheticReportShellModel(data.mode, data.payload),
   );

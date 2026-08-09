@@ -33,11 +33,9 @@ import {
 } from '@ai-usage/usage-store/writer';
 import { Effect } from 'effect';
 import {
-  CODEX_QUOTA_SOURCE_IDENTITY,
   createProviderQuotaRefresh,
   type ProviderQuotaRefreshAborted,
   type ProviderQuotaRefreshResult,
-  type ProviderQuotaSourceIdentity,
   type ResolvedProviderQuotaRefreshInput,
 } from './provider-quota-refresh';
 
@@ -45,8 +43,6 @@ const LIVE_CADENCE_MS = 5 * 60 * 1000;
 
 export interface ProviderQuotaRuntimeOptions {
   backfillSource?: ProviderQuotaBatchSource | null;
-  /** Defaults to Codex. Pass another identity to refresh a different provider's windows. */
-  identity?: ProviderQuotaSourceIdentity;
   liveCadenceMs?: number;
   liveSource?: ProviderQuotaBatchSource;
   now?: () => Date;
@@ -137,7 +133,6 @@ export const refreshLocalProviderQuotas = (
       backfillSource:
         input.options?.backfillSource === undefined ? productionBackfillSource(storage) : input.options.backfillSource,
       dbPath: input.dbPath ?? usageStorePath(storage.home),
-      identity: input.options?.identity ?? CODEX_QUOTA_SOURCE_IDENTITY,
       liveCadenceMs: input.options?.liveCadenceMs ?? LIVE_CADENCE_MS,
       liveSource: input.options?.liveSource ?? createCodexAppServerBatchSource(),
       machine,

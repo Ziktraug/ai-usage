@@ -28,7 +28,7 @@
     table,
     tableWrap,
   } from '@ai-usage/design-system/report';
-  import HarnessBadge from '@ai-usage/design-system/svelte/harness-badge';
+  import { HarnessBadge } from '@ai-usage/design-system/svelte';
   import type { SkillManagementSnapshot } from '@ai-usage/skills';
   import {
     canReconcileAll,

@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-08-09T10:18:33.651Z",
+  "generatedAt": "2026-08-09T12:10:04.038Z",
   "source": {
-    "artifactSourceCommit": "084108fa2f9091524d11a08a7aa4d58c862440a3",
-    "worktreeHead": "084108fa2f9091524d11a08a7aa4d58c862440a3",
-    "worktreeDirty": false
+    "artifactSourceCommit": "dfa5b66ed02f2fe25fa14764faa7b874e3cde8f7",
+    "worktreeHead": "dfa5b66ed02f2fe25fa14764faa7b874e3cde8f7",
+    "worktreeDirty": true
   },
   "tools": {
     "bun": "1.3.13",
@@ -16,13 +16,13 @@
     "vite": "8.2.0"
   },
   "sources": {
-    "controlInitial": "docs/performance/artifacts/plan072-control.json",
+    "controlBundleMap": "docs/performance/artifacts/plan072-control-bundle-map.json",
     "controlDrawer": "docs/performance/artifacts/plan072-ark-control-7.json",
-    "candidateBundleMap": "docs/performance/artifacts/plan072-bundle-map.json",
+    "candidateBundleMap": "docs/performance/artifacts/plan072-bundle-map-rejected-b.json",
     "candidateDestination": "docs/performance/artifacts/plan072-destination-render.json"
   },
   "method": {
-    "initial": "Control bytes are read from plan072-control.json. Candidate bytes are recomputed from the Vite initial closure with gzip level 9 and default Brotli.",
+    "initial": "Control and candidate bytes are recomputed from their clean-build Vite Overview closures with gzip level 9 and default Brotli.",
     "incrementalDrawer": "Raw bytes come from destination-render response bodies. Candidate and control gzip are recomputed from the exact recorded Drawer chunk identities in their respective builds.",
     "totalThroughDrawer": "initial + incremental Drawer bytes; cumulative total is authoritative.",
     "controlDrawerGzipRebuild": {
@@ -34,27 +34,27 @@
   "metrics": {
     "initial": {
       "control": {
-        "brotli": 241578,
-        "gzip": 279234,
-        "raw": 891157
+        "brotli": 241604,
+        "gzip": 279246,
+        "raw": 891161
       },
       "candidate": {
-        "brotli": 232976,
-        "gzip": 265686,
-        "raw": 810954
+        "brotli": 239047,
+        "gzip": 271935,
+        "raw": 837039
       },
       "delta": {
         "brotli": {
-          "bytes": -8602,
-          "percent": -3.560755
+          "bytes": -2557,
+          "percent": -1.058343
         },
         "gzip": {
-          "bytes": -13548,
-          "percent": -4.851845
+          "bytes": -7311,
+          "percent": -2.618122
         },
         "raw": {
-          "bytes": -80203,
-          "percent": -8.999873
+          "bytes": -54122,
+          "percent": -6.073201
         }
       }
     },
@@ -64,54 +64,54 @@
         "raw": 41297
       },
       "candidate": {
-        "gzip": 29962,
-        "raw": 95553
+        "gzip": 25559,
+        "raw": 80563
       },
       "delta": {
         "gzip": {
-          "bytes": 16799,
-          "percent": 127.622882
+          "bytes": 12396,
+          "percent": 94.173061
         },
         "raw": {
-          "bytes": 54256,
-          "percent": 131.380003
+          "bytes": 39266,
+          "percent": 95.081967
         }
       }
     },
     "totalThroughDrawer": {
       "control": {
-        "gzip": 292397,
-        "raw": 932454
+        "gzip": 292409,
+        "raw": 932458
       },
       "candidate": {
-        "gzip": 295648,
-        "raw": 906507
+        "gzip": 297494,
+        "raw": 917602
       },
       "delta": {
         "gzip": {
-          "bytes": 3251,
-          "percent": 1.111845
+          "bytes": 5085,
+          "percent": 1.739003
         },
         "raw": {
-          "bytes": -25947,
-          "percent": -2.782657
+          "bytes": -14856,
+          "percent": -1.593208
         }
       }
     },
     "drawerOpenMs": {
       "control": {
-        "samples": [76.804, 82.688, 112.186, 105.033, 73.741, 111.176, 107.077],
-        "median": 105.033
+        "samples": [94.436, 92.413, 99.023, 91.653, 105.542, 97.021, 108.947],
+        "median": 97.021
       },
       "candidate": {
         "samples": [
-          108.497, 77.299, 124.155, 108.312, 1284.577, 104.84, 81.186
+          122.689, 140.879, 122.293, 462.74, 133.305, 119.434, 120.014
         ],
-        "median": 108.312
+        "median": 122.689
       },
       "delta": {
-        "bytes": 3.2789999999999964,
-        "percent": 3.121876
+        "bytes": 25.667999999999992,
+        "percent": 26.456128
       }
     },
     "duplicatedArkOrZagCount": 0
@@ -119,10 +119,10 @@
   "gate": {
     "wording": "total chargé après ouverture du Drawer",
     "interpretation": "Cumulative totalThroughDrawer is authoritative, not incremental-only. Initial target gzip must decrease by at least 10 KiB and cumulative totalThroughDrawer growth must be <=5%.",
-    "initialGzipDecreaseAtLeast10KiB": true,
+    "initialGzipDecreaseAtLeast10KiB": false,
     "totalThroughDrawerGzipGrowthAtMost5Percent": true,
-    "drawerOpenRegressionAtMost10Percent": true,
+    "drawerOpenRegressionAtMost10Percent": false,
     "noDuplicatedArkOrZag": true,
-    "passes": true
+    "passes": false
   }
 }

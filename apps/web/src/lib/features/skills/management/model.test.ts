@@ -5,6 +5,8 @@ import {
   editSourceRepositoryDraft,
   matrixDotTone,
   observeInspectorDisclosure,
+  previewReconcileOperation,
+  reconcileSkillOperation,
   resolveSkillsRefreshAcceptance,
   runSkillsConfigurationOperation,
   runSkillsManagementOperation,
@@ -67,7 +69,7 @@ describe('Skills management presentation and mutation seam', () => {
         saveSkillManagementConfig: () => Promise.resolve({ data: snapshot, ok: true }),
         toggleManagedSkill: () => Promise.resolve({ data: { actions: [], snapshot }, ok: true }),
       },
-      'preview-reconcile',
+      previewReconcileOperation,
     );
     expect(result.ok).toBe(true);
     if (!result.ok) {
@@ -88,14 +90,14 @@ describe('Skills management presentation and mutation seam', () => {
       type: 'create-symlink',
     };
     expect(
-      skillsManagementSuccessMessage('reconcile:alpha-skill', {
+      skillsManagementSuccessMessage(reconcileSkillOperation('alpha-skill'), {
         actions: [action],
         plan: null,
         snapshot,
       }),
     ).toBe('alpha-skill linked to Codex.');
     expect(
-      skillsManagementSuccessMessage('reconcile:alpha-skill', {
+      skillsManagementSuccessMessage(reconcileSkillOperation('alpha-skill'), {
         actions: [],
         plan: null,
         snapshot,

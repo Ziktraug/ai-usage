@@ -21,7 +21,7 @@
 </script>
 
 <script lang="ts">
-  import Popover from '@ai-usage/design-system/svelte/popover';
+  import { Popover } from '@ai-usage/design-system/svelte';
   import type { Metric } from '../../../../dashboard-metric-model';
 
   let { metric }: { metric: Metric } = $props();

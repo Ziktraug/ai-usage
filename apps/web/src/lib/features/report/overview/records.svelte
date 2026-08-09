@@ -16,7 +16,7 @@
     topRow,
     topTitle,
   } from '@ai-usage/design-system/report';
-  import HarnessBadge from '@ai-usage/design-system/svelte/harness-badge';
+  import { HarnessBadge } from '@ai-usage/design-system/svelte';
   import type { FocusedOverviewRecords, FocusedOverviewSessionItem } from '@ai-usage/report-core/focused-report-query';
   import { fmtDateOnly, fmtDuration, fmtMoney, fmtNum } from '../../../foundation/presentation/format';
   import { apiValuePresentation } from '../../../foundation/presentation/report-value';

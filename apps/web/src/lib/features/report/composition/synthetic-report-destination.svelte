@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { css } from '@ai-usage/design-system/css';
   import { applyCampaignLabelOverrideMutation, type CampaignLabelOverride } from '@ai-usage/report-core/campaign-label';
   import {
     type FocusedOverviewSessionItem,
@@ -56,18 +55,13 @@
   import CampaignSessionControls from '../actions/campaign-session-controls.svelte';
   import QuotaHistoryOwner from '../actions/quota-history-owner.svelte';
   import ActiveFilters from '../breakdown/active-filters.svelte';
-  import FilterBar from '../breakdown/filter-bar.svelte';
   import { createBreakdownNavigation } from '../breakdown/navigation';
-  import ReportWorkspace from '../core/report-workspace.svelte';
-  import OverviewPage from '../overview/overview-page.svelte';
   import OverviewStatus from '../overview/overview-status.svelte';
-  import ReportRangeControl from '../range/report-range-control.svelte';
   import { activeTimelineSeriesKeys } from './active-timeline-series';
+  import ReportDestinationPresentation from './report-destination-presentation.svelte';
   import { reportDestinationForSearch, reportFilterFingerprint } from './report-search';
 
   import SessionIdentityPublisher from './session-identity-publisher.svelte';
-
-  const rangePlacement = css({ mt: '14px' });
 
   type DashboardBreakdownModule = typeof import('../breakdown/dashboard-breakdown.svelte');
   type SessionTableModule = typeof import('../../sessions/table/session-table.svelte');
@@ -398,43 +392,159 @@
   />
 {/snippet}
 
-<FilterBar
-  freshnessStatus={displayedFreshnessStatus}
-  freshnessUnavailable={displayedFreshnessUnavailable}
-  {harnessOptions}
-  isDemo={mode === 'demo'}
-  machineAttention={runtimeMode === 'e2e' && machineOptions.some(({ value }) => machinePresentations.get(value)?.freshness !== 'fresh')}
-  machineOptions={machineOptions.map(({ value }) => value)}
-  {navigation}
-  {presentMachineLabel}
-  {search}
-/>
-<div class={rangePlacement} hidden={focusedTimelineFiltersAreStale}>
-  <ReportRangeControl
-    {activeSeriesKeys}
-    dateDomain={overview.dateDomain}
-    {dimension}
-    generatedAt={reportSupport.generatedAt}
-    {granularity}
-    {machineFreshnessStatus}
-    {navigate}
-    onDimensionFilter={navigation.setTimelineDimensionFilter}
-    onOptionsChange={(options) => {
+{#snippet summary()}
+  {@render activeFilterSummary(pending)}
+{/snippet}
+{#snippet sessions()}
+  {#if sessionTableModule}
+    {@const SessionTable = sessionTableModule.default}
+    <SessionIdentityPublisher
+      requestFingerprint={sessionQueryFingerprint(syntheticSessionQuery)}
+      revision={syntheticSessionQuery.revision}
+    />
+    <SessionTable
+      {columnVisibility}
+      initialWindowAnchor={sessionWindowAnchorOwner.available()}
+      onClearFilters={navigation.clearAllFilters}
+      onColumnVisibilityChange={(updater) => {
+        const next = applyStateUpdate(updater, columnVisibility);
+        navigate((current) => ({ ...current, ...columnVisibilitySearchForVisibility(next) }), { replace: true });
+      }}
+      onFieldFilter={navigation.setFieldFilter}
+      onHarnessFilter={(value) =>
+        navigation.setHarness(
+          renderedSearch.harness.includes(value)
+            ? renderedSearch.harness.filter((item) => item !== value)
+            : [...renderedSearch.harness, value],
+        )}
+      onInitialWindowAnchor={sessionWindowAnchorOwner.consume}
+      onSelect={selectSessionRow}
+      onSortingChange={(updater) => {
+        const next = applyStateUpdate(updater, sorting);
+        navigate((current) => ({ ...current, sort: sortFromSortingState(next, current.sort) }));
+      }}
+      queryResetKey={sessionResetKey}
+      rows={tableRows}
+      searchQuery={renderedSearch.q}
+      {selectedRowId}
+      {sorting}
+      totalRows={visibleRows.length}
+    />
+  {/if}
+{/snippet}
+<ReportDestinationPresentation
+  activeView={primary}
+  breakdown={primary === 'breakdown' && dashboardBreakdownModule
+    ? {
+        component: dashboardBreakdownModule.default,
+        props: {
+          data: {
+            cursorRows: breakdown.context.cursorCommitAttribution,
+            generatedAt: reportSupport.generatedAt,
+            harnesses: breakdown.groups.harnesses,
+            harnessProviders: breakdown.groups.harnessProviders,
+            models: breakdown.groups.models,
+            projects: breakdown.groups.projects,
+          },
+          navigation: {
+            onSortChange: navigation.setBreakdownSort,
+            onTabChange: (tab) => navigate((current) => ({ ...current, tab })),
+            sort: renderedSearch.breakdownSort,
+            tab: renderedSearch.tab,
+          },
+          onFieldFilter: navigation.setFieldFilter,
+          onHarnessFilter: (value) =>
+            navigation.setHarness(
+              renderedSearch.harness.includes(value)
+                ? renderedSearch.harness.filter((item) => item !== value)
+                : [...renderedSearch.harness, value],
+            ),
+          projectEditor: {
+            disabled: true,
+            onSave: () => Promise.reject(new Error('Synthetic project groups are read-only.')),
+            payload: reportSupport,
+          },
+        },
+      }
+    : null}
+  filters={{
+    freshnessStatus: displayedFreshnessStatus,
+    freshnessUnavailable: displayedFreshnessUnavailable,
+    harnessOptions,
+    isDemo: mode === 'demo',
+    machineAttention:
+      runtimeMode === 'e2e' &&
+      machineOptions.some(({ value }) => machinePresentations.get(value)?.freshness !== 'fresh'),
+    machineOptions: machineOptions.map(({ value }) => value),
+    navigation,
+    presentMachineLabel,
+    search,
+  }}
+  hasOutput={!pending}
+  loadFailed={dashboardBreakdownLoadFailed || sessionTableLoadFailed}
+  overview={primary === 'overview'
+    ? {
+        activeSeriesKeys,
+        dimension,
+        draggedWindowApiValue,
+        freshness: focusedMachineFreshness,
+        granularity,
+        machineFreshnessStatus,
+        navigate,
+        onDimensionFilter: navigation.setTimelineDimensionFilter,
+        onOptionsChange: (options) => {
+          dimension = options.dimension;
+          granularity = options.granularity;
+          timelineValue = options.value;
+        },
+        onRangeChange: navigation.setDateRange,
+        onSelectDay: (date) =>
+          navigate((current) => ({
+            ...current,
+            range: { from: date, mode: 'custom', to: date },
+            tab: 'sessions',
+          })),
+        onSelectSession: selectOverviewSession,
+        onSelectTimeCell: (cell) =>
+          navigate((current) => ({ ...current, timeCell: serializeDashboardTimeCell(cell) })),
+        presentCampaignSeries,
+        presentMachineSeries,
+        presentSessionItem,
+        range: renderedSearch.range,
+        result: overview,
+        value: timelineValue,
+      }
+    : null}
+  {pending}
+  range={{
+    hidden: focusedTimelineFiltersAreStale,
+    props: {
+      activeSeriesKeys,
+      dateDomain: overview.dateDomain,
+      dimension,
+      generatedAt: reportSupport.generatedAt,
+      granularity,
+      machineFreshnessStatus,
+      navigate,
+      onDimensionFilter: navigation.setTimelineDimensionFilter,
+      onOptionsChange: (options) => {
         dimension = options.dimension;
         granularity = options.granularity;
         timelineValue = options.value;
-      }}
-    onRangeChange={navigation.setDateRange}
-    onWindowPreview={(apiValue) => (draggedWindowApiValue = apiValue)}
-    {presentCampaignSeries}
-    {presentMachineSeries}
-    range={renderedSearch.range}
-    timeline={overview.timeline}
-    value={timelineValue}
-  />
-</div>
-{@render activeFilterSummary(pending)}
-<ReportWorkspace hasOutput={!pending} {pending}>
+      },
+      onRangeChange: navigation.setDateRange,
+      onWindowPreview: (apiValue) => (draggedWindowApiValue = apiValue),
+      presentCampaignSeries,
+      presentMachineSeries,
+      range: renderedSearch.range,
+      timeline: overview.timeline,
+      value: timelineValue,
+    },
+  }}
+  {sessions}
+  sessionsReady={sessionTableModule !== undefined}
+  {summary}
+>
   {#snippet status()}
     {#if primary === 'overview' && !pending}
       <OverviewStatus
@@ -445,94 +555,7 @@
       />
     {/if}
   {/snippet}
-  {#snippet children()}
-    {#if primary === 'overview'}
-      <OverviewPage
-        {activeSeriesKeys}
-        {dimension}
-        {draggedWindowApiValue}
-        freshness={focusedMachineFreshness}
-        {granularity}
-        {machineFreshnessStatus}
-        {navigate}
-        onDimensionFilter={navigation.setTimelineDimensionFilter}
-        onOptionsChange={(options) => {
-          dimension = options.dimension;
-          granularity = options.granularity;
-          timelineValue = options.value;
-        }}
-        onRangeChange={navigation.setDateRange}
-        onSelectDay={(date) => navigate((current) => ({ ...current, range: { from: date, mode: 'custom', to: date }, tab: 'sessions' }))}
-        onSelectSession={selectOverviewSession}
-        onSelectTimeCell={(cell) => navigate((current) => ({ ...current, timeCell: serializeDashboardTimeCell(cell) }))}
-        {presentCampaignSeries}
-        {presentMachineSeries}
-        {presentSessionItem}
-        range={renderedSearch.range}
-        result={overview}
-        value={timelineValue}
-      />
-    {:else if primary === 'breakdown' && dashboardBreakdownModule}
-      {@const DashboardBreakdown = dashboardBreakdownModule.default}
-      <DashboardBreakdown
-        data={{
-          cursorRows: breakdown.context.cursorCommitAttribution,
-          generatedAt: reportSupport.generatedAt,
-          harnesses: breakdown.groups.harnesses,
-          harnessProviders: breakdown.groups.harnessProviders,
-          models: breakdown.groups.models,
-          projects: breakdown.groups.projects,
-        }}
-        navigation={{
-          onSortChange: navigation.setBreakdownSort,
-          onTabChange: (tab) => navigate((current) => ({ ...current, tab: tab as DashboardSearch['tab'] })),
-          sort: renderedSearch.breakdownSort,
-          tab: renderedSearch.tab,
-        }}
-        onFieldFilter={navigation.setFieldFilter}
-        onHarnessFilter={(value) => navigation.setHarness(renderedSearch.harness.includes(value) ? renderedSearch.harness.filter((item) => item !== value) : [...renderedSearch.harness, value])}
-        projectEditor={{
-          disabled: true,
-          onSave: () => Promise.reject(new Error('Synthetic project groups are read-only.')),
-          payload: reportSupport,
-        }}
-      />
-    {:else if primary === 'sessions' && sessionTableModule}
-      {@const SessionTable = sessionTableModule.default}
-      <SessionIdentityPublisher
-        requestFingerprint={sessionQueryFingerprint(syntheticSessionQuery)}
-        revision={syntheticSessionQuery.revision}
-      />
-      <SessionTable
-        {columnVisibility}
-        initialWindowAnchor={sessionWindowAnchorOwner.available()}
-        onClearFilters={navigation.clearAllFilters}
-        onColumnVisibilityChange={(updater) => {
-          const next = applyStateUpdate(updater, columnVisibility);
-          navigate((current) => ({ ...current, ...columnVisibilitySearchForVisibility(next) }), { replace: true });
-        }}
-        onFieldFilter={navigation.setFieldFilter}
-        onHarnessFilter={(value) => navigation.setHarness(renderedSearch.harness.includes(value) ? renderedSearch.harness.filter((item) => item !== value) : [...renderedSearch.harness, value])}
-        onInitialWindowAnchor={sessionWindowAnchorOwner.consume}
-        onSelect={selectSessionRow}
-        onSortingChange={(updater) => {
-          const next = applyStateUpdate(updater, sorting);
-          navigate((current) => ({ ...current, sort: sortFromSortingState(next, current.sort) }));
-        }}
-        queryResetKey={sessionResetKey}
-        rows={tableRows}
-        searchQuery={renderedSearch.q}
-        {selectedRowId}
-        {sorting}
-        totalRows={visibleRows.length}
-      />
-    {:else if dashboardBreakdownLoadFailed || sessionTableLoadFailed}
-      <p role="status">Report view is temporarily unavailable.</p>
-    {:else}
-      <p aria-live="polite" role="status">Loading report…</p>
-    {/if}
-  {/snippet}
-</ReportWorkspace>
+</ReportDestinationPresentation>
 <SessionDetailQuerySlot
   {campaignSlot}
   client={syntheticClient}

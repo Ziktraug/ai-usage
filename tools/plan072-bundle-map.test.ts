@@ -7,9 +7,12 @@ const ROOT = path.resolve(import.meta.dirname, '..');
 const SCRIPT_PATH = path.join(ROOT, 'tools/plan072-bundle-map.ts');
 
 interface BundleMapOutput {
+  readonly destinationClosures: ReadonlyArray<{ label: string }>;
   readonly duplicatedArkOrZagCount: number;
   readonly initialChunkCount: number;
+  readonly initialChunkFileNames: readonly string[];
   readonly initialChunks: ReadonlyArray<{ arkComponents: readonly string[]; fileName: string; isInitial: boolean }>;
+  readonly lazyChunkFileNames: readonly string[];
   readonly lazyChunks: ReadonlyArray<{ fileName: string; isInitial: boolean }>;
 }
 
@@ -36,19 +39,40 @@ const parseBundleMapOutput = (value: unknown): BundleMapOutput => {
     value === null ||
     !('duplicatedArkOrZagCount' in value) ||
     typeof value.duplicatedArkOrZagCount !== 'number' ||
+    !('destinationClosures' in value) ||
+    !Array.isArray(value.destinationClosures) ||
     !('initialChunkCount' in value) ||
     typeof value.initialChunkCount !== 'number' ||
+    !('initialChunkFileNames' in value) ||
+    !Array.isArray(value.initialChunkFileNames) ||
+    !value.initialChunkFileNames.every((fileName) => typeof fileName === 'string') ||
     !('initialChunks' in value) ||
     !Array.isArray(value.initialChunks) ||
+    !('lazyChunkFileNames' in value) ||
+    !Array.isArray(value.lazyChunkFileNames) ||
+    !value.lazyChunkFileNames.every((fileName) => typeof fileName === 'string') ||
     !('lazyChunks' in value) ||
     !Array.isArray(value.lazyChunks)
   ) {
     throw new Error('Expected a valid bundle-map output');
   }
   return {
+    destinationClosures: value.destinationClosures.map((closure) => {
+      if (
+        typeof closure !== 'object' ||
+        closure === null ||
+        !('label' in closure) ||
+        typeof closure.label !== 'string'
+      ) {
+        throw new Error('Expected a valid destination closure');
+      }
+      return { label: closure.label };
+    }),
     duplicatedArkOrZagCount: value.duplicatedArkOrZagCount,
     initialChunkCount: value.initialChunkCount,
+    initialChunkFileNames: value.initialChunkFileNames,
     initialChunks: value.initialChunks.map(parseChunk),
+    lazyChunkFileNames: value.lazyChunkFileNames,
     lazyChunks: value.lazyChunks.map(parseChunk),
   };
 };
@@ -72,6 +96,7 @@ const writeMinimalManifests = (manifestPath: string, viteManifestPath: string): 
           '../../node_modules/@ark-ui/svelte/dist/components/drawer/drawer-backdrop.svelte',
           '../../node_modules/@ark-ui/svelte/dist/components/popover/popover-root.svelte',
           '../../node_modules/@zag-js/focus-trap/dist/index.js',
+          './src/lib/features/sessions/table/session-table.svelte',
         ],
         modules: [],
         renderedDynamicImports: [],
@@ -168,6 +193,14 @@ describe('plan072 bundle-map', () => {
     const parsed = parseBundleMapOutput(JSON.parse(readFileSync(outputJson, 'utf8')));
     expect(parsed.duplicatedArkOrZagCount).toBe(0);
     expect(parsed.initialChunkCount).toBe(2);
+    expect(parsed.destinationClosures.map((closure) => closure.label)).toEqual([
+      'overview',
+      'sessions',
+      'breakdown',
+      'sessions-after-drawer',
+    ]);
+    expect(parsed.initialChunkFileNames.filter((fileName) => parsed.lazyChunkFileNames.includes(fileName))).toEqual([]);
+    expect(parsed.lazyChunks.every((chunk) => !chunk.isInitial)).toBe(true);
     const initialWithArk = parsed.initialChunks.find((entry) => entry.arkComponents.length > 0);
     expect(initialWithArk).toBeDefined();
     expect(initialWithArk?.arkComponents).toContain('drawer');
@@ -176,5 +209,6 @@ describe('plan072 bundle-map', () => {
     expect(parsed.lazyChunks).toContainEqual(
       expect.objectContaining({ fileName: '_app/immutable/chunks/DrrDGPOk2.js', isInitial: false }),
     );
+    expect(parsed.lazyChunkFileNames).not.toContain('_app/immutable/chunks/EardQyRL.js');
   });
 });
