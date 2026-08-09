@@ -7,15 +7,27 @@ import {
   type Request,
   type Response,
 } from '@playwright/test';
+import {
+  type BrowserRequestAbortExpectation,
+  createBrowserRequestAbortAllowance,
+  isCancelledSvelteKitRouteDataRequest,
+} from './browser-request-abort-allowance';
+import { isExpectedSkillsSaveFailureResponse, RPC_PATH_PREFIX } from './rpc-test-transport';
 
 const CRITICAL_RESOURCE_TYPES = new Set(['document', 'fetch', 'xhr']);
 const SOURCE_CONTROL_EVENTS_PATH = '/api/source-control';
 const SOURCE_CONTROL_COMMAND_PATH = '/api/source-control/command';
-const SERVER_FUNCTION_PATH_PREFIX = '/_serverFn/';
 const INTENTIONAL_EVENT_SOURCE_ABORT = 'net::ERR_ABORTED';
 const REPORT_REQUEST_OWNER_HEADER = 'x-ai-usage-request-owner';
-const INTENTIONAL_REPORT_REQUEST_OWNERS = new Set(['focused-report', 'session-query']);
+const INTENTIONAL_REPORT_REQUEST_OWNERS = new Set([
+  'focused-report',
+  'session-query',
+  'svelte-report-root',
+  'web-query-browser',
+]);
 const ROOT_ROUTE_MATCH_WARNING = 'Warning: Error in route match: __root__';
+const EXPECTED_SHELL_ERROR_HEADER = 'x-ai-usage-expected-error';
+const EXPECTED_SHELL_ERROR_VALUES = new Set(['not-found-fixture', 'shell-route']);
 
 const requestPath = (request: Request): string => new URL(request.url()).pathname;
 
@@ -25,7 +37,7 @@ const isCriticalRequest = (request: Request): boolean => {
   }
   const pathname = requestPath(request);
   return (
-    pathname.startsWith(SERVER_FUNCTION_PATH_PREFIX) ||
+    pathname.startsWith(RPC_PATH_PREFIX) ||
     pathname === SOURCE_CONTROL_EVENTS_PATH ||
     pathname === SOURCE_CONTROL_COMMAND_PATH
   );
@@ -38,41 +50,106 @@ const isIntentionalSourceControlCancellation = (request: Request, errorText: str
 
 const isIntentionalReportRequestCancellation = (request: Request, errorText: string): boolean =>
   (request.resourceType() === 'fetch' || request.resourceType() === 'xhr') &&
-  requestPath(request).startsWith(SERVER_FUNCTION_PATH_PREFIX) &&
+  requestPath(request).startsWith(RPC_PATH_PREFIX) &&
   INTENTIONAL_REPORT_REQUEST_OWNERS.has(request.headers()[REPORT_REQUEST_OWNER_HEADER] ?? '') &&
   errorText === INTENTIONAL_EVENT_SOURCE_ABORT;
 
 interface PageListeners {
   console: (message: ConsoleMessage) => void;
+  finalize: () => void;
   pageError: (error: Error) => void;
   requestFailed: (request: Request) => void;
   response: (response: Response) => void;
 }
 
+export interface BrowserFailureGate {
+  allowRequestAbortOnce: (expectation: BrowserRequestAbortExpectation) => () => void;
+}
+
 export const reportViewsFor = (page: Page): Locator => page.getByRole('navigation', { name: 'Report views' });
 
-export const test = base.extend<{ browserFailureGate: undefined }>({
+export const waitForHydratedReport = async (page: Page): Promise<void> => {
+  await playwrightExpect(page.locator('main[data-hydrated="true"][data-route-shell="report"]')).toBeVisible();
+};
+
+/**
+ * The navigation rail is server-rendered, so its links are clickable before the router exists —
+ * a click landing that early is a full document navigation, which discards any browser state the
+ * test installed. Await this before any click that must stay a client-side navigation.
+ */
+export const waitForHydratedNavigation = async (page: Page): Promise<void> => {
+  await playwrightExpect(page.locator('[data-app-navigation="desktop"][data-hydrated="true"]')).toBeVisible();
+};
+
+export const openHydratedReport = async (page: Page, url = '/'): Promise<Awaited<ReturnType<Page['goto']>>> => {
+  const response = await page.goto(url);
+  await waitForHydratedReport(page);
+  return response;
+};
+
+export const waitForFocusedReportSettled = async (page: Page): Promise<void> => {
+  await waitForHydratedReport(page);
+  await playwrightExpect(page.locator('[data-report-refresh-pending]')).toHaveCount(0);
+  await playwrightExpect(page.locator('[data-report-complete-output]')).toBeVisible();
+};
+
+export const waitForHydratedSkills = async (page: Page): Promise<void> => {
+  await playwrightExpect(page.locator('[data-skills-workspace][data-skills-hydrated="true"]')).toBeVisible();
+};
+
+export const openHydratedSkills = async (page: Page, url: string): Promise<Awaited<ReturnType<Page['goto']>>> => {
+  const response = await page.goto(url);
+  await waitForHydratedSkills(page);
+  return response;
+};
+
+export const test = base.extend<{ browserFailureGate: BrowserFailureGate }>({
   browserFailureGate: [
     async ({ context }, use) => {
       const failures: string[] = [];
+      const requestAbortAllowance = createBrowserRequestAbortAllowance();
       const listenersByPage = new Map<Page, PageListeners>();
 
       const attach = (page: Page): void => {
         if (listenersByPage.has(page)) {
           return;
         }
+        const expectedShellErrorUrls = new Set<string>();
+        const pendingResourceErrors: Array<{
+          readonly message: string;
+          readonly source: string;
+          readonly url: string;
+        }> = [];
         const listeners: PageListeners = {
           console: (message) => {
             const messageType = message.type();
             const isRouteMatchWarning = messageType === 'warning' && message.text() === ROOT_ROUTE_MATCH_WARNING;
-            if (messageType !== 'error' && !isRouteMatchWarning) {
+            const location = message.location();
+            const isExpectedShellResourceError =
+              messageType === 'error' &&
+              message.text().startsWith('Failed to load resource: the server responded with a status of') &&
+              expectedShellErrorUrls.has(location.url);
+            if ((messageType !== 'error' && !isRouteMatchWarning) || isExpectedShellResourceError) {
               return;
             }
-            const location = message.location();
             const source = location.url ? ` at ${location.url}:${location.lineNumber}:${location.columnNumber}` : '';
+            if (
+              messageType === 'error' &&
+              message.text().startsWith('Failed to load resource: the server responded with a status of')
+            ) {
+              pendingResourceErrors.push({ message: message.text(), source, url: location.url });
+              return;
+            }
             failures.push(`console ${messageType}${source}: ${message.text()}`);
           },
-          pageError: (error) => failures.push(`uncaught page error: ${error.message}`),
+          finalize: () => {
+            for (const error of pendingResourceErrors) {
+              if (!expectedShellErrorUrls.has(error.url)) {
+                failures.push(`console error${error.source}: ${error.message}`);
+              }
+            }
+          },
+          pageError: (error) => failures.push(`uncaught page error: ${error.stack ?? error.message}`),
           requestFailed: (request) => {
             if (!isCriticalRequest(request)) {
               return;
@@ -80,7 +157,17 @@ export const test = base.extend<{ browserFailureGate: undefined }>({
             const errorText = request.failure()?.errorText ?? 'unknown transport failure';
             if (
               isIntentionalSourceControlCancellation(request, errorText) ||
-              isIntentionalReportRequestCancellation(request, errorText)
+              isIntentionalReportRequestCancellation(request, errorText) ||
+              isCancelledSvelteKitRouteDataRequest({
+                errorText,
+                pathname: requestPath(request),
+                resourceType: request.resourceType(),
+              }) ||
+              requestAbortAllowance.consume({
+                errorText,
+                pathname: requestPath(request),
+                resourceType: request.resourceType(),
+              })
             ) {
               return;
             }
@@ -88,6 +175,20 @@ export const test = base.extend<{ browserFailureGate: undefined }>({
           },
           response: (response) => {
             if (response.status() < 400 || !isCriticalRequest(response.request())) {
+              return;
+            }
+            if (EXPECTED_SHELL_ERROR_VALUES.has(response.headers()[EXPECTED_SHELL_ERROR_HEADER] ?? '')) {
+              expectedShellErrorUrls.add(response.url());
+              return;
+            }
+            if (
+              isExpectedSkillsSaveFailureResponse({
+                headers: response.headers(),
+                pathname: requestPath(response.request()),
+                status: response.status(),
+              })
+            ) {
+              expectedShellErrorUrls.add(response.url());
               return;
             }
             failures.push(
@@ -107,10 +208,11 @@ export const test = base.extend<{ browserFailureGate: undefined }>({
       }
       context.on('page', attach);
 
-      await use(undefined);
+      await use({ allowRequestAbortOnce: requestAbortAllowance.allowOnce });
 
       context.off('page', attach);
       for (const [page, listeners] of listenersByPage) {
+        listeners.finalize();
         page.off('console', listeners.console);
         page.off('pageerror', listeners.pageError);
         page.off('requestfailed', listeners.requestFailed);

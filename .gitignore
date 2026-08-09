@@ -1,8 +1,7 @@
 node_modules
 dist
-.output
 .output-build
-.output-dev
+.svelte-kit
 styled-system
 .turbo
 .worktrees/

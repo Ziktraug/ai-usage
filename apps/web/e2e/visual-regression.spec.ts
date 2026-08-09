@@ -1,6 +1,7 @@
 import { collectionSourceDefinitions, type SourceControlView } from '@ai-usage/report-core/source-control';
 import type { Page } from '@playwright/test';
-import { test as browserTest, expect, reportViewsFor } from './browser-test';
+import { E2E_SKILLS_FIXTURE_HEADER } from '../src/lib/server/rpc/e2e-fixture-profile';
+import { test as browserTest, expect, openHydratedReport, openHydratedSkills, reportViewsFor } from './browser-test';
 
 const DESKTOP_VIEWPORT = { height: 900, width: 1280 } as const;
 const NARROW_VIEWPORT = { height: 844, width: 390 } as const;
@@ -102,8 +103,7 @@ const installStableSourceControl = async (page: Page): Promise<void> => {
 
 const openStableOverview = async (page: Page): Promise<void> => {
   await installStableSourceControl(page);
-  await page.goto('/');
-  await expect(page.locator('main[data-hydrated="true"]')).toBeVisible();
+  await openHydratedReport(page);
   await expect(page.getByText('5 / 6 sessions', { exact: true })).toBeVisible();
   await expect(reportViewsFor(page).getByRole('link', { exact: true, name: 'Overview' })).toHaveAttribute(
     'aria-current',
@@ -156,8 +156,8 @@ test('matches the narrow Overview value proposition', async ({ page }) => {
 });
 
 test('matches the hydrated Skills workspace', async ({ page }) => {
-  await page.goto('/skills/global/alpha-skill');
-  await expect(page.locator('main[data-hydrated="true"]')).toBeVisible();
+  await page.setExtraHTTPHeaders({ [E2E_SKILLS_FIXTURE_HEADER]: 'visual' });
+  await openHydratedSkills(page, '/skills/global/alpha-skill');
   await expect(page.getByRole('textbox', { name: 'alpha-skill SKILL.md' })).toBeVisible();
   await waitForFonts(page);
 

@@ -1,5 +1,12 @@
 import { FOCUSED_REPORT_E2E_ENABLED_KEY } from '../src/focused-report-e2e-fixture';
-import { expect, reportViewsFor, test } from './browser-test';
+import {
+  expect,
+  openHydratedReport,
+  reportViewsFor,
+  test,
+  waitForHydratedNavigation,
+  waitForHydratedReport,
+} from './browser-test';
 
 const PREVIOUS_PERIOD_PATTERN = /vs previous period/i;
 const API_VALUE_HINT_PATTERN = /Estimated API-equivalent value at standard prices for \d+ of \d+ fully priced sessions/;
@@ -52,7 +59,7 @@ test('groups value bases while keeping the remaining metric deltas qualified and
 });
 
 test('keeps metric provenance visibly interactive and operable by keyboard', async ({ page }) => {
-  await page.goto('/');
+  await openHydratedReport(page);
 
   const help = page.getByRole('button', { name: 'About API value' });
   const box = await help.boundingBox();
@@ -71,12 +78,25 @@ test('keeps metric provenance visibly interactive and operable by keyboard', asy
   await expect(hint).toBeVisible();
 });
 
-test('explains unavailable source freshness without replacing its compact pill', async ({ page }) => {
+test('explains unavailable source freshness without replacing its compact pill', async ({
+  browserFailureGate,
+  page,
+}) => {
   await page.goto('/skills');
+  await waitForHydratedNavigation(page);
   await page.evaluate((enabledKey) => {
     Reflect.set(globalThis, enabledKey, true);
   }, FOCUSED_REPORT_E2E_ENABLED_KEY);
-  await reportViewsFor(page).getByRole('link', { exact: true, name: 'Overview' }).click();
+  const releaseOverviewDataAbort = browserFailureGate.allowRequestAbortOnce({
+    pathname: '/__data.json',
+    resourceType: 'fetch',
+  });
+  try {
+    await reportViewsFor(page).getByRole('link', { exact: true, name: 'Overview' }).click();
+    await waitForHydratedReport(page);
+  } finally {
+    releaseOverviewDataAbort();
+  }
 
   const freshnessPill = page.getByText('Freshness unavailable', { exact: true });
   await expect(freshnessPill).toBeVisible();
@@ -157,22 +177,81 @@ test('renders secondary status only on Overview and puts Projects before closed 
   await expect(projectsPanel.locator('[data-project-quality-label]')).toHaveCount(0);
 });
 
-test('uses one fixed-size Punchcard intensity channel with a low/high key', async ({ page }) => {
+test('uses compact circular Punchcard marks inside accessible targets with a low/high key', async ({ page }) => {
+  await page.setViewportSize({ height: 1000, width: 1440 });
   await page.goto('/');
+  await expect(page.locator('main[data-hydrated="true"]')).toBeVisible();
 
+  const advancedAnalysis = page.locator('[data-overview-advanced-analysis]');
+  const punchcardPanel = page
+    .getByRole('heading', { level: 3, name: 'Punchcard' })
+    .locator('xpath=ancestor::section[1]');
+  const punchcardHeader = punchcardPanel.locator(':scope > header');
   const punchcardKey = page.locator('[data-punchcard-intensity-key]');
+  const punchcardVisual = page.locator('[data-punchcard-visual]');
+  const punchcardTargets = page.locator('[data-punchcard-cell]');
   const punchcardCells = page.locator('[data-punchcard-cell-fill]');
   await expect(punchcardKey).toContainText('Low');
   await expect(punchcardKey).toContainText('High');
+  await expect(punchcardKey).toContainText('session count');
+  await expect(punchcardKey).toHaveAttribute('aria-label', 'Punchcard session-count intensity');
+  await expect(punchcardKey).toHaveAttribute('role', 'img');
+  await expect(punchcardKey).toHaveCSS('justify-content', 'flex-end');
+  await expect(punchcardVisual).toHaveCSS('column-gap', '2px');
+  await expect(punchcardVisual).toHaveCSS('row-gap', '2px');
+  await expect(punchcardVisual).toHaveCSS('overflow-y', 'hidden');
+  await expect(punchcardHeader).toHaveCSS('display', 'grid');
+  await expect(punchcardHeader).toHaveCSS('row-gap', '2px');
   expect(await punchcardCells.count()).toBeGreaterThan(0);
-  const cellGeometry = await punchcardCells.evaluateAll((elements) =>
+
+  const hoveredTarget = punchcardTargets.last();
+  const hoveredDot = hoveredTarget.locator('[data-punchcard-cell-fill]');
+  await expect(hoveredDot).toHaveCSS('transition-duration', '0.16s');
+  const dotBeforeHover = await hoveredDot.boundingBox();
+  const scrollBeforeHover = await punchcardVisual.evaluate((element) => ({
+    clientHeight: element.clientHeight,
+    scrollHeight: element.scrollHeight,
+  }));
+  await hoveredTarget.hover();
+  await expect(hoveredTarget).toHaveCSS('outline-style', 'none');
+  await expect.poll(async () => Math.round((await hoveredDot.boundingBox())?.width ?? 0)).toBe(16);
+  expect(await punchcardVisual.evaluate((element) => element.scrollHeight)).toBe(scrollBeforeHover.scrollHeight);
+  expect(scrollBeforeHover.scrollHeight).toBe(scrollBeforeHover.clientHeight);
+  await page.mouse.move(0, 0);
+  await expect.poll(async () => (await hoveredDot.boundingBox())?.width ?? 0).toBe(dotBeforeHover?.width ?? 0);
+
+  const tuesdayEveningCell = punchcardPanel.locator('button[data-weekday="1"][data-hour="18"]');
+  await tuesdayEveningCell.focus();
+  await tuesdayEveningCell.press('ArrowDown');
+  await expect(tuesdayEveningCell).toBeFocused();
+  await expect(tuesdayEveningCell).toHaveCSS('outline-offset', '-2px');
+
+  const targetGeometry = await punchcardTargets.evaluateAll((elements) =>
     elements.map((element) => {
       const box = element.getBoundingClientRect();
       return { height: Math.round(box.height), width: Math.round(box.width) };
     }),
   );
-  expect(new Set(cellGeometry.map((box) => box.width)).size).toBe(1);
-  expect(new Set(cellGeometry.map((box) => box.height)).size).toBe(1);
+  expect(new Set(targetGeometry.map((target) => target.width))).toEqual(new Set([24]));
+  expect(new Set(targetGeometry.map((target) => target.height))).toEqual(new Set([24]));
+  await expect(punchcardTargets.first().locator('..')).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+
+  const presentation = await punchcardCells.evaluateAll((elements) =>
+    elements.map((element) => {
+      const box = element.getBoundingClientRect();
+      return {
+        borderRadius: getComputedStyle(element).borderRadius,
+        height: Math.round(box.height),
+        width: Math.round(box.width),
+      };
+    }),
+  );
+  expect(new Set(presentation.map((cell) => cell.width))).toEqual(new Set([10]));
+  expect(new Set(presentation.map((cell) => cell.height))).toEqual(new Set([10]));
+  expect(new Set(presentation.map((cell) => cell.borderRadius))).toEqual(new Set(['999px']));
+
+  const [advancedBox, punchcardBox] = await Promise.all([advancedAnalysis.boundingBox(), punchcardPanel.boundingBox()]);
+  expect(punchcardBox?.width ?? 0).toBeGreaterThanOrEqual((advancedBox?.width ?? 0) - 32);
 });
 
 test('separates timeline boundary dates and retains no horizontally intersecting tick', async ({ page }) => {
@@ -182,6 +261,7 @@ test('separates timeline boundary dates and retains no horizontally intersecting
 
     const tickRow = page.locator('[data-timeline-tick-row]');
     const boundaryRow = page.locator('[data-timeline-boundary-row]');
+    await expect(page.locator('[data-timeline-labels-settled="true"]')).toBeVisible();
     const ticks = tickRow.locator('[data-timeline-tick]:visible');
     const boundaries = boundaryRow.locator('[data-timeline-boundary]');
     await expect(tickRow).toBeVisible();

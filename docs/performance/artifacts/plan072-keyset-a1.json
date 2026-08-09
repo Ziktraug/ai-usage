@@ -1,0 +1,2653 @@
+{
+  "configuration": {
+    "fixtures": [
+      {
+        "campaignCount": 4999,
+        "classifierSessionCount": 1,
+        "sessionCount": 5000
+      },
+      {
+        "campaignCount": 19996,
+        "classifierSessionCount": 4,
+        "sessionCount": 20000
+      }
+    ],
+    "fixtureSizes": [5000, 20000],
+    "pageSize": 200,
+    "recordedSampleCount": 3,
+    "warmupCount": 1
+  },
+  "decision": {
+    "keysetRejected": true,
+    "reason": "STOP A1: JavaScript projection slicing is below 10% of residual SQLite cost at 5k and 20k does not grow superlinearly.",
+    "sliceGrowthRatio": 2.0999999999999996,
+    "sliceShareAtFiveThousand": 0.0002977697049102224,
+    "sliceShareAtTwentyThousand": 0.000147417249783788,
+    "superlinearGrowthObserved": false
+  },
+  "revisionTransition": {
+    "firstRevisionProjectionMisses": 1,
+    "identitiesOverlap": 0,
+    "secondRevisionProjectionMisses": 1
+  },
+  "scenarios": [
+    {
+      "fixtureSize": 5000,
+      "label": "date-desc",
+      "median": {
+        "duplicateIdentityCount": 0,
+        "firstIdentity": "session-row-v1:b6074141ec0dfafd",
+        "lastIdentity": "session-row-v1:183f5e2a1264d176",
+        "missingIdentityCount": 0,
+        "pageCount": 25,
+        "serializationMs": 8.207,
+        "sqlite": {
+          "counters": {
+            "identityChecks": 25,
+            "projectionCacheHits": 24,
+            "projectionCacheMisses": 1,
+            "totalsCacheHits": 24,
+            "totalsCacheMisses": 1
+          },
+          "phases": {
+            "count": {
+              "count": 1,
+              "p50Ms": 0.918,
+              "p95Ms": 0.918,
+              "totalMs": 0.918
+            },
+            "identity": {
+              "count": 25,
+              "p50Ms": 0.035,
+              "p95Ms": 0.05,
+              "totalMs": 0.904
+            },
+            "materialize": {
+              "count": 25,
+              "p50Ms": 2.918,
+              "p95Ms": 3.354,
+              "totalMs": 73.977
+            },
+            "projection": {
+              "count": 1,
+              "p50Ms": 92.066,
+              "p95Ms": 92.066,
+              "totalMs": 92.066
+            },
+            "slice": {
+              "count": 25,
+              "p50Ms": 0.002,
+              "p95Ms": 0.003,
+              "totalMs": 0.05
+            }
+          },
+          "samples": 77
+        },
+        "totalMs": 190.807,
+        "transferBytes": 9125414,
+        "uniqueIdentityCount": 4999
+      },
+      "samples": [
+        {
+          "duplicateIdentityCount": 0,
+          "firstIdentity": "session-row-v1:b6074141ec0dfafd",
+          "lastIdentity": "session-row-v1:183f5e2a1264d176",
+          "missingIdentityCount": 0,
+          "pageCount": 25,
+          "serializationMs": 8.207,
+          "sqlite": {
+            "counters": {
+              "identityChecks": 25,
+              "projectionCacheHits": 24,
+              "projectionCacheMisses": 1,
+              "totalsCacheHits": 24,
+              "totalsCacheMisses": 1
+            },
+            "phases": {
+              "count": {
+                "count": 1,
+                "p50Ms": 0.918,
+                "p95Ms": 0.918,
+                "totalMs": 0.918
+              },
+              "identity": {
+                "count": 25,
+                "p50Ms": 0.035,
+                "p95Ms": 0.05,
+                "totalMs": 0.904
+              },
+              "materialize": {
+                "count": 25,
+                "p50Ms": 2.918,
+                "p95Ms": 3.354,
+                "totalMs": 73.977
+              },
+              "projection": {
+                "count": 1,
+                "p50Ms": 92.066,
+                "p95Ms": 92.066,
+                "totalMs": 92.066
+              },
+              "slice": {
+                "count": 25,
+                "p50Ms": 0.002,
+                "p95Ms": 0.003,
+                "totalMs": 0.05
+              }
+            },
+            "samples": 77
+          },
+          "totalMs": 190.807,
+          "transferBytes": 9125414,
+          "uniqueIdentityCount": 4999
+        },
+        {
+          "duplicateIdentityCount": 0,
+          "firstIdentity": "session-row-v1:b6074141ec0dfafd",
+          "lastIdentity": "session-row-v1:183f5e2a1264d176",
+          "missingIdentityCount": 0,
+          "pageCount": 25,
+          "serializationMs": 9.752,
+          "sqlite": {
+            "counters": {
+              "identityChecks": 25,
+              "projectionCacheHits": 24,
+              "projectionCacheMisses": 1,
+              "totalsCacheHits": 24,
+              "totalsCacheMisses": 1
+            },
+            "phases": {
+              "count": {
+                "count": 1,
+                "p50Ms": 0.971,
+                "p95Ms": 0.971,
+                "totalMs": 0.971
+              },
+              "identity": {
+                "count": 25,
+                "p50Ms": 0.036,
+                "p95Ms": 0.081,
+                "totalMs": 1
+              },
+              "materialize": {
+                "count": 25,
+                "p50Ms": 2.98,
+                "p95Ms": 4.539,
+                "totalMs": 76.861
+              },
+              "projection": {
+                "count": 1,
+                "p50Ms": 91.74,
+                "p95Ms": 91.74,
+                "totalMs": 91.74
+              },
+              "slice": {
+                "count": 25,
+                "p50Ms": 0.001,
+                "p95Ms": 0.002,
+                "totalMs": 0.023
+              }
+            },
+            "samples": 77
+          },
+          "totalMs": 196.507,
+          "transferBytes": 9125414,
+          "uniqueIdentityCount": 4999
+        },
+        {
+          "duplicateIdentityCount": 0,
+          "firstIdentity": "session-row-v1:b6074141ec0dfafd",
+          "lastIdentity": "session-row-v1:183f5e2a1264d176",
+          "missingIdentityCount": 0,
+          "pageCount": 25,
+          "serializationMs": 6.845,
+          "sqlite": {
+            "counters": {
+              "identityChecks": 25,
+              "projectionCacheHits": 24,
+              "projectionCacheMisses": 1,
+              "totalsCacheHits": 24,
+              "totalsCacheMisses": 1
+            },
+            "phases": {
+              "count": {
+                "count": 1,
+                "p50Ms": 0.928,
+                "p95Ms": 0.928,
+                "totalMs": 0.928
+              },
+              "identity": {
+                "count": 25,
+                "p50Ms": 0.033,
+                "p95Ms": 0.049,
+                "totalMs": 0.895
+              },
+              "materialize": {
+                "count": 25,
+                "p50Ms": 2.623,
+                "p95Ms": 3.336,
+                "totalMs": 74.691
+              },
+              "projection": {
+                "count": 1,
+                "p50Ms": 91.741,
+                "p95Ms": 91.741,
+                "totalMs": 91.741
+              },
+              "slice": {
+                "count": 25,
+                "p50Ms": 0.001,
+                "p95Ms": 0.002,
+                "totalMs": 0.02
+              }
+            },
+            "samples": 77
+          },
+          "totalMs": 188.991,
+          "transferBytes": 9125414,
+          "uniqueIdentityCount": 4999
+        }
+      ]
+    },
+    {
+      "fixtureSize": 5000,
+      "label": "date-asc",
+      "median": {
+        "duplicateIdentityCount": 0,
+        "firstIdentity": "session-row-v1:183f5e2a1264d176",
+        "lastIdentity": "session-row-v1:b6074141ec0dfafd",
+        "missingIdentityCount": 0,
+        "pageCount": 25,
+        "serializationMs": 7.012,
+        "sqlite": {
+          "counters": {
+            "identityChecks": 25,
+            "projectionCacheHits": 24,
+            "projectionCacheMisses": 1,
+            "totalsCacheHits": 24,
+            "totalsCacheMisses": 1
+          },
+          "phases": {
+            "count": {
+              "count": 1,
+              "p50Ms": 0.931,
+              "p95Ms": 0.931,
+              "totalMs": 0.931
+            },
+            "identity": {
+              "count": 25,
+              "p50Ms": 0.033,
+              "p95Ms": 0.042,
+              "totalMs": 0.844
+            },
+            "materialize": {
+              "count": 25,
+              "p50Ms": 2.744,
+              "p95Ms": 3.257,
+              "totalMs": 69.036
+            },
+            "projection": {
+              "count": 1,
+              "p50Ms": 102.803,
+              "p95Ms": 102.803,
+              "totalMs": 102.803
+            },
+            "slice": {
+              "count": 25,
+              "p50Ms": 0.001,
+              "p95Ms": 0.001,
+              "totalMs": 0.022
+            }
+          },
+          "samples": 77
+        },
+        "totalMs": 193.477,
+        "transferBytes": 9125414,
+        "uniqueIdentityCount": 4999
+      },
+      "samples": [
+        {
+          "duplicateIdentityCount": 0,
+          "firstIdentity": "session-row-v1:183f5e2a1264d176",
+          "lastIdentity": "session-row-v1:b6074141ec0dfafd",
+          "missingIdentityCount": 0,
+          "pageCount": 25,
+          "serializationMs": 6.479,
+          "sqlite": {
+            "counters": {
+              "identityChecks": 25,
+              "projectionCacheHits": 24,
+              "projectionCacheMisses": 1,
+              "totalsCacheHits": 24,
+              "totalsCacheMisses": 1
+            },
+            "phases": {
+              "count": {
+                "count": 1,
+                "p50Ms": 0.931,
+                "p95Ms": 0.931,
+                "totalMs": 0.931
+              },
+              "identity": {
+                "count": 25,
+                "p50Ms": 0.033,
+                "p95Ms": 0.042,
+                "totalMs": 0.844
+              },
+              "materialize": {
+                "count": 25,
+                "p50Ms": 2.744,
+                "p95Ms": 3.257,
+                "totalMs": 69.036
+              },
+              "projection": {
+                "count": 1,
+                "p50Ms": 102.803,
+                "p95Ms": 102.803,
+                "totalMs": 102.803
+              },
+              "slice": {
+                "count": 25,
+                "p50Ms": 0.001,
+                "p95Ms": 0.001,
+                "totalMs": 0.022
+              }
+            },
+            "samples": 77
+          },
+          "totalMs": 193.477,
+          "transferBytes": 9125414,
+          "uniqueIdentityCount": 4999
+        },
+        {
+          "duplicateIdentityCount": 0,
+          "firstIdentity": "session-row-v1:183f5e2a1264d176",
+          "lastIdentity": "session-row-v1:b6074141ec0dfafd",
+          "missingIdentityCount": 0,
+          "pageCount": 25,
+          "serializationMs": 7.012,
+          "sqlite": {
+            "counters": {
+              "identityChecks": 25,
+              "projectionCacheHits": 24,
+              "projectionCacheMisses": 1,
+              "totalsCacheHits": 24,
+              "totalsCacheMisses": 1
+            },
+            "phases": {
+              "count": {
+                "count": 1,
+                "p50Ms": 1.011,
+                "p95Ms": 1.011,
+                "totalMs": 1.011
+              },
+              "identity": {
+                "count": 25,
+                "p50Ms": 0.034,
+                "p95Ms": 0.041,
+                "totalMs": 0.87
+              },
+              "materialize": {
+                "count": 25,
+                "p50Ms": 2.844,
+                "p95Ms": 3.376,
+                "totalMs": 80.577
+              },
+              "projection": {
+                "count": 1,
+                "p50Ms": 92.689,
+                "p95Ms": 92.689,
+                "totalMs": 92.689
+              },
+              "slice": {
+                "count": 25,
+                "p50Ms": 0.001,
+                "p95Ms": 0.002,
+                "totalMs": 0.021
+              }
+            },
+            "samples": 77
+          },
+          "totalMs": 196.33,
+          "transferBytes": 9125414,
+          "uniqueIdentityCount": 4999
+        },
+        {
+          "duplicateIdentityCount": 0,
+          "firstIdentity": "session-row-v1:183f5e2a1264d176",
+          "lastIdentity": "session-row-v1:b6074141ec0dfafd",
+          "missingIdentityCount": 0,
+          "pageCount": 25,
+          "serializationMs": 7.265,
+          "sqlite": {
+            "counters": {
+              "identityChecks": 25,
+              "projectionCacheHits": 24,
+              "projectionCacheMisses": 1,
+              "totalsCacheHits": 24,
+              "totalsCacheMisses": 1
+            },
+            "phases": {
+              "count": {
+                "count": 1,
+                "p50Ms": 0.925,
+                "p95Ms": 0.925,
+                "totalMs": 0.925
+              },
+              "identity": {
+                "count": 25,
+                "p50Ms": 0.033,
+                "p95Ms": 0.048,
+                "totalMs": 0.896
+              },
+              "materialize": {
+                "count": 25,
+                "p50Ms": 2.826,
+                "p95Ms": 3.627,
+                "totalMs": 73.527
+              },
+              "projection": {
+                "count": 1,
+                "p50Ms": 91.698,
+                "p95Ms": 91.698,
+                "totalMs": 91.698
+              },
+              "slice": {
+                "count": 25,
+                "p50Ms": 0.001,
+                "p95Ms": 0.003,
+                "totalMs": 0.024
+              }
+            },
+            "samples": 77
+          },
+          "totalMs": 188.287,
+          "transferBytes": 9125414,
+          "uniqueIdentityCount": 4999
+        }
+      ]
+    },
+    {
+      "fixtureSize": 5000,
+      "label": "project-rank-ties",
+      "median": {
+        "duplicateIdentityCount": 0,
+        "firstIdentity": "session-row-v1:183f5e2a1264d176",
+        "lastIdentity": "session-row-v1:8283601034ba328f",
+        "missingIdentityCount": 0,
+        "pageCount": 25,
+        "serializationMs": 7.335,
+        "sqlite": {
+          "counters": {
+            "identityChecks": 25,
+            "projectionCacheHits": 24,
+            "projectionCacheMisses": 1,
+            "totalsCacheHits": 24,
+            "totalsCacheMisses": 1
+          },
+          "phases": {
+            "count": {
+              "count": 1,
+              "p50Ms": 1.203,
+              "p95Ms": 1.203,
+              "totalMs": 1.203
+            },
+            "identity": {
+              "count": 25,
+              "p50Ms": 0.033,
+              "p95Ms": 0.041,
+              "totalMs": 0.836
+            },
+            "materialize": {
+              "count": 25,
+              "p50Ms": 2.626,
+              "p95Ms": 2.974,
+              "totalMs": 66.819
+            },
+            "projection": {
+              "count": 1,
+              "p50Ms": 100.531,
+              "p95Ms": 100.531,
+              "totalMs": 100.531
+            },
+            "slice": {
+              "count": 25,
+              "p50Ms": 0.001,
+              "p95Ms": 0.002,
+              "totalMs": 0.022
+            }
+          },
+          "samples": 77
+        },
+        "totalMs": 190.172,
+        "transferBytes": 9125414,
+        "uniqueIdentityCount": 4999
+      },
+      "samples": [
+        {
+          "duplicateIdentityCount": 0,
+          "firstIdentity": "session-row-v1:183f5e2a1264d176",
+          "lastIdentity": "session-row-v1:8283601034ba328f",
+          "missingIdentityCount": 0,
+          "pageCount": 25,
+          "serializationMs": 7.335,
+          "sqlite": {
+            "counters": {
+              "identityChecks": 25,
+              "projectionCacheHits": 24,
+              "projectionCacheMisses": 1,
+              "totalsCacheHits": 24,
+              "totalsCacheMisses": 1
+            },
+            "phases": {
+              "count": {
+                "count": 1,
+                "p50Ms": 0.931,
+                "p95Ms": 0.931,
+                "totalMs": 0.931
+              },
+              "identity": {
+                "count": 25,
+                "p50Ms": 0.032,
+                "p95Ms": 0.049,
+                "totalMs": 0.926
+              },
+              "materialize": {
+                "count": 25,
+                "p50Ms": 3.009,
+                "p95Ms": 4.383,
+                "totalMs": 82.544
+              },
+              "projection": {
+                "count": 1,
+                "p50Ms": 104.293,
+                "p95Ms": 104.293,
+                "totalMs": 104.293
+              },
+              "slice": {
+                "count": 25,
+                "p50Ms": 0.001,
+                "p95Ms": 0.001,
+                "totalMs": 0.022
+              }
+            },
+            "samples": 77
+          },
+          "totalMs": 210.552,
+          "transferBytes": 9125414,
+          "uniqueIdentityCount": 4999
+        },
+        {
+          "duplicateIdentityCount": 0,
+          "firstIdentity": "session-row-v1:183f5e2a1264d176",
+          "lastIdentity": "session-row-v1:8283601034ba328f",
+          "missingIdentityCount": 0,
+          "pageCount": 25,
+          "serializationMs": 8.226,
+          "sqlite": {
+            "counters": {
+              "identityChecks": 25,
+              "projectionCacheHits": 24,
+              "projectionCacheMisses": 1,
+              "totalsCacheHits": 24,
+              "totalsCacheMisses": 1
+            },
+            "phases": {
+              "count": {
+                "count": 1,
+                "p50Ms": 0.928,
+                "p95Ms": 0.928,
+                "totalMs": 0.928
+              },
+              "identity": {
+                "count": 25,
+                "p50Ms": 0.032,
+                "p95Ms": 0.044,
+                "totalMs": 0.821
+              },
+              "materialize": {
+                "count": 25,
+                "p50Ms": 2.628,
+                "p95Ms": 3.454,
+                "totalMs": 69.741
+              },
+              "projection": {
+                "count": 1,
+                "p50Ms": 94.666,
+                "p95Ms": 94.666,
+                "totalMs": 94.666
+              },
+              "slice": {
+                "count": 25,
+                "p50Ms": 0.001,
+                "p95Ms": 0.001,
+                "totalMs": 0.017
+              }
+            },
+            "samples": 77
+          },
+          "totalMs": 188.039,
+          "transferBytes": 9125414,
+          "uniqueIdentityCount": 4999
+        },
+        {
+          "duplicateIdentityCount": 0,
+          "firstIdentity": "session-row-v1:183f5e2a1264d176",
+          "lastIdentity": "session-row-v1:8283601034ba328f",
+          "missingIdentityCount": 0,
+          "pageCount": 25,
+          "serializationMs": 7.168,
+          "sqlite": {
+            "counters": {
+              "identityChecks": 25,
+              "projectionCacheHits": 24,
+              "projectionCacheMisses": 1,
+              "totalsCacheHits": 24,
+              "totalsCacheMisses": 1
+            },
+            "phases": {
+              "count": {
+                "count": 1,
+                "p50Ms": 1.203,
+                "p95Ms": 1.203,
+                "totalMs": 1.203
+              },
+              "identity": {
+                "count": 25,
+                "p50Ms": 0.033,
+                "p95Ms": 0.041,
+                "totalMs": 0.836
+              },
+              "materialize": {
+                "count": 25,
+                "p50Ms": 2.626,
+                "p95Ms": 2.974,
+                "totalMs": 66.819
+              },
+              "projection": {
+                "count": 1,
+                "p50Ms": 100.531,
+                "p95Ms": 100.531,
+                "totalMs": 100.531
+              },
+              "slice": {
+                "count": 25,
+                "p50Ms": 0.001,
+                "p95Ms": 0.002,
+                "totalMs": 0.022
+              }
+            },
+            "samples": 77
+          },
+          "totalMs": 190.172,
+          "transferBytes": 9125414,
+          "uniqueIdentityCount": 4999
+        }
+      ]
+    },
+    {
+      "fixtureSize": 5000,
+      "label": "zero-matches",
+      "median": {
+        "duplicateIdentityCount": 0,
+        "firstIdentity": null,
+        "lastIdentity": null,
+        "missingIdentityCount": 0,
+        "pageCount": 1,
+        "serializationMs": 0.006,
+        "sqlite": {
+          "counters": {
+            "identityChecks": 1,
+            "projectionCacheHits": 0,
+            "projectionCacheMisses": 1,
+            "totalsCacheHits": 0,
+            "totalsCacheMisses": 1
+          },
+          "phases": {
+            "count": {
+              "count": 1,
+              "p50Ms": 5.412,
+              "p95Ms": 5.412,
+              "totalMs": 5.412
+            },
+            "identity": {
+              "count": 1,
+              "p50Ms": 0.036,
+              "p95Ms": 0.036,
+              "totalMs": 0.036
+            },
+            "materialize": {
+              "count": 1,
+              "p50Ms": 0.003,
+              "p95Ms": 0.003,
+              "totalMs": 0.003
+            },
+            "projection": {
+              "count": 1,
+              "p50Ms": 12.214,
+              "p95Ms": 12.214,
+              "totalMs": 12.214
+            },
+            "slice": {
+              "count": 1,
+              "p50Ms": 0.001,
+              "p95Ms": 0.001,
+              "totalMs": 0.001
+            }
+          },
+          "samples": 5
+        },
+        "totalMs": 18.3,
+        "transferBytes": 150,
+        "uniqueIdentityCount": 0
+      },
+      "samples": [
+        {
+          "duplicateIdentityCount": 0,
+          "firstIdentity": null,
+          "lastIdentity": null,
+          "missingIdentityCount": 0,
+          "pageCount": 1,
+          "serializationMs": 0.005,
+          "sqlite": {
+            "counters": {
+              "identityChecks": 1,
+              "projectionCacheHits": 0,
+              "projectionCacheMisses": 1,
+              "totalsCacheHits": 0,
+              "totalsCacheMisses": 1
+            },
+            "phases": {
+              "count": {
+                "count": 1,
+                "p50Ms": 5.374,
+                "p95Ms": 5.374,
+                "totalMs": 5.374
+              },
+              "identity": {
+                "count": 1,
+                "p50Ms": 0.047,
+                "p95Ms": 0.047,
+                "totalMs": 0.047
+              },
+              "materialize": {
+                "count": 1,
+                "p50Ms": 0.003,
+                "p95Ms": 0.003,
+                "totalMs": 0.003
+              },
+              "projection": {
+                "count": 1,
+                "p50Ms": 12.295,
+                "p95Ms": 12.295,
+                "totalMs": 12.295
+              },
+              "slice": {
+                "count": 1,
+                "p50Ms": 0.001,
+                "p95Ms": 0.001,
+                "totalMs": 0.001
+              }
+            },
+            "samples": 5
+          },
+          "totalMs": 18.458,
+          "transferBytes": 150,
+          "uniqueIdentityCount": 0
+        },
+        {
+          "duplicateIdentityCount": 0,
+          "firstIdentity": null,
+          "lastIdentity": null,
+          "missingIdentityCount": 0,
+          "pageCount": 1,
+          "serializationMs": 0.006,
+          "sqlite": {
+            "counters": {
+              "identityChecks": 1,
+              "projectionCacheHits": 0,
+              "projectionCacheMisses": 1,
+              "totalsCacheHits": 0,
+              "totalsCacheMisses": 1
+            },
+            "phases": {
+              "count": {
+                "count": 1,
+                "p50Ms": 5.412,
+                "p95Ms": 5.412,
+                "totalMs": 5.412
+              },
+              "identity": {
+                "count": 1,
+                "p50Ms": 0.036,
+                "p95Ms": 0.036,
+                "totalMs": 0.036
+              },
+              "materialize": {
+                "count": 1,
+                "p50Ms": 0.003,
+                "p95Ms": 0.003,
+                "totalMs": 0.003
+              },
+              "projection": {
+                "count": 1,
+                "p50Ms": 12.214,
+                "p95Ms": 12.214,
+                "totalMs": 12.214
+              },
+              "slice": {
+                "count": 1,
+                "p50Ms": 0.001,
+                "p95Ms": 0.001,
+                "totalMs": 0.001
+              }
+            },
+            "samples": 5
+          },
+          "totalMs": 18.3,
+          "transferBytes": 150,
+          "uniqueIdentityCount": 0
+        },
+        {
+          "duplicateIdentityCount": 0,
+          "firstIdentity": null,
+          "lastIdentity": null,
+          "missingIdentityCount": 0,
+          "pageCount": 1,
+          "serializationMs": 0.006,
+          "sqlite": {
+            "counters": {
+              "identityChecks": 1,
+              "projectionCacheHits": 0,
+              "projectionCacheMisses": 1,
+              "totalsCacheHits": 0,
+              "totalsCacheMisses": 1
+            },
+            "phases": {
+              "count": {
+                "count": 1,
+                "p50Ms": 5.143,
+                "p95Ms": 5.143,
+                "totalMs": 5.143
+              },
+              "identity": {
+                "count": 1,
+                "p50Ms": 0.036,
+                "p95Ms": 0.036,
+                "totalMs": 0.036
+              },
+              "materialize": {
+                "count": 1,
+                "p50Ms": 0.004,
+                "p95Ms": 0.004,
+                "totalMs": 0.004
+              },
+              "projection": {
+                "count": 1,
+                "p50Ms": 11.914,
+                "p95Ms": 11.914,
+                "totalMs": 11.914
+              },
+              "slice": {
+                "count": 1,
+                "p50Ms": 0.001,
+                "p95Ms": 0.001,
+                "totalMs": 0.001
+              }
+            },
+            "samples": 5
+          },
+          "totalMs": 17.721,
+          "transferBytes": 150,
+          "uniqueIdentityCount": 0
+        }
+      ]
+    },
+    {
+      "fixtureSize": 5000,
+      "label": "harness-codex",
+      "median": {
+        "duplicateIdentityCount": 0,
+        "firstIdentity": "session-row-v1:887ec1fd766e0007",
+        "lastIdentity": "session-row-v1:183f5e2a1264d176",
+        "missingIdentityCount": 0,
+        "pageCount": 5,
+        "serializationMs": 1.41,
+        "sqlite": {
+          "counters": {
+            "identityChecks": 5,
+            "projectionCacheHits": 4,
+            "projectionCacheMisses": 1,
+            "totalsCacheHits": 4,
+            "totalsCacheMisses": 1
+          },
+          "phases": {
+            "count": {
+              "count": 1,
+              "p50Ms": 1.683,
+              "p95Ms": 1.683,
+              "totalMs": 1.683
+            },
+            "identity": {
+              "count": 5,
+              "p50Ms": 0.033,
+              "p95Ms": 0.035,
+              "totalMs": 0.163
+            },
+            "materialize": {
+              "count": 5,
+              "p50Ms": 2.623,
+              "p95Ms": 2.67,
+              "totalMs": 13.037
+            },
+            "projection": {
+              "count": 1,
+              "p50Ms": 78.424,
+              "p95Ms": 78.424,
+              "totalMs": 78.424
+            },
+            "slice": {
+              "count": 5,
+              "p50Ms": 0.001,
+              "p95Ms": 0.001,
+              "totalMs": 0.004
+            }
+          },
+          "samples": 17
+        },
+        "totalMs": 97.372,
+        "transferBytes": 1809063,
+        "uniqueIdentityCount": 1000
+      },
+      "samples": [
+        {
+          "duplicateIdentityCount": 0,
+          "firstIdentity": "session-row-v1:887ec1fd766e0007",
+          "lastIdentity": "session-row-v1:183f5e2a1264d176",
+          "missingIdentityCount": 0,
+          "pageCount": 5,
+          "serializationMs": 1.41,
+          "sqlite": {
+            "counters": {
+              "identityChecks": 5,
+              "projectionCacheHits": 4,
+              "projectionCacheMisses": 1,
+              "totalsCacheHits": 4,
+              "totalsCacheMisses": 1
+            },
+            "phases": {
+              "count": {
+                "count": 1,
+                "p50Ms": 1.683,
+                "p95Ms": 1.683,
+                "totalMs": 1.683
+              },
+              "identity": {
+                "count": 5,
+                "p50Ms": 0.033,
+                "p95Ms": 0.035,
+                "totalMs": 0.163
+              },
+              "materialize": {
+                "count": 5,
+                "p50Ms": 2.623,
+                "p95Ms": 2.67,
+                "totalMs": 13.037
+              },
+              "projection": {
+                "count": 1,
+                "p50Ms": 78.424,
+                "p95Ms": 78.424,
+                "totalMs": 78.424
+              },
+              "slice": {
+                "count": 5,
+                "p50Ms": 0.001,
+                "p95Ms": 0.001,
+                "totalMs": 0.004
+              }
+            },
+            "samples": 17
+          },
+          "totalMs": 97.372,
+          "transferBytes": 1809063,
+          "uniqueIdentityCount": 1000
+        },
+        {
+          "duplicateIdentityCount": 0,
+          "firstIdentity": "session-row-v1:887ec1fd766e0007",
+          "lastIdentity": "session-row-v1:183f5e2a1264d176",
+          "missingIdentityCount": 0,
+          "pageCount": 5,
+          "serializationMs": 1.419,
+          "sqlite": {
+            "counters": {
+              "identityChecks": 5,
+              "projectionCacheHits": 4,
+              "projectionCacheMisses": 1,
+              "totalsCacheHits": 4,
+              "totalsCacheMisses": 1
+            },
+            "phases": {
+              "count": {
+                "count": 1,
+                "p50Ms": 1.998,
+                "p95Ms": 1.998,
+                "totalMs": 1.998
+              },
+              "identity": {
+                "count": 5,
+                "p50Ms": 0.036,
+                "p95Ms": 0.041,
+                "totalMs": 0.179
+              },
+              "materialize": {
+                "count": 5,
+                "p50Ms": 2.751,
+                "p95Ms": 2.919,
+                "totalMs": 13.542
+              },
+              "projection": {
+                "count": 1,
+                "p50Ms": 78.353,
+                "p95Ms": 78.353,
+                "totalMs": 78.353
+              },
+              "slice": {
+                "count": 5,
+                "p50Ms": 0,
+                "p95Ms": 0.002,
+                "totalMs": 0.005
+              }
+            },
+            "samples": 17
+          },
+          "totalMs": 98.305,
+          "transferBytes": 1809063,
+          "uniqueIdentityCount": 1000
+        },
+        {
+          "duplicateIdentityCount": 0,
+          "firstIdentity": "session-row-v1:887ec1fd766e0007",
+          "lastIdentity": "session-row-v1:183f5e2a1264d176",
+          "missingIdentityCount": 0,
+          "pageCount": 5,
+          "serializationMs": 1.376,
+          "sqlite": {
+            "counters": {
+              "identityChecks": 5,
+              "projectionCacheHits": 4,
+              "projectionCacheMisses": 1,
+              "totalsCacheHits": 4,
+              "totalsCacheMisses": 1
+            },
+            "phases": {
+              "count": {
+                "count": 1,
+                "p50Ms": 1.901,
+                "p95Ms": 1.901,
+                "totalMs": 1.901
+              },
+              "identity": {
+                "count": 5,
+                "p50Ms": 0.034,
+                "p95Ms": 0.036,
+                "totalMs": 0.172
+              },
+              "materialize": {
+                "count": 5,
+                "p50Ms": 2.59,
+                "p95Ms": 2.727,
+                "totalMs": 13.068
+              },
+              "projection": {
+                "count": 1,
+                "p50Ms": 77.688,
+                "p95Ms": 77.688,
+                "totalMs": 77.688
+              },
+              "slice": {
+                "count": 5,
+                "p50Ms": 0.001,
+                "p95Ms": 0.001,
+                "totalMs": 0.004
+              }
+            },
+            "samples": 17
+          },
+          "totalMs": 96.752,
+          "transferBytes": 1809063,
+          "uniqueIdentityCount": 1000
+        }
+      ]
+    },
+    {
+      "fixtureSize": 5000,
+      "label": "origin-classifier",
+      "median": {
+        "duplicateIdentityCount": 0,
+        "firstIdentity": "session-row-v1:b6074141ec0dfafd",
+        "lastIdentity": "session-row-v1:b6074141ec0dfafd",
+        "missingIdentityCount": 0,
+        "pageCount": 1,
+        "serializationMs": 0.009,
+        "sqlite": {
+          "counters": {
+            "identityChecks": 1,
+            "projectionCacheHits": 0,
+            "projectionCacheMisses": 1,
+            "totalsCacheHits": 0,
+            "totalsCacheMisses": 1
+          },
+          "phases": {
+            "count": {
+              "count": 1,
+              "p50Ms": 5.776,
+              "p95Ms": 5.776,
+              "totalMs": 5.776
+            },
+            "identity": {
+              "count": 1,
+              "p50Ms": 0.035,
+              "p95Ms": 0.035,
+              "totalMs": 0.035
+            },
+            "materialize": {
+              "count": 1,
+              "p50Ms": 0.281,
+              "p95Ms": 0.281,
+              "totalMs": 0.281
+            },
+            "projection": {
+              "count": 1,
+              "p50Ms": 36.576,
+              "p95Ms": 36.576,
+              "totalMs": 36.576
+            },
+            "slice": {
+              "count": 1,
+              "p50Ms": 0.001,
+              "p95Ms": 0.001,
+              "totalMs": 0.001
+            }
+          },
+          "samples": 5
+        },
+        "totalMs": 43.26,
+        "transferBytes": 1964,
+        "uniqueIdentityCount": 1
+      },
+      "samples": [
+        {
+          "duplicateIdentityCount": 0,
+          "firstIdentity": "session-row-v1:b6074141ec0dfafd",
+          "lastIdentity": "session-row-v1:b6074141ec0dfafd",
+          "missingIdentityCount": 0,
+          "pageCount": 1,
+          "serializationMs": 0.009,
+          "sqlite": {
+            "counters": {
+              "identityChecks": 1,
+              "projectionCacheHits": 0,
+              "projectionCacheMisses": 1,
+              "totalsCacheHits": 0,
+              "totalsCacheMisses": 1
+            },
+            "phases": {
+              "count": {
+                "count": 1,
+                "p50Ms": 5.776,
+                "p95Ms": 5.776,
+                "totalMs": 5.776
+              },
+              "identity": {
+                "count": 1,
+                "p50Ms": 0.035,
+                "p95Ms": 0.035,
+                "totalMs": 0.035
+              },
+              "materialize": {
+                "count": 1,
+                "p50Ms": 0.281,
+                "p95Ms": 0.281,
+                "totalMs": 0.281
+              },
+              "projection": {
+                "count": 1,
+                "p50Ms": 36.576,
+                "p95Ms": 36.576,
+                "totalMs": 36.576
+              },
+              "slice": {
+                "count": 1,
+                "p50Ms": 0.001,
+                "p95Ms": 0.001,
+                "totalMs": 0.001
+              }
+            },
+            "samples": 5
+          },
+          "totalMs": 43.26,
+          "transferBytes": 1964,
+          "uniqueIdentityCount": 1
+        },
+        {
+          "duplicateIdentityCount": 0,
+          "firstIdentity": "session-row-v1:b6074141ec0dfafd",
+          "lastIdentity": "session-row-v1:b6074141ec0dfafd",
+          "missingIdentityCount": 0,
+          "pageCount": 1,
+          "serializationMs": 0.009,
+          "sqlite": {
+            "counters": {
+              "identityChecks": 1,
+              "projectionCacheHits": 0,
+              "projectionCacheMisses": 1,
+              "totalsCacheHits": 0,
+              "totalsCacheMisses": 1
+            },
+            "phases": {
+              "count": {
+                "count": 1,
+                "p50Ms": 4.738,
+                "p95Ms": 4.738,
+                "totalMs": 4.738
+              },
+              "identity": {
+                "count": 1,
+                "p50Ms": 0.032,
+                "p95Ms": 0.032,
+                "totalMs": 0.032
+              },
+              "materialize": {
+                "count": 1,
+                "p50Ms": 0.33,
+                "p95Ms": 0.33,
+                "totalMs": 0.33
+              },
+              "projection": {
+                "count": 1,
+                "p50Ms": 37.306,
+                "p95Ms": 37.306,
+                "totalMs": 37.306
+              },
+              "slice": {
+                "count": 1,
+                "p50Ms": 0.001,
+                "p95Ms": 0.001,
+                "totalMs": 0.001
+              }
+            },
+            "samples": 5
+          },
+          "totalMs": 43.013,
+          "transferBytes": 1964,
+          "uniqueIdentityCount": 1
+        },
+        {
+          "duplicateIdentityCount": 0,
+          "firstIdentity": "session-row-v1:b6074141ec0dfafd",
+          "lastIdentity": "session-row-v1:b6074141ec0dfafd",
+          "missingIdentityCount": 0,
+          "pageCount": 1,
+          "serializationMs": 0.01,
+          "sqlite": {
+            "counters": {
+              "identityChecks": 1,
+              "projectionCacheHits": 0,
+              "projectionCacheMisses": 1,
+              "totalsCacheHits": 0,
+              "totalsCacheMisses": 1
+            },
+            "phases": {
+              "count": {
+                "count": 1,
+                "p50Ms": 5.249,
+                "p95Ms": 5.249,
+                "totalMs": 5.249
+              },
+              "identity": {
+                "count": 1,
+                "p50Ms": 0.037,
+                "p95Ms": 0.037,
+                "totalMs": 0.037
+              },
+              "materialize": {
+                "count": 1,
+                "p50Ms": 0.264,
+                "p95Ms": 0.264,
+                "totalMs": 0.264
+              },
+              "projection": {
+                "count": 1,
+                "p50Ms": 40.645,
+                "p95Ms": 40.645,
+                "totalMs": 40.645
+              },
+              "slice": {
+                "count": 1,
+                "p50Ms": 0.001,
+                "p95Ms": 0.001,
+                "totalMs": 0.001
+              }
+            },
+            "samples": 5
+          },
+          "totalMs": 46.837,
+          "transferBytes": 1964,
+          "uniqueIdentityCount": 1
+        }
+      ]
+    },
+    {
+      "fixtureSize": 20000,
+      "label": "date-desc",
+      "median": {
+        "duplicateIdentityCount": 0,
+        "firstIdentity": "session-row-v1:823c2793e999e295",
+        "lastIdentity": "session-row-v1:183f5e2a1264d176",
+        "missingIdentityCount": 0,
+        "pageCount": 100,
+        "serializationMs": 27.366,
+        "sqlite": {
+          "counters": {
+            "identityChecks": 100,
+            "projectionCacheHits": 99,
+            "projectionCacheMisses": 1,
+            "totalsCacheHits": 99,
+            "totalsCacheMisses": 1
+          },
+          "phases": {
+            "count": {
+              "count": 1,
+              "p50Ms": 4.329,
+              "p95Ms": 4.329,
+              "totalMs": 4.329
+            },
+            "identity": {
+              "count": 100,
+              "p50Ms": 0.031,
+              "p95Ms": 0.045,
+              "totalMs": 3.32
+            },
+            "materialize": {
+              "count": 100,
+              "p50Ms": 2.949,
+              "p95Ms": 3.796,
+              "totalMs": 301.499
+            },
+            "projection": {
+              "count": 1,
+              "p50Ms": 403.011,
+              "p95Ms": 403.011,
+              "totalMs": 403.011
+            },
+            "slice": {
+              "count": 100,
+              "p50Ms": 0.001,
+              "p95Ms": 0.002,
+              "totalMs": 0.105
+            }
+          },
+          "samples": 302
+        },
+        "totalMs": 814.772,
+        "transferBytes": 36608564,
+        "uniqueIdentityCount": 19996
+      },
+      "samples": [
+        {
+          "duplicateIdentityCount": 0,
+          "firstIdentity": "session-row-v1:823c2793e999e295",
+          "lastIdentity": "session-row-v1:183f5e2a1264d176",
+          "missingIdentityCount": 0,
+          "pageCount": 100,
+          "serializationMs": 26.539,
+          "sqlite": {
+            "counters": {
+              "identityChecks": 100,
+              "projectionCacheHits": 99,
+              "projectionCacheMisses": 1,
+              "totalsCacheHits": 99,
+              "totalsCacheMisses": 1
+            },
+            "phases": {
+              "count": {
+                "count": 1,
+                "p50Ms": 4.091,
+                "p95Ms": 4.091,
+                "totalMs": 4.091
+              },
+              "identity": {
+                "count": 100,
+                "p50Ms": 0.031,
+                "p95Ms": 0.042,
+                "totalMs": 3.219
+              },
+              "materialize": {
+                "count": 100,
+                "p50Ms": 2.983,
+                "p95Ms": 3.497,
+                "totalMs": 304.727
+              },
+              "projection": {
+                "count": 1,
+                "p50Ms": 432.614,
+                "p95Ms": 432.614,
+                "totalMs": 432.614
+              },
+              "slice": {
+                "count": 100,
+                "p50Ms": 0.001,
+                "p95Ms": 0.002,
+                "totalMs": 0.101
+              }
+            },
+            "samples": 302
+          },
+          "totalMs": 824.448,
+          "transferBytes": 36608564,
+          "uniqueIdentityCount": 19996
+        },
+        {
+          "duplicateIdentityCount": 0,
+          "firstIdentity": "session-row-v1:823c2793e999e295",
+          "lastIdentity": "session-row-v1:183f5e2a1264d176",
+          "missingIdentityCount": 0,
+          "pageCount": 100,
+          "serializationMs": 34.337,
+          "sqlite": {
+            "counters": {
+              "identityChecks": 100,
+              "projectionCacheHits": 99,
+              "projectionCacheMisses": 1,
+              "totalsCacheHits": 99,
+              "totalsCacheMisses": 1
+            },
+            "phases": {
+              "count": {
+                "count": 1,
+                "p50Ms": 4.329,
+                "p95Ms": 4.329,
+                "totalMs": 4.329
+              },
+              "identity": {
+                "count": 100,
+                "p50Ms": 0.031,
+                "p95Ms": 0.045,
+                "totalMs": 3.32
+              },
+              "materialize": {
+                "count": 100,
+                "p50Ms": 2.949,
+                "p95Ms": 3.796,
+                "totalMs": 301.499
+              },
+              "projection": {
+                "count": 1,
+                "p50Ms": 403.011,
+                "p95Ms": 403.011,
+                "totalMs": 403.011
+              },
+              "slice": {
+                "count": 100,
+                "p50Ms": 0.001,
+                "p95Ms": 0.002,
+                "totalMs": 0.105
+              }
+            },
+            "samples": 302
+          },
+          "totalMs": 814.772,
+          "transferBytes": 36608564,
+          "uniqueIdentityCount": 19996
+        },
+        {
+          "duplicateIdentityCount": 0,
+          "firstIdentity": "session-row-v1:823c2793e999e295",
+          "lastIdentity": "session-row-v1:183f5e2a1264d176",
+          "missingIdentityCount": 0,
+          "pageCount": 100,
+          "serializationMs": 27.366,
+          "sqlite": {
+            "counters": {
+              "identityChecks": 100,
+              "projectionCacheHits": 99,
+              "projectionCacheMisses": 1,
+              "totalsCacheHits": 99,
+              "totalsCacheMisses": 1
+            },
+            "phases": {
+              "count": {
+                "count": 1,
+                "p50Ms": 4.236,
+                "p95Ms": 4.236,
+                "totalMs": 4.236
+              },
+              "identity": {
+                "count": 100,
+                "p50Ms": 0.031,
+                "p95Ms": 0.05,
+                "totalMs": 3.386
+              },
+              "materialize": {
+                "count": 100,
+                "p50Ms": 2.922,
+                "p95Ms": 3.505,
+                "totalMs": 296.371
+              },
+              "projection": {
+                "count": 1,
+                "p50Ms": 391.902,
+                "p95Ms": 391.902,
+                "totalMs": 391.902
+              },
+              "slice": {
+                "count": 100,
+                "p50Ms": 0.001,
+                "p95Ms": 0.002,
+                "totalMs": 0.104
+              }
+            },
+            "samples": 302
+          },
+          "totalMs": 776.258,
+          "transferBytes": 36608564,
+          "uniqueIdentityCount": 19996
+        }
+      ]
+    },
+    {
+      "fixtureSize": 20000,
+      "label": "date-asc",
+      "median": {
+        "duplicateIdentityCount": 0,
+        "firstIdentity": "session-row-v1:183f5e2a1264d176",
+        "lastIdentity": "session-row-v1:823c2793e999e295",
+        "missingIdentityCount": 0,
+        "pageCount": 100,
+        "serializationMs": 28.427,
+        "sqlite": {
+          "counters": {
+            "identityChecks": 100,
+            "projectionCacheHits": 99,
+            "projectionCacheMisses": 1,
+            "totalsCacheHits": 99,
+            "totalsCacheMisses": 1
+          },
+          "phases": {
+            "count": {
+              "count": 1,
+              "p50Ms": 4.576,
+              "p95Ms": 4.576,
+              "totalMs": 4.576
+            },
+            "identity": {
+              "count": 100,
+              "p50Ms": 0.031,
+              "p95Ms": 0.046,
+              "totalMs": 3.361
+            },
+            "materialize": {
+              "count": 100,
+              "p50Ms": 2.875,
+              "p95Ms": 3.302,
+              "totalMs": 289.008
+            },
+            "projection": {
+              "count": 1,
+              "p50Ms": 391.221,
+              "p95Ms": 391.221,
+              "totalMs": 391.221
+            },
+            "slice": {
+              "count": 100,
+              "p50Ms": 0.001,
+              "p95Ms": 0.002,
+              "totalMs": 0.111
+            }
+          },
+          "samples": 302
+        },
+        "totalMs": 769.703,
+        "transferBytes": 36608564,
+        "uniqueIdentityCount": 19996
+      },
+      "samples": [
+        {
+          "duplicateIdentityCount": 0,
+          "firstIdentity": "session-row-v1:183f5e2a1264d176",
+          "lastIdentity": "session-row-v1:823c2793e999e295",
+          "missingIdentityCount": 0,
+          "pageCount": 100,
+          "serializationMs": 30.894,
+          "sqlite": {
+            "counters": {
+              "identityChecks": 100,
+              "projectionCacheHits": 99,
+              "projectionCacheMisses": 1,
+              "totalsCacheHits": 99,
+              "totalsCacheMisses": 1
+            },
+            "phases": {
+              "count": {
+                "count": 1,
+                "p50Ms": 4.121,
+                "p95Ms": 4.121,
+                "totalMs": 4.121
+              },
+              "identity": {
+                "count": 100,
+                "p50Ms": 0.031,
+                "p95Ms": 0.046,
+                "totalMs": 3.296
+              },
+              "materialize": {
+                "count": 100,
+                "p50Ms": 2.952,
+                "p95Ms": 3.845,
+                "totalMs": 320.965
+              },
+              "projection": {
+                "count": 1,
+                "p50Ms": 384.174,
+                "p95Ms": 384.174,
+                "totalMs": 384.174
+              },
+              "slice": {
+                "count": 100,
+                "p50Ms": 0.001,
+                "p95Ms": 0.002,
+                "totalMs": 0.11
+              }
+            },
+            "samples": 302
+          },
+          "totalMs": 796.611,
+          "transferBytes": 36608564,
+          "uniqueIdentityCount": 19996
+        },
+        {
+          "duplicateIdentityCount": 0,
+          "firstIdentity": "session-row-v1:183f5e2a1264d176",
+          "lastIdentity": "session-row-v1:823c2793e999e295",
+          "missingIdentityCount": 0,
+          "pageCount": 100,
+          "serializationMs": 28.427,
+          "sqlite": {
+            "counters": {
+              "identityChecks": 100,
+              "projectionCacheHits": 99,
+              "projectionCacheMisses": 1,
+              "totalsCacheHits": 99,
+              "totalsCacheMisses": 1
+            },
+            "phases": {
+              "count": {
+                "count": 1,
+                "p50Ms": 4.576,
+                "p95Ms": 4.576,
+                "totalMs": 4.576
+              },
+              "identity": {
+                "count": 100,
+                "p50Ms": 0.031,
+                "p95Ms": 0.046,
+                "totalMs": 3.361
+              },
+              "materialize": {
+                "count": 100,
+                "p50Ms": 2.875,
+                "p95Ms": 3.302,
+                "totalMs": 289.008
+              },
+              "projection": {
+                "count": 1,
+                "p50Ms": 391.221,
+                "p95Ms": 391.221,
+                "totalMs": 391.221
+              },
+              "slice": {
+                "count": 100,
+                "p50Ms": 0.001,
+                "p95Ms": 0.002,
+                "totalMs": 0.111
+              }
+            },
+            "samples": 302
+          },
+          "totalMs": 769.703,
+          "transferBytes": 36608564,
+          "uniqueIdentityCount": 19996
+        },
+        {
+          "duplicateIdentityCount": 0,
+          "firstIdentity": "session-row-v1:183f5e2a1264d176",
+          "lastIdentity": "session-row-v1:823c2793e999e295",
+          "missingIdentityCount": 0,
+          "pageCount": 100,
+          "serializationMs": 27.878,
+          "sqlite": {
+            "counters": {
+              "identityChecks": 100,
+              "projectionCacheHits": 99,
+              "projectionCacheMisses": 1,
+              "totalsCacheHits": 99,
+              "totalsCacheMisses": 1
+            },
+            "phases": {
+              "count": {
+                "count": 1,
+                "p50Ms": 3.794,
+                "p95Ms": 3.794,
+                "totalMs": 3.794
+              },
+              "identity": {
+                "count": 100,
+                "p50Ms": 0.032,
+                "p95Ms": 0.046,
+                "totalMs": 3.36
+              },
+              "materialize": {
+                "count": 100,
+                "p50Ms": 2.908,
+                "p95Ms": 3.498,
+                "totalMs": 292.186
+              },
+              "projection": {
+                "count": 1,
+                "p50Ms": 386.178,
+                "p95Ms": 386.178,
+                "totalMs": 386.178
+              },
+              "slice": {
+                "count": 100,
+                "p50Ms": 0.001,
+                "p95Ms": 0.002,
+                "totalMs": 0.098
+              }
+            },
+            "samples": 302
+          },
+          "totalMs": 765.896,
+          "transferBytes": 36608564,
+          "uniqueIdentityCount": 19996
+        }
+      ]
+    },
+    {
+      "fixtureSize": 20000,
+      "label": "project-rank-ties",
+      "median": {
+        "duplicateIdentityCount": 0,
+        "firstIdentity": "session-row-v1:183f5e2a1264d176",
+        "lastIdentity": "session-row-v1:ba113f704ba892d8",
+        "missingIdentityCount": 0,
+        "pageCount": 100,
+        "serializationMs": 27.82,
+        "sqlite": {
+          "counters": {
+            "identityChecks": 100,
+            "projectionCacheHits": 99,
+            "projectionCacheMisses": 1,
+            "totalsCacheHits": 99,
+            "totalsCacheMisses": 1
+          },
+          "phases": {
+            "count": {
+              "count": 1,
+              "p50Ms": 3.71,
+              "p95Ms": 3.71,
+              "totalMs": 3.71
+            },
+            "identity": {
+              "count": 100,
+              "p50Ms": 0.031,
+              "p95Ms": 0.041,
+              "totalMs": 3.332
+            },
+            "materialize": {
+              "count": 100,
+              "p50Ms": 3.194,
+              "p95Ms": 3.982,
+              "totalMs": 331.159
+            },
+            "projection": {
+              "count": 1,
+              "p50Ms": 371.868,
+              "p95Ms": 371.868,
+              "totalMs": 371.868
+            },
+            "slice": {
+              "count": 100,
+              "p50Ms": 0.001,
+              "p95Ms": 0.002,
+              "totalMs": 0.109
+            }
+          },
+          "samples": 302
+        },
+        "totalMs": 792.131,
+        "transferBytes": 36608564,
+        "uniqueIdentityCount": 19996
+      },
+      "samples": [
+        {
+          "duplicateIdentityCount": 0,
+          "firstIdentity": "session-row-v1:183f5e2a1264d176",
+          "lastIdentity": "session-row-v1:ba113f704ba892d8",
+          "missingIdentityCount": 0,
+          "pageCount": 100,
+          "serializationMs": 27.164,
+          "sqlite": {
+            "counters": {
+              "identityChecks": 100,
+              "projectionCacheHits": 99,
+              "projectionCacheMisses": 1,
+              "totalsCacheHits": 99,
+              "totalsCacheMisses": 1
+            },
+            "phases": {
+              "count": {
+                "count": 1,
+                "p50Ms": 3.71,
+                "p95Ms": 3.71,
+                "totalMs": 3.71
+              },
+              "identity": {
+                "count": 100,
+                "p50Ms": 0.031,
+                "p95Ms": 0.041,
+                "totalMs": 3.332
+              },
+              "materialize": {
+                "count": 100,
+                "p50Ms": 3.194,
+                "p95Ms": 3.982,
+                "totalMs": 331.159
+              },
+              "projection": {
+                "count": 1,
+                "p50Ms": 371.868,
+                "p95Ms": 371.868,
+                "totalMs": 371.868
+              },
+              "slice": {
+                "count": 100,
+                "p50Ms": 0.001,
+                "p95Ms": 0.002,
+                "totalMs": 0.109
+              }
+            },
+            "samples": 302
+          },
+          "totalMs": 792.131,
+          "transferBytes": 36608564,
+          "uniqueIdentityCount": 19996
+        },
+        {
+          "duplicateIdentityCount": 0,
+          "firstIdentity": "session-row-v1:183f5e2a1264d176",
+          "lastIdentity": "session-row-v1:ba113f704ba892d8",
+          "missingIdentityCount": 0,
+          "pageCount": 100,
+          "serializationMs": 28.194,
+          "sqlite": {
+            "counters": {
+              "identityChecks": 100,
+              "projectionCacheHits": 99,
+              "projectionCacheMisses": 1,
+              "totalsCacheHits": 99,
+              "totalsCacheMisses": 1
+            },
+            "phases": {
+              "count": {
+                "count": 1,
+                "p50Ms": 4.16,
+                "p95Ms": 4.16,
+                "totalMs": 4.16
+              },
+              "identity": {
+                "count": 100,
+                "p50Ms": 0.032,
+                "p95Ms": 0.046,
+                "totalMs": 3.427
+              },
+              "materialize": {
+                "count": 100,
+                "p50Ms": 3.267,
+                "p95Ms": 4.012,
+                "totalMs": 336.16
+              },
+              "projection": {
+                "count": 1,
+                "p50Ms": 391.091,
+                "p95Ms": 391.091,
+                "totalMs": 391.091
+              },
+              "slice": {
+                "count": 100,
+                "p50Ms": 0.001,
+                "p95Ms": 0.002,
+                "totalMs": 0.106
+              }
+            },
+            "samples": 302
+          },
+          "totalMs": 818.749,
+          "transferBytes": 36608564,
+          "uniqueIdentityCount": 19996
+        },
+        {
+          "duplicateIdentityCount": 0,
+          "firstIdentity": "session-row-v1:183f5e2a1264d176",
+          "lastIdentity": "session-row-v1:ba113f704ba892d8",
+          "missingIdentityCount": 0,
+          "pageCount": 100,
+          "serializationMs": 27.82,
+          "sqlite": {
+            "counters": {
+              "identityChecks": 100,
+              "projectionCacheHits": 99,
+              "projectionCacheMisses": 1,
+              "totalsCacheHits": 99,
+              "totalsCacheMisses": 1
+            },
+            "phases": {
+              "count": {
+                "count": 1,
+                "p50Ms": 4.045,
+                "p95Ms": 4.045,
+                "totalMs": 4.045
+              },
+              "identity": {
+                "count": 100,
+                "p50Ms": 0.032,
+                "p95Ms": 0.046,
+                "totalMs": 3.369
+              },
+              "materialize": {
+                "count": 100,
+                "p50Ms": 3.112,
+                "p95Ms": 3.589,
+                "totalMs": 313.145
+              },
+              "projection": {
+                "count": 1,
+                "p50Ms": 377.415,
+                "p95Ms": 377.415,
+                "totalMs": 377.415
+              },
+              "slice": {
+                "count": 100,
+                "p50Ms": 0.001,
+                "p95Ms": 0.002,
+                "totalMs": 0.098
+              }
+            },
+            "samples": 302
+          },
+          "totalMs": 780.467,
+          "transferBytes": 36608564,
+          "uniqueIdentityCount": 19996
+        }
+      ]
+    },
+    {
+      "fixtureSize": 20000,
+      "label": "zero-matches",
+      "median": {
+        "duplicateIdentityCount": 0,
+        "firstIdentity": null,
+        "lastIdentity": null,
+        "missingIdentityCount": 0,
+        "pageCount": 1,
+        "serializationMs": 0.005,
+        "sqlite": {
+          "counters": {
+            "identityChecks": 1,
+            "projectionCacheHits": 0,
+            "projectionCacheMisses": 1,
+            "totalsCacheHits": 0,
+            "totalsCacheMisses": 1
+          },
+          "phases": {
+            "count": {
+              "count": 1,
+              "p50Ms": 21.849,
+              "p95Ms": 21.849,
+              "totalMs": 21.849
+            },
+            "identity": {
+              "count": 1,
+              "p50Ms": 0.037,
+              "p95Ms": 0.037,
+              "totalMs": 0.037
+            },
+            "materialize": {
+              "count": 1,
+              "p50Ms": 0.003,
+              "p95Ms": 0.003,
+              "totalMs": 0.003
+            },
+            "projection": {
+              "count": 1,
+              "p50Ms": 45.076,
+              "p95Ms": 45.076,
+              "totalMs": 45.076
+            },
+            "slice": {
+              "count": 1,
+              "p50Ms": 0.001,
+              "p95Ms": 0.001,
+              "totalMs": 0.001
+            }
+          },
+          "samples": 5
+        },
+        "totalMs": 67.648,
+        "transferBytes": 150,
+        "uniqueIdentityCount": 0
+      },
+      "samples": [
+        {
+          "duplicateIdentityCount": 0,
+          "firstIdentity": null,
+          "lastIdentity": null,
+          "missingIdentityCount": 0,
+          "pageCount": 1,
+          "serializationMs": 0.004,
+          "sqlite": {
+            "counters": {
+              "identityChecks": 1,
+              "projectionCacheHits": 0,
+              "projectionCacheMisses": 1,
+              "totalsCacheHits": 0,
+              "totalsCacheMisses": 1
+            },
+            "phases": {
+              "count": {
+                "count": 1,
+                "p50Ms": 22.542,
+                "p95Ms": 22.542,
+                "totalMs": 22.542
+              },
+              "identity": {
+                "count": 1,
+                "p50Ms": 0.037,
+                "p95Ms": 0.037,
+                "totalMs": 0.037
+              },
+              "materialize": {
+                "count": 1,
+                "p50Ms": 0.003,
+                "p95Ms": 0.003,
+                "totalMs": 0.003
+              },
+              "projection": {
+                "count": 1,
+                "p50Ms": 44.998,
+                "p95Ms": 44.998,
+                "totalMs": 44.998
+              },
+              "slice": {
+                "count": 1,
+                "p50Ms": 0.001,
+                "p95Ms": 0.001,
+                "totalMs": 0.001
+              }
+            },
+            "samples": 5
+          },
+          "totalMs": 68.228,
+          "transferBytes": 150,
+          "uniqueIdentityCount": 0
+        },
+        {
+          "duplicateIdentityCount": 0,
+          "firstIdentity": null,
+          "lastIdentity": null,
+          "missingIdentityCount": 0,
+          "pageCount": 1,
+          "serializationMs": 0.006,
+          "sqlite": {
+            "counters": {
+              "identityChecks": 1,
+              "projectionCacheHits": 0,
+              "projectionCacheMisses": 1,
+              "totalsCacheHits": 0,
+              "totalsCacheMisses": 1
+            },
+            "phases": {
+              "count": {
+                "count": 1,
+                "p50Ms": 21.849,
+                "p95Ms": 21.849,
+                "totalMs": 21.849
+              },
+              "identity": {
+                "count": 1,
+                "p50Ms": 0.037,
+                "p95Ms": 0.037,
+                "totalMs": 0.037
+              },
+              "materialize": {
+                "count": 1,
+                "p50Ms": 0.003,
+                "p95Ms": 0.003,
+                "totalMs": 0.003
+              },
+              "projection": {
+                "count": 1,
+                "p50Ms": 45.076,
+                "p95Ms": 45.076,
+                "totalMs": 45.076
+              },
+              "slice": {
+                "count": 1,
+                "p50Ms": 0.001,
+                "p95Ms": 0.001,
+                "totalMs": 0.001
+              }
+            },
+            "samples": 5
+          },
+          "totalMs": 67.648,
+          "transferBytes": 150,
+          "uniqueIdentityCount": 0
+        },
+        {
+          "duplicateIdentityCount": 0,
+          "firstIdentity": null,
+          "lastIdentity": null,
+          "missingIdentityCount": 0,
+          "pageCount": 1,
+          "serializationMs": 0.005,
+          "sqlite": {
+            "counters": {
+              "identityChecks": 1,
+              "projectionCacheHits": 0,
+              "projectionCacheMisses": 1,
+              "totalsCacheHits": 0,
+              "totalsCacheMisses": 1
+            },
+            "phases": {
+              "count": {
+                "count": 1,
+                "p50Ms": 21.741,
+                "p95Ms": 21.741,
+                "totalMs": 21.741
+              },
+              "identity": {
+                "count": 1,
+                "p50Ms": 0.036,
+                "p95Ms": 0.036,
+                "totalMs": 0.036
+              },
+              "materialize": {
+                "count": 1,
+                "p50Ms": 0.004,
+                "p95Ms": 0.004,
+                "totalMs": 0.004
+              },
+              "projection": {
+                "count": 1,
+                "p50Ms": 44.722,
+                "p95Ms": 44.722,
+                "totalMs": 44.722
+              },
+              "slice": {
+                "count": 1,
+                "p50Ms": 0.001,
+                "p95Ms": 0.001,
+                "totalMs": 0.001
+              }
+            },
+            "samples": 5
+          },
+          "totalMs": 67.169,
+          "transferBytes": 150,
+          "uniqueIdentityCount": 0
+        }
+      ]
+    },
+    {
+      "fixtureSize": 20000,
+      "label": "harness-codex",
+      "median": {
+        "duplicateIdentityCount": 0,
+        "firstIdentity": "session-row-v1:27e68e085f667111",
+        "lastIdentity": "session-row-v1:183f5e2a1264d176",
+        "missingIdentityCount": 0,
+        "pageCount": 20,
+        "serializationMs": 5.94,
+        "sqlite": {
+          "counters": {
+            "identityChecks": 20,
+            "projectionCacheHits": 19,
+            "projectionCacheMisses": 1,
+            "totalsCacheHits": 19,
+            "totalsCacheMisses": 1
+          },
+          "phases": {
+            "count": {
+              "count": 1,
+              "p50Ms": 7.011,
+              "p95Ms": 7.011,
+              "totalMs": 7.011
+            },
+            "identity": {
+              "count": 20,
+              "p50Ms": 0.031,
+              "p95Ms": 0.045,
+              "totalMs": 0.68
+            },
+            "materialize": {
+              "count": 20,
+              "p50Ms": 2.683,
+              "p95Ms": 2.965,
+              "totalMs": 54.484
+            },
+            "projection": {
+              "count": 1,
+              "p50Ms": 748.779,
+              "p95Ms": 748.779,
+              "totalMs": 748.779
+            },
+            "slice": {
+              "count": 20,
+              "p50Ms": 0.001,
+              "p95Ms": 0.002,
+              "totalMs": 0.018
+            }
+          },
+          "samples": 62
+        },
+        "totalMs": 827.833,
+        "transferBytes": 7257656,
+        "uniqueIdentityCount": 4000
+      },
+      "samples": [
+        {
+          "duplicateIdentityCount": 0,
+          "firstIdentity": "session-row-v1:27e68e085f667111",
+          "lastIdentity": "session-row-v1:183f5e2a1264d176",
+          "missingIdentityCount": 0,
+          "pageCount": 20,
+          "serializationMs": 5.792,
+          "sqlite": {
+            "counters": {
+              "identityChecks": 20,
+              "projectionCacheHits": 19,
+              "projectionCacheMisses": 1,
+              "totalsCacheHits": 19,
+              "totalsCacheMisses": 1
+            },
+            "phases": {
+              "count": {
+                "count": 1,
+                "p50Ms": 6.512,
+                "p95Ms": 6.512,
+                "totalMs": 6.512
+              },
+              "identity": {
+                "count": 20,
+                "p50Ms": 0.033,
+                "p95Ms": 0.05,
+                "totalMs": 0.721
+              },
+              "materialize": {
+                "count": 20,
+                "p50Ms": 2.779,
+                "p95Ms": 3.62,
+                "totalMs": 58.166
+              },
+              "projection": {
+                "count": 1,
+                "p50Ms": 743.777,
+                "p95Ms": 743.777,
+                "totalMs": 743.777
+              },
+              "slice": {
+                "count": 20,
+                "p50Ms": 0.001,
+                "p95Ms": 0.002,
+                "totalMs": 0.021
+              }
+            },
+            "samples": 62
+          },
+          "totalMs": 827.075,
+          "transferBytes": 7257656,
+          "uniqueIdentityCount": 4000
+        },
+        {
+          "duplicateIdentityCount": 0,
+          "firstIdentity": "session-row-v1:27e68e085f667111",
+          "lastIdentity": "session-row-v1:183f5e2a1264d176",
+          "missingIdentityCount": 0,
+          "pageCount": 20,
+          "serializationMs": 5.94,
+          "sqlite": {
+            "counters": {
+              "identityChecks": 20,
+              "projectionCacheHits": 19,
+              "projectionCacheMisses": 1,
+              "totalsCacheHits": 19,
+              "totalsCacheMisses": 1
+            },
+            "phases": {
+              "count": {
+                "count": 1,
+                "p50Ms": 7.157,
+                "p95Ms": 7.157,
+                "totalMs": 7.157
+              },
+              "identity": {
+                "count": 20,
+                "p50Ms": 0.032,
+                "p95Ms": 0.044,
+                "totalMs": 0.675
+              },
+              "materialize": {
+                "count": 20,
+                "p50Ms": 2.666,
+                "p95Ms": 2.976,
+                "totalMs": 54.61
+              },
+              "projection": {
+                "count": 1,
+                "p50Ms": 762.052,
+                "p95Ms": 762.052,
+                "totalMs": 762.052
+              },
+              "slice": {
+                "count": 20,
+                "p50Ms": 0.001,
+                "p95Ms": 0.002,
+                "totalMs": 0.025
+              }
+            },
+            "samples": 62
+          },
+          "totalMs": 841.113,
+          "transferBytes": 7257656,
+          "uniqueIdentityCount": 4000
+        },
+        {
+          "duplicateIdentityCount": 0,
+          "firstIdentity": "session-row-v1:27e68e085f667111",
+          "lastIdentity": "session-row-v1:183f5e2a1264d176",
+          "missingIdentityCount": 0,
+          "pageCount": 20,
+          "serializationMs": 6.452,
+          "sqlite": {
+            "counters": {
+              "identityChecks": 20,
+              "projectionCacheHits": 19,
+              "projectionCacheMisses": 1,
+              "totalsCacheHits": 19,
+              "totalsCacheMisses": 1
+            },
+            "phases": {
+              "count": {
+                "count": 1,
+                "p50Ms": 7.011,
+                "p95Ms": 7.011,
+                "totalMs": 7.011
+              },
+              "identity": {
+                "count": 20,
+                "p50Ms": 0.031,
+                "p95Ms": 0.045,
+                "totalMs": 0.68
+              },
+              "materialize": {
+                "count": 20,
+                "p50Ms": 2.683,
+                "p95Ms": 2.965,
+                "totalMs": 54.484
+              },
+              "projection": {
+                "count": 1,
+                "p50Ms": 748.779,
+                "p95Ms": 748.779,
+                "totalMs": 748.779
+              },
+              "slice": {
+                "count": 20,
+                "p50Ms": 0.001,
+                "p95Ms": 0.002,
+                "totalMs": 0.018
+              }
+            },
+            "samples": 62
+          },
+          "totalMs": 827.833,
+          "transferBytes": 7257656,
+          "uniqueIdentityCount": 4000
+        }
+      ]
+    },
+    {
+      "fixtureSize": 20000,
+      "label": "origin-classifier",
+      "median": {
+        "duplicateIdentityCount": 0,
+        "firstIdentity": "session-row-v1:823c2793e999e295",
+        "lastIdentity": "session-row-v1:b6074141ec0dfafd",
+        "missingIdentityCount": 0,
+        "pageCount": 1,
+        "serializationMs": 0.019,
+        "sqlite": {
+          "counters": {
+            "identityChecks": 1,
+            "projectionCacheHits": 0,
+            "projectionCacheMisses": 1,
+            "totalsCacheHits": 0,
+            "totalsCacheMisses": 1
+          },
+          "phases": {
+            "count": {
+              "count": 1,
+              "p50Ms": 21.428,
+              "p95Ms": 21.428,
+              "totalMs": 21.428
+            },
+            "identity": {
+              "count": 1,
+              "p50Ms": 0.033,
+              "p95Ms": 0.033,
+              "totalMs": 0.033
+            },
+            "materialize": {
+              "count": 1,
+              "p50Ms": 0.587,
+              "p95Ms": 0.587,
+              "totalMs": 0.587
+            },
+            "projection": {
+              "count": 1,
+              "p50Ms": 145.981,
+              "p95Ms": 145.981,
+              "totalMs": 145.981
+            },
+            "slice": {
+              "count": 1,
+              "p50Ms": 0.002,
+              "p95Ms": 0.002,
+              "totalMs": 0.002
+            }
+          },
+          "samples": 5
+        },
+        "totalMs": 168.674,
+        "transferBytes": 7425,
+        "uniqueIdentityCount": 4
+      },
+      "samples": [
+        {
+          "duplicateIdentityCount": 0,
+          "firstIdentity": "session-row-v1:823c2793e999e295",
+          "lastIdentity": "session-row-v1:b6074141ec0dfafd",
+          "missingIdentityCount": 0,
+          "pageCount": 1,
+          "serializationMs": 0.016,
+          "sqlite": {
+            "counters": {
+              "identityChecks": 1,
+              "projectionCacheHits": 0,
+              "projectionCacheMisses": 1,
+              "totalsCacheHits": 0,
+              "totalsCacheMisses": 1
+            },
+            "phases": {
+              "count": {
+                "count": 1,
+                "p50Ms": 21.376,
+                "p95Ms": 21.376,
+                "totalMs": 21.376
+              },
+              "identity": {
+                "count": 1,
+                "p50Ms": 0.031,
+                "p95Ms": 0.031,
+                "totalMs": 0.031
+              },
+              "materialize": {
+                "count": 1,
+                "p50Ms": 0.356,
+                "p95Ms": 0.356,
+                "totalMs": 0.356
+              },
+              "projection": {
+                "count": 1,
+                "p50Ms": 145.167,
+                "p95Ms": 145.167,
+                "totalMs": 145.167
+              },
+              "slice": {
+                "count": 1,
+                "p50Ms": 0.001,
+                "p95Ms": 0.001,
+                "totalMs": 0.001
+              }
+            },
+            "samples": 5
+          },
+          "totalMs": 167.549,
+          "transferBytes": 7425,
+          "uniqueIdentityCount": 4
+        },
+        {
+          "duplicateIdentityCount": 0,
+          "firstIdentity": "session-row-v1:823c2793e999e295",
+          "lastIdentity": "session-row-v1:b6074141ec0dfafd",
+          "missingIdentityCount": 0,
+          "pageCount": 1,
+          "serializationMs": 0.019,
+          "sqlite": {
+            "counters": {
+              "identityChecks": 1,
+              "projectionCacheHits": 0,
+              "projectionCacheMisses": 1,
+              "totalsCacheHits": 0,
+              "totalsCacheMisses": 1
+            },
+            "phases": {
+              "count": {
+                "count": 1,
+                "p50Ms": 21.428,
+                "p95Ms": 21.428,
+                "totalMs": 21.428
+              },
+              "identity": {
+                "count": 1,
+                "p50Ms": 0.033,
+                "p95Ms": 0.033,
+                "totalMs": 0.033
+              },
+              "materialize": {
+                "count": 1,
+                "p50Ms": 0.587,
+                "p95Ms": 0.587,
+                "totalMs": 0.587
+              },
+              "projection": {
+                "count": 1,
+                "p50Ms": 145.981,
+                "p95Ms": 145.981,
+                "totalMs": 145.981
+              },
+              "slice": {
+                "count": 1,
+                "p50Ms": 0.002,
+                "p95Ms": 0.002,
+                "totalMs": 0.002
+              }
+            },
+            "samples": 5
+          },
+          "totalMs": 168.674,
+          "transferBytes": 7425,
+          "uniqueIdentityCount": 4
+        },
+        {
+          "duplicateIdentityCount": 0,
+          "firstIdentity": "session-row-v1:823c2793e999e295",
+          "lastIdentity": "session-row-v1:b6074141ec0dfafd",
+          "missingIdentityCount": 0,
+          "pageCount": 1,
+          "serializationMs": 0.02,
+          "sqlite": {
+            "counters": {
+              "identityChecks": 1,
+              "projectionCacheHits": 0,
+              "projectionCacheMisses": 1,
+              "totalsCacheHits": 0,
+              "totalsCacheMisses": 1
+            },
+            "phases": {
+              "count": {
+                "count": 1,
+                "p50Ms": 21.63,
+                "p95Ms": 21.63,
+                "totalMs": 21.63
+              },
+              "identity": {
+                "count": 1,
+                "p50Ms": 0.033,
+                "p95Ms": 0.033,
+                "totalMs": 0.033
+              },
+              "materialize": {
+                "count": 1,
+                "p50Ms": 0.361,
+                "p95Ms": 0.361,
+                "totalMs": 0.361
+              },
+              "projection": {
+                "count": 1,
+                "p50Ms": 147.651,
+                "p95Ms": 147.651,
+                "totalMs": 147.651
+              },
+              "slice": {
+                "count": 1,
+                "p50Ms": 0.001,
+                "p95Ms": 0.001,
+                "totalMs": 0.001
+              }
+            },
+            "samples": 5
+          },
+          "totalMs": 170.318,
+          "transferBytes": 7425,
+          "uniqueIdentityCount": 4
+        }
+      ]
+    }
+  ],
+  "tool": "plan072-keyset-a1",
+  "version": 3
+}

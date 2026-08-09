@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import path from 'node:path';
-import { createDemoEnvironment, DEMO_HOST, DEMO_PORT } from './run-web-demo';
+import { createDemoEnvironment, DEMO_HOST, DEMO_PORT, parseDemoRunMode } from './run-web-demo';
 
 describe('web demo launcher', () => {
   test('uses a fixed loopback listener and an isolated child environment', () => {
@@ -10,9 +10,9 @@ describe('web demo launcher', () => {
     expect({ host: DEMO_HOST, port: DEMO_PORT }).toEqual({ host: '127.0.0.1', port: 4176 });
     expect(environment).toEqual({
       AI_USAGE_ROOT_DIR: temporaryHome,
+      AI_USAGE_SVELTEKIT_PHASE: 'dev',
       BROWSER: 'none',
       HOME: temporaryHome,
-      NITRO_DEV_RUNNER: 'self',
       NO_COLOR: '1',
       PATH: '/synthetic/bin',
       TMPDIR: path.join(temporaryHome, 'tmp'),
@@ -28,5 +28,14 @@ describe('web demo launcher', () => {
     expect(environment.AI_USAGE_ENGINE_INSTANCE_ID).toBeUndefined();
     expect(environment.AI_USAGE_ENGINE_STATE_DIR).toBeUndefined();
     expect(environment.AI_USAGE_TEMP_ROOT).toBeUndefined();
+  });
+
+  test('splits finite preparation from the supervised demo server', () => {
+    expect(parseDemoRunMode([])).toBe('prepare-and-serve');
+    expect(parseDemoRunMode(['--prepare-only'])).toBe('prepare-only');
+    expect(parseDemoRunMode(['--serve-only'])).toBe('serve-only');
+    expect(() => parseDemoRunMode(['--prepare-only', '--serve-only'])).toThrow(
+      'Usage: run-web-demo.ts [--prepare-only|--serve-only]',
+    );
   });
 });

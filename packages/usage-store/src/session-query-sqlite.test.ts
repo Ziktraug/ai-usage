@@ -28,6 +28,7 @@ import { createServedRevisionQueryDatabase } from './served-revision';
 import {
   assertSessionQueryDatabase,
   executeMaterializedSessionQuery,
+  resetSessionQueryTotalsCacheForTests,
   type SessionQuerySqliteDatabase,
   type SessionQuerySqliteTrace,
 } from './session-query-sqlite';
@@ -36,6 +37,7 @@ import { publishServedReportRevision, updateUsageMachineLabel } from './writer';
 const temporaryDirectories = new Set<string>();
 
 afterEach(async () => {
+  resetSessionQueryTotalsCacheForTests();
   await Promise.all([...temporaryDirectories].map((directory) => rm(directory, { force: true, recursive: true })));
   temporaryDirectories.clear();
 });
@@ -564,12 +566,13 @@ describe('durable session query SQLite projections', () => {
       const request = queryRequest();
       const first = executeMaterializedSessionQuery(database, 'sessions', request, trace);
       expect(first).toEqual(projectSessionPage(rows, request));
-      expect(traces).toHaveLength(4);
-      expect(traces[1]?.sql).toContain('LIMIT ? OFFSET ?');
-      expect(traces[1]?.sql).not.toContain('FROM session_rows AS classifier');
-      expect(traces[1]?.params.slice(-2)).toEqual([request.pageSize + 1, 0]);
-      expect(traces[2]?.sql).toContain('SELECT ordinal, row_json');
-      expect(traces[3]?.sql).toContain('campaign_root DESC, ordinal');
+      expect(traces.some((entry) => entry.sql.includes('FROM campaign_items ORDER BY'))).toBe(true);
+      expect(
+        traces.some((entry) => entry.sql.includes('LIMIT ? OFFSET ?') && entry.sql.includes('campaign_items')),
+      ).toBe(false);
+      expect(traces.some((entry) => entry.sql.includes('FROM session_rows AS classifier'))).toBe(false);
+      expect(traces.some((entry) => entry.sql.includes('SELECT ordinal, row_json'))).toBe(true);
+      expect(traces.some((entry) => entry.sql.includes('campaign_root DESC, ordinal'))).toBe(true);
 
       const campaign = first.items.find((item) => item.kind === 'campaign');
       expect(campaign?.kind).toBe('campaign');
@@ -581,9 +584,11 @@ describe('durable session query SQLite projections', () => {
       expect(executeMaterializedSessionQuery(database, 'campaign-children', childRequest, trace)).toEqual(
         projectSessionCampaignChildren(rows, childRequest),
       );
-      expect(traces).toHaveLength(2);
+      expect(traces).toHaveLength(3);
       expect(traces[1]?.sql).toContain('LIMIT ? OFFSET ?');
       expect(traces[1]?.params.slice(-2)).toEqual([2, 0]);
+      expect(traces[2]?.sql).toContain('campaign_root = 1 LIMIT 1');
+      expect(traces[2]?.params).toEqual([campaign.campaignKey]);
     } finally {
       database.close();
     }
@@ -700,6 +705,41 @@ describe('durable session query SQLite projections', () => {
     }
   });
 
+  test('returns the actual campaign root when current filters match no campaign rows', async () => {
+    const fixtureRows = [
+      row('campaign-root', 10, { root: 'campaign-root' }),
+      row('campaign-child', 20, { parent: 'campaign-root', root: 'campaign-root' }),
+    ];
+    const { database } = await openRowsDatabase(fixtureRows);
+    const root = enrichSessionPresentationRow(fixtureRows[0]!);
+    const request = queryRequest({
+      filters: {
+        fields: {},
+        harness: [],
+        machine: [],
+        origin: [],
+        query: 'does-not-match-any-campaign-row',
+      },
+    });
+    const childrenRequest = {
+      campaignKey: sessionCampaignIdentityForRow(root).campaignKey,
+      query: request,
+    };
+    try {
+      const expected = projectSessionCampaignChildren(fixtureRows, childrenRequest);
+      const actual = executeMaterializedSessionQuery(database, 'campaign-children', childrenRequest);
+
+      expect(actual).toEqual(expected);
+      expect(actual).toMatchObject({
+        itemCount: 0,
+        items: [],
+        root,
+        sessionCount: 0,
+      });
+    } finally {
+      database.close();
+    }
+  });
   test('filters sessions by every attributed model segment', async () => {
     const segmentedRow: SerializedRow = {
       ...row('multi-model', 10),
@@ -771,15 +811,120 @@ describe('durable session query SQLite projections', () => {
       expect(actual).toEqual(projectSessionPage(fixtureRows, request));
       expect(actual.itemCount).toBe(5000);
       expect(actual.sessionCount).toBe(5000);
-      expect(traces).toHaveLength(4);
-      expect(traces[1]?.sql).not.toContain('root.row_json');
-      expect(traces[1]?.sql).not.toContain('source_row_json');
-      expect(traces[2]?.params).toHaveLength(100);
+      const projectionTrace = traces.find((entry) => entry.sql.includes('FROM campaign_items ORDER BY'));
+      expect(projectionTrace).toBeDefined();
+      expect(projectionTrace?.sql).not.toContain('root.row_json');
+      expect(projectionTrace?.sql).not.toContain('source_row_json');
+      const rootTrace = traces.find((entry) => entry.sql.includes('SELECT ordinal, row_json'));
+      expect(rootTrace?.params).toHaveLength(100);
       expect(durationMs).toBeLessThan(8000);
     } finally {
       database.close();
     }
   }, 30_000);
+
+  test('reuses invariant totals for later pages of the same exact revision query identity', async () => {
+    const fixtureRows = Array.from({ length: 40 }, (_, index) => row(`totals-session-${index}`, index + 1));
+    const traces: { params: readonly unknown[]; sql: string }[] = [];
+    const trace: SessionQuerySqliteTrace = (query) => traces.push(query);
+    const { database } = await openRowsDatabase(fixtureRows);
+    const firstRequest = queryRequest({ pageSize: 10, sort: [{ desc: true, id: 'date' }] });
+    try {
+      const first = executeMaterializedSessionQuery(database, 'sessions', firstRequest, trace);
+      expect(first.nextCursor).not.toBeNull();
+      const countSqlBeforeSecond = traces.filter((entry) => entry.sql.includes('COUNT(DISTINCT campaign_key)')).length;
+      expect(countSqlBeforeSecond).toBe(1);
+
+      const second = executeMaterializedSessionQuery(
+        database,
+        'sessions',
+        { ...firstRequest, cursor: first.nextCursor },
+        trace,
+      );
+      expect(second.itemCount).toBe(first.itemCount);
+      expect(second.sessionCount).toBe(first.sessionCount);
+      expect(traces.filter((entry) => entry.sql.includes('COUNT(DISTINCT campaign_key)')).length).toBe(1);
+
+      const resorted = executeMaterializedSessionQuery(
+        database,
+        'sessions',
+        queryRequest({ pageSize: 10, sort: [{ desc: false, id: 'date' }] }),
+        trace,
+      );
+      expect(resorted.sessionCount).toBe(first.sessionCount);
+      expect(traces.filter((entry) => entry.sql.includes('COUNT(DISTINCT campaign_key)')).length).toBe(2);
+
+      resetSessionQueryTotalsCacheForTests();
+      const missingFirstPage = executeMaterializedSessionQuery(
+        database,
+        'sessions',
+        { ...firstRequest, cursor: first.nextCursor },
+        trace,
+      );
+      expect(missingFirstPage.sessionCount).toBe(first.sessionCount);
+      expect(traces.filter((entry) => entry.sql.includes('COUNT(DISTINCT campaign_key)')).length).toBe(3);
+    } finally {
+      database.close();
+    }
+  });
+
+  test('reuses the ordered campaign projection across OFFSET pages of one query identity', async () => {
+    const fixtureRows = Array.from({ length: 40 }, (_, index) => row(`projection-session-${index}`, index + 1));
+    const traces: { params: readonly unknown[]; sql: string }[] = [];
+    const trace: SessionQuerySqliteTrace = (query) => traces.push(query);
+    const { database } = await openRowsDatabase(fixtureRows);
+    const firstRequest = queryRequest({ pageSize: 10, sort: [{ desc: true, id: 'total' }] });
+    const projectionSql = (sql: string): boolean => sql.includes('FROM campaign_items ORDER BY');
+    try {
+      const first = executeMaterializedSessionQuery(database, 'sessions', firstRequest, trace);
+      expect(first.nextCursor).not.toBeNull();
+      expect(traces.filter((entry) => projectionSql(entry.sql))).toHaveLength(1);
+      expect(traces.some((entry) => entry.sql.includes('LIMIT ? OFFSET ?') && projectionSql(entry.sql))).toBe(false);
+
+      const second = executeMaterializedSessionQuery(
+        database,
+        'sessions',
+        { ...firstRequest, cursor: first.nextCursor },
+        trace,
+      );
+      expect(second.items.map((item) => item.campaignKey)).not.toEqual(first.items.map((item) => item.campaignKey));
+      expect(traces.filter((entry) => projectionSql(entry.sql))).toHaveLength(1);
+
+      const withoutLimit = executeMaterializedSessionQuery(database, 'sessions', firstRequest, trace);
+      expect(withoutLimit.items).toEqual(first.items);
+
+      const resorted = executeMaterializedSessionQuery(
+        database,
+        'sessions',
+        queryRequest({ pageSize: 10, sort: [{ desc: false, id: 'total' }] }),
+        trace,
+      );
+      expect(resorted.items.map((item) => item.campaignKey)).not.toEqual(first.items.map((item) => item.campaignKey));
+      expect(traces.filter((entry) => projectionSql(entry.sql))).toHaveLength(2);
+    } finally {
+      database.close();
+    }
+  });
+
+  test('does not reuse a cached projection for a different equal-sized payload with the same revision', async () => {
+    const firstFixture = [row('cache-alpha', 10)];
+    const secondFixture = [row('cache-bravo', 10)];
+    expect(JSON.stringify(firstFixture).length).toBe(JSON.stringify(secondFixture).length);
+
+    const firstDatabase = await openRowsDatabase(firstFixture, undefined, 'shared-revision');
+    const secondDatabase = await openRowsDatabase(secondFixture, undefined, 'shared-revision');
+    const request = queryRequest({ pageSize: 10 });
+    try {
+      const first = executeMaterializedSessionQuery(firstDatabase.database, 'sessions', request);
+      const second = executeMaterializedSessionQuery(secondDatabase.database, 'sessions', request);
+
+      expect(first.items[0]?.row.source?.sourceSessionId).toBe('cache-alpha');
+      expect(second.items[0]?.row.source?.sourceSessionId).toBe('cache-bravo');
+    } finally {
+      firstDatabase.database.close();
+      secondDatabase.database.close();
+    }
+  });
 
   test('returns a bounded page through the exact-revision read API', async () => {
     const request = queryRequest();

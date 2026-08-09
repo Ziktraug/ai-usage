@@ -16,9 +16,9 @@ bun run demo
 `bun run dev` supervises the persistent usage engine and Web as separate tasks.
 Use the repository-root `bun run dev:once`, or `bun run start:web-only` after a
 completed production build, only for explicit Web-only diagnostics against an
-existing compatible store. Production builds use `.output-build`, development
-uses `.output-dev`, and a production build must never clean active development
-output.
+existing compatible store. Production builds use `.output-build/sveltekit`,
+development uses the phase-isolated `.svelte-kit/dev` tree, and a production
+build must never clean active development output.
 
 The usage engine is the sole production writer. Web and CLI report code must
 open SQLite only through `@ai-usage/usage-store/reader`; fresh or usage-domain

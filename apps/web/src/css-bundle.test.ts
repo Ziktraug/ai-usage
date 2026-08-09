@@ -1,7 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
 import { gzipSync } from 'node:zlib';
 import { $ } from 'bun';
 
@@ -34,37 +33,52 @@ const LEADING_SLASH_PATTERN = /^\/+/;
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
-const initialAssetPaths = async (appDir: string): Promise<string[]> => {
-  const serverDir = path.join(appDir, '.output-build/nitro/server');
-  const manifestFile = readdirSync(serverDir).find(
-    (file) => file.startsWith('_tanstack-start-manifest_') && file.endsWith('.mjs'),
-  );
-  if (!manifestFile) {
-    throw new Error('Expected the report build to emit one TanStack Start manifest');
+interface ClientManifestEntry {
+  readonly css?: readonly string[];
+  readonly file: string;
+  readonly imports?: readonly string[];
+}
+
+const initialAssetPaths = (appDir: string): string[] => {
+  const manifestPath = path.join(appDir, '.svelte-kit/build/output/client/.vite/manifest.json');
+  const parsed: unknown = JSON.parse(readFileSync(manifestPath, 'utf8'));
+  if (!isRecord(parsed)) {
+    throw new Error('Expected the SvelteKit client manifest to be an object');
   }
-  const imported: unknown = await import(pathToFileURL(path.join(serverDir, manifestFile)).href);
-  if (!(isRecord(imported) && typeof imported.tsrStartManifest === 'function')) {
-    throw new Error('Expected the TanStack Start manifest to export tsrStartManifest');
-  }
-  const manifest: unknown = imported.tsrStartManifest();
-  const routes = isRecord(manifest) && isRecord(manifest.routes) ? manifest.routes : undefined;
-  const root = routes && isRecord(routes.__root__) ? routes.__root__ : undefined;
-  if (!root) {
-    throw new Error('Expected the TanStack Start manifest to describe the root route');
-  }
-  const paths = [
-    ...(Array.isArray(root.css) ? root.css : []),
-    ...(Array.isArray(root.preloads) ? root.preloads : []),
-    ...(Array.isArray(root.scripts)
-      ? root.scripts.flatMap((script) =>
-          isRecord(script) && isRecord(script.attrs) && typeof script.attrs.src === 'string' ? [script.attrs.src] : [],
-        )
-      : []),
+  const manifest = parsed as Record<string, ClientManifestEntry>;
+  const pending = [
+    '../../node_modules/@sveltejs/kit/src/runtime/client/entry.js',
+    '.svelte-kit/build/generated/client-optimized/app.js',
+    '.svelte-kit/build/generated/client-optimized/nodes/0.js',
+    '.svelte-kit/build/generated/client-optimized/nodes/3.js',
   ];
-  if (!paths.every((assetPath) => typeof assetPath === 'string' && assetPath.startsWith('/assets/'))) {
-    throw new Error('Expected every root-route client asset to use the generated assets directory');
+  const visited = new Set<string>();
+  const assets = new Set<string>();
+  while (pending.length > 0) {
+    const key = pending.pop();
+    if (!key || visited.has(key)) {
+      continue;
+    }
+    visited.add(key);
+    const entry = manifest[key];
+    if (!(entry && typeof entry.file === 'string')) {
+      throw new Error(`Expected the SvelteKit client manifest to include ${key}`);
+    }
+    assets.add(entry.file);
+    for (const css of entry.css ?? []) {
+      assets.add(css);
+    }
+    pending.push(...(entry.imports ?? []));
   }
-  return [...new Set(paths)];
+  return [...assets].sort();
+};
+
+const readInitialAsset = (publicDir: string, assetPath: string) => {
+  const assetFile = path.join(publicDir, assetPath.replace(LEADING_SLASH_PATTERN, ''));
+  if (!existsSync(assetFile)) {
+    throw new Error(`Expected the initial client asset to exist: ${assetPath}`);
+  }
+  return readFileSync(assetFile);
 };
 
 describe('report app client bundle', () => {
@@ -74,36 +88,30 @@ describe('report app client bundle', () => {
       const appDir = path.resolve(import.meta.dir, '..');
       await $`bun run build`.cwd(appDir).quiet();
 
-      const assetsDir = path.join(appDir, '.output-build/nitro/public/assets');
-      expect(existsSync(assetsDir)).toBe(true);
-
-      const cssFile = readdirSync(assetsDir).find((file) => file.endsWith('.css'));
-      if (!cssFile) {
-        throw new Error('Expected the report build to emit a CSS asset');
+      const publicDir = path.join(appDir, '.output-build/sveltekit/client');
+      const rootAssets = initialAssetPaths(appDir);
+      const cssAssetPaths = rootAssets.filter((assetPath) => assetPath.endsWith('.css'));
+      if (cssAssetPaths.length === 0) {
+        throw new Error('Expected the initial client manifest closure to include a CSS asset');
       }
-
-      const css = readFileSync(path.join(assetsDir, cssFile), 'utf8');
+      const css = cssAssetPaths.map((assetPath) => readInitialAsset(publicDir, assetPath).toString('utf8')).join('\n');
       expect(css).toContain('--colors-canvas');
       expect(css).toContain('--colors-accent');
       expect(css).toContain('[data-theme=dark]');
       expect(css).toContain('prefers-color-scheme:dark');
       expect(css).not.toContain('@layer reset,base,tokens,recipes,utilities;');
 
-      const javascriptFiles = readdirSync(assetsDir).filter((file) => file.endsWith('.js'));
-      const reportEntry = javascriptFiles.find((file) => file.startsWith('index-'));
+      const nodesDir = path.join(publicDir, '_app/immutable/nodes');
+      const javascriptFiles = readdirSync(nodesDir).filter((file) => file.endsWith('.js'));
+      const reportEntry = javascriptFiles.find((file) => file.startsWith('3.'));
       expect(javascriptFiles.length).toBeGreaterThan(2);
       if (!reportEntry) {
         throw new Error('Expected the report build to emit an index JavaScript entry');
       }
-      expect(readFileSync(path.join(assetsDir, reportEntry)).byteLength).toBeLessThan(720_000);
+      expect(readFileSync(path.join(nodesDir, reportEntry)).byteLength).toBeLessThan(720_000);
 
-      const publicDir = path.join(appDir, '.output-build/nitro/public');
-      const rootAssets = await initialAssetPaths(appDir);
       const gzipClosureBytes = rootAssets.reduce(
-        (total, assetPath) =>
-          total +
-          gzipSync(readFileSync(path.join(publicDir, assetPath.replace(LEADING_SLASH_PATTERN, ''))), { level: 9 })
-            .byteLength,
+        (total, assetPath) => total + gzipSync(readInitialAsset(publicDir, assetPath), { level: 9 }).byteLength,
         0,
       );
       expect(gzipClosureBytes).toBeLessThanOrEqual(INITIAL_GZIP_CLOSURE_MAXIMUM_BYTES);

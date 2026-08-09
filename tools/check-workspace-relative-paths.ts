@@ -2,17 +2,18 @@ import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 
 const ignoredDirectories = new Set([
+  '.direnv',
   '.git',
-  '.output',
   '.output-build',
-  '.output-dev',
+  '.svelte-kit',
   '.turbo',
+  '.worktrees',
   'dist',
   'node_modules',
   'styled-system',
 ]);
 const ignoredFiles = new Set(['biome.json']);
-const checkedExtensions = new Set(['.cjs', '.js', '.jsx', '.json', '.mjs', '.ts', '.tsx', '.yaml', '.yml']);
+const checkedExtensions = new Set(['.cjs', '.js', '.jsx', '.json', '.mjs', '.svelte', '.ts', '.tsx', '.yaml', '.yml']);
 const relativeWorkspacePath = /\.\.\/(?:\.\.\/)*(?:apps|packages)\//g;
 
 interface Violation {

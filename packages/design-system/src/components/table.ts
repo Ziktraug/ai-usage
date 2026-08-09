@@ -96,6 +96,7 @@ export const sessionViewportSurface = css({
   '--ai-usage-table-min-height': '0px',
   h: 'var(--session-surface-height, 100dvh)',
   minH: 0,
+  overflowAnchor: 'none',
   _print: { h: 'auto' },
 });
 
@@ -215,10 +216,6 @@ export const projectSummaryMetric = css({
     fontSize: '11px',
     overflowWrap: 'anywhere',
   },
-});
-
-export const sessionDesktopControl = css({
-  display: { base: 'none', md: 'block' },
 });
 
 export const sessionSummaryMobileSort = css({
@@ -390,15 +387,6 @@ export const sessionSummaryStats = css({
   color: 'faint',
   fontSize: '10px',
   whiteSpace: 'nowrap',
-});
-
-export const sessionSummaryLoadMore = css({
-  display: { base: 'flex', md: 'none' },
-  justifyContent: 'center',
-  pt: '10px',
-  '& button': {
-    minH: '44px',
-  },
 });
 
 export const sessionPagingLoadMore = css({

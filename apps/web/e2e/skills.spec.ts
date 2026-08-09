@@ -1,5 +1,6 @@
 import type { Page } from '@playwright/test';
-import { expect, test } from './browser-test';
+import { expect, openHydratedSkills, test } from './browser-test';
+import { rpcRouteFulfillmentForClientResult, SKILLS_SAVE_RPC_PATH } from './rpc-test-transport';
 
 const ALPHA_SKILL_CONTENT = '# alpha-skill\n\nDeterministic Playwright fixture.\n';
 const ALPHA_SKILL_URL = /\/skills\/global\/alpha-skill$/;
@@ -10,9 +11,12 @@ const MIN_DESKTOP_INSPECTOR_WIDTH_PX = 260;
 const MIN_DESKTOP_TREE_WIDTH_PX = 190;
 const BETA_SKILL_URL = /\/skills\/global\/beta-skill$/;
 const SKILLS_MATRIX_URL = /\/skills\/matrix$/;
+const SKILLS_DETAIL_GAP_PX = 14;
+const SKILLS_SECTION_HEADER_GAP_PX = 2;
 const CREATED_TARGET_PATTERN = /Created target directory/;
 const LONG_PROJECT_LABEL = 'customer-analytics-platform-with-an-exceptionally-long-scope-name';
 const MOBILE_VIEWPORT = { height: 844, width: 390 } as const;
+const SAVE_MANAGED_MARKDOWN_RPC_ROUTE = `**${SKILLS_SAVE_RPC_PATH}`;
 const SKILL_TOGGLE_ACTION_PATTERN = /^(Disable|Enable)$/;
 const SUCCESS_NOTICE_DISMISS_DELAY_MS = 5000;
 const WHITESPACE_PATTERN = /\s+/g;
@@ -20,21 +24,23 @@ const WHITESPACE_PATTERN = /\s+/g;
 const normalizeText = (value: string): string => value.replace(WHITESPACE_PATTERN, ' ').trim();
 
 const interceptSaveResultForDraft = async (page: Page, draftMarker: string, result: unknown): Promise<void> => {
-  await page.route('**/_serverFn/**', async (route) => {
+  await page.route(SAVE_MANAGED_MARKDOWN_RPC_ROUTE, async (route) => {
     if (!route.request().postData()?.includes(draftMarker)) {
       await route.continue();
       return;
     }
+    const fulfillment = rpcRouteFulfillmentForClientResult(result);
     await route.fulfill({
-      body: JSON.stringify({ context: {}, result }),
+      body: fulfillment.body,
       contentType: 'application/json',
-      status: 200,
+      headers: fulfillment.headers,
+      status: fulfillment.status,
     });
   });
 };
 
 test('opens a managed SKILL.md as an immediately editable document and saves with the pointer', async ({ page }) => {
-  await page.goto('/skills/global/alpha-skill');
+  await openHydratedSkills(page, '/skills/global/alpha-skill');
 
   const detail = page.getByRole('region', { name: 'Selected skill detail' });
   const editor = detail.getByRole('textbox', { name: 'alpha-skill SKILL.md' });
@@ -64,7 +70,7 @@ test('opens a managed SKILL.md as an immediately editable document and saves wit
 });
 
 test('saves with Control+S and Meta+S while accepting immediate follow-up edits', async ({ page }) => {
-  await page.goto('/skills/global/alpha-skill');
+  await openHydratedSkills(page, '/skills/global/alpha-skill');
 
   const detail = page.getByRole('region', { name: 'Selected skill detail' });
   const editor = detail.getByRole('textbox', { name: 'alpha-skill SKILL.md' });
@@ -95,7 +101,7 @@ test('saves with Control+S and Meta+S while accepting immediate follow-up edits'
 test('wraps long SKILL.md prose without changing the source value', async ({ page }) => {
   const longProse = `# Long prose\n\n${'Readable prose should wrap inside the authoring surface. '.repeat(180)}\n`;
   await page.setViewportSize(MOBILE_VIEWPORT);
-  await page.goto('/skills/global/alpha-skill');
+  await openHydratedSkills(page, '/skills/global/alpha-skill');
 
   const editor = page.getByRole('textbox', { name: 'alpha-skill SKILL.md' });
   await editor.fill(longProse);
@@ -123,7 +129,7 @@ test('preserves the exact local draft when SKILL.md changed on disk', async ({ p
     data: { reason: 'conflict' },
     ok: true,
   });
-  await page.goto('/skills/global/alpha-skill');
+  await openHydratedSkills(page, '/skills/global/alpha-skill');
 
   const detail = page.getByRole('region', { name: 'Selected skill detail' });
   const editor = detail.getByRole('textbox', { name: 'alpha-skill SKILL.md' });
@@ -144,7 +150,7 @@ test('preserves the exact local draft after another save failure', async ({ page
     error: { message: 'Storage unavailable', tag: 'E2ESaveFailure' },
     ok: false,
   });
-  await page.goto('/skills/global/alpha-skill');
+  await openHydratedSkills(page, '/skills/global/alpha-skill');
 
   const detail = page.getByRole('region', { name: 'Selected skill detail' });
   const editor = detail.getByRole('textbox', { name: 'alpha-skill SKILL.md' });
@@ -160,7 +166,7 @@ test('preserves the exact local draft after another save failure', async ({ page
 });
 
 test('saves SKILL.md source without installing it into runtimes', async ({ page }) => {
-  await page.goto('/skills/global/alpha-skill');
+  await openHydratedSkills(page, '/skills/global/alpha-skill');
 
   const detail = page.getByRole('region', { name: 'Selected skill detail' });
   const editor = detail.getByRole('textbox', { name: 'alpha-skill SKILL.md' });
@@ -183,9 +189,8 @@ test('saves SKILL.md source without installing it into runtimes', async ({ page 
   await expect(page.getByText('alpha-skill linked to Codex.', { exact: true })).toHaveCount(0);
 });
 
-test('protects an unsaved SKILL.md draft during navigation and reload', async ({ page }) => {
-  await page.goto('/skills/global/alpha-skill');
-  await expect(page.locator('main[data-hydrated="true"]')).toBeVisible();
+test('protects an unsaved SKILL.md draft during navigation and reload', async ({ browserFailureGate, page }) => {
+  await openHydratedSkills(page, '/skills/global/alpha-skill');
 
   await expect(page.getByRole('heading', { level: 2, name: 'alpha-skill' })).toBeVisible();
   const editor = page.getByRole('textbox', { name: 'alpha-skill SKILL.md' });
@@ -193,9 +198,14 @@ test('protects an unsaved SKILL.md draft during navigation and reload', async ({
   await editor.fill('# Unsaved local draft\n');
   await expect(page.getByText('Unsaved changes', { exact: true })).toBeVisible();
 
+  const releaseGuardedNavigationAbort = browserFailureGate.allowRequestAbortOnce({
+    pathname: '/skills/global/beta-skill/__data.json',
+    resourceType: 'fetch',
+  });
   await betaSkillLink.press('Enter');
   const discardDialog = page.getByRole('alertdialog', { name: 'Discard unsaved changes?' });
   await expect(discardDialog).toBeVisible();
+  releaseGuardedNavigationAbort();
   await discardDialog.getByRole('button', { name: 'Keep editing' }).click();
   await expect(page).toHaveURL(ALPHA_SKILL_URL);
   await expect(editor).toHaveValue('# Unsaved local draft\n');
@@ -223,7 +233,7 @@ test('protects an unsaved SKILL.md draft during navigation and reload', async ({
 });
 
 test('refreshes the skills snapshot and inventories without silently replacing a draft', async ({ page }) => {
-  await page.goto('/skills/global/alpha-skill');
+  await openHydratedSkills(page, '/skills/global/alpha-skill');
   const editor = page.getByRole('textbox', { name: 'alpha-skill SKILL.md' });
   await editor.fill('# Preserve me during refresh\n');
   await expect(page.getByText('Unsaved changes', { exact: true })).toBeVisible();
@@ -267,7 +277,7 @@ test('refreshes the skills snapshot and inventories without silently replacing a
 });
 
 test('preserves a source repository draft across an unrelated snapshot refresh', async ({ page }) => {
-  await page.goto('/skills/global');
+  await openHydratedSkills(page, '/skills/global');
   await page.getByText('Configuration & runtimes').click();
 
   const sourceRepository = page.getByRole('textbox', { name: 'Source repository' });
@@ -278,7 +288,7 @@ test('preserves a source repository draft across an unrelated snapshot refresh',
 });
 
 test('keeps every Skills mutation inside the deterministic E2E backend', async ({ page }) => {
-  await page.goto('/skills/global');
+  await openHydratedSkills(page, '/skills/global');
   await page.getByText('Configuration & runtimes').click();
 
   await page.getByRole('button', { name: 'Save source' }).click();
@@ -294,14 +304,14 @@ test('keeps every Skills mutation inside the deterministic E2E backend', async (
   await inspector.getByRole('button', { name: 'Disable' }).click();
   await expect(inspector.getByRole('button', { name: 'Enable' })).toBeVisible();
 
-  await page.goto('/skills/matrix');
+  await openHydratedSkills(page, '/skills/matrix');
   await page.getByRole('button', { name: 'Preview reconcile' }).first().click();
   await page.getByRole('button', { name: APPLY_ACTION_PATTERN }).first().click();
   await expect(page.getByText('alpha-skill linked to Codex.')).toBeVisible();
 });
 
 test('shows the document inspector with actions in a single place', async ({ page }) => {
-  await page.goto('/skills/global/alpha-skill');
+  await openHydratedSkills(page, '/skills/global/alpha-skill');
 
   const inspector = page.getByRole('complementary', { name: 'Inspector' });
   await expect(inspector).toBeVisible();
@@ -320,50 +330,96 @@ test('shows the document inspector with actions in a single place', async ({ pag
 
 test('keeps the tree, editor, and Inspector in one bounded desktop workspace row', async ({ page }) => {
   await page.setViewportSize(DESKTOP_WORKSPACE_VIEWPORT);
-  await page.goto('/skills/global/alpha-skill');
+  await openHydratedSkills(page, '/skills/global/alpha-skill');
 
   const tree = page.getByRole('complementary', { name: 'Skill scopes' }).last();
   const detail = page.getByRole('region', { name: 'Selected skill detail' });
   const editor = detail.getByRole('textbox', { name: 'alpha-skill SKILL.md' });
+  const editorStatus = detail.getByText('Saved', { exact: true });
+  const saveButton = detail.getByRole('button', { exact: true, name: 'Save' });
   const inspector = page.getByRole('complementary', { name: 'Inspector' });
+  const editorToolbar = editorStatus.locator('..');
+  const editorActions = saveButton.locator('..');
   await expect(tree).toBeVisible();
   await expect(detail).toBeVisible();
   await expect(editor).toBeVisible();
+  await expect(editorStatus).toBeVisible();
+  await expect(saveButton).toBeVisible();
   await expect(inspector).toBeVisible();
 
-  const [treeBox, detailBox, editorBox, inspectorBox] = await Promise.all([
+  const [
+    treeBox,
+    detailBox,
+    editorBox,
+    editorStatusBox,
+    saveButtonBox,
+    editorToolbarBox,
+    editorActionsBox,
+    inspectorBox,
+  ] = await Promise.all([
     tree.boundingBox(),
     detail.boundingBox(),
     editor.boundingBox(),
+    editorStatus.boundingBox(),
+    saveButton.boundingBox(),
+    editorToolbar.boundingBox(),
+    editorActions.boundingBox(),
     inspector.boundingBox(),
   ]);
   expect(treeBox).not.toBeNull();
   expect(detailBox).not.toBeNull();
   expect(inspectorBox).not.toBeNull();
   expect(editorBox).not.toBeNull();
+  expect(editorStatusBox).not.toBeNull();
+  expect(saveButtonBox).not.toBeNull();
 
   const rowTops = [treeBox?.y ?? 0, detailBox?.y ?? 0, inspectorBox?.y ?? 0];
   expect(Math.max(...rowTops) - Math.min(...rowTops)).toBeLessThanOrEqual(1);
+  expect(editorToolbarBox).not.toBeNull();
+  expect(editorActionsBox).not.toBeNull();
   expect((treeBox?.x ?? 0) + (treeBox?.width ?? 0)).toBeLessThanOrEqual(detailBox?.x ?? 0);
   expect(treeBox?.width ?? 0).toBeGreaterThanOrEqual(MIN_DESKTOP_TREE_WIDTH_PX);
   expect(editorBox?.width ?? 0).toBeGreaterThanOrEqual(MIN_DESKTOP_EDITOR_WIDTH_PX);
   expect(inspectorBox?.width ?? 0).toBeGreaterThanOrEqual(MIN_DESKTOP_INSPECTOR_WIDTH_PX);
+  expect(editorStatusBox?.y ?? 0).toBeLessThan(editorBox?.y ?? 0);
+  expect((editorStatusBox?.y ?? 0) + (editorStatusBox?.height ?? 0)).toBeLessThanOrEqual(editorBox?.y ?? 0);
+  expect(saveButtonBox?.y ?? 0).toBeLessThan(editorBox?.y ?? 0);
+  expect((saveButtonBox?.y ?? 0) + (saveButtonBox?.height ?? 0)).toBeLessThanOrEqual(editorBox?.y ?? 0);
   expect(editorBox?.x ?? 0).toBeGreaterThanOrEqual(detailBox?.x ?? 0);
   expect((editorBox?.x ?? 0) + (editorBox?.width ?? 0)).toBeLessThanOrEqual(
     (detailBox?.x ?? 0) + (detailBox?.width ?? 0),
   );
   expect((detailBox?.x ?? 0) + (detailBox?.width ?? 0)).toBeLessThanOrEqual(inspectorBox?.x ?? 0);
   expect(inspectorBox?.x ?? -1).toBeGreaterThanOrEqual(0);
+  expect(Math.abs((editorToolbarBox?.y ?? 0) - (editorActionsBox?.y ?? 0))).toBeLessThanOrEqual(1);
   expect((inspectorBox?.x ?? 0) + (inspectorBox?.width ?? 0)).toBeLessThanOrEqual(DESKTOP_WORKSPACE_VIEWPORT.width);
   expect(inspectorBox?.y ?? -1).toBeGreaterThanOrEqual(0);
   expect(inspectorBox?.y ?? DESKTOP_WORKSPACE_VIEWPORT.height).toBeLessThan(DESKTOP_WORKSPACE_VIEWPORT.height);
   await expect
     .poll(() => page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth))
     .toBe(true);
+  await page.setViewportSize({ height: 900, width: 768 });
+  const narrowEditorHeading = detail.getByRole('heading', { level: 3, name: 'SKILL.md' });
+  await expect(narrowEditorHeading).toHaveCSS('overflow-wrap', 'anywhere');
+  const narrowEditorToolbar = narrowEditorHeading.locator('..');
+  const [narrowEditorHeadingBox, narrowEditorToolbarBox] = await Promise.all([
+    narrowEditorHeading.boundingBox(),
+    narrowEditorToolbar.boundingBox(),
+  ]);
+  expect(narrowEditorHeadingBox).not.toBeNull();
+  expect(narrowEditorToolbarBox).not.toBeNull();
+  // The heading has to wrap inside its toolbar rather than spill past it. How many lines that takes
+  // depends on how much room the rail leaves the editor, so assert containment, not a line count.
+  expect((narrowEditorHeadingBox?.x ?? 0) + (narrowEditorHeadingBox?.width ?? 0)).toBeLessThanOrEqual(
+    (narrowEditorToolbarBox?.x ?? 0) + (narrowEditorToolbarBox?.width ?? 0),
+  );
+  await expect
+    .poll(() => page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth))
+    .toBe(true);
 });
 
 test('bounds long scope labels and makes validation findings individually identifiable', async ({ page }) => {
-  await page.goto('/skills/global/beta-skill');
+  await openHydratedSkills(page, '/skills/global/beta-skill');
 
   const tree = page.getByRole('complementary', { exact: true, name: 'Skill scopes' });
   await tree.getByText('Projects without skills').click();
@@ -410,9 +466,42 @@ test('bounds long scope labels and makes validation findings individually identi
 });
 
 test('presents unmanaged copies as neutral backlog rows with their reconciliation action', async ({ page }) => {
-  await page.goto('/skills/global');
+  await page.setViewportSize({ height: 1000, width: 1440 });
+  await openHydratedSkills(page, '/skills/global');
 
+  const detail = page.getByRole('region', { name: 'Selected skill detail' });
+  const inspector = page.getByRole('complementary', { name: 'Selection actions' });
+  const attentionHeading = detail.getByRole('heading', { level: 3, name: 'Needs attention' });
+  const attentionHeader = attentionHeading.locator('..');
   const consolidation = page.locator('[data-consolidation-panel]');
+  await expect(detail.getByRole('heading', { level: 2, name: 'Global skills' })).toBeVisible();
+  await expect(attentionHeading).toBeVisible();
+  await expect(detail.locator('[data-consolidation-panel]')).toBeVisible();
+  await expect(detail.locator('[data-skills-configuration]')).toBeVisible();
+  await expect(inspector.locator('[data-consolidation-panel]')).toHaveCount(0);
+  await expect(inspector.locator('[data-skills-configuration]')).toHaveCount(0);
+  await expect(inspector.getByRole('button', { name: 'Exposure matrix' })).toBeVisible();
+  await expect(attentionHeader).toHaveCSS('display', 'grid');
+  await expect(attentionHeader).toHaveCSS('gap', `${SKILLS_SECTION_HEADER_GAP_PX}px`);
+  const [detailBox, inspectorBox] = await Promise.all([detail.boundingBox(), inspector.boundingBox()]);
+  expect(detailBox?.height ?? 0).toBeGreaterThan(600);
+  expect(inspectorBox?.height ?? Number.POSITIVE_INFINITY).toBeLessThan(350);
+  const disabledDisclosure = detail.getByText('Disabled', { exact: true }).locator('../..');
+  const configurationDisclosure = detail.locator('[data-skills-configuration]');
+  const [consolidationBox, disabledDisclosureBox, configurationDisclosureBox] = await Promise.all([
+    consolidation.boundingBox(),
+    disabledDisclosure.boundingBox(),
+    configurationDisclosure.boundingBox(),
+  ]);
+  expect(consolidationBox).not.toBeNull();
+  expect(disabledDisclosureBox).not.toBeNull();
+  expect(configurationDisclosureBox).not.toBeNull();
+  expect(Math.abs((disabledDisclosureBox?.y ?? 0) - (configurationDisclosureBox?.y ?? 0))).toBeLessThanOrEqual(1);
+  expect(configurationDisclosureBox?.width ?? 0).toBeGreaterThan(disabledDisclosureBox?.width ?? 0);
+  expect((disabledDisclosureBox?.y ?? 0) - ((consolidationBox?.y ?? 0) + (consolidationBox?.height ?? 0))).toBe(
+    SKILLS_DETAIL_GAP_PX,
+  );
+
   await consolidation.locator(':scope > summary').click();
   await consolidation.locator('details > summary').click();
   const unmanagedRow = consolidation.locator('[data-unmanaged-entry]');
@@ -426,7 +515,7 @@ test('presents unmanaged copies as neutral backlog rows with their reconciliatio
 
 test('prioritizes the editor on mobile and keeps the compact picker behavior', async ({ page }) => {
   await page.setViewportSize(MOBILE_VIEWPORT);
-  await page.goto('/skills/global/alpha-skill');
+  await openHydratedSkills(page, '/skills/global/alpha-skill');
 
   const picker = page.getByRole('group', { name: 'Skill picker' });
   const editor = page.getByRole('textbox', { name: 'alpha-skill SKILL.md' });
@@ -489,12 +578,25 @@ test('prioritizes the editor on mobile and keeps the compact picker behavior', a
 
 test('renders matrix cards on mobile and preserves the desktop comparison table', async ({ page }) => {
   await page.setViewportSize(MOBILE_VIEWPORT);
-  await page.goto('/skills/matrix');
+  await openHydratedSkills(page, '/skills/matrix');
 
-  await expect(page.getByRole('list', { name: 'Managed skills by runtime' })).toBeVisible();
+  const mobileCards = page.getByRole('list', { name: 'Managed skills by runtime' });
+  await expect(mobileCards).toBeVisible();
+  await expect(mobileCards.getByRole('listitem').first()).toContainText('Auto');
+  await expect(mobileCards.getByRole('listitem').first()).toContainText('4 tok');
   await expect(page.getByRole('table')).toBeHidden();
 
   await page.setViewportSize({ height: 800, width: 1280 });
-  await expect(page.getByRole('table')).toBeVisible();
-  await expect(page.getByRole('list', { name: 'Managed skills by runtime' })).toBeHidden();
+  const table = page.getByRole('table');
+  await expect(table).toBeVisible();
+  await expect(table).toHaveCSS('border-collapse', 'separate');
+  await expect(table).toHaveCSS('font-size', '13px');
+  const stateBox = await table.getByRole('img').first().boundingBox();
+  expect(stateBox?.width).toBe(15);
+  await expect(mobileCards).toBeHidden();
+  const inspector = page.getByRole('complementary', { name: 'Selection actions' });
+  await expect(inspector.locator('[data-skills-configuration]')).toHaveCount(0);
+  await expect(inspector.getByRole('button', { name: 'Close matrix' })).toBeVisible();
+  const inspectorBox = await inspector.boundingBox();
+  expect(inspectorBox?.height ?? Number.POSITIVE_INFINITY).toBeLessThan(350);
 });

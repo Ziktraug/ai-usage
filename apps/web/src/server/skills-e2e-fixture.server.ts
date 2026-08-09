@@ -156,7 +156,6 @@ export const readE2ERefreshedSkillManagementSnapshot = (): SkillsServerResult<Sk
     ok: true,
   };
 };
-
 export const readE2EKnownSkillProjectPaths = (): SkillsServerResult<readonly KnownSkillProjectPath[]> => ({
   data: [
     {
@@ -171,6 +170,51 @@ export const readE2EKnownSkillProjectPaths = (): SkillsServerResult<readonly Kno
 
 export const readE2ESkillProjectInventories = (): SkillsServerResult<readonly ProjectSkillInventory[]> => ({
   data: [],
+  ok: true,
+});
+
+export const readExtendedE2EKnownSkillProjectPaths = (): SkillsServerResult<readonly KnownSkillProjectPath[]> => ({
+  data: [
+    {
+      groupId: 'project/opaque',
+      groupLabel: 'Opaque project',
+      label: 'opaque-project-source',
+      path: '/fixture/projects/opaque-project-source',
+      project: 'opaque-project',
+      sessions: 1,
+    },
+    {
+      label: 'customer-analytics-platform-with-an-exceptionally-long-scope-name',
+      path: '/fixture/projects/customer-analytics-platform-with-an-exceptionally-long-scope-name',
+      project: 'customer-analytics-platform',
+      sessions: 1,
+    },
+  ],
+  ok: true,
+});
+
+export const readExtendedE2ESkillProjectInventories = (): SkillsServerResult<readonly ProjectSkillInventory[]> => ({
+  data: [
+    {
+      diagnostics: [],
+      observations: [
+        {
+          description: 'Opaque project skill fixture',
+          diagnostics: [],
+          invocation: 'auto',
+          markdownReadable: true,
+          name: 'skill-name',
+          path: '/fixture/projects/opaque-project-source/.agents/skills/skill-name',
+          placement: 'owned-directory',
+          runtimeDirId: 'agents-project',
+          skillMdPath: '/fixture/projects/opaque-project-source/.agents/skills/skill-name/SKILL.md',
+          tokenCount: { approximate: true, references: 0, skillMd: 4, total: 4 },
+          validationStatus: 'valid',
+        },
+      ],
+      projectPath: '/fixture/projects/opaque-project-source',
+    },
+  ],
   ok: true,
 });
 

@@ -118,6 +118,25 @@ describe('semantic palette roles', () => {
   }
 });
 
+describe('provider brand marks', () => {
+  for (const scheme of ['_light', '_dark'] as const) {
+    test(`${scheme.slice(1)} carries a brand color only for providers that publish one`, () => {
+      // Cursor and OpenCode publish monochrome marks, so they deliberately have no brand entry and
+      // fall back to the curated categorical hue. Adding one would be inventing a brand identity.
+      const brand = aiUsagePreset.theme?.extend?.semanticTokens?.colors?.brand as Record<string, unknown>;
+
+      expect(Object.keys(brand).toSorted()).toEqual(['claude', 'codex']);
+      expect(colorFor('brand.claude', scheme)).not.toBe(colorFor('harness.claude.fg', scheme));
+      expect(colorFor('brand.codex', scheme)).not.toBe(colorFor('harness.codex.fg', scheme));
+    });
+  }
+});
+
+test('preset preserves the exact global CSS, keyframes, tokens, and semantic values', () => {
+  const presetHash = new Bun.CryptoHasher('sha256').update(JSON.stringify(aiUsagePreset)).digest('hex');
+  expect(presetHash).toBe('2db33fe89a9114b22c4c753a5354b504be8e3376da7aec25022d6a8dbc718b00');
+});
+
 test('punchcard controls meet the minimum interactive target size', () => {
   expect(PUNCHCARD_INTERACTIVE_TARGET_SIZE_PX).toBeGreaterThanOrEqual(WCAG_MINIMUM_TARGET_SIZE_PX);
 });

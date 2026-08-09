@@ -2,16 +2,17 @@ import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 
 const ignoredDirectories = new Set([
+  '.direnv',
   '.git',
-  '.output',
   '.output-build',
-  '.output-dev',
+  '.svelte-kit',
   '.turbo',
+  '.worktrees',
   'dist',
   'node_modules',
   'styled-system',
 ]);
-const checkedExtensions = new Set(['.cjs', '.js', '.jsx', '.mjs', '.ts', '.tsx']);
+const checkedExtensions = new Set(['.cjs', '.js', '.jsx', '.mjs', '.svelte', '.ts', '.tsx']);
 const workspacePackageParents = ['apps', 'packages'];
 const workspaceImportPattern =
   /\b(?:import|export)\s+(?:type\s+)?(?:[^'";]+?\s+from\s*)?['"](@ai-usage\/[^'"]+)['"]|\bimport\(\s*['"](@ai-usage\/[^'"]+)['"]\s*\)|\bimport\.meta\.resolve\(\s*['"](@ai-usage\/[^'"]+)['"]\s*\)/g;

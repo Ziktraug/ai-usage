@@ -20,21 +20,3 @@ export const field = css({
 });
 
 export const searchInput = cx(field, css({ flex: '1 1 240px', minW: '180px' }));
-export const selectInput = cx(field, css({ flex: '0 1 180px', minW: '150px' }));
-export const dateInput = cx(field, css({ flex: '0 1 150px', minW: '140px' }));
-
-export const dateFieldGroup = css({
-  display: 'grid',
-  gap: '4px',
-});
-
-export const inlineFieldLabel = css({
-  textStyle: 'label',
-  color: 'muted',
-});
-
-export const formField = css({
-  display: 'grid',
-  gap: '4px',
-  minW: 0,
-});

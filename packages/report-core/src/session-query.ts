@@ -285,6 +285,7 @@ export interface SessionCampaignChildrenResult {
   nextCursor: string | null;
   requestFingerprint: string;
   revision: string;
+  root: SessionPresentationRow | null;
   sessionCount: number;
 }
 
@@ -587,7 +588,7 @@ export const sessionQueryFingerprint = (request: SessionQueryRequest): string =>
 
 export const sessionCampaignChildrenFingerprint = (request: SessionCampaignChildrenRequest): string => {
   const validated = parseSessionCampaignChildrenRequest(request);
-  return `session-campaign-children-v1:${fnv1a64(`${validated.campaignKey}\n${canonicalQueryScope(validated.query)}`)}`;
+  return `session-campaign-children-v2:${fnv1a64(`${validated.campaignKey}\n${canonicalQueryScope(validated.query)}`)}`;
 };
 
 export const sessionNeighborFingerprint = (request: SessionNeighborRequest): string => {
@@ -766,7 +767,7 @@ export const parseSessionCampaignChildrenResult = (
   const record = requireRecord(value, 'campaign children result');
   assertExactKeys(
     record,
-    ['campaignKey', 'itemCount', 'items', 'nextCursor', 'requestFingerprint', 'revision', 'sessionCount'],
+    ['campaignKey', 'itemCount', 'items', 'nextCursor', 'requestFingerprint', 'revision', 'root', 'sessionCount'],
     'campaign children result',
   );
   assertResultIdentity(record, request.query.revision, requestFingerprint, 'campaign children result');
@@ -781,6 +782,10 @@ export const parseSessionCampaignChildrenResult = (
   if (itemCount < record.items.length || sessionCount < record.items.length) {
     throw new SessionQueryValidationError('campaign children result counts are smaller than the returned page');
   }
+  const root = record.root === null ? null : parseSessionPresentationRow(record.root, 'campaign children result.root');
+  if (root && sessionCampaignIdentityForRow(root).campaignKey !== request.campaignKey) {
+    throw new SessionQueryValidationError('campaign children result root has a mismatched campaign key');
+  }
   return {
     campaignKey: request.campaignKey,
     itemCount,
@@ -790,6 +795,7 @@ export const parseSessionCampaignChildrenResult = (
     nextCursor: parseResultCursor(record.nextCursor, 'campaign children result.nextCursor'),
     requestFingerprint,
     revision: request.query.revision,
+    root,
     sessionCount,
   };
 };
@@ -1546,6 +1552,9 @@ export const projectSessionCampaignChildren = (
   const campaign = buildSessionCampaignViews(allRows, visibleRows).find(
     (candidate) => candidate.campaignKey === request.campaignKey,
   );
+  const root = buildSessionCampaignViews(allRows, allRows).find(
+    (candidate) => candidate.campaignKey === request.campaignKey,
+  )?.root;
   const children = campaign ? buildSortedSessionPresentationRows(campaign.visibleChildren, request.query.sort) : [];
   const visibleIds = new Set(visibleRows.map((row) => row.rowId));
   const visibleSessionCount = campaign?.allChildren.filter((row) => visibleIds.has(row.rowId)).length ?? 0;
@@ -1557,6 +1566,7 @@ export const projectSessionCampaignChildren = (
     nextCursor: page.hasMore ? sessionQueryNextCursor(request.query, requestFingerprint, page.nextOffset) : null,
     requestFingerprint,
     revision: request.query.revision,
+    root: root ?? null,
     sessionCount: visibleSessionCount,
   };
 };

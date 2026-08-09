@@ -1,7 +1,7 @@
 import type { CampaignLabelOverride } from '@ai-usage/report-core/campaign-label';
 import type { FocusedOverviewSessionItem } from '@ai-usage/report-core/focused-report-query';
 import { sessionCampaignIdentityForRow } from '@ai-usage/report-core/session-query';
-import type { DashboardRow } from './shared';
+import type { DashboardRow } from './lib/foundation/presentation/report-value';
 
 export interface CampaignLabelContext {
   campaignKey: string;

@@ -1,4 +1,5 @@
 import type { SkillManagementSnapshot, SkillMarkdownDocument } from '@ai-usage/skills';
+import type { StateSubscription } from './lib/foundation/subscription';
 import type { SkillMarkdownSaveResult as SkillMarkdownSaveData, SkillsServerResult } from './server/skills-contracts';
 
 export type SkillMarkdownDocumentResult = SkillsServerResult<SkillMarkdownDocument>;
@@ -23,15 +24,13 @@ interface SkillMarkdownEditorDependencies {
   saveMarkdown: (input: { baseSha256: string; content: string; skillName: string }) => Promise<SkillMarkdownSaveResult>;
 }
 
-export interface SkillMarkdownEditorController {
-  getState: () => SkillMarkdownEditorState;
+export interface SkillMarkdownEditorController extends StateSubscription<SkillMarkdownEditorState> {
   reload: () => Promise<boolean>;
   reportUnexpectedError: (error: unknown) => void;
   revertDraft: () => void;
   save: () => Promise<void>;
   select: (skillName: string) => Promise<boolean>;
   setDraft: (draft: string) => void;
-  subscribe: (listener: (state: SkillMarkdownEditorState) => void) => () => void;
 }
 
 const clientErrorMessage = (error: unknown): string => (error instanceof Error ? error.message : String(error));

@@ -69,12 +69,27 @@ export interface WebDevBuildIsolationResult {
   devPid: number;
   devProcessCountAfterBuild: number;
   devProcessCountBeforeBuild: number;
+  devReadyDurationMs: number;
   healthyRequestsDuringBuild: number;
   hmrMessagesDuringBuild: number;
   mode: 'isolated' | 'legacy-observation';
   peakDeletedDevOutputDescriptors: number;
   secondBuildExitCode: number | null;
 }
+
+export interface MeasuredOperation<Value> {
+  readonly durationMs: number;
+  readonly value: Value;
+}
+
+export const measureOperationDuration = async <Value>(
+  operation: () => Promise<Value>,
+  now: () => number = performance.now.bind(performance),
+): Promise<MeasuredOperation<Value>> => {
+  const startedAt = now();
+  const value = await operation();
+  return { durationMs: now() - startedAt, value };
+};
 
 export interface WebDevBuildIsolationCheckOptions {
   beforePrimaryBuild?: (context: { devOutputDirectory: string; devPid: number }) => Promise<void>;
@@ -188,10 +203,10 @@ export const createWebBuildIsolationEnvironment = ({
   const environment: Record<string, string> = {
     AI_USAGE_LOG_DIR: path.join(runtimeRoot, 'logs'),
     AI_USAGE_ROOT_DIR: repositoryDirectory,
+    AI_USAGE_SVELTEKIT_PHASE: 'dev',
     BROWSER: 'none',
     CI: '1',
     HOME: path.join(runtimeRoot, 'home'),
-    NITRO_DEV_RUNNER: 'self',
     NO_COLOR: '1',
     PATH: inheritedEnvironment.PATH ?? '',
     TMPDIR: path.join(runtimeRoot, 'tmp'),
@@ -601,7 +616,7 @@ export const runWebDevBuildIsolationCheck = async (
   const repositoryDirectory = options.repositoryDirectory ?? path.resolve(import.meta.dirname, '..');
   const webDirectory = path.join(repositoryDirectory, 'apps', 'web');
   const mode = options.mode ?? 'isolated';
-  const devOutputDirectory = path.join(webDirectory, mode === 'isolated' ? '.output-dev' : '.output');
+  const devOutputDirectory = path.join(webDirectory, '.svelte-kit', 'dev');
   const buildLockPath = path.join(webDirectory, '.output-build', 'build.lock');
   const runtimeRoot = await mkdtemp(
     path.join(options.runtimeParentDirectory ?? tmpdir(), 'plan052-web-build-isolation-'),
@@ -643,12 +658,17 @@ export const runWebDevBuildIsolationCheck = async (
     );
 
     const port = await reserveFreePort();
-    devProcess = spawnOwnedProcess(
-      ['bun', '--no-env-file', '--bun', 'vite', '--host', LOOPBACK_HOST, '--port', String(port), '--strictPort'],
-      webDirectory,
-      commonEnvironment,
-    );
-    await waitForApplication(port, devProcess);
+    const devReadiness = await measureOperationDuration(async () => {
+      const process = spawnOwnedProcess(
+        ['bun', '--no-env-file', '--bun', 'vite', '--host', LOOPBACK_HOST, '--port', String(port), '--strictPort'],
+        webDirectory,
+        commonEnvironment,
+      );
+      devProcess = process;
+      await waitForApplication(port, process);
+      return process;
+    });
+    devProcess = devReadiness.value;
     const devOutputBefore = await waitForStableDevOutput(devOutputDirectory);
     const devProcessTreeBefore = await listProcessTree(devProcess.child.pid);
     const deletedBefore = await countDeletedDevOutputDescriptors(devProcessTreeBefore, devOutputDirectory);
@@ -752,6 +772,7 @@ export const runWebDevBuildIsolationCheck = async (
       checkedDevOutputFiles: checkedFiles,
       devPid: devProcess.child.pid,
       devProcessCountAfterBuild: devProcessTreeAfter.length,
+      devReadyDurationMs: devReadiness.durationMs,
       devProcessCountBeforeBuild: devProcessTreeBefore.length,
       healthyRequestsDuringBuild: buildHealth.healthyRequests,
       hmrMessagesDuringBuild,

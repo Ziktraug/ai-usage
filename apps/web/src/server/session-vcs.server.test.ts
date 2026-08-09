@@ -277,4 +277,18 @@ describe('session VCS server', () => {
       }),
     ).rejects.toMatchObject({ kind: 'timed-out' });
   });
+
+  test('kills a bounded provider process when its caller aborts', async () => {
+    const controller = new AbortController();
+    const running = runBoundedStdoutProcess({
+      args: ['-e', 'setInterval(() => undefined, 1000)'],
+      command: process.execPath,
+      maximumOutputBytes: 16,
+      signal: controller.signal,
+      timeoutMs: 1000,
+    });
+    queueMicrotask(() => controller.abort());
+
+    await expect(running).rejects.toMatchObject({ name: 'AbortError' });
+  });
 });

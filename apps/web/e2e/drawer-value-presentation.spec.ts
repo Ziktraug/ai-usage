@@ -1,9 +1,9 @@
-import { expect, reportViewsFor, test } from './browser-test';
+import { expect, openHydratedReport, reportViewsFor, test, waitForFocusedReportSettled } from './browser-test';
 
 const TOP_SESSION_PATTERN = /Top session/;
 
 test('uses one token magnitude and accessible drawer explanations', async ({ page }) => {
-  await page.goto('/?origin=%5B%5D');
+  await openHydratedReport(page, '/?origin=%5B%5D');
   await page.getByRole('button', { name: TOP_SESSION_PATTERN }).click();
 
   const drawer = page.getByRole('dialog', { name: 'Session details' });
@@ -33,7 +33,9 @@ test('uses one token magnitude and accessible drawer explanations', async ({ pag
 
   await drawer.getByRole('button', { name: 'Close session details' }).click();
   await page.getByRole('region', { name: 'Date range' }).getByRole('button', { exact: true, name: 'All' }).click();
+  await waitForFocusedReportSettled(page);
   await reportViewsFor(page).getByRole('link', { exact: true, name: 'Sessions' }).click();
+  await waitForFocusedReportSettled(page);
   await page.locator('tbody tr').filter({ hasText: 'Explore report sketch' }).locator('td').first().click();
 
   const partialHelp = drawer.getByRole('button', { name: 'About Partial' });

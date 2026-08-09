@@ -6,7 +6,10 @@ import {
 import type { RuntimeMode } from '../runtime-mode';
 import { getServerRuntimeMode } from './runtime-mode.server';
 
-export type ProviderQuotaHistoryReader = (request: ProviderQuotaHistoryRequest) => Promise<ProviderQuotaHistoryResult>;
+export type ProviderQuotaHistoryReader = (
+  request: ProviderQuotaHistoryRequest,
+  options?: { readonly signal?: AbortSignal },
+) => Promise<ProviderQuotaHistoryResult>;
 
 const loadLiveProviderQuotaHistoryReader = async (): Promise<ProviderQuotaHistoryReader> => {
   const { getProviderQuotaHistoryForServer } = await import('./provider-quota.server');
@@ -17,7 +20,9 @@ export const resolveProviderQuotaHistoryForServer = async (
   requestValue: ProviderQuotaHistoryRequest,
   mode: RuntimeMode = getServerRuntimeMode(),
   loadLiveReader: () => Promise<ProviderQuotaHistoryReader> = loadLiveProviderQuotaHistoryReader,
+  options: { readonly signal?: AbortSignal } = {},
 ): Promise<ProviderQuotaHistoryResult> => {
+  options.signal?.throwIfAborted();
   const request = parseProviderQuotaHistoryRequest(requestValue);
   if (mode === 'demo') {
     const { assertOutsideDemo } = await import('./demo-boundary.server');
@@ -29,5 +34,7 @@ export const resolveProviderQuotaHistoryForServer = async (
     return createE2EProviderQuotaHistoryFixture();
   }
   const readLive = await loadLiveReader();
-  return await readLive(request);
+  const result = await readLive(request, options);
+  options.signal?.throwIfAborted();
+  return result;
 };

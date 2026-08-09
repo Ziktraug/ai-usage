@@ -32,11 +32,6 @@ export const unavailablePanel = css({
   p: '22px',
 });
 
-export const unavailableTitle = css({
-  fontSize: '16px',
-  fontWeight: 650,
-});
-
 export const unavailableText = css({
   color: 'muted',
   fontSize: '13px',

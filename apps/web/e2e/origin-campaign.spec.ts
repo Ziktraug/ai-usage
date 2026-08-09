@@ -1,11 +1,10 @@
-import { expect, test } from './browser-test';
+import { expect, openHydratedReport, test } from './browser-test';
 
 const MAX_SESSION_ROW_TEXT_LENGTH = 600;
 
 test('makes the neutral origin default and singleton campaigns explicit', async ({ page }) => {
   await page.setViewportSize({ height: 900, width: 1024 });
-  await page.goto('/?tab=sessions');
-  await expect(page.locator('main[data-hydrated="true"]')).toBeVisible();
+  await openHydratedReport(page, '/?tab=sessions');
 
   const originFilter = page.getByRole('button', { name: 'Filter by origin' });
   await expect(originFilter).toContainText('Origin: all');
@@ -27,8 +26,7 @@ test('ignores legacy campaign opt-out URLs and keeps every top-level row bounded
   page,
 }) => {
   await page.setViewportSize({ height: 900, width: 1024 });
-  await page.goto('/?campaigns=off&tab=sessions');
-  await expect(page.locator('main[data-hydrated="true"]')).toBeVisible();
+  await openHydratedReport(page, '/?campaigns=off&tab=sessions');
 
   await expect(page.getByRole('checkbox', { name: 'Group campaigns' })).toHaveCount(0);
   await expect(page.getByText('Group campaigns', { exact: true })).toHaveCount(0);

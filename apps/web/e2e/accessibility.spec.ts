@@ -1,6 +1,15 @@
 import AxeBuilder from '@axe-core/playwright';
 import type { Locator, Page } from '@playwright/test';
-import { expect, reportViewsFor, test } from './browser-test';
+import {
+  expect,
+  openHydratedReport,
+  openHydratedSkills,
+  reportViewsFor,
+  test,
+  waitForHydratedNavigation,
+  waitForHydratedReport,
+  waitForHydratedSkills,
+} from './browser-test';
 
 const TOP_SESSION_PATTERN = /Top session/;
 const RGB_COMPONENT_PATTERN = /[\d.]+/g;
@@ -35,6 +44,8 @@ const focusContrast = async (page: Page, target: Locator): Promise<number> => {
   const tabIndex = await target.evaluate((element) => (element as HTMLElement).tabIndex);
   expect(tabIndex).toBeGreaterThanOrEqual(0);
   await target.focus();
+  await page.keyboard.press('Shift+Tab');
+  await page.keyboard.press('Tab');
   await expect(target).toBeFocused();
   const focusStyle = await target.evaluate((element) => {
     const style = getComputedStyle(element);
@@ -77,10 +88,53 @@ const expectNoAxeViolations = async (page: Page): Promise<void> => {
 };
 
 for (const route of routes) {
-  test(`${route.heading} exposes shared navigation without narrow overflow`, async ({ page }) => {
+  test(`${route.heading} exposes shared navigation without narrow overflow`, async ({ browser, page }) => {
     await page.setViewportSize({ height: 900, width: 1280 });
     await page.goto(route.path);
+    // Both rails are server-rendered, so their presence no longer implies a live router: the Manage
+    // popover asserted below is driven by client state and stays inert until the navigation hydrates.
+    await waitForHydratedNavigation(page);
+    if (route.path === '/') {
+      await waitForHydratedReport(page);
+    } else if (route.path.startsWith('/skills')) {
+      await waitForHydratedSkills(page);
+    }
     await expect(page.getByRole('heading', { level: 1, name: route.heading })).toBeVisible();
+
+    if (route.path === '/sync') {
+      const syncShell = page.locator('[data-route-shell="sync"]').locator('..');
+      await expect(syncShell).toHaveCSS('max-width', '1380px');
+      await expect(syncShell).toHaveCSS('padding-left', '36px');
+      await expect(syncShell).toHaveCSS('padding-right', '36px');
+      await expect(syncShell).toHaveCSS('padding-top', '32px');
+      await expect(syncShell).toHaveCSS('padding-bottom', '32px');
+
+      const ssrContext = await browser.newContext({
+        baseURL: new URL(page.url()).origin,
+        javaScriptEnabled: false,
+        viewport: { height: 900, width: 1024 },
+      });
+      try {
+        const ssrPage = await ssrContext.newPage();
+        await ssrPage.goto('/sync');
+        const notice = ssrPage.getByRole('status').filter({ hasText: 'Connecting to the usage engine.' });
+        const fleet = ssrPage.getByRole('heading', { level: 2, name: 'Machine fleet' }).locator('..');
+        await expect(notice).toHaveCSS('display', 'grid');
+        await expect(notice).toHaveCSS('padding', '10px 12px');
+        await expect(notice).toHaveCSS('border-top-width', '1px');
+        await expect(notice).toHaveCSS('border-radius', '8px');
+        await expect(notice).toHaveCSS('font-size', '13px');
+        const noticeBox = await notice.boundingBox();
+        const fleetBox = await fleet.boundingBox();
+        expect(noticeBox).not.toBeNull();
+        expect(fleetBox).not.toBeNull();
+        expect(noticeBox?.x).toBe(fleetBox?.x);
+        expect(noticeBox?.width).toBe(fleetBox?.width);
+        expect(fleetBox?.y).toBe((noticeBox?.y ?? 0) + (noticeBox?.height ?? 0) + 16);
+      } finally {
+        await ssrContext.close();
+      }
+    }
 
     const desktopNavigation = page.getByRole('complementary', { name: 'Application navigation' });
     await expect(desktopNavigation).toBeVisible();
@@ -93,6 +147,13 @@ for (const route of routes) {
     await expect.poll(() => page.evaluate(documentOverflow)).toBeLessThanOrEqual(0);
 
     await page.setViewportSize({ height: 844, width: 390 });
+    if (route.path === '/sync') {
+      const syncShell = page.locator('[data-route-shell="sync"]').locator('..');
+      await expect(syncShell).toHaveCSS('padding-left', '20px');
+      await expect(syncShell).toHaveCSS('padding-right', '20px');
+      await expect(syncShell).toHaveCSS('padding-top', '24px');
+      await expect(syncShell).toHaveCSS('padding-bottom', '24px');
+    }
     const mobileNavigation = page.locator('[data-app-navigation="mobile"]');
     await expect(mobileNavigation).toBeVisible();
     await expect(desktopNavigation).toHaveCount(0);
@@ -114,7 +175,7 @@ for (const route of routes) {
 
 test('keeps the active report destination visible after deep scrolling', async ({ page }) => {
   await page.setViewportSize({ height: 900, width: 1280 });
-  await page.goto('/?tab=sessions');
+  await openHydratedReport(page, '/?tab=sessions');
 
   const navigation = page.getByRole('complementary', { name: 'Application navigation' });
   const activeDestination = navigation.getByRole('link', { exact: true, name: 'Sessions' });
@@ -124,13 +185,32 @@ test('keeps the active report destination visible after deep scrolling', async (
   await expect(activeDestination).toBeVisible();
 });
 
+test('shows the report panel focus indicator only for keyboard navigation', async ({ page }) => {
+  await openHydratedReport(page);
+
+  const dashboardPanel = page.locator('[data-dashboard-panel]');
+  await dashboardPanel.locator(':scope > *').evaluateAll((elements) => {
+    for (const element of elements) {
+      (element as HTMLElement).style.pointerEvents = 'none';
+    }
+  });
+  await dashboardPanel.click();
+  await expect(dashboardPanel).toBeFocused();
+  await expect(dashboardPanel).toHaveCSS('outline-style', 'none');
+
+  await page.keyboard.press('Shift+Tab');
+  await page.keyboard.press('Tab');
+  await expect(dashboardPanel).toBeFocused();
+  await expect(dashboardPanel).toHaveCSS('outline-style', 'solid');
+});
+
 for (const colorScheme of ['light', 'dark'] as const) {
   test(`draws contrasting timeline and dashboard-panel focus indicators in ${colorScheme} mode`, async ({ page }) => {
     await page.emulateMedia({ colorScheme });
     await page.addInitScript(() => {
       localStorage.clear();
     });
-    await page.goto('/');
+    await openHydratedReport(page);
 
     const timeline = page.getByRole('button', { name: 'Inspect activity timeline. Use arrow keys to inspect days.' });
     const dashboardPanel = page.locator('[data-dashboard-panel]');
@@ -147,7 +227,7 @@ for (const colorScheme of ['light', 'dark'] as const) {
 
 test('reduced motion keeps drawer feedback while making motion effectively immediate', async ({ page }) => {
   await page.emulateMedia({ reducedMotion: 'reduce' });
-  await page.goto('/');
+  await openHydratedReport(page);
 
   await page.getByRole('button', { name: TOP_SESSION_PATTERN }).click();
   const drawer = page.getByRole('dialog', { name: 'Session details' });
@@ -174,8 +254,7 @@ test('reduced motion keeps drawer feedback while making motion effectively immed
 });
 
 test('Overview has no detectable accessibility violations', async ({ page }) => {
-  await page.goto('/');
-  await expect(page.locator('main[data-hydrated="true"]')).toBeVisible();
+  await openHydratedReport(page);
   await expect(page.getByText('5 / 6 sessions', { exact: true })).toBeVisible();
   await expect(reportViewsFor(page).getByRole('link', { exact: true, name: 'Overview' })).toHaveAttribute(
     'aria-current',
@@ -186,7 +265,7 @@ test('Overview has no detectable accessibility violations', async ({ page }) => 
 });
 
 test('the open session drawer has no detectable accessibility violations', async ({ page }) => {
-  await page.goto('/');
+  await openHydratedReport(page);
   await expect(page.getByText('5 / 6 sessions', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: TOP_SESSION_PATTERN }).click();
   const drawer = page.getByRole('dialog', { name: 'Session details' });
@@ -197,8 +276,7 @@ test('the open session drawer has no detectable accessibility violations', async
 });
 
 test('Skills has no detectable accessibility violations', async ({ page }) => {
-  await page.goto('/skills/global/alpha-skill');
-  await expect(page.locator('main[data-hydrated="true"]')).toBeVisible();
+  await openHydratedSkills(page, '/skills/global/alpha-skill');
   await expect(page.getByRole('textbox', { name: 'alpha-skill SKILL.md' })).toBeVisible();
 
   await expectNoAxeViolations(page);

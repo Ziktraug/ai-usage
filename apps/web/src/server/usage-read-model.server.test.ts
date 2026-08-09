@@ -190,4 +190,18 @@ describe('SQLite usage read model', () => {
     await expect(readModel.readCurrentBootstrap()).rejects.toMatchObject({ reason: 'store-missing' });
     await expect(Bun.file(dbPath).exists()).resolves.toBe(false);
   });
+
+  test('rejects an aborted read before opening the local store', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'wave4-web-read-model-aborted-'));
+    roots.push(root);
+    const dbPath = path.join(root, 'missing', 'usage.sqlite');
+    const readModel = createSqliteUsageReadModel({ dbPath });
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(readModel.readCurrentBootstrap({ signal: controller.signal })).rejects.toMatchObject({
+      name: 'AbortError',
+    });
+    await expect(Bun.file(dbPath).exists()).resolves.toBe(false);
+  });
 });

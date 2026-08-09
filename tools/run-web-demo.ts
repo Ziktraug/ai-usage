@@ -21,9 +21,9 @@ export const createDemoEnvironment = (
   executablePath: string = process.env.PATH ?? '',
 ): DemoEnvironment => ({
   AI_USAGE_ROOT_DIR: temporaryHome,
+  AI_USAGE_SVELTEKIT_PHASE: 'dev',
   BROWSER: 'none',
   HOME: temporaryHome,
-  NITRO_DEV_RUNNER: 'self',
   NO_COLOR: '1',
   PATH: executablePath,
   TMPDIR: path.join(temporaryHome, 'tmp'),
@@ -35,7 +35,22 @@ export const createDemoEnvironment = (
   XDG_DATA_HOME: path.join(temporaryHome, '.local', 'share'),
 });
 
-export const runWebDemo = async (): Promise<number> => {
+export type DemoRunMode = 'prepare-and-serve' | 'prepare-only' | 'serve-only';
+
+export const parseDemoRunMode = (arguments_: readonly string[]): DemoRunMode => {
+  if (arguments_.length === 0) {
+    return 'prepare-and-serve';
+  }
+  if (arguments_.length === 1 && arguments_[0] === '--prepare-only') {
+    return 'prepare-only';
+  }
+  if (arguments_.length === 1 && arguments_[0] === '--serve-only') {
+    return 'serve-only';
+  }
+  throw new Error('Usage: run-web-demo.ts [--prepare-only|--serve-only]');
+};
+
+export const runWebDemo = async (mode: DemoRunMode = 'prepare-and-serve'): Promise<number> => {
   const temporaryHome = await mkdtemp(path.join(tmpdir(), 'ai-usage-demo-'));
   let homeRemoved = false;
   const cleanupHome = (): void => {
@@ -109,20 +124,25 @@ export const runWebDemo = async (): Promise<number> => {
     if (stopping) {
       return 0;
     }
-    await runOwnedChild(
-      ['bun', '--no-env-file', 'run', '--filter', '@ai-usage/design-system', 'build'],
-      rootDirectory,
-      'Demo design-system preparation',
-    );
+    if (mode !== 'serve-only') {
+      await runOwnedChild(
+        ['bun', '--no-env-file', 'run', '--filter', '@ai-usage/design-system', 'build'],
+        rootDirectory,
+        'Demo design-system preparation',
+      );
+      if (stopping) {
+        return 0;
+      }
+      await runOwnedChild(
+        ['bun', '--no-env-file', 'run', '--cwd', 'apps/web', 'dev:prepare'],
+        rootDirectory,
+        'Demo web preparation',
+      );
+    }
     if (stopping) {
       return 0;
     }
-    await runOwnedChild(
-      ['bun', '--no-env-file', 'run', '--cwd', 'apps/web', 'dev:prepare'],
-      rootDirectory,
-      'Demo web preparation',
-    );
-    if (stopping) {
+    if (mode === 'prepare-only') {
       return 0;
     }
     return await runOwnedChild(
@@ -146,5 +166,5 @@ export const runWebDemo = async (): Promise<number> => {
 };
 
 if (import.meta.main) {
-  process.exitCode = await runWebDemo();
+  process.exitCode = await runWebDemo(parseDemoRunMode(process.argv.slice(2)));
 }

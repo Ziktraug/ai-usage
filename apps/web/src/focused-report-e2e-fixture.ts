@@ -1,4 +1,8 @@
 import {
+  type FocusedBreakdownRequest,
+  type FocusedBreakdownResult,
+  type FocusedOverviewRequest,
+  type FocusedOverviewResult,
   type FocusedReportSupport,
   type FocusedSupportResult,
   projectFocusedBreakdown,
@@ -6,16 +10,29 @@ import {
   projectFocusedSupport,
 } from '@ai-usage/report-core/focused-report-query';
 import type { SessionQueryServerResult } from '@ai-usage/report-core/session-query';
-import type { FocusedReportSource } from './focused-report-client';
 import { demoReportPayload } from './report-data';
 import {
   parseReportRevision,
   reportManifestRequestFingerprint,
+  type WebReportRevisionBootstrapResult,
   type WebReportRevisionManifestResult,
 } from './web-report-payload';
 
 export const FOCUSED_REPORT_E2E_CONTROL_KEY = '__aiUsageE2EFocusedReportControl';
 export const FOCUSED_REPORT_E2E_ENABLED_KEY = '__aiUsageE2EFocusedReportEnabled';
+export const FOCUSED_REPORT_E2E_VISIBLE_TREND_KEY = '__aiUsageE2EFocusedReportVisibleTrend';
+
+interface FocusedReportSource {
+  readonly getBootstrap: (options?: { readonly signal?: AbortSignal }) => Promise<WebReportRevisionBootstrapResult>;
+  readonly getBreakdown: (
+    request: FocusedBreakdownRequest,
+    options?: { readonly signal?: AbortSignal },
+  ) => Promise<SessionQueryServerResult<FocusedBreakdownResult>>;
+  readonly getOverview: (
+    request: FocusedOverviewRequest,
+    options?: { readonly signal?: AbortSignal },
+  ) => Promise<SessionQueryServerResult<FocusedOverviewResult>>;
+}
 
 const FIXTURE_CAPTURE_FINGERPRINT = 'e'.repeat(64);
 const FIXTURE_REVISION = 'focused-e2e-revision';
@@ -28,7 +45,9 @@ interface FocusedResponseGate {
 
 export interface FocusedReportE2EFixture {
   bootstrap: FocusedSupportResult;
+  overviewRows: typeof demoReportPayload.rows;
   source: FocusedReportSource;
+  waitForResponse: () => Promise<void>;
 }
 
 interface ResolvablePromise {
@@ -108,6 +127,27 @@ const createResponseGate = (): { control: FocusedResponseGate; waitForResponse: 
   };
 };
 
+const focusedOverviewRows = (): typeof demoReportPayload.rows => {
+  if (Reflect.get(globalThis, FOCUSED_REPORT_E2E_VISIBLE_TREND_KEY) !== true) {
+    return demoReportPayload.rows;
+  }
+  return demoReportPayload.rows.map((row) =>
+    row.date === '2026-06-10T18:15:00.000Z'
+      ? {
+          ...row,
+          costActual: 1.6,
+          costApprox: 1.6,
+          harness: 'Codex',
+          model: 'gpt-5.3-codex',
+          name: 'Build previous report UI',
+          provider: 'Codex API',
+          sessionLabel: 'Build previous report UI',
+          source: { ...row.source, harnessKey: 'codex', sourceSessionId: 'trend-previous' },
+        }
+      : row,
+  );
+};
+
 export const createFocusedReportE2EFixture = (): FocusedReportE2EFixture | undefined => {
   if (Reflect.get(globalThis, FOCUSED_REPORT_E2E_ENABLED_KEY) !== true) {
     return;
@@ -116,6 +156,7 @@ export const createFocusedReportE2EFixture = (): FocusedReportE2EFixture | undef
   const gate = createResponseGate();
   Reflect.set(globalThis, FOCUSED_REPORT_E2E_CONTROL_KEY, gate.control);
   const support = reportSupport();
+  const overviewRows = focusedOverviewRows();
   const bootstrap = projectFocusedSupport(
     support,
     { harness: ['codex'], machine: [{ label: 'Fixture Machine', value: 'fixture-machine' }], truncated: false },
@@ -137,6 +178,7 @@ export const createFocusedReportE2EFixture = (): FocusedReportE2EFixture | undef
 
   return {
     bootstrap,
+    overviewRows,
     source: {
       getBreakdown: async (request) => {
         const data = projectFocusedBreakdown(demoReportPayload.rows, support, request);
@@ -148,10 +190,11 @@ export const createFocusedReportE2EFixture = (): FocusedReportE2EFixture | undef
         return { ...manifest, bootstrap };
       },
       getOverview: async (request) => {
-        const data = projectFocusedOverview(demoReportPayload.rows, support, request);
+        const data = projectFocusedOverview(overviewRows, support, request);
         await gate.waitForResponse();
         return success(data);
       },
     },
+    waitForResponse: gate.waitForResponse,
   };
 };

@@ -8,6 +8,8 @@ import {
   type SourceControlCommandResponse,
   type SourceControlView,
 } from '@ai-usage/report-core/source-control';
+import type { StateSubscription } from './lib/foundation/subscription';
+import { createControlBrowserAdapter } from './lib/rpc/control-client';
 import type { RuntimeMode } from './runtime-mode';
 
 export type { SourceControlCommandResponse } from '@ai-usage/report-core/source-control';
@@ -38,15 +40,13 @@ export interface SourceControlEventSource {
 
 export interface SourceControlClientOptions {
   readonly createEventSource?: () => SourceControlEventSource;
-  readonly sendCommand?: (command: SourceControlCommand) => Promise<SourceControlCommandResponse>;
+  readonly sendCommand?: (command: SourceControlCommand, signal?: AbortSignal) => Promise<SourceControlCommandResponse>;
 }
 
-export interface SourceControlClient {
+export interface SourceControlClient extends StateSubscription<SourceControlClientState> {
   readonly execute: (command: SourceControlCommand) => Promise<boolean>;
-  readonly getState: () => SourceControlClientState;
   readonly start: () => void;
   readonly stop: () => void;
-  readonly subscribe: (listener: (state: SourceControlClientState) => void) => () => void;
 }
 
 const initialState: SourceControlClientState = {
@@ -57,20 +57,15 @@ const initialState: SourceControlClientState = {
   snapshot: null,
 };
 
-const defaultEventSource = (): SourceControlEventSource => new EventSource('/api/source-control');
+const controlBrowserAdapter = createControlBrowserAdapter();
 
-const defaultSendCommand = async (command: SourceControlCommand): Promise<SourceControlCommandResponse> => {
-  const response = await fetch('/api/source-control/command', {
-    body: JSON.stringify(command),
-    headers: { 'content-type': 'application/json' },
-    method: 'POST',
-  });
-  const result = parseSourceControlCommandResponse(await response.json());
-  if (!(response.ok && result.ok)) {
-    throw new Error(result.ok ? 'The source control command failed.' : result.error.message);
-  }
-  return result;
-};
+const defaultEventSource = (): SourceControlEventSource =>
+  controlBrowserAdapter.openEvents() as SourceControlEventSource;
+
+const defaultSendCommand = (
+  command: SourceControlCommand,
+  signal?: AbortSignal,
+): Promise<SourceControlCommandResponse> => controlBrowserAdapter.sendCommand(command, signal);
 
 const parseControlState = (value: unknown): Exclude<SourceControlConnectionState, 'connecting' | 'stopped'> => {
   if (!(typeof value === 'object' && value !== null && !Array.isArray(value))) {
@@ -92,6 +87,7 @@ export const createSourceControlClient = (options: SourceControlClientOptions = 
   const sendCommand = options.sendCommand ?? defaultSendCommand;
   let eventSource: SourceControlEventSource | null = null;
   let state = initialState;
+  let pendingCommandController: AbortController | null = null;
 
   const update = (patch: Partial<SourceControlClientState>): void => {
     state = { ...state, ...patch };
@@ -176,6 +172,8 @@ export const createSourceControlClient = (options: SourceControlClientOptions = 
   const stop = (): void => {
     eventSource?.close();
     eventSource = null;
+    pendingCommandController?.abort();
+    pendingCommandController = null;
     update({ connection: 'stopped', pendingCommand: null });
   };
 
@@ -183,21 +181,30 @@ export const createSourceControlClient = (options: SourceControlClientOptions = 
     if (state.connection !== 'live' || state.pendingCommand) {
       return false;
     }
+    const commandController = new AbortController();
+    pendingCommandController = commandController;
     update({ commandError: null, pendingCommand: command });
     try {
-      const result = parseSourceControlCommandResponse(await sendCommand(command));
+      const result = parseSourceControlCommandResponse(await sendCommand(command, commandController.signal));
+      commandController.signal.throwIfAborted();
       if (!result.ok) {
         throw new Error(result.error.message);
       }
       acceptSnapshot(parseSourceControlSnapshot(result.snapshot));
       return true;
     } catch (error) {
+      if (commandController.signal.aborted) {
+        return false;
+      }
       update({
         commandError: error instanceof Error ? error.message : 'The source control command failed.',
       });
       return false;
     } finally {
-      update({ pendingCommand: null });
+      if (pendingCommandController === commandController) {
+        pendingCommandController = null;
+        update({ pendingCommand: null });
+      }
     }
   };
 

@@ -8,7 +8,6 @@ import {
   sessionCampaignIdentityForRow,
   sessionModelKeys,
 } from '@ai-usage/report-core/session-query';
-import type { SortingState } from '@tanstack/solid-table';
 import {
   buildAnalyticsGroups,
   buildHarnessProviderAnalyticsGroups,
@@ -19,18 +18,16 @@ import {
 import type { Metric, MetricDelta } from './dashboard-metric-model';
 import type { FieldFilterKey, FieldFilters } from './dashboard-search';
 import { DAY_MS, type DateBounds, endOfDay, rowMatchesDateBounds } from './date-range';
-import { isSessionColumnId, type SessionColumnId, sortValueForSessionColumn } from './session-table-schema';
+import { fmtCompact, fmtMoney, fmtNum, fmtPct } from './lib/foundation/presentation/format';
 import {
   aggregateApiPriceProvenance,
   aggregateApiValuePresentation,
   buildReportSummary,
   type DashboardRow,
-  fmtCompact,
-  fmtMoney,
-  fmtNum,
-  fmtPct,
   type ReportSummary,
-} from './shared';
+} from './lib/foundation/presentation/report-value';
+import type { TableSortingState } from './lib/foundation/table/state';
+import { isSessionColumnId, type SessionColumnId, sortValueForSessionColumn } from './session-table-schema';
 
 export const fieldValueForRow = (row: DashboardRow, key: FieldFilterKey) => {
   if (key === 'campaign') {
@@ -99,7 +96,7 @@ export const machineFilterOptionsForRows = (rows: readonly DashboardRow[]): Focu
 export const filterRowsByDateBounds = (rows: DashboardRow[], bounds: DateBounds) =>
   rows.filter((row) => rowMatchesDateBounds(row, bounds));
 
-export const buildSortedDashboardRows = (rows: DashboardRow[], sorting: SortingState) =>
+export const buildSortedDashboardRows = (rows: DashboardRow[], sorting: TableSortingState) =>
   buildSortedSessionPresentationRows(rows, sorting);
 
 export type CampaignKey = string;
@@ -272,7 +269,7 @@ const compareCampaignSortValues = (av: number | string, bv: number | string) => 
   return av > bv ? 1 : -1;
 };
 
-const compareCampaignTableItems = (sorting: SortingState) => (a: CampaignTableItem, b: CampaignTableItem) => {
+const compareCampaignTableItems = (sorting: TableSortingState) => (a: CampaignTableItem, b: CampaignTableItem) => {
   for (const sort of sorting) {
     if (!isSessionColumnId(sort.id)) {
       continue;
@@ -290,7 +287,7 @@ const compareCampaignTableItems = (sorting: SortingState) => (a: CampaignTableIt
 export const buildCampaignTableItems = (
   allRows: DashboardRow[],
   visibleRows: DashboardRow[],
-  sorting: SortingState,
+  sorting: TableSortingState,
   preparedCampaigns?: CampaignView[],
 ): CampaignTableItem[] => {
   const campaigns = preparedCampaigns ?? buildCampaignViews(allRows, visibleRows);
@@ -321,7 +318,7 @@ export const buildCampaignTableItems = (
   return items.sort(compareCampaignTableItems(sorting));
 };
 
-const campaignDisplayRow = (campaign: CampaignView, sorting: SortingState): DashboardRow => {
+const campaignDisplayRow = (campaign: CampaignView, sorting: TableSortingState): DashboardRow => {
   const totals = campaign.visibleTotals;
   const visibleChildren = buildSortedDashboardRows(campaign.visibleChildren, sorting);
   const latestVisibleRow = campaign.visibleRows.reduce(
@@ -381,7 +378,7 @@ export const campaignBadgeLabelForRow = (row: DashboardRow) => {
 export const buildCampaignTableRows = (
   allRows: DashboardRow[],
   visibleRows: DashboardRow[],
-  sorting: SortingState,
+  sorting: TableSortingState,
   preparedCampaigns?: CampaignView[],
 ): DashboardRow[] =>
   buildCampaignTableItems(allRows, visibleRows, sorting, preparedCampaigns).map((item) =>

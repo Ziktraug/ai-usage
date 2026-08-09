@@ -1,4 +1,4 @@
-import { parseRuntimeMode, type RuntimeMode, type RuntimeModeEnvironment } from '../runtime-mode';
+import { parseRuntimeMode, type RuntimeMode, type RuntimeModeEnvironment } from '../runtime-mode.ts';
 
 export const getServerRuntimeMode = (
   environment: RuntimeModeEnvironment = {

@@ -6,7 +6,9 @@ A large report cannot be fetched and recomputed atomically in the browser while 
 
 ## Decision
 
-The served app bootstraps bounded support metadata, then requests Overview, Breakdown, or paged Sessions against one named immutable revision. One dashboard lifecycle coordinates destination refresh, expiry recovery, supersession, and atomic commit.
+The served app bootstraps bounded support metadata, then requests Overview,
+Breakdown, or paged Sessions against one named immutable revision. One composite
+TanStack Query destination coordinates refresh, expiry recovery, supersession, and atomic publication.
 
 ### Plan 066 amendment
 
@@ -28,7 +30,7 @@ A monolithic payload was rejected because its cost grows with history and it can
 
 ## Evidence
 
-- [Dashboard lifecycle](../../apps/web/src/dashboard-report-lifecycle.ts)
-- [Served report session](../../apps/web/src/dashboard-served-report-session.ts)
-- [Coordinator regression coverage](../../apps/web/src/served-report-session.test.ts)
+- [Composite report destination](../../apps/web/src/lib/query/options/report-destination.ts)
+- [Exact Session window](../../apps/web/src/lib/query/options/session-window.ts)
+- [Query lifecycle coverage](../../apps/web/src/lib/features/report/composition/report-destination.test.ts)
 - [Production protocol coverage](../../apps/web/e2e/production-report.spec.ts)

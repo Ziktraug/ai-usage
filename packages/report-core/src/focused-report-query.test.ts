@@ -222,6 +222,9 @@ describe('focused report query contracts', () => {
     expect(result.view.sessionShape?.totalPoints).toBe(3);
     expect(result.view.punchcard?.maxSessions).toBe(1);
     expect(result.view.advancedSummary?.hasSessionShape).toBe(true);
+    expect(result.view.advancedSummary?.summary).toBe(
+      'Duration/value patterns and weekly/hourly activity · 3 sessions',
+    );
     expect(Object.hasOwn(result, 'rows')).toBe(false);
     expect(Buffer.byteLength(JSON.stringify(result))).toBeLessThan(2 * 1024 * 1024);
     expect(parseFocusedReportQueryResult('overview', JSON.parse(JSON.stringify(result)), overviewRequest)).toEqual(
@@ -550,6 +553,7 @@ describe('focused report query contracts', () => {
 
     expect(result.view.sessionShape).toBeNull();
     expect(result.view.advancedSummary?.hasSessionShape).toBe(false);
+    expect(result.view.advancedSummary?.summary).toBe('Weekly/hourly activity · 3 sessions');
   });
 
   test('keeps projected session-shape outliers within the transport bound', () => {

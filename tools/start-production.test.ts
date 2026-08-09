@@ -27,13 +27,8 @@ const developmentRuntimeEnvironmentKeys = [
   'CI',
   'HOME',
   'HOST',
-  'NITRO_HOST',
-  'NITRO_PORT',
-  'NITRO_SSL_CERT',
-  'NITRO_SSL_KEY',
   'NO_COLOR',
   'PORT',
-  'SERVER_SHUTDOWN_TIMEOUT',
   'TMPDIR',
   'TZ',
   'VITE_AI_USAGE_DEMO',
@@ -378,7 +373,8 @@ describe('production environment', () => {
     const environment = createProductionEnvironment(rootDirectory, {
       AI_USAGE_HOME: homeDirectory,
       HOST: '0.0.0.0',
-      NITRO_HOST: 'localhost',
+      ORIGIN: 'https://attacker.example',
+      SOCKET_PATH: '/tmp/attacker.sock',
       PATH: '/fixture/bin',
       TMPDIR: '/var/tmp/ai-usage-fixture',
     });
@@ -388,9 +384,10 @@ describe('production environment', () => {
       AI_USAGE_ENGINE_STATE_DIR: path.join(homeDirectory, '.config/ai-usage/engine'),
       AI_USAGE_HOME: homeDirectory,
       AI_USAGE_ROOT_DIR: rootDirectory,
+      BODY_SIZE_LIMIT: String(64 * 1024 * 1024),
       HOME: homeDirectory,
       HOST: '127.0.0.1',
-      NITRO_HOST: '127.0.0.1',
+      IDLE_TIMEOUT: '45',
       NODE_ENV: 'production',
       PATH: '/fixture/bin',
       TMPDIR: '/var/tmp/ai-usage-fixture',
@@ -400,6 +397,8 @@ describe('production environment', () => {
     expect(environment.AI_USAGE_ENGINE_INSTANCE_ID).toMatch(uuidV4Pattern);
     expect(environment.AI_USAGE_TEMP_ROOT).toBe('/var/tmp/ai-usage-fixture');
     expect(environment.AI_USAGE_LOG_DIR).toBe(path.join(rootDirectory, 'logs'));
+    expect(environment.ORIGIN).toBeUndefined();
+    expect(environment.SOCKET_PATH).toBeUndefined();
   });
 
   test('uses absolute system defaults without accepting relative runtime paths', () => {

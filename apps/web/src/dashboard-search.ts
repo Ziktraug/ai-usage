@@ -6,8 +6,8 @@ import {
   type SessionOrigin,
   sessionOrigins,
 } from '@ai-usage/report-core/session-query';
-import type { SortingState } from '@tanstack/solid-table';
 import { type DateRangeMode, parseLocalDate } from './date-range';
+import type { TableSortingState } from './lib/foundation/table/state';
 import {
   isSearchableColumnDiffId,
   isSessionColumnId,
@@ -323,4 +323,4 @@ export const validateDashboardSearch = (
   };
 };
 
-export const sortingStateFromSearch = (sort: DashboardSort): SortingState => [sort];
+export const sortingStateFromSearch = (sort: DashboardSort): TableSortingState => [sort];

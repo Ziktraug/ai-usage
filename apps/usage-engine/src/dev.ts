@@ -214,28 +214,34 @@ export const createUsageEngineDevWatchTargets = (engineDirectoryValue: string): 
   return targets;
 };
 
-const createTermination = (): { readonly dispose: () => void; readonly signal: Promise<NodeJS.Signals> } => {
+export interface UsageEngineDevSignalEmitter {
+  off(signal: 'SIGINT' | 'SIGTERM', listener: () => void): void;
+  on(signal: 'SIGINT' | 'SIGTERM', listener: () => void): void;
+}
+
+export const createUsageEngineDevTermination = (
+  emitter: UsageEngineDevSignalEmitter = process,
+): { readonly dispose: () => void; readonly signal: Promise<NodeJS.Signals> } => {
   let resolveSignal: ((signal: NodeJS.Signals) => void) | undefined;
   let settled = false;
   const signal = new Promise<NodeJS.Signals>((resolve) => {
     resolveSignal = resolve;
   });
   const dispose = (): void => {
-    process.off('SIGINT', onSigint);
-    process.off('SIGTERM', onSigterm);
+    emitter.off('SIGINT', onSigint);
+    emitter.off('SIGTERM', onSigterm);
   };
   const finish = (receivedSignal: NodeJS.Signals): void => {
     if (settled) {
       return;
     }
     settled = true;
-    dispose();
     resolveSignal?.(receivedSignal);
   };
   const onSigint = (): void => finish('SIGINT');
   const onSigterm = (): void => finish('SIGTERM');
-  process.on('SIGINT', onSigint);
-  process.on('SIGTERM', onSigterm);
+  emitter.on('SIGINT', onSigint);
+  emitter.on('SIGTERM', onSigterm);
   return { dispose, signal };
 };
 
@@ -244,7 +250,7 @@ export const runUsageEngineDevMain = async (
 ): Promise<number> => {
   const changes = createUsageEngineDevChanges();
   const watchers: FSWatcher[] = [];
-  const termination = createTermination();
+  const termination = createUsageEngineDevTermination();
   try {
     for (const target of createUsageEngineDevWatchTargets(engineDirectory)) {
       watchers.push(

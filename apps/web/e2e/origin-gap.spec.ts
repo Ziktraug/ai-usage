@@ -1,13 +1,14 @@
-import { expect, test } from './browser-test';
+import { expect, openHydratedReport, test, waitForFocusedReportSettled } from './browser-test';
 
 const expectedGapDescription =
   'Not classified: 3 sessions · Origin unsupported: 1 session · Origin not declared: 1 session · Origin unavailable: 1 session';
 
 test('renders undeclared origin outside the stack with its three causes', async ({ page }) => {
-  await page.goto('/?origin=[]');
+  await openHydratedReport(page, '/?origin=[]');
 
   const dateRange = page.getByRole('region', { name: 'Date range' });
   await dateRange.getByRole('button', { exact: true, name: 'All' }).click();
+  await waitForFocusedReportSettled(page);
 
   const chartOptions = dateRange.locator('details[aria-label="Chart options"]');
   await chartOptions.locator('summary').click();

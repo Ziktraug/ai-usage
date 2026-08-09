@@ -2,13 +2,22 @@ import type { LocalSessionAnalysis, SessionDetailHarnessKey } from '@ai-usage/re
 import { Effect } from 'effect';
 import { readClaudeSessionAnalysis } from './claude-session-analysis';
 import { readCodexSessionAnalysis } from './codex-session-analysis';
-import { createLocalHistoryStorage, LocalHistoryStorage } from './local-history';
+import {
+  createLocalHistoryStorage,
+  LocalHistoryStorage,
+  type LocalHistoryStorage as LocalHistoryStorageService,
+} from './local-history';
 import { readOpenCodeSessionAnalysis } from './opencode-session-analysis';
 
 export interface LocalSessionAnalysisRequest {
   readonly harnessKey: SessionDetailHarnessKey;
   readonly homePath?: string;
   readonly sourceSessionId: string;
+}
+
+export interface LocalSessionAnalysisOptions {
+  readonly signal?: AbortSignal;
+  readonly storage?: LocalHistoryStorageService;
 }
 
 const sessionAnalysisReaders = {
@@ -19,11 +28,13 @@ const sessionAnalysisReaders = {
 
 export const readLocalSessionAnalysis = (
   request: LocalSessionAnalysisRequest,
+  options: LocalSessionAnalysisOptions = {},
 ): Promise<LocalSessionAnalysis | null> => {
-  const storage = createLocalHistoryStorage(request.homePath);
+  const storage = options.storage ?? createLocalHistoryStorage(request.homePath);
   return Effect.runPromise(
     sessionAnalysisReaders[request.harnessKey](request.sourceSessionId).pipe(
       Effect.provideService(LocalHistoryStorage, storage),
     ),
+    options.signal === undefined ? undefined : { signal: options.signal },
   );
 };

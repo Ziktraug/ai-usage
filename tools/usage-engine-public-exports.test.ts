@@ -53,6 +53,7 @@ describe('usage engine public package exports', () => {
       './source-control': './src/source-control.ts',
     });
     expect(storePackage.exports).toEqual({
+      './performance-testing': './src/performance-testing.ts',
       './reader': './src/reader.ts',
       './testing': './src/testing.ts',
       './writer': './src/writer.ts',

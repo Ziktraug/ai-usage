@@ -4,15 +4,27 @@ import {
   HARNESS_FIXTURE_PRIVATE_PROMPT_SENTINEL,
   HARNESS_FIXTURE_PROVIDER_STDERR_SENTINEL,
 } from '@ai-usage/local-machine/testing/harness-home';
+import type { Request } from '@playwright/test';
 import { expect, reportViewsFor, test } from './browser-test';
+import { encodeRpcResponseBody, isRpcPathname, RPC_ROUTE_GLOB, rpcStringFieldValues } from './rpc-test-transport';
+import { createServerStateNetworkTrace } from './server-state-network';
 
 const NON_EMPTY_ATTRIBUTE_PATTERN = /.+/;
 const SESSION_QUERY_FINGERPRINT_PATTERN = /^session-query-v1:[0-9a-f]{16}$/;
 const SESSION_NEIGHBOR_FINGERPRINT_PATTERN = /^session-neighbor-v1:[0-9a-f]{16}$/;
 const FOCUSED_OVERVIEW_FINGERPRINT_PREFIX = 'focused-overview-v1:';
+const PROJECT_COLUMN_PATTERN = /Project/;
 const SOURCES_URL_PATTERN = /\/sources$/;
+const SESSION_PAGE_PATH = '/rpc/session/page';
+const EXPECTED_ENABLED_SOURCE_COUNT = 7;
+const INITIAL_HTML_SECRET_SENTINELS = [
+  HARNESS_FIXTURE_PRIVATE_PROMPT_SENTINEL,
+  HARNESS_FIXTURE_CREDENTIAL_REMOTE_SENTINEL,
+  HARNESS_FIXTURE_DANGEROUS_URL_SENTINEL,
+  HARNESS_FIXTURE_PROVIDER_STDERR_SENTINEL,
+] as const;
 
-interface CapturedServerFunctionResponse {
+interface CapturedRpcResponse {
   body: Promise<string>;
   status: number;
 }
@@ -22,52 +34,33 @@ interface ProtocolIdentity {
   revisions: string[];
 }
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
+interface ObservedRequest {
+  readonly pathname: string;
+  readonly resourceType: string;
+  readonly startedAtEpochMs: number;
+  readonly url: string;
+}
 
-const wireString = (value: unknown): string | undefined => {
-  if (typeof value === 'string') {
-    return value;
-  }
-  if (isRecord(value) && typeof value.s === 'string') {
-    return value.s;
-  }
-  return;
+const REPORT_BOOTSTRAP_PATH = '/rpc/report/revisionBootstrap';
+
+const writeCharacterization = (scenario: string, value: unknown): void => {
+  process.stdout.write(`${JSON.stringify({ scenario, type: 'plan-069-gate-0', value })}\n`);
 };
 
-const collectWireFieldValues = (value: unknown, fieldName: string, values: string[]): void => {
-  if (Array.isArray(value)) {
-    for (const item of value) {
-      collectWireFieldValues(item, fieldName, values);
-    }
-    return;
+const countOccurrences = (value: string, needle: string): number => value.split(needle).length - 1;
+
+const sortedCountRecord = (values: readonly string[]): Record<string, number> => {
+  const counts = new Map<string, number>();
+  for (const value of values) {
+    counts.set(value, (counts.get(value) ?? 0) + 1);
   }
-  if (!isRecord(value)) {
-    return;
-  }
-  const properties = value.p;
-  if (isRecord(properties) && Array.isArray(properties.k) && Array.isArray(properties.v)) {
-    for (const [index, key] of properties.k.entries()) {
-      const propertyValue = properties.v[index];
-      if (key === fieldName) {
-        const stringValue = wireString(propertyValue);
-        if (stringValue !== undefined) {
-          values.push(stringValue);
-        }
-      }
-      collectWireFieldValues(propertyValue, fieldName, values);
-    }
-  }
+  return Object.fromEntries([...counts].sort(([left], [right]) => left.localeCompare(right)));
 };
 
-const protocolIdentityFrom = (body: string): ProtocolIdentity => {
-  const serialized: unknown = JSON.parse(body);
-  const fingerprints: string[] = [];
-  const revisions: string[] = [];
-  collectWireFieldValues(serialized, 'requestFingerprint', fingerprints);
-  collectWireFieldValues(serialized, 'revision', revisions);
-  return { fingerprints, revisions };
-};
+const protocolIdentityFrom = (body: string): ProtocolIdentity => ({
+  fingerprints: rpcStringFieldValues(body, 'requestFingerprint'),
+  revisions: rpcStringFieldValues(body, 'revision'),
+});
 
 const expectExactProtocolIdentity = (
   body: string,
@@ -88,16 +81,53 @@ const expectExactProtocolIdentity = (
 };
 
 test('renders the report timeline on the initial production Overview', async ({ page }) => {
+  const serverStateTrace = createServerStateNetworkTrace(page);
+  const observedRequests: ObservedRequest[] = [];
+  const pendingServerQueries = new Set<Request>();
+  page.on('request', (request) => {
+    const url = new URL(request.url());
+    observedRequests.push({
+      pathname: url.pathname,
+      resourceType: request.resourceType(),
+      startedAtEpochMs: request.timing().startTime,
+      url: `${url.pathname}${url.search}`,
+    });
+    if (isRpcPathname(url.pathname) && request.resourceType() !== 'eventsource') {
+      pendingServerQueries.add(request);
+    }
+  });
+  const settleServerQuery = (request: Request): void => {
+    if (isRpcPathname(new URL(request.url()).pathname) && request.resourceType() !== 'eventsource') {
+      pendingServerQueries.delete(request);
+    }
+  };
+  page.on('requestfinished', settleServerQuery);
+  page.on('requestfailed', settleServerQuery);
+
   const initialResponse = await page.request.get('/');
   const initialHtml = await initialResponse.text();
   expect(initialResponse.ok()).toBe(true);
   expect(initialHtml).toContain('Usage report');
   expect(initialHtml).not.toContain('Loading report data');
-  expect(initialHtml).not.toContain('Implement fixture root');
-  expect(initialHtml).not.toContain('codex-root-025');
+  expect(initialHtml).toContain('focused-overview-v1:');
+  // Useful bounded report/query data belongs in SSR. Only explicit secret-bearing
+  // fixture values are forbidden from the serialized initial HTML.
+  for (const secretSentinel of INITIAL_HTML_SECRET_SENTINELS) {
+    expect(initialHtml).not.toContain(secretSentinel);
+  }
 
   await page.addInitScript(() => {
     Reflect.set(globalThis, '__aiUsageFalseEmptyRange', false);
+    let hydrationObserver: MutationObserver | undefined;
+    const recordHydration = () => {
+      if (
+        Reflect.get(globalThis, '__aiUsageHydratedAtEpochMs') === undefined &&
+        document.querySelector('main[data-hydrated="true"]')
+      ) {
+        Reflect.set(globalThis, '__aiUsageHydratedAtEpochMs', performance.timeOrigin + performance.now());
+        hydrationObserver?.disconnect();
+      }
+    };
     const recordFalseEmptyRange = () => {
       if (document.body?.textContent?.includes('No dated sessions match the current filters')) {
         Reflect.set(globalThis, '__aiUsageFalseEmptyRange', true);
@@ -108,23 +138,38 @@ test('renders the report timeline on the initial production Overview', async ({ 
       childList: true,
       subtree: true,
     });
-    window.addEventListener('DOMContentLoaded', recordFalseEmptyRange, { once: true });
+    hydrationObserver = new MutationObserver(recordHydration);
+    hydrationObserver.observe(document, {
+      attributes: true,
+      childList: true,
+      subtree: true,
+    });
+    window.addEventListener(
+      'DOMContentLoaded',
+      () => {
+        recordFalseEmptyRange();
+        recordHydration();
+      },
+      { once: true },
+    );
   });
   const overviewGate = Promise.withResolvers<void>();
-  let serverFunctionRequestCount = 0;
-  await page.route('**/_serverFn/**', async (route) => {
-    serverFunctionRequestCount++;
+  let rpcRequestCount = 0;
+  await page.route(RPC_ROUTE_GLOB, async (route) => {
+    rpcRequestCount++;
     // A cold source-control bootstrap may return one pending manifest before
     // report-published prompts the exact-revision owner to retry.
-    if (serverFunctionRequestCount <= 3) {
+    if (rpcRequestCount <= 3) {
       await route.continue();
       return;
     }
     await overviewGate.promise;
     await route.continue();
   });
-  await page.goto('/');
+  const navigationStartedAt = performance.now();
+  const navigationResponse = await page.goto('/');
   await expect(page.locator('main[data-hydrated="true"]')).toBeVisible();
+  const navigationToHydratedMs = performance.now() - navigationStartedAt;
   const dateRange = page.getByRole('region', { name: 'Date range' });
   try {
     await expect(dateRange).toContainText('Jun 3 → Jul 03, 2026');
@@ -138,6 +183,257 @@ test('renders the report timeline on the initial production Overview', async ({ 
   ).toBeVisible({ timeout: 5000 });
   await expect(page.getByText('No dated sessions match the current filters')).toHaveCount(0);
   expect(await page.evaluate(() => Reflect.get(globalThis, '__aiUsageFalseEmptyRange'))).toBe(false);
+  await expect.poll(() => pendingServerQueries.size).toBe(0);
+
+  if (!navigationResponse) {
+    throw new Error('Initial production navigation did not return a document response.');
+  }
+  const documentTiming = navigationResponse.request().timing();
+  const hydratedAtEpochMs = await page.evaluate(() => Reflect.get(globalThis, '__aiUsageHydratedAtEpochMs'));
+  if (typeof hydratedAtEpochMs !== 'number') {
+    throw new Error('Initial production navigation did not expose its hydration timestamp.');
+  }
+  const requestUrls = observedRequests.map(({ url }) => url);
+  const duplicateUrls = Object.entries(sortedCountRecord(requestUrls))
+    .filter(([, count]) => count > 1)
+    .map(([url, count]) => ({ count, url }));
+  const bootstrapRequestsAfterHydration = observedRequests
+    .filter(
+      ({ pathname, startedAtEpochMs }) => pathname === REPORT_BOOTSTRAP_PATH && startedAtEpochMs >= hydratedAtEpochMs,
+    )
+    .map(({ url }) => url)
+    .sort();
+  // One dehydrated Query entry serializes the identity once in queryKey and once in queryHash.
+  const dehydratedBootstrapKeyOccurrenceCount = countOccurrences(initialHtml, 'report-bootstrap');
+  const pendingNonSseServerQueries = [...pendingServerQueries].map((request) => request.url()).sort();
+
+  expect(documentTiming.responseStart).toBeGreaterThanOrEqual(0);
+  expect(documentTiming.responseEnd).toBeGreaterThanOrEqual(documentTiming.responseStart);
+  expect(bootstrapRequestsAfterHydration).toEqual([]);
+  expect(dehydratedBootstrapKeyOccurrenceCount).toBe(2);
+  expect(pendingNonSseServerQueries).toEqual([]);
+  process.stdout.write(
+    `${JSON.stringify({
+      bootstrapRequestsAfterHydration,
+      dehydratedBootstrapKeyOccurrenceCount,
+      documentCompletionMs: documentTiming.responseEnd,
+      documentTtfbMs: documentTiming.responseStart,
+      duplicateUrls,
+      navigationToHydratedMs,
+      pendingNonSseServerQueries,
+      requestClasses: sortedCountRecord(observedRequests.map(({ resourceType }) => resourceType)),
+      ssrHtmlBytes: new TextEncoder().encode(initialHtml).byteLength,
+      totalRequestCount: observedRequests.length,
+      type: 'production-overview-ssr-hydration',
+      serverStateCounts: serverStateTrace.counts(),
+    })}\n`,
+  );
+  serverStateTrace.dispose();
+});
+
+test('reuses the current revision bootstrap across Sessions filter and sort without route-load duplicates', async ({
+  page,
+}) => {
+  const trace = createServerStateNetworkTrace(page);
+  const browserBootstrapRequests: string[] = [];
+  const routeDataRequests: string[] = [];
+  page.on('request', (request) => {
+    const url = new URL(request.url());
+    if (url.pathname === REPORT_BOOTSTRAP_PATH) {
+      browserBootstrapRequests.push(`${url.pathname}${url.search}`);
+    } else if (url.pathname.endsWith('/__data.json')) {
+      routeDataRequests.push(`${url.pathname}${url.search}`);
+    }
+  });
+
+  await page.goto('/?tab=sessions');
+  await expect(page.locator('main[data-hydrated="true"]')).toBeVisible();
+  await expect(page.locator('[data-session-surface="desktop"]')).toBeVisible();
+  await expect(page.locator('[data-report-refresh-pending]')).toHaveCount(0);
+  trace.checkpoint('session-actions');
+  browserBootstrapRequests.length = 0;
+  routeDataRequests.length = 0;
+
+  const search = page.getByRole('textbox', {
+    name: 'Filter sessions by title, project, model, provider, or harness',
+  });
+  const filteredSessionsResponse = page.waitForResponse(
+    (response) => new URL(response.url()).pathname === SESSION_PAGE_PATH,
+  );
+  await search.fill('codex');
+  await filteredSessionsResponse;
+  await expect.poll(() => new URL(page.url()).searchParams.get('q')).toBe('codex');
+  await expect.poll(() => browserBootstrapRequests.length).toBe(0);
+  await expect(page.locator('[data-report-refresh-pending]')).toHaveCount(0);
+  await expect.poll(() => trace.counts('session-actions').operations['session.page'] ?? 0).toBe(1);
+  expect(browserBootstrapRequests).toHaveLength(0);
+
+  const sortedSessionsResponse = page.waitForResponse(
+    (response) => new URL(response.url()).pathname === SESSION_PAGE_PATH,
+  );
+  await page.getByRole('columnheader', { name: PROJECT_COLUMN_PATTERN }).getByRole('button').click();
+  await sortedSessionsResponse;
+  await expect.poll(() => new URL(page.url()).searchParams.get('sort') ?? '').toContain('project');
+  await expect.poll(() => browserBootstrapRequests.length).toBe(0);
+  await expect(page.locator('[data-report-refresh-pending]')).toHaveCount(0);
+  await expect.poll(() => trace.counts('session-actions').operations['session.page'] ?? 0).toBe(2);
+  expect(browserBootstrapRequests).toHaveLength(0);
+  expect(routeDataRequests).toEqual([]);
+  const counts = trace.counts('session-actions');
+  expect(counts.operations).toEqual({ 'report.focusedOverview': 1, 'session.page': 2 });
+  expect(counts.routeData).toBe(0);
+  writeCharacterization('sessions-filter-sort', counts);
+  trace.dispose();
+});
+
+test('records destination request counts and report DOM identity', async ({ page }) => {
+  const trace = createServerStateNetworkTrace(page);
+  await page.goto('/');
+  const workspace = page.locator('[data-report-workspace]');
+  const graph = page.locator('[data-report-range-part="chart"]');
+  await expect(workspace).toBeVisible();
+  await expect(graph).toBeVisible();
+  await workspace.evaluate((element) => element.setAttribute('data-plan-069-workspace', 'baseline'));
+  await graph.evaluate((element) => element.setAttribute('data-plan-069-graph', 'baseline'));
+  trace.checkpoint('destination-navigation');
+
+  const views = reportViewsFor(page);
+  await views.getByRole('link', { exact: true, name: 'Breakdown' }).click();
+  await expect(page.getByText('By model', { exact: true })).toBeVisible();
+  await views.getByRole('link', { exact: true, name: 'Sessions' }).click();
+  await expect(page.locator('[data-session-surface="desktop"]')).toBeVisible();
+  await views.getByRole('link', { exact: true, name: 'Overview' }).click();
+  await expect(page.getByRole('heading', { level: 2, name: 'Advanced analysis' })).toBeVisible();
+
+  await expect(workspace).toHaveAttribute('data-plan-069-workspace', 'baseline');
+  const graphIdentity = await page.locator('[data-report-range-part="chart"]').getAttribute('data-plan-069-graph');
+  const counts = trace.counts('destination-navigation');
+  expect(counts.operations).toEqual({
+    'report.focusedBreakdown': 1,
+    'report.focusedOverview': 1,
+    'session.page': 1,
+  });
+  expect(counts.routeData).toBe(0);
+  writeCharacterization('overview-breakdown-sessions-overview', {
+    counts,
+    graphRetainedAcrossDestinations: graphIdentity === 'baseline',
+    workspaceRetainedAcrossDestinations: true,
+  });
+  trace.dispose();
+});
+
+test('records filter range sort and history request counts without route data', async ({ page }) => {
+  const trace = createServerStateNetworkTrace(page);
+  await page.goto('/?tab=sessions');
+  const workspace = page.locator('[data-report-workspace]');
+  await expect(page.locator('[data-session-surface="desktop"]')).toBeVisible();
+  await workspace.evaluate((element) => element.setAttribute('data-plan-069-workspace', 'history'));
+  trace.checkpoint('filter-range-sort-history');
+
+  const search = page.getByRole('textbox', {
+    name: 'Filter sessions by title, project, model, provider, or harness',
+  });
+  const filteredSessionsResponse = page.waitForResponse(
+    (response) => new URL(response.url()).pathname === SESSION_PAGE_PATH,
+  );
+  await search.fill('codex');
+  await filteredSessionsResponse;
+  await expect.poll(() => new URL(page.url()).searchParams.get('q')).toBe('codex');
+  await expect(page.locator('[data-report-refresh-pending]')).toHaveCount(0);
+  const sortedSessionsResponse = page.waitForResponse(
+    (response) => new URL(response.url()).pathname === SESSION_PAGE_PATH,
+  );
+  await page.getByRole('columnheader', { name: PROJECT_COLUMN_PATTERN }).getByRole('button').click();
+  await sortedSessionsResponse;
+  await expect.poll(() => new URL(page.url()).searchParams.get('sort')).not.toBeNull();
+  await expect(page.locator('[data-report-refresh-pending]')).toHaveCount(0);
+  const rangedSessionsResponse = page.waitForResponse(
+    (response) => new URL(response.url()).pathname === SESSION_PAGE_PATH,
+  );
+  await page.getByRole('region', { name: 'Date range' }).getByRole('button', { exact: true, name: '7d' }).click();
+  await rangedSessionsResponse;
+  await expect.poll(() => new URL(page.url()).searchParams.get('range')).not.toBeNull();
+  await expect(page.locator('[data-report-refresh-pending]')).toHaveCount(0);
+  const rangedUrl = page.url();
+
+  await page.goBack();
+  await expect(page).not.toHaveURL(rangedUrl);
+  await expect(page.locator('[data-report-refresh-pending]')).toHaveCount(0);
+  await page.goForward();
+  await expect(page).toHaveURL(rangedUrl);
+  await expect(page.locator('[data-report-refresh-pending]')).toHaveCount(0);
+
+  await expect(workspace).toHaveAttribute('data-plan-069-workspace', 'history');
+  const counts = trace.counts('filter-range-sort-history');
+  // Filter, sort, and range have distinct semantic query identities. History reuses those
+  // completed entries without adding route data or another Sessions request.
+  expect(counts.operations).toEqual({ 'report.focusedOverview': 2, 'session.page': 3 });
+  expect(counts.routeData).toBe(0);
+  writeCharacterization('filter-range-sort-back-forward', {
+    counts,
+    workspaceRetainedAcrossHistory: true,
+  });
+  trace.dispose();
+});
+
+test('records one exact expiry and one failed background refresh while retaining the complete report', async ({
+  page,
+}) => {
+  const trace = createServerStateNetworkTrace(page);
+  await page.goto('/');
+  const workspace = page.locator('[data-report-workspace]');
+  const completeOutput = page.locator('[data-report-complete-output]');
+  await expect(completeOutput).toBeVisible();
+  await workspace.evaluate((element) => element.setAttribute('data-plan-069-workspace', 'last-good'));
+
+  let interceptedOutcome: 'QueryFailed' | 'RevisionExpired' = 'RevisionExpired';
+  let interceptedCount = 0;
+  await page.route('**/rpc/report/focusedOverview', async (route) => {
+    interceptedCount += 1;
+    if (interceptedCount > 2) {
+      await route.continue();
+      return;
+    }
+    const response = await route.fetch();
+    const identity = protocolIdentityFrom(await response.text());
+    const revision = identity.revisions[0];
+    const requestFingerprint = identity.fingerprints[0];
+    if (!(revision && requestFingerprint)) {
+      throw new Error('The intercepted focused Overview response did not expose exact identity.');
+    }
+    await route.fulfill({
+      body: encodeRpcResponseBody({
+        error: { message: `Characterized ${interceptedOutcome}`, revision, tag: interceptedOutcome },
+        ok: false,
+        requestFingerprint,
+        revision,
+      }),
+      contentType: 'application/json',
+      status: 200,
+    });
+  });
+
+  trace.checkpoint('expiry');
+  await page.getByRole('region', { name: 'Date range' }).getByRole('button', { exact: true, name: '7d' }).click();
+  await expect(page.locator('[data-report-refresh-error]')).toBeVisible();
+  await expect(completeOutput).toBeVisible();
+  await expect(workspace).toHaveAttribute('data-plan-069-workspace', 'last-good');
+  const expiryCounts = trace.counts('expiry');
+  expect(expiryCounts.operations).toEqual({ 'report.focusedOverview': 1, 'report.revisionBootstrap': 1 });
+  writeCharacterization('exact-revision-expiry', expiryCounts);
+
+  interceptedOutcome = 'QueryFailed';
+  trace.checkpoint('background-failure');
+  const chartOptions = page.getByRole('region', { name: 'Date range' }).locator('details[aria-label="Chart options"]');
+  await chartOptions.locator('summary').click();
+  await chartOptions.getByRole('radio', { exact: true, name: 'Model' }).click();
+  await expect(page.locator('[data-report-refresh-error]')).toBeVisible();
+  await expect(completeOutput).toBeVisible();
+  await expect(workspace).toHaveAttribute('data-plan-069-workspace', 'last-good');
+  const failureCounts = trace.counts('background-failure');
+  expect(failureCounts.operations).toEqual({ 'report.focusedOverview': 1 });
+  writeCharacterization('failed-background-refresh', failureCounts);
+  trace.dispose();
 });
 
 test('provides one accessible responsive source-control surface', async ({ page }) => {
@@ -161,7 +457,7 @@ test('provides one accessible responsive source-control surface', async ({ page 
   await expect(healthySources).toHaveJSProperty('open', false);
   await healthySources.locator('summary').click();
   await expect(healthySources).toHaveJSProperty('open', true);
-  await expect(page.getByRole('checkbox', { name: 'Enabled' })).toHaveCount(7);
+  await expect(page.getByRole('checkbox', { name: 'Enabled' })).toHaveCount(EXPECTED_ENABLED_SOURCE_COUNT);
   await expect(page.getByText('codex.sessions', { exact: true })).toBeVisible();
 
   const detectAll = page.getByRole('button', { name: 'Detect all' });
@@ -178,10 +474,10 @@ test('keeps the Report range mounted while focused chart options refresh', async
   });
   await expect(timeline).toBeVisible({ timeout: 5000 });
   const advancedAnalysis = page.getByRole('region', { name: 'Advanced analysis' });
-  await expect(advancedAnalysis.getByRole('heading', { level: 2, name: 'Punchcard' })).toBeVisible();
+  await expect(advancedAnalysis.getByRole('heading', { level: 3, name: 'Punchcard' })).toBeVisible();
   await dateRange.evaluate((element) => element.setAttribute('data-stability-marker', 'original-range'));
   await timeline.evaluate((element) => element.setAttribute('data-stability-marker', 'original-chart'));
-  await page.route('**/_serverFn/**', async (route) => {
+  await page.route(RPC_ROUTE_GLOB, async (route) => {
     await new Promise<void>((resolve) => {
       setTimeout(resolve, 250);
     });
@@ -194,7 +490,7 @@ test('keeps the Report range mounted while focused chart options refresh', async
   await expect(timeline).toHaveAttribute('data-stability-marker', 'original-chart');
   await expect(dateRange).toHaveAttribute('data-stability-marker', 'original-range');
   await expect(timeline).toHaveAttribute('data-stability-marker', 'original-chart');
-  await expect(advancedAnalysis.getByRole('heading', { level: 2, name: 'Punchcard' })).toBeVisible();
+  await expect(advancedAnalysis.getByRole('heading', { level: 3, name: 'Punchcard' })).toBeVisible();
 });
 
 test('keeps the last complete report visible while the report range changes', async ({ page }) => {
@@ -208,7 +504,7 @@ test('keeps the last complete report visible while the report range changes', as
   await timeline.evaluate((element) => element.setAttribute('data-stability-marker', 'original-chart'));
 
   const overviewGate = Promise.withResolvers<void>();
-  await page.route('**/_serverFn/**', async (route) => {
+  await page.route(RPC_ROUTE_GLOB, async (route) => {
     await overviewGate.promise;
     await route.continue();
   });
@@ -228,14 +524,17 @@ test('keeps the last complete report visible while the report range changes', as
 });
 
 test('hydrates and automatically pages Sessions through the production revision protocol', async ({ page }) => {
-  const serverFunctionResponses: CapturedServerFunctionResponse[] = [];
+  const rpcResponses: CapturedRpcResponse[] = [];
   page.on('response', (response) => {
-    if (response.url().includes('/_serverFn/')) {
-      serverFunctionResponses.push({ body: response.text(), status: response.status() });
+    if (isRpcPathname(new URL(response.url()).pathname)) {
+      rpcResponses.push({
+        body: response.text().catch(() => ''),
+        status: response.status(),
+      });
     }
   });
   const overviewResponseCount = async (): Promise<number> =>
-    (await Promise.all(serverFunctionResponses.map(({ body }) => body))).filter((body) =>
+    (await Promise.all(rpcResponses.map(({ body }) => body))).filter((body) =>
       body.includes(FOCUSED_OVERVIEW_FINGERPRINT_PREFIX),
     ).length;
 
@@ -335,18 +634,19 @@ test('hydrates and automatically pages Sessions through the production revision 
   await expect(page.getByRole('button', { name: 'Previous session' })).toBeEnabled();
   await expect(report).toHaveAttribute('data-report-revision', revision);
   await expect(report).toHaveAttribute('data-request-fingerprint', requestFingerprint);
-  await expect.poll(overviewResponseCount).toBe(1);
+  await expect.poll(overviewResponseCount).toBe(0);
 
   await page.keyboard.press('Escape');
   await reportViewsFor(page).getByRole('link', { exact: true, name: 'Overview' }).click();
   await expect(page.getByRole('heading', { level: 2, name: 'Advanced analysis' })).toBeVisible();
   await expect(page.locator('summary').filter({ hasText: 'Advanced analysis' })).toHaveCount(0);
-  await expect(page.getByRole('heading', { level: 2, name: 'Punchcard' })).toBeVisible();
-  await expect.poll(overviewResponseCount).toBe(2);
+  await expect(page.getByRole('heading', { level: 3, name: 'Punchcard' })).toBeVisible();
+  await expect.poll(overviewResponseCount).toBe(1);
 
-  const responseBodies = await Promise.all(serverFunctionResponses.map(({ body }) => body));
+  const responseBodies = await Promise.all(rpcResponses.map(({ body }) => body));
   const sessionResponseBodies = responseBodies.filter((body) => body.includes('session-query-v1:'));
-  expect(sessionResponseBodies.length).toBeGreaterThanOrEqual(2);
+  // First page is SSR-hydrated; with 200-row pages only one follow-up RPC is required to reach index 204.
+  expect(sessionResponseBodies.length).toBeGreaterThanOrEqual(1);
   for (const responseBody of sessionResponseBodies) {
     expectExactProtocolIdentity(responseBody, revision, SESSION_QUERY_FINGERPRINT_PATTERN, requestFingerprint);
   }
@@ -360,8 +660,8 @@ test('hydrates and automatically pages Sessions through the production revision 
   for (const responseBody of detailResponseBodies) {
     expect(new Set(protocolIdentityFrom(responseBody).revisions)).toEqual(new Set([revision]));
   }
-  expect(serverFunctionResponses.length).toBeGreaterThanOrEqual(5);
-  expect(serverFunctionResponses.every(({ status }) => status === 200)).toBe(true);
+  expect(rpcResponses.length).toBeGreaterThanOrEqual(4);
+  expect(rpcResponses.every(({ status }) => status === 200)).toBe(true);
   const allResponseBodies = responseBodies.join('\n');
   expect(allResponseBodies).not.toContain(HARNESS_FIXTURE_CREDENTIAL_REMOTE_SENTINEL);
   expect(allResponseBodies).not.toContain(HARNESS_FIXTURE_DANGEROUS_URL_SENTINEL);

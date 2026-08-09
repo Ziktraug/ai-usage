@@ -87,8 +87,9 @@ Publication requests use monotonic demand, and timed-out work aborts at the
 provider boundary before later writes. Disabling, missing input, empty output,
 or failure never deletes prior contributions. The browser strictly decodes
 sanitized replacement status plus publication events through one SSE
-connection. TanStack Query owns ordinary finite Skills and quota reads; the
-served-report session remains the sole browser exact-revision owner.
+connection. TanStack Svelte Query owns finite Skills and quota reads as well as
+immutable exact-revision report and Session results; composite report queries
+publish one complete revision atomically.
 
 ### Runtime ownership and backups
 
@@ -264,9 +265,9 @@ Merged CSV/JSON payloads include row provenance (`source.machineLabel`, `source.
 - `apps/usage-engine`: the sole production writer composition root and control server
 - `docs/session-analysis-sources.md`: provenance, quality, privacy, and known limitations of per-session analysis for each harness
 - `packages/skills` (`@ai-usage/skills`): local skill inventory, validation, projection, and reconciliation workflows
-- `packages/design-system` (`@ai-usage/design-system`): Panda/Solid primitives, report style slots, and generated Panda consumer exports
+- `packages/design-system` (`@ai-usage/design-system`): Panda/Svelte primitives, report style slots, and generated Panda consumer exports
 - `apps/cli`: read-only stored reports plus bounded engine-client/foreground fresh and mutating commands, portable snapshots, and output adapters
-- `apps/web`: read-only server-rendered Solid/TanStack report plus control proxies, `/sources`, local Skills, and file-only `/sync` workspaces
+- `apps/web`: read-only SvelteKit SSR/UI with an oRPC endpoint, control proxies, `/sources`, local Skills, and file-only `/sync` workspaces
 
 Architecture docs:
 
@@ -274,7 +275,7 @@ Architecture docs:
 - `docs/adr/`: short records for the implemented frontend decisions
 - `docs/future-work.md`: global backlog for known follow-ups
 - `docs/public-package-interfaces.md`: public package exports and import rules
-- `docs/generated-tooling-ownership.md`: Panda/TanStack/Nitro/Turbo generated file ownership
+- `docs/generated-tooling-ownership.md`: Panda/SvelteKit/Vite/Turbo generated file ownership
 
 ## Development
 
@@ -322,11 +323,25 @@ direct revision-keyed SQLite query path:
 
 ```sh
 bun run test:web-production
+bun run test:web-dev-build-isolation
 bun run test:setup-loopback
 bun run test:e2e-production
+bun run --cwd apps/web benchmark:session-scroll
 ```
 
-The ordinary suite includes axe accessibility checks and four focused visual snapshots. The demo suite proves the synthetic runtime makes no business requests. The production suite exercises exact-revision server functions and the 5,000-session scroll proof.
+After the build, verify that server-only capabilities stay out of the emitted
+browser closure:
+
+```sh
+bun run test:web-client-manifest
+```
+
+The ordinary suite includes request-policy coverage, axe accessibility checks,
+and four focused visual snapshots. The demo-isolation suite proves the synthetic
+runtime cannot reach local data or control capabilities. The production suite
+exercises exact-revision oRPC procedures, verifies explicit secret sentinels stay
+out of initial SSR HTML, and runs the 5,000-session scroll proof. Useful bounded
+report data is intentionally allowed in the initial payload.
 
 Run the report app in development:
 
@@ -335,10 +350,11 @@ bun run dev
 ```
 
 This supervises persistent usage-engine and Web tasks with attributable logs.
-Web HMR does not restart the engine or trigger collection/publication. Nitro
-development and production builds use separate `.output-dev` and
-`.output-build` trees, and concurrent production builds fail through a narrow
-lock without deleting active dev files.
+Web HMR does not restart the engine or trigger collection/publication.
+SvelteKit keeps check, development, and production intermediates in separate
+`.svelte-kit/{check,dev,build}` trees. The Bun adapter writes production output
+to `.output-build/sveltekit`, and concurrent production builds fail through a
+narrow lock without deleting active development files.
 
 The dev runtime intentionally reads this machine's configured local data and
 refreshes the dashboard through immutable, destination-focused SQLite queries.

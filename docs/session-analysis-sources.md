@@ -106,8 +106,9 @@ that its adapter completed; it does not prove that an older long-lived process
 loaded the newest collector implementation.
 
 In development, source control lives in the persistent usage-engine task.
-Web/Nitro HMR neither disposes nor recreates it; engine/runtime package changes
-belong to the engine task. Parser cache versions are part of the same contract:
+Web/SvelteKit HMR neither disposes nor recreates it; engine/runtime package
+changes belong to the engine task. Parser cache versions are part of the same
+contract:
 any change to attribution or serialized session semantics must bump the cache
 version so records produced by an older parser cannot be reused under the new
 rules.

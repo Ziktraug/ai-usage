@@ -11,12 +11,14 @@ import {
   sessionQueryFingerprint,
 } from '@ai-usage/report-core/session-query';
 import { Effect } from 'effect';
+import { createWebReadObservabilityLifecycle } from '../lib/server/observability/web-read-lifecycle.server';
 import {
   type RevisionQueryKind,
   type RevisionQueryRunnerDependencies,
   resolveRevisionQueryRunnerDependenciesForServer,
   runRevisionQueryForServer,
 } from './revision-query-runner.server';
+import { createWebReadObservabilityRuntime } from './web-read-observability.server';
 
 const request: SessionDetailRequest = { revision: 'revision-a', rowId: 'row-a' };
 const fingerprint = sessionDetailRequestFingerprint(request);
@@ -154,7 +156,7 @@ describe('direct revision query server', () => {
 
   for (const queryPath of revisionQueryParityPaths) {
     test(`${queryPath.name} preserves the exact revision query lifecycle`, async () => {
-      const executions: unknown[] = [];
+      const executions: Parameters<RevisionQueryRunnerDependencies['execute']>[0][] = [];
       const successful = await queryPath.run({
         execute: (execution) => {
           executions.push(execution);
@@ -162,7 +164,13 @@ describe('direct revision query server', () => {
         },
       });
 
-      expect(executions).toEqual([{ kind: queryPath.kind, request: queryPath.request, revision: queryPath.revision }]);
+      expect(executions).toHaveLength(1);
+      expect(executions[0]).toMatchObject({
+        kind: queryPath.kind,
+        request: queryPath.request,
+        revision: queryPath.revision,
+      });
+      expect(executions[0]?.signal).toBeInstanceOf(AbortSignal);
       expect(successful).toEqual({
         data: queryPath.successfulPayload,
         ok: true,
@@ -227,6 +235,30 @@ describe('direct revision query server', () => {
     });
     expect(event?.services.map(({ name }) => name)).toEqual(['revision.execute', 'revision.parse']);
     expect(event?.services[0]?.annotations).toEqual({ sqliteReadMs: 12 });
+  });
+
+  test('runs the default sessions boundary through the initialized process runtime', async () => {
+    const sink = makeCaptureWideEventSink();
+    const layer = makeTestWideEventSinkLayer(sink);
+    const lifecycle = createWebReadObservabilityLifecycle(() => createWebReadObservabilityRuntime(layer));
+    const dependencies = await resolveRevisionQueryRunnerDependenciesForServer(() =>
+      Promise.resolve({ queryRevision: () => Promise.resolve(emptySessionPage) }),
+    );
+
+    try {
+      await lifecycle.initialize();
+      const result = await runRevisionQueryForServer('sessions', sessionRequest, dependencies);
+
+      expect(result).toEqual({
+        data: emptySessionPage,
+        ok: true,
+        requestFingerprint: sessionFingerprint,
+        revision: sessionRequest.revision,
+      });
+      expect(sink.events().some(({ boundary }) => boundary === 'web.sessions.read')).toBe(true);
+    } finally {
+      await lifecycle.dispose();
+    }
   });
 
   test('classifies expiry and result validation failures without changing protocol identity', async () => {

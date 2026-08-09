@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./performance-testing": "./src/performance-testing.ts",
     "./reader": "./src/reader.ts",
     "./testing": "./src/testing.ts",
     "./writer": "./src/writer.ts"

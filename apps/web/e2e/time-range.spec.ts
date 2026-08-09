@@ -1,5 +1,9 @@
 import type { Page } from '@playwright/test';
-import { expect, reportViewsFor, test } from './browser-test';
+import {
+  FOCUSED_REPORT_E2E_ENABLED_KEY,
+  FOCUSED_REPORT_E2E_VISIBLE_TREND_KEY,
+} from '../src/focused-report-e2e-fixture';
+import { expect, openHydratedReport, reportViewsFor, test, waitForFocusedReportSettled } from './browser-test';
 
 const CALENDAR_NAME_PATTERN = /Daily activity calendar/;
 const CHART_VIEW_PATTERN = /Chart view:/;
@@ -10,10 +14,87 @@ const PUNCHCARD_CELL_LABEL_PATTERN =
   /^Filter report to (Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday) ([0-9]{2}):00–[0-9]{2}:59, ([0-9,]+) sessions?$/;
 const SESSION_SUMMARY_PATTERN = / sessions$/;
 
+const SESSION_COUNT_PATTERN = /^[0-9,]+$/;
+const RANGE_DAYS_PATTERN = /·\s*(\d+)\s*days?/;
+// The bug this guards against bound the class to the `'start' | 'end'` edge
+// name, so the generated style never applied. Assert the edge name itself never
+// reaches the class list rather than pattern-matching a Panda atom, which a
+// hyphenated domain value would also satisfy.
+const HANDLE_EDGE_NAMES = ['start', 'end'] as const;
+// WCAG 2.5.5 Target Size (Enhanced); `timeSliderThumb` is sized for it.
+const HANDLE_MINIMUM_TARGET_PX = 44;
+const BRUSH_GEOMETRY_VIEWPORTS = [
+  { height: 1000, width: 1440 },
+  { height: 900, width: 1024 },
+  { height: 900, width: 768 },
+  // The frozen narrow viewport the responsive suites use elsewhere.
+  { height: 800, width: 361 },
+] as const;
+
+interface BrushHandleGeometry {
+  centerX: number;
+  classes: string[];
+  height: number;
+  label: string | null;
+  position: string;
+  role: string | null;
+  valueText: string | null;
+  width: number;
+}
+
+interface BrushGeometry {
+  handles: BrushHandleGeometry[];
+  offsets: number[];
+}
+
+const readBrushGeometry = (element: Element): BrushGeometry => {
+  const selection = element.querySelector('[aria-label="Selected report window"]');
+  if (!selection) {
+    throw new Error('Expected the selected report window');
+  }
+  const selectionBox = selection.getBoundingClientRect();
+  const handles = [...element.querySelectorAll('[role="slider"]')].map((handle) => {
+    const box = handle.getBoundingClientRect();
+    return {
+      centerX: box.left + box.width / 2,
+      classes: [...handle.classList],
+      height: box.height,
+      label: handle.getAttribute('aria-label'),
+      position: getComputedStyle(handle).position,
+      role: handle.getAttribute('role'),
+      valueText: handle.getAttribute('aria-valuetext'),
+      width: box.width,
+    };
+  });
+  const edgeFor = (label: string): number => (label === 'Start date' ? selectionBox.left : selectionBox.right);
+  return {
+    handles,
+    offsets: handles.map((handle) => Math.round(handle.centerX - edgeFor(handle.label ?? ''))),
+  };
+};
+
 const reportRangeValue = (page: Page): string | null => new URL(page.url()).searchParams.get('range');
 
+const navigationEntryKey = async (page: Page): Promise<string | null> =>
+  await page.evaluate(() => {
+    const states = Reflect.get(history.state ?? {}, 'sveltekit:states');
+    if (!(states && typeof states === 'object')) {
+      return null;
+    }
+    const key = Reflect.get(states, 'aiUsageNavigationKey');
+    return typeof key === 'string' ? key : null;
+  });
+
 test('uses one report range for the dashboard and activity chart', async ({ page }) => {
-  await page.goto('/');
+  await page.addInitScript(
+    ({ enabledKey, trendKey }) => {
+      Reflect.set(globalThis, enabledKey, true);
+      Reflect.set(globalThis, trendKey, true);
+    },
+    { enabledKey: FOCUSED_REPORT_E2E_ENABLED_KEY, trendKey: FOCUSED_REPORT_E2E_VISIBLE_TREND_KEY },
+  );
+  await openHydratedReport(page);
+  await waitForFocusedReportSettled(page);
 
   const dateRange = page.getByRole('region', { name: 'Date range' });
   await expect(dateRange.getByRole('button', { exact: true, name: 'All' })).toBeVisible();
@@ -47,10 +128,45 @@ test('uses one report range for the dashboard and activity chart', async ({ page
   await expect(chartOptions.getByText('Group by', { exact: true })).toBeVisible();
   await expect(chartOptions.getByText('Interval', { exact: true })).toBeVisible();
   await expect(chartOptions.getByText('Metric', { exact: true })).toBeVisible();
+
+  const timeline = dateRange.getByRole('button', {
+    name: 'Inspect activity timeline. Use arrow keys to inspect days.',
+  });
+  await timeline.focus();
+  await timeline.press('End');
+  const trend = dateRange.locator('[data-timeline-trend]');
+  await expect(trend).toBeVisible();
+  await expect(trend).toHaveText('▲ 100%');
+});
+
+test('wraps chart options without horizontal clipping below the frozen narrow viewport', async ({ page }) => {
+  await page.setViewportSize({ height: 844, width: 320 });
+  await openHydratedReport(page);
+
+  const summary = page
+    .getByRole('region', { name: 'Date range' })
+    .locator('details[aria-label="Chart options"] summary');
+  const geometry = await summary.evaluate((element) => {
+    const current = element.querySelector('span:last-child');
+    if (!(current instanceof HTMLElement)) {
+      throw new Error('Expected the current chart-options summary');
+    }
+    const currentStyle = getComputedStyle(current);
+    return {
+      clientWidth: element.clientWidth,
+      currentMinWidth: currentStyle.minWidth,
+      currentWhiteSpace: currentStyle.whiteSpace,
+      scrollWidth: element.scrollWidth,
+    };
+  });
+
+  expect(geometry.scrollWidth).toBeLessThanOrEqual(geometry.clientWidth);
+  expect(geometry.currentMinWidth).toBe('0px');
+  expect(geometry.currentWhiteSpace).toBe('normal');
 });
 
 test('uses clickable heatmap days as Rhythm activity-day controls without a native date input', async ({ page }) => {
-  await page.goto('/');
+  await openHydratedReport(page);
 
   const calendar = page.getByRole('toolbar', { name: CALENDAR_NAME_PATTERN });
   const rhythm = page.locator('section').filter({ has: calendar });
@@ -60,6 +176,7 @@ test('uses clickable heatmap days as Rhythm activity-day controls without a nati
   expect(await heatmapDays.count()).toBeGreaterThan(0);
 
   await heatmapDays.first().click();
+  await waitForFocusedReportSettled(page);
   await expect(reportViewsFor(page).getByRole('link', { exact: true, name: 'Sessions' })).toHaveAttribute(
     'aria-current',
     'page',
@@ -67,7 +184,7 @@ test('uses clickable heatmap days as Rhythm activity-day controls without a nati
 });
 
 test('filters the report from non-empty Punchcard cells with click and keyboard', async ({ page }) => {
-  await page.goto('/');
+  await openHydratedReport(page);
 
   const heading = page.getByRole('heading', { exact: true, name: 'Punchcard' });
   const punchcard = heading.locator('xpath=ancestor::section[1]');
@@ -104,28 +221,34 @@ test('filters the report from non-empty Punchcard cells with click and keyboard'
   const timeCellValue = `${weekdayCode}-${hour}`;
   const period = `${weekday} ${hour}:00–${hour}:59`;
   const timePill = page.getByTitle('Clear Time filter');
-  const summary = page.locator('span[aria-live="polite"]').filter({ hasText: SESSION_SUMMARY_PATTERN }).first();
+  const summary = page.locator('[data-active-filters] span[aria-live="polite"]').filter({
+    hasText: SESSION_SUMMARY_PATTERN,
+  });
   const firstTimeCell = punchcard.getByRole('button', { exact: true, name: ariaLabel });
 
   await firstTimeCell.focus();
   await firstTimeCell.press('Enter');
   await expect.poll(() => new URL(page.url()).searchParams.get('timeCell')).toBe(timeCellValue);
+  await waitForFocusedReportSettled(page);
   await expect(timePill).toHaveText(`Time · ${period} ×`);
   await expect(summary).toContainText(`${formattedCount} / `);
 
   await timePill.click();
   await expect.poll(() => new URL(page.url()).searchParams.get('timeCell')).toBeNull();
+  await waitForFocusedReportSettled(page);
   await expect(timePill).toHaveCount(0);
 
   await punchcard.getByRole('button', { exact: true, name: ariaLabel }).click();
   await expect.poll(() => new URL(page.url()).searchParams.get('timeCell')).toBe(timeCellValue);
+  await waitForFocusedReportSettled(page);
   await expect(timePill).toHaveText(`Time · ${period} ×`);
   await timePill.click();
   await expect.poll(() => new URL(page.url()).searchParams.get('timeCell')).toBeNull();
+  await waitForFocusedReportSettled(page);
 });
 
 test('changes every chart option from its segmented controls', async ({ page }) => {
-  await page.goto('/');
+  await openHydratedReport(page);
 
   const chartOptions = page.getByRole('region', { name: 'Date range' }).locator('details[aria-label="Chart options"]');
   await chartOptions.locator('summary').click();
@@ -148,7 +271,7 @@ test('changes every chart option from its segmented controls', async ({ page }) 
 });
 
 test('groups the timeline by campaign, machine, and origin with matching legends', async ({ page }) => {
-  await page.goto('/');
+  await openHydratedReport(page);
 
   const dateRange = page.getByRole('region', { name: 'Date range' });
   const chartOptions = dateRange.locator('details[aria-label="Chart options"]');
@@ -158,8 +281,8 @@ test('groups the timeline by campaign, machine, and origin with matching legends
   await expect(
     chartOptions.getByText('Campaign · Day · Estimated API-equivalent value', { exact: true }),
   ).toBeVisible();
-  await expect(dateRange.getByTitle('Build report UI')).toContainText('Build report UI');
-  await expect(dateRange.getByTitle('Inspect OpenCode root')).toContainText('Inspect OpenCode root');
+  await expect(dateRange.getByTitle('Build report UI', { exact: true })).toContainText('Build report UI');
+  await expect(dateRange.getByTitle('Inspect OpenCode root', { exact: true })).toContainText('Inspect OpenCode root');
 
   await chartOptions.getByRole('radio', { exact: true, name: 'Machine' }).click();
   await expect(chartOptions.getByText('Machine · Day · Estimated API-equivalent value', { exact: true })).toBeVisible();
@@ -174,7 +297,7 @@ test('groups the timeline by campaign, machine, and origin with matching legends
 });
 
 test('commits preset, text, keyboard, and pointer report ranges to the URL', async ({ page }) => {
-  await page.goto('/');
+  await openHydratedReport(page);
 
   const dateRange = page.getByRole('region', { name: 'Date range' });
   const startInput = dateRange.getByRole('textbox', { name: 'Start date' });
@@ -184,8 +307,10 @@ test('commits preset, text, keyboard, and pointer report ranges to the URL', asy
 
   await dateRange.getByRole('button', { exact: true, name: 'All' }).click();
   await expect.poll(() => reportRangeValue(page)).not.toBeNull();
+  await waitForFocusedReportSettled(page);
   await dateRange.getByRole('button', { exact: true, name: '30d' }).click();
   await expect.poll(() => reportRangeValue(page)).toBeNull();
+  await waitForFocusedReportSettled(page);
   await expect(startInput).toHaveValue('May 12, 2026');
   await expect(endInput).toHaveValue('Jun 11, 2026');
 
@@ -199,6 +324,7 @@ test('commits preset, text, keyboard, and pointer report ranges to the URL', asy
   await expect.poll(() => page.url()).not.toBe(presetUrl);
   await startInput.press('Enter');
   await expect(startInput).toHaveValue('May 25, 2026');
+  await expect(startInput).not.toBeFocused();
 
   const textUrl = page.url();
   const keyboardStart = await startHandle.getAttribute('aria-valuenow');
@@ -224,11 +350,39 @@ test('commits preset, text, keyboard, and pointer report ranges to the URL', asy
   await expect.poll(() => page.url()).not.toBe(keyboardUrl);
 
   await page.reload();
+  await waitForFocusedReportSettled(page);
   await expect(startInput).not.toHaveValue(pointerStart);
+
+  const beforeFirstBlurKey = await navigationEntryKey(page);
+  await startInput.fill('2026-05-20');
+  await endInput.focus();
+  await expect(startInput).toHaveValue('May 20, 2026');
+  await expect.poll(() => reportRangeValue(page)).toContain('"from":"2026-05-20"');
+  await expect.poll(() => navigationEntryKey(page)).not.toBe(beforeFirstBlurKey);
+  const firstBlurredEditKey = await navigationEntryKey(page);
+  expect(firstBlurredEditKey).not.toBeNull();
+  const firstBlurredEditUrl = page.url();
+
+  await startInput.fill('2026-05-21');
+  await endInput.focus();
+  await expect(startInput).toHaveValue('May 21, 2026');
+  await expect.poll(() => reportRangeValue(page)).toContain('"from":"2026-05-21"');
+  await expect.poll(() => navigationEntryKey(page)).not.toBe(firstBlurredEditKey);
+  const secondBlurredEditKey = await navigationEntryKey(page);
+  expect(secondBlurredEditKey).not.toBeNull();
+  const secondBlurredEditUrl = page.url();
+  expect(secondBlurredEditUrl).not.toBe(firstBlurredEditUrl);
+
+  await page.goBack();
+  await expect.poll(() => page.url()).toBe(firstBlurredEditUrl);
+  await expect.poll(() => navigationEntryKey(page)).not.toBe(secondBlurredEditKey);
+  await waitForFocusedReportSettled(page);
+  await expect.poll(() => page.url()).toBe(firstBlurredEditUrl);
+  await expect(startInput).toHaveValue('May 20, 2026');
 });
 
 test('does not capture wheel scrolling over the activity chart', async ({ page }) => {
-  await page.goto('/');
+  await openHydratedReport(page);
 
   const dateRange = page.getByRole('region', { name: 'Date range' });
   const timeline = dateRange.getByRole('button', {
@@ -241,10 +395,11 @@ test('does not capture wheel scrolling over the activity chart', async ({ page }
 });
 
 test('keeps the report range canonical across granularity and domain changes', async ({ page }) => {
-  await page.goto('/');
+  await openHydratedReport(page);
 
   const dateRange = page.getByRole('region', { name: 'Date range' });
   await dateRange.getByRole('button', { exact: true, name: '7d' }).click();
+  await waitForFocusedReportSettled(page);
   const startInput = dateRange.getByRole('textbox', { name: 'Start date' });
   const endInput = dateRange.getByRole('textbox', { name: 'End date' });
   const selectedStart = await startInput.inputValue();
@@ -257,6 +412,7 @@ test('keeps the report range canonical across granularity and domain changes', a
   await expect(endInput).toHaveValue(selectedEnd);
 
   await dateRange.getByTitle('Filter by Codex').click();
+  await waitForFocusedReportSettled(page);
 
   const reportStart = dateRange.getByRole('slider', { name: 'Start date' });
   const reportEnd = dateRange.getByRole('slider', { name: 'End date' });
@@ -264,4 +420,282 @@ test('keeps the report range canonical across granularity and domain changes', a
   await expect(reportStart).toHaveAttribute('aria-valuenow', '0');
   await expect(reportEnd).toHaveAttribute('aria-valuenow', '7');
   await expect(dateRange.getByRole('slider', { name: 'Graph view start' })).toHaveCount(0);
+});
+
+test('anchors the brush handles to the selected report window at every viewport', async ({ page }) => {
+  await openHydratedReport(page);
+
+  const brush = page.getByRole('region', { name: 'Date range' }).locator('[data-report-range-part="brush"]');
+  const measureBrush = (): Promise<BrushGeometry> => brush.evaluate(readBrushGeometry);
+
+  for (const viewport of BRUSH_GEOMETRY_VIEWPORTS) {
+    await page.setViewportSize(viewport);
+
+    // The handles are positioned from the same percentages as the selection, so
+    // their centres must land on its edges however wide the track becomes.
+    await expect.poll(async () => (await measureBrush()).offsets).toEqual([0, 0]);
+
+    const geometry = await measureBrush();
+    expect(geometry.handles).toHaveLength(2);
+    for (const handle of geometry.handles) {
+      // An edge name in the class list means a loop binding shadowed the Panda
+      // class and the thumb silently lost its absolute positioning.
+      expect(handle.classes.filter((token) => HANDLE_EDGE_NAMES.includes(token as 'end' | 'start'))).toEqual([]);
+      expect(handle.position).toBe('absolute');
+    }
+  }
+
+  await page.setViewportSize(BRUSH_GEOMETRY_VIEWPORTS[0]);
+  const startHandle = brush.getByRole('slider', { name: 'Start date' });
+  const before = await measureBrush();
+  await startHandle.press('ArrowRight');
+  await expect.poll(async () => (await measureBrush()).offsets).toEqual([0, 0]);
+  // One day later must move the thumb rightwards, not merely somewhere else.
+  const afterKeyboard = await measureBrush();
+  expect(afterKeyboard.handles[0]?.centerX ?? 0).toBeGreaterThan(before.handles[0]?.centerX ?? 0);
+});
+
+test('drags a brush handle with the pointer and keeps it on the selection edge', async ({ page }) => {
+  await openHydratedReport(page);
+
+  const dateRange = page.getByRole('region', { name: 'Date range' });
+  const brush = dateRange.locator('[data-report-range-part="brush"]');
+  const startHandle = brush.getByRole('slider', { name: 'Start date' });
+  const startInput = dateRange.getByRole('textbox', { name: 'Start date' });
+  // `page.mouse` works in viewport coordinates and does not scroll, so the
+  // handle has to be in view before its box is turned into a pointer position.
+  await startHandle.scrollIntoViewIfNeeded();
+  const before = await startHandle.boundingBox();
+  const startedAt = await startInput.inputValue();
+  expect(before).not.toBeNull();
+  if (!before) {
+    return;
+  }
+
+  // The handle became a `<button>`; prove pointer capture still drags it.
+  await page.mouse.move(before.x + before.width / 2, before.y + before.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(before.x + before.width / 2 - 120, before.y + before.height / 2, { steps: 6 });
+  await page.mouse.up();
+
+  await expect.poll(async () => await startInput.inputValue()).not.toBe(startedAt);
+  await expect.poll(async () => (await brush.evaluate(readBrushGeometry)).offsets).toEqual([0, 0]);
+  const after = await startHandle.boundingBox();
+  expect(after?.x ?? 0).toBeLessThan(before.x);
+  // Dragging must not leave the pointer captured on the thumb.
+  await expect(brush.locator('[data-dragging="true"]')).toHaveCount(0);
+});
+
+test('draws only the selected report range and never overflows the plot', async ({ page }) => {
+  await openHydratedReport(page);
+
+  const dateRange = page.getByRole('region', { name: 'Date range' });
+  const chart = dateRange.locator('[data-report-range-part="chart"]');
+  const readChart = () =>
+    chart.evaluate((element) => {
+      const boundaryRow = document.querySelector('[data-timeline-boundary-row]');
+      return {
+        boundaries: [...(boundaryRow?.querySelectorAll('[data-timeline-boundary]') ?? [])].map((node) =>
+          (node.textContent ?? '').trim(),
+        ),
+        buckets: element.querySelectorAll('[role="img"]').length,
+        clientWidth: element.clientWidth,
+        // A per-bucket minimum that ignores the container turned 249 days into
+        // roughly a thousand pixels of overflow past the panel.
+        scrollWidth: element.scrollWidth,
+      };
+    });
+
+  for (const preset of ['30d', '7d', 'All'] as const) {
+    await dateRange.getByRole('button', { exact: true, name: preset }).click();
+    await waitForFocusedReportSettled(page);
+
+    const summary = await dateRange.locator('[data-report-range-part="summary"]').first().innerText();
+    const days = Number(RANGE_DAYS_PATTERN.exec(summary)?.[1] ?? Number.NaN);
+    expect(days, summary).not.toBeNaN();
+
+    const geometry = await readChart();
+    // One bucket per calendar day the range covers, inclusive of both ends.
+    expect(geometry.buckets, preset).toBe(days + 1);
+    expect(geometry.scrollWidth, preset).toBeLessThanOrEqual(geometry.clientWidth);
+    // The axis must report the window, not the domain the brush can address.
+    expect(geometry.boundaries[0], preset).toBe(
+      await dateRange.getByRole('textbox', { name: 'Start date' }).inputValue(),
+    );
+    expect(geometry.boundaries[1], preset).toBe(
+      await dateRange.getByRole('textbox', { name: 'End date' }).inputValue(),
+    );
+  }
+});
+
+test('holds the brush scale still while dragging a range that starts before the data', async ({ page }) => {
+  await openHydratedReport(page);
+
+  const dateRange = page.getByRole('region', { name: 'Date range' });
+  const startInput = dateRange.getByRole('textbox', { name: 'Start date' });
+  const startHandle = dateRange.getByRole('slider', { name: 'Start date' });
+
+  // A custom range opening before the first dated session makes the index origin
+  // `selectedFrom` instead of the data start, so committing on every pointermove
+  // used to move the origin — and the scale — underneath the drag.
+  await startInput.fill('2026-01-01');
+  await startInput.press('Enter');
+  await waitForFocusedReportSettled(page);
+
+  const scaleBefore = await startHandle.getAttribute('aria-valuemax');
+  expect(scaleBefore).not.toBeNull();
+
+  await startHandle.scrollIntoViewIfNeeded();
+  const box = await startHandle.boundingBox();
+  expect(box).not.toBeNull();
+  if (!box) {
+    return;
+  }
+  const originX = box.x + box.width / 2;
+  const originY = box.y + box.height / 2;
+  await page.mouse.move(originX, originY);
+  await page.mouse.down();
+  for (const step of [45, 90, 135, 180]) {
+    await page.mouse.move(originX + step, originY);
+    // The scale must not move, and the day the handle announces must be the day
+    // the committed range reports.
+    await expect(startHandle).toHaveAttribute('aria-valuemax', scaleBefore ?? '');
+    expect(await startHandle.getAttribute('aria-valuetext')).toBe(await startInput.inputValue());
+  }
+  await page.mouse.up();
+  await waitForFocusedReportSettled(page);
+
+  expect(await startHandle.getAttribute('aria-valuetext')).toBe(await startInput.inputValue());
+});
+
+test('lands the dragged range once on release while the headline follows the handle', async ({ page }) => {
+  await openHydratedReport(page);
+
+  const dateRange = page.getByRole('region', { name: 'Date range' });
+  const endHandle = dateRange.getByRole('slider', { name: 'End date' });
+  const hero = page.getByRole('region', { name: 'Estimated API-equivalent value' });
+  const headline = hero.locator('p').nth(1);
+  const urlBeforeDrag = page.url();
+
+  await endHandle.scrollIntoViewIfNeeded();
+  const box = await endHandle.boundingBox();
+  expect(box).not.toBeNull();
+  if (!box) {
+    return;
+  }
+  const originX = box.x + box.width / 2;
+  const originY = box.y + box.height / 2;
+  await page.mouse.move(originX, originY);
+  await page.mouse.down();
+  for (const step of [30, 60, 90, 120]) {
+    await page.mouse.move(originX - step, originY);
+  }
+  // The range is what a commit writes, so an unchanged URL is the drag having committed nothing.
+  // Committing per pointermove refetched the report on every day boundary and made `pending`
+  // flicker under the pointer, so the whole body dimmed and the counters above blinked.
+  expect(page.url()).toBe(urlBeforeDrag);
+  // The amount is summed locally from the buckets already drawn, so the headline stays live while
+  // its qualifiers — which only the server knows — say they are lagging rather than mismatching.
+  await expect(hero.locator('[data-hero-provisional]').first()).toBeVisible();
+  // The live figure must never be dimmed along with the stale body around it.
+  await expect(page.locator('[data-report-complete-output]')).toHaveCSS('opacity', '1');
+
+  const dragged = await headline.textContent();
+  await page.mouse.up();
+  // Whatever the gesture ended on must survive the release: the preview retires on commit, not on
+  // pointerup, so the headline cannot rebound to the range that was left behind.
+  expect(await headline.textContent()).toBe(dragged);
+  await waitForFocusedReportSettled(page);
+
+  // Exactly one commit, and it happened on release.
+  expect(page.url()).not.toBe(urlBeforeDrag);
+  expect(new URL(page.url()).searchParams.get('range')).not.toBeNull();
+  await expect(hero.locator('[data-hero-provisional]')).toHaveCount(0);
+});
+
+test('reports legend shares and the range total over the selected window', async ({ page }) => {
+  await openHydratedReport(page);
+
+  const dateRange = page.getByRole('region', { name: 'Date range' });
+  const legend = dateRange.locator('[data-report-range-part="total-legend"]');
+  const readLegend = () =>
+    legend.evaluate((element) => ({
+      series: [...element.querySelectorAll('[data-series-key]')].map((node) =>
+        (node.textContent ?? '').trim().replace(/\s+/g, ' '),
+      ),
+      total: element.querySelector('[data-report-range-total]')?.textContent?.trim() ?? null,
+    }));
+
+  const initial = await readLegend();
+  // In value mode the total restated the hero verbatim, so only the shares remain here. The session
+  // count is a different quantity the hero never states, so it keeps its slot — see below.
+  expect(initial.total).toBeNull();
+  // A series with nothing inside the window is noise, not information.
+  expect(initial.series.filter((entry) => entry.endsWith('0.0%'))).toEqual([]);
+  expect(initial.series.length).toBeGreaterThan(0);
+
+  await dateRange.getByRole('button', { exact: true, name: 'Today' }).click();
+  await waitForFocusedReportSettled(page);
+
+  const narrowed = await readLegend();
+  expect(narrowed.total).toBeNull();
+  expect(narrowed.series.length).toBeLessThanOrEqual(initial.series.length);
+
+  const chartOptions = dateRange.locator('details[aria-label="Chart options"]');
+  await chartOptions.locator('summary').click();
+  await chartOptions.getByRole('radio', { exact: true, name: 'Sessions' }).click();
+  await waitForFocusedReportSettled(page);
+  expect((await readLegend()).total).toMatch(SESSION_COUNT_PATTERN);
+
+  await chartOptions.getByRole('radio', { exact: true, name: 'Share' }).click();
+  await waitForFocusedReportSettled(page);
+  // Share mode made this a constant 100%.
+  expect((await readLegend()).total).toBeNull();
+});
+
+test('fills harness series with their branded tokens rather than one hashed hue', async ({ page }) => {
+  await openHydratedReport(page);
+
+  const dateRange = page.getByRole('region', { name: 'Date range' });
+  const fills = await dateRange.evaluate((element) => {
+    const swatchFill = (key: string): string | null => {
+      const node = element.querySelector(`[data-report-range-part="total-legend"] [data-series-key="${key}"] span`);
+      return node ? getComputedStyle(node).backgroundColor : null;
+    };
+    const keys = [...element.querySelectorAll('[data-report-range-part="total-legend"] [data-series-key]')].map(
+      (node) => node.getAttribute('data-series-key') ?? '',
+    );
+    return Object.fromEntries(keys.map((key) => [key, swatchFill(key)]));
+  });
+
+  const values = Object.values(fills).filter((fill): fill is string => typeof fill === 'string');
+  expect(values.length).toBeGreaterThan(1);
+  // A hash-derived palette produced neighbouring tans that read as one colour;
+  // every harness must resolve to its own semantic token instead.
+  expect(new Set(values).size).toBe(values.length);
+  for (const [key, fill] of Object.entries(fills)) {
+    expect(fill, key).not.toBeNull();
+    expect(fill, key).not.toBe('rgba(0, 0, 0, 0)');
+  }
+});
+
+test('announces each brush handle as a slider over the day it selects', async ({ page }) => {
+  await openHydratedReport(page);
+
+  const dateRange = page.getByRole('region', { name: 'Date range' });
+  const brush = dateRange.locator('[data-report-range-part="brush"]');
+  const handles = (await brush.evaluate(readBrushGeometry)).handles;
+
+  expect(handles.map((handle) => handle.label)).toEqual(['Start date', 'End date']);
+  for (const handle of handles) {
+    expect(handle.role).toBe('slider');
+    // A raw bucket index announces nothing useful, so the resolved day must be
+    // exposed, and the pointer target must stay reachable on touch.
+    expect(handle.valueText).toBe(handle.label === 'Start date' ? 'May 12, 2026' : 'Jun 11, 2026');
+    expect(handle.width).toBeGreaterThanOrEqual(HANDLE_MINIMUM_TARGET_PX);
+    expect(handle.height).toBeGreaterThanOrEqual(HANDLE_MINIMUM_TARGET_PX);
+  }
+
+  await brush.getByRole('slider', { name: 'Start date' }).press('ArrowRight');
+  await expect(brush.getByRole('slider', { name: 'Start date' })).toHaveAttribute('aria-valuetext', 'May 13, 2026');
 });

@@ -13,6 +13,7 @@ const localMachineRoot = ['@ai-usage', 'local-machine'].join('/');
 const reportDataPackage = `${workspacePackageScope}report-data`;
 const reportDataPortableReport = `${reportDataPackage}/portable-report`;
 const usageStoreInternal = `${workspacePackageScope}usage-store/internal`;
+const usageStorePerformanceTesting = `${workspacePackageScope}usage-store/performance-testing`;
 const retiredLanPackage = `${workspacePackageScope}lan-pairing`;
 const retiredSyncPackage = `${workspacePackageScope}sync`;
 const webBridgePackage = ['@ai-usage', 'web-bridge'].join('/');
@@ -268,6 +269,43 @@ describe('package boundary guard', () => {
         packageName: '@ai-usage/usage-merge',
         specifier: '@ai-usage/usage-store/writer',
       }),
+    );
+  });
+
+  test('allows only the Web server hook to consume explicit usage-store performance instrumentation', async () => {
+    const root = await createFixture();
+    await writePackage(root, 'apps', 'web', { name: '@ai-usage/web' });
+    await writeFile(
+      path.join(root, 'apps/web/src/hooks.server.ts'),
+      "import '@ai-usage/usage-store/performance-testing';\n",
+    );
+
+    expect(await collectViolations(root)).toEqual([]);
+  });
+
+  test('rejects performance instrumentation from general server and client Web modules', async () => {
+    const root = await createFixture();
+    await writePackage(
+      root,
+      'apps',
+      'web',
+      { name: '@ai-usage/web' },
+      "import '@ai-usage/usage-store/performance-testing';\n",
+    );
+    await writeFile(
+      path.join(root, 'apps/web/src/general.server.ts'),
+      "import '@ai-usage/usage-store/performance-testing';\n",
+    );
+
+    const violations = await collectViolations(root);
+    expect(violations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ file: 'apps/web/src/index.ts', specifier: usageStorePerformanceTesting }),
+        expect.objectContaining({
+          file: 'apps/web/src/general.server.ts',
+          specifier: usageStorePerformanceTesting,
+        }),
+      ]),
     );
   });
 
@@ -642,6 +680,124 @@ describe('package boundary guard', () => {
         specifier: './missing.js',
       }),
     );
+  });
+
+  test('scans direct forbidden imports in Svelte source', async () => {
+    const root = await createFixture();
+    await writePackage(root, 'apps', 'web', { name: '@ai-usage/web' });
+    const routeDirectory = path.join(root, 'apps/web/src/routes');
+    await mkdir(routeDirectory, { recursive: true });
+    await writeFile(
+      path.join(routeDirectory, '+page.svelte'),
+      "<script>import '@ai-usage/local-collectors/codex-history';</script>\n",
+    );
+
+    expect(await collectViolations(root)).toContainEqual(
+      expect.objectContaining({
+        file: 'apps/web/src/routes/+page.svelte',
+        packageName: '@ai-usage/web',
+        specifier: '@ai-usage/local-collectors/codex-history',
+      }),
+    );
+  });
+
+  test('scans dynamic forbidden imports in Svelte source', async () => {
+    const root = await createFixture();
+    await writePackage(root, 'apps', 'web', { name: '@ai-usage/web' });
+    const sourceDirectory = path.join(root, 'apps/web/src/lib');
+    await mkdir(sourceDirectory, { recursive: true });
+    await writeFile(
+      path.join(sourceDirectory, 'dynamic.svelte'),
+      `<script>const merge = import('${['@ai-usage', 'usage-merge', 'internal'].join('/')}'); void merge;</script>
+`,
+    );
+
+    expect(await collectViolations(root)).toContainEqual(
+      expect.objectContaining({
+        file: 'apps/web/src/lib/dynamic.svelte',
+        packageName: '@ai-usage/web',
+        specifier: '@ai-usage/usage-merge/internal',
+      }),
+    );
+  });
+
+  test('scans forbidden re-exports in Svelte source', async () => {
+    const root = await createFixture();
+    await writePackage(root, 'apps', 'web', { name: '@ai-usage/web' });
+    const sourceDirectory = path.join(root, 'apps/web/src/lib');
+    await mkdir(sourceDirectory, { recursive: true });
+    await writeFile(
+      path.join(sourceDirectory, 're-export.svelte'),
+      '<script context="module">export { merge } from \'@ai-usage/usage-merge\';</script>\n',
+    );
+
+    expect(await collectViolations(root)).toContainEqual(
+      expect.objectContaining({
+        file: 'apps/web/src/lib/re-export.svelte',
+        packageName: '@ai-usage/web',
+        specifier: '@ai-usage/usage-merge',
+      }),
+    );
+  });
+
+  test('follows indirect production workspace reachability through Svelte source', async () => {
+    const root = await createFixture();
+    await writePackage(root, 'apps', 'web', { name: '@ai-usage/web' });
+    await writePackage(root, 'packages', 'web-bridge', { name: webBridgePackage });
+    await writePackage(root, 'packages', 'local-collectors', { name: '@ai-usage/local-collectors' });
+    const webSource = path.join(root, 'apps/web/src/+page.svelte');
+    const bridgeSource = path.join(root, 'packages/web-bridge/src/bridge.svelte');
+    await Promise.all([
+      writeFile(webSource, `<script>import '${webBridgePackage}';</script>\n`),
+      writeFile(
+        bridgeSource,
+        '<script context="module">export { collect } from \'@ai-usage/local-collectors/codex-history\';</script>\n',
+      ),
+    ]);
+
+    expect(await collectViolations(root)).toContainEqual(
+      expect.objectContaining({
+        file: 'packages/web-bridge/src/bridge.svelte',
+        message: expect.stringContaining('@ai-usage/web -> @ai-usage/web-bridge -> @ai-usage/local-collectors'),
+        packageName: '@ai-usage/web',
+        specifier: '@ai-usage/local-collectors',
+      }),
+    );
+  });
+
+  test('resolves .svelte modules in recursive source-closure scans', async () => {
+    const root = await createFixture();
+    await writePackage(root, 'packages', 'report-data', { name: reportDataPackage });
+    const sourceDirectory = path.join(root, 'packages/report-data/src');
+    await Promise.all([
+      writeFile(path.join(sourceDirectory, 'portable-report.ts'), "export { value } from './bridge.svelte';\n"),
+      writeFile(
+        path.join(sourceDirectory, 'bridge.svelte'),
+        '<script context="module">export { value } from \'@ai-usage/local-collectors\';</script>\n',
+      ),
+    ]);
+
+    expect(await collectViolations(root)).toContainEqual(
+      expect.objectContaining({
+        file: 'packages/report-data/src/bridge.svelte',
+        packageName: reportDataPackage,
+        specifier: '@ai-usage/local-collectors',
+      }),
+    );
+  });
+
+  test('ignores every generated canonical SvelteKit tree', async () => {
+    const root = await createFixture();
+    await writePackage(root, 'apps', 'web', { name: '@ai-usage/web' });
+    const generatedDirectories = ['.output-build', '.svelte-kit'];
+
+    for (const generatedDirectory of generatedDirectories) {
+      const directory = path.join(root, 'apps/web', generatedDirectory);
+      await mkdir(directory, { recursive: true });
+      await writeFile(path.join(directory, 'forbidden.svelte'), "<script>import '@ai-usage/usage-merge';</script>\n");
+    }
+
+    expect(await collectViolations(root)).toEqual([]);
   });
 
   test('accepts the current workspace graph', async () => {

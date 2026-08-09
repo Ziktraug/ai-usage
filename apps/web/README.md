@@ -2,9 +2,10 @@
 
 ## Owns
 
-Solid/TanStack SSR and UI, the browser served-session coordinator, read-only
-report server functions, source-control command/status/event proxies, `/sync`,
-web read observability, and the unrelated `/skills` filesystem control plane.
+SvelteKit SSR and UI, TanStack Query-owned report and Session state, read-only report
+procedures through the explicit `/rpc/[...rest]` oRPC endpoint, source-control
+command/status/event proxies, `/sync`, web read observability, and the unrelated
+`/skills` filesystem control plane.
 
 ## Does not own
 
@@ -42,12 +43,29 @@ the built Web server without spawning an engine. Demo and ordinary browser E2E
 use synthetic adapters and cannot import production reader/control modules;
 production E2E uses an isolated real engine/store/runtime.
 
-Development and production outputs are isolated in `.output-dev` and
-`.output-build`; the production build lock never targets active dev output.
+SvelteKit check, development, and production intermediates are isolated in
+`.svelte-kit/{check,dev,build}`. The selected Bun adapter writes the production
+server to `.output-build/sveltekit`; the production build lock never targets
+active development output. `bun run --cwd apps/web check:svelte`, `build`,
+`dev`, and `preview` are the canonical framework commands.
+
+The route tree lives under `src/routes`. `src/routes/rpc/[...rest]/+server.ts`
+is the single oRPC HTTP entrypoint, while source-control SSE and manual-transfer
+file routes remain explicit SvelteKit `+server.ts` leaves. `src/hooks.server.ts`
+owns per-request runtime mode and the single web-observability lifecycle.
 
 ## Test strategy
 
 Keep model tests near models and server adapter tests under `src/server`. Use
 isolated synthetic homes/stores/ports for E2E. Cover engine available/stopped,
-missing/incompatible store, mismatch, expired revision, demo import privacy,
+missing/incompatible store, mismatch, expired revision, synthetic demo isolation,
 and direct-query bounds.
+
+The permanent browser boundary gate is `bun run test:web-client-manifest`; it
+rejects server-only capabilities in the emitted client graph. Request-policy
+tests cover every live RPC path plus explicit file/SSE/command routes. The demo
+suite proves synthetic-runtime isolation, while the production suite keeps
+explicit secret sentinels out of SSR HTML without forbidding useful bounded
+initial report data.
+The dev/build isolation gate is `bun run test:web-dev-build-isolation`; the
+5,000-session budget is `bun run --cwd apps/web benchmark:session-scroll`.

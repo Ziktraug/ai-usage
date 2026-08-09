@@ -51,6 +51,7 @@ const readModelWith = (overrides: Partial<UsageReadModel> = {}): UsageReadModel 
   readCurrentBootstrap: () => Promise.resolve({ manifest: storeManifest, support: focusedSupport() }),
   readCurrentLocalProjectSources: () => Promise.resolve({ revision, sources: [] }),
   readCurrentManifest: () => Promise.resolve(storeManifest),
+  readLatestProviderQuota: () => Promise.reject(new Error('Unexpected provider quota read')),
   readLocalMergeBundle: () => Promise.reject(new Error('Unexpected merge export read')),
   readLocalMachine: () => Promise.reject(new Error('Unexpected local machine read')),
   readSyncFleet: () => Promise.reject(new Error('Unexpected Sync fleet read')),
@@ -224,7 +225,7 @@ test('rejects project group mutations from an untrusted Host before engine admis
 
   try {
     await saveProjectGroupsFromRequestForServer(
-      new Request('http://attacker.example/_serverFn/saveProjectGroups', {
+      new Request('http://attacker.example/rpc/projectGroup/save', {
         headers: { host: 'attacker.example' },
         method: 'POST',
       }),
@@ -270,7 +271,7 @@ test('propagates an aborted project group request before engine admission', asyn
   };
   const abort = new AbortController();
   abort.abort();
-  const request = new Request('http://localhost:3000/_serverFn/saveProjectGroups', {
+  const request = new Request('http://localhost:3000/rpc/projectGroup/save', {
     headers: { host: 'localhost:3000', origin: 'http://localhost:3000' },
     method: 'POST',
     signal: abort.signal,

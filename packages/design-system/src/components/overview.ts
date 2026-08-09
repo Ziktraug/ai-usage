@@ -291,15 +291,6 @@ export const heatDayDetail = css({
   overflowWrap: 'anywhere',
 });
 
-export const scatterWrap = css({
-  position: 'relative',
-  h: '240px',
-  border: '1px solid token(colors.line)',
-  borderRadius: 'sm',
-  bg: 'surfaceMuted',
-  overflow: 'hidden',
-});
-
 export const PUNCHCARD_INTERACTIVE_TARGET_SIZE_PX = 24;
 const PUNCHCARD_INTERACTIVE_TARGET_SIZE = `${PUNCHCARD_INTERACTIVE_TARGET_SIZE_PX}px`;
 
@@ -309,6 +300,7 @@ export const punchGrid = css({
   gap: '2px',
   alignItems: 'center',
   overflowX: 'auto',
+  overflowY: 'hidden',
 });
 
 export const punchDayLabel = css({
@@ -324,8 +316,6 @@ export const punchCell = css({
   display: 'grid',
   w: PUNCHCARD_INTERACTIVE_TARGET_SIZE,
   h: PUNCHCARD_INTERACTIVE_TARGET_SIZE,
-  borderRadius: '2px',
-  bg: 'track',
   placeItems: 'center',
 });
 
@@ -341,24 +331,27 @@ export const punchCellButton = css({
   placeItems: 'center',
   w: 'full',
   _hover: {
-    outline: '1px solid token(colors.ink)',
-    outlineOffset: '1px',
+    '& [data-punchcard-cell-fill]': {
+      transform: 'scale(1.6)',
+    },
   },
   _focusVisible: {
     outline: '2px solid token(colors.accent)',
-    outlineOffset: '2px',
+    outlineOffset: '-2px',
   },
 });
 
 export const punchDot = css({
-  w: 'full',
-  h: 'full',
-  borderRadius: '2px',
+  w: '10px',
+  h: '10px',
+  borderRadius: 'full',
+  transition: 'transform 0.16s ease-out',
 });
 
 export const punchIntensityKey = css({
   display: 'flex',
   alignItems: 'center',
+  justifyContent: 'flex-end',
   gap: '5px',
   pt: '10px',
   color: 'muted',
@@ -368,7 +361,7 @@ export const punchIntensityKey = css({
 export const punchIntensityKeyCell = css({
   w: '10px',
   h: '10px',
-  borderRadius: '2px',
+  borderRadius: 'full',
 });
 
 export const punchHourLabel = css({

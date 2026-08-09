@@ -65,32 +65,6 @@ export const ghostButton = css({
   },
 });
 
-export const navButton = css({
-  appearance: 'none',
-  display: 'inline-flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  h: '36px',
-  px: '12px',
-  border: '1px solid token(colors.lineStrong)',
-  borderRadius: 'sm',
-  bg: 'surface',
-  color: 'muted',
-  fontSize: '12px',
-  fontWeight: 650,
-  textDecoration: 'none',
-  whiteSpace: 'nowrap',
-  transition: 'color 0.15s, border-color 0.15s, background-color 0.15s',
-  _hover: {
-    color: 'accent',
-    borderColor: 'accent',
-  },
-  _focusVisible: {
-    outline: '2px solid token(colors.accent)',
-    outlineOffset: '2px',
-  },
-});
-
 export const themeToggleButton = css({
   display: 'inline-flex',
   alignItems: 'center',
@@ -245,44 +219,6 @@ export const refreshButton = css({
   _disabled: {
     color: 'faint',
     cursor: 'not-allowed',
-  },
-  _focusVisible: {
-    outline: '2px solid token(colors.accent)',
-    outlineOffset: '2px',
-  },
-});
-
-export const refreshIconButton = css({
-  appearance: 'none',
-  display: 'inline-flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  w: '22px',
-  h: '22px',
-  p: 0,
-  border: '0',
-  borderRadius: 'xs',
-  bg: 'transparent',
-  color: 'accent',
-  fontFamily: 'mono',
-  fontSize: '11px',
-  fontWeight: 650,
-  lineHeight: 1,
-  cursor: 'pointer',
-  transition: 'color 0.15s, background-color 0.15s',
-  _hover: {
-    bg: 'surfaceMuted',
-    color: 'accent',
-  },
-  '&[aria-pressed="true"]': {
-    bg: 'surfaceMuted',
-    color: 'accent',
-  },
-  _disabled: {
-    bg: 'transparent',
-    color: 'faint',
-    cursor: 'not-allowed',
-    opacity: 0.55,
   },
   _focusVisible: {
     outline: '2px solid token(colors.accent)',

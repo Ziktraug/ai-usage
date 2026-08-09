@@ -51,15 +51,6 @@ export const headerActions = css({
   _print: { display: 'none' },
 });
 
-export const headerNavigation = css({
-  display: 'flex',
-  flexWrap: 'wrap',
-  alignItems: 'center',
-  justifyContent: 'flex-end',
-  gap: '8px',
-  maxW: '100%',
-});
-
 export const titleBlock = css({
   display: 'grid',
   gap: '8px',
@@ -146,13 +137,6 @@ export const activeFilters = css({
   alignItems: 'center',
 });
 
-export const chartLegend = css({
-  display: 'flex',
-  flexWrap: 'wrap',
-  gap: '6px',
-  justifyContent: { base: 'flex-start', sm: 'flex-end' },
-});
-
 export const section = css({
   display: 'grid',
   gap: '14px',
@@ -175,5 +159,3 @@ export const detailValue = css({
   fontWeight: 500,
   overflowWrap: 'anywhere',
 });
-
-export const unavailableCell = css({ color: 'muted', fontStyle: 'italic' });

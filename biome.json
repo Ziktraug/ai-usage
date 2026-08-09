@@ -4,14 +4,13 @@
     "includes": [
       "**/*.ts",
       "**/*.tsx",
+      "**/*.svelte",
       "**/*.json",
-      "!**/.output",
       "!**/.output-build",
-      "!**/.output-dev",
+      "!**/.svelte-kit",
       "!**/.turbo",
       "!**/.worktrees",
       "!**/dist",
-      "!apps/web/src/routeTree.gen.ts",
       "!**/node_modules",
       "!**/styled-system"
     ]
@@ -129,7 +128,7 @@
   ],
   "extends": [
     "ultracite/biome/core",
-    "ultracite/biome/solid",
+    "ultracite/biome/svelte",
     "ultracite/biome/tanstack",
     "ultracite/biome/vitest"
   ]

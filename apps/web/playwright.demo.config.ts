@@ -6,7 +6,7 @@ export default defineConfig({
   expect: { timeout: 10_000 },
   reporter: process.env.CI ? 'github' : 'line',
   testDir: './e2e',
-  testMatch: 'demo-privacy.spec.ts',
+  testMatch: 'demo-isolation.spec.ts',
   timeout: 60_000,
   use: {
     baseURL: 'http://127.0.0.1:4176',
@@ -17,7 +17,7 @@ export default defineConfig({
     trace: 'retain-on-failure',
   },
   webServer: {
-    command: 'bun --no-env-file ../../tools/run-web-demo.ts',
+    command: 'bun --no-env-file ../../tools/run-web-demo.ts --serve-only',
     gracefulShutdown: { signal: 'SIGTERM', timeout: 5000 },
     reuseExistingServer: false,
     timeout: 240_000,

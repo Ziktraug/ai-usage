@@ -29,6 +29,8 @@ import {
 } from '@ai-usage/report-core/session-query';
 import { parseSessionVcsContext, type SessionVcsContext } from '@ai-usage/report-core/session-vcs';
 import { usageRowApiPriceMeasurement } from '@ai-usage/report-core/usage-row';
+import { createSessionQueryExactRevisionCache } from './session-query-exact-revision-cache';
+import { measureSessionQueryPerfPhase, recordSessionQueryPerfCounter } from './session-query-perf';
 
 export type SessionQueryKind = 'campaign-children' | 'neighbors' | 'session-detail-anchor' | 'sessions';
 
@@ -665,6 +667,119 @@ const hydrateExactCampaignCosts = (
   }
 };
 
+interface SessionQueryTotalsCacheEntry {
+  itemCount: number;
+  sessionCount: number;
+}
+
+/**
+ * Exact-revision reuse across OFFSET pages. Readers open a fresh SQLite connection per
+ * request, so identity is revision + capture fingerprint + query fingerprint rather than the
+ * ephemeral database object.
+ */
+const SESSION_QUERY_TOTALS_CACHE_LIMIT = 64;
+const SESSION_QUERY_PROJECTION_CACHE_LIMIT = 8;
+const sessionQueryExactRevisionCache = createSessionQueryExactRevisionCache<SessionQueryTotalsCacheEntry, ItemRecord[]>(
+  {
+    projections: SESSION_QUERY_PROJECTION_CACHE_LIMIT,
+    totals: SESSION_QUERY_TOTALS_CACHE_LIMIT,
+  },
+);
+
+const sessionQueryCaptureFingerprint = (
+  database: SessionQuerySqliteDatabase,
+  trace?: SessionQuerySqliteTrace,
+): string =>
+  measureSessionQueryPerfPhase('identity', () => {
+    const metadata = executeGet<{ capture_fingerprint: string }>(
+      database,
+      'SELECT capture_fingerprint FROM metadata LIMIT 1',
+      [],
+      trace,
+    );
+    if (!metadata?.capture_fingerprint) {
+      throw new Error('Session query database omitted its capture fingerprint');
+    }
+    return metadata.capture_fingerprint;
+  });
+
+const sessionQueryPageIdentity = (
+  database: SessionQuerySqliteDatabase,
+  revision: string,
+  requestFingerprint: string,
+  trace?: SessionQuerySqliteTrace,
+): string => {
+  recordSessionQueryPerfCounter('identityChecks');
+  return `${revision}\0${sessionQueryCaptureFingerprint(database, trace)}\0${requestFingerprint}`;
+};
+
+export const resetSessionQueryTotalsCacheForTests = (): void => {
+  sessionQueryExactRevisionCache.reset();
+};
+
+const resolveSessionQueryTotals = (
+  database: SessionQuerySqliteDatabase,
+  request: SessionQueryRequest,
+  identity: string,
+  filter: ReturnType<typeof buildSessionQuerySqlFilter>,
+  trace?: SessionQuerySqliteTrace,
+): SessionQueryTotalsCacheEntry => {
+  if (request.cursor !== null) {
+    const cached = sessionQueryExactRevisionCache.totals(identity);
+    if (cached) {
+      recordSessionQueryPerfCounter('totalsCacheHits');
+      return cached;
+    }
+  }
+  recordSessionQueryPerfCounter('totalsCacheMisses');
+  const countSql = `SELECT
+    COUNT(*) AS session_count,
+    COUNT(DISTINCT campaign_key) AS item_count
+    FROM session_rows
+    WHERE ${filter.where}`;
+  const counts = measureSessionQueryPerfPhase(
+    'count',
+    () =>
+      executeGet<CountRecord>(database, countSql, filter.params, trace) ?? {
+        item_count: 0,
+        session_count: 0,
+      },
+  );
+  const totals = { itemCount: counts.item_count, sessionCount: counts.session_count };
+  sessionQueryExactRevisionCache.rememberTotals(identity, totals);
+  return totals;
+};
+
+const resolveSessionQueryProjection = (
+  database: SessionQuerySqliteDatabase,
+  identity: string,
+  filter: ReturnType<typeof buildSessionQuerySqlFilter>,
+  order: string,
+  useExactCostSort: boolean,
+  trace?: SessionQuerySqliteTrace,
+): ItemRecord[] => {
+  const cached = sessionQueryExactRevisionCache.projection(identity);
+  if (cached) {
+    recordSessionQueryPerfCounter('projectionCacheHits');
+    return cached;
+  }
+  recordSessionQueryPerfCounter('projectionCacheMisses');
+  const campaignCtes = [
+    campaignFilteredCte(filter.where),
+    campaignRollupCte(filter.where !== '1 = 1'),
+    campaignProjectionCtes,
+    ...(useExactCostSort ? [campaignExactCostCtes] : []),
+    campaignItemCte(useExactCostSort),
+  ].join(',\n');
+  const pageSql = `WITH${useExactCostSort ? ' RECURSIVE' : ''} ${campaignCtes}
+    SELECT * FROM campaign_items ORDER BY ${order}`;
+  const records = measureSessionQueryPerfPhase('projection', () =>
+    executeAll<ItemRecord>(database, pageSql, [...filter.params], trace),
+  );
+  sessionQueryExactRevisionCache.rememberProjection(identity, records);
+  return records;
+};
+
 const runSessionPage = (
   database: SessionQuerySqliteDatabase,
   input: SessionQueryRequest,
@@ -674,48 +789,32 @@ const runSessionPage = (
   const requestFingerprint = sessionQueryFingerprint(request);
   const offset = offsetFromCursor(request.cursor, request.revision, requestFingerprint);
   const filter = buildSessionQuerySqlFilter(request);
-  const countSql = `SELECT
-    COUNT(*) AS session_count,
-    COUNT(DISTINCT campaign_key) AS item_count
-    FROM session_rows
-    WHERE ${filter.where}`;
-  const counts = executeGet<CountRecord>(database, countSql, filter.params, trace) ?? {
-    item_count: 0,
-    session_count: 0,
-  };
+  const identity = sessionQueryPageIdentity(database, request.revision, requestFingerprint, trace);
+  const counts = resolveSessionQueryTotals(database, request, identity, filter, trace);
   const order = buildSessionQuerySqlOrder(request.sort, 'item_identity_rank', 'item_ordinal');
   const useExactCostSort = request.sort.some(({ id }) => CAMPAIGN_EXACT_COST_SORT_FIELDS.has(id));
-  const campaignCtes = [
-    campaignFilteredCte(filter.where),
-    campaignRollupCte(filter.where !== '1 = 1'),
-    campaignProjectionCtes,
-    ...(useExactCostSort ? [campaignExactCostCtes] : []),
-    campaignItemCte(useExactCostSort),
-  ].join(',\n');
-  const pageSql = `WITH${useExactCostSort ? ' RECURSIVE' : ''} ${campaignCtes}
-    SELECT * FROM campaign_items ORDER BY ${order} LIMIT ? OFFSET ?`;
-  const pageWithSentinel = executeAll<ItemRecord>(
-    database,
-    pageSql,
-    [...filter.params, request.pageSize + 1, offset],
-    trace,
+  const orderedRecords = resolveSessionQueryProjection(database, identity, filter, order, useExactCostSort, trace);
+  const pageWithSentinel = measureSessionQueryPerfPhase('slice', () =>
+    orderedRecords.slice(offset, offset + request.pageSize + 1),
   );
   const hasMore = pageWithSentinel.length > request.pageSize;
   const pageRecords = pageWithSentinel.slice(0, request.pageSize);
-  hydrateCampaignRoots(database, pageRecords, trace);
-  hydrateExactCampaignCosts(database, pageRecords, filter, trace);
-  const items: SessionPageItem[] = pageRecords.map((record) => ({
-    campaignKey: record.campaign_key!,
-    kind: 'campaign',
-    row: campaignDisplayRow(record),
-  }));
+  const items: SessionPageItem[] = measureSessionQueryPerfPhase('materialize', () => {
+    hydrateCampaignRoots(database, pageRecords, trace);
+    hydrateExactCampaignCosts(database, pageRecords, filter, trace);
+    return pageRecords.map((record) => ({
+      campaignKey: record.campaign_key!,
+      kind: 'campaign' as const,
+      row: campaignDisplayRow(record),
+    }));
+  });
   return {
-    itemCount: counts.item_count,
+    itemCount: counts.itemCount,
     items,
     nextCursor: hasMore ? createPageCursor(request.revision, requestFingerprint, offset + request.pageSize) : null,
     requestFingerprint,
     revision: request.revision,
-    sessionCount: counts.session_count,
+    sessionCount: counts.sessionCount,
   };
 };
 
@@ -746,6 +845,12 @@ const runCampaignChildren = (
     [request.campaignKey, ...filter.params, request.query.pageSize + 1, offset],
     trace,
   );
+  const rootRecord = executeGet<{ row_json: string }>(
+    database,
+    'SELECT row_json FROM session_rows WHERE campaign_key = ? AND campaign_root = 1 LIMIT 1',
+    [request.campaignKey],
+    trace,
+  );
   const hasMore = rows.length > request.query.pageSize;
   return {
     campaignKey: request.campaignKey,
@@ -756,6 +861,7 @@ const runCampaignChildren = (
       : null,
     requestFingerprint,
     revision: request.query.revision,
+    root: rootRecord ? parsePresentationRow(rootRecord.row_json) : null,
     sessionCount: count.session_count,
   };
 };

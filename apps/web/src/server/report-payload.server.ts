@@ -14,7 +14,7 @@ import {
   executeUsageEngineCommandToCompletion,
 } from './usage-engine-command.server';
 import { resolveUsageEngineControlClientForServer } from './usage-engine-control-resolver.server';
-import type { UsageReadModel } from './usage-read-model.server';
+import type { UsageReadModel, UsageReadModelCallOptions } from './usage-read-model.server';
 import { resolveUsageReadModelForServer } from './usage-read-model-resolver.server';
 
 const UNAVAILABLE_MESSAGE = 'Report data is unavailable.';
@@ -41,15 +41,20 @@ const revisionUnavailable = (): Extract<WebReportRevisionManifestResult, { reado
 export const getReportRevisionManifestForServer = async (
   readModel?: Pick<UsageReadModel, 'readCurrentManifest'>,
   resolveReadModel: () => Promise<Pick<UsageReadModel, 'readCurrentManifest'>> = resolveUsageReadModelForServer,
+  options: UsageReadModelCallOptions = {},
 ): Promise<WebReportRevisionManifestResult> => {
   try {
+    options.signal?.throwIfAborted();
     const activeReadModel = readModel ?? (await resolveReadModel());
+    const manifest = toWebManifest(await activeReadModel.readCurrentManifest(options));
+    options.signal?.throwIfAborted();
     return {
-      manifest: toWebManifest(await activeReadModel.readCurrentManifest()),
+      manifest,
       ok: true,
       requestFingerprint: reportManifestRequestFingerprint,
     };
   } catch {
+    options.signal?.throwIfAborted();
     return revisionUnavailable();
   }
 };
@@ -57,10 +62,13 @@ export const getReportRevisionManifestForServer = async (
 export const getReportRevisionBootstrapForServer = async (
   readModel?: Pick<UsageReadModel, 'readCurrentBootstrap'>,
   resolveReadModel: () => Promise<Pick<UsageReadModel, 'readCurrentBootstrap'>> = resolveUsageReadModelForServer,
+  options: UsageReadModelCallOptions = {},
 ): Promise<WebReportRevisionBootstrapResult> => {
   try {
+    options.signal?.throwIfAborted();
     const activeReadModel = readModel ?? (await resolveReadModel());
-    const { manifest, support } = await activeReadModel.readCurrentBootstrap();
+    const { manifest, support } = await activeReadModel.readCurrentBootstrap(options);
+    options.signal?.throwIfAborted();
     return {
       bootstrap: support,
       manifest: toWebManifest(manifest),
@@ -68,6 +76,7 @@ export const getReportRevisionBootstrapForServer = async (
       requestFingerprint: reportManifestRequestFingerprint,
     };
   } catch {
+    options.signal?.throwIfAborted();
     return revisionUnavailable();
   }
 };

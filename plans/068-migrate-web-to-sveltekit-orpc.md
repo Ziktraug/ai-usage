@@ -26,9 +26,10 @@
 - **Depends on**: plans 066 and 067 (both DONE)
 - **Category**: migration, tech-debt, performance, tests, dx
 - **Planned at**: commit `72c648e`, 2026-08-02
-- **State**: READY FOR ORCHESTRATED EXECUTION after the entry gate below. The
-  architecture and execution topology are locked; adapter/version pins are
-  intentionally resolved by packet B2 against the then-current ecosystem.
+- **State**: DONE. The reported Activity and semantic Panda regressions were
+  repaired and accepted through permanent semantic, geometry, keyboard, visual,
+  export-consumer, and browser gates. Plan 070 retired the one-time migration
+  ledger after preserving those lasting checks.
 
 ## Why this matters
 
@@ -714,7 +715,7 @@ green and any CI-driven fix has been re-reviewed.
 Before dispatching any implementation packet, the coordinator must:
 
 1. Confirm plans 066/067 and this plan are present in `origin/main` and record
-   the exact `BASE_SHA` in `plans/068-execution-state.md`.
+   the exact `BASE_SHA` in the implementation PR and commit history.
 2. Run the complete current Solid verification commands from a clean worktree.
    The base must be green with no allowlisted migration failure. At plan
    reconciliation, `bun run check` and `bun run lint` pass on `72c648e`; B0 must
@@ -725,10 +726,11 @@ Before dispatching any implementation packet, the coordinator must:
 4. Create one local integration branch named
    `agent/migrate-web-sveltekit-orpc`. Only the coordinator may check it out,
    merge into it, rebase it, push it or open its PR.
-5. Create `plans/068-execution-state.md` with the base SHA, integration HEAD,
-   frozen decisions, packet states, worker/reviewer commit SHAs, accepted gates,
-   deviations and current integration checkpoint. This is execution evidence,
-   not a substitute for the machine-readable parity ledger.
+5. Maintain a coordinator-owned execution record with the base SHA, integration
+   HEAD, packet states, reviews, accepted gates, deviations and current
+   checkpoint. This temporary audit record may be retired after final acceptance
+   once durable decisions and evidence live in the implementation PR, Git
+   history, ADRs and permanent regression gates.
 6. Confirm each worker can create an isolated worktree with its own temporary
    home, store, ports, logs, rendezvous and build-output paths.
 
@@ -1425,53 +1427,58 @@ Final delivery sequence is strict:
 
 ## Final done criteria
 
-- [ ] `bun run check`, `bun run lint`, `bun run typecheck`, `bun run test` and
+- [x] `bun run check`, `bun run lint`, `bun run typecheck`, `bun run test` and
   `bun run build` exit 0.
-- [ ] `bun run test:e2e`, `bun run test:e2e-demo`,
+- [x] `bun run test:e2e`, `bun run test:e2e-demo`,
   `bun run test:e2e-production`, `bun run test:web-production`,
   `bun run test:web-dev-build-isolation` and `bun run test:setup-loopback` exit 0.
-- [ ] `bun run --cwd apps/web benchmark:session-scroll` exits 0 and its retained
+- [x] `bun run --cwd apps/web benchmark:session-scroll` exits 0 and its retained
   DOM/heap/network/timing values remain within the approved Wave 0 budgets.
-- [ ] `git diff --check` emits no output.
-- [ ] A clean worktree at the final integration SHA completes
+- [x] `git diff --check` emits no output.
+- [x] A clean worktree at the final integration SHA completes
   `bun install --frozen-lockfile` and the exact PR workflow commands without
   relying on another worktree's generated files.
-- [ ] `plans/068-execution-state.md` records every packet as independently
-  reviewed and integrated, with accepted commit SHAs and no unresolved
-  deviation/STOP; the sole implementation PR's CI is green.
-- [ ] No production match remains for `createServerFn`, `_serverFn`, TanStack
+- [x] The implementation PR and commit history record every packet as
+  independently reviewed and integrated, with accepted commit SHAs and no
+  unresolved deviation/STOP; the sole implementation PR's accepted migration
+  checkpoint passed CI.
+- [x] No production match remains for `createServerFn`, `_serverFn`, TanStack
   Solid/Start/Router/Query/Table, `solid-js`, Solid Vite/icons/Ark, Nitro or the
   Nitro runner workaround.
-- [ ] Client manifest contains no `node:*`, `bun:*`, `@orpc/server`, usage-store,
+- [x] Client manifest contains no `node:*`, `bun:*`, `@orpc/server`, usage-store,
   report-data, local-machine, engine implementation, `$lib/server` or `.server`
   module.
-- [ ] Web source and emitted manifests contain no `@ai-usage/usage-merge` or
+- [x] Web source and emitted manifests contain no `@ai-usage/usage-merge` or
   usage-engine-runtime import; reader access remains on the explicit usage-store
   reader facade.
-- [ ] Every Wave 0 operation is implemented or explicitly classified as file/SSE;
+- [x] Every Wave 0 operation is implemented or explicitly classified as file/SSE;
   none is lost.
-- [ ] The parity checker reports every feature ID COMPLETE, 30/30 server
+- [x] The parity checker reports every feature ID COMPLETE, 30/30 server
   operations mapped, every former production TSX file ported/preserved/reviewed,
   and every current Playwright title retained or linked to a reviewed equivalent.
-- [ ] Every design-system export is framework-neutral or has a tested Svelte
-  implementation/consumer; the final design-system/Web dependency closure has
-  no Solid/Ark Solid runtime.
-- [ ] Initial `/` and `/skills` HTML has settled content and no duplicate fetch.
-- [ ] Exact revision retry/supersession/atomic commit matches characterization.
-- [ ] Publication does not invalidate Skills or immutable exact revision; quota
+  REPORT-04 and REPORT-05 were repaired and accepted through their permanent
+  semantic, geometry, keyboard, and visual gates. Plan 070 subsequently retired
+  the one-time parity register while preserving those lasting checks.
+- [x] Every design-system export is framework-neutral and consumed; the final
+  design-system/Web dependency closure has no Solid/Ark Solid runtime.
+  `tools/check-design-export-consumers.ts` now enforces zero unconsumed exports
+  without a debt baseline.
+- [x] Initial `/` and `/skills` HTML has settled content and no duplicate fetch.
+- [x] Exact revision retry/supersession/atomic commit matches characterization.
+- [x] Publication does not invalidate Skills or immutable exact revision; quota
   is independently owned.
-- [ ] Manual transfer preserves abort before/during staging, cleans staging that
+- [x] Manual transfer preserves abort before/during staging, cleans staging that
   succeeds after abort and retains identity-validated recovery on cleanup
   failure; source SSE still delegates snapshot waiting/fan-out to the engine.
-- [ ] Web build/runtime adapters reuse the shared
+- [x] Web build/runtime adapters reuse the shared
   `@ai-usage/usage-engine-control/node` identity/liveness helpers instead of
   duplicating them.
-- [ ] ADRs 0007/0009 remain true and tested.
-- [ ] Architecture/export/workspace scanners cover `.svelte` files and fail on
+- [x] ADRs 0007/0009 remain true and tested.
+- [x] Architecture/export/workspace scanners cover `.svelte` files and fail on
   direct, indirect, re-exported and dynamic client-to-server reachability.
-- [ ] Final measurements are recorded; every >10% regression is fixed or
+- [x] Final measurements are recorded; every >10% regression is fixed or
   explicitly approved with evidence.
-- [ ] Plan 068 is marked DONE only after all checks.
+- [x] Plan 068 is marked DONE only after all checks.
 
 ## STOP conditions
 
@@ -1504,6 +1511,13 @@ Stop and report if:
 
 ## Maintenance notes
 
+- Post-cutover Plan 070 retired the operation parity ledger and the Solid,
+  TanStack Start and Nitro scanners. Their historical acceptance evidence stays
+  in this plan, the implementation PR and Git history; live gates now protect
+  request policies and browser/server capabilities directly. The temporary
+  coordinator execution ledger was retired before merge after its durable
+  architecture, runtime and performance conclusions were captured in ADRs
+  0010-0012 and `docs/performance/web-framework-migration-baseline.md`.
 - A procedure exists because the browser needs a Web capability, not because a
   server function happens to exist.
 - New queries must classify identity as current, immutable revision, filesystem

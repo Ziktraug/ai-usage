@@ -1,18 +1,27 @@
 {
-  "extends": "../../tsconfig.json",
+  "extends": "./.svelte-kit/check/tsconfig.json",
   "compilerOptions": {
-    "jsx": "preserve",
-    "jsxImportSource": "solid-js",
-    "lib": ["DOM", "DOM.Iterable", "ES2023"],
-    "types": ["vite/client", "bun"],
-    "strictNullChecks": true
+    "allowImportingTsExtensions": true,
+    "exactOptionalPropertyTypes": true,
+    "noUncheckedIndexedAccess": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "types": ["bun", "vite/client"]
   },
   "include": [
+    ".svelte-kit/check/ambient.d.ts",
+    ".svelte-kit/check/env.d.ts",
+    ".svelte-kit/check/non-ambient.d.ts",
+    ".svelte-kit/check/types/**/$types.d.ts",
+    "src/**/*.svelte",
     "src/**/*.ts",
-    "src/**/*.tsx",
-    "vite.config.ts",
-    "vite-*.ts",
+    "browser-request-abort-allowance.test.ts",
     "panda.config.ts",
-    "styled-system"
+    "server-state-*.test.ts",
+    "production-clock.test.ts",
+    "rpc-test-transport.test.ts",
+    "sveltekit-*.ts",
+    "vite-*.ts",
+    "vite.config.ts"
   ]
 }

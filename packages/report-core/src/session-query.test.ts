@@ -851,6 +851,8 @@ describe('session query contracts', () => {
 
     const first = projectSessionCampaignChildren([parent, ...children], request);
     expect(first.campaignKey).toBe(campaignKey);
+    expect(first.requestFingerprint).toStartWith('session-campaign-children-v2:');
+    expect(first.root).toEqual(enrichSessionPresentationRow(parent));
     expect(first.itemCount).toBe(3);
     expect(first.sessionCount).toBe(3);
     expect(first.items.map((item) => item.sessionLabel)).toEqual(['child-a']);
@@ -937,6 +939,28 @@ describe('session query contracts', () => {
         childRequest,
       ).ok,
     ).toBe(true);
+    expect(() => {
+      const { root: _root, ...withoutRoot } = children;
+      return parseSessionCampaignChildrenResult(withoutRoot, childRequest);
+    }).toThrow(SessionQueryValidationError);
+    expect(() =>
+      parseSessionCampaignChildrenResult(
+        {
+          ...children,
+          root: enrichSessionPresentationRow(
+            sourcedRow('other-root', {
+              source: {
+                harnessKey: 'codex',
+                machineId: 'other-machine',
+                machineLabel: 'Other',
+                sourceSessionId: 'other-root',
+              },
+            }),
+          ),
+        },
+        childRequest,
+      ),
+    ).toThrow(SessionQueryValidationError);
 
     const neighborRequest = parseSessionNeighborRequest({ query: pageRequest, rowId: page.items[0]?.row.rowId });
     const neighbors = projectSessionNeighbors(rows, neighborRequest);

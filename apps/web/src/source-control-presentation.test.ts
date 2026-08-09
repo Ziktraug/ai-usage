@@ -1,11 +1,11 @@
 import { describe, expect, test } from 'bun:test';
 import { collectionSourceDefinitions, type SourceControlEntryView } from '@ai-usage/report-core/source-control';
+import { sourceToneClass } from './source-control-presentation';
 import {
   presentSourceProgress,
   presentSourceState,
   type SourcePresentationTone,
-  sourceToneClass,
-} from './source-control-presentation';
+} from './source-control-presentation-model';
 
 const source = (overrides: Partial<SourceControlEntryView> = {}): SourceControlEntryView => ({
   availability: 'detected',

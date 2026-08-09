@@ -9,16 +9,17 @@ const productionDependencyFields = new Set<DependencyField>([
   'optionalDependencies',
 ]);
 const ignoredDirectories = new Set([
+  '.direnv',
   '.git',
-  '.output',
   '.output-build',
-  '.output-dev',
+  '.svelte-kit',
   '.turbo',
+  '.worktrees',
   'dist',
   'node_modules',
   'styled-system',
 ]);
-const checkedExtensions = new Set(['.cjs', '.js', '.jsx', '.mjs', '.ts', '.tsx']);
+const checkedExtensions = new Set(['.cjs', '.js', '.jsx', '.mjs', '.svelte', '.ts', '.tsx']);
 const workspaceImportPattern =
   /\b(?:import|export)\s+(?:type\s+)?(?:[^'";]+?\s+from\s*)?['"](@ai-usage\/[^'"]+)['"]|\bimport\(\s*['"](@ai-usage\/[^'"]+)['"]\s*\)|\brequire\(\s*['"](@ai-usage\/[^'"]+)['"]\s*\)/g;
 const moduleImportPattern =
@@ -131,6 +132,8 @@ const boundaryPolicies: BoundaryPolicy[] = [
 ];
 
 const usageStorePackage = '@ai-usage/usage-store';
+const usageStorePerformanceTesting = `${usageStorePackage}/performance-testing`;
+const webPerformanceTestingImporter = 'apps/web/src/hooks.server.ts';
 const usageStoreReader = `${usageStorePackage}/reader`;
 const usageStoreWriter = `${usageStorePackage}/writer`;
 const usageStoreTesting = `${usageStorePackage}/testing`;
@@ -226,9 +229,14 @@ const targetImportReason = (
   if (
     (packageName === '@ai-usage/web' || packageName === '@ai-usage/cli') &&
     specifier.startsWith(`${usageStorePackage}/`) &&
-    specifier !== usageStoreReader
+    specifier !== usageStoreReader &&
+    !(
+      packageName === '@ai-usage/web' &&
+      relativeFile === webPerformanceTestingImporter &&
+      specifier === usageStorePerformanceTesting
+    )
   ) {
-    return 'Web and CLI may import only the usage-store reader facade.';
+    return 'Web and CLI may import only the usage-store reader facade; only the server hook may consume benchmark-only performance instrumentation.';
   }
   if (isPackageOrSubpath(specifier, usageMergePackage) && packageName !== engineRuntimePackage) {
     return 'Only usage-engine-runtime may import the writer-capable usage-merge package.';
@@ -496,7 +504,7 @@ const collectTargetImportViolations = async (
   return violations;
 };
 
-const sourceModuleExtensions = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.mts', '.cts'] as const;
+const sourceModuleExtensions = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.mts', '.cts', '.svelte'] as const;
 const emittedExtensionSources = new Map<string, readonly string[]>([
   ['.js', ['.ts', '.tsx']],
   ['.jsx', ['.tsx']],

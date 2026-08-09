@@ -1,0 +1,77 @@
+import {
+  breakdownTabFor,
+  type DashboardSearch,
+  dashboardSearchDefaultsFor,
+  type PrimaryDashboardTab,
+  primaryDashboardTabFor,
+  validateDashboardSearch,
+} from '../../../dashboard-search';
+import {
+  type DashboardSearchCodec,
+  dashboardUrlFor,
+  parseDashboardSearchUrl,
+} from '../../foundation/navigation/svelte/dashboard-url';
+
+export type ShellIconName = 'breakdown' | 'overview' | 'sessions' | 'skills' | 'sources' | 'sync';
+
+export interface ShellDestination {
+  readonly href: string;
+  readonly icon: ShellIconName;
+  readonly label: string;
+}
+
+export const shellManagementDestinations = [
+  { href: '/skills', icon: 'skills', label: 'Skills' },
+  { href: '/sync', icon: 'sync', label: 'Sync' },
+  { href: '/sources', icon: 'sources', label: 'Sources' },
+] as const satisfies readonly ShellDestination[];
+
+export const dashboardSearchCodec: DashboardSearchCodec<DashboardSearch> = {
+  defaults: dashboardSearchDefaultsFor('date'),
+  validate: validateDashboardSearch,
+};
+
+export const activeReportTab = (url: URL): PrimaryDashboardTab =>
+  primaryDashboardTabFor(parseDashboardSearchUrl(url, dashboardSearchCodec).tab);
+
+export const reportDestinationUrl = (currentUrl: URL, tab: PrimaryDashboardTab): URL => {
+  const search = parseDashboardSearchUrl(currentUrl, dashboardSearchCodec);
+  const nextTab = tab === 'breakdown' ? breakdownTabFor(search.tab) : tab;
+  const reportUrl = new URL(currentUrl);
+  reportUrl.pathname = '/';
+  return dashboardUrlFor(reportUrl, { ...search, tab: nextTab }, dashboardSearchCodec);
+};
+
+export const isManagementPath = (pathname: string): boolean =>
+  shellManagementDestinations.some(({ href }) => pathname === href || pathname.startsWith(`${href}/`));
+
+export const isActiveManagementDestination = (pathname: string, href: string): boolean =>
+  pathname === href || pathname.startsWith(`${href}/`);
+
+export const navigationTypeForScroll = (type: string): 'enter' | 'form' | 'goto' | 'leave' | 'link' | 'popstate' => {
+  if (type === 'enter' || type === 'form' || type === 'goto' || type === 'leave' || type === 'popstate') {
+    return type;
+  }
+  return 'link';
+};
+
+export const shouldPreserveReportScroll = (from: URL | null, to: URL | null): boolean =>
+  from?.pathname === '/' && to?.pathname === '/';
+
+export interface HistoryEntryState {
+  readonly aiUsageNavigationKey?: string;
+}
+
+export const ensureHistoryEntryKey = <State extends object>(
+  state: State & HistoryEntryState,
+  createKey: () => string,
+): {
+  readonly key: string;
+  readonly state: (State & HistoryEntryState) | (State & { readonly aiUsageNavigationKey: string });
+} => {
+  if (state.aiUsageNavigationKey) {
+    return { key: state.aiUsageNavigationKey, state };
+  }
+  const key = createKey();
+  return { key, state: { ...state, aiUsageNavigationKey: key } };
+};

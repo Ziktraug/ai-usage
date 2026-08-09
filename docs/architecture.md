@@ -125,9 +125,11 @@ server, forwards signals, reports the first child failure, and reaps both
 process trees. `bun run start:web-only` is an explicit diagnostic mode that
 reads an existing store and never starts an engine.
 
-Nitro/Vite development and production builds use separate `.output-dev` and
-`.output-build` trees. A narrow production-build lock prevents concurrent
-builders; production cleanup never targets active development output.
+SvelteKit check, development, and production phases use separate
+`.svelte-kit/{check,dev,build}` trees. The Bun adapter writes the production
+server to `.output-build/sveltekit`. A narrow production-build lock prevents
+concurrent builders; production cleanup never targets active development
+output.
 
 Demo runs web alone with committed synthetic data. Its import boundary rejects
 production store readers, control clients, engine modules, local history, and
@@ -236,6 +238,10 @@ source adapter, artifact runner, or filesystem lease.
 Owns the durable SQLite schema and explicitly separate exports:
 
 - `./reader`: existing-store compatibility and bounded query-only reads;
+- `./performance-testing`: benchmark-only, server-only Session query
+  instrumentation. It is inert unless `AI_USAGE_PERF=1`, may be imported only
+  by the Web server hook (plus repository benchmark tooling), and is never a
+  browser or general production API;
 - `./writer`: migrations, normalized imports, enrichment, merge mutations,
   checkpoints, atomic served-revision publication, recovery, and retention;
 - `./testing`: mixed temporary-store fixtures for tests only.
@@ -325,19 +331,47 @@ explicit exit so structured output and warning order remain unchanged.
 
 ### `apps/web`
 
-Owns Solid/TanStack SSR/UI, browser served-session coordination, source-control
-proxies, `/sync`, web read observability, and the unrelated `/skills` route.
-Report queries use `usage-store/reader` directly; commands use
+Owns SvelteKit SSR/UI, browser Query composition, the explicit oRPC
+endpoint at `apps/web/src/routes/rpc/[...rest]/+server.ts`, source-control SSE
+routes, manual-transfer file leaves, `/sync`, web read observability, and the
+unrelated `/skills` route. Report queries use the
+read-only server facades over `usage-store/reader`; commands use
 `usage-engine-control`. Web never imports collectors, engine-runtime, source
 adapters, or `usage-store/writer`.
 
 The SSR support bootstrap shares a 512 KiB budget across filter options,
 provider representative rows/statuses, and warnings. It returns exact omission
 counts and the UI identifies truncation; row-derived Overview, Breakdown, and
-Session destination queries remain independent from those omissions. TanStack
-Query owns ordinary finite Skills, project-source, and quota reads/mutations,
-but never owns exact report revisions. Client-visible modules must not import
-`*.server.*`.
+Session destination queries remain independent from those omissions.
+
+One root document-scoped TanStack Svelte Query client is the sole browser owner
+of remote results, freshness, request and mutation status, errors,
+cancellation, retained data, invalidation, hydration, and bounded collection.
+The shared contract-first oRPC client transports typed calls and exposes one
+generated Svelte Query utility tree; it does not decide visibility or
+freshness. Client-visible modules must not import `*.server.*`.
+
+Current report aliases and finite reads use named 30-second SWR policies.
+Exact report and Session keys include the immutable revision and canonical
+request fingerprint, remain fresh indefinitely, and are never swept by
+publication invalidation. The composite report-destination Query publishes one
+validated descriptor plus Overview and optional Breakdown or complete requested
+Session window atomically. Its single typed expiry recovery refreshes the
+bootstrap once. Failed background work retains the last complete Query value.
+
+Initial document loads create an isolated request Query client, await bounded
+Report, Skills, Sync, and quota data where useful, dehydrate the same keys, and
+clear the request cache. SPA route loads return empty hydration deltas rather
+than prefetching business data. The persistent browser client therefore serves
+fresh tab revisits immediately and revalidates stale entries in the background.
+Search, filter, range, sort, and report destination changes stay client-side and
+request no route data.
+
+Session paging rows and cursors remain in exact Query page data. Components own
+only requested depth, expansion, selection, focus, URL intent, and
+virtualization. The source EventSource retains one explicit connection and
+writes its latest bounded snapshot into Query; publication invalidates only
+current report aliases.
 
 On-demand Session Analysis first resolves a private `local-observed` anchor
 from the exact served revision, validates its local machine identity, and only
@@ -351,8 +385,10 @@ fixed budgets.
 
 ### `@ai-usage/design-system`
 
-Owns reusable Panda/Solid primitives, report style slots, and generated Panda
-consumer exports. See [generated tooling ownership](generated-tooling-ownership.md).
+Owns reusable Panda/Svelte primitives, report style slots, and generated Panda
+consumer exports. Its tested Svelte component surface is exported through
+`@ai-usage/design-system/svelte`. See
+[generated tooling ownership](generated-tooling-ownership.md).
 
 ## Wide-event observability
 

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { sessionSortFields } from '@ai-usage/report-core/session-query';
-import { sessionColumns } from './session-columns';
+import { sessionTableColumns } from './lib/features/sessions/table/session-columns';
 import {
   columnDiffFromVisibility,
   columnVisibilityForSessionPreset,
@@ -17,13 +17,13 @@ import {
 
 describe('session table schema', () => {
   test('keeps rendered columns aligned with the shared schema', () => {
-    expect(sessionColumns.map((column) => column.id)).toEqual(sessionColumnIds);
+    expect(sessionTableColumns.map((column) => column.id)).toEqual(sessionColumnIds);
     expect(sessionColumnIds).toEqual([...sessionSortFields]);
   });
 
   test('uses canonical compact headers and explains partial API pricing once in the API column header', () => {
-    const apiValueColumn = sessionColumns.find((column) => column.id === 'cost');
-    const ambiguousColumn = sessionColumns.find((column) => column.id === 'ambiguous');
+    const apiValueColumn = sessionTableColumns.find((column) => column.id === 'cost');
+    const ambiguousColumn = sessionTableColumns.find((column) => column.id === 'ambiguous');
 
     expect(apiValueColumn?.header).toBe('API value');
     expect(apiValueColumn?.meta?.title).toContain('Estimated API-equivalent value');

@@ -1,7 +1,6 @@
 import { css } from '@ai-usage/design-system/css';
 
 export const skillsDisclosurePanel = css({
-  p: '0',
   overflow: 'hidden',
 });
 
@@ -19,16 +18,6 @@ export const skillsPathText = css({
   fontSize: '12px',
   color: 'muted',
   overflowWrap: 'anywhere',
-});
-
-export const skillsDiagnosticRow = css({
-  border: 0,
-  display: 'grid',
-  gap: '3px',
-  p: '8px 0',
-  m: 0,
-  minW: 0,
-  borderTop: '1px solid token(colors.line)',
 });
 
 export const skillsReconcilePlanList = css({

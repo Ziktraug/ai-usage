@@ -1,164 +1,46 @@
-import { fileURLToPath } from 'node:url';
-import { tanstackStart } from '@tanstack/solid-start/plugin/vite';
-import { nitro } from 'nitro/vite';
-import { defineConfig, type Plugin } from 'vite';
-import solid from 'vite-plugin-solid';
-import { getServerRuntimeMode } from './src/server/runtime-mode.server';
-import { resolveViteRuntimePaths } from './vite-output-paths';
-import { createRetryableWarmup } from './vite-warmup';
+import { sveltekit } from '@sveltejs/kit/vite';
+import { defineConfig } from 'vite';
+import { resolveSvelteKitOutputPaths } from './sveltekit-output-paths.ts';
+import { webClientModuleManifest } from './vite-client-module-manifest.ts';
 
-const serverFunctionEntrypoints = [
-  './src/server/report-payload.ts',
-  './src/server/skills.ts',
-  './src/server/sync.ts',
-] as const;
+const LOOPBACK_HOST = '127.0.0.1' as const;
+const DEFAULT_DEVELOPMENT_PORT = '5173';
 
-const clientOptimizeDeps = [
-  '@pandacss/dev',
-  '@solid-primitives/refs',
-  '@tanstack/history',
-  '@tanstack/query-core',
-  '@tanstack/router-core',
-  '@tanstack/router-core/isServer',
-  '@tanstack/router-core/scroll-restoration-script',
-  '@tanstack/router-core/ssr/client',
-  '@tanstack/solid-query',
-  'effect',
-  'seroval',
-  'solid-js',
-  'solid-js/h',
-  'solid-js/html',
-  'solid-js/store',
-  'solid-js/web',
-] as const;
+export interface ViteDevelopmentServerBinding {
+  readonly host: typeof LOOPBACK_HOST;
+  readonly port?: number;
+  readonly strictPort?: boolean;
+}
 
-const solidDepScanPlugin = (): Plugin => ({
-  name: 'ai-usage-solid-dep-scan',
-  enforce: 'post',
-  configEnvironment: {
-    order: 'post',
-    handler(_name, config) {
-      config.optimizeDeps ??= {};
-      config.optimizeDeps.rolldownOptions ??= {};
-      config.optimizeDeps.rolldownOptions.transform ??= {};
-      config.optimizeDeps.rolldownOptions.transform.jsx = 'preserve';
+export const resolveViteDevelopmentServerBinding = (
+  command: 'build' | 'serve',
+  requestedPort: string | undefined,
+): ViteDevelopmentServerBinding => {
+  if (command !== 'serve') {
+    return { host: LOOPBACK_HOST };
+  }
+  const portValue = requestedPort ?? DEFAULT_DEVELOPMENT_PORT;
+  const port = Number(portValue);
+  if (!(Number.isSafeInteger(port) && port > 0 && port <= 65_535 && String(port) === portValue)) {
+    throw new Error('PORT must be a canonical integer between 1 and 65535.');
+  }
+  return { host: LOOPBACK_HOST, port, strictPort: true };
+};
+
+const { intermediateDirectory, viteCacheDirectory } = resolveSvelteKitOutputPaths();
+
+export default defineConfig(({ command }) => ({
+  cacheDir: viteCacheDirectory,
+  plugins: [
+    sveltekit(),
+    webClientModuleManifest({
+      manifestFile: `${intermediateDirectory}/private/client-modules.json`,
+    }),
+  ],
+  server: {
+    ...resolveViteDevelopmentServerBinding(command, process.env.PORT),
+    watch: {
+      ignored: ['**/.output-build/**', '**/.svelte-kit/**', '**/dist/**', '**/styled-system/**'],
     },
   },
-});
-
-const tanStackServerFunctionWarmupPlugin = (): Plugin => ({
-  name: 'ai-usage-tanstack-server-fn-warmup',
-  apply: 'serve',
-  configureServer(server) {
-    const runtimeMode = getServerRuntimeMode();
-    const warmup = async () => {
-      if (runtimeMode === 'demo') {
-        return;
-      }
-      const ssrEnvironment = server.environments.ssr;
-      if (!ssrEnvironment) {
-        return;
-      }
-
-      for (const entrypoint of serverFunctionEntrypoints) {
-        const filePath = fileURLToPath(new URL(entrypoint, import.meta.url));
-        await ssrEnvironment.transformRequest(filePath);
-      }
-    };
-
-    const ensureWarmup = createRetryableWarmup(warmup);
-
-    server.middlewares.use(async (req, _res, next) => {
-      if (!req.url?.startsWith('/_serverFn/')) {
-        next();
-        return;
-      }
-
-      if (runtimeMode === 'demo') {
-        _res.statusCode = 404;
-        _res.setHeader('cache-control', 'no-store');
-        _res.end();
-        return;
-      }
-
-      try {
-        await ensureWarmup();
-        next();
-      } catch (error) {
-        next(error);
-      }
-    });
-
-    server.httpServer?.once('listening', () => {
-      if (runtimeMode === 'demo') {
-        return;
-      }
-      ensureWarmup().catch((error: unknown) => {
-        server.config.logger.warn(
-          `[ai-usage] Failed to warm TanStack server functions: ${
-            error instanceof Error ? error.message : String(error)
-          }`,
-        );
-      });
-    });
-  },
-});
-
-export default defineConfig((configEnvironment) => {
-  const { nitroBuildDirectory, nitroOutputDirectory, viteCacheDirectory } = resolveViteRuntimePaths(configEnvironment);
-
-  return {
-    ...(getServerRuntimeMode() === 'demo' ? { envDir: false } : {}),
-    cacheDir: viteCacheDirectory,
-    optimizeDeps: {
-      entries: ['src/routes/**/*.tsx'],
-      include: [...clientOptimizeDeps],
-    },
-    plugins: [
-      tanStackServerFunctionWarmupPlugin(),
-      tanstackStart({
-        router: {
-          codeSplittingOptions: {
-            defaultBehavior: [['component']],
-            // Splitting the root route leaves the served app SSR-only: navigation
-            // never hydrates. Keep this one route eager; nested routes still split.
-            splitBehavior: ({ routeId }) => (routeId === '/' ? [] : undefined),
-          },
-        },
-      }),
-      solid({ ssr: true }),
-      nitro({
-        buildDir: nitroBuildDirectory,
-        handlers: [
-          {
-            handler: './server/routes/api/source-control.get.ts',
-            method: 'GET',
-            route: '/api/source-control',
-          },
-          {
-            handler: './server/routes/api/source-control.post.ts',
-            method: 'POST',
-            route: '/api/source-control/command',
-          },
-        ],
-        output: {
-          dir: nitroOutputDirectory,
-        },
-        plugins: ['./server/plugins/web-read-observability.ts'],
-        preset: 'bun',
-      }),
-      solidDepScanPlugin(),
-    ],
-    server: {
-      watch: {
-        // Panda and Nitro write these generated trees during check/build/dev.
-        // Watching them can import partial output or turn a production build
-        // into a development HMR/reload loop.
-        ignored: ['**/styled-system/**', '**/.output-build/**', '**/.output-dev/**', '**/dist/**'],
-      },
-    },
-    resolve: {
-      dedupe: ['solid-js', 'solid-js/web'],
-    },
-  };
-});
+}));

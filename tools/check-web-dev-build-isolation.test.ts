@@ -6,6 +6,7 @@ import {
   assertDirectoryIdentitiesPreserved,
   captureBoundedStream,
   createWebBuildIsolationEnvironment,
+  measureOperationDuration,
   snapshotDirectoryIdentities,
 } from './check-web-dev-build-isolation';
 
@@ -22,6 +23,22 @@ const createFixture = async (): Promise<string> => {
 };
 
 describe('web dev/build isolation helpers', () => {
+  test('measures only the awaited readiness operation and returns its value', async () => {
+    const clockSamples = [120, 475];
+    let operationCalls = 0;
+    const measurement = await measureOperationDuration(
+      () => {
+        operationCalls += 1;
+        return Promise.resolve('ready');
+      },
+      () => clockSamples.shift() ?? Number.NaN,
+    );
+
+    expect(measurement).toEqual({ durationMs: 355, value: 'ready' });
+    expect(operationCalls).toBe(1);
+    expect(clockSamples).toEqual([]);
+  });
+
   test('retains build-time log messages after startup exceeds the capture budget', async () => {
     let streamController: ReadableStreamDefaultController<Uint8Array> | undefined;
     const stream = new ReadableStream<Uint8Array>({
@@ -53,7 +70,7 @@ describe('web dev/build isolation helpers', () => {
 
   test('requires every recorded dev output inode while allowing new output', async () => {
     const fixture = await createFixture();
-    const retainedFile = path.join(fixture, 'nitro', 'server.mjs');
+    const retainedFile = path.join(fixture, 'generated', 'server.js');
     const replacedFile = path.join(fixture, 'vite', 'cache.bin');
     await Promise.all([mkdir(path.dirname(retainedFile), { recursive: true }), mkdir(path.dirname(replacedFile))]);
     await Promise.all([writeFile(retainedFile, 'server\n'), writeFile(replacedFile, 'cache\n')]);
@@ -83,6 +100,7 @@ describe('web dev/build isolation helpers', () => {
     expect(environment).toMatchObject({
       AI_USAGE_LOG_DIR: path.join(fixture, 'logs'),
       AI_USAGE_ROOT_DIR: '/synthetic/repository',
+      AI_USAGE_SVELTEKIT_PHASE: 'dev',
       HOME: path.join(fixture, 'home'),
       PATH: '/synthetic/bin',
       PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH: '/synthetic/chrome',

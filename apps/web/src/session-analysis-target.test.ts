@@ -8,7 +8,6 @@ import {
   sessionAnalysisTargetForSession,
   sessionAnalysisTargetForTopLevelRow,
 } from './session-analysis-target';
-import { canAnalyzeSession } from './session-detail-client';
 
 const requireValue = <Value>(value: Value | undefined, label: string): Value => {
   if (value === undefined) {
@@ -108,11 +107,5 @@ describe('session analysis target', () => {
       kind: 'session',
       reportRowId: campaign.root.rowId,
     });
-  });
-
-  test('does not offer analysis for Overview selection without a served revision', () => {
-    const target = sessionAnalysisTargetForSession(simpleRow);
-    expect(canAnalyzeSession({ revision: null, rowId: target.reportRowId })).toBe(false);
-    expect(canAnalyzeSession({ revision: 'revision-a', rowId: target.reportRowId })).toBe(true);
   });
 });

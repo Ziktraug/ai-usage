@@ -10,7 +10,6 @@ Global backlog for known follow-ups that should survive individual refactor logs
 
 ## Report UI Models
 
-- Move the small `Hero` and `TokenAnatomy` presentation calculations out of `Overview.tsx` if those components grow again.
 - Keep adding pure model tests when dashboard or overview calculations change.
 
 ## Manual Transfer
@@ -32,11 +31,17 @@ Global backlog for known follow-ups that should survive individual refactor logs
 - Audit `@ai-usage/design-system/report` after another app exists or a second report surface appears.
 - Promote genuinely reusable primitives from `@ai-usage/design-system/report` to the root `@ai-usage/design-system` API only when there is a concrete second consumer.
 - Keep report-specific style slots in `@ai-usage/design-system/report` rather than making the root API app-specific.
+- Defer Drawer/Tabs out of the Sessions initial preload only after Popover (or its Ark focus-trap dependency) is no longer shared with Drawer on the table path. Plan 071 measured a +2.13 KiB initial gzip regression for a naive split; see `docs/performance/web-session-optimization.md`.
+
+## Web Session Performance
+
+- Keyset pagination for session pages needs a separate ADR: Plan 071 removed CTE rebuild cost via exact-revision projection materialization; further OFFSET elimination would change the public cursor contract.
+- Revisit direct Sessions/Breakdown SSR shells only with fresh traces showing ≥10% usable-render gain without growing Overview initial gzip by more than 5 KiB.
 
 ## Tooling And Generated Files
 
 - Revisit direct `bun --filter @ai-usage/design-system build` calls in `apps/web` scripts if all local workflows move through `turbo run`.
-- Keep `docs/generated-tooling-ownership.md` updated when Panda, TanStack Router, Vite, Nitro, or Turbo generated outputs change.
+- Keep `docs/generated-tooling-ownership.md` updated when Panda, SvelteKit, Vite, the Bun adapter, or Turbo generated outputs change.
 
 ## Dashboard And Product
 

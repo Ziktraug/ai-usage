@@ -1,5 +1,6 @@
 import type { FocusedMachineFreshness, FocusedSupportResult } from '@ai-usage/report-core/focused-report-query';
 import type { UsageReportPayload } from '@ai-usage/report-core/report-data';
+import type { ReportRevisionBootstrapResult, ReportRevisionManifestResult } from '@ai-usage/web-contract/report';
 
 export type JsonValue = boolean | number | string | null | JsonValue[] | { [key: string]: JsonValue };
 
@@ -138,6 +139,38 @@ export const parseReportRequestFingerprint = (value: unknown): ReportRequestFing
     throw new Error('Report request fingerprint must be a non-empty opaque identifier');
   }
   return value as ReportRequestFingerprint;
+};
+
+const normalizeManifest = (
+  manifest: ReportRevisionManifestResult & { readonly ok: true },
+): WebReportRevisionManifest => ({
+  ...manifest.manifest,
+  revision: parseReportRevision(manifest.manifest.revision),
+});
+
+export const normalizeWebReportRevisionManifestResult = (
+  result: ReportRevisionManifestResult,
+): WebReportRevisionManifestResult => {
+  const requestFingerprint = parseReportRequestFingerprint(result.requestFingerprint);
+  if (!result.ok) {
+    return { error: result.error, ok: false, requestFingerprint };
+  }
+  return { manifest: normalizeManifest(result), ok: true, requestFingerprint };
+};
+
+export const normalizeWebReportRevisionBootstrapResult = (
+  result: ReportRevisionBootstrapResult,
+): WebReportRevisionBootstrapResult => {
+  const requestFingerprint = parseReportRequestFingerprint(result.requestFingerprint);
+  if (!result.ok) {
+    return { error: result.error, ok: false, requestFingerprint };
+  }
+  return {
+    bootstrap: result.bootstrap,
+    manifest: normalizeManifest(result),
+    ok: true,
+    requestFingerprint,
+  };
 };
 
 export const parseWebReportSliceRequest = (value: unknown): WebReportSliceRequest => {

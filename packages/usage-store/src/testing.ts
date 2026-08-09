@@ -17,3 +17,9 @@ export {
   updateUsageMachineLabel,
   usageStorePath,
 } from './index';
+export { createServedRevisionQueryDatabase } from './served-revision';
+export {
+  assertSessionQueryDatabase,
+  executeMaterializedSessionQuery,
+  type SessionQuerySqliteDatabase,
+} from './session-query-sqlite';

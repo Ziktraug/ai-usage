@@ -1,6 +1,8 @@
 import { collectionSourceDefinitions, parseSourceControlCommandResponse } from '@ai-usage/report-core/source-control';
 import type { Page } from '@playwright/test';
-import { expect, test } from './browser-test';
+import { FOCUSED_REPORT_E2E_CONTROL_KEY, FOCUSED_REPORT_E2E_ENABLED_KEY } from '../src/focused-report-e2e-fixture';
+import { expect, openHydratedReport, reportViewsFor, test, waitForHydratedNavigation } from './browser-test';
+import { createServerStateNetworkTrace } from './server-state-network';
 
 test.describe.configure({ mode: 'serial' });
 
@@ -10,6 +12,26 @@ const FULL_REVISION_PATTERN = /^e2e-revision-(\d+)-[a-f\d]{32}$/;
 const RUNNING_ELAPSED_PATTERN = /Running: Codex sessions \(\d+s elapsed\)/;
 const NEXT_DUE_PATTERN = /Next due: .* at \d{4}-\d{2}-\d{2}T/;
 let shouldRestoreCodexSessions = false;
+type FocusedResponseControlAction = 'arm' | 'release' | 'waitUntilBlocked';
+
+const controlFocusedResponse = async (page: Page, action: FocusedResponseControlAction): Promise<void> => {
+  await page.evaluate(
+    async ({ action: requestedAction, controlKey }) => {
+      const control = Reflect.get(globalThis, controlKey);
+      const command = control && typeof control === 'object' ? Reflect.get(control, requestedAction) : undefined;
+      if (typeof command !== 'function') {
+        throw new Error(`Focused E2E response control cannot ${requestedAction}`);
+      }
+      await Promise.resolve(Reflect.apply(command, control, []));
+    },
+    { action, controlKey: FOCUSED_REPORT_E2E_CONTROL_KEY },
+  );
+};
+
+const openHydratedSources = async (page: Page): Promise<void> => {
+  await page.goto('/sources');
+  await expect(page.locator('main[data-hydrated="true"]')).toBeVisible();
+};
 
 const sourceSurface = (page: Page, label: string) =>
   page
@@ -31,6 +53,7 @@ test.afterEach(async ({ request }) => {
   try {
     const response = await request.post('/api/source-control/command', {
       data: { command: 'set-enabled', enabled: true, sourceId: 'codex.sessions' },
+      headers: { origin: 'http://127.0.0.1:4174' },
     });
     const result = parseSourceControlCommandResponse(await response.json());
     if (!(response.ok() && result.ok)) {
@@ -44,10 +67,10 @@ test.afterEach(async ({ request }) => {
 
 test('states each source health once and keeps source metadata concise', async ({ context, page }) => {
   await context.grantPermissions(['clipboard-read', 'clipboard-write']);
-  await page.goto('/sources');
+  await openHydratedSources(page);
   await expect(page.getByRole('heading', { level: 1, name: 'Sources' })).toBeVisible();
 
-  const sourceCards = page.locator('[data-source-card]');
+  const sourceCards = page.locator('main [data-source-card]');
   const healthySummary = page.locator('[data-healthy-source-summary]');
   await expect(sourceCards).toHaveCount(0);
   await expect(healthySummary).toContainText(`${collectionSourceDefinitions.length} sources`);
@@ -95,7 +118,7 @@ test('states each source health once and keeps source metadata concise', async (
 });
 
 test('keeps business sources independent through a picked disable and publishes once', async ({ context, page }) => {
-  await page.goto('/sources');
+  await openHydratedSources(page);
   await expect(page.getByRole('heading', { level: 1, name: 'Sources' })).toBeVisible();
 
   const healthySummary = page.locator('[data-healthy-source-summary]');
@@ -114,15 +137,12 @@ test('keeps business sources independent through a picked disable and publishes 
   await expect(sessions.getByText('Running', { exact: true })).toBeVisible();
 
   const reportPage = await context.newPage();
-  await reportPage.goto('/');
-  await expect(reportPage.locator('main[data-hydrated="true"]')).toBeVisible();
-  const reportOwnerLoads = await reportPage.evaluate(() =>
-    Number(Reflect.get(globalThis, '__aiUsageE2EReportOwnerLoads') ?? 0),
-  );
+  await openHydratedReport(reportPage);
   const summary = reportPage.getByRole('region', { name: 'Collection source status' });
   const summaryCard = summary.locator('[data-source-card]');
   await summary.hover();
   await expect(summaryCard).toBeVisible();
+  await expect(summaryCard.getByText('Codex sessions', { exact: true })).toBeVisible();
   const runningDetail = summaryCard.getByText(RUNNING_ELAPSED_PATTERN);
   await expect(runningDetail).toBeVisible();
   const firstElapsed = await runningDetail.textContent();
@@ -142,13 +162,69 @@ test('keeps business sources independent through a picked disable and publishes 
   await expect(sessions.getByText('Pausing after current run', { exact: true })).toBeVisible();
   await expect(sessions.getByText('Disabled', { exact: true })).toBeVisible();
   await expect(quota.getByRole('checkbox', { name: 'Enabled' })).toBeChecked();
+  // The source-page revision proves one publication; the report summary proves
+  // that the other page observed that published snapshot through its SSE owner.
   await expect
     .poll(async () => publicationRevisionNumber(await revisionCode.getAttribute('title')))
     .toBe(initialRevision + 1);
-  await expect
-    .poll(() => reportPage.evaluate(() => Number(Reflect.get(globalThis, '__aiUsageE2EReportOwnerLoads') ?? 0)))
-    .toBe(reportOwnerLoads + 1);
+  await expect(summaryCard.getByText('Codex sessions', { exact: true })).toHaveCount(0);
 
+  await reportPage.close();
+});
+
+test('records a publication while a report destination is pending', async ({ context, page }) => {
+  await openHydratedSources(page);
+  await page.locator('[data-healthy-source-summary] > summary').click();
+  await page.locator('[data-publication-details] > summary').click();
+  const revisionCode = page.locator('code[title]').first();
+  const initialRevision = publicationRevisionNumber(await revisionCode.getAttribute('title'));
+  const sessions = sourceSurface(page, 'Codex sessions');
+
+  const reportPage = await context.newPage();
+  const trace = createServerStateNetworkTrace(reportPage);
+  await reportPage.goto('/skills');
+  await waitForHydratedNavigation(reportPage);
+  await reportPage.evaluate((enabledKey) => {
+    Reflect.set(globalThis, enabledKey, true);
+  }, FOCUSED_REPORT_E2E_ENABLED_KEY);
+  await reportViewsFor(reportPage).getByRole('link', { exact: true, name: 'Overview' }).click();
+  await expect(reportPage.locator('[data-report-complete-output]')).toBeVisible();
+  const workspace = reportPage.locator('[data-report-workspace]');
+  await workspace.evaluate((element) => element.setAttribute('data-plan-069-workspace', 'pending-publication'));
+  trace.checkpoint('pending-publication');
+
+  await controlFocusedResponse(reportPage, 'arm');
+  const search = reportPage.getByRole('textbox', {
+    name: 'Filter sessions by title, project, model, provider, or harness',
+  });
+  try {
+    await search.fill('pending-publication');
+    await controlFocusedResponse(reportPage, 'waitUntilBlocked');
+    await sessions.getByRole('button', { name: 'Run now' }).click();
+    await expect(sessions.getByText('Running', { exact: true })).toBeVisible();
+    shouldRestoreCodexSessions = true;
+    await sessions.getByRole('checkbox', { name: 'Enabled' }).uncheck();
+    await expect(sessions.getByText('Pausing after current run', { exact: true })).toBeVisible();
+    await expect
+      .poll(async () => publicationRevisionNumber(await revisionCode.getAttribute('title')))
+      .toBe(initialRevision + 1);
+  } finally {
+    await controlFocusedResponse(reportPage, 'release');
+  }
+
+  await expect(reportPage.locator('[data-report-refresh-pending]')).toHaveCount(0);
+  const workspaceWasRetained =
+    (await reportPage.locator('[data-report-workspace]').getAttribute('data-plan-069-workspace')) ===
+    'pending-publication';
+  expect(workspaceWasRetained).toBe(true);
+  process.stdout.write(
+    `${JSON.stringify({
+      scenario: 'publication-while-destination-pending',
+      type: 'plan-069-gate-0',
+      value: { counts: trace.counts('pending-publication'), workspaceWasRetained },
+    })}\n`,
+  );
+  trace.dispose();
   await reportPage.close();
 });
 
@@ -198,7 +274,7 @@ test('ignores a partial SSE snapshot after a complete catalogue', async ({ page 
     });
   });
 
-  await page.goto('/sources');
+  await openHydratedSources(page);
   await page.locator('[data-healthy-source-summary] > summary').click();
   for (const definition of collectionSourceDefinitions) {
     await expect(page.getByRole('heading', { level: 3, name: definition.label })).toBeVisible();
@@ -250,8 +326,8 @@ test('renders only deviation cards beside the healthy-source summary', async ({ 
     });
   });
 
-  await page.goto('/sources');
-  const sourceCards = page.locator('[data-source-card]');
+  await openHydratedSources(page);
+  const sourceCards = page.locator('main [data-source-card]');
   await expect(sourceCards).toHaveCount(1);
   await expect(sourceCards.getByRole('heading', { level: 3, name: 'Codex sessions' })).toBeVisible();
   await expect(sourceCards.getByText('Failed', { exact: true })).toBeVisible();
@@ -309,7 +385,7 @@ test('renders count-free source progress without assigning a non-finite native v
     });
   });
 
-  await page.goto('/sources');
+  await openHydratedSources(page);
   await page.locator('[data-healthy-source-summary] > summary').click();
   await expect(page.getByText('Reading local rollout history')).toBeVisible();
 });

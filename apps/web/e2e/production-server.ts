@@ -2,10 +2,12 @@ import { rmSync } from 'node:fs';
 import { chmod, mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import {
   HARNESS_FIXTURE_PROVIDER_STDERR_SENTINEL,
   seedHarnessHome,
 } from '@ai-usage/local-machine/testing/harness-home';
+import { CLOCK_EPOCH_ENVIRONMENT_KEY } from './production-clock';
 import { SESSION_SCROLL_EXPECTED_COUNT } from './session-scroll-fixture';
 
 const DEFAULT_CODEX_SESSION_COUNT = 205;
@@ -13,7 +15,9 @@ const DEFAULT_LISTENER_PORT = '4175';
 const SCALE_FIXTURE_ENVIRONMENT_KEY = 'AI_USAGE_SESSION_SCALE_E2E';
 const LISTENER_PORT_ENVIRONMENT_KEY = 'AI_USAGE_PRODUCTION_E2E_PORT';
 const LISTENER_PORT_PATTERN = /^\d{1,5}$/;
+const PRODUCTION_FIXTURE_EPOCH = '2026-07-03T12:00:00.000Z';
 const rootDirectory = path.resolve(import.meta.dirname, '../../..');
+const productionClockUrl = pathToFileURL(path.join(import.meta.dirname, 'production-clock.ts')).href;
 const scaleFixture = process.env[SCALE_FIXTURE_ENVIRONMENT_KEY] === '1';
 const listenerPort = process.env[LISTENER_PORT_ENVIRONMENT_KEY] ?? DEFAULT_LISTENER_PORT;
 
@@ -58,11 +62,12 @@ try {
       AI_USAGE_LOG_DIR: logDirectory,
       AI_USAGE_ROOT_DIR: rootDirectory,
       AI_USAGE_TEMP_ROOT: temporaryDirectory,
+      [CLOCK_EPOCH_ENVIRONMENT_KEY]: PRODUCTION_FIXTURE_EPOCH,
       HOME: temporaryHome,
       HOST: '127.0.0.1',
-      NITRO_HOST: '127.0.0.1',
-      NITRO_PORT: listenerPort,
+      IDLE_TIMEOUT: '45',
       NO_COLOR: '1',
+      BUN_OPTIONS: `--preload=${productionClockUrl}`,
       PATH: `${fixtureBinDirectory}${path.delimiter}${process.env.PATH ?? ''}`,
       PORT: listenerPort,
       TMPDIR: temporaryDirectory,
@@ -71,6 +76,7 @@ try {
       XDG_CONFIG_HOME: path.join(temporaryHome, '.config'),
       XDG_DATA_HOME: path.join(temporaryHome, '.local', 'share'),
       ...(process.env.CI === undefined ? {} : { CI: process.env.CI }),
+      ...(process.env.AI_USAGE_PERF === undefined ? {} : { AI_USAGE_PERF: process.env.AI_USAGE_PERF }),
     },
     stderr: 'inherit',
     stdout: 'inherit',
