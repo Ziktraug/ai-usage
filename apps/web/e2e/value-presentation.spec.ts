@@ -1,9 +1,16 @@
 import { expect, openHydratedReport, reportViewsFor, test, waitForFocusedReportSettled } from './browser-test';
 
-const FIXED_VALUE_COLUMN_PATTERN = / 96px$/;
-const PARTIALLY_MEASURED_PATTERN = /Partially measured/;
+const MODEL_ANALYSIS_COLUMNS = [
+  'Model',
+  'API value',
+  'Share',
+  'Processed tokens',
+  'Pricing coverage',
+  'API value / 1M tokens',
+] as const;
+const LOWER_BOUND_PATTERN = /^≥/;
 
-test('renders measured, partially measured, and zero Breakdown bars distinctly', async ({ page }) => {
+test('renders measured, partially measured, and zero Analysis values distinctly', async ({ page }) => {
   await page.setViewportSize({ height: 1200, width: 1440 });
   await openHydratedReport(page, '/?origin=%5B%5D');
   await page
@@ -11,38 +18,28 @@ test('renders measured, partially measured, and zero Breakdown bars distinctly',
     .getByRole('button', { exact: true, name: 'All time' })
     .click();
   await waitForFocusedReportSettled(page);
-  await reportViewsFor(page).getByRole('link', { exact: true, name: 'Breakdown' }).click();
+  await reportViewsFor(page).getByRole('link', { exact: true, name: 'Analysis' }).click();
   await waitForFocusedReportSettled(page);
 
   const breakdown = page.getByRole('tabpanel', { name: 'Models' });
   await expect(breakdown).toBeVisible();
 
-  const measuredRows = breakdown.locator('[data-price-state="measured"]');
-  const partiallyMeasuredRows = breakdown.locator('[data-price-state="partially measured"]');
-  const zeroRows = breakdown.locator('[data-price-state="zero"]');
+  const modelTable = breakdown.getByRole('table', { name: 'Model API-value analysis' });
+  await expect(modelTable).toBeVisible();
+  await expect(modelTable.getByRole('columnheader')).toHaveText(MODEL_ANALYSIS_COLUMNS);
+  await expect(breakdown.locator('[data-model-analysis-cards]')).toBeHidden();
+
+  const measuredRows = modelTable.locator('[data-price-state="measured"]');
+  const partiallyMeasuredRows = modelTable.locator('[data-price-state="partially measured"]');
+  const zeroRows = modelTable.locator('[data-price-state="zero"]');
 
   await expect(measuredRows.first()).toBeVisible();
   await expect(partiallyMeasuredRows.first()).toBeVisible();
   await expect(zeroRows.first()).toBeVisible();
   await expect(partiallyMeasuredRows.first()).toContainText('Partially measured');
-
-  const measuredBar = measuredRows.first().locator('[data-price-bar]');
-  const zeroBar = zeroRows.first().locator('[data-price-bar]');
-  const partiallyMeasuredBar = partiallyMeasuredRows.first().locator('[data-price-bar]');
-  await expect(zeroBar).toHaveAttribute('data-width-percent', '0');
-  await expect(partiallyMeasuredBar).toHaveAttribute('aria-label', PARTIALLY_MEASURED_PATTERN);
-
-  expect(Number(await measuredBar.getAttribute('data-width-percent'))).toBeGreaterThan(0);
-  expect(await partiallyMeasuredBar.evaluate((element) => getComputedStyle(element).borderTopStyle)).toBe('dashed');
-  expect(await zeroBar.evaluate((element) => getComputedStyle(element).borderTopStyle)).not.toBe('dashed');
-
-  const [panelBox, measuredRowBox] = await Promise.all([breakdown.boundingBox(), measuredRows.first().boundingBox()]);
-  expect(measuredRowBox?.width ?? 0).toBeGreaterThanOrEqual((panelBox?.width ?? 0) - 4);
-  await expect(measuredRows.first()).toHaveCSS('column-gap', '14px');
-  await expect(measuredRows.first()).toHaveCSS('grid-template-columns', FIXED_VALUE_COLUMN_PATTERN);
-  await expect(measuredBar).toHaveCSS('height', '6px');
-  await expect(measuredBar).toHaveCSS('margin-top', '8px');
-  await expect(measuredBar.locator(':scope > div')).toHaveCSS('border-radius', '999px');
+  await expect(partiallyMeasuredRows.first().getByText(LOWER_BOUND_PATTERN).first()).toBeVisible();
+  await expect(zeroRows.first().getByText('$0.00', { exact: true }).first()).toBeVisible();
+  const desktopModelRowCount = await modelTable.locator('[data-price-state]').count();
 
   await page.getByRole('tab', { exact: true, name: 'Harnesses & providers' }).click();
   const harnessBreakdown = page.getByRole('tabpanel', { name: 'Harnesses & providers' });
@@ -66,10 +63,26 @@ test('renders measured, partially measured, and zero Breakdown bars distinctly',
     .allTextContents();
   expect(harnessShares.slice(0, 4)).toEqual(['66%', '34%', '0.0%', '0.0%']);
 
-  await page.setViewportSize({ height: 1200, width: 361 });
+  await page.setViewportSize({ height: 844, width: 390 });
   await page.getByRole('tab', { exact: true, name: 'Models' }).click();
-  await expect(page.getByRole('tabpanel', { name: 'Models' }).locator('[data-report-sharing-actions]')).toHaveCSS(
-    'height',
-    '30px',
-  );
+  const mobileModels = page.getByRole('tabpanel', { name: 'Models' });
+  const modelCards = mobileModels.getByRole('list', { name: 'Model API-value analysis' });
+  await expect(modelCards).toBeVisible();
+  await expect(mobileModels.locator('[data-model-analysis-table]')).toBeHidden();
+  await expect(modelCards.getByRole('article')).toHaveCount(desktopModelRowCount);
+  await expect(
+    modelCards.locator('[data-price-state="partially measured"]').first().getByText(LOWER_BOUND_PATTERN).first(),
+  ).toBeVisible();
+  await expect(
+    modelCards.locator('[data-price-state="zero"]').first().getByText('$0.00', { exact: true }).first(),
+  ).toBeVisible();
+
+  const actionHeights = await mobileModels
+    .locator('[data-report-sharing-actions] button, [data-report-sharing-actions] a')
+    .evaluateAll((elements) => elements.map((element) => element.getBoundingClientRect().height));
+  expect(actionHeights.length).toBeGreaterThan(0);
+  expect(actionHeights.every((height) => height >= 44)).toBe(true);
+  expect(
+    await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth),
+  ).toBeLessThanOrEqual(0);
 });

@@ -299,8 +299,8 @@ test('records destination request counts and report DOM identity', async ({ page
   trace.checkpoint('destination-navigation');
 
   const views = reportViewsFor(page);
-  await views.getByRole('link', { exact: true, name: 'Breakdown' }).click();
-  await expect(page.getByText('By model', { exact: true })).toBeVisible();
+  await views.getByRole('link', { exact: true, name: 'Analysis' }).click();
+  await expect(page.getByRole('heading', { exact: true, name: 'Models' })).toBeVisible();
   await views.getByRole('link', { exact: true, name: 'Sessions' }).click();
   await expect(page.locator('[data-session-surface="desktop"]')).toBeVisible();
   await views.getByRole('link', { exact: true, name: 'Overview' }).click();

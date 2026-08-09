@@ -13,6 +13,14 @@ const MAX_DASHBOARD_METRIC_COLUMNS = 4;
 const MAX_ALIGNMENT_DRIFT_PX = 1;
 const MIN_CONTENT_ABOVE_FOLD_PX = 10;
 const MOBILE_VIEWPORT = { height: 844, width: 390 };
+const MODEL_ANALYSIS_COLUMNS = [
+  'Model',
+  'API value',
+  'Share',
+  'Processed tokens',
+  'Pricing coverage',
+  'API value / 1M tokens',
+] as const;
 const FIRST_READ_SCENARIOS = [
   { colorScheme: 'light', name: '1440x900-light', viewport: { height: 900, width: 1440 } },
   { colorScheme: 'light', name: '1280x900-light', viewport: { height: 900, width: 1280 } },
@@ -228,8 +236,8 @@ test('renders secondary status only on Overview and puts Projects before closed 
   }
 
   await page.goto('/');
-  await page.getByRole('link', { exact: true, name: 'Breakdown' }).click();
-  await page.getByRole('tablist', { name: 'Breakdown dimension' }).getByRole('tab', { name: 'Projects' }).click();
+  await page.getByRole('link', { exact: true, name: 'Analysis' }).click();
+  await page.getByRole('tablist', { name: 'Analysis dimension' }).getByRole('tab', { name: 'Projects' }).click();
   const projectsPanel = page.locator('[data-projects-panel]');
   const projectSummary = projectsPanel.getByRole('table');
   const management = projectsPanel.locator('details');
@@ -420,3 +428,71 @@ test('keeps the mobile filter stack coherent with content above the fold', async
     MIN_CONTENT_ABOVE_FOLD_PX,
   );
 });
+
+for (const scenario of FIRST_READ_SCENARIOS) {
+  test(`keeps one responsive Models representation accessible in ${scenario.name}`, async ({ page }, testInfo) => {
+    await page.emulateMedia({ colorScheme: scenario.colorScheme, reducedMotion: 'reduce' });
+    await page.setViewportSize(scenario.viewport);
+    await openHydratedReport(page, '/?tab=models');
+
+    const panel = page.locator('[data-breakdown-panel="models"]');
+    const table = panel.locator('[data-model-analysis-table]');
+    const cards = panel.locator('[data-model-analysis-cards]');
+    await expect(panel.getByRole('heading', { exact: true, name: 'Models' })).toBeVisible();
+    if (scenario.viewport.width >= 1280) {
+      await expect(table).toBeVisible();
+      await expect(cards).toBeHidden();
+      await expect(table.getByRole('columnheader')).toHaveText(MODEL_ANALYSIS_COLUMNS);
+      expect(await table.locator('[data-price-state]').count()).toBeGreaterThan(0);
+    } else {
+      await expect(table).toBeHidden();
+      await expect(cards).toBeVisible();
+      expect(await cards.getByRole('article').count()).toBeGreaterThan(0);
+      const targetHeights = await panel
+        .locator('input:visible, button:visible, a:visible')
+        .evaluateAll((elements) => elements.map((element) => element.getBoundingClientRect().height));
+      expect(targetHeights.length).toBeGreaterThan(0);
+      expect(targetHeights.every((height) => height >= 44)).toBe(true);
+    }
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth),
+    ).toBeLessThanOrEqual(0);
+    const clippedActionCount = await panel
+      .locator('input:visible, button:visible, a:visible')
+      .evaluateAll((elements) => elements.filter((element) => element.scrollWidth > element.clientWidth + 1).length);
+    expect(clippedActionCount).toBe(0);
+    const sourceStatusLabel = page
+      .getByRole('region', { name: 'Collection source status' })
+      .locator('a > span:not([aria-hidden])')
+      .first();
+    if ((await sourceStatusLabel.count()) > 0) {
+      expect(
+        await sourceStatusLabel.evaluate((element) => element.scrollWidth - element.clientWidth),
+      ).toBeLessThanOrEqual(0);
+    }
+
+    const screenshot = await page.screenshot({ animations: 'disabled' });
+    await testInfo.attach(`analysis-${scenario.name}`, { body: screenshot, contentType: 'image/png' });
+    const smokeDirectory = process.env.AI_USAGE_PLAN073_SMOKE_DIR;
+    if (smokeDirectory) {
+      await page.screenshot({
+        animations: 'disabled',
+        path: `${smokeDirectory}/ai-usage-plan073-step6-analysis-${scenario.name}.png`,
+      });
+    }
+    if (scenario.viewport.width < 1280) {
+      await cards.getByRole('article').first().scrollIntoViewIfNeeded();
+      const cardsScreenshot = await page.screenshot({ animations: 'disabled' });
+      await testInfo.attach(`analysis-${scenario.name}-cards`, {
+        body: cardsScreenshot,
+        contentType: 'image/png',
+      });
+      if (smokeDirectory) {
+        await page.screenshot({
+          animations: 'disabled',
+          path: `${smokeDirectory}/ai-usage-plan073-step6-analysis-${scenario.name}-cards.png`,
+        });
+      }
+    }
+  });
+}

@@ -11,15 +11,21 @@ import {
   waitForHydratedSkills,
 } from './browser-test';
 
-const TOP_SESSION_PATTERN = /Top session/;
 const RGB_COMPONENT_PATTERN = /[\d.]+/g;
-const NAVIGATION_DESTINATIONS = ['Overview', 'Sessions', 'Breakdown', 'Skills', 'Sync', 'Sources'] as const;
+const NAVIGATION_DESTINATIONS = ['Overview', 'Sessions', 'Analysis', 'Skills', 'Sync', 'Sources'] as const;
 const routes = [
   { heading: 'Usage report', path: '/' },
   { heading: 'Skill management', path: '/skills' },
   { heading: 'Sources', path: '/sources' },
   { heading: 'Sync', path: '/sync' },
 ] as const;
+
+const overviewTopSessionTrigger = (page: Page): Locator =>
+  page
+    .getByRole('heading', { level: 2, name: 'Top sessions' })
+    .locator('xpath=ancestor::section[1]')
+    .getByRole('button')
+    .first();
 
 const documentOverflow = () =>
   Math.max(document.body.scrollWidth, document.documentElement.scrollWidth) - document.documentElement.clientWidth;
@@ -157,7 +163,7 @@ for (const route of routes) {
     const mobileNavigation = page.locator('[data-app-navigation="mobile"]');
     await expect(mobileNavigation).toBeVisible();
     await expect(desktopNavigation).toHaveCount(0);
-    for (const label of ['Overview', 'Sessions', 'Breakdown']) {
+    for (const label of ['Overview', 'Sessions', 'Analysis']) {
       await expect(mobileNavigation.getByRole('link', { exact: true, name: label })).toBeVisible();
     }
     const manageButton = mobileNavigation.getByRole('button', { name: 'Manage' });
@@ -189,7 +195,7 @@ test('shows the report panel focus indicator only for keyboard navigation', asyn
   await openHydratedReport(page);
 
   const dashboardPanel = page.locator('[data-dashboard-panel]');
-  await dashboardPanel.locator(':scope > *').evaluateAll((elements) => {
+  await dashboardPanel.locator(':scope *').evaluateAll((elements) => {
     for (const element of elements) {
       (element as HTMLElement).style.pointerEvents = 'none';
     }
@@ -229,7 +235,7 @@ test('reduced motion keeps drawer feedback while making motion effectively immed
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await openHydratedReport(page);
 
-  await page.getByRole('button', { name: TOP_SESSION_PATTERN }).click();
+  await overviewTopSessionTrigger(page).click();
   const drawer = page.getByRole('dialog', { name: 'Session details' });
   await expect(drawer).toBeVisible();
 
@@ -264,10 +270,32 @@ test('Overview has no detectable accessibility violations', async ({ page }) => 
   await expectNoAxeViolations(page);
 });
 
+test('Sessions has no detectable accessibility violations', async ({ page }) => {
+  await openHydratedReport(page, '/?tab=sessions');
+  await expect(reportViewsFor(page).getByRole('link', { exact: true, name: 'Sessions' })).toHaveAttribute(
+    'aria-current',
+    'page',
+  );
+  await expect(page.getByRole('table')).toBeVisible();
+
+  await expectNoAxeViolations(page);
+});
+
+test('Analysis has no detectable accessibility violations', async ({ page }) => {
+  await openHydratedReport(page, '/?tab=models');
+  await expect(reportViewsFor(page).getByRole('link', { exact: true, name: 'Analysis' })).toHaveAttribute(
+    'aria-current',
+    'page',
+  );
+  await expect(page.getByRole('table', { name: 'Model API-value analysis' })).toBeVisible();
+
+  await expectNoAxeViolations(page);
+});
+
 test('the open session drawer has no detectable accessibility violations', async ({ page }) => {
   await openHydratedReport(page);
   await expect(page.getByText('5 / 6 sessions', { exact: true })).toBeVisible();
-  await page.getByRole('button', { name: TOP_SESSION_PATTERN }).click();
+  await overviewTopSessionTrigger(page).click();
   const drawer = page.getByRole('dialog', { name: 'Session details' });
   await expect(drawer).toBeVisible();
   await expect(drawer.getByRole('button', { name: 'Close session details' })).toBeVisible();

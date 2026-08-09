@@ -174,7 +174,7 @@ test('retries a failed lazy Analysis module without reloading the page', async (
     },
   );
 
-  await reportViewsFor(page).getByRole('link', { exact: true, name: 'Breakdown' }).click();
+  await reportViewsFor(page).getByRole('link', { exact: true, name: 'Analysis' }).click();
   await expect(page.getByText('Report view is temporarily unavailable.', { exact: true })).toBeVisible();
   await page.getByRole('button', { exact: true, name: 'Retry' }).click();
   await expect(page.getByRole('tabpanel', { name: 'Models' })).toBeVisible();
@@ -203,12 +203,14 @@ test('opens the existing Models deep state from the executive link and preserves
   await expect(page.getByRole('tabpanel', { name: 'Models' })).toBeVisible();
 });
 
-test('uses one primary navigation while preserving Breakdown deep links and sub-tabs', async ({ page }) => {
+test('uses one primary navigation while preserving Breakdown deep links behind the Analysis label', async ({
+  page,
+}) => {
   await openHydratedReport(page, '/?tab=sessions');
 
   const reportViews = reportViewsFor(page);
   await expect(reportViews).toHaveCount(1);
-  await expect(reportViews.getByRole('link')).toHaveText(['Overview', 'Sessions', 'Breakdown']);
+  await expect(reportViews.getByRole('link')).toHaveText(['Overview', 'Sessions', 'Analysis']);
   await expect(page.getByRole('tablist', { name: 'Dashboard sections' })).toHaveCount(0);
   await expect(reportViews.getByRole('link', { exact: true, name: 'Sessions' })).toHaveAttribute(
     'aria-current',
@@ -219,13 +221,13 @@ test('uses one primary navigation while preserving Breakdown deep links and sub-
   await expect(page.getByRole('region', { name: 'Activity' })).toHaveCount(0);
 
   await openHydratedReport(page, '/?tab=models');
-  await expect(reportViews.getByRole('link', { exact: true, name: 'Breakdown' })).toHaveAttribute(
+  await expect(reportViews.getByRole('link', { exact: true, name: 'Analysis' })).toHaveAttribute(
     'aria-current',
     'page',
   );
-  const breakdownTabs = page.getByRole('tablist', { name: 'Breakdown dimension' });
+  const breakdownTabs = page.getByRole('tablist', { name: 'Analysis dimension' });
   await expect(breakdownTabs.getByRole('tab', { name: 'Models' })).toHaveAttribute('aria-selected', 'true');
-  await expect(page.getByText('By model', { exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { exact: true, name: 'Models' })).toBeVisible();
   await expect(page.getByRole('region', { name: 'Report period' })).toBeVisible();
   await expect(page.getByRole('region', { name: 'Activity' })).toHaveCount(0);
 
@@ -237,11 +239,11 @@ test('uses one primary navigation while preserving Breakdown deep links and sub-
 
 test('copies the exact breakdown URL and exports only visible sorted model rows', async ({ page }) => {
   await openHydratedReport(page, '/?tab=models&breakdownSort=sessions');
-  await expect(page.getByText('By model', { exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { exact: true, name: 'Models' })).toBeVisible();
 
   const localSearch = page.getByRole('searchbox', { name: 'Search this breakdown' });
   await localSearch.fill('cod');
-  const visibleRows = page.locator('[data-price-state]');
+  const visibleRows = page.getByRole('table', { name: 'Model API-value analysis' }).locator('[data-price-state]');
   await expect(visibleRows).toHaveCount(2);
   await expect(visibleRows.getByRole('button')).toHaveText(['qwen3-coder', 'gpt-5.3-codex']);
 
@@ -628,8 +630,8 @@ test('offers keyboard-safe charts and mobile summaries at a narrow viewport', as
   await expect(page.getByRole('dialog')).toBeVisible();
   await page.keyboard.press('Escape');
 
-  await reportViewsFor(page).getByRole('link', { exact: true, name: 'Breakdown' }).click();
-  const breakdownTabs = page.getByRole('tablist', { name: 'Breakdown dimension' });
+  await reportViewsFor(page).getByRole('link', { exact: true, name: 'Analysis' }).click();
+  const breakdownTabs = page.getByRole('tablist', { name: 'Analysis dimension' });
   await expect(breakdownTabs.getByRole('tab', { name: 'Models' })).toHaveAttribute('aria-selected', 'true');
   await breakdownTabs.getByRole('tab', { name: 'Projects' }).click();
   await expect(page.getByRole('list', { name: 'Project summaries' })).toBeVisible();

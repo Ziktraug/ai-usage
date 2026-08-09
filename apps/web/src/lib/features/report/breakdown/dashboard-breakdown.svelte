@@ -13,10 +13,11 @@
   } from '../../../../dashboard-search';
   import type { CursorCommitAttributionFacet } from '../../../../report-data';
   import type { WebReportPayloadWithoutRows } from '../../../../web-report-payload';
-  import BreakdownPanel from './breakdown-panel.svelte';
   import CursorAttributionPanel from './cursor-attribution-panel.svelte';
   import HarnessProviderPanel from './harness-provider-panel.svelte';
+  import ModelAnalysisTable from './model-analysis-table.svelte';
   import ProjectsPanel from './projects-panel.svelte';
+  import { analysisTabs } from './styles';
 
   const section = css({ display: 'grid', gap: '14px', minW: 0 });
 
@@ -63,15 +64,12 @@
 
 {#snippet modelsPanel()}
   <section class={section}>
-    <BreakdownPanel
-      countLabel="models"
-      dimension="models"
+    <ModelAnalysisTable
       generatedAt={data.generatedAt}
       groups={data.models}
-      onFilter={onFieldFilter}
+      onModelFilter={(value) => onFieldFilter('model', value)}
       onSortChange={navigation.onSortChange}
       sort={navigation.sort}
-      title="By model"
     />
   </section>
 {/snippet}
@@ -107,14 +105,16 @@
   <section class={section}><CursorAttributionPanel rows={data.cursorRows} /></section>
 {/snippet}
 
-<Tabs
-  ariaLabel="Breakdown dimension"
-  items={[
-    { content: modelsPanel, label: 'Models', value: 'models' },
-    { content: harnessesPanel, label: 'Harnesses & providers', value: 'harness-providers' },
-    { content: projectsPanel, label: 'Projects', value: 'projects' },
-    { content: cursorPanel, label: 'Cursor AI', value: 'cursor-ai' },
-  ]}
-  onValueChange={changeTab}
-  value={selectedTab}
-/>
+<div class={analysisTabs}>
+  <Tabs
+    ariaLabel="Analysis dimension"
+    items={[
+      { content: modelsPanel, label: 'Models', value: 'models' },
+      { content: harnessesPanel, label: 'Harnesses & providers', value: 'harness-providers' },
+      { content: projectsPanel, label: 'Projects', value: 'projects' },
+      { content: cursorPanel, label: 'Cursor AI', value: 'cursor-ai' },
+    ]}
+    onValueChange={changeTab}
+    value={selectedTab}
+  />
+</div>
