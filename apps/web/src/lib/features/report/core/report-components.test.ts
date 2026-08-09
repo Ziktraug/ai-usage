@@ -6,6 +6,7 @@ import { svelte } from '@sveltejs/vite-plugin-svelte';
 import type { Component } from 'svelte';
 import { createServer } from 'vite';
 import { demoReportPayload } from '../../../../report-data';
+import { toWebReportPayload } from '../../../../web-report-payload';
 import { createWebQueryClient, dehydrateWebQueryClient } from '../../../query/client';
 import type { ReportQueryClient } from '../../../query/options/report';
 import { reportBootstrapKey } from '../../../query/options/report';
@@ -148,6 +149,27 @@ describe('report Svelte SSR components', () => {
     // The live destination — not the bootstrap placeholder — is what the server now emits.
     expect(body).toContain('data-dashboard-filter-stack');
     expect(body).not.toContain('data-report-bootstrap-overview');
+  });
+
+  it('renders filters, period, active summary, then the Overview in decision order', () => {
+    const queryClient = createWebQueryClient();
+    const data = {
+      mode: 'demo',
+      payload: toWebReportPayload(demoReportPayload),
+      queryState: dehydrateWebQueryClient(queryClient),
+    } as const;
+
+    const { body } = render(reportRoot, { props: { data } });
+    const orderedSurfaces = [
+      'data-dashboard-filter-stack',
+      'data-report-period-control',
+      'data-active-filters',
+      'data-report-overview',
+    ];
+    const positions = orderedSurfaces.map((surface) => body.indexOf(surface));
+
+    expect(positions.every((position) => position >= 0)).toBe(true);
+    expect(positions).toEqual([...positions].sort((left, right) => left - right));
   });
 
   it('marks retained output as stale while a refresh is in flight', () => {
