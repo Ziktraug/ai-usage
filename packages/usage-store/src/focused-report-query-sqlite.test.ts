@@ -230,10 +230,10 @@ describe('focused report SQLite queries', () => {
       const basicOverview = executeFocusedReportQuery(database, 'overview', basicOverviewRequest, ({ sql }) =>
         basicOverviewTrace.push(sql),
       );
-      expect(basicOverview).toEqual(projectFocusedOverview(rows, support, basicOverviewRequest));
       expect(basicOverviewTrace.some((sql) => sql.includes('source_row_json'))).toBe(false);
       expect(basicOverviewTrace.some((sql) => UNBOUNDED_PRESENTATION_SCAN_PATTERN.test(sql))).toBe(false);
       expect(basicOverviewTrace.every((sql) => !sql.includes('SELECT * FROM session_rows'))).toBe(true);
+      expect(basicOverviewTrace.some((sql) => sql.includes('executive_dimensions AS'))).toBe(true);
       const topSessionsSql = basicOverviewTrace.find((sql) => sql.includes('campaign_rollup AS'));
       expect(topSessionsSql).toBeDefined();
       expect(topSessionsSql).not.toContain('FROM visible AS matched');
@@ -242,6 +242,53 @@ describe('focused report SQLite queries', () => {
         throw new Error('The focused Overview query must return an Overview result');
       }
       expect(basicOverview.view.advancedSummary).toBeNull();
+      expect(basicOverview.view.executive).toEqual({
+        harnesses: [
+          {
+            key: 'Claude Code',
+            label: 'Claude Code',
+            priceMeasurement: { knownCost: 6, state: 'partially measured', unpricedFreshTokens: 4 },
+            processedTokens: 24,
+            sessions: 2,
+            total: 6,
+          },
+          {
+            key: 'Codex',
+            label: 'Codex',
+            priceMeasurement: { knownCost: 3, state: 'measured', unpricedFreshTokens: 0 },
+            processedTokens: 12,
+            sessions: 1,
+            total: 3,
+          },
+        ],
+        models: [
+          {
+            key: 'claude-opus-4-6',
+            label: 'claude-opus-4-6',
+            priceMeasurement: { knownCost: 6, state: 'measured', unpricedFreshTokens: 0 },
+            processedTokens: 19,
+            sessions: 2,
+            total: 6,
+          },
+          {
+            key: 'gpt-5.4',
+            label: 'gpt-5.4',
+            priceMeasurement: { knownCost: 3, state: 'measured', unpricedFreshTokens: 0 },
+            processedTokens: 12,
+            sessions: 1,
+            total: 3,
+          },
+          {
+            key: 'unpriced-model',
+            label: 'unpriced-model',
+            priceMeasurement: { knownCost: 0, state: 'partially measured', unpricedFreshTokens: 4 },
+            processedTokens: 5,
+            sessions: 1,
+            total: 0,
+          },
+        ],
+      });
+      expect(basicOverview).toEqual(projectFocusedOverview(rows, support, basicOverviewRequest));
       expect(basicOverview.view.punchcard).toBeNull();
       expect(basicOverview.view.sessionShape).toBeNull();
 
@@ -585,10 +632,40 @@ describe('focused report SQLite queries', () => {
     };
     try {
       const overview = executeFocusedReportQuery(database, 'overview', request);
-      expect(overview).toEqual(projectFocusedOverview(fixtureRows, support, request));
-      if (!('timeline' in overview) || overview.timeline === null) {
+      if (!('view' in overview) || overview.timeline === null) {
         throw new Error('The segmented focused query must return an Overview timeline');
       }
+      expect(overview.view.executive).toEqual({
+        harnesses: [
+          {
+            key: 'Codex',
+            label: 'Codex',
+            priceMeasurement: { knownCost: 6, state: 'measured', unpricedFreshTokens: 0 },
+            processedTokens: 110,
+            sessions: 1,
+            total: 6,
+          },
+        ],
+        models: [
+          {
+            key: 'claude-opus-4-6',
+            label: 'claude-opus-4-6',
+            priceMeasurement: { knownCost: 4, state: 'measured', unpricedFreshTokens: 0 },
+            processedTokens: 100,
+            sessions: 1,
+            total: 4,
+          },
+          {
+            key: 'gpt-5.4',
+            label: 'gpt-5.4',
+            priceMeasurement: { knownCost: 2, state: 'measured', unpricedFreshTokens: 0 },
+            processedTokens: 10,
+            sessions: 1,
+            total: 2,
+          },
+        ],
+      });
+      expect(overview).toEqual(projectFocusedOverview(fixtureRows, support, request));
       expect(overview.summary.sessionCount).toBe(1);
       expect(overview.timeline.series).toEqual([
         {
@@ -762,6 +839,28 @@ describe('focused report SQLite queries', () => {
       const breakdownRequest = { query: modelRequest.query };
       const breakdown = executeFocusedReportQuery(database, 'breakdown', breakdownRequest);
 
+      expect('view' in modelOverview ? modelOverview.view.executive : null).toEqual({
+        harnesses: [
+          {
+            key: 'Codex',
+            label: 'Codex',
+            priceMeasurement: { knownCost: 2, state: 'partially measured', unpricedFreshTokens: 1 },
+            processedTokens: 2,
+            sessions: 1,
+            total: 2,
+          },
+        ],
+        models: [
+          {
+            key: 'gpt-5.4',
+            label: 'gpt-5.4',
+            priceMeasurement: { knownCost: 2, state: 'partially measured', unpricedFreshTokens: 1 },
+            processedTokens: 2,
+            sessions: 1,
+            total: 2,
+          },
+        ],
+      });
       expect(modelOverview).toEqual(projectFocusedOverview([partialRow], support, modelRequest));
       expect(providerOverview).toEqual(projectFocusedOverview([partialRow], support, providerRequest));
       expect(breakdown).toEqual(projectFocusedBreakdown([partialRow], support, breakdownRequest));
@@ -804,6 +903,11 @@ describe('focused report SQLite queries', () => {
       const overview = executeFocusedReportQuery(database, 'overview', request);
       const breakdown = executeFocusedReportQuery(database, 'breakdown', breakdownRequest);
 
+      expect('view' in overview ? overview.view.executive.models.map(({ key }) => key) : []).toEqual([
+        'a-model',
+        'z-model',
+        'ä-model',
+      ]);
       expect(overview).toEqual(projectFocusedOverview(tieRows, support, request));
       expect(breakdown).toEqual(projectFocusedBreakdown(tieRows, support, breakdownRequest));
       expect('timeline' in overview ? overview.timeline?.series.map(({ key }) => key) : []).toEqual([
@@ -816,6 +920,102 @@ describe('focused report SQLite queries', () => {
         'z-model',
         'ä-model',
       ]);
+    } finally {
+      database.close();
+    }
+  });
+
+  test('bounds SQLite executive groups and combines the complete harness remainder into Other', async () => {
+    const fixtureRows: SerializedRow[] = [6, 5, 4, 3, 2].map((cost) => ({
+      ...row(`harness-${cost}`, cost, cost),
+      harness: `Harness ${cost}`,
+      model: `model-${cost}`,
+    }));
+    fixtureRows.push({
+      ...row('reserved-harness', 1, 1),
+      costKnown: false,
+      harness: '__ai_usage_other__',
+      model: 'model-1',
+      modelSegments: [
+        {
+          costApprox: 1,
+          costKnown: true,
+          model: 'model-1',
+          tokCr: 0,
+          tokCw: 0,
+          tokIn: 1,
+          tokOut: 0,
+        },
+        {
+          costApprox: 0,
+          costKnown: false,
+          model: 'unpriced-other',
+          tokCr: 1,
+          tokCw: 1,
+          tokIn: 0,
+          tokOut: 1,
+        },
+      ],
+      models: ['model-1', 'unpriced-other'],
+    });
+    const revisionDirectory = await mkdtemp(path.join(tmpdir(), 'ai-usage-focused-executive-bounds-'));
+    temporaryDirectories.add(revisionDirectory);
+    const database = openServedFixture(await publishFixture(revisionDirectory, fixtureRows, support), 'revision-a');
+    const request: FocusedOverviewRequest = {
+      includeAdvanced: false,
+      query: { ...overviewRequest.query, range: { from: null, to: null } },
+      timeline: { dimension: 'model', granularity: 'day' },
+    };
+    try {
+      const overview = executeFocusedReportQuery(database, 'overview', request);
+      if (!('view' in overview)) {
+        throw new Error('The executive bounds fixture must return an Overview result');
+      }
+
+      expect(overview.view.executive.harnesses.slice(0, 4).map(({ key }) => key)).toEqual([
+        'Harness 6',
+        'Harness 5',
+        'Harness 4',
+        'Harness 3',
+      ]);
+      expect(overview.view.executive.harnesses[4]).toEqual({
+        key: '___ai_usage_other__',
+        label: 'Other',
+        priceMeasurement: { knownCost: 3, state: 'partially measured', unpricedFreshTokens: 2 },
+        processedTokens: 12,
+        sessions: 2,
+        total: 3,
+      });
+      expect(overview.view.executive.models.map(({ key }) => key)).toEqual([
+        'model-6',
+        'model-5',
+        'model-4',
+        'model-3',
+        'model-2',
+      ]);
+      expect(overview.view.executive.models.some(({ label }) => label === 'Other')).toBe(false);
+      expect(overview).toEqual(projectFocusedOverview(fixtureRows, support, request));
+    } finally {
+      database.close();
+    }
+  });
+
+  test('returns mandatory empty SQLite executive groups when filters match no sessions', async () => {
+    const { database } = await fixture();
+    const request: FocusedOverviewRequest = {
+      includeAdvanced: false,
+      query: {
+        ...overviewRequest.query,
+        filters: { ...overviewRequest.query.filters, harness: ['Missing Harness'] },
+        range: { from: null, to: null },
+      },
+      timeline: { dimension: 'model', granularity: 'day' },
+    };
+    try {
+      const overview = executeFocusedReportQuery(database, 'overview', request);
+
+      expect('view' in overview ? overview.view.executive : null).toEqual({ harnesses: [], models: [] });
+      expect(overview).toEqual(projectFocusedOverview(rows, support, request));
     } finally {
       database.close();
     }
@@ -958,6 +1158,8 @@ describe('focused report SQLite queries', () => {
         throw new Error('The maximum focused query fixture must return an Overview result');
       }
       expect(overview.summary.sessionCount).toBe(maximumRows.length);
+      expect(overview.view.executive.harnesses.length).toBeLessThanOrEqual(5);
+      expect(overview.view.executive.models.length).toBeLessThanOrEqual(5);
 
       const breakdownTrace: string[] = [];
       const breakdown = executeFocusedReportQuery(database, 'breakdown', { query: request.query }, ({ sql }) =>

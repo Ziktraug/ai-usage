@@ -8,6 +8,7 @@ import {
   groupModelAnalytics,
   harnessProviderAnalyticsKey,
   type LineMeasurementAccumulator,
+  processedTokensForAnalytics,
 } from './analytics';
 import { type CursorCommitAttributionRow, isCursorCommitAttributionRow } from './datasets';
 import { parseProjectGroupConfigs } from './project-group';
@@ -289,6 +290,20 @@ export interface FocusedOverviewRecords {
   topCost: FocusedOverviewSessionItem | null;
 }
 
+export interface FocusedExecutiveGroup {
+  key: string;
+  label: string;
+  priceMeasurement: ApiPriceMeasurement;
+  processedTokens: number;
+  sessions: number;
+  total: number;
+}
+
+export interface FocusedExecutiveOverview {
+  harnesses: FocusedExecutiveGroup[];
+  models: FocusedExecutiveGroup[];
+}
+
 export interface FocusedPunchcard {
   cells: { cost: number; sessions: number }[][];
   maxSessions: number;
@@ -296,6 +311,7 @@ export interface FocusedPunchcard {
 
 export interface FocusedOverviewView {
   advancedSummary: { hasPunchcard: boolean; hasSessionShape: boolean; summary: string } | null;
+  executive: FocusedExecutiveOverview;
   heatmap: FocusedCalendarHeatmap | null;
   previousSummary: FocusedReportSummary | null;
   punchcard: FocusedPunchcard | null;
@@ -374,6 +390,8 @@ export type FocusedReportQueryKind = 'breakdown' | 'overview' | 'support';
 export type FocusedReportQueryResult = FocusedBreakdownResult | FocusedOverviewResult | FocusedSupportResult;
 
 const MAX_REVISION_LENGTH = 512;
+const MAX_EXECUTIVE_GROUPS = 5;
+const OTHER_EXECUTIVE_GROUP_KEY = '__ai_usage_other__';
 const MAX_TIMELINE_SERIES = 12;
 const OTHER_TIMELINE_SERIES_KEY = '__ai_usage_other__';
 const timelineGranularities = new Set<FocusedTimelineGranularity>(['day', 'month', 'week']);
@@ -887,6 +905,78 @@ const analyticsInput = (row: SessionPresentationRow): AnalyticsRowInput => ({
   usageUnavailable: row.usageUnavailable ?? false,
 });
 
+const executiveAnalyticsInput = (row: SessionPresentationRow): AnalyticsRowInput => ({
+  ...analyticsInput(row),
+  costLowerBound: usageRowApiPriceMeasurement(row).knownCost,
+});
+
+const focusedExecutiveGroupFromAnalytics = (group: AnalyticsGroup): FocusedExecutiveGroup => {
+  const priceMeasurement = apiPriceMeasurement({
+    costKnown: group.unpriced === 0,
+    freshTokens: group.unpricedFreshTokens,
+    knownCost: group.costSum,
+  });
+  return {
+    key: group.key,
+    label: group.key,
+    priceMeasurement,
+    processedTokens: processedTokensForAnalytics(group),
+    sessions: group.sessions,
+    total: priceMeasurement.knownCost,
+  };
+};
+
+const unusedExecutiveGroupKey = (groups: readonly FocusedExecutiveGroup[]): string => {
+  const keys = new Set(groups.map(({ key }) => key));
+  let key = OTHER_EXECUTIVE_GROUP_KEY;
+  while (keys.has(key)) {
+    key = `_${key}`;
+  }
+  return key;
+};
+
+export const buildFocusedExecutiveGroups = (
+  groups: readonly FocusedExecutiveGroup[],
+  aggregateRemainder: boolean,
+): FocusedExecutiveGroup[] => {
+  const ranked = [...groups].sort(
+    (left, right) => right.total - left.total || compareAnalyticsKeys(left.key, right.key),
+  );
+  if (ranked.length <= MAX_EXECUTIVE_GROUPS) {
+    return ranked;
+  }
+  if (!aggregateRemainder) {
+    return ranked.slice(0, MAX_EXECUTIVE_GROUPS);
+  }
+  const retained = ranked.slice(0, MAX_EXECUTIVE_GROUPS - 1);
+  const remainder = ranked.slice(MAX_EXECUTIVE_GROUPS - 1);
+  const priceMeasurement = combineApiPriceMeasurements(remainder.map((group) => group.priceMeasurement));
+  return [
+    ...retained,
+    {
+      key: unusedExecutiveGroupKey(ranked),
+      label: 'Other',
+      priceMeasurement,
+      processedTokens: remainder.reduce((total, group) => total + group.processedTokens, 0),
+      sessions: remainder.reduce((total, group) => total + group.sessions, 0),
+      total: priceMeasurement.knownCost,
+    },
+  ];
+};
+
+const buildFocusedExecutiveOverview = (rows: readonly SessionPresentationRow[]): FocusedExecutiveOverview => {
+  const knownCost = rows.reduce((total, row) => total + usageRowApiPriceMeasurement(row).knownCost, 0);
+  return {
+    harnesses: buildFocusedExecutiveGroups(
+      groupAnalytics(rows, executiveAnalyticsInput, (row) => row.harness, knownCost).map(
+        focusedExecutiveGroupFromAnalytics,
+      ),
+      true,
+    ),
+    models: buildFocusedExecutiveGroups(groupModelAnalytics(rows).map(focusedExecutiveGroupFromAnalytics), false),
+  };
+};
+
 const harnessProviderAnalyticsInput = (row: SessionPresentationRow): AnalyticsRowInput => ({
   ...analyticsInput(row),
   provider: row.providerDisplay,
@@ -1342,6 +1432,7 @@ export const projectFocusedOverviewFromPresentationRows = (
               hasSessionShape: sessionShape !== null,
               summary: `${analysisSummary.charAt(0).toUpperCase()}${analysisSummary.slice(1)} · ${visible.length} ${visible.length === 1 ? 'session' : 'sessions'}`,
             },
+      executive: buildFocusedExecutiveOverview(visible),
       heatmap: buildHeatmap(timelineRows),
       previousSummary: previousPeriodSummary(timelineRows, request.query, support.generatedAt),
       punchcard,
@@ -2034,14 +2125,56 @@ const assertAdvancedSummary = (value: unknown): void => {
   requireString(summary.summary, 'overview advanced summary.summary');
 };
 
+const assertExecutiveGroups = (value: unknown, label: string): void => {
+  if (!Array.isArray(value) || value.length > MAX_EXECUTIVE_GROUPS) {
+    throw new Error(`${label} must be an array of at most ${MAX_EXECUTIVE_GROUPS} groups`);
+  }
+  const keys = new Set<string>();
+  for (const [index, rawGroup] of value.entries()) {
+    const groupLabel = `${label}[${index}]`;
+    const group = requireRecord(rawGroup, groupLabel);
+    assertExactKeys(group, ['key', 'label', 'priceMeasurement', 'processedTokens', 'sessions', 'total'], groupLabel);
+    const key = requireString(group.key, `${groupLabel}.key`);
+    const displayLabel = requireString(group.label, `${groupLabel}.label`);
+    if (key.length === 0 || key !== key.trim() || keys.has(key)) {
+      throw new Error(`${label} keys must be non-empty, trimmed, and unique`);
+    }
+    if (displayLabel.length === 0 || displayLabel !== displayLabel.trim()) {
+      throw new Error(`${groupLabel}.label must be a non-empty trimmed string`);
+    }
+    keys.add(key);
+    requireNonNegativeSafeInteger(group.sessions, `${groupLabel}.sessions`);
+    requireFiniteNumber(group.processedTokens, `${groupLabel}.processedTokens`);
+    const total = requireFiniteNumber(group.total, `${groupLabel}.total`);
+    assertApiPriceMeasurement(group.priceMeasurement, `${groupLabel}.priceMeasurement`, total);
+  }
+};
+
+const assertExecutiveOverview = (value: unknown): void => {
+  const executive = requireRecord(value, 'overview executive');
+  assertExactKeys(executive, ['harnesses', 'models'], 'overview executive');
+  assertExecutiveGroups(executive.harnesses, 'overview executive.harnesses');
+  assertExecutiveGroups(executive.models, 'overview executive.models');
+};
+
 const assertOverviewView = (value: unknown, includeAdvanced: boolean): void => {
   const view = requireRecord(value, 'overview view');
   assertExactKeys(
     view,
-    ['advancedSummary', 'heatmap', 'previousSummary', 'punchcard', 'records', 'sessionShape', 'topSessions'],
+    [
+      'advancedSummary',
+      'executive',
+      'heatmap',
+      'previousSummary',
+      'punchcard',
+      'records',
+      'sessionShape',
+      'topSessions',
+    ],
     'overview view',
   );
   assertAdvancedSummary(view.advancedSummary);
+  assertExecutiveOverview(view.executive);
   assertHeatmap(view.heatmap);
   if (view.previousSummary !== null) {
     assertFocusedSummary(view.previousSummary, 'overview previous summary');
