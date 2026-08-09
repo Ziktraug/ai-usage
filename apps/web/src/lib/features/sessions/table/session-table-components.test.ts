@@ -84,6 +84,8 @@ describe('session table Svelte rendering', () => {
     expect(body).toContain('data-session-list-padding="0"');
     expect(body).toContain('data-session-row-height="188"');
     expect(body).toContain('data-session-card-height="180"');
+    expect(body).toContain('[&amp;_>_button]:min-h_44px');
+    expect(body).toContain('[&amp;_>_button]:min-w_44px');
     expect(body).toContain('data-session-row-id');
     expect(body).toContain('data-depth="0"');
     expect(body).toContain('data-session-paging-sentinel="mobile"');

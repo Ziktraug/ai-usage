@@ -173,10 +173,14 @@ test('keeps executive composition presentation-only and threads retained state t
   for (const source of [liveSource, syntheticSource]) {
     expect(source).toContain('onClearFilters: navigation.clearAllFilters');
     expect(source).toContain("onOpenModels: () => navigation.setBreakdownTab('models')");
-    expect(source).toContain('totalSessionCount:');
     expect(source).toContain('activeDestinationLoadFailed');
     expect(source).toContain('onRetry={retryReportDestination}');
   }
+  expect(liveSource).toContain('totalSessionCount:');
+  expect(syntheticSource).toContain('totalSessionCount,');
   expect(syntheticSource).toContain('hasOutput={true}');
+  expect(syntheticSource).toContain(
+    'responseFixture?.bootstrap.support.analytics.sessionCount ?? support.support.analytics.sessionCount',
+  );
   expect(syntheticSource).not.toContain('hasOutput={!pending}');
 });

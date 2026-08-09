@@ -622,6 +622,32 @@ test('offers keyboard-safe charts and mobile summaries at a narrow viewport', as
   await expect(page.locator('[data-session-surface="mobile"]')).toHaveCount(1);
   await expect(page.locator('[data-session-surface="desktop"]')).toHaveCount(0);
   await expect(page.getByRole('table')).toHaveCount(0);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(
+    true,
+  );
+  const sessionControlGeometry = await page
+    .locator('[data-session-surface="mobile"]')
+    .locator('button:visible, input:visible, a:visible, select:visible')
+    .evaluateAll((elements) =>
+      elements.map((element) => {
+        const box = element.getBoundingClientRect();
+        return {
+          clipped: element.scrollWidth > element.clientWidth + 1,
+          height: Math.floor(box.height),
+          name: element.getAttribute('aria-label') ?? element.textContent?.trim() ?? element.tagName,
+          width: Math.floor(box.width),
+        };
+      }),
+    );
+  expect(sessionControlGeometry.length).toBeGreaterThan(0);
+  expect(sessionControlGeometry.filter(({ clipped, height, width }) => clipped || height < 44 || width < 44)).toEqual(
+    [],
+  );
+  expect(
+    await page
+      .locator('[data-session-card-height]')
+      .evaluateAll((cards) => cards.every((card) => card.scrollHeight <= card.clientHeight)),
+  ).toBe(true);
   const mobileSort = page.getByRole('combobox', { name: 'Sort mobile session summaries' });
   expect(Math.round((await mobileSort.boundingBox())?.height ?? 0)).toBe(44);
   const sortDirection = page.getByRole('button', { name: 'Sort ascending' });

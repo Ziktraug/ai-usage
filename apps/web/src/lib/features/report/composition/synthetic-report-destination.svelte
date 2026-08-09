@@ -179,6 +179,8 @@
     { revision },
     { providerRows: allRows },
   );
+  const totalSessionCount =
+    responseFixture?.bootstrap.support.analytics.sessionCount ?? support.support.analytics.sessionCount;
   const syntheticMachineFreshness = {
     kind: 'available',
     machines: [{ id: 'fixture-machine', label: 'Fixture Machine', lastSeenAt: reportSupport.generatedAt }],
@@ -396,12 +398,12 @@
 {/snippet}
 {#snippet activeFilterSummary(_filterPending: boolean)}
   <ActiveFilters
-    hidden={Math.max(0, support.support.analytics.sessionCount - overview.summary.sessionCount)}
+    hidden={Math.max(0, totalSessionCount - overview.summary.sessionCount)}
     {navigation}
     pending={_filterPending}
     {presentMachineLabel}
     {search}
-    total={support.support.analytics.sessionCount}
+    total={totalSessionCount}
     visible={overview.summary.sessionCount}
   />
 {/snippet}
@@ -542,7 +544,7 @@
         providers: mode === 'e2e' ? providers : [],
         range: renderedSearch.range,
         result: overview,
-        totalSessionCount: support.support.analytics.sessionCount,
+        totalSessionCount,
       }
     : null}
   {pending}

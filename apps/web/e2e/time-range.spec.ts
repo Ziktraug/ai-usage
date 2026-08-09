@@ -314,8 +314,11 @@ test('compares 90d with the previous equal-length period when that boundary has 
   await waitForFocusedReportSettled(page);
 
   const executiveValue = page.getByRole('region', { name: 'Estimated API-equivalent value' });
+  await expect(executiveValue.locator('strong').first()).toHaveText('$4.04');
   await expect(executiveValue).toContainText('381% higher than the previous equal-length period.');
+  await expect(executiveValue).not.toContainText('Partially measured');
   await expect(executiveValue).not.toContainText('No sessions exist in the previous period.');
+  await expect(page.locator('[data-period-insight]')).toHaveCount(1);
 });
 
 test('uses clickable heatmap days as Rhythm activity-day controls without a native date input', async ({ page }) => {

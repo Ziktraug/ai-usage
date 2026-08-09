@@ -19,6 +19,11 @@ const routes = [
   { heading: 'Sources', path: '/sources' },
   { heading: 'Sync', path: '/sync' },
 ] as const;
+const REPORT_AXE_DESTINATIONS = [
+  { label: 'Overview', path: '/' },
+  { label: 'Sessions', path: '/?tab=sessions' },
+  { label: 'Analysis', path: '/?tab=models' },
+] as const;
 
 const overviewTopSessionTrigger = (page: Page): Locator =>
   page
@@ -259,50 +264,44 @@ test('reduced motion keeps drawer feedback while making motion effectively immed
   await expect(drawer).not.toBeVisible();
 });
 
-test('Overview has no detectable accessibility violations', async ({ page }) => {
-  await openHydratedReport(page);
-  await expect(page.getByText('5 / 6 sessions', { exact: true })).toBeVisible();
-  await expect(reportViewsFor(page).getByRole('link', { exact: true, name: 'Overview' })).toHaveAttribute(
-    'aria-current',
-    'page',
-  );
+for (const colorScheme of ['light', 'dark'] as const) {
+  for (const destination of REPORT_AXE_DESTINATIONS) {
+    test(`${destination.label} has no detectable accessibility violations in ${colorScheme} mode`, async ({ page }) => {
+      await page.emulateMedia({ colorScheme });
+      await page.addInitScript(() => localStorage.clear());
+      await openHydratedReport(page, destination.path);
+      await expect(reportViewsFor(page).getByRole('link', { exact: true, name: destination.label })).toHaveAttribute(
+        'aria-current',
+        'page',
+      );
+      if (destination.label === 'Overview') {
+        await expect(page.getByText('5 / 6 sessions', { exact: true })).toBeVisible();
+      } else if (destination.label === 'Sessions') {
+        await expect(page.getByRole('table')).toBeVisible();
+      } else {
+        await expect(page.getByRole('table', { name: 'Model API-value analysis' })).toBeVisible();
+      }
 
-  await expectNoAxeViolations(page);
-});
+      await expectNoAxeViolations(page);
+    });
+  }
 
-test('Sessions has no detectable accessibility violations', async ({ page }) => {
-  await openHydratedReport(page, '/?tab=sessions');
-  await expect(reportViewsFor(page).getByRole('link', { exact: true, name: 'Sessions' })).toHaveAttribute(
-    'aria-current',
-    'page',
-  );
-  await expect(page.getByRole('table')).toBeVisible();
+  test(`the open session drawer has no detectable accessibility violations in ${colorScheme} mode`, async ({
+    page,
+  }) => {
+    await page.emulateMedia({ colorScheme });
+    await page.addInitScript(() => localStorage.clear());
+    await page.setViewportSize({ height: 844, width: 390 });
+    await openHydratedReport(page);
+    await expect(page.getByText('5 / 6 sessions', { exact: true })).toBeVisible();
+    await overviewTopSessionTrigger(page).click();
+    const drawer = page.getByRole('dialog', { name: 'Session details' });
+    await expect(drawer).toBeVisible();
+    await expect(drawer.getByRole('button', { name: 'Close session details' })).toBeVisible();
 
-  await expectNoAxeViolations(page);
-});
-
-test('Analysis has no detectable accessibility violations', async ({ page }) => {
-  await openHydratedReport(page, '/?tab=models');
-  await expect(reportViewsFor(page).getByRole('link', { exact: true, name: 'Analysis' })).toHaveAttribute(
-    'aria-current',
-    'page',
-  );
-  await expect(page.getByRole('table', { name: 'Model API-value analysis' })).toBeVisible();
-
-  await expectNoAxeViolations(page);
-});
-
-test('the open session drawer has no detectable accessibility violations', async ({ page }) => {
-  await page.setViewportSize({ height: 844, width: 390 });
-  await openHydratedReport(page);
-  await expect(page.getByText('5 / 6 sessions', { exact: true })).toBeVisible();
-  await overviewTopSessionTrigger(page).click();
-  const drawer = page.getByRole('dialog', { name: 'Session details' });
-  await expect(drawer).toBeVisible();
-  await expect(drawer.getByRole('button', { name: 'Close session details' })).toBeVisible();
-
-  await expectNoAxeViolations(page);
-});
+    await expectNoAxeViolations(page);
+  });
+}
 
 test('Skills has no detectable accessibility violations', async ({ page }) => {
   await openHydratedSkills(page, '/skills/global/alpha-skill');

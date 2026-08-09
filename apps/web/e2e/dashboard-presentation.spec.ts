@@ -1,4 +1,7 @@
-import { FOCUSED_REPORT_E2E_ENABLED_KEY } from '../src/focused-report-e2e-fixture';
+import {
+  FOCUSED_REPORT_E2E_ENABLED_KEY,
+  FOCUSED_REPORT_E2E_NO_LOCAL_DATA_KEY,
+} from '../src/focused-report-e2e-fixture';
 import {
   expect,
   openHydratedReport,
@@ -43,6 +46,7 @@ for (const scenario of FIRST_READ_SCENARIOS) {
     await expect(chart).toBeVisible();
     await expect(metrics).toBeVisible();
     await expect(kpi).toContainText('Standard API-price estimate');
+    await expect(page.locator('[data-period-insight]')).toHaveCount(0);
     expect(await page.evaluate(() => window.scrollY)).toBe(0);
     expect(
       await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth),
@@ -161,7 +165,49 @@ test('keeps partial pricing qualification visible without a disclosure', async (
   await expect(coverage).toContainText('5 / 6');
   await expect(coverage).toContainText('fully priced');
   await expect(coverage).toContainText('Partially measured');
+  await expect(page.locator('[data-period-insight]')).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'About API value' })).toHaveCount(0);
+});
+
+test('keeps a fully unpriced selection unknown instead of presenting an exact zero', async ({ page }) => {
+  await openHydratedReport(page, '/?origin=%5B%5D');
+  await page
+    .getByRole('region', { name: 'Report period' })
+    .getByRole('button', { exact: true, name: 'All time' })
+    .click();
+  await waitForFocusedReportSettled(page);
+  await page
+    .getByRole('textbox', { name: 'Filter sessions by title, project, model, provider, or harness' })
+    .fill('Explore report sketch');
+  await waitForFocusedReportSettled(page);
+
+  const kpi = page.locator('[data-executive-kpi]');
+  await expect(page.getByText('1 / 6 sessions', { exact: true })).toBeVisible();
+  await expect(kpi.locator('strong').first()).toHaveText('—');
+  await expect(kpi).toContainText('Partially measured');
+  await expect(kpi).not.toContainText('$0.00');
+  await expect(page.locator('[data-period-insight]')).toHaveCount(0);
+});
+
+test('distinguishes no local usage from a filtered empty result', async ({ page }) => {
+  await page.addInitScript(
+    ({ enabledKey, noLocalDataKey }) => {
+      Reflect.set(globalThis, enabledKey, true);
+      Reflect.set(globalThis, noLocalDataKey, true);
+    },
+    {
+      enabledKey: FOCUSED_REPORT_E2E_ENABLED_KEY,
+      noLocalDataKey: FOCUSED_REPORT_E2E_NO_LOCAL_DATA_KEY,
+    },
+  );
+  await openHydratedReport(page);
+
+  await expect(page.getByRole('heading', { level: 2, name: 'No local usage yet' })).toBeVisible();
+  await expect(page.getByText('0 / 0 sessions', { exact: true })).toBeVisible();
+  await expect(page.getByRole('link', { exact: true, name: 'Open Sources' })).toHaveAttribute('href', '/sources');
+  await expect(page.getByRole('button', { exact: true, name: 'Clear filters' })).toHaveCount(0);
+  await expect(page.locator('[data-executive-kpi]')).toHaveCount(0);
+  await expect(page.locator('[data-period-insight]')).toHaveCount(0);
 });
 
 test('explains unavailable source freshness without replacing its compact pill', async ({
@@ -421,6 +467,26 @@ test('keeps the mobile filter stack coherent with content above the fold', async
     );
   }
   expect(searchBox?.width ?? Number.POSITIVE_INFINITY).toBeLessThanOrEqual(MOBILE_VIEWPORT.width - 32);
+  const filterControlGeometry = await page
+    .locator('[data-dashboard-filter-stack]')
+    .locator('input:visible, button:visible, a:visible, [role="combobox"]:visible')
+    .evaluateAll((elements) =>
+      elements.map((element) => {
+        const box = element.getBoundingClientRect();
+        return {
+          clipped: element.scrollWidth > element.clientWidth + 1,
+          height: Math.floor(box.height),
+          left: Math.floor(box.left),
+          right: Math.ceil(box.right),
+        };
+      }),
+    );
+  expect(filterControlGeometry.length).toBeGreaterThan(0);
+  expect(
+    filterControlGeometry.every(
+      ({ clipped, height, left, right }) => !clipped && height >= 44 && left >= 0 && right <= MOBILE_VIEWPORT.width,
+    ),
+  ).toBe(true);
 
   const dateRange = page.getByRole('region', { name: 'Report period' });
   const dateRangeBox = await dateRange.boundingBox();

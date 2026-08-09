@@ -72,7 +72,7 @@
   } from './session-cell-projection';
   import { sessionTableColumns, visibleSessionTableColumns } from './session-columns';
   import { createSessionTableModel, toggleSessionRowExpanded } from './session-table-model';
-  import { popoverGrid, popoverHeader } from './session-table-styles';
+  import { mobileSessionSummaryHeader, popoverGrid, popoverHeader } from './session-table-styles';
   import {
     isSessionPagePrefetchRequired,
     projectSessionVirtualRows,
@@ -559,7 +559,7 @@
               data-selected={selectedRowId === virtualRow.row.id}
               data-session-card-height="180"
             >
-              <header class={sessionSummaryHeader}>
+              <header class={cx(sessionSummaryHeader, mobileSessionSummaryHeader)}>
                 <span class={sessionSummaryDate}>{fmtDate(virtualRow.row.original.activeDate)}</span>
                 <HarnessBadge
                   name={virtualRow.row.original.harness}
