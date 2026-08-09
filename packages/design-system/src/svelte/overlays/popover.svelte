@@ -11,14 +11,7 @@
     triggerTitle?: string;
   }
 
-  let {
-    children,
-    contentClass,
-    trigger,
-    triggerAriaLabel,
-    triggerClass,
-    triggerTitle,
-  }: Props = $props();
+  let { children, contentClass, trigger, triggerAriaLabel, triggerClass, triggerTitle }: Props = $props();
 
   const propsId = $props.id();
   const popoverId = `ai-usage-popover-${propsId}`;
