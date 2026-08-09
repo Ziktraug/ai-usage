@@ -3,8 +3,14 @@
 
   let { pending, refreshError }: { pending: boolean; refreshError?: string | null } = $props();
 
-  const unavailablePanel = css({ border: '1px solid token(colors.border)', borderRadius: 'lg', p: '24px' });
-  const unavailableText = css({ color: 'muted', fontSize: '13px' });
+  const unavailablePanel = css({
+    border: '1px solid token(colors.line)',
+    borderColor: 'status.danger',
+    borderRadius: 'lg',
+    bg: 'status.dangerSoft',
+    p: '24px',
+  });
+  const unavailableText = css({ color: 'ink', fontSize: '13px' });
 </script>
 
 {#if refreshError}

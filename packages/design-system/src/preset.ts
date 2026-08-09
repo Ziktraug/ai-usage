@@ -125,6 +125,13 @@ export const aiUsagePreset = definePreset({
           accentTint: dual('#F8F0E5', '#23201B'),
           focusRing: dual('rgba(177, 78, 18, 0.28)', 'rgba(224, 131, 60, 0.35)'),
 
+          // Translucent copper is reserved for active interaction feedback. It
+          // stays separate from categorical and status roles in both schemes.
+          interaction: {
+            brush: dual('rgba(172, 75, 18, 0.13)', 'rgba(224, 131, 60, 0.16)'),
+            brushHover: dual('rgba(172, 75, 18, 0.06)', 'rgba(224, 131, 60, 0.09)'),
+          },
+
           // Categorical series palette for charts (model migration, etc.).
           // Series colors remain distinct from the interaction-only accent.
           chart: {

@@ -24,6 +24,23 @@ test('public design entrypoints keep framework runtimes explicit', async () => {
   }
 });
 
+test('the Report entrypoint exposes the executive editorial primitives', async () => {
+  const reportModule = await import('./report');
+
+  for (const name of [
+    'containedInteractive',
+    'editorialSection',
+    'executiveCaption',
+    'executiveEssentialLabel',
+    'executiveGrid',
+    'metricStrip',
+    'numericDisplay',
+    'sectionDivider',
+  ]) {
+    expect(reportModule, name).toHaveProperty(name);
+  }
+});
+
 test('Panda scans the aggregate TypeScript and Svelte source surface', async () => {
   const pandaConfig = await Bun.file(path.join(packageDirectory, 'panda.config.ts')).text();
   expect(pandaConfig).toContain("include: ['./src/**/*.{ts,svelte}']");

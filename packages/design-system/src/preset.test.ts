@@ -6,6 +6,7 @@ const NORMAL_TEXT_CONTRAST = 4.5;
 const UI_COMPONENT_CONTRAST = 3;
 const WCAG_MINIMUM_TARGET_SIZE_PX = 24;
 const HEX_COLOR_PATTERN = /^#[0-9a-f]{6}$/i;
+const RGBA_COLOR_PATTERN = /^rgba\(\d{1,3}, \d{1,3}, \d{1,3}, 0?\.\d+\)$/;
 const RGB_CHANNEL_MAX = 255;
 const SRGB_LINEAR_THRESHOLD = 0.040_45;
 const SRGB_LINEAR_DIVISOR = 12.92;
@@ -108,14 +109,27 @@ describe('semantic palette roles', () => {
       const chartPrimary = colorFor('chart.c1', scheme);
       const claude = colorFor('harness.claude.fg', scheme);
       const controlDefault = colorFor('controlDefault', scheme);
+      const brush = colorFor('interaction.brush', scheme);
+      const brushHover = colorFor('interaction.brushHover', scheme);
+      const warning = colorFor('status.warn', scheme);
 
       expect(chartPrimary).not.toBe(accent);
       expect(claude).not.toBe(accent);
       expect(claude).not.toBe(chartPrimary);
       expect(controlDefault).toBe(colorFor('surfaceMuted', scheme));
       expect(controlDefault).not.toBe(accent);
+      expect(warning).not.toBe(accent);
+      expect(warning).not.toBe(chartPrimary);
+      expect(brush).toMatch(RGBA_COLOR_PATTERN);
+      expect(brushHover).toMatch(RGBA_COLOR_PATTERN);
+      expect(brushHover).not.toBe(brush);
     });
   }
+
+  test('the activity brush has explicit light and dark interaction colors', () => {
+    expect(colorFor('interaction.brush', '_light')).not.toBe(colorFor('interaction.brush', '_dark'));
+    expect(colorFor('interaction.brushHover', '_light')).not.toBe(colorFor('interaction.brushHover', '_dark'));
+  });
 });
 
 describe('provider brand marks', () => {
@@ -134,7 +148,7 @@ describe('provider brand marks', () => {
 
 test('preset preserves the exact global CSS, keyframes, tokens, and semantic values', () => {
   const presetHash = new Bun.CryptoHasher('sha256').update(JSON.stringify(aiUsagePreset)).digest('hex');
-  expect(presetHash).toBe('2db33fe89a9114b22c4c753a5354b504be8e3376da7aec25022d6a8dbc718b00');
+  expect(presetHash).toBe('f4ea6ba5b77516c81b7ba1a950a36135b54e80ebc43b0a52055795c27b13b15d');
 });
 
 test('punchcard controls meet the minimum interactive target size', () => {

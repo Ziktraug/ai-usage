@@ -128,8 +128,8 @@ export const timeSliderRange = css({
   bottom: '4px',
   zIndex: 3,
   borderRadius: 'full',
-  bg: 'rgba(177, 78, 18, 0.13)',
-  boxShadow: 'inset 0 0 0 1px rgba(177, 78, 18, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.08)',
+  bg: 'interaction.brush',
+  boxShadow: 'inset 0 0 0 1px token(colors.focusRing), inset 0 1px 0 rgba(255, 255, 255, 0.08)',
   pointerEvents: 'none',
 });
 
@@ -192,7 +192,7 @@ export const timeSliderRangeDrag = css({
   touchAction: 'none',
   borderRadius: 'full',
   _hover: {
-    bg: 'rgba(177, 78, 18, 0.06)',
+    bg: 'interaction.brushHover',
   },
   '&:hover::before': {
     borderColor: 'accent',
@@ -200,7 +200,7 @@ export const timeSliderRangeDrag = css({
   },
   '&[data-dragging="true"]': {
     cursor: 'grabbing',
-    bg: 'rgba(177, 78, 18, 0.1)',
+    bg: 'interaction.brush',
   },
   '&[data-dragging="true"]::before': {
     borderColor: 'accent',
