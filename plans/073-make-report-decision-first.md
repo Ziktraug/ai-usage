@@ -501,7 +501,7 @@ dependencies.
 ## Git workflow
 
 - Start only after Gate 0 from a clean checkpoint. The assigned implementation
-  branch is `agent/report-decision-first-ui-ux`.
+  branch is `refactor/report-decision-first-ui-ux`.
 - Use conventional commit style observed in recent history, for example
   `style(design-system): format popover props` and
   `test(web): refresh final overlay evidence`.
