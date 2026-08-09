@@ -91,13 +91,39 @@ export const reportRangeProjection = (
   };
 };
 
-export const customRangeFromInputs = (fromInput: string, toInput: string): DashboardDateRangeSearch | null => {
+export type CustomRangeValidation =
+  | {
+      readonly invalidField: 'from' | 'range' | 'to';
+      readonly message: string;
+      readonly status: 'invalid';
+    }
+  | { readonly range: DashboardDateRangeSearch; readonly status: 'valid' };
+
+export const validateCustomRangeInputs = (fromInput: string, toInput: string): CustomRangeValidation => {
   const from = parseLocalDate(fromInput);
   const to = parseLocalDate(toInput, true);
-  if (!(from && to) || from.getTime() > to.getTime()) {
-    return null;
+  if (!from) {
+    return { invalidField: 'from', message: 'Enter a valid From date.', status: 'invalid' };
   }
-  return { from: toDateInputValue(from), mode: 'custom', to: toDateInputValue(to) };
+  if (!to) {
+    return { invalidField: 'to', message: 'Enter a valid To date.', status: 'invalid' };
+  }
+  if (from.getTime() > to.getTime()) {
+    return {
+      invalidField: 'range',
+      message: 'From date must be on or before To date.',
+      status: 'invalid',
+    };
+  }
+  return {
+    range: { from: toDateInputValue(from), mode: 'custom', to: toDateInputValue(to) },
+    status: 'valid',
+  };
+};
+
+export const customRangeFromInputs = (fromInput: string, toInput: string): DashboardDateRangeSearch | null => {
+  const validation = validateCustomRangeInputs(fromInput, toInput);
+  return validation.status === 'valid' ? validation.range : null;
 };
 
 export const customRangeFromIndexes = (

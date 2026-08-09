@@ -127,7 +127,7 @@ test('keeps report range before filter summary and Overview content in the share
 
   const presentationPath = '../composition/report-destination-presentation.svelte';
   const presentationSource = await Bun.file(new URL(presentationPath, import.meta.url)).text();
-  const positions = ['<FilterBar', '<ReportRangeControl', '{@render summary()}', '<OverviewPage'].map((surface) =>
+  const positions = ['<FilterBar', '<ReportPeriodControl', '{@render summary()}', '<OverviewPage'].map((surface) =>
     presentationSource.indexOf(surface),
   );
   expect(

@@ -4,6 +4,7 @@ import {
   dateBoundsForRange,
   dateFromIndex,
   dateIndexFrom,
+  dateRangePresets,
   normalizeDateIndexRange,
   parseLocalDate,
   rowMatchesDateBounds,
@@ -38,14 +39,17 @@ const rowAt = (activeDate: string): SerializedRow => ({
 });
 
 describe('date range filters', () => {
-  test('uses rolling days for 7d and 30d to match CLI --since semantics', () => {
+  test('uses rolling days for 7d, 30d, and 90d to match CLI --since semantics', () => {
     const generatedAt = new Date('2026-06-11T23:19:24.682Z');
     const bounds = dateBoundsForRange('30d', generatedAt, '', '');
+    const ninetyDayBounds = dateBoundsForRange('90d', generatedAt, '', '');
 
     expect(bounds.from?.toISOString()).toBe('2026-05-12T23:19:24.682Z');
     expect(bounds.to).toBeNull();
     expect(rowMatchesDateBounds(rowAt('2026-05-12T23:19:24.681Z'), bounds)).toBe(false);
     expect(rowMatchesDateBounds(rowAt('2026-05-12T23:19:24.682Z'), bounds)).toBe(true);
+    expect(ninetyDayBounds.from?.toISOString()).toBe('2026-03-13T23:19:24.682Z');
+    expect(dateRangePresets.map(({ mode }) => mode)).toEqual(['all', 'today', '7d', '30d', '90d']);
   });
 
   test('normalizes date indexes for timeline controls', () => {

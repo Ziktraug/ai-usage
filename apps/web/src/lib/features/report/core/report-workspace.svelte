@@ -29,7 +29,7 @@
   const staleOutput = css({ opacity: 0.5, transitionDelay: '180ms' });
   const staleAttributes = $derived(pending ? ({ 'aria-busy': 'true', 'data-report-stale': 'true' } as const) : {});
   const panel = css({ minW: 0, _focusVisible: { outline: '2px solid token(colors.accent)', outlineOffset: '4px' } });
-  const unavailablePanel = css({ border: '1px solid token(colors.border)', borderRadius: 'lg', p: '24px' });
+  const unavailablePanel = css({ border: '1px solid token(colors.line)', borderRadius: 'lg', p: '24px' });
   const unavailableText = css({ color: 'muted', fontSize: '13px' });
 </script>
 

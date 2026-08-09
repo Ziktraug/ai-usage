@@ -131,7 +131,7 @@ test('loads a deterministic report overview', async ({ page }) => {
   expect(initialHtml).toContain('Daily activity calendar');
 
   await expect(page.getByRole('heading', { level: 1, name: 'Usage report' })).toBeVisible();
-  await expect(page.getByRole('region', { name: 'Date range' })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Report period' })).toBeVisible();
   await expect(page.getByText('5 / 6 sessions', { exact: true })).toBeVisible();
   await expect(reportViewsFor(page).getByRole('link', { exact: true, name: 'Overview' })).toHaveAttribute(
     'aria-current',
@@ -180,7 +180,7 @@ test('locks definitive output while a focused filter response is pending', async
     await expect(page.getByText(NO_SESSIONS_PATTERN)).toHaveCount(0);
     await expect(page.getByText('$0.00', { exact: true })).toHaveCount(0);
     await expect(page.locator('[data-metric-grid]')).toHaveCount(0);
-    await expect(page.getByRole('region', { name: 'Date range' })).toHaveCount(0);
+    await expect(page.getByRole('region', { name: 'Report period' })).toBeVisible();
     // Withholding the counts must not collapse their slot: dropping the boxes threw "Clear all"
     // ~300px sideways for the length of the request. The pills stay, emptied and marked busy.
     const counterSlot = page.locator('[data-active-filters] > span').first();
@@ -193,7 +193,7 @@ test('locks definitive output while a focused filter response is pending', async
 
   expect(violations).toEqual([]);
   await expect(pendingSurface).toHaveCount(0);
-  await expect(page.getByRole('region', { name: 'Date range' })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Report period' })).toBeVisible();
   await expect(page.getByText('0 / 6 sessions', { exact: true })).toBeVisible();
 });
 
@@ -226,6 +226,8 @@ test('uses one primary navigation while preserving Breakdown deep links and sub-
     'page',
   );
   await expect(page.getByRole('table')).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Report period' })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Activity' })).toHaveCount(0);
 
   await openHydratedReport(page, '/?tab=models');
   await expect(reportViews.getByRole('link', { exact: true, name: 'Breakdown' })).toHaveAttribute(
@@ -235,6 +237,8 @@ test('uses one primary navigation while preserving Breakdown deep links and sub-
   const breakdownTabs = page.getByRole('tablist', { name: 'Breakdown dimension' });
   await expect(breakdownTabs.getByRole('tab', { name: 'Models' })).toHaveAttribute('aria-selected', 'true');
   await expect(page.getByText('By model', { exact: true })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Report period' })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Activity' })).toHaveCount(0);
 
   await breakdownTabs.getByRole('tab', { name: 'Projects' }).click();
   await expect(page.getByRole('columnheader', { name: 'Project' })).toBeVisible();
@@ -313,7 +317,7 @@ test('shows analysis and report metrics without disclosure gates', async ({ page
   await expect(reportMetrics.getByRole('heading', { level: 2, name: 'More report metrics' })).toBeVisible();
   await expect(reportMetrics.getByRole('button', { name: 'More report metrics' })).toHaveCount(0);
   await expect(reportMetrics.getByText('Fresh tokens', { exact: true })).toBeVisible();
-  await expect(reportMetrics.locator(':scope > header')).toContainText('8');
+  await expect(reportMetrics.locator(':scope > header')).toContainText('6');
   await expect(reportMetrics.locator('[data-metric-tile]')).toHaveCount(5);
   await expect(reportMetrics.getByRole('button', { name: 'About Sessions' })).toBeVisible();
   await expect(reportMetrics.locator('[data-metric-delta]').first()).toContainText('×5.0 vs previous period');
@@ -384,7 +388,7 @@ test('keeps provider details collapsed until they are requested', async ({ page 
   const attentionProviders = page.getByRole('list', { name: 'Providers requiring attention' });
   const providerCategories = page.getByRole('list', { name: PROVIDER_CATEGORIES_PATTERN });
   const dashboardPanel = page.locator('[data-dashboard-panel]');
-  const dateRange = page.getByRole('region', { name: 'Date range' });
+  const dateRange = page.getByRole('region', { name: 'Report period' });
   const activeFilters = page.locator('[data-active-filters]');
   const overviewHero = page.getByRole('region', { name: 'Estimated API-equivalent value' });
   const reportMetrics = page.getByRole('region', { name: 'More report metrics' });
@@ -486,11 +490,11 @@ test('shows the text query as a directly removable active filter', async ({ page
 
 test('updates the date range and opens a session drawer', async ({ page }) => {
   await openHydratedReport(page, '/?origin=%5B%5D');
-  const range = page.getByRole('region', { name: 'Date range' });
+  const range = page.getByRole('region', { name: 'Report period' });
 
-  await range.getByRole('button', { exact: true, name: 'All' }).click();
+  await range.getByRole('button', { exact: true, name: 'All time' }).click();
   await expect(page).toHaveURL(RANGE_URL_PATTERN);
-  await expect(range.getByRole('textbox', { name: 'Start date' })).toHaveValue('Apr 12, 2026');
+  await expect(range.getByText('Apr 12 → Jun 11, 2026 · 60 days', { exact: true })).toBeVisible();
 
   await reportViewsFor(page).getByRole('link', { exact: true, name: 'Sessions' }).click();
   await page.locator('tbody tr').first().locator('td').first().click();
@@ -598,11 +602,11 @@ test('renders a human campaign root as not a subagent', async ({ page }) => {
 test('uses the report range as the only graph viewport', async ({ page }) => {
   await openHydratedReport(page);
 
-  const dateRange = page.getByRole('region', { name: 'Date range' });
-  await expect(dateRange.getByRole('button', { name: 'Zoom chart' })).toHaveCount(0);
-  await expect(dateRange.getByRole('slider', { name: 'Graph view start' })).toHaveCount(0);
-  await expect(dateRange.getByText('Custom chart view', { exact: true })).toHaveCount(0);
-  await expect(dateRange.getByText('Activity range follows report range', { exact: true })).toBeVisible();
+  const activity = page.getByRole('region', { name: 'Activity' });
+  await expect(activity.getByRole('button', { name: 'Zoom chart' })).toHaveCount(0);
+  await expect(activity.getByRole('slider', { name: 'Graph view start' })).toHaveCount(0);
+  await expect(activity.getByText('Custom chart view', { exact: true })).toHaveCount(0);
+  await expect(activity.getByText('Explore activity', { exact: true })).toBeVisible();
 });
 
 test('offers keyboard-safe charts and mobile summaries at a narrow viewport', async ({ page }) => {
@@ -684,15 +688,15 @@ test('keeps the Top sessions panel header geometry at desktop width', async ({ p
 
 test('selects the same heatmap day with mouse and keyboard', async ({ page }) => {
   const selectedDay = '2026-05-25';
-  const selectedDayDisplay = 'May 25, 2026';
   const assertSelectedDay = async () => {
     await expect(reportViewsFor(page).getByRole('link', { exact: true, name: 'Sessions' })).toHaveAttribute(
       'aria-current',
       'page',
     );
-    const range = page.getByRole('region', { name: 'Date range' });
-    await expect(range.getByRole('textbox', { name: 'Start date' })).toHaveValue(selectedDayDisplay);
-    await expect(range.getByRole('textbox', { name: 'End date' })).toHaveValue(selectedDayDisplay);
+    const range = page.getByRole('region', { name: 'Report period' });
+    await range.getByRole('button', { name: 'Choose a custom report period' }).click();
+    await expect(page.getByRole('textbox', { name: 'From' })).toHaveValue(selectedDay);
+    await expect(page.getByRole('textbox', { name: 'To' })).toHaveValue(selectedDay);
   };
   const selectedCell = () =>
     page.getByRole('toolbar', { name: CALENDAR_NAME_PATTERN }).locator(`button[data-heatmap-day="${selectedDay}"]`);

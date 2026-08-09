@@ -146,7 +146,7 @@ export const hasActiveDashboardFilters = (search: DashboardSearch): boolean =>
   search.timeCell !== undefined;
 
 const breakdownSortSet = new Set<string>(breakdownSorts);
-const dateRangeModes: DateRangeMode[] = ['all', 'today', '7d', '30d', 'custom'];
+const dateRangeModes: DateRangeMode[] = ['all', 'today', '7d', '30d', '90d', 'custom'];
 const dateRangeModeSet = new Set<string>(dateRangeModes);
 const fieldFilterKeySet = new Set<string>(fieldFilterKeys);
 const dashboardTabSet = new Set<string>(dashboardTabs);

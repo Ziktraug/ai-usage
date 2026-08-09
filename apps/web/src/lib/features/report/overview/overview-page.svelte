@@ -11,84 +11,51 @@
 </script>
 
 <script lang="ts">
-  import type {
-    FocusedMachineFreshness,
-    FocusedOverviewResult,
-    FocusedOverviewSessionItem,
-    FocusedTimelineSeries,
-  } from '@ai-usage/report-core/focused-report-query';
+  import type { FocusedOverviewResult, FocusedOverviewSessionItem } from '@ai-usage/report-core/focused-report-query';
   import type { LocalTimeCell } from '@ai-usage/report-core/session-query';
-  import type { DashboardDateRangeSearch, DashboardSearch } from '../../../../dashboard-search';
-  import type { MigrationGranularity, TimelineDimension, TimelineValue } from '../../../../overview-model';
-  import type { SearchNavigationIntent } from '../../../foundation/navigation/search-intent';
+  import type { ComponentProps } from 'svelte';
+  import type { DashboardDateRangeSearch } from '../../../../dashboard-search';
+  import ActivityExplorer from '../range/activity-explorer.svelte';
   import ActivityHeatmap from './activity-heatmap.svelte';
   import OverviewHero from './overview-hero.svelte';
   import Punchcard from './punchcard.svelte';
   import Records from './records.svelte';
   import SessionShape from './session-shape.svelte';
-  import type { MachineSeriesPresenter } from './timeline-model';
   import TokenAnatomy from './token-anatomy.svelte';
   import { overviewHasContent } from './view-model';
 
   interface Props {
-    activeSeriesKeys?: readonly string[];
-    dimension?: TimelineDimension;
+    activity?: ComponentProps<typeof ActivityExplorer>;
     /** Headline value of the window being dragged, or null when the brush is settled. */
     draggedWindowApiValue?: number | null;
-    freshness?: FocusedMachineFreshness;
-    granularity?: MigrationGranularity;
-    machineFreshnessStatus?: string | null;
-    navigate?: SearchNavigationIntent<DashboardSearch>;
-    onDimensionFilter?: (dimension: TimelineDimension, key: string) => void;
-    onOptionsChange?: (options: {
-      dimension: TimelineDimension;
-      granularity: MigrationGranularity;
-      value: TimelineValue;
-    }) => void;
-    onRangeChange?: (range: DashboardDateRangeSearch) => void;
     onSelectDay?: (date: string) => void;
     onSelectSession?: (item: FocusedOverviewSessionItem) => void;
     onSelectTimeCell?: (cell: LocalTimeCell) => void;
-    presentCampaignSeries?: (series: FocusedTimelineSeries) => FocusedTimelineSeries;
-    presentMachineSeries?: MachineSeriesPresenter;
     presentSessionItem?: (item: FocusedOverviewSessionItem) => FocusedOverviewSessionItem;
     range: DashboardDateRangeSearch;
     result: FocusedOverviewResult;
-    value?: TimelineValue;
   }
 
-  const unchangedCampaignSeries = (series: FocusedTimelineSeries): FocusedTimelineSeries => series;
-  const unchangedMachineSeries: MachineSeriesPresenter = (_key, label) => ({ freshness: 'unavailable', label });
   const unchangedSessionItem = (item: FocusedOverviewSessionItem): FocusedOverviewSessionItem => item;
 
   let {
-    activeSeriesKeys = [],
-    dimension,
+    activity,
     draggedWindowApiValue = null,
-    freshness,
-    granularity = 'day',
-    machineFreshnessStatus = null,
-    navigate,
-    onDimensionFilter = () => undefined,
-    onOptionsChange = () => undefined,
-    onRangeChange = () => undefined,
     onSelectDay = () => undefined,
     onSelectSession = () => undefined,
     onSelectTimeCell = () => undefined,
-    presentCampaignSeries = unchangedCampaignSeries,
-    presentMachineSeries = unchangedMachineSeries,
     presentSessionItem = unchangedSessionItem,
     range,
     result,
-    value = 'cost',
   }: Props = $props();
-
-  const activeDimension = $derived(dimension ?? result.timeline?.dimension ?? 'harness');
 </script>
 
 <div class={overviewGrid} data-report-overview data-report-revision={result.revision}>
   {#if overviewHasContent(result)}
     <OverviewHero {draggedWindowApiValue} {range} summary={result.summary} />
+    {#if activity}
+      <ActivityExplorer {...activity} />
+    {/if}
     <ActivityHeatmap heatmap={result.view.heatmap} {onSelectDay} />
     <TokenAnatomy summary={result.summary} />
     <Records

@@ -1,6 +1,6 @@
 import type { SerializedRow } from '@ai-usage/report-core/report-data';
 
-export type DateRangeMode = 'all' | 'today' | '7d' | '30d' | 'custom';
+export type DateRangeMode = 'all' | 'today' | '7d' | '30d' | '90d' | 'custom';
 export type TimeRangePreset = Exclude<DateRangeMode, 'custom'>;
 
 export const DAY_MS = 86_400_000;
@@ -10,6 +10,7 @@ export const dateRangePresets: { mode: TimeRangePreset; label: string }[] = [
   { mode: 'today', label: 'Today' },
   { mode: '7d', label: '7d' },
   { mode: '30d', label: '30d' },
+  { mode: '90d', label: '90d' },
 ];
 
 export interface DateBounds {
@@ -92,6 +93,9 @@ export const dateBoundsForRange = (
   }
   if (mode === '30d') {
     return { from: rollingDaysAgo(generatedAt, 30), to: null };
+  }
+  if (mode === '90d') {
+    return { from: rollingDaysAgo(generatedAt, 90), to: null };
   }
   return {
     from: customFrom ? parseLocalDate(customFrom) : null,

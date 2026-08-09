@@ -5,7 +5,7 @@
     FocusedTimelineSeries,
   } from '@ai-usage/report-core/focused-report-query';
   import type { ProviderStatusView } from '../../../../provider-status-model';
-  import ReportRangeControl from '../range/report-range-control.svelte';
+  import ReportPeriodControl from '../range/report-period-control.svelte';
   import OverviewPage from './overview-page.svelte';
   import OverviewStatus from './overview-status.svelte';
   import type { MachineSeriesPresenter } from './timeline-model';
@@ -29,24 +29,22 @@
   } = $props();
 </script>
 
-<ReportRangeControl
-  {activeSeriesKeys}
-  {machineFreshnessStatus}
-  {...(presentCampaignSeries ? { presentCampaignSeries } : {})}
-  {...(presentMachineSeries ? { presentMachineSeries } : {})}
-  dateDomain={result.dateDomain}
-  dimension={result.timeline?.dimension ?? 'harness'}
-  generatedAt={result.metadata.generatedAt}
-  granularity="day"
-  range={{ mode: '30d' }}
-  timeline={result.timeline}
-  value="cost"
-/>
+<ReportPeriodControl dateDomain={result.dateDomain} generatedAt={result.metadata.generatedAt} range={{ mode: '30d' }} />
 <OverviewPage
-  {activeSeriesKeys}
-  {machineFreshnessStatus}
-  {...(presentCampaignSeries ? { presentCampaignSeries } : {})}
-  {...(presentMachineSeries ? { presentMachineSeries } : {})}
+  activity={{
+    activeSeriesKeys,
+    dateDomain: result.dateDomain,
+    dimension: result.timeline?.dimension ?? 'harness',
+    generatedAt: result.metadata.generatedAt,
+    granularity: 'day',
+    machineFreshnessStatus,
+    ...(presentCampaignSeries ? { presentCampaignSeries } : {}),
+    ...(presentMachineSeries ? { presentMachineSeries } : {}),
+    range: { mode: '30d' },
+    revision: result.revision,
+    timeline: result.timeline,
+    value: 'cost',
+  }}
   {...(presentSessionItem ? { presentSessionItem } : {})}
   range={{ mode: '30d' }}
   {result}

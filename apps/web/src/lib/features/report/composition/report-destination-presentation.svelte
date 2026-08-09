@@ -1,7 +1,7 @@
 <script lang="ts" module>
   import { css } from '@ai-usage/design-system/css';
 
-  const rangePlacement = css({ mt: '14px' });
+  const reportToolbar = css({ display: 'grid', gap: '10px' });
 </script>
 
 <script lang="ts">
@@ -9,7 +9,7 @@
   import FilterBar from '../breakdown/filter-bar.svelte';
   import ReportWorkspace from '../core/report-workspace.svelte';
   import OverviewPage from '../overview/overview-page.svelte';
-  import ReportRangeControl from '../range/report-range-control.svelte';
+  import ReportPeriodControl from '../range/report-period-control.svelte';
 
   type DashboardBreakdownComponent = typeof import('../breakdown/dashboard-breakdown.svelte').default;
 
@@ -20,7 +20,7 @@
 
   interface RangePresentation {
     hidden: boolean;
-    props: ComponentProps<typeof ReportRangeControl>;
+    props: ComponentProps<typeof ReportPeriodControl>;
   }
 
   let {
@@ -61,12 +61,14 @@
   });
 </script>
 
-<FilterBar {...filters} />
-{#if range}
-  <div class={rangePlacement} hidden={range.hidden}>
-    <ReportRangeControl {...range.props} />
-  </div>
-{/if}
+<div class={reportToolbar} data-report-toolbar>
+  <FilterBar {...filters} />
+  {#if range}
+    <div hidden={range.hidden}>
+      <ReportPeriodControl {...range.props} />
+    </div>
+  {/if}
+</div>
 {@render summary()}
 <ReportWorkspace {...workspaceProps}>
   {#if activeView === 'overview' && overview}

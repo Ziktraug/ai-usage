@@ -75,7 +75,7 @@
     requireFocusedBreakdown,
   } from './report-destination';
   import ReportDestinationPresentation from './report-destination-presentation.svelte';
-  import { queryForDescriptor, reportDestinationForSearch, reportFilterFingerprint } from './report-search';
+  import { queryForDescriptor, reportDestinationForSearch } from './report-search';
 
   type DashboardBreakdownModule = typeof import('../breakdown/dashboard-breakdown.svelte');
   type SessionsDestinationModule = typeof import('./sessions-destination.svelte');
@@ -241,13 +241,6 @@
     visibleCommitIdentity = identity;
     draggedWindowApiValue = null;
   });
-  const requestedFilterFingerprint = $derived(
-    destination.focused === null ? undefined : reportFilterFingerprint(destination.focused.query.filters),
-  );
-  const committedFilterFingerprint = $derived(
-    commit === undefined ? undefined : reportFilterFingerprint(commit.destination.query.filters),
-  );
-  const focusedTimelineFiltersChanged = $derived(requestedFilterFingerprint !== committedFilterFingerprint);
   const primary = $derived(primaryDashboardTabFor(search.tab));
   // The URL changes immediately, while the newly requested exact-revision data commits atomically.
   // Keep rendering the last complete destination during that gap instead of replacing it with a
@@ -595,32 +588,7 @@
   loadFailed={dashboardBreakdownLoadFailed || sessionsDestinationLoadFailed}
   overview={visiblePrimary === 'overview' && commit?.destination.kind === 'overview'
     ? {
-        activeSeriesKeys,
-        dimension,
-        draggedWindowApiValue,
-        freshness: bootstrap.machineFreshness,
-        granularity,
-        machineFreshnessStatus: machineFreshnessStatusLabel(machineSnapshot),
-        navigate,
-        onDimensionFilter: navigation.setTimelineDimensionFilter,
-        onOptionsChange: updateOverviewOptions,
-        onRangeChange: navigation.setDateRange,
-        onSelectDay: selectDay,
-        onSelectSession: selectOverviewSession,
-        onSelectTimeCell: selectTimeCell,
-        presentCampaignSeries,
-        presentMachineSeries,
-        presentSessionItem,
-        range: search.range,
-        result: commit.overview,
-        value: timelineValue,
-      }
-    : null}
-  pending={workspacePending()}
-  range={commit?.overview
-    ? {
-        hidden: destinationQuery.isFetching && focusedTimelineFiltersChanged,
-        props: {
+        activity: {
           activeSeriesKeys,
           dateDomain: commit.overview.dateDomain,
           dimension,
@@ -635,8 +603,29 @@
           presentCampaignSeries,
           presentMachineSeries,
           range: search.range,
+          revision: commit.overview.revision,
           timeline: commit.overview.timeline,
           value: timelineValue,
+        },
+        draggedWindowApiValue,
+        onSelectDay: selectDay,
+        onSelectSession: selectOverviewSession,
+        onSelectTimeCell: selectTimeCell,
+        presentSessionItem,
+        range: search.range,
+        result: commit.overview,
+      }
+    : null}
+  pending={workspacePending()}
+  range={commit?.overview
+    ? {
+        hidden: false,
+        props: {
+          dateDomain: commit.overview.dateDomain,
+          generatedAt: bootstrap.support.generatedAt,
+          navigate,
+          onRangeChange: navigation.setDateRange,
+          range: search.range,
         },
       }
     : null}

@@ -59,7 +59,7 @@
   import OverviewStatus from '../overview/overview-status.svelte';
   import { activeTimelineSeriesKeys } from './active-timeline-series';
   import ReportDestinationPresentation from './report-destination-presentation.svelte';
-  import { reportDestinationForSearch, reportFilterFingerprint } from './report-search';
+  import { reportDestinationForSearch } from './report-search';
 
   import SessionIdentityPublisher from './session-identity-publisher.svelte';
 
@@ -199,14 +199,6 @@
   const navigation = createBreakdownNavigation((update, options) => navigate(update, options));
   const destination = $derived(
     reportDestinationForSearch(renderedSearch, reportSupport.generatedAt, { dimension, granularity }),
-  );
-  const requestedDestination = $derived(
-    reportDestinationForSearch(search, reportSupport.generatedAt, { dimension, granularity }),
-  );
-  const focusedTimelineFiltersAreStale = $derived(
-    pending &&
-      reportFilterFingerprint(requestedDestination.sessions.filters) !==
-        reportFilterFingerprint(destination.sessions.filters),
   );
   const syntheticSessionQuery = $derived({ ...destination.sessions, cursor: null, revision });
   const focusedQuery = $derived({
@@ -484,20 +476,30 @@
   loadFailed={dashboardBreakdownLoadFailed || sessionTableLoadFailed}
   overview={primary === 'overview'
     ? {
-        activeSeriesKeys,
-        dimension,
-        draggedWindowApiValue,
-        freshness: focusedMachineFreshness,
-        granularity,
-        machineFreshnessStatus,
-        navigate,
-        onDimensionFilter: navigation.setTimelineDimensionFilter,
-        onOptionsChange: (options) => {
-          dimension = options.dimension;
-          granularity = options.granularity;
-          timelineValue = options.value;
+        activity: {
+          activeSeriesKeys,
+          dateDomain: overview.dateDomain,
+          dimension,
+          generatedAt: reportSupport.generatedAt,
+          granularity,
+          machineFreshnessStatus,
+          navigate,
+          onDimensionFilter: navigation.setTimelineDimensionFilter,
+          onOptionsChange: (options) => {
+            dimension = options.dimension;
+            granularity = options.granularity;
+            timelineValue = options.value;
+          },
+          onRangeChange: navigation.setDateRange,
+          onWindowPreview: (apiValue) => (draggedWindowApiValue = apiValue),
+          presentCampaignSeries,
+          presentMachineSeries,
+          range: renderedSearch.range,
+          revision: overview.revision,
+          timeline: overview.timeline,
+          value: timelineValue,
         },
-        onRangeChange: navigation.setDateRange,
+        draggedWindowApiValue,
         onSelectDay: (date) =>
           navigate((current) => ({
             ...current,
@@ -507,38 +509,20 @@
         onSelectSession: selectOverviewSession,
         onSelectTimeCell: (cell) =>
           navigate((current) => ({ ...current, timeCell: serializeDashboardTimeCell(cell) })),
-        presentCampaignSeries,
-        presentMachineSeries,
         presentSessionItem,
         range: renderedSearch.range,
         result: overview,
-        value: timelineValue,
       }
     : null}
   {pending}
   range={{
-    hidden: focusedTimelineFiltersAreStale,
+    hidden: false,
     props: {
-      activeSeriesKeys,
       dateDomain: overview.dateDomain,
-      dimension,
       generatedAt: reportSupport.generatedAt,
-      granularity,
-      machineFreshnessStatus,
       navigate,
-      onDimensionFilter: navigation.setTimelineDimensionFilter,
-      onOptionsChange: (options) => {
-        dimension = options.dimension;
-        granularity = options.granularity;
-        timelineValue = options.value;
-      },
       onRangeChange: navigation.setDateRange,
-      onWindowPreview: (apiValue) => (draggedWindowApiValue = apiValue),
-      presentCampaignSeries,
-      presentMachineSeries,
       range: renderedSearch.range,
-      timeline: overview.timeline,
-      value: timelineValue,
     },
   }}
   {sessions}

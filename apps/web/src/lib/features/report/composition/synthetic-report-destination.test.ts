@@ -139,3 +139,20 @@ describe('synthetic report campaign presentation', () => {
     });
   });
 });
+
+test('keeps the compact period control global and mounts activity exploration only in Overview', async () => {
+  const presentationSource = await Bun.file(
+    new URL('./report-destination-presentation.svelte', import.meta.url),
+  ).text();
+  const overviewSource = await Bun.file(new URL('../overview/overview-page.svelte', import.meta.url)).text();
+  const liveSource = await Bun.file(new URL('./live-report-destination.svelte', import.meta.url)).text();
+  const syntheticSource = await Bun.file(new URL('./synthetic-report-destination.svelte', import.meta.url)).text();
+
+  expect(presentationSource).toContain("import ReportPeriodControl from '../range/report-period-control.svelte'");
+  expect(presentationSource).toContain('<ReportPeriodControl {...range.props} />');
+  expect(presentationSource).not.toContain('ActivityExplorer');
+  expect(overviewSource).toContain("import ActivityExplorer from '../range/activity-explorer.svelte'");
+  expect(overviewSource).toContain('<ActivityExplorer {...activity} />');
+  expect(liveSource).toContain('activity: {');
+  expect(syntheticSource).toContain('activity: {');
+});

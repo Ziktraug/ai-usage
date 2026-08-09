@@ -76,6 +76,9 @@
     if (range.mode === '30d') {
       return 'last 30 days';
     }
+    if (range.mode === '90d') {
+      return 'last 90 days';
+    }
     return `${formattedRangeDate(range.from, 'start')} – ${formattedRangeDate(range.to, 'end')}`;
   });
 </script>

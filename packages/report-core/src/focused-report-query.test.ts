@@ -498,6 +498,33 @@ describe('focused report query contracts', () => {
     expect(fullRange.view.previousSummary).toBeNull();
   });
 
+  test('uses the bounded 90-day window to build an equal-length previous summary', () => {
+    const datedRow = (name: string, date: string, cost: number): SerializedRow => ({
+      ...row(name, 1, cost),
+      activeDate: `${date}T10:00:00.000Z`,
+      date: `${date}T09:00:00.000Z`,
+      endDate: `${date}T10:00:00.000Z`,
+    });
+    const result = projectFocusedOverview(
+      [
+        datedRow('outside-previous-window', '2026-01-01', 7),
+        datedRow('previous-period', '2026-04-01', 2),
+        datedRow('current-period', '2026-07-01', 3),
+      ],
+      support,
+      {
+        ...overviewRequest,
+        query: {
+          ...overviewRequest.query,
+          range: { from: '2026-04-14T12:00:00.000Z', to: null },
+        },
+      },
+    );
+
+    expect(result.summary).toMatchObject({ sessionCount: 1, totalCost: 3 });
+    expect(result.view.previousSummary).toMatchObject({ sessionCount: 1, totalCost: 2 });
+  });
+
   test('groups focused timelines by campaign, machine, project identity, and declared origin', () => {
     const request = {
       ...overviewRequest,
