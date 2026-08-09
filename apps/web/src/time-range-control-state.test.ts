@@ -123,6 +123,18 @@ describe('time range control report selection', () => {
 });
 
 describe('time range control options and inspection', () => {
+  test('keeps the Tokens display metric local to the existing result', () => {
+    const result = transitionTimeRangeControl(
+      initialState(),
+      { option: 'value', type: 'optionChanged', value: 'tokens' },
+      context(20),
+    );
+
+    expect(result.state.options.value).toBe('tokens');
+    expect(result.state.selectionIndexes).toEqual([5, 10]);
+    expect(result.commands).toEqual([]);
+  });
+
   test('granularity preserves the date-mapped report selection and clears hover', () => {
     const state = {
       ...initialState(),

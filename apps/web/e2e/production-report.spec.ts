@@ -5,12 +5,14 @@ import {
   HARNESS_FIXTURE_PROVIDER_STDERR_SENTINEL,
 } from '@ai-usage/local-machine/testing/harness-home';
 import type { Request } from '@playwright/test';
-import { expect, reportViewsFor, test } from './browser-test';
+import { expect, reportViewsFor, test, waitForFocusedReportSettled } from './browser-test';
 import { capturePlan073Smoke } from './plan073-smoke';
 import { encodeRpcResponseBody, isRpcPathname, RPC_ROUTE_GLOB, rpcStringFieldValues } from './rpc-test-transport';
 import { createServerStateNetworkTrace } from './server-state-network';
 
 const NON_EMPTY_ATTRIBUTE_PATTERN = /.+/;
+const API_VALUE_BUCKET_PATTERN = /API value: \$/;
+const PROCESSED_TOKEN_BUCKET_PATTERN = /Processed tokens: [0-9,]+ tokens$/;
 const SESSION_QUERY_FINGERPRINT_PATTERN = /^session-query-v1:[0-9a-f]{16}$/;
 const SESSION_NEIGHBOR_FINGERPRINT_PATTERN = /^session-neighbor-v1:[0-9a-f]{16}$/;
 const FOCUSED_OVERVIEW_FINGERPRINT_PREFIX = 'focused-overview-v1:';
@@ -230,6 +232,45 @@ test('renders the report timeline on the initial production Overview', async ({ 
       serverStateCounts: serverStateTrace.counts(),
     })}\n`,
   );
+  serverStateTrace.dispose();
+});
+
+test('switches production Activity metrics without a business request', async ({ page }) => {
+  const serverStateTrace = createServerStateNetworkTrace(page);
+  await page.goto('/');
+  await waitForFocusedReportSettled(page);
+
+  const activity = page.getByRole('region', { name: 'Activity' });
+  const metricControl = activity.getByRole('group', { name: 'Activity metric' });
+  const apiValue = metricControl.getByRole('button', { exact: true, name: 'API value' });
+  const tokens = metricControl.getByRole('button', { exact: true, name: 'Tokens' });
+  const overview = page.locator('[data-report-overview]');
+  const firstBucket = activity.locator('[data-report-range-part="chart"]').getByRole('img').first();
+  await expect(apiValue).toHaveAttribute('aria-pressed', 'true');
+  await expect(firstBucket).toHaveAccessibleName(API_VALUE_BUCKET_PATTERN);
+  const costLabel = await firstBucket.getAttribute('aria-label');
+  const initialUrl = page.url();
+  await expect(overview).toHaveAttribute('data-report-revision', NON_EMPTY_ATTRIBUTE_PATTERN);
+  const revision = await overview.getAttribute('data-report-revision');
+  expect(revision).not.toBeNull();
+
+  serverStateTrace.checkpoint('activity-metric-toggle');
+  await tokens.click();
+  await expect(tokens).toHaveAttribute('aria-pressed', 'true');
+  await expect(firstBucket).toHaveAccessibleName(PROCESSED_TOKEN_BUCKET_PATTERN);
+  expect(await firstBucket.getAttribute('aria-label')).not.toBe(costLabel);
+
+  await apiValue.click();
+  await expect(apiValue).toHaveAttribute('aria-pressed', 'true');
+  await expect(firstBucket).toHaveAttribute('aria-label', costLabel ?? '');
+  expect(page.url()).toBe(initialUrl);
+  await expect(overview).toHaveAttribute('data-report-revision', revision ?? '');
+  expect(serverStateTrace.counts('activity-metric-toggle')).toEqual({
+    operations: {},
+    owners: {},
+    routeData: 0,
+    totalRpc: 0,
+  });
   serverStateTrace.dispose();
 });
 

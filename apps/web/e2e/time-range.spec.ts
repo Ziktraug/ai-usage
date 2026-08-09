@@ -1,20 +1,24 @@
 import type { Locator, Page } from '@playwright/test';
 import {
   FOCUSED_REPORT_E2E_ENABLED_KEY,
+  FOCUSED_REPORT_E2E_NINETY_DAY_COMPARISON_KEY,
   FOCUSED_REPORT_E2E_VISIBLE_TREND_KEY,
 } from '../src/focused-report-e2e-fixture';
 import { expect, openHydratedReport, reportViewsFor, test, waitForFocusedReportSettled } from './browser-test';
+import { createServerStateNetworkTrace } from './server-state-network';
 
 const CALENDAR_NAME_PATTERN = /Daily activity calendar/;
 const CHART_VIEW_PATTERN = /Chart view:/;
 const DELEGATED_LEGEND_PATTERN = /^Delegated\b/;
 const HUMAN_LEGEND_PATTERN = /^Human\b/;
+const API_VALUE_BUCKET_PATTERN = /API value: \$/;
+const PROCESSED_TOKEN_BUCKET_PATTERN = /Processed tokens: [0-9,]+ tokens$/;
 const PUNCHCARD_CELL_BUTTON_PATTERN = /^Filter report to /;
 const PUNCHCARD_CELL_LABEL_PATTERN =
   /^Filter report to (Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday) ([0-9]{2}):00–[0-9]{2}:59, ([0-9,]+) sessions?$/;
 const SESSION_SUMMARY_PATTERN = / sessions$/;
 
-const SESSION_COUNT_PATTERN = /^[0-9,]+$/;
+const SESSION_COUNT_PATTERN = /^[0-9,]+ sessions$/;
 const RANGE_DAYS_PATTERN = /·\s*(\d+)\s*days?/;
 // The bug this guards against bound the class to the `'start' | 'end'` edge
 // name, so the generated style never applied. Assert the edge name itself never
@@ -74,6 +78,7 @@ const readBrushGeometry = (element: Element): BrushGeometry => {
 };
 
 const reportRangeValue = (page: Page): string | null => new URL(page.url()).searchParams.get('range');
+const ninetyDayReportUrl = (): string => `/?${new URLSearchParams({ range: JSON.stringify({ mode: '90d' }) })}`;
 
 const navigationEntryKey = async (page: Page): Promise<string | null> =>
   await page.evaluate(() => {
@@ -164,6 +169,60 @@ test('uses one report range for the dashboard and activity chart', async ({ page
   await expect(trend).toHaveText('▲ 100%');
 });
 
+test('switches API value and processed tokens locally without changing report identity', async ({ page }) => {
+  await openHydratedReport(page);
+  await waitForFocusedReportSettled(page);
+
+  const activity = activityFor(page);
+  const metricControl = activity.getByRole('group', { name: 'Activity metric' });
+  const apiValue = metricControl.getByRole('button', { exact: true, name: 'API value' });
+  const tokens = metricControl.getByRole('button', { exact: true, name: 'Tokens' });
+  const chart = activity.locator('[data-report-range-part="chart"]');
+  const firstBucket = chart.getByRole('img').first();
+  await expect(metricControl.getByRole('button')).toHaveCount(2);
+  await expect(apiValue).toHaveAttribute('aria-pressed', 'true');
+  await expect(firstBucket).toHaveAccessibleName(API_VALUE_BUCKET_PATTERN);
+  const costLabel = await firstBucket.getAttribute('aria-label');
+  const initialUrl = page.url();
+
+  const serverStateTrace = createServerStateNetworkTrace(page);
+  serverStateTrace.checkpoint('activity-metric-toggle');
+  await tokens.click();
+  await expect(tokens).toHaveAttribute('aria-pressed', 'true');
+  await expect(activity.locator('[data-timeline-metric="tokens"]')).toBeVisible();
+  await expect(firstBucket).toHaveAccessibleName(PROCESSED_TOKEN_BUCKET_PATTERN);
+  expect(await firstBucket.getAttribute('aria-label')).not.toBe(costLabel);
+
+  await apiValue.click();
+  await expect(apiValue).toHaveAttribute('aria-pressed', 'true');
+  await expect(activity.locator('[data-timeline-metric="cost"]')).toBeVisible();
+  await expect(firstBucket).toHaveAttribute('aria-label', costLabel ?? '');
+
+  const explorer = activityExplorerFor(page);
+  await explorer.locator('summary').click();
+  await explorer
+    .getByRole('radiogroup', { name: 'Metric' })
+    .getByRole('radio', { exact: true, name: 'Sessions' })
+    .click();
+  await expect(apiValue).toHaveAttribute('aria-pressed', 'false');
+  await expect(tokens).toHaveAttribute('aria-pressed', 'false');
+  await tokens.focus();
+  await page.keyboard.press('Space');
+  await expect(tokens).toBeFocused();
+  await expect(tokens).toHaveAttribute('aria-pressed', 'true');
+  await apiValue.click();
+  await expect(apiValue).toHaveAttribute('aria-pressed', 'true');
+
+  expect(page.url()).toBe(initialUrl);
+  expect(serverStateTrace.counts('activity-metric-toggle')).toEqual({
+    operations: {},
+    owners: {},
+    routeData: 0,
+    totalRpc: 0,
+  });
+  serverStateTrace.dispose();
+});
+
 test('keeps period targets tactile and wraps chart options below the narrow viewport', async ({ page }) => {
   await page.setViewportSize({ height: 844, width: 390 });
   await openHydratedReport(page);
@@ -171,6 +230,11 @@ test('keeps period targets tactile and wraps chart options below the narrow view
   const periodButtons = reportPeriodFor(page).getByRole('button');
   await expect(periodButtons).toHaveCount(6);
   for (const button of await periodButtons.all()) {
+    expect(Math.round((await button.boundingBox())?.height ?? 0)).toBeGreaterThanOrEqual(44);
+  }
+  const activityMetricButtons = activityFor(page).getByRole('group', { name: 'Activity metric' }).getByRole('button');
+  await expect(activityMetricButtons).toHaveCount(2);
+  for (const button of await activityMetricButtons.all()) {
     expect(Math.round((await button.boundingBox())?.height ?? 0)).toBeGreaterThanOrEqual(44);
   }
 
@@ -193,6 +257,65 @@ test('keeps period targets tactile and wraps chart options below the narrow view
   expect(geometry.scrollWidth).toBeLessThanOrEqual(geometry.clientWidth);
   expect(geometry.currentMinWidth).toBe('0px');
   expect(geometry.currentWhiteSpace).toBe('normal');
+});
+
+test('restores a bounded 90d period from a mobile deep link, reload, and history', async ({ page }) => {
+  await page.setViewportSize({ height: 844, width: 390 });
+  await openHydratedReport(page, ninetyDayReportUrl());
+  await waitForFocusedReportSettled(page);
+
+  let period = reportPeriodFor(page);
+  await expect(period.getByRole('button', { exact: true, name: '90d' })).toHaveAttribute('aria-pressed', 'true');
+  await expect(period.getByText('Mar 13 → Jun 11, 2026 · 90 days', { exact: true })).toBeVisible();
+  const executiveValue = page.getByRole('region', { name: 'Estimated API-equivalent value' });
+  await expect(executiveValue).toContainText('last 90 days');
+  await expect(executiveValue).toContainText('No sessions exist in the previous period.');
+
+  await page.reload();
+  await waitForFocusedReportSettled(page);
+  period = reportPeriodFor(page);
+  await expect(period.getByRole('button', { exact: true, name: '90d' })).toHaveAttribute('aria-pressed', 'true');
+
+  await period.getByRole('button', { exact: true, name: '7d' }).click();
+  await waitForFocusedReportSettled(page);
+  await expect.poll(() => reportRangeValue(page)).toContain('7d');
+
+  await page.goBack();
+  await waitForFocusedReportSettled(page);
+  await expect.poll(() => reportRangeValue(page)).toContain('90d');
+  await expect(reportPeriodFor(page).getByRole('button', { exact: true, name: '90d' })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
+
+  await page.goForward();
+  await waitForFocusedReportSettled(page);
+  await expect.poll(() => reportRangeValue(page)).toContain('7d');
+  await expect(reportPeriodFor(page).getByRole('button', { exact: true, name: '7d' })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
+});
+
+test('compares 90d with the previous equal-length period when that boundary has data', async ({ page }) => {
+  await page.addInitScript(
+    ({ comparisonKey, enabledKey }) => {
+      Reflect.set(globalThis, enabledKey, true);
+      Reflect.set(globalThis, comparisonKey, true);
+    },
+    {
+      comparisonKey: FOCUSED_REPORT_E2E_NINETY_DAY_COMPARISON_KEY,
+      enabledKey: FOCUSED_REPORT_E2E_ENABLED_KEY,
+    },
+  );
+  await openHydratedReport(page);
+
+  await reportPeriodFor(page).getByRole('button', { exact: true, name: '90d' }).click();
+  await waitForFocusedReportSettled(page);
+
+  const executiveValue = page.getByRole('region', { name: 'Estimated API-equivalent value' });
+  await expect(executiveValue).toContainText('381% higher than the previous equal-length period.');
+  await expect(executiveValue).not.toContainText('No sessions exist in the previous period.');
 });
 
 test('uses clickable heatmap days as Rhythm activity-day controls without a native date input', async ({ page }) => {
@@ -292,7 +415,7 @@ test('changes every chart option from its segmented controls', async ({ page }) 
     await expect(chartOptions.getByRole('radio', { exact: true, name: option })).toBeChecked();
   }
 
-  for (const option of ['Share', 'Sessions', 'Estimated API-equivalent value']) {
+  for (const option of ['Share', 'Sessions', 'Tokens', 'Estimated API-equivalent value']) {
     await chartOptions.getByRole('radio', { exact: true, name: option }).click();
     await expect(chartOptions.getByRole('radio', { exact: true, name: option })).toBeChecked();
   }
@@ -403,8 +526,20 @@ test('commits preset, text, keyboard, and pointer report ranges to the URL', asy
   if (selectedRangeBox) {
     const startX = selectedRangeBox.x + selectedRangeBox.width / 2;
     const startY = selectedRangeBox.y + selectedRangeBox.height / 2;
+    const hitTarget = await selectedRange.evaluate(
+      (_selectedElement, { x, y }) => {
+        const element = document.elementFromPoint(x, y);
+        return {
+          ariaLabel: element?.getAttribute('aria-label') ?? null,
+          tagName: element?.tagName ?? null,
+        };
+      },
+      { x: startX, y: startY },
+    );
+    expect(hitTarget).toEqual({ ariaLabel: 'Selected report window', tagName: 'BUTTON' });
     await page.mouse.move(startX, startY);
     await page.mouse.down();
+    await expect(selectedRange).toHaveAttribute('data-dragging', 'true');
     await page.mouse.move(startX - 50, startY, { steps: 4 });
     await expect(selectedRange).toHaveAttribute('data-dragging', 'true');
     await page.mouse.up();

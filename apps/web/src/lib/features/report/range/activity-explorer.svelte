@@ -13,6 +13,8 @@
   });
   const explorerContent = css({ display: 'grid', gap: '12px', pt: '12px' });
   const activityPanel = css({ display: 'grid', gap: '12px', p: { base: '14px', md: '18px' } });
+  const executiveMetricGroup = css({ border: 0, m: 0, minW: 0, p: 0 });
+  const executiveMetricButton = css({ minH: '44px' });
 </script>
 
 <script lang="ts">
@@ -21,6 +23,8 @@
   import {
     panelSub,
     panelTitle,
+    presetButton,
+    presetGroup,
     SegmentedControl,
     timeChartOptions,
     timeChartOptionsCurrent,
@@ -46,7 +50,12 @@
   import { untrack } from 'svelte';
   import type { DashboardDateRangeSearch, DashboardSearch } from '../../../../dashboard-search';
   import { dateFromIndex } from '../../../../date-range';
-  import type { MigrationGranularity, TimelineDimension, TimelineValue } from '../../../../overview-model';
+  import type {
+    MigrationGranularity,
+    ResolvedTimelineMetric,
+    TimelineDimension,
+    TimelineValue,
+  } from '../../../../overview-model';
   import {
     createTimeRangeControlState,
     type TimeRangeControlState,
@@ -55,9 +64,14 @@
   } from '../../../../time-range-control-state';
   import type { SearchNavigationIntent, SearchNavigationOptions } from '../../../foundation/navigation/search-intent';
   import { createSearchEditRun } from '../../../foundation/navigation/svelte/dashboard-url';
-  import { fmtDateOnly } from '../../../foundation/presentation/format';
+  import { fmtDateOnly, fmtNum, fmtPct } from '../../../foundation/presentation/format';
   import ActivityTimeline from '../overview/activity-timeline.svelte';
-  import type { MachineSeriesPresenter } from '../overview/timeline-model';
+  import {
+    executiveTimelineValue,
+    type MachineSeriesPresenter,
+    presentTimelineValue,
+    resolveTimelineMetric,
+  } from '../overview/timeline-model';
   import { timelineRangeForSelection, visibleTimelineSummary } from '../overview/timeline-window';
   import {
     customRangeFromIndexes,
@@ -177,7 +191,7 @@
   );
   const draggedWindowApiValue = $derived(
     timeline && visibleRange && controlState.interaction.type !== 'idle'
-      ? visibleTimelineSummary(timeline, visibleRange, false).total
+      ? visibleTimelineSummary(timeline, visibleRange, 'cost').total
       : null,
   );
 
@@ -202,14 +216,49 @@
   ] as const;
   const valueItems = [
     { label: 'Estimated API-equivalent value', value: 'cost' },
+    { label: 'Tokens', value: 'tokens' },
     { label: 'Sessions', value: 'sessions' },
     { label: 'Share', value: 'share' },
+  ] as const;
+  const executiveValueItems = [
+    { label: 'API value', value: 'cost' },
+    { label: 'Tokens', value: 'tokens' },
   ] as const;
   const valueLabels: Record<TimelineValue, string> = {
     cost: 'Estimated API-equivalent value',
     sessions: 'Sessions',
     share: 'Share',
+    tokens: 'Tokens',
   };
+  const executiveValue = $derived(executiveTimelineValue(value));
+  const resolvedMetric = $derived<ResolvedTimelineMetric>(resolveTimelineMetric(timeline, value));
+  const selectedWindowSummary = $derived(
+    timeline && visibleRange ? visibleTimelineSummary(timeline, visibleRange, resolvedMetric) : null,
+  );
+  const selectedMetricSummary = $derived.by(() => {
+    const total = selectedWindowSummary?.total ?? 0;
+    if (value === 'share') {
+      return { label: `${fmtPct(total > 0 ? 100 : 0)} of selected activity`, title: null };
+    }
+    if (resolvedMetric === 'cost') {
+      const presentation = presentTimelineValue(
+        total,
+        total,
+        value,
+        resolvedMetric,
+        selectedWindowSummary?.priceMeasurement ?? {
+          knownCost: 0,
+          state: 'zero',
+          unpricedFreshTokens: 0,
+        },
+      );
+      return {
+        label: `${presentation.label} API value${presentation.provenance ? ` · ${presentation.provenance.label}` : ''}`,
+        title: presentation.provenance?.description ?? presentation.title,
+      };
+    }
+    return { label: `${fmtNum(total)} ${resolvedMetric}`, title: null };
+  });
   const chartSummary = $derived(
     `${focusedTimelineDimensionLabel(dimension)} · ${granularity[0]?.toUpperCase()}${granularity.slice(1)} · ${
       valueLabels[value]
@@ -355,7 +404,7 @@
     }
   };
   const changeValue = (next: string): void => {
-    if (next === 'cost' || next === 'sessions' || next === 'share') {
+    if (next === 'cost' || next === 'sessions' || next === 'share' || next === 'tokens') {
       onOptionsChange({ dimension, granularity, value: next });
     }
   };
@@ -373,8 +422,21 @@
   </div>
   <div class={summaryRow}>
     <span>{chartSummary}</span>
-    <span>{timeline?.grandSessions ?? 0} sessions</span>
+    <span title={selectedMetricSummary.title ?? undefined}>{selectedMetricSummary.label}</span>
   </div>
+  <fieldset aria-label="Activity metric" class={cx(presetGroup, executiveMetricGroup)}>
+    {#each executiveValueItems as item (item.value)}
+      <button
+        aria-pressed={executiveValue === item.value}
+        class={cx(presetButton, executiveMetricButton)}
+        data-active={executiveValue === item.value ? 'true' : 'false'}
+        onclick={() => changeValue(item.value)}
+        type="button"
+      >
+        {item.label}
+      </button>
+    {/each}
+  </fieldset>
   <ActivityTimeline
     {activeSeriesKeys}
     {machineFreshnessStatus}

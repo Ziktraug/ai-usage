@@ -105,9 +105,11 @@
     }
     return comparison.explanation;
   });
-  const primaryQualification = $derived(
-    model.primary.provenance?.description ?? 'Standard API-price estimate for all priced sessions in this period.',
-  );
+  const primaryQualification = $derived.by((): string => {
+    const periodSentence = `This estimate covers work ${model.primary.periodScope}.`;
+    const provenance = model.primary.provenance?.description;
+    return provenance ? `${provenance} ${periodSentence}` : `Standard API-price estimate. ${periodSentence}`;
+  });
   const openModels = (event: MouseEvent): void => {
     if (event.button !== 0 || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) {
       return;

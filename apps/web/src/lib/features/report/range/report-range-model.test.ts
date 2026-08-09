@@ -137,6 +137,26 @@ test('wires pointer cancellation and lost capture into the activity explorer', a
   expect(source).toContain('target.releasePointerCapture(event.pointerId)');
 });
 
+test('keeps the executive API value and Tokens toggle above advanced activity options', async () => {
+  const source = await Bun.file(new URL('./activity-explorer.svelte', import.meta.url)).text();
+  const topLevelToggle = source.indexOf('aria-label="Activity metric"');
+  const advancedDisclosure = source.indexOf('<details aria-label="Explore activity"');
+
+  expect(topLevelToggle).toBeGreaterThan(-1);
+  expect(advancedDisclosure).toBeGreaterThan(topLevelToggle);
+  expect(source).toContain("{ label: 'API value', value: 'cost' }");
+  expect(source).toContain("{ label: 'Tokens', value: 'tokens' }");
+  expect(source).toContain('<fieldset aria-label="Activity metric"');
+  expect(source).toContain('aria-pressed={executiveValue === item.value}');
+  expect(source).toContain("data-active={executiveValue === item.value ? 'true' : 'false'}");
+  expect(source).toContain('class={cx(presetButton, executiveMetricButton)}');
+  expect(source).toContain("minH: '44px'");
+  expect(source).not.toContain('{#if executiveValue}');
+  expect(source).toContain('selectedWindowSummary?.priceMeasurement');
+  expect(source).toContain('presentTimelineValue(');
+  expect(source).toContain("visibleTimelineSummary(timeline, visibleRange, 'cost').total");
+});
+
 test('keeps invalid custom drafts announced and restores the committed range on Escape', async () => {
   const source = await Bun.file(new URL('./report-period-control.svelte', import.meta.url)).text();
   expect(source).toContain('aria-invalid={invalidFrom}');

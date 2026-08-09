@@ -45,6 +45,7 @@ describe('Overview presentation adapters', () => {
       ],
       priceMeasurement: apiPriceMeasurement({ costKnown: true, freshTokens: 0, knownCost: 0 }),
       sessions: 6,
+      tokens: 0,
       total: 0,
     });
     expect(description).toContain('Origin unsupported: 1 session');

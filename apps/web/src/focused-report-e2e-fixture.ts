@@ -20,6 +20,7 @@ import {
 
 export const FOCUSED_REPORT_E2E_CONTROL_KEY = '__aiUsageE2EFocusedReportControl';
 export const FOCUSED_REPORT_E2E_ENABLED_KEY = '__aiUsageE2EFocusedReportEnabled';
+export const FOCUSED_REPORT_E2E_NINETY_DAY_COMPARISON_KEY = '__aiUsageE2ENinetyDayComparison';
 export const FOCUSED_REPORT_E2E_VISIBLE_TREND_KEY = '__aiUsageE2EFocusedReportVisibleTrend';
 
 interface FocusedReportSource {
@@ -128,21 +129,36 @@ const createResponseGate = (): { control: FocusedResponseGate; waitForResponse: 
 };
 
 const focusedOverviewRows = (): typeof demoReportPayload.rows => {
-  if (Reflect.get(globalThis, FOCUSED_REPORT_E2E_VISIBLE_TREND_KEY) !== true) {
-    return demoReportPayload.rows;
+  const rows =
+    Reflect.get(globalThis, FOCUSED_REPORT_E2E_VISIBLE_TREND_KEY) === true
+      ? demoReportPayload.rows.map((row) =>
+          row.date === '2026-06-10T18:15:00.000Z'
+            ? {
+                ...row,
+                costActual: 1.6,
+                costApprox: 1.6,
+                harness: 'Codex',
+                model: 'gpt-5.3-codex',
+                name: 'Build previous report UI',
+                provider: 'Codex API',
+                sessionLabel: 'Build previous report UI',
+                source: { ...row.source, harnessKey: 'codex', sourceSessionId: 'trend-previous' },
+              }
+            : row,
+        )
+      : demoReportPayload.rows;
+  if (Reflect.get(globalThis, FOCUSED_REPORT_E2E_NINETY_DAY_COMPARISON_KEY) !== true) {
+    return rows;
   }
-  return demoReportPayload.rows.map((row) =>
-    row.date === '2026-06-10T18:15:00.000Z'
+  return rows.map((row) =>
+    row.date === '2026-05-25T13:05:00.000Z'
       ? {
           ...row,
-          costActual: 1.6,
-          costApprox: 1.6,
-          harness: 'Codex',
-          model: 'gpt-5.3-codex',
-          name: 'Build previous report UI',
-          provider: 'Codex API',
-          sessionLabel: 'Build previous report UI',
-          source: { ...row.source, harnessKey: 'codex', sourceSessionId: 'trend-previous' },
+          activeDate: '2026-02-12T14:18:00.000Z',
+          date: '2026-02-12T13:05:00.000Z',
+          endDate: '2026-02-12T14:18:00.000Z',
+          name: 'Build previous 90-day report UI',
+          sessionLabel: 'Build previous 90-day report UI',
         }
       : row,
   );

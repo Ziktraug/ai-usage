@@ -44,6 +44,7 @@ export interface ExecutiveComparisonPresentation {
 
 export interface ExecutivePrimaryPresentation {
   readonly comparison: ExecutiveComparisonPresentation;
+  readonly periodScope: string;
   readonly provenance: ReturnType<typeof aggregateApiPriceProvenance>;
   readonly value: ApiValuePresentation;
 }
@@ -112,6 +113,25 @@ const comparisonFor = (
         }
       : null;
   return { delta, explanation: metricComparisonMessage(state), state };
+};
+
+const periodScopeFor = (rangeMode: DateRangeMode): string => {
+  if (rangeMode === 'all') {
+    return 'across all recorded dates';
+  }
+  if (rangeMode === 'today') {
+    return 'today';
+  }
+  if (rangeMode === '7d') {
+    return 'in the last 7 days';
+  }
+  if (rangeMode === '30d') {
+    return 'in the last 30 days';
+  }
+  if (rangeMode === '90d') {
+    return 'in the last 90 days';
+  }
+  return 'in the selected custom period';
 };
 
 const pricingQualification = (measurement: ApiPriceMeasurement): string | null =>
@@ -265,6 +285,7 @@ export const buildExecutiveOverviewModel = ({
   models: executive.models.map((group) => groupPresentation(group, summary.totalCost)),
   primary: {
     comparison: comparisonFor(summary, previousSummary, rangeMode),
+    periodScope: periodScopeFor(rangeMode),
     provenance: aggregateApiPriceProvenance(summary.priceMeasurement),
     value: aggregateApiValuePresentation(summary.priceMeasurement),
   },

@@ -2,13 +2,18 @@ import { describe, expect, test } from 'bun:test';
 import type { FocusedTimelineData } from '@ai-usage/report-core/focused-report-query';
 import { apiPriceMeasurement } from '@ai-usage/report-core/provenance';
 import {
+  executiveTimelineValue,
   presentTimelineSeries,
+  presentTimelineValue,
+  resolveTimelineMetric,
   retainTimelineTickLabels,
+  timelineGapValue,
+  timelineMetricLabel,
   timelineReadoutFor,
   timelineSeriesIsFilterable,
+  timelineSeriesValue,
   timelineSharePercent,
   timelineTrendIsVisible,
-  timelineUsesSessions,
 } from './timeline-model';
 
 const measured = apiPriceMeasurement({ costKnown: true, freshTokens: 10, knownCost: 10 });
@@ -16,12 +21,13 @@ const timeline = (grandTotal: number): FocusedTimelineData => ({
   buckets: [
     {
       byKey: {
-        alpha: { cost: 9, priceMeasurement: measured, sessions: 1 },
-        beta: { cost: 1, priceMeasurement: measured, sessions: 9 },
+        alpha: { cost: 9, priceMeasurement: measured, sessions: 1, tokens: 900 },
+        beta: { cost: 1, priceMeasurement: measured, sessions: 9, tokens: 100 },
       },
       date: '2026-06-01',
       priceMeasurement: measured,
       sessions: 10,
+      tokens: 1000,
       total: grandTotal > 0 ? 10 : 0,
       unclassified: null,
     },
@@ -29,25 +35,34 @@ const timeline = (grandTotal: number): FocusedTimelineData => ({
   dimension: 'harness',
   first: '2026-06-01',
   grandSessions: 10,
+  grandTokens: 1000,
   grandTotal,
   granularity: 'day',
   last: '2026-06-01',
   maxBucketSessions: 10,
+  maxBucketTokens: 1000,
   maxBucketTotal: grandTotal > 0 ? 10 : 0,
   priceMeasurement: measured,
   series: [
-    { key: 'alpha', label: 'Alpha', priceMeasurement: measured, sessions: 1, total: 9 },
-    { key: 'beta', label: 'Beta', priceMeasurement: measured, sessions: 9, total: 1 },
+    { key: 'alpha', label: 'Alpha', priceMeasurement: measured, sessions: 1, tokens: 900, total: 9 },
+    { key: 'beta', label: 'Beta', priceMeasurement: measured, sessions: 9, tokens: 100, total: 1 },
   ],
   unclassified: null,
 });
 
 describe('P2 timeline presentation model', () => {
+  test('only marks an executive metric toggle with one of its own values', () => {
+    expect(executiveTimelineValue('cost')).toBe('cost');
+    expect(executiveTimelineValue('tokens')).toBe('tokens');
+    expect(executiveTimelineValue('sessions')).toBeNull();
+    expect(executiveTimelineValue('share')).toBeNull();
+  });
+
   test('uses cost for every share when cost exists, never sessions divided by cost', () => {
     const data = timeline(10);
     const readout = timelineReadoutFor(data, 'share', 0);
 
-    expect(timelineUsesSessions(data, 'share')).toBe(false);
+    expect(resolveTimelineMetric(data, 'share')).toBe('cost');
     expect(readout?.rows.map((row) => [row.key, timelineSharePercent(row.value, readout.total)])).toEqual([
       ['alpha', 90],
       ['beta', 10],
@@ -58,11 +73,59 @@ describe('P2 timeline presentation model', () => {
     const data = timeline(0);
     const readout = timelineReadoutFor(data, 'share', 0);
 
-    expect(timelineUsesSessions(data, 'share')).toBe(true);
+    expect(resolveTimelineMetric(data, 'share')).toBe('sessions');
     expect(readout?.rows.map((row) => [row.key, timelineSharePercent(row.value, readout.total)])).toEqual([
       ['beta', 90],
       ['alpha', 10],
     ]);
+  });
+
+  test('resolves Tokens to processed-token values without consulting price coverage', () => {
+    const data = timeline(0);
+    const firstSeries = data.series[0];
+    const readout = timelineReadoutFor(data, 'tokens', 0);
+    if (!firstSeries) {
+      throw new Error('Expected a timeline series fixture.');
+    }
+
+    expect(resolveTimelineMetric(data, 'tokens')).toBe('tokens');
+    expect(readout?.metric).toBe('tokens');
+    expect(readout?.total).toBe(1000);
+    expect(readout?.rows.map((row) => [row.key, row.value])).toEqual([
+      ['alpha', 900],
+      ['beta', 100],
+    ]);
+    expect(timelineSeriesValue(firstSeries, 'tokens')).toBe(900);
+    expect(timelineGapValue({ sessions: 2, tokens: 75, total: 0 }, 'tokens')).toBe(75);
+    expect(timelineMetricLabel('tokens', 'tokens')).toBe('Processed tokens');
+    expect(presentTimelineValue(241_600, 241_600, 'tokens', 'tokens', measured)).toEqual({
+      label: '241,600 tokens',
+      provenance: null,
+      title: null,
+    });
+  });
+
+  test('qualifies API value as exact, a lower bound, or unavailable from its price measurement', () => {
+    const partial = apiPriceMeasurement({ costKnown: false, freshTokens: 2500, knownCost: 4.5 });
+    const unpriced = apiPriceMeasurement({ costKnown: false, freshTokens: 2500, knownCost: 0 });
+
+    expect(presentTimelineValue(10, 10, 'cost', 'cost', measured)).toMatchObject({
+      label: '$10.00',
+      provenance: null,
+    });
+    expect(presentTimelineValue(4.5, 4.5, 'cost', 'cost', partial)).toMatchObject({
+      label: '≥ $4.50',
+      provenance: { label: 'Partially measured', severity: 'warning' },
+    });
+    expect(presentTimelineValue(0, 0, 'cost', 'cost', unpriced)).toMatchObject({
+      label: '—',
+      provenance: { label: 'Partially measured', severity: 'warning' },
+    });
+    expect(presentTimelineValue(2500, 2500, 'tokens', 'tokens', partial)).toEqual({
+      label: '2,500 tokens',
+      provenance: null,
+      title: null,
+    });
   });
 
   test('presents campaign and machine language without changing stable keys', () => {
@@ -134,6 +197,12 @@ test('wires legend buttons, keyboard inspection, live readout, and collision mea
   expect(source).toContain('data-origin-unclassified-legend');
   expect(source).toContain('document.fonts.ready.then');
   expect(source).toContain('observer.observe(boundaryRowElement)');
+  expect(source).toContain('metricLabel}:');
+  expect(source).toContain('presentTimelineValue(');
+  expect(source).toContain('classifiedBucketPriceMeasurement(bar.bucket)');
+  expect(source).toContain('accessibleAmount(barValue)');
+  expect(source).toContain('presentation.provenance');
+  expect(source).not.toContain('data-origin-gap-value');
 });
 
 test('remeasures tick collisions when timeline labels change without a resize', async () => {
@@ -148,12 +217,13 @@ test('remeasures tick collisions when timeline labels change without a resize', 
 describe('readout series trend', () => {
   const bucketWith = (date: string, alpha: number, beta: number) => ({
     byKey: {
-      alpha: { cost: alpha, priceMeasurement: measured, sessions: alpha },
-      beta: { cost: beta, priceMeasurement: measured, sessions: beta },
+      alpha: { cost: alpha, priceMeasurement: measured, sessions: alpha, tokens: alpha * 10 },
+      beta: { cost: beta, priceMeasurement: measured, sessions: beta, tokens: beta * 10 },
     },
     date,
     priceMeasurement: measured,
     sessions: alpha + beta,
+    tokens: (alpha + beta) * 10,
     total: alpha + beta,
     unclassified: null,
   });

@@ -34,7 +34,7 @@ export const presetGroupLabel = css({
 
 export const timeRangeViewControls = css({
   display: 'grid',
-  gridTemplateColumns: { base: '1fr', md: 'repeat(3, max-content)' },
+  gridTemplateColumns: { base: 'minmax(0, 1fr)', md: 'repeat(2, minmax(0, 1fr))' },
   gap: '8px',
   alignItems: 'end',
   justifyContent: 'flex-start',

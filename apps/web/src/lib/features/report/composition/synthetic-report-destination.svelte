@@ -36,6 +36,7 @@
     machineFreshnessStatusLabel,
     machineLabelPresentationForSnapshot,
   } from '../../../../machine-freshness-presentation';
+  import type { TimelineValue } from '../../../../overview-model';
   import { buildProviderStatusViews } from '../../../../provider-status-model';
   import { demoReportPayload } from '../../../../report-data';
   import type { RuntimeMode } from '../../../../runtime-mode';
@@ -207,7 +208,7 @@
   const providers = buildProviderStatusViews(reportSupport, allRows, reportSupport.generatedAt);
   let dimension = $state<'campaign' | 'harness' | 'machine' | 'model' | 'origin' | 'provider' | 'project'>('harness');
   let granularity = $state<'day' | 'month' | 'week'>('day');
-  let timelineValue = $state<'cost' | 'sessions' | 'share'>('cost');
+  let timelineValue = $state<TimelineValue>('cost');
   // Headline value of the window under the pointer, so the hero keeps tracking the brush now that a
   // gesture only commits on release. This payload recomputes in memory, so the committed range
   // itself is the signal to retire the preview.

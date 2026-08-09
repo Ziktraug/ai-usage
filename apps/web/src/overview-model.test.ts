@@ -271,6 +271,37 @@ describe('overview model', () => {
     expect(providerData?.grandSessions).toBe(1);
   });
 
+  test('totals processed tokens across classified and unclassified timeline activity', () => {
+    const classified = {
+      ...row({
+        sessionLabel: 'Classified',
+        tokCr: 10,
+        tokCw: 20,
+        tokIn: 30,
+        tokOut: 40,
+        tokenTotal: 100,
+      }),
+      origin: 'human' as const,
+    };
+    const unclassified = row({
+      sessionLabel: 'Unclassified',
+      tokCr: 1,
+      tokCw: 2,
+      tokIn: 3,
+      tokOut: 4,
+      tokenTotal: 10,
+    });
+
+    const data = buildTimelineData([classified, unclassified], { dimension: 'origin', granularity: 'day' });
+
+    expect(data?.grandTokens).toBe(110);
+    expect(data?.maxBucketTokens).toBe(110);
+    expect(data?.buckets[0]?.tokens).toBe(110);
+    expect(data?.buckets[0]?.unclassified?.tokens).toBe(10);
+    expect(data?.series[0]?.tokens).toBe(100);
+    expect(data?.buckets[0]?.byKey.get('human')?.tokens).toBe(100);
+  });
+
   test('orders equal timeline series by a stable lexical key', () => {
     const rows = ['z-model', 'a-model', 'ä-model'].map((model) => row({ costApprox: 1, model, sessionLabel: model }));
 
@@ -467,14 +498,17 @@ describe('overview model', () => {
     expect(aggregate?.label).toBe('Other');
     expect(aggregate?.memberKeys).toEqual(['model-4', 'model-3', 'model-2', 'model-1']);
     expect(aggregate?.sessions).toBe(4);
+    expect(aggregate?.tokens).toBe(80);
     expect(aggregate?.total).toBe(10);
     expect(data?.buckets[0]?.byKey.get(aggregate?.key ?? '')).toEqual({
       cost: 10,
       priceMeasurement: { knownCost: 10, state: 'measured', unpricedFreshTokens: 0 },
       sessions: 4,
+      tokens: 80,
     });
     expect(data?.series.reduce((sum, series) => sum + series.total, 0)).toBe(data?.grandTotal);
     expect(data?.series.reduce((sum, series) => sum + series.sessions, 0)).toBe(data?.grandSessions);
+    expect(data?.series.reduce((sum, series) => sum + series.tokens, 0)).toBe(data?.grandTokens);
   });
 
   test('builds session shape chart data for timed priced rows', () => {

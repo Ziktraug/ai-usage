@@ -72,6 +72,7 @@ describe('decision-first Overview Svelte surfaces', () => {
     expect(body).toContain('data-executive-chart');
     expect(body).toContain('data-executive-metrics');
     expect(body).toContain('Estimated API-equivalent value');
+    expect(body).toContain('This estimate covers work in the last 30 days.');
     expect(body).toContain('By harness');
     expect(body).toContain('Processed tokens');
     expect(body).toContain('Cache volume');

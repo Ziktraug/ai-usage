@@ -86,6 +86,7 @@ describe('executive Overview model', () => {
 
     expect(model.primary.value).toMatchObject({ label: '$100.00', status: 'exact' });
     expect(model.primary.provenance).toBeNull();
+    expect(model.primary.periodScope).toBe('in the last 30 days');
     expect(model.primary.comparison).toMatchObject({
       delta: { pct: 100 },
       explanation: null,
@@ -189,7 +190,17 @@ describe('executive Overview model', () => {
       explanation: 'No previous period exists before the full recorded range.',
       state: 'full-range',
     });
+    expect(model.primary.periodScope).toBe('across all recorded dates');
     expect(model.insight).toBeNull();
+  });
+
+  test('keeps the 90-day and custom period scope visible in the primary answer', () => {
+    expect(buildExecutiveOverviewModel(modelInput({ rangeMode: '90d' })).primary.periodScope).toBe(
+      'in the last 90 days',
+    );
+    expect(buildExecutiveOverviewModel(modelInput({ rangeMode: 'custom' })).primary.periodScope).toBe(
+      'in the selected custom period',
+    );
   });
 
   test('keeps bounded no-prior and measured-zero outcomes explicit without a delta', () => {
