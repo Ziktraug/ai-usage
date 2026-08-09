@@ -76,7 +76,7 @@
 ## Status
 
 - **Priority**: P1
-- **Status**: TODO
+- **Status**: IN PROGRESS
 - **Effort**: L
 - **Risk**: HIGH
 - **Depends on**: completed plans
@@ -1188,9 +1188,27 @@ Fill this during implementation; do not pre-claim results.
 - **Clean merged foundation SHA**: `1868b108`
 - **Plan 069/072 reconciliation evidence**: both plan documents and
   `plans/README.md` are DONE in `1868b108`
-- **Clean implementation start SHA**: pending
-- **Gate-0 bundle/CSS/RPC measurements**: pending
-- **Gate-0 session benchmark**: pending
+- **Clean implementation start SHA**: `edf7704cdc4a27f590b56c02da2eb034cb4832bb`
+- **Gate-0 bundle/CSS/RPC measurements**: Overview `/` median from
+  `/tmp/ai-usage-plan073-destination-render.json`: raw closure `886,314 B`,
+  gzip closure `277,526 B`, Brotli closure `240,408 B`, hydration
+  `58,926 B`, first useful content `147.7 ms`, first usable render
+  `357.4 ms`, TTFB `135.438 ms`, layout shift `0.001134`. All seven `/`
+  samples recorded `4` business RPCs before hydration and `0` after.
+  `/tmp/ai-usage-plan073-bundle-map.json` contains `52` chunks, `34`
+  initial chunks, and `0` duplicated Ark/Zag modules. SHA-256:
+  destination render `e6ff7e69eb62c9da36cec5ac23f732e0643b46c5ff66a927e3f1fc7ffbffe7ad`;
+  bundle JSON `efa4f48ac1f7701dbfbe446d1aab9d53616953932cbca6f02010b495af56460e`;
+  bundle Markdown `a903fe67333101da3f1305c4cc7bca7f7e1c3b47fad5abb4eb610f12c19b6567`.
+- **Gate-0 session benchmark**:
+  `/tmp/ai-usage-plan073-session-scroll-baseline.json` covers `5,000`
+  unique session identities across `4,999` root campaigns, `25` desktop
+  pages (`26` total Session pages), with `0` missing and `0` duplicate
+  identities in every sample. Medians: desktop traversal `3,806.4 ms`,
+  mobile traversal `72.396 ms`, initial hydration `460.314 ms`, filter
+  `195.7 ms`, sort `206.458 ms`, heap delta `25,537,480 B`, cumulative
+  Session responses `11,026,467 B`, maximum page `441,050 B`. SHA-256:
+  `215f9b28317f1810fd4ea98910df370c0a1b619e4129145555e79fb3badffe9f`.
 - **Final measurement deltas**: pending
 - **Final snapshot names and viewports**: pending
 - **Final green SHA**: pending

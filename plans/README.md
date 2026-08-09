@@ -136,7 +136,7 @@ read-only SQLite and the permanent browser/server and demo-isolation boundaries.
 | 070 | Retire Completed Web Migration Guardrails and Clarify Lasting Safety Gates | P1 | M | 068 migration integrated; 069 browser ownership integrated | DONE |
 | 071 | Measure and Optimize the Web Session Pipeline End to End | P1 | XL | current Plan 069 Query ownership; 070 | DONE |
 | 072 | Evaluate Deferred Web Session Optimizations (keyset, Ark split, direct destination SSR) | P1 | XL | 071 reviewed final | DONE |
-| 073 | Make the Report a Decision-First Executive and Investigation Workspace | P1 | L | 069, 072 (DONE); main `1868b108` | TODO |
+| 073 | Make the Report a Decision-First Executive and Investigation Workspace | P1 | L | 069, 072 (DONE); main `1868b108` | IN PROGRESS |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) |
 REJECTED (with one-line rationale).
