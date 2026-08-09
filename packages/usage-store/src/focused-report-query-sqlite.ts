@@ -140,6 +140,7 @@ interface TimelineRecord {
   last_time: number;
   partial_price_rows: number;
   sessions: number;
+  tokens: number;
   unpriced_fresh_tokens: number;
 }
 
@@ -450,6 +451,7 @@ const readModelTimeline = (
         SUM(segments.cost_approx) AS cost,
         MAX(CASE WHEN segments.cost_known = 0 THEN 1 ELSE 0 END) AS partial_price_rows,
         SUM(segments.unpriced_fresh_tokens) AS unpriced_fresh_tokens,
+        SUM(segments.tok_cr + segments.tok_cw + segments.tok_in + segments.tok_out) AS tokens,
         SUM(
           CASE
             WHEN segments.model_key = visible.primary_model_key THEN 1
@@ -504,6 +506,7 @@ const readModelTimeline = (
       label,
       partial_price_rows: partialPriceRows,
       sessions,
+      tokens,
       unpriced_fresh_tokens: unpricedFreshTokens,
     }) => {
       const time = timeForLocalDay(dayKey);
@@ -523,6 +526,7 @@ const readModelTimeline = (
         priceMeasurement: priceMeasurementFromSql(cost, partialPriceRows, unpricedFreshTokens),
         sessions,
         time,
+        tokens,
       };
     },
   );
@@ -561,6 +565,7 @@ const readTimeline = (
         ${projection.label} AS timeline_label,
         ${projection.cause} AS origin_cause,
         session_rows.cost_approx,
+        session_rows.tok_cr + session_rows.tok_cw + session_rows.tok_in + session_rows.tok_out AS tokens,
         segment_coverage.partial_price_rows,
         segment_coverage.unpriced_fresh_tokens
       FROM session_rows
@@ -576,6 +581,7 @@ const readTimeline = (
       MAX(partial_price_rows) AS partial_price_rows,
       SUM(unpriced_fresh_tokens) AS unpriced_fresh_tokens,
       COUNT(*) AS sessions,
+      SUM(tokens) AS tokens,
       MIN(active_time) AS first_time,
       MAX(active_time) AS last_time,
       MIN(ordinal) AS first_ordinal
@@ -595,6 +601,7 @@ const readTimeline = (
       label,
       partial_price_rows: partialPriceRows,
       sessions,
+      tokens,
       unpriced_fresh_tokens,
     }) => {
       const time = timeForLocalDay(dayKey);
@@ -625,6 +632,7 @@ const readTimeline = (
           priceMeasurement,
           sessions,
           time,
+          tokens,
         };
       }
       if (key === null || label === null) {
@@ -638,6 +646,7 @@ const readTimeline = (
         priceMeasurement,
         sessions,
         time,
+        tokens,
       };
     },
   );

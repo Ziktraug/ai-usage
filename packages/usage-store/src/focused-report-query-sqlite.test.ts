@@ -435,6 +435,142 @@ describe('focused report SQLite queries', () => {
     }
   });
 
+  test('keeps classified and unclassified processed-token timelines in pure/SQLite parity', async () => {
+    const classified: SerializedRow = {
+      ...row('classified', 1, 1),
+      freshTokens: 15,
+      origin: 'human',
+      tokCr: 2,
+      tokCw: 3,
+      tokIn: 5,
+      tokOut: 7,
+      tokenTotal: 17,
+    };
+    const unclassified: SerializedRow = {
+      ...row('unclassified', 2, 2),
+      freshTokens: 49,
+      originProvenance: 'origin-unsupported',
+      tokCr: 11,
+      tokCw: 13,
+      tokIn: 17,
+      tokOut: 19,
+      tokenTotal: 60,
+    };
+    const fixtureRows = [classified, unclassified];
+    const revisionDirectory = await mkdtemp(path.join(tmpdir(), 'ai-usage-focused-timeline-tokens-'));
+    temporaryDirectories.add(revisionDirectory);
+    const database = openServedFixture(await publishFixture(revisionDirectory, fixtureRows, support), 'revision-a');
+    const request: FocusedOverviewRequest = {
+      ...overviewRequest,
+      includeAdvanced: false,
+      query: { ...overviewRequest.query, range: { from: null, to: null } },
+      timeline: { dimension: 'origin', granularity: 'day' },
+    };
+    try {
+      const overview = executeFocusedReportQuery(database, 'overview', request);
+      const expected = projectFocusedOverview(fixtureRows, support, request);
+      expect(overview).toEqual(expected);
+      if (!('summary' in overview) || overview.timeline === null) {
+        throw new Error('The SQLite token fixture must return an Overview timeline');
+      }
+
+      expect(overview.timeline).toMatchObject({
+        grandTokens: 77,
+        maxBucketTokens: 60,
+        unclassified: { sessions: 1, tokens: 60 },
+      });
+      expect(overview.timeline.series).toEqual([expect.objectContaining({ key: 'human', sessions: 1, tokens: 17 })]);
+      expect(overview.timeline.buckets.map(({ tokens }) => tokens)).toEqual([17, 60]);
+      expect(overview.timeline.grandTokens).toBe(
+        overview.summary.cacheRead + overview.summary.cacheWrite + overview.summary.tokIn + overview.summary.tokOut,
+      );
+    } finally {
+      database.close();
+    }
+  });
+
+  test('keeps token-only model segments inside the bounded SQLite Other series', async () => {
+    const primaryWithTokenOnlySegments: SerializedRow = {
+      ...row('primary-with-token-only-segments', 1, 11),
+      freshTokens: 13,
+      model: 'model-11',
+      modelSegments: [
+        {
+          costApprox: 11,
+          costKnown: true,
+          model: 'model-11',
+          tokCr: 1,
+          tokCw: 1,
+          tokIn: 1,
+          tokOut: 1,
+        },
+        {
+          costApprox: 0,
+          costKnown: true,
+          model: 'token-only-a',
+          tokCr: 2,
+          tokCw: 3,
+          tokIn: 0,
+          tokOut: 0,
+        },
+        {
+          costApprox: 0,
+          costKnown: true,
+          model: 'token-only-b',
+          tokCr: 0,
+          tokCw: 0,
+          tokIn: 0,
+          tokOut: 7,
+        },
+      ],
+      models: ['model-11', 'token-only-a', 'token-only-b'],
+      tokCr: 3,
+      tokCw: 4,
+      tokIn: 1,
+      tokOut: 8,
+      tokenTotal: 16,
+    };
+    const fixtureRows = [
+      primaryWithTokenOnlySegments,
+      ...Array.from({ length: 10 }, (_, index) => {
+        const value = 10 - index;
+        return { ...row(`model-${value}`, 1, value), model: `model-${value}` };
+      }),
+    ];
+    const revisionDirectory = await mkdtemp(path.join(tmpdir(), 'ai-usage-focused-token-other-'));
+    temporaryDirectories.add(revisionDirectory);
+    const database = openServedFixture(await publishFixture(revisionDirectory, fixtureRows, support), 'revision-a');
+    const request: FocusedOverviewRequest = {
+      ...overviewRequest,
+      includeAdvanced: false,
+      query: { ...overviewRequest.query, range: { from: null, to: null } },
+    };
+    try {
+      const overview = executeFocusedReportQuery(database, 'overview', request);
+      expect(overview).toEqual(projectFocusedOverview(fixtureRows, support, request));
+      if (!('timeline' in overview) || overview.timeline === null) {
+        throw new Error('The bounded SQLite token fixture must return an Overview timeline');
+      }
+      const other = overview.timeline.series.find(({ label }) => label === 'Other');
+      if (other === undefined) {
+        throw new Error('The bounded SQLite token fixture must produce an Other series');
+      }
+
+      expect(overview.timeline.series).toHaveLength(12);
+      expect(other).toMatchObject({
+        memberKeys: ['token-only-a', 'token-only-b'],
+        sessions: 0,
+        tokens: 12,
+        total: 0,
+      });
+      expect(
+        overview.timeline.buckets.find(({ byKey }) => byKey[other.key] !== undefined)?.byKey[other.key],
+      ).toMatchObject({ cost: 0, sessions: 0, tokens: 12 });
+    } finally {
+      database.close();
+    }
+  });
+
   test('filters local punchcard cells with pure and SQLite focused row identity parity', async () => {
     const timedRow = (name: string, day: number, hour: number, minute: number): SerializedRow => ({
       ...row(name, 1, 1),
@@ -673,6 +809,7 @@ describe('focused report SQLite queries', () => {
           label: 'claude-opus-4-6',
           priceMeasurement: { knownCost: 4, state: 'measured', unpricedFreshTokens: 0 },
           sessions: 0,
+          tokens: 100,
           total: 4,
         },
         {
@@ -680,11 +817,14 @@ describe('focused report SQLite queries', () => {
           label: 'gpt-5.4',
           priceMeasurement: { knownCost: 2, state: 'measured', unpricedFreshTokens: 0 },
           sessions: 1,
+          tokens: 10,
           total: 2,
         },
       ]);
       expect(overview.timeline.grandSessions).toBe(1);
+      expect(overview.timeline.grandTokens).toBe(110);
       expect(overview.timeline.buckets[0]?.sessions).toBe(1);
+      expect(overview.timeline.buckets[0]?.tokens).toBe(110);
 
       const breakdownRequest = { query: request.query };
       const breakdown = executeFocusedReportQuery(database, 'breakdown', breakdownRequest);

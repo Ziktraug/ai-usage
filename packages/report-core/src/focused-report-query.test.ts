@@ -621,6 +621,138 @@ describe('focused report query contracts', () => {
     });
   });
 
+  test('projects exact processed-token totals across classified and unclassified origin activity', () => {
+    const classified = {
+      ...row('classified', 1, 1),
+      freshTokens: 15,
+      origin: 'human' as const,
+      tokCr: 2,
+      tokCw: 3,
+      tokIn: 5,
+      tokOut: 7,
+      tokenTotal: 17,
+    };
+    const unclassified = {
+      ...row('unclassified', 2, 2),
+      freshTokens: 49,
+      originProvenance: 'origin-unsupported' as const,
+      tokCr: 11,
+      tokCw: 13,
+      tokIn: 17,
+      tokOut: 19,
+      tokenTotal: 60,
+    };
+    const request: FocusedOverviewRequest = {
+      ...overviewRequest,
+      includeAdvanced: false,
+      query: { ...overviewRequest.query, range: { from: null, to: null } },
+      timeline: { dimension: 'origin', granularity: 'day' },
+    };
+
+    const result = projectFocusedOverview([classified, unclassified], support, request);
+    const timeline = result.timeline;
+    if (timeline === null) {
+      throw new Error('The token timeline fixture must produce activity');
+    }
+
+    expect(timeline.grandTokens).toBe(77);
+    expect(timeline.maxBucketTokens).toBe(60);
+    expect(timeline.series).toEqual([expect.objectContaining({ key: 'human', sessions: 1, tokens: 17 })]);
+    expect(timeline.unclassified).toMatchObject({
+      causes: [{ kind: 'origin-unsupported', sessions: 1 }],
+      sessions: 1,
+      tokens: 60,
+    });
+    expect(timeline.buckets.map(({ tokens }) => tokens)).toEqual([17, 60]);
+    expect(timeline.buckets[0]?.byKey.human?.tokens).toBe(17);
+    expect(timeline.buckets[1]?.unclassified?.tokens).toBe(60);
+    expect(timeline.grandTokens).toBe(
+      result.summary.cacheRead + result.summary.cacheWrite + result.summary.tokIn + result.summary.tokOut,
+    );
+  });
+
+  test('keeps token-only model segments inside the bounded Other series', () => {
+    const primaryWithTokenOnlySegments: SerializedRow = {
+      ...row('primary-with-token-only-segments', 11, 11),
+      freshTokens: 13,
+      model: 'model-11',
+      modelSegments: [
+        {
+          costApprox: 11,
+          costKnown: true,
+          model: 'model-11',
+          tokCr: 1,
+          tokCw: 1,
+          tokIn: 1,
+          tokOut: 1,
+        },
+        {
+          costApprox: 0,
+          costKnown: true,
+          model: 'token-only-a',
+          tokCr: 2,
+          tokCw: 3,
+          tokIn: 0,
+          tokOut: 0,
+        },
+        {
+          costApprox: 0,
+          costKnown: true,
+          model: 'token-only-b',
+          tokCr: 0,
+          tokCw: 0,
+          tokIn: 0,
+          tokOut: 7,
+        },
+      ],
+      models: ['model-11', 'token-only-a', 'token-only-b'],
+      tokCr: 3,
+      tokCw: 4,
+      tokIn: 1,
+      tokOut: 8,
+      tokenTotal: 16,
+    };
+    const fixtureRows = [
+      primaryWithTokenOnlySegments,
+      ...Array.from({ length: 10 }, (_, index) => {
+        const value = 10 - index;
+        return { ...row(`model-${value}`, value, value), model: `model-${value}` };
+      }),
+    ];
+    const request: FocusedOverviewRequest = {
+      ...overviewRequest,
+      includeAdvanced: false,
+      query: { ...overviewRequest.query, range: { from: null, to: null } },
+    };
+
+    const result = projectFocusedOverview(fixtureRows, support, request);
+    const timeline = result.timeline;
+    if (timeline === null) {
+      throw new Error('The bounded token timeline fixture must produce activity');
+    }
+    const other = timeline.series.find(({ label }) => label === 'Other');
+    if (other === undefined) {
+      throw new Error('The bounded token timeline fixture must produce an Other series');
+    }
+
+    expect(timeline.series).toHaveLength(12);
+    expect(other).toMatchObject({
+      memberKeys: ['token-only-a', 'token-only-b'],
+      sessions: 0,
+      tokens: 12,
+      total: 0,
+    });
+    expect(timeline.buckets.find(({ byKey }) => byKey[other.key] !== undefined)?.byKey[other.key]).toMatchObject({
+      cost: 0,
+      sessions: 0,
+      tokens: 12,
+    });
+    expect(timeline.grandTokens).toBe(236);
+    expect(timeline.grandTokens).toBe(
+      result.summary.cacheRead + result.summary.cacheWrite + result.summary.tokIn + result.summary.tokOut,
+    );
+  });
+
   test('uses stable machine IDs for filters and timeline keys when labels collide', () => {
     const machineRows = [
       {
@@ -906,10 +1038,32 @@ describe('focused report query contracts', () => {
 
   test('rejects malformed nested Overview timeline data at the transport boundary', () => {
     const result = projectFocusedOverview(rows, support, overviewRequest);
+    const timeline = result.timeline;
+    if (timeline === null || timeline.series[0] === undefined || timeline.buckets[0] === undefined) {
+      throw new Error('The strict timeline fixture must include a bucket and series');
+    }
+
+    expect(parseFocusedReportQueryResult('overview', JSON.parse(JSON.stringify(result)), overviewRequest)).toEqual(
+      result,
+    );
 
     expect(() =>
       parseFocusedReportQueryResult('overview', { ...result, timeline: 'not-a-timeline' }, overviewRequest),
     ).toThrow('timeline');
+    const invalidTimelines = [
+      { ...timeline, grandTokens: -1 },
+      { ...timeline, maxBucketTokens: 0.5 },
+      { ...timeline, series: [{ ...timeline.series[0], tokens: -1 }, ...timeline.series.slice(1)] },
+      {
+        ...timeline,
+        buckets: [{ ...timeline.buckets[0], tokens: Number.MAX_SAFE_INTEGER + 1 }, ...timeline.buckets.slice(1)],
+      },
+    ];
+    for (const invalidTimeline of invalidTimelines) {
+      expect(() =>
+        parseFocusedReportQueryResult('overview', { ...result, timeline: invalidTimeline }, overviewRequest),
+      ).toThrow('non-negative safe integer');
+    }
   });
 
   test('rejects malformed nested Overview presentation data at the transport boundary', () => {
@@ -1214,11 +1368,14 @@ describe('focused report query contracts', () => {
       },
     });
 
-    expect(overview.timeline?.series.map(({ key, sessions, total }) => ({ key, sessions, total }))).toEqual([
-      { key: 'gpt-5.4', sessions: 1, total: 2 },
-      { key: 'claude-sonnet-4-6', sessions: 0, total: 1 },
+    expect(
+      overview.timeline?.series.map(({ key, sessions, tokens, total }) => ({ key, sessions, tokens, total })),
+    ).toEqual([
+      { key: 'gpt-5.4', sessions: 1, tokens: 10, total: 2 },
+      { key: 'claude-sonnet-4-6', sessions: 0, tokens: 20, total: 1 },
     ]);
     expect(overview.timeline?.grandSessions).toBe(1);
+    expect(overview.timeline?.grandTokens).toBe(30);
     expect(
       breakdown.groups.models.map(({ costSum, fresh, inp, key, sessions }) => ({
         costSum,
