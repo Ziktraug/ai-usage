@@ -386,7 +386,7 @@
               {preset.label}
             </button>
           {/each}
-          <Popover closeOnInteract triggerClass={ghostButton}>
+          <Popover triggerClass={ghostButton}>
             {#snippet trigger()}
               Advanced columns · {visibleColumns.length} ▾
             {/snippet}

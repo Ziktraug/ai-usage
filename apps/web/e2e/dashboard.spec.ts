@@ -588,7 +588,6 @@ test('renders a human campaign root as not a subagent', async ({ page }) => {
   await advancedColumns.click();
   await page.getByText('Subagent', { exact: true }).click();
   await expect(page).toHaveURL(COLUMN_URL_PATTERN);
-  await advancedColumns.click();
   await expect(page.getByRole('checkbox', { name: 'Subagent' })).toBeChecked();
 
   const humanCampaignRoot = page.getByRole('row').filter({ hasText: 'Build report UI' }).first();

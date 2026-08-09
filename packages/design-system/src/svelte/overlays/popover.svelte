@@ -4,7 +4,6 @@
 
   interface Props {
     children: Snippet;
-    closeOnInteract?: boolean;
     contentClass?: string;
     trigger: Snippet;
     triggerAriaLabel?: string;
@@ -14,7 +13,6 @@
 
   let {
     children,
-    closeOnInteract = false,
     contentClass,
     trigger,
     triggerAriaLabel,
@@ -46,15 +44,6 @@
         if (node.parentElement === document.body) {
           document.body.removeChild(node);
         }
-      },
-    };
-  };
-
-  const closeOnContentInteraction = (node: HTMLElement): { destroy: () => void } => {
-    node.addEventListener('click', onContentClick);
-    return {
-      destroy(): void {
-        node.removeEventListener('click', onContentClick);
       },
     };
   };
@@ -149,14 +138,6 @@
     computePosition();
   };
 
-  const onContentClick = (): void => {
-    if (!closeOnInteract) {
-      return;
-    }
-    popoverElement?.hidePopover();
-    triggerElement?.focus();
-  };
-
   $effect(() => {
     if (!isOpen) {
       return;
@@ -204,7 +185,6 @@
     style:left={`${leftPosition}px`}
     style:top={`${topPosition}px`}
     style:transform="translateX(-50%)"
-    use:closeOnContentInteraction
     use:portalElement
   >
     {#if isOpen}
