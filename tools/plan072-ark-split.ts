@@ -61,8 +61,8 @@ interface DrawerSample {
 
 const parseDrawerSamples = (root: Record<string, unknown>, label: string): readonly DrawerSample[] => {
   const destination = requiredRecord(root.plan072DestinationRender, `${label}.plan072DestinationRender`);
-  if (!Array.isArray(destination.drawer) || destination.drawer.length !== 3) {
-    throw new Error(`Expected ${label} to contain exactly three Drawer samples`);
+  if (!Array.isArray(destination.drawer) || destination.drawer.length < 3 || destination.drawer.length % 2 === 0) {
+    throw new Error(`Expected ${label} to contain an odd number of at least three Drawer samples`);
   }
   return destination.drawer.map((value, index) => {
     const sample = requiredRecord(value, `${label}.drawer[${index}]`);
@@ -79,7 +79,7 @@ const parseDrawerSamples = (root: Record<string, unknown>, label: string): reado
 
 const median = (values: readonly number[]): number => {
   const sorted = [...values].sort((left, right) => left - right);
-  return sorted[1] ?? 0;
+  return sorted[Math.floor(sorted.length / 2)] ?? 0;
 };
 
 const percentage = (delta: number, control: number): number => Number(((delta / control) * 100).toFixed(6));
@@ -216,6 +216,9 @@ const main = (): void => {
   };
   const initialGzipDelta = delta(initial.control.gzip, initial.candidate.gzip);
   const totalGzipDelta = delta(totalThroughDrawer.control.gzip, totalThroughDrawer.candidate.gzip);
+  const controlDrawerOpenMedian = median(controlDrawerSamples.map((sample) => sample.drawerOpenMs));
+  const candidateDrawerOpenMedian = median(candidateDrawerSamples.map((sample) => sample.drawerOpenMs));
+  const drawerOpenDelta = delta(controlDrawerOpenMedian, candidateDrawerOpenMedian);
   const webPackage = parseJson(readFileSync(path.join(ROOT, 'apps/web/package.json'), 'utf8'), 'apps/web/package.json');
   const webDependencies = requiredRecord(webPackage.dependencies, 'apps/web.dependencies');
   const webDevDependencies = requiredRecord(webPackage.devDependencies, 'apps/web.devDependencies');
@@ -276,12 +279,13 @@ const main = (): void => {
       drawerOpenMs: {
         control: {
           samples: controlDrawerSamples.map((sample) => sample.drawerOpenMs),
-          median: median(controlDrawerSamples.map((sample) => sample.drawerOpenMs)),
+          median: controlDrawerOpenMedian,
         },
         candidate: {
           samples: candidateDrawerSamples.map((sample) => sample.drawerOpenMs),
-          median: median(candidateDrawerSamples.map((sample) => sample.drawerOpenMs)),
+          median: candidateDrawerOpenMedian,
         },
+        delta: drawerOpenDelta,
       },
       duplicatedArkOrZagCount: requiredNumber(bundleMap.duplicatedArkOrZagCount, 'bundleMap.duplicatedArkOrZagCount'),
     },
@@ -291,7 +295,8 @@ const main = (): void => {
         'Cumulative totalThroughDrawer is authoritative, not incremental-only. Initial target gzip must decrease by at least 10 KiB and cumulative totalThroughDrawer growth must be <=5%.',
       initialGzipDecreaseAtLeast10KiB: initialGzipDelta.bytes <= -(10 * 1024),
       totalThroughDrawerGzipGrowthAtMost5Percent: totalGzipDelta.percent <= 5,
-      passes: initialGzipDelta.bytes <= -(10 * 1024) && totalGzipDelta.percent <= 5,
+      drawerOpenRegressionAtMost10Percent: drawerOpenDelta.percent <= 10,
+      passes: initialGzipDelta.bytes <= -(10 * 1024) && totalGzipDelta.percent <= 5 && drawerOpenDelta.percent <= 10,
     },
   };
   writeFileSync(OUTPUT_PATH, `${JSON.stringify(artifact, null, 2)}\n`, 'utf8');

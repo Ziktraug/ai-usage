@@ -651,13 +651,15 @@ cursor contract or ADR was introduced.
 ### Experience B — Design-system split
 
 Retained. Focused design-system entry points and local Tooltip/Popover
-primitives reduce the initial gzip closure from 279,234 B to 265,621 B
-(-13,613 B). The exact cumulative total through first Drawer open changes from
-292,397 B to 295,584 B (+1.090%), below the 5% ceiling. Median Drawer open time
-changes from 84.738 ms to 90.926 ms (+7.3%, below the 10% ceiling), and the
+primitives reduce the initial gzip closure from 279,234 B to 265,762 B
+(-13,472 B). The exact cumulative total through first Drawer open changes from
+292,397 B to 295,724 B (+1.138%), below the 5% ceiling. After timing variance
+crossed the gate in a three-sample run, seven candidate samples produced a
+92.417 ms median versus 84.738 ms control (+9.06%, below the 10% ceiling). The
 bundle map reports zero duplicated Ark/Zag modules. Keyboard focus, Escape,
 light dismiss, focus return, viewport positioning, scroll behavior, and Tooltip
-lifecycle tests pass. The retained commits are `633323bb` and `88384202`.
+lifecycle tests pass. The retained commits are `633323bb`, `88384202`, and the
+post-matrix lifecycle fix `a6365f5d`.
 
 ### Experience C — Destination SSR
 
@@ -671,8 +673,8 @@ and prefetch path remain unchanged.
 
 The post-integration exhaustive benchmark retained 489,216 hydration bytes, 26
 Session RPCs, 29 desktop items, and 581 desktop nodes. Relative to the fresh
-control, desktop traversal changed -7.5%, mobile traversal -5.9%, sort +1.7%,
-and heap -0.9%; no regression crossed the 10% gate. Raw samples, environment,
+control, desktop traversal changed -7.4%, mobile traversal +3.1%, sort +1.5%,
+and heap -1.0%; no regression crossed the 10% gate. Raw samples, environment,
 hashes, byte terminology, and reproduction commands are recorded in
 `docs/performance/web-session-deferred-optimizations.md`.
 

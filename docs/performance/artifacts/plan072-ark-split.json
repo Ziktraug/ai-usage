@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-08-09T09:27:35.506Z",
+  "generatedAt": "2026-08-09T09:56:43.818Z",
   "source": {
-    "artifactSourceCommit": "c84455cbbe46ea3b9215e4c47003d79dd26c0f6d",
-    "worktreeHead": "c84455cbbe46ea3b9215e4c47003d79dd26c0f6d",
+    "artifactSourceCommit": "a6365f5d52d8f2766625bdda6b536354faa36ed7",
+    "worktreeHead": "a6365f5d52d8f2766625bdda6b536354faa36ed7",
     "worktreeDirty": true
   },
   "tools": {
@@ -40,22 +40,22 @@
         "raw": 891157
       },
       "candidate": {
-        "brotli": 232912,
-        "gzip": 265621,
-        "raw": 810799
+        "brotli": 233035,
+        "gzip": 265762,
+        "raw": 811150
       },
       "delta": {
         "brotli": {
-          "bytes": -8666,
-          "percent": -3.587247
+          "bytes": -8543,
+          "percent": -3.536332
         },
         "gzip": {
-          "bytes": -13613,
-          "percent": -4.875123
+          "bytes": -13472,
+          "percent": -4.824627
         },
         "raw": {
-          "bytes": -80358,
-          "percent": -9.017266
+          "bytes": -80007,
+          "percent": -8.977879
         }
       }
     },
@@ -65,13 +65,13 @@
         "raw": 41297
       },
       "candidate": {
-        "gzip": 29963,
+        "gzip": 29962,
         "raw": 95553
       },
       "delta": {
         "gzip": {
-          "bytes": 16800,
-          "percent": 127.630479
+          "bytes": 16799,
+          "percent": 127.622882
         },
         "raw": {
           "bytes": 54256,
@@ -85,17 +85,17 @@
         "raw": 932454
       },
       "candidate": {
-        "gzip": 295584,
-        "raw": 906352
+        "gzip": 295724,
+        "raw": 906703
       },
       "delta": {
         "gzip": {
-          "bytes": 3187,
-          "percent": 1.089956
+          "bytes": 3327,
+          "percent": 1.137837
         },
         "raw": {
-          "bytes": -26102,
-          "percent": -2.79928
+          "bytes": -25751,
+          "percent": -2.761638
         }
       }
     },
@@ -105,8 +105,12 @@
         "median": 84.738
       },
       "candidate": {
-        "samples": [71.56, 92.978, 90.926],
-        "median": 90.926
+        "samples": [97.027, 96.839, 78.845, 105.038, 92.417, 91.725, 88.273],
+        "median": 92.417
+      },
+      "delta": {
+        "bytes": 7.679000000000002,
+        "percent": 9.06205
       }
     },
     "duplicatedArkOrZagCount": 0
@@ -116,6 +120,7 @@
     "interpretation": "Cumulative totalThroughDrawer is authoritative, not incremental-only. Initial target gzip must decrease by at least 10 KiB and cumulative totalThroughDrawer growth must be <=5%.",
     "initialGzipDecreaseAtLeast10KiB": true,
     "totalThroughDrawerGzipGrowthAtMost5Percent": true,
+    "drawerOpenRegressionAtMost10Percent": true,
     "passes": true
   }
 }

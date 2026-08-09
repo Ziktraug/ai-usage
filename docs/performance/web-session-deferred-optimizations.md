@@ -5,7 +5,7 @@
 Plan 072 retained the design-system split from candidate B. Focused local
 Popover and Tooltip primitives remove non-initial Ark overlay code from the
 initial closure while the existing Drawer remains lazy. Initial gzip falls by
-13,613 B and cumulative gzip through the first Drawer open grows by 1.090%, so
+13,472 B and cumulative gzip through the first Drawer open grows by 1.138%, so
 the candidate passes both byte gates without duplicating Ark or Zag runtimes.
 
 Keyset pagination stops at A1, and a direct-destination SSR experiment does not
@@ -21,7 +21,7 @@ zero-refetch invariant, so the pre-existing behavior remains unchanged.
 - Planned-against commit: `67ca9b0e060c0359628a8c2721401bd973c8ce4f`
 - Candidate B control commit: `9bbcc90d2e7edf8ccdfcda327b566208466c34c7`
 - Retained source commit: `88384202`
-- Measured source commit: `b210b446`
+- Measured source commit: `a6365f5d`
 - Bun: `1.3.13`
 - Playwright: `1.61.1`
 - Browser: Playwright Chromium from the repository lockfile
@@ -86,18 +86,20 @@ occurrences, and design-system modules co-located with those runtimes.
 
 | Closure | Assets | Raw | Gzip | Brotli |
 | --- | ---: | ---: | ---: | ---: |
-| Overview | 47 | 810,799 B | 265,621 B | 232,912 B |
-| Sessions | 50 | 895,637 B | 291,623 B | 255,787 B |
-| Breakdown | 49 | 853,621 B | 280,618 B | 246,100 B |
-| Sessions after Drawer | 54 | 991,389 B | 321,743 B | 282,389 B |
+| Overview | 47 | 811,150 B | 265,762 B | 233,035 B |
+| Sessions | 50 | 896,007 B | 291,778 B | 255,942 B |
+| Breakdown | 49 | 853,972 B | 280,759 B | 246,223 B |
+| Sessions after Drawer | 54 | 991,759 B | 321,897 B | 282,530 B |
 
 The authoritative gate uses the exact initial closure plus the runtime files
 loaded by opening the Drawer, rather than subtracting static destination
-closures. Initial gzip changes from 279,234 B to 265,621 B (-13,613 B). The
-incremental Drawer load changes from 13,163 B to 29,963 B gzip, making the
-cumulative total 292,397 B control versus 295,584 B candidate (+1.090%). Median
-Drawer open time changes from 84.738 ms to 90.926 ms (+7.3%, below the 10%
-ceiling). There are no duplicated Ark/Zag modules between chunks.
+closures. Initial gzip changes from 279,234 B to 265,762 B (-13,472 B). The
+incremental Drawer load changes from 13,163 B to 29,962 B gzip, making the
+cumulative total 292,397 B control versus 295,724 B candidate (+1.138%). After
+the initial three-sample run crossed the timing ceiling amid overlapping
+variance, the candidate was increased to seven samples. Its Drawer median is
+92.417 ms versus the 84.738 ms control (+9.06%, below the 10% ceiling). There
+are no duplicated Ark/Zag modules between chunks.
 
 Behavioral tests cover keyboard focus, Escape, light dismiss, focus return,
 viewport clamping, scroll positioning, Tooltip hover/focus delay, and cleanup.
@@ -147,18 +149,18 @@ owner and no additional post-hydration business RPC.
 
 | Metric | Control | Final | Delta |
 | --- | ---: | ---: | ---: |
-| Initial | 481.794 ms | 467.144 ms | -3.0% |
-| Desktop traversal | 3,752.577 ms | 3,470.264 ms | -7.5% |
-| Mobile traversal | 78.668 ms | 73.996 ms | -5.9% |
-| Filter | 200.315 ms | 122.877 ms | -38.7% |
-| Sort | 234.733 ms | 238.788 ms | +1.7% |
-| Heap delta | 25,485,104 B | 25,247,396 B | -0.9% |
+| Initial | 481.794 ms | 440.641 ms | -8.5% |
+| Desktop traversal | 3,752.577 ms | 3,474.547 ms | -7.4% |
+| Mobile traversal | 78.668 ms | 81.100 ms | +3.1% |
+| Filter | 200.315 ms | 123.620 ms | -38.3% |
+| Sort | 234.733 ms | 238.213 ms | +1.5% |
+| Heap delta | 25,485,104 B | 25,229,172 B | -1.0% |
 | Hydration | 489,216 B | 489,216 B | 0% |
 | Session RPCs | 26 | 26 | 0% |
 | Desktop items / nodes | 29 / 581 | 29 / 581 | 0% |
 
 Timing changes other than the directly attributed bundle reduction are treated
-as run variance. The +1.7% sort change is below the 10% regression threshold;
+as run variance. The +3.1% mobile change is below the 10% regression threshold;
 all byte, request, identity, and DOM contracts remain unchanged.
 
 ## Byte terminology
@@ -178,12 +180,12 @@ all byte, request, identity, and DOM contracts remain unchanged.
 | --- | --- |
 | `plan072-control.json` | `bb9023df3c78573151197a4e30d1f7825a048404ae3141966ac7082852dcc5e8` |
 | `plan072-keyset-a1.json` | `9f20ef78382080db148d00b7d7cdbbeb07507cd02677f6034c1eff6a3e472610` |
-| `plan072-bundle-map.json` | `c6a735700613c7ba905b4d55050162a0e8a66915e627badf6e31acd9c1a9a349` |
-| `plan072-destination-render.json` | `ee07da5091c44bed5e7495c46631b5dbe65ff33e9e1648c1d94977167db76b6a` |
-| `plan072-ark-split.json` | `2adc86befa0a9658971275662725c1654e3d1ed4ded4bd637b1e62ae2a18c1af` |
+| `plan072-bundle-map.json` | `cb807dd8071d86b02221d54eb9c0f68b57514ef2d0fef68b30cd3d7555f58999` |
+| `plan072-destination-render.json` | `105708230b0cb4e91f622d828f74c39c085ccecd664b973c3b6f75b1152617a5` |
+| `plan072-ark-split.json` | `923d4ee8dd1c4f92b3ac064d2dcf2c409383392fc68227f8c3607ac923b36464` |
 | `plan072-destination-ssr-control.json` | `dff84030317861d8aab2474f6c8ccb38870af7529d64fa0386a063f77414ae26` |
 | `plan072-destination-final.json` | `72fdb5d007930935ce599407f0548cca39d0be2ff8344f8a74a270dc8799becd` |
-| `plan072-final.json` | `36d50a321c7d11e9ecd2e47ac18dc4abc5acce774f8ce8ab883220fd5920c741` |
+| `plan072-final.json` | `24540c4245aca529d99baceccc012dc23d37b4339eb4e93bbf5c1dbe37ac397f` |
 
 ## Remaining candidates
 

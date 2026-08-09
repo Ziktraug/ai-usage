@@ -413,7 +413,7 @@ const median = (values: readonly number[]): number => {
 
 const routeSamples: RouteSample[] = [];
 const drawerSamples: DrawerOpenSample[] = [];
-const SAMPLE_NUMBERS = [1, 2, 3] as const;
+const SAMPLE_NUMBERS = [1, 2, 3, 4, 5, 6, 7] as const;
 
 // biome-ignore lint/suspicious/noSkippedTests: this benchmark requires the dedicated production perf server.
 test.skip(
@@ -473,8 +473,8 @@ test.afterAll(async ({ request }) => {
     medians: mediansByRoute,
     samples: routeSamples,
   };
-  expect(routeSamples).toHaveLength(ROUTE_SCENARIOS.length * 3);
-  expect(drawerSamples).toHaveLength(3);
+  expect(routeSamples).toHaveLength(ROUTE_SCENARIOS.length * SAMPLE_NUMBERS.length);
+  expect(drawerSamples).toHaveLength(SAMPLE_NUMBERS.length);
   const outputFile = process.env.AI_USAGE_PLAN072_OUTPUT;
   if (outputFile) {
     mkdirSync(path.dirname(outputFile), { recursive: true });
