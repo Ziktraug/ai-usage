@@ -1,0 +1,121 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-08-09T09:14:44.046Z",
+  "source": {
+    "artifactSourceCommit": "46c73f53a5e23c04f81412c94db0b34dc15ec9f1",
+    "worktreeHead": "46c73f53a5e23c04f81412c94db0b34dc15ec9f1",
+    "worktreeDirty": true
+  },
+  "tools": {
+    "bun": "1.3.13",
+    "chrome": "Google Chrome 151.0.7922.75",
+    "arkUiSvelte": "5.22.1",
+    "playwright": "1.61.1",
+    "svelte": "5.56.8",
+    "svelteKit": "2.70.2",
+    "vite": "8.2.0"
+  },
+  "sources": {
+    "controlInitial": "docs/performance/artifacts/plan072-control.json",
+    "controlDrawer": "git show 9bbcc90d2e7edf8ccdfcda327b566208466c34c7:docs/performance/artifacts/plan072-destination-render.json",
+    "candidateBundleMap": "docs/performance/artifacts/plan072-bundle-map.json",
+    "candidateDestination": "docs/performance/artifacts/plan072-destination-render.json"
+  },
+  "method": {
+    "initial": "Control bytes are read from plan072-control.json. Candidate bytes are recomputed from the Vite initial closure with gzip level 9 and default Brotli.",
+    "incrementalDrawer": "Raw bytes come from destination-render response bodies. Candidate gzip is recomputed from the exact built Drawer files. Control gzip is recomputed from the closest clean-HEAD rebuilt Drawer chunk; rebuild raw drift is recorded.",
+    "totalThroughDrawer": "initial + incremental Drawer bytes; cumulative total is authoritative.",
+    "controlDrawerGzipRebuild": {
+      "file": "_app/immutable/chunks/DXm_Fk5_2.js",
+      "gzip": 13163,
+      "raw": 41297,
+      "rawDriftFromArtifact": 0
+    }
+  },
+  "metrics": {
+    "initial": {
+      "control": {
+        "brotli": 241578,
+        "gzip": 279234,
+        "raw": 891157
+      },
+      "candidate": {
+        "brotli": 232941,
+        "gzip": 265627,
+        "raw": 810791
+      },
+      "delta": {
+        "brotli": {
+          "bytes": -8637,
+          "percent": -3.575243
+        },
+        "gzip": {
+          "bytes": -13607,
+          "percent": -4.872974
+        },
+        "raw": {
+          "bytes": -80366,
+          "percent": -9.018164
+        }
+      }
+    },
+    "incrementalDrawer": {
+      "control": {
+        "gzip": 13163,
+        "raw": 41297
+      },
+      "candidate": {
+        "gzip": 29963,
+        "raw": 95553
+      },
+      "delta": {
+        "gzip": {
+          "bytes": 16800,
+          "percent": 127.630479
+        },
+        "raw": {
+          "bytes": 54256,
+          "percent": 131.380003
+        }
+      }
+    },
+    "totalThroughDrawer": {
+      "control": {
+        "gzip": 292397,
+        "raw": 932454
+      },
+      "candidate": {
+        "gzip": 295590,
+        "raw": 906344
+      },
+      "delta": {
+        "gzip": {
+          "bytes": 3193,
+          "percent": 1.092008
+        },
+        "raw": {
+          "bytes": -26110,
+          "percent": -2.800138
+        }
+      }
+    },
+    "drawerOpenMs": {
+      "control": {
+        "samples": [96.006, 84.738, 70.554],
+        "median": 84.738
+      },
+      "candidate": {
+        "samples": [96.818, 59.755, 81.543],
+        "median": 81.543
+      }
+    },
+    "duplicatedArkOrZagCount": 0
+  },
+  "gate": {
+    "wording": "total chargé après ouverture du Drawer",
+    "interpretation": "Cumulative totalThroughDrawer is authoritative, not incremental-only. Initial target gzip must decrease by at least 10 KiB and cumulative totalThroughDrawer growth must be <=5%.",
+    "initialGzipDecreaseAtLeast10KiB": true,
+    "totalThroughDrawerGzipGrowthAtMost5Percent": true,
+    "passes": true
+  }
+}

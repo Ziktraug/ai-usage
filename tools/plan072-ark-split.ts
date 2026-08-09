@@ -1,0 +1,295 @@
+#!/usr/bin/env bun
+import { execFileSync } from 'node:child_process';
+import { readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
+import { brotliCompressSync, gzipSync } from 'node:zlib';
+// biome-ignore lint/style/noRestrictedImports: Plan072 evidence must reuse the benchmark's exact closure definition.
+import { measureInitialStaticClosureBytes } from '../apps/web/e2e/session-scroll-benchmark-closure';
+
+const ROOT = path.resolve(import.meta.dirname, '..');
+const CONTROL_PATH = path.join(ROOT, 'docs/performance/artifacts/plan072-control.json');
+const DESTINATION_PATH = path.join(ROOT, 'docs/performance/artifacts/plan072-destination-render.json');
+const BUNDLE_MAP_PATH = path.join(ROOT, 'docs/performance/artifacts/plan072-bundle-map.json');
+const OUTPUT_PATH = path.join(ROOT, 'docs/performance/artifacts/plan072-ark-split.json');
+const CLIENT_DIRECTORY = path.join(ROOT, 'apps/web/.output-build/sveltekit/client');
+const CONTROL_DESTINATION_REPOSITORY_PATH = 'docs/performance/artifacts/plan072-destination-render.json';
+const MAX_CONTROL_REBUILD_RAW_DRIFT_BYTES = 32;
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+const parseJson = (raw: string, label: string): Record<string, unknown> => {
+  const value: unknown = JSON.parse(raw);
+  if (!isRecord(value)) {
+    throw new Error(`Expected ${label} to contain a JSON object`);
+  }
+  return value;
+};
+
+const requiredRecord = (value: unknown, label: string): Record<string, unknown> => {
+  if (!isRecord(value)) {
+    throw new Error(`Expected ${label} to be an object`);
+  }
+  return value;
+};
+
+const requiredNumber = (value: unknown, label: string): number => {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    throw new Error(`Expected ${label} to be a finite number`);
+  }
+  return value;
+};
+
+const requiredStringArray = (value: unknown, label: string): readonly string[] => {
+  if (!(Array.isArray(value) && value.every((entry) => typeof entry === 'string'))) {
+    throw new Error(`Expected ${label} to be an array of strings`);
+  }
+  return value;
+};
+
+interface DrawerSample {
+  readonly bytesLoadedAfterDrawerOpen: number;
+  readonly drawerOpenMs: number;
+  readonly newChunkFileNames: readonly string[];
+}
+
+const parseDrawerSamples = (root: Record<string, unknown>, label: string): readonly DrawerSample[] => {
+  const destination = requiredRecord(root.plan072DestinationRender, `${label}.plan072DestinationRender`);
+  if (!Array.isArray(destination.drawer) || destination.drawer.length !== 3) {
+    throw new Error(`Expected ${label} to contain exactly three Drawer samples`);
+  }
+  return destination.drawer.map((value, index) => {
+    const sample = requiredRecord(value, `${label}.drawer[${index}]`);
+    return {
+      bytesLoadedAfterDrawerOpen: requiredNumber(
+        sample.bytesLoadedAfterDrawerOpen,
+        `${label}.drawer[${index}].bytesLoadedAfterDrawerOpen`,
+      ),
+      drawerOpenMs: requiredNumber(sample.drawerOpenMs, `${label}.drawer[${index}].drawerOpenMs`),
+      newChunkFileNames: requiredStringArray(sample.newChunkFileNames, `${label}.drawer[${index}].newChunkFileNames`),
+    };
+  });
+};
+
+const median = (values: readonly number[]): number => {
+  const sorted = [...values].sort((left, right) => left - right);
+  return sorted[1] ?? 0;
+};
+
+const percentage = (delta: number, control: number): number => Number(((delta / control) * 100).toFixed(6));
+
+const delta = (control: number, candidate: number): { bytes: number; percent: number } => ({
+  bytes: candidate - control,
+  percent: percentage(candidate - control, control),
+});
+
+const compressedBytes = (body: Buffer): { brotli: number; gzip: number; raw: number } => ({
+  brotli: brotliCompressSync(body).byteLength,
+  gzip: gzipSync(body, { level: 9 }).byteLength,
+  raw: body.byteLength,
+});
+
+const candidateIncremental = (samples: readonly DrawerSample[]): { gzip: number; raw: number } => {
+  const measurements = samples.map((sample) => {
+    let raw = 0;
+    let gzip = 0;
+    for (const fileName of sample.newChunkFileNames) {
+      const body = readFileSync(path.join(CLIENT_DIRECTORY, fileName));
+      const compressed = compressedBytes(body);
+      raw += compressed.raw;
+      gzip += compressed.gzip;
+    }
+    if (raw !== sample.bytesLoadedAfterDrawerOpen) {
+      throw new Error(
+        `Candidate Drawer artifact reports ${sample.bytesLoadedAfterDrawerOpen} raw bytes; built files total ${raw}`,
+      );
+    }
+    return { gzip, raw };
+  });
+  const first = measurements[0];
+  if (!first || measurements.some((measurement) => measurement.raw !== first.raw || measurement.gzip !== first.gzip)) {
+    throw new Error('Expected all candidate Drawer samples to load the same raw and gzip byte totals');
+  }
+  return first;
+};
+
+const deriveControlDrawerGzip = (
+  controlClientDirectory: string,
+  artifactRawBytes: number,
+): { file: string; gzip: number; raw: number; rawDriftFromArtifact: number } => {
+  const chunkDirectory = path.join(controlClientDirectory, '_app/immutable/chunks');
+  const candidates = readdirSync(chunkDirectory)
+    .filter((fileName) => fileName.endsWith('.js'))
+    .map((fileName) => {
+      const file = path.join(chunkDirectory, fileName);
+      return { file, raw: statSync(file).size };
+    })
+    .sort(
+      (left, right) =>
+        Math.abs(left.raw - artifactRawBytes) - Math.abs(right.raw - artifactRawBytes) ||
+        left.file.localeCompare(right.file),
+    );
+  const closest = candidates[0];
+  if (!closest) {
+    throw new Error(`Expected control chunks in ${chunkDirectory}`);
+  }
+  const rawDriftFromArtifact = closest.raw - artifactRawBytes;
+  if (Math.abs(rawDriftFromArtifact) > MAX_CONTROL_REBUILD_RAW_DRIFT_BYTES) {
+    throw new Error(
+      `Closest rebuilt control chunk differs from artifact by ${rawDriftFromArtifact} bytes, exceeding ${MAX_CONTROL_REBUILD_RAW_DRIFT_BYTES}`,
+    );
+  }
+  return {
+    file: path.relative(controlClientDirectory, closest.file),
+    gzip: gzipSync(readFileSync(closest.file), { level: 9 }).byteLength,
+    raw: closest.raw,
+    rawDriftFromArtifact,
+  };
+};
+
+const main = (): void => {
+  const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: ROOT, encoding: 'utf8' }).trim();
+  const status = execFileSync('git', ['status', '--porcelain'], { cwd: ROOT, encoding: 'utf8' });
+  const control = parseJson(readFileSync(CONTROL_PATH, 'utf8'), 'plan072-control.json');
+  const controlBenchmark = requiredRecord(control.sessionScrollBenchmark, 'control.sessionScrollBenchmark');
+  const controlInitial = requiredRecord(controlBenchmark.initialStaticClosure, 'control.initialStaticClosure');
+  // biome-ignore lint/suspicious/noUndeclaredEnvVars: explicit immutable revision for the pre-candidate control artifact
+  const controlCommit = process.env.AI_USAGE_PLAN072_CONTROL_COMMIT;
+  if (!controlCommit) {
+    throw new Error('AI_USAGE_PLAN072_CONTROL_COMMIT must identify the pre-candidate control revision');
+  }
+  const controlDestination = parseJson(
+    execFileSync('git', ['show', `${controlCommit}:${CONTROL_DESTINATION_REPOSITORY_PATH}`], {
+      cwd: ROOT,
+      encoding: 'utf8',
+    }),
+    `${controlCommit}:${CONTROL_DESTINATION_REPOSITORY_PATH}`,
+  );
+  const candidateDestination = parseJson(readFileSync(DESTINATION_PATH, 'utf8'), 'plan072-destination-render.json');
+  const bundleMap = parseJson(readFileSync(BUNDLE_MAP_PATH, 'utf8'), 'plan072-bundle-map.json');
+  const controlDrawerSamples = parseDrawerSamples(controlDestination, 'control destination');
+  const candidateDrawerSamples = parseDrawerSamples(candidateDestination, 'candidate destination');
+  const controlDrawerRaw = controlDrawerSamples[0]?.bytesLoadedAfterDrawerOpen ?? 0;
+  if (controlDrawerSamples.some((sample) => sample.bytesLoadedAfterDrawerOpen !== controlDrawerRaw)) {
+    throw new Error('Expected all control Drawer samples to load the same raw bytes');
+  }
+
+  // biome-ignore lint/suspicious/noUndeclaredEnvVars: explicit path to the clean control build used for compression evidence
+  const controlClientDirectory = process.env.AI_USAGE_PLAN072_CONTROL_CLIENT_DIR;
+  if (!controlClientDirectory) {
+    throw new Error('AI_USAGE_PLAN072_CONTROL_CLIENT_DIR must point to a clean HEAD control client build');
+  }
+  const controlDrawerGzip = deriveControlDrawerGzip(controlClientDirectory, controlDrawerRaw);
+  const candidateInitial = measureInitialStaticClosureBytes();
+  const candidateDrawer = candidateIncremental(candidateDrawerSamples);
+  const initial = {
+    control: {
+      brotli: requiredNumber(controlInitial.brotliBytes, 'control.initialStaticClosure.brotliBytes'),
+      gzip: requiredNumber(controlInitial.gzipBytes, 'control.initialStaticClosure.gzipBytes'),
+      raw: requiredNumber(controlInitial.rawBytes, 'control.initialStaticClosure.rawBytes'),
+    },
+    candidate: {
+      brotli: candidateInitial.brotliBytes,
+      gzip: candidateInitial.gzipBytes,
+      raw: candidateInitial.rawBytes,
+    },
+  };
+  const incrementalDrawer = {
+    control: { gzip: controlDrawerGzip.gzip, raw: controlDrawerRaw },
+    candidate: candidateDrawer,
+  };
+  const totalThroughDrawer = {
+    control: {
+      gzip: initial.control.gzip + incrementalDrawer.control.gzip,
+      raw: initial.control.raw + incrementalDrawer.control.raw,
+    },
+    candidate: {
+      gzip: initial.candidate.gzip + incrementalDrawer.candidate.gzip,
+      raw: initial.candidate.raw + incrementalDrawer.candidate.raw,
+    },
+  };
+  const initialGzipDelta = delta(initial.control.gzip, initial.candidate.gzip);
+  const totalGzipDelta = delta(totalThroughDrawer.control.gzip, totalThroughDrawer.candidate.gzip);
+  const webPackage = parseJson(readFileSync(path.join(ROOT, 'apps/web/package.json'), 'utf8'), 'apps/web/package.json');
+  const webDependencies = requiredRecord(webPackage.dependencies, 'apps/web.dependencies');
+  const webDevDependencies = requiredRecord(webPackage.devDependencies, 'apps/web.devDependencies');
+  const artifact = {
+    schemaVersion: 1,
+    generatedAt: new Date().toISOString(),
+    source: {
+      artifactSourceCommit: head,
+      worktreeHead: head,
+      worktreeDirty: status.length > 0,
+    },
+    tools: {
+      bun: Bun.version,
+      chrome: execFileSync(Bun.which('google-chrome') ?? 'google-chrome', ['--version'], { encoding: 'utf8' }).trim(),
+      arkUiSvelte: webDependencies['@ark-ui/svelte'],
+      playwright: webDevDependencies['@playwright/test'],
+      svelte: webDependencies.svelte,
+      svelteKit: webDevDependencies['@sveltejs/kit'],
+      vite: webDevDependencies.vite,
+    },
+    sources: {
+      controlInitial: 'docs/performance/artifacts/plan072-control.json',
+      controlDrawer: `git show ${controlCommit}:${CONTROL_DESTINATION_REPOSITORY_PATH}`,
+      candidateBundleMap: 'docs/performance/artifacts/plan072-bundle-map.json',
+      candidateDestination: 'docs/performance/artifacts/plan072-destination-render.json',
+    },
+    method: {
+      initial:
+        'Control bytes are read from plan072-control.json. Candidate bytes are recomputed from the Vite initial closure with gzip level 9 and default Brotli.',
+      incrementalDrawer:
+        'Raw bytes come from destination-render response bodies. Candidate gzip is recomputed from the exact built Drawer files. Control gzip is recomputed from the closest clean-HEAD rebuilt Drawer chunk; rebuild raw drift is recorded.',
+      totalThroughDrawer: 'initial + incremental Drawer bytes; cumulative total is authoritative.',
+      controlDrawerGzipRebuild: controlDrawerGzip,
+    },
+    metrics: {
+      initial: {
+        ...initial,
+        delta: {
+          brotli: delta(initial.control.brotli, initial.candidate.brotli),
+          gzip: initialGzipDelta,
+          raw: delta(initial.control.raw, initial.candidate.raw),
+        },
+      },
+      incrementalDrawer: {
+        ...incrementalDrawer,
+        delta: {
+          gzip: delta(incrementalDrawer.control.gzip, incrementalDrawer.candidate.gzip),
+          raw: delta(incrementalDrawer.control.raw, incrementalDrawer.candidate.raw),
+        },
+      },
+      totalThroughDrawer: {
+        ...totalThroughDrawer,
+        delta: {
+          gzip: totalGzipDelta,
+          raw: delta(totalThroughDrawer.control.raw, totalThroughDrawer.candidate.raw),
+        },
+      },
+      drawerOpenMs: {
+        control: {
+          samples: controlDrawerSamples.map((sample) => sample.drawerOpenMs),
+          median: median(controlDrawerSamples.map((sample) => sample.drawerOpenMs)),
+        },
+        candidate: {
+          samples: candidateDrawerSamples.map((sample) => sample.drawerOpenMs),
+          median: median(candidateDrawerSamples.map((sample) => sample.drawerOpenMs)),
+        },
+      },
+      duplicatedArkOrZagCount: requiredNumber(bundleMap.duplicatedArkOrZagCount, 'bundleMap.duplicatedArkOrZagCount'),
+    },
+    gate: {
+      wording: 'total chargé après ouverture du Drawer',
+      interpretation:
+        'Cumulative totalThroughDrawer is authoritative, not incremental-only. Initial target gzip must decrease by at least 10 KiB and cumulative totalThroughDrawer growth must be <=5%.',
+      initialGzipDecreaseAtLeast10KiB: initialGzipDelta.bytes <= -(10 * 1024),
+      totalThroughDrawerGzipGrowthAtMost5Percent: totalGzipDelta.percent <= 5,
+      passes: initialGzipDelta.bytes <= -(10 * 1024) && totalGzipDelta.percent <= 5,
+    },
+  };
+  writeFileSync(OUTPUT_PATH, `${JSON.stringify(artifact, null, 2)}\n`, 'utf8');
+  process.stdout.write(`plan072-ark-split: wrote ${path.relative(ROOT, OUTPUT_PATH)}; gate=${artifact.gate.passes}\n`);
+};
+
+main();
