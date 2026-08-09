@@ -216,61 +216,268 @@ try {
   await page.keyboard.press('Escape');
   await persistentDrawer.waitFor({ state: 'hidden' });
 
-  const popoverSelector = '[data-scope="popover"][data-part="content"]';
+  const popoverSelector = 'div[popover="auto"]';
   const popoverTrigger = page.getByRole('button', { name: 'Open fixture popover' });
-  await assertCount(page.locator(popoverSelector), 0, 'Popover is lazy before opening');
+  await assertEqual(
+    await page
+      .locator(popoverSelector)
+      .first()
+      .evaluate((element) => getComputedStyle(element).display),
+    'none',
+    'Popover is hidden before opening',
+  );
+  await assertCount(page.locator(`${popoverSelector} > *`), 0, 'Popover retains only its empty native container');
   await popoverTrigger.click();
   const popover = page.locator(popoverSelector);
   await popover.waitFor({ state: 'visible' });
-  await assertPortalled(popover, 'Popover content is portalled under body');
   await assertReducedMotion(popover, 'Popover disables animation for reduced motion');
-  assertEqual(
-    await popover.locator('xpath=..').evaluate((element) => getComputedStyle(element).zIndex),
-    '50',
-    'Popover occupies the documented z-50 layer',
-  );
   await assertFocused(
     popover.getByRole('button', { name: 'Popover fixture action' }),
     'Popover moves focus into its content',
   );
+
+  const popoverTopLayer = await popover.evaluate((element) => element.matches(':popover-open'));
+  assertEqual(popoverTopLayer, true, 'Popover is promoted to the top layer when open');
+
+  const popoverGeometry = await popover.evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    return {
+      bottom: rect.bottom,
+      height: rect.height,
+      left: rect.left,
+      right: rect.right,
+      top: rect.top,
+      width: rect.width,
+    };
+  });
+  const triggerGeometry = await popoverTrigger.evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    return {
+      bottom: rect.bottom,
+      centerX: rect.left + rect.width / 2,
+      height: rect.height,
+      width: rect.width,
+    };
+  });
+  const popoverCenterX = popoverGeometry.left + popoverGeometry.width / 2;
+  assertEqual(
+    Math.abs(popoverCenterX - triggerGeometry.centerX) <= 1,
+    true,
+    'Popover center is horizontally aligned with the trigger center',
+  );
+  assertEqual(
+    Math.abs(popoverGeometry.top - (triggerGeometry.bottom + 4)) <= 1,
+    true,
+    'Popover top is 4px below the trigger bottom (gutter respected)',
+  );
+  assertEqual(
+    popoverGeometry.left >= 4 && popoverGeometry.right <= (await page.evaluate(() => window.innerWidth)) - 4,
+    true,
+    'Popover stays inside the viewport with at least 4px of edge padding',
+  );
+
+  const popoverSizeToggle = popover.getByRole('button', { name: 'Toggle popover size' });
+  await popoverSizeToggle.click();
+  await popover.evaluate(async (element) => {
+    const MAX_OBSERVER_FRAMES = 10;
+    for (let frame = 0; frame < MAX_OBSERVER_FRAMES; frame += 1) {
+      if (element.scrollHeight > element.clientHeight) {
+        return;
+      }
+      await new Promise<void>((resolveFrame) => requestAnimationFrame(() => resolveFrame()));
+    }
+  });
+  const expandedPopoverGeometry = await popover.evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    return {
+      bottom: rect.bottom,
+      clientHeight: element.clientHeight,
+      overflowY: getComputedStyle(element).overflowY,
+      scrollHeight: element.scrollHeight,
+      top: rect.top,
+    };
+  });
+  const viewportHeight = await page.evaluate(() => window.innerHeight);
+  assertEqual(expandedPopoverGeometry.top >= 4, true, 'Tall Popover keeps its top inside the viewport');
+  assertEqual(
+    expandedPopoverGeometry.bottom <= viewportHeight - 4,
+    true,
+    'Tall Popover keeps its bottom inside the viewport',
+  );
+  assertEqual(expandedPopoverGeometry.overflowY, 'auto', 'Tall Popover exposes scrollable overflow');
+  assertEqual(
+    expandedPopoverGeometry.scrollHeight > expandedPopoverGeometry.clientHeight,
+    true,
+    'Tall Popover content remains reachable by scrolling',
+  );
+
+  await popoverSizeToggle.click();
+  await popover.evaluate(async (element) => {
+    const trigger = document.querySelector<HTMLElement>(`[aria-controls="${element.id}"]`);
+    const MAX_OBSERVER_FRAMES = 10;
+    for (let frame = 0; frame < MAX_OBSERVER_FRAMES; frame += 1) {
+      if (
+        trigger &&
+        element.scrollHeight <= element.clientHeight &&
+        Math.abs(element.getBoundingClientRect().top - (trigger.getBoundingClientRect().bottom + 4)) <= 1
+      ) {
+        return;
+      }
+      await new Promise<void>((resolveFrame) => requestAnimationFrame(() => resolveFrame()));
+    }
+  });
+  const compactPopoverTop = await popover.evaluate((element) => element.getBoundingClientRect().top);
+  assertEqual(
+    Math.abs(compactPopoverTop - (triggerGeometry.bottom + 4)) <= 1,
+    true,
+    'Popover repositions after content shrinks without a viewport event',
+  );
+
+  await popoverTrigger.evaluate((element) => {
+    element.style.transform = 'translateX(16px)';
+    window.dispatchEvent(new Event('resize'));
+  });
+  await page.waitForTimeout(50);
+  const resizedGeometry = await popover.evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    return { centerX: rect.left + rect.width / 2, top: rect.top };
+  });
+  assertEqual(
+    Math.abs(resizedGeometry.centerX - (triggerGeometry.centerX + 16)) <= 1,
+    true,
+    'Popover repositions to track changed trigger geometry after a resize event',
+  );
+  await popoverTrigger.evaluate((element) => {
+    element.style.transform = '';
+    window.dispatchEvent(new Event('resize'));
+  });
+
+  await page.evaluate(() => window.scrollBy(0, 32));
+  await popover.evaluate(async (element) => {
+    const trigger = document.querySelector<HTMLElement>(`[aria-controls="${element.id}"]`);
+    const MAX_SCROLL_FRAMES = 10;
+    for (let frame = 0; frame < MAX_SCROLL_FRAMES; frame += 1) {
+      if (
+        trigger &&
+        Math.abs(element.getBoundingClientRect().top - Math.max(4, trigger.getBoundingClientRect().bottom + 4)) <= 1
+      ) {
+        return;
+      }
+      await new Promise<void>((resolveFrame) => requestAnimationFrame(() => resolveFrame()));
+    }
+  });
+  const postScrollGeometry = await popover.evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    return { centerX: rect.left + rect.width / 2, top: rect.top };
+  });
+  const postScrollTriggerBottom = await popoverTrigger.evaluate((element) => element.getBoundingClientRect().bottom);
+  assertEqual(
+    Math.abs(postScrollGeometry.top - Math.max(4, postScrollTriggerBottom + 4)) <= 1,
+    true,
+    'Popover recomputes top placement in response to a capture-phase scroll event',
+  );
+  await page.evaluate(() => window.scrollBy(0, -32));
+
   await page.keyboard.press('Escape');
   await assertHidden(popover, 'Popover did not hide after Escape');
-  await assertCount(page.locator(popoverSelector), 0, 'Popover unmounts after Escape');
   await assertFocused(popoverTrigger, 'Popover Escape returns focus to its trigger');
 
   await popoverTrigger.click();
   await popover.waitFor({ state: 'visible' });
   await outsideTarget.click();
   await assertHidden(popover, 'Popover did not close after outside interaction');
-  await assertCount(page.locator(popoverSelector), 0, 'Popover unmounts after outside interaction');
   await assertFocused(outsideTarget, 'Popover outside dismissal preserves outside focus');
 
-  const tooltipSelector = '[data-scope="tooltip"][data-part="content"]';
+  const tooltipSelector = '[role="tooltip"]';
   const tooltipTarget = page.getByRole('button', { name: 'Tooltip target' });
-  const tooltipTrigger = tooltipTarget.locator('xpath=..');
-  await assertCount(page.locator(tooltipSelector), 0, 'Tooltip is lazy before interaction');
+  await assertCount(page.locator(tooltipSelector), 0, 'Tooltip is hidden before interaction');
   await tooltipTarget.hover();
   await page.waitForTimeout(DEFAULT_TOOLTIP_CLOSED_DELAY_MS);
   await assertCount(page.locator(tooltipSelector), 0, 'Tooltip honors its 300ms default open delay');
-  const tooltip = page.getByRole('tooltip').filter({ hasText: 'Tooltip fixture content' });
-  await tooltip.waitFor({ state: 'visible' });
-  await assertPortalled(tooltip, 'Tooltip content is portalled under body');
+  const tooltip = page.locator(tooltipSelector).filter({ hasText: 'Tooltip fixture content' });
+  await tooltip.first().waitFor({ state: 'attached' });
   await assertReducedMotion(tooltip, 'Tooltip disables animation for reduced motion');
   const tooltipId = await tooltip.getAttribute('id');
   assertEqual(
-    await tooltipTrigger.getAttribute('aria-describedby'),
+    await tooltipTarget.getAttribute('aria-describedby'),
     tooltipId,
-    'Tooltip trigger is associated with its content',
+    'Tooltip trigger button is associated with its content via aria-describedby',
+  );
+  const tooltipParentTag = await tooltip.evaluate((element) => element.parentElement?.tagName ?? null);
+  assertEqual(tooltipParentTag, 'BODY', 'Tooltip content is portaled to document.body');
+  const initialTooltipWidth = await tooltip.evaluate((element) => element.getBoundingClientRect().width);
+  await tooltip.evaluate((element) => {
+    const dynamicContent = document.createElement('span');
+    dynamicContent.dataset.tooltipDynamicContent = 'true';
+    dynamicContent.style.display = 'block';
+    dynamicContent.style.width = '900px';
+    dynamicContent.style.height = '300px';
+    dynamicContent.textContent = 'Expanded tooltip content';
+    element.appendChild(dynamicContent);
+  });
+  await tooltip.evaluate(async (element) => {
+    const MAX_OBSERVER_FRAMES = 10;
+    for (let frame = 0; frame < MAX_OBSERVER_FRAMES; frame += 1) {
+      if (element.getBoundingClientRect().width > 800) {
+        return;
+      }
+      await new Promise<void>((resolveFrame) => requestAnimationFrame(() => resolveFrame()));
+    }
+  });
+  const expandedTooltipGeometry = await tooltip.evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    return { bottom: rect.bottom, left: rect.left, right: rect.right, top: rect.top, width: rect.width };
+  });
+  const viewport = await page.evaluate(() => ({ height: window.innerHeight, width: window.innerWidth }));
+  assertEqual(expandedTooltipGeometry.width > initialTooltipWidth, true, 'Tooltip observes dynamic content growth');
+  assertEqual(
+    expandedTooltipGeometry.left >= 4 && expandedTooltipGeometry.right <= viewport.width - 4,
+    true,
+    'Dynamically grown Tooltip remains horizontally viewport-safe',
+  );
+  assertEqual(
+    expandedTooltipGeometry.top >= 4 && expandedTooltipGeometry.bottom <= viewport.height - 4,
+    true,
+    'Dynamically grown Tooltip remains vertically viewport-safe',
+  );
+  await tooltip.evaluate((element) => element.querySelector('[data-tooltip-dynamic-content]')?.remove());
+  await tooltip.evaluate(async (element, initialWidth) => {
+    const MAX_OBSERVER_FRAMES = 10;
+    for (let frame = 0; frame < MAX_OBSERVER_FRAMES; frame += 1) {
+      if (element.getBoundingClientRect().width <= initialWidth + 1) {
+        return;
+      }
+      await new Promise<void>((resolveFrame) => requestAnimationFrame(() => resolveFrame()));
+    }
+  }, initialTooltipWidth);
+  assertEqual(
+    (await tooltip.evaluate((element) => element.getBoundingClientRect().width)) <= initialTooltipWidth + 1,
+    true,
+    'Tooltip observes dynamic content shrinkage',
   );
   await page.keyboard.press('Escape');
   await assertHidden(tooltip, 'Tooltip did not hide after Escape');
-  await assertCount(page.locator(tooltipSelector), 0, 'Tooltip unmounts after Escape');
+  await assertCount(page.locator(tooltipSelector), 0, 'Tooltip is hidden after Escape');
 
+  await outsideTarget.hover();
+  await tooltipTarget.focus();
+  await tooltip.waitFor({ state: 'visible' });
+  await page.evaluate(() => window.dispatchEvent(new Event('resize')));
+  await assertHidden(tooltip, 'Tooltip closes on resize while open');
+  await assertCount(page.locator(tooltipSelector), 0, 'Tooltip is removed from the DOM after a resize');
+
+  await outsideTarget.focus();
+  await tooltipTarget.focus();
+  await tooltip.waitFor({ state: 'visible' });
+  await page.evaluate(() => window.scrollBy(0, 16));
+  await assertHidden(tooltip, 'Tooltip closes on capture-phase scroll while open');
+  await assertCount(page.locator(tooltipSelector), 0, 'Tooltip is removed from the DOM after a scroll');
+  await outsideTarget.focus();
   await tooltipTarget.focus();
   await tooltip.waitFor({ state: 'visible' });
   await outsideTarget.focus();
   await assertHidden(tooltip, 'Tooltip did not hide after focus left its trigger');
-  await assertCount(page.locator(tooltipSelector), 0, 'Tooltip unmounts after focus leaves its trigger');
+  await assertCount(page.locator(tooltipSelector), 0, 'Tooltip is hidden after focus leaves its trigger');
 
   const provenanceTitle = 'Partial data: The provider omitted part of this interval.';
   const provenanceMarker = page.getByRole('img', { name: provenanceTitle });
@@ -279,13 +486,12 @@ try {
   const provenanceTooltip = page.getByRole('tooltip').filter({ hasText: provenanceTitle });
   await provenanceTooltip.waitFor({ state: 'visible' });
   assertEqual(
-    await provenanceMarker.locator('xpath=..').getAttribute('aria-describedby'),
+    await provenanceMarker.getAttribute('aria-describedby'),
     await provenanceTooltip.getAttribute('id'),
     'provenance marker is associated with its explanatory tooltip',
   );
   await page.keyboard.press('Escape');
 
-  await assertCount(page.locator(popoverSelector), 0, 'Popover has no retained lazy content');
   await assertCount(page.locator(tooltipSelector), 0, 'Tooltip has no retained lazy content');
   await assertCount(page.locator(drawerSelector), 0, 'Drawers have no open content at cleanup');
   assertEqual(browserErrors.length, 0, 'browser console, page, and request errors after interactions');

@@ -9,6 +9,7 @@
   let drawerTrigger: HTMLButtonElement | null = $state(null);
   let drawerInitialFocus: HTMLButtonElement | null = $state(null);
   let persistentDrawerTrigger: HTMLButtonElement | null = $state(null);
+  let popoverExpanded = $state(false);
 
   const facts = [
     {
@@ -19,7 +20,7 @@
   ] as const;
 </script>
 
-<section aria-label="Overlay component fixture">
+<section aria-label="Overlay component fixture" style="min-height: 1200px">
   <button type="button">Outside overlay target</button>
   <button onclick={() => (drawerOpen = true)} type="button" bind:this={drawerTrigger}>Open drawer</button>
 
@@ -60,6 +61,10 @@
     {/snippet}
     <p>Popover fixture content</p>
     <button type="button">Popover fixture action</button>
+    <button onclick={() => (popoverExpanded = !popoverExpanded)} type="button">Toggle popover size</button>
+    <div data-popover-dynamic-content style:height={popoverExpanded ? '900px' : '20px'}>
+      {popoverExpanded ? 'Expanded popover content' : 'Compact popover content'}
+    </div>
   </Popover>
 
   <Tooltip content="Tooltip fixture content">

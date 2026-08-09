@@ -84,10 +84,7 @@ export const drawerCompare = css({ color: 'muted', fontSize: '12px' });
 
 export const drawerActions = css({ display: 'flex', flexWrap: 'wrap', gap: '8px' });
 
-export const popoverPositionerClass = css({ zIndex: 50 });
-
 export const popoverContentClass = css({
-  zIndex: 50,
   display: 'grid',
   gap: '10px',
   w: 'min(560px, calc(100vw - 32px))',
