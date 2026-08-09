@@ -3,8 +3,6 @@ import { execFileSync } from 'node:child_process';
 import { readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { brotliCompressSync, gzipSync } from 'node:zlib';
-// biome-ignore lint/style/noRestrictedImports: Plan072 evidence must reuse the benchmark's exact closure definition.
-import { measureInitialStaticClosureBytes } from '../apps/web/e2e/session-scroll-benchmark-closure';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const CONTROL_PATH = path.join(ROOT, 'docs/performance/artifacts/plan072-control.json');
@@ -45,6 +43,14 @@ const requiredStringArray = (value: unknown, label: string): readonly string[] =
     throw new Error(`Expected ${label} to be an array of strings`);
   }
   return value;
+};
+
+const findDestinationClosure = (root: Record<string, unknown>, label: string): Record<string, unknown> => {
+  if (!Array.isArray(root.destinationClosures)) {
+    throw new Error('Expected bundleMap.destinationClosures to be an array');
+  }
+  const closure = root.destinationClosures.find((value) => isRecord(value) && value.label === label);
+  return requiredRecord(closure, `bundleMap.destinationClosures.${label}`);
 };
 
 interface DrawerSample {
@@ -180,7 +186,7 @@ const main = (): void => {
     throw new Error('AI_USAGE_PLAN072_CONTROL_CLIENT_DIR must point to a clean HEAD control client build');
   }
   const controlDrawerGzip = deriveControlDrawerGzip(controlClientDirectory, controlDrawerRaw);
-  const candidateInitial = measureInitialStaticClosureBytes();
+  const candidateInitial = findDestinationClosure(bundleMap, 'overview');
   const candidateDrawer = candidateIncremental(candidateDrawerSamples);
   const initial = {
     control: {
@@ -189,9 +195,9 @@ const main = (): void => {
       raw: requiredNumber(controlInitial.rawBytes, 'control.initialStaticClosure.rawBytes'),
     },
     candidate: {
-      brotli: candidateInitial.brotliBytes,
-      gzip: candidateInitial.gzipBytes,
-      raw: candidateInitial.rawBytes,
+      brotli: requiredNumber(candidateInitial.brotliBytes, 'candidateInitial.brotliBytes'),
+      gzip: requiredNumber(candidateInitial.gzipBytes, 'candidateInitial.gzipBytes'),
+      raw: requiredNumber(candidateInitial.rawBytes, 'candidateInitial.rawBytes'),
     },
   };
   const incrementalDrawer = {
