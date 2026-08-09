@@ -3,36 +3,36 @@
     "fixture": { "campaigns": 4999, "sessions": 5000 },
     "initialStaticClosure": {
       "assetCount": 47,
-      "brotliBytes": 233035,
-      "gzipBytes": 265762,
-      "rawBytes": 811150
+      "brotliBytes": 232976,
+      "gzipBytes": 265686,
+      "rawBytes": 810954
     },
     "medians": {
       "browserSessionRpcCount": 26,
       "cumulativeSessionResponseBytes": 11026467,
-      "desktopFullTraversalMs": 3474.547,
+      "desktopFullTraversalMs": 3832.993,
       "desktopMaximumRenderedItems": 29,
       "desktopMaximumSessionDomNodes": 581,
       "desktopSessionPageCount": 25,
       "desktopSessionRpcCount": 24,
-      "filterMs": 123.62,
-      "heapDeltaBytes": 25229172,
+      "filterMs": 213.757,
+      "heapDeltaBytes": 25232160,
       "hydrationTotalBytes": 489216,
-      "initialHtmlBytes": 482557,
-      "initialMs": 440.641,
+      "initialHtmlBytes": 482556,
+      "initialMs": 533.407,
       "maximumPageBytes": 441050,
-      "mobileFullTraversalMs": 81.1,
+      "mobileFullTraversalMs": 92.935,
       "mobileMaximumRenderedItems": 13,
       "mobileMaximumSessionDomNodes": 224,
       "sessionPageCount": 26,
-      "sortMs": 238.213,
+      "sortMs": 300.153,
       "uniqueIdentityCount": 4999
     },
     "samples": [
       {
         "browserSessionRpcCount": 26,
         "cumulativeSessionResponseBytes": 11026467,
-        "desktopFullTraversalMs": 3474.547,
+        "desktopFullTraversalMs": 3827.16,
         "desktopMaximumRenderedItems": 29,
         "desktopMaximumSessionDomNodes": 581,
         "desktopSettledRenderedItems": 25,
@@ -40,9 +40,9 @@
         "desktopSessionPageCount": 25,
         "desktopSessionRpcCount": 24,
         "duplicateIdentityCount": 0,
-        "filterMs": 134.482,
-        "firstSessionIdentity": "session-row-v1:ae65e7682211541d",
-        "heapDeltaBytes": 25182608,
+        "filterMs": 211.821,
+        "firstSessionIdentity": "session-row-v1:2ff12cc36eeb14a1",
+        "heapDeltaBytes": 25211032,
         "hydrationFamilyBytes": {
           "bootstrap": { "bytes": 3850, "queryCount": 1 },
           "destination-current": { "bytes": 15681, "queryCount": 1 },
@@ -52,43 +52,43 @@
           "session-pages": { "bytes": 441538, "queryCount": 1 }
         },
         "hydrationTotalBytes": 489216,
-        "initialHtmlBytes": 482557,
-        "initialMs": 451.598,
-        "lastSessionIdentity": "session-row-v1:3ce15de844f5f352",
+        "initialHtmlBytes": 482556,
+        "initialMs": 528.564,
+        "lastSessionIdentity": "session-row-v1:9e8990e187cb733e",
         "maximumPageBytes": 441050,
         "missingIdentityCount": 0,
-        "mobileFullTraversalMs": 121.289,
+        "mobileFullTraversalMs": 92.935,
         "mobileMaximumRenderedItems": 13,
         "mobileMaximumSessionDomNodes": 224,
         "mobileSettledRenderedItems": 9,
         "mobileSettledSessionDomNodes": 155,
         "sessionPageCount": 26,
-        "sortMs": 238.213,
+        "sortMs": 256.006,
         "sqlitePhases": {
           "count": {
             "count": 3,
-            "p50Ms": 6.315,
-            "p95Ms": 6.815,
-            "totalMs": 17.814
+            "p50Ms": 6.769,
+            "p95Ms": 9.357,
+            "totalMs": 22.322
           },
           "identity": {
             "count": 27,
-            "p50Ms": 0.039,
-            "p95Ms": 0.065,
-            "totalMs": 1.126
+            "p50Ms": 0.043,
+            "p95Ms": 0.113,
+            "totalMs": 1.355
           },
           "materialize": {
             "count": 27,
-            "p50Ms": 4.985,
-            "p95Ms": 6.24,
-            "totalMs": 133.028
+            "p50Ms": 6.016,
+            "p95Ms": 7.738,
+            "totalMs": 163.875
           },
           "projection": { "count": 0, "p50Ms": 0, "p95Ms": 0, "totalMs": 0 },
           "slice": {
             "count": 27,
             "p50Ms": 0.003,
-            "p95Ms": 0.004,
-            "totalMs": 0.084
+            "p95Ms": 0.007,
+            "totalMs": 0.103
           }
         },
         "uniqueIdentityCount": 4999
@@ -96,7 +96,7 @@
       {
         "browserSessionRpcCount": 26,
         "cumulativeSessionResponseBytes": 11026467,
-        "desktopFullTraversalMs": 3486.735,
+        "desktopFullTraversalMs": 3832.993,
         "desktopMaximumRenderedItems": 29,
         "desktopMaximumSessionDomNodes": 581,
         "desktopSettledRenderedItems": 25,
@@ -104,9 +104,9 @@
         "desktopSessionPageCount": 25,
         "desktopSessionRpcCount": 24,
         "duplicateIdentityCount": 0,
-        "filterMs": 121.975,
-        "firstSessionIdentity": "session-row-v1:ae65e7682211541d",
-        "heapDeltaBytes": 25229172,
+        "filterMs": 213.757,
+        "firstSessionIdentity": "session-row-v1:2ff12cc36eeb14a1",
+        "heapDeltaBytes": 25272568,
         "hydrationFamilyBytes": {
           "bootstrap": { "bytes": 3850, "queryCount": 1 },
           "destination-current": { "bytes": 15681, "queryCount": 1 },
@@ -116,43 +116,43 @@
           "session-pages": { "bytes": 441538, "queryCount": 1 }
         },
         "hydrationTotalBytes": 489216,
-        "initialHtmlBytes": 482557,
-        "initialMs": 440.641,
-        "lastSessionIdentity": "session-row-v1:3ce15de844f5f352",
+        "initialHtmlBytes": 482556,
+        "initialMs": 564.274,
+        "lastSessionIdentity": "session-row-v1:9e8990e187cb733e",
         "maximumPageBytes": 441050,
         "missingIdentityCount": 0,
-        "mobileFullTraversalMs": 76.271,
+        "mobileFullTraversalMs": 72.474,
         "mobileMaximumRenderedItems": 13,
         "mobileMaximumSessionDomNodes": 224,
         "mobileSettledRenderedItems": 9,
         "mobileSettledSessionDomNodes": 155,
         "sessionPageCount": 26,
-        "sortMs": 238.373,
+        "sortMs": 300.153,
         "sqlitePhases": {
           "count": {
             "count": 3,
-            "p50Ms": 6.365,
-            "p95Ms": 7.777,
-            "totalMs": 18.866
+            "p50Ms": 7.499,
+            "p95Ms": 9.607,
+            "totalMs": 23.595
           },
           "identity": {
             "count": 27,
-            "p50Ms": 0.037,
-            "p95Ms": 0.069,
-            "totalMs": 1.175
+            "p50Ms": 0.047,
+            "p95Ms": 0.137,
+            "totalMs": 1.702
           },
           "materialize": {
             "count": 27,
-            "p50Ms": 5.032,
-            "p95Ms": 5.719,
-            "totalMs": 130.98
+            "p50Ms": 6.463,
+            "p95Ms": 9.372,
+            "totalMs": 180.579
           },
           "projection": { "count": 0, "p50Ms": 0, "p95Ms": 0, "totalMs": 0 },
           "slice": {
             "count": 27,
-            "p50Ms": 0.003,
-            "p95Ms": 0.005,
-            "totalMs": 0.091
+            "p50Ms": 0.004,
+            "p95Ms": 0.008,
+            "totalMs": 0.12
           }
         },
         "uniqueIdentityCount": 4999
@@ -160,7 +160,7 @@
       {
         "browserSessionRpcCount": 26,
         "cumulativeSessionResponseBytes": 11026467,
-        "desktopFullTraversalMs": 3228.256,
+        "desktopFullTraversalMs": 4090.629,
         "desktopMaximumRenderedItems": 29,
         "desktopMaximumSessionDomNodes": 581,
         "desktopSettledRenderedItems": 25,
@@ -168,9 +168,9 @@
         "desktopSessionPageCount": 25,
         "desktopSessionRpcCount": 24,
         "duplicateIdentityCount": 0,
-        "filterMs": 123.62,
-        "firstSessionIdentity": "session-row-v1:ae65e7682211541d",
-        "heapDeltaBytes": 25269296,
+        "filterMs": 223.266,
+        "firstSessionIdentity": "session-row-v1:2ff12cc36eeb14a1",
+        "heapDeltaBytes": 25232160,
         "hydrationFamilyBytes": {
           "bootstrap": { "bytes": 3850, "queryCount": 1 },
           "destination-current": { "bytes": 15681, "queryCount": 1 },
@@ -180,43 +180,43 @@
           "session-pages": { "bytes": 441538, "queryCount": 1 }
         },
         "hydrationTotalBytes": 489216,
-        "initialHtmlBytes": 482557,
-        "initialMs": 434.693,
-        "lastSessionIdentity": "session-row-v1:3ce15de844f5f352",
+        "initialHtmlBytes": 482556,
+        "initialMs": 533.407,
+        "lastSessionIdentity": "session-row-v1:9e8990e187cb733e",
         "maximumPageBytes": 441050,
         "missingIdentityCount": 0,
-        "mobileFullTraversalMs": 81.1,
+        "mobileFullTraversalMs": 108.094,
         "mobileMaximumRenderedItems": 13,
         "mobileMaximumSessionDomNodes": 224,
         "mobileSettledRenderedItems": 9,
         "mobileSettledSessionDomNodes": 155,
         "sessionPageCount": 26,
-        "sortMs": 213.999,
+        "sortMs": 312.212,
         "sqlitePhases": {
           "count": {
             "count": 3,
-            "p50Ms": 6.201,
-            "p95Ms": 7.027,
-            "totalMs": 18.051
+            "p50Ms": 7.443,
+            "p95Ms": 9.361,
+            "totalMs": 22.145
           },
           "identity": {
             "count": 27,
-            "p50Ms": 0.035,
-            "p95Ms": 0.082,
-            "totalMs": 1.097
+            "p50Ms": 0.049,
+            "p95Ms": 0.08,
+            "totalMs": 1.423
           },
           "materialize": {
             "count": 27,
-            "p50Ms": 4.959,
-            "p95Ms": 8.169,
-            "totalMs": 138.806
+            "p50Ms": 7.317,
+            "p95Ms": 11.601,
+            "totalMs": 201.912
           },
           "projection": { "count": 0, "p50Ms": 0, "p95Ms": 0, "totalMs": 0 },
           "slice": {
             "count": 27,
-            "p50Ms": 0.003,
-            "p95Ms": 0.006,
-            "totalMs": 0.092
+            "p50Ms": 0.004,
+            "p95Ms": 0.008,
+            "totalMs": 0.116
           }
         },
         "uniqueIdentityCount": 4999

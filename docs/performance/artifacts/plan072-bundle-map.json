@@ -94,22 +94,10 @@
           "rawBytes": 22727
         },
         {
-          "brotliBytes": 1668,
-          "fileName": "_app/immutable/chunks/BNNbzYyJ.js",
-          "gzipBytes": 1832,
-          "rawBytes": 5698
-        },
-        {
           "brotliBytes": 1509,
           "fileName": "_app/immutable/chunks/BOFVzuhi2.js",
           "gzipBytes": 1712,
           "rawBytes": 5954
-        },
-        {
-          "brotliBytes": 22488,
-          "fileName": "_app/immutable/chunks/BSWL3Eaa.js",
-          "gzipBytes": 25301,
-          "rawBytes": 83475
         },
         {
           "brotliBytes": 844,
@@ -128,6 +116,12 @@
           "fileName": "_app/immutable/chunks/BcRAdlx82.js",
           "gzipBytes": 473,
           "rawBytes": 911
+        },
+        {
+          "brotliBytes": 154,
+          "fileName": "_app/immutable/chunks/BeY-08Zf.js",
+          "gzipBytes": 183,
+          "rawBytes": 330
         },
         {
           "brotliBytes": 109,
@@ -154,10 +148,10 @@
           "rawBytes": 7665
         },
         {
-          "brotliBytes": 1285,
-          "fileName": "_app/immutable/chunks/BrVOG_Ll2.js",
-          "gzipBytes": 1466,
-          "rawBytes": 2912
+          "brotliBytes": 1226,
+          "fileName": "_app/immutable/chunks/C0XT3Teo2.js",
+          "gzipBytes": 1405,
+          "rawBytes": 2720
         },
         {
           "brotliBytes": 363,
@@ -170,12 +164,6 @@
           "fileName": "_app/immutable/chunks/CQASo0XQ2.js",
           "gzipBytes": 1989,
           "rawBytes": 5018
-        },
-        {
-          "brotliBytes": 12312,
-          "fileName": "_app/immutable/chunks/CTfGOlne.js",
-          "gzipBytes": 13569,
-          "rawBytes": 36113
         },
         {
           "brotliBytes": 3472,
@@ -202,6 +190,12 @@
           "rawBytes": 2087
         },
         {
+          "brotliBytes": 12314,
+          "fileName": "_app/immutable/chunks/D1newkxg.js",
+          "gzipBytes": 13569,
+          "rawBytes": 36109
+        },
+        {
           "brotliBytes": 819,
           "fileName": "_app/immutable/chunks/D3GE79p72.js",
           "gzipBytes": 938,
@@ -220,6 +214,12 @@
           "rawBytes": 13617
         },
         {
+          "brotliBytes": 22457,
+          "fileName": "_app/immutable/chunks/DCct3omZ.js",
+          "gzipBytes": 25301,
+          "rawBytes": 83475
+        },
+        {
           "brotliBytes": 18880,
           "fileName": "_app/immutable/chunks/DjfkarL2.js",
           "gzipBytes": 20835,
@@ -236,12 +236,6 @@
           "fileName": "_app/immutable/chunks/DpKWXS6l2.js",
           "gzipBytes": 59,
           "rawBytes": 39
-        },
-        {
-          "brotliBytes": 156,
-          "fileName": "_app/immutable/chunks/DpjYoveX.js",
-          "gzipBytes": 187,
-          "rawBytes": 330
         },
         {
           "brotliBytes": 2958,
@@ -292,6 +286,12 @@
           "rawBytes": 12400
         },
         {
+          "brotliBytes": 1666,
+          "fileName": "_app/immutable/chunks/nnm5bvIf.js",
+          "gzipBytes": 1831,
+          "rawBytes": 5698
+        },
+        {
           "brotliBytes": 5160,
           "fileName": "_app/immutable/chunks/pIUHqgvj.js",
           "gzipBytes": 5974,
@@ -310,31 +310,31 @@
           "rawBytes": 65
         },
         {
-          "brotliBytes": 1840,
-          "fileName": "_app/immutable/entry/app.CVr1CZc3.js",
-          "gzipBytes": 2093,
+          "brotliBytes": 1844,
+          "fileName": "_app/immutable/entry/app.CzE7K5aA.js",
+          "gzipBytes": 2089,
           "rawBytes": 5848
         },
         {
-          "brotliBytes": 86,
-          "fileName": "_app/immutable/entry/start.CbivmOpv.js",
+          "brotliBytes": 79,
+          "fileName": "_app/immutable/entry/start.6JcGRGNF.js",
           "gzipBytes": 92,
           "rawBytes": 82
         },
         {
-          "brotliBytes": 15271,
-          "fileName": "_app/immutable/nodes/0.BhvEx_Hw.js",
-          "gzipBytes": 17674,
+          "brotliBytes": 15324,
+          "fileName": "_app/immutable/nodes/0.cu-KrUud.js",
+          "gzipBytes": 17670,
           "rawBytes": 47889
         },
         {
-          "brotliBytes": 60897,
-          "fileName": "_app/immutable/nodes/3.DRHEhMQp.js",
-          "gzipBytes": 71436,
+          "brotliBytes": 60880,
+          "fileName": "_app/immutable/nodes/3.A5m5oaos.js",
+          "gzipBytes": 71434,
           "rawBytes": 229160
         }
       ],
-      "brotliBytes": 233035,
+      "brotliBytes": 232976,
       "chunkCount": 47,
       "designSystemArkImporters": [
         "packages/design-system/src/svelte/compound/multi-select.svelte",
@@ -346,9 +346,9 @@
         "packages/design-system/src/svelte/overlays/tooltip.svelte",
         "packages/design-system/src/svelte/overlays/tooltip.svelte?svelte&type=style&lang.css"
       ],
-      "gzipBytes": 265762,
+      "gzipBytes": 265686,
       "label": "overview",
-      "rawBytes": 811150,
+      "rawBytes": 810954,
       "zagModuleIds": [
         "../../node_modules/@zag-js/anatomy/dist/create-anatomy.mjs",
         "../../node_modules/@zag-js/checkbox/dist/checkbox.anatomy.mjs",
@@ -516,12 +516,6 @@
           "rawBytes": 22727
         },
         {
-          "brotliBytes": 1668,
-          "fileName": "_app/immutable/chunks/BNNbzYyJ.js",
-          "gzipBytes": 1832,
-          "rawBytes": 5698
-        },
-        {
           "brotliBytes": 1509,
           "fileName": "_app/immutable/chunks/BOFVzuhi2.js",
           "gzipBytes": 1712,
@@ -532,12 +526,6 @@
           "fileName": "_app/immutable/chunks/BPl3Y7y_2.js",
           "gzipBytes": 2845,
           "rawBytes": 8234
-        },
-        {
-          "brotliBytes": 22488,
-          "fileName": "_app/immutable/chunks/BSWL3Eaa.js",
-          "gzipBytes": 25301,
-          "rawBytes": 83475
         },
         {
           "brotliBytes": 844,
@@ -556,6 +544,12 @@
           "fileName": "_app/immutable/chunks/BcRAdlx82.js",
           "gzipBytes": 473,
           "rawBytes": 911
+        },
+        {
+          "brotliBytes": 154,
+          "fileName": "_app/immutable/chunks/BeY-08Zf.js",
+          "gzipBytes": 183,
+          "rawBytes": 330
         },
         {
           "brotliBytes": 109,
@@ -582,16 +576,10 @@
           "rawBytes": 7665
         },
         {
-          "brotliBytes": 1285,
-          "fileName": "_app/immutable/chunks/BrVOG_Ll2.js",
-          "gzipBytes": 1466,
-          "rawBytes": 2912
-        },
-        {
-          "brotliBytes": 1428,
-          "fileName": "_app/immutable/chunks/CD5lxqGT2.js",
-          "gzipBytes": 1585,
-          "rawBytes": 3971
+          "brotliBytes": 1226,
+          "fileName": "_app/immutable/chunks/C0XT3Teo2.js",
+          "gzipBytes": 1405,
+          "rawBytes": 2720
         },
         {
           "brotliBytes": 363,
@@ -604,12 +592,6 @@
           "fileName": "_app/immutable/chunks/CQASo0XQ2.js",
           "gzipBytes": 1989,
           "rawBytes": 5018
-        },
-        {
-          "brotliBytes": 12312,
-          "fileName": "_app/immutable/chunks/CTfGOlne.js",
-          "gzipBytes": 13569,
-          "rawBytes": 36113
         },
         {
           "brotliBytes": 3472,
@@ -636,6 +618,12 @@
           "rawBytes": 2087
         },
         {
+          "brotliBytes": 12314,
+          "fileName": "_app/immutable/chunks/D1newkxg.js",
+          "gzipBytes": 13569,
+          "rawBytes": 36109
+        },
+        {
           "brotliBytes": 819,
           "fileName": "_app/immutable/chunks/D3GE79p72.js",
           "gzipBytes": 938,
@@ -648,10 +636,22 @@
           "rawBytes": 7974
         },
         {
+          "brotliBytes": 18938,
+          "fileName": "_app/immutable/chunks/DBiXRtrK.js",
+          "gzipBytes": 21573,
+          "rawBytes": 72633
+        },
+        {
           "brotliBytes": 3731,
           "fileName": "_app/immutable/chunks/DCZBJClL.js",
           "gzipBytes": 4206,
           "rawBytes": 13617
+        },
+        {
+          "brotliBytes": 22457,
+          "fileName": "_app/immutable/chunks/DCct3omZ.js",
+          "gzipBytes": 25301,
+          "rawBytes": 83475
         },
         {
           "brotliBytes": 18880,
@@ -672,12 +672,6 @@
           "rawBytes": 39
         },
         {
-          "brotliBytes": 156,
-          "fileName": "_app/immutable/chunks/DpjYoveX.js",
-          "gzipBytes": 187,
-          "rawBytes": 330
-        },
-        {
           "brotliBytes": 2958,
           "fileName": "_app/immutable/chunks/DqdLu1To2.js",
           "gzipBytes": 3292,
@@ -696,10 +690,10 @@
           "rawBytes": 1213
         },
         {
-          "brotliBytes": 18930,
-          "fileName": "_app/immutable/chunks/FEXK0UVv.js",
-          "gzipBytes": 21586,
-          "rawBytes": 72652
+          "brotliBytes": 1424,
+          "fileName": "_app/immutable/chunks/DyzJL85c2.js",
+          "gzipBytes": 1582,
+          "rawBytes": 3971
         },
         {
           "brotliBytes": 828,
@@ -732,6 +726,12 @@
           "rawBytes": 12400
         },
         {
+          "brotliBytes": 1666,
+          "fileName": "_app/immutable/chunks/nnm5bvIf.js",
+          "gzipBytes": 1831,
+          "rawBytes": 5698
+        },
+        {
           "brotliBytes": 5160,
           "fileName": "_app/immutable/chunks/pIUHqgvj.js",
           "gzipBytes": 5974,
@@ -750,31 +750,31 @@
           "rawBytes": 65
         },
         {
-          "brotliBytes": 1840,
-          "fileName": "_app/immutable/entry/app.CVr1CZc3.js",
-          "gzipBytes": 2093,
+          "brotliBytes": 1844,
+          "fileName": "_app/immutable/entry/app.CzE7K5aA.js",
+          "gzipBytes": 2089,
           "rawBytes": 5848
         },
         {
-          "brotliBytes": 86,
-          "fileName": "_app/immutable/entry/start.CbivmOpv.js",
+          "brotliBytes": 79,
+          "fileName": "_app/immutable/entry/start.6JcGRGNF.js",
           "gzipBytes": 92,
           "rawBytes": 82
         },
         {
-          "brotliBytes": 15271,
-          "fileName": "_app/immutable/nodes/0.BhvEx_Hw.js",
-          "gzipBytes": 17674,
+          "brotliBytes": 15324,
+          "fileName": "_app/immutable/nodes/0.cu-KrUud.js",
+          "gzipBytes": 17670,
           "rawBytes": 47889
         },
         {
-          "brotliBytes": 60897,
-          "fileName": "_app/immutable/nodes/3.DRHEhMQp.js",
-          "gzipBytes": 71436,
+          "brotliBytes": 60880,
+          "fileName": "_app/immutable/nodes/3.A5m5oaos.js",
+          "gzipBytes": 71434,
           "rawBytes": 229160
         }
       ],
-      "brotliBytes": 255942,
+      "brotliBytes": 255887,
       "chunkCount": 50,
       "designSystemArkImporters": [
         "packages/design-system/src/svelte/compound/multi-select.svelte",
@@ -786,9 +786,9 @@
         "packages/design-system/src/svelte/overlays/tooltip.svelte",
         "packages/design-system/src/svelte/overlays/tooltip.svelte?svelte&type=style&lang.css"
       ],
-      "gzipBytes": 291778,
+      "gzipBytes": 291686,
       "label": "sessions",
-      "rawBytes": 896007,
+      "rawBytes": 895792,
       "zagModuleIds": [
         "../../node_modules/@zag-js/anatomy/dist/create-anatomy.mjs",
         "../../node_modules/@zag-js/checkbox/dist/checkbox.anatomy.mjs",
@@ -968,22 +968,10 @@
           "rawBytes": 645
         },
         {
-          "brotliBytes": 1668,
-          "fileName": "_app/immutable/chunks/BNNbzYyJ.js",
-          "gzipBytes": 1832,
-          "rawBytes": 5698
-        },
-        {
           "brotliBytes": 1509,
           "fileName": "_app/immutable/chunks/BOFVzuhi2.js",
           "gzipBytes": 1712,
           "rawBytes": 5954
-        },
-        {
-          "brotliBytes": 22488,
-          "fileName": "_app/immutable/chunks/BSWL3Eaa.js",
-          "gzipBytes": 25301,
-          "rawBytes": 83475
         },
         {
           "brotliBytes": 844,
@@ -1002,6 +990,12 @@
           "fileName": "_app/immutable/chunks/BcRAdlx82.js",
           "gzipBytes": 473,
           "rawBytes": 911
+        },
+        {
+          "brotliBytes": 154,
+          "fileName": "_app/immutable/chunks/BeY-08Zf.js",
+          "gzipBytes": 183,
+          "rawBytes": 330
         },
         {
           "brotliBytes": 109,
@@ -1028,10 +1022,10 @@
           "rawBytes": 7665
         },
         {
-          "brotliBytes": 1285,
-          "fileName": "_app/immutable/chunks/BrVOG_Ll2.js",
-          "gzipBytes": 1466,
-          "rawBytes": 2912
+          "brotliBytes": 1226,
+          "fileName": "_app/immutable/chunks/C0XT3Teo2.js",
+          "gzipBytes": 1405,
+          "rawBytes": 2720
         },
         {
           "brotliBytes": 363,
@@ -1044,12 +1038,6 @@
           "fileName": "_app/immutable/chunks/CQASo0XQ2.js",
           "gzipBytes": 1989,
           "rawBytes": 5018
-        },
-        {
-          "brotliBytes": 12312,
-          "fileName": "_app/immutable/chunks/CTfGOlne.js",
-          "gzipBytes": 13569,
-          "rawBytes": 36113
         },
         {
           "brotliBytes": 3472,
@@ -1076,6 +1064,12 @@
           "rawBytes": 2087
         },
         {
+          "brotliBytes": 12314,
+          "fileName": "_app/immutable/chunks/D1newkxg.js",
+          "gzipBytes": 13569,
+          "rawBytes": 36109
+        },
+        {
           "brotliBytes": 819,
           "fileName": "_app/immutable/chunks/D3GE79p72.js",
           "gzipBytes": 938,
@@ -1094,6 +1088,12 @@
           "rawBytes": 13617
         },
         {
+          "brotliBytes": 22457,
+          "fileName": "_app/immutable/chunks/DCct3omZ.js",
+          "gzipBytes": 25301,
+          "rawBytes": 83475
+        },
+        {
           "brotliBytes": 18880,
           "fileName": "_app/immutable/chunks/DjfkarL2.js",
           "gzipBytes": 20835,
@@ -1110,12 +1110,6 @@
           "fileName": "_app/immutable/chunks/DpKWXS6l2.js",
           "gzipBytes": 59,
           "rawBytes": 39
-        },
-        {
-          "brotliBytes": 156,
-          "fileName": "_app/immutable/chunks/DpjYoveX.js",
-          "gzipBytes": 187,
-          "rawBytes": 330
         },
         {
           "brotliBytes": 2958,
@@ -1172,6 +1166,12 @@
           "rawBytes": 12400
         },
         {
+          "brotliBytes": 1666,
+          "fileName": "_app/immutable/chunks/nnm5bvIf.js",
+          "gzipBytes": 1831,
+          "rawBytes": 5698
+        },
+        {
           "brotliBytes": 5160,
           "fileName": "_app/immutable/chunks/pIUHqgvj.js",
           "gzipBytes": 5974,
@@ -1190,31 +1190,31 @@
           "rawBytes": 65
         },
         {
-          "brotliBytes": 1840,
-          "fileName": "_app/immutable/entry/app.CVr1CZc3.js",
-          "gzipBytes": 2093,
+          "brotliBytes": 1844,
+          "fileName": "_app/immutable/entry/app.CzE7K5aA.js",
+          "gzipBytes": 2089,
           "rawBytes": 5848
         },
         {
-          "brotliBytes": 86,
-          "fileName": "_app/immutable/entry/start.CbivmOpv.js",
+          "brotliBytes": 79,
+          "fileName": "_app/immutable/entry/start.6JcGRGNF.js",
           "gzipBytes": 92,
           "rawBytes": 82
         },
         {
-          "brotliBytes": 15271,
-          "fileName": "_app/immutable/nodes/0.BhvEx_Hw.js",
-          "gzipBytes": 17674,
+          "brotliBytes": 15324,
+          "fileName": "_app/immutable/nodes/0.cu-KrUud.js",
+          "gzipBytes": 17670,
           "rawBytes": 47889
         },
         {
-          "brotliBytes": 60897,
-          "fileName": "_app/immutable/nodes/3.DRHEhMQp.js",
-          "gzipBytes": 71436,
+          "brotliBytes": 60880,
+          "fileName": "_app/immutable/nodes/3.A5m5oaos.js",
+          "gzipBytes": 71434,
           "rawBytes": 229160
         }
       ],
-      "brotliBytes": 246223,
+      "brotliBytes": 246164,
       "chunkCount": 49,
       "designSystemArkImporters": [
         "packages/design-system/src/svelte/compound/multi-select.svelte",
@@ -1229,9 +1229,9 @@
         "packages/design-system/src/svelte/overlays/tooltip.svelte",
         "packages/design-system/src/svelte/overlays/tooltip.svelte?svelte&type=style&lang.css"
       ],
-      "gzipBytes": 280759,
+      "gzipBytes": 280683,
       "label": "breakdown",
-      "rawBytes": 853972,
+      "rawBytes": 853776,
       "zagModuleIds": [
         "../../node_modules/@zag-js/anatomy/dist/create-anatomy.mjs",
         "../../node_modules/@zag-js/checkbox/dist/checkbox.anatomy.mjs",
@@ -1425,12 +1425,6 @@
           "rawBytes": 645
         },
         {
-          "brotliBytes": 1668,
-          "fileName": "_app/immutable/chunks/BNNbzYyJ.js",
-          "gzipBytes": 1832,
-          "rawBytes": 5698
-        },
-        {
           "brotliBytes": 1509,
           "fileName": "_app/immutable/chunks/BOFVzuhi2.js",
           "gzipBytes": 1712,
@@ -1441,12 +1435,6 @@
           "fileName": "_app/immutable/chunks/BPl3Y7y_2.js",
           "gzipBytes": 2845,
           "rawBytes": 8234
-        },
-        {
-          "brotliBytes": 22488,
-          "fileName": "_app/immutable/chunks/BSWL3Eaa.js",
-          "gzipBytes": 25301,
-          "rawBytes": 83475
         },
         {
           "brotliBytes": 844,
@@ -1465,6 +1453,12 @@
           "fileName": "_app/immutable/chunks/BcRAdlx82.js",
           "gzipBytes": 473,
           "rawBytes": 911
+        },
+        {
+          "brotliBytes": 154,
+          "fileName": "_app/immutable/chunks/BeY-08Zf.js",
+          "gzipBytes": 183,
+          "rawBytes": 330
         },
         {
           "brotliBytes": 109,
@@ -1491,16 +1485,10 @@
           "rawBytes": 7665
         },
         {
-          "brotliBytes": 1285,
-          "fileName": "_app/immutable/chunks/BrVOG_Ll2.js",
-          "gzipBytes": 1466,
-          "rawBytes": 2912
-        },
-        {
-          "brotliBytes": 1428,
-          "fileName": "_app/immutable/chunks/CD5lxqGT2.js",
-          "gzipBytes": 1585,
-          "rawBytes": 3971
+          "brotliBytes": 1226,
+          "fileName": "_app/immutable/chunks/C0XT3Teo2.js",
+          "gzipBytes": 1405,
+          "rawBytes": 2720
         },
         {
           "brotliBytes": 363,
@@ -1513,12 +1501,6 @@
           "fileName": "_app/immutable/chunks/CQASo0XQ2.js",
           "gzipBytes": 1989,
           "rawBytes": 5018
-        },
-        {
-          "brotliBytes": 12312,
-          "fileName": "_app/immutable/chunks/CTfGOlne.js",
-          "gzipBytes": 13569,
-          "rawBytes": 36113
         },
         {
           "brotliBytes": 3472,
@@ -1545,6 +1527,12 @@
           "rawBytes": 2087
         },
         {
+          "brotliBytes": 12314,
+          "fileName": "_app/immutable/chunks/D1newkxg.js",
+          "gzipBytes": 13569,
+          "rawBytes": 36109
+        },
+        {
           "brotliBytes": 819,
           "fileName": "_app/immutable/chunks/D3GE79p72.js",
           "gzipBytes": 938,
@@ -1557,10 +1545,22 @@
           "rawBytes": 7974
         },
         {
+          "brotliBytes": 18938,
+          "fileName": "_app/immutable/chunks/DBiXRtrK.js",
+          "gzipBytes": 21573,
+          "rawBytes": 72633
+        },
+        {
           "brotliBytes": 3731,
           "fileName": "_app/immutable/chunks/DCZBJClL.js",
           "gzipBytes": 4206,
           "rawBytes": 13617
+        },
+        {
+          "brotliBytes": 22457,
+          "fileName": "_app/immutable/chunks/DCct3omZ.js",
+          "gzipBytes": 25301,
+          "rawBytes": 83475
         },
         {
           "brotliBytes": 18880,
@@ -1581,12 +1581,6 @@
           "rawBytes": 39
         },
         {
-          "brotliBytes": 156,
-          "fileName": "_app/immutable/chunks/DpjYoveX.js",
-          "gzipBytes": 187,
-          "rawBytes": 330
-        },
-        {
           "brotliBytes": 2958,
           "fileName": "_app/immutable/chunks/DqdLu1To2.js",
           "gzipBytes": 3292,
@@ -1605,10 +1599,10 @@
           "rawBytes": 1213
         },
         {
-          "brotliBytes": 18930,
-          "fileName": "_app/immutable/chunks/FEXK0UVv.js",
-          "gzipBytes": 21586,
-          "rawBytes": 72652
+          "brotliBytes": 1424,
+          "fileName": "_app/immutable/chunks/DyzJL85c2.js",
+          "gzipBytes": 1582,
+          "rawBytes": 3971
         },
         {
           "brotliBytes": 828,
@@ -1641,10 +1635,10 @@
           "rawBytes": 12400
         },
         {
-          "brotliBytes": 11405,
-          "fileName": "_app/immutable/chunks/pAShgLbH.js",
-          "gzipBytes": 13206,
-          "rawBytes": 41403
+          "brotliBytes": 1666,
+          "fileName": "_app/immutable/chunks/nnm5bvIf.js",
+          "gzipBytes": 1831,
+          "rawBytes": 5698
         },
         {
           "brotliBytes": 5160,
@@ -1671,31 +1665,37 @@
           "rawBytes": 65
         },
         {
-          "brotliBytes": 1840,
-          "fileName": "_app/immutable/entry/app.CVr1CZc3.js",
-          "gzipBytes": 2093,
+          "brotliBytes": 11435,
+          "fileName": "_app/immutable/chunks/xrLBEHUo.js",
+          "gzipBytes": 13206,
+          "rawBytes": 41403
+        },
+        {
+          "brotliBytes": 1844,
+          "fileName": "_app/immutable/entry/app.CzE7K5aA.js",
+          "gzipBytes": 2089,
           "rawBytes": 5848
         },
         {
-          "brotliBytes": 86,
-          "fileName": "_app/immutable/entry/start.CbivmOpv.js",
+          "brotliBytes": 79,
+          "fileName": "_app/immutable/entry/start.6JcGRGNF.js",
           "gzipBytes": 92,
           "rawBytes": 82
         },
         {
-          "brotliBytes": 15271,
-          "fileName": "_app/immutable/nodes/0.BhvEx_Hw.js",
-          "gzipBytes": 17674,
+          "brotliBytes": 15324,
+          "fileName": "_app/immutable/nodes/0.cu-KrUud.js",
+          "gzipBytes": 17670,
           "rawBytes": 47889
         },
         {
-          "brotliBytes": 60897,
-          "fileName": "_app/immutable/nodes/3.DRHEhMQp.js",
-          "gzipBytes": 71436,
+          "brotliBytes": 60880,
+          "fileName": "_app/immutable/nodes/3.A5m5oaos.js",
+          "gzipBytes": 71434,
           "rawBytes": 229160
         }
       ],
-      "brotliBytes": 282530,
+      "brotliBytes": 282505,
       "chunkCount": 54,
       "designSystemArkImporters": [
         "packages/design-system/src/svelte/compound/multi-select.svelte",
@@ -1709,9 +1709,9 @@
         "packages/design-system/src/svelte/overlays/tooltip.svelte",
         "packages/design-system/src/svelte/overlays/tooltip.svelte?svelte&type=style&lang.css"
       ],
-      "gzipBytes": 321897,
+      "gzipBytes": 321805,
       "label": "sessions-after-drawer",
-      "rawBytes": 991759,
+      "rawBytes": 991544,
       "zagModuleIds": [
         "../../node_modules/@zag-js/anatomy/dist/create-anatomy.mjs",
         "../../node_modules/@zag-js/aria-hidden/dist/aria-hidden.mjs",
@@ -1887,22 +1887,6 @@
       "arkComponents": [],
       "arkModuleIds": [],
       "dynamicImports": [],
-      "fileName": "_app/immutable/chunks/BNNbzYyJ.js",
-      "imports": [
-        "_app/immutable/chunks/B8YIuy6q.js",
-        "_app/immutable/chunks/CTfGOlne.js",
-        "_app/immutable/chunks/CiEXHJEK.js",
-        "_app/immutable/chunks/DjfkarL2.js"
-      ],
-      "isInitial": true,
-      "lazyLabel": null,
-      "moduleCount": 4,
-      "zagModuleIds": []
-    },
-    {
-      "arkComponents": [],
-      "arkModuleIds": [],
-      "dynamicImports": [],
       "fileName": "_app/immutable/chunks/BOFVzuhi2.js",
       "imports": [
         "_app/immutable/chunks/3VHCA45O.js",
@@ -1911,27 +1895,6 @@
       "isInitial": true,
       "lazyLabel": null,
       "moduleCount": 3,
-      "zagModuleIds": []
-    },
-    {
-      "arkComponents": [],
-      "arkModuleIds": [],
-      "dynamicImports": [],
-      "fileName": "_app/immutable/chunks/BSWL3Eaa.js",
-      "imports": [
-        "_app/immutable/chunks/B8YIuy6q.js",
-        "_app/immutable/chunks/BNNbzYyJ.js",
-        "_app/immutable/chunks/BZ-ho4tl.js",
-        "_app/immutable/chunks/CiEXHJEK.js",
-        "_app/immutable/chunks/Cqnsa6Vs.js",
-        "_app/immutable/chunks/CwvhNzVO.js",
-        "_app/immutable/chunks/DBNAtran.js",
-        "_app/immutable/chunks/DCZBJClL.js",
-        "_app/immutable/chunks/DjfkarL2.js"
-      ],
-      "isInitial": true,
-      "lazyLabel": null,
-      "moduleCount": 26,
       "zagModuleIds": []
     },
     {
@@ -1971,6 +1934,20 @@
       "isInitial": true,
       "lazyLabel": null,
       "moduleCount": 1,
+      "zagModuleIds": []
+    },
+    {
+      "arkComponents": [],
+      "arkModuleIds": [],
+      "dynamicImports": [],
+      "fileName": "_app/immutable/chunks/BeY-08Zf.js",
+      "imports": [
+        "_app/immutable/chunks/D1newkxg.js",
+        "_app/immutable/chunks/DjfkarL2.js"
+      ],
+      "isInitial": true,
+      "lazyLabel": null,
+      "moduleCount": 3,
       "zagModuleIds": []
     },
     {
@@ -2064,7 +2041,7 @@
       "arkComponents": [],
       "arkModuleIds": [],
       "dynamicImports": [],
-      "fileName": "_app/immutable/chunks/BrVOG_Ll2.js",
+      "fileName": "_app/immutable/chunks/C0XT3Teo2.js",
       "imports": [
         "_app/immutable/chunks/3VHCA45O.js",
         "_app/immutable/chunks/DjfkarL2.js",
@@ -2098,20 +2075,6 @@
       "isInitial": true,
       "lazyLabel": null,
       "moduleCount": 4,
-      "zagModuleIds": []
-    },
-    {
-      "arkComponents": [],
-      "arkModuleIds": [],
-      "dynamicImports": [],
-      "fileName": "_app/immutable/chunks/CTfGOlne.js",
-      "imports": [
-        "_app/immutable/chunks/DjfkarL2.js",
-        "_app/immutable/chunks/Dt-HX3Vu.js"
-      ],
-      "isInitial": true,
-      "lazyLabel": null,
-      "moduleCount": 30,
       "zagModuleIds": []
     },
     {
@@ -2165,6 +2128,20 @@
       "arkComponents": [],
       "arkModuleIds": [],
       "dynamicImports": [],
+      "fileName": "_app/immutable/chunks/D1newkxg.js",
+      "imports": [
+        "_app/immutable/chunks/DjfkarL2.js",
+        "_app/immutable/chunks/Dt-HX3Vu.js"
+      ],
+      "isInitial": true,
+      "lazyLabel": null,
+      "moduleCount": 30,
+      "zagModuleIds": []
+    },
+    {
+      "arkComponents": [],
+      "arkModuleIds": [],
+      "dynamicImports": [],
       "fileName": "_app/immutable/chunks/D3GE79p72.js",
       "imports": [],
       "isInitial": true,
@@ -2204,6 +2181,27 @@
       "arkComponents": [],
       "arkModuleIds": [],
       "dynamicImports": [],
+      "fileName": "_app/immutable/chunks/DCct3omZ.js",
+      "imports": [
+        "_app/immutable/chunks/B8YIuy6q.js",
+        "_app/immutable/chunks/BZ-ho4tl.js",
+        "_app/immutable/chunks/CiEXHJEK.js",
+        "_app/immutable/chunks/Cqnsa6Vs.js",
+        "_app/immutable/chunks/CwvhNzVO.js",
+        "_app/immutable/chunks/DBNAtran.js",
+        "_app/immutable/chunks/DCZBJClL.js",
+        "_app/immutable/chunks/DjfkarL2.js",
+        "_app/immutable/chunks/nnm5bvIf.js"
+      ],
+      "isInitial": true,
+      "lazyLabel": null,
+      "moduleCount": 26,
+      "zagModuleIds": []
+    },
+    {
+      "arkComponents": [],
+      "arkModuleIds": [],
+      "dynamicImports": [],
       "fileName": "_app/immutable/chunks/DjfkarL2.js",
       "imports": [],
       "isInitial": true,
@@ -2236,20 +2234,6 @@
       "isInitial": true,
       "lazyLabel": null,
       "moduleCount": 1,
-      "zagModuleIds": []
-    },
-    {
-      "arkComponents": [],
-      "arkModuleIds": [],
-      "dynamicImports": [],
-      "fileName": "_app/immutable/chunks/DpjYoveX.js",
-      "imports": [
-        "_app/immutable/chunks/CTfGOlne.js",
-        "_app/immutable/chunks/DjfkarL2.js"
-      ],
-      "isInitial": true,
-      "lazyLabel": null,
-      "moduleCount": 3,
       "zagModuleIds": []
     },
     {
@@ -2374,6 +2358,22 @@
       "arkComponents": [],
       "arkModuleIds": [],
       "dynamicImports": [],
+      "fileName": "_app/immutable/chunks/nnm5bvIf.js",
+      "imports": [
+        "_app/immutable/chunks/B8YIuy6q.js",
+        "_app/immutable/chunks/CiEXHJEK.js",
+        "_app/immutable/chunks/D1newkxg.js",
+        "_app/immutable/chunks/DjfkarL2.js"
+      ],
+      "isInitial": true,
+      "lazyLabel": null,
+      "moduleCount": 4,
+      "zagModuleIds": []
+    },
+    {
+      "arkComponents": [],
+      "arkModuleIds": [],
+      "dynamicImports": [],
       "fileName": "_app/immutable/chunks/pIUHqgvj.js",
       "imports": [
         "_app/immutable/chunks/3VHCA45O.js",
@@ -2445,12 +2445,12 @@
       "arkModuleIds": [],
       "dynamicImports": [
         "_app/immutable/chunks/Bjy-W4x22.js",
-        "_app/immutable/nodes/0.BhvEx_Hw.js",
-        "_app/immutable/nodes/1.C51GcF4c.js",
+        "_app/immutable/nodes/0.cu-KrUud.js",
+        "_app/immutable/nodes/1.C1V1sCK2.js",
         "_app/immutable/nodes/10.CYumxv1c.js",
         "_app/immutable/nodes/11.B60UeYso.js",
-        "_app/immutable/nodes/2.Cf9hsoA6.js",
-        "_app/immutable/nodes/3.DRHEhMQp.js",
+        "_app/immutable/nodes/2.DPWpFwco.js",
+        "_app/immutable/nodes/3.A5m5oaos.js",
         "_app/immutable/nodes/4.D338HPZQ.js",
         "_app/immutable/nodes/5.Ctzgl8WD.js",
         "_app/immutable/nodes/6.CbU_ObpH.js",
@@ -2458,7 +2458,7 @@
         "_app/immutable/nodes/8.DIiYmDmG.js",
         "_app/immutable/nodes/9.CYA0zEAv.js"
       ],
-      "fileName": "_app/immutable/entry/app.CVr1CZc3.js",
+      "fileName": "_app/immutable/entry/app.CzE7K5aA.js",
       "imports": [
         "_app/immutable/chunks/DjfkarL2.js",
         "_app/immutable/chunks/DuqgYnXA.js",
@@ -2473,8 +2473,8 @@
       "arkComponents": [],
       "arkModuleIds": [],
       "dynamicImports": [],
-      "fileName": "_app/immutable/entry/start.CbivmOpv.js",
-      "imports": ["_app/immutable/chunks/CTfGOlne.js"],
+      "fileName": "_app/immutable/entry/start.6JcGRGNF.js",
+      "imports": ["_app/immutable/chunks/D1newkxg.js"],
       "isInitial": true,
       "lazyLabel": null,
       "moduleCount": 1,
@@ -2484,24 +2484,24 @@
       "arkComponents": [],
       "arkModuleIds": [],
       "dynamicImports": [],
-      "fileName": "_app/immutable/nodes/0.BhvEx_Hw.js",
+      "fileName": "_app/immutable/nodes/0.cu-KrUud.js",
       "imports": [
         "_app/immutable/chunks/3VHCA45O.js",
         "_app/immutable/chunks/6SE7dzrI.js",
         "_app/immutable/chunks/B8YIuy6q.js",
-        "_app/immutable/chunks/BNNbzYyJ.js",
-        "_app/immutable/chunks/BSWL3Eaa.js",
+        "_app/immutable/chunks/BeY-08Zf.js",
         "_app/immutable/chunks/BlMEqpDI.js",
         "_app/immutable/chunks/CJs5hR2P.js",
         "_app/immutable/chunks/CQASo0XQ2.js",
-        "_app/immutable/chunks/CTfGOlne.js",
         "_app/immutable/chunks/C_xS7Tf12.js",
         "_app/immutable/chunks/CiEXHJEK.js",
+        "_app/immutable/chunks/D1newkxg.js",
         "_app/immutable/chunks/DBNAtran.js",
         "_app/immutable/chunks/DCZBJClL.js",
+        "_app/immutable/chunks/DCct3omZ.js",
         "_app/immutable/chunks/DjfkarL2.js",
-        "_app/immutable/chunks/DpjYoveX.js",
         "_app/immutable/chunks/WnPP9mkP2.js",
+        "_app/immutable/chunks/nnm5bvIf.js",
         "_app/immutable/chunks/pIUHqgvj.js",
         "_app/immutable/chunks/xihTtKlq.js"
       ],
@@ -2530,46 +2530,46 @@
         "../../node_modules/@ark-ui/svelte/dist/components/select/use-select.svelte.js"
       ],
       "dynamicImports": [
-        "_app/immutable/chunks/CD5lxqGT2.js",
+        "_app/immutable/chunks/DBiXRtrK.js",
         "_app/immutable/chunks/DWcbDsDQ2.js",
-        "_app/immutable/chunks/FEXK0UVv.js",
+        "_app/immutable/chunks/DyzJL85c2.js",
         "_app/immutable/chunks/FcXmQM5Y2.js",
-        "_app/immutable/chunks/pAShgLbH.js"
+        "_app/immutable/chunks/xrLBEHUo.js"
       ],
-      "fileName": "_app/immutable/nodes/3.DRHEhMQp.js",
+      "fileName": "_app/immutable/nodes/3.A5m5oaos.js",
       "imports": [
         "_app/immutable/chunks/3VHCA45O.js",
         "_app/immutable/chunks/B7qJoBQn.js",
         "_app/immutable/chunks/B8YIuy6q.js",
-        "_app/immutable/chunks/BNNbzYyJ.js",
         "_app/immutable/chunks/BOFVzuhi2.js",
-        "_app/immutable/chunks/BSWL3Eaa.js",
         "_app/immutable/chunks/BXviFDi6.js",
         "_app/immutable/chunks/BZ-ho4tl.js",
         "_app/immutable/chunks/BcRAdlx82.js",
+        "_app/immutable/chunks/BeY-08Zf.js",
         "_app/immutable/chunks/BelWyZaW2.js",
         "_app/immutable/chunks/BkFRMrMT2.js",
         "_app/immutable/chunks/BoNsmG2n2.js",
-        "_app/immutable/chunks/BrVOG_Ll2.js",
+        "_app/immutable/chunks/C0XT3Teo2.js",
         "_app/immutable/chunks/CJs5hR2P.js",
-        "_app/immutable/chunks/CTfGOlne.js",
         "_app/immutable/chunks/C_xS7Tf12.js",
         "_app/immutable/chunks/CiEXHJEK.js",
         "_app/immutable/chunks/Cqnsa6Vs.js",
         "_app/immutable/chunks/CwvhNzVO.js",
+        "_app/immutable/chunks/D1newkxg.js",
         "_app/immutable/chunks/D3GE79p72.js",
         "_app/immutable/chunks/DBNAtran.js",
         "_app/immutable/chunks/DCZBJClL.js",
+        "_app/immutable/chunks/DCct3omZ.js",
         "_app/immutable/chunks/DjfkarL2.js",
         "_app/immutable/chunks/Djg_lrpQ.js",
         "_app/immutable/chunks/DpKWXS6l2.js",
-        "_app/immutable/chunks/DpjYoveX.js",
         "_app/immutable/chunks/DqdLu1To2.js",
         "_app/immutable/chunks/DuqgYnXA.js",
         "_app/immutable/chunks/ImaW1pJ22.js",
         "_app/immutable/chunks/dfWPZyj12.js",
         "_app/immutable/chunks/dmDhAf7E2.js",
         "_app/immutable/chunks/gTjvzm6A2.js",
+        "_app/immutable/chunks/nnm5bvIf.js",
         "_app/immutable/chunks/pIUHqgvj.js",
         "_app/immutable/chunks/qeZrtJb7.js",
         "_app/immutable/chunks/xihTtKlq.js"
@@ -2615,6 +2615,30 @@
       "arkComponents": [],
       "arkModuleIds": [],
       "dynamicImports": [],
+      "fileName": "_app/immutable/chunks/DBiXRtrK.js",
+      "imports": [
+        "_app/immutable/chunks/3VHCA45O.js",
+        "_app/immutable/chunks/BPl3Y7y_2.js",
+        "_app/immutable/chunks/BXviFDi6.js",
+        "_app/immutable/chunks/BcRAdlx82.js",
+        "_app/immutable/chunks/BkFRMrMT2.js",
+        "_app/immutable/chunks/C0XT3Teo2.js",
+        "_app/immutable/chunks/CJs5hR2P.js",
+        "_app/immutable/chunks/Cqnsa6Vs.js",
+        "_app/immutable/chunks/DjfkarL2.js",
+        "_app/immutable/chunks/dmDhAf7E2.js",
+        "_app/immutable/chunks/pIUHqgvj.js",
+        "_app/immutable/chunks/xihTtKlq.js"
+      ],
+      "isInitial": false,
+      "lazyLabel": "session-table",
+      "moduleCount": 14,
+      "zagModuleIds": []
+    },
+    {
+      "arkComponents": [],
+      "arkModuleIds": [],
+      "dynamicImports": [],
       "fileName": "_app/immutable/chunks/DWcbDsDQ2.js",
       "imports": [
         "_app/immutable/chunks/3VHCA45O.js",
@@ -2628,30 +2652,6 @@
       "isInitial": false,
       "lazyLabel": "quota-history-panel",
       "moduleCount": 1,
-      "zagModuleIds": []
-    },
-    {
-      "arkComponents": [],
-      "arkModuleIds": [],
-      "dynamicImports": [],
-      "fileName": "_app/immutable/chunks/FEXK0UVv.js",
-      "imports": [
-        "_app/immutable/chunks/3VHCA45O.js",
-        "_app/immutable/chunks/BPl3Y7y_2.js",
-        "_app/immutable/chunks/BXviFDi6.js",
-        "_app/immutable/chunks/BcRAdlx82.js",
-        "_app/immutable/chunks/BkFRMrMT2.js",
-        "_app/immutable/chunks/BrVOG_Ll2.js",
-        "_app/immutable/chunks/CJs5hR2P.js",
-        "_app/immutable/chunks/Cqnsa6Vs.js",
-        "_app/immutable/chunks/DjfkarL2.js",
-        "_app/immutable/chunks/dmDhAf7E2.js",
-        "_app/immutable/chunks/pIUHqgvj.js",
-        "_app/immutable/chunks/xihTtKlq.js"
-      ],
-      "isInitial": false,
-      "lazyLabel": "session-table",
-      "moduleCount": 14,
       "zagModuleIds": []
     },
     {
@@ -2710,12 +2710,12 @@
       "arkComponents": [],
       "arkModuleIds": [],
       "dynamicImports": [],
-      "fileName": "_app/immutable/chunks/pAShgLbH.js",
+      "fileName": "_app/immutable/chunks/xrLBEHUo.js",
       "imports": [
         "_app/immutable/chunks/3VHCA45O.js",
         "_app/immutable/chunks/BPl3Y7y_2.js",
         "_app/immutable/chunks/BcRAdlx82.js",
-        "_app/immutable/chunks/BrVOG_Ll2.js",
+        "_app/immutable/chunks/C0XT3Teo2.js",
         "_app/immutable/chunks/CJs5hR2P.js",
         "_app/immutable/chunks/Cqnsa6Vs.js",
         "_app/immutable/chunks/DjfkarL2.js",
@@ -2749,46 +2749,46 @@
         "../../node_modules/@ark-ui/svelte/dist/components/select/use-select.svelte.js"
       ],
       "dynamicImports": [
-        "_app/immutable/chunks/CD5lxqGT2.js",
+        "_app/immutable/chunks/DBiXRtrK.js",
         "_app/immutable/chunks/DWcbDsDQ2.js",
-        "_app/immutable/chunks/FEXK0UVv.js",
+        "_app/immutable/chunks/DyzJL85c2.js",
         "_app/immutable/chunks/FcXmQM5Y2.js",
-        "_app/immutable/chunks/pAShgLbH.js"
+        "_app/immutable/chunks/xrLBEHUo.js"
       ],
-      "fileName": "_app/immutable/nodes/3.DRHEhMQp.js",
+      "fileName": "_app/immutable/nodes/3.A5m5oaos.js",
       "imports": [
         "_app/immutable/chunks/3VHCA45O.js",
         "_app/immutable/chunks/B7qJoBQn.js",
         "_app/immutable/chunks/B8YIuy6q.js",
-        "_app/immutable/chunks/BNNbzYyJ.js",
         "_app/immutable/chunks/BOFVzuhi2.js",
-        "_app/immutable/chunks/BSWL3Eaa.js",
         "_app/immutable/chunks/BXviFDi6.js",
         "_app/immutable/chunks/BZ-ho4tl.js",
         "_app/immutable/chunks/BcRAdlx82.js",
+        "_app/immutable/chunks/BeY-08Zf.js",
         "_app/immutable/chunks/BelWyZaW2.js",
         "_app/immutable/chunks/BkFRMrMT2.js",
         "_app/immutable/chunks/BoNsmG2n2.js",
-        "_app/immutable/chunks/BrVOG_Ll2.js",
+        "_app/immutable/chunks/C0XT3Teo2.js",
         "_app/immutable/chunks/CJs5hR2P.js",
-        "_app/immutable/chunks/CTfGOlne.js",
         "_app/immutable/chunks/C_xS7Tf12.js",
         "_app/immutable/chunks/CiEXHJEK.js",
         "_app/immutable/chunks/Cqnsa6Vs.js",
         "_app/immutable/chunks/CwvhNzVO.js",
+        "_app/immutable/chunks/D1newkxg.js",
         "_app/immutable/chunks/D3GE79p72.js",
         "_app/immutable/chunks/DBNAtran.js",
         "_app/immutable/chunks/DCZBJClL.js",
+        "_app/immutable/chunks/DCct3omZ.js",
         "_app/immutable/chunks/DjfkarL2.js",
         "_app/immutable/chunks/Djg_lrpQ.js",
         "_app/immutable/chunks/DpKWXS6l2.js",
-        "_app/immutable/chunks/DpjYoveX.js",
         "_app/immutable/chunks/DqdLu1To2.js",
         "_app/immutable/chunks/DuqgYnXA.js",
         "_app/immutable/chunks/ImaW1pJ22.js",
         "_app/immutable/chunks/dfWPZyj12.js",
         "_app/immutable/chunks/dmDhAf7E2.js",
         "_app/immutable/chunks/gTjvzm6A2.js",
+        "_app/immutable/chunks/nnm5bvIf.js",
         "_app/immutable/chunks/pIUHqgvj.js",
         "_app/immutable/chunks/qeZrtJb7.js",
         "_app/immutable/chunks/xihTtKlq.js"
