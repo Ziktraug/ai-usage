@@ -650,12 +650,14 @@ cursor contract or ADR was introduced.
 
 ### Experience B — Design-system split
 
-Rejected. Overview already loads the shared Ark/Zag runtime through active
-Tooltip and Popover primitives; the map found no duplicated runtime modules.
-Sessions adds 25,592 B gzip over Overview and Drawer open adds 13,163 B gzip,
-but the earlier isolated Drawer/Tabs trial grew initial gzip by 2.13 KiB.
-Meeting the 10 KiB gate would require replacing active accessible primitives,
-not merely moving a chunk boundary, so no prototype remains in source.
+Retained. Focused design-system entry points and local Tooltip/Popover
+primitives reduce the initial gzip closure from 279,234 B to 265,621 B
+(-13,613 B). The exact cumulative total through first Drawer open changes from
+292,397 B to 295,584 B (+1.090%), below the 5% ceiling. Median Drawer open time
+changes from 84.738 ms to 90.926 ms (+7.3%, below the 10% ceiling), and the
+bundle map reports zero duplicated Ark/Zag modules. Keyboard focus, Escape,
+light dismiss, focus return, viewport positioning, scroll behavior, and Tooltip
+lifecycle tests pass. The retained commits are `633323bb` and `88384202`.
 
 ### Experience C — Destination SSR
 
@@ -667,11 +669,11 @@ and prefetch path remain unchanged.
 
 ### Final
 
-The final exhaustive benchmark retained 489,216 hydration bytes, 26 Session
-RPCs, 29 desktop items, and 581 desktop nodes. Relative to the fresh control,
-desktop traversal changed -3.2%, sort +1.4%, and heap +0.02%; no regression
-crossed the 10% gate. Raw samples, environment, hashes, byte terminology, and
-reproduction commands are recorded in
+The post-integration exhaustive benchmark retained 489,216 hydration bytes, 26
+Session RPCs, 29 desktop items, and 581 desktop nodes. Relative to the fresh
+control, desktop traversal changed -7.5%, mobile traversal -5.9%, sort +1.7%,
+and heap -0.9%; no regression crossed the 10% gate. Raw samples, environment,
+hashes, byte terminology, and reproduction commands are recorded in
 `docs/performance/web-session-deferred-optimizations.md`.
 
 Validation passed: `check`, `lint`, `typecheck` (28/28), package tests, tools

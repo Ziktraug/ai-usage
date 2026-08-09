@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-08-09T09:14:44.046Z",
+  "generatedAt": "2026-08-09T09:21:39.178Z",
   "source": {
-    "artifactSourceCommit": "46c73f53a5e23c04f81412c94db0b34dc15ec9f1",
-    "worktreeHead": "46c73f53a5e23c04f81412c94db0b34dc15ec9f1",
+    "artifactSourceCommit": "b210b446dc2e0ebe40754d11d14f193c7d27fc74",
+    "worktreeHead": "b210b446dc2e0ebe40754d11d14f193c7d27fc74",
     "worktreeDirty": true
   },
   "tools": {
@@ -40,22 +40,22 @@
         "raw": 891157
       },
       "candidate": {
-        "brotli": 232941,
-        "gzip": 265627,
-        "raw": 810791
+        "brotli": 232912,
+        "gzip": 265621,
+        "raw": 810799
       },
       "delta": {
         "brotli": {
-          "bytes": -8637,
-          "percent": -3.575243
+          "bytes": -8666,
+          "percent": -3.587247
         },
         "gzip": {
-          "bytes": -13607,
-          "percent": -4.872974
+          "bytes": -13613,
+          "percent": -4.875123
         },
         "raw": {
-          "bytes": -80366,
-          "percent": -9.018164
+          "bytes": -80358,
+          "percent": -9.017266
         }
       }
     },
@@ -85,17 +85,17 @@
         "raw": 932454
       },
       "candidate": {
-        "gzip": 295590,
-        "raw": 906344
+        "gzip": 295584,
+        "raw": 906352
       },
       "delta": {
         "gzip": {
-          "bytes": 3193,
-          "percent": 1.092008
+          "bytes": 3187,
+          "percent": 1.089956
         },
         "raw": {
-          "bytes": -26110,
-          "percent": -2.800138
+          "bytes": -26102,
+          "percent": -2.79928
         }
       }
     },
@@ -105,8 +105,8 @@
         "median": 84.738
       },
       "candidate": {
-        "samples": [96.818, 59.755, 81.543],
-        "median": 81.543
+        "samples": [71.56, 92.978, 90.926],
+        "median": 90.926
       }
     },
     "duplicatedArkOrZagCount": 0

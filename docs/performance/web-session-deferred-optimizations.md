@@ -2,11 +2,14 @@
 
 ## Result
 
-Plan 072 retained no new product optimization. It retained the benchmark and
-attribution improvements needed to make that decision. Keyset pagination stops
-at A1, deeper Ark splitting cannot meet its byte gate with the current shared
-Overview dependencies, and a direct-destination SSR experiment does not produce
-a stable 10% first-usable-render improvement.
+Plan 072 retained the design-system split from candidate B. Focused local
+Popover and Tooltip primitives remove non-initial Ark overlay code from the
+initial closure while the existing Drawer remains lazy. Initial gzip falls by
+13,613 B and cumulative gzip through the first Drawer open grows by 1.090%, so
+the candidate passes both byte gates without duplicating Ark or Zag runtimes.
+
+Keyset pagination stops at A1, and a direct-destination SSR experiment does not
+produce a stable 10% first-usable-render improvement.
 
 The direct destination prefetch already existed at the planned-against commit.
 Temporarily disabling it caused the exhaustive Sessions benchmark to fail its
@@ -16,7 +19,9 @@ zero-refetch invariant, so the pre-existing behavior remains unchanged.
 
 - Branch: `agent/migrate-web-sveltekit-orpc`
 - Planned-against commit: `67ca9b0e060c0359628a8c2721401bd973c8ce4f`
-- Measurement base before the final review fixes: `1a48962995ac5a203cd41cc6324d04b6402379aa`
+- Candidate B control commit: `9bbcc90d2e7edf8ccdfcda327b566208466c34c7`
+- Retained source commit: `88384202`
+- Measured source commit: `b210b446`
 - Bun: `1.3.13`
 - Playwright: `1.61.1`
 - Browser: Playwright Chromium from the repository lockfile
@@ -31,6 +36,9 @@ machine-local and are not cross-host performance claims.
 ```sh
 bun tools/plan072-keyset-a1.ts
 bun run --cwd apps/web benchmark:plan072-destination-render
+AI_USAGE_PLAN072_CONTROL_COMMIT=9bbcc90d2e7edf8ccdfcda327b566208466c34c7 \
+AI_USAGE_PLAN072_CONTROL_CLIENT_DIR=/tmp/plan072-control-build/apps/web/.output-build/sveltekit/client \
+  bun tools/plan072-ark-split.ts
 cd apps/web
 AI_USAGE_SESSION_BENCHMARK_OUTPUT=../../docs/performance/artifacts/plan072-final.json \
   bun --bun playwright test --config playwright.session-scroll.config.ts \
@@ -69,31 +77,36 @@ threshold and is not superlinear. No cursor contract or ADR is justified.
 
 ## B — Design-system and Ark splitting
 
-The bundle map now reports explicit Overview, Sessions, Breakdown, and
+The retained split exposes passive and overlay-specific design-system entry
+points. Overview's Tooltip and table column Popover use focused local
+primitives; Ark Drawer, Tabs, Select, and MultiSelect remain on lazy boundaries.
+The bundle map reports explicit Overview, Sessions, Breakdown, and
 Sessions-after-Drawer closures, including raw/gzip/Brotli sizes, Ark/Zag module
 occurrences, and design-system modules co-located with those runtimes.
 
 | Closure | Assets | Raw | Gzip | Brotli |
 | --- | ---: | ---: | ---: | ---: |
-| Overview | 36 | 891,161 B | 279,250 B | 241,574 B |
-| Sessions | 39 | 975,032 B | 304,842 B | 264,152 B |
-| Breakdown | 37 | 920,275 B | 289,762 B | 250,705 B |
-| Sessions after Drawer | 40 | 1,016,329 B | 318,005 B | 275,537 B |
+| Overview | 47 | 810,799 B | 265,621 B | 232,912 B |
+| Sessions | 50 | 895,637 B | 291,623 B | 255,787 B |
+| Breakdown | 49 | 853,621 B | 280,618 B | 246,100 B |
+| Sessions after Drawer | 54 | 991,389 B | 321,743 B | 282,389 B |
 
-There are no duplicated Ark/Zag modules between chunks. The Overview closure
-already contains the shared Ark/Zag runtime because Overview itself uses
-Tooltip and Popover. Sessions adds 25,592 B gzip over Overview, while opening
-the Drawer adds 13,163 B gzip statically and 41,297 B of raw JavaScript at
-runtime. Median Drawer open time is 84.738 ms.
+The authoritative gate uses the exact initial closure plus the runtime files
+loaded by opening the Drawer, rather than subtracting static destination
+closures. Initial gzip changes from 279,234 B to 265,621 B (-13,613 B). The
+incremental Drawer load changes from 13,163 B to 29,963 B gzip, making the
+cumulative total 292,397 B control versus 295,584 B candidate (+1.090%). Median
+Drawer open time changes from 84.738 ms to 90.926 ms (+7.3%, below the 10%
+ceiling). There are no duplicated Ark/Zag modules between chunks.
 
-The earlier isolated Drawer/Tabs subpath trial increased initial gzip by
-2.13 KiB. The deeper trials cannot remove the shared runtime from Sessions
-without also replacing active Overview and table primitives, and the table and
-Drawer content are required for their respective first-usable states.
+Behavioral tests cover keyboard focus, Escape, light dismiss, focus return,
+viewport clamping, scroll positioning, Tooltip hover/focus delay, and cleanup.
+The retained local primitives preserve the public interaction contracts while
+avoiding the initial Ark overlay runtime.
 
-**Decision: rejected.** The evidence provides no path to the required 10 KiB
-target reduction without duplicating runtime code or replacing accessible Ark
-primitives. No subpath or local overlay prototype remains in the final source.
+**Decision: retained.** The initial reduction exceeds 10 KiB, cumulative bytes
+through Drawer remain below the 5% growth limit, Drawer timing does not regress,
+and all interaction, accessibility, and duplication gates pass.
 
 ## C — Direct destination SSR
 
@@ -134,19 +147,19 @@ owner and no additional post-hydration business RPC.
 
 | Metric | Control | Final | Delta |
 | --- | ---: | ---: | ---: |
-| Initial | 481.794 ms | 443.396 ms | -8.0% |
-| Desktop traversal | 3,752.577 ms | 3,632.960 ms | -3.2% |
-| Mobile traversal | 78.668 ms | 61.788 ms | -21.5% |
-| Filter | 200.315 ms | 120.280 ms | -40.0% |
-| Sort | 234.733 ms | 238.050 ms | +1.4% |
-| Heap delta | 25,485,104 B | 25,489,952 B | +0.02% |
+| Initial | 481.794 ms | 467.144 ms | -3.0% |
+| Desktop traversal | 3,752.577 ms | 3,470.264 ms | -7.5% |
+| Mobile traversal | 78.668 ms | 73.996 ms | -5.9% |
+| Filter | 200.315 ms | 122.877 ms | -38.7% |
+| Sort | 234.733 ms | 238.788 ms | +1.7% |
+| Heap delta | 25,485,104 B | 25,247,396 B | -0.9% |
 | Hydration | 489,216 B | 489,216 B | 0% |
 | Session RPCs | 26 | 26 | 0% |
 | Desktop items / nodes | 29 / 581 | 29 / 581 | 0% |
 
-The timing improvements are treated as run variance because the final product
-path is intentionally unchanged. The +1.4% sort and +0.02% heap changes are
-below the 10% regression threshold.
+Timing changes other than the directly attributed bundle reduction are treated
+as run variance. The +1.7% sort change is below the 10% regression threshold;
+all byte, request, identity, and DOM contracts remain unchanged.
 
 ## Byte terminology
 
@@ -165,17 +178,18 @@ below the 10% regression threshold.
 | --- | --- |
 | `plan072-control.json` | `bb9023df3c78573151197a4e30d1f7825a048404ae3141966ac7082852dcc5e8` |
 | `plan072-keyset-a1.json` | `9f20ef78382080db148d00b7d7cdbbeb07507cd02677f6034c1eff6a3e472610` |
-| `plan072-bundle-map.json` | `20528f67f307952562ae0353fc9020ee1774a8ae9bacce6997479db9d871856c` |
-| `plan072-destination-render.json` | `ff9f231a5717620105155cbe519a733851f9a7dd64e8461b013334e458439044` |
+| `plan072-bundle-map.json` | `c6a735700613c7ba905b4d55050162a0e8a66915e627badf6e31acd9c1a9a349` |
+| `plan072-destination-render.json` | `ee07da5091c44bed5e7495c46631b5dbe65ff33e9e1648c1d94977167db76b6a` |
+| `plan072-ark-split.json` | `1412ec29dfba44d496c8db985766e05c67194b1a19103fcc0701d47a30816f5c` |
 | `plan072-destination-ssr-control.json` | `dff84030317861d8aab2474f6c8ccb38870af7529d64fa0386a063f77414ae26` |
 | `plan072-destination-final.json` | `72fdb5d007930935ce599407f0548cca39d0be2ff8344f8a74a270dc8799becd` |
-| `plan072-final.json` | `1c926b28f1dc1d04e557f5b263894cd152daa55ba4abcf7f2f55d1b47b1ae463` |
+| `plan072-final.json` | `36d50a321c7d11e9ecd2e47ac18dc4abc5acce774f8ce8ab883220fd5920c741` |
 
 ## Remaining candidates
 
 - A public keyset cursor remains unjustified unless future data changes the A1
   ratios materially.
-- Ark splitting should be reconsidered only after Overview no longer requires
-  the shared Popover/Tooltip runtime or a framework upgrade changes chunking.
+- Further Ark splitting is unjustified unless a framework upgrade changes the
+  remaining lazy Drawer/Tabs/Select chunking materially.
 - Direct destination SSR should be reconsidered only with a streaming design
   that improves first usable render without the current TTFB/HTML tradeoff.
