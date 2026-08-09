@@ -4,13 +4,16 @@ import { E2E_SKILLS_FIXTURE_HEADER } from '../src/lib/server/rpc/e2e-fixture-pro
 import { test as browserTest, expect, openHydratedReport, openHydratedSkills, reportViewsFor } from './browser-test';
 
 const DESKTOP_VIEWPORT = { height: 900, width: 1280 } as const;
+const OVERVIEW_DESKTOP_VIEWPORT = { height: 1000, width: 1440 } as const;
 const NARROW_VIEWPORT = { height: 844, width: 390 } as const;
 const DESKTOP_MAX_DIFF_PIXELS = 28;
 const DRAWER_MAX_DIFF_PIXELS = 24;
+const EXECUTIVE_METRIC_COUNT = 4;
+const MIN_PRIMARY_VALUE_FONT_SIZE_PX = 44;
+const MIN_TOUCH_TARGET_PX = 44;
 const NARROW_MAX_DIFF_PIXELS = 22;
 const SKILLS_MAX_DIFF_PIXELS = 12;
 const DISABLE_LCD_TEXT_ARGUMENT = '--disable-lcd-text';
-const TOP_SESSION_PATTERN = /Top session/;
 const STABLE_SOURCE_CONTROL_SNAPSHOT = {
   generatedAt: '2026-06-11T12:00:00.000Z',
   generation: 1,
@@ -112,19 +115,99 @@ const openStableOverview = async (page: Page): Promise<void> => {
   await waitForFonts(page);
 };
 
-const scrollOverviewValueIntoView = (page: Page): Promise<void> =>
-  page.getByRole('region', { name: 'Estimated API-equivalent value' }).evaluate((element) => {
-    element.scrollIntoView({ block: 'start' });
+const expectViewportProfile = async (
+  page: Page,
+  viewport: { readonly height: number; readonly width: number },
+  colorScheme: 'dark' | 'light',
+): Promise<void> => {
+  expect(page.viewportSize()).toEqual(viewport);
+  expect(await page.evaluate(() => matchMedia('(prefers-color-scheme: dark)').matches)).toBe(colorScheme === 'dark');
+};
+
+const expectDecisionFirstOverviewAtTop = async (page: Page) => {
+  const period = page.getByRole('region', { name: 'Report period' });
+  const kpi = page.locator('[data-executive-kpi]');
+  const chart = page.locator('[data-executive-chart]');
+  const chartPlot = chart.locator('[data-report-range-part="chart"]');
+  const metrics = page.locator('[data-executive-metrics]');
+  const metricItems = metrics.locator(':scope > div');
+  const investigation = page.getByRole('heading', { level: 2, name: 'Investigate' });
+
+  await expect(period).toBeVisible();
+  await expect(kpi).toBeVisible();
+  await expect(kpi).toContainText('Standard API-price estimate');
+  await expect(chart).toBeVisible();
+  await expect(chartPlot).toBeVisible();
+  await expect(metrics).toBeVisible();
+  await expect(metricItems).toHaveCount(EXECUTIVE_METRIC_COUNT);
+  await expect(investigation).toBeVisible();
+
+  const documentGeometry = await page.evaluate(() => ({
+    clientWidth: document.documentElement.clientWidth,
+    scrollWidth: document.documentElement.scrollWidth,
+    scrollY: window.scrollY,
+  }));
+  expect(documentGeometry.scrollY).toBe(0);
+  expect(documentGeometry.scrollWidth).toBeLessThanOrEqual(documentGeometry.clientWidth);
+
+  const readingOrderIsDecisionFirst = await page.locator('[data-report-overview]').evaluate((element) => {
+    const investigationHeading = [...element.querySelectorAll('h2')].find(
+      (heading) => heading.textContent?.trim() === 'Investigate',
+    );
+    const markers = [
+      element.querySelector('[data-executive-kpi]'),
+      element.querySelector('[data-executive-chart]'),
+      element.querySelector('[data-executive-metrics]'),
+      investigationHeading ?? null,
+    ];
+    const documentOrder = [...element.querySelectorAll('*')];
+    const positions = markers.map((marker) => (marker === null ? -1 : documentOrder.indexOf(marker)));
+    return (
+      positions.every((position) => position >= 0) &&
+      positions.every((position, index) => index === 0 || position > (positions[index - 1] ?? Number.POSITIVE_INFINITY))
+    );
   });
+  expect(readingOrderIsDecisionFirst).toBe(true);
+
+  const primaryValueFontSize = Number.parseFloat(
+    await kpi
+      .locator('strong')
+      .first()
+      .evaluate((element) => getComputedStyle(element).fontSize),
+  );
+  const secondaryValueFontSize = Number.parseFloat(
+    await metricItems
+      .first()
+      .locator('dd')
+      .first()
+      .evaluate((element) => getComputedStyle(element).fontSize),
+  );
+  expect(primaryValueFontSize).toBeGreaterThan(secondaryValueFontSize);
+
+  return { chart, kpi, metricItems, period, primaryValueFontSize };
+};
 
 const screenshotOptions = {
   animations: 'disabled',
   caret: 'hide',
 } as const;
 
-test('matches the desktop Overview', async ({ page }) => {
+test('matches the initial desktop light Overview at 1440x1000', async ({ page }) => {
+  await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce' });
+  await page.setViewportSize(OVERVIEW_DESKTOP_VIEWPORT);
   await openStableOverview(page);
-  await scrollOverviewValueIntoView(page);
+  await expectViewportProfile(page, OVERVIEW_DESKTOP_VIEWPORT, 'light');
+  const { chart, kpi, metricItems, primaryValueFontSize } = await expectDecisionFirstOverviewAtTop(page);
+  expect(primaryValueFontSize).toBeGreaterThanOrEqual(MIN_PRIMARY_VALUE_FONT_SIZE_PX);
+
+  const foldBottoms = [
+    await kpi.evaluate((element) => Math.ceil(element.getBoundingClientRect().bottom)),
+    await chart.evaluate((element) => Math.ceil(element.getBoundingClientRect().bottom)),
+    ...(await metricItems.evaluateAll((elements) =>
+      elements.map((element) => Math.ceil(element.getBoundingClientRect().bottom)),
+    )),
+  ];
+  expect(foldBottoms.every((bottom) => bottom <= OVERVIEW_DESKTOP_VIEWPORT.height)).toBe(true);
 
   await expect(page).toHaveScreenshot('overview-desktop.png', {
     ...screenshotOptions,
@@ -132,26 +215,118 @@ test('matches the desktop Overview', async ({ page }) => {
   });
 });
 
-test('matches Overview with an open session drawer', async ({ page }) => {
-  await openStableOverview(page);
-  await page.getByRole('button', { name: TOP_SESSION_PATTERN }).click();
-  await expect(page.getByRole('dialog', { name: 'Session details' })).toBeVisible();
-  await scrollOverviewValueIntoView(page);
-
-  await expect(page).toHaveScreenshot('overview-session-drawer.png', {
-    ...screenshotOptions,
-    maxDiffPixels: DRAWER_MAX_DIFF_PIXELS,
-  });
-});
-
-test('matches the narrow Overview value proposition', async ({ page }) => {
+test('matches the initial narrow dark Overview at 390x844', async ({ page }) => {
+  await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'reduce' });
   await page.setViewportSize(NARROW_VIEWPORT);
   await openStableOverview(page);
-  await scrollOverviewValueIntoView(page);
+  await expectViewportProfile(page, NARROW_VIEWPORT, 'dark');
+  const { chart, kpi, period } = await expectDecisionFirstOverviewAtTop(page);
+
+  const mobileNavigation = page.locator('[data-app-navigation="mobile"]');
+  const chartHeading = chart.getByRole('heading', { level: 2, name: 'Activity' });
+  await expect(mobileNavigation).toBeVisible();
+  await expect(chartHeading).toBeVisible();
+  const navigationTop = await mobileNavigation.evaluate((element) => Math.floor(element.getBoundingClientRect().top));
+  const [periodBottom, kpiBottom, chartTop, chartHeadingBottom] = await Promise.all([
+    period.evaluate((element) => Math.ceil(element.getBoundingClientRect().bottom)),
+    kpi.evaluate((element) => Math.ceil(element.getBoundingClientRect().bottom)),
+    chart.evaluate((element) => Math.floor(element.getBoundingClientRect().top)),
+    chartHeading.evaluate((element) => Math.ceil(element.getBoundingClientRect().bottom)),
+  ]);
+  expect(periodBottom).toBeLessThanOrEqual(navigationTop);
+  expect(kpiBottom).toBeLessThanOrEqual(navigationTop);
+  expect(chartTop).toBeLessThan(navigationTop);
+  expect(chartHeadingBottom).toBeLessThanOrEqual(navigationTop);
+
+  const presetGeometry = await period.locator('button:visible').evaluateAll((elements) =>
+    elements.map((element) => {
+      const box = element.getBoundingClientRect();
+      return {
+        bottom: Math.ceil(box.bottom),
+        clipped: element.scrollWidth > element.clientWidth + 1,
+        height: Math.floor(box.height),
+      };
+    }),
+  );
+  expect(presetGeometry).toHaveLength(6);
+  expect(
+    presetGeometry.every(
+      ({ bottom, clipped, height }) => bottom <= navigationTop && !clipped && height >= MIN_TOUCH_TARGET_PX,
+    ),
+  ).toBe(true);
 
   await expect(page).toHaveScreenshot('overview-narrow.png', {
     ...screenshotOptions,
     maxDiffPixels: NARROW_MAX_DIFF_PIXELS,
+  });
+});
+
+test('matches the mobile light session drawer at 390x844', async ({ page }) => {
+  await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce' });
+  await page.setViewportSize(NARROW_VIEWPORT);
+  await openStableOverview(page);
+  await expectViewportProfile(page, NARROW_VIEWPORT, 'light');
+  await page
+    .getByRole('heading', { level: 2, name: 'Top sessions' })
+    .locator('xpath=ancestor::section[1]')
+    .getByRole('button')
+    .first()
+    .click();
+
+  const drawer = page.getByRole('dialog', { name: 'Session details' });
+  const closeButton = drawer.getByRole('button', { name: 'Close session details' });
+  await expect(drawer).toBeVisible();
+  await expect(drawer).toHaveAttribute('aria-modal', 'true');
+  await expect(drawer).toHaveCSS('animation-name', 'none');
+  await expect(closeButton).toBeFocused();
+
+  const drawerGeometry = await drawer.evaluate((element) => {
+    const box = element.getBoundingClientRect();
+    return {
+      bottom: Math.round(box.bottom),
+      left: Math.round(box.left),
+      pageHasHorizontalOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+      right: Math.round(box.right),
+      width: Math.round(box.width),
+    };
+  });
+  expect(drawerGeometry).toEqual({
+    bottom: NARROW_VIEWPORT.height,
+    left: 0,
+    pageHasHorizontalOverflow: false,
+    right: NARROW_VIEWPORT.width,
+    width: NARROW_VIEWPORT.width,
+  });
+
+  const layerOrder = await page.evaluate(() => {
+    const zIndex = (selector: string): number => {
+      const element = document.querySelector(selector);
+      return element ? Number(getComputedStyle(element).zIndex) : Number.NaN;
+    };
+    return {
+      backdrop: zIndex('[data-scope="drawer"][data-part="backdrop"][data-state="open"]'),
+      content: zIndex('[data-scope="drawer"][data-part="content"][data-state="open"]'),
+      navigation: zIndex('[data-app-navigation="mobile"]'),
+    };
+  });
+  expect(layerOrder.backdrop).toBeGreaterThan(layerOrder.navigation);
+  expect(layerOrder.content).toBeGreaterThan(layerOrder.navigation);
+
+  const headerActions = drawer.locator('[data-session-drawer-header] button:visible');
+  const headerActionGeometry = await headerActions.evaluateAll((elements) =>
+    elements.map((element) => {
+      const box = element.getBoundingClientRect();
+      return { height: Math.floor(box.height), width: Math.floor(box.width) };
+    }),
+  );
+  expect(headerActionGeometry.length).toBeGreaterThanOrEqual(3);
+  expect(
+    headerActionGeometry.every(({ height, width }) => height >= MIN_TOUCH_TARGET_PX && width >= MIN_TOUCH_TARGET_PX),
+  ).toBe(true);
+
+  await expect(page).toHaveScreenshot('overview-session-drawer.png', {
+    ...screenshotOptions,
+    maxDiffPixels: DRAWER_MAX_DIFF_PIXELS,
   });
 });
 
