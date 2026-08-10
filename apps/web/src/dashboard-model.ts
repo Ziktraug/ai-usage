@@ -477,9 +477,9 @@ export const buildDashboardMetrics = (summary: ReportSummary, previous?: ReportS
     },
     {
       kind: 'actual-cost',
-      label: 'Actual cost',
+      label: 'Charged amount',
       value: fmtMoney(summary.actualCost),
-      hint: `Out-of-pocket spend reported by harnesses; subscription usage counts as $0${
+      hint: `Amount reported as charged by collectors; sessions without a reported amount fall back to the API-equivalent estimate${
         summary.unknownActual ? ` (${fmtNum(summary.unknownActual)} sessions unknown)` : ''
       }`,
       delta: deltaVs(summary.actualCost, prev?.actualCost, fmtMoney),
@@ -488,7 +488,7 @@ export const buildDashboardMetrics = (summary: ReportSummary, previous?: ReportS
 
   metrics.push({
     kind: 'subscription-value',
-    label: 'Sub value',
+    label: 'Subscription value',
     value: fmtMoney(summary.costQuota),
     hint: 'Cursor export value covered by the subscription quota',
     delta: deltaVs(summary.costQuota, prev?.costQuota, fmtMoney),
@@ -513,7 +513,7 @@ export const buildDashboardMetrics = (summary: ReportSummary, previous?: ReportS
   if (summary.rtkSaved) {
     metrics.push({
       kind: 'rtk-savings',
-      label: 'RTK savings',
+      label: 'RTK token savings',
       value: fmtPct(summary.rtkInput ? (summary.rtkSaved / summary.rtkInput) * 100 : 0),
       hint: [
         `${fmtNum(summary.rtkSaved)} tokens saved in matched sessions`,

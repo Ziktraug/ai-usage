@@ -111,7 +111,7 @@ export const sessionTableColumns = [
   column('rtkSaved', 'RTK', {
     align: 'right',
     format: rtkLabel,
-    label: 'RTK savings',
+    label: 'RTK token savings',
     title: 'RTK saved-token percentage; hover a cell for matched command details',
     widthPx: 86,
   }),
@@ -125,8 +125,9 @@ export const sessionTableColumns = [
   column('actual', '$Actual', {
     align: 'right',
     format: (row) => unavailable(row, fmtMoney(row.costActual)),
-    label: 'Actual cost',
-    title: 'Out-of-pocket spend reported by harnesses',
+    label: 'Charged amount',
+    title:
+      'Amount reported as charged by collectors. Sessions without a reported amount fall back to the API-equivalent estimate.',
     widthPx: 88,
   }),
   column('quota', '$Sub', {

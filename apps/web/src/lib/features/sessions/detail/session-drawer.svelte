@@ -100,6 +100,12 @@
   const durationRatio = $derived(
     row && (row.durationMs ?? 0) > 0 && medianDuration > 0 ? (row.durationMs ?? 0) / medianDuration : null,
   );
+  // `costActual` falls back to the API-equivalent estimate whenever the collected cost is itself an
+  // approximation, so an equal value carries no charged-amount information and must not be restated
+  // under a spend label. Only a provider-reported amount that differs is real charge evidence.
+  const chargedAmount = $derived(
+    row && row.costActual !== null && row.costActual !== row.costApprox ? row.costActual : null,
+  );
   const fmtRatio = (ratio: number): string => (ratio >= 10 ? `${Math.round(ratio)}×` : `${ratio.toFixed(1)}×`);
   const analysisButtonLabel = (): string => {
     if (snapshot.analysisOpen) {
@@ -365,7 +371,7 @@
       {#if costRatio !== null || durationRatio !== null}
         <div class={drawerCompare} title="Compared with the median session in the current view">
           {#if costRatio !== null}
-            ≈ {fmtRatio(costRatio)} median cost
+            ≈ {fmtRatio(costRatio)} median API value
           {/if}
           {#if costRatio !== null && durationRatio !== null}
             ·
@@ -391,7 +397,7 @@
         <DrawerDetailItem
           {...detailHintControl}
           hint={rtkSavedTitle(row)}
-          label="RTK savings"
+          label="RTK token savings"
           value={rtkSavedLabel(row)}
         />
         <DrawerDetailItem
@@ -400,16 +406,18 @@
           label="API value"
           value={apiValuePresentation(row).label}
         />
-        <DrawerDetailItem
-          {...detailHintControl}
-          hint="Out-of-pocket spend — $0.00 means covered by a subscription"
-          label="Actual cost"
-          value={fmtMoney(row.costActual)}
-        />
+        {#if chargedAmount !== null}
+          <DrawerDetailItem
+            {...detailHintControl}
+            hint="Amount this session's source reported as charged. Shown only when it differs from the API-equivalent estimate."
+            label="Charged amount"
+            value={fmtMoney(chargedAmount)}
+          />
+        {/if}
         <DrawerDetailItem
           {...detailHintControl}
           hint="Cursor export value covered by the subscription quota"
-          label="Sub value"
+          label="Subscription value"
           value={fmtMoney(row.costQuota)}
         />
         <DrawerDetailItem {...detailHintControl} label="Calls" value={fmtNum(row.calls)} />

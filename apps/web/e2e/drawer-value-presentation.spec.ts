@@ -13,7 +13,7 @@ test('uses one token magnitude and accessible drawer explanations', async ({ pag
   await expect(totalTokens).not.toContainText('203,500');
 
   const subValueHelp = drawer.getByRole('button', {
-    name: 'About Sub value',
+    name: 'About Subscription value',
   });
   await expect(subValueHelp).toHaveAttribute('aria-haspopup', 'dialog');
   await subValueHelp.click();
