@@ -8,7 +8,7 @@ const ADVANCED_COLUMNS_PATTERN = /Advanced columns/;
 const CALENDAR_NAME_PATTERN = /Daily activity calendar/;
 const COLUMN_URL_PATTERN = /cols=/;
 const DATE_HEADER_PATTERN = /Date/;
-const OPEN_BUILD_REPORT_UI_ACCESSIBLE_NAME_PATTERN = /^Open details for Build report UI\..*Campaign.*\$4\.04/;
+const OPEN_BUILD_REPORT_UI_ACCESSIBLE_NAME_PATTERN = /^Open details for Build report UI\..*Campaign.*\$4\.21/;
 const OPEN_BUILD_REPORT_UI_PATTERN = /^Open details for Build report UI\./;
 const TOKEN_SESSION_HEADERS = [DATE_HEADER_PATTERN, /Session\s*↑/, /Input/, /Output/, /Cache/, /Fresh/];
 const HYDRATION_TIMEOUT_MS = 15_000;
@@ -247,7 +247,7 @@ test('copies the exact breakdown URL and exports only visible sorted model rows'
   await localSearch.fill('cod');
   const visibleRows = page.getByRole('table', { name: 'Model API-value analysis' }).locator('[data-price-state]');
   await expect(visibleRows).toHaveCount(2);
-  await expect(visibleRows.getByRole('button')).toHaveText(['qwen3-coder', 'gpt-5.3-codex']);
+  await expect(visibleRows.getByRole('button')).toHaveText(['gpt-5.3-codex', 'qwen3-coder']);
 
   await page.context().grantPermissions(['clipboard-read', 'clipboard-write'], {
     origin: new URL(page.url()).origin,
@@ -270,8 +270,8 @@ test('copies the exact breakdown URL and exports only visible sorted model rows'
   expect(csv).toBe(
     [
       'label,sessions,fresh_tokens,cache_read_tokens,cache_hit_percent,api_value_known,api_value_display,api_value_measurement,fully_priced_sessions,total_sessions,unpriced_fresh_tokens,turns,tools',
-      'qwen3-coder,2,97600,144000,63.716814159292035,1.68,$1.68,complete,2,2,0,0,0',
       'gpt-5.3-codex,1,73500,130000,67.70833333333334,3.2,$3.20,complete,1,1,0,0,0',
+      'qwen3-coder,1,48800,72000,63.716814159292035,0.84,$0.84,complete,1,1,0,0,0',
       '',
     ].join('\r\n'),
   );
@@ -330,7 +330,7 @@ test('shows the executive answer, evidence, four metrics, and investigation in o
     'Estimated API-equivalent value',
   ]);
   expect(await punchcardTable.getByRole('row').count()).toBeGreaterThan(1);
-  await expect(punchcardTable.getByRole('row', { name: 'Sunday 14:00 1 $0.84' })).toBeAttached();
+  await expect(punchcardTable.getByRole('row', { name: 'Sunday 14:00 1 $0.00' })).toBeAttached();
   const punchcardVisual = page.locator('[data-punchcard-visual]');
   await expect(punchcardVisual).not.toHaveAttribute('aria-hidden', 'true');
   expect(await punchcardVisual.getByRole('button', { name: PUNCHCARD_FILTER_PATTERN }).count()).toBeGreaterThan(0);

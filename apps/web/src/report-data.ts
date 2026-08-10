@@ -58,8 +58,13 @@ const demoRows: SerializedRow[] = [
     tokCw: 0,
     tokenTotal: 76_600,
     freshTokens: 32_600,
+    // `costKnown: true` asserts the API-equivalent value is measured, so it cannot pair with a zero
+    // `costApprox`: the report then reads "100% pricing coverage" beside "$0.00" for 76.6k tokens,
+    // which no reader can tell apart from an unpriced model. 0.17 is what the pricing table charges
+    // for these counts. Keeping `costActual: 0` makes this the subscription-covered case, where the
+    // estimate and the charged amount legitimately differ.
     costActual: 0,
-    costApprox: 0,
+    costApprox: 0.17,
     costKnown: true,
     calls: 9,
     durationMs: 1_740_000,
@@ -160,14 +165,25 @@ const withoutOrigin = (
 };
 
 demoRows.push(
-  withoutOrigin(demoRows[2]!, {
-    activeDate: '2026-05-24T14:18:00.000Z',
-    date: '2026-05-24T13:05:00.000Z',
-    endDate: '2026-05-24T14:18:00.000Z',
-    name: 'Inspect OpenCode root',
-    originProvenance: 'origin-absent',
-    sessionLabel: 'Inspect OpenCode root',
-  }),
+  {
+    ...withoutOrigin(demoRows[2]!, {
+      activeDate: '2026-05-24T14:18:00.000Z',
+      date: '2026-05-24T13:05:00.000Z',
+      endDate: '2026-05-24T14:18:00.000Z',
+      name: 'Inspect OpenCode root',
+      originProvenance: 'origin-absent',
+      sessionLabel: 'Inspect OpenCode root',
+    }),
+    // The report tells three price states apart, and `zero` means "the price is known and it is
+    // nothing". Only a free model produces that honestly — `minTokens` filters an empty session out,
+    // and any billed model with real tokens is `measured`. `glm-4.7-flash` is priced FREE in the
+    // pricing table, so $0.00 at 100% coverage is a true statement about this session. OpenCode
+    // routing one session to a free model and another to a billed one is the realistic shape.
+    costActual: 0,
+    costApprox: 0,
+    costKnown: true,
+    model: 'glm-4.7-flash',
+  },
   {
     ...withoutOrigin(demoRows[1]!, {
       activeDate: '2026-06-09T18:44:00.000Z',

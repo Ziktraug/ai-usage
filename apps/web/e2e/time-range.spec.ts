@@ -316,8 +316,8 @@ test('compares 90d with the previous equal-length period when that boundary has 
   await waitForFocusedReportSettled(page);
 
   const executiveValue = page.getByRole('region', { name: 'Estimated API-equivalent value' });
-  await expect(executiveValue.locator('strong').first()).toHaveText('$4.04');
-  await expect(executiveValue).toContainText('381% higher than the previous equal-length period.');
+  await expect(executiveValue.locator('strong').first()).toHaveText('$3.54');
+  await expect(executiveValue).toContainText('321% higher than the previous equal-length period.');
   await expect(executiveValue).not.toContainText('Partially measured');
   await expect(executiveValue).not.toContainText('No sessions exist in the previous period.');
   await expect(page.locator('[data-period-insight]')).toHaveCount(1);
@@ -438,14 +438,23 @@ test('groups the timeline by campaign, machine, and origin with matching legends
   await chartOptions.getByRole('radio', { exact: true, name: 'Campaign' }).click();
   await expect(activity.getByText('Campaign · Day · Estimated API-equivalent value', { exact: true })).toBeVisible();
   await expect(activity.getByTitle('Build report UI', { exact: true })).toContainText('Build report UI');
+  await expect(activity.getByTitle('Recover Claude history', { exact: true })).toContainText('Recover Claude history');
+  // `Inspect OpenCode root` runs a free model, so it carries no API-equivalent value and the value
+  // legend legitimately omits it. It has to reappear once the metric counts sessions instead.
+  await expect(activity.getByTitle('Inspect OpenCode root', { exact: true })).toHaveCount(0);
+  await chartOptions.getByRole('radio', { exact: true, name: 'Sessions' }).click();
   await expect(activity.getByTitle('Inspect OpenCode root', { exact: true })).toContainText('Inspect OpenCode root');
+  await chartOptions.getByRole('radio', { exact: true, name: 'Estimated API-equivalent value' }).click();
 
   await chartOptions.getByRole('radio', { exact: true, name: 'Machine' }).click();
   await expect(activity.getByText('Machine · Day · Estimated API-equivalent value', { exact: true })).toBeVisible();
   await expect(activity.getByTitle('Filter by Fixture Machine · Stale')).toContainText('Fixture Machine · Stale');
-  await expect(activity.getByTitle('Unknown machine')).toContainText('Unknown machine');
+  // The unattributed session is the free-model one, so the value legend drops it for the same reason
+  // as the campaign above. Counting sessions brings it back.
+  await expect(activity.getByTitle('Unknown machine')).toHaveCount(0);
 
   await chartOptions.getByRole('radio', { exact: true, name: 'Sessions' }).click();
+  await expect(activity.getByTitle('Unknown machine')).toContainText('Unknown machine');
   await chartOptions.getByRole('radio', { exact: true, name: 'Origin' }).click();
   await expect(activity.getByText('Origin · Day · Sessions', { exact: true })).toBeVisible();
   await expect(activity.getByRole('button', { name: HUMAN_LEGEND_PATTERN })).toContainText('Human');

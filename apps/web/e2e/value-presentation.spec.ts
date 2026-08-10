@@ -61,7 +61,7 @@ test('renders measured, partially measured, and zero Analysis values distinctly'
   const harnessShares = await harnessBreakdown
     .locator('[data-price-state] > :last-child > :last-child')
     .allTextContents();
-  expect(harnessShares.slice(0, 4)).toEqual(['66%', '34%', '0%', '0%']);
+  expect(harnessShares.slice(0, 4)).toEqual(['73%', '19%', '7.8%', '0%']);
 
   await page.setViewportSize({ height: 844, width: 390 });
   await page.getByRole('tab', { exact: true, name: 'Models' }).click();
