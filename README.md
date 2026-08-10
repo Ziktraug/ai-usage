@@ -225,7 +225,7 @@ bun run cli -- --csv
 
 The web report opens on Overview and lets you:
 
-- switch between **Overview, Sessions, and Breakdown**, with Models, Providers, Harnesses, Projects, and Cursor AI inside Breakdown;
+- switch between **Overview, Sessions, and Analysis**; Analysis keeps the existing breakdown dimensions for Models, Providers, Harnesses, Projects, and Cursor AI;
 - filter by date range with presets or a custom range, and read the activity timeline;
 - analyze local Claude, Codex, and OpenCode chronology from the unified session drawer, using each harness's recorded, partial, or unavailable timing semantics;
 - inspect source-dependent repository, branch-span, commit, and recorded pull-request facts when the harness owns them;
