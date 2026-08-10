@@ -177,6 +177,44 @@ describe('Claude Agent SDK quota source', () => {
     expect(interrupted).toBe(true);
   });
 
+  test('closes the session, not just the turn, so the host process can exit', async () => {
+    // `interrupt` ends the current turn and leaves the session's handles open; only closing the
+    // generator disposes it. Interrupting alone left the usage engine alive after it had already
+    // succeeded, and the CLI reported the command as cancelled once its deadline passed.
+    const calls: string[] = [];
+    const source = createClaudeAgentSdkBatchSource({
+      openQuery: () =>
+        Promise.resolve({
+          interrupt: () => {
+            calls.push('interrupt');
+            return Promise.resolve(undefined);
+          },
+          return: () => {
+            calls.push('return');
+            return Promise.resolve(undefined);
+          },
+          usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: () => Promise.resolve(livePayload()),
+        } satisfies ClaudeUsageQuery),
+    });
+    await Effect.runPromise(source.collect(REQUEST));
+
+    expect(calls).toEqual(['interrupt', 'return']);
+  });
+
+  test('survives an SDK build that exposes no session disposal', async () => {
+    // Both teardown calls are optional on the interface: the surface is undocumented, so an older or
+    // newer build missing either one must degrade to a normal reading rather than throwing.
+    const source = createClaudeAgentSdkBatchSource({
+      openQuery: () =>
+        Promise.resolve({
+          usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: () => Promise.resolve(livePayload()),
+        } satisfies ClaudeUsageQuery),
+    });
+    const batch = await Effect.runPromise(source.collect(REQUEST));
+
+    expect(batch.observations).toHaveLength(1);
+  });
+
   test('fails with a malformed-result reason when the payload is not a record', async () => {
     const exit = await Effect.runPromiseExit(sourceReturning('nope').collect(REQUEST));
 

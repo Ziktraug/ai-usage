@@ -19,9 +19,15 @@ export class ClaudeQuotaCollectionError extends Data.TaggedError('ClaudeQuotaCol
 const collectionError = (reason: ClaudeQuotaCollectionErrorReason, message: string): ClaudeQuotaCollectionError =>
   new ClaudeQuotaCollectionError({ message, reason });
 
-/** The one method this source needs from the SDK, named so the unstable surface is visible here. */
+/**
+ * The surface this source needs from the SDK, named so the unstable parts are visible here. `Query`
+ * is an `AsyncGenerator`, and the two teardown calls are not interchangeable: `interrupt` ends the
+ * current turn, while `return` — the generator protocol's disposal — ends the *session* and tears
+ * down the transport. Interrupting alone leaves handles open that keep the host process alive.
+ */
 export interface ClaudeUsageQuery {
   interrupt?: () => Promise<unknown>;
+  return?: (value?: unknown) => Promise<unknown>;
   usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: () => Promise<unknown>;
 }
 
@@ -93,9 +99,11 @@ const readUsage = async (
     })(),
     options.timeoutMs,
   ).finally(async () => {
-    // Always release the session: it holds a child process, and leaking one per refresh would
-    // accumulate silently across the engine's lifetime.
+    // Always release the session, and release it fully. `interrupt` stops the turn; only closing the
+    // generator disposes the session, and a session left open keeps handles that stop the host
+    // process from exiting on its own — which strands the engine after it has already succeeded.
     await session?.interrupt?.().catch(() => undefined);
+    await session?.return?.().catch(() => undefined);
   });
   const observation = normalizeClaudeAgentSdkQuotaObservation({
     ...(request.accountScope === undefined ? {} : { accountScope: request.accountScope }),
