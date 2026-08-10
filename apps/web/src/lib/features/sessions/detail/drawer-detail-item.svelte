@@ -52,22 +52,28 @@
 
 <script lang="ts">
   import { Popover } from '@ai-usage/design-system/svelte';
+  import { onDestroy } from 'svelte';
 
   let {
     hint,
+    hintDisabled = false,
     label,
-    onHintExitComplete,
+    onHintSettled,
     openHint,
     onHintOpenChange,
     value,
   }: {
     hint?: string;
+    hintDisabled?: boolean;
     label: string;
-    onHintExitComplete?: (label: string) => void;
-    openHint?: string | null;
-    onHintOpenChange?: (label: string, open: boolean) => void;
+    onHintSettled?: (hintId: symbol) => void;
+    openHint?: symbol | null;
+    onHintOpenChange?: (hintId: symbol, open: boolean) => void;
     value: string;
   } = $props();
+
+  const hintId = Symbol('session-drawer-detail-hint');
+  onDestroy(() => onHintSettled?.(hintId));
 </script>
 
 <div class={detailItem} data-detail-item={label}>
@@ -76,11 +82,12 @@
     {#if hint}
       <Popover
         contentClass={popoverContent}
-        onExitComplete={() => onHintExitComplete?.(label)}
-        onOpenChange={(open) => onHintOpenChange?.(label, open)}
-        open={openHint === undefined ? undefined : openHint === label}
+        onExitComplete={() => onHintSettled?.(hintId)}
+        onOpenChange={(open) => onHintOpenChange?.(hintId, open)}
+        open={openHint === undefined ? undefined : openHint === hintId}
         triggerAriaLabel={`About ${label}`}
         triggerClass={detailInfoButton}
+        triggerDisabled={hintDisabled}
         triggerTitle={`About ${label}`}
       >
         {#snippet trigger()}

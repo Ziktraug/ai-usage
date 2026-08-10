@@ -31,6 +31,7 @@
   let {
     campaignSlot,
     client,
+    onClosingChange,
     onFieldFilter,
     onSelectionChange,
     queryClient,
@@ -39,6 +40,7 @@
   }: {
     campaignSlot?: Snippet;
     client: SessionClientAdapter;
+    onClosingChange?: (closing: boolean) => void;
     onFieldFilter?: (key: 'model' | 'project', value: string) => void;
     onSelectionChange: (selection: SessionSelectionInput | null) => void;
     queryClient: QueryClient;
@@ -52,6 +54,12 @@
   let drawerModule = $state<SessionDrawerModule>();
   let drawerLoadFailed = $state(false);
   let drawerLoad: Promise<void> | undefined;
+  let drawerClosing = false;
+
+  const handleClosingChange = (closing: boolean): void => {
+    drawerClosing = closing;
+    onClosingChange?.(closing);
+  };
 
   const identityFor = (next: SessionSelectionInput | null): string => {
     if (!next) {
@@ -123,6 +131,9 @@
   };
 
   const navigate = (delta: -1 | 1): void => {
+    if (drawerClosing) {
+      return;
+    }
     const current = selection;
     if (!current) {
       return;
@@ -147,7 +158,7 @@
     current: () => snapshot,
     dispose: () => undefined,
     handleKeyDown: (event) => {
-      if (!snapshot.row) {
+      if (drawerClosing || !snapshot.row) {
         return;
       }
       if (escapeBelongsToActiveOverlay(event)) {
@@ -219,6 +230,7 @@
     <SessionDrawer
       {...(campaignSlot === undefined ? {} : { campaignSlot })}
       {controller}
+      onClosingChange={handleClosingChange}
       {...(onFieldFilter === undefined ? {} : { onFieldFilter })}
       {rows}
       {snapshot}

@@ -218,6 +218,7 @@
   let detailRows = $state<readonly SessionPresentationRow[]>([]);
   let selectedRowId = $state<string | null>(null);
   let selection = $state<SessionSelectionInput | null>(null);
+  let sessionDrawerClosing = false;
   let quotaHistoryOpen = $state(false);
   let campaignLabelOverrides = $state<readonly CampaignLabelOverride[]>([]);
   const navigation = createBreakdownNavigation((update, options) => navigate(update, options));
@@ -343,6 +344,9 @@
     vcs: unavailable,
   };
   const republishSelectedCampaign = (campaignKey: string, index: ReadonlyMap<string, string>): void => {
+    if (sessionDrawerClosing) {
+      return;
+    }
     const activeSelection = selection;
     if (!(activeSelection && activeSelection.row.campaignKey === campaignKey)) {
       return;
@@ -356,6 +360,9 @@
   };
 
   const selectOverviewSession = (item: FocusedOverviewSessionItem): void => {
+    if (sessionDrawerClosing) {
+      return;
+    }
     const presented = presentSessionItem(item);
     const campaignContext = focusedCampaignLabelContext(presented);
     const presentedRow = campaignContext
@@ -366,6 +373,9 @@
     selectedRowId = presentedRow.rowId;
   };
   const selectSessionRow = (row: SessionPresentationRow): void => {
+    if (sessionDrawerClosing) {
+      return;
+    }
     detailRows = tableRows;
     selection = selectedRowId === row.rowId ? null : { row };
     selectedRowId = selection?.row.rowId ?? null;
@@ -565,8 +575,12 @@
 <SessionDetailQuerySlot
   {campaignSlot}
   client={syntheticClient}
+  onClosingChange={(closing) => (sessionDrawerClosing = closing)}
   onFieldFilter={navigation.setFieldFilter}
   onSelectionChange={(nextSelection) => {
+    if (sessionDrawerClosing && nextSelection !== null) {
+      return;
+    }
     selection = nextSelection;
     selectedRowId = nextSelection?.row.rowId ?? null;
   }}

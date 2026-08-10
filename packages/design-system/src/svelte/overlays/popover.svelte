@@ -13,6 +13,7 @@
     trigger: Snippet;
     triggerAriaLabel?: string;
     triggerClass?: string;
+    triggerDisabled?: boolean;
     triggerTitle?: string;
   }
 
@@ -25,6 +26,7 @@
     trigger,
     triggerAriaLabel,
     triggerClass,
+    triggerDisabled,
     triggerTitle,
   }: Props = $props();
 
@@ -41,7 +43,13 @@
   positioning={{ gutter: 4 }}
   unmountOnExit
 >
-  <Popover.Trigger aria-label={triggerAriaLabel} class={triggerClass} title={triggerTitle} type="button">
+  <Popover.Trigger
+    aria-label={triggerAriaLabel}
+    class={triggerClass}
+    disabled={triggerDisabled}
+    title={triggerTitle}
+    type="button"
+  >
     {@render trigger()}
   </Popover.Trigger>
   <Portal>

@@ -47,6 +47,7 @@ describe('Svelte overlay components', () => {
       'onOpenChange={handleOpenChange}',
       '{open}',
       'positioning={{ gutter: 4 }}',
+      'disabled={triggerDisabled}',
       'unmountOnExit',
     ]) {
       expect(source).toContain(contract);

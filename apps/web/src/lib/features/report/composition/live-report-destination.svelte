@@ -119,6 +119,7 @@
   let detailRows = $state<readonly SessionPresentationRow[]>([]);
   let selectedRowId = $state<string | null>(null);
   let selection = $state<SessionSelectionInput | null>(null);
+  let sessionDrawerClosing = false;
   let quotaHistoryOpen = $state(false);
   let servedSessionCount = $state<number>();
   let cleaningProjectWarningGroupId = $state<string>();
@@ -391,6 +392,9 @@
   const presentSessionRow = (row: SessionPresentationRow): SessionPresentationRow =>
     presentServedCampaignDisplayRow(row, campaignIndex);
   const selectOverviewSession = (item: FocusedOverviewSessionItem): void => {
+    if (sessionDrawerClosing) {
+      return;
+    }
     const presented = presentSessionItem(item);
     detailRows = commit?.overview.view.topSessions.map((candidate) => presentSessionItem(candidate).row) ?? [
       presented.row,
@@ -402,6 +406,9 @@
     selectedRowId = presented.row.rowId;
   };
   const selectCampaignSession = (row: SessionPresentationRow): void => {
+    if (sessionDrawerClosing) {
+      return;
+    }
     const controls = campaignSessionControls;
     if (controls === null) {
       return;
@@ -545,6 +552,9 @@
       onInitialSessionWindowAnchor={sessionWindowAnchorOwner.consume}
       onRowsChange={(rows) => (detailRows = rows)}
       onSelectionChange={(nextSelection) => {
+        if (sessionDrawerClosing) {
+          return;
+        }
         selection = nextSelection;
         selectedRowId = nextSelection?.row.rowId ?? null;
       }}
@@ -670,8 +680,12 @@
 <SessionDetailQuerySlot
   {campaignSlot}
   client={sessionClient}
+  onClosingChange={(closing) => (sessionDrawerClosing = closing)}
   onFieldFilter={(key, value) => navigation.setFieldFilter(key, value)}
   onSelectionChange={(nextSelection) => {
+    if (sessionDrawerClosing && nextSelection !== null) {
+      return;
+    }
     selection = nextSelection;
     selectedRowId = nextSelection?.row.rowId ?? null;
   }}

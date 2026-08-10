@@ -38,7 +38,7 @@
   import { provenanceForUsageRow } from '@ai-usage/report-core/provenance';
 
   import type { SessionPresentationRow } from '@ai-usage/report-core/session-query';
-  import type { Snippet } from 'svelte';
+  import { onDestroy, type Snippet } from 'svelte';
   import { MediaQuery } from 'svelte/reactivity';
   import { lineDeltaLabel, rtkSavedLabel, rtkSavedTitle } from '../../../../dashboard-sort';
   import { sessionDurationSemantics } from '../../../../session-analysis-model';
@@ -52,12 +52,14 @@
   let {
     campaignSlot,
     controller,
+    onClosingChange = () => undefined,
     onFieldFilter = () => undefined,
     rows,
     snapshot,
   }: {
     campaignSlot?: Snippet;
     controller: SessionDetailController;
+    onClosingChange?: (closing: boolean) => void;
     onFieldFilter?: (key: 'model' | 'project', value: string) => void;
     rows: readonly SessionPresentationRow[];
     snapshot: SessionDetailControllerSnapshot;
@@ -71,9 +73,11 @@
   let presentedRow = $state<SessionPresentationRow | null>(null);
   let presentedTarget = $state<SessionDetailControllerSnapshot['target']>(null);
   let drawerWasOpen = false;
-  let openHint = $state<string | null>(null);
-  const hintExitPromises = new Map<string, Promise<void>>();
-  const hintExitResolvers = new Map<string, () => void>();
+  let destroyed = false;
+  let openHint = $state<symbol | null>(null);
+  let closing = $state(false);
+  let closeInFlight: Promise<void> | null = null;
+  const hintExits = new Map<symbol, { promise: Promise<void>; resolve: () => void }>();
   const drawerOpen = $derived(snapshot.row !== null && snapshot.target !== null);
   const row = $derived(snapshot.row ?? presentedRow);
   const target = $derived(snapshot.target ?? presentedTarget);
@@ -139,6 +143,9 @@
   $effect.pre(() => {
     const currentOpen = drawerOpen;
     if (currentOpen && !drawerWasOpen) {
+      closeInFlight = null;
+      closing = false;
+      onClosingChange(false);
       previousFocus = typeof document === 'undefined' ? null : document.activeElement;
     }
     drawerWasOpen = currentOpen;
@@ -192,41 +199,73 @@
   };
 
   const closeDrawer = (): void => {
-    controller.close();
+    try {
+      controller.close();
+    } finally {
+      onClosingChange(false);
+    }
   };
 
-  const handleHintOpenChange = (label: string, open: boolean): void => {
-    if (open) {
-      openHint = label;
-      if (!hintExitPromises.has(label)) {
-        hintExitPromises.set(
-          label,
-          new Promise((resolve) => {
-            hintExitResolvers.set(label, resolve);
-          }),
-        );
-      }
+  const registerHintExit = (hintId: symbol): void => {
+    if (hintExits.has(hintId)) {
       return;
     }
-    if (openHint === label) {
+    let resolveExit = (): void => undefined;
+    const promise = new Promise<void>((resolve) => {
+      resolveExit = resolve;
+    });
+    hintExits.set(hintId, { promise, resolve: resolveExit });
+  };
+
+  const handleHintOpenChange = (hintId: symbol, open: boolean): void => {
+    if (open) {
+      if (closing) {
+        return;
+      }
+      openHint = hintId;
+      registerHintExit(hintId);
+      return;
+    }
+    if (openHint === hintId) {
       openHint = null;
     }
   };
 
-  const handleHintExitComplete = (label: string): void => {
-    hintExitResolvers.get(label)?.();
-    hintExitResolvers.delete(label);
-    hintExitPromises.delete(label);
+  const handleHintSettled = (hintId: symbol): void => {
+    const exit = hintExits.get(hintId);
+    if (!exit) {
+      return;
+    }
+    hintExits.delete(hintId);
+    exit.resolve();
   };
 
-  const closeDrawerAfterHints = async (): Promise<void> => {
+  const completeDrawerClose = async (): Promise<void> => {
     openHint = null;
-    await Promise.all(hintExitPromises.values());
-    closeDrawer();
+    await Promise.all([...hintExits.values()].map(({ promise }) => promise));
+    if (!destroyed) {
+      closeDrawer();
+    }
   };
+
+  const closeDrawerAfterHints = (): Promise<void> => {
+    if (closeInFlight) {
+      return closeInFlight;
+    }
+    closing = true;
+    onClosingChange(true);
+    closeInFlight = completeDrawerClose();
+    return closeInFlight;
+  };
+
+  onDestroy(() => {
+    destroyed = true;
+    onClosingChange(false);
+  });
 
   const detailHintControl = $derived({
-    onHintExitComplete: handleHintExitComplete,
+    hintDisabled: closing,
+    onHintSettled: handleHintSettled,
     onHintOpenChange: handleHintOpenChange,
     openHint,
   });
@@ -248,7 +287,7 @@
   modal={mobileDrawer}
   onOpenChange={(open) => {
     if (!open) {
-      closeDrawer();
+      return closeDrawerAfterHints();
     }
   }}
   open={drawerOpen}
@@ -265,7 +304,7 @@
         <button
           aria-label="Previous session (k)"
           class={drawerClose}
-          disabled={snapshot.navigation?.loading || !previousAvailable}
+          disabled={closing || snapshot.navigation?.loading || !previousAvailable}
           onclick={() => controller.navigate(-1)}
           title="Previous session (k)"
           type="button"
@@ -275,7 +314,7 @@
         <button
           aria-label="Next session (j)"
           class={drawerClose}
-          disabled={snapshot.navigation?.loading || !nextAvailable}
+          disabled={closing || snapshot.navigation?.loading || !nextAvailable}
           onclick={() => controller.navigate(1)}
           title="Next session (j)"
           type="button"
@@ -288,6 +327,7 @@
             aria-expanded={snapshot.analysisOpen ? 'true' : 'false'}
             aria-label={analysisButtonAriaLabel()}
             class={ghostButton}
+            disabled={closing}
             onclick={toggleAnalysis}
             type="button"
           >
@@ -297,6 +337,7 @@
         <button
           aria-label="Close session details"
           class={drawerClose}
+          disabled={closing}
           onclick={closeDrawerAfterHints}
           type="button"
           bind:this={closeButton}
