@@ -34,6 +34,7 @@ const PRICING: Readonly<Record<string, Rates>> = {
   // Anthropic
   'claude-fable-5': { in: 10, out: 50, cr: 1, cw: 12.5 },
   'claude-mythos-5': { in: 10, out: 50, cr: 1, cw: 12.5 },
+  'claude-opus-5': { in: 5, out: 25, cr: 0.5, cw: 6.25 },
   'claude-opus-4-8': { in: 5, out: 25, cr: 0.5, cw: 6.25 },
   'claude-opus-4-7': { in: 5, out: 25, cr: 0.5, cw: 6.25 },
   'claude-opus-4-6': { in: 5, out: 25, cr: 0.5, cw: 6.25 },

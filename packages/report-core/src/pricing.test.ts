@@ -34,6 +34,7 @@ describe('model pricing', () => {
     const cases: [model: string, rates: Rates][] = [
       ['claude-fable-5', { in: 10, out: 50, cr: 1, cw: 12.5 }],
       ['claude-mythos-5', { in: 10, out: 50, cr: 1, cw: 12.5 }],
+      ['claude-opus-5', { in: 5, out: 25, cr: 0.5, cw: 6.25 }],
       ['claude-opus-4-8', { in: 5, out: 25, cr: 0.5, cw: 6.25 }],
       ['claude-opus-4-1', { in: 15, out: 75, cr: 1.5, cw: 18.75 }],
       ['claude-sonnet-5', { in: 2, out: 10, cr: 0.2, cw: 2.5 }],
