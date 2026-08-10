@@ -18,6 +18,19 @@ const SYNC_COMPARISON_ROUTE_HASH_GZIP_BUDGET_BYTES = 2;
 const PENDING_FILTER_TIMELINE_GZIP_BUDGET_BYTES = 96;
 const POST_REVIEW_CORRECTIONS_GZIP_BUDGET_BYTES = 128;
 const REPORT_TESTABILITY_SEAMS_GZIP_BUDGET_BYTES = 128;
+/**
+ * The quota rail rides in the shell, so a second provider is initial-closure weight: one more ring,
+ * a brand mark per provider that publishes one, and rail semantics that no longer assume a single
+ * head. Measured against the commit that introduced it (3497 bytes) rather than estimated, then
+ * rounded to the next 64: the build is not byte-identical between runs, and a budget pinned to an
+ * exact measurement fails on a five-byte drift that says nothing about the code.
+ */
+const MULTI_PROVIDER_QUOTA_RAIL_GZIP_BUDGET_BYTES = 3520;
+/**
+ * Branded value objects parse at the boundary, and their parsers ship with the contract types.
+ * Measured at 644 bytes, rounded on the same rule.
+ */
+const CORE_VALUE_OBJECTS_GZIP_BUDGET_BYTES = 704;
 const INITIAL_GZIP_CLOSURE_MAXIMUM_BYTES =
   Math.ceil(INITIAL_GZIP_CLOSURE_BASELINE_BYTES * 1.1) +
   BREAKDOWN_SEARCH_GZIP_BUDGET_BYTES +
@@ -30,7 +43,9 @@ const INITIAL_GZIP_CLOSURE_MAXIMUM_BYTES =
   SYNC_COMPARISON_ROUTE_HASH_GZIP_BUDGET_BYTES +
   PENDING_FILTER_TIMELINE_GZIP_BUDGET_BYTES +
   POST_REVIEW_CORRECTIONS_GZIP_BUDGET_BYTES +
-  REPORT_TESTABILITY_SEAMS_GZIP_BUDGET_BYTES;
+  REPORT_TESTABILITY_SEAMS_GZIP_BUDGET_BYTES +
+  MULTI_PROVIDER_QUOTA_RAIL_GZIP_BUDGET_BYTES +
+  CORE_VALUE_OBJECTS_GZIP_BUDGET_BYTES;
 const LEADING_SLASH_PATTERN = /^\/+/;
 const REPORT_COLOR_TOKEN_PATTERN = /token\(colors\.([A-Za-z0-9_.-]+)\)/g;
 const REPORT_SOURCE_FILE_PATTERN = /\.(?:svelte|ts)$/;
