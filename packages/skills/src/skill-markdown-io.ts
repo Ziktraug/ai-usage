@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { link, lstat, realpath, rename, unlink } from 'node:fs/promises';
+import { link, lstat, rename, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import { maxSkillMarkdownBytes, type SkillMarkdownDocument, type SkillMarkdownWriteInput } from './contracts';
 import { isMissingPathError, isRecord } from './diagnostics';
@@ -13,16 +13,12 @@ import {
 } from './filesystem';
 import { parseSkillName } from './shared';
 import { assertRecord, parseRequiredNonEmptyString, parseString } from './validation';
+import { isPathWithin, resolveCanonicalPath } from './verified-path';
 
 const sha256 = (buffer: Buffer | string): string => createHash('sha256').update(buffer).digest('hex');
 
 const skillMarkdownPathFor = (sourceRepoPath: string, skillName: string): string =>
   path.join(sourceRepoPath, 'skills', parseSkillName(skillName), 'SKILL.md');
-
-const isInsideDirectory = (directory: string, candidate: string): boolean => {
-  const relative = path.relative(directory, candidate);
-  return relative === '' || !(relative.startsWith('..') || path.isAbsolute(relative));
-};
 
 interface SkillMarkdownLocation {
   filePath: string;
@@ -35,10 +31,10 @@ const resolveSkillMarkdownLocation = async (
 ): Promise<SkillMarkdownLocation | undefined> => {
   const filePath = skillMarkdownPathFor(sourceRepoPath, skillName);
   try {
-    const realSourcePath = await realpath(sourceRepoPath);
-    const realSkillsPath = await realpath(path.join(realSourcePath, 'skills'));
-    const realSkillPath = await realpath(path.join(realSkillsPath, skillName));
-    if (!(isInsideDirectory(realSourcePath, realSkillsPath) && isInsideDirectory(realSkillsPath, realSkillPath))) {
+    const realSourcePath = await resolveCanonicalPath(sourceRepoPath);
+    const realSkillsPath = await resolveCanonicalPath(path.join(realSourcePath, 'skills'));
+    const realSkillPath = await resolveCanonicalPath(path.join(realSkillsPath, skillName));
+    if (!(isPathWithin(realSourcePath, realSkillsPath) && isPathWithin(realSkillsPath, realSkillPath))) {
       return;
     }
     return { filePath, markdownPath: path.join(realSkillPath, 'SKILL.md') };

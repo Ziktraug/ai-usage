@@ -12,6 +12,7 @@ import {
   remainingPercentFromUsed,
   windowGroupForLimitSeconds,
 } from './provider-status';
+import { quotaWindowDurationFromMinutes } from './quota-window-duration';
 
 export const PROVIDER_QUOTA_DEFAULT_MAXIMUM_POINTS = 1000;
 export const PROVIDER_QUOTA_MAXIMUM_POINTS = 5000;
@@ -112,8 +113,7 @@ const appServerWindow = (
   if (!isRecord(raw)) {
     return null;
   }
-  const durationMinutes = Number(raw.windowDurationMins);
-  const limitSeconds = Number.isFinite(durationMinutes) && durationMinutes > 0 ? durationMinutes * 60 : null;
+  const limitSeconds = quotaWindowDurationFromMinutes(raw.windowDurationMins);
   const usedPercent = clampPercent(raw.usedPercent);
   if (usedPercent === null && limitSeconds === null && raw.resetsAt == null) {
     return null;

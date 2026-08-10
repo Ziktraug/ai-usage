@@ -4,6 +4,7 @@ import {
   USAGE_MERGE_BUNDLE_VERSION,
   type UsageMergeBundle,
 } from '@ai-usage/report-core/merge-bundle';
+import { parseMergePreviewProof } from '@ai-usage/report-core/merge-proof';
 import {
   parseUsageEngineHandoffId,
   type UsageEngineFileInput,
@@ -75,12 +76,15 @@ export const previewSyncE2EHandoff = (input: UsageEngineFileInput): UsageEngineM
   const { bundle, bytes } = parseStagedBundle(input);
   const documentDigest = digestFor(bytes);
   previewSequence += 1;
-  const confirmationToken = `e2e-confirmation-${previewSequence}`;
+  const proof = parseMergePreviewProof({
+    confirmationToken: `v1.${previewSequence.toString(16).padStart(64, '0')}`,
+    documentDigest,
+  });
+  const { confirmationToken } = proof;
   previews.set(confirmationToken, { digest: documentDigest, machineId: bundle.machine.id });
   return {
+    ...proof,
     bytes: bytes.byteLength,
-    confirmationToken,
-    documentDigest,
     kind: 'merge-preview',
     result: { ...mergeResultFor(bundle.rows.length), warnings: bundle.warnings.length },
     rows: bundle.rows.length,

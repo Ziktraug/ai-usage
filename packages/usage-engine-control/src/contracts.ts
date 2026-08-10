@@ -3,7 +3,9 @@ import {
   MAX_CAMPAIGN_KEY_BYTES,
   parseCampaignLabelOverrideMutation,
 } from '@ai-usage/report-core/campaign-label';
+import { parseCanonicalInstant } from '@ai-usage/report-core/canonical-instant';
 import { type HarnessKey, isHarnessKey } from '@ai-usage/report-core/harness-metadata';
+import { type MergePreviewProof, parseMergePreviewProof } from '@ai-usage/report-core/merge-proof';
 import { MAX_PORTABLE_USAGE_BYTES, MAX_PORTABLE_USAGE_ROWS } from '@ai-usage/report-core/portable-usage';
 import type { ProjectAliasEntry } from '@ai-usage/report-core/project-alias';
 import {
@@ -11,6 +13,7 @@ import {
   type ProjectSourceSelector,
   parseProjectGroupConfigs,
 } from '@ai-usage/report-core/project-group';
+import { parseServedRevision, type ServedRevision } from '@ai-usage/report-core/served-revision';
 import {
   type CollectionSourceId,
   collectionSourceIds,
@@ -36,15 +39,13 @@ export type UsageEngineCommandId = Branded<string, 'UsageEngineCommandId'>;
 export type UsageEngineEventId = Branded<string, 'UsageEngineEventId'>;
 export type UsageEngineEventSequence = Branded<number, 'UsageEngineEventSequence'>;
 export type UsageEngineHandoffId = Branded<string, 'UsageEngineHandoffId'>;
-export type UsageEnginePublicationRevision = Branded<string, 'UsageEnginePublicationRevision'>;
+export type UsageEnginePublicationRevision = ServedRevision;
 export type UsageEngineProjectSourceReference = Branded<string, 'UsageEngineProjectSourceReference'>;
 
 export const USAGE_ENGINE_PROTOCOL_VERSION = 1 as UsageEngineProtocolVersion;
 
 const kibibyte = 1024;
 const maxOpaqueIdBytes = 160;
-const maxConfirmationBytes = 128;
-const maxDigestBytes = 128;
 const maxCommandCompletionEventBytes = sourceControlBounds.maxSnapshotBytes;
 const maxStatusBytes = sourceControlBounds.maxSnapshotBytes + 32 * kibibyte;
 const maxForegroundEnvelopeBytes = 4 * kibibyte;
@@ -70,11 +71,9 @@ export const usageEngineControlBounds = {
   minTokenBytes: 32,
 } as const;
 
-const isoTimestampPattern = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 const opaqueIdPattern = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,159}$/;
-const revisionPattern = /^[a-zA-Z0-9._-]{1,160}$/;
+const replayEventIdPattern = /^(engine|snapshot):(0|[1-9]\d*)$/;
 const boundedCodePattern = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/;
-const sha256DigestPattern = /^[a-f0-9]{64}$/;
 const projectSourceReferencePattern = /^project-source:[a-f0-9]{64}$/;
 const encoder = new TextEncoder();
 
@@ -154,10 +153,11 @@ const parseNonNegativeSafeInteger = (value: unknown, maximum: number, label: str
 };
 
 const parseIsoTimestamp = (value: unknown, label: string): string => {
-  if (!(typeof value === 'string' && isoTimestampPattern.test(value) && !Number.isNaN(Date.parse(value)))) {
+  try {
+    return parseCanonicalInstant(value, label);
+  } catch {
     return fail(`${label} is invalid.`);
   }
-  return value;
 };
 
 export const parseUsageEngineProtocolVersion = (value: unknown): UsageEngineProtocolVersion => {
@@ -179,15 +179,48 @@ export const parseUsageEngineCommandId = (value: unknown): UsageEngineCommandId 
     'Usage engine command ID',
   );
 
-export const parseUsageEngineEventId = (value: unknown): UsageEngineEventId =>
-  parseOpaqueId<UsageEngineEventId extends Branded<string, infer Name> ? Name : never>(value, 'Usage engine event ID');
-
 export const parseUsageEngineEventSequence = (value: unknown): UsageEngineEventSequence =>
   parseNonNegativeSafeInteger(
     value,
     sourceControlBounds.maxGeneration,
     'Usage engine event sequence',
   ) as UsageEngineEventSequence;
+
+export type UsageEngineReplayCursorKind = 'engine' | 'snapshot';
+
+export interface UsageEngineReplayCursor {
+  readonly eventId: UsageEngineEventId;
+  readonly kind: UsageEngineReplayCursorKind;
+  readonly replaySequence: UsageEngineEventSequence;
+}
+
+export const usageEngineEventIdFor = (
+  kind: UsageEngineReplayCursorKind,
+  replaySequence: UsageEngineEventSequence,
+): UsageEngineEventId => `${kind}:${replaySequence}` as UsageEngineEventId;
+
+export const parseUsageEngineReplayCursor = (value: unknown): UsageEngineReplayCursor => {
+  if (typeof value !== 'string') {
+    return fail('Usage engine replay cursor is invalid.');
+  }
+  const match = replayEventIdPattern.exec(value);
+  if (match === null) {
+    return fail('Usage engine replay cursor is invalid.');
+  }
+  const kind = match[1];
+  if (kind !== 'engine' && kind !== 'snapshot') {
+    return fail('Usage engine replay cursor is invalid.');
+  }
+  const replaySequence = parseUsageEngineEventSequence(Number(match[2]));
+  return {
+    eventId: usageEngineEventIdFor(kind, replaySequence),
+    kind,
+    replaySequence,
+  };
+};
+
+export const parseUsageEngineEventId = (value: unknown): UsageEngineEventId =>
+  parseOpaqueId<UsageEngineEventId extends Branded<string, infer Name> ? Name : never>(value, 'Usage engine event ID');
 
 export const parseUsageEngineHandoffId = (value: unknown): UsageEngineHandoffId =>
   parseOpaqueId<UsageEngineHandoffId extends Branded<string, infer Name> ? Name : never>(
@@ -196,10 +229,11 @@ export const parseUsageEngineHandoffId = (value: unknown): UsageEngineHandoffId 
   );
 
 export const parseUsageEnginePublicationRevision = (value: unknown): UsageEnginePublicationRevision => {
-  if (!(typeof value === 'string' && revisionPattern.test(value))) {
+  try {
+    return parseServedRevision(value, 'Usage engine publication revision');
+  } catch {
     return fail('Usage engine publication revision is invalid.');
   }
-  return value as UsageEnginePublicationRevision;
 };
 
 export const parseUsageEngineProjectSourceReference = (value: unknown): UsageEngineProjectSourceReference => {
@@ -254,12 +288,10 @@ export type UsageEngineCommand =
   | { readonly command: 'collect-fresh-quota' }
   | { readonly command: 'import-cursor'; readonly input: UsageEngineFileInput }
   | { readonly command: 'preview-merge'; readonly input: UsageEngineFileInput }
-  | {
+  | ({
       readonly command: 'confirm-merge';
-      readonly confirmationToken: string;
-      readonly documentDigest: string;
       readonly input: UsageEngineFileInput;
-    };
+    } & MergePreviewProof);
 
 export interface UsageEngineFreshReportSelection {
   readonly harness: HarnessKey | null;
@@ -313,12 +345,10 @@ export type WebUsageEngineCommand =
       readonly command: 'import-cursor' | 'preview-merge';
       readonly input: UsageEngineInboxFileInput;
     }
-  | {
+  | ({
       readonly command: 'confirm-merge';
-      readonly confirmationToken: string;
-      readonly documentDigest: string;
       readonly input: UsageEngineInboxFileInput;
-    };
+    } & MergePreviewProof);
 
 const parseProjectGroups = (value: unknown): readonly ProjectGroupConfig[] => {
   if (!(Array.isArray(value) && value.length <= usageEngineControlBounds.maxProjectGroups)) {
@@ -556,16 +586,19 @@ export const parseUsageEngineCommand = (value: unknown): UsageEngineCommand => {
       if (!hasExactKeys(command, ['command', 'confirmationToken', 'documentDigest', 'input'])) {
         return fail('Usage engine confirm-merge command contains unknown fields.');
       }
-      return {
-        command: 'confirm-merge',
-        confirmationToken: parseBoundedString(
-          command.confirmationToken,
-          maxConfirmationBytes,
-          'Usage engine confirmation token',
-        ),
-        documentDigest: parseBoundedString(command.documentDigest, maxDigestBytes, 'Usage engine document digest'),
-        input: parseFileInput(command.input),
-      };
+      try {
+        const proof = parseMergePreviewProof({
+          confirmationToken: command.confirmationToken,
+          documentDigest: command.documentDigest,
+        });
+        return {
+          ...proof,
+          command: 'confirm-merge',
+          input: parseFileInput(command.input),
+        };
+      } catch {
+        return fail('Usage engine merge preview proof is invalid.');
+      }
     default:
       return fail('Usage engine command kind is unknown.');
   }
@@ -779,10 +812,8 @@ export interface UsageEngineMergeImportResult {
   readonly warnings: number;
 }
 
-export interface UsageEngineMergePreviewOutput {
+export interface UsageEngineMergePreviewOutput extends MergePreviewProof {
   readonly bytes: number;
-  readonly confirmationToken: string;
-  readonly documentDigest: string;
   readonly kind: 'merge-preview';
   readonly result: UsageEngineMergeImportResult;
   readonly rows: number;
@@ -930,21 +961,21 @@ export const parseUsageEngineMergePreviewOutput = (value: unknown): UsageEngineM
   ) {
     return fail('Usage engine merge preview output contains unknown or missing fields.');
   }
-  const documentDigest = parseBoundedString(value.documentDigest, maxDigestBytes, 'Usage engine merge document digest');
-  if (!sha256DigestPattern.test(documentDigest)) {
+  let proof: MergePreviewProof;
+  try {
+    proof = parseMergePreviewProof({
+      confirmationToken: value.confirmationToken,
+      documentDigest: value.documentDigest,
+    });
+  } catch {
     return fail('Usage engine merge document digest is invalid.');
   }
   const result = parseMergeImportResult(value.result);
   const rows = parseMergeCount(value.rows, 'Usage engine merge row count');
   assertMergeResultRows(result, rows);
   return {
+    ...proof,
     bytes: parseNonNegativeSafeInteger(value.bytes, MAX_PORTABLE_USAGE_BYTES, 'Usage engine merge byte count'),
-    confirmationToken: parseBoundedString(
-      value.confirmationToken,
-      maxConfirmationBytes,
-      'Usage engine confirmation token',
-    ),
-    documentDigest,
     kind: 'merge-preview',
     result,
     rows,

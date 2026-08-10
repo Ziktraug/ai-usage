@@ -1,4 +1,4 @@
-import { lstat, opendir, readlink, realpath } from 'node:fs/promises';
+import { lstat, opendir, readlink } from 'node:fs/promises';
 import path from 'node:path';
 import {
   defaultTokenThresholds,
@@ -20,14 +20,10 @@ import {
 } from './scan-options';
 import { parseSkillName } from './shared';
 import { scanOneSkill } from './source-scan';
+import { isPathWithin, resolveCanonicalPath } from './verified-path';
 
 const invocationForFields = (fields: readonly SkillFrontmatterField[]): 'auto' | 'manual' =>
   fields.some((field) => field.key === 'disable-model-invocation' && field.value === true) ? 'manual' : 'auto';
-
-const isPathWithin = (parentPath: string, childPath: string): boolean => {
-  const relative = path.relative(parentPath, childPath);
-  return relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative);
-};
 
 const projectPlacementFor = async (
   entryPath: string,
@@ -41,25 +37,25 @@ const projectPlacementFor = async (
   const resolved = path.resolve(path.dirname(entryPath), await readlink(entryPath));
   let resolvedRealPath: string;
   try {
-    resolvedRealPath = await realpath(resolved);
+    resolvedRealPath = await resolveCanonicalPath(resolved);
   } catch {
     return { pathForScan: entryPath, placement: 'external-symlink' };
   }
   if (sourceRepoPath !== undefined) {
-    const sourceSkillsPath = path.join(await realpath(sourceRepoPath), 'skills');
-    if (isPathWithin(sourceSkillsPath, resolvedRealPath)) {
+    const sourceSkillsPath = path.join(await resolveCanonicalPath(sourceRepoPath), 'skills');
+    if (isPathWithin(sourceSkillsPath, resolvedRealPath, false)) {
       return { pathForScan: entryPath, placement: 'symlink-to-source' };
     }
   }
   let projectRealPath: string;
   try {
-    projectRealPath = await realpath(projectPath);
+    projectRealPath = await resolveCanonicalPath(projectPath);
   } catch {
     return { pathForScan: entryPath, placement: 'external-symlink' };
   }
   return {
     pathForScan: entryPath,
-    placement: isPathWithin(projectRealPath, resolvedRealPath) ? 'project-symlink' : 'external-symlink',
+    placement: isPathWithin(projectRealPath, resolvedRealPath, false) ? 'project-symlink' : 'external-symlink',
   };
 };
 
@@ -83,7 +79,7 @@ export const scanProjectSkills = async (input: {
     const observations: ProjectSkillObservation[] = [];
     let projectRealPath: string;
     try {
-      projectRealPath = await realpath(projectPath);
+      projectRealPath = await resolveCanonicalPath(projectPath);
     } catch {
       inventories.push({ diagnostics, observations, projectPath });
       continue;
@@ -91,8 +87,8 @@ export const scanProjectSkills = async (input: {
     for (const directory of projectSkillDirectories) {
       const runtimePath = path.join(projectPath, directory.relativePath);
       try {
-        const runtimeRealPath = await realpath(runtimePath);
-        if (!isPathWithin(projectRealPath, runtimeRealPath)) {
+        const runtimeRealPath = await resolveCanonicalPath(runtimePath);
+        if (!isPathWithin(projectRealPath, runtimeRealPath, false)) {
           diagnostics.push(
             createDiagnostic(
               'ExternalProjectSkillDirectoryNotScanned',

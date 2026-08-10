@@ -2,6 +2,7 @@ import { harnessProviderAnalyticsKey, hasMeasuredLineDelta } from '@ai-usage/rep
 import { MAX_PORTABLE_USAGE_ROWS } from '@ai-usage/report-core/portable-usage';
 import { providerStatusKeyForUsage, providerStatusScopeKey } from '@ai-usage/report-core/provider-status';
 import type { SerializedRow } from '@ai-usage/report-core/report-data';
+import { SERVED_REVISION_PATTERN } from '@ai-usage/report-core/served-revision';
 import type { SessionDetailSourceAuthority } from '@ai-usage/report-core/session-detail';
 import {
   buildSessionCampaignViews,
@@ -24,7 +25,7 @@ import {
 } from '@ai-usage/report-core/usage-row';
 
 export const SERVED_REPORT_PROJECTION_SCHEMA_VERSION = 17;
-export const SERVED_REPORT_REVISION_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,159}$/;
+export const SERVED_REPORT_REVISION_PATTERN = SERVED_REVISION_PATTERN;
 
 export interface ServedRevisionReadStatement {
   all(...params: unknown[]): unknown[];

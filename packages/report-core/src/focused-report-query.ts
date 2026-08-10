@@ -12,11 +12,17 @@ import {
 } from './analytics';
 import { type CursorCommitAttributionRow, isCursorCommitAttributionRow } from './datasets';
 import { parseProjectGroupConfigs } from './project-group';
-import { type ApiPriceMeasurement, apiPriceMeasurement, combineApiPriceMeasurements } from './provenance';
+import {
+  type ApiPriceMeasurement,
+  apiPriceMeasurement,
+  combineApiPriceMeasurements,
+  parseApiPriceMeasurement,
+} from './provenance';
 import { parseProviderStatusDataset } from './provider-status';
 import { MAX_SERVED_BOOTSTRAP_BYTES } from './report-budgets';
 import { parseUsageReportPayload, type SerializedRow, type UsageReportPayload } from './report-data';
 import { isStrictIsoTimestamp, isUsageReportWarnings } from './serialized-usage-validation';
+import { parseServedRevision } from './served-revision';
 import {
   activeTimeMatchesLocalTimeCell,
   buildSessionCampaignTimelineIdentities,
@@ -397,7 +403,6 @@ export interface FocusedSupportProjectionOptions {
 export type FocusedReportQueryKind = 'breakdown' | 'overview' | 'support';
 export type FocusedReportQueryResult = FocusedBreakdownResult | FocusedOverviewResult | FocusedSupportResult;
 
-const MAX_REVISION_LENGTH = 512;
 const MAX_EXECUTIVE_GROUPS = 5;
 const OTHER_EXECUTIVE_GROUP_KEY = '__ai_usage_other__';
 const MAX_TIMELINE_SERIES = 12;
@@ -421,12 +426,7 @@ const assertExactKeys = (value: Record<string, unknown>, keys: readonly string[]
   }
 };
 
-const parseRevision = (value: unknown): string => {
-  if (typeof value !== 'string' || value.length === 0 || value.length > MAX_REVISION_LENGTH || value !== value.trim()) {
-    throw new Error('revision must be a non-empty trimmed string');
-  }
-  return value;
-};
+const parseRevision = (value: unknown): string => parseServedRevision(value, 'revision');
 
 export const parseFocusedReportQueryScope = (value: unknown): FocusedReportQueryScope => {
   const record = requireRecord(value, 'focused report query');
@@ -1753,21 +1753,14 @@ const requireString = (value: unknown, label: string): string => {
 };
 
 const assertApiPriceMeasurement = (value: unknown, label: string, expectedKnownCost?: number): void => {
-  const measurement = requireRecord(value, label);
-  assertExactKeys(measurement, ['knownCost', 'state', 'unpricedFreshTokens'], label);
-  const knownCost = requireFiniteNumber(measurement.knownCost, `${label}.knownCost`);
-  const unpricedFreshTokens = requireFiniteNumber(measurement.unpricedFreshTokens, `${label}.unpricedFreshTokens`);
-  const state = measurement.state;
-  if (!(state === 'measured' || state === 'partially measured' || state === 'zero')) {
-    throw new Error(`${label}.state is invalid`);
+  let measurement: ApiPriceMeasurement;
+  try {
+    measurement = parseApiPriceMeasurement(value);
+  } catch (cause) {
+    const reason = cause instanceof Error ? cause.message : 'API price measurement is invalid';
+    throw new Error(`${label}: ${reason}`, { cause });
   }
-  if ((state === 'zero') !== (knownCost === 0 && state !== 'partially measured')) {
-    throw new Error(`${label} zero state is inconsistent`);
-  }
-  if (state !== 'partially measured' && unpricedFreshTokens !== 0) {
-    throw new Error(`${label} unpriced volume is inconsistent`);
-  }
-  if (expectedKnownCost !== undefined && knownCost !== expectedKnownCost) {
+  if (expectedKnownCost !== undefined && measurement.knownCost !== expectedKnownCost) {
     throw new Error(`${label}.knownCost must match its aggregate cost`);
   }
 };

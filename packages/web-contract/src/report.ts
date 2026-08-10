@@ -3,6 +3,7 @@ import {
   parseCampaignLabelOverrideMutation,
   parseCampaignLabelOverrides,
 } from '@ai-usage/report-core/campaign-label';
+import { parseCanonicalInstant } from '@ai-usage/report-core/canonical-instant';
 import {
   type FocusedBreakdownRequest,
   type FocusedBreakdownResult,
@@ -29,14 +30,13 @@ import {
   MAX_OVERVIEW_REFRESH_BYTES,
   MAX_SERVED_BOOTSTRAP_BYTES,
 } from '@ai-usage/report-core/report-budgets';
+import { parseServedRevision } from '@ai-usage/report-core/served-revision';
 import type { SessionQueryServerResult } from '@ai-usage/report-core/session-query';
 import { type ContractRouterClient, oc } from '@orpc/contract';
 import { boolean, literal, pipe, rawTransform, strictObject, unknown as unknownSchema } from 'valibot';
 import { publicErrorMap } from './errors';
 import { emptyInputSchema, isJsonWireValue } from './schema-conventions';
 
-const REPORT_REVISION_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u;
-const PUBLICATION_REVISION_PATTERN = /^[A-Za-z0-9._-]{1,160}$/u;
 const PROJECT_SOURCE_REFERENCE_PATTERN = /^project-source:[a-f0-9]{64}$/u;
 const REPORT_MANIFEST_FINGERPRINT = 'report-manifest:v1:{}';
 const MAX_PROJECT_GROUPS = 256;
@@ -108,10 +108,11 @@ const parseNonNegativeSafeInteger = (value: unknown, label: string): number => {
 };
 
 const parseReportRevision = (value: unknown): string => {
-  if (typeof value !== 'string' || !REPORT_REVISION_PATTERN.test(value)) {
+  try {
+    return parseServedRevision(value, 'report revision');
+  } catch {
     throw new Error('Invalid report revision.');
   }
-  return value;
 };
 
 export interface ReportRevisionManifest {
@@ -153,10 +154,7 @@ const parseManifest = (value: unknown): ReportRevisionManifest => {
     'report manifest',
   );
   const captureFingerprint = parseNonEmptyText(value.captureFingerprint, 'capture fingerprint', 512);
-  const generatedAt = parseNonEmptyText(value.generatedAt, 'generated timestamp', 64);
-  if (!Number.isFinite(Date.parse(generatedAt))) {
-    throw new Error('Invalid generated timestamp.');
-  }
+  const generatedAt = parseCanonicalInstant(value.generatedAt, 'generated timestamp');
   return {
     captureFingerprint,
     expiresAt: parseNonNegativeSafeInteger(value.expiresAt, 'manifest expiry'),
@@ -363,8 +361,6 @@ const parseSaveProjectGroupsInput = (value: unknown): SaveProjectGroupsInput => 
   assertExactKeys(value, ['command', 'projectGroups', 'revision'], 'project group command');
   if (
     value.command !== 'replace-project-groups-by-reference' ||
-    typeof value.revision !== 'string' ||
-    !PUBLICATION_REVISION_PATTERN.test(value.revision) ||
     !Array.isArray(value.projectGroups) ||
     value.projectGroups.length > MAX_PROJECT_GROUPS
   ) {
@@ -392,7 +388,7 @@ const parseSaveProjectGroupsInput = (value: unknown): SaveProjectGroupsInput => 
     }
     return { id, name: parseNonEmptyText(entry.name, 'project group name'), sources };
   });
-  return { command: value.command, projectGroups, revision: value.revision };
+  return { command: value.command, projectGroups, revision: parseReportRevision(value.revision) };
 };
 
 const campaignMutationSchema = parsedSchema('campaign label mutation', parseCampaignLabelOverrideMutation);

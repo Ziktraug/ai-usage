@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   apiPriceMeasurement,
   combineApiPriceMeasurements,
+  parseApiPriceMeasurement,
   partiallyMeasuredApiPriceDescription,
   provenanceForMetric,
   provenanceForUsageRow,
@@ -34,6 +35,15 @@ const row = (overrides: Partial<Row> = {}): Row => ({
 });
 
 describe('usage row provenance', () => {
+  test('rejects internally inconsistent API price measurements', () => {
+    expect(() => parseApiPriceMeasurement({ knownCost: 0, state: 'measured', unpricedFreshTokens: 0 })).toThrow(
+      'zero state',
+    );
+    expect(() => parseApiPriceMeasurement({ knownCost: 2, state: 'measured', unpricedFreshTokens: 1 })).toThrow(
+      'unpriced volume',
+    );
+  });
+
   test('distinguishes measured, partially measured, and genuine zero aggregates', () => {
     const measured = apiPriceMeasurement({ costKnown: true, freshTokens: 10, knownCost: 2 });
     const unpriced = apiPriceMeasurement({ costKnown: false, freshTokens: 57_500_000, knownCost: 0 });

@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { parseMergePreviewProof } from '@ai-usage/report-core/merge-proof';
 import { collectionSourceDefinitions, type SourceControlView } from '@ai-usage/report-core/source-control';
 import {
   parseUsageEnginePublicationRevision,
@@ -22,6 +23,10 @@ import {
 const INSTANCE_ID = '11111111-1111-4111-8111-111111111111' as UsageEngineInstanceId;
 const COMMAND_ID = '22222222-2222-4222-8222-222222222222';
 const FIXED_NOW = new Date('2026-07-29T12:00:00.000Z');
+const MERGE_PREVIEW_PROOF = parseMergePreviewProof({
+  confirmationToken: `v1.${'b'.repeat(64)}`,
+  documentDigest: 'a'.repeat(64),
+});
 
 const publishedSourceControl = (generation = 1): SourceControlView => ({
   ...createInitialUsageEngineSourceControlView(INSTANCE_ID, FIXED_NOW),
@@ -151,9 +156,8 @@ const createTestSourceControl = (initial = publishedSourceControl()): TestSource
 };
 
 const mergePreview: UsageEngineMergePreviewOutput = {
+  ...MERGE_PREVIEW_PROOF,
   bytes: 42,
-  confirmationToken: 'confirmation-token',
-  documentDigest: 'a'.repeat(64),
   kind: 'merge-preview',
   result: {
     deleted: 0,
@@ -817,9 +821,8 @@ describe('usage engine runtime', () => {
     await runtime.start();
     await runtime.executeCommand(
       {
+        ...MERGE_PREVIEW_PROOF,
         command: 'confirm-merge',
-        confirmationToken: 'confirmation-token',
-        documentDigest: 'a'.repeat(64),
         input: { filePath: '/synthetic/merge.json', kind: 'operator-file' },
       },
       'durable-command',
@@ -922,9 +925,8 @@ describe('usage engine runtime', () => {
     await runtime.start();
     await runtime.executeCommand(
       {
+        ...MERGE_PREVIEW_PROOF,
         command: 'confirm-merge',
-        confirmationToken: 'confirmation-token',
-        documentDigest: 'a'.repeat(64),
         input: { filePath: '/synthetic/merge.json', kind: 'operator-file' },
       },
       'stale-confirmation',
@@ -952,9 +954,8 @@ describe('usage engine runtime', () => {
     await runtime.start();
     await runtime.executeCommand(
       {
+        ...MERGE_PREVIEW_PROOF,
         command: 'confirm-merge',
-        confirmationToken: 'confirmation-token',
-        documentDigest: 'a'.repeat(64),
         input: { filePath: '/synthetic/merge.json', kind: 'operator-file' },
       },
       'retrying-confirmation',
@@ -993,9 +994,8 @@ describe('usage engine runtime', () => {
       { command: 'import-cursor', input: { filePath: '/synthetic/cursor.csv', kind: 'operator-file' } },
       { command: 'preview-merge', input: { filePath: '/synthetic/merge.json', kind: 'operator-file' } },
       {
+        ...MERGE_PREVIEW_PROOF,
         command: 'confirm-merge',
-        confirmationToken: 'confirmation-token',
-        documentDigest: 'a'.repeat(64),
         input: { filePath: '/synthetic/merge.json', kind: 'operator-file' },
       },
     ];

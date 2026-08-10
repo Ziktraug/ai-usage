@@ -1,10 +1,11 @@
-import { lstat, mkdir, realpath } from 'node:fs/promises';
+import { lstat, mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import type { SkillDiagnostic, SkillSourceState, SkillSourceStateResult } from './contracts';
 import { createDiagnostic, isMissingPathError, isRecord } from './diagnostics';
 import { atomicWriteFile, readBoundedRegularFile, withSerializedFileMutation } from './filesystem';
 import { parseSkillName, skillNamePattern } from './shared';
 import { parseBoolean } from './validation';
+import { isPathWithin, resolveCanonicalPath } from './verified-path';
 
 const maxSkillSourceStateBytes = 1_048_576;
 
@@ -83,7 +84,7 @@ const safeSkillSourceStatePath = async (
   sourceRepoPath: string,
   createTracker: boolean,
 ): Promise<string | undefined> => {
-  const realSourceRepoPath = await realpath(sourceRepoPath);
+  const realSourceRepoPath = await resolveCanonicalPath(sourceRepoPath);
   const trackerPath = path.join(sourceRepoPath, '.skill-tracker');
   if (createTracker) {
     try {
@@ -111,9 +112,8 @@ const safeSkillSourceStatePath = async (
     throw new Error('source skill state directory must be a directory');
   }
 
-  const realTrackerPath = await realpath(trackerPath);
-  const trackerRelativePath = path.relative(realSourceRepoPath, realTrackerPath);
-  if (trackerRelativePath.startsWith('..') || path.isAbsolute(trackerRelativePath)) {
+  const realTrackerPath = await resolveCanonicalPath(trackerPath);
+  if (!isPathWithin(realSourceRepoPath, realTrackerPath)) {
     throw new Error('source skill state directory must stay inside the source repository');
   }
 

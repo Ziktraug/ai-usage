@@ -1,12 +1,14 @@
 import {
   parseUsageEngineEvent,
+  parseUsageEngineEventSequence,
+  parseUsageEngineReplayCursor,
   parseUsageEngineStatus,
   type UsageEngineEvent,
   type UsageEngineStatus,
+  usageEngineEventIdFor,
 } from '@ai-usage/usage-engine-control';
 
 const SSE_HEARTBEAT_MS = 5000;
-const REPLAY_EVENT_ID_PATTERN = /^(?:engine|snapshot):(\d+)$/;
 const encoder = new TextEncoder();
 
 interface EventSubscriber {
@@ -50,11 +52,12 @@ const lastSeenSequence = (
   if (exact) {
     return Math.min(exact.sequence, snapshotBoundarySequence);
   }
-  const match = REPLAY_EVENT_ID_PATTERN.exec(lastEventId);
-  const parsed = Number(match?.[1]);
-  return Number.isSafeInteger(parsed) && parsed >= 0 && parsed <= snapshotBoundarySequence
-    ? parsed
-    : snapshotBoundarySequence;
+  try {
+    const cursor = parseUsageEngineReplayCursor(lastEventId);
+    return cursor.replaySequence <= snapshotBoundarySequence ? cursor.replaySequence : snapshotBoundarySequence;
+  } catch {
+    return snapshotBoundarySequence;
+  }
 };
 
 export const createUsageEngineControlEventHub = ({
@@ -163,7 +166,7 @@ export const createUsageEngineControlEventHub = ({
     }
     const statusEvent = parseUsageEngineEvent({
       event: 'status',
-      eventId: `snapshot:${snapshotBoundarySequence}`,
+      eventId: usageEngineEventIdFor('snapshot', parseUsageEngineEventSequence(snapshotBoundarySequence)),
       instanceId: status.instanceId,
       sequence: 0,
       status,

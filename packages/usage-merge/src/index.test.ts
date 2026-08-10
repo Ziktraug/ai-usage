@@ -80,7 +80,7 @@ describe('usage merge workflow owner', () => {
           ...document,
           bytes: new TextEncoder().encode(`${document.text} `),
           confirmationToken: preview.confirmationToken,
-          expectedDigest: preview.digest,
+          documentDigest: preview.documentDigest,
         })
         .pipe(Effect.flip),
     );
@@ -90,7 +90,7 @@ describe('usage merge workflow owner', () => {
       service.confirmManualMergeBundle({
         ...document,
         confirmationToken: preview.confirmationToken,
-        expectedDigest: preview.digest,
+        documentDigest: preview.documentDigest,
       }),
     );
     expect(confirmed.result.inserted).toBe(1);

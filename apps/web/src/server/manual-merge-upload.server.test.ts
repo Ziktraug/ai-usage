@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { parseMergePreviewProof } from '@ai-usage/report-core/merge-proof';
 import {
   parseUsageEngineCommandCompletion,
   parseUsageEngineHandoffId,
@@ -10,6 +11,8 @@ import { handleManualMergeUpload } from './manual-merge-upload.server';
 import { UsageEngineCommandCompletionError } from './usage-engine-command.server';
 
 const DIGEST = 'a'.repeat(64);
+const CONFIRMATION_TOKEN = `v1.${'b'.repeat(64)}`;
+const MERGE_PROOF = parseMergePreviewProof({ confirmationToken: CONFIRMATION_TOKEN, documentDigest: DIGEST });
 
 const jsonRequest = (body: BodyInit, headers: Record<string, string> = {}, signal?: AbortSignal) =>
   new Request('http://localhost/sync', {
@@ -32,7 +35,7 @@ const previewCompletion = (): UsageEngineCommandCompletion =>
     completedAt: '2026-07-30T12:00:00.000Z',
     output: {
       bytes: 11,
-      confirmationToken: 'confirmation-token',
+      confirmationToken: CONFIRMATION_TOKEN,
       documentDigest: DIGEST,
       kind: 'merge-preview',
       result: {
@@ -100,7 +103,7 @@ describe('manual merge upload boundary', () => {
     const response = await handleManualMergeUpload(
       jsonRequest('{"rows":[]}', {
         'x-ai-usage-merge-action': 'confirm',
-        'x-ai-usage-merge-confirmation': 'opaque-token',
+        'x-ai-usage-merge-confirmation': CONFIRMATION_TOKEN,
         'x-ai-usage-merge-digest': DIGEST,
       }),
       {
@@ -115,9 +118,8 @@ describe('manual merge upload boundary', () => {
     expect(response.status).toBe(200);
     expect(commands).toEqual([
       {
+        ...MERGE_PROOF,
         command: 'confirm-merge',
-        confirmationToken: 'opaque-token',
-        documentDigest: DIGEST,
         input: { handoffId: parseUsageEngineHandoffId('confirm-handoff'), kind: 'inbox-handoff' },
       },
     ]);

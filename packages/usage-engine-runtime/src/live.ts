@@ -701,7 +701,7 @@ export const createLiveUsageEngineMutationPort = (options: LiveUsageEngineMutati
               mergeService.confirmManualMergeBundle({
                 bytes: input.bytes,
                 confirmationToken: command.confirmationToken,
-                expectedDigest: command.documentDigest,
+                documentDigest: command.documentDigest,
                 text: input.text,
               }),
             );
@@ -751,7 +751,7 @@ export const createLiveUsageEngineMutationPort = (options: LiveUsageEngineMutati
             return {
               bytes: preview.bytes,
               confirmationToken: preview.confirmationToken,
-              documentDigest: preview.digest,
+              documentDigest: preview.documentDigest,
               kind: 'merge-preview' as const,
               result: {
                 deleted: preview.deleted,

@@ -779,7 +779,7 @@ test('keeps sync limited to explicit file transfers', async ({ page }) => {
       body: JSON.stringify({
         data: {
           bytes: 2,
-          confirmationToken: 'opaque-confirmation',
+          confirmationToken: `v1.${'b'.repeat(64)}`,
           documentDigest: 'a'.repeat(64),
           kind: 'merge-preview',
           result: {

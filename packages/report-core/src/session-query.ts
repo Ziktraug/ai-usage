@@ -1,7 +1,7 @@
 import { rtkSavingsPct } from './csv';
 import { modelGroupKey } from './model-identity';
 import { normalizeProjectIdentity } from './project-group';
-import { type ApiPriceMeasurement, combineApiPriceMeasurements } from './provenance';
+import { type ApiPriceMeasurement, combineApiPriceMeasurements, parseApiPriceMeasurement } from './provenance';
 import { MAX_SESSION_QUERY_PAGE_SIZE, MAX_SESSION_QUERY_RESULT_BYTES } from './report-budgets';
 import type { SerializedRow } from './report-data';
 import {
@@ -10,6 +10,7 @@ import {
   isSerializedUsageRowShape,
   SERIALIZED_USAGE_ROW_KEYS,
 } from './serialized-usage-validation';
+import { parseServedRevision } from './served-revision';
 import { zonedWeekdayHourForTimestamp } from './time-zone';
 import { isSessionOrigin, type SessionOrigin } from './types';
 import { usageRowApiPriceMeasurement, usageRowModelContributions } from './usage-row';
@@ -20,7 +21,6 @@ export { isSessionOrigin, sessionOrigins } from './types';
 
 const MAX_CURSOR_LENGTH = 4096;
 const MAX_FILTER_LIST_LENGTH = 100;
-const MAX_REVISION_LENGTH = 512;
 const MAX_STRING_LENGTH = 512;
 const CURSOR_PATTERN = /^sq1\.([0-9a-f]{16})\.([0-9a-z]+)$/;
 const OPENCODE_PROVIDER_SUFFIX = /\s*\(OC\)\s*$/;
@@ -512,6 +512,14 @@ const parseCursor = (value: unknown): string | null => {
   return value;
 };
 
+const parseSessionRevision = (value: unknown): string => {
+  try {
+    return parseServedRevision(value, 'revision');
+  } catch (cause) {
+    throw new SessionQueryValidationError(cause instanceof Error ? cause.message : 'revision is invalid');
+  }
+};
+
 export const parseSessionQueryRequest = (value: unknown): SessionQueryRequest => {
   const record = requireRecord(value, 'session query request');
   assertExactKeys(record, ['cursor', 'filters', 'pageSize', 'range', 'revision', 'sort'], 'request');
@@ -528,7 +536,7 @@ export const parseSessionQueryRequest = (value: unknown): SessionQueryRequest =>
     filters: parseFilters(record.filters),
     pageSize: record.pageSize,
     range: parseRange(record.range),
-    revision: requireTrimmedString(record.revision, 'revision', MAX_REVISION_LENGTH),
+    revision: parseSessionRevision(record.revision),
     sort: parseSort(record.sort),
   };
 };
@@ -664,28 +672,17 @@ export const parseSessionPresentationRow = (value: unknown, label: string): Sess
     requireNonNegativeSafeInteger(record.campaignVisibleCount, `${label}.campaignVisibleCount`);
   }
   if (record.priceMeasurement !== undefined) {
-    const priceMeasurement = requireRecord(record.priceMeasurement, `${label}.priceMeasurement`);
-    assertExactKeys(priceMeasurement, ['knownCost', 'state', 'unpricedFreshTokens'], `${label}.priceMeasurement`);
-    const knownCost = requireFiniteNumberOrNull(priceMeasurement.knownCost, `${label}.priceMeasurement.knownCost`);
-    const unpricedFreshTokens = requireFiniteNumberOrNull(
-      priceMeasurement.unpricedFreshTokens,
-      `${label}.priceMeasurement.unpricedFreshTokens`,
-    );
-    const state = priceMeasurement.state;
-    if (knownCost === null || knownCost < 0 || unpricedFreshTokens === null || unpricedFreshTokens < 0) {
-      throw new SessionQueryValidationError(`${label}.priceMeasurement must contain non-negative finite values`);
+    let priceMeasurement: ApiPriceMeasurement;
+    try {
+      priceMeasurement = parseApiPriceMeasurement(record.priceMeasurement);
+    } catch {
+      throw new SessionQueryValidationError(`${label}.priceMeasurement is invalid`);
     }
-    if (!(state === 'measured' || state === 'partially measured' || state === 'zero')) {
-      throw new SessionQueryValidationError(`${label}.priceMeasurement.state is invalid`);
-    }
-    if (knownCost !== record.costApprox || record.costKnown !== (state !== 'partially measured')) {
+    if (
+      priceMeasurement.knownCost !== record.costApprox ||
+      record.costKnown !== (priceMeasurement.state !== 'partially measured')
+    ) {
       throw new SessionQueryValidationError(`${label}.priceMeasurement must match the campaign API value`);
-    }
-    if ((state === 'zero') !== (knownCost === 0 && state !== 'partially measured')) {
-      throw new SessionQueryValidationError(`${label}.priceMeasurement zero state is inconsistent`);
-    }
-    if (state !== 'partially measured' && unpricedFreshTokens !== 0) {
-      throw new SessionQueryValidationError(`${label}.priceMeasurement unpriced volume is inconsistent`);
     }
   }
   if (record.campaignVisibleCount !== undefined && record.priceMeasurement === undefined) {
@@ -1453,7 +1450,7 @@ const parseCursorScope = (
 ): { cursor: string | null; requestFingerprint: string; revision: string } => ({
   cursor: parseCursor(request.cursor),
   requestFingerprint: requireTrimmedString(requestFingerprint, 'requestFingerprint'),
-  revision: requireTrimmedString(request.revision, 'revision', MAX_REVISION_LENGTH),
+  revision: parseSessionRevision(request.revision),
 });
 
 const offsetFromCursor = (cursor: string | null, revision: string, requestFingerprint: string): number => {

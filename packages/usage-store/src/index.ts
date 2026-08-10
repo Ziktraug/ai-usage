@@ -20,6 +20,7 @@ import {
   type UsageMergeBundle,
   usageContentHash,
 } from '@ai-usage/report-core/merge-bundle';
+import { type MergeConfirmationToken, parseMergeConfirmationToken } from '@ai-usage/report-core/merge-proof';
 import { MAX_PORTABLE_USAGE_ROWS } from '@ai-usage/report-core/portable-usage';
 import type { ProjectAliasEntry } from '@ai-usage/report-core/project-alias';
 import type { ProjectGroupConfig } from '@ai-usage/report-core/project-group';
@@ -123,7 +124,7 @@ export interface ImportPeerMergeBundleInput {
 export interface PreviewPeerMergeBundleInput extends ImportPeerMergeBundleInput {}
 
 export interface PreviewPeerMergeBundleResult extends ImportResult {
-  confirmationToken: string;
+  confirmationToken: MergeConfirmationToken;
 }
 
 export interface ConfirmPeerMergeBundleInput extends ImportPeerMergeBundleInput {
@@ -2236,9 +2237,6 @@ const validatePeerBundle = (
   }
 };
 
-const CONFIRMATION_TOKEN_VERSION = 'v1';
-const CONFIRMATION_TOKEN_PATTERN = /^v1\.[0-9a-f]{64}$/;
-const MAX_CONFIRMATION_TOKEN_CHARACTERS = 128;
 const canonicalBundleDigest = (bundle: UsageMergeBundle, preparedRows: PreparedMergeRow[]): string => {
   const rows = preparedRows.map(({ contribution, row }) =>
     contribution === undefined ? row : { ...row, ...contribution },
@@ -2294,17 +2292,16 @@ const readUsageStoreGeneration = (db: SqliteDatabase): number => {
   return record.value;
 };
 
-const confirmationTokenFor = (bundleDigest: string, generation: number, storeFingerprint: string): string => {
+const confirmationTokenFor = (
+  bundleDigest: string,
+  generation: number,
+  storeFingerprint: string,
+): MergeConfirmationToken => {
   const digest = createHash('sha256')
     .update(canonicalJson({ bundleDigest, generation, storeFingerprint }))
     .digest('hex');
-  return `${CONFIRMATION_TOKEN_VERSION}.${digest}`;
+  return parseMergeConfirmationToken(`v1.${digest}`);
 };
-
-const isConfirmationToken = (value: unknown): value is string =>
-  typeof value === 'string' &&
-  value.length <= MAX_CONFIRMATION_TOKEN_CHARACTERS &&
-  CONFIRMATION_TOKEN_PATTERN.test(value);
 
 const previewStaleError = (cause?: unknown): UsageStoreError =>
   new UsageStoreError({
@@ -2391,7 +2388,10 @@ export const previewPeerMergeBundle = (
 export const confirmPeerMergeBundle = (
   input: ConfirmPeerMergeBundleInput,
 ): Effect.Effect<ImportResult, UsageStoreError> => {
-  if (!isConfirmationToken(input.confirmationToken)) {
+  let expectedConfirmationToken: MergeConfirmationToken;
+  try {
+    expectedConfirmationToken = parseMergeConfirmationToken(input.confirmationToken);
+  } catch {
     return Effect.fail(
       new UsageStoreError({
         operation: 'confirmPeerMergeBundle',
@@ -2418,7 +2418,7 @@ export const confirmPeerMergeBundle = (
               const generation = readCurrentUsageStoreGeneration(db);
               const storeFingerprint = storeStateFingerprint(db, rows);
               const confirmationToken = confirmationTokenFor(bundleDigest, generation, storeFingerprint);
-              if (confirmationToken !== input.confirmationToken) {
+              if (confirmationToken !== expectedConfirmationToken) {
                 throw previewStaleError();
               }
               const now = (input.importedAt ?? new Date()).toISOString();

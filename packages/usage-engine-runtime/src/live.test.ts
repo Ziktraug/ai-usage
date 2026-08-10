@@ -15,6 +15,7 @@ import {
 import { createLocalHistoryStorage, LocalHistoryStorage } from '@ai-usage/local-machine/local-history';
 import { ensureMachineConfig, readAiUsageConfig, writeMachineConfig } from '@ai-usage/local-machine/machine-config';
 import { createUsageMergeBundle, serializeUsageMergeBundle } from '@ai-usage/report-core/merge-bundle';
+import { parseMergePreviewProof } from '@ai-usage/report-core/merge-proof';
 import { projectSourceSelectorKey } from '@ai-usage/report-core/project-group';
 import type { UsageMachine } from '@ai-usage/report-core/snapshot';
 import {
@@ -895,10 +896,12 @@ describe('live usage engine publication', () => {
         Deferred.succeed(previewStarted, undefined).pipe(
           Effect.andThen(Deferred.await(allowPreview)),
           Effect.as({
+            ...parseMergePreviewProof({
+              confirmationToken: `v1.${'b'.repeat(64)}`,
+              documentDigest: 'a'.repeat(64),
+            }),
             bytes: 2,
-            confirmationToken: 'confirmation-token',
             deleted: 0,
-            digest: 'a'.repeat(64),
             fleetChanged: false,
             generatedAt: now.toISOString(),
             inserted: 0,

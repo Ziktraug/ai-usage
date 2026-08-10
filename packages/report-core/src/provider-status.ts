@@ -1,4 +1,12 @@
+import { type CanonicalInstant, canonicalInstantFromDate } from './canonical-instant';
 import { isRecord } from './datasets';
+import {
+  type QuotaWindowDuration,
+  quotaWindowDurationFromMinutes,
+  quotaWindowDurationFromSeconds,
+  quotaWindowGroup,
+  quotaWindowLabel,
+} from './quota-window-duration';
 
 const CODEX_PROVIDER_PATTERN = /codex/i;
 const CLAUDE_PROVIDER_PATTERN = /claude/i;
@@ -107,16 +115,16 @@ const PROVIDER_LIMIT_WINDOW_SCOPES: Record<ProviderLimitWindowScope, true> = {
   unknown: true,
 };
 
-export const normalizeIsoTimestamp = (value: unknown): string | null => {
+export const normalizeIsoTimestamp = (value: unknown): CanonicalInstant | null => {
   if (value === null || value === undefined || value === '') {
     return null;
   }
   const numericValue = typeof value === 'number' ? value : Number.NaN;
   const date = typeof value === 'number' ? new Date(numericValue) : new Date(String(value));
-  return Number.isFinite(date.getTime()) ? date.toISOString() : null;
+  return Number.isFinite(date.getTime()) ? canonicalInstantFromDate(date) : null;
 };
 
-export const normalizeUnixSecondsTimestamp = (value: unknown): string | null => {
+export const normalizeUnixSecondsTimestamp = (value: unknown): CanonicalInstant | null => {
   const numericValue =
     typeof value === 'number' || (typeof value === 'string' && value.trim()) ? Number(value) : Number.NaN;
   return Number.isFinite(numericValue) ? normalizeIsoTimestamp(numericValue * 1000) : normalizeIsoTimestamp(value);
@@ -139,52 +147,22 @@ export const clampPercent = (value: unknown): number | null => {
 export const remainingPercentFromUsed = (usedPercent: number | null): number | null =>
   usedPercent === null ? null : Math.max(0, 100 - usedPercent);
 
-export const labelForLimitWindow = (limitSeconds: number | null, fallback = 'Quota window') => {
-  if (!limitSeconds || limitSeconds <= 0) {
-    return fallback;
-  }
-  const hours = limitSeconds / 3600;
-  if (hours === 5) {
-    return '5h';
-  }
-  const days = limitSeconds / 86_400;
-  if (days === 7) {
-    return 'Weekly';
-  }
-  if (days >= 28 && days <= 31) {
-    return 'Monthly';
-  }
-  if (Number.isInteger(hours) && hours < 24) {
-    return `${hours}h`;
-  }
-  if (Number.isInteger(days)) {
-    return `${days}d`;
-  }
-  return fallback;
-};
+export const labelForLimitWindow = (limitSeconds: number | null, fallback = 'Quota window'): string =>
+  quotaWindowLabel(quotaWindowDurationFromSeconds(limitSeconds), fallback);
 
-export const windowGroupForLimitSeconds = (limitSeconds: number | null): string | null => {
-  if (limitSeconds === 18_000) {
-    return '5h';
-  }
-  if (limitSeconds === 604_800) {
-    return 'weekly';
-  }
-  if (limitSeconds !== null && limitSeconds >= 2_419_200 && limitSeconds <= 2_678_400) {
-    return 'monthly';
-  }
-  return null;
-};
+export const windowGroupForLimitSeconds = (limitSeconds: number | null): string | null =>
+  quotaWindowGroup(quotaWindowDurationFromSeconds(limitSeconds));
 
 const optionalString = (value: unknown): string | null => (typeof value === 'string' && value.trim() ? value : null);
 
-const limitSecondsFromWindow = (record: Record<string, unknown>): number | null => {
-  const value = record.limit_window_seconds ?? record.window_seconds ?? record.window_minutes;
-  const numeric = Number(value);
-  if (!Number.isFinite(numeric) || numeric <= 0) {
-    return null;
+const limitSecondsFromWindow = (record: Record<string, unknown>): QuotaWindowDuration | null => {
+  if (record.limit_window_seconds !== undefined) {
+    return quotaWindowDurationFromSeconds(record.limit_window_seconds);
   }
-  return record.window_minutes === value ? numeric * 60 : numeric;
+  if (record.window_seconds !== undefined) {
+    return quotaWindowDurationFromSeconds(record.window_seconds);
+  }
+  return quotaWindowDurationFromMinutes(record.window_minutes);
 };
 
 const blockedFromWindow = (record: Record<string, unknown>): boolean =>
@@ -201,7 +179,7 @@ export const normalizeProviderLimitWindow = (input: {
   if (!isRecord(input.raw)) {
     return null;
   }
-  const limitSeconds = limitSecondsFromWindow(input.raw) ?? input.fallbackLimitSeconds ?? null;
+  const limitSeconds = limitSecondsFromWindow(input.raw) ?? quotaWindowDurationFromSeconds(input.fallbackLimitSeconds);
   const usedPercent = clampPercent(input.raw.used_percent);
   const resetsAt =
     normalizeUnixSecondsTimestamp(input.raw.reset_at) ?? normalizeUnixSecondsTimestamp(input.raw.resets_at);

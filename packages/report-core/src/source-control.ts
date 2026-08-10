@@ -1,4 +1,6 @@
+import { isCanonicalInstant } from './canonical-instant';
 import { MAX_PORTABLE_USAGE_ROWS } from './portable-usage';
+import { isServedRevision } from './served-revision';
 
 export const collectionSourceIds = [
   'claude.sessions',
@@ -385,8 +387,6 @@ const sourceReasonCodes = new Set<SourceReasonCode>([
 ]);
 const progressPhases = new Set<SourceProgressPhase>(['discovering', 'reading', 'normalizing', 'importing']);
 const publicationOutcomes = new Set<SourcePublicationView['lastOutcome']>(['not-run', 'success', 'failed']);
-const isoTimestampPattern = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
-const revisionPattern = /^[a-zA-Z0-9._-]{1,160}$/;
 const boundedCodePattern = /^[a-zA-Z0-9._-]{1,64}$/;
 const unsafeWarningCodeCharacterPattern = /[^a-zA-Z0-9._-]/g;
 
@@ -422,8 +422,7 @@ const isNonNegativeSafeInteger = (value: unknown): value is number =>
 const isBoundedNonNegativeInteger = (value: unknown, maximum: number): value is number =>
   isNonNegativeSafeInteger(value) && value <= maximum;
 
-const isIsoTimestamp = (value: unknown): value is string =>
-  typeof value === 'string' && isoTimestampPattern.test(value) && !Number.isNaN(Date.parse(value));
+const isIsoTimestamp = (value: unknown): value is string => isCanonicalInstant(value);
 
 const isOptionalIsoTimestamp = (value: unknown): value is string | undefined =>
   value === undefined || isIsoTimestamp(value);
@@ -565,7 +564,7 @@ const isPublication = (value: unknown): value is SourcePublicationView => {
     isBoundedNonNegativeInteger(value.rtkRequiredGeneration, sourceControlBounds.maxGeneration) &&
     isOptionalBoundedInteger(value.lastDurationMs, sourceControlBounds.maxDurationMs) &&
     isOptionalIsoTimestamp(value.lastPublishedAt) &&
-    (value.revision === undefined || (typeof value.revision === 'string' && revisionPattern.test(value.revision))) &&
+    (value.revision === undefined || isServedRevision(value.revision)) &&
     value.acknowledgedRequestGeneration <= value.requestedGeneration &&
     value.publishedGeneration <= value.dirtyGeneration &&
     value.rtkCompletedGeneration <= value.rtkRequiredGeneration &&
@@ -752,8 +751,7 @@ export const parseReportPublishedEvent = (value: unknown): ReportPublishedEvent 
       hasOnlyRecordKeys(value, ['instanceId', 'publishedAt', 'revision', 'sourceControlGeneration']) &&
       isBoundedString(value.instanceId, 160) &&
       isIsoTimestamp(value.publishedAt) &&
-      typeof value.revision === 'string' &&
-      revisionPattern.test(value.revision) &&
+      isServedRevision(value.revision) &&
       isNonNegativeSafeInteger(value.sourceControlGeneration)
     )
   ) {
