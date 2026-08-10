@@ -76,7 +76,7 @@
 ## Status
 
 - **Priority**: P1
-- **Status**: IN PROGRESS
+- **Status**: DONE
 - **Effort**: L
 - **Risk**: HIGH
 - **Depends on**: completed plans
@@ -1089,44 +1089,46 @@ the operator's personal histories.
 
 ALL must hold:
 
-- [ ] Plans 069/072 are reconciled and the implementation began from a clean,
+- [x] Plans 069/072 are reconciled and the implementation began from a clean,
   recorded checkpoint.
-- [ ] Overview's initial DOM reads answer -> evidence -> investigation.
-- [ ] At 1440x900 and 1280x900, KPI, chart, and four metrics are fully above the
+- [x] Overview's initial DOM reads answer -> evidence -> investigation.
+- [x] At 1440x900 and 1280x900, KPI, chart, and four metrics are fully above the
   fold without a helper scroll; at 390x844 the KPI and period control are fully
   visible and the chart begins above mobile navigation.
-- [ ] The primary metric is “Estimated API-equivalent value”; no executive
+- [x] The primary metric is “Estimated API-equivalent value”; no executive
   Overview surface calls it actual spend, a bill, an invoice, savings, or ROI.
-- [ ] Pricing/estimate qualifications remain visible; definitions alone may be
+- [x] Pricing/estimate qualifications remain visible; definitions alone may be
   tooltip content.
-- [ ] Harness and provider vocabulary is correct.
-- [ ] Period control works on Overview, Sessions, and Analysis; 90d and Custom
+- [x] Harness and provider vocabulary is correct.
+- [x] Period control works on Overview, Sessions, and Analysis; 90d and Custom
   round-trip through URL/history/reload; invalid dates announce an inline error.
-- [ ] API value/Tokens chart toggle uses real memory/SQLite token aggregates and
+- [x] API value/Tokens chart toggle uses real memory/SQLite token aggregates and
   performs zero extra business requests.
-- [ ] Executive harness/model arrays are bounded; Overview does not fetch
+- [x] Executive harness/model arrays are bounded; Overview does not fetch
   Breakdown or create another Query owner.
-- [ ] Exactly four support metrics and zero-or-one eligible insight render; no
+- [x] Exactly four support metrics and zero-or-one eligible insight render; no
   causal claim appears.
-- [ ] Analysis keeps existing URLs and exposes the responsive model table with
+- [x] Analysis keeps existing URLs and exposes the responsive model table with
   all six locked columns and correct partial/zero behavior.
-- [ ] Records remain actionable through the existing session-detail owner;
+- [x] Records remain actionable through the existing session-detail owner;
   mobile drawer is above navigation, modal/trapped, safe-area-aware, and 44px;
   desktop drawer remains non-modal.
-- [ ] Passive Report sections no longer repeat card border/shadow treatment;
+- [x] Passive Report sections no longer repeat card border/shadow treatment;
   interactive containment and focus states remain clear.
-- [ ] Accent/status/chart token roles, partial-pricing signals, light/dark
+- [x] Accent/status/chart token roles, partial-pricing signals, light/dark
   contrast, and no-color-only rules pass.
-- [ ] Rhythm/Punchcard compact geometry and direct/equivalent controls pass their
+- [x] Rhythm/Punchcard compact geometry and direct/equivalent controls pass their
   unchanged tests.
-- [ ] DOM/geometry/token/Axe/request-count tests pass before exactly four
+- [x] DOM/geometry/token/Axe/request-count tests pass before exactly four
   snapshots are refreshed; `scrollOverviewValueIntoView` no longer exists.
-- [ ] Client manifest, production/dev/loopback, demo, production E2E, ordinary
-  E2E, bundle/CSS, and session benchmark gates pass within recorded budgets.
-- [ ] `bun x ultracite fix`, `bun run check`, `bun run lint`, `bun run typecheck`,
+- [x] Client manifest, production/dev/loopback, demo, production E2E, ordinary
+  E2E, bundle/CSS, and Session structural gates pass within recorded budgets;
+  the operator explicitly waived the mobile traversal median in D021.
+- [x] `bun x ultracite fix`, `bun run check`, `bun run lint`, `bun run typecheck`,
   `bun run test`, `bun run build`, and `git diff --check` all exit 0.
-- [ ] No files outside Scope are modified; `plans/README.md` is updated only
-  after the gate is green.
+- [x] No unrecorded files outside Scope are modified; the narrow operator-
+  authorized seam corrections are documented in D002, D009, and D011, and
+  `plans/README.md` is updated only after the accepted gate decision.
 
 ## STOP conditions
 
@@ -1231,7 +1233,7 @@ Fill this during implementation; do not pre-claim results.
   bundle Markdown `a58787e6c206d224d739f9345d011bffb77e4f10d2062548ecb67a530557a00a`.
   Analysis layout shift is a recorded, non-budgeted notice: median about
   `0.0098`, with every observed value below `0.02`.
-- **Final Session measurement and blocker**:
+- **Final Session measurement and retained exception**:
   `/tmp/ai-usage-plan073-session-scroll-final.json` preserves `5,000` unique
   identities, `4,999` campaigns, `25` desktop pages (`26` total), `0` missing,
   `0` duplicate, and every response/DOM ceiling. Its medians are desktop
@@ -1241,14 +1243,16 @@ Fill this during implementation; do not pre-claim results.
   `ba96d9e739134438d4e019f3751e81ddea8109e8103a536709271f18ed9ebbb1`.
   The mobile median exceeds the locked `79.6356 ms` ceiling. Three complete
   cohorts and focused paired measurements are retained in `/tmp`; no
-  product-side candidate correlated with the runner-level variance. This is a
-  STOP condition, so the plan and index remain `IN PROGRESS`.
+  product-side candidate correlated with the runner-level variance. On
+  2026-08-10 the operator explicitly excluded the mobile traversal median from
+  completion; every structural invariant and all non-mobile medians remain
+  green. The raw result remains recorded rather than being relabelled a pass.
 - **Final snapshot names and viewports**:
   `overview-desktop-linux.png` at 1440×1000 light,
   `overview-narrow-linux.png` at 390×844 dark,
   `overview-session-drawer-linux.png` at 390×844 light, and
   `skills-desktop-linux.png` at 1280×900 light. Exactly four PNGs and four
   `toHaveScreenshot` calls remain.
-- **Final green SHA**: not assigned. `3f397209` is the functionally and visually
-  green implementation SHA, but the Session mobile performance gate above
-  prevents `DONE` and the final plan/documentation completion commit.
+- **Final green implementation SHA**: `3f397209`. The operator-approved mobile
+  benchmark exception is documented in D021; the final documentation commit is
+  recorded by the repository history after this execution log.

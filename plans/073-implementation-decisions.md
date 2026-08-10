@@ -289,7 +289,23 @@ evidence remain authoritative in the plan's Execution log.
   ellipsis, or the former 22 px control. A two-row-overscan experiment reduced
   DOM counts but made the official median `158.583 ms`, so it was reverted.
 - **Consequence**: the exact identity, page, gap, duplicate, row-height, focus,
-  and 44 px contracts remain intact, but Plan 073 stays `IN PROGRESS`. Closing
-  it now requires explicit authority for a separate measurement amendment that
-  establishes a comparable baseline and predeclared verdict rule; rerunning
-  until a favorable three-sample median appears is not acceptable evidence.
+  and 44 px contracts remain intact. At this review point Plan 073 stayed
+  `IN PROGRESS` pending explicit authority; D021 records the operator's later
+  completion decision. Rerunning until a favorable three-sample median appears
+  remains unacceptable evidence.
+
+## D021 — Exclude the mobile Session traversal median from completion
+
+- **Decision**: on 2026-08-10, the operator explicitly directed that mobile
+  Session benchmark performance is not a completion concern for Plan 073.
+  Treat only that median as non-blocking; preserve every raw measurement and do
+  not describe it as passing the original 10% budget.
+- **Reason**: all product behavior, responsive geometry, mobile accessibility,
+  exact Session identities/pages/gaps, production scale assertions, and every
+  non-mobile performance budget are green. The remaining miss is isolated to a
+  three-sample Playwright traversal measurement with high runner variance, and
+  the operator owns the product-priority decision to exclude it.
+- **Consequence**: Plan 073 and its index may move to `DONE` without another
+  benchmark run. The final report must still disclose `90.999 ms` versus the
+  original `79.6356 ms` ceiling, and future performance work must establish a
+  new comparable baseline rather than silently widening this one.
