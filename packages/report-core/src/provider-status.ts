@@ -123,6 +123,12 @@ export const normalizeUnixSecondsTimestamp = (value: unknown): string | null => 
 };
 
 export const clampPercent = (value: unknown): number | null => {
+  // `Number(null)` and `Number('')` are both 0, so a bare finiteness check silently turns a missing
+  // percentage into "nothing used". Absent must stay absent — a provider that stopped reporting a
+  // window is not a provider at zero.
+  if (value === null || value === undefined || value === '' || typeof value === 'boolean') {
+    return null;
+  }
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) {
     return null;
