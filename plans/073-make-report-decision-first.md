@@ -1127,7 +1127,7 @@ ALL must hold:
 - [x] `bun x ultracite fix`, `bun run check`, `bun run lint`, `bun run typecheck`,
   `bun run test`, `bun run build`, and `git diff --check` all exit 0.
 - [x] No unrecorded files outside Scope are modified; the narrow operator-
-  authorized seam corrections are documented in D002, D009, and D011, and
+  authorized seam corrections are documented in D002, D009, D011, and D019, and
   `plans/README.md` is updated only after the accepted gate decision.
 
 ## STOP conditions

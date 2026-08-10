@@ -16,6 +16,7 @@ const MAX_DASHBOARD_METRIC_COLUMNS = 4;
 const MAX_ALIGNMENT_DRIFT_PX = 1;
 const MIN_CONTENT_ABOVE_FOLD_PX = 10;
 const MOBILE_VIEWPORT = { height: 844, width: 390 };
+const PERIOD_DIRECTION_PATTERN = /higher|lower/u;
 const MODEL_ANALYSIS_COLUMNS = [
   'Model',
   'API value',
@@ -81,11 +82,13 @@ for (const scenario of FIRST_READ_SCENARIOS) {
       const kpiBox = await kpi.boundingBox();
       const chartBox = await chart.boundingBox();
       const chartHeadingBox = await chart.getByRole('heading', { level: 3, name: 'Activity' }).boundingBox();
+      const chartPlotBox = await chart.locator('[data-report-range-part="chart"]').boundingBox();
       const navigationTop = navigationBox?.y ?? scenario.viewport.height - 64;
       expect((periodBox?.y ?? -1) + (periodBox?.height ?? 0)).toBeLessThanOrEqual(navigationTop);
       expect((kpiBox?.y ?? -1) + (kpiBox?.height ?? 0)).toBeLessThanOrEqual(navigationTop);
       expect(chartBox?.y ?? Number.POSITIVE_INFINITY).toBeLessThan(navigationTop);
       expect((chartHeadingBox?.y ?? -1) + (chartHeadingBox?.height ?? 0)).toBeLessThanOrEqual(navigationTop);
+      expect((chartPlotBox?.y ?? Number.POSITIVE_INFINITY) + 24).toBeLessThanOrEqual(navigationTop);
     }
 
     const screenshot = await page.screenshot({
@@ -152,13 +155,14 @@ test('keeps the four executive metrics aligned below a visually dominant KPI', a
 
 test('keeps partial pricing qualification visible without a disclosure', async ({ page }) => {
   await openHydratedReport(page);
+  const kpi = page.locator('[data-executive-kpi]');
+  await expect(kpi).not.toContainText(PERIOD_DIRECTION_PATTERN);
   await page
     .getByRole('region', { name: 'Report period' })
     .getByRole('button', { exact: true, name: 'All time' })
     .click();
   await waitForFocusedReportSettled(page);
 
-  const kpi = page.locator('[data-executive-kpi]');
   const coverage = page.locator('[data-executive-metrics] > div').filter({ hasText: 'Pricing coverage' });
   await expect(kpi).toContainText('Partially measured');
   await expect(kpi.locator('strong').first()).toContainText('≥');

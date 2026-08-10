@@ -179,7 +179,26 @@ describe('executive Overview model', () => {
       qualification: expect.stringContaining('400'),
       value: '2 / 3',
     });
+    expect(model.primary.comparison).toEqual({
+      delta: null,
+      explanation: null,
+      state: 'available',
+    });
     expect(model.insight).toBeNull();
+  });
+
+  test('does not infer an exact period delta from a partially measured previous period', () => {
+    const previousSummary = summary({
+      priceMeasurement: apiPriceMeasurement({ costKnown: false, freshTokens: 200, knownCost: 50 }),
+      totalCost: 50,
+    });
+    const model = buildExecutiveOverviewModel(modelInput({ previousSummary }));
+
+    expect(model.primary.comparison).toEqual({
+      delta: null,
+      explanation: null,
+      state: 'available',
+    });
   });
 
   test('uses the established all-time boundary instead of fabricating a comparison', () => {

@@ -106,7 +106,10 @@ const comparisonFor = (
 ): ExecutiveComparisonPresentation => {
   const state = metricComparisonStateFor(rangeMode, previousSummary);
   const delta =
-    previousSummary && previousSummary.totalCost > 0
+    previousSummary &&
+    summary.priceMeasurement.state !== 'partially measured' &&
+    previousSummary.priceMeasurement.state !== 'partially measured' &&
+    previousSummary.totalCost > 0
       ? {
           hint: `Previous period of equal length: ${fmtMoney(previousSummary.totalCost)}`,
           pct: ((summary.totalCost - previousSummary.totalCost) / previousSummary.totalCost) * 100,

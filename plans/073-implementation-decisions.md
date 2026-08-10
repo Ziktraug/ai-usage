@@ -309,3 +309,23 @@ evidence remain authoritative in the plan's Execution log.
   benchmark run. The final report must still disclose `90.999 ms` versus the
   original `79.6356 ms` ceiling, and future performance work must establish a
   new comparable baseline rather than silently widening this one.
+
+## D022 — Close the post-implementation review findings
+
+- **Decision**: on 2026-08-10, the operator requested implementation of the
+  review findings and thereby ratified D019's narrow shared-Popover lifecycle
+  extension. Period comparison is now omitted whenever current or previous
+  pricing coverage is partial. On mobile, the executive reading order becomes
+  KPI, Activity, then harness distribution so the real plot—not merely its
+  panel title—starts above the fixed navigation.
+- **Reason**: an exact percentage between incomplete API-value lower bounds can
+  imply a direction or magnitude the data does not prove. The former 390×844
+  assertion also checked only the Activity container and heading while the
+  actual plot remained below the fold.
+- **Consequence**: partial periods retain their visible pricing qualification
+  and omit the numeric comparison. Desktop keeps KPI/harness and Activity as two
+  columns; mobile prioritizes the trend evidence before the detailed harness
+  split. The browser gate measures at least the first 24 px of the actual plot
+  above mobile navigation. The optimized correction adds 116 gzip bytes to the
+  initial closure; `css-bundle.test.ts` records a named, bounded 128-byte
+  post-review allowance rather than hiding it in the baseline.

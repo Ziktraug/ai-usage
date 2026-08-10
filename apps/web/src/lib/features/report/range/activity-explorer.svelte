@@ -2,7 +2,7 @@
 <script lang="ts" module>
   import { css } from '@ai-usage/design-system/css';
 
-  const heading = css({ display: 'grid', gap: '3px' });
+  const heading = css({ display: 'grid', gap: '3px', order: { md: -2 } });
   const summaryRow = css({
     display: 'flex',
     flexWrap: 'wrap',
@@ -10,10 +10,11 @@
     gap: '8px',
     color: 'muted',
     fontSize: '12px',
+    order: { md: -1 },
   });
   const explorerContent = css({ display: 'grid', gap: '12px', pt: '12px' });
   const activityPanel = css({ display: 'grid', gap: '12px', p: { base: '14px', md: '18px' } });
-  const executiveMetricGroup = css({ border: 0, m: 0, minW: 0, p: 0 });
+  const executiveMetricGroup = css({ border: 0, m: 0, minW: 0, order: { md: -1 }, p: 0 });
   const executiveMetricButton = css({ minH: '44px' });
 </script>
 
@@ -420,6 +421,16 @@
     <h3 class={panelTitle} id="activity-title">Activity</h3>
     <p class={panelSub}>Daily evidence for the selected report period</p>
   </div>
+  <ActivityTimeline
+    {activeSeriesKeys}
+    {machineFreshnessStatus}
+    {onDimensionFilter}
+    {...(presentCampaignSeries ? { presentCampaignSeries } : {})}
+    {...(presentMachineSeries ? { presentMachineSeries } : {})}
+    {timeline}
+    {value}
+    {visibleRange}
+  />
   <div class={summaryRow}>
     <span>{chartSummary}</span>
     <span title={selectedMetricSummary.title ?? undefined}>{selectedMetricSummary.label}</span>
@@ -437,16 +448,6 @@
       </button>
     {/each}
   </fieldset>
-  <ActivityTimeline
-    {activeSeriesKeys}
-    {machineFreshnessStatus}
-    {onDimensionFilter}
-    {...(presentCampaignSeries ? { presentCampaignSeries } : {})}
-    {...(presentMachineSeries ? { presentMachineSeries } : {})}
-    {timeline}
-    {value}
-    {visibleRange}
-  />
   <details aria-label="Explore activity" class={timeChartOptions} data-report-range-part="activity-explorer">
     <summary class={timeChartOptionsSummary}>
       <span class={timeChartOptionsTitle}>Explore activity</span>

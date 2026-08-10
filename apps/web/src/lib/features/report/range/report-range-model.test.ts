@@ -140,7 +140,7 @@ test('wires pointer cancellation and lost capture into the activity explorer', a
 test('keeps the executive API value and Tokens toggle above advanced activity options', async () => {
   const source = await Bun.file(new URL('./activity-explorer.svelte', import.meta.url)).text();
   const topLevelToggle = source.indexOf('aria-label="Activity metric"');
-  const advancedDisclosure = source.indexOf('<details aria-label="Explore activity"');
+  const advancedDisclosure = source.indexOf('aria-label="Explore activity"');
 
   expect(topLevelToggle).toBeGreaterThan(-1);
   expect(advancedDisclosure).toBeGreaterThan(topLevelToggle);

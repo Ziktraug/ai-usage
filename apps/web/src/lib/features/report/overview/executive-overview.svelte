@@ -6,6 +6,7 @@
   const qualification = css({ color: 'muted', fontSize: '12px', lineHeight: 1.5, m: 0, maxW: '58ch' });
   const comparison = css({ color: 'ink', fontSize: '13px', fontWeight: 600, lineHeight: 1.45, m: 0 });
   const evidence = css({ display: 'grid', gap: '8px' });
+  const activityCell = css({ minW: 0, gridColumn: { lg: '2' }, gridRow: { lg: '1 / span 2' } });
   const groupList = css({ display: 'grid', gap: '2px', listStyle: 'none', m: 0, p: 0 });
   const groupRow = css({
     alignItems: 'center',
@@ -150,27 +151,26 @@
             <p class={comparison}>{comparisonText}</p>
           {/if}
         </div>
-
-        <div class={evidence}>
-          <!-- Naming the measure in the heading rather than in a caption below it: the caption cost
-               a line above the fold, and the plan requires the chart heading to stay within the
-               first 390x844 screen. -->
-          <h3 class={modelsTitle}>API value by harness</h3>
-          <ul class={groupList}>
-            {#each model.harnesses as harness (harness.group.key)}
-              <li class={groupRow}>
-                <span class={groupName}><HarnessBadge name={harness.group.label} /></span>
-                <span class={groupShare}>{harness.shareLabel}</span>
-                <strong class={groupValue} title={harness.value.title}>{harness.value.label}</strong>
-              </li>
-            {/each}
-          </ul>
-        </div>
       </section>
 
       {#if activity}
-        <ActivityExplorer {...activity} />
+        <div class={activityCell}>
+          <ActivityExplorer {...activity} />
+        </div>
       {/if}
+
+      <div class={evidence}>
+        <h3 class={modelsTitle}>API value by harness</h3>
+        <ul class={groupList}>
+          {#each model.harnesses as harness (harness.group.key)}
+            <li class={groupRow}>
+              <span class={groupName}><HarnessBadge name={harness.group.label} /></span>
+              <span class={groupShare}>{harness.shareLabel}</span>
+              <strong class={groupValue} title={harness.value.title}>{harness.value.label}</strong>
+            </li>
+          {/each}
+        </ul>
+      </div>
     </div>
 
     <dl class={metricStrip} data-executive-metrics>
