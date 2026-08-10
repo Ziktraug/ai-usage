@@ -53,7 +53,21 @@
 <script lang="ts">
   import { Popover } from '@ai-usage/design-system/svelte';
 
-  let { hint, label, value }: { hint?: string; label: string; value: string } = $props();
+  let {
+    hint,
+    label,
+    onHintExitComplete,
+    openHint,
+    onHintOpenChange,
+    value,
+  }: {
+    hint?: string;
+    label: string;
+    onHintExitComplete?: (label: string) => void;
+    openHint?: string | null;
+    onHintOpenChange?: (label: string, open: boolean) => void;
+    value: string;
+  } = $props();
 </script>
 
 <div class={detailItem} data-detail-item={label}>
@@ -62,6 +76,9 @@
     {#if hint}
       <Popover
         contentClass={popoverContent}
+        onExitComplete={() => onHintExitComplete?.(label)}
+        onOpenChange={(open) => onHintOpenChange?.(label, open)}
+        open={openHint === undefined ? undefined : openHint === label}
         triggerAriaLabel={`About ${label}`}
         triggerClass={detailInfoButton}
         triggerTitle={`About ${label}`}

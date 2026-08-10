@@ -71,6 +71,9 @@
   let presentedRow = $state<SessionPresentationRow | null>(null);
   let presentedTarget = $state<SessionDetailControllerSnapshot['target']>(null);
   let drawerWasOpen = false;
+  let openHint = $state<string | null>(null);
+  const hintExitPromises = new Map<string, Promise<void>>();
+  const hintExitResolvers = new Map<string, () => void>();
   const drawerOpen = $derived(snapshot.row !== null && snapshot.target !== null);
   const row = $derived(snapshot.row ?? presentedRow);
   const target = $derived(snapshot.target ?? presentedTarget);
@@ -143,9 +146,14 @@
 
   $effect(() => {
     if (snapshot.row && snapshot.target) {
+      if (presentedRow?.rowId !== snapshot.row.rowId) {
+        openHint = null;
+      }
       presentedRow = snapshot.row;
       presentedTarget = snapshot.target;
+      return;
     }
+    openHint = null;
   });
 
   const visibleSessionTrigger = (): HTMLElement | null => {
@@ -186,6 +194,42 @@
   const closeDrawer = (): void => {
     controller.close();
   };
+
+  const handleHintOpenChange = (label: string, open: boolean): void => {
+    if (open) {
+      openHint = label;
+      if (!hintExitPromises.has(label)) {
+        hintExitPromises.set(
+          label,
+          new Promise((resolve) => {
+            hintExitResolvers.set(label, resolve);
+          }),
+        );
+      }
+      return;
+    }
+    if (openHint === label) {
+      openHint = null;
+    }
+  };
+
+  const handleHintExitComplete = (label: string): void => {
+    hintExitResolvers.get(label)?.();
+    hintExitResolvers.delete(label);
+    hintExitPromises.delete(label);
+  };
+
+  const closeDrawerAfterHints = async (): Promise<void> => {
+    openHint = null;
+    await Promise.all(hintExitPromises.values());
+    closeDrawer();
+  };
+
+  const detailHintControl = $derived({
+    onHintExitComplete: handleHintExitComplete,
+    onHintOpenChange: handleHintOpenChange,
+    openHint,
+  });
 
   const toggleAnalysis = async (): Promise<void> => {
     await controller.toggleAnalysis();
@@ -253,7 +297,7 @@
         <button
           aria-label="Close session details"
           class={drawerClose}
-          onclick={closeDrawer}
+          onclick={closeDrawerAfterHints}
           type="button"
           bind:this={closeButton}
         >
@@ -295,44 +339,59 @@
         {@render campaignSlot()}
       {/if}
       <div class={drawerGrid}>
-        <DrawerDetailItem label="Started" value={fmtDate(row.date)} />
-        <DrawerDetailItem label="Ended" value={fmtDate(row.endDate)} />
+        <DrawerDetailItem {...detailHintControl} label="Started" value={fmtDate(row.date)} />
+        <DrawerDetailItem {...detailHintControl} label="Ended" value={fmtDate(row.endDate)} />
         <DrawerDetailItem
+          {...detailHintControl}
           hint={`Exact token count: ${fmtNum(row.tokenTotal)}`}
           label="Total tokens"
           value={fmtCompact(row.tokenTotal)}
         />
-        <DrawerDetailItem hint={rtkSavedTitle(row)} label="RTK savings" value={rtkSavedLabel(row)} />
         <DrawerDetailItem
+          {...detailHintControl}
+          hint={rtkSavedTitle(row)}
+          label="RTK savings"
+          value={rtkSavedLabel(row)}
+        />
+        <DrawerDetailItem
+          {...detailHintControl}
           hint={apiValuePresentation(row).title}
           label="API value"
           value={apiValuePresentation(row).label}
         />
         <DrawerDetailItem
+          {...detailHintControl}
           hint="Out-of-pocket spend — $0.00 means covered by a subscription"
           label="Actual cost"
           value={fmtMoney(row.costActual)}
         />
         <DrawerDetailItem
+          {...detailHintControl}
           hint="Cursor export value covered by the subscription quota"
           label="Sub value"
           value={fmtMoney(row.costQuota)}
         />
-        <DrawerDetailItem label="Calls" value={fmtNum(row.calls)} />
-        <DrawerDetailItem label="Turns" value={row.usageUnavailable ? 'Unavailable' : fmtNum(row.turns)} />
-        <DrawerDetailItem label="Tools" value={fmtNum(row.tools)} />
+        <DrawerDetailItem {...detailHintControl} label="Calls" value={fmtNum(row.calls)} />
         <DrawerDetailItem
+          {...detailHintControl}
+          label="Turns"
+          value={row.usageUnavailable ? 'Unavailable' : fmtNum(row.turns)}
+        />
+        <DrawerDetailItem {...detailHintControl} label="Tools" value={fmtNum(row.tools)} />
+        <DrawerDetailItem
+          {...detailHintControl}
           hint={sessionDurationSemantics(row.source?.harnessKey, target.kind === 'campaign-root').metricHint}
           label={sessionDurationSemantics(row.source?.harnessKey, target.kind === 'campaign-root').metricLabel}
           value={fmtDuration(row.durationMs)}
         />
-        <DrawerDetailItem label="Lines" value={lineDeltaLabel(row)} />
-        <DrawerDetailItem label="Subagent" value={row.subagent ? 'Yes' : 'No'} />
+        <DrawerDetailItem {...detailHintControl} label="Lines" value={lineDeltaLabel(row)} />
+        <DrawerDetailItem {...detailHintControl} label="Subagent" value={row.subagent ? 'Yes' : 'No'} />
         {#if row.partial}
-          <DrawerDetailItem hint={partialHint} label="Partial" value="Yes" />
+          <DrawerDetailItem {...detailHintControl} hint={partialHint} label="Partial" value="Yes" />
         {/if}
         {#if row.usageUnavailable}
           <DrawerDetailItem
+            {...detailHintControl}
             hint="Session came from prompt history, but detailed local token counters are missing"
             label="Usage data"
             value="Unavailable"
@@ -340,6 +399,7 @@
         {/if}
         {#if row.ambiguous}
           <DrawerDetailItem
+            {...detailHintControl}
             hint="Multiple local Cursor sessions matched the same export cluster; totals are best-effort"
             label="Reconciliation"
             value="Ambiguous"

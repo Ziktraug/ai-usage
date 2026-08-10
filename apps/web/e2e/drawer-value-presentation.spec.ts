@@ -1,10 +1,11 @@
 import { expect, openHydratedReport, reportViewsFor, test, waitForFocusedReportSettled } from './browser-test';
 
-const TOP_SESSION_PATTERN = /Top session/;
+const OPEN_BUILD_REPORT_UI_PATTERN = /^Open details for Build report UI\./;
 
 test('uses one token magnitude and accessible drawer explanations', async ({ page }) => {
   await openHydratedReport(page, '/?origin=%5B%5D');
-  await page.getByRole('button', { name: TOP_SESSION_PATTERN }).click();
+  const topSessionTrigger = page.getByRole('button', { name: OPEN_BUILD_REPORT_UI_PATTERN });
+  await topSessionTrigger.click();
 
   const drawer = page.getByRole('dialog', { name: 'Session details' });
   const totalTokens = drawer.locator('[data-detail-item="Total tokens"]');
@@ -25,14 +26,19 @@ test('uses one token magnitude and accessible drawer explanations', async ({ pag
   await expect(taskOpenHelp).toHaveAttribute('aria-haspopup', 'dialog');
   await taskOpenHelp.focus();
   await taskOpenHelp.press('Enter');
-  await expect(
-    page.getByText(
-      'Sum of recorded Codex task-open spans. This includes time waiting for tools and subagents; it is not model runtime.',
-    ),
-  ).toBeVisible();
+  const taskOpenExplanation = page.getByText(
+    'Sum of recorded Codex task-open spans. This includes time waiting for tools and subagents; it is not model runtime.',
+  );
+  await expect(taskOpenExplanation).toBeVisible();
 
   await drawer.getByRole('button', { name: 'Close session details' }).click();
-  await page.getByRole('region', { name: 'Date range' }).getByRole('button', { exact: true, name: 'All' }).click();
+  await expect(drawer).not.toBeVisible();
+  await expect(taskOpenExplanation).not.toBeVisible();
+  await expect(topSessionTrigger).toBeFocused();
+  await page
+    .getByRole('region', { name: 'Report period' })
+    .getByRole('button', { exact: true, name: 'All time' })
+    .click();
   await waitForFocusedReportSettled(page);
   await reportViewsFor(page).getByRole('link', { exact: true, name: 'Sessions' }).click();
   await waitForFocusedReportSettled(page);

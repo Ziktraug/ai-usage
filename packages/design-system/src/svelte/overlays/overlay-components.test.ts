@@ -39,9 +39,18 @@ describe('Svelte overlay components', () => {
     expect(source).toContain('prefers-reduced-motion: reduce');
   });
 
-  test('Popover remains lazy, portalled, dismissible, and positioned with a four-pixel gutter', async () => {
+  test('Popover remains lazy, portalled, dismissible, and exposes its exit lifecycle', async () => {
     const source = await readOverlay('popover.svelte');
-    expect(source).toContain('lazyMount positioning={{ gutter: 4 }} unmountOnExit');
+    for (const contract of [
+      'lazyMount',
+      '{onExitComplete}',
+      'onOpenChange={handleOpenChange}',
+      '{open}',
+      'positioning={{ gutter: 4 }}',
+      'unmountOnExit',
+    ]) {
+      expect(source).toContain(contract);
+    }
     expect(source).toContain('<Portal>');
     expect(source).toContain('type="button"');
     expect(source).toContain('triggerAriaLabel');

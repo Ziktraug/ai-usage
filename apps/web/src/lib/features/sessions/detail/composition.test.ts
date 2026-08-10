@@ -30,6 +30,9 @@ describe('P4 stable Drawer composition', () => {
     expect(drawer).toContain("document.querySelectorAll<HTMLElement>('[data-session-row-id]')");
     expect(drawer).toContain('candidate.dataset.sessionRowId !== row.rowId');
     expect(drawer).toContain('candidate.getClientRects().length === 0');
+    expect(drawer).toContain('openHint = null');
+    expect(drawer).toContain('await Promise.all(hintExitPromises.values())');
+    expect(drawer).toContain('onclick={closeDrawerAfterHints}');
   });
 
   test('drives one responsive Drawer as a modal sheet below md and a non-modal panel at md', () => {
