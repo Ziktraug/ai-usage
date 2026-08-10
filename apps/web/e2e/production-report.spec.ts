@@ -4,6 +4,7 @@ import {
   HARNESS_FIXTURE_PRIVATE_PROMPT_SENTINEL,
   HARNESS_FIXTURE_PROVIDER_STDERR_SENTINEL,
 } from '@ai-usage/local-machine/testing/harness-home';
+import { collectionSourceDefinitions } from '@ai-usage/report-core';
 import type { Request } from '@playwright/test';
 import { expect, reportViewsFor, test, waitForFocusedReportSettled } from './browser-test';
 import { capturePlan073Smoke } from './plan073-smoke';
@@ -19,7 +20,9 @@ const FOCUSED_OVERVIEW_FINGERPRINT_PREFIX = 'focused-overview-v1:';
 const PROJECT_COLUMN_PATTERN = /Project/;
 const SOURCES_URL_PATTERN = /\/sources$/;
 const SESSION_PAGE_PATH = '/rpc/session/page';
-const EXPECTED_ENABLED_SOURCE_COUNT = 7;
+const EXPECTED_ENABLED_SOURCE_COUNT = collectionSourceDefinitions.filter(
+  (definition) => definition.defaultEnabled,
+).length;
 const INITIAL_HTML_SECRET_SENTINELS = [
   HARNESS_FIXTURE_PRIVATE_PROMPT_SENTINEL,
   HARNESS_FIXTURE_CREDENTIAL_REMOTE_SENTINEL,

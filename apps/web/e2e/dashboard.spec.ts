@@ -288,7 +288,7 @@ test('shows the executive answer, evidence, four metrics, and investigation in o
   const investigation = page.getByRole('heading', { level: 2, name: 'Investigate' });
   await expect(kpi).toBeVisible();
   await expect(kpi).toContainText('Estimated API-equivalent value');
-  await expect(kpi).toContainText('API value by harness');
+  await expect(page.getByRole('heading', { level: 3, name: 'API value by harness' })).toBeVisible();
   await expect(chart).toBeVisible();
   await expect(metrics.locator(':scope > div')).toHaveCount(4);
   await expect(metrics.locator('dt')).toHaveText([
