@@ -1209,6 +1209,46 @@ Fill this during implementation; do not pre-claim results.
   `195.7 ms`, sort `206.458 ms`, heap delta `25,537,480 B`, cumulative
   Session responses `11,026,467 B`, maximum page `441,050 B`. SHA-256:
   `215f9b28317f1810fd4ea98910df370c0a1b619e4129145555e79fb3badffe9f`.
-- **Final measurement deltas**: pending
-- **Final snapshot names and viewports**: pending
-- **Final green SHA**: pending
+- **Final functional and quality matrix**: implementation SHA `3f397209` passes
+  `bun run check`, `bun run lint`, `bun run typecheck`, the complete package
+  test matrix, `bun run build`, client-manifest, production/dev/loopback
+  boundaries, CSS/source budgets, and `git diff --check`. Browser results are
+  `135/135` ordinary E2E, `12/12` production E2E, `2/2` production Session
+  scale, `1/1` demo isolation, and `4/4` visual comparisons. Axe covers
+  Overview, Sessions, Analysis, and the open Drawer in both themes; keyboard,
+  focus return, reduced motion, retained refresh, empty/error/pricing states,
+  and the required desktop/mobile geometry are green. Independent QA review of
+  the integrated DOM, overlays, and four PNGs is green.
+- **Final destination/bundle measurements**: the confirmed `/` median is raw
+  `907,217 B`, gzip `283,795 B` (`+6,269 B`), Brotli `245,531 B`, hydration
+  `61,584 B` (`+4.51%`), first useful content `149.4 ms` (`+1.15%`), first
+  usable render `344.2 ms` (`-3.69%`), TTFB `138.34 ms` (`+2.14%`), and layout
+  shift `0.001127`; all seven samples remain at `4` pre-hydration and `0`
+  post-hydration business RPCs. The bundle map contains `53` chunks, `35`
+  initial chunks, and `0` duplicated Ark/Zag modules. SHA-256: destination
+  `c5dd240aeb2dc5f570c8ea116f0a11bcaf6cff36f9cd3e1b3d4417fdc0ecf657`,
+  bundle JSON `6d2d474ba0a1f8f1cdebe108edca93341173d4665ce90759bbdb72697fccf416`,
+  bundle Markdown `a58787e6c206d224d739f9345d011bffb77e4f10d2062548ecb67a530557a00a`.
+  Analysis layout shift is a recorded, non-budgeted notice: median about
+  `0.0098`, with every observed value below `0.02`.
+- **Final Session measurement and blocker**:
+  `/tmp/ai-usage-plan073-session-scroll-final.json` preserves `5,000` unique
+  identities, `4,999` campaigns, `25` desktop pages (`26` total), `0` missing,
+  `0` duplicate, and every response/DOM ceiling. Its medians are desktop
+  `3,306.426 ms` (`-13.14%`), mobile `90.999 ms` (`+25.70%`), initial
+  `430.047 ms` (`-6.58%`), filter `193.942 ms` (`-0.90%`), and sort
+  `223.602 ms` (`+8.30%`). SHA-256:
+  `ba96d9e739134438d4e019f3751e81ddea8109e8103a536709271f18ed9ebbb1`.
+  The mobile median exceeds the locked `79.6356 ms` ceiling. Three complete
+  cohorts and focused paired measurements are retained in `/tmp`; no
+  product-side candidate correlated with the runner-level variance. This is a
+  STOP condition, so the plan and index remain `IN PROGRESS`.
+- **Final snapshot names and viewports**:
+  `overview-desktop-linux.png` at 1440×1000 light,
+  `overview-narrow-linux.png` at 390×844 dark,
+  `overview-session-drawer-linux.png` at 390×844 light, and
+  `skills-desktop-linux.png` at 1280×900 light. Exactly four PNGs and four
+  `toHaveScreenshot` calls remain.
+- **Final green SHA**: not assigned. `3f397209` is the functionally and visually
+  green implementation SHA, but the Session mobile performance gate above
+  prevents `DONE` and the final plan/documentation completion commit.
