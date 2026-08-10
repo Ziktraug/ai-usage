@@ -28,9 +28,14 @@
     pt: '12px',
     '& dd, & dt': { m: 0 },
   });
-  const metricValue = css({ fontSize: { base: '22px', md: '24px' }, fontWeight: 650, lineHeight: 1.1 });
+  const metricValue = css({
+    textStyle: 'numeric',
+    fontSize: { base: '22px', md: '24px' },
+    fontWeight: 650,
+    lineHeight: 1.1,
+  });
   const insight = css({
-    borderInlineStart: '3px solid token(colors.accent)',
+    borderInlineStart: '3px solid token(colors.lineStrong)',
     color: 'ink',
     display: 'grid',
     fontSize: '13px',
@@ -51,6 +56,7 @@
   const action = css({ minH: '44px', textDecoration: 'none' });
   const emptyState = css({ alignContent: 'center', display: 'grid', gap: '8px', justifyItems: 'start', minH: '180px' });
   const emptyTitle = css({ fontSize: '20px', fontWeight: 650, m: 0 });
+  const srOnly = css({ srOnly: true });
 </script>
 
 <script lang="ts">
@@ -132,7 +138,8 @@
     {/if}
   </section>
 {:else}
-  <section aria-label="Executive overview" class={editorialSection}>
+  <section aria-labelledby="executive-overview-title" class={editorialSection}>
+    <h2 class={srOnly} id="executive-overview-title">Executive overview</h2>
     <div class={executiveGrid}>
       <section aria-label="Estimated API-equivalent value" class={answer} data-executive-kpi>
         <div class={answerHeading} {...previewAttributes}>
@@ -145,7 +152,10 @@
         </div>
 
         <div class={evidence}>
-          <h2 class={modelsTitle}>By harness</h2>
+          <!-- Naming the measure in the heading rather than in a caption below it: the caption cost
+               a line above the fold, and the plan requires the chart heading to stay within the
+               first 390x844 screen. -->
+          <h3 class={modelsTitle}>API value by harness</h3>
           <ul class={groupList}>
             {#each model.harnesses as harness (harness.group.key)}
               <li class={groupRow}>
@@ -187,7 +197,7 @@
     <section aria-labelledby="top-models-title" class={cx(editorialSection, sectionDivider)}>
       <div class={modelsHeader}>
         <div>
-          <h2 class={modelsTitle} id="top-models-title">Top models</h2>
+          <h3 class={modelsTitle} id="top-models-title">Top models</h3>
           <p class={executiveCaption}>Up to five models by known API-equivalent value.</p>
         </div>
         <a class={cx(ghostButton, action)} href={modelsHref} onclick={openModels}>Open Analysis → Models</a>

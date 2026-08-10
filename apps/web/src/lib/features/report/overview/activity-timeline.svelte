@@ -50,6 +50,29 @@
     backgroundImage: 'repeating-linear-gradient(135deg, transparent 0 2px, token(colors.lineStrong) 2px 3px)',
   });
   const gapEmpty = css({ flex: '1 1 0', minW: 0 });
+  // The bars are scaled against the tallest bucket in the window, so without a marked peak the
+  // chart shows shape but no magnitude. Two references — this rule and the plot's bottom border —
+  // are enough to read a value at this size; a full axis would not fit the compact geometry.
+  const peakRule = css({
+    position: 'absolute',
+    insetInline: '8px',
+    top: '8px',
+    borderTop: '1px dashed token(colors.line)',
+    pointerEvents: 'none',
+  });
+  const peakValue = css({
+    position: 'absolute',
+    top: '11px',
+    insetInlineEnd: '10px',
+    // The tallest bucket sits under this label whenever the peak falls at the right edge, so the
+    // text needs its own ground to stay readable over a series fill.
+    px: '3px',
+    bg: 'surface',
+    color: 'muted',
+    fontSize: '10px',
+    lineHeight: 1,
+    pointerEvents: 'none',
+  });
   // No `bg` here: the series swatch owns the fill, and a base `bg` atom would
   // race it on stylesheet order rather than losing to it.
   const segment = css({ minH: '1px', borderTop: '1px solid token(colors.surface)' });
@@ -113,7 +136,7 @@
   import { tick as afterDomUpdate, onMount } from 'svelte';
   import type { ResolvedTimelineMetric, TimelineValue } from '../../../../overview-model';
   import type { TimeRangeIndexRange } from '../../../../time-range-control-state';
-  import { fmtDateOnly, fmtPct } from '../../../foundation/presentation/format';
+  import { fmtCompact, fmtDateOnly, fmtMoney, fmtPct } from '../../../foundation/presentation/format';
   import {
     type CampaignSeriesPresenter,
     type MachineSeriesPresenter,
@@ -210,6 +233,13 @@
   const readoutData = $derived(
     timeline && inspectedIndex !== null ? timelineReadoutFor(timeline, value, inspectedIndex, presentedSeries) : null,
   );
+
+  const peakLabel = $derived.by((): string => {
+    if (value === 'share') {
+      return '100%';
+    }
+    return metric === 'cost' ? fmtMoney(windowMaximum) : fmtCompact(windowMaximum);
+  });
 
   const heightFor = (barTotal: number, amount: number): number => {
     if (value === 'share') {
@@ -381,6 +411,8 @@
       {/if}
     </ul>
     <div class={plot} data-bucket-index={inspectedIndex ?? 0} data-report-range-part="chart">
+      <span aria-hidden="true" class={peakRule} data-timeline-peak-rule></span>
+      <span aria-hidden="true" class={peakValue} data-timeline-peak-value>{peakLabel}</span>
       {#each monthTicks as monthTick (timelineMonthTickId(monthTick))}
         <span
           aria-hidden="true"

@@ -103,7 +103,7 @@
       <TokenAnatomy summary={result.summary} />
       <section aria-labelledby="advanced-analysis-title" class={advancedAnalysis} data-overview-advanced-analysis>
         <header class={advancedAnalysisHeader}>
-          <h2 id="advanced-analysis-title">Advanced analysis</h2>
+          <h3 id="advanced-analysis-title">Advanced analysis</h3>
           <span class={advancedAnalysisHeaderText}
             >{result.view.advancedSummary?.summary ?? 'Session shape and weekly/hourly activity'}</span
           >

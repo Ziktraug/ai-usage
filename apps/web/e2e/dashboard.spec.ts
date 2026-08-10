@@ -39,7 +39,7 @@ const openHydratedReport = async (page: Page, url = '/'): Promise<Awaited<Return
 };
 const overviewTopSessionTrigger = (page: Page) =>
   page
-    .getByRole('heading', { level: 2, name: 'Top sessions' })
+    .getByRole('heading', { level: 3, name: 'Top sessions' })
     .locator('xpath=ancestor::section[1]')
     .getByRole('button')
     .first();
@@ -288,7 +288,7 @@ test('shows the executive answer, evidence, four metrics, and investigation in o
   const investigation = page.getByRole('heading', { level: 2, name: 'Investigate' });
   await expect(kpi).toBeVisible();
   await expect(kpi).toContainText('Estimated API-equivalent value');
-  await expect(kpi).toContainText('By harness');
+  await expect(kpi).toContainText('API value by harness');
   await expect(chart).toBeVisible();
   await expect(metrics.locator(':scope > div')).toHaveCount(4);
   await expect(metrics.locator('dt')).toHaveText([
@@ -316,8 +316,8 @@ test('shows the executive answer, evidence, four metrics, and investigation in o
   expect(readingOrder).toEqual([...readingOrder].sort((left, right) => left - right));
 
   const advancedSummary = page.locator('summary').filter({ hasText: 'Advanced analysis' });
-  const punchcard = page.getByRole('heading', { level: 3, name: 'Punchcard' });
-  await expect(page.getByRole('heading', { level: 2, name: 'Advanced analysis' })).toBeVisible();
+  const punchcard = page.getByRole('heading', { level: 4, name: 'Punchcard' });
+  await expect(page.getByRole('heading', { level: 3, name: 'Advanced analysis' })).toBeVisible();
   await expect(advancedSummary).toHaveCount(0);
   await expect(punchcard).toBeVisible();
   await expect(page.getByText('Punchcard data', { exact: true })).toHaveCount(0);
@@ -552,7 +552,7 @@ test('starts sessions with focused work columns and switches metric presets', as
   expect(Math.round((await advancedColumns.boundingBox())?.height ?? 0)).toBe(30);
   await advancedColumns.click();
   await expect(page.getByText('7 of 25 columns shown', { exact: true })).toBeVisible();
-  await expect(page.getByRole('checkbox', { name: 'RTK savings' })).toHaveCount(0);
+  await expect(page.getByRole('checkbox', { name: 'RTK token savings' })).toHaveCount(0);
   await page.keyboard.press('Escape');
 
   await page.setViewportSize({ height: 1000, width: 1440 });
@@ -701,7 +701,7 @@ test('keeps the Top sessions panel readable without horizontal overflow at deskt
   await openHydratedReport(page);
 
   const topSessionsPanel = page
-    .getByRole('heading', { level: 2, name: 'Top sessions' })
+    .getByRole('heading', { level: 3, name: 'Top sessions' })
     .locator('xpath=ancestor::section[1]');
   await expect(topSessionsPanel).toBeVisible();
   expect(await topSessionsPanel.evaluate((element) => element.scrollWidth)).toBeLessThanOrEqual(

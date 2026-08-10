@@ -80,7 +80,7 @@ for (const scenario of FIRST_READ_SCENARIOS) {
       const periodBox = await period.boundingBox();
       const kpiBox = await kpi.boundingBox();
       const chartBox = await chart.boundingBox();
-      const chartHeadingBox = await chart.getByRole('heading', { level: 2, name: 'Activity' }).boundingBox();
+      const chartHeadingBox = await chart.getByRole('heading', { level: 3, name: 'Activity' }).boundingBox();
       const navigationTop = navigationBox?.y ?? scenario.viewport.height - 64;
       expect((periodBox?.y ?? -1) + (periodBox?.height ?? 0)).toBeLessThanOrEqual(navigationTop);
       expect((kpiBox?.y ?? -1) + (kpiBox?.height ?? 0)).toBeLessThanOrEqual(navigationTop);
@@ -253,7 +253,7 @@ test('keeps pricing coverage textual without presenting actual spend or subscrip
 test('renders Token anatomy as four exact definition rows without a segmented bar', async ({ page }) => {
   await page.goto('/');
 
-  const anatomy = page.getByRole('heading', { level: 2, name: 'Token anatomy' }).locator('xpath=../..');
+  const anatomy = page.getByRole('heading', { level: 3, name: 'Token anatomy' }).locator('xpath=../..');
   const rows = anatomy.locator('[data-token-anatomy-row]');
   await expect(rows).toHaveCount(4);
   await expect(anatomy.getByRole('img', { name: 'Token anatomy' })).toHaveCount(0);
@@ -308,7 +308,7 @@ test('uses compact circular Punchcard marks inside accessible targets with a low
 
   const advancedAnalysis = page.locator('[data-overview-advanced-analysis]');
   const punchcardPanel = page
-    .getByRole('heading', { level: 3, name: 'Punchcard' })
+    .getByRole('heading', { level: 4, name: 'Punchcard' })
     .locator('xpath=ancestor::section[1]');
   const punchcardHeader = punchcardPanel.locator(':scope > header');
   const punchcardKey = page.locator('[data-punchcard-intensity-key]');

@@ -149,7 +149,9 @@ test('uses one report range for the dashboard and activity chart', async ({ page
 
   const chartOptions = activityExplorerFor(page);
   await expect(chartOptions).not.toHaveAttribute('open', '');
-  await expect(chartOptions.getByText('Harness · Day · Estimated API-equivalent value', { exact: true })).toBeVisible();
+  await expect(
+    activityFor(page).getByText('Harness · Day · Estimated API-equivalent value', { exact: true }),
+  ).toBeVisible();
   await expect(chartOptions.getByText('Group by', { exact: true })).not.toBeVisible();
 
   await chartOptions.locator('summary').click();
@@ -422,7 +424,9 @@ test('changes every chart option from its segmented controls', async ({ page }) 
     await chartOptions.getByRole('radio', { exact: true, name: option }).click();
     await expect(chartOptions.getByRole('radio', { exact: true, name: option })).toBeChecked();
   }
-  await expect(chartOptions.getByText('Harness · Day · Estimated API-equivalent value', { exact: true })).toBeVisible();
+  await expect(
+    activityFor(page).getByText('Harness · Day · Estimated API-equivalent value', { exact: true }),
+  ).toBeVisible();
 });
 
 test('groups the timeline by campaign, machine, and origin with matching legends', async ({ page }) => {
@@ -432,20 +436,18 @@ test('groups the timeline by campaign, machine, and origin with matching legends
   const chartOptions = await openActivityExplorer(page);
 
   await chartOptions.getByRole('radio', { exact: true, name: 'Campaign' }).click();
-  await expect(
-    chartOptions.getByText('Campaign · Day · Estimated API-equivalent value', { exact: true }),
-  ).toBeVisible();
+  await expect(activity.getByText('Campaign · Day · Estimated API-equivalent value', { exact: true })).toBeVisible();
   await expect(activity.getByTitle('Build report UI', { exact: true })).toContainText('Build report UI');
   await expect(activity.getByTitle('Inspect OpenCode root', { exact: true })).toContainText('Inspect OpenCode root');
 
   await chartOptions.getByRole('radio', { exact: true, name: 'Machine' }).click();
-  await expect(chartOptions.getByText('Machine · Day · Estimated API-equivalent value', { exact: true })).toBeVisible();
+  await expect(activity.getByText('Machine · Day · Estimated API-equivalent value', { exact: true })).toBeVisible();
   await expect(activity.getByTitle('Filter by Fixture Machine · Stale')).toContainText('Fixture Machine · Stale');
   await expect(activity.getByTitle('Unknown machine')).toContainText('Unknown machine');
 
   await chartOptions.getByRole('radio', { exact: true, name: 'Sessions' }).click();
   await chartOptions.getByRole('radio', { exact: true, name: 'Origin' }).click();
-  await expect(chartOptions.getByText('Origin · Day · Sessions', { exact: true })).toBeVisible();
+  await expect(activity.getByText('Origin · Day · Sessions', { exact: true })).toBeVisible();
   await expect(activity.getByRole('button', { name: HUMAN_LEGEND_PATTERN })).toContainText('Human');
   await expect(activity.getByRole('button', { name: DELEGATED_LEGEND_PATTERN })).toContainText('Delegated');
 });

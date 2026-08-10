@@ -417,7 +417,7 @@
   data-executive-chart
 >
   <div class={heading}>
-    <h2 class={panelTitle} id="activity-title">Activity</h2>
+    <h3 class={panelTitle} id="activity-title">Activity</h3>
     <p class={panelSub}>Daily evidence for the selected report period</p>
   </div>
   <div class={summaryRow}>
@@ -450,7 +450,9 @@
   <details aria-label="Explore activity" class={timeChartOptions} data-report-range-part="activity-explorer">
     <summary class={timeChartOptionsSummary}>
       <span class={timeChartOptionsTitle}>Explore activity</span>
-      <span class={timeChartOptionsCurrent}>{chartSummary}</span>
+      <!-- The current dimension/interval/metric already reads above the chart; repeating it here
+           would spend the disclosure label on something the reader can see. Name what is inside. -->
+      <span class={timeChartOptionsCurrent}>Grouping, interval, metric, exact dates</span>
     </summary>
     <div class={explorerContent}>
       <div class={summaryRow}>

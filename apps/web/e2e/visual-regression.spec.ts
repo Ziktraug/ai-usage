@@ -223,7 +223,7 @@ test('matches the initial narrow dark Overview at 390x844', async ({ page }) => 
   const { chart, kpi, period } = await expectDecisionFirstOverviewAtTop(page);
 
   const mobileNavigation = page.locator('[data-app-navigation="mobile"]');
-  const chartHeading = chart.getByRole('heading', { level: 2, name: 'Activity' });
+  const chartHeading = chart.getByRole('heading', { level: 3, name: 'Activity' });
   await expect(mobileNavigation).toBeVisible();
   await expect(chartHeading).toBeVisible();
   const navigationTop = await mobileNavigation.evaluate((element) => Math.floor(element.getBoundingClientRect().top));
@@ -267,7 +267,7 @@ test('matches the mobile light session drawer at 390x844', async ({ page }) => {
   await openStableOverview(page);
   await expectViewportProfile(page, NARROW_VIEWPORT, 'light');
   await page
-    .getByRole('heading', { level: 2, name: 'Top sessions' })
+    .getByRole('heading', { level: 3, name: 'Top sessions' })
     .locator('xpath=ancestor::section[1]')
     .getByRole('button')
     .first()

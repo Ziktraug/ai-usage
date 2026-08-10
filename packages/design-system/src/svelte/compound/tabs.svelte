@@ -8,7 +8,12 @@
   });
   const tabsList = css({
     display: 'flex',
-    flexWrap: 'wrap',
+    // A wrapped strip leaves the shared bottom rule under the second row while the active underline
+    // stays on the first, which reads as two tab bars. Below `md` keep one row and scroll it.
+    flexWrap: { base: 'nowrap', md: 'wrap' },
+    overflowX: { base: 'auto', md: 'visible' },
+    // Room for the triggers' -1px pull, which an auto overflow context would otherwise clip.
+    pb: '1px',
     gap: '0 20px',
     borderBottom: '1px solid token(colors.line)',
   });

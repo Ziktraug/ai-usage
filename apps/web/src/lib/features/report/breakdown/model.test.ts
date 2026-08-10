@@ -132,7 +132,7 @@ describe('Models analysis projection', () => {
       {
         label: 'partial-zero',
         priceState: 'partially measured',
-        pricingCoverageLabel: '0 / 1 · 0.0%',
+        pricingCoverageLabel: '0 / 1 · 0%',
         pricingQualification: 'Partially measured · 60 unpriced fresh tokens',
         value: { label: '—', status: 'unknown' },
         valuePerMillion: { label: '≥ $0.00', status: 'lower-bound' },

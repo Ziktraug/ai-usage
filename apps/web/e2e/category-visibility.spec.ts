@@ -75,7 +75,7 @@ test('keeps every populated harness and machine visible with default dimension f
   const sessionsRadio = chartOptions.getByRole('radio', { exact: true, name: 'Sessions' });
   await sessionsRadio.click();
   await expect(sessionsRadio).toBeChecked();
-  await expect(chartOptions.getByText('Machine · Day · Sessions', { exact: true })).toBeVisible();
+  await expect(activity.getByText('Machine · Day · Sessions', { exact: true })).toBeVisible();
 
   const machineFilter = page.getByRole('combobox', { name: 'Filter by machine' });
   await machineFilter.click();

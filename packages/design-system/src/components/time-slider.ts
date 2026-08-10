@@ -151,6 +151,9 @@ export const timeSliderBrushColumn = css({
   display: 'grid',
   gap: '6px',
   minW: 0,
+  // The handles are centred on their position, so half of their 44px target sits outside the track.
+  // This gutter keeps that half inside the panel instead of letting the end handle lose it.
+  px: '22px',
 });
 
 export const timeSliderBrushTrack = css({

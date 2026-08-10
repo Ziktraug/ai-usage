@@ -346,7 +346,7 @@ test('records destination request counts and report DOM identity', async ({ page
   await views.getByRole('link', { exact: true, name: 'Sessions' }).click();
   await expect(page.locator('[data-session-surface="desktop"]')).toBeVisible();
   await views.getByRole('link', { exact: true, name: 'Overview' }).click();
-  await expect(page.getByRole('heading', { level: 2, name: 'Advanced analysis' })).toBeVisible();
+  await expect(page.getByRole('heading', { level: 3, name: 'Advanced analysis' })).toBeVisible();
 
   await expect(workspace).toHaveAttribute('data-plan-069-workspace', 'baseline');
   const graphIdentity = await page.locator('[data-report-range-part="chart"]').getAttribute('data-plan-069-graph');
@@ -518,7 +518,7 @@ test('keeps the Report range mounted while focused chart options refresh', async
   });
   await expect(timeline).toBeVisible({ timeout: 5000 });
   const advancedAnalysis = page.getByRole('region', { name: 'Advanced analysis' });
-  await expect(advancedAnalysis.getByRole('heading', { level: 3, name: 'Punchcard' })).toBeVisible();
+  await expect(advancedAnalysis.getByRole('heading', { level: 4, name: 'Punchcard' })).toBeVisible();
   await dateRange.evaluate((element) => element.setAttribute('data-stability-marker', 'original-range'));
   await timeline.evaluate((element) => element.setAttribute('data-stability-marker', 'original-chart'));
   await page.route(RPC_ROUTE_GLOB, async (route) => {
@@ -534,7 +534,7 @@ test('keeps the Report range mounted while focused chart options refresh', async
   await expect(timeline).toHaveAttribute('data-stability-marker', 'original-chart');
   await expect(dateRange).toHaveAttribute('data-stability-marker', 'original-range');
   await expect(timeline).toHaveAttribute('data-stability-marker', 'original-chart');
-  await expect(advancedAnalysis.getByRole('heading', { level: 3, name: 'Punchcard' })).toBeVisible();
+  await expect(advancedAnalysis.getByRole('heading', { level: 4, name: 'Punchcard' })).toBeVisible();
 });
 
 test('keeps the last complete report visible while the report range changes', async ({ page }) => {
@@ -683,9 +683,9 @@ test('hydrates and automatically pages Sessions through the production revision 
 
   await page.keyboard.press('Escape');
   await reportViewsFor(page).getByRole('link', { exact: true, name: 'Overview' }).click();
-  await expect(page.getByRole('heading', { level: 2, name: 'Advanced analysis' })).toBeVisible();
+  await expect(page.getByRole('heading', { level: 3, name: 'Advanced analysis' })).toBeVisible();
   await expect(page.locator('summary').filter({ hasText: 'Advanced analysis' })).toHaveCount(0);
-  await expect(page.getByRole('heading', { level: 3, name: 'Punchcard' })).toBeVisible();
+  await expect(page.getByRole('heading', { level: 4, name: 'Punchcard' })).toBeVisible();
   await expect.poll(overviewResponseCount).toBe(1);
 
   const responseBodies = await Promise.all(rpcResponses.map(({ body }) => body));

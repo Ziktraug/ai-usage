@@ -39,6 +39,7 @@
     modelTableIntro,
     modelTableIntroTitle,
     modelTableViewport,
+    modelTextCell,
   } from './styles';
 
   let {
@@ -109,7 +110,7 @@
       </caption>
       <thead>
         <tr>
-          <th class={modelTableHeaderCell} scope="col">Model</th>
+          <th class={cx(modelTableHeaderCell, modelTextCell)} scope="col">Model</th>
           <th class={cx(modelTableHeaderCell, modelNumericCell)} scope="col">API value</th>
           <th class={cx(modelTableHeaderCell, modelNumericCell)} scope="col">Share</th>
           <th class={cx(modelTableHeaderCell, modelNumericCell)} scope="col">Processed tokens</th>
@@ -125,7 +126,7 @@
         {:else}
           {#each visibleRows as row (row.group.key)}
             <tr data-price-state={row.priceState}>
-              <th class={modelTableCell} scope="row">
+              <th class={cx(modelTableCell, modelTextCell)} scope="row">
                 <button
                   aria-label={`Filter sessions by model ${row.label}`}
                   class={modelNameButton}

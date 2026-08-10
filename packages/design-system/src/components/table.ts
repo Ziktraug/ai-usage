@@ -262,6 +262,10 @@ export const sessionSummaryMobileSortSelect = css({
 
 export const sessionSummaryViewport = css({
   gap: 0,
+  // The surface is a fixed-height scroller, so grid would stretch its auto rows to fill the
+  // leftover space and push the cards apart. Rows must keep the height the virtualizer reserved
+  // for them, or the scroll offset it computes from that height no longer lands on a row.
+  alignContent: 'start',
   overflowAnchor: 'none',
   overflowY: 'auto',
   overscrollBehavior: 'contain',

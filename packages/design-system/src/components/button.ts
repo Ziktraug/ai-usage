@@ -141,7 +141,10 @@ export const presetButton = css({
   display: 'inline-flex',
   alignItems: 'center',
   justifyContent: 'center',
-  h: '26px',
+  // Touch height below `md`, where these are operated with a thumb. The compact 26px belongs to
+  // pointer viewports; keeping it everywhere left the segmented options far under the 44px the
+  // rest of the mobile report already honours.
+  h: { base: '44px', md: '26px' },
   px: '10px',
   border: '1px solid transparent',
   borderRadius: 'sm',

@@ -17,14 +17,22 @@ export const editorialSection = css({
     display: 'grid',
     gap: '4px',
   },
-  '& h2': {
+  // Scope the section title to the section's own header. A descendant `& h2` also restyled every
+  // panel title nested inside the section, which collapsed the answer/evidence/investigation levels
+  // into one size regardless of what each panel asked for.
+  '& > header > h2': {
     m: 0,
-    fontSize: { base: '18px', md: '20px' },
+    fontSize: { base: '19px', md: '21px' },
     fontWeight: 650,
+    letterSpacing: '-0.015em',
     lineHeight: 1.25,
   },
   '& > header > p': {
     m: 0,
+    color: 'muted',
+    fontSize: '13px',
+    lineHeight: 1.5,
+    maxW: '68ch',
   },
 });
 

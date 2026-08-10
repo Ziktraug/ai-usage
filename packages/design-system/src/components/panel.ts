@@ -12,6 +12,17 @@ export const panel = css({
   minW: 0,
 });
 
+// Same reading rhythm as `panel` without the card chrome: for sections that are read, not operated.
+// Containment stays reserved for interactive charts, tables, forms, alerts, and overlays.
+export const passivePanel = css({
+  display: 'grid',
+  gap: '14px',
+  alignContent: 'start',
+  pt: '18px',
+  borderTop: '1px solid token(colors.line)',
+  minW: 0,
+});
+
 export const panelHeader = css({
   display: 'grid',
   gap: '2px',

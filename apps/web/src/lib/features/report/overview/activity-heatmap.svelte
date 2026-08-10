@@ -106,7 +106,7 @@
 
 <section class={panel}>
   <header class={panelHeader}>
-    <h2 class={panelTitle}>Rhythm</h2>
+    <h3 class={panelTitle}>Rhythm</h3>
     <div class={panelSub}>
       Daily activity across the whole filtered history — choose a day to focus the dashboard on it
     </div>

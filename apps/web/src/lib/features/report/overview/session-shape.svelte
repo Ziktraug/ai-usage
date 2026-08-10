@@ -55,7 +55,7 @@
 <section class={panel} data-session-shape>
   <div>
     <!-- h3: this panel only ever renders inside the "Advanced analysis" h2 section. -->
-    <h3 class={panelTitle}>Session shape</h3>
+    <h4 class={panelTitle}>Session shape</h4>
     <p class={panelSub}>Duration × API value (log scales) — fixed-size marks show sessions or campaigns</p>
     {#if advancedSummary}
       <p class={summary} data-advanced-summary>{advancedSummary.summary}</p>

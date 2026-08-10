@@ -124,7 +124,7 @@
 {#if presentedTopSessions.length > 0}
   <section class={panel}>
     <header class={panelHeader}>
-      <h2 class={panelTitle}>Top sessions</h2>
+      <h3 class={panelTitle}>Top sessions</h3>
       <p class={panelSub}>
         The five highest estimated API-equivalent values for sessions or campaigns in range — click to inspect
       </p>

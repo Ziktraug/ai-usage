@@ -27,7 +27,7 @@ const REPORT_AXE_DESTINATIONS = [
 
 const overviewTopSessionTrigger = (page: Page): Locator =>
   page
-    .getByRole('heading', { level: 2, name: 'Top sessions' })
+    .getByRole('heading', { level: 3, name: 'Top sessions' })
     .locator('xpath=ancestor::section[1]')
     .getByRole('button')
     .first();

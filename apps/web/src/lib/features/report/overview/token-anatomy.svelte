@@ -9,10 +9,10 @@
     anatomyLegendSwatch,
     anatomyLegendValue,
     anatomyLegendValues,
-    panel,
     panelHeader,
     panelSub,
     panelTitle,
+    passivePanel,
     rtkNote,
   } from '@ai-usage/design-system/report';
 
@@ -40,9 +40,9 @@
   const cachePercentage = $derived(total > 0 ? (summary.cacheRead / total) * 100 : 0);
 </script>
 
-<section class={panel}>
+<section class={passivePanel}>
   <header class={panelHeader}>
-    <h2 class={panelTitle}>Token anatomy</h2>
+    <h3 class={panelTitle}>Token anatomy</h3>
     <div class={panelSub}>Where the volume actually goes</div>
   </header>
   {#if total > 0}

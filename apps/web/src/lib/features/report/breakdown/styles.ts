@@ -166,7 +166,6 @@ export const modelTableHeaderCell = css({
   fontSize: '11px',
   fontWeight: 700,
   lineHeight: 1.35,
-  textAlign: 'left',
   verticalAlign: 'bottom',
 });
 export const modelTableCell = css({
@@ -174,8 +173,13 @@ export const modelTableCell = css({
   borderBottom: '1px solid token(colors.line)',
   color: 'ink',
   lineHeight: 1.45,
-  textAlign: 'left',
   verticalAlign: 'top',
+});
+// `textAlign` has to live on exactly one of the classes a cell composes. `cx` keeps both atoms and
+// the winner is stylesheet order, not call order, so a base `left` silently beat the numeric `right`
+// and every figure column read as text.
+export const modelTextCell = css({
+  textAlign: 'left',
 });
 export const modelNumericCell = css({
   textStyle: 'numeric',
