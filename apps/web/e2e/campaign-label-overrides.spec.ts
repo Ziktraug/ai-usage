@@ -81,11 +81,11 @@ test('renames and resets one page-local campaign label without changing its filt
   await reportViewsFor(page).getByRole('link', { exact: true, name: 'Overview' }).click();
   await waitForFocusedReportSettled(page);
   await expect(campaignOverviewButton(page, RENAMED_LABEL)).toBeVisible();
-  const dateRange = page.getByRole('region', { name: 'Date range' });
-  const chartOptions = dateRange.locator('details[aria-label="Chart options"]');
+  const activity = page.getByRole('region', { name: 'Activity' });
+  const chartOptions = activity.locator('details[aria-label="Explore activity"]');
   await chartOptions.locator('summary').click();
   await chartOptions.getByRole('radio', { exact: true, name: 'Campaign' }).click();
-  await expect(dateRange.getByTitle(RENAMED_LABEL, { exact: true })).toContainText(RENAMED_LABEL);
+  await expect(activity.getByTitle(RENAMED_LABEL, { exact: true })).toContainText(RENAMED_LABEL);
   await expect.poll(() => campaignFilterFromUrl(page)).toBe(CAMPAIGN_KEY);
 
   await campaignOverviewButton(page, RENAMED_LABEL).click();
@@ -97,8 +97,8 @@ test('renames and resets one page-local campaign label without changing its filt
   await drawer.getByRole('button', { name: 'Close session details' }).click();
 
   await expect(campaignOverviewButton(page, DERIVED_LABEL)).toBeVisible();
-  await expect(dateRange.getByTitle(DERIVED_LABEL, { exact: true })).toContainText(DERIVED_LABEL);
-  await expect(dateRange.getByTitle(RENAMED_LABEL, { exact: true })).toHaveCount(0);
+  await expect(activity.getByTitle(DERIVED_LABEL, { exact: true })).toContainText(DERIVED_LABEL);
+  await expect(activity.getByTitle(RENAMED_LABEL, { exact: true })).toHaveCount(0);
   await reportViewsFor(page).getByRole('link', { exact: true, name: 'Sessions' }).click();
   await waitForFocusedReportSettled(page);
   await expect(campaignRow(page, DERIVED_LABEL)).toBeVisible();

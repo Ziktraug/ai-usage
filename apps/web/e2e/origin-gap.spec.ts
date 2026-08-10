@@ -6,24 +6,25 @@ const expectedGapDescription =
 test('renders undeclared origin outside the stack with its three causes', async ({ page }) => {
   await openHydratedReport(page, '/?origin=[]');
 
-  const dateRange = page.getByRole('region', { name: 'Date range' });
-  await dateRange.getByRole('button', { exact: true, name: 'All' }).click();
+  const reportPeriod = page.getByRole('region', { name: 'Report period' });
+  await reportPeriod.getByRole('button', { exact: true, name: 'All time' }).click();
   await waitForFocusedReportSettled(page);
 
-  const chartOptions = dateRange.locator('details[aria-label="Chart options"]');
+  const activity = page.getByRole('region', { name: 'Activity' });
+  const chartOptions = activity.locator('details[aria-label="Explore activity"]');
   await chartOptions.locator('summary').click();
   await chartOptions.getByRole('radio', { exact: true, name: 'Origin' }).click();
   await chartOptions.getByRole('radio', { exact: true, name: 'Sessions' }).click();
 
-  const legend = dateRange.locator('[data-report-range-part=total-legend]');
+  const legend = activity.locator('[data-report-range-part=total-legend]');
   await expect(legend).toContainText('Human');
   await expect(legend).toContainText('Delegated');
   await expect(legend).toContainText('Automated review');
   const gapLegend = legend.locator('[data-origin-unclassified-legend]');
   await expect(gapLegend).toHaveAttribute('title', expectedGapDescription);
 
-  const stack = dateRange.locator('[data-origin-series-stack]');
-  const gapBands = dateRange.locator('[data-origin-unclassified-band]');
+  const stack = activity.locator('[data-origin-series-stack]');
+  const gapBands = activity.locator('[data-origin-unclassified-band]');
   await expect(stack).toBeVisible();
   await expect(gapBands).toBeVisible();
   expect(

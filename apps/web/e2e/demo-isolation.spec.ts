@@ -4,7 +4,7 @@ import { MANUAL_MERGE_DOWNLOAD_PATH, MANUAL_MERGE_UPLOAD_PATH } from './rpc-test
 const BUSINESS_RESOURCE_TYPES = new Set(['eventsource', 'fetch', 'xhr']);
 const KNOWN_RPC_PROBE_PATH = '/rpc/report/revisionManifest';
 const NON_REPORT_NAVIGATION_PATTERN = /Skills|Sources|Sync/;
-const TOP_SESSION_PATTERN = /Top session/;
+const OPEN_BUILD_REPORT_UI_PATTERN = /^Open details for Build report UI\./;
 const UNKNOWN_RPC_PROBE_PATH = '/rpc/demo-boundary-probe';
 
 test('isolates the synthetic demo from every local data and control capability', async ({ page, request }) => {
@@ -32,7 +32,7 @@ test('isolates the synthetic demo from every local data and control capability',
   await expect(page.getByText('1 / 6 sessions', { exact: true })).toBeVisible();
   await filter.fill('');
 
-  await page.getByRole('button', { name: TOP_SESSION_PATTERN }).click();
+  await page.getByRole('button', { name: OPEN_BUILD_REPORT_UI_PATTERN }).click();
   const drawer = page.getByRole('dialog', { name: 'Session details' });
   await expect(drawer).toBeVisible();
   await expect(drawer.getByText('Build report UI', { exact: true }).first()).toBeVisible();
