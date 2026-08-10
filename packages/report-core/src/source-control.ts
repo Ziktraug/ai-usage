@@ -22,6 +22,13 @@ export type CollectionSourceKind = 'producer' | 'enricher' | 'dataset-producer';
 export interface CollectionSourceDefinition {
   readonly cadenceMs: number;
   readonly defaultEnabled: boolean;
+  /**
+   * Marks a source whose upstream is undocumented or self-declared unstable, so consumers can say so
+   * rather than presenting it as a settled reading. It is a label on the source, not a second on/off
+   * plane: enablement stays with the one mechanism every source already uses, the persisted policy
+   * override. Absent means the source rests on a documented, stable upstream.
+   */
+  readonly experimental?: boolean;
   readonly group: CollectionSourceGroup;
   readonly id: CollectionSourceId;
   readonly kind: CollectionSourceKind;
@@ -75,6 +82,10 @@ export const collectionSourceDefinitions = [
   {
     cadenceMs: fiveMinutesMs,
     defaultEnabled: true,
+    // The Agent SDK's usage method is undocumented and names itself unstable, so this source is
+    // flagged rather than presented as settled. It stays on by default because a quota nobody can
+    // see is the problem being solved; the flag is what makes the reliance explicit and revocable.
+    experimental: true,
     group: 'provider-usage',
     id: 'claude.usage-limits',
     kind: 'producer',
@@ -115,6 +126,22 @@ export const providerUsageSourceIds: readonly CollectionSourceId[] = collectionS
   .filter((definition) => definition.group === 'provider-usage')
   .map((definition) => definition.id);
 
+/**
+ * Sources standing on an unstable upstream. Derived from the catalogue for the same reason
+ * `providerUsageSourceIds` is: the one place that decides a source is experimental is its definition,
+ * so a second list can never drift out of agreement with it.
+ */
+/**
+ * The catalogue widened to its declared shape. `as const` above narrows each entry to its own literal
+ * type, where an omitted optional field simply does not exist — so reading `experimental` across the
+ * union has to go through the interface rather than the literals.
+ */
+const catalogue: readonly CollectionSourceDefinition[] = collectionSourceDefinitions;
+
+export const experimentalSourceIds: readonly CollectionSourceId[] = catalogue
+  .filter((definition) => definition.experimental === true)
+  .map((definition) => definition.id);
+
 export const getCollectionSourceDefinition = (id: CollectionSourceId): CollectionSourceDefinition => {
   const definition = collectionSourceDefinitionById.get(id);
   if (!definition) {
@@ -122,6 +149,9 @@ export const getCollectionSourceDefinition = (id: CollectionSourceId): Collectio
   }
   return definition;
 };
+
+export const isExperimentalSource = (id: CollectionSourceId): boolean =>
+  getCollectionSourceDefinition(id).experimental === true;
 
 export interface SourcePolicyOverride {
   readonly enabled: boolean;
