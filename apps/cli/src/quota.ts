@@ -30,8 +30,11 @@ export const renderQuota = (providers: readonly ProviderStatus[]): string => {
     for (const window of provider.windows) {
       const usedPercent = window.usedPercent ?? (window.remainingPercent === null ? 0 : 100 - window.remainingPercent);
       const span = quotaWindowSpan(window);
+      // The span is only worth its parentheses when it says something the label does not. A provider
+      // that reports no window duration falls back to the label, and "5h (5h)" is noise.
+      const heading = span === window.label ? window.label : `${window.label} (${span})`;
       lines.push(
-        `  ${pad(`${window.label} (${span})`, 18)} ${bar(usedPercent)} ${clr.bold(`${usedPercent.toFixed(0)}%`)}` +
+        `  ${pad(heading, 18)} ${bar(usedPercent)} ${clr.bold(`${usedPercent.toFixed(0)}%`)}` +
           (window.resetsAt ? clr.dim(`  resets ${fmtDate(new Date(window.resetsAt))}`) : ''),
       );
     }

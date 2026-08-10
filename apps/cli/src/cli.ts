@@ -125,7 +125,7 @@ export const helpText =
   '  projects list          summarize detected projects\n' +
   '  cursor import <csv>    copy a Cursor usage export into local ignored storage\n' +
   '  setup                  launch project alias setup UI\n' +
-  '  quota                  Codex subscription quota (5h / 7d usage)\n\n' +
+  '  quota                  subscription quota per provider (Claude, Codex)\n\n' +
   'Options:\n' +
   '  --since <30d|12w|24h>  only sessions active since\n' +
   `  --harness <name>       ${harnessKeyList}\n` +
