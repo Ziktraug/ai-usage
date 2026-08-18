@@ -313,15 +313,13 @@ const claudeModelScopedWindows = (raw: unknown): ProviderLimitWindow[] => {
 export const normalizeClaudeAgentSdkQuotaObservation = (
   input: NormalizeClaudeAgentSdkQuotaInput,
 ): ProviderQuotaObservation | null => {
-  if (!isRecord(input.result)) {
-    return null;
-  }
   const observedAt = normalizeIsoTimestamp(input.observedAt);
   if (!(observedAt && nonEmptyString(input.machineId))) {
     return null;
   }
-  const root = input.result.rate_limits;
-  const available = input.result.rate_limits_available !== false && isRecord(root);
+  const result = isRecord(input.result) ? input.result : {};
+  const root = result.rate_limits;
+  const available = result.rate_limits_available !== false && isRecord(root);
   const windows = new Map<string, ProviderLimitWindow>();
   if (isRecord(root)) {
     // `limits[]` is preferred: it is the flat, extensible shape, and it alone carries severity.
@@ -357,7 +355,7 @@ export const normalizeClaudeAgentSdkQuotaObservation = (
     machineId: input.machineId,
     machineLabel: input.machineLabel ?? null,
     observedAt,
-    plan: nonEmptyString(input.result.subscription_type),
+    plan: nonEmptyString(result.subscription_type),
     providerGeneratedAt: null,
     providerKey: 'claude',
     providerLabel: 'Claude',

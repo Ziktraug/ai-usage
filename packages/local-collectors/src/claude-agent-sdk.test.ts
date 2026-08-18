@@ -215,11 +215,11 @@ describe('Claude Agent SDK quota source', () => {
     expect(batch.observations).toHaveLength(1);
   });
 
-  test('fails with a malformed-result reason when the payload is not a record', async () => {
-    const exit = await Effect.runPromiseExit(sourceReturning('nope').collect(REQUEST));
+  test('degrades a structurally incompatible payload to unsupported', async () => {
+    const batch = await collect('nope');
 
-    expect(Exit.isFailure(exit)).toBe(true);
-    expect(JSON.stringify(exit)).toContain('malformed-result');
+    expect(batch.observations).toHaveLength(1);
+    expect(batch.observations[0]).toMatchObject({ providerKey: 'claude', state: 'unsupported', windows: [] });
   });
 
   test('refuses to open a session once the request is already aborted', async () => {
@@ -236,5 +236,96 @@ describe('Claude Agent SDK quota source', () => {
 
     expect(Exit.isFailure(exit)).toBe(true);
     expect(opened).toBe(false);
+  });
+
+  test('aborts an in-flight read and fully closes its session', async () => {
+    const controller = new AbortController();
+    const calls: string[] = [];
+    let markOpened = (): void => undefined;
+    const opened = new Promise<void>((resolve) => {
+      markOpened = resolve;
+    });
+    const source = createClaudeAgentSdkBatchSource({
+      openQuery: () => {
+        markOpened();
+        return Promise.resolve({
+          interrupt: () => {
+            calls.push('interrupt');
+            return Promise.resolve(undefined);
+          },
+          return: () => {
+            calls.push('return');
+            return Promise.resolve(undefined);
+          },
+          usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: () => new Promise<never>(() => undefined),
+        } satisfies ClaudeUsageQuery);
+      },
+      timeoutMs: 1000,
+    });
+    const pendingExit = Effect.runPromiseExit(source.collect({ ...REQUEST, signal: controller.signal }));
+    await opened;
+
+    controller.abort();
+    const exit = await pendingExit;
+
+    expect(Exit.isFailure(exit)).toBe(true);
+    expect(JSON.stringify(exit)).toContain('aborted');
+    expect(calls).toEqual(['interrupt', 'return']);
+  });
+
+  test('closes a session that opens only after the read timeout', async () => {
+    const calls: string[] = [];
+    let resolveSession = (_session: ClaudeUsageQuery): void => undefined;
+    const pendingSession = new Promise<ClaudeUsageQuery>((resolve) => {
+      resolveSession = resolve;
+    });
+    const source = createClaudeAgentSdkBatchSource({ openQuery: () => pendingSession, timeoutMs: 5 });
+
+    const exit = await Effect.runPromiseExit(source.collect(REQUEST));
+    resolveSession({
+      interrupt: () => {
+        calls.push('interrupt');
+        return Promise.resolve(undefined);
+      },
+      return: () => {
+        calls.push('return');
+        return Promise.resolve(undefined);
+      },
+      usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: () => {
+        calls.push('usage');
+        return Promise.resolve(livePayload());
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(Exit.isFailure(exit)).toBe(true);
+    expect(JSON.stringify(exit)).toContain('timeout');
+    expect(calls).toEqual(['interrupt', 'return']);
+  });
+
+  test('bounds every teardown call and still attempts full disposal', async () => {
+    const calls: string[] = [];
+    const source = createClaudeAgentSdkBatchSource({
+      openQuery: () =>
+        Promise.resolve({
+          interrupt: () => {
+            calls.push('interrupt');
+            return new Promise<never>(() => undefined);
+          },
+          return: () => {
+            calls.push('return');
+            return new Promise<never>(() => undefined);
+          },
+          usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: () => Promise.resolve(livePayload()),
+        } satisfies ClaudeUsageQuery),
+      timeoutMs: 5,
+    });
+    const startedAt = performance.now();
+
+    const batch = await Effect.runPromise(source.collect(REQUEST));
+
+    expect(performance.now() - startedAt).toBeLessThan(250);
+    expect(batch.observations).toHaveLength(1);
+    expect(calls).toEqual(['interrupt', 'return']);
   });
 });

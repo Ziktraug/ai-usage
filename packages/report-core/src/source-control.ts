@@ -126,22 +126,6 @@ export const providerUsageSourceIds: readonly CollectionSourceId[] = collectionS
   .filter((definition) => definition.group === 'provider-usage')
   .map((definition) => definition.id);
 
-/**
- * Sources standing on an unstable upstream. Derived from the catalogue for the same reason
- * `providerUsageSourceIds` is: the one place that decides a source is experimental is its definition,
- * so a second list can never drift out of agreement with it.
- */
-/**
- * The catalogue widened to its declared shape. `as const` above narrows each entry to its own literal
- * type, where an omitted optional field simply does not exist — so reading `experimental` across the
- * union has to go through the interface rather than the literals.
- */
-const catalogue: readonly CollectionSourceDefinition[] = collectionSourceDefinitions;
-
-export const experimentalSourceIds: readonly CollectionSourceId[] = catalogue
-  .filter((definition) => definition.experimental === true)
-  .map((definition) => definition.id);
-
 export const getCollectionSourceDefinition = (id: CollectionSourceId): CollectionSourceDefinition => {
   const definition = collectionSourceDefinitionById.get(id);
   if (!definition) {
@@ -149,9 +133,6 @@ export const getCollectionSourceDefinition = (id: CollectionSourceId): Collectio
   }
   return definition;
 };
-
-export const isExperimentalSource = (id: CollectionSourceId): boolean =>
-  getCollectionSourceDefinition(id).experimental === true;
 
 export interface SourcePolicyOverride {
   readonly enabled: boolean;

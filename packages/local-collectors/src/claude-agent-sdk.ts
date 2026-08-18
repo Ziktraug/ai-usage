@@ -8,8 +8,9 @@ import type { ProviderQuotaBatch, ProviderQuotaBatchSource, ProviderQuotaCollect
  * a warning rather than hold the whole collection cycle open behind it.
  */
 const DEFAULT_TIMEOUT_MS = 8000;
+const MAX_TEARDOWN_TIMEOUT_MS = 1000;
 
-export type ClaudeQuotaCollectionErrorReason = 'unsupported' | 'timeout' | 'protocol' | 'malformed-result' | 'aborted';
+export type ClaudeQuotaCollectionErrorReason = 'unsupported' | 'timeout' | 'protocol' | 'aborted';
 
 export class ClaudeQuotaCollectionError extends Data.TaggedError('ClaudeQuotaCollectionError')<{
   readonly message: string;
@@ -65,20 +66,61 @@ const openPublishedQuery = async (): Promise<ClaudeUsageQuery> => {
   return session as ClaudeUsageQuery;
 };
 
-const withTimeout = async <Value>(work: Promise<Value>, timeoutMs: number): Promise<Value> => {
+const withCollectionBoundary = async <Value>(
+  work: Promise<Value>,
+  timeoutMs: number,
+  signal: AbortSignal | undefined,
+): Promise<Value> => {
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let abortListener: (() => void) | undefined;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => reject(collectionError('timeout', 'The Claude quota read timed out.')), timeoutMs);
+  });
+  const contenders: Promise<Value>[] = [work, timeout];
+  if (signal) {
+    const aborted = new Promise<never>((_resolve, reject) => {
+      abortListener = () => reject(collectionError('aborted', 'The Claude quota read was aborted.'));
+      signal.addEventListener('abort', abortListener, { once: true });
+      if (signal.aborted) {
+        abortListener();
+      }
+    });
+    contenders.push(aborted);
+  }
   try {
-    return await Promise.race([
-      work,
-      new Promise<never>((_resolve, reject) => {
-        timer = setTimeout(() => reject(collectionError('timeout', 'The Claude quota read timed out.')), timeoutMs);
-      }),
-    ]);
+    return await Promise.race(contenders);
+  } finally {
+    if (timer) {
+      clearTimeout(timer);
+    }
+    if (signal && abortListener) {
+      signal.removeEventListener('abort', abortListener);
+    }
+  }
+};
+
+const settleTeardown = async (work: () => Promise<unknown> | undefined, timeoutMs: number): Promise<void> => {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const settledWork = Promise.resolve()
+    .then(work)
+    .then(() => undefined)
+    .catch(() => undefined);
+  const deadline = new Promise<void>((resolve) => {
+    timer = setTimeout(resolve, timeoutMs);
+  });
+  try {
+    await Promise.race([settledWork, deadline]);
   } finally {
     if (timer) {
       clearTimeout(timer);
     }
   }
+};
+
+const disposeSession = async (session: ClaudeUsageQuery, timeoutMs: number): Promise<void> => {
+  const teardownTimeoutMs = Math.max(1, Math.min(timeoutMs, MAX_TEARDOWN_TIMEOUT_MS));
+  await settleTeardown(() => session.interrupt?.(), teardownTimeoutMs);
+  await settleTeardown(() => session.return?.(), teardownTimeoutMs);
 };
 
 const readUsage = async (
@@ -88,23 +130,35 @@ const readUsage = async (
   if (request.signal?.aborted) {
     throw collectionError('aborted', 'The Claude quota read was aborted.');
   }
-  // The whole exchange is bounded, not just the read. Opening the session spawns a Claude process and
-  // performs a handshake; on a machine without usable credentials that can stall indefinitely, and a
-  // timeout that starts only once the session exists would never fire.
+  // Opening and reading share one boundary. Opening the session spawns a Claude process and performs a
+  // handshake; on a machine without usable credentials that can stall indefinitely, and a timeout that
+  // starts only once the session exists would never fire.
   let session: ClaudeUsageQuery | undefined;
-  const result = await withTimeout(
-    (async () => {
-      session = await options.openQuery();
-      return await session.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET();
-    })(),
-    options.timeoutMs,
-  ).finally(async () => {
-    // Always release the session, and release it fully. `interrupt` stops the turn; only closing the
-    // generator disposes the session, and a session left open keeps handles that stop the host
-    // process from exiting on its own — which strands the engine after it has already succeeded.
-    await session?.interrupt?.().catch(() => undefined);
-    await session?.return?.().catch(() => undefined);
-  });
+  let acceptOpenedSession = true;
+  const read = (async () => {
+    const openedSession = await options.openQuery();
+    if (!acceptOpenedSession) {
+      await disposeSession(openedSession, options.timeoutMs);
+      const reason = request.signal?.aborted ? 'aborted' : 'timeout';
+      throw collectionError(reason, `The Claude quota read ${reason === 'aborted' ? 'was aborted' : 'timed out'}.`);
+    }
+    session = openedSession;
+    return await openedSession.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET();
+  })();
+  let result: unknown;
+  try {
+    result = await withCollectionBoundary(read, options.timeoutMs, request.signal);
+  } finally {
+    acceptOpenedSession = false;
+    if (session) {
+      // `interrupt` stops the turn; only closing the generator disposes the session and transport.
+      // Each teardown call has its own small deadline so one unstable SDK method cannot block the next.
+      await disposeSession(session, options.timeoutMs);
+    }
+  }
+  if (request.signal?.aborted) {
+    throw collectionError('aborted', 'The Claude quota read was aborted.');
+  }
   const observation = normalizeClaudeAgentSdkQuotaObservation({
     ...(request.accountScope === undefined ? {} : { accountScope: request.accountScope }),
     machineId: request.machineId,
@@ -113,7 +167,7 @@ const readUsage = async (
     result,
   });
   if (!observation) {
-    throw collectionError('malformed-result', 'The Claude usage payload could not be normalised.');
+    throw collectionError('protocol', 'The Claude quota request could not be normalised.');
   }
   // A session with no plan limits — API key, Bedrock, Vertex — is a normal outcome, not a failure.
   // It still records an observation so the UI can say "no windows" rather than "never read".
