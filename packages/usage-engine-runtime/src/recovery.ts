@@ -211,16 +211,21 @@ const isLegacyArtifactName = (name: string, prefix: (typeof LEGACY_ARTIFACT_PREF
 const canonicalTemporaryRoot = async (temporaryRootValue: string): Promise<string> => {
   const temporaryRoot = path.resolve(temporaryRootValue);
   const stats = await lstat(temporaryRoot).catch(() => undefined);
+  const canonicalRoot = await realpath(temporaryRoot).catch(() => undefined);
+  const canonicalStats = canonicalRoot ? await lstat(canonicalRoot).catch(() => undefined) : undefined;
   if (
     !stats ||
     stats.isSymbolicLink() ||
     !stats.isDirectory() ||
     !isTrustedUsageEngineTemporaryRoot(stats) ||
-    (await realpath(temporaryRoot).catch(() => undefined)) !== temporaryRoot
+    !canonicalRoot ||
+    !canonicalStats?.isDirectory() ||
+    canonicalStats.isSymbolicLink() ||
+    !sameIdentity(stats, canonicalStats)
   ) {
     throw new Error('Usage engine temporary root must be a canonical owned directory.');
   }
-  return temporaryRoot;
+  return canonicalRoot;
 };
 
 export const scavengeLegacyUsageEngineArtifacts = async ({

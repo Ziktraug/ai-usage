@@ -1084,13 +1084,6 @@ export const sessionCampaignKeyFor = (row: SessionPresentationRow, rootSourceSes
 export const sessionCampaignIdentityForRow = (row: SessionPresentationRow) => {
   const declaredSourceSessionId = row.source?.sourceSessionId ?? null;
   const declaredRootSourceSessionId = row.source?.rootSourceSessionId ?? null;
-  if (
-    row.origin === 'classifier' &&
-    (!(declaredSourceSessionId && declaredRootSourceSessionId) ||
-      declaredSourceSessionId === declaredRootSourceSessionId)
-  ) {
-    throw new Error(`Classifier session ${declaredSourceSessionId ?? row.rowId} has no declared parent campaign`);
-  }
   const sourceSessionId = declaredSourceSessionId ?? row.rowId;
   const rootSourceSessionId = declaredRootSourceSessionId ?? declaredSourceSessionId ?? row.rowId;
   return {
@@ -1185,7 +1178,9 @@ export const buildSessionCampaignViews = (
       throw new Error(`Classifier campaign ${campaignKey} has no resolvable parent session`);
     }
     const allChildren = rows.filter((row) => row !== root);
-    const allClassifiers = rows.filter((row) => row.origin === 'classifier');
+    // A parentless automated review is the campaign root itself, not a
+    // classifier child to roll up into its own totals a second time.
+    const allClassifiers = rows.filter((row) => row !== root && row.origin === 'classifier');
     const matchedRows = rows.filter((row) => visibleIds.has(row.rowId));
     if (matchedRows.length === 0) {
       continue;

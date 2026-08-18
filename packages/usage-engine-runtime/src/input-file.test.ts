@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { createHash, randomUUID } from 'node:crypto';
-import { link, lstat, mkdir, mkdtemp, readFile, rm, symlink, utimes, writeFile } from 'node:fs/promises';
+import { link, lstat, mkdir, mkdtemp, readFile, realpath, rm, symlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { parseUsageEngineHandoffId } from '@ai-usage/usage-engine-control';
@@ -113,7 +113,7 @@ describe('usage engine file inputs', () => {
     );
 
     expect(result.alreadyImported).toBe(false);
-    expect(path.dirname(result.path)).toBe(path.join(root, '.ai-usage', 'cursor-exports'));
+    expect(path.dirname(result.path)).toBe(path.join(await realpath(root), '.ai-usage', 'cursor-exports'));
     expect(await Bun.file(handoffPath).exists()).toBe(false);
     expect(await Bun.file(result.path).text()).toBe(csv);
   });
@@ -197,15 +197,18 @@ describe('usage engine file inputs', () => {
     await writeFile(sourcePath, csv);
     const digest = createHash('sha256').update(csv).digest('hex');
     const importDirectory = path.join(root, '.ai-usage', 'cursor-exports');
-    await mkdir(importDirectory, { mode: 0o700, recursive: true });
+    await mkdir(importDirectory, { mode: 0o755, recursive: true });
     const legacyPath = path.join(importDirectory, `${digest.slice(0, 12)}-cursor-legacy.csv`);
     await writeFile(legacyPath, csv, { mode: 0o644 });
     const legacyBefore = await lstat(legacyPath);
+    const canonicalLegacyPath = await realpath(legacyPath);
 
-    await expect(listManagedCursorUsageExportPaths(root)).rejects.toThrow('not owner-only');
+    await expect(listManagedCursorUsageExportPaths(root)).rejects.toThrow('unsafe');
+    expect((await lstat(importDirectory)).mode % 0o1000).toBe(process.platform === 'win32' ? 0o755 : 0o755);
     expect((await lstat(legacyPath)).mode % 0o1000).toBe(process.platform === 'win32' ? 0o644 : 0o644);
     await repairManagedCursorUsageExportModes(root);
-    expect(await listManagedCursorUsageExportPaths(root)).toEqual([legacyPath]);
+    expect(await listManagedCursorUsageExportPaths(root)).toEqual([canonicalLegacyPath]);
+    expect((await lstat(importDirectory)).mode % 0o1000).toBe(process.platform === 'win32' ? 0o755 : 0o700);
     const legacyAfterRepair = await lstat(legacyPath);
     if (process.platform !== 'win32') {
       expect(legacyAfterRepair.ino).not.toBe(legacyBefore.ino);
@@ -216,7 +219,7 @@ describe('usage engine file inputs', () => {
       { configCwd: root, inboxDirectory, operatorCwd },
     );
 
-    expect(result).toEqual({ alreadyImported: true, path: legacyPath });
+    expect(result).toEqual({ alreadyImported: true, path: canonicalLegacyPath });
     expect((await lstat(legacyPath)).mode % 0o1000).toBe(process.platform === 'win32' ? 0o644 : 0o600);
     expect((await import('node:fs/promises')).readdir(importDirectory)).resolves.toHaveLength(1);
   });

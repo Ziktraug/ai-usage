@@ -658,10 +658,28 @@ describe('session query contracts', () => {
     expect(campaignBadgeLabelForSessionRow(item.row)).toBe('Campaign · 1 session');
   });
 
-  test('rejects classifier sessions without a resolvable declared parent campaign', () => {
-    expect(() =>
-      projectSessionPage([sourcedRow('classifier-root', { origin: 'classifier' })], defaultRequest()),
-    ).toThrow('has no declared parent campaign');
+  test('represents parentless classifiers as standalone review campaigns', () => {
+    const page = projectSessionPage(
+      [sourcedRow('classifier-root', { origin: 'classifier' })],
+      defaultRequest({ pageSize: 10 }),
+    );
+    const item = page.items[0];
+    if (item?.kind !== 'campaign') {
+      throw new Error('Expected a standalone review campaign fixture');
+    }
+    expect(page).toMatchObject({ itemCount: 1, sessionCount: 1 });
+    expect(item.row).toMatchObject({
+      campaignClassifierCount: 0,
+      campaignTotalCount: 1,
+      campaignVisibleCount: 1,
+      origin: 'classifier',
+      sessionLabel: 'classifier-root',
+    });
+    expect(campaignBadgeLabelForSessionRow(item.row)).toBe('Campaign · 1 session');
+    expect(classifierRollupLabelForSessionRow(item.row)).toBeNull();
+  });
+
+  test('rejects classifier sessions with an unresolved declared parent campaign', () => {
     expect(() =>
       projectSessionPage(
         [

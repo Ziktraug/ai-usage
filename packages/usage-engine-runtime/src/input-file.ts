@@ -122,15 +122,20 @@ const throwIfSignalAborted = (signal?: AbortSignal): void => {
 const validateCanonicalDirectory = async (directoryValue: string, ownerOnly: boolean): Promise<string> => {
   const directory = path.resolve(directoryValue);
   const stats = await lstat(directory).catch(() => undefined);
+  const canonicalDirectory = await realpath(directory).catch(() => undefined);
+  const canonicalStats = canonicalDirectory ? await lstat(canonicalDirectory).catch(() => undefined) : undefined;
   if (
     !stats?.isDirectory() ||
     stats.isSymbolicLink() ||
     (ownerOnly && !(hasCurrentOwner(stats.uid) && isOwnerOnly(stats.mode))) ||
-    (await realpath(directory).catch(() => undefined)) !== directory
+    !canonicalDirectory ||
+    !canonicalStats?.isDirectory() ||
+    canonicalStats.isSymbolicLink() ||
+    !sameIdentity(stats, canonicalStats)
   ) {
     throw new Error('Usage engine input directory is unsafe.');
   }
-  return directory;
+  return canonicalDirectory;
 };
 
 const handoffPath = async (input: Extract<UsageEngineFileInput, { kind: 'inbox-handoff' }>, directory: string) => {
@@ -919,7 +924,10 @@ export const repairManagedCursorUsageExportModes = async (configCwd: string): Pr
   if (!importStats) {
     return;
   }
-  const importDirectory = await validateCanonicalDirectory(importDirectoryValue, true);
+  const importDirectory = await ensurePrivateChildDirectory(
+    path.dirname(importDirectoryValue),
+    path.basename(importDirectoryValue),
+  );
   for (const name of await managedCursorArtifactNames(importDirectory)) {
     const candidatePath = path.join(importDirectory, name);
     const repairedDigest = await repairManagedCursorArtifactMode(candidatePath, CURSOR_EXPORT_MAX_BYTES);

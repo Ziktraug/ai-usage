@@ -102,6 +102,25 @@ describe('legacy runtime artifact recovery', () => {
     ).rejects.toThrow('temporary root must be a canonical owned directory');
   });
 
+  test('accepts a trusted temporary root reached through a symlinked ancestor', async () => {
+    const parent = await createFixture();
+    const root = path.join(parent, 'temporary');
+    await mkdir(root, { mode: 0o700 });
+    const aliasContainer = await createFixture();
+    const aliasedParent = path.join(aliasContainer, 'parent');
+    await symlink(parent, aliasedParent);
+    const artifact = await oldArtifact(root, 'ai-usage-session-query-lease-a1B2c3');
+
+    const result = await scavengeLegacyUsageEngineArtifacts({
+      gracePeriodMs: 60_000,
+      now: NOW,
+      temporaryRoot: path.join(aliasedParent, 'temporary'),
+    });
+
+    expect(result).toEqual({ deletedBytes: 7, deletedEntries: 2, deletedRoots: 1, skippedSuspicious: 0 });
+    await expect(Bun.file(artifact).exists()).resolves.toBe(false);
+  });
+
   test('stops a root scan at its explicit entry bound', async () => {
     const root = await createFixture();
     await mkdir(path.join(root, 'unrelated-a'));
