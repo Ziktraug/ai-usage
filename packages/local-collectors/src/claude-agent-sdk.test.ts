@@ -216,10 +216,29 @@ describe('Claude Agent SDK quota source', () => {
   });
 
   test('degrades a structurally incompatible payload to unsupported', async () => {
-    const batch = await collect('nope');
+    const batches = await Promise.all([
+      collect('nope'),
+      collect({
+        rate_limits: {
+          extra_usage: { is_enabled: false },
+          renamed_weekly: { resets_at: '2026-08-10T05:00:00.000Z', utilization: 42 },
+        },
+        rate_limits_available: true,
+      }),
+      collect({
+        rate_limits: { limits: [{ kind: 'weekly_all', renamed_utilization: 42 }] },
+        rate_limits_available: true,
+      }),
+      collect({
+        rate_limits: { five_hour: { renamed_utilization: 42 } },
+        rate_limits_available: true,
+      }),
+    ]);
 
-    expect(batch.observations).toHaveLength(1);
-    expect(batch.observations[0]).toMatchObject({ providerKey: 'claude', state: 'unsupported', windows: [] });
+    for (const batch of batches) {
+      expect(batch.observations).toHaveLength(1);
+      expect(batch.observations[0]).toMatchObject({ providerKey: 'claude', state: 'unsupported', windows: [] });
+    }
   });
 
   test('refuses to open a session once the request is already aborted', async () => {

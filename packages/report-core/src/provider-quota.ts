@@ -319,7 +319,6 @@ export const normalizeClaudeAgentSdkQuotaObservation = (
   }
   const result = isRecord(input.result) ? input.result : {};
   const root = result.rate_limits;
-  const available = result.rate_limits_available !== false && isRecord(root);
   const windows = new Map<string, ProviderLimitWindow>();
   if (isRecord(root)) {
     // `limits[]` is preferred: it is the flat, extensible shape, and it alone carries severity.
@@ -347,6 +346,7 @@ export const normalizeClaudeAgentSdkQuotaObservation = (
     }
   }
   const normalizedWindows = [...windows.values()];
+  const available = result.rate_limits_available !== false && normalizedWindows.length > 0;
   const incomplete = normalizedWindows.length === 0 || normalizedWindows.some((window) => window.blocked);
   const measuredState: ProviderStatusState = incomplete ? 'partial' : 'ok';
   const state: ProviderStatusState = available ? measuredState : 'unsupported';

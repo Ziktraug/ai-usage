@@ -356,7 +356,7 @@ Normalization rules:
 
 1. Implement Codex live snapshots through `codex app-server`. *(Done.)*
 2. Backfill Codex rollout snapshots with aggressive deduplication and replay safeguards. *(Done.)*
-3. Poll Claude through the Agent SDK usage method, behind a feature flag with a defensive parse.
+3. Poll Claude through the Agent SDK usage method with a defensive parse. *(Done as a default-enabled experimental source with its own source policy.)*
 4. Add optional Claude status-line ingestion only if the SDK method is withdrawn or proves unreliable.
 5. Add Cursor Teams absolute usage as a separately labeled source if there is demand.
 6. Wait for an official OpenCode Go quota endpoint before adding live Go polling.
