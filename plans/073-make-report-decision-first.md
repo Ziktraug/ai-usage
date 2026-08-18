@@ -1211,7 +1211,7 @@ Fill this during implementation; do not pre-claim results.
   `195.7 ms`, sort `206.458 ms`, heap delta `25,537,480 B`, cumulative
   Session responses `11,026,467 B`, maximum page `441,050 B`. SHA-256:
   `215f9b28317f1810fd4ea98910df370c0a1b619e4129145555e79fb3badffe9f`.
-- **Final functional and quality matrix**: implementation SHA `3f397209` passes
+- **Initial functional and quality matrix**: implementation SHA `3f397209` passes
   `bun run check`, `bun run lint`, `bun run typecheck`, the complete package
   test matrix, `bun run build`, client-manifest, production/dev/loopback
   boundaries, CSS/source budgets, and `git diff --check`. Browser results are
@@ -1253,6 +1253,9 @@ Fill this during implementation; do not pre-claim results.
   `overview-session-drawer-linux.png` at 390×844 light, and
   `skills-desktop-linux.png` at 1280×900 light. Exactly four PNGs and four
   `toHaveScreenshot` calls remain.
-- **Final green implementation SHA**: `3f397209`. The operator-approved mobile
-  benchmark exception is documented in D021; the final documentation commit is
-  recorded by the repository history after this execution log.
+- **Final green Plan 073 implementation SHA**: `142f9ba6`. Post-review fixes
+  through that commit preserve the recorded matrix and close the partial-state
+  comparison and mobile-layout findings. The operator-approved mobile benchmark
+  exception is documented in D021. Later commits on the branch are intentional
+  follow-up work for multi-provider quota collection and are outside Plan 073's
+  UI remediation scope.

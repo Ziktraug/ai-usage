@@ -3,9 +3,9 @@
 ## Owns
 
 Collection-only adapters for Claude, Codex, OpenCode, Cursor, Cursor CSV,
-Codex usage-limit observations, RTK savings, and Cursor commit attribution. It
-also owns collector-private Codex rollout/cache writes and conversion into
-normalized contributions.
+Codex and experimental Claude usage-limit observations, RTK savings, and Cursor
+commit attribution. It also owns collector-private Codex rollout/cache writes
+and conversion into normalized contributions.
 
 ## Does not own
 

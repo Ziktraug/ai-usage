@@ -2,7 +2,7 @@
 
 Unified local AI usage reporting for the coding tools installed on this machine — and across multiple machines through portable snapshots.
 
-ai-usage reads sessions from Codex, Claude Code, OpenCode, and Cursor, then makes their token usage, estimated cost, activity, and chronology available through a CLI and an interactive dashboard. Normal report collection stays on the local machine. The optional served Codex usage-limit source is the narrow exception: it may invoke the installed `codex app-server`, which owns provider communication and authentication refresh. ai-usage never reads Codex credentials or stores or logs raw app-server payloads.
+ai-usage reads sessions from Codex, Claude Code, OpenCode, and Cursor, then makes their token usage, estimated cost, activity, and chronology available through a CLI and an interactive dashboard. Normal report collection stays on the local machine. Provider quota sources are the narrow exception: Codex may invoke the installed `codex app-server`, and the experimental Claude source may open the installed Claude Agent SDK. Those provider clients own communication and authentication. ai-usage never reads provider credentials or stores or logs their raw payloads.
 
 ## Supported session sources
 
@@ -55,15 +55,15 @@ Filter by harness:
 bun run cli -- --harness codex
 ```
 
-Request a fresh Codex subscription quota observation (5h / 7d windows) through the installed `codex app-server`, then render the newest durable local observation:
+Request fresh subscription quota observations from the enabled provider sources, then render the newest durable local observation for each provider:
 
 ```sh
 bun run cli -- quota
 ```
 
-`ai-usage` does not read Codex credentials. The app-server owns provider communication and authentication refresh; after the refresh attempt, `ai-usage` reads the newest durable usage-limit observation.
+Codex uses the installed `codex app-server`. Claude uses an experimental Agent SDK API whose shape may change, so an incompatible or unavailable response is recorded as unsupported instead of failing the complete quota view. The provider clients own communication and authentication; after collection, `ai-usage` reads the newest durable observations.
 
-If refresh fails and a durable observation exists, the command renders that observation successfully while the `cli.quota` diagnostic boundary is degraded. Without a durable observation, it still exits successfully with `No stored Codex usage-limit observation is available.` while diagnostics record the failed refresh. A source paused by user policy is distinct from provider unavailability: the command exits 1 with `Codex usage-limit collection is paused; re-enable codex.usage-limits first.`
+If one refresh fails and a durable observation exists, the command renders the available observations while the `cli.quota` diagnostic boundary is degraded. Without a durable observation, it reports `No stored provider usage-limit observation is available.` A paused source is distinct from provider unavailability; the command fails only when every provider quota source is paused and identifies the source IDs to re-enable.
 
 Normal CLI reports are fresh: they ask the usage engine to collect and publish,
 then read the committed revision. To read the latest compatible stored revision
@@ -74,8 +74,9 @@ bun run cli -- --stored
 ```
 
 The dedicated usage engine runs collection independently from browser
-visibility. Its seven collection sources are Claude, Codex, OpenCode, and
-Cursor sessions; Codex usage limits; RTK savings; and Cursor commit attribution.
+visibility. Its eight collection sources are Claude, Codex, OpenCode, and
+Cursor sessions; Codex and experimental Claude usage limits; RTK savings; and
+Cursor commit attribution.
 Each source has separate policy, detection, lifecycle, outcome, and cadence
 state on `/sources`. Sparse policy overrides live only in
 `~/.config/ai-usage/config.json`; repository config cannot enable background
