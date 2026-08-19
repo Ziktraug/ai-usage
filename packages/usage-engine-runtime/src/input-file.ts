@@ -394,16 +394,12 @@ export const scavengeUsageEngineInbox = async ({
   ) {
     throw new Error('Usage engine inbox recovery timing is invalid.');
   }
-  const inboxStats = await lstat(path.resolve(inboxDirectoryValue)).catch((error: unknown) => {
-    if (errorHasCode(error, 'ENOENT')) {
-      return;
-    }
-    throw error;
-  });
-  if (!inboxStats) {
-    return { deletedBytes: 0, deletedFiles: 0, skippedSuspicious: 0 };
-  }
-  const inboxDirectory = await validateCanonicalDirectory(inboxDirectoryValue, true);
+  const resolvedInboxDirectory = path.resolve(inboxDirectoryValue);
+  const inboxDirectory = await ensurePrivateChildDirectory(
+    path.dirname(resolvedInboxDirectory),
+    path.basename(resolvedInboxDirectory),
+    { label: 'Usage engine inbox directory', parentOwnerOnly: true, repairMode: false },
+  );
   const entries = await opendir(inboxDirectory);
   let deletedBytes = 0;
   let deletedFiles = 0;
@@ -450,24 +446,42 @@ export const scavengeUsageEngineInbox = async ({
   return { deletedBytes, deletedFiles, skippedSuspicious };
 };
 
-const ensurePrivateChildDirectory = async (parentValue: string, name: string): Promise<string> => {
-  const parent = await validateCanonicalDirectory(parentValue, false);
+const ensurePrivateChildDirectory = async (
+  parentValue: string,
+  name: string,
+  options: {
+    readonly label?: string;
+    readonly parentOwnerOnly?: boolean;
+    readonly repairMode?: boolean;
+  } = {},
+): Promise<string> => {
+  const label = options.label ?? 'Cursor import directory';
+  const repairMode = options.repairMode ?? true;
+  const parent = await validateCanonicalDirectory(parentValue, options.parentOwnerOnly ?? false);
   const directory = path.join(parent, name);
+  if (directory === parent || path.dirname(directory) !== parent) {
+    throw new Error(`${label} escaped its parent directory.`);
+  }
   const existing = await lstat(directory).catch(() => undefined);
   if (!existing) {
     await mkdir(directory, { mode: PRIVATE_DIRECTORY_MODE });
   }
   const before = await lstat(directory);
-  if (before.isSymbolicLink() || !before.isDirectory() || !hasCurrentOwner(before.uid)) {
-    throw new Error('Cursor import directory is unsafe.');
+  if (
+    before.isSymbolicLink() ||
+    !before.isDirectory() ||
+    !hasCurrentOwner(before.uid) ||
+    !(repairMode || hasExactMode(before.mode, PRIVATE_DIRECTORY_MODE))
+  ) {
+    throw new Error(`${label} is unsafe.`);
   }
   const directoryHandle = await open(directory, SAFE_DIRECTORY_READ_FLAGS);
   try {
     const opened = await directoryHandle.stat();
     if (!(opened.isDirectory() && sameIdentity(before, opened) && hasCurrentOwner(opened.uid))) {
-      throw new Error('Cursor import directory changed while it was opened.');
+      throw new Error(`${label} changed while it was opened.`);
     }
-    if (process.platform !== 'win32') {
+    if (repairMode && process.platform !== 'win32') {
       await directoryHandle.chmod(PRIVATE_DIRECTORY_MODE);
     }
     const afterOpened = await directoryHandle.stat();
@@ -480,7 +494,7 @@ const ensurePrivateChildDirectory = async (parentValue: string, name: string): P
       !hasExactMode(afterOpened.mode, PRIVATE_DIRECTORY_MODE) ||
       (await realpath(directory)) !== directory
     ) {
-      throw new Error('Cursor import directory changed during validation.');
+      throw new Error(`${label} changed during validation.`);
     }
   } finally {
     await directoryHandle.close().catch(() => undefined);

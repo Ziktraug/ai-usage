@@ -73,6 +73,22 @@ describe('Sync browser adapter', () => {
     expect(response.bodyUsed).toBe(true);
   });
 
+  test('streams and bounds an attachment when the browser omits content length', async () => {
+    const response = new Response('{"portable":true}', {
+      headers: {
+        'content-disposition': 'attachment; filename="ai-usage-machine-a.json"',
+        'content-type': 'application/json; charset=utf-8',
+      },
+    });
+    const adapter = createSyncBrowserAdapter(defaultTransport(), () => Promise.resolve(response));
+
+    const download = await adapter.downloadManualMerge();
+
+    expect(download.filename).toBe('ai-usage-machine-a.json');
+    expect(await download.response.text()).toBe('{"portable":true}');
+    expect(response.bodyUsed).toBe(true);
+  });
+
   test('cancels rejected status and attachment metadata before returning bytes', async () => {
     const responses = [
       new Response('{}', { status: 503 }),
@@ -95,12 +111,6 @@ describe('Sync browser adapter', () => {
           'content-disposition': 'attachment; filename="safe.json"',
           'content-length': '2',
           'content-type': 'text/plain',
-        },
-      }),
-      new Response('{}', {
-        headers: {
-          'content-disposition': 'attachment; filename="safe.json"',
-          'content-type': 'application/json; charset=utf-8',
         },
       }),
     ];

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
@@ -7,6 +7,7 @@ import {
   parseUsageEngineStatus,
   USAGE_ENGINE_PROTOCOL_VERSION,
 } from '@ai-usage/usage-engine-control';
+import { stageUsageEngineHandoff } from '@ai-usage/usage-engine-control/handoff';
 import {
   loadUsageEngineRendezvous,
   revealUsageEngineBearerToken,
@@ -273,5 +274,16 @@ describe('usage engine real process lifecycle', () => {
     });
     await expect(Bun.file(fixture.rendezvousPath).exists()).resolves.toBe(false);
     await expect(Bun.file(fixture.lockPath).exists()).resolves.toBe(false);
+
+    const inboxDirectory = path.join(fixture.stateDirectory, 'inbox');
+    const inboxStats = await lstat(inboxDirectory);
+    expect(inboxStats.isDirectory()).toBe(true);
+    if (process.platform !== 'win32') {
+      expect(inboxStats.mode % 0o1000).toBe(0o700);
+    }
+    const handoff = await stageUsageEngineHandoff(new TextEncoder().encode('{}'), {
+      inboxDirectory: await realpath(inboxDirectory),
+    });
+    await handoff.cleanup();
   });
 });

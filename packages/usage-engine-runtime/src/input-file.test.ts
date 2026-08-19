@@ -1,9 +1,22 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { createHash, randomUUID } from 'node:crypto';
-import { link, lstat, mkdir, mkdtemp, readFile, realpath, rm, symlink, utimes, writeFile } from 'node:fs/promises';
+import {
+  chmod,
+  link,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  symlink,
+  utimes,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { parseUsageEngineHandoffId } from '@ai-usage/usage-engine-control';
+import { stageUsageEngineHandoff } from '@ai-usage/usage-engine-control/handoff';
 import {
   listManagedCursorUsageExportPaths,
   readUsageEngineInput,
@@ -29,6 +42,51 @@ const fixture = async () => {
 };
 
 describe('usage engine file inputs', () => {
+  test('creates a private inbox before staging the first handoff', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'plan052-engine-empty-inbox-'));
+    roots.push(root);
+    const stateDirectory = path.join(root, 'state');
+    const inboxDirectory = path.join(stateDirectory, 'inbox');
+    await mkdir(stateDirectory, { mode: 0o700 });
+
+    expect(await Bun.file(inboxDirectory).exists()).toBe(false);
+    expect(
+      await scavengeUsageEngineInbox({
+        gracePeriodMs: 60_000,
+        inboxDirectory,
+        now: Date.parse('2026-07-30T00:00:00.000Z'),
+      }),
+    ).toEqual({ deletedBytes: 0, deletedFiles: 0, skippedSuspicious: 0 });
+
+    const inboxStats = await lstat(inboxDirectory);
+    expect(inboxStats.isDirectory()).toBe(true);
+    if (process.platform !== 'win32') {
+      expect(inboxStats.mode % 0o1000).toBe(0o700);
+    }
+
+    const handoff = await stageUsageEngineHandoff(new TextEncoder().encode('{}'), {
+      inboxDirectory: await realpath(inboxDirectory),
+    });
+    await handoff.cleanup();
+  });
+
+  test('refuses to repair an existing permissive inbox', async () => {
+    const { inboxDirectory } = await fixture();
+    if (process.platform === 'win32') {
+      return;
+    }
+    await chmod(inboxDirectory, 0o755);
+
+    await expect(
+      scavengeUsageEngineInbox({
+        gracePeriodMs: 60_000,
+        inboxDirectory,
+        now: Date.parse('2026-07-30T00:00:00.000Z'),
+      }),
+    ).rejects.toThrow('Usage engine inbox directory is unsafe.');
+    expect((await lstat(inboxDirectory)).mode % 0o1000).toBe(0o755);
+  });
+
   test('reads a bounded no-follow operator file and rejects symlinks and hard links', async () => {
     const { inboxDirectory, operatorCwd } = await fixture();
     const filePath = path.join(operatorCwd, 'merge.json');
