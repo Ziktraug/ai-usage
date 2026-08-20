@@ -143,7 +143,7 @@ read-only SQLite and the permanent browser/server and demo-isolation boundaries.
 | 077 | Give /sources a First-Run Answer When Nothing Is Detected | P2 | M | - | TODO |
 | 078 | Export Filtered Session Rows as CSV From the Web Sessions View | P2 | S-M | - | TODO |
 | 079 | Drive Cursor Import and Machine Renaming From the Web | P2 | M | 075 (file overlap in sync feature; sequence or coordinate) | TODO |
-| 080 | Restore Glanceable Quota in the 768-1279px Band and Cover the Missing Viewports | P2 | S+M | - | TODO |
+| 080 | Restore Glanceable Quota in the 768-1279px Band and Cover the Missing Viewports | P2 | S+M | - | DONE — the new viewports surfaced a Models branch pinned at 1280 though the table swaps at `md` (768); the rail query is gated to live mode so it never renders under e2e, and the band behaviour is asserted in the SSR test plus a live-mode browser measurement (56px column, compact values 22-25px, zero overflow at 1080x900 and 1080x1920, hidden at 1280+) |
 | 081 | Add `quota --history` to the CLI | P2 | M | - | DONE |
 | 082 | Let the Reader See What the Timeline "Other" Series Contains | P3 | S-M | - | TODO |
 | 083 | Design "Adopt Unmanaged Skill Into Source" (spike, then gated build) | P1 | L | - | TODO |

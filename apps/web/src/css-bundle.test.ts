@@ -31,6 +31,13 @@ const MULTI_PROVIDER_QUOTA_RAIL_GZIP_BUDGET_BYTES = 3520;
  * Measured at 644 bytes, rounded on the same rule.
  */
 const CORE_VALUE_OBJECTS_GZIP_BUDGET_BYTES = 704;
+/**
+ * Restoring the quota percentage in the 768-1279px band, where the rail is a 56px icon column and
+ * the labelled row is hidden. Purely responsive atoms — the stacked row direction and gap, and the
+ * compact value's md/xl display pair — since colour and weight reuse existing atoms. Measured at
+ * 98 bytes, rounded to the next 64 on the same rule as the entries above.
+ */
+const COMPACT_QUOTA_RAIL_VALUE_GZIP_BUDGET_BYTES = 128;
 const INITIAL_GZIP_CLOSURE_MAXIMUM_BYTES =
   Math.ceil(INITIAL_GZIP_CLOSURE_BASELINE_BYTES * 1.1) +
   BREAKDOWN_SEARCH_GZIP_BUDGET_BYTES +
@@ -45,7 +52,8 @@ const INITIAL_GZIP_CLOSURE_MAXIMUM_BYTES =
   POST_REVIEW_CORRECTIONS_GZIP_BUDGET_BYTES +
   REPORT_TESTABILITY_SEAMS_GZIP_BUDGET_BYTES +
   MULTI_PROVIDER_QUOTA_RAIL_GZIP_BUDGET_BYTES +
-  CORE_VALUE_OBJECTS_GZIP_BUDGET_BYTES;
+  CORE_VALUE_OBJECTS_GZIP_BUDGET_BYTES +
+  COMPACT_QUOTA_RAIL_VALUE_GZIP_BUDGET_BYTES;
 const LEADING_SLASH_PATTERN = /^\/+/;
 const REPORT_COLOR_TOKEN_PATTERN = /token\(colors\.([A-Za-z0-9_.-]+)\)/g;
 const REPORT_SOURCE_FILE_PATTERN = /\.(?:svelte|ts)$/;

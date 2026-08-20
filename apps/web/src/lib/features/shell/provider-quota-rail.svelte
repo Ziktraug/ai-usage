@@ -40,11 +40,14 @@
     letterSpacing: '0.08em',
     textTransform: 'uppercase',
   });
+  // In the 56px band the row stacks so the percentage can sit under its ring; at `xl` the labelled
+  // row is unchanged. Neither the rail's width nor the content offset that mirrors it is touched.
   const providerRow = css({
     display: 'flex',
     alignItems: 'center',
+    flexDirection: { md: 'column', xl: 'row' },
     justifyContent: { md: 'center', xl: 'flex-start' },
-    gap: '9px',
+    gap: { md: '2px', xl: '9px' },
     minH: '30px',
     px: { md: 0, xl: '10px' },
   });
@@ -65,6 +68,17 @@
     fontSize: '12px',
     fontWeight: 700,
     fontVariantNumeric: 'tabular-nums',
+  });
+  // The product's most glanceable number, restored to the band where the rail has no room for names.
+  // Only the number: the "Quota used" heading and the provider name stay at `xl`, and the flyout
+  // remains the labelled detail surface.
+  const providerValueCompact = css({
+    display: { md: 'block', xl: 'none' },
+    color: 'ink',
+    fontSize: '9px',
+    fontWeight: 700,
+    fontVariantNumeric: 'tabular-nums',
+    textAlign: 'center',
   });
   const providerValueAbsent = css({ color: 'faint', fontWeight: 600 });
   // An aged reading keeps its number — it is still what the quota was — but drops to muted so it
@@ -257,6 +271,16 @@
   {#each entries as entry (entry.key)}
     <span aria-hidden="true" class={providerRow} data-provider-quota={entry.key}>
       {@render providerRing(entry, 26)}
+      <span
+        class={cx(
+          providerValueCompact,
+          entry.usedPercent === null ? providerValueAbsent : undefined,
+          entry.stale ? providerValueStale : undefined,
+        )}
+        data-provider-quota-compact-value
+      >
+        {headline(entry)}
+      </span>
       <span class={providerName}>{entry.label}</span>
       <span
         class={cx(
