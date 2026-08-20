@@ -56,7 +56,7 @@
     selectedCampaignKey,
     selectedRowId,
   }: {
-    generatedAt: string;
+    generatedAt?: string;
     initialSessionWindowAnchor: boolean;
     navigate: SearchNavigationIntent<DashboardSearch>;
     onCampaignControlsChange: (binding: CampaignSessionControlsBinding | null) => void;
@@ -140,7 +140,9 @@
           queryState?.sessionCount ?? _rows.length,
         )}
       </span>
-      <ReportSharingActions createExport={() => createSessionsExport(generatedAt, _rows)} />
+      <ReportSharingActions
+        createExport={() => createSessionsExport(generatedAt ?? new Date().toISOString(), _rows)}
+      />
     </div>
     <SessionTable
       {...(queryState?.campaignChildren === undefined
