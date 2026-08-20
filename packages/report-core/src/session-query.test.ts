@@ -658,28 +658,71 @@ describe('session query contracts', () => {
     expect(campaignBadgeLabelForSessionRow(item.row)).toBe('Campaign · 1 session');
   });
 
-  test('rejects classifier sessions without a resolvable declared parent campaign', () => {
-    expect(() =>
-      projectSessionPage([sourcedRow('classifier-root', { origin: 'classifier' })], defaultRequest()),
-    ).toThrow('has no declared parent campaign');
-    expect(() =>
-      projectSessionPage(
-        [
-          sourcedRow('classifier-review', {
-            origin: 'classifier',
-            source: {
-              harnessKey: 'codex',
-              machineId: 'machine-a',
-              machineLabel: 'Machine A',
-              parentSourceSessionId: 'missing-root',
-              rootSourceSessionId: 'missing-root',
-              sourceSessionId: 'classifier-review',
-            },
-          }),
-        ],
-        defaultRequest(),
+  test('preserves declared classifier campaign identity when the parent row is unavailable', () => {
+    // An older writer may omit lineage entirely; that row stands alone instead of stopping report
+    // publication. A portable or merged dataset may instead preserve an explicit root declaration
+    // without carrying the root row. Keep that declaration and choose a deterministic stand-in.
+    const undeclared = projectSessionPage([sourcedRow('classifier-root', { origin: 'classifier' })], defaultRequest());
+    expect(undeclared.sessionCount).toBe(1);
+    expect(undeclared.items[0]?.kind).toBe('campaign');
+
+    const classifiers = ['classifier-review-b', 'classifier-review-a'].map((sourceSessionId) =>
+      sourcedRow(sourceSessionId, {
+        origin: 'classifier',
+        source: {
+          harnessKey: 'codex',
+          machineId: 'machine-a',
+          machineLabel: 'Machine A',
+          parentSourceSessionId: 'missing-root',
+          rootSourceSessionId: 'missing-root',
+          sourceSessionId,
+        },
+      }),
+    );
+    const forward = projectSessionPage(classifiers, defaultRequest({ pageSize: 10 }));
+    const reversed = projectSessionPage([...classifiers].reverse(), defaultRequest({ pageSize: 10 }));
+
+    expect(forward).toMatchObject({
+      itemCount: 1,
+      items: [
+        {
+          campaignKey: 'machine-a:codex:missing-root',
+          kind: 'campaign',
+          row: { campaignTotalCount: 2 },
+        },
+      ],
+      sessionCount: 2,
+    });
+    expect(reversed.items[0]).toMatchObject({
+      campaignKey: forward.items[0]?.campaignKey,
+      row: { rowId: forward.items[0]?.row.rowId },
+    });
+  });
+
+  test('keeps distinct declared classifier roots in separate campaigns', () => {
+    const page = projectSessionPage(
+      ['missing-root-a', 'missing-root-b'].map((rootSourceSessionId, index) =>
+        sourcedRow(`classifier-review-${index}`, {
+          origin: 'classifier',
+          source: {
+            harnessKey: 'codex',
+            machineId: 'machine-a',
+            machineLabel: 'Machine A',
+            parentSourceSessionId: rootSourceSessionId,
+            rootSourceSessionId,
+            sourceSessionId: `classifier-review-${index}`,
+          },
+        }),
       ),
-    ).toThrow('has no resolvable parent session');
+      defaultRequest({ pageSize: 10 }),
+    );
+
+    expect(page.itemCount).toBe(2);
+    expect(page.sessionCount).toBe(2);
+    expect(page.items.map((item) => item.campaignKey).sort()).toEqual([
+      'machine-a:codex:missing-root-a',
+      'machine-a:codex:missing-root-b',
+    ]);
   });
 
   test('uses root duration and model identity for campaigns with overlapping child rollouts', () => {
