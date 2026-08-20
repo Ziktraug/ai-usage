@@ -32,6 +32,13 @@ const MULTI_PROVIDER_QUOTA_RAIL_GZIP_BUDGET_BYTES = 3520;
  */
 const CORE_VALUE_OBJECTS_GZIP_BUDGET_BYTES = 704;
 /**
+ * The period control regained the draggable range brush the retired range card used to carry:
+ * a standalone brush instance (state machine wiring, pointer/keyboard handlers, slider markup)
+ * plus the inline native date fields ride in the report entry closure whenever Custom is the
+ * period mode. Measured at 965 bytes, rounded on the same rule.
+ */
+const PERIOD_RANGE_BRUSH_GZIP_BUDGET_BYTES = 1024;
+/**
  * Restoring the quota percentage in the 768-1279px band, where the rail is a 56px icon column and
  * the labelled row is hidden. Purely responsive atoms — the stacked row direction and gap, and the
  * compact value's md/xl display pair — since colour and weight reuse existing atoms. Measured at
@@ -53,6 +60,7 @@ const INITIAL_GZIP_CLOSURE_MAXIMUM_BYTES =
   REPORT_TESTABILITY_SEAMS_GZIP_BUDGET_BYTES +
   MULTI_PROVIDER_QUOTA_RAIL_GZIP_BUDGET_BYTES +
   CORE_VALUE_OBJECTS_GZIP_BUDGET_BYTES +
+  PERIOD_RANGE_BRUSH_GZIP_BUDGET_BYTES +
   COMPACT_QUOTA_RAIL_VALUE_GZIP_BUDGET_BYTES;
 const LEADING_SLASH_PATTERN = /^\/+/;
 const REPORT_COLOR_TOKEN_PATTERN = /token\(colors\.([A-Za-z0-9_.-]+)\)/g;
