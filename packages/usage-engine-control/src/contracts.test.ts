@@ -12,6 +12,7 @@ import {
   parseUsageEngineReplayCursor,
   parseUsageEngineStatus,
   parseWebUsageEngineCommand,
+  USAGE_ENGINE_PROTOCOL_VERSION,
   usageEngineControlBounds,
 } from './contracts';
 import { fixtureGeneratedAt, fixtureInstanceId, fixtureStatus } from './test-fixtures';
@@ -179,8 +180,8 @@ describe('usage engine control contracts', () => {
   });
 
   test('rejects protocol mismatches and inconsistent status identities', () => {
-    expect(Number(parseUsageEngineProtocolVersion(1))).toBe(1);
-    expect(() => parseUsageEngineProtocolVersion(2)).toThrow('protocol');
+    expect(Number(parseUsageEngineProtocolVersion(USAGE_ENGINE_PROTOCOL_VERSION))).toBe(2);
+    expect(() => parseUsageEngineProtocolVersion(1)).toThrow('protocol');
     expect(parseUsageEngineStatus(fixtureStatus()) as unknown).toEqual(fixtureStatus());
     expect(() =>
       parseUsageEngineStatus({
@@ -197,7 +198,7 @@ describe('usage engine control contracts', () => {
       commandId: 'command-1',
       instanceId: fixtureInstanceId,
       ok: true,
-      protocolVersion: 1,
+      protocolVersion: USAGE_ENGINE_PROTOCOL_VERSION,
     };
     expect(parseUsageEngineCommandResult(accepted) as unknown).toEqual(accepted);
     expect(() => parseUsageEngineCommandResult({ ...accepted, payload: { rows: [] } })).toThrow('unknown');
@@ -205,7 +206,7 @@ describe('usage engine control contracts', () => {
       commandId: 'command-1',
       disposition: 'cancelled',
       instanceId: fixtureInstanceId,
-      protocolVersion: 1,
+      protocolVersion: USAGE_ENGINE_PROTOCOL_VERSION,
     };
     expect(parseUsageEngineCommandCancellationResult(cancellation) as unknown).toEqual(cancellation);
     expect(() => parseUsageEngineCommandCancellationResult({ ...cancellation, disposition: 'deleted' })).toThrow(
@@ -342,13 +343,13 @@ describe('usage engine control contracts', () => {
     const error = {
       error: { code: 'engine-unavailable', message: 'The engine is not running.' },
       ok: false,
-      protocolVersion: 1,
+      protocolVersion: USAGE_ENGINE_PROTOCOL_VERSION,
     };
     expect(parseUsageEngineErrorResponse(error) as unknown).toEqual(error);
     const stalePreview = {
       error: { code: 'preview-stale', message: 'Preview the merge file again.' },
       ok: false,
-      protocolVersion: 1,
+      protocolVersion: USAGE_ENGINE_PROTOCOL_VERSION,
     };
     expect(parseUsageEngineErrorResponse(stalePreview) as unknown).toEqual(stalePreview);
     expect(() => parseUsageEngineErrorResponse({ ...error, detail: '/private/token' })).toThrow('unknown');
@@ -373,10 +374,16 @@ describe('usage engine control contracts', () => {
     expect(() =>
       parseUsageEngineMergePreviewOutput({ ...preview, bundle: { ...preview.bundle, machineLabel: '' } }),
     ).toThrow('machine label');
-    expect(() =>
+    expect(
       parseUsageEngineMergePreviewOutput({
         ...preview,
         bundle: { ...preview.bundle, machineLabel: 'L'.repeat(121) },
+      }) as unknown,
+    ).toEqual({ ...preview, bundle: { ...preview.bundle, machineLabel: 'L'.repeat(121) } });
+    expect(() =>
+      parseUsageEngineMergePreviewOutput({
+        ...preview,
+        bundle: { ...preview.bundle, machineLabel: 'é'.repeat(121) },
       }),
     ).toThrow('machine label');
     expect(() =>
@@ -423,7 +430,7 @@ describe('usage engine control contracts', () => {
       },
       instanceId: fixtureInstanceId,
       kind: 'command-completed',
-      protocolVersion: 1,
+      protocolVersion: USAGE_ENGINE_PROTOCOL_VERSION,
       status: fixtureStatus(),
     };
     expect(parseUsageEngineForegroundOutcome(completed) as unknown).toEqual(completed);
@@ -435,7 +442,7 @@ describe('usage engine control contracts', () => {
         error: { code: 'engine-busy', message: 'The writer lock is held.' },
         instanceId: fixtureInstanceId,
         ok: false,
-        protocolVersion: 1,
+        protocolVersion: USAGE_ENGINE_PROTOCOL_VERSION,
       },
     };
     expect(parseUsageEngineForegroundOutcome(rejected) as unknown).toEqual(rejected);
@@ -450,7 +457,7 @@ describe('usage engine control contracts', () => {
         commandId: 'command-1',
         instanceId: fixtureInstanceId,
         ok: true,
-        protocolVersion: 1,
+        protocolVersion: USAGE_ENGINE_PROTOCOL_VERSION,
         unexpected: oversized,
       }),
     ).toThrow('byte limit');
@@ -468,7 +475,7 @@ describe('usage engine control contracts', () => {
       parseUsageEngineErrorResponse({
         error: { code: 'engine-unavailable', message: oversized },
         ok: false,
-        protocolVersion: 1,
+        protocolVersion: USAGE_ENGINE_PROTOCOL_VERSION,
       }),
     ).toThrow('byte limit');
   });
