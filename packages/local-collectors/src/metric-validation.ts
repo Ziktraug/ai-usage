@@ -8,5 +8,6 @@ export const metricValidationWarning = (harness: string, rejectedMetricRecords: 
         harness,
         operation: 'metricValidation',
         message: `Rejected ${rejectedMetricRecords} malformed ${harness} metric record(s).`,
+        rejectedRecords: rejectedMetricRecords,
       }
     : null;

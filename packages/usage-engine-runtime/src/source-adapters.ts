@@ -24,7 +24,6 @@ import type {
   SourceDetectionResult,
   SourceProgress,
   SourceRunResult,
-  SourceWarning,
 } from '@ai-usage/report-core/source-control';
 import {
   collectionSourceDefinitions,
@@ -45,6 +44,7 @@ import { listManagedCursorUsageExportPaths } from './input-file';
 import type { ProviderQuotaRuntimeOptions } from './provider-quota';
 import { refreshLocalProviderQuotas } from './provider-quota';
 import { CLAUDE_QUOTA_SOURCE_IDENTITY } from './provider-quota-refresh';
+import { type SanitizableSourceWarning, sanitizeSourceWarnings } from './source-warnings';
 
 export interface SourceRunContext {
   readonly reportProgress: (progress: SourceProgress) => Effect.Effect<void>;
@@ -73,17 +73,6 @@ export interface SourceAdapterOptions {
   readonly now?: () => Date;
   readonly providerQuotaOptions?: ProviderQuotaRuntimeOptions;
 }
-
-const warningCodeCharacters = /[^a-zA-Z0-9._-]/g;
-
-const sanitizeWarnings = (label: string, warnings: readonly { operation?: string }[]): readonly SourceWarning[] =>
-  warnings.slice(0, sourceControlBounds.maxWarningsPerSource).map((warning) => {
-    const code = (warning.operation ?? 'collector-warning').replace(warningCodeCharacters, '-').slice(0, 64);
-    return {
-      code: code || 'collector-warning',
-      message: `${label} completed with an incomplete or rejected local record.`,
-    };
-  });
 
 const detected = (): SourceDetectionResult => ({
   availability: 'detected',
@@ -232,7 +221,7 @@ const cursorOptions = (
 const collectHarness = (
   adapter: HarnessAdapter,
 ): Effect.Effect<
-  { rows: CollectorRow[]; warnings: readonly { operation?: string }[] },
+  { rows: CollectorRow[]; warnings: readonly SanitizableSourceWarning[] },
   unknown,
   LocalHistoryStorageService
 > => {
@@ -287,7 +276,7 @@ const createSessionSource = (input: {
         machine: input.machine,
         rows,
       }).pipe(Effect.mapError((cause) => sourceFailure(input.id, cause)));
-      const warnings = sanitizeWarnings(input.label, [...collection.warnings, ...retentionWarnings]);
+      const warnings = sanitizeSourceWarnings(input.label, [...collection.warnings, ...retentionWarnings]);
       return {
         changed: imported.inserted > 0 || imported.updated > 0,
         inputCount: collection.rows.length,
@@ -349,7 +338,7 @@ const createRtkSource = (input: {
         changed: imported.inserted > 0 || imported.updated > 0,
         inputCount: stored.rows.length,
         outputCount: imported.inserted + imported.updated + imported.unchanged,
-        warnings: sanitizeWarnings('RTK savings', enriched.warnings),
+        warnings: sanitizeSourceWarnings('RTK savings', enriched.warnings),
       };
     }),
 });
@@ -389,7 +378,7 @@ const createCursorAttributionSource = (input: {
         changed: imported.inserted > 0 || imported.updated > 0,
         inputCount: collection.rows.length,
         outputCount: collection.rows.length,
-        warnings: sanitizeWarnings('Cursor commit attribution', collection.warnings),
+        warnings: sanitizeSourceWarnings('Cursor commit attribution', collection.warnings),
       };
     }),
 });
