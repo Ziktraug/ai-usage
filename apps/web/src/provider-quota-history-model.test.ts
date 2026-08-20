@@ -57,6 +57,47 @@ test('groups provider-defined windows and describes reset and gap boundaries', (
   expect(model.series[0]?.summary).toContain('1 collection gap');
 });
 
+test('keeps a series per provider when two providers report the same window', () => {
+  const points = [
+    point({ firstObservedAt: '2026-07-15T10:00:00.000Z', usedPercent: 20 }),
+    point({ firstObservedAt: '2026-07-15T10:05:00.000Z', usedPercent: 30 }),
+    point({
+      firstObservedAt: '2026-07-15T10:00:00.000Z',
+      providerKey: 'claude',
+      providerLabel: 'Claude',
+      source: { confidence: 'authoritative', key: 'claude-agent-sdk', mode: 'poll' },
+      usedPercent: 11,
+      windowId: 'claude:primary',
+    }),
+    point({
+      firstObservedAt: '2026-07-15T10:05:00.000Z',
+      providerKey: 'claude',
+      providerLabel: 'Claude',
+      source: { confidence: 'authoritative', key: 'claude-agent-sdk', mode: 'poll' },
+      usedPercent: 17,
+      windowId: 'claude:primary',
+    }),
+  ];
+
+  const model = buildProviderQuotaHistoryModel({
+    coverage: [],
+    generatedAt: '2026-07-15T10:06:00.000Z',
+    latest: [],
+    points,
+    skipped: 0,
+    truncated: false,
+  });
+
+  expect(model.series).toHaveLength(2);
+  expect(model.series.map(({ providerKey }) => providerKey).sort()).toEqual(['claude', 'codex']);
+  const claude = model.series.find(({ providerKey }) => providerKey === 'claude');
+  const codex = model.series.find(({ providerKey }) => providerKey === 'codex');
+  expect(claude?.providerLabel).toBe('Claude');
+  expect(claude?.points.map(({ usedPercent }) => usedPercent)).toEqual([11, 17]);
+  expect(codex?.providerLabel).toBe('Codex');
+  expect(codex?.points.map(({ usedPercent }) => usedPercent)).toEqual([20, 30]);
+});
+
 describe('empty history', () => {
   test('returns a stable empty state without fabricating monthly windows', () => {
     const model = buildProviderQuotaHistoryModel({

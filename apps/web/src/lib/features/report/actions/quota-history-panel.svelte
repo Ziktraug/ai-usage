@@ -121,7 +121,7 @@
 </script>
 
 <Drawer
-  contentAriaLabel="Codex quota history"
+  contentAriaLabel="Provider quota history"
   finalFocusEl={() => (previousFocus instanceof HTMLElement && previousFocus.isConnected ? previousFocus : null)}
   initialFocusEl={() => closeButton ?? null}
   modal
@@ -136,11 +136,11 @@
   <div class={stack} data-quota-history>
     <header class={row}>
       <div>
-        <h2 class={title}>Codex quota history</h2>
+        <h2 class={title}>Provider quota history</h2>
         <p class={muted}>Provider-defined quota observations retained on this machine.</p>
       </div>
       <button
-        aria-label="Close Codex quota history"
+        aria-label="Close provider quota history"
         class={button}
         onclick={onClose}
         type="button"

@@ -25,7 +25,7 @@
   } from '../../../../machine-freshness-presentation';
   import type { MigrationGranularity, TimelineDimension, TimelineValue } from '../../../../overview-model';
   import { buildProjectGroupReferenceCommand } from '../../../../project-group-control';
-  import { buildProviderStatusViews } from '../../../../provider-status-model';
+  import { buildProviderStatusViews, providerHistoryAvailable } from '../../../../provider-status-model';
   import type { RuntimeMode } from '../../../../runtime-mode';
   import { sessionAnalysisTargetForSession } from '../../../../session-analysis-target';
   import type { WebReportPayloadWithoutRows } from '../../../../web-report-payload';
@@ -312,6 +312,14 @@
   const campaignIndex = $derived(indexCampaignLabelOverrides(campaignLabelsQuery.data ?? []));
   const providers = $derived(
     buildProviderStatusViews(bootstrap.support, bootstrap.providerRows, bootstrap.support.generatedAt),
+  );
+  // Only offer the history drawer when a provider can plausibly have stored observations behind it;
+  // a live or local-history source is what the quota store writes from.
+  const quotaHistoryAvailable = $derived(
+    providerHistoryAvailable(
+      undefined,
+      providers.some(({ provider }) => provider.source === 'live-api' || provider.source === 'local-history'),
+    ),
   );
   const totalSessions = $derived(bootstrap.support.analytics.sessionCount);
   const visibleSessions = $derived(
@@ -648,7 +656,7 @@
         modelsHref,
         onClearFilters: navigation.clearAllFilters,
         onOpenModels: () => navigation.setBreakdownTab('models'),
-        onOpenQuotaHistory: () => (quotaHistoryOpen = true),
+        ...(quotaHistoryAvailable ? { onOpenQuotaHistory: () => (quotaHistoryOpen = true) } : {}),
         onSelectDay: selectDay,
         onSelectSession: selectOverviewSession,
         onSelectTimeCell: selectTimeCell,

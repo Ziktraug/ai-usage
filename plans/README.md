@@ -137,7 +137,7 @@ read-only SQLite and the permanent browser/server and demo-isolation boundaries.
 | 071 | Measure and Optimize the Web Session Pipeline End to End | P1 | XL | current Plan 069 Query ownership; 070 | DONE |
 | 072 | Evaluate Deferred Web Session Optimizations (keyset, Ark split, direct destination SSR) | P1 | XL | 071 reviewed final | DONE |
 | 073 | Make the Report a Decision-First Executive and Investigation Workspace | P1 | L | 069, 072 (DONE); main `1868b108` | DONE |
-| 074 | Finish the Multi-Provider Quota History Surface | P1 | S | - | TODO |
+| 074 | Finish the Multi-Provider Quota History Surface | P1 | S | - | DONE |
 | 075 | Show Bundle Identity, Age, and Warnings in the /sync Import Preview | P1 | M | - | TODO |
 | 076 | Display Campaign Root Titles on Generic Child Sessions | P2 | S-M | - | TODO |
 | 077 | Give /sources a First-Run Answer When Nothing Is Detected | P2 | M | - | TODO |
