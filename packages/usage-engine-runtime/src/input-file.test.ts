@@ -1,11 +1,23 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { createHash, randomUUID } from 'node:crypto';
-import { link, lstat, mkdir, mkdtemp, readFile, rm, symlink, utimes, writeFile } from 'node:fs/promises';
+import {
+  chmod,
+  link,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  symlink,
+  utimes,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { parseUsageEngineHandoffId } from '@ai-usage/usage-engine-control';
+import { stageUsageEngineHandoff } from '@ai-usage/usage-engine-control/handoff';
 import {
-  ensureUsageEngineInbox,
   listManagedCursorUsageExportPaths,
   readUsageEngineInput,
   repairManagedCursorUsageExportModes,
@@ -14,7 +26,6 @@ import {
 } from './input-file';
 
 const roots: string[] = [];
-const unsafeInboxMessage = /inbox directory is unsafe/;
 
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { force: true, recursive: true })));
@@ -31,35 +42,68 @@ const fixture = async () => {
 };
 
 describe('usage engine file inputs', () => {
-  test('establishes the inbox on a state directory that has never held one', async () => {
-    // Every other fixture here creates the inbox itself, which is exactly why nothing noticed that no
-    // production path did. This one starts from a state directory that does not exist yet.
-    const root = await mkdtemp(path.join(tmpdir(), 'plan052-engine-inbox-'));
+  test('creates a private inbox before staging the first handoff', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'plan052-engine-empty-inbox-'));
     roots.push(root);
-    const inboxDirectory = path.join(root, 'state', 'inbox');
-    expect(await lstat(inboxDirectory).catch(() => undefined)).toBeUndefined();
+    const stateDirectory = path.join(root, 'state');
+    const inboxDirectory = path.join(stateDirectory, 'inbox');
+    await mkdir(stateDirectory, { mode: 0o700 });
 
-    const created = await ensureUsageEngineInbox(inboxDirectory);
-    expect(created).toBe(inboxDirectory);
-    const stats = await lstat(inboxDirectory);
-    expect(stats.isDirectory()).toBe(true);
-    expect(stats.mode % 0o1000).toBe(0o700);
+    expect(await Bun.file(inboxDirectory).exists()).toBe(false);
+    expect(
+      await scavengeUsageEngineInbox({
+        gracePeriodMs: 60_000,
+        inboxDirectory,
+        now: Date.parse('2026-07-30T00:00:00.000Z'),
+      }),
+    ).toEqual({ deletedBytes: 0, deletedFiles: 0, skippedSuspicious: 0 });
 
-    // Re-establishing an existing inbox is a no-op, not a failure.
-    await expect(ensureUsageEngineInbox(inboxDirectory)).resolves.toBe(inboxDirectory);
+    const inboxStats = await lstat(inboxDirectory);
+    expect(inboxStats.isDirectory()).toBe(true);
+    if (process.platform !== 'win32') {
+      expect(inboxStats.mode % 0o1000).toBe(0o700);
+    }
+
+    const handoff = await stageUsageEngineHandoff(new TextEncoder().encode('{}'), {
+      inboxDirectory: await realpath(inboxDirectory),
+    });
+    await handoff.cleanup();
   });
 
-  test('refuses an inbox that is a symlink rather than a private directory', async () => {
-    const root = await mkdtemp(path.join(tmpdir(), 'plan052-engine-inbox-unsafe-'));
+  test('refuses to repair an existing permissive inbox', async () => {
+    const { inboxDirectory } = await fixture();
+    if (process.platform === 'win32') {
+      return;
+    }
+    await chmod(inboxDirectory, 0o755);
+
+    await expect(
+      scavengeUsageEngineInbox({
+        gracePeriodMs: 60_000,
+        inboxDirectory,
+        now: Date.parse('2026-07-30T00:00:00.000Z'),
+      }),
+    ).rejects.toThrow('Usage engine inbox directory is unsafe.');
+    expect((await lstat(inboxDirectory)).mode % 0o1000).toBe(0o755);
+  });
+
+  test('refuses a symlinked inbox instead of following it', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'plan052-engine-inbox-symlink-'));
     roots.push(root);
     const stateDirectory = path.join(root, 'state');
     const elsewhere = path.join(root, 'elsewhere');
-    await mkdir(stateDirectory, { mode: 0o700, recursive: true });
-    await mkdir(elsewhere, { mode: 0o700, recursive: true });
     const inboxDirectory = path.join(stateDirectory, 'inbox');
+    await mkdir(stateDirectory, { mode: 0o700 });
+    await mkdir(elsewhere, { mode: 0o700 });
     await symlink(elsewhere, inboxDirectory);
 
-    await expect(ensureUsageEngineInbox(inboxDirectory)).rejects.toThrow(unsafeInboxMessage);
+    await expect(
+      scavengeUsageEngineInbox({
+        gracePeriodMs: 60_000,
+        inboxDirectory,
+        now: Date.parse('2026-07-30T00:00:00.000Z'),
+      }),
+    ).rejects.toThrow('Usage engine inbox directory is unsafe.');
   });
 
   test('reads a bounded no-follow operator file and rejects symlinks and hard links', async () => {
@@ -146,7 +190,7 @@ describe('usage engine file inputs', () => {
     );
 
     expect(result.alreadyImported).toBe(false);
-    expect(path.dirname(result.path)).toBe(path.join(root, '.ai-usage', 'cursor-exports'));
+    expect(path.dirname(result.path)).toBe(path.join(await realpath(root), '.ai-usage', 'cursor-exports'));
     expect(await Bun.file(handoffPath).exists()).toBe(false);
     expect(await Bun.file(result.path).text()).toBe(csv);
   });
@@ -230,15 +274,18 @@ describe('usage engine file inputs', () => {
     await writeFile(sourcePath, csv);
     const digest = createHash('sha256').update(csv).digest('hex');
     const importDirectory = path.join(root, '.ai-usage', 'cursor-exports');
-    await mkdir(importDirectory, { mode: 0o700, recursive: true });
+    await mkdir(importDirectory, { mode: 0o755, recursive: true });
     const legacyPath = path.join(importDirectory, `${digest.slice(0, 12)}-cursor-legacy.csv`);
     await writeFile(legacyPath, csv, { mode: 0o644 });
     const legacyBefore = await lstat(legacyPath);
+    const canonicalLegacyPath = await realpath(legacyPath);
 
-    await expect(listManagedCursorUsageExportPaths(root)).rejects.toThrow('not owner-only');
+    await expect(listManagedCursorUsageExportPaths(root)).rejects.toThrow('unsafe');
+    expect((await lstat(importDirectory)).mode % 0o1000).toBe(process.platform === 'win32' ? 0o755 : 0o755);
     expect((await lstat(legacyPath)).mode % 0o1000).toBe(process.platform === 'win32' ? 0o644 : 0o644);
     await repairManagedCursorUsageExportModes(root);
-    expect(await listManagedCursorUsageExportPaths(root)).toEqual([legacyPath]);
+    expect(await listManagedCursorUsageExportPaths(root)).toEqual([canonicalLegacyPath]);
+    expect((await lstat(importDirectory)).mode % 0o1000).toBe(process.platform === 'win32' ? 0o755 : 0o700);
     const legacyAfterRepair = await lstat(legacyPath);
     if (process.platform !== 'win32') {
       expect(legacyAfterRepair.ino).not.toBe(legacyBefore.ino);
@@ -249,7 +296,7 @@ describe('usage engine file inputs', () => {
       { configCwd: root, inboxDirectory, operatorCwd },
     );
 
-    expect(result).toEqual({ alreadyImported: true, path: legacyPath });
+    expect(result).toEqual({ alreadyImported: true, path: canonicalLegacyPath });
     expect((await lstat(legacyPath)).mode % 0o1000).toBe(process.platform === 'win32' ? 0o644 : 0o600);
     expect((await import('node:fs/promises')).readdir(importDirectory)).resolves.toHaveLength(1);
   });

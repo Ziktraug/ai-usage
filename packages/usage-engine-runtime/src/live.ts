@@ -50,7 +50,6 @@ import {
 import { Effect, Layer, ManagedRuntime, Stream } from 'effect';
 import {
   discardUsageEngineHandoff,
-  ensureUsageEngineInbox,
   readUsageEngineInput,
   repairManagedCursorUsageExportModes,
   scavengeUsageEngineInbox,
@@ -1069,7 +1068,6 @@ export const createLiveUsageEngineRuntime = (options: LiveUsageEngineRuntimeOpti
         const gracePeriodMs = options.legacyArtifactGracePeriodMs ?? 5 * 60 * 1000;
         const recoveryTime = now().getTime();
         await repairManagedCursorUsageExportModes(options.configCwd);
-        await ensureUsageEngineInbox(options.inboxDirectory);
         const [legacy, inbox] = await Promise.all([
           scavengeLegacyUsageEngineArtifacts({
             gracePeriodMs,

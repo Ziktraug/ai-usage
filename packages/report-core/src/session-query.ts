@@ -1078,25 +1078,11 @@ export const buildSortedSessionPresentationRows = (
 export const sessionCampaignKeyFor = (row: SessionPresentationRow, rootSourceSessionId: string): string =>
   [row.source?.machineId ?? 'local', row.source?.harnessKey ?? row.harness, rootSourceSessionId].join(':');
 
-// A classifier session normally declares the campaign it reviewed. An older writer may not have
-// recorded that lineage at all; only that undeclared case becomes a standalone campaign. When a row
-// explicitly declares a different root, preserve that identity even if the root row is absent from a
-// portable or merged dataset. The declaration is evidence; silently rewriting it would invent lineage.
+// Missing lineage defaults to the row itself, which makes a parentless automated review a standalone
+// campaign. An explicitly declared root remains authoritative and is validated when the campaign is built.
 export const sessionCampaignIdentityForRow = (row: SessionPresentationRow) => {
   const declaredSourceSessionId = row.source?.sourceSessionId ?? null;
   const declaredRootSourceSessionId = row.source?.rootSourceSessionId ?? null;
-  const hasDeclaredParent =
-    declaredSourceSessionId !== null &&
-    declaredRootSourceSessionId !== null &&
-    declaredSourceSessionId !== declaredRootSourceSessionId;
-  if (row.origin === 'classifier' && !hasDeclaredParent) {
-    const standaloneId = declaredSourceSessionId ?? row.rowId;
-    return {
-      campaignKey: sessionCampaignKeyFor(row, standaloneId),
-      rootSourceSessionId: standaloneId,
-      sourceSessionId: standaloneId,
-    };
-  }
   const sourceSessionId = declaredSourceSessionId ?? row.rowId;
   const rootSourceSessionId = declaredRootSourceSessionId ?? declaredSourceSessionId ?? row.rowId;
   return {
@@ -1180,21 +1166,20 @@ export const buildSessionCampaignViews = (
 
   const campaigns: SessionCampaignView[] = [];
   for (const [campaignKey, rows] of groups) {
-    const fallbackRoot = buildSortedSessionPresentationRows(rows, [])[0];
-    if (!fallbackRoot) {
-      continue;
-    }
-    const firstIdentity = sessionCampaignIdentityForRow(fallbackRoot);
-    // A portable or merged dataset can contain a declared campaign without its root row. Preserve
-    // the declared identity and choose the same observed stand-in regardless of input order.
+    const firstIdentity = sessionCampaignIdentityForRow(rows[0]!);
     const root =
-      buildSortedSessionPresentationRows(rows, []).find(
+      rows.find(
         (row) =>
           row.source?.sourceSessionId === firstIdentity.rootSourceSessionId ||
           (!row.source?.sourceSessionId && row.rowId === firstIdentity.rootSourceSessionId),
-      ) ?? fallbackRoot;
+      ) ?? (rows.some((row) => row.origin === 'classifier') ? undefined : rows[0]);
+    if (!root) {
+      throw new Error(`Classifier campaign ${campaignKey} has no resolvable parent session`);
+    }
     const allChildren = rows.filter((row) => row !== root);
-    const allClassifiers = rows.filter((row) => row.origin === 'classifier');
+    // A parentless automated review is the campaign root itself, not a
+    // classifier child to roll up into its own totals a second time.
+    const allClassifiers = rows.filter((row) => row !== root && row.origin === 'classifier');
     const matchedRows = rows.filter((row) => visibleIds.has(row.rowId));
     if (matchedRows.length === 0) {
       continue;

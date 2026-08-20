@@ -122,15 +122,20 @@ const throwIfSignalAborted = (signal?: AbortSignal): void => {
 const validateCanonicalDirectory = async (directoryValue: string, ownerOnly: boolean): Promise<string> => {
   const directory = path.resolve(directoryValue);
   const stats = await lstat(directory).catch(() => undefined);
+  const canonicalDirectory = await realpath(directory).catch(() => undefined);
+  const canonicalStats = canonicalDirectory ? await lstat(canonicalDirectory).catch(() => undefined) : undefined;
   if (
     !stats?.isDirectory() ||
     stats.isSymbolicLink() ||
     (ownerOnly && !(hasCurrentOwner(stats.uid) && isOwnerOnly(stats.mode))) ||
-    (await realpath(directory).catch(() => undefined)) !== directory
+    !canonicalDirectory ||
+    !canonicalStats?.isDirectory() ||
+    canonicalStats.isSymbolicLink() ||
+    !sameIdentity(stats, canonicalStats)
   ) {
     throw new Error('Usage engine input directory is unsafe.');
   }
-  return directory;
+  return canonicalDirectory;
 };
 
 const handoffPath = async (input: Extract<UsageEngineFileInput, { kind: 'inbox-handoff' }>, directory: string) => {
@@ -370,16 +375,6 @@ export const discardUsageEngineHandoff = async (input: UsageEngineFileInput, inb
   }
 };
 
-// The web app stages manual-merge handoffs into this directory, so the engine must establish it
-// before any transfer is attempted. Only tests used to create it, which left `/sync` import failing
-// with an unavailable inbox on every machine that had never run one.
-export const ensureUsageEngineInbox = async (inboxDirectory: string): Promise<string> => {
-  const resolved = path.resolve(inboxDirectory);
-  const stateDirectory = path.dirname(resolved);
-  await mkdir(stateDirectory, { mode: PRIVATE_DIRECTORY_MODE, recursive: true });
-  return await ensurePrivateChildDirectory(stateDirectory, path.basename(resolved), 'Usage engine inbox');
-};
-
 export const scavengeUsageEngineInbox = async ({
   gracePeriodMs,
   inboxDirectory: inboxDirectoryValue,
@@ -399,16 +394,12 @@ export const scavengeUsageEngineInbox = async ({
   ) {
     throw new Error('Usage engine inbox recovery timing is invalid.');
   }
-  const inboxStats = await lstat(path.resolve(inboxDirectoryValue)).catch((error: unknown) => {
-    if (errorHasCode(error, 'ENOENT')) {
-      return;
-    }
-    throw error;
-  });
-  if (!inboxStats) {
-    return { deletedBytes: 0, deletedFiles: 0, skippedSuspicious: 0 };
-  }
-  const inboxDirectory = await validateCanonicalDirectory(inboxDirectoryValue, true);
+  const resolvedInboxDirectory = path.resolve(inboxDirectoryValue);
+  const inboxDirectory = await ensurePrivateChildDirectory(
+    path.dirname(resolvedInboxDirectory),
+    path.basename(resolvedInboxDirectory),
+    { label: 'Usage engine inbox directory', parentOwnerOnly: true, repairMode: false },
+  );
   const entries = await opendir(inboxDirectory);
   let deletedBytes = 0;
   let deletedFiles = 0;
@@ -458,25 +449,39 @@ export const scavengeUsageEngineInbox = async ({
 const ensurePrivateChildDirectory = async (
   parentValue: string,
   name: string,
-  label = 'Cursor import',
+  options: {
+    readonly label?: string;
+    readonly parentOwnerOnly?: boolean;
+    readonly repairMode?: boolean;
+  } = {},
 ): Promise<string> => {
-  const parent = await validateCanonicalDirectory(parentValue, false);
+  const label = options.label ?? 'Cursor import directory';
+  const repairMode = options.repairMode ?? true;
+  const parent = await validateCanonicalDirectory(parentValue, options.parentOwnerOnly ?? false);
   const directory = path.join(parent, name);
+  if (directory === parent || path.dirname(directory) !== parent) {
+    throw new Error(`${label} escaped its parent directory.`);
+  }
   const existing = await lstat(directory).catch(() => undefined);
   if (!existing) {
     await mkdir(directory, { mode: PRIVATE_DIRECTORY_MODE });
   }
   const before = await lstat(directory);
-  if (before.isSymbolicLink() || !before.isDirectory() || !hasCurrentOwner(before.uid)) {
-    throw new Error(`${label} directory is unsafe.`);
+  if (
+    before.isSymbolicLink() ||
+    !before.isDirectory() ||
+    !hasCurrentOwner(before.uid) ||
+    !(repairMode || hasExactMode(before.mode, PRIVATE_DIRECTORY_MODE))
+  ) {
+    throw new Error(`${label} is unsafe.`);
   }
   const directoryHandle = await open(directory, SAFE_DIRECTORY_READ_FLAGS);
   try {
     const opened = await directoryHandle.stat();
     if (!(opened.isDirectory() && sameIdentity(before, opened) && hasCurrentOwner(opened.uid))) {
-      throw new Error(`${label} directory changed while it was opened.`);
+      throw new Error(`${label} changed while it was opened.`);
     }
-    if (process.platform !== 'win32') {
+    if (repairMode && process.platform !== 'win32') {
       await directoryHandle.chmod(PRIVATE_DIRECTORY_MODE);
     }
     const afterOpened = await directoryHandle.stat();
@@ -489,7 +494,7 @@ const ensurePrivateChildDirectory = async (
       !hasExactMode(afterOpened.mode, PRIVATE_DIRECTORY_MODE) ||
       (await realpath(directory)) !== directory
     ) {
-      throw new Error(`${label} directory changed during validation.`);
+      throw new Error(`${label} changed during validation.`);
     }
   } finally {
     await directoryHandle.close().catch(() => undefined);
@@ -933,7 +938,10 @@ export const repairManagedCursorUsageExportModes = async (configCwd: string): Pr
   if (!importStats) {
     return;
   }
-  const importDirectory = await validateCanonicalDirectory(importDirectoryValue, true);
+  const importDirectory = await ensurePrivateChildDirectory(
+    path.dirname(importDirectoryValue),
+    path.basename(importDirectoryValue),
+  );
   for (const name of await managedCursorArtifactNames(importDirectory)) {
     const candidatePath = path.join(importDirectory, name);
     const repairedDigest = await repairManagedCursorArtifactMode(candidatePath, CURSOR_EXPORT_MAX_BYTES);

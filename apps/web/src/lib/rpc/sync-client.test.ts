@@ -73,6 +73,25 @@ describe('Sync browser adapter', () => {
     expect(response.bodyUsed).toBe(true);
   });
 
+  test('streams and bounds an attachment when the browser omits content length', async () => {
+    // Compressed and chunked responses normally hide this header from browser fetch. The streamed
+    // read remains bounded independently, so absence is valid while malformed declared lengths fail.
+    const response = new Response('{"portable":true}', {
+      headers: {
+        'content-disposition': 'attachment; filename="ai-usage-machine-a.json"',
+        'content-type': 'application/json; charset=utf-8',
+      },
+    });
+    expect(response.headers.get('content-length')).toBeNull();
+    const adapter = createSyncBrowserAdapter(defaultTransport(), () => Promise.resolve(response));
+
+    const download = await adapter.downloadManualMerge();
+
+    expect(download.filename).toBe('ai-usage-machine-a.json');
+    expect(await download.response.text()).toBe('{"portable":true}');
+    expect(response.bodyUsed).toBe(true);
+  });
+
   test('cancels rejected status and attachment metadata before returning bytes', async () => {
     const responses = [
       new Response('{}', { status: 503 }),
@@ -111,26 +130,6 @@ describe('Sync browser adapter', () => {
       await expect(adapter.downloadManualMerge()).rejects.toThrow();
       expect(response.bodyUsed).toBe(true);
     }
-  });
-
-  test('downloads a compressed export whose content-length the browser cannot expose', async () => {
-    // Any gzip or chunked response drops content-length from what fetch exposes, which is the normal
-    // case for this endpoint. The read stays bounded by its maximum, so an absent header is not a
-    // failure; requiring it made every real browser export fail.
-    const response = new Response('{"portable":true}', {
-      headers: {
-        'content-disposition': 'attachment; filename="ai-usage-machine-a.json"',
-        'content-type': 'application/json; charset=utf-8',
-      },
-    });
-    expect(response.headers.get('content-length')).toBeNull();
-
-    const adapter = createSyncBrowserAdapter(defaultTransport(), () => Promise.resolve(response));
-    const download = await adapter.downloadManualMerge();
-
-    expect(download.filename).toBe('ai-usage-machine-a.json');
-    expect(await download.response.text()).toBe('{"portable":true}');
-    expect(response.bodyUsed).toBe(true);
   });
 
   test('rejects truncated and lying manual-export streams without returning partial bytes', async () => {

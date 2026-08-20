@@ -658,15 +658,29 @@ describe('session query contracts', () => {
     expect(campaignBadgeLabelForSessionRow(item.row)).toBe('Campaign · 1 session');
   });
 
-  test('preserves declared classifier campaign identity when the parent row is unavailable', () => {
-    // An older writer may omit lineage entirely; that row stands alone instead of stopping report
-    // publication. A portable or merged dataset may instead preserve an explicit root declaration
-    // without carrying the root row. Keep that declaration and choose a deterministic stand-in.
-    const undeclared = projectSessionPage([sourcedRow('classifier-root', { origin: 'classifier' })], defaultRequest());
-    expect(undeclared.sessionCount).toBe(1);
-    expect(undeclared.items[0]?.kind).toBe('campaign');
+  test('represents parentless classifiers as standalone review campaigns', () => {
+    const page = projectSessionPage(
+      [sourcedRow('classifier-root', { origin: 'classifier' })],
+      defaultRequest({ pageSize: 10 }),
+    );
+    const item = page.items[0];
+    if (item?.kind !== 'campaign') {
+      throw new Error('Expected a standalone review campaign fixture');
+    }
+    expect(page).toMatchObject({ itemCount: 1, sessionCount: 1 });
+    expect(item.row).toMatchObject({
+      campaignClassifierCount: 0,
+      campaignTotalCount: 1,
+      campaignVisibleCount: 1,
+      origin: 'classifier',
+      sessionLabel: 'classifier-root',
+    });
+    expect(campaignBadgeLabelForSessionRow(item.row)).toBe('Campaign · 1 session');
+    expect(classifierRollupLabelForSessionRow(item.row)).toBeNull();
+  });
 
-    const classifiers = ['classifier-review-b', 'classifier-review-a'].map((sourceSessionId) =>
+  test('rejects multiple classifiers sharing an unresolved declared parent instead of merging them', () => {
+    const classifiers = ['classifier-review-a', 'classifier-review-b'].map((sourceSessionId) =>
       sourcedRow(sourceSessionId, {
         origin: 'classifier',
         source: {
@@ -679,50 +693,10 @@ describe('session query contracts', () => {
         },
       }),
     );
-    const forward = projectSessionPage(classifiers, defaultRequest({ pageSize: 10 }));
-    const reversed = projectSessionPage([...classifiers].reverse(), defaultRequest({ pageSize: 10 }));
 
-    expect(forward).toMatchObject({
-      itemCount: 1,
-      items: [
-        {
-          campaignKey: 'machine-a:codex:missing-root',
-          kind: 'campaign',
-          row: { campaignTotalCount: 2 },
-        },
-      ],
-      sessionCount: 2,
-    });
-    expect(reversed.items[0]).toMatchObject({
-      campaignKey: forward.items[0]?.campaignKey,
-      row: { rowId: forward.items[0]?.row.rowId },
-    });
-  });
-
-  test('keeps distinct declared classifier roots in separate campaigns', () => {
-    const page = projectSessionPage(
-      ['missing-root-a', 'missing-root-b'].map((rootSourceSessionId, index) =>
-        sourcedRow(`classifier-review-${index}`, {
-          origin: 'classifier',
-          source: {
-            harnessKey: 'codex',
-            machineId: 'machine-a',
-            machineLabel: 'Machine A',
-            parentSourceSessionId: rootSourceSessionId,
-            rootSourceSessionId,
-            sourceSessionId: `classifier-review-${index}`,
-          },
-        }),
-      ),
-      defaultRequest({ pageSize: 10 }),
+    expect(() => projectSessionPage(classifiers, defaultRequest({ pageSize: 10 }))).toThrow(
+      'Classifier campaign machine-a:codex:missing-root has no resolvable parent session',
     );
-
-    expect(page.itemCount).toBe(2);
-    expect(page.sessionCount).toBe(2);
-    expect(page.items.map((item) => item.campaignKey).sort()).toEqual([
-      'machine-a:codex:missing-root-a',
-      'machine-a:codex:missing-root-b',
-    ]);
   });
 
   test('uses root duration and model identity for campaigns with overlapping child rollouts', () => {

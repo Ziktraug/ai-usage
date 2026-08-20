@@ -58,6 +58,7 @@ _Avoid_: chat, transcript, thread
 
 **Session origin**:
 The declared way a session was started, with three values: human, delegated, or automated review. It is absent when the harness did not declare one. An absent attribute is expressed by provenance, never by a sentinel value in its own domain.
+An automated review with a declared parent contributes to that parent's campaign. A review shape that declares no parent remains a standalone one-session review campaign; a declared but unresolved parent remains an integrity error.
 _Avoid_: unknown origin, origin unknown, undeclared as a category
 
 **Collected session**:
