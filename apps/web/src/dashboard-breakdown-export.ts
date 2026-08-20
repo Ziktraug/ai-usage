@@ -1,4 +1,4 @@
-import type { AnalyticsExportRow } from '@ai-usage/report-core/csv';
+import type { AnalyticsExportRow, SessionCampaignExportRow } from '@ai-usage/report-core/csv';
 import type { SessionPresentationRow } from '@ai-usage/report-core/session-query';
 import type { ProjectGroup } from './dashboard-analytics';
 
@@ -14,31 +14,70 @@ export const createAnalyticsExport = async (
   };
 };
 
-/**
- * States the export's exact bound in the Sessions view, as persistent visible
- * text rather than a tooltip: it serializes the rows the browser has loaded, not
- * the whole filtered set, and a campaign travels as the single aggregated row
- * the table shows rather than as its child sessions. Both compositions render
- * this one sentence so the claim cannot drift between them.
- */
-export const sessionsExportScopeLabel = (loadedRows: number, filteredSessions: number): string =>
-  `Exports the ${loadedRows.toLocaleString()} loaded of ${filteredSessions.toLocaleString()} filtered sessions, campaigns as one aggregated row`;
+const loadedSessionCount = (rows: readonly SessionPresentationRow[]): number =>
+  rows.reduce((sum, row) => sum + (row.campaignVisibleCount ?? 1), 0);
 
 /**
- * Row-level export of the session rows the browser currently holds. It feeds the
- * shared `usageRowCsvColumns` projection, so the emitted schema is identical to
- * the CLI's `--csv`; the web deliberately owns no column set of its own.
- *
- * The scope is the loaded rows, not the full filtered set — the honest
- * client-side bound, stated by `sessionsExportScopeLabel` next to the button.
+ * States both pagination units instead of comparing top-level campaign rows to underlying sessions.
+ * The reader can now tell whether the export is a complete campaign page and how many filtered
+ * sessions those loaded campaign aggregates actually represent.
+ */
+export const sessionsExportScopeLabel = (
+  rows: readonly SessionPresentationRow[],
+  totalCampaignRows: number,
+  filteredSessions: number,
+): string =>
+  `Exports ${rows.length.toLocaleString()} of ${totalCampaignRows.toLocaleString()} campaign rows currently loaded, representing ${loadedSessionCount(rows).toLocaleString()} of ${filteredSessions.toLocaleString()} filtered sessions`;
+
+const sessionCampaignExportRow = (row: SessionPresentationRow): SessionCampaignExportRow => {
+  if (row.campaignKey === undefined || row.campaignVisibleCount === undefined || row.campaignTotalCount === undefined) {
+    throw new Error('Sessions export requires top-level campaign presentation rows.');
+  }
+  return {
+    ambiguous: row.ambiguous ?? false,
+    calls: row.calls,
+    campaignKey: row.campaignKey,
+    campaignLabel: row.sessionLabel,
+    campaignSessions: row.campaignTotalCount,
+    costActual: row.costActual,
+    costApprox: row.costApprox,
+    costKnown: row.costKnown,
+    costQuota: row.costQuota,
+    durationMs: row.durationMs,
+    freshTokens: row.freshTokens,
+    lineDelta: row.lineDelta,
+    linesAdded: row.linesAdded,
+    linesDeleted: row.linesDeleted,
+    partial: row.partial ?? false,
+    rtkCommandCount: row.rtkCommandCount,
+    rtkInputTokens: row.rtkInputTokens,
+    rtkOutputTokens: row.rtkOutputTokens,
+    rtkSavedTokens: row.rtkSavedTokens,
+    tokCr: row.tokCr,
+    tokCw: row.tokCw,
+    tokIn: row.tokIn,
+    tokOut: row.tokOut,
+    tokenTotal: row.tokenTotal,
+    tools: row.tools,
+    turns: row.turns,
+    usageUnavailable: row.usageUnavailable ?? false,
+    visibleSessions: row.campaignVisibleCount,
+  };
+};
+
+/**
+ * The Sessions table owns campaign display rows, not raw usage rows. Export them through a schema
+ * that says exactly that: aggregate metrics plus campaign identity only. Root-only harness/model/
+ * provider/machine/project fields are deliberately omitted because they can disagree with the child
+ * rows contributing the filtered totals.
  */
 export const createSessionsExport = async (
   generatedAt: string,
   rows: readonly SessionPresentationRow[],
 ): Promise<{ csv: string; filename: string }> => {
-  const { reportCsvFilename, serializedRowsToCSV } = await import('@ai-usage/report-core/csv');
+  const { reportCsvFilename, sessionCampaignCsv } = await import('@ai-usage/report-core/csv');
   return {
-    csv: serializedRowsToCSV([...rows]),
+    csv: sessionCampaignCsv(rows.map(sessionCampaignExportRow)),
     filename: reportCsvFilename('sessions', generatedAt),
   };
 };
