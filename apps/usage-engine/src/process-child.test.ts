@@ -167,7 +167,11 @@ describe('usage engine real process lifecycle', () => {
     const contender = spawnEngine(fixture, ['serve', '--port', '0']);
     const contenderResult = await finishChild(contender);
     expect(contenderResult.exitCode).toBe(1);
-    expect(contenderResult.stderr).toBe('Usage engine failed to start or complete its command.\n');
+    // The sentence stays the first line verbatim; the failure class follows it so an operator can tell
+    // writer contention from a refused stored row. Neither line may carry the running PID or the lock
+    // path — the whole point of reporting a class rather than the error message.
+    expect(contenderResult.stderr.split('\n')[0]).toBe('Usage engine failed to start or complete its command.');
+    expect(contenderResult.stderr.split('\n')[1]).toBe('usage-engine startupFailureKind=writer-lock-contended');
     expect(contenderResult.stderr).not.toContain(String(primary.child.pid));
     expect(contenderResult.stderr).not.toContain(fixture.lockPath);
     expect(await loadUsageEngineRendezvous(fixture.rendezvousPath)).toEqual(rendezvous);
