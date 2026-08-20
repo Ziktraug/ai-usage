@@ -4,14 +4,18 @@
   import type { UsageEngineMergePreviewOutput } from '@ai-usage/usage-engine-control';
   import { onDestroy } from 'svelte';
   import { formatManualImportSummary, formatTransferBytes } from '../../../manual-transfer-model';
-  import { createManualTransferClient, type ManualUploadProgress } from './manual-transfer-client';
+  import {
+    createManualTransferClient,
+    type ManualTransferOperation,
+    type ManualUploadProgress,
+  } from './manual-transfer-client';
   import ManualTransferProgress from './manual-transfer-progress.svelte';
   import { actionRow, ghostButton, panelHeader, strongCell } from './styles';
 
   let { mutationAvailable, onCompleted }: { mutationAvailable: boolean; onCompleted?: () => Promise<void> | void } =
     $props();
 
-  type PendingOperation = 'confirm' | 'export' | 'preview';
+  type PendingOperation = ManualTransferOperation;
   let fileInput: HTMLInputElement;
   let pending = $state<PendingOperation | null>(null);
   let preview = $state<{ data: UsageEngineMergePreviewOutput; file: File } | null>(null);
@@ -249,6 +253,6 @@
     </div>
   {/if}
   {#if progress}
-    <ManualTransferProgress now={progressNow} {progress} />
+    <ManualTransferProgress now={progressNow} operation={pending ?? 'preview'} {progress} />
   {/if}
 </section>

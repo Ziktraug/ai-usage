@@ -2,9 +2,23 @@
   import { css, cx } from '@ai-usage/design-system/css';
   import { panelSub } from '@ai-usage/design-system/svelte';
   import { formatTransferBytes } from '../../../manual-transfer-model';
-  import type { ManualUploadProgress } from './manual-transfer-client';
+  import type { ManualTransferOperation, ManualUploadProgress } from './manual-transfer-client';
 
-  let { now, progress }: { now: number; progress: ManualUploadProgress } = $props();
+  let {
+    now,
+    operation,
+    progress,
+  }: { now: number; operation: ManualTransferOperation; progress: ManualUploadProgress } = $props();
+  // A preview reads the staged file and reports what an import would do; it writes no usage row.
+  // Announcing a merge during that phase contradicts the guarantee shown next to the drop zone.
+  const processingLabel = $derived(
+    operation === 'confirm' ? 'Merging into the local database…' : 'Checking the file against your usage…',
+  );
+  const processingHint = $derived(
+    operation === 'confirm'
+      ? 'Large files take a moment while each usage row is written and deduplicated.'
+      : 'Large files take a moment to compare. Nothing is written until you confirm.',
+  );
   const percent = $derived(
     progress.phase === 'uploading' && progress.total > 0
       ? Math.min(100, Math.round((progress.loaded / progress.total) * 100))
@@ -54,7 +68,7 @@
       <span>Uploading {formatTransferBytes(progress.loaded)} / {formatTransferBytes(progress.total)}</span>
       <span>{percent ?? 0}%</span>
     {:else}
-      <span>Merging into the local database…</span>
+      <span>{processingLabel}</span>
       <span>{elapsedSeconds}s</span>
     {/if}
   </div>
@@ -72,6 +86,6 @@
     ></div>
   </div>
   {#if progress.phase === 'processing'}
-    <span class={progressHint}>Large files take a moment while each usage row is written and deduplicated.</span>
+    <span class={progressHint}>{processingHint}</span>
   {/if}
 </div>

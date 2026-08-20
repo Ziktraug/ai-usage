@@ -370,6 +370,16 @@ export const discardUsageEngineHandoff = async (input: UsageEngineFileInput, inb
   }
 };
 
+// The web app stages manual-merge handoffs into this directory, so the engine must establish it
+// before any transfer is attempted. Only tests used to create it, which left `/sync` import failing
+// with an unavailable inbox on every machine that had never run one.
+export const ensureUsageEngineInbox = async (inboxDirectory: string): Promise<string> => {
+  const resolved = path.resolve(inboxDirectory);
+  const stateDirectory = path.dirname(resolved);
+  await mkdir(stateDirectory, { mode: PRIVATE_DIRECTORY_MODE, recursive: true });
+  return await ensurePrivateChildDirectory(stateDirectory, path.basename(resolved), 'Usage engine inbox');
+};
+
 export const scavengeUsageEngineInbox = async ({
   gracePeriodMs,
   inboxDirectory: inboxDirectoryValue,
@@ -445,7 +455,11 @@ export const scavengeUsageEngineInbox = async ({
   return { deletedBytes, deletedFiles, skippedSuspicious };
 };
 
-const ensurePrivateChildDirectory = async (parentValue: string, name: string): Promise<string> => {
+const ensurePrivateChildDirectory = async (
+  parentValue: string,
+  name: string,
+  label = 'Cursor import',
+): Promise<string> => {
   const parent = await validateCanonicalDirectory(parentValue, false);
   const directory = path.join(parent, name);
   const existing = await lstat(directory).catch(() => undefined);
@@ -454,13 +468,13 @@ const ensurePrivateChildDirectory = async (parentValue: string, name: string): P
   }
   const before = await lstat(directory);
   if (before.isSymbolicLink() || !before.isDirectory() || !hasCurrentOwner(before.uid)) {
-    throw new Error('Cursor import directory is unsafe.');
+    throw new Error(`${label} directory is unsafe.`);
   }
   const directoryHandle = await open(directory, SAFE_DIRECTORY_READ_FLAGS);
   try {
     const opened = await directoryHandle.stat();
     if (!(opened.isDirectory() && sameIdentity(before, opened) && hasCurrentOwner(opened.uid))) {
-      throw new Error('Cursor import directory changed while it was opened.');
+      throw new Error(`${label} directory changed while it was opened.`);
     }
     if (process.platform !== 'win32') {
       await directoryHandle.chmod(PRIVATE_DIRECTORY_MODE);
@@ -475,7 +489,7 @@ const ensurePrivateChildDirectory = async (parentValue: string, name: string): P
       !hasExactMode(afterOpened.mode, PRIVATE_DIRECTORY_MODE) ||
       (await realpath(directory)) !== directory
     ) {
-      throw new Error('Cursor import directory changed during validation.');
+      throw new Error(`${label} directory changed during validation.`);
     }
   } finally {
     await directoryHandle.close().catch(() => undefined);

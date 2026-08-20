@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { parseUsageEngineHandoffId } from '@ai-usage/usage-engine-control';
 import {
+  ensureUsageEngineInbox,
   listManagedCursorUsageExportPaths,
   readUsageEngineInput,
   repairManagedCursorUsageExportModes,
@@ -13,6 +14,7 @@ import {
 } from './input-file';
 
 const roots: string[] = [];
+const unsafeInboxMessage = /inbox directory is unsafe/;
 
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { force: true, recursive: true })));
@@ -29,6 +31,37 @@ const fixture = async () => {
 };
 
 describe('usage engine file inputs', () => {
+  test('establishes the inbox on a state directory that has never held one', async () => {
+    // Every other fixture here creates the inbox itself, which is exactly why nothing noticed that no
+    // production path did. This one starts from a state directory that does not exist yet.
+    const root = await mkdtemp(path.join(tmpdir(), 'plan052-engine-inbox-'));
+    roots.push(root);
+    const inboxDirectory = path.join(root, 'state', 'inbox');
+    expect(await lstat(inboxDirectory).catch(() => undefined)).toBeUndefined();
+
+    const created = await ensureUsageEngineInbox(inboxDirectory);
+    expect(created).toBe(inboxDirectory);
+    const stats = await lstat(inboxDirectory);
+    expect(stats.isDirectory()).toBe(true);
+    expect(stats.mode % 0o1000).toBe(0o700);
+
+    // Re-establishing an existing inbox is a no-op, not a failure.
+    await expect(ensureUsageEngineInbox(inboxDirectory)).resolves.toBe(inboxDirectory);
+  });
+
+  test('refuses an inbox that is a symlink rather than a private directory', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'plan052-engine-inbox-unsafe-'));
+    roots.push(root);
+    const stateDirectory = path.join(root, 'state');
+    const elsewhere = path.join(root, 'elsewhere');
+    await mkdir(stateDirectory, { mode: 0o700, recursive: true });
+    await mkdir(elsewhere, { mode: 0o700, recursive: true });
+    const inboxDirectory = path.join(stateDirectory, 'inbox');
+    await symlink(elsewhere, inboxDirectory);
+
+    await expect(ensureUsageEngineInbox(inboxDirectory)).rejects.toThrow(unsafeInboxMessage);
+  });
+
   test('reads a bounded no-follow operator file and rejects symlinks and hard links', async () => {
     const { inboxDirectory, operatorCwd } = await fixture();
     const filePath = path.join(operatorCwd, 'merge.json');
