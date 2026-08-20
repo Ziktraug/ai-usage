@@ -107,7 +107,7 @@ describe('first-run session detection', () => {
 
   test('accepts an unreadable input as undetected input', () => {
     expect(
-      noSessionInputDetected(undetectedSessionSources({ 'codex.sessions': { reason: { code: 'input-unreadable' } } })),
+      noSessionInputDetected(undetectedSessionSources({ 'codex.sessions': { reason: { code: 'input-unreadable' } })),
     ).toBe(true);
   });
 
@@ -130,11 +130,20 @@ describe('first-run history locations', () => {
     expect(sessionHistoryLocations).toHaveLength(SESSION_SOURCE_IDS.length);
   });
 
-  test('quotes the supported session source table from README.md verbatim', () => {
-    const panelCopy: readonly SessionSourceCopy[] = sessionHistoryLocations.map(({ harness, paths }) => ({
-      harness: harness.replace(HARNESS_PLATFORM_NOTE_PATTERN, ''),
-      paths: [...paths],
-    }));
-    expect(panelCopy).toEqual(readmeSessionRows());
+  test('keeps every concise README history path represented in the richer first-run copy', () => {
+    const panelCopy = new Map(
+      sessionHistoryLocations.map(({ harness, paths }) => [harness.replace(HARNESS_PLATFORM_NOTE_PATTERN, ''), paths]),
+    );
+    for (const { harness, paths } of readmeSessionRows()) {
+      expect(panelCopy.get(harness)).toEqual(expect.arrayContaining([...paths]));
+    }
+  });
+
+  test('names every OpenCode history location supported by the collector', () => {
+    expect(sessionHistoryLocations.find(({ harness }) => harness === 'OpenCode')?.paths).toEqual([
+      '~/.local/share/opencode/opencode.db',
+      '~/Library/Application Support/opencode/opencode.db',
+      '~/AppData/Local/opencode/opencode.db',
+    ]);
   });
 });
