@@ -70,7 +70,11 @@ export const serializedRowsToCSV = (rows: SerializedRow[]): string => {
   return [head.join(','), ...body].join('\n');
 };
 
-export type ReportCsvDimension = 'harnesses' | 'models' | 'projects' | 'providers';
+/**
+ * The slug that names a downloaded CSV. `sessions` is the row-level export the
+ * Sessions view emits through `serializedRowsToCSV`; the rest are breakdowns.
+ */
+export type ReportCsvDimension = 'harnesses' | 'models' | 'projects' | 'providers' | 'sessions';
 
 export interface AnalyticsExportRow {
   group: AnalyticsGroup;

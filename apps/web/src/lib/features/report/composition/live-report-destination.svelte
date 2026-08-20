@@ -545,6 +545,7 @@
     {@const SessionsDestination = sessionsDestinationModule.default}
     <SessionsDestination
       destinationScope={commit?.destination.kind === 'sessions' ? commit.destination.sessions : destination.sessions}
+      generatedAt={bootstrap.support.generatedAt}
       initialSessionWindowAnchor={sessionWindowAnchorOwner.available()}
       {navigate}
       onCampaignControlsChange={(binding) => (campaignSessionControls = binding)}

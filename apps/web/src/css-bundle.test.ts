@@ -31,6 +31,15 @@ const MULTI_PROVIDER_QUOTA_RAIL_GZIP_BUDGET_BYTES = 3520;
  * Measured at 644 bytes, rounded on the same rule.
  */
 const CORE_VALUE_OBJECTS_GZIP_BUDGET_BYTES = 704;
+/**
+ * The Sessions destination reuses the shared report sharing actions the breakdown already
+ * mounts. Two lazily loaded destinations reaching the same leaf modules makes Rollup carve
+ * them into their own chunks, and the identical bytes gzip worse split than merged — the
+ * initial closure grows without shipping new code — the CSV projection itself stays behind the
+ * dynamic import and never enters the closure. Measured at 921 bytes against the commit that
+ * introduced it, rounded on the same rule.
+ */
+const SESSIONS_ROW_EXPORT_GZIP_BUDGET_BYTES = 960;
 const INITIAL_GZIP_CLOSURE_MAXIMUM_BYTES =
   Math.ceil(INITIAL_GZIP_CLOSURE_BASELINE_BYTES * 1.1) +
   BREAKDOWN_SEARCH_GZIP_BUDGET_BYTES +
@@ -45,7 +54,8 @@ const INITIAL_GZIP_CLOSURE_MAXIMUM_BYTES =
   POST_REVIEW_CORRECTIONS_GZIP_BUDGET_BYTES +
   REPORT_TESTABILITY_SEAMS_GZIP_BUDGET_BYTES +
   MULTI_PROVIDER_QUOTA_RAIL_GZIP_BUDGET_BYTES +
-  CORE_VALUE_OBJECTS_GZIP_BUDGET_BYTES;
+  CORE_VALUE_OBJECTS_GZIP_BUDGET_BYTES +
+  SESSIONS_ROW_EXPORT_GZIP_BUDGET_BYTES;
 const LEADING_SLASH_PATTERN = /^\/+/;
 const REPORT_COLOR_TOKEN_PATTERN = /token\(colors\.([A-Za-z0-9_.-]+)\)/g;
 const REPORT_SOURCE_FILE_PATTERN = /\.(?:svelte|ts)$/;
