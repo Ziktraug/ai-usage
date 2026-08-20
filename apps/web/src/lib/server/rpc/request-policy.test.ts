@@ -106,7 +106,7 @@ describe('request policy matrix', () => {
         csrf: 'required',
         id: 'http:manual-merge-upload',
         method: 'POST',
-        requestSize: 'portable-usage-json',
+        requestSize: 'portable-usage-upload',
         transport: 'upload',
       }),
     ]);
