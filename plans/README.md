@@ -140,7 +140,7 @@ read-only SQLite and the permanent browser/server and demo-isolation boundaries.
 | 074 | Finish the Multi-Provider Quota History Surface | P1 | S | - | TODO |
 | 075 | Show Bundle Identity, Age, and Warnings in the /sync Import Preview | P1 | M | - | TODO |
 | 076 | Display Campaign Root Titles on Generic Child Sessions | P2 | S-M | - | TODO |
-| 077 | Give /sources a First-Run Answer When Nothing Is Detected | P2 | M | - | TODO |
+| 077 | Give /sources a First-Run Answer When Nothing Is Detected | P2 | M | - | DONE |
 | 078 | Export Filtered Session Rows as CSV From the Web Sessions View | P2 | S-M | - | TODO |
 | 079 | Drive Cursor Import and Machine Renaming From the Web | P2 | M | 075 (file overlap in sync feature; sequence or coordinate) | TODO |
 | 080 | Restore Glanceable Quota in the 768-1279px Band and Cover the Missing Viewports | P2 | S+M | - | TODO |
