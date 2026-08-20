@@ -32,6 +32,13 @@ const MULTI_PROVIDER_QUOTA_RAIL_GZIP_BUDGET_BYTES = 3520;
  */
 const CORE_VALUE_OBJECTS_GZIP_BUDGET_BYTES = 704;
 /**
+ * The period control regained the draggable range brush the retired range card used to carry:
+ * a standalone brush instance (state machine wiring, pointer/keyboard handlers, slider markup)
+ * plus the inline native date fields ride in the report entry closure whenever Custom is the
+ * period mode. Measured at 965 bytes, rounded on the same rule.
+ */
+const PERIOD_RANGE_BRUSH_GZIP_BUDGET_BYTES = 1024;
+/**
  * The Sessions destination reuses the shared report sharing actions the breakdown already
  * mounts. Two lazily loaded destinations reaching the same leaf modules makes Rollup carve
  * them into their own chunks, and the identical bytes gzip worse split than merged — the
@@ -63,6 +70,7 @@ const INITIAL_GZIP_CLOSURE_MAXIMUM_BYTES =
   REPORT_TESTABILITY_SEAMS_GZIP_BUDGET_BYTES +
   MULTI_PROVIDER_QUOTA_RAIL_GZIP_BUDGET_BYTES +
   CORE_VALUE_OBJECTS_GZIP_BUDGET_BYTES +
+  PERIOD_RANGE_BRUSH_GZIP_BUDGET_BYTES +
   SESSIONS_ROW_EXPORT_GZIP_BUDGET_BYTES +
   TIMELINE_OTHER_DISCLOSURE_GZIP_BUDGET_BYTES;
 const LEADING_SLASH_PATTERN = /^\/+/;
