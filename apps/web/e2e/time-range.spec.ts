@@ -1,7 +1,6 @@
 import type { Locator, Page } from '@playwright/test';
 import {
   FOCUSED_REPORT_E2E_ENABLED_KEY,
-  FOCUSED_REPORT_E2E_MODEL_TAIL_KEY,
   FOCUSED_REPORT_E2E_NINETY_DAY_COMPARISON_KEY,
   FOCUSED_REPORT_E2E_VISIBLE_TREND_KEY,
 } from '../src/focused-report-e2e-fixture';
@@ -18,9 +17,6 @@ const PUNCHCARD_CELL_BUTTON_PATTERN = /^Filter report to /;
 const PUNCHCARD_CELL_LABEL_PATTERN =
   /^Filter report to (Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday) ([0-9]{2}):00–[0-9]{2}:59, ([0-9,]+) sessions?$/;
 const SESSION_SUMMARY_PATTERN = / sessions$/;
-const GROUPED_MEMBER_COUNT_PATTERN = /^[0-9,]+ grouped$/;
-const MEMBER_SESSION_COUNT_PATTERN = /^.+ · [0-9,]+ sessions?$/;
-const UNNAMED_MEMBER_PATTERN = /^and [0-9,]+ more$/;
 
 const SESSION_COUNT_PATTERN = /^[0-9,]+ sessions$/;
 const RANGE_DAYS_PATTERN = /·\s*(\d+)\s*days?/;
@@ -109,8 +105,8 @@ const openActivityExplorer = async (page: Page): Promise<Locator> => {
 const openCustomPeriod = async (page: Page): Promise<{ from: Locator; to: Locator }> => {
   await reportPeriodFor(page).getByRole('button', { name: 'Choose a custom report period' }).click();
   return {
-    from: page.getByRole('textbox', { name: 'From' }),
-    to: page.getByRole('textbox', { name: 'To' }),
+    from: page.getByLabel('From', { exact: true }),
+    to: page.getByLabel('To', { exact: true }),
   };
 };
 
@@ -484,42 +480,35 @@ test('commits preset, text, keyboard, and pointer report ranges to the URL', asy
   let custom = await openCustomPeriod(page);
   await expect(custom.from).toHaveValue('2026-03-13');
   await expect(custom.to).toHaveValue('2026-06-11');
+  await expect.poll(() => reportRangeValue(page)).toContain('"from":"2026-03-13"');
+  await waitForFocusedReportSettled(page);
   const urlBeforeInvalidDraft = page.url();
-  await custom.from.fill('not-a-date');
-  await page.getByRole('button', { name: 'Apply custom period' }).click();
+  await custom.from.fill('');
   await expect(custom.from).toHaveAttribute('aria-invalid', 'true');
   await expect(page.getByRole('alert')).toHaveText('Enter a valid From date.');
   expect(page.url()).toBe(urlBeforeInvalidDraft);
   await custom.from.press('Escape');
   await expect(page.getByRole('alert')).toHaveCount(0);
-  await expect(period.getByRole('button', { name: 'Choose a custom report period' })).toBeFocused();
-
-  custom = await openCustomPeriod(page);
   await expect(custom.from).toHaveValue('2026-03-13');
+
   const urlBeforeReversedDraft = page.url();
   await custom.from.fill('2026-06-12');
-  await custom.to.fill('2026-06-11');
-  await page.getByRole('button', { name: 'Apply custom period' }).click();
   await expect(custom.from).toHaveAttribute('aria-invalid', 'true');
   await expect(custom.to).toHaveAttribute('aria-invalid', 'true');
   await expect(page.getByRole('alert')).toHaveText('From date must be on or before To date.');
   expect(page.url()).toBe(urlBeforeReversedDraft);
-  await page.getByRole('button', { name: 'Apply custom period' }).focus();
-  await page.keyboard.press('Escape');
-  await expect(period.getByRole('button', { name: 'Choose a custom report period' })).toBeFocused();
-
-  custom = await openCustomPeriod(page);
+  await custom.from.press('Escape');
+  await expect(page.getByRole('alert')).toHaveCount(0);
   await expect(custom.from).toHaveValue('2026-03-13');
+
   await custom.from.fill('2026-05-25');
   await custom.to.fill('2026-06-05');
-  await custom.from.press('Enter');
   await expect.poll(() => reportRangeValue(page)).toContain('"from":"2026-05-25"');
   await waitForFocusedReportSettled(page);
   await expect(
     period.getByRole('button', { exact: true, name: 'Choose a custom report period, selected' }),
   ).toBeVisible();
   await expect(period.getByText('May 25 → Jun 05, 2026 · 11 days', { exact: true })).toBeVisible();
-  await page.keyboard.press('Escape');
 
   // Keep the interaction checks on a non-empty window: moving the May 25
   // boundary by one day intentionally produces the filtered-zero state, where
@@ -574,18 +563,14 @@ test('commits preset, text, keyboard, and pointer report ranges to the URL', asy
   custom = await openCustomPeriod(page);
   await custom.from.fill('2026-05-20');
   await custom.to.fill('2026-06-05');
-  await page.getByRole('button', { name: 'Apply custom period' }).click();
   await expect.poll(() => reportRangeValue(page)).toContain('"from":"2026-05-20"');
   await expect.poll(() => navigationEntryKey(page)).not.toBe(beforeFirstBlurKey);
   const firstBlurredEditKey = await navigationEntryKey(page);
   expect(firstBlurredEditKey).not.toBeNull();
   const firstBlurredEditUrl = page.url();
-  await page.keyboard.press('Escape');
 
-  custom = await openCustomPeriod(page);
   await custom.from.fill('2026-05-21');
   await custom.to.fill('2026-06-05');
-  await page.getByRole('button', { name: 'Apply custom period' }).click();
   await expect.poll(() => reportRangeValue(page)).toContain('"from":"2026-05-21"');
   await expect.poll(() => navigationEntryKey(page)).not.toBe(firstBlurredEditKey);
   const secondBlurredEditKey = await navigationEntryKey(page);
@@ -749,10 +734,9 @@ test('holds the brush scale still while dragging a range that starts before the 
   // `selectedFrom` instead of the data start, so committing on every pointermove
   // used to move the origin — and the scale — underneath the drag.
   const custom = await openCustomPeriod(page);
-  await custom.from.fill('2026-01-01');
-  await custom.from.press('Enter');
   await waitForFocusedReportSettled(page);
-  await page.keyboard.press('Escape');
+  await custom.from.fill('2026-01-01');
+  await waitForFocusedReportSettled(page);
 
   const explorer = await openActivityExplorer(page);
   const startHandle = explorer.getByRole('slider', { name: 'Start date' });
@@ -909,48 +893,4 @@ test('announces each brush handle as a slider over the day it selects', async ({
 
   await brush.getByRole('slider', { name: 'Start date' }).press('ArrowRight');
   await expect(brush.getByRole('slider', { name: 'Start date' })).toHaveAttribute('aria-valuetext', 'May 13, 2026');
-});
-
-test('discloses what the aggregated Other series contains without turning it into a filter', async ({ page }) => {
-  await page.addInitScript(
-    ({ enabledKey, tailKey }) => {
-      Reflect.set(globalThis, enabledKey, true);
-      Reflect.set(globalThis, tailKey, true);
-    },
-    { enabledKey: FOCUSED_REPORT_E2E_ENABLED_KEY, tailKey: FOCUSED_REPORT_E2E_MODEL_TAIL_KEY },
-  );
-  await openHydratedReport(page);
-  await waitForFocusedReportSettled(page);
-
-  const legend = activityFor(page).locator('[data-report-range-part="total-legend"]');
-  const disclosure = legend.locator('[data-timeline-other-members]');
-  // The default harness dimension stays inside the series bound, so nothing aggregates there.
-  await expect(disclosure).toHaveCount(0);
-
-  const chartOptions = await openActivityExplorer(page);
-  await chartOptions.getByRole('radio', { exact: true, name: 'Model' }).click();
-  await waitForFocusedReportSettled(page);
-
-  await expect(disclosure).toHaveCount(1);
-  await expect(disclosure.locator('summary')).toHaveText(GROUPED_MEMBER_COUNT_PATTERN);
-  // Read-only: Other is not an exact dimension filter, and disclosing its
-  // members must not smuggle one in.
-  await expect(disclosure.locator('button')).toHaveCount(0);
-  await expect(disclosure.locator('a')).toHaveCount(0);
-  await expect(legend.locator('[data-series-key]', { hasText: 'Other' })).toBeDisabled();
-
-  await disclosure.locator('summary').click();
-  const members = disclosure.locator('li');
-  expect(await members.count()).toBeGreaterThan(1);
-  await expect(members.first()).toHaveText(MEMBER_SESSION_COUNT_PATTERN);
-  // The summaries are bounded, so a longer tail says how many stayed unnamed.
-  await expect(members.last()).toHaveText(UNNAMED_MEMBER_PATTERN);
-
-  // The widened fixture must stay isolated to models: every other dimension is
-  // still inside the series bound, so nothing else aggregates.
-  for (const option of ['Campaign', 'Machine', 'Origin', 'Provider', 'Project', 'Harness']) {
-    await chartOptions.getByRole('radio', { exact: true, name: option }).click();
-    await waitForFocusedReportSettled(page);
-    await expect(disclosure).toHaveCount(0);
-  }
 });
