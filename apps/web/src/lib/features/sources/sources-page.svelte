@@ -199,7 +199,7 @@
             <h2 class={groupTitle}>No local history detected yet</h2>
             <p class={meta}>
               ai-usage reads the session history that installed coding tools write on this machine. Use one of these
-              tools once, then collection picks it up automatically.
+              tools once, then run Detect all. Once a source is detected, scheduled collection keeps it up to date.
             </p>
             <div class={sourceGrid}>
               {#each sessionHistoryLocations as location (location.harness)}
@@ -216,6 +216,14 @@
               collected locally for it to appear in the report.
             </p>
             <div class={actionRow}>
+              <button
+                class={ghostButton}
+                disabled={!controlsAvailable || pending}
+                onclick={() => executeCommand({ command: 'detect-all' })}
+                type="button"
+              >
+                Detect all
+              </button>
               <a class={ghostButton} href="/sync">Open Sync</a>
             </div>
           </section>
