@@ -43,6 +43,43 @@ export interface ApiPriceMeasurementInput {
   knownCost: number;
 }
 
+const apiPriceMeasurementStates = new Set<ApiPriceMeasurementState>(['measured', 'partially measured', 'zero']);
+
+export const parseApiPriceMeasurement = (value: unknown): ApiPriceMeasurement => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new Error('API price measurement must be an object');
+  }
+  const record = value as Record<string, unknown>;
+  const keys = Object.keys(record);
+  if (
+    keys.length !== 3 ||
+    !Object.hasOwn(record, 'knownCost') ||
+    !Object.hasOwn(record, 'state') ||
+    !Object.hasOwn(record, 'unpricedFreshTokens')
+  ) {
+    throw new Error('API price measurement contains unknown or missing fields');
+  }
+  const { knownCost, state, unpricedFreshTokens } = record;
+  if (!(typeof knownCost === 'number' && Number.isFinite(knownCost) && knownCost >= 0)) {
+    throw new Error('API price measurement known cost must be non-negative and finite');
+  }
+  if (
+    !(typeof unpricedFreshTokens === 'number' && Number.isSafeInteger(unpricedFreshTokens) && unpricedFreshTokens >= 0)
+  ) {
+    throw new Error('API price measurement unpriced tokens must be a non-negative safe integer');
+  }
+  if (!(typeof state === 'string' && apiPriceMeasurementStates.has(state as ApiPriceMeasurementState))) {
+    throw new Error('API price measurement state is invalid');
+  }
+  if ((state === 'zero') !== (knownCost === 0 && state !== 'partially measured')) {
+    throw new Error('API price measurement zero state is inconsistent');
+  }
+  if (state !== 'partially measured' && unpricedFreshTokens !== 0) {
+    throw new Error('API price measurement unpriced volume is inconsistent');
+  }
+  return Object.freeze({ knownCost, state: state as ApiPriceMeasurementState, unpricedFreshTokens });
+};
+
 const apiPriceMeasurementState = (costKnown: boolean, knownCost: number): ApiPriceMeasurementState => {
   if (!costKnown) {
     return 'partially measured';
@@ -54,26 +91,28 @@ export const apiPriceMeasurement = ({
   costKnown,
   freshTokens,
   knownCost,
-}: ApiPriceMeasurementInput): ApiPriceMeasurement => ({
-  knownCost,
-  state: apiPriceMeasurementState(costKnown, knownCost),
-  unpricedFreshTokens: costKnown ? 0 : freshTokens,
-});
+}: ApiPriceMeasurementInput): ApiPriceMeasurement =>
+  parseApiPriceMeasurement({
+    knownCost,
+    state: apiPriceMeasurementState(costKnown, knownCost),
+    unpricedFreshTokens: costKnown ? 0 : freshTokens,
+  });
 
 export const combineApiPriceMeasurements = (measurements: Iterable<ApiPriceMeasurement>): ApiPriceMeasurement => {
   let knownCost = 0;
   let partiallyMeasured = false;
   let unpricedFreshTokens = 0;
   for (const measurement of measurements) {
-    knownCost += measurement.knownCost;
-    partiallyMeasured ||= measurement.state === 'partially measured';
-    unpricedFreshTokens += measurement.unpricedFreshTokens;
+    const parsed = parseApiPriceMeasurement(measurement);
+    knownCost += parsed.knownCost;
+    partiallyMeasured ||= parsed.state === 'partially measured';
+    unpricedFreshTokens += parsed.unpricedFreshTokens;
   }
-  return {
+  return parseApiPriceMeasurement({
     knownCost,
     state: apiPriceMeasurementState(!partiallyMeasured, knownCost),
     unpricedFreshTokens,
-  };
+  });
 };
 
 export const PARTIALLY_MEASURED_LABEL = 'Partially measured';

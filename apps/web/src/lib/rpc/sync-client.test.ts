@@ -74,12 +74,15 @@ describe('Sync browser adapter', () => {
   });
 
   test('streams and bounds an attachment when the browser omits content length', async () => {
+    // Compressed and chunked responses normally hide this header from browser fetch. The streamed
+    // read remains bounded independently, so absence is valid while malformed declared lengths fail.
     const response = new Response('{"portable":true}', {
       headers: {
         'content-disposition': 'attachment; filename="ai-usage-machine-a.json"',
         'content-type': 'application/json; charset=utf-8',
       },
     });
+    expect(response.headers.get('content-length')).toBeNull();
     const adapter = createSyncBrowserAdapter(defaultTransport(), () => Promise.resolve(response));
 
     const download = await adapter.downloadManualMerge();
@@ -111,6 +114,13 @@ describe('Sync browser adapter', () => {
           'content-disposition': 'attachment; filename="safe.json"',
           'content-length': '2',
           'content-type': 'text/plain',
+        },
+      }),
+      new Response('{}', {
+        headers: {
+          'content-disposition': 'attachment; filename="safe.json"',
+          'content-length': 'not-a-number',
+          'content-type': 'application/json; charset=utf-8',
         },
       }),
     ];

@@ -1,10 +1,11 @@
 # Architecture
 
-`ai-usage` reports usage from local coding-tool history. The served Codex
-quota-history source is the narrow provider-facing exception: the usage engine
-invokes the installed Codex CLI's supported local app-server interface, while
-Codex owns provider communication and authentication. `ai-usage` does not read
-provider credentials or call private provider HTTP endpoints.
+`ai-usage` reports usage from local coding-tool history. Provider quota sources
+are the narrow provider-facing exception: the usage engine may invoke the
+installed Codex CLI's supported local app-server interface or the experimental
+Claude Agent SDK. Those provider clients own communication and authentication.
+`ai-usage` does not read provider credentials, call private provider HTTP
+endpoints, or persist raw provider payloads.
 
 The central runtime rule is a strict split between two planes:
 
@@ -207,11 +208,11 @@ chmodded or otherwise normalized by a reader.
 ### `@ai-usage/local-collectors`
 
 Owns collection-only adapters for Claude, Codex, OpenCode, Cursor, Cursor CSV,
-Codex quota batches, RTK savings, and Cursor commit attribution. It may use
-collector-private caches and the neutral fact parsers from `local-machine`, but
-it does not own machine configuration, report assembly, usage-store access,
-scheduling, commands, or output rendering. Production apps never import it;
-only `usage-engine-runtime` composes it.
+Codex and experimental Claude quota batches, RTK savings, and Cursor commit
+attribution. It may use collector-private caches and the neutral fact parsers
+from `local-machine`, but it does not own machine configuration, report
+assembly, usage-store access, scheduling, commands, or output rendering.
+Production apps never import it; only `usage-engine-runtime` composes it.
 
 Claude, Codex, and OpenCode collection plus exact detail share one semantic
 facts/parser owner per harness rather than competing interpretations. Claude's
@@ -421,7 +422,8 @@ admission, cadence, dependencies, or publication ordering here.
 
 - Stable sources are `claude.sessions`, `codex.sessions`,
   `opencode.sessions`, `cursor.sessions`, `codex.usage-limits`, `rtk.savings`,
-  and `cursor.commit-attribution`.
+  and `cursor.commit-attribution`. `claude.usage-limits` is an eighth,
+  default-enabled experimental source whose upstream API may change.
 - Sparse source-policy overrides are read only from user-home config. Repository
   config cannot authorize background work or provider communication.
 - Policy, availability, lifecycle, outcome, and progress are independent.
@@ -441,7 +443,7 @@ admission, cadence, dependencies, or publication ordering here.
   generation are durable. There is no source-delete command.
 - Source/status/SSE events are strictly decoded, bounded, and sanitized. They
   contain no paths, prompts, rows, credentials, provider payloads, or tokens.
-- Browser snapshot replacement requires the exact seven-source catalogue,
+- Browser snapshot replacement requires the exact eight-source catalogue,
   canonical labels/cadences, consistent policy/availability/lifecycle/outcome/
   generation axes, and explicit operational bounds before accepting state.
 - Publication uses a canonical semantic capture fingerprint that excludes only

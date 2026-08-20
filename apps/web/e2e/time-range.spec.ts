@@ -1,20 +1,24 @@
-import type { Page } from '@playwright/test';
+import type { Locator, Page } from '@playwright/test';
 import {
   FOCUSED_REPORT_E2E_ENABLED_KEY,
+  FOCUSED_REPORT_E2E_NINETY_DAY_COMPARISON_KEY,
   FOCUSED_REPORT_E2E_VISIBLE_TREND_KEY,
 } from '../src/focused-report-e2e-fixture';
 import { expect, openHydratedReport, reportViewsFor, test, waitForFocusedReportSettled } from './browser-test';
+import { createServerStateNetworkTrace } from './server-state-network';
 
 const CALENDAR_NAME_PATTERN = /Daily activity calendar/;
 const CHART_VIEW_PATTERN = /Chart view:/;
 const DELEGATED_LEGEND_PATTERN = /^Delegated\b/;
 const HUMAN_LEGEND_PATTERN = /^Human\b/;
+const API_VALUE_BUCKET_PATTERN = /API value: \$/;
+const PROCESSED_TOKEN_BUCKET_PATTERN = /Processed tokens: [0-9,]+ tokens$/;
 const PUNCHCARD_CELL_BUTTON_PATTERN = /^Filter report to /;
 const PUNCHCARD_CELL_LABEL_PATTERN =
   /^Filter report to (Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday) ([0-9]{2}):00–[0-9]{2}:59, ([0-9,]+) sessions?$/;
 const SESSION_SUMMARY_PATTERN = / sessions$/;
 
-const SESSION_COUNT_PATTERN = /^[0-9,]+$/;
+const SESSION_COUNT_PATTERN = /^[0-9,]+ sessions$/;
 const RANGE_DAYS_PATTERN = /·\s*(\d+)\s*days?/;
 // The bug this guards against bound the class to the `'start' | 'end'` edge
 // name, so the generated style never applied. Assert the edge name itself never
@@ -74,6 +78,7 @@ const readBrushGeometry = (element: Element): BrushGeometry => {
 };
 
 const reportRangeValue = (page: Page): string | null => new URL(page.url()).searchParams.get('range');
+const ninetyDayReportUrl = (): string => `/?${new URLSearchParams({ range: JSON.stringify({ mode: '90d' }) })}`;
 
 const navigationEntryKey = async (page: Page): Promise<string | null> =>
   await page.evaluate(() => {
@@ -84,6 +89,26 @@ const navigationEntryKey = async (page: Page): Promise<string | null> =>
     const key = Reflect.get(states, 'aiUsageNavigationKey');
     return typeof key === 'string' ? key : null;
   });
+
+const reportPeriodFor = (page: Page): Locator => page.getByRole('region', { name: 'Report period' });
+const activityFor = (page: Page): Locator => page.getByRole('region', { name: 'Activity' });
+const activityExplorerFor = (page: Page): Locator =>
+  activityFor(page).locator('details[aria-label="Explore activity"]');
+const openActivityExplorer = async (page: Page): Promise<Locator> => {
+  const explorer = activityExplorerFor(page);
+  if ((await explorer.getAttribute('open')) === null) {
+    await explorer.locator('summary').click();
+  }
+  await expect(explorer).toHaveAttribute('open', '');
+  return explorer;
+};
+const openCustomPeriod = async (page: Page): Promise<{ from: Locator; to: Locator }> => {
+  await reportPeriodFor(page).getByRole('button', { name: 'Choose a custom report period' }).click();
+  return {
+    from: page.getByLabel('From', { exact: true }),
+    to: page.getByLabel('To', { exact: true }),
+  };
+};
 
 test('uses one report range for the dashboard and activity chart', async ({ page }) => {
   await page.addInitScript(
@@ -96,30 +121,37 @@ test('uses one report range for the dashboard and activity chart', async ({ page
   await openHydratedReport(page);
   await waitForFocusedReportSettled(page);
 
-  const dateRange = page.getByRole('region', { name: 'Date range' });
-  await expect(dateRange.getByRole('button', { exact: true, name: 'All' })).toBeVisible();
-  await expect(dateRange.getByRole('button', { exact: true, name: 'Today' })).toBeVisible();
-  await expect(dateRange.getByRole('button', { exact: true, name: '7d' })).toBeVisible();
-  await expect(dateRange.getByRole('button', { exact: true, name: '30d' })).toBeVisible();
-  await expect(dateRange.getByRole('button', { exact: true, name: '30d' })).toHaveAttribute('aria-pressed', 'true');
-  await expect(dateRange.getByRole('textbox', { name: 'Start date' })).toHaveValue('May 12, 2026');
-  await expect(dateRange.getByRole('textbox', { name: 'End date' })).toHaveValue('Jun 11, 2026');
-  await expect(dateRange.getByText('May 12 → Jun 11, 2026 · 30 days', { exact: true })).toBeVisible();
-  await expect(dateRange.getByText('Activity range follows report range', { exact: true })).toBeVisible();
-  await expect(dateRange.getByText('Filters the entire report', { exact: true })).toHaveCount(0);
-  await expect(dateRange.getByTitle('Filter by Codex')).toHaveCount(1);
+  const period = reportPeriodFor(page);
+  const activity = activityFor(page);
+  await expect(period.getByRole('button', { exact: true, name: 'All time' })).toBeVisible();
+  await expect(period.getByRole('button', { exact: true, name: 'Today' })).toBeVisible();
+  await expect(period.getByRole('button', { exact: true, name: '7d' })).toBeVisible();
+  await expect(period.getByRole('button', { exact: true, name: '30d' })).toBeVisible();
+  await expect(period.getByRole('button', { exact: true, name: '90d' })).toBeVisible();
+  await expect(period.getByRole('button', { name: 'Choose a custom report period' })).toBeVisible();
+  await expect(period.getByRole('button', { exact: true, name: '30d' })).toHaveAttribute('aria-pressed', 'true');
+  await expect(period.getByText('May 12 → Jun 11, 2026 · 30 days', { exact: true })).toBeVisible();
+  await expect(period.getByText('Filters the entire report', { exact: true })).toHaveCount(0);
+  await expect(activity.getByTitle('Filter by Codex')).toHaveCount(1);
   expect(
-    await dateRange
+    await period
       .locator('[data-report-range-part]')
       .evaluateAll((elements) => elements.map((element) => element.getAttribute('data-report-range-part'))),
-  ).toEqual(['summary', 'total-legend', 'chart', 'chart-axis', 'adjustments', 'brush', 'chart-options']);
-  await expect(dateRange.getByText(CHART_VIEW_PATTERN)).toHaveCount(0);
-  await expect(dateRange.getByRole('button', { name: 'Zoom chart' })).toHaveCount(0);
-  await expect(dateRange.getByRole('slider', { name: 'Graph view start' })).toHaveCount(0);
+  ).toEqual(['summary']);
+  expect(
+    await activity
+      .locator('[data-report-range-part]')
+      .evaluateAll((elements) => elements.map((element) => element.getAttribute('data-report-range-part'))),
+  ).toEqual(['total-legend', 'chart', 'chart-axis', 'activity-explorer', 'brush']);
+  await expect(activity.getByText(CHART_VIEW_PATTERN)).toHaveCount(0);
+  await expect(activity.getByRole('button', { name: 'Zoom chart' })).toHaveCount(0);
+  await expect(activity.getByRole('slider', { name: 'Graph view start' })).toHaveCount(0);
 
-  const chartOptions = dateRange.locator('details[aria-label="Chart options"]');
+  const chartOptions = activityExplorerFor(page);
   await expect(chartOptions).not.toHaveAttribute('open', '');
-  await expect(chartOptions.getByText('Harness · Day · Estimated API-equivalent value', { exact: true })).toBeVisible();
+  await expect(
+    activityFor(page).getByText('Harness · Day · Estimated API-equivalent value', { exact: true }),
+  ).toBeVisible();
   await expect(chartOptions.getByText('Group by', { exact: true })).not.toBeVisible();
 
   await chartOptions.locator('summary').click();
@@ -129,23 +161,87 @@ test('uses one report range for the dashboard and activity chart', async ({ page
   await expect(chartOptions.getByText('Interval', { exact: true })).toBeVisible();
   await expect(chartOptions.getByText('Metric', { exact: true })).toBeVisible();
 
-  const timeline = dateRange.getByRole('button', {
+  const timeline = activity.getByRole('button', {
     name: 'Inspect activity timeline. Use arrow keys to inspect days.',
   });
   await timeline.focus();
   await timeline.press('End');
-  const trend = dateRange.locator('[data-timeline-trend]');
+  const trend = activity.locator('[data-timeline-trend]');
   await expect(trend).toBeVisible();
   await expect(trend).toHaveText('▲ 100%');
 });
 
-test('wraps chart options without horizontal clipping below the frozen narrow viewport', async ({ page }) => {
-  await page.setViewportSize({ height: 844, width: 320 });
+test('switches API value and processed tokens locally without changing report identity', async ({ page }) => {
+  await openHydratedReport(page);
+  await waitForFocusedReportSettled(page);
+
+  const activity = activityFor(page);
+  const metricControl = activity.getByRole('group', { name: 'Activity metric' });
+  const apiValue = metricControl.getByRole('button', { exact: true, name: 'API value' });
+  const tokens = metricControl.getByRole('button', { exact: true, name: 'Tokens' });
+  const chart = activity.locator('[data-report-range-part="chart"]');
+  const firstBucket = chart.getByRole('img').first();
+  await expect(metricControl.getByRole('button')).toHaveCount(2);
+  await expect(apiValue).toHaveAttribute('aria-pressed', 'true');
+  await expect(firstBucket).toHaveAccessibleName(API_VALUE_BUCKET_PATTERN);
+  const costLabel = await firstBucket.getAttribute('aria-label');
+  const initialUrl = page.url();
+
+  const serverStateTrace = createServerStateNetworkTrace(page);
+  serverStateTrace.checkpoint('activity-metric-toggle');
+  await tokens.click();
+  await expect(tokens).toHaveAttribute('aria-pressed', 'true');
+  await expect(activity.locator('[data-timeline-metric="tokens"]')).toBeVisible();
+  await expect(firstBucket).toHaveAccessibleName(PROCESSED_TOKEN_BUCKET_PATTERN);
+  expect(await firstBucket.getAttribute('aria-label')).not.toBe(costLabel);
+
+  await apiValue.click();
+  await expect(apiValue).toHaveAttribute('aria-pressed', 'true');
+  await expect(activity.locator('[data-timeline-metric="cost"]')).toBeVisible();
+  await expect(firstBucket).toHaveAttribute('aria-label', costLabel ?? '');
+
+  const explorer = activityExplorerFor(page);
+  await explorer.locator('summary').click();
+  await explorer
+    .getByRole('radiogroup', { name: 'Metric' })
+    .getByRole('radio', { exact: true, name: 'Sessions' })
+    .click();
+  await expect(apiValue).toHaveAttribute('aria-pressed', 'false');
+  await expect(tokens).toHaveAttribute('aria-pressed', 'false');
+  await tokens.focus();
+  await page.keyboard.press('Space');
+  await expect(tokens).toBeFocused();
+  await expect(tokens).toHaveAttribute('aria-pressed', 'true');
+  await apiValue.click();
+  await expect(apiValue).toHaveAttribute('aria-pressed', 'true');
+
+  expect(page.url()).toBe(initialUrl);
+  expect(serverStateTrace.counts('activity-metric-toggle')).toEqual({
+    operations: {},
+    owners: {},
+    routeData: 0,
+    totalRpc: 0,
+  });
+  serverStateTrace.dispose();
+});
+
+test('keeps period targets tactile and wraps chart options below the narrow viewport', async ({ page }) => {
+  await page.setViewportSize({ height: 844, width: 390 });
   await openHydratedReport(page);
 
-  const summary = page
-    .getByRole('region', { name: 'Date range' })
-    .locator('details[aria-label="Chart options"] summary');
+  const periodButtons = reportPeriodFor(page).getByRole('button');
+  await expect(periodButtons).toHaveCount(6);
+  for (const button of await periodButtons.all()) {
+    expect(Math.round((await button.boundingBox())?.height ?? 0)).toBeGreaterThanOrEqual(44);
+  }
+  const activityMetricButtons = activityFor(page).getByRole('group', { name: 'Activity metric' }).getByRole('button');
+  await expect(activityMetricButtons).toHaveCount(2);
+  for (const button of await activityMetricButtons.all()) {
+    expect(Math.round((await button.boundingBox())?.height ?? 0)).toBeGreaterThanOrEqual(44);
+  }
+
+  await page.setViewportSize({ height: 844, width: 320 });
+  const summary = activityExplorerFor(page).locator('summary');
   const geometry = await summary.evaluate((element) => {
     const current = element.querySelector('span:last-child');
     if (!(current instanceof HTMLElement)) {
@@ -163,6 +259,68 @@ test('wraps chart options without horizontal clipping below the frozen narrow vi
   expect(geometry.scrollWidth).toBeLessThanOrEqual(geometry.clientWidth);
   expect(geometry.currentMinWidth).toBe('0px');
   expect(geometry.currentWhiteSpace).toBe('normal');
+});
+
+test('restores a bounded 90d period from a mobile deep link, reload, and history', async ({ page }) => {
+  await page.setViewportSize({ height: 844, width: 390 });
+  await openHydratedReport(page, ninetyDayReportUrl());
+  await waitForFocusedReportSettled(page);
+
+  let period = reportPeriodFor(page);
+  await expect(period.getByRole('button', { exact: true, name: '90d' })).toHaveAttribute('aria-pressed', 'true');
+  await expect(period.getByText('Mar 13 → Jun 11, 2026 · 90 days', { exact: true })).toBeVisible();
+  const executiveValue = page.getByRole('region', { name: 'Estimated API-equivalent value' });
+  await expect(executiveValue).toContainText('last 90 days');
+  await expect(executiveValue).toContainText('No sessions exist in the previous period.');
+
+  await page.reload();
+  await waitForFocusedReportSettled(page);
+  period = reportPeriodFor(page);
+  await expect(period.getByRole('button', { exact: true, name: '90d' })).toHaveAttribute('aria-pressed', 'true');
+
+  await period.getByRole('button', { exact: true, name: '7d' }).click();
+  await waitForFocusedReportSettled(page);
+  await expect.poll(() => reportRangeValue(page)).toContain('7d');
+
+  await page.goBack();
+  await waitForFocusedReportSettled(page);
+  await expect.poll(() => reportRangeValue(page)).toContain('90d');
+  await expect(reportPeriodFor(page).getByRole('button', { exact: true, name: '90d' })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
+
+  await page.goForward();
+  await waitForFocusedReportSettled(page);
+  await expect.poll(() => reportRangeValue(page)).toContain('7d');
+  await expect(reportPeriodFor(page).getByRole('button', { exact: true, name: '7d' })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
+});
+
+test('compares 90d with the previous equal-length period when that boundary has data', async ({ page }) => {
+  await page.addInitScript(
+    ({ comparisonKey, enabledKey }) => {
+      Reflect.set(globalThis, enabledKey, true);
+      Reflect.set(globalThis, comparisonKey, true);
+    },
+    {
+      comparisonKey: FOCUSED_REPORT_E2E_NINETY_DAY_COMPARISON_KEY,
+      enabledKey: FOCUSED_REPORT_E2E_ENABLED_KEY,
+    },
+  );
+  await openHydratedReport(page);
+
+  await reportPeriodFor(page).getByRole('button', { exact: true, name: '90d' }).click();
+  await waitForFocusedReportSettled(page);
+
+  const executiveValue = page.getByRole('region', { name: 'Estimated API-equivalent value' });
+  await expect(executiveValue.locator('strong').first()).toHaveText('$3.54');
+  await expect(executiveValue).toContainText('321% higher than the previous equal-length period.');
+  await expect(executiveValue).not.toContainText('Partially measured');
+  await expect(executiveValue).not.toContainText('No sessions exist in the previous period.');
+  await expect(page.locator('[data-period-insight]')).toHaveCount(1);
 });
 
 test('uses clickable heatmap days as Rhythm activity-day controls without a native date input', async ({ page }) => {
@@ -250,8 +408,7 @@ test('filters the report from non-empty Punchcard cells with click and keyboard'
 test('changes every chart option from its segmented controls', async ({ page }) => {
   await openHydratedReport(page);
 
-  const chartOptions = page.getByRole('region', { name: 'Date range' }).locator('details[aria-label="Chart options"]');
-  await chartOptions.locator('summary').click();
+  const chartOptions = await openActivityExplorer(page);
 
   for (const option of ['Campaign', 'Machine', 'Origin', 'Model', 'Provider', 'Project', 'Harness']) {
     await chartOptions.getByRole('radio', { exact: true, name: option }).click();
@@ -263,109 +420,157 @@ test('changes every chart option from its segmented controls', async ({ page }) 
     await expect(chartOptions.getByRole('radio', { exact: true, name: option })).toBeChecked();
   }
 
-  for (const option of ['Share', 'Sessions', 'Estimated API-equivalent value']) {
+  for (const option of ['Share', 'Sessions', 'Tokens', 'Estimated API-equivalent value']) {
     await chartOptions.getByRole('radio', { exact: true, name: option }).click();
     await expect(chartOptions.getByRole('radio', { exact: true, name: option })).toBeChecked();
   }
-  await expect(chartOptions.getByText('Harness · Day · Estimated API-equivalent value', { exact: true })).toBeVisible();
+  await expect(
+    activityFor(page).getByText('Harness · Day · Estimated API-equivalent value', { exact: true }),
+  ).toBeVisible();
 });
 
 test('groups the timeline by campaign, machine, and origin with matching legends', async ({ page }) => {
   await openHydratedReport(page);
 
-  const dateRange = page.getByRole('region', { name: 'Date range' });
-  const chartOptions = dateRange.locator('details[aria-label="Chart options"]');
-  await chartOptions.locator('summary').click();
+  const activity = activityFor(page);
+  const chartOptions = await openActivityExplorer(page);
 
   await chartOptions.getByRole('radio', { exact: true, name: 'Campaign' }).click();
-  await expect(
-    chartOptions.getByText('Campaign · Day · Estimated API-equivalent value', { exact: true }),
-  ).toBeVisible();
-  await expect(dateRange.getByTitle('Build report UI', { exact: true })).toContainText('Build report UI');
-  await expect(dateRange.getByTitle('Inspect OpenCode root', { exact: true })).toContainText('Inspect OpenCode root');
+  await expect(activity.getByText('Campaign · Day · Estimated API-equivalent value', { exact: true })).toBeVisible();
+  await expect(activity.getByTitle('Build report UI', { exact: true })).toContainText('Build report UI');
+  await expect(activity.getByTitle('Recover Claude history', { exact: true })).toContainText('Recover Claude history');
+  // `Inspect OpenCode root` runs a free model, so it carries no API-equivalent value and the value
+  // legend legitimately omits it. It has to reappear once the metric counts sessions instead.
+  await expect(activity.getByTitle('Inspect OpenCode root', { exact: true })).toHaveCount(0);
+  await chartOptions.getByRole('radio', { exact: true, name: 'Sessions' }).click();
+  await expect(activity.getByTitle('Inspect OpenCode root', { exact: true })).toContainText('Inspect OpenCode root');
+  await chartOptions.getByRole('radio', { exact: true, name: 'Estimated API-equivalent value' }).click();
 
   await chartOptions.getByRole('radio', { exact: true, name: 'Machine' }).click();
-  await expect(chartOptions.getByText('Machine · Day · Estimated API-equivalent value', { exact: true })).toBeVisible();
-  await expect(dateRange.getByTitle('Filter by Fixture Machine · Stale')).toContainText('Fixture Machine · Stale');
-  await expect(dateRange.getByTitle('Unknown machine')).toContainText('Unknown machine');
+  await expect(activity.getByText('Machine · Day · Estimated API-equivalent value', { exact: true })).toBeVisible();
+  await expect(activity.getByTitle('Filter by Fixture Machine · Stale')).toContainText('Fixture Machine · Stale');
+  // The unattributed session is the free-model one, so the value legend drops it for the same reason
+  // as the campaign above. Counting sessions brings it back.
+  await expect(activity.getByTitle('Unknown machine')).toHaveCount(0);
 
   await chartOptions.getByRole('radio', { exact: true, name: 'Sessions' }).click();
+  await expect(activity.getByTitle('Unknown machine')).toContainText('Unknown machine');
   await chartOptions.getByRole('radio', { exact: true, name: 'Origin' }).click();
-  await expect(chartOptions.getByText('Origin · Day · Sessions', { exact: true })).toBeVisible();
-  await expect(dateRange.getByRole('button', { name: HUMAN_LEGEND_PATTERN })).toContainText('Human');
-  await expect(dateRange.getByRole('button', { name: DELEGATED_LEGEND_PATTERN })).toContainText('Delegated');
+  await expect(activity.getByText('Origin · Day · Sessions', { exact: true })).toBeVisible();
+  await expect(activity.getByRole('button', { name: HUMAN_LEGEND_PATTERN })).toContainText('Human');
+  await expect(activity.getByRole('button', { name: DELEGATED_LEGEND_PATTERN })).toContainText('Delegated');
 });
 
 test('commits preset, text, keyboard, and pointer report ranges to the URL', async ({ page }) => {
   await openHydratedReport(page);
 
-  const dateRange = page.getByRole('region', { name: 'Date range' });
-  const startInput = dateRange.getByRole('textbox', { name: 'Start date' });
-  const endInput = dateRange.getByRole('textbox', { name: 'End date' });
-  const startHandle = dateRange.getByRole('slider', { name: 'Start date' });
-  const selectedRange = dateRange.getByRole('button', { name: 'Selected report window' });
-
-  await dateRange.getByRole('button', { exact: true, name: 'All' }).click();
+  const period = reportPeriodFor(page);
+  await period.getByRole('button', { exact: true, name: 'All time' }).click();
   await expect.poll(() => reportRangeValue(page)).not.toBeNull();
   await waitForFocusedReportSettled(page);
-  await dateRange.getByRole('button', { exact: true, name: '30d' }).click();
+  await period.getByRole('button', { exact: true, name: '30d' }).click();
   await expect.poll(() => reportRangeValue(page)).toBeNull();
   await waitForFocusedReportSettled(page);
-  await expect(startInput).toHaveValue('May 12, 2026');
-  await expect(endInput).toHaveValue('Jun 11, 2026');
+  await period.getByRole('button', { exact: true, name: '90d' }).click();
+  await expect.poll(() => reportRangeValue(page)).toContain('90d');
+  await waitForFocusedReportSettled(page);
+  await expect(period.getByText('Mar 13 → Jun 11, 2026 · 90 days', { exact: true })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Estimated API-equivalent value' })).toContainText('last 90 days');
 
-  await dateRange.getByRole('button', { exact: true, name: '7d' }).click();
-  await expect(startInput).toHaveValue('Jun 04, 2026');
-  await expect(dateRange.getByText('Activity range follows report range', { exact: true })).toBeVisible();
+  let custom = await openCustomPeriod(page);
+  await expect(custom.from).toHaveValue('2026-03-13');
+  await expect(custom.to).toHaveValue('2026-06-11');
+  await expect.poll(() => reportRangeValue(page)).toContain('"from":"2026-03-13"');
+  await waitForFocusedReportSettled(page);
+  const urlBeforeInvalidDraft = page.url();
+  await custom.from.fill('');
+  await expect(custom.from).toHaveAttribute('aria-invalid', 'true');
+  await expect(page.getByRole('alert')).toHaveText('Enter a valid From date.');
+  expect(page.url()).toBe(urlBeforeInvalidDraft);
+  await custom.from.press('Escape');
+  await expect(page.getByRole('alert')).toHaveCount(0);
+  await expect(custom.from).toHaveValue('2026-03-13');
 
-  const presetUrl = page.url();
-  await startInput.fill('2026-05-25');
-  await expect(startInput).toHaveValue('2026-05-25');
-  await expect.poll(() => page.url()).not.toBe(presetUrl);
-  await startInput.press('Enter');
-  await expect(startInput).toHaveValue('May 25, 2026');
-  await expect(startInput).not.toBeFocused();
+  const urlBeforeReversedDraft = page.url();
+  await custom.from.fill('2026-06-12');
+  await expect(custom.from).toHaveAttribute('aria-invalid', 'true');
+  await expect(custom.to).toHaveAttribute('aria-invalid', 'true');
+  await expect(page.getByRole('alert')).toHaveText('From date must be on or before To date.');
+  expect(page.url()).toBe(urlBeforeReversedDraft);
+  await custom.from.press('Escape');
+  await expect(page.getByRole('alert')).toHaveCount(0);
+  await expect(custom.from).toHaveValue('2026-03-13');
 
+  await custom.from.fill('2026-05-25');
+  await custom.to.fill('2026-06-05');
+  await expect.poll(() => reportRangeValue(page)).toContain('"from":"2026-05-25"');
+  await waitForFocusedReportSettled(page);
+  await expect(
+    period.getByRole('button', { exact: true, name: 'Choose a custom report period, selected' }),
+  ).toBeVisible();
+  await expect(period.getByText('May 25 → Jun 05, 2026 · 11 days', { exact: true })).toBeVisible();
+
+  // Keep the interaction checks on a non-empty window: moving the May 25
+  // boundary by one day intentionally produces the filtered-zero state, where
+  // Activity is no longer rendered.
+  await period.getByRole('button', { exact: true, name: '30d' }).click();
+  await waitForFocusedReportSettled(page);
+
+  const explorer = await openActivityExplorer(page);
+  const startHandle = explorer.getByRole('slider', { name: 'Start date' });
+  const selectedRange = explorer.getByRole('button', { name: 'Selected report window' });
   const textUrl = page.url();
   const keyboardStart = await startHandle.getAttribute('aria-valuenow');
   await startHandle.press('ArrowRight');
   await expect(startHandle).not.toHaveAttribute('aria-valuenow', keyboardStart ?? '');
-  await expect(startInput).toHaveValue('May 26, 2026');
+  await expect(startHandle).toHaveAttribute('aria-valuetext', 'May 13, 2026');
   await expect.poll(() => page.url()).not.toBe(textUrl);
 
   const keyboardUrl = page.url();
-  const pointerStart = await startInput.inputValue();
+  const pointerStart = await startHandle.getAttribute('aria-valuetext');
   const selectedRangeBox = await selectedRange.boundingBox();
   expect(selectedRangeBox).not.toBeNull();
   if (selectedRangeBox) {
     const startX = selectedRangeBox.x + selectedRangeBox.width / 2;
     const startY = selectedRangeBox.y + selectedRangeBox.height / 2;
+    const hitTarget = await selectedRange.evaluate(
+      (_selectedElement, { x, y }) => {
+        const element = document.elementFromPoint(x, y);
+        return {
+          ariaLabel: element?.getAttribute('aria-label') ?? null,
+          tagName: element?.tagName ?? null,
+        };
+      },
+      { x: startX, y: startY },
+    );
+    expect(hitTarget).toEqual({ ariaLabel: 'Selected report window', tagName: 'BUTTON' });
     await page.mouse.move(startX, startY);
     await page.mouse.down();
+    await expect(selectedRange).toHaveAttribute('data-dragging', 'true');
     await page.mouse.move(startX - 50, startY, { steps: 4 });
     await expect(selectedRange).toHaveAttribute('data-dragging', 'true');
     await page.mouse.up();
   }
-  await expect(startInput).not.toHaveValue(pointerStart);
+  await expect(startHandle).not.toHaveAttribute('aria-valuetext', pointerStart ?? '');
   await expect.poll(() => page.url()).not.toBe(keyboardUrl);
 
+  const committedPointerSummary = await period.locator('[data-report-range-part="summary"]').innerText();
   await page.reload();
   await waitForFocusedReportSettled(page);
-  await expect(startInput).not.toHaveValue(pointerStart);
+  await expect(reportPeriodFor(page).locator('[data-report-range-part="summary"]')).toHaveText(committedPointerSummary);
 
   const beforeFirstBlurKey = await navigationEntryKey(page);
-  await startInput.fill('2026-05-20');
-  await endInput.focus();
-  await expect(startInput).toHaveValue('May 20, 2026');
+  custom = await openCustomPeriod(page);
+  await custom.from.fill('2026-05-20');
+  await custom.to.fill('2026-06-05');
   await expect.poll(() => reportRangeValue(page)).toContain('"from":"2026-05-20"');
   await expect.poll(() => navigationEntryKey(page)).not.toBe(beforeFirstBlurKey);
   const firstBlurredEditKey = await navigationEntryKey(page);
   expect(firstBlurredEditKey).not.toBeNull();
   const firstBlurredEditUrl = page.url();
 
-  await startInput.fill('2026-05-21');
-  await endInput.focus();
-  await expect(startInput).toHaveValue('May 21, 2026');
+  await custom.from.fill('2026-05-21');
+  await custom.to.fill('2026-06-05');
   await expect.poll(() => reportRangeValue(page)).toContain('"from":"2026-05-21"');
   await expect.poll(() => navigationEntryKey(page)).not.toBe(firstBlurredEditKey);
   const secondBlurredEditKey = await navigationEntryKey(page);
@@ -378,14 +583,13 @@ test('commits preset, text, keyboard, and pointer report ranges to the URL', asy
   await expect.poll(() => navigationEntryKey(page)).not.toBe(secondBlurredEditKey);
   await waitForFocusedReportSettled(page);
   await expect.poll(() => page.url()).toBe(firstBlurredEditUrl);
-  await expect(startInput).toHaveValue('May 20, 2026');
+  await expect(reportPeriodFor(page).getByText('May 20 → Jun 05, 2026 · 16 days', { exact: true })).toBeVisible();
 });
 
 test('does not capture wheel scrolling over the activity chart', async ({ page }) => {
   await openHydratedReport(page);
 
-  const dateRange = page.getByRole('region', { name: 'Date range' });
-  const timeline = dateRange.getByRole('button', {
+  const timeline = activityFor(page).getByRole('button', {
     name: 'Inspect activity timeline. Use arrow keys to inspect days.',
   });
   const initialScrollY = await page.evaluate(() => window.scrollY);
@@ -397,35 +601,31 @@ test('does not capture wheel scrolling over the activity chart', async ({ page }
 test('keeps the report range canonical across granularity and domain changes', async ({ page }) => {
   await openHydratedReport(page);
 
-  const dateRange = page.getByRole('region', { name: 'Date range' });
-  await dateRange.getByRole('button', { exact: true, name: '7d' }).click();
+  const period = reportPeriodFor(page);
+  const activity = activityFor(page);
+  await period.getByRole('button', { exact: true, name: '7d' }).click();
   await waitForFocusedReportSettled(page);
-  const startInput = dateRange.getByRole('textbox', { name: 'Start date' });
-  const endInput = dateRange.getByRole('textbox', { name: 'End date' });
-  const selectedStart = await startInput.inputValue();
-  const selectedEnd = await endInput.inputValue();
+  const selectedRange = reportRangeValue(page);
 
-  const chartOptions = dateRange.locator('details[aria-label="Chart options"]');
-  await chartOptions.locator('summary').click();
+  const chartOptions = await openActivityExplorer(page);
   await chartOptions.getByRole('radio', { exact: true, name: 'Month' }).click();
-  await expect(startInput).toHaveValue(selectedStart);
-  await expect(endInput).toHaveValue(selectedEnd);
+  expect(reportRangeValue(page)).toBe(selectedRange);
 
-  await dateRange.getByTitle('Filter by Codex').click();
+  await activity.getByTitle('Filter by Codex').click();
   await waitForFocusedReportSettled(page);
 
-  const reportStart = dateRange.getByRole('slider', { name: 'Start date' });
-  const reportEnd = dateRange.getByRole('slider', { name: 'End date' });
+  const reportStart = chartOptions.getByRole('slider', { name: 'Start date' });
+  const reportEnd = chartOptions.getByRole('slider', { name: 'End date' });
   await expect(reportStart).toHaveAttribute('aria-valuemax', '7');
   await expect(reportStart).toHaveAttribute('aria-valuenow', '0');
   await expect(reportEnd).toHaveAttribute('aria-valuenow', '7');
-  await expect(dateRange.getByRole('slider', { name: 'Graph view start' })).toHaveCount(0);
+  await expect(activity.getByRole('slider', { name: 'Graph view start' })).toHaveCount(0);
 });
 
 test('anchors the brush handles to the selected report window at every viewport', async ({ page }) => {
   await openHydratedReport(page);
 
-  const brush = page.getByRole('region', { name: 'Date range' }).locator('[data-report-range-part="brush"]');
+  const brush = (await openActivityExplorer(page)).locator('[data-report-range-part="brush"]');
   const measureBrush = (): Promise<BrushGeometry> => brush.evaluate(readBrushGeometry);
 
   for (const viewport of BRUSH_GEOMETRY_VIEWPORTS) {
@@ -458,15 +658,13 @@ test('anchors the brush handles to the selected report window at every viewport'
 test('drags a brush handle with the pointer and keeps it on the selection edge', async ({ page }) => {
   await openHydratedReport(page);
 
-  const dateRange = page.getByRole('region', { name: 'Date range' });
-  const brush = dateRange.locator('[data-report-range-part="brush"]');
+  const brush = (await openActivityExplorer(page)).locator('[data-report-range-part="brush"]');
   const startHandle = brush.getByRole('slider', { name: 'Start date' });
-  const startInput = dateRange.getByRole('textbox', { name: 'Start date' });
   // `page.mouse` works in viewport coordinates and does not scroll, so the
   // handle has to be in view before its box is turned into a pointer position.
   await startHandle.scrollIntoViewIfNeeded();
   const before = await startHandle.boundingBox();
-  const startedAt = await startInput.inputValue();
+  const startedAt = await startHandle.getAttribute('aria-valuetext');
   expect(before).not.toBeNull();
   if (!before) {
     return;
@@ -478,7 +676,7 @@ test('drags a brush handle with the pointer and keeps it on the selection edge',
   await page.mouse.move(before.x + before.width / 2 - 120, before.y + before.height / 2, { steps: 6 });
   await page.mouse.up();
 
-  await expect.poll(async () => await startInput.inputValue()).not.toBe(startedAt);
+  await expect(startHandle).not.toHaveAttribute('aria-valuetext', startedAt ?? '');
   await expect.poll(async () => (await brush.evaluate(readBrushGeometry)).offsets).toEqual([0, 0]);
   const after = await startHandle.boundingBox();
   expect(after?.x ?? 0).toBeLessThan(before.x);
@@ -489,8 +687,8 @@ test('drags a brush handle with the pointer and keeps it on the selection edge',
 test('draws only the selected report range and never overflows the plot', async ({ page }) => {
   await openHydratedReport(page);
 
-  const dateRange = page.getByRole('region', { name: 'Date range' });
-  const chart = dateRange.locator('[data-report-range-part="chart"]');
+  const period = reportPeriodFor(page);
+  const chart = activityFor(page).locator('[data-report-range-part="chart"]');
   const readChart = () =>
     chart.evaluate((element) => {
       const boundaryRow = document.querySelector('[data-timeline-boundary-row]');
@@ -506,11 +704,11 @@ test('draws only the selected report range and never overflows the plot', async 
       };
     });
 
-  for (const preset of ['30d', '7d', 'All'] as const) {
-    await dateRange.getByRole('button', { exact: true, name: preset }).click();
+  for (const preset of ['30d', '7d', 'All time'] as const) {
+    await period.getByRole('button', { exact: true, name: preset }).click();
     await waitForFocusedReportSettled(page);
 
-    const summary = await dateRange.locator('[data-report-range-part="summary"]').first().innerText();
+    const summary = await period.locator('[data-report-range-part="summary"]').innerText();
     const days = Number(RANGE_DAYS_PATTERN.exec(summary)?.[1] ?? Number.NaN);
     expect(days, summary).not.toBeNaN();
 
@@ -519,30 +717,32 @@ test('draws only the selected report range and never overflows the plot', async 
     expect(geometry.buckets, preset).toBe(days + 1);
     expect(geometry.scrollWidth, preset).toBeLessThanOrEqual(geometry.clientWidth);
     // The axis must report the window, not the domain the brush can address.
-    expect(geometry.boundaries[0], preset).toBe(
-      await dateRange.getByRole('textbox', { name: 'Start date' }).inputValue(),
-    );
-    expect(geometry.boundaries[1], preset).toBe(
-      await dateRange.getByRole('textbox', { name: 'End date' }).inputValue(),
-    );
+    const explorer = activityExplorerFor(page);
+    const selectedStart = await explorer
+      .locator('[role="slider"][aria-label="Start date"]')
+      .getAttribute('aria-valuetext');
+    const selectedEnd = await explorer.locator('[role="slider"][aria-label="End date"]').getAttribute('aria-valuetext');
+    expect(geometry.boundaries[0], preset).toBe(selectedStart);
+    expect(geometry.boundaries[1], preset).toBe(selectedEnd);
   }
 });
 
 test('holds the brush scale still while dragging a range that starts before the data', async ({ page }) => {
   await openHydratedReport(page);
 
-  const dateRange = page.getByRole('region', { name: 'Date range' });
-  const startInput = dateRange.getByRole('textbox', { name: 'Start date' });
-  const startHandle = dateRange.getByRole('slider', { name: 'Start date' });
-
   // A custom range opening before the first dated session makes the index origin
   // `selectedFrom` instead of the data start, so committing on every pointermove
   // used to move the origin — and the scale — underneath the drag.
-  await startInput.fill('2026-01-01');
-  await startInput.press('Enter');
+  const custom = await openCustomPeriod(page);
+  await waitForFocusedReportSettled(page);
+  await custom.from.fill('2026-01-01');
   await waitForFocusedReportSettled(page);
 
+  const explorer = await openActivityExplorer(page);
+  const startHandle = explorer.getByRole('slider', { name: 'Start date' });
+
   const scaleBefore = await startHandle.getAttribute('aria-valuemax');
+  const initialValue = await startHandle.getAttribute('aria-valuetext');
   expect(scaleBefore).not.toBeNull();
 
   await startHandle.scrollIntoViewIfNeeded();
@@ -557,24 +757,22 @@ test('holds the brush scale still while dragging a range that starts before the 
   await page.mouse.down();
   for (const step of [45, 90, 135, 180]) {
     await page.mouse.move(originX + step, originY);
-    // The scale must not move, and the day the handle announces must be the day
-    // the committed range reports.
+    // The scale must not move while the handle's locally announced day follows the pointer.
     await expect(startHandle).toHaveAttribute('aria-valuemax', scaleBefore ?? '');
-    expect(await startHandle.getAttribute('aria-valuetext')).toBe(await startInput.inputValue());
   }
+  await expect(startHandle).not.toHaveAttribute('aria-valuetext', initialValue ?? '');
   await page.mouse.up();
   await waitForFocusedReportSettled(page);
 
-  expect(await startHandle.getAttribute('aria-valuetext')).toBe(await startInput.inputValue());
+  expect(reportRangeValue(page)).toContain('"mode":"custom"');
 });
 
 test('lands the dragged range once on release while the headline follows the handle', async ({ page }) => {
   await openHydratedReport(page);
 
-  const dateRange = page.getByRole('region', { name: 'Date range' });
-  const endHandle = dateRange.getByRole('slider', { name: 'End date' });
+  const endHandle = (await openActivityExplorer(page)).getByRole('slider', { name: 'End date' });
   const hero = page.getByRole('region', { name: 'Estimated API-equivalent value' });
-  const headline = hero.locator('p').nth(1);
+  const headline = hero.locator('strong').first();
   const urlBeforeDrag = page.url();
 
   await endHandle.scrollIntoViewIfNeeded();
@@ -596,7 +794,7 @@ test('lands the dragged range once on release while the headline follows the han
   expect(page.url()).toBe(urlBeforeDrag);
   // The amount is summed locally from the buckets already drawn, so the headline stays live while
   // its qualifiers — which only the server knows — say they are lagging rather than mismatching.
-  await expect(hero.locator('[data-hero-provisional]').first()).toBeVisible();
+  await expect(hero.locator('[aria-busy="true"]').first()).toBeVisible();
   // The live figure must never be dimmed along with the stale body around it.
   await expect(page.locator('[data-report-complete-output]')).toHaveCSS('opacity', '1');
 
@@ -610,14 +808,14 @@ test('lands the dragged range once on release while the headline follows the han
   // Exactly one commit, and it happened on release.
   expect(page.url()).not.toBe(urlBeforeDrag);
   expect(new URL(page.url()).searchParams.get('range')).not.toBeNull();
-  await expect(hero.locator('[data-hero-provisional]')).toHaveCount(0);
+  await expect(hero.locator('[aria-busy="true"]')).toHaveCount(0);
 });
 
 test('reports legend shares and the range total over the selected window', async ({ page }) => {
   await openHydratedReport(page);
 
-  const dateRange = page.getByRole('region', { name: 'Date range' });
-  const legend = dateRange.locator('[data-report-range-part="total-legend"]');
+  const activity = activityFor(page);
+  const legend = activity.locator('[data-report-range-part="total-legend"]');
   const readLegend = () =>
     legend.evaluate((element) => ({
       series: [...element.querySelectorAll('[data-series-key]')].map((node) =>
@@ -634,15 +832,14 @@ test('reports legend shares and the range total over the selected window', async
   expect(initial.series.filter((entry) => entry.endsWith('0.0%'))).toEqual([]);
   expect(initial.series.length).toBeGreaterThan(0);
 
-  await dateRange.getByRole('button', { exact: true, name: 'Today' }).click();
+  await reportPeriodFor(page).getByRole('button', { exact: true, name: 'Today' }).click();
   await waitForFocusedReportSettled(page);
 
   const narrowed = await readLegend();
   expect(narrowed.total).toBeNull();
   expect(narrowed.series.length).toBeLessThanOrEqual(initial.series.length);
 
-  const chartOptions = dateRange.locator('details[aria-label="Chart options"]');
-  await chartOptions.locator('summary').click();
+  const chartOptions = await openActivityExplorer(page);
   await chartOptions.getByRole('radio', { exact: true, name: 'Sessions' }).click();
   await waitForFocusedReportSettled(page);
   expect((await readLegend()).total).toMatch(SESSION_COUNT_PATTERN);
@@ -656,8 +853,7 @@ test('reports legend shares and the range total over the selected window', async
 test('fills harness series with their branded tokens rather than one hashed hue', async ({ page }) => {
   await openHydratedReport(page);
 
-  const dateRange = page.getByRole('region', { name: 'Date range' });
-  const fills = await dateRange.evaluate((element) => {
+  const fills = await activityFor(page).evaluate((element) => {
     const swatchFill = (key: string): string | null => {
       const node = element.querySelector(`[data-report-range-part="total-legend"] [data-series-key="${key}"] span`);
       return node ? getComputedStyle(node).backgroundColor : null;
@@ -682,8 +878,7 @@ test('fills harness series with their branded tokens rather than one hashed hue'
 test('announces each brush handle as a slider over the day it selects', async ({ page }) => {
   await openHydratedReport(page);
 
-  const dateRange = page.getByRole('region', { name: 'Date range' });
-  const brush = dateRange.locator('[data-report-range-part="brush"]');
+  const brush = (await openActivityExplorer(page)).locator('[data-report-range-part="brush"]');
   const handles = (await brush.evaluate(readBrushGeometry)).handles;
 
   expect(handles.map((handle) => handle.label)).toEqual(['Start date', 'End date']);

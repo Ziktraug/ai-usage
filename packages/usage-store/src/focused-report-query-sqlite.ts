@@ -1,6 +1,11 @@
-import { type AnalyticsGroup, compareAnalyticsKeys } from '@ai-usage/report-core/analytics';
+import {
+  type AnalyticsGroup,
+  compareAnalyticsKeys,
+  processedTokensForAnalytics,
+} from '@ai-usage/report-core/analytics';
 import {
   buildFocusedDateDomain,
+  buildFocusedExecutiveGroups,
   buildFocusedHeatmapFromAggregates,
   buildFocusedRecordsFromAggregates,
   buildFocusedTimelineFromAggregates,
@@ -8,6 +13,8 @@ import {
   type FocusedBreakdownResult,
   type FocusedDateDomain,
   type FocusedDayAggregate,
+  type FocusedExecutiveGroup,
+  type FocusedExecutiveOverview,
   type FocusedOverviewRequest,
   type FocusedOverviewResult,
   type FocusedOverviewSessionItem,
@@ -111,6 +118,17 @@ interface SummaryRecord {
   unpriced_fresh_tokens: number | null;
 }
 
+interface ExecutiveAggregateRecord {
+  cache: number;
+  cost: number;
+  fresh: number;
+  key: string;
+  kind: 'harness' | 'model';
+  partial_price_rows: number;
+  sessions: number;
+  unpriced_fresh_tokens: number;
+}
+
 interface TimelineRecord {
   cause: string | null;
   cost: number;
@@ -122,6 +140,7 @@ interface TimelineRecord {
   last_time: number;
   partial_price_rows: number;
   sessions: number;
+  tokens: number;
   unpriced_fresh_tokens: number;
 }
 
@@ -266,6 +285,86 @@ const readSummary = (
     ),
   );
 
+const executiveGroupFromRecord = (record: ExecutiveAggregateRecord): FocusedExecutiveGroup => {
+  const priceMeasurement = priceMeasurementFromSql(
+    record.cost,
+    record.partial_price_rows,
+    record.unpriced_fresh_tokens,
+  );
+  return {
+    key: record.key,
+    label: record.key,
+    priceMeasurement,
+    processedTokens: processedTokensForAnalytics(record),
+    sessions: record.sessions,
+    total: priceMeasurement.knownCost,
+  };
+};
+
+const readExecutiveOverview = (
+  database: SessionQuerySqliteDatabase,
+  filter: SqlFilter,
+  trace?: SessionQuerySqliteTrace,
+): FocusedExecutiveOverview => {
+  const records = executeAll<ExecutiveAggregateRecord>(
+    database,
+    `WITH visible AS (
+      SELECT
+        ordinal,
+        harness,
+        cost_approx,
+        cost_known,
+        fresh_tokens,
+        unpriced_fresh_tokens,
+        tok_cr
+      FROM session_rows
+      WHERE ${filter.where}
+    ),
+    executive_dimensions AS (
+      SELECT
+        'harness' AS kind,
+        harness AS key,
+        cost_approx,
+        cost_known,
+        fresh_tokens AS fresh,
+        unpriced_fresh_tokens,
+        tok_cr AS cache
+      FROM visible
+      UNION ALL
+      SELECT
+        'model' AS kind,
+        segments.model_key AS key,
+        segments.cost_approx,
+        segments.cost_known,
+        segments.tok_cw + segments.tok_in + segments.tok_out AS fresh,
+        segments.unpriced_fresh_tokens,
+        segments.tok_cr AS cache
+      FROM visible
+      INNER JOIN session_model_segments AS segments USING (ordinal)
+    )
+    SELECT
+      kind,
+      key,
+      COUNT(*) AS sessions,
+      SUM(cost_approx) AS cost,
+      SUM(CASE WHEN cost_known = 0 THEN 1 ELSE 0 END) AS partial_price_rows,
+      SUM(unpriced_fresh_tokens) AS unpriced_fresh_tokens,
+      SUM(fresh) AS fresh,
+      SUM(cache) AS cache
+    FROM executive_dimensions
+    GROUP BY kind, key
+    ORDER BY kind, cost DESC, key ASC`,
+    filter.params,
+    trace,
+  );
+  const groupsFor = (kind: ExecutiveAggregateRecord['kind']): FocusedExecutiveGroup[] =>
+    records.filter((record) => record.kind === kind).map(executiveGroupFromRecord);
+  return {
+    harnesses: buildFocusedExecutiveGroups(groupsFor('harness'), true),
+    models: buildFocusedExecutiveGroups(groupsFor('model'), false),
+  };
+};
+
 interface TimelineDimensionProjection {
   cause: string;
   key: string;
@@ -352,6 +451,7 @@ const readModelTimeline = (
         SUM(segments.cost_approx) AS cost,
         MAX(CASE WHEN segments.cost_known = 0 THEN 1 ELSE 0 END) AS partial_price_rows,
         SUM(segments.unpriced_fresh_tokens) AS unpriced_fresh_tokens,
+        SUM(segments.tok_cr + segments.tok_cw + segments.tok_in + segments.tok_out) AS tokens,
         SUM(
           CASE
             WHEN segments.model_key = visible.primary_model_key THEN 1
@@ -406,6 +506,7 @@ const readModelTimeline = (
       label,
       partial_price_rows: partialPriceRows,
       sessions,
+      tokens,
       unpriced_fresh_tokens: unpricedFreshTokens,
     }) => {
       const time = timeForLocalDay(dayKey);
@@ -425,6 +526,7 @@ const readModelTimeline = (
         priceMeasurement: priceMeasurementFromSql(cost, partialPriceRows, unpricedFreshTokens),
         sessions,
         time,
+        tokens,
       };
     },
   );
@@ -463,6 +565,7 @@ const readTimeline = (
         ${projection.label} AS timeline_label,
         ${projection.cause} AS origin_cause,
         session_rows.cost_approx,
+        session_rows.tok_cr + session_rows.tok_cw + session_rows.tok_in + session_rows.tok_out AS tokens,
         segment_coverage.partial_price_rows,
         segment_coverage.unpriced_fresh_tokens
       FROM session_rows
@@ -478,6 +581,7 @@ const readTimeline = (
       MAX(partial_price_rows) AS partial_price_rows,
       SUM(unpriced_fresh_tokens) AS unpriced_fresh_tokens,
       COUNT(*) AS sessions,
+      SUM(tokens) AS tokens,
       MIN(active_time) AS first_time,
       MAX(active_time) AS last_time,
       MIN(ordinal) AS first_ordinal
@@ -497,6 +601,7 @@ const readTimeline = (
       label,
       partial_price_rows: partialPriceRows,
       sessions,
+      tokens,
       unpriced_fresh_tokens,
     }) => {
       const time = timeForLocalDay(dayKey);
@@ -527,6 +632,7 @@ const readTimeline = (
           priceMeasurement,
           sessions,
           time,
+          tokens,
         };
       }
       if (key === null || label === null) {
@@ -540,6 +646,7 @@ const readTimeline = (
         priceMeasurement,
         sessions,
         time,
+        tokens,
       };
     },
   );
@@ -818,6 +925,7 @@ const runOverview = (
     timeline: buildFocusedTimelineFromAggregates(timelineAggregates.timeline, request.timeline),
     view: {
       advancedSummary: null,
+      executive: readExecutiveOverview(database, visibleFilter, trace),
       heatmap: buildFocusedHeatmapFromAggregates(timelineAggregates.days),
       previousSummary: previousSummary(database, request, support.generatedAt, trace),
       punchcard: null,

@@ -34,7 +34,7 @@ export const presetGroupLabel = css({
 
 export const timeRangeViewControls = css({
   display: 'grid',
-  gridTemplateColumns: { base: '1fr', md: 'repeat(3, max-content)' },
+  gridTemplateColumns: { base: 'minmax(0, 1fr)', md: 'repeat(2, minmax(0, 1fr))' },
   gap: '8px',
   alignItems: 'end',
   justifyContent: 'flex-start',
@@ -128,8 +128,8 @@ export const timeSliderRange = css({
   bottom: '4px',
   zIndex: 3,
   borderRadius: 'full',
-  bg: 'rgba(177, 78, 18, 0.13)',
-  boxShadow: 'inset 0 0 0 1px rgba(177, 78, 18, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.08)',
+  bg: 'interaction.brush',
+  boxShadow: 'inset 0 0 0 1px token(colors.focusRing), inset 0 1px 0 rgba(255, 255, 255, 0.08)',
   pointerEvents: 'none',
 });
 
@@ -151,6 +151,9 @@ export const timeSliderBrushColumn = css({
   display: 'grid',
   gap: '6px',
   minW: 0,
+  // The handles are centred on their position, so half of their 44px target sits outside the track.
+  // This gutter keeps that half inside the panel instead of letting the end handle lose it.
+  px: '22px',
 });
 
 export const timeSliderBrushTrack = css({
@@ -192,7 +195,7 @@ export const timeSliderRangeDrag = css({
   touchAction: 'none',
   borderRadius: 'full',
   _hover: {
-    bg: 'rgba(177, 78, 18, 0.06)',
+    bg: 'interaction.brushHover',
   },
   '&:hover::before': {
     borderColor: 'accent',
@@ -200,7 +203,7 @@ export const timeSliderRangeDrag = css({
   },
   '&[data-dragging="true"]': {
     cursor: 'grabbing',
-    bg: 'rgba(177, 78, 18, 0.1)',
+    bg: 'interaction.brush',
   },
   '&[data-dragging="true"]::before': {
     borderColor: 'accent',

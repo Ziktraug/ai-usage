@@ -679,25 +679,24 @@ describe('session query contracts', () => {
     expect(classifierRollupLabelForSessionRow(item.row)).toBeNull();
   });
 
-  test('rejects classifier sessions with an unresolved declared parent campaign', () => {
-    expect(() =>
-      projectSessionPage(
-        [
-          sourcedRow('classifier-review', {
-            origin: 'classifier',
-            source: {
-              harnessKey: 'codex',
-              machineId: 'machine-a',
-              machineLabel: 'Machine A',
-              parentSourceSessionId: 'missing-root',
-              rootSourceSessionId: 'missing-root',
-              sourceSessionId: 'classifier-review',
-            },
-          }),
-        ],
-        defaultRequest(),
-      ),
-    ).toThrow('has no resolvable parent session');
+  test('rejects multiple classifiers sharing an unresolved declared parent instead of merging them', () => {
+    const classifiers = ['classifier-review-a', 'classifier-review-b'].map((sourceSessionId) =>
+      sourcedRow(sourceSessionId, {
+        origin: 'classifier',
+        source: {
+          harnessKey: 'codex',
+          machineId: 'machine-a',
+          machineLabel: 'Machine A',
+          parentSourceSessionId: 'missing-root',
+          rootSourceSessionId: 'missing-root',
+          sourceSessionId,
+        },
+      }),
+    );
+
+    expect(() => projectSessionPage(classifiers, defaultRequest({ pageSize: 10 }))).toThrow(
+      'Classifier campaign machine-a:codex:missing-root has no resolvable parent session',
+    );
   });
 
   test('uses root duration and model identity for campaigns with overlapping child rollouts', () => {

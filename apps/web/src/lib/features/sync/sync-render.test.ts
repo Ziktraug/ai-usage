@@ -98,6 +98,7 @@ describe('Sync rendered SSR parity', () => {
     const uploading = render(transferProgress, {
       props: {
         now: 12_000,
+        operation: 'preview',
         progress: { fileName: 'peer.json', fileSize: 100, loaded: 25, phase: 'uploading', total: 100 },
       },
     }).body;
@@ -112,6 +113,7 @@ describe('Sync rendered SSR parity', () => {
     const processing = render(transferProgress, {
       props: {
         now: 12_000,
+        operation: 'confirm',
         progress: { fileName: 'peer.json', fileSize: 100, phase: 'processing', startedAt: 7000 },
       },
     }).body;
@@ -122,5 +124,17 @@ describe('Sync rendered SSR parity', () => {
     expect(processing).toContain('Merging into the local database…');
     expect(processing).toContain('>5s</span>');
     expect(processing).toContain('Large files take a moment while each usage row is written and deduplicated.');
+
+    const previewing = render(transferProgress, {
+      props: {
+        now: 12_000,
+        operation: 'preview',
+        progress: { fileName: 'peer.json', fileSize: 100, phase: 'processing', startedAt: 7000 },
+      },
+    }).body;
+    expect(previewing).not.toContain('Merging into the local database…');
+    expect(previewing).not.toContain('each usage row is written');
+    expect(previewing).toContain('Checking the file against your usage…');
+    expect(previewing).toContain('Nothing is written until you confirm.');
   });
 });

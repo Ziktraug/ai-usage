@@ -57,7 +57,7 @@ test('rejects non-JSON dataset values at the server-function boundary', () => {
 });
 
 test('validates opaque report revisions without normalizing their identity', () => {
-  expect(String(parseReportRevision('report-2026.07.13:abc_123'))).toBe('report-2026.07.13:abc_123');
+  expect(String(parseReportRevision('report-2026.07.13-abc_123'))).toBe('report-2026.07.13-abc_123');
   expect(() => parseReportRevision('')).toThrow('Report revision');
   expect(() => parseReportRevision(' revision-with-whitespace')).toThrow('Report revision');
   expect(() => parseReportRevision(42)).toThrow('Report revision');

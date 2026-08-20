@@ -239,6 +239,246 @@ describe('focused report query contracts', () => {
     ).toThrow('fingerprint');
   });
 
+  test('projects bounded executive harness and model groups for the selected period', () => {
+    const result = projectFocusedOverview(rows, support, overviewRequest);
+
+    expect(result.view.executive).toEqual({
+      harnesses: [
+        {
+          key: 'Claude Code',
+          label: 'Claude Code',
+          priceMeasurement: { knownCost: 6, state: 'measured', unpricedFreshTokens: 0 },
+          processedTokens: 24,
+          sessions: 2,
+          total: 6,
+        },
+        {
+          key: 'Codex',
+          label: 'Codex',
+          priceMeasurement: { knownCost: 3, state: 'measured', unpricedFreshTokens: 0 },
+          processedTokens: 12,
+          sessions: 1,
+          total: 3,
+        },
+      ],
+      models: [
+        {
+          key: 'claude-opus-4-6',
+          label: 'claude-opus-4-6',
+          priceMeasurement: { knownCost: 6, state: 'measured', unpricedFreshTokens: 0 },
+          processedTokens: 24,
+          sessions: 2,
+          total: 6,
+        },
+        {
+          key: 'gpt-5.4',
+          label: 'gpt-5.4',
+          priceMeasurement: { knownCost: 3, state: 'measured', unpricedFreshTokens: 0 },
+          processedTokens: 12,
+          sessions: 1,
+          total: 3,
+        },
+      ],
+    });
+  });
+
+  test('keeps the mandatory executive result empty when no rows match', () => {
+    const request = { ...overviewRequest, includeAdvanced: false };
+    const result = projectFocusedOverview([], support, request);
+
+    expect(result.view.executive).toEqual({ harnesses: [], models: [] });
+    expect(parseFocusedReportQueryResult('overview', JSON.parse(JSON.stringify(result)), request)).toEqual(result);
+  });
+
+  test('preserves partial lower bounds and segment-accurate processed tokens', () => {
+    const partialSegmentedRow: SerializedRow = {
+      ...row('partial-executive', 3, 2),
+      costKnown: false,
+      freshTokens: 30,
+      harness: 'Mixed Harness',
+      model: 'gpt-5.4-high',
+      modelSegments: [
+        {
+          costApprox: 2,
+          costKnown: true,
+          model: 'gpt-5.4-high',
+          tokCr: 1,
+          tokCw: 2,
+          tokIn: 3,
+          tokOut: 4,
+        },
+        {
+          costApprox: 0,
+          costKnown: false,
+          model: 'mystery-model',
+          tokCr: 5,
+          tokCw: 6,
+          tokIn: 7,
+          tokOut: 8,
+        },
+      ],
+      models: ['gpt-5.4-high', 'mystery-model'],
+      tokCr: 6,
+      tokCw: 8,
+      tokIn: 10,
+      tokOut: 12,
+      tokenTotal: 36,
+    };
+    const request: FocusedOverviewRequest = {
+      ...overviewRequest,
+      includeAdvanced: false,
+      query: { ...overviewRequest.query, range: { from: null, to: null } },
+    };
+
+    const result = projectFocusedOverview([partialSegmentedRow], support, request);
+
+    expect(result.view.executive.harnesses).toEqual([
+      {
+        key: 'Mixed Harness',
+        label: 'Mixed Harness',
+        priceMeasurement: { knownCost: 2, state: 'partially measured', unpricedFreshTokens: 21 },
+        processedTokens: 36,
+        sessions: 1,
+        total: 2,
+      },
+    ]);
+    expect(result.view.executive.models).toEqual([
+      {
+        key: 'gpt-5.4',
+        label: 'gpt-5.4',
+        priceMeasurement: { knownCost: 2, state: 'measured', unpricedFreshTokens: 0 },
+        processedTokens: 10,
+        sessions: 1,
+        total: 2,
+      },
+      {
+        key: 'mystery-model',
+        label: 'mystery-model',
+        priceMeasurement: { knownCost: 0, state: 'partially measured', unpricedFreshTokens: 21 },
+        processedTokens: 26,
+        sessions: 1,
+        total: 0,
+      },
+    ]);
+  });
+
+  test('keeps exactly five harness groups without manufacturing Other', () => {
+    const fixtureRows = [5, 4, 3, 2, 1].map((cost) => ({
+      ...row(`harness-${cost}`, cost, cost),
+      harness: `Harness ${cost}`,
+      model: `model-${cost}`,
+    }));
+    const request: FocusedOverviewRequest = {
+      ...overviewRequest,
+      includeAdvanced: false,
+      query: { ...overviewRequest.query, range: { from: null, to: null } },
+    };
+
+    const result = projectFocusedOverview(fixtureRows, support, request);
+
+    expect(result.view.executive.harnesses.map(({ key }) => key)).toEqual([
+      'Harness 5',
+      'Harness 4',
+      'Harness 3',
+      'Harness 2',
+      'Harness 1',
+    ]);
+    expect(result.view.executive.harnesses.some(({ label }) => label === 'Other')).toBe(false);
+  });
+
+  test('combines every harness remainder into a collision-safe partial Other and limits models to five', () => {
+    const fixtureRows: SerializedRow[] = [6, 5, 4, 3, 2].map((cost) => ({
+      ...row(`harness-${cost}`, cost, cost),
+      harness: `Harness ${cost}`,
+      model: `model-${cost}`,
+    }));
+    fixtureRows.push({
+      ...row('reserved-harness', 1, 1),
+      costKnown: false,
+      harness: '__ai_usage_other__',
+      model: 'model-1',
+      modelSegments: [
+        {
+          costApprox: 1,
+          costKnown: true,
+          model: 'model-1',
+          tokCr: 0,
+          tokCw: 0,
+          tokIn: 1,
+          tokOut: 0,
+        },
+        {
+          costApprox: 0,
+          costKnown: false,
+          model: 'unpriced-other',
+          tokCr: 1,
+          tokCw: 1,
+          tokIn: 0,
+          tokOut: 1,
+        },
+      ],
+      models: ['model-1', 'unpriced-other'],
+    });
+    const request: FocusedOverviewRequest = {
+      ...overviewRequest,
+      includeAdvanced: false,
+      query: { ...overviewRequest.query, range: { from: null, to: null } },
+    };
+
+    const result = projectFocusedOverview(fixtureRows, support, request);
+
+    expect(result.view.executive.harnesses.slice(0, 4).map(({ key }) => key)).toEqual([
+      'Harness 6',
+      'Harness 5',
+      'Harness 4',
+      'Harness 3',
+    ]);
+    expect(result.view.executive.harnesses[4]).toEqual({
+      key: '___ai_usage_other__',
+      label: 'Other',
+      priceMeasurement: { knownCost: 3, state: 'partially measured', unpricedFreshTokens: 2 },
+      processedTokens: 12,
+      sessions: 2,
+      total: 3,
+    });
+    expect(result.view.executive.models).toHaveLength(5);
+    expect(result.view.executive.models.map(({ key }) => key)).toEqual([
+      'model-6',
+      'model-5',
+      'model-4',
+      'model-3',
+      'model-2',
+    ]);
+    expect(result.view.executive.models.some(({ label }) => label === 'Other')).toBe(false);
+  });
+
+  test('uses the stable analytics key rather than session count to order equal executive totals', () => {
+    const fixtureRows = [
+      { ...row('z', 1, 1), harness: 'z-harness', model: 'z-model' },
+      { ...row('a-1', 1, 0.5), harness: 'a-harness', model: 'a-model' },
+      { ...row('a-2', 1, 0.5), harness: 'a-harness', model: 'a-model' },
+      { ...row('accent', 1, 1), harness: 'ä-harness', model: 'ä-model' },
+    ];
+    const request: FocusedOverviewRequest = {
+      ...overviewRequest,
+      includeAdvanced: false,
+      query: { ...overviewRequest.query, range: { from: null, to: null } },
+    };
+
+    const result = projectFocusedOverview(fixtureRows, support, request);
+
+    expect(result.view.executive.harnesses.map(({ key, sessions }) => ({ key, sessions }))).toEqual([
+      { key: 'a-harness', sessions: 2 },
+      { key: 'z-harness', sessions: 1 },
+      { key: 'ä-harness', sessions: 1 },
+    ]);
+    expect(result.view.executive.models.map(({ key, sessions }) => ({ key, sessions }))).toEqual([
+      { key: 'a-model', sessions: 2 },
+      { key: 'z-model', sessions: 1 },
+      { key: 'ä-model', sessions: 1 },
+    ]);
+  });
+
   test('keeps full-range and bounded empty previous periods distinct from available prior data', () => {
     const withPrior = projectFocusedOverview(rows, support, overviewRequest);
     const withoutPrior = projectFocusedOverview(rows, support, {
@@ -256,6 +496,33 @@ describe('focused report query contracts', () => {
     expect(withPrior.view.previousSummary?.sessionCount).toBe(1);
     expect(withoutPrior.view.previousSummary).toBeNull();
     expect(fullRange.view.previousSummary).toBeNull();
+  });
+
+  test('uses the bounded 90-day window to build an equal-length previous summary', () => {
+    const datedRow = (name: string, date: string, cost: number): SerializedRow => ({
+      ...row(name, 1, cost),
+      activeDate: `${date}T10:00:00.000Z`,
+      date: `${date}T09:00:00.000Z`,
+      endDate: `${date}T10:00:00.000Z`,
+    });
+    const result = projectFocusedOverview(
+      [
+        datedRow('outside-previous-window', '2026-01-01', 7),
+        datedRow('previous-period', '2026-04-01', 2),
+        datedRow('current-period', '2026-07-01', 3),
+      ],
+      support,
+      {
+        ...overviewRequest,
+        query: {
+          ...overviewRequest.query,
+          range: { from: '2026-04-14T12:00:00.000Z', to: null },
+        },
+      },
+    );
+
+    expect(result.summary).toMatchObject({ sessionCount: 1, totalCost: 3 });
+    expect(result.view.previousSummary).toMatchObject({ sessionCount: 1, totalCost: 2 });
   });
 
   test('groups focused timelines by campaign, machine, project identity, and declared origin', () => {
@@ -352,6 +619,138 @@ describe('focused report query contracts', () => {
       sessions: 1,
       total: 2,
     });
+  });
+
+  test('projects exact processed-token totals across classified and unclassified origin activity', () => {
+    const classified = {
+      ...row('classified', 1, 1),
+      freshTokens: 15,
+      origin: 'human' as const,
+      tokCr: 2,
+      tokCw: 3,
+      tokIn: 5,
+      tokOut: 7,
+      tokenTotal: 17,
+    };
+    const unclassified = {
+      ...row('unclassified', 2, 2),
+      freshTokens: 49,
+      originProvenance: 'origin-unsupported' as const,
+      tokCr: 11,
+      tokCw: 13,
+      tokIn: 17,
+      tokOut: 19,
+      tokenTotal: 60,
+    };
+    const request: FocusedOverviewRequest = {
+      ...overviewRequest,
+      includeAdvanced: false,
+      query: { ...overviewRequest.query, range: { from: null, to: null } },
+      timeline: { dimension: 'origin', granularity: 'day' },
+    };
+
+    const result = projectFocusedOverview([classified, unclassified], support, request);
+    const timeline = result.timeline;
+    if (timeline === null) {
+      throw new Error('The token timeline fixture must produce activity');
+    }
+
+    expect(timeline.grandTokens).toBe(77);
+    expect(timeline.maxBucketTokens).toBe(60);
+    expect(timeline.series).toEqual([expect.objectContaining({ key: 'human', sessions: 1, tokens: 17 })]);
+    expect(timeline.unclassified).toMatchObject({
+      causes: [{ kind: 'origin-unsupported', sessions: 1 }],
+      sessions: 1,
+      tokens: 60,
+    });
+    expect(timeline.buckets.map(({ tokens }) => tokens)).toEqual([17, 60]);
+    expect(timeline.buckets[0]?.byKey.human?.tokens).toBe(17);
+    expect(timeline.buckets[1]?.unclassified?.tokens).toBe(60);
+    expect(timeline.grandTokens).toBe(
+      result.summary.cacheRead + result.summary.cacheWrite + result.summary.tokIn + result.summary.tokOut,
+    );
+  });
+
+  test('keeps token-only model segments inside the bounded Other series', () => {
+    const primaryWithTokenOnlySegments: SerializedRow = {
+      ...row('primary-with-token-only-segments', 11, 11),
+      freshTokens: 13,
+      model: 'model-11',
+      modelSegments: [
+        {
+          costApprox: 11,
+          costKnown: true,
+          model: 'model-11',
+          tokCr: 1,
+          tokCw: 1,
+          tokIn: 1,
+          tokOut: 1,
+        },
+        {
+          costApprox: 0,
+          costKnown: true,
+          model: 'token-only-a',
+          tokCr: 2,
+          tokCw: 3,
+          tokIn: 0,
+          tokOut: 0,
+        },
+        {
+          costApprox: 0,
+          costKnown: true,
+          model: 'token-only-b',
+          tokCr: 0,
+          tokCw: 0,
+          tokIn: 0,
+          tokOut: 7,
+        },
+      ],
+      models: ['model-11', 'token-only-a', 'token-only-b'],
+      tokCr: 3,
+      tokCw: 4,
+      tokIn: 1,
+      tokOut: 8,
+      tokenTotal: 16,
+    };
+    const fixtureRows = [
+      primaryWithTokenOnlySegments,
+      ...Array.from({ length: 10 }, (_, index) => {
+        const value = 10 - index;
+        return { ...row(`model-${value}`, value, value), model: `model-${value}` };
+      }),
+    ];
+    const request: FocusedOverviewRequest = {
+      ...overviewRequest,
+      includeAdvanced: false,
+      query: { ...overviewRequest.query, range: { from: null, to: null } },
+    };
+
+    const result = projectFocusedOverview(fixtureRows, support, request);
+    const timeline = result.timeline;
+    if (timeline === null) {
+      throw new Error('The bounded token timeline fixture must produce activity');
+    }
+    const other = timeline.series.find(({ label }) => label === 'Other');
+    if (other === undefined) {
+      throw new Error('The bounded token timeline fixture must produce an Other series');
+    }
+
+    expect(timeline.series).toHaveLength(12);
+    expect(other).toMatchObject({
+      memberKeys: ['token-only-a', 'token-only-b'],
+      sessions: 0,
+      tokens: 12,
+      total: 0,
+    });
+    expect(timeline.buckets.find(({ byKey }) => byKey[other.key] !== undefined)?.byKey[other.key]).toMatchObject({
+      cost: 0,
+      sessions: 0,
+      tokens: 12,
+    });
+    expect(timeline.grandTokens).toBe(236);
+    expect(timeline.grandTokens).toBe(
+      result.summary.cacheRead + result.summary.cacheWrite + result.summary.tokIn + result.summary.tokOut,
+    );
   });
 
   test('uses stable machine IDs for filters and timeline keys when labels collide', () => {
@@ -639,10 +1038,32 @@ describe('focused report query contracts', () => {
 
   test('rejects malformed nested Overview timeline data at the transport boundary', () => {
     const result = projectFocusedOverview(rows, support, overviewRequest);
+    const timeline = result.timeline;
+    if (timeline === null || timeline.series[0] === undefined || timeline.buckets[0] === undefined) {
+      throw new Error('The strict timeline fixture must include a bucket and series');
+    }
+
+    expect(parseFocusedReportQueryResult('overview', JSON.parse(JSON.stringify(result)), overviewRequest)).toEqual(
+      result,
+    );
 
     expect(() =>
       parseFocusedReportQueryResult('overview', { ...result, timeline: 'not-a-timeline' }, overviewRequest),
     ).toThrow('timeline');
+    const invalidTimelines = [
+      { ...timeline, grandTokens: -1 },
+      { ...timeline, maxBucketTokens: 0.5 },
+      { ...timeline, series: [{ ...timeline.series[0], tokens: -1 }, ...timeline.series.slice(1)] },
+      {
+        ...timeline,
+        buckets: [{ ...timeline.buckets[0], tokens: Number.MAX_SAFE_INTEGER + 1 }, ...timeline.buckets.slice(1)],
+      },
+    ];
+    for (const invalidTimeline of invalidTimelines) {
+      expect(() =>
+        parseFocusedReportQueryResult('overview', { ...result, timeline: invalidTimeline }, overviewRequest),
+      ).toThrow('non-negative safe integer');
+    }
   });
 
   test('rejects malformed nested Overview presentation data at the transport boundary', () => {
@@ -687,6 +1108,112 @@ describe('focused report query contracts', () => {
         overviewRequest,
       ),
     ).toThrow('flags');
+  });
+
+  test('requires the exact executive shape at the focused transport boundary', () => {
+    const result = projectFocusedOverview(rows, support, overviewRequest);
+    const { executive: _executive, ...viewWithoutExecutive } = result.view;
+
+    expect(() =>
+      parseFocusedReportQueryResult('overview', { ...result, view: viewWithoutExecutive }, overviewRequest),
+    ).toThrow('unknown or missing');
+    expect(() =>
+      parseFocusedReportQueryResult(
+        'overview',
+        {
+          ...result,
+          view: { ...result.view, executive: { ...result.view.executive, unexpected: true } },
+        },
+        overviewRequest,
+      ),
+    ).toThrow('unknown or missing');
+  });
+
+  test('rejects unbounded, empty, or duplicate executive keys', () => {
+    const result = projectFocusedOverview(rows, support, overviewRequest);
+    const first = result.view.executive.harnesses[0];
+    if (!first) {
+      throw new Error('The executive fixture must include a harness group');
+    }
+    const sixGroups = Array.from({ length: 6 }, (_, index) => ({ ...first, key: `harness-${index}` }));
+
+    expect(() =>
+      parseFocusedReportQueryResult(
+        'overview',
+        {
+          ...result,
+          view: {
+            ...result.view,
+            executive: { ...result.view.executive, harnesses: sixGroups },
+          },
+        },
+        overviewRequest,
+      ),
+    ).toThrow('at most 5');
+    expect(() =>
+      parseFocusedReportQueryResult(
+        'overview',
+        {
+          ...result,
+          view: {
+            ...result.view,
+            executive: { ...result.view.executive, harnesses: [first, { ...first }] },
+          },
+        },
+        overviewRequest,
+      ),
+    ).toThrow('unique');
+    expect(() =>
+      parseFocusedReportQueryResult(
+        'overview',
+        {
+          ...result,
+          view: {
+            ...result.view,
+            executive: { ...result.view.executive, harnesses: [{ ...first, key: ' ' }] },
+          },
+        },
+        overviewRequest,
+      ),
+    ).toThrow('non-empty');
+  });
+
+  test('rejects invalid executive values and price measurements', () => {
+    const result = projectFocusedOverview(rows, support, overviewRequest);
+    const first = result.view.executive.harnesses[0];
+    if (!first) {
+      throw new Error('The executive fixture must include a harness group');
+    }
+    const withHarness = (harness: Record<string, unknown>) => ({
+      ...result,
+      view: {
+        ...result.view,
+        executive: { ...result.view.executive, harnesses: [harness] },
+      },
+    });
+
+    expect(() =>
+      parseFocusedReportQueryResult('overview', withHarness({ ...first, sessions: -1 }), overviewRequest),
+    ).toThrow('non-negative safe integer');
+    expect(() =>
+      parseFocusedReportQueryResult('overview', withHarness({ ...first, processedTokens: -1 }), overviewRequest),
+    ).toThrow('finite number');
+    expect(() =>
+      parseFocusedReportQueryResult('overview', withHarness({ ...first, total: -1 }), overviewRequest),
+    ).toThrow('finite number');
+    expect(() =>
+      parseFocusedReportQueryResult(
+        'overview',
+        withHarness({
+          ...first,
+          priceMeasurement: { ...first.priceMeasurement, knownCost: first.total + 1 },
+        }),
+        overviewRequest,
+      ),
+    ).toThrow('match its aggregate cost');
+    expect(() =>
+      parseFocusedReportQueryResult('overview', withHarness({ ...first, unexpected: true }), overviewRequest),
+    ).toThrow('unknown or missing');
   });
 
   test('projects breakdown groups with Cursor and project-editor context', () => {
@@ -841,11 +1368,14 @@ describe('focused report query contracts', () => {
       },
     });
 
-    expect(overview.timeline?.series.map(({ key, sessions, total }) => ({ key, sessions, total }))).toEqual([
-      { key: 'gpt-5.4', sessions: 1, total: 2 },
-      { key: 'claude-sonnet-4-6', sessions: 0, total: 1 },
+    expect(
+      overview.timeline?.series.map(({ key, sessions, tokens, total }) => ({ key, sessions, tokens, total })),
+    ).toEqual([
+      { key: 'gpt-5.4', sessions: 1, tokens: 10, total: 2 },
+      { key: 'claude-sonnet-4-6', sessions: 0, tokens: 20, total: 1 },
     ]);
     expect(overview.timeline?.grandSessions).toBe(1);
+    expect(overview.timeline?.grandTokens).toBe(30);
     expect(
       breakdown.groups.models.map(({ costSum, fresh, inp, key, sessions }) => ({
         costSum,

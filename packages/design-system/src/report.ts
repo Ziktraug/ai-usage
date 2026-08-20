@@ -2,6 +2,7 @@
 export * from './components/button';
 export * from './components/chart';
 export * from './components/empty-state';
+export * from './components/executive-overview';
 export * from './components/field';
 export * from './components/layout';
 export * from './components/metric-tile';

@@ -38,7 +38,7 @@
     overflowWrap: 'anywhere',
   });
   const popoverContent = css({
-    zIndex: 50,
+    zIndex: 70,
     display: 'grid',
     gap: '10px',
     w: 'min(560px, calc(100vw - 32px))',
@@ -52,8 +52,28 @@
 
 <script lang="ts">
   import { Popover } from '@ai-usage/design-system/svelte';
+  import { onDestroy } from 'svelte';
 
-  let { hint, label, value }: { hint?: string; label: string; value: string } = $props();
+  let {
+    hint,
+    hintDisabled = false,
+    label,
+    onHintSettled,
+    openHint,
+    onHintOpenChange,
+    value,
+  }: {
+    hint?: string;
+    hintDisabled?: boolean;
+    label: string;
+    onHintSettled?: (hintId: symbol) => void;
+    openHint?: symbol | null;
+    onHintOpenChange?: (hintId: symbol, open: boolean) => void;
+    value: string;
+  } = $props();
+
+  const hintId = Symbol('session-drawer-detail-hint');
+  onDestroy(() => onHintSettled?.(hintId));
 </script>
 
 <div class={detailItem} data-detail-item={label}>
@@ -62,8 +82,12 @@
     {#if hint}
       <Popover
         contentClass={popoverContent}
+        onExitComplete={() => onHintSettled?.(hintId)}
+        onOpenChange={(open) => onHintOpenChange?.(hintId, open)}
+        open={openHint === undefined ? undefined : openHint === hintId}
         triggerAriaLabel={`About ${label}`}
         triggerClass={detailInfoButton}
+        triggerDisabled={hintDisabled}
         triggerTitle={`About ${label}`}
       >
         {#snippet trigger()}

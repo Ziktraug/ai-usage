@@ -1,5 +1,6 @@
 import type { SerializedUsageRow } from './report-data';
 import { isSerializedUsageRow } from './serialized-usage-validation';
+import { parseServedRevision } from './served-revision';
 import { parseSessionVcsContext, type SessionVcsContext } from './session-vcs';
 
 const MAX_ID_LENGTH = 512;
@@ -518,7 +519,7 @@ export const parseSessionDetailRequest = (value: unknown): SessionDetailRequest 
   }
   assertExactKeys(value, ['revision', 'rowId'], 'Session detail request');
   return {
-    revision: requireString(value.revision, 'Session detail request.revision', MAX_ID_LENGTH),
+    revision: parseServedRevision(value.revision, 'Session detail request.revision'),
     rowId: requireString(value.rowId, 'Session detail request.rowId', MAX_ID_LENGTH),
   };
 };
@@ -781,7 +782,7 @@ export const parseSessionDetailResponse = (value: unknown): SessionDetailRespons
     return {
       consistency,
       detail: parseSessionDetail(value.detail),
-      revision: requireString(value.revision, 'Session detail response.revision', MAX_ID_LENGTH),
+      revision: parseServedRevision(value.revision, 'Session detail response.revision'),
       status: 'available',
     };
   }

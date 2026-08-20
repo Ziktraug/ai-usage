@@ -149,6 +149,7 @@ describe('dashboard search params', () => {
     const defaults = dashboardSearchDefaultsFor('date');
 
     expect(validateDashboardSearch({ range: { mode: 'all' } }, defaults).range).toEqual({ mode: 'all' });
+    expect(validateDashboardSearch({ range: { mode: '90d' } }, defaults).range).toEqual({ mode: '90d' });
     expect(
       validateDashboardSearch({ range: { mode: 'custom', from: '2026-06-01', to: '2026-06-03' } }, defaults).range,
     ).toEqual({ mode: 'custom', from: '2026-06-01', to: '2026-06-03' });

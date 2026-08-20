@@ -15,10 +15,23 @@
 
   type SessionDrawerModule = typeof import('./session-drawer.svelte');
   const interactiveElementTagPattern = /^(INPUT|SELECT|TEXTAREA)$/;
+  const openDrawerContentSelector = '[data-scope="drawer"][data-part="content"][data-state="open"][role="dialog"]';
+
+  const escapeBelongsToActiveOverlay = (event: Pick<KeyboardEvent, 'defaultPrevented' | 'key' | 'target'>): boolean => {
+    if (event.key !== 'Escape') {
+      return false;
+    }
+    if (event.defaultPrevented) {
+      return true;
+    }
+    const targetElement = event.target;
+    return targetElement instanceof Element && targetElement.closest(openDrawerContentSelector) !== null;
+  };
 
   let {
     campaignSlot,
     client,
+    onClosingChange,
     onFieldFilter,
     onSelectionChange,
     queryClient,
@@ -27,6 +40,7 @@
   }: {
     campaignSlot?: Snippet;
     client: SessionClientAdapter;
+    onClosingChange?: (closing: boolean) => void;
     onFieldFilter?: (key: 'model' | 'project', value: string) => void;
     onSelectionChange: (selection: SessionSelectionInput | null) => void;
     queryClient: QueryClient;
@@ -40,6 +54,12 @@
   let drawerModule = $state<SessionDrawerModule>();
   let drawerLoadFailed = $state(false);
   let drawerLoad: Promise<void> | undefined;
+  let drawerClosing = false;
+
+  const handleClosingChange = (closing: boolean): void => {
+    drawerClosing = closing;
+    onClosingChange?.(closing);
+  };
 
   const identityFor = (next: SessionSelectionInput | null): string => {
     if (!next) {
@@ -111,6 +131,9 @@
   };
 
   const navigate = (delta: -1 | 1): void => {
+    if (drawerClosing) {
+      return;
+    }
     const current = selection;
     if (!current) {
       return;
@@ -135,7 +158,10 @@
     current: () => snapshot,
     dispose: () => undefined,
     handleKeyDown: (event) => {
-      if (!snapshot.row) {
+      if (drawerClosing || !snapshot.row) {
+        return;
+      }
+      if (escapeBelongsToActiveOverlay(event)) {
         return;
       }
       const targetElement = event.target;
@@ -199,11 +225,12 @@
 </script>
 
 <div data-selected-row-id={selection?.row.rowId} data-session-detail-slot>
-  {#if selection?.row && drawerModule}
+  {#if drawerModule}
     {@const SessionDrawer = drawerModule.default}
     <SessionDrawer
       {...(campaignSlot === undefined ? {} : { campaignSlot })}
       {controller}
+      onClosingChange={handleClosingChange}
       {...(onFieldFilter === undefined ? {} : { onFieldFilter })}
       {rows}
       {snapshot}

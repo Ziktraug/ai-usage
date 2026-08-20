@@ -19,7 +19,12 @@ import {
 import os, { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createUsageEngineBearerToken, usageEngineTargetIdFor } from '@ai-usage/usage-engine-control/node';
-import { acquireUsageEngineLock, inspectUsageEngineLock, usageEngineLockPath } from './engine-lock';
+import {
+  acquireUsageEngineLock,
+  inspectUsageEngineLock,
+  UsageEngineWriterLockContendedError,
+  usageEngineLockPath,
+} from './engine-lock';
 import { publishUsageEngineRendezvous, usageEngineRendezvousPath } from './rendezvous-file';
 
 const fixtures: string[] = [];
@@ -88,9 +93,9 @@ describe('usage engine writer lock', () => {
     const first = await acquireLock(stateDirectory);
     const lockPath = usageEngineLockPath(databasePathFor(stateDirectory));
 
-    await expect(acquireLock(stateDirectory)).rejects.toThrow(
-      `Usage engine lock ${lockPath} is owned by live PID ${process.pid}`,
-    );
+    const contender = acquireLock(stateDirectory);
+    await expect(contender).rejects.toBeInstanceOf(UsageEngineWriterLockContendedError);
+    await expect(contender).rejects.toThrow(`Usage engine lock ${lockPath} is owned by live PID ${process.pid}`);
 
     await first.release();
     await expect(Bun.file(lockPath).exists()).resolves.toBe(false);

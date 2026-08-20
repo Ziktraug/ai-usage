@@ -65,8 +65,9 @@
   import ActiveFilters from '../breakdown/active-filters.svelte';
   import { createBreakdownNavigation } from '../breakdown/navigation';
   import ReportWarnings from '../core/report-warnings.svelte';
-  import OverviewStatus from '../overview/overview-status.svelte';
   import { activeTimelineSeriesKeys } from './active-timeline-series';
+  import { importReportLazyModule } from './lazy-module-e2e-fixture';
+  import { createLazyModuleLoader } from './lazy-module-loader';
   import {
     destinationFingerprint,
     type FocusedReportDestination,
@@ -75,13 +76,14 @@
     requireFocusedBreakdown,
   } from './report-destination';
   import ReportDestinationPresentation from './report-destination-presentation.svelte';
-  import { queryForDescriptor, reportDestinationForSearch, reportFilterFingerprint } from './report-search';
+  import { queryForDescriptor, reportDestinationForSearch } from './report-search';
 
   type DashboardBreakdownModule = typeof import('../breakdown/dashboard-breakdown.svelte');
   type SessionsDestinationModule = typeof import('./sessions-destination.svelte');
 
   let {
     bootstrapResult,
+    modelsHref,
     navigate,
     queryClient,
     reportClient,
@@ -92,6 +94,7 @@
     warnings,
   }: {
     bootstrapResult: Extract<ReportRevisionBootstrapResult, { readonly ok: true }>;
+    modelsHref: string;
     navigate: SearchNavigationIntent<DashboardSearch>;
     queryClient: QueryClient;
     reportClient: ReportClient;
@@ -116,6 +119,7 @@
   let detailRows = $state<readonly SessionPresentationRow[]>([]);
   let selectedRowId = $state<string | null>(null);
   let selection = $state<SessionSelectionInput | null>(null);
+  let sessionDrawerClosing = false;
   let quotaHistoryOpen = $state(false);
   let servedSessionCount = $state<number>();
   let cleaningProjectWarningGroupId = $state<string>();
@@ -123,10 +127,28 @@
   let campaignSessionControls = $state<CampaignSessionControlsBinding | null>(null);
   let dashboardBreakdownModule = $state<DashboardBreakdownModule>();
   let dashboardBreakdownLoadFailed = $state(false);
-  let dashboardBreakdownLoad: Promise<void> | undefined;
   let sessionsDestinationModule = $state<SessionsDestinationModule>();
   let sessionsDestinationLoadFailed = $state(false);
-  let sessionsDestinationLoad: Promise<void> | undefined;
+  const dashboardBreakdownLoader = createLazyModuleLoader({
+    importModule: () =>
+      importReportLazyModule({
+        enabled: runtimeMode === 'e2e',
+        importModule: () => import('../breakdown/dashboard-breakdown.svelte'),
+        target: 'breakdown',
+      }),
+    onFailureChange: (failed) => (dashboardBreakdownLoadFailed = failed),
+    onLoaded: (module) => (dashboardBreakdownModule = module),
+  });
+  const sessionsDestinationLoader = createLazyModuleLoader({
+    importModule: () =>
+      importReportLazyModule({
+        enabled: runtimeMode === 'e2e',
+        importModule: () => import('./sessions-destination.svelte'),
+        target: 'sessions',
+      }),
+    onFailureChange: (failed) => (sessionsDestinationLoadFailed = failed),
+    onLoaded: (module) => (sessionsDestinationModule = module),
+  });
   const sourceControl = useSourceControl();
   const defaultSessionWindowIntent = initialSessionWindowIntent();
   let sessionWindowState = $state.raw<{
@@ -241,46 +263,50 @@
     visibleCommitIdentity = identity;
     draggedWindowApiValue = null;
   });
-  const requestedFilterFingerprint = $derived(
-    destination.focused === null ? undefined : reportFilterFingerprint(destination.focused.query.filters),
-  );
-  const committedFilterFingerprint = $derived(
-    commit === undefined ? undefined : reportFilterFingerprint(commit.destination.query.filters),
-  );
-  const focusedTimelineFiltersChanged = $derived(requestedFilterFingerprint !== committedFilterFingerprint);
   const primary = $derived(primaryDashboardTabFor(search.tab));
   // The URL changes immediately, while the newly requested exact-revision data commits atomically.
   // Keep rendering the last complete destination during that gap instead of replacing it with a
   // page-sized loading message. The navigation still reflects the user's requested destination.
   const visiblePrimary = $derived(commit?.destination.kind ?? primary);
+  // A refetch of the destination the reader is already looking at — a newer engine revision
+  // published while the range and filters are unchanged — revalidates in place: the visible
+  // figures still answer the request, so they keep full strength until the fresh commit lands.
+  // Only a request the visible commit does not answer (range or filter change) marks it stale.
+  const commitAnswersRequest = $derived(
+    commit !== undefined && destinationFingerprint(focusedDestination) === destinationFingerprint(commit.destination),
+  );
+  const staleForRequest = $derived(destinationQuery.isFetching && !commitAnswersRequest);
   const workspacePending = (): boolean => {
     if (visiblePrimary === 'sessions') {
       return false;
     }
     if (commit === undefined) {
-      return destinationQuery.error === null;
+      return destinationQuery.isFetching || destinationQuery.error === null;
     }
-    return destinationQuery.isFetching;
+    return staleForRequest;
   };
   $effect(() => {
     if (primary === 'breakdown' && !dashboardBreakdownModule) {
-      dashboardBreakdownLoad ??= import('../breakdown/dashboard-breakdown.svelte')
-        .then((module) => {
-          dashboardBreakdownModule = module;
-        })
-        .catch(() => {
-          dashboardBreakdownLoadFailed = true;
-        });
+      dashboardBreakdownLoader.start();
     } else if (primary === 'sessions' && !sessionsDestinationModule) {
-      sessionsDestinationLoad ??= import('./sessions-destination.svelte')
-        .then((module) => {
-          sessionsDestinationModule = module;
-        })
-        .catch(() => {
-          sessionsDestinationLoadFailed = true;
-        });
+      sessionsDestinationLoader.start();
     }
   });
+  const retryReportDestination = async (): Promise<void> => {
+    if (primary === 'breakdown' && dashboardBreakdownLoadFailed) {
+      await dashboardBreakdownLoader.retry();
+      return;
+    }
+    if (primary === 'sessions' && sessionsDestinationLoadFailed) {
+      await sessionsDestinationLoader.retry();
+      return;
+    }
+    await destinationQuery.refetch();
+  };
+  const activeDestinationLoadFailed = $derived(
+    (visiblePrimary === 'breakdown' && dashboardBreakdownLoadFailed) ||
+      (visiblePrimary === 'sessions' && sessionsDestinationLoadFailed),
+  );
   const bootstrap = $derived(commit?.descriptor.bootstrap ?? initialDescriptor.bootstrap);
   const machineSnapshot = $derived(machineFreshnessSnapshotFromFocused(bootstrap.machineFreshness));
   const machinePresentations = $derived(
@@ -374,6 +400,9 @@
   const presentSessionRow = (row: SessionPresentationRow): SessionPresentationRow =>
     presentServedCampaignDisplayRow(row, campaignIndex);
   const selectOverviewSession = (item: FocusedOverviewSessionItem): void => {
+    if (sessionDrawerClosing) {
+      return;
+    }
     const presented = presentSessionItem(item);
     detailRows = commit?.overview.view.topSessions.map((candidate) => presentSessionItem(candidate).row) ?? [
       presented.row,
@@ -385,6 +414,9 @@
     selectedRowId = presented.row.rowId;
   };
   const selectCampaignSession = (row: SessionPresentationRow): void => {
+    if (sessionDrawerClosing) {
+      return;
+    }
     const controls = campaignSessionControls;
     if (controls === null) {
       return;
@@ -514,7 +546,7 @@
   <p aria-live="polite" role="status">{projectWarningCleanupError}</p>
 {/if}
 {#snippet summary()}
-  {@render activeFilterSummary(destinationQuery.isFetching)}
+  {@render activeFilterSummary(staleForRequest)}
 {/snippet}
 {#snippet sessions()}
   {#if sessionsDestinationModule}
@@ -528,6 +560,9 @@
       onInitialSessionWindowAnchor={sessionWindowAnchorOwner.consume}
       onRowsChange={(rows) => (detailRows = rows)}
       onSelectionChange={(nextSelection) => {
+        if (sessionDrawerClosing) {
+          return;
+        }
         selection = nextSelection;
         selectedRowId = nextSelection?.row.rowId ?? null;
       }}
@@ -542,44 +577,46 @@
     />
   {/if}
 {/snippet}
+{#snippet breakdownDestination()}
+  {#if commit?.breakdown && dashboardBreakdownModule}
+    {@const DashboardBreakdown = dashboardBreakdownModule.default}
+    <DashboardBreakdown
+      data={{
+        cursorRows: commit.breakdown.context.cursorCommitAttribution,
+        generatedAt: bootstrap.support.generatedAt,
+        harnesses: commit.breakdown.groups.harnesses,
+        harnessProviders: commit.breakdown.groups.harnessProviders,
+        models: commit.breakdown.groups.models,
+        projects: commit.breakdown.groups.projects,
+      }}
+      navigation={{
+        onSortChange: navigation.setBreakdownSort,
+        onTabChange: navigation.setBreakdownTab,
+        sort: search.breakdownSort,
+        tab: search.tab,
+      }}
+      onFieldFilter={navigation.setFieldFilter}
+      onHarnessFilter={(value) =>
+        navigation.setHarness(
+          search.harness.includes(value)
+            ? search.harness.filter((item) => item !== value)
+            : [...search.harness, value],
+        )}
+      projectEditor={{
+        disabled: !mutationsEnabled,
+        onSave: async (groups) => {
+          await persistProjectGroups(groups);
+          await destinationQuery.refetch();
+        },
+        payload: projectPayload,
+      }}
+    />
+  {/if}
+{/snippet}
 <ReportDestinationPresentation
   activeView={visiblePrimary}
-  breakdown={visiblePrimary === 'breakdown' && commit?.breakdown && dashboardBreakdownModule
-    ? {
-        component: dashboardBreakdownModule.default,
-        props: {
-          data: {
-            cursorRows: commit.breakdown.context.cursorCommitAttribution,
-            generatedAt: bootstrap.support.generatedAt,
-            harnesses: commit.breakdown.groups.harnesses,
-            harnessProviders: commit.breakdown.groups.harnessProviders,
-            models: commit.breakdown.groups.models,
-            projects: commit.breakdown.groups.projects,
-          },
-          navigation: {
-            onSortChange: navigation.setBreakdownSort,
-            onTabChange: navigation.setBreakdownTab,
-            sort: search.breakdownSort,
-            tab: search.tab,
-          },
-          onFieldFilter: navigation.setFieldFilter,
-          onHarnessFilter: (value) =>
-            navigation.setHarness(
-              search.harness.includes(value)
-                ? search.harness.filter((item) => item !== value)
-                : [...search.harness, value],
-            ),
-          projectEditor: {
-            disabled: !mutationsEnabled,
-            onSave: async (groups) => {
-              await persistProjectGroups(groups);
-              await destinationQuery.refetch();
-            },
-            payload: projectPayload,
-          },
-        },
-      }
-    : null}
+  breakdown={breakdownDestination}
+  breakdownReady={commit?.breakdown !== undefined && dashboardBreakdownModule !== undefined}
   filters={{
     freshnessStatus: machineFreshnessStatusLabel(machineSnapshot),
     freshnessUnavailable: machineSnapshot.kind === 'unavailable',
@@ -592,35 +629,11 @@
     search,
   }}
   hasOutput={visiblePrimary === 'sessions' || commit !== undefined}
-  loadFailed={dashboardBreakdownLoadFailed || sessionsDestinationLoadFailed}
+  loadFailed={activeDestinationLoadFailed}
+  onRetry={retryReportDestination}
   overview={visiblePrimary === 'overview' && commit?.destination.kind === 'overview'
     ? {
-        activeSeriesKeys,
-        dimension,
-        draggedWindowApiValue,
-        freshness: bootstrap.machineFreshness,
-        granularity,
-        machineFreshnessStatus: machineFreshnessStatusLabel(machineSnapshot),
-        navigate,
-        onDimensionFilter: navigation.setTimelineDimensionFilter,
-        onOptionsChange: updateOverviewOptions,
-        onRangeChange: navigation.setDateRange,
-        onSelectDay: selectDay,
-        onSelectSession: selectOverviewSession,
-        onSelectTimeCell: selectTimeCell,
-        presentCampaignSeries,
-        presentMachineSeries,
-        presentSessionItem,
-        range: search.range,
-        result: commit.overview,
-        value: timelineValue,
-      }
-    : null}
-  pending={workspacePending()}
-  range={commit?.overview
-    ? {
-        hidden: destinationQuery.isFetching && focusedTimelineFiltersChanged,
-        props: {
+        activity: {
           activeSeriesKeys,
           dateDomain: commit.overview.dateDomain,
           dimension,
@@ -635,8 +648,35 @@
           presentCampaignSeries,
           presentMachineSeries,
           range: search.range,
+          revision: commit.overview.revision,
           timeline: commit.overview.timeline,
           value: timelineValue,
+        },
+        draggedWindowApiValue,
+        modelsHref,
+        onClearFilters: navigation.clearAllFilters,
+        onOpenModels: () => navigation.setBreakdownTab('models'),
+        onOpenQuotaHistory: () => (quotaHistoryOpen = true),
+        onSelectDay: selectDay,
+        onSelectSession: selectOverviewSession,
+        onSelectTimeCell: selectTimeCell,
+        presentSessionItem,
+        providers,
+        range: search.range,
+        result: commit.overview,
+        totalSessionCount: totalSessions,
+      }
+    : null}
+  pending={workspacePending()}
+  range={commit?.overview
+    ? {
+        hidden: false,
+        props: {
+          dateDomain: commit.overview.dateDomain,
+          generatedAt: bootstrap.support.generatedAt,
+          navigate,
+          onRangeChange: navigation.setDateRange,
+          range: search.range,
         },
       }
     : null}
@@ -644,23 +684,16 @@
   {sessions}
   sessionsReady={sessionsDestinationModule !== undefined}
   {summary}
->
-  {#snippet status()}
-    {#if visiblePrimary === 'overview' && commit?.destination.kind === 'overview' && !destinationQuery.isFetching}
-      <OverviewStatus
-        onOpenQuotaHistory={() => (quotaHistoryOpen = true)}
-        {providers}
-        range={search.range}
-        result={commit.overview}
-      />
-    {/if}
-  {/snippet}
-</ReportDestinationPresentation>
+/>
 <SessionDetailQuerySlot
   {campaignSlot}
   client={sessionClient}
+  onClosingChange={(closing) => (sessionDrawerClosing = closing)}
   onFieldFilter={(key, value) => navigation.setFieldFilter(key, value)}
   onSelectionChange={(nextSelection) => {
+    if (sessionDrawerClosing && nextSelection !== null) {
+      return;
+    }
     selection = nextSelection;
     selectedRowId = nextSelection?.row.rowId ?? null;
   }}

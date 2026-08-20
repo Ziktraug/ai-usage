@@ -1,5 +1,6 @@
 import type { FocusedMachineFreshness, FocusedSupportResult } from '@ai-usage/report-core/focused-report-query';
 import type { UsageReportPayload } from '@ai-usage/report-core/report-data';
+import { parseServedRevision, type ServedRevision } from '@ai-usage/report-core/served-revision';
 import type { ReportRevisionBootstrapResult, ReportRevisionManifestResult } from '@ai-usage/web-contract/report';
 
 export type JsonValue = boolean | number | string | null | JsonValue[] | { [key: string]: JsonValue };
@@ -10,9 +11,7 @@ export type WebReportPayload = Omit<UsageReportPayload, 'datasets' | 'facets' | 
   machineFreshness?: FocusedMachineFreshness;
 };
 
-declare const reportRevisionBrand: unique symbol;
-
-export type ReportRevision = string & { readonly [reportRevisionBrand]: true };
+export type ReportRevision = ServedRevision;
 
 export type WebReportPayloadWithoutRows = Omit<WebReportPayload, 'rows'>;
 
@@ -119,7 +118,6 @@ export type WebReportSupportSliceResult =
       requestFingerprint: ReportRequestFingerprint;
     };
 
-const REPORT_REVISION_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/;
 const REPORT_REQUEST_FINGERPRINT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:{},"-]{0,511}$/;
 
 export const reportManifestRequestFingerprint = 'report-manifest:v1:{}' as ReportRequestFingerprint;
@@ -128,10 +126,11 @@ export const reportSliceRequestFingerprint = (kind: WebReportSliceKind): ReportR
   `report-${kind}:v1:{}` as ReportRequestFingerprint;
 
 export const parseReportRevision = (value: unknown): ReportRevision => {
-  if (typeof value !== 'string' || !REPORT_REVISION_PATTERN.test(value)) {
+  try {
+    return parseServedRevision(value, 'Report revision');
+  } catch {
     throw new Error('Report revision must be a non-empty opaque identifier');
   }
-  return value as ReportRevision;
 };
 
 export const parseReportRequestFingerprint = (value: unknown): ReportRequestFingerprint => {

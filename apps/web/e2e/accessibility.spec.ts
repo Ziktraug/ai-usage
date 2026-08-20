@@ -11,15 +11,26 @@ import {
   waitForHydratedSkills,
 } from './browser-test';
 
-const TOP_SESSION_PATTERN = /Top session/;
 const RGB_COMPONENT_PATTERN = /[\d.]+/g;
-const NAVIGATION_DESTINATIONS = ['Overview', 'Sessions', 'Breakdown', 'Skills', 'Sync', 'Sources'] as const;
+const NAVIGATION_DESTINATIONS = ['Overview', 'Sessions', 'Analysis', 'Skills', 'Sync', 'Sources'] as const;
 const routes = [
   { heading: 'Usage report', path: '/' },
   { heading: 'Skill management', path: '/skills' },
   { heading: 'Sources', path: '/sources' },
   { heading: 'Sync', path: '/sync' },
 ] as const;
+const REPORT_AXE_DESTINATIONS = [
+  { label: 'Overview', path: '/' },
+  { label: 'Sessions', path: '/?tab=sessions' },
+  { label: 'Analysis', path: '/?tab=models' },
+] as const;
+
+const overviewTopSessionTrigger = (page: Page): Locator =>
+  page
+    .getByRole('heading', { level: 3, name: 'Top sessions' })
+    .locator('xpath=ancestor::section[1]')
+    .getByRole('button')
+    .first();
 
 const documentOverflow = () =>
   Math.max(document.body.scrollWidth, document.documentElement.scrollWidth) - document.documentElement.clientWidth;
@@ -157,7 +168,7 @@ for (const route of routes) {
     const mobileNavigation = page.locator('[data-app-navigation="mobile"]');
     await expect(mobileNavigation).toBeVisible();
     await expect(desktopNavigation).toHaveCount(0);
-    for (const label of ['Overview', 'Sessions', 'Breakdown']) {
+    for (const label of ['Overview', 'Sessions', 'Analysis']) {
       await expect(mobileNavigation.getByRole('link', { exact: true, name: label })).toBeVisible();
     }
     const manageButton = mobileNavigation.getByRole('button', { name: 'Manage' });
@@ -189,7 +200,7 @@ test('shows the report panel focus indicator only for keyboard navigation', asyn
   await openHydratedReport(page);
 
   const dashboardPanel = page.locator('[data-dashboard-panel]');
-  await dashboardPanel.locator(':scope > *').evaluateAll((elements) => {
+  await dashboardPanel.locator(':scope *').evaluateAll((elements) => {
     for (const element of elements) {
       (element as HTMLElement).style.pointerEvents = 'none';
     }
@@ -229,7 +240,7 @@ test('reduced motion keeps drawer feedback while making motion effectively immed
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await openHydratedReport(page);
 
-  await page.getByRole('button', { name: TOP_SESSION_PATTERN }).click();
+  await overviewTopSessionTrigger(page).click();
   const drawer = page.getByRole('dialog', { name: 'Session details' });
   await expect(drawer).toBeVisible();
 
@@ -253,27 +264,44 @@ test('reduced motion keeps drawer feedback while making motion effectively immed
   await expect(drawer).not.toBeVisible();
 });
 
-test('Overview has no detectable accessibility violations', async ({ page }) => {
-  await openHydratedReport(page);
-  await expect(page.getByText('5 / 6 sessions', { exact: true })).toBeVisible();
-  await expect(reportViewsFor(page).getByRole('link', { exact: true, name: 'Overview' })).toHaveAttribute(
-    'aria-current',
-    'page',
-  );
+for (const colorScheme of ['light', 'dark'] as const) {
+  for (const destination of REPORT_AXE_DESTINATIONS) {
+    test(`${destination.label} has no detectable accessibility violations in ${colorScheme} mode`, async ({ page }) => {
+      await page.emulateMedia({ colorScheme });
+      await page.addInitScript(() => localStorage.clear());
+      await openHydratedReport(page, destination.path);
+      await expect(reportViewsFor(page).getByRole('link', { exact: true, name: destination.label })).toHaveAttribute(
+        'aria-current',
+        'page',
+      );
+      if (destination.label === 'Overview') {
+        await expect(page.getByText('5 / 6 sessions', { exact: true })).toBeVisible();
+      } else if (destination.label === 'Sessions') {
+        await expect(page.getByRole('table')).toBeVisible();
+      } else {
+        await expect(page.getByRole('table', { name: 'Model API-value analysis' })).toBeVisible();
+      }
 
-  await expectNoAxeViolations(page);
-});
+      await expectNoAxeViolations(page);
+    });
+  }
 
-test('the open session drawer has no detectable accessibility violations', async ({ page }) => {
-  await openHydratedReport(page);
-  await expect(page.getByText('5 / 6 sessions', { exact: true })).toBeVisible();
-  await page.getByRole('button', { name: TOP_SESSION_PATTERN }).click();
-  const drawer = page.getByRole('dialog', { name: 'Session details' });
-  await expect(drawer).toBeVisible();
-  await expect(drawer.getByRole('button', { name: 'Close session details' })).toBeVisible();
+  test(`the open session drawer has no detectable accessibility violations in ${colorScheme} mode`, async ({
+    page,
+  }) => {
+    await page.emulateMedia({ colorScheme });
+    await page.addInitScript(() => localStorage.clear());
+    await page.setViewportSize({ height: 844, width: 390 });
+    await openHydratedReport(page);
+    await expect(page.getByText('5 / 6 sessions', { exact: true })).toBeVisible();
+    await overviewTopSessionTrigger(page).click();
+    const drawer = page.getByRole('dialog', { name: 'Session details' });
+    await expect(drawer).toBeVisible();
+    await expect(drawer.getByRole('button', { name: 'Close session details' })).toBeVisible();
 
-  await expectNoAxeViolations(page);
-});
+    await expectNoAxeViolations(page);
+  });
+}
 
 test('Skills has no detectable accessibility violations', async ({ page }) => {
   await openHydratedSkills(page, '/skills/global/alpha-skill');

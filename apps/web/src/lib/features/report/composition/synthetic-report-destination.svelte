@@ -36,6 +36,7 @@
     machineFreshnessStatusLabel,
     machineLabelPresentationForSnapshot,
   } from '../../../../machine-freshness-presentation';
+  import type { TimelineValue } from '../../../../overview-model';
   import { buildProviderStatusViews } from '../../../../provider-status-model';
   import { demoReportPayload } from '../../../../report-data';
   import type { RuntimeMode } from '../../../../runtime-mode';
@@ -56,10 +57,11 @@
   import QuotaHistoryOwner from '../actions/quota-history-owner.svelte';
   import ActiveFilters from '../breakdown/active-filters.svelte';
   import { createBreakdownNavigation } from '../breakdown/navigation';
-  import OverviewStatus from '../overview/overview-status.svelte';
   import { activeTimelineSeriesKeys } from './active-timeline-series';
+  import { importReportLazyModule } from './lazy-module-e2e-fixture';
+  import { createLazyModuleLoader } from './lazy-module-loader';
   import ReportDestinationPresentation from './report-destination-presentation.svelte';
-  import { reportDestinationForSearch, reportFilterFingerprint } from './report-search';
+  import { reportDestinationForSearch } from './report-search';
 
   import SessionIdentityPublisher from './session-identity-publisher.svelte';
 
@@ -68,11 +70,13 @@
 
   let {
     mode,
+    modelsHref,
     navigate,
     queryClient,
     search,
   }: {
     mode: Extract<RuntimeMode, 'demo' | 'e2e'>;
+    modelsHref: string;
     navigate: SearchNavigationIntent<DashboardSearch>;
     queryClient: QueryClient;
     search: DashboardSearch;
@@ -87,10 +91,28 @@
   let pending = $state(false);
   let dashboardBreakdownModule = $state<DashboardBreakdownModule>();
   let dashboardBreakdownLoadFailed = $state(false);
-  let dashboardBreakdownLoad: Promise<void> | undefined;
   let sessionTableModule = $state<SessionTableModule>();
   let sessionTableLoadFailed = $state(false);
-  let sessionTableLoad: Promise<void> | undefined;
+  const dashboardBreakdownLoader = createLazyModuleLoader({
+    importModule: () =>
+      importReportLazyModule({
+        enabled: runtimeMode === 'e2e',
+        importModule: () => import('../breakdown/dashboard-breakdown.svelte'),
+        target: 'breakdown',
+      }),
+    onFailureChange: (failed) => (dashboardBreakdownLoadFailed = failed),
+    onLoaded: (module) => (dashboardBreakdownModule = module),
+  });
+  const sessionTableLoader = createLazyModuleLoader({
+    importModule: () =>
+      importReportLazyModule({
+        enabled: runtimeMode === 'e2e',
+        importModule: () => import('../../sessions/table/session-table.svelte'),
+        target: 'sessions',
+      }),
+    onFailureChange: (failed) => (sessionTableLoadFailed = failed),
+    onLoaded: (module) => (sessionTableModule = module),
+  });
   let responseGeneration = 0;
   $effect(() => {
     const requestedSearch = search;
@@ -157,6 +179,8 @@
     { revision },
     { providerRows: allRows },
   );
+  const totalSessionCount =
+    responseFixture?.bootstrap.support.analytics.sessionCount ?? support.support.analytics.sessionCount;
   const syntheticMachineFreshness = {
     kind: 'available',
     machines: [{ id: 'fixture-machine', label: 'Fixture Machine', lastSeenAt: reportSupport.generatedAt }],
@@ -186,7 +210,7 @@
   const providers = buildProviderStatusViews(reportSupport, allRows, reportSupport.generatedAt);
   let dimension = $state<'campaign' | 'harness' | 'machine' | 'model' | 'origin' | 'provider' | 'project'>('harness');
   let granularity = $state<'day' | 'month' | 'week'>('day');
-  let timelineValue = $state<'cost' | 'sessions' | 'share'>('cost');
+  let timelineValue = $state<TimelineValue>('cost');
   // Headline value of the window under the pointer, so the hero keeps tracking the brush now that a
   // gesture only commits on release. This payload recomputes in memory, so the committed range
   // itself is the signal to retire the preview.
@@ -194,19 +218,12 @@
   let detailRows = $state<readonly SessionPresentationRow[]>([]);
   let selectedRowId = $state<string | null>(null);
   let selection = $state<SessionSelectionInput | null>(null);
+  let sessionDrawerClosing = false;
   let quotaHistoryOpen = $state(false);
   let campaignLabelOverrides = $state<readonly CampaignLabelOverride[]>([]);
   const navigation = createBreakdownNavigation((update, options) => navigate(update, options));
   const destination = $derived(
     reportDestinationForSearch(renderedSearch, reportSupport.generatedAt, { dimension, granularity }),
-  );
-  const requestedDestination = $derived(
-    reportDestinationForSearch(search, reportSupport.generatedAt, { dimension, granularity }),
-  );
-  const focusedTimelineFiltersAreStale = $derived(
-    pending &&
-      reportFilterFingerprint(requestedDestination.sessions.filters) !==
-        reportFilterFingerprint(destination.sessions.filters),
   );
   const syntheticSessionQuery = $derived({ ...destination.sessions, cursor: null, revision });
   const focusedQuery = $derived({
@@ -225,23 +242,23 @@
   const primary = $derived(primaryDashboardTabFor(renderedSearch.tab));
   $effect(() => {
     if (primary === 'breakdown' && !dashboardBreakdownModule) {
-      dashboardBreakdownLoad ??= import('../breakdown/dashboard-breakdown.svelte')
-        .then((module) => {
-          dashboardBreakdownModule = module;
-        })
-        .catch(() => {
-          dashboardBreakdownLoadFailed = true;
-        });
+      dashboardBreakdownLoader.start();
     } else if (primary === 'sessions' && !sessionTableModule) {
-      sessionTableLoad ??= import('../../sessions/table/session-table.svelte')
-        .then((module) => {
-          sessionTableModule = module;
-        })
-        .catch(() => {
-          sessionTableLoadFailed = true;
-        });
+      sessionTableLoader.start();
     }
   });
+  const retryReportDestination = async (): Promise<void> => {
+    if (primary === 'breakdown' && dashboardBreakdownLoadFailed) {
+      await dashboardBreakdownLoader.retry();
+      return;
+    }
+    if (primary === 'sessions' && sessionTableLoadFailed) {
+      await sessionTableLoader.retry();
+    }
+  };
+  const activeDestinationLoadFailed = $derived(
+    (primary === 'breakdown' && dashboardBreakdownLoadFailed) || (primary === 'sessions' && sessionTableLoadFailed),
+  );
   const visibleRows = $derived(
     allRows.filter((row) => matchesFocusedReportQuery(row, focusedQuery, reportSupport.timeZone)),
   );
@@ -327,6 +344,9 @@
     vcs: unavailable,
   };
   const republishSelectedCampaign = (campaignKey: string, index: ReadonlyMap<string, string>): void => {
+    if (sessionDrawerClosing) {
+      return;
+    }
     const activeSelection = selection;
     if (!(activeSelection && activeSelection.row.campaignKey === campaignKey)) {
       return;
@@ -340,6 +360,9 @@
   };
 
   const selectOverviewSession = (item: FocusedOverviewSessionItem): void => {
+    if (sessionDrawerClosing) {
+      return;
+    }
     const presented = presentSessionItem(item);
     const campaignContext = focusedCampaignLabelContext(presented);
     const presentedRow = campaignContext
@@ -350,6 +373,9 @@
     selectedRowId = presentedRow.rowId;
   };
   const selectSessionRow = (row: SessionPresentationRow): void => {
+    if (sessionDrawerClosing) {
+      return;
+    }
     detailRows = tableRows;
     selection = selectedRowId === row.rowId ? null : { row };
     selectedRowId = selection?.row.rowId ?? null;
@@ -382,12 +408,12 @@
 {/snippet}
 {#snippet activeFilterSummary(_filterPending: boolean)}
   <ActiveFilters
-    hidden={Math.max(0, support.support.analytics.sessionCount - overview.summary.sessionCount)}
+    hidden={Math.max(0, totalSessionCount - overview.summary.sessionCount)}
     {navigation}
     pending={_filterPending}
     {presentMachineLabel}
     {search}
-    total={support.support.analytics.sessionCount}
+    total={totalSessionCount}
     visible={overview.summary.sessionCount}
   />
 {/snippet}
@@ -432,41 +458,43 @@
     />
   {/if}
 {/snippet}
+{#snippet breakdownDestination()}
+  {#if dashboardBreakdownModule}
+    {@const DashboardBreakdown = dashboardBreakdownModule.default}
+    <DashboardBreakdown
+      data={{
+        cursorRows: breakdown.context.cursorCommitAttribution,
+        generatedAt: reportSupport.generatedAt,
+        harnesses: breakdown.groups.harnesses,
+        harnessProviders: breakdown.groups.harnessProviders,
+        models: breakdown.groups.models,
+        projects: breakdown.groups.projects,
+      }}
+      navigation={{
+        onSortChange: navigation.setBreakdownSort,
+        onTabChange: (tab) => navigate((current) => ({ ...current, tab })),
+        sort: renderedSearch.breakdownSort,
+        tab: renderedSearch.tab,
+      }}
+      onFieldFilter={navigation.setFieldFilter}
+      onHarnessFilter={(value) =>
+        navigation.setHarness(
+          renderedSearch.harness.includes(value)
+            ? renderedSearch.harness.filter((item) => item !== value)
+            : [...renderedSearch.harness, value],
+        )}
+      projectEditor={{
+        disabled: true,
+        onSave: () => Promise.reject(new Error('Synthetic project groups are read-only.')),
+        payload: reportSupport,
+      }}
+    />
+  {/if}
+{/snippet}
 <ReportDestinationPresentation
   activeView={primary}
-  breakdown={primary === 'breakdown' && dashboardBreakdownModule
-    ? {
-        component: dashboardBreakdownModule.default,
-        props: {
-          data: {
-            cursorRows: breakdown.context.cursorCommitAttribution,
-            generatedAt: reportSupport.generatedAt,
-            harnesses: breakdown.groups.harnesses,
-            harnessProviders: breakdown.groups.harnessProviders,
-            models: breakdown.groups.models,
-            projects: breakdown.groups.projects,
-          },
-          navigation: {
-            onSortChange: navigation.setBreakdownSort,
-            onTabChange: (tab) => navigate((current) => ({ ...current, tab })),
-            sort: renderedSearch.breakdownSort,
-            tab: renderedSearch.tab,
-          },
-          onFieldFilter: navigation.setFieldFilter,
-          onHarnessFilter: (value) =>
-            navigation.setHarness(
-              renderedSearch.harness.includes(value)
-                ? renderedSearch.harness.filter((item) => item !== value)
-                : [...renderedSearch.harness, value],
-            ),
-          projectEditor: {
-            disabled: true,
-            onSave: () => Promise.reject(new Error('Synthetic project groups are read-only.')),
-            payload: reportSupport,
-          },
-        },
-      }
-    : null}
+  breakdown={breakdownDestination}
+  breakdownReady={dashboardBreakdownModule !== undefined}
   filters={{
     freshnessStatus: displayedFreshnessStatus,
     freshnessUnavailable: displayedFreshnessUnavailable,
@@ -480,24 +508,39 @@
     presentMachineLabel,
     search,
   }}
-  hasOutput={!pending}
-  loadFailed={dashboardBreakdownLoadFailed || sessionTableLoadFailed}
+  hasOutput={true}
+  loadFailed={activeDestinationLoadFailed}
+  onRetry={retryReportDestination}
   overview={primary === 'overview'
     ? {
-        activeSeriesKeys,
-        dimension,
-        draggedWindowApiValue,
-        freshness: focusedMachineFreshness,
-        granularity,
-        machineFreshnessStatus,
-        navigate,
-        onDimensionFilter: navigation.setTimelineDimensionFilter,
-        onOptionsChange: (options) => {
-          dimension = options.dimension;
-          granularity = options.granularity;
-          timelineValue = options.value;
+        activity: {
+          activeSeriesKeys,
+          dateDomain: overview.dateDomain,
+          dimension,
+          generatedAt: reportSupport.generatedAt,
+          granularity,
+          machineFreshnessStatus,
+          navigate,
+          onDimensionFilter: navigation.setTimelineDimensionFilter,
+          onOptionsChange: (options) => {
+            dimension = options.dimension;
+            granularity = options.granularity;
+            timelineValue = options.value;
+          },
+          onRangeChange: navigation.setDateRange,
+          onWindowPreview: (apiValue) => (draggedWindowApiValue = apiValue),
+          presentCampaignSeries,
+          presentMachineSeries,
+          range: renderedSearch.range,
+          revision: overview.revision,
+          timeline: overview.timeline,
+          value: timelineValue,
         },
-        onRangeChange: navigation.setDateRange,
+        draggedWindowApiValue,
+        modelsHref,
+        onClearFilters: navigation.clearAllFilters,
+        onOpenModels: () => navigation.setBreakdownTab('models'),
+        ...(mode === 'e2e' ? { onOpenQuotaHistory: () => (quotaHistoryOpen = true) } : {}),
         onSelectDay: (date) =>
           navigate((current) => ({
             ...current,
@@ -507,60 +550,37 @@
         onSelectSession: selectOverviewSession,
         onSelectTimeCell: (cell) =>
           navigate((current) => ({ ...current, timeCell: serializeDashboardTimeCell(cell) })),
-        presentCampaignSeries,
-        presentMachineSeries,
         presentSessionItem,
+        providers: mode === 'e2e' ? providers : [],
         range: renderedSearch.range,
         result: overview,
-        value: timelineValue,
+        totalSessionCount,
       }
     : null}
   {pending}
   range={{
-    hidden: focusedTimelineFiltersAreStale,
+    hidden: false,
     props: {
-      activeSeriesKeys,
       dateDomain: overview.dateDomain,
-      dimension,
       generatedAt: reportSupport.generatedAt,
-      granularity,
-      machineFreshnessStatus,
       navigate,
-      onDimensionFilter: navigation.setTimelineDimensionFilter,
-      onOptionsChange: (options) => {
-        dimension = options.dimension;
-        granularity = options.granularity;
-        timelineValue = options.value;
-      },
       onRangeChange: navigation.setDateRange,
-      onWindowPreview: (apiValue) => (draggedWindowApiValue = apiValue),
-      presentCampaignSeries,
-      presentMachineSeries,
       range: renderedSearch.range,
-      timeline: overview.timeline,
-      value: timelineValue,
     },
   }}
   {sessions}
   sessionsReady={sessionTableModule !== undefined}
   {summary}
->
-  {#snippet status()}
-    {#if primary === 'overview' && !pending}
-      <OverviewStatus
-        {...(mode === 'e2e' ? { onOpenQuotaHistory: () => (quotaHistoryOpen = true) } : {})}
-        providers={mode === 'e2e' ? providers : []}
-        range={renderedSearch.range}
-        result={overview}
-      />
-    {/if}
-  {/snippet}
-</ReportDestinationPresentation>
+/>
 <SessionDetailQuerySlot
   {campaignSlot}
   client={syntheticClient}
+  onClosingChange={(closing) => (sessionDrawerClosing = closing)}
   onFieldFilter={navigation.setFieldFilter}
   onSelectionChange={(nextSelection) => {
+    if (sessionDrawerClosing && nextSelection !== null) {
+      return;
+    }
     selection = nextSelection;
     selectedRowId = nextSelection?.row.rowId ?? null;
   }}

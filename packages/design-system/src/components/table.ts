@@ -262,6 +262,10 @@ export const sessionSummaryMobileSortSelect = css({
 
 export const sessionSummaryViewport = css({
   gap: 0,
+  // The surface is a fixed-height scroller, so grid would stretch its auto rows to fill the
+  // leftover space and push the cards apart. Rows must keep the height the virtualizer reserved
+  // for them, or the scroll offset it computes from that height no longer lands on a row.
+  alignContent: 'start',
   overflowAnchor: 'none',
   overflowY: 'auto',
   overscrollBehavior: 'contain',
@@ -364,7 +368,7 @@ export const sessionSummaryFilter = css({
   display: 'block',
   minW: 0,
   minH: '44px',
-  px: '6px',
+  px: '4px',
   border: '1px solid token(colors.line)',
   borderRadius: 'sm',
   bg: 'surfaceMuted',
@@ -372,9 +376,9 @@ export const sessionSummaryFilter = css({
   cursor: 'pointer',
   fontFamily: 'mono',
   fontSize: '10.5px',
-  overflow: 'hidden',
-  textOverflow: 'ellipsis',
-  whiteSpace: 'nowrap',
+  lineHeight: 1.2,
+  overflowWrap: 'anywhere',
+  whiteSpace: 'normal',
   _hover: { borderColor: 'accent', color: 'accent' },
   _focusVisible: {
     outline: '2px solid token(colors.accent)',

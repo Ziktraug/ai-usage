@@ -306,8 +306,13 @@ export const readUsageMachine = async (dbPath: string): Promise<UsageMachine> =>
   return result.right;
 };
 
+/**
+ * Every provider head, not a nominated one. Filtering to a single `providerKey` here is what kept the
+ * second provider invisible after it was collecting and storing correctly: the store held the reading
+ * and the renderer could already draw it, but the query in between asked for one provider by name.
+ */
 export const readLatestProviderQuotas = async (dbPath: string) => {
-  const latest = await Effect.runPromise(queryLatestLocalProviderQuotaObservations({ dbPath, providerKey: 'codex' }));
+  const latest = await Effect.runPromise(queryLatestLocalProviderQuotaObservations({ dbPath }));
   return latest.observations.map(({ observation }) => projectProviderQuotaObservation(observation));
 };
 

@@ -12,6 +12,9 @@ export interface LocalHistoryWarning {
   readonly message: string;
   readonly operation: string;
   readonly path?: string;
+  // How many local records the collector rejected. A message may be built from a path or a SQL
+  // statement, so the control plane cannot forward it; a count carries no local detail and can.
+  readonly rejectedRecords?: number;
   readonly sql?: string;
 }
 

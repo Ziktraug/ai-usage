@@ -25,6 +25,9 @@ export interface SyncBrowserAdapter {
   readonly fleet: (signal?: AbortSignal) => Promise<SyncFleet>;
 }
 
+// A compressed or chunked response carries no content-length the browser will expose, which is the
+// normal case for this endpoint. An absent header is therefore not a failure: the read stays bounded
+// by maximumBytes. A header that is present must still be well formed and within the limit.
 const parseContentLength = (value: string | null): number | null => {
   if (value === null) {
     return null;

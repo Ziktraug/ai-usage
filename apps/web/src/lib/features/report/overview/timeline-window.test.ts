@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import type { FocusedTimelineBucket, FocusedTimelineData } from '@ai-usage/report-core/focused-report-query';
 import {
+  classifiedBucketPriceMeasurement,
   classifiedBucketValue,
   timelineBucketCenterPercent,
   timelineBucketLayout,
@@ -19,11 +20,18 @@ const measurement = (knownCost: number) => ({
   unpricedFreshTokens: 0,
 });
 
+const partialMeasurement = (knownCost: number, unpricedFreshTokens: number) => ({
+  knownCost,
+  state: 'partially measured' as const,
+  unpricedFreshTokens,
+});
+
 const bucket = (date: string, overrides: Partial<FocusedTimelineBucket> = {}): FocusedTimelineBucket => ({
   byKey: {},
   date,
   priceMeasurement: measurement(0),
   sessions: 0,
+  tokens: 0,
   total: 0,
   unclassified: null,
   ...overrides,
@@ -34,13 +42,22 @@ const timeline = (buckets: FocusedTimelineBucket[], seriesKeys: string[] = []): 
   dimension: 'harness',
   first: buckets[0]?.date ?? '2026-01-01',
   grandSessions: 0,
+  grandTokens: 0,
   grandTotal: 0,
   granularity: 'day',
   last: buckets.at(-1)?.date ?? '2026-01-01',
   maxBucketSessions: 0,
+  maxBucketTokens: 0,
   maxBucketTotal: 0,
   priceMeasurement: measurement(0),
-  series: seriesKeys.map((key) => ({ key, label: key, priceMeasurement: measurement(0), sessions: 0, total: 0 })),
+  series: seriesKeys.map((key) => ({
+    key,
+    label: key,
+    priceMeasurement: measurement(0),
+    sessions: 0,
+    tokens: 0,
+    total: 0,
+  })),
   unclassified: null,
 });
 
@@ -73,29 +90,32 @@ describe('report window projection', () => {
 
 describe('visible bar projection', () => {
   const hidden = bucket('2026-01-01T00:00:00.000Z', {
-    byKey: { alpha: { cost: 99, priceMeasurement: measurement(99), sessions: 9 } },
+    byKey: { alpha: { cost: 99, priceMeasurement: measurement(99), sessions: 9, tokens: 990 } },
     priceMeasurement: measurement(99),
     sessions: 9,
+    tokens: 990,
     total: 99,
   });
   const visible = bucket('2026-01-02T00:00:00.000Z', {
     byKey: {
-      alpha: { cost: 3, priceMeasurement: measurement(3), sessions: 2 },
-      beta: { cost: 2, priceMeasurement: measurement(2), sessions: 1 },
+      alpha: { cost: 3, priceMeasurement: measurement(3), sessions: 2, tokens: 300 },
+      beta: { cost: 2, priceMeasurement: measurement(2), sessions: 1, tokens: 200 },
     },
     priceMeasurement: measurement(13),
     sessions: 4,
+    tokens: 1300,
     total: 13,
     unclassified: {
       causes: [{ kind: 'origin-unsupported' as const, sessions: 1 }],
       priceMeasurement: measurement(8),
       sessions: 1,
+      tokens: 800,
       total: 8,
     },
   });
 
   test('projects only visible, non-empty timeline entries in series order', () => {
-    const bars = visibleTimelineBars(timeline([hidden, visible], ['alpha', 'beta']), { from: 1, to: 1 }, false);
+    const bars = visibleTimelineBars(timeline([hidden, visible], ['alpha', 'beta']), { from: 1, to: 1 }, 'cost');
 
     expect(bars).toHaveLength(1);
     expect(bars[0]?.bucket).toBe(visible);
@@ -109,59 +129,93 @@ describe('visible bar projection', () => {
 
   test('drops an entry whose value is zero in the selected metric', () => {
     const unpriced = bucket('2026-01-03T00:00:00.000Z', {
-      byKey: { cursor: { cost: 0, priceMeasurement: measurement(0), sessions: 4 } },
+      byKey: { cursor: { cost: 0, priceMeasurement: measurement(0), sessions: 4, tokens: 40 } },
       sessions: 4,
+      tokens: 40,
       total: 0,
     });
     const data = timeline([unpriced], ['cursor']);
 
-    expect(visibleTimelineBars(data, { from: 0, to: 0 }, false)[0]?.segments).toEqual([]);
-    expect(visibleTimelineBars(data, { from: 0, to: 0 }, true)[0]?.segments).toEqual([
+    expect(visibleTimelineBars(data, { from: 0, to: 0 }, 'cost')[0]?.segments).toEqual([]);
+    expect(visibleTimelineBars(data, { from: 0, to: 0 }, 'sessions')[0]?.segments).toEqual([
       { key: 'cursor', rank: 0, value: 4 },
     ]);
   });
 
   test('ignores an entry whose key left the series list', () => {
-    const bars = visibleTimelineBars(timeline([visible], ['beta']), { from: 0, to: 0 }, false);
+    const bars = visibleTimelineBars(timeline([visible], ['beta']), { from: 0, to: 0 }, 'cost');
 
     expect(bars[0]?.segments).toEqual([{ key: 'beta', rank: 0, value: 2 }]);
   });
 
   test('excludes the unclassified gap from the classified bucket value', () => {
-    expect(classifiedBucketValue(visible, false)).toBe(5);
-    expect(classifiedBucketValue(visible, true)).toBe(3);
-    expect(classifiedBucketValue(hidden, false)).toBe(99);
+    expect(classifiedBucketValue(visible, 'cost')).toBe(5);
+    expect(classifiedBucketValue(visible, 'sessions')).toBe(3);
+    expect(classifiedBucketValue(hidden, 'cost')).toBe(99);
+    expect(classifiedBucketPriceMeasurement(visible)).toEqual(measurement(5));
   });
 
   test('scales against the tallest bucket inside the window, not the whole domain', () => {
     const data = timeline([hidden, visible], ['alpha', 'beta']);
 
-    expect(visibleTimelineMaximum(data, { from: 0, to: 1 }, false)).toBe(99);
-    expect(visibleTimelineMaximum(data, { from: 1, to: 1 }, false)).toBe(5);
+    expect(visibleTimelineMaximum(data, { from: 0, to: 1 }, 'cost')).toBe(99);
+    expect(visibleTimelineMaximum(data, { from: 1, to: 1 }, 'cost')).toBe(5);
+  });
+
+  test('projects processed-token bars, gaps, summaries, and window maxima', () => {
+    const data = timeline([hidden, visible], ['alpha', 'beta']);
+
+    expect(visibleTimelineBars(data, { from: 1, to: 1 }, 'tokens')).toEqual([
+      {
+        bucket: visible,
+        index: 1,
+        segments: [
+          { key: 'alpha', rank: 0, value: 300 },
+          { key: 'beta', rank: 1, value: 200 },
+        ],
+        total: 500,
+      },
+    ]);
+    expect(classifiedBucketValue(visible, 'tokens')).toBe(500);
+    expect(visibleTimelineMaximum(data, { from: 1, to: 1 }, 'tokens')).toBe(500);
+    expect(visibleTimelineSummary(data, { from: 1, to: 1 }, 'tokens')).toEqual({
+      gap: 800,
+      priceMeasurement: measurement(13),
+      total: 1300,
+      totalsByKey: new Map([
+        ['alpha', 300],
+        ['beta', 200],
+      ]),
+    });
   });
 
   test('returns a zero maximum for an empty window', () => {
-    expect(visibleTimelineMaximum(timeline([]), { from: 0, to: 0 }, false)).toBe(0);
+    expect(visibleTimelineMaximum(timeline([]), { from: 0, to: 0 }, 'cost')).toBe(0);
   });
 });
 
 describe('window summary', () => {
   const early = bucket('2026-01-01T00:00:00.000Z', {
-    byKey: { alpha: { cost: 90, priceMeasurement: measurement(90), sessions: 9 } },
+    byKey: { alpha: { cost: 90, priceMeasurement: measurement(90), sessions: 9, tokens: 900 } },
+    priceMeasurement: measurement(90),
     sessions: 9,
+    tokens: 900,
     total: 90,
   });
   const late = bucket('2026-01-02T00:00:00.000Z', {
     byKey: {
-      alpha: { cost: 3, priceMeasurement: measurement(3), sessions: 2 },
-      beta: { cost: 2, priceMeasurement: measurement(2), sessions: 1 },
+      alpha: { cost: 3, priceMeasurement: measurement(3), sessions: 2, tokens: 300 },
+      beta: { cost: 2, priceMeasurement: measurement(2), sessions: 1, tokens: 200 },
     },
+    priceMeasurement: measurement(13),
     sessions: 4,
+    tokens: 1300,
     total: 13,
     unclassified: {
       causes: [{ kind: 'origin-unsupported' as const, sessions: 1 }],
       priceMeasurement: measurement(8),
       sessions: 1,
+      tokens: 800,
       total: 8,
     },
   });
@@ -169,8 +223,9 @@ describe('window summary', () => {
   test('totals only the buckets inside the window', () => {
     const data = timeline([early, late], ['alpha', 'beta']);
 
-    expect(visibleTimelineSummary(data, { from: 1, to: 1 }, false)).toEqual({
+    expect(visibleTimelineSummary(data, { from: 1, to: 1 }, 'cost')).toEqual({
       gap: 8,
+      priceMeasurement: measurement(13),
       total: 13,
       totalsByKey: new Map([
         ['alpha', 3],
@@ -182,21 +237,40 @@ describe('window summary', () => {
   test('reports zero for a series that carries nothing inside the window', () => {
     const data = timeline([early, late], ['alpha', 'beta']);
 
-    expect(visibleTimelineSummary(data, { from: 0, to: 0 }, false).totalsByKey.get('beta')).toBeUndefined();
-    expect(visibleTimelineSummary(data, { from: 0, to: 0 }, false).gap).toBe(0);
+    expect(visibleTimelineSummary(data, { from: 0, to: 0 }, 'cost').totalsByKey.get('beta')).toBeUndefined();
+    expect(visibleTimelineSummary(data, { from: 0, to: 0 }, 'cost').gap).toBe(0);
   });
 
   test('switches to session counts without changing the window', () => {
     const data = timeline([early, late], ['alpha', 'beta']);
 
-    expect(visibleTimelineSummary(data, { from: 0, to: 1 }, true)).toEqual({
+    expect(visibleTimelineSummary(data, { from: 0, to: 1 }, 'sessions')).toEqual({
       gap: 1,
+      priceMeasurement: measurement(103),
       total: 13,
       totalsByKey: new Map([
         ['alpha', 11],
         ['beta', 1],
       ]),
     });
+  });
+
+  test('combines price coverage only from buckets inside the selected window', () => {
+    const outside = bucket('2025-12-31T00:00:00.000Z', {
+      priceMeasurement: partialMeasurement(0, 9000),
+    });
+    const priced = bucket('2026-01-01T00:00:00.000Z', {
+      priceMeasurement: measurement(2),
+      total: 2,
+    });
+    const partial = bucket('2026-01-02T00:00:00.000Z', {
+      priceMeasurement: partialMeasurement(2, 500),
+      total: 2,
+    });
+
+    expect(
+      visibleTimelineSummary(timeline([outside, priced, partial]), { from: 1, to: 2 }, 'cost').priceMeasurement,
+    ).toEqual(partialMeasurement(4, 500));
   });
 });
 

@@ -14,3 +14,10 @@ export const popoverGrid = css({
   gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))',
   gap: '6px',
 });
+
+export const mobileSessionSummaryHeader = css({
+  '& > button': {
+    minH: '44px',
+    minW: '44px',
+  },
+});

@@ -1,3 +1,4 @@
+import { type MergePreviewProof, parseMergePreviewProof } from '@ai-usage/report-core/merge-proof';
 import { MAX_PORTABLE_USAGE_BYTES } from '@ai-usage/report-core/portable-usage';
 import type { UsageEngineCommandCompletion, UsageEngineErrorCode } from '@ai-usage/usage-engine-control';
 import type { StagedUsageEngineHandoff } from '@ai-usage/usage-engine-control/handoff';
@@ -7,19 +8,14 @@ import { validateTrustedLocalRequest } from './local-request-trust.server';
 import { UsageEngineCommandCompletionError } from './usage-engine-command.server';
 
 const BYTE_COUNT_PATTERN = /^\d+$/;
-const SHA_256_DIGEST_PATTERN = /^[a-f0-9]{64}$/;
-const MAX_CONFIRMATION_TOKEN_BYTES = 128;
-const encoder = new TextEncoder();
 
 type InboxHandoffInput = StagedUsageEngineHandoff['input'];
 type ManualMergeCommand =
   | { readonly command: 'preview-merge'; readonly input: InboxHandoffInput }
-  | {
+  | ({
       readonly command: 'confirm-merge';
-      readonly confirmationToken: string;
-      readonly documentDigest: string;
       readonly input: InboxHandoffInput;
-    };
+    } & MergePreviewProof);
 type ManualMergeUploadResult = ManualOperationResult<unknown>;
 type ManualMergeUploadFailure = Extract<ManualMergeUploadResult, { readonly ok: false }>;
 
@@ -107,11 +103,7 @@ const readBoundedBody = async (request: Request, maxBytes: number): Promise<Boun
   return { bytes };
 };
 
-interface ParsedManualMergeAction {
-  readonly action: 'confirm' | 'preview';
-  readonly confirmationToken?: string;
-  readonly documentDigest?: string;
-}
+type ParsedManualMergeAction = { readonly action: 'preview' } | ({ readonly action: 'confirm' } & MergePreviewProof);
 
 const parseManualMergeAction = (request: Request): ParsedManualMergeAction | Response => {
   const action = request.headers.get('x-ai-usage-merge-action');
@@ -121,16 +113,15 @@ const parseManualMergeAction = (request: Request): ParsedManualMergeAction | Res
   if (action !== 'confirm') {
     return jsonFailure(400, 'InvalidAction', 'Choose preview or confirm for a manual import.');
   }
-  const documentDigest = request.headers.get('x-ai-usage-merge-digest') ?? '';
-  const confirmationToken = request.headers.get('x-ai-usage-merge-confirmation') ?? '';
-  if (
-    !SHA_256_DIGEST_PATTERN.test(documentDigest) ||
-    confirmationToken.length === 0 ||
-    encoder.encode(confirmationToken).byteLength > MAX_CONFIRMATION_TOKEN_BYTES
-  ) {
+  try {
+    const proof = parseMergePreviewProof({
+      confirmationToken: request.headers.get('x-ai-usage-merge-confirmation'),
+      documentDigest: request.headers.get('x-ai-usage-merge-digest'),
+    });
+    return { ...proof, action };
+  } catch {
     return jsonFailure(400, 'InvalidConfirmation', 'Manual import confirmation preconditions are invalid.');
   }
-  return { action, confirmationToken, documentDigest };
 };
 
 const engineFailurePresentation = {
@@ -162,9 +153,9 @@ const commandFor = (action: ParsedManualMergeAction, staged: StagedUsageEngineHa
   action.action === 'preview'
     ? { command: 'preview-merge', input: staged.input }
     : {
+        confirmationToken: action.confirmationToken,
+        documentDigest: action.documentDigest,
         command: 'confirm-merge',
-        confirmationToken: action.confirmationToken ?? '',
-        documentDigest: action.documentDigest ?? '',
         input: staged.input,
       };
 

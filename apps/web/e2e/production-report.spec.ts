@@ -4,19 +4,25 @@ import {
   HARNESS_FIXTURE_PRIVATE_PROMPT_SENTINEL,
   HARNESS_FIXTURE_PROVIDER_STDERR_SENTINEL,
 } from '@ai-usage/local-machine/testing/harness-home';
+import { collectionSourceDefinitions } from '@ai-usage/report-core';
 import type { Request } from '@playwright/test';
-import { expect, reportViewsFor, test } from './browser-test';
+import { expect, reportViewsFor, test, waitForFocusedReportSettled } from './browser-test';
+import { capturePlan073Smoke } from './plan073-smoke';
 import { encodeRpcResponseBody, isRpcPathname, RPC_ROUTE_GLOB, rpcStringFieldValues } from './rpc-test-transport';
 import { createServerStateNetworkTrace } from './server-state-network';
 
 const NON_EMPTY_ATTRIBUTE_PATTERN = /.+/;
+const API_VALUE_BUCKET_PATTERN = /API value: \$/;
+const PROCESSED_TOKEN_BUCKET_PATTERN = /Processed tokens: [0-9,]+ tokens$/;
 const SESSION_QUERY_FINGERPRINT_PATTERN = /^session-query-v1:[0-9a-f]{16}$/;
 const SESSION_NEIGHBOR_FINGERPRINT_PATTERN = /^session-neighbor-v1:[0-9a-f]{16}$/;
 const FOCUSED_OVERVIEW_FINGERPRINT_PREFIX = 'focused-overview-v1:';
 const PROJECT_COLUMN_PATTERN = /Project/;
 const SOURCES_URL_PATTERN = /\/sources$/;
 const SESSION_PAGE_PATH = '/rpc/session/page';
-const EXPECTED_ENABLED_SOURCE_COUNT = 7;
+const EXPECTED_ENABLED_SOURCE_COUNT = collectionSourceDefinitions.filter(
+  (definition) => definition.defaultEnabled,
+).length;
 const INITIAL_HTML_SECRET_SENTINELS = [
   HARNESS_FIXTURE_PRIVATE_PROMPT_SENTINEL,
   HARNESS_FIXTURE_CREDENTIAL_REMOTE_SENTINEL,
@@ -170,7 +176,8 @@ test('renders the report timeline on the initial production Overview', async ({ 
   const navigationResponse = await page.goto('/');
   await expect(page.locator('main[data-hydrated="true"]')).toBeVisible();
   const navigationToHydratedMs = performance.now() - navigationStartedAt;
-  const dateRange = page.getByRole('region', { name: 'Date range' });
+  const dateRange = page.getByRole('region', { name: 'Report period' });
+  const activity = page.getByRole('region', { name: 'Activity' });
   try {
     await expect(dateRange).toContainText('Jun 3 → Jul 03, 2026');
     await expect(dateRange).toContainText('Jul 03, 2026');
@@ -179,7 +186,7 @@ test('renders the report timeline on the initial production Overview', async ({ 
     overviewGate.resolve();
   }
   await expect(
-    dateRange.getByRole('button', { name: 'Inspect activity timeline. Use arrow keys to inspect days.' }),
+    activity.getByRole('button', { name: 'Inspect activity timeline. Use arrow keys to inspect days.' }),
   ).toBeVisible({ timeout: 5000 });
   await expect(page.getByText('No dated sessions match the current filters')).toHaveCount(0);
   expect(await page.evaluate(() => Reflect.get(globalThis, '__aiUsageFalseEmptyRange'))).toBe(false);
@@ -228,6 +235,45 @@ test('renders the report timeline on the initial production Overview', async ({ 
       serverStateCounts: serverStateTrace.counts(),
     })}\n`,
   );
+  serverStateTrace.dispose();
+});
+
+test('switches production Activity metrics without a business request', async ({ page }) => {
+  const serverStateTrace = createServerStateNetworkTrace(page);
+  await page.goto('/');
+  await waitForFocusedReportSettled(page);
+
+  const activity = page.getByRole('region', { name: 'Activity' });
+  const metricControl = activity.getByRole('group', { name: 'Activity metric' });
+  const apiValue = metricControl.getByRole('button', { exact: true, name: 'API value' });
+  const tokens = metricControl.getByRole('button', { exact: true, name: 'Tokens' });
+  const overview = page.locator('[data-report-overview]');
+  const firstBucket = activity.locator('[data-report-range-part="chart"]').getByRole('img').first();
+  await expect(apiValue).toHaveAttribute('aria-pressed', 'true');
+  await expect(firstBucket).toHaveAccessibleName(API_VALUE_BUCKET_PATTERN);
+  const costLabel = await firstBucket.getAttribute('aria-label');
+  const initialUrl = page.url();
+  await expect(overview).toHaveAttribute('data-report-revision', NON_EMPTY_ATTRIBUTE_PATTERN);
+  const revision = await overview.getAttribute('data-report-revision');
+  expect(revision).not.toBeNull();
+
+  serverStateTrace.checkpoint('activity-metric-toggle');
+  await tokens.click();
+  await expect(tokens).toHaveAttribute('aria-pressed', 'true');
+  await expect(firstBucket).toHaveAccessibleName(PROCESSED_TOKEN_BUCKET_PATTERN);
+  expect(await firstBucket.getAttribute('aria-label')).not.toBe(costLabel);
+
+  await apiValue.click();
+  await expect(apiValue).toHaveAttribute('aria-pressed', 'true');
+  await expect(firstBucket).toHaveAttribute('aria-label', costLabel ?? '');
+  expect(page.url()).toBe(initialUrl);
+  await expect(overview).toHaveAttribute('data-report-revision', revision ?? '');
+  expect(serverStateTrace.counts('activity-metric-toggle')).toEqual({
+    operations: {},
+    owners: {},
+    routeData: 0,
+    totalRpc: 0,
+  });
   serverStateTrace.dispose();
 });
 
@@ -298,12 +344,12 @@ test('records destination request counts and report DOM identity', async ({ page
   trace.checkpoint('destination-navigation');
 
   const views = reportViewsFor(page);
-  await views.getByRole('link', { exact: true, name: 'Breakdown' }).click();
-  await expect(page.getByText('By model', { exact: true })).toBeVisible();
+  await views.getByRole('link', { exact: true, name: 'Analysis' }).click();
+  await expect(page.getByRole('heading', { exact: true, name: 'Models' })).toBeVisible();
   await views.getByRole('link', { exact: true, name: 'Sessions' }).click();
   await expect(page.locator('[data-session-surface="desktop"]')).toBeVisible();
   await views.getByRole('link', { exact: true, name: 'Overview' }).click();
-  await expect(page.getByRole('heading', { level: 2, name: 'Advanced analysis' })).toBeVisible();
+  await expect(page.getByRole('heading', { level: 3, name: 'Advanced analysis' })).toBeVisible();
 
   await expect(workspace).toHaveAttribute('data-plan-069-workspace', 'baseline');
   const graphIdentity = await page.locator('[data-report-range-part="chart"]').getAttribute('data-plan-069-graph');
@@ -350,7 +396,7 @@ test('records filter range sort and history request counts without route data', 
   const rangedSessionsResponse = page.waitForResponse(
     (response) => new URL(response.url()).pathname === SESSION_PAGE_PATH,
   );
-  await page.getByRole('region', { name: 'Date range' }).getByRole('button', { exact: true, name: '7d' }).click();
+  await page.getByRole('region', { name: 'Report period' }).getByRole('button', { exact: true, name: '7d' }).click();
   await rangedSessionsResponse;
   await expect.poll(() => new URL(page.url()).searchParams.get('range')).not.toBeNull();
   await expect(page.locator('[data-report-refresh-pending]')).toHaveCount(0);
@@ -414,7 +460,7 @@ test('records one exact expiry and one failed background refresh while retaining
   });
 
   trace.checkpoint('expiry');
-  await page.getByRole('region', { name: 'Date range' }).getByRole('button', { exact: true, name: '7d' }).click();
+  await page.getByRole('region', { name: 'Report period' }).getByRole('button', { exact: true, name: '7d' }).click();
   await expect(page.locator('[data-report-refresh-error]')).toBeVisible();
   await expect(completeOutput).toBeVisible();
   await expect(workspace).toHaveAttribute('data-plan-069-workspace', 'last-good');
@@ -424,7 +470,7 @@ test('records one exact expiry and one failed background refresh while retaining
 
   interceptedOutcome = 'QueryFailed';
   trace.checkpoint('background-failure');
-  const chartOptions = page.getByRole('region', { name: 'Date range' }).locator('details[aria-label="Chart options"]');
+  const chartOptions = page.getByRole('region', { name: 'Activity' }).locator('details[aria-label="Explore activity"]');
   await chartOptions.locator('summary').click();
   await chartOptions.getByRole('radio', { exact: true, name: 'Model' }).click();
   await expect(page.locator('[data-report-refresh-error]')).toBeVisible();
@@ -468,13 +514,14 @@ test('provides one accessible responsive source-control surface', async ({ page 
 
 test('keeps the Report range mounted while focused chart options refresh', async ({ page }) => {
   await page.goto('/');
-  const dateRange = page.getByRole('region', { name: 'Date range' });
-  const timeline = dateRange.getByRole('button', {
+  const dateRange = page.getByRole('region', { name: 'Report period' });
+  const activity = page.getByRole('region', { name: 'Activity' });
+  const timeline = activity.getByRole('button', {
     name: 'Inspect activity timeline. Use arrow keys to inspect days.',
   });
   await expect(timeline).toBeVisible({ timeout: 5000 });
   const advancedAnalysis = page.getByRole('region', { name: 'Advanced analysis' });
-  await expect(advancedAnalysis.getByRole('heading', { level: 3, name: 'Punchcard' })).toBeVisible();
+  await expect(advancedAnalysis.getByRole('heading', { level: 4, name: 'Punchcard' })).toBeVisible();
   await dateRange.evaluate((element) => element.setAttribute('data-stability-marker', 'original-range'));
   await timeline.evaluate((element) => element.setAttribute('data-stability-marker', 'original-chart'));
   await page.route(RPC_ROUTE_GLOB, async (route) => {
@@ -483,20 +530,20 @@ test('keeps the Report range mounted while focused chart options refresh', async
     });
     await route.continue();
   });
-  const chartOptions = dateRange.locator('details[aria-label="Chart options"]');
+  const chartOptions = activity.locator('details[aria-label="Explore activity"]');
   await chartOptions.locator('summary').click();
   await chartOptions.getByRole('radio', { exact: true, name: 'Model' }).click();
   await expect(dateRange).toHaveAttribute('data-stability-marker', 'original-range', { timeout: 1000 });
   await expect(timeline).toHaveAttribute('data-stability-marker', 'original-chart');
   await expect(dateRange).toHaveAttribute('data-stability-marker', 'original-range');
   await expect(timeline).toHaveAttribute('data-stability-marker', 'original-chart');
-  await expect(advancedAnalysis.getByRole('heading', { level: 3, name: 'Punchcard' })).toBeVisible();
+  await expect(advancedAnalysis.getByRole('heading', { level: 4, name: 'Punchcard' })).toBeVisible();
 });
 
 test('keeps the last complete report visible while the report range changes', async ({ page }) => {
   await page.goto('/');
-  const dateRange = page.getByRole('region', { name: 'Date range' });
-  const timeline = dateRange.getByRole('button', {
+  const dateRange = page.getByRole('region', { name: 'Report period' });
+  const timeline = page.getByRole('region', { name: 'Activity' }).getByRole('button', {
     name: 'Inspect activity timeline. Use arrow keys to inspect days.',
   });
   await expect(timeline).toBeVisible({ timeout: 5000 });
@@ -519,7 +566,8 @@ test('keeps the last complete report visible while the report range changes', as
     overviewGate.resolve();
   }
 
-  await expect(dateRange.getByRole('textbox', { name: 'Start date' })).toHaveValue('Jun 26, 2026');
+  await expect(dateRange.getByRole('button', { exact: true, name: '7d' })).toHaveAttribute('aria-pressed', 'true');
+  await expect(dateRange).toContainText('Jun 26 → Jul 03, 2026 · 7 days');
   await expect(timeline).toHaveAttribute('data-stability-marker', 'original-chart');
 });
 
@@ -638,9 +686,9 @@ test('hydrates and automatically pages Sessions through the production revision 
 
   await page.keyboard.press('Escape');
   await reportViewsFor(page).getByRole('link', { exact: true, name: 'Overview' }).click();
-  await expect(page.getByRole('heading', { level: 2, name: 'Advanced analysis' })).toBeVisible();
+  await expect(page.getByRole('heading', { level: 3, name: 'Advanced analysis' })).toBeVisible();
   await expect(page.locator('summary').filter({ hasText: 'Advanced analysis' })).toHaveCount(0);
-  await expect(page.getByRole('heading', { level: 3, name: 'Punchcard' })).toBeVisible();
+  await expect(page.getByRole('heading', { level: 4, name: 'Punchcard' })).toBeVisible();
   await expect.poll(overviewResponseCount).toBe(1);
 
   const responseBodies = await Promise.all(rpcResponses.map(({ body }) => body));
@@ -702,7 +750,7 @@ test('opens Claude chronology and recorded source control from the production re
   await expect(claudeAnalysis).toContainText('Recorded duration unavailable');
 });
 
-test('automatically pages mobile Sessions while scrolling', async ({ page }) => {
+test('automatically pages mobile Sessions and keeps modal analysis usable', async ({ page }, testInfo) => {
   await page.setViewportSize({ height: 844, width: 390 });
   await page.goto('/?tab=sessions');
 
@@ -728,4 +776,71 @@ test('automatically pages mobile Sessions while scrolling', async ({ page }) => 
     .toBe(204);
   expect(await summaries.locator('[data-session-row-id][data-index]').count()).toBeLessThanOrEqual(600);
   await expect(page.getByRole('button', { name: 'Load more sessions' })).toHaveCount(0);
+
+  const rootTrigger = summaries.getByRole('button', { exact: true, name: 'Inspect session: Implement fixture root' });
+  await expect(rootTrigger).toBeVisible();
+  await rootTrigger.focus();
+  await rootTrigger.click();
+
+  const drawer = page.getByRole('dialog', { name: 'Session details' });
+  const drawerBody = drawer.locator('[data-session-drawer-body]');
+  const drawerHeader = drawer.locator('[data-session-drawer-header]');
+  await expect(drawer).toBeVisible();
+  await expect(drawer).toHaveAttribute('aria-modal', 'true');
+  const analyzeButton = drawer.getByRole('button', { name: 'Analyze root session chronology' });
+  await expect(analyzeButton).toBeVisible();
+  const headerActionGeometry = await drawerHeader.locator('button:visible').evaluateAll((elements) =>
+    elements.map((element) => {
+      const rect = element.getBoundingClientRect();
+      return { height: Math.round(rect.height), width: Math.round(rect.width) };
+    }),
+  );
+  expect(headerActionGeometry).toHaveLength(4);
+  expect(headerActionGeometry.every(({ height, width }) => height >= 44 && width >= 44)).toBe(true);
+
+  await analyzeButton.click();
+  const analysis = drawer.getByRole('region', { name: 'Session analysis' });
+  await expect(analysis).toBeVisible();
+  await expect(drawer.getByRole('button', { name: 'Hide session chronology' })).toBeVisible();
+  await expect(drawer.locator('[aria-label="Token anatomy"]')).toBeVisible();
+  const bodyControlGeometry = await drawerBody
+    .locator('button:visible, a[href]:visible, summary:visible, input:visible, select:visible, textarea:visible')
+    .evaluateAll((elements) =>
+      elements.map((element) => {
+        const rect = element.getBoundingClientRect();
+        return {
+          height: Math.round(rect.height),
+          name: element.getAttribute('aria-label') ?? element.textContent?.trim() ?? '',
+          ordinaryAction: element.matches('button, a[href]'),
+          tagName: element.tagName,
+          width: Math.round(rect.width),
+        };
+      }),
+    );
+  expect(bodyControlGeometry.length).toBeGreaterThan(0);
+  expect(
+    bodyControlGeometry.filter(({ height, ordinaryAction, width }) =>
+      ordinaryAction ? height < 44 || width < 44 : height < 44,
+    ),
+  ).toEqual([]);
+  const analysisGeometry = await drawerBody.evaluate((element) => ({
+    clientHeight: element.clientHeight,
+    scrollHeight: element.scrollHeight,
+  }));
+  expect(analysisGeometry.scrollHeight).toBeGreaterThan(analysisGeometry.clientHeight);
+  await expect
+    .poll(
+      async () =>
+        await drawerBody.evaluate((element) => {
+          element.scrollTop = element.scrollHeight;
+          return element.scrollTop;
+        }),
+    )
+    .toBeGreaterThan(0);
+  await expect(drawer.getByRole('button', { name: 'Close session details' })).toBeVisible();
+  await capturePlan073Smoke(page, testInfo, 'step7-drawer-analysis-390x844-light');
+
+  await page.keyboard.press('Escape');
+  await expect(drawer).toBeHidden();
+  await expect(rootTrigger).toBeFocused();
 });

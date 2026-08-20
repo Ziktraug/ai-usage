@@ -15,6 +15,7 @@ import {
 } from '@ai-usage/report-core/session-query';
 import type { OriginProvenanceKind } from '@ai-usage/report-core/types';
 import {
+  tokenTotal,
   usageModelSegmentApiPriceMeasurement,
   usageRowApiPriceMeasurement,
   usageRowModelApiPriceMeasurements,
@@ -164,7 +165,8 @@ export const buildCalendarHeatmapData = (rows: DashboardRow[], now = new Date())
 };
 
 export type TimelineDimension = FocusedTimelineDimension;
-export type TimelineValue = 'cost' | 'sessions' | 'share';
+export type TimelineValue = 'cost' | 'sessions' | 'share' | 'tokens';
+export type ResolvedTimelineMetric = Exclude<TimelineValue, 'share'>;
 
 export interface TimelineDomain {
   maxDay: Date;
@@ -175,6 +177,7 @@ export interface TimelineBucketEntry {
   cost: number;
   priceMeasurement: ApiPriceMeasurement;
   sessions: number;
+  tokens: number;
 }
 
 export interface TimelineGapCause {
@@ -186,6 +189,7 @@ export interface TimelineGap {
   causes: TimelineGapCause[];
   priceMeasurement: ApiPriceMeasurement;
   sessions: number;
+  tokens: number;
   total: number;
 }
 
@@ -194,6 +198,7 @@ export interface TimelineBucket {
   date: Date;
   priceMeasurement: ApiPriceMeasurement;
   sessions: number;
+  tokens: number;
   total: number;
   unclassified: TimelineGap | null;
 }
@@ -204,6 +209,7 @@ export interface TimelineSeries {
   memberKeys?: readonly string[];
   priceMeasurement: ApiPriceMeasurement;
   sessions: number;
+  tokens: number;
   total: number;
 }
 export type MigrationSeries = TimelineSeries;
@@ -212,10 +218,12 @@ export interface TimelineData {
   dimension: TimelineDimension;
   first: Date;
   grandSessions: number;
+  grandTokens: number;
   grandTotal: number;
   granularity: MigrationGranularity;
   last: Date;
   maxBucketSessions: number;
+  maxBucketTokens: number;
   maxBucketTotal: number;
   priceMeasurement: ApiPriceMeasurement;
   series: TimelineSeries[];
@@ -228,6 +236,9 @@ export interface ModelMigrationData extends Omit<TimelineData, 'buckets' | 'dime
   buckets: MigrationBucket[];
   dimension: 'model';
 }
+
+const processedTokensForTimeline = (tokens: Pick<DashboardRow, 'tokCr' | 'tokCw' | 'tokIn' | 'tokOut'>): number =>
+  tokenTotal({ cr: tokens.tokCr, cw: tokens.tokCw, in: tokens.tokIn, out: tokens.tokOut });
 
 const bucketStartFor = (date: Date, granularity: MigrationGranularity) => {
   const day = startOfDay(date);
@@ -293,6 +304,7 @@ const timelineContributionsForRow = (
         label: identity.label,
         priceMeasurement,
         sessions: 1,
+        tokens: processedTokensForTimeline(row),
       },
     ];
   }
@@ -305,6 +317,7 @@ const timelineContributionsForRow = (
     label: contribution.key,
     priceMeasurement: priceMeasurements.get(contribution.key) ?? usageModelSegmentApiPriceMeasurement(contribution),
     sessions: contribution.key === sessionKey ? 1 : 0,
+    tokens: processedTokensForTimeline(contribution),
   }));
 };
 
@@ -322,6 +335,7 @@ const timelineSeriesFrom = (
       label: labels.get(key) ?? key,
       priceMeasurement: value.priceMeasurement,
       sessions: value.sessions,
+      tokens: value.tokens,
       total: value.cost,
     }));
   }
@@ -339,6 +353,7 @@ const timelineSeriesFrom = (
       cost: 0,
       priceMeasurement: apiPriceMeasurement({ costKnown: true, freshTokens: 0, knownCost: 0 }),
       sessions: 0,
+      tokens: 0,
     };
     for (const key of memberKeys) {
       const entry = bucket.byKey.get(key);
@@ -351,9 +366,10 @@ const timelineSeriesFrom = (
         entry.priceMeasurement,
       ]);
       aggregateEntry.sessions += entry.sessions;
+      aggregateEntry.tokens += entry.tokens;
       bucket.byKey.delete(key);
     }
-    if (aggregateEntry.sessions > 0 || aggregateEntry.cost > 0) {
+    if (aggregateEntry.sessions > 0 || aggregateEntry.cost > 0 || aggregateEntry.tokens > 0) {
       bucket.byKey.set(aggregateKey, aggregateEntry);
     }
   }
@@ -363,11 +379,13 @@ const timelineSeriesFrom = (
       cost: total.cost + value.cost,
       priceMeasurement: combineApiPriceMeasurements([total.priceMeasurement, value.priceMeasurement]),
       sessions: total.sessions + value.sessions,
+      tokens: total.tokens + value.tokens,
     }),
     {
       cost: 0,
       priceMeasurement: apiPriceMeasurement({ costKnown: true, freshTokens: 0, knownCost: 0 }),
       sessions: 0,
+      tokens: 0,
     },
   );
   return [
@@ -376,6 +394,7 @@ const timelineSeriesFrom = (
       label: labels.get(key) ?? key,
       priceMeasurement: value.priceMeasurement,
       sessions: value.sessions,
+      tokens: value.tokens,
       total: value.cost,
     })),
     {
@@ -384,6 +403,7 @@ const timelineSeriesFrom = (
       memberKeys,
       priceMeasurement: aggregateTotal.priceMeasurement,
       sessions: aggregateTotal.sessions,
+      tokens: aggregateTotal.tokens,
       total: aggregateTotal.cost,
     },
   ];
@@ -407,6 +427,7 @@ const addTimelineGapForRow = (current: TimelineGap | null, row: DashboardRow): T
       measurement,
     ]),
     sessions: (current?.sessions ?? 0) + 1,
+    tokens: (current?.tokens ?? 0) + processedTokensForTimeline(row),
     total: (current?.total ?? 0) + measurement.knownCost,
   };
 };
@@ -444,6 +465,7 @@ export const buildTimelineData = (
       byKey: new Map(),
       priceMeasurement: apiPriceMeasurement({ costKnown: true, freshTokens: 0, knownCost: 0 }),
       sessions: 0,
+      tokens: 0,
       total: 0,
       unclassified: null,
     });
@@ -470,11 +492,12 @@ export const buildTimelineData = (
       bucket.unclassified = addTimelineGapForRow(bucket.unclassified, row);
       unclassified = addTimelineGapForRow(unclassified, row);
       bucket.total += gapMeasurement.knownCost;
+      bucket.tokens += processedTokensForTimeline(row);
       bucket.priceMeasurement = combineApiPriceMeasurements([bucket.priceMeasurement, gapMeasurement]);
       bucket.sessions++;
       continue;
     }
-    for (const { cost, key, label, priceMeasurement, sessions } of timelineContributionsForRow(
+    for (const { cost, key, label, priceMeasurement, sessions, tokens } of timelineContributionsForRow(
       row,
       options.dimension,
       campaignIdentities.get(row.rowId),
@@ -488,23 +511,28 @@ export const buildTimelineData = (
         cost: 0,
         priceMeasurement: apiPriceMeasurement({ costKnown: true, freshTokens: 0, knownCost: 0 }),
         sessions: 0,
+        tokens: 0,
       };
       entry.cost += cost;
       entry.priceMeasurement = combineApiPriceMeasurements([entry.priceMeasurement, priceMeasurement]);
       entry.sessions += sessions;
+      entry.tokens += tokens;
       bucket.byKey.set(key, entry);
       bucket.total += cost;
       bucket.priceMeasurement = combineApiPriceMeasurements([bucket.priceMeasurement, priceMeasurement]);
       bucket.sessions += sessions;
+      bucket.tokens += tokens;
 
       const totalEntry = totals.get(key) ?? {
         cost: 0,
         priceMeasurement: apiPriceMeasurement({ costKnown: true, freshTokens: 0, knownCost: 0 }),
         sessions: 0,
+        tokens: 0,
       };
       totalEntry.cost += cost;
       totalEntry.priceMeasurement = combineApiPriceMeasurements([totalEntry.priceMeasurement, priceMeasurement]);
       totalEntry.sessions += sessions;
+      totalEntry.tokens += tokens;
       totals.set(key, totalEntry);
     }
   }
@@ -516,6 +544,7 @@ export const buildTimelineData = (
   );
   const grandTotal = ranked.reduce((sum, [, value]) => sum + value.cost, unclassified?.total ?? 0);
   const grandSessions = ranked.reduce((sum, [, value]) => sum + value.sessions, unclassified?.sessions ?? 0);
+  const grandTokens = ranked.reduce((sum, [, value]) => sum + value.tokens, unclassified?.tokens ?? 0);
   const priceMeasurement = combineApiPriceMeasurements([
     ...ranked.map(([, value]) => value.priceMeasurement),
     ...(unclassified ? [unclassified.priceMeasurement] : []),
@@ -523,14 +552,17 @@ export const buildTimelineData = (
   const series = timelineSeriesFrom(ranked, buckets, labels);
   const maxBucketTotal = buckets.reduce((max, bucket) => Math.max(max, bucket.total), 0);
   const maxBucketSessions = buckets.reduce((max, bucket) => Math.max(max, bucket.sessions), 0);
+  const maxBucketTokens = buckets.reduce((max, bucket) => Math.max(max, bucket.tokens), 0);
 
   return {
     buckets,
     dimension: options.dimension,
     grandTotal,
     grandSessions,
+    grandTokens,
     granularity: options.granularity,
     maxBucketSessions,
+    maxBucketTokens,
     maxBucketTotal,
     priceMeasurement,
     series,

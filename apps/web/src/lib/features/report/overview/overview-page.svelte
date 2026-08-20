@@ -4,128 +4,138 @@
     advancedAnalysisContent,
     advancedAnalysisHeader,
     advancedAnalysisHeaderText,
+    editorialSection,
     emptyPanel,
     overviewGrid,
+    sectionDivider,
     twoColumns,
   } from '@ai-usage/design-system/report';
 </script>
 
 <script lang="ts">
-  import type {
-    FocusedMachineFreshness,
-    FocusedOverviewResult,
-    FocusedOverviewSessionItem,
-    FocusedTimelineSeries,
-  } from '@ai-usage/report-core/focused-report-query';
+  import type { FocusedOverviewResult, FocusedOverviewSessionItem } from '@ai-usage/report-core/focused-report-query';
   import type { LocalTimeCell } from '@ai-usage/report-core/session-query';
-  import type { DashboardDateRangeSearch, DashboardSearch } from '../../../../dashboard-search';
-  import type { MigrationGranularity, TimelineDimension, TimelineValue } from '../../../../overview-model';
-  import type { SearchNavigationIntent } from '../../../foundation/navigation/search-intent';
+  import type { ComponentProps } from 'svelte';
+  import type { DashboardDateRangeSearch } from '../../../../dashboard-search';
+  import type { ProviderStatusView } from '../../../../provider-status-model';
+  import type ActivityExplorer from '../range/activity-explorer.svelte';
   import ActivityHeatmap from './activity-heatmap.svelte';
-  import OverviewHero from './overview-hero.svelte';
+  import ExecutiveOverview from './executive-overview.svelte';
+  import { buildExecutiveOverviewModel } from './executive-overview-model';
+  import ProviderStatus from './provider-status.svelte';
   import Punchcard from './punchcard.svelte';
   import Records from './records.svelte';
   import SessionShape from './session-shape.svelte';
-  import type { MachineSeriesPresenter } from './timeline-model';
   import TokenAnatomy from './token-anatomy.svelte';
-  import { overviewHasContent } from './view-model';
 
   interface Props {
-    activeSeriesKeys?: readonly string[];
-    dimension?: TimelineDimension;
+    activity?: ComponentProps<typeof ActivityExplorer>;
     /** Headline value of the window being dragged, or null when the brush is settled. */
     draggedWindowApiValue?: number | null;
-    freshness?: FocusedMachineFreshness;
-    granularity?: MigrationGranularity;
-    machineFreshnessStatus?: string | null;
-    navigate?: SearchNavigationIntent<DashboardSearch>;
-    onDimensionFilter?: (dimension: TimelineDimension, key: string) => void;
-    onOptionsChange?: (options: {
-      dimension: TimelineDimension;
-      granularity: MigrationGranularity;
-      value: TimelineValue;
-    }) => void;
-    onRangeChange?: (range: DashboardDateRangeSearch) => void;
+    modelsHref: string;
+    onClearFilters?: () => void;
+    onOpenModels: () => void;
+    onOpenQuotaHistory?: () => void;
     onSelectDay?: (date: string) => void;
     onSelectSession?: (item: FocusedOverviewSessionItem) => void;
     onSelectTimeCell?: (cell: LocalTimeCell) => void;
-    presentCampaignSeries?: (series: FocusedTimelineSeries) => FocusedTimelineSeries;
-    presentMachineSeries?: MachineSeriesPresenter;
     presentSessionItem?: (item: FocusedOverviewSessionItem) => FocusedOverviewSessionItem;
+    providers?: readonly ProviderStatusView[];
     range: DashboardDateRangeSearch;
     result: FocusedOverviewResult;
-    value?: TimelineValue;
+    totalSessionCount: number;
   }
 
-  const unchangedCampaignSeries = (series: FocusedTimelineSeries): FocusedTimelineSeries => series;
-  const unchangedMachineSeries: MachineSeriesPresenter = (_key, label) => ({ freshness: 'unavailable', label });
   const unchangedSessionItem = (item: FocusedOverviewSessionItem): FocusedOverviewSessionItem => item;
 
   let {
-    activeSeriesKeys = [],
-    dimension,
+    activity,
     draggedWindowApiValue = null,
-    freshness,
-    granularity = 'day',
-    machineFreshnessStatus = null,
-    navigate,
-    onDimensionFilter = () => undefined,
-    onOptionsChange = () => undefined,
-    onRangeChange = () => undefined,
+    modelsHref,
+    onClearFilters = () => undefined,
+    onOpenModels,
+    onOpenQuotaHistory,
     onSelectDay = () => undefined,
     onSelectSession = () => undefined,
     onSelectTimeCell = () => undefined,
-    presentCampaignSeries = unchangedCampaignSeries,
-    presentMachineSeries = unchangedMachineSeries,
     presentSessionItem = unchangedSessionItem,
+    providers = [],
     range,
     result,
-    value = 'cost',
+    totalSessionCount,
   }: Props = $props();
 
-  const activeDimension = $derived(dimension ?? result.timeline?.dimension ?? 'harness');
+  const executiveModel = $derived(
+    buildExecutiveOverviewModel({
+      executive: result.view.executive,
+      previousSummary: result.view.previousSummary,
+      rangeMode: range.mode,
+      summary: result.summary,
+      topItems: result.view.topSessions,
+      totalSessionCount,
+    }),
+  );
 </script>
 
 <div class={overviewGrid} data-report-overview data-report-revision={result.revision}>
-  {#if overviewHasContent(result)}
-    <OverviewHero {draggedWindowApiValue} {range} summary={result.summary} />
-    <ActivityHeatmap heatmap={result.view.heatmap} {onSelectDay} />
-    <TokenAnatomy summary={result.summary} />
-    <Records
-      {onSelectDay}
-      {onSelectSession}
-      {presentSessionItem}
-      records={result.view.records}
-      topSessions={result.view.topSessions}
-    />
-    <section aria-labelledby="advanced-analysis-title" class={advancedAnalysis} data-overview-advanced-analysis>
-      <header class={advancedAnalysisHeader}>
-        <h2 id="advanced-analysis-title">Advanced analysis</h2>
-        <span class={advancedAnalysisHeaderText}
-          >{result.view.advancedSummary?.summary ?? 'Session shape and weekly/hourly activity'}</span
-        >
+  <ExecutiveOverview
+    {...(activity === undefined ? {} : { activity })}
+    {draggedWindowApiValue}
+    model={executiveModel}
+    {modelsHref}
+    {onClearFilters}
+    {onOpenModels}
+  />
+  {#if executiveModel.emptyState === null}
+    <section aria-labelledby="overview-investigate-title" class={editorialSection}>
+      <header>
+        <h2 id="overview-investigate-title">Investigate</h2>
+        <p>Open the sessions, rhythms, and token structure behind the executive answer.</p>
       </header>
-      <div class={advancedAnalysisContent}>
-        {#if result.view.advancedSummary}
-          <div class={twoColumns}>
-            {#if result.view.advancedSummary.hasSessionShape}
-              <SessionShape
-                advancedSummary={result.view.advancedSummary}
-                {onSelectSession}
-                {presentSessionItem}
-                shape={result.view.sessionShape}
-              />
-            {/if}
-            {#if result.view.advancedSummary.hasPunchcard}
-              <Punchcard {onSelectTimeCell} punchcard={result.view.punchcard} />
-            {/if}
-          </div>
-        {:else}
-          <p class={emptyPanel}>No advanced analysis is available for these filters.</p>
-        {/if}
-      </div>
+      <Records
+        {onSelectDay}
+        {onSelectSession}
+        {presentSessionItem}
+        records={result.view.records}
+        topSessions={result.view.topSessions}
+      />
+      <ActivityHeatmap heatmap={result.view.heatmap} {onSelectDay} />
+      <TokenAnatomy summary={result.summary} />
+      <section aria-labelledby="advanced-analysis-title" class={advancedAnalysis} data-overview-advanced-analysis>
+        <header class={advancedAnalysisHeader}>
+          <h3 id="advanced-analysis-title">Advanced analysis</h3>
+          <span class={advancedAnalysisHeaderText}
+            >{result.view.advancedSummary?.summary ?? 'Session shape and weekly/hourly activity'}</span
+          >
+        </header>
+        <div class={advancedAnalysisContent}>
+          {#if result.view.advancedSummary}
+            <div class={twoColumns}>
+              {#if result.view.advancedSummary.hasSessionShape}
+                <SessionShape
+                  advancedSummary={result.view.advancedSummary}
+                  {onSelectSession}
+                  {presentSessionItem}
+                  shape={result.view.sessionShape}
+                />
+              {/if}
+              {#if result.view.advancedSummary.hasPunchcard}
+                <Punchcard {onSelectTimeCell} punchcard={result.view.punchcard} />
+              {/if}
+            </div>
+          {:else}
+            <p class={emptyPanel}>No advanced analysis is available for these filters.</p>
+          {/if}
+        </div>
+      </section>
     </section>
-  {:else}
-    <p class={emptyPanel}>No sessions match the selected report range and filters.</p>
+  {/if}
+  {#if providers.length > 0}
+    <div class={sectionDivider}>
+      <ProviderStatus
+        {...(onOpenQuotaHistory === undefined ? {} : { onOpenHistory: onOpenQuotaHistory })}
+        {providers}
+      />
+    </div>
   {/if}
 </div>

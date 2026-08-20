@@ -27,6 +27,10 @@ export interface ManualTransferClient {
   ): Promise<ManualOperationResult<UsageEngineMergePreviewOutput>>;
 }
 
+// Which manual-transfer action is in flight. The progress UI needs it because preview and confirm
+// share one transport but make very different promises about local data.
+export type ManualTransferOperation = 'confirm' | 'export' | 'preview';
+
 export type ManualUploadProgress =
   | {
       readonly fileName: string;

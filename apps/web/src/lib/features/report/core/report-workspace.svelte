@@ -9,15 +9,15 @@
   let {
     children,
     hasOutput,
+    onRetry = () => Promise.resolve(),
     pending,
     refreshError = null,
-    status,
   }: {
     children?: Snippet;
     hasOutput: boolean;
+    onRetry?: () => Promise<void>;
     pending: boolean;
     refreshError?: string | null;
-    status?: Snippet;
   } = $props();
 
   const layout = css({ display: 'flex', flexDirection: 'column' });
@@ -29,7 +29,7 @@
   const staleOutput = css({ opacity: 0.5, transitionDelay: '180ms' });
   const staleAttributes = $derived(pending ? ({ 'aria-busy': 'true', 'data-report-stale': 'true' } as const) : {});
   const panel = css({ minW: 0, _focusVisible: { outline: '2px solid token(colors.accent)', outlineOffset: '4px' } });
-  const unavailablePanel = css({ border: '1px solid token(colors.border)', borderRadius: 'lg', p: '24px' });
+  const unavailablePanel = css({ border: '1px solid token(colors.line)', borderRadius: 'lg', p: '24px' });
   const unavailableText = css({ color: 'muted', fontSize: '13px' });
 </script>
 
@@ -54,10 +54,5 @@
       </section>
     {/if}
   </div>
-  {#if status}
-    <div data-report-secondary-status>
-      {@render status()}
-    </div>
-  {/if}
-  <ReportStatus {pending} {refreshError} />
+  <ReportStatus {onRetry} {pending} {refreshError} />
 </div>

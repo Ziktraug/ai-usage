@@ -16,7 +16,7 @@
     gridTemplateColumns: { base: '1fr', sm: 'repeat(2, minmax(0, 1fr))', lg: 'repeat(4, minmax(0, 1fr))' },
   });
   const metric = css({
-    border: '1px solid token(colors.border)',
+    border: '1px solid token(colors.line)',
     borderRadius: 'md',
     display: 'grid',
     gap: '4px',

@@ -12,6 +12,8 @@ interface SvelteServerModule {
   render(component: Component, options?: { props?: Record<string, unknown> }): { body: string };
 }
 
+const RECORD_DISCLOSURE_PATTERN = /aria-hidden="true" class="[^"]+">↗<\/span>/;
+
 const componentFrom = (loaded: unknown): Component => {
   if (typeof loaded !== 'object' || loaded === null || !('default' in loaded) || typeof loaded.default !== 'function') {
     throw new Error('Overview fixture did not expose a Svelte component');
@@ -59,14 +61,28 @@ const focusedOverview = () => {
   });
 };
 
-describe('P2 Overview Svelte surfaces', () => {
-  test('renders meaningful report content and all primary P2 regions during SSR', () => {
-    const { body } = render(fixture, { props: { result: focusedOverview() } });
+describe('decision-first Overview Svelte surfaces', () => {
+  test('renders the executive answer before evidence and investigation during SSR', () => {
+    const result = focusedOverview();
+    const { body } = render(fixture, { props: { result } });
 
     expect(body).toContain('data-report-overview');
     expect(body).toContain('data-report-revision="p2-fixture-revision"');
+    expect(body).toContain('data-executive-kpi');
+    expect(body).toContain('data-executive-chart');
+    expect(body).toContain('data-executive-metrics');
     expect(body).toContain('Estimated API-equivalent value');
-    expect(body).toContain('Value bases');
+    expect(body).toContain('This estimate covers work in the last 30 days.');
+    expect(body).toContain('API value by harness');
+    expect(body).toContain('Processed tokens');
+    expect(body).toContain('Cache volume');
+    expect(body).toContain('Output tokens');
+    expect(body).toContain('Pricing coverage');
+    expect(body).toContain('Open Analysis');
+    expect(body).not.toContain('Value bases');
+    expect(body).not.toContain('Reported actual spend');
+    expect(body).not.toContain('Actual recorded cost');
+    expect(body).not.toContain('Subscription value');
     expect(body).toContain('Token anatomy');
     expect(body).not.toContain('Provider status');
     expect(body).toContain('Rhythm');
@@ -78,6 +94,70 @@ describe('P2 Overview Svelte surfaces', () => {
     expect(body).toContain('Campaign · 3 sessions');
     expect(body).not.toContain('3 campaign sessions');
     expect(body).not.toContain('Loading report');
+
+    const readingOrder = [
+      'data-executive-kpi',
+      'data-executive-chart',
+      'data-executive-metrics',
+      'Open Analysis',
+      'Investigate',
+      'Top sessions',
+      'Rhythm',
+      'Token anatomy',
+      'Advanced analysis',
+    ].map((marker) => body.indexOf(marker));
+    expect(readingOrder.every((position) => position >= 0)).toBe(true);
+    expect(readingOrder).toEqual([...readingOrder].sort((left, right) => left - right));
+    expect(body).not.toContain('>Top session</span>');
+    for (const item of result.view.topSessions) {
+      expect(body).toContain(`Open details for ${item.label}.`);
+    }
+    const firstTopSession = result.view.topSessions[0];
+    if (!firstTopSession) {
+      throw new Error('Expected the Overview fixture to include a top session');
+    }
+    expect(body.split(`Open details for ${firstTopSession.label}.`).length - 1).toBe(1);
+    expect(body).toContain('Open activity for');
+    expect(body).not.toContain('aria-label="Open details for');
+    expect(body).toMatch(RECORD_DISCLOSURE_PATTERN);
+  });
+
+  test('distinguishes no local data from a filtered zero result', () => {
+    const emptyResult = focusedOverview();
+    const summary = {
+      ...emptyResult.summary,
+      cacheRead: 0,
+      cacheWrite: 0,
+      fresh: 0,
+      meanCost: 0,
+      pricedSessions: 0,
+      priceMeasurement: { knownCost: 0, state: 'measured' as const, unpricedFreshTokens: 0 },
+      sessionCount: 0,
+      tokIn: 0,
+      tokOut: 0,
+      tools: 0,
+      totalCost: 0,
+      turns: 0,
+    };
+    const result = {
+      ...emptyResult,
+      summary,
+      view: {
+        ...emptyResult.view,
+        executive: { harnesses: [], models: [] },
+        topSessions: [],
+      },
+    };
+
+    const noLocal = render(fixture, { props: { result, totalSessionCount: 0 } }).body;
+    const filtered = render(fixture, { props: { result, totalSessionCount: 12 } }).body;
+
+    expect(noLocal).toContain('No local usage yet');
+    expect(noLocal).toContain('Open Sources');
+    expect(noLocal).not.toContain('Clear filters');
+    expect(filtered).toContain('No sessions match these filters');
+    expect(filtered).toContain('Clear filters');
+    expect(filtered).not.toContain('Open Sources');
   });
 
   test('retains campaign-shaped series identities and does not relabel human roots as subagents', () => {
@@ -137,7 +217,17 @@ describe('P2 corrected interactive SSR contracts', () => {
     const todayKey = toDateInputValue(new Date(todayDay.date));
     const result = {
       ...baseResult,
-      view: { ...baseResult.view, heatmap: { ...heatmap, todayKey } },
+      view: {
+        ...baseResult.view,
+        heatmap: {
+          ...heatmap,
+          todayKey,
+          weeks: heatmap.weeks.map((week) => ({
+            ...week,
+            days: week.days.map((day) => (day?.date === todayDay.date ? { ...day, sessions: 1 } : day)),
+          })),
+        },
+      },
     };
     const { body } = render(fixture, { props: { result } });
     const dayCount = body.match(/data-heatmap-day/g)?.length ?? 0;
@@ -149,6 +239,8 @@ describe('P2 corrected interactive SSR contracts', () => {
     expect(body.match(/aria-current="date"/g)).toHaveLength(1);
     expect(todayButton).toContain('tabindex="0"');
     expect(todayButton).toContain('aria-current="date"');
+    expect(todayButton).toContain('1 session');
+    expect(todayButton).not.toContain('1 sessions');
     expect(body).toContain('data-price-state=');
     expect(body).toContain('data-heatmap-readout');
   });

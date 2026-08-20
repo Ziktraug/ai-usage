@@ -36,7 +36,9 @@ export interface SessionDetailController {
   readonly close: () => void;
   readonly current: () => SessionDetailControllerSnapshot;
   readonly dispose: () => void;
-  readonly handleKeyDown: (event: Pick<KeyboardEvent, 'key' | 'preventDefault' | 'target'>) => void;
+  readonly handleKeyDown: (
+    event: Pick<KeyboardEvent, 'defaultPrevented' | 'key' | 'preventDefault' | 'target'>,
+  ) => void;
   readonly navigate: (delta: -1 | 1) => void;
   readonly resolveVcs: () => Promise<void>;
   readonly retryAnalysis: () => Promise<void>;

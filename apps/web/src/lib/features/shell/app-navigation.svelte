@@ -177,7 +177,7 @@
   const reportTabs = [
     { icon: 'overview', label: 'Overview', tab: 'overview' },
     { icon: 'sessions', label: 'Sessions', tab: 'sessions' },
-    { icon: 'breakdown', label: 'Breakdown', tab: 'breakdown' },
+    { icon: 'breakdown', label: 'Analysis', tab: 'breakdown' },
   ] as const;
   const showManage = $derived(runtimeMode !== 'demo');
   const dirtyRegistry = useDirtyGuardRegistry();

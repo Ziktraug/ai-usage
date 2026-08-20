@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { gzipSync } from 'node:zlib';
+import { aiUsagePreset } from '@ai-usage/design-system/preset';
 import { $ } from 'bun';
 
 const CLIENT_BUNDLE_BUILD_TIMEOUT_MS = 120_000;
@@ -15,7 +16,28 @@ const HARNESS_PROVIDER_HIERARCHY_GZIP_BUDGET_BYTES = 1628;
 const REPORT_SHARING_GZIP_BUDGET_BYTES = 615;
 const SYNC_COMPARISON_ROUTE_HASH_GZIP_BUDGET_BYTES = 2;
 const PENDING_FILTER_TIMELINE_GZIP_BUDGET_BYTES = 96;
+const POST_REVIEW_CORRECTIONS_GZIP_BUDGET_BYTES = 128;
 const REPORT_TESTABILITY_SEAMS_GZIP_BUDGET_BYTES = 128;
+/**
+ * The quota rail rides in the shell, so a second provider is initial-closure weight: one more ring,
+ * a brand mark per provider that publishes one, and rail semantics that no longer assume a single
+ * head. Measured against the commit that introduced it (3497 bytes) rather than estimated, then
+ * rounded to the next 64: the build is not byte-identical between runs, and a budget pinned to an
+ * exact measurement fails on a five-byte drift that says nothing about the code.
+ */
+const MULTI_PROVIDER_QUOTA_RAIL_GZIP_BUDGET_BYTES = 3520;
+/**
+ * Branded value objects parse at the boundary, and their parsers ship with the contract types.
+ * Measured at 644 bytes, rounded on the same rule.
+ */
+const CORE_VALUE_OBJECTS_GZIP_BUDGET_BYTES = 704;
+/**
+ * The period control regained the draggable range brush the retired range card used to carry:
+ * a standalone brush instance (state machine wiring, pointer/keyboard handlers, slider markup)
+ * plus the inline native date fields ride in the report entry closure whenever Custom is the
+ * period mode. Measured at 965 bytes, rounded on the same rule.
+ */
+const PERIOD_RANGE_BRUSH_GZIP_BUDGET_BYTES = 1024;
 const INITIAL_GZIP_CLOSURE_MAXIMUM_BYTES =
   Math.ceil(INITIAL_GZIP_CLOSURE_BASELINE_BYTES * 1.1) +
   BREAKDOWN_SEARCH_GZIP_BUDGET_BYTES +
@@ -27,11 +49,83 @@ const INITIAL_GZIP_CLOSURE_MAXIMUM_BYTES =
   REPORT_SHARING_GZIP_BUDGET_BYTES +
   SYNC_COMPARISON_ROUTE_HASH_GZIP_BUDGET_BYTES +
   PENDING_FILTER_TIMELINE_GZIP_BUDGET_BYTES +
-  REPORT_TESTABILITY_SEAMS_GZIP_BUDGET_BYTES;
+  POST_REVIEW_CORRECTIONS_GZIP_BUDGET_BYTES +
+  REPORT_TESTABILITY_SEAMS_GZIP_BUDGET_BYTES +
+  MULTI_PROVIDER_QUOTA_RAIL_GZIP_BUDGET_BYTES +
+  CORE_VALUE_OBJECTS_GZIP_BUDGET_BYTES +
+  PERIOD_RANGE_BRUSH_GZIP_BUDGET_BYTES;
 const LEADING_SLASH_PATTERN = /^\/+/;
+const REPORT_COLOR_TOKEN_PATTERN = /token\(colors\.([A-Za-z0-9_.-]+)\)/g;
+const REPORT_SOURCE_FILE_PATTERN = /\.(?:svelte|ts)$/;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
+
+const semanticColorPaths = (): ReadonlySet<string> => {
+  const colors = aiUsagePreset.theme?.extend?.semanticTokens?.colors as unknown;
+  const paths = new Set<string>();
+  const visit = (node: unknown, prefix: string): void => {
+    if (!isRecord(node)) {
+      return;
+    }
+    if (isRecord(node.value)) {
+      paths.add(prefix);
+      return;
+    }
+    for (const [key, value] of Object.entries(node)) {
+      visit(value, prefix ? `${prefix}.${key}` : key);
+    }
+  };
+  visit(colors, '');
+  return paths;
+};
+
+const sourceFilesUnder = (directory: string): string[] => {
+  const files: string[] = [];
+  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    const entryPath = path.join(directory, entry.name);
+    if (entry.isDirectory()) {
+      files.push(...sourceFilesUnder(entryPath));
+    } else if (REPORT_SOURCE_FILE_PATTERN.test(entry.name)) {
+      files.push(entryPath);
+    }
+  }
+  return files;
+};
+
+test('Report source references only declared semantic color tokens', () => {
+  const appDirectory = path.resolve(import.meta.dir, '..');
+  const repositoryDirectory = path.resolve(appDirectory, '../..');
+  const sourceFiles = [
+    ...sourceFilesUnder(path.join(appDirectory, 'src/lib/features/report')),
+    ...sourceFilesUnder(path.join(repositoryDirectory, 'packages/design-system/src/components')),
+  ];
+  const declaredColors = semanticColorPaths();
+  const unknownTokens = new Set<string>();
+  for (const sourceFile of sourceFiles) {
+    const source = readFileSync(sourceFile, 'utf8');
+    for (const match of source.matchAll(REPORT_COLOR_TOKEN_PATTERN)) {
+      const token = match[1];
+      if (token && !declaredColors.has(token)) {
+        unknownTokens.add(token);
+      }
+    }
+  }
+
+  expect([...unknownTokens].toSorted()).toEqual([]);
+});
+
+test('Report alerts use warning and danger roles instead of the interaction accent', () => {
+  const reportCoreDirectory = path.join(import.meta.dir, 'lib/features/report/core');
+  const warningSource = readFileSync(path.join(reportCoreDirectory, 'report-warnings.svelte'), 'utf8');
+  const statusSource = readFileSync(path.join(reportCoreDirectory, 'report-status.svelte'), 'utf8');
+
+  expect(warningSource).toContain("borderColor: 'status.warn'");
+  expect(warningSource).toContain("bg: 'status.warnSoft'");
+  expect(warningSource).not.toContain("bg: 'accentTint'");
+  expect(statusSource).toContain("borderColor: 'status.danger'");
+  expect(statusSource).toContain("bg: 'status.dangerSoft'");
+});
 
 interface ClientManifestEntry {
   readonly css?: readonly string[];
@@ -97,9 +191,13 @@ describe('report app client bundle', () => {
       const css = cssAssetPaths.map((assetPath) => readInitialAsset(publicDir, assetPath).toString('utf8')).join('\n');
       expect(css).toContain('--colors-canvas');
       expect(css).toContain('--colors-accent');
+      expect(css).toContain('--colors-interaction-brush');
+      expect(css).toContain('--colors-interaction-brush-hover');
       expect(css).toContain('[data-theme=dark]');
       expect(css).toContain('prefers-color-scheme:dark');
       expect(css).not.toContain('@layer reset,base,tokens,recipes,utilities;');
+      expect(css).not.toContain('--colors-border');
+      expect(css).not.toContain('token(colors.');
 
       const nodesDir = path.join(publicDir, '_app/immutable/nodes');
       const javascriptFiles = readdirSync(nodesDir).filter((file) => file.endsWith('.js'));

@@ -38,7 +38,8 @@
   import { provenanceForUsageRow } from '@ai-usage/report-core/provenance';
 
   import type { SessionPresentationRow } from '@ai-usage/report-core/session-query';
-  import type { Snippet } from 'svelte';
+  import { onDestroy, type Snippet } from 'svelte';
+  import { MediaQuery } from 'svelte/reactivity';
   import { lineDeltaLabel, rtkSavedLabel, rtkSavedTitle } from '../../../../dashboard-sort';
   import { sessionDurationSemantics } from '../../../../session-analysis-model';
   import { fmtCompact, fmtDate, fmtDuration, fmtMoney, fmtNum } from '../../../foundation/presentation/format';
@@ -51,12 +52,14 @@
   let {
     campaignSlot,
     controller,
+    onClosingChange = () => undefined,
     onFieldFilter = () => undefined,
     rows,
     snapshot,
   }: {
     campaignSlot?: Snippet;
     controller: SessionDetailController;
+    onClosingChange?: (closing: boolean) => void;
     onFieldFilter?: (key: 'model' | 'project', value: string) => void;
     rows: readonly SessionPresentationRow[];
     snapshot: SessionDetailControllerSnapshot;
@@ -64,9 +67,20 @@
 
   let closeButton = $state<HTMLButtonElement>();
   let analysisPanel = $state<HTMLDivElement>();
-  const previousFocus = typeof document === 'undefined' ? null : document.activeElement;
-  const row = $derived(snapshot.row);
-  const target = $derived(snapshot.target);
+  const desktopViewport = new MediaQuery('(min-width: 48rem)', false);
+  const mobileDrawer = $derived(!desktopViewport.current);
+  let previousFocus = $state<Element | null>(typeof document === 'undefined' ? null : document.activeElement);
+  let presentedRow = $state<SessionPresentationRow | null>(null);
+  let presentedTarget = $state<SessionDetailControllerSnapshot['target']>(null);
+  let drawerWasOpen = false;
+  let destroyed = false;
+  let openHint = $state<symbol | null>(null);
+  let closing = $state(false);
+  let closeInFlight: Promise<void> | null = null;
+  const hintExits = new Map<symbol, { promise: Promise<void>; resolve: () => void }>();
+  const drawerOpen = $derived(snapshot.row !== null && snapshot.target !== null);
+  const row = $derived(snapshot.row ?? presentedRow);
+  const target = $derived(snapshot.target ?? presentedTarget);
   const position = $derived(row ? rows.findIndex((candidate) => candidate.rowId === row.rowId) : -1);
   const median = (values: readonly number[]): number => {
     const sorted = [...values].sort((left, right) => left - right);
@@ -85,6 +99,12 @@
   );
   const durationRatio = $derived(
     row && (row.durationMs ?? 0) > 0 && medianDuration > 0 ? (row.durationMs ?? 0) / medianDuration : null,
+  );
+  // `costActual` falls back to the API-equivalent estimate whenever the collected cost is itself an
+  // approximation, so an equal value carries no charged-amount information and must not be restated
+  // under a spend label. Only a provider-reported amount that differs is real charge evidence.
+  const chargedAmount = $derived(
+    row && row.costActual !== null && row.costActual !== row.costApprox ? row.costActual : null,
   );
   const fmtRatio = (ratio: number): string => (ratio >= 10 ? `${Math.round(ratio)}×` : `${ratio.toFixed(1)}×`);
   const analysisButtonLabel = (): string => {
@@ -126,12 +146,135 @@
       : '',
   );
 
-  const closeDrawer = (): void => {
-    if (previousFocus instanceof HTMLElement && previousFocus.isConnected) {
-      previousFocus.focus({ preventScroll: true });
+  $effect.pre(() => {
+    const currentOpen = drawerOpen;
+    if (currentOpen && !drawerWasOpen) {
+      closeInFlight = null;
+      closing = false;
+      onClosingChange(false);
+      previousFocus = typeof document === 'undefined' ? null : document.activeElement;
     }
-    controller.close();
+    drawerWasOpen = currentOpen;
+  });
+
+  $effect(() => {
+    if (snapshot.row && snapshot.target) {
+      if (presentedRow?.rowId !== snapshot.row.rowId) {
+        openHint = null;
+      }
+      presentedRow = snapshot.row;
+      presentedTarget = snapshot.target;
+      return;
+    }
+    openHint = null;
+  });
+
+  const visibleSessionTrigger = (): HTMLElement | null => {
+    if (typeof document === 'undefined' || !row) {
+      return null;
+    }
+
+    const candidates = document.querySelectorAll<HTMLElement>('[data-session-row-id]');
+    for (const candidate of candidates) {
+      if (candidate.dataset.sessionRowId !== row.rowId || candidate.getClientRects().length === 0) {
+        continue;
+      }
+
+      if (candidate.matches('[data-session-index]')) {
+        return candidate;
+      }
+
+      const mobileTrigger = candidate.querySelector<HTMLElement>('[data-session-index]');
+      if (mobileTrigger && mobileTrigger.getClientRects().length > 0) {
+        return mobileTrigger;
+      }
+    }
+
+    return null;
   };
+
+  const previousFocusElement = (): HTMLElement | null => {
+    if (
+      previousFocus instanceof HTMLElement &&
+      previousFocus.isConnected &&
+      previousFocus.getClientRects().length > 0
+    ) {
+      return previousFocus;
+    }
+    return visibleSessionTrigger();
+  };
+
+  const closeDrawer = (): void => {
+    try {
+      controller.close();
+    } finally {
+      onClosingChange(false);
+    }
+  };
+
+  const registerHintExit = (hintId: symbol): void => {
+    if (hintExits.has(hintId)) {
+      return;
+    }
+    let resolveExit = (): void => undefined;
+    const promise = new Promise<void>((resolve) => {
+      resolveExit = resolve;
+    });
+    hintExits.set(hintId, { promise, resolve: resolveExit });
+  };
+
+  const handleHintOpenChange = (hintId: symbol, open: boolean): void => {
+    if (open) {
+      if (closing) {
+        return;
+      }
+      openHint = hintId;
+      registerHintExit(hintId);
+      return;
+    }
+    if (openHint === hintId) {
+      openHint = null;
+    }
+  };
+
+  const handleHintSettled = (hintId: symbol): void => {
+    const exit = hintExits.get(hintId);
+    if (!exit) {
+      return;
+    }
+    hintExits.delete(hintId);
+    exit.resolve();
+  };
+
+  const completeDrawerClose = async (): Promise<void> => {
+    openHint = null;
+    await Promise.all([...hintExits.values()].map(({ promise }) => promise));
+    if (!destroyed) {
+      closeDrawer();
+    }
+  };
+
+  const closeDrawerAfterHints = (): Promise<void> => {
+    if (closeInFlight) {
+      return closeInFlight;
+    }
+    closing = true;
+    onClosingChange(true);
+    closeInFlight = completeDrawerClose();
+    return closeInFlight;
+  };
+
+  onDestroy(() => {
+    destroyed = true;
+    onClosingChange(false);
+  });
+
+  const detailHintControl = $derived({
+    hintDisabled: closing,
+    onHintSettled: handleHintSettled,
+    onHintOpenChange: handleHintOpenChange,
+    openHint,
+  });
 
   const toggleAnalysis = async (): Promise<void> => {
     await controller.toggleAnalysis();
@@ -141,32 +284,33 @@
   };
 </script>
 
-{#if row && target}
-  <Drawer
-    closeOnInteractOutside
-    contentAriaLabel="Session details"
-    contentClass={snapshot.analysisOpen ? cx(drawer, analysisDrawer) : drawer}
-    finalFocusEl={() => previousFocus instanceof HTMLElement && previousFocus.isConnected ? previousFocus : null}
-    initialFocusEl={() => closeButton ?? null}
-    modal={false}
-    onOpenChange={(open) => {
-      if (!open) {
-        closeDrawer();
-      }
-    }}
-    open
-    trapFocus={false}
-  >
-    <div class={drawerTop}>
+<Drawer
+  closeOnInteractOutside={mobileDrawer}
+  contentAriaLabel="Session details"
+  contentClass={snapshot.analysisOpen ? cx(drawer, analysisDrawer) : drawer}
+  finalFocusEl={previousFocusElement}
+  initialFocusEl={() => (mobileDrawer ? (closeButton ?? null) : previousFocusElement())}
+  modal={mobileDrawer}
+  onOpenChange={(open) => {
+    if (!open) {
+      return closeDrawerAfterHints();
+    }
+  }}
+  open={drawerOpen}
+  preventScroll={mobileDrawer}
+  trapFocus={mobileDrawer}
+>
+  {#if row && target}
+    <div class={drawerTop} data-session-drawer-header>
       <HarnessBadge name={row.harness} />
-      <div class={drawerNav}>
+      <nav aria-label={`Session navigation, ${positionLabel()}`} class={drawerNav} data-session-drawer-navigation>
         <span class={drawerPosition}>
           {positionLabel()}
         </span>
         <button
           aria-label="Previous session (k)"
           class={drawerClose}
-          disabled={snapshot.navigation?.loading || !previousAvailable}
+          disabled={closing || snapshot.navigation?.loading || !previousAvailable}
           onclick={() => controller.navigate(-1)}
           title="Previous session (k)"
           type="button"
@@ -176,7 +320,7 @@
         <button
           aria-label="Next session (j)"
           class={drawerClose}
-          disabled={snapshot.navigation?.loading || !nextAvailable}
+          disabled={closing || snapshot.navigation?.loading || !nextAvailable}
           onclick={() => controller.navigate(1)}
           title="Next session (j)"
           type="button"
@@ -189,6 +333,7 @@
             aria-expanded={snapshot.analysisOpen ? 'true' : 'false'}
             aria-label={analysisButtonAriaLabel()}
             class={ghostButton}
+            disabled={closing}
             onclick={toggleAnalysis}
             type="button"
           >
@@ -198,15 +343,16 @@
         <button
           aria-label="Close session details"
           class={drawerClose}
-          onclick={closeDrawer}
+          disabled={closing}
+          onclick={closeDrawerAfterHints}
           type="button"
           bind:this={closeButton}
         >
           ✕
         </button>
-      </div>
+      </nav>
     </div>
-    <div class={drawerBody}>
+    <div class={drawerBody} data-session-drawer-body>
       <div>
         <div class={drawerTitle}>{row.sessionLabel}</div>
         <div class={muted}>{row.providerDisplay} · {row.modelLabel}</div>
@@ -225,7 +371,7 @@
       {#if costRatio !== null || durationRatio !== null}
         <div class={drawerCompare} title="Compared with the median session in the current view">
           {#if costRatio !== null}
-            ≈ {fmtRatio(costRatio)} median cost
+            ≈ {fmtRatio(costRatio)} median API value
           {/if}
           {#if costRatio !== null && durationRatio !== null}
             ·
@@ -240,44 +386,61 @@
         {@render campaignSlot()}
       {/if}
       <div class={drawerGrid}>
-        <DrawerDetailItem label="Started" value={fmtDate(row.date)} />
-        <DrawerDetailItem label="Ended" value={fmtDate(row.endDate)} />
+        <DrawerDetailItem {...detailHintControl} label="Started" value={fmtDate(row.date)} />
+        <DrawerDetailItem {...detailHintControl} label="Ended" value={fmtDate(row.endDate)} />
         <DrawerDetailItem
+          {...detailHintControl}
           hint={`Exact token count: ${fmtNum(row.tokenTotal)}`}
           label="Total tokens"
           value={fmtCompact(row.tokenTotal)}
         />
-        <DrawerDetailItem hint={rtkSavedTitle(row)} label="RTK savings" value={rtkSavedLabel(row)} />
         <DrawerDetailItem
+          {...detailHintControl}
+          hint={rtkSavedTitle(row)}
+          label="RTK token savings"
+          value={rtkSavedLabel(row)}
+        />
+        <DrawerDetailItem
+          {...detailHintControl}
           hint={apiValuePresentation(row).title}
           label="API value"
           value={apiValuePresentation(row).label}
         />
+        {#if chargedAmount !== null}
+          <DrawerDetailItem
+            {...detailHintControl}
+            hint="Amount this session's source reported as charged. Shown only when it differs from the API-equivalent estimate."
+            label="Charged amount"
+            value={fmtMoney(chargedAmount)}
+          />
+        {/if}
         <DrawerDetailItem
-          hint="Out-of-pocket spend — $0.00 means covered by a subscription"
-          label="Actual cost"
-          value={fmtMoney(row.costActual)}
-        />
-        <DrawerDetailItem
+          {...detailHintControl}
           hint="Cursor export value covered by the subscription quota"
-          label="Sub value"
+          label="Subscription value"
           value={fmtMoney(row.costQuota)}
         />
-        <DrawerDetailItem label="Calls" value={fmtNum(row.calls)} />
-        <DrawerDetailItem label="Turns" value={row.usageUnavailable ? 'Unavailable' : fmtNum(row.turns)} />
-        <DrawerDetailItem label="Tools" value={fmtNum(row.tools)} />
+        <DrawerDetailItem {...detailHintControl} label="Calls" value={fmtNum(row.calls)} />
         <DrawerDetailItem
+          {...detailHintControl}
+          label="Turns"
+          value={row.usageUnavailable ? 'Unavailable' : fmtNum(row.turns)}
+        />
+        <DrawerDetailItem {...detailHintControl} label="Tools" value={fmtNum(row.tools)} />
+        <DrawerDetailItem
+          {...detailHintControl}
           hint={sessionDurationSemantics(row.source?.harnessKey, target.kind === 'campaign-root').metricHint}
           label={sessionDurationSemantics(row.source?.harnessKey, target.kind === 'campaign-root').metricLabel}
           value={fmtDuration(row.durationMs)}
         />
-        <DrawerDetailItem label="Lines" value={lineDeltaLabel(row)} />
-        <DrawerDetailItem label="Subagent" value={row.subagent ? 'Yes' : 'No'} />
+        <DrawerDetailItem {...detailHintControl} label="Lines" value={lineDeltaLabel(row)} />
+        <DrawerDetailItem {...detailHintControl} label="Subagent" value={row.subagent ? 'Yes' : 'No'} />
         {#if row.partial}
-          <DrawerDetailItem hint={partialHint} label="Partial" value="Yes" />
+          <DrawerDetailItem {...detailHintControl} hint={partialHint} label="Partial" value="Yes" />
         {/if}
         {#if row.usageUnavailable}
           <DrawerDetailItem
+            {...detailHintControl}
             hint="Session came from prompt history, but detailed local token counters are missing"
             label="Usage data"
             value="Unavailable"
@@ -285,6 +448,7 @@
         {/if}
         {#if row.ambiguous}
           <DrawerDetailItem
+            {...detailHintControl}
             hint="Multiple local Cursor sessions matched the same export cluster; totals are best-effort"
             label="Reconciliation"
             value="Ambiguous"
@@ -320,5 +484,5 @@
         </div>
       {/if}
     </div>
-  </Drawer>
-{/if}
+  {/if}
+</Drawer>

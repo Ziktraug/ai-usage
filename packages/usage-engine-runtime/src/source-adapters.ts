@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { normalizeCursorCommitAttributionItems } from '@ai-usage/local-collectors';
+import { createClaudeAgentSdkBatchSource, normalizeCursorCommitAttributionItems } from '@ai-usage/local-collectors';
 import {
   collectClaudeRetentionWarnings,
   type HarnessAdapter,
@@ -24,7 +24,6 @@ import type {
   SourceDetectionResult,
   SourceProgress,
   SourceRunResult,
-  SourceWarning,
 } from '@ai-usage/report-core/source-control';
 import {
   collectionSourceDefinitions,
@@ -44,6 +43,8 @@ import { Data, Duration, Effect } from 'effect';
 import { listManagedCursorUsageExportPaths } from './input-file';
 import type { ProviderQuotaRuntimeOptions } from './provider-quota';
 import { refreshLocalProviderQuotas } from './provider-quota';
+import { CLAUDE_QUOTA_SOURCE_IDENTITY } from './provider-quota-refresh';
+import { type SanitizableSourceWarning, sanitizeSourceWarnings } from './source-warnings';
 
 export interface SourceRunContext {
   readonly reportProgress: (progress: SourceProgress) => Effect.Effect<void>;
@@ -64,6 +65,7 @@ export class SourceRunError extends Data.TaggedError('SourceRunError')<{
 }> {}
 
 export interface SourceAdapterOptions {
+  readonly claudeLiveAvailable?: () => boolean;
   readonly codexLiveAvailable?: () => boolean;
   readonly configCwd?: string;
   readonly dbPath?: string;
@@ -71,17 +73,6 @@ export interface SourceAdapterOptions {
   readonly now?: () => Date;
   readonly providerQuotaOptions?: ProviderQuotaRuntimeOptions;
 }
-
-const warningCodeCharacters = /[^a-zA-Z0-9._-]/g;
-
-const sanitizeWarnings = (label: string, warnings: readonly { operation?: string }[]): readonly SourceWarning[] =>
-  warnings.slice(0, sourceControlBounds.maxWarningsPerSource).map((warning) => {
-    const code = (warning.operation ?? 'collector-warning').replace(warningCodeCharacters, '-').slice(0, 64);
-    return {
-      code: code || 'collector-warning',
-      message: `${label} completed with an incomplete or rejected local record.`,
-    };
-  });
 
 const detected = (): SourceDetectionResult => ({
   availability: 'detected',
@@ -230,7 +221,7 @@ const cursorOptions = (
 const collectHarness = (
   adapter: HarnessAdapter,
 ): Effect.Effect<
-  { rows: CollectorRow[]; warnings: readonly { operation?: string }[] },
+  { rows: CollectorRow[]; warnings: readonly SanitizableSourceWarning[] },
   unknown,
   LocalHistoryStorageService
 > => {
@@ -285,7 +276,7 @@ const createSessionSource = (input: {
         machine: input.machine,
         rows,
       }).pipe(Effect.mapError((cause) => sourceFailure(input.id, cause)));
-      const warnings = sanitizeWarnings(input.label, [...collection.warnings, ...retentionWarnings]);
+      const warnings = sanitizeSourceWarnings(input.label, [...collection.warnings, ...retentionWarnings]);
       return {
         changed: imported.inserted > 0 || imported.updated > 0,
         inputCount: collection.rows.length,
@@ -347,7 +338,7 @@ const createRtkSource = (input: {
         changed: imported.inserted > 0 || imported.updated > 0,
         inputCount: stored.rows.length,
         outputCount: imported.inserted + imported.updated + imported.unchanged,
-        warnings: sanitizeWarnings('RTK savings', enriched.warnings),
+        warnings: sanitizeSourceWarnings('RTK savings', enriched.warnings),
       };
     }),
 });
@@ -387,7 +378,7 @@ const createCursorAttributionSource = (input: {
         changed: imported.inserted > 0 || imported.updated > 0,
         inputCount: collection.rows.length,
         outputCount: collection.rows.length,
-        warnings: sanitizeWarnings('Cursor commit attribution', collection.warnings),
+        warnings: sanitizeSourceWarnings('Cursor commit attribution', collection.warnings),
       };
     }),
 });
@@ -395,13 +386,16 @@ const createCursorAttributionSource = (input: {
 const createProviderQuotaSource = (input: {
   dbPath: string;
   detect: Effect.Effect<SourceDetectionResult>;
+  /** Provider-specific refresh overrides: identity and sources. Codex passes none and keeps its defaults. */
+  quotaOptions?: ProviderQuotaRuntimeOptions;
+  id: 'codex.usage-limits' | 'claude.usage-limits';
   machine: UsageMachine;
   options: SourceAdapterOptions;
   storage: LocalHistoryStorageService;
 }): ScheduledSource => ({
-  cadence: Duration.millis(getCollectionSourceDefinition('codex.usage-limits').cadenceMs),
+  cadence: Duration.millis(getCollectionSourceDefinition(input.id).cadenceMs),
   detect: input.detect,
-  id: 'codex.usage-limits',
+  id: input.id,
   run: (context) =>
     Effect.gen(function* () {
       yield* reportProgress(context, { phase: 'reading' });
@@ -410,12 +404,15 @@ const createProviderQuotaSource = (input: {
         return sourceUnavailableResult();
       }
       const generationBefore = yield* queryUsageStoreGeneration({ dbPath: input.dbPath }).pipe(
-        Effect.mapError((cause) => sourceFailure('codex.usage-limits', cause)),
+        Effect.mapError((cause) => sourceFailure(input.id, cause)),
       );
       const result = yield* refreshLocalProviderQuotas({
         dbPath: input.dbPath,
         machine: input.machine,
         options: {
+          // Per-source defaults first, caller injection second: a test that stubs a live source must
+          // still win, while the provider identity this source was built with survives untouched.
+          ...input.quotaOptions,
           ...input.options.providerQuotaOptions,
           liveCadenceMs: 0,
           ...(input.options.now === undefined ? {} : { now: input.options.now }),
@@ -423,10 +420,10 @@ const createProviderQuotaSource = (input: {
         ...(context.signal === undefined ? {} : { signal: context.signal }),
       }).pipe(
         Effect.provideService(LocalHistoryStorage, input.storage),
-        Effect.mapError((cause) => sourceFailure('codex.usage-limits', cause)),
+        Effect.mapError((cause) => sourceFailure(input.id, cause)),
       );
       const generationAfter = yield* queryUsageStoreGeneration({ dbPath: input.dbPath }).pipe(
-        Effect.mapError((cause) => sourceFailure('codex.usage-limits', cause)),
+        Effect.mapError((cause) => sourceFailure(input.id, cause)),
       );
       const warnings = result.warnings
         .slice(0, sourceControlBounds.maxWarningsPerSource)
@@ -468,6 +465,16 @@ export const createScheduledSourceRegistry = (
       const rollout = yield* detections.codex;
       const liveAvailable = options.codexLiveAvailable?.() ?? Bun.which('codex') !== null;
       return liveAvailable || rollout.availability === 'detected' ? detected() : notDetected();
+    });
+    // The binary AND a local Claude home. Presence of the executable alone is not enough: opening a
+    // session against a profile that has never run Claude spawns a process that waits on an onboarding
+    // prompt, so a bare `which` would have every isolated environment stall for the whole timeout.
+    // Whether that session then carries plan limits still cannot be known until it is open, and the
+    // source already handles that by recording a window-less observation.
+    const claudeQuotaDetection = Effect.gen(function* () {
+      const history = yield* detections.claude;
+      const liveAvailable = options.claudeLiveAvailable?.() ?? Bun.which('claude') !== null;
+      return liveAvailable && history.availability === 'detected' ? detected() : notDetected();
     });
     const sources: ScheduledSource[] = [
       createSessionSource({
@@ -521,8 +528,23 @@ export const createScheduledSourceRegistry = (
       createProviderQuotaSource({
         dbPath,
         detect: quotaDetection,
+        id: 'codex.usage-limits',
         machine,
         options,
+        storage,
+      }),
+      createProviderQuotaSource({
+        dbPath,
+        detect: claudeQuotaDetection,
+        id: 'claude.usage-limits',
+        machine,
+        options,
+        quotaOptions: {
+          // No Claude quota history exists locally, so there is nothing to backfill.
+          backfillSource: null,
+          identity: CLAUDE_QUOTA_SOURCE_IDENTITY,
+          liveSource: createClaudeAgentSdkBatchSource(),
+        },
         storage,
       }),
       createRtkSource({

@@ -1,4 +1,3 @@
-import { realpath } from 'node:fs/promises';
 import path from 'node:path';
 import { parseSkillConfigInput } from './config';
 import type {
@@ -14,6 +13,7 @@ import { readBoundedRegularFile } from './filesystem';
 import { scanProjectSkills } from './project-scan';
 import { parseSkillName } from './shared';
 import { readSkillMarkdown, writeSkillMarkdown } from './skill-markdown-io';
+import { isPathWithin, resolveCanonicalPath } from './verified-path';
 import {
   createSkillTargetDirectory,
   loadSkillManagementSnapshot,
@@ -77,14 +77,6 @@ export interface SkillsApplication {
     | { document: SkillMarkdownDocument; snapshot: SkillManagementSnapshot }
   >;
 }
-
-const pathIsWithin = (parentPath: string, candidatePath: string): boolean => {
-  const relativePath = path.relative(parentPath, candidatePath);
-  return (
-    relativePath === '' ||
-    (relativePath !== '..' && !relativePath.startsWith(`..${path.sep}`) && !path.isAbsolute(relativePath))
-  );
-};
 
 export const readBoundedProjectSkillMarkdown = async (
   filePath: string,
@@ -190,17 +182,17 @@ export const createSkillsApplication = (
       }
       const observedSkillMdPath = path.resolve(observation.skillMdPath);
       const [canonicalProjectPath, canonicalSkillMdPath] = await Promise.all([
-        realpath(projectPath),
-        realpath(observedSkillMdPath),
+        resolveCanonicalPath(projectPath),
+        resolveCanonicalPath(observedSkillMdPath),
       ]);
       const canonicalSourcePath =
         observation.placement === 'symlink-to-source' && config.sourceRepoPath
-          ? path.join(await realpath(config.sourceRepoPath), 'skills')
+          ? path.join(await resolveCanonicalPath(config.sourceRepoPath), 'skills')
           : undefined;
       const authorized =
-        pathIsWithin(projectPath, observedSkillMdPath) &&
-        (pathIsWithin(canonicalProjectPath, canonicalSkillMdPath) ||
-          (canonicalSourcePath !== undefined && pathIsWithin(canonicalSourcePath, canonicalSkillMdPath)));
+        isPathWithin(projectPath, observedSkillMdPath) &&
+        (isPathWithin(canonicalProjectPath, canonicalSkillMdPath) ||
+          (canonicalSourcePath !== undefined && isPathWithin(canonicalSourcePath, canonicalSkillMdPath)));
       if (!authorized) {
         throw new Error('project skill markdown resolves outside the allowed project');
       }

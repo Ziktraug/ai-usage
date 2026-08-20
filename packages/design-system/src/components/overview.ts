@@ -5,12 +5,14 @@ export const overviewGrid = css({
   gap: '14px',
 });
 
+// The charts nested inside carry their own containment, so this wrapper stays a hairline-separated
+// group: a card holding cards reads as two levels of importance where there is only one.
 export const advancedAnalysis = css({
-  border: '1px solid token(colors.line)',
-  borderRadius: 'md',
-  bg: 'surface',
-  boxShadow: 'card',
-  overflow: 'hidden',
+  display: 'grid',
+  gap: '12px',
+  pt: '18px',
+  borderTop: '1px solid token(colors.line)',
+  minW: 0,
 });
 
 export const advancedAnalysisHeader = css({
@@ -18,10 +20,9 @@ export const advancedAnalysisHeader = css({
   gridTemplateColumns: { base: '1fr', sm: 'auto 1fr' },
   gap: '4px 12px',
   alignItems: 'center',
-  p: '14px 16px',
   color: 'ink',
   fontWeight: 650,
-  '& h2': {
+  '& h3': {
     fontSize: 'inherit',
     fontWeight: 'inherit',
     lineHeight: 'inherit',
@@ -36,7 +37,7 @@ export const advancedAnalysisHeaderText = css({
 });
 
 export const advancedAnalysisContent = css({
-  p: '0 14px 14px',
+  minW: 0,
 });
 
 export const twoColumns = css({
@@ -47,70 +48,6 @@ export const twoColumns = css({
   '& > :only-child': {
     gridColumn: '1 / -1',
   },
-});
-
-export const heroPanel = css({
-  display: 'grid',
-  gridTemplateColumns: { base: '1fr', md: 'minmax(0, 1.2fr) minmax(0, 1fr)' },
-  gap: '18px 32px',
-  alignItems: 'center',
-  p: '20px 22px',
-  border: '1px solid token(colors.line)',
-  borderRadius: 'md',
-  bg: 'surface',
-  boxShadow: 'card',
-});
-
-export const heroLabel = css({
-  textStyle: 'eyebrow',
-  color: 'accent',
-});
-
-export const heroValue = css({
-  textStyle: 'numeric',
-  fontSize: { base: '30px', md: '38px' },
-  lineHeight: '1.05',
-  fontWeight: 650,
-  mt: '8px',
-});
-
-export const heroText = css({
-  color: 'muted',
-  fontSize: '13px',
-  mt: '6px',
-});
-
-export const heroSide = css({
-  display: 'grid',
-  gap: '10px',
-});
-
-export const heroMultiple = css({
-  textStyle: 'numeric',
-  display: 'inline-flex',
-  alignItems: 'center',
-  h: '24px',
-  px: '10px',
-  borderRadius: 'full',
-  bg: 'accentSoft',
-  color: 'accent',
-  fontSize: '12px',
-  fontWeight: 650,
-  justifySelf: 'start',
-});
-
-export const heroLegend = css({
-  display: 'flex',
-  flexWrap: 'wrap',
-  gap: '4px 16px',
-  color: 'muted',
-  fontSize: '11px',
-});
-
-export const heroLegendValue = css({
-  textStyle: 'numeric',
-  color: 'ink',
-  ml: '5px',
 });
 
 export const anatomyLegend = css({
@@ -415,7 +352,9 @@ export const recordValue = css({
 export const recordSub = css({
   color: 'muted',
   fontSize: '11px',
-  lineClamp: 1,
+  // A second line: one line cut the streak caption mid-date, dropping the only part of it a reader
+  // cannot infer from the label. These captions fit on one line on wide viewports anyway.
+  lineClamp: 2,
 });
 
 export const topList = css({
@@ -431,7 +370,9 @@ export const topRank = css({
 export const topTitle = css({
   fontSize: '13px',
   fontWeight: 600,
-  lineClamp: 1,
+  // The badge and value keep their width on a narrow row, so a single line left the session name
+  // clamped to one word. A second line keeps the row identifiable; wide rows still fit on one.
+  lineClamp: 2,
   overflowWrap: 'anywhere',
 });
 

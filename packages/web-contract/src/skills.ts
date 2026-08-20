@@ -29,9 +29,42 @@ import {
 import { publicErrorDataSchema } from './errors';
 import { emptyInputSchema, isJsonWireValue, jsonWireValueSchema } from './schema-conventions';
 
+const MAX_DISCOVERED_ENTRY_NAME_LENGTH = 255;
+const LAST_C0_CONTROL_CODE_POINT = 0x1f;
+const FIRST_C1_CONTROL_CODE_POINT = 0x7f;
+const LAST_C1_CONTROL_CODE_POINT = 0x9f;
+
+// Path separators and control characters are the only characters that could turn a reported entry
+// name into something other than a leaf name. Checked by code point because a regex range over the
+// control block is itself disallowed by the lint rules.
+const isSafeEntryName = (value: string): boolean => {
+  for (const character of value) {
+    const codePoint = character.codePointAt(0) ?? 0;
+    if (
+      character === '/' ||
+      character === '\\' ||
+      codePoint <= LAST_C0_CONTROL_CODE_POINT ||
+      (codePoint >= FIRST_C1_CONTROL_CODE_POINT && codePoint <= LAST_C1_CONTROL_CODE_POINT)
+    ) {
+      return false;
+    }
+  }
+  return true;
+};
 const boundedStringSchema = pipe(string(), maxLength(4096));
 const nonNegativeFiniteNumberSchema = pipe(number(), finite(), safeInteger(), minValue(0));
 const skillNameSchema = pipe(string(), regex(skillNamePattern));
+// A runtime target may hold any directory entry, including names a managed skill could never carry
+// (Codex writes its own `.system` directory). A discovered name is reported data, not an identifier,
+// so it is bounded to one safe path segment instead of the managed-name pattern. Validating it like a
+// managed name lets a single unrecognized entry reject the whole snapshot.
+const discoveredEntryNameSchema = pipe(
+  string(),
+  minLength(1),
+  maxLength(MAX_DISCOVERED_ENTRY_NAME_LENGTH),
+  check(isSafeEntryName, 'A discovered entry name must be one path segment.'),
+  check((value) => value !== '.' && value !== '..', 'A discovered entry name must not be a relative segment.'),
+);
 const targetIdSchema = pipe(string(), regex(skillTargetIdPattern));
 const sha256Schema = pipe(string(), regex(/^[a-f0-9]{64}$/));
 const markdownContentSchema = pipe(string(), maxBytes(262_144));
@@ -159,10 +192,16 @@ const targetIdentitySchema = strictObject({
   ino: string(),
 });
 
-const projectionSchema = strictObject({
+const projectionBaseShape = {
   actualPath: optional(boundedStringSchema),
   diagnostics: pipe(array(diagnosticSchema), maxLength(MAX_COLLECTION_ITEMS)),
   expectedPath: boundedStringSchema,
+  targetId: targetIdSchema,
+  targetIdentity: optional(targetIdentitySchema),
+};
+
+const projectionSchema = strictObject({
+  ...projectionBaseShape,
   skillName: skillNameSchema,
   state: picklist([
     'linked',
@@ -176,8 +215,11 @@ const projectionSchema = strictObject({
     'disabled-exposed',
     'missing-target',
   ]),
-  targetId: targetIdSchema,
-  targetIdentity: optional(targetIdentitySchema),
+});
+const unmanagedEntrySchema = strictObject({
+  ...projectionBaseShape,
+  entryName: discoveredEntryNameSchema,
+  state: picklist(['unmanaged-copy', 'unmanaged-symlink']),
 });
 
 const skillManagementSnapshotShapeSchema = strictObject({
@@ -217,7 +259,7 @@ const skillManagementSnapshotShapeSchema = strictObject({
     ),
     maxLength(MAX_COLLECTION_ITEMS),
   ),
-  unmanagedEntries: pipe(array(projectionSchema), maxLength(MAX_COLLECTION_ITEMS)),
+  unmanagedEntries: pipe(array(unmanagedEntrySchema), maxLength(MAX_COLLECTION_ITEMS)),
 });
 
 export const skillManagementSnapshotSchema = pipe(

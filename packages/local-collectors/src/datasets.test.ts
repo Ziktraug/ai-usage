@@ -108,6 +108,7 @@ describe('harness datasets', () => {
         harness: 'cursor',
         operation: 'metricValidation',
         message: 'Rejected 1 malformed cursor metric record(s).',
+        rejectedRecords: 1,
       },
     ]);
     expect(JSON.stringify(result.warnings)).not.toContain('private-invalid-value');

@@ -277,7 +277,7 @@ const measureRoute = async (page: Page, request: APIRequestContext, scenario: Ro
       await expect(page.locator('[data-session-row-id]').first()).toBeVisible();
     }
     if (scenario.kind === 'breakdown') {
-      await expect(page.getByRole('tablist', { name: 'Breakdown dimension' })).toBeVisible();
+      await expect(page.getByRole('tablist', { name: 'Analysis dimension' })).toBeVisible();
     }
     const firstUsableRenderMs = await page.evaluate(() => performance.now());
     await page.waitForTimeout(POST_RENDER_SETTLE_MS);

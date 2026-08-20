@@ -1,6 +1,6 @@
 # ai-usage Context
 
-This context describes the local AI usage reporting domain. The CLI turns provider-free local history from installed AI coding tools into usage rows, analytics, and CSV. Quota collection is the explicit exception: the usage engine may ask the installed `codex app-server` for a fresh usage-limit observation before readers project the durable local result, while app-server owns provider communication and authentication refresh.
+This context describes the local AI usage reporting domain. The CLI turns provider-free local history from installed AI coding tools into usage rows, analytics, and CSV. Quota collection is the explicit exception: the usage engine may ask the installed `codex app-server` or the experimental Claude Agent SDK for a fresh usage-limit observation before readers project the durable local result. Those provider clients own communication and authentication.
 
 ## Language
 
@@ -9,7 +9,7 @@ An installed AI coding tool whose local history can be collected, such as Claude
 _Avoid_: source, tool, integration
 
 **Collection source**:
-An independently detected, scheduled, and policy-controlled contribution to the normalized local store. A harness may expose more than one collection source: Codex sessions and Codex usage limits have separate policy and cadence.
+An independently detected, scheduled, and policy-controlled contribution to the normalized local store. A harness may expose more than one collection source: Codex and Claude sessions and their respective usage limits have separate policy and cadence.
 _Avoid_: harness, refresh task, report loader
 
 **Source policy**:

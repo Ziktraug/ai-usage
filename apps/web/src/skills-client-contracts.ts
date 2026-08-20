@@ -20,6 +20,7 @@ import type {
   SkillTargetScope,
   SkillValidationStatus,
   SourceSkill,
+  UnmanagedEntry,
 } from '@ai-usage/skills';
 import { parseSkillConfigInput } from '@ai-usage/skills/config';
 import type { KnownSkillProjectPath } from './server/skills-contracts';
@@ -258,6 +259,25 @@ const parseProjection = (value: unknown): Projection => {
   };
 };
 
+const parseUnmanagedEntry = (value: unknown): UnmanagedEntry => {
+  const entry = recordValue(value, 'unmanaged runtime entry');
+  const state = projectionState(entry.state, 'unmanaged runtime entry');
+  if (state !== 'unmanaged-copy' && state !== 'unmanaged-symlink') {
+    return invalidResult('unmanaged runtime entry');
+  }
+  return {
+    diagnostics: arrayValue(entry.diagnostics, 'unmanaged runtime entry', parseDiagnostic),
+    entryName: stringValue(entry.entryName, 'unmanaged runtime entry'),
+    expectedPath: stringValue(entry.expectedPath, 'unmanaged runtime entry'),
+    state,
+    targetId: stringValue(entry.targetId, 'unmanaged runtime entry'),
+    ...(entry.actualPath === undefined ? {} : { actualPath: stringValue(entry.actualPath, 'unmanaged runtime entry') }),
+    ...(entry.targetIdentity === undefined
+      ? {}
+      : { targetIdentity: parseProjectionTargetIdentity(entry.targetIdentity) }),
+  };
+};
+
 const parseSourceState = (value: unknown): SkillSourceState => {
   const state = recordValue(value, 'skill source state');
   if (state.version !== 1) {
@@ -312,7 +332,7 @@ const parseSnapshot = (value: unknown): SkillManagementSnapshot => {
     sourceState: parseSourceState(snapshot.sourceState),
     summary: parseSummary(snapshot.summary),
     targets: arrayValue(snapshot.targets, 'skills snapshot', parseTarget),
-    unmanagedEntries: arrayValue(snapshot.unmanagedEntries, 'skills snapshot', parseProjection),
+    unmanagedEntries: arrayValue(snapshot.unmanagedEntries, 'skills snapshot', parseUnmanagedEntry),
   };
 };
 

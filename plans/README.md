@@ -136,6 +136,7 @@ read-only SQLite and the permanent browser/server and demo-isolation boundaries.
 | 070 | Retire Completed Web Migration Guardrails and Clarify Lasting Safety Gates | P1 | M | 068 migration integrated; 069 browser ownership integrated | DONE |
 | 071 | Measure and Optimize the Web Session Pipeline End to End | P1 | XL | current Plan 069 Query ownership; 070 | DONE |
 | 072 | Evaluate Deferred Web Session Optimizations (keyset, Ark split, direct destination SSR) | P1 | XL | 071 reviewed final | DONE |
+| 073 | Make the Report a Decision-First Executive and Investigation Workspace | P1 | L | 069, 072 (DONE); main `1868b108` | DONE |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) |
 REJECTED (with one-line rationale).
@@ -676,3 +677,12 @@ provenance files, and their code anchors were re-checked line by line.
 - Plan 052 implements plan 045 decision 1 (every top-level row is a campaign).
   Plan 059 completes decision 10's machine-fleet direction. Plan 063 removes the
   stale Origin tint because plans 048/049 made the default neutral.
+- Plan 073 is the report-only UI refactor derived from the 2026-08-09 T3 Code
+  comparison. It starts from the clean post-069/072 merge checkpoint
+  `1868b108`. It supersedes plan 045 decision 8 only for the Report range
+  card's size and placement, and plan 062 HIER-3 only for the standalone Value
+  bases card. It preserves the canonical API-equivalent vocabulary, Query
+  ownership, compact visualization ADRs, data-quality visibility, and exactly
+  four Playwright snapshots. Skills, Sources, Sync, collectors, Query ownership,
+  request count, and SSR strategy are outside its redesign scope; the existing
+  bounded Overview result itself is extended.

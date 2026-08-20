@@ -52,7 +52,9 @@
   const lazyClient: QuotaQueryClient = {
     getProviderQuotaHistory: async (...parameters) => await resolveClient().getProviderQuotaHistory(...parameters),
   };
-  const request = $derived(providerQuotaHistoryRequest(range, requestedAt, { providerKey: 'codex' }));
+  // Unfiltered on purpose: the panel builds its own provider selector from whatever series come back,
+  // so naming one provider here would leave that selector permanently showing a single option.
+  const request = $derived(providerQuotaHistoryRequest(range, requestedAt));
   const query = createQuery(() => ({
     ...quotaHistoryQueryOptions(
       lazyClient,
@@ -86,7 +88,7 @@
   });
 </script>
 
-{#if open && panelModule}
+{#if panelModule}
   {@const QuotaHistoryPanel = panelModule.default}
   <QuotaHistoryPanel
     errorMessage={query.error?.message ?? null}

@@ -126,6 +126,18 @@ export interface Projection {
   targetIdentity?: ProjectionTargetIdentity;
 }
 
+export type UnmanagedEntryState = 'unmanaged-copy' | 'unmanaged-symlink';
+
+export interface UnmanagedEntry {
+  actualPath?: string;
+  diagnostics: readonly SkillDiagnostic[];
+  entryName: string;
+  expectedPath: string;
+  state: UnmanagedEntryState;
+  targetId: string;
+  targetIdentity?: ProjectionTargetIdentity;
+}
+
 export interface ProjectionTargetIdentity {
   canonicalPath: string;
   dev: string;
@@ -211,7 +223,7 @@ export interface TargetProjectionScanInput {
 export interface TargetProjectionScan {
   diagnostics: readonly SkillDiagnostic[];
   projections: readonly Projection[];
-  unmanagedEntries: readonly Projection[];
+  unmanagedEntries: readonly UnmanagedEntry[];
 }
 
 export interface SkillManagementConfigDocument {
@@ -239,7 +251,7 @@ export interface SkillManagementSnapshot {
   sourceState: SkillSourceState;
   summary: SkillManagementSnapshotSummary;
   targets: readonly SkillTarget[];
-  unmanagedEntries: readonly Projection[];
+  unmanagedEntries: readonly UnmanagedEntry[];
 }
 
 export interface LoadSkillManagementSnapshotInput {

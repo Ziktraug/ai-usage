@@ -4,32 +4,36 @@ export const drawerClass = css({
   position: 'fixed',
   right: '0',
   bottom: '0',
-  top: { base: 'auto', sm: '0' },
-  left: { base: '0', sm: 'auto' },
-  w: { base: '100%', sm: '440px' },
+  top: { base: 'auto', md: '0' },
+  left: { base: '0', md: 'auto' },
+  w: { base: '100%', md: '440px' },
   maxW: '100vw',
-  maxH: { base: '78dvh', sm: 'none' },
+  maxH: { base: '78dvh', md: 'none' },
   display: 'flex',
   flexDirection: 'column',
   bg: 'surface',
-  borderLeft: { base: '0', sm: '1px solid token(colors.line)' },
-  borderTop: { base: '1px solid token(colors.line)', sm: '0' },
-  roundedTop: { base: 'md', sm: '0' },
+  borderLeft: { base: '0', md: '1px solid token(colors.line)' },
+  borderTop: { base: '1px solid token(colors.line)', md: '0' },
+  roundedTop: { base: 'md', md: '0' },
   boxShadow: 'overlay',
-  zIndex: 40,
-  animation: { base: 'sheetIn 0.2s ease-out', sm: 'drawerIn 0.18s ease-out' },
+  zIndex: 60,
+  _open: { animation: { base: 'sheetIn 0.2s ease-out', md: 'drawerIn 0.18s ease-out' } },
+  _closed: { animation: 'none' },
   _print: { display: 'none' },
 });
 
 export const drawer = drawerClass;
 
 export const drawerTop = css({
-  display: 'flex',
-  justifyContent: 'space-between',
+  display: 'grid',
+  gridTemplateColumns: 'minmax(0, 1fr) auto',
   alignItems: 'center',
   gap: '10px',
   p: '12px 16px',
   borderBottom: '1px solid token(colors.line)',
+  flexShrink: 0,
+  minW: 0,
+  '& > :first-child': { minW: 0, overflow: 'hidden' },
 });
 
 export const drawerBody = css({
@@ -37,7 +41,14 @@ export const drawerBody = css({
   gap: '14px',
   alignContent: 'start',
   p: '16px 18px',
+  pb: { base: 'calc(16px + env(safe-area-inset-bottom))', md: '18px' },
+  flex: '1 1 auto',
+  minH: 0,
   overflowY: 'auto',
+  overscrollBehaviorY: 'contain',
+  '& button, & a[href], & summary': { minH: '44px', minW: '44px' },
+  '& a[href]': { display: 'inline-flex', alignItems: 'center' },
+  '& input, & select, & textarea': { minH: '44px' },
 });
 
 export const drawerTitle = css({
@@ -56,10 +67,15 @@ export const drawerGrid = css({
 export const drawerNav = css({
   display: 'flex',
   alignItems: 'center',
+  justifyContent: 'flex-end',
   gap: '6px',
+  minW: 0,
+  whiteSpace: 'nowrap',
+  '& button': { minH: '44px', minW: '44px' },
 });
 
 export const drawerPosition = css({
+  display: { base: 'none', md: 'block' },
   textStyle: 'numeric',
   color: 'faint',
   fontSize: '11px',
@@ -82,12 +98,17 @@ export const drawerLegendValue = css({ textStyle: 'numeric', color: 'ink', ml: '
 
 export const drawerCompare = css({ color: 'muted', fontSize: '12px' });
 
-export const drawerActions = css({ display: 'flex', flexWrap: 'wrap', gap: '8px' });
+export const drawerActions = css({
+  display: 'flex',
+  flexWrap: 'wrap',
+  gap: '8px',
+  '& button, & a': { minH: '44px' },
+});
 
-export const popoverPositionerClass = css({ zIndex: 50 });
+export const popoverPositionerClass = css({ zIndex: 70 });
 
 export const popoverContentClass = css({
-  zIndex: 50,
+  zIndex: 70,
   display: 'grid',
   gap: '10px',
   w: 'min(560px, calc(100vw - 32px))',
@@ -108,7 +129,7 @@ export const tooltipContentClass = css({
   lineHeight: 1.5,
   whiteSpace: 'pre',
   boxShadow: 'overlay',
-  zIndex: 50,
+  zIndex: 70,
   _open: {
     animation: 'fadeIn 0.12s ease-out',
   },

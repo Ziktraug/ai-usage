@@ -6,11 +6,11 @@ test('surfaces a stale machine outside sync while preserving its raw filter valu
   await openHydratedReport(page);
   expect(new URL(page.url()).pathname).toBe('/');
 
-  const dateRange = page.getByRole('region', { name: 'Date range' });
-  const chartOptions = dateRange.locator('details[aria-label="Chart options"]');
+  const activity = page.getByRole('region', { name: 'Activity' });
+  const chartOptions = activity.locator('details[aria-label="Explore activity"]');
   await chartOptions.locator('summary').click();
   await chartOptions.getByRole('radio', { exact: true, name: 'Machine' }).click();
-  await expect(dateRange.getByTitle('Filter by Fixture Machine · Stale')).toContainText('Fixture Machine · Stale');
+  await expect(activity.getByTitle('Filter by Fixture Machine · Stale')).toContainText('Fixture Machine · Stale');
 
   const machineFilter = page.getByRole('combobox', { name: 'Filter by machine' });
   await expect(machineFilter).toBeVisible();

@@ -1,3 +1,5 @@
+import { parseServedRevision } from './served-revision';
+
 export const MAX_SESSION_VCS_BRANCHES = 32;
 export const MAX_SESSION_VCS_PULL_REQUESTS = 16;
 export const MAX_SESSION_VCS_TEXT_LENGTH = 256;
@@ -424,17 +426,10 @@ export const parseSessionVcsResolveRequest = (value: unknown): SessionVcsResolve
   if (!(isRecord(value) && hasOnlyKeys(value, RESOLVE_REQUEST_KEYS))) {
     throw new Error('Session VCS resolve request is invalid');
   }
-  if (
-    typeof value.revision !== 'string' ||
-    value.revision.length === 0 ||
-    value.revision.length > 512 ||
-    typeof value.rowId !== 'string' ||
-    value.rowId.length === 0 ||
-    value.rowId.length > 512
-  ) {
+  if (typeof value.rowId !== 'string' || value.rowId.length === 0 || value.rowId.length > 512) {
     throw new Error('Session VCS resolve request identity is invalid');
   }
-  return { revision: value.revision, rowId: value.rowId };
+  return { revision: parseServedRevision(value.revision, 'Session VCS revision'), rowId: value.rowId };
 };
 
 const isResolveUnavailableReason = (value: unknown): value is SessionVcsResolveUnavailableReason => {

@@ -6,7 +6,12 @@ import type {
   FocusedTimelineSeries,
 } from '@ai-usage/report-core/focused-report-query';
 import type { ApiPriceMeasurement } from '@ai-usage/report-core/provenance';
-import type { TimelineValue } from '../../../../overview-model';
+import type { ResolvedTimelineMetric, TimelineValue } from '../../../../overview-model';
+import { fmtNum, fmtPct } from '../../../foundation/presentation/format';
+import {
+  aggregateApiPriceProvenance,
+  aggregateApiValuePresentation,
+} from '../../../foundation/presentation/report-value';
 
 export interface MachineTimelinePresentation {
   readonly freshness: 'fresh' | 'stale' | 'unavailable';
@@ -31,47 +36,117 @@ export interface TimelineReadoutRow {
 export interface TimelineReadout {
   readonly bucket: FocusedTimelineBucket;
   readonly hasPrevious: boolean;
+  readonly metric: ResolvedTimelineMetric;
   readonly rows: readonly TimelineReadoutRow[];
   readonly total: number;
-  readonly useSessions: boolean;
+}
+
+export interface TimelineValuePresentation {
+  readonly label: string;
+  readonly provenance: ReturnType<typeof aggregateApiPriceProvenance>;
+  readonly title: string | null;
 }
 
 export type CampaignSeriesPresenter = (series: FocusedTimelineSeries) => FocusedTimelineSeries;
 export type MachineSeriesPresenter = (key: string, label: string) => MachineTimelinePresentation;
+export type ExecutiveTimelineValue = Extract<TimelineValue, 'cost' | 'tokens'>;
 
-export const timelineUsesSessions = (timeline: FocusedTimelineData, value: TimelineValue): boolean =>
-  value === 'sessions' || (value === 'share' && timeline.grandTotal <= 0);
+export const executiveTimelineValue = (value: TimelineValue): ExecutiveTimelineValue | null =>
+  value === 'cost' || value === 'tokens' ? value : null;
+
+export const resolveTimelineMetric = (
+  timeline: Pick<FocusedTimelineData, 'grandTotal'> | null,
+  value: TimelineValue,
+): ResolvedTimelineMetric => {
+  if (value !== 'share') {
+    return value;
+  }
+  return timeline !== null && timeline.grandTotal <= 0 ? 'sessions' : 'cost';
+};
+
+export const timelineSharePercent = (amount: number, total: number): number => (total > 0 ? (amount / total) * 100 : 0);
+
+export const timelineMetricLabel = (value: TimelineValue, metric: ResolvedTimelineMetric): string => {
+  if (value === 'share') {
+    return 'Share';
+  }
+  if (metric === 'tokens') {
+    return 'Processed tokens';
+  }
+  return metric === 'sessions' ? 'Sessions' : 'API value';
+};
+
+export const presentTimelineValue = (
+  amount: number,
+  total: number,
+  value: TimelineValue,
+  metric: ResolvedTimelineMetric,
+  priceMeasurement: ApiPriceMeasurement,
+): TimelineValuePresentation => {
+  if (value === 'share') {
+    return { label: fmtPct(timelineSharePercent(amount, total)), provenance: null, title: null };
+  }
+  if (metric === 'tokens') {
+    return { label: `${fmtNum(amount)} tokens`, provenance: null, title: null };
+  }
+  if (metric === 'sessions') {
+    return { label: `${fmtNum(amount)} sessions`, provenance: null, title: null };
+  }
+  const amountMeasurement = { ...priceMeasurement, knownCost: amount };
+  const presentation = aggregateApiValuePresentation(amountMeasurement);
+  return {
+    label: presentation.label,
+    provenance: aggregateApiPriceProvenance(amountMeasurement),
+    title: presentation.title,
+  };
+};
 
 // Internal to the readout: bars read their own segment values from
 // `timeline-window`, which already filtered the empty entries out.
 const timelineEntryValue = (
-  entry: Pick<FocusedTimelineBucketEntry, 'cost' | 'sessions'> | null | undefined,
-  useSessions: boolean,
+  entry: Pick<FocusedTimelineBucketEntry, 'cost' | 'sessions' | 'tokens'> | null | undefined,
+  metric: ResolvedTimelineMetric,
 ): number => {
   if (!entry) {
     return 0;
   }
-  return useSessions ? entry.sessions : entry.cost;
+  if (metric === 'sessions') {
+    return entry.sessions;
+  }
+  return metric === 'tokens' ? entry.tokens : entry.cost;
 };
 
 // Internal to the readout: the chart itself reads classified bucket values from
 // `timeline-window`, which excludes the unclassified gap.
 const timelineBucketValue = (
-  bucket: Pick<FocusedTimelineBucket, 'sessions' | 'total'>,
-  useSessions: boolean,
-): number => (useSessions ? bucket.sessions : bucket.total);
+  bucket: Pick<FocusedTimelineBucket, 'sessions' | 'tokens' | 'total'>,
+  metric: ResolvedTimelineMetric,
+): number => {
+  if (metric === 'sessions') {
+    return bucket.sessions;
+  }
+  return metric === 'tokens' ? bucket.tokens : bucket.total;
+};
 
 export const timelineSeriesValue = (
-  series: Pick<FocusedTimelineSeries, 'sessions' | 'total'>,
-  useSessions: boolean,
-): number => (useSessions ? series.sessions : series.total);
+  series: Pick<FocusedTimelineSeries, 'sessions' | 'tokens' | 'total'>,
+  metric: ResolvedTimelineMetric,
+): number => {
+  if (metric === 'sessions') {
+    return series.sessions;
+  }
+  return metric === 'tokens' ? series.tokens : series.total;
+};
 
 export const timelineGapValue = (
-  gap: { readonly sessions: number; readonly total: number },
-  useSessions: boolean,
-): number => (useSessions ? gap.sessions : gap.total);
-
-export const timelineSharePercent = (amount: number, total: number): number => (total > 0 ? (amount / total) * 100 : 0);
+  gap: { readonly sessions: number; readonly tokens: number; readonly total: number },
+  metric: ResolvedTimelineMetric,
+): number => {
+  if (metric === 'sessions') {
+    return gap.sessions;
+  }
+  return metric === 'tokens' ? gap.tokens : gap.total;
+};
 
 export const presentTimelineSeries = (
   timeline: FocusedTimelineData,
@@ -119,15 +194,15 @@ export const timelineReadoutFor = (
   if (!bucket) {
     return null;
   }
-  const useSessions = timelineUsesSessions(timeline, value);
+  const metric = resolveTimelineMetric(timeline, value);
   // The bucket before this one, when there is one, is what each series change is
   // measured against.
   const previous = index > 0 ? timeline.buckets[index - 1] : undefined;
   const rows = series
     .map((series) => {
       const entry = bucket.byKey[series.key];
-      const current = timelineEntryValue(entry, useSessions);
-      const prior = previous ? timelineEntryValue(previous.byKey[series.key], useSessions) : 0;
+      const current = timelineEntryValue(entry, metric);
+      const prior = previous ? timelineEntryValue(previous.byKey[series.key], metric) : 0;
       return {
         delta: prior > NEGLIGIBLE_PRIOR ? ((current - prior) / prior) * 100 : null,
         key: series.key,
@@ -141,9 +216,9 @@ export const timelineReadoutFor = (
   return {
     bucket,
     hasPrevious: previous !== undefined,
+    metric,
     rows,
-    total: timelineBucketValue(bucket, useSessions),
-    useSessions,
+    total: timelineBucketValue(bucket, metric),
   };
 };
 

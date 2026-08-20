@@ -81,8 +81,8 @@ export const syntheticManagementSnapshot = (): SkillManagementSnapshot => {
       {
         actualPath: '/synthetic/runtime/skills/legacy-local-copy',
         diagnostics: [],
+        entryName: 'legacy-local-copy',
         expectedPath: '/synthetic/runtime/skills/legacy-local-copy',
-        skillName: 'legacy-local-copy',
         state: 'unmanaged-copy',
         targetId: 'codex',
       },

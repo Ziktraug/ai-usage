@@ -6,6 +6,7 @@ import {
   groupAnalytics,
   harnessProviderAnalyticsKey,
   hasMeasuredLineDelta,
+  processedTokensForAnalytics,
   rowToAnalyticsInput,
 } from './analytics';
 import { createUsageReportPayload, parseUsageReportPayload } from './report-data';
@@ -55,6 +56,22 @@ describe('analytics calculation', () => {
   test('encodes harness-provider tuples without separator collisions', () => {
     expect(harnessProviderAnalyticsKey('Codex', 'Codex API')).toBe('["Codex","Codex API"]');
     expect(harnessProviderAnalyticsKey('a:b', 'c')).not.toBe(harnessProviderAnalyticsKey('a', 'b:c'));
+  });
+
+  test('defines processed tokens as cache read plus cache write, input, and output', () => {
+    const [group] = groupAnalytics(
+      [row({ tokCr: 11, tokCw: 13, tokIn: 17, tokOut: 19 })],
+      rowToAnalyticsInput,
+      (entry) => entry.harness,
+      1,
+    );
+    if (!group) {
+      throw new Error('Expected one analytics group');
+    }
+
+    expect(group.cache).toBe(11);
+    expect(group.fresh).toBe(49);
+    expect(processedTokensForAnalytics(group)).toBe(60);
   });
 
   test('calculates reusable report metrics without rendering strings', () => {

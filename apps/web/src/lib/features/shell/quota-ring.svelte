@@ -29,6 +29,9 @@
   // Unmeasured providers get a dashed track instead of an empty solid one: a 0% ring and a
   // "nothing is being read" ring must not look the same.
   const trackUnmeasured = css({ strokeDasharray: '2 4' });
+  // A stale arc is drawn thinner and dimmer. It cannot be dashed like the track above: the arc's own
+  // `stroke-dasharray` is what sets its length, so a second pattern would corrupt the geometry.
+  const arcStale = css({ opacity: 0.5, strokeWidth: '2' });
 </script>
 
 <script lang="ts">
@@ -39,11 +42,13 @@
     center,
     severity,
     size = 26,
+    stale = false,
     usedPercent,
   }: {
     center?: Snippet;
     severity: ProviderQuotaSeverity;
     size?: number;
+    stale?: boolean;
     usedPercent: number | null;
   } = $props();
 
@@ -62,7 +67,7 @@
     />
     {#if usedPercent !== null}
       <circle
-        class={arcTones[severity]}
+        class={cx(arcTones[severity], stale ? arcStale : undefined)}
         cx="18"
         cy="18"
         fill="none"

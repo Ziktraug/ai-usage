@@ -1,7 +1,9 @@
 import {
   parseUsageEngineEvent,
+  parseUsageEngineEventSequence,
   type UsageEngineEvent,
   type UsageEngineInstanceId,
+  usageEngineEventIdFor,
 } from '@ai-usage/usage-engine-control';
 
 type RuntimeEventPayload = UsageEngineEvent extends infer Event
@@ -66,11 +68,12 @@ export const createRuntimeEventHub = (instanceId: UsageEngineInstanceId): Runtim
 
   const publish = (eventValue: RuntimeEventPayload): void => {
     eventSequence += 1;
+    const sequence = parseUsageEngineEventSequence(eventSequence);
     const event = parseUsageEngineEvent({
       ...eventValue,
-      eventId: `engine:${eventSequence}`,
+      eventId: usageEngineEventIdFor('engine', sequence),
       instanceId,
-      sequence: eventSequence,
+      sequence,
     });
     for (const subscriber of subscribers) {
       if (subscriber.pending) {

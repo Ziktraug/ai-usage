@@ -23,7 +23,7 @@ browser-only APIs.
 
 ## Data Boundary
 
-Inputs and outputs are typed, deterministic, JSON-safe where they cross processes, and portable. Browser-safe source-control contracts construct domain snapshots only after requiring the exact canonical seven-source catalogue, canonical cadence/labels, bounded operational numbers, consistent lifecycle counts, and valid publication ordering. They also strictly decode command responses and publication events and own newest-snapshot replacement. Shared query contracts define validated filters, sort, paging, campaign children, neighbors, focused Overview/Breakdown projections, a byte-bounded support bootstrap with explicit omission counts, complete export results, cursors, and request fingerprints without deciding where data is stored, collected, fetched, or rendered.
+Inputs and outputs are typed, deterministic, JSON-safe where they cross processes, and portable. Browser-safe source-control contracts construct domain snapshots only after requiring the exact canonical eight-source catalogue, canonical cadence/labels, bounded operational numbers, consistent lifecycle counts, and valid publication ordering. They also strictly decode command responses and publication events and own newest-snapshot replacement. Shared query contracts define validated filters, sort, paging, campaign children, neighbors, focused Overview/Breakdown projections, a byte-bounded support bootstrap with explicit omission counts, complete export results, cursors, and request fingerprints without deciding where data is stored, collected, fetched, or rendered.
 
 ## Test Strategy
 

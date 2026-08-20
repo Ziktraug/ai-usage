@@ -6,7 +6,7 @@ import { parseUsageEngineInstanceId, type UsageEngineInstanceId } from '@ai-usag
 import { createUsageEngineBearerToken } from '@ai-usage/usage-engine-control/node';
 import { createLiveUsageEngineRuntime } from '@ai-usage/usage-engine-runtime/live';
 import { startUsageEngineControlServer, type UsageEngineInternalFailureBoundary } from './control-server';
-import { acquireUsageEngineLock } from './engine-lock';
+import { acquireUsageEngineLock, UsageEngineWriterLockContendedError } from './engine-lock';
 import {
   createUsageEngineProcess,
   interruptedExitCode,
@@ -119,11 +119,19 @@ export const runUsageEngineMain = async (
   }
 };
 
+export type UsageEngineStartupFailureKind = 'startup-failure' | 'writer-lock-contended';
+
+// Startup diagnostics are a closed public vocabulary. Never derive them from an error tag, class
+// name, or message: those values are not stable and may carry private local details.
+export const usageEngineStartupFailureKind = (error: unknown): UsageEngineStartupFailureKind =>
+  error instanceof UsageEngineWriterLockContendedError ? 'writer-lock-contended' : 'startup-failure';
+
 if (import.meta.main) {
   try {
     process.exitCode = await runUsageEngineMain();
-  } catch {
+  } catch (error) {
     process.stderr.write(`${usageEngineFailureDiagnostic}\n`);
+    process.stderr.write(`usage-engine startupFailureKind=${usageEngineStartupFailureKind(error)}\n`);
     process.exitCode = 1;
   }
 }

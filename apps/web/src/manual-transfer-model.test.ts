@@ -1,4 +1,5 @@
 import { expect, test } from 'bun:test';
+import { parseMergePreviewProof } from '@ai-usage/report-core/merge-proof';
 import type { UsageEngineMergePreviewOutput } from '@ai-usage/usage-engine-control';
 import type { UsageMachineFleetItem } from '@ai-usage/usage-store/reader';
 import {
@@ -66,9 +67,11 @@ test('owns conservative invalid-row and stale-machine guidance without local pat
 
 test('summarizes changed and unchanged usage rows after a manual import', () => {
   const result: UsageEngineMergePreviewOutput = {
+    ...parseMergePreviewProof({
+      confirmationToken: `v1.${'b'.repeat(64)}`,
+      documentDigest: 'a'.repeat(64),
+    }),
     bytes: 1024,
-    confirmationToken: 'confirmation-token',
-    documentDigest: 'a'.repeat(64),
     kind: 'merge-preview',
     result: {
       deleted: 5,

@@ -1,5 +1,7 @@
 import type { FocusedTimelineBucket, FocusedTimelineData } from '@ai-usage/report-core/focused-report-query';
+import { type ApiPriceMeasurement, combineApiPriceMeasurements } from '@ai-usage/report-core/provenance';
 import { clampNumber, dateFromIndex } from '../../../../date-range';
+import type { ResolvedTimelineMetric } from '../../../../overview-model';
 import type { TimeRangeIndexRange, TimeRangeSelectionIndexes } from '../../../../time-range-control-state';
 
 /**
@@ -66,14 +68,38 @@ export const timelineRangeForSelection = (
 });
 
 /** The classified value of one bucket, excluding its unclassified gap. */
-export const classifiedBucketValue = (bucket: FocusedTimelineBucket, useSessions: boolean): number => {
+const timelineMetricValue = (
+  value: { readonly sessions: number; readonly tokens: number; readonly total: number },
+  metric: ResolvedTimelineMetric,
+): number => {
+  if (metric === 'sessions') {
+    return value.sessions;
+  }
+  return metric === 'tokens' ? value.tokens : value.total;
+};
+
+const timelineEntryMetricValue = (
+  value: { readonly cost: number; readonly sessions: number; readonly tokens: number },
+  metric: ResolvedTimelineMetric,
+): number => {
+  if (metric === 'sessions') {
+    return value.sessions;
+  }
+  return metric === 'tokens' ? value.tokens : value.cost;
+};
+
+export const classifiedBucketValue = (bucket: FocusedTimelineBucket, metric: ResolvedTimelineMetric): number => {
   const gap = bucket.unclassified;
-  const bucketValue = useSessions ? bucket.sessions : bucket.total;
+  const bucketValue = timelineMetricValue(bucket, metric);
   if (!gap) {
     return bucketValue;
   }
-  return bucketValue - (useSessions ? gap.sessions : gap.total);
+  return bucketValue - timelineMetricValue(gap, metric);
 };
+
+/** Price coverage for the classified stack, excluding its unclassified gap. */
+export const classifiedBucketPriceMeasurement = (bucket: FocusedTimelineBucket): ApiPriceMeasurement =>
+  combineApiPriceMeasurements(Object.values(bucket.byKey).map((entry) => entry.priceMeasurement));
 
 /**
  * Projects the visible buckets in series order, keeping only entries that
@@ -82,7 +108,7 @@ export const classifiedBucketValue = (bucket: FocusedTimelineBucket, useSessions
 export const visibleTimelineBars = (
   timeline: FocusedTimelineData,
   range: TimeRangeIndexRange,
-  useSessions: boolean,
+  metric: ResolvedTimelineMetric,
 ): VisibleTimelineBar[] => {
   const rankByKey = new Map(timeline.series.map((series, rank) => [series.key, rank]));
   return timeline.buckets.slice(range.from, range.to + 1).map((bucket, offset) => {
@@ -92,13 +118,13 @@ export const visibleTimelineBars = (
       if (rank === undefined) {
         continue;
       }
-      const value = useSessions ? entry.sessions : entry.cost;
+      const value = timelineEntryMetricValue(entry, metric);
       if (value > 0) {
         segments.push({ key, rank, value });
       }
     }
     segments.sort((left, right) => left.rank - right.rank);
-    return { bucket, index: range.from + offset, segments, total: classifiedBucketValue(bucket, useSessions) };
+    return { bucket, index: range.from + offset, segments, total: classifiedBucketValue(bucket, metric) };
   });
 };
 
@@ -109,11 +135,11 @@ export const visibleTimelineBars = (
 export const visibleTimelineMaximum = (
   timeline: FocusedTimelineData,
   range: TimeRangeIndexRange,
-  useSessions: boolean,
+  metric: ResolvedTimelineMetric,
 ): number =>
   timeline.buckets
     .slice(range.from, range.to + 1)
-    .reduce((maximum, bucket) => Math.max(maximum, classifiedBucketValue(bucket, useSessions)), 0);
+    .reduce((maximum, bucket) => Math.max(maximum, classifiedBucketValue(bucket, metric)), 0);
 
 /** Keeps dense day buckets inside the plot instead of overflowing horizontally. */
 export const timelineBucketLayout = (bucketCount: number): TimelineBucketLayout => {
@@ -165,6 +191,7 @@ export const visibleTimelineMonthTicks = (
 
 export interface VisibleTimelineSummary {
   gap: number;
+  priceMeasurement: ApiPriceMeasurement;
   total: number;
   totalsByKey: ReadonlyMap<string, number>;
 }
@@ -177,21 +204,28 @@ export interface VisibleTimelineSummary {
 export const visibleTimelineSummary = (
   timeline: FocusedTimelineData,
   range: TimeRangeIndexRange,
-  useSessions: boolean,
+  metric: ResolvedTimelineMetric,
 ): VisibleTimelineSummary => {
+  const visibleBuckets = timeline.buckets.slice(range.from, range.to + 1);
   const totalsByKey = new Map<string, number>();
   let total = 0;
   let gap = 0;
-  for (const bucket of timeline.buckets.slice(range.from, range.to + 1)) {
-    total += useSessions ? bucket.sessions : bucket.total;
+  for (const bucket of visibleBuckets) {
+    total += timelineMetricValue(bucket, metric);
     if (bucket.unclassified) {
-      gap += useSessions ? bucket.unclassified.sessions : bucket.unclassified.total;
+      gap += timelineMetricValue(bucket.unclassified, metric);
     }
     for (const [key, entry] of Object.entries(bucket.byKey)) {
-      totalsByKey.set(key, (totalsByKey.get(key) ?? 0) + (useSessions ? entry.sessions : entry.cost));
+      const value = timelineEntryMetricValue(entry, metric);
+      totalsByKey.set(key, (totalsByKey.get(key) ?? 0) + value);
     }
   }
-  return { gap, total, totalsByKey };
+  return {
+    gap,
+    priceMeasurement: combineApiPriceMeasurements(visibleBuckets.map((bucket) => bucket.priceMeasurement)),
+    total,
+    totalsByKey,
+  };
 };
 
 /** The dates the window actually starts and ends on. */

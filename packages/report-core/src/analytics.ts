@@ -134,6 +134,10 @@ export const compareAnalyticsKeys = (left: string, right: string): number => {
 export const harnessProviderAnalyticsKey = (harness: string, provider: string): string =>
   JSON.stringify([harness, provider]);
 
+/** Cache reads plus fresh tokens, where fresh is cache writes, input, and output. */
+export const processedTokensForAnalytics = ({ cache, fresh }: Pick<AnalyticsGroup, 'cache' | 'fresh'>): number =>
+  cache + fresh;
+
 const median = (values: number[]) => {
   if (!values.length) {
     return 0;

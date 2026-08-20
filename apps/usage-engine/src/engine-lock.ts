@@ -77,6 +77,10 @@ class UnprovenPublishedLockRollbackError extends AggregateError {
   override readonly name = 'UnprovenPublishedLockRollbackError';
 }
 
+export class UsageEngineWriterLockContendedError extends Error {
+  override readonly name = 'UsageEngineWriterLockContendedError';
+}
+
 export interface UsageEngineLock {
   readonly path: string;
   readonly release: () => Promise<void>;
@@ -615,7 +619,9 @@ const adoptAbandonedRecoveryClaim = async (
   }
   for (const claim of claims) {
     if (!(await recoveryOwnerIsAbandoned(claim.owner))) {
-      throw new Error(`Usage engine lock recovery is owned by live PID ${claim.owner.pid}: ${lockPath}`);
+      throw new UsageEngineWriterLockContendedError(
+        `Usage engine lock recovery is owned by live PID ${claim.owner.pid}: ${lockPath}`,
+      );
     }
   }
   const selected = [...claims].sort((left, right) => left.path.localeCompare(right.path))[0];
@@ -671,7 +677,9 @@ const drainForeignAcquisitionIntents = async (
       return;
     }
     if (Date.now() >= deadline) {
-      throw new Error(`Usage engine lock recovery could not drain live acquisition intents: ${lockPath}`);
+      throw new UsageEngineWriterLockContendedError(
+        `Usage engine lock recovery could not drain live acquisition intents: ${lockPath}`,
+      );
     }
     await Bun.sleep(LOCK_RECOVERY_POLL_MS);
   }
@@ -1068,7 +1076,9 @@ const recoverStaleLock = async (
       throw new Error(`Usage engine lock recovery claims disagreed and were preserved: ${lockPath}`);
     }
     if (await lockOwnerIsLive(firstClaim.metadata)) {
-      throw new Error(`Usage engine lock ${lockPath} is owned by live PID ${firstClaim.metadata.pid}.`);
+      throw new UsageEngineWriterLockContendedError(
+        `Usage engine lock ${lockPath} is owned by live PID ${firstClaim.metadata.pid}.`,
+      );
     }
     claim = await adoptAbandonedRecoveryClaim(lockPath, directory, databasePath, claims, owner);
     if (!claim) {
@@ -1081,7 +1091,9 @@ const recoverStaleLock = async (
     await repairInterruptedLockPublication(lockPath, directory);
     const inspected = await inspectExistingLock(lockPath, directory, databasePath);
     if (await lockOwnerIsLive(inspected.metadata)) {
-      throw new Error(`Usage engine lock ${lockPath} is owned by live PID ${inspected.metadata.pid}.`);
+      throw new UsageEngineWriterLockContendedError(
+        `Usage engine lock ${lockPath} is owned by live PID ${inspected.metadata.pid}.`,
+      );
     }
     claim = await createRecoveryClaim(lockPath, directory, databasePath, inspected.identity, owner);
     if (!(claim && (await electRecoveryClaim(lockPath, directory, databasePath, claim)))) {

@@ -143,7 +143,7 @@ describe('Svelte session table schema adapter', () => {
       'Estimated API-equivalent value at standard prices. Values prefixed with ≥ are lower bounds because some model prices are unavailable.',
     );
     expect(sessionTableColumns.find(({ id }) => id === 'actual')?.meta.title).toBe(
-      'Out-of-pocket spend reported by harnesses',
+      'Amount reported as charged by collectors. Sessions without a reported amount fall back to the API-equivalent estimate.',
     );
     expect(sessionTableColumns.find(({ id }) => id === 'quota')?.meta.title).toBe(
       'Cursor export value covered by the subscription quota',

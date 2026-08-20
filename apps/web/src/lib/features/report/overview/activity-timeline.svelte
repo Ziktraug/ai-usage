@@ -5,7 +5,7 @@
   const plot = css({
     position: 'relative',
     display: 'block',
-    minH: '150px',
+    minH: { base: '150px', lg: '120px' },
     // A dense window must never escape the panel, whatever the bucket count.
     overflow: 'hidden',
     // 8px horizontal inset matches the hover overlay and the crosshair correction.
@@ -20,12 +20,18 @@
     display: 'flex',
     alignItems: 'flex-end',
     w: 'full',
-    h: '140px',
+    h: { base: '140px', lg: '110px' },
     minW: 0,
     // Marks only; the hover overlay above owns pointer input.
     pointerEvents: 'none',
   });
-  const bucketClass = css({ display: 'flex', flex: '1 1 0', flexDirection: 'column-reverse', h: '140px', minW: 0 });
+  const bucketClass = css({
+    display: 'flex',
+    flex: '1 1 0',
+    flexDirection: 'column-reverse',
+    h: { base: '140px', lg: '110px' },
+    minW: 0,
+  });
   const gapBands = css({
     position: 'absolute',
     insetInline: '4px',
@@ -44,6 +50,29 @@
     backgroundImage: 'repeating-linear-gradient(135deg, transparent 0 2px, token(colors.lineStrong) 2px 3px)',
   });
   const gapEmpty = css({ flex: '1 1 0', minW: 0 });
+  // The bars are scaled against the tallest bucket in the window, so without a marked peak the
+  // chart shows shape but no magnitude. Two references — this rule and the plot's bottom border —
+  // are enough to read a value at this size; a full axis would not fit the compact geometry.
+  const peakRule = css({
+    position: 'absolute',
+    insetInline: '8px',
+    top: '8px',
+    borderTop: '1px dashed token(colors.line)',
+    pointerEvents: 'none',
+  });
+  const peakValue = css({
+    position: 'absolute',
+    top: '11px',
+    insetInlineEnd: '10px',
+    // The tallest bucket sits under this label whenever the peak falls at the right edge, so the
+    // text needs its own ground to stay readable over a series fill.
+    px: '3px',
+    bg: 'surface',
+    color: 'muted',
+    fontSize: '10px',
+    lineHeight: 1,
+    pointerEvents: 'none',
+  });
   // No `bg` here: the series swatch owns the fill, and a base `bg` atom would
   // race it on stylesheet order rather than losing to it.
   const segment = css({ minH: '1px', borderTop: '1px solid token(colors.surface)' });
@@ -80,7 +109,13 @@
   const rangeTotal = css({ fontWeight: 600, textStyle: 'numeric', mr: '4px' });
   const readout = css({ display: 'grid', gap: '5px', p: '9px', borderRadius: 'md', bg: 'track', fontSize: '11px' });
   const readoutRow = css({ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', gap: '8px' });
-  const empty = css({ display: 'grid', placeItems: 'center', minH: '150px', color: 'muted', fontSize: '12px' });
+  const empty = css({
+    display: 'grid',
+    placeItems: 'center',
+    minH: { base: '150px', lg: '120px' },
+    color: 'muted',
+    fontSize: '12px',
+  });
 </script>
 
 <script lang="ts">
@@ -97,24 +132,28 @@
     timelineHoverLayer,
   } from '@ai-usage/design-system/svelte';
   import type { FocusedTimelineData, FocusedTimelineSeries } from '@ai-usage/report-core/focused-report-query';
+  import { type ApiPriceMeasurement, apiPriceMeasurement } from '@ai-usage/report-core/provenance';
   import { tick as afterDomUpdate, onMount } from 'svelte';
-  import type { TimelineValue } from '../../../../overview-model';
+  import type { ResolvedTimelineMetric, TimelineValue } from '../../../../overview-model';
   import type { TimeRangeIndexRange } from '../../../../time-range-control-state';
-  import { fmtDateOnly, fmtMoney, fmtNum, fmtPct } from '../../../foundation/presentation/format';
-  import { aggregateApiPriceProvenance } from '../../../foundation/presentation/report-value';
+  import { fmtCompact, fmtDateOnly, fmtMoney, fmtPct } from '../../../foundation/presentation/format';
   import {
     type CampaignSeriesPresenter,
     type MachineSeriesPresenter,
     presentTimelineSeries,
+    presentTimelineValue,
+    resolveTimelineMetric,
     retainTimelineTickLabels,
+    type TimelineValuePresentation,
     timelineGapValue,
+    timelineMetricLabel,
     timelineReadoutFor,
     timelineSeriesIsFilterable,
     timelineSharePercent,
     timelineTrendIsVisible,
-    timelineUsesSessions,
   } from './timeline-model';
   import {
+    classifiedBucketPriceMeasurement,
     timelineBucketCenterPercent,
     timelineBucketLayout,
     timelineMonthTickId,
@@ -142,6 +181,7 @@
 
   const unchangedCampaignSeries: CampaignSeriesPresenter = (series) => series;
   const unchangedMachineSeries: MachineSeriesPresenter = (_key, label) => ({ freshness: 'unavailable', label });
+  const emptyPriceMeasurement = apiPriceMeasurement({ costKnown: true, freshTokens: 0, knownCost: 0 });
 
   let {
     activeSeriesKeys = [],
@@ -163,23 +203,22 @@
   const presentedSeries = $derived(
     timeline ? presentTimelineSeries(timeline, campaignPresenter, machinePresenter) : [],
   );
-  const useSessions = $derived(timeline ? timelineUsesSessions(timeline, value) : value === 'sessions');
+  const metric = $derived<ResolvedTimelineMetric>(resolveTimelineMetric(timeline, value));
+  const metricLabel = $derived(timelineMetricLabel(value, metric));
   // The report range owns which buckets are on screen. Everything downstream —
   // scale, ticks, boundary dates, pointer hit-testing — reads this one window.
   const visibleWindow = $derived<TimeRangeIndexRange>(
     timeline ? (visibleRange ?? { from: 0, to: Math.max(0, timeline.buckets.length - 1) }) : { from: 0, to: 0 },
   );
-  const bars = $derived(timeline ? visibleTimelineBars(timeline, visibleWindow, useSessions) : []);
+  const bars = $derived(timeline ? visibleTimelineBars(timeline, visibleWindow, metric) : []);
   const layout = $derived(timelineBucketLayout(bars.length));
   // Scale against the tallest bucket inside the window, so narrowing the range
   // rescales the chart instead of flattening it against a domain-wide peak.
-  const windowMaximum = $derived(
-    timeline ? Math.max(1, visibleTimelineMaximum(timeline, visibleWindow, useSessions)) : 1,
-  );
+  const windowMaximum = $derived(timeline ? Math.max(1, visibleTimelineMaximum(timeline, visibleWindow, metric)) : 1);
   const summary = $derived(
     timeline
-      ? visibleTimelineSummary(timeline, visibleWindow, useSessions)
-      : { gap: 0, total: 0, totalsByKey: new Map<string, number>() },
+      ? visibleTimelineSummary(timeline, visibleWindow, metric)
+      : { gap: 0, priceMeasurement: emptyPriceMeasurement, total: 0, totalsByKey: new Map<string, number>() },
   );
   // A series carrying nothing in the window is noise, but an active filter must
   // stay visible so it can be cleared.
@@ -195,18 +234,23 @@
     timeline && inspectedIndex !== null ? timelineReadoutFor(timeline, value, inspectedIndex, presentedSeries) : null,
   );
 
+  const peakLabel = $derived.by((): string => {
+    if (value === 'share') {
+      return '100%';
+    }
+    return metric === 'cost' ? fmtMoney(windowMaximum) : fmtCompact(windowMaximum);
+  });
+
   const heightFor = (barTotal: number, amount: number): number => {
     if (value === 'share') {
       return timelineSharePercent(amount, barTotal);
     }
     return (amount / windowMaximum) * 100;
   };
-  const formattedAmount = (amount: number, total: number): string => {
-    if (value === 'share') {
-      return fmtPct(timelineSharePercent(amount, total));
-    }
-    return useSessions ? fmtNum(amount) : fmtMoney(amount);
-  };
+  const presentedAmount = (amount: number, total: number, priceMeasurement: ApiPriceMeasurement) =>
+    presentTimelineValue(amount, total, value, metric, priceMeasurement);
+  const accessibleAmount = (presentation: TimelineValuePresentation): string =>
+    presentation.provenance ? `${presentation.label}. ${presentation.provenance.label}.` : presentation.label;
   const inspect = (index: number): void => {
     inspectedIndex = index;
     onInspect(index);
@@ -317,13 +361,18 @@
   const swatchFor = (key: string): DimensionSwatch => (timeline ? dimensionSwatch(timeline.dimension, key) : {});
 </script>
 
-<div class={chart} data-timeline-labels-settled={retainedTickIds === null ? 'false' : 'true'}>
+<div
+  class={chart}
+  data-timeline-labels-settled={retainedTickIds === null ? 'false' : 'true'}
+  data-timeline-metric={metric}
+>
   {#if timeline && timeline.buckets.length > 0}
     <ul aria-label={`${timeline.dimension} timeline legend`} class={legend} data-report-range-part="total-legend">
       <!-- Only the session count earns a slot here. In value mode this restated the hero verbatim,
            and in share mode it was a constant 100%; the per-series shares below carry the split. -->
-      {#if useSessions}
-        <li class={rangeTotal} data-report-range-total>{fmtNum(summary.total)}</li>
+      {#if value !== 'share' && metric !== 'cost'}
+        {@const summaryValue = presentedAmount(summary.total, summary.total, summary.priceMeasurement)}
+        <li class={rangeTotal} data-report-range-total title={summaryValue.title ?? undefined}>{summaryValue.label}</li>
       {/if}
       {#each legendSeries as series (series.key)}
         {@const total = summary.totalsByKey.get(series.key) ?? 0}
@@ -362,6 +411,8 @@
       {/if}
     </ul>
     <div class={plot} data-bucket-index={inspectedIndex ?? 0} data-report-range-part="chart">
+      <span aria-hidden="true" class={peakRule} data-timeline-peak-rule></span>
+      <span aria-hidden="true" class={peakValue} data-timeline-peak-value>{peakLabel}</span>
       {#each monthTicks as monthTick (timelineMonthTickId(monthTick))}
         <span
           aria-hidden="true"
@@ -376,10 +427,16 @@
         style:gap={layout.bucketGap}
       >
         {#each bars as bar (bar.bucket.date)}
+          {@const barValue = presentedAmount(
+            bar.total,
+            bar.total,
+            classifiedBucketPriceMeasurement(bar.bucket),
+          )}
           <span
-            aria-label={`${fmtDateOnly(bar.bucket.date)} · ${formattedAmount(bar.total, bar.total)}`}
+            aria-label={`${fmtDateOnly(bar.bucket.date)} · ${metricLabel}: ${accessibleAmount(barValue)}`}
             class={bucketClass}
             role="img"
+            title={barValue.title ?? undefined}
             style:min-width={layout.bucketMinWidth}
           >
             {#each bar.segments as segmentEntry (segmentEntry.key)}
@@ -454,21 +511,26 @@
       <p class={percentage} data-machine-freshness-status>{machineFreshnessStatus}</p>
     {/if}
     {#if readoutData}
+      {@const readoutValue = presentedAmount(
+        readoutData.total,
+        readoutData.total,
+        readoutData.bucket.priceMeasurement,
+      )}
       <div aria-live="polite" class={readout} data-timeline-readout role="status">
         <div class={readoutRow}>
           <strong>{fmtDateOnly(readoutData.bucket.date)}</strong>
-          <span>{formattedAmount(readoutData.total, readoutData.total)}</span>
-          {#if !readoutData.useSessions && aggregateApiPriceProvenance(readoutData.bucket.priceMeasurement)}
-            {@const provenance = aggregateApiPriceProvenance(readoutData.bucket.priceMeasurement)}
-            <span title={provenance?.description}>{provenance?.label}</span>
+          <span title={readoutValue.title ?? undefined}>{metricLabel}: {readoutValue.label}</span>
+          {#if readoutValue.provenance}
+            <span title={readoutValue.provenance.description}>{readoutValue.provenance.label}</span>
           {/if}
         </div>
         {#each readoutData.rows as row (row.key)}
           {@const showTrend = readoutData.hasPrevious && timelineTrendIsVisible(row.delta)}
+          {@const rowValue = presentedAmount(row.value, readoutData.total, row.priceMeasurement)}
           <div class={readoutRow} data-active={hoveredKey === row.key ? 'true' : 'false'}>
             <span>{row.label}</span>
-            <span>
-              {formattedAmount(row.value, readoutData.total)}
+            <span title={rowValue.title ?? undefined}>
+              {rowValue.label}
               · {fmtPct(timelineSharePercent(row.value, readoutData.total))}
               {#if showTrend}
                 {@const rose = (row.delta ?? 0) >= 0}
@@ -480,11 +542,14 @@
           </div>
         {/each}
         {#if readoutData.bucket.unclassified}
+          {@const gapValue = presentedAmount(
+            timelineGapValue(readoutData.bucket.unclassified, readoutData.metric),
+            readoutData.total,
+            readoutData.bucket.unclassified.priceMeasurement,
+          )}
           <div class={readoutRow} title={originGapDescription(readoutData.bucket.unclassified)}>
             <span>Not classified</span>
-            <span
-              >{formattedAmount(timelineGapValue(readoutData.bucket.unclassified, readoutData.useSessions), readoutData.total)}</span
-            >
+            <span title={gapValue.title ?? undefined}>{gapValue.label}</span>
           </div>
         {/if}
       </div>

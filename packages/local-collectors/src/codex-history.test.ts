@@ -1326,6 +1326,7 @@ Preserve the existing aggregation semantics.`,
         harness: 'codex',
         operation: 'metricValidation',
         message: 'Rejected 1 malformed codex metric record(s).',
+        rejectedRecords: 1,
       },
     ]);
     expect(JSON.stringify(result.warnings)).not.toContain('private-invalid-value');
@@ -2569,6 +2570,7 @@ Preserve the existing aggregation semantics.`,
           harness: 'codex',
           operation: 'metricValidation',
           message: 'Rejected 1 malformed codex metric record(s).',
+          rejectedRecords: 1,
         },
       ]);
       expect(JSON.stringify(second.warnings)).not.toContain('private-invalid-cache-value');

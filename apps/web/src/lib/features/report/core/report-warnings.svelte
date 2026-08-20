@@ -17,7 +17,7 @@
     warnings?: readonly UsageReportWarning[];
   } = $props();
 
-  const warningPanel = css({ borderColor: 'accent', bg: 'accentTint', mt: '16px' });
+  const warningPanel = css({ borderColor: 'status.warn', bg: 'status.warnSoft', mt: '16px' });
   const warningList = css({
     color: 'muted',
     display: 'grid',
@@ -31,7 +31,7 @@
   const panelHeader = css({ display: 'grid', gap: '4px' });
   const cleanupButton = css({
     bg: 'transparent',
-    border: '1px solid token(colors.border)',
+    border: '1px solid token(colors.line)',
     borderRadius: 'md',
     color: 'ink',
     cursor: 'pointer',

@@ -8,6 +8,7 @@ import {
   parseUsageEngineEvent,
   parseUsageEngineForegroundOutcome,
   parseUsageEngineProtocolVersion,
+  parseUsageEngineReplayCursor,
   parseUsageEngineStatus,
   parseWebUsageEngineCommand,
   usageEngineControlBounds,
@@ -15,6 +16,17 @@ import {
 import { fixtureGeneratedAt, fixtureInstanceId, fixtureStatus } from './test-fixtures';
 
 describe('usage engine control contracts', () => {
+  test('parses replay identity and sequence as one cursor', () => {
+    expect(parseUsageEngineReplayCursor('engine:42')).toMatchObject({
+      eventId: 'engine:42',
+      kind: 'engine',
+      replaySequence: 42,
+    });
+    expect(parseUsageEngineReplayCursor('snapshot:0')).toMatchObject({ kind: 'snapshot', replaySequence: 0 });
+    expect(() => parseUsageEngineReplayCursor('engine:01')).toThrow('replay cursor');
+    expect(() => parseUsageEngineReplayCursor('event-42')).toThrow('replay cursor');
+  });
+
   test('parses the complete operational command catalogue without report data', () => {
     const commands = [
       { command: 'detect-all' },
@@ -46,7 +58,7 @@ describe('usage engine control contracts', () => {
       },
       {
         command: 'confirm-merge',
-        confirmationToken: 'confirmation-1',
+        confirmationToken: `v1.${'b'.repeat(64)}`,
         documentDigest: 'a'.repeat(64),
         input: { handoffId: 'handoff-2', kind: 'inbox-handoff' },
       },
@@ -222,7 +234,7 @@ describe('usage engine control contracts', () => {
         completedAt: fixtureGeneratedAt,
         output: {
           bytes: 1024,
-          confirmationToken: 'confirmation-1',
+          confirmationToken: `v1.${'b'.repeat(64)}`,
           documentDigest: 'a'.repeat(64),
           kind: 'merge-preview',
           result: {

@@ -1,4 +1,4 @@
-import { expect, openHydratedReport, test, waitForFocusedReportSettled } from './browser-test';
+import { expect, openHydratedReport, reportViewsFor, test, waitForFocusedReportSettled } from './browser-test';
 
 interface CategorySnapshot {
   categories: string[];
@@ -11,13 +11,13 @@ const sortedCategoryLabels = (labels: readonly string[]): string[] =>
 test('keeps every populated harness and machine visible with default dimension filters', async ({ page }) => {
   await openHydratedReport(page, '/?tab=harnesses');
 
-  const dateRange = page.getByRole('region', { name: 'Date range' });
+  const reportPeriod = page.getByRole('region', { name: 'Report period' });
   // Use the all-time fixture range so every synthetic category is in scope while
   // origin, harness, and machine retain their dashboard defaults.
-  await dateRange.getByRole('button', { exact: true, name: 'All' }).click();
+  await reportPeriod.getByRole('button', { exact: true, name: 'All time' }).click();
   await waitForFocusedReportSettled(page);
 
-  const breakdownTabs = page.getByRole('tablist', { name: 'Breakdown dimension' });
+  const breakdownTabs = page.getByRole('tablist', { name: 'Analysis dimension' });
   await expect(breakdownTabs.getByRole('tab', { name: 'Harnesses & providers' })).toHaveAttribute(
     'aria-selected',
     'true',
@@ -64,7 +64,10 @@ test('keeps every populated harness and machine visible with default dimension f
   await expect(harnessPanel.locator('[data-provider-child]')).toHaveCount(1);
   await breakdownSearch.clear();
 
-  const chartOptions = dateRange.locator('details[aria-label="Chart options"]');
+  await reportViewsFor(page).getByRole('link', { exact: true, name: 'Overview' }).click();
+  await waitForFocusedReportSettled(page);
+  const activity = page.getByRole('region', { name: 'Activity' });
+  const chartOptions = activity.locator('details[aria-label="Explore activity"]');
   await chartOptions.locator('summary').click();
   const machineRadio = chartOptions.getByRole('radio', { exact: true, name: 'Machine' });
   await machineRadio.click();
@@ -72,12 +75,12 @@ test('keeps every populated harness and machine visible with default dimension f
   const sessionsRadio = chartOptions.getByRole('radio', { exact: true, name: 'Sessions' });
   await sessionsRadio.click();
   await expect(sessionsRadio).toBeChecked();
-  await expect(chartOptions.getByText('Machine · Day · Sessions', { exact: true })).toBeVisible();
+  await expect(activity.getByText('Machine · Day · Sessions', { exact: true })).toBeVisible();
 
   const machineFilter = page.getByRole('combobox', { name: 'Filter by machine' });
   await machineFilter.click();
   const machineListboxId = await machineFilter.getAttribute('aria-controls');
-  const machineSnapshot = await dateRange.evaluate<CategorySnapshot, string | null>((range, listboxId) => {
+  const machineSnapshot = await activity.evaluate<CategorySnapshot, string | null>((range, listboxId) => {
     const listbox = listboxId ? document.getElementById(listboxId) : null;
     const legend = range.querySelector('[aria-label="machine timeline legend"]');
     if (!(listbox && legend)) {

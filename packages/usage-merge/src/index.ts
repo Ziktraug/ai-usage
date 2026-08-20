@@ -1,5 +1,10 @@
 import { createHash } from 'node:crypto';
 import { parseUsageMergeBundle } from '@ai-usage/report-core/merge-bundle';
+import {
+  type MergeDocumentDigest,
+  type MergePreviewProof,
+  parseMergeDocumentDigest,
+} from '@ai-usage/report-core/merge-proof';
 import type { UsageMachine } from '@ai-usage/report-core/snapshot';
 import { confirmPeerMergeBundle, type ImportResult, previewPeerMergeBundle } from '@ai-usage/usage-store/writer';
 import { Data, Effect } from 'effect';
@@ -9,10 +14,8 @@ export interface ManualMergeDocumentInput {
   readonly text: string;
 }
 
-export interface ManualMergePreviewResult extends ImportResult {
+export interface ManualMergePreviewResult extends ImportResult, MergePreviewProof {
   readonly bytes: number;
-  readonly confirmationToken: string;
-  readonly digest: string;
   readonly generatedAt: string;
   readonly machine: UsageMachine;
   readonly rows: number;
@@ -20,10 +23,7 @@ export interface ManualMergePreviewResult extends ImportResult {
   readonly warningItems: string[];
 }
 
-export interface ManualMergeConfirmInput extends ManualMergeDocumentInput {
-  readonly confirmationToken: string;
-  readonly expectedDigest: string;
-}
+export interface ManualMergeConfirmInput extends ManualMergeDocumentInput, MergePreviewProof {}
 
 export interface ManualMergeConfirmResult {
   readonly generatedAt: string;
@@ -61,7 +61,8 @@ export const MAX_MANUAL_MERGE_PREVIEW_WARNINGS = 20;
 const MAX_PREVIEW_WARNING_CHARACTERS = 512;
 const WHITESPACE_PATTERN = /\s+/g;
 
-const documentDigest = (bytes: Uint8Array): string => createHash('sha256').update(bytes).digest('hex');
+const documentDigest = (bytes: Uint8Array): MergeDocumentDigest =>
+  parseMergeDocumentDigest(createHash('sha256').update(bytes).digest('hex'));
 
 const mergeReasonFromStore = (reason: string | undefined): UsageMergeErrorReason => {
   if (reason === 'invalid-input') {
@@ -105,7 +106,7 @@ const parseMergeDocument = (text: string, operation: string) => {
 export const createUsageFileMergeService = (options: UsageFileMergeServiceOptions): UsageFileMergeService => ({
   confirmManualMergeBundle: (input) =>
     Effect.gen(function* () {
-      if (documentDigest(input.bytes) !== input.expectedDigest) {
+      if (documentDigest(input.bytes) !== input.documentDigest) {
         return yield* Effect.fail(
           usageMergeError('confirmManualMergeBundle', 'The selected file changed after preview.', 'preview-stale'),
         );
@@ -179,7 +180,7 @@ export const createUsageFileMergeService = (options: UsageFileMergeServiceOption
         ...result,
         bytes: input.bytes.byteLength,
         confirmationToken,
-        digest: documentDigest(input.bytes),
+        documentDigest: documentDigest(input.bytes),
         generatedAt: bundle.generatedAt,
         machine: bundle.machine,
         rows: bundle.rows.length,

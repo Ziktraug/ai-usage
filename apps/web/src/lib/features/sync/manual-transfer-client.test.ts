@@ -8,7 +8,7 @@ import {
 
 const preview = parseUsageEngineMergePreviewOutput({
   bytes: 2,
-  confirmationToken: 'opaque-confirmation',
+  confirmationToken: `v1.${'b'.repeat(64)}`,
   documentDigest: 'a'.repeat(64),
   kind: 'merge-preview',
   result: {
@@ -54,7 +54,7 @@ describe('manual transfer browser client', () => {
     });
     expect(calls.map(({ action }) => action)).toEqual(['preview', 'confirm']);
     expect(calls.every((call) => call.file === file && call.signal === abort.signal)).toBe(true);
-    expect(calls[1]?.headers['x-ai-usage-merge-confirmation']).toBe('opaque-confirmation');
+    expect(calls[1]?.headers['x-ai-usage-merge-confirmation']).toBe(`v1.${'b'.repeat(64)}`);
     expect(calls[1]?.headers['x-ai-usage-merge-digest']).toBe('a'.repeat(64));
     expect(progress.map(({ phase }) => phase)).toEqual([
       'uploading',

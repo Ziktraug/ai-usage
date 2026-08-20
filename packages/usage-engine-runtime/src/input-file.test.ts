@@ -87,6 +87,25 @@ describe('usage engine file inputs', () => {
     expect((await lstat(inboxDirectory)).mode % 0o1000).toBe(0o755);
   });
 
+  test('refuses a symlinked inbox instead of following it', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'plan052-engine-inbox-symlink-'));
+    roots.push(root);
+    const stateDirectory = path.join(root, 'state');
+    const elsewhere = path.join(root, 'elsewhere');
+    const inboxDirectory = path.join(stateDirectory, 'inbox');
+    await mkdir(stateDirectory, { mode: 0o700 });
+    await mkdir(elsewhere, { mode: 0o700 });
+    await symlink(elsewhere, inboxDirectory);
+
+    await expect(
+      scavengeUsageEngineInbox({
+        gracePeriodMs: 60_000,
+        inboxDirectory,
+        now: Date.parse('2026-07-30T00:00:00.000Z'),
+      }),
+    ).rejects.toThrow('Usage engine inbox directory is unsafe.');
+  });
+
   test('reads a bounded no-follow operator file and rejects symlinks and hard links', async () => {
     const { inboxDirectory, operatorCwd } = await fixture();
     const filePath = path.join(operatorCwd, 'merge.json');

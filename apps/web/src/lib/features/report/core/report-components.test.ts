@@ -6,6 +6,7 @@ import { svelte } from '@sveltejs/vite-plugin-svelte';
 import type { Component } from 'svelte';
 import { createServer } from 'vite';
 import { demoReportPayload } from '../../../../report-data';
+import { toWebReportPayload } from '../../../../web-report-payload';
 import { createWebQueryClient, dehydrateWebQueryClient } from '../../../query/client';
 import type { ReportQueryClient } from '../../../query/options/report';
 import { reportBootstrapKey } from '../../../query/options/report';
@@ -150,6 +151,27 @@ describe('report Svelte SSR components', () => {
     expect(body).not.toContain('data-report-bootstrap-overview');
   });
 
+  it('renders filters, period, active summary, then the Overview in decision order', () => {
+    const queryClient = createWebQueryClient();
+    const data = {
+      mode: 'demo',
+      payload: toWebReportPayload(demoReportPayload),
+      queryState: dehydrateWebQueryClient(queryClient),
+    } as const;
+
+    const { body } = render(reportRoot, { props: { data } });
+    const orderedSurfaces = [
+      'data-dashboard-filter-stack',
+      'data-report-period-control',
+      'data-active-filters',
+      'data-report-overview',
+    ];
+    const positions = orderedSurfaces.map((surface) => body.indexOf(surface));
+
+    expect(positions.every((position) => position >= 0)).toBe(true);
+    expect(positions).toEqual([...positions].sort((left, right) => left - right));
+  });
+
   it('marks retained output as stale while a refresh is in flight', () => {
     // A range change rescales the Activity chart locally while every figure inside the workspace
     // still describes the previous request. Both must not read as equally definitive.
@@ -161,6 +183,22 @@ describe('report Svelte SSR components', () => {
     expect(settled.body).toContain('data-report-complete-output');
     expect(settled.body).not.toContain('data-report-stale');
     expect(settled.body).not.toContain('aria-busy');
+  });
+
+  it('keeps refresh failure recoverable without replacing retained output', () => {
+    const failedRefresh = render(reportWorkspace, {
+      props: {
+        hasOutput: true,
+        onRetry: () => Promise.resolve(),
+        pending: false,
+        refreshError: 'The report refresh failed.',
+      },
+    });
+
+    expect(failedRefresh.body).toContain('data-report-complete-output');
+    expect(failedRefresh.body).toContain('data-report-refresh-error');
+    expect(failedRefresh.body).toContain('The report refresh failed.');
+    expect(failedRefresh.body).toContain('>Retry</button>');
   });
 
   it('shows the pending surface rather than an unavailable panel while the first commit is missing', async () => {

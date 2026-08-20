@@ -72,7 +72,7 @@
   } from './session-cell-projection';
   import { sessionTableColumns, visibleSessionTableColumns } from './session-columns';
   import { createSessionTableModel, toggleSessionRowExpanded } from './session-table-model';
-  import { popoverGrid, popoverHeader } from './session-table-styles';
+  import { mobileSessionSummaryHeader, popoverGrid, popoverHeader } from './session-table-styles';
   import {
     isSessionPagePrefetchRequired,
     projectSessionVirtualRows,
@@ -559,7 +559,7 @@
               data-selected={selectedRowId === virtualRow.row.id}
               data-session-card-height="180"
             >
-              <header class={sessionSummaryHeader}>
+              <header class={cx(sessionSummaryHeader, mobileSessionSummaryHeader)}>
                 <span class={sessionSummaryDate}>{fmtDate(virtualRow.row.original.activeDate)}</span>
                 <HarnessBadge
                   name={virtualRow.row.original.harness}
@@ -594,7 +594,10 @@
               </button>
               <footer class={sessionSummaryFooter}>
                 <div class={sessionSummaryFilters}>
+                  <!-- The visible text is the value, so it becomes the accessible name and the
+                       filtering action goes unannounced without an explicit label. -->
                   <button
+                    aria-label={`Filter by project ${virtualRow.row.original.projectLabel}`}
                     class={sessionSummaryFilter}
                     onclick={() => onFieldFilter('project', virtualRow.row.original.projectKey)}
                     title={`Filter by project ${virtualRow.row.original.projectLabel}`}
@@ -605,6 +608,7 @@
                       : virtualRow.row.original.projectLabel}
                   </button>
                   <button
+                    aria-label={`Filter by model ${virtualRow.row.original.modelKey}`}
                     class={sessionSummaryFilter}
                     onclick={() => onFieldFilter('model', virtualRow.row.original.modelKey)}
                     title={`Filter by model ${virtualRow.row.original.modelKey}`}

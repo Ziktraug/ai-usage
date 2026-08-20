@@ -66,7 +66,8 @@
   const describeHeatDay = (item: FocusedHeatDay): string => {
     const value = aggregateApiValuePresentation(item.priceMeasurement).label;
     const provenance = aggregateApiPriceProvenance(item.priceMeasurement);
-    return `${fmtDateOnly(item.date)} — ${value} · ${fmtNum(item.sessions)} sessions${provenance ? ` · ${provenance.label}` : ''}`;
+    const sessions = `${fmtNum(item.sessions)} ${item.sessions === 1 ? 'session' : 'sessions'}`;
+    return `${fmtDateOnly(item.date)} — ${value} · ${sessions}${provenance ? ` · ${provenance.label}` : ''}`;
   };
   const describeHeatDayWithProvenance = (item: FocusedHeatDay): string => {
     const description = describeHeatDay(item);
@@ -106,7 +107,7 @@
 
 <section class={panel}>
   <header class={panelHeader}>
-    <h2 class={panelTitle}>Rhythm</h2>
+    <h3 class={panelTitle}>Rhythm</h3>
     <div class={panelSub}>
       Daily activity across the whole filtered history — choose a day to focus the dashboard on it
     </div>

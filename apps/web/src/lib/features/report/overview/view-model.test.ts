@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import type { FocusedReportSummary } from '@ai-usage/report-core/focused-report-query';
 import { apiPriceMeasurement } from '@ai-usage/report-core/provenance';
-import { buildOverviewMetrics, originGapDescription, tokenAnatomyRows } from './view-model';
+import { originGapDescription, tokenAnatomyRows } from './view-model';
 
 const summary = (overrides: Partial<FocusedReportSummary> = {}): FocusedReportSummary => ({
   actualCost: 3,
@@ -27,22 +27,6 @@ const summary = (overrides: Partial<FocusedReportSummary> = {}): FocusedReportSu
 });
 
 describe('Overview presentation adapters', () => {
-  test('keeps three distinct value bases and qualifies every available comparison', () => {
-    const metrics = buildOverviewMetrics(
-      summary(),
-      summary({ actualCost: 1, costQuota: 3, sessionCount: 1, totalCost: 4 }),
-    );
-    expect(
-      metrics.filter((metric) => ['api-value', 'actual-cost', 'subscription-value'].includes(metric.kind)),
-    ).toHaveLength(3);
-    expect(metrics.find((metric) => metric.kind === 'api-value')?.hint).toContain('2 of 3 fully priced sessions');
-    expect(
-      metrics
-        .filter((metric) => metric.delta)
-        .every((metric) => metric.delta?.hint.startsWith('Previous period of equal length:')),
-    ).toBe(true);
-  });
-
   test('keeps token anatomy as four exact rows with percentages', () => {
     expect(tokenAnatomyRows(summary())).toEqual([
       { key: 'cache-read', label: 'Cache read', percentage: '55%', value: '60' },
@@ -61,6 +45,7 @@ describe('Overview presentation adapters', () => {
       ],
       priceMeasurement: apiPriceMeasurement({ costKnown: true, freshTokens: 0, knownCost: 0 }),
       sessions: 6,
+      tokens: 0,
       total: 0,
     });
     expect(description).toContain('Origin unsupported: 1 session');
@@ -69,72 +54,34 @@ describe('Overview presentation adapters', () => {
   });
 });
 
-test('keeps the frozen Overview content and secondary-status order', async () => {
+test('keeps the decision-first Overview and provider-last reading order', async () => {
   const pageSource = await Bun.file(new URL('./overview-page.svelte', import.meta.url)).text();
   const orderedSurfaces = [
-    '<OverviewHero',
+    '<ExecutiveOverview',
+    '<Records',
     '<ActivityHeatmap',
     '<TokenAnatomy',
-    '<Records',
-    '<section aria-labelledby="advanced-analysis-title"',
+    'aria-labelledby="advanced-analysis-title"',
+    '<ProviderStatus',
   ];
   const positions = orderedSurfaces.map((surface) => pageSource.indexOf(surface));
 
   expect(positions.every((position) => position >= 0)).toBe(true);
   expect(positions).toEqual([...positions].sort((left, right) => left - right));
   expect(pageSource).not.toContain('<DashboardMetrics');
-  expect(pageSource).not.toContain('<ProviderStatus');
 
-  const statusSource = await Bun.file(new URL('./overview-status.svelte', import.meta.url)).text();
-  const statusPositions = ['<DashboardMetrics', '<ProviderStatus'].map((surface) => statusSource.indexOf(surface));
-  expect(statusPositions.every((position) => position >= 0)).toBe(true);
-  expect(statusPositions).toEqual([...statusPositions].sort((left, right) => left - right));
-
-  const heroSource = await Bun.file(new URL('./overview-hero.svelte', import.meta.url)).text();
-  expect(heroSource).toContain('This is a comparison value, not savings or ROI.');
-  expect(heroSource).toContain('Reported actual spend ·');
-  expect(heroSource).toContain('Spend coverage');
-});
-
-test('keeps report range before filter summary and Overview content in the shared destination presentation', async () => {
-  const destinationFiles = [
-    {
-      filterMarker: '{@render activeFilterSummary(destinationQuery.isFetching)}',
-      relativePath: '../composition/live-report-destination.svelte',
-    },
-    {
-      filterMarker: '{@render activeFilterSummary(pending)}',
-      relativePath: '../composition/synthetic-report-destination.svelte',
-    },
-  ] as const;
-  for (const { filterMarker, relativePath } of destinationFiles) {
-    const source = await Bun.file(new URL(relativePath, import.meta.url)).text();
-    const filterSnippetStart = source.indexOf('{#snippet activeFilterSummary');
-    const filterSnippetEnd = source.indexOf('{/snippet}', filterSnippetStart);
-    const activeFiltersComponent = source.indexOf('<ActiveFilters', filterSnippetStart);
-    expect(filterSnippetStart, relativePath).toBeGreaterThanOrEqual(0);
-    expect(filterSnippetEnd, relativePath).toBeGreaterThan(filterSnippetStart);
-    expect(activeFiltersComponent, relativePath).toBeGreaterThan(filterSnippetStart);
-    expect(activeFiltersComponent, relativePath).toBeLessThan(filterSnippetEnd);
-    const statusSnippetStart = source.indexOf('{#snippet status');
-    const statusSnippetEnd = source.indexOf('{/snippet}', statusSnippetStart);
-    const overviewStatus = source.indexOf('<OverviewStatus', statusSnippetStart);
-    expect(overviewStatus, relativePath).toBeGreaterThan(statusSnippetStart);
-    expect(overviewStatus, relativePath).toBeLessThan(statusSnippetEnd);
-    for (const normalizedPresentationProp of ['filters={{', 'overview={', 'range={']) {
-      expect(source, relativePath).toContain(normalizedPresentationProp);
-    }
-    expect(source, relativePath).toContain(filterMarker);
+  const executiveSource = await Bun.file(new URL('./executive-overview.svelte', import.meta.url)).text();
+  const executiveSurfaces = [
+    'data-executive-kpi',
+    '<ActivityExplorer',
+    'data-executive-metrics',
+    'data-period-insight',
+    'Top models',
+  ];
+  const executivePositions = executiveSurfaces.map((surface) => executiveSource.indexOf(surface));
+  expect(executivePositions.every((position) => position >= 0)).toBe(true);
+  expect(executivePositions).toEqual([...executivePositions].sort((left, right) => left - right));
+  for (const forbiddenClaim of ['actual spend', 'bill', 'invoice', 'saving', 'ROI']) {
+    expect(executiveSource.toLowerCase()).not.toContain(forbiddenClaim.toLowerCase());
   }
-
-  const presentationPath = '../composition/report-destination-presentation.svelte';
-  const presentationSource = await Bun.file(new URL(presentationPath, import.meta.url)).text();
-  const positions = ['<FilterBar', '<ReportRangeControl', '{@render summary()}', '<OverviewPage'].map((surface) =>
-    presentationSource.indexOf(surface),
-  );
-  expect(
-    positions.every((position) => position >= 0),
-    presentationPath,
-  ).toBe(true);
-  expect(positions, presentationPath).toEqual([...positions].sort((left, right) => left - right));
 });
