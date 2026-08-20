@@ -42,7 +42,9 @@ export type UsageEngineHandoffId = Branded<string, 'UsageEngineHandoffId'>;
 export type UsageEnginePublicationRevision = ServedRevision;
 export type UsageEngineProjectSourceReference = Branded<string, 'UsageEngineProjectSourceReference'>;
 
-export const USAGE_ENGINE_PROTOCOL_VERSION = 1 as UsageEngineProtocolVersion;
+// Preview-merge gained required bundle identity and warning-detail fields. Keeping protocol v1 would
+// admit a long-running old engine and then fail the first preview as an opaque invalid response.
+export const USAGE_ENGINE_PROTOCOL_VERSION = 2 as UsageEngineProtocolVersion;
 
 const kibibyte = 1024;
 const maxOpaqueIdBytes = 160;
@@ -963,14 +965,6 @@ const assertMergeResultRows = (result: UsageEngineMergeImportResult, rows: numbe
 // legitimately truncated multi-byte warning.
 const MAX_MERGE_PREVIEW_WARNING_ITEMS = 20;
 const MAX_MERGE_PREVIEW_WARNING_ITEM_CHARACTERS = 512;
-const MAX_MERGE_PREVIEW_MACHINE_LABEL_CHARACTERS = 120;
-
-const parseBoundedCharacters = (value: unknown, maximumCharacters: number, label: string): string => {
-  if (!(typeof value === 'string' && value.length > 0 && value.length <= maximumCharacters)) {
-    return fail(`${label} is invalid or exceeds its length limit.`);
-  }
-  return value;
-};
 
 const parseMergePreviewBundle = (value: unknown): UsageEngineMergePreviewOutput['bundle'] => {
   if (!(isRecord(value) && hasExactKeys(value, ['generatedAt', 'machineId', 'machineLabel']))) {
@@ -979,9 +973,11 @@ const parseMergePreviewBundle = (value: unknown): UsageEngineMergePreviewOutput[
   return {
     generatedAt: parseIsoTimestamp(value.generatedAt, 'Usage engine merge preview bundle timestamp'),
     machineId: parseBoundedString(value.machineId, maxOpaqueIdBytes, 'Usage engine merge preview bundle machine ID'),
-    machineLabel: parseBoundedCharacters(
+    // Machine labels are one domain value across rename, export, and preview. Use the same UTF-8 byte
+    // bound as the engine command instead of a second character-based cap that rejects valid exports.
+    machineLabel: parseBoundedString(
       value.machineLabel,
-      MAX_MERGE_PREVIEW_MACHINE_LABEL_CHARACTERS,
+      usageEngineControlBounds.maxMessageBytes,
       'Usage engine merge preview bundle machine label',
     ),
   };
