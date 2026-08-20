@@ -7,6 +7,7 @@ import type {
   SkillManagementSnapshot,
   SkillTarget,
   SourceSkill,
+  UnmanagedEntry,
 } from '@ai-usage/skills';
 import {
   buildGlobalSkillExposure,
@@ -61,6 +62,14 @@ const projection = (skillName: string, targetId: string, state: Projection['stat
   diagnostics: [],
   expectedPath: `/targets/${targetId}/${skillName}`,
   skillName,
+  state,
+  targetId,
+});
+
+const unmanagedEntry = (entryName: string, targetId: string, state: UnmanagedEntry['state']): UnmanagedEntry => ({
+  diagnostics: [],
+  entryName,
+  expectedPath: `/targets/${targetId}/${entryName}`,
   state,
   targetId,
 });
@@ -502,7 +511,7 @@ describe('skills page model', () => {
         skill('invalid-skill', { validationStatus: 'invalid' }),
       ],
       targets: [target('codex', 'Codex'), target('claude-code', 'Claude Code'), target('cursor', 'Cursor', false)],
-      unmanagedEntries: [projection('local-copy', 'codex', 'unmanaged-copy')],
+      unmanagedEntries: [unmanagedEntry('local-copy', 'codex', 'unmanaged-copy')],
     });
 
     expect(buildSkillHealthSummary(snapshot)).toEqual({
@@ -522,9 +531,9 @@ describe('skills page model', () => {
     const snapshot = makeSnapshot({
       targets: [target('codex', 'Codex'), target('claude-code', 'Claude Code')],
       unmanagedEntries: [
-        projection('copy-one', 'codex', 'unmanaged-copy'),
-        projection('copy-two', 'codex', 'unmanaged-copy'),
-        projection('link-one', 'codex', 'unmanaged-symlink'),
+        unmanagedEntry('copy-one', 'codex', 'unmanaged-copy'),
+        unmanagedEntry('copy-two', 'codex', 'unmanaged-copy'),
+        unmanagedEntry('link-one', 'codex', 'unmanaged-symlink'),
       ],
     });
 
@@ -595,7 +604,7 @@ describe('skills page model', () => {
       projections: [projection('alpha-skill', 'codex', 'missing')],
       skills: [skill('alpha-skill')],
       targets: [target('codex', 'Codex')],
-      unmanagedEntries: [projection('local-copy', 'codex', 'unmanaged-copy')],
+      unmanagedEntries: [unmanagedEntry('local-copy', 'codex', 'unmanaged-copy')],
     });
 
     expect(canReconcileAll(snapshot)).toBe(true);

@@ -49,6 +49,8 @@ export type {
   TargetProjectionScan,
   TargetProjectionScanInput,
   ToggleSkillEnabledInput,
+  UnmanagedEntry,
+  UnmanagedEntryState,
   WriteSkillManagementConfigInput,
 } from './contracts';
 export { defaultTokenThresholds, maxSkillMarkdownBytes, projectSkillDirectories } from './contracts';

@@ -11,6 +11,8 @@ import type {
   SourceSkill,
   TargetProjectionScan,
   TargetProjectionScanInput,
+  UnmanagedEntry,
+  UnmanagedEntryState,
 } from './contracts';
 import { createDiagnostic, isMissingPathError } from './diagnostics';
 import { withSkillProjectionLock } from './projection-lock';
@@ -168,7 +170,7 @@ const classifyProjectedSkill = async (
 const scanUnmanagedTargetEntries = async (
   target: SkillTarget,
   managedSkillNames: ReadonlySet<string>,
-): Promise<readonly Projection[]> => {
+): Promise<readonly UnmanagedEntry[]> => {
   let entries: Array<{
     isDirectory: () => boolean;
     isFile: () => boolean;
@@ -181,26 +183,34 @@ const scanUnmanagedTargetEntries = async (
     return [];
   }
 
-  const projections: Projection[] = [];
+  const entriesFound: UnmanagedEntry[] = [];
+  const unmanagedEntryFor = (entryName: string, expectedPath: string, state: UnmanagedEntryState): UnmanagedEntry => ({
+    actualPath: expectedPath,
+    diagnostics: [],
+    entryName,
+    expectedPath,
+    state,
+    targetId: target.id,
+  });
   for (const entry of entries.toSorted((left, right) => left.name.localeCompare(right.name))) {
     if (managedSkillNames.has(entry.name)) {
       continue;
     }
     const entryPath = path.join(target.path, entry.name);
     if (entry.isSymbolicLink()) {
-      projections.push(projectionFor(entry.name, target.id, entryPath, 'unmanaged-symlink', { actualPath: entryPath }));
+      entriesFound.push(unmanagedEntryFor(entry.name, entryPath, 'unmanaged-symlink'));
       continue;
     }
     if (entry.isDirectory() || entry.isFile()) {
-      projections.push(projectionFor(entry.name, target.id, entryPath, 'unmanaged-copy', { actualPath: entryPath }));
+      entriesFound.push(unmanagedEntryFor(entry.name, entryPath, 'unmanaged-copy'));
     }
   }
-  return projections;
+  return entriesFound;
 };
 
 export const scanTargetProjections = async (input: TargetProjectionScanInput): Promise<TargetProjectionScan> => {
   const projections: Projection[] = [];
-  const unmanagedEntries: Projection[] = [];
+  const unmanagedEntries: UnmanagedEntry[] = [];
   const diagnostics: SkillDiagnostic[] = [];
   const managedSkillNames = new Set(input.skills.map((skill) => skill.name));
 

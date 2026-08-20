@@ -696,7 +696,7 @@ export const groupUnmanagedEntries = (snapshot: SkillManagementSnapshot): readon
     const unmanagedEntry =
       entry.state === 'unmanaged-copy' || entry.state === 'unmanaged-symlink'
         ? {
-            name: entry.skillName,
+            name: entry.entryName,
             path: entry.actualPath ?? entry.expectedPath,
             state: entry.state,
           }

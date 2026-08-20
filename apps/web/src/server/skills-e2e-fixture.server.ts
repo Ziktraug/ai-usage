@@ -10,6 +10,7 @@ import type {
   SkillTargetDirectoryInput,
   SkillToggleInput,
   SourceSkill,
+  UnmanagedEntry,
 } from '@ai-usage/skills';
 import type {
   KnownSkillProjectPath,
@@ -52,6 +53,14 @@ const projection = (skillName: string, targetId: string, state: Projection['stat
   diagnostics: [],
   expectedPath: `/fixture/targets/${targetId}/${skillName}`,
   skillName,
+  state,
+  targetId,
+});
+
+const unmanagedEntry = (entryName: string, targetId: string, state: UnmanagedEntry['state']): UnmanagedEntry => ({
+  diagnostics: [],
+  entryName,
+  expectedPath: `/fixture/targets/${targetId}/${entryName}`,
   state,
   targetId,
 });
@@ -112,7 +121,7 @@ const snapshot: SkillManagementSnapshot = {
     unmanagedEntryCount: 1,
   },
   targets,
-  unmanagedEntries: [projection('legacy-local-copy', 'codex', 'unmanaged-copy')],
+  unmanagedEntries: [unmanagedEntry('legacy-local-copy', 'codex', 'unmanaged-copy')],
 };
 
 const snapshotCopy = (overrides: Partial<SkillManagementSnapshot> = {}): SkillManagementSnapshot => ({

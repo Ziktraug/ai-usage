@@ -116,6 +116,50 @@ describe('Skills oRPC contract', () => {
     ).toBe(false);
   });
 
+  test('accepts discovered entry names a managed skill could never carry', () => {
+    // A runtime target holds whatever is on disk. Codex writes a `.system` directory of its own, and
+    // validating that name like a managed skill name rejected the entire snapshot, taking every valid
+    // entry with it.
+    const withDiscoveredEntry = (entryName: string) => ({
+      ...emptySnapshot,
+      unmanagedEntries: [
+        {
+          diagnostics: [],
+          entryName,
+          expectedPath: '/synthetic/target/entry',
+          state: 'unmanaged-copy',
+          targetId: 'codex',
+        },
+      ],
+    });
+
+    for (const accepted of ['.system', 'Legacy_Skill', 'skill.backup', 'réviseur']) {
+      expect(safeParse(skillManagementSnapshotSchema, withDiscoveredEntry(accepted)).success).toBe(true);
+    }
+
+    for (const rejected of [
+      '',
+      '.',
+      '..',
+      'nested/name',
+      'nested\\name',
+      'bell\u0007',
+      'next-line\u0085',
+      'application-command\u009f',
+      'a'.repeat(256),
+    ]) {
+      expect(safeParse(skillManagementSnapshotSchema, withDiscoveredEntry(rejected)).success).toBe(false);
+    }
+
+    // Managed projections keep the strict identifier pattern.
+    expect(
+      safeParse(skillManagementSnapshotSchema, {
+        ...emptySnapshot,
+        projections: withDiscoveredEntry('.system').unmanagedEntries,
+      }).success,
+    ).toBe(false);
+  });
+
   test('performs non-invoking JSON-wire preflight before transforms', () => {
     let reads = 0;
     const rootAccessor: Record<string, unknown> = {};

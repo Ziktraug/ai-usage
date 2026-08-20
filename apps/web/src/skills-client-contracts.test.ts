@@ -89,6 +89,29 @@ describe('browser-safe Skills contracts', () => {
     ).toThrow('Invalid skills snapshot response');
   });
 
+  test('keeps unmanaged runtime entry names distinct from managed skill names', () => {
+    const entry = {
+      diagnostics: [],
+      entryName: '.system',
+      expectedPath: '/runtime/.system',
+      state: 'unmanaged-copy' as const,
+      targetId: 'codex',
+    };
+    const parsed = parseSkillSnapshotResult({
+      data: { ...snapshot(), unmanagedEntries: [entry] },
+      ok: true,
+    });
+
+    expect(parsed).toMatchObject({ data: { unmanagedEntries: [entry] }, ok: true });
+    const { entryName: _entryName, ...legacyEntry } = entry;
+    expect(() =>
+      parseSkillSnapshotResult({
+        data: { ...snapshot(), unmanagedEntries: [{ ...legacyEntry, skillName: '.system' }] },
+        ok: true,
+      }),
+    ).toThrow('Invalid skills snapshot response');
+  });
+
   test('rejects incomplete project inventory observations before they reach UI state', () => {
     const valid = inventory();
     expect(parseProjectInventoriesResult({ data: [valid], ok: true })).toEqual({ data: [valid], ok: true });

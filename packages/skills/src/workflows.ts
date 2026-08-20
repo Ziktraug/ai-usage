@@ -18,6 +18,7 @@ import type {
   SourceSkill,
   SourceSkillScanOptions,
   ToggleSkillEnabledInput,
+  UnmanagedEntry,
   WriteSkillManagementConfigInput,
 } from './contracts';
 import { isMissingPathError } from './diagnostics';
@@ -107,7 +108,7 @@ const snapshotSummary = (
   skills: readonly SourceSkill[],
   targets: readonly SkillTarget[],
   projections: readonly Projection[],
-  unmanagedEntries: readonly Projection[],
+  unmanagedEntries: readonly UnmanagedEntry[],
   diagnostics: readonly SkillDiagnostic[],
 ): SkillManagementSnapshotSummary => {
   const healthyProjectionCount = projections.filter(isProjectionHealthy).length;
