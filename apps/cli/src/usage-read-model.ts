@@ -1,7 +1,11 @@
 import type { ReportDatasets } from '@ai-usage/report-core/datasets';
 import type { FocusedReportSupport } from '@ai-usage/report-core/focused-report-query';
 import { type HarnessKey, isHarnessKey } from '@ai-usage/report-core/harness-metadata';
-import { projectProviderQuotaObservation } from '@ai-usage/report-core/provider-quota';
+import {
+  downsampleProviderQuotaHistoryPoints,
+  type ProviderQuotaHistoryPoint,
+  projectProviderQuotaObservation,
+} from '@ai-usage/report-core/provider-quota';
 import {
   createUsageReportPayload,
   deserializeProjectedUsageRow,
@@ -19,6 +23,7 @@ import { usageRowLineDelta, usageRowPricedCost, usageRowTokenTotal } from '@ai-u
 import { usageEngineReportSourceIdsFor } from '@ai-usage/usage-engine-control';
 import {
   queryLatestLocalProviderQuotaObservations,
+  queryProviderQuotaObservations,
   queryServedReportRevisionLocalSnapshot,
   queryServedReportRevisionPortableConfig,
   queryServedReportRevisionSlices,
@@ -314,6 +319,90 @@ export const readUsageMachine = async (dbPath: string): Promise<UsageMachine> =>
 export const readLatestProviderQuotas = async (dbPath: string) => {
   const latest = await Effect.runPromise(queryLatestLocalProviderQuotaObservations({ dbPath }));
   return latest.observations.map(({ observation }) => projectProviderQuotaObservation(observation));
+};
+
+/** The web history read bounds itself by observation count rather than by point count; match it. */
+const QUOTA_HISTORY_MAXIMUM_POINTS = 1000;
+const QUOTA_HISTORY_OBSERVATIONS_PER_POINT = 4;
+
+/**
+ * Flattens stored observations into one point per limit window — the same shape the web history model
+ * consumes, so the terminal trend and the drawer agree. Unfiltered by provider and machine on purpose,
+ * mirroring the drawer: the command is "show my quota", and naming one of either would hide the rest.
+ */
+export interface CliProviderQuotaHistory {
+  /** True when the read was truncated or skipped corrupt rows, so the trend is knowingly incomplete. */
+  readonly partial: boolean;
+  readonly points: ProviderQuotaHistoryPoint[];
+}
+
+const historySeriesKey = (point: ProviderQuotaHistoryPoint): string =>
+  [point.providerKey, point.machineId, point.accountScope ?? '', point.windowId].join('|');
+
+/**
+ * The store prepends the newest observation from *before* `from` as a chart anchor. A series whose
+ * only point is that anchor has nothing to say about the requested window — reporting it would print
+ * a months-old percentage and an expired reset under "last 24h" — so those series drop out entirely
+ * while an anchor that leads real in-range data is kept.
+ */
+const withoutAnchorOnlySeries = (points: ProviderQuotaHistoryPoint[], from: string): ProviderQuotaHistoryPoint[] => {
+  const inRange = new Set<string>();
+  for (const point of points) {
+    if (point.firstObservedAt >= from) {
+      inRange.add(historySeriesKey(point));
+    }
+  }
+  return points.filter((point) => inRange.has(historySeriesKey(point)));
+};
+
+export const readProviderQuotaHistory = async (input: {
+  readonly dbPath: string;
+  readonly from: string;
+  readonly to: string;
+}): Promise<CliProviderQuotaHistory> => {
+  // Either-then-throw like the other readers here, so callers still receive the typed UsageStoreError
+  // rather than the fiber failure Effect.runPromise would otherwise reject with.
+  const result = await Effect.runPromise(
+    Effect.either(
+      queryProviderQuotaObservations({
+        dbPath: input.dbPath,
+        from: input.from,
+        maximumObservations: QUOTA_HISTORY_MAXIMUM_POINTS * QUOTA_HISTORY_OBSERVATIONS_PER_POINT,
+        to: input.to,
+      }),
+    ),
+  );
+  if (result._tag === 'Left') {
+    throw result.left;
+  }
+  const stored = result.right;
+  const points = stored.observations.flatMap(({ firstObservedAt, lastObservedAt, observation }) =>
+    observation.windows.map((window) => ({
+      accountScope: observation.accountScope,
+      blocked: window.blocked,
+      firstObservedAt,
+      group: window.group,
+      lastObservedAt,
+      limitSeconds: window.limitSeconds,
+      machineId: observation.machineId,
+      machineLabel: observation.machineLabel,
+      providerKey: observation.providerKey,
+      providerLabel: observation.providerLabel,
+      resetAt: window.resetsAt,
+      source: observation.source,
+      usedPercent: window.usedPercent,
+      windowId: window.id,
+      windowLabel: window.label,
+    })),
+  );
+  const reduced = downsampleProviderQuotaHistoryPoints(
+    withoutAnchorOnlySeries(points, input.from),
+    QUOTA_HISTORY_MAXIMUM_POINTS,
+  );
+  return {
+    partial: stored.truncated || stored.skipped > 0 || reduced.truncated,
+    points: reduced.points,
+  };
 };
 
 export const reportSourceIdsFor = usageEngineReportSourceIdsFor;

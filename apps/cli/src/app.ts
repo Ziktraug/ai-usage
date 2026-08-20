@@ -4,6 +4,7 @@ import path from 'node:path';
 import { type BoundaryClassification, classifyExit, runBoundaryEffect } from '@ai-usage/effect-runtime';
 import type { ProjectAliasEntry } from '@ai-usage/report-core/project-alias';
 import type { ProjectGroupConfig } from '@ai-usage/report-core/project-group';
+import type { ProviderQuotaHistoryPoint } from '@ai-usage/report-core/provider-quota';
 import type { ProviderStatus } from '@ai-usage/report-core/provider-status';
 import type { UsageReportWarning } from '@ai-usage/report-core/report-data';
 import { serializeUsageSnapshot, type UsageSnapshot } from '@ai-usage/report-core/snapshot';
@@ -20,9 +21,9 @@ import type {
 } from '@ai-usage/usage-engine-control';
 import { UsageStoreError } from '@ai-usage/usage-store/reader';
 import { Console, Effect, Exit } from 'effect';
-import { type Args, helpText, parseCommand } from './cli';
+import { type Args, helpText, parseCommand, type QuotaHistoryRange } from './cli';
 import { type AppError, CliArgumentError, formatAppError } from './errors';
-import { renderQuota } from './quota';
+import { renderQuota, renderQuotaHistory } from './quota';
 import { setColor } from './render/colors';
 import { fmtNum, pad, trunc } from './render/format';
 import { renderUsagePayloadForCli, renderUsageReportForCli, renderWarnings, renderWarningsForStderr } from './report';
@@ -33,6 +34,7 @@ import { CliUsageEngineError, type CliUsageEngineExecution } from './usage-engin
 import {
   type CliSourceExecutionOutcome,
   readLatestProviderQuotas,
+  readProviderQuotaHistory,
   readServedLocalUsageSnapshot,
   readServedPortableConfig,
   readServedUsageReport,
@@ -43,11 +45,28 @@ import {
   sourceExecutionWarnings,
 } from './usage-read-model';
 
-interface CliQuotaBoundaryResult {
+interface CliQuotaRefreshBoundaryResult {
+  readonly kind: 'refresh';
   readonly latest: readonly ProviderStatus[];
   /** One per provider-usage source. The command refreshes every provider, not a nominated one. */
   readonly sources: readonly CliSourceExecutionOutcome[];
 }
+
+/** `--history` is a pure store read, so it has no sources to grade — only whether it found points. */
+interface CliQuotaHistoryBoundaryResult {
+  readonly kind: 'history';
+  readonly partial: boolean;
+  readonly pointCount: number;
+  readonly range: QuotaHistoryRange;
+}
+
+type CliQuotaBoundaryResult = CliQuotaHistoryBoundaryResult | CliQuotaRefreshBoundaryResult;
+
+const QUOTA_HISTORY_DURATION_MS: Record<QuotaHistoryRange, number> = {
+  '24h': 24 * 60 * 60 * 1000,
+  '7d': 7 * 24 * 60 * 60 * 1000,
+  '30d': 30 * 24 * 60 * 60 * 1000,
+};
 
 const CLI_QUOTA_ERROR_POLICY = {
   allowedTags: new Set(['CliArgumentError']),
@@ -59,6 +78,21 @@ const classifyCliQuotaOutcome = (exit: Exit.Exit<CliQuotaBoundaryResult, unknown
     return {
       ...classifyExit(exit, CLI_QUOTA_ERROR_POLICY),
       annotations: { failureKind: 'quota-command-failed' },
+    };
+  }
+  if (exit.value.kind === 'history') {
+    // A read that found nothing is still a successful read: "no history yet" is the honest answer,
+    // not a failure. The point count carries the distinction into the wide event.
+    const { partial, pointCount, range } = exit.value;
+    let domainOutcome = 'success';
+    if (pointCount === 0) {
+      domainOutcome = 'empty';
+    } else if (partial) {
+      domainOutcome = 'partial';
+    }
+    return {
+      outcome: 'success',
+      annotations: { domainOutcome, outputCount: pointCount, quotaHistoryRange: range },
     };
   }
   const { latest, sources } = exit.value;
@@ -199,6 +233,33 @@ export const app = Effect.gen(function* () {
       { boundary: 'cli.quota', classify: classifyCliQuotaOutcome },
       Effect.gen(function* () {
         yield* Effect.sync(() => setColor(command.color === null ? runtime.stdoutIsTTY : command.color));
+        const historyRange = command.history;
+        if (historyRange !== null) {
+          // Quota refresh lives on the engine command seam and quota reads on the durable-observation
+          // seam, so --history deliberately issues no collect-fresh-quota: it reports what is stored.
+          const to = new Date();
+          const history = yield* fromPromise(() =>
+            readProviderQuotaHistory({
+              dbPath: runtime.paths.databasePath,
+              from: new Date(to.getTime() - QUOTA_HISTORY_DURATION_MS[historyRange]).toISOString(),
+              to: to.toISOString(),
+            }),
+          ).pipe(
+            // A machine that has never collected has no store file, which is "no history yet" rather
+            // than a read failure — the same reading the report's stored-config path already takes.
+            Effect.catchIf(
+              (error): error is UsageStoreError => error instanceof UsageStoreError && error.reason === 'store-missing',
+              () => Effect.succeed({ partial: false, points: [] as ProviderQuotaHistoryPoint[] }),
+            ),
+          );
+          yield* Console.log(renderQuotaHistory(history.points, historyRange, { partial: history.partial }));
+          return {
+            kind: 'history',
+            partial: history.partial,
+            pointCount: history.points.length,
+            range: historyRange,
+          } as const;
+        }
         const execution = yield* executeEngine(runtime, { command: 'collect-fresh-quota' });
         const quotaSourceIds = [...providerUsageSourceIds];
         const collection = requiredCollectionOutput(execution, quotaSourceIds);
@@ -217,7 +278,7 @@ export const app = Effect.gen(function* () {
         }
         const latest = yield* fromPromise(() => readLatestProviderQuotas(runtime.paths.databasePath));
         yield* Console.log(renderQuota(latest));
-        return { latest, sources };
+        return { kind: 'refresh', latest, sources } as const;
       }),
     );
     return;
