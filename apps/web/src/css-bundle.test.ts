@@ -32,6 +32,13 @@ const MULTI_PROVIDER_QUOTA_RAIL_GZIP_BUDGET_BYTES = 3520;
  */
 const CORE_VALUE_OBJECTS_GZIP_BUDGET_BYTES = 704;
 /**
+ * The period control regained the draggable range brush the retired range card used to carry:
+ * a standalone brush instance (state machine wiring, pointer/keyboard handlers, slider markup)
+ * plus the inline native date fields ride in the report entry closure whenever Custom is the
+ * period mode. Measured at 965 bytes, rounded on the same rule.
+ */
+const PERIOD_RANGE_BRUSH_GZIP_BUDGET_BYTES = 1024;
+/**
  * The merge preview now carries bundle identity and bounded warning items, so the contract parser
  * that the shell already ships grew a nested validator and the sync panel grew a disclosure list.
  * Measured at 188 bytes against the commit that introduced it, rounded on the same rule.
@@ -58,6 +65,7 @@ const INITIAL_GZIP_CLOSURE_MAXIMUM_BYTES =
   REPORT_TESTABILITY_SEAMS_GZIP_BUDGET_BYTES +
   MULTI_PROVIDER_QUOTA_RAIL_GZIP_BUDGET_BYTES +
   CORE_VALUE_OBJECTS_GZIP_BUDGET_BYTES +
+  PERIOD_RANGE_BRUSH_GZIP_BUDGET_BYTES +
   MERGE_PREVIEW_BUNDLE_IDENTITY_GZIP_BUDGET_BYTES +
   WEB_CURSOR_IMPORT_AND_MACHINE_LABEL_GZIP_BUDGET_BYTES;
 const LEADING_SLASH_PATTERN = /^\/+/;
