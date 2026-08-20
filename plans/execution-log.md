@@ -110,3 +110,85 @@ After those guarantees, another forced real startup refresh completed in 2.18
 seconds with 3,724 rows, including 882 visible Codex rows, and no Codex warning.
 Ultracite, lint, typecheck 16/16, 603 package tests, 8 tooling tests, and the 9/9
 build all passed.
+
+## Direction Audit 074–085, Unattended Five-Train Run — 2026-08-20
+
+Twelve plans executed in parallel by five coordinator-dispatched executors, each
+in its own git worktree branched from `5e4cf954`. The main checkout was never
+touched: a concurrent live session was committing to
+`refactor/report-decision-first-ui-ux` throughout, and it advanced to `6beb0c0e`
+("Restore draggable report period brush") during the run.
+
+Because plans 074–085 and their `plans/README.md` rows were still untracked in
+that checkout, every train branch was seeded with an identical plans-baseline
+commit `462758ce` — same parent, tree and message, so it is literally the same
+commit object on all five branches and resolves cleanly wherever they merge.
+E2E was serialized across trains behind one `flock`: `playwright.config.ts` pins
+port 4174 with `--strictPort` and `reuseExistingServer: false`, so concurrent
+runs would have failed to bind and produced false BLOCKED rows. The baseline was
+verified green *and* verified capable of failing (an injected type error was
+caught in the worktree) before any executor started.
+
+### What shipped
+
+Nothing blocked. All twelve plans reached their intended end state.
+
+- **A `feat/quota-surface`** (PR #30) — 074 provider-neutral quota history with a
+  two-provider fixture and the dormant `providerHistoryAvailable` gate finally
+  wired; 081 `quota --history` as a pure read; 080 the md-band compact rail plus
+  the two missing presentation viewports. Gates green, full e2e 139 passed.
+- **B `feat/sync-transfer`** (PR #31) — 075 bundle identity, age and bounded
+  warnings in the `/sync` preview, with `merge-proof.ts` untouched; 079 Cursor CSV
+  import and machine renaming from the web, tightening the upload media-type check
+  to match the parsed action. Gates green, full e2e 135 passed.
+- **C `feat/report-ux`** (PR #32) — 076 display-only campaign title inheritance
+  with `session-query.ts` untouched; 078 client-side sessions CSV export; 082
+  bounded `Other` member disclosure with no filter surface added. Gates green,
+  full e2e 136 passed.
+- **D `feat/sources-onboarding`** (PR #33) — 077 zero-source first-run guidance on
+  `/sources`. Rebased onto `6beb0c0e`, merges clean.
+- **E `docs/design-spikes`** (PR #34) — 083/084/085 delivered as memos only, no
+  build phase executed. Rebased onto `6beb0c0e`, merges clean.
+
+### What awaits a decision
+
+- **083** recommends approving Phase B but splitting it: 84% of unmanaged entries
+  are symlinks and only ~23 are adoptable, so the first ship should explain the
+  other 159 rows rather than offer to consolidate them.
+- **084** recommends **not building** the intent signal. Coherent clusters have
+  86–99% top-term recall, so they cannot group sessions that share an intent but
+  not a vocabulary; coverage tops out near 14.5%. It asks to close the standing
+  intent-grouping deferral for good.
+- **085** rules a print stylesheet **outside** the plan-009 rejection and cuts the
+  recap to four statements the bounded Overview payload already carries. Its
+  two-engine print gate is unmet — no reachable Gecko exposes `--print` — and the
+  status row now says so.
+- **Protocol version.** Plan 075 changed a command's wire shape into required
+  fields while `USAGE_ENGINE_PROTOCOL_VERSION` stays 1, so an old engine meeting a
+  new web fails as `invalid-response` rather than `protocol-mismatch`. Bumping it
+  is out of 075's scope and changes compatibility for every operation: it needs its
+  own small plan.
+- **A cross-plan cap mismatch.** 079's editor accepts a 240-*byte* machine label;
+  075's preview parser rejects past 120 *characters*. A machine renamed with the
+  new editor can export a bundle its peer cannot preview. Either fix contradicts
+  one plan's explicit text, so the maintainer chooses.
+
+### Notes for the next run
+
+Three of four out-of-scope file edits were forced by the plans' own steps
+colliding with guards their authors had not run — a gzip budget, a package
+boundary rule, a pinned fixture count. The plans were right about intent and
+wrong about mechanism, and the executors were correct to follow the evidence and
+record the deviation in the plan file rather than ship a red gate. Plan 081's
+prescribed import is a genuine plan defect if that text is ever reused.
+
+The whole-train review earned its place: the two most valuable findings of the
+run — the label-cap mismatch and the stale merge proof after a sibling mutation —
+are compositions of two individually correct plans, invisible to any single-plan
+review.
+
+`git rebase --continue` and `git merge` were blocked by the session's permission
+policy, so trains A, B and C remain based on `5e4cf954`. Each conflicts with the
+tip in exactly one file, `apps/web/src/css-bundle.test.ts`, whose additive budget
+ledger is a serialization point every bundle-affecting branch must touch. The
+resolution — keep both constants, add both to the sum — is stated in each PR body.
