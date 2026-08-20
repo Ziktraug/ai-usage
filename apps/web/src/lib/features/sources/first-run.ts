@@ -47,13 +47,21 @@ export interface SessionHistoryLocation {
 
 /**
  * Static onboarding copy, deliberately not derived from the collectors: it answers "what do I install
- * and where does ai-usage look?" before any source has run. Keep it in sync with the "Supported session
- * sources" table in `README.md` (guarded by a test) and with `docs/session-analysis-sources.md`.
+ * and where does ai-usage look?" before any source has run. README.md remains the concise installation
+ * reference; this first-run surface may list additional platform-specific locations that the collector
+ * accepts so the recovery instructions stay correct on Linux, macOS, and Windows.
  */
 export const sessionHistoryLocations: readonly SessionHistoryLocation[] = [
   { harness: 'Claude Code', paths: ['~/.claude/projects/**/*.jsonl', '~/.claude.json'] },
   { harness: 'Codex', paths: ['~/.codex/sessions/**/*.jsonl'] },
-  { harness: 'OpenCode', paths: ['~/.local/share/opencode/opencode.db'] },
+  {
+    harness: 'OpenCode',
+    paths: [
+      '~/.local/share/opencode/opencode.db',
+      '~/Library/Application Support/opencode/opencode.db',
+      '~/AppData/Local/opencode/opencode.db',
+    ],
+  },
   {
     harness: 'Cursor (macOS)',
     paths: ['~/Library/Application Support/Cursor/User/globalStorage/state.vscdb'],
