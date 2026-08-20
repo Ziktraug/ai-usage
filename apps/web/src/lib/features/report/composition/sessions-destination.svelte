@@ -131,10 +131,14 @@
 >
   {#snippet children(_rows)}
     <div class={tableControls} data-sessions-export>
-      <!-- The export serializes what the browser holds, not the whole filtered
-           set, so the bound is stated rather than left to be assumed. -->
+      <!-- The export serializes only loaded top-level campaign aggregates. Keep
+           campaign-row pagination and underlying session coverage as separate units. -->
       <span class={muted} data-sessions-export-scope>
-        {sessionsExportScopeLabel(_rows.length, queryState?.sessionCount ?? _rows.length)}
+        {sessionsExportScopeLabel(
+          _rows,
+          queryState?.itemCount ?? _rows.length,
+          queryState?.sessionCount ?? _rows.length,
+        )}
       </span>
       <ReportSharingActions createExport={() => createSessionsExport(generatedAt, _rows)} />
     </div>
