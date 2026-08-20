@@ -19,7 +19,12 @@ const fleet = {
   skipped: 0,
 };
 
-const defaultTransport = (): SyncRpcTransport => ({ fleet: () => Promise.resolve(fleet) });
+const renamedMachine = { machine: { id: 'machine-a', label: 'Studio Mac' } };
+
+const defaultTransport = (): SyncRpcTransport => ({
+  fleet: () => Promise.resolve(fleet),
+  setMachineLabel: () => Promise.resolve(renamedMachine),
+});
 
 const exportResponse = (): Response =>
   new Response('{"portable":true}', {
@@ -36,6 +41,7 @@ describe('Sync browser adapter', () => {
     let receivedInput: unknown;
     let receivedSignal: AbortSignal | undefined;
     const adapter = createSyncBrowserAdapter({
+      ...defaultTransport(),
       fleet: (input, options) => {
         receivedInput = input;
         receivedSignal = options?.signal;
@@ -48,9 +54,36 @@ describe('Sync browser adapter', () => {
     expect(receivedSignal).toBe(controller.signal);
 
     const malformed = createSyncBrowserAdapter({
+      ...defaultTransport(),
       fleet: () => Promise.resolve({ ...fleet, databasePath: '/private/usage.sqlite' } as never),
     });
     await expect(malformed.fleet()).rejects.toThrow();
+  });
+
+  test('sends the machine label through RPC and validates the returned identity', async () => {
+    const controller = new AbortController();
+    let receivedInput: unknown;
+    let receivedSignal: AbortSignal | undefined;
+    const adapter = createSyncBrowserAdapter({
+      ...defaultTransport(),
+      setMachineLabel: (input, options) => {
+        receivedInput = input;
+        receivedSignal = options?.signal;
+        return Promise.resolve(renamedMachine);
+      },
+    });
+
+    expect(await adapter.setMachineLabel('Studio Mac', controller.signal)).toEqual(renamedMachine);
+    expect(receivedInput).toEqual({ label: 'Studio Mac' });
+    expect(receivedSignal).toBe(controller.signal);
+
+    // A private path riding along on the machine identity must not reach the browser.
+    const malformed = createSyncBrowserAdapter({
+      ...defaultTransport(),
+      setMachineLabel: () =>
+        Promise.resolve({ machine: { configPath: '/private/machine.json', id: 'machine-a', label: 'x' } } as never),
+    });
+    await expect(malformed.setMachineLabel('Studio Mac')).rejects.toThrow();
   });
 
   test('consumes and replays a validated attachment within its declared byte budget', async () => {
@@ -254,9 +287,14 @@ describe('Sync browser adapter', () => {
     let rpcAcquisitions = 0;
     const adapter = createSyncBrowserAdapter(
       {
+        ...defaultTransport(),
         fleet: () => {
           rpcAcquisitions += 1;
           return Promise.resolve(fleet);
+        },
+        setMachineLabel: () => {
+          rpcAcquisitions += 1;
+          return Promise.resolve(renamedMachine);
         },
       },
       () => {

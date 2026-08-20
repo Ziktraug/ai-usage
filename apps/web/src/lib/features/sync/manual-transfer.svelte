@@ -17,6 +17,7 @@
 
   type PendingOperation = ManualTransferOperation;
   let fileInput: HTMLInputElement;
+  let cursorInput: HTMLInputElement;
   let pending = $state<PendingOperation | null>(null);
   let preview = $state<{ data: UsageEngineMergePreviewOutput; file: File } | null>(null);
   let notice = $state<{ kind: 'error' | 'status'; message: string } | null>(null);
@@ -47,6 +48,12 @@
     display: 'grid',
     gap: '8px',
     p: '12px',
+  });
+  const cursorSection = css({
+    borderTop: '1px solid token(colors.line)',
+    display: 'grid',
+    gap: '6px',
+    pt: '12px',
   });
   const warningList = css({
     color: 'muted',
@@ -162,6 +169,38 @@
     }
   };
 
+  // Separate from the merge drop zone on purpose: a Cursor export is not a merge bundle, and it is
+  // staged for collection rather than merged into the store.
+  const importCursorExport = async (file: File | undefined): Promise<void> => {
+    if (!(file && mutationAvailable)) {
+      return;
+    }
+    const signal = begin('cursor');
+    if (!signal) {
+      return;
+    }
+    try {
+      const result = await client.importCursor(file, signal, updateProgress);
+      if (result.ok) {
+        notice = {
+          kind: 'status',
+          message: result.data.alreadyImported
+            ? 'Already imported.'
+            : `Import staged as ${result.data.artifactName}. Collection picks it up automatically.`,
+        };
+        // The engine re-runs the Cursor source before the command completes, so this machine's
+        // session count and freshness can have moved even when the artifact was already imported.
+        await onCompleted?.();
+      } else {
+        notice = { kind: 'error', message: result.error.message };
+      }
+    } catch {
+      showUnexpectedFailure(signal);
+    } finally {
+      finish();
+    }
+  };
+
   const confirmImport = async (): Promise<void> => {
     const current = preview;
     if (!(current && mutationAvailable)) {
@@ -244,6 +283,35 @@
     <span class={strongCell}>Drop a merge file here or choose a file</span>
     <span class={panelSub}>JSON only. The file is previewed before any local usage changes.</span>
   </button>
+  <div class={cursorSection}>
+    <div class={strongCell}>Cursor usage export</div>
+    <div class={panelSub}>
+      From cursor.com &rarr; usage events export. Copied into local ignored storage, then collected like any other
+      source.
+    </div>
+    <input
+      accept=".csv,text/csv"
+      disabled={!mutationAvailable || pending !== null}
+      hidden
+      onchange={async (event) => {
+        const input = event.currentTarget;
+        await importCursorExport(input.files?.[0]);
+        input.value = '';
+      }}
+      type="file"
+      bind:this={cursorInput}
+    >
+    <div class={actionRow}>
+      <button
+        class={ghostButton}
+        disabled={!mutationAvailable || pending !== null}
+        onclick={() => cursorInput.click()}
+        type="button"
+      >
+        {pending === 'cursor' ? 'Importing' : 'Import a Cursor usage CSV'}
+      </button>
+    </div>
+  </div>
   {#if preview}
     <div class={operationPanel} role="status">
       <div class={strongCell}>Review merge import</div>

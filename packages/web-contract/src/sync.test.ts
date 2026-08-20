@@ -1,11 +1,15 @@
 import { describe, expect, test } from 'bun:test';
 import { safeParse } from 'valibot';
 import {
+  MAX_MACHINE_LABEL_BYTES,
   manualMergeDownloadTransport,
   manualMergeUploadTransport,
   parseSyncFleet,
+  parseSyncMachineLabelResult,
   syncContract,
   syncFleetOutputSchema,
+  syncMachineLabelInputSchema,
+  syncMachineLabelOutputSchema,
 } from './sync';
 
 const FORBIDDEN_RPC_VALUE_PATTERN = /text|bytes|file|stream/i;
@@ -27,14 +31,42 @@ const fleet = {
 };
 
 describe('Sync contract', () => {
-  test('defines only the bounded fleet GET procedure and exact public errors', () => {
-    expect(Object.keys(syncContract)).toEqual(['fleet']);
+  test('defines only the bounded fleet read and machine rename with exact public errors', () => {
+    expect(Object.keys(syncContract)).toEqual(['fleet', 'setMachineLabel']);
     expect(syncContract.fleet['~orpc'].route).toEqual({ method: 'GET', path: '/sync/fleet' });
     expect(Object.keys(syncContract.fleet['~orpc'].errorMap).sort()).toEqual([
       'ForbiddenDemo',
       'IncompatibleStore',
       'Unavailable',
     ]);
+    expect(syncContract.setMachineLabel['~orpc'].route).toEqual({ method: 'POST', path: '/sync/setMachineLabel' });
+    expect(Object.keys(syncContract.setMachineLabel['~orpc'].errorMap).sort()).toEqual([
+      'EngineUnavailable',
+      'Forbidden',
+      'ForbiddenDemo',
+      'InvalidInput',
+    ]);
+  });
+
+  test('bounds the machine label by the engine byte limit and closes both wire shapes', () => {
+    expect(safeParse(syncMachineLabelInputSchema, { label: 'Studio Mac' }).success).toBe(true);
+    expect(safeParse(syncMachineLabelInputSchema, { label: '   ' }).success).toBe(false);
+    expect(safeParse(syncMachineLabelInputSchema, { label: 'x'.repeat(MAX_MACHINE_LABEL_BYTES + 1) }).success).toBe(
+      false,
+    );
+    // Two-byte characters reach the engine's byte bound at half the character count.
+    expect(safeParse(syncMachineLabelInputSchema, { label: 'é'.repeat(120) }).success).toBe(true);
+    expect(safeParse(syncMachineLabelInputSchema, { label: 'é'.repeat(121) }).success).toBe(false);
+    expect(safeParse(syncMachineLabelInputSchema, { label: 'ok', machineId: 'machine-b' }).success).toBe(false);
+
+    expect(parseSyncMachineLabelResult({ machine: { id: 'machine-a', label: 'Studio Mac' } })).toEqual({
+      machine: { id: 'machine-a', label: 'Studio Mac' },
+    });
+    expect(
+      safeParse(syncMachineLabelOutputSchema, {
+        machine: { configPath: '/private/machine.json', id: 'machine-a', label: 'Studio Mac' },
+      }).success,
+    ).toBe(false);
   });
 
   test('deeply validates the closed bounded fleet wire shape', () => {

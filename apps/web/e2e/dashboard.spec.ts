@@ -813,10 +813,15 @@ test('keeps sync limited to explicit file transfers', async ({ page }) => {
   await expect(page.getByRole('heading', { level: 2, name: 'Machine fleet' })).toBeVisible();
   await expect(page.getByLabel('Machine fleet').getByText('Current machine', { exact: true })).toBeVisible();
   await page.setViewportSize({ height: 844, width: 361 });
-  const fileInput = page.locator('input[type="file"]');
+  const fileInput = page.locator('input[type="file"][accept=".json,application/json"]');
   const dropTarget = fileInput.locator('xpath=following-sibling::button[1]');
   await expect(dropTarget).toBeVisible();
   await expect(dropTarget).toContainText('Drop a merge file here or choose a file');
+  // The Cursor export is a second explicit file action next to the merge drop zone. The synthetic
+  // runtime cannot execute a real import, so this asserts the affordance, not a completed import.
+  await expect(page.getByText('Cursor usage export')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Import a Cursor usage CSV' })).toBeEnabled();
+  await expect(page.locator('input[type="file"][accept=".csv,text/csv"]')).toHaveCount(1);
   await expect(page.getByRole('button', { name: 'Start LAN merge' })).toHaveCount(0);
   await expect(page.getByLabel('Scan host')).toHaveCount(0);
   await expect(page.getByText('Pair nearby machine')).toHaveCount(0);

@@ -8,14 +8,26 @@
     STALE_MACHINE_COLLECTION_GUIDANCE,
     type SyncFleetMachineView,
   } from '../../../manual-transfer-model';
+  import MachineLabelEditor from './machine-label-editor.svelte';
   import { actionRow, panelHeader, statusPill, statusPillInfo, statusPillOk, statusPillWarn } from './styles';
 
   let {
     machines,
     now,
     omittedMachines,
+    onRename,
+    renameAvailable = false,
     skipped,
-  }: { machines: readonly SyncFleetMachineView[]; now: number; omittedMachines: number; skipped: number } = $props();
+  }: {
+    machines: readonly SyncFleetMachineView[];
+    now: number;
+    omittedMachines: number;
+    onRename?: (label: string) => Promise<string | null>;
+    renameAvailable?: boolean;
+    skipped: number;
+  } = $props();
+
+  const renameMachine = async (label: string): Promise<string | null> => (await onRename?.(label)) ?? null;
 
   const fleetGrid = css({
     display: 'grid',
@@ -31,7 +43,6 @@
     gap: '10px',
     justifyContent: 'space-between',
   });
-  const machineTitle = css({ fontSize: '15px', fontWeight: 750, overflowWrap: 'anywhere' });
   const machineFacts = css({ display: 'grid', gap: '10px', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))' });
   const machineFact = css({ display: 'grid', gap: '3px', minW: 0 });
   const machineFactLabel = css({ color: 'muted', fontSize: '10px', fontWeight: 700, textTransform: 'uppercase' });
@@ -67,7 +78,11 @@
     {#each machines as machine (machine.id)}
       <article class={cx(panel, machineCard, machine.current && machineCardCurrent)} data-machine-stale={machine.stale}>
         <div class={machineHeader}>
-          <h3 class={machineTitle}>{machine.label}</h3>
+          <MachineLabelEditor
+            editable={machine.current && renameAvailable && onRename !== undefined}
+            label={machine.label}
+            onRename={renameMachine}
+          />
           <div class={actionRow}>
             {#if machine.current}
               <span class={cx(statusPill, statusPillInfo)}>Current machine</span>

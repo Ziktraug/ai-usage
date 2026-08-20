@@ -6,7 +6,19 @@ import {
 } from '@ai-usage/report-core/merge-bundle';
 import { ORPCError } from '@orpc/client';
 import { call } from '@orpc/server';
-import { createManualMergeExplicitHandlers, createSyncRpcRouter, type ManualMergeExportCandidate } from './sync';
+import {
+  createManualMergeExplicitHandlers,
+  createSyncRpcRouter,
+  type ManualMergeExportCandidate,
+  type SyncRpcDependencies,
+} from './sync';
+
+const syncRouter = (dependencies: Partial<SyncRpcDependencies>) =>
+  createSyncRpcRouter({
+    getFleet: () => Promise.reject(new Error('Fleet reads are outside this fixture.')),
+    setMachineLabel: () => Promise.reject(new Error('Machine renames are outside this fixture.')),
+    ...dependencies,
+  });
 
 const fleet = {
   currentMachine: { id: 'machine-a', label: 'Machine A' },
@@ -83,7 +95,7 @@ describe('Sync RPC server adapter', () => {
   test('returns the exact bounded fleet and forwards cancellation capability', async () => {
     const controller = new AbortController();
     let receivedSignal: AbortSignal | undefined;
-    const router = createSyncRpcRouter({
+    const router = syncRouter({
       getFleet: (signal) => {
         receivedSignal = signal;
         return Promise.resolve({ data: fleet, ok: true });
@@ -96,7 +108,7 @@ describe('Sync RPC server adapter', () => {
 
   test('maps incompatible and unavailable owner failures to sanitized closed errors', async () => {
     const privatePath = '/private/usage.sqlite';
-    const incompatible = createSyncRpcRouter({
+    const incompatible = syncRouter({
       getFleet: () =>
         Promise.resolve({
           error: { message: privatePath, reason: 'schema-too-new', tag: 'UsageStoreReadError' },
@@ -108,7 +120,7 @@ describe('Sync RPC server adapter', () => {
     expect(incompatibleError.data).toEqual({ reason: 'incompatible-store' });
     expect(incompatibleError.message).not.toContain(privatePath);
 
-    const unavailable = createSyncRpcRouter({ getFleet: () => Promise.reject(new Error(privatePath)) });
+    const unavailable = syncRouter({ getFleet: () => Promise.reject(new Error(privatePath)) });
     const unavailableError = requireOrpcError(await catchError(call(unavailable.fleet, {})));
     expect(unavailableError.code).toBe('Unavailable');
     expect(unavailableError.data).toEqual({ reason: 'sync-fleet-unavailable' });
@@ -126,7 +138,7 @@ describe('Sync RPC server adapter', () => {
     const startedPromise = new Promise<void>((resolve) => {
       started = resolve;
     });
-    const router = createSyncRpcRouter({
+    const router = syncRouter({
       getFleet: async () => {
         started?.();
         return await deepFailure;
@@ -142,12 +154,64 @@ describe('Sync RPC server adapter', () => {
   });
 
   test('rejects malformed deep output before it crosses RPC', async () => {
-    const router = createSyncRpcRouter({
+    const router = syncRouter({
       getFleet: () => Promise.resolve({ data: { ...fleet, databasePath: '/private/usage.sqlite' }, ok: true }),
     });
     const error = requireOrpcError(await catchError(call(router.fleet, {})));
     expect(error.code).toBe('Unavailable');
     expect(error.message).not.toContain('/private');
+  });
+
+  test('renames the local machine through the engine and returns the engine-confirmed identity', async () => {
+    const labels: string[] = [];
+    const router = syncRouter({
+      setMachineLabel: ({ label }) => {
+        labels.push(label);
+        return Promise.resolve({ machine: { id: 'machine-a', label } });
+      },
+    });
+
+    expect(await call(router.setMachineLabel, { label: 'Studio Mac' })).toEqual({
+      machine: { id: 'machine-a', label: 'Studio Mac' },
+    });
+    expect(labels).toEqual(['Studio Mac']);
+  });
+
+  test('rejects blank, oversized, and unknown-field label input before the engine is reached', async () => {
+    let calls = 0;
+    const router = syncRouter({
+      setMachineLabel: ({ label }) => {
+        calls += 1;
+        return Promise.resolve({ machine: { id: 'machine-a', label } });
+      },
+    });
+
+    for (const input of [{ label: '   ' }, { label: 'L'.repeat(241) }, { label: 'ok', machineId: 'machine-b' }]) {
+      expect(await catchError(call(router.setMachineLabel, input as { label: string }))).toBeDefined();
+    }
+    expect(calls).toBe(0);
+    // A multi-byte label is measured the way the engine measures it, not by character count.
+    expect(await catchError(call(router.setMachineLabel, { label: 'é'.repeat(121) }))).toBeDefined();
+    expect(calls).toBe(0);
+    expect(await call(router.setMachineLabel, { label: 'é'.repeat(120) })).toEqual({
+      machine: { id: 'machine-a', label: 'é'.repeat(120) },
+    });
+  });
+
+  test('sanitizes a deep rename failure and a malformed engine identity', async () => {
+    const privatePath = '/private/machine.json';
+    const failing = syncRouter({ setMachineLabel: () => Promise.reject(new Error(privatePath)) });
+    const failure = requireOrpcError(await catchError(call(failing.setMachineLabel, { label: 'Studio Mac' })));
+    expect(failure.code).toBe('EngineUnavailable');
+    expect(failure.data).toEqual({ reason: 'machine-label-unavailable' });
+    expect(failure.message).not.toContain(privatePath);
+
+    const malformed = syncRouter({
+      setMachineLabel: () => Promise.resolve({ machine: { configPath: privatePath, id: 'machine-a', label: 'x' } }),
+    });
+    const malformedError = requireOrpcError(await catchError(call(malformed.setMachineLabel, { label: 'Studio Mac' })));
+    expect(malformedError.code).toBe('EngineUnavailable');
+    expect(malformedError.message).not.toContain(privatePath);
   });
 });
 

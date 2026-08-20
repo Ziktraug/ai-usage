@@ -142,7 +142,7 @@ read-only SQLite and the permanent browser/server and demo-isolation boundaries.
 | 076 | Display Campaign Root Titles on Generic Child Sessions | P2 | S-M | - | TODO |
 | 077 | Give /sources a First-Run Answer When Nothing Is Detected | P2 | M | - | TODO |
 | 078 | Export Filtered Session Rows as CSV From the Web Sessions View | P2 | S-M | - | TODO |
-| 079 | Drive Cursor Import and Machine Renaming From the Web | P2 | M | 075 (file overlap in sync feature; sequence or coordinate) | TODO |
+| 079 | Drive Cursor Import and Machine Renaming From the Web | P2 | M | 075 (file overlap in sync feature; sequence or coordinate) | DONE |
 | 080 | Restore Glanceable Quota in the 768-1279px Band and Cover the Missing Viewports | P2 | S+M | - | TODO |
 | 081 | Add `quota --history` to the CLI | P2 | M | - | TODO |
 | 082 | Let the Reader See What the Timeline "Other" Series Contains | P3 | S-M | - | TODO |

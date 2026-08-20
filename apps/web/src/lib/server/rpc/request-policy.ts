@@ -341,6 +341,15 @@ export const operationRequestPolicies = [
     transport: 'query',
   }),
   defineOperationPolicy({
+    applicationErrorFamilies: ['ForbiddenDemo', 'Forbidden', 'InvalidInput', 'EngineUnavailable'],
+    method: 'POST',
+    operation: 'setMachineLabel',
+    requestSize: 'bounded-rpc-json',
+    responseSize: 'bounded-json',
+    target: 'sync.setMachineLabel',
+    transport: 'mutation',
+  }),
+  defineOperationPolicy({
     applicationErrorFamilies: ['ForbiddenDemo', 'Forbidden', 'InvalidInput', 'Unavailable'],
     method: 'POST',
     operation: 'exportManualMergeBundle',

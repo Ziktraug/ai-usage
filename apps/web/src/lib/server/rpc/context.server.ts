@@ -286,7 +286,7 @@ const createSessionDependencies = (): WebRpcRouterDependencies['session'] => ({
     }),
 });
 
-const createSyncDependencies = (): WebRpcRouterDependencies['sync'] => ({
+const createSyncDependencies = (request: Request): WebRpcRouterDependencies['sync'] => ({
   getFleet: async (signal) =>
     await phaseBound(signal, async () => {
       const [{ getSyncFleetForServer }, { resolveUsageReadModelForServer }] = await Promise.all([
@@ -297,6 +297,11 @@ const createSyncDependencies = (): WebRpcRouterDependencies['sync'] => ({
         await resolveUsageReadModelForServer(),
         signal === undefined ? {} : { signal },
       );
+    }),
+  setMachineLabel: async (input, signal) =>
+    await phaseBound(signal, async () => {
+      const server = await import('../../../server/machine-label.server');
+      return await server.setMachineLabelFromRequestForServer(request, input);
     }),
 });
 
@@ -309,6 +314,6 @@ export const createWebRpcRouterDependencies = (request: Request): Promise<WebRpc
       preflight: preflightSkills,
       selectCapability: async (options) => await selectSkillsCapability(options, fixtureVariant),
     },
-    sync: createSyncDependencies(),
+    sync: createSyncDependencies(request),
   });
 };

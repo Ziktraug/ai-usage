@@ -3,7 +3,12 @@ import {
   assertPortableUsageTopLevelRowsPreflight,
   MAX_PORTABLE_USAGE_BYTES,
 } from '@ai-usage/report-core/portable-usage';
-import { parseUsageEngineMergePreviewOutput, type UsageEngineMergePreviewOutput } from '@ai-usage/usage-engine-control';
+import {
+  parseUsageEngineCursorImportOutput,
+  parseUsageEngineMergePreviewOutput,
+  type UsageEngineCursorImportOutput,
+  type UsageEngineMergePreviewOutput,
+} from '@ai-usage/usage-engine-control';
 import { manualMergeUploadTransport } from '@ai-usage/web-contract/sync';
 import type { ManualOperationError, ManualOperationResult } from '../../../manual-transfer-contract';
 import { createSyncBrowserAdapter, type SyncFetch } from '../../rpc/sync-client';
@@ -20,6 +25,11 @@ export interface ManualTransferClient {
   download(
     signal?: AbortSignal,
   ): Promise<{ readonly filename: string; readonly response: Response; readonly rows: number }>;
+  importCursor(
+    file: File,
+    signal?: AbortSignal,
+    onProgress?: ManualUploadProgressListener,
+  ): Promise<ManualOperationResult<UsageEngineCursorImportOutput>>;
   preview(
     file: File,
     signal?: AbortSignal,
@@ -27,9 +37,9 @@ export interface ManualTransferClient {
   ): Promise<ManualOperationResult<UsageEngineMergePreviewOutput>>;
 }
 
-// Which manual-transfer action is in flight. The progress UI needs it because preview and confirm
-// share one transport but make very different promises about local data.
-export type ManualTransferOperation = 'confirm' | 'export' | 'preview';
+// Which manual-transfer action is in flight. The progress UI needs it because preview, confirm, and
+// the Cursor import share one transport but make very different promises about local data.
+export type ManualTransferOperation = 'confirm' | 'cursor' | 'export' | 'preview';
 
 export type ManualUploadProgress =
   | {
@@ -48,13 +58,23 @@ export type ManualUploadProgress =
 
 export type ManualUploadProgressListener = (progress: ManualUploadProgress) => void;
 
+export type ManualUploadAction = 'confirm' | 'cursor' | 'preview';
+
 export interface ManualUploadRequest {
-  readonly action: 'confirm' | 'preview';
+  readonly action: ManualUploadAction;
   readonly file: File;
   readonly headers: Readonly<Record<string, string>>;
   readonly onProgress?: ManualUploadProgressListener;
   readonly signal?: AbortSignal;
 }
+
+// The server checks the media type against the requested action, so a merge bundle cannot reach the
+// Cursor import and a CSV cannot reach the merge preview.
+const CONTENT_TYPE_BY_ACTION: Readonly<Record<ManualUploadAction, string>> = {
+  confirm: 'application/json',
+  cursor: 'text/csv',
+  preview: 'application/json',
+};
 
 export type ManualUploadTransport = (request: ManualUploadRequest) => Promise<Response>;
 
@@ -192,7 +212,7 @@ const exportedRowCount = async (response: Response): Promise<number> => {
 
 const upload = async <Value>(
   file: File,
-  action: 'confirm' | 'preview',
+  action: ManualUploadAction,
   parseValue: (value: unknown) => Value,
   uploadTransport: ManualUploadTransport,
   signal?: AbortSignal,
@@ -210,7 +230,7 @@ const upload = async <Value>(
     };
   }
   const headers = {
-    'content-type': 'application/json',
+    'content-type': CONTENT_TYPE_BY_ACTION[action],
     'x-ai-usage-merge-action': action,
     ...(preview === undefined
       ? {}
@@ -239,12 +259,17 @@ export const createManualTransferClient = (
     await upload(file, 'confirm', parseNone, uploadTransport, signal, preview, onProgress),
   download: async (signal) => {
     const adapter = createSyncBrowserAdapter(
-      { fleet: () => Promise.reject(new Error('Fleet RPC is outside manual download.')) },
+      {
+        fleet: () => Promise.reject(new Error('Fleet RPC is outside manual download.')),
+        setMachineLabel: () => Promise.reject(new Error('Machine renaming is outside manual download.')),
+      },
       fetchTransport,
     );
     const result = await adapter.downloadManualMerge(signal);
     return { ...result, rows: await exportedRowCount(result.response) };
   },
+  importCursor: async (file, signal, onProgress) =>
+    await upload(file, 'cursor', parseUsageEngineCursorImportOutput, uploadTransport, signal, undefined, onProgress),
   preview: async (file, signal, onProgress) =>
     await upload(file, 'preview', parseUsageEngineMergePreviewOutput, uploadTransport, signal, undefined, onProgress),
 });

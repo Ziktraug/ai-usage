@@ -1,6 +1,6 @@
 import { MAX_PORTABLE_USAGE_BYTES } from '@ai-usage/report-core/portable-usage';
 import { isJsonWireValue } from '@ai-usage/web-contract/schema-conventions';
-import { parseSyncFleet, type SyncFleet, syncContract } from '@ai-usage/web-contract/sync';
+import { parseSyncFleet, parseSyncMachineLabelResult, type SyncFleet, syncContract } from '@ai-usage/web-contract/sync';
 import { implement } from '@orpc/server';
 
 const SAFE_FILENAME_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,254}$/u;
@@ -63,6 +63,7 @@ const isAbortError = (error: unknown, signal: AbortSignal | undefined): boolean 
 
 export interface SyncRpcDependencies {
   readonly getFleet: (signal: AbortSignal | undefined) => Promise<unknown>;
+  readonly setMachineLabel: (input: { readonly label: string }, signal: AbortSignal | undefined) => Promise<unknown>;
 }
 
 export const createSyncRpcRouter = (dependencies: SyncRpcDependencies) => {
@@ -97,6 +98,25 @@ export const createSyncRpcRouter = (dependencies: SyncRpcDependencies) => {
         data: { reason: 'sync-fleet-unavailable' },
         message: 'Sync fleet data could not be read safely.',
       });
+    }),
+    // The engine owns machine identity: the renamed machine comes back from the command completion,
+    // so a rename the engine refused cannot be reported as applied.
+    setMachineLabel: sync.setMachineLabel.handler(async ({ errors, input, signal }) => {
+      signal?.throwIfAborted();
+      try {
+        const machine = parseSyncMachineLabelResult(await dependencies.setMachineLabel({ label: input.label }, signal));
+        signal?.throwIfAborted();
+        return machine;
+      } catch (error) {
+        signal?.throwIfAborted();
+        if (isAbortError(error, signal)) {
+          throw error;
+        }
+        throw errors.EngineUnavailable({
+          data: { reason: 'machine-label-unavailable' },
+          message: 'The machine could not be renamed.',
+        });
+      }
     }),
   };
 };

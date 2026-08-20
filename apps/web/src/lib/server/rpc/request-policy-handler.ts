@@ -44,6 +44,7 @@ export const rpcPathByOperation = {
   saveProjectGroups: '/projectGroup/save',
   saveSkillManagementConfig: '/skills/saveConfig',
   setCampaignLabelOverride: '/campaign/setLabelOverride',
+  setMachineLabel: '/sync/setMachineLabel',
   toggleManagedSkill: '/skills/toggleProjection',
 } as const;
 

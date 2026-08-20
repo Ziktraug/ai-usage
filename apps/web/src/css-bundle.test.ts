@@ -37,6 +37,12 @@ const CORE_VALUE_OBJECTS_GZIP_BUDGET_BYTES = 704;
  * Measured at 188 bytes against the commit that introduced it, rounded on the same rule.
  */
 const MERGE_PREVIEW_BUNDLE_IDENTITY_GZIP_BUDGET_BYTES = 192;
+/**
+ * Cursor import and machine renaming both reach the engine from the web, so the shell now ships one
+ * more sync contract procedure, its browser adapter, and the fleet label editor.
+ * Measured at 140 bytes against the commit that introduced it, rounded on the same rule.
+ */
+const WEB_CURSOR_IMPORT_AND_MACHINE_LABEL_GZIP_BUDGET_BYTES = 192;
 const INITIAL_GZIP_CLOSURE_MAXIMUM_BYTES =
   Math.ceil(INITIAL_GZIP_CLOSURE_BASELINE_BYTES * 1.1) +
   BREAKDOWN_SEARCH_GZIP_BUDGET_BYTES +
@@ -52,7 +58,8 @@ const INITIAL_GZIP_CLOSURE_MAXIMUM_BYTES =
   REPORT_TESTABILITY_SEAMS_GZIP_BUDGET_BYTES +
   MULTI_PROVIDER_QUOTA_RAIL_GZIP_BUDGET_BYTES +
   CORE_VALUE_OBJECTS_GZIP_BUDGET_BYTES +
-  MERGE_PREVIEW_BUNDLE_IDENTITY_GZIP_BUDGET_BYTES;
+  MERGE_PREVIEW_BUNDLE_IDENTITY_GZIP_BUDGET_BYTES +
+  WEB_CURSOR_IMPORT_AND_MACHINE_LABEL_GZIP_BUDGET_BYTES;
 const LEADING_SLASH_PATTERN = /^\/+/;
 const REPORT_COLOR_TOKEN_PATTERN = /token\(colors\.([A-Za-z0-9_.-]+)\)/g;
 const REPORT_SOURCE_FILE_PATTERN = /\.(?:svelte|ts)$/;

@@ -32,6 +32,7 @@ describe('Sync fleet query options', () => {
         }
         return Promise.resolve(fleet);
       },
+      setMachineLabel: () => Promise.reject(new Error('Machine renames are outside Query.')),
     };
     const serverDisabled = syncFleetQueryOptions(adapter, {
       browser: false,

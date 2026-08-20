@@ -11,14 +11,22 @@
   }: { now: number; operation: ManualTransferOperation; progress: ManualUploadProgress } = $props();
   // A preview reads the staged file and reports what an import would do; it writes no usage row.
   // Announcing a merge during that phase contradicts the guarantee shown next to the drop zone.
-  const processingLabel = $derived(
-    operation === 'confirm' ? 'Merging into the local database…' : 'Checking the file against your usage…',
-  );
-  const processingHint = $derived(
-    operation === 'confirm'
-      ? 'Large files take a moment while each usage row is written and deduplicated.'
-      : 'Large files take a moment to compare. Nothing is written until you confirm.',
-  );
+  // A Cursor import writes no usage row either: it copies the export into local ignored storage,
+  // and collection reads it afterwards.
+  const processingLabel = $derived.by(() => {
+    if (operation === 'confirm') {
+      return 'Merging into the local database…';
+    }
+    return operation === 'cursor' ? 'Copying into local Cursor exports…' : 'Checking the file against your usage…';
+  });
+  const processingHint = $derived.by(() => {
+    if (operation === 'confirm') {
+      return 'Large files take a moment while each usage row is written and deduplicated.';
+    }
+    return operation === 'cursor'
+      ? 'The file is copied and de-duplicated by content. Collection reads it afterwards.'
+      : 'Large files take a moment to compare. Nothing is written until you confirm.';
+  });
   const percent = $derived(
     progress.phase === 'uploading' && progress.total > 0
       ? Math.min(100, Math.round((progress.loaded / progress.total) * 100))

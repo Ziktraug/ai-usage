@@ -12,11 +12,12 @@
   import ManualTransfer from './manual-transfer.svelte';
   import { headerTop, pageStack, unavailablePanel, unavailableText } from './styles';
   import type { SyncPageData } from './sync-load';
-  import { createHydratedSyncFleetQuery } from './sync-query.svelte';
+  import { createHydratedSyncFleetQuery, createSyncMachineRenamer } from './sync-query.svelte';
 
   let { connection = 'connecting', data }: { connection?: SourceControlConnectionState; data: SyncPageData } = $props();
   const queryClient = useQueryClient();
   const fleetQuery = createHydratedSyncFleetQuery(browser, () => data.compatibleGeneration);
+  const renameMachine = createSyncMachineRenamer(browser);
   const fleet = $derived(fleetQuery.data);
   const machines = $derived(
     fleet ? buildSyncFleetMachineViews(fleet.currentMachine, fleet.machines, data.renderedAt) : [],
@@ -25,6 +26,19 @@
     fleet ? buildSyncFleetComparisonRows(fleet.currentMachine, fleet.machines, data.renderedAt) : [],
   );
   const mutation = $derived(manualTransferMutationAvailability(connection));
+  // Renaming issues an engine command, so it rides the same availability signal as manual imports.
+  const onRenameLocalMachine = async (label: string): Promise<string | null> => {
+    if (!(renameMachine && mutation.available)) {
+      return null;
+    }
+    try {
+      const renamed = await renameMachine(label);
+      await invalidateSyncFleet(queryClient, data.compatibleGeneration);
+      return renamed;
+    } catch {
+      return null;
+    }
+  };
   const operationPanel = css({
     bg: 'surfaceMuted',
     border: '1px solid token(colors.line)',
@@ -55,6 +69,8 @@
           {machines}
           now={data.renderedAt}
           omittedMachines={fleet.omittedMachines}
+          onRename={onRenameLocalMachine}
+          renameAvailable={mutation.available}
           skipped={fleet.skipped}
         />
         <MachineComparison rows={comparison} />
