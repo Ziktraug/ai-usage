@@ -453,16 +453,18 @@ test('quota persists a degraded boundary without polluting stderr when live refr
     const fakeCodexPath = path.join(binaryDirectory, 'codex');
     await writeFile(fakeCodexPath, '#!/bin/sh\nexit 1\n');
     await chmod(fakeCodexPath, 0o700);
+    const observedAt = new Date(Date.now() - 60_000);
+    const resetsAt = new Date(observedAt.getTime() + 5 * 60 * 60 * 1000);
     await writeFile(
       path.join(sessionDirectory, 'rollout.jsonl'),
       `${JSON.stringify({
-        timestamp: '2026-07-15T10:00:00.000Z',
+        timestamp: observedAt.toISOString(),
         type: 'event_msg',
         payload: {
           type: 'token_count',
           rate_limits: {
             primary: {
-              resets_at: '2026-07-15T15:00:00.000Z',
+              resets_at: resetsAt.toISOString(),
               used_percent: 20,
               window_minutes: 300,
             },
