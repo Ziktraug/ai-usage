@@ -81,14 +81,14 @@ const classifyCliQuotaOutcome = (exit: Exit.Exit<CliQuotaBoundaryResult, unknown
     };
   }
   if (exit.value.kind === 'history') {
-    // A read that found nothing is still a successful read: "no history yet" is the honest answer,
-    // not a failure. The point count carries the distinction into the wide event.
+    // Partial is the stronger statement: zero surviving points can mean corrupt rows were skipped,
+    // which must not be collapsed into the genuine "no history yet" case.
     const { partial, pointCount, range } = exit.value;
     let domainOutcome = 'success';
-    if (pointCount === 0) {
-      domainOutcome = 'empty';
-    } else if (partial) {
+    if (partial) {
       domainOutcome = 'partial';
+    } else if (pointCount === 0) {
+      domainOutcome = 'empty';
     }
     return {
       outcome: 'success',
