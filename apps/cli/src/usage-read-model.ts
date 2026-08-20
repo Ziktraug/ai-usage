@@ -336,24 +336,15 @@ export interface CliProviderQuotaHistory {
   readonly points: ProviderQuotaHistoryPoint[];
 }
 
-const historySeriesKey = (point: ProviderQuotaHistoryPoint): string =>
-  [point.providerKey, point.machineId, point.accountScope ?? '', point.windowId].join('|');
-
 /**
- * The store prepends the newest observation from *before* `from` as a chart anchor. A series whose
- * only point is that anchor has nothing to say about the requested window — reporting it would print
- * a months-old percentage and an expired reset under "last 24h" — so those series drop out entirely
- * while an anchor that leads real in-range data is kept.
+ * The store prepends the newest observation from *before* `from` as a chart anchor. This view is
+ * labelled with the requested range and plan 081 takes `start% → end%` "from the first and last
+ * points of the range", so an anchor must never become an endpoint: it would print a days-old
+ * percentage as the start of "last 24h". Dropping every pre-range point also drops anchor-only
+ * series, which have nothing to say about the requested window.
  */
-const withoutAnchorOnlySeries = (points: ProviderQuotaHistoryPoint[], from: string): ProviderQuotaHistoryPoint[] => {
-  const inRange = new Set<string>();
-  for (const point of points) {
-    if (point.firstObservedAt >= from) {
-      inRange.add(historySeriesKey(point));
-    }
-  }
-  return points.filter((point) => inRange.has(historySeriesKey(point)));
-};
+export const withoutPreRangePoints = (points: ProviderQuotaHistoryPoint[], from: string): ProviderQuotaHistoryPoint[] =>
+  points.filter((point) => point.firstObservedAt >= from);
 
 export const readProviderQuotaHistory = async (input: {
   readonly dbPath: string;
@@ -396,7 +387,7 @@ export const readProviderQuotaHistory = async (input: {
     })),
   );
   const reduced = downsampleProviderQuotaHistoryPoints(
-    withoutAnchorOnlySeries(points, input.from),
+    withoutPreRangePoints(points, input.from),
     QUOTA_HISTORY_MAXIMUM_POINTS,
   );
   return {
