@@ -31,6 +31,13 @@ const MULTI_PROVIDER_QUOTA_RAIL_GZIP_BUDGET_BYTES = 3520;
  * Measured at 644 bytes, rounded on the same rule.
  */
 const CORE_VALUE_OBJECTS_GZIP_BUDGET_BYTES = 704;
+/**
+ * The period control regained the draggable range brush the retired range card used to carry:
+ * a standalone brush instance (state machine wiring, pointer/keyboard handlers, slider markup)
+ * plus the inline native date fields ride in the report entry closure whenever Custom is the
+ * period mode. Measured at 965 bytes, rounded on the same rule.
+ */
+const PERIOD_RANGE_BRUSH_GZIP_BUDGET_BYTES = 1024;
 const INITIAL_GZIP_CLOSURE_MAXIMUM_BYTES =
   Math.ceil(INITIAL_GZIP_CLOSURE_BASELINE_BYTES * 1.1) +
   BREAKDOWN_SEARCH_GZIP_BUDGET_BYTES +
@@ -45,7 +52,8 @@ const INITIAL_GZIP_CLOSURE_MAXIMUM_BYTES =
   POST_REVIEW_CORRECTIONS_GZIP_BUDGET_BYTES +
   REPORT_TESTABILITY_SEAMS_GZIP_BUDGET_BYTES +
   MULTI_PROVIDER_QUOTA_RAIL_GZIP_BUDGET_BYTES +
-  CORE_VALUE_OBJECTS_GZIP_BUDGET_BYTES;
+  CORE_VALUE_OBJECTS_GZIP_BUDGET_BYTES +
+  PERIOD_RANGE_BRUSH_GZIP_BUDGET_BYTES;
 const LEADING_SLASH_PATTERN = /^\/+/;
 const REPORT_COLOR_TOKEN_PATTERN = /token\(colors\.([A-Za-z0-9_.-]+)\)/g;
 const REPORT_SOURCE_FILE_PATTERN = /\.(?:svelte|ts)$/;
