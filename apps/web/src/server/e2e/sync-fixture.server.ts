@@ -15,6 +15,9 @@ import type { UsageMachineFleetItem } from '@ai-usage/usage-store/reader';
 import type { UsageReadModel } from '../usage-read-model.server';
 
 const CURRENT_MACHINE = { id: 'e2e-current-machine', label: 'E2E current machine' } as const;
+// Mirrors the merge service's preview warning truncation so the fixture stays inside the contract.
+const MAX_E2E_PREVIEW_WARNING_ITEMS = 20;
+const MAX_E2E_PREVIEW_WARNING_CHARACTERS = 512;
 const stagedDocuments = new Map<string, Uint8Array>();
 const previews = new Map<string, { readonly digest: string; readonly machineId: string }>();
 const peerFleet = new Map<string, UsageMachineFleetItem>();
@@ -84,11 +87,19 @@ export const previewSyncE2EHandoff = (input: UsageEngineFileInput): UsageEngineM
   previews.set(confirmationToken, { digest: documentDigest, machineId: bundle.machine.id });
   return {
     ...proof,
+    bundle: {
+      generatedAt: bundle.generatedAt,
+      machineId: bundle.machine.id,
+      machineLabel: bundle.machine.label,
+    },
     bytes: bytes.byteLength,
     kind: 'merge-preview',
     result: { ...mergeResultFor(bundle.rows.length), warnings: bundle.warnings.length },
     rows: bundle.rows.length,
     warningCount: bundle.warnings.length,
+    warningItems: bundle.warnings
+      .slice(0, MAX_E2E_PREVIEW_WARNING_ITEMS)
+      .map((warning) => warning.message.slice(0, MAX_E2E_PREVIEW_WARNING_CHARACTERS)),
   };
 };
 

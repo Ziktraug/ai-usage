@@ -34,6 +34,7 @@ const previewCompletion = (): UsageEngineCommandCompletion =>
     commandId: 'preview-command',
     completedAt: '2026-07-30T12:00:00.000Z',
     output: {
+      bundle: { generatedAt: '2026-07-30T12:00:00.000Z', machineId: 'machine-b', machineLabel: 'Peer MacBook' },
       bytes: 11,
       confirmationToken: CONFIRMATION_TOKEN,
       documentDigest: DIGEST,
@@ -49,6 +50,7 @@ const previewCompletion = (): UsageEngineCommandCompletion =>
       },
       rows: 0,
       warningCount: 0,
+      warningItems: [],
     },
     state: 'succeeded',
   });

@@ -31,6 +31,12 @@ const MULTI_PROVIDER_QUOTA_RAIL_GZIP_BUDGET_BYTES = 3520;
  * Measured at 644 bytes, rounded on the same rule.
  */
 const CORE_VALUE_OBJECTS_GZIP_BUDGET_BYTES = 704;
+/**
+ * The merge preview now carries bundle identity and bounded warning items, so the contract parser
+ * that the shell already ships grew a nested validator and the sync panel grew a disclosure list.
+ * Measured at 188 bytes against the commit that introduced it, rounded on the same rule.
+ */
+const MERGE_PREVIEW_BUNDLE_IDENTITY_GZIP_BUDGET_BYTES = 192;
 const INITIAL_GZIP_CLOSURE_MAXIMUM_BYTES =
   Math.ceil(INITIAL_GZIP_CLOSURE_BASELINE_BYTES * 1.1) +
   BREAKDOWN_SEARCH_GZIP_BUDGET_BYTES +
@@ -45,7 +51,8 @@ const INITIAL_GZIP_CLOSURE_MAXIMUM_BYTES =
   POST_REVIEW_CORRECTIONS_GZIP_BUDGET_BYTES +
   REPORT_TESTABILITY_SEAMS_GZIP_BUDGET_BYTES +
   MULTI_PROVIDER_QUOTA_RAIL_GZIP_BUDGET_BYTES +
-  CORE_VALUE_OBJECTS_GZIP_BUDGET_BYTES;
+  CORE_VALUE_OBJECTS_GZIP_BUDGET_BYTES +
+  MERGE_PREVIEW_BUNDLE_IDENTITY_GZIP_BUDGET_BYTES;
 const LEADING_SLASH_PATTERN = /^\/+/;
 const REPORT_COLOR_TOKEN_PATTERN = /token\(colors\.([A-Za-z0-9_.-]+)\)/g;
 const REPORT_SOURCE_FILE_PATTERN = /\.(?:svelte|ts)$/;

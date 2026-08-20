@@ -778,6 +778,11 @@ test('keeps sync limited to explicit file transfers', async ({ page }) => {
     await route.fulfill({
       body: JSON.stringify({
         data: {
+          bundle: {
+            generatedAt: '2026-07-30T12:00:00.000Z',
+            machineId: 'peer-machine',
+            machineLabel: 'Peer MacBook',
+          },
           bytes: 2,
           confirmationToken: `v1.${'b'.repeat(64)}`,
           documentDigest: 'a'.repeat(64),
@@ -789,10 +794,11 @@ test('keeps sync limited to explicit file transfers', async ({ page }) => {
             superseded: 0,
             unchanged: 0,
             updated: 0,
-            warnings: 0,
+            warnings: 3,
           },
           rows: 1,
-          warningCount: 0,
+          warningCount: 3,
+          warningItems: ['A row was skipped.', 'A second row was skipped.'],
         },
         ok: true,
       }),
@@ -833,4 +839,15 @@ test('keeps sync limited to explicit file transfers', async ({ page }) => {
   expect(progressBox?.y).toBeGreaterThan((dropTargetBox?.y ?? 0) + (dropTargetBox?.height ?? 0));
   releaseUpload();
   await expect(page.getByText('Preview ready. Review the changes before confirming.')).toBeVisible();
+
+  await expect(page.getByText('Review merge import')).toBeVisible();
+  await expect(page.getByText('From Peer MacBook · generated Jul 30, 2026, 12:00')).toBeVisible();
+  const warningSummary = page.locator('summary', { hasText: '3 warnings' });
+  await expect(warningSummary).toBeVisible();
+  await expect(page.getByText('A row was skipped.', { exact: true })).toBeHidden();
+  await warningSummary.click();
+  await expect(page.getByText('A row was skipped.', { exact: true })).toBeVisible();
+  await expect(page.getByText('A second row was skipped.', { exact: true })).toBeVisible();
+  await expect(page.getByText('and 1 more', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Confirm import' })).toBeVisible();
 });

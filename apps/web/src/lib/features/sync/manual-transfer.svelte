@@ -48,6 +48,29 @@
     gap: '8px',
     p: '12px',
   });
+  const warningList = css({
+    color: 'muted',
+    display: 'grid',
+    gap: '4px',
+    listStyle: 'none',
+    m: 0,
+    mt: '6px',
+    overflowWrap: 'anywhere',
+    p: 0,
+  });
+
+  // The bundle's own generation instant, not an age: "superseded: 40" is only readable once you can
+  // see whether the file predates the rows it would supersede.
+  const bundleGeneratedFormatter = new Intl.DateTimeFormat('en', {
+    year: 'numeric',
+    month: 'short',
+    day: '2-digit',
+    hour: '2-digit',
+    hourCycle: 'h23',
+    minute: '2-digit',
+  });
+
+  const formatBundleGeneratedAt = (value: string): string => bundleGeneratedFormatter.format(new Date(value));
 
   const begin = (operation: PendingOperation): AbortSignal | undefined => {
     if (pending) {
@@ -228,14 +251,32 @@
         {preview.file.name}
         · {preview.data.rows.toLocaleString()} rows · {formatTransferBytes(preview.data.bytes)}
       </div>
+      <div class={panelSub}>
+        From {preview.data.bundle.machineLabel} · generated {formatBundleGeneratedAt(preview.data.bundle.generatedAt)}
+      </div>
       <div>
         {preview.data.result.inserted}
         inserted, {preview.data.result.updated} updated,
         {preview.data.result.unchanged}
         unchanged, {preview.data.result.superseded} superseded,
         {preview.data.result.deleted}
-        deleted, {preview.data.warningCount} warnings
+        deleted
       </div>
+      {#if preview.data.warningCount === 0}
+        <div>0 warnings</div>
+      {:else}
+        <details>
+          <summary>{preview.data.warningCount.toLocaleString()} warnings</summary>
+          <ul class={warningList}>
+            {#each preview.data.warningItems as warning}
+              <li>{warning}</li>
+            {/each}
+            {#if preview.data.warningCount > preview.data.warningItems.length}
+              <li>and {(preview.data.warningCount - preview.data.warningItems.length).toLocaleString()} more</li>
+            {/if}
+          </ul>
+        </details>
+      {/if}
       <div class={panelSub}>Peer provenance is preserved; local history is not replaced wholesale.</div>
       <div class={actionRow}>
         <button

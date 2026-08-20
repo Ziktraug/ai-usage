@@ -7,6 +7,7 @@ import {
 } from './manual-transfer-client';
 
 const preview = parseUsageEngineMergePreviewOutput({
+  bundle: { generatedAt: '2026-07-30T12:00:00.000Z', machineId: 'machine-b', machineLabel: 'Peer MacBook' },
   bytes: 2,
   confirmationToken: `v1.${'b'.repeat(64)}`,
   documentDigest: 'a'.repeat(64),
@@ -18,10 +19,11 @@ const preview = parseUsageEngineMergePreviewOutput({
     superseded: 0,
     unchanged: 0,
     updated: 0,
-    warnings: 0,
+    warnings: 1,
   },
   rows: 1,
-  warningCount: 0,
+  warningCount: 1,
+  warningItems: ['One row was skipped.'],
 });
 
 describe('manual transfer browser client', () => {
@@ -44,10 +46,16 @@ describe('manual transfer browser client', () => {
     });
     const file = new File(['{}'], 'peer.json', { type: 'application/json' });
 
-    expect(await client.preview(file, abort.signal, (value) => progress.push(value))).toEqual({
-      data: preview,
-      ok: true,
+    const previewed = await client.preview(file, abort.signal, (value) => progress.push(value));
+    expect(previewed).toEqual({ data: preview, ok: true });
+    // Bundle identity and the warning excerpts decide whether the counters are expected or alarming,
+    // so the browser boundary has to carry them, not just the proof and the totals.
+    expect(previewed.ok && previewed.data.bundle).toEqual({
+      generatedAt: '2026-07-30T12:00:00.000Z',
+      machineId: 'machine-b',
+      machineLabel: 'Peer MacBook',
     });
+    expect(previewed.ok && previewed.data.warningItems).toEqual(['One row was skipped.']);
     expect(await client.confirm(file, preview, abort.signal, (value) => progress.push(value))).toEqual({
       data: { kind: 'none' },
       ok: true,

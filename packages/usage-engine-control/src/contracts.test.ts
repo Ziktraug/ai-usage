@@ -7,6 +7,7 @@ import {
   parseUsageEngineErrorResponse,
   parseUsageEngineEvent,
   parseUsageEngineForegroundOutcome,
+  parseUsageEngineMergePreviewOutput,
   parseUsageEngineProtocolVersion,
   parseUsageEngineReplayCursor,
   parseUsageEngineStatus,
@@ -233,6 +234,11 @@ describe('usage engine control contracts', () => {
         commandId: 'command-1',
         completedAt: fixtureGeneratedAt,
         output: {
+          bundle: {
+            generatedAt: fixtureGeneratedAt,
+            machineId: 'machine-b',
+            machineLabel: 'Peer MacBook',
+          },
           bytes: 1024,
           confirmationToken: `v1.${'b'.repeat(64)}`,
           documentDigest: 'a'.repeat(64),
@@ -244,10 +250,11 @@ describe('usage engine control contracts', () => {
             superseded: 0,
             unchanged: 1,
             updated: 0,
-            warnings: 0,
+            warnings: 1,
           },
           rows: 3,
-          warningCount: 0,
+          warningCount: 1,
+          warningItems: ['One row was skipped.'],
         },
         state: 'succeeded',
       },
@@ -345,6 +352,61 @@ describe('usage engine control contracts', () => {
     };
     expect(parseUsageEngineErrorResponse(stalePreview) as unknown).toEqual(stalePreview);
     expect(() => parseUsageEngineErrorResponse({ ...error, detail: '/private/token' })).toThrow('unknown');
+  });
+
+  test('carries bounded merge bundle identity and warning items into the preview output', () => {
+    const preview = {
+      bundle: { generatedAt: fixtureGeneratedAt, machineId: 'machine-b', machineLabel: 'Peer MacBook' },
+      bytes: 1024,
+      confirmationToken: `v1.${'b'.repeat(64)}`,
+      documentDigest: 'a'.repeat(64),
+      kind: 'merge-preview',
+      result: { deleted: 0, fleetChanged: false, inserted: 2, superseded: 0, unchanged: 1, updated: 0, warnings: 2 },
+      rows: 3,
+      warningCount: 2,
+      warningItems: ['A row was skipped.', 'x'.repeat(512)],
+    };
+    expect(parseUsageEngineMergePreviewOutput(preview) as unknown).toEqual(preview);
+
+    const { bundle: _bundle, ...withoutBundle } = preview;
+    expect(() => parseUsageEngineMergePreviewOutput(withoutBundle)).toThrow('missing fields');
+    expect(() =>
+      parseUsageEngineMergePreviewOutput({ ...preview, bundle: { ...preview.bundle, machineLabel: '' } }),
+    ).toThrow('machine label');
+    expect(() =>
+      parseUsageEngineMergePreviewOutput({
+        ...preview,
+        bundle: { ...preview.bundle, machineLabel: 'L'.repeat(121) },
+      }),
+    ).toThrow('machine label');
+    expect(() =>
+      parseUsageEngineMergePreviewOutput({ ...preview, bundle: { ...preview.bundle, generatedAt: 'yesterday' } }),
+    ).toThrow('timestamp');
+    expect(() =>
+      parseUsageEngineMergePreviewOutput({
+        ...preview,
+        bundle: { ...preview.bundle, hostname: 'peer.local' },
+      }),
+    ).toThrow('missing fields');
+    expect(() =>
+      parseUsageEngineMergePreviewOutput({
+        ...preview,
+        warningItems: Array.from({ length: 21 }, () => 'A row was skipped.'),
+      }),
+    ).toThrow('warning items');
+    expect(() => parseUsageEngineMergePreviewOutput({ ...preview, warningItems: ['x'.repeat(513)] })).toThrow(
+      'warning item',
+    );
+    expect(() => parseUsageEngineMergePreviewOutput({ ...preview, warningItems: [{ message: 'skipped' }] })).toThrow(
+      'warning item',
+    );
+    expect(() =>
+      parseUsageEngineMergePreviewOutput({
+        ...preview,
+        result: { ...preview.result, warnings: 0 },
+        warningCount: 0,
+      }),
+    ).toThrow('exceed its warning count');
   });
 
   test('parses bounded foreground completion and rejection outcomes without report data', () => {
