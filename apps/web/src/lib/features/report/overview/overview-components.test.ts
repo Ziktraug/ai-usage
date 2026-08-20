@@ -217,7 +217,17 @@ describe('P2 corrected interactive SSR contracts', () => {
     const todayKey = toDateInputValue(new Date(todayDay.date));
     const result = {
       ...baseResult,
-      view: { ...baseResult.view, heatmap: { ...heatmap, todayKey } },
+      view: {
+        ...baseResult.view,
+        heatmap: {
+          ...heatmap,
+          todayKey,
+          weeks: heatmap.weeks.map((week) => ({
+            ...week,
+            days: week.days.map((day) => (day?.date === todayDay.date ? { ...day, sessions: 1 } : day)),
+          })),
+        },
+      },
     };
     const { body } = render(fixture, { props: { result } });
     const dayCount = body.match(/data-heatmap-day/g)?.length ?? 0;
@@ -229,6 +239,8 @@ describe('P2 corrected interactive SSR contracts', () => {
     expect(body.match(/aria-current="date"/g)).toHaveLength(1);
     expect(todayButton).toContain('tabindex="0"');
     expect(todayButton).toContain('aria-current="date"');
+    expect(todayButton).toContain('1 session');
+    expect(todayButton).not.toContain('1 sessions');
     expect(body).toContain('data-price-state=');
     expect(body).toContain('data-heatmap-readout');
   });

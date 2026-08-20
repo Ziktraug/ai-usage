@@ -66,7 +66,8 @@
   const describeHeatDay = (item: FocusedHeatDay): string => {
     const value = aggregateApiValuePresentation(item.priceMeasurement).label;
     const provenance = aggregateApiPriceProvenance(item.priceMeasurement);
-    return `${fmtDateOnly(item.date)} — ${value} · ${fmtNum(item.sessions)} sessions${provenance ? ` · ${provenance.label}` : ''}`;
+    const sessions = `${fmtNum(item.sessions)} ${item.sessions === 1 ? 'session' : 'sessions'}`;
+    return `${fmtDateOnly(item.date)} — ${value} · ${sessions}${provenance ? ` · ${provenance.label}` : ''}`;
   };
   const describeHeatDayWithProvenance = (item: FocusedHeatDay): string => {
     const description = describeHeatDay(item);
