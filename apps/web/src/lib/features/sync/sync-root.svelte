@@ -26,6 +26,13 @@
     fleet ? buildSyncFleetComparisonRows(fleet.currentMachine, fleet.machines, data.renderedAt) : [],
   );
   const mutation = $derived(manualTransferMutationAvailability(connection));
+  // A merge preview is bound to the store generation. Any sibling mutation can stale that proof, so
+  // remount the transfer owner after successful mutations rather than leaving an armed Confirm button.
+  let manualTransferEpoch = $state(0);
+  const invalidateAfterMutation = async (): Promise<void> => {
+    manualTransferEpoch += 1;
+    await invalidateSyncFleet(queryClient, data.compatibleGeneration);
+  };
   // Renaming issues an engine command, so it rides the same availability signal as manual imports.
   const onRenameLocalMachine = async (label: string): Promise<string | null> => {
     if (!(renameMachine && mutation.available)) {
@@ -33,7 +40,7 @@
     }
     try {
       const renamed = await renameMachine(label);
-      await invalidateSyncFleet(queryClient, data.compatibleGeneration);
+      await invalidateAfterMutation();
       return renamed;
     } catch {
       return null;
@@ -83,10 +90,9 @@
           <div class={unavailableText}>Sync fleet data could not be read safely.</div>
         </section>
       {/if}
-      <ManualTransfer
-        mutationAvailable={mutation.available}
-        onCompleted={async () => await invalidateSyncFleet(queryClient, data.compatibleGeneration)}
-      />
+      {#key manualTransferEpoch}
+        <ManualTransfer mutationAvailable={mutation.available} onCompleted={invalidateAfterMutation} />
+      {/key}
     </div>
   </main>
 </div>
