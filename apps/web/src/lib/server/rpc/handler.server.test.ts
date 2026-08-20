@@ -202,6 +202,26 @@ describe('Web RPC HTTP convergence', () => {
     });
   });
 
+  test('closes dependency failures without forwarding private diagnostics', async () => {
+    const privateDiagnostic = 'private path: /home/operator/history.db token=secret\nforged-line';
+    const handler = createWebRpcHttpHandler({
+      createDependencies: () => Promise.reject(new Error(privateDiagnostic)),
+    });
+    const response = await trustedHandlerFetch(handler)(
+      new Request('http://127.0.0.1:3000/rpc/report/revisionManifest'),
+    );
+    const body = await response.text();
+
+    expect(response.status).toBe(500);
+    expect(JSON.parse(body)).toEqual({
+      error: { message: 'The RPC operation is temporarily unavailable.', tag: 'Unavailable' },
+      ok: false,
+    });
+    expect(body).not.toContain('/home/operator');
+    expect(body).not.toContain('token=secret');
+    expect(body).not.toContain('forged-line');
+  });
+
   test('isolates dependencies for concurrent requests', async () => {
     const acquiredOwners: string[] = [];
     const handler = createWebRpcHttpHandler({
