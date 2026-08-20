@@ -213,7 +213,9 @@ export const renderQuotaHistory = (
   options: { readonly partial?: boolean } = {},
 ): string => {
   if (points.length === 0) {
-    return `No stored provider quota history in the last ${range}.`;
+    return options.partial
+      ? `Stored provider quota history in the last ${range} is partial; no valid observations could be rendered.`
+      : `No stored provider quota history in the last ${range}.`;
   }
   const groups = new Map<string, ProviderQuotaHistoryPoint[]>();
   for (const point of points) {
