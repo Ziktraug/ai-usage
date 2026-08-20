@@ -176,10 +176,19 @@ export interface FocusedTimelineBucket {
   unclassified: FocusedTimelineGap | null;
 }
 
+/** One named member of an aggregated `Other` timeline series, for disclosure only. */
+export interface FocusedTimelineMemberSummary {
+  label: string;
+  sessions: number;
+  total: number;
+}
+
 export interface FocusedTimelineSeries {
   key: string;
   label: string;
   memberKeys?: string[];
+  /** Present only on an aggregated series, and bounded: the highest-ranked members. */
+  memberSummaries?: FocusedTimelineMemberSummary[];
   priceMeasurement: ApiPriceMeasurement;
   sessions: number;
   tokens: number;
@@ -407,6 +416,13 @@ const MAX_EXECUTIVE_GROUPS = 5;
 const OTHER_EXECUTIVE_GROUP_KEY = '__ai_usage_other__';
 const MAX_TIMELINE_SERIES = 12;
 const OTHER_TIMELINE_SERIES_KEY = '__ai_usage_other__';
+/**
+ * How many of the aggregated tail's members the `Other` series names. The keys
+ * already travel in `memberKeys`; these add a display label and totals so a
+ * reader can see what the series contains. They are bounded because a
+ * pathological store can push hundreds of categories into that tail.
+ */
+const OTHER_MEMBER_SUMMARY_LIMIT = 10;
 const timelineGranularities = new Set<FocusedTimelineGranularity>(['day', 'month', 'week']);
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -817,6 +833,9 @@ export const buildFocusedTimelineFromAggregates = (
       aggregateKey = `_${aggregateKey}`;
     }
     const memberKeys = aggregated.map(([key]) => key);
+    const memberSummaries = aggregated
+      .slice(0, OTHER_MEMBER_SUMMARY_LIMIT)
+      .map(([key, value]) => ({ label: labels.get(key) ?? key, sessions: value.sessions, total: value.cost }));
     for (const bucket of buckets) {
       const aggregate: FocusedTimelineBucketEntry = {
         cost: 0,
@@ -868,6 +887,7 @@ export const buildFocusedTimelineFromAggregates = (
         key: aggregateKey,
         label: 'Other',
         memberKeys,
+        memberSummaries,
         priceMeasurement: aggregate.priceMeasurement,
         sessions: aggregate.sessions,
         tokens: aggregate.tokens,
@@ -1840,6 +1860,19 @@ const assertFocusedSummary = (value: unknown, label: string): void => {
   }
 };
 
+const assertTimelineMemberSummaries = (value: unknown, label: string): void => {
+  if (!Array.isArray(value) || value.length > OTHER_MEMBER_SUMMARY_LIMIT) {
+    throw new Error(`${label} exceeds its presentation bound`);
+  }
+  for (const [index, entry] of value.entries()) {
+    const summary = requireRecord(entry, `${label}[${index}]`);
+    assertAllowedKeys(summary, ['label', 'sessions', 'total'], [], `${label}[${index}]`);
+    requireString(summary.label, `${label}[${index}].label`);
+    requireNonNegativeSafeInteger(summary.sessions, `${label}[${index}].sessions`);
+    requireFiniteNumber(summary.total, `${label}[${index}].total`);
+  }
+};
+
 const assertTimelineSeries = (value: unknown): Set<string> => {
   if (!Array.isArray(value) || value.length > MAX_TIMELINE_SERIES) {
     throw new Error('overview timeline.series exceeds its presentation bound');
@@ -1850,7 +1883,7 @@ const assertTimelineSeries = (value: unknown): Set<string> => {
     assertAllowedKeys(
       series,
       ['key', 'label', 'priceMeasurement', 'sessions', 'tokens', 'total'],
-      ['memberKeys'],
+      ['memberKeys', 'memberSummaries'],
       'overview timeline series',
     );
     const key = requireString(series.key, 'overview timeline series.key');
@@ -1861,6 +1894,9 @@ const assertTimelineSeries = (value: unknown): Set<string> => {
     assertApiPriceMeasurement(series.priceMeasurement, 'overview timeline series.priceMeasurement', seriesTotal);
     if (series.memberKeys !== undefined) {
       assertStringArray(series.memberKeys, 'overview timeline series.memberKeys');
+    }
+    if (series.memberSummaries !== undefined) {
+      assertTimelineMemberSummaries(series.memberSummaries, 'overview timeline series.memberSummaries');
     }
     if (keys.has(key)) {
       throw new Error('overview timeline series keys must be unique');

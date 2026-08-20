@@ -165,6 +165,35 @@ export const presentTimelineSeries = (
   return timeline.series;
 };
 
+export interface TimelineOtherDisclosure {
+  readonly items: readonly string[];
+  readonly label: string;
+}
+
+/**
+ * What an aggregated series contains, for reading only. The tail collapses into
+ * a non-filterable `Other`, and the members it swallowed never reached the DOM;
+ * this names a bounded, rank-ordered sample of them plus how many stayed
+ * unnamed. It deliberately yields no filter target: `Other` is not an exact
+ * dimension filter, and disclosing its members must not make it one.
+ */
+export const timelineOtherDisclosure = (
+  series: Pick<FocusedTimelineSeries, 'memberKeys' | 'memberSummaries'>,
+): TimelineOtherDisclosure | null => {
+  const memberKeys = series.memberKeys ?? [];
+  if (memberKeys.length === 0) {
+    return null;
+  }
+  const items = (series.memberSummaries ?? []).map(
+    ({ label, sessions }) => `${label} · ${fmtNum(sessions)} ${sessions === 1 ? 'session' : 'sessions'}`,
+  );
+  const unnamed = memberKeys.length - items.length;
+  return {
+    items: unnamed > 0 ? [...items, `and ${fmtNum(unnamed)} more`] : items,
+    label: `${fmtNum(memberKeys.length)} grouped`,
+  };
+};
+
 export const timelineSeriesIsFilterable = (
   dimension: FocusedTimelineDimension,
   series: Pick<FocusedTimelineSeries, 'key' | 'memberKeys'>,
