@@ -1,6 +1,10 @@
 import { afterAll, describe, expect, test } from 'bun:test';
 import { fileURLToPath } from 'node:url';
-import { parseSessionQueryRequest, sessionQueryFingerprint } from '@ai-usage/report-core/session-query';
+import {
+  parseSessionQueryRequest,
+  type SessionPresentationRow,
+  sessionQueryFingerprint,
+} from '@ai-usage/report-core/session-query';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
 import type { Component } from 'svelte';
 import { createServer } from 'vite';
@@ -58,9 +62,19 @@ const request = parseSessionQueryRequest({
 });
 const { cursor: _cursor, revision: _revision, ...destinationScope } = request;
 
-// Two loaded rows out of seven that match the filters: the gap the scope label exists to state.
+// The two units the scope label exists to keep apart: four campaign rows match the filters and two
+// of them are loaded, and those four campaigns stand for seven filtered sessions. A fixture that
+// reused one number for both would let the label swap the units without failing.
 const LOADED_ROWS = 2;
 const FILTERED_SESSIONS = 7;
+const FILTERED_CAMPAIGN_ROWS = 4;
+// Deliberately different per row, so "representing N sessions" cannot be satisfied by the row count.
+const LOADED_VISIBLE_SESSIONS = [2, 3] as const;
+const loadedCampaignRows = (): SessionPresentationRow[] =>
+  Array.from({ length: LOADED_ROWS }, (_unused, index) => ({
+    ...syntheticCampaignRow(index + 1),
+    campaignVisibleCount: LOADED_VISIBLE_SESSIONS[index] ?? 1,
+  }));
 const queryData = (): SessionWindowQueryData => ({
   campaignChildren: [],
   campaignSessions: [],
@@ -69,11 +83,12 @@ const queryData = (): SessionWindowQueryData => ({
     pageParams: [null],
     pages: [
       {
-        itemCount: FILTERED_SESSIONS,
-        items: Array.from({ length: LOADED_ROWS }, (_, index) => {
-          const row = syntheticCampaignRow(index + 1);
-          return { campaignKey: row.campaignKey ?? `campaign-${index}`, kind: 'campaign' as const, row };
-        }),
+        itemCount: FILTERED_CAMPAIGN_ROWS,
+        items: loadedCampaignRows().map((row, index) => ({
+          campaignKey: row.campaignKey ?? `campaign-${index}`,
+          kind: 'campaign' as const,
+          row,
+        })),
         nextCursor: 'sq1.0000000000000000.1',
         requestFingerprint: sessionQueryFingerprint(request),
         revision: request.revision,
@@ -120,13 +135,19 @@ describe('sessions destination export actions SSR', () => {
     // Campaign rows are not flattened into the destination row list, so the CSV
     // carries the aggregate and never a second copy of a child session — stated
     // as visible text, not a tooltip only a mouse can reach.
-    expect(normalized).toContain(sessionsExportScopeLabel(LOADED_ROWS, FILTERED_SESSIONS));
-    expect(normalized).toContain('campaigns as one aggregated row');
+    expect(normalized).toContain(
+      sessionsExportScopeLabel(loadedCampaignRows(), FILTERED_CAMPAIGN_ROWS, FILTERED_SESSIONS),
+    );
+    // The units have to stay distinct in the rendered text: 2 of 4 campaign rows loaded, standing
+    // for 5 of 7 filtered sessions. Comparing a campaign-row count against a session total is the
+    // exact confusion this label replaced.
+    expect(normalized).toContain('2 of 4 campaign rows currently loaded');
+    expect(normalized).toContain('representing 5 of 7 filtered sessions');
   });
 
   test('falls back to the loaded count before a page has reported a filtered total', () => {
     const normalized = renderDestination(undefined).replaceAll(/\s+/g, ' ');
 
-    expect(normalized).toContain(sessionsExportScopeLabel(0, 0));
+    expect(normalized).toContain(sessionsExportScopeLabel([], 0, 0));
   });
 });

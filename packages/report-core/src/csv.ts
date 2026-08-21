@@ -103,6 +103,9 @@ export interface ProjectBreakdownExportGroup {
  * provider and project are intentionally absent: a filtered campaign row can aggregate
  * child metrics while its presentation label comes from the root, so exporting those
  * root fields would manufacture a usage row that never existed.
+ *
+ * Nullable metrics stay nullable: a harness that reports no RTK counters or no quota cost is not
+ * the same claim as one that reported zero, and the serializer writes an empty cell for absence.
  */
 export interface SessionCampaignExportRow {
   ambiguous: boolean;
@@ -110,20 +113,20 @@ export interface SessionCampaignExportRow {
   campaignKey: string;
   campaignLabel: string;
   campaignSessions: number;
-  costActual: number;
-  costApprox: number;
+  costActual: number | null;
+  costApprox: number | null;
   costKnown: boolean;
-  costQuota: number;
+  costQuota: number | null;
   durationMs: number | null;
   freshTokens: number;
   lineDelta: number | null;
   linesAdded: number | null;
   linesDeleted: number | null;
   partial: boolean;
-  rtkCommandCount: number;
-  rtkInputTokens: number;
-  rtkOutputTokens: number;
-  rtkSavedTokens: number;
+  rtkCommandCount: number | null;
+  rtkInputTokens: number | null;
+  rtkOutputTokens: number | null;
+  rtkSavedTokens: number | null;
   tokCr: number;
   tokCw: number;
   tokenTotal: number;
@@ -323,7 +326,7 @@ export const sessionCampaignCsv = (rows: readonly SessionCampaignExportRow[]): s
       row.tokenTotal,
       row.costActual,
       row.costQuota,
-      row.costApprox.toFixed(4),
+      row.costApprox === null ? null : row.costApprox.toFixed(4),
       row.costKnown,
       row.calls,
       row.durationMs,
