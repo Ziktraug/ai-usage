@@ -38,6 +38,23 @@ const CORE_VALUE_OBJECTS_GZIP_BUDGET_BYTES = 704;
  * period mode. Measured at 965 bytes, rounded on the same rule.
  */
 const PERIOD_RANGE_BRUSH_GZIP_BUDGET_BYTES = 1024;
+/**
+ * The Sessions destination reuses the shared report sharing actions the breakdown already
+ * mounts. Two lazily loaded destinations reaching the same leaf modules makes Rollup carve
+ * them into their own chunks, and the identical bytes gzip worse split than merged — the
+ * initial closure grows without shipping new code — the CSV projection itself stays behind the
+ * dynamic import and never enters the closure. Measured at 921 bytes against the commit that
+ * introduced it, rounded on the same rule.
+ */
+const SESSIONS_ROW_EXPORT_GZIP_BUDGET_BYTES = 960;
+/**
+ * The timeline's aggregated `Other` series now names a bounded sample of what it swallowed.
+ * That is initial-closure weight on three seams the Overview always ships: the member summaries
+ * and their transport validator in focused-report-query, the presenter in timeline-model, and the
+ * legend disclosure itself. It reuses the existing legend classes and adds no new CSS. Measured
+ * at 476 bytes against the commit that introduced it, rounded on the same rule.
+ */
+const TIMELINE_OTHER_DISCLOSURE_GZIP_BUDGET_BYTES = 512;
 const INITIAL_GZIP_CLOSURE_MAXIMUM_BYTES =
   Math.ceil(INITIAL_GZIP_CLOSURE_BASELINE_BYTES * 1.1) +
   BREAKDOWN_SEARCH_GZIP_BUDGET_BYTES +
@@ -53,7 +70,9 @@ const INITIAL_GZIP_CLOSURE_MAXIMUM_BYTES =
   REPORT_TESTABILITY_SEAMS_GZIP_BUDGET_BYTES +
   MULTI_PROVIDER_QUOTA_RAIL_GZIP_BUDGET_BYTES +
   CORE_VALUE_OBJECTS_GZIP_BUDGET_BYTES +
-  PERIOD_RANGE_BRUSH_GZIP_BUDGET_BYTES;
+  PERIOD_RANGE_BRUSH_GZIP_BUDGET_BYTES +
+  SESSIONS_ROW_EXPORT_GZIP_BUDGET_BYTES +
+  TIMELINE_OTHER_DISCLOSURE_GZIP_BUDGET_BYTES;
 const LEADING_SLASH_PATTERN = /^\/+/;
 const REPORT_COLOR_TOKEN_PATTERN = /token\(colors\.([A-Za-z0-9_.-]+)\)/g;
 const REPORT_SOURCE_FILE_PATTERN = /\.(?:svelte|ts)$/;

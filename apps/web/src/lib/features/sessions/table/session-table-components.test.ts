@@ -6,6 +6,8 @@ import { createServer } from 'vite';
 
 const CAMPAIGN_ANNOTATION_PATTERN = /data-session-campaign-annotation[^>]*>\s*Campaign · 1 session<\/span>/;
 const EXTRA_CAMPAIGN_SEPARATOR_PATTERN = /data-session-campaign-annotation[^>]*>\s*· Campaign/;
+const INHERITED_TITLE_PATTERN =
+  /data-session-inherited-title[^>]*title="Title inherited from the campaign root session"[^>]*>Synthetic session 1<\/span><span class="[^"]*"> · <\/span>/;
 
 interface SvelteServerModule {
   render(component: Component, options?: { props?: Record<string, unknown> }): { body: string };
@@ -99,6 +101,29 @@ describe('session table Svelte rendering', () => {
       'Campaign time uses the root session only. Sum of recorded Codex task-open spans. This includes time waiting for tools and subagents; it is not model runtime.',
     );
     expect(body.match(/data-session-row-id/g)?.length ?? 0).toBeLessThan(24);
+  });
+
+  test('inherits the campaign root title on generic children in both surfaces, and nowhere else', () => {
+    const desktop = render(fixture, { props: { childTitleSource: 'agent-role', expanded: true } }).body;
+    expect(desktop).toMatch(INHERITED_TITLE_PATTERN);
+    // Only the one generic child inherits; the 5,000 top-level rows never do.
+    expect(desktop.match(/data-session-inherited-title/g)?.length ?? 0).toBe(1);
+    expect(desktop).toContain('data-depth="1"');
+
+    const mobile = render(fixture, { props: { childTitleSource: 'agent-role', expanded: true, mode: 'mobile' } }).body;
+    expect(mobile).toContain('data-session-surface="mobile"');
+    expect(mobile).toMatch(INHERITED_TITLE_PATTERN);
+    expect(mobile.match(/data-session-inherited-title/g)?.length ?? 0).toBe(1);
+    // The card button's explicit accessible name overrides its text, so the
+    // inheritance has to be spoken there too.
+    expect(mobile).toContain(
+      'aria-label="Inspect session: Synthetic session 2, title inherited from the campaign root session Synthetic session 1"',
+    );
+
+    const declared = render(fixture, { props: { childTitleSource: 'ai', expanded: true } }).body;
+    expect(declared).not.toContain('data-session-inherited-title');
+    const collapsed = render(fixture, { props: { childTitleSource: 'agent-role' } }).body;
+    expect(collapsed).not.toContain('data-session-inherited-title');
   });
 
   test('renders unavailable mobile hints and expanded aria set size from the full row model', () => {

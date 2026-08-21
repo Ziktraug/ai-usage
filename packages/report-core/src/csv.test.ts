@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { serializedRowsToCSV, usageRowCsvColumns } from './csv';
+import { reportCsvFilename, serializedRowsToCSV, usageRowCsvColumns } from './csv';
 import { serializeUsageRow } from './report-data';
 import type { UsageRow } from './types';
 
@@ -70,5 +70,10 @@ describe('usage row CSV projection', () => {
     expect(cellFor('session')).toStartWith('"\'=HYPERLINK');
     expect(cellFor('cost_actual')).toBe('-1');
     expect(cellFor('cost_approx_api')).toBe('-1.0000');
+  });
+
+  test('names a downloaded file by dimension and capture day, sessions included', () => {
+    expect(reportCsvFilename('sessions', '2026-08-20T18:45:00.000Z')).toBe('ai-usage-sessions-2026-08-20.csv');
+    expect(reportCsvFilename('projects', '2026-08-20T18:45:00.000Z')).toBe('ai-usage-projects-2026-08-20.csv');
   });
 });

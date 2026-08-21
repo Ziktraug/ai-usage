@@ -147,6 +147,7 @@
     type TimelineValuePresentation,
     timelineGapValue,
     timelineMetricLabel,
+    timelineOtherDisclosure,
     timelineReadoutFor,
     timelineSeriesIsFilterable,
     timelineSharePercent,
@@ -379,6 +380,7 @@
         {@const active = activeSeriesKeys.includes(series.key)}
         {@const filterable = timelineSeriesIsFilterable(timeline.dimension, series)}
         {@const marker = swatchFor(series.key)}
+        {@const disclosure = timelineOtherDisclosure(series)}
         <li>
           <button
             {...pressedAria(active)}
@@ -401,6 +403,18 @@
             {series.label}
             <span class={percentage}>{fmtPct(timelineSharePercent(total, summary.total))}</span>
           </button>
+          {#if disclosure}
+            <!-- Subordinate to the entry it explains and carrying no control:
+                 the aggregated series stays non-filterable, so this only reads. -->
+            <details data-timeline-other-members>
+              <summary class={legendButton}>{disclosure.label}</summary>
+              <ul class={legend}>
+                {#each disclosure.items as item, index (`${index}:${item}`)}
+                  <li class={legendButton}>{item}</li>
+                {/each}
+              </ul>
+            </details>
+          {/if}
         </li>
       {/each}
       {#if timeline.unclassified && summary.gap > 0}

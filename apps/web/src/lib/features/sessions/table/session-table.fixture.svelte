@@ -1,20 +1,26 @@
 <script lang="ts">
+  import type { TitleSource } from '@ai-usage/report-core/types';
   import type { SessionSurfaceMode } from '../../../../session-surface-mode';
   import { defaultColumnVisibility } from '../../../../session-table-schema';
   import { syntheticCampaignRow, syntheticSessionRow, syntheticSessionRows } from './session-table.fixtures';
   import SessionTable from './session-table.svelte';
 
   let {
+    childTitleSource,
     expanded = false,
     mode = 'desktop',
     unavailable = false,
   }: {
+    childTitleSource?: TitleSource;
     expanded?: boolean;
     mode?: Exclude<SessionSurfaceMode, 'pending'>;
     unavailable?: boolean;
   } = $props();
+  const child = $derived(
+    childTitleSource ? { ...syntheticSessionRow(2), titleSource: childTitleSource } : syntheticSessionRow(2),
+  );
   const campaign = $derived({
-    ...syntheticCampaignRow(1, [syntheticSessionRow(2)]),
+    ...syntheticCampaignRow(1, [child]),
     campaignClassifierCount: 1,
     campaignClassifierFreshTokens: 1200,
     costApprox: 1.2,

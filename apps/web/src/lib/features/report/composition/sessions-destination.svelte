@@ -1,10 +1,12 @@
 <script lang="ts">
+  import { muted, tableControls } from '@ai-usage/design-system/svelte';
   import type {
     SessionPageItem,
     SessionPresentationRow,
     SessionQueryRequest,
   } from '@ai-usage/report-core/session-query';
   import { sessionQueryFingerprint } from '@ai-usage/report-core/session-query';
+  import { createSessionsExport, sessionsExportScopeLabel } from '../../../../dashboard-breakdown-export';
   import type { DashboardSearch } from '../../../../dashboard-search';
   import {
     sessionAnalysisTargetForPageItem,
@@ -30,11 +32,13 @@
     type CampaignSessionControlsBinding,
     campaignSessionsNeedInitialLoad,
   } from '../actions/campaign-session-controls-binding';
+  import ReportSharingActions from '../actions/report-sharing-actions.svelte';
   import type { SessionQueryScopeSnapshot } from './report-search';
   import SessionIdentityPublisher from './session-identity-publisher.svelte';
   import SessionsDestinationState from './sessions-destination-state.svelte';
 
   let {
+    generatedAt,
     navigate,
     initialSessionWindowAnchor,
     onCampaignControlsChange,
@@ -52,6 +56,7 @@
     selectedCampaignKey,
     selectedRowId,
   }: {
+    generatedAt?: string;
     initialSessionWindowAnchor: boolean;
     navigate: SearchNavigationIntent<DashboardSearch>;
     onCampaignControlsChange: (binding: CampaignSessionControlsBinding | null) => void;
@@ -125,6 +130,18 @@
   sourceRows={queryState === undefined ? [] : projectSessionDestinationRows(queryState)}
 >
   {#snippet children(_rows)}
+    <div class={tableControls} data-sessions-export>
+      <!-- The export serializes only loaded top-level campaign aggregates. Keep
+           campaign-row pagination and underlying session coverage as separate units. -->
+      <span class={muted} data-sessions-export-scope>
+        {sessionsExportScopeLabel(
+          _rows,
+          queryState?.itemCount ?? _rows.length,
+          queryState?.sessionCount ?? _rows.length,
+        )}
+      </span>
+      <ReportSharingActions createExport={() => createSessionsExport(generatedAt ?? new Date().toISOString(), _rows)} />
+    </div>
     <SessionTable
       {...(queryState?.campaignChildren === undefined
         ? {}
