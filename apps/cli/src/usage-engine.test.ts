@@ -3,7 +3,11 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { collectionSourceDefinitions } from '@ai-usage/report-core/source-control';
-import { parseUsageEngineCommandCompletion, type UsageEngineStatus } from '@ai-usage/usage-engine-control';
+import {
+  parseUsageEngineCommandCompletion,
+  USAGE_ENGINE_PROTOCOL_VERSION,
+  type UsageEngineStatus,
+} from '@ai-usage/usage-engine-control';
 import { type UsageEngineControlClient, UsageEngineControlError } from '@ai-usage/usage-engine-control/client';
 import { usageEngineTargetIdFor } from '@ai-usage/usage-engine-control/node';
 import { USAGE_STORE_SCHEMA_VERSION } from '@ai-usage/usage-store/reader';
@@ -127,7 +131,7 @@ const foregroundStatus = {
   generatedAt: '2026-07-30T10:00:01.000Z',
   generation: 0,
   instanceId: '11111111-1111-4111-8111-111111111111',
-  protocolVersion: 1,
+  protocolVersion: USAGE_ENGINE_PROTOCOL_VERSION,
   readiness: 'ready',
   sourceControl: {
     generatedAt: '2026-07-30T10:00:01.000Z',
@@ -174,7 +178,7 @@ test('fails closed when a rendezvous targets another database or config root', a
       `${JSON.stringify({
         instanceId: '11111111-1111-4111-8111-111111111111',
         port: 41_052,
-        protocolVersion: 1,
+        protocolVersion: USAGE_ENGINE_PROTOCOL_VERSION,
         targetId: usageEngineTargetIdFor(fixture.paths),
         token: 'fixture-token-with-at-least-thirty-two-bytes',
       })}\n`,
@@ -278,7 +282,7 @@ process.stdout.write(JSON.stringify({
   },
   instanceId: ${JSON.stringify(foregroundStatus.instanceId)},
   kind: 'command-completed',
-  protocolVersion: 1,
+  protocolVersion: ${USAGE_ENGINE_PROTOCOL_VERSION},
   status: ${JSON.stringify(foregroundStatus)},
 }));
 `,
@@ -377,7 +381,7 @@ process.stdout.write(JSON.stringify({
   },
   instanceId: ${JSON.stringify(foregroundStatus.instanceId)},
   kind: 'command-completed',
-  protocolVersion: 1,
+  protocolVersion: ${USAGE_ENGINE_PROTOCOL_VERSION},
   status: ${JSON.stringify(foregroundStatus)},
 }));
 `;

@@ -1,13 +1,13 @@
 import { describe, expect, test } from 'bun:test';
 import { createUsageEngineControlClient, UsageEngineControlError, type UsageEngineFetch } from './client';
-import { usageEngineControlBounds } from './contracts';
+import { USAGE_ENGINE_PROTOCOL_VERSION, usageEngineControlBounds } from './contracts';
 import { assertUsageEngineRendezvousTarget, parseUsageEngineRendezvous } from './rendezvous';
 import { fixtureGeneratedAt, fixtureInstanceId, fixtureStatus } from './test-fixtures';
 
 const rendezvous = parseUsageEngineRendezvous({
   instanceId: fixtureInstanceId,
   port: 41_321,
-  protocolVersion: 1,
+  protocolVersion: USAGE_ENGINE_PROTOCOL_VERSION,
   targetId: 'a'.repeat(64),
   token: 'fixture-token-with-at-least-thirty-two-bytes',
 });
@@ -95,7 +95,7 @@ describe('usage engine HTTP client', () => {
     expect(requests[0]?.url).toBe('http://127.0.0.1:41321/v1/status');
     expect(requests[0]?.method).toBe('GET');
     expect(requests[0]?.headers.get('authorization')).toBe('Bearer fixture-token-with-at-least-thirty-two-bytes');
-    expect(requests[0]?.headers.get('x-ai-usage-protocol-version')).toBe('1');
+    expect(requests[0]?.headers.get('x-ai-usage-protocol-version')).toBe(String(USAGE_ENGINE_PROTOCOL_VERSION));
     expect(requests[0]?.redirect).toBe('error');
   });
 
@@ -156,7 +156,7 @@ describe('usage engine HTTP client', () => {
             commandId: 'command-1',
             instanceId: fixtureInstanceId,
             ok: true,
-            protocolVersion: 1,
+            protocolVersion: USAGE_ENGINE_PROTOCOL_VERSION,
           }),
         );
       },
@@ -172,7 +172,7 @@ describe('usage engine HTTP client', () => {
     expect(await requests[0]?.json()).toEqual({
       command: { command: 'publish' },
       commandId: 'command-1',
-      protocolVersion: 1,
+      protocolVersion: USAGE_ENGINE_PROTOCOL_VERSION,
     });
 
     const oversizedClient = createUsageEngineControlClient({
@@ -197,7 +197,7 @@ describe('usage engine HTTP client', () => {
             commandId: 'command-to-cancel',
             disposition: 'cancelled',
             instanceId: fixtureInstanceId,
-            protocolVersion: 1,
+            protocolVersion: USAGE_ENGINE_PROTOCOL_VERSION,
           }),
         );
       },
@@ -247,7 +247,7 @@ describe('usage engine HTTP client', () => {
             },
             instanceId: fixtureInstanceId,
             ok: false,
-            protocolVersion: 1,
+            protocolVersion: USAGE_ENGINE_PROTOCOL_VERSION,
           }),
         ),
       resolveRendezvous: () => Promise.resolve(rendezvous),
@@ -268,7 +268,7 @@ describe('usage engine HTTP client', () => {
             {
               error: { code: 'engine-busy', message: 'retry with /private/credential' },
               ok: false,
-              protocolVersion: 1,
+              protocolVersion: USAGE_ENGINE_PROTOCOL_VERSION,
             },
             { status: 401 },
           ),
@@ -297,7 +297,7 @@ describe('usage engine HTTP client', () => {
           parseUsageEngineRendezvous({
             instanceId: fixtureInstanceId,
             port: 41_321,
-            protocolVersion: 2,
+            protocolVersion: USAGE_ENGINE_PROTOCOL_VERSION + 1,
             targetId: 'a'.repeat(64),
             token: 'fixture-token-with-at-least-thirty-two-bytes',
           }),
@@ -330,7 +330,8 @@ describe('usage engine HTTP client', () => {
 
   test('distinguishes response protocol mismatch from malformed SSE without reconnecting either', async () => {
     const mismatchClient = createUsageEngineControlClient({
-      fetch: () => Promise.resolve(Response.json({ ...fixtureStatus(), protocolVersion: 2 })),
+      fetch: () =>
+        Promise.resolve(Response.json({ ...fixtureStatus(), protocolVersion: USAGE_ENGINE_PROTOCOL_VERSION + 1 })),
       resolveRendezvous: () => Promise.resolve(rendezvous),
     });
     await expect(mismatchClient.getStatus()).rejects.toMatchObject({ code: 'protocol-mismatch', retry: 'never' });
@@ -583,7 +584,7 @@ describe('usage engine HTTP client', () => {
           parseUsageEngineRendezvous({
             instanceId: activeInstanceId,
             port: 41_321,
-            protocolVersion: 1,
+            protocolVersion: USAGE_ENGINE_PROTOCOL_VERSION,
             targetId: 'a'.repeat(64),
             token: 'fixture-token-with-at-least-thirty-two-bytes',
           }),

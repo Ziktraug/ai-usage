@@ -51,6 +51,7 @@ describe('Sync contract', () => {
   test('bounds the machine label by the engine byte limit and closes both wire shapes', () => {
     expect(safeParse(syncMachineLabelInputSchema, { label: 'Studio Mac' }).success).toBe(true);
     expect(safeParse(syncMachineLabelInputSchema, { label: '   ' }).success).toBe(false);
+    expect(safeParse(syncMachineLabelInputSchema, { label: 'x'.repeat(MAX_MACHINE_LABEL_BYTES) }).success).toBe(true);
     expect(safeParse(syncMachineLabelInputSchema, { label: 'x'.repeat(MAX_MACHINE_LABEL_BYTES + 1) }).success).toBe(
       false,
     );

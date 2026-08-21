@@ -2,6 +2,7 @@ import { expect, test } from 'bun:test';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { USAGE_ENGINE_PROTOCOL_VERSION } from '@ai-usage/usage-engine-control';
 import { usageEngineTargetIdFor } from '@ai-usage/usage-engine-control/node';
 import { loadUsageEngineRendezvousForWeb } from './usage-engine-control.server';
 import type { UsageWebRuntimePaths } from './usage-runtime-paths.server';
@@ -23,7 +24,7 @@ test('loads only a rendezvous bound to the web database and config target', asyn
       `${JSON.stringify({
         instanceId: '11111111-1111-4111-8111-111111111111',
         port: 41_052,
-        protocolVersion: 1,
+        protocolVersion: USAGE_ENGINE_PROTOCOL_VERSION,
         targetId: usageEngineTargetIdFor(paths),
         token: 'fixture-token-with-at-least-thirty-two-bytes',
       })}\n`,
