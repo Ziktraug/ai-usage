@@ -112,6 +112,46 @@ letter ("prompt bodies" stay local) while enabling aggregates — but the
 maintainer decides whether a derived label is itself too revealing for
 portable payloads.
 
+If B is chosen, the write-up must split it into **B1 (portable label)**
+and **B2 (local-only label)** and answer them separately, because B2 is
+much stronger than "we will not put it in the bundle".
+
+**B2 — what "local-only" has to mean here.** A field is local-only only if
+it cannot reach *any* portable surface. This repository already has
+several, and a design that names two of them has not made the field
+local-only:
+
+- merge bundles (`packages/report-core/src/merge-bundle.ts`)
+- portable usage payloads (`packages/report-core/src/portable-usage.ts`)
+- snapshots (`packages/report-core/src/snapshot.ts`)
+- served report revisions, which are serialized and re-validated on read
+  (`packages/usage-store/src/served-report-store.ts`,
+  `served-revision.ts`)
+- serialized session projections (`packages/report-core/src/session-query.ts`)
+- every CSV projection (`packages/report-core/src/csv.ts`), including the
+  campaign-aggregate schema
+- any future portable projection, which is the case a strip-list cannot
+  cover
+
+A strip-list applied at a few export sites is therefore not sufficient:
+it is a denylist over a set that grows, and the next portable surface
+inherits the leak by default. The design must instead pick one of:
+
+- **Exclusion by construction** (preferred): the label never enters the
+  row/domain type that portable serializers consume. It lives in a
+  separate local-only store keyed by session id, so no portable
+  serializer can reach it even by mistake.
+- **Exclusion by exhaustive proof**: if the field must live on the shared
+  type, every portable surface gets a non-leak test, and there is a single
+  enumeration of "portable surfaces" that those tests iterate — so adding
+  a surface without a non-leak test fails the suite rather than shipping
+  silently.
+
+State which one is chosen and why. If exclusion by construction is
+chosen, say explicitly that the exact-key parsers on the portable
+surfaces (which reject unknown fields) are the enforcement, and that
+relaxing any of them to a permissive parse would silently re-open this.
+
 ### Step 2: Prototype the clustering offline
 
 Against this machine's real store (read-only), extract first
@@ -144,6 +184,10 @@ Any build is a new plan written after the maintainer picks an architecture.
 - [ ] `plans/084-intent-design.md` exists with: the three architectures +
       recommendation, prototype coherence results on real local data, the
       minimal-slice spec, and explicit privacy analysis per architecture
+- [ ] If B is recommended, the doc splits B1 from B2 and, for B2, names
+      the enforcement (exclusion by construction, or one enumerated
+      portable-surface list with a non-leak test per surface) — a
+      per-export strip-list is not an acceptable answer
 - [ ] No production file modified (`git status` clean except the doc)
 - [ ] No prompt text is quoted in the design doc beyond 3-word fragments
       needed to illustrate a cluster label
@@ -152,6 +196,10 @@ Any build is a new plan written after the maintainer picks an architecture.
 ## STOP conditions
 
 - Any step would require sending prompt text off this machine.
+- A "local-only" field is proposed whose containment rests on stripping it
+  at named export sites: that is a denylist over a growing set, and the
+  next portable surface inherits the leak. Redesign for exclusion by
+  construction or an enumerated, test-enforced surface list instead.
 - The store/local history cannot yield first prompts without exceeding the
   documented read budgets (Claude 1 GiB/100k-record bounds) — report the
   measured cost instead of raising budgets.
