@@ -188,6 +188,10 @@
             ? 'Already imported.'
             : `Import staged as ${result.data.artifactName}. Collection picks it up automatically.`,
         };
+        // The import moves the store generation, so any preview opened before it can no
+        // longer be confirmed. Drop it here rather than leaving an armed button: this panel
+        // owns that preview, and it just learned the proof is stale.
+        preview = null;
         // The engine re-runs the Cursor source before the command completes, so this machine's
         // session count and freshness can have moved even when the artifact was already imported.
         await onCompleted?.();

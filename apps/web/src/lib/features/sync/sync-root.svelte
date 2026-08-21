@@ -26,10 +26,13 @@
     fleet ? buildSyncFleetComparisonRows(fleet.currentMachine, fleet.machines, data.renderedAt) : [],
   );
   const mutation = $derived(manualTransferMutationAvailability(connection));
-  // A merge preview is bound to the store generation. Any sibling mutation can stale that proof, so
-  // remount the transfer owner after successful mutations rather than leaving an armed Confirm button.
+  // A merge preview is bound to the store generation, so any sibling mutation stales its proof.
+  // Renaming happens outside the transfer panel, which has no way to learn about it: remount the
+  // panel so an armed Confirm cannot sit in front of a proof that can now only fail. The panel's own
+  // mutations drop their preview themselves, because remounting them would also discard the outcome
+  // message the user just earned.
   let manualTransferEpoch = $state(0);
-  const invalidateAfterMutation = async (): Promise<void> => {
+  const invalidateAfterSiblingMutation = async (): Promise<void> => {
     manualTransferEpoch += 1;
     await invalidateSyncFleet(queryClient, data.compatibleGeneration);
   };
@@ -40,7 +43,7 @@
     }
     try {
       const renamed = await renameMachine(label);
-      await invalidateAfterMutation();
+      await invalidateAfterSiblingMutation();
       return renamed;
     } catch {
       return null;
@@ -91,7 +94,10 @@
         </section>
       {/if}
       {#key manualTransferEpoch}
-        <ManualTransfer mutationAvailable={mutation.available} onCompleted={invalidateAfterMutation} />
+        <ManualTransfer
+          mutationAvailable={mutation.available}
+          onCompleted={async () => await invalidateSyncFleet(queryClient, data.compatibleGeneration)}
+        />
       {/key}
     </div>
   </main>

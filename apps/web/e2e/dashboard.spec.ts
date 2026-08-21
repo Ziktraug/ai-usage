@@ -856,3 +856,86 @@ test('keeps sync limited to explicit file transfers', async ({ page }) => {
   await expect(page.getByText('and 1 more', { exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Confirm import' })).toBeVisible();
 });
+
+/**
+ * A merge preview's confirmation token is bound to the store generation, so any sibling mutation —
+ * a machine rename, a Cursor import — makes it unconfirmable server-side. The UI's job is not to
+ * leave an armed Confirm button in front of a proof that can now only fail.
+ */
+test('drops an armed merge preview after a sibling mutation invalidates its proof', async ({ page }) => {
+  const previewBody = {
+    data: {
+      bundle: {
+        generatedAt: '2026-07-30T12:00:00.000Z',
+        machineId: 'peer-machine',
+        machineLabel: 'Peer MacBook',
+      },
+      bytes: 2,
+      confirmationToken: `v1.${'b'.repeat(64)}`,
+      documentDigest: 'a'.repeat(64),
+      kind: 'merge-preview',
+      result: {
+        deleted: 0,
+        fleetChanged: true,
+        inserted: 1,
+        superseded: 0,
+        unchanged: 0,
+        updated: 0,
+        warnings: 0,
+      },
+      rows: 1,
+      warningCount: 0,
+      warningItems: [],
+    },
+    ok: true,
+  };
+  await page.route('**/api/manual-merge/upload', async (route) => {
+    const action = route.request().headers()['x-ai-usage-merge-action'];
+    if (action === 'cursor') {
+      await route.fulfill({
+        body: JSON.stringify({ data: { alreadyImported: false, artifactName: 'cursor-import.csv' }, ok: true }),
+        contentType: 'application/json',
+        status: 200,
+      });
+      return;
+    }
+    await route.fulfill({ body: JSON.stringify(previewBody), contentType: 'application/json', status: 200 });
+  });
+  await page.route('**/rpc/sync/setMachineLabel', async (route) => {
+    await route.fulfill({
+      body: JSON.stringify({ machine: { id: 'machine-a', label: 'Renamed Machine' } }),
+      contentType: 'application/json',
+      status: 200,
+    });
+  });
+
+  const mergeFile = { buffer: Buffer.from('{}'), mimeType: 'application/json', name: 'merge.json' };
+  const cursorFile = { buffer: Buffer.from('Date,Model\n'), mimeType: 'text/csv', name: 'cursor.csv' };
+  const mergeInput = page.locator('input[type="file"][accept=".json,application/json"]');
+  const cursorInput = page.locator('input[type="file"][accept=".csv,text/csv"]');
+  const confirmButton = page.getByRole('button', { name: 'Confirm import' });
+
+  await page.goto('/sync');
+  await expect(page.getByRole('heading', { level: 1, name: 'Sync' })).toBeVisible();
+
+  // A rename is the mutation furthest from the preview, and the one most likely to be treated as
+  // unrelated to it.
+  await mergeInput.setInputFiles(mergeFile);
+  await expect(confirmButton).toBeVisible();
+  await page.getByRole('button', { name: 'Rename' }).click();
+  await page.getByLabel('Machine label').fill('Renamed Machine');
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  await expect(confirmButton).toBeHidden();
+
+  // Importing a Cursor export moves the generation too, even though it stages an artifact rather
+  // than merging rows.
+  await mergeInput.setInputFiles(mergeFile);
+  await expect(confirmButton).toBeVisible();
+  await cursorInput.setInputFiles(cursorFile);
+  await expect(confirmButton).toBeHidden();
+  // Dropping the stale preview must not also discard what the user just did. Remounting the
+  // whole panel would clear this message along with the preview.
+  await expect(
+    page.getByText('Import staged as cursor-import.csv. Collection picks it up automatically.'),
+  ).toBeVisible();
+});
