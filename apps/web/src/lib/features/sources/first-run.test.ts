@@ -107,7 +107,7 @@ describe('first-run session detection', () => {
 
   test('accepts an unreadable input as undetected input', () => {
     expect(
-      noSessionInputDetected(undetectedSessionSources({ 'codex.sessions': { reason: { code: 'input-unreadable' } })),
+      noSessionInputDetected(undetectedSessionSources({ 'codex.sessions': { reason: { code: 'input-unreadable' } } })),
     ).toBe(true);
   });
 

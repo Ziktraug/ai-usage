@@ -403,7 +403,14 @@ test('answers the first run when no session source has detected input', async ({
   for (const { harness, paths } of [
     { harness: 'Claude Code', paths: ['~/.claude/projects/**/*.jsonl', '~/.claude.json'] },
     { harness: 'Codex', paths: ['~/.codex/sessions/**/*.jsonl'] },
-    { harness: 'OpenCode', paths: ['~/.local/share/opencode/opencode.db'] },
+    {
+      harness: 'OpenCode',
+      paths: [
+        '~/.local/share/opencode/opencode.db',
+        '~/Library/Application Support/opencode/opencode.db',
+        '~/AppData/Local/opencode/opencode.db',
+      ],
+    },
     { harness: 'Cursor (macOS)', paths: ['~/Library/Application Support/Cursor/User/globalStorage/state.vscdb'] },
   ]) {
     const row = harnessRows.filter({ hasText: harness });
@@ -412,6 +419,20 @@ test('answers the first run when no session source has detected input', async ({
       await expect(row.getByText(path, { exact: true })).toBeVisible();
     }
   }
+
+  // The panel tells the reader to "run Detect all"; that instruction is only honest if the button beside
+  // it issues the command rather than describing one the reader has to find elsewhere.
+  const commands: string[] = [];
+  await page.route('**/api/source-control/command', async (route) => {
+    commands.push(route.request().postData() ?? '');
+    await route.fulfill({
+      body: JSON.stringify({ accepted: true, ok: true, snapshot }),
+      contentType: 'application/json',
+      status: 200,
+    });
+  });
+  await guidance.getByRole('button', { name: 'Detect all' }).click();
+  await expect.poll(() => commands).toEqual(['{"command":"detect-all"}']);
 
   // The alternative path for usage that lives on another machine has to be reachable, not just described.
   await expect(guidance.getByRole('link', { name: 'Open Sync' })).toHaveAttribute('href', '/sync');
