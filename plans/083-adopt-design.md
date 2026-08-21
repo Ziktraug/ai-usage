@@ -272,6 +272,31 @@ rename completed", never "a reservation was made". Reserving the leaf with
 `mkdir` first would make the two states indistinguishable and is the reason
 this design does not do it.
 
+
+**The quarantine root is verified, never trusted.** The leaf check above is
+only decidable if the directory containing it is the directory this design
+means. `.ai-usage-skill-quarantine/` sits in a directory the user can write
+to, so an idempotent `mkdir` is not enough: `mkdir` on an existing **symlink
+to a directory** succeeds (`EEXIST`, swallowed by the idempotent path), and
+the quarantine rename then lands wherever that symlink points — outside the
+projection root, possibly outside `$HOME`. Under the lock, before the
+`mkdir` and again before the rename:
+
+- `lstat` the quarantine root — never `stat`, which resolves the final
+  symlink and reports the *target's* type.
+- Refuse a symlink outright, whatever it points at, and refuse any type
+  that is not a directory.
+- Compare `realpath(quarantineRoot)` against
+  `join(realpath(dirname(target.path)), '.ai-usage-skill-quarantine')` —
+  the caller-supplied string is not evidence.
+- A root that fails any check is **never replaced, removed, or adopted**:
+  emit `adopt-blocked: quarantine-root-unsafe`, naming what was found
+  (symlink → its target, or the actual file type), and leave the runtime
+  entry untouched. Repairing it is a user decision, not the tool's.
+- A root that passes is reused as-is; a collision on the *leaf* inside it
+  is the already-defined `adopt-blocked: quarantine-occupied`, which is a
+  different condition and keeps its own diagnostic.
+
 - Rejected: quarantine *inside* the target (`<target>/.ai-usage-…`). That is
   what `claimObservedProjection` (`projections.ts:430`) does for its
   transient `.old` claim, and it is fine transiently — but a *permanent*
@@ -648,7 +673,23 @@ reconcile because adoption writes into a directory ai-usage does not own:
 4. Re-verify the content digest before the quarantine rename. A mismatch
    between plan and apply means the user edited the entry in between →
    `failed` with `recoverable: true`, nothing moved.
-5. The destination `<source>/skills/<name>` must not exist at rename time
+5. Re-verify the content digest **again, after the quarantine rename**, and
+   compare it against the digest the copy in `copied` was made from. Step 4
+   alone does not close the window: it reads the entry while that entry is
+   still at its original path and still writable, so a writer can change it
+   between that read and the rename completing. Publishing the symlink then
+   points the user at a copy that silently dropped their edit. The rename is
+   the claim — after it, the original is unreachable and its digest is
+   finally stable, which is the only point at which the comparison proves
+   anything.
+
+   On divergence: do **not** create the symlink. Rename the quarantined
+   entry back to its original path, discard the candidate copy, and return
+   `adopt-conflict: entry-changed-during-adoption` with
+   `recoverable: true` so the caller can re-run against the new content.
+   The invariant this buys: a concurrent mutation is never lost and is never
+   temporarily replaced by a stale copy.
+6. The destination `<source>/skills/<name>` must not exist at rename time
    (the atomic-rename precondition doubles as a late collision check).
 
 **Apply re-derives the plan; the client's plan is a confirmation token, not
@@ -789,6 +830,21 @@ Beyond plan 083's listed crash windows:
    regression that matters — the *planner does not throw*; the other
    entries in the same plan still produce actions.
 7. **Quarantine leaf already exists** → `quarantine-occupied`, no write.
+7a. **Quarantine root is a symlink** pointing outside the projection root
+    (adversarial: the whole point of `lstat`) → `quarantine-root-unsafe`
+    naming the link target, nothing created at the link's destination, and
+    the runtime entry still present and byte-identical. A second case with
+    the root existing as a **regular file** → same refusal, different
+    reported type. Both must fail *before* any `mkdir` or rename, and the
+    symlink itself must be left in place.
+7b. **Entry mutated between the pre-rename digest and the rename** (write a
+    child file from the injected `rename` stub, so the change lands inside
+    the window step 4 cannot see) → the symlink is **not** created, the
+    entry is back at its original path, its content is the *mutated*
+    content rather than the copy, and the outcome is
+    `entry-changed-during-adoption`. This is the test that distinguishes
+    the post-quarantine re-digest from the pre-rename one: with step 5
+    removed it must fail, and a stale copy would be published in its place.
 8. **`EXDEV` on the quarantine rename** (inject via a stubbed `rename`) →
    `cross-device-quarantine`, no copy-then-delete fallback.
 9. **Concurrent adopt of two entries in the same target** → serialised by

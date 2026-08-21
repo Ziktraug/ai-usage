@@ -18,14 +18,16 @@
 | Does a print-optimised route fall under the plan-009 rejection? | **No — it is outside it.** §1 gives the argument; the maintainer confirms. |
 | What does the recap say? | **Four statements** (§2). Six candidates are killed, five of them because a single bounded Overview request cannot support them (§2.6). |
 | Does it fit the bounded Overview payload? | **Yes, after the cuts** — one request, one timeline dimension, no widening (§2.7). |
-| Does browser print-to-PDF produce something postable? | **Yes** — one A4 page with 17% headroom; the two engines agree on page height to 0.9 px (§3). |
+| Does browser print-to-PDF produce something postable? | **Yes, verified in Chromium** — one real PDF, one A4 page, 17% headroom (§3). Gecko was checked under print media only: its page height agrees with Chromium to 0.9 px, but no Firefox PDF was produced and its pagination is unverified (§3.1). |
 | What is the privacy exposure? | **None.** After the cuts, the surviving four statements contain no project name, machine label, session title, or prompt-derived text. The exclusion control becomes a *precondition* for ever adding a killed card back, not a feature to ship now (§4). |
 | Should it be built? | **Yes, if the maintainer wants the "Wrapped" direction at all** — S–M, and it is the cheapest possible version. §5 lists two things that must land with it. |
 
 **One Done criterion is only partially met and the status row should be read
-with that in mind:** print results were obtained from two engines, but a
-Firefox *PDF* could not be produced in this environment (§3.1). Gecko was
-verified for print stylesheet and geometry; its pagination is unverified.
+with that in mind:** the two engines were exercised differently — Chromium
+produced a real PDF with verified pagination; Gecko was verified for print
+stylesheet and geometry only. No Firefox *PDF* was produced in this
+environment (§3.1), so no single PDF was generated and validated by both
+engines, and the Firefox PDF gate stays unmet.
 
 ---
 

@@ -68,7 +68,8 @@ prototypes what it would say.
 | Purpose | Command | Expected on success |
 |---|---|---|
 | Dev server | `bun run dev` | app on 127.0.0.1 |
-| Print check | Chromium + Firefox → print preview / save as PDF on the prototype | readable multi-page PDF |
+| Print check (Chromium) | `google-chrome-stable --headless --print-to-pdf` on the prototype | a real, readable, paginated PDF |
+| Print check (Gecko) | Playwright Firefox + `page.emulateMedia({ media: 'print' })` + geometry probe | print stylesheet and geometry only — no reachable Firefox exposes `--print`, and `page.pdf()` is Chromium-only, so Gecko pagination stays unverified |
 | Typecheck | `bun run typecheck` | exit 0 |
 
 ## Scope
@@ -121,7 +122,9 @@ inside the bounded payload or say why one addition is worth it.
 
 Build the one-page (A4 portrait) prototype with real numbers from the dev
 server (hand-copied into a scratchpad mock is fine — this is visual
-design, not integration). Print it to PDF in Chromium and Firefox. Record
+design, not integration). Produce the PDF in Chromium; exercise Gecko under
+print media for stylesheet and geometry only. Do not claim a Firefox PDF —
+none can be generated here (see the commands table). Record
 in the memo: page-break behavior, dark-mode handling (`print` should force
 light), typography at print DPI, and whether the result is something a
 person would actually post.
@@ -129,15 +132,17 @@ person would actually post.
 ### Step 4: STOP — present the memo
 
 Present `plans/085-recap-design.md` with the constraint ruling, the chosen
-statements, the privacy in-frame list + exclusion toggle design, both PDFs
-(paths), and a build estimate. Stop; the build is a follow-up plan after
-the maintainer's call.
+statements, the privacy in-frame list + exclusion toggle design, the Chromium
+PDF and the Gecko print-media evidence (paths), and a build estimate. Stop;
+the build is a follow-up plan after the maintainer's call.
 
 ## Done criteria
 
 - [ ] `plans/085-recap-design.md` exists with the constraint ruling, the
-      statement set with per-statement provenance + privacy notes, and
-      print results from two engines
+      statement set with per-statement provenance + privacy notes,
+      the Chromium PDF with its verified page count, and the Gecko
+      print-media geometry — stated as two different levels of evidence,
+      never as one PDF validated by both engines
 - [ ] No shipped route, button, or nav change (`git status`: only the memo)
 - [ ] `plans/README.md` row updated to `DESIGN READY — awaiting decision`
 
