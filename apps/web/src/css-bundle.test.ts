@@ -41,15 +41,24 @@ const PERIOD_RANGE_BRUSH_GZIP_BUDGET_BYTES = 1024;
 /**
  * The merge preview now carries bundle identity and bounded warning items, so the contract parser
  * that the shell already ships grew a nested validator and the sync panel grew a disclosure list.
- * Measured at 188 bytes against the commit that introduced it, rounded on the same rule.
+ * Re-measured at 204 bytes against the current base after the period-brush merge — the original
+ * 188-byte reading was taken against the pre-merge base — rounded on the same rule.
  */
-const MERGE_PREVIEW_BUNDLE_IDENTITY_GZIP_BUDGET_BYTES = 192;
+const MERGE_PREVIEW_BUNDLE_IDENTITY_GZIP_BUDGET_BYTES = 256;
 /**
  * Cursor import and machine renaming both reach the engine from the web, so the shell now ships one
  * more sync contract procedure, its browser adapter, and the fleet label editor.
- * Measured at 140 bytes against the commit that introduced it, rounded on the same rule.
+ * Re-measured at 116 bytes against the current base, rounded on the same rule.
  */
-const WEB_CURSOR_IMPORT_AND_MACHINE_LABEL_GZIP_BUDGET_BYTES = 192;
+const WEB_CURSOR_IMPORT_AND_MACHINE_LABEL_GZIP_BUDGET_BYTES = 128;
+/**
+ * The post-review corrections on this train are initial-closure weight of their own and had no
+ * entry: the protocol v2 contract gained nested bundle and warning-item validators that ship with
+ * the parser, and the sync root gained the epoch remount that invalidates an open merge preview
+ * after a sibling mutation. Measured at 367 bytes against the two entries above, rounded on the
+ * same rule.
+ */
+const SYNC_POST_REVIEW_CORRECTIONS_GZIP_BUDGET_BYTES = 384;
 const INITIAL_GZIP_CLOSURE_MAXIMUM_BYTES =
   Math.ceil(INITIAL_GZIP_CLOSURE_BASELINE_BYTES * 1.1) +
   BREAKDOWN_SEARCH_GZIP_BUDGET_BYTES +
@@ -67,7 +76,8 @@ const INITIAL_GZIP_CLOSURE_MAXIMUM_BYTES =
   CORE_VALUE_OBJECTS_GZIP_BUDGET_BYTES +
   PERIOD_RANGE_BRUSH_GZIP_BUDGET_BYTES +
   MERGE_PREVIEW_BUNDLE_IDENTITY_GZIP_BUDGET_BYTES +
-  WEB_CURSOR_IMPORT_AND_MACHINE_LABEL_GZIP_BUDGET_BYTES;
+  WEB_CURSOR_IMPORT_AND_MACHINE_LABEL_GZIP_BUDGET_BYTES +
+  SYNC_POST_REVIEW_CORRECTIONS_GZIP_BUDGET_BYTES;
 const LEADING_SLASH_PATTERN = /^\/+/;
 const REPORT_COLOR_TOKEN_PATTERN = /token\(colors\.([A-Za-z0-9_.-]+)\)/g;
 const REPORT_SOURCE_FILE_PATTERN = /\.(?:svelte|ts)$/;
