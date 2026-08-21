@@ -17,8 +17,8 @@ export const rtkSavingsPct = (row: Pick<SerializedRow, 'rtkInputTokens' | 'rtkSa
 
 /**
  * The single source of truth for the usage row → CSV projection. Both the CLI
- * and the web export adapter feed it serialized rows so the emitted schema can
- * never drift between outputs.
+ * and raw-row consumers feed it serialized rows. Campaign aggregates deliberately
+ * do not use this projection: a campaign display row is not a real usage row.
  */
 export const usageRowCsvColumns = [
   { header: 'date', textual: true, value: (row) => row.date },
@@ -70,7 +70,11 @@ export const serializedRowsToCSV = (rows: SerializedRow[]): string => {
   return [head.join(','), ...body].join('\n');
 };
 
-export type ReportCsvDimension = 'harnesses' | 'models' | 'projects' | 'providers';
+/**
+ * The slug that names a downloaded CSV. `sessions` names the Sessions-view export;
+ * that export is campaign-aware and does not claim its aggregate rows are raw sessions.
+ */
+export type ReportCsvDimension = 'harnesses' | 'models' | 'projects' | 'providers' | 'sessions';
 
 export interface AnalyticsExportRow {
   group: AnalyticsGroup;
@@ -94,8 +98,48 @@ export interface ProjectBreakdownExportGroup {
   turns: number;
 }
 
+/**
+ * One top-level Sessions row. Identity-like fields such as harness, model, machine,
+ * provider and project are intentionally absent: a filtered campaign row can aggregate
+ * child metrics while its presentation label comes from the root, so exporting those
+ * root fields would manufacture a usage row that never existed.
+ *
+ * Nullable metrics stay nullable: a harness that reports no RTK counters or no quota cost is not
+ * the same claim as one that reported zero, and the serializer writes an empty cell for absence.
+ */
+export interface SessionCampaignExportRow {
+  ambiguous: boolean;
+  calls: number;
+  campaignKey: string;
+  campaignLabel: string;
+  campaignSessions: number;
+  costActual: number | null;
+  costApprox: number | null;
+  costKnown: boolean;
+  costQuota: number | null;
+  durationMs: number | null;
+  freshTokens: number;
+  lineDelta: number | null;
+  linesAdded: number | null;
+  linesDeleted: number | null;
+  partial: boolean;
+  rtkCommandCount: number | null;
+  rtkInputTokens: number | null;
+  rtkOutputTokens: number | null;
+  rtkSavedTokens: number | null;
+  tokCr: number;
+  tokCw: number;
+  tokenTotal: number;
+  tokIn: number;
+  tokOut: number;
+  tools: number;
+  turns: number;
+  usageUnavailable: boolean;
+  visibleSessions: number;
+}
+
 type ApiValueMeasurement = 'complete' | 'partial' | 'unavailable';
-type ReportCsvValue = number | string;
+type ReportCsvValue = boolean | null | number | string | undefined;
 
 const ANALYTICS_BREAKDOWN_COLUMNS = [
   'label',
@@ -129,6 +173,38 @@ const PROJECT_BREAKDOWN_COLUMNS = [
   'line_total_sessions',
   'turns',
   'tools',
+] as const;
+
+export const SESSION_CAMPAIGN_EXPORT_COLUMNS = [
+  'row_kind',
+  'campaign_key',
+  'campaign_label',
+  'visible_sessions',
+  'campaign_sessions',
+  'input',
+  'output',
+  'cache_read',
+  'cache_write',
+  'fresh_tokens',
+  'total_tokens',
+  'cost_actual',
+  'cost_quota',
+  'cost_approx_api',
+  'cost_known',
+  'calls',
+  'duration_ms',
+  'turns',
+  'tools',
+  'lines_added',
+  'lines_deleted',
+  'line_delta',
+  'rtk_saved_tokens',
+  'rtk_input_tokens',
+  'rtk_output_tokens',
+  'rtk_command_count',
+  'partial',
+  'usage_unavailable',
+  'ambiguous',
 ] as const;
 
 const ASCII_SPACE_CODE_POINT = 32;
@@ -170,7 +246,10 @@ const projectMeasurement = (group: ProjectBreakdownExportGroup): ApiValueMeasure
 };
 
 const serializeReportCsvValue = (value: ReportCsvValue): string => {
-  if (typeof value === 'number') {
+  if (value === null || value === undefined) {
+    return '';
+  }
+  if (typeof value === 'number' || typeof value === 'boolean') {
     return String(value);
   }
   const neutralizedValue = startsSpreadsheetFormula(value) ? `'${value}` : value;
@@ -228,6 +307,42 @@ export const projectBreakdownCsv = (groups: readonly ProjectBreakdownExportGroup
         group.tools,
       ];
     }),
+  );
+
+export const sessionCampaignCsv = (rows: readonly SessionCampaignExportRow[]): string =>
+  serializeReportCsv(
+    SESSION_CAMPAIGN_EXPORT_COLUMNS,
+    rows.map((row) => [
+      'campaign_aggregate',
+      row.campaignKey,
+      row.campaignLabel,
+      row.visibleSessions,
+      row.campaignSessions,
+      row.tokIn,
+      row.tokOut,
+      row.tokCr,
+      row.tokCw,
+      row.freshTokens,
+      row.tokenTotal,
+      row.costActual,
+      row.costQuota,
+      row.costApprox === null ? null : row.costApprox.toFixed(4),
+      row.costKnown,
+      row.calls,
+      row.durationMs,
+      row.turns,
+      row.tools,
+      row.linesAdded,
+      row.linesDeleted,
+      row.lineDelta,
+      row.rtkSavedTokens,
+      row.rtkInputTokens,
+      row.rtkOutputTokens,
+      row.rtkCommandCount,
+      row.partial,
+      row.usageUnavailable,
+      row.ambiguous,
+    ]),
   );
 
 export const reportCsvFilename = (dimension: ReportCsvDimension, generatedAt: string): string =>

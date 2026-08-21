@@ -41,6 +41,7 @@ export type SessionCellProjection =
   | {
       readonly campaignLabel: string | null;
       readonly classifierLabel: string | null;
+      readonly inheritedTitle: string | null;
       readonly kind: 'session';
       readonly originLabel: string | null;
       readonly provenanceFacts: readonly UsageRowProvenance[];
@@ -108,6 +109,28 @@ const highlightedSegments = (text: string, query: string): readonly SessionHighl
     segments.push({ match: false, text: bounded.slice(index) });
   }
   return segments;
+};
+
+/**
+ * A generic title is one the harness never declared: the collectors fall back to
+ * `subagent <id>` / `claude <id>` and record `agent-role` or `id` as the source.
+ * An absent `titleSource` means nothing was declared about the title at all — do
+ * not guess that such a row is generic.
+ */
+export const sessionTitleIsGeneric = (row: SessionPresentationRow): boolean =>
+  row.titleSource === 'agent-role' || row.titleSource === 'id';
+
+/**
+ * Display-only campaign title inheritance. The caller passes the campaign root
+ * label for child rows only, so `depth > 0` is enforced at the call site; this
+ * helper adds the remaining conditions. The child keeps its own `sessionLabel`
+ * in `segments`, so search, sort, and CSV projections are untouched.
+ */
+const inheritedCampaignTitle = (row: SessionPresentationRow, campaignRootLabel: string | undefined): string | null => {
+  if (!(campaignRootLabel && sessionTitleIsGeneric(row)) || campaignRootLabel === row.sessionLabel) {
+    return null;
+  }
+  return campaignRootLabel;
 };
 
 const provenanceFacts = (
@@ -186,6 +209,7 @@ export const projectSessionCell = (
   row: SessionPresentationRow,
   id: SessionColumnId,
   query: string,
+  campaignRootLabel?: string,
 ): SessionCellProjection => {
   if (id === 'harness') {
     return { kind: 'harness-filter', label: row.harness, title: `Filter by ${row.harness}`, value: row.harness };
@@ -226,6 +250,7 @@ export const projectSessionCell = (
         classifierRollup === null
           ? null
           : `${classifierRollup} · ${fmtCompact(row.campaignClassifierFreshTokens ?? 0)} fresh`,
+      inheritedTitle: inheritedCampaignTitle(row, campaignRootLabel),
       kind: 'session',
       originLabel: row.origin === 'classifier' ? sessionOriginLabel(row.origin) : null,
       provenanceFacts: provenanceFacts(row, 'title'),

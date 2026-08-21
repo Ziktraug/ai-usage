@@ -14,6 +14,7 @@
   import { applySessionFieldFilter, projectSessionCell } from './session-cell-projection';
 
   let {
+    campaignRootLabel,
     canExpand,
     columnId,
     depth,
@@ -24,6 +25,7 @@
     query,
     row,
   }: {
+    campaignRootLabel?: string | undefined;
     canExpand: boolean;
     columnId: SessionColumnId;
     depth: number;
@@ -35,7 +37,7 @@
     row: SessionPresentationRow;
   } = $props();
 
-  const projection = $derived(projectSessionCell(row, columnId, query));
+  const projection = $derived(projectSessionCell(row, columnId, query, campaignRootLabel));
 </script>
 
 {#if projection.kind === 'session'}
@@ -54,6 +56,11 @@
       >
         {expanded ? '▾' : '▸'}
       </button>
+    {/if}
+    {#if projection.inheritedTitle}
+      <span class={muted} data-session-inherited-title title="Title inherited from the campaign root session"
+        >{projection.inheritedTitle}</span
+      ><span class={muted}>{' · '}</span>
     {/if}
     {#each projection.segments as segment, index (`${index}:${segment.text}`)}
       {#if segment.match}

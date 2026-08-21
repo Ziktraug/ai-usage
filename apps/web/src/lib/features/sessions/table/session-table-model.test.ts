@@ -10,6 +10,7 @@ import {
   projectSessionCell,
   sessionSortDescendingByDefault,
   sessionSortForColumnChange,
+  sessionTitleIsGeneric,
   shouldSelectSessionRowForKey,
 } from './session-cell-projection';
 import { sessionTableColumns, visibleSessionTableColumns } from './session-columns';
@@ -136,6 +137,32 @@ describe('Svelte session table schema adapter', () => {
       'provenanceFacts',
       expect.arrayContaining([expect.objectContaining({ kind: 'unknown-api-price' })]),
     );
+  });
+
+  test('treats only harness-declared fallback titles as generic', () => {
+    const row = syntheticSessionRow(3);
+
+    expect(sessionTitleIsGeneric({ ...row, titleSource: 'ai' })).toBe(false);
+    expect(sessionTitleIsGeneric({ ...row, titleSource: 'first-prompt' })).toBe(false);
+    expect(sessionTitleIsGeneric({ ...row, titleSource: 'agent-role' })).toBe(true);
+    expect(sessionTitleIsGeneric({ ...row, titleSource: 'id' })).toBe(true);
+    expect(sessionTitleIsGeneric(row)).toBe(false);
+  });
+
+  test('inherits the campaign root title for generic children without touching the child label', () => {
+    const generic = { ...syntheticSessionRow(3), titleSource: 'agent-role' as const };
+    const inherited = projectSessionCell(generic, 'session', '', 'Root campaign title');
+
+    expect(inherited).toMatchObject({ inheritedTitle: 'Root campaign title', kind: 'session' });
+    expect(inherited).toHaveProperty('segments.0.text', generic.sessionLabel);
+    // No root label means a top-level row: the caller only passes one for children.
+    expect(projectSessionCell(generic, 'session', '')).toHaveProperty('inheritedTitle', null);
+    expect(projectSessionCell({ ...generic, titleSource: 'ai' }, 'session', '', 'Root campaign title')).toHaveProperty(
+      'inheritedTitle',
+      null,
+    );
+    expect(projectSessionCell(generic, 'session', '', generic.sessionLabel)).toHaveProperty('inheritedTitle', null);
+    expect(projectSessionCell(generic, 'session', '', '')).toHaveProperty('inheritedTitle', null);
   });
 
   test('preserves exact headers, unavailable hints, RTK details, and compact line deltas', () => {

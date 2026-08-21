@@ -59,6 +59,37 @@ const WEB_CURSOR_IMPORT_AND_MACHINE_LABEL_GZIP_BUDGET_BYTES = 128;
  * same rule.
  */
 const SYNC_POST_REVIEW_CORRECTIONS_GZIP_BUDGET_BYTES = 384;
+/**
+ * Provider-neutral quota history naming, plus wiring `providerHistoryAvailable` into both report
+ * destinations so the entry point is withheld when no history can exist. It shipped without a ledger
+ * line because it fit the headroom the pre-merge base happened to have; measured against the current
+ * base at 93 bytes, rounded to the next 64 on the same rule as the entries above.
+ */
+const NEUTRAL_QUOTA_HISTORY_NAMING_GZIP_BUDGET_BYTES = 128;
+/**
+ * Restoring the quota percentage in the 768-1279px band, where the rail is a 56px icon column and
+ * the labelled row is hidden. Purely responsive atoms — the stacked row direction and gap, and the
+ * compact value's md/xl display pair — since colour and weight reuse existing atoms. Measured at
+ * 117 bytes against the current base, rounded to the next 64 on the same rule as the entries above.
+ */
+const COMPACT_QUOTA_RAIL_VALUE_GZIP_BUDGET_BYTES = 128;
+/**
+ * The Sessions destination reuses the shared report sharing actions the breakdown already
+ * mounts. Two lazily loaded destinations reaching the same leaf modules makes Rollup carve
+ * them into their own chunks, and the identical bytes gzip worse split than merged — the
+ * initial closure grows without shipping new code — the CSV projection itself stays behind the
+ * dynamic import and never enters the closure. Measured at 921 bytes against the commit that
+ * introduced it, rounded on the same rule.
+ */
+const SESSIONS_ROW_EXPORT_GZIP_BUDGET_BYTES = 960;
+/**
+ * The timeline's aggregated `Other` series now names a bounded sample of what it swallowed.
+ * That is initial-closure weight on three seams the Overview always ships: the member summaries
+ * and their transport validator in focused-report-query, the presenter in timeline-model, and the
+ * legend disclosure itself. It reuses the existing legend classes and adds no new CSS. Measured
+ * at 476 bytes against the commit that introduced it, rounded on the same rule.
+ */
+const TIMELINE_OTHER_DISCLOSURE_GZIP_BUDGET_BYTES = 512;
 const INITIAL_GZIP_CLOSURE_MAXIMUM_BYTES =
   Math.ceil(INITIAL_GZIP_CLOSURE_BASELINE_BYTES * 1.1) +
   BREAKDOWN_SEARCH_GZIP_BUDGET_BYTES +
@@ -77,9 +108,14 @@ const INITIAL_GZIP_CLOSURE_MAXIMUM_BYTES =
   PERIOD_RANGE_BRUSH_GZIP_BUDGET_BYTES +
   MERGE_PREVIEW_BUNDLE_IDENTITY_GZIP_BUDGET_BYTES +
   WEB_CURSOR_IMPORT_AND_MACHINE_LABEL_GZIP_BUDGET_BYTES +
-  SYNC_POST_REVIEW_CORRECTIONS_GZIP_BUDGET_BYTES;
+  SYNC_POST_REVIEW_CORRECTIONS_GZIP_BUDGET_BYTES +
+  NEUTRAL_QUOTA_HISTORY_NAMING_GZIP_BUDGET_BYTES +
+  COMPACT_QUOTA_RAIL_VALUE_GZIP_BUDGET_BYTES +
+  SESSIONS_ROW_EXPORT_GZIP_BUDGET_BYTES +
+  TIMELINE_OTHER_DISCLOSURE_GZIP_BUDGET_BYTES;
 const LEADING_SLASH_PATTERN = /^\/+/;
 const REPORT_COLOR_TOKEN_PATTERN = /token\(colors\.([A-Za-z0-9_.-]+)\)/g;
+const TRAILING_MEDIA_QUERY_PATTERN = /@media screen and \(width>=[\d.]+rem\)(?![\s\S]*@media)/;
 const REPORT_SOURCE_FILE_PATTERN = /\.(?:svelte|ts)$/;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -222,6 +258,19 @@ describe('report app client bundle', () => {
       expect(css).not.toContain('@layer reset,base,tokens,recipes,utilities;');
       expect(css).not.toContain('--colors-border');
       expect(css).not.toContain('token(colors.');
+
+      // The rail's compact percentage is an `md`/`xl` display pair, and provider-quota-rail.ssr.test.ts
+      // pins those atoms onto the element. What that cannot see is where the atoms actually switch:
+      // a preset change moving `md` would shift the band silently while every atom assertion still
+      // passed. Panda emits the breakpoints in rem, so 48rem/80rem are the 768px/1280px contract.
+      const mediaQueryFor = (atom: string): string | undefined => {
+        const upToAtom = css.slice(0, css.indexOf(`.${atom.replace(':', '\\:')}`));
+        return upToAtom.match(TRAILING_MEDIA_QUERY_PATTERN)?.[0];
+      };
+      expect(mediaQueryFor('md:d_block')).toBe('@media screen and (width>=48rem)');
+      expect(mediaQueryFor('xl:d_none')).toBe('@media screen and (width>=80rem)');
+      expect(mediaQueryFor('md:d_none')).toBe('@media screen and (width>=48rem)');
+      expect(mediaQueryFor('xl:d_block')).toBe('@media screen and (width>=80rem)');
 
       const nodesDir = path.join(publicDir, '_app/immutable/nodes');
       const javascriptFiles = readdirSync(nodesDir).filter((file) => file.endsWith('.js'));

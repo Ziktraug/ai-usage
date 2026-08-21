@@ -7,11 +7,42 @@ describe('CLI command parsing', () => {
     expect(Effect.runSync(parseCommand(['quota', '--no-color']))).toEqual({
       _tag: 'Quota',
       color: false,
+      history: null,
     });
     expect(Effect.runSync(parseCommand(['quota', '--color']))).toEqual({
       _tag: 'Quota',
       color: true,
+      history: null,
     });
+  });
+
+  test('defaults a bare quota --history to 7d and accepts every supported range', () => {
+    expect(Effect.runSync(parseCommand(['quota', '--history']))).toEqual({
+      _tag: 'Quota',
+      color: null,
+      history: '7d',
+    });
+    for (const range of ['24h', '7d', '30d'] as const) {
+      expect(Effect.runSync(parseCommand(['quota', '--history', range]))).toEqual({
+        _tag: 'Quota',
+        color: null,
+        history: range,
+      });
+    }
+  });
+
+  test('reads the token after quota --history as a flag rather than a range', () => {
+    expect(Effect.runSync(parseCommand(['quota', '--history', '--color']))).toEqual({
+      _tag: 'Quota',
+      color: true,
+      history: '7d',
+    });
+  });
+
+  test('rejects an unsupported quota history range', () => {
+    const error = Effect.runSync(Effect.flip(parseCommand(['quota', '--history', '90d'])));
+
+    expect(error.message).toBe('Unknown quota history range: 90d (expected 24h, 7d, or 30d)');
   });
 
   test('rejects unknown quota options as typed Effect failures', () => {
