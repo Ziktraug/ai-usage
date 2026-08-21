@@ -24,6 +24,15 @@ export const FOCUSED_REPORT_E2E_ENABLED_KEY = '__aiUsageE2EFocusedReportEnabled'
 export const FOCUSED_REPORT_E2E_NINETY_DAY_COMPARISON_KEY = '__aiUsageE2ENinetyDayComparison';
 export const FOCUSED_REPORT_E2E_NO_LOCAL_DATA_KEY = '__aiUsageE2ENoLocalData';
 export const FOCUSED_REPORT_E2E_VISIBLE_TREND_KEY = '__aiUsageE2EFocusedReportVisibleTrend';
+/**
+ * Opt-in only. The shared rows yield at most a handful of categories in any
+ * dimension, so no timeline ever aggregates a tail into `Other`. This flag
+ * appends one row per distinct model, inside the default report period, and
+ * touches nothing else: the shared rows and every default-view total stay
+ * exactly as they were, and the settled visual snapshots capture the harness
+ * dimension, which this never widens.
+ */
+export const FOCUSED_REPORT_E2E_MODEL_TAIL_KEY = '__aiUsageE2EModelTail';
 
 interface FocusedReportSource {
   readonly getBootstrap: (options?: { readonly signal?: AbortSignal }) => Promise<WebReportRevisionBootstrapResult>;
@@ -135,6 +144,47 @@ const createResponseGate = (): { control: FocusedResponseGate; waitForResponse: 
   };
 };
 
+/** Enough distinct models to cross MAX_TIMELINE_SERIES and leave a truncated tail. */
+const MODEL_TAIL_ROW_COUNT = 20;
+/**
+ * One lineage for every appended row. Campaign identity is derived from the root
+ * session ID, so distinct roots here would widen the campaign dimension too and
+ * this addition would no longer be isolated to models.
+ */
+const MODEL_TAIL_ROOT_SESSION_ID = 'model-tail-root';
+
+const withModelTail = (rows: typeof demoReportPayload.rows): typeof demoReportPayload.rows => {
+  const template = rows[0];
+  if (!template) {
+    return rows;
+  }
+  const tail = Array.from({ length: MODEL_TAIL_ROW_COUNT }, (_, index) => {
+    const ordinal = String(MODEL_TAIL_ROW_COUNT - index).padStart(2, '0');
+    // Cheaper than every shared row, so the aggregated tail is exactly these models.
+    const cost = (MODEL_TAIL_ROW_COUNT - index) / 100;
+    const id = index === 0 ? MODEL_TAIL_ROOT_SESSION_ID : `model-tail-${ordinal}`;
+    return {
+      ...template,
+      activeDate: '2026-06-05T09:00:00.000Z',
+      costActual: cost,
+      costApprox: cost,
+      date: '2026-06-05T08:00:00.000Z',
+      endDate: '2026-06-05T09:00:00.000Z',
+      model: `tail-model-${ordinal}`,
+      name: id,
+      sessionLabel: id,
+      source: {
+        harnessKey: 'codex',
+        machineId: 'fixture-machine',
+        machineLabel: 'Fixture Machine',
+        rootSourceSessionId: MODEL_TAIL_ROOT_SESSION_ID,
+        sourceSessionId: id,
+      },
+    };
+  });
+  return [...rows, ...tail];
+};
+
 const focusedOverviewRows = (): typeof demoReportPayload.rows => {
   const rows =
     Reflect.get(globalThis, FOCUSED_REPORT_E2E_VISIBLE_TREND_KEY) === true
@@ -154,10 +204,11 @@ const focusedOverviewRows = (): typeof demoReportPayload.rows => {
             : row,
         )
       : demoReportPayload.rows;
+  const widened = Reflect.get(globalThis, FOCUSED_REPORT_E2E_MODEL_TAIL_KEY) === true ? withModelTail(rows) : rows;
   if (Reflect.get(globalThis, FOCUSED_REPORT_E2E_NINETY_DAY_COMPARISON_KEY) !== true) {
-    return rows;
+    return widened;
   }
-  return rows.map((row) => {
+  return widened.map((row) => {
     if (row.date === '2026-05-25T13:05:00.000Z') {
       return {
         ...row,

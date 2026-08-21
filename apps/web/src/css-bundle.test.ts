@@ -52,6 +52,23 @@ const NEUTRAL_QUOTA_HISTORY_NAMING_GZIP_BUDGET_BYTES = 128;
  * 117 bytes against the current base, rounded to the next 64 on the same rule as the entries above.
  */
 const COMPACT_QUOTA_RAIL_VALUE_GZIP_BUDGET_BYTES = 128;
+/**
+ * The Sessions destination reuses the shared report sharing actions the breakdown already
+ * mounts. Two lazily loaded destinations reaching the same leaf modules makes Rollup carve
+ * them into their own chunks, and the identical bytes gzip worse split than merged — the
+ * initial closure grows without shipping new code — the CSV projection itself stays behind the
+ * dynamic import and never enters the closure. Measured at 921 bytes against the commit that
+ * introduced it, rounded on the same rule.
+ */
+const SESSIONS_ROW_EXPORT_GZIP_BUDGET_BYTES = 960;
+/**
+ * The timeline's aggregated `Other` series now names a bounded sample of what it swallowed.
+ * That is initial-closure weight on three seams the Overview always ships: the member summaries
+ * and their transport validator in focused-report-query, the presenter in timeline-model, and the
+ * legend disclosure itself. It reuses the existing legend classes and adds no new CSS. Measured
+ * at 476 bytes against the commit that introduced it, rounded on the same rule.
+ */
+const TIMELINE_OTHER_DISCLOSURE_GZIP_BUDGET_BYTES = 512;
 const INITIAL_GZIP_CLOSURE_MAXIMUM_BYTES =
   Math.ceil(INITIAL_GZIP_CLOSURE_BASELINE_BYTES * 1.1) +
   BREAKDOWN_SEARCH_GZIP_BUDGET_BYTES +
@@ -69,7 +86,9 @@ const INITIAL_GZIP_CLOSURE_MAXIMUM_BYTES =
   CORE_VALUE_OBJECTS_GZIP_BUDGET_BYTES +
   PERIOD_RANGE_BRUSH_GZIP_BUDGET_BYTES +
   NEUTRAL_QUOTA_HISTORY_NAMING_GZIP_BUDGET_BYTES +
-  COMPACT_QUOTA_RAIL_VALUE_GZIP_BUDGET_BYTES;
+  COMPACT_QUOTA_RAIL_VALUE_GZIP_BUDGET_BYTES +
+  SESSIONS_ROW_EXPORT_GZIP_BUDGET_BYTES +
+  TIMELINE_OTHER_DISCLOSURE_GZIP_BUDGET_BYTES;
 const LEADING_SLASH_PATTERN = /^\/+/;
 const REPORT_COLOR_TOKEN_PATTERN = /token\(colors\.([A-Za-z0-9_.-]+)\)/g;
 const TRAILING_MEDIA_QUERY_PATTERN = /@media screen and \(width>=[\d.]+rem\)(?![\s\S]*@media)/;

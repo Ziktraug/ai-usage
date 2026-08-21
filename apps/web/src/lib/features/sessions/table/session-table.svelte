@@ -12,6 +12,7 @@
     highlightMark,
     mobileSummarySurface,
     modelCell,
+    muted,
     numCell,
     Popover,
     presetButton,
@@ -66,6 +67,7 @@
   import SessionCell from './session-cell.svelte';
   import {
     projectSessionCell,
+    type SessionCellProjection,
     sessionSortDescendingByDefault,
     sessionSortForColumnChange,
     shouldSelectSessionRowForKey,
@@ -304,6 +306,22 @@
     onSortingChange(sessionSortForColumnChange(sorting, id));
   };
 
+  /**
+   * The mobile card's open button carries an explicit accessible name, which
+   * overrides its descendant text — so an inherited campaign title has to be
+   * spoken here or it never reaches assistive technology.
+   */
+  const mobileSessionAriaLabel = (projection: SessionCellProjection): string | undefined => {
+    if (projection.kind !== 'session') {
+      return;
+    }
+    const title = projection.segments.map(({ text }) => text).join('');
+    if (!projection.inheritedTitle) {
+      return `Inspect session: ${title}`;
+    }
+    return `Inspect session: ${title}, title inherited from the campaign root session ${projection.inheritedTitle}`;
+  };
+
   const setColumnVisible = (id: SessionColumnId, visible: boolean): void => {
     onColumnVisibilityChange((current) => ({ ...current, [id]: visible }));
   };
@@ -497,6 +515,7 @@
                 {#each visibleColumns as entry (entry.id)}
                   <td class={cellClass(entry.id, entry.meta.align)}>
                     <SessionCell
+                      campaignRootLabel={virtualRow.row.getParentRow()?.original.sessionLabel}
                       canExpand={virtualRow.row.getCanExpand()}
                       columnId={entry.id}
                       depth={virtualRow.row.depth}
@@ -539,7 +558,12 @@
           <li aria-hidden="true" data-virtual-spacer="top" style:height={`${virtual.topHeight}px`}></li>
         {/if}
         {#each virtual.rows as virtualRow (virtualRow.row.id)}
-          {@const mobileSession = projectSessionCell(virtualRow.row.original, 'session', searchQuery)}
+          {@const mobileSession = projectSessionCell(
+            virtualRow.row.original,
+            'session',
+            searchQuery,
+            virtualRow.row.getParentRow()?.original.sessionLabel,
+          )}
           {@const mobileValue = projectSessionCell(virtualRow.row.original, 'cost', searchQuery)}
           {@const mobileFresh = projectSessionCell(virtualRow.row.original, 'fresh', searchQuery)}
           {@const mobileCache = projectSessionCell(virtualRow.row.original, 'cache', searchQuery)}
@@ -567,9 +591,7 @@
                 />
               </header>
               <button
-                aria-label={mobileSession.kind === 'session'
-                  ? `Inspect session: ${mobileSession.segments.map(({ text }) => text).join('')}`
-                  : undefined}
+                aria-label={mobileSessionAriaLabel(mobileSession)}
                 class={sessionSummaryOpen}
                 data-session-index={virtualRow.index}
                 onclick={() => onSelect(virtualRow.row.original)}
@@ -579,6 +601,14 @@
               >
                 <span class={sessionSummaryTitle}>
                   {#if mobileSession.kind === 'session'}
+                    {#if mobileSession.inheritedTitle}
+                      <span
+                        class={muted}
+                        data-session-inherited-title
+                        title="Title inherited from the campaign root session"
+                        >{mobileSession.inheritedTitle}</span
+                      ><span class={muted}>{' · '}</span>
+                    {/if}
                     {#each mobileSession.segments as segment, index (`mobile:${index}:${segment.text}`)}
                       {#if segment.match}
                         <mark class={highlightMark}>{segment.text}</mark>

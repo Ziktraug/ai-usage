@@ -9,6 +9,7 @@ import {
   retainTimelineTickLabels,
   timelineGapValue,
   timelineMetricLabel,
+  timelineOtherDisclosure,
   timelineReadoutFor,
   timelineSeriesIsFilterable,
   timelineSeriesValue,
@@ -163,6 +164,33 @@ describe('P2 timeline presentation model', () => {
     expect(timelineSeriesIsFilterable('origin', { key: 'human' })).toBe(false);
     expect(timelineSeriesIsFilterable('machine', { key: '' })).toBe(false);
     expect(timelineSeriesIsFilterable('model', { key: 'other', memberKeys: ['a'] })).toBe(false);
+  });
+
+  test('discloses what an aggregated series swallowed without offering a filter', () => {
+    expect(timelineOtherDisclosure({})).toBeNull();
+    expect(timelineOtherDisclosure({ memberKeys: [] })).toBeNull();
+    expect(
+      timelineOtherDisclosure({
+        memberKeys: ['claude-opus-4', 'gpt-5.4'],
+        memberSummaries: [
+          { label: 'claude-opus-4', sessions: 12, total: 4.5 },
+          { label: 'gpt-5.4', sessions: 1, total: 0.5 },
+        ],
+      }),
+    ).toEqual({ items: ['claude-opus-4 · 12 sessions', 'gpt-5.4 · 1 session'], label: '2 grouped' });
+    // The summaries are bounded but the keys are not, so the count of members
+    // that stayed unnamed has to come from the key list.
+    expect(
+      timelineOtherDisclosure({
+        memberKeys: Array.from({ length: 1400 }, (_, index) => `model-${index}`),
+        memberSummaries: [{ label: 'model-0', sessions: 3, total: 1 }],
+      }),
+    ).toEqual({ items: ['model-0 · 3 sessions', 'and 1,399 more'], label: '1,400 grouped' });
+    // Keys without summaries still disclose the count rather than nothing.
+    expect(timelineOtherDisclosure({ memberKeys: ['a', 'b'] })).toEqual({
+      items: ['and 2 more'],
+      label: '2 grouped',
+    });
   });
 
   test('retains spaced ticks only when they do not collide with boundary labels', () => {
