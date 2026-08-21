@@ -105,8 +105,8 @@ const openActivityExplorer = async (page: Page): Promise<Locator> => {
 const openCustomPeriod = async (page: Page): Promise<{ from: Locator; to: Locator }> => {
   await reportPeriodFor(page).getByRole('button', { name: 'Choose a custom report period' }).click();
   return {
-    from: page.getByRole('textbox', { name: 'From' }),
-    to: page.getByRole('textbox', { name: 'To' }),
+    from: page.getByLabel('From', { exact: true }),
+    to: page.getByLabel('To', { exact: true }),
   };
 };
 
@@ -480,42 +480,35 @@ test('commits preset, text, keyboard, and pointer report ranges to the URL', asy
   let custom = await openCustomPeriod(page);
   await expect(custom.from).toHaveValue('2026-03-13');
   await expect(custom.to).toHaveValue('2026-06-11');
+  await expect.poll(() => reportRangeValue(page)).toContain('"from":"2026-03-13"');
+  await waitForFocusedReportSettled(page);
   const urlBeforeInvalidDraft = page.url();
-  await custom.from.fill('not-a-date');
-  await page.getByRole('button', { name: 'Apply custom period' }).click();
+  await custom.from.fill('');
   await expect(custom.from).toHaveAttribute('aria-invalid', 'true');
   await expect(page.getByRole('alert')).toHaveText('Enter a valid From date.');
   expect(page.url()).toBe(urlBeforeInvalidDraft);
   await custom.from.press('Escape');
   await expect(page.getByRole('alert')).toHaveCount(0);
-  await expect(period.getByRole('button', { name: 'Choose a custom report period' })).toBeFocused();
-
-  custom = await openCustomPeriod(page);
   await expect(custom.from).toHaveValue('2026-03-13');
+
   const urlBeforeReversedDraft = page.url();
   await custom.from.fill('2026-06-12');
-  await custom.to.fill('2026-06-11');
-  await page.getByRole('button', { name: 'Apply custom period' }).click();
   await expect(custom.from).toHaveAttribute('aria-invalid', 'true');
   await expect(custom.to).toHaveAttribute('aria-invalid', 'true');
   await expect(page.getByRole('alert')).toHaveText('From date must be on or before To date.');
   expect(page.url()).toBe(urlBeforeReversedDraft);
-  await page.getByRole('button', { name: 'Apply custom period' }).focus();
-  await page.keyboard.press('Escape');
-  await expect(period.getByRole('button', { name: 'Choose a custom report period' })).toBeFocused();
-
-  custom = await openCustomPeriod(page);
+  await custom.from.press('Escape');
+  await expect(page.getByRole('alert')).toHaveCount(0);
   await expect(custom.from).toHaveValue('2026-03-13');
+
   await custom.from.fill('2026-05-25');
   await custom.to.fill('2026-06-05');
-  await custom.from.press('Enter');
   await expect.poll(() => reportRangeValue(page)).toContain('"from":"2026-05-25"');
   await waitForFocusedReportSettled(page);
   await expect(
     period.getByRole('button', { exact: true, name: 'Choose a custom report period, selected' }),
   ).toBeVisible();
   await expect(period.getByText('May 25 → Jun 05, 2026 · 11 days', { exact: true })).toBeVisible();
-  await page.keyboard.press('Escape');
 
   // Keep the interaction checks on a non-empty window: moving the May 25
   // boundary by one day intentionally produces the filtered-zero state, where
@@ -570,18 +563,14 @@ test('commits preset, text, keyboard, and pointer report ranges to the URL', asy
   custom = await openCustomPeriod(page);
   await custom.from.fill('2026-05-20');
   await custom.to.fill('2026-06-05');
-  await page.getByRole('button', { name: 'Apply custom period' }).click();
   await expect.poll(() => reportRangeValue(page)).toContain('"from":"2026-05-20"');
   await expect.poll(() => navigationEntryKey(page)).not.toBe(beforeFirstBlurKey);
   const firstBlurredEditKey = await navigationEntryKey(page);
   expect(firstBlurredEditKey).not.toBeNull();
   const firstBlurredEditUrl = page.url();
-  await page.keyboard.press('Escape');
 
-  custom = await openCustomPeriod(page);
   await custom.from.fill('2026-05-21');
   await custom.to.fill('2026-06-05');
-  await page.getByRole('button', { name: 'Apply custom period' }).click();
   await expect.poll(() => reportRangeValue(page)).toContain('"from":"2026-05-21"');
   await expect.poll(() => navigationEntryKey(page)).not.toBe(firstBlurredEditKey);
   const secondBlurredEditKey = await navigationEntryKey(page);
@@ -745,10 +734,9 @@ test('holds the brush scale still while dragging a range that starts before the 
   // `selectedFrom` instead of the data start, so committing on every pointermove
   // used to move the origin — and the scale — underneath the drag.
   const custom = await openCustomPeriod(page);
-  await custom.from.fill('2026-01-01');
-  await custom.from.press('Enter');
   await waitForFocusedReportSettled(page);
-  await page.keyboard.press('Escape');
+  await custom.from.fill('2026-01-01');
+  await waitForFocusedReportSettled(page);
 
   const explorer = await openActivityExplorer(page);
   const startHandle = explorer.getByRole('slider', { name: 'Start date' });

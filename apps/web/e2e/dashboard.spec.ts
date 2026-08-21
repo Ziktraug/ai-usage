@@ -730,9 +730,11 @@ test('selects the same heatmap day with mouse and keyboard', async ({ page }) =>
       'page',
     );
     const range = page.getByRole('region', { name: 'Report period' });
-    await range.getByRole('button', { name: 'Choose a custom report period' }).click();
-    await expect(page.getByRole('textbox', { name: 'From' })).toHaveValue(selectedDay);
-    await expect(page.getByRole('textbox', { name: 'To' })).toHaveValue(selectedDay);
+    await expect(
+      range.getByRole('button', { exact: true, name: 'Choose a custom report period, selected' }),
+    ).toBeVisible();
+    await expect(page.getByLabel('From', { exact: true })).toHaveValue(selectedDay);
+    await expect(page.getByLabel('To', { exact: true })).toHaveValue(selectedDay);
   };
   const selectedCell = () =>
     page.getByRole('toolbar', { name: CALENDAR_NAME_PATTERN }).locator(`button[data-heatmap-day="${selectedDay}"]`);

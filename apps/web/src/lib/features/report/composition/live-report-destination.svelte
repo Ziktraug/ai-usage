@@ -268,6 +268,14 @@
   // Keep rendering the last complete destination during that gap instead of replacing it with a
   // page-sized loading message. The navigation still reflects the user's requested destination.
   const visiblePrimary = $derived(commit?.destination.kind ?? primary);
+  // A refetch of the destination the reader is already looking at — a newer engine revision
+  // published while the range and filters are unchanged — revalidates in place: the visible
+  // figures still answer the request, so they keep full strength until the fresh commit lands.
+  // Only a request the visible commit does not answer (range or filter change) marks it stale.
+  const commitAnswersRequest = $derived(
+    commit !== undefined && destinationFingerprint(focusedDestination) === destinationFingerprint(commit.destination),
+  );
+  const staleForRequest = $derived(destinationQuery.isFetching && !commitAnswersRequest);
   const workspacePending = (): boolean => {
     if (visiblePrimary === 'sessions') {
       return false;
@@ -275,7 +283,7 @@
     if (commit === undefined) {
       return destinationQuery.isFetching || destinationQuery.error === null;
     }
-    return destinationQuery.isFetching;
+    return staleForRequest;
   };
   $effect(() => {
     if (primary === 'breakdown' && !dashboardBreakdownModule) {
@@ -546,7 +554,7 @@
   <p aria-live="polite" role="status">{projectWarningCleanupError}</p>
 {/if}
 {#snippet summary()}
-  {@render activeFilterSummary(destinationQuery.isFetching)}
+  {@render activeFilterSummary(staleForRequest)}
 {/snippet}
 {#snippet sessions()}
   {#if sessionsDestinationModule}

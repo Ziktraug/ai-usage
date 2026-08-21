@@ -24,21 +24,15 @@
   });
   const selectedPreset = css({ borderColor: 'accent', bg: 'accentTint', color: 'ink' });
   const periodSummary = css({ color: 'muted', fontSize: '12px' });
-  const customContent = css({
-    zIndex: 50,
-    display: 'grid',
-    gap: '12px',
-    w: 'min(360px, calc(100vw - 24px))',
-    p: '14px',
-    border: '1px solid token(colors.line)',
-    borderRadius: 'md',
-    bg: 'surface',
-    boxShadow: 'overlay',
+  const customFields = css({ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '8px' });
+  const field = css({
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '6px',
+    color: 'muted',
+    fontSize: '11px',
+    fontWeight: 'semibold',
   });
-  const customForm = css({ display: 'grid', gap: '12px' });
-  const customHeading = css({ fontSize: '13px', fontWeight: 'semibold' });
-  const customFields = css({ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '10px' });
-  const field = css({ display: 'grid', gap: '5px', color: 'muted', fontSize: '11px' });
   const input = css({
     minW: 0,
     minH: '44px',
@@ -52,25 +46,17 @@
   });
   const invalidInput = css({ borderColor: 'status.danger' });
   const validationMessage = css({ color: 'status.danger', fontSize: '12px' });
-  const customActions = css({ display: 'flex', justifyContent: 'flex-end' });
-  const applyButton = css({
-    minH: '44px',
-    px: '14px',
-    borderRadius: 'md',
-    bg: 'accent',
-    color: 'surface',
-    fontSize: '12px',
-    fontWeight: 'semibold',
-  });
+  const brushRow = css({ minW: 0, pt: '2px', w: '100%' });
 </script>
 
 <script lang="ts">
   import { cx } from '@ai-usage/design-system/css';
-  import { Popover } from '@ai-usage/design-system/svelte';
   import type { FocusedDateDomain } from '@ai-usage/report-core/focused-report-query';
+  import { tick } from 'svelte';
   import type { DashboardDateRangeSearch, DashboardSearch } from '../../../../dashboard-search';
   import { dateFromIndex } from '../../../../date-range';
   import type { SearchNavigationIntent, SearchNavigationOptions } from '../../../foundation/navigation/search-intent';
+  import RangeBrush from './range-brush.svelte';
   import {
     type CustomRangeValidation,
     inputValueForRange,
@@ -101,6 +87,7 @@
   const initialTo = (): string => committedInput('end');
   let draftFrom = $state(initialFrom());
   let draftTo = $state(initialTo());
+  let fromInputElement = $state<HTMLInputElement | null>(null);
   let validationError = $state<Extract<CustomRangeValidation, { status: 'invalid' }> | null>(null);
   const invalidFrom = $derived(validationError?.invalidField === 'from' || validationError?.invalidField === 'range');
   const invalidTo = $derived(validationError?.invalidField === 'to' || validationError?.invalidField === 'range');
@@ -135,13 +122,29 @@
     commitRange({ mode });
   };
 
-  const applyCustomRange = (): void => {
+  // Entering custom mode keeps the currently effective window, so the report does not move —
+  // the two date fields appear inline, seeded and ready to edit.
+  const selectCustom = async (): Promise<void> => {
+    if (range.mode !== 'custom') {
+      validationError = null;
+      commitRange({ from: committedInput('start'), mode: 'custom', to: committedInput('end') });
+    }
+    await tick();
+    fromInputElement?.focus();
+  };
+
+  // Each completed field edit commits on its own, like the original range control: a valid pair
+  // navigates immediately, an invalid one announces why and leaves the committed range alone.
+  const commitDraftEdit = (): void => {
     const validation = validateCustomRangeInputs(draftFrom, draftTo);
     if (validation.status === 'invalid') {
       validationError = validation;
       return;
     }
     validationError = null;
+    if (reportRangeEditKey(validation.range) === reportRangeEditKey(range)) {
+      return;
+    }
     commitRange(validation.range);
   };
 
@@ -152,10 +155,6 @@
     restoreCommittedDraft();
   };
 </script>
-
-{#snippet customTrigger()}
-  <span>{range.mode === 'custom' ? 'Custom · selected' : 'Custom'} ▾</span>
-{/snippet}
 
 <section aria-label="Report period" class={toolbar} data-report-period-control>
   <span class={label}>Period</span>
@@ -185,57 +184,55 @@
   >
     All time
   </button>
-  <Popover
-    contentClass={customContent}
-    trigger={customTrigger}
-    triggerAriaLabel={range.mode === 'custom'
-      ? 'Choose a custom report period, selected'
-      : 'Choose a custom report period'}
-    triggerClass={cx(preset, range.mode === 'custom' ? selectedPreset : undefined)}
+  <button
+    aria-label={range.mode === 'custom' ? 'Choose a custom report period, selected' : 'Choose a custom report period'}
+    aria-pressed={range.mode === 'custom'}
+    class={cx(preset, range.mode === 'custom' ? selectedPreset : undefined)}
+    onclick={selectCustom}
+    type="button"
   >
-    <form
-      class={customForm}
-      onsubmit={(event) => {
-        event.preventDefault();
-        applyCustomRange();
-      }}
-    >
-      <h2 class={customHeading}>Custom period</h2>
-      <div class={customFields}>
-        <label class={field} for="report-period-from">From</label>
-        <label class={field} for="report-period-to">To</label>
-        <input
-          aria-describedby={validationError ? customErrorId : undefined}
-          aria-invalid={invalidFrom}
-          class={cx(input, invalidFrom ? invalidInput : undefined)}
-          id="report-period-from"
-          oninput={(event) => {
-            draftFrom = event.currentTarget.value;
-          }}
-          onkeydown={restoreOnEscape}
-          type="text"
-          value={draftFrom}
-        >
-        <input
-          aria-describedby={validationError ? customErrorId : undefined}
-          aria-invalid={invalidTo}
-          class={cx(input, invalidTo ? invalidInput : undefined)}
-          id="report-period-to"
-          oninput={(event) => {
-            draftTo = event.currentTarget.value;
-          }}
-          onkeydown={restoreOnEscape}
-          type="text"
-          value={draftTo}
-        >
-      </div>
+    Custom
+  </button>
+  {#if range.mode === 'custom'}
+    <div class={customFields} data-report-range-part="adjustments">
+      <label class={field} for="report-period-from">From</label>
+      <input
+        aria-describedby={validationError ? customErrorId : undefined}
+        aria-invalid={invalidFrom}
+        class={cx(input, invalidFrom ? invalidInput : undefined)}
+        id="report-period-from"
+        onchange={(event) => {
+          draftFrom = event.currentTarget.value;
+          commitDraftEdit();
+        }}
+        onkeydown={restoreOnEscape}
+        type="date"
+        value={draftFrom}
+        bind:this={fromInputElement}
+      >
+      <label class={field} for="report-period-to">To</label>
+      <input
+        aria-describedby={validationError ? customErrorId : undefined}
+        aria-invalid={invalidTo}
+        class={cx(input, invalidTo ? invalidInput : undefined)}
+        id="report-period-to"
+        onchange={(event) => {
+          draftTo = event.currentTarget.value;
+          commitDraftEdit();
+        }}
+        onkeydown={restoreOnEscape}
+        type="date"
+        value={draftTo}
+      >
       {#if validationError}
         <p class={validationMessage} id={customErrorId} role="alert">{validationError.message}</p>
       {/if}
-      <div class={customActions}>
-        <button class={applyButton} onkeydown={restoreOnEscape} type="submit">Apply custom period</button>
-      </div>
-    </form>
-  </Popover>
+    </div>
+  {/if}
   <span class={periodSummary} data-report-range-part="summary">{projection.summary}</span>
+  {#if range.mode === 'custom'}
+    <div class={brushRow}>
+      <RangeBrush {dateDomain} {generatedAt} {onRangeChange} {range} {...navigate ? { navigate } : {}} />
+    </div>
+  {/if}
 </section>
