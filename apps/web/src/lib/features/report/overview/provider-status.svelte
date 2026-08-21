@@ -328,7 +328,7 @@
         <div class={panelSub}>Quota usage and operational issues at a glance.</div>
       </div>
       {#if onOpenHistory}
-        <button class={historyButton} onclick={onOpenHistory} type="button">View Codex history</button>
+        <button class={historyButton} onclick={onOpenHistory} type="button">View quota history</button>
       {/if}
     </div>
 

@@ -42,7 +42,9 @@ export type UsageEngineHandoffId = Branded<string, 'UsageEngineHandoffId'>;
 export type UsageEnginePublicationRevision = ServedRevision;
 export type UsageEngineProjectSourceReference = Branded<string, 'UsageEngineProjectSourceReference'>;
 
-export const USAGE_ENGINE_PROTOCOL_VERSION = 1 as UsageEngineProtocolVersion;
+// Preview-merge gained required bundle identity and warning-detail fields. Keeping protocol v1 would
+// admit a long-running old engine and then fail the first preview as an opaque invalid response.
+export const USAGE_ENGINE_PROTOCOL_VERSION = 2 as UsageEngineProtocolVersion;
 
 const kibibyte = 1024;
 const maxOpaqueIdBytes = 160;
@@ -813,11 +815,17 @@ export interface UsageEngineMergeImportResult {
 }
 
 export interface UsageEngineMergePreviewOutput extends MergePreviewProof {
+  readonly bundle: {
+    readonly generatedAt: string;
+    readonly machineId: string;
+    readonly machineLabel: string;
+  };
   readonly bytes: number;
   readonly kind: 'merge-preview';
   readonly result: UsageEngineMergeImportResult;
   readonly rows: number;
   readonly warningCount: number;
+  readonly warningItems: readonly string[];
 }
 
 export interface UsageEngineCursorImportOutput {
@@ -951,11 +959,59 @@ const assertMergeResultRows = (result: UsageEngineMergeImportResult, rows: numbe
   }
 };
 
+// The merge service truncates preview warnings before they cross this boundary
+// (MAX_MANUAL_MERGE_PREVIEW_WARNINGS / MAX_PREVIEW_WARNING_CHARACTERS in @ai-usage/usage-merge).
+// Both truncations count UTF-16 code units, so these ceilings do too: a byte bound would reject a
+// legitimately truncated multi-byte warning.
+const MAX_MERGE_PREVIEW_WARNING_ITEMS = 20;
+const MAX_MERGE_PREVIEW_WARNING_ITEM_CHARACTERS = 512;
+
+const parseMergePreviewBundle = (value: unknown): UsageEngineMergePreviewOutput['bundle'] => {
+  if (!(isRecord(value) && hasExactKeys(value, ['generatedAt', 'machineId', 'machineLabel']))) {
+    return fail('Usage engine merge preview bundle contains unknown or missing fields.');
+  }
+  return {
+    generatedAt: parseIsoTimestamp(value.generatedAt, 'Usage engine merge preview bundle timestamp'),
+    machineId: parseBoundedString(value.machineId, maxOpaqueIdBytes, 'Usage engine merge preview bundle machine ID'),
+    // Machine labels are one domain value across rename, export, and preview. Use the same UTF-8 byte
+    // bound as the engine command instead of a second character-based cap that rejects valid exports.
+    machineLabel: parseBoundedString(
+      value.machineLabel,
+      usageEngineControlBounds.maxMessageBytes,
+      'Usage engine merge preview bundle machine label',
+    ),
+  };
+};
+
+const parseMergePreviewWarningItems = (value: unknown): readonly string[] => {
+  if (!(Array.isArray(value) && value.length <= MAX_MERGE_PREVIEW_WARNING_ITEMS)) {
+    return fail('Usage engine merge preview warning items are invalid.');
+  }
+  return Object.freeze(
+    value.map((item) => {
+      if (!(typeof item === 'string' && item.length <= MAX_MERGE_PREVIEW_WARNING_ITEM_CHARACTERS)) {
+        return fail('Usage engine merge preview warning item is invalid or exceeds its length limit.');
+      }
+      return item;
+    }),
+  );
+};
+
 export const parseUsageEngineMergePreviewOutput = (value: unknown): UsageEngineMergePreviewOutput => {
   if (
     !(
       isRecord(value) &&
-      hasExactKeys(value, ['bytes', 'confirmationToken', 'documentDigest', 'kind', 'result', 'rows', 'warningCount']) &&
+      hasExactKeys(value, [
+        'bundle',
+        'bytes',
+        'confirmationToken',
+        'documentDigest',
+        'kind',
+        'result',
+        'rows',
+        'warningCount',
+        'warningItems',
+      ]) &&
       value.kind === 'merge-preview'
     )
   ) {
@@ -973,13 +1029,22 @@ export const parseUsageEngineMergePreviewOutput = (value: unknown): UsageEngineM
   const result = parseMergeImportResult(value.result);
   const rows = parseMergeCount(value.rows, 'Usage engine merge row count');
   assertMergeResultRows(result, rows);
+  const warningCount = parseMergeWarningCount(value.warningCount, 'Usage engine merge preview warning count');
+  const warningItems = parseMergePreviewWarningItems(value.warningItems);
+  // The items are an excerpt of the counted warnings, so more excerpts than warnings is incoherent:
+  // the panel would list rows its own summary denies exist.
+  if (warningItems.length > warningCount) {
+    fail('Usage engine merge preview warning items exceed its warning count.');
+  }
   return {
     ...proof,
+    bundle: parseMergePreviewBundle(value.bundle),
     bytes: parseNonNegativeSafeInteger(value.bytes, MAX_PORTABLE_USAGE_BYTES, 'Usage engine merge byte count'),
     kind: 'merge-preview',
     result,
     rows,
-    warningCount: parseMergeWarningCount(value.warningCount, 'Usage engine merge preview warning count'),
+    warningCount,
+    warningItems,
   };
 };
 

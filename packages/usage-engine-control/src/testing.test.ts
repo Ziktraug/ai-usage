@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { USAGE_ENGINE_PROTOCOL_VERSION } from './contracts';
 import { fixtureGeneratedAt, fixtureInstanceId, fixtureStatus } from './test-fixtures';
 import { createInMemoryUsageEngineControlClient } from './testing';
 
@@ -96,7 +97,7 @@ describe('in-memory usage engine control client', () => {
         error: { code: 'command-rejected', message: '/fixture/private/secret.json api_key=fake' },
         instanceId: fixtureInstanceId as never,
         ok: false,
-        protocolVersion: 1 as never,
+        protocolVersion: USAGE_ENGINE_PROTOCOL_VERSION as never,
       }),
       status: fixtureStatus(),
     });
@@ -136,7 +137,7 @@ describe('in-memory usage engine control client', () => {
         commandId: 'different-command' as never,
         instanceId: fixtureInstanceId as never,
         ok: true,
-        protocolVersion: 1 as never,
+        protocolVersion: USAGE_ENGINE_PROTOCOL_VERSION as never,
       }),
       status: fixtureStatus(),
     });
@@ -172,7 +173,7 @@ describe('in-memory usage engine control client', () => {
           commandId,
           instanceId: fixtureInstanceId,
           ok: true,
-          protocolVersion: 2,
+          protocolVersion: USAGE_ENGINE_PROTOCOL_VERSION + 1,
         }) as never,
       status: fixtureStatus(),
     });

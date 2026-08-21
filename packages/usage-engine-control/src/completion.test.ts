@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test';
 import { executeUsageEngineCommandToCompletion } from './completion';
-import { parseUsageEngineCommandResult, parseUsageEngineEvent } from './contracts';
+import { parseUsageEngineCommandResult, parseUsageEngineEvent, USAGE_ENGINE_PROTOCOL_VERSION } from './contracts';
 import { fixtureInstanceId, fixtureStatus } from './test-fixtures';
 import { createInMemoryUsageEngineControlClient } from './testing';
 
@@ -28,7 +28,7 @@ test('subscribes before admission and returns the exact completion without a lat
         commandId,
         instanceId: fixtureInstanceId,
         ok: true,
-        protocolVersion: 1,
+        protocolVersion: USAGE_ENGINE_PROTOCOL_VERSION,
       });
     },
     status: fixtureStatus(),

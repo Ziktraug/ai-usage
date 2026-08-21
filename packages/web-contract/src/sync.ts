@@ -66,10 +66,45 @@ export const syncFleetOutputSchema = pipe(
 export type SyncFleet = InferOutput<typeof syncFleetOutputSchema>;
 export const parseSyncFleet = (value: unknown): SyncFleet => parse(syncFleetOutputSchema, value);
 
+// The engine bounds `set-machine-label` by UTF-8 bytes, so this boundary counts bytes too: a
+// character cap would accept a label the engine then rejects, and the rename would fail late.
+export const MAX_MACHINE_LABEL_BYTES = 240;
+const labelEncoder = new TextEncoder();
+
+const machineLabelInputSchema = pipe(
+  string(),
+  check((value) => value.trim().length > 0, 'A machine label cannot be blank.'),
+  check(
+    (value) => labelEncoder.encode(value.trim()).byteLength <= MAX_MACHINE_LABEL_BYTES,
+    'A machine label exceeds its byte limit.',
+  ),
+);
+
+export const syncMachineLabelInputSchema = pipe(
+  custom<unknown>(isJsonWireValue, 'Expected a finite JSON machine label request without accessors.'),
+  strictObject({ label: machineLabelInputSchema }),
+);
+export type SyncMachineLabelInput = InferOutput<typeof syncMachineLabelInputSchema>;
+
+export const syncMachineLabelOutputSchema = pipe(
+  custom<unknown>(isJsonWireValue, 'Expected a finite JSON machine label response without accessors.'),
+  strictObject({ machine: usageMachineSchema }),
+);
+export type SyncMachineLabelResult = InferOutput<typeof syncMachineLabelOutputSchema>;
+export const parseSyncMachineLabelResult = (value: unknown): SyncMachineLabelResult =>
+  parse(syncMachineLabelOutputSchema, value);
+
 const syncFleetErrors = {
   ForbiddenDemo: publicErrorMap.ForbiddenDemo,
   IncompatibleStore: publicErrorMap.IncompatibleStore,
   Unavailable: publicErrorMap.Unavailable,
+} as const;
+
+const syncMachineLabelErrors = {
+  EngineUnavailable: publicErrorMap.EngineUnavailable,
+  Forbidden: publicErrorMap.Forbidden,
+  ForbiddenDemo: publicErrorMap.ForbiddenDemo,
+  InvalidInput: publicErrorMap.InvalidInput,
 } as const;
 
 export const syncContract = {
@@ -78,6 +113,11 @@ export const syncContract = {
     .input(emptyInputSchema)
     .output(syncFleetOutputSchema)
     .errors(syncFleetErrors),
+  setMachineLabel: oc
+    .route({ method: 'POST', path: '/sync/setMachineLabel' })
+    .input(syncMachineLabelInputSchema)
+    .output(syncMachineLabelOutputSchema)
+    .errors(syncMachineLabelErrors),
 } as const;
 
 export type SyncContractClient = ContractRouterClient<typeof syncContract>;

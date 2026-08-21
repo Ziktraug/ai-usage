@@ -55,13 +55,15 @@ const viteServer = await createServer({
 });
 const closeViteServer = (): Promise<void> => viteServer.close();
 afterAll(closeViteServer);
-const [rootModule, progressModule, serverModule] = await Promise.all([
+const [rootModule, progressModule, labelEditorModule, serverModule] = await Promise.all([
   viteServer.ssrLoadModule('/apps/web/src/lib/features/sync/sync-root.fixture.svelte'),
   viteServer.ssrLoadModule('/apps/web/src/lib/features/sync/manual-transfer-progress.svelte'),
+  viteServer.ssrLoadModule('/apps/web/src/lib/features/sync/machine-label-editor.svelte'),
   viteServer.ssrLoadModule('svelte/server'),
 ]);
 const syncRoot = componentFrom(rootModule, 'Sync root fixture');
 const transferProgress = componentFrom(progressModule, 'Manual transfer progress');
+const machineLabelEditor = componentFrom(labelEditorModule, 'Machine label editor');
 const { render } = rendererFrom(serverModule);
 
 describe('Sync rendered SSR parity', () => {
@@ -91,6 +93,11 @@ describe('Sync rendered SSR parity', () => {
     expect(body).toContain('Laptop');
     expect(body).toContain('7');
     expect(body).toContain('Manual transfer');
+    // The Cursor export is a second, separately labelled action next to the merge drop zone.
+    expect(body).toContain('Drop a merge file here or choose a file');
+    expect(body).toContain('Cursor usage export');
+    expect(body).toContain('Import a Cursor usage CSV');
+    expect(body).toContain('accept=".csv,text/csv"');
     expect(body).not.toContain('Loading machine fleet');
   });
 
@@ -136,5 +143,34 @@ describe('Sync rendered SSR parity', () => {
     expect(previewing).not.toContain('each usage row is written');
     expect(previewing).toContain('Checking the file against your usage…');
     expect(previewing).toContain('Nothing is written until you confirm.');
+
+    // A Cursor import neither merges nor previews; claiming either would misdescribe what it does.
+    const importingCursor = render(transferProgress, {
+      props: {
+        now: 12_000,
+        operation: 'cursor',
+        progress: { fileName: 'usage-events.csv', fileSize: 100, phase: 'processing', startedAt: 7000 },
+      },
+    }).body;
+    expect(importingCursor).not.toContain('Merging into the local database…');
+    expect(importingCursor).not.toContain('Checking the file against your usage…');
+    expect(importingCursor).toContain('Copying into local Cursor exports…');
+    expect(importingCursor).toContain('Collection reads it afterwards.');
+  });
+
+  it('offers the rename affordance only for the machine the engine command can label', () => {
+    const rename = (label: string): Promise<string | null> => Promise.resolve(label);
+    const editable = render(machineLabelEditor, { props: { editable: true, label: 'Laptop', onRename: rename } }).body;
+    expect(editable).toContain('data-machine-label-editor="view"');
+    expect(editable).toContain('Laptop');
+    expect(editable).toContain('Rename');
+
+    // Peer labels travel with their merge bundles, so a peer row must not offer a local rename.
+    const peer = render(machineLabelEditor, {
+      props: { editable: false, label: 'Peer MacBook', onRename: rename },
+    }).body;
+    expect(peer).toContain('data-machine-label-editor="view"');
+    expect(peer).toContain('Peer MacBook');
+    expect(peer).not.toContain('Rename');
   });
 });

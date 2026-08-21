@@ -11,11 +11,13 @@ const BYTE_COUNT_PATTERN = /^\d+$/;
 
 type InboxHandoffInput = StagedUsageEngineHandoff['input'];
 type ManualMergeCommand =
+  | { readonly command: 'import-cursor'; readonly input: InboxHandoffInput }
   | { readonly command: 'preview-merge'; readonly input: InboxHandoffInput }
   | ({
       readonly command: 'confirm-merge';
       readonly input: InboxHandoffInput;
     } & MergePreviewProof);
+export type ManualMergeUploadAction = 'confirm' | 'cursor' | 'preview';
 type ManualMergeUploadResult = ManualOperationResult<unknown>;
 type ManualMergeUploadFailure = Extract<ManualMergeUploadResult, { readonly ok: false }>;
 
@@ -34,17 +36,50 @@ const jsonFailure = (status: number, tag: string, message: string, reason?: stri
     { status },
   );
 
-const validateJsonContentType = (request: Request): Response | null => {
+// A merge bundle is JSON and a Cursor usage export is CSV, so the media type is checked against the
+// requested action rather than widened to a set that would let either body reach either command.
+const CONTENT_TYPE_BY_ACTION = {
+  confirm: 'application/json',
+  cursor: 'text/csv',
+  preview: 'application/json',
+} as const satisfies Readonly<Record<ManualMergeUploadAction, string>>;
+
+const validateContentType = (request: Request, action: ManualMergeUploadAction): Response | null => {
+  const expected = CONTENT_TYPE_BY_ACTION[action];
   const contentType = request.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase();
-  if (contentType !== 'application/json') {
-    return jsonFailure(415, 'UnsupportedMediaType', 'Manual imports require Content-Type: application/json.');
+  if (contentType !== expected) {
+    return jsonFailure(415, 'UnsupportedMediaType', `Manual imports require Content-Type: ${expected}.`);
   }
   return null;
 };
 
+// The upload seam now serves two different documents. Public failure text is what the user acts on,
+// so it names the document they actually chose rather than always describing a merge.
+interface ManualMergeUploadVocabulary {
+  readonly document: string;
+  readonly encoding: string;
+  readonly operation: string;
+}
+
+const MERGE_VOCABULARY: ManualMergeUploadVocabulary = {
+  document: 'usage merge file',
+  encoding: 'UTF-8 JSON',
+  operation: 'merge',
+};
+
+const VOCABULARY_BY_ACTION = {
+  confirm: MERGE_VOCABULARY,
+  cursor: { document: 'Cursor usage export', encoding: 'UTF-8 CSV', operation: 'Cursor import' },
+  preview: MERGE_VOCABULARY,
+} as const satisfies Readonly<Record<ManualMergeUploadAction, ManualMergeUploadVocabulary>>;
+
 type BoundedBodyResult = { readonly bytes: Uint8Array } | { readonly response: Response };
 
-const readBoundedBody = async (request: Request, maxBytes: number): Promise<BoundedBodyResult> => {
+const readBoundedBody = async (
+  request: Request,
+  maxBytes: number,
+  vocabulary: ManualMergeUploadVocabulary,
+): Promise<BoundedBodyResult> => {
   const contentLength = request.headers.get('content-length');
   if (contentLength !== null) {
     if (!BYTE_COUNT_PATTERN.test(contentLength)) {
@@ -58,7 +93,7 @@ const readBoundedBody = async (request: Request, maxBytes: number): Promise<Boun
   }
 
   if (!request.body) {
-    return { response: jsonFailure(400, 'EmptyUpload', 'Choose a non-empty usage merge file to import.') };
+    return { response: jsonFailure(400, 'EmptyUpload', `Choose a non-empty ${vocabulary.document} to import.`) };
   }
 
   const reader = request.body.getReader();
@@ -67,11 +102,11 @@ const readBoundedBody = async (request: Request, maxBytes: number): Promise<Boun
   while (true) {
     const chunk = await readAbortableRequestBodyChunk(reader, request.signal);
     if ('aborted' in chunk) {
-      return { response: jsonFailure(499, 'UploadAborted', 'The merge upload was cancelled.') };
+      return { response: jsonFailure(499, 'UploadAborted', `The ${vocabulary.operation} upload was cancelled.`) };
     }
     if (chunk.done) {
       if (request.signal.aborted) {
-        return { response: jsonFailure(499, 'UploadAborted', 'The merge upload was cancelled.') };
+        return { response: jsonFailure(499, 'UploadAborted', `The ${vocabulary.operation} upload was cancelled.`) };
       }
       break;
     }
@@ -86,7 +121,7 @@ const readBoundedBody = async (request: Request, maxBytes: number): Promise<Boun
   }
 
   if (byteLength === 0) {
-    return { response: jsonFailure(400, 'EmptyUpload', 'Choose a non-empty usage merge file to import.') };
+    return { response: jsonFailure(400, 'EmptyUpload', `Choose a non-empty ${vocabulary.document} to import.`) };
   }
 
   const bytes = new Uint8Array(byteLength);
@@ -98,20 +133,25 @@ const readBoundedBody = async (request: Request, maxBytes: number): Promise<Boun
   try {
     new TextDecoder('utf-8', { fatal: true }).decode(bytes);
   } catch {
-    return { response: jsonFailure(400, 'InvalidEncoding', 'Manual import files must contain valid UTF-8 JSON.') };
+    return {
+      response: jsonFailure(400, 'InvalidEncoding', `Manual import files must contain valid ${vocabulary.encoding}.`),
+    };
   }
   return { bytes };
 };
 
-type ParsedManualMergeAction = { readonly action: 'preview' } | ({ readonly action: 'confirm' } & MergePreviewProof);
+type ParsedManualMergeAction =
+  | { readonly action: 'cursor' }
+  | { readonly action: 'preview' }
+  | ({ readonly action: 'confirm' } & MergePreviewProof);
 
 const parseManualMergeAction = (request: Request): ParsedManualMergeAction | Response => {
   const action = request.headers.get('x-ai-usage-merge-action');
-  if (action === 'preview') {
+  if (action === 'cursor' || action === 'preview') {
     return { action };
   }
   if (action !== 'confirm') {
-    return jsonFailure(400, 'InvalidAction', 'Choose preview or confirm for a manual import.');
+    return jsonFailure(400, 'InvalidAction', 'Choose preview, confirm, or cursor for a manual import.');
   }
   try {
     const proof = parseMergePreviewProof({
@@ -124,40 +164,74 @@ const parseManualMergeAction = (request: Request): ParsedManualMergeAction | Res
   }
 };
 
+// The status per engine error code is the same for both documents; only the noun differs, so the
+// message is written against the vocabulary of the action the user actually chose. The `merge-*`
+// codes stay merge-worded because only the merge commands can produce them.
 const engineFailurePresentation = {
-  aborted: { message: 'The merge command was cancelled.', status: 503 },
-  'authentication-failed': { message: 'The usage engine is unavailable for this merge.', status: 503 },
-  'command-failed': { message: 'The usage engine could not complete this merge.', status: 500 },
-  'command-rejected': { message: 'The usage engine rejected the merge command.', status: 409 },
-  'engine-busy': { message: 'The usage engine is unavailable for this merge.', status: 503 },
-  'engine-unavailable': { message: 'The usage engine is unavailable for this merge.', status: 503 },
-  'invalid-response': { message: 'The usage engine returned an invalid merge response.', status: 502 },
-  'merge-invalid-input': { message: 'The merge file is invalid.', status: 422 },
-  'merge-invalid-json': { message: 'The merge file does not contain valid JSON.', status: 400 },
-  'merge-self-merge': { message: 'The merge file belongs to this machine.', status: 409 },
-  'merge-store-failed': { message: 'The usage store could not apply the merge file.', status: 500 },
-  'preview-stale': { message: 'The merge file changed after it was previewed.', status: 409 },
-  'protocol-mismatch': { message: 'The usage engine version is incompatible with the web app.', status: 409 },
-  'request-too-large': { message: 'The usage engine rejected the merge file size.', status: 413 },
-  'response-too-large': { message: 'The usage engine returned an invalid merge response.', status: 502 },
-  timeout: { message: 'The usage engine is unavailable for this merge.', status: 503 },
-  'transport-failed': { message: 'The usage engine is unavailable for this merge.', status: 503 },
-} as const satisfies Readonly<Record<UsageEngineErrorCode, { readonly message: string; readonly status: number }>>;
+  aborted: { message: (words) => `The ${words.operation} command was cancelled.`, status: 503 },
+  'authentication-failed': {
+    message: (words) => `The usage engine is unavailable for this ${words.operation}.`,
+    status: 503,
+  },
+  'command-failed': { message: (words) => `The usage engine could not complete this ${words.operation}.`, status: 500 },
+  'command-rejected': { message: (words) => `The usage engine rejected the ${words.operation} command.`, status: 409 },
+  'engine-busy': { message: (words) => `The usage engine is unavailable for this ${words.operation}.`, status: 503 },
+  'engine-unavailable': {
+    message: (words) => `The usage engine is unavailable for this ${words.operation}.`,
+    status: 503,
+  },
+  'invalid-response': {
+    message: (words) => `The usage engine returned an invalid ${words.operation} response.`,
+    status: 502,
+  },
+  'merge-invalid-input': { message: (words) => `The ${words.document} is invalid.`, status: 422 },
+  'merge-invalid-json': { message: () => 'The merge file does not contain valid JSON.', status: 400 },
+  'merge-self-merge': { message: () => 'The merge file belongs to this machine.', status: 409 },
+  'merge-store-failed': { message: (words) => `The usage store could not apply the ${words.document}.`, status: 500 },
+  'preview-stale': { message: () => 'The merge file changed after it was previewed.', status: 409 },
+  'protocol-mismatch': { message: () => 'The usage engine version is incompatible with the web app.', status: 409 },
+  'request-too-large': { message: (words) => `The usage engine rejected the ${words.document} size.`, status: 413 },
+  'response-too-large': {
+    message: (words) => `The usage engine returned an invalid ${words.operation} response.`,
+    status: 502,
+  },
+  timeout: { message: (words) => `The usage engine is unavailable for this ${words.operation}.`, status: 503 },
+  'transport-failed': {
+    message: (words) => `The usage engine is unavailable for this ${words.operation}.`,
+    status: 503,
+  },
+} as const satisfies Readonly<
+  Record<
+    UsageEngineErrorCode,
+    { readonly message: (words: ManualMergeUploadVocabulary) => string; readonly status: number }
+  >
+>;
 
-const engineFailureResponse = (error: UsageEngineCommandCompletionError): Response => {
+const engineFailureResponse = (
+  error: UsageEngineCommandCompletionError,
+  vocabulary: ManualMergeUploadVocabulary,
+): Response => {
   const presentation = engineFailurePresentation[error.code];
-  return jsonFailure(presentation.status, 'UsageEngineCommandError', presentation.message, error.code);
+  return jsonFailure(presentation.status, 'UsageEngineCommandError', presentation.message(vocabulary), error.code);
 };
 
-const commandFor = (action: ParsedManualMergeAction, staged: StagedUsageEngineHandoff): ManualMergeCommand =>
-  action.action === 'preview'
-    ? { command: 'preview-merge', input: staged.input }
-    : {
-        confirmationToken: action.confirmationToken,
-        documentDigest: action.documentDigest,
-        command: 'confirm-merge',
-        input: staged.input,
-      };
+const ENGINE_COMMAND_BY_ACTION = {
+  confirm: 'confirm-merge',
+  cursor: 'import-cursor',
+  preview: 'preview-merge',
+} as const satisfies Readonly<Record<ManualMergeUploadAction, ManualMergeCommand['command']>>;
+
+const commandFor = (action: ParsedManualMergeAction, staged: StagedUsageEngineHandoff): ManualMergeCommand => {
+  if (action.action === 'confirm') {
+    return {
+      confirmationToken: action.confirmationToken,
+      documentDigest: action.documentDigest,
+      command: 'confirm-merge',
+      input: staged.input,
+    };
+  }
+  return { command: ENGINE_COMMAND_BY_ACTION[action.action], input: staged.input };
+};
 
 type StagingOutcome =
   | { readonly state: 'aborted' }
@@ -208,11 +282,16 @@ const stageUntilAbort = async (
   return outcome;
 };
 
-const completionResponse = (action: ParsedManualMergeAction, completion: UsageEngineCommandCompletion): Response => {
-  const expectedCommand = action.action === 'preview' ? 'preview-merge' : 'confirm-merge';
+const completionResponse = (
+  action: ParsedManualMergeAction,
+  completion: UsageEngineCommandCompletion,
+  vocabulary: ManualMergeUploadVocabulary,
+): Response => {
+  const expectedCommand = ENGINE_COMMAND_BY_ACTION[action.action];
   if (completion.state !== 'succeeded' || completion.command !== expectedCommand) {
     return engineFailureResponse(
       new UsageEngineCommandCompletionError('invalid-response', 'Usage engine returned a mismatched completion.'),
+      vocabulary,
     );
   }
   return Response.json({ data: completion.output, ok: true } satisfies ManualMergeUploadResult, { status: 200 });
@@ -226,29 +305,30 @@ export const handleManualMergeUpload = async (
   if (originFailure) {
     return originFailure;
   }
-  const contentTypeFailure = validateJsonContentType(request);
-  if (contentTypeFailure) {
-    return contentTypeFailure;
-  }
   const action = parseManualMergeAction(request);
   if (action instanceof Response) {
     return action;
   }
+  const contentTypeFailure = validateContentType(request, action.action);
+  if (contentTypeFailure) {
+    return contentTypeFailure;
+  }
+  const vocabulary = VOCABULARY_BY_ACTION[action.action];
   const maximumBytes = options.maxBytes ?? MAX_PORTABLE_USAGE_BYTES;
   if (!(Number.isSafeInteger(maximumBytes) && maximumBytes > 0 && maximumBytes <= MAX_PORTABLE_USAGE_BYTES)) {
     return jsonFailure(500, 'UploadConfigurationError', 'Manual import upload limits are unavailable.');
   }
-  const body = await readBoundedBody(request, maximumBytes);
+  const body = await readBoundedBody(request, maximumBytes, vocabulary);
   if ('response' in body) {
     return body.response;
   }
   if (request.signal.aborted) {
-    return jsonFailure(499, 'UploadAborted', 'The merge upload was cancelled.');
+    return jsonFailure(499, 'UploadAborted', `The ${vocabulary.operation} upload was cancelled.`);
   }
 
   const staging = await stageUntilAbort(body.bytes, request.signal, options.stageHandoff);
   if (staging.state === 'aborted') {
-    return jsonFailure(499, 'UploadAborted', 'The merge upload was cancelled.');
+    return jsonFailure(499, 'UploadAborted', `The ${vocabulary.operation} upload was cancelled.`);
   }
   if (staging.state === 'failed') {
     return jsonFailure(503, 'EngineInboxUnavailable', 'The usage engine inbox is unavailable.');
@@ -258,20 +338,28 @@ export const handleManualMergeUpload = async (
     try {
       await staged.cleanup();
     } catch {
-      return jsonFailure(500, 'HandoffCleanupFailed', 'The merge upload could not be cleaned up safely.');
+      return jsonFailure(
+        500,
+        'HandoffCleanupFailed',
+        `The ${vocabulary.operation} upload could not be cleaned up safely.`,
+      );
     }
-    return jsonFailure(499, 'UploadAborted', 'The merge upload was cancelled.');
+    return jsonFailure(499, 'UploadAborted', `The ${vocabulary.operation} upload was cancelled.`);
   }
 
   let response: Response;
   try {
     const completion = await options.executeCommand(commandFor(action, staged));
-    response = completionResponse(action, completion);
+    response = completionResponse(action, completion, vocabulary);
   } catch (error) {
     response =
       error instanceof UsageEngineCommandCompletionError
-        ? engineFailureResponse(error)
-        : jsonFailure(503, 'UsageEngineUnavailable', 'The usage engine is unavailable for this merge.');
+        ? engineFailureResponse(error, vocabulary)
+        : jsonFailure(
+            503,
+            'UsageEngineUnavailable',
+            `The usage engine is unavailable for this ${vocabulary.operation}.`,
+          );
   }
   try {
     await staged.cleanup();

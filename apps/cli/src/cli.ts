@@ -46,9 +46,18 @@ export interface CursorImportArgs {
   file: string;
 }
 
+export type QuotaHistoryRange = '24h' | '7d' | '30d';
+
+export const QUOTA_HISTORY_RANGES = ['24h', '7d', '30d'] as const satisfies readonly QuotaHistoryRange[];
+
+const DEFAULT_QUOTA_HISTORY_RANGE: QuotaHistoryRange = '7d';
+
+const isQuotaHistoryRange = (value: string): value is QuotaHistoryRange =>
+  (QUOTA_HISTORY_RANGES as readonly string[]).includes(value);
+
 export type CliCommand =
   | { _tag: 'Help' }
-  | { _tag: 'Quota'; color: boolean | null }
+  | { _tag: 'Quota'; color: boolean | null; history: QuotaHistoryRange | null }
   | { _tag: 'Report'; args: Args }
   | { _tag: 'Snapshot'; args: SnapshotArgs }
   | { _tag: 'Merge'; args: MergeArgs }
@@ -116,7 +125,7 @@ const parseHarness = (value: string): Effect.Effect<HarnessKey, CliArgumentError
 
 export const helpText =
   `ai-usage — per-session token usage across ${harnessLabelList}\n\n` +
-  'Usage: bun ai-usage.ts [report] [options]   |   bun ai-usage.ts quota [--color|--no-color]\n\n' +
+  'Usage: bun ai-usage.ts [report] [options]   |   bun ai-usage.ts quota [--history [24h|7d|30d]]\n\n' +
   'Subcommands:\n' +
   '  report (default)       per-session table + data analysis\n' +
   '  snapshot               write a portable usage snapshot\n' +
@@ -139,6 +148,10 @@ export const helpText =
   '  --no-color / --color   disable / force ANSI colors (default: auto)\n' +
   '  --json | --csv\n' +
   '  --payload-json         full report payload JSON for compatible consumers\n' +
+  '\nQuota:\n' +
+  '  quota                  refresh, then show the newest observation per provider\n' +
+  '  quota --history [range]\n' +
+  '                         trend from stored observations only (24h|7d|30d, default 7d)\n' +
   '\nSnapshot:\n' +
   '  snapshot --out <file>  export local usage rows with machine provenance\n' +
   '\nMerge:\n' +
@@ -209,9 +222,12 @@ export const parseArgs = (argv: string[]): Effect.Effect<Args, CliArgumentError>
     return args;
   });
 
-const parseQuotaArgs = (argv: string[]): Effect.Effect<{ color: boolean | null }, CliArgumentError> =>
+const parseQuotaArgs = (
+  argv: string[],
+): Effect.Effect<{ color: boolean | null; history: QuotaHistoryRange | null }, CliArgumentError> =>
   Effect.gen(function* () {
     let color: boolean | null = null;
+    let history: QuotaHistoryRange | null = null;
     const rest = [...argv];
     while (rest.length) {
       const arg = rest.shift()!;
@@ -219,13 +235,28 @@ const parseQuotaArgs = (argv: string[]): Effect.Effect<{ color: boolean | null }
         color = false;
       } else if (arg === '--color') {
         color = true;
+      } else if (arg === '--history') {
+        // The range is optional: a bare --history means the default window, and anything starting
+        // with "-" is the next flag rather than a range, so `--history --color` still parses.
+        const next = rest[0];
+        if (next === undefined || next.startsWith('-')) {
+          history = DEFAULT_QUOTA_HISTORY_RANGE;
+        } else {
+          rest.shift();
+          if (!isQuotaHistoryRange(next)) {
+            return yield* Effect.fail(
+              cliArgumentError(`Unknown quota history range: ${next} (expected 24h, 7d, or 30d)`),
+            );
+          }
+          history = next;
+        }
       } else if (arg === '-h' || arg === '--help') {
         return yield* Effect.fail(cliArgumentError('Help is a command-level flag'));
       } else {
         return yield* Effect.fail(cliArgumentError(`Unknown option for quota: ${arg}`));
       }
     }
-    return { color };
+    return { color, history };
   });
 
 const parseSnapshotArgs = (argv: string[]): Effect.Effect<SnapshotArgs, CliArgumentError> =>

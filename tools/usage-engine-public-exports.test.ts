@@ -62,7 +62,7 @@ describe('usage engine public package exports', () => {
   });
 
   test('resolves every declared TypeScript seam through its package specifier', () => {
-    expect(Number(USAGE_ENGINE_PROTOCOL_VERSION)).toBe(1);
+    expect(Number(USAGE_ENGINE_PROTOCOL_VERSION)).toBe(2);
     expect(parseUsageEngineCommand).toBeFunction();
     expect(parseUsageEngineCommandCancellationResult).toBeFunction();
     expect(parseUsageEngineCommandCompletion).toBeFunction();

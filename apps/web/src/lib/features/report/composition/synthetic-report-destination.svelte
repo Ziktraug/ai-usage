@@ -37,7 +37,8 @@
     machineLabelPresentationForSnapshot,
   } from '../../../../machine-freshness-presentation';
   import type { TimelineValue } from '../../../../overview-model';
-  import { buildProviderStatusViews } from '../../../../provider-status-model';
+  import { E2E_PROVIDER_QUOTA_FIXTURE_POINT_COUNT } from '../../../../provider-quota-e2e-fixture';
+  import { buildProviderStatusViews, providerHistoryAvailable } from '../../../../provider-status-model';
   import { demoReportPayload } from '../../../../report-data';
   import type { RuntimeMode } from '../../../../runtime-mode';
   import {
@@ -86,6 +87,8 @@
   const runtimeMode = untrack(() => mode);
   const revision = untrack(() => `synthetic-${runtimeMode}`);
   const responseFixture = untrack(() => (browser && mode === 'e2e' ? createFocusedReportE2EFixture() : undefined));
+  const quotaHistoryAvailable =
+    runtimeMode === 'e2e' && providerHistoryAvailable(E2E_PROVIDER_QUOTA_FIXTURE_POINT_COUNT, true);
   let renderedSearch = $state<DashboardSearch>(untrack(() => search));
   let renderedSearchKey = JSON.stringify(untrack(() => search));
   let pending = $state(false);
@@ -540,7 +543,7 @@
         modelsHref,
         onClearFilters: navigation.clearAllFilters,
         onOpenModels: () => navigation.setBreakdownTab('models'),
-        ...(mode === 'e2e' ? { onOpenQuotaHistory: () => (quotaHistoryOpen = true) } : {}),
+        ...(quotaHistoryAvailable ? { onOpenQuotaHistory: () => (quotaHistoryOpen = true) } : {}),
         onSelectDay: (date) =>
           navigate((current) => ({
             ...current,

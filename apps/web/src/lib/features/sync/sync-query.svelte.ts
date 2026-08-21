@@ -15,6 +15,16 @@ const createLazySyncClient = (): SyncFleetClient => {
   return { fleet: async (...parameters) => await getClient().fleet(...parameters) };
 };
 
+// The RPC context is a Svelte context read, so it must happen while the component initialises; the
+// returned closure can then run later, from an event handler.
+export const createSyncMachineRenamer = (browser: boolean): ((label: string) => Promise<string>) | undefined => {
+  if (!browser) {
+    return;
+  }
+  const adapter = createSyncBrowserAdapter(useWebQueryRpcContext().rpc.sync);
+  return async (label) => (await adapter.setMachineLabel(label)).machine.label;
+};
+
 export const createHydratedSyncFleetQuery = (
   browser: boolean,
   compatibleGeneration: () => string,

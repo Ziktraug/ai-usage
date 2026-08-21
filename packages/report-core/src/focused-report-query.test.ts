@@ -753,6 +753,44 @@ describe('focused report query contracts', () => {
     );
   });
 
+  test('names a bounded, rank-ordered sample of what the Other series aggregated', () => {
+    const modelRows = (count: number): SerializedRow[] =>
+      Array.from({ length: count }, (_, index) => {
+        const value = count - index;
+        return { ...row(`model-${value}`, 11, value), model: `model-${value}` };
+      });
+    const request: FocusedOverviewRequest = {
+      ...overviewRequest,
+      includeAdvanced: false,
+      query: { ...overviewRequest.query, range: { from: null, to: null } },
+    };
+
+    const aggregated = projectFocusedOverview(modelRows(20), support, request).timeline;
+    const other = aggregated?.series.find(({ label }) => label === 'Other');
+    if (!other) {
+      throw new Error('Twenty models must exceed the timeline series bound');
+    }
+    // The tail is ranked by cost: the nine cheapest models fall out of the top 11.
+    expect(other.memberKeys).toHaveLength(9);
+    expect(other.memberSummaries).toHaveLength(9);
+    expect(other.memberSummaries?.map(({ label }) => label)).toEqual(other.memberKeys ?? []);
+    expect(other.memberSummaries?.[0]).toEqual({ label: 'model-9', sessions: 1, total: 9 });
+    expect(other.memberSummaries?.at(-1)).toEqual({ label: 'model-1', sessions: 1, total: 1 });
+    expect(other.total).toBe(45);
+
+    const wide = projectFocusedOverview(modelRows(40), support, request).timeline;
+    const wideOther = wide?.series.find(({ label }) => label === 'Other');
+    expect(wideOther?.memberKeys).toHaveLength(29);
+    // Bounded even though the tail is far longer: a store with hundreds of
+    // categories must not push hundreds of records over the wire.
+    expect(wideOther?.memberSummaries).toHaveLength(10);
+    expect(wideOther?.memberSummaries?.map(({ label }) => label)).toEqual(wideOther?.memberKeys?.slice(0, 10) ?? []);
+
+    const narrow = projectFocusedOverview(modelRows(5), support, request).timeline;
+    expect(narrow?.series.some(({ label }) => label === 'Other')).toBe(false);
+    expect(narrow?.series.every(({ memberSummaries }) => memberSummaries === undefined)).toBe(true);
+  });
+
   test('uses stable machine IDs for filters and timeline keys when labels collide', () => {
     const machineRows = [
       {

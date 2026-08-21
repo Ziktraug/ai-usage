@@ -6,6 +6,7 @@
   import { fmtDate, fmtNum } from '../../foundation/presentation/format';
   import { useSourceControl } from './context.svelte';
   import { createCopyFeedback, registerCopyFeedbackDisposal } from './copy-feedback';
+  import { noSessionInputDetected, sessionHistoryLocations } from './first-run';
   import {
     compactRevision,
     conciseSourceStatus,
@@ -18,7 +19,7 @@
   import { presentSourceState, sourceToneClass } from './presentation';
   import SourceActions from './source-actions.svelte';
   import SourceCard from './source-card.svelte';
-  import { banner, bannerError, ghostButton, headerActions, headerTop, statusPill } from './styles';
+  import { actionRow, banner, bannerError, ghostButton, headerActions, headerTop, statusPill } from './styles';
 
   const sourceControl = useSourceControl();
   const controlState = $derived(sourceControl.state());
@@ -28,6 +29,7 @@
   const liveSources = $derived(orderedSources(controlState));
   const healthy = $derived(healthySources(liveSources));
   const deviations = $derived(deviationSources(liveSources));
+  const firstRun = $derived(noSessionInputDetected(liveSources));
   let copiedRevision: string | undefined = $state();
   const copyFeedback = createCopyFeedback(
     {
@@ -192,6 +194,40 @@
             </div>
           </details>
         </section>
+        {#if firstRun}
+          <section class={cx(panel, sourceCard)} data-first-run-guidance>
+            <h2 class={groupTitle}>No local history detected yet</h2>
+            <p class={meta}>
+              ai-usage reads the session history that installed coding tools write on this machine. Use one of these
+              tools once, then run Detect all. Once a source is detected, scheduled collection keeps it up to date.
+            </p>
+            <div class={sourceGrid}>
+              {#each sessionHistoryLocations as location (location.harness)}
+                <div class={axis} data-first-run-harness>
+                  <span class={axisLabel}>{location.harness}</span>
+                  {#each location.paths as path (path)}
+                    <code class={axisValue}>{path}</code>
+                  {/each}
+                </div>
+              {/each}
+            </div>
+            <p class={meta}>
+              Usage from another machine? Export it there, then import the file on the Sync page — nothing has to be
+              collected locally for it to appear in the report.
+            </p>
+            <div class={actionRow}>
+              <button
+                class={ghostButton}
+                disabled={!controlsAvailable || pending}
+                onclick={() => executeCommand({ command: 'detect-all' })}
+                type="button"
+              >
+                Detect all
+              </button>
+              <a class={ghostButton} href="/sync">Open Sync</a>
+            </div>
+          </section>
+        {/if}
         <details class={cx(panel, healthySummary)} data-healthy-source-summary>
           <summary class={healthySummaryHeader}>
             <h2 class={groupTitle}>Healthy sources</h2>

@@ -1,9 +1,15 @@
 import { expect, test } from 'bun:test';
 import type { FocusedReportSupport } from '@ai-usage/report-core/focused-report-query';
+import type { ProviderQuotaHistoryPoint } from '@ai-usage/report-core/provider-quota';
 import { createUsageReportPayload, prepareUsageReport, serializeUsageRow } from '@ai-usage/report-core/report-data';
 import type { SourcedRow } from '@ai-usage/report-core/types';
 import type { Args } from './cli';
-import { createServedUsageReport, createServedUsageSnapshot, reportSourceIdsFor } from './usage-read-model';
+import {
+  createServedUsageReport,
+  createServedUsageSnapshot,
+  reportSourceIdsFor,
+  withoutPreRangePoints,
+} from './usage-read-model';
 
 const args = (overrides: Partial<Args> = {}): Args => ({
   color: false,
@@ -180,4 +186,43 @@ test('uses the same canonical source ordering as the engine batch', () => {
     'rtk.savings',
     'cursor.commit-attribution',
   ]);
+});
+
+const historyPoint = (
+  overrides: Partial<ProviderQuotaHistoryPoint> & Pick<ProviderQuotaHistoryPoint, 'firstObservedAt'>,
+): ProviderQuotaHistoryPoint => ({
+  accountScope: null,
+  blocked: false,
+  group: null,
+  lastObservedAt: overrides.firstObservedAt,
+  limitSeconds: null,
+  machineId: 'machine-1',
+  machineLabel: null,
+  providerKey: 'codex',
+  providerLabel: 'Codex',
+  resetAt: null,
+  source: { confidence: 'authoritative', key: 'codex-app-server', mode: 'poll' },
+  usedPercent: 10,
+  windowId: 'codex:weekly',
+  windowLabel: 'Weekly',
+  ...overrides,
+});
+
+test('drops the store pre-range anchor so a trend endpoint never predates the requested range', () => {
+  const from = '2026-08-19T00:00:00.000Z';
+  const anchor = historyPoint({ firstObservedAt: '2026-07-25T09:00:00.000Z', usedPercent: 10 });
+  const inRange = historyPoint({ firstObservedAt: '2026-08-19T06:00:00.000Z', usedPercent: 80 });
+
+  const kept = withoutPreRangePoints([anchor, inRange], from);
+
+  // The anchor is what made `quota --history 24h` print "10% → 80%" with a July reading as the start.
+  expect(kept).toEqual([inRange]);
+  expect(kept[0]?.usedPercent).toBe(80);
+});
+
+test('drops a series whose only observation predates the requested range', () => {
+  const from = '2026-08-19T00:00:00.000Z';
+  const anchorOnly = historyPoint({ firstObservedAt: '2026-06-01T00:00:00.000Z', windowId: 'codex:monthly' });
+
+  expect(withoutPreRangePoints([anchorOnly], from)).toEqual([]);
 });

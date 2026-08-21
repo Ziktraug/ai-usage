@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { chmod, link, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { USAGE_ENGINE_PROTOCOL_VERSION } from './contracts';
 import {
   assertUsageEngineRendezvousTarget,
   loadUsageEngineRendezvous,
@@ -22,7 +23,7 @@ afterEach(async () => {
 const rendezvousValue = {
   instanceId: '11111111-1111-4111-8111-111111111111',
   port: 41_321,
-  protocolVersion: 1,
+  protocolVersion: USAGE_ENGINE_PROTOCOL_VERSION,
   targetId: 'a'.repeat(64),
   token: 'fixture-token-with-at-least-thirty-two-bytes',
 };
@@ -81,9 +82,14 @@ describe('usage engine rendezvous', () => {
     );
   });
 
-  test('classifies a rendezvous protocol mismatch without exposing its contents', () => {
+  // Both directions of skew, derived from the constant so a future bump keeps testing skew
+  // rather than silently re-testing the version this build already speaks.
+  test.each([
+    ['a superseded engine', USAGE_ENGINE_PROTOCOL_VERSION - 1],
+    ['an unreleased engine', USAGE_ENGINE_PROTOCOL_VERSION + 1],
+  ])('classifies %s rendezvous as a protocol mismatch without exposing its contents', (_case, protocolVersion) => {
     const parseMismatch = (): void => {
-      parseUsageEngineRendezvous({ ...rendezvousValue, protocolVersion: 2 });
+      parseUsageEngineRendezvous({ ...rendezvousValue, protocolVersion });
     };
     expect(parseMismatch).toThrow(UsageEngineRendezvousError);
     expect(parseMismatch).toThrow(expect.objectContaining({ reason: 'protocol-mismatch' }));

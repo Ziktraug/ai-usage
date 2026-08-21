@@ -2,8 +2,10 @@ import { MAX_PORTABLE_USAGE_BYTES } from '@ai-usage/report-core/portable-usage';
 import {
   manualMergeDownloadTransport,
   parseSyncFleet,
+  parseSyncMachineLabelResult,
   type SyncContractClient,
   type SyncFleet,
+  type SyncMachineLabelResult,
 } from '@ai-usage/web-contract/sync';
 import { readBoundedResponseBytes } from './bounded-response-reader';
 
@@ -13,7 +15,7 @@ const CONTENT_LENGTH_PATTERN = /^[1-9][0-9]*$/u;
 
 export type SyncFetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
-export type SyncRpcTransport = Pick<SyncContractClient, 'fleet'>;
+export type SyncRpcTransport = Pick<SyncContractClient, 'fleet' | 'setMachineLabel'>;
 
 export interface ManualMergeDownload {
   readonly filename: string;
@@ -23,6 +25,7 @@ export interface ManualMergeDownload {
 export interface SyncBrowserAdapter {
   readonly downloadManualMerge: (signal?: AbortSignal) => Promise<ManualMergeDownload>;
   readonly fleet: (signal?: AbortSignal) => Promise<SyncFleet>;
+  readonly setMachineLabel: (label: string, signal?: AbortSignal) => Promise<SyncMachineLabelResult>;
 }
 
 // A compressed or chunked response carries no content-length the browser will expose, which is the
@@ -115,5 +118,11 @@ export const createSyncBrowserAdapter = (
     const result = await transport.fleet({}, signal === undefined ? undefined : { signal });
     signal?.throwIfAborted();
     return parseSyncFleet(result);
+  },
+  setMachineLabel: async (label, signal) => {
+    signal?.throwIfAborted();
+    const result = await transport.setMachineLabel({ label }, signal === undefined ? undefined : { signal });
+    signal?.throwIfAborted();
+    return parseSyncMachineLabelResult(result);
   },
 });
