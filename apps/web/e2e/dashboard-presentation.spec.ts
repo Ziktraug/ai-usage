@@ -13,6 +13,8 @@ import {
 } from './browser-test';
 
 const MAX_DASHBOARD_METRIC_COLUMNS = 4;
+/** Panda's `md` breakpoint, where `[data-model-analysis-table]` replaces the card list. */
+const MODEL_TABLE_MIN_WIDTH_PX = 768;
 const MAX_ALIGNMENT_DRIFT_PX = 1;
 const MIN_CONTENT_ABOVE_FOLD_PX = 10;
 const MOBILE_VIEWPORT = { height: 844, width: 390 };
@@ -25,9 +27,13 @@ const MODEL_ANALYSIS_COLUMNS = [
   'Pricing coverage',
   'API value / 1M tokens',
 ] as const;
+// 1080x900 sits in the md-but-not-xl band and 1080x1920 is the portrait display. Both are daily
+// working viewports that no scenario covered, so layout drift there used to ship unnoticed.
 const FIRST_READ_SCENARIOS = [
   { colorScheme: 'light', name: '1440x900-light', viewport: { height: 900, width: 1440 } },
   { colorScheme: 'light', name: '1280x900-light', viewport: { height: 900, width: 1280 } },
+  { colorScheme: 'light', name: '1080x900-light', viewport: { height: 900, width: 1080 } },
+  { colorScheme: 'light', name: '1080x1920-light', viewport: { height: 1920, width: 1080 } },
   { colorScheme: 'light', name: '390x844-light', viewport: MOBILE_VIEWPORT },
   { colorScheme: 'dark', name: '390x844-dark', viewport: MOBILE_VIEWPORT },
 ] as const;
@@ -90,6 +96,12 @@ for (const scenario of FIRST_READ_SCENARIOS) {
       expect((chartHeadingBox?.y ?? -1) + (chartHeadingBox?.height ?? 0)).toBeLessThanOrEqual(navigationTop);
       expect((chartPlotBox?.y ?? Number.POSITIVE_INFINITY) + 24).toBeLessThanOrEqual(navigationTop);
     }
+
+    // The quota rail's own data query is gated to live mode (`provider-quota-query-shell.svelte`),
+    // so it renders nothing under e2e and cannot be asserted here — a guarded block would assert
+    // nothing at all. Its compact-percentage behaviour is covered in provider-quota-rail.ssr.test.ts
+    // instead. What this spec still owns at every width is that the shell reserves the rail column
+    // without pushing content off-screen, which the overflow assertion above already pins.
 
     const screenshot = await page.screenshot({
       animations: 'disabled',
@@ -509,7 +521,9 @@ for (const scenario of FIRST_READ_SCENARIOS) {
     const table = panel.locator('[data-model-analysis-table]');
     const cards = panel.locator('[data-model-analysis-cards]');
     await expect(panel.getByRole('heading', { exact: true, name: 'Models' })).toBeVisible();
-    if (scenario.viewport.width >= 1280) {
+    // The table swaps in at Panda's `md`, not at `xl`. Nothing between 390 and 1280 was covered
+    // before, so this branch could pin the wrong threshold without any scenario contradicting it.
+    if (scenario.viewport.width >= MODEL_TABLE_MIN_WIDTH_PX) {
       await expect(table).toBeVisible();
       await expect(cards).toBeHidden();
       await expect(table.getByRole('columnheader')).toHaveText(MODEL_ANALYSIS_COLUMNS);
@@ -550,7 +564,7 @@ for (const scenario of FIRST_READ_SCENARIOS) {
         path: `${smokeDirectory}/ai-usage-plan073-step6-analysis-${scenario.name}.png`,
       });
     }
-    if (scenario.viewport.width < 1280) {
+    if (scenario.viewport.width < MODEL_TABLE_MIN_WIDTH_PX) {
       await cards.getByRole('article').first().scrollIntoViewIfNeeded();
       const cardsScreenshot = await page.screenshot({ animations: 'disabled' });
       await testInfo.attach(`analysis-${scenario.name}-cards`, {

@@ -24,6 +24,7 @@ const QUERY_URL_PATTERN = /q=ai-usage/;
 const RANGE_URL_PATTERN = /range=/;
 const RESET_COUNT_PATTERN = /1 reset/;
 const GAP_COUNT_PATTERN = /1 collection gap/;
+const CLAUDE_SERIES_PATTERN = /^Claude · /;
 const SORT_URL_PATTERN = /sort=/;
 const UUID_PATTERN = /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/i;
 const HIDDEN_FILTERS_PATTERN = /hidden by filters/;
@@ -414,18 +415,29 @@ test('keeps provider details collapsed until they are requested', async ({ page 
   );
 });
 
-test('Codex quota history shows reset and gap-aware ranges on desktop and mobile', async ({ page }) => {
+test('Provider quota history shows reset and gap-aware ranges on desktop and mobile', async ({ page }) => {
   await openHydratedReport(page);
 
-  const historyButton = page.getByRole('button', { name: 'View Codex history' });
+  const historyButton = page.getByRole('button', { name: 'View quota history' });
   await expect(historyButton).toHaveCount(1);
   await historyButton.click();
-  const history = page.getByRole('dialog', { name: 'Codex quota history' });
-  await expect(history.getByRole('heading', { name: 'Codex quota history' })).toBeVisible();
+  const history = page.getByRole('dialog', { name: 'Provider quota history' });
+  await expect(history.getByRole('heading', { name: 'Provider quota history' })).toBeVisible();
   await expect(history.getByText('5h', { exact: true }).first()).toBeVisible();
   await expect(history.getByText('Weekly', { exact: true }).first()).toBeVisible();
   await expect(history.getByText(RESET_COUNT_PATTERN).first()).toBeVisible();
   await expect(history.getByText(GAP_COUNT_PATTERN).first()).toBeVisible();
+
+  const providerSelect = history.getByRole('combobox', { name: 'Provider' });
+  await expect(providerSelect.locator('option[value="codex"]')).toHaveCount(1);
+  await expect(providerSelect.locator('option[value="claude"]')).toHaveCount(1);
+  const claudeSeries = history.getByText(CLAUDE_SERIES_PATTERN);
+  await expect(claudeSeries.first()).toBeVisible();
+  await providerSelect.selectOption('codex');
+  await expect(claudeSeries).toHaveCount(0);
+  await providerSelect.selectOption('');
+  await expect(claudeSeries.first()).toBeVisible();
+
   await history.getByRole('button', { name: '7d' }).click();
   await expect(history.getByRole('button', { name: '7d' })).toHaveAttribute('aria-pressed', 'true');
   await page.keyboard.press('Escape');
@@ -433,9 +445,9 @@ test('Codex quota history shows reset and gap-aware ranges on desktop and mobile
 
   await page.setViewportSize({ height: 800, width: 390 });
   await historyButton.click();
-  await expect(page.getByRole('dialog', { name: 'Codex quota history' })).toBeVisible();
+  await expect(page.getByRole('dialog', { name: 'Provider quota history' })).toBeVisible();
   await page.keyboard.press('Escape');
-  await expect(page.getByRole('dialog', { name: 'Codex quota history' })).not.toBeVisible();
+  await expect(page.getByRole('dialog', { name: 'Provider quota history' })).not.toBeVisible();
 });
 
 test('persists exploration state in the URL', async ({ page }) => {

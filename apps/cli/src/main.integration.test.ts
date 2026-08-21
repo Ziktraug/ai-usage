@@ -533,3 +533,36 @@ test('quota persists a failed boundary when refresh fails without durable data',
     ).toBe(true);
   });
 });
+
+test('quota --history reads stored observations without invoking provider collection', async () => {
+  await withCliSandbox(async ({ root, runCli }) => {
+    const binaryDirectory = path.join(root, 'bin');
+    const logDirectory = path.join(root, 'logs');
+    const markerPath = path.join(root, 'codex-invoked');
+    await mkdir(binaryDirectory, { recursive: true });
+    const fakeCodexPath = path.join(binaryDirectory, 'codex');
+    await writeFile(fakeCodexPath, `#!/bin/sh\ntouch "${markerPath}"\nexit 1\n`);
+    await chmod(fakeCodexPath, 0o700);
+
+    const result = await runCli(['quota', '--history', '--no-color'], {
+      env: {
+        AI_USAGE_LOG_DIR: logDirectory,
+        PATH: `${binaryDirectory}:${process.env.PATH ?? ''}`,
+      },
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain('No stored provider quota history in the last 7d.');
+    expect(result.stderr).toBe('');
+    // The read-only seam is the whole point of --history: no provider is polled and no engine runs.
+    expect(await Bun.file(markerPath).exists()).toBe(false);
+    const events = await readWideEvents(logDirectory);
+    const cliEvent = events.find((event) => event.resource?.surface === 'cli');
+    expect(cliEvent).toMatchObject({
+      annotations: { domainOutcome: 'empty', outputCount: 0, quotaHistoryRange: '7d' },
+      boundary: 'cli.quota',
+      outcome: 'success',
+    });
+    expect(events.some((event) => event.resource?.surface === 'engine')).toBe(false);
+  });
+});
