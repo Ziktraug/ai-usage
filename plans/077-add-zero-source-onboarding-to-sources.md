@@ -198,8 +198,9 @@ runtime presents session sources as input-missing (the demo/e2e runtime
 
 ## Done criteria
 
-- [ ] `grep -n "data-first-run-guidance" apps/web/src/lib/features/sources/sources-page.svelte` → 1 hit
-- [ ] `grep -n "noSessionInputDetected" apps/web/src/lib/features/sources/model.ts` → definition present, with tests
+- [x] `grep -n "data-first-run-guidance" apps/web/src/lib/features/sources/sources-page.svelte` → 1 hit
+- [x] `grep -n "noSessionInputDetected" apps/web/src/lib/features/sources/first-run.ts` → definition present, with
+      tests in `first-run.test.ts` (amended from `model.ts` — see "Implementation notes")
 - [ ] `bun run typecheck` exits 0
 - [ ] `bun run --cwd apps/web test` exits 0 with the new cases
 - [ ] `bun run test:e2e` exits 0
@@ -214,6 +215,36 @@ runtime presents session sources as input-missing (the demo/e2e runtime
   deterministically (report; do not add a new fixture mode to force it).
 - An existing e2e spec pins the exact child order of the `/sources` page
   stack in a way the new panel breaks.
+
+## Implementation notes (executor, 2026-08-20)
+
+Three deviations from the plan text, each forced by evidence found while executing it.
+
+1. **The predicate and copy live in `apps/web/src/lib/features/sources/first-run.ts`, not `model.ts`.**
+   Step 1 said new pure logic belongs in `model.ts`. It cannot: `apps/web/src/routes/+layout.svelte`
+   imports `source-control-summary.svelte`, which imports `./model`, so `model.ts` sits in the root
+   layout's client closure and everything added to it ships on *every* route. Measured with
+   `apps/web/src/css-bundle.test.ts`: baseline initial gzip closure 286,845 bytes, cap 286,966;
+   putting the predicate and the four history paths in `model.ts` took it to 287,059 — a hard gate
+   failure, and 214 bytes of `/sources`-only onboarding copy in the report's first paint. Moving them
+   to a module only `sources-page.svelte` imports returns the closure to exactly 286,845. Raising the
+   budget was rejected: the weight is not the report's to carry. The in-scope list is otherwise
+   respected — both new files sit in the same feature directory.
+
+2. **The visible branch is asserted in e2e, not in a component render test.** Step 3 prescribed a
+   component test *instead* only if the synthetic runtime could not show the branch. It can: the
+   stock fixture has every source detected (so the panel's absence is asserted there), and
+   `sources.spec.ts` already contained three tests that fulfil a synthetic snapshot over
+   `page.route('**/api/source-control', …)`. Reusing that existing pattern is not "a new fixture
+   mode" under the STOP condition, and it exercises the real page, real hydration, and the real copy
+   rather than a fixture component.
+
+3. **The predicate reads detection reason *and* availability, not reason alone.** A disabled source
+   has its reason overwritten with `policy-disabled`
+   (`packages/usage-engine-runtime/src/source-control-state.ts`), so reason alone cannot answer the
+   plan's disabled-vs-missing rule; `availability` is the axis policy never rewrites. Sources
+   reporting `misconfigured` or `unsupported` are excluded — they have their own recovery state on
+   their deviation card, which onboarding copy would bury.
 
 ## Maintenance notes
 

@@ -81,6 +81,8 @@ test('states each source health once and keeps source metadata concise', async (
     await expect(row.locator('[data-source-health]')).toHaveCount(1);
   }
   await expect(page.getByText('The last run completed successfully.', { exact: true })).toHaveCount(0);
+  // Every session source in this fixture has detected input, so the first-run guidance must stay away.
+  await expect(page.locator('[data-first-run-guidance]')).toHaveCount(0);
   await expect(page.getByRole('heading', { level: 2, name: 'Sessions' })).toHaveCount(0);
   await expect(page.getByRole('heading', { level: 2, name: 'Provider usage' })).toHaveCount(0);
   await expect(page.getByRole('heading', { level: 2, name: 'Enrichments' })).toHaveCount(0);
@@ -338,6 +340,102 @@ test('renders only deviation cards beside the healthy-source summary', async ({ 
   await expect(sessionsGroup.getByText('1 source', { exact: true })).toBeVisible();
   await expect(page.getByRole('heading', { level: 2, name: 'Provider usage' })).toHaveCount(0);
   await expect(page.getByRole('heading', { level: 2, name: 'Enrichments' })).toHaveCount(0);
+});
+
+test('answers the first run when no session source has detected input', async ({ page }) => {
+  const sessionSourceIds: ReadonlySet<string> = new Set(
+    collectionSourceDefinitions.filter((definition) => definition.group === 'sessions').map(({ id }) => id),
+  );
+  const sources = collectionSourceDefinitions.map((definition) => {
+    const undetected = sessionSourceIds.has(definition.id);
+    return {
+      availability: undetected ? ('not-detected' as const) : ('detected' as const),
+      cadenceMs: definition.cadenceMs,
+      id: definition.id,
+      label: definition.label,
+      lastOutcome: undetected ? ('not-run' as const) : ('success' as const),
+      lifecycle: undetected ? ('dormant' as const) : ('scheduled' as const),
+      policy: 'enabled' as const,
+      reason: undetected
+        ? { code: 'input-missing' as const, message: 'No supported local input was found.' }
+        : { code: 'none' as const },
+      warnings: [],
+    };
+  });
+  const snapshot = {
+    generatedAt: '2026-08-19T09:15:00.000Z',
+    generation: 14,
+    instanceId: 'e2e-first-run',
+    publication: {
+      acknowledgedRequestGeneration: 1,
+      dirty: false,
+      dirtyGeneration: 1,
+      lastOutcome: 'success',
+      pendingDemand: false,
+      publishedGeneration: 1,
+      queued: false,
+      requestedGeneration: 1,
+      revision: 'e2e-first-run-revision',
+      rtkCompletedGeneration: 1,
+      rtkRequiredGeneration: 1,
+      running: false,
+    },
+    queueDepth: 0,
+    runningCount: 0,
+    sources,
+  };
+  await page.route('**/api/source-control', async (route) => {
+    await route.fulfill({
+      body: `event: snapshot\ndata: ${JSON.stringify(snapshot)}\n\n`,
+      contentType: 'text/event-stream',
+      status: 200,
+    });
+  });
+
+  await openHydratedSources(page);
+  const guidance = page.locator('[data-first-run-guidance]');
+  await expect(guidance).toBeVisible();
+  await expect(guidance.getByRole('heading', { level: 2, name: 'No local history detected yet' })).toBeVisible();
+
+  const harnessRows = guidance.locator('[data-first-run-harness]');
+  await expect(harnessRows).toHaveCount(sessionSourceIds.size);
+  // Literal copy on purpose: a test that re-imported the panel's own constant would assert nothing.
+  for (const { harness, paths } of [
+    { harness: 'Claude Code', paths: ['~/.claude/projects/**/*.jsonl', '~/.claude.json'] },
+    { harness: 'Codex', paths: ['~/.codex/sessions/**/*.jsonl'] },
+    {
+      harness: 'OpenCode',
+      paths: [
+        '~/.local/share/opencode/opencode.db',
+        '~/Library/Application Support/opencode/opencode.db',
+        '~/AppData/Local/opencode/opencode.db',
+      ],
+    },
+    { harness: 'Cursor (macOS)', paths: ['~/Library/Application Support/Cursor/User/globalStorage/state.vscdb'] },
+  ]) {
+    const row = harnessRows.filter({ hasText: harness });
+    await expect(row).toHaveCount(1);
+    for (const path of paths) {
+      await expect(row.getByText(path, { exact: true })).toBeVisible();
+    }
+  }
+
+  // The panel tells the reader to "run Detect all", so the action has to be beside the instruction
+  // rather than somewhere they have to go find. It cannot be clicked here: the first-run state is
+  // only reachable by stubbing the source-control stream, and a stubbed stream ends immediately,
+  // which drops the connection out of `live` and correctly disables every mutation. That disabled
+  // state is itself the invariant worth pinning — the button must not stay armed in front of a
+  // control plane that cannot accept the command.
+  const detectAll = guidance.getByRole('button', { name: 'Detect all' });
+  await expect(detectAll).toHaveCount(1);
+  await expect(detectAll).toBeDisabled();
+  await expect(page.getByRole('status')).toContainText('Connection interrupted');
+
+  // The alternative path for usage that lives on another machine has to be reachable, not just described.
+  await expect(guidance.getByRole('link', { name: 'Open Sync' })).toHaveAttribute('href', '/sync');
+  // The panel answers "what now"; the per-source deviation cards still state each source's own outcome.
+  await expect(page.getByRole('heading', { level: 2, name: 'Sessions' })).toBeVisible();
+  await expect(page.locator('main [data-source-card]')).toHaveCount(sessionSourceIds.size);
 });
 
 test('renders count-free source progress without assigning a non-finite native value', async ({ page }) => {
