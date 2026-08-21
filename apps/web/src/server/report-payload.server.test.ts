@@ -8,6 +8,7 @@ import {
   parseUsageEngineCommandCompletion,
   parseUsageEngineCommandResult,
   parseWebUsageEngineCommand,
+  USAGE_ENGINE_PROTOCOL_VERSION,
 } from '@ai-usage/usage-engine-control';
 import type { UsageEngineControlClient } from '@ai-usage/usage-engine-control/client';
 import type { ServedReportRevisionManifest } from '@ai-usage/usage-store/reader';
@@ -174,7 +175,7 @@ test('forwards only an opaque revision-keyed project group command to the engine
           commandId: 'command-a',
           instanceId: 'instance-a',
           ok: true,
-          protocolVersion: 1,
+          protocolVersion: USAGE_ENGINE_PROTOCOL_VERSION,
         }),
       );
     },
