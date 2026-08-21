@@ -3,6 +3,7 @@ import type { Page } from '@playwright/test';
 import { FOCUSED_REPORT_E2E_CONTROL_KEY, FOCUSED_REPORT_E2E_ENABLED_KEY } from '../src/focused-report-e2e-fixture';
 import { REPORT_LAZY_MODULE_E2E_FAILURE_KEY } from '../src/lib/features/report/composition/lazy-module-e2e-fixture';
 import { expect, reportViewsFor, test, waitForHydratedNavigation } from './browser-test';
+import { encodeRpcResponseBody } from './rpc-test-transport';
 
 const ADVANCED_COLUMNS_PATTERN = /Advanced columns/;
 const CALENDAR_NAME_PATTERN = /Daily activity calendar/;
@@ -893,7 +894,10 @@ test('drops an armed merge preview after a sibling mutation invalidates its proo
     const action = route.request().headers()['x-ai-usage-merge-action'];
     if (action === 'cursor') {
       await route.fulfill({
-        body: JSON.stringify({ data: { alreadyImported: false, artifactName: 'cursor-import.csv' }, ok: true }),
+        body: JSON.stringify({
+          data: { alreadyImported: false, artifactName: 'cursor-import.csv', kind: 'cursor-import' },
+          ok: true,
+        }),
         contentType: 'application/json',
         status: 200,
       });
@@ -903,7 +907,7 @@ test('drops an armed merge preview after a sibling mutation invalidates its proo
   });
   await page.route('**/rpc/sync/setMachineLabel', async (route) => {
     await route.fulfill({
-      body: JSON.stringify({ machine: { id: 'machine-a', label: 'Renamed Machine' } }),
+      body: encodeRpcResponseBody({ machine: { id: 'e2e-current-machine', label: 'Renamed Machine' } }),
       contentType: 'application/json',
       status: 200,
     });
@@ -917,6 +921,11 @@ test('drops an armed merge preview after a sibling mutation invalidates its proo
 
   await page.goto('/sync');
   await expect(page.getByRole('heading', { level: 1, name: 'Sync' })).toBeVisible();
+
+  // Both affordances only arm once the control connection reports itself available; acting
+  // before that silently does nothing rather than failing.
+  await expect(mergeInput).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Rename' })).toBeVisible();
 
   // A rename is the mutation furthest from the preview, and the one most likely to be treated as
   // unrelated to it.
