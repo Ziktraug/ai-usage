@@ -44,6 +44,7 @@ export const rpcPathByOperation = {
   saveProjectGroups: '/projectGroup/save',
   saveSkillManagementConfig: '/skills/saveConfig',
   setCampaignLabelOverride: '/campaign/setLabelOverride',
+  setMachineLabel: '/sync/setMachineLabel',
   toggleManagedSkill: '/skills/toggleProjection',
 } as const;
 
@@ -152,7 +153,7 @@ const maximumRequestBodyBytes = (policy: RequestPolicy): number | undefined => {
   if (policy.requestSize === 'source-control-command-json-4kib') {
     return MAX_SOURCE_CONTROL_COMMAND_BYTES;
   }
-  if (policy.requestSize === 'portable-usage-json') {
+  if (policy.requestSize === 'portable-usage-json' || policy.requestSize === 'portable-usage-upload') {
     return MAX_PORTABLE_USAGE_BYTES;
   }
   return;

@@ -39,6 +39,27 @@ const CORE_VALUE_OBJECTS_GZIP_BUDGET_BYTES = 704;
  */
 const PERIOD_RANGE_BRUSH_GZIP_BUDGET_BYTES = 1024;
 /**
+ * The merge preview now carries bundle identity and bounded warning items, so the contract parser
+ * that the shell already ships grew a nested validator and the sync panel grew a disclosure list.
+ * Re-measured at 204 bytes against the current base after the period-brush merge — the original
+ * 188-byte reading was taken against the pre-merge base — rounded on the same rule.
+ */
+const MERGE_PREVIEW_BUNDLE_IDENTITY_GZIP_BUDGET_BYTES = 256;
+/**
+ * Cursor import and machine renaming both reach the engine from the web, so the shell now ships one
+ * more sync contract procedure, its browser adapter, and the fleet label editor.
+ * Re-measured at 116 bytes against the current base, rounded on the same rule.
+ */
+const WEB_CURSOR_IMPORT_AND_MACHINE_LABEL_GZIP_BUDGET_BYTES = 128;
+/**
+ * The post-review corrections on this train are initial-closure weight of their own and had no
+ * entry: the protocol v2 contract gained nested bundle and warning-item validators that ship with
+ * the parser, and the sync root gained the epoch remount that invalidates an open merge preview
+ * after a sibling mutation. Measured at 367 bytes against the two entries above, rounded on the
+ * same rule.
+ */
+const SYNC_POST_REVIEW_CORRECTIONS_GZIP_BUDGET_BYTES = 384;
+/**
  * Provider-neutral quota history naming, plus wiring `providerHistoryAvailable` into both report
  * destinations so the entry point is withheld when no history can exist. It shipped without a ledger
  * line because it fit the headroom the pre-merge base happened to have; measured against the current
@@ -85,6 +106,9 @@ const INITIAL_GZIP_CLOSURE_MAXIMUM_BYTES =
   MULTI_PROVIDER_QUOTA_RAIL_GZIP_BUDGET_BYTES +
   CORE_VALUE_OBJECTS_GZIP_BUDGET_BYTES +
   PERIOD_RANGE_BRUSH_GZIP_BUDGET_BYTES +
+  MERGE_PREVIEW_BUNDLE_IDENTITY_GZIP_BUDGET_BYTES +
+  WEB_CURSOR_IMPORT_AND_MACHINE_LABEL_GZIP_BUDGET_BYTES +
+  SYNC_POST_REVIEW_CORRECTIONS_GZIP_BUDGET_BYTES +
   NEUTRAL_QUOTA_HISTORY_NAMING_GZIP_BUDGET_BYTES +
   COMPACT_QUOTA_RAIL_VALUE_GZIP_BUDGET_BYTES +
   SESSIONS_ROW_EXPORT_GZIP_BUDGET_BYTES +

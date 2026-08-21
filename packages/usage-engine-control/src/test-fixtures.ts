@@ -1,5 +1,5 @@
 import { collectionSourceDefinitions } from '@ai-usage/report-core/source-control';
-import { parseUsageEngineStatus, type UsageEngineStatus } from './contracts';
+import { parseUsageEngineStatus, USAGE_ENGINE_PROTOCOL_VERSION, type UsageEngineStatus } from './contracts';
 
 export const fixtureInstanceId = '11111111-1111-4111-8111-111111111111';
 export const fixtureGeneratedAt = '2026-07-29T12:00:00.000Z';
@@ -45,7 +45,7 @@ export const fixtureStatus = (instanceId = fixtureInstanceId): UsageEngineStatus
     generatedAt: fixtureGeneratedAt,
     generation: 0,
     instanceId,
-    protocolVersion: 1,
+    protocolVersion: USAGE_ENGINE_PROTOCOL_VERSION,
     readiness: 'ready',
     sourceControl: fixtureSourceControl(instanceId),
     storeSchemaVersion: 1,

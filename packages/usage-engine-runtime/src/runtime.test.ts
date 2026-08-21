@@ -157,6 +157,11 @@ const createTestSourceControl = (initial = publishedSourceControl()): TestSource
 
 const mergePreview: UsageEngineMergePreviewOutput = {
   ...MERGE_PREVIEW_PROOF,
+  bundle: {
+    generatedAt: '2026-07-30T12:00:00.000Z',
+    machineId: 'machine-b',
+    machineLabel: 'Peer MacBook',
+  },
   bytes: 42,
   kind: 'merge-preview',
   result: {
@@ -166,10 +171,11 @@ const mergePreview: UsageEngineMergePreviewOutput = {
     superseded: 0,
     unchanged: 0,
     updated: 0,
-    warnings: 0,
+    warnings: 1,
   },
   rows: 1,
-  warningCount: 0,
+  warningCount: 1,
+  warningItems: ['One row was skipped.'],
 };
 
 const createMutationPort = (calls: string[]): UsageEngineMutationPort => ({

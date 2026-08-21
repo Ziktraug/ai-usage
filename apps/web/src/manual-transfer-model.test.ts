@@ -71,6 +71,7 @@ test('summarizes changed and unchanged usage rows after a manual import', () => 
       confirmationToken: `v1.${'b'.repeat(64)}`,
       documentDigest: 'a'.repeat(64),
     }),
+    bundle: { generatedAt: '2026-07-30T12:00:00.000Z', machineId: 'machine-b', machineLabel: 'Peer MacBook' },
     bytes: 1024,
     kind: 'merge-preview',
     result: {
@@ -84,6 +85,7 @@ test('summarizes changed and unchanged usage rows after a manual import', () => 
     },
     rows: 20,
     warningCount: 0,
+    warningItems: [],
   };
 
   expect(formatManualImportSummary(result)).toBe('Imported usage: 14 changed, 6 unchanged.');

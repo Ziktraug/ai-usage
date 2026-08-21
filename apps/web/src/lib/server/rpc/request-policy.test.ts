@@ -106,14 +106,14 @@ describe('request policy matrix', () => {
         csrf: 'required',
         id: 'http:manual-merge-upload',
         method: 'POST',
-        requestSize: 'portable-usage-json',
+        requestSize: 'portable-usage-upload',
         transport: 'upload',
       }),
     ]);
   });
 
   test('requires demo rejection and trusted-local validation for every policy', () => {
-    expect(requestPolicyMatrix).toHaveLength(33);
+    expect(requestPolicyMatrix).toHaveLength(34);
     expect(new Set(requestPolicyMatrix.map(({ id }) => id)).size).toBe(requestPolicyMatrix.length);
 
     for (const policy of requestPolicyMatrix) {

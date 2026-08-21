@@ -3,6 +3,7 @@ import type { Page } from '@playwright/test';
 import { FOCUSED_REPORT_E2E_CONTROL_KEY, FOCUSED_REPORT_E2E_ENABLED_KEY } from '../src/focused-report-e2e-fixture';
 import { REPORT_LAZY_MODULE_E2E_FAILURE_KEY } from '../src/lib/features/report/composition/lazy-module-e2e-fixture';
 import { expect, reportViewsFor, test, waitForHydratedNavigation } from './browser-test';
+import { encodeRpcResponseBody } from './rpc-test-transport';
 
 const ADVANCED_COLUMNS_PATTERN = /Advanced columns/;
 const CALENDAR_NAME_PATTERN = /Daily activity calendar/;
@@ -730,11 +731,9 @@ test('selects the same heatmap day with mouse and keyboard', async ({ page }) =>
       'page',
     );
     const range = page.getByRole('region', { name: 'Report period' });
-    await expect(
-      range.getByRole('button', { exact: true, name: 'Choose a custom report period, selected' }),
-    ).toBeVisible();
-    await expect(page.getByLabel('From', { exact: true })).toHaveValue(selectedDay);
-    await expect(page.getByLabel('To', { exact: true })).toHaveValue(selectedDay);
+    await range.getByRole('button', { name: 'Choose a custom report period' }).click();
+    await expect(page.getByRole('textbox', { name: 'From' })).toHaveValue(selectedDay);
+    await expect(page.getByRole('textbox', { name: 'To' })).toHaveValue(selectedDay);
   };
   const selectedCell = () =>
     page.getByRole('toolbar', { name: CALENDAR_NAME_PATTERN }).locator(`button[data-heatmap-day="${selectedDay}"]`);
@@ -792,6 +791,11 @@ test('keeps sync limited to explicit file transfers', async ({ page }) => {
     await route.fulfill({
       body: JSON.stringify({
         data: {
+          bundle: {
+            generatedAt: '2026-07-30T12:00:00.000Z',
+            machineId: 'peer-machine',
+            machineLabel: 'Peer MacBook',
+          },
           bytes: 2,
           confirmationToken: `v1.${'b'.repeat(64)}`,
           documentDigest: 'a'.repeat(64),
@@ -803,10 +807,11 @@ test('keeps sync limited to explicit file transfers', async ({ page }) => {
             superseded: 0,
             unchanged: 0,
             updated: 0,
-            warnings: 0,
+            warnings: 3,
           },
           rows: 1,
-          warningCount: 0,
+          warningCount: 3,
+          warningItems: ['A row was skipped.', 'A second row was skipped.'],
         },
         ok: true,
       }),
@@ -821,10 +826,15 @@ test('keeps sync limited to explicit file transfers', async ({ page }) => {
   await expect(page.getByRole('heading', { level: 2, name: 'Machine fleet' })).toBeVisible();
   await expect(page.getByLabel('Machine fleet').getByText('Current machine', { exact: true })).toBeVisible();
   await page.setViewportSize({ height: 844, width: 361 });
-  const fileInput = page.locator('input[type="file"]');
+  const fileInput = page.locator('input[type="file"][accept=".json,application/json"]');
   const dropTarget = fileInput.locator('xpath=following-sibling::button[1]');
   await expect(dropTarget).toBeVisible();
   await expect(dropTarget).toContainText('Drop a merge file here or choose a file');
+  // The Cursor export is a second explicit file action next to the merge drop zone. The synthetic
+  // runtime cannot execute a real import, so this asserts the affordance, not a completed import.
+  await expect(page.getByText('Cursor usage export')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Import a Cursor usage CSV' })).toBeEnabled();
+  await expect(page.locator('input[type="file"][accept=".csv,text/csv"]')).toHaveCount(1);
   await expect(page.getByRole('button', { name: 'Start LAN merge' })).toHaveCount(0);
   await expect(page.getByLabel('Scan host')).toHaveCount(0);
   await expect(page.getByText('Pair nearby machine')).toHaveCount(0);
@@ -847,4 +857,106 @@ test('keeps sync limited to explicit file transfers', async ({ page }) => {
   expect(progressBox?.y).toBeGreaterThan((dropTargetBox?.y ?? 0) + (dropTargetBox?.height ?? 0));
   releaseUpload();
   await expect(page.getByText('Preview ready. Review the changes before confirming.')).toBeVisible();
+
+  await expect(page.getByText('Review merge import')).toBeVisible();
+  await expect(page.getByText('From Peer MacBook · generated Jul 30, 2026, 12:00')).toBeVisible();
+  const warningSummary = page.locator('summary', { hasText: '3 warnings' });
+  await expect(warningSummary).toBeVisible();
+  await expect(page.getByText('A row was skipped.', { exact: true })).toBeHidden();
+  await warningSummary.click();
+  await expect(page.getByText('A row was skipped.', { exact: true })).toBeVisible();
+  await expect(page.getByText('A second row was skipped.', { exact: true })).toBeVisible();
+  await expect(page.getByText('and 1 more', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Confirm import' })).toBeVisible();
+});
+
+/**
+ * A merge preview's confirmation token is bound to the store generation, so any sibling mutation —
+ * a machine rename, a Cursor import — makes it unconfirmable server-side. The UI's job is not to
+ * leave an armed Confirm button in front of a proof that can now only fail.
+ */
+test('drops an armed merge preview after a sibling mutation invalidates its proof', async ({ page }) => {
+  const previewBody = {
+    data: {
+      bundle: {
+        generatedAt: '2026-07-30T12:00:00.000Z',
+        machineId: 'peer-machine',
+        machineLabel: 'Peer MacBook',
+      },
+      bytes: 2,
+      confirmationToken: `v1.${'b'.repeat(64)}`,
+      documentDigest: 'a'.repeat(64),
+      kind: 'merge-preview',
+      result: {
+        deleted: 0,
+        fleetChanged: true,
+        inserted: 1,
+        superseded: 0,
+        unchanged: 0,
+        updated: 0,
+        warnings: 0,
+      },
+      rows: 1,
+      warningCount: 0,
+      warningItems: [],
+    },
+    ok: true,
+  };
+  await page.route('**/api/manual-merge/upload', async (route) => {
+    const action = route.request().headers()['x-ai-usage-merge-action'];
+    if (action === 'cursor') {
+      await route.fulfill({
+        body: JSON.stringify({
+          data: { alreadyImported: false, artifactName: 'cursor-import.csv', kind: 'cursor-import' },
+          ok: true,
+        }),
+        contentType: 'application/json',
+        status: 200,
+      });
+      return;
+    }
+    await route.fulfill({ body: JSON.stringify(previewBody), contentType: 'application/json', status: 200 });
+  });
+  await page.route('**/rpc/sync/setMachineLabel', async (route) => {
+    await route.fulfill({
+      body: encodeRpcResponseBody({ machine: { id: 'e2e-current-machine', label: 'Renamed Machine' } }),
+      contentType: 'application/json',
+      status: 200,
+    });
+  });
+
+  const mergeFile = { buffer: Buffer.from('{}'), mimeType: 'application/json', name: 'merge.json' };
+  const cursorFile = { buffer: Buffer.from('Date,Model\n'), mimeType: 'text/csv', name: 'cursor.csv' };
+  const mergeInput = page.locator('input[type="file"][accept=".json,application/json"]');
+  const cursorInput = page.locator('input[type="file"][accept=".csv,text/csv"]');
+  const confirmButton = page.getByRole('button', { name: 'Confirm import' });
+
+  await page.goto('/sync');
+  await expect(page.getByRole('heading', { level: 1, name: 'Sync' })).toBeVisible();
+
+  // Both affordances only arm once the control connection reports itself available; acting
+  // before that silently does nothing rather than failing.
+  await expect(mergeInput).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Rename' })).toBeVisible();
+
+  // A rename is the mutation furthest from the preview, and the one most likely to be treated as
+  // unrelated to it.
+  await mergeInput.setInputFiles(mergeFile);
+  await expect(confirmButton).toBeVisible();
+  await page.getByRole('button', { name: 'Rename' }).click();
+  await page.getByLabel('Machine label').fill('Renamed Machine');
+  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  await expect(confirmButton).toBeHidden();
+
+  // Importing a Cursor export moves the generation too, even though it stages an artifact rather
+  // than merging rows.
+  await mergeInput.setInputFiles(mergeFile);
+  await expect(confirmButton).toBeVisible();
+  await cursorInput.setInputFiles(cursorFile);
+  await expect(confirmButton).toBeHidden();
+  // Dropping the stale preview must not also discard what the user just did. Remounting the
+  // whole panel would clear this message along with the preview.
+  await expect(
+    page.getByText('Import staged as cursor-import.csv. Collection picks it up automatically.'),
+  ).toBeVisible();
 });

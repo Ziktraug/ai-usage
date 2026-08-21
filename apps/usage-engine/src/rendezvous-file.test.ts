@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { chmod, lstat, mkdtemp, readFile, rename, rm, symlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { USAGE_ENGINE_PROTOCOL_VERSION } from '@ai-usage/usage-engine-control';
 import {
   createUsageEngineBearerToken,
   loadUsageEngineRendezvous,
@@ -43,7 +44,7 @@ describe('usage engine rendezvous writer', () => {
     expect(loaded).toMatchObject({
       instanceId: INSTANCE_ID,
       port: 41_052,
-      protocolVersion: 1,
+      protocolVersion: USAGE_ENGINE_PROTOCOL_VERSION,
       targetId: TARGET_ID,
     });
     expect(revealUsageEngineBearerToken(loaded.token)).toBe('a'.repeat(43));

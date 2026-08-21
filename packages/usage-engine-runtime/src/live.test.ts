@@ -861,7 +861,7 @@ describe('live usage engine publication', () => {
     const mergePath = path.join(root, 'peer-merge.json');
     await writeFile(
       mergePath,
-      serializeUsageMergeBundle(createUsageMergeBundle({ machine: peerMachine, rows: [row] })),
+      serializeUsageMergeBundle(createUsageMergeBundle({ generatedAt: now, machine: peerMachine, rows: [row] })),
     );
     const preview = await port.previewMerge({
       command: 'preview-merge',
@@ -875,7 +875,14 @@ describe('live usage engine publication', () => {
     });
 
     const stored = await Effect.runPromise(queryReportRows({ dbPath }));
-    expect(preview).toMatchObject({ rows: 1, result: { inserted: 1 } });
+    // Identity and warning excerpts are what make a superseded count readable, so the port must
+    // forward them rather than reduce the bundle to counters.
+    expect(preview).toMatchObject({
+      bundle: { generatedAt: now.toISOString(), machineId: peerMachine.id, machineLabel: peerMachine.label },
+      result: { inserted: 1 },
+      rows: 1,
+      warningItems: [],
+    });
     expect(stored.rows).toHaveLength(1);
     expect(stored.rows[0]?.source.machineId).toBe(peerMachine.id);
   });

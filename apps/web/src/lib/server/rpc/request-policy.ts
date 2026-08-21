@@ -10,6 +10,7 @@ export const requestSizeClasses = [
   'bounded-rpc-json',
   'source-control-command-json-4kib',
   'portable-usage-json',
+  'portable-usage-upload',
 ] as const;
 export const responseSizeClasses = ['bounded-json', 'bounded-sse-events', 'portable-usage-json'] as const;
 
@@ -297,6 +298,15 @@ export const operationRequestPolicies = [
   }),
   defineOperationPolicy({
     applicationErrorFamilies: skillsErrors,
+    method: 'POST',
+    operation: 'saveManagedSkillMarkdown',
+    requestSize: 'bounded-rpc-json',
+    responseSize: 'bounded-json',
+    target: 'skills.saveManagedMarkdown',
+    transport: 'mutation',
+  }),
+  defineOperationPolicy({
+    applicationErrorFamilies: skillsErrors,
     method: 'GET',
     operation: 'getSkillProjectInventories',
     requestSize: 'none',
@@ -323,15 +333,6 @@ export const operationRequestPolicies = [
     transport: 'query',
   }),
   defineOperationPolicy({
-    applicationErrorFamilies: skillsErrors,
-    method: 'POST',
-    operation: 'saveManagedSkillMarkdown',
-    requestSize: 'bounded-rpc-json',
-    responseSize: 'bounded-json',
-    target: 'skills.saveManagedMarkdown',
-    transport: 'mutation',
-  }),
-  defineOperationPolicy({
     applicationErrorFamilies: reportReadErrors,
     method: 'GET',
     operation: 'getSyncFleet',
@@ -339,6 +340,15 @@ export const operationRequestPolicies = [
     responseSize: 'bounded-json',
     target: 'sync.fleet',
     transport: 'query',
+  }),
+  defineOperationPolicy({
+    applicationErrorFamilies: ['ForbiddenDemo', 'Forbidden', 'InvalidInput', 'EngineUnavailable'],
+    method: 'POST',
+    operation: 'setMachineLabel',
+    requestSize: 'bounded-rpc-json',
+    responseSize: 'bounded-json',
+    target: 'sync.setMachineLabel',
+    transport: 'mutation',
   }),
   defineOperationPolicy({
     applicationErrorFamilies: ['ForbiddenDemo', 'Forbidden', 'InvalidInput', 'Unavailable'],
@@ -384,7 +394,7 @@ export const explicitHttpRequestPolicies = [
     demo: 'forbidden',
     id: 'http:manual-merge-upload',
     method: 'POST',
-    requestSize: 'portable-usage-json',
+    requestSize: 'portable-usage-upload',
     responseSize: 'bounded-json',
     source: 'explicit-http',
     target: '/api/manual-merge/upload',

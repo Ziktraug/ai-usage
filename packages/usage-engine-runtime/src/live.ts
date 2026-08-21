@@ -749,6 +749,11 @@ export const createLiveUsageEngineMutationPort = (options: LiveUsageEngineMutati
             );
             throwIfAborted(signal);
             return {
+              bundle: {
+                generatedAt: preview.generatedAt,
+                machineId: preview.machine.id,
+                machineLabel: preview.machine.label,
+              },
               bytes: preview.bytes,
               confirmationToken: preview.confirmationToken,
               documentDigest: preview.documentDigest,
@@ -764,6 +769,7 @@ export const createLiveUsageEngineMutationPort = (options: LiveUsageEngineMutati
               },
               rows: preview.rows,
               warningCount: preview.warningCount,
+              warningItems: preview.warningItems,
             };
           } finally {
             await removeMergeInput(input, 'preview-merge');

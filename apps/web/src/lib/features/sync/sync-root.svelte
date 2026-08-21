@@ -12,11 +12,12 @@
   import ManualTransfer from './manual-transfer.svelte';
   import { headerTop, pageStack, unavailablePanel, unavailableText } from './styles';
   import type { SyncPageData } from './sync-load';
-  import { createHydratedSyncFleetQuery } from './sync-query.svelte';
+  import { createHydratedSyncFleetQuery, createSyncMachineRenamer } from './sync-query.svelte';
 
   let { connection = 'connecting', data }: { connection?: SourceControlConnectionState; data: SyncPageData } = $props();
   const queryClient = useQueryClient();
   const fleetQuery = createHydratedSyncFleetQuery(browser, () => data.compatibleGeneration);
+  const renameMachine = createSyncMachineRenamer(browser);
   const fleet = $derived(fleetQuery.data);
   const machines = $derived(
     fleet ? buildSyncFleetMachineViews(fleet.currentMachine, fleet.machines, data.renderedAt) : [],
@@ -25,6 +26,29 @@
     fleet ? buildSyncFleetComparisonRows(fleet.currentMachine, fleet.machines, data.renderedAt) : [],
   );
   const mutation = $derived(manualTransferMutationAvailability(connection));
+  // A merge preview is bound to the store generation, so any sibling mutation stales its proof.
+  // Renaming happens outside the transfer panel, which has no way to learn about it: remount the
+  // panel so an armed Confirm cannot sit in front of a proof that can now only fail. The panel's own
+  // mutations drop their preview themselves, because remounting them would also discard the outcome
+  // message the user just earned.
+  let manualTransferEpoch = $state(0);
+  const invalidateAfterSiblingMutation = async (): Promise<void> => {
+    manualTransferEpoch += 1;
+    await invalidateSyncFleet(queryClient, data.compatibleGeneration);
+  };
+  // Renaming issues an engine command, so it rides the same availability signal as manual imports.
+  const onRenameLocalMachine = async (label: string): Promise<string | null> => {
+    if (!(renameMachine && mutation.available)) {
+      return null;
+    }
+    try {
+      const renamed = await renameMachine(label);
+      await invalidateAfterSiblingMutation();
+      return renamed;
+    } catch {
+      return null;
+    }
+  };
   const operationPanel = css({
     bg: 'surfaceMuted',
     border: '1px solid token(colors.line)',
@@ -55,6 +79,8 @@
           {machines}
           now={data.renderedAt}
           omittedMachines={fleet.omittedMachines}
+          onRename={onRenameLocalMachine}
+          renameAvailable={mutation.available}
           skipped={fleet.skipped}
         />
         <MachineComparison rows={comparison} />
@@ -67,10 +93,12 @@
           <div class={unavailableText}>Sync fleet data could not be read safely.</div>
         </section>
       {/if}
-      <ManualTransfer
-        mutationAvailable={mutation.available}
-        onCompleted={async () => await invalidateSyncFleet(queryClient, data.compatibleGeneration)}
-      />
+      {#key manualTransferEpoch}
+        <ManualTransfer
+          mutationAvailable={mutation.available}
+          onCompleted={async () => await invalidateSyncFleet(queryClient, data.compatibleGeneration)}
+        />
+      {/key}
     </div>
   </main>
 </div>

@@ -34,6 +34,7 @@ const previewCompletion = (): UsageEngineCommandCompletion =>
     commandId: 'preview-command',
     completedAt: '2026-07-30T12:00:00.000Z',
     output: {
+      bundle: { generatedAt: '2026-07-30T12:00:00.000Z', machineId: 'machine-b', machineLabel: 'Peer MacBook' },
       bytes: 11,
       confirmationToken: CONFIRMATION_TOKEN,
       documentDigest: DIGEST,
@@ -49,6 +50,7 @@ const previewCompletion = (): UsageEngineCommandCompletion =>
       },
       rows: 0,
       warningCount: 0,
+      warningItems: [],
     },
     state: 'succeeded',
   });
@@ -60,6 +62,28 @@ const confirmedCompletion = (): UsageEngineCommandCompletion =>
     completedAt: '2026-07-30T12:00:00.000Z',
     output: { kind: 'none' },
     state: 'succeeded',
+  });
+
+const cursorCompletion = (alreadyImported: boolean): UsageEngineCommandCompletion =>
+  parseUsageEngineCommandCompletion({
+    command: 'import-cursor',
+    commandId: 'cursor-command',
+    completedAt: '2026-07-30T12:00:00.000Z',
+    output: { alreadyImported, artifactName: 'abc123-usage-events.csv', kind: 'cursor-import' },
+    state: 'succeeded',
+  });
+
+const csvRequest = (body: BodyInit, headers: Record<string, string> = {}) =>
+  new Request('http://localhost/sync', {
+    body,
+    headers: {
+      'content-type': 'text/csv',
+      host: 'localhost',
+      origin: 'http://localhost',
+      'x-ai-usage-merge-action': 'cursor',
+      ...headers,
+    },
+    method: 'POST',
   });
 
 const stagedFixture = (handoffId: string, onCleanup: () => void): StagedUsageEngineHandoff => ({
@@ -96,6 +120,88 @@ describe('manual merge upload boundary', () => {
     ]);
     expect(cleanups).toBe(1);
     expect(await response.json()).toMatchObject({ data: { kind: 'merge-preview' }, ok: true });
+  });
+
+  test('routes the cursor action to import-cursor and reports the staged artifact', async () => {
+    const commands: UsageEngineCommand[] = [];
+    let cleanups = 0;
+    const response = await handleManualMergeUpload(csvRequest('Date,Model\n2026-07-30,gpt-5\n'), {
+      executeCommand: (command) => {
+        commands.push(command);
+        return Promise.resolve(cursorCompletion(false));
+      },
+      stageHandoff: () => Promise.resolve(stagedFixture('cursor-handoff', () => (cleanups += 1))),
+    });
+
+    expect(response.status).toBe(200);
+    expect(commands).toEqual([
+      {
+        command: 'import-cursor',
+        input: { handoffId: parseUsageEngineHandoffId('cursor-handoff'), kind: 'inbox-handoff' },
+      },
+    ]);
+    expect(cleanups).toBe(1);
+    expect(await response.json()).toEqual({
+      data: { alreadyImported: false, artifactName: 'abc123-usage-events.csv', kind: 'cursor-import' },
+      ok: true,
+    });
+
+    const repeated = await handleManualMergeUpload(csvRequest('Date,Model\n2026-07-30,gpt-5\n'), {
+      executeCommand: () => Promise.resolve(cursorCompletion(true)),
+      stageHandoff: () => Promise.resolve(stagedFixture('cursor-handoff-2', () => undefined)),
+    });
+    expect(await repeated.json()).toMatchObject({ data: { alreadyImported: true }, ok: true });
+  });
+
+  test('keeps each action on its own media type and rejects mismatched completions', async () => {
+    const options = {
+      executeCommand: () => Promise.resolve(previewCompletion()),
+      stageHandoff: () => Promise.resolve(stagedFixture('unused-handoff', () => undefined)),
+    };
+    // A CSV body must not reach preview-merge, and a merge bundle must not reach import-cursor.
+    const csvAsPreview = await handleManualMergeUpload(
+      csvRequest('Date,Model\n', { 'x-ai-usage-merge-action': 'preview' }),
+      options,
+    );
+    const jsonAsCursor = await handleManualMergeUpload(
+      jsonRequest('{"rows":[]}', { 'x-ai-usage-merge-action': 'cursor' }),
+      options,
+    );
+    // The cursor action asks for import-cursor; a preview completion is not an acceptable answer.
+    const mismatched = await handleManualMergeUpload(csvRequest('Date,Model\n'), options);
+
+    expect(csvAsPreview.status).toBe(415);
+    expect(jsonAsCursor.status).toBe(415);
+    expect(mismatched.status).toBe(502);
+  });
+
+  test('describes Cursor failures as Cursor failures rather than as merge failures', async () => {
+    const options = {
+      executeCommand: () =>
+        Promise.reject(new UsageEngineCommandCompletionError('command-failed', 'private engine detail')),
+      stageHandoff: () => Promise.resolve(stagedFixture('cursor-handoff', () => undefined)),
+    };
+    const empty = await handleManualMergeUpload(csvRequest(''), options);
+    const invalidUtf8 = await handleManualMergeUpload(csvRequest(new Uint8Array([0xc3, 0x28])), options);
+    const engineFailure = await handleManualMergeUpload(csvRequest('Date,Model\n'), options);
+
+    // The client renders these messages verbatim, so a bad CSV must not be told to fix its JSON.
+    const emptyText = JSON.stringify(await empty.json());
+    expect(emptyText).toContain('Cursor usage export');
+    expect(emptyText).not.toContain('usage merge file');
+    const invalidUtf8Text = JSON.stringify(await invalidUtf8.json());
+    expect(invalidUtf8Text).toContain('UTF-8 CSV');
+    expect(invalidUtf8Text).not.toContain('UTF-8 JSON');
+    const engineText = JSON.stringify(await engineFailure.json());
+    expect(engineText).toContain('Cursor import');
+    expect(engineText).not.toContain('this merge');
+    expect(engineText).not.toContain('private engine detail');
+
+    // The merge path keeps its own wording.
+    const mergeFailure = await handleManualMergeUpload(jsonRequest('{"rows":[]}'), options);
+    const mergeText = JSON.stringify(await mergeFailure.json());
+    expect(mergeText).toContain('this merge');
+    expect(mergeText).not.toContain('Cursor');
   });
 
   test('transports bounded confirmation preconditions with a newly staged handoff', async () => {
