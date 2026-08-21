@@ -140,9 +140,7 @@
           queryState?.sessionCount ?? _rows.length,
         )}
       </span>
-      <ReportSharingActions
-        createExport={() => createSessionsExport(generatedAt ?? new Date().toISOString(), _rows)}
-      />
+      <ReportSharingActions createExport={() => createSessionsExport(generatedAt ?? new Date().toISOString(), _rows)} />
     </div>
     <SessionTable
       {...(queryState?.campaignChildren === undefined

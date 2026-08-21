@@ -7,10 +7,7 @@ import { syntheticSessionRow } from './lib/features/sessions/table/session-table
 const GENERATED_AT = '2026-08-20T18:45:00.000Z';
 const campaignHeader = SESSION_CAMPAIGN_EXPORT_COLUMNS.join(',');
 
-const campaignRow = (
-  index: number,
-  overrides: Partial<SessionPresentationRow> = {},
-): SessionPresentationRow => ({
+const campaignRow = (index: number, overrides: Partial<SessionPresentationRow> = {}): SessionPresentationRow => ({
   ...syntheticSessionRow(index),
   campaignKey: `campaign-${index}`,
   campaignTotalCount: 4,
@@ -66,6 +63,28 @@ describe('sessions CSV export adapter', () => {
     const labelIndex = SESSION_CAMPAIGN_EXPORT_COLUMNS.indexOf('campaign_label');
 
     expect(cells[labelIndex]).toStartWith('"\'=HYPERLINK');
+  });
+
+  test.each([
+    ['a singleton campaign', 1, 1],
+    ['a fully loaded campaign', 4, 4],
+    ['a partially loaded campaign', 2, 4],
+  ] as const)('reports visible and total session coverage for %s', async (_case, visible, total) => {
+    const { csv } = await createSessionsExport(GENERATED_AT, [
+      campaignRow(6, { campaignTotalCount: total, campaignVisibleCount: visible }),
+    ]);
+    const cells = csv.trimEnd().split('\r\n')[1]?.split(',') ?? [];
+
+    expect(cells[SESSION_CAMPAIGN_EXPORT_COLUMNS.indexOf('visible_sessions')]).toBe(String(visible));
+    expect(cells[SESSION_CAMPAIGN_EXPORT_COLUMNS.indexOf('campaign_sessions')]).toBe(String(total));
+  });
+
+  test.each(['=', '+', '-', '@'])('neutralizes a campaign label opening with "%s"', async (marker) => {
+    const dangerous = campaignRow(7, { sessionLabel: `${marker}cmd|'/C calc'!A0` });
+    const { csv } = await createSessionsExport(GENERATED_AT, [dangerous]);
+    const cells = csv.trimEnd().split('\r\n')[1]?.split(',') ?? [];
+
+    expect(cells[SESSION_CAMPAIGN_EXPORT_COLUMNS.indexOf('campaign_label')]).toBe(`'${marker}cmd|'/C calc'!A0`);
   });
 
   test('states campaign pagination and represented session coverage in their own units', () => {

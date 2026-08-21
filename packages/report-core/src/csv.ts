@@ -126,9 +126,9 @@ export interface SessionCampaignExportRow {
   rtkSavedTokens: number;
   tokCr: number;
   tokCw: number;
+  tokenTotal: number;
   tokIn: number;
   tokOut: number;
-  tokenTotal: number;
   tools: number;
   turns: number;
   usageUnavailable: boolean;
