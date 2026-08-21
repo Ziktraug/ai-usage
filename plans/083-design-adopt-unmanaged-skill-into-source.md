@@ -167,6 +167,74 @@ The design doc must decide (recommendation → rationale → alternative):
    same preview dialog. Sketch states: preview list (what will be copied,
    what refused and why) → confirm → per-entry outcome.
 
+
+### Step A2b: Two safety invariants the design doc must state explicitly
+
+These are not open questions with a recommendation each — they are
+properties the adoption protocol has to hold however questions 1-8 are
+answered. State both in `plans/083-adopt-design.md` and carry both into
+the Phase B test plan.
+
+**Invariant Q — the quarantine root is never followed on trust.**
+`.ai-usage-skill-quarantine/` lives inside a directory the user can write
+to, so its presence proves nothing about what it is. Before *any* use of
+it — creating it, renaming an entry into it, or scanning it for recovery:
+
+1. Acquire the projection lock first; every check below is meaningless if
+   another writer can act between the check and the rename.
+2. `lstat` the path — never `stat`, which resolves the final symlink and
+   reports the target's type.
+3. Refuse a symlink outright, whatever it points at. Adoption must never
+   move a user's skill into a path someone else chose.
+4. Refuse any type that is not a directory (regular file, socket, FIFO,
+   device).
+5. Verify the resolved path is the expected child of the expected parent —
+   resolve the parent, join the fixed segment, and compare against the
+   canonicalized candidate; do not compare the string the caller passed.
+6. A pre-existing quarantine root that fails any check is **never silently
+   replaced, deleted, or adopted**. Fail the adoption with an explicit
+   `adopt-blocked: quarantine-root-unsafe` diagnostic naming what was
+   found (symlink → target, or the actual file type), and leave the
+   runtime entry untouched.
+7. Document the benign-collision behaviour separately from the unsafe
+   one: an existing, verified quarantine *directory* is reused, and a name
+   collision *inside* it is resolved by the collision naming that question
+   1 already requires — never by overwrite.
+
+Phase B test plan must include an adversarial case where
+`.ai-usage-skill-quarantine` already exists as a symlink pointing outside
+the projection root, and assert the adoption refuses with the diagnostic
+above while the original entry is still present and unmodified. A second
+case covers the path existing as a regular file.
+
+**Invariant T — no stale copy is published after quarantine.**
+Hashing the entry immediately before the rename does not close the
+window: the rename moves the *original*, and a writer can change it
+between that last hash and the rename completing. Publishing the symlink
+then points the user at a copy that silently lost their edit. The design
+must therefore sequence:
+
+1. Digest the runtime entry.
+2. Copy it into the source repo as the adoption candidate.
+3. Validate the copy (question 3's gate) and digest the copy.
+4. Rename the original entry into the verified quarantine root
+   (Invariant Q) — this is the claim, and it is the point after which no
+   further writer can reach the original path.
+5. Re-digest the entry **now that it is quarantined** and can no longer
+   change.
+6. Compare that digest against the one from step 1, which is what the
+   copy in step 2 was made from.
+7. On divergence, do **not** create the symlink. Restore the quarantined
+   entry to its original path, discard the candidate copy, and return an
+   explicit `adopt-conflict: entry-changed-during-adoption` outcome so the
+   caller can re-run against the new content.
+
+The invariant to state and test: a concurrent mutation is never lost and
+is never temporarily replaced by a stale copy. Phase B must include a
+test that mutates a child file between the pre-copy digest and the
+rename, and asserts the symlink was not created, the entry is back at its
+original path, and its content is the mutated content — not the copy.
+
 ### Step A3: STOP — present the design
 
 Present `plans/083-adopt-design.md` to the maintainer and stop. Do not
@@ -197,13 +265,17 @@ design in writing.
 ## Done criteria
 
 **Phase A (this plan's primary gate):**
+- [ ] `plans/083-adopt-design.md` states Invariants Q and T from Step A2b
+      verbatim, including the refusal diagnostics and the digest ordering
 - [ ] `plans/083-adopt-design.md` exists, answers all eight questions with
       recommendations, and includes the entry-shape inventory
 - [ ] No source file modified (`git status` shows only the new design doc)
 - [ ] `plans/README.md` row updated to `DESIGN READY — awaiting approval`
 
 **Phase B (after approval):**
-- [ ] `bun test packages/skills` passes including crash-window tests
+- [ ] `bun test packages/skills` passes including crash-window tests, the
+      symlink and regular-file quarantine-root refusals (Invariant Q), and
+      the mutate-between-digest-and-rename conflict case (Invariant T)
 - [ ] Preview-first adopt reachable from both former dead-ends
 - [ ] `grep -rn "goto('/skills/matrix')" apps/web/src/lib/features/skills/management/skills-health-slot.svelte` no longer the consolidate entry action
 - [ ] `bun run typecheck && bun run test && bun run test:e2e` exit 0
@@ -214,6 +286,12 @@ design in writing.
 - The snapshot inventory reveals entry shapes the design did not cover
   (e.g. nested skill directories with executable scripts) — extend the
   design first.
+- The quarantine root cannot be verified under the lock as a real
+  directory at its expected path (Invariant Q) — refuse the adoption and
+  report; never repair or replace it automatically.
+- A design or implementation that publishes the managed symlink without
+  re-digesting the entry after quarantine (Invariant T) — the stale-copy
+  window is a data-loss bug, not a rare race to accept.
 - Any implementation step would delete or rewrite runtime bytes outside
   the atomic entry→symlink swap.
 - `withSkillProjectionLock` / `targetIdentity` revalidation cannot cover
