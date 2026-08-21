@@ -139,16 +139,16 @@ read-only SQLite and the permanent browser/server and demo-isolation boundaries.
 | 073 | Make the Report a Decision-First Executive and Investigation Workspace | P1 | L | 069, 072 (DONE); main `1868b108` | DONE |
 | 074 | Finish the Multi-Provider Quota History Surface | P1 | S | - | TODO |
 | 075 | Show Bundle Identity, Age, and Warnings in the /sync Import Preview | P1 | M | - | TODO |
-| 076 | Display Campaign Root Titles on Generic Child Sessions | P2 | S-M | - | DONE |
+| 076 | Display Campaign Root Titles on Generic Child Sessions | P2 | S-M | - | TODO |
 | 077 | Give /sources a First-Run Answer When Nothing Is Detected | P2 | M | - | TODO |
-| 078 | Export Filtered Session Rows as CSV From the Web Sessions View | P2 | S-M | - | DONE |
+| 078 | Export Filtered Session Rows as CSV From the Web Sessions View | P2 | S-M | - | TODO |
 | 079 | Drive Cursor Import and Machine Renaming From the Web | P2 | M | 075 (file overlap in sync feature; sequence or coordinate) | TODO |
 | 080 | Restore Glanceable Quota in the 768-1279px Band and Cover the Missing Viewports | P2 | S+M | - | TODO |
 | 081 | Add `quota --history` to the CLI | P2 | M | - | TODO |
-| 082 | Let the Reader See What the Timeline "Other" Series Contains | P3 | S-M | - | DONE |
-| 083 | Design "Adopt Unmanaged Skill Into Source" (spike, then gated build) | P1 | L | - | TODO |
-| 084 | Spike — a Session-Intent Signal From First Prompts, Within the Privacy Boundary | P3 | L | - | TODO |
-| 085 | Spike — a Printable Period Recap on the Existing Print Path | P3 | M | - | TODO |
+| 082 | Let the Reader See What the Timeline "Other" Series Contains | P3 | S-M | - | TODO |
+| 083 | Design "Adopt Unmanaged Skill Into Source" (spike, then gated build) | P1 | L | - | DESIGN READY — awaiting approval |
+| 084 | Spike — a Session-Intent Signal From First Prompts, Within the Privacy Boundary | P3 | L | - | DESIGN READY — awaiting decision |
+| 085 | Spike — a Printable Period Recap on the Existing Print Path | P3 | M | - | DESIGN READY — awaiting decision (Firefox print-to-PDF gate unmet: no reachable Gecko exposes `--print`, so pagination is verified in one engine only) |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) |
 REJECTED (with one-line rationale) | DESIGN READY (design/spike plans only:
