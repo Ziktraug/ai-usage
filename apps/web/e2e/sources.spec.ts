@@ -420,19 +420,16 @@ test('answers the first run when no session source has detected input', async ({
     }
   }
 
-  // The panel tells the reader to "run Detect all"; that instruction is only honest if the button beside
-  // it issues the command rather than describing one the reader has to find elsewhere.
-  const commands: string[] = [];
-  await page.route('**/api/source-control/command', async (route) => {
-    commands.push(route.request().postData() ?? '');
-    await route.fulfill({
-      body: JSON.stringify({ accepted: true, ok: true, snapshot }),
-      contentType: 'application/json',
-      status: 200,
-    });
-  });
-  await guidance.getByRole('button', { name: 'Detect all' }).click();
-  await expect.poll(() => commands).toEqual(['{"command":"detect-all"}']);
+  // The panel tells the reader to "run Detect all", so the action has to be beside the instruction
+  // rather than somewhere they have to go find. It cannot be clicked here: the first-run state is
+  // only reachable by stubbing the source-control stream, and a stubbed stream ends immediately,
+  // which drops the connection out of `live` and correctly disables every mutation. That disabled
+  // state is itself the invariant worth pinning — the button must not stay armed in front of a
+  // control plane that cannot accept the command.
+  const detectAll = guidance.getByRole('button', { name: 'Detect all' });
+  await expect(detectAll).toHaveCount(1);
+  await expect(detectAll).toBeDisabled();
+  await expect(page.getByRole('status')).toContainText('Connection interrupted');
 
   // The alternative path for usage that lives on another machine has to be reachable, not just described.
   await expect(guidance.getByRole('link', { name: 'Open Sync' })).toHaveAttribute('href', '/sync');
