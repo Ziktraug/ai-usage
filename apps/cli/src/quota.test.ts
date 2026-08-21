@@ -124,6 +124,17 @@ test('explains an empty range instead of drawing an empty chart', () => {
   expect(renderQuotaHistory([], '24h')).toBe('No stored provider quota history in the last 24h.');
 });
 
+test('does not present a partial read with no surviving points as an absent history', () => {
+  // Skipping every corrupt row leaves the same empty array as a store that never recorded anything.
+  // Collapsing the two would tell the reader nothing exists when observations were in fact dropped.
+  const partial = renderQuotaHistory([], '24h', { partial: true });
+
+  expect(partial).toBe(
+    'Stored provider quota history in the last 24h is partial; no valid observations could be rendered.',
+  );
+  expect(partial).not.toBe(renderQuotaHistory([], '24h'));
+});
+
 test('states that history is read-only so the reader knows it is not a fresh reading', () => {
   expect(renderQuotaHistory(twoProviderHistory, '30d')).toContain(
     "Read from stored observations only. Run 'ai-usage quota' for a fresh reading.",
