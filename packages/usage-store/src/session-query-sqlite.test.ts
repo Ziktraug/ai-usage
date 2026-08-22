@@ -609,8 +609,10 @@ describe('durable session query SQLite projections', () => {
         executeMaterializedSessionQuery(database, 'neighbors', neighborRequest, (query) => traces.push(query)),
       ).toEqual(projectSessionNeighbors(rows, neighborRequest));
       expect(traces).toHaveLength(1);
-      expect(traces[0]?.sql).toContain('LAG(row_json)');
-      expect(traces[0]?.sql).toContain('LEAD(row_json)');
+      expect(traces[0]?.sql).toContain('LAG(ordinal)');
+      expect(traces[0]?.sql).toContain('LEAD(ordinal)');
+      expect(traces[0]?.sql).not.toContain('LAG(row_json)');
+      expect(traces[0]?.sql).not.toContain('LEAD(row_json)');
     } finally {
       database.close();
     }
