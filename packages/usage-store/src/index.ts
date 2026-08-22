@@ -289,7 +289,7 @@ export interface ProviderQuotaImportResult {
 
 export interface RetainProviderQuotaObservationsInput {
   dbPath: string;
-  /** Observations older than this window are downsampled; defaults to 90 days. */
+  /** Observations older than this window are downsampled; defaults to 30 days. */
   fullResolutionMs?: number;
   /** Downsampling keeps the earliest observation per stream and per this bucket; defaults to one hour. */
   granularityMs?: number;
