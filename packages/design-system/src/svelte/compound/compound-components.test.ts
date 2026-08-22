@@ -11,7 +11,28 @@ import { keepTabPanelInTabOrder } from './tab-panel';
 
 const compoundDirectory = dirname(fileURLToPath(import.meta.url));
 const repositoryDirectory = resolve(compoundDirectory, '../../../../..');
-const BROWSER_PROOF_TIMEOUT_MS = 15_000;
+/**
+ * Every interaction below is bounded by `page.setDefaultTimeout` — that is the guard that catches a
+ * control which stopped responding, and it names the locator when it fires. This budget only has to
+ * be large enough that the guard is what fails first.
+ *
+ * It was not. At 15s it sat well under the 41 interactions x 2s of waiting it permits, so on a
+ * loaded runner the test killed itself before any action timed out, reporting an anonymous 15,000ms
+ * overrun instead of naming the control that stalled. That is how it failed in CI five times
+ * (15000.19, 15001.79, 15003.22 and 15049.89 ms), and why those failures said nothing useful.
+ *
+ * Sized from the worst case the per-action guard allows, plus the measured setup. Setup is the temp
+ * directory, the fixture writes, the Vite server, the Chromium launch and the first paint: 626ms
+ * warm and 1,092ms with the Vite cache cleared, measured on the development machine.
+ *
+ * A real regression still fails in about two seconds, at a named locator. This budget is only
+ * reached when the machine is too slow to finish work that is genuinely progressing.
+ */
+const BROWSER_PROOF_INTERACTIONS = 41;
+const BROWSER_PROOF_ACTION_TIMEOUT_MS = 2000;
+const BROWSER_PROOF_SETUP_BUDGET_MS = 8000;
+const BROWSER_PROOF_TIMEOUT_MS =
+  BROWSER_PROOF_SETUP_BUDGET_MS + BROWSER_PROOF_INTERACTIONS * BROWSER_PROOF_ACTION_TIMEOUT_MS;
 const POSITIONING_PIXEL_TOLERANCE = 1;
 
 const readCompound = async (name: string): Promise<string> => readFile(resolve(compoundDirectory, name), 'utf8');
@@ -57,7 +78,7 @@ describe('Svelte compound controls', () => {
           throw new Error('The synthetic D3 Vite server did not expose a TCP address.');
         }
         const page = await browser.newPage();
-        page.setDefaultTimeout(2000);
+        page.setDefaultTimeout(BROWSER_PROOF_ACTION_TIMEOUT_MS);
         await page.goto(`http://127.0.0.1:${address.port}/${fixtureUrlPath}/`);
 
         const multiFixture = page.getByTestId('multi-select-fixture');

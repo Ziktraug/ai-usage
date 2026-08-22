@@ -8,7 +8,20 @@ const LOOPBACK_HOST = '127.0.0.1';
 const DEV_READY_DEADLINE_MS = 60_000;
 const DEV_OUTPUT_STABLE_DEADLINE_MS = 20_000;
 const BUILD_DEADLINE_MS = 180_000;
-const CONTENDING_BUILD_DEADLINE_MS = 30_000;
+/**
+ * Two different waits, which used to share one 30s constant.
+ *
+ * The lock deadline waits for the *primary* build to reach the point where it publishes its lock.
+ * That milestone is inside the build, so it cannot be given less room than the build itself: a
+ * runner slow enough to need 120s for a build reaches the lock late too, and the old 30s turned
+ * that into a failure of the check rather than a slow build. It shares BUILD_DEADLINE_MS for that
+ * reason.
+ *
+ * The exit deadline is the opposite claim: a build that finds the lock must refuse and exit
+ * promptly. Keeping it tight is the point -- a contending build still running after 30s means the
+ * lock is not doing its job, which is exactly what this check exists to catch.
+ */
+const CONTENDING_BUILD_EXIT_DEADLINE_MS = 30_000;
 const REQUEST_TIMEOUT_MS = 5000;
 const PROCESS_STOP_DEADLINE_MS = 3000;
 const LOG_DRAIN_DEADLINE_MS = 3000;
@@ -524,7 +537,7 @@ const countDeletedDevOutputDescriptors = async (
 };
 
 const waitForBuildLock = async (lockPath: string, buildProcess: OwnedProcess): Promise<void> => {
-  const deadline = Date.now() + CONTENDING_BUILD_DEADLINE_MS;
+  const deadline = Date.now() + BUILD_DEADLINE_MS;
   while (Date.now() < deadline) {
     assertIsolationCheckNotInterrupted();
     if (buildProcess.child.exitCode !== null) {
@@ -705,7 +718,7 @@ export const runWebDevBuildIsolationCheck = async (
       );
       secondBuildExitCode = await within(
         'contending production build',
-        CONTENDING_BUILD_DEADLINE_MS,
+        CONTENDING_BUILD_EXIT_DEADLINE_MS,
         secondBuild.child.exited,
       );
       await within(
