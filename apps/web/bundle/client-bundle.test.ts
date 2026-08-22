@@ -38,7 +38,7 @@ const INITIAL_GZIP_CLOSURE_CEILING_BYTES = 300_000;
  *
  * When a change legitimately grows the closure, re-measure and move this number in the same commit.
  */
-const RECORDED_GZIP_CLOSURE_BYTES = 290_137;
+const RECORDED_GZIP_CLOSURE_BYTES = 284_579;
 const GZIP_CLOSURE_DRIFT_TOLERANCE = 0.02;
 
 /** The report page entry, uncompressed. A coarse companion to the closure guard above. */
