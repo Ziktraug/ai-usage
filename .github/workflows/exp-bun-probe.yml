@@ -1,0 +1,62 @@
+name: EXP Bun Vite Probe
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    name: Vite dev startup under 1.3.13 vs 1.4.0
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.13
+      - run: |
+          echo "nproc=$(nproc) mem=$(free -m | awk '/Mem:/{print $2}')MB"
+      - run: bun install --frozen-lockfile
+      - run: bun --filter @ai-usage/design-system build
+      - run: bun run --cwd apps/web dev:prepare
+
+      - name: Fetch bun 1.4.0 alongside
+        run: |
+          curl -sL -o /tmp/bun14.zip https://github.com/oven-sh/bun/releases/download/bun-v1.4.0/bun-linux-x64.zip
+          unzip -q /tmp/bun14.zip -d /tmp/bun14
+          /tmp/bun14/bun-linux-x64/bun --version
+
+      - name: Measure both runtimes
+        run: |
+          set +e
+          measure() {
+            label="$1"; bunbin="$2"; dbg="$3"
+            echo "::group::$label"
+            ( cd apps/web && DEBUG="$dbg" AI_USAGE_SVELTEKIT_PHASE=dev \
+              "$bunbin" --no-env-file --bun vite --host 127.0.0.1 --port 4180 --strictPort \
+              > /tmp/$label.log 2>&1 & echo $! > /tmp/$label.pid )
+            start=$(date +%s%3N)
+            got=""
+            for i in $(seq 1 90); do
+              code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 2 http://127.0.0.1:4180/ 2>/dev/null)
+              if [ -n "$code" ] && [ "$code" != "000" ]; then
+                got=$(( $(date +%s%3N) - start )); break
+              fi
+              sleep 1
+            done
+            pid=$(cat /tmp/$label.pid)
+            kill -TERM "$pid" 2>/dev/null; sleep 3; kill -KILL "$pid" 2>/dev/null
+            wait "$pid" 2>/dev/null
+            if [ -n "$got" ]; then echo "RESULT $label: ready_ms=$got"; else echo "RESULT $label: NEVER_READY (90s)"; fi
+            echo "---- sortie $label (200 dernières lignes) ----"
+            tail -200 /tmp/$label.log
+            echo "::endgroup::"
+            sleep 5
+          }
+          measure bun1313 "$(which bun)" ""
+          measure bun140 /tmp/bun14/bun-linux-x64/bun ""
+          measure bun140debug /tmp/bun14/bun-linux-x64/bun "vite:*"
+          echo "===== SYNTHÈSE ====="
+          grep -h "^RESULT" /tmp/*.log 2>/dev/null || true
