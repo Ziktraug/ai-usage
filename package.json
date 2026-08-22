@@ -29,6 +29,7 @@
     "test:packages": "turbo run test --concurrency=1",
     "test:setup-loopback": "bun tools/check-setup-loopback.ts",
     "test:tools": "bun test tools",
+    "test:web-bundle": "bun run --cwd apps/web test:bundle",
     "test:web-dev-build-isolation": "bun tools/check-web-dev-build-isolation.ts",
     "test:web-client-manifest": "bun tools/check-web-client-manifest.ts apps/web/.svelte-kit/build/private/client-modules.json",
     "test:web-production": "bun tools/check-web-production-start.ts",
