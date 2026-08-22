@@ -287,6 +287,19 @@ export interface ProviderQuotaImportResult {
   unchanged: number;
 }
 
+export interface RetainProviderQuotaObservationsInput {
+  dbPath: string;
+  /** Observations older than this window are downsampled; defaults to 90 days. */
+  fullResolutionMs?: number;
+  /** Downsampling keeps the earliest observation per stream and per this bucket; defaults to one hour. */
+  granularityMs?: number;
+  now?: number;
+}
+
+export interface RetainProviderQuotaObservationsResult {
+  deleted: number;
+}
+
 export interface QueryProviderQuotaObservationsInput {
   accountScope?: string | null;
   dbPath: string;
@@ -1242,6 +1255,10 @@ const migrate = (db: SqliteDatabase): boolean => {
       CREATE UNIQUE INDEX IF NOT EXISTS idx_provider_quota_source_event
         ON provider_quota_observations(provider_key, machine_id, source_key, source_event_key)
         WHERE source_event_key IS NOT NULL;
+      -- Quota retention deletes observations in bulk; without this index every cascaded
+      -- provider_quota_source_events delete would scan that table per observation.
+      CREATE INDEX IF NOT EXISTS idx_provider_quota_source_events_observation
+        ON provider_quota_source_events(observation_id);
     `);
     db.exec(servedReportSchemaSql);
     if (!hasExactUsageLocalMachineSchema(db)) {
@@ -3272,6 +3289,7 @@ export const {
   queryLatestProviderQuotaObservations,
   queryLatestLocalProviderQuotaObservations,
   recordProviderQuotaSourceAttempt,
+  retainProviderQuotaObservations,
 } = createProviderQuotaStore({
   readUsageLocalMachineWithDatabase,
   usageStoreError,

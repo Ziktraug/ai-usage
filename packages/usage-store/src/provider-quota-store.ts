@@ -20,6 +20,8 @@ import type {
   QueryProviderQuotaSourceStateInput,
   QueryProviderQuotaSourceStatesInput,
   RecordProviderQuotaSourceAttemptInput,
+  RetainProviderQuotaObservationsInput,
+  RetainProviderQuotaObservationsResult,
   StoredProviderQuotaObservation,
 } from './index';
 
@@ -27,6 +29,10 @@ const MAX_PROVIDER_QUOTA_OBSERVATIONS = 10_000;
 const MAX_PROVIDER_QUOTA_SOURCE_STATES = 1000;
 export const MAX_PROVIDER_QUOTA_STREAMS = 10_000;
 const MAX_PROVIDER_QUOTA_WINDOWS_PER_OBSERVATION = 256;
+const DEFAULT_PROVIDER_QUOTA_FULL_RESOLUTION_MS = 90 * 24 * 60 * 60 * 1000;
+const DEFAULT_PROVIDER_QUOTA_GRANULARITY_MS = 60 * 60 * 1000;
+// Bounds the WAL growth of each retention transaction; every batch commits independently.
+const PROVIDER_QUOTA_RETENTION_BATCH_SIZE = 20_000;
 
 interface SqliteStatement {
   all(...params: unknown[]): unknown[];
@@ -891,6 +897,98 @@ export const createProviderQuotaStore = (dependencies: ProviderQuotaStoreDepende
       }),
     );
 
+  // Deleted rows only move pages to the freelist; the file itself never shrinks. A guarded
+  // VACUUM reclaims the space after a large prune without paying a full rewrite on every run.
+  const VACUUM_MINIMUM_FREELIST_BYTES = 100 * 1024 * 1024;
+  const VACUUM_MINIMUM_FREELIST_RATIO = 0.2;
+  const reclaimFreelistSpace = (db: SqliteDatabase): void => {
+    const pageSize = (db.query('PRAGMA page_size').get() as { page_size: number }).page_size;
+    const pageCount = (db.query('PRAGMA page_count').get() as { page_count: number }).page_count;
+    const freelistCount = (db.query('PRAGMA freelist_count').get() as { freelist_count: number }).freelist_count;
+    const freelistBytes = freelistCount * pageSize;
+    if (pageCount === 0 || freelistBytes < VACUUM_MINIMUM_FREELIST_BYTES) {
+      return;
+    }
+    if (freelistCount / pageCount < VACUUM_MINIMUM_FREELIST_RATIO) {
+      return;
+    }
+    db.clearStatements();
+    db.exec('VACUUM');
+  };
+
+  const retainProviderQuotaObservations = (
+    input: RetainProviderQuotaObservationsInput,
+  ): Effect.Effect<RetainProviderQuotaObservationsResult, UsageStoreError> =>
+    withUsageStoreWriter(input.dbPath, (db) =>
+      Effect.try({
+        try: () => {
+          const now = input.now ?? Date.now();
+          const fullResolutionMs = input.fullResolutionMs ?? DEFAULT_PROVIDER_QUOTA_FULL_RESOLUTION_MS;
+          const granularityMs = input.granularityMs ?? DEFAULT_PROVIDER_QUOTA_GRANULARITY_MS;
+          if (
+            !(
+              Number.isSafeInteger(now) &&
+              now >= 0 &&
+              Number.isSafeInteger(fullResolutionMs) &&
+              fullResolutionMs > 0 &&
+              Number.isSafeInteger(granularityMs) &&
+              granularityMs > 0
+            )
+          ) {
+            throw usageStoreError(
+              'retainProviderQuotaObservations',
+              input.dbPath,
+              'Provider quota retention options are invalid',
+              'invalid-input',
+            );
+          }
+          const cutoff = new Date(now - fullResolutionMs).toISOString();
+          const granularitySeconds = Math.max(1, Math.floor(granularityMs / 1000));
+          // Beyond the full-resolution window, keep the earliest observation per stream and
+          // time bucket, plus anything the latest-heads projection still points at. Windows
+          // and source events follow through ON DELETE CASCADE. Each DELETE statement is its
+          // own transaction, so a bounded batch size caps WAL growth on the first large prune.
+          const deleteBatch = db.query(`
+            DELETE FROM provider_quota_observations
+            WHERE id IN (
+              SELECT id FROM provider_quota_observations
+              WHERE first_observed_at < ?
+                AND id NOT IN (SELECT observation_id FROM provider_quota_latest_heads)
+                AND id NOT IN (
+                  SELECT MIN(id) FROM provider_quota_observations
+                  WHERE first_observed_at < ?
+                  GROUP BY
+                    provider_key,
+                    machine_id,
+                    COALESCE(account_scope, ''),
+                    source_key,
+                    CAST(strftime('%s', first_observed_at) AS INTEGER) / ?
+                )
+              LIMIT ?
+            )
+          `);
+          const countChanges = db.query('SELECT changes() AS changed');
+          let deleted = 0;
+          for (;;) {
+            deleteBatch.run(cutoff, cutoff, granularitySeconds, PROVIDER_QUOTA_RETENTION_BATCH_SIZE);
+            const { changed } = countChanges.get() as { changed: number };
+            deleted += changed;
+            if (changed < PROVIDER_QUOTA_RETENTION_BATCH_SIZE) {
+              break;
+            }
+          }
+          if (deleted > 0) {
+            reclaimFreelistSpace(db);
+          }
+          return { deleted };
+        },
+        catch: (cause) =>
+          cause instanceof UsageStoreError
+            ? cause
+            : usageStoreError('retainProviderQuotaObservations', input.dbPath, cause, 'storage-failure'),
+      }),
+    );
+
   return {
     importProviderQuotaBatch,
     queryProviderQuotaObservations,
@@ -899,5 +997,6 @@ export const createProviderQuotaStore = (dependencies: ProviderQuotaStoreDepende
     queryLatestProviderQuotaObservations,
     queryLatestLocalProviderQuotaObservations,
     recordProviderQuotaSourceAttempt,
+    retainProviderQuotaObservations,
   };
 };

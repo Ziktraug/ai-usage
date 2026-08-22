@@ -43,6 +43,7 @@ import {
   publishServedReportRevision,
   queryServedReportRevisionSupport,
   quiesceUsageStoreForShutdown,
+  retainProviderQuotaObservations,
   retainServedReportRevisions,
   type UpdateUsageMachineLabelInput,
   type UsageStoreGenerations,
@@ -1069,6 +1070,7 @@ export const createLiveUsageEngineRuntime = (options: LiveUsageEngineRuntimeOpti
           'retention',
           async () => {
             await Effect.runPromise(retainServedReportRevisions({ dbPath: options.dbPath, now: now().getTime() }));
+            await Effect.runPromise(retainProviderQuotaObservations({ dbPath: options.dbPath, now: now().getTime() }));
           },
           { phase: 'startup' },
         );
