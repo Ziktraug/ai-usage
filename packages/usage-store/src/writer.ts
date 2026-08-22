@@ -24,6 +24,7 @@ export type {
   PublishServedReportRevisionContext,
   PublishServedReportRevisionInput,
   PublishServedReportRevisionResult,
+  PublishServedRevisionValidationCache,
   QueryEnrichableUsageRowsInput,
   QueryEnrichableUsageRowsResult,
   QueryLatestProviderQuotaObservationsInput,

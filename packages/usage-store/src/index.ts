@@ -368,6 +368,10 @@ export interface PublishServedReportRevisionContext {
   readonly generations: UsageStoreGenerations;
 }
 
+export interface PublishServedRevisionValidationCache {
+  revision: string | null;
+}
+
 export interface PublishServedReportRevisionInput {
   readonly assemble: (
     context: PublishServedReportRevisionContext,
@@ -377,7 +381,14 @@ export interface PublishServedReportRevisionInput {
   readonly now?: number;
   readonly renewalWindowMs?: number;
   readonly revision: string;
+  /** A revision validated once by this process stays trusted; it is immutable once staged. */
+  readonly revisionValidationCache?: PublishServedRevisionValidationCache;
   readonly ttlMs?: number;
+  /**
+   * Config fingerprint observed by the caller just before publishing. When it and both store
+   * generations match the current revision, the publication renews without assembling a capture.
+   */
+  readonly unchangedConfigFingerprint?: string;
 }
 
 export interface PublishServedReportRevisionResult {

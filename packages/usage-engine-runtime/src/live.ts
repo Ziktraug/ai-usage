@@ -39,6 +39,7 @@ import {
 import { createUsageFileMergeService, type UsageFileMergeService, UsageMergeError } from '@ai-usage/usage-merge';
 import {
   initializeUsageStore,
+  type PublishServedRevisionValidationCache,
   publishServedReportRevision,
   queryServedReportRevisionSupport,
   quiesceUsageStoreForShutdown,
@@ -1124,9 +1125,14 @@ export const createDurableReportPublisher = (options: DurableReportPublisherOpti
     });
   const runWithStorage = <Value, Error>(effect: Effect.Effect<Value, Error, LocalHistoryStorage>) =>
     Effect.runPromise(effect.pipe(Effect.provideService(LocalHistoryStorage, options.storage)));
+  const validationCache: PublishServedRevisionValidationCache = { revision: null };
 
   const publish = async () => {
     const publicationTime = currentTime();
+    const publishConfig = await runWithStorage(readMergedAiUsageConfigFrom(options.configCwd));
+    const publishFingerprint = await Effect.runPromise(
+      readStoredReportSourceFingerprint({ config: publishConfig, dbPath: options.dbPath }),
+    );
     const result = await Effect.runPromise(
       publishServedReportRevision({
         assemble: async ({ generations }) => {
@@ -1167,6 +1173,8 @@ export const createDurableReportPublisher = (options: DurableReportPublisherOpti
         dbPath: options.dbPath,
         now: publicationTime.getTime(),
         revision: nextRevision(),
+        revisionValidationCache: validationCache,
+        unchangedConfigFingerprint: publishFingerprint.configFingerprint,
       }),
     );
     try {
