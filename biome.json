@@ -6,6 +6,8 @@
       "**/*.tsx",
       "**/*.svelte",
       "**/*.json",
+      "!**/.claude/settings.local.json",
+      "!**/.claude/worktrees",
       "!**/.output-build",
       "!**/.svelte-kit",
       "!**/.turbo",
