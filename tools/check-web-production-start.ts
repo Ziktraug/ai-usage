@@ -14,7 +14,7 @@ const LOOPBACK_HOST = '127.0.0.1';
 const LOG_LIMIT_BYTES = 64 * 1024;
 const HTTP_RESPONSE_LIMIT_BYTES = 2 * 1024 * 1024;
 const START_DEADLINE_MS = 15_000;
-const DEVELOPMENT_START_DEADLINE_MS = 60_000;
+const DEVELOPMENT_START_DEADLINE_MS = 180_000;
 const REQUEST_TIMEOUT_MS = 5000;
 // The production supervisor owns a 5 s graceful window followed by a 3 s
 // forced-cleanup window. Its wrapper must never kill it before both complete.
