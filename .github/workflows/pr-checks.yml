@@ -43,6 +43,7 @@ jobs:
       - run: bun run test
       - run: bun run build
       - run: bun run test:web-client-manifest
+      - run: bun run test:web-bundle
 
   lifecycle:
     name: Production and Lifecycle

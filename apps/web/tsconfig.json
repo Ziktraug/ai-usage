@@ -15,6 +15,7 @@
     ".svelte-kit/check/types/**/$types.d.ts",
     "src/**/*.svelte",
     "src/**/*.ts",
+    "bundle/**/*.ts",
     "browser-request-abort-allowance.test.ts",
     "panda.config.ts",
     "server-state-*.test.ts",
