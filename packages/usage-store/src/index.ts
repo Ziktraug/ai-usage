@@ -1455,6 +1455,16 @@ const migrate = (db: SqliteDatabase): boolean => {
   }
 };
 
+// Report captures and the served-query catalog sort the full revision payload (tens of MB).
+// SQLite's default page cache (~2 MB) makes every such sort spill a temp B-tree to disk; a
+// 64 MB cache plus in-memory temp storage keeps those sorts entirely in RAM.
+const USAGE_STORE_PAGE_CACHE_KIB = 65_536;
+
+const applySortCapacityPragmas = (db: SqliteDatabase): void => {
+  db.exec(`PRAGMA cache_size = -${USAGE_STORE_PAGE_CACHE_KIB}`);
+  db.exec('PRAGMA temp_store = MEMORY');
+};
+
 const openUsageStoreWriterDatabase = (dbPath: string): Effect.Effect<SqliteDatabase, UsageStoreError> =>
   Effect.tryPromise({
     try: async () => {
@@ -1464,6 +1474,10 @@ const openUsageStoreWriterDatabase = (dbPath: string): Effect.Effect<SqliteDatab
       try {
         db.exec('PRAGMA busy_timeout = 5000');
         db.exec('PRAGMA journal_mode = WAL');
+        // NORMAL only relaxes durability of the most recent commits; the store is rebuilt from
+        // local session files, so WAL integrity is the property that matters here.
+        db.exec('PRAGMA synchronous = NORMAL');
+        applySortCapacityPragmas(db);
         db.exec('PRAGMA foreign_keys = ON');
         const schemaChanged = migrate(db);
         if (schemaChanged) {
@@ -1539,6 +1553,7 @@ const openValidatedReadOnlyUsageStore = async (
   const db = createTrackedSqliteDatabase(new Database(fileUrl.href, flags) as unknown as RawSqliteDatabase);
   try {
     db.exec(`PRAGMA busy_timeout = ${USAGE_STORE_READER_BUSY_TIMEOUT_MS}`);
+    applySortCapacityPragmas(db);
     db.exec('PRAGMA query_only = ON');
     db.exec('PRAGMA foreign_keys = ON');
     revalidatePrivateStoreForConfirmation(dbPath, identity);
@@ -1626,6 +1641,8 @@ const openConfirmationUsageStoreDatabase = (
       );
       try {
         db.exec('PRAGMA busy_timeout = 5000');
+        db.exec('PRAGMA synchronous = NORMAL');
+        applySortCapacityPragmas(db);
         db.exec('PRAGMA foreign_keys = ON');
         revalidatePrivateStoreForConfirmation(dbPath, identity);
         return { db, identity };
