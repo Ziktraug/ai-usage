@@ -922,27 +922,34 @@ export const createServedReportStore = (dependencies: ServedReportStoreDependenc
               try {
                 const generations = readUsageStoreGenerations(database);
                 visitPublicationPhase('after-generation-read');
-                const capture = await input.assemble({ generations });
-                const machine = readUsageLocalMachineWithDatabase(database, input.dbPath);
-                const prepared = validatePublicationInput(capture, options, machine);
                 const current = readCurrentServedRevisionRecord(database);
-                let renewableManifest: ServedReportRevisionManifest | undefined;
-                if (current?.private_capture_fingerprint === prepared.privateCaptureFingerprint) {
-                  try {
-                    validateServedRevisionCounts(database, current);
-                    validateServedRevisionOrphans(database, current.revision);
-                    validateServedRevisionPayload(database, current);
-                    validateServedRevisionQueryCatalog(
-                      () => createServedRevisionQueryDatabase(database, current.revision),
-                      current.revision,
-                    );
-                    renewableManifest = manifestFromServedRevisionRecord(current);
-                  } catch {
-                    renewableManifest = undefined;
+                const validateCurrentRevision = (
+                  record: ServedReportRevisionRecord,
+                ): ServedReportRevisionManifest | undefined => {
+                  if (input.revisionValidationCache?.revision === record.revision) {
+                    return manifestFromServedRevisionRecord(record);
                   }
-                }
-                if (current && renewableManifest) {
-                  const renewed = current.expires_at - prepared.now <= prepared.renewalWindowMs;
+                  try {
+                    validateServedRevisionCounts(database, record);
+                    validateServedRevisionOrphans(database, record.revision);
+                    validateServedRevisionPayload(database, record);
+                    validateServedRevisionQueryCatalog(
+                      () => createServedRevisionQueryDatabase(database, record.revision),
+                      record.revision,
+                    );
+                    if (input.revisionValidationCache) {
+                      input.revisionValidationCache.revision = record.revision;
+                    }
+                    return manifestFromServedRevisionRecord(record);
+                  } catch {
+                    return;
+                  }
+                };
+                const renewCurrentRevision = (
+                  record: ServedReportRevisionRecord,
+                  manifest: ServedReportRevisionManifest,
+                ): PublishServedReportRevisionResult => {
+                  const renewed = record.expires_at - options.now <= options.renewalWindowMs;
                   if (renewed) {
                     database
                       .query(`
@@ -950,15 +957,41 @@ export const createServedReportStore = (dependencies: ServedReportStoreDependenc
                     SET published_at = ?, expires_at = ?
                     WHERE revision = ? AND complete = 1
                   `)
-                      .run(prepared.now, prepared.expiresAt, current.revision);
-                    current.published_at = prepared.now;
-                    current.expires_at = prepared.expiresAt;
+                      .run(options.now, options.expiresAt, record.revision);
+                    record.published_at = options.now;
+                    record.expires_at = options.expiresAt;
                   }
-                  expectedCommittedResult = {
+                  return {
                     changed: false,
-                    manifest: renewed ? manifestFromServedRevisionRecord(current) : renewableManifest,
+                    manifest: renewed ? manifestFromServedRevisionRecord(record) : manifest,
                     renewed,
                   };
+                };
+                const unchangedByGenerations =
+                  current !== null &&
+                  input.unchangedConfigFingerprint !== undefined &&
+                  current.usage_store_generation === generations.usageStoreGeneration &&
+                  current.machine_fleet_generation === generations.machineFleetGeneration &&
+                  current.config_fingerprint === input.unchangedConfigFingerprint;
+                if (current && unchangedByGenerations) {
+                  const manifest = validateCurrentRevision(current);
+                  // A failed validation falls through to a full assembly, which rebuilds the revision.
+                  if (manifest) {
+                    expectedCommittedResult = renewCurrentRevision(current, manifest);
+                    database.exec('COMMIT');
+                    visitPublicationPhase('after-commit');
+                    return expectedCommittedResult;
+                  }
+                }
+                const capture = await input.assemble({ generations });
+                const machine = readUsageLocalMachineWithDatabase(database, input.dbPath);
+                const prepared = validatePublicationInput(capture, options, machine);
+                let renewableManifest: ServedReportRevisionManifest | undefined;
+                if (current?.private_capture_fingerprint === prepared.privateCaptureFingerprint) {
+                  renewableManifest = validateCurrentRevision(current);
+                }
+                if (current && renewableManifest) {
+                  expectedCommittedResult = renewCurrentRevision(current, renewableManifest);
                   database.exec('COMMIT');
                   visitPublicationPhase('after-commit');
                   return expectedCommittedResult;
@@ -1067,6 +1100,10 @@ export const createServedReportStore = (dependencies: ServedReportStoreDependenc
                 expectedCommittedResult = { changed: true, manifest, renewed: false };
                 database.exec('COMMIT');
                 visitPublicationPhase('after-commit');
+                if (input.revisionValidationCache) {
+                  // The staged revision passed the full catalog validation above.
+                  input.revisionValidationCache.revision = input.revision;
+                }
                 return expectedCommittedResult;
               } catch (cause) {
                 if (database.inTransaction) {

@@ -875,6 +875,8 @@ const runNeighbors = (
   const requestFingerprint = sessionNeighborFingerprint(request);
   const filter = buildSessionQuerySqlFilter(request.query);
   const order = buildSessionQuerySqlOrder(request.query.sort, 'row_identity_rank', 'ordinal');
+  // Windowing over ordinals keeps the sort payload to a few integers per row; carrying
+  // row_json through LAG/LEAD makes the window sort spill multi-MB temp B-trees to disk.
   const neighbor = executeGet<NeighborRecord>(
     database,
     `WITH ${filteredCte(filter.where)},
@@ -883,15 +885,21 @@ const runNeighbors = (
           row_id,
           ordinal,
           ROW_NUMBER() OVER (ORDER BY ${order}) AS sequence_position,
-          LAG(row_json) OVER (ORDER BY ${order}) AS previous_json,
-          LEAD(row_json) OVER (ORDER BY ${order}) AS next_json
+          LAG(ordinal) OVER (ORDER BY ${order}) AS previous_ordinal,
+          LEAD(ordinal) OVER (ORDER BY ${order}) AS next_ordinal
         FROM filtered
+      ),
+      anchor AS (
+        SELECT previous_ordinal, next_ordinal
+        FROM ordered
+        WHERE row_id = ?
+        ORDER BY sequence_position
+        LIMIT 1
       )
-      SELECT previous_json, next_json
-      FROM ordered
-      WHERE row_id = ?
-      ORDER BY sequence_position
-      LIMIT 1`,
+      SELECT
+        (SELECT row_json FROM session_rows WHERE ordinal = anchor.previous_ordinal) AS previous_json,
+        (SELECT row_json FROM session_rows WHERE ordinal = anchor.next_ordinal) AS next_json
+      FROM anchor`,
     [...filter.params, request.rowId],
     trace,
   );

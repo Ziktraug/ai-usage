@@ -287,6 +287,19 @@ export interface ProviderQuotaImportResult {
   unchanged: number;
 }
 
+export interface RetainProviderQuotaObservationsInput {
+  dbPath: string;
+  /** Observations older than this window are downsampled; defaults to 30 days. */
+  fullResolutionMs?: number;
+  /** Downsampling keeps the earliest observation per stream and per this bucket; defaults to one hour. */
+  granularityMs?: number;
+  now?: number;
+}
+
+export interface RetainProviderQuotaObservationsResult {
+  deleted: number;
+}
+
 export interface QueryProviderQuotaObservationsInput {
   accountScope?: string | null;
   dbPath: string;
@@ -368,6 +381,10 @@ export interface PublishServedReportRevisionContext {
   readonly generations: UsageStoreGenerations;
 }
 
+export interface PublishServedRevisionValidationCache {
+  revision: string | null;
+}
+
 export interface PublishServedReportRevisionInput {
   readonly assemble: (
     context: PublishServedReportRevisionContext,
@@ -377,7 +394,14 @@ export interface PublishServedReportRevisionInput {
   readonly now?: number;
   readonly renewalWindowMs?: number;
   readonly revision: string;
+  /** A revision validated once by this process stays trusted; it is immutable once staged. */
+  readonly revisionValidationCache?: PublishServedRevisionValidationCache;
   readonly ttlMs?: number;
+  /**
+   * Config fingerprint observed by the caller just before publishing. When it and both store
+   * generations match the current revision, the publication renews without assembling a capture.
+   */
+  readonly unchangedConfigFingerprint?: string;
 }
 
 export interface PublishServedReportRevisionResult {
@@ -1231,6 +1255,10 @@ const migrate = (db: SqliteDatabase): boolean => {
       CREATE UNIQUE INDEX IF NOT EXISTS idx_provider_quota_source_event
         ON provider_quota_observations(provider_key, machine_id, source_key, source_event_key)
         WHERE source_event_key IS NOT NULL;
+      -- Quota retention deletes observations in bulk; without this index every cascaded
+      -- provider_quota_source_events delete would scan that table per observation.
+      CREATE INDEX IF NOT EXISTS idx_provider_quota_source_events_observation
+        ON provider_quota_source_events(observation_id);
     `);
     db.exec(servedReportSchemaSql);
     if (!hasExactUsageLocalMachineSchema(db)) {
@@ -1455,6 +1483,16 @@ const migrate = (db: SqliteDatabase): boolean => {
   }
 };
 
+// Report captures and the served-query catalog sort the full revision payload (tens of MB).
+// SQLite's default page cache (~2 MB) makes every such sort spill a temp B-tree to disk; a
+// 64 MB cache plus in-memory temp storage keeps those sorts entirely in RAM.
+const USAGE_STORE_PAGE_CACHE_KIB = 65_536;
+
+const applySortCapacityPragmas = (db: SqliteDatabase): void => {
+  db.exec(`PRAGMA cache_size = -${USAGE_STORE_PAGE_CACHE_KIB}`);
+  db.exec('PRAGMA temp_store = MEMORY');
+};
+
 const openUsageStoreWriterDatabase = (dbPath: string): Effect.Effect<SqliteDatabase, UsageStoreError> =>
   Effect.tryPromise({
     try: async () => {
@@ -1464,6 +1502,10 @@ const openUsageStoreWriterDatabase = (dbPath: string): Effect.Effect<SqliteDatab
       try {
         db.exec('PRAGMA busy_timeout = 5000');
         db.exec('PRAGMA journal_mode = WAL');
+        // NORMAL only relaxes durability of the most recent commits; the store is rebuilt from
+        // local session files, so WAL integrity is the property that matters here.
+        db.exec('PRAGMA synchronous = NORMAL');
+        applySortCapacityPragmas(db);
         db.exec('PRAGMA foreign_keys = ON');
         const schemaChanged = migrate(db);
         if (schemaChanged) {
@@ -1539,6 +1581,7 @@ const openValidatedReadOnlyUsageStore = async (
   const db = createTrackedSqliteDatabase(new Database(fileUrl.href, flags) as unknown as RawSqliteDatabase);
   try {
     db.exec(`PRAGMA busy_timeout = ${USAGE_STORE_READER_BUSY_TIMEOUT_MS}`);
+    applySortCapacityPragmas(db);
     db.exec('PRAGMA query_only = ON');
     db.exec('PRAGMA foreign_keys = ON');
     revalidatePrivateStoreForConfirmation(dbPath, identity);
@@ -1626,6 +1669,8 @@ const openConfirmationUsageStoreDatabase = (
       );
       try {
         db.exec('PRAGMA busy_timeout = 5000');
+        db.exec('PRAGMA synchronous = NORMAL');
+        applySortCapacityPragmas(db);
         db.exec('PRAGMA foreign_keys = ON');
         revalidatePrivateStoreForConfirmation(dbPath, identity);
         return { db, identity };
@@ -3244,6 +3289,7 @@ export const {
   queryLatestProviderQuotaObservations,
   queryLatestLocalProviderQuotaObservations,
   recordProviderQuotaSourceAttempt,
+  retainProviderQuotaObservations,
 } = createProviderQuotaStore({
   readUsageLocalMachineWithDatabase,
   usageStoreError,

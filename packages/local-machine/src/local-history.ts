@@ -414,6 +414,10 @@ export const createLocalHistoryStorage = (home = os.homedir()): LocalHistoryStor
         // Read-only SQLite connections include committed WAL pages without
         // checkpointing or mutating the harness-owned database.
         const db = new Database(dbPath, { readonly: true });
+        // Harness databases reach GBs (Codex logs); with SQLite's default ~2 MB page cache,
+        // any sort or group over them spills a transient B-tree to disk on every query.
+        db.exec('PRAGMA cache_size = -65536');
+        db.exec('PRAGMA temp_store = MEMORY');
         let closed = false;
         const rollbackAndClose = (): void => {
           if (closed) {
