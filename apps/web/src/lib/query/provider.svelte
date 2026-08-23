@@ -8,7 +8,7 @@
     hydrateWebQueryClient,
     type WebQueryHydrationState,
   } from './client';
-  import { installWebQueryHydrationContext, webQueryHydrationSignature } from './hydration-context.svelte';
+  import { installWebQueryHydrationContext } from './hydration-context.svelte';
   import { installWebQueryRpcContext } from './rpc-context.svelte';
 
   let {
@@ -23,8 +23,8 @@
     hydrationState ? createHydratedWebQueryClient(hydrationState) : createWebQueryClient(),
   );
   let observedHydrationState = untrack(() => hydrationState);
-  let appliedHydrationSignature = $state(webQueryHydrationSignature(observedHydrationState));
-  installWebQueryHydrationContext(() => appliedHydrationSignature);
+  let appliedHydrationState = $state.raw(observedHydrationState);
+  installWebQueryHydrationContext(() => appliedHydrationState);
 
   if (typeof window !== 'undefined') {
     const rpc = untrack(() => createBrowserWebRpcClient('web-query-browser'));
@@ -38,7 +38,7 @@
     if (hydrationState && hydrationState !== observedHydrationState) {
       observedHydrationState = hydrationState;
       hydrateWebQueryClient(queryClient, hydrationState);
-      appliedHydrationSignature = webQueryHydrationSignature(hydrationState);
+      appliedHydrationState = hydrationState;
     }
   });
 </script>

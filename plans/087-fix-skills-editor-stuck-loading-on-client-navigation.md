@@ -533,3 +533,227 @@ Stop and report back (do not improvise) if:
   `dataUpdatedAt` exactly as `hydrate()` decides what to apply (newer wins),
   and that `$state.raw` (not `$state`) holds the applied state in the
   provider.
+
+## Execution notes
+
+Executed 2026-08-23 in worktree `exec/087` off program tip `a70cf1aa`. Drift
+check clean: `git diff --stat 51815b70..HEAD` over the twelve in-scope files
+returned empty, and every "Current state" excerpt matched the working tree.
+
+**Deviation 1 — Step 4 case 5 contradicts its own Done criterion.** Step 4
+asks the composition pin to assert the shell `not.toContain('webQueryHydrationSignature')`,
+but the first Done criterion requires `grep -rn "appliedSignature\|webQueryHydrationSignature" apps/web/src`
+to return no matches — and the test file lives under `apps/web/src`. The two
+cannot both hold. Resolved by pinning the equivalent positive fact, which
+carries no retired identifier:
+
+```ts
+expect(skillsShell).toContain(
+  "import { useWebQueryHydrationContext } from '../../../query/hydration-context.svelte';",
+);
+```
+
+The shell importing that hook *alone* is exactly "no signature helper comes
+back with it". Verified to fail against the pre-fix shell (whose line 14
+imports both symbols), so the pin keeps its power, and the Done-criterion grep
+now returns no matches verbatim.
+
+**Deviation 2 — `bun run lint` and `bun run check` are vacuous in a worktree.**
+`biome.json` excludes `**/.claude/worktrees`, so the root's bare `biome check .`
+processes 0 files. Both gates were run against explicit paths instead:
+`bun x @biomejs/biome check --formatter-enabled=false --assist-enabled=false --only=lint/style/noRestrictedImports apps packages tools plans docs ./*.json ./*.ts`
+plus the five `tools/check-*.ts` guards (the exact expansion of the `lint`
+script), and `bun x ultracite check apps packages tools plans docs ./*.json ./*.ts`
+for `check`. Both cover 1077 files and exit 0. This is an artefact of executing
+in a worktree, not a repo defect.
+
+**Deviation 3 — Step 7's live check was not performed.** It calls for
+`bun run dev` against the machine's real Skills source. The execution mandate
+for this program restricts runs to synthetic fixtures (`bun run demo` /
+`test:e2e`), so the live-mode check is recorded as NOT PERFORMED rather than
+faked. What compensates: the Step 4 predicate cases are built from the real
+`mergeWebQueryHydrationStates` and the real route keys in the exact live-mode
+composition (root quota rail + three Skills queries), and the whole test file
+was verified to fail against the pre-fix sources.
+
+**Confirmation of the Step 5 honesty note (measured, not assumed).** The new
+e2e case was run against the pre-fix sources with the fixed spec in place:
+it PASSED (`--workers=1 -g "loads the SKILL.md editor after client-side navigation"`,
+1 passed). The e2e runtime returns `emptyQueryState` from the root layout when
+`runtimeMode !== 'live'`, so both the old equality gate and the new coverage
+gate are true there. The e2e case is therefore a regression guard for the
+client-navigation editor flow, **not** a repro of U01. The deterministic
+fails-before assertion for U01 is `hydration-context.test.ts`, verified in
+both directions:
+
+- pre-fix sources → the file fails (`SyntaxError: Export named 'webQueryHydrationCovers' not found`);
+- pre-fix `skills-shell.svelte` only (fixed context module) → case 5 fails on
+  `hydrationContext.covers(hydrationState)`;
+- fixed sources → 5 pass.
+
+Case 1 was strengthened beyond the plan's text to state *why* equality was the
+wrong predicate: it asserts that the merged root state carries exactly one
+query hash the Skills route delta does not (the quota rail), which is the
+asymmetry that pinned the old gate to `false` for a whole live session.
+
+**Not observed / not applicable.** No STOP condition fired. No
+`Skills reloaded.` / `Skills refreshed.` regression: `skills.spec.ts` passes
+17/17, including the two cases that exercise those notices. The refetch-storm
+STOP could not be evaluated without the live check; `webQueryPolicies.finiteSwr`
+was not touched. Plan 096 (U24) still owns the notice conditions and should be
+pointed at this change, as the plan's maintenance note says.
+
+## Execution notes — rework round 1
+
+Two blocking review findings. Both were investigated by measurement rather than
+argument; one is fixed, one is reported as genuinely impossible within this
+child's scope, with the evidence that establishes it.
+
+### Finding 2 (refetch-storm STOP) — SUPERSEDED BY ROUND 2
+
+The round-1 version of this bound was not sound: it modelled three of the four
+route queries, and its "second observer" used a separate rejecting `queryFn`
+that never touched the counter being asserted, so the no-loop assertion could
+not fail. Round 2 replaced it. See "Rework round 2 — Blocking A" below.
+
+### Finding 1 (presentation gate) — NOT SATISFIABLE IN THIS CHILD
+
+A deterministic render assertion that fails on U01 and passes on the fix cannot
+be produced without work this plan explicitly places outside its own scope.
+Three axes were attempted and measured:
+
+**1. SSR / component render — measured impossible.** A new fixture
+(`skills-shell.asymmetric-hydration.fixture.svelte`) wires the real
+`WebQueryProvider` to the MERGED state and the real `SkillsShell` to the
+route-delta alone, reproducing the live composition exactly (5 provider queries
+vs 4 route queries, quota rail root-only). Rendering `/skills/global/beta-skill`
+— a skill present in the snapshot whose SKILL.md the SSR payload never seeded —
+does reproduce the visible symptom: `Loading…` present,
+`data-skills-hydrated="true"` absent. But the identical probe run against the
+pre-fix sources returns **byte-identical** output:
+
+```
+post-fix: {"alpha":{"editor":true,"hydratedTrue":false,"loading":false,"synthetic":true,"workspace":true},"beta":{"editor":true,"hydratedTrue":false,"loading":true,"workspace":true},"providerQueries":5,"routeQueries":4}
+pre-fix:  {"alpha":{"editor":true,"hydratedTrue":false,"loading":false,"synthetic":true,"workspace":true},"beta":{"editor":true,"hydratedTrue":false,"loading":true,"workspace":true},"providerQueries":5,"routeQueries":4}
+```
+
+Reason: `svelte/server`'s `render()` never runs `onMount` or `$effect`, so
+`mounted` is `false` and `queriesEnabled` is `false` in BOTH versions. The gate
+has no rendered consequence server-side; the SSR cache alone decides what the
+editor shows. The fixture and its two assertions were kept as a
+characterization test (`skills-shell.asymmetric-hydration.ssr.test.ts`) and are
+labelled in-file as passing both before and after. They are the scaffold a
+browser-level repro would build on; they are **not** the gate.
+
+**2. Playwright as the runtime stands — measured impossible.** Already reported:
+the new e2e case passes pre-fix. `apps/web/src/routes/+layout.server.ts:12-14`
+returns `emptyQueryState` whenever `runtimeMode !== 'live'`, so in `e2e` mode the
+applied state is always content-identical to the route delta on every Skills
+route, and no asymmetry exists for either predicate to disagree about.
+
+**3. Playwright with the asymmetry injected — out of scope by the plan's own
+text.** It requires the root layout to dehydrate one root-level query in `e2e`
+mode. `apps/web/src/routes/+layout.server.ts` is listed under "Out of scope (do
+NOT touch)", and Step 5 forbids this by name: "Do not attempt to add a
+root-level dehydrated query to e2e mode here (quota fixture in the rail changes
+every dashboard spec and the visual snapshots — plan 080's territory)." The
+Maintenance notes then defer it explicitly: "Deferred, deliberately: making the
+e2e runtime dehydrate one root-level query so Playwright exercises the live
+composition. Coordinate with plan 080 (quota rail) … and then the Step 5 e2e
+becomes the failing-before assertion too."
+
+So plan 087 was authored knowing its presentation-gate assertion was deferred to
+plan 080. The unblock is one of: (a) land plan 080's e2e quota fixture, then flip
+the Step 5 e2e into the fails-before assertion; or (b) add a DOM test runner
+(no `happy-dom`/`jsdom`/`@testing-library` is present, and adding one needs
+`bun install`, which is prohibited here).
+
+**Recommendation**: this child is correct and well covered on the logic axis
+(predicate, composition pin, revalidation bound, e2e regression guard) but does
+not meet the program's presentation gate on its own. Status left as the
+coordinator directs — the executor's own row is set to TODO rather than DONE so
+a false DONE does not stand.
+
+### Non-blocking review note — FIXED
+
+The exact-import assertion did not prove what its comment claimed. It now parses
+the shell's import binding list from the hydration module and asserts it equals
+exactly `['useWebQueryHydrationContext']`, which does establish "the hook alone".
+
+## Execution notes — rework round 2
+
+### Blocking A (the refetch bound could not fail) — FIXED, and mutation-verified
+
+The criticism was correct on every point. The replacement block in
+`apps/web/src/lib/query/hydration-context.test.ts` now:
+
+- covers **all four** route queries (snapshot, known project paths, project
+  inventories, managed SKILL.md);
+- drives the **real production query options**
+  (`skillsSnapshotQueryOptions` and the other three) rather than a hand-spread
+  copy of the policy, so a regression in either the policy or an options factory
+  is in scope;
+- routes **every** observer, including any mounted later, through one shared
+  fetch counter, with fetched values that differ from the seeded ones so a cache
+  read is distinguishable from a refetch;
+- asserts the later observer's own outcome (`status`, and which value it holds);
+- holds a **real 50 ms quiet window** open while system time crosses the whole
+  stale period, instead of a microtask.
+
+Mutation verification — each mutation was applied to the real policy, the suite
+run, and the mutation reverted:
+
+| Mutation | Result |
+| --- | --- |
+| `finiteSwr.staleTime` → `0` | **2 fail**: `Expected: 0, Received: 4` (fresh mount now refetches) and `Expected: 30000, Received: 0` (policy pin) |
+| `finiteSwr` gains `refetchInterval: 1` | **1 fail**: policy pin, `Expected path: not "refetchInterval", Received value: 1` |
+| snapshot fetch self-invalidates (a true storm loop) | **1 fail**: `Expected: 4, Received: 2400` — the quiet window catches it decisively |
+
+All three were re-run against the final, type-checked version of the file after
+the observer helper was refactored, so the table reflects the committed code and
+not an earlier draft.
+
+One honest limitation, stated rather than papered over: the 50 ms quiet window
+does **not** by itself catch `refetchInterval` polling, because TanStack's
+`focusManager` treats this headless environment as unfocused and skips interval
+refetches. That is why the third test pins the policy shape directly
+(`staleTime`, `refetchOnWindowFocus`, `refetchOnReconnect`, no
+`refetchInterval`). The window catches self-sustaining loops; the pin catches
+configuration drift, including a slow poll the window is too short to see.
+Together they cover the STOP condition. `webQueryPolicies.finiteSwr` itself is
+unchanged.
+
+### Blocking B (speculative scaffolding) — REMOVED
+
+`skills-shell.asymmetric-hydration.fixture.svelte` and its SSR test are deleted.
+The measurement they produced is preserved above under "Finding 1", and is worth
+restating compactly because it is the durable result:
+
+> A server render never runs `onMount` or `$effect`, so `mounted` is `false` and
+> every Skills observer is disabled regardless of the gate. Rendering the real
+> merged-provider / route-delta composition produced **byte-identical** output
+> before and after the fix. The hydration gate has no server-side consequence,
+> so no SSR or component render test can ever distinguish this defect from its
+> fix. A browser mount is required, which means Playwright, which means the e2e
+> runtime must first dehydrate one root-level query — plan 080's fixture.
+
+### Blocking C (one commit) — DONE
+
+The two commits were squashed into one titled with the child plan's title.
+
+### Minor (INTEGRATION.md copy) — FIXED
+
+The combined sentence is now four sentences, one idea each: what coverage
+enables, what coverage means, that the applied state may hold more, and that an
+empty delta is always covered.
+
+### Note for plan 096 (wave 2) — no inherited `Saved` count
+
+The round-1 e2e case added a fourth assertion,
+`detail.getByText('Saved', { exact: true })`, which would have taken
+`skills.spec.ts` from 8 to 9 occurrences of that exact-text locator. It was
+**not** load-bearing for U01 — `Loading…` absent plus the editor holding the
+exact fixture content already proves the document arrived — so it has been
+removed. `skills.spec.ts` is back to **8** occurrences of
+`getByText('Saved', { exact: true })`, unchanged from `51815b70`, and plan 096
+can re-derive its own count without inheriting anything from this child.

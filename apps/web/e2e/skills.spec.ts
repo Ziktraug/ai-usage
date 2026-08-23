@@ -1,8 +1,9 @@
 import type { Page } from '@playwright/test';
-import { expect, openHydratedSkills, test } from './browser-test';
+import { expect, openHydratedSkills, test, waitForHydratedSkills } from './browser-test';
 import { rpcRouteFulfillmentForClientResult, SKILLS_SAVE_RPC_PATH } from './rpc-test-transport';
 
 const ALPHA_SKILL_CONTENT = '# alpha-skill\n\nDeterministic Playwright fixture.\n';
+const BETA_SKILL_CONTENT = '# beta-skill\n\nDeterministic Playwright fixture.\n';
 const ALPHA_SKILL_URL = /\/skills\/global\/alpha-skill$/;
 const APPLY_ACTION_PATTERN = /Apply 1 action|Apply$/;
 const DESKTOP_WORKSPACE_VIEWPORT = { height: 900, width: 1280 } as const;
@@ -67,6 +68,30 @@ test('opens a managed SKILL.md as an immediately editable document and saves wit
   await expect(editor).toBeEditable();
   await expect(editor).toHaveValue('# Saved with the pointer\n');
   await expect(saveButton).toBeDisabled();
+});
+
+test('loads the SKILL.md editor after client-side navigation into and between skills', async ({ page }) => {
+  await openHydratedSkills(page, '/skills/global');
+  await page.evaluate(() => document.documentElement.setAttribute('data-spa-probe', 'kept'));
+
+  await page.getByRole('link', { exact: true, name: 'beta-skill' }).first().click();
+  await expect(page).toHaveURL(BETA_SKILL_URL);
+  // A full document navigation would replace <html> and drop the probe.
+  await expect(page.locator('html[data-spa-probe="kept"]')).toHaveCount(1);
+  const detail = page.getByRole('region', { name: 'Selected skill detail' });
+  const betaEditor = detail.getByRole('textbox', { name: 'beta-skill SKILL.md' });
+  await expect(betaEditor).toBeVisible();
+  await expect(betaEditor).toHaveValue(BETA_SKILL_CONTENT);
+  await expect(detail.getByText('Loading…', { exact: true })).toHaveCount(0);
+  await waitForHydratedSkills(page);
+
+  await page.getByRole('link', { exact: true, name: 'alpha-skill' }).first().click();
+  await expect(page).toHaveURL(ALPHA_SKILL_URL);
+  const alphaEditor = detail.getByRole('textbox', { name: 'alpha-skill SKILL.md' });
+  await expect(alphaEditor).toBeVisible();
+  await expect(alphaEditor).toHaveValue(ALPHA_SKILL_CONTENT);
+  await expect(detail.getByText('Loading…', { exact: true })).toHaveCount(0);
+  await waitForHydratedSkills(page);
 });
 
 test('saves with Control+S and Meta+S while accepting immediate follow-up edits', async ({ page }) => {
