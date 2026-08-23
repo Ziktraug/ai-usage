@@ -2,6 +2,7 @@ import {
   breakdownTabFor,
   type DashboardSearch,
   dashboardSearchDefaultsFor,
+  dashboardSearchUrlValues,
   type PrimaryDashboardTab,
   primaryDashboardTabFor,
   validateDashboardSearch,
@@ -28,6 +29,7 @@ export const shellManagementDestinations = [
 
 export const dashboardSearchCodec: DashboardSearchCodec<DashboardSearch> = {
   defaults: dashboardSearchDefaultsFor('date'),
+  encode: dashboardSearchUrlValues,
   validate: validateDashboardSearch,
 };
 

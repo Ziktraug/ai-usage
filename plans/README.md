@@ -152,7 +152,7 @@ read-only SQLite and the permanent browser/server and demo-isolation boundaries.
 | 086 | Remediate the 2026-08-23 Fresh-Eyes UI/UX Audit (program plan) | P0 | L (program) | 087–098 | TODO |
 | 087 | Fix the Skills Editor Stuck on "Loading…" After Client-Side Navigation | P0 | S–M | - | BLOCKED (fix landed and green; U01's presentation gate needs an e2e runtime that dehydrates one root-level query, deferred to plan 080 by this plan's own maintenance notes) |
 | 088 | One Canonical Number Per Concept | P0 | L | - | BLOCKED (ordinary budget plus one exceptional correction round spent; branch `exec/088` still lacks a two-machine/different-value aggregate proof and deterministic assertions for changed Sync/duration explanatory copy) |
-| 089 | Period Semantics — Inclusive Day Counts, Honest Campaign Dates, Auto Interval, Readable Range URLs | P0 | M–L | - | TODO |
+| 089 | Period Semantics — Inclusive Day Counts, Honest Campaign Dates, Auto Interval, Readable Range URLs | P0 | M–L | - | DONE |
 | 090 | Scope the Cursor AI Tab to the Report Period and List One Row per Commit | P1 | S–M | - | BLOCKED (rework budget spent; branch `exec/090` is one focused fix away — rows are filtered before grouping, so a commit whose only in-range row lacks a commit date renders scoring-dated in the wrong period) |
 | 091 | Sessions Table — One Scroll Container and Calmer Columns | P1 | M | - | TODO |
 | 092 | One Checkbox-Filter Mechanic, a Working `/` Shortcut, and a Filter Bar That Holds One Row | P1 | M | - | TODO |

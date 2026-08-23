@@ -22,6 +22,7 @@ type DashboardUrlSearch = Partial<Record<DashboardSearchKey, unknown>>;
 
 export interface DashboardSearchCodec<Search extends DashboardUrlSearch> {
   readonly defaults: Search;
+  readonly encode?: (search: Search) => DashboardUrlSearch;
   readonly validate: (raw: Record<string, unknown>, defaults: Search) => Search;
 }
 
@@ -47,7 +48,8 @@ export const dashboardUrlFor = <Search extends DashboardUrlSearch>(
 ): URL => {
   const next = new URL(currentUrl);
   const canonical = codec.validate(dashboardRecord(search), codec.defaults);
-  const encoded = new URLSearchParams(stringifyTanStackSearch(dashboardRecord(canonical)));
+  const encodedSearch = codec.encode ? codec.encode(canonical) : canonical;
+  const encoded = new URLSearchParams(stringifyTanStackSearch(dashboardRecord(encodedSearch)));
   for (const key of dashboardKeys) {
     next.searchParams.delete(key);
     if (!sameValue(canonical[key], codec.defaults[key])) {

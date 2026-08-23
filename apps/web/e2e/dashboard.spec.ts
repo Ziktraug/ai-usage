@@ -490,7 +490,7 @@ test('updates the date range and opens a session drawer', async ({ page }) => {
 
   await range.getByRole('button', { exact: true, name: 'All time' }).click();
   await expect(page).toHaveURL(RANGE_URL_PATTERN);
-  await expect(range.getByText('Apr 12 → Jun 11, 2026 · 60 days', { exact: true })).toBeVisible();
+  await expect(range.getByText('Apr 12 → Jun 11, 2026 · 61 days', { exact: true })).toBeVisible();
 
   await reportViewsFor(page).getByRole('link', { exact: true, name: 'Sessions' }).click();
   await page.locator('tbody tr').first().locator('td').first().click();
@@ -733,7 +733,9 @@ test('selects the same heatmap day with mouse and keyboard', async ({ page }) =>
     const range = page.getByRole('region', { name: 'Report period' });
     await range.getByRole('button', { name: 'Choose a custom report period' }).click();
     await expect(page.getByRole('textbox', { name: 'From' })).toHaveValue(selectedDay);
+    await expect(page.getByRole('textbox', { name: 'From' })).toHaveAttribute('placeholder', 'YYYY-MM-DD');
     await expect(page.getByRole('textbox', { name: 'To' })).toHaveValue(selectedDay);
+    await expect(range.getByText('May 25 → May 25, 2026 · 1 day', { exact: true })).toBeVisible();
   };
   const selectedCell = () =>
     page.getByRole('toolbar', { name: CALENDAR_NAME_PATTERN }).locator(`button[data-heatmap-day="${selectedDay}"]`);

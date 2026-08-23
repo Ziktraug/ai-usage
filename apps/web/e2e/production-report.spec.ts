@@ -567,7 +567,7 @@ test('keeps the last complete report visible while the report range changes', as
   }
 
   await expect(dateRange.getByRole('button', { exact: true, name: '7d' })).toHaveAttribute('aria-pressed', 'true');
-  await expect(dateRange).toContainText('Jun 26 → Jul 03, 2026 · 7 days');
+  await expect(dateRange).toContainText('Jun 26 → Jul 03, 2026 · 8 days');
   await expect(timeline).toHaveAttribute('data-stability-marker', 'original-chart');
 });
 

@@ -325,7 +325,7 @@ const campaignRollupProjection = (alias: string): string =>
 const filteredCte = (where: string): string => `filtered AS (SELECT * FROM session_rows WHERE ${where})`;
 
 const campaignFilteredCte = (where: string): string =>
-  `filtered AS (SELECT ${campaignRollupProjection('session_rows')} FROM session_rows WHERE ${where})`;
+  `filtered AS MATERIALIZED (SELECT ${campaignRollupProjection('session_rows')} FROM session_rows WHERE ${where})`;
 
 const campaignRollupCte = (includeMissingClassifiers: boolean): string => {
   if (!includeMissingClassifiers) {
@@ -357,15 +357,16 @@ campaign_latest_candidates AS (
     campaign_key,
     active_date,
     active_time,
+    sort_date,
     ROW_NUMBER() OVER (
       PARTITION BY campaign_key
       ORDER BY sort_date DESC, ordinal ASC
     ) AS latest_position
-  FROM campaign_rollup
+  FROM filtered
   WHERE campaign_key IS NOT NULL
 ),
 campaign_latest_rows AS (
-  SELECT campaign_key, active_date, active_time
+  SELECT campaign_key, active_date, active_time, sort_date
   FROM campaign_latest_candidates
   WHERE latest_position = 1
 )`;
@@ -436,7 +437,7 @@ const campaignItemCte = (useExactCostSort: boolean): string => `campaign_items A
     SUM(CASE WHEN visible.origin = 'classifier' THEN visible.fresh_tokens ELSE 0 END) AS classifier_fresh_tokens,
     MAX(latest.active_date) AS latest_active_date,
     MAX(latest.active_time) AS latest_active_time,
-    MAX(visible.sort_date) AS sort_date,
+    MAX(latest.sort_date) AS sort_date,
     root.sort_session,
     root.sort_harness,
     root.sort_machine,

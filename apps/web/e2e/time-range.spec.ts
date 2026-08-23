@@ -20,6 +20,8 @@ const SESSION_SUMMARY_PATTERN = / sessions$/;
 
 const SESSION_COUNT_PATTERN = /^[0-9,]+ sessions$/;
 const RANGE_DAYS_PATTERN = /·\s*(\d+)\s*days?/;
+const AUTO_INTERVAL_PATTERN = /^Auto/;
+const READABLE_CUSTOM_RANGE_PATTERN = /^\d{4}-\d{2}-\d{2}\.\.\d{4}-\d{2}-\d{2}$/;
 // The bug this guards against bound the class to the `'start' | 'end'` edge
 // name, so the generated style never applied. Assert the edge name itself never
 // reaches the class list rather than pattern-matching a Panda atom, which a
@@ -130,7 +132,7 @@ test('uses one report range for the dashboard and activity chart', async ({ page
   await expect(period.getByRole('button', { exact: true, name: '90d' })).toBeVisible();
   await expect(period.getByRole('button', { name: 'Choose a custom report period' })).toBeVisible();
   await expect(period.getByRole('button', { exact: true, name: '30d' })).toHaveAttribute('aria-pressed', 'true');
-  await expect(period.getByText('May 12 → Jun 11, 2026 · 30 days', { exact: true })).toBeVisible();
+  await expect(period.getByText('May 12 → Jun 11, 2026 · 31 days', { exact: true })).toBeVisible();
   await expect(period.getByText('Filters the entire report', { exact: true })).toHaveCount(0);
   await expect(activity.getByTitle('Filter by Codex')).toHaveCount(1);
   expect(
@@ -268,7 +270,7 @@ test('restores a bounded 90d period from a mobile deep link, reload, and history
 
   let period = reportPeriodFor(page);
   await expect(period.getByRole('button', { exact: true, name: '90d' })).toHaveAttribute('aria-pressed', 'true');
-  await expect(period.getByText('Mar 13 → Jun 11, 2026 · 90 days', { exact: true })).toBeVisible();
+  await expect(period.getByText('Mar 13 → Jun 11, 2026 · 91 days', { exact: true })).toBeVisible();
   const executiveValue = page.getByRole('region', { name: 'Estimated API-equivalent value' });
   await expect(executiveValue).toContainText('last 90 days');
   await expect(executiveValue).toContainText('No sessions exist in the previous period.');
@@ -277,6 +279,13 @@ test('restores a bounded 90d period from a mobile deep link, reload, and history
   await waitForFocusedReportSettled(page);
   period = reportPeriodFor(page);
   await expect(period.getByRole('button', { exact: true, name: '90d' })).toHaveAttribute('aria-pressed', 'true');
+
+  await page.goto('/?range=90d');
+  await waitForFocusedReportSettled(page);
+  await expect(reportPeriodFor(page).getByRole('button', { exact: true, name: '90d' })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
 
   await period.getByRole('button', { exact: true, name: '7d' }).click();
   await waitForFocusedReportSettled(page);
@@ -419,6 +428,8 @@ test('changes every chart option from its segmented controls', async ({ page }) 
     await chartOptions.getByRole('radio', { exact: true, name: option }).click();
     await expect(chartOptions.getByRole('radio', { exact: true, name: option })).toBeChecked();
   }
+  await chartOptions.getByRole('radio', { name: AUTO_INTERVAL_PATTERN }).click();
+  await expect(chartOptions.getByRole('radio', { name: AUTO_INTERVAL_PATTERN })).toBeChecked();
 
   for (const option of ['Share', 'Sessions', 'Tokens', 'Estimated API-equivalent value']) {
     await chartOptions.getByRole('radio', { exact: true, name: option }).click();
@@ -427,6 +438,21 @@ test('changes every chart option from its segmented controls', async ({ page }) 
   await expect(
     activityFor(page).getByText('Harness · Day · Estimated API-equivalent value', { exact: true }),
   ).toBeVisible();
+});
+
+test('resolves Auto to Week for a long readable custom range and permits a Day override', async ({ page }) => {
+  await openHydratedReport(page, '/?range=2026-01-01..2026-06-11');
+
+  const activity = activityFor(page);
+  const chartOptions = await openActivityExplorer(page);
+  const buckets = activity.locator('[data-report-range-part="chart"] [role="img"]');
+  await expect(chartOptions.getByRole('radio', { name: 'Auto (Week)' })).toBeChecked();
+  await expect(activity.getByText('Harness · Week · Estimated API-equivalent value', { exact: true })).toBeVisible();
+  const weeklyBucketCount = await buckets.count();
+
+  await chartOptions.getByRole('radio', { exact: true, name: 'Day' }).click();
+  await expect(activity.getByText('Harness · Day · Estimated API-equivalent value', { exact: true })).toBeVisible();
+  await expect.poll(() => buckets.count()).toBeGreaterThan(weeklyBucketCount);
 });
 
 test('groups the timeline by campaign, machine, and origin with matching legends', async ({ page }) => {
@@ -474,18 +500,19 @@ test('commits preset, text, keyboard, and pointer report ranges to the URL', asy
   await period.getByRole('button', { exact: true, name: '90d' }).click();
   await expect.poll(() => reportRangeValue(page)).toContain('90d');
   await waitForFocusedReportSettled(page);
-  await expect(period.getByText('Mar 13 → Jun 11, 2026 · 90 days', { exact: true })).toBeVisible();
+  await expect(period.getByText('Mar 13 → Jun 11, 2026 · 91 days', { exact: true })).toBeVisible();
   await expect(page.getByRole('region', { name: 'Estimated API-equivalent value' })).toContainText('last 90 days');
 
   let custom = await openCustomPeriod(page);
   await expect(custom.from).toHaveValue('2026-03-13');
   await expect(custom.to).toHaveValue('2026-06-11');
-  await expect.poll(() => reportRangeValue(page)).toContain('"from":"2026-03-13"');
+  await expect.poll(() => reportRangeValue(page)).toContain('2026-03-13..');
   await waitForFocusedReportSettled(page);
   const urlBeforeInvalidDraft = page.url();
   await custom.from.fill('');
+  await custom.from.press('Tab');
   await expect(custom.from).toHaveAttribute('aria-invalid', 'true');
-  await expect(page.getByRole('alert')).toHaveText('Enter a valid From date.');
+  await expect(page.getByRole('alert')).toHaveText('Enter a valid From date (YYYY-MM-DD).');
   expect(page.url()).toBe(urlBeforeInvalidDraft);
   await custom.from.press('Escape');
   await expect(page.getByRole('alert')).toHaveCount(0);
@@ -493,6 +520,7 @@ test('commits preset, text, keyboard, and pointer report ranges to the URL', asy
 
   const urlBeforeReversedDraft = page.url();
   await custom.from.fill('2026-06-12');
+  await custom.from.press('Tab');
   await expect(custom.from).toHaveAttribute('aria-invalid', 'true');
   await expect(custom.to).toHaveAttribute('aria-invalid', 'true');
   await expect(page.getByRole('alert')).toHaveText('From date must be on or before To date.');
@@ -501,14 +529,17 @@ test('commits preset, text, keyboard, and pointer report ranges to the URL', asy
   await expect(page.getByRole('alert')).toHaveCount(0);
   await expect(custom.from).toHaveValue('2026-03-13');
 
-  await custom.from.fill('2026-05-25');
   await custom.to.fill('2026-06-05');
-  await expect.poll(() => reportRangeValue(page)).toContain('"from":"2026-05-25"');
+  await custom.to.press('Tab');
+  await expect.poll(() => reportRangeValue(page)).toContain('..2026-06-05');
+  await custom.from.fill('2026-05-25');
+  await custom.from.press('Tab');
+  await expect.poll(() => reportRangeValue(page)).toContain('2026-05-25..');
   await waitForFocusedReportSettled(page);
   await expect(
     period.getByRole('button', { exact: true, name: 'Choose a custom report period, selected' }),
   ).toBeVisible();
-  await expect(period.getByText('May 25 → Jun 05, 2026 · 11 days', { exact: true })).toBeVisible();
+  await expect(period.getByText('May 25 → Jun 05, 2026 · 12 days', { exact: true })).toBeVisible();
 
   // Keep the interaction checks on a non-empty window: moving the May 25
   // boundary by one day intentionally produces the filtered-zero state, where
@@ -561,9 +592,12 @@ test('commits preset, text, keyboard, and pointer report ranges to the URL', asy
 
   const beforeFirstBlurKey = await navigationEntryKey(page);
   custom = await openCustomPeriod(page);
-  await custom.from.fill('2026-05-20');
   await custom.to.fill('2026-06-05');
-  await expect.poll(() => reportRangeValue(page)).toContain('"from":"2026-05-20"');
+  await custom.to.press('Tab');
+  await expect.poll(() => reportRangeValue(page)).toContain('..2026-06-05');
+  await custom.from.fill('2026-05-20');
+  await custom.from.press('Tab');
+  await expect.poll(() => reportRangeValue(page)).toContain('2026-05-20..');
   await expect.poll(() => navigationEntryKey(page)).not.toBe(beforeFirstBlurKey);
   const firstBlurredEditKey = await navigationEntryKey(page);
   expect(firstBlurredEditKey).not.toBeNull();
@@ -571,7 +605,8 @@ test('commits preset, text, keyboard, and pointer report ranges to the URL', asy
 
   await custom.from.fill('2026-05-21');
   await custom.to.fill('2026-06-05');
-  await expect.poll(() => reportRangeValue(page)).toContain('"from":"2026-05-21"');
+  await custom.to.press('Tab');
+  await expect.poll(() => reportRangeValue(page)).toContain('2026-05-21..');
   await expect.poll(() => navigationEntryKey(page)).not.toBe(firstBlurredEditKey);
   const secondBlurredEditKey = await navigationEntryKey(page);
   expect(secondBlurredEditKey).not.toBeNull();
@@ -583,7 +618,7 @@ test('commits preset, text, keyboard, and pointer report ranges to the URL', asy
   await expect.poll(() => navigationEntryKey(page)).not.toBe(secondBlurredEditKey);
   await waitForFocusedReportSettled(page);
   await expect.poll(() => page.url()).toBe(firstBlurredEditUrl);
-  await expect(reportPeriodFor(page).getByText('May 20 → Jun 05, 2026 · 16 days', { exact: true })).toBeVisible();
+  await expect(reportPeriodFor(page).getByText('May 20 → Jun 05, 2026 · 17 days', { exact: true })).toBeVisible();
 });
 
 test('does not capture wheel scrolling over the activity chart', async ({ page }) => {
@@ -714,7 +749,7 @@ test('draws only the selected report range and never overflows the plot', async 
 
     const geometry = await readChart();
     // One bucket per calendar day the range covers, inclusive of both ends.
-    expect(geometry.buckets, preset).toBe(days + 1);
+    expect(geometry.buckets, preset).toBe(days);
     expect(geometry.scrollWidth, preset).toBeLessThanOrEqual(geometry.clientWidth);
     // The axis must report the window, not the domain the brush can address.
     const explorer = activityExplorerFor(page);
@@ -764,7 +799,7 @@ test('holds the brush scale still while dragging a range that starts before the 
   await page.mouse.up();
   await waitForFocusedReportSettled(page);
 
-  expect(reportRangeValue(page)).toContain('"mode":"custom"');
+  expect(reportRangeValue(page)).toMatch(READABLE_CUSTOM_RANGE_PATTERN);
 });
 
 test('lands the dragged range once on release while the headline follows the handle', async ({ page }) => {

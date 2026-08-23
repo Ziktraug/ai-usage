@@ -1,6 +1,7 @@
 <script lang="ts">
   import { applyCampaignLabelOverrideMutation, type CampaignLabelOverride } from '@ai-usage/report-core/campaign-label';
   import {
+    buildFocusedDateDomain,
     type FocusedOverviewSessionItem,
     type FocusedTimelineSeries,
     matchesFocusedReportQuery,
@@ -58,6 +59,11 @@
   import QuotaHistoryOwner from '../actions/quota-history-owner.svelte';
   import ActiveFilters from '../breakdown/active-filters.svelte';
   import { createBreakdownNavigation } from '../breakdown/navigation';
+  import {
+    reportRangeProjection,
+    resolveTimelineGranularity,
+    type TimelineGranularityPreference,
+  } from '../range/report-range-model';
   import { activeTimelineSeriesKeys } from './active-timeline-series';
   import { importReportLazyModule } from './lazy-module-e2e-fixture';
   import { createLazyModuleLoader } from './lazy-module-loader';
@@ -212,7 +218,16 @@
   );
   const providers = buildProviderStatusViews(reportSupport, allRows, reportSupport.generatedAt);
   let dimension = $state<'campaign' | 'harness' | 'machine' | 'model' | 'origin' | 'provider' | 'project'>('harness');
-  let granularity = $state<'day' | 'month' | 'week'>('day');
+  let granularityPreference = $state<TimelineGranularityPreference>('auto');
+  const syntheticDateDomain = buildFocusedDateDomain(
+    allRows.flatMap((row) => (row.activeTime === null ? [] : [row.activeTime])),
+  );
+  const granularity = $derived(
+    resolveTimelineGranularity(
+      granularityPreference,
+      reportRangeProjection(renderedSearch.range, new Date(reportSupport.generatedAt), syntheticDateDomain).dayCount,
+    ),
+  );
   let timelineValue = $state<TimelineValue>('cost');
   // Headline value of the window under the pointer, so the hero keeps tracking the brush now that a
   // gesture only commits on release. This payload recomputes in memory, so the committed range
@@ -522,12 +537,13 @@
           dimension,
           generatedAt: reportSupport.generatedAt,
           granularity,
+          granularityPreference,
           machineFreshnessStatus,
           navigate,
           onDimensionFilter: navigation.setTimelineDimensionFilter,
           onOptionsChange: (options) => {
             dimension = options.dimension;
-            granularity = options.granularity;
+            granularityPreference = options.granularity;
             timelineValue = options.value;
           },
           onRangeChange: navigation.setDateRange,
