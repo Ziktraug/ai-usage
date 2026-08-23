@@ -562,3 +562,159 @@ Stop and report back (do not improvise) if:
   copy, which the e2e pins.
 - Deferred: a visible "Scored" column (the scoring time is now a `title`
   only); a year in `fmtDate`.
+
+## Execution notes
+
+Executed 2026-08-23 in an isolated worktree on the program branch. Drift check
+returned an empty diff and every "Current state" excerpt matched the working
+tree, so no STOP condition applied. Deviations from the literal steps:
+
+- **Step 4 / Step 5, date cell markup.** The step's inline
+  `{fmtDate(group.date)}{#if …}<span> · scored</span>{/if}` is not a fixed point
+  of `bun x ultracite fix`: the formatter reflows the `{#if}` onto its own
+  lines, Svelte collapses the introduced newline into a text space, and the SSR
+  output became `>— <!--…-->` instead of `>—<`. The date value is therefore
+  wrapped in its own `<span>` — `<span>{fmtDate(group.date)}</span>` — which is
+  format-stable and restores the step's literal `>—<` assertion. The marker span
+  drops its leading space (`· scored`) because the element separation now
+  supplies it. Nothing else about the cell changed.
+- **Step 2 / Step 5, fixtures.** The row factory is duplicated in
+  `cursor.test.ts` and `cursor-attribution-panel.ssr.test.ts` (the step's second
+  option). Exporting it from `cursor.test.ts` would make the SSR run import a
+  test module and re-register its suites.
+- **Step 2, existing cases.** The two `summarizeCursorAiPercentage` cases are
+  unchanged in intent and values, but their local helper now builds on the new
+  full-row factory instead of an `as CursorCommitAttributionFacet` cast.
+- **Step 7, `bun run check` / `bun run lint`.** Both are no-ops or spurious
+  failures inside a worktree because `biome.json` excludes
+  `**/.claude/worktrees`, so `biome check .` sees 0 files. They were run with
+  the changed paths passed explicitly instead (`bun x ultracite check <paths>`
+  → 9 files, 0 findings; the root `lint` biome invocation plus all five
+  `tools/check-*.ts` guards with explicit workspace roots → 1077 files, clean).
+
+Guards checked beyond the plan's list:
+
+- `bun run test:web-bundle` **cannot run inside a worktree** and this is not
+  caused by the change: the dependency provisioning resolves third-party
+  packages at the repository root, so the Vite client manifest keys the
+  SvelteKit entry as `../../../../../node_modules/@sveltejs/kit/…` while
+  `bundle/client-bundle.test.ts` looks up `../../node_modules/@sveltejs/kit/…`
+  and throws before reading a single byte of app code. The first-load budget is
+  structurally untouched anyway: a production build places the new helpers and
+  the rewritten panel in the `dashboard-breakdown.svelte` chunk, which the
+  manifest reaches only through `dynamicImports` from route node 3 and through
+  no static import.
+
+### Rework round 1 (adversarial review)
+
+Three blocking findings, all accepted and fixed. Each is now pinned by a test
+that fails on the pre-rework code.
+
+1. **Duplicate render key (runtime defect).** Step 1 specified
+   `key = ${commitHash}:${branches.join(',')}` as "unique by construction", but
+   group identity is `(commitHash, metric set)`, so that key collides whenever
+   one commit on one branch is stored twice with different numbers. That is a
+   normal dataset, not a contrived one: `collected_dataset_items` has
+   `PRIMARY KEY (source_id, machine_id, dataset_key, schema_version, item_key)`
+   while `cursorCommitAttributionItemKey` hashes only `[commitHash, branchName]`
+   — the same commit collected on two machines is two stored rows. Reproduced:
+   `groupCursorCommits` returned two groups both keyed `<hash>:main`, which
+   Svelte rejects in a keyed `{#each}`. The key now carries the group's metric
+   signature (`${commitHash}:${branches}:${signature}`), which is exactly the
+   discriminator the group map already used. **The plan's stated key shape is
+   therefore wrong and was not followed.** Note that Svelte's *SSR* renderer does
+   not validate keys (verified: it renders duplicates without throwing), so the
+   gate is the unit case `keeps same-branch rows apart when two machines
+   disagree on the numbers`, backed by an SSR case asserting both rows render.
+2. **Accessibility: hover-only scoring time.** Step 4 moved the scoring time
+   into a `title` and Step 4/"Deferred" accepted losing the visible `Scored`
+   column. Native `title` is not keyboard- or touch-reachable, and CONTRIBUTING
+   requires preserving accessibility. The scoring time is now visible text in
+   the date cell (`data-cursor-scored-at`: `Scored <times>`, `No scoring time
+   recorded`, or `No commit date recorded`), and the date rule moved from a
+   `<th title>` to a visible `<p>` referenced by the table's `aria-describedby`
+   — the pattern `model-analysis-table.svelte` already uses. `scope="col"` was
+   added to the eight headers. The pre-existing `title` on the `AI %` header and
+   on the metric tiles is untouched (out of scope; it predates this plan).
+3. **Unpinned tile projections.** The out-of-range SSR fixture row had zero
+   metrics, so reverting the AI-share or Human-lines projections from
+   `visibleRows` to `rows` left the suite green. That row now carries 1,000
+   lines / 900 human lines / 99%, and the tiles are asserted at
+   `4/4 measured`, `67%` and `358`. Verified by mutation: unscoping either
+   projection alone now fails.
+
+Weak tests the reviewer flagged, both fixed:
+
+- The non-merge unit case used two different branches, so it could not expose
+  the same-branch collision; a same-branch case was added alongside it.
+- The e2e "one row per commit" claim was unfalsifiable — the synthetic payload
+  ships one Cursor row, so raw un-deduped rendering would also produce one row.
+  The test is renamed to `scopes the Cursor AI analysis to the report period`
+  and carries a comment pointing at the SSR file as the de-duplication gate.
+  `apps/web/src/report-data.ts` was **not** edited (Scope forbids it).
+
+### Rework round 2 (adversarial review)
+
+Four blocking findings, all accepted and fixed; each is pinned by a test that
+fails on the round-1 code.
+
+1. **Mixed-provenance groups falsely claimed a scoring fallback.** The group's
+   date took the earliest activity of any merged row regardless of its source,
+   so a commit whose `main` row carried a July 13 git commit date and whose
+   `topic/z` row carried only a July 1 scoring time was labelled
+   `dateSource: 'scored'` and dated July 1 — while the panel's own copy told
+   the reader the scoring time appears only when Cursor stored *no* commit date.
+   Source now outranks recency (`cursorDateSourceRank`, `outranksDraftActivity`):
+   the earliest **commit date** among the merged rows wins, and the earliest
+   scoring time is used only when no merged row carries a commit date. Proved by
+   the unit case `prefers a real commit date over another row's scoring
+   fallback` and the SSR case `dates a mixed-provenance commit from its commit
+   date and says so`, both rendering fixture **G** (`'g'.repeat(40)`: `main`
+   with commit date July 13 + scoredAt July 14, `topic/z` with no commit date +
+   scoredAt July 1, identical metrics so the two rows merge). A companion unit
+   case pins "earliest commit date wins when several rows carry one".
+2. **Copy contradicted the settled disagreement rule.** The Branch rows tile
+   said the table "lists each commit once with its branches", which the
+   deliberate split-on-disagreement rule makes false. Both the tile hint and the
+   table description now say the table folds branch rows into one row per commit
+   and keeps a commit on separate rows only when its stored numbers disagree.
+3. **Presentation-gate gaps.** (a) The tile hints had no DOM assertion — the new
+   SSR case `states in the tiles what each number counts` asserts all four.
+   (b) `shows every scoring time as visible text` measured commas across the
+   whole row, where the branch list already supplies two, and a scoring-dated
+   group rendered only `No commit date recorded`, hiding every instant but the
+   earliest. The label now always lists the instants
+   (`No commit date recorded — Scored <a> · <b>`), the instants are joined with
+   ` · ` so the count is independent of time zone and date format, and the test
+   reads **only** the `data-cursor-scored-at` cell via `scoredAtTextFor`. New
+   fixture **F** (`'f'.repeat(40)`) is a scoring-dated commit with two scoring
+   times; the assertions pin 3 instants for A, 1 for E, 2 for F.
+4. **Weak oracles.** The `cursorCommitActivity` timestamp expectations re-ran the
+   same `Date.parse` the implementation uses. They are now literal epochs
+   (`JULY_13_2026_0800_UTC`, `JULY_20_2026_0000_UTC`).
+
+**Provenance audit requested by the orchestrator** — the other derivations in
+`cursor.ts` that reduce a multi-row group to one value:
+
+- `metrics` — identical across merged rows by construction (the metric signature
+  is the group key), so there is no winner to pick.
+- `branches` and `scoredAt` — unions, never a selection; every value survives.
+- `rowCount` — a count.
+- `commitMessage` — **was** "first non-null wins", which is a silent winner over
+  a nondeterministic order: stored rows arrive in SHA-256 item-key order, so two
+  reads could render different messages. It now takes the lexicographically
+  smallest non-null message, so the render is stable; a row that stored no
+  message never displaces one that did. Pinned by `resolves a commit message the
+  same way regardless of stored row order`. (Within a group the commit hash is
+  identical, so a genuine message disagreement is not expected — this guards
+  determinism, not a data conflict.)
+- `date` / `dateSource` — the finding above.
+
+**Orchestrator-directed deviation (do not "restore" the plan text).** Step 4 of
+this plan puts the scoring time in a native `title` and its Maintenance notes
+defer a visible scoring presentation. That instruction was **superseded by
+orchestrator direction in rework round 1**: a native `title` is not keyboard- or
+touch-discoverable, so the scoring time is visible text in the date cell and the
+date rule is a visible `<p>` wired to the table with `aria-describedby`. A later
+reader should treat the plan's `title` wording as obsolete, not as a regression
+to repair.

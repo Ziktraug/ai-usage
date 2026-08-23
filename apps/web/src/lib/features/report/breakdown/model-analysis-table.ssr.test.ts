@@ -143,6 +143,7 @@ describe('responsive Models analysis', () => {
           harnessProviders: [],
           models: [group('measured')],
           projects: [],
+          range: { from: null, to: null },
         },
         navigation: {
           onSortChange: () => undefined,

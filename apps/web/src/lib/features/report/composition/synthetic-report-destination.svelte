@@ -472,6 +472,7 @@
         harnessProviders: breakdown.groups.harnessProviders,
         models: breakdown.groups.models,
         projects: breakdown.groups.projects,
+        range: focusedQuery.range,
       }}
       navigation={{
         onSortChange: navigation.setBreakdownSort,
