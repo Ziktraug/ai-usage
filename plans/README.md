@@ -155,7 +155,7 @@ read-only SQLite and the permanent browser/server and demo-isolation boundaries.
 | 089 | Period Semantics — Inclusive Day Counts, Honest Campaign Dates, Auto Interval, Readable Range URLs | P0 | M–L | - | TODO |
 | 090 | Scope the Cursor AI Tab to the Report Period and List One Row per Commit | P1 | S–M | - | BLOCKED (rework budget spent; branch `exec/090` is one focused fix away — rows are filtered before grouping, so a commit whose only in-range row lacks a commit date renders scoring-dated in the wrong period) |
 | 091 | Sessions Table — One Scroll Container and Calmer Columns | P1 | M | - | TODO |
-| 092 | One Checkbox-Filter Mechanic, a Working `/` Shortcut, and a Filter Bar That Holds One Row | P1 | M | - | TODO |
+| 092 | One Checkbox-Filter Mechanic, a Working `/` Shortcut, and a Filter Bar That Holds One Row | P1 | M | - | BLOCKED (named STOP condition: Ark opens the popover as `role="dialog"` but emits no `aria-label`/`aria-labelledby`, so the required named-dialog accessibility proof cannot pass without an unplanned ARIA contract change) |
 | 093 | Activity Explorer Controls, Model Palette, and Hero Number Format | P1 | M–L | 089 (`timeline` request + range model) | TODO |
 | 094 | Calm the Overview Secondary Panels (Harness Disclosure, Session Shape, Punchcard Fit, KPI Baseline, Rhythm Axis, Record Tiles) | P1 | M | 088, 093 (shared `harness-provider-model.ts`, `executive-overview.svelte`) | BLOCKED (dependency 088 did not land) |
 | 095 | Make Provider Status and Quota History Legible | P1 | M | - | BLOCKED (rework budget spent; branch `exec/095` is one focused fix away — providers with no `machineId` all group under one empty key and render a single machine label, and `machineId`/`machineLabel` are independently optional) |
