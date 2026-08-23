@@ -253,6 +253,11 @@ describe('dashboard URL parity', () => {
     expect(parseDashboardSearchUrl(new URL('http://local/?range=%7B%22mode%22%3A%227d%22%7D'), codec).range).toEqual({
       mode: '7d',
     });
+    for (const quotedRange of ['%227d%22', '%222026-02-01..2026-02-28%22']) {
+      expect(parseDashboardSearchUrl(new URL(`http://local/?range=${quotedRange}`), codec).range).toEqual(
+        defaults.range,
+      );
+    }
     for (const range of [
       { mode: 'custom', from: '2026-02-30' },
       { mode: 'custom', from: 'bad' },

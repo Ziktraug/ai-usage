@@ -39,7 +39,14 @@ const dashboardRecord = (search: DashboardUrlSearch): Record<string, unknown> =>
 export const parseDashboardSearchUrl = <Search extends DashboardUrlSearch>(
   url: URL,
   codec: DashboardSearchCodec<Search>,
-): Search => codec.validate(parseTanStackSearch(url.search), codec.defaults);
+): Search => {
+  const parsed = parseTanStackSearch(url.search);
+  const rawRange = url.searchParams.get('range');
+  if (rawRange !== null && typeof parsed.range === 'string' && parsed.range !== rawRange) {
+    parsed.range = rawRange;
+  }
+  return codec.validate(parsed, codec.defaults);
+};
 
 export const dashboardUrlFor = <Search extends DashboardUrlSearch>(
   currentUrl: URL,

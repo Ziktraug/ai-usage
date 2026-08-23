@@ -67,6 +67,17 @@ const focusedOverview = (
 };
 
 describe('decision-first Overview Svelte surfaces', () => {
+  test('renders exact ISO guidance on both custom period fields', () => {
+    const body = render(fixture, {
+      props: {
+        range: { from: '2026-05-12', mode: 'custom', to: '2026-06-11' },
+        result: focusedOverview(),
+      },
+    }).body;
+
+    expect(body.match(/title="Date as YYYY-MM-DD"/g)).toHaveLength(2);
+  });
+
   test('renders the provisional comparison caveat only for a period still in progress', () => {
     const today = focusedOverview({
       from: '2026-06-11T00:00:00.000Z',

@@ -20,7 +20,6 @@ const SESSION_SUMMARY_PATTERN = / sessions$/;
 
 const SESSION_COUNT_PATTERN = /^[0-9,]+ sessions$/;
 const RANGE_DAYS_PATTERN = /·\s*(\d+)\s*days?/;
-const AUTO_INTERVAL_PATTERN = /^Auto/;
 const READABLE_CUSTOM_RANGE_PATTERN = /^\d{4}-\d{2}-\d{2}\.\.\d{4}-\d{2}-\d{2}$/;
 // The bug this guards against bound the class to the `'start' | 'end'` edge
 // name, so the generated style never applied. Assert the edge name itself never
@@ -230,8 +229,10 @@ test('switches API value and processed tokens locally without changing report id
 test('keeps period targets tactile and wraps chart options below the narrow viewport', async ({ page }) => {
   await page.setViewportSize({ height: 844, width: 390 });
   await openHydratedReport(page);
+  await waitForFocusedReportSettled(page);
 
-  const periodButtons = reportPeriodFor(page).getByRole('button');
+  const period = reportPeriodFor(page);
+  const periodButtons = period.getByRole('button');
   await expect(periodButtons).toHaveCount(6);
   for (const button of await periodButtons.all()) {
     expect(Math.round((await button.boundingBox())?.height ?? 0)).toBeGreaterThanOrEqual(44);
@@ -240,6 +241,33 @@ test('keeps period targets tactile and wraps chart options below the narrow view
   await expect(activityMetricButtons).toHaveCount(2);
   for (const button of await activityMetricButtons.all()) {
     expect(Math.round((await button.boundingBox())?.height ?? 0)).toBeGreaterThanOrEqual(44);
+  }
+
+  await period.getByRole('button', { name: 'Choose a custom report period' }).click();
+  await waitForFocusedReportSettled(page);
+  const customFields = period.locator('[data-report-range-part="adjustments"]');
+  const customInputs = customFields.getByRole('textbox');
+  await expect(customInputs).toHaveCount(2);
+  await expect(customFields.locator('input[title="Date as YYYY-MM-DD"]')).toHaveCount(2);
+  const customGeometry = await customFields.evaluate((element) => {
+    const bounds = element.getBoundingClientRect();
+    return {
+      clientWidth: element.clientWidth,
+      left: bounds.left,
+      right: bounds.right,
+      scrollWidth: element.scrollWidth,
+      viewportWidth: document.documentElement.clientWidth,
+    };
+  });
+  expect(customGeometry.scrollWidth).toBeLessThanOrEqual(customGeometry.clientWidth);
+  expect(customGeometry.left).toBeGreaterThanOrEqual(0);
+  expect(customGeometry.right).toBeLessThanOrEqual(customGeometry.viewportWidth);
+  for (const input of await customInputs.all()) {
+    const bounds = await input.boundingBox();
+    expect(bounds?.x ?? -1).toBeGreaterThanOrEqual(0);
+    expect((bounds?.x ?? 0) + (bounds?.width ?? customGeometry.viewportWidth + 1)).toBeLessThanOrEqual(
+      customGeometry.viewportWidth,
+    );
   }
 
   await page.setViewportSize({ height: 844, width: 320 });
@@ -428,8 +456,8 @@ test('changes every chart option from its segmented controls', async ({ page }) 
     await chartOptions.getByRole('radio', { exact: true, name: option }).click();
     await expect(chartOptions.getByRole('radio', { exact: true, name: option })).toBeChecked();
   }
-  await chartOptions.getByRole('radio', { name: AUTO_INTERVAL_PATTERN }).click();
-  await expect(chartOptions.getByRole('radio', { name: AUTO_INTERVAL_PATTERN })).toBeChecked();
+  await chartOptions.getByRole('radio', { exact: true, name: 'Auto (Day)' }).click();
+  await expect(chartOptions.getByRole('radio', { exact: true, name: 'Auto (Day)' })).toBeChecked();
 
   for (const option of ['Share', 'Sessions', 'Tokens', 'Estimated API-equivalent value']) {
     await chartOptions.getByRole('radio', { exact: true, name: option }).click();
@@ -442,17 +470,28 @@ test('changes every chart option from its segmented controls', async ({ page }) 
 
 test('resolves Auto to Week for a long readable custom range and permits a Day override', async ({ page }) => {
   await openHydratedReport(page, '/?range=2026-01-01..2026-06-11');
+  await waitForFocusedReportSettled(page);
 
   const activity = activityFor(page);
   const chartOptions = await openActivityExplorer(page);
   const buckets = activity.locator('[data-report-range-part="chart"] [role="img"]');
-  await expect(chartOptions.getByRole('radio', { name: 'Auto (Week)' })).toBeChecked();
+  await expect(chartOptions.getByRole('radio', { exact: true, name: 'Auto (Week)' })).toBeChecked();
   await expect(activity.getByText('Harness · Week · Estimated API-equivalent value', { exact: true })).toBeVisible();
   const weeklyBucketCount = await buckets.count();
 
   await chartOptions.getByRole('radio', { exact: true, name: 'Day' }).click();
+  await waitForFocusedReportSettled(page);
   await expect(activity.getByText('Harness · Day · Estimated API-equivalent value', { exact: true })).toBeVisible();
   await expect.poll(() => buckets.count()).toBeGreaterThan(weeklyBucketCount);
+
+  await page.goto('/?range=2024-01-01..2026-06-11');
+  await waitForFocusedReportSettled(page);
+  const monthActivity = activityFor(page);
+  const monthOptions = await openActivityExplorer(page);
+  await expect(monthOptions.getByRole('radio', { exact: true, name: 'Auto (Month)' })).toBeChecked();
+  await expect(
+    monthActivity.getByText('Harness · Month · Estimated API-equivalent value', { exact: true }),
+  ).toBeVisible();
 });
 
 test('groups the timeline by campaign, machine, and origin with matching legends', async ({ page }) => {
@@ -869,6 +908,9 @@ test('reports legend shares and the range total over the selected window', async
 
   await reportPeriodFor(page).getByRole('button', { exact: true, name: 'Today' }).click();
   await waitForFocusedReportSettled(page);
+  await expect(page.locator('[data-period-comparison-caveat]')).toHaveText(
+    'This period is still in progress, so the comparison is provisional.',
+  );
 
   const narrowed = await readLegend();
   expect(narrowed.total).toBeNull();

@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import type { Page } from '@playwright/test';
 import { FOCUSED_REPORT_E2E_CONTROL_KEY, FOCUSED_REPORT_E2E_ENABLED_KEY } from '../src/focused-report-e2e-fixture';
 import { REPORT_LAZY_MODULE_E2E_FAILURE_KEY } from '../src/lib/features/report/composition/lazy-module-e2e-fixture';
-import { expect, reportViewsFor, test, waitForHydratedNavigation } from './browser-test';
+import { expect, reportViewsFor, test, waitForFocusedReportSettled, waitForHydratedNavigation } from './browser-test';
 import { encodeRpcResponseBody } from './rpc-test-transport';
 
 const ADVANCED_COLUMNS_PATTERN = /Advanced columns/;
@@ -726,6 +726,7 @@ test('keeps the Top sessions panel readable without horizontal overflow at deskt
 test('selects the same heatmap day with mouse and keyboard', async ({ page }) => {
   const selectedDay = '2026-05-25';
   const assertSelectedDay = async () => {
+    await waitForFocusedReportSettled(page);
     await expect(reportViewsFor(page).getByRole('link', { exact: true, name: 'Sessions' })).toHaveAttribute(
       'aria-current',
       'page',
@@ -735,6 +736,7 @@ test('selects the same heatmap day with mouse and keyboard', async ({ page }) =>
     await expect(page.getByRole('textbox', { name: 'From' })).toHaveValue(selectedDay);
     await expect(page.getByRole('textbox', { name: 'From' })).toHaveAttribute('placeholder', 'YYYY-MM-DD');
     await expect(page.getByRole('textbox', { name: 'To' })).toHaveValue(selectedDay);
+    await expect(page.getByRole('textbox', { name: 'To' })).toHaveAttribute('placeholder', 'YYYY-MM-DD');
     await expect(range.getByText('May 25 → May 25, 2026 · 1 day', { exact: true })).toBeVisible();
   };
   const selectedCell = () =>
