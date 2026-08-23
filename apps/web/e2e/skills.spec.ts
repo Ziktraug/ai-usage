@@ -1,6 +1,12 @@
+import type { SkillManagementSnapshot } from '@ai-usage/skills';
 import type { Locator, Page } from '@playwright/test';
 import { expect, openHydratedSkills, test, waitForHydratedSkills } from './browser-test';
-import { rpcRouteFulfillmentForClientResult, SKILLS_SAVE_RPC_PATH } from './rpc-test-transport';
+import {
+  decodeRpcResponseBody,
+  encodeRpcResponseBody,
+  rpcRouteFulfillmentForClientResult,
+  SKILLS_SAVE_RPC_PATH,
+} from './rpc-test-transport';
 
 const ALPHA_SKILL_CONTENT = '# alpha-skill\n\nDeterministic Playwright fixture.\n';
 const BETA_SKILL_CONTENT = '# beta-skill\n\nDeterministic Playwright fixture.\n';
@@ -22,8 +28,10 @@ const BLOCKED_PATTERN = /^Blocked/;
 const LONG_PROJECT_LABEL = 'customer-analytics-platform-with-an-exceptionally-long-scope-name';
 const MOBILE_VIEWPORT = { height: 844, width: 390 } as const;
 const SAVE_MANAGED_MARKDOWN_RPC_ROUTE = `**${SKILLS_SAVE_RPC_PATH}`;
+const SKILLS_REFRESH_RPC_ROUTE = '**/rpc/skills/refreshSnapshot';
 const SKILL_TOGGLE_ACTION_PATTERN = /^(Disable|Enable)$/;
 const SUCCESS_NOTICE_DISMISS_DELAY_MS = 5000;
+const MAX_KEYBOARD_TABS = 64;
 const WHITESPACE_PATTERN = /\s+/g;
 
 const normalizeText = (value: string): string => value.replace(WHITESPACE_PATTERN, ' ').trim();
@@ -38,6 +46,45 @@ const expectColorToken = async (locator: Locator, token: string, property = 'col
     return color;
   }, token);
   await expect(locator).toHaveCSS(property, expectedColor);
+};
+
+const openMatrixWithSnapshot = async (
+  page: Page,
+  transform: (snapshot: SkillManagementSnapshot) => SkillManagementSnapshot,
+): Promise<void> => {
+  await page.unroute(SKILLS_REFRESH_RPC_ROUTE);
+  await page.route(SKILLS_REFRESH_RPC_ROUTE, async (route) => {
+    const response = await route.fetch();
+    const snapshot = structuredClone(decodeRpcResponseBody(await response.text()) as SkillManagementSnapshot);
+    await route.fulfill({ response, body: encodeRpcResponseBody(transform(snapshot)) });
+  });
+  await openHydratedSkills(page, '/skills/matrix');
+  await page.getByRole('button', { name: 'Refresh skills' }).click();
+};
+
+const tabToLocator = async (page: Page, target: Locator): Promise<void> => {
+  for (let tabCount = 0; tabCount < MAX_KEYBOARD_TABS; tabCount += 1) {
+    await page.keyboard.press('Tab');
+    if (await target.evaluate((element) => element === document.activeElement)) {
+      return;
+    }
+  }
+  throw new Error(`Target was not reachable within ${MAX_KEYBOARD_TABS} Tab presses.`);
+};
+
+const expectKeyboardMatrixNavigation = async (page: Page, accessibleName: RegExp): Promise<void> => {
+  await openHydratedSkills(page, '/skills/global');
+  const link = page.getByRole('region', { name: 'Selected skill detail' }).getByRole('link', { name: accessibleName });
+  await expect(link).toHaveAttribute('href', '/skills/matrix');
+  await tabToLocator(page, link);
+  await expect(link).toBeFocused();
+  await expect(link).toHaveCSS('outline-style', 'solid');
+  await expect(link).toHaveCSS('outline-width', '2px');
+  await expect(link).toHaveCSS('outline-offset', '2px');
+  await expectColorToken(link, '--colors-accent', 'outline-color');
+  await page.keyboard.press('Enter');
+  await expect(page).toHaveURL(SKILLS_MATRIX_URL);
+  await expect(page.getByRole('heading', { level: 2, name: 'Managed skills — exposure per runtime' })).toBeVisible();
 };
 
 const interceptSaveResultForDraft = async (page: Page, draftMarker: string, result: unknown): Promise<void> => {
@@ -553,36 +600,55 @@ test('keeps colliding scope names legible and says each health number once', asy
   }
 });
 
+test('renders matrix health states with their public computed color tokens', async ({ page }) => {
+  await page.setViewportSize({ height: 900, width: 1280 });
+  await openMatrixWithSnapshot(page, (snapshot) => ({
+    ...snapshot,
+    projections: snapshot.projections.map((projection) => ({ ...projection, state: 'missing' })),
+  }));
+
+  const healthyLinksValue = page.getByRole('button', { name: HEALTHY_LINKS_PATTERN }).locator('[data-health-tone]');
+  await expect(healthyLinksValue).toHaveAttribute('data-health-tone', 'danger');
+  await expectColorToken(healthyLinksValue, '--colors-status-danger');
+
+  await openMatrixWithSnapshot(page, (snapshot) => ({
+    ...snapshot,
+    projections: snapshot.projections.map((projection, index) => ({
+      ...projection,
+      state: index === 0 ? 'missing' : 'linked',
+    })),
+  }));
+  await expect(healthyLinksValue).toHaveAttribute('data-health-tone', 'warn');
+  await expectColorToken(healthyLinksValue, '--colors-status-warn');
+
+  await openMatrixWithSnapshot(page, (snapshot) => snapshot);
+  await expect(healthyLinksValue).toHaveAttribute('data-health-tone', 'ok');
+  await expectColorToken(healthyLinksValue, '--colors-status-ok');
+
+  await openMatrixWithSnapshot(page, (snapshot) => ({
+    ...snapshot,
+    targets: snapshot.targets.map((target) => ({ ...target, enabled: false })),
+  }));
+  await expect(healthyLinksValue).toHaveAttribute('data-health-tone', 'neutral');
+  await expectColorToken(healthyLinksValue, '--colors-ink');
+});
+
 test('exposes health drill-down links with token tones, focus rings, and matrix navigation', async ({ page }) => {
   await page.setViewportSize({ height: 900, width: 1280 });
   await openHydratedSkills(page, '/skills/global');
 
   const detail = page.getByRole('region', { name: 'Selected skill detail' });
-  const links = [
-    detail.getByRole('link', { name: HEALTHY_LINKS_PATTERN }),
-    detail.getByRole('link', { name: TO_REPAIR_PATTERN }),
-    detail.getByRole('link', { name: BLOCKED_PATTERN }),
-  ] as const;
-  for (const link of links) {
-    await expect(link).toHaveAttribute('href', '/skills/matrix');
-    await link.focus();
-    await expect(link).toBeFocused();
-    await expect(link).toHaveCSS('outline-style', 'solid');
-    await expect(link).toHaveCSS('outline-width', '2px');
-    await expect(link).toHaveCSS('outline-offset', '2px');
-    await expectColorToken(link, '--colors-accent', 'outline-color');
-  }
-
-  const healthyLinksValue = links[0].locator('[data-health-tone="warn"]');
-  const repairValue = links[1].locator('[data-health-tone="neutral"]');
+  const healthyLinks = detail.getByRole('link', { name: HEALTHY_LINKS_PATTERN });
+  const healthyLinksValue = healthyLinks.locator('[data-health-tone="warn"]');
+  const repairValue = detail.getByRole('link', { name: TO_REPAIR_PATTERN }).locator('[data-health-tone="neutral"]');
   await expect(healthyLinksValue).toHaveText('3/4');
   await expect(repairValue).toHaveText('0');
   await expectColorToken(healthyLinksValue, '--colors-status-warn');
   await expectColorToken(repairValue, '--colors-ink');
 
-  await links[0].click();
-  await expect(page).toHaveURL(SKILLS_MATRIX_URL);
-  await expect(page.getByRole('heading', { level: 2, name: 'Managed skills — exposure per runtime' })).toBeVisible();
+  await expectKeyboardMatrixNavigation(page, HEALTHY_LINKS_PATTERN);
+  await expectKeyboardMatrixNavigation(page, TO_REPAIR_PATTERN);
+  await expectKeyboardMatrixNavigation(page, BLOCKED_PATTERN);
 });
 
 test('presents unmanaged copies as neutral backlog rows with their reconciliation action', async ({ page }) => {
