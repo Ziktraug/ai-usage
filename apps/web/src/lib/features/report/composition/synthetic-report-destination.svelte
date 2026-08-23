@@ -41,6 +41,7 @@
   import { buildProviderStatusViews, providerHistoryAvailable } from '../../../../provider-status-model';
   import { demoReportPayload } from '../../../../report-data';
   import type { RuntimeMode } from '../../../../runtime-mode';
+  import { sessionAnalysisTargetForOverviewRow } from '../../../../session-analysis-target';
   import {
     columnVisibilityFromDiff,
     columnVisibilitySearchForVisibility,
@@ -372,7 +373,7 @@
       ? { ...presented.row, campaignKey: campaignContext.campaignKey, sessionLabel: presented.label }
       : presented.row;
     detailRows = visibleRows;
-    selection = { row: presentedRow };
+    selection = { row: presentedRow, target: sessionAnalysisTargetForOverviewRow(presentedRow) };
     selectedRowId = presentedRow.rowId;
   };
   const selectSessionRow = (row: SessionPresentationRow): void => {
@@ -380,7 +381,9 @@
       return;
     }
     detailRows = tableRows;
-    selection = selectedRowId === row.rowId ? null : { row };
+    // Top-level table rows are campaign aggregates; loaded campaign members are plain
+    // sessions. The same helper the live destination uses tells them apart.
+    selection = selectedRowId === row.rowId ? null : { row, target: sessionAnalysisTargetForOverviewRow(row) };
     selectedRowId = selection?.row.rowId ?? null;
   };
 </script>
@@ -405,6 +408,10 @@
       onLoadMoreCampaignSessions={() => undefined}
       onSelectSession={selectSessionRow}
       query={syntheticSessionQuery}
+      rolledUpClassifierCount={Math.max(
+        0,
+        selectedCampaignView.visibleRows.length - selectedCampaignView.visibleCount,
+      )}
       visibleRows={selectedCampaignView.visibleRows}
     />
   {/if}

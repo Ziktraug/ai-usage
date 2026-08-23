@@ -151,7 +151,7 @@ read-only SQLite and the permanent browser/server and demo-isolation boundaries.
 | 085 | Spike — a Printable Period Recap on the Existing Print Path | P3 | M | - | DESIGN READY — awaiting decision (Firefox print-to-PDF gate unmet: no reachable Gecko exposes `--print`, so pagination is verified in one engine only) |
 | 086 | Remediate the 2026-08-23 Fresh-Eyes UI/UX Audit (program plan) | P0 | L (program) | 087–098 | TODO |
 | 087 | Fix the Skills Editor Stuck on "Loading…" After Client-Side Navigation | P0 | S–M | - | TODO |
-| 088 | One Canonical Number Per Concept | P0 | L | - | TODO |
+| 088 | One Canonical Number Per Concept | P0 | L | - | DONE |
 | 089 | Period Semantics — Inclusive Day Counts, Honest Campaign Dates, Auto Interval, Readable Range URLs | P0 | M–L | - | TODO |
 | 090 | Scope the Cursor AI Tab to the Report Period and List One Row per Commit | P1 | S–M | - | TODO |
 | 091 | Sessions Table — One Scroll Container and Calmer Columns | P1 | M | - | TODO |

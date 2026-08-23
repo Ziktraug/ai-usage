@@ -45,6 +45,7 @@ import { isSessionOrigin, sessionOriginLabel } from '@ai-usage/report-core/sessi
 import { isOriginProvenanceKind } from '@ai-usage/report-core/types';
 import {
   buildSessionQuerySqlFilter,
+  executeMaterializedSessionQuery,
   type SessionQuerySqliteDatabase,
   type SessionQuerySqliteTrace,
 } from './session-query-sqlite';
@@ -163,6 +164,7 @@ interface DayRecord {
 }
 
 interface OverviewSessionSelectionRecord {
+  campaign_key: string | null;
   cost_approx: number;
   cost_known: number;
   duration_ms: number | null;
@@ -704,23 +706,21 @@ const readDays = (
 
 const overviewSessionItemFromRecord = (
   record: OverviewSessionSelectionRecord,
-  rowJson: string,
-): FocusedOverviewSessionItem => {
-  const row = parsePresentationRow(rowJson);
-  return {
-    costApprox: record.cost_approx,
-    costKnown: record.cost_known === 1,
-    durationMs: record.duration_ms,
-    harness: row.harness,
-    kind: record.item_kind,
-    label: row.sessionLabel,
-    row,
-    sessionCount: record.session_count,
-  };
-};
+  row: SessionPresentationRow,
+): FocusedOverviewSessionItem => ({
+  costApprox: record.cost_approx,
+  costKnown: record.cost_known === 1,
+  durationMs: record.duration_ms,
+  harness: row.harness,
+  kind: record.item_kind,
+  label: row.sessionLabel,
+  row,
+  sessionCount: record.session_count,
+});
 
 const readOverviewSessionSelections = (
   database: SessionQuerySqliteDatabase,
+  query: FocusedReportQueryScope,
   filter: SqlFilter,
   trace?: SessionQuerySqliteTrace,
 ): { longest: FocusedOverviewSessionItem | null; topSessions: FocusedOverviewSessionItem[] } => {
@@ -753,6 +753,7 @@ const readOverviewSessionSelections = (
     items AS (
       SELECT
         'campaign' AS item_kind,
+        rollup.campaign_key AS campaign_key,
         MIN(root.ordinal) AS root_ordinal,
         SUM(rollup.cost_approx) AS cost_approx,
         MIN(rollup.cost_known) AS cost_known,
@@ -770,6 +771,7 @@ const readOverviewSessionSelections = (
       UNION ALL
       SELECT
         'session' AS item_kind,
+        NULL AS campaign_key,
         ordinal AS root_ordinal,
         cost_approx,
         cost_known,
@@ -797,6 +799,7 @@ const readOverviewSessionSelections = (
     SELECT
       'top-session' AS item_role,
       item_kind,
+      campaign_key,
       root_ordinal,
       cost_approx,
       cost_known,
@@ -810,6 +813,7 @@ const readOverviewSessionSelections = (
     SELECT
       'longest' AS item_role,
       item_kind,
+      campaign_key,
       root_ordinal,
       cost_approx,
       cost_known,
@@ -826,22 +830,54 @@ const readOverviewSessionSelections = (
   if (records.length === 0) {
     return { longest: null, topSessions: [] };
   }
-  const rootOrdinals = [...new Set(records.map((record) => record.root_ordinal))];
-  const roots = executeAll<TopSessionRootRecord>(
-    database,
-    `SELECT ordinal, row_json
+  const rootOrdinals = [
+    ...new Set(records.filter((record) => record.campaign_key === null).map((record) => record.root_ordinal)),
+  ];
+  const roots =
+    rootOrdinals.length === 0
+      ? []
+      : executeAll<TopSessionRootRecord>(
+          database,
+          `SELECT ordinal, row_json
     FROM session_rows
     WHERE ordinal IN (${rootOrdinals.map(() => '?').join(', ')})`,
-    rootOrdinals,
-    trace,
-  );
+          rootOrdinals,
+          trace,
+        );
   const rootJsonByOrdinal = new Map(roots.map((root) => [root.ordinal, root.row_json]));
+  // Campaign items reuse the served campaign aggregate (the same row the
+  // Sessions page returns) instead of re-deriving a second aggregation here.
+  const campaignRowsByKey = new Map<string, SessionPresentationRow>();
+  const campaignRow = (campaignKey: string): SessionPresentationRow => {
+    const memoized = campaignRowsByKey.get(campaignKey);
+    if (memoized) {
+      return memoized;
+    }
+    const page = executeMaterializedSessionQuery(
+      database,
+      'sessions',
+      {
+        ...sessionRequest(query),
+        filters: { ...query.filters, fields: { ...query.filters.fields, campaign: campaignKey } },
+      },
+      trace,
+    );
+    const row = page.items[0]?.row;
+    if (!row) {
+      throw new Error('Focused report query database omitted an Overview campaign display row');
+    }
+    campaignRowsByKey.set(campaignKey, row);
+    return row;
+  };
   const itemFromRecord = (record: OverviewSessionSelectionRecord): FocusedOverviewSessionItem => {
+    if (record.campaign_key !== null) {
+      return overviewSessionItemFromRecord(record, campaignRow(record.campaign_key));
+    }
     const rootJson = rootJsonByOrdinal.get(record.root_ordinal);
     if (rootJson === undefined) {
       throw new Error('Focused report query database omitted an Overview session-selection root');
     }
-    return overviewSessionItemFromRecord(record, rootJson);
+    return overviewSessionItemFromRecord(record, parsePresentationRow(rootJson));
   };
   const topSessions = records.filter((record) => record.item_role === 'top-session').map(itemFromRecord);
   const longestRecord = records.find((record) => record.item_role === 'longest');
@@ -910,7 +946,7 @@ const runOverview = (
   const summary = readSummary(database, visibleFilter, trace);
   const timelineAggregates = readTimeline(database, timelineFilter, request.timeline.dimension, trace);
   const visibleDays = readDays(database, visibleFilter, trace);
-  const sessionSelections = readOverviewSessionSelections(database, visibleFilter, trace);
+  const sessionSelections = readOverviewSessionSelections(database, request.query, visibleFilter, trace);
   return {
     dateDomain: timelineAggregates.dateDomain,
     metadata: {
@@ -1142,7 +1178,7 @@ const readAnalyticsGroups = (
         SUM(fresh_tokens) AS fresh,
         SUM(tok_in) AS inp,
         SUM(tok_cr) AS cache,
-        SUM(CASE WHEN cost_known = 1 OR kind = 'model' THEN cost_approx ELSE 0 END) AS cost_sum,
+        SUM(cost_approx) AS cost_sum,
         SUM(CASE WHEN cost_known = 1 THEN cost_approx ELSE 0 END) AS priced_cost_sum,
         SUM(COALESCE(lines_added, 0)) AS lines_a,
         SUM(COALESCE(lines_deleted, 0)) AS lines_d,
@@ -1220,7 +1256,7 @@ const readProjectGroups = (
       SUM(CASE WHEN lines_measured = 1 THEN lines_added ELSE 0 END) AS lines_added,
       SUM(CASE WHEN lines_measured = 1 THEN lines_deleted ELSE 0 END) AS lines_deleted,
       SUM(lines_measured) AS measured_sessions,
-      SUM(CASE WHEN cost_known = 1 THEN cost_approx ELSE 0 END) AS cost,
+      SUM(cost_approx) AS cost,
       SUM(cost_known) AS priced
     FROM session_rows
     WHERE ${filter.where}
