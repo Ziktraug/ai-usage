@@ -159,7 +159,7 @@ read-only SQLite and the permanent browser/server and demo-isolation boundaries.
 | 093 | Activity Explorer Controls, Model Palette, and Hero Number Format | P1 | M–L | 089 (`timeline` request + range model) | BLOCKED (dependency 089 did not land) |
 | 094 | Calm the Overview Secondary Panels (Harness Disclosure, Session Shape, Punchcard Fit, KPI Baseline, Rhythm Axis, Record Tiles) | P1 | M | 088, 093 (shared `harness-provider-model.ts`, `executive-overview.svelte`) | BLOCKED (dependency 088 did not land) |
 | 095 | Make Provider Status and Quota History Legible | P1 | M | - | BLOCKED (rework budget spent; branch `exec/095` is one focused fix away — providers with no `machineId` all group under one empty key and render a single machine label, and `machineId`/`machineLabel` are independently optional) |
-| 096 | Skills Management Surface Fixes — Legible Tree, Honest Statuses, One Health Surface, Matrix Geometry, Frontmatter False Positives | P1 | M | 087 (editor status branch) | TODO |
+| 096 | Skills Management Surface Fixes — Legible Tree, Honest Statuses, One Health Surface, Matrix Geometry, Frontmatter False Positives | P1 | M | 087 (editor status branch) | BLOCKED (final correction budget spent; branch `exec/096` at `4940ee5b` still asserts the warning health tone before its transformed refresh is observably settled, so Codex r3 rejected the presentation proof) |
 | 097 | Sync, Sources, Projects: Duplication and Jargon | P1 | M | 088 (fleet "Sessions" label) | BLOCKED (dependency 088 did not land) |
 | 098 | Session Drawer, Analysis, and Report Chrome Polish | P2 | M | 088 (drawer, records); 093/094 if they touched `preset.ts` | BLOCKED (dependencies 088 and 094 did not land) |
 
