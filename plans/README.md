@@ -149,6 +149,19 @@ read-only SQLite and the permanent browser/server and demo-isolation boundaries.
 | 083 | Design "Adopt Unmanaged Skill Into Source" (spike, then gated build) | P1 | L | - | DESIGN READY — awaiting approval |
 | 084 | Spike — a Session-Intent Signal From First Prompts, Within the Privacy Boundary | P3 | L | - | DESIGN READY — awaiting decision |
 | 085 | Spike — a Printable Period Recap on the Existing Print Path | P3 | M | - | DESIGN READY — awaiting decision (Firefox print-to-PDF gate unmet: no reachable Gecko exposes `--print`, so pagination is verified in one engine only) |
+| 086 | Remediate the 2026-08-23 Fresh-Eyes UI/UX Audit (program plan) | P0 | L (program) | 087–098 | TODO |
+| 087 | Fix the Skills Editor Stuck on "Loading…" After Client-Side Navigation | P0 | S–M | - | TODO |
+| 088 | One Canonical Number Per Concept | P0 | L | - | TODO |
+| 089 | Period Semantics — Inclusive Day Counts, Honest Campaign Dates, Auto Interval, Readable Range URLs | P0 | M–L | - | TODO |
+| 090 | Scope the Cursor AI Tab to the Report Period and List One Row per Commit | P1 | S–M | - | TODO |
+| 091 | Sessions Table — One Scroll Container and Calmer Columns | P1 | M | - | TODO |
+| 092 | One Checkbox-Filter Mechanic, a Working `/` Shortcut, and a Filter Bar That Holds One Row | P1 | M | - | TODO |
+| 093 | Activity Explorer Controls, Model Palette, and Hero Number Format | P1 | M–L | 089 (`timeline` request + range model) | TODO |
+| 094 | Calm the Overview Secondary Panels (Harness Disclosure, Session Shape, Punchcard Fit, KPI Baseline, Rhythm Axis, Record Tiles) | P1 | M | 088, 093 (shared `harness-provider-model.ts`, `executive-overview.svelte`) | TODO |
+| 095 | Make Provider Status and Quota History Legible | P1 | M | - | TODO |
+| 096 | Skills Management Surface Fixes — Legible Tree, Honest Statuses, One Health Surface, Matrix Geometry, Frontmatter False Positives | P1 | M | 087 (editor status branch) | TODO |
+| 097 | Sync, Sources, Projects: Duplication and Jargon | P1 | M | 088 (fleet "Sessions" label) | TODO |
+| 098 | Session Drawer, Analysis, and Report Chrome Polish | P2 | M | 088 (drawer, records); 093/094 if they touched `preset.ts` | TODO |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) |
 REJECTED (with one-line rationale) | DESIGN READY (design/spike plans only:
@@ -198,6 +211,55 @@ exact filter, no self-contained-HTML export).
   delivered in Svelte form by `activity-explorer.svelte` + the
   dimension-parameterized `activity-timeline.svelte`; its file anchors
   predate the SvelteKit migration and the plan should be archived.
+
+## 2026-08-23 fresh-eyes UI/UX audit (plans 086-098)
+
+Generated on 2026-08-23 at `51815b70` from a deliberately uninformed review
+of the running app (no code, ADR, or prior plan read first): six routes and
+every sub-tab, all interactions, five viewports (1920/1280/1024/768/390),
+both themes, keyboard, console. 42 findings U01–U42 — the full table with
+symptoms and owners lives in plan 086; each child plan anchored its findings
+line by line in the working tree and states explicitly what it could not
+reproduce from code.
+
+- Plan 086 is the umbrella: findings table, execution order, cross-cutting
+  rules (presentation gate, per-metric provenance, ADR 0004/0005/0009, PII),
+  and the program gate (full test run + a fresh-eyes pass on `bun run demo`).
+- Plans 087–089 are P0: 087 fixes the Skills editor left on "Loading…" after
+  client-side navigation (hydration gate compares a merged signature with the
+  skills-only delta, so every Skills query is disabled after navigation);
+  088 gives each concept one canonical number (the Overview counts
+  `costLowerBound`, the harness breakdown does not → the ~$208 Claude Code
+  gap; fleet "sessions" are stored rows, not published ones; campaign rows
+  open a drawer for the root; "Longest session" is a root task-open window);
+  089 fixes period semantics (inclusive day count, partial-day comparison
+  caveat, campaign dates pulled from classifier members outside the range,
+  auto interval for long ranges, readable `range=` URLs, ISO date inputs).
+- Plans 090–097 are P1 surface work, one coherent slice each: Cursor AI tab
+  period + dedupe (090); Sessions table single scroll / honest columns /
+  collapsed identical provenance markers (091, ADR 0004 kept); one
+  checkbox-filter mechanic and the `/` shortcut that was lost in the
+  Solid→SvelteKit cutover (092); Activity explorer controls, a rank-ordered
+  model palette replacing `hash % 6`, hero number format (093); Overview
+  secondary panels (094); provider status / quota history legibility (095);
+  Skills tree, statuses, health, matrix, frontmatter false positives (096);
+  Sync/Sources/Projects duplication and jargon (097).
+- Plan 098 is the P2 drawer/analysis/chrome polish and runs last because it
+  shares `session-drawer.svelte` and `records.svelte` with 088.
+- Execution order and the only real file overlaps: 087 → 088 → 089 → 091 →
+  {092 ∥ 090} → 093 → 094 → {095 ∥ 096 ∥ 097} → 098. Everything else is
+  independent.
+- Findings deliberately *not* turned into work: the "1 warning" pill flipping
+  to "Sources ready" after a harness filter (no code path couples the pill to
+  the report filter; attributed to a coincident engine state change — 095
+  adds attribution and an e2e guard); the Rhythm grid using ~970 of 1,300 px
+  (every in-card fix changes geometry pinned by ADR 0005/0009 — deferred as a
+  section-layout decision); the "To consolidate" dead end (plan 083).
+- Two TODO rows above were found already delivered in the tree while
+  anchoring: 074 (drawer strings + `providerHistoryAvailable` wired) and 076
+  (`c3de318a`). Their rows are left for the maintainer to flip.
+- Audit screenshots were taken against real local data and are not
+  committed; every child re-derives its symptom from the synthetic fixtures.
 
 ## Presentation gate
 
