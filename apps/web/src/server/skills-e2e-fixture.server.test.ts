@@ -32,6 +32,19 @@ describe('Skills E2E mutation backend', () => {
       observations: [{ name: 'skill-name' }],
       projectPath: '/fixture/projects/opaque-project-source',
     });
+    expect(knownPaths.ok && knownPaths.data).toContainEqual(
+      expect.objectContaining({
+        groupId: 'project/opaque-twin',
+        groupLabel: 'Opaque project',
+        path: '/fixture/work/opaque-project-source',
+      }),
+    );
+    expect(inventories.ok && inventories.data).toContainEqual(
+      expect.objectContaining({
+        observations: [expect.objectContaining({ name: 'twin-skill' })],
+        projectPath: '/fixture/work/opaque-project-source',
+      }),
+    );
   });
 
   test('provides deterministic responses for every Skills mutation', () => {

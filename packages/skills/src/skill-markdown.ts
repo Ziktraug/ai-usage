@@ -13,7 +13,28 @@ import { parseSkillName, skillTokenDiagnosticCodes } from './shared';
 const frontmatterClosePattern = /^\n---\r?\n?/;
 const lineBreakPattern = /\r?\n/;
 const whitespacePattern = /\s+/;
-const knownFrontmatterExtensions = new Set(['paths', 'disable-model-invocation']);
+// Claude Code's SKILL.md frontmatter reference, the Agent Skills specification
+// (agentskills.io), and the Cursor extension `disable-model-invocation`.
+const knownFrontmatterExtensions = new Set([
+  'agent',
+  'allowed-tools',
+  'argument-hint',
+  'arguments',
+  'background',
+  'compatibility',
+  'context',
+  'disable-model-invocation',
+  'disallowed-tools',
+  'effort',
+  'hooks',
+  'license',
+  'metadata',
+  'model',
+  'paths',
+  'shell',
+  'user-invocable',
+  'when_to_use',
+]);
 const standardFrontmatterFields = new Set(['name', 'description']);
 const tokenDiagnosticCodeSet = new Set<string>(skillTokenDiagnosticCodes);
 

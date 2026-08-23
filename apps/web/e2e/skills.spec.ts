@@ -1,4 +1,4 @@
-import type { Page } from '@playwright/test';
+import type { Locator, Page } from '@playwright/test';
 import { expect, openHydratedSkills, test, waitForHydratedSkills } from './browser-test';
 import { rpcRouteFulfillmentForClientResult, SKILLS_SAVE_RPC_PATH } from './rpc-test-transport';
 
@@ -7,6 +7,7 @@ const BETA_SKILL_CONTENT = '# beta-skill\n\nDeterministic Playwright fixture.\n'
 const ALPHA_SKILL_URL = /\/skills\/global\/alpha-skill$/;
 const APPLY_ACTION_PATTERN = /Apply 1 action|Apply$/;
 const DESKTOP_WORKSPACE_VIEWPORT = { height: 900, width: 1280 } as const;
+const PASSIVE_RELOAD_NOTICE = ['Skills', 'reloaded.'].join(' ');
 const MIN_DESKTOP_EDITOR_WIDTH_PX = 320;
 const MIN_DESKTOP_INSPECTOR_WIDTH_PX = 260;
 const MIN_DESKTOP_TREE_WIDTH_PX = 190;
@@ -15,6 +16,9 @@ const SKILLS_MATRIX_URL = /\/skills\/matrix$/;
 const SKILLS_DETAIL_GAP_PX = 14;
 const SKILLS_SECTION_HEADER_GAP_PX = 2;
 const CREATED_TARGET_PATTERN = /Created target directory/;
+const HEALTHY_LINKS_PATTERN = /^Healthy links/;
+const TO_REPAIR_PATTERN = /^To repair/;
+const BLOCKED_PATTERN = /^Blocked/;
 const LONG_PROJECT_LABEL = 'customer-analytics-platform-with-an-exceptionally-long-scope-name';
 const MOBILE_VIEWPORT = { height: 844, width: 390 } as const;
 const SAVE_MANAGED_MARKDOWN_RPC_ROUTE = `**${SKILLS_SAVE_RPC_PATH}`;
@@ -23,6 +27,18 @@ const SUCCESS_NOTICE_DISMISS_DELAY_MS = 5000;
 const WHITESPACE_PATTERN = /\s+/g;
 
 const normalizeText = (value: string): string => value.replace(WHITESPACE_PATTERN, ' ').trim();
+
+const expectColorToken = async (locator: Locator, token: string, property = 'color'): Promise<void> => {
+  const expectedColor = await locator.evaluate((element, tokenName) => {
+    const probe = document.createElement('span');
+    probe.style.color = `var(${tokenName})`;
+    element.append(probe);
+    const color = getComputedStyle(probe).color;
+    probe.remove();
+    return color;
+  }, token);
+  await expect(locator).toHaveCSS(property, expectedColor);
+};
 
 const interceptSaveResultForDraft = async (page: Page, draftMarker: string, result: unknown): Promise<void> => {
   await page.route(SAVE_MANAGED_MARKDOWN_RPC_ROUTE, async (route) => {
@@ -52,7 +68,9 @@ test('opens a managed SKILL.md as an immediately editable document and saves wit
   await expect(editor).toBeVisible();
   await expect(editor).toHaveValue(ALPHA_SKILL_CONTENT);
   await expect(detail.getByRole('button', { name: 'Edit' })).toHaveCount(0);
-  await expect(page.getByText('Saved', { exact: true })).toBeVisible();
+  const unchangedStatus = page.getByText('Unchanged', { exact: true });
+  await expect(unchangedStatus).toBeVisible();
+  await expectColorToken(unchangedStatus, '--colors-muted');
   await expect(saveButton).toBeDisabled();
   await expect(revertButton).toBeDisabled();
 
@@ -247,7 +265,7 @@ test('protects an unsaved SKILL.md draft during navigation and reload', async ({
   await discardDialog.getByRole('button', { name: 'Discard changes' }).click();
   await expect(discardDialog).toBeHidden();
   await expect(editor).toHaveValue(ALPHA_SKILL_CONTENT);
-  await expect(page.getByText('Saved', { exact: true })).toBeVisible();
+  await expect(page.getByText('Unchanged', { exact: true })).toBeVisible();
 
   await editor.fill('# Discard before navigation\n');
   await expect(page.getByText('Unsaved changes', { exact: true })).toBeVisible();
@@ -360,7 +378,7 @@ test('keeps the tree, editor, and Inspector in one bounded desktop workspace row
   const tree = page.getByRole('complementary', { name: 'Skill scopes' }).last();
   const detail = page.getByRole('region', { name: 'Selected skill detail' });
   const editor = detail.getByRole('textbox', { name: 'alpha-skill SKILL.md' });
-  const editorStatus = detail.getByText('Saved', { exact: true });
+  const editorStatus = detail.getByText('Unchanged', { exact: true });
   const saveButton = detail.getByRole('button', { exact: true, name: 'Save' });
   const inspector = page.getByRole('complementary', { name: 'Inspector' });
   const editorToolbar = editorStatus.locator('..');
@@ -488,6 +506,83 @@ test('bounds long scope labels and makes validation findings individually identi
     scrollWidth: element.scrollWidth,
   }));
   expect(diagnosticDimensions.scrollWidth).toBeLessThanOrEqual(diagnosticDimensions.clientWidth);
+});
+
+test('keeps colliding scope names legible and says each health number once', async ({ page }) => {
+  await page.setViewportSize({ height: 1080, width: 1920 });
+  await openHydratedSkills(page, '/skills/global');
+
+  const tree = page.getByRole('complementary', { exact: true, name: 'Skill scopes' });
+  const twins = tree.locator('[data-skill-scope-name]').filter({ hasText: 'Opaque project' });
+  await expect(twins).toHaveCount(2);
+  for (const twin of await twins.all()) {
+    expect(await twin.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+    expect(await twin.getAttribute('title')).toBe((await twin.textContent())?.trim());
+  }
+
+  const paths = tree.locator('[data-skill-scope-path]');
+  await expect(paths).toHaveCount(2);
+  for (const path of await paths.all()) {
+    expect(
+      await path.evaluate((element) => {
+        const name = element.previousElementSibling;
+        return (
+          name instanceof HTMLElement &&
+          name.hasAttribute('data-skill-scope-name') &&
+          element.getBoundingClientRect().top >= name.getBoundingClientRect().bottom - 1
+        );
+      }),
+    ).toBe(true);
+  }
+
+  expect((await tree.boundingBox())?.width ?? 0).toBeGreaterThanOrEqual(272);
+  await expect(tree.getByRole('link', { name: 'alpha-skill' }).locator('span').first()).toHaveCSS(
+    '-webkit-line-clamp',
+    '2',
+  );
+  await expect(page.getByRole('status').filter({ hasText: PASSIVE_RELOAD_NOTICE })).toHaveCount(0);
+  await expect(page.getByText('Healthy links', { exact: true })).toHaveCount(1);
+
+  await tree.getByRole('button', { name: 'Expand Opaque project' }).nth(1).click();
+  await tree.getByRole('link', { exact: true, name: 'twin-skill' }).click();
+  await expect(page.getByText('Opaque twin project skill fixture', { exact: true })).toBeVisible();
+
+  await page.setViewportSize({ height: 900, width: 1280 });
+  for (const twin of await twins.all()) {
+    expect(await twin.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+  }
+});
+
+test('exposes health drill-down links with token tones, focus rings, and matrix navigation', async ({ page }) => {
+  await page.setViewportSize({ height: 900, width: 1280 });
+  await openHydratedSkills(page, '/skills/global');
+
+  const detail = page.getByRole('region', { name: 'Selected skill detail' });
+  const links = [
+    detail.getByRole('link', { name: HEALTHY_LINKS_PATTERN }),
+    detail.getByRole('link', { name: TO_REPAIR_PATTERN }),
+    detail.getByRole('link', { name: BLOCKED_PATTERN }),
+  ] as const;
+  for (const link of links) {
+    await expect(link).toHaveAttribute('href', '/skills/matrix');
+    await link.focus();
+    await expect(link).toBeFocused();
+    await expect(link).toHaveCSS('outline-style', 'solid');
+    await expect(link).toHaveCSS('outline-width', '2px');
+    await expect(link).toHaveCSS('outline-offset', '2px');
+    await expectColorToken(link, '--colors-accent', 'outline-color');
+  }
+
+  const healthyLinksValue = links[0].locator('[data-health-tone="warn"]');
+  const repairValue = links[1].locator('[data-health-tone="neutral"]');
+  await expect(healthyLinksValue).toHaveText('3/4');
+  await expect(repairValue).toHaveText('0');
+  await expectColorToken(healthyLinksValue, '--colors-status-warn');
+  await expectColorToken(repairValue, '--colors-ink');
+
+  await links[0].click();
+  await expect(page).toHaveURL(SKILLS_MATRIX_URL);
+  await expect(page.getByRole('heading', { level: 2, name: 'Managed skills — exposure per runtime' })).toBeVisible();
 });
 
 test('presents unmanaged copies as neutral backlog rows with their reconciliation action', async ({ page }) => {
@@ -624,4 +719,56 @@ test('renders matrix cards on mobile and preserves the desktop comparison table'
   await expect(inspector.getByRole('button', { name: 'Close matrix' })).toBeVisible();
   const inspectorBox = await inspector.boundingBox();
   expect(inspectorBox?.height ?? Number.POSITIVE_INFINITY).toBeLessThan(350);
+});
+
+test('keeps matrix tiles, names, and the table legible beside the tree at 1280', async ({ page }) => {
+  await page.setViewportSize({ height: 800, width: 1280 });
+  await openHydratedSkills(page, '/skills/matrix');
+
+  const tiles = page.locator('[data-skills-health-tiles] > button');
+  await expect(tiles).toHaveCount(6);
+  for (const tile of await tiles.all()) {
+    expect((await tile.boundingBox())?.width ?? 0).toBeGreaterThanOrEqual(150);
+    const caption = tile.locator(':scope > div').first();
+    expect(await caption.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+    expect(
+      await caption.evaluate((element) => {
+        const range = document.createRange();
+        range.selectNodeContents(element);
+        return range.getClientRects().length;
+      }),
+    ).toBe(1);
+  }
+
+  const table = page.getByRole('table');
+  await expect(table).toHaveCSS('table-layout', 'auto');
+  await expect(table).toHaveCSS('min-width', '0px');
+  expect((await table.getByRole('columnheader', { name: 'Skill' }).boundingBox())?.width ?? 0).toBeGreaterThanOrEqual(
+    320,
+  );
+  expect(await table.locator('..').evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+
+  const name = table.getByRole('link', { exact: true, name: 'alpha-skill' });
+  await expect(name).toHaveCSS('overflow-wrap', 'break-word');
+  expect(
+    await name.evaluate((element) => {
+      const range = document.createRange();
+      range.selectNodeContents(element);
+      return range.getClientRects().length;
+    }),
+  ).toBe(1);
+
+  const matrixSlot = page.locator('[data-skills-matrix-slot]');
+  const inspector = page.getByRole('complementary', { name: 'Selection actions' });
+  const [matrixBox, inspectorBox] = await Promise.all([matrixSlot.boundingBox(), inspector.boundingBox()]);
+  expect(matrixBox?.width ?? 0).toBeGreaterThanOrEqual(700);
+  expect(inspectorBox?.y ?? 0).toBeGreaterThanOrEqual((matrixBox?.y ?? 0) + (matrixBox?.height ?? 0) - 1);
+  await expect(inspector.getByRole('button', { name: 'Close matrix' })).toBeVisible();
+  await expect(page.getByText('Healthy links', { exact: true })).toHaveCount(1);
+
+  await page.setViewportSize({ height: 1080, width: 1920 });
+  for (const tile of await tiles.all()) {
+    expect((await tile.boundingBox())?.width ?? 0).toBeGreaterThanOrEqual(150);
+  }
+  expect(await table.locator('..').evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
 });

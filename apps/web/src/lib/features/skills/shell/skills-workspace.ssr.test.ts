@@ -19,6 +19,8 @@ interface SvelteServerModule {
   render: (component: Component, options?: { props?: Record<string, unknown> }) => { body: string };
 }
 
+const DANGER_HEALTH_TOKEN_PATTERN = /class="[^"]*c_status\.danger[^"]*" data-health-tone="danger"/u;
+
 const componentFrom = (loaded: unknown): Component => {
   if (typeof loaded !== 'object' || loaded === null || !('default' in loaded) || typeof loaded.default !== 'function') {
     throw new Error('Skills workspace fixture did not expose a Svelte component');
@@ -134,6 +136,20 @@ describe('Svelte Skills workspace SSR', () => {
     const matrixHtml = render(convergenceFixture, { props: { pathname: '/skills/matrix' } }).body;
     expect(matrixHtml).toContain('data-skills-management-matrix-slot');
     expect(matrixHtml).not.toContain('Synthetic matrix slot');
+  });
+
+  test('says each health number once and tones an empty link count as danger', () => {
+    const detailHtml = render(convergenceFixture, {
+      props: { healthSnapshot: 'management', pathname: '/skills/global' },
+    }).body;
+    expect(detailHtml.match(/Healthy links/gu) ?? []).toHaveLength(1);
+    expect(detailHtml).toContain('data-health-tone="danger"');
+    expect(detailHtml).toMatch(DANGER_HEALTH_TOKEN_PATTERN);
+
+    const matrixHtml = render(convergenceFixture, {
+      props: { healthSnapshot: 'management', pathname: '/skills/matrix' },
+    }).body;
+    expect(matrixHtml.match(/Healthy links/gu) ?? []).toHaveLength(1);
   });
 
   test('hydrates a bounded awaited route into a new provider without duplicate Skills acquisition', async () => {

@@ -144,7 +144,10 @@
     if (next.dirty) {
       return { error: false, label: 'Unsaved changes', tone: statusPillWarn };
     }
-    return { error: false, label: 'Saved', tone: statusPillOk };
+    if (next.message === 'SKILL.md saved.') {
+      return { error: false, label: 'Saved', tone: statusPillOk };
+    }
+    return { error: false, label: 'Unchanged', tone: statusPillInfo };
   };
   const status = $derived(documentStatus(editorState));
 

@@ -19,6 +19,7 @@ The feature provides a local control plane for inspecting, editing, enabling, an
 
 - Scan source skills, configured runtime targets, and eligible project-local skill directories.
 - Validate `SKILL.md` frontmatter, name consistency, reference readability, and configured token thresholds.
+- Treat frontmatter fields documented by Claude Code, the Agent Skills specification, or Cursor (`disable-model-invocation`) as known extensions; only undocumented keys raise `UnknownFrontmatterField`.
 - Distinguish managed symlinks, missing projections, unmanaged files/directories, invalid skills, and warning-only skills.
 - Keep project-local observations read-only.
 
@@ -36,7 +37,7 @@ The feature provides a local control plane for inspecting, editing, enabling, an
 - Expose Skills as a first-class web route with global and project scopes, a runtime matrix, diagnostics, configuration, and reconciliation controls.
 - Open each managed global `SKILL.md` as a directly editable source document without a preview-first mode or Edit button.
 - Keep Save explicit through the document toolbar and `Ctrl+S` / `Cmd+S`. Saving updates the source repository only; installing or repairing runtime projections remains a separate action in the Inspector.
-- Surface Saved, unsaved, saving, validation-error, and changed-on-disk states while preserving the exact local draft after revision conflicts or other save failures.
+- Surface unchanged, saved (this session), unsaved, saving, validation-error, and changed-on-disk states while preserving the exact local draft after revision conflicts or other save failures.
 - Preserve dirty Markdown drafts across selection, refresh, and disk-reload operations. If a new snapshot removes the edited skill, require explicit discard before replacing the snapshot.
 - Give the editor priority in the responsive layout: tree, document, then Inspector on wide screens; tree and document with the Inspector stacked after it at intermediate widths; compact picker, document, then Inspector on narrow screens.
 - Keep project-owned `SKILL.md` documents read-only until a separate adoption workflow creates a canonical source document.
