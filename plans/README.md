@@ -151,17 +151,17 @@ read-only SQLite and the permanent browser/server and demo-isolation boundaries.
 | 085 | Spike — a Printable Period Recap on the Existing Print Path | P3 | M | - | DESIGN READY — awaiting decision (Firefox print-to-PDF gate unmet: no reachable Gecko exposes `--print`, so pagination is verified in one engine only) |
 | 086 | Remediate the 2026-08-23 Fresh-Eyes UI/UX Audit (program plan) | P0 | L (program) | 087–098 | TODO |
 | 087 | Fix the Skills Editor Stuck on "Loading…" After Client-Side Navigation | P0 | S–M | - | BLOCKED (fix landed and green; U01's presentation gate needs an e2e runtime that dehydrates one root-level query, deferred to plan 080 by this plan's own maintenance notes) |
-| 088 | One Canonical Number Per Concept | P0 | L | - | TODO |
+| 088 | One Canonical Number Per Concept | P0 | L | - | BLOCKED (ordinary budget plus one exceptional correction round spent; branch `exec/088` still lacks a two-machine/different-value aggregate proof and deterministic assertions for changed Sync/duration explanatory copy) |
 | 089 | Period Semantics — Inclusive Day Counts, Honest Campaign Dates, Auto Interval, Readable Range URLs | P0 | M–L | - | TODO |
 | 090 | Scope the Cursor AI Tab to the Report Period and List One Row per Commit | P1 | S–M | - | BLOCKED (rework budget spent; branch `exec/090` is one focused fix away — rows are filtered before grouping, so a commit whose only in-range row lacks a commit date renders scoring-dated in the wrong period) |
 | 091 | Sessions Table — One Scroll Container and Calmer Columns | P1 | M | - | TODO |
 | 092 | One Checkbox-Filter Mechanic, a Working `/` Shortcut, and a Filter Bar That Holds One Row | P1 | M | - | TODO |
 | 093 | Activity Explorer Controls, Model Palette, and Hero Number Format | P1 | M–L | 089 (`timeline` request + range model) | TODO |
-| 094 | Calm the Overview Secondary Panels (Harness Disclosure, Session Shape, Punchcard Fit, KPI Baseline, Rhythm Axis, Record Tiles) | P1 | M | 088, 093 (shared `harness-provider-model.ts`, `executive-overview.svelte`) | TODO |
+| 094 | Calm the Overview Secondary Panels (Harness Disclosure, Session Shape, Punchcard Fit, KPI Baseline, Rhythm Axis, Record Tiles) | P1 | M | 088, 093 (shared `harness-provider-model.ts`, `executive-overview.svelte`) | BLOCKED (dependency 088 did not land) |
 | 095 | Make Provider Status and Quota History Legible | P1 | M | - | BLOCKED (rework budget spent; branch `exec/095` is one focused fix away — providers with no `machineId` all group under one empty key and render a single machine label, and `machineId`/`machineLabel` are independently optional) |
 | 096 | Skills Management Surface Fixes — Legible Tree, Honest Statuses, One Health Surface, Matrix Geometry, Frontmatter False Positives | P1 | M | 087 (editor status branch) | TODO |
-| 097 | Sync, Sources, Projects: Duplication and Jargon | P1 | M | 088 (fleet "Sessions" label) | TODO |
-| 098 | Session Drawer, Analysis, and Report Chrome Polish | P2 | M | 088 (drawer, records); 093/094 if they touched `preset.ts` | TODO |
+| 097 | Sync, Sources, Projects: Duplication and Jargon | P1 | M | 088 (fleet "Sessions" label) | BLOCKED (dependency 088 did not land) |
+| 098 | Session Drawer, Analysis, and Report Chrome Polish | P2 | M | 088 (drawer, records); 093/094 if they touched `preset.ts` | BLOCKED (dependencies 088 and 094 did not land) |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) |
 REJECTED (with one-line rationale) | DESIGN READY (design/spike plans only:
