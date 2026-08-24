@@ -1,17 +1,17 @@
 <script lang="ts">
   import { css, cx } from '@ai-usage/design-system/css';
+  import { fmtDate } from '../../foundation/presentation/format';
   import { useSourceControl } from './context.svelte';
   import { pendingAriaBusyAttributes } from './model';
   import { presentSourceState, sourceToneClass } from './presentation';
+  import { summarizeSourceControlStatus } from './source-control-summary-model';
   import { ghostButton, statusPill } from './styles';
 
   const sourceControl = useSourceControl();
   const controlState = $derived(sourceControl.state());
   const snapshot = $derived(controlState.snapshot);
+  const status = $derived(summarizeSourceControlStatus(controlState));
   const enabledSources = $derived(snapshot?.sources.filter((source) => source.policy === 'enabled') ?? []);
-  const warningCount = $derived(
-    enabledSources.filter((source) => ['danger', 'warning'].includes(presentSourceState(source).tone)).length,
-  );
   const runningSources = $derived(
     snapshot?.sources.filter((source) => source.lifecycle === 'running' || source.lifecycle === 'pausing') ?? [],
   );
@@ -21,42 +21,6 @@
       .filter((source) => source.nextDueAt !== undefined)
       .toSorted((left, right) => String(left.nextDueAt).localeCompare(String(right.nextDueAt)))[0],
   );
-  // 'stopped' is the state before the client has even been started — which is what the server render
-  // and every frame before hydration see. Reporting that as "Unavailable" told the user sources were
-  // broken when nothing had been attempted yet, so not-yet-known reads as its own neutral state.
-  const awaitingFirstSnapshot = $derived(
-    !snapshot && (controlState.connection === 'stopped' || controlState.connection === 'connecting'),
-  );
-  const statusLabel = $derived.by(() => {
-    if (awaitingFirstSnapshot) {
-      return 'Checking sources…';
-    }
-    if (!snapshot) {
-      return controlState.connection === 'protocol-mismatch' ? 'Incompatible' : 'Unavailable';
-    }
-    if (controlState.connection === 'protocol-mismatch') {
-      return 'Incompatible';
-    }
-    if (controlState.connection === 'disconnected') {
-      return 'Reconnecting';
-    }
-    if (warningCount > 0) {
-      return `${warningCount} warning${warningCount === 1 ? '' : 's'}`;
-    }
-    if (snapshot.runningCount > 0) {
-      return `${snapshot.runningCount} running`;
-    }
-    return 'Sources ready';
-  });
-  const statusTone = $derived.by(() => {
-    if (awaitingFirstSnapshot) {
-      return 'info';
-    }
-    if (!snapshot || controlState.connection === 'disconnected' || controlState.connection === 'protocol-mismatch') {
-      return 'warning';
-    }
-    return warningCount > 0 ? 'danger' : 'ok';
-  });
   const runPending = $derived(controlState.pendingCommand !== null);
   let hasFocus = $state(false);
   let isHovered = $state(false);
@@ -140,7 +104,12 @@
   const sourceLabel = css({ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: '12px' });
 </script>
 
-<section aria-label="Collection source status" class={summary}>
+<section
+  aria-label="Collection source status"
+  class={summary}
+  data-source-summary
+  data-source-summary-generation={status.generation ?? ''}
+>
   <a
     class={summaryLink}
     href="/sources"
@@ -148,21 +117,22 @@
     onfocus={() => (hasFocus = true)}
     onmouseenter={() => (isHovered = true)}
     onmouseleave={() => (isHovered = false)}
+    title={status.warningSources.length > 0 ? `Warnings: ${status.warningSources.join(', ')}` : undefined}
   >
     <span
       aria-hidden="true"
       class={cx(
         summaryDot,
-        statusTone === 'info' ? summaryDotPending : undefined,
-        statusTone === 'warning' ? summaryDotWarn : undefined,
-        statusTone === 'danger' ? summaryDotDanger : undefined,
+        status.tone === 'info' ? summaryDotPending : undefined,
+        status.tone === 'warning' ? summaryDotWarn : undefined,
+        status.tone === 'danger' ? summaryDotDanger : undefined,
       )}
     ></span>
-    <span class={summaryLabel}>{statusLabel}</span>
+    <span class={summaryLabel} data-source-summary-status>{status.label}</span>
     <div class={card} data-source-card>
       <div class={cardHeader}>
         <span class={cardTitle}>Collection sources</span
-        ><span class={cx(statusPill, sourceToneClass(statusTone))}>{statusLabel}</span>
+        ><span class={cx(statusPill, sourceToneClass(status.tone))}>{status.label}</span>
       </div>
       {#if snapshot}
         <div class={sourceList}>
@@ -188,6 +158,9 @@
         <p class={cardMeta}>
           Last success:
           {enabledSources.flatMap((source) => source.lastSuccessAt ? [source.lastSuccessAt] : []).toSorted().at(-1) ?? 'none yet'}
+        </p>
+        <p class={cardMeta} data-source-summary-attribution>
+          This status is from the source check at {fmtDate(snapshot.generatedAt)}, update #{status.generation}.
         </p>
       {:else}
         <p class={cardMeta}>Waiting for the server-owned source snapshot.</p>

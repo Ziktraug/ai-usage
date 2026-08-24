@@ -1,24 +1,35 @@
 <script lang="ts">
-  import { css } from '@ai-usage/design-system/css';
+  import { css, cx } from '@ai-usage/design-system/css';
   import { Drawer } from '@ai-usage/design-system/svelte';
   import type { ProviderQuotaHistoryResult } from '@ai-usage/report-core/provider-quota';
   import {
     buildProviderQuotaHistoryModel,
     type ProviderQuotaHistoryRange,
     type ProviderQuotaHistorySeries,
+    providerQuotaHistoryWindow,
   } from '../../../../provider-quota-history-model';
   import { fmtDate, fmtPct } from '../../../foundation/presentation/format';
   import { button, field, list, muted, panel, row, stack, table, tableCell, title } from '../breakdown/styles';
 
+  // A 600-unit viewBox stretched non-uniformly into a 440 px drawer rendered every glyph at ~0.63
+  // horizontal scale. Scaling the box uniformly keeps the marks round and moves the words to HTML.
   const chart = css({
     w: 'full',
-    h: '180px',
+    h: 'auto',
+    aspectRatio: '3 / 1',
     bg: 'surface',
     border: '1px solid token(colors.line)',
     borderRadius: 'sm',
   });
+  const axisRow = css({ display: 'flex', justifyContent: 'space-between', color: 'muted', fontSize: '11px' });
   const rangeControls = css({ display: 'flex', flexWrap: 'wrap', gap: '8px', border: 0, m: 0, p: 0 });
+  // `Drawer` styles its content with `drawerClass` only — `drawerBody`, which forces descendant
+  // controls to 44 px, is never applied here. Without this the buttons sit at their 32 px minimum
+  // beside 36 px selects, so the height has to be stated: it tracks `field`'s own responsive height.
+  const rangeButton = css({ minW: '56px', minH: { base: '44px', sm: '36px' } });
   const selectedRange = css({ borderColor: 'accent', bg: 'accentTint', color: 'accent' });
+  const historyControl = css({ display: 'grid', gap: '4px', fontSize: '12px' });
+  const historySelect = cx(field, css({ w: '168px', minW: '168px' }));
 
   const tableWrap = css({ overflowX: 'auto' });
   const srOnly = css({ srOnly: true });
@@ -26,19 +37,25 @@
   const MILLISECONDS_PER_MINUTE = 60_000;
   const MINUTES_PER_HOUR = 60;
   const CHART_WIDTH = 600;
-  const CHART_HEIGHT = 180;
+  const CHART_HEIGHT = 200;
   const CHART_LEFT = 20;
   const CHART_RIGHT = 580;
-  const CHART_TOP = 30;
-  const CHART_MIDDLE = 90;
-  const CHART_BOTTOM = 150;
+  const MARKER_BAND_TOP = 6;
+  const MARKER_BAND_BOTTOM = 22;
+  const MARKER_HALF_WIDTH = 5;
+  const PLOT_TOP = 30;
+  const PLOT_MIDDLE = 100;
+  const PLOT_BOTTOM = 170;
   const CHART_PLOT_WIDTH = CHART_RIGHT - CHART_LEFT;
-  const CHART_PLOT_HEIGHT = CHART_BOTTOM - CHART_TOP;
+  const CHART_PLOT_HEIGHT = PLOT_BOTTOM - PLOT_TOP;
   const FULL_PERCENT = 100;
-  const BREAK_LINE_TOP = 22;
-  const BREAK_LINE_BOTTOM = 158;
-  const BREAK_LABEL_OFFSET_X = 4;
-  const BREAK_LABEL_Y = 18;
+
+  interface QuotaBreakBoundary {
+    readonly key: string;
+    readonly label: string;
+    readonly reason: 'gap' | 'reset';
+    readonly x: number;
+  }
 
   let {
     errorMessage = null,
@@ -67,7 +84,10 @@
     }
     wasOpen = open;
   });
-  const model = $derived(result ? buildProviderQuotaHistoryModel(result) : null);
+  // The window ends at the result's `generatedAt` — the server's own query time — rather than at the
+  // owner's request clock, so the drawn axis matches the observations the server actually answered with.
+  const historyWindow = $derived(result ? providerQuotaHistoryWindow(range, result.generatedAt) : null);
+  const model = $derived(result && historyWindow ? buildProviderQuotaHistoryModel(result, historyWindow) : null);
   const changeRange = (value: string): void => {
     if (value === '24h' || value === '7d' || value === '30d') {
       onRangeChange(value);
@@ -98,13 +118,18 @@
     const minutes = Math.round(milliseconds / MILLISECONDS_PER_MINUTE);
     return minutes < MINUTES_PER_HOUR ? `${minutes}m` : `${(minutes / MINUTES_PER_HOUR).toFixed(1)}h`;
   };
-  const seriesX = (series: ProviderQuotaHistorySeries, observedAt: string): number => {
-    const firstTime = Date.parse(series.firstObservedAt);
-    const duration = Math.max(1, Date.parse(series.lastObservedAt) - firstTime);
-    return CHART_LEFT + ((Date.parse(observedAt) - firstTime) / duration) * CHART_PLOT_WIDTH;
+  const clamp01 = (value: number): number => Math.min(1, Math.max(0, value));
+  const seriesX = (observedAt: string): number => {
+    const bounds = model?.window;
+    if (!bounds) {
+      return CHART_LEFT;
+    }
+    const from = Date.parse(bounds.from);
+    const span = Math.max(1, Date.parse(bounds.to) - from);
+    return CHART_LEFT + clamp01((Date.parse(observedAt) - from) / span) * CHART_PLOT_WIDTH;
   };
   const seriesY = (usedPercent: number | null): number =>
-    CHART_BOTTOM - ((usedPercent ?? 0) / FULL_PERCENT) * CHART_PLOT_HEIGHT;
+    PLOT_BOTTOM - ((usedPercent ?? 0) / FULL_PERCENT) * CHART_PLOT_HEIGHT;
   const seriesPath = (series: ProviderQuotaHistorySeries, segmentIndex: number): string => {
     const segment = series.segments[segmentIndex];
     if (!segment?.points.length) {
@@ -112,12 +137,38 @@
     }
     return segment.points
       .map((point, index) => {
-        const x = seriesX(series, point.firstObservedAt).toFixed(1);
+        const x = seriesX(point.firstObservedAt).toFixed(1);
         const y = seriesY(point.usedPercent).toFixed(1);
         return `${index === 0 ? 'M' : 'L'} ${x} ${y}`;
       })
       .join(' ');
   };
+  const breakBoundaries = (series: ProviderQuotaHistorySeries): QuotaBreakBoundary[] =>
+    series.segments.flatMap((segment) => {
+      const point = segment.points[0];
+      if (!(segment.breakReason && point)) {
+        return [];
+      }
+      const observed = fmtDate(point.firstObservedAt);
+      return [
+        {
+          key: `${segment.breakReason}:${point.firstObservedAt}`,
+          label:
+            segment.breakReason === 'reset' ? `Reset boundary at ${observed}` : `Collection gap before ${observed}`,
+          reason: segment.breakReason,
+          x: seriesX(point.firstObservedAt),
+        },
+      ];
+    });
+  const markerPath = (x: number): string =>
+    `M ${(x - MARKER_HALF_WIDTH).toFixed(1)} ${MARKER_BAND_TOP} L ${(x + MARKER_HALF_WIDTH).toFixed(1)} ${MARKER_BAND_TOP} L ${x.toFixed(1)} ${MARKER_BAND_BOTTOM} Z`;
+  const percentLabel = (usedPercent: number | null): string => (usedPercent === null ? 'Unknown' : fmtPct(usedPercent));
+  const heldClause = (series: ProviderQuotaHistorySeries): string =>
+    series.carriedIn
+      ? ` · held at ${percentLabel(series.carriedIn.usedPercent)} since ${fmtDate(series.carriedIn.firstObservedAt)}`
+      : '';
+  const midpointOf = (from: string, to: string): string =>
+    new Date((Date.parse(from) + Date.parse(to)) / 2).toISOString();
 </script>
 
 <Drawer
@@ -133,7 +184,12 @@
   {open}
   trapFocus
 >
-  <div class={stack} data-quota-history>
+  <div
+    class={stack}
+    data-quota-history
+    data-quota-window-from={model?.window.from}
+    data-quota-window-to={model?.window.to}
+  >
     <header class={row}>
       <div>
         <h2 class={title}>Provider quota history</h2>
@@ -158,7 +214,7 @@
         {#each historyRanges as item (item)}
           <button
             {...pressedAria(item)}
-            class={[button, range === item ? selectedRange : undefined]}
+            class={[button, rangeButton, range === item ? selectedRange : undefined]}
             onclick={() => changeRange(item)}
             type="button"
           >
@@ -166,27 +222,27 @@
           </button>
         {/each}
       </fieldset>
-      <label
+      <label class={historyControl}
         >Provider
-        <select class={field} bind:value={provider}>
+        <select class={historySelect} bind:value={provider}>
           <option value="">All</option>
           {#each providers as value}
             <option {value}>{value}</option>
           {/each}
         </select></label
       >
-      <label
+      <label class={historyControl}
         >Machine
-        <select class={field} bind:value={machine}>
+        <select class={historySelect} bind:value={machine}>
           <option value="">All</option>
           {#each machines as value}
             <option {value}>{value}</option>
           {/each}
         </select></label
       >
-      <label
+      <label class={historyControl}
         >Account scope
-        <select class={field} bind:value={account}>
+        <select class={historySelect} bind:value={account}>
           <option value="">All</option>
           {#each accounts as value}
             <option {value}>{value}</option>
@@ -204,8 +260,13 @@
     {#if model?.partial}
       <div class={panel}>History is partial or contains skipped corrupt observations.</div>
     {/if}
+    {#if visibleSeries.length > 0}
+      <p class={muted} data-quota-legend>▼ reset boundary · ▽ collection gap · ○ held from before the window</p>
+    {/if}
     <div class={list}>
       {#each visibleSeries as series (series.key)}
+        {@const boundaries = breakBoundaries(series)}
+        {@const bounds = model?.window}
         <article class={panel}>
           <div class={row}>
             <strong>{series.label}</strong
@@ -216,48 +277,97 @@
             {series.summary}
             · largest gap {largestGapLabel(series.largestGapMs)} · {series.sourceKey} ({series.sourceConfidence})
           </p>
-          <svg
-            aria-hidden="true"
-            class={chart}
-            preserveAspectRatio="none"
-            viewBox={`0 0 ${CHART_WIDTH} ${CHART_HEIGHT}`}
-          >
+          <svg aria-hidden="true" class={chart} data-quota-chart viewBox={`0 0 ${CHART_WIDTH} ${CHART_HEIGHT}`}>
             <title>{series.label} quota observation chart</title>
             <path
-              d={`M ${CHART_LEFT} ${CHART_TOP} H ${CHART_RIGHT} M ${CHART_LEFT} ${CHART_MIDDLE} H ${CHART_RIGHT} M ${CHART_LEFT} ${CHART_BOTTOM} H ${CHART_RIGHT}`}
+              d={`M ${CHART_LEFT} ${PLOT_TOP} H ${CHART_RIGHT} M ${CHART_LEFT} ${PLOT_MIDDLE} H ${CHART_RIGHT} M ${CHART_LEFT} ${PLOT_BOTTOM} H ${CHART_RIGHT}`}
               fill="none"
               stroke="currentColor"
               stroke-opacity="0.12"
             ></path>
+            {#each boundaries as boundary (boundary.key)}
+              <line
+                data-break-reason={boundary.reason}
+                data-quota-break-guide
+                stroke="currentColor"
+                stroke-dasharray="3 4"
+                stroke-opacity="0.25"
+                x1={boundary.x}
+                x2={boundary.x}
+                y1={PLOT_TOP}
+                y2={PLOT_BOTTOM}
+              ></line>
+            {/each}
+            {#if series.carriedIn}
+              {@const heldY = seriesY(series.carriedIn.usedPercent)}
+              <line
+                data-quota-hold-line
+                stroke="currentColor"
+                stroke-dasharray="4 4"
+                stroke-opacity="0.45"
+                x1={CHART_LEFT}
+                x2={seriesX(series.carriedIn.lastObservedAt)}
+                y1={heldY}
+                y2={heldY}
+              ></line>
+              <circle
+                cx={CHART_LEFT}
+                cy={heldY}
+                data-quota-carried-in
+                fill="none"
+                r="3.5"
+                stroke="currentColor"
+                stroke-width="1.5"
+              >
+                <title>
+                  Held at {percentLabel(series.carriedIn.usedPercent)} since
+                  {fmtDate(
+                    series.carriedIn.firstObservedAt,
+                  )}
+                </title>
+              </circle>
+            {/if}
             {#each series.segments as _segment, segmentIndex}
-              <path d={seriesPath(series, segmentIndex)} fill="none" stroke="currentColor" stroke-width="3"></path>
+              <path
+                d={seriesPath(series, segmentIndex)}
+                data-quota-series-path
+                fill="none"
+                stroke="currentColor"
+                stroke-width="3"
+              ></path>
             {/each}
             {#each series.points as point (`${point.windowId}:${point.firstObservedAt}`)}
               <circle
-                cx={seriesX(series, point.firstObservedAt)}
+                cx={seriesX(point.firstObservedAt)}
                 cy={seriesY(point.usedPercent)}
+                data-quota-point
                 fill="currentColor"
                 r="3"
               ></circle>
             {/each}
-            {#each series.segments.filter(({ breakReason }) => breakReason !== null) as segment}
-              {@const point = segment.points[0]}
-              {#if point}
-                {@const x = seriesX(series, point.firstObservedAt)}
-                <line
-                  stroke="currentColor"
-                  stroke-dasharray="5 4"
-                  x1={x}
-                  x2={x}
-                  y1={BREAK_LINE_TOP}
-                  y2={BREAK_LINE_BOTTOM}
-                ></line>
-                <text font-size="11" x={x + BREAK_LABEL_OFFSET_X} y={BREAK_LABEL_Y}>{segment.breakReason}</text>
-              {/if}
+            {#each boundaries as boundary (boundary.key)}
+              <path
+                d={markerPath(boundary.x)}
+                data-break-reason={boundary.reason}
+                data-quota-break-marker
+                fill={boundary.reason === 'reset' ? 'currentColor' : 'none'}
+                stroke="currentColor"
+                stroke-width="1.5"
+              >
+                <title>{boundary.label}</title>
+              </path>
             {/each}
           </svg>
-          <p class={muted}>
-            First {fmtDate(series.firstObservedAt)} · Last {fmtDate(series.lastObservedAt)} · Next reset
+          {#if bounds}
+            <div class={axisRow} data-quota-axis>
+              <span>{fmtDate(bounds.from)}</span>
+              <span>{fmtDate(midpointOf(bounds.from, bounds.to))}</span>
+              <span>{fmtDate(bounds.to)}</span>
+            </div>
+          {/if}
+          <p class={muted} data-quota-series-footer>
+            Latest observation {fmtDate(series.lastObservedAt)}{heldClause(series)}
+            · Next reset
             {series.nextResetAt ? fmtDate(series.nextResetAt) : 'unknown'}
           </p>
           <div class={tableWrap}>
@@ -275,10 +385,20 @@
                 </tr>
               </thead>
               <tbody>
+                {#if series.carriedIn}
+                  <tr data-quota-carried-in-row>
+                    <td class={tableCell}>held since {fmtDate(series.carriedIn.firstObservedAt)}</td>
+                    <td class={tableCell}>{percentLabel(series.carriedIn.usedPercent)}</td>
+                    <td class={tableCell}>
+                      Reset {series.carriedIn.resetAt ? fmtDate(series.carriedIn.resetAt) : 'unknown'}
+                    </td>
+                    <td class={tableCell}>{series.carriedIn.source.key} ({series.carriedIn.source.confidence})</td>
+                  </tr>
+                {/if}
                 {#each series.points as point (`${point.windowId}:${point.firstObservedAt}`)}
                   <tr>
                     <td class={tableCell}>{fmtDate(point.firstObservedAt)}</td>
-                    <td class={tableCell}>{point.usedPercent === null ? 'Unknown' : fmtPct(point.usedPercent)}</td>
+                    <td class={tableCell}>{percentLabel(point.usedPercent)}</td>
                     <td class={tableCell}>Reset {point.resetAt ? fmtDate(point.resetAt) : 'unknown'}</td>
                     <td class={tableCell}>{point.source.key} ({point.source.confidence})</td>
                   </tr>

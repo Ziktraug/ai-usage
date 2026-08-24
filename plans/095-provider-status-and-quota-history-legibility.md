@@ -901,3 +901,260 @@ Stop and report back (do not improvise) if:
   closer than 10 units apart (rare: a reset and a gap at the same instant
   collapse into one `reset` segment by construction); showing the CLI-style
   `start% → end%` trend in the drawer (plan 081 owns that wording).
+
+## Execution notes
+
+Executed on branch `exec/095` off the program tip `a70cf1aa`. The drift check
+returned an empty diff — no in-scope file had moved since `51815b70` — and the
+two dependency greps confirmed plan 074 is in the tree
+(`providerHistoryAvailable`: two `.svelte` call sites; `Codex quota history`: no
+matches). `buildProviderQuotaHistoryModel` still had exactly one production
+caller, so the signature change did not ripple.
+
+Deviations from the written steps, each with its reason:
+
+- **Step 6/7 e2e, bitwise draw-order check.** The snippet in Step 6 used
+  `guide.compareDocumentPosition(path) & Node.DOCUMENT_POSITION_FOLLOWING`,
+  which the repo's lint preset rejects
+  (`lint/suspicious/noBitwiseOperators`, confirmed by running
+  `bun x ultracite fix` on the spec). Replaced with the equivalent, and
+  stricter, document-order check: `svg.querySelectorAll('*')` is document
+  order, so the assertion is `max(guide index) < min(series-path index)`. Same
+  guarantee — a guide can never be painted over the data it annotates — with
+  no suppression.
+- **Step 5.1, local variable name.** The plan writes
+  `const window = $derived(...)`. Declaring `window` at component scope
+  shadows the DOM global inside the whole instance closure, so the local is
+  named `historyWindow`; the model property the plan specified is still called
+  `window` and the DOM stamps are still `data-quota-window-from` / `-to`.
+- **Step 5.3(c), hold-line end.** `seriesX` clamps to the window, so
+  `seriesX(carriedIn.lastObservedAt)` already renders `min(lastObservedAt, to)`
+  — the explicit `min` would be dead arithmetic.
+- **Step 3, detail-card count.** The plan suggested counting `<li` inside the
+  `<details>` block. A card's warning list also emits `<li>` elements, so the
+  test counts `<li class="` instead: provider cards always carry a class,
+  warning items never do. The count still equals
+  `detailedProviders(summary).length`.
+- **Step 5.5, range-button height — deviation WITHDRAWN.** An earlier round of
+  this execution recorded the step's `minH: { base: '44px', sm: '36px' }` as an
+  inert declaration, on the reasoning that `drawerBody`'s
+  `'& button, & a[href], & summary': { minH: '44px' }` outranks an atom class.
+  That was wrong: `packages/design-system/src/svelte/overlays/drawer.svelte`
+  line 178 styles its content with `drawerClass` **only** — `drawerBody` is
+  exported but never applied to this drawer. Measured in the browser, without
+  the atom the range buttons sit at their 32 px minimum beside 36 px selects
+  (a 4 px mismatch). The step is correct as written, the atom is live and
+  necessary, and the e2e now asserts the parity it produces.
+
+Environment facts (worktree only — not defects, and not "fixed" here):
+
+- `bun run lint` and `bun run check` process **0 files** from a worktree
+  because `biome.json` excludes `**/.claude/worktrees`. Ran the documented
+  equivalent instead: `biome check --only=lint/style/noRestrictedImports` over
+  `apps packages tools plans docs ./*.json ./*.ts` (1079 files, clean) plus all
+  five `tools/check-*.ts` guards (clean), and `bun x ultracite check` over the
+  13 changed paths explicitly (clean).
+- `bun run test:web-bundle` cannot run from a worktree at all:
+  `apps/web/bundle/client-bundle.test.ts` hardcodes the manifest key
+  `../../node_modules/@sveltejs/kit/src/runtime/client/entry.js`, and in a
+  worktree `@sveltejs/kit` resolves five levels up, so the emitted key is
+  `../../../../../node_modules/...`. Three of its four tests throw on that
+  lookup before reading a byte of application code; the fourth passes. The
+  measurement was reproduced with the key resolved by suffix and everything
+  else identical: **initial gzip closure 285,201 B** — under the 300,000 B
+  ceiling and under the 290,271 B drift ceiling (recorded 284,579 B + 2%), a
+  **+622 B / +0.219%** change. Every CSS/breakpoint assertion in the other two
+  tests reproduces green as well. `RECORDED_GZIP_CLOSURE_BYTES` was left alone:
+  the drift is inside tolerance, and re-recording it from a worktree build
+  would write a number CI cannot reproduce.
+
+U28b (the "1 warning" pill): no failing guard appeared. The pill is now derived
+by `summarizeSourceControlStatus`, whose only argument is
+`SourceControlClientState`. The e2e guard applies a report filter through the
+search box and then removes it again through its active-filter chip, asserting
+after each transition that both the label and the stamped engine generation are
+unchanged. (An earlier draft of this note said the guard selects the Claude
+harness; it did, until rework round 1 moved it off the harness dropdown that
+plan 092 replaces — see finding 6 below.) It passes at `--workers=2` and again
+serialized at `--workers=1`.
+
+### Rework round 1 (adversarial review)
+
+Six findings, all accepted; none disputed.
+
+1. **The summary sentence could contradict its own total.** `stateBreakdown`
+   counted the labels produced by `groupByState`, which de-duplicates with a
+   `Set` — correct inside one machine line, wrong for a panel-wide count. Two
+   partial Cursor views on different machines printed
+   `2 providers … 2 without a quota source (1 partial)`. Split the two concerns:
+   `groupByState` still de-duplicates labels (and now says in its doc comment
+   that it is only ever valid within one machine), and a new `countByState`
+   counts views for the sentence. Guarded three ways: an exact-string unit case
+   for the two-machine input, an invariant case that walks four inputs and
+   checks the breakdown sums to the without-a-quota-source count, and an SSR
+   case rendering the same shape. Reverting the fix fails two of them.
+2. **Presentation gate.** Three changes had no failing-before assertion. Added,
+   and each verified to fail against the pre-change styling in the browser:
+   the chart's uniform scaling (an `r=3` point's rendered aspect ratio — 0.762
+   with a stretched viewBox, 1.0 after) and its 3:1 presentation (2.27 before);
+   the range buttons' width (47.25 px before, ≥ 56 px after) and their height
+   parity with the selects (4 px apart before, equal after); and the Sources
+   card's visible attribution line, now pinned by an SSR case.
+3. **Tests that could not fail.**
+   - The e2e draw-order and marker-separation checks used `Math.min`/`Math.max`
+     over possibly-empty arrays, which yield ±Infinity — both would have passed
+     if the guides, paths, markers or points vanished. They now return counts,
+     and the test asserts every count is non-zero before comparing.
+   - `provider-status.ssr.test.ts` built its expectations by calling the same
+     production helpers the component calls, so it could only detect wrong
+     wiring. Every expectation is now a written-out literal, and the file no
+     longer imports `provider-status-panel-model` at all.
+   - The e2e provider-summary test checked only the sentence's internal
+     arithmetic. It now pins the exact sentence and the exact machine lines for
+     the e2e fixture, and cross-checks that the providers named across the lines
+     number exactly what the sentence claims. Writing that assertion surfaced a
+     fifth inferred provider: `report-data.ts` pushes an OpenCode row through
+     `withoutOrigin`, which strips `source` entirely, so the panel legitimately
+     renders an unscoped `OpenCode — partial` line with no machine prefix — the
+     unscoped-machine branch and a repeated label across lines, both now covered
+     by the e2e fixture.
+4. **Detail-card order.** The plan requires input order; concatenating the three
+   partitions put a provider with windows ahead of a critical one, the opposite
+   of `sortRankFor`. `ProviderStatusPanelSummary` gains `rankedProviders` (the
+   input, in order) — the partitions are disjoint slices and cannot reconstruct
+   their interleaving — and `detailedProviders` filters that. Pinned by a unit
+   case and an SSR case that both feed a critical-first ranking.
+5. **Copy rule.** The glossary was one sentence carrying three ideas and used
+   the internal term "quota windows"; it is now a labelled list of three
+   one-idea sentences phrased around the reader's limit. The Sources card's
+   `Engine state #N · pushed …` became `This status is from the source check at
+   …, update #N.` Both are asserted, including a negative assertion that the
+   glossary no longer contains "quota window". The summary sentence keeps
+   "with quota windows": that exact grammar is specified by this plan's Step 1
+   and is the contract of its e2e regex, so retiring the phrase panel-wide is
+   left as a follow-up for whichever plan owns the panel's vocabulary.
+6. **Merge hazard with plan 092.** The pill guard no longer touches the harness
+   dropdown, whose mechanic 092 replaces. It applies a filter through the search
+   box and removes it again through its active-filter chip — two report-filter
+   transitions instead of one, both driven by controls already pinned by sibling
+   tests in the same file — and asserts the label and the stamped generation are
+   unchanged after each.
+
+Re-measured after the rework: initial gzip closure **285,288 B** (+709 B /
++0.249 % against the recorded 284,579 B), still under both the 300,000 B ceiling
+and the 290,271 B drift ceiling.
+
+### Rework round 2 (adversarial review)
+
+Four findings, all accepted; none disputed.
+
+1. **Machine lines grouped on a display string.** Round 1 fixed the *count* per
+   view but left the *identity* a label: `providerMachineLines` grouped on
+   `machineContext`, which is only `provider.machineLabel`. Two machines sharing
+   a name collapsed into one visible line while the sentence still counted both
+   — "2 providers … 2 with no limit reading" over a single "Cursor". Grouping now
+   keys on `provider.machineId`, sorts by label with the id as tie-breaker, and
+   renders the repeated label on both lines, following this repo's settled
+   answer in `dashboard-model.test.ts` ("filters duplicate machine labels by
+   stable machine ID"). Regression tests added at both the model and SSR levels;
+   reverting the key to `machineContext` fails both.
+
+   **Audit of every other key, group and de-duplication in this diff**, as
+   asked. One further latent instance found and hardened: `groupByState`
+   de-duplicated provider *labels* with a `Set`, so two providers sharing a
+   display name on one machine would have printed one name for two counted
+   views. It now de-duplicates on `provider.key` and prints the label twice when
+   two keys genuinely share it (test: "keeps two providers that share a display
+   name apart, on the provider key"). Everything else already keyed on ids and
+   was left alone: `seriesKey` in the quota model (`providerKey|machineId|
+   accountScope|windowId`) and its `dedupePoints`; the drawer's provider,
+   machine and account `Set`s (`providerKey`, `machineId`, `accountScope`); every
+   Svelte `{#each}` key in the panel and the drawer (`provider.key` +
+   `machineId`, `window.id`, `line.key`, `series.key`, `windowId` + timestamp);
+   and `{#each enabledSources as source (source.id)}` in the pill's card. Labels
+   survive only where they are sorted or displayed, never where identity is
+   decided. One deliberate exception: `warningSources` in
+   `source-control-summary-model.ts` is a list of labels, but it is display-only
+   — the pill's count comes from filtering entries, so duplicate labels cannot
+   collapse it.
+
+2. **The chart replacement was ungated.** Removing `<text>` from the SVG was
+   gated; the words that replaced it were not. Added assertions for the legend
+   (exact text), the three-label axis (count, non-empty, and — bound to the
+   window rather than to a fixed caption — relabelling when the range changes),
+   the "Latest observation" footer including the held clause, the dashed hold
+   line, and the carried-in table row, plus their disappearance at `7d` when the
+   held value comes into range. **Each was verified by deleting the element and
+   watching the matching assertion fail**, one mutation at a time:
+   legend → `toHaveCount(1)`; axis → `toHaveCount(3)`; `heldClause` →
+   `toContainText('held at 48% since')`; hold line → `toHaveCount(1)`;
+   carried-in row → `toHaveCount(1)`.
+3. **"quota windows" was still reader-facing.** The precedence argument in round
+   1 was wrong: plan 086 is the umbrella and its copy rule binds every child, so
+   a child's Step cannot license breaking it. The sentence now reads
+   `N providers · N reporting a usage limit · N with no limit reading (…)`, and
+   the e2e regex, the exact-string assertions, the list's accessible name
+   ("Providers with no limit reading"), the empty state and the detail card's
+   no-reading line moved with it. The negative assertion now covers everything
+   the panel renders, at both SSR and e2e level, not just the glossary;
+   restoring the old phrase fails four tests. Left alone deliberately:
+   `sourceLabelFor`'s "No quota source" lives in `provider-status-model.ts`,
+   which this plan holds read-only — recorded as a follow-up rather than edited.
+4. **Housekeeping.** Squashed to one commit with `git commit-tree` +
+   `git update-ref` (no reset, no force, working tree untouched), parented on the
+   merge-base `a70cf1aa`; the resulting tree is byte-identical to the pre-squash
+   HEAD. The stale U28b note that claimed the guard selects the Claude harness
+   now describes what the code does.
+
+Note for the orchestrator: `plan/086-ui-ux-audit-remediation` advanced from
+`a70cf1aa` to `229addbe` during this session. This branch is deliberately still
+parented on the merge-base and has **not** been rebased onto the new tip —
+integration is the orchestrator's call, not the executor's.
+
+Re-measured after round 2: initial gzip closure **285,332 B** (+753 B /
++0.265 % against the recorded 284,579 B), still under both the 300,000 B ceiling
+and the 290,271 B drift ceiling.
+
+### Maintainer reopening D20
+
+The maintainer explicitly reopened the exhausted child on 2026-08-24. The
+remaining blocker reproduced before the correction: two labelled provider
+observations without `machineId` collapsed under the same empty identity and
+only the first machine label rendered. `machineId` and `machineLabel` are
+independently optional, so a label is never promoted to identity. Labelled
+observations without an id now remain separate; an actually unscoped provider
+still shares the explicit unscoped group. Providers that do share a stable id
+use an available label even when another provider in that group omits it.
+
+The model regression and literal SSR regression both cover different synthetic
+machine labels with absent ids. A second model case covers one stable id with
+independently missing/present labels. The initial targeted run failed exactly
+both model assertions before the production correction and passed afterward.
+
+One composition-only test oracle was updated: the accepted shared `fmtDate`
+renders `Aug 03 at 10:00`, while the new Sources assertion expected a comma.
+The visible production copy was not changed; its literal assertion now follows
+the established formatter.
+
+Initial reopened-child gates: targeted model/SSR/source tests passed; web passed 1,065/1,065;
+typecheck passed 28/28 with zero Svelte findings; Ultracite and lint passed over
+1,088 files plus all five repository guards; build passed 15/15 and the bundle
+gate run immediately afterward passed 4/4 below both ceilings. Dashboard plus
+visual Playwright passed 33/33 under the shared lock with two workers, then the
+complete Playwright gate passed 155/155 under the same lock and worker count.
+The structural scope diff, explicit focus scan, and added-line PII scan were
+clean. A fresh independent review is required before fast-forward integration.
+
+The fresh r3 review returned REWORK with one accepted finding: the internal
+group ids were namespaced, but the Svelte keys exposed a stable machine id
+verbatim. A valid stable id equal to `unscoped` therefore collided with the
+fallback unscoped key. The rendered key is now the same namespaced identity as
+the grouping key (`machine:`, `scope:`, or `observation:`). A regression places
+a stable `unscoped` id beside a truly unscoped provider and a labelled
+unidentified observation, proving three distinct rendered keys. The targeted
+model and literal SSR suites passed after this correction. The complete
+post-correction gate passed: Ultracite and all five lint guards; typecheck 28/28
+with zero Svelte findings; web 1,066/1,066; build 15/15; the immediately
+following bundle gate 4/4 below both ceilings; and Playwright 155/155 under the
+shared lock with two workers, including all four visual regressions. A fresh r4
+review against the amended commit is still required before integration.

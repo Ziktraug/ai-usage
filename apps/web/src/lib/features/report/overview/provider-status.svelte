@@ -57,12 +57,16 @@
     overflowWrap: 'anywhere',
     px: '10px',
   });
+  // Grid items stretch by default and `normal` behaves as `stretch` for the tracks inside them, so a
+  // one-window column split the extra height of its taller neighbour between its label and its rows
+  // and the single window floated mid-column. Both axes have to opt out for the columns to top-align.
   const windowsGrid = css({
+    alignItems: 'start',
     display: 'grid',
     gap: '10px',
     gridTemplateColumns: { base: '1fr', lg: 'repeat(3, minmax(0, 1fr))' },
   });
-  const windowGroup = css({ display: 'grid', gap: '8px', minW: 0 });
+  const windowGroup = css({ alignContent: 'start', display: 'grid', gap: '8px', minW: 0 });
   const groupLabel = css({
     color: 'muted',
     fontSize: '11px',
@@ -159,27 +163,17 @@
     py: '6px',
     _focusVisible: { borderRadius: 'sm', outline: '2px solid token(colors.accent)', outlineOffset: '2px' },
   });
-  const issueList = css({
-    alignItems: 'center',
-    display: 'flex',
-    flexWrap: 'wrap',
-    gap: '6px',
+  const machineLineList = css({ display: 'grid', gap: '4px', listStyle: 'none', m: 0, p: 0 });
+  const glossaryList = css({
+    color: 'muted',
+    display: 'grid',
+    fontSize: '11px',
+    gap: '2px',
     listStyle: 'none',
     m: 0,
+    overflowWrap: 'anywhere',
     p: 0,
   });
-  const issuePill = css({
-    alignItems: 'center',
-    bg: 'surfaceMuted',
-    borderRadius: 'full',
-    color: 'muted',
-    display: 'inline-flex',
-    fontSize: '11px',
-    fontWeight: 700,
-    minH: '24px',
-    px: '9px',
-  });
-  const attentionProviderName = css({ color: 'ink' });
   const criticalNote = css({ color: 'harness.claude.fg', fontSize: '12px', fontWeight: 600 });
   const detailDisclosure = css({
     borderTop: '1px solid token(colors.line)',
@@ -201,13 +195,20 @@
   import { cx } from '@ai-usage/design-system/css';
   import { panel, panelHeader, panelSub, panelTitle } from '@ai-usage/design-system/report';
   import type { ProviderStatusView } from '../../../../provider-status-model';
-  import { buildProviderStatusPanelSummary } from '../../../../provider-status-panel-model';
+  import {
+    buildProviderStatusPanelSummary,
+    describeProviderStatusSummary,
+    detailedProviders,
+    providerMachineLines,
+  } from '../../../../provider-status-panel-model';
   import { providerProgressState } from '../../../../provider-status-progress';
   import { fmtDate, fmtPct } from '../../../foundation/presentation/format';
   import { providerPercentLabel, providerWindowAriaLabel } from './provider-presentation';
 
   let { onOpenHistory, providers }: { onOpenHistory?: () => void; providers: readonly ProviderStatusView[] } = $props();
   const summary = $derived(buildProviderStatusPanelSummary([...providers]));
+  const details = $derived(detailedProviders(summary));
+  const machineLines = $derived(providerMachineLines(summary.providersWithoutQuotaSource));
   const providerCountLabel = (count: number): string => `${count} provider${count === 1 ? '' : 's'}`;
   const compactProviderContext = (view: ProviderStatusView): string =>
     [view.machineContext, view.accountContext].filter((value) => value !== null).join(' · ');
@@ -273,7 +274,7 @@
     {#if _view.windowGroups.length > 0}
       <div class={windowsGrid}>
         {#each _view.windowGroups as group (group.key)}
-          <div class={windowGroup}>
+          <div class={windowGroup} data-provider-window-group>
             <div class={groupLabel}>{group.label}</div>
             <div class={windowRows}>
               {#each group.windows as window (window.id)}
@@ -307,7 +308,7 @@
         {/each}
       </div>
     {:else}
-      <div class={contextLine}>No quota windows are available for this provider.</div>
+      <div class={contextLine}>No usage limit was read for this provider.</div>
     {/if}
 
     {#if _view.provider.warnings?.length}
@@ -340,7 +341,7 @@
           {/each}
         </ul>
       {:else}
-        <div class={compactEmpty}>No provider exposes quota windows in this report.</div>
+        <div class={compactEmpty}>No provider reported a usage limit in this report.</div>
       {/if}
 
       {#if summary.criticalProvidersWithoutQuota.length > 0}
@@ -351,48 +352,32 @@
         </ul>
       {/if}
 
-      {#if summary.attentionProvidersWithoutQuota.length > 0}
-        <ul aria-label="Providers requiring attention" class={issueList}>
-          {#each summary.attentionProvidersWithoutQuota as view (`attention:${view.provider.key}:${view.provider.machineId ?? 'global'}`)}
-            <li class={issuePill}>
-              <strong class={attentionProviderName}>{view.provider.label}</strong>
-              {#if compactProviderContext(view)}
-                <span>· {compactProviderContext(view)}</span>
-              {/if}
-              <span>· {view.provider.state.replaceAll('-', ' ')}</span>
-              {#if view.provider.warnings?.[0]}
-                <span>· {view.provider.warnings[0]}</span>
-              {/if}
-              {#if view.creditsSummary}
-                <span>· {view.creditsSummary}</span>
-              {/if}
-            </li>
+      <p class={contextLine} data-provider-status-summary>{describeProviderStatusSummary(summary)}</p>
+
+      {#if machineLines.length > 0}
+        <ul aria-label="Providers with no limit reading" class={machineLineList}>
+          {#each machineLines as line (line.key)}
+            <li class={contextLine} data-provider-no-quota-line>{line.text}</li>
           {/each}
         </ul>
       {/if}
 
-      <ul aria-label={`Provider categories (${providerCountLabel(providers.length)})`} class={issueList}>
-        <li class={issuePill}>Quota windows: {providerCountLabel(summary.quotaProviders.length)}</li>
-        <li class={issuePill}>
-          Critical without quota windows: {providerCountLabel(summary.criticalProvidersWithoutQuota.length)}
-        </li>
-        <li class={issuePill}>
-          Attention without quota windows: {providerCountLabel(summary.attentionProvidersWithoutQuota.length)}
-        </li>
-        <li class={issuePill}>Unsupported: {providerCountLabel(summary.unsupportedProvidersWithoutQuota.length)}</li>
-        <li class={issuePill}>
-          No quota windows or issues: {providerCountLabel(summary.otherProvidersWithoutQuota.length)}
-        </li>
+      <ul aria-label="What each provider state means" class={glossaryList} data-provider-state-glossary>
+        <li>Ok = this provider reported how much of its limit is used.</li>
+        <li>Partial = usage was collected here, but no limit reading arrived for this provider.</li>
+        <li>Unsupported = this provider does not publish a limit ai-usage can read.</li>
       </ul>
     </div>
 
-    <details class={detailDisclosure}>
-      <summary class={detailSummary}>Provider details ({providerCountLabel(providers.length)})</summary>
-      <ul class={statusList}>
-        {#each providers as view (`${view.provider.key}:${view.provider.machineId ?? 'global'}`)}
-          {@render providerDetailCard(view)}
-        {/each}
-      </ul>
-    </details>
+    {#if details.length > 0}
+      <details class={detailDisclosure}>
+        <summary class={detailSummary}>Provider details ({providerCountLabel(details.length)})</summary>
+        <ul class={statusList}>
+          {#each details as view (`${view.provider.key}:${view.provider.machineId ?? 'global'}`)}
+            {@render providerDetailCard(view)}
+          {/each}
+        </ul>
+      </details>
+    {/if}
   </section>
 {/if}
