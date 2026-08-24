@@ -72,6 +72,13 @@ for (const scenario of FIRST_READ_SCENARIOS) {
         .evaluate((element) => getComputedStyle(element).fontSize),
     );
     expect(kpiSize).toBeGreaterThan(metricSize);
+    expect(
+      await kpi
+        .locator('strong')
+        .first()
+        .evaluate((element) => element.getClientRects().length),
+    ).toBe(1);
+    expect(await kpi.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
 
     if (scenario.viewport.width >= 1280) {
       expect(kpiSize).toBeGreaterThanOrEqual(44);

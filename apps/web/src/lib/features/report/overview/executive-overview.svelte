@@ -1,7 +1,7 @@
 <script lang="ts" module>
   import { css } from '@ai-usage/design-system/css';
 
-  const answer = css({ display: 'grid', gap: { base: '14px', md: '18px' }, minW: 0 });
+  const answer = css({ containerType: 'inline-size', display: 'grid', gap: { base: '14px', md: '18px' }, minW: 0 });
   const answerHeading = css({ display: 'grid', gap: '8px' });
   const qualification = css({ color: 'muted', fontSize: '12px', lineHeight: 1.5, m: 0, maxW: '58ch' });
   const comparison = css({ color: 'ink', fontSize: '13px', fontWeight: 600, lineHeight: 1.45, m: 0 });
@@ -146,7 +146,9 @@
       <section aria-label="Estimated API-equivalent value" class={answer} data-executive-kpi>
         <div class={answerHeading} {...previewAttributes}>
           <span class={executiveEssentialLabel}>Estimated API-equivalent value</span>
-          <strong class={numericDisplay} title={model.primary.value.title}>{displayedValue}</strong>
+          <strong class={numericDisplay} title={model.primary.value.title} style:--hero-chars={displayedValue.length}
+            >{displayedValue}</strong
+          >
           <p class={qualification}>{primaryQualification}</p>
           {#if comparisonText}
             <p class={comparison}>

@@ -1,4 +1,5 @@
 const numberFormatter = new Intl.NumberFormat('en', { maximumFractionDigits: 0 });
+const THOUSANDS_GROUP_PATTERN = /\B(?=(\d{3})+(?!\d))/g;
 const dateTimeFormatter = new Intl.DateTimeFormat('en', {
   month: 'short',
   day: '2-digit',
@@ -14,7 +15,8 @@ const dateOnlyFormatter = new Intl.DateTimeFormat('en', {
 
 export const fmtNum = (value: number): string => numberFormatter.format(value);
 
-export const fmtMoney = (value: number | null | undefined): string => (value == null ? '—' : `$${value.toFixed(2)}`);
+export const fmtMoney = (value: number | null | undefined): string =>
+  value == null ? '—' : `$${value.toFixed(2).replace(THOUSANDS_GROUP_PATTERN, ',')}`;
 
 // One decimal only where it carries information. An exact zero gains nothing from `0.0%`, and the
 // extra digit made it the odd entry in columns whose other rows print whole percentages.

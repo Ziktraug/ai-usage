@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { RANKED_SERIES_HEX } from './components/chart';
 import { PUNCHCARD_INTERACTIVE_TARGET_SIZE_PX } from './components/overview';
 import { aiUsagePreset } from './preset';
 
@@ -17,6 +18,27 @@ const RED_LUMINANCE_WEIGHT = 0.2126;
 const GREEN_LUMINANCE_WEIGHT = 0.7152;
 const BLUE_LUMINANCE_WEIGHT = 0.0722;
 const CONTRAST_LUMINANCE_OFFSET = 0.05;
+const MINIMUM_ADJACENT_CVD_OKLAB_DISTANCE = 0.11;
+
+type LinearRgb = readonly [number, number, number];
+
+const colorVisionMatrices = {
+  normal: [
+    [1, 0, 0],
+    [0, 1, 0],
+    [0, 0, 1],
+  ],
+  protan: [
+    [0.152_286, 1.052_583, -0.204_868],
+    [0.114_503, 0.786_281, 0.099_216],
+    [-0.003_882, -0.048_116, 1.051_998],
+  ],
+  deutan: [
+    [0.367_322, 0.860_646, -0.227_968],
+    [0.280_085, 0.672_501, 0.047_413],
+    [-0.011_82, 0.042_94, 0.968_881],
+  ],
+} as const;
 
 type ColorScheme = '_dark' | '_light';
 
@@ -55,6 +77,43 @@ const relativeLuminance = (hexColor: string): number => {
     BLUE_LUMINANCE_WEIGHT * (linear[2] ?? 0)
   );
 };
+
+const linearRgb = (hexColor: string): LinearRgb => {
+  if (!HEX_COLOR_PATTERN.test(hexColor)) {
+    throw new Error(`Expected a six-digit hex color, received ${hexColor}.`);
+  }
+  const channels = [1, 3, 5].map((offset) => Number.parseInt(hexColor.slice(offset, offset + 2), 16) / RGB_CHANNEL_MAX);
+  return channels.map((channel) =>
+    channel <= SRGB_LINEAR_THRESHOLD
+      ? channel / SRGB_LINEAR_DIVISOR
+      : ((channel + SRGB_OFFSET) / SRGB_SCALE) ** SRGB_EXPONENT,
+  ) as unknown as LinearRgb;
+};
+
+const simulateColorVision = (rgb: LinearRgb, matrix: readonly (readonly number[])[]): LinearRgb =>
+  matrix.map((row) =>
+    Math.max(
+      0,
+      Math.min(
+        1,
+        row.reduce((sum, coefficient, index) => sum + coefficient * (rgb[index] ?? 0), 0),
+      ),
+    ),
+  ) as unknown as LinearRgb;
+
+const linearRgbToOklab = ([red, green, blue]: LinearRgb): LinearRgb => {
+  const long = Math.cbrt(0.412_221_470_8 * red + 0.536_332_536_3 * green + 0.051_445_992_9 * blue);
+  const medium = Math.cbrt(0.211_903_498_2 * red + 0.680_699_545_1 * green + 0.107_396_956_6 * blue);
+  const short = Math.cbrt(0.088_302_461_9 * red + 0.281_718_837_6 * green + 0.629_978_700_5 * blue);
+  return [
+    0.210_454_255_3 * long + 0.793_617_785 * medium - 0.004_072_046_8 * short,
+    1.977_998_495_1 * long - 2.428_592_205 * medium + 0.450_593_709_9 * short,
+    0.025_904_037_1 * long + 0.782_771_766_2 * medium - 0.808_675_766 * short,
+  ];
+};
+
+const oklabDistance = (left: LinearRgb, right: LinearRgb): number =>
+  Math.hypot(left[0] - right[0], left[1] - right[1], left[2] - right[2]);
 
 const contrastRatio = (foreground: string, background: string): number => {
   const lighter = Math.max(relativeLuminance(foreground), relativeLuminance(background));
@@ -130,6 +189,25 @@ describe('semantic palette roles', () => {
     expect(colorFor('interaction.brush', '_light')).not.toBe(colorFor('interaction.brush', '_dark'));
     expect(colorFor('interaction.brushHover', '_light')).not.toBe(colorFor('interaction.brushHover', '_dark'));
   });
+
+  for (const scheme of ['_light', '_dark'] as const) {
+    for (const [vision, matrix] of Object.entries(colorVisionMatrices)) {
+      test(`${scheme.slice(1)} keeps adjacent ranked chart colors distinct under ${vision} vision`, () => {
+        const schemeIndex = scheme === '_light' ? 0 : 1;
+        const palette = RANKED_SERIES_HEX.map((pair) => pair[schemeIndex]);
+        const perceived = palette.map((color) => linearRgbToOklab(simulateColorVision(linearRgb(color), matrix)));
+
+        for (const [index, current] of perceived.slice(0, -1).entries()) {
+          const next = perceived[index + 1];
+          expect(next).toBeDefined();
+          expect(
+            oklabDistance(current, next as LinearRgb),
+            `rank ${index + 1} beside rank ${index + 2}`,
+          ).toBeGreaterThanOrEqual(MINIMUM_ADJACENT_CVD_OKLAB_DISTANCE);
+        }
+      });
+    }
+  }
 });
 
 describe('provider brand marks', () => {
@@ -148,7 +226,7 @@ describe('provider brand marks', () => {
 
 test('preset preserves the exact global CSS, keyframes, tokens, and semantic values', () => {
   const presetHash = new Bun.CryptoHasher('sha256').update(JSON.stringify(aiUsagePreset)).digest('hex');
-  expect(presetHash).toBe('f4ea6ba5b77516c81b7ba1a950a36135b54e80ebc43b0a52055795c27b13b15d');
+  expect(presetHash).toBe('13edf2b04b74d09e912fee4bce9e0b4233fb56a798c6b7ae8a83a7a32af2a475');
 });
 
 test('punchcard controls meet the minimum interactive target size', () => {

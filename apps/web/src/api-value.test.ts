@@ -14,6 +14,7 @@ describe('API value presentation', () => {
       status: 'exact',
       title: 'Estimated API-equivalent value at standard prices',
     });
+    expect(apiValuePresentation({ costApprox: 1234.5, costKnown: true })).toMatchObject({ label: '$1,234.50' });
     expect(apiValuePresentation({ costApprox: 0, costKnown: true })).toEqual({
       label: '$0.00',
       status: 'exact',
@@ -50,5 +51,12 @@ describe('API value presentation', () => {
       label: 'Partially measured',
       severity: 'warning',
     });
+    expect(
+      aggregateApiValuePresentation({
+        knownCost: 14_134.47,
+        state: 'partially measured',
+        unpricedFreshTokens: 1,
+      }),
+    ).toMatchObject({ label: '≥ $14,134.47' });
   });
 });

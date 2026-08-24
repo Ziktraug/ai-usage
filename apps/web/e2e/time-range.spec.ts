@@ -1,6 +1,7 @@
 import type { Locator, Page } from '@playwright/test';
 import {
   FOCUSED_REPORT_E2E_ENABLED_KEY,
+  FOCUSED_REPORT_E2E_MODEL_TAIL_KEY,
   FOCUSED_REPORT_E2E_NINETY_DAY_COMPARISON_KEY,
   FOCUSED_REPORT_E2E_VISIBLE_TREND_KEY,
 } from '../src/focused-report-e2e-fixture';
@@ -93,6 +94,7 @@ const navigationEntryKey = async (page: Page): Promise<string | null> =>
 
 const reportPeriodFor = (page: Page): Locator => page.getByRole('region', { name: 'Report period' });
 const activityFor = (page: Page): Locator => page.getByRole('region', { name: 'Activity' });
+const activityMetricFor = (page: Page): Locator => activityFor(page).getByRole('group', { name: 'Activity metric' });
 const activityExplorerFor = (page: Page): Locator =>
   activityFor(page).locator('details[aria-label="Explore activity"]');
 const openActivityExplorer = async (page: Page): Promise<Locator> => {
@@ -143,7 +145,7 @@ test('uses one report range for the dashboard and activity chart', async ({ page
     await activity
       .locator('[data-report-range-part]')
       .evaluateAll((elements) => elements.map((element) => element.getAttribute('data-report-range-part'))),
-  ).toEqual(['total-legend', 'chart', 'chart-axis', 'activity-explorer', 'brush']);
+  ).toEqual(['total-legend', 'chart', 'chart-axis', 'activity-explorer', 'brush', 'brush-axis']);
   await expect(activity.getByText(CHART_VIEW_PATTERN)).toHaveCount(0);
   await expect(activity.getByRole('button', { name: 'Zoom chart' })).toHaveCount(0);
   await expect(activity.getByRole('slider', { name: 'Graph view start' })).toHaveCount(0);
@@ -160,7 +162,8 @@ test('uses one report range for the dashboard and activity chart', async ({ page
   await expect(chartOptions).toHaveAttribute('open', '');
   await expect(chartOptions.getByText('Group by', { exact: true })).toBeVisible();
   await expect(chartOptions.getByText('Interval', { exact: true })).toBeVisible();
-  await expect(chartOptions.getByText('Metric', { exact: true })).toBeVisible();
+  await expect(chartOptions.getByText('Metric', { exact: true })).toHaveCount(0);
+  await expect(chartOptions.locator('[data-brush-tick]')).toHaveText(['May', 'Jun']);
 
   const timeline = activity.getByRole('button', {
     name: 'Inspect activity timeline. Use arrow keys to inspect days.',
@@ -177,12 +180,14 @@ test('switches API value and processed tokens locally without changing report id
   await waitForFocusedReportSettled(page);
 
   const activity = activityFor(page);
-  const metricControl = activity.getByRole('group', { name: 'Activity metric' });
+  const metricControl = activityMetricFor(page);
   const apiValue = metricControl.getByRole('button', { exact: true, name: 'API value' });
   const tokens = metricControl.getByRole('button', { exact: true, name: 'Tokens' });
+  const sessions = metricControl.getByRole('button', { exact: true, name: 'Sessions' });
+  const share = metricControl.getByRole('button', { exact: true, name: 'Share' });
   const chart = activity.locator('[data-report-range-part="chart"]');
   const firstBucket = chart.getByRole('img').first();
-  await expect(metricControl.getByRole('button')).toHaveCount(2);
+  await expect(metricControl.getByRole('button')).toHaveCount(4);
   await expect(apiValue).toHaveAttribute('aria-pressed', 'true');
   await expect(firstBucket).toHaveAccessibleName(API_VALUE_BUCKET_PATTERN);
   const costLabel = await firstBucket.getAttribute('aria-label');
@@ -201,14 +206,15 @@ test('switches API value and processed tokens locally without changing report id
   await expect(activity.locator('[data-timeline-metric="cost"]')).toBeVisible();
   await expect(firstBucket).toHaveAttribute('aria-label', costLabel ?? '');
 
-  const explorer = activityExplorerFor(page);
-  await explorer.locator('summary').click();
-  await explorer
-    .getByRole('radiogroup', { name: 'Metric' })
-    .getByRole('radio', { exact: true, name: 'Sessions' })
-    .click();
+  const explorer = await openActivityExplorer(page);
+  await expect(explorer.getByRole('radiogroup', { name: 'Metric' })).toHaveCount(0);
+  await sessions.click();
   await expect(apiValue).toHaveAttribute('aria-pressed', 'false');
   await expect(tokens).toHaveAttribute('aria-pressed', 'false');
+  await expect(sessions).toHaveAttribute('aria-pressed', 'true');
+  await share.click();
+  await expect(share).toHaveAttribute('aria-pressed', 'true');
+  await expect(metricControl.locator('[aria-pressed="true"]')).toHaveCount(1);
   await tokens.focus();
   await page.keyboard.press('Space');
   await expect(tokens).toBeFocused();
@@ -237,8 +243,8 @@ test('keeps period targets tactile and wraps chart options below the narrow view
   for (const button of await periodButtons.all()) {
     expect(Math.round((await button.boundingBox())?.height ?? 0)).toBeGreaterThanOrEqual(44);
   }
-  const activityMetricButtons = activityFor(page).getByRole('group', { name: 'Activity metric' }).getByRole('button');
-  await expect(activityMetricButtons).toHaveCount(2);
+  const activityMetricButtons = activityMetricFor(page).getByRole('button');
+  await expect(activityMetricButtons).toHaveCount(4);
   for (const button of await activityMetricButtons.all()) {
     expect(Math.round((await button.boundingBox())?.height ?? 0)).toBeGreaterThanOrEqual(44);
   }
@@ -459,9 +465,12 @@ test('changes every chart option from its segmented controls', async ({ page }) 
   await chartOptions.getByRole('radio', { exact: true, name: 'Auto (Day)' }).click();
   await expect(chartOptions.getByRole('radio', { exact: true, name: 'Auto (Day)' })).toBeChecked();
 
-  for (const option of ['Share', 'Sessions', 'Tokens', 'Estimated API-equivalent value']) {
-    await chartOptions.getByRole('radio', { exact: true, name: option }).click();
-    await expect(chartOptions.getByRole('radio', { exact: true, name: option })).toBeChecked();
+  for (const option of ['Share', 'Sessions', 'Tokens', 'API value']) {
+    await activityMetricFor(page).getByRole('button', { exact: true, name: option }).click();
+    await expect(activityMetricFor(page).getByRole('button', { exact: true, name: option })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
   }
   await expect(
     activityFor(page).getByText('Harness · Day · Estimated API-equivalent value', { exact: true }),
@@ -517,9 +526,9 @@ test('groups the timeline by campaign, machine, and origin with matching legends
   // `Inspect OpenCode root` runs a free model, so it carries no API-equivalent value and the value
   // legend legitimately omits it. It has to reappear once the metric counts sessions instead.
   await expect(activity.getByTitle('Inspect OpenCode root', { exact: true })).toHaveCount(0);
-  await chartOptions.getByRole('radio', { exact: true, name: 'Sessions' }).click();
+  await activityMetricFor(page).getByRole('button', { exact: true, name: 'Sessions' }).click();
   await expect(activity.getByTitle('Inspect OpenCode root', { exact: true })).toContainText('Inspect OpenCode root');
-  await chartOptions.getByRole('radio', { exact: true, name: 'Estimated API-equivalent value' }).click();
+  await activityMetricFor(page).getByRole('button', { exact: true, name: 'API value' }).click();
 
   await chartOptions.getByRole('radio', { exact: true, name: 'Machine' }).click();
   await expect(activity.getByText('Machine · Day · Estimated API-equivalent value', { exact: true })).toBeVisible();
@@ -528,7 +537,7 @@ test('groups the timeline by campaign, machine, and origin with matching legends
   // as the campaign above. Counting sessions brings it back.
   await expect(activity.getByTitle('Unknown machine')).toHaveCount(0);
 
-  await chartOptions.getByRole('radio', { exact: true, name: 'Sessions' }).click();
+  await activityMetricFor(page).getByRole('button', { exact: true, name: 'Sessions' }).click();
   await expect(activity.getByTitle('Unknown machine')).toContainText('Unknown machine');
   await chartOptions.getByRole('radio', { exact: true, name: 'Origin' }).click();
   await expect(activity.getByText('Origin · Day · Sessions', { exact: true })).toBeVisible();
@@ -711,6 +720,8 @@ test('anchors the brush handles to the selected report window at every viewport'
 
   const brush = (await openActivityExplorer(page)).locator('[data-report-range-part="brush"]');
   const measureBrush = (): Promise<BrushGeometry> => brush.evaluate(readBrushGeometry);
+  const track = brush.getByRole('button', { name: 'Selected report window' }).locator('..');
+  const tickLabels = brush.locator('[data-report-range-part="brush-axis"] [data-brush-tick]');
 
   for (const viewport of BRUSH_GEOMETRY_VIEWPORTS) {
     await page.setViewportSize(viewport);
@@ -726,6 +737,21 @@ test('anchors the brush handles to the selected report window at every viewport'
       // class and the thumb silently lost its absolute positioning.
       expect(handle.classes.filter((token) => HANDLE_EDGE_NAMES.includes(token as 'end' | 'start'))).toEqual([]);
       expect(handle.position).toBe('absolute');
+    }
+
+    await expect(tickLabels).toHaveText(['May', 'Jun']);
+    await expect(brush.locator('[data-brush-tick-mark]')).toHaveCount(2);
+    const trackBox = await track.boundingBox();
+    const tickGeometry = await tickLabels.evaluateAll((nodes) =>
+      nodes.map((node) => {
+        const box = node.getBoundingClientRect();
+        return { center: box.left + box.width / 2, index: Number(node.getAttribute('data-brush-tick-index')) };
+      }),
+    );
+    expect(trackBox).not.toBeNull();
+    for (const tick of tickGeometry) {
+      const expectedCenter = (trackBox?.x ?? 0) + (tick.index / 60) * (trackBox?.width ?? 0);
+      expect(Math.abs(tick.center - expectedCenter)).toBeLessThanOrEqual(1);
     }
   }
 
@@ -925,13 +951,31 @@ test('reports legend shares and the range total over the selected window', async
   const narrowed = await readLegend();
   expect(narrowed.total).toBeNull();
   expect(narrowed.series.length).toBeLessThanOrEqual(initial.series.length);
+  const todayStack = activity.locator('[data-timeline-series-stack]');
+  const todayBar = activity.locator('[data-report-range-part="chart"] [role="img"]');
+  await expect(todayBar).toHaveCount(1);
+  const [todayBarBox, todayStackBox] = await Promise.all([todayBar.boundingBox(), todayStack.boundingBox()]);
+  expect(todayBarBox).not.toBeNull();
+  expect(todayStackBox).not.toBeNull();
+  expect(todayBarBox?.width ?? Number.POSITIVE_INFINITY).toBeLessThanOrEqual(65);
+  const todayBarCenter = (todayBarBox?.x ?? 0) + (todayBarBox?.width ?? 0) / 2;
+  const todayStackCenter = (todayStackBox?.x ?? 0) + (todayStackBox?.width ?? 0) / 2;
+  expect(Math.abs(todayBarCenter - todayStackCenter)).toBeLessThanOrEqual(1);
+  const peakBox = await activity.locator('[data-timeline-peak-value]').boundingBox();
+  expect(peakBox).not.toBeNull();
+  const intersectsPeak =
+    (todayBarBox?.x ?? 0) < (peakBox?.x ?? 0) + (peakBox?.width ?? 0) &&
+    (todayBarBox?.x ?? 0) + (todayBarBox?.width ?? 0) > (peakBox?.x ?? 0) &&
+    (todayBarBox?.y ?? 0) < (peakBox?.y ?? 0) + (peakBox?.height ?? 0) &&
+    (todayBarBox?.y ?? 0) + (todayBarBox?.height ?? 0) > (peakBox?.y ?? 0);
+  expect(intersectsPeak).toBe(false);
 
-  const chartOptions = await openActivityExplorer(page);
-  await chartOptions.getByRole('radio', { exact: true, name: 'Sessions' }).click();
+  await openActivityExplorer(page);
+  await activityMetricFor(page).getByRole('button', { exact: true, name: 'Sessions' }).click();
   await waitForFocusedReportSettled(page);
   expect((await readLegend()).total).toMatch(SESSION_COUNT_PATTERN);
 
-  await chartOptions.getByRole('radio', { exact: true, name: 'Share' }).click();
+  await activityMetricFor(page).getByRole('button', { exact: true, name: 'Share' }).click();
   await waitForFocusedReportSettled(page);
   // Share mode made this a constant 100%.
   expect((await readLegend()).total).toBeNull();
@@ -960,6 +1004,43 @@ test('fills harness series with their branded tokens rather than one hashed hue'
     expect(fill, key).not.toBeNull();
     expect(fill, key).not.toBe('rgba(0, 0, 0, 0)');
   }
+});
+
+test('assigns each ranked model series a distinct palette token and keeps the grouped tail inline', async ({
+  page,
+}) => {
+  await page.addInitScript(
+    ({ enabledKey, modelTailKey }) => {
+      Reflect.set(globalThis, enabledKey, true);
+      Reflect.set(globalThis, modelTailKey, true);
+    },
+    { enabledKey: FOCUSED_REPORT_E2E_ENABLED_KEY, modelTailKey: FOCUSED_REPORT_E2E_MODEL_TAIL_KEY },
+  );
+  await openHydratedReport(page);
+
+  const activity = activityFor(page);
+  const chartOptions = await openActivityExplorer(page);
+  await chartOptions.getByRole('radio', { exact: true, name: 'Model' }).click();
+  const entries = activity.locator('[data-report-range-part="total-legend"] [data-series-key]');
+  await waitForFocusedReportSettled(page);
+  await expect(entries).toHaveCount(12);
+  const colors = await entries.evaluateAll((nodes) =>
+    nodes.map((node) => {
+      const swatch = node.querySelector('span');
+      return swatch ? getComputedStyle(swatch).backgroundColor : '';
+    }),
+  );
+  expect(colors.every((color) => color !== '' && color !== 'rgba(0, 0, 0, 0)')).toBe(true);
+  expect(new Set(colors).size).toBe(colors.length);
+  const aggregate = activity.locator('[data-timeline-legend-entry="aggregate"]');
+  const [buttonBox, summaryBox] = await Promise.all([
+    aggregate.getByRole('button', { name: 'Other' }).boundingBox(),
+    aggregate.locator('details > summary').boundingBox(),
+  ]);
+  expect(buttonBox).not.toBeNull();
+  expect(summaryBox).not.toBeNull();
+  expect(Math.abs((summaryBox?.y ?? 0) - (buttonBox?.y ?? 0))).toBeLessThan(buttonBox?.height ?? 0);
+  expect(summaryBox?.x ?? 0).toBeGreaterThanOrEqual((buttonBox?.x ?? 0) + (buttonBox?.width ?? 0) - 1);
 });
 
 test('announces each brush handle as a slider over the day it selects', async ({ page }) => {

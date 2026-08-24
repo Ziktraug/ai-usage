@@ -36,8 +36,9 @@ describe('Report executive editorial primitives', () => {
   });
 
   test('keeps executive numbers and essential copy legible at every breakpoint', () => {
-    expect(numericDisplay).toContain('fs_40px');
-    expect(numericDisplay).toContain('md:fs_52px');
+    expect(numericDisplay).toContain('fs_clamp(28px,_calc(150cqi_/_var(--hero-chars,_8)),_40px)');
+    expect(numericDisplay).toContain('md:fs_clamp(28px,_calc(150cqi_/_var(--hero-chars,_8)),_52px)');
+    expect(numericDisplay).toContain('white-space_nowrap');
     expect(executiveCaption).toContain('fs_12px');
     expect(executiveEssentialLabel).toContain('fs_11px');
   });

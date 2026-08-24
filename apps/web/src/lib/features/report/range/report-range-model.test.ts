@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  brushAxisTicks,
   customRangeFromIndexes,
   customRangeFromInputs,
   escapedRangeDraft,
@@ -114,6 +115,30 @@ describe('report range projection', () => {
     expect(projection.displayTo).toBe('Jun 11, 2026');
   });
 
+  test('labels short brush domains by day and longer domains at month boundaries', () => {
+    const monthTicks = brushAxisTicks(new Date(2026, 3, 12), 60);
+    expect(monthTicks.map(({ index, label }) => ({ index, label }))).toEqual([
+      { index: 19, label: 'May' },
+      { index: 50, label: 'Jun' },
+    ]);
+    expect(monthTicks[0]?.pct).toBeCloseTo((19 / 60) * 100);
+
+    const dayTicks = brushAxisTicks(new Date(2026, 5, 4), 7);
+    expect(dayTicks).toHaveLength(8);
+    expect(dayTicks.map((tick) => tick.label)).toEqual(['Jun 4', '5', '6', '7', '8', '9', '10', '11']);
+    const fortnightTicks = brushAxisTicks(new Date(2026, 5, 26), 13);
+    expect(fortnightTicks.length).toBeGreaterThan(0);
+    expect(fortnightTicks.some((tick) => tick.label === 'Jul 1')).toBeTrue();
+    expect(brushAxisTicks(new Date(2026, 5, 4), 8).length).toBeGreaterThan(0);
+    expect(brushAxisTicks(new Date(2026, 5, 4), 0)).toEqual([]);
+  });
+
+  test('thins long brush axes and keeps the year on January', () => {
+    const ticks = brushAxisTicks(new Date(2025, 5, 10), 439);
+    expect(ticks.length).toBeLessThanOrEqual(8);
+    expect(ticks.some((tick) => tick.label === 'Jan ’26')).toBeTrue();
+  });
+
   test('normalizes report query bounds to the calendar days shown by the control', () => {
     const bounds = rangeBounds({ mode: '30d' }, generatedAt);
 
@@ -197,7 +222,7 @@ test('wires pointer cancellation and lost capture into the activity explorer', a
   expect(source).toContain('target.releasePointerCapture(event.pointerId)');
 });
 
-test('keeps the executive API value and Tokens toggle above advanced activity options', async () => {
+test('keeps one complete metric control above advanced activity options', async () => {
   const source = await Bun.file(new URL('./activity-explorer.svelte', import.meta.url)).text();
   const topLevelToggle = source.indexOf('aria-label="Activity metric"');
   const advancedDisclosure = source.indexOf('aria-label="Explore activity"');
@@ -206,12 +231,14 @@ test('keeps the executive API value and Tokens toggle above advanced activity op
   expect(advancedDisclosure).toBeGreaterThan(topLevelToggle);
   expect(source).toContain("{ label: 'API value', value: 'cost' }");
   expect(source).toContain("{ label: 'Tokens', value: 'tokens' }");
+  expect(source).toContain("{ label: 'Sessions', value: 'sessions' }");
+  expect(source).toContain("{ label: 'Share', value: 'share' }");
   expect(source).toContain('<fieldset aria-label="Activity metric"');
-  expect(source).toContain('aria-pressed={executiveValue === item.value}');
-  expect(source).toContain("data-active={executiveValue === item.value ? 'true' : 'false'}");
+  expect(source).toContain('aria-pressed={value === item.value}');
+  expect(source).toContain("data-active={value === item.value ? 'true' : 'false'}");
   expect(source).toContain('class={cx(presetButton, executiveMetricButton)}');
   expect(source).toContain("minH: '44px'");
-  expect(source).not.toContain('{#if executiveValue}');
+  expect(source).not.toContain('ariaLabel="Metric"');
   expect(source).toContain('selectedWindowSummary?.priceMeasurement');
   expect(source).toContain('presentTimelineValue(');
   expect(source).toContain("visibleTimelineSummary(timeline, visibleRange, 'cost').total");
