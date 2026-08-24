@@ -368,13 +368,6 @@ const campaignDisplayRow = (campaign: CampaignView, sorting: TableSortingState):
   };
 };
 
-export const campaignBadgeLabelForRow = (row: DashboardRow) => {
-  if (!row.campaignKey || row.campaignTotalCount == null || row.campaignVisibleCount == null) {
-    return null;
-  }
-  return `Campaign · ${row.campaignVisibleCount} ${row.campaignVisibleCount === 1 ? 'session' : 'sessions'}`;
-};
-
 export const buildCampaignTableRows = (
   allRows: DashboardRow[],
   visibleRows: DashboardRow[],

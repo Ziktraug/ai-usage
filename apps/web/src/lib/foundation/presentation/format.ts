@@ -35,6 +35,19 @@ export const fmtCompact = (value: number): string => {
   return fmtNum(value);
 };
 
+const compactColumnFormatter = new Intl.NumberFormat('en', {
+  maximumSignificantDigits: 3,
+  notation: 'compact',
+});
+
+/**
+ * One notation for values that are compared down a column: up to three
+ * significant digits and a k/M/B suffix from 1,000 up (`999`, `1.23k`,
+ * `37k`, `188k`, `10.9M`). `fmtCompact` keeps exact separators below
+ * 100,000 for prose and single tiles, where nothing is compared.
+ */
+export const fmtCompactColumn = (value: number): string => compactColumnFormatter.format(value).replace('K', 'k');
+
 export const fmtDate = (value: string | null): string => (value ? dateTimeFormatter.format(new Date(value)) : '—');
 
 export const fmtDateOnly = (value: string | Date | null): string =>

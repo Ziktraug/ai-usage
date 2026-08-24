@@ -12,6 +12,7 @@ import {
   sessionSortForColumnChange,
   sessionTitleIsGeneric,
   shouldSelectSessionRowForKey,
+  summarizeSessionRowProvenance,
 } from './session-cell-projection';
 import { sessionTableColumns, visibleSessionTableColumns } from './session-columns';
 import { syntheticCampaignRow, syntheticSessionRow, syntheticSessionRows } from './session-table.fixtures';
@@ -21,6 +22,8 @@ import {
   projectSessionVirtualRows,
   sessionVirtualBudgets,
 } from './session-virtualization';
+
+const CAMPAIGN_DURATION_PREFIX_PATTERN = /^Campaign time uses the root session only\./;
 
 describe('Svelte session table schema adapter', () => {
   test('preserves the exact 25-column contract and Work/Tokens/Reliability presets', () => {
@@ -117,8 +120,8 @@ describe('Svelte session table schema adapter', () => {
       value: row.modelKey,
     });
     expect(projectSessionCell(row, 'session', 'session')).toMatchObject({
-      campaignLabel: 'Campaign · 3 sessions',
-      classifierLabel: '+ 2 automated reviews · 4,321 fresh',
+      campaignLabel: 'Campaign · 3 of 4 sessions',
+      classifierLabel: '+ 2 automated reviews · 4.32k fresh',
       kind: 'session',
       originLabel: 'Automated review',
     });
@@ -163,6 +166,72 @@ describe('Svelte session table schema adapter', () => {
     );
     expect(projectSessionCell(generic, 'session', '', generic.sessionLabel)).toHaveProperty('inheritedTitle', null);
     expect(projectSessionCell(generic, 'session', '', '')).toHaveProperty('inheritedTitle', null);
+  });
+
+  test('keeps the duration value calm while the tooltip explains campaign-root time', () => {
+    const campaignDuration = projectSessionCell(syntheticCampaignRow(5), 'duration', '');
+    const sessionDuration = projectSessionCell(syntheticSessionRow(5), 'duration', '');
+
+    expect(campaignDuration).toMatchObject({ kind: 'value', label: '6m' });
+    expect(campaignDuration).toHaveProperty('title', expect.stringMatching(CAMPAIGN_DURATION_PREFIX_PATTERN));
+    expect(sessionDuration).toMatchObject({ kind: 'value', label: '6m' });
+    expect(sessionDuration).not.toHaveProperty('title', expect.stringMatching(CAMPAIGN_DURATION_PREFIX_PATTERN));
+  });
+
+  test('offers campaign expansion only when another member can exist', () => {
+    const singleton = syntheticCampaignRow(3);
+    const loadable = { ...singleton, campaignTotalCount: 2 };
+    const modelFor = (row: typeof singleton) =>
+      createSessionTableModel({
+        canLoadCampaignChildren: true,
+        expanded: {},
+        rows: [row],
+        sorting: [{ desc: true, id: 'date' }],
+        visibility: defaultColumnVisibility,
+      });
+
+    expect(modelFor(singleton).rows[0]?.getCanExpand()).toBe(false);
+    expect(modelFor(loadable).rows[0]?.getCanExpand()).toBe(true);
+  });
+
+  test('summarizes only facts shared by multiple visible metric columns', () => {
+    const tokenColumnIds = visibleSessionTableColumns(columnVisibilityForSessionPreset('tokens')).map(({ id }) => id);
+    const workColumnIds = visibleSessionTableColumns(columnVisibilityForSessionPreset('work')).map(({ id }) => id);
+    const partialTokens = summarizeSessionRowProvenance({ ...syntheticSessionRow(1), partial: true }, tokenColumnIds);
+
+    expect(partialTokens.shared).toHaveLength(1);
+    expect(partialTokens.shared[0]).toMatchObject({
+      columns: ['Input tokens', 'Output tokens', 'Cache read', 'Fresh tokens'],
+      fact: { kind: 'partial-session' },
+    });
+    expect(partialTokens.sharedKinds).toEqual(new Set(['partial-session']));
+    expect(summarizeSessionRowProvenance({ ...syntheticSessionRow(1), partial: true }, workColumnIds).shared).toEqual(
+      [],
+    );
+    expect(
+      summarizeSessionRowProvenance({ ...syntheticSessionRow(1), usageUnavailable: true }, tokenColumnIds).shared,
+    ).toEqual([
+      expect.objectContaining({
+        columns: ['Input tokens', 'Output tokens', 'Cache read', 'Fresh tokens'],
+        fact: expect.objectContaining({ kind: 'usage-unavailable' }),
+      }),
+    ]);
+    expect(partialTokens.shared.some(({ fact }) => fact.kind === 'title-derived')).toBe(false);
+  });
+
+  test('pairs compact token labels with exact-count tooltips', () => {
+    expect(projectSessionCell({ ...syntheticSessionRow(1), tokIn: 36_971 }, 'tokIn', '')).toMatchObject({
+      kind: 'value',
+      label: '37k',
+      title: '36,971',
+    });
+    expect(
+      projectSessionCell({ ...syntheticSessionRow(1), tokIn: 36_971, usageUnavailable: true }, 'tokIn', ''),
+    ).toMatchObject({
+      kind: 'value',
+      label: '—',
+      title: USAGE_UNAVAILABLE_HINT,
+    });
   });
 
   test('preserves exact headers, unavailable hints, RTK details, and compact line deltas', () => {

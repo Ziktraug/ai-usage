@@ -570,7 +570,21 @@ test('starts sessions with focused work columns and switches metric presets', as
 
   await page.setViewportSize({ height: 1000, width: 1440 });
   const campaignRow = page.getByRole('row').filter({ hasText: 'Build report UI' }).first();
-  expect(Math.round((await campaignRow.boundingBox())?.height ?? 0)).toBe(75);
+  await expect(campaignRow).not.toContainText('root-session time');
+  expect(await campaignRow.evaluate((row) => row.tabIndex === 0 && row.getBoundingClientRect().height >= 44)).toBe(
+    true,
+  );
+  const rowColumnEdges = await page.locator('tbody tr[data-session-row-id]').evaluateAll((rows) =>
+    rows.slice(0, 3).map((row) =>
+      [...row.children].map((cell) => {
+        const { left, right } = cell.getBoundingClientRect();
+        return [Math.round(left), Math.round(right)];
+      }),
+    ),
+  );
+  expect(rowColumnEdges).toHaveLength(3);
+  expect(rowColumnEdges[1]).toEqual(rowColumnEdges[0]);
+  expect(rowColumnEdges[2]).toEqual(rowColumnEdges[0]);
   await page.setViewportSize({ height: 900, width: 1024 });
 
   const sessionHeader = page.getByRole('columnheader', { name: 'Session' });

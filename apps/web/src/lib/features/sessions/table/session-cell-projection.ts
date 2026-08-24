@@ -1,3 +1,4 @@
+import type { ProvenanceMarkerFact } from '@ai-usage/design-system/svelte';
 import type { UsageMetricKey, UsageRowProvenance } from '@ai-usage/report-core/provenance';
 import { provenanceForMetric } from '@ai-usage/report-core/provenance';
 import {
@@ -10,14 +11,14 @@ import { rtkSavedTitle } from '../../../../dashboard-sort';
 import { sessionDurationSemantics } from '../../../../session-analysis-model';
 import { boundedSessionListLabel, caseInsensitiveLiteralMatches } from '../../../../session-list-label';
 import type { SessionColumnId } from '../../../../session-table-schema';
-import { fmtCompact } from '../../../foundation/presentation/format';
+import { fmtCompactColumn, fmtNum } from '../../../foundation/presentation/format';
 import {
   aggregateApiValuePresentation,
   apiValuePresentation,
   USAGE_UNAVAILABLE_HINT,
 } from '../../../foundation/presentation/report-value';
 import type { TableSortingState } from '../../../foundation/table/state';
-import { sessionColumnById } from './session-columns';
+import { sessionColumnById, TOKEN_COLUMN_VALUE } from './session-columns';
 
 export interface SessionHighlightSegment {
   readonly match: boolean;
@@ -171,6 +172,10 @@ const valueTitle = (row: SessionPresentationRow, id: SessionColumnId): string | 
   if (row.usageUnavailable && USAGE_UNAVAILABLE_COLUMNS.has(id)) {
     return USAGE_UNAVAILABLE_HINT;
   }
+  const tokenValue = TOKEN_COLUMN_VALUE[id];
+  if (tokenValue) {
+    return fmtNum(tokenValue(row));
+  }
   return id === 'rtkSaved' ? rtkSavedTitle(row) : undefined;
 };
 
@@ -191,7 +196,7 @@ const valueProjection = (row: SessionPresentationRow, id: SessionColumnId): Sess
     const semantics = sessionDurationSemantics(row.source?.harnessKey, rootSessionOnly);
     return {
       kind: 'value',
-      label: `${sessionColumnById(id).meta.format(row)}${rootSessionOnly ? ' root-session time' : ''}`,
+      label: sessionColumnById(id).meta.format(row),
       provenanceFacts: provenanceFacts(row, 'duration'),
       title: semantics.metricHint,
     };
@@ -204,6 +209,49 @@ const valueProjection = (row: SessionPresentationRow, id: SessionColumnId): Sess
     title: valueTitle(row, id),
   };
 };
+
+export interface SessionRowProvenanceSummary {
+  /** Facts that apply to two or more visible metric columns; rendered once on the Session cell. */
+  readonly shared: readonly {
+    readonly columns: readonly string[];
+    readonly fact: UsageRowProvenance;
+  }[];
+  readonly sharedKinds: ReadonlySet<string>;
+}
+
+const provenanceFactsForColumn = (row: SessionPresentationRow, id: SessionColumnId): readonly UsageRowProvenance[] => {
+  if (id === 'cost') {
+    return provenanceFacts(row, 'api-value', API_PRICE_PROVENANCE_KINDS);
+  }
+  const metric = metricForColumn(id);
+  return metric ? provenanceFacts(row, metric) : [];
+};
+
+export const summarizeSessionRowProvenance = (
+  row: SessionPresentationRow,
+  visibleColumnIds: readonly SessionColumnId[],
+): SessionRowProvenanceSummary => {
+  const byKind = new Map<string, { columns: string[]; fact: UsageRowProvenance }>();
+  for (const id of visibleColumnIds) {
+    for (const fact of provenanceFactsForColumn(row, id)) {
+      const existing = byKind.get(fact.kind);
+      if (existing) {
+        existing.columns.push(sessionColumnById(id).meta.label);
+      } else {
+        byKind.set(fact.kind, { columns: [sessionColumnById(id).meta.label], fact });
+      }
+    }
+  }
+  const shared = [...byKind.values()].filter(({ columns }) => columns.length >= 2);
+  return { shared, sharedKinds: new Set(shared.map(({ fact }) => fact.kind)) };
+};
+
+export const sharedProvenanceMarkerFacts = (summary: SessionRowProvenanceSummary): readonly ProvenanceMarkerFact[] =>
+  summary.shared.map(({ columns, fact }) => ({
+    description: `${fact.description} Applies to ${columns.join(', ')}.`,
+    label: fact.label,
+    severity: fact.severity,
+  }));
 
 export const projectSessionCell = (
   row: SessionPresentationRow,
@@ -249,7 +297,7 @@ export const projectSessionCell = (
       classifierLabel:
         classifierRollup === null
           ? null
-          : `${classifierRollup} · ${fmtCompact(row.campaignClassifierFreshTokens ?? 0)} fresh`,
+          : `${classifierRollup} · ${fmtCompactColumn(row.campaignClassifierFreshTokens ?? 0)} fresh`,
       inheritedTitle: inheritedCampaignTitle(row, campaignRootLabel),
       kind: 'session',
       originLabel: row.origin === 'classifier' ? sessionOriginLabel(row.origin) : null,

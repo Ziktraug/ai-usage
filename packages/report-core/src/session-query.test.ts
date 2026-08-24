@@ -616,7 +616,8 @@ describe('session query contracts', () => {
       sessionLabel: 'campaign-root',
       subagent: false,
     });
-    expect(campaignBadgeLabelForSessionRow(item.row)).toBe('Campaign · 2 sessions');
+    expect(campaignBadgeLabelForSessionRow(item.row)).toBe('Campaign · 2 of 3 sessions');
+    expect(campaignBadgeLabelForSessionRow({ ...item.row, campaignVisibleCount: 3 })).toBe('Campaign · 3 sessions');
     expect(classifierRollupLabelForSessionRow(item.row)).toBe('+ 1 automated review');
 
     const children = projectSessionCampaignChildren(rows, {
@@ -655,7 +656,7 @@ describe('session query contracts', () => {
       throw new Error('Expected a singleton campaign fixture');
     }
     expect(item.row).toMatchObject({ campaignTotalCount: 1, campaignVisibleCount: 1, subagent: false });
-    expect(campaignBadgeLabelForSessionRow(item.row)).toBe('Campaign · 1 session');
+    expect(campaignBadgeLabelForSessionRow(item.row)).toBeNull();
   });
 
   test('represents parentless classifiers as standalone review campaigns', () => {
@@ -675,7 +676,7 @@ describe('session query contracts', () => {
       origin: 'classifier',
       sessionLabel: 'classifier-root',
     });
-    expect(campaignBadgeLabelForSessionRow(item.row)).toBe('Campaign · 1 session');
+    expect(campaignBadgeLabelForSessionRow(item.row)).toBeNull();
     expect(classifierRollupLabelForSessionRow(item.row)).toBeNull();
   });
 

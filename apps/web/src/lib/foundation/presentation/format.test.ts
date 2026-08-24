@@ -1,5 +1,16 @@
 import { describe, expect, test } from 'bun:test';
-import { fmtCompact, fmtDate, fmtDateOnly, fmtDuration, fmtMaybeNum, fmtMoney, fmtNum, fmtPct, median } from './format';
+import {
+  fmtCompact,
+  fmtCompactColumn,
+  fmtDate,
+  fmtDateOnly,
+  fmtDuration,
+  fmtMaybeNum,
+  fmtMoney,
+  fmtNum,
+  fmtPct,
+  median,
+} from './format';
 
 describe('framework-neutral presentation formatting', () => {
   test('preserves report number and value labels', () => {
@@ -19,6 +30,17 @@ describe('framework-neutral presentation formatting', () => {
     expect(fmtDuration(null)).toBe('—');
     expect(fmtDuration(89 * 60_000)).toBe('89m');
     expect(fmtDuration(90 * 60_000)).toBe('1.5h');
+  });
+
+  test('uses one compact notation down comparable token columns', () => {
+    expect(fmtCompactColumn(999)).toBe('999');
+    expect(fmtCompactColumn(1234)).toBe('1.23k');
+    expect(fmtCompactColumn(36_971)).toBe('37k');
+    expect(fmtCompactColumn(188_312)).toBe('188k');
+    expect(fmtCompactColumn(999_999)).toBe('1M');
+    expect(fmtCompactColumn(10_912_345)).toBe('10.9M');
+    expect(fmtCompactColumn(2000)).toBe('2k');
+    expect(fmtCompactColumn(0)).toBe('0');
   });
 
   test('calculates medians without mutating the input', () => {

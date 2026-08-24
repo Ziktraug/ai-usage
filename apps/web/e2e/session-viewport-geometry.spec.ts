@@ -2,7 +2,6 @@ import type { Locator, Page } from '@playwright/test';
 import { expect, openHydratedReport, test } from './browser-test';
 import { capturePlan073Smoke } from './plan073-smoke';
 
-const SESSION_VIEWPORT_BOTTOM_INSET = 24;
 const MOBILE_DRAWER_VIEWPORT = { height: 844, width: 390 } as const;
 const DESKTOP_DRAWER_VIEWPORT = { height: 900, width: 1280 } as const;
 
@@ -39,6 +38,21 @@ const captureLifecycleWarnings = (page: Page): (() => readonly string[]) => {
     warnings.push(`${location.url}:${location.lineNumber}:${location.columnNumber} ${message.text()}`);
   });
   return () => warnings;
+};
+
+const captureResizeObserverLoopMessages = (page: Page): (() => readonly string[]) => {
+  const messages: string[] = [];
+  page.on('console', (message) => {
+    if (message.text().includes('ResizeObserver loop')) {
+      messages.push(message.text());
+    }
+  });
+  page.on('pageerror', (error) => {
+    if (error.message.includes('ResizeObserver loop')) {
+      messages.push(error.message);
+    }
+  });
+  return () => messages;
 };
 
 const startSelectionCloseCounter = async (page: Page): Promise<void> => {
@@ -86,6 +100,7 @@ const viewportCases = [
 ] as const;
 
 test('anchors the virtual Session viewport inside the screen on desktop and mobile', async ({ page }) => {
+  const resizeObserverLoopMessages = captureResizeObserverLoopMessages(page);
   for (const viewportCase of viewportCases) {
     await page.setViewportSize({ height: viewportCase.height, width: viewportCase.width });
     await openHydratedReport(page, '/?tab=sessions');
@@ -98,36 +113,48 @@ test('anchors the virtual Session viewport inside the screen on desktop and mobi
     await expect
       .poll(
         async () =>
-          await surface.evaluate((element, bottomInset) => {
+          await surface.evaluate((element, currentViewport) => {
             const rect = element.getBoundingClientRect();
             const regionRect = document.querySelector('[data-session-region-start]')?.getBoundingClientRect();
-            // The height follows the viewport alone. Deriving it from `rect.top`
-            // — as this assertion did until 2026-08-05 — is what let the surface
-            // grow as the page was scrolled and the document stretch away.
-            const expectedHeight = Math.max(1, window.innerHeight - bottomInset);
+            const navRect = document.querySelector('[data-app-navigation="mobile"]')?.getBoundingClientRect();
+            const isDesktop = currentViewport.mode === 'desktop';
+            const regionDocumentTop = regionRect ? regionRect.top + window.scrollY : Number.NaN;
             return {
               activeElementInsideRegion: Boolean(document.activeElement?.closest('[data-session-region-start]')),
-              fillsViewportHeight: Math.abs(element.clientHeight - expectedHeight) <= 2,
+              atLeastMinimumRows: element.clientHeight >= currentViewport.minimumRowHeight * (isDesktop ? 3 : 1),
+              desktopBottomGap:
+                !isDesktop || (window.innerHeight - rect.bottom >= 24 && window.innerHeight - rect.bottom <= 48),
               maxHeight: getComputedStyle(element).maxHeight,
+              mobileRegionAnchored: isDesktop || Boolean(regionRect && Math.abs(regionRect.top) <= 2),
+              mobileScrollRangeEndsAtAnchor:
+                isDesktop ||
+                Math.abs(document.documentElement.scrollHeight - window.innerHeight - regionDocumentTop) <= 2,
+              mobileSurfaceAboveNavigation: isDesktop || Boolean(navRect && rect.bottom <= navRect.top),
+              mobileWindowScrolled: isDesktop || window.scrollY > 0,
               minHeight: getComputedStyle(element).minHeight,
               overflowAnchor: getComputedStyle(element).overflowAnchor,
-              regionStartsInViewport: Boolean(
-                regionRect && regionRect.top >= -1 && regionRect.top < window.innerHeight * 0.2,
-              ),
-              surfaceStartsInViewport: rect.top >= 0 && rect.top < window.innerHeight * 0.25,
-              windowScrolledPastChrome: window.scrollY > 0,
+              regionStartsInViewport: Boolean(regionRect && regionRect.top >= -1),
+              singleScrollContainer: !isDesktop || document.documentElement.scrollHeight <= window.innerHeight + 1,
+              surfaceStartsInViewport: rect.top >= 0 && rect.top < window.innerHeight,
+              windowAtTop: !isDesktop || window.scrollY === 0,
             };
-          }, SESSION_VIEWPORT_BOTTOM_INSET),
+          }, viewportCase),
       )
       .toEqual({
         activeElementInsideRegion: false,
-        fillsViewportHeight: true,
+        atLeastMinimumRows: true,
+        desktopBottomGap: true,
         maxHeight: 'none',
+        mobileRegionAnchored: true,
+        mobileScrollRangeEndsAtAnchor: true,
+        mobileSurfaceAboveNavigation: true,
+        mobileWindowScrolled: true,
         minHeight: '0px',
         overflowAnchor: 'none',
         regionStartsInViewport: true,
+        singleScrollContainer: true,
         surfaceStartsInViewport: true,
-        windowScrolledPastChrome: true,
+        windowAtTop: true,
       });
 
     const rowHeight = await surface
@@ -137,10 +164,49 @@ test('anchors the virtual Session viewport inside the screen on desktop and mobi
     expect(rowHeight).toBeGreaterThanOrEqual(viewportCase.minimumRowHeight);
     expect(rowHeight).toBeLessThanOrEqual(viewportCase.maximumRowHeight);
 
+    if (viewportCase.mode === 'desktop') {
+      const initialSurfaceHeight = await surface.evaluate((element) => element.clientHeight);
+      // This browser harness renders SessionTable directly. Keep the choice
+      // explicit so a missing production export row cannot silently weaken a
+      // shell-level geometry test.
+      await expect(page.locator('[data-sessions-export]')).toHaveCount(0);
+      await expect(page.locator('[data-session-table-owner]')).toHaveCount(1);
+      await page.evaluate(() => {
+        const probeAnchor = document.querySelector('[data-session-table-owner]');
+        if (!probeAnchor) {
+          throw new Error('Synthetic Sessions table owner is unavailable');
+        }
+        const probe = document.createElement('div');
+        probe.dataset.sessionGeometryProbe = 'true';
+        probe.style.height = '80px';
+        probe.style.flex = '0 0 80px';
+        probeAnchor.insertBefore(probe, probeAnchor.firstChild);
+      });
+      await expect
+        .poll(
+          async () =>
+            await surface.evaluate(
+              (element, expectedHeight) => ({
+                heightDroppedByProbe: Math.abs(element.clientHeight - (expectedHeight - 80)) <= 2,
+                singleScrollContainer: document.documentElement.scrollHeight <= window.innerHeight + 1,
+              }),
+              initialSurfaceHeight,
+            ),
+        )
+        .toEqual({ heightDroppedByProbe: true, singleScrollContainer: true });
+      await page.evaluate(() => document.querySelector('[data-session-geometry-probe]')?.remove());
+      await expect
+        .poll(async () => await surface.evaluate((element) => element.clientHeight))
+        .toBe(initialSurfaceHeight);
+    }
+
     await page.setViewportSize({
       height: viewportCase.mode === 'desktop' ? 220 : 300,
       width: viewportCase.width,
     });
+    await page.evaluate(() =>
+      document.querySelector('[data-session-region-start]')?.scrollIntoView({ block: 'start' }),
+    );
     await expect
       .poll(async () => await surface.evaluate((element) => element.scrollHeight > element.clientHeight))
       .toBe(true);
@@ -152,6 +218,7 @@ test('anchors the virtual Session viewport inside the screen on desktop and mobi
     await expect.poll(async () => await surface.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
     expect(await page.evaluate(() => window.scrollY)).toBe(outerScrollPosition);
   }
+  expect(resizeObserverLoopMessages()).toEqual([]);
 });
 
 test('keeps the document height still while the Session surface is scrolled past', async ({ page }) => {
@@ -174,10 +241,10 @@ test('keeps the document height still while the Session surface is scrolled past
 
   const initial = await measure();
   expect(initial.surfaceHeight).not.toBeNull();
+  expect(initial.documentHeight).toBe(900);
 
-  // Sizing the surface from its own viewport-relative top was circular: each
-  // pixel scrolled grew the page by a pixel, so the reader never advanced and the
-  // bottom stayed out of reach. One viewport must yield one document height.
+  // At rest the document is exactly one viewport tall, so every requested page
+  // position below is clamped to 0 while the surface height stays fixed.
   for (const target of [120, 320, 560, 800, 320, 0]) {
     await page.evaluate((y) => window.scrollTo(0, y), target);
     await page.waitForTimeout(200);

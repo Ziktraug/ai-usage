@@ -51,7 +51,7 @@ export const syntheticCampaignRow = (
 ): SessionPresentationRow => ({
   ...syntheticSessionRow(index),
   campaignKey: `synthetic-campaign-${index}`,
-  campaignTotalCount: Math.max(1, children.length),
-  campaignVisibleCount: Math.max(1, children.length),
+  campaignTotalCount: children.length + 1,
+  campaignVisibleCount: children.length + 1,
   ...(children.length === 0 ? {} : { children: [...children] }),
 });

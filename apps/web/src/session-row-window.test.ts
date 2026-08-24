@@ -13,25 +13,89 @@ const windowFor = (overrides: Partial<Parameters<typeof calculateSessionRowWindo
   });
 
 describe('session row window', () => {
-  test('sizes the internal viewport from the viewport alone', () => {
-    expect(calculateSessionViewportHeight({ bottomInset: 24, minimumHeight: 129, viewportHeight: 900 })).toBe(876);
-    expect(calculateSessionViewportHeight({ bottomInset: 24, minimumHeight: 188, viewportHeight: 844 })).toBe(820);
+  test('sizes the desktop surface between its document position and the page bottom', () => {
+    expect(
+      calculateSessionViewportHeight({
+        anchorTop: 0,
+        bottomInset: 32,
+        minimumHeight: 129,
+        surfaceTop: 364,
+        viewportHeight: 1080,
+      }),
+    ).toBe(684);
   });
 
-  test('never lets the surface height follow the scroll position', () => {
-    // Sizing from `getBoundingClientRect().top` was circular: the height is part
-    // of the document, so every pixel scrolled grew the page by a pixel and the
-    // bottom stayed out of reach. One viewport must yield one height.
-    const heights = [900, 900, 900].map(() =>
-      calculateSessionViewportHeight({ bottomInset: 24, minimumHeight: 129, viewportHeight: 900 }),
-    );
+  test('sizes the mobile surface from its region anchor', () => {
+    expect(
+      calculateSessionViewportHeight({
+        anchorTop: 304,
+        bottomInset: 96,
+        minimumHeight: 188,
+        surfaceTop: 364,
+        viewportHeight: 844,
+      }),
+    ).toBe(688);
+  });
 
-    expect(new Set(heights).size).toBe(1);
+  test('is invariant when both document offsets move together', () => {
+    const height = calculateSessionViewportHeight({
+      anchorTop: 304,
+      bottomInset: 96,
+      minimumHeight: 188,
+      surfaceTop: 364,
+      viewportHeight: 844,
+    });
+    const shiftedHeight = calculateSessionViewportHeight({
+      anchorTop: 804,
+      bottomInset: 96,
+      minimumHeight: 188,
+      surfaceTop: 864,
+      viewportHeight: 844,
+    });
+
+    expect(shiftedHeight).toBe(height);
   });
 
   test('keeps a usable surface in a viewport shorter than the minimum', () => {
-    expect(calculateSessionViewportHeight({ bottomInset: 24, minimumHeight: 320, viewportHeight: 280 })).toBe(320);
-    expect(calculateSessionViewportHeight({ bottomInset: 24, minimumHeight: 129, viewportHeight: 100 })).toBe(129);
+    expect(
+      calculateSessionViewportHeight({
+        anchorTop: 0,
+        bottomInset: 32,
+        minimumHeight: 129,
+        surfaceTop: 364,
+        viewportHeight: 220,
+      }),
+    ).toBe(129);
+    expect(
+      calculateSessionViewportHeight({
+        anchorTop: 0,
+        bottomInset: 32,
+        minimumHeight: 188,
+        surfaceTop: 700,
+        viewportHeight: 300,
+      }),
+    ).toBe(188);
+  });
+
+  test('treats invalid document offsets as no chrome above the surface', () => {
+    expect(
+      calculateSessionViewportHeight({
+        anchorTop: -20,
+        bottomInset: 32,
+        minimumHeight: 129,
+        surfaceTop: Number.NaN,
+        viewportHeight: 900,
+      }),
+    ).toBe(868);
+    expect(
+      calculateSessionViewportHeight({
+        anchorTop: 500,
+        bottomInset: 32,
+        minimumHeight: 129,
+        surfaceTop: 300,
+        viewportHeight: 900,
+      }),
+    ).toBe(868);
   });
 
   test('returns an empty window for an empty collection', () => {
