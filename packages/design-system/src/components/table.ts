@@ -226,7 +226,7 @@ export const sessionSummaryMobileSort = css({
   gap: '8px',
   w: '100%',
   '& > button': {
-    minH: '44px',
+    minH: '48px',
   },
 });
 

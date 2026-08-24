@@ -868,7 +868,7 @@ test('offers keyboard-safe charts and mobile summaries at a narrow viewport', as
   const mobileSort = page.getByRole('combobox', { name: 'Sort mobile session summaries' });
   expect(Math.round((await mobileSort.boundingBox())?.height ?? 0)).toBe(44);
   const sortDirection = page.getByRole('button', { name: 'Sort ascending' });
-  expect(Math.round((await sortDirection.boundingBox())?.height ?? 0)).toBeGreaterThanOrEqual(44);
+  expect(Math.round((await sortDirection.boundingBox())?.height ?? 0)).toBe(48);
   await expect(sessionSummaries).toHaveCSS('border-top-width', '0px');
   await expect(sessionSummaries).toHaveCSS('box-shadow', 'none');
   const firstSummary = sessionSummaries.locator('article').first();
