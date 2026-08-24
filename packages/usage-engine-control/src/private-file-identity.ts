@@ -2,6 +2,23 @@ const PROCESS_START_TIME_INDEX = 19;
 const DIGITS_PATTERN = /^\d+$/;
 const WHITESPACE_PATTERN = /\s+/;
 
+const readDarwinProcessStartTime = async (pid: number): Promise<string | null> => {
+  try {
+    const child = Bun.spawn(['/bin/ps', '-o', 'lstart=', '-p', String(pid)], {
+      stderr: 'ignore',
+      stdout: 'pipe',
+    });
+    const output = await new Response(child.stdout).text();
+    if ((await child.exited) !== 0) {
+      return null;
+    }
+    const startTimeMs = Date.parse(output.trim());
+    return Number.isFinite(startTimeMs) ? String(startTimeMs) : null;
+  } catch {
+    return null;
+  }
+};
+
 export interface FileIdentity {
   readonly dev: number;
   readonly ino: number;
@@ -31,6 +48,9 @@ export const isProcessStartTimeTicks = (value: unknown): value is string =>
   typeof value === 'string' && DIGITS_PATTERN.test(value);
 
 export const readProcessStartTimeTicks = async (pid: number): Promise<string | null> => {
+  if (process.platform === 'darwin') {
+    return readDarwinProcessStartTime(pid);
+  }
   if (process.platform !== 'linux') {
     return null;
   }
