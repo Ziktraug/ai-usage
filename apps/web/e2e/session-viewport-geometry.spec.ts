@@ -165,23 +165,72 @@ test('anchors the virtual Session viewport inside the screen on desktop and mobi
     expect(rowHeight).toBeLessThanOrEqual(viewportCase.maximumRowHeight);
 
     if (viewportCase.mode === 'desktop') {
-      const initialSurfaceHeight = await surface.evaluate((element) => element.clientHeight);
-      // This browser harness renders SessionTable directly. Keep the choice
-      // explicit so a missing production export row cannot silently weaken a
-      // shell-level geometry test.
+      // This browser harness renders SessionTable directly. Keep that absence
+      // explicit, then install a clearly named synthetic export anchor in the
+      // production sibling position so the probe exercises external chrome.
       await expect(page.locator('[data-sessions-export]')).toHaveCount(0);
       await expect(page.locator('[data-session-table-owner]')).toHaveCount(1);
       await page.evaluate(() => {
-        const probeAnchor = document.querySelector('[data-session-table-owner]');
-        if (!probeAnchor) {
+        const fixtureOwner = document.querySelector('[data-session-table-owner]');
+        if (!fixtureOwner?.parentElement) {
           throw new Error('Synthetic Sessions table owner is unavailable');
+        }
+        const rowGap = Number.parseFloat(getComputedStyle(fixtureOwner.parentElement).rowGap);
+        if (!Number.isFinite(rowGap)) {
+          throw new Error('Synthetic Sessions table owner has no measurable row gap');
+        }
+        const exportAnchor = document.createElement('div');
+        exportAnchor.dataset.sessionGeometryExportFixture = 'true';
+        exportAnchor.dataset.sessionsExport = '';
+        // The production export sibling exists before the surface is measured.
+        // Cancel the grid gap introduced only by installing this test anchor.
+        exportAnchor.style.marginBlockEnd = `${-rowGap}px`;
+        fixtureOwner.parentElement.insertBefore(exportAnchor, fixtureOwner);
+      });
+      const exportFixture = page.locator('[data-session-geometry-export-fixture][data-sessions-export]');
+      await expect(exportFixture).toHaveCount(1);
+      expect(
+        await exportFixture.evaluate(
+          (element) =>
+            element.parentElement === document.querySelector('[data-session-table-owner]')?.parentElement &&
+            element.nextElementSibling?.matches('[data-session-table-owner]'),
+        ),
+      ).toBe(true);
+      await page.evaluate(
+        () =>
+          new Promise<void>((resolve) => {
+            requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+          }),
+      );
+      const initialSurfaceHeight = await surface.evaluate((element) => element.clientHeight);
+      await page.evaluate(() => {
+        const exportAnchor = document.querySelector('[data-session-geometry-export-fixture][data-sessions-export]');
+        if (!exportAnchor?.parentElement) {
+          throw new Error('Synthetic Sessions export anchor is unavailable');
+        }
+        const rowGap = Number.parseFloat(getComputedStyle(exportAnchor.parentElement).rowGap);
+        if (!Number.isFinite(rowGap)) {
+          throw new Error('Synthetic Sessions export anchor has no measurable row gap');
         }
         const probe = document.createElement('div');
         probe.dataset.sessionGeometryProbe = 'true';
         probe.style.height = '80px';
         probe.style.flex = '0 0 80px';
-        probeAnchor.insertBefore(probe, probeAnchor.firstChild);
+        // Adding a grid sibling also adds one fixture row gap. Cancel only that
+        // gap so the external chrome mutation remains the probe's locked 80 px.
+        probe.style.marginBlockEnd = `${-rowGap}px`;
+        exportAnchor.parentElement.insertBefore(probe, exportAnchor);
       });
+      const geometryProbe = page.locator('[data-session-geometry-probe]');
+      await expect(geometryProbe).toHaveCount(1);
+      expect(Math.round((await geometryProbe.boundingBox())?.height ?? 0)).toBe(80);
+      expect(
+        await geometryProbe.evaluate(
+          (element) =>
+            element.parentElement === document.querySelector('[data-session-geometry-export-fixture]')?.parentElement &&
+            element.nextElementSibling?.matches('[data-session-geometry-export-fixture][data-sessions-export]'),
+        ),
+      ).toBe(true);
       await expect
         .poll(
           async () =>
@@ -194,10 +243,12 @@ test('anchors the virtual Session viewport inside the screen on desktop and mobi
             ),
         )
         .toEqual({ heightDroppedByProbe: true, singleScrollContainer: true });
-      await page.evaluate(() => document.querySelector('[data-session-geometry-probe]')?.remove());
+      await geometryProbe.evaluate((element) => element.remove());
       await expect
         .poll(async () => await surface.evaluate((element) => element.clientHeight))
         .toBe(initialSurfaceHeight);
+      await exportFixture.evaluate((element) => element.remove());
+      await expect(page.locator('[data-sessions-export]')).toHaveCount(0);
     }
 
     await page.setViewportSize({
