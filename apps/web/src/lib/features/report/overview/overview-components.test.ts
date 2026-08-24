@@ -53,13 +53,18 @@ const fixture = componentFrom(fixtureModule);
 const harnessPanel = componentFrom(harnessPanelModule);
 const { render } = rendererFrom(serverModule);
 
-const focusedOverview = () => {
+const focusedOverview = (
+  range: { readonly from: string; readonly to: string } = {
+    from: '2026-05-12T00:00:00.000Z',
+    to: '2026-06-11T23:59:59.999Z',
+  },
+) => {
   const { rows, tableRows: _tableRows, ...support } = demoReportPayload;
   return projectFocusedOverview(rows, support, {
     includeAdvanced: true,
     query: {
       filters: { fields: {}, harness: [], machine: [], origin: [], query: '' },
-      range: { from: '2026-05-12T00:00:00.000Z', to: '2026-06-11T23:59:59.999Z' },
+      range,
       revision: 'p2-fixture-revision',
     },
     timeline: { dimension: 'campaign', granularity: 'day' },
@@ -67,6 +72,31 @@ const focusedOverview = () => {
 };
 
 describe('decision-first Overview Svelte surfaces', () => {
+  test('renders exact ISO guidance on both custom period fields', () => {
+    const body = render(fixture, {
+      props: {
+        range: { from: '2026-05-12', mode: 'custom', to: '2026-06-11' },
+        result: focusedOverview(),
+      },
+    }).body;
+
+    expect(body.match(/title="Date as YYYY-MM-DD"/g)).toHaveLength(2);
+  });
+
+  test('renders the provisional comparison caveat only for a period still in progress', () => {
+    const today = focusedOverview({
+      from: '2026-06-11T00:00:00.000Z',
+      to: '2026-06-11T23:59:59.999Z',
+    });
+    const todayBody = render(fixture, { props: { range: { mode: 'today' }, result: today } }).body;
+    const completeBody = render(fixture, { props: { result: focusedOverview() } }).body;
+
+    expect(today.view.previousSummary?.totalCost).toBeGreaterThan(0);
+    expect(todayBody).toContain('data-period-comparison-caveat');
+    expect(todayBody).toContain('This period is still in progress, so the comparison is provisional.');
+    expect(completeBody).not.toContain('data-period-comparison-caveat');
+  });
+
   test('renders the executive answer before evidence and investigation during SSR', () => {
     const result = focusedOverview();
     const { body } = render(fixture, { props: { result } });

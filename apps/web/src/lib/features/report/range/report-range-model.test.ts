@@ -4,9 +4,11 @@ import {
   customRangeFromInputs,
   escapedRangeDraft,
   rangeBounds,
+  reportPeriodInProgress,
   reportRangeEditKey,
   reportRangePointerFinishType,
   reportRangeProjection,
+  resolveTimelineGranularity,
   validateCustomRangeInputs,
 } from './report-range-model';
 
@@ -25,8 +27,9 @@ describe('report range projection', () => {
 
     expect(projection.displayFrom).toBe('May 12, 2026');
     expect(projection.displayTo).toBe('Jun 11, 2026');
-    expect(projection.summary).toBe('May 12 → Jun 11, 2026 · 30 days');
+    expect(projection.summary).toBe('May 12 → Jun 11, 2026 · 31 days');
     expect(projection.selectionIndexes).toEqual([11, 41]);
+    expect(projection.dayCount).toBe(projection.selectionIndexes[1] - projection.selectionIndexes[0] + 1);
   });
 
   test('projects the 90-day preset without changing the 30-day default', () => {
@@ -34,7 +37,7 @@ describe('report range projection', () => {
 
     expect(projection.displayFrom).toBe('Mar 13, 2026');
     expect(projection.displayTo).toBe('Jun 11, 2026');
-    expect(projection.summary).toBe('Mar 13 → Jun 11, 2026 · 90 days');
+    expect(projection.summary).toBe('Mar 13 → Jun 11, 2026 · 91 days');
     expect(projection.selectionIndexes).toEqual([0, 90]);
   });
 
@@ -44,7 +47,59 @@ describe('report range projection', () => {
       last: '2026-07-03',
     });
 
-    expect(projection.summary).toBe('Jun 3 → Jul 03, 2026 · 30 days');
+    expect(projection.summary).toBe('Jun 3 → Jul 03, 2026 · 31 days');
+  });
+
+  test('counts every selected calendar day inclusively', () => {
+    const today = reportRangeProjection({ mode: 'today' }, generatedAt, domain);
+    const sameDay = reportRangeProjection(
+      { from: '2026-06-11', mode: 'custom', to: '2026-06-11' },
+      generatedAt,
+      domain,
+    );
+    const twelveDays = reportRangeProjection(
+      { from: '2026-05-25', mode: 'custom', to: '2026-06-05' },
+      generatedAt,
+      domain,
+    );
+
+    expect(today.summary).toEndWith('· 1 day');
+    expect(today.dayCount).toBe(1);
+    expect(sameDay.summary).toEndWith('· 1 day');
+    expect(twelveDays.summary).toEndWith('· 12 days');
+  });
+
+  test('keeps open bounds ordered when their explicit endpoint falls outside the data domain', () => {
+    const untilBeforeDomain = reportRangeProjection({ mode: 'custom', to: '2025-01-01' }, generatedAt, domain);
+    const fromAfterGeneration = reportRangeProjection({ from: '2027-01-01', mode: 'custom' }, generatedAt, domain);
+
+    expect(untilBeforeDomain.summary).toBe('Jan 1 → Jan 01, 2025 · 1 day');
+    expect(fromAfterGeneration.summary).toBe('Jan 1 → Jan 01, 2027 · 1 day');
+    for (const projection of [untilBeforeDomain, fromAfterGeneration]) {
+      expect(projection.dayCount).toBe(1);
+      expect(projection.dayCount).toBe(projection.selectionIndexes[1] - projection.selectionIndexes[0] + 1);
+    }
+  });
+
+  test('identifies periods that are still in progress', () => {
+    expect(reportPeriodInProgress({ mode: 'today' }, generatedAt)).toBeTrue();
+    expect(reportPeriodInProgress({ from: '2026-06-11', mode: 'custom', to: '2026-06-11' }, generatedAt)).toBeTrue();
+    expect(reportPeriodInProgress({ mode: '7d' }, generatedAt)).toBeFalse();
+    expect(reportPeriodInProgress({ mode: 'all' }, generatedAt)).toBeFalse();
+    expect(reportPeriodInProgress({ from: '2026-06-10', mode: 'custom', to: '2026-06-10' }, generatedAt)).toBeFalse();
+  });
+
+  test('resolves automatic timeline intervals from the inclusive day count', () => {
+    expect(resolveTimelineGranularity('day', 731)).toBe('day');
+    expect(resolveTimelineGranularity('week', 1)).toBe('week');
+    expect(resolveTimelineGranularity('month', 1)).toBe('month');
+    for (const days of [1, 91, 120]) {
+      expect(resolveTimelineGranularity('auto', days)).toBe('day');
+    }
+    for (const days of [121, 439, 730]) {
+      expect(resolveTimelineGranularity('auto', days)).toBe('week');
+    }
+    expect(resolveTimelineGranularity('auto', 731)).toBe('month');
   });
 
   test('keeps a canonical preset range when filtered data has a sparse domain', () => {
@@ -92,7 +147,12 @@ describe('report range projection', () => {
     expect(customRangeFromInputs('not-a-date', '2026-06-11')).toBeNull();
     expect(validateCustomRangeInputs('not-a-date', '2026-06-11')).toEqual({
       invalidField: 'from',
-      message: 'Enter a valid From date.',
+      message: 'Enter a valid From date (YYYY-MM-DD).',
+      status: 'invalid',
+    });
+    expect(validateCustomRangeInputs('2026-06-10', 'not-a-date')).toEqual({
+      invalidField: 'to',
+      message: 'Enter a valid To date (YYYY-MM-DD).',
       status: 'invalid',
     });
     expect(validateCustomRangeInputs('2026-06-12', '2026-06-11')).toEqual({
@@ -165,4 +225,6 @@ test('keeps invalid custom drafts announced and restores the committed range on 
   expect(source).toContain('validateCustomRangeInputs(draftFrom, draftTo)');
   expect(source).toContain("event.key !== 'Escape'");
   expect(source).toContain('restoreCommittedDraft()');
+  expect(source).not.toContain('type="date"');
+  expect(source).toContain('placeholder="YYYY-MM-DD"');
 });

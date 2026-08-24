@@ -789,18 +789,18 @@ and in the same test, after the day click, assert the period summary
 
 ## Done criteria
 
-- [ ] `grep -n "Math.max(0, Math.round" apps/web/src/lib/features/report/range/report-range-model.ts` → no match; `grep -n "dayCount" …/report-range-model.ts` ≥ 2
-- [ ] `grep -n "data-period-comparison-caveat" apps/web/src/lib/features/report/overview/executive-overview.svelte` → 1 hit
-- [ ] `grep -n "matchedRows" packages/report-core/src/session-query.ts apps/web/src/dashboard-model.ts` → ≥ 3 hits each; `grep -n "FROM campaign_rollup" packages/usage-store/src/session-query-sqlite.ts` → no hit inside `campaign_latest_candidates`; `grep -n "MAX(visible.sort_date)" …/session-query-sqlite.ts` → no match
-- [ ] `grep -n "serializeDashboardDateRange\|dashboardSearchUrlValues" apps/web/src/dashboard-search.ts apps/web/src/lib/features/shell/navigation.ts` → definitions + one `encode:` use
-- [ ] `grep -n 'type="date"' apps/web/src/lib/features/report/range/report-period-control.svelte` → no match; `placeholder="YYYY-MM-DD"` → 2 hits
-- [ ] `grep -n "resolveTimelineGranularity" apps/web/src --include=*.ts --include=*.svelte -r | grep -v test | wc -l` ≥ 4 (definition, report-search, live, synthetic)
-- [ ] `grep -n "INITIAL_REPORT_TIMELINE" apps/web/src/lib/features/report/core/report-bootstrap.ts` → no match (replaced by `initialReportTimelineFor`)
-- [ ] `grep -n "toBe(days + 1)" apps/web/e2e/time-range.spec.ts` → no match
-- [ ] `bun run typecheck`, `bun run lint`, `bun run --cwd apps/web test`, `cd packages/report-core && bun test src/session-query.test.ts`, `cd packages/usage-store && bun test src/session-query-sqlite.test.ts` all exit 0
-- [ ] `bun run --cwd apps/web test:e2e` exits 0 (snapshots regenerated and inspected)
-- [ ] `git status` shows no file outside the in-scope list
-- [ ] `plans/README.md` status row updated
+- [x] `grep -n "Math.max(0, Math.round" apps/web/src/lib/features/report/range/report-range-model.ts` → no match; `grep -n "dayCount" …/report-range-model.ts` ≥ 2
+- [x] `grep -n "data-period-comparison-caveat" apps/web/src/lib/features/report/overview/executive-overview.svelte` → 1 hit
+- [x] `grep -n "matchedRows" packages/report-core/src/session-query.ts apps/web/src/dashboard-model.ts` → ≥ 3 hits each; `grep -n "FROM campaign_rollup" packages/usage-store/src/session-query-sqlite.ts` → no hit inside `campaign_latest_candidates`; `grep -n "MAX(visible.sort_date)" …/session-query-sqlite.ts` → no match
+- [x] `grep -n "serializeDashboardDateRange\|dashboardSearchUrlValues" apps/web/src/dashboard-search.ts apps/web/src/lib/features/shell/navigation.ts` → definitions + one `encode:` use
+- [x] `grep -n 'type="date"' apps/web/src/lib/features/report/range/report-period-control.svelte` → no match; `placeholder="YYYY-MM-DD"` → 2 hits
+- [x] `grep -n "resolveTimelineGranularity" apps/web/src --include=*.ts --include=*.svelte -r | grep -v test | wc -l` ≥ 4 (definition, report-search, live, synthetic)
+- [x] `grep -n "INITIAL_REPORT_TIMELINE" apps/web/src/lib/features/report/core/report-bootstrap.ts` → no match (replaced by `initialReportTimelineFor`)
+- [x] `grep -n "toBe(days + 1)" apps/web/e2e/time-range.spec.ts` → no match
+- [x] `bun run typecheck`, `bun run lint`, `bun run --cwd apps/web test`, `cd packages/report-core && bun test src/session-query.test.ts`, `cd packages/usage-store && bun test src/session-query-sqlite.test.ts` all exit 0
+- [x] `bun run --cwd apps/web test:e2e` exits 0 (snapshots regenerated and inspected)
+- [x] `git status` shows no file outside the in-scope list
+- [x] `plans/README.md` status row updated
 
 ## STOP conditions
 
@@ -846,3 +846,71 @@ Stop and report back (do not improvise) if:
   `toBe(days)` bucket proof; the `knownDateDomain` effect in Step 6 (it must
   only ever widen knowledge, never reset to `null`); the ISO text inputs
   at 390 px (the brush stays the touch picker).
+
+## Execution notes
+
+- Executed on 2026-08-23 from `3a0bf943`; the child drift check against
+  `51815b70` was empty for every in-scope path.
+- Implemented U04a/U04b, U05, U19, U32, and the date-input portion of U37.
+  Campaign totals still include the established classifier rollup while the
+  displayed date and date sort now use only query-matched members.
+- Materialized the SQLite `filtered` campaign CTE. Reading matched dates from
+  that CTE exposed a 5,000-campaign regression (~47 s); materialization
+  restored the existing proof to 1.19 s without changing query results.
+- The same source session on `machine-a` and `machine-b`, with different API
+  values, remains two campaign rows. This proves machine identity stays in
+  grouping keys instead of being inferred from the shared session id or label.
+- Every changed visible sentence is pinned by a unit, SSR, or e2e assertion:
+  inclusive summaries, provisional comparison copy, ISO validation guidance,
+  and the resolved Auto interval label all have direct coverage.
+- Worktree lint used the explicit Biome path set plus all five repository
+  guards because bare `bun run lint` processes zero files below
+  `.claude/worktrees`. Typecheck, 986 web tests, report-core (31), usage-store
+  SQLite (22), and the full Playwright suite (151, `--workers=2` under the
+  shared lock) passed. The visual update command passed all four snapshots and
+  produced no PNG diff, so there was no visual change beyond already accepted
+  output to inspect.
+- A discretionary root `bun run test` passed all package tests and 121/122
+  tool tests. The one worktree-only failure was
+  `precommit-staged-only.test.ts`: its temporary repository could not resolve
+  `ultracite/biome/core` through the provisioned dependency shadow. The
+  required explicit-path formatter and lint gates above passed.
+- Codex review round 1 requested two copy-gate corrections. The To-date
+  validation now has an independent exact literal assertion, and the
+  in-progress insight pins its complete reader-facing sentence rather than
+  only its parenthetical suffix. Production code was unchanged.
+
+## Execution notes — maintainer reopening D20
+
+- Re-anchored the original implementation and review correction on the
+  current program tree after plan 088. The only conflict was the expected
+  additive `plans/README.md` status block; the accepted 087, 088, and 091
+  states were preserved.
+- Codex r3's remaining defect was reproduced before correction: the supported
+  URL `?range=..2025-01-01` projected the known-domain start after the
+  explicit end and rendered `-484 days`. A from-only bound after generation
+  had the symmetric failure.
+- Open ranges now retain their explicit endpoint and collapse only the
+  missing endpoint to it when the usual domain/generation fallback would
+  reverse the period. Both directions therefore remain ordered, have one
+  inclusive day, and keep `dayCount` equal to the selected index width.
+  Unit and settled browser tests cover both readable URLs.
+- The two Darwin Overview baselines changed only from `30 days` to the
+  accepted inclusive `31 days` text. Both diffs were reproduced alone,
+  audited visually, regenerated, and then passed in the full run; no geometry
+  or unrelated pixels changed.
+- Final child gates on 2026-08-24: targeted cross-package tests 145/145; web
+  1,003/1,003; report-core 244/244; usage-store 163/163, including the
+  50,000-row proof; typecheck 28/28 with Svelte 0 errors and 0 warnings; lint
+  1,084 files plus five repository guards; locked Playwright 153/153 with two
+  workers; production report 13/13; production scale 2/2 over exactly 5,000
+  synthetic sessions; build 15/15 immediately followed by bundle 4/4.
+  Added-line PII, `.only`/`.skip`, and diff checks were clean.
+- One production run initially executed the pre-089 build artifact and failed
+  the new `8 days` and `Auto (Day)` assertions. Both titles passed alone after
+  the mandatory rebuild, and the full production and scale gates then passed.
+  The stale-artifact run receives no product attribution.
+- Final independent review found no standards or specification blocker. Its
+  additional sweep covered open and preset projections across UTC,
+  Europe/Paris, America/New_York, Australia/Lord_Howe, and Pacific/Apia; the
+  inclusive count/index-width invariant held throughout. Verdict: ACCEPT.

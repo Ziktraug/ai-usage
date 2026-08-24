@@ -707,6 +707,54 @@ describe('durable session query SQLite projections', () => {
     }
   });
 
+  test('uses only date-matched members for campaign dates and date ordering', async () => {
+    const datedRow = (
+      sourceSessionId: string,
+      activeDate: string,
+      campaign?: { parent?: string; root: string },
+    ): SerializedRow => ({
+      ...row(sourceSessionId, 10, campaign),
+      activeDate,
+      date: activeDate,
+      endDate: activeDate,
+    });
+    const fixtureRows = [
+      { ...datedRow('campaign-root', '2026-07-16T08:00:00.000Z', { root: 'campaign-root' }), origin: 'human' as const },
+      {
+        ...datedRow('campaign-child', '2026-07-15T10:00:00.000Z', {
+          parent: 'campaign-root',
+          root: 'campaign-root',
+        }),
+        origin: 'subagent' as const,
+      },
+      {
+        ...datedRow('classifier-review', '2026-07-18T09:00:00.000Z', {
+          parent: 'campaign-root',
+          root: 'campaign-root',
+        }),
+        origin: 'classifier' as const,
+      },
+      datedRow('standalone', '2026-07-15T12:00:00.000Z'),
+    ];
+    const { database } = await openRowsDatabase(fixtureRows);
+    const request = queryRequest({
+      pageSize: 200,
+      range: { from: '2026-07-15T00:00:00.000Z', to: '2026-07-15T23:59:59.999Z' },
+      sort: [{ desc: true, id: 'date' }],
+    });
+    try {
+      const page = executeMaterializedSessionQuery(database, 'sessions', request);
+      expect(page).toEqual(projectSessionPage(fixtureRows, request));
+      if (!('items' in page)) {
+        throw new Error('Expected a session page fixture');
+      }
+      expect(page.items.map(({ row: itemRow }) => itemRow.sessionLabel)).toEqual(['standalone', 'campaign-root']);
+      expect(page.items[1]?.row.activeDate).toBe('2026-07-15T10:00:00.000Z');
+    } finally {
+      database.close();
+    }
+  });
+
   test('returns the actual campaign root when current filters match no campaign rows', async () => {
     const fixtureRows = [
       row('campaign-root', 10, { root: 'campaign-root' }),

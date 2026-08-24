@@ -7,6 +7,7 @@ import {
   hasActiveDashboardFilters,
   parseDashboardTimeCell,
   primaryDashboardTabFor,
+  serializeDashboardDateRange,
   serializeDashboardTimeCell,
   sortingStateFromSearch,
   toggleExactFieldFilter,
@@ -153,6 +154,26 @@ describe('dashboard search params', () => {
     expect(
       validateDashboardSearch({ range: { mode: 'custom', from: '2026-06-01', to: '2026-06-03' } }, defaults).range,
     ).toEqual({ mode: 'custom', from: '2026-06-01', to: '2026-06-03' });
+  });
+
+  test('decodes readable report ranges and keeps legacy records compatible', () => {
+    const defaults = dashboardSearchDefaultsFor('date');
+    const cases = [
+      ['7d', { mode: '7d' }],
+      ['custom', { mode: 'custom' }],
+      ['2026-06-01..2026-06-03', { from: '2026-06-01', mode: 'custom', to: '2026-06-03' }],
+      ['2026-06-01..', { from: '2026-06-01', mode: 'custom' }],
+      ['..2026-06-03', { mode: 'custom', to: '2026-06-03' }],
+    ] as const;
+    for (const [encoded, expected] of cases) {
+      const parsed = validateDashboardSearch({ range: encoded }, defaults).range;
+      expect(parsed).toEqual(expected);
+      expect(validateDashboardSearch({ range: serializeDashboardDateRange(parsed) }, defaults).range).toEqual(parsed);
+    }
+    for (const invalid of ['2026-03-03..2026-02-28', '2026-02-30..', '..', 'yesterday']) {
+      expect(validateDashboardSearch({ range: invalid }, defaults).range).toEqual(defaults.range);
+    }
+    expect(validateDashboardSearch({ range: { mode: '7d' } }, defaults).range).toEqual({ mode: '7d' });
   });
 
   test('toggles an exact field filter without disturbing the other dimensions', () => {

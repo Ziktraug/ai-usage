@@ -12,8 +12,7 @@ import { createReportClient } from '../../../rpc/report-client';
 import { createSessionClientAdapter, type SessionClientAdapter } from '../../../rpc/session-client';
 import { dashboardSearchCodec } from '../../shell/navigation';
 import { createAwaitedRouteQueryState } from '../../shell/query-load';
-import { INITIAL_REPORT_TIMELINE } from '../composition/report-destination';
-import { reportDestinationForSearch } from '../composition/report-search';
+import { initialReportTimelineFor, reportDestinationForSearch } from '../composition/report-search';
 
 export interface LiveReportPageData {
   readonly mode: 'live';
@@ -111,7 +110,7 @@ const prefetchInitialDestination = async (
     const { focused } = reportDestinationForSearch(
       search,
       bootstrap.bootstrap.support.generatedAt,
-      INITIAL_REPORT_TIMELINE,
+      initialReportTimelineFor(search.range, bootstrap.bootstrap.support.generatedAt),
     );
     if (focused === null) {
       return;
