@@ -50,6 +50,16 @@ export const sessionAnalysisTargetForPageItem = (item: SessionPageItem): Session
   };
 };
 
+/**
+ * Canonical target for a row the Overview hands the drawer. Overview campaign
+ * items carry the served campaign aggregate row, so the drawer must open the
+ * campaign — not the root session — whenever the row carries campaign identity.
+ */
+export const sessionAnalysisTargetForOverviewRow = (row: DashboardRow): SessionAnalysisTarget =>
+  row.campaignKey !== undefined && row.campaignTotalCount !== undefined && row.campaignVisibleCount !== undefined
+    ? sessionAnalysisTargetForPageItem({ campaignKey: row.campaignKey, kind: 'campaign', row })
+    : sessionAnalysisTargetForSession(row);
+
 export const sessionAnalysisTargetForTopLevelRow = (input: {
   campaigns: readonly CampaignView[];
   pageItems: readonly SessionPageItem[];

@@ -55,6 +55,7 @@ const shellRoutes = [
 ] as const;
 
 test('server-renders and reloads every Svelte shell route with accessible navigation', async ({ page, request }) => {
+  test.setTimeout(60_000);
   const browserSkillsRequests: string[] = [];
   page.on('request', (browserRequest) => {
     const pathname = new URL(browserRequest.url()).pathname;

@@ -1,5 +1,5 @@
 import { rmSync } from 'node:fs';
-import { chmod, mkdir, mkdtemp, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, realpath, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -25,12 +25,14 @@ if (!(LISTENER_PORT_PATTERN.test(listenerPort) && Number(listenerPort) <= 65_535
   throw new Error(`${LISTENER_PORT_ENVIRONMENT_KEY} must be a valid TCP port`);
 }
 
-const temporaryHome = await mkdtemp(path.join(tmpdir(), 'plan052-production-browser-'));
+const temporaryHome = await realpath(await mkdtemp(path.join(tmpdir(), 'plan052-production-browser-')));
 const fixtureBinDirectory = path.join(temporaryHome, 'fixture-bin');
+const configDirectory = path.join(temporaryHome, 'config');
 const engineStateDirectory = path.join(temporaryHome, 'engine-state');
 const logDirectory = path.join(temporaryHome, 'logs');
 const temporaryDirectory = path.join(temporaryHome, 'tmp');
 const databasePath = path.join(temporaryHome, 'store', 'usage.sqlite');
+const machineConfigPath = path.join(temporaryHome, '.config', 'ai-usage', 'machine.json');
 
 const cleanupHome = (): void => {
   rmSync(temporaryHome, { force: true, recursive: true });
@@ -38,9 +40,15 @@ const cleanupHome = (): void => {
 
 try {
   await Promise.all(
-    [fixtureBinDirectory, engineStateDirectory, logDirectory, temporaryDirectory, path.dirname(databasePath)].map(
-      async (directory) => await mkdir(directory, { mode: 0o700, recursive: true }),
-    ),
+    [
+      fixtureBinDirectory,
+      configDirectory,
+      engineStateDirectory,
+      logDirectory,
+      temporaryDirectory,
+      path.dirname(databasePath),
+      path.dirname(machineConfigPath),
+    ].map(async (directory) => await mkdir(directory, { mode: 0o700, recursive: true })),
   );
   const fakeGhPath = path.join(fixtureBinDirectory, 'gh');
   await writeFile(
@@ -52,6 +60,11 @@ try {
     codexSessionCount: scaleFixture ? SESSION_SCROLL_EXPECTED_COUNT : DEFAULT_CODEX_SESSION_COUNT,
     harnesses: scaleFixture ? ['codex'] : ['claude', 'codex'],
   });
+  await writeFile(
+    machineConfigPath,
+    `${JSON.stringify({ id: 'production-e2e-machine', label: 'Production fixture machine' })}\n`,
+    { mode: 0o600 },
+  );
   const child = Bun.spawn(['bun', '--no-env-file', 'run', 'start'], {
     cwd: rootDirectory,
     env: {
@@ -60,7 +73,7 @@ try {
       AI_USAGE_ENGINE_STATE_DIR: engineStateDirectory,
       AI_USAGE_HOME: temporaryHome,
       AI_USAGE_LOG_DIR: logDirectory,
-      AI_USAGE_ROOT_DIR: rootDirectory,
+      AI_USAGE_ROOT_DIR: configDirectory,
       AI_USAGE_TEMP_ROOT: temporaryDirectory,
       [CLOCK_EPOCH_ENVIRONMENT_KEY]: PRODUCTION_FIXTURE_EPOCH,
       HOME: temporaryHome,

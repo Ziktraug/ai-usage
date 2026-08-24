@@ -1571,7 +1571,14 @@ const openValidatedReadOnlyUsageStore = async (
   // directly and use an explicit mode=ro URI. Ordinary SQLite locking keeps reader snapshots consistent.
   // biome-ignore lint/suspicious/noBitwiseOperators: SQLite open flags are a documented bitmask API.
   const flags = constants.SQLITE_OPEN_READONLY | constants.SQLITE_OPEN_URI | constants.SQLITE_OPEN_NOFOLLOW;
-  const fileUrl = pathToFileURL(dbPath);
+  // `SQLITE_OPEN_NOFOLLOW` rejects any symlink component, not only a symlink at
+  // the database leaf. macOS exposes its private temporary directory through
+  // `/var` -> `/private/var`, so canonicalize the parent of the already-inspected
+  // file before opening it. Keeping the leaf name out of realpath means NOFOLLOW
+  // still rejects a leaf swapped to a symlink. The identity revalidation below
+  // binds the original path to the exact device/inode inspected above.
+  const canonicalParent = fs.realpathSync.native(path.dirname(dbPath));
+  const fileUrl = pathToFileURL(path.join(canonicalParent, path.basename(dbPath)));
   fileUrl.searchParams.set('mode', 'ro');
   if (options.immutable) {
     // With no committed WAL frames, immutable mode prevents a preview from creating WAL/SHM sidecars.

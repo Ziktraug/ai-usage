@@ -37,7 +37,7 @@
   } from '@ai-usage/design-system/svelte';
   import { provenanceForUsageRow } from '@ai-usage/report-core/provenance';
 
-  import type { SessionPresentationRow } from '@ai-usage/report-core/session-query';
+  import { campaignBadgeLabelForSessionRow, type SessionPresentationRow } from '@ai-usage/report-core/session-query';
   import { onDestroy, type Snippet } from 'svelte';
   import { MediaQuery } from 'svelte/reactivity';
   import { lineDeltaLabel, rtkSavedLabel, rtkSavedTitle } from '../../../../dashboard-sort';
@@ -82,6 +82,16 @@
   const row = $derived(snapshot.row ?? presentedRow);
   const target = $derived(snapshot.target ?? presentedTarget);
   const position = $derived(row ? rows.findIndex((candidate) => candidate.rowId === row.rowId) : -1);
+  // Names what the values below aggregate, using the same count the row that opened this
+  // drawer shows. No automated-review suffix here: the display row cannot tell how many of
+  // its rolled-up reviews are already inside `campaignVisibleCount`, and the campaign
+  // controls panel below states that exactly, from the member list it actually has.
+  // A campaign of one (every top-level row is a campaign) gets no extra line.
+  const campaignScope = $derived(
+    target?.kind === 'campaign-root' && (row?.campaignTotalCount ?? 1) > 1 && row
+      ? campaignBadgeLabelForSessionRow(row)
+      : null,
+  );
   const median = (values: readonly number[]): number => {
     const sorted = [...values].sort((left, right) => left - right);
     if (sorted.length === 0) {
@@ -353,9 +363,18 @@
       </nav>
     </div>
     <div class={drawerBody} data-session-drawer-body>
-      <div>
+      <div data-session-drawer-scope={campaignScope ? 'campaign' : 'session'}>
         <div class={drawerTitle}>{row.sessionLabel}</div>
         <div class={muted}>{row.providerDisplay} · {row.modelLabel}</div>
+        {#if campaignScope}
+          <div
+            class={muted}
+            data-session-drawer-campaign-scope
+            title="Values below cover the whole campaign: every session matching the current filters plus its rolled-up automated reviews, including any not listed below. Analyze root opens the root session's chronology."
+          >
+            {campaignScope}
+          </div>
+        {/if}
       </div>
       <div>
         <SegmentBar ariaLabel="Token anatomy" {segments} />

@@ -12,7 +12,7 @@ import { encodeRpcResponseBody, isRpcPathname, RPC_ROUTE_GLOB, rpcStringFieldVal
 import { createServerStateNetworkTrace } from './server-state-network';
 
 const NON_EMPTY_ATTRIBUTE_PATTERN = /.+/;
-const API_VALUE_BUCKET_PATTERN = /API value: \$/;
+const API_VALUE_BUCKET_PATTERN = /API value: (?:≥ )?\$/;
 const PROCESSED_TOKEN_BUCKET_PATTERN = /Processed tokens: [0-9,]+ tokens$/;
 const SESSION_QUERY_FINGERPRINT_PATTERN = /^session-query-v1:[0-9a-f]{16}$/;
 const SESSION_NEIGHBOR_FINGERPRINT_PATTERN = /^session-neighbor-v1:[0-9a-f]{16}$/;

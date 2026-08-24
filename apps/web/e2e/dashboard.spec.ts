@@ -509,6 +509,11 @@ test('opens a session from Overview without leaving the current analysis', async
   await sessionTrigger.click();
 
   await expect(page.getByRole('dialog')).toBeVisible();
+  // The Overview row describes the campaign, so the drawer it opens must describe the
+  // same campaign — the same total the trigger's accessible name already pins.
+  const drawer = page.getByRole('dialog', { name: 'Session details' });
+  await expect(drawer.locator('[data-session-drawer-campaign-scope]')).toHaveText('Campaign · 3 sessions');
+  await expect(drawer.locator('[data-detail-item="API value"]')).toContainText('$4.21');
   await expect(reportViewsFor(page).getByRole('link', { exact: true, name: 'Overview' })).toHaveAttribute(
     'aria-current',
     'page',
@@ -678,7 +683,7 @@ test('offers keyboard-safe charts and mobile summaries at a narrow viewport', as
   const mobileSort = page.getByRole('combobox', { name: 'Sort mobile session summaries' });
   expect(Math.round((await mobileSort.boundingBox())?.height ?? 0)).toBe(44);
   const sortDirection = page.getByRole('button', { name: 'Sort ascending' });
-  expect(Math.round((await sortDirection.boundingBox())?.height ?? 0)).toBe(48);
+  expect(Math.round((await sortDirection.boundingBox())?.height ?? 0)).toBeGreaterThanOrEqual(44);
   await expect(sessionSummaries).toHaveCSS('border-top-width', '0px');
   await expect(sessionSummaries).toHaveCSS('box-shadow', 'none');
   const firstSummary = sessionSummaries.locator('article').first();

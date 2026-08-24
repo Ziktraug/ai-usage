@@ -861,3 +861,349 @@ Stop and report back (do not improvise) if:
   per refresh, memoized) and the updated `drawer-value-presentation` numbers
   (derive them from `apps/web/src/report-data.ts`, do not copy from this plan
   blindly).
+
+## Execution notes
+
+Executed 2026-08-23 in the `exec/088` worktree from program tip `a70cf1aa`.
+Drift check clean: no in-scope file had changed since `51815b70`, and every
+"Current state" excerpt matched the tree.
+
+### Deviations from the written steps
+
+1. **Step 8/10 — the synthetic destination had no drawer target at all.**
+   Step 10.3 asks the Sessions-tab drawer to expose
+   `[data-session-drawer-campaign-scope]`, but the e2e and demo runtimes render
+   `synthetic-report-destination.svelte`, not `sessions-destination.svelte`.
+   Its `selectSessionRow` set `selection = { row }` with no `target`, so the
+   drawer slot defaulted to a plain session target and the qualifier never
+   rendered (the assertion failed on the first run). Fixed by threading the
+   same canonical helper through it:
+   `selection = { row, target: sessionAnalysisTargetForOverviewRow(row) }`.
+   `synthetic-report-destination.svelte` is already in scope, the helper's
+   guard keeps loaded campaign members atomic, and U06 would otherwise stay
+   visibly unfixed on `bun run demo` — which the program gate walks.
+
+2. **Step 5 — the `>Sessions<` grep matched the new test's own regex.**
+   The literal `/<th[^>]*>Sessions<\/th>/` in `sync-render.test.ts` made the
+   Done-criterion grep non-empty. The pattern is now
+   `/<th[^>]*>\s*Sessions\s*<\/th>/u`, hoisted to module scope (Biome's
+   `useTopLevelRegex`). It is a strict superset of the written assertion.
+
+3. **Step 11 — the SSR assertion is whitespace-normalized.**
+   `bun x ultracite fix` wraps the record sub-line, so Svelte's SSR output
+   contains `Build report UI\n          · Root task-open time`. The browser
+   collapses it (the e2e passes), so the SSR check now compares against
+   `body.replaceAll(/\s+/g, ' ')`, as other SSR tests here do.
+
+4. **Step 7 — the trace bound also asserts a lower bound.**
+   `expect(campaignPageQueries).toBeGreaterThan(0)` sits next to the
+   `toBeLessThanOrEqual(6)` the plan asked for; measured value is 3 for the
+   fixture. Without it the bound would still pass if the campaign page query
+   silently disappeared.
+
+### Repo guards the plan did not run
+
+- **Bundle closure.** `bun run test:web-bundle` cannot run in a nested
+  worktree (its `INITIAL_CLOSURE_ENTRY_KEYS` hard-code
+  `../../node_modules/@sveltejs/kit/...`; the emitted manifest key here is
+  `../../../../../node_modules/...`). Measured the same closure by hand from
+  the emitted manifest, in this environment, at three points:
+  HEAD `286,073 B` gzip · this change without `records.svelte` `286,451 B` ·
+  this change `289,091 B`. So the change costs **+3,018 B**, of which
+  **+2,640 B** is `records.svelte` newly importing `sessionDurationSemantics`
+  from `session-analysis-model.ts` into the eager report closure. Against the
+  recorded `284,579 B` that is **1.585 % drift** — under the 2 % tolerance and
+  under the 300 KB ceiling, so the guard stays green and
+  `RECORDED_GZIP_CLOSURE_BYTES` was **not** moved (this worktree's own build
+  is already +0.525 % over the recorded number, so writing my figure into the
+  guard would bake in an environment artefact). Duplicating the semantic to
+  dodge the import was rejected: two definitions of one concept is the exact
+  defect this plan removes. Plans 093/094/097/098 should know ~1 % of the
+  drift budget is now spent.
+- **`bun run lint`** is a no-op-then-fail inside a worktree (`biome.json`
+  excludes `**/.claude/worktrees`, so `biome check .` processes 0 files and
+  exits 1). Ran the equivalent explicitly over `apps packages tools plans docs
+  ./*.json ./*.ts` plus the five `tools/check-*.ts` guards: 1076 files, exit 0.
+- **`tools/precommit-staged-only.test.ts`** fails here with
+  `Could not resolve ultracite/biome/core`. It runs `lint-staged` with a `/tmp`
+  cwd; this worktree's `node_modules` holds only `@ai-usage/*` and `.bin`
+  symlinks, so a `/tmp` cwd has no upward path to `ultracite`. Unrelated to
+  this diff (it never reads a changed file). `bun run test:packages` is green.
+
+### Canonical helpers introduced (for plans 094 / 097 / 098)
+
+- `sessionAnalysisTargetForOverviewRow(row)` in
+  `apps/web/src/session-analysis-target.ts` — the one way to turn a *presented
+  display row* (which may be a campaign aggregate) into a drawer target. Used
+  by both report destinations. Do not add a second variant.
+- `OVERVIEW_ITEM_SORT` + `sessionCampaignDisplayRow(campaign, …, false)` in
+  `packages/report-core/src/focused-report-query.ts` — Overview campaign items
+  now carry the same aggregate row the Sessions page serves.
+- `data-session-drawer-scope` (`campaign` | `session`) and
+  `data-session-drawer-campaign-scope` on the drawer title block, and
+  `data-campaign-totals` on the campaign header line. Plan 098 should build on
+  these rather than adding a second campaign label.
+- `analyticsInput` in `focused-report-query.ts` now carries `costLowerBound`
+  for every group; the SQLite twin is a plain `SUM(cost_approx)`. A new
+  breakdown dimension must use both — never a `cost_known = 1` case.
+
+## Execution notes — rework round 1
+
+Four findings from the adversarial review, all fixed.
+
+1. **BLOCKING 1 (fixed) — the automated-review suffix double-counted.**
+   `classifierRollupLabelForSessionRow(campaign)` always printed
+   `campaignClassifierCount`, but the in-memory collection *lists* its
+   classifiers, so the drawer read `3 / 3 sessions shown · + 1 automated
+   review` while that review was one of the three rows on screen. The suffix
+   now counts only the reviews the member list does **not** show:
+   `campaignClassifierCount − (listed rows whose origin is 'classifier',
+   excluding the campaign row itself)`, floored at 0. The served page lists no
+   classifiers, so the live path still shows all of them; the in-memory path
+   shows none when they are all listed. The canonical label still owns the
+   phrasing (it is applied to the corrected count), so "automated review(s)"
+   has exactly one definition.
+   *Why the gates missed it*: no fixture ever put a classifier **in** the
+   listed collection. Added `listedClassifier` (a row with
+   `origin: 'classifier'`) and three cases that relate the count to the list:
+   none listed → `+ 2 automated reviews`; the only review listed → no suffix
+   at all; one of three listed → `+ 2 automated reviews`. Verified the two new
+   cases **fail** against the previous implementation and pass against this one.
+
+2. **BLOCKING 2 (fixed) — U03 was gated on one surface.**
+   `sync-render.test.ts` now asserts each renamed surface at the rendered
+   level with its own pattern — the fleet card's `<span>`, the desktop
+   `<th>`, and the mobile `<dt>` — plus a single negative
+   `/<(dt|span|th)[^>]*>\s*Sessions\s*<\/\1>/u`. Verified by regressing each
+   surface independently (including the mobile `<dt>` alone): each regression
+   fails the suite.
+
+3. **BLOCKING 3 (fixed) — two assertions that could not fail.**
+   - `focused-report-query.test.ts`: `rowId: campaignItem.row.rowId` compared a
+     property with itself. The `toMatchObject` now pins the independent
+     `sessionRowIdentity(campaignRoot)` and the literal expected campaign key
+     `machine-a:codex:record-campaign-root`; the redundant follow-up
+     assertions were removed.
+   - `campaign-session-controls.ssr.test.ts`: the ordering checks compared two
+     `indexOf` results and passed on two `-1`s. Added a `positionOf` helper
+     that asserts presence (`toBeGreaterThanOrEqual(0)`) before returning the
+     index, and a `countsLine` helper that asserts both boundary markers exist
+     before slicing. Every position comparison in this file now goes through
+     them.
+
+4. **STANDARDS (fixed).** `(r) => r.root_ordinal` →
+   `(record) => record.root_ordinal` in
+   `focused-report-query-sqlite.ts`; removed the comment I had duplicated at
+   `focused-report-query-sqlite.test.ts`.
+
+### Program-wide check: one entity from two machines
+
+Nothing this plan introduces assumes a globally unique entity. Every key I
+added is already machine-scoped, matching the storage primary key:
+
+- **Campaign identity** — `sessionCampaignKeyFor` is
+  `machineId:harnessKey:rootSourceSessionId` (`session-query.ts:1078`). The
+  Overview campaign items I changed key off exactly this.
+- **The SQLite memo I introduced** — `campaignRowsByKey` in
+  `readOverviewSessionSelections` is keyed by the `campaign_key` column, which
+  carries the same machine-scoped value. This was the one genuinely new
+  cache in the diff and the one place a non-scoped key would have served one
+  machine's aggregate for another's item.
+- **Row identity** — `sessionRowIdentity` includes `source.machineId`, so
+  `sessionAnalysisTargetForOverviewRow`'s fallback path is scoped too.
+- **Group totals** (`costLowerBound` in `analyticsInput`) group by harness /
+  provider / project, which are deliberately cross-machine; two machines
+  observing the same logical session are two stored rows and contribute
+  twice. That is the pre-existing, intended semantic — my change only extends
+  *which cost* is summed, not the grouping — and `/sync`'s new "Stored
+  sessions" label exists precisely to say these are per-machine stored rows.
+
+Proved by two new fixtures, both with two machines emitting identical
+`sourceSessionId`s (`shared-root` / `shared-child`):
+- `focused-report-query.test.ts` → "keeps the same campaign observed on two
+  machines as two Overview items": two campaign keys, `[2, 2]` sessions,
+  `[12, 24]` cost, two distinct `rowId`s, `summary.sessionCount === 4`.
+- `focused-report-query-sqlite.test.ts` → two campaign keys, `[2, 2]`
+  sessions and `[7, 24]` cost through the served path, plus pure/SQLite
+  `toEqual` parity. Verified this one
+  **fails** when the memo key is changed to a non-machine-scoped value.
+
+### The same double-count was in the drawer's own scope line (found while fixing BLOCKING 1)
+
+Step 9.2 specified the qualifier as
+`[campaignBadgeLabelForSessionRow(row), classifierRollupLabelForSessionRow(row)].filter(Boolean).join(' · ')`,
+which rendered `Campaign · 3 sessions · + 1 automated review` for the shipped
+fixture — where that review is one of the three sessions. `visibleCount` is
+`matchedRows.length` (`session-query.ts:1189`) and the classifier matched, so
+the badge already counted it.
+
+Unlike the controls panel, the drawer cannot fix this by counting: it holds
+only the display row, and nothing on that row says how many of
+`campaignClassifierCount` are already inside `campaignVisibleCount`
+(`|matched ∩ classifiers|` is not carried, and inferring it from
+`min(totalCount, visibleCount + classifierCount)` over-counts whenever an
+origin filter matches a classifier but not its siblings). Inventing that
+number is exactly what this plan exists to stop, and carrying it properly
+means a new field on `sessionCampaignDisplayRow` plus its SQLite mirror and
+parser — out of scope here.
+
+So the drawer scope line now states one canonical count,
+`campaignBadgeLabelForSessionRow(row)` → `Campaign · N sessions`, the same
+number the row that opened the drawer shows. The rolled-up-review explanation
+lives only in the campaign controls panel directly below it, where the member
+list makes it exact. `classifierRollupLabelForSessionRow` is no longer
+imported by `session-drawer.svelte`.
+
+Gated deterministically: the e2e scope assertions are `toHaveText` (exact), so
+any appended suffix fails, and `origin-campaign.spec.ts` additionally asserts
+the counts line reads `3 / 3 sessions shown`, contains no `automated review`,
+and that `Tune collector fixtures` — the review — is visible in the list.
+The regenerated `overview-session-drawer-linux.png` now reconciles end to
+end: `$4.21 = 3.20 + 0.17 + 0.84`, `49 turns = 22 + 11 + 16`,
+`109 tools = 64 + 18 + 27` across exactly the three rows on screen.
+
+**Note for plan 098** (drawer chrome): the scope line is deliberately just
+`Campaign · N sessions`. If 098 wants the rolled-up reviews named in the
+drawer header, the honest way is to carry the covered-session count on the
+campaign display row from `session-query.ts` — not to re-append
+`classifierRollupLabelForSessionRow` there.
+
+## Execution notes — rework round 2
+
+1. **BLOCKING 1 (fixed) — U02 now has a rendered gate.**
+   `overview-components.test.ts` gains "U02 — one API-value total per harness
+   across Overview and Analysis": one fixture, one query, both surfaces
+   rendered — the Overview's "API value by harness" list (via
+   `overview-page.fixture.svelte`) and `harness-provider-panel.svelte` — and
+   the Codex value and share compared between them. The fixture has a
+   partially priced row with a **non-zero** known subtotal ($2 of a
+   two-segment session) plus a fully priced $3 Codex row, and a second,
+   fully priced $5 Claude harness so the two share denominators differ.
+   Verified against the reintroduced defect: the breakdown renders
+   `≥ $3.00` / `38%` while the Overview renders `≥ $5.00` / `50%` — both
+   halves of the audit symptom (the missing subtotal and the 24 %-vs-23 %
+   share) fail the gate, and both pass after the fix.
+
+2. **BLOCKING 2 (fixed) — all four header values pinned.**
+   The SSR campaign fixture now carries `freshTokens: 777_000`,
+   `turns: 4242`, `tools: 3131` — none of which is the member-page sum — and
+   the test pins the whole header string
+   `$99.00 API · 777k fresh tokens · 4,242 turns · 3,131 tools`, asserts it
+   appears exactly once, and asserts the member-page sums (`2,003 fresh`,
+   `7 turns`, `3 tools`) appear nowhere. Verified by regressing all three
+   previously unpinned fields back to `visibleRows` sums: the suite fails.
+   `origin-campaign.spec.ts` pins the rendered header with `toHaveText`
+   (`$4.21 API · 155k fresh tokens · 49 turns · 109 tools`).
+
+3. **BLOCKING 3 (fixed) — the tooltip was false and is now pinned.**
+   It said the values are totals "across the listed sessions"; they are the
+   whole matching aggregate plus rolled-up automated reviews, including
+   members not loaded or listed. New copy: "Values below cover the whole
+   campaign: every session matching the current filters plus its rolled-up
+   automated reviews, including any not listed below. Analyze root opens the
+   root session's chronology." Pinned by a `toHaveAttribute('title', …)`
+   assertion in `origin-campaign.spec.ts`, so the copy cannot drift from its
+   own test again.
+
+4. **BLOCKING 4** — squashed to one commit on the merge-base `a70cf1aa` via
+   `git commit-tree` + `git update-ref` (no reset, no force, working tree
+   untouched); tree verified byte-identical to the pre-squash tree.
+
+### The served-page premise was wrong; the computation was not
+
+The reviewer is right about `session-query-sqlite.ts`: `runCampaignChildren`
+builds `rollupWhere` as
+`campaign_key = ? AND campaign_root = 0 AND ((<filter>) OR session_rows.origin = 'classifier')`
+and uses it for the `items` projection, so the **served children query does
+return classifiers** — `matchedWhere` (classifier-free) is used only for
+`session_count`. My comment claiming the served page excludes them was wrong
+and is corrected.
+
+**The computation was already right**, because it never depended on that
+premise: it counts classifier rows in the *rendered list* (`model.sessions`)
+and subtracts, so it is correct whichever shape the collection has. What the
+wrong premise did cost was a missing case, now added: a review that is
+**loaded but filtered out of the list** — the served shape, where
+`collection.items` carries the classifier via the rollup but `visibleRows`
+does not — must still be counted. That case is pinned in
+`campaign-session-controls.ssr.test.ts` ("still counts a loaded review that
+the current filters keep out of the list") and passes.
+
+So: **comment corrected, computation unchanged, one missing test case added.**
+
+### Not taken (non-blocking)
+
+The two-machine campaign graphs in `focused-report-query.test.ts` and
+`focused-report-query-sqlite.test.ts` stay separate. They live in different
+packages (`report-core` vs `usage-store`) and the SQLite one must go through
+`SerializedRow` → `publishFixture`; a shared fixture would need a new exported
+test helper crossing the package boundary. The parity `toEqual` in the SQLite
+test already fails if the two graphs drift apart, which is the drift that
+matters.
+
+## Execution notes — exceptional rework round 3
+
+The orchestrator granted one narrow budget extension after the third Codex
+review reproduced a data-honesty defect at the campaign-controls adapter seam.
+The finding was accepted in full.
+
+### Production seam and regression
+
+`runCampaignChildren` deliberately returns the union of children matching the
+active filter and classifier rows needed by the campaign rollup. Its
+`sessionCount` remains the count of children that actually match. The web
+adapter previously copied every returned item into `visibleRows` but used the
+filter-derived `campaignVisibleCount` for the count line. The focused red
+fixture therefore rendered a root and its automated review while saying
+`1 / 2 sessions shown · 1 hidden by current filters`, with no review
+explanation.
+
+The fix keeps the settled pure/SQLite rollup parity and carries the query's
+exact `itemCount - sessionCount` delta through
+`campaignSessionControlsState`, the live binding, and the component model as
+`rolledUpClassifierCount`. That count has three presentation effects:
+
+- the main ratio is explicitly the number of sessions that match the active
+  filters, not the number of rendered rows;
+- a classifier returned for campaign totals is not also called hidden;
+- the same count renders `+ N automated reviews included in campaign totals`,
+  using the canonical review label and pluralization.
+
+`campaign-session-controls.ssr.test.ts` now drives
+`SessionWindowView -> campaignSessionControlsState -> CampaignSessionControls`
+with the served shape: an origin filter matches the root, the filtered child
+page returns the review through the rollup rule, and the page's
+`sessionCount` excludes it. The test went red on the exact reported symptom,
+then green with both rows rendered and the copy
+`1 / 2 sessions match current filters · + 1 automated review included in
+campaign totals`; it also asserts that no `hidden by current filters` claim is
+rendered. The manually impossible test that removed the returned classifier
+from `visibleRows` was deleted, and the contradictory served-page comment was
+replaced.
+
+### Two-machine applicability
+
+This correction does not group across machines. The adapter indexes exactly
+one page pair by the selected `campaignKey`, whose identity is
+`machineId:harnessKey:rootSourceSessionId`, and `uniqueRows` uses the
+machine-scoped `rowId`. The two existing plan fixtures remain the systemic
+proof: `focused-report-query.test.ts` presents the same `shared-root` /
+`shared-child` IDs from two machines as two campaigns,
+and `focused-report-query-sqlite.test.ts` proves the served projection has the
+same result in pure/SQLite parity. Both passed in this round's focused package
+run. No new different-value fixture is required for this seam: the new delta
+is computed only after one exact machine-scoped map lookup and never iterates,
+groups, counts, or de-duplicates entries from another campaign key.
+
+### Round 3 verification
+
+- Red/green adapter SSR loop: 7 passing / 1 failing before the fix; 7 passing
+  after removing the impossible duplicate case.
+- Focused package gate: 138 tests passed across report-core focused/CSV/
+  analytics and usage-store focused/index suites.
+- Full web unit/SSR gate: 935 tests passed across 172 files.
+- Worktree-safe Biome lint checked 1,076 files; all five repository lint guards
+  passed.
+- `bun run typecheck`: 28 tasks passed, Svelte reported zero errors and zero
+  warnings.
+- Locked Playwright gate: the five plan specs passed 35/35 with two workers.

@@ -52,7 +52,7 @@ const withTimeout = async <Value>(promise: Promise<Value>, label: string): Promi
 };
 
 const createFixture = async (options: { readonly databasePath?: string } = {}): Promise<EngineFixture> => {
-  const root = await mkdtemp(path.join(tmpdir(), 'plan052-engine-child-'));
+  const root = await realpath(await mkdtemp(path.join(tmpdir(), 'plan052-engine-child-')));
   const homeDirectory = path.join(root, 'home');
   const stateDirectory = path.join(root, 'state');
   const temporaryRoot = path.join(root, 'temporary');

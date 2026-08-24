@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { USAGE_ENGINE_PROTOCOL_VERSION } from '@ai-usage/usage-engine-control';
@@ -8,7 +8,7 @@ import { loadUsageEngineRendezvousForWeb } from './usage-engine-control.server';
 import type { UsageWebRuntimePaths } from './usage-runtime-paths.server';
 
 test('loads only a rendezvous bound to the web database and config target', async () => {
-  const root = await mkdtemp(path.join(tmpdir(), 'plan052-web-rendezvous-'));
+  const root = await realpath(await mkdtemp(path.join(tmpdir(), 'plan052-web-rendezvous-')));
   const stateDirectory = path.join(root, 'state');
   const paths: UsageWebRuntimePaths = {
     configCwd: path.join(root, 'config'),

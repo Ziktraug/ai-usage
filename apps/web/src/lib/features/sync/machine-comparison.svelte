@@ -35,7 +35,10 @@
 <section aria-labelledby="machine-contribution-title" class={section}>
   <div class={panelHeader}>
     <h2 class={panelTitle} id="machine-contribution-title">Machine contributions</h2>
-    <div class={panelSub}>Session share across the loaded fleet.</div>
+    <div class={panelSub}>
+      Share of stored sessions across the loaded fleet. The store keeps every active row per machine, including
+      zero-token sessions that the report leaves out, so the report's session total can be lower.
+    </div>
   </div>
   <!-- svelte-ignore a11y_no_noninteractive_tabindex -- comparison table remains keyboard-reachable -->
   <div class={cx(tableWrap, desktopTableSurface)} tabindex="0">
@@ -43,7 +46,7 @@
       <thead>
         <tr>
           <th scope="col">Machine</th>
-          <th class={numCell} scope="col">Sessions</th>
+          <th class={numCell} scope="col">Stored sessions</th>
           <th class={numCell} scope="col">Fleet share</th>
           <th scope="col">Newest session</th>
           <th scope="col">Freshness</th>
@@ -77,7 +80,7 @@
         </header>
         <dl class={projectSummaryMetrics}>
           <div class={projectSummaryMetric}>
-            <dt>Sessions</dt>
+            <dt>Stored sessions</dt>
             <dd>{row.sessionCount.toLocaleString()}</dd>
           </div>
           <div class={projectSummaryMetric}>

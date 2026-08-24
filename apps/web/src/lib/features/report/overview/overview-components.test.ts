@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from 'bun:test';
-import { projectFocusedOverview } from '@ai-usage/report-core/focused-report-query';
+import { projectFocusedBreakdown, projectFocusedOverview } from '@ai-usage/report-core/focused-report-query';
 import type { ProviderLimitWindow } from '@ai-usage/report-core/provider-status';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
 import type { Component } from 'svelte';
@@ -13,6 +13,9 @@ interface SvelteServerModule {
 }
 
 const RECORD_DISCLOSURE_PATTERN = /aria-hidden="true" class="[^"]+">↗<\/span>/;
+/** The share `<span>` and value `<strong>` of one "API value by harness" row. */
+const HARNESS_GROUP_SHARE_PATTERN = />([\d.]+%|—)<\/span> <strong/u;
+const HARNESS_GROUP_VALUE_PATTERN = /<strong[^>]*>([^<]+)<\/strong>/u;
 
 const componentFrom = (loaded: unknown): Component => {
   if (typeof loaded !== 'object' || loaded === null || !('default' in loaded) || typeof loaded.default !== 'function') {
@@ -41,11 +44,13 @@ const viteServer = await createServer({
 });
 const closeViteServer = (): Promise<void> => viteServer.close();
 afterAll(closeViteServer);
-const [fixtureModule, serverModule] = await Promise.all([
+const [fixtureModule, harnessPanelModule, serverModule] = await Promise.all([
   viteServer.ssrLoadModule('/apps/web/src/lib/features/report/overview/overview-page.fixture.svelte'),
+  viteServer.ssrLoadModule('/apps/web/src/lib/features/report/breakdown/harness-provider-panel.svelte'),
   viteServer.ssrLoadModule('svelte/server'),
 ]);
 const fixture = componentFrom(fixtureModule);
+const harnessPanel = componentFrom(harnessPanelModule);
 const { render } = rendererFrom(serverModule);
 
 const focusedOverview = () => {
@@ -120,6 +125,22 @@ describe('decision-first Overview Svelte surfaces', () => {
     expect(body).toContain('Open activity for');
     expect(body).not.toContain('aria-label="Open details for');
     expect(body).toMatch(RECORD_DISCLOSURE_PATTERN);
+
+    // "Longest session" is a recorded duration whose meaning is harness-specific and,
+    // for a campaign, root-session only (plan 052). The card must say which.
+    const longest = result.view.records?.longest;
+    if (!longest) {
+      throw new Error('Expected the Overview fixture to include a longest session');
+    }
+    const expectedSemantic =
+      longest.kind === 'campaign' && longest.sessionCount > 1 ? 'Root task-open time' : 'Task-open time';
+    expect(body).toContain('data-longest-session-semantic');
+    const normalizedBody = body.replaceAll(/\s+/g, ' ');
+    expect(normalizedBody).toContain(`${longest.label} · ${expectedSemantic}`);
+    expect(normalizedBody).toContain('Build report UI · Root task-open time');
+    expect(body).toContain(
+      'title="Campaign time uses the root session only. Sum of recorded Codex task-open spans. This includes time waiting for tools and subagents; it is not model runtime."',
+    );
   });
 
   test('distinguishes no local data from a filtered zero result', () => {
@@ -362,5 +383,176 @@ describe('P2 corrected interactive SSR contracts', () => {
     expect(body).toContain('data-machine-freshness="stale"');
     expect(body).toContain('· Stale');
     expect(body).toContain('Freshness unavailable');
+  });
+});
+
+describe('U02 — one API-value total per harness across Overview and Analysis', () => {
+  // The audit symptom: a harness whose sessions are partly priced showed a larger total on
+  // Overview than in Harnesses & providers, because the breakdown counted only fully priced
+  // sessions. Both surfaces must render the same known subtotal and the same share.
+  const partiallyPricedFixture = () => {
+    const { rows: _rows, tableRows: _tableRows, ...support } = demoReportPayload;
+    const base = {
+      activeDate: '2026-06-05T10:00:00.000Z',
+      calls: 1,
+      costQuota: 0,
+      date: '2026-06-05T09:00:00.000Z',
+      durationMs: 60_000,
+      endDate: '2026-06-05T10:00:00.000Z',
+      harness: 'Codex',
+      lineDelta: 0,
+      linesAdded: 0,
+      linesDeleted: 0,
+      origin: 'human' as const,
+      project: 'ai-usage',
+      provider: 'Codex API',
+      subagent: false,
+      tokCw: 0,
+      tools: 1,
+      turns: 1,
+    };
+    const rows = [
+      {
+        ...base,
+        costActual: 3,
+        costApprox: 3,
+        costKnown: true,
+        freshTokens: 100,
+        model: 'gpt-5.3-codex',
+        name: 'Fully priced session',
+        sessionLabel: 'Fully priced session',
+        source: {
+          harnessKey: 'codex',
+          machineId: 'fixture-machine',
+          machineLabel: 'Fixture Machine',
+          rootSourceSessionId: 'priced',
+          sourceSessionId: 'priced',
+        },
+        tokCr: 0,
+        tokIn: 100,
+        tokOut: 0,
+        tokenTotal: 100,
+      },
+      {
+        ...base,
+        // Partly priced: one segment has a known $2 subtotal, the other has no pricing at all.
+        // Before the fix the breakdown dropped this $2 while the Overview kept it.
+        costActual: null,
+        costApprox: 2,
+        costKnown: false,
+        freshTokens: 200,
+        model: 'gpt-5.3-codex',
+        modelSegments: [
+          { costApprox: 2, costKnown: true, model: 'gpt-5.3-codex', tokCr: 0, tokCw: 0, tokIn: 100, tokOut: 0 },
+          { costApprox: 0, costKnown: false, model: 'mystery-model', tokCr: 0, tokCw: 0, tokIn: 100, tokOut: 0 },
+        ],
+        models: ['gpt-5.3-codex', 'mystery-model'],
+        name: 'Partly priced session',
+        sessionLabel: 'Partly priced session',
+        source: {
+          harnessKey: 'codex',
+          machineId: 'fixture-machine',
+          machineLabel: 'Fixture Machine',
+          rootSourceSessionId: 'partial',
+          sourceSessionId: 'partial',
+        },
+        tokCr: 0,
+        tokIn: 200,
+        tokOut: 0,
+        tokenTotal: 200,
+      },
+      {
+        // A second, fully priced harness so the two surfaces divide by different denominators
+        // when they disagree — the 24% vs 23% half of U02.
+        ...base,
+        costActual: 5,
+        costApprox: 5,
+        costKnown: true,
+        freshTokens: 100,
+        harness: 'Claude',
+        model: 'claude-opus-4-6',
+        name: 'Claude session',
+        provider: 'Anthropic',
+        sessionLabel: 'Claude session',
+        source: {
+          harnessKey: 'claude',
+          machineId: 'fixture-machine',
+          machineLabel: 'Fixture Machine',
+          rootSourceSessionId: 'claude-session',
+          sourceSessionId: 'claude-session',
+        },
+        tokCr: 0,
+        tokIn: 100,
+        tokOut: 0,
+        tokenTotal: 100,
+      },
+    ];
+    const query = {
+      filters: { fields: {}, harness: [], machine: [], origin: [], query: '' },
+      range: { from: null, to: null },
+      revision: 'u02-fixture-revision',
+    };
+    return {
+      breakdown: projectFocusedBreakdown(rows, support, { query }),
+      overview: projectFocusedOverview(rows, support, {
+        includeAdvanced: false,
+        query,
+        timeline: { dimension: 'harness', granularity: 'day' },
+      }),
+    };
+  };
+
+  /** The value and share the Overview's "API value by harness" list renders for one harness. */
+  const overviewHarnessTotal = (body: string, harness: string): { share: string; value: string } => {
+    const section = body.slice(body.indexOf('API value by harness'));
+    const item = section
+      .split('<li')
+      .find((fragment) => fragment.includes(`>${harness}<`) && fragment.includes('<strong'));
+    if (item === undefined) {
+      throw new Error(`Expected the Overview to render an "API value by harness" row for ${harness}`);
+    }
+    const share = HARNESS_GROUP_SHARE_PATTERN.exec(item);
+    const value = HARNESS_GROUP_VALUE_PATTERN.exec(item);
+    if (!(share?.[1] && value?.[1])) {
+      throw new Error(`Expected the Overview ${harness} row to render a value and a share`);
+    }
+    return { share: share[1], value: value[1] };
+  };
+
+  test('renders the same Codex total and share on Overview and in Harnesses & providers', () => {
+    const { breakdown, overview } = partiallyPricedFixture();
+
+    const overviewBody = render(fixture, { props: { result: overview } }).body;
+    const breakdownBody = render(harnessPanel, {
+      props: {
+        generatedAt: overview.metadata.generatedAt,
+        groups: breakdown.groups.harnesses,
+        harnessProviderGroups: breakdown.groups.harnessProviders,
+        onHarnessFilter: () => undefined,
+        onProviderFilter: () => undefined,
+        onSortChange: () => undefined,
+        sort: 'value',
+      },
+    }).body;
+
+    const overviewHarness = overviewHarnessTotal(overviewBody, 'Codex');
+    const harnessSection = breakdownBody.slice(breakdownBody.indexOf('data-harness-total="Codex"'));
+    if (!harnessSection.startsWith('data-harness-total="Codex"')) {
+      throw new Error('Expected the harness breakdown to render a Codex section');
+    }
+
+    const codexRow = harnessSection.slice(0, harnessSection.indexOf('</section>'));
+
+    // Codex is $3 fully priced + the $2 known subtotal of the partly priced session, so both
+    // surfaces read >= $5.00. Before the fix the breakdown dropped the $2 and rendered >= $3.00.
+    expect(overviewHarness.value).toBe('≥ $5.00');
+    expect(codexRow).toContain('≥ $5.00');
+    expect(codexRow).not.toContain('$3.00');
+
+    // Both shares divide by the same known subtotal ($5 Codex + $5 Claude), so Codex is half of
+    // it on both surfaces. Before the fix the breakdown divided $3 by a fully-priced-only $8.
+    expect(overviewHarness.share).toBe('50%');
+    expect(codexRow).toContain('50%');
+    expect(codexRow).not.toContain('38%');
   });
 });
