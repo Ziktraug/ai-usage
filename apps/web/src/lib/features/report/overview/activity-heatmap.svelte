@@ -67,7 +67,7 @@
     const value = aggregateApiValuePresentation(item.priceMeasurement).label;
     const provenance = aggregateApiPriceProvenance(item.priceMeasurement);
     const sessions = `${fmtNum(item.sessions)} ${item.sessions === 1 ? 'session' : 'sessions'}`;
-    return `${fmtDateOnly(item.date)} — ${value} · ${sessions}${provenance ? ` · ${provenance.label}` : ''}`;
+    return `${fmtDateOnly(item.date)} — ${sessions} · ${value}${provenance ? ` · ${provenance.label}` : ''}`;
   };
   const describeHeatDayWithProvenance = (item: FocusedHeatDay): string => {
     const description = describeHeatDay(item);
@@ -118,7 +118,7 @@
         <span>Mon</span><span></span><span>Wed</span><span></span><span>Fri</span><span></span><span></span>
       </div>
       <div class={heatScroll} bind:this={scrollElement}>
-        <div aria-hidden="true" class={heatMonths}>
+        <div aria-hidden="true" class={heatMonths} data-heatmap-months>
           {#each heatmap.monthLabels as label, index (`${label}-${index}`)}
             <span>{label}</span>
           {/each}

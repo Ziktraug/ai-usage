@@ -1,5 +1,7 @@
 import { expect, openHydratedReport, reportViewsFor, test, waitForFocusedReportSettled } from './browser-test';
 
+const EXPAND_PROVIDERS_PATTERN = /Expand providers for/;
+
 interface CategorySnapshot {
   categories: string[];
   options: string[];
@@ -54,8 +56,11 @@ test('keeps every populated harness and machine visible with default dimension f
   await breakdownSearch.fill('claude sub');
   await expect(harnessPanel.locator('[data-harness-total]')).toHaveCount(1);
   await expect(harnessPanel.locator('[data-harness-total="Claude"]')).toBeVisible();
-  await expect(harnessPanel.locator('[data-provider-child="Claude sub"]')).toBeVisible();
-  await expect(harnessPanel.locator('[data-provider-child]')).toHaveCount(1);
+  const soleClaudeProvider = harnessPanel.locator('[data-harness-total="Claude"] [data-sole-provider="Claude sub"]');
+  await expect(soleClaudeProvider).toBeVisible();
+  await expect(soleClaudeProvider).toHaveText('· Claude sub');
+  await expect(harnessPanel.locator('[data-provider-child]')).toHaveCount(0);
+  await expect(harnessPanel.getByRole('button', { name: EXPAND_PROVIDERS_PATTERN })).toHaveCount(0);
   await breakdownSearch.clear();
 
   await reportViewsFor(page).getByRole('link', { exact: true, name: 'Overview' }).click();

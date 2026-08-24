@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   aggregateSeriesFill,
   dimensionSwatch,
+  harnessMarkFillFor,
   RANKED_SERIES_HEX,
   RANKED_SERIES_SLOT_COUNT,
   rankedSeriesSwatchClasses,
@@ -47,6 +48,12 @@ const contrast = (foreground: string, background: string): number => {
 };
 
 describe('categorical chart colors', () => {
+  test('maps harness marks to the same fg tokens the badges use', () => {
+    expect(harnessMarkFillFor('Codex')).toContain('fill_harness.codex.fg');
+    expect(harnessMarkFillFor('Claude Code')).toContain('fill_harness.claude.fg');
+    expect(harnessMarkFillFor('Some new tool')).toBeUndefined();
+  });
+
   test('derives literal colors from the series key', () => {
     expect(stableSeriesColor('gpt-5')).toMatch(HSL_COLOR_PATTERN);
     expect(stableSeriesColor('gpt-5')).toBe(stableSeriesColor('gpt-5'));

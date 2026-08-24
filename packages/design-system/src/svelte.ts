@@ -12,6 +12,7 @@ export {
   accentFill,
   type DimensionSwatch,
   dimensionSwatch,
+  harnessMarkFillFor,
   highlightMark,
   migrationCrosshair,
   migrationTrend,

@@ -40,11 +40,17 @@ export const advancedAnalysisContent = css({
   minW: 0,
 });
 
+// Session shape (flexible) beside Punchcard (its natural width). The Punchcard grid is
+// 34px + 24 × 24px targets + 24 × 2px gaps = 658px and the 24px target is the WCAG minimum
+// (preset.test.ts), so it cannot share a symmetric half of any content width this shell offers
+// (≈977px at 1280, 1308px at the 1380px shell maximum). It stacks under the shape until `2xl`;
+// from there the shape takes what the Punchcard leaves. Keep the shape first in the DOM.
 export const twoColumns = css({
   display: 'grid',
-  gridTemplateColumns: { base: '1fr', lg: 'repeat(2, minmax(0, 1fr))' },
+  gridTemplateColumns: { base: '1fr', '2xl': 'minmax(0, 1fr) max-content' },
   gap: '14px',
-  alignItems: 'stretch',
+  // Natural heights: a stretched Punchcard card was two thirds empty next to the taller shape.
+  alignItems: 'start',
   '& > :only-child': {
     gridColumn: '1 / -1',
   },
@@ -311,6 +317,14 @@ export const punchHourLabel = css({
 export const recordsGrid = css({
   display: 'grid',
   gridTemplateColumns: { base: 'repeat(2, minmax(0, 1fr))', lg: 'repeat(4, minmax(0, 1fr))' },
+  gap: '10px',
+});
+
+// Three cards leave an orphan on a two-column row. Below `md` one column reads better than 2 + 1;
+// from `md` three equal columns fit the 768px content width.
+export const recordsGridTriple = css({
+  display: 'grid',
+  gridTemplateColumns: { base: '1fr', md: 'repeat(3, minmax(0, 1fr))' },
   gap: '10px',
 });
 

@@ -10,6 +10,7 @@
     recordLabel,
     recordSub,
     recordsGrid,
+    recordsGridTriple,
     recordValue,
     topList,
     topMoney,
@@ -78,11 +79,21 @@
       topCost && firstSession && topCost.kind === firstSession.kind && topCost.row.rowId === firstSession.row.rowId,
     );
   });
+  const recordCount = $derived(
+    presentedRecords
+      ? [
+          presentedRecords.topCost !== null && !topCostRepeatsFirstSession,
+          presentedRecords.longest !== null,
+          presentedRecords.busiest !== null,
+          presentedRecords.streak > 0 && presentedRecords.streakEnd !== null,
+        ].filter(Boolean).length
+      : 0,
+  );
 </script>
 
 {#if presentedRecords}
-  <div class={recordsGrid}>
-    {#if presentedRecords.topCost && !topCostRepeatsFirstSession}
+  <div class={recordCount === 3 ? recordsGridTriple : recordsGrid} data-record-count={recordCount} data-records-grid>
+    {#if presentedRecords.topCost !== null && !topCostRepeatsFirstSession}
       <button class={recordCard} onclick={() => onSelectSession(presentedRecords.topCost!)} type="button">
         <span class={srOnly}>Open details for top session {presentedRecords.topCost.label}. </span>
         <span class={cx(recordLabel, recordActionLabel)}
@@ -94,7 +105,7 @@
         <span class={recordSub}>{presentedRecords.topCost.label}</span>
       </button>
     {/if}
-    {#if presentedRecords.longest}
+    {#if presentedRecords.longest !== null}
       <button class={recordCard} onclick={() => onSelectSession(presentedRecords.longest!)} type="button">
         <span class={srOnly}
           >Open details for longest session {presentedRecords.longest.label} ({longestSemantics?.metricLabel}).
@@ -109,7 +120,7 @@
         >
       </button>
     {/if}
-    {#if presentedRecords.busiest}
+    {#if presentedRecords.busiest !== null}
       <button class={recordCard} onclick={() => onSelectDay(presentedRecords.busiest!.date)} type="button">
         <span class={srOnly}>Open activity for {fmtDateOnly(presentedRecords.busiest.date)}. </span>
         <span class={cx(recordLabel, recordActionLabel)}
@@ -122,7 +133,7 @@
         >
       </button>
     {/if}
-    {#if presentedRecords.streak > 0 && presentedRecords.streakEnd}
+    {#if presentedRecords.streak > 0 && presentedRecords.streakEnd !== null}
       <button class={recordCard} onclick={() => onSelectDay(presentedRecords.streakEnd!)} type="button">
         <span class={srOnly}>Open activity for streak ending {fmtDateOnly(presentedRecords.streakEnd)}. </span>
         <span class={cx(recordLabel, recordActionLabel)}

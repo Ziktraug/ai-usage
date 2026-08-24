@@ -23,6 +23,7 @@
     hierarchy = false,
     onFilter,
     onToggle,
+    soleProvider,
     view,
   }: {
     child?: boolean;
@@ -31,6 +32,7 @@
     hierarchy?: boolean;
     onFilter: () => void;
     onToggle?: () => void;
+    soleProvider?: string;
     view: BreakdownRowView;
   } = $props();
 
@@ -41,6 +43,7 @@
     bg: 'surfaceMuted',
   });
   const identity = css({ display: 'flex', alignItems: 'center', gap: '8px', minW: 0 });
+  const soleProviderNote = css({ color: 'muted', fontSize: '12px', whiteSpace: 'nowrap' });
   const expandedAria = (value: boolean): { readonly 'aria-expanded': 'false' | 'true' } => ({
     'aria-expanded': value ? 'true' : 'false',
   });
@@ -84,6 +87,14 @@
         </button>
       {/if}
       <button class={groupKeyButton} onclick={onFilter} type="button">{view.label}</button>
+      {#if soleProvider}
+        <span
+          class={soleProviderNote}
+          data-sole-provider={soleProvider}
+          title="Only provider recorded for this harness — its figures are the harness figures"
+          >· {soleProvider}</span
+        >
+      {/if}
     </div>
     <div class={groupSub} title={view.freshTitle}>
       {view.sessionSummary}

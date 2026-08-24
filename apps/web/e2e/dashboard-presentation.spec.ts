@@ -1,6 +1,7 @@
 import {
   FOCUSED_REPORT_E2E_ENABLED_KEY,
   FOCUSED_REPORT_E2E_NO_LOCAL_DATA_KEY,
+  FOCUSED_REPORT_E2E_SESSION_SHAPE_KEY,
 } from '../src/focused-report-e2e-fixture';
 import {
   expect,
@@ -19,6 +20,10 @@ const MAX_ALIGNMENT_DRIFT_PX = 1;
 const MIN_CONTENT_ABOVE_FOLD_PX = 10;
 const MOBILE_VIEWPORT = { height: 844, width: 390 };
 const PERIOD_DIRECTION_PATTERN = /higher|lower/u;
+const RHYTHM_CALENDAR_PATTERN = /Daily activity calendar/;
+const RHYTHM_FIRST_MONTH_PATTERN = /^[A-Z][a-z]{2} '\d{2}$/;
+const RHYTHM_MONTH_PATTERN = /^[A-Z][a-z]{2}( '\d{2})?$/;
+const RHYTHM_READOUT_PATTERN = / — [\d,]+ sessions? · /;
 const MODEL_ANALYSIS_COLUMNS = [
   'Model',
   'API value',
@@ -146,16 +151,30 @@ test('keeps the four executive metrics aligned below a visually dominant KPI', a
   );
   expect(columnCount).toBe(MAX_DASHBOARD_METRIC_COLUMNS);
 
-  const valueOffsets = await metrics.evaluateAll((elements) =>
-    elements.map((element) => {
-      const value = element.querySelector('dd');
-      if (!(value instanceof HTMLElement)) {
-        throw new Error('Executive metric value is missing');
-      }
-      return Math.round(value.getBoundingClientRect().top - element.getBoundingClientRect().top);
-    }),
-  );
+  const valueOffsetsOf = () =>
+    metrics.evaluateAll((elements) =>
+      elements.map((element) => {
+        const value = element.querySelector('dd');
+        if (!(value instanceof HTMLElement)) {
+          throw new Error('Executive metric value is missing');
+        }
+        return Math.round(value.getBoundingClientRect().top - element.getBoundingClientRect().top);
+      }),
+    );
+  const valueOffsets = await valueOffsetsOf();
   expect(Math.max(...valueOffsets) - Math.min(...valueOffsets)).toBeLessThanOrEqual(MAX_ALIGNMENT_DRIFT_PX);
+  await waitForHydratedReport(page);
+  await page
+    .getByRole('region', { name: 'Report period' })
+    .getByRole('button', { exact: true, name: 'All time' })
+    .click();
+  await waitForFocusedReportSettled(page);
+  const coverage = metrics.filter({ hasText: 'Pricing coverage' });
+  await expect(coverage).toContainText('Partially measured');
+  expect(await coverage.locator('dd').count()).toBe(3);
+  expect(await metrics.first().locator('dd').count()).toBe(2);
+  const qualifiedOffsets = await valueOffsetsOf();
+  expect(Math.max(...qualifiedOffsets) - Math.min(...qualifiedOffsets)).toBeLessThanOrEqual(MAX_ALIGNMENT_DRIFT_PX);
   const kpiSize = Number.parseFloat(
     await kpi
       .locator('strong')
@@ -399,6 +418,73 @@ test('uses compact circular Punchcard marks inside accessible targets with a low
 
   const [advancedBox, punchcardBox] = await Promise.all([advancedAnalysis.boundingBox(), punchcardPanel.boundingBox()]);
   expect(punchcardBox?.width ?? 0).toBeGreaterThanOrEqual((advancedBox?.width ?? 0) - 32);
+});
+
+test('keeps every Punchcard hour visible beside Session shape across the desktop band', async ({ page }) => {
+  await page.addInitScript(
+    ({ enabledKey, shapeKey }) => {
+      Reflect.set(globalThis, enabledKey, true);
+      Reflect.set(globalThis, shapeKey, true);
+    },
+    { enabledKey: FOCUSED_REPORT_E2E_ENABLED_KEY, shapeKey: FOCUSED_REPORT_E2E_SESSION_SHAPE_KEY },
+  );
+  for (const { sideBySide, width } of [
+    { sideBySide: false, width: 1024 },
+    { sideBySide: false, width: 1280 },
+    { sideBySide: true, width: 1920 },
+  ]) {
+    await page.setViewportSize({ height: 1000, width });
+    await openHydratedReport(page);
+    await waitForFocusedReportSettled(page);
+    const shape = page.locator('[data-session-shape]');
+    const punchcard = page.getByRole('heading', { level: 4, name: 'Punchcard' }).locator('xpath=ancestor::section[1]');
+    const visual = page.locator('[data-punchcard-visual]');
+    await expect(shape, `${width}px`).toBeVisible();
+    await expect(punchcard, `${width}px`).toBeVisible();
+    expect(
+      await visual.evaluate((element) => element.scrollWidth - element.clientWidth),
+      `${width}px: hidden Punchcard hours`,
+    ).toBeLessThanOrEqual(0);
+    const [shapeBox, punchcardBox] = await Promise.all([shape.boundingBox(), punchcard.boundingBox()]);
+    const sameRow = Math.abs((shapeBox?.y ?? 0) - (punchcardBox?.y ?? Number.POSITIVE_INFINITY)) < 1;
+    expect(sameRow, `${width}px: side by side`).toBe(sideBySide);
+  }
+});
+
+test('labels the Rhythm month axis with the year and leads the day readout with sessions', async ({ page }) => {
+  await openHydratedReport(page);
+  const calendar = page.getByRole('toolbar', { name: RHYTHM_CALENDAR_PATTERN });
+  const rhythm = page.locator('section').filter({ has: calendar });
+  const labels = (await rhythm.locator('[data-heatmap-months] > span').allTextContents()).filter(Boolean);
+  expect(labels.length).toBeGreaterThan(0);
+  expect(labels[0]).toMatch(RHYTHM_FIRST_MONTH_PATTERN);
+  for (const label of labels.slice(1)) {
+    expect(label).toMatch(RHYTHM_MONTH_PATTERN);
+  }
+  expect(labels.filter((label) => label.includes("'"))).toHaveLength(1);
+  await expect(rhythm.locator('[data-heatmap-readout]')).toHaveText(RHYTHM_READOUT_PATTERN);
+});
+
+test('never orphans a record tile: three tiles are 3-up from md and 1-up below', async ({ page }) => {
+  await page.setViewportSize({ height: 1024, width: 768 });
+  await openHydratedReport(page);
+  const grid = page.locator('[data-records-grid]');
+  await expect(grid).toHaveAttribute('data-record-count', '3');
+  const trackCount = () =>
+    grid.evaluate((element) => getComputedStyle(element).gridTemplateColumns.trim().split(' ').filter(Boolean).length);
+  expect(await trackCount()).toBe(3);
+  const tops = await grid
+    .locator(':scope > button')
+    .evaluateAll((elements) => elements.map((element) => Math.round(element.getBoundingClientRect().top)));
+  expect(new Set(tops).size).toBe(1);
+
+  await page.setViewportSize({ height: 844, width: 390 });
+  expect(await trackCount()).toBe(1);
+  const widths = await grid.evaluate((element) => ({
+    grid: element.getBoundingClientRect().width,
+    cards: [...element.querySelectorAll(':scope > button')].map((card) => card.getBoundingClientRect().width),
+  }));
+  expect(widths.cards.every((width) => Math.abs(width - widths.grid) < 1)).toBe(true);
 });
 
 test('separates timeline boundary dates and retains no horizontally intersecting tick', async ({ page }) => {
