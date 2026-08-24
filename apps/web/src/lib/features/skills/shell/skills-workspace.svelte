@@ -20,6 +20,8 @@
     buildSkillHealthSummary,
     count,
     globalSkillAttention,
+    healthyLinkTone,
+    type SkillHealthTone,
     type SkillSelection,
     selectionKey,
   } from '../../../../skills-page-model';
@@ -164,10 +166,18 @@
   });
   const workspaceGrid = css({
     display: 'grid',
-    gridTemplateColumns: { base: '1fr', lg: '240px minmax(0, 1fr)', xl: '240px minmax(0, 1fr) 288px' },
+    gridTemplateColumns: {
+      base: '1fr',
+      lg: '240px minmax(0, 1fr)',
+      xl: '240px minmax(0, 1fr) 288px',
+      '2xl': '280px minmax(0, 1fr) 288px',
+    },
     columnGap: '16px',
     rowGap: '16px',
     alignItems: 'start',
+    '&[data-matrix-open="true"]': {
+      gridTemplateColumns: { xl: '240px minmax(0, 1fr)', '2xl': '280px minmax(0, 1fr)' },
+    },
   });
   const centerStack = css({ display: 'grid', gap: '16px', minW: 0 });
   const desktopTree = css({ display: { base: 'none', lg: 'block' } });
@@ -211,6 +221,24 @@
     bg: 'surfaceMuted',
     minW: 0,
   });
+  const metadataLink = css({
+    color: 'ink',
+    textDecoration: 'none',
+    _hover: { borderColor: 'accent' },
+    _focusVisible: { outline: '2px solid token(colors.accent)', outlineOffset: '2px' },
+  });
+  const dangerValue = css({ color: 'status.danger' });
+  const warningValue = css({ color: 'status.warn' });
+  const okValue = css({ color: 'status.ok' });
+  const healthToneClass = (tone: SkillHealthTone): string | undefined => {
+    if (tone === 'danger') {
+      return dangerValue;
+    }
+    if (tone === 'warn') {
+      return warningValue;
+    }
+    return tone === 'ok' ? okValue : undefined;
+  };
   const metadataLabel = css({
     color: 'muted',
     fontSize: '11px',
@@ -258,10 +286,14 @@
     fontSize: '12px',
     whiteSpace: 'pre-wrap',
   });
-  const mobileContext = css({ display: { base: 'block', xl: 'contents' }, gridColumn: { lg: '2', xl: 'auto' } });
+  const mobileContext = css({
+    display: { base: 'block', xl: 'contents' },
+    gridColumn: { lg: '2', xl: 'auto' },
+    '&[data-matrix-open="true"]': { display: { xl: 'block' }, gridColumn: { xl: '2' } },
+  });
 </script>
 
-<div class={workspaceGrid} data-skills-hydrated={hydrated} data-skills-workspace>
+<div class={workspaceGrid} data-matrix-open={view.matrixOpen} data-skills-hydrated={hydrated} data-skills-workspace>
   <div class={desktopTree}>
     <SkillsTree
       {collapsedKeys}
@@ -321,21 +353,36 @@
               </p>
             </div>
             <div class={metadataGrid}>
-              <div class={metadataItem}>
+              <a class={cx(metadataItem, metadataLink)} data-sveltekit-noscroll href="/skills/matrix">
                 <span class={metadataLabel}>Healthy links</span>
-                <span>{health.healthyLinkCount}/{health.expectedLinkCount}</span>
-              </div>
-              <div class={metadataItem}>
+                <span class={healthToneClass(healthyLinkTone(health))} data-health-tone={healthyLinkTone(health)}
+                  >{health.healthyLinkCount}/{health.expectedLinkCount}</span
+                >
+              </a>
+              <a class={cx(metadataItem, metadataLink)} data-sveltekit-noscroll href="/skills/matrix">
                 <span class={metadataLabel}>To repair</span>
-                <span>{health.toRepairCount}</span>
-              </div>
-              <div class={metadataItem}>
+                <span
+                  class={health.toRepairCount > 0 ? dangerValue : undefined}
+                  data-health-tone={health.toRepairCount > 0 ? 'danger' : 'neutral'}
+                  >{health.toRepairCount}</span
+                >
+              </a>
+              <a class={cx(metadataItem, metadataLink)} data-sveltekit-noscroll href="/skills/matrix">
                 <span class={metadataLabel}>Blocked</span>
-                <span>{health.blockedCount}</span>
-              </div>
+                <span
+                  class={health.blockedCount > 0 ? dangerValue : undefined}
+                  data-health-tone={health.blockedCount > 0 ? 'danger' : 'neutral'}
+                  >{health.blockedCount}</span
+                >
+              </a>
               <div class={metadataItem}>
                 <span class={metadataLabel}>To consolidate</span>
-                <span>{health.consolidateCopies} copies / {health.consolidateSymlinks} symlinks</span>
+                <span
+                  class={health.consolidateCount > 0 ? warningValue : undefined}
+                  data-health-tone={health.consolidateCount > 0 ? 'warn' : 'neutral'}
+                  >{health.consolidateCopies}
+                  copies / {health.consolidateSymlinks} symlinks</span
+                >
               </div>
             </div>
             <section class={section}>
@@ -423,7 +470,7 @@
     {/if}
   </div>
 
-  <div class={mobileContext}>
+  <div class={mobileContext} data-matrix-open={view.matrixOpen}>
     <SkillsInspector {...(healthSlot === undefined ? {} : { healthSlot })} {managementPlan} {slotContext} {view} />
   </div>
 </div>

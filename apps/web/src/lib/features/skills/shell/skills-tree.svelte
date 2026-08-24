@@ -109,6 +109,8 @@
     _focusVisible: { outline: '2px solid token(colors.accent)', outlineOffset: '2px' },
     '&[data-selected="true"]': { bg: 'accentTint', borderColor: 'accent' },
   });
+  const collidingScopeButton = css({ gridTemplateColumns: 'minmax(0, 1fr)' });
+  const collidingScopeName = css({ gridColumn: '1 / -1' });
   const skillButton = css({ pl: '36px' });
   const toggleButton = css({
     border: '1px solid transparent',
@@ -119,14 +121,7 @@
     _focusVisible: { outline: '2px solid token(colors.accent)', outlineOffset: '2px' },
   });
   const label = css({ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' });
-  const scopeLabel = css({
-    display: 'flex',
-    minW: 0,
-    gap: '6px',
-    alignItems: 'baseline',
-    overflow: 'hidden',
-    whiteSpace: 'nowrap',
-  });
+  const scopeLabel = css({ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto', gap: '1px 8px', minW: 0 });
   const scopeName = css({
     display: 'block',
     minW: 0,
@@ -137,11 +132,13 @@
   const scopePath = css({
     minW: 0,
     color: 'muted',
-    fontSize: '12px',
+    fontSize: '11px',
+    lineHeight: 1.3,
     overflow: 'hidden',
     textOverflow: 'ellipsis',
     whiteSpace: 'nowrap',
   });
+  const skillLabel = css({ minW: 0, lineClamp: 2, overflowWrap: 'break-word', lineHeight: 1.3 });
   const count = css({ color: 'muted', fontSize: '11px', fontWeight: 650 });
   const attention = css({ color: 'status.warn', fontSize: '11px', fontWeight: 700 });
   const emptyFold = css({ display: 'grid', gap: '6px' });
@@ -203,19 +200,27 @@
               </button>
             {/if}
             <SelectionLink
-              class={treeButton}
+              class={cx(treeButton, scope.shortPath ? collidingScopeButton : undefined)}
               {knownProjects}
               selected={activeKey === scope.key}
               selection={scope.selection}
               title={scope.path}
             >
               <span class={scopeLabel}>
-                <span class={cx(strongCell, scopeName)} data-skill-scope-name title={scope.label}>{scope.label}</span>
+                <span
+                  class={cx(strongCell, scopeName, scope.shortPath ? collidingScopeName : undefined)}
+                  data-skill-scope-name
+                  title={scope.label}
+                  >{scope.label}</span
+                >
                 {#if scope.shortPath}
-                  <span class={scopePath}>{scope.shortPath}</span>
+                  <span class={scopePath} data-skill-scope-path>{scope.shortPath}</span>
+                  <span class={count}>{scope.skills.length}</span>
                 {/if}
               </span>
-              <span class={count}>{scope.skills.length}</span>
+              {#if !scope.shortPath}
+                <span class={count}>{scope.skills.length}</span>
+              {/if}
             </SelectionLink>
           </div>
           {#if expanded}
@@ -228,7 +233,7 @@
                   selection={skill.selection}
                   title={skill.description || skill.name}
                 >
-                  <span class={label}>{skill.name}</span>
+                  <span class={skillLabel}>{skill.name}</span>
                   {#if skill.issueCount > 0 || skill.validationStatus === 'invalid'}
                     <span class={attention} title={skill.attentionSummary || undefined}>
                       {skill.validationStatus === 'invalid' ? '!' : skill.issueCount}

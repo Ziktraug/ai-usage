@@ -857,3 +857,71 @@ Stop and report back (do not improvise) if:
 - Deferred: the adopt/consolidate action (plan 083); a richer inspector for
   the matrix route if "Close matrix" proves hard to reach under long
   matrices (the tree's scope links already close it).
+
+## Execution notes
+
+- Re-anchored at `3a0bf943`. Relative to `51815b70`, the only in-scope drift
+  was plan 087's authorized client-navigation test in
+  `apps/web/e2e/skills.spec.ts`; the pre-change exact `'Saved'` count was 8.
+  The implemented test now has the required 5 post-save occurrences.
+- The live Claude Code frontmatter reference has expanded beyond the list
+  frozen in Step 6. In addition to the planned keys, this execution accepts
+  `when_to_use`, `arguments`, `disallowed-tools`, `effort`, `background`, and
+  `shell`, all listed by the current upstream reference. `version`,
+  `environments`, and `disabled-environments` remain warning-producing
+  unknown extensions.
+- Browser verification disproved the plan's assumption that
+  `message === 'SKILL.md saved.'` survives a real save. The plan-087 query
+  revalidation/cache synchronization feeds the just-saved document back
+  through `editor/controller.ts`, whose `acceptDocument` path cleared the
+  message. With orchestrator authorization, `controller.ts` now preserves
+  that message only for the identical saved SHA; its focused test also proves
+  a different external revision clears the message. The implementation
+  deviation is 2 changed logic lines.
+- At 1280 px the plan's proposed two-line scope stack still left "Opaque
+  project" truncated because the separate count column consumed the last
+  usable width. Rather than widening the full workspace and perturbing the
+  stable visual fixture, colliding scopes now place their count beside the
+  second-line path. The deterministic 1280/1920 geometry test passes, while
+  non-colliding rows retain their previous layout.
+- The first Playwright attempt never opened port 4174 and timed out after 300
+  seconds. Moving the copied Vite optimizer caches outside the worktree made
+  the server start normally; no source or dependency install was involved.
+  The four initially failing assertions were rerun serialized and passed,
+  followed by the complete requested browser gates.
+- Two-machine applicability: this Skills snapshot is deliberately local-host
+  inventory and has no machine identity to group or deduplicate. The relevant
+  identity collision is instead covered by two populated projects with the
+  same visible label and different group IDs, paths, and skill values; it
+  proves both scopes remain distinct and legible.
+- Copy assertions pin `Unchanged`, the absence of the passive reload notice,
+  and the single visible `Healthy links` label. The plan-083 adoption action
+  remains untouched.
+- Codex round 1 correctly found that the cache-synchronization guard above
+  compared only the saved SHA. It now also compares skill identity; a focused
+  counter-test proves a different skill with the same SHA clears the notice.
+  A server-render assertion pins the danger health state to `status.danger`;
+  deterministic browser assertions resolve the `muted`, `status.warn`, and
+  neutral `ink` tokens to computed colours, and pin each health link's role,
+  `/skills/matrix` destination, navigation, and focus-visible presentation.
+  The visible `Opaque twin project skill fixture` copy is asserted verbatim.
+- The visual snapshot's removal of `Skills reloaded.` is an
+  orchestrator-authorized cross-child delta: plan 087's finite-SWR cache
+  synchronization made passive reloads legitimate, and the program handoff
+  explicitly assigned U24's passive-notice removal to plan 096. The notice is
+  intentionally not restored; its deterministic post-hydration absence
+  assertion remains in `apps/web/e2e/skills.spec.ts`.
+- Maintainer decision D20 reopened the exhausted correction budget. The
+  round-3 review defect is closed causally: each transformed matrix refresh
+  is held until the test observes `aria-busy="true"`, then released, observed
+  settled at `aria-busy="false"`, and checked against the transformed healthy
+  link count before its tone is asserted. The Cursor extension reference now
+  lists both `disable-model-invocation` and `paths`.
+- Final re-anchored gates at the current program tip: Skills package 101/101,
+  web 1,076/1,076, typecheck 28/28 with zero Svelte findings, lint/check over
+  1,092 files plus repository guards, targeted Playwright 54/54, full
+  Playwright 168/168 under the shared lock with two workers, production-report
+  13/13, synthetic 5,000-session scale 2/2, build 15/15 immediately followed
+  by bundle 4/4, and clean structural, focus, and added-line PII scans. The
+  Darwin Skills visual baseline was regenerated only after the exact failing
+  title reproduced and the intended UI delta was inspected.

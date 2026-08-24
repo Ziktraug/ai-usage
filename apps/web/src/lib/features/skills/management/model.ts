@@ -133,14 +133,6 @@ export type SkillsRefreshDecisionState = 'closed' | 'none' | 'pending';
 export const skillsSnapshotAcceptanceSignature = (snapshot: SkillManagementSnapshot): string =>
   JSON.stringify(snapshot);
 
-export const shouldAnnounceSkillsHydrationReload = (
-  hydrationSnapshot: SkillManagementSnapshot,
-  nextSnapshot: SkillManagementSnapshot,
-  operationNoticePresent: boolean,
-): boolean =>
-  hydrationSnapshot !== nextSnapshot &&
-  !operationNoticePresent &&
-  skillsSnapshotAcceptanceSignature(hydrationSnapshot) === skillsSnapshotAcceptanceSignature(nextSnapshot);
 export const resolveSkillsRefreshAcceptance = (
   target: SkillsRefreshAcceptanceTarget | undefined,
   snapshot: SkillManagementSnapshot,

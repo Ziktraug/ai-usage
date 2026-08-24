@@ -15,7 +15,7 @@
     strongCell,
   } from '@ai-usage/design-system/svelte';
   import { createMutation, useQueryClient } from '@tanstack/svelte-query';
-  import { onDestroy, onMount, tick, untrack } from 'svelte';
+  import { onDestroy, onMount, tick } from 'svelte';
   import { goto } from '$app/navigation';
   import { deriveInstallationAction, groupSkillDiagnostics } from '../../../../skill-document-inspector-model';
   import {
@@ -50,7 +50,6 @@
     type SkillsRefreshAcceptanceTarget,
     type SkillsRefreshClient,
     type SkillsRefreshDecisionState,
-    shouldAnnounceSkillsHydrationReload,
     skillsManagementSuccessMessage,
     skillsSnapshotAcceptanceSignature,
     toggleOperation,
@@ -95,8 +94,6 @@
   let awaitingRefresh = $state<SkillsRefreshAcceptanceTarget>();
   let refreshDecisionOpen = $state(false);
   let mounted = $state(false);
-  let hydrationReloadAnnounced = $state(false);
-  const hydrationSnapshot = untrack(() => context.snapshot);
   let dismissTimer: ReturnType<typeof setTimeout> | undefined;
   let restoreFocusFrame: number | undefined;
   const ownsRefreshRegistration = $derived(
@@ -164,22 +161,6 @@
     alignItems: 'center',
   });
   const metricList = css({ display: 'grid', gap: '6px' });
-  const sourceHealthRow = css({
-    appearance: 'none',
-    display: 'grid',
-    gridTemplateColumns: 'minmax(0, 1fr) auto',
-    gap: '8px',
-    alignItems: 'baseline',
-    border: '1px solid transparent',
-    borderRadius: 'sm',
-    bg: 'transparent',
-    color: 'ink',
-    fontSize: '13px',
-    textAlign: 'left',
-    cursor: 'pointer',
-    _hover: { bg: 'surfaceMuted', borderColor: 'line' },
-    _focusVisible: { outline: '2px solid token(colors.accent)', outlineOffset: '2px' },
-  });
   const metricRow = css({
     display: 'grid',
     gridTemplateColumns: 'minmax(0, 1fr) auto',
@@ -281,25 +262,6 @@
   $effect(() => {
     if (ownsRefreshRegistration) {
       onRefreshPendingChange?.(pendingOperation !== null);
-    }
-  });
-  $effect(() => {
-    const nextSnapshot = context.snapshot;
-    if (!(mounted && !hydrationReloadAnnounced && nextSnapshot !== hydrationSnapshot)) {
-      return;
-    }
-    hydrationReloadAnnounced = true;
-    if (!ownsRefreshRegistration) {
-      return;
-    }
-    if (
-      shouldAnnounceSkillsHydrationReload(
-        hydrationSnapshot,
-        nextSnapshot,
-        operationMessage !== null || operationError !== null,
-      )
-    ) {
-      setSuccessMessage('Skills reloaded.');
     }
   });
   $effect(() => {
@@ -413,30 +375,6 @@
         <SkillsConfiguration {...(injectedClient === undefined ? {} : { client: injectedClient })} {context} />
       </div>
     {:else}
-      <section class={stack}>
-        <div>
-          <div class={strongCell}>Source health</div>
-          <div class={meta}>Managed runtime exposure</div>
-        </div>
-        <div class={metricList}>
-          <button class={sourceHealthRow} onclick={() => goto('/skills/matrix')} type="button">
-            <span class={meta}>Healthy links</span>
-            <strong>{health.healthyLinkCount}/{health.expectedLinkCount}</strong>
-          </button>
-          <button class={sourceHealthRow} onclick={() => goto('/skills/matrix')} type="button">
-            <span class={meta}>To repair</span>
-            <strong>{health.toRepairCount}</strong>
-          </button>
-          <button class={sourceHealthRow} onclick={() => goto('/skills/matrix')} type="button">
-            <span class={meta}>Blocked</span>
-            <strong>{health.blockedCount}</strong>
-          </button>
-          <button class={sourceHealthRow} onclick={() => goto('/skills/global')} type="button">
-            <span class={meta}>To consolidate</span>
-            <strong>{health.consolidateCount}</strong>
-          </button>
-        </div>
-      </section>
       <section class={actionGrid}>
         <button
           class={ghostButton}
