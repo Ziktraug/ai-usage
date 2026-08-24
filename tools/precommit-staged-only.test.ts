@@ -15,8 +15,13 @@ const runBytes = async (
   cwd: string,
   command: string[],
   environment: Record<string, string | undefined> = process.env,
+  input?: Uint8Array,
 ): Promise<Uint8Array> => {
-  const child = Bun.spawn(command, { cwd, env: environment, stderr: 'pipe', stdout: 'pipe' });
+  const child = Bun.spawn(command, { cwd, env: environment, stderr: 'pipe', stdin: 'pipe', stdout: 'pipe' });
+  if (input) {
+    child.stdin.write(input);
+  }
+  child.stdin.end();
   const [exitCode, stdout, stderr] = await Promise.all([
     child.exited,
     new Response(child.stdout).arrayBuffer(),
@@ -55,15 +60,22 @@ describe('staged-only pre-commit formatting', () => {
     temporaryDirectories.add(fixture);
     await run(fixture, ['git', 'init', '--quiet']);
 
-    const makeNonUtf8Path = (filenameByte: number): Buffer =>
-      Buffer.concat([Buffer.from(`${fixture}${path.sep}`), Buffer.from([filenameByte]), Buffer.from('.ts')]);
-    const firstPath = makeNonUtf8Path(0x80);
-    const secondPath = makeNonUtf8Path(0x81);
-
-    await writeFile(firstPath, 'export {};\n');
+    const blobHash = new TextDecoder()
+      .decode(
+        await runBytes(fixture, ['git', 'hash-object', '-w', '--stdin'], process.env, Buffer.from('export {};\n')),
+      )
+      .trim();
+    const writeIndexPath = (filenameByte: number): Promise<Uint8Array> =>
+      runBytes(
+        fixture,
+        ['git', 'update-index', '-z', '--index-info'],
+        process.env,
+        Buffer.concat([Buffer.from(`100644 ${blobHash}\t`), Buffer.from([filenameByte]), Buffer.from('.ts\0')]),
+      );
+    await writeIndexPath(0x80);
     const firstState = await captureGitState(fixture);
-    await rm(firstPath);
-    await writeFile(secondPath, 'export {};\n');
+    await run(fixture, ['git', 'read-tree', '--empty']);
+    await writeIndexPath(0x81);
     const secondState = await captureGitState(fixture);
 
     expect(firstState.status).not.toEqual(secondState.status);
