@@ -4,6 +4,8 @@ import { capturePlan073Smoke } from './plan073-smoke';
 
 const MOBILE_DRAWER_VIEWPORT = { height: 844, width: 390 } as const;
 const DESKTOP_DRAWER_VIEWPORT = { height: 900, width: 1280 } as const;
+const EXPAND_CAMPAIGN_BUTTON_PATTERN = /^Expand campaign /;
+const LOAD_MORE_CAMPAIGN_BUTTON_PATTERN = /^Load more sessions in /;
 
 type SessionDrawerViewport = 'desktop' | 'mobile';
 
@@ -98,6 +100,68 @@ const viewportCases = [
     width: 390,
   },
 ] as const;
+
+test('keeps a paged expanded campaign inside the single Sessions scroll container', async ({ page }) => {
+  await page.setViewportSize({ height: 900, width: 1024 });
+  await openHydratedReport(page, '/');
+  await page.addScriptTag({
+    type: 'module',
+    url: '/src/lib/features/sessions/table/session-table.e2e-fixture.ts',
+  });
+  await expect(page.locator('[data-session-table-browser-fixture="paged-campaign"]')).toBeVisible();
+
+  const surface = page.locator('[data-session-surface="desktop"]');
+  const expandCampaign = surface.getByRole('button', { name: EXPAND_CAMPAIGN_BUTTON_PATTERN }).first();
+  await expect(expandCampaign).toBeVisible();
+  await expandCampaign.click();
+  const loadMore = page.getByRole('button', { name: LOAD_MORE_CAMPAIGN_BUTTON_PATTERN });
+  await expect(loadMore).toBeVisible();
+
+  await expect
+    .poll(
+      async () =>
+        await page.evaluate(() => {
+          const sessionSurface = document.querySelector<HTMLElement>('[data-session-surface="desktop"]');
+          const pagingButton = [...document.querySelectorAll<HTMLButtonElement>('button')].find((button) =>
+            button.textContent?.startsWith('Load more sessions in '),
+          );
+          const tableHeader = sessionSurface?.querySelector('thead');
+          if (!(sessionSurface && pagingButton?.parentElement && tableHeader)) {
+            throw new Error('Paged campaign geometry is unavailable');
+          }
+          const surfaceRect = sessionSurface.getBoundingClientRect();
+          const controlRect = pagingButton.parentElement.getBoundingClientRect();
+          const visibleBodyTop = Math.max(surfaceRect.top, tableHeader.getBoundingClientRect().bottom);
+          const fullyVisibleBodyRows = [...sessionSurface.querySelectorAll('tbody tr[data-session-row-id]')].filter(
+            (row) => {
+              const rowRect = row.getBoundingClientRect();
+              return rowRect.top >= visibleBodyTop - 1 && rowRect.bottom <= surfaceRect.bottom + 1;
+            },
+          ).length;
+          const surfaceMaximumScrollTop = sessionSurface.scrollHeight - sessionSurface.clientHeight;
+          return {
+            atLeastThreeFullyVisibleBodyRows: fullyVisibleBodyRows >= 3,
+            controlAfterSurface: controlRect.top >= surfaceRect.bottom - 1,
+            controlFullyVisible: controlRect.bottom <= window.innerHeight,
+            controlHeight: Math.round(controlRect.height),
+            documentMaximumScrollTop: document.documentElement.scrollHeight - window.innerHeight,
+            fullyVisibleBodyRows,
+            surfaceMaximumScrollTop,
+            surfaceScrollable: surfaceMaximumScrollTop > 0,
+          };
+        }),
+    )
+    .toMatchObject({
+      atLeastThreeFullyVisibleBodyRows: true,
+      controlAfterSurface: true,
+      controlFullyVisible: true,
+      controlHeight: 54,
+      documentMaximumScrollTop: 0,
+      fullyVisibleBodyRows: expect.any(Number),
+      surfaceMaximumScrollTop: expect.any(Number),
+      surfaceScrollable: true,
+    });
+});
 
 test('anchors the virtual Session viewport inside the screen on desktop and mobile', async ({ page }) => {
   const resizeObserverLoopMessages = captureResizeObserverLoopMessages(page);
