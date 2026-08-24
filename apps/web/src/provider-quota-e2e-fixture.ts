@@ -2,6 +2,8 @@ import type { ProviderQuotaHistoryPoint, ProviderQuotaHistoryResult } from '@ai-
 
 interface FixtureQuotaPointInput {
   readonly at: string;
+  /** When the store coalesced this reading, the instant its identical run stopped being extended. */
+  readonly heldUntil?: string;
   readonly providerKey?: string;
   readonly providerLabel?: string;
   readonly resetAt: string;
@@ -17,7 +19,7 @@ const fixtureQuotaPoint = (input: FixtureQuotaPointInput): ProviderQuotaHistoryP
     blocked: false,
     firstObservedAt: input.at,
     group: input.window,
-    lastObservedAt: input.at,
+    lastObservedAt: input.heldUntil ?? input.at,
     limitSeconds: input.window === '5h' ? 18_000 : 604_800,
     machineId: 'fixture-machine',
     machineLabel: 'Fixture Machine',
@@ -65,6 +67,16 @@ const FIXTURE_POINT_INPUTS = [
     usedPercent: 44,
     window: 'weekly',
   },
+  // Observed before the 24h window opens and held into it: the store's anchor row. At `24h` the
+  // drawer must carry it in as a held value rather than stretch its axis back two days; at `7d` it
+  // is an ordinary in-range point.
+  {
+    at: '2026-07-13T08:00:00.000Z',
+    heldUntil: '2026-07-15T08:55:00.000Z',
+    resetAt: '2026-07-13T12:00:00.000Z',
+    usedPercent: 48,
+    window: '5h',
+  },
 ] as const satisfies readonly FixtureQuotaPointInput[];
 
 /**
@@ -75,7 +87,7 @@ const FIXTURE_POINT_INPUTS = [
  * fixture point without updating this number fails typecheck rather than silently re-opening the
  * empty-drawer bug the gate exists to prevent.
  */
-export const E2E_PROVIDER_QUOTA_FIXTURE_POINT_COUNT: (typeof FIXTURE_POINT_INPUTS)['length'] = 9;
+export const E2E_PROVIDER_QUOTA_FIXTURE_POINT_COUNT: (typeof FIXTURE_POINT_INPUTS)['length'] = 10;
 
 export const createE2EProviderQuotaHistoryFixture = (): ProviderQuotaHistoryResult => ({
   coverage: [],
