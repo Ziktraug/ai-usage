@@ -1104,6 +1104,7 @@ export const buildFocusedHeatmapFromAggregates = (
   const weeks: FocusedCalendarHeatmap['weeks'] = [];
   const monthLabels: string[] = [];
   let previousMonth = -1;
+  let labelledYear: number | null = null;
   for (let cursor = gridStart; cursor <= last; cursor = shiftDays(cursor, 7)) {
     const days: (FocusedHeatDay | null)[] = [];
     for (let offset = 0; offset < 7; offset++) {
@@ -1125,7 +1126,15 @@ export const buildFocusedHeatmapFromAggregates = (
     }
     weeks.push({ days });
     const month = cursor.getMonth();
-    monthLabels.push(month === previousMonth ? '' : cursor.toLocaleDateString('en', { month: 'short' }));
+    if (month === previousMonth) {
+      monthLabels.push('');
+    } else {
+      const year = cursor.getFullYear();
+      const monthName = cursor.toLocaleDateString('en', { month: 'short' });
+      // The first label and the first label of every new year carry the year: "Jun '25 … Jan '26".
+      monthLabels.push(year === labelledYear ? monthName : `${monthName} '${String(year).slice(-2)}`);
+      labelledYear = year;
+    }
     previousMonth = month;
   }
   return { monthLabels, todayKey: dateKey(startOfDay(now)), weeks };

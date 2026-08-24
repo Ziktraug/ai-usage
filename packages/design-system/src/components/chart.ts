@@ -1,6 +1,8 @@
 import { css } from '@ai-usage/design-system/css';
 import { harnessFillFor } from '../svelte/passive/harness-fill';
 
+export { harnessMarkFillFor } from '../svelte/passive/harness-fill';
+
 /** Ranked fills; adjacent slots are the pairs that can touch in the stack. */
 export const rankedSeriesSwatchClasses = [
   css({ bg: 'chart.c3' }),

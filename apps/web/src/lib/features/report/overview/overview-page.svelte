@@ -114,12 +114,7 @@
           {#if result.view.advancedSummary}
             <div class={twoColumns}>
               {#if result.view.advancedSummary.hasSessionShape}
-                <SessionShape
-                  advancedSummary={result.view.advancedSummary}
-                  {onSelectSession}
-                  {presentSessionItem}
-                  shape={result.view.sessionShape}
-                />
+                <SessionShape {onSelectSession} {presentSessionItem} shape={result.view.sessionShape} />
               {/if}
               {#if result.view.advancedSummary.hasPunchcard}
                 <Punchcard {onSelectTimeCell} punchcard={result.view.punchcard} />

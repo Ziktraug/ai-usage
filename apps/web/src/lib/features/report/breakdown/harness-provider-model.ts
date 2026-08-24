@@ -15,8 +15,12 @@ export interface HarnessProviderChild {
 export interface HarnessProviderParent {
   readonly children: readonly HarnessProviderChild[];
   readonly controlsId: string;
+  /** False when the harness has no provider pairs or a single pair that repeats its own figures. */
+  readonly expandable: boolean;
   readonly expanded: boolean;
   readonly group: AnalyticsGroup;
+  /** The provider of a single mirroring pair, shown inline on the harness row instead of a child. */
+  readonly soleProvider: string | null;
 }
 
 export interface HarnessProviderView {
@@ -43,6 +47,25 @@ const providerChildrenByHarness = (
   return childrenByHarness;
 };
 
+const MIRRORED_FIGURES = ['sessions', 'costSum', 'fresh', 'cache', 'priced'] as const;
+
+/**
+ * A harness whose only provider pair repeats the harness figures has nothing to disclose: the
+ * child row would print the parent's numbers under a second name. Both group lists are computed
+ * from the same visible rows, so this holds by construction today; the figure check guards the
+ * day an aggregation diverges, in which case the disclosure comes back on its own.
+ */
+export const soleProviderMirroringHarness = (
+  harness: AnalyticsGroup,
+  children: readonly AnalyticsGroup[],
+): string | null => {
+  const [only] = children;
+  if (children.length !== 1 || only === undefined) {
+    return null;
+  }
+  return MIRRORED_FIGURES.every((figure) => only[figure] === harness[figure]) ? only.provider : null;
+};
+
 export const providerDisclosureId = (harness: string): string =>
   `harness-provider-children-${encodeURIComponent(harness)}`;
 
@@ -61,17 +84,21 @@ export const harnessProviderView = (
   let pairCount = 0;
   const parents = visibleGroups.map((group): HarnessProviderParent => {
     const allChildren = childrenByHarness.get(group.key) ?? [];
+    const soleProvider = soleProviderMirroringHarness(group, allChildren);
+    const expandable = soleProvider === null && allChildren.length > 0;
     const matchingChildren = allChildren.filter((child) => breakdownLabelMatchesSearch(child.provider, query));
     pairCount += searchActive ? matchingChildren.length : allChildren.length;
-    let visibleChildren: readonly AnalyticsGroup[] = matchingChildren;
+    let visibleChildren: readonly AnalyticsGroup[] = expandable ? matchingChildren : [];
     if (!searchActive) {
-      visibleChildren = expandedHarnesses.includes(group.key) ? allChildren : [];
+      visibleChildren = expandable && expandedHarnesses.includes(group.key) ? allChildren : [];
     }
     return {
       children: visibleChildren.map((child) => ({ group: child, label: child.provider })),
       controlsId: providerDisclosureId(group.key),
+      expandable,
       expanded: visibleChildren.length > 0,
       group,
+      soleProvider,
     };
   });
   return {

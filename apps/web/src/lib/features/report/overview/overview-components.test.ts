@@ -19,6 +19,8 @@ const HERO_VALUE_PATTERN = /<strong class="[^"]*white-space_nowrap[^"]*"[^>]*sty
 /** The share `<span>` and value `<strong>` of one "API value by harness" row. */
 const HARNESS_GROUP_SHARE_PATTERN = />([\d.]+%|—)<\/span> <strong/u;
 const HARNESS_GROUP_VALUE_PATTERN = /<strong[^>]*>([^<]+)<\/strong>/u;
+const SINGLE_SESSION_FIRST_PATTERN = / — 1 session · /;
+const SESSION_FIRST_PATTERN = / — [\d,]+ sessions? · /;
 
 const componentFrom = (loaded: unknown): Component => {
   if (typeof loaded !== 'object' || loaded === null || !('default' in loaded) || typeof loaded.default !== 'function') {
@@ -155,6 +157,7 @@ describe('decision-first Overview Svelte surfaces', () => {
     expect(readingOrder.every((position) => position >= 0)).toBe(true);
     expect(readingOrder).toEqual([...readingOrder].sort((left, right) => left - right));
     expect(body).not.toContain('>Top session</span>');
+    expect(body).toContain('data-record-count="3"');
     for (const item of result.view.topSessions) {
       expect(body).toContain(`Open details for ${item.label}.`);
     }
@@ -303,8 +306,11 @@ describe('P2 corrected interactive SSR contracts', () => {
     expect(todayButton).toContain('aria-current="date"');
     expect(todayButton).toContain('1 session');
     expect(todayButton).not.toContain('1 sessions');
+    expect(todayButton).toMatch(SINGLE_SESSION_FIRST_PATTERN);
     expect(body).toContain('data-price-state=');
     expect(body).toContain('data-heatmap-readout');
+    const readout = body.slice(body.indexOf('data-heatmap-readout'));
+    expect(readout.slice(0, readout.indexOf('</div>'))).toMatch(SESSION_FIRST_PATTERN);
   });
 
   test('preserves a local heatmap calendar day when its timestamp crosses the UTC boundary', () => {
@@ -396,6 +402,22 @@ describe('P2 corrected interactive SSR contracts', () => {
     expect(body).toContain('data-session-shape-point');
     expect(body).toContain('Renamed campaign');
     expect(body).toContain('Renamed Build report UI');
+    expect(body.split('Shape and rhythm ready').length - 1).toBe(1);
+    expect(body).not.toContain('data-advanced-summary');
+    const shapeStart = body.indexOf('data-session-shape');
+    const shapeKey = body.indexOf('data-session-shape-harness-key', shapeStart);
+    const shapeSummary = body.indexOf('data-session-shape-summary', shapeStart);
+    expect(shapeStart).toBeGreaterThanOrEqual(0);
+    expect(shapeKey).toBeGreaterThanOrEqual(0);
+    expect(shapeSummary).toBeGreaterThanOrEqual(0);
+    const shapeMarkup = body.slice(shapeStart, shapeSummary);
+    expect(shapeMarkup).toContain('data-session-shape-harness="Codex"');
+    expect(shapeMarkup).toContain('fill_harness.codex.fg');
+    expect(shapeMarkup).not.toContain('fill_accent');
+    expect(shapeMarkup).toContain('data-session-shape-harness-key');
+    expect(shapeMarkup).toContain('c_harness.codex.fg');
+    expect(shapeKey).toBeLessThan(shapeSummary);
+    expect(body).toContain('Standout sessions</h5>');
   });
 
   test('renders pressed legend filters and explicit stale/current machine presentation seam', () => {

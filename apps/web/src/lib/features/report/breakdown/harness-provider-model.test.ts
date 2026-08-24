@@ -29,6 +29,53 @@ const group = (key: string, harness = key, provider = key, sessions = 1): Analyt
 });
 
 describe('harness/provider hierarchy projection', () => {
+  test('folds a sole provider that mirrors its harness into the parent row', () => {
+    const view = harnessProviderView(
+      [group('codex', 'codex', 'codex', 3)],
+      [group('Codex sub', 'codex', 'Codex sub', 3)],
+      '',
+      'value',
+      ['codex'],
+    );
+
+    expect(view.parents[0]?.expandable).toBe(false);
+    expect(view.parents[0]?.expanded).toBe(false);
+    expect(view.parents[0]?.soleProvider).toBe('Codex sub');
+    expect(view.parents[0]?.children).toEqual([]);
+    expect(view.pairCount).toBe(1);
+    expect(view.exportRows.map(({ label }) => label)).toEqual(['codex']);
+  });
+
+  test('keeps the disclosure when the only provider diverges from its harness', () => {
+    const view = harnessProviderView(
+      [group('codex', 'codex', 'codex', 3)],
+      [group('Codex sub', 'codex', 'Codex sub', 2)],
+      '',
+      'value',
+      ['codex'],
+    );
+
+    expect(view.parents[0]?.expandable).toBe(true);
+    expect(view.parents[0]?.soleProvider).toBeNull();
+    expect(view.parents[0]?.children).toHaveLength(1);
+  });
+
+  test('matches a sole provider by search without re-introducing a child row', () => {
+    const view = harnessProviderView(
+      [group('codex', 'codex', 'codex', 3)],
+      [group('Codex sub', 'codex', 'Codex sub', 3)],
+      'codex sub',
+      'value',
+      [],
+    );
+
+    expect(view.searchActive).toBe(true);
+    expect(view.parents).toHaveLength(1);
+    expect(view.parents[0]?.children).toEqual([]);
+    expect(view.parents[0]?.soleProvider).toBe('Codex sub');
+    expect(view.pairCount).toBe(1);
+  });
+
   test('keeps children collapsed while counting every pair and exporting only visible rows', () => {
     const view = harnessProviderView(
       [group('claude'), group('codex')],

@@ -21,6 +21,7 @@
   const groupShare = css({ color: 'muted', fontSize: '11px', textAlign: 'right', whiteSpace: 'nowrap' });
   const groupValue = css({ fontSize: '12px', fontWeight: 650, textAlign: 'right', whiteSpace: 'nowrap' });
   const metric = css({
+    alignContent: 'start',
     borderTop: '1px solid token(colors.line)',
     display: 'grid',
     gap: '3px',

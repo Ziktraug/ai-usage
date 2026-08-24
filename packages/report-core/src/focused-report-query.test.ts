@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  buildFocusedHeatmapFromAggregates,
   type FocusedMachineFreshness,
   type FocusedOverviewRequest,
   type FocusedReportSupport,
@@ -14,6 +15,7 @@ import {
   projectFocusedSupport,
 } from './focused-report-query';
 import { localTimeRowFields } from './local-time-row.test-fixture';
+import { apiPriceMeasurement } from './provenance';
 import {
   MAX_BREAKDOWN_REFRESH_BYTES,
   MAX_OVERVIEW_REFRESH_BYTES,
@@ -60,6 +62,31 @@ const row = (name: string, day: number, cost: number, project = 'ai-usage'): Ser
 });
 
 const rows = [row('one', 1, 1), row('two', 2, 2), row('three', 3, 3), row('four', 4, 4, 'side')];
+
+test('marks the heatmap month axis with the year at the start and at every January', () => {
+  const aggregate = (iso: string) => ({
+    cost: 1,
+    priceMeasurement: apiPriceMeasurement({ costKnown: true, freshTokens: 0, knownCost: 1 }),
+    sessions: 1,
+    time: Date.parse(iso),
+  });
+  const heatmap = buildFocusedHeatmapFromAggregates(
+    [aggregate('2025-06-15T12:00:00.000Z'), aggregate('2026-02-10T12:00:00.000Z')],
+    new Date('2026-02-11T12:00:00.000Z'),
+  );
+  expect(heatmap?.monthLabels.filter(Boolean)).toEqual([
+    "Jun '25",
+    'Jul',
+    'Aug',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Dec',
+    "Jan '26",
+    'Feb',
+  ]);
+  expect(heatmap?.monthLabels.length).toBe(heatmap?.weeks.length);
+});
 
 const support: FocusedReportSupport = {
   analytics: {
