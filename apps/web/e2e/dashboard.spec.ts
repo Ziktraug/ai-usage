@@ -618,6 +618,8 @@ test('keeps the collection source pill independent of the report filter', async 
   const search = page.getByRole('textbox', {
     name: 'Filter sessions by title, project, model, provider, or harness',
   });
+  await page.keyboard.press('/');
+  await expect(search).toBeFocused();
   await search.fill('ai-usage');
   await search.press('Enter');
   await expect(page).toHaveURL(QUERY_URL_PATTERN);

@@ -12,14 +12,29 @@ test('surfaces a stale machine outside sync while preserving its raw filter valu
   await chartOptions.getByRole('radio', { exact: true, name: 'Machine' }).click();
   await expect(activity.getByTitle('Filter by Fixture Machine · Stale')).toContainText('Fixture Machine · Stale');
 
-  const machineFilter = page.getByRole('combobox', { name: 'Filter by machine' });
+  const machineFilter = page.getByRole('button', { name: 'Filter by machine' });
   await expect(machineFilter).toBeVisible();
   await machineFilter.click();
 
-  const staleMachineOption = page.getByRole('option', { name: 'Fixture Machine · Stale' });
+  const machineOptions = page.getByRole('dialog', { name: 'Machine' });
+  const staleMachineOption = machineOptions.getByRole('checkbox', { name: 'Fixture Machine · Stale' });
   await expect(staleMachineOption).toBeVisible();
-  await staleMachineOption.click();
+  await expect(staleMachineOption).not.toBeChecked();
+  const longMachineLabel = machineOptions.getByTitle('Fixture Machine Secondary · Freshness unavailable');
+  expect(
+    await longMachineLabel.evaluate(
+      (element) =>
+        getComputedStyle(element).whiteSpace === 'nowrap' &&
+        element.getClientRects().length === 1 &&
+        element.scrollWidth <= element.clientWidth + 1,
+    ),
+  ).toBe(true);
+  await machineOptions.getByTitle('Fixture Machine · Stale').click();
   await expect.poll(() => serializedSearchValues(page.url())).toContain('fixture-machine');
+  await machineFilter.click();
+  await expect(
+    page.getByRole('dialog', { name: 'Machine' }).getByRole('checkbox', { name: 'Fixture Machine · Stale' }),
+  ).toBeChecked();
   await waitForFocusedReportSettled(page);
   await expect(machineFilter).toContainText('Fixture Machine · Stale');
   expect(serializedSearchValues(page.url())).not.toContain('Stale');

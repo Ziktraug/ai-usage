@@ -468,7 +468,7 @@
               {preset.label}
             </button>
           {/each}
-          <Popover triggerClass={ghostButton}>
+          <Popover contentAriaLabel="Choose visible session columns" triggerClass={ghostButton}>
             {#snippet trigger()}
               Advanced columns · {visibleColumns.length} ▾
             {/snippet}

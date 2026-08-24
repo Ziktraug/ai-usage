@@ -9,6 +9,7 @@ test('makes the neutral origin default and keeps singleton campaigns unqualified
   const originFilter = page.getByRole('button', { name: 'Filter by origin' });
   await expect(originFilter).toContainText('Origin: all');
   await originFilter.click();
+  await expect(page.getByRole('dialog', { name: 'Session origin' })).toBeVisible();
   for (const origin of ['Human', 'Delegated', 'Automated review']) {
     await expect(page.getByText(origin, { exact: true })).toBeVisible();
   }

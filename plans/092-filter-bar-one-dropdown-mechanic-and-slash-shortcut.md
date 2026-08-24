@@ -21,6 +21,8 @@
 - **Category**: presentation
 - **Planned at**: commit `51815b70`, 2026-08-23
 - **Audit findings**: U07, U15, U39, U40
+- **Delivery status**: DONE under maintainer reopening D20; final commit and review verdict are recorded by the program run state.
+- **Superseded STOP**: D20 explicitly authorized the ARIA contract change. The shared Popover now requires an accessible content name, and every application caller supplies one.
 
 ## Why this matters
 

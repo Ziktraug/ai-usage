@@ -1,15 +1,17 @@
 <script lang="ts">
-  import { Popover, type PopoverOpenChangeDetails } from '@ark-ui/svelte/popover';
+  import { Popover, type PopoverOpenChangeDetails, type PopoverRootProps } from '@ark-ui/svelte/popover';
   import { Portal } from '@ark-ui/svelte/portal';
   import type { Snippet } from 'svelte';
   import { popoverContentClass, popoverPositionerClass } from './styles';
 
   interface Props {
     children: Snippet;
+    contentAriaLabel: string;
     contentClass?: string;
     onExitComplete?: (() => void) | undefined;
     onOpenChange?: (open: boolean) => void;
     open?: boolean | undefined;
+    positioning?: PopoverRootProps['positioning'];
     trigger: Snippet;
     triggerAriaLabel?: string;
     triggerClass?: string;
@@ -19,10 +21,12 @@
 
   let {
     children,
+    contentAriaLabel,
     contentClass,
     onExitComplete,
     onOpenChange,
     open,
+    positioning = { gutter: 4 },
     trigger,
     triggerAriaLabel,
     triggerClass,
@@ -35,14 +39,7 @@
   };
 </script>
 
-<Popover.Root
-  lazyMount
-  {onExitComplete}
-  onOpenChange={handleOpenChange}
-  {open}
-  positioning={{ gutter: 4 }}
-  unmountOnExit
->
+<Popover.Root lazyMount {onExitComplete} onOpenChange={handleOpenChange} {open} {positioning} unmountOnExit>
   <Popover.Trigger
     aria-label={triggerAriaLabel}
     class={triggerClass}
@@ -54,7 +51,9 @@
   </Popover.Trigger>
   <Portal>
     <Popover.Positioner class={popoverPositionerClass}>
-      <Popover.Content class={contentClass ?? popoverContentClass}> {@render children()} </Popover.Content>
+      <Popover.Content aria-label={contentAriaLabel} class={contentClass ?? popoverContentClass}>
+        {@render children()}
+      </Popover.Content>
     </Popover.Positioner>
   </Portal>
 </Popover.Root>
