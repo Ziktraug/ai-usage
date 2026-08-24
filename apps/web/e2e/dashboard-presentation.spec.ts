@@ -341,6 +341,24 @@ test('renders secondary status only on Overview and puts Projects before closed 
     }),
   ).toBe(true);
   await expect(projectsPanel.locator('[data-project-quality-label]')).toHaveCount(0);
+
+  const projectHeader = projectsPanel.getByRole('columnheader', { name: 'Project' });
+  const sessionsHeader = projectsPanel.getByRole('columnheader', { name: 'Sessions' });
+  const firstRowHeader = projectsPanel.getByRole('rowheader').first();
+  await expect(projectHeader).toHaveCSS('text-align', 'left');
+  await expect(projectHeader).toHaveCSS('padding-left', '12px');
+  await expect(firstRowHeader).toHaveCSS('text-align', 'left');
+  await expect(firstRowHeader).toHaveCSS('padding-left', '12px');
+  await expect(sessionsHeader).toHaveCSS('text-align', 'right');
+  await expect(projectsPanel.getByRole('columnheader', { name: 'Lines changed' })).toBeVisible();
+
+  const search = projectsPanel.getByRole('searchbox', { name: 'Search this breakdown' });
+  await expect(search).toBeVisible();
+  await search.fill('no-such-project');
+  await expect(projectsPanel.getByRole('table').getByRole('status')).toHaveText('No breakdown rows match this search');
+  await expect(projectsPanel.locator('[data-project-name]')).toHaveCount(0);
+  await search.fill('');
+  await expect(projectsPanel.locator('[data-project-name]').first()).toBeVisible();
 });
 
 test('uses compact circular Punchcard marks inside accessible targets with a low/high key', async ({ page }) => {

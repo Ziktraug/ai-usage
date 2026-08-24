@@ -24,13 +24,9 @@ const rendererFrom = (loaded: unknown): SvelteServerModule => {
   return loaded as SvelteServerModule;
 };
 
-// The fleet counts stored rows, not the report's reportable sessions, so every surface that
-// renders the count says so (U03). One pattern per surface: the fleet card's fact label, the
-// desktop table header, and the mobile summary term. A bare "Sessions" in any of the three is
-// the regression.
+// The fleet counts stored rows, not the report's reportable sessions, so the single fleet
+// representation keeps saying so after the duplicate comparison surfaces are removed (U03/U27).
 const STORED_SESSIONS_FACT_PATTERN = /<span[^>]*>\s*Stored sessions\s*<\/span>/u;
-const STORED_SESSIONS_COLUMN_PATTERN = /<th[^>]*>\s*Stored sessions\s*<\/th>/u;
-const STORED_SESSIONS_TERM_PATTERN = /<dt[^>]*>\s*Stored sessions\s*<\/dt>/u;
 const BARE_SESSIONS_LABEL_PATTERN = /<(dt|span|th)[^>]*>\s*Sessions\s*<\/\1>/u;
 
 const fleet: SyncFleet = {
@@ -101,12 +97,13 @@ describe('Sync rendered SSR parity', () => {
     expect(body).toContain('Sync');
     expect(body).toContain('Laptop');
     expect(body).toContain('7');
-    // The store's per-machine count is stored rows, not the report's reportable sessions (U03).
-    // Every rendered surface carries the qualifier, including the mobile summary list.
     expect(body).toMatch(STORED_SESSIONS_FACT_PATTERN);
-    expect(body).toMatch(STORED_SESSIONS_COLUMN_PATTERN);
-    expect(body).toMatch(STORED_SESSIONS_TERM_PATTERN);
-    expect(body).toContain('zero-token sessions that the report leaves out');
+    expect(body).toContain('Fleet share');
+    expect(body).toContain('100%');
+    expect(body).not.toContain('Machine contributions');
+    expect(body).not.toContain('Machine contribution summaries');
+    expect(body).not.toContain('<table');
+    expect(body.match(/data-machine-fleet-share/g)).toHaveLength(1);
     expect(body).not.toMatch(BARE_SESSIONS_LABEL_PATTERN);
     expect(body).toContain('Manual transfer');
     // The Cursor export is a second, separately labelled action next to the merge drop zone.

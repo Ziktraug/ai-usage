@@ -160,7 +160,7 @@ read-only SQLite and the permanent browser/server and demo-isolation boundaries.
 | 094 | Calm the Overview Secondary Panels (Harness Disclosure, Session Shape, Punchcard Fit, KPI Baseline, Rhythm Axis, Record Tiles) | P1 | M | 088, 093 (shared `harness-provider-model.ts`, `executive-overview.svelte`) | DONE |
 | 095 | Make Provider Status and Quota History Legible | P1 | M | - | DONE (maintainer reopening D20; missing machine IDs no longer collapse labelled observations, full gates and independent Codex review passed, and the child is merged into the program) |
 | 096 | Skills Management Surface Fixes — Legible Tree, Honest Statuses, One Health Surface, Matrix Geometry, Frontmatter False Positives | P1 | M | 087 (editor status branch) | DONE (maintainer reopening D20; refresh proof now observes the settled transformed response, the intended visual baseline is updated, and full child gates pass) |
-| 097 | Sync, Sources, Projects: Duplication and Jargon | P1 | M | 088 (fleet "Sessions" label) | TODO |
+| 097 | Sync, Sources, Projects: Duplication and Jargon | P1 | M | 088 (fleet "Sessions" label) | DONE |
 | 098 | Session Drawer, Analysis, and Report Chrome Polish | P2 | M | 088 (drawer, records); 093/094 if they touched `preset.ts` | BLOCKED (dependency 094 has not landed) |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) |
