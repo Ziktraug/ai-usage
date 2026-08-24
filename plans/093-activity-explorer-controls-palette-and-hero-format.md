@@ -49,18 +49,19 @@ next to it:
 - **U18** — "Group by: Model" paints series from a 6-entry palette indexed by
   a string hash modulo 6. Two of the synthetic model keys in the audit hashed
   to the same slot (`stableHueFor('gpt-5.6-sol') % 6 === 2` and
-  `stableHueFor('claude-opus-5') % 6 === 2`, both `chart.c3`), so the top two
-  series — 76 % and 11 % of value — were the same lavender. With up to twelve
-  named series and six colours, collisions are guaranteed, not unlucky. The
-  `Other` series' member disclosure ("58 grouped") renders as a block under
-  its legend entry and floats alone below the legend row.
-- **U34** — the hero reads `≥ $14134.47`: no thousands separator while the KPI
-  tiles beside it use `fmtNum` and read `36,971`; at 1024 px the KPI column is
-  ~340 px wide, the 52 px mono value does not fit, and `overflow-wrap: anywhere`
-  breaks after `≥`, leaving the symbol alone on a line.
+  `stableHueFor('claude-opus-5') % 6 === 2`, both `chart.c3`), so two dominant
+  synthetic series were the same lavender. With up to twelve named series and
+  six colours, collisions are guaranteed, not unlucky. The `Other` series'
+  grouped-member disclosure renders as a block under its legend entry and
+  floats alone below the legend row.
+- **U34** — the hero shows a five-digit currency amount without a thousands
+  separator while the KPI tiles beside it use `fmtNum` and include separators;
+  at 1024 px the KPI column is ~340 px wide, the 52 px mono value does not fit,
+  and `overflow-wrap: anywhere` breaks after `≥`, leaving the symbol alone on a
+  line.
 - **U04 (chart part)** — a single-day window renders one bucket as a
-  full-width, full-height bar; the peak label (`$111.91`, absolutely positioned
-  top-right with a surface background) is drawn over the bar's corner and reads
+  full-width, full-height bar; the currency peak label, absolutely positioned
+  top-right with a surface background, is drawn over the bar's corner and reads
   as a notch cut out of it.
 
 Maintainer preferences that bound the fixes (from `plans/README.md` and
@@ -225,7 +226,7 @@ Tokens".
     {/if}
     ```
     `<li>` is block-level, `<details>` is block-level, so the summary
-    ("58 grouped") stacks under the button instead of beside it.
+    stacks under the button instead of beside it.
   - line 88: `const legend = css({ display: 'flex', flexWrap: 'wrap', gap: '8px 12px', mt: '4px' });`
 - `timeline-model.ts` lines 180–195 `timelineOtherDisclosure` builds
   `label: \`${fmtNum(memberKeys.length)} grouped\`` — the copy is fine; the

@@ -31,28 +31,29 @@
 ## Why this matters
 
 The `/skills` surface is the maintainer's inventory of every Agent Skill on
-the machine — scope, invocation, origin, state, exposure. The 2026-08-23
-fresh-eyes audit found that the surface contradicts its own "hierarchize,
-don't drown" rule in seven small, independent ways:
+the machine — scope, invocation, origin, state, exposure. The fresh-eyes audit
+found that the surface contradicts its own "hierarchize, don't drown" rule in
+several small, independent ways:
 
-- the left tree truncates scope names down to "Exa…" / "Ex…" while the
-  page leaves ~200 px unused at 1920 px, so sibling scopes become
-  indistinguishable exactly when a disambiguating path is rendered (the path
-  steals the name's width);
+- the left tree truncates scope names to nearly identical prefixes while a
+  wide desktop page leaves substantial horizontal space unused, so sibling
+  scopes become indistinguishable exactly when a disambiguating path is
+  rendered (the path steals the name's width);
 - a "Skills reloaded." toast appears on every passive page load, announcing
   that nothing changed;
 - the SKILL.md editor says "Saved" on a file nobody touched, so the word
   "Saved" stops meaning anything after an actual save;
-- "Healthy links 0/8" is rendered in the same neutral tone as "Blocked 0";
-- the right-hand Context panel repeats the four health numbers that the
-  centre column already shows as tiles (and, on the matrix route, repeats
-  the six clickable tiles);
-- on `/skills/matrix` six tiles are forced into a 7-column grid inside a
-  ~700 px column (five-line captions, "TO CONSOLIDATE" clipped), skill names
-  break letter-by-letter because a `table-layout: fixed` table with a
-  `min-width: 860px` override divides its width equally among every column,
-  and the whole matrix scrolls horizontally while the 288 px Context column
-  next to it is almost empty;
+- an incomplete "Healthy links" ratio is rendered in the same neutral tone as
+  a zero-valued "Blocked" indicator;
+- the right-hand Context panel repeats the health summary that the centre
+  column already shows as tiles (and, on the matrix route, repeats the same
+  clickable tiles);
+- on `/skills/matrix` the tiles are forced into an over-dense grid inside a
+  narrow centre column (multi-line captions, "TO CONSOLIDATE" clipped), skill
+  names break letter-by-letter because a `table-layout: fixed` table with a
+  hard minimum width divides its width equally among every column, and the
+  whole matrix scrolls horizontally while the Context column next to it is
+  almost empty;
 - validation flags `compatibility`, `argument-hint`, `allowed-tools` (and
   other documented fields) as `UnknownFrontmatterField`, so the real token
   warnings drown in false positives.
@@ -89,9 +90,10 @@ All paths are relative to the worktree root. Line numbers were read at
   followed by `{#if scope.shortPath}<span class={scopePath}>{scope.shortPath}</span>{/if}`.
   **Root cause**: both flex items have `flex-shrink: 1` and `min-width: 0`,
   so when name + path overflow the row, both shrink *proportionally to their
-  content width* — a 14-character name beside a 30-character path keeps
-  roughly a third of its width. That is the "Exa…" / "Ex…" symptom, and it
-  only appears when `shortPath` is present, i.e. exactly when two scopes share
+  content width* — a shorter name beside a much longer path keeps only a
+  fraction of its width. That is the nearly identical truncated-prefix
+  symptom, and it only appears when `shortPath` is present, i.e. exactly when
+  two scopes share
   a label and need telling apart (`apps/web/src/skills-page-model.ts:508-510`:
   `...((labelCounts.get(label) ?? 0) > 1 ? { shortPath: shortPathFor(project.path) } : {})`).
 - `apps/web/src/lib/features/skills/shell/skills-workspace.svelte:165-171`:
@@ -107,10 +109,11 @@ All paths are relative to the worktree root. Line numbers were read at
   The tree column is 240 px at every desktop width. The shell is capped at
   `maxWidth: '1380px'` (`packages/design-system/src/components/layout.ts:22-27`)
   behind a rail of `ml: { base: 0, md: '56px', xl: '216px' }`
-  (`apps/web/src/lib/features/shell/app-shell.svelte:37`), so at 1920 px the
-  three columns are 240 / ~748 / 288 and the tree's label cell is ~130 px
-  wide (panel padding 18 px, toggle 32 px + 4 px gap, button padding 10 px,
-  count badge). Panda's default `2xl` breakpoint (1536 px) is unused anywhere
+  (`apps/web/src/lib/features/shell/app-shell.svelte:37`), so at the audited
+  wide desktop viewport the fixed outer columns leave the centre column and
+  the tree's label cell much narrower than the available page (panel padding,
+  toggle, gap, button padding and the count badge consume the remaining label
+  width). Panda's default `2xl` breakpoint (1536 px) is unused anywhere
   in `apps/web/src` today (`grep -rn "'2xl'" apps/web/src` → no hits).
 - Existing e2e coverage: `apps/web/e2e/skills.spec.ts:421-441` ("bounds long
   scope labels…") asserts the 66-character `LONG_PROJECT_LABEL` still
@@ -279,9 +282,10 @@ All paths are relative to the worktree root. Line numbers were read at
     sets `width: '100%', minW: '1040px', tableLayout: 'fixed'`. In fixed
     layout the column widths come from the first row's `width` values, not
     from `min-width`; no cell here has a `width`, so every column —
-    including the Skill column — gets `tableWidth / (targets + 1)`. With
-    the `minW` override that is ~860 / 9 ≈ 95 px for eight targets, and
-    `overflowWrap: 'anywhere'` (also on `strongCell`,
+    including the Skill column — gets `tableWidth / (targets + 1)`. In the
+    audited many-target case, the matrix-specific minimum width is divided
+    into columns too narrow for skill names, and `overflowWrap: 'anywhere'`
+    (also on `strongCell`,
     `table.ts:124`) lets the name break at any character → "pr-/revi".
     Pre-check you can run: with the 2-target e2e fixture the Skill `th`
     measures ~287 px (860/3), **below** its declared `minW: 320px` — proof
@@ -295,9 +299,10 @@ All paths are relative to the worktree root. Line numbers were read at
   `view.matrixOpen` (line 299: `{#if view.matrixOpen}` … `data-skills-matrix-slot`),
   and `skills-workspace.svelte:261`
   `const mobileContext = css({ display: { base: 'block', xl: 'contents' }, gridColumn: { lg: '2', xl: 'auto' } });`
-  places the inspector beside the matrix at `xl`. With the rail and shell
-  padding the centre column is ~432 px at 1280 and ~748 px at 1920, minus
-  18 px panel padding on each side (`panel`, `packages/design-system/src/components/panel.ts:7`).
+  places the inspector beside the matrix at `xl`. With the rail, shell padding
+  and panel padding (`panel`,
+  `packages/design-system/src/components/panel.ts:7`), the centre column
+  remains narrow even at a wide desktop viewport.
 - e2e: `skills.spec.ts:579-602` (1280×800) asserts the table is visible,
   `border-collapse: separate`, `font-size: 13px`, the state dot is 15 px,
   and the inspector's `Close matrix` is visible with height < 350.
@@ -332,14 +337,10 @@ All paths are relative to the worktree root. Line numbers were read at
   `plans/001-integrate-skill-management-log.md:240`). The repository
   documents **no other** SKILL.md field; the lists below come from outside
   the repo and the executor must confirm them (Step 6).
-- What the audit saw flagged on the live app: `compatibility`,
-  `argument-hint`, `allowed-tools`.
-- Frontmatter keys observed across the local runtime inventories during
-  planning (`~/.claude/skills`, `~/.agents/skills`, `~/.codex/skills`;
-  90 SKILL.md files; key names only): `name` 90, `description` 90,
-  `disable-model-invocation` 36, `metadata` 8, `argument-hint` 8,
-  `compatibility` 4, `allowed-tools` 4, `environments` 3, `version` 2,
-  `license` 2, `disabled-environments` 1.
+- Generalized discovery suggested additional frontmatter keys including
+  `compatibility`, `argument-hint`, `allowed-tools`, `metadata`, `environments`,
+  `version`, `license`, and `disabled-environments`. Exact private discovery
+  paths and counts are omitted; the executor must confirm upstream support.
 - Claude Code's skills documentation ("Frontmatter reference", public docs
   at `https://code.claude.com/docs/en/skills`; **not** reproduced in this
   repo — verify) lists: `name`, `description`, `argument-hint`,
@@ -737,9 +738,9 @@ unaffected). Before this step the Skill `th` measures ~287 px at 1280
    ]);
    ```
    `name`/`description` stay `standard`. `version`, `environments`,
-   `disabled-environments` were observed locally but are documented by
-   neither reference — they stay `unknown-extension` (still a warning);
-   record them in Maintenance notes, not in the set.
+   `disabled-environments` were suggested by generalized discovery but are
+   documented by neither reference — they stay `unknown-extension` (still a
+   warning); record them in Maintenance notes, not in the set.
 3. `packages/skills/src/skill-markdown.test.ts`: add
    `test('accepts documented Claude Code and Agent Skills frontmatter without diagnostics', …)`
    parsing a document whose frontmatter has every key above (scalar values
@@ -824,9 +825,10 @@ Stop and report back (do not improvise) if:
   rows (`Healthy links` inside the inspector) — would mean another plan owns
   that presentation.
 - The external frontmatter references cannot be reached and a field cannot
-  be confirmed by either: ship only the fields the audit observed
-  (`compatibility`, `argument-hint`, `allowed-tools`) plus the repo-known
-  four, and record the unconfirmed ones in the commit body for a follow-up.
+  be confirmed by either: ship only the three candidate fields required by the
+  generalized finding (`compatibility`, `argument-hint`, `allowed-tools`) plus
+  the repo-known four, and record their unconfirmed provenance in the commit
+  body for a follow-up.
 - The visual snapshot diff shows anything beyond the status pill and tree
   label wrapping.
 
@@ -839,10 +841,11 @@ Stop and report back (do not improvise) if:
 - The Context column is dropped at `xl`+ only while `view.matrixOpen`; the
   editor routes keep the three-column layout the 1280×900 geometry test
   protects.
-- `version`, `environments`, `disabled-environments` appear in real local
-  inventories but are undocumented; if the maintainer wants them silent,
-  add them to `knownFrontmatterExtensions` with a comment naming the tool
-  that writes them — do not downgrade `UnknownFrontmatterField` to `info`.
+- `version`, `environments`, `disabled-environments` were suggested by
+  generalized discovery but are undocumented; if the maintainer wants them
+  silent, first confirm their provenance, then add them to
+  `knownFrontmatterExtensions` with a comment naming the tool that writes them
+  — do not downgrade `UnknownFrontmatterField` to `info`.
 - Dead code noticed, not removed here (out of scope, candidate for a
   cleanup commit): `management/skill-diagnostics.svelte` (no importer) and
   `apps/web/src/skill-markdown-editor-model.ts` (+ its test; only the test

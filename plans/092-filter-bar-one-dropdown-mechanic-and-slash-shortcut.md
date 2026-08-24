@@ -43,7 +43,7 @@ The filter bar is the first interactive row of every report view, and the
   so it opens ~170px to the left. Two mechanics for one row of filters.
 - **U39** — at 1280px (`xl`: navigation rail 216px + 36px shell padding ⇒
   992px of toolbar) the flex bases sum to ~1,050px, so the source-status
-  group ("1 warning" + "Run all") wraps alone to a second line. 1280 and the
+  group (warning status + "Run all") wraps alone to a second line. 1280 and the
   1080-wide portrait display are daily viewports.
 - **U40** — the machine menu is `sameWidth` with its 180px trigger, so a
   label like `Fixture Machine Secondary · Freshness unavailable` wraps onto
@@ -261,7 +261,7 @@ running e2e (`--channel chrome` does not work here).
 - `packages/design-system/src/svelte/overlays/popover.svelte` and `checkbox.svelte` — the sessions
   "Advanced columns" chooser (`session-table.svelte:407–431`) and `app-navigation.svelte` keep using them.
 - `apps/web/src/lib/features/sources/source-control-summary.svelte` and everything under `sources/` —
-  the status copy ("Sources ready", "1 warning") belongs to plans 095/097; this plan only changes the
+  the status copy ("Sources ready", warning-count copy) belongs to plans 095/097; this plan only changes the
   box the snippet is rendered into.
 - `packages/report-core/**` predicates and `apps/web/src/dashboard-search.ts` — the neutral `[]`
   semantics and the undeclared-origin rule are settled (plan 049).

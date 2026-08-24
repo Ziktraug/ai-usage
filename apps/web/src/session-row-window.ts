@@ -17,7 +17,7 @@ export interface SessionRowWindow {
 export interface SessionViewportHeightInput {
   /** Document-relative top of the element the page is anchored to: 0 when the page must not scroll (desktop), the session region start on mobile. */
   anchorTop: number;
-  /** Static document space below the session table owner (page padding, mobile navigation reserve). */
+  /** Total space below the surface: dynamic in-owner controls plus static space below the table owner. */
   bottomInset: number;
   minimumHeight: number;
   /** Document-relative top of the scroll surface (`rect.top + window.scrollY`) — scroll-invariant, so not circular. */

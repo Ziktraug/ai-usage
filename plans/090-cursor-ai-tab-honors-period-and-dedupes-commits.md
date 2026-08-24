@@ -30,17 +30,16 @@
 Every other Analysis sub-tab (Models, Harnesses & providers, Projects) is
 computed from the session rows that match the report's range and filters.
 The Cursor AI sub-tab is the exception: the Cursor commit-attribution
-dataset is passed through the breakdown untouched, so under a
-"Jul 24 → Aug 23" period the reader sees commits dated March and April, the
-"Scored commits" / "Branch rows" tiles count the whole history, and the
-period control above the table silently does nothing. On top of that, Cursor
-stores one attribution row per branch a commit was observed on, and the
-table renders those raw rows — the same commit appears three times with the
-same numbers and a different branch name — and the rows arrive in the order
-the store returns them (sorted by a SHA-256 item key, i.e. effectively
-random), so there is no date order. The reader cannot answer the one question
-the tab exists for: "of the code I committed in this period, how much did
-Cursor attribute to AI?"
+dataset is passed through the breakdown untouched, so under a selected recent
+period the reader sees commits dated months earlier, the "Scored commits" /
+"Branch rows" tiles count the whole history, and the period control above the
+table silently does nothing. On top of that, Cursor stores one attribution row
+per branch a commit was observed on, and the table renders those raw rows — the
+same commit appears repeatedly with the same numbers and a different branch
+name — and the rows arrive in the order the store returns them (sorted by a
+SHA-256 item key, i.e. effectively random), so there is no date order. The
+reader cannot answer the one question the tab exists for: "of the code I
+committed in this period, how much did Cursor attribute to AI?"
 
 This plan makes the tab honour the period that the rest of the breakdown
 already honours, lists each commit once with its branches, orders rows by

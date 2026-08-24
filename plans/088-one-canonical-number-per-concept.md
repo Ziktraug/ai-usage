@@ -32,28 +32,27 @@ The 2026-08-23 fresh-eyes audit found four places where the same concept is
 computed twice and the two numbers disagree on screen at the same minute with
 the same filters:
 
-- **U02** — Overview "API value by harness" says Claude Code `≥ $3,430 (24 %)`
-  while Analysis › Harnesses & providers says Claude Code `≥ $3,222 (23 %)`;
-  Codex and OpenCode agree in both. The breakdown drops the known subtotal of
+- **U02** — Overview "API value by harness" reports a larger value and share for
+  one harness than Analysis › Harnesses & providers, while the other harnesses
+  agree in both. The breakdown drops the known subtotal of
   every *partially priced* session (it counts only fully priced sessions), the
-  Overview keeps it. ~$208 of honestly-known value disappears between two tabs,
-  and the breakdown row's own tooltip ("≥ values include lower bounds from
-  incomplete pricing") promises the opposite of what it does.
-- **U03** — `/sync` shows 4,954 + 3,171 = 8,125 sessions per machine while the
-  report says 7,979 sessions for All time. The fleet counts every active stored
-  row; the published report drops zero-token sessions (`minTokens: 1`) and reads
-  the last published revision, not the live store. Both were labelled
+  Overview keeps it. A material amount of honestly known value disappears
+  between two tabs, and the breakdown row's own tooltip ("≥ values include
+  lower bounds from incomplete pricing") promises the opposite of what it does.
+- **U03** — `/sync` reports a larger sum of stored sessions across the loaded
+  fleet than the published All time report. The fleet counts every active
+  stored row; the published report drops zero-token sessions (`minTokens: 1`)
+  and reads the last published revision, not the live store. Both were labelled
   "Sessions".
-- **U06** — Top sessions row "Campaign · 267 sessions · ≥ $2,567" opens a
-  drawer for *one* session ($1,020, Calls 1, Subagent Yes) because the Overview
-  hands the drawer the campaign **root** row, not the campaign aggregate. In the
-  Sessions tab the drawer's campaign header recomputes "Campaign · $8.65 · 5
-  turns · 83 tools" from the loaded member list while the metric grid below
-  shows the campaign display row ($14.36 / 9 turns / 160 tools, which includes
-  rolled-up automated reviews). Two aggregations of "this campaign" in one
-  drawer.
-- **U42** — "Longest session 53.2h" is a Codex campaign root's task-open time
-  (root session only, by the locked plan 052 rule). The card never says so.
+- **U06** — A high-value, multi-session campaign row in Top sessions opens a
+  drawer containing metrics for *one* session because the Overview hands the
+  drawer the campaign **root** row, not the campaign aggregate. In the Sessions
+  tab, the drawer's campaign header recomputes smaller totals from the loaded
+  member list while the metric grid below shows the larger campaign display-row
+  totals, which include rolled-up automated reviews. Two aggregations of "this
+  campaign" appear in one drawer.
+- **U42** — The "Longest session" value is an agent campaign root's task-open
+  time (root session only, by the locked plan 052 rule). The card never says so.
 
 The settled rule is one canonical aggregation per concept, reused by every
 surface, and explicit naming where two legitimately different concepts meet
@@ -140,7 +139,7 @@ metric; nothing partial is hidden.
   `:286`) divides by `summary.totalCost = summary.priceMeasurement.knownCost`
   (`focused-report-query.ts:597-598`, lower-bound inclusive); the breakdown
   divides `costSum / totalCost` with the fully-priced-only `totalCost` above.
-  That is the 24 % vs 23 %.
+  That is the share discrepancy described above.
 - `apps/web/src/lib/features/report/breakdown/breakdown-row.svelte:62-63`
   already documents the intended semantics:
   `'Share of the known API-value subtotal in this breakdown; ≥ values include lower bounds from incomplete pricing'`.

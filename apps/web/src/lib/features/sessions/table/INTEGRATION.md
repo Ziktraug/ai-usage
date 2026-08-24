@@ -24,10 +24,12 @@ payload modes create no live client, descriptor acquisition, or Session request.
 ## Surface sizing
 
 On desktop, the Sessions surface is the only scroll container: the document is
-one viewport high and the surface height is the viewport minus its document top
-and the static space below its owner. On mobile, the page anchors at the Session
-region start and the surface fills the remaining space above the fixed
-navigation. Only the three-row desktop and one-card mobile minimum heights let
+one viewport high and the surface height is the viewport minus its document top,
+dynamic in-owner trailing controls, and static space below its owner. On mobile,
+the page anchors at the Session region start; the surface uses the remaining
+space after subtracting the same dynamic controls and all static space below
+the owner, including page padding and the fixed-navigation reserve.
+Only the three-row desktop and one-card mobile minimum heights let
 the page scroll past the surface. `session-row-window.ts` is the pure sizing
 model; `session-viewport-geometry.spec.ts` pins the browser contract.
 
