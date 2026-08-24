@@ -15,16 +15,22 @@ export interface SessionRowWindow {
 }
 
 export interface SessionViewportHeightInput {
+  /** Document-relative top of the element the page is anchored to: 0 when the page must not scroll (desktop), the session region start on mobile. */
+  anchorTop: number;
+  /** Static document space below the session table owner (page padding, mobile navigation reserve). */
   bottomInset: number;
   minimumHeight: number;
+  /** Document-relative top of the scroll surface (`rect.top + window.scrollY`) — scroll-invariant, so not circular. */
+  surfaceTop: number;
   viewportHeight: number;
 }
 
 const nonNegativeInteger = (value: number): number => (Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0);
 
 /**
- * The surface height depends on the viewport alone, never on where the surface
- * currently sits in it.
+ * The surface height uses document offsets, never the surface's current
+ * position in the viewport. `surfaceTop` and `anchorTop` therefore do not
+ * change while the page scrolls.
  *
  * Sizing it from its own `getBoundingClientRect().top` — as this did until
  * 2026-08-05, and as the retired Solid table did before it — is circular: the
@@ -34,16 +40,18 @@ const nonNegativeInteger = (value: number): number => (Number.isFinite(value) ? 
  * scrolled, and the bottom stayed permanently out of reach until the surface
  * reached the top of the viewport.
  *
- * A constant height for a given viewport keeps the virtual window budgets — they
- * were always measured in the saturated state this now holds — while the page
- * simply scrolls to the surface and the surface then fills the viewport.
+ * With `anchorTop = 0`, the resulting document height equals the viewport
+ * height, so the page has no scroll range and the surface is the only scroll
+ * container. A non-zero mobile anchor leaves only the range needed to bring the
+ * session region to the top.
  */
 export const calculateSessionViewportHeight = (input: SessionViewportHeightInput): number => {
   const viewportHeight = Math.max(1, nonNegativeInteger(input.viewportHeight));
-  const bottomInset = Math.min(viewportHeight - 1, nonNegativeInteger(input.bottomInset));
-  const usableHeight = viewportHeight - bottomInset;
-  // A viewport shorter than the minimum keeps a usable surface and lets the page
-  // scroll to it, rather than collapsing the table.
+  const chromeAboveSurface = Math.max(0, nonNegativeInteger(input.surfaceTop) - nonNegativeInteger(input.anchorTop));
+  const bottomInset = nonNegativeInteger(input.bottomInset);
+  const usableHeight = viewportHeight - chromeAboveSurface - bottomInset;
+  // A viewport too short for the chrome plus the minimum keeps a usable surface
+  // and lets the page scroll to it, rather than collapsing the table.
   return Math.max(Math.max(1, nonNegativeInteger(input.minimumHeight)), usableHeight);
 };
 

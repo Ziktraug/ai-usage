@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { TitleSource } from '@ai-usage/report-core/types';
   import type { SessionSurfaceMode } from '../../../../session-surface-mode';
-  import { defaultColumnVisibility } from '../../../../session-table-schema';
+  import { columnVisibilityForSessionPreset, type SessionColumnPresetId } from '../../../../session-table-schema';
   import { syntheticCampaignRow, syntheticSessionRow, syntheticSessionRows } from './session-table.fixtures';
   import SessionTable from './session-table.svelte';
 
@@ -9,11 +9,13 @@
     childTitleSource,
     expanded = false,
     mode = 'desktop',
+    preset = 'work',
     unavailable = false,
   }: {
     childTitleSource?: TitleSource;
     expanded?: boolean;
     mode?: Exclude<SessionSurfaceMode, 'pending'>;
+    preset?: SessionColumnPresetId;
     unavailable?: boolean;
   } = $props();
   const child = $derived(
@@ -29,12 +31,14 @@
     titleSource: 'first-prompt' as const,
     usageUnavailable: unavailable,
   });
-  const rows = $derived([campaign, ...syntheticSessionRows(4999, 10)]);
+  const singleton = syntheticCampaignRow(3);
+  const filtered = { ...syntheticCampaignRow(4), campaignTotalCount: 3, campaignVisibleCount: 1 };
+  const rows = $derived([campaign, singleton, filtered, ...syntheticSessionRows(4997, 10)]);
   const noop = () => undefined;
 </script>
 
 <SessionTable
-  columnVisibility={defaultColumnVisibility}
+  columnVisibility={columnVisibilityForSessionPreset(preset)}
   initialExpanded={expanded ? { [campaign.rowId]: true } : {}}
   initialSurfaceMode={mode}
   initialWindowAnchor
@@ -43,6 +47,7 @@
   onFieldFilter={noop}
   onHarnessFilter={noop}
   onInitialWindowAnchor={noop}
+  onLoadCampaignChildren={noop}
   onSelect={noop}
   onSortingChange={noop}
   queryResetKey="synthetic-query"

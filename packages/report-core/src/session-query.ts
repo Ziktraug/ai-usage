@@ -1392,7 +1392,17 @@ export const campaignBadgeLabelForSessionRow = (row: SessionPresentationRow): st
   if (!row.campaignKey || row.campaignTotalCount == null || row.campaignVisibleCount == null) {
     return null;
   }
-  return `Campaign · ${row.campaignVisibleCount} ${row.campaignVisibleCount === 1 ? 'session' : 'sessions'}`;
+  // A one-session campaign is just a session; the qualifier only earns its
+  // place when there are members to qualify. A filtered campaign says how
+  // many of its members the current filters show.
+  if (row.campaignTotalCount <= 1) {
+    return null;
+  }
+  const count =
+    row.campaignVisibleCount < row.campaignTotalCount
+      ? `${row.campaignVisibleCount} of ${row.campaignTotalCount}`
+      : `${row.campaignVisibleCount}`;
+  return `Campaign · ${count} sessions`;
 };
 
 export const classifierRollupLabelForSessionRow = (row: SessionPresentationRow): string | null => {

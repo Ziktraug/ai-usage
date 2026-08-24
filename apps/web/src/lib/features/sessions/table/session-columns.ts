@@ -8,7 +8,7 @@ import {
   sessionColumnSchema,
   sortValueForSessionColumn,
 } from '../../../../session-table-schema';
-import { fmtCompact, fmtDate, fmtDuration, fmtMoney, fmtNum } from '../../../foundation/presentation/format';
+import { fmtCompactColumn, fmtDate, fmtDuration, fmtMoney, fmtNum } from '../../../foundation/presentation/format';
 import { apiValuePresentation } from '../../../foundation/presentation/report-value';
 
 export interface SessionColumnMeta {
@@ -26,8 +26,17 @@ export type SessionTableColumn = ColumnDef<SessionPresentationRow, unknown> & {
 
 const unavailable = (row: SessionPresentationRow, value: string): string => (row.usageUnavailable ? '—' : value);
 const boolLabel = (value: boolean | undefined): string => (value ? 'Yes' : 'No');
-const token = (row: SessionPresentationRow, value: number): string => unavailable(row, fmtCompact(value));
+const token = (row: SessionPresentationRow, value: number): string => unavailable(row, fmtCompactColumn(value));
 const count = (row: SessionPresentationRow, value: number): string => unavailable(row, fmtNum(value));
+
+export const TOKEN_COLUMN_VALUE: Partial<Record<SessionColumnId, (row: SessionPresentationRow) => number>> = {
+  cache: (row) => row.tokCr,
+  fresh: (row) => row.freshTokens,
+  tokCw: (row) => row.tokCw,
+  tokIn: (row) => row.tokIn,
+  tokOut: (row) => row.tokOut,
+  total: (row) => row.tokenTotal,
+};
 const rtkLabel = (row: SessionPresentationRow): string => {
   const percentage = rtkSavingsPct(row);
   return percentage === null ? '—' : `${percentage.toFixed(percentage >= 10 ? 0 : 1)}%`;
@@ -141,7 +150,8 @@ export const sessionTableColumns = [
     align: 'right',
     format: (row) => fmtDuration(row.durationMs),
     label: 'Recorded time',
-    title: 'Harness-specific recorded or derived time; this is not model runtime',
+    title:
+      'Recorded time of the root session on campaign rows (children show their own); harness-specific recorded or derived time, not model runtime',
     widthPx: 96,
   }),
   column('calls', 'Calls', { align: 'right', format: (row) => count(row, row.calls), widthPx: 76 }),

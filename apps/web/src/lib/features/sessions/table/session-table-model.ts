@@ -30,7 +30,10 @@ export const createSessionTableModel = (input: SessionTableModelInput): SessionT
     getCoreRowModel: getCoreRowModel(),
     getExpandedRowModel: getExpandedRowModel(),
     getRowCanExpand: (row) =>
-      Boolean(row.original.children?.length || (row.original.campaignKey && input.canLoadCampaignChildren)),
+      Boolean(
+        row.original.children?.length ||
+          (row.original.campaignKey && input.canLoadCampaignChildren && (row.original.campaignTotalCount ?? 0) > 1),
+      ),
     getRowId: (row) => row.rowId,
     getSubRows: (row) => row.children ?? [],
     onStateChange: () => undefined,

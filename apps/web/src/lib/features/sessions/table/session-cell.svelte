@@ -7,11 +7,19 @@
     highlightMark,
     muted,
     ProvenanceMarker,
+    provenanceTitle,
     sessionTitleClamp,
   } from '@ai-usage/design-system/svelte';
   import type { SessionPresentationRow } from '@ai-usage/report-core/session-query';
   import type { SessionColumnId } from '../../../../session-table-schema';
-  import { applySessionFieldFilter, projectSessionCell } from './session-cell-projection';
+  import {
+    applySessionFieldFilter,
+    projectSessionCell,
+    type SessionRowProvenanceSummary,
+    sharedProvenanceMarkerFacts,
+  } from './session-cell-projection';
+
+  const EMPTY_ROW_PROVENANCE: SessionRowProvenanceSummary = { shared: [], sharedKinds: new Set() };
 
   let {
     campaignRootLabel,
@@ -24,6 +32,7 @@
     onToggleExpanded,
     query,
     row,
+    rowProvenance = EMPTY_ROW_PROVENANCE,
   }: {
     campaignRootLabel?: string | undefined;
     canExpand: boolean;
@@ -35,12 +44,14 @@
     onToggleExpanded: () => void;
     query: string;
     row: SessionPresentationRow;
+    rowProvenance?: SessionRowProvenanceSummary;
   } = $props();
 
   const projection = $derived(projectSessionCell(row, columnId, query, campaignRootLabel));
 </script>
 
 {#if projection.kind === 'session'}
+  {@const markerFacts = [...projection.provenanceFacts, ...sharedProvenanceMarkerFacts(rowProvenance)]}
   <div class={sessionTitleClamp} style:padding-left={`${depth * 14}px`}>
     {#if canExpand}
       <button
@@ -69,8 +80,8 @@
         {segment.text}
       {/if}
     {/each}
-    {#if projection.provenanceFacts.length > 0}
-      {' '}<ProvenanceMarker facts={projection.provenanceFacts} />
+    {#if markerFacts.length > 0}
+      {' '}<ProvenanceMarker facts={markerFacts} />
     {/if}
     {#if depth > 0 && projection.originLabel}
       <span class={muted} data-session-origin="classifier"> {projection.originLabel}</span>
@@ -99,7 +110,15 @@
     {projection.label}
   </button>
 {:else}
-  <CellWithProvenance facts={projection.provenanceFacts}>
-    <span title={projection.title}>{projection.label}</span>
+  {@const ownFacts = projection.provenanceFacts.filter((fact) => !rowProvenance.sharedKinds.has(fact.kind))}
+  {@const suppressed = projection.provenanceFacts.filter((fact) => rowProvenance.sharedKinds.has(fact.kind))}
+  <CellWithProvenance facts={ownFacts}>
+    <span
+      data-provenance-shared={suppressed.length > 0 ? suppressed.map((fact) => fact.kind).join(' ') : undefined}
+      title={[projection.title, suppressed.length > 0 ? provenanceTitle(suppressed) : undefined]
+        .filter(Boolean)
+        .join('\n')}
+      >{projection.label}</span
+    >
   </CellWithProvenance>
 {/if}
