@@ -1493,6 +1493,13 @@ const applySortCapacityPragmas = (db: SqliteDatabase): void => {
   db.exec('PRAGMA temp_store = MEMORY');
 };
 
+const ensureWalJournalMode = (db: SqliteDatabase): void => {
+  const journalMode = db.query('PRAGMA journal_mode').get() as { journal_mode?: unknown };
+  if (journalMode.journal_mode !== 'wal') {
+    db.exec('PRAGMA journal_mode = WAL');
+  }
+};
+
 const openUsageStoreWriterDatabase = (dbPath: string): Effect.Effect<SqliteDatabase, UsageStoreError> =>
   Effect.tryPromise({
     try: async () => {
@@ -1501,7 +1508,7 @@ const openUsageStoreWriterDatabase = (dbPath: string): Effect.Effect<SqliteDatab
       const db = createTrackedSqliteDatabase(new Database(dbPath) as unknown as RawSqliteDatabase);
       try {
         db.exec('PRAGMA busy_timeout = 5000');
-        db.exec('PRAGMA journal_mode = WAL');
+        ensureWalJournalMode(db);
         // NORMAL only relaxes durability of the most recent commits; the store is rebuilt from
         // local session files, so WAL integrity is the property that matters here.
         db.exec('PRAGMA synchronous = NORMAL');
@@ -1509,7 +1516,7 @@ const openUsageStoreWriterDatabase = (dbPath: string): Effect.Effect<SqliteDatab
         db.exec('PRAGMA foreign_keys = ON');
         const schemaChanged = migrate(db);
         if (schemaChanged) {
-          db.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+          db.exec('PRAGMA wal_checkpoint(PASSIVE)');
         }
         db.clearStatements();
         preparePrivateStoreFile(dbPath);
