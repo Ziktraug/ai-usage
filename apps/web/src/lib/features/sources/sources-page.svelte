@@ -13,10 +13,15 @@
     deviationSources,
     healthySources,
     orderedSources,
-    publicationStatus,
     sourcesInGroup,
   } from './model';
   import { presentSourceState, sourceToneClass } from './presentation';
+  import {
+    pendingPublishRequests,
+    publicationOutcomeLabel,
+    publicationStatus,
+    rtkDependencyStatus,
+  } from './publication-status';
   import SourceActions from './source-actions.svelte';
   import SourceCard from './source-card.svelte';
   import { actionRow, banner, bannerError, ghostButton, headerActions, headerTop, statusPill } from './styles';
@@ -144,13 +149,14 @@
         <div class={cx(banner, bannerError)}>{controlState.commandError}</div>
       {/if}
       {#if snapshot}
+        {@const rtk = rtkDependencyStatus(snapshot.publication)}
         <p class={meta}>
           {fmtNum(snapshot.runningCount)}
           running · {fmtNum(snapshot.queueDepth)} queued · snapshot {fmtDate(snapshot.generatedAt)}
         </p>
         <section class={cx(panel, sourceCard)}>
-          <h2 class={groupTitle}>Report publication pipeline</h2>
-          <p class={meta}>{publicationStatus(snapshot.publication)}</p>
+          <h2 class={groupTitle}>Report publishing</h2>
+          <p class={meta} data-publication-status>{publicationStatus(snapshot.publication)}</p>
           <details data-publication-details>
             <summary class={detailsSummary}>Details</summary>
             <div class={axes}>
@@ -175,20 +181,25 @@
                 {/if}
               </div>
               <div class={axis}>
-                <span class={axisLabel}>Last outcome</span
-                ><span class={axisValue}>{snapshot.publication.lastOutcome}</span>
-              </div>
-              <div class={axis}>
-                <span class={axisLabel}>Demand</span
-                ><span class={axisValue}
-                  >{snapshot.publication.acknowledgedRequestGeneration}/{snapshot.publication.requestedGeneration}
-                  acknowledged</span
+                <span class={axisLabel}>Last publish</span
+                ><span class={axisValue} data-publication-outcome={snapshot.publication.lastOutcome}
+                  >{publicationOutcomeLabel(snapshot.publication)}
+                  {snapshot.publication.lastPublishedAt ? ` · ${fmtDate(snapshot.publication.lastPublishedAt)}` : ''}</span
                 >
               </div>
               <div class={axis}>
-                <span class={axisLabel}>RTK dependency</span
-                ><span class={axisValue}
-                  >{snapshot.publication.rtkCompletedGeneration >= snapshot.publication.rtkRequiredGeneration ? 'Caught up' : `Waiting for generation ${snapshot.publication.rtkRequiredGeneration}`}</span
+                <span class={axisLabel}>Pending publish requests</span
+                ><span
+                  class={axisValue}
+                  data-publication-pending-requests
+                  title={`Requested generation ${snapshot.publication.requestedGeneration}, acknowledged ${snapshot.publication.acknowledgedRequestGeneration}`}
+                  >{fmtNum(pendingPublishRequests(snapshot.publication))}</span
+                >
+              </div>
+              <div class={axis}>
+                <span class={axisLabel}>RTK savings enrichment</span
+                ><span class={axisValue} data-publication-rtk={rtk.behind ? 'behind' : 'up-to-date'} title={rtk.title}
+                  >{rtk.label}</span
                 >
               </div>
             </div>

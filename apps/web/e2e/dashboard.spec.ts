@@ -1033,7 +1033,29 @@ test('keeps sync limited to explicit file transfers', async ({ page }) => {
   await expect(page.getByRole('button', { name: 'Export current machine' })).toBeVisible();
   await expect(page.getByRole('heading', { level: 2, name: 'Machine fleet' })).toBeVisible();
   await expect(page.getByLabel('Machine fleet').getByText('Current machine', { exact: true })).toBeVisible();
+  const fleetSection = page
+    .getByRole('heading', { level: 2, name: 'Machine fleet' })
+    .locator('xpath=ancestor::section[1]');
+  const transferSection = page
+    .getByRole('heading', { level: 2, name: 'Manual transfer' })
+    .locator('xpath=ancestor::section[1]');
+  await expect(transferSection).toBeVisible();
+  await expect(fleetSection.locator('[data-machine-fleet-share]')).toHaveCount(1);
+  await expect(page.locator('main[data-route-shell="sync"] table')).toHaveCount(0);
+  await expect(page.getByRole('list', { name: 'Machine contribution summaries' })).toHaveCount(0);
+  const syncSections = page.locator('main[data-route-shell="sync"] > div > section');
+  await expect(syncSections).toHaveCount(2);
+  await expect
+    .poll(async () =>
+      syncSections.evaluateAll((sections) => {
+        const fleetBox = sections[0]?.getBoundingClientRect();
+        const transferBox = sections[1]?.getBoundingClientRect();
+        return fleetBox && transferBox ? Math.round(transferBox.top - fleetBox.bottom) : null;
+      }),
+    )
+    .toBe(16);
   await page.setViewportSize({ height: 844, width: 361 });
+  await expect(page.getByRole('list', { name: 'Machine contribution summaries' })).toHaveCount(0);
   const fileInput = page.locator('input[type="file"][accept=".json,application/json"]');
   const dropTarget = fileInput.locator('xpath=following-sibling::button[1]');
   await expect(dropTarget).toBeVisible();

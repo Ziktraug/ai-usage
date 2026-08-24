@@ -17,6 +17,7 @@
     omittedMachines,
     onRename,
     renameAvailable = false,
+    shares = new Map(),
     skipped,
   }: {
     machines: readonly SyncFleetMachineView[];
@@ -24,6 +25,7 @@
     omittedMachines: number;
     onRename?: (label: string) => Promise<string | null>;
     renameAvailable?: boolean;
+    shares?: ReadonlyMap<string, string>;
     skipped: number;
   } = $props();
 
@@ -93,6 +95,9 @@
         <div class={machineFacts}>
           <div class={machineFact}>
             <span class={machineFactLabel}>Stored sessions</span><span>{machine.sessionCount.toLocaleString()}</span>
+          </div>
+          <div class={machineFact} data-machine-fleet-share>
+            <span class={machineFactLabel}>Fleet share</span><span>{shares.get(machine.id) ?? '0%'}</span>
           </div>
           <div class={machineFact}>
             <span class={machineFactLabel}>Newest session</span
