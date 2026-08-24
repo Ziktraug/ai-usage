@@ -156,7 +156,17 @@ const collectDirectoryIdentities = async (
     FILESYSTEM_CONSTANTS.O_DIRECTORY | FILESYSTEM_CONSTANTS.O_NOFOLLOW | FILESYSTEM_CONSTANTS.O_RDONLY,
   );
   try {
-    const entries = await readdir(`/proc/self/fd/${directoryHandle.fd}`, { withFileTypes: true });
+    const openedDirectory = await directoryHandle.stat();
+    const directoryReadPath = process.platform === 'linux' ? `/proc/self/fd/${directoryHandle.fd}` : currentDirectory;
+    const entries = await readdir(directoryReadPath, { withFileTypes: true });
+    const currentDirectoryStats = await lstat(currentDirectory);
+    if (
+      !currentDirectoryStats.isDirectory() ||
+      openedDirectory.dev !== currentDirectoryStats.dev ||
+      openedDirectory.ino !== currentDirectoryStats.ino
+    ) {
+      throw new Error(`Development output directory changed while it was read: ${currentDirectory}`);
+    }
     entries.sort((left, right) => left.name.localeCompare(right.name));
     for (const entry of entries) {
       const entryPath = path.join(currentDirectory, entry.name);
