@@ -9,7 +9,7 @@ const emptyQueryState: WebQueryHydrationState = { dehydratedState: { mutations: 
 export const load: LayoutServerLoad = async ({ depends, fetch, isDataRequest, locals, untrack, url }) => {
   depends('ai-usage:provider-quota');
   const runtimeMode = locals.runtimeMode ?? 'live';
-  if (isDataRequest || runtimeMode !== 'live') {
+  if (isDataRequest || runtimeMode === 'demo') {
     return { quotaQueryState: emptyQueryState, runtimeMode };
   }
   const rpcBaseUrl = untrack(() => new URL(url.origin));
