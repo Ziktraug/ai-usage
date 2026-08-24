@@ -33,9 +33,13 @@ describe('Svelte overlay Panda styles', () => {
     expect(drawerBody).toContain('min-h_44px');
     expect(drawerBody).toContain('min-w_44px');
     expect(drawerTop).toContain('d_grid');
+    expect(drawerTop).toContain('grid-tc_auto_minmax(0,_1fr)');
+    expect(drawerTop).not.toContain('ov_hidden');
     expect(drawerNav).toContain('min-h_44px');
     expect(drawerPosition).toContain('d_none');
     expect(drawerPosition).toContain('md:d_block');
+    expect(drawerPosition).toContain('ov_hidden');
+    expect(drawerPosition).toContain('ellipsis');
     expect(drawerClose).toContain('w_44px');
     expect(drawerClose).toContain('h_44px');
     expect(popoverContentClass).toContain('z_70');

@@ -224,9 +224,13 @@ describe('provider brand marks', () => {
   }
 });
 
+test('reserves a stable scrollbar gutter on the document scroll root', () => {
+  expect((aiUsagePreset.globalCss as { html: { scrollbarGutter?: string } }).html.scrollbarGutter).toBe('stable');
+});
+
 test('preset preserves the exact global CSS, keyframes, tokens, and semantic values', () => {
   const presetHash = new Bun.CryptoHasher('sha256').update(JSON.stringify(aiUsagePreset)).digest('hex');
-  expect(presetHash).toBe('13edf2b04b74d09e912fee4bce9e0b4233fb56a798c6b7ae8a83a7a32af2a475');
+  expect(presetHash).toBe('0711949135bed635e12ef395b5114ca8e71236852c33969c23db0287b38b6092');
 });
 
 test('punchcard controls meet the minimum interactive target size', () => {

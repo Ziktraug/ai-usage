@@ -1,5 +1,6 @@
 import { afterAll, describe, expect, test } from 'bun:test';
 import { fileURLToPath } from 'node:url';
+import { provenanceMarkerClass } from '@ai-usage/design-system/svelte';
 import type { SessionDetailResponse } from '@ai-usage/report-core/session-detail';
 import type { SessionVcsContext } from '@ai-usage/report-core/session-vcs';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
@@ -202,6 +203,8 @@ describe('P4 Svelte detail rendering', () => {
     expect(detail).toContain('data-detail-item="Sub value"');
     expect(detail).toContain('aria-label="About Sub value"');
     expect(detail).toContain('aria-haspopup="dialog"');
+    expect(detail).toContain('data-detail-hint-glyph');
+    expect(detail).toContain(provenanceMarkerClass);
   });
 
   test('renders recorded/partial chronology, compressed gaps, phase trust, and multi-harness labels', () => {
@@ -236,6 +239,14 @@ describe('P4 Svelte detail rendering', () => {
     );
     expect(partialDuration).toBeGreaterThan(-1);
     expect(html.match(/Compressed gaps/g)).toHaveLength(2);
+    const axisLabels = html.indexOf('data-session-analysis-axis-labels');
+    const axisBreaks = html.indexOf('data-session-analysis-axis-breaks');
+    const hatch = html.indexOf('⫽');
+    expect(axisLabels).toBeGreaterThan(-1);
+    expect(axisLabels).toBeLessThan(axisBreaks);
+    expect(axisBreaks).toBeLessThan(hatch);
+    expect(html.slice(axisLabels, axisBreaks)).not.toContain('⫽');
+    expect(html.match(/data-session-analysis-axis-breaks/g)).toHaveLength(2);
     expect(html.match(/>Tokens<\/span>/g)).toHaveLength(1);
     expect(html).toContain(
       `from ${fmtDateTime('2026-08-01T10:00:00.000Z')} to ${fmtDateTime('2026-08-01T10:01:00.000Z')}`,
@@ -297,6 +308,9 @@ describe('P4 Svelte detail rendering', () => {
     expect(vcs).toContain('<svg');
     expect(vcs).not.toContain('↗');
     expect(vcs).toContain('Some recorded source-control context could not be represented safely.');
+    expect(vcs).toContain('Find pull requests on GitHub');
+    expect(vcs).toContain('Uses the GitHub CLI (gh)');
+    expect(vcs).not.toContain(['Resolve', 'GitHub links'].join(' '));
     expect(invalid).not.toContain('PRIVATE');
     expect(invalid).not.toContain('javascript:');
   });

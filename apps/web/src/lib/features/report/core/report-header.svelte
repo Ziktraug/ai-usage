@@ -1,7 +1,7 @@
 <script lang="ts">
   import { css } from '@ai-usage/design-system/css';
   import { header, meta, title, titleBlock } from '@ai-usage/design-system/svelte';
-  import { reportGeneratedLabel } from './report-view-model';
+  import { reportFreshnessLabel, reportFreshnessTime } from './report-view-model';
 
   let { generatedAt, hasReportData, isDemo }: { generatedAt: string | null; hasReportData: boolean; isDemo: boolean } =
     $props();
@@ -36,7 +36,17 @@
         {/if}
       </div>
       <h1 class={title}>Usage report</h1>
-      <div class={meta}>{reportGeneratedLabel(generatedAt, hasReportData)}</div>
+      <div
+        class={meta}
+        data-report-freshness
+        title="When the stored report was last assembled from collected usage. It changes only when the data changes, not when you navigate."
+      >
+        {#if hasReportData && generatedAt}
+          Data as of <time datetime={generatedAt}>{reportFreshnessTime(generatedAt)}</time>
+        {:else}
+          {reportFreshnessLabel(generatedAt, hasReportData)}
+        {/if}
+      </div>
     </div>
   </div>
 </header>

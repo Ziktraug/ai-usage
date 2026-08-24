@@ -8,7 +8,7 @@ import {
   breakdownPriceStateLabel,
   filterAndSortBreakdownGroups,
 } from '../../../../group-panel-presentation';
-import { fmtCompact, fmtMoney, fmtNum, fmtPct } from '../../../foundation/presentation/format';
+import { fmtCompact, fmtCount, fmtMoney, fmtNum, fmtPct } from '../../../foundation/presentation/format';
 import {
   type ApiValuePresentation,
   aggregateApiValuePresentation,
@@ -104,7 +104,7 @@ export const projectBreakdownRow = (group: AnalyticsGroup, label: string, maxKno
       group.unpriced > 0
         ? ` · ${PARTIALLY_MEASURED_LABEL} (${fmtNum(group.priced)}/${fmtNum(group.sessions)} fully priced)`
         : '',
-    sessionSummary: `${fmtNum(group.sessions)} ${group.sessions === 1 ? 'session' : 'sessions'}${
+    sessionSummary: `${fmtCount(group.sessions, 'session')}${
       group.ambiguous ? ` · ${fmtNum(group.ambiguous)} ambiguous` : ''
     }`,
     valueLabel: unavailable ? '—' : value.label,
@@ -175,8 +175,7 @@ const unavailableCounterQualification = (group: AnalyticsGroup): string | null =
   if (group.usageUnavailable <= 0) {
     return null;
   }
-  const verb = group.usageUnavailable === 1 ? 'has' : 'have';
-  return `${fmtNum(group.usageUnavailable)} of ${fmtNum(group.sessions)} model sessions ${verb} unavailable token counters`;
+  return `${fmtNum(group.usageUnavailable)} of ${fmtNum(group.sessions)} sessions without token counters`;
 };
 
 const pricingCoveragePresentation = (
@@ -194,7 +193,7 @@ const pricingCoveragePresentation = (
   }
   const unavailableQualification = unavailableCounterQualification(group);
   if (unavailableQualification) {
-    qualifications.push(unavailableQualification);
+    qualifications.push(`${unavailableQualification} · API value is a lower bound`);
   }
   return {
     label: `${fmtNum(group.priced)} / ${fmtNum(group.sessions)} · ${fmtPct((group.priced / group.sessions) * 100)}`,

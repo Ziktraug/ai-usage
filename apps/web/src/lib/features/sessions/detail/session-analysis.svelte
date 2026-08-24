@@ -49,7 +49,8 @@
     fontSize: '10px',
     fontVariantNumeric: 'tabular-nums',
   });
-  const axisTrack = css({ position: 'relative', minW: 0 });
+  const axisTrack = css({ display: 'grid', gap: '2px', minW: 0 });
+  const axisBreaks = css({ position: 'relative', h: '14px', minW: 0 });
   const axisTokenHeading = css({
     display: { base: 'none', md: 'block' },
     color: 'faint',
@@ -58,7 +59,7 @@
   });
   const scaleBreakClass = css({
     position: 'absolute',
-    top: '-2px',
+    top: 0,
     color: 'ink',
     fontSize: '14px',
     fontWeight: 700,
@@ -452,20 +453,24 @@
     <div class={timelineAxis}>
       <span aria-hidden="true" class={timelineAxisSpacer}></span>
       <div class={axisTrack}>
-        <div class={axisLabels}>
+        <div class={axisLabels} data-session-analysis-axis-labels>
           <time datetime={detail.startedAt}>{fmtDateTime(detail.startedAt)}</time>
           <span aria-hidden="true">{scaleMode === 'compressed' ? 'Compressed gaps' : 'Wall-clock time'}</span>
           <time datetime={detail.endedAt}>{fmtDateTime(detail.endedAt)}</time>
         </div>
-        {#each scale.breaks as scaleBreak (scaleBreak.atPercent)}
-          <span
-            aria-hidden="true"
-            class={scaleBreakClass}
-            title={formatSessionDuration(scaleBreak.gapMs)}
-            style:left={`${scaleBreak.atPercent}%`}
-            >⫽</span
-          >
-        {/each}
+        {#if scale.breaks.length > 0}
+          <div aria-hidden="true" class={axisBreaks} data-session-analysis-axis-breaks>
+            {#each scale.breaks as scaleBreak (scaleBreak.atPercent)}
+              <span
+                aria-hidden="true"
+                class={scaleBreakClass}
+                title={formatSessionDuration(scaleBreak.gapMs)}
+                style:left={`${scaleBreak.atPercent}%`}
+                >⫽</span
+              >
+            {/each}
+          </div>
+        {/if}
       </div>
       <span class={axisTokenHeading}>{_showTokens ? 'Tokens' : ''}</span>
     </div>

@@ -15,6 +15,9 @@ const dateOnlyFormatter = new Intl.DateTimeFormat('en', {
 
 export const fmtNum = (value: number): string => numberFormatter.format(value);
 
+export const fmtCount = (count: number, noun: string, plural = `${noun}s`): string =>
+  `${fmtNum(count)} ${count === 1 ? noun : plural}`;
+
 export const fmtMoney = (value: number | null | undefined): string =>
   value == null ? '—' : `$${value.toFixed(2).replace(THOUSANDS_GROUP_PATTERN, ',')}`;
 

@@ -23,6 +23,8 @@ export const aiUsagePreset = definePreset({
       accentColor: 'accent',
       // Keep scrolled-to elements clear of the sticky filter toolbar.
       scrollPaddingTop: { base: '72px', md: '180px', lg: '132px' },
+      // The centred max-width shell otherwise re-centres whenever a sub-tab crosses the viewport height.
+      scrollbarGutter: 'stable',
       '&[data-theme=light]': { colorScheme: 'light' },
       '&[data-theme=dark]': { colorScheme: 'dark' },
     },

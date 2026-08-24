@@ -26,19 +26,34 @@ export interface Metric {
 
 export type MetricComparisonState = 'available' | 'full-range' | 'no-prior-data';
 
+export interface MetricComparisonBoundary {
+  /** Resolved start of the current period; null for the full range. */
+  readonly rangeFrom: Date | null;
+  /** Earliest recorded activity under the current filters (ISO), or null when nothing is recorded. */
+  readonly recordedFirst: string | null;
+}
+
 const metricComparisonMessages: Record<Exclude<MetricComparisonState, 'available'>, string> = {
   'full-range': 'No previous period exists before the full recorded range.',
   'no-prior-data': 'No sessions exist in the previous period.',
 };
 
+const nothingRecordedBefore = (boundary: MetricComparisonBoundary | undefined): boolean =>
+  Boolean(
+    boundary?.rangeFrom &&
+      boundary.recordedFirst !== null &&
+      Date.parse(boundary.recordedFirst) >= boundary.rangeFrom.getTime(),
+  );
+
 export const metricComparisonStateFor = (
   rangeMode: DateRangeMode,
   previousSummary: object | null | undefined,
+  boundary?: MetricComparisonBoundary,
 ): MetricComparisonState => {
   if (previousSummary) {
     return 'available';
   }
-  return rangeMode === 'all' ? 'full-range' : 'no-prior-data';
+  return rangeMode === 'all' || nothingRecordedBefore(boundary) ? 'full-range' : 'no-prior-data';
 };
 
 export const metricComparisonMessage = (state: MetricComparisonState): string | null =>

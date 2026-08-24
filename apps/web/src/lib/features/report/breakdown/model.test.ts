@@ -193,10 +193,10 @@ describe('Models analysis projection', () => {
     expect(row).toMatchObject({
       priceState: 'partially measured',
       pricingCoverageLabel: '3 / 3 · 100%',
-      pricingQualification: '1 of 3 model sessions has unavailable token counters',
+      pricingQualification: '1 of 3 sessions without token counters · API value is a lower bound',
       processedTokens: 200,
       processedTokensLabel: '200',
-      processedTokensQualification: '1 of 3 model sessions has unavailable token counters',
+      processedTokensQualification: '1 of 3 sessions without token counters',
       value: { label: '≥ $4.00', status: 'lower-bound' },
       valuePerMillion: { label: '—', status: 'unknown' },
     });

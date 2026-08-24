@@ -21,7 +21,7 @@
   import { HarnessBadge } from '@ai-usage/design-system/svelte';
   import type { FocusedOverviewRecords, FocusedOverviewSessionItem } from '@ai-usage/report-core/focused-report-query';
   import { sessionDurationSemantics } from '../../../../session-analysis-model';
-  import { fmtDateOnly, fmtDuration, fmtMoney, fmtNum } from '../../../foundation/presentation/format';
+  import { fmtCount, fmtDateOnly, fmtDuration, fmtMoney, fmtNum } from '../../../foundation/presentation/format';
   import { apiValuePresentation } from '../../../foundation/presentation/report-value';
 
   const recordActionLabel = css({
@@ -129,7 +129,7 @@
         <span class={recordValue}>{fmtMoney(presentedRecords.busiest.cost)}</span>
         <span class={recordSub}
           >{fmtDateOnly(presentedRecords.busiest.date)}
-          · {fmtNum(presentedRecords.busiest.sessions)} sessions</span
+          · {fmtCount(presentedRecords.busiest.sessions, 'session')}</span
         >
       </button>
     {/if}
@@ -164,7 +164,7 @@
           <span class={topTitle}>
             {item.label}
             {#if item.kind === 'campaign'}
-              <span class={muted}> · Campaign · {fmtNum(item.sessionCount)} sessions</span>
+              <span class={muted}> · Campaign · {fmtCount(item.sessionCount, 'session')}</span>
             {/if}
           </span>
           <HarnessBadge name={item.harness} />

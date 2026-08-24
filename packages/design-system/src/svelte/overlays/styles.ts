@@ -26,14 +26,13 @@ export const drawer = drawerClass;
 
 export const drawerTop = css({
   display: 'grid',
-  gridTemplateColumns: 'minmax(0, 1fr) auto',
+  gridTemplateColumns: 'auto minmax(0, 1fr)',
   alignItems: 'center',
   gap: '10px',
   p: '12px 16px',
   borderBottom: '1px solid token(colors.line)',
   flexShrink: 0,
   minW: 0,
-  '& > :first-child': { minW: 0, overflow: 'hidden' },
 });
 
 export const drawerBody = css({
@@ -71,7 +70,7 @@ export const drawerNav = css({
   gap: '6px',
   minW: 0,
   whiteSpace: 'nowrap',
-  '& button': { minH: '44px', minW: '44px' },
+  '& button': { minH: '44px', minW: '44px', flexShrink: 0 },
 });
 
 export const drawerPosition = css({
@@ -80,6 +79,10 @@ export const drawerPosition = css({
   color: 'faint',
   fontSize: '11px',
   mr: '4px',
+  flex: '0 1 auto',
+  minW: 0,
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
 });
 
 export const drawerLegend = css({
