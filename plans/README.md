@@ -137,9 +137,9 @@ read-only SQLite and the permanent browser/server and demo-isolation boundaries.
 | 071 | Measure and Optimize the Web Session Pipeline End to End | P1 | XL | current Plan 069 Query ownership; 070 | DONE |
 | 072 | Evaluate Deferred Web Session Optimizations (keyset, Ark split, direct destination SSR) | P1 | XL | 071 reviewed final | DONE |
 | 073 | Make the Report a Decision-First Executive and Investigation Workspace | P1 | L | 069, 072 (DONE); main `1868b108` | DONE |
-| 074 | Finish the Multi-Provider Quota History Surface | P1 | S | - | TODO |
+| 074 | Finish the Multi-Provider Quota History Surface | P1 | S | - | DONE |
 | 075 | Show Bundle Identity, Age, and Warnings in the /sync Import Preview | P1 | M | - | TODO |
-| 076 | Display Campaign Root Titles on Generic Child Sessions | P2 | S-M | - | TODO |
+| 076 | Display Campaign Root Titles on Generic Child Sessions | P2 | S-M | - | DONE |
 | 077 | Give /sources a First-Run Answer When Nothing Is Detected | P2 | M | - | TODO |
 | 078 | Export Filtered Session Rows as CSV From the Web Sessions View | P2 | S-M | - | TODO |
 | 079 | Drive Cursor Import and Machine Renaming From the Web | P2 | M | 075 (file overlap in sync feature; sequence or coordinate) | TODO |
@@ -149,15 +149,15 @@ read-only SQLite and the permanent browser/server and demo-isolation boundaries.
 | 083 | Design "Adopt Unmanaged Skill Into Source" (spike, then gated build) | P1 | L | - | DESIGN READY — awaiting approval |
 | 084 | Spike — a Session-Intent Signal From First Prompts, Within the Privacy Boundary | P3 | L | - | DESIGN READY — awaiting decision |
 | 085 | Spike — a Printable Period Recap on the Existing Print Path | P3 | M | - | DESIGN READY — awaiting decision (Firefox print-to-PDF gate unmet: no reachable Gecko exposes `--print`, so pagination is verified in one engine only) |
-| 086 | Remediate the 2026-08-23 Fresh-Eyes UI/UX Audit (program plan) | P0 | L (program) | 087–098 | TODO |
-| 087 | Fix the Skills Editor Stuck on "Loading…" After Client-Side Navigation | P0 | S–M | - | BLOCKED (fix landed and green; U01's presentation gate needs an e2e runtime that dehydrates one root-level query, deferred to plan 080 by this plan's own maintenance notes) |
+| 086 | Remediate the 2026-08-23 Fresh-Eyes UI/UX Audit (program plan) | P0 | L (program) | 087–098 | BLOCKED (children 087–090 and 092–098 remain BLOCKED; only 091 is DONE, and the literal program gate remains non-green: D14–D15 and D17–D19 are NOT PASS, while D16 is NOT RUN / NOT PASS) |
+| 087 | Fix the Skills Editor Stuck on "Loading…" After Client-Side Navigation | P0 | S–M | - | BLOCKED (fix landed and focused logic checks are green; U01 still needs an e2e runtime with one root-level dehydrated query, but ownership of that fixture is unassigned) |
 | 088 | One Canonical Number Per Concept | P0 | L | - | BLOCKED (ordinary budget plus one exceptional correction round spent; branch `exec/088` still lacks a two-machine/different-value aggregate proof and deterministic assertions for changed Sync/duration explanatory copy) |
 | 089 | Period Semantics — Inclusive Day Counts, Honest Campaign Dates, Auto Interval, Readable Range URLs | P0 | M–L | - | BLOCKED (final correction budget spent; branch `exec/089` at `5bca1f65` still projects open bounds outside the known domain as an inverted period with a negative inclusive day count, so Codex r3 rejected it) |
 | 090 | Scope the Cursor AI Tab to the Report Period and List One Row per Commit | P1 | S–M | - | BLOCKED (rework budget spent; branch `exec/090` is one focused fix away — rows are filtered before grouping, so a commit whose only in-range row lacks a commit date renders scoring-dated in the wrong period) |
 | 091 | Sessions Table — One Scroll Container and Calmer Columns | P1 | M | - | DONE |
 | 092 | One Checkbox-Filter Mechanic, a Working `/` Shortcut, and a Filter Bar That Holds One Row | P1 | M | - | BLOCKED (named STOP condition: Ark opens the popover as `role="dialog"` but emits no `aria-label`/`aria-labelledby`, so the required named-dialog accessibility proof cannot pass without an unplanned ARIA contract change) |
 | 093 | Activity Explorer Controls, Model Palette, and Hero Number Format | P1 | M–L | 089 (`timeline` request + range model) | BLOCKED (dependency 089 did not land) |
-| 094 | Calm the Overview Secondary Panels (Harness Disclosure, Session Shape, Punchcard Fit, KPI Baseline, Rhythm Axis, Record Tiles) | P1 | M | 088, 093 (shared `harness-provider-model.ts`, `executive-overview.svelte`) | BLOCKED (dependency 088 did not land) |
+| 094 | Calm the Overview Secondary Panels (Harness Disclosure, Session Shape, Punchcard Fit, KPI Baseline, Rhythm Axis, Record Tiles) | P1 | M | 088, 093 (shared `harness-provider-model.ts`, `executive-overview.svelte`) | BLOCKED (dependencies 088 and 093 did not land) |
 | 095 | Make Provider Status and Quota History Legible | P1 | M | - | BLOCKED (rework budget spent; branch `exec/095` is one focused fix away — providers with no `machineId` all group under one empty key and render a single machine label, and `machineId`/`machineLabel` are independently optional) |
 | 096 | Skills Management Surface Fixes — Legible Tree, Honest Statuses, One Health Surface, Matrix Geometry, Frontmatter False Positives | P1 | M | 087 (editor status branch) | BLOCKED (final correction budget spent; branch `exec/096` at `4940ee5b` still asserts the warning health tone before its transformed refresh is observably settled, so Codex r3 rejected the presentation proof) |
 | 097 | Sync, Sources, Projects: Duplication and Jargon | P1 | M | 088 (fleet "Sessions" label) | BLOCKED (dependency 088 did not land) |
@@ -229,8 +229,8 @@ reproduce from code.
   client-side navigation (hydration gate compares a merged signature with the
   skills-only delta, so every Skills query is disabled after navigation);
   088 gives each concept one canonical number (the Overview counts
-  `costLowerBound`, the harness breakdown does not → the ~$208 Claude Code
-  gap; fleet "sessions" are stored rows, not published ones; campaign rows
+  `costLowerBound`, the harness breakdown does not, so their totals disagree;
+  fleet "sessions" are stored rows, not published ones; campaign rows
   open a drawer for the root; "Longest session" is a root task-open window);
   089 fixes period semantics (inclusive day count, partial-day comparison
   caveat, campaign dates pulled from classifier members outside the range,
@@ -246,20 +246,24 @@ reproduce from code.
   Sync/Sources/Projects duplication and jargon (097).
 - Plan 098 is the P2 drawer/analysis/chrome polish and runs last because it
   shares `session-drawer.svelte` and `records.svelte` with 088.
-- Execution order and the only real file overlaps: 087 → 088 → 089 → 091 →
-  {092 ∥ 090} → 093 → 094 → {095 ∥ 096 ∥ 097} → 098. Everything else is
-  independent.
-- Findings deliberately *not* turned into work: the "1 warning" pill flipping
+- Execution order: 087 → 088 → 089 → 091 → {092 ∥ 090} → 093 → 094 →
+  {095 ∥ 096 ∥ 097} → 098. Parallel markers apply to production scopes after
+  allowlist checks, not to every test path: 090 and 092 share
+  `apps/web/e2e/dashboard.spec.ts`, so that hunk must be serialized or rebased
+  additively. The dependency edges in plan 086 still apply.
+- Findings deliberately *not* turned into work: the warning-count pill flipping
   to "Sources ready" after a harness filter (no code path couples the pill to
   the report filter; attributed to a coincident engine state change — 095
-  adds attribution and an e2e guard); the Rhythm grid using ~970 of 1,300 px
-  (every in-card fix changes geometry pinned by ADR 0005/0009 — deferred as a
-  section-layout decision); the "To consolidate" dead end (plan 083).
-- Two TODO rows above were found already delivered in the tree while
-  anchoring: 074 (drawer strings + `providerHistoryAvailable` wired) and 076
-  (`c3de318a`). Their rows are left for the maintainer to flip.
-- Audit screenshots were taken against real local data and are not
-  committed; every child re-derives its symptom from the synthetic fixtures.
+  adds attribution and an e2e guard); the Rhythm grid leaving substantial card
+  width unused (every in-card fix changes geometry pinned by ADR 0005/0009 —
+  deferred as a section-layout decision); the "To consolidate" dead end
+  (plan 083).
+- Plans 074 and 076 were already delivered by `c3de318a`; program closure
+  corrected their stale rows above to DONE.
+- Private audit screenshots and local histories were discovery inputs only and
+  are not committed. Only deterministic repository-owned synthetic fixtures
+  count toward a PASS or DONE decision; findings without that proof remain
+  BLOCKED or UNVERIFIED.
 
 ## Presentation gate
 

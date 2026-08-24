@@ -29,33 +29,29 @@
 The Sessions tab is the investigation surface, and on 2026-08-23 it read as
 noisier than the data behind it:
 
-- **U11** — two scroll containers side by side. At 1920×1080 the page scrolls
-  372 px and then the table scrolls inside a surface that is itself
-  1,056 px tall. Measured on the running app: the document is 1,452 px tall
-  for a 1,080 px viewport; the surface starts 364 px down the document
-  (32 px page padding + 101 px header + 115 px filter toolbar + 36 px active
-  filters + 44 px export row and gap + 36 px table controls) and ends 32 px
-  before the document bottom. The surface's inline height is exactly
-  `innerHeight − 24`, so the page always has `chrome + 8 px` of scroll range
-  left over. On a 390 px phone the same model puts the whole list below a
-  ~500 px chrome when the tab is entered through the bottom navigation
-  (which preserves page scroll), leaving a ~130 px peephole above the fixed
-  bottom bar.
+- **U11** — two scroll containers side by side. At desktop widths, the page
+  scrolls before the table scrolls inside a surface that is itself nearly a
+  viewport tall. Measured on the running app, the surface starts below all of
+  the page chrome and ends before the document bottom. Its inline height is
+  exactly `innerHeight − 24`, so the page always has `chrome + 8 px` of scroll
+  range left over. On a phone, the same model puts the whole list below the page
+  chrome when the tab is entered through the bottom navigation (which preserves
+  page scroll), leaving only a narrow peephole above the fixed bottom bar.
 - **U12** — every top-level row is a campaign display row
-  (`campaignTotalCount !== undefined`), so every Time cell reads
-  `"2.3h root-session time"` and wraps to two lines in a 96 px column. The
-  qualifier belongs to the column, not to each value.
-- **U13** — ~80 % of rows are one-session campaigns, and each one carries a
+  (`campaignTotalCount !== undefined`), so every Time cell appends
+  `root-session time` to its duration and wraps to two lines in the narrow
+  column. The qualifier belongs to the column, not to each value.
+- **U13** — Most rows are one-session campaigns, and each one carries a
   `Campaign · 1 session` annotation plus an expand chevron that loads nothing.
   The campaign qualifier should appear only when there is something to
   qualify (members > 1).
-- **U14** — in the Tokens preset, a Claude Code row whose session is
-  `partial` shows the same `!` marker on Input, Output, Cache and Fresh. Four
+- **U14** — in the Tokens preset, a partially measured row shows the same `!`
+  marker on Input, Output, Cache and Fresh. Four
   identical buttons per row say less than one. Provenance stays per metric
   (settled); identical markers collapse into one per row whose tooltip names
   the cells.
-- **U36** — `fmtCompact` prints `36,971`, `188k` and `10.9M` in the same token
-  column. One column, one notation.
+- **U36** — `fmtCompact` mixes separator-formatted integers with `k` and `M`
+  suffixes in the same token column. One column, one notation.
 
 ## Current state
 
@@ -296,8 +292,8 @@ noisier than the data behind it:
     return fmtNum(value);
   };
   ```
-  Below 100,000 it falls back to `36,971`; above it switches to `188k`; so
-  one token column mixes separators and suffixes. `fmtCompact` has 14
+  Below 100,000 it falls back to separator formatting; above it switches to a
+  compact suffix, so one token column mixes notations. `fmtCompact` has 14
   consumer files (overview KPI tiles, drawer, analysis tables, prose) and
   pinned strings (`format.test.ts:12-13` `'1000k'`, `'1.0M'`;
   `e2e/drawer-value-presentation.spec.ts:12` `'204k'`), so this plan does not
@@ -396,7 +392,7 @@ and `calculateSessionViewportHeight` (lines 17–48) with:
 export interface SessionViewportHeightInput {
   /** Document-relative top of the element the page is anchored to: 0 when the page must not scroll (desktop), the session region start on mobile. */
   anchorTop: number;
-  /** Static document space below the session table owner (page padding, mobile navigation reserve). */
+  /** Total space below the surface: dynamic in-owner controls plus all static space below the table owner. */
   bottomInset: number;
   minimumHeight: number;
   /** Document-relative top of the scroll surface (`rect.top + window.scrollY`) — scroll-invariant, so not circular. */
@@ -449,10 +445,15 @@ In `apps/web/src/lib/features/sessions/table/session-table.svelte`:
    ```ts
    const owner = element.closest('[data-session-table-owner]');
    const regionStart = sessionRegionStartElement;
-   const bottomInset = owner ? Math.max(0, Math.round(documentBottom(document.body) - documentBottom(owner))) : 0;
+   const staticBottomInset = owner
+     ? Math.max(0, Math.round(documentBottom(document.body) - documentBottom(owner)))
+     : 0;
+   const dynamicOwnerBottomInset = owner
+     ? Math.max(0, Math.round(documentBottom(owner) - documentBottom(element)))
+     : 0;
    const nextHeight = calculateSessionViewportHeight({
      anchorTop: surfaceMode === 'mobile' && regionStart ? documentTop(regionStart) : 0,
-     bottomInset,
+     bottomInset: staticBottomInset + dynamicOwnerBottomInset,
      minimumHeight,
      surfaceTop: documentTop(element),
      viewportHeight: window.innerHeight,
@@ -626,7 +627,7 @@ In `apps/web/e2e/session-viewport-geometry.spec.ts`:
      ),
    ```
    A singleton has no children to load; the `▸` / `Show children` affordance
-   disappears from ~80 % of rows.
+   disappears from most rows.
 4. `session-table.fixtures.ts:54-55`: count the root —
    `campaignTotalCount: children.length + 1, campaignVisibleCount: children.length + 1`.
 5. `session-table.fixture.svelte`: add a singleton campaign row and a filtered
@@ -784,8 +785,10 @@ In `apps/web/e2e/session-viewport-geometry.spec.ts`:
 - `apps/web/src/lib/features/sessions/table/INTEGRATION.md`: add a short
   "Surface sizing" paragraph: the surface is the only scroll container on
   desktop (document = viewport; height = viewport − surface document top −
-  static space below the owner); on mobile the page anchors at the region
-  start and the surface fills down to the fixed navigation; the minimum
+  dynamic in-owner controls − static space below the owner); on mobile the page
+  anchors at the region start and subtracts the same dynamic controls plus all
+  static space below the owner, including page padding and the fixed-navigation
+  reserve; the minimum
   heights (3 rows / 1 card) are the only case where the page scrolls past
   the surface; `session-row-window.ts` is the pure model and
   `session-viewport-geometry.spec.ts` the contract.
@@ -862,9 +865,8 @@ Stop and report back (do not improvise) if:
 
 ## Maintenance notes
 
-- Trade-off made explicit: on desktop the chrome (≈ 364 px at 1920, more in
-  the 768–1279 band where the filter bar wraps) now stays on screen, so the
-  table shows ~15 rows at 1080 p and ~11 at 1024×900 instead of ~24/~20.
+- Trade-off made explicit: on desktop the chrome now stays on screen, including
+  in the band where the filter bar wraps, so the table shows fewer rows at once.
   The rejected alternative — letting the page be the only scroller and
   windowing rows against `window.scrollY` — was ruled out because it
   rewrites the 5,000-session proof driver, breaks sticky `<th>` inside a

@@ -36,28 +36,29 @@ The 2026-08-23 fresh-eyes audit (Chrome headless via CDP, live dev app, all
 routes, 1920/1280/1024/768/390, dark + light) found that the report's notion
 of "a period" is internally inconsistent in five visible ways:
 
-- **U04 (P0)** — "Today" and a Rhythm-day click read `Aug 23 → Aug 23, 2026 ·
-  0 days`. The count is the fence-post difference between two day starts, so
-  a one-day window is 0 and a 30-day window is 30 even though the chart draws
-  31 bars and the brush spans 31 positions — the e2e harness even compensates
-  with `toBe(days + 1)`. The hero's "60 % lower than the previous equal-length
-  period" at 09:39 compared a partial day with a full day and said nothing.
-- **U05 (P0)** — a day filter (Rhythm click → custom Jul 15 → Jul 15) listed a
-  row whose Date column read Jul 18. Single sessions are filtered and
-  displayed on the same instant (`activeDate`, the last activity). Campaign
-  display rows are not: their date is the latest of the *matched members plus
-  every automated-review (classifier) member regardless of the range*, and
-  their date sort key follows the same rollup. The classifier rollup is a
-  deliberate feature for the origin filter; it leaks into the date.
-- **U19 (P1)** — All time (439 days) at Day interval draws ~1.6 px bars; the
-  first ten months are a line. The Interval control exists but has no
-  automatic mode.
+- **U04 (P0)** — "Today" and a Rhythm-day click describe a same-day range as
+  `0 days`. The count is the fence-post difference between two day starts, so
+  a one-day window is zero and a multi-week window is one day shorter than the
+  number of bars and brush positions — the e2e harness even compensates with
+  `toBe(days + 1)`. The hero's comparison with the previous equal-length period
+  also compared a partial current day with a full prior day without saying so.
+- **U05 (P0)** — A single-day filter listed a row whose Date column fell several
+  days outside the selected range. Single sessions are filtered and displayed
+  on the same instant (`activeDate`, the last activity). Campaign display rows
+  are not: their date is the latest of the *matched members plus every
+  automated-review (classifier) member regardless of the range*, and their date
+  sort key follows the same rollup. The classifier rollup is a deliberate
+  feature for the origin filter; it leaks into the date.
+- **U19 (P1)** — A long All time range at Day interval draws subpixel-width
+  bars, making most of the period look like a line. The Interval control exists
+  but has no automatic mode.
 - **U32 (P2)** — `?range=%7B%22mode%22%3A%227d%22%7D` is JSON in the URL.
 - **U37 (P2, date inputs only)** — the custom From/To inputs are native
   `type="date"` inputs whose display format is chosen by the browser's UI
   language, not by the page; the rest of the period control speaks `en`
-  month names and the URL speaks ISO. A French reader saw `MM/DD/YYYY` beside
-  `Aug 23 → Aug 23, 2026` and had to guess the field order.
+  month names and the URL speaks ISO. With a French browser locale, the native
+  date placeholder appeared beside an English-language same-day range, leaving
+  the field order ambiguous.
 
 One coherent rule fixes all five: **a period is an inclusive set of calendar
 days; every surface (count, chart buckets, filter, displayed dates, URL,
@@ -204,10 +205,10 @@ Every excerpt below was read from the worktree at `51815b70`.
     line 205 `return Math.max(...campaign.visibleRows.map((row) => row.sortDate), root.sortDate);`,
     `campaignDisplayRow` lines 324–327 (`latestVisibleRow` from `visibleRows`),
     333–334, 359.
-- Mechanism of the symptom: a campaign whose subagent member was active on
-  Jul 15 and whose automated review ran on Jul 18 matches a Jul 15 filter (one
-  member matched), then displays and sorts on Jul 18. Nothing else in the
-  code path can move a displayed date outside the filter: `fmtDate`
+- Mechanism of the symptom: a campaign whose subagent member was active on the
+  selected day and whose automated review ran several days later matches the
+  single-day filter, then displays and sorts on the later review day. Nothing
+  else in the code path can move a displayed date outside the filter: `fmtDate`
   (`apps/web/src/lib/foundation/presentation/format.ts:2–8,38`) formats in
   the runtime's local zone, the same zone `rangeBounds` uses.
 - Parity harness: `packages/usage-store/src/session-query-sqlite.test.ts`

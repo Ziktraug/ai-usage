@@ -279,3 +279,194 @@ turned out to belong to a change that had shipped with no entry at all, hidden
 by whatever headroom the older base happened to have. Whoever merges these in
 sequence must re-run `bun test apps/web/src/css-bundle.test.ts` after each merge
 and, if it fails, measure the split rather than raise a number.
+
+## UI/UX Audit 086–098, Unattended Five-Wave Run — 2026-08-24
+
+The program ran on `plan/086-ui-ux-audit-remediation` from fixed base
+`51815b70`. Implementation reached `1f36977d`; PR #46 stayed a draft and was
+not merged. Only the production changes for 087 and 091 were fast-forwarded
+into the program branch. Every other delivery branch tip was preserved; only
+selected child worktrees were recreated, while the original 088/090/095
+worktrees remain absent.
+
+### Child outcomes
+
+| Plan | Result | Commits | Correction rounds and Codex verdicts |
+| --- | --- | --- | --- |
+| 087 | BLOCKED — production code landed, but U01 still lacks an assigned asymmetric root-query fixture | `ac53024e` merged | 2/2; verbatim verdicts unavailable; checkpoint confirms a proof-means defect, not a reproduced production defect |
+| 088 | BLOCKED — the two-machine/different-value aggregate proof and deterministic visible-copy assertions remain incomplete | `59792b5f` not merged | 2/2 plus the exceptional third correction exhausted; checkpoint records BLOCKED, verbatim Codex verdict unavailable in this clone |
+| 089 | BLOCKED — an open bound outside the known domain can produce a negative inclusive day count | `4521e995`, `5bca1f65` not merged | 2/2; r1 REWORK, r2 REWORK, r3 REWORK |
+| 090 | BLOCKED — a row without a commit date can inherit an out-of-period scoring date | `79a0a3a6` not merged | 2/2; verbatim Codex verdicts unavailable in this clone |
+| 091 | DONE — the single-scroll contract now includes a paged campaign's real trailing control | `f726c11e`, `99229546`, `1f36977d` merged | 2/2; r1 REWORK, r2 ACCEPT, final-r1 REWORK reopening, r3 ACCEPT |
+| 092 | BLOCKED — explicit accessibility STOP: the Ark dialog has no accessible name | no delivery commit | 0; STOP before delivery review |
+| 093 | BLOCKED by 089 | not launched | 0 |
+| 094 | BLOCKED by 088 and 093 | not launched | 0 |
+| 095 | BLOCKED — absent `machineId` values collapse under one empty grouping key | `6d71cbbc` not merged | 2/2; verbatim Codex verdicts unavailable in this clone |
+| 096 | BLOCKED — the warning-tone proof can assert before its transformed refresh settles | `39eb5aa9`, `4940ee5b` not merged | 2/2; r1 REWORK, r2 REWORK, r3 REWORK |
+| 097 | BLOCKED by 088 | not launched | 0 |
+| 098 | BLOCKED by 088 and 094 | not launched | 0 |
+
+Plan 091 has three clearly scoped commits because each of its two permitted
+correction rounds was committed separately. This follows the runbook's
+allowance for a few commits with clear scopes. Its `dashboard.spec.ts` oracle
+replacement was explicitly reviewed and accepted in 091 r1/r2; it is evidence
+maintenance for U12 copy plus the settled column focus/geometry contracts, not
+an unreviewed scope expansion.
+
+### Finding closure ledger
+
+Every U-row is accounted for below. `RESIDUAL` means no accepted child closes
+the finding; it does not claim that every demo fixture visibly reproduced it.
+The final fresh-eyes ledger separately records the symptoms it re-observed.
+`UNVERIFIED` means the deterministic repository fixture did not establish
+closure; private discovery material gives it no acceptance credit.
+
+| Findings | Final state | Evidence or residual |
+| --- | --- | --- |
+| U01 | UNVERIFIED / 087 BLOCKED | The production fix is present, but the asymmetric root-query presentation fixture is still missing. |
+| U02, U03, U06, U42 | RESIDUAL / 088 BLOCKED | Canonical-number, fleet, drawer-root, and longest-session contracts remain rejected with the unmerged child. |
+| U04a, U04b, U05, U19, U32, U37a | RESIDUAL / 089 BLOCKED | Period count, caveat, date, and domain behavior remain rejected; the final child review found a negative open-bound day count. |
+| U08 | RESIDUAL / 090 BLOCKED | Cursor-AI period/date inheritance remains rejected. |
+| U11, U12, U13, U14, U36 | VERIFIED / 091 DONE | Repository-owned units, settled geometry, a real paged-campaign component fixture, production-report, scale, and fresh Codex r3 all pass. |
+| U07, U15, U39, U40 | RESIDUAL / UNVERIFIED / 092 BLOCKED | The explicit STOP remains: the opened Ark dialog has no accessible name. U39 remains UNVERIFIED while the synthetic source fixture reports ready; no other filter-bar claim is promoted. |
+| U04-chart, U17, U18, U34 | RESIDUAL / 093 BLOCKED | The child was not launched because 089 did not land. |
+| U16, U20, U21, U35, U38, U41 | RESIDUAL / 094 BLOCKED | The child was not launched because 088/093 did not land. |
+| U22, U23, U28b | RESIDUAL / 095 BLOCKED | Provider grouping remains rejected and U28's warning transition is not promoted from discovery evidence. |
+| U24, U25, U26 | RESIDUAL / 096 BLOCKED | The warning presentation proof remains unsettled; the unmerged Skills branch receives no closure credit. |
+| U27, U28a, U30 | RESIDUAL / 097 BLOCKED | The child was not launched because 088 did not land. |
+| U09, U10, U29, U31, U33, U37b | RESIDUAL / 098 BLOCKED | The child was not launched because 088/094 did not land. |
+
+### Gates by wave
+
+- Wave 1 (087, 088, 090, 095): 087 was merged; 088, 090, and 095 finished
+  BLOCKED and were not merged. The resumed clone does not contain verbatim
+  whole-wave gate/review evidence for this checkpoint, so no green wave claim
+  is made.
+- Wave 2 (089, 092, 096, 097): lint covered 1,083 files and five guards;
+  typecheck passed 28/28;
+  package coverage recorded 2,204 positive tests and tools recorded 115;
+  build passed 15/15 immediately before bundle 4/4 at 284,561 B. The wave
+  composition review returned ACCEPT.
+- Wave 3 (091, 093) before the last 091 correction: package coverage recorded 2,212
+  positive tests; tools recorded 115; production-report passed 12/12; the
+  5,000-session scale proof passed 2/2; bundle measured 284,635 B. The wave
+  composition review returned ACCEPT.
+- Final 091 correction: units 33/33, exact paged-campaign causal browser 1/1,
+  geometry 5/5, production-report 12/12, scale 2/2, build 15/15 immediately
+  before bundle 4/4. Codex r3 returned ACCEPT.
+- Program tip `1f36977d`: lint passed over 1,084 files and five guards;
+  typecheck passed 28/28 and direct Svelte checking returned no errors or
+  warnings; build passed 15/15 immediately before bundle 4/4 at 284,635 B.
+  Tools passed 115 tests with 302 assertions while exactly seven D16/D17
+  titles stayed excluded; D16 had one aborted invocation after it spawned the
+  forbidden install, never completed, and was excluded thereafter. The package
+  aggregate was not all-green: one writer-lock race failed and then passed
+  both alone and in its workspace rerun; the browser-backed design-system
+  complement passed 47/47 under the shared lock.
+- Final default Playwright under the shared lock and two workers collected 151
+  tests: 145 passed and six failed. D18 reproduced alone at 44 px observed
+  versus 48 px expected. Four missing Darwin snapshots passed individually
+  against generated images whose dimensions and hashes matched the earlier
+  differential exactly; those untracked images were then deleted by exact
+  path. The Svelte shell timeout/`EBADF` passed alone. A navigation-hydration
+  title failed once alone and passed on a second final isolate and at the
+  unchanged wave-start baseline; it remains an intermittent, unattributed
+  gate failure. The separately filtered positive run was therefore honestly
+  144/146, not all-green.
+- The final clean synthetic production environment first exposed a race in one
+  request-count test. The same unchanged title also failed at the wave-start
+  baseline at a different phase. A canonical final rerun passed 12/12. The
+  5,000-session desktop/mobile scale proof passed 2/2 in 1.6 minutes. All
+  credited data was generated by repository fixtures.
+- Wave 4 (094) and wave 5 (098) were NOT RUN and had no wave gate: their
+  required parents remained BLOCKED. No dependent child was launched merely
+  to manufacture a gate result.
+
+### Final fresh-eyes at `1f36977d`
+
+- The real paged-campaign component proof passed 1/1 under the shared lock
+  with one worker. Its repository fixture renders a synthetic 201-session
+  campaign and real 54 px trailing control while keeping document scroll at
+  zero, the Sessions surface independently scrollable, and real body rows
+  visible below the sticky header.
+- Report completed 48/48 settled captures from `bun run demo` on port 4176:
+  six routes, four viewports, two themes. Manage completed 40/40 settled E2E
+  synthetic captures on port 4174: five routes over the same viewport/theme
+  matrix. All 88 had exact-target HTTP 200 navigation, synthetic attestation,
+  and no console, page, critical request, loading, settle, theme, or screenshot
+  error.
+- Report had 42 mechanically clean entries. The six flagged entries were
+  unchanged: Sessions at 768 px in both themes had 46 px document overflow;
+  Models at 768 px had a 110 px overflowing section around a 122 px inner
+  scroller in both themes; Projects at 768 px in both themes extended the
+  document by 164 px. The earlier detached
+  `1273dbfe` differential already reproduced the Sessions value exactly, so it
+  is not caused by 091. Models and Projects are recorded only as unchanged
+  residuals observed alongside blocked work, not assigned to a child without
+  causal proof.
+- Manage had 38 mechanically clean entries. Skills Global at 1280 px in both
+  themes retained a 64 px overflowing `Disabled…` disclosure. It is likewise
+  an unchanged residual, not proof that a particular blocked child owns it.
+- Visual inspection covered 88/88 images. All 48 Report images were
+  pixel-identical to the prior matrix. Thirty-two Manage images were
+  pixel-identical; the eight Sources images differed only in their synthetic
+  snapshot timestamp, with normalized ledgers and layout identical. No new
+  causal regression was found. The visible `Skills reloaded.` toast, compressed
+  Skills header/matrix, and Report table/tab edges remain discovery residuals
+  and receive no acceptance credit.
+- The base matrix did not replay the special Today or opened-Origin states;
+  those earlier captures are discovery/residual evidence only. The final
+  Sources route again used the `Sources ready` fixture, not the exact
+  warning-count case, so U39 remains UNVERIFIED.
+- Both synthetic servers were stopped. Ports 4174 and 4176 and the shared lock
+  were clear at the end. The four earlier causal starts that reported
+  `EADDRINUSE` were pre-collection sandbox artifacts; only the escalated,
+  locked 1/1 run counts.
+
+### Literal program decisions
+
+The literal program gate is **NOT SATISFIED**.
+
+| Decision | Honest status | Reason |
+| --- | --- | --- |
+| D14 | NOT PASS | The macOS SQLite identity and legacy-metadata cases are not consistently green; the current isolates split between one fail and one pass, so no finding is overruled. |
+| D15 | NOT PASS | Web bootstrap/production-lock and usage-engine process-identity tests retain their Linux-assuming host failures. |
+| D16 | NOT RUN / NOT PASS | One invocation reached its forbidden `bun install` and was interrupted; the gate never completed and was excluded thereafter. |
+| D17 | NOT PASS | The non-UTF-8 and process-cleanup tool cases remain host-dependent; current isolates again split between failures and passes. |
+| D18 | NOT PASS | The responsive navigation height is 44 px where the assertion requires 48 px. |
+| D19 | NOT PASS | The latest custom browser annex passed, but no code changed after the earlier exact Drawer/Escape failure; a single host rerun cannot overrule a presentation finding. |
+
+Private captures and real local-state observations were discovery-only and
+contributed to no PASS or DONE decision. Credited acceptance evidence was
+limited to deterministic repository-owned synthetic fixtures and assertions;
+where a server or browser was involved, it also used isolated temporary state,
+loopback, and settled checks.
+
+### What awaits a maintainer decision
+
+- Whether to reopen any exhausted correction budget for 088, 089, 090, 095,
+  or 096. Their dependent plans remain blocked until the relevant parent is
+  accepted.
+- Which plan should own the asymmetric root-query fixture needed to close 087's
+  U01 presentation proof; plan 080 is only a candidate and does not currently
+  scope it.
+- Whether to authorize the ARIA contract change required to give 092's Ark
+  dialog an accessible name.
+- Whether to repair or formally port the D14, D15, and D17 host gates, and how
+  to resolve D16 without violating the no-install rule. D18 and D19 require
+  product corrections and deterministic presentation proofs; they cannot be
+  waived or overruled by host reruns. The intermittent positive E2E/package
+  races also remain open rather than counting as completion.
+- If repository authentication still cannot update draft PR #46, a maintainer
+  must update its body manually; no replacement PR should be created.
+
+### Maintainer decision D20 — resume the blocked program
+
+On 2026-08-24 the maintainer explicitly reopened every exhausted child and
+authorized the orchestrator to make the implementation decisions needed to
+converge. This includes the asymmetric U01 fixture, the ARIA contract required
+by 092, product fixes for D18/D19, and repairs or portability work for the host
+gates. `bun install` is permitted if a dependency is genuinely missing, but is
+not a default step. Existing BLOCKED labels remain historical and honest until
+their replacement implementations pass fresh gates and Codex review. The
+original PR constraints remain: use only draft PR #46 and never merge it.

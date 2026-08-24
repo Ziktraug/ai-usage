@@ -35,19 +35,20 @@ Three surfaces say true things in a way the reader cannot use.
   Sessions, Fleet share, Newest session, Freshness, Current Yes/No). Plan 059
   added the table deliberately next to the cards; the fresh-eyes audit read it
   as the same data twice. Worse, the table wrapper reserves
-  `min-height: 320px`, so with two machines roughly 200 px of empty white
-  sits under two rows before the Manual transfer panel.
+  a fixed minimum height, so a small fleet leaves a large empty area under its
+  rows before the Manual transfer panel.
 - `/sources` tells the user "Publication demand is fully acknowledged." and
   "RTK dependency: Caught up", and prints the raw outcome enum
   (`success` / `not-run` / `failed`) and generation counters
-  ("1/1 acknowledged"). These are the engine's internal mechanism names
+  (a fractional "acknowledged" value). These are the engine's internal
+  mechanism names
   (CONTEXT.md: "Source publication … Requests advance monotonic demand …").
   The states are right; the words are not what a reader can act on.
 - Analysis › Projects lists one repository twice as `<project> — <machine A>`
   and `<project> — <machine B>` (ungrouped project sources are named
   `projectLabelWithMachine`), while a configured project group shows its bare
-  name with no machine at all; the Lines column prints
-  `+0/-0 · 39/1,514 measured` with no explanation; the "Project" header is
+  name with no machine at all; the Lines column prints a diff count followed
+  by a measured/total ratio with no explanation; the "Project" header is
   centred (UA default for `<th>`) over left-aligned cells with a different
   padding; and unlike Models and Harnesses & providers the panel has no
   header, no count, and no "Search this breakdown" box.
@@ -394,7 +395,7 @@ e2e (documented workaround; `--channel chrome` does not work here).
 In `apps/web/src/lib/features/sync/machine-fleet.svelte`:
 
 - Add an optional prop `shares: ReadonlyMap<string, string>` (machine id →
-  `sessionShareLabel`, e.g. `'61%'`), default `new Map()`.
+  `sessionShareLabel`), default `new Map()`.
 - In the facts block (lines 93–105) add a fourth fact **after** "Sessions":
   ```svelte
   <div class={machineFact} data-machine-fleet-share>
@@ -682,13 +683,16 @@ lower-bound marker, see `apiValuePresentation` in
 Coverage stays visible — per-metric provenance is never hidden.)
 
 In `apps/web/src/project-presentation.test.ts` add cases with **synthetic**
-names only (`fixture-app`, `Fixture Machine`, `Fixture Machine Secondary`,
-`Shared tooling`):
+names and values only (`fixture-app`, `Fixture Machine`,
+`Fixture Machine Secondary`, `Shared tooling`):
 - identity, ungrouped + catalogue → `{ grouped: false, machines: ['Fixture Machine'], name: 'fixture-app' }` even though `project.label` is `'fixture-app — Fixture Machine'`;
 - identity, grouped with two sources on two machines → `{ grouped: true, machines: ['Fixture Machine', 'Fixture Machine Secondary'], name: 'Shared tooling' }` (duplicates collapsed, catalogue order kept);
 - identity, ungrouped with empty `project` → name `'(unknown)'`;
 - identity, no catalogue / key not found → `{ grouped: false, machines: [], name: project.label }`;
-- lines: `measured 0 of 3` → `'—'`/`unknown`/`coverage: null`; `39 of 1514` with `+0/-0` → label `'≥ +0/-0'`, `coverage: '39 of 1,514 sessions measured'`, `lower-bound`; `3 of 3` with `+860/-120` → `'+860/-120'`, `exact`, `coverage: null`;
+- lines: `measured 0 of 3` → `'—'`/`unknown`/`coverage: null`; `2 of 5` with
+  `+0/-0` → label `'≥ +0/-0'`, `coverage: '2 of 5 sessions measured'`,
+  `lower-bound`; `3 of 3` with `+860/-120` → `'+860/-120'`, `exact`,
+  `coverage: null`;
 - search: empty query returns all in order; `'secondary'` matches only the row whose machine is `Fixture Machine Secondary`; `'shared'` matches the group; `'FIXTURE-APP'` matches both ungrouped rows; `'zzz'` → `[]`;
 - `projectsEmptyMessage('  ')` → `'No projects'`, `projectsEmptyMessage('x')` → the shared "No breakdown rows match this search" string.
 
@@ -926,8 +930,8 @@ Stop and report back (do not improvise) if:
   (`freshnessLabel`, `newestSessionLabel`, `current`) is now unused by any
   component — slim the model in a later cleanup if it stays unused; its
   tests are the only reason it is left intact here.
-- Never reintroduce a `minH` on a sync table wrapper; the 320 px reservation
-  is exactly what the audit saw as "empty space under two rows".
+- Never reintroduce a `minH` on a sync table wrapper; the fixed reservation is
+  exactly what the audit saw as excess space under a short table.
 - The publication copy strings in `publication-status.ts` are a contract
   (pinned by unit + e2e). Add a new publication state there first, then in
   the tests, then in the page.

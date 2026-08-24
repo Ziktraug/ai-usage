@@ -40,30 +40,32 @@ the app look less careful than it is:
 
 - **U29** — the session drawer header gives the navigation cluster an `auto`
   grid track and the harness badge a `minmax(0, 1fr)` track with
-  `overflow: hidden`, so at the desktop drawer width (440 px) a label such as
-  "2,719 matching sessions" plus four 44 px controls squeezes the badge to its
-  18 px of padding: a coloured circle with no text, touching the count. In the
-  Analyze timeline, the compressed-gap hatch `⫽` is absolutely positioned over
-  the axis *label* row, so a break at 2 % is drawn through "Aug 02, 10:15".
-  The metric grid shows up to five "i" triggers that the drawer body's
-  `& button { minH: 44px; minW: 44px }` rule inflates from the intended 24 px
-  to 44 px bordered circles — a second, heavier "i" pattern next to the 14 px
+  `overflow: hidden`, so at the desktop drawer width a long matching-session
+  count plus several minimum-size controls squeezes the badge down to its
+  padding: a coloured circle with no text, touching the count. In the Analyze
+  timeline, the compressed-gap hatch `⫽` is absolutely positioned over the
+  axis *label* row, so a break near the start is drawn through its timestamp.
+  The metric grid shows several "i" triggers that the drawer body's broad
+  minimum-button-size rule inflates from compact icons to full touch-target
+  bordered circles — a second, heavier "i" pattern next to the compact
   provenance marker used everywhere else. "Resolve GitHub links" names a
-  mechanism, not what happens (it runs your local `gh pr list` for the
-  recorded branch).
-- **U09** — "Busiest day … · 1 sessions": the Investigate record never
-  pluralises while the heatmap next to it does.
-- **U10** — Models: "988 / 988 · 100 %" coverage beside a "≥" value and a "—"
-  per-1M; the cell's second line explains the three sessions without token
-  counters, but never says the consequence, so the 100 % reads as a
-  contradiction.
-- **U31** — "Generated Aug 23, 09:33" is read as render time. It is in fact
-  the time the *stored report revision* was assembled (renewals update only
-  `published_at`, never `generated_at`), i.e. data freshness — but the word
-  "Generated" hides that, and the value moves whenever collectors add rows.
+  mechanism, not what happens (it runs your local `gh pr list` for the recorded
+  branch).
+- **U09** — a singular busiest-day count is rendered with the plural noun
+  "sessions": the Investigate record never pluralises while the heatmap next
+  to it does.
+- **U10** — Models shows a complete-looking coverage ratio and percentage
+  beside a "≥" value and a "—" per-1M; the cell's second line explains the
+  small subset of sessions without token counters, but never says the
+  consequence, so the complete percentage reads as a contradiction.
+- **U31** — "Generated" followed by a timestamp is read as render time. It is
+  in fact the time the *stored report revision* was assembled (renewals update
+  only `published_at`, never `generated_at`), i.e. data freshness — but the
+  word "Generated" hides that, and the value moves whenever collectors add
+  rows.
 - **U33** — the document is the scroll root and `shell` is a centred
-  `max-width: 1380px` container; when the page scrollbar appears or disappears
-  between sub-tabs the content re-centres by half a scrollbar (~8 px).
+  fixed-maximum-width container; when the page scrollbar appears or disappears
+  between sub-tabs the content re-centres by roughly half a scrollbar.
 - **U37 (copy)** — the comparison line under the hero has two sentences for
   what a reader sees as one situation: a custom or preset range that already
   starts before the first recorded session says "No sessions exist in the
@@ -129,9 +131,9 @@ Every excerpt below was read from the worktree at `51815b70`.
     (`composition/synthetic-report-destination.svelte:342–348`) has no
     `detail`/`neighbors`, and its selection has no `revision`, so in
     `bun run test:e2e` the header shows "1 / 12"-style labels and **no**
-    Analyze button; the symptom reproduces only in
-    `apps/web/e2e/production-report.spec.ts` (205 sessions → "205 matching
-    sessions" + "Analyze root").
+    Analyze button; the symptom reproduces only in the repository-owned
+    `apps/web/e2e/production-report.spec.ts` fixture (a many-session selection
+    with "Analyze root").
 - `packages/design-system/src/svelte/overlays/styles.ts` (consumed only by the
   session drawer — `grep -rn "drawerTop\|drawerNav\|drawerPosition" apps/web/src --include="*.svelte"`
   → `session-drawer.svelte` only):
@@ -318,8 +320,9 @@ Every excerpt below was read from the worktree at `51815b70`.
     joined by `' · '`.
   - lines 129–145 `modelValue` (`usageUnavailable > 0` → `≥ $x` lower-bound)
     and 147–172 `modelValuePerMillion` (`usageUnavailable > 0` → `'—'`).
-  - Why 988/988 is "priced": `packages/report-core/src/analytics.ts:234–242`
-    counts a row as `priced` when `usageRowPricedCost(row) != null`, i.e.
+  - Why the observed complete-looking coverage is "priced":
+    `packages/report-core/src/analytics.ts:234–242` counts a row as `priced`
+    when `usageRowPricedCost(row) != null`, i.e.
     `costKnown` (`usage-row.ts:266`), and `costKnown` comes from the model's
     price table (`usage-row.ts:188–199`) regardless of missing counters
     (`codex-history.ts:1199–1205` nulls the tokens of a usage-unavailable
@@ -769,8 +772,8 @@ On NixOS, if Playwright's bundled Chromium fails to launch, export
    - `pricingCoveragePresentation` (lines 195–198): when
      `unavailableQualification` is non-null push
      `` `${unavailableQualification} · API value is a lower bound` `` instead
-     of the bare phrase. Label (line 200) unchanged — `988 / 988 · 100%` *is*
-     the pricing coverage; the second line now says why the value shows `≥`.
+     of the bare phrase. The complete coverage label is legitimate pricing
+     coverage; the second line now says why the value shows `≥`.
 2. `model.test.ts` lines 185–201 (`qualifies mixed missing counters…`):
    `pricingQualification: '1 of 3 sessions without token counters · API value is a lower bound'`,
    `processedTokensQualification: '1 of 3 sessions without token counters'`;

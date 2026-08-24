@@ -132,14 +132,10 @@ the worktree at `51815b70`.
   `` aria-label={`${editorState.skillName} SKILL.md`} ``; `:180-187` — the
   section carries `aria-busy="true"` while loading.
 
-**Evidence captured from the live dev server on 2026-08-23 (document request
-to `/skills/global`)**: the SSR payload carried `quotaQueryState` with one
-dehydrated query (hash `["web","finite-swr","quota","rail"]`) and `queryState`
-with three (`…"skills","snapshot"`, `…"skills","known-project-paths"`,
-`…"skills","project-inventories"`); the Skills layout node was marked
-`uses:{parent:1,url:1}`. The data request
-`/skills/global/<skill>/__data.json?x-sveltekit-invalidated=010` returned the
-Skills node with `queries:[]`, `source:"not configured"` and `uses:{parent:1}`.
+**Generalized discovery observation**: the root hydration can contain an extra
+quota query while the Skills route carries only Skills queries, and a later
+Skills data request can return an empty route delta. Exact live payloads are
+omitted; acceptance requires the repository-owned synthetic proof below.
 Merged signature (4 entries) ≠ Skills signature (3 entries) on load; after
 navigation, quota-only signature ≠ empty signature. The gate is false in both
 states.
@@ -217,7 +213,8 @@ running e2e (`--channel chrome` does not work here).
   loading logic is correct; the document simply never arrives.
 - The "Skills reloaded." toast, tree truncation, and other Skills surface
   items — plan 096 (U24–U26). The adopt action — plan 083.
-- Quota rail presentation and the e2e quota fixture — plan 080 / 074.
+- Quota rail presentation — plans 080/074. The asymmetric root-query e2e
+  fixture remains unassigned; plan 080 is only a candidate.
 
 ## Git workflow
 
@@ -424,9 +421,9 @@ client-navigation editor flow (scope → skill, skill → skill, no "Loading…"
 hydration marker restored). It does **not** reproduce the live-mode signature
 mismatch, because the e2e runtime dehydrates no root-level query; the unit
 file in Step 4 is the assertion that fails on the defect and passes on the
-fix. Do not attempt to add a root-level dehydrated query to e2e mode here
-(quota fixture in the rail changes every dashboard spec and the visual
-snapshots — plan 080's territory).
+fix. Do not attempt to add a root-level dehydrated query to e2e mode here: that
+fixture changes every dashboard spec and the visual snapshots, remains
+unassigned, and names plan 080 only as a candidate.
 
 **Verify**: `cd apps/web && bun run test:e2e -- e2e/skills.spec.ts` → all pass, including the new test.
 
@@ -654,17 +651,13 @@ route, and no asymmetry exists for either predicate to disagree about.
 **3. Playwright with the asymmetry injected — out of scope by the plan's own
 text.** It requires the root layout to dehydrate one root-level query in `e2e`
 mode. `apps/web/src/routes/+layout.server.ts` is listed under "Out of scope (do
-NOT touch)", and Step 5 forbids this by name: "Do not attempt to add a
-root-level dehydrated query to e2e mode here (quota fixture in the rail changes
-every dashboard spec and the visual snapshots — plan 080's territory)." The
-Maintenance notes then defer it explicitly: "Deferred, deliberately: making the
-e2e runtime dehydrate one root-level query so Playwright exercises the live
-composition. Coordinate with plan 080 (quota rail) … and then the Step 5 e2e
-becomes the failing-before assertion too."
+NOT touch)". Step 5's historical wording called this plan 080 territory, but
+the closure audit established that plan 080 does not scope the fixture; that
+ownership statement is superseded and 080 remains only a candidate.
 
-So plan 087 was authored knowing its presentation-gate assertion was deferred to
-plan 080. The unblock is one of: (a) land plan 080's e2e quota fixture, then flip
-the Step 5 e2e into the fails-before assertion; or (b) add a DOM test runner
+So plan 087 was authored knowing its presentation-gate assertion needed separate
+work. The unblock is one of: (a) assign and land the asymmetric e2e fixture,
+then flip the Step 5 e2e into the fails-before assertion; or (b) add a DOM test runner
 (no `happy-dom`/`jsdom`/`@testing-library` is present, and adding one needs
 `bun install`, which is prohibited here).
 
@@ -735,7 +728,8 @@ restating compactly because it is the durable result:
 > before and after the fix. The hydration gate has no server-side consequence,
 > so no SSR or component render test can ever distinguish this defect from its
 > fix. A browser mount is required, which means Playwright, which means the e2e
-> runtime must first dehydrate one root-level query — plan 080's fixture.
+> runtime must first dehydrate one root-level query. That fixture is unassigned;
+> plan 080 is only a candidate and does not currently scope it.
 
 ### Blocking C (one commit) — DONE
 

@@ -31,32 +31,31 @@
 
 The Overview's Provider status panel is the one place the report says what it
 knows about quota, and today it says it in the least legible way possible. On a
-two-machine install, 6 of 8 "Provider details" cards say only "No quota source
-· MacBook-Pro" and "No quota windows are available for this provider." — the
-same sentence six times, each card a dead end. Above them, five counter chips
-("Quota windows: 2 providers · Critical without quota windows: 0 · Attention
-without quota windows: 5 · Unsupported: 1 · No quota windows or issues: 0")
-read as an internal partition, not a summary. The attention chips lose the
-space before their separators ("Codex· MacBook-Pro· partial") because the pill
-is a flex container and the separator lives inside the next flex item. The
+multi-machine install, most "Provider details" cards can say only "No quota
+source" with a machine label and "No quota windows are available for this
+provider." — the same sentence repeated across dead-end cards. Above them,
+multiple counter chips partition providers by quota and issue state instead of
+summarising what needs attention. The attention chips lose the space before
+their separators (`<provider>· <machine>· partial`) because the pill is a flex
+container and the separator lives inside the next flex item. The
 badges "Partial", "Unsupported", "Ok" are never explained. And in a quota card
 the 5H column's single window floats in the middle of its column, because the
 grid that holds it stretches its tracks to match the taller Weekly column.
 
 The quota history drawer has the opposite problem: it shows more than it says.
-"24h" is selected, yet the first point reads "First Aug 21, 18:54" (> 36 h),
+The recent range is selected, yet the first point can predate it by many hours,
 because the store deliberately prepends one anchor observation from *before*
 the requested range per stream and the drawer then stretches its x-axis to that
 anchor. The CLI already diagnosed and fixed this for `quota --history`
 (`withoutPreRangePoints`); the web drawer still renders the anchor as its first
-point. The chart is a 600-unit SVG squeezed to a 440 px drawer with
+point. The chart uses a fixed-width SVG squeezed into a narrower drawer with
 `preserveAspectRatio="none"`, so its reset labels are horizontally squashed,
 and the dashed reset/gap lines are drawn *after* the series, over the points.
-Three native `<select>`s size themselves to their longest option, so the filter
-row has three different widths.
+The native `<select>`s size themselves to their longest option, so the filter
+row has inconsistent control widths.
 
-Finally, the header pill "1 warning" was observed flipping to "Sources ready"
-as the report was filtered to one harness. This plan traces that pill and
+Finally, the header pill was observed flipping from a warning-count state to
+"Sources ready" as the report was narrowed. This plan traces that pill and
 records the finding: the pill reads a layout-scoped, event-stream-fed snapshot
 with no input from the report filter (see "Current state"); the flip was a
 genuine engine state change coincident with the click. Because a pill whose
@@ -424,11 +423,13 @@ Rewrite `apps/web/src/provider-status-panel-model.test.ts`:
 - `detailedProviders` → `[codex, opencode, cursor]` (cursor has warnings);
 - `describeProviderStatusSummary` →
   `'5 providers · 1 with quota windows · 3 without a quota source (1 partial, 1 unsupported, 1 ok) · 1 critical · 1 with warnings'`;
-- `providerMachineLines` with `machineContext` set to `'MacBook-Pro'` for
-  codex-without-windows, cursor and claude, `'Workstation'` for a second
-  cursor view, `null` for gemini → three lines, in order:
+- `providerMachineLines` with `machineContext` set to repository-owned
+  synthetic labels: `'MacBook-Pro'` for codex-without-windows, cursor and
+  claude, `'Workstation'` for a second cursor view, `null` for
+  gemini → three lines, in order:
   `'MacBook-Pro · Codex, Cursor — partial · Claude — unsupported'`,
-  `'Workstation · Cursor — partial'`, `'Gemini — ok'`; every `text` matches
+  `'Workstation · Cursor — partial'`, `'Gemini — ok'`; every
+  `text` matches
   `/ · /` between clauses and never matches `/\S·|·\S/` (the separator
   spacing assertion that fails on today's chip rendering);
 - a view with `state: 'auth-required'` renders `'auth required'` in its line.
@@ -500,8 +501,9 @@ comments with `/<!--[\s\S]*?-->/g` before text assertions. Cases:
    and `weekly` (two windows) → every `data-provider-window-group` element's
    `class` contains `ac_start` (Panda atom for `alignContent: 'start'`) and the
    `windowsGrid` parent contains `ai_start`. Fails on today's markup.
-2. *Separator spacing*: views for Codex (partial, `machineContext: 'MacBook-Pro'`),
-   Claude (unsupported, `'MacBook-Pro'`), Cursor (partial, `'Workstation'`)
+2. *Separator spacing*: views for Codex (partial,
+   `machineContext: 'MacBook-Pro'`), Claude (unsupported,
+   `'MacBook-Pro'`), Cursor (partial, `'Workstation'`)
    → two `data-provider-no-quota-line` items whose text equals
    `providerMachineLines(...)[i].text` exactly and does not match `/\S·|·\S/`.
 3. *One sentence*: `data-provider-status-summary` text equals

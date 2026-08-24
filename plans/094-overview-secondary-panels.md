@@ -28,11 +28,11 @@
 
 ## Why this matters
 
-The 2026-08-23 fresh-eyes audit of the running dev app (Chrome headless via CDP,
-six routes, 1920/1280/1024/768/390, dark + light, keyboard, console clean) found
-six defects in the Overview's secondary panels and the Analysis harness
-breakdown. None is a data bug; each is a presentation habit that makes a
-correct number harder to read:
+The fresh-eyes audit of the running dev app (Chrome headless via CDP across
+representative routes, viewport classes and both themes, with keyboard and
+console checks) found six defects in the Overview's secondary panels and the
+Analysis harness breakdown. None is a data bug; each is a presentation habit
+that makes a correct number harder to read:
 
 - **U16** — "Harnesses & providers" renders an expander on every harness, but
   for Codex and Claude the only child is "Codex sub" / "Claude sub" with the
@@ -50,11 +50,11 @@ correct number harder to read:
   the row layout, not the cell (see the arithmetic below).
 - **U35** — The four KPI tiles under the hero are not baseline-aligned once one
   tile carries a qualification line ("Pricing coverage" with "Partially
-  measured …"): the big numbers sit at different heights (observed y 145 / 139
-  / 120). The tile grid stretches its rows to the tallest sibling.
-- **U38** — Rhythm's month axis reads "Jun … Aug … Aug" across 15 months with
-  no year; the legend says "scaled by sessions" while the readout leads with
-  the dollar value.
+  measured …"): the big numbers sit at visibly different vertical positions.
+  The tile grid stretches its rows to the tallest sibling.
+- **U38** — Rhythm's month axis repeats month names across a multi-year range
+  without showing the year; the legend says "scaled by sessions" while the
+  readout leads with the dollar value.
 - **U41** — The Investigate record tiles render 2 + 1 at 768 px (an orphan
   third tile) because the grid is two columns below `lg` regardless of how
   many tiles exist.
@@ -463,8 +463,8 @@ running e2e (`--channel chrome` does not work here).
   heatmap cell/gap sizes (`heatGrid`, `heatCell`, `heatMonths`) — ADR 0005/0009
   compact geometry, pinned by `preset.test.ts` and
   `dashboard.spec.ts` "keeps compact heatmap geometry".
-- Letting the Rhythm grid stretch to the card width (the "~970 of 1300 px
-  used" part of U38). The grid's width is weeks × (12 px + 3 px); filling
+- Letting the Rhythm grid stretch to the card width (the unused right-hand
+  space observed in U38). The grid's width is weeks × (12 px + 3 px); filling
   1300 px at 65 weeks means either 20 px cells or 8 px gaps, both of which the
   ADRs and the pinned geometry test reject, and a narrower gap makes it use
   *less* width. This plan records the decision and leaves the blank right
