@@ -67,10 +67,14 @@ export const containedInteractive = css({
 export const numericDisplay = css({
   textStyle: 'numeric',
   color: 'ink',
-  fontSize: { base: '40px', md: '52px' },
+  fontSize: {
+    base: 'clamp(28px, calc(150cqi / var(--hero-chars, 8)), 40px)',
+    md: 'clamp(28px, calc(150cqi / var(--hero-chars, 8)), 52px)',
+  },
   fontWeight: 650,
   lineHeight: 0.98,
-  overflowWrap: 'anywhere',
+  overflowWrap: 'normal',
+  whiteSpace: 'nowrap',
 });
 
 export const executiveCaption = css({

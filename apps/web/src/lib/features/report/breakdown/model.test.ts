@@ -81,7 +81,7 @@ describe('Models analysis projection', () => {
       processedTokensTitle: 'Processed tokens: cache read + cache write + input + output.',
       shareLabel: '8.5%',
       value: { label: '$15.00', status: 'exact' },
-      valuePerMillion: { label: '$100000.00', status: 'exact' },
+      valuePerMillion: { label: '$100,000.00', status: 'exact' },
     });
   });
 
@@ -127,7 +127,7 @@ describe('Models analysis projection', () => {
         pricingCoverageLabel: '1 / 2 · 50%',
         pricingQualification: 'Partially measured · 25 unpriced fresh tokens',
         value: { label: '≥ $3.00', status: 'lower-bound' },
-        valuePerMillion: { label: '≥ $30000.00', status: 'lower-bound' },
+        valuePerMillion: { label: '≥ $30,000.00', status: 'lower-bound' },
       },
       {
         label: 'partial-zero',

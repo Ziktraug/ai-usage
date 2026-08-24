@@ -16,6 +16,10 @@ describe('framework-neutral presentation formatting', () => {
   test('preserves report number and value labels', () => {
     expect(fmtNum(12_345)).toBe('12,345');
     expect(fmtMoney(12.345)).toBe('$12.35');
+    expect(fmtMoney(12_345.6)).toBe('$12,345.60');
+    expect(fmtMoney(1.005)).toBe('$1.00');
+    expect(fmtMoney(1000)).toBe('$1,000.00');
+    expect(fmtMoney(-1234.5)).toBe('$-1,234.50');
     expect(fmtMoney(null)).toBe('—');
     expect(fmtPct(9.94)).toBe('9.9%');
     expect(fmtPct(10.4)).toBe('10%');

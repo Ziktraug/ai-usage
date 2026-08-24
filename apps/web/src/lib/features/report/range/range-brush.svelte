@@ -1,6 +1,14 @@
 <!-- biome-ignore-all lint/a11y/useValidAriaValues: Svelte emits numeric slider bounds and position from typed state; time-range.spec.ts asserts the rendered values -->
+<script lang="ts" module>
+  import { css } from '@ai-usage/design-system/css';
+
+  const brushAxis = css({ position: 'relative', minH: '14px', color: 'muted', fontSize: '10px', lineHeight: 1 });
+  const brushTick = css({ position: 'absolute', top: 0, transform: 'translateX(-50%)', whiteSpace: 'nowrap' });
+</script>
+
 <script lang="ts">
   import {
+    monthGridline,
     timeSliderBrushColumn,
     timeSliderBrushTrack,
     timeSliderDimLeft,
@@ -23,6 +31,7 @@
   import { createSearchEditRun } from '../../../foundation/navigation/svelte/dashboard-url';
   import { fmtDateOnly } from '../../../foundation/presentation/format';
   import {
+    brushAxisTicks,
     customRangeFromIndexes,
     type ReportRangeProjection,
     reportRangeEditKey,
@@ -79,7 +88,15 @@
   // Dragging pins the projection so the index origin — and with it the scale — cannot move
   // underneath the pointer when the committed range starts before the data.
   let pinnedProjection = $state<ReportRangeProjection | null>(null);
+  let axisWidth = $state<number | undefined>();
   const activeProjection = $derived(pinnedProjection ?? projection);
+  const ticks = $derived(
+    brushAxisTicks(
+      activeProjection.domainFirst,
+      activeProjection.maxIndex,
+      axisWidth ? Math.max(2, Math.floor(axisWidth / 44)) : undefined,
+    ),
+  );
   const selectionIndexFor = (edge: 'end' | 'start'): number =>
     edge === 'start' ? controlState.selectionIndexes[0] : controlState.selectionIndexes[1];
   const percentFor = (index: number): number =>
@@ -229,6 +246,9 @@
     style:--slider-range-end={`${100 - endPercent}%`}
     style:--slider-range-start={`${startPercent}%`}
   >
+    {#each ticks as tick (tick.index)}
+      <span aria-hidden="true" class={monthGridline} data-period-brush-tick-mark style:left={`${tick.pct}%`}></span>
+    {/each}
     <div aria-hidden="true" class={timeSliderRange}></div>
     <div aria-hidden="true" class={timeSliderDimLeft}></div>
     <div aria-hidden="true" class={timeSliderDimRight}></div>
@@ -264,6 +284,13 @@
         type="button"
         style:left={`${percentFor(index)}%`}
       ></button>
+    {/each}
+  </div>
+  <div class={brushAxis} data-report-range-part="period-brush-axis" bind:clientWidth={axisWidth}>
+    {#each ticks as tick (tick.index)}
+      <span class={brushTick} data-brush-tick-index={tick.index} data-period-brush-tick style:left={`${tick.pct}%`}>
+        {tick.label}
+      </span>
     {/each}
   </div>
 </div>

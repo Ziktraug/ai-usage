@@ -14,6 +14,8 @@
   });
   const explorerContent = css({ display: 'grid', gap: '12px', pt: '12px' });
   const activityPanel = css({ display: 'grid', gap: '12px', p: { base: '14px', md: '18px' } });
+  const brushAxis = css({ position: 'relative', minH: '14px', color: 'muted', fontSize: '10px', lineHeight: 1 });
+  const brushTick = css({ position: 'absolute', top: 0, transform: 'translateX(-50%)', whiteSpace: 'nowrap' });
   const executiveMetricGroup = css({ border: 0, m: 0, minW: 0, order: { md: -1 }, p: 0 });
   const executiveMetricButton = css({ minH: '44px' });
 </script>
@@ -22,6 +24,7 @@
   import { cx } from '@ai-usage/design-system/css';
   import { containedInteractive } from '@ai-usage/design-system/report';
   import {
+    monthGridline,
     panelSub,
     panelTitle,
     presetButton,
@@ -67,14 +70,10 @@
   import { createSearchEditRun } from '../../../foundation/navigation/svelte/dashboard-url';
   import { fmtDateOnly, fmtNum, fmtPct } from '../../../foundation/presentation/format';
   import ActivityTimeline from '../overview/activity-timeline.svelte';
-  import {
-    executiveTimelineValue,
-    type MachineSeriesPresenter,
-    presentTimelineValue,
-    resolveTimelineMetric,
-  } from '../overview/timeline-model';
+  import { type MachineSeriesPresenter, presentTimelineValue, resolveTimelineMetric } from '../overview/timeline-model';
   import { timelineRangeForSelection, visibleTimelineSummary } from '../overview/timeline-window';
   import {
+    brushAxisTicks,
     customRangeFromIndexes,
     type ReportRangeProjection,
     reportRangeEditKey,
@@ -179,7 +178,15 @@
   });
 
   let pinnedProjection = $state<ReportRangeProjection | null>(null);
+  let axisWidth = $state<number | undefined>();
   const activeProjection = $derived(pinnedProjection ?? projection);
+  const ticks = $derived(
+    brushAxisTicks(
+      activeProjection.domainFirst,
+      activeProjection.maxIndex,
+      axisWidth ? Math.max(2, Math.floor(axisWidth / 44)) : undefined,
+    ),
+  );
   const selectionIndexFor = (edge: 'end' | 'start'): number =>
     edge === 'start' ? controlState.selectionIndexes[0] : controlState.selectionIndexes[1];
   const dateForHandle = (edge: 'end' | 'start'): Date =>
@@ -221,14 +228,10 @@
     { label: 'Month', value: 'month' },
   ] as const);
   const valueItems = [
-    { label: 'Estimated API-equivalent value', value: 'cost' },
+    { label: 'API value', value: 'cost' },
     { label: 'Tokens', value: 'tokens' },
     { label: 'Sessions', value: 'sessions' },
     { label: 'Share', value: 'share' },
-  ] as const;
-  const executiveValueItems = [
-    { label: 'API value', value: 'cost' },
-    { label: 'Tokens', value: 'tokens' },
   ] as const;
   const valueLabels: Record<TimelineValue, string> = {
     cost: 'Estimated API-equivalent value',
@@ -236,7 +239,6 @@
     share: 'Share',
     tokens: 'Tokens',
   };
-  const executiveValue = $derived(executiveTimelineValue(value));
   const resolvedMetric = $derived<ResolvedTimelineMetric>(resolveTimelineMetric(timeline, value));
   const selectedWindowSummary = $derived(
     timeline && visibleRange ? visibleTimelineSummary(timeline, visibleRange, resolvedMetric) : null,
@@ -441,11 +443,11 @@
     <span title={selectedMetricSummary.title ?? undefined}>{selectedMetricSummary.label}</span>
   </div>
   <fieldset aria-label="Activity metric" class={cx(presetGroup, executiveMetricGroup)}>
-    {#each executiveValueItems as item (item.value)}
+    {#each valueItems as item (item.value)}
       <button
-        aria-pressed={executiveValue === item.value}
+        aria-pressed={value === item.value}
         class={cx(presetButton, executiveMetricButton)}
-        data-active={executiveValue === item.value ? 'true' : 'false'}
+        data-active={value === item.value ? 'true' : 'false'}
         onclick={() => changeValue(item.value)}
         type="button"
       >
@@ -458,7 +460,7 @@
       <span class={timeChartOptionsTitle}>Explore activity</span>
       <!-- The current dimension/interval/metric already reads above the chart; repeating it here
            would spend the disclosure label on something the reader can see. Name what is inside. -->
-      <span class={timeChartOptionsCurrent}>Grouping, interval, metric, exact dates</span>
+      <span class={timeChartOptionsCurrent}>Grouping, interval, exact dates</span>
     </summary>
     <div class={explorerContent}>
       <div class={summaryRow}>
@@ -471,6 +473,9 @@
           style:--slider-range-end={`${100 - endPercent}%`}
           style:--slider-range-start={`${startPercent}%`}
         >
+          {#each ticks as tick (tick.index)}
+            <span aria-hidden="true" class={monthGridline} data-brush-tick-mark style:left={`${tick.pct}%`}></span>
+          {/each}
           <div aria-hidden="true" class={timeSliderRange}></div>
           <div aria-hidden="true" class={timeSliderDimLeft}></div>
           <div aria-hidden="true" class={timeSliderDimRight}></div>
@@ -508,6 +513,13 @@
             ></button>
           {/each}
         </div>
+        <div class={brushAxis} data-report-range-part="brush-axis" bind:clientWidth={axisWidth}>
+          {#each ticks as tick (tick.index)}
+            <span class={brushTick} data-brush-tick data-brush-tick-index={tick.index} style:left={`${tick.pct}%`}>
+              {tick.label}
+            </span>
+          {/each}
+        </div>
       </div>
       <div class={timeRangeViewControls}>
         <SegmentedControl
@@ -524,7 +536,6 @@
           onValueChange={changeGranularity}
           value={granularityPreference}
         />
-        <SegmentedControl ariaLabel="Metric" items={valueItems} label="Metric" onValueChange={changeValue} {value} />
       </div>
     </div>
   </details>

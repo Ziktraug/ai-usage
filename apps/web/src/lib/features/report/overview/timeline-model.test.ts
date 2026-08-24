@@ -2,7 +2,6 @@ import { describe, expect, test } from 'bun:test';
 import type { FocusedTimelineData } from '@ai-usage/report-core/focused-report-query';
 import { apiPriceMeasurement } from '@ai-usage/report-core/provenance';
 import {
-  executiveTimelineValue,
   presentTimelineSeries,
   presentTimelineValue,
   resolveTimelineMetric,
@@ -52,13 +51,6 @@ const timeline = (grandTotal: number): FocusedTimelineData => ({
 });
 
 describe('P2 timeline presentation model', () => {
-  test('only marks an executive metric toggle with one of its own values', () => {
-    expect(executiveTimelineValue('cost')).toBe('cost');
-    expect(executiveTimelineValue('tokens')).toBe('tokens');
-    expect(executiveTimelineValue('sessions')).toBeNull();
-    expect(executiveTimelineValue('share')).toBeNull();
-  });
-
   test('uses cost for every share when cost exists, never sessions divided by cost', () => {
     const data = timeline(10);
     const readout = timelineReadoutFor(data, 'share', 0);
@@ -230,6 +222,9 @@ test('wires legend buttons, keyboard inspection, live readout, and collision mea
   expect(source).toContain('classifiedBucketPriceMeasurement(bar.bucket)');
   expect(source).toContain('accessibleAmount(barValue)');
   expect(source).toContain('presentation.provenance');
+  expect(source).toContain('data-timeline-legend-entry=');
+  expect(source).toContain('...(rank === undefined ? {} : { rank })');
+  expect(source).toContain('aggregate: (series?.memberKeys?.length ?? 0) > 0');
   expect(source).not.toContain('data-origin-gap-value');
 });
 

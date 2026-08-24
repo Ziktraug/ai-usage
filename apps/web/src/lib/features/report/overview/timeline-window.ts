@@ -15,6 +15,7 @@ const MONTH_TICK_MINIMUM_BUCKETS = 8;
 const MAX_VISUAL_TICKS = 14;
 const SPACED_BUCKET_MIN_WIDTH_PX = 2;
 const SPACED_BUCKET_GAP_PX = 2;
+const SINGLE_BUCKET_MAX_WIDTH_PX = 64;
 const TIMELINE_PLOT_INSET_PX = 8;
 const PLOT_OFFSET_EPSILON = 0.0001;
 
@@ -22,7 +23,9 @@ const monthTickFormatter = new Intl.DateTimeFormat('en', { month: 'short' });
 
 export interface TimelineBucketLayout {
   bucketGap: string;
+  bucketMaxWidth: string;
   bucketMinWidth: string;
+  stackJustify: 'center' | 'flex-start';
 }
 
 export interface TimelineMonthTick {
@@ -149,7 +152,9 @@ export const timelineBucketLayout = (bucketCount: number): TimelineBucketLayout 
       count > 1
         ? `clamp(0px, calc((100% - ${count * SPACED_BUCKET_MIN_WIDTH_PX}px) / ${count - 1}), ${SPACED_BUCKET_GAP_PX}px)`
         : '0px',
+    bucketMaxWidth: count === 1 ? `${SINGLE_BUCKET_MAX_WIDTH_PX}px` : 'none',
     bucketMinWidth: `min(${SPACED_BUCKET_MIN_WIDTH_PX}px, calc(100% / ${count}))`,
+    stackJustify: count === 1 ? 'center' : 'flex-start',
   };
 };
 

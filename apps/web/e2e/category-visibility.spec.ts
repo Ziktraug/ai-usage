@@ -66,9 +66,11 @@ test('keeps every populated harness and machine visible with default dimension f
   const machineRadio = chartOptions.getByRole('radio', { exact: true, name: 'Machine' });
   await machineRadio.click();
   await expect(machineRadio).toBeChecked();
-  const sessionsRadio = chartOptions.getByRole('radio', { exact: true, name: 'Sessions' });
-  await sessionsRadio.click();
-  await expect(sessionsRadio).toBeChecked();
+  const sessionsButton = activity
+    .getByRole('group', { name: 'Activity metric' })
+    .getByRole('button', { exact: true, name: 'Sessions' });
+  await sessionsButton.click();
+  await expect(sessionsButton).toHaveAttribute('aria-pressed', 'true');
   await expect(activity.getByText('Machine · Day · Sessions', { exact: true })).toBeVisible();
 
   const machineFilter = page.getByRole('button', { name: 'Filter by machine' });

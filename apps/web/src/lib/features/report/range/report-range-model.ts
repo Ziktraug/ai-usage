@@ -31,6 +31,9 @@ export interface ReportRangeProjection {
 const inputDateFormatter = new Intl.DateTimeFormat('en', { day: '2-digit', month: 'short', year: 'numeric' });
 const summaryDayFormatter = new Intl.DateTimeFormat('en', { day: 'numeric', month: 'short' });
 const summaryEndFormatter = new Intl.DateTimeFormat('en', { day: '2-digit', month: 'short', year: 'numeric' });
+const brushMonthFormatter = new Intl.DateTimeFormat('en', { month: 'short' });
+const brushDayFormatter = new Intl.DateTimeFormat('en', { day: 'numeric' });
+const brushFirstDayFormatter = new Intl.DateTimeFormat('en', { day: 'numeric', month: 'short' });
 
 const CANONICAL_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -172,6 +175,50 @@ export const escapedRangeDraft = (
   projection: Pick<ReportRangeProjection, 'displayFrom' | 'displayTo'>,
   field: 'end' | 'start',
 ): string => (field === 'start' ? projection.displayFrom : projection.displayTo);
+
+export interface BrushAxisTick {
+  readonly index: number;
+  readonly label: string;
+  readonly pct: number;
+}
+
+export const brushAxisTicks = (domainFirst: Date, maxIndex: number, maxLabels = 8): BrushAxisTick[] => {
+  if (maxIndex <= 0) {
+    return [];
+  }
+  const ticks: BrushAxisTick[] = [];
+  if (maxIndex < 14) {
+    for (let index = 0; index <= maxIndex; index += 1) {
+      const date = dateFromIndex(domainFirst, index);
+      ticks.push({
+        index,
+        label:
+          index === 0 || date.getDate() === 1 ? brushFirstDayFormatter.format(date) : brushDayFormatter.format(date),
+        pct: (index / maxIndex) * 100,
+      });
+    }
+  } else {
+    let previousMonth = domainFirst.getMonth();
+    for (let index = 1; index <= maxIndex; index += 1) {
+      const date = dateFromIndex(domainFirst, index);
+      const month = date.getMonth();
+      if (month === previousMonth) {
+        continue;
+      }
+      previousMonth = month;
+      const monthLabel = brushMonthFormatter.format(date);
+      ticks.push({
+        index,
+        label: month === 0 ? `${monthLabel} ’${String(date.getFullYear()).slice(-2)}` : monthLabel,
+        pct: (index / maxIndex) * 100,
+      });
+    }
+  }
+  const step = Math.max(1, Math.ceil(ticks.length / Math.max(1, maxLabels)));
+  return ticks.filter(
+    (tick, index) => index % step === 0 || (maxIndex < 14 && tick.index > 0 && tick.label.includes(' ')),
+  );
+};
 
 export type TimelineGranularityPreference = MigrationGranularity | 'auto';
 

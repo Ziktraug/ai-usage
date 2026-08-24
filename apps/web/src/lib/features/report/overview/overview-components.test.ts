@@ -13,6 +13,9 @@ interface SvelteServerModule {
 }
 
 const RECORD_DISCLOSURE_PATTERN = /aria-hidden="true" class="[^"]+">↗<\/span>/;
+const ACTIVITY_METRIC_FIELDSET_PATTERN = /<fieldset aria-label="Activity metric"[\s\S]*?<\/fieldset>/;
+const ARIA_PRESSED_PATTERN = /aria-pressed="(?:true|false)"/g;
+const HERO_VALUE_PATTERN = /<strong class="[^"]*white-space_nowrap[^"]*"[^>]*style="[^"]*--hero-chars:\s*\d+/;
 /** The share `<span>` and value `<strong>` of one "API value by harness" row. */
 const HARNESS_GROUP_SHARE_PATTERN = />([\d.]+%|—)<\/span> <strong/u;
 const HARNESS_GROUP_VALUE_PATTERN = /<strong[^>]*>([^<]+)<\/strong>/u;
@@ -104,6 +107,7 @@ describe('decision-first Overview Svelte surfaces', () => {
     expect(body).toContain('data-report-overview');
     expect(body).toContain('data-report-revision="p2-fixture-revision"');
     expect(body).toContain('data-executive-kpi');
+    expect(body).toMatch(HERO_VALUE_PATTERN);
     expect(body).toContain('data-executive-chart');
     expect(body).toContain('data-executive-metrics');
     expect(body).toContain('Estimated API-equivalent value');
@@ -123,6 +127,13 @@ describe('decision-first Overview Svelte surfaces', () => {
     expect(body).toContain('Rhythm');
     expect(body).toContain('Punchcard');
     expect(body).toContain('Campaign · Day · Estimated API-equivalent value');
+    expect(body).toContain('aria-label="Activity metric"');
+    const activityMetric = body.match(ACTIVITY_METRIC_FIELDSET_PATTERN)?.[0] ?? '';
+    expect(activityMetric.match(ARIA_PRESSED_PATTERN)).toHaveLength(4);
+    expect(body).not.toContain('aria-label="Metric"');
+    expect(body).toContain('Grouping, interval, exact dates');
+    expect(body).toContain('data-report-range-part="brush-axis"');
+    expect(body).toContain('data-brush-tick');
     expect(body).toContain('data-series-key="');
     expect(body).toContain('background: hsl(');
     expect(body).toContain('data-punchcard-cell-fill');
