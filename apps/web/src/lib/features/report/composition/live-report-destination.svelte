@@ -625,6 +625,7 @@
         harnessProviders: commit.breakdown.groups.harnessProviders,
         models: commit.breakdown.groups.models,
         projects: commit.breakdown.groups.projects,
+        range: commit.destination.query.range,
       }}
       navigation={{
         onSortChange: navigation.setBreakdownSort,
