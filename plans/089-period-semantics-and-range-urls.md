@@ -879,3 +879,34 @@ Stop and report back (do not improvise) if:
   validation now has an independent exact literal assertion, and the
   in-progress insight pins its complete reader-facing sentence rather than
   only its parenthetical suffix. Production code was unchanged.
+
+## Execution notes — maintainer reopening D20
+
+- Re-anchored the original implementation and review correction on the
+  current program tree after plan 088. The only conflict was the expected
+  additive `plans/README.md` status block; the accepted 087, 088, and 091
+  states were preserved.
+- Codex r3's remaining defect was reproduced before correction: the supported
+  URL `?range=..2025-01-01` projected the known-domain start after the
+  explicit end and rendered `-484 days`. A from-only bound after generation
+  had the symmetric failure.
+- Open ranges now retain their explicit endpoint and collapse only the
+  missing endpoint to it when the usual domain/generation fallback would
+  reverse the period. Both directions therefore remain ordered, have one
+  inclusive day, and keep `dayCount` equal to the selected index width.
+  Unit and settled browser tests cover both readable URLs.
+- The two Darwin Overview baselines changed only from `30 days` to the
+  accepted inclusive `31 days` text. Both diffs were reproduced alone,
+  audited visually, regenerated, and then passed in the full run; no geometry
+  or unrelated pixels changed.
+- Final child gates on 2026-08-24: targeted cross-package tests 145/145; web
+  1,003/1,003; report-core 244/244; usage-store 163/163, including the
+  50,000-row proof; typecheck 28/28 with Svelte 0 errors and 0 warnings; lint
+  1,084 files plus five repository guards; locked Playwright 153/153 with two
+  workers; production report 13/13; production scale 2/2 over exactly 5,000
+  synthetic sessions; build 15/15 immediately followed by bundle 4/4.
+  Added-line PII, `.only`/`.skip`, and diff checks were clean.
+- One production run initially executed the pre-089 build artifact and failed
+  the new `8 days` and `Auto (Day)` assertions. Both titles passed alone after
+  the mandatory rebuild, and the full production and scale gates then passed.
+  The stale-artifact run receives no product attribution.

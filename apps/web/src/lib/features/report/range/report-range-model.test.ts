@@ -69,6 +69,18 @@ describe('report range projection', () => {
     expect(twelveDays.summary).toEndWith('· 12 days');
   });
 
+  test('keeps open bounds ordered when their explicit endpoint falls outside the data domain', () => {
+    const untilBeforeDomain = reportRangeProjection({ mode: 'custom', to: '2025-01-01' }, generatedAt, domain);
+    const fromAfterGeneration = reportRangeProjection({ from: '2027-01-01', mode: 'custom' }, generatedAt, domain);
+
+    expect(untilBeforeDomain.summary).toBe('Jan 1 → Jan 01, 2025 · 1 day');
+    expect(fromAfterGeneration.summary).toBe('Jan 1 → Jan 01, 2027 · 1 day');
+    for (const projection of [untilBeforeDomain, fromAfterGeneration]) {
+      expect(projection.dayCount).toBe(1);
+      expect(projection.dayCount).toBe(projection.selectionIndexes[1] - projection.selectionIndexes[0] + 1);
+    }
+  });
+
   test('identifies periods that are still in progress', () => {
     expect(reportPeriodInProgress({ mode: 'today' }, generatedAt)).toBeTrue();
     expect(reportPeriodInProgress({ from: '2026-06-11', mode: 'custom', to: '2026-06-11' }, generatedAt)).toBeTrue();

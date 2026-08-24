@@ -266,7 +266,9 @@
     return { label: `${fmtNum(total)} ${resolvedMetric}`, title: null };
   });
   const chartSummary = $derived(
-    `${focusedTimelineDimensionLabel(dimension)} · ${resolvedGranularityLabel} · ${valueLabels[value]}`,
+    `${focusedTimelineDimensionLabel(dimension)} · ${granularity[0]?.toUpperCase()}${granularity.slice(1)} · ${
+      valueLabels[value]
+    }`,
   );
 
   const commitRange = (next: DashboardDateRangeSearch, options: SearchNavigationOptions = {}): void => {

@@ -74,10 +74,16 @@ export const reportRangeProjection = (
   const fallbackLast = startOfDay(generatedAt);
   const fallbackFirst = rollingDaysAgo(fallbackLast, 30);
   const bounds = rangeBounds(range, generatedAt);
-  const selectedFrom = startOfDay(bounds.from ?? validDomainDate(domain?.first, fallbackFirst));
-  const selectedTo = startOfDay(
+  const fallbackSelectedFrom = startOfDay(bounds.from ?? validDomainDate(domain?.first, fallbackFirst));
+  const fallbackSelectedTo = startOfDay(
     bounds.to ?? (range.mode === 'all' ? validDomainDate(domain?.last, fallbackLast) : fallbackLast),
   );
+  const selectedFrom =
+    bounds.from === null && fallbackSelectedFrom.getTime() > fallbackSelectedTo.getTime()
+      ? fallbackSelectedTo
+      : fallbackSelectedFrom;
+  const selectedTo =
+    bounds.to === null && fallbackSelectedTo.getTime() < selectedFrom.getTime() ? selectedFrom : fallbackSelectedTo;
   const dataFirst = startOfDay(validDomainDate(domain?.first, selectedFrom));
   const dataLast = startOfDay(validDomainDate(domain?.last, selectedTo));
   const domainFirst = new Date(Math.min(dataFirst.getTime(), selectedFrom.getTime()));
