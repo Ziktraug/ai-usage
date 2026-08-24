@@ -199,14 +199,19 @@
       <input
         aria-describedby={validationError ? customErrorId : undefined}
         aria-invalid={invalidFrom}
+        autocomplete="off"
         class={cx(input, invalidFrom ? invalidInput : undefined)}
         id="report-period-from"
+        maxlength="10"
         onchange={(event) => {
           draftFrom = event.currentTarget.value;
           commitDraftEdit();
         }}
         onkeydown={restoreOnEscape}
-        type="date"
+        placeholder="YYYY-MM-DD"
+        spellcheck="false"
+        title="Date as YYYY-MM-DD"
+        type="text"
         value={draftFrom}
         bind:this={fromInputElement}
       >
@@ -214,14 +219,19 @@
       <input
         aria-describedby={validationError ? customErrorId : undefined}
         aria-invalid={invalidTo}
+        autocomplete="off"
         class={cx(input, invalidTo ? invalidInput : undefined)}
         id="report-period-to"
+        maxlength="10"
         onchange={(event) => {
           draftTo = event.currentTarget.value;
           commitDraftEdit();
         }}
         onkeydown={restoreOnEscape}
-        type="date"
+        placeholder="YYYY-MM-DD"
+        spellcheck="false"
+        title="Date as YYYY-MM-DD"
+        type="text"
         value={draftTo}
       >
       {#if validationError}

@@ -1,5 +1,9 @@
 <script lang="ts">
-  import type { FocusedOverviewSessionItem, FocusedTimelineSeries } from '@ai-usage/report-core/focused-report-query';
+  import type {
+    FocusedDateDomain,
+    FocusedOverviewSessionItem,
+    FocusedTimelineSeries,
+  } from '@ai-usage/report-core/focused-report-query';
   import type { ProjectGroupConfig } from '@ai-usage/report-core/project-group';
   import type { UsageReportWarning } from '@ai-usage/report-core/report-data';
   import type { LocalTimeCell, SessionPresentationRow } from '@ai-usage/report-core/session-query';
@@ -23,7 +27,7 @@
     machineFreshnessStatusLabel,
     machineLabelPresentationForSnapshot,
   } from '../../../../machine-freshness-presentation';
-  import type { MigrationGranularity, TimelineDimension, TimelineValue } from '../../../../overview-model';
+  import type { TimelineDimension, TimelineValue } from '../../../../overview-model';
   import { buildProjectGroupReferenceCommand } from '../../../../project-group-control';
   import { buildProviderStatusViews, providerHistoryAvailable } from '../../../../provider-status-model';
   import type { RuntimeMode } from '../../../../runtime-mode';
@@ -68,6 +72,11 @@
   import ActiveFilters from '../breakdown/active-filters.svelte';
   import { createBreakdownNavigation } from '../breakdown/navigation';
   import ReportWarnings from '../core/report-warnings.svelte';
+  import {
+    reportRangeProjection,
+    resolveTimelineGranularity,
+    type TimelineGranularityPreference,
+  } from '../range/report-range-model';
   import { activeTimelineSeriesKeys } from './active-timeline-series';
   import { importReportLazyModule } from './lazy-module-e2e-fixture';
   import { createLazyModuleLoader } from './lazy-module-loader';
@@ -79,7 +88,7 @@
     requireFocusedBreakdown,
   } from './report-destination';
   import ReportDestinationPresentation from './report-destination-presentation.svelte';
-  import { queryForDescriptor, reportDestinationForSearch } from './report-search';
+  import { initialReportTimelineFor, queryForDescriptor, reportDestinationForSearch } from './report-search';
 
   type DashboardBreakdownModule = typeof import('../breakdown/dashboard-breakdown.svelte');
   type SessionsDestinationModule = typeof import('./sessions-destination.svelte');
@@ -110,14 +119,19 @@
 
   const sessionWindowAnchorOwner = useSessionWindowAnchorOwner();
   let dimension = $state<TimelineDimension>(INITIAL_REPORT_TIMELINE.dimension);
-  let granularity = $state<MigrationGranularity>(INITIAL_REPORT_TIMELINE.granularity);
+  let granularityPreference = $state<TimelineGranularityPreference>('auto');
+  let knownDateDomain = $state<FocusedDateDomain | null>(null);
   let timelineValue = $state<TimelineValue>('cost');
   // Headline value of the window currently under the pointer, so the hero tracks the brush instead
   // of waiting for the release-triggered round trip. Null whenever the brush is not being dragged.
   let draggedWindowApiValue = $state<number | null>(null);
   const initialDescriptor = untrack(() => initialFocusedReportDescriptor(bootstrapResult));
   const initialDestination = untrack(() =>
-    reportDestinationForSearch(search, bootstrapResult.bootstrap.support.generatedAt, INITIAL_REPORT_TIMELINE),
+    reportDestinationForSearch(
+      search,
+      bootstrapResult.bootstrap.support.generatedAt,
+      initialReportTimelineFor(search.range, bootstrapResult.bootstrap.support.generatedAt),
+    ),
   );
   let detailRows = $state<readonly SessionPresentationRow[]>([]);
   let selectedRowId = $state<string | null>(null);
@@ -170,6 +184,10 @@
   );
   const projectGroupsMutation = createMutation(() => saveProjectGroupsMutationOptions(reportClient, queryClient));
   const navigation = createBreakdownNavigation((update, options) => navigate(update, options));
+  const rangeProjection = $derived(
+    reportRangeProjection(search.range, new Date(bootstrapResult.bootstrap.support.generatedAt), knownDateDomain),
+  );
+  const granularity = $derived(resolveTimelineGranularity(granularityPreference, rangeProjection.dayCount));
   const timeline = $derived({ dimension, granularity });
   const destination = $derived(
     reportDestinationForSearch(search, bootstrapResult.bootstrap.support.generatedAt, timeline),
@@ -198,6 +216,12 @@
     ),
   );
   const commit = $derived(destinationQuery.data);
+  $effect(() => {
+    const domain = commit?.overview.dateDomain;
+    if (domain) {
+      knownDateDomain = domain;
+    }
+  });
   const increaseSessionDepth = (
     family: 'campaign-children' | 'campaign-sessions' | 'top-level',
     campaignKey?: string,
@@ -447,11 +471,11 @@
     navigate((current) => ({ ...current, timeCell: serializeDashboardTimeCell(cell) }));
   const updateOverviewOptions = (options: {
     dimension: TimelineDimension;
-    granularity: MigrationGranularity;
+    granularity: TimelineGranularityPreference;
     value: TimelineValue;
   }): void => {
     dimension = options.dimension;
-    granularity = options.granularity;
+    granularityPreference = options.granularity;
     timelineValue = options.value;
   };
   const currentRevision = (): string => commit?.descriptor.revision ?? initialDescriptor.revision;
@@ -652,6 +676,7 @@
           dimension,
           generatedAt: bootstrap.support.generatedAt,
           granularity,
+          granularityPreference,
           machineFreshnessStatus: machineFreshnessStatusLabel(machineSnapshot),
           navigate,
           onDimensionFilter: navigation.setTimelineDimensionFilter,

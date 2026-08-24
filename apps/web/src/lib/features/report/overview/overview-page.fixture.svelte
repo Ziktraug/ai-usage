@@ -4,6 +4,7 @@
     FocusedOverviewSessionItem,
     FocusedTimelineSeries,
   } from '@ai-usage/report-core/focused-report-query';
+  import type { DashboardDateRangeSearch } from '../../../../dashboard-search';
   import type { ProviderStatusView } from '../../../../provider-status-model';
   import ReportPeriodControl from '../range/report-period-control.svelte';
   import OverviewPage from './overview-page.svelte';
@@ -18,6 +19,7 @@
     presentMachineSeries,
     presentSessionItem,
     providers = [],
+    range = { mode: '30d' },
     result,
     totalSessionCount = result.summary.sessionCount,
   }: {
@@ -27,12 +29,13 @@
     presentMachineSeries?: MachineSeriesPresenter;
     presentSessionItem?: (item: FocusedOverviewSessionItem) => FocusedOverviewSessionItem;
     providers?: readonly ProviderStatusView[];
+    range?: DashboardDateRangeSearch;
     result: FocusedOverviewResult;
     totalSessionCount?: number;
   } = $props();
 </script>
 
-<ReportPeriodControl dateDomain={result.dateDomain} generatedAt={result.metadata.generatedAt} range={{ mode: '30d' }} />
+<ReportPeriodControl dateDomain={result.dateDomain} generatedAt={result.metadata.generatedAt} {range} />
 <OverviewPage
   activity={{
     activeSeriesKeys,
@@ -43,7 +46,7 @@
     machineFreshnessStatus,
     ...(presentCampaignSeries ? { presentCampaignSeries } : {}),
     ...(presentMachineSeries ? { presentMachineSeries } : {}),
-    range: { mode: '30d' },
+    range,
     revision: result.revision,
     timeline: result.timeline,
     value: 'cost',
@@ -52,7 +55,7 @@
   modelsHref="?tab=models"
   onOpenModels={openModels}
   {providers}
-  range={{ mode: '30d' }}
+  {range}
   {result}
   {totalSessionCount}
 />

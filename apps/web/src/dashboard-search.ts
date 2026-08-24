@@ -86,10 +86,22 @@ export interface DashboardDateRangeSearch {
   to?: string;
 }
 
+/** `7d` | `today` | `all` | `90d` | `30d` | `custom` | `<from>..<to>` with either bound optional. */
+export const serializeDashboardDateRange = (range: DashboardDateRangeSearch): string => {
+  if (range.mode !== 'custom') {
+    return range.mode;
+  }
+  if (range.from === undefined && range.to === undefined) {
+    return 'custom';
+  }
+  return `${range.from ?? ''}..${range.to ?? ''}`;
+};
+
 export const defaultDashboardDateRangeMode = '30d' as const;
 export const defaultDashboardOrigins = [] as const satisfies readonly SessionOrigin[];
 
 const DASHBOARD_TIME_CELL_PATTERN = /^(MON|TUE|WED|THU|FRI|SAT|SUN)-(0[0-9]|1[0-9]|2[0-3])$/;
+const DASHBOARD_RANGE_PATTERN = /^(\d{4}-\d{2}-\d{2})?\.\.(\d{4}-\d{2}-\d{2})?$/;
 const dashboardTimeCellWeekdayCodes: readonly string[] = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
 
 export const parseDashboardTimeCell = (value: unknown): LocalTimeCell | undefined => {
@@ -130,6 +142,11 @@ export interface DashboardSearch {
   tab: DashboardTab;
   timeCell?: string;
 }
+
+export const dashboardSearchUrlValues = (search: DashboardSearch): Record<string, unknown> => ({
+  ...search,
+  range: serializeDashboardDateRange(search.range),
+});
 
 export const withoutDashboardTimeCell = (search: DashboardSearch): DashboardSearch => {
   const { timeCell: _timeCell, ...rest } = search;
@@ -261,6 +278,23 @@ const parseFilters = (value: unknown): FieldFilters => {
 };
 
 const parseRange = (value: unknown, fallback: DashboardDateRangeSearch): DashboardDateRangeSearch => {
+  if (typeof value === 'string') {
+    if (dateRangeModeSet.has(value)) {
+      return { mode: value as DateRangeMode };
+    }
+    const match = DASHBOARD_RANGE_PATTERN.exec(value);
+    if (match && (match[1] || match[2])) {
+      return parseRange(
+        {
+          ...(match[1] ? { from: match[1] } : {}),
+          mode: 'custom',
+          ...(match[2] ? { to: match[2] } : {}),
+        },
+        fallback,
+      );
+    }
+    return fallback;
+  }
   if (!isRecord(value)) {
     return fallback;
   }

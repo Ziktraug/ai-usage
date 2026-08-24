@@ -19,6 +19,7 @@
   import type { DashboardDateRangeSearch } from '../../../../dashboard-search';
   import type { ProviderStatusView } from '../../../../provider-status-model';
   import type ActivityExplorer from '../range/activity-explorer.svelte';
+  import { reportPeriodInProgress } from '../range/report-range-model';
   import ActivityHeatmap from './activity-heatmap.svelte';
   import ExecutiveOverview from './executive-overview.svelte';
   import { buildExecutiveOverviewModel } from './executive-overview-model';
@@ -68,6 +69,7 @@
   const executiveModel = $derived(
     buildExecutiveOverviewModel({
       executive: result.view.executive,
+      periodInProgress: reportPeriodInProgress(range, new Date(result.metadata.generatedAt)),
       previousSummary: result.view.previousSummary,
       rangeMode: range.mode,
       summary: result.summary,

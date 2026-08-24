@@ -22,6 +22,7 @@ type DashboardUrlSearch = Partial<Record<DashboardSearchKey, unknown>>;
 
 export interface DashboardSearchCodec<Search extends DashboardUrlSearch> {
   readonly defaults: Search;
+  readonly encode?: (search: Search) => DashboardUrlSearch;
   readonly validate: (raw: Record<string, unknown>, defaults: Search) => Search;
 }
 
@@ -38,7 +39,14 @@ const dashboardRecord = (search: DashboardUrlSearch): Record<string, unknown> =>
 export const parseDashboardSearchUrl = <Search extends DashboardUrlSearch>(
   url: URL,
   codec: DashboardSearchCodec<Search>,
-): Search => codec.validate(parseTanStackSearch(url.search), codec.defaults);
+): Search => {
+  const parsed = parseTanStackSearch(url.search);
+  const rawRange = url.searchParams.get('range');
+  if (rawRange !== null && typeof parsed.range === 'string' && parsed.range !== rawRange) {
+    parsed.range = rawRange;
+  }
+  return codec.validate(parsed, codec.defaults);
+};
 
 export const dashboardUrlFor = <Search extends DashboardUrlSearch>(
   currentUrl: URL,
@@ -47,7 +55,8 @@ export const dashboardUrlFor = <Search extends DashboardUrlSearch>(
 ): URL => {
   const next = new URL(currentUrl);
   const canonical = codec.validate(dashboardRecord(search), codec.defaults);
-  const encoded = new URLSearchParams(stringifyTanStackSearch(dashboardRecord(canonical)));
+  const encodedSearch = codec.encode ? codec.encode(canonical) : canonical;
+  const encoded = new URLSearchParams(stringifyTanStackSearch(dashboardRecord(encodedSearch)));
   for (const key of dashboardKeys) {
     next.searchParams.delete(key);
     if (!sameValue(canonical[key], codec.defaults[key])) {

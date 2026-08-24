@@ -112,6 +112,7 @@
     }
     return comparison.explanation;
   });
+  const comparisonCaveat = $derived(model.primary.comparison.caveat);
   const primaryQualification = $derived.by((): string => {
     const periodSentence = `This estimate covers work ${model.primary.periodScope}.`;
     const provenance = model.primary.provenance?.description;
@@ -148,7 +149,12 @@
           <strong class={numericDisplay} title={model.primary.value.title}>{displayedValue}</strong>
           <p class={qualification}>{primaryQualification}</p>
           {#if comparisonText}
-            <p class={comparison}>{comparisonText}</p>
+            <p class={comparison}>
+              {comparisonText}
+              {#if comparisonCaveat}
+                <span class={qualification} data-period-comparison-caveat>{comparisonCaveat}</span>
+              {/if}
+            </p>
           {/if}
         </div>
       </section>

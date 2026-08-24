@@ -80,6 +80,7 @@
     reportRangeEditKey,
     reportRangePointerFinishType,
     reportRangeProjection,
+    type TimelineGranularityPreference,
   } from './report-range-model';
 
   interface Props {
@@ -88,12 +89,13 @@
     dimension: TimelineDimension;
     generatedAt: string;
     granularity: MigrationGranularity;
+    granularityPreference?: TimelineGranularityPreference;
     machineFreshnessStatus?: string | null;
     navigate?: SearchNavigationIntent<DashboardSearch>;
     onDimensionFilter?: (dimension: TimelineDimension, key: string) => void;
     onOptionsChange?: (options: {
       dimension: TimelineDimension;
-      granularity: MigrationGranularity;
+      granularity: TimelineGranularityPreference;
       value: TimelineValue;
     }) => void;
     onRangeChange?: (range: DashboardDateRangeSearch) => void;
@@ -113,6 +115,7 @@
     dimension,
     generatedAt,
     granularity,
+    granularityPreference = granularity,
     machineFreshnessStatus = null,
     navigate,
     onDimensionFilter = () => undefined,
@@ -210,11 +213,13 @@
     { edge: 'end', label: 'End date' },
   ] as const satisfies readonly { edge: 'end' | 'start'; label: string }[];
   const handleValueText = (edge: 'end' | 'start'): string => fmtDateOnly(dateForHandle(edge));
-  const granularityItems = [
+  const resolvedGranularityLabel = $derived(`${granularity[0]?.toUpperCase()}${granularity.slice(1)}`);
+  const granularityItems = $derived([
+    { label: `Auto (${resolvedGranularityLabel})`, value: 'auto' },
     { label: 'Day', value: 'day' },
     { label: 'Week', value: 'week' },
     { label: 'Month', value: 'month' },
-  ] as const;
+  ] as const);
   const valueItems = [
     { label: 'Estimated API-equivalent value', value: 'cost' },
     { label: 'Tokens', value: 'tokens' },
@@ -396,17 +401,17 @@
 
   const changeDimension = (next: string): void => {
     if (isFocusedTimelineDimension(next)) {
-      onOptionsChange({ dimension: next, granularity, value });
+      onOptionsChange({ dimension: next, granularity: granularityPreference, value });
     }
   };
   const changeGranularity = (next: string): void => {
-    if (next === 'day' || next === 'week' || next === 'month') {
+    if (next === 'auto' || next === 'day' || next === 'week' || next === 'month') {
       onOptionsChange({ dimension, granularity: next, value });
     }
   };
   const changeValue = (next: string): void => {
     if (next === 'cost' || next === 'sessions' || next === 'share' || next === 'tokens') {
-      onOptionsChange({ dimension, granularity, value: next });
+      onOptionsChange({ dimension, granularity: granularityPreference, value: next });
     }
   };
 </script>
@@ -517,7 +522,7 @@
           items={granularityItems}
           label="Interval"
           onValueChange={changeGranularity}
-          value={granularity}
+          value={granularityPreference}
         />
         <SegmentedControl ariaLabel="Metric" items={valueItems} label="Metric" onValueChange={changeValue} {value} />
       </div>
