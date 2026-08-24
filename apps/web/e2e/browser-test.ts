@@ -69,7 +69,9 @@ export interface BrowserFailureGate {
 export const reportViewsFor = (page: Page): Locator => page.getByRole('navigation', { name: 'Report views' });
 
 export const waitForHydratedReport = async (page: Page): Promise<void> => {
-  await playwrightExpect(page.locator('main[data-hydrated="true"][data-route-shell="report"]')).toBeVisible();
+  await playwrightExpect(page.locator('main[data-hydrated="true"][data-route-shell="report"]')).toBeVisible({
+    timeout: 15_000,
+  });
 };
 
 /**

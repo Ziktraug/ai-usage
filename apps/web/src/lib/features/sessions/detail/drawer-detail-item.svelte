@@ -81,6 +81,7 @@
     <div class={detailLabel}>{label}</div>
     {#if hint}
       <Popover
+        contentAriaLabel={`About ${label}`}
         contentClass={popoverContent}
         onExitComplete={() => onHintSettled?.(hintId)}
         onOpenChange={(open) => onHintOpenChange?.(hintId, open)}

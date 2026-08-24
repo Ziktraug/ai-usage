@@ -5,7 +5,6 @@ import { fileURLToPath } from 'node:url';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
 import { chromium } from 'playwright';
 import { createServer } from 'vite';
-import { multiSelectSummary } from './multi-select';
 import { nextSegmentValue } from './segmented-control';
 import { keepTabPanelInTabOrder } from './tab-panel';
 
@@ -33,7 +32,6 @@ const BROWSER_PROOF_ACTION_TIMEOUT_MS = 2000;
 const BROWSER_PROOF_SETUP_BUDGET_MS = 8000;
 const BROWSER_PROOF_TIMEOUT_MS =
   BROWSER_PROOF_SETUP_BUDGET_MS + BROWSER_PROOF_INTERACTIONS * BROWSER_PROOF_ACTION_TIMEOUT_MS;
-const POSITIONING_PIXEL_TOLERANCE = 1;
 
 const readCompound = async (name: string): Promise<string> => readFile(resolve(compoundDirectory, name), 'utf8');
 
@@ -80,49 +78,6 @@ describe('Svelte compound controls', () => {
         const page = await browser.newPage();
         page.setDefaultTimeout(BROWSER_PROOF_ACTION_TIMEOUT_MS);
         await page.goto(`http://127.0.0.1:${address.port}/${fixtureUrlPath}/`);
-
-        const multiFixture = page.getByTestId('multi-select-fixture');
-        const multiTrigger = page.getByRole('combobox', { name: 'Filter fixture machines' });
-        await multiTrigger.focus();
-        await multiTrigger.press('ArrowDown');
-        await page
-          .locator('[data-scope="select"][data-part="item"][data-highlighted]', { hasText: 'Alpha workstation' })
-          .waitFor();
-        const selectContent = page.locator('[data-scope="select"][data-part="content"]');
-        await selectContent.press('Enter');
-        await page.waitForFunction(
-          () =>
-            document.querySelector('[data-testid="multi-select-fixture"]')?.getAttribute('data-selection') === 'alpha',
-        );
-        expect(await multiFixture.getAttribute('data-selection')).toBe('alpha');
-        expect(await multiTrigger.getAttribute('data-state')).toBe('open');
-        const hiddenAlphaOption = page.locator('select[name="fixture-machines"] option[value="alpha"]');
-        expect(await hiddenAlphaOption.evaluate((option) => Reflect.get(option, 'selected'))).toBe(true);
-        const positioner = page.locator('body > [data-scope="select"][data-part="positioner"]');
-        expect(await positioner.count()).toBe(1);
-        expect(await positioner.evaluate((element) => getComputedStyle(element).zIndex)).toBe('50');
-        const [triggerBounds, positionerBounds] = await Promise.all([
-          multiTrigger.boundingBox(),
-          positioner.boundingBox(),
-        ]);
-        if (!(triggerBounds && positionerBounds)) {
-          throw new Error('The open D3 Select trigger and positioner must both have measurable bounds.');
-        }
-        expect(Math.abs(triggerBounds.width - positionerBounds.width)).toBeLessThanOrEqual(POSITIONING_PIXEL_TOLERANCE);
-        await selectContent.press('Home');
-        await selectContent.press('Enter');
-        await page.waitForFunction(
-          () => document.querySelector('[data-testid="multi-select-fixture"]')?.getAttribute('data-selection') === '',
-        );
-        expect(await multiFixture.getAttribute('data-selection')).toBe('');
-        await page.keyboard.press('Escape');
-        await page.getByRole('button', { name: 'Toggle dynamic option' }).click();
-        await multiTrigger.click();
-        expect(
-          await page.locator('[data-scope="select"][data-part="item"]', { hasText: 'Gamma workstation' }).count(),
-        ).toBe(1);
-        await multiTrigger.click();
-        await positioner.waitFor({ state: 'hidden' });
 
         const segmentedFixture = page.getByTestId('segmented-control-fixture');
         const week = page.getByRole('radio', { name: 'Week' });
@@ -194,38 +149,6 @@ describe('Svelte compound controls', () => {
     BROWSER_PROOF_TIMEOUT_MS,
   );
 
-  test('MultiSelect preserves controlled multiple selection, hidden form state, open state, and stacking', async () => {
-    const source = await readCompound('multi-select.svelte');
-    for (const contract of [
-      'import { field } from \x27../../components/field\x27',
-      'closeOnSelect={false}',
-      '<Select.HiddenSelect />',
-      'multiple',
-      'onValueChange={(details) => onValueChange(details.value)}',
-      'positioning={{ sameWidth: true, gutter: 4 }}',
-      '{value}',
-      '<Portal>',
-      "zIndex: '50 !important'",
-      "'&[data-state=checked]'",
-      "'&[data-highlighted]'",
-      "'[data-state=open] &'",
-      '{#each options as option (option)}',
-      '<Select.ItemText>{optionLabel(option)}</Select.ItemText>',
-    ]) {
-      expect(source).toContain(contract);
-    }
-  });
-
-  test('MultiSelect summary retains placeholder, one-option labels, and plural counts across dynamic labels', () => {
-    const labels: Readonly<Record<string, string>> = { alpha: 'Alpha workstation', beta: 'Beta workstation' };
-    const label = (value: string): string => labels[value] ?? value;
-
-    expect(multiSelectSummary([], 'All machines', 'machines', label)).toBe('All machines');
-    expect(multiSelectSummary(['alpha'], 'All machines', 'machines', label)).toBe('Alpha workstation');
-    expect(multiSelectSummary(['alpha', 'beta'], 'All machines', 'machines', label)).toBe('2 machines');
-    expect(multiSelectSummary(['dynamic'], 'All machines', 'machines', label)).toBe('dynamic');
-  });
-
   test('SegmentedControl keeps exactly one controlled value and delegates arrows and Space to ToggleGroup', async () => {
     expect(nextSegmentValue([])).toBeUndefined();
     expect(nextSegmentValue([''])).toBeUndefined();
@@ -287,11 +210,8 @@ describe('Svelte compound controls', () => {
 
   test('the fixture directly consumes each control and exercises controlled and dynamic inputs', async () => {
     const source = await readCompound('compound.fixture.svelte');
-    expect(source).toContain("import MultiSelect from './multi-select.svelte'");
     expect(source).toContain("import SegmentedControl from './segmented-control.svelte'");
     expect(source).toContain("import Tabs from './tabs.svelte'");
-    expect(source).toContain('name="fixture-machines"');
-    expect(source).toContain('Toggle dynamic option');
     expect(source).toContain('disabled: true');
   });
 });

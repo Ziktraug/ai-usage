@@ -46,7 +46,8 @@ describe('Svelte overlay components', () => {
       '{onExitComplete}',
       'onOpenChange={handleOpenChange}',
       '{open}',
-      'positioning={{ gutter: 4 }}',
+      'positioning = { gutter: 4 }',
+      '{positioning}',
       'disabled={triggerDisabled}',
       'unmountOnExit',
     ]) {
@@ -54,6 +55,8 @@ describe('Svelte overlay components', () => {
     }
     expect(source).toContain('<Portal>');
     expect(source).toContain('type="button"');
+    expect(source).toContain('contentAriaLabel: string');
+    expect(source).toContain('aria-label={contentAriaLabel}');
     expect(source).toContain('triggerAriaLabel');
     expect(source).toContain('triggerTitle');
   });
@@ -83,6 +86,7 @@ describe('Svelte overlay components', () => {
     expect(source).toContain('trapFocus={false}');
     expect(source).toContain('Outside overlay target');
     expect(source).toContain('Popover fixture action');
+    expect(source).toContain('contentAriaLabel="Fixture popover actions"');
     expect(source).toContain('<CellWithProvenance {facts}>');
   });
 

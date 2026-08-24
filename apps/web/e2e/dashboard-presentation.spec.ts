@@ -439,9 +439,9 @@ test('keeps the mobile filter stack coherent with content above the fold', async
   const search = page.getByRole('textbox', {
     name: 'Filter sessions by title, project, model, provider, or harness',
   });
-  const harness = page.getByRole('combobox', { name: 'Filter by harness' });
+  const harness = page.getByRole('button', { name: 'Filter by harness' });
   const origin = page.getByRole('button', { name: 'Filter by origin' });
-  const machine = page.getByRole('combobox', { name: 'Filter by machine' });
+  const machine = page.getByRole('button', { name: 'Filter by machine' });
   const sourceStatus = page.getByRole('region', { name: 'Collection source status' });
   const searchBox = await search.boundingBox();
   const harnessBox = await harness.boundingBox();
@@ -510,6 +510,30 @@ test('keeps the mobile filter stack coherent with content above the fold', async
     MIN_CONTENT_ABOVE_FOLD_PX,
   );
 });
+
+for (const width of [1280, 1080]) {
+  test(`keeps the complete filter bar on one row at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ height: 900, width });
+    await openHydratedReport(page);
+
+    const toolbar = page.locator('[data-dashboard-filter-stack]');
+    const controls = [
+      page.getByRole('textbox', { name: 'Filter sessions by title, project, model, provider, or harness' }),
+      page.getByRole('button', { name: 'Filter by harness' }),
+      page.getByRole('button', { name: 'Filter by origin' }),
+      page.getByRole('button', { name: 'Filter by machine' }),
+      page.getByRole('region', { name: 'Collection source status' }),
+    ];
+    const boxes = await Promise.all(controls.map((control) => control.boundingBox()));
+    const tops = boxes.flatMap((box) => (box === null ? [] : [Math.round(box.y)]));
+
+    expect(tops).toHaveLength(controls.length);
+    expect(Math.max(...tops) - Math.min(...tops)).toBeLessThanOrEqual(MAX_ALIGNMENT_DRIFT_PX);
+    expect(await toolbar.evaluate((element) => element.scrollWidth)).toBeLessThanOrEqual(
+      await toolbar.evaluate((element) => element.clientWidth),
+    );
+  });
+}
 
 for (const scenario of FIRST_READ_SCENARIOS) {
   test(`keeps one responsive Models representation accessible in ${scenario.name}`, async ({ page }, testInfo) => {

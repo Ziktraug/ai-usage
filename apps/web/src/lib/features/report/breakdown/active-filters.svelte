@@ -1,5 +1,6 @@
 <script lang="ts">
   import { activeFilters, filterSummary, ghostButton, summaryPill } from '@ai-usage/design-system/svelte';
+  import { sessionOriginLabel } from '@ai-usage/report-core/session-query';
   import {
     type DashboardSearch,
     dashboardTimeCellLabel,
@@ -96,6 +97,11 @@
         Machine: {presentMachineLabel(value)} ×
       </button>
     {/each}
+    {#if search.origin.length > 0}
+      <button class={pill} onclick={navigation.clearOrigin} title="Clear Origin filter" type="button">
+        Origin: {search.origin.map(sessionOriginLabel).join(' + ')} ×
+      </button>
+    {/if}
     {#each activeFieldFilters(search) as filter (filter.key)}
       <button
         class={pill}

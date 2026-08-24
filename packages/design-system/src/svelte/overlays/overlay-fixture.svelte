@@ -58,7 +58,7 @@
     <button onclick={() => (persistentDrawerOpen = false)} type="button">Close persistent drawer</button>
   </Drawer>
 
-  <Popover triggerAriaLabel="Open fixture popover">
+  <Popover contentAriaLabel="Fixture popover actions" triggerAriaLabel="Open fixture popover">
     {#snippet trigger()}
       More
     {/snippet}
