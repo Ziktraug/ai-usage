@@ -85,6 +85,7 @@ describe('Svelte Skills management SSR', () => {
     expect(html).toContain('beta-skill');
     expect(html).toContain('Not linked');
     expect(html).toContain('Disabled');
+    expect(html).toContain('data-health-tone="danger"');
   });
 
   test('renders neutral unmanaged backlog without invoking a filesystem or RPC client', () => {

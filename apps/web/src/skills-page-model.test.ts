@@ -20,6 +20,7 @@ import {
   filterMatrixRows,
   findProjectSkillRow,
   groupUnmanagedEntries,
+  healthyLinkTone,
   projectionStateLabel,
   projectRouteKey,
   selectionKey,
@@ -525,6 +526,13 @@ describe('skills page model', () => {
       toLinkCount: 1,
       toRepairCount: 1,
     });
+  });
+
+  test('tones healthy-link coverage by the severity of the gap', () => {
+    expect(healthyLinkTone({ expectedLinkCount: 0, healthyLinkCount: 0 })).toBe('neutral');
+    expect(healthyLinkTone({ expectedLinkCount: 8, healthyLinkCount: 0 })).toBe('danger');
+    expect(healthyLinkTone({ expectedLinkCount: 8, healthyLinkCount: 3 })).toBe('warn');
+    expect(healthyLinkTone({ expectedLinkCount: 8, healthyLinkCount: 8 })).toBe('ok');
   });
 
   test('groups unmanaged entries by runtime', () => {

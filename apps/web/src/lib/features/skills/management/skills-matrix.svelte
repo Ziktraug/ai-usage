@@ -42,8 +42,11 @@
   const filterBar = css({ display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center', mb: '12px' });
   const activeFilter = css({ borderColor: 'accent', color: 'accent', bg: 'accentTint' });
   const positionedButton = css({ position: 'relative' });
-  const matrixTable = css({ minW: '860px' });
-  const matrixWrap = css({ minH: 'auto', display: { base: 'none', md: 'block' } });
+  const matrixWrap = css({
+    minH: 'auto',
+    display: { base: 'none', md: 'block' },
+    '& > table': { tableLayout: 'auto', minW: 0 },
+  });
   const mobileCards = css({
     display: { base: 'grid', md: 'none' },
     gap: '10px',
@@ -88,12 +91,12 @@
   const skillCell = css({ display: 'grid', gap: '5px', maxW: '440px' });
   const skillTop = css({ display: 'flex', alignItems: 'center', gap: '8px', minW: 0 });
   const skillName = css({
-    overflow: 'hidden',
-    overflowWrap: 'anywhere',
-    whiteSpace: 'normal',
+    minW: 0,
+    fontWeight: 600,
+    lineClamp: 2,
+    overflowWrap: 'break-word',
     textAlign: 'left',
     lineHeight: 1.25,
-    maxH: '2.5em',
   });
   const skillNameButton = css({
     appearance: 'none',
@@ -308,7 +311,7 @@
   </div>
 
   <div class={cx(tableWrap, matrixWrap)}>
-    <table class={cx(table, matrixTable)}>
+    <table class={table}>
       <thead>
         <tr>
           <th class={stickyCol}>Skill</th>
@@ -337,7 +340,7 @@
                       showTitle
                     />
                     <a
-                      class={cx(strongCell, skillName, skillNameButton, row.enabled ? undefined : disabledName)}
+                      class={cx(skillName, skillNameButton, row.enabled ? undefined : disabledName)}
                       href={skillHref(row.name)}
                       >{row.name}</a
                     >
@@ -394,9 +397,7 @@
               onToggle={() => toggleSkill(row.name, !row.enabled)}
               pending={pendingOperation === `toggle:${row.name}`}
             />
-            <a
-              class={cx(strongCell, skillName, skillNameButton, row.enabled ? undefined : disabledName)}
-              href={skillHref(row.name)}
+            <a class={cx(skillName, skillNameButton, row.enabled ? undefined : disabledName)} href={skillHref(row.name)}
               >{row.name}</a
             >
             {#if row.validationStatus !== 'valid'}

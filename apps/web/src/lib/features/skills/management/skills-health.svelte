@@ -1,8 +1,14 @@
 <script lang="ts">
   import { css, cx } from '@ai-usage/design-system/css';
-  import { metricDelta, metricGrid, metricLabel, metricTile, metricValue } from '@ai-usage/design-system/report';
+  import { metricDelta, metricLabel, metricTile, metricValue } from '@ai-usage/design-system/report';
   import type { SkillManagementSnapshot } from '@ai-usage/skills';
-  import { count, type SkillCellStateFilter, type SkillHealthSummary } from '../../../../skills-page-model';
+  import {
+    count,
+    healthyLinkTone,
+    type SkillCellStateFilter,
+    type SkillHealthSummary,
+    type SkillHealthTone,
+  } from '../../../../skills-page-model';
 
   let {
     activeFilter,
@@ -22,6 +28,22 @@
   const activeRuntimeCount = $derived(snapshot.targets.filter((target) => target.enabled).length);
   const dangerValue = css({ color: 'status.danger' });
   const warningValue = css({ color: 'status.warn' });
+  const okValue = css({ color: 'status.ok' });
+  const healthGrid = css({
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))',
+    gap: '10px',
+  });
+  const linkTone = $derived(healthyLinkTone(summary));
+  const healthToneClass = (tone: SkillHealthTone): string | undefined => {
+    if (tone === 'danger') {
+      return dangerValue;
+    }
+    if (tone === 'warn') {
+      return warningValue;
+    }
+    return tone === 'ok' ? okValue : undefined;
+  };
   const tileButton = css({
     appearance: 'none',
     textAlign: 'left',
@@ -39,7 +61,7 @@
   });
 </script>
 
-<section class={metricGrid}>
+<section class={healthGrid} data-skills-health-tiles>
   <button
     class={cx(metricTile, tileButton)}
     data-active={activeFilter === 'linked' ? 'true' : undefined}
@@ -49,7 +71,9 @@
   >
     <div class={metricLabel}>Healthy links</div>
     <div>
-      <div class={metricValue}>{summary.healthyLinkCount}</div>
+      <div class={cx(metricValue, healthToneClass(linkTone))} data-health-tone={linkTone}>
+        {summary.healthyLinkCount}
+      </div>
       <div class={metricDelta}>
         {count(activeSkillCount, 'active skill')}
         · {activeRuntimeCount} enabled / {snapshot.targets.length} configured

@@ -43,6 +43,68 @@ name: other-skill
     ]);
   });
 
+  test('accepts documented Claude Code and Agent Skills frontmatter without diagnostics', () => {
+    const result = parseSkillMarkdown(
+      'example-skill',
+      `---
+name: example-skill
+description: Helps with examples
+agent: Explore
+allowed-tools:
+  - Read
+argument-hint: [path]
+arguments:
+  - path
+background: false
+compatibility: Requires git
+context: fork
+disable-model-invocation: true
+disallowed-tools:
+  - AskUserQuestion
+effort: high
+hooks:
+  PreToolUse: configured
+license: MIT
+metadata:
+  author: example
+model: inherit
+paths:
+  - references/**
+shell: bash
+user-invocable: false
+when_to_use: Use for examples
+---
+# Example Skill
+`,
+    );
+
+    expect(result.diagnostics).toEqual([]);
+    expect(
+      result.manifest.fields
+        .filter((field) => !['description', 'name'].includes(field.key))
+        .map((field) => [field.key, field.kind]),
+    ).toEqual([
+      ['agent', 'known-extension'],
+      ['allowed-tools', 'known-extension'],
+      ['argument-hint', 'known-extension'],
+      ['arguments', 'known-extension'],
+      ['background', 'known-extension'],
+      ['compatibility', 'known-extension'],
+      ['context', 'known-extension'],
+      ['disable-model-invocation', 'known-extension'],
+      ['disallowed-tools', 'known-extension'],
+      ['effort', 'known-extension'],
+      ['hooks', 'known-extension'],
+      ['license', 'known-extension'],
+      ['metadata', 'known-extension'],
+      ['model', 'known-extension'],
+      ['paths', 'known-extension'],
+      ['shell', 'known-extension'],
+      ['user-invocable', 'known-extension'],
+      ['when_to_use', 'known-extension'],
+    ]);
+  });
+
   test('warns on unknown frontmatter fields', () => {
     const result = parseSkillMarkdown(
       'example-skill',

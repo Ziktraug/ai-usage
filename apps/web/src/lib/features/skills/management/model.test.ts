@@ -11,7 +11,6 @@ import {
   runSkillsConfigurationOperation,
   runSkillsManagementOperation,
   runSkillsRefreshOperation,
-  shouldAnnounceSkillsHydrationReload,
   skillsConfigInput,
   skillsConfigurationRefreshesDependents,
   skillsManagementSuccessMessage,
@@ -258,18 +257,5 @@ describe('Skills management presentation and mutation seam', () => {
 
     expect(observed).toEqual([true, false]);
     expect(removedListener).toBe(listener);
-  });
-
-  test('announces only same-content hydration replacement and retains mutation notices', () => {
-    const hydrationSnapshot = syntheticManagementSnapshot();
-    const hydrationReplacement = structuredClone(hydrationSnapshot);
-    const mutationPublication = {
-      ...hydrationReplacement,
-      config: { ...hydrationReplacement.config, sourceRepoPath: '/synthetic/mutated-source' },
-    };
-
-    expect(shouldAnnounceSkillsHydrationReload(hydrationSnapshot, hydrationReplacement, false)).toBe(true);
-    expect(shouldAnnounceSkillsHydrationReload(hydrationSnapshot, hydrationReplacement, true)).toBe(false);
-    expect(shouldAnnounceSkillsHydrationReload(hydrationSnapshot, mutationPublication, false)).toBe(false);
   });
 });

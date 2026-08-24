@@ -139,6 +139,31 @@ describe('Svelte Skills markdown editor controller', () => {
     });
   });
 
+  test('preserves a save notice only while resynchronizing the just-saved revision', async () => {
+    const controller = createSkillMarkdownEditorController(dependencies(), document());
+    controller.setDraft('# Saved\n');
+    await controller.save();
+
+    expect(controller.acceptDocument(document('# Saved\n', 'c'.repeat(64)))).toBe('accepted');
+    expect(controller.getState().message).toBe('SKILL.md saved.');
+
+    expect(controller.acceptDocument(document('# External\n', 'd'.repeat(64)))).toBe('accepted');
+    expect(controller.getState()).toMatchObject({ document: { content: '# External\n' }, message: null });
+  });
+
+  test('clears a save notice when another skill has the same revision hash', async () => {
+    const controller = createSkillMarkdownEditorController(dependencies(), document());
+    controller.setDraft('# Saved\n');
+    await controller.save();
+
+    expect(controller.acceptDocument(document('# Saved\n', 'c'.repeat(64), 'beta-skill'))).toBe('accepted');
+    expect(controller.getState()).toMatchObject({
+      document: { skillName: 'beta-skill' },
+      message: null,
+      skillName: 'beta-skill',
+    });
+  });
+
   test('ignores a stale refresh after a newer document is accepted', async () => {
     const pending = Promise.withResolvers<SkillsClientResult<SkillMarkdownDocument>>();
     const controller = createSkillMarkdownEditorController(
