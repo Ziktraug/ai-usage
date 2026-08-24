@@ -25,6 +25,7 @@ interface DashboardFixture {
 
 interface DashboardSearchModule {
   readonly dashboardSearchDefaultsFor: (sortId: string) => DashboardFixture;
+  readonly dashboardSearchUrlValues: (search: DashboardFixture) => Record<string, unknown>;
   readonly toggleExactFieldFilter: (
     filters: Record<string, string>,
     key: 'campaign' | 'model' | 'project' | 'provider',
@@ -56,6 +57,7 @@ const sessionSchemaModuleId: string = '../../../../session-table-schema';
 const sessionSchemaModule = (await import(sessionSchemaModuleId)) as SessionSchemaModule;
 const codec: DashboardSearchCodec<DashboardFixture> = {
   defaults: dashboardSearchModule.dashboardSearchDefaultsFor('date'),
+  encode: dashboardSearchModule.dashboardSearchUrlValues,
   validate: dashboardSearchModule.validateDashboardSearch,
 };
 const { defaults } = codec;
@@ -237,6 +239,9 @@ describe('dashboard URL parity', () => {
       const url = dashboardUrlFor(new URL('http://local/'), { ...defaults, range: { mode } }, codec);
       expect(parseDashboardSearchUrl(new URL(url), codec).range).toEqual({ mode });
     }
+    expect(dashboardUrlFor(new URL('http://local/'), { ...defaults, range: { mode: '7d' } }, codec).search).toBe(
+      '?range=7d',
+    );
     expect(dashboardUrlFor(new URL('http://local/'), { ...defaults, range: { mode: '30d' } }, codec).search).toBe('');
     const invalid = parseDashboardSearchUrl(
       new URL(
@@ -245,6 +250,9 @@ describe('dashboard URL parity', () => {
       codec,
     );
     expect(invalid.range).toEqual(defaults.range);
+    expect(parseDashboardSearchUrl(new URL('http://local/?range=%7B%22mode%22%3A%227d%22%7D'), codec).range).toEqual({
+      mode: '7d',
+    });
     for (const range of [
       { mode: 'custom', from: '2026-02-30' },
       { mode: 'custom', from: 'bad' },
@@ -257,6 +265,7 @@ describe('dashboard URL parity', () => {
       { ...defaults, range: { mode: 'custom', from: '2026-02-01' } },
       codec,
     );
+    expect(url.search).toBe('?range=2026-02-01..');
     expect(parseDashboardSearchUrl(url, codec).range).toEqual({ mode: 'custom', from: '2026-02-01' });
     const toOnlyUrl = dashboardUrlFor(
       new URL('http://local/'),
@@ -264,6 +273,14 @@ describe('dashboard URL parity', () => {
       codec,
     );
     expect(parseDashboardSearchUrl(toOnlyUrl, codec).range).toEqual({ mode: 'custom', to: '2026-02-28' });
+    expect(toOnlyUrl.search).toBe('?range=..2026-02-28');
+    expect(
+      dashboardUrlFor(
+        new URL('http://local/'),
+        { ...defaults, range: { from: '2026-02-01', mode: 'custom', to: '2026-02-28' } },
+        codec,
+      ).search,
+    ).toBe('?range=2026-02-01..2026-02-28');
     const fixture = trackedNavigation();
     for (const mode of ['all', 'today', '7d', '30d', 'custom']) {
       fixture.navigate((current) => ({

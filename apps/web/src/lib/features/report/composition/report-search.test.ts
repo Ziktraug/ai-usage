@@ -1,8 +1,20 @@
 import { describe, expect, test } from 'bun:test';
 import { dashboardSearchDefaultsFor } from '../../../../dashboard-search';
-import { reportDestinationForSearch } from './report-search';
+import { INITIAL_REPORT_TIMELINE } from './report-destination';
+import { initialReportTimelineFor, reportDestinationForSearch } from './report-search';
 
 describe('report destination URL projection', () => {
+  test('keeps preset hydration on the seeded timeline and resolves long custom periods automatically', () => {
+    const generatedAt = '2026-06-11T12:00:00.000Z';
+    for (const mode of ['30d', '7d', '90d', 'today', 'all'] as const) {
+      expect(initialReportTimelineFor({ mode }, generatedAt)).toEqual(INITIAL_REPORT_TIMELINE);
+    }
+    expect(initialReportTimelineFor({ from: '2026-01-01', mode: 'custom', to: '2026-06-11' }, generatedAt)).toEqual({
+      dimension: 'harness',
+      granularity: 'week',
+    });
+  });
+
   test('projects one canonical search snapshot into exact focused and Sessions scopes', () => {
     const search = {
       ...dashboardSearchDefaultsFor('date'),

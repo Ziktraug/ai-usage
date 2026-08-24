@@ -586,6 +586,43 @@ describe('dashboard model', () => {
     expect(rows[0]?.children?.map((row) => row.sessionLabel)).toEqual(['child']);
   });
 
+  test('projects a campaign date from matched rows rather than a later classifier rollup', () => {
+    const parent = sourcedRow('parent', {
+      activeDate: '2026-07-16T08:00:00.000Z',
+      date: '2026-07-16T08:00:00.000Z',
+      origin: 'human',
+    });
+    const child = sourcedRow('child', {
+      activeDate: '2026-07-15T10:00:00.000Z',
+      date: '2026-07-15T10:00:00.000Z',
+      origin: 'subagent',
+      source: {
+        harnessKey: 'codex',
+        machineId: 'machine-a',
+        parentSourceSessionId: 'parent',
+        rootSourceSessionId: 'parent',
+        sourceSessionId: 'child',
+      },
+    });
+    const classifier = sourcedRow('review', {
+      activeDate: '2026-07-18T09:00:00.000Z',
+      date: '2026-07-18T09:00:00.000Z',
+      origin: 'classifier',
+      source: {
+        harnessKey: 'codex',
+        machineId: 'machine-a',
+        parentSourceSessionId: 'parent',
+        rootSourceSessionId: 'parent',
+        sourceSessionId: 'review',
+      },
+    });
+
+    const rows = buildCampaignTableRows([parent, child, classifier], [child], [{ id: 'date', desc: true }]);
+
+    expect(rows[0]?.activeDate).toBe(child.activeDate);
+    expect(rows[0]?.sortDate).toBe(child.sortDate);
+  });
+
   test('keeps the focused report-core session page projection in fixture parity', () => {
     const parent = sourcedRow('campaign parent', { costApprox: 1, freshTokens: 10, tokenTotal: 10 });
     const child = sourcedRow('campaign child', {

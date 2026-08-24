@@ -5,13 +5,18 @@ import {
   type SessionQueryRequest,
 } from '@ai-usage/report-core/session-query';
 import {
+  type DashboardDateRangeSearch,
   type DashboardSearch,
   parseDashboardTimeCell,
   primaryDashboardTabFor,
   sortingStateFromSearch,
 } from '../../../../dashboard-search';
-import { rangeBounds } from '../range/report-range-model';
-import type { FocusedQuerySnapshot, FocusedReportDestination } from './report-destination';
+import { rangeBounds, reportRangeProjection, resolveTimelineGranularity } from '../range/report-range-model';
+import {
+  type FocusedQuerySnapshot,
+  type FocusedReportDestination,
+  INITIAL_REPORT_TIMELINE,
+} from './report-destination';
 
 export type SessionQueryScopeSnapshot = Omit<SessionQueryRequest, 'cursor' | 'revision'>;
 
@@ -21,6 +26,14 @@ export interface ReportDestinationSnapshot {
 }
 
 export const SERVED_SESSION_PAGE_SIZE = 200;
+
+export const initialReportTimelineFor = (
+  range: DashboardDateRangeSearch,
+  generatedAt: string,
+): FocusedOverviewRequest['timeline'] => ({
+  dimension: INITIAL_REPORT_TIMELINE.dimension,
+  granularity: resolveTimelineGranularity('auto', reportRangeProjection(range, new Date(generatedAt), null).dayCount),
+});
 
 export const reportFilterFingerprint = (filters: FocusedQuerySnapshot['filters']): string => JSON.stringify(filters);
 

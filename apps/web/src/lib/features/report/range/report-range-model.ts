@@ -11,12 +11,14 @@ import {
   startOfDay,
   toDateInputValue,
 } from '../../../../date-range';
+import type { MigrationGranularity } from '../../../../overview-model';
 import type { TimeRangeSelectionIndexes } from '../../../../time-range-control-state';
 
 export const reportRangeEditKey = (range: DashboardDateRangeSearch): string =>
   JSON.stringify([range.mode, range.from ?? null, range.to ?? null]);
 
 export interface ReportRangeProjection {
+  readonly dayCount: number;
   readonly displayFrom: string;
   readonly displayTo: string;
   readonly domainFirst: Date;
@@ -58,6 +60,12 @@ export const rangeBounds = (
   };
 };
 
+/** True while the selected period still extends past the report's generation instant. */
+export const reportPeriodInProgress = (range: DashboardDateRangeSearch, generatedAt: Date): boolean => {
+  const { to } = rangeBounds(range, generatedAt);
+  return to !== null && to.getTime() > generatedAt.getTime();
+};
+
 export const reportRangeProjection = (
   range: DashboardDateRangeSearch,
   generatedAt: Date,
@@ -79,8 +87,9 @@ export const reportRangeProjection = (
   const to = selectedTo;
   const fromIndex = Math.max(0, Math.min(maxIndex, dateIndexFrom(from, domainFirst)));
   const toIndex = Math.max(fromIndex, Math.min(maxIndex, dateIndexFrom(to, domainFirst)));
-  const days = Math.max(0, Math.round((to.getTime() - from.getTime()) / DAY_MS));
+  const days = Math.round((to.getTime() - from.getTime()) / DAY_MS) + 1;
   return {
+    dayCount: days,
     displayFrom: inputDateFormatter.format(from),
     displayTo: inputDateFormatter.format(to),
     domainFirst,
@@ -103,10 +112,10 @@ export const validateCustomRangeInputs = (fromInput: string, toInput: string): C
   const from = parseLocalDate(fromInput);
   const to = parseLocalDate(toInput, true);
   if (!from) {
-    return { invalidField: 'from', message: 'Enter a valid From date.', status: 'invalid' };
+    return { invalidField: 'from', message: 'Enter a valid From date (YYYY-MM-DD).', status: 'invalid' };
   }
   if (!to) {
-    return { invalidField: 'to', message: 'Enter a valid To date.', status: 'invalid' };
+    return { invalidField: 'to', message: 'Enter a valid To date (YYYY-MM-DD).', status: 'invalid' };
   }
   if (from.getTime() > to.getTime()) {
     return {
@@ -157,3 +166,24 @@ export const escapedRangeDraft = (
   projection: Pick<ReportRangeProjection, 'displayFrom' | 'displayTo'>,
   field: 'end' | 'start',
 ): string => (field === 'start' ? projection.displayFrom : projection.displayTo);
+
+export type TimelineGranularityPreference = MigrationGranularity | 'auto';
+
+/** Up to this many selected days the chart keeps one bar per day (the 90d preset is 91). */
+export const AUTO_INTERVAL_DAY_LIMIT_DAYS = 120;
+
+/** Up to this many selected days the chart uses weeks; beyond it, months. */
+export const AUTO_INTERVAL_WEEK_LIMIT_DAYS = 730;
+
+export const resolveTimelineGranularity = (
+  preference: TimelineGranularityPreference,
+  selectedDayCount: number,
+): MigrationGranularity => {
+  if (preference !== 'auto') {
+    return preference;
+  }
+  if (selectedDayCount <= AUTO_INTERVAL_DAY_LIMIT_DAYS) {
+    return 'day';
+  }
+  return selectedDayCount <= AUTO_INTERVAL_WEEK_LIMIT_DAYS ? 'week' : 'month';
+};
