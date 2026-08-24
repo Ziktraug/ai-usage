@@ -26,6 +26,7 @@ const RANGE_URL_PATTERN = /range=/;
 const RESET_COUNT_PATTERN = /1 reset/;
 const GAP_COUNT_PATTERN = /1 collection gap/;
 const CLAUDE_SERIES_PATTERN = /^Claude · /;
+const CURSOR_SCORED_AT_PATTERN = /^Scored /;
 const SORT_URL_PATTERN = /sort=/;
 const UUID_PATTERN = /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/i;
 const HIDDEN_FILTERS_PATTERN = /hidden by filters/;
@@ -239,6 +240,39 @@ test('uses one primary navigation while preserving Breakdown deep links behind t
   await expect(page.getByRole('columnheader', { name: 'Project' })).toBeVisible();
   await expect(page.getByText('Manage project groups', { exact: true })).toBeVisible();
   await expect(page).toHaveURL(LEGACY_PROJECT_TAB_URL_PATTERN);
+});
+
+/**
+ * Period scoping through the real tab and the real range URL. The synthetic payload ships a single
+ * Cursor row, so this test deliberately does NOT prove per-commit de-duplication -- that is pinned
+ * at DOM level in cursor-attribution-panel.ssr.test.ts, which renders three branch rows of one
+ * commit plus a same-branch disagreement.
+ */
+test('scopes the Cursor AI analysis to the report period', async ({ page }) => {
+  await openHydratedReport(page, '/?tab=cursor-ai');
+  const breakdownTabs = page.getByRole('tablist', { name: 'Analysis dimension' });
+  await expect(breakdownTabs.getByRole('tab', { name: 'Cursor AI' })).toHaveAttribute('aria-selected', 'true');
+  // The default 30d window (May 12 -> Jun 11, 2026 in the fixture) excludes the Mar 6 fixture commit.
+  await expect(page.locator('[data-cursor-empty-state="period"]')).toHaveText(
+    'No Cursor commits in this period · 1 scored commit outside it',
+  );
+  await expect(page.locator('[data-cursor-commit]')).toHaveCount(0);
+
+  await openHydratedReport(
+    page,
+    `/?${new URLSearchParams({ range: JSON.stringify({ mode: 'all' }), tab: 'cursor-ai' }).toString()}`,
+  );
+  const commitRows = page.locator('[data-cursor-commit]');
+  await expect(commitRows).toHaveCount(1);
+  await expect(commitRows.first()).toHaveAttribute('data-cursor-commit', 'da59e06cc4c9627584edec0f8dc06f7e4cdd199d');
+  await expect(commitRows.first().locator('[data-cursor-branch-count]')).toHaveText('main');
+  await expect(commitRows.first().locator('[data-cursor-date-source]')).toHaveAttribute(
+    'data-cursor-date-source',
+    'commit',
+  );
+  // The scoring time and the date rule are readable without hovering a native tooltip.
+  await expect(commitRows.first().locator('[data-cursor-scored-at]')).toHaveText(CURSOR_SCORED_AT_PATTERN);
+  await expect(page.locator('#cursor-attribution-table-description')).toBeVisible();
 });
 
 test('copies the exact breakdown URL and exports only visible sorted model rows', async ({ page }) => {

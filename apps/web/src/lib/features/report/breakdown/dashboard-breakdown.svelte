@@ -3,6 +3,7 @@
   import { Tabs } from '@ai-usage/design-system/svelte';
   import type { AnalyticsGroup } from '@ai-usage/report-core/analytics';
   import type { ProjectGroupConfig } from '@ai-usage/report-core/project-group';
+  import type { SessionQueryRange } from '@ai-usage/report-core/session-query';
   import type { ProjectGroup } from '../../../../dashboard-analytics';
   import {
     type BreakdownSort,
@@ -35,6 +36,7 @@
       harnessProviders: readonly AnalyticsGroup[];
       models: readonly AnalyticsGroup[];
       projects: readonly ProjectGroup[];
+      range: SessionQueryRange;
     };
     navigation: {
       onSortChange: (sort: BreakdownSort) => void;
@@ -102,7 +104,7 @@
 {/snippet}
 
 {#snippet cursorPanel()}
-  <section class={section}><CursorAttributionPanel rows={data.cursorRows} /></section>
+  <section class={section}><CursorAttributionPanel range={data.range} rows={data.cursorRows} /></section>
 {/snippet}
 
 <div class={analysisTabs}>

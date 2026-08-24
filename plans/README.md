@@ -153,7 +153,7 @@ read-only SQLite and the permanent browser/server and demo-isolation boundaries.
 | 087 | Fix the Skills Editor Stuck on "Loading…" After Client-Side Navigation | P0 | S–M | - | DONE |
 | 088 | One Canonical Number Per Concept | P0 | L | - | DONE (exceptional maintainer reopening D20; production and proof defects corrected, full gates and independent review accepted) |
 | 089 | Period Semantics — Inclusive Day Counts, Honest Campaign Dates, Auto Interval, Readable Range URLs | P0 | M–L | - | DONE (maintainer reopening D20; open bounds ordered in both directions, full gates and independent review accepted) |
-| 090 | Scope the Cursor AI Tab to the Report Period and List One Row per Commit | P1 | S–M | - | BLOCKED (rework budget spent; branch `exec/090` is one focused fix away — rows are filtered before grouping, so a commit whose only in-range row lacks a commit date renders scoring-dated in the wrong period) |
+| 090 | Scope the Cursor AI Tab to the Report Period and List One Row per Commit | P1 | S–M | - | DONE (maintainer reopening D20; complete groups are dated before period filtering, with fresh model, rendered, browser, and full child gates) |
 | 091 | Sessions Table — One Scroll Container and Calmer Columns | P1 | M | - | DONE |
 | 092 | One Checkbox-Filter Mechanic, a Working `/` Shortcut, and a Filter Bar That Holds One Row | P1 | M | - | BLOCKED (named STOP condition: Ark opens the popover as `role="dialog"` but emits no `aria-label`/`aria-labelledby`, so the required named-dialog accessibility proof cannot pass without an unplanned ARIA contract change) |
 | 093 | Activity Explorer Controls, Model Palette, and Hero Number Format | P1 | M–L | 089 (`timeline` request + range model) | BLOCKED (dependency 089 did not land) |
