@@ -6,6 +6,7 @@ const MOBILE_DRAWER_VIEWPORT = { height: 844, width: 390 } as const;
 const DESKTOP_DRAWER_VIEWPORT = { height: 900, width: 1280 } as const;
 const EXPAND_CAMPAIGN_BUTTON_PATTERN = /^Expand campaign /;
 const LOAD_MORE_CAMPAIGN_BUTTON_PATTERN = /^Load more sessions in /;
+const SESSION_POSITION_PATTERN = /\/|matching sessions/;
 
 type SessionDrawerViewport = 'desktop' | 'mobile';
 
@@ -598,6 +599,31 @@ test('keeps the desktop Session drawer nonmodal and outside-focus friendly', asy
   );
   expect(actionGeometry.length).toBeGreaterThanOrEqual(3);
   expect(actionGeometry.every(({ height, width }) => height >= 44 && width >= 44)).toBe(true);
+  const drawerHeader = drawer.locator('[data-session-drawer-header]');
+  const drawerPosition = drawerHeader.locator('[data-session-drawer-position]');
+  await expect(drawerPosition).toHaveText(SESSION_POSITION_PATTERN);
+  const headerContentGeometry = await drawerHeader.evaluate((header) => {
+    const badge = header.querySelector('[data-session-drawer-harness] > *');
+    const position = header.querySelector('[data-session-drawer-position]');
+    const navigation = header.querySelector('[data-session-drawer-navigation]');
+    if (!(badge instanceof HTMLElement && position instanceof HTMLElement && navigation instanceof HTMLElement)) {
+      throw new Error('Expected the drawer header badge, position label, and navigation');
+    }
+    const badgeBox = badge.getBoundingClientRect();
+    return {
+      badgeClipped: badge.scrollWidth > badge.clientWidth + 1,
+      badgeRight: Math.round(badgeBox.right),
+      badgeWidth: Math.round(badgeBox.width),
+      headerOverflows: header.scrollWidth > header.clientWidth + 1,
+      navigationOverflows: navigation.scrollWidth > navigation.clientWidth + 1,
+      positionLeft: Math.round(position.getBoundingClientRect().left),
+    };
+  });
+  expect(headerContentGeometry.badgeClipped).toBe(false);
+  expect(headerContentGeometry.badgeWidth).toBeGreaterThan(40);
+  expect(headerContentGeometry.badgeRight).toBeLessThanOrEqual(headerContentGeometry.positionLeft);
+  expect(headerContentGeometry.navigationOverflows).toBe(false);
+  expect(headerContentGeometry.headerOverflows).toBe(false);
   await capturePlan073Smoke(page, testInfo, 'step7-drawer-1280x900-light');
 
   const overviewLink = page.getByRole('link', { exact: true, name: 'Overview' }).first();

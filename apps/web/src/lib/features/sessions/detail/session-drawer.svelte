@@ -312,9 +312,9 @@
 >
   {#if row && target}
     <div class={drawerTop} data-session-drawer-header>
-      <HarnessBadge name={row.harness} />
+      <span data-session-drawer-harness><HarnessBadge name={row.harness} /></span>
       <nav aria-label={`Session navigation, ${positionLabel()}`} class={drawerNav} data-session-drawer-navigation>
-        <span class={drawerPosition}>
+        <span class={drawerPosition} data-session-drawer-position title={positionLabel()}>
           {positionLabel()}
         </span>
         <button
@@ -337,19 +337,6 @@
         >
           ↓
         </button>
-        {#if snapshot.revision}
-          <button
-            aria-controls="session-analysis-panel"
-            aria-expanded={snapshot.analysisOpen ? 'true' : 'false'}
-            aria-label={analysisButtonAriaLabel()}
-            class={ghostButton}
-            disabled={closing}
-            onclick={toggleAnalysis}
-            type="button"
-          >
-            {analysisButtonLabel()}
-          </button>
-        {/if}
         <button
           aria-label="Close session details"
           class={drawerClose}
@@ -483,6 +470,19 @@
         />
       {/if}
       <div class={drawerActions}>
+        {#if snapshot.revision}
+          <button
+            aria-controls="session-analysis-panel"
+            aria-expanded={snapshot.analysisOpen ? 'true' : 'false'}
+            aria-label={analysisButtonAriaLabel()}
+            class={ghostButton}
+            disabled={closing}
+            onclick={toggleAnalysis}
+            type="button"
+          >
+            {analysisButtonLabel()}
+          </button>
+        {/if}
         <button class={ghostButton} onclick={() => onFieldFilter('project', row.projectKey)} type="button">
           Filter project: {row.projectLabel}
         </button>

@@ -129,14 +129,14 @@
       case 'not-found':
         return 'No matching GitHub pull request was found.';
       default:
-        return 'GitHub lookup is unavailable.';
+        return 'GitHub lookup is unavailable — the gh CLI was not found or returned nothing usable.';
     }
   };
   const resolveLabel = (): string => {
     if (resolving) {
-      return 'Resolving GitHub links…';
+      return 'Looking up pull requests…';
     }
-    return unavailable ? 'Retry GitHub lookup' : 'Resolve GitHub links';
+    return unavailable ? 'Retry GitHub lookup' : 'Find pull requests on GitHub';
   };
 </script>
 
@@ -262,16 +262,20 @@
       <p class={note}>Some recorded source-control context could not be represented safely.</p>
     {/if}
     {#if resolving}
-      <p aria-live="polite" class={note}>Resolving GitHub links…</p>
+      <p aria-live="polite" class={note}>Looking up pull requests…</p>
     {/if}
     {#if unavailable}
       <p class={note}>{unavailableMessage()}</p>
     {/if}
     {#if canResolve}
+      <p class={note}>
+        Uses the GitHub CLI (gh) signed in on this machine to list pull requests whose head is the recorded branch. Only
+        that lookup leaves the machine, and only when you click.
+      </p>
       <button
         aria-label={resolving
-          ? 'Resolving GitHub repository and pull request links'
-          : 'Resolve GitHub repository and pull request links'}
+          ? 'Looking up pull requests for the recorded branch on GitHub'
+          : 'Find pull requests for the recorded branch on GitHub'}
         class={ghostButton}
         disabled={resolving}
         onclick={() => onResolve?.()}

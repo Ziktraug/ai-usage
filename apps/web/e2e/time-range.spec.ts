@@ -307,7 +307,7 @@ test('restores a bounded 90d period from a mobile deep link, reload, and history
   await expect(period.getByText('Mar 13 → Jun 11, 2026 · 91 days', { exact: true })).toBeVisible();
   const executiveValue = page.getByRole('region', { name: 'Estimated API-equivalent value' });
   await expect(executiveValue).toContainText('last 90 days');
-  await expect(executiveValue).toContainText('No sessions exist in the previous period.');
+  await expect(executiveValue).toContainText('No previous period exists before the full recorded range.');
 
   await page.reload();
   await waitForFocusedReportSettled(page);
@@ -362,7 +362,7 @@ test('compares 90d with the previous equal-length period when that boundary has 
   await expect(executiveValue.locator('strong').first()).toHaveText('$3.54');
   await expect(executiveValue).toContainText('321% higher than the previous equal-length period.');
   await expect(executiveValue).not.toContainText('Partially measured');
-  await expect(executiveValue).not.toContainText('No sessions exist in the previous period.');
+  await expect(executiveValue).not.toContainText('No previous period');
   await expect(page.locator('[data-period-insight]')).toHaveCount(1);
 });
 

@@ -25,6 +25,7 @@ const SESSION_NEIGHBOR_FINGERPRINT_PATTERN = /^session-neighbor-v1:[0-9a-f]{16}$
 const FOCUSED_OVERVIEW_FINGERPRINT_PREFIX = 'focused-overview-v1:';
 const FOCUSED_OVERVIEW_FINGERPRINT_PATTERN = /^focused-overview-v1:[0-9a-f]{16}$/;
 const PROJECT_COLUMN_PATTERN = /Project/;
+const MATCHING_SESSIONS_PATTERN = /matching sessions$/;
 const SOURCES_URL_PATTERN = /\/sources$/;
 const SESSION_PAGE_PATH = '/rpc/session/page';
 const EXPECTED_ENABLED_SOURCE_COUNT = collectionSourceDefinitions.filter(
@@ -760,13 +761,40 @@ test('hydrates and automatically pages Sessions through the production revision 
   await rootSessionRow.click({ force: true });
   const rootDrawer = page.getByRole('dialog');
   await expect(rootDrawer).toBeVisible();
+  const rootHeader = rootDrawer.locator('[data-session-drawer-header]');
+  const rootPosition = rootHeader.locator('[data-session-drawer-position]');
+  await expect(rootPosition).toHaveText(MATCHING_SESSIONS_PATTERN);
+  const headerGeometry = await rootHeader.evaluate((header) => {
+    const badge = header.querySelector('[data-session-drawer-harness] > *');
+    const position = header.querySelector('[data-session-drawer-position]');
+    const navigation = header.querySelector('[data-session-drawer-navigation]');
+    if (!(badge instanceof HTMLElement && position instanceof HTMLElement && navigation instanceof HTMLElement)) {
+      throw new Error('Expected the drawer header badge, position label, and navigation');
+    }
+    const badgeBox = badge.getBoundingClientRect();
+    return {
+      badgeClipped: badge.scrollWidth > badge.clientWidth + 1,
+      badgeRight: Math.round(badgeBox.right),
+      badgeWidth: Math.round(badgeBox.width),
+      headerOverflows: header.scrollWidth > header.clientWidth + 1,
+      navigationOverflows: navigation.scrollWidth > navigation.clientWidth + 1,
+      positionLeft: Math.round(position.getBoundingClientRect().left),
+    };
+  });
+  expect(headerGeometry.badgeClipped).toBe(false);
+  expect(headerGeometry.badgeWidth).toBeGreaterThan(40);
+  expect(headerGeometry.badgeRight).toBeLessThanOrEqual(headerGeometry.positionLeft);
+  expect(headerGeometry.navigationOverflows).toBe(false);
+  expect(headerGeometry.headerOverflows).toBe(false);
   const codexSourceControl = rootDrawer.getByRole('region', { name: 'Session source control' });
   await expect(
     codexSourceControl.getByRole('link', { name: 'Open repository fixture/ai-usage in a new tab' }),
   ).toBeVisible();
   await expect(codexSourceControl).toContainText('fixture/main');
   await expect(codexSourceControl).toContainText('01234567');
-  await codexSourceControl.getByRole('button', { name: 'Resolve GitHub repository and pull request links' }).click();
+  await codexSourceControl
+    .getByRole('button', { name: 'Find pull requests for the recorded branch on GitHub' })
+    .click();
   await expect(codexSourceControl.getByRole('link', { name: 'Open #42 in a new tab' })).toBeVisible();
   await rootDrawer.getByRole('button', { name: 'Analyze root session chronology' }).click();
   const sessionAnalysis = rootDrawer.getByRole('region', { name: 'Session analysis' });
@@ -928,8 +956,9 @@ test('automatically pages mobile Sessions and keeps modal analysis usable', asyn
       return { height: Math.round(rect.height), width: Math.round(rect.width) };
     }),
   );
-  expect(headerActionGeometry).toHaveLength(4);
+  expect(headerActionGeometry).toHaveLength(3);
   expect(headerActionGeometry.every(({ height, width }) => height >= 44 && width >= 44)).toBe(true);
+  await expect(drawerBody.getByRole('button', { name: 'Analyze root session chronology' })).toBeVisible();
 
   await analyzeButton.click();
   const analysis = drawer.getByRole('region', { name: 'Session analysis' });

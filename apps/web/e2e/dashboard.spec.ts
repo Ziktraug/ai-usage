@@ -73,8 +73,11 @@ test('loads a deterministic report overview', async ({ page }) => {
   const initialHtml = await response?.text();
   expect(initialHtml).not.toContain('Loading report data…');
   expect(initialHtml).toContain('Daily activity calendar');
+  expect(initialHtml).not.toContain('Generated ');
 
   await expect(page.getByRole('heading', { level: 1, name: 'Usage report' })).toBeVisible();
+  await expect(page.locator('[data-report-freshness]')).toHaveText('Data as of Jun 11, 12:00');
+  await expect(page.locator('[data-report-freshness] time')).toHaveAttribute('datetime', '2026-06-11T12:00:00.000Z');
   await expect(page.getByRole('region', { name: 'Report period' })).toBeVisible();
   await expect(page.getByText('5 / 6 sessions', { exact: true })).toBeVisible();
   await expect(reportViewsFor(page).getByRole('link', { exact: true, name: 'Overview' })).toHaveAttribute(

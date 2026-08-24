@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   fmtCompact,
   fmtCompactColumn,
+  fmtCount,
   fmtDate,
   fmtDateOnly,
   fmtDuration,
@@ -26,6 +27,9 @@ describe('framework-neutral presentation formatting', () => {
     expect(fmtMaybeNum(undefined)).toBe('—');
     expect(fmtCompact(999_999)).toBe('1000k');
     expect(fmtCompact(1_000_000)).toBe('1.0M');
+    expect(fmtCount(1, 'session')).toBe('1 session');
+    expect(fmtCount(1234, 'session')).toBe('1,234 sessions');
+    expect(fmtCount(0, 'day')).toBe('0 days');
   });
 
   test('preserves empty date and duration labels', () => {

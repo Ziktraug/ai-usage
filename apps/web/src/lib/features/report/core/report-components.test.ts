@@ -12,6 +12,8 @@ import type { ReportQueryClient } from '../../../query/options/report';
 import { reportBootstrapKey } from '../../../query/options/report';
 import { acquireLiveReportQueryState } from './report-bootstrap';
 
+const REPORT_FRESHNESS_PATTERN = /Data as of Jun 11, \d{2}:\d{2}/;
+
 const liveAcquisitionOptions = () => ({
   fetch: () => Promise.reject(new Error('The injected report client owns this test acquisition')),
   pageUrl: new URL('http://report.invalid/'),
@@ -170,6 +172,8 @@ describe('report Svelte SSR components', () => {
 
     expect(positions.every((position) => position >= 0)).toBe(true);
     expect(positions).toEqual([...positions].sort((left, right) => left - right));
+    expect(body).toContain('data-report-freshness');
+    expect(body.replaceAll(/<[^>]*>/g, '')).toMatch(REPORT_FRESHNESS_PATTERN);
   });
 
   it('marks retained output as stale while a refresh is in flight', () => {

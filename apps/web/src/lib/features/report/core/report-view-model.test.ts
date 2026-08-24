@@ -2,7 +2,7 @@ import { describe, expect, it } from 'bun:test';
 import { projectFocusedSupport } from '@ai-usage/report-core/focused-report-query';
 import { demoReportPayload } from '../../../../report-data';
 import { toWebReportPayload } from '../../../../web-report-payload';
-import { liveReportShellModel, reportGeneratedLabel, syntheticReportShellModel } from './report-view-model';
+import { liveReportShellModel, reportFreshnessLabel, syntheticReportShellModel } from './report-view-model';
 
 const support = () => {
   const { rows: _rows, tableRows: _tableRows, ...reportSupport } = demoReportPayload;
@@ -38,7 +38,7 @@ describe('report SSR view model', () => {
       revision: 'revision-a',
     });
     expect(model.overviewItems).toEqual(expect.arrayContaining([{ label: 'Harnesses', value: '0' }]));
-    expect(reportGeneratedLabel('2026-08-01T10:00:00', model.hasReportData)).toBe('Generated Aug 01, 10:00');
+    expect(reportFreshnessLabel('2026-08-01T10:00:00', model.hasReportData)).toBe('Data as of Aug 01, 10:00');
   });
 
   it('keeps demo and E2E payloads meaningful without labelling E2E as demo', () => {
@@ -60,6 +60,6 @@ describe('report SSR view model', () => {
     const warnings: readonly unknown[] = unavailable.warnings;
     expect(unavailable.hasReportData).toBe(false);
     expect(warnings).toEqual([]);
-    expect(reportGeneratedLabel(null, false)).toBe('Report payload unavailable');
+    expect(reportFreshnessLabel(null, false)).toBe('Report payload unavailable');
   });
 });

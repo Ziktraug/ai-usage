@@ -246,6 +246,49 @@ describe('executive Overview model', () => {
     expect(model.insight).toBeNull();
   });
 
+  test('chooses no-prior copy from the recorded boundary rather than the range mode', () => {
+    const beforeRecordedRange = buildExecutiveOverviewModel(
+      modelInput({
+        comparisonBoundary: {
+          rangeFrom: new Date('2026-03-13T00:00:00.000Z'),
+          recordedFirst: '2026-04-12T09:20:00.000Z',
+        },
+        previousSummary: null,
+        rangeMode: '90d',
+      }),
+    );
+    const emptyWindowWithinHistory = buildExecutiveOverviewModel(
+      modelInput({
+        comparisonBoundary: {
+          rangeFrom: new Date('2026-05-12T00:00:00.000Z'),
+          recordedFirst: '2026-04-12T09:20:00.000Z',
+        },
+        previousSummary: null,
+        rangeMode: '30d',
+      }),
+    );
+    const customBoundary = buildExecutiveOverviewModel(
+      modelInput({
+        comparisonBoundary: {
+          rangeFrom: new Date('2026-04-12T00:00:00.000Z'),
+          recordedFirst: '2026-04-12T09:20:00.000Z',
+        },
+        previousSummary: null,
+        rangeMode: 'custom',
+      }),
+    );
+
+    expect(beforeRecordedRange.primary.comparison).toMatchObject({
+      explanation: 'No previous period exists before the full recorded range.',
+      state: 'full-range',
+    });
+    expect(emptyWindowWithinHistory.primary.comparison).toMatchObject({
+      explanation: 'No sessions exist in the previous period.',
+      state: 'no-prior-data',
+    });
+    expect(customBoundary.primary.comparison).toMatchObject({ state: 'full-range' });
+  });
+
   test('qualifies comparisons while the selected period is still in progress', () => {
     const caveat = 'This period is still in progress, so the comparison is provisional.';
     const inProgress = buildExecutiveOverviewModel(modelInput({ periodInProgress: true }));

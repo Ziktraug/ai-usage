@@ -49,13 +49,15 @@ const viteServer = await createServer({
 });
 const closeViteServer = (): Promise<void> => viteServer.close();
 afterAll(closeViteServer);
-const [fixtureModule, harnessPanelModule, serverModule] = await Promise.all([
+const [fixtureModule, harnessPanelModule, recordsModule, serverModule] = await Promise.all([
   viteServer.ssrLoadModule('/apps/web/src/lib/features/report/overview/overview-page.fixture.svelte'),
   viteServer.ssrLoadModule('/apps/web/src/lib/features/report/breakdown/harness-provider-panel.svelte'),
+  viteServer.ssrLoadModule('/apps/web/src/lib/features/report/overview/records.svelte'),
   viteServer.ssrLoadModule('svelte/server'),
 ]);
 const fixture = componentFrom(fixtureModule);
 const harnessPanel = componentFrom(harnessPanelModule);
+const records = componentFrom(recordsModule);
 const { render } = rendererFrom(serverModule);
 
 const focusedOverview = (
@@ -77,6 +79,24 @@ const focusedOverview = (
 };
 
 describe('decision-first Overview Svelte surfaces', () => {
+  test('uses the singular noun for a one-session busiest day', () => {
+    const body = render(records, {
+      props: {
+        records: {
+          busiest: { cost: 1.5, date: '2026-08-04T00:00:00.000Z', sessions: 1 },
+          longest: null,
+          streak: 0,
+          streakEnd: null,
+          topCost: null,
+        },
+        topSessions: [],
+      },
+    }).body;
+
+    expect(body).toContain('· 1 session<');
+    expect(body).not.toContain('1 sessions');
+  });
+
   test('renders exact ISO guidance on both custom period fields', () => {
     const body = render(fixture, {
       props: {

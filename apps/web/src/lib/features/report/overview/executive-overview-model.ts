@@ -5,6 +5,7 @@ import type {
 } from '@ai-usage/report-core/focused-report-query';
 import type { ApiPriceMeasurement } from '@ai-usage/report-core/provenance';
 import {
+  type MetricComparisonBoundary,
   type MetricComparisonState,
   type MetricDelta,
   metricComparisonMessage,
@@ -28,6 +29,7 @@ export interface ExecutiveInsightItem {
 }
 
 export interface ExecutiveOverviewModelInput {
+  readonly comparisonBoundary?: MetricComparisonBoundary;
   readonly executive: FocusedExecutiveOverview;
   readonly periodInProgress: boolean;
   readonly previousSummary: FocusedReportSummary | null;
@@ -106,8 +108,9 @@ const comparisonFor = (
   previousSummary: FocusedReportSummary | null,
   rangeMode: DateRangeMode,
   periodInProgress: boolean,
+  comparisonBoundary?: MetricComparisonBoundary,
 ): ExecutiveComparisonPresentation => {
-  const state = metricComparisonStateFor(rangeMode, previousSummary);
+  const state = metricComparisonStateFor(rangeMode, previousSummary, comparisonBoundary);
   const delta =
     previousSummary &&
     summary.priceMeasurement.state !== 'partially measured' &&
@@ -287,6 +290,7 @@ const emptyStateFor = (summary: FocusedReportSummary, totalSessionCount: number)
 };
 
 export const buildExecutiveOverviewModel = ({
+  comparisonBoundary,
   executive,
   periodInProgress,
   previousSummary,
@@ -300,7 +304,7 @@ export const buildExecutiveOverviewModel = ({
   insight: periodInsight(summary, previousSummary, topItems, periodInProgress),
   models: executive.models.map((group) => groupPresentation(group, summary.totalCost)),
   primary: {
-    comparison: comparisonFor(summary, previousSummary, rangeMode, periodInProgress),
+    comparison: comparisonFor(summary, previousSummary, rangeMode, periodInProgress, comparisonBoundary),
     periodScope: periodScopeFor(rangeMode),
     provenance: aggregateApiPriceProvenance(summary.priceMeasurement),
     value: aggregateApiValuePresentation(summary.priceMeasurement),
