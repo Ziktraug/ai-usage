@@ -86,6 +86,7 @@
   const MIN_SESSION_TABLE_WIDTH = 720;
   const DESKTOP_MINIMUM_VIEWPORT_HEIGHT = sessionVirtualBudgets.desktop.rowHeight * 3;
   const MOBILE_MINIMUM_VIEWPORT_HEIGHT = sessionVirtualBudgets.mobile.rowHeight;
+  const MOBILE_WINDOW_ANCHOR_THRESHOLD_RATIO = 0.5;
   const documentTop = (element: Element): number => element.getBoundingClientRect().top + window.scrollY;
   const documentBottom = (element: Element): number => element.getBoundingClientRect().bottom + window.scrollY;
   const staticBottomInsetBySurface = new WeakMap<HTMLElement, number>();
@@ -204,16 +205,21 @@
     const minimumHeight = surfaceMode === 'desktop' ? DESKTOP_MINIMUM_VIEWPORT_HEIGHT : MOBILE_MINIMUM_VIEWPORT_HEIGHT;
     const owner = element.closest('[data-session-table-owner]');
     const regionStart = sessionRegionStartElement;
-    const measuredBottomInset = owner
+    const measuredStaticBottomInset = owner
       ? Math.max(0, Math.round(documentBottom(document.body) - documentBottom(owner)))
       : 0;
+    const dynamicOwnerBottomInset = owner
+      ? Math.max(0, Math.round(documentBottom(owner) - documentBottom(element)))
+      : 0;
     const previousBottomInset = staticBottomInsetBySurface.get(element);
-    const bottomInset =
-      previousBottomInset === undefined ? measuredBottomInset : Math.min(previousBottomInset, measuredBottomInset);
-    staticBottomInsetBySurface.set(element, bottomInset);
+    const staticBottomInset =
+      previousBottomInset === undefined
+        ? measuredStaticBottomInset
+        : Math.min(previousBottomInset, measuredStaticBottomInset);
+    staticBottomInsetBySurface.set(element, staticBottomInset);
     const nextHeight = calculateSessionViewportHeight({
       anchorTop: surfaceMode === 'mobile' && regionStart ? documentTop(regionStart) : 0,
-      bottomInset,
+      bottomInset: staticBottomInset + dynamicOwnerBottomInset,
       minimumHeight,
       surfaceTop: documentTop(element),
       viewportHeight: window.innerHeight,
@@ -316,7 +322,7 @@
       const mobileListBelowFold =
         activeMode === 'mobile' &&
         regionStart !== undefined &&
-        regionStart.getBoundingClientRect().top > window.innerHeight * 0.5;
+        regionStart.getBoundingClientRect().top > window.innerHeight * MOBILE_WINDOW_ANCHOR_THRESHOLD_RATIO;
       if (shouldAnchorWindow || mobileListBelowFold) {
         window.scrollTo({ top: anchorTop });
       }

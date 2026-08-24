@@ -1,5 +1,5 @@
 import type { ProvenanceMarkerFact } from '@ai-usage/design-system/svelte';
-import type { UsageMetricKey, UsageRowProvenance } from '@ai-usage/report-core/provenance';
+import type { UsageMetricKey, UsageProvenanceKind, UsageRowProvenance } from '@ai-usage/report-core/provenance';
 import { provenanceForMetric } from '@ai-usage/report-core/provenance';
 import {
   campaignBadgeLabelForSessionRow,
@@ -216,7 +216,7 @@ export interface SessionRowProvenanceSummary {
     readonly columns: readonly string[];
     readonly fact: UsageRowProvenance;
   }[];
-  readonly sharedKinds: ReadonlySet<string>;
+  readonly sharedKinds: ReadonlySet<UsageProvenanceKind>;
 }
 
 const provenanceFactsForColumn = (row: SessionPresentationRow, id: SessionColumnId): readonly UsageRowProvenance[] => {
@@ -231,7 +231,7 @@ export const summarizeSessionRowProvenance = (
   row: SessionPresentationRow,
   visibleColumnIds: readonly SessionColumnId[],
 ): SessionRowProvenanceSummary => {
-  const byKind = new Map<string, { columns: string[]; fact: UsageRowProvenance }>();
+  const byKind = new Map<UsageProvenanceKind, { columns: string[]; fact: UsageRowProvenance }>();
   for (const id of visibleColumnIds) {
     for (const fact of provenanceFactsForColumn(row, id)) {
       const existing = byKind.get(fact.kind);

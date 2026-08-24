@@ -9,15 +9,18 @@
     childTitleSource,
     expanded = false,
     mode = 'desktop',
+    pagedCampaign = false,
     preset = 'work',
     unavailable = false,
   }: {
     childTitleSource?: TitleSource;
     expanded?: boolean;
     mode?: Exclude<SessionSurfaceMode, 'pending'>;
+    pagedCampaign?: boolean;
     preset?: SessionColumnPresetId;
     unavailable?: boolean;
   } = $props();
+  const SYNTHETIC_PAGED_CAMPAIGN_SESSION_COUNT = 201;
   const child = $derived(
     childTitleSource ? { ...syntheticSessionRow(2), titleSource: childTitleSource } : syntheticSessionRow(2),
   );
@@ -30,7 +33,30 @@
     partial: true,
     titleSource: 'first-prompt' as const,
     usageUnavailable: unavailable,
+    ...(pagedCampaign
+      ? {
+          campaignTotalCount: SYNTHETIC_PAGED_CAMPAIGN_SESSION_COUNT,
+          campaignVisibleCount: SYNTHETIC_PAGED_CAMPAIGN_SESSION_COUNT,
+        }
+      : {}),
   });
+  const campaignChildren = $derived(
+    pagedCampaign
+      ? new Map([
+          [
+            campaign.campaignKey!,
+            {
+              items: [child],
+              loading: false,
+              nextCursor: 'synthetic-campaign-cursor-200',
+              root: campaign,
+              sessionCount: SYNTHETIC_PAGED_CAMPAIGN_SESSION_COUNT,
+              totalCount: SYNTHETIC_PAGED_CAMPAIGN_SESSION_COUNT,
+            },
+          ],
+        ])
+      : new Map(),
+  );
   const singleton = syntheticCampaignRow(3);
   const filtered = { ...syntheticCampaignRow(4), campaignTotalCount: 3, campaignVisibleCount: 1 };
   const rows = $derived([campaign, singleton, filtered, ...syntheticSessionRows(4997, 10)]);
@@ -38,6 +64,7 @@
 </script>
 
 <SessionTable
+  {campaignChildren}
   columnVisibility={columnVisibilityForSessionPreset(preset)}
   initialExpanded={expanded ? { [campaign.rowId]: true } : {}}
   initialSurfaceMode={mode}
