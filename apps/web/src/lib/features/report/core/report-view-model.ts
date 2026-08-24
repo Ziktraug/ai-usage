@@ -99,5 +99,8 @@ export const reportGeneratedLabel = (generatedAt: string | null, hasReportData: 
   if (!(hasReportData && generatedAt)) {
     return 'Report payload unavailable';
   }
-  return `Generated ${dateTimeFormatter.format(new Date(generatedAt))}`;
+  const parts = dateTimeFormatter.formatToParts(new Date(generatedAt));
+  const part = (type: Intl.DateTimeFormatPartTypes): string =>
+    parts.find((candidate) => candidate.type === type)?.value ?? '';
+  return `Generated ${part('month')} ${part('day')}, ${part('hour')}:${part('minute')}`;
 };

@@ -21,6 +21,7 @@ export interface CampaignSessionControlsModel {
   readonly hiddenCount: number;
   readonly loadedCount: number;
   readonly loading: boolean;
+  readonly rolledUpClassifierCount: number;
   readonly sessions: readonly CampaignSessionControlItem[];
   readonly totalCount: number;
   readonly visibleCount: number;
@@ -30,6 +31,7 @@ export interface CampaignSessionControlsInput {
   readonly campaign: SessionPresentationRow;
   readonly collection: CampaignSessionCollection;
   readonly query: SessionQueryRequest;
+  readonly rolledUpClassifierCount?: number;
   readonly showAll: boolean;
   readonly visibleRows: readonly SessionPresentationRow[];
 }
@@ -49,6 +51,7 @@ const uniqueRows = (rows: readonly SessionPresentationRow[]): SessionPresentatio
 
 export interface CampaignSessionControlsState {
   readonly collection: CampaignSessionCollection;
+  readonly rolledUpClassifierCount: number;
   readonly visibleRows: readonly SessionPresentationRow[];
 }
 
@@ -66,6 +69,10 @@ export const campaignSessionControlsState = (
   }
   const filteredPage = state?.campaignChildren.get(campaignKey);
   const rootIsVisible = (campaign.campaignVisibleCount ?? 0) > (filteredPage?.sessionCount ?? 0);
+  // The served projection returns every matching child plus classifier rows needed for
+  // campaign totals. Its item/session count delta is therefore the exact number included
+  // only by that rollup rule, without reimplementing the active filter in the browser.
+  const rolledUpClassifierCount = Math.max(0, (filteredPage?.totalCount ?? 0) - (filteredPage?.sessionCount ?? 0));
   return {
     collection: {
       items: uniqueRows([allPage.root, ...allPage.items]),
@@ -73,6 +80,7 @@ export const campaignSessionControlsState = (
       nextCursor: allPage.nextCursor,
       totalCount: allPage.totalCount + 1,
     },
+    rolledUpClassifierCount,
     visibleRows: uniqueRows([...(rootIsVisible ? [allPage.root] : []), ...(filteredPage?.items ?? [])]),
   };
 };
@@ -99,14 +107,16 @@ export const campaignSessionControlsModel = (
 
   const visibleCount = input.campaign.campaignVisibleCount ?? visibleSessions.length;
   const totalCount = input.collection.totalCount;
+  const rolledUpClassifierCount = input.rolledUpClassifierCount ?? 0;
   return {
     allSessionsLoaded: input.collection.nextCursor === null,
     campaignKey,
     canClearCampaignFilter: input.query.filters.fields.campaign === campaignKey,
     canLoadMore: input.collection.nextCursor !== null,
-    hiddenCount: Math.max(0, totalCount - visibleCount),
+    hiddenCount: Math.max(0, totalCount - visibleCount - rolledUpClassifierCount),
     loadedCount: campaignRows.length,
     loading: input.collection.loading,
+    rolledUpClassifierCount,
     sessions: input.showAll ? [...visibleSessions, ...hiddenSessions] : visibleSessions,
     totalCount,
     visibleCount,

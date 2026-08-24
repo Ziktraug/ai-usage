@@ -92,7 +92,7 @@
         </div>
         <div class={machineFacts}>
           <div class={machineFact}>
-            <span class={machineFactLabel}>Sessions</span><span>{machine.sessionCount.toLocaleString()}</span>
+            <span class={machineFactLabel}>Stored sessions</span><span>{machine.sessionCount.toLocaleString()}</span>
           </div>
           <div class={machineFact}>
             <span class={machineFactLabel}>Newest session</span

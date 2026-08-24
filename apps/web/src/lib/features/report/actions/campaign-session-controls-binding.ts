@@ -10,6 +10,7 @@ export interface CampaignSessionControlsBinding {
   readonly collection: CampaignSessionCollection;
   readonly loadMore: () => void;
   readonly query: SessionQueryRequest;
+  readonly rolledUpClassifierCount: number;
   readonly selectionQuery: SessionQueryRequest;
   readonly sessionCount: number;
   readonly visibleRows: readonly SessionPresentationRow[];

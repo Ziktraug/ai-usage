@@ -63,6 +63,7 @@
         onIncreaseQueryDepth('campaign-sessions', campaignKey);
       },
       query: queryState.query,
+      rolledUpClassifierCount: campaignState.rolledUpClassifierCount,
       selectionQuery: campaignSessionSelectionQuery(queryState.query, campaignKey),
       sessionCount: campaignState.collection.totalCount,
       visibleRows: campaignState.visibleRows.map(presentRow),

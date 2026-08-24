@@ -4,6 +4,7 @@ import { buildCampaignViews } from './dashboard-model';
 import { demoReportPayload } from './report-data';
 import {
   sessionAnalysisTargetForCampaign,
+  sessionAnalysisTargetForOverviewRow,
   sessionAnalysisTargetForPageItem,
   sessionAnalysisTargetForSession,
   sessionAnalysisTargetForTopLevelRow,
@@ -81,6 +82,30 @@ describe('session analysis target', () => {
       reportRowId: 'campaign-root-row',
       totalCount: 15,
       visibleCount: 6,
+    });
+  });
+
+  test('opens the campaign an Overview aggregate row describes', () => {
+    const summaryRow = {
+      ...requireValue(campaignRows[0], 'overview campaign row'),
+      campaignKey: 'fixture-campaign',
+      campaignTotalCount: 3,
+      campaignVisibleCount: 3,
+    };
+    expect(sessionAnalysisTargetForOverviewRow(summaryRow)).toMatchObject({
+      campaignKey: 'fixture-campaign',
+      kind: 'campaign-root',
+      reportRowId: 'campaign-root-row',
+      totalCount: 3,
+      visibleCount: 3,
+    });
+  });
+
+  test('keeps a plain Overview session row atomic', () => {
+    expect(sessionAnalysisTargetForOverviewRow(simpleRow)).toEqual({
+      kind: 'session',
+      reportRowId: simpleRow.rowId,
+      summaryRow: simpleRow,
     });
   });
 

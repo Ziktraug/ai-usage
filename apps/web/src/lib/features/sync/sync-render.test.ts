@@ -24,6 +24,15 @@ const rendererFrom = (loaded: unknown): SvelteServerModule => {
   return loaded as SvelteServerModule;
 };
 
+// The fleet counts stored rows, not the report's reportable sessions, so every surface that
+// renders the count says so (U03). One pattern per surface: the fleet card's fact label, the
+// desktop table header, and the mobile summary term. A bare "Sessions" in any of the three is
+// the regression.
+const STORED_SESSIONS_FACT_PATTERN = /<span[^>]*>\s*Stored sessions\s*<\/span>/u;
+const STORED_SESSIONS_COLUMN_PATTERN = /<th[^>]*>\s*Stored sessions\s*<\/th>/u;
+const STORED_SESSIONS_TERM_PATTERN = /<dt[^>]*>\s*Stored sessions\s*<\/dt>/u;
+const BARE_SESSIONS_LABEL_PATTERN = /<(dt|span|th)[^>]*>\s*Sessions\s*<\/\1>/u;
+
 const fleet: SyncFleet = {
   currentMachine: { id: 'machine-a', label: 'Laptop' },
   machines: [
@@ -92,6 +101,13 @@ describe('Sync rendered SSR parity', () => {
     expect(body).toContain('Sync');
     expect(body).toContain('Laptop');
     expect(body).toContain('7');
+    // The store's per-machine count is stored rows, not the report's reportable sessions (U03).
+    // Every rendered surface carries the qualifier, including the mobile summary list.
+    expect(body).toMatch(STORED_SESSIONS_FACT_PATTERN);
+    expect(body).toMatch(STORED_SESSIONS_COLUMN_PATTERN);
+    expect(body).toMatch(STORED_SESSIONS_TERM_PATTERN);
+    expect(body).toContain('zero-token sessions that the report leaves out');
+    expect(body).not.toMatch(BARE_SESSIONS_LABEL_PATTERN);
     expect(body).toContain('Manual transfer');
     // The Cursor export is a second, separately labelled action next to the merge drop zone.
     expect(body).toContain('Drop a merge file here or choose a file');

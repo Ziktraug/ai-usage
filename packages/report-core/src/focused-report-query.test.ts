@@ -21,6 +21,7 @@ import {
   REPORT_AUDIT_FIXTURE_SEED,
 } from './report-budgets';
 import type { SerializedRow } from './report-data';
+import { sessionRowIdentity } from './session-query';
 
 const row = (name: string, day: number, cost: number, project = 'ai-usage'): SerializedRow => ({
   activeDate: `2026-07-${String(day).padStart(2, '0')}T10:00:00.000Z`,
@@ -360,6 +361,20 @@ describe('focused report query contracts', () => {
         total: 0,
       },
     ]);
+
+    const { groups } = projectFocusedBreakdown([partialSegmentedRow], support, { query: request.query });
+
+    expect(groups.harnesses[0]).toMatchObject({
+      costPercent: 100,
+      costSum: 2,
+      key: 'Mixed Harness',
+      priced: 0,
+      unpriced: 1,
+    });
+    expect(groups.harnesses[0]?.costSum).toBe(result.view.executive.harnesses[0]?.total);
+    expect(groups.harnessProviders[0]).toMatchObject({ costSum: 2, unpriced: 1 });
+    expect(groups.providers[0]).toMatchObject({ costSum: 2, unpriced: 1 });
+    expect(groups.projects[0]).toMatchObject({ cost: 2, priced: 0 });
   });
 
   test('keeps exactly five harness groups without manufacturing Other', () => {
@@ -884,6 +899,90 @@ describe('focused report query contracts', () => {
     });
     expect(result.view.records?.streak).toBe(3);
     expect(result.view.records?.streakEnd).toBe('2026-07-04T00:00:00.000Z');
+
+    // The item's row is the campaign aggregate the Sessions page serves, not the
+    // campaign root, so the drawer it opens cannot disagree with the row.
+    const campaignItem = result.view.topSessions.find((item) => item.kind === 'campaign');
+    if (!campaignItem) {
+      throw new Error('Expected the Overview fixture to include a campaign item');
+    }
+    expect(campaignItem.row).toMatchObject({
+      // machineId:harnessKey:rootSourceSessionId — campaign identity is machine-scoped.
+      campaignKey: 'machine-a:codex:record-campaign-root',
+      campaignTotalCount: 2,
+      campaignVisibleCount: 2,
+      costApprox: 12,
+      // The display row keeps the root's identity, so the drawer still analyses the root.
+      rowId: sessionRowIdentity(campaignRoot),
+    });
+    expect(campaignItem.row.costApprox).toBe(campaignItem.costApprox);
+    expect(result.view.records?.longest?.row).toMatchObject({
+      // machineId:harnessKey:rootSourceSessionId — campaign identity is machine-scoped.
+      campaignKey: 'machine-a:codex:record-campaign-root',
+      campaignTotalCount: 2,
+      campaignVisibleCount: 2,
+    });
+    expect(parseFocusedReportQueryResult('overview', JSON.parse(JSON.stringify(result)), overviewRequest)).toEqual(
+      result,
+    );
+  });
+
+  test('keeps the same campaign observed on two machines as two Overview items', () => {
+    // Machine identity is part of the storage primary key while collector session ids are not
+    // machine-scoped, so the same logical campaign can arrive from two machines with identical
+    // source session ids. Campaign identity and row identity must both stay machine-scoped.
+    const machineCampaign = (machineId: string, label: string, rootCost: number, childCost: number) => [
+      {
+        ...row(`${machineId}-root`, 2, rootCost),
+        sessionLabel: label,
+        source: {
+          harnessKey: 'codex',
+          machineId,
+          machineLabel: machineId,
+          rootSourceSessionId: 'shared-root',
+          sourceSessionId: 'shared-root',
+        },
+      },
+      {
+        ...row(`${machineId}-child`, 3, childCost),
+        sessionLabel: `${label} child`,
+        source: {
+          harnessKey: 'codex',
+          machineId,
+          machineLabel: machineId,
+          parentSourceSessionId: 'shared-root',
+          rootSourceSessionId: 'shared-root',
+          sourceSessionId: 'shared-child',
+        },
+      },
+    ];
+
+    const result = projectFocusedOverview(
+      [
+        ...machineCampaign('machine-a', 'Shared campaign', 5, 7),
+        ...machineCampaign('machine-b', 'Shared campaign', 11, 13),
+      ],
+      support,
+      overviewRequest,
+    );
+    const campaignItems = result.view.topSessions.filter((item) => item.kind === 'campaign');
+
+    expect(campaignItems.map((item) => item.row.campaignKey).sort()).toEqual([
+      'machine-a:codex:shared-root',
+      'machine-b:codex:shared-root',
+    ]);
+    // Two campaigns of two, not one campaign of four. Different totals prove that neither
+    // machine can reuse or absorb the other machine's aggregate through a key collision.
+    expect(Object.fromEntries(campaignItems.map((item) => [item.row.campaignKey, item.sessionCount]))).toEqual({
+      'machine-a:codex:shared-root': 2,
+      'machine-b:codex:shared-root': 2,
+    });
+    expect(Object.fromEntries(campaignItems.map((item) => [item.row.campaignKey, item.costApprox]))).toEqual({
+      'machine-a:codex:shared-root': 12,
+      'machine-b:codex:shared-root': 24,
+    });
+    expect(new Set(campaignItems.map((item) => item.row.rowId)).size).toBe(2);
+    expect(result.summary.sessionCount).toBe(4);
   });
 
   test('preserves known API-value subtotals and completeness for top sessions and campaigns', () => {

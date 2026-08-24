@@ -238,6 +238,13 @@ describe('focused report SQLite queries', () => {
       expect(topSessionsSql).toBeDefined();
       expect(topSessionsSql).not.toContain('FROM visible AS matched');
       expect(topSessionsSql).not.toContain('root.row_json AS row_json');
+      // Overview campaign items reuse the served session page (`FROM campaign_rollup AS visible`);
+      // at most the five top sessions plus the longest item, memoized by campaign key.
+      const campaignPageQueries = basicOverviewTrace.filter((sql) =>
+        sql.includes('FROM campaign_rollup AS visible'),
+      ).length;
+      expect(campaignPageQueries).toBeGreaterThan(0);
+      expect(campaignPageQueries).toBeLessThanOrEqual(6);
       if (!('view' in basicOverview)) {
         throw new Error('The focused Overview query must return an Overview result');
       }
@@ -1019,6 +1026,87 @@ describe('focused report SQLite queries', () => {
         unpriced: 1,
         unpricedFreshTokens: 1,
       });
+      expect('groups' in breakdown ? breakdown.groups.harnesses[0] : null).toMatchObject({
+        costSum: 2,
+        key: 'Codex',
+        priced: 0,
+        unpriced: 1,
+      });
+      expect('groups' in breakdown ? breakdown.groups.harnessProviders[0] : null).toMatchObject({
+        costSum: 2,
+        priced: 0,
+        unpriced: 1,
+      });
+      expect('groups' in breakdown ? breakdown.groups.projects[0] : null).toMatchObject({ cost: 2, priced: 0 });
+    } finally {
+      database.close();
+    }
+  });
+
+  test('keeps two machines reporting the same campaign session ids as two Overview campaigns', async () => {
+    // Machine identity is part of the storage primary key while collector session ids are not
+    // machine-scoped. The Overview campaign lookup memoizes by `campaign_key`, so a key that
+    // was not machine-scoped would serve one machine's aggregate for the other's item.
+    const sharedCampaignRows: SerializedRow[] = ['machine-a', 'machine-b'].flatMap((machineId) => {
+      const [rootCost, childCost] = machineId === 'machine-a' ? [3, 4] : [11, 13];
+      return [
+        {
+          ...row(`${machineId}-root`, 3, rootCost),
+          source: {
+            harnessKey: 'codex',
+            machineId,
+            machineLabel: machineId,
+            rootSourceSessionId: 'shared-root',
+            sourceSessionId: 'shared-root',
+          },
+        },
+        {
+          ...row(`${machineId}-child`, 4, childCost),
+          source: {
+            harnessKey: 'codex',
+            machineId,
+            machineLabel: machineId,
+            parentSourceSessionId: 'shared-root',
+            rootSourceSessionId: 'shared-root',
+            sourceSessionId: 'shared-child',
+          },
+        },
+      ];
+    });
+    const revisionDirectory = await mkdtemp(path.join(tmpdir(), 'ai-usage-focused-two-machine-'));
+    temporaryDirectories.add(revisionDirectory);
+    const database = openServedFixture(
+      await publishFixture(revisionDirectory, sharedCampaignRows, support),
+      'revision-a',
+    );
+    const request: FocusedOverviewRequest = {
+      includeAdvanced: false,
+      query: { ...overviewRequest.query, range: { from: null, to: null } },
+      timeline: { dimension: 'campaign', granularity: 'day' },
+    };
+    try {
+      const overview = executeFocusedReportQuery(database, 'overview', request);
+      if (!('view' in overview)) {
+        throw new Error('The focused Overview query must return an Overview result');
+      }
+      const campaignItems = overview.view.topSessions.filter((item) => item.kind === 'campaign');
+
+      expect(campaignItems.map((item) => item.row.campaignKey).sort()).toEqual([
+        'machine-a:codex:shared-root',
+        'machine-b:codex:shared-root',
+      ]);
+      // Different per-machine totals make an accidental memoization collision observable.
+      expect(Object.fromEntries(campaignItems.map((item) => [item.row.campaignKey, item.sessionCount]))).toEqual({
+        'machine-a:codex:shared-root': 2,
+        'machine-b:codex:shared-root': 2,
+      });
+      expect(Object.fromEntries(campaignItems.map((item) => [item.row.campaignKey, item.costApprox]))).toEqual({
+        'machine-a:codex:shared-root': 7,
+        'machine-b:codex:shared-root': 24,
+      });
+      expect(new Set(campaignItems.map((item) => item.row.rowId)).size).toBe(2);
+      expect(overview.summary.sessionCount).toBe(4);
+      expect(overview).toEqual(projectFocusedOverview(sharedCampaignRows, support, request));
     } finally {
       database.close();
     }

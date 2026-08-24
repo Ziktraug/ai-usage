@@ -31,11 +31,13 @@ priced segment is displayed as `—`. `costKnown` is true only when every
 token-bearing segment is priced, while `costApprox` retains that known
 subtotal even when `costKnown` is false.
 
-Overall report summaries intentionally total only fully priced sessions and
-expose their priced-session coverage; they do not mix lower bounds into means.
-Session rows and grouped campaign rows retain and display their own lower
-bounds. Breakdown panels also expose priced-session coverage; their percentages
-are shares of the known-price subtotal, not shares of an unknown final bill.
+Report summaries, Overview harness/model groups, breakdown groups and project
+groups all total the known API-value subtotal of every visible session — a
+partially priced session contributes its priced segments — and expose
+priced-session coverage beside it. Means and medians (`meanCost`,
+`costPerSession`, `medianCost`, `costPer100Lines`) use fully priced sessions
+only. Breakdown percentages are shares of that known subtotal, not shares of an
+unknown final bill.
 
 Provenance markers have two visual levels. A neutral `i` is informational: for
 example, `title-derived` means the label came from the first prompt or other

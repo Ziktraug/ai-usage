@@ -27,7 +27,10 @@
   import { buildProjectGroupReferenceCommand } from '../../../../project-group-control';
   import { buildProviderStatusViews, providerHistoryAvailable } from '../../../../provider-status-model';
   import type { RuntimeMode } from '../../../../runtime-mode';
-  import { sessionAnalysisTargetForSession } from '../../../../session-analysis-target';
+  import {
+    sessionAnalysisTargetForOverviewRow,
+    sessionAnalysisTargetForSession,
+  } from '../../../../session-analysis-target';
   import type { WebReportPayloadWithoutRows } from '../../../../web-report-payload';
   import type { SearchNavigationIntent } from '../../../foundation/navigation/search-intent';
   import {
@@ -418,6 +421,7 @@
     selection = {
       ...(commit?.overview.revision === undefined ? {} : { revision: commit.overview.revision }),
       row: presented.row,
+      target: sessionAnalysisTargetForOverviewRow(presented.row),
     };
     selectedRowId = presented.row.rowId;
   };
@@ -524,6 +528,7 @@
       onLoadMoreCampaignSessions={() => campaignSessionControls?.loadMore()}
       onSelectSession={selectCampaignSession}
       query={campaignSessionControls.query}
+      rolledUpClassifierCount={campaignSessionControls.rolledUpClassifierCount}
       visibleRows={campaignSessionControls.visibleRows}
     />
   {/if}

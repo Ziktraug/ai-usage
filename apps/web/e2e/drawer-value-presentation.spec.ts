@@ -8,9 +8,12 @@ test('uses one token magnitude and accessible drawer explanations', async ({ pag
   await topSessionTrigger.click();
 
   const drawer = page.getByRole('dialog', { name: 'Session details' });
+  // The Overview row is the campaign aggregate (203,500 + 76,600 + 120,800 tokens),
+  // and the drawer states which scope its values cover.
+  await expect(drawer.locator('[data-session-drawer-scope="campaign"]')).toHaveCount(1);
   const totalTokens = drawer.locator('[data-detail-item="Total tokens"]');
-  await expect(totalTokens).toContainText('204k');
-  await expect(totalTokens).not.toContainText('203,500');
+  await expect(totalTokens).toContainText('401k');
+  await expect(totalTokens).not.toContainText('400,900');
 
   const subValueHelp = drawer.getByRole('button', {
     name: 'About Subscription value',
@@ -21,7 +24,7 @@ test('uses one token magnitude and accessible drawer explanations', async ({ pag
   await subValueHelp.click();
 
   const taskOpenHelp = drawer.getByRole('button', {
-    name: 'About Task-open time',
+    name: 'About Root task-open time',
   });
   await expect(taskOpenHelp).toHaveAttribute('aria-haspopup', 'dialog');
   await taskOpenHelp.focus();

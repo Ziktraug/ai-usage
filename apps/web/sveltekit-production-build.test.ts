@@ -24,8 +24,9 @@ afterEach(async () => {
 
 const createWebFixture = async (): Promise<string> => {
   const fixture = await mkdtemp(path.join(tmpdir(), 'plan052-web-build-lock-'));
-  fixtures.push(fixture);
-  return fixture;
+  const canonicalFixture = await realpath(fixture);
+  fixtures.push(canonicalFixture);
+  return canonicalFixture;
 };
 
 const staleLockMetadata = async (webDirectory: string, pid: number, processStartTimeTicks: string | null = '1') => ({
@@ -135,6 +136,11 @@ describe('production web build lock', () => {
   });
 
   test('recovers stale metadata when a live PID has a different process identity', async () => {
+    // Process start-time identity is available from /proc only. Other hosts
+    // deliberately preserve a live owner's lock when PID reuse cannot be disproved.
+    if (process.platform !== 'linux') {
+      return;
+    }
     const webDirectory = await createWebFixture();
     const lockPath = await writeLockFixture(webDirectory, await staleLockMetadata(webDirectory, process.pid, '0'));
 

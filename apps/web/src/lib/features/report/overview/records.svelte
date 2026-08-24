@@ -19,6 +19,7 @@
   } from '@ai-usage/design-system/report';
   import { HarnessBadge } from '@ai-usage/design-system/svelte';
   import type { FocusedOverviewRecords, FocusedOverviewSessionItem } from '@ai-usage/report-core/focused-report-query';
+  import { sessionDurationSemantics } from '../../../../session-analysis-model';
   import { fmtDateOnly, fmtDuration, fmtMoney, fmtNum } from '../../../foundation/presentation/format';
   import { apiValuePresentation } from '../../../foundation/presentation/report-value';
 
@@ -59,6 +60,16 @@
         }
       : null,
   );
+  // "Longest session" is a recorded duration whose meaning differs per harness, and
+  // a campaign's is the root session's alone (plan 052). The card names which.
+  const longestSemantics = $derived(
+    presentedRecords?.longest
+      ? sessionDurationSemantics(
+          presentedRecords.longest.row.source?.harnessKey,
+          presentedRecords.longest.kind === 'campaign' && presentedRecords.longest.sessionCount > 1,
+        )
+      : null,
+  );
   const presentedTopSessions = $derived(topSessions.map(presentSessionItem));
   const topCostRepeatsFirstSession = $derived.by((): boolean => {
     const topCost = presentedRecords?.topCost;
@@ -85,12 +96,17 @@
     {/if}
     {#if presentedRecords.longest}
       <button class={recordCard} onclick={() => onSelectSession(presentedRecords.longest!)} type="button">
-        <span class={srOnly}>Open details for longest session {presentedRecords.longest.label}. </span>
+        <span class={srOnly}
+          >Open details for longest session {presentedRecords.longest.label} ({longestSemantics?.metricLabel}).
+        </span>
         <span class={cx(recordLabel, recordActionLabel)}
           >Longest session <span aria-hidden="true" class={disclosureIcon}>↗</span></span
         >
         <span class={recordValue}>{fmtDuration(presentedRecords.longest.durationMs)}</span>
-        <span class={recordSub}>{presentedRecords.longest.label}</span>
+        <span class={recordSub} data-longest-session-semantic title={longestSemantics?.metricHint}
+          >{presentedRecords.longest.label}
+          · {longestSemantics?.metricLabel}</span
+        >
       </button>
     {/if}
     {#if presentedRecords.busiest}
