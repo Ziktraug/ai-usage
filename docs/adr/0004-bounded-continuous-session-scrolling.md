@@ -1,5 +1,8 @@
 # ADR 0004: Page data and window continuous session scrolling
 
+- **Status**: Accepted
+- **Date**: 2026-07-22
+
 ## Context
 
 Rendering 5,000 mobile session cards exceeded the DOM budget, while a full query would violate the existing 200-row response cap.
@@ -19,6 +22,8 @@ A full-query render was rejected because it broke the response and mobile DOM bu
 ## Evidence
 
 - [Decision measurements](../session-scroll-benchmark.md)
-- [Paging coordinator](../../apps/web/src/session-query-client.ts)
+- [Paging query options](../../apps/web/src/lib/query/options/session-window.ts)
+  (paging lifecycle ownership moved to TanStack Query by
+  [ADR 0012](0012-tanstack-query-browser-server-state-ownership.md))
 - [Window model](../../apps/web/src/session-row-window.ts)
 - [5,000-session proof](../../apps/web/e2e/session-scroll.scale.ts)

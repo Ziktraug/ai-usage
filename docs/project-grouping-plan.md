@@ -1,5 +1,12 @@
 # Project Grouping Architecture Plan
 
+> **Status: delivered design record (2026-07).** The grouping model shipped;
+> see `docs/architecture.md` for current ownership. File paths in the
+> implementation steps predate later refactors — notably `machine-config.ts`
+> now lives in `packages/local-machine/src/`. Making grouping *portable* was
+> later evaluated and rejected (plan 047); grouping stays local machine
+> configuration.
+
 ## Problem
 
 Multi-machine reporting currently preserves session provenance, but project reporting is still too close to the raw `project` string. This creates two opposite failure modes:

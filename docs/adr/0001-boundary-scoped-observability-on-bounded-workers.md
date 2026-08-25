@@ -1,4 +1,4 @@
-# Keep bounded workers and isolate observability per execution
+# ADR 0001: Keep bounded workers and isolate observability per execution
 
 - **Status**: Accepted
 - **Date**: 2026-07-21

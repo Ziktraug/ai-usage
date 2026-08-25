@@ -1,8 +1,9 @@
----
-status: accepted
----
-
 # ADR 0007: Server-render the report bootstrap and initial destination
+
+- **Status**: Accepted
+- **Date**: 2026-07-22; amended 2026-08-08 (initial-destination embedding)
+- **Amended by**: [ADR 0009](0009-sole-writer-usage-engine-and-direct-sqlite-readers.md)
+  (backing location only)
 
 The trusted loopback report route loads its initial report data during SSR. Live mode embeds the bounded support bootstrap for one immutable revision, while demo and browser-test modes embed deterministic synthetic data. This accepts that local report metadata is present in the initial HTML because the same trusted browser can request it from the local server, and it avoids a global loading screen plus the hydration failure produced by a client-only route fallback.
 

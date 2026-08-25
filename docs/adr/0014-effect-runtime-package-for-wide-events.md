@@ -1,8 +1,14 @@
-# `@ai-usage/effect-runtime` owns wide-event primitives
+# ADR 0014: `@ai-usage/effect-runtime` owns wide-event primitives
 
 - **Status**: Accepted
 - **Date**: 2026-07-21
+- **Formerly**: numbered ADR 0002; renumbered 2026-08-25 to resolve the
+  collision with the immutable-focused-report-revisions ADR. References to
+  "ADR 0002" in ADR 0008 and plans 036/037 mean this record.
 - **Amended by**: [ADR 0009](0009-sole-writer-usage-engine-and-direct-sqlite-readers.md)
+- **Superseded in part by**: [ADR 0008](0008-wide-event-presentation-provenance-and-delivery.md)
+  (TTY presentation, producer resource context, delivery diagnostics,
+  tagged-error policy ownership)
 
 ## Context
 

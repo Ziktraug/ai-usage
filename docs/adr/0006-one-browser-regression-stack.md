@@ -1,5 +1,8 @@
 # ADR 0006: Use one browser regression stack
 
+- **Status**: Accepted
+- **Date**: 2026-07-22
+
 ## Context
 
 The frontend needs functional, accessibility, visual, console, page-error, and critical-request regression gates without duplicating browser infrastructure.
