@@ -470,3 +470,78 @@ gates. `bun install` is permitted if a dependency is genuinely missing, but is
 not a default step. Existing BLOCKED labels remain historical and honest until
 their replacement implementations pass fresh gates and Codex review. The
 original PR constraints remain: use only draft PR #46 and never merge it.
+
+## Program 086 closure — 2026-08-25
+
+Decision D20 replaced the blocked checkpoint above with fresh implementations,
+fresh gates, and fresh reviews. Decisions D21 and D22 accepted only inspected,
+causal macOS snapshot changes; no presentation finding, PII finding, or settled
+product decision was overruled. No Docker was used.
+
+### Final child ledger
+
+| Plan | Final result | Integrated commit(s) | Correction/review history |
+| --- | --- | --- | --- |
+| 087 | DONE | `ac53024e`, `94f049dc` | asymmetric synthetic hydration proof added; accepted by final composition review |
+| 088 | DONE | `0acfba17` | D20 reopening after the historical exhausted cycle; r4 ACCEPT |
+| 089 | DONE | `05b2c77f` | historical r1–r3 REWORK; D20 replacement r4 ACCEPT |
+| 090 | DONE | `cdf58c70` | D20 replacement; r3 ACCEPT |
+| 091 | DONE | `f726c11e`, `99229546`, `1f36977d` | two correction rounds; r1 REWORK, r2 ACCEPT, final reopening, r3 ACCEPT |
+| 092 | DONE | `09670e38` | D20 authorized the ARIA contract and extra convergence; r1–r3 REWORK, r4 ACCEPT |
+| 093 | DONE | `652ebb96` | two correction rounds; r1–r2 REWORK, r3 ACCEPT |
+| 094 | DONE | `67fed079` | one correction round; initial REWORK, then ACCEPT under D21 |
+| 095 | DONE | `efffa53c` | D20 replacement plus identity-collision correction; final r4 ACCEPT |
+| 096 | DONE | `cb1fbc08` | D20 replacement; r4–r5 REWORK, r6 ACCEPT |
+| 097 | DONE | `46e595a3` | one accessibility correction; Standards and Specification ACCEPT |
+| 098 | DONE | `236417fd` | two specification rounds; Standards r1 PASS, Spec r1 REWORK, Spec r2 PASS |
+
+The final responsive composition correction is `4f46e5df`: tablet Sessions and
+Projects tables keep horizontal overflow inside their scroll surfaces, and the
+Skills health layout stacks at 1280 px while retaining the 1440 px two-column
+contract.
+
+### Gates by accepted wave
+
+- Reopened P0/data wave (087–090, 095): child unit, Web, SQLite parity/scale,
+  typecheck, lint, full locked Playwright, production, build, and immediately
+  following bundle gates passed before integration. Each accepted child had a
+  fresh terminal review.
+- Interaction/Skills wave (092, 096): full Web and locked Playwright gates,
+  deterministic accessibility/geometry proofs, visual baselines, lint,
+  typecheck, build, and bundle passed. Terminal verdicts were r4 ACCEPT and r6
+  ACCEPT.
+- Analysis wave (091, 093): the paged-campaign single-scroll proof, dated brush
+  and palette/hero proofs, full Web, locked Playwright, production, scale,
+  lint, typecheck, build, and bundle passed. Wave composition review ACCEPT.
+- Overview/Manage wave (094, 097): post-rebase packages passed 1,341/1,341 for
+  094 and Web passed 1,047/1,047 for 097; typecheck passed 28/28; full locked
+  Playwright passed 172/172 then 173/173; root lint, build, and bundle passed
+  after each fast-forward. Composition review ACCEPT.
+- Chrome/polish wave (098): candidate Web 1,091/1,091, visual 4/4, production
+  13/13, scale 2/2 at 5,000 sessions, and locked Playwright 173/173 passed.
+  Rebase gates and both review axes passed before fast-forward.
+- Final program tip: lint passed on 1,097 files plus five guards; typecheck
+  28/28; packages 28/28 with Web 1,091/1,091; tools 122/122; locked Playwright
+  176/176 with two workers; visual 4/4; production 13/13; scale 2/2 over
+  exactly 5,000 synthetic sessions; build 15/15 immediately followed by bundle
+  4/4. Added-line PII, diff, `.only`, and `.skip` scans were clean.
+
+### Final fresh-eyes and review
+
+The synthetic-only walk settled and visually inspected 88/88 states over 11
+routes, 1920/1280/768/390 viewports, and both themes. Three responsive
+composition defects found on the first pass were fixed and recaptured in both
+themes: Sessions and Projects no longer widen the 768 px document, and Skills
+health disclosures no longer overlap at 1280 px. No residual U-row remains.
+
+Fresh whole-diff review of `main...4f46e5df` returned ACCEPT with no findings.
+Every U01–U42 row maps to a DONE child. The host-gate work closed D14–D19 with
+portable implementations and deterministic proofs; D20–D22 are settled
+maintainer decisions recorded in the ignored run state.
+
+### Remaining external action
+
+Program code and acceptance are complete. Draft PR #46 must remain unmerged.
+Its body update is retried after the closure push; if the current GitHub token
+still lacks `UpdatePullRequest`, only that metadata edit awaits a maintainer
+with sufficient repository permission. No replacement PR is authorized.

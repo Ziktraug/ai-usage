@@ -22,6 +22,7 @@
   overlaps are called out per child in "Execution order"
 - **Category**: remediation (correctness, data consistency, presentation)
 - **Planned at**: commit `51815b70`, 2026-08-23
+- **Completed**: 2026-08-25; final reviewed code tip `4f46e5df`
 - **Audit**: 42 findings U01–U42, table below
 
 ## Why this matters
