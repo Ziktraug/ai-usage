@@ -102,7 +102,7 @@ export const controls = css({
   '& button, & a': { minH: { base: '44px', sm: '36px' } },
   '& > [aria-label="Collection source status"]': {
     gap: { base: '4px', sm: '8px' },
-    '& > a, & > button': { px: { base: '6px', sm: '10px' } },
+    '& > a, & > button': { px: { base: '5px', sm: '10px' } },
     '& > button': { whiteSpace: 'nowrap' },
   },
   '& > :last-child:nth-child(odd)': { gridColumn: { base: '1 / -1', sm: 'auto' } },
