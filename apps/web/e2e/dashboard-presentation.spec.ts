@@ -361,6 +361,33 @@ test('renders secondary status only on Overview and puts Projects before closed 
   await expect(projectsPanel.locator('[data-project-name]').first()).toBeVisible();
 });
 
+test('keeps the tablet Projects table inside its horizontal scroll surface', async ({ page }) => {
+  await page.setViewportSize({ height: 1024, width: 768 });
+  await page.goto('/');
+  await page.getByRole('link', { exact: true, name: 'Analysis' }).click();
+  await page.getByRole('tablist', { name: 'Analysis dimension' }).getByRole('tab', { name: 'Projects' }).click();
+
+  const projectsPanel = page.locator('[data-breakdown-panel="projects"]');
+  const tableViewport = projectsPanel.getByRole('table').locator('..');
+  await expect(projectsPanel).toBeVisible();
+  await expect
+    .poll(
+      async () =>
+        await tableViewport.evaluate((element) => ({
+          documentFitsViewport: document.documentElement.scrollWidth <= document.documentElement.clientWidth,
+          ownsHorizontalOverflow: element.scrollWidth > element.clientWidth,
+          panelFitsViewport:
+            (element.closest('[data-breakdown-panel]')?.getBoundingClientRect().right ?? Number.POSITIVE_INFINITY) <=
+            document.documentElement.clientWidth + 1,
+        })),
+    )
+    .toEqual({
+      documentFitsViewport: true,
+      ownsHorizontalOverflow: true,
+      panelFitsViewport: true,
+    });
+});
+
 test('uses compact circular Punchcard marks inside accessible targets with a low/high key', async ({ page }) => {
   await page.setViewportSize({ height: 1000, width: 1440 });
   await page.goto('/');

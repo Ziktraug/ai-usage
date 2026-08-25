@@ -102,6 +102,8 @@ export const sessionViewportSurface = css({
 
 export const desktopTableSurface = css({
   display: { base: 'none', md: 'block' },
+  maxW: 'full',
+  minW: 0,
   _print: { display: 'block' },
 });
 

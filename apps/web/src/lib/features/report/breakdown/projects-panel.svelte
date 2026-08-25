@@ -65,9 +65,10 @@
     },
     '&[open] > summary': { mb: '10px' },
   });
+  const projectsPanel = css({ minW: 0 });
 </script>
 
-<section data-projects-panel>
+<section class={projectsPanel} data-projects-panel>
   <section class={groupPanel} data-breakdown-panel="projects">
     <header class={groupHeader}>
       <h2 class={groupTitle}>Projects</h2>

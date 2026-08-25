@@ -337,6 +337,28 @@ test('anchors the virtual Session viewport inside the screen on desktop and mobi
   expect(resizeObserverLoopMessages()).toEqual([]);
 });
 
+test('keeps the tablet Sessions table inside its horizontal scroll surface', async ({ page }) => {
+  await page.setViewportSize({ height: 1024, width: 768 });
+  await openHydratedReport(page, '/?tab=sessions');
+
+  const surface = page.locator('[data-session-surface="desktop"]');
+  await expect(surface).toBeVisible();
+  await expect
+    .poll(
+      async () =>
+        await surface.evaluate((element) => ({
+          documentFitsViewport: document.documentElement.scrollWidth <= document.documentElement.clientWidth,
+          ownsHorizontalOverflow: element.scrollWidth > element.clientWidth,
+          surfaceFitsViewport: element.getBoundingClientRect().right <= document.documentElement.clientWidth + 1,
+        })),
+    )
+    .toEqual({
+      documentFitsViewport: true,
+      ownsHorizontalOverflow: true,
+      surfaceFitsViewport: true,
+    });
+});
+
 test('keeps the document height still while the Session surface is scrolled past', async ({ page }) => {
   await page.setViewportSize({ height: 900, width: 1440 });
   await openHydratedReport(page);
