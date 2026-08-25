@@ -149,7 +149,7 @@ read-only SQLite and the permanent browser/server and demo-isolation boundaries.
 | 083 | Design "Adopt Unmanaged Skill Into Source" (spike, then gated build) | P1 | L | - | DESIGN READY — awaiting approval |
 | 084 | Spike — a Session-Intent Signal From First Prompts, Within the Privacy Boundary | P3 | L | - | DESIGN READY — awaiting decision |
 | 085 | Spike — a Printable Period Recap on the Existing Print Path | P3 | M | - | DESIGN READY — awaiting decision (Firefox print-to-PDF gate unmet: no reachable Gecko exposes `--print`, so pagination is verified in one engine only) |
-| 086 | Remediate the 2026-08-23 Fresh-Eyes UI/UX Audit (program plan) | P0 | L (program) | 087–098 | IN PROGRESS (maintainer decision D20 reopened exhausted children and program gates; only fresh verified replacements may become DONE) |
+| 086 | Remediate the 2026-08-23 Fresh-Eyes UI/UX Audit (program plan) | P0 | L (program) | 087–098 | DONE (all children accepted; U01–U42 closed; final 88-state fresh-eyes walk, full program gates, and whole-diff review passed) |
 | 087 | Fix the Skills Editor Stuck on "Loading…" After Client-Side Navigation | P0 | S–M | - | DONE |
 | 088 | One Canonical Number Per Concept | P0 | L | - | DONE (exceptional maintainer reopening D20; production and proof defects corrected, full gates and independent review accepted) |
 | 089 | Period Semantics — Inclusive Day Counts, Honest Campaign Dates, Auto Interval, Readable Range URLs | P0 | M–L | - | DONE (maintainer reopening D20; open bounds ordered in both directions, full gates and independent review accepted) |
