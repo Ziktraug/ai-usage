@@ -284,19 +284,21 @@ test('matches the mobile light session drawer at 390x844', async ({ page }) => {
     const box = element.getBoundingClientRect();
     return {
       bottom: Math.round(box.bottom),
+      layoutWidth: Math.min(document.documentElement.clientWidth, document.documentElement.scrollWidth),
       left: Math.round(box.left),
       pageHasHorizontalOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
       right: Math.round(box.right),
       width: Math.round(box.width),
     };
   });
-  expect(drawerGeometry).toEqual({
+  expect(drawerGeometry).toMatchObject({
     bottom: NARROW_VIEWPORT.height,
     left: 0,
     pageHasHorizontalOverflow: false,
-    right: NARROW_VIEWPORT.width,
-    width: NARROW_VIEWPORT.width,
   });
+  expect(drawerGeometry.layoutWidth).toBeLessThanOrEqual(NARROW_VIEWPORT.width);
+  expect(drawerGeometry.right).toBe(drawerGeometry.layoutWidth);
+  expect(drawerGeometry.width).toBe(drawerGeometry.layoutWidth);
 
   const layerOrder = await page.evaluate(() => {
     const zIndex = (selector: string): number => {

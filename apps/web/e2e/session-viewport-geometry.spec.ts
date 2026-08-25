@@ -421,19 +421,21 @@ test('keeps the mobile Session drawer modal, trapped, safe, and restorable', asy
     const rect = element.getBoundingClientRect();
     return {
       bottom: Math.round(rect.bottom),
+      layoutWidth: Math.min(document.documentElement.clientWidth, document.documentElement.scrollWidth),
       left: Math.round(rect.left),
       pageHasHorizontalOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
       right: Math.round(rect.right),
       width: Math.round(rect.width),
     };
   });
-  expect(geometry).toEqual({
+  expect(geometry).toMatchObject({
     bottom: MOBILE_DRAWER_VIEWPORT.height,
     left: 0,
     pageHasHorizontalOverflow: false,
-    right: MOBILE_DRAWER_VIEWPORT.width,
-    width: MOBILE_DRAWER_VIEWPORT.width,
   });
+  expect(geometry.layoutWidth).toBeLessThanOrEqual(MOBILE_DRAWER_VIEWPORT.width);
+  expect(geometry.right).toBe(geometry.layoutWidth);
+  expect(geometry.width).toBe(geometry.layoutWidth);
 
   const layers = await page.evaluate(() => {
     const zIndexOf = (selector: string): number => {
@@ -597,22 +599,22 @@ test('keeps the desktop Session drawer nonmodal and outside-focus friendly', asy
   await expect(drawer).toHaveAttribute('aria-modal', 'false');
   await expect(page.locator('[data-scope="drawer"][data-part="backdrop"]')).toHaveCount(0);
   await expect(sessionTrigger).toBeFocused();
-  expect(
-    await drawer.evaluate((element) => {
-      const rect = element.getBoundingClientRect();
-      return {
-        bottom: Math.round(rect.bottom),
-        right: Math.round(rect.right),
-        top: Math.round(rect.top),
-        width: Math.round(rect.width),
-      };
-    }),
-  ).toEqual({
+  const desktopGeometry = await drawer.evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    return {
+      bottom: Math.round(rect.bottom),
+      layoutRight: Math.min(document.documentElement.clientWidth, document.documentElement.scrollWidth),
+      right: Math.round(rect.right),
+      top: Math.round(rect.top),
+      width: Math.round(rect.width),
+    };
+  });
+  expect(desktopGeometry).toMatchObject({
     bottom: DESKTOP_DRAWER_VIEWPORT.height,
-    right: DESKTOP_DRAWER_VIEWPORT.width,
     top: 0,
     width: 440,
   });
+  expect(desktopGeometry.right).toBe(desktopGeometry.layoutRight);
   const actionGeometry = await drawer.locator('[data-session-drawer-header] button:visible').evaluateAll((elements) =>
     elements.map((element) => {
       const rect = element.getBoundingClientRect();

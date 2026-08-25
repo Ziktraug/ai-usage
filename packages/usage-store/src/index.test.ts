@@ -15,7 +15,6 @@ import {
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-import { pathToFileURL } from 'node:url';
 import type { CursorCommitAttributionDatasetItem } from '@ai-usage/report-core/datasets';
 import {
   createUsageMergeBundle,
@@ -1024,9 +1023,7 @@ describe('usage-store public boundary', () => {
       expect(replacementOccurred).toBe(true);
       expect(error.reason).toBe('preview-stale');
       for (const inspectedPath of [dbPath, movedDbPath]) {
-        const inspectionUrl = pathToFileURL(inspectedPath);
-        inspectionUrl.searchParams.set('immutable', '1');
-        const inspection = new Database(inspectionUrl.href, { readonly: true });
+        const inspection = new Database(inspectedPath, { create: false, readwrite: true });
         const generation = inspection
           .query("SELECT value FROM usage_store_metadata WHERE key = 'generation'")
           .get() as { value: number };

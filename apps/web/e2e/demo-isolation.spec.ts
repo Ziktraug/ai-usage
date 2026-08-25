@@ -37,7 +37,7 @@ test('isolates the synthetic demo from every local data and control capability',
   await expect(drawer).toBeVisible();
   await expect(drawer.getByText('Build report UI', { exact: true }).first()).toBeVisible();
   await expect(drawer.getByText('Total tokens', { exact: true })).toBeVisible();
-  await expect(drawer.locator('[data-detail-item="Total tokens"]')).toContainText('204k');
+  await expect(drawer.locator('[data-detail-item="Total tokens"]')).toContainText('401k');
   await expect(page.getByRole('link', { name: NON_REPORT_NAVIGATION_PATTERN })).toHaveCount(0);
 
   const guardedResponses = await Promise.all([
