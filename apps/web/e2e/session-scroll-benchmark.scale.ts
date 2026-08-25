@@ -406,6 +406,9 @@ const runSample = async (page: Page, request: APIRequestContext): Promise<Sessio
     expect(browserSessionRpcCount).toBe(0);
 
     const hydrationSnapshot = await readPerfSnapshot(request);
+    const hydrationIdentityCount = hydrationSnapshot.sqlite.phases.identity?.count ?? 0;
+    expect(hydrationIdentityCount).toBeGreaterThanOrEqual(1);
+    expect(hydrationIdentityCount).toBeLessThanOrEqual(3);
 
     const client = await page.context().newCDPSession(page);
     await client.send('Performance.enable');
@@ -491,7 +494,13 @@ const runSample = async (page: Page, request: APIRequestContext): Promise<Sessio
     expect(desktopTraversal.firstIdentity).not.toBe(desktopTraversal.lastIdentity);
 
     const sqliteSnapshot = await readPerfSnapshot(request);
-    expect(sqliteSnapshot.sqlite.phases.identity?.count).toBe(EXPECTED_TOTAL_SESSION_PAGES + 2);
+    const finalIdentityCount = sqliteSnapshot.sqlite.phases.identity?.count ?? 0;
+    const postHydrationIdentityCount = finalIdentityCount - hydrationIdentityCount;
+    const expectedInteractionIdentityCount = EXPECTED_DESKTOP_SESSION_RPCS + 2;
+    // Publication settling can add at most two server-owned identity probes. Browser paging remains
+    // pinned exactly above, so this cap detects extra client work without depending on host timing.
+    expect(postHydrationIdentityCount).toBeGreaterThanOrEqual(expectedInteractionIdentityCount);
+    expect(postHydrationIdentityCount).toBeLessThanOrEqual(expectedInteractionIdentityCount + 2);
 
     await client.detach();
     return {
