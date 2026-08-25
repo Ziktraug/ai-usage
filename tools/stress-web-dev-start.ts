@@ -55,22 +55,25 @@ const logDirectory = path.join(rootDirectory, '.dev-server-stress');
 type DebugMode = '0' | '1' | 'alternate';
 type StressMode = 'direct' | 'playwright' | 'wrapped';
 type RunnerRuntime = 'bun' | 'node';
+type EnvProfile = 'minimal' | 'inherit';
 
 interface StressOptions {
   readonly debug: DebugMode;
+  readonly envProfile: EnvProfile;
   readonly iterations: number;
   readonly mode: StressMode;
   readonly runner: RunnerRuntime;
 }
 
 const USAGE =
-  'Usage: stress-web-dev-start.ts [--iterations <1-200>] [--debug 0|1|alternate] [--mode direct|playwright|wrapped] [--runner bun|node]';
+  'Usage: stress-web-dev-start.ts [--iterations <1-200>] [--debug 0|1|alternate] [--mode direct|playwright|wrapped] [--runner bun|node] [--env-profile minimal|inherit]';
 
 const parseOptions = (argumentList: readonly string[]): StressOptions => {
   let debug: DebugMode = 'alternate';
   let iterations = DEFAULT_ITERATIONS;
   let mode: StressMode = 'direct';
   let runner: RunnerRuntime = 'bun';
+  let envProfile: EnvProfile = 'minimal';
   for (let index = 0; index < argumentList.length; index += 2) {
     const flag = argumentList[index];
     const value = argumentList[index + 1];
@@ -82,6 +85,8 @@ const parseOptions = (argumentList: readonly string[]): StressOptions => {
       mode = value;
     } else if (flag === '--runner' && (value === 'bun' || value === 'node')) {
       runner = value;
+    } else if (flag === '--env-profile' && (value === 'minimal' || value === 'inherit')) {
+      envProfile = value;
     } else {
       throw new Error(USAGE);
     }
@@ -89,7 +94,7 @@ const parseOptions = (argumentList: readonly string[]): StressOptions => {
   if (!(Number.isSafeInteger(iterations) && iterations > 0 && iterations <= 200)) {
     throw new Error(USAGE);
   }
-  return { debug, iterations, mode, runner };
+  return { debug, envProfile, iterations, mode, runner };
 };
 
 interface IterationResult {
@@ -228,26 +233,30 @@ const runServerIteration = async (
   iteration: number,
   debugEnabled: boolean,
   wrapped: boolean,
+  envProfile: EnvProfile,
 ): Promise<IterationResult> => {
   await rm(viteCacheDirectory, { force: true, recursive: true });
   const startedAt = Date.now();
   const command = wrapped
     ? ['bun', 'run', 'dev', '--', '--port', String(PORT), '--strictPort']
     : ['bun', '--no-env-file', '--bun', 'vite', '--host', HOST, '--port', String(PORT), '--strictPort'];
-  const { child, drained, lines } = captureChild(
-    command,
-    {
-      AI_USAGE_SVELTEKIT_PHASE: 'dev',
-      AI_USAGE_SVELTEKIT_PRIVATE_E2E_OVERRIDES: '1',
-      BROWSER: 'none',
-      ...(debugEnabled ? { DEBUG: 'vite:*' } : {}),
-      NO_COLOR: '1',
-      PATH: process.env.PATH ?? '',
-      TZ: 'UTC',
-      VITE_AI_USAGE_E2E: '1',
-    },
-    startedAt,
-  );
+  const overrides = {
+    AI_USAGE_SVELTEKIT_PHASE: 'dev',
+    AI_USAGE_SVELTEKIT_PRIVATE_E2E_OVERRIDES: '1',
+    BROWSER: 'none',
+    ...(debugEnabled ? { DEBUG: 'vite:*' } : {}),
+    TZ: 'UTC',
+    VITE_AI_USAGE_E2E: '1',
+  };
+  // 'inherit' reproduces the Playwright webServer child env: the full process
+  // environment plus FORCE_COLOR=1, which Playwright always sets on webServer
+  // children (and which is why [WebServer] lines carry ANSI codes in CI logs).
+  // 'minimal' is the controlled env the never-hanging baselines used.
+  const environment =
+    envProfile === 'inherit'
+      ? { ...process.env, ...overrides, FORCE_COLOR: '1' }
+      : { ...overrides, NO_COLOR: '1', PATH: process.env.PATH ?? '' };
+  const { child, drained, lines } = captureChild(command, environment, startedAt);
 
   const { at, status } = await pollUntilResponse(startedAt + READINESS_DEADLINE_MS);
   const elapsedMs = at - startedAt;
@@ -275,7 +284,7 @@ const runServerIteration = async (
   return { debugEnabled, elapsedMs, iteration, outcome };
 };
 
-const { debug, iterations, mode, runner } = parseOptions(process.argv.slice(2));
+const { debug, envProfile, iterations, mode, runner } = parseOptions(process.argv.slice(2));
 await rm(logDirectory, { force: true, recursive: true });
 await mkdir(logDirectory, { recursive: true });
 
@@ -285,17 +294,17 @@ for (let iteration = 1; iteration <= iterations; iteration += 1) {
   const result =
     mode === 'playwright'
       ? await runPlaywrightIteration(iteration, debugEnabled, runner)
-      : await runServerIteration(iteration, debugEnabled, mode === 'wrapped');
+      : await runServerIteration(iteration, debugEnabled, mode === 'wrapped', envProfile);
   results.push(result);
   console.log(
-    `iteration ${result.iteration}/${iterations} (${mode}/${runner}, ${debugEnabled ? 'debug' : 'no debug'}): ${result.outcome} in ${result.elapsedMs}ms`,
+    `iteration ${result.iteration}/${iterations} (${mode}/${runner}/${envProfile}, ${debugEnabled ? 'debug' : 'no debug'}): ${result.outcome} in ${result.elapsedMs}ms`,
   );
 }
 
 const hangs = results.filter((result) => result.outcome !== 'ready');
 await writeFile(
   path.join(logDirectory, 'summary.json'),
-  `${JSON.stringify({ iterations, mode, results, runner }, null, 2)}\n`,
+  `${JSON.stringify({ envProfile, iterations, mode, results, runner }, null, 2)}\n`,
   'utf8',
 );
 console.log(`\n${hangs.length}/${iterations} starts did not become ready. Logs: ${logDirectory}`);

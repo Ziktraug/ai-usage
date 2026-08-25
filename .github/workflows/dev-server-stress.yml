@@ -38,6 +38,10 @@ on:
         description: "Start chain: playwright (real e2e chain), wrapped (bun run dev, minimal env), or direct (vite alone)"
         default: playwright
         required: false
+      env-profile:
+        description: "Server env in direct/wrapped modes: minimal (controlled) or inherit (full CI env + FORCE_COLOR, like Playwright)"
+        default: minimal
+        required: false
       runner:
         description: "Playwright runner runtime in playwright mode: bun (repo convention, reproduces) or node"
         default: bun
@@ -70,7 +74,7 @@ jobs:
       # Same precondition as the functional-browser job; also required by the
       # playwright mode, whose iterations run a real spec in a real browser.
       - run: bun x playwright install --with-deps chromium
-      - run: bun tools/stress-web-dev-start.ts --iterations "${{ inputs.iterations }}" --debug "${{ inputs.debug }}" --mode "${{ inputs.mode }}" --runner "${{ inputs.runner }}"
+      - run: bun tools/stress-web-dev-start.ts --iterations "${{ inputs.iterations }}" --debug "${{ inputs.debug }}" --mode "${{ inputs.mode }}" --runner "${{ inputs.runner }}" --env-profile "${{ inputs.env-profile }}"
       - name: Upload startup traces
         if: always()
         uses: actions/upload-artifact@v4
