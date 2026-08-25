@@ -1,9 +1,10 @@
-# Sole-writer usage engine and direct SQLite readers
+# ADR 0009: Sole-writer usage engine and direct SQLite readers
 
 - **Status**: Accepted
 - **Date**: 2026-07-31
-- **Amends**: host/artifact clauses only in ADR 0001, both ADR 0002 records,
-  ADR 0007, and ADR 0008
+- **Amends**: host/artifact clauses only in ADR 0001, ADR 0002, ADR 0007,
+  ADR 0008, and [ADR 0014](0014-effect-runtime-package-for-wide-events.md)
+  (formerly the second record numbered 0002)
 
 ## Context
 

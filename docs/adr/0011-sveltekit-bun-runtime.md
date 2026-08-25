@@ -1,6 +1,7 @@
 # ADR 0011: Run SvelteKit with svelte-adapter-bun
 
-Status: Accepted
+- **Status**: Accepted
+- **Date**: 2026-08-09
 
 ## Context
 

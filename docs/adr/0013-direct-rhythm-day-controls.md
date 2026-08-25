@@ -1,7 +1,9 @@
-# ADR 0009: Use direct Rhythm day controls
+# ADR 0013: Use direct Rhythm day controls
 
 - **Status**: Accepted
 - **Date**: 2026-08-01
+- **Formerly**: numbered ADR 0009; renumbered 2026-08-25 to resolve the
+  collision with the sole-writer usage-engine ADR
 - **Supersedes**: the synchronized labelled heatmap day input required by ADR 0005
 
 ## Context
@@ -40,7 +42,7 @@ day buttons and could suggest dates outside the heatmap's rendered report data.
 
 ## Evidence
 
-- [Overview implementation](../../apps/web/src/overview.tsx)
+- [Heatmap implementation](../../apps/web/src/lib/features/report/overview/activity-heatmap.svelte)
 - [Accessibility browser coverage](../../apps/web/e2e/accessibility.spec.ts)
 - [Interaction coverage](../../apps/web/e2e/time-range.spec.ts)
 - [Presentation regression plan](../../plans/061-close-reopened-presentation-regressions.md)

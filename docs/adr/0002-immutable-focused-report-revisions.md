@@ -1,5 +1,10 @@
 # ADR 0002: Read immutable focused report revisions
 
+- **Status**: Accepted
+- **Date**: 2026-07-22
+- **Amended by**: [ADR 0009](0009-sole-writer-usage-engine-and-direct-sqlite-readers.md)
+  (artifact transport only; see the Plan 066 amendment below)
+
 ## Context
 
 A large report cannot be fetched and recomputed atomically in the browser while collection may publish a replacement.

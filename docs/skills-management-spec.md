@@ -2,7 +2,7 @@
 
 ## Status and scope
 
-This document specifies the Skills management work delivered alongside, but independently from, the application-audit follow-ups recorded in `docs/app-audit-2026-07-10.md`.
+This document specifies the Skills management work delivered alongside, but independently from, the application-audit follow-ups recorded in `docs/app-audit-2026-07-10.md`. The requirements remain binding; the package-boundary paths below were updated on 2026-08-25 to the post-SvelteKit layout (plan 068). `docs/skills-management.md` is the living feature overview.
 
 The feature provides a local control plane for inspecting, editing, enabling, and projecting agent skills. It does not derive inventory from portable or manually imported usage data and does not mutate native project skill directories or unmanaged runtime entries.
 
@@ -47,9 +47,9 @@ The feature provides a local control plane for inspecting, editing, enabling, an
 ## Package boundaries
 
 - `@ai-usage/skills` owns contracts, validation, bounded filesystem operations, scans, projections, Markdown IO, and workflows.
-- `apps/web/src/server/skills*` owns server-function validation and adaptation.
-- `apps/web/src/skills-route-controller.ts` owns route operations and snapshot replacement policy.
-- `apps/web/src/routes/skills.tsx` composes route presentation and URL-backed selection.
+- `apps/web/src/server/skills*` owns server-side validation and adaptation behind the oRPC contract.
+- `apps/web/src/lib/features/skills/shell` owns route operations and snapshot replacement policy (see its `INTEGRATION.md`).
+- `apps/web/src/routes/skills/` composes route presentation and URL-backed selection; `apps/web/src/lib/features/skills/{editor,management}` own the editor and management surfaces.
 - Browser-safe clients must use the documented `@ai-usage/skills/config` and `@ai-usage/skills/shared` exports and must not import server modules.
 
 ## Verification contract

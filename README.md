@@ -270,10 +270,11 @@ Merged CSV/JSON payloads include row provenance (`source.machineLabel`, `source.
 - `apps/cli`: read-only stored reports plus bounded engine-client/foreground fresh and mutating commands, portable snapshots, and output adapters
 - `apps/web`: read-only SvelteKit SSR/UI with an oRPC endpoint, control proxies, `/sources`, local Skills, and file-only `/sync` workspaces
 
-Architecture docs:
+Architecture docs (`docs/README.md` maps them all):
 
 - `docs/architecture.md`: package ownership, data flow, adapter rules, and guardrails
-- `docs/adr/`: short records for the implemented frontend decisions
+- `docs/adr/README.md`: the architecture decision index — runtime, boundary, and product invariants
+- `CONTEXT.md`: the ubiquitous language of the usage-reporting domain
 - `docs/future-work.md`: global backlog for known follow-ups
 - `docs/public-package-interfaces.md`: public package exports and import rules
 - `docs/generated-tooling-ownership.md`: Panda/SvelteKit/Vite/Turbo generated file ownership

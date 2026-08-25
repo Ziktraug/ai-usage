@@ -1,5 +1,8 @@
 # ADR 0003: Isolate the synthetic runtime
 
+- **Status**: Accepted
+- **Date**: 2026-07-22
+
 ## Context
 
 Development, reproduction, and browser testing need representative report data without discovering or exposing the operator's histories, configuration, credentials, or mutable local controls.

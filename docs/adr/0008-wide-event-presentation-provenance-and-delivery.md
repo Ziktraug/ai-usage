@@ -1,8 +1,10 @@
-# Wide-event presentation, provenance, and delivery diagnostics
+# ADR 0008: Wide-event presentation, provenance, and delivery diagnostics
 
 - **Status**: Accepted
 - **Date**: 2026-07-22
-- **Supersedes**: selected clauses of ADR 0002 and plan 036 only
+- **Supersedes**: selected clauses of
+  [ADR 0014](0014-effect-runtime-package-for-wide-events.md) (formerly
+  numbered ADR 0002) and plan 036 only
 - **Amended by**: [ADR 0009](0009-sole-writer-usage-engine-and-direct-sqlite-readers.md)
 
 ## Context
@@ -49,7 +51,7 @@ non-cooperative append and cooperative lock remain alive until I/O settles.
 Retention sweeps run on the first successful append and target rotation, not on
 steady-state appends.
 
-This ADR supersedes only ADR 0002/plan 036 choices that required one physical
+This ADR supersedes only ADR 0014 (formerly 0002)/plan 036 choices that required one physical
 TTY line, omitted producer resource context, kept web file diagnostics silent,
 owned application tags in the runtime, or allowed generic `.message` fallback.
 
