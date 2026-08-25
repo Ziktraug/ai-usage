@@ -2,6 +2,13 @@ name: PR Checks
 
 on:
   pull_request:
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - "plans/**"
+      - ".claude/**"
+      - ".agent-memory/**"
+      - LICENSE
   workflow_dispatch:
 
 permissions:
@@ -12,6 +19,44 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: Change Scope
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      browser: ${{ steps.scope.outputs.browser }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The pull_request checkout is the merge commit, so its first parent
+          # is the base branch tip and `git diff HEAD^1 HEAD` is exactly the
+          # PR change set. Depth 2 fetches both parents.
+          fetch-depth: 2
+      - id: scope
+        name: Decide whether the browser jobs have anything to verify
+        run: |
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "browser=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # The browser jobs execute apps/web, and through it 9 of the 13
+          # workspace packages; the demo/production job also boots
+          # apps/usage-engine, which pulls in the rest. The only code
+          # directory outside that surface is apps/cli, so the filter is
+          # inverted: skip the browser jobs only when every changed file is
+          # CLI-only or documentation.
+          browser=false
+          while IFS= read -r file; do
+            [ -z "$file" ] && continue
+            case "$file" in
+              apps/cli/*|*.md|docs/*|plans/*|.claude/*|.agent-memory/*|LICENSE) ;;
+              *) browser=true ;;
+            esac
+          done <<EOF
+          $(git diff --name-only HEAD^1 HEAD)
+          EOF
+          echo "browser=$browser" >> "$GITHUB_OUTPUT"
+
   static-types:
     name: Static and Types
     runs-on: ubuntu-latest
@@ -62,6 +107,10 @@ jobs:
 
   functional-browser:
     name: Functional Browser
+    needs: changes
+    # A skipped job still reports its status (as passing), so this stays
+    # compatible with required checks if branch protection is added later.
+    if: needs.changes.outputs.browser == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -82,6 +131,10 @@ jobs:
 
   demo-production-browser:
     name: Demo, Production, Performance
+    needs: changes
+    # A skipped job still reports its status (as passing), so this stays
+    # compatible with required checks if branch protection is added later.
+    if: needs.changes.outputs.browser == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:

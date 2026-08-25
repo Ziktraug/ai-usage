@@ -1,19 +1,12 @@
 import { defineConfig, devices } from '@playwright/test';
 
 /**
- * This is not a boot budget. Playwright waits for the first successful response, and reaching it
- * means Vite has optimised the dependency graph and transformed the app for SSR -- work whose scale
- * is a build, not a process start, and which a fresh checkout always pays in full.
- *
- * Measured on the development machine after `dev:prepare`: Vite reports ready in 816ms, but the
- * first response lands at 4,382ms, so the transform dominates. CI runs on two cores with the other
- * jobs alongside, and 120s was not enough there twice: both failures were "never became ready",
- * never a server that answered and then misbehaved.
- *
- * Sized so a runner an order of magnitude slower than the development machine still starts. A server
- * that is genuinely broken fails immediately with its own error rather than by waiting this out.
+ * This server is `bun --bun vite` in demo mode, not a built artifact, so it shares the dev
+ * server's startup profile and its known startup-hang class. Measured on the 2026-08-25 green CI
+ * run: ~6s from the SvelteKit tsconfig warning to tests running. 20s is ~3x headroom; a miss is a
+ * hang, not a slow start, and a larger number only buys a slower red.
  */
-const WEB_SERVER_COLD_START_TIMEOUT_MS = 300_000;
+const WEB_SERVER_COLD_START_TIMEOUT_MS = 20_000;
 
 const executablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH;
 

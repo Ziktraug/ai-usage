@@ -1,0 +1,42 @@
+# Manual harness for the intermittent `bun --bun vite` startup hang.
+#
+# The functional-browser job hits the hang at PR cadence with stdout discarded,
+# which is why its cause is still unknown. This workflow reproduces the same
+# cold start on demand, N times in one run, with DEBUG=vite:* and timestamped
+# stdout+stderr per iteration, so one dispatch yields several hang traces to
+# compare against green ones. At the observed ~35% rate, 15 iterations should
+# capture around 5.
+name: Dev Server Startup Stress
+
+on:
+  workflow_dispatch:
+    inputs:
+      iterations:
+        description: Number of cold starts to attempt
+        default: "15"
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  stress:
+    name: Cold Start Stress
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.13
+      - run: bun install --frozen-lockfile
+      - run: bun --filter @ai-usage/design-system build
+      - run: bun run --cwd apps/web dev:prepare
+      - run: bun --no-env-file tools/stress-web-dev-start.ts --iterations "${{ inputs.iterations }}"
+      - name: Upload startup traces
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dev-server-stress-traces
+          path: apps/web/test-results/dev-server-stress
+          retention-days: 14
