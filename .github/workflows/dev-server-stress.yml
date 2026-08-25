@@ -78,6 +78,13 @@ jobs:
       # Same precondition as the functional-browser job; also required by the
       # playwright mode, whose iterations run a real spec in a real browser.
       - run: bun x playwright install --with-deps chromium
+      # A wedged server can only be diagnosed from outside: gdb reads its
+      # userspace frames, and ptrace_scope must allow attaching to a process
+      # that is not a descendant of gdb.
+      - name: Enable external process inspection
+        run: |
+          sudo apt-get install -y --no-install-recommends gdb
+          echo 0 | sudo tee /proc/sys/kernel/yama/ptrace_scope
       - run: bun tools/stress-web-dev-start.ts --iterations "${{ inputs.iterations }}" --debug "${{ inputs.debug }}" --mode "${{ inputs.mode }}" --runner "${{ inputs.runner }}" --env-profile "${{ inputs.env-profile }}" --load "${{ inputs.load }}"
       - name: Upload startup traces
         if: always()

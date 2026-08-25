@@ -37,6 +37,7 @@
  */
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { captureFileName, captureProcessState, findProcessByCommand } from './capture-process-state.ts';
 
 const HOST = '127.0.0.1';
 const PORT = 4174;
@@ -45,6 +46,12 @@ const POLL_INTERVAL_MS = 250;
 const FORCE_KILL_AFTER_MS = 5000;
 const DEFAULT_ITERATIONS = 15;
 const PLAYWRIGHT_ITERATION_DEADLINE_MS = 180_000;
+// Playwright gives the webServer 20s (playwright.config.ts). Start capturing
+// at 9s: past every observed healthy start (max 15.8s end-to-end, server ready
+// well before), with room for the /proc sampling and a gdb attach before
+// Playwright tears the process down.
+const HANG_CAPTURE_AFTER_MS = 9000;
+const HANG_CAPTURE_POLL_MS = 500;
 const PLAYWRIGHT_SMOKE_SPEC = 'e2e/theme.spec.ts';
 
 const rootDirectory = path.resolve(import.meta.dirname, '..');
@@ -181,6 +188,54 @@ const writeIterationLog = async (
 };
 
 /**
+ * Watch for a server that is alive but not serving, and photograph it before
+ * Playwright kills it. This is the only window in which the wedged process
+ * exists and can still be inspected: Playwright's gracefulShutdown escalates
+ * to killing the process group, after which there is nothing left to attach
+ * to. Returns a stop function; capture happens at most once per iteration.
+ */
+const watchForWedgedServer = (
+  startedAt: number,
+  iteration: number,
+  label: string,
+  onCapture: (message: string) => void,
+): (() => void) => {
+  let stopped = false;
+  const poll = async (): Promise<void> => {
+    while (!stopped) {
+      await Bun.sleep(HANG_CAPTURE_POLL_MS);
+      if (stopped || Date.now() - startedAt < HANG_CAPTURE_AFTER_MS) {
+        continue;
+      }
+      try {
+        const response = await fetch(`http://${HOST}:${PORT}/`, { signal: AbortSignal.timeout(400) });
+        await response.arrayBuffer();
+        if (response.ok) {
+          return;
+        }
+      } catch {
+        // Not serving yet -- that is exactly the case worth photographing.
+      }
+      const pid = await findProcessByCommand(`vite --host ${HOST} --port ${PORT}`);
+      if (pid === undefined) {
+        continue;
+      }
+      const file = captureFileName(logDirectory, iteration, label);
+      onCapture(`harness: server pid ${pid} alive but not serving; capturing state to ${path.basename(file)}`);
+      await captureProcessState(pid, file);
+      onCapture('harness: capture complete');
+      return;
+    }
+  };
+  poll().catch(() => {
+    // A failed capture must never take the iteration down with it.
+  });
+  return () => {
+    stopped = true;
+  };
+};
+
+/**
  * The production chain: Playwright (itself under Bun) owns the webServer and
  * runs one real spec. The controlled env of the direct mode cannot apply here
  * -- Playwright needs HOME, the browser path, and CI detection -- so the full
@@ -203,9 +258,13 @@ const runPlaywrightIteration = async (
     { ...process.env, ...(debugEnabled ? { DEBUG: 'vite:*' } : {}) },
     startedAt,
   );
+  const stopWatching = watchForWedgedServer(startedAt, iteration, debugEnabled ? 'debug' : 'nodebug', (message) =>
+    lines.push(message),
+  );
   const deadline = setTimeout(() => child.kill('SIGKILL'), PLAYWRIGHT_ITERATION_DEADLINE_MS);
   const exitCode = await child.exited;
   clearTimeout(deadline);
+  stopWatching();
   await drained;
   const elapsedMs = Date.now() - startedAt;
 
