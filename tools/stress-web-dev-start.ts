@@ -53,7 +53,7 @@ const viteCacheDirectory = path.join(webDirectory, '.svelte-kit', 'dev', 'vite')
 const logDirectory = path.join(rootDirectory, '.dev-server-stress');
 
 type DebugMode = '0' | '1' | 'alternate';
-type StressMode = 'direct' | 'playwright';
+type StressMode = 'direct' | 'playwright' | 'wrapped';
 type RunnerRuntime = 'bun' | 'node';
 
 interface StressOptions {
@@ -64,7 +64,7 @@ interface StressOptions {
 }
 
 const USAGE =
-  'Usage: stress-web-dev-start.ts [--iterations <1-200>] [--debug 0|1|alternate] [--mode direct|playwright] [--runner bun|node]';
+  'Usage: stress-web-dev-start.ts [--iterations <1-200>] [--debug 0|1|alternate] [--mode direct|playwright|wrapped] [--runner bun|node]';
 
 const parseOptions = (argumentList: readonly string[]): StressOptions => {
   let debug: DebugMode = 'alternate';
@@ -78,7 +78,7 @@ const parseOptions = (argumentList: readonly string[]): StressOptions => {
       iterations = Number(value);
     } else if (flag === '--debug' && (value === '0' || value === '1' || value === 'alternate')) {
       debug = value;
-    } else if (flag === '--mode' && (value === 'direct' || value === 'playwright')) {
+    } else if (flag === '--mode' && (value === 'direct' || value === 'playwright' || value === 'wrapped')) {
       mode = value;
     } else if (flag === '--runner' && (value === 'bun' || value === 'node')) {
       runner = value;
@@ -214,11 +214,28 @@ const pollUntilResponse = async (deadlineAt: number): Promise<{ status: number |
   return { at: Date.now(), status: lastStatus };
 };
 
-const runDirectIteration = async (iteration: number, debugEnabled: boolean): Promise<IterationResult> => {
+/**
+ * The node-runner experiment (22/48 hangs) eliminated the parent's runtime as
+ * the trigger, leaving exactly two differences between the never-hanging
+ * direct mode and the hanging playwright chain: the `bun run dev` wrapper
+ * process (a Bun script-runner that is Vite's direct parent, alive throughout
+ * startup) and the full inherited environment. Wrapped mode isolates the
+ * wrapper: same minimal env as direct, but through `bun run dev` like the
+ * real webServer command. Hangs here indict the wrapper; a clean run indicts
+ * the environment.
+ */
+const runServerIteration = async (
+  iteration: number,
+  debugEnabled: boolean,
+  wrapped: boolean,
+): Promise<IterationResult> => {
   await rm(viteCacheDirectory, { force: true, recursive: true });
   const startedAt = Date.now();
+  const command = wrapped
+    ? ['bun', 'run', 'dev', '--', '--port', String(PORT), '--strictPort']
+    : ['bun', '--no-env-file', '--bun', 'vite', '--host', HOST, '--port', String(PORT), '--strictPort'];
   const { child, drained, lines } = captureChild(
-    ['bun', '--no-env-file', '--bun', 'vite', '--host', HOST, '--port', String(PORT), '--strictPort'],
+    command,
     {
       AI_USAGE_SVELTEKIT_PHASE: 'dev',
       AI_USAGE_SVELTEKIT_PRIVATE_E2E_OVERRIDES: '1',
@@ -241,6 +258,19 @@ const runDirectIteration = async (iteration: number, debugEnabled: boolean): Pro
 
   await terminateChild(child);
   await drained;
+  if (wrapped) {
+    // `bun run` forwards SIGTERM to the script child, but give the port time
+    // to actually free before the next --strictPort start.
+    const portFreeDeadline = Date.now() + FORCE_KILL_AFTER_MS;
+    while (Date.now() < portFreeDeadline) {
+      try {
+        await fetch(`http://${HOST}:${PORT}/`, { signal: AbortSignal.timeout(POLL_INTERVAL_MS) });
+      } catch {
+        break;
+      }
+      await Bun.sleep(POLL_INTERVAL_MS);
+    }
+  }
   await writeIterationLog(iteration, debugEnabled, outcome, lines);
   return { debugEnabled, elapsedMs, iteration, outcome };
 };
@@ -255,7 +285,7 @@ for (let iteration = 1; iteration <= iterations; iteration += 1) {
   const result =
     mode === 'playwright'
       ? await runPlaywrightIteration(iteration, debugEnabled, runner)
-      : await runDirectIteration(iteration, debugEnabled);
+      : await runServerIteration(iteration, debugEnabled, mode === 'wrapped');
   results.push(result);
   console.log(
     `iteration ${result.iteration}/${iterations} (${mode}/${runner}, ${debugEnabled ? 'debug' : 'no debug'}): ${result.outcome} in ${result.elapsedMs}ms`,

@@ -35,7 +35,7 @@ on:
         default: alternate
         required: false
       mode:
-        description: "Start chain: playwright (real e2e chain) or direct (vite alone)"
+        description: "Start chain: playwright (real e2e chain), wrapped (bun run dev, minimal env), or direct (vite alone)"
         default: playwright
         required: false
       runner:
