@@ -20,10 +20,10 @@ const openFilter = async (
 };
 
 const expectAnchoredUnder = async (page: Page, trigger: Locator, dialog: Locator): Promise<void> => {
-  const [dialogBox, triggerBox, viewportWidth] = await Promise.all([
+  const [dialogBox, triggerBox, layoutWidth] = await Promise.all([
     dialog.boundingBox(),
     trigger.boundingBox(),
-    page.evaluate(() => document.documentElement.clientWidth),
+    page.evaluate(() => Math.min(document.documentElement.clientWidth, document.documentElement.scrollWidth)),
   ]);
   if (!(dialogBox && triggerBox)) {
     throw new Error('Filter trigger and dialog must expose geometry');
@@ -34,11 +34,11 @@ const expectAnchoredUnder = async (page: Page, trigger: Locator, dialog: Locator
   expect(dialogBox.y - triggerBottom).toBeLessThanOrEqual(ZAG_OVERFLOW_PADDING);
   expect(dialogBox.width + PIXEL_TOLERANCE).toBeGreaterThanOrEqual(triggerBox.width);
 
-  const fitsToTheRight = triggerBox.x + dialogBox.width <= viewportWidth - ZAG_OVERFLOW_PADDING;
+  const fitsToTheRight = triggerBox.x + dialogBox.width <= layoutWidth - ZAG_OVERFLOW_PADDING;
   if (fitsToTheRight) {
     expect(Math.abs(dialogBox.x - triggerBox.x)).toBeLessThanOrEqual(PIXEL_TOLERANCE);
   } else {
-    expect(Math.abs(dialogBox.x + dialogBox.width - (viewportWidth - ZAG_OVERFLOW_PADDING))).toBeLessThanOrEqual(
+    expect(Math.abs(dialogBox.x + dialogBox.width - (layoutWidth - ZAG_OVERFLOW_PADDING))).toBeLessThanOrEqual(
       PIXEL_TOLERANCE,
     );
   }

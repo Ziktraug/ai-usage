@@ -91,7 +91,7 @@ export const toolbar = css({
 });
 export const controls = css({
   display: { base: 'grid', sm: 'contents' },
-  gridTemplateColumns: 'minmax(0, 0.75fr) minmax(0, 1.25fr)',
+  gridTemplateColumns: 'minmax(0, 0.7fr) minmax(0, 1.3fr)',
   w: { base: 'full', sm: 'auto' },
   gap: { base: '8px', sm: '0' },
   alignItems: 'center',
