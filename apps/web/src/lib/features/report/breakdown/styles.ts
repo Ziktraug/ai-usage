@@ -100,11 +100,6 @@ export const controls = css({
     w: { base: 'full', sm: 'auto' },
   },
   '& button, & a': { minH: { base: '44px', sm: '36px' } },
-  '& > [aria-label="Collection source status"]': {
-    gap: { base: '4px', sm: '8px' },
-    '& > a, & > button': { px: { base: '4px', sm: '10px' } },
-    '& > button': { whiteSpace: 'nowrap' },
-  },
   '& > :last-child:nth-child(odd)': { gridColumn: { base: '1 / -1', sm: 'auto' } },
 });
 export const actions = css({
@@ -114,7 +109,12 @@ export const actions = css({
   gap: { base: '8px', sm: '6px' },
   ml: { base: 0, sm: 'auto' },
   minW: 0,
-  '& > [aria-label="Collection source status"]': { ml: 0 },
+  '& > [aria-label="Collection source status"]': {
+    ml: 0,
+    gap: { base: '4px', sm: '8px' },
+    '& > a, & > button': { px: { base: '4px', sm: '10px' } },
+    '& > button': { whiteSpace: 'nowrap' },
+  },
 });
 
 export const table = css({ w: 'full', borderCollapse: 'collapse', fontSize: '12px' });
