@@ -7,7 +7,8 @@ import { createServer } from 'vite';
 const DISABLED_ATTRIBUTE_PATTERN = /\sdisabled(?:[\s=>])/u;
 const STATUS_LABEL_PATTERN = /<span class="[^"]*" data-source-summary-status="">Sources ready<\/span>/u;
 const ATTRIBUTION_PATTERN = /<p class="[^"]*" data-source-summary-attribution="">([\s\S]*?)<\/p>/u;
-const ATTRIBUTION_COPY_PATTERN = /^This status is from the source check at \w{3} \d{2} at \d{2}:\d{2}, update #1\.$/u;
+const ATTRIBUTION_COPY_PATTERN =
+  /^This status is from the source check at \w{3} \d{2}(?: at|,) \d{2}:\d{2}, update #1\.$/u;
 
 interface SvelteServerModule {
   render: (component: Component, options?: { props?: Record<string, unknown> }) => { body: string };
