@@ -42,6 +42,10 @@ on:
         description: "Server env in direct/wrapped modes: minimal (controlled), inherit (full CI env + FORCE_COLOR, like Playwright), or color (minimal + FORCE_COLOR only)"
         default: minimal
         required: false
+      drain-delay:
+        description: "Milliseconds to stall between output reads (direct/wrapped), filling the child's stdio socket buffer on purpose"
+        default: "0"
+        required: false
       load:
         description: "Synthetic busy CPU workers during startup (direct/wrapped modes), approximating the Playwright runner's contention"
         default: "0"
@@ -85,7 +89,7 @@ jobs:
         run: |
           sudo apt-get install -y --no-install-recommends gdb
           echo 0 | sudo tee /proc/sys/kernel/yama/ptrace_scope
-      - run: bun tools/stress-web-dev-start.ts --iterations "${{ inputs.iterations }}" --debug "${{ inputs.debug }}" --mode "${{ inputs.mode }}" --runner "${{ inputs.runner }}" --env-profile "${{ inputs.env-profile }}" --load "${{ inputs.load }}"
+      - run: bun tools/stress-web-dev-start.ts --iterations "${{ inputs.iterations }}" --debug "${{ inputs.debug }}" --mode "${{ inputs.mode }}" --runner "${{ inputs.runner }}" --env-profile "${{ inputs.env-profile }}" --load "${{ inputs.load }}" --drain-delay "${{ inputs.drain-delay }}"
       - name: Upload startup traces
         if: always()
         uses: actions/upload-artifact@v4

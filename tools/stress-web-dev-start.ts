@@ -66,6 +66,7 @@ type EnvProfile = 'minimal' | 'inherit' | 'color';
 
 interface StressOptions {
   readonly debug: DebugMode;
+  readonly drainDelayMs: number;
   readonly envProfile: EnvProfile;
   readonly iterations: number;
   readonly loadWorkers: number;
@@ -74,7 +75,7 @@ interface StressOptions {
 }
 
 const USAGE =
-  'Usage: stress-web-dev-start.ts [--iterations <1-200>] [--debug 0|1|alternate] [--mode direct|playwright|wrapped] [--runner bun|node] [--env-profile minimal|inherit|color] [--load <0-8>]';
+  'Usage: stress-web-dev-start.ts [--iterations <1-200>] [--debug 0|1|alternate] [--mode direct|playwright|wrapped] [--runner bun|node] [--env-profile minimal|inherit|color] [--load <0-8>] [--drain-delay <0-2000>]';
 
 const parseOptions = (argumentList: readonly string[]): StressOptions => {
   let debug: DebugMode = 'alternate';
@@ -83,6 +84,7 @@ const parseOptions = (argumentList: readonly string[]): StressOptions => {
   let runner: RunnerRuntime = 'bun';
   let envProfile: EnvProfile = 'minimal';
   let loadWorkers = 0;
+  let drainDelayMs = 0;
   for (let index = 0; index < argumentList.length; index += 2) {
     const flag = argumentList[index];
     const value = argumentList[index + 1];
@@ -98,6 +100,8 @@ const parseOptions = (argumentList: readonly string[]): StressOptions => {
       envProfile = value;
     } else if (flag === '--load') {
       loadWorkers = Number(value);
+    } else if (flag === '--drain-delay') {
+      drainDelayMs = Number(value);
     } else {
       throw new Error(USAGE);
     }
@@ -108,7 +112,10 @@ const parseOptions = (argumentList: readonly string[]): StressOptions => {
   if (!(Number.isSafeInteger(loadWorkers) && loadWorkers >= 0 && loadWorkers <= 8)) {
     throw new Error(USAGE);
   }
-  return { debug, envProfile, iterations, loadWorkers, mode, runner };
+  if (!(Number.isSafeInteger(drainDelayMs) && drainDelayMs >= 0 && drainDelayMs <= 2000)) {
+    throw new Error(USAGE);
+  }
+  return { debug, drainDelayMs, envProfile, iterations, loadWorkers, mode, runner };
 };
 
 /**
@@ -135,10 +142,19 @@ interface CapturedChild {
   readonly lines: string[];
 }
 
+/**
+ * drainDelayMs throttles how fast the harness reads the child's output. The
+ * captures show the wedged server parked in ep_poll with no thread blocked in
+ * a write -- but its stdout and stderr are socketpairs, so a non-blocking write
+ * to a full socket buffer parks the event loop in exactly that state while it
+ * waits for writability. A slow reader fills that buffer on purpose: if the
+ * hang rate jumps, output backpressure is the mechanism.
+ */
 const captureChild = (
   command: readonly string[],
   environment: Record<string, string | undefined>,
   startedAt: number,
+  drainDelayMs = 0,
 ): CapturedChild => {
   const lines: string[] = [];
   const child = Bun.spawn([...command], {
@@ -151,6 +167,9 @@ const captureChild = (
     const decoder = new TextDecoder();
     let pending = '';
     for await (const chunk of stream) {
+      if (drainDelayMs > 0) {
+        await Bun.sleep(drainDelayMs);
+      }
       pending += decoder.decode(chunk, { stream: true });
       const parts = pending.split('\n');
       pending = parts.pop() ?? '';
@@ -312,6 +331,7 @@ const runServerIteration = async (
   wrapped: boolean,
   envProfile: EnvProfile,
   loadWorkers: number,
+  drainDelayMs: number,
 ): Promise<IterationResult> => {
   await rm(viteCacheDirectory, { force: true, recursive: true });
   const load = spawnLoadWorkers(loadWorkers);
@@ -339,7 +359,7 @@ const runServerIteration = async (
   } else if (envProfile === 'color') {
     environment = { ...overrides, FORCE_COLOR: '1', PATH: process.env.PATH ?? '' };
   }
-  const { child, drained, lines } = captureChild(command, environment, startedAt);
+  const { child, drained, lines } = captureChild(command, environment, startedAt, drainDelayMs);
 
   const { at, status } = await pollUntilResponse(startedAt + READINESS_DEADLINE_MS);
   const elapsedMs = at - startedAt;
@@ -382,7 +402,7 @@ const runServerIteration = async (
   return { debugEnabled, elapsedMs, iteration, outcome };
 };
 
-const { debug, envProfile, iterations, loadWorkers, mode, runner } = parseOptions(process.argv.slice(2));
+const { debug, drainDelayMs, envProfile, iterations, loadWorkers, mode, runner } = parseOptions(process.argv.slice(2));
 await rm(logDirectory, { force: true, recursive: true });
 await mkdir(logDirectory, { recursive: true });
 
@@ -392,7 +412,7 @@ for (let iteration = 1; iteration <= iterations; iteration += 1) {
   const result =
     mode === 'playwright'
       ? await runPlaywrightIteration(iteration, debugEnabled, runner)
-      : await runServerIteration(iteration, debugEnabled, mode === 'wrapped', envProfile, loadWorkers);
+      : await runServerIteration(iteration, debugEnabled, mode === 'wrapped', envProfile, loadWorkers, drainDelayMs);
   results.push(result);
   console.log(
     `iteration ${result.iteration}/${iterations} (${mode}/${runner}/${envProfile}, ${debugEnabled ? 'debug' : 'no debug'}): ${result.outcome} in ${result.elapsedMs}ms`,
@@ -402,7 +422,7 @@ for (let iteration = 1; iteration <= iterations; iteration += 1) {
 const hangs = results.filter((result) => result.outcome !== 'ready');
 await writeFile(
   path.join(logDirectory, 'summary.json'),
-  `${JSON.stringify({ envProfile, iterations, loadWorkers, mode, results, runner }, null, 2)}\n`,
+  `${JSON.stringify({ drainDelayMs, envProfile, iterations, loadWorkers, mode, results, runner }, null, 2)}\n`,
   'utf8',
 );
 console.log(`\n${hangs.length}/${iterations} starts did not become ready. Logs: ${logDirectory}`);
