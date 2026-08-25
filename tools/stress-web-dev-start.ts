@@ -61,12 +61,13 @@ interface StressOptions {
   readonly debug: DebugMode;
   readonly envProfile: EnvProfile;
   readonly iterations: number;
+  readonly loadWorkers: number;
   readonly mode: StressMode;
   readonly runner: RunnerRuntime;
 }
 
 const USAGE =
-  'Usage: stress-web-dev-start.ts [--iterations <1-200>] [--debug 0|1|alternate] [--mode direct|playwright|wrapped] [--runner bun|node] [--env-profile minimal|inherit|color]';
+  'Usage: stress-web-dev-start.ts [--iterations <1-200>] [--debug 0|1|alternate] [--mode direct|playwright|wrapped] [--runner bun|node] [--env-profile minimal|inherit|color] [--load <0-8>]';
 
 const parseOptions = (argumentList: readonly string[]): StressOptions => {
   let debug: DebugMode = 'alternate';
@@ -74,6 +75,7 @@ const parseOptions = (argumentList: readonly string[]): StressOptions => {
   let mode: StressMode = 'direct';
   let runner: RunnerRuntime = 'bun';
   let envProfile: EnvProfile = 'minimal';
+  let loadWorkers = 0;
   for (let index = 0; index < argumentList.length; index += 2) {
     const flag = argumentList[index];
     const value = argumentList[index + 1];
@@ -87,6 +89,8 @@ const parseOptions = (argumentList: readonly string[]): StressOptions => {
       runner = value;
     } else if (flag === '--env-profile' && (value === 'minimal' || value === 'inherit' || value === 'color')) {
       envProfile = value;
+    } else if (flag === '--load') {
+      loadWorkers = Number(value);
     } else {
       throw new Error(USAGE);
     }
@@ -94,8 +98,22 @@ const parseOptions = (argumentList: readonly string[]): StressOptions => {
   if (!(Number.isSafeInteger(iterations) && iterations > 0 && iterations <= 200)) {
     throw new Error(USAGE);
   }
-  return { debug, envProfile, iterations, mode, runner };
+  if (!(Number.isSafeInteger(loadWorkers) && loadWorkers >= 0 && loadWorkers <= 8)) {
+    throw new Error(USAGE);
+  }
+  return { debug, envProfile, iterations, loadWorkers, mode, runner };
 };
+
+/**
+ * Synthetic CPU contention. During a real e2e start the Playwright runner is
+ * collecting tests and launching Chromium beside the server on a two-core
+ * runner; the wrapped harness idles, which may be why it hangs at ~4% where
+ * the playwright chain hangs at ~35-60%. Busy shells approximate that load.
+ */
+const spawnLoadWorkers = (count: number): Bun.Subprocess[] =>
+  Array.from({ length: count }, () =>
+    Bun.spawn(['bash', '-c', 'while :; do :; done'], { stderr: 'ignore', stdout: 'ignore' }),
+  );
 
 interface IterationResult {
   readonly debugEnabled: boolean;
@@ -234,8 +252,10 @@ const runServerIteration = async (
   debugEnabled: boolean,
   wrapped: boolean,
   envProfile: EnvProfile,
+  loadWorkers: number,
 ): Promise<IterationResult> => {
   await rm(viteCacheDirectory, { force: true, recursive: true });
+  const load = spawnLoadWorkers(loadWorkers);
   const startedAt = Date.now();
   const command = wrapped
     ? ['bun', 'run', 'dev', '--', '--port', String(PORT), '--strictPort']
@@ -267,6 +287,9 @@ const runServerIteration = async (
   let outcome: IterationResult['outcome'] = 'hang';
   if (status !== undefined) {
     outcome = status >= 200 && status < 400 ? 'ready' : `http-${status}`;
+  }
+  for (const worker of load) {
+    worker.kill('SIGKILL');
   }
 
   await terminateChild(child);
@@ -300,7 +323,7 @@ const runServerIteration = async (
   return { debugEnabled, elapsedMs, iteration, outcome };
 };
 
-const { debug, envProfile, iterations, mode, runner } = parseOptions(process.argv.slice(2));
+const { debug, envProfile, iterations, loadWorkers, mode, runner } = parseOptions(process.argv.slice(2));
 await rm(logDirectory, { force: true, recursive: true });
 await mkdir(logDirectory, { recursive: true });
 
@@ -310,7 +333,7 @@ for (let iteration = 1; iteration <= iterations; iteration += 1) {
   const result =
     mode === 'playwright'
       ? await runPlaywrightIteration(iteration, debugEnabled, runner)
-      : await runServerIteration(iteration, debugEnabled, mode === 'wrapped', envProfile);
+      : await runServerIteration(iteration, debugEnabled, mode === 'wrapped', envProfile, loadWorkers);
   results.push(result);
   console.log(
     `iteration ${result.iteration}/${iterations} (${mode}/${runner}/${envProfile}, ${debugEnabled ? 'debug' : 'no debug'}): ${result.outcome} in ${result.elapsedMs}ms`,
@@ -320,7 +343,7 @@ for (let iteration = 1; iteration <= iterations; iteration += 1) {
 const hangs = results.filter((result) => result.outcome !== 'ready');
 await writeFile(
   path.join(logDirectory, 'summary.json'),
-  `${JSON.stringify({ envProfile, iterations, mode, results, runner }, null, 2)}\n`,
+  `${JSON.stringify({ envProfile, iterations, loadWorkers, mode, results, runner }, null, 2)}\n`,
   'utf8',
 );
 console.log(`\n${hangs.length}/${iterations} starts did not become ready. Logs: ${logDirectory}`);
