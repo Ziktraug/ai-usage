@@ -6,15 +6,26 @@
  * spawns the exact command the Playwright webServer uses, and polls the port
  * until the first HTTP response or the deadline. Output is
  * captured with per-line elapsed timestamps so a hang shows *where* startup
- * stopped, not just that it did. Logs land in apps/web/test-results/, which is
- * gitignored and what CI uploads as an artifact.
+ * stopped, not just that it did. Logs land in .dev-server-stress/ at the repo
+ * root (gitignored, uploaded by CI); they must NOT live under
+ * apps/web/test-results, because Playwright wipes its outputDir at run start
+ * and the playwright mode would delete the harness logs mid-run.
  *
  * `DEBUG=vite:*` is itself a timing perturbation, and the job that hangs runs
  * without it, so by default iterations alternate debug off/on: a hang that only
  * occurs in the no-debug arm identifies a heisenbug, and one with debug carries
  * its own forensics. Force one arm with --debug 0|1.
  *
- * Usage: bun --no-env-file tools/stress-web-dev-start.ts [--iterations 15] [--debug 0|1|alternate]
+ * Two modes, because 63 direct spawns across 9 runner VMs reproduced nothing
+ * while the real job hung the same morning:
+ * - direct: spawn `bun --bun vite` alone, the minimal server-only start.
+ * - playwright: run one real spec through `bun --bun playwright test`, which is
+ *   the exact production chain -- a second live Bun process (the Playwright
+ *   runner) spawns a shell, `bun run dev`, then `bun --bun vite`. The repo's
+ *   prior Bun 1.4 investigation recorded the hang as concurrency-dependent, and
+ *   this is the concurrency the direct mode lacks.
+ *
+ * Usage: bun tools/stress-web-dev-start.ts [--iterations 15] [--debug 0|1|alternate] [--mode direct|playwright]
  * Requires `bun --filter @ai-usage/design-system build` and
  * `bun run --cwd apps/web dev:prepare` to have run first, like test:e2e.
  */
@@ -27,22 +38,30 @@ const READINESS_DEADLINE_MS = 30_000;
 const POLL_INTERVAL_MS = 250;
 const FORCE_KILL_AFTER_MS = 5000;
 const DEFAULT_ITERATIONS = 15;
+const PLAYWRIGHT_ITERATION_DEADLINE_MS = 180_000;
+const PLAYWRIGHT_SMOKE_SPEC = 'e2e/theme.spec.ts';
 
 const rootDirectory = path.resolve(import.meta.dirname, '..');
 const webDirectory = path.join(rootDirectory, 'apps', 'web');
 const viteCacheDirectory = path.join(webDirectory, '.svelte-kit', 'dev', 'vite');
-const logDirectory = path.join(webDirectory, 'test-results', 'dev-server-stress');
+const logDirectory = path.join(rootDirectory, '.dev-server-stress');
 
 type DebugMode = '0' | '1' | 'alternate';
+type StressMode = 'direct' | 'playwright';
 
 interface StressOptions {
   readonly debug: DebugMode;
   readonly iterations: number;
+  readonly mode: StressMode;
 }
+
+const USAGE =
+  'Usage: stress-web-dev-start.ts [--iterations <1-200>] [--debug 0|1|alternate] [--mode direct|playwright]';
 
 const parseOptions = (argumentList: readonly string[]): StressOptions => {
   let debug: DebugMode = 'alternate';
   let iterations = DEFAULT_ITERATIONS;
+  let mode: StressMode = 'direct';
   for (let index = 0; index < argumentList.length; index += 2) {
     const flag = argumentList[index];
     const value = argumentList[index + 1];
@@ -50,22 +69,113 @@ const parseOptions = (argumentList: readonly string[]): StressOptions => {
       iterations = Number(value);
     } else if (flag === '--debug' && (value === '0' || value === '1' || value === 'alternate')) {
       debug = value;
+    } else if (flag === '--mode' && (value === 'direct' || value === 'playwright')) {
+      mode = value;
     } else {
-      throw new Error('Usage: stress-web-dev-start.ts [--iterations <1-200>] [--debug 0|1|alternate]');
+      throw new Error(USAGE);
     }
   }
   if (!(Number.isSafeInteger(iterations) && iterations > 0 && iterations <= 200)) {
-    throw new Error('Usage: stress-web-dev-start.ts [--iterations <1-200>] [--debug 0|1|alternate]');
+    throw new Error(USAGE);
   }
-  return { debug, iterations };
+  return { debug, iterations, mode };
 };
 
 interface IterationResult {
   readonly debugEnabled: boolean;
   readonly elapsedMs: number;
   readonly iteration: number;
-  readonly outcome: 'ready' | 'hang' | `http-${number}`;
+  readonly outcome: 'ready' | 'hang' | `http-${number}` | `exit-${number}`;
 }
+
+interface CapturedChild {
+  readonly child: Bun.Subprocess<'ignore', 'pipe', 'pipe'>;
+  readonly drained: Promise<unknown>;
+  readonly lines: string[];
+}
+
+const captureChild = (
+  command: readonly string[],
+  environment: Record<string, string | undefined>,
+  startedAt: number,
+): CapturedChild => {
+  const lines: string[] = [];
+  const child = Bun.spawn([...command], {
+    cwd: webDirectory,
+    env: environment,
+    stderr: 'pipe',
+    stdout: 'pipe',
+  });
+  const drain = async (stream: ReadableStream<Uint8Array>, label: 'stdout' | 'stderr'): Promise<void> => {
+    const decoder = new TextDecoder();
+    let pending = '';
+    for await (const chunk of stream) {
+      pending += decoder.decode(chunk, { stream: true });
+      const parts = pending.split('\n');
+      pending = parts.pop() ?? '';
+      for (const part of parts) {
+        lines.push(`${String(Date.now() - startedAt).padStart(6)}ms ${label} ${part}`);
+      }
+    }
+    if (pending.length > 0) {
+      lines.push(`${String(Date.now() - startedAt).padStart(6)}ms ${label} ${pending}`);
+    }
+  };
+  const drained = Promise.all([drain(child.stdout, 'stdout'), drain(child.stderr, 'stderr')]);
+  return { child, drained, lines };
+};
+
+const terminateChild = async (child: Bun.Subprocess): Promise<void> => {
+  child.kill('SIGTERM');
+  const forceKill = setTimeout(() => child.kill('SIGKILL'), FORCE_KILL_AFTER_MS);
+  await child.exited;
+  clearTimeout(forceKill);
+};
+
+const writeIterationLog = async (
+  iteration: number,
+  debugEnabled: boolean,
+  outcome: IterationResult['outcome'],
+  lines: readonly string[],
+): Promise<void> => {
+  const debugSuffix = debugEnabled ? 'debug' : 'nodebug';
+  const logFile = path.join(
+    logDirectory,
+    `iteration-${String(iteration).padStart(3, '0')}-${debugSuffix}-${outcome}.log`,
+  );
+  await writeFile(logFile, `${lines.join('\n')}\n`, 'utf8');
+};
+
+/**
+ * The production chain: Playwright (itself under Bun) owns the webServer and
+ * runs one real spec. The controlled env of the direct mode cannot apply here
+ * -- Playwright needs HOME, the browser path, and CI detection -- so the full
+ * environment is inherited and only DEBUG is toggled. A webServer hang
+ * surfaces as Playwright's own timeout message, which is the classifier.
+ */
+const runPlaywrightIteration = async (iteration: number, debugEnabled: boolean): Promise<IterationResult> => {
+  await rm(viteCacheDirectory, { force: true, recursive: true });
+  const startedAt = Date.now();
+  const { child, drained, lines } = captureChild(
+    ['bun', '--bun', 'playwright', 'test', PLAYWRIGHT_SMOKE_SPEC, '--workers', '1'],
+    { ...process.env, ...(debugEnabled ? { DEBUG: 'vite:*' } : {}) },
+    startedAt,
+  );
+  const deadline = setTimeout(() => child.kill('SIGKILL'), PLAYWRIGHT_ITERATION_DEADLINE_MS);
+  const exitCode = await child.exited;
+  clearTimeout(deadline);
+  await drained;
+  const elapsedMs = Date.now() - startedAt;
+
+  let outcome: IterationResult['outcome'] = `exit-${exitCode}`;
+  if (exitCode === 0) {
+    outcome = 'ready';
+  } else if (lines.some((line) => line.includes('Timed out waiting') && line.includes('config.webServer'))) {
+    outcome = 'hang';
+  }
+  await writeIterationLog(iteration, debugEnabled, outcome, lines);
+  return { debugEnabled, elapsedMs, iteration, outcome };
+};
 
 const pollUntilResponse = async (deadlineAt: number): Promise<{ status: number | undefined; at: number }> => {
   let lastStatus: number | undefined;
@@ -85,44 +195,23 @@ const pollUntilResponse = async (deadlineAt: number): Promise<{ status: number |
   return { at: Date.now(), status: lastStatus };
 };
 
-const runIteration = async (iteration: number, debugEnabled: boolean): Promise<IterationResult> => {
+const runDirectIteration = async (iteration: number, debugEnabled: boolean): Promise<IterationResult> => {
   await rm(viteCacheDirectory, { force: true, recursive: true });
   const startedAt = Date.now();
-  const lines: string[] = [];
-  const child = Bun.spawn(
+  const { child, drained, lines } = captureChild(
     ['bun', '--no-env-file', '--bun', 'vite', '--host', HOST, '--port', String(PORT), '--strictPort'],
     {
-      cwd: webDirectory,
-      env: {
-        AI_USAGE_SVELTEKIT_PHASE: 'dev',
-        AI_USAGE_SVELTEKIT_PRIVATE_E2E_OVERRIDES: '1',
-        BROWSER: 'none',
-        ...(debugEnabled ? { DEBUG: 'vite:*' } : {}),
-        NO_COLOR: '1',
-        PATH: process.env.PATH ?? '',
-        TZ: 'UTC',
-        VITE_AI_USAGE_E2E: '1',
-      },
-      stderr: 'pipe',
-      stdout: 'pipe',
+      AI_USAGE_SVELTEKIT_PHASE: 'dev',
+      AI_USAGE_SVELTEKIT_PRIVATE_E2E_OVERRIDES: '1',
+      BROWSER: 'none',
+      ...(debugEnabled ? { DEBUG: 'vite:*' } : {}),
+      NO_COLOR: '1',
+      PATH: process.env.PATH ?? '',
+      TZ: 'UTC',
+      VITE_AI_USAGE_E2E: '1',
     },
+    startedAt,
   );
-  const drain = async (stream: ReadableStream<Uint8Array>, label: 'stdout' | 'stderr'): Promise<void> => {
-    const decoder = new TextDecoder();
-    let pending = '';
-    for await (const chunk of stream) {
-      pending += decoder.decode(chunk, { stream: true });
-      const parts = pending.split('\n');
-      pending = parts.pop() ?? '';
-      for (const part of parts) {
-        lines.push(`${String(Date.now() - startedAt).padStart(6)}ms ${label} ${part}`);
-      }
-    }
-    if (pending.length > 0) {
-      lines.push(`${String(Date.now() - startedAt).padStart(6)}ms ${label} ${pending}`);
-    }
-  };
-  const drained = Promise.all([drain(child.stdout, 'stdout'), drain(child.stderr, 'stderr')]);
 
   const { at, status } = await pollUntilResponse(startedAt + READINESS_DEADLINE_MS);
   const elapsedMs = at - startedAt;
@@ -131,39 +220,33 @@ const runIteration = async (iteration: number, debugEnabled: boolean): Promise<I
     outcome = status >= 200 && status < 400 ? 'ready' : `http-${status}`;
   }
 
-  child.kill('SIGTERM');
-  const forceKill = setTimeout(() => child.kill('SIGKILL'), FORCE_KILL_AFTER_MS);
-  await child.exited;
-  clearTimeout(forceKill);
+  await terminateChild(child);
   await drained;
-
-  const debugSuffix = debugEnabled ? 'debug' : 'nodebug';
-  const logFile = path.join(
-    logDirectory,
-    `iteration-${String(iteration).padStart(3, '0')}-${debugSuffix}-${outcome}.log`,
-  );
-  await writeFile(logFile, `${lines.join('\n')}\n`, 'utf8');
+  await writeIterationLog(iteration, debugEnabled, outcome, lines);
   return { debugEnabled, elapsedMs, iteration, outcome };
 };
 
-const { debug, iterations } = parseOptions(process.argv.slice(2));
+const { debug, iterations, mode } = parseOptions(process.argv.slice(2));
 await rm(logDirectory, { force: true, recursive: true });
 await mkdir(logDirectory, { recursive: true });
 
 const results: IterationResult[] = [];
 for (let iteration = 1; iteration <= iterations; iteration += 1) {
   const debugEnabled = debug === 'alternate' ? iteration % 2 === 0 : debug === '1';
-  const result = await runIteration(iteration, debugEnabled);
+  const result =
+    mode === 'playwright'
+      ? await runPlaywrightIteration(iteration, debugEnabled)
+      : await runDirectIteration(iteration, debugEnabled);
   results.push(result);
   console.log(
-    `iteration ${result.iteration}/${iterations} (${debugEnabled ? 'debug' : 'no debug'}): ${result.outcome} in ${result.elapsedMs}ms`,
+    `iteration ${result.iteration}/${iterations} (${mode}, ${debugEnabled ? 'debug' : 'no debug'}): ${result.outcome} in ${result.elapsedMs}ms`,
   );
 }
 
 const hangs = results.filter((result) => result.outcome !== 'ready');
 await writeFile(
   path.join(logDirectory, 'summary.json'),
-  `${JSON.stringify({ iterations, results }, null, 2)}\n`,
+  `${JSON.stringify({ iterations, mode, results }, null, 2)}\n`,
   'utf8',
 );
 console.log(`\n${hangs.length}/${iterations} starts did not become ready. Logs: ${logDirectory}`);

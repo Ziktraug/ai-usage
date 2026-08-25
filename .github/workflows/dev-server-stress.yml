@@ -13,6 +13,14 @@
 # - DEBUG=vite:* is itself a timing perturbation, and the job that hangs runs
 #   without it -- hence iterations alternate debug off/on inside each sample
 #   (see tools/stress-web-dev-start.ts).
+#
+# The second dispatch (v2 matrix, 48 direct starts across 8 VMs, both debug
+# arms) also came back clean -- 0/63 cumulative against a real hang the same
+# morning. A direct `bun --bun vite` spawn therefore does not reproduce; the
+# default mode is now "playwright", the exact production chain (Playwright
+# under Bun owning the webServer and running one real spec), which is the
+# concurrency the direct mode lacked. Mode "direct" remains selectable as the
+# minimal control arm.
 name: Dev Server Startup Stress
 
 on:
@@ -25,6 +33,10 @@ on:
       debug:
         description: "DEBUG=vite:* mode: 0, 1, or alternate"
         default: alternate
+        required: false
+      mode:
+        description: "Start chain: playwright (real e2e chain) or direct (vite alone)"
+        default: playwright
         required: false
 
 permissions:
@@ -47,11 +59,14 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun --filter @ai-usage/design-system build
       - run: bun run --cwd apps/web dev:prepare
-      - run: bun --no-env-file tools/stress-web-dev-start.ts --iterations "${{ inputs.iterations }}" --debug "${{ inputs.debug }}"
+      # Same precondition as the functional-browser job; also required by the
+      # playwright mode, whose iterations run a real spec in a real browser.
+      - run: bun x playwright install --with-deps chromium
+      - run: bun tools/stress-web-dev-start.ts --iterations "${{ inputs.iterations }}" --debug "${{ inputs.debug }}" --mode "${{ inputs.mode }}"
       - name: Upload startup traces
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: dev-server-stress-traces-sample-${{ matrix.sample }}
-          path: apps/web/test-results/dev-server-stress
+          path: .dev-server-stress
           retention-days: 14
