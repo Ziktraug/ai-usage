@@ -534,10 +534,24 @@ composition defects found on the first pass were fixed and recaptured in both
 themes: Sessions and Projects no longer widen the 768 px document, and Skills
 health disclosures no longer overlap at 1280 px. No residual U-row remains.
 
-Fresh whole-diff review of `main...4f46e5df` returned ACCEPT with no findings.
+Fresh whole-diff review of `main...ee155391` returned ACCEPT with no findings.
 Every U01–U42 row maps to a DONE child. The host-gate work closed D14–D19 with
 portable implementations and deterministic proofs; D20–D22 are settled
 maintainer decisions recorded in the ignored run state.
+
+### Terminal Linux CI portability closure
+
+- Commits `610c1a5b` through `ee155391` made the already accepted contracts
+  portable across macOS and Linux without weakening browser paging, geometry,
+  source-status, no-write, or presentation evidence. Four causal Overview
+  baselines were rendered on their named hosts and inspected before refresh.
+- GitHub Actions run `32798391790` passed all five groups at implementation tip
+  `ee155391`: Static and Types; Functional Browser; Production and Lifecycle;
+  Unit, Build, and Client Boundary; and Demo, Production, Performance. The
+  benchmark retained exactly 5,000 synthetic sessions. No Docker was used.
+- Final portability review `codex-reviews/final-r6.md` returned ACCEPT with no
+  findings. The only remaining action is the permission-gated PR body metadata
+  edit described below; it is not a code, test, or acceptance blocker.
 
 ### Remaining external action
 
