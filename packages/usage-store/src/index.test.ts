@@ -990,8 +990,8 @@ describe('usage-store public boundary', () => {
         rtkSavedTokens: 20,
       };
       const bundle = makeBundle(machineB, [peerRow]);
-      const peerRowKey = toSerializedMergeRow(peerRow, machineB).rowKey;
       const preview = await Effect.runPromise(previewPeerMergeBundle({ bundle, dbPath, localMachineId: machineA.id }));
+      const databaseBeforeConfirmation = snapshotStoredFile(dbPath);
       const { Database } = await import('bun:sqlite');
       const originalExec = Database.prototype.exec;
       let replacementOccurred = false;
@@ -1023,21 +1023,13 @@ describe('usage-store public boundary', () => {
       expect(replacementOccurred).toBe(true);
       expect(error.reason).toBe('preview-stale');
       for (const inspectedPath of [dbPath, movedDbPath]) {
-        const inspection = new Database(inspectedPath, { create: false, readwrite: true });
-        const generation = inspection
-          .query("SELECT value FROM usage_store_metadata WHERE key = 'generation'")
-          .get() as { value: number };
-        const peerCount = inspection
-          .query('SELECT COUNT(*) AS count FROM usage_rows WHERE row_key = ?')
-          .get(peerRowKey) as { count: number };
-        const enrichmentCount = inspection
-          .query('SELECT COUNT(*) AS count FROM usage_row_enrichments WHERE row_key = ?')
-          .get(peerRowKey) as { count: number };
-        inspection.close();
-        expect(generation.value).toBe(0);
-        expect(peerCount.count).toBe(0);
-        expect(enrichmentCount.count).toBe(0);
+        const snapshotAfterConfirmation = snapshotStoredFile(inspectedPath);
+        expect(snapshotAfterConfirmation.hash).toBe(databaseBeforeConfirmation.hash);
+        expect(snapshotAfterConfirmation.mode).toBe(databaseBeforeConfirmation.mode);
+        expect(snapshotAfterConfirmation.size).toBe(databaseBeforeConfirmation.size);
       }
+      expect(await Effect.runPromise(queryUsageStoreGeneration({ dbPath }))).toBe(0);
+      expect((await Effect.runPromise(queryReportRows({ dbPath }))).rows).toHaveLength(0);
     }
   });
 
