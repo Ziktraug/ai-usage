@@ -62,9 +62,11 @@ const logDirectory = path.join(rootDirectory, '.dev-server-stress');
 type DebugMode = '0' | '1' | 'alternate';
 type StressMode = 'direct' | 'playwright' | 'wrapped';
 type RunnerRuntime = 'bun' | 'node';
+type CachePolicy = 'cold' | 'warm';
 type EnvProfile = 'minimal' | 'inherit' | 'color';
 
 interface StressOptions {
+  readonly cache: CachePolicy;
   readonly debug: DebugMode;
   readonly drainDelayMs: number;
   readonly envProfile: EnvProfile;
@@ -75,7 +77,7 @@ interface StressOptions {
 }
 
 const USAGE =
-  'Usage: stress-web-dev-start.ts [--iterations <1-200>] [--debug 0|1|alternate] [--mode direct|playwright|wrapped] [--runner bun|node] [--env-profile minimal|inherit|color] [--load <0-8>] [--drain-delay <0-2000>]';
+  'Usage: stress-web-dev-start.ts [--iterations <1-200>] [--debug 0|1|alternate] [--mode direct|playwright|wrapped] [--runner bun|node] [--env-profile minimal|inherit|color] [--load <0-8>] [--drain-delay <0-2000>] [--cache cold|warm]';
 
 const parseOptions = (argumentList: readonly string[]): StressOptions => {
   let debug: DebugMode = 'alternate';
@@ -85,6 +87,7 @@ const parseOptions = (argumentList: readonly string[]): StressOptions => {
   let envProfile: EnvProfile = 'minimal';
   let loadWorkers = 0;
   let drainDelayMs = 0;
+  let cache: CachePolicy = 'cold';
   for (let index = 0; index < argumentList.length; index += 2) {
     const flag = argumentList[index];
     const value = argumentList[index + 1];
@@ -102,6 +105,8 @@ const parseOptions = (argumentList: readonly string[]): StressOptions => {
       loadWorkers = Number(value);
     } else if (flag === '--drain-delay') {
       drainDelayMs = Number(value);
+    } else if (flag === '--cache' && (value === 'cold' || value === 'warm')) {
+      cache = value;
     } else {
       throw new Error(USAGE);
     }
@@ -115,7 +120,7 @@ const parseOptions = (argumentList: readonly string[]): StressOptions => {
   if (!(Number.isSafeInteger(drainDelayMs) && drainDelayMs >= 0 && drainDelayMs <= 2000)) {
     throw new Error(USAGE);
   }
-  return { debug, drainDelayMs, envProfile, iterations, loadWorkers, mode, runner };
+  return { cache, debug, drainDelayMs, envProfile, iterations, loadWorkers, mode, runner };
 };
 
 /**
@@ -265,8 +270,11 @@ const runPlaywrightIteration = async (
   iteration: number,
   debugEnabled: boolean,
   runner: RunnerRuntime,
+  cache: CachePolicy,
 ): Promise<IterationResult> => {
-  await rm(viteCacheDirectory, { force: true, recursive: true });
+  if (cache === 'cold') {
+    await rm(viteCacheDirectory, { force: true, recursive: true });
+  }
   const startedAt = Date.now();
   const runnerCommand =
     runner === 'node'
@@ -332,8 +340,11 @@ const runServerIteration = async (
   envProfile: EnvProfile,
   loadWorkers: number,
   drainDelayMs: number,
+  cache: CachePolicy,
 ): Promise<IterationResult> => {
-  await rm(viteCacheDirectory, { force: true, recursive: true });
+  if (cache === 'cold') {
+    await rm(viteCacheDirectory, { force: true, recursive: true });
+  }
   const load = spawnLoadWorkers(loadWorkers);
   const startedAt = Date.now();
   const command = wrapped
@@ -402,17 +413,41 @@ const runServerIteration = async (
   return { debugEnabled, elapsedMs, iteration, outcome };
 };
 
-const { debug, drainDelayMs, envProfile, iterations, loadWorkers, mode, runner } = parseOptions(process.argv.slice(2));
+const { cache, debug, drainDelayMs, envProfile, iterations, loadWorkers, mode, runner } = parseOptions(
+  process.argv.slice(2),
+);
 await rm(logDirectory, { force: true, recursive: true });
 await mkdir(logDirectory, { recursive: true });
+
+/**
+ * Warm mode answers a question the captures raised: every hang stalls right
+ * where Vite optimises dependencies, and the process is then fully parked --
+ * main thread in ep_poll, twelve rolldown workers in futex_do_wait, nobody
+ * runnable. That is the shape of a handoff between the main thread and the
+ * worker pool that never completes. A populated cache skips the optimisation,
+ * so if the hang needs it, warm runs stop hanging -- and pre-warming in
+ * dev:prepare becomes a real fix, not just a diagnosis.
+ */
+if (cache === 'warm') {
+  console.log('warming the dependency cache with one unmeasured start');
+  await runServerIteration(0, false, mode === 'wrapped', envProfile, 0, 0, 'cold');
+}
 
 const results: IterationResult[] = [];
 for (let iteration = 1; iteration <= iterations; iteration += 1) {
   const debugEnabled = debug === 'alternate' ? iteration % 2 === 0 : debug === '1';
   const result =
     mode === 'playwright'
-      ? await runPlaywrightIteration(iteration, debugEnabled, runner)
-      : await runServerIteration(iteration, debugEnabled, mode === 'wrapped', envProfile, loadWorkers, drainDelayMs);
+      ? await runPlaywrightIteration(iteration, debugEnabled, runner, cache)
+      : await runServerIteration(
+          iteration,
+          debugEnabled,
+          mode === 'wrapped',
+          envProfile,
+          loadWorkers,
+          drainDelayMs,
+          cache,
+        );
   results.push(result);
   console.log(
     `iteration ${result.iteration}/${iterations} (${mode}/${runner}/${envProfile}, ${debugEnabled ? 'debug' : 'no debug'}): ${result.outcome} in ${result.elapsedMs}ms`,
@@ -422,7 +457,7 @@ for (let iteration = 1; iteration <= iterations; iteration += 1) {
 const hangs = results.filter((result) => result.outcome !== 'ready');
 await writeFile(
   path.join(logDirectory, 'summary.json'),
-  `${JSON.stringify({ drainDelayMs, envProfile, iterations, loadWorkers, mode, results, runner }, null, 2)}\n`,
+  `${JSON.stringify({ cache, drainDelayMs, envProfile, iterations, loadWorkers, mode, results, runner }, null, 2)}\n`,
   'utf8',
 );
 console.log(`\n${hangs.length}/${iterations} starts did not become ready. Logs: ${logDirectory}`);
