@@ -1,0 +1,57 @@
+# Manual harness for the intermittent `bun --bun vite` startup hang.
+#
+# The functional-browser job hits the hang at PR cadence with stdout discarded,
+# which is why its cause is still unknown. This workflow reproduces the same
+# cold start on demand with timestamped stdout+stderr per iteration.
+#
+# The first dispatch (2026-08-25, 15 sequential iterations, all DEBUG=vite:*)
+# came back 0/15 an hour after a real PR run hung, which taught two lessons the
+# current shape encodes:
+# - Sequential iterations sample ONE runner VM. If the hang is conditioned on
+#   the machine or its neighbors rather than an independent per-start race, one
+#   job cannot see it -- hence the sample matrix fanning out across runners.
+# - DEBUG=vite:* is itself a timing perturbation, and the job that hangs runs
+#   without it -- hence iterations alternate debug off/on inside each sample
+#   (see tools/stress-web-dev-start.ts).
+name: Dev Server Startup Stress
+
+on:
+  workflow_dispatch:
+    inputs:
+      iterations:
+        description: Cold starts per sample (each sample is one runner VM)
+        default: "6"
+        required: false
+      debug:
+        description: "DEBUG=vite:* mode: 0, 1, or alternate"
+        default: alternate
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  stress:
+    name: Cold Start Stress (sample ${{ matrix.sample }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        sample: [1, 2, 3, 4, 5, 6, 7, 8]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.13
+      - run: bun install --frozen-lockfile
+      - run: bun --filter @ai-usage/design-system build
+      - run: bun run --cwd apps/web dev:prepare
+      - run: bun --no-env-file tools/stress-web-dev-start.ts --iterations "${{ inputs.iterations }}" --debug "${{ inputs.debug }}"
+      - name: Upload startup traces
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dev-server-stress-traces-sample-${{ matrix.sample }}
+          path: apps/web/test-results/dev-server-stress
+          retention-days: 14
