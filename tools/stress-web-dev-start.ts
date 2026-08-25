@@ -55,7 +55,7 @@ const logDirectory = path.join(rootDirectory, '.dev-server-stress');
 type DebugMode = '0' | '1' | 'alternate';
 type StressMode = 'direct' | 'playwright' | 'wrapped';
 type RunnerRuntime = 'bun' | 'node';
-type EnvProfile = 'minimal' | 'inherit';
+type EnvProfile = 'minimal' | 'inherit' | 'color';
 
 interface StressOptions {
   readonly debug: DebugMode;
@@ -66,7 +66,7 @@ interface StressOptions {
 }
 
 const USAGE =
-  'Usage: stress-web-dev-start.ts [--iterations <1-200>] [--debug 0|1|alternate] [--mode direct|playwright|wrapped] [--runner bun|node] [--env-profile minimal|inherit]';
+  'Usage: stress-web-dev-start.ts [--iterations <1-200>] [--debug 0|1|alternate] [--mode direct|playwright|wrapped] [--runner bun|node] [--env-profile minimal|inherit|color]';
 
 const parseOptions = (argumentList: readonly string[]): StressOptions => {
   let debug: DebugMode = 'alternate';
@@ -85,7 +85,7 @@ const parseOptions = (argumentList: readonly string[]): StressOptions => {
       mode = value;
     } else if (flag === '--runner' && (value === 'bun' || value === 'node')) {
       runner = value;
-    } else if (flag === '--env-profile' && (value === 'minimal' || value === 'inherit')) {
+    } else if (flag === '--env-profile' && (value === 'minimal' || value === 'inherit' || value === 'color')) {
       envProfile = value;
     } else {
       throw new Error(USAGE);
@@ -251,11 +251,15 @@ const runServerIteration = async (
   // 'inherit' reproduces the Playwright webServer child env: the full process
   // environment plus FORCE_COLOR=1, which Playwright always sets on webServer
   // children (and which is why [WebServer] lines carry ANSI codes in CI logs).
+  // It reproduced 2 hangs/40 on the wrapped chain (run 32885776033).
+  // 'color' bisects one variable: the minimal env with only FORCE_COLOR added.
   // 'minimal' is the controlled env the never-hanging baselines used.
-  const environment =
-    envProfile === 'inherit'
-      ? { ...process.env, ...overrides, FORCE_COLOR: '1' }
-      : { ...overrides, NO_COLOR: '1', PATH: process.env.PATH ?? '' };
+  let environment: Record<string, string | undefined> = { ...overrides, NO_COLOR: '1', PATH: process.env.PATH ?? '' };
+  if (envProfile === 'inherit') {
+    environment = { ...process.env, ...overrides, FORCE_COLOR: '1' };
+  } else if (envProfile === 'color') {
+    environment = { ...overrides, FORCE_COLOR: '1', PATH: process.env.PATH ?? '' };
+  }
   const { child, drained, lines } = captureChild(command, environment, startedAt);
 
   const { at, status } = await pollUntilResponse(startedAt + READINESS_DEADLINE_MS);
@@ -266,7 +270,19 @@ const runServerIteration = async (
   }
 
   await terminateChild(child);
-  await drained;
+  // A fully wedged Vite never runs its SIGTERM handler and survives the
+  // wrapper's death (run 32885776033: two orphaned grandchildren held the
+  // pipes open, the unbounded drain never resolved, and both jobs burned to
+  // the 20-minute timeout). Bound the drain and shoot any orphan explicitly.
+  const drainResult = await Promise.race([
+    drained.then(() => 'drained' as const),
+    Bun.sleep(10_000).then(() => 'stuck' as const),
+  ]);
+  if (drainResult === 'stuck') {
+    lines.push('harness: pipes still open after kill; killing orphaned vite');
+    Bun.spawnSync(['pkill', '-9', '-f', `vite --host ${HOST} --port ${PORT}`]);
+    await Promise.race([drained, Bun.sleep(5000)]);
+  }
   if (wrapped) {
     // `bun run` forwards SIGTERM to the script child, but give the port time
     // to actually free before the next --strictPort start.

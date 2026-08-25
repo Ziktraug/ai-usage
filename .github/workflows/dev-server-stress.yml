@@ -39,7 +39,7 @@ on:
         default: playwright
         required: false
       env-profile:
-        description: "Server env in direct/wrapped modes: minimal (controlled) or inherit (full CI env + FORCE_COLOR, like Playwright)"
+        description: "Server env in direct/wrapped modes: minimal (controlled), inherit (full CI env + FORCE_COLOR, like Playwright), or color (minimal + FORCE_COLOR only)"
         default: minimal
         required: false
       runner:
