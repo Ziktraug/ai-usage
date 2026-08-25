@@ -1,6 +1,6 @@
 <!-- biome-ignore-all lint/a11y/noNoninteractiveTabindex lint/a11y/useValidAriaValues: virtualized rows preserve the legacy keyboard surface; Svelte emits the closed dynamic WAI-ARIA values asserted by SSR tests -->
 <script lang="ts">
-  import { cx } from '@ai-usage/design-system/css';
+  import { css, cx } from '@ai-usage/design-system/css';
   import {
     Checkbox,
     dateCell,
@@ -87,6 +87,7 @@
   const DESKTOP_MINIMUM_VIEWPORT_HEIGHT = sessionVirtualBudgets.desktop.rowHeight * 3;
   const MOBILE_MINIMUM_VIEWPORT_HEIGHT = sessionVirtualBudgets.mobile.rowHeight;
   const MOBILE_WINDOW_ANCHOR_THRESHOLD_RATIO = 0.5;
+  const sessionTableOwner = css({ minW: 0 });
   const documentTop = (element: Element): number => element.getBoundingClientRect().top + window.scrollY;
   const documentBottom = (element: Element): number => element.getBoundingClientRect().bottom + window.scrollY;
   const staticBottomInsetBySurface = new WeakMap<HTMLElement, number>();
@@ -451,7 +452,7 @@
     {/if}
   </div>
 {:else}
-  <section aria-label="Sessions" data-session-mode={activeMode} data-session-table-owner>
+  <section aria-label="Sessions" class={sessionTableOwner} data-session-mode={activeMode} data-session-table-owner>
     <div class={tableControls} data-session-region-start bind:this={sessionRegionStartElement}>
       {#if activeMode === 'desktop'}
         <fieldset aria-label="Session column presets" class={presetGroup}>

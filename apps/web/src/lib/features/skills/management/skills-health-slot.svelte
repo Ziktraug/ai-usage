@@ -205,8 +205,11 @@
   const SUCCESS_MESSAGE_DURATION_MS = 5000;
   const foldsGrid = css({
     display: 'grid',
-    gridTemplateColumns: { base: '1fr', xl: 'minmax(0, 0.75fr) minmax(360px, 1.25fr)' },
+    gridTemplateColumns: '1fr',
     gap: '16px',
+    '@media screen and (min-width: 1440px)': {
+      gridTemplateColumns: 'minmax(0, 0.75fr) minmax(360px, 1.25fr)',
+    },
   });
   const disabledRow = css({
     display: 'grid',

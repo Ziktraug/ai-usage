@@ -712,6 +712,28 @@ test('exposes health drill-down links with token tones, focus rings, and matrix 
   await expectKeyboardMatrixNavigation(page, BLOCKED_PATTERN);
 });
 
+test('stacks the global health disclosures in the tablet workspace', async ({ page }) => {
+  await page.setViewportSize({ height: 900, width: 1280 });
+  await openHydratedSkills(page, '/skills/global');
+
+  const detail = page.getByRole('region', { name: 'Selected skill detail' });
+  const disabledDisclosure = detail.getByText('Disabled', { exact: true }).locator('../..');
+  const configurationDisclosure = detail.locator('[data-skills-configuration]');
+  const [detailBox, disabledBox, configurationBox] = await Promise.all([
+    detail.boundingBox(),
+    disabledDisclosure.boundingBox(),
+    configurationDisclosure.boundingBox(),
+  ]);
+  expect(detailBox).not.toBeNull();
+  expect(disabledBox).not.toBeNull();
+  expect(configurationBox).not.toBeNull();
+  expect(disabledBox?.width ?? 0).toBeGreaterThan((detailBox?.width ?? 0) * 0.9);
+  expect(configurationBox?.width ?? 0).toBeGreaterThan((detailBox?.width ?? 0) * 0.9);
+  expect(configurationBox?.y ?? 0).toBeGreaterThanOrEqual(
+    (disabledBox?.y ?? 0) + (disabledBox?.height ?? 0) + SKILLS_DETAIL_GAP_PX - 1,
+  );
+});
+
 test('presents unmanaged copies as neutral backlog rows with their reconciliation action', async ({ page }) => {
   await page.setViewportSize({ height: 1000, width: 1440 });
   await openHydratedSkills(page, '/skills/global');
