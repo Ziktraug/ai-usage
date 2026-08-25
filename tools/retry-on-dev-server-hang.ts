@@ -17,6 +17,10 @@
  *
  * Usage: bun tools/retry-on-dev-server-hang.ts <command> [args...]
  */
+// This script has no imports, so the empty export is what makes it a module
+// and allows the top-level await below under tsconfig.e2e.json.
+export {};
+
 const HANG_SIGNATURES = ['Timed out waiting', 'config.webServer'] as const;
 const MAX_ATTEMPTS = 2;
 
@@ -35,17 +39,20 @@ const runAttempt = async (): Promise<AttemptResult> => {
   let sawHangSignature = false;
   // Forward output live so the job log stays readable, while scanning it for
   // the signature. Buffering until exit would hide progress on a 10-minute run.
-  const forward = async (stream: ReadableStream<Uint8Array>, sink: typeof process.stdout): Promise<void> => {
+  const forward = async (stream: ReadableStream<Uint8Array>, write: (text: string) => void): Promise<void> => {
     const decoder = new TextDecoder();
     for await (const chunk of stream) {
       const text = decoder.decode(chunk, { stream: true });
       if (HANG_SIGNATURES.every((signature) => text.includes(signature))) {
         sawHangSignature = true;
       }
-      sink.write(text);
+      write(text);
     }
   };
-  await Promise.all([forward(child.stdout, process.stdout), forward(child.stderr, process.stderr)]);
+  await Promise.all([
+    forward(child.stdout, (text) => process.stdout.write(text)),
+    forward(child.stderr, (text) => process.stderr.write(text)),
+  ]);
   const exitCode = await child.exited;
   return { exitCode, sawHangSignature };
 };
