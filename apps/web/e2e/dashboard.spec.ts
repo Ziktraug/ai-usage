@@ -27,6 +27,7 @@ const RANGE_URL_PATTERN = /range=/;
 const RESET_COUNT_PATTERN = /1 reset/;
 const GAP_COUNT_PATTERN = /1 collection gap/;
 const CLAUDE_SERIES_PATTERN = /^Claude · /;
+const OLDER_PROVIDER_SERIES_PATTERN = /^Older provider ·/;
 const CURSOR_SCORED_AT_PATTERN = /^Scored /;
 const SORT_URL_PATTERN = /sort=/;
 const UUID_PATTERN = /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/i;
@@ -595,6 +596,15 @@ test('Provider quota history shows reset and gap-aware ranges on desktop and mob
   await expect
     .poll(async () => (await history.locator('[data-quota-axis]').first().locator('span').allTextContents())[0])
     .not.toBe(axisAt24h[0]);
+
+  await providerSelect.selectOption('older-provider');
+  await expect(history.getByText(OLDER_PROVIDER_SERIES_PATTERN)).toBeVisible();
+  await history.getByRole('button', { name: '24h' }).click();
+  await expect(history.getByRole('button', { name: '24h' })).toHaveAttribute('aria-pressed', 'true');
+  await expect(providerSelect).toHaveValue('');
+  await expect(providerSelect.locator('option[value="older-provider"]')).toHaveCount(0);
+  await expect(history.locator('article').first()).toBeVisible();
+
   await page.keyboard.press('Escape');
   await expect(history).not.toBeVisible();
 

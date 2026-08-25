@@ -1156,5 +1156,6 @@ model and literal SSR suites passed after this correction. The complete
 post-correction gate passed: Ultracite and all five lint guards; typecheck 28/28
 with zero Svelte findings; web 1,066/1,066; build 15/15; the immediately
 following bundle gate 4/4 below both ceilings; and Playwright 155/155 under the
-shared lock with two workers, including all four visual regressions. A fresh r4
-review against the amended commit is still required before integration.
+shared lock with two workers, including all four visual regressions. The fresh
+r4 review against the amended commit returned ACCEPT before integration, as
+recorded in the program execution ledger.

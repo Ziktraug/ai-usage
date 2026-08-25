@@ -34,6 +34,23 @@ export interface ProjectIdentityPresentation {
   readonly name: string;
 }
 
+const projectMachineLabels = (entry: UsageReportProjectGroup): string[] => {
+  const machines = new Map<string, string>();
+  for (const source of entry.sources) {
+    const label = source.machineLabel.trim();
+    if (label && !machines.has(source.machineId)) {
+      machines.set(source.machineId, label);
+    }
+  }
+  const labelCounts = new Map<string, number>();
+  for (const label of machines.values()) {
+    labelCounts.set(label, (labelCounts.get(label) ?? 0) + 1);
+  }
+  return [...machines].map(([machineId, label]) =>
+    (labelCounts.get(label) ?? 0) > 1 ? `${label} (${machineId})` : label,
+  );
+};
+
 export const projectIdentityPresentation = (
   project: Pick<ProjectGroup, 'key' | 'label'>,
   catalogue: readonly UsageReportProjectGroup[] | undefined,
@@ -42,7 +59,7 @@ export const projectIdentityPresentation = (
   if (!entry) {
     return { grouped: false, machines: [], name: project.label };
   }
-  const machines = [...new Set(entry.sources.map((source) => source.machineLabel.trim()).filter(Boolean))];
+  const machines = projectMachineLabels(entry);
   if (entry.grouped) {
     return { grouped: true, machines, name: entry.name };
   }

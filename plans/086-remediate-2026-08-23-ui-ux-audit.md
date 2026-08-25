@@ -189,12 +189,15 @@ bun x ultracite fix               # format before each commit
 ## Program gate (after the last child)
 
 1. `bun run lint && bun run typecheck && bun run test && cd apps/web && bun test src && cd ../.. && bun run --cwd apps/web test:e2e` all green.
-2. `bun run demo`, then walk `/`, `/?tab=sessions`, `/?tab=models`,
-   `/?tab=harness-providers`, `/?tab=projects`, `/?tab=cursor-ai`,
-   `/skills/global`, `/skills/global/<fixture-skill>`, `/skills/matrix`,
-   `/sync`, `/sources` at 1920×1080, 1280×800, 768×1024, 390×844, dark and
-   light, and tick every U-row in the table above as "verified on demo" or
-   record the residual symptom. A row with a residual symptom is not DONE.
+2. Use only repository-owned synthetic fixtures. Run `bun run demo` for `/`,
+   `/?tab=sessions`, `/?tab=models`, `/?tab=harness-providers`,
+   `/?tab=projects`, and `/?tab=cursor-ai`. Run the locked E2E synthetic server
+   for `/skills/global`, `/skills/global/<fixture-skill>`, `/skills/matrix`,
+   `/sync`, and `/sources`: demo mode intentionally redirects Manage routes
+   before acquiring local services. Walk both sets at 1920×1080, 1280×800,
+   768×1024, 390×844, dark and light, and tick every U-row below as verified on
+   its named synthetic surface or record the residual symptom. A row with a
+   residual symptom is not DONE.
 3. `plans/README.md`: every row 086–098 has a status; every U-row maps to a
    DONE child or to a REJECTED line with rationale.
 

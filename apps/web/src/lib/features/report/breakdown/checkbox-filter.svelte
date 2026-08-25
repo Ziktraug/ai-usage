@@ -133,6 +133,8 @@
   const allSelected = $derived(value.length === 0);
   const triggerLabel = $derived(summary?.(value) ?? checkboxFilterSummary(value, placeholder, noun, labelFor));
   const includedCount = $derived(checkboxFilterIncludedCount(value, options));
+  const pressedAria = (pressed: boolean) =>
+    pressed ? ({ 'aria-pressed': 'true' } as const) : ({ 'aria-pressed': 'false' } as const);
 </script>
 
 {#snippet trigger()}
@@ -160,15 +162,9 @@
   </div>
   <ul class={optionList}>
     <li>
-      {#if allSelected}
-        <button aria-pressed="true" class={allRow} onclick={() => onValueChange([])} type="button">
-          {@render allOptionContent()}
-        </button>
-      {:else}
-        <button aria-pressed="false" class={allRow} onclick={() => onValueChange([])} type="button">
-          {@render allOptionContent()}
-        </button>
-      {/if}
+      <button {...pressedAria(allSelected)} class={allRow} onclick={() => onValueChange([])} type="button">
+        {@render allOptionContent()}
+      </button>
     </li>
     {#each options as option (option)}
       <li>

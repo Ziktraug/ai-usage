@@ -9,15 +9,22 @@ import {
   projectsEmptyMessage,
 } from './project-presentation';
 
-const source = (id: string, machineLabel: string, project: string): UsageReportProjectSource => ({
+const source = (
+  id: string,
+  machineId: string,
+  machineLabel: string,
+  project: string,
+  sessions = 1,
+  tokens = 0,
+): UsageReportProjectSource => ({
   gitRemote: '',
   id,
-  machineId: id,
+  machineId,
   machineLabel,
   project,
-  sessions: 1,
+  sessions,
   sourcePath: `/home/alex/${project || 'unknown'}`,
-  tokens: 0,
+  tokens,
 });
 
 const catalogueGroup = (
@@ -88,15 +95,15 @@ describe('project data-quality presentation', () => {
 
 describe('project breakdown presentation', () => {
   const fixtureA = catalogueGroup('source:fixture-a', 'fixture-app — Fixture Machine', false, [
-    source('fixture-a', 'Fixture Machine', 'fixture-app'),
+    source('fixture-a', 'machine-a', 'Fixture Machine', 'fixture-app'),
   ]);
   const fixtureB = catalogueGroup('source:fixture-b', 'fixture-app — Fixture Machine Secondary', false, [
-    source('fixture-b', 'Fixture Machine Secondary', 'fixture-app'),
+    source('fixture-b', 'machine-b', 'Fixture Machine Secondary', 'fixture-app'),
   ]);
   const shared = catalogueGroup('group:shared', 'Shared tooling', true, [
-    source('fixture-a-shared', 'Fixture Machine', 'shared-a'),
-    source('fixture-b-shared', 'Fixture Machine Secondary', 'shared-b'),
-    source('fixture-b-shared-copy', 'Fixture Machine Secondary', 'shared-b-copy'),
+    source('fixture-a-shared', 'machine-a', 'Fixture Machine', 'shared-a'),
+    source('fixture-b-shared', 'machine-b', 'Fixture Machine Secondary', 'shared-b'),
+    source('fixture-b-shared-copy', 'machine-b', 'Fixture Machine Secondary', 'shared-b-copy'),
   ]);
   const catalogue = [fixtureA, fixtureB, shared];
   const rows = [
@@ -119,7 +126,7 @@ describe('project breakdown presentation', () => {
     expect(
       projectIdentityPresentation(project('source:unknown', 'unknown — Fixture Machine'), [
         catalogueGroup('source:unknown', 'unknown — Fixture Machine', false, [
-          source('unknown', 'Fixture Machine', ''),
+          source('unknown', 'machine-a', 'Fixture Machine', ''),
         ]),
       ]),
     ).toEqual({ grouped: false, machines: ['Fixture Machine'], name: '(unknown)' });
@@ -130,12 +137,30 @@ describe('project breakdown presentation', () => {
     });
   });
 
+  test('keeps two machine identities when their labels match and their contributions differ', () => {
+    const sameLabel = catalogueGroup('group:same-label', 'Shared label project', true, [
+      source('machine-a-source', 'machine-a', 'Shared', 'shared-a', 2, 200),
+      source('machine-b-source', 'machine-b', 'Shared', 'shared-b', 5, 900),
+    ]);
+
+    expect(projectIdentityPresentation(project(sameLabel.id, sameLabel.name), [sameLabel])).toEqual({
+      grouped: true,
+      machines: ['Shared (machine-a)', 'Shared (machine-b)'],
+      name: 'Shared label project',
+    });
+  });
+
   test('labels exact, partial, and unknown line measurements independently', () => {
     expect(
       projectLinesPresentation(
         project('unknown', 'Unknown', { lineMeasurement: { measuredSessions: 0, totalSessions: 3 } }),
       ),
-    ).toMatchObject({ coverage: null, label: '—', status: 'unknown' });
+    ).toEqual({
+      coverage: null,
+      label: '—',
+      status: 'unknown',
+      title: 'No session in this project reports line changes (0 of 3 measured)',
+    });
     expect(
       projectLinesPresentation(
         project('partial', 'Partial', {
@@ -144,7 +169,12 @@ describe('project breakdown presentation', () => {
           linesDeleted: 0,
         }),
       ),
-    ).toMatchObject({ coverage: '2 of 5 sessions measured', label: '≥ +0/-0', status: 'lower-bound' });
+    ).toEqual({
+      coverage: '2 of 5 sessions measured',
+      label: '≥ +0/-0',
+      status: 'lower-bound',
+      title: 'Lines added/deleted summed over the 2 of 5 sessions that report line changes; the rest are not counted',
+    });
     expect(
       projectLinesPresentation(
         project('exact', 'Exact', {
@@ -153,7 +183,12 @@ describe('project breakdown presentation', () => {
           linesDeleted: 120,
         }),
       ),
-    ).toMatchObject({ coverage: null, label: '+860/-120', status: 'exact' });
+    ).toEqual({
+      coverage: null,
+      label: '+860/-120',
+      status: 'exact',
+      title: 'Lines added/deleted summed over all 3 sessions',
+    });
   });
 
   test('searches across project and machine identities while preserving row order', () => {

@@ -1,10 +1,38 @@
 const PROCESS_START_TIME_INDEX = 19;
 const DIGITS_PATTERN = /^\d+$/;
 const WHITESPACE_PATTERN = /\s+/;
+const DARWIN_PROCESS_START_PATTERN =
+  /^(?:Sun|Mon|Tue|Wed|Thu|Fri|Sat)\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+([1-9]|[12]\d|3[01])\s+([01]\d|2[0-3]):([0-5]\d):([0-5]\d)\s+(\d{4})$/;
+const DARWIN_MONTHS = new Map(
+  ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'].map((month, index) => [
+    month,
+    String(index + 1).padStart(2, '0'),
+  ]),
+);
+
+export const parseDarwinProcessStartTime = (output: string): string | null => {
+  const match = DARWIN_PROCESS_START_PATTERN.exec(output.trim());
+  if (!match) {
+    return null;
+  }
+  const [, monthName, dayValue, hour, minute, second, year] = match;
+  const month = monthName ? DARWIN_MONTHS.get(monthName) : undefined;
+  if (!(month && dayValue && hour && minute && second && year)) {
+    return null;
+  }
+  const day = dayValue.padStart(2, '0');
+  const canonical = `${year}-${month}-${day}T${hour}:${minute}:${second}.000Z`;
+  const timestamp = Date.parse(canonical);
+  if (!Number.isFinite(timestamp) || new Date(timestamp).toISOString() !== canonical) {
+    return null;
+  }
+  return `${year}${month}${day}${hour}${minute}${second}`;
+};
 
 const readDarwinProcessStartTime = async (pid: number): Promise<string | null> => {
   try {
     const child = Bun.spawn(['/bin/ps', '-o', 'lstart=', '-p', String(pid)], {
+      env: { ...process.env, LC_ALL: 'C' },
       stderr: 'ignore',
       stdout: 'pipe',
     });
@@ -12,8 +40,7 @@ const readDarwinProcessStartTime = async (pid: number): Promise<string | null> =
     if ((await child.exited) !== 0) {
       return null;
     }
-    const startTimeMs = Date.parse(output.trim());
-    return Number.isFinite(startTimeMs) ? String(startTimeMs) : null;
+    return parseDarwinProcessStartTime(output);
   } catch {
     return null;
   }

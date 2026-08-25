@@ -559,3 +559,73 @@ Program code and acceptance are complete. Draft PR #46 must remain unmerged.
 Its body update is retried after the closure push; if the current GitHub token
 still lacks `UpdatePullRequest`, only that metadata edit awaits a maintainer
 with sufficient repository permission. No replacement PR is authorized.
+
+### Post-audit evidence normalization and corrections — 2026-08-25
+
+This section supersedes the aggregate wording in "Final fresh-eyes and review"
+without changing the accepted result. The final matrix used the safe hybrid
+protocol already described at `1f36977d`: 48 Report states from `bun run demo`
+and 40 Manage states from the locked synthetic E2E server. Demo-mode redirects
+for Skills, Sync, and Sources are safety behavior and are not counted as route
+captures. A post-audit rerun again passed all 48 Report states with zero
+console/page errors and zero document overflow; the current locked browser
+suite passed 176/176. Captures remain outside the repository.
+
+The same audit found and corrected two gaps beyond the original accepted
+fixtures. A group with two different machine ids, the same `Shared` label, and
+different session/token contributions now preserves and disambiguates both
+identities. Quota-history filters now reconcile when a range removes the
+selected provider, machine, or account instead of rendering a silent empty
+drawer. The Darwin process-start identity also has deterministic C-locale
+parser coverage, all visible Projects line-provenance copy is literal-tested,
+the quota series renderer is separated from drawer/filter ownership, and the
+checkbox filter renders one `All` button.
+
+Each program finding is individually closed below. "Verified" means the named
+repository-owned synthetic surface and its deterministic assertion passed; no
+private history is acceptance evidence.
+
+| Finding | Synthetic surface / proof | Final result |
+| --- | --- | --- |
+| U01 | Skills global/detail navigation and asymmetric hydration E2E | VERIFIED — no residual |
+| U02 | Overview versus harness aggregate units and browser comparison | VERIFIED — no residual |
+| U03 | Sync stored-session caption and report-total presentation assertions | VERIFIED — no residual |
+| U04 | Today/Rhythm range units, browser caveat, and Activity geometry | VERIFIED — no residual |
+| U05 | Sessions campaign-date range and ordering assertions | VERIFIED — no residual |
+| U06 | Campaign-root drawer SSR and browser totals | VERIFIED — no residual |
+| U07 | Report filter-bar `/` keyboard browser assertion | VERIFIED — no residual |
+| U08 | Cursor AI period, deduplication, branch, and ordering assertions | VERIFIED — no residual |
+| U09 | Rhythm singular-session literal assertion | VERIFIED — no residual |
+| U10 | Models coverage/value presentation assertions | VERIFIED — no residual |
+| U11 | Sessions single-scroll computed geometry and paged-campaign fixture | VERIFIED — no residual |
+| U12 | Sessions root-time copy assertions | VERIFIED — no residual |
+| U13 | Sessions campaign-qualifier copy assertions | VERIFIED — no residual |
+| U14 | Sessions token-provenance deduplication assertions | VERIFIED — no residual |
+| U15 | Harness, machine, and origin named-dialog/checked-state browser assertions | VERIFIED — no residual |
+| U16 | Harness/provider disclosure browser assertions | VERIFIED — no residual |
+| U17 | Activity metric, share-state, and dated-brush browser assertions | VERIFIED — no residual |
+| U18 | Ranked model palette and legend-placement assertions | VERIFIED — no residual |
+| U19 | Long-range automatic Activity interval assertion | VERIFIED — no residual |
+| U20 | Session-shape chart, title, and legend assertions | VERIFIED — no residual |
+| U21 | Punchcard target and responsive stacking geometry | VERIFIED — no residual |
+| U22 | Provider-status grouping, glossary, spacing, and copy assertions | VERIFIED — no residual |
+| U23 | Quota window/chart/control assertions plus stale-filter range regression | VERIFIED — no residual |
+| U24 | Skills tree, status, notice, health-link, and context assertions | VERIFIED — no residual |
+| U25 | Skills matrix narrow/desktop geometry assertions | VERIFIED — no residual |
+| U26 | Skills frontmatter allowlist units | VERIFIED — no residual |
+| U27 | Sync fleet single-surface render assertions | VERIFIED — no residual |
+| U28 | Sources plain-language copy and engine-state attribution guard | VERIFIED — no residual |
+| U29 | Session-drawer responsive, date, help, and GitHub-link assertions | VERIFIED — no residual |
+| U30 | Projects header/search/metric assertions plus two-id same-label fixture | VERIFIED — no residual |
+| U31 | Report `Data as of` text and `<time datetime>` assertions | VERIFIED — no residual |
+| U32 | Readable range URL unit and browser assertions | VERIFIED — no residual |
+| U33 | Stable Analysis sub-tab geometry | VERIFIED — no residual |
+| U34 | Hero lower-bound wrapping and number-format assertions | VERIFIED — no residual |
+| U35 | KPI baseline computed-geometry assertion | VERIFIED — no residual |
+| U36 | Sessions numeric-format consistency assertions | VERIFIED — no residual |
+| U37 | ISO custom-range inputs and unified comparison copy assertions | VERIFIED — no residual |
+| U38 | Rhythm year-axis and session-first readout assertions | VERIFIED — no residual |
+| U39 | 1280 px filter-bar one-row computed geometry | VERIFIED — no residual |
+| U40 | Long machine-label menu geometry assertion | VERIFIED — no residual |
+| U41 | Intermediate-width record-tile grid assertion | VERIFIED — no residual |
+| U42 | Longest-session record semantics assertion | VERIFIED — no residual |

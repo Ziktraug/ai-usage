@@ -39,6 +39,12 @@ const CLAUDE_FIXTURE_PROVIDER = {
   sourceKey: 'claude-agent-sdk',
 } as const;
 
+const OLDER_FIXTURE_PROVIDER = {
+  providerKey: 'older-provider',
+  providerLabel: 'Older provider',
+  sourceKey: 'older-provider-fixture',
+} as const;
+
 const FIXTURE_POINT_INPUTS = [
   { at: '2026-07-15T09:00:00.000Z', resetAt: '2026-07-15T12:00:00.000Z', usedPercent: 22, window: '5h' },
   { at: '2026-07-15T09:05:00.000Z', resetAt: '2026-07-15T12:00:00.000Z', usedPercent: 28, window: '5h' },
@@ -67,6 +73,13 @@ const FIXTURE_POINT_INPUTS = [
     usedPercent: 44,
     window: 'weekly',
   },
+  {
+    ...OLDER_FIXTURE_PROVIDER,
+    at: '2026-07-10T09:00:00.000Z',
+    resetAt: '2026-07-10T14:00:00.000Z',
+    usedPercent: 37,
+    window: '5h',
+  },
   // Observed before the 24h window opens and held into it: the store's anchor row. At `24h` the
   // drawer must carry it in as a held value rather than stretch its axis back two days; at `7d` it
   // is an ordinary in-range point.
@@ -87,7 +100,7 @@ const FIXTURE_POINT_INPUTS = [
  * fixture point without updating this number fails typecheck rather than silently re-opening the
  * empty-drawer bug the gate exists to prevent.
  */
-export const E2E_PROVIDER_QUOTA_FIXTURE_POINT_COUNT: (typeof FIXTURE_POINT_INPUTS)['length'] = 10;
+export const E2E_PROVIDER_QUOTA_FIXTURE_POINT_COUNT: (typeof FIXTURE_POINT_INPUTS)['length'] = 11;
 
 export const createE2EProviderQuotaHistoryFixture = (): ProviderQuotaHistoryResult => ({
   coverage: [],
