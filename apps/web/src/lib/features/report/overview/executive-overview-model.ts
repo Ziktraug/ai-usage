@@ -5,6 +5,7 @@ import type {
 } from '@ai-usage/report-core/focused-report-query';
 import type { ApiPriceMeasurement } from '@ai-usage/report-core/provenance';
 import {
+  type MetricComparisonBoundary,
   type MetricComparisonState,
   type MetricDelta,
   metricComparisonMessage,
@@ -28,7 +29,9 @@ export interface ExecutiveInsightItem {
 }
 
 export interface ExecutiveOverviewModelInput {
+  readonly comparisonBoundary?: MetricComparisonBoundary;
   readonly executive: FocusedExecutiveOverview;
+  readonly periodInProgress: boolean;
   readonly previousSummary: FocusedReportSummary | null;
   readonly rangeMode: DateRangeMode;
   readonly summary: FocusedReportSummary;
@@ -37,6 +40,7 @@ export interface ExecutiveOverviewModelInput {
 }
 
 export interface ExecutiveComparisonPresentation {
+  readonly caveat: string | null;
   readonly delta: MetricDelta | null;
   readonly explanation: string | null;
   readonly state: MetricComparisonState;
@@ -103,8 +107,10 @@ const comparisonFor = (
   summary: FocusedReportSummary,
   previousSummary: FocusedReportSummary | null,
   rangeMode: DateRangeMode,
+  periodInProgress: boolean,
+  comparisonBoundary?: MetricComparisonBoundary,
 ): ExecutiveComparisonPresentation => {
-  const state = metricComparisonStateFor(rangeMode, previousSummary);
+  const state = metricComparisonStateFor(rangeMode, previousSummary, comparisonBoundary);
   const delta =
     previousSummary &&
     summary.priceMeasurement.state !== 'partially measured' &&
@@ -115,7 +121,12 @@ const comparisonFor = (
           pct: ((summary.totalCost - previousSummary.totalCost) / previousSummary.totalCost) * 100,
         }
       : null;
-  return { delta, explanation: metricComparisonMessage(state), state };
+  return {
+    caveat: delta && periodInProgress ? 'This period is still in progress, so the comparison is provisional.' : null,
+    delta,
+    explanation: metricComparisonMessage(state),
+    state,
+  };
 };
 
 const periodScopeFor = (rangeMode: DateRangeMode): string => {
@@ -220,6 +231,7 @@ const periodInsight = (
   summary: FocusedReportSummary,
   previousSummary: FocusedReportSummary | null,
   topItems: readonly ExecutiveInsightItem[],
+  periodInProgress: boolean,
 ): ExecutivePeriodInsight | null => {
   if (
     summary.priceMeasurement.state !== 'measured' ||
@@ -245,8 +257,11 @@ const periodInsight = (
   }
   const direction = changePercent >= 0 ? 'higher' : 'lower';
   const items = [first, second] as const;
+  const comparisonSentence = periodInProgress
+    ? `API-equivalent value is ${fmtPct(Math.abs(changePercent))} ${direction} than the previous equal-length period (this period is still in progress).`
+    : `API-equivalent value is ${fmtPct(Math.abs(changePercent))} ${direction} than the previous equal-length period.`;
   const sentences = [
-    `API-equivalent value is ${fmtPct(Math.abs(changePercent))} ${direction} than the previous equal-length period.`,
+    comparisonSentence,
     `The two leading ${leadingItemsNoun(items)} represent ${fmtPct(concentrationPercent)} of this period's measured value.`,
   ] as const;
   return { sentences, text: sentences.join(' ') };
@@ -275,7 +290,9 @@ const emptyStateFor = (summary: FocusedReportSummary, totalSessionCount: number)
 };
 
 export const buildExecutiveOverviewModel = ({
+  comparisonBoundary,
   executive,
+  periodInProgress,
   previousSummary,
   rangeMode,
   summary,
@@ -284,10 +301,10 @@ export const buildExecutiveOverviewModel = ({
 }: ExecutiveOverviewModelInput): ExecutiveOverviewModel => ({
   emptyState: emptyStateFor(summary, totalSessionCount),
   harnesses: executive.harnesses.map((group) => groupPresentation(group, summary.totalCost)),
-  insight: periodInsight(summary, previousSummary, topItems),
+  insight: periodInsight(summary, previousSummary, topItems, periodInProgress),
   models: executive.models.map((group) => groupPresentation(group, summary.totalCost)),
   primary: {
-    comparison: comparisonFor(summary, previousSummary, rangeMode),
+    comparison: comparisonFor(summary, previousSummary, rangeMode, periodInProgress, comparisonBoundary),
     periodScope: periodScopeFor(rangeMode),
     provenance: aggregateApiPriceProvenance(summary.priceMeasurement),
     value: aggregateApiValuePresentation(summary.priceMeasurement),

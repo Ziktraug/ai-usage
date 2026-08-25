@@ -33,6 +33,12 @@ export const FOCUSED_REPORT_E2E_VISIBLE_TREND_KEY = '__aiUsageE2EFocusedReportVi
  * dimension, which this never widens.
  */
 export const FOCUSED_REPORT_E2E_MODEL_TAIL_KEY = '__aiUsageE2EModelTail';
+/**
+ * Opt-in only. Session shape needs three timed, fully priced items with distinct lineages; the
+ * shared rows form one campaign plus one priced session, so the Advanced analysis row renders
+ * Punchcard alone. This appends three roots inside the default period and touches nothing else.
+ */
+export const FOCUSED_REPORT_E2E_SESSION_SHAPE_KEY = '__aiUsageE2ESessionShape';
 
 interface FocusedReportSource {
   readonly getBootstrap: (options?: { readonly signal?: AbortSignal }) => Promise<WebReportRevisionBootstrapResult>;
@@ -185,6 +191,64 @@ const withModelTail = (rows: typeof demoReportPayload.rows): typeof demoReportPa
   return [...rows, ...tail];
 };
 
+const SESSION_SHAPE_ROWS = [
+  {
+    cost: 0.45,
+    durationMs: 900_000,
+    harness: 'Codex',
+    harnessKey: 'codex',
+    id: 'shape-fixture-01',
+    provider: 'Codex API',
+  },
+  {
+    cost: 2.1,
+    durationMs: 5_400_000,
+    harness: 'Claude',
+    harnessKey: 'claude',
+    id: 'shape-fixture-02',
+    provider: 'Claude sub',
+  },
+  {
+    cost: 6.3,
+    durationMs: 14_400_000,
+    harness: 'Codex',
+    harnessKey: 'codex',
+    id: 'shape-fixture-03',
+    provider: 'Codex API',
+  },
+] as const;
+
+const withSessionShape = (rows: typeof demoReportPayload.rows): typeof demoReportPayload.rows => {
+  const template = rows[0];
+  if (!template) {
+    return rows;
+  }
+  return [
+    ...rows,
+    ...SESSION_SHAPE_ROWS.map((entry, index) => ({
+      ...template,
+      activeDate: `2026-06-0${index + 2}T10:00:00.000Z`,
+      costActual: entry.cost,
+      costApprox: entry.cost,
+      costKnown: true,
+      date: `2026-06-0${index + 2}T08:00:00.000Z`,
+      durationMs: entry.durationMs,
+      endDate: `2026-06-0${index + 2}T10:00:00.000Z`,
+      harness: entry.harness,
+      name: entry.id,
+      provider: entry.provider,
+      sessionLabel: entry.id,
+      source: {
+        harnessKey: entry.harnessKey,
+        machineId: 'fixture-machine',
+        machineLabel: 'Fixture Machine',
+        rootSourceSessionId: entry.id,
+        sourceSessionId: entry.id,
+      },
+    })),
+  ];
+};
+
 const focusedOverviewRows = (): typeof demoReportPayload.rows => {
   const rows =
     Reflect.get(globalThis, FOCUSED_REPORT_E2E_VISIBLE_TREND_KEY) === true
@@ -205,10 +269,12 @@ const focusedOverviewRows = (): typeof demoReportPayload.rows => {
         )
       : demoReportPayload.rows;
   const widened = Reflect.get(globalThis, FOCUSED_REPORT_E2E_MODEL_TAIL_KEY) === true ? withModelTail(rows) : rows;
+  const shaped =
+    Reflect.get(globalThis, FOCUSED_REPORT_E2E_SESSION_SHAPE_KEY) === true ? withSessionShape(widened) : widened;
   if (Reflect.get(globalThis, FOCUSED_REPORT_E2E_NINETY_DAY_COMPARISON_KEY) !== true) {
-    return widened;
+    return shaped;
   }
-  return widened.map((row) => {
+  return shaped.map((row) => {
     if (row.date === '2026-05-25T13:05:00.000Z') {
       return {
         ...row,

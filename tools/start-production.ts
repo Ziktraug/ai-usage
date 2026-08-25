@@ -249,8 +249,13 @@ const processGroupIsAlive = (processGroupId: number): boolean => {
     process.kill(process.platform === 'win32' ? processGroupId : -processGroupId, 0);
     return true;
   } catch (error) {
-    if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'ESRCH') {
-      return false;
+    if (typeof error === 'object' && error !== null && 'code' in error) {
+      if (error.code === 'ESRCH') {
+        return false;
+      }
+      if (error.code === 'EPERM') {
+        return true;
+      }
     }
     throw error;
   }

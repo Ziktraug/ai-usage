@@ -2,7 +2,6 @@ import {
   type CollectionSourceGroup,
   collectionSourceDefinitions,
   type SourceControlEntryView,
-  type SourcePublicationView,
 } from '@ai-usage/report-core/source-control';
 import type { SourceControlClientState } from '../../../source-control-client';
 import { presentSourceState } from '../../../source-control-presentation-model';
@@ -73,18 +72,6 @@ export const sourceRunDisabledReason = (
     return 'This source is already queued or running.';
   }
   return;
-};
-
-export const publicationStatus = (publication: SourcePublicationView): string => {
-  if (publication.running) {
-    return 'Publishing stored data now.';
-  }
-  if (publication.queued) {
-    return 'Publication is queued.';
-  }
-  return publication.pendingDemand
-    ? 'Publication demand is waiting for its dependency.'
-    : 'Publication demand is fully acknowledged.';
 };
 
 export const conciseSourceStatus = (state: SourceControlClientState): string => {

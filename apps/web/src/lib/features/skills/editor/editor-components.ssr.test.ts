@@ -49,7 +49,8 @@ describe('P9 Svelte Skills editor SSR', () => {
     expect(html).toContain('data-skill-markdown-editor');
     expect(html).toContain('aria-label="alpha-skill SKILL.md"');
     expect(html).toContain('# Alpha synthetic editor');
-    expect(html).toContain('Saved');
+    expect(html).toContain('Unchanged');
+    expect(html).not.toContain('>Saved<');
     expect(html).toContain('Save');
     expect(html).toContain('Revert changes');
     expect(html).toContain('Reload from disk');

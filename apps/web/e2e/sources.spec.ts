@@ -9,6 +9,7 @@ test.describe.configure({ mode: 'serial' });
 const COMPACT_REVISION_PREFIX_LENGTH = 12;
 const COMPACT_REVISION_SUFFIX_LENGTH = 8;
 const FULL_REVISION_PATTERN = /^e2e-revision-(\d+)-[a-f\d]{32}$/;
+const PUBLICATION_JARGON_PATTERN = /Publication demand|RTK dependency|Caught up|acknowledged|not-run/;
 const RUNNING_ELAPSED_PATTERN = /Running: Codex sessions \(\d+s elapsed\)/;
 const NEXT_DUE_PATTERN = /Next due: .* at \d{4}-\d{2}-\d{2}T/;
 let shouldRestoreCodexSessions = false;
@@ -97,6 +98,11 @@ test('states each source health once and keeps source metadata concise', async (
   await expect(revisionCode).toBeHidden();
   await publicationDetails.locator('summary').click();
   await expect(revisionCode).toBeVisible();
+  await expect(page.locator('[data-publication-status]')).toHaveText(
+    'The report is up to date with everything collected.',
+  );
+  await expect(page.locator('[data-publication-rtk="up-to-date"]')).toHaveText('Up to date');
+  await expect(page.locator('[data-publication-outcome="success"]')).toContainText('Succeeded · ');
   const fullRevision = await revisionCode.getAttribute('title');
   if (!(fullRevision && FULL_REVISION_PATTERN.test(fullRevision))) {
     throw new Error(`The full source publication revision is invalid: ${fullRevision ?? 'missing'}`);
@@ -281,6 +287,67 @@ test('ignores a partial SSE snapshot after a complete catalogue', async ({ page 
   for (const definition of collectionSourceDefinitions) {
     await expect(page.getByRole('heading', { level: 3, name: definition.label })).toBeVisible();
   }
+});
+
+test('describes report publishing in plain language in both the waiting and the up-to-date states', async ({
+  page,
+}) => {
+  const sources = collectionSourceDefinitions.map((definition) => ({
+    availability: 'detected' as const,
+    cadenceMs: definition.cadenceMs,
+    id: definition.id,
+    label: definition.label,
+    lastOutcome: 'success' as const,
+    lifecycle: 'scheduled' as const,
+    policy: 'enabled' as const,
+    reason: { code: 'none' as const },
+    warnings: [],
+  }));
+  const snapshot = {
+    generatedAt: '2026-07-16T10:00:00.000Z',
+    generation: 12,
+    instanceId: 'e2e-waiting-publication',
+    publication: {
+      acknowledgedRequestGeneration: 1,
+      dirty: true,
+      dirtyGeneration: 2,
+      lastOutcome: 'failed' as const,
+      pendingDemand: true,
+      publishedGeneration: 1,
+      queued: false,
+      requestedGeneration: 3,
+      revision: 'e2e-waiting-publication-revision',
+      rtkCompletedGeneration: 1,
+      rtkRequiredGeneration: 2,
+      running: false,
+    },
+    queueDepth: 0,
+    runningCount: 0,
+    sources,
+  };
+  await page.route('**/api/source-control', async (route) => {
+    if (route.request().method() !== 'GET') {
+      await route.fallback();
+      return;
+    }
+    await route.fulfill({
+      body: `event: snapshot\ndata: ${JSON.stringify(snapshot)}\n\n`,
+      contentType: 'text/event-stream',
+      status: 200,
+    });
+  });
+
+  await openHydratedSources(page);
+  await expect(page.getByRole('heading', { level: 2, name: 'Report publishing' })).toBeVisible();
+  await expect(page.locator('[data-publication-status]')).toHaveText(
+    'New data is waiting to be published once RTK savings enrichment catches up.',
+  );
+  await page.locator('[data-publication-details] > summary').click();
+  await expect(page.getByText('Pending publish requests', { exact: true })).toBeVisible();
+  await expect(page.locator('[data-publication-pending-requests]')).toHaveText('2');
+  await expect(page.locator('[data-publication-rtk="behind"]')).toHaveText('Behind — publishing waits for it');
+  await expect(page.locator('[data-publication-outcome="failed"]')).toHaveText('Failed');
+  expect(await page.locator('main').innerText()).not.toMatch(PUBLICATION_JARGON_PATTERN);
 });
 
 test('renders only deviation cards beside the healthy-source summary', async ({ page }) => {

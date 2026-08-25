@@ -49,11 +49,6 @@ export interface TimelineValuePresentation {
 
 export type CampaignSeriesPresenter = (series: FocusedTimelineSeries) => FocusedTimelineSeries;
 export type MachineSeriesPresenter = (key: string, label: string) => MachineTimelinePresentation;
-export type ExecutiveTimelineValue = Extract<TimelineValue, 'cost' | 'tokens'>;
-
-export const executiveTimelineValue = (value: TimelineValue): ExecutiveTimelineValue | null =>
-  value === 'cost' || value === 'tokens' ? value : null;
-
 export const resolveTimelineMetric = (
   timeline: Pick<FocusedTimelineData, 'grandTotal'> | null,
   value: TimelineValue,

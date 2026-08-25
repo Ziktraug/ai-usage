@@ -19,6 +19,7 @@
   const seriesStack = css({
     display: 'flex',
     alignItems: 'flex-end',
+    justifyContent: 'center',
     w: 'full',
     h: { base: '140px', lg: '110px' },
     minW: 0,
@@ -106,6 +107,7 @@
     opacity: 0.55,
   });
   const percentage = css({ color: 'muted', textStyle: 'numeric' });
+  const legendEntry = css({ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '0 4px' });
   const rangeTotal = css({ fontWeight: 600, textStyle: 'numeric', mr: '4px' });
   const readout = css({ display: 'grid', gap: '5px', p: '9px', borderRadius: 'md', bg: 'track', fontSize: '11px' });
   const readoutRow = css({ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', gap: '8px' });
@@ -204,6 +206,8 @@
   const presentedSeries = $derived(
     timeline ? presentTimelineSeries(timeline, campaignPresenter, machinePresenter) : [],
   );
+  const seriesRankByKey = $derived(new Map((timeline?.series ?? []).map((series, rank) => [series.key, rank])));
+  const seriesByKey = $derived(new Map((timeline?.series ?? []).map((series) => [series.key, series])));
   const metric = $derived<ResolvedTimelineMetric>(resolveTimelineMetric(timeline, value));
   const metricLabel = $derived(timelineMetricLabel(value, metric));
   // The report range owns which buckets are on screen. Everything downstream —
@@ -359,7 +363,17 @@
   // Harness and model series carry branded semantic tokens; only the open-ended
   // dimensions fall back to a hash-derived hue. Calling the hash directly for
   // every dimension collapsed Codex and OpenCode onto neighbouring tans.
-  const swatchFor = (key: string): DimensionSwatch => (timeline ? dimensionSwatch(timeline.dimension, key) : {});
+  const swatchFor = (key: string): DimensionSwatch => {
+    if (!timeline) {
+      return {};
+    }
+    const series = seriesByKey.get(key);
+    const rank = seriesRankByKey.get(key);
+    return dimensionSwatch(timeline.dimension, key, {
+      aggregate: (series?.memberKeys?.length ?? 0) > 0,
+      ...(rank === undefined ? {} : { rank }),
+    });
+  };
 </script>
 
 <div
@@ -381,7 +395,7 @@
         {@const filterable = timelineSeriesIsFilterable(timeline.dimension, series)}
         {@const marker = swatchFor(series.key)}
         {@const disclosure = timelineOtherDisclosure(series)}
-        <li>
+        <li class={legendEntry} data-timeline-legend-entry={disclosure ? 'aggregate' : 'series'}>
           <button
             {...pressedAria(active)}
             class={legendButton}
@@ -404,8 +418,6 @@
             <span class={percentage}>{fmtPct(timelineSharePercent(total, summary.total))}</span>
           </button>
           {#if disclosure}
-            <!-- Subordinate to the entry it explains and carrying no control:
-                 the aggregated series stays non-filterable, so this only reads. -->
             <details data-timeline-other-members>
               <summary class={legendButton}>{disclosure.label}</summary>
               <ul class={legend}>
@@ -438,7 +450,9 @@
       <span
         class={seriesStack}
         data-origin-series-stack={timeline.dimension === 'origin' ? '' : undefined}
+        data-timeline-series-stack
         style:gap={layout.bucketGap}
+        style:justify-content={layout.stackJustify}
       >
         {#each bars as bar (bar.bucket.date)}
           {@const barValue = presentedAmount(
@@ -451,6 +465,7 @@
             class={bucketClass}
             role="img"
             title={barValue.title ?? undefined}
+            style:max-width={layout.bucketMaxWidth}
             style:min-width={layout.bucketMinWidth}
           >
             {#each bar.segments as segmentEntry (segmentEntry.key)}
@@ -467,17 +482,28 @@
         {/each}
       </span>
       {#if timeline.dimension === 'origin' && timeline.unclassified}
-        <span aria-hidden="true" class={gapBands} data-origin-unclassified-band style:gap={layout.bucketGap}>
+        <span
+          aria-hidden="true"
+          class={gapBands}
+          data-origin-unclassified-band
+          style:gap={layout.bucketGap}
+          style:justify-content={layout.stackJustify}
+        >
           {#each bars as bar (bar.bucket.date)}
             {#if bar.bucket.unclassified}
               <span
                 class={gapBand}
                 data-origin-gap-sessions={bar.bucket.unclassified.sessions}
                 title={originGapDescription(bar.bucket.unclassified)}
+                style:max-width={layout.bucketMaxWidth}
                 style:min-width={layout.bucketMinWidth}
               ></span>
             {:else}
-              <span class={gapEmpty} style:min-width={layout.bucketMinWidth}></span>
+              <span
+                class={gapEmpty}
+                style:max-width={layout.bucketMaxWidth}
+                style:min-width={layout.bucketMinWidth}
+              ></span>
             {/if}
           {/each}
         </span>

@@ -97,6 +97,7 @@ describe('responsive Models analysis', () => {
         unpricedFreshTokens: 25,
       }),
       group('zero', { cache: 0, costPercent: 0, costSum: 0, fresh: 0 }),
+      group('counterless', { costSum: 4, priced: 3, sessions: 3, usageUnavailable: 1 }),
     ];
     const { body } = render(component, {
       props: {
@@ -129,8 +130,15 @@ describe('responsive Models analysis', () => {
     expect(body).toContain('aria-label="Filter sessions by model partial"');
     expect(body).toContain('<article aria-label="partial"');
     expect(body).toContain('API value / 1M tokens is unavailable because this model has zero processed tokens.');
+    const coverageLabel = '3 / 3 · 100%';
+    const coverageQualification = '1 of 3 sessions without token counters · API value is a lower bound';
+    const coverageStart = body.indexOf(coverageLabel);
+    const coverageCell = body.slice(coverageStart, body.indexOf('</td>', coverageStart));
+    expect(coverageStart).toBeGreaterThan(-1);
+    expect(coverageCell).toContain(coverageQualification);
     const mobileCards = body.slice(body.indexOf('data-model-analysis-cards'));
     expect(mobileCards).toContain('Processed tokens: cache read + cache write + input + output.');
+    expect(mobileCards.match(new RegExp(coverageQualification, 'g'))).toHaveLength(1);
   });
 
   test('keeps the Breakdown route contract behind the visible Analysis dimension', () => {
@@ -143,6 +151,7 @@ describe('responsive Models analysis', () => {
           harnessProviders: [],
           models: [group('measured')],
           projects: [],
+          range: { from: null, to: null },
         },
         navigation: {
           onSortChange: () => undefined,

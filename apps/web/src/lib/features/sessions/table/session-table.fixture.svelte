@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { TitleSource } from '@ai-usage/report-core/types';
   import type { SessionSurfaceMode } from '../../../../session-surface-mode';
-  import { defaultColumnVisibility } from '../../../../session-table-schema';
+  import { columnVisibilityForSessionPreset, type SessionColumnPresetId } from '../../../../session-table-schema';
   import { syntheticCampaignRow, syntheticSessionRow, syntheticSessionRows } from './session-table.fixtures';
   import SessionTable from './session-table.svelte';
 
@@ -9,13 +9,18 @@
     childTitleSource,
     expanded = false,
     mode = 'desktop',
+    pagedCampaign = false,
+    preset = 'work',
     unavailable = false,
   }: {
     childTitleSource?: TitleSource;
     expanded?: boolean;
     mode?: Exclude<SessionSurfaceMode, 'pending'>;
+    pagedCampaign?: boolean;
+    preset?: SessionColumnPresetId;
     unavailable?: boolean;
   } = $props();
+  const SYNTHETIC_PAGED_CAMPAIGN_SESSION_COUNT = 201;
   const child = $derived(
     childTitleSource ? { ...syntheticSessionRow(2), titleSource: childTitleSource } : syntheticSessionRow(2),
   );
@@ -28,13 +33,39 @@
     partial: true,
     titleSource: 'first-prompt' as const,
     usageUnavailable: unavailable,
+    ...(pagedCampaign
+      ? {
+          campaignTotalCount: SYNTHETIC_PAGED_CAMPAIGN_SESSION_COUNT,
+          campaignVisibleCount: SYNTHETIC_PAGED_CAMPAIGN_SESSION_COUNT,
+        }
+      : {}),
   });
-  const rows = $derived([campaign, ...syntheticSessionRows(4999, 10)]);
+  const campaignChildren = $derived(
+    pagedCampaign
+      ? new Map([
+          [
+            campaign.campaignKey!,
+            {
+              items: [child],
+              loading: false,
+              nextCursor: 'synthetic-campaign-cursor-200',
+              root: campaign,
+              sessionCount: SYNTHETIC_PAGED_CAMPAIGN_SESSION_COUNT,
+              totalCount: SYNTHETIC_PAGED_CAMPAIGN_SESSION_COUNT,
+            },
+          ],
+        ])
+      : new Map(),
+  );
+  const singleton = syntheticCampaignRow(3);
+  const filtered = { ...syntheticCampaignRow(4), campaignTotalCount: 3, campaignVisibleCount: 1 };
+  const rows = $derived([campaign, singleton, filtered, ...syntheticSessionRows(4997, 10)]);
   const noop = () => undefined;
 </script>
 
 <SessionTable
-  columnVisibility={defaultColumnVisibility}
+  {campaignChildren}
+  columnVisibility={columnVisibilityForSessionPreset(preset)}
   initialExpanded={expanded ? { [campaign.rowId]: true } : {}}
   initialSurfaceMode={mode}
   initialWindowAnchor
@@ -43,6 +74,7 @@
   onFieldFilter={noop}
   onHarnessFilter={noop}
   onInitialWindowAnchor={noop}
+  onLoadCampaignChildren={noop}
   onSelect={noop}
   onSortingChange={noop}
   queryResetKey="synthetic-query"

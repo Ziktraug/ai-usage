@@ -4,6 +4,7 @@ import { MAX_SESSION_QUERY_RESULT_BYTES } from './report-budgets';
 import type { SerializedRow } from './report-data';
 import { parseSessionDetailRequest } from './session-detail';
 import {
+  buildSessionCampaignViews,
   campaignBadgeLabelForSessionRow,
   classifierRollupLabelForSessionRow,
   compareSessionPresentationRows,
@@ -616,7 +617,8 @@ describe('session query contracts', () => {
       sessionLabel: 'campaign-root',
       subagent: false,
     });
-    expect(campaignBadgeLabelForSessionRow(item.row)).toBe('Campaign · 2 sessions');
+    expect(campaignBadgeLabelForSessionRow(item.row)).toBe('Campaign · 2 of 3 sessions');
+    expect(campaignBadgeLabelForSessionRow({ ...item.row, campaignVisibleCount: 3 })).toBe('Campaign · 3 sessions');
     expect(classifierRollupLabelForSessionRow(item.row)).toBe('+ 1 automated review');
 
     const children = projectSessionCampaignChildren(rows, {
@@ -642,6 +644,85 @@ describe('session query contracts', () => {
     });
   });
 
+  test('dates and sorts a filtered campaign from matched members while retaining classifier totals', () => {
+    const root = sourcedRow('campaign-root', {
+      activeDate: '2026-07-16T08:00:00.000Z',
+      date: '2026-07-16T08:00:00.000Z',
+      endDate: '2026-07-16T08:00:00.000Z',
+      origin: 'human',
+    });
+    const child = sourcedRow('campaign-child', {
+      activeDate: '2026-07-15T10:00:00.000Z',
+      date: '2026-07-15T10:00:00.000Z',
+      endDate: '2026-07-15T10:00:00.000Z',
+      origin: 'subagent',
+      source: {
+        harnessKey: 'codex',
+        machineId: 'machine-a',
+        machineLabel: 'Machine A',
+        parentSourceSessionId: 'campaign-root',
+        rootSourceSessionId: 'campaign-root',
+        sourceSessionId: 'campaign-child',
+      },
+    });
+    const classifier = sourcedRow('classifier-review', {
+      activeDate: '2026-07-18T09:00:00.000Z',
+      date: '2026-07-18T09:00:00.000Z',
+      endDate: '2026-07-18T09:00:00.000Z',
+      origin: 'classifier',
+      source: {
+        harnessKey: 'codex',
+        machineId: 'machine-a',
+        machineLabel: 'Machine A',
+        parentSourceSessionId: 'campaign-root',
+        rootSourceSessionId: 'campaign-root',
+        sourceSessionId: 'classifier-review',
+      },
+    });
+    const standalone = sourcedRow('standalone', {
+      activeDate: '2026-07-15T12:00:00.000Z',
+      date: '2026-07-15T12:00:00.000Z',
+      endDate: '2026-07-15T12:00:00.000Z',
+    });
+    const fixtureRows = [root, child, classifier, standalone];
+    const request = defaultRequest({
+      pageSize: 10,
+      range: { from: '2026-07-15T00:00:00.000Z', to: '2026-07-15T23:59:59.999Z' },
+      sort: [{ desc: true, id: 'date' }],
+    });
+
+    const page = projectSessionPage(fixtureRows, request);
+    expect(page.items).toHaveLength(2);
+    expect(page.items.map(({ row: itemRow }) => itemRow.sessionLabel)).toEqual(['standalone', 'campaign-root']);
+    expect(page.items[1]?.row).toMatchObject({
+      activeDate: '2026-07-15T10:00:00.000Z',
+      campaignClassifierCount: 1,
+      campaignVisibleCount: 1,
+    });
+
+    const enriched = fixtureRows.map(enrichSessionPresentationRow);
+    const campaign = buildSessionCampaignViews(enriched, [enriched[1]!])[0];
+    expect(campaign?.matchedRows).toHaveLength(1);
+  });
+
+  test('keeps the same source session distinct on two machines with different values', () => {
+    const machineA = sourcedRow('shared-session', { costApprox: 1 });
+    const machineB = sourcedRow('shared-session', {
+      costApprox: 2,
+      source: {
+        harnessKey: 'codex',
+        machineId: 'machine-b',
+        machineLabel: 'Machine B',
+        rootSourceSessionId: 'shared-session',
+        sourceSessionId: 'shared-session',
+      },
+    });
+
+    const page = projectSessionPage([machineA, machineB], defaultRequest({ pageSize: 10 }));
+    expect(page.items).toHaveLength(2);
+    expect(page.items.map(({ row: itemRow }) => itemRow.costApprox).sort()).toEqual([1, 2]);
+  });
+
   test('represents every singleton as a one-session campaign', () => {
     const page = projectSessionPage(
       [sourcedRow('singleton', { origin: 'human', subagent: false })],
@@ -655,7 +736,7 @@ describe('session query contracts', () => {
       throw new Error('Expected a singleton campaign fixture');
     }
     expect(item.row).toMatchObject({ campaignTotalCount: 1, campaignVisibleCount: 1, subagent: false });
-    expect(campaignBadgeLabelForSessionRow(item.row)).toBe('Campaign · 1 session');
+    expect(campaignBadgeLabelForSessionRow(item.row)).toBeNull();
   });
 
   test('represents parentless classifiers as standalone review campaigns', () => {
@@ -675,7 +756,7 @@ describe('session query contracts', () => {
       origin: 'classifier',
       sessionLabel: 'classifier-root',
     });
-    expect(campaignBadgeLabelForSessionRow(item.row)).toBe('Campaign · 1 session');
+    expect(campaignBadgeLabelForSessionRow(item.row)).toBeNull();
     expect(classifierRollupLabelForSessionRow(item.row)).toBeNull();
   });
 

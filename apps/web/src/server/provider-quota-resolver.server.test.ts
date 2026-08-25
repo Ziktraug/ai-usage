@@ -19,7 +19,9 @@ test('serves fresh in-memory quota fixtures in E2E without loading the live SQLi
   const second = await resolveProviderQuotaHistoryForServer(request, 'e2e', loadLive);
 
   expect(first.points).toHaveLength(E2E_PROVIDER_QUOTA_FIXTURE_POINT_COUNT);
-  expect(new Set(first.points.map(({ providerKey }) => providerKey))).toEqual(new Set(['claude', 'codex']));
+  expect(new Set(first.points.map(({ providerKey }) => providerKey))).toEqual(
+    new Set(['claude', 'codex', 'older-provider']),
+  );
   expect(first).not.toBe(second);
   expect(first.points).not.toBe(second.points);
   expect(liveLoads).toBe(0);

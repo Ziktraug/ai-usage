@@ -25,7 +25,11 @@
 
 <script lang="ts">
   import { cx } from '@ai-usage/design-system/css';
-  import type { SessionPresentationRow, SessionQueryRequest } from '@ai-usage/report-core/session-query';
+  import {
+    classifierRollupLabelForSessionRow,
+    type SessionPresentationRow,
+    type SessionQueryRequest,
+  } from '@ai-usage/report-core/session-query';
   import { fmtCompact, fmtNum } from '../../../foundation/presentation/format';
   import { apiValuePresentation } from '../../../foundation/presentation/report-value';
   import { muted } from '../breakdown/styles';
@@ -38,6 +42,7 @@
     readonly onLoadMoreCampaignSessions: (campaignKey: string) => void;
     readonly onSelectSession: (row: SessionPresentationRow) => void;
     readonly query: SessionQueryRequest;
+    readonly rolledUpClassifierCount?: number;
     readonly visibleRows: readonly SessionPresentationRow[];
   }
 
@@ -48,18 +53,14 @@
     onLoadMoreCampaignSessions,
     onSelectSession,
     query,
+    rolledUpClassifierCount = 0,
     visibleRows,
   }: Props = $props();
   let showAll = $state(false);
   let previousCampaignKey = $state('');
-  const model = $derived(campaignSessionControlsModel({ campaign, collection, query, showAll, visibleRows }));
-  const visibleTotals = $derived({
-    costApprox: visibleRows.reduce((sum, row) => sum + row.costApprox, 0),
-    costKnown: visibleRows.every((row) => row.costKnown),
-    freshTokens: visibleRows.reduce((sum, row) => sum + row.freshTokens, 0),
-    tools: visibleRows.reduce((sum, row) => sum + row.tools, 0),
-    turns: visibleRows.reduce((sum, row) => sum + row.turns, 0),
-  });
+  const model = $derived(
+    campaignSessionControlsModel({ campaign, collection, query, rolledUpClassifierCount, showAll, visibleRows }),
+  );
 
   $effect(() => {
     const campaignKey = campaign.campaignKey ?? '';
@@ -79,24 +80,42 @@
       `${fmtNum(session.tools)} tools`,
     ].join(' · ');
   };
+  // The header states the campaign display row's own totals — the same numbers the
+  // metric grid below renders — instead of re-aggregating the loaded member page.
   const campaignTotals = $derived(
     [
-      `${apiValuePresentation(visibleTotals).label} API`,
-      `${fmtCompact(visibleTotals.freshTokens)} fresh tokens`,
-      `${fmtNum(visibleTotals.turns)} turns`,
-      `${fmtNum(visibleTotals.tools)} tools`,
+      `${apiValuePresentation(campaign).label} API`,
+      `${fmtCompact(campaign.freshTokens)} fresh tokens`,
+      `${fmtNum(campaign.turns)} turns`,
+      `${fmtNum(campaign.tools)} tools`,
     ].join(' · '),
+  );
+  // Outside a narrowed filter, the suffix explains automated reviews not yet listed. Under
+  // a filter, the adapter's exact rollup-only count takes precedence so a review returned
+  // for complete campaign totals is never misreported as a matching or hidden session.
+  // Reuse the canonical label so the count and pluralization keep one definition.
+  const unlistedClassifierCount = $derived.by((): number => {
+    const listed = (model?.sessions ?? []).filter(
+      ({ row }) => row.origin === 'classifier' && row.rowId !== campaign.rowId,
+    ).length;
+    return Math.max(0, (campaign.campaignClassifierCount ?? 0) - listed);
+  });
+  const explainedClassifierCount = $derived(
+    model?.rolledUpClassifierCount ? model.rolledUpClassifierCount : unlistedClassifierCount,
+  );
+  const classifierRollup = $derived(
+    classifierRollupLabelForSessionRow({ ...campaign, campaignClassifierCount: explainedClassifierCount }),
   );
 </script>
 
 {#if model}
   <section class={drawerCompare} data-campaign-session-controls={model.campaignKey}>
     <div class={drawerTitle}>Campaign</div>
-    <div style="margin-top: 6px">{campaignTotals}</div>
+    <div data-campaign-totals style="margin-top: 6px">{campaignTotals}</div>
     <div class={muted} data-campaign-session-counts style="margin-top: 4px">
       {#if model.allSessionsLoaded}
         {fmtNum(model.visibleCount)}
-        / {fmtNum(model.totalCount)} sessions shown
+        / {fmtNum(model.totalCount)} sessions {model.rolledUpClassifierCount > 0 ? 'match current filters' : 'shown'}
       {:else}
         {fmtNum(model.visibleCount)}
         / {fmtNum(model.totalCount)} sessions match current filters · {fmtNum(model.loadedCount)} /
@@ -105,6 +124,9 @@
       {/if}
       {#if model.hiddenCount > 0}
         · {fmtNum(model.hiddenCount)} hidden by current filters
+      {/if}
+      {#if classifierRollup}
+        · {classifierRollup}{model.rolledUpClassifierCount > 0 ? ' included in campaign totals' : ''}
       {/if}
     </div>
 

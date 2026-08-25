@@ -1,15 +1,7 @@
 <script lang="ts">
-  import MultiSelect from './multi-select.svelte';
   import SegmentedControl from './segmented-control.svelte';
   import Tabs from './tabs.svelte';
 
-  const machineLabels: Readonly<Record<string, string>> = {
-    alpha: 'Alpha workstation',
-    beta: 'Beta workstation',
-    gamma: 'Gamma workstation',
-  };
-  let machineOptions = $state(['alpha', 'beta']);
-  let selectedMachines = $state<string[]>([]);
   let selectedRange = $state('week');
   let selectedTab = $state('overview');
 </script>
@@ -27,25 +19,6 @@
 {/snippet}
 
 <section aria-label="Compound controls fixture">
-  <div data-selection={selectedMachines.join(',')} data-testid="multi-select-fixture">
-    <MultiSelect
-      label="Filter fixture machines"
-      name="fixture-machines"
-      noun="machines"
-      onValueChange={(value) => (selectedMachines = value)}
-      optionLabel={(value) => machineLabels[value] ?? value}
-      options={machineOptions}
-      placeholder="All machines"
-      value={selectedMachines}
-    />
-    <button
-      onclick={() => (machineOptions = machineOptions.includes('gamma') ? ['alpha', 'beta'] : [...machineOptions, 'gamma'])}
-      type="button"
-    >
-      Toggle dynamic option
-    </button>
-  </div>
-
   <div data-testid="segmented-control-fixture" data-value={selectedRange}>
     <SegmentedControl
       ariaLabel="Fixture range"

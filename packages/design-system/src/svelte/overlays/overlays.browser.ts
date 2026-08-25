@@ -273,6 +273,7 @@ try {
   await popoverTrigger.click();
   const popover = page.locator(popoverSelector);
   await popover.waitFor({ state: 'visible' });
+  assertEqual(await popover.getAttribute('aria-label'), 'Fixture popover actions', 'Popover names its dialog content');
   await assertPortalled(popover, 'Popover content is portalled under body');
   await assertReducedMotion(popover, 'Popover disables animation for reduced motion');
   assertEqual(

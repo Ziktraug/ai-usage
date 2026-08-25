@@ -1,14 +1,42 @@
 import { css } from '@ai-usage/design-system/css';
 import { harnessFillFor } from '../svelte/passive/harness-fill';
 
-export const chartSwatchClasses = [
-  css({ bg: 'chart.c1' }),
-  css({ bg: 'chart.c2' }),
+export { harnessMarkFillFor } from '../svelte/passive/harness-fill';
+
+/** Ranked fills; adjacent slots are the pairs that can touch in the stack. */
+export const rankedSeriesSwatchClasses = [
   css({ bg: 'chart.c3' }),
-  css({ bg: 'chart.c4' }),
+  css({ bg: 'chart.c2' }),
+  css({ bg: 'chart.c7' }),
+  css({ bg: 'chart.c13' }),
+  css({ bg: 'chart.c12' }),
+  css({ bg: 'chart.c11' }),
   css({ bg: 'chart.c5' }),
+  css({ bg: 'chart.c8' }),
+  css({ bg: 'chart.c1' }),
   css({ bg: 'chart.c6' }),
-];
+  css({ bg: 'chart.c9' }),
+  css({ bg: 'chart.c10' }),
+] as const;
+
+export const RANKED_SERIES_HEX = [
+  ['#6A47C8', '#AC92F2'],
+  ['#0E7569', '#46C3AC'],
+  ['#588BE0', '#5590F3'],
+  ['#B8527E', '#FC90BC'],
+  ['#0A6B1D', '#61B565'],
+  ['#853376', '#D37BC1'],
+  ['#647722', '#A9BB5E'],
+  ['#3B4FA5', '#A7B5FE'],
+  ['#9B4210', '#F19A57'],
+  ['#0F6FA8', '#5FB5E2'],
+  ['#9B7300', '#C69612'],
+  ['#9250A0', '#DF99EF'],
+] as const;
+export const RANKED_SERIES_SLOT_COUNT = RANKED_SERIES_HEX.length;
+
+/** Aggregated tails are context, not another ranked series. */
+export const aggregateSeriesFill = css({ bg: 'lineStrong' });
 
 const stableHueFor = (value: string) => {
   let hash = 0;
@@ -19,9 +47,6 @@ const stableHueFor = (value: string) => {
 };
 
 export const stableSeriesColor = (value: string) => `hsl(${stableHueFor(value)} 42% 60%)`;
-
-export const stableSeriesIndex = (value: string, itemCount: number) =>
-  itemCount > 0 ? stableHueFor(value) % itemCount : 0;
 
 /**
  * Neutral series fill. Callers use it as the sibling fallback when a swatch
@@ -39,7 +64,11 @@ export interface DimensionSwatch {
 export const dimensionSwatch = (
   dimension: 'campaign' | 'harness' | 'machine' | 'model' | 'origin' | 'project' | 'provider',
   key: string,
+  position: { readonly aggregate?: boolean; readonly rank?: number } = {},
 ): DimensionSwatch => {
+  if (position.aggregate === true) {
+    return { className: aggregateSeriesFill };
+  }
   // biome-ignore lint/style/useDefaultSwitchClause: Exhaustive by type so a future dimension fails compilation.
   switch (dimension) {
     case 'harness': {
@@ -47,7 +76,10 @@ export const dimensionSwatch = (
       return className ? { className } : {};
     }
     case 'model': {
-      const className = chartSwatchClasses[stableSeriesIndex(key, chartSwatchClasses.length)];
+      const className =
+        position.rank === undefined || position.rank >= RANKED_SERIES_SLOT_COUNT
+          ? undefined
+          : rankedSeriesSwatchClasses[position.rank];
       return className ? { className } : {};
     }
     case 'campaign':

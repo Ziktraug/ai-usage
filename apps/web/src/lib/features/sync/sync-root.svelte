@@ -7,7 +7,6 @@
   import type { SourceControlConnectionState } from '../../../source-control-client';
   import { buildSyncFleetComparisonRows } from '../../../sync-machine-comparison-model';
   import { invalidateSyncFleet } from '../../query/options/sync';
-  import MachineComparison from './machine-comparison.svelte';
   import MachineFleet from './machine-fleet.svelte';
   import ManualTransfer from './manual-transfer.svelte';
   import { headerTop, pageStack, unavailablePanel, unavailableText } from './styles';
@@ -22,8 +21,12 @@
   const machines = $derived(
     fleet ? buildSyncFleetMachineViews(fleet.currentMachine, fleet.machines, data.renderedAt) : [],
   );
-  const comparison = $derived(
-    fleet ? buildSyncFleetComparisonRows(fleet.currentMachine, fleet.machines, data.renderedAt) : [],
+  const fleetShares = $derived(
+    new Map(
+      (fleet ? buildSyncFleetComparisonRows(fleet.currentMachine, fleet.machines, data.renderedAt) : []).map(
+        (row) => [row.id, row.sessionShareLabel] as const,
+      ),
+    ),
   );
   const mutation = $derived(manualTransferMutationAvailability(connection));
   // A merge preview is bound to the store generation, so any sibling mutation stales its proof.
@@ -81,9 +84,9 @@
           omittedMachines={fleet.omittedMachines}
           onRename={onRenameLocalMachine}
           renameAvailable={mutation.available}
+          shares={fleetShares}
           skipped={fleet.skipped}
         />
-        <MachineComparison rows={comparison} />
       {:else if fleetQuery.isPending}
         <section aria-live="polite" class={unavailablePanel}>
           <div class={unavailableText}>Loading machine fleet…</div>

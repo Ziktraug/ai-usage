@@ -1,6 +1,7 @@
 import {
   FOCUSED_REPORT_E2E_ENABLED_KEY,
   FOCUSED_REPORT_E2E_NO_LOCAL_DATA_KEY,
+  FOCUSED_REPORT_E2E_SESSION_SHAPE_KEY,
 } from '../src/focused-report-e2e-fixture';
 import {
   expect,
@@ -19,6 +20,10 @@ const MAX_ALIGNMENT_DRIFT_PX = 1;
 const MIN_CONTENT_ABOVE_FOLD_PX = 10;
 const MOBILE_VIEWPORT = { height: 844, width: 390 };
 const PERIOD_DIRECTION_PATTERN = /higher|lower/u;
+const RHYTHM_CALENDAR_PATTERN = /Daily activity calendar/;
+const RHYTHM_FIRST_MONTH_PATTERN = /^[A-Z][a-z]{2} '\d{2}$/;
+const RHYTHM_MONTH_PATTERN = /^[A-Z][a-z]{2}( '\d{2})?$/;
+const RHYTHM_READOUT_PATTERN = / — [\d,]+ sessions? · /;
 const MODEL_ANALYSIS_COLUMNS = [
   'Model',
   'API value',
@@ -72,6 +77,13 @@ for (const scenario of FIRST_READ_SCENARIOS) {
         .evaluate((element) => getComputedStyle(element).fontSize),
     );
     expect(kpiSize).toBeGreaterThan(metricSize);
+    expect(
+      await kpi
+        .locator('strong')
+        .first()
+        .evaluate((element) => element.getClientRects().length),
+    ).toBe(1);
+    expect(await kpi.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
 
     if (scenario.viewport.width >= 1280) {
       expect(kpiSize).toBeGreaterThanOrEqual(44);
@@ -139,16 +151,30 @@ test('keeps the four executive metrics aligned below a visually dominant KPI', a
   );
   expect(columnCount).toBe(MAX_DASHBOARD_METRIC_COLUMNS);
 
-  const valueOffsets = await metrics.evaluateAll((elements) =>
-    elements.map((element) => {
-      const value = element.querySelector('dd');
-      if (!(value instanceof HTMLElement)) {
-        throw new Error('Executive metric value is missing');
-      }
-      return Math.round(value.getBoundingClientRect().top - element.getBoundingClientRect().top);
-    }),
-  );
+  const valueOffsetsOf = () =>
+    metrics.evaluateAll((elements) =>
+      elements.map((element) => {
+        const value = element.querySelector('dd');
+        if (!(value instanceof HTMLElement)) {
+          throw new Error('Executive metric value is missing');
+        }
+        return Math.round(value.getBoundingClientRect().top - element.getBoundingClientRect().top);
+      }),
+    );
+  const valueOffsets = await valueOffsetsOf();
   expect(Math.max(...valueOffsets) - Math.min(...valueOffsets)).toBeLessThanOrEqual(MAX_ALIGNMENT_DRIFT_PX);
+  await waitForHydratedReport(page);
+  await page
+    .getByRole('region', { name: 'Report period' })
+    .getByRole('button', { exact: true, name: 'All time' })
+    .click();
+  await waitForFocusedReportSettled(page);
+  const coverage = metrics.filter({ hasText: 'Pricing coverage' });
+  await expect(coverage).toContainText('Partially measured');
+  expect(await coverage.locator('dd').count()).toBe(3);
+  expect(await metrics.first().locator('dd').count()).toBe(2);
+  const qualifiedOffsets = await valueOffsetsOf();
+  expect(Math.max(...qualifiedOffsets) - Math.min(...qualifiedOffsets)).toBeLessThanOrEqual(MAX_ALIGNMENT_DRIFT_PX);
   const kpiSize = Number.parseFloat(
     await kpi
       .locator('strong')
@@ -315,6 +341,51 @@ test('renders secondary status only on Overview and puts Projects before closed 
     }),
   ).toBe(true);
   await expect(projectsPanel.locator('[data-project-quality-label]')).toHaveCount(0);
+
+  const projectHeader = projectsPanel.getByRole('columnheader', { name: 'Project' });
+  const sessionsHeader = projectsPanel.getByRole('columnheader', { name: 'Sessions' });
+  const firstRowHeader = projectsPanel.getByRole('rowheader').first();
+  await expect(projectHeader).toHaveCSS('text-align', 'left');
+  await expect(projectHeader).toHaveCSS('padding-left', '12px');
+  await expect(firstRowHeader).toHaveCSS('text-align', 'left');
+  await expect(firstRowHeader).toHaveCSS('padding-left', '12px');
+  await expect(sessionsHeader).toHaveCSS('text-align', 'right');
+  await expect(projectsPanel.getByRole('columnheader', { name: 'Lines changed' })).toBeVisible();
+
+  const search = projectsPanel.getByRole('searchbox', { name: 'Search this breakdown' });
+  await expect(search).toBeVisible();
+  await search.fill('no-such-project');
+  await expect(projectsPanel.getByRole('table').getByRole('status')).toHaveText('No breakdown rows match this search');
+  await expect(projectsPanel.locator('[data-project-name]')).toHaveCount(0);
+  await search.fill('');
+  await expect(projectsPanel.locator('[data-project-name]').first()).toBeVisible();
+});
+
+test('keeps the tablet Projects table inside its horizontal scroll surface', async ({ page }) => {
+  await page.setViewportSize({ height: 1024, width: 768 });
+  await page.goto('/');
+  await page.getByRole('link', { exact: true, name: 'Analysis' }).click();
+  await page.getByRole('tablist', { name: 'Analysis dimension' }).getByRole('tab', { name: 'Projects' }).click();
+
+  const projectsPanel = page.locator('[data-breakdown-panel="projects"]');
+  const tableViewport = projectsPanel.getByRole('table').locator('..');
+  await expect(projectsPanel).toBeVisible();
+  await expect
+    .poll(
+      async () =>
+        await tableViewport.evaluate((element) => ({
+          documentFitsViewport: document.documentElement.scrollWidth <= document.documentElement.clientWidth,
+          ownsHorizontalOverflow: element.scrollWidth > element.clientWidth,
+          panelFitsViewport:
+            (element.closest('[data-breakdown-panel]')?.getBoundingClientRect().right ?? Number.POSITIVE_INFINITY) <=
+            document.documentElement.clientWidth + 1,
+        })),
+    )
+    .toEqual({
+      documentFitsViewport: true,
+      ownsHorizontalOverflow: true,
+      panelFitsViewport: true,
+    });
 });
 
 test('uses compact circular Punchcard marks inside accessible targets with a low/high key', async ({ page }) => {
@@ -394,6 +465,73 @@ test('uses compact circular Punchcard marks inside accessible targets with a low
   expect(punchcardBox?.width ?? 0).toBeGreaterThanOrEqual((advancedBox?.width ?? 0) - 32);
 });
 
+test('keeps every Punchcard hour visible beside Session shape across the desktop band', async ({ page }) => {
+  await page.addInitScript(
+    ({ enabledKey, shapeKey }) => {
+      Reflect.set(globalThis, enabledKey, true);
+      Reflect.set(globalThis, shapeKey, true);
+    },
+    { enabledKey: FOCUSED_REPORT_E2E_ENABLED_KEY, shapeKey: FOCUSED_REPORT_E2E_SESSION_SHAPE_KEY },
+  );
+  for (const { sideBySide, width } of [
+    { sideBySide: false, width: 1024 },
+    { sideBySide: false, width: 1280 },
+    { sideBySide: true, width: 1920 },
+  ]) {
+    await page.setViewportSize({ height: 1000, width });
+    await openHydratedReport(page);
+    await waitForFocusedReportSettled(page);
+    const shape = page.locator('[data-session-shape]');
+    const punchcard = page.getByRole('heading', { level: 4, name: 'Punchcard' }).locator('xpath=ancestor::section[1]');
+    const visual = page.locator('[data-punchcard-visual]');
+    await expect(shape, `${width}px`).toBeVisible();
+    await expect(punchcard, `${width}px`).toBeVisible();
+    expect(
+      await visual.evaluate((element) => element.scrollWidth - element.clientWidth),
+      `${width}px: hidden Punchcard hours`,
+    ).toBeLessThanOrEqual(0);
+    const [shapeBox, punchcardBox] = await Promise.all([shape.boundingBox(), punchcard.boundingBox()]);
+    const sameRow = Math.abs((shapeBox?.y ?? 0) - (punchcardBox?.y ?? Number.POSITIVE_INFINITY)) < 1;
+    expect(sameRow, `${width}px: side by side`).toBe(sideBySide);
+  }
+});
+
+test('labels the Rhythm month axis with the year and leads the day readout with sessions', async ({ page }) => {
+  await openHydratedReport(page);
+  const calendar = page.getByRole('toolbar', { name: RHYTHM_CALENDAR_PATTERN });
+  const rhythm = page.locator('section').filter({ has: calendar });
+  const labels = (await rhythm.locator('[data-heatmap-months] > span').allTextContents()).filter(Boolean);
+  expect(labels.length).toBeGreaterThan(0);
+  expect(labels[0]).toMatch(RHYTHM_FIRST_MONTH_PATTERN);
+  for (const label of labels.slice(1)) {
+    expect(label).toMatch(RHYTHM_MONTH_PATTERN);
+  }
+  expect(labels.filter((label) => label.includes("'"))).toHaveLength(1);
+  await expect(rhythm.locator('[data-heatmap-readout]')).toHaveText(RHYTHM_READOUT_PATTERN);
+});
+
+test('never orphans a record tile: three tiles are 3-up from md and 1-up below', async ({ page }) => {
+  await page.setViewportSize({ height: 1024, width: 768 });
+  await openHydratedReport(page);
+  const grid = page.locator('[data-records-grid]');
+  await expect(grid).toHaveAttribute('data-record-count', '3');
+  const trackCount = () =>
+    grid.evaluate((element) => getComputedStyle(element).gridTemplateColumns.trim().split(' ').filter(Boolean).length);
+  expect(await trackCount()).toBe(3);
+  const tops = await grid
+    .locator(':scope > button')
+    .evaluateAll((elements) => elements.map((element) => Math.round(element.getBoundingClientRect().top)));
+  expect(new Set(tops).size).toBe(1);
+
+  await page.setViewportSize({ height: 844, width: 390 });
+  expect(await trackCount()).toBe(1);
+  const widths = await grid.evaluate((element) => ({
+    grid: element.getBoundingClientRect().width,
+    cards: [...element.querySelectorAll(':scope > button')].map((card) => card.getBoundingClientRect().width),
+  }));
+  expect(widths.cards.every((width) => Math.abs(width - widths.grid) < 1)).toBe(true);
+});
+
 test('separates timeline boundary dates and retains no horizontally intersecting tick', async ({ page }) => {
   for (const width of [1440, 900]) {
     await page.setViewportSize({ height: 1000, width });
@@ -439,9 +577,9 @@ test('keeps the mobile filter stack coherent with content above the fold', async
   const search = page.getByRole('textbox', {
     name: 'Filter sessions by title, project, model, provider, or harness',
   });
-  const harness = page.getByRole('combobox', { name: 'Filter by harness' });
+  const harness = page.getByRole('button', { name: 'Filter by harness' });
   const origin = page.getByRole('button', { name: 'Filter by origin' });
-  const machine = page.getByRole('combobox', { name: 'Filter by machine' });
+  const machine = page.getByRole('button', { name: 'Filter by machine' });
   const sourceStatus = page.getByRole('region', { name: 'Collection source status' });
   const searchBox = await search.boundingBox();
   const harnessBox = await harness.boundingBox();
@@ -510,6 +648,30 @@ test('keeps the mobile filter stack coherent with content above the fold', async
     MIN_CONTENT_ABOVE_FOLD_PX,
   );
 });
+
+for (const width of [1280, 1080]) {
+  test(`keeps the complete filter bar on one row at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ height: 900, width });
+    await openHydratedReport(page);
+
+    const toolbar = page.locator('[data-dashboard-filter-stack]');
+    const controls = [
+      page.getByRole('textbox', { name: 'Filter sessions by title, project, model, provider, or harness' }),
+      page.getByRole('button', { name: 'Filter by harness' }),
+      page.getByRole('button', { name: 'Filter by origin' }),
+      page.getByRole('button', { name: 'Filter by machine' }),
+      page.getByRole('region', { name: 'Collection source status' }),
+    ];
+    const boxes = await Promise.all(controls.map((control) => control.boundingBox()));
+    const tops = boxes.flatMap((box) => (box === null ? [] : [Math.round(box.y)]));
+
+    expect(tops).toHaveLength(controls.length);
+    expect(Math.max(...tops) - Math.min(...tops)).toBeLessThanOrEqual(MAX_ALIGNMENT_DRIFT_PX);
+    expect(await toolbar.evaluate((element) => element.scrollWidth)).toBeLessThanOrEqual(
+      await toolbar.evaluate((element) => element.clientWidth),
+    );
+  });
+}
 
 for (const scenario of FIRST_READ_SCENARIOS) {
   test(`keeps one responsive Models representation accessible in ${scenario.name}`, async ({ page }, testInfo) => {

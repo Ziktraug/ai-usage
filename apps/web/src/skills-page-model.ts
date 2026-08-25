@@ -121,6 +121,8 @@ export interface SkillHealthSummary {
   toRepairCount: number;
 }
 
+export type SkillHealthTone = 'danger' | 'neutral' | 'ok' | 'warn';
+
 export interface UnmanagedEntry {
   name: string;
   path: string;
@@ -638,6 +640,18 @@ export const skillScopeMatches = (
     matches.push({ scopeLabel: scope.label, selection: skill.selection });
   }
   return matches;
+};
+
+export const healthyLinkTone = (
+  summary: Pick<SkillHealthSummary, 'expectedLinkCount' | 'healthyLinkCount'>,
+): SkillHealthTone => {
+  if (summary.expectedLinkCount === 0) {
+    return 'neutral';
+  }
+  if (summary.healthyLinkCount === 0) {
+    return 'danger';
+  }
+  return summary.healthyLinkCount < summary.expectedLinkCount ? 'warn' : 'ok';
 };
 
 export const buildSkillHealthSummary = (snapshot: SkillManagementSnapshot): SkillHealthSummary => {

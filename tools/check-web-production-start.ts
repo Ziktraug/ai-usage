@@ -374,8 +374,13 @@ const ownedProcessGroupIsAlive = (child: Bun.Subprocess): boolean => {
     process.kill(process.platform === 'win32' ? child.pid : -child.pid, 0);
     return true;
   } catch (error) {
-    if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'ESRCH') {
-      return false;
+    if (typeof error === 'object' && error !== null && 'code' in error) {
+      if (error.code === 'ESRCH') {
+        return false;
+      }
+      if (error.code === 'EPERM') {
+        return child.exitCode === null;
+      }
     }
     throw error;
   }

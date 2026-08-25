@@ -10,6 +10,12 @@ A SvelteKit data request returns an empty hydration delta. The persistent root
 Query client serves fresh Skills data immediately and revalidates stale or
 missing entries through the mounted observers without a route-owned client.
 
+The shell enables those observers once the root provider's applied hydration
+state _covers_ the Skills route delta. Coverage means every query the route
+carries is present with same-or-newer data. The applied state may hold more
+than the route knows about, such as the root's quota rail. A data request's
+delta is empty, which every applied state covers.
+
 `apps/web/src/routes/skills/+layout.svelte` renders one `SkillsShell` inside the
 shared `RouteFrame`. Nested Skills route leaves retain addressability and typed
 parameters; the layout owns the workspace. The root query provider remains the

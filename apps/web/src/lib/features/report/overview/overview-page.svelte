@@ -19,6 +19,7 @@
   import type { DashboardDateRangeSearch } from '../../../../dashboard-search';
   import type { ProviderStatusView } from '../../../../provider-status-model';
   import type ActivityExplorer from '../range/activity-explorer.svelte';
+  import { rangeBounds, reportPeriodInProgress } from '../range/report-range-model';
   import ActivityHeatmap from './activity-heatmap.svelte';
   import ExecutiveOverview from './executive-overview.svelte';
   import { buildExecutiveOverviewModel } from './executive-overview-model';
@@ -67,7 +68,12 @@
 
   const executiveModel = $derived(
     buildExecutiveOverviewModel({
+      comparisonBoundary: {
+        rangeFrom: rangeBounds(range, new Date(result.metadata.generatedAt)).from,
+        recordedFirst: result.dateDomain?.first ?? null,
+      },
       executive: result.view.executive,
+      periodInProgress: reportPeriodInProgress(range, new Date(result.metadata.generatedAt)),
       previousSummary: result.view.previousSummary,
       rangeMode: range.mode,
       summary: result.summary,
@@ -112,12 +118,7 @@
           {#if result.view.advancedSummary}
             <div class={twoColumns}>
               {#if result.view.advancedSummary.hasSessionShape}
-                <SessionShape
-                  advancedSummary={result.view.advancedSummary}
-                  {onSelectSession}
-                  {presentSessionItem}
-                  shape={result.view.sessionShape}
-                />
+                <SessionShape {onSelectSession} {presentSessionItem} shape={result.view.sessionShape} />
               {/if}
               {#if result.view.advancedSummary.hasPunchcard}
                 <Punchcard {onSelectTimeCell} punchcard={result.view.punchcard} />

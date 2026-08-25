@@ -4,8 +4,10 @@ import { svelte } from '@sveltejs/vite-plugin-svelte';
 import type { Component } from 'svelte';
 import { createServer } from 'vite';
 
-const CAMPAIGN_ANNOTATION_PATTERN = /data-session-campaign-annotation[^>]*>\s*Campaign · 1 session<\/span>/;
+const CAMPAIGN_ANNOTATION_PATTERN = /data-session-campaign-annotation[^>]*>\s*Campaign · 2 sessions<\/span>/;
 const EXTRA_CAMPAIGN_SEPARATOR_PATTERN = /data-session-campaign-annotation[^>]*>\s*· Campaign/;
+const FILTERED_CAMPAIGN_ANNOTATION_PATTERN =
+  /data-session-campaign-annotation[^>]*>\s*Campaign · 1 of 3 sessions<\/span>/;
 const INHERITED_TITLE_PATTERN =
   /data-session-inherited-title[^>]*title="Title inherited from the campaign root session"[^>]*>Synthetic session 1<\/span><span class="[^"]*"> · <\/span>/;
 
@@ -47,6 +49,16 @@ const [fixtureModule, serverModule] = await Promise.all([
 const fixture = componentFrom(fixtureModule);
 const { render } = rendererFrom(serverModule);
 
+const campaignRowMarkup = (body: string): string => {
+  const markerIndex = body.indexOf('Expand campaign Synthetic session 1');
+  const rowStart = body.lastIndexOf('<tr', markerIndex);
+  const rowEnd = body.indexOf('</tr>', markerIndex);
+  if (markerIndex < 0 || rowStart < 0 || rowEnd < 0) {
+    throw new Error('Synthetic campaign row markup is unavailable');
+  }
+  return body.slice(rowStart, rowEnd + '</tr>'.length);
+};
+
 describe('session table Svelte rendering', () => {
   test('server-renders meaningful table semantics, sorting, columns, and a bounded desktop window', () => {
     const { body } = render(fixture);
@@ -62,17 +74,22 @@ describe('session table Svelte rendering', () => {
     expect(body).toContain('Session column presets');
     expect(body).toContain('Synthetic session 1');
     expect(body).toContain('Expand campaign Synthetic session 1');
+    expect(body).toContain('Expand campaign Synthetic session 4');
+    expect(body).not.toContain('Expand campaign Synthetic session 3');
     expect(body).toContain('data-session-row-id');
     expect(body).toContain('<mark');
     expect(body).toMatch(CAMPAIGN_ANNOTATION_PATTERN);
+    expect(body).toMatch(FILTERED_CAMPAIGN_ANNOTATION_PATTERN);
+    expect(body.match(/data-session-campaign-annotation/g)?.length ?? 0).toBe(2);
     expect(body).not.toMatch(EXTRA_CAMPAIGN_SEPARATOR_PATTERN);
-    expect(body).toContain('+ 1 automated review · 1,200 fresh');
+    expect(body).toContain('+ 1 automated review · 1.2k fresh');
     expect(body).toContain('data-scope="tooltip"');
     expect(body).toContain('data-part="trigger"');
     expect(body).toContain('aria-label="Derived title:');
     expect(body).toContain('aria-pressed="false"');
     expect(body).toContain('title="Filter by synthetic-project"');
     expect(body).toContain('title="Filter by gpt-5.4"');
+    expect(body).toContain('title="Recorded time of the root session on campaign rows');
     expect(body.match(/data-session-row-id/g)?.length ?? 0).toBeLessThan(40);
   });
 
@@ -96,7 +113,8 @@ describe('session table Svelte rendering', () => {
     expect(body).toContain('title="Filter by project synthetic-project"');
     expect(body).toContain('title="Filter by model gpt-5.4"');
     expect(body).toContain('title="Expand campaign"');
-    expect(body).toContain('root-session time');
+    expect(body.match(/title="Expand campaign"/g)?.length ?? 0).toBe(2);
+    expect(body).not.toContain('root-session time');
     expect(body).toContain(
       'Campaign time uses the root session only. Sum of recorded Codex task-open spans. This includes time waiting for tools and subagents; it is not model runtime.',
     );
@@ -133,5 +151,20 @@ describe('session table Svelte rendering', () => {
     expect(expanded).toContain('aria-setsize="5001"');
     expect(expanded).toContain('data-depth="1"');
     expect(expanded).toContain('title="Collapse campaign"');
+  });
+
+  test('collapses identical metric provenance into one marker per row in the Tokens preset', () => {
+    const tokensBody = render(fixture, { props: { preset: 'tokens' } }).body;
+    expect(
+      tokensBody.match(
+        /aria-label="Derived title:[^"]*Partial session:[^"]*Applies to Input tokens, Output tokens, Cache read, Fresh tokens\./g,
+      )?.length ?? 0,
+    ).toBe(1);
+    expect(tokensBody.match(/data-provenance-shared="partial-session"/g)?.length ?? 0).toBe(4);
+    expect(campaignRowMarkup(tokensBody).match(/data-part="trigger"/g)?.length ?? 0).toBe(1);
+
+    const workBody = render(fixture, { props: { preset: 'work' } }).body;
+    expect(campaignRowMarkup(workBody)).not.toContain('data-provenance-shared');
+    expect(campaignRowMarkup(workBody).match(/data-part="trigger"/g)?.length ?? 0).toBe(2);
   });
 });

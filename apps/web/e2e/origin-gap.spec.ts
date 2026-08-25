@@ -14,7 +14,10 @@ test('renders undeclared origin outside the stack with its three causes', async 
   const chartOptions = activity.locator('details[aria-label="Explore activity"]');
   await chartOptions.locator('summary').click();
   await chartOptions.getByRole('radio', { exact: true, name: 'Origin' }).click();
-  await chartOptions.getByRole('radio', { exact: true, name: 'Sessions' }).click();
+  await activity
+    .getByRole('group', { name: 'Activity metric' })
+    .getByRole('button', { exact: true, name: 'Sessions' })
+    .click();
 
   const legend = activity.locator('[data-report-range-part=total-legend]');
   await expect(legend).toContainText('Human');
@@ -52,4 +55,22 @@ test('renders undeclared origin outside the stack with its three causes', async 
     expect(appearance.backgroundImage).not.toBe('none');
     expect(appearance.borderColor).not.toBe('rgba(0, 0, 0, 0)');
   }
+
+  await reportPeriod.getByRole('button', { name: 'Choose a custom report period' }).click();
+  await page.getByLabel('To', { exact: true }).fill('2026-06-09');
+  await page.getByLabel('To', { exact: true }).press('Tab');
+  await page.getByLabel('From', { exact: true }).fill('2026-06-09');
+  await page.getByLabel('From', { exact: true }).press('Tab');
+  await waitForFocusedReportSettled(page);
+  const singleBar = activity.locator('[data-report-range-part="chart"] [role="img"]');
+  const singleGap = activity.locator('[data-origin-unclassified-band] > [data-origin-gap-sessions]');
+  await expect(singleBar).toHaveCount(1);
+  await expect(singleGap).toHaveCount(1);
+  const [barBox, gapBox] = await Promise.all([singleBar.boundingBox(), singleGap.boundingBox()]);
+  expect(barBox).not.toBeNull();
+  expect(gapBox).not.toBeNull();
+  expect(gapBox?.width ?? Number.POSITIVE_INFINITY).toBeLessThanOrEqual(65);
+  expect(
+    Math.abs((barBox?.x ?? 0) + (barBox?.width ?? 0) / 2 - ((gapBox?.x ?? 0) + (gapBox?.width ?? 0) / 2)),
+  ).toBeLessThanOrEqual(2);
 });

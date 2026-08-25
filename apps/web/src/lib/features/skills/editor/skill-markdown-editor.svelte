@@ -48,9 +48,10 @@
     display: 'grid',
     gridTemplateAreas: {
       base: '"header" "editor" "actions"',
-      md: '"header actions" "editor editor"',
+      md: '"header" "actions" "editor"',
+      '2xl': '"header actions" "editor editor"',
     },
-    gridTemplateColumns: { base: '1fr', md: 'minmax(0, 1fr) auto' },
+    gridTemplateColumns: { base: '1fr', '2xl': 'minmax(0, 1fr) auto' },
     columnGap: { base: '12px', md: 0 },
     rowGap: '12px',
     minW: 0,
@@ -63,10 +64,10 @@
     alignItems: 'center',
     p: '10px 12px',
     border: '1px solid token(colors.line)',
-    borderRightWidth: { base: '1px', md: 0 },
+    borderRightWidth: { base: '1px', '2xl': 0 },
     borderTopLeftRadius: 'sm',
-    borderTopRightRadius: { base: 'sm', md: 0 },
-    borderBottomRightRadius: { base: 'sm', md: 0 },
+    borderTopRightRadius: { base: 'sm', '2xl': 0 },
+    borderBottomRightRadius: { base: 'sm', '2xl': 0 },
     borderBottomLeftRadius: 'sm',
     bg: 'surfaceMuted',
   });
@@ -76,13 +77,13 @@
     flexWrap: 'wrap',
     gap: '8px',
     alignItems: 'center',
-    justifyContent: { base: 'flex-start', md: 'flex-end' },
+    justifyContent: { base: 'flex-start', '2xl': 'flex-end' },
     p: '10px 12px',
     border: '1px solid token(colors.line)',
-    borderTopLeftRadius: { base: 'sm', md: 0 },
+    borderTopLeftRadius: { base: 'sm', '2xl': 0 },
     borderTopRightRadius: 'sm',
     borderBottomRightRadius: 'sm',
-    borderBottomLeftRadius: { base: 'sm', md: 0 },
+    borderBottomLeftRadius: { base: 'sm', '2xl': 0 },
     bg: 'surfaceMuted',
   });
   const editorArea = css({
@@ -144,7 +145,10 @@
     if (next.dirty) {
       return { error: false, label: 'Unsaved changes', tone: statusPillWarn };
     }
-    return { error: false, label: 'Saved', tone: statusPillOk };
+    if (next.message === 'SKILL.md saved.') {
+      return { error: false, label: 'Saved', tone: statusPillOk };
+    }
+    return { error: false, label: 'Unchanged', tone: statusPillInfo };
   };
   const status = $derived(documentStatus(editorState));
 

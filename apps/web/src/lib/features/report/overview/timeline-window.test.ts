@@ -297,13 +297,25 @@ describe('window layout and ticks', () => {
   test('keeps dense day buckets inside the plot instead of overflowing horizontally', () => {
     expect(timelineBucketLayout(379)).toEqual({
       bucketGap: 'clamp(0px, calc((100% - 758px) / 378), 2px)',
+      bucketMaxWidth: 'none',
       bucketMinWidth: 'min(2px, calc(100% / 379))',
+      stackJustify: 'flex-start',
     });
   });
 
   test('collapses the gap for a single bucket', () => {
-    expect(timelineBucketLayout(1)).toEqual({ bucketGap: '0px', bucketMinWidth: 'min(2px, calc(100% / 1))' });
-    expect(timelineBucketLayout(0)).toEqual({ bucketGap: '0px', bucketMinWidth: 'min(2px, calc(100% / 1))' });
+    expect(timelineBucketLayout(1)).toEqual({
+      bucketGap: '0px',
+      bucketMaxWidth: '64px',
+      bucketMinWidth: 'min(2px, calc(100% / 1))',
+      stackJustify: 'center',
+    });
+    expect(timelineBucketLayout(0)).toEqual({
+      bucketGap: '0px',
+      bucketMaxWidth: '64px',
+      bucketMinWidth: 'min(2px, calc(100% / 1))',
+      stackJustify: 'center',
+    });
   });
 
   test('carries no interior tick for a window shorter than a week', () => {

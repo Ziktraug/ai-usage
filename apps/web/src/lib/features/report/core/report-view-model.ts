@@ -95,9 +95,21 @@ export const syntheticReportShellModel = (mode: 'demo' | 'e2e', payload: WebRepo
   };
 };
 
-export const reportGeneratedLabel = (generatedAt: string | null, hasReportData: boolean): string => {
+/**
+ * The stored report revision's assembly time. Renewing an unchanged revision keeps it
+ * (`served-report-store.ts` renews `published_at` only), so it moves when collected data
+ * changed — never because the reader navigated.
+ */
+export const reportFreshnessTime = (generatedAt: string): string => {
+  const parts = dateTimeFormatter.formatToParts(new Date(generatedAt));
+  const part = (type: Intl.DateTimeFormatPartTypes): string =>
+    parts.find((candidate) => candidate.type === type)?.value ?? '';
+  return `${part('month')} ${part('day')}, ${part('hour')}:${part('minute')}`;
+};
+
+export const reportFreshnessLabel = (generatedAt: string | null, hasReportData: boolean): string => {
   if (!(hasReportData && generatedAt)) {
     return 'Report payload unavailable';
   }
-  return `Generated ${dateTimeFormatter.format(new Date(generatedAt))}`;
+  return `Data as of ${reportFreshnessTime(generatedAt)}`;
 };

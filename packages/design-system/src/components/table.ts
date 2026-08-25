@@ -102,6 +102,8 @@ export const sessionViewportSurface = css({
 
 export const desktopTableSurface = css({
   display: { base: 'none', md: 'block' },
+  maxW: 'full',
+  minW: 0,
   _print: { display: 'block' },
 });
 
@@ -226,7 +228,7 @@ export const sessionSummaryMobileSort = css({
   gap: '8px',
   w: '100%',
   '& > button': {
-    minH: '44px',
+    minH: '48px',
   },
 });
 

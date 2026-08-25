@@ -10,18 +10,20 @@
   const detailInfoButton = css({
     display: 'inline-grid',
     placeItems: 'center',
-    w: '24px',
-    h: '24px',
+    w: '44px',
+    h: '44px',
+    m: '-14px -12px -14px 0',
     p: 0,
-    border: '1px solid token(colors.line)',
-    borderRadius: 'full',
-    bg: 'surfaceMuted',
+    border: 0,
+    bg: 'transparent',
     color: 'muted',
-    fontSize: '12px',
-    fontWeight: 700,
-    cursor: 'pointer',
-    _hover: { borderColor: 'lineStrong', color: 'ink' },
-    _focusVisible: { outline: '2px solid token(colors.accent)', outlineOffset: '2px' },
+    cursor: 'help',
+    '&:hover > [data-detail-hint-glyph]': { borderColor: 'lineStrong', color: 'ink' },
+    '&:focus-visible': { outline: 'none' },
+    '&:focus-visible > [data-detail-hint-glyph]': {
+      outline: '2px solid token(colors.accent)',
+      outlineOffset: '2px',
+    },
   });
   const detailHintContent = css({
     maxW: '320px',
@@ -51,7 +53,7 @@
 </script>
 
 <script lang="ts">
-  import { Popover } from '@ai-usage/design-system/svelte';
+  import { Popover, provenanceMarkerClass } from '@ai-usage/design-system/svelte';
   import { onDestroy } from 'svelte';
 
   let {
@@ -81,6 +83,7 @@
     <div class={detailLabel}>{label}</div>
     {#if hint}
       <Popover
+        contentAriaLabel={`About ${label}`}
         contentClass={popoverContent}
         onExitComplete={() => onHintSettled?.(hintId)}
         onOpenChange={(open) => onHintOpenChange?.(hintId, open)}
@@ -91,7 +94,7 @@
         triggerTitle={`About ${label}`}
       >
         {#snippet trigger()}
-          <span aria-hidden="true">i</span>
+          <span aria-hidden="true" class={provenanceMarkerClass} data-detail-hint-glyph>i</span>
         {/snippet}
         <div class={detailHintContent}>{hint}</div>
       </Popover>

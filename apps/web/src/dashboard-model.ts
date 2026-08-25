@@ -110,6 +110,8 @@ export interface CampaignView {
   allTotals: CampaignTotals;
   campaignKey: CampaignKey;
   label: string;
+  /** Members that satisfy the current query; the classifier rollup is excluded. */
+  matchedRows: DashboardRow[];
   root: DashboardRow;
   rootSourceSessionId: string;
   totalCount: number;
@@ -178,6 +180,7 @@ export const buildCampaignViews = (
     campaigns.push({
       campaignKey,
       label: labelFor(campaignKey, root.sessionLabel),
+      matchedRows,
       rootSourceSessionId: firstIdentity.rootSourceSessionId,
       root,
       visibleRows: visibleRowsForTotals,
@@ -202,7 +205,7 @@ const campaignSortValue = (campaign: CampaignView, columnId: SessionColumnId): n
   const root = campaign.root;
   switch (columnId) {
     case 'date':
-      return Math.max(...campaign.visibleRows.map((row) => row.sortDate), root.sortDate);
+      return Math.max(...campaign.matchedRows.map((row) => row.sortDate));
     case 'tokIn':
       return totals.tokIn;
     case 'tokOut':
@@ -321,9 +324,9 @@ export const buildCampaignTableItems = (
 const campaignDisplayRow = (campaign: CampaignView, sorting: TableSortingState): DashboardRow => {
   const totals = campaign.visibleTotals;
   const visibleChildren = buildSortedDashboardRows(campaign.visibleChildren, sorting);
-  const latestVisibleRow = campaign.visibleRows.reduce(
+  const latestVisibleRow = campaign.matchedRows.reduce(
     (latest, row) => (row.sortDate > latest.sortDate ? row : latest),
-    campaign.visibleRows[0] ?? campaign.root,
+    campaign.matchedRows[0] ?? campaign.root,
   );
   const ambiguous = campaign.visibleRows.some((row) => row.ambiguous);
   const partial = campaign.visibleRows.some((row) => row.partial);
@@ -366,13 +369,6 @@ const campaignDisplayRow = (campaign: CampaignView, sorting: TableSortingState):
     turns: totals.turns,
     usageUnavailable,
   };
-};
-
-export const campaignBadgeLabelForRow = (row: DashboardRow) => {
-  if (!row.campaignKey || row.campaignTotalCount == null || row.campaignVisibleCount == null) {
-    return null;
-  }
-  return `Campaign · ${row.campaignVisibleCount} ${row.campaignVisibleCount === 1 ? 'session' : 'sessions'}`;
 };
 
 export const buildCampaignTableRows = (

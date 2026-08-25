@@ -69,6 +69,7 @@ const executive: FocusedExecutiveOverview = {
 
 const modelInput = (overrides: Partial<ExecutiveOverviewModelInput> = {}): ExecutiveOverviewModelInput => ({
   executive,
+  periodInProgress: false,
   previousSummary: summary({ totalCost: 50 }),
   rangeMode: '30d',
   summary: summary(),
@@ -88,6 +89,7 @@ describe('executive Overview model', () => {
     expect(model.primary.provenance).toBeNull();
     expect(model.primary.periodScope).toBe('in the last 30 days');
     expect(model.primary.comparison).toMatchObject({
+      caveat: null,
       delta: { pct: 100 },
       explanation: null,
       state: 'available',
@@ -180,6 +182,7 @@ describe('executive Overview model', () => {
       value: '2 / 3',
     });
     expect(model.primary.comparison).toEqual({
+      caveat: null,
       delta: null,
       explanation: null,
       state: 'available',
@@ -195,6 +198,7 @@ describe('executive Overview model', () => {
     const model = buildExecutiveOverviewModel(modelInput({ previousSummary }));
 
     expect(model.primary.comparison).toEqual({
+      caveat: null,
       delta: null,
       explanation: null,
       state: 'available',
@@ -205,6 +209,7 @@ describe('executive Overview model', () => {
     const model = buildExecutiveOverviewModel(modelInput({ previousSummary: null, rangeMode: 'all' }));
 
     expect(model.primary.comparison).toEqual({
+      caveat: null,
       delta: null,
       explanation: 'No previous period exists before the full recorded range.',
       state: 'full-range',
@@ -233,11 +238,72 @@ describe('executive Overview model', () => {
 
     expect(model.primary.value).toMatchObject({ label: '$0.00', status: 'exact' });
     expect(model.primary.comparison).toEqual({
+      caveat: null,
       delta: null,
       explanation: 'No sessions exist in the previous period.',
       state: 'no-prior-data',
     });
     expect(model.insight).toBeNull();
+  });
+
+  test('chooses no-prior copy from the recorded boundary rather than the range mode', () => {
+    const beforeRecordedRange = buildExecutiveOverviewModel(
+      modelInput({
+        comparisonBoundary: {
+          rangeFrom: new Date('2026-03-13T00:00:00.000Z'),
+          recordedFirst: '2026-04-12T09:20:00.000Z',
+        },
+        previousSummary: null,
+        rangeMode: '90d',
+      }),
+    );
+    const emptyWindowWithinHistory = buildExecutiveOverviewModel(
+      modelInput({
+        comparisonBoundary: {
+          rangeFrom: new Date('2026-05-12T00:00:00.000Z'),
+          recordedFirst: '2026-04-12T09:20:00.000Z',
+        },
+        previousSummary: null,
+        rangeMode: '30d',
+      }),
+    );
+    const customBoundary = buildExecutiveOverviewModel(
+      modelInput({
+        comparisonBoundary: {
+          rangeFrom: new Date('2026-04-12T00:00:00.000Z'),
+          recordedFirst: '2026-04-12T09:20:00.000Z',
+        },
+        previousSummary: null,
+        rangeMode: 'custom',
+      }),
+    );
+
+    expect(beforeRecordedRange.primary.comparison).toMatchObject({
+      explanation: 'No previous period exists before the full recorded range.',
+      state: 'full-range',
+    });
+    expect(emptyWindowWithinHistory.primary.comparison).toMatchObject({
+      explanation: 'No sessions exist in the previous period.',
+      state: 'no-prior-data',
+    });
+    expect(customBoundary.primary.comparison).toMatchObject({ state: 'full-range' });
+  });
+
+  test('qualifies comparisons while the selected period is still in progress', () => {
+    const caveat = 'This period is still in progress, so the comparison is provisional.';
+    const inProgress = buildExecutiveOverviewModel(modelInput({ periodInProgress: true }));
+    const withoutDelta = buildExecutiveOverviewModel(
+      modelInput({ periodInProgress: true, previousSummary: null, rangeMode: 'all' }),
+    );
+    const complete = buildExecutiveOverviewModel(modelInput({ periodInProgress: false }));
+
+    expect(inProgress.primary.comparison.caveat).toBe(caveat);
+    expect(inProgress.insight?.sentences[0]).toBe(
+      'API-equivalent value is 100% higher than the previous equal-length period (this period is still in progress).',
+    );
+    expect(inProgress.insight?.text).not.toMatch(FORBIDDEN_INSIGHT_CLAIMS);
+    expect(withoutDelta.primary.comparison.caveat).toBeNull();
+    expect(complete.primary.comparison.caveat).toBeNull();
   });
 
   test('distinguishes no local usage from filters that return zero', () => {

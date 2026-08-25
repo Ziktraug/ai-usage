@@ -75,7 +75,7 @@ export const toolbar = css({
   zIndex: 20,
   display: 'flex',
   flexDirection: { base: 'column', sm: 'row' },
-  flexWrap: { base: 'nowrap', sm: 'wrap' },
+  flexWrap: { base: 'nowrap', sm: 'wrap', lg: 'nowrap' },
   gap: { base: '8px', sm: '10px' },
   alignItems: 'center',
   py: { base: '8px', sm: '12px' },
@@ -83,7 +83,7 @@ export const toolbar = css({
   borderBottom: '1px solid token(colors.line)',
   _print: { display: 'none' },
   '& > input': {
-    flex: { base: 'none', sm: '1 1 240px' },
+    flex: { base: 'none', sm: '1 1 240px', lg: '1 1 180px' },
     minH: { base: '44px', sm: '36px' },
     minW: { base: 0, sm: '180px' },
     w: { base: 'full', sm: 'auto' },
@@ -91,7 +91,7 @@ export const toolbar = css({
 });
 export const controls = css({
   display: { base: 'grid', sm: 'contents' },
-  gridTemplateColumns: 'minmax(0, 0.75fr) minmax(0, 1.25fr)',
+  gridTemplateColumns: 'minmax(0, 0.7fr) minmax(0, 1.3fr)',
   w: { base: 'full', sm: 'auto' },
   gap: { base: '8px', sm: '0' },
   alignItems: 'center',
@@ -100,12 +100,21 @@ export const controls = css({
     w: { base: 'full', sm: 'auto' },
   },
   '& button, & a': { minH: { base: '44px', sm: '36px' } },
+  '& > :last-child:nth-child(odd)': { gridColumn: { base: '1 / -1', sm: 'auto' } },
+});
+export const actions = css({
+  alignItems: 'center',
+  display: { base: 'contents', sm: 'flex' },
+  flexShrink: 0,
+  gap: { base: '8px', sm: '6px' },
+  ml: { base: 0, sm: 'auto' },
+  minW: 0,
   '& > [aria-label="Collection source status"]': {
+    ml: 0,
     gap: { base: '4px', sm: '8px' },
-    '& > a, & > button': { px: { base: '6px', sm: '10px' } },
+    '& > a, & > button': { px: { base: '4px', sm: '10px' } },
     '& > button': { whiteSpace: 'nowrap' },
   },
-  '& > :last-child:nth-child(odd)': { gridColumn: { base: '1 / -1', sm: 'auto' } },
 });
 
 export const table = css({ w: 'full', borderCollapse: 'collapse', fontSize: '12px' });

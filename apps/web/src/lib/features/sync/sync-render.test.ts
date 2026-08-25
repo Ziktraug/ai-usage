@@ -24,6 +24,11 @@ const rendererFrom = (loaded: unknown): SvelteServerModule => {
   return loaded as SvelteServerModule;
 };
 
+// The fleet counts stored rows, not the report's reportable sessions, so the single fleet
+// representation keeps saying so after the duplicate comparison surfaces are removed (U03/U27).
+const STORED_SESSIONS_FACT_PATTERN = /<span[^>]*>\s*Stored sessions\s*<\/span>/u;
+const BARE_SESSIONS_LABEL_PATTERN = /<(dt|span|th)[^>]*>\s*Sessions\s*<\/\1>/u;
+
 const fleet: SyncFleet = {
   currentMachine: { id: 'machine-a', label: 'Laptop' },
   machines: [
@@ -92,6 +97,14 @@ describe('Sync rendered SSR parity', () => {
     expect(body).toContain('Sync');
     expect(body).toContain('Laptop');
     expect(body).toContain('7');
+    expect(body).toMatch(STORED_SESSIONS_FACT_PATTERN);
+    expect(body).toContain('Fleet share');
+    expect(body).toContain('100%');
+    expect(body).not.toContain('Machine contributions');
+    expect(body).not.toContain('Machine contribution summaries');
+    expect(body).not.toContain('<table');
+    expect(body.match(/data-machine-fleet-share/g)).toHaveLength(1);
+    expect(body).not.toMatch(BARE_SESSIONS_LABEL_PATTERN);
     expect(body).toContain('Manual transfer');
     // The Cursor export is a second, separately labelled action next to the merge drop zone.
     expect(body).toContain('Drop a merge file here or choose a file');

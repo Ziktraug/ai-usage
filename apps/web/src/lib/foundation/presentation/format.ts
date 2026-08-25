@@ -1,4 +1,5 @@
 const numberFormatter = new Intl.NumberFormat('en', { maximumFractionDigits: 0 });
+const THOUSANDS_GROUP_PATTERN = /\B(?=(\d{3})+(?!\d))/g;
 const dateTimeFormatter = new Intl.DateTimeFormat('en', {
   month: 'short',
   day: '2-digit',
@@ -14,7 +15,11 @@ const dateOnlyFormatter = new Intl.DateTimeFormat('en', {
 
 export const fmtNum = (value: number): string => numberFormatter.format(value);
 
-export const fmtMoney = (value: number | null | undefined): string => (value == null ? '—' : `$${value.toFixed(2)}`);
+export const fmtCount = (count: number, noun: string, plural = `${noun}s`): string =>
+  `${fmtNum(count)} ${count === 1 ? noun : plural}`;
+
+export const fmtMoney = (value: number | null | undefined): string =>
+  value == null ? '—' : `$${value.toFixed(2).replace(THOUSANDS_GROUP_PATTERN, ',')}`;
 
 // One decimal only where it carries information. An exact zero gains nothing from `0.0%`, and the
 // extra digit made it the odd entry in columns whose other rows print whole percentages.
@@ -34,6 +39,19 @@ export const fmtCompact = (value: number): string => {
   }
   return fmtNum(value);
 };
+
+const compactColumnFormatter = new Intl.NumberFormat('en', {
+  maximumSignificantDigits: 3,
+  notation: 'compact',
+});
+
+/**
+ * One notation for values that are compared down a column: up to three
+ * significant digits and a k/M/B suffix from 1,000 up (`999`, `1.23k`,
+ * `37k`, `188k`, `10.9M`). `fmtCompact` keeps exact separators below
+ * 100,000 for prose and single tiles, where nothing is compared.
+ */
+export const fmtCompactColumn = (value: number): string => compactColumnFormatter.format(value).replace('K', 'k');
 
 export const fmtDate = (value: string | null): string => (value ? dateTimeFormatter.format(new Date(value)) : '—');
 

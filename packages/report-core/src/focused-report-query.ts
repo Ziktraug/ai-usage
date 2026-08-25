@@ -34,6 +34,7 @@ import {
   type SessionPresentationRow,
   type SessionQueryFilters,
   type SessionQueryRange,
+  sessionCampaignDisplayRow,
   sessionCampaignIdentityForRow,
   sessionModelKeys,
   sessionOriginLabel,
@@ -943,9 +944,13 @@ export const buildFocusedTimeline = (
   );
 };
 
+// Known subtotal of every visible session — fully priced or not. Overview
+// groups, breakdown groups, project groups and `buildFocusedReportSummary` must
+// all sum this; only means use fully priced rows.
 const analyticsInput = (row: SessionPresentationRow): AnalyticsRowInput => ({
   ambiguous: row.ambiguous ?? false,
   cache: row.tokCr,
+  costLowerBound: usageRowApiPriceMeasurement(row).knownCost,
   fresh: row.freshTokens,
   harness: row.harness,
   inp: row.tokIn,
@@ -958,11 +963,6 @@ const analyticsInput = (row: SessionPresentationRow): AnalyticsRowInput => ({
   unpricedFreshTokens:
     row.priceMeasurement?.unpricedFreshTokens ?? usageRowApiPriceMeasurement(row).unpricedFreshTokens,
   usageUnavailable: row.usageUnavailable ?? false,
-});
-
-const executiveAnalyticsInput = (row: SessionPresentationRow): AnalyticsRowInput => ({
-  ...analyticsInput(row),
-  costLowerBound: usageRowApiPriceMeasurement(row).knownCost,
 });
 
 const focusedExecutiveGroupFromAnalytics = (group: AnalyticsGroup): FocusedExecutiveGroup => {
@@ -1023,9 +1023,7 @@ const buildFocusedExecutiveOverview = (rows: readonly SessionPresentationRow[]):
   const knownCost = rows.reduce((total, row) => total + usageRowApiPriceMeasurement(row).knownCost, 0);
   return {
     harnesses: buildFocusedExecutiveGroups(
-      groupAnalytics(rows, executiveAnalyticsInput, (row) => row.harness, knownCost).map(
-        focusedExecutiveGroupFromAnalytics,
-      ),
+      groupAnalytics(rows, analyticsInput, (row) => row.harness, knownCost).map(focusedExecutiveGroupFromAnalytics),
       true,
     ),
     models: buildFocusedExecutiveGroups(groupModelAnalytics(rows).map(focusedExecutiveGroupFromAnalytics), false),
@@ -1060,8 +1058,8 @@ const projectGroups = (rows: readonly SessionPresentationRow[]): FocusedProjectG
     group.turns += row.turns;
     group.tools += row.tools;
     accumulateLineMeasurement(group, row.linesAdded, row.linesDeleted);
+    group.cost += usageRowApiPriceMeasurement(row).knownCost;
     if (row.costKnown) {
-      group.cost += row.costApprox;
       group.priced++;
     }
     groups.set(row.projectKey, group);
@@ -1106,6 +1104,7 @@ export const buildFocusedHeatmapFromAggregates = (
   const weeks: FocusedCalendarHeatmap['weeks'] = [];
   const monthLabels: string[] = [];
   let previousMonth = -1;
+  let labelledYear: number | null = null;
   for (let cursor = gridStart; cursor <= last; cursor = shiftDays(cursor, 7)) {
     const days: (FocusedHeatDay | null)[] = [];
     for (let offset = 0; offset < 7; offset++) {
@@ -1127,7 +1126,15 @@ export const buildFocusedHeatmapFromAggregates = (
     }
     weeks.push({ days });
     const month = cursor.getMonth();
-    monthLabels.push(month === previousMonth ? '' : cursor.toLocaleDateString('en', { month: 'short' }));
+    if (month === previousMonth) {
+      monthLabels.push('');
+    } else {
+      const year = cursor.getFullYear();
+      const monthName = cursor.toLocaleDateString('en', { month: 'short' });
+      // The first label and the first label of every new year carry the year: "Jun '25 … Jan '26".
+      monthLabels.push(year === labelledYear ? monthName : `${monthName} '${String(year).slice(-2)}`);
+      labelledYear = year;
+    }
     previousMonth = month;
   }
   return { monthLabels, todayKey: dateKey(startOfDay(now)), weeks };
@@ -1153,6 +1160,10 @@ const buildHeatmap = (rows: readonly SessionPresentationRow[], now = new Date())
     now,
   );
 
+// Overview campaign items carry the same aggregate row the Sessions page
+// serves, so a row can never disagree with the drawer it opens.
+const OVERVIEW_ITEM_SORT = [{ desc: true, id: 'date' }] as const;
+
 const overviewSessionItems = (
   rows: readonly SessionPresentationRow[],
   campaigns: ReturnType<typeof buildSessionCampaignViews>,
@@ -1167,7 +1178,7 @@ const overviewSessionItems = (
         harness: campaign.root.harness,
         kind: 'campaign',
         label: campaign.root.sessionLabel,
-        row: campaign.root,
+        row: sessionCampaignDisplayRow(campaign, OVERVIEW_ITEM_SORT, false),
         sessionCount: campaign.visibleCount,
       }),
     ),
@@ -1517,7 +1528,7 @@ export const projectFocusedBreakdown = (
   const visible = rows
     .map(enrichSessionPresentationRow)
     .filter((row) => matchesFocusedReportQuery(row, request.query, support.timeZone));
-  const totalCost = visible.reduce((sum, row) => sum + (row.costKnown ? row.costApprox : 0), 0);
+  const totalCost = visible.reduce((sum, row) => sum + usageRowApiPriceMeasurement(row).knownCost, 0);
   return {
     context: {
       cursorCommitAttribution: support.datasets?.cursorCommitAttribution ?? [],

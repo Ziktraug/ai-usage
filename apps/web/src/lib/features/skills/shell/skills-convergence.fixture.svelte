@@ -4,6 +4,7 @@
   import SkillsEditorSlot from '../editor/skills-editor-slot.svelte';
   import SkillsHealthSlot from '../management/skills-health-slot.svelte';
   import SkillsMatrixSlot from '../management/skills-matrix-slot.svelte';
+  import { syntheticManagementSnapshot } from '../management/synthetic-fixture.test-helper';
   import type { SkillsManagementPlanController } from './management-plan-controller';
   import { createSkillsShellViewModel } from './model';
   import SkillsWorkspace from './skills-workspace.svelte';
@@ -15,10 +16,13 @@
     syntheticSnapshot,
   } from './synthetic-fixture.test-helper';
 
-  let { pathname = '/skills/global/alpha-skill' }: { pathname?: string } = $props();
+  let {
+    healthSnapshot,
+    pathname = '/skills/global/alpha-skill',
+  }: { healthSnapshot?: 'management'; pathname?: string } = $props();
 
   provideDirtyGuardRegistry(createDirtyGuardRegistry());
-  const snapshot = syntheticSnapshot();
+  const snapshot = $derived(healthSnapshot === 'management' ? syntheticManagementSnapshot() : syntheticSnapshot());
   const view = $derived(
     createSkillsShellViewModel({
       inventories: syntheticInventories,

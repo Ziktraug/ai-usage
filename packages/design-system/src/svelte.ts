@@ -12,6 +12,7 @@ export {
   accentFill,
   type DimensionSwatch,
   dimensionSwatch,
+  harnessMarkFillFor,
   highlightMark,
   migrationCrosshair,
   migrationTrend,
@@ -115,7 +116,6 @@ export {
   timeSliderRangeDrag,
   timeSliderThumb,
 } from './components/time-slider';
-export { default as MultiSelect } from './svelte/compound/multi-select.svelte';
 export { default as SegmentedControl } from './svelte/compound/segmented-control.svelte';
 export { default as Tabs } from './svelte/compound/tabs.svelte';
 export { default as Checkbox } from './svelte/controls/checkbox.svelte';
@@ -147,5 +147,6 @@ export {
   drawerPosition,
   drawerTitle,
   drawerTop,
+  provenanceMarkerClass,
 } from './svelte/overlays/styles';
 export { default as Tooltip } from './svelte/overlays/tooltip.svelte';

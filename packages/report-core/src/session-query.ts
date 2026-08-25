@@ -247,6 +247,8 @@ export interface SessionCampaignView {
   allRows: SessionPresentationRow[];
   allTotals: SessionCampaignTotals;
   campaignKey: string;
+  /** Members that satisfy the current query; the classifier rollup is excluded. */
+  matchedRows: SessionPresentationRow[];
   root: SessionPresentationRow;
   rootSourceSessionId: string;
   totalCount: number;
@@ -1193,6 +1195,7 @@ export const buildSessionCampaignViews = (
       allRows: rows,
       allTotals: buildSessionCampaignTotals(rows, root),
       campaignKey,
+      matchedRows,
       root,
       rootSourceSessionId: firstIdentity.rootSourceSessionId,
       totalCount: rows.length,
@@ -1227,10 +1230,10 @@ export const buildSessionCampaignTimelineIdentities = (
 };
 
 const campaignSortValue = (campaign: SessionCampaignView, columnId: SessionSortField): number | string => {
-  const { root, visibleRows, visibleTotals: totals } = campaign;
+  const { matchedRows, root, visibleRows, visibleTotals: totals } = campaign;
   switch (columnId) {
     case 'date':
-      return Math.max(...visibleRows.map((row) => row.sortDate), root.sortDate);
+      return Math.max(...matchedRows.map((row) => row.sortDate));
     case 'tokIn':
       return totals.tokIn;
     case 'tokOut':
@@ -1328,9 +1331,9 @@ export const sessionCampaignDisplayRow = (
   const totals = campaign.visibleTotals;
   const rootWithoutModelAttribution = { ...campaign.root };
   Reflect.deleteProperty(rootWithoutModelAttribution, 'modelSegments');
-  const latestVisibleRow = campaign.visibleRows.reduce(
+  const latestVisibleRow = campaign.matchedRows.reduce(
     (latest, row) => (row.sortDate > latest.sortDate ? row : latest),
-    campaign.visibleRows[0] ?? campaign.root,
+    campaign.matchedRows[0] ?? campaign.root,
   );
   return {
     ...rootWithoutModelAttribution,
@@ -1392,7 +1395,17 @@ export const campaignBadgeLabelForSessionRow = (row: SessionPresentationRow): st
   if (!row.campaignKey || row.campaignTotalCount == null || row.campaignVisibleCount == null) {
     return null;
   }
-  return `Campaign · ${row.campaignVisibleCount} ${row.campaignVisibleCount === 1 ? 'session' : 'sessions'}`;
+  // A one-session campaign is just a session; the qualifier only earns its
+  // place when there are members to qualify. A filtered campaign says how
+  // many of its members the current filters show.
+  if (row.campaignTotalCount <= 1) {
+    return null;
+  }
+  const count =
+    row.campaignVisibleCount < row.campaignTotalCount
+      ? `${row.campaignVisibleCount} of ${row.campaignTotalCount}`
+      : `${row.campaignVisibleCount}`;
+  return `Campaign · ${count} sessions`;
 };
 
 export const classifierRollupLabelForSessionRow = (row: SessionPresentationRow): string | null => {

@@ -1,5 +1,7 @@
 import { expect, openHydratedReport, reportViewsFor, test, waitForFocusedReportSettled } from './browser-test';
 
+const EXPAND_PROVIDERS_PATTERN = /Expand providers for/;
+
 interface CategorySnapshot {
   categories: string[];
   options: string[];
@@ -25,32 +27,26 @@ test('keeps every populated harness and machine visible with default dimension f
   const harnessPanel = page.getByRole('tabpanel', { name: 'Harnesses & providers' });
   await expect(harnessPanel).toBeVisible();
 
-  const harnessFilter = page.getByRole('combobox', { name: 'Filter by harness' });
+  const harnessFilter = page.getByRole('button', { name: 'Filter by harness' });
   await harnessFilter.click();
-  const harnessListboxId = await harnessFilter.getAttribute('aria-controls');
-  const harnessSnapshot = await harnessPanel.evaluate<CategorySnapshot, string | null>((panel, listboxId) => {
-    const listbox = listboxId ? document.getElementById(listboxId) : null;
-    if (!listbox) {
-      throw new Error('Harness filter listbox is missing');
-    }
-    const options: string[] = [];
-    for (const option of listbox.querySelectorAll('[role=option]')) {
-      const label = (option.querySelector('[data-part=item-text]')?.textContent ?? option.textContent ?? '')
-        .replace('✓', '')
-        .trim();
-      if (label) {
-        options.push(label);
+  const harnessOptions = page.getByRole('dialog', { name: 'Harness' });
+  await expect(harnessOptions.getByRole('button', { name: 'All harnesses' })).toHaveAttribute('aria-pressed', 'true');
+  const harnessSnapshot = await harnessPanel.evaluate<CategorySnapshot, string[]>(
+    (panel, options) => {
+      const categories: string[] = [];
+      for (const row of panel.querySelectorAll('[data-price-state]')) {
+        const label = row.querySelector('button:not([aria-expanded])')?.textContent?.trim();
+        if (label) {
+          categories.push(label);
+        }
       }
-    }
-    const categories: string[] = [];
-    for (const row of panel.querySelectorAll('[data-price-state]')) {
-      const label = row.querySelector('button:not([aria-expanded])')?.textContent?.trim();
-      if (label) {
-        categories.push(label);
-      }
-    }
-    return { categories, options };
-  }, harnessListboxId);
+      return { categories, options };
+    },
+    await harnessOptions
+      .locator('li')
+      .allTextContents()
+      .then((labels) => labels.slice(1).map((label) => label.replace('✓', '').trim())),
+  );
 
   expect(harnessSnapshot.options.length).toBeGreaterThan(0);
   expect(sortedCategoryLabels(harnessSnapshot.categories)).toEqual(sortedCategoryLabels(harnessSnapshot.options));
@@ -60,8 +56,11 @@ test('keeps every populated harness and machine visible with default dimension f
   await breakdownSearch.fill('claude sub');
   await expect(harnessPanel.locator('[data-harness-total]')).toHaveCount(1);
   await expect(harnessPanel.locator('[data-harness-total="Claude"]')).toBeVisible();
-  await expect(harnessPanel.locator('[data-provider-child="Claude sub"]')).toBeVisible();
-  await expect(harnessPanel.locator('[data-provider-child]')).toHaveCount(1);
+  const soleClaudeProvider = harnessPanel.locator('[data-harness-total="Claude"] [data-sole-provider="Claude sub"]');
+  await expect(soleClaudeProvider).toBeVisible();
+  await expect(soleClaudeProvider).toHaveText('· Claude sub');
+  await expect(harnessPanel.locator('[data-provider-child]')).toHaveCount(0);
+  await expect(harnessPanel.getByRole('button', { name: EXPAND_PROVIDERS_PATTERN })).toHaveCount(0);
   await breakdownSearch.clear();
 
   await reportViewsFor(page).getByRole('link', { exact: true, name: 'Overview' }).click();
@@ -72,46 +71,45 @@ test('keeps every populated harness and machine visible with default dimension f
   const machineRadio = chartOptions.getByRole('radio', { exact: true, name: 'Machine' });
   await machineRadio.click();
   await expect(machineRadio).toBeChecked();
-  const sessionsRadio = chartOptions.getByRole('radio', { exact: true, name: 'Sessions' });
-  await sessionsRadio.click();
-  await expect(sessionsRadio).toBeChecked();
+  const sessionsButton = activity
+    .getByRole('group', { name: 'Activity metric' })
+    .getByRole('button', { exact: true, name: 'Sessions' });
+  await sessionsButton.click();
+  await expect(sessionsButton).toHaveAttribute('aria-pressed', 'true');
   await expect(activity.getByText('Machine · Day · Sessions', { exact: true })).toBeVisible();
 
-  const machineFilter = page.getByRole('combobox', { name: 'Filter by machine' });
+  const machineFilter = page.getByRole('button', { name: 'Filter by machine' });
   await machineFilter.click();
-  const machineListboxId = await machineFilter.getAttribute('aria-controls');
-  const machineSnapshot = await activity.evaluate<CategorySnapshot, string | null>((range, listboxId) => {
-    const listbox = listboxId ? document.getElementById(listboxId) : null;
-    const legend = range.querySelector('[aria-label="machine timeline legend"]');
-    if (!(listbox && legend)) {
-      throw new Error('Machine filter listbox or timeline legend is missing');
-    }
-    const options: string[] = [];
-    for (const option of listbox.querySelectorAll('[role=option]')) {
-      const label = (option.querySelector('[data-part=item-text]')?.textContent ?? option.textContent ?? '')
-        .replace('✓', '')
-        .trim();
-      if (label) {
-        options.push(label);
+  const machineOptions = page.getByRole('dialog', { name: 'Machine' });
+  await expect(machineOptions.getByRole('button', { name: 'All machines' })).toHaveAttribute('aria-pressed', 'true');
+  const machineSnapshot = await activity.evaluate<CategorySnapshot, string[]>(
+    (range, options) => {
+      const legend = range.querySelector('[aria-label="machine timeline legend"]');
+      if (!legend) {
+        throw new Error('Machine timeline legend is missing');
       }
-    }
-    const categories: string[] = [];
-    const titlePrefixes = ['Filter by ', 'Clear or replace '];
-    for (const button of legend.querySelectorAll('button:not([disabled])')) {
-      let label = button.getAttribute('title') ?? '';
-      for (const prefix of titlePrefixes) {
-        if (label.startsWith(prefix)) {
-          label = label.slice(prefix.length);
-          break;
+      const categories: string[] = [];
+      const titlePrefixes = ['Filter by ', 'Clear or replace '];
+      for (const button of legend.querySelectorAll('button:not([disabled])')) {
+        let label = button.getAttribute('title') ?? '';
+        for (const prefix of titlePrefixes) {
+          if (label.startsWith(prefix)) {
+            label = label.slice(prefix.length);
+            break;
+          }
+        }
+        label = label.trim();
+        if (label) {
+          categories.push(label);
         }
       }
-      label = label.trim();
-      if (label) {
-        categories.push(label);
-      }
-    }
-    return { categories, options };
-  }, machineListboxId);
+      return { categories, options };
+    },
+    await machineOptions
+      .locator('li')
+      .allTextContents()
+      .then((labels) => labels.slice(1).map((label) => label.replace('✓', '').trim())),
+  );
 
   expect(machineSnapshot.options.length).toBeGreaterThan(1);
   expect(sortedCategoryLabels(machineSnapshot.categories)).toEqual(sortedCategoryLabels(machineSnapshot.options));

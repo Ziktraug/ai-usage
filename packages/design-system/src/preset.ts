@@ -23,6 +23,8 @@ export const aiUsagePreset = definePreset({
       accentColor: 'accent',
       // Keep scrolled-to elements clear of the sticky filter toolbar.
       scrollPaddingTop: { base: '72px', md: '180px', lg: '132px' },
+      // The centred max-width shell otherwise re-centres whenever a sub-tab crosses the viewport height.
+      scrollbarGutter: 'stable',
       '&[data-theme=light]': { colorScheme: 'light' },
       '&[data-theme=dark]': { colorScheme: 'dark' },
     },
@@ -141,6 +143,15 @@ export const aiUsagePreset = definePreset({
             c4: dual('#2061B4', '#7FA9E8'),
             c5: dual('#647722', '#A9BB5E'),
             c6: dual('#0F6FA8', '#5FB5E2'),
+            // c7-c13 extend the ranked series palette. c4 is excluded from
+            // that order because c4 and c6 sit too close in OKLab.
+            c7: dual('#588BE0', '#5590F3'),
+            c8: dual('#3B4FA5', '#A7B5FE'),
+            c9: dual('#9B7300', '#C69612'),
+            c10: dual('#9250A0', '#DF99EF'),
+            c11: dual('#853376', '#D37BC1'),
+            c12: dual('#0A6B1D', '#61B565'),
+            c13: dual('#B8527E', '#FC90BC'),
           },
 
           // Provider identity marks, taken from each vendor's own published favicon. These are not

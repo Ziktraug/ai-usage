@@ -8,16 +8,24 @@ import { collectionSourceDefinitions } from '@ai-usage/report-core';
 import type { Request } from '@playwright/test';
 import { expect, reportViewsFor, test, waitForFocusedReportSettled } from './browser-test';
 import { capturePlan073Smoke } from './plan073-smoke';
-import { encodeRpcResponseBody, isRpcPathname, RPC_ROUTE_GLOB, rpcStringFieldValues } from './rpc-test-transport';
+import {
+  decodeRpcResponseBody,
+  encodeRpcResponseBody,
+  isRpcPathname,
+  RPC_ROUTE_GLOB,
+  rpcStringFieldValues,
+} from './rpc-test-transport';
 import { createServerStateNetworkTrace } from './server-state-network';
 
 const NON_EMPTY_ATTRIBUTE_PATTERN = /.+/;
-const API_VALUE_BUCKET_PATTERN = /API value: \$/;
+const API_VALUE_BUCKET_PATTERN = /API value: (?:≥ )?\$/;
 const PROCESSED_TOKEN_BUCKET_PATTERN = /Processed tokens: [0-9,]+ tokens$/;
 const SESSION_QUERY_FINGERPRINT_PATTERN = /^session-query-v1:[0-9a-f]{16}$/;
 const SESSION_NEIGHBOR_FINGERPRINT_PATTERN = /^session-neighbor-v1:[0-9a-f]{16}$/;
 const FOCUSED_OVERVIEW_FINGERPRINT_PREFIX = 'focused-overview-v1:';
+const FOCUSED_OVERVIEW_FINGERPRINT_PATTERN = /^focused-overview-v1:[0-9a-f]{16}$/;
 const PROJECT_COLUMN_PATTERN = /Project/;
+const MATCHING_SESSIONS_PATTERN = /matching sessions$/;
 const SOURCES_URL_PATTERN = /\/sources$/;
 const SESSION_PAGE_PATH = '/rpc/session/page';
 const EXPECTED_ENABLED_SOURCE_COUNT = collectionSourceDefinitions.filter(
@@ -48,6 +56,38 @@ interface ObservedRequest {
 }
 
 const REPORT_BOOTSTRAP_PATH = '/rpc/report/revisionBootstrap';
+const LIVE_ALL_TIME_CURRENT_FIRST_DAY = '2026-07-01T';
+const LIVE_ALL_TIME_HISTORICAL_FIRST_DAY = '2025-01-01T';
+const LIVE_ALL_TIME_HISTORICAL_FIRST_INSTANT = '2025-01-01T08:00:00.000Z';
+const LIVE_ALL_TIME_QUIESCENCE_MS = 250;
+
+const isUnknownRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+const rewriteDateDomainFirst = (value: unknown, first: string): number => {
+  if (Array.isArray(value)) {
+    let rewritten = 0;
+    for (const item of value) {
+      rewritten += rewriteDateDomainFirst(item, first);
+    }
+    return rewritten;
+  }
+  if (!isUnknownRecord(value)) {
+    return 0;
+  }
+  let rewritten = 0;
+  const dateDomain = value.dateDomain;
+  if (isUnknownRecord(dateDomain) && typeof dateDomain.first === 'string') {
+    dateDomain.first = first;
+    rewritten += 1;
+  }
+  for (const [key, child] of Object.entries(value)) {
+    if (key !== 'dateDomain') {
+      rewritten += rewriteDateDomainFirst(child, first);
+    }
+  }
+  return rewritten;
+};
 
 const writeCharacterization = (scenario: string, value: unknown): void => {
   process.stdout.write(`${JSON.stringify({ scenario, type: 'plan-069-gate-0', value })}\n`);
@@ -236,6 +276,100 @@ test('renders the report timeline on the initial production Overview', async ({ 
     })}\n`,
   );
   serverStateTrace.dispose();
+});
+
+test('upgrades a live all-time Day cache exactly once after the date domain resolves to Week', async ({ page }) => {
+  const trace = createServerStateNetworkTrace(page);
+  const upgradeStarted = Promise.withResolvers<void>();
+  const releaseUpgrade = Promise.withResolvers<void>();
+  const upgradeResponseBodies: string[] = [];
+  let initialDocumentHtml = '';
+  let initialDomainRewriteCount = 0;
+
+  await expect
+    .poll(async () => {
+      const response = await page.request.get('/?range=all');
+      const body = await response.text();
+      return (
+        response.ok() &&
+        body.includes('Harness · Day · Estimated API-equivalent value') &&
+        body.includes(LIVE_ALL_TIME_CURRENT_FIRST_DAY)
+      );
+    })
+    .toBe(true);
+
+  await page.route(
+    (url) => url.pathname === '/' && url.searchParams.get('range') === 'all',
+    async (route) => {
+      const response = await route.fetch();
+      initialDocumentHtml = await response.text();
+      initialDomainRewriteCount = initialDocumentHtml.split(LIVE_ALL_TIME_CURRENT_FIRST_DAY).length - 1;
+      await route.fulfill({
+        body: initialDocumentHtml.replaceAll(LIVE_ALL_TIME_CURRENT_FIRST_DAY, LIVE_ALL_TIME_HISTORICAL_FIRST_DAY),
+        response,
+      });
+    },
+  );
+  await page.route('**/rpc/report/focusedOverview', async (route) => {
+    const response = await route.fetch();
+    const decoded = decodeRpcResponseBody(await response.text());
+    expect(rewriteDateDomainFirst(decoded, LIVE_ALL_TIME_HISTORICAL_FIRST_INSTANT)).toBeGreaterThan(0);
+    const body = encodeRpcResponseBody(decoded);
+    upgradeResponseBodies.push(body);
+    upgradeStarted.resolve();
+    await releaseUpgrade.promise;
+    await route.fulfill({ body, response });
+  });
+
+  try {
+    await page.goto('/?range=all');
+    await upgradeStarted.promise;
+
+    expect(initialDomainRewriteCount).toBeGreaterThan(0);
+    expect(initialDocumentHtml).toContain('Harness · Day · Estimated API-equivalent value');
+    expect(initialDocumentHtml).toContain('Auto (Day)');
+    const initialFingerprints = new Set(
+      [...initialDocumentHtml.matchAll(/requestFingerprint[=:]"(focused-overview-v1:[0-9a-f]{16})"/g)].map(
+        ([, fingerprint]) => fingerprint,
+      ),
+    );
+    expect(initialFingerprints.size).toBe(1);
+
+    const completeOutput = page.locator('[data-report-complete-output]');
+    const activity = page.getByRole('region', { name: 'Activity' });
+    const chartOptions = activity.locator('details[aria-label="Explore activity"]');
+    await expect(completeOutput).toHaveAttribute('data-report-stale', 'true');
+    await expect(page.locator('[data-report-refresh-pending]')).toHaveText('Updating report…');
+    await expect(activity.getByText('Harness · Week · Estimated API-equivalent value', { exact: true })).toBeVisible();
+    await chartOptions.locator('summary').click();
+    await expect(chartOptions.getByRole('radio', { exact: true, name: 'Auto (Week)' })).toBeChecked();
+
+    const pendingFocusedRequests = trace.records().filter(({ operation }) => operation === 'report.focusedOverview');
+    expect(pendingFocusedRequests).toHaveLength(1);
+    expect(pendingFocusedRequests[0]).toMatchObject({ owner: 'web-query-browser' });
+    const upgradeFingerprints = new Set(
+      upgradeResponseBodies.flatMap((body) => rpcStringFieldValues(body, 'requestFingerprint')),
+    );
+    expect(upgradeFingerprints.size).toBe(1);
+    const upgradeFingerprint = [...upgradeFingerprints][0];
+    expect(upgradeFingerprint).toMatch(FOCUSED_OVERVIEW_FINGERPRINT_PATTERN);
+    expect(initialFingerprints.has(upgradeFingerprint ?? '')).toBe(false);
+
+    releaseUpgrade.resolve();
+    await waitForFocusedReportSettled(page);
+    await expect(chartOptions.getByRole('radio', { exact: true, name: 'Auto (Week)' })).toBeChecked();
+    await expect(activity.getByText('Harness · Week · Estimated API-equivalent value', { exact: true })).toBeVisible();
+    await expect(completeOutput).not.toHaveAttribute('data-report-stale');
+    await expect(page.locator('[data-report-refresh-pending]')).toHaveCount(0);
+
+    await page.waitForTimeout(LIVE_ALL_TIME_QUIESCENCE_MS);
+    expect(trace.records().filter(({ operation }) => operation === 'report.focusedOverview')).toHaveLength(1);
+    expect(trace.counts().routeData).toBe(0);
+    expect(upgradeResponseBodies).toHaveLength(1);
+  } finally {
+    releaseUpgrade.resolve();
+    trace.dispose();
+  }
 });
 
 test('switches production Activity metrics without a business request', async ({ page }) => {
@@ -567,7 +701,7 @@ test('keeps the last complete report visible while the report range changes', as
   }
 
   await expect(dateRange.getByRole('button', { exact: true, name: '7d' })).toHaveAttribute('aria-pressed', 'true');
-  await expect(dateRange).toContainText('Jun 26 → Jul 03, 2026 · 7 days');
+  await expect(dateRange).toContainText('Jun 26 → Jul 03, 2026 · 8 days');
   await expect(timeline).toHaveAttribute('data-stability-marker', 'original-chart');
 });
 
@@ -627,13 +761,40 @@ test('hydrates and automatically pages Sessions through the production revision 
   await rootSessionRow.click({ force: true });
   const rootDrawer = page.getByRole('dialog');
   await expect(rootDrawer).toBeVisible();
+  const rootHeader = rootDrawer.locator('[data-session-drawer-header]');
+  const rootPosition = rootHeader.locator('[data-session-drawer-position]');
+  await expect(rootPosition).toHaveText(MATCHING_SESSIONS_PATTERN);
+  const headerGeometry = await rootHeader.evaluate((header) => {
+    const badge = header.querySelector('[data-session-drawer-harness] > *');
+    const position = header.querySelector('[data-session-drawer-position]');
+    const navigation = header.querySelector('[data-session-drawer-navigation]');
+    if (!(badge instanceof HTMLElement && position instanceof HTMLElement && navigation instanceof HTMLElement)) {
+      throw new Error('Expected the drawer header badge, position label, and navigation');
+    }
+    const badgeBox = badge.getBoundingClientRect();
+    return {
+      badgeClipped: badge.scrollWidth > badge.clientWidth + 1,
+      badgeRight: Math.round(badgeBox.right),
+      badgeWidth: Math.round(badgeBox.width),
+      headerOverflows: header.scrollWidth > header.clientWidth + 1,
+      navigationOverflows: navigation.scrollWidth > navigation.clientWidth + 1,
+      positionLeft: Math.round(position.getBoundingClientRect().left),
+    };
+  });
+  expect(headerGeometry.badgeClipped).toBe(false);
+  expect(headerGeometry.badgeWidth).toBeGreaterThan(40);
+  expect(headerGeometry.badgeRight).toBeLessThanOrEqual(headerGeometry.positionLeft);
+  expect(headerGeometry.navigationOverflows).toBe(false);
+  expect(headerGeometry.headerOverflows).toBe(false);
   const codexSourceControl = rootDrawer.getByRole('region', { name: 'Session source control' });
   await expect(
     codexSourceControl.getByRole('link', { name: 'Open repository fixture/ai-usage in a new tab' }),
   ).toBeVisible();
   await expect(codexSourceControl).toContainText('fixture/main');
   await expect(codexSourceControl).toContainText('01234567');
-  await codexSourceControl.getByRole('button', { name: 'Resolve GitHub repository and pull request links' }).click();
+  await codexSourceControl
+    .getByRole('button', { name: 'Find pull requests for the recorded branch on GitHub' })
+    .click();
   await expect(codexSourceControl.getByRole('link', { name: 'Open #42 in a new tab' })).toBeVisible();
   await rootDrawer.getByRole('button', { name: 'Analyze root session chronology' }).click();
   const sessionAnalysis = rootDrawer.getByRole('region', { name: 'Session analysis' });
@@ -795,8 +956,9 @@ test('automatically pages mobile Sessions and keeps modal analysis usable', asyn
       return { height: Math.round(rect.height), width: Math.round(rect.width) };
     }),
   );
-  expect(headerActionGeometry).toHaveLength(4);
+  expect(headerActionGeometry).toHaveLength(3);
   expect(headerActionGeometry.every(({ height, width }) => height >= 44 && width >= 44)).toBe(true);
+  await expect(drawerBody.getByRole('button', { name: 'Analyze root session chronology' })).toBeVisible();
 
   await analyzeButton.click();
   const analysis = drawer.getByRole('region', { name: 'Session analysis' });

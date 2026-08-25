@@ -10,6 +10,7 @@
     recordLabel,
     recordSub,
     recordsGrid,
+    recordsGridTriple,
     recordValue,
     topList,
     topMoney,
@@ -19,7 +20,8 @@
   } from '@ai-usage/design-system/report';
   import { HarnessBadge } from '@ai-usage/design-system/svelte';
   import type { FocusedOverviewRecords, FocusedOverviewSessionItem } from '@ai-usage/report-core/focused-report-query';
-  import { fmtDateOnly, fmtDuration, fmtMoney, fmtNum } from '../../../foundation/presentation/format';
+  import { sessionDurationSemantics } from '../../../../session-analysis-model';
+  import { fmtCount, fmtDateOnly, fmtDuration, fmtMoney, fmtNum } from '../../../foundation/presentation/format';
   import { apiValuePresentation } from '../../../foundation/presentation/report-value';
 
   const recordActionLabel = css({
@@ -59,6 +61,16 @@
         }
       : null,
   );
+  // "Longest session" is a recorded duration whose meaning differs per harness, and
+  // a campaign's is the root session's alone (plan 052). The card names which.
+  const longestSemantics = $derived(
+    presentedRecords?.longest
+      ? sessionDurationSemantics(
+          presentedRecords.longest.row.source?.harnessKey,
+          presentedRecords.longest.kind === 'campaign' && presentedRecords.longest.sessionCount > 1,
+        )
+      : null,
+  );
   const presentedTopSessions = $derived(topSessions.map(presentSessionItem));
   const topCostRepeatsFirstSession = $derived.by((): boolean => {
     const topCost = presentedRecords?.topCost;
@@ -67,11 +79,21 @@
       topCost && firstSession && topCost.kind === firstSession.kind && topCost.row.rowId === firstSession.row.rowId,
     );
   });
+  const recordCount = $derived(
+    presentedRecords
+      ? [
+          presentedRecords.topCost !== null && !topCostRepeatsFirstSession,
+          presentedRecords.longest !== null,
+          presentedRecords.busiest !== null,
+          presentedRecords.streak > 0 && presentedRecords.streakEnd !== null,
+        ].filter(Boolean).length
+      : 0,
+  );
 </script>
 
 {#if presentedRecords}
-  <div class={recordsGrid}>
-    {#if presentedRecords.topCost && !topCostRepeatsFirstSession}
+  <div class={recordCount === 3 ? recordsGridTriple : recordsGrid} data-record-count={recordCount} data-records-grid>
+    {#if presentedRecords.topCost !== null && !topCostRepeatsFirstSession}
       <button class={recordCard} onclick={() => onSelectSession(presentedRecords.topCost!)} type="button">
         <span class={srOnly}>Open details for top session {presentedRecords.topCost.label}. </span>
         <span class={cx(recordLabel, recordActionLabel)}
@@ -83,17 +105,22 @@
         <span class={recordSub}>{presentedRecords.topCost.label}</span>
       </button>
     {/if}
-    {#if presentedRecords.longest}
+    {#if presentedRecords.longest !== null}
       <button class={recordCard} onclick={() => onSelectSession(presentedRecords.longest!)} type="button">
-        <span class={srOnly}>Open details for longest session {presentedRecords.longest.label}. </span>
+        <span class={srOnly}
+          >Open details for longest session {presentedRecords.longest.label} ({longestSemantics?.metricLabel}).
+        </span>
         <span class={cx(recordLabel, recordActionLabel)}
           >Longest session <span aria-hidden="true" class={disclosureIcon}>↗</span></span
         >
         <span class={recordValue}>{fmtDuration(presentedRecords.longest.durationMs)}</span>
-        <span class={recordSub}>{presentedRecords.longest.label}</span>
+        <span class={recordSub} data-longest-session-semantic title={longestSemantics?.metricHint}
+          >{presentedRecords.longest.label}
+          · {longestSemantics?.metricLabel}</span
+        >
       </button>
     {/if}
-    {#if presentedRecords.busiest}
+    {#if presentedRecords.busiest !== null}
       <button class={recordCard} onclick={() => onSelectDay(presentedRecords.busiest!.date)} type="button">
         <span class={srOnly}>Open activity for {fmtDateOnly(presentedRecords.busiest.date)}. </span>
         <span class={cx(recordLabel, recordActionLabel)}
@@ -102,11 +129,11 @@
         <span class={recordValue}>{fmtMoney(presentedRecords.busiest.cost)}</span>
         <span class={recordSub}
           >{fmtDateOnly(presentedRecords.busiest.date)}
-          · {fmtNum(presentedRecords.busiest.sessions)} sessions</span
+          · {fmtCount(presentedRecords.busiest.sessions, 'session')}</span
         >
       </button>
     {/if}
-    {#if presentedRecords.streak > 0 && presentedRecords.streakEnd}
+    {#if presentedRecords.streak > 0 && presentedRecords.streakEnd !== null}
       <button class={recordCard} onclick={() => onSelectDay(presentedRecords.streakEnd!)} type="button">
         <span class={srOnly}>Open activity for streak ending {fmtDateOnly(presentedRecords.streakEnd)}. </span>
         <span class={cx(recordLabel, recordActionLabel)}
@@ -137,7 +164,7 @@
           <span class={topTitle}>
             {item.label}
             {#if item.kind === 'campaign'}
-              <span class={muted}> · Campaign · {fmtNum(item.sessionCount)} sessions</span>
+              <span class={muted}> · Campaign · {fmtCount(item.sessionCount, 'session')}</span>
             {/if}
           </span>
           <HarnessBadge name={item.harness} />

@@ -8,20 +8,45 @@ test('uses one token magnitude and accessible drawer explanations', async ({ pag
   await topSessionTrigger.click();
 
   const drawer = page.getByRole('dialog', { name: 'Session details' });
+  // The Overview row is the campaign aggregate (203,500 + 76,600 + 120,800 tokens),
+  // and the drawer states which scope its values cover.
+  await expect(drawer.locator('[data-session-drawer-scope="campaign"]')).toHaveCount(1);
   const totalTokens = drawer.locator('[data-detail-item="Total tokens"]');
-  await expect(totalTokens).toContainText('204k');
-  await expect(totalTokens).not.toContainText('203,500');
+  await expect(totalTokens).toContainText('401k');
+  await expect(totalTokens).not.toContainText('400,900');
 
   const subValueHelp = drawer.getByRole('button', {
     name: 'About Subscription value',
   });
   await expect(subValueHelp).toHaveAttribute('aria-haspopup', 'dialog');
+  const hintGeometry = await subValueHelp.evaluate((button) => {
+    const glyph = button.querySelector('[data-detail-hint-glyph]');
+    const row = button.parentElement;
+    if (!(glyph instanceof HTMLElement && row instanceof HTMLElement)) {
+      throw new Error('Expected the hint glyph inside its label row');
+    }
+    const style = getComputedStyle(button);
+    return {
+      background: style.backgroundColor,
+      borderWidth: style.borderTopWidth,
+      glyphWidth: Math.round(glyph.getBoundingClientRect().width),
+      hitHeight: Math.round(button.getBoundingClientRect().height),
+      hitWidth: Math.round(button.getBoundingClientRect().width),
+      rowHeight: Math.round(row.getBoundingClientRect().height),
+    };
+  });
+  expect(hintGeometry.hitWidth).toBeGreaterThanOrEqual(44);
+  expect(hintGeometry.hitHeight).toBeGreaterThanOrEqual(44);
+  expect(hintGeometry.borderWidth).toBe('0px');
+  expect(hintGeometry.background).toBe('rgba(0, 0, 0, 0)');
+  expect(hintGeometry.glyphWidth).toBeLessThanOrEqual(16);
+  expect(hintGeometry.rowHeight).toBeLessThanOrEqual(24);
   await subValueHelp.click();
   await expect(page.getByText('Cursor export value covered by the subscription quota')).toBeVisible();
   await subValueHelp.click();
 
   const taskOpenHelp = drawer.getByRole('button', {
-    name: 'About Task-open time',
+    name: 'About Root task-open time',
   });
   await expect(taskOpenHelp).toHaveAttribute('aria-haspopup', 'dialog');
   await taskOpenHelp.focus();

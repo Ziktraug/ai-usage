@@ -11,7 +11,7 @@
   import { replaceState } from '$app/navigation';
   import type { RuntimeMode } from '../../../../runtime-mode';
   import type { WebQueryHydrationState } from '../../../query/client';
-  import { useWebQueryHydrationContext, webQueryHydrationSignature } from '../../../query/hydration-context.svelte';
+  import { useWebQueryHydrationContext } from '../../../query/hydration-context.svelte';
   import {
     managedSkillMarkdownQueryOptions,
     projectSkillMarkdownQueryOptions,
@@ -69,7 +69,7 @@
   };
   let mounted = $state(false);
   const hydrationContext = useWebQueryHydrationContext();
-  const hydrationApplied = $derived(hydrationContext.appliedSignature === webQueryHydrationSignature(hydrationState));
+  const hydrationApplied = $derived(hydrationContext.covers(hydrationState));
   const queriesEnabled = $derived(mounted && hydrationApplied && runtimeMode !== 'demo');
   const snapshotQuery = createQuery(() =>
     skillsSnapshotQueryOptions(client, {

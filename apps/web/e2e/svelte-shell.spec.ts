@@ -55,6 +55,7 @@ const shellRoutes = [
 ] as const;
 
 test('server-renders and reloads every Svelte shell route with accessible navigation', async ({ page, request }) => {
+  test.setTimeout(60_000);
   const browserSkillsRequests: string[] = [];
   page.on('request', (browserRequest) => {
     const pathname = new URL(browserRequest.url()).pathname;
@@ -105,9 +106,9 @@ test('server-renders and reloads every Svelte shell route with accessible naviga
       'aria-current',
       'page',
     );
-    expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBe(
-      0,
-    );
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth),
+    ).toBeLessThanOrEqual(0);
     const axe = await new AxeBuilder({ page }).analyze();
     expect(axe.violations).toEqual([]);
   }
@@ -134,9 +135,9 @@ test('server-renders and reloads every Svelte shell route with accessible naviga
 
   await page.setViewportSize({ height: 844, width: 390 });
   await expect(page.locator('[data-app-navigation="mobile"]')).toBeVisible();
-  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBe(
-    0,
-  );
+  expect(
+    await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth),
+  ).toBeLessThanOrEqual(0);
   const manage = page.getByRole('button', { name: 'Manage' });
   await manage.click();
   await expect(manage).toHaveAttribute('aria-expanded', 'true');

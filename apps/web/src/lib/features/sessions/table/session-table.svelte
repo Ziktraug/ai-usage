@@ -1,6 +1,6 @@
 <!-- biome-ignore-all lint/a11y/noNoninteractiveTabindex lint/a11y/useValidAriaValues: virtualized rows preserve the legacy keyboard surface; Svelte emits the closed dynamic WAI-ARIA values asserted by SSR tests -->
 <script lang="ts">
-  import { cx } from '@ai-usage/design-system/css';
+  import { css, cx } from '@ai-usage/design-system/css';
   import {
     Checkbox,
     dateCell,
@@ -71,6 +71,7 @@
     sessionSortDescendingByDefault,
     sessionSortForColumnChange,
     shouldSelectSessionRowForKey,
+    summarizeSessionRowProvenance,
   } from './session-cell-projection';
   import { sessionTableColumns, visibleSessionTableColumns } from './session-columns';
   import { createSessionTableModel, toggleSessionRowExpanded } from './session-table-model';
@@ -81,11 +82,15 @@
     sessionVirtualBudgets,
   } from './session-virtualization';
 
-  const SESSION_VIEWPORT_BOTTOM_INSET = 24;
   const SESSION_VIEWPORT_FALLBACK_HEIGHT = 520;
   const MIN_SESSION_TABLE_WIDTH = 720;
   const DESKTOP_MINIMUM_VIEWPORT_HEIGHT = sessionVirtualBudgets.desktop.rowHeight * 3;
   const MOBILE_MINIMUM_VIEWPORT_HEIGHT = sessionVirtualBudgets.mobile.rowHeight;
+  const MOBILE_WINDOW_ANCHOR_THRESHOLD_RATIO = 0.5;
+  const sessionTableOwner = css({ minW: 0 });
+  const documentTop = (element: Element): number => element.getBoundingClientRect().top + window.scrollY;
+  const documentBottom = (element: Element): number => element.getBoundingClientRect().bottom + window.scrollY;
+  const staticBottomInsetBySurface = new WeakMap<HTMLElement, number>();
 
   interface Props {
     campaignChildren?: ReadonlyMap<string, SessionCampaignPage>;
@@ -166,6 +171,7 @@
     }),
   );
   const visibleColumns = $derived(visibleSessionTableColumns(effectiveVisibility));
+  const visibleColumnIds = $derived(visibleColumns.map(({ id }) => id));
   const activeMode = $derived(mode === 'mobile' ? 'mobile' : 'desktop');
   const virtual = $derived(
     projectSessionVirtualRows({ mode: activeMode, rows: model.rows, scrollTop, viewportHeight }),
@@ -198,9 +204,25 @@
       return;
     }
     const minimumHeight = surfaceMode === 'desktop' ? DESKTOP_MINIMUM_VIEWPORT_HEIGHT : MOBILE_MINIMUM_VIEWPORT_HEIGHT;
+    const owner = element.closest('[data-session-table-owner]');
+    const regionStart = sessionRegionStartElement;
+    const measuredStaticBottomInset = owner
+      ? Math.max(0, Math.round(documentBottom(document.body) - documentBottom(owner)))
+      : 0;
+    const dynamicOwnerBottomInset = owner
+      ? Math.max(0, Math.round(documentBottom(owner) - documentBottom(element)))
+      : 0;
+    const previousBottomInset = staticBottomInsetBySurface.get(element);
+    const staticBottomInset =
+      previousBottomInset === undefined
+        ? measuredStaticBottomInset
+        : Math.min(previousBottomInset, measuredStaticBottomInset);
+    staticBottomInsetBySurface.set(element, staticBottomInset);
     const nextHeight = calculateSessionViewportHeight({
-      bottomInset: SESSION_VIEWPORT_BOTTOM_INSET,
+      anchorTop: surfaceMode === 'mobile' && regionStart ? documentTop(regionStart) : 0,
+      bottomInset: staticBottomInset + dynamicOwnerBottomInset,
       minimumHeight,
+      surfaceTop: documentTop(element),
       viewportHeight: window.innerHeight,
     });
     const cssHeight = `${nextHeight}px`;
@@ -240,14 +262,45 @@
     }
     const synchronize = (): void => updateViewportFor(activeSurface, observedMode);
     synchronize();
-    // No window `scroll` listener: the height no longer depends on where the
-    // surface sits, and recomputing it on scroll is what made the document grow
-    // under the reader. The surface's own `onscroll` still drives the row window.
-    const observer = new ResizeObserver(synchronize);
-    observer.observe(activeSurface);
+    // No window `scroll` listener: document offsets are scroll-invariant. The
+    // surface's own `onscroll` still drives the row window.
+    const surfaceObserver = new ResizeObserver(synchronize);
+    let bodyObserverFrame: number | undefined;
+    const scheduleSynchronize = (): void => {
+      if (bodyObserverFrame !== undefined) {
+        window.cancelAnimationFrame(bodyObserverFrame);
+      }
+      // Resizing the surface inside the body's observer callback changes the
+      // body at a shallower depth. Deferring one frame lets Chrome converge
+      // without a ResizeObserver loop warning.
+      bodyObserverFrame = window.requestAnimationFrame(() => {
+        bodyObserverFrame = undefined;
+        synchronize();
+      });
+    };
+    const bodyObserver = new ResizeObserver(scheduleSynchronize);
+    const chromeMutationObserver = new MutationObserver((records) => {
+      if (records.some((record) => !activeSurface.contains(record.target))) {
+        scheduleSynchronize();
+      }
+    });
+    surfaceObserver.observe(activeSurface);
+    const owner = activeSurface.closest('[data-session-table-owner]');
+    if (owner) {
+      // The body's viewport minimum can mask chrome shrinking below one screen;
+      // the owner still changes size during that transition.
+      bodyObserver.observe(owner);
+    }
+    bodyObserver.observe(document.body);
+    chromeMutationObserver.observe(document.body, { characterData: true, childList: true, subtree: true });
     window.addEventListener('resize', synchronize);
     return () => {
-      observer.disconnect();
+      surfaceObserver.disconnect();
+      bodyObserver.disconnect();
+      chromeMutationObserver.disconnect();
+      if (bodyObserverFrame !== undefined) {
+        window.cancelAnimationFrame(bodyObserverFrame);
+      }
       window.removeEventListener('resize', synchronize);
     };
   });
@@ -262,12 +315,22 @@
     const frame = window.requestAnimationFrame(() => {
       initializedSurfaceElement = activeSurface;
       activeSurface.style.removeProperty('--session-surface-height');
+      // Size first, anchor second: with the document already one viewport tall
+      // the desktop scroll is a no-op; document offsets keep this order stable
+      // on mobile too.
+      updateViewportFor(activeSurface, activeMode);
+      const anchorTop = regionStart ? documentTop(regionStart) : 0;
+      const mobileListBelowFold =
+        activeMode === 'mobile' &&
+        regionStart !== undefined &&
+        regionStart.getBoundingClientRect().top > window.innerHeight * MOBILE_WINDOW_ANCHOR_THRESHOLD_RATIO;
+      if (shouldAnchorWindow || mobileListBelowFold) {
+        window.scrollTo({ top: anchorTop });
+      }
       if (shouldAnchorWindow) {
         windowAnchorConsumed = true;
-        regionStart?.scrollIntoView({ block: 'start' });
         onInitialWindowAnchor();
       }
-      updateViewportFor(activeSurface, activeMode);
     });
     return () => window.cancelAnimationFrame(frame);
   });
@@ -279,6 +342,8 @@
       expanded = {};
       scrollTop = 0;
       surfaceElement?.scrollTo({ top: 0 });
+      const frame = window.requestAnimationFrame(updateViewport);
+      return () => window.cancelAnimationFrame(frame);
     }
   });
 
@@ -387,7 +452,7 @@
     {/if}
   </div>
 {:else}
-  <section aria-label="Sessions" data-session-mode={activeMode} data-session-table-owner>
+  <section aria-label="Sessions" class={sessionTableOwner} data-session-mode={activeMode} data-session-table-owner>
     <div class={tableControls} data-session-region-start bind:this={sessionRegionStartElement}>
       {#if activeMode === 'desktop'}
         <fieldset aria-label="Session column presets" class={presetGroup}>
@@ -404,7 +469,7 @@
               {preset.label}
             </button>
           {/each}
-          <Popover triggerClass={ghostButton}>
+          <Popover contentAriaLabel="Choose visible session columns" triggerClass={ghostButton}>
             {#snippet trigger()}
               Advanced columns · {visibleColumns.length} ▾
             {/snippet}
@@ -502,6 +567,7 @@
               </tr>
             {/if}
             {#each virtual.rows as virtualRow (virtualRow.row.id)}
+              {@const rowProvenance = summarizeSessionRowProvenance(virtualRow.row.original, visibleColumnIds)}
               <tr
                 data-depth={virtualRow.row.depth}
                 data-index={virtualRow.index}
@@ -525,6 +591,7 @@
                       onToggleExpanded={() => toggleExpanded(virtualRow.row.original)}
                       query={searchQuery}
                       row={virtualRow.row.original}
+                      {rowProvenance}
                     />
                   </td>
                 {/each}

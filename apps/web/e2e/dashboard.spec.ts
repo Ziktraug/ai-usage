@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import type { Page } from '@playwright/test';
 import { FOCUSED_REPORT_E2E_CONTROL_KEY, FOCUSED_REPORT_E2E_ENABLED_KEY } from '../src/focused-report-e2e-fixture';
 import { REPORT_LAZY_MODULE_E2E_FAILURE_KEY } from '../src/lib/features/report/composition/lazy-module-e2e-fixture';
-import { expect, reportViewsFor, test, waitForHydratedNavigation } from './browser-test';
+import { expect, reportViewsFor, test, waitForFocusedReportSettled, waitForHydratedNavigation } from './browser-test';
 import { encodeRpcResponseBody } from './rpc-test-transport';
 
 const ADVANCED_COLUMNS_PATTERN = /Advanced columns/;
@@ -18,17 +18,22 @@ const LEGACY_PROJECT_TAB_URL_PATTERN = /tab=projects/;
 const MODELS_TAB_URL_PATTERN = /tab=models/;
 const PROVIDER_DETAILS_PATTERN = /^Provider details \(/;
 const PUNCHCARD_FILTER_PATTERN = /^Filter report to /;
-const PROVIDER_CATEGORY_COUNT_PATTERN = /: (\d+) providers?$/;
-const PROVIDER_CATEGORY_TOTAL_PATTERN = /\((\d+) providers?\)$/;
-const PROVIDER_CATEGORIES_PATTERN = /^Provider categories/;
+const PROVIDER_SUMMARY_PATTERN =
+  /^(\d+) providers? · (\d+) reporting a usage limit · (\d+) with no limit reading(?: \([^)]*\))?(?: · (\d+) critical)?(?: · \d+ with warnings)?$/;
+const PROVIDER_LINE_PATTERN = / — (?:partial|unsupported|ok|stale|auth required|error)/;
+const SEPARATOR_SPACING_PATTERN = /\S·|·\S/;
 const QUERY_URL_PATTERN = /q=ai-usage/;
 const RANGE_URL_PATTERN = /range=/;
 const RESET_COUNT_PATTERN = /1 reset/;
 const GAP_COUNT_PATTERN = /1 collection gap/;
 const CLAUDE_SERIES_PATTERN = /^Claude · /;
+const OLDER_PROVIDER_SERIES_PATTERN = /^Older provider ·/;
+const CURSOR_SCORED_AT_PATTERN = /^Scored /;
 const SORT_URL_PATTERN = /sort=/;
 const UUID_PATTERN = /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/i;
 const HIDDEN_FILTERS_PATTERN = /hidden by filters/;
+/** The quota chart's authored viewBox is 600x200; the drawer must present it at that ratio. */
+const QUOTA_CHART_ASPECT_RATIO = 3;
 const NO_SESSIONS_PATTERN = /No sessions/;
 const SESSION_COUNTER_PATTERN = /^\d+ \/ \d+ sessions$/;
 type FocusedResponseControlAction = 'arm' | 'release' | 'waitUntilBlocked';
@@ -69,8 +74,11 @@ test('loads a deterministic report overview', async ({ page }) => {
   const initialHtml = await response?.text();
   expect(initialHtml).not.toContain('Loading report data…');
   expect(initialHtml).toContain('Daily activity calendar');
+  expect(initialHtml).not.toContain('Generated ');
 
   await expect(page.getByRole('heading', { level: 1, name: 'Usage report' })).toBeVisible();
+  await expect(page.locator('[data-report-freshness]')).toHaveText('Data as of Jun 11, 12:00');
+  await expect(page.locator('[data-report-freshness] time')).toHaveAttribute('datetime', '2026-06-11T12:00:00.000Z');
   await expect(page.getByRole('region', { name: 'Report period' })).toBeVisible();
   await expect(page.getByText('5 / 6 sessions', { exact: true })).toBeVisible();
   await expect(reportViewsFor(page).getByRole('link', { exact: true, name: 'Overview' })).toHaveAttribute(
@@ -241,6 +249,39 @@ test('uses one primary navigation while preserving Breakdown deep links behind t
   await expect(page).toHaveURL(LEGACY_PROJECT_TAB_URL_PATTERN);
 });
 
+/**
+ * Period scoping through the real tab and the real range URL. The synthetic payload ships a single
+ * Cursor row, so this test deliberately does NOT prove per-commit de-duplication -- that is pinned
+ * at DOM level in cursor-attribution-panel.ssr.test.ts, which renders three branch rows of one
+ * commit plus a same-branch disagreement.
+ */
+test('scopes the Cursor AI analysis to the report period', async ({ page }) => {
+  await openHydratedReport(page, '/?tab=cursor-ai');
+  const breakdownTabs = page.getByRole('tablist', { name: 'Analysis dimension' });
+  await expect(breakdownTabs.getByRole('tab', { name: 'Cursor AI' })).toHaveAttribute('aria-selected', 'true');
+  // The default 30d window (May 12 -> Jun 11, 2026 in the fixture) excludes the Mar 6 fixture commit.
+  await expect(page.locator('[data-cursor-empty-state="period"]')).toHaveText(
+    'No Cursor commits in this period · 1 scored commit outside it',
+  );
+  await expect(page.locator('[data-cursor-commit]')).toHaveCount(0);
+
+  await openHydratedReport(
+    page,
+    `/?${new URLSearchParams({ range: JSON.stringify({ mode: 'all' }), tab: 'cursor-ai' }).toString()}`,
+  );
+  const commitRows = page.locator('[data-cursor-commit]');
+  await expect(commitRows).toHaveCount(1);
+  await expect(commitRows.first()).toHaveAttribute('data-cursor-commit', 'da59e06cc4c9627584edec0f8dc06f7e4cdd199d');
+  await expect(commitRows.first().locator('[data-cursor-branch-count]')).toHaveText('main');
+  await expect(commitRows.first().locator('[data-cursor-date-source]')).toHaveAttribute(
+    'data-cursor-date-source',
+    'commit',
+  );
+  // The scoring time and the date rule are readable without hovering a native tooltip.
+  await expect(commitRows.first().locator('[data-cursor-scored-at]')).toHaveText(CURSOR_SCORED_AT_PATTERN);
+  await expect(page.locator('#cursor-attribution-table-description')).toBeVisible();
+});
+
 test('copies the exact breakdown URL and exports only visible sorted model rows', async ({ page }) => {
   await openHydratedReport(page, '/?tab=models&breakdownSort=sessions');
   await expect(page.getByRole('heading', { exact: true, name: 'Models' })).toBeVisible();
@@ -369,25 +410,21 @@ test('keeps the selected dashboard view ahead of secondary provider status on de
   expect(kpiBox?.y).toBeLessThan(providerBox?.y ?? 0);
 });
 
-test('keeps provider details collapsed until they are requested', async ({ page }) => {
+test('summarizes providers with no limit reading per machine and shows details only when they exist', async ({
+  page,
+}) => {
   await page.setViewportSize({ height: 1000, width: 1440 });
   await openHydratedReport(page);
 
   const providerPanel = page
     .getByRole('heading', { level: 2, name: 'Provider status' })
     .locator('xpath=ancestor::section[1]');
-  const providerDetails = page.getByText(PROVIDER_DETAILS_PATTERN);
-  const providerDisclosure = providerDetails.locator('xpath=..');
-  const noQuotaDetail = page.getByText('No quota windows are available for this provider.').first();
-  const attentionProviders = page.getByRole('list', { name: 'Providers requiring attention' });
-  const providerCategories = page.getByRole('list', { name: PROVIDER_CATEGORIES_PATTERN });
   const dateRange = page.getByRole('region', { name: 'Report period' });
   const activeFilters = page.locator('[data-active-filters]');
   const overviewHero = page.getByRole('region', { name: 'Estimated API-equivalent value' });
   const executiveMetrics = page.locator('[data-executive-metrics]');
 
   await expect(providerPanel).toContainText('Quota usage and operational issues at a glance.');
-  await expect(providerDisclosure).not.toHaveAttribute('open', '');
   expect(await providerPanel.evaluate((element) => element.closest('[data-report-overview]') !== null)).toBe(true);
   expect(await executiveMetrics.evaluate((element) => element.closest('[data-dashboard-panel]') !== null)).toBe(true);
   expect(await dateRange.evaluate((element) => element.closest('[data-dashboard-panel]') === null)).toBe(true);
@@ -395,22 +432,44 @@ test('keeps provider details collapsed until they are requested', async ({ page 
   const [providerBox, heroBox] = await Promise.all([providerPanel.boundingBox(), overviewHero.boundingBox()]);
   expect(heroBox?.y).toBeLessThan(providerBox?.y ?? 0);
 
-  await expect(providerDetails).toBeVisible();
-  await expect(attentionProviders).toBeVisible();
-  const categoryLabel = await providerCategories.getAttribute('aria-label');
-  const providerTotal = Number(categoryLabel?.match(PROVIDER_CATEGORY_TOTAL_PATTERN)?.[1]);
-  const categoryCounts = (await providerCategories.getByRole('listitem').allTextContents()).map((text) =>
-    Number(text.match(PROVIDER_CATEGORY_COUNT_PATTERN)?.[1]),
+  const summary = providerPanel.locator('[data-provider-status-summary]');
+  const lines = providerPanel.getByRole('list', { name: 'Providers with no limit reading' }).getByRole('listitem');
+  const glossary = providerPanel.locator('[data-provider-state-glossary]');
+  // Pinned to the fixture, not only to its own internal arithmetic: the e2e report infers Codex,
+  // Claude and OpenCode on Fixture Machine, Cursor on Fixture Machine Secondary, and a second
+  // OpenCode from the row that carries no source at all — which is why the last line has no machine
+  // prefix, and why the same label legitimately appears on two lines. Checking the identity alone
+  // lets a wrong count agree with itself.
+  await expect(summary).toHaveText(
+    '5 providers · 0 reporting a usage limit · 5 with no limit reading (4 partial, 1 unsupported)',
   );
-  expect(categoryCounts.every(Number.isFinite)).toBe(true);
-  expect(categoryCounts.reduce((total, count) => total + count, 0)).toBe(providerTotal);
-  await expect(noQuotaDetail).not.toBeVisible();
+  const [, total, withQuota, withoutSource, critical] =
+    (await summary.textContent())?.match(PROVIDER_SUMMARY_PATTERN) ?? [];
+  expect(Number(withQuota) + Number(withoutSource) + Number(critical ?? 0)).toBe(Number(total));
+  const lineTexts = await lines.allTextContents();
+  expect(lineTexts).toEqual([
+    'Fixture Machine · Codex, OpenCode — partial · Claude — unsupported',
+    'Fixture Machine Secondary · Cursor — partial',
+    'OpenCode — partial',
+  ]);
+  // Every provider the sentence counts is named on exactly one machine line.
+  const namedProviders = lineTexts.flatMap((line) =>
+    ['Codex', 'Claude', 'Cursor', 'OpenCode'].filter((label) => line.includes(label)),
+  );
+  expect(namedProviders).toHaveLength(Number(withoutSource));
+  for (const line of lineTexts) {
+    expect(line).toMatch(PROVIDER_LINE_PATTERN);
+    expect(line).not.toMatch(SEPARATOR_SPACING_PATTERN);
+  }
+  await expect(glossary).toContainText('Partial =');
+  await expect(glossary).toContainText('Unsupported =');
+  // Plan 086's copy rule, over everything the panel renders — not just the glossary.
+  expect((await providerPanel.innerText()).toLowerCase()).not.toContain('quota window');
+  await expect(page.getByText(PROVIDER_DETAILS_PATTERN)).toHaveCount(0);
+  await expect(page.getByText('No usage limit was read for this provider.')).toHaveCount(0);
 
   await page.setViewportSize({ height: 844, width: 390 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
-  await providerDetails.click();
-  await expect(providerDisclosure).toHaveAttribute('open', '');
-  await expect(noQuotaDetail).toBeVisible();
   expect(await providerPanel.evaluate((element) => element.scrollWidth)).toBeLessThanOrEqual(
     await providerPanel.evaluate((element) => element.clientWidth),
   );
@@ -429,6 +488,92 @@ test('Provider quota history shows reset and gap-aware ranges on desktop and mob
   await expect(history.getByText(RESET_COUNT_PATTERN).first()).toBeVisible();
   await expect(history.getByText(GAP_COUNT_PATTERN).first()).toBeVisible();
 
+  const historyRoot = history.locator('[data-quota-history]');
+  await expect(historyRoot).toHaveAttribute('data-quota-window-from', '2026-07-14T10:40:00.000Z');
+  await expect(historyRoot).toHaveAttribute('data-quota-window-to', '2026-07-15T10:40:00.000Z');
+  const carriedIn = history.locator('[data-quota-carried-in]');
+  await expect(carriedIn).toHaveCount(1);
+  await expect(carriedIn).toHaveAttribute('cx', '20');
+
+  const chart = history.locator('article', { hasText: RESET_COUNT_PATTERN }).first().locator('[data-quota-chart]');
+  await expect(chart.locator('css=text')).toHaveCount(0);
+  const geometry = await chart.evaluate((svg) => {
+    // `querySelectorAll('*')` is document order, so painting order is index order: a guide drawn
+    // before every series path can never be painted over the data it annotates.
+    const ordered = [...svg.querySelectorAll('*')];
+    const indexesOf = (selector: string) =>
+      ordered.flatMap((element, index) => (element.matches(selector) ? [index] : []));
+    const rects = (selector: string) => [...svg.querySelectorAll(selector)].map((el) => el.getBoundingClientRect());
+    const guideIndexes = indexesOf('[data-quota-break-guide]');
+    const pathIndexes = indexesOf('[data-quota-series-path]');
+    const markerRects = rects('[data-quota-break-marker]');
+    const pointRects = rects('[data-quota-point]');
+    const svgRect = svg.getBoundingClientRect();
+    const firstPoint = pointRects[0];
+    return {
+      guideCount: guideIndexes.length,
+      lastGuideIndex: guideIndexes.at(-1) ?? -1,
+      firstPathIndex: pathIndexes[0] ?? -1,
+      markerBottom: markerRects.length > 0 ? Math.max(...markerRects.map((r) => r.bottom)) : -1,
+      markerCount: markerRects.length,
+      pathCount: pathIndexes.length,
+      pointAspectRatio: firstPoint && firstPoint.height > 0 ? firstPoint.width / firstPoint.height : 0,
+      pointCount: pointRects.length,
+      pointTop: pointRects.length > 0 ? Math.min(...pointRects.map((r) => r.top)) : -1,
+      svgAspectRatio: svgRect.height > 0 ? svgRect.width / svgRect.height : 0,
+    };
+  });
+  // Counts first: without them `Math.min(...[])`/`Math.max(...[])` are ±Infinity and every ordering
+  // and separation assertion below would pass by an element vanishing from the chart entirely.
+  expect(geometry.guideCount).toBeGreaterThan(0);
+  expect(geometry.pathCount).toBeGreaterThan(0);
+  expect(geometry.markerCount).toBeGreaterThan(0);
+  expect(geometry.pointCount).toBeGreaterThan(0);
+  expect(geometry.lastGuideIndex).toBeLessThan(geometry.firstPathIndex);
+  expect(geometry.markerBottom).toBeLessThanOrEqual(geometry.pointTop);
+  // A stretched viewBox renders an r=3 circle as an ellipse (~0.63 wide) and squashes the chart out
+  // of the ratio its geometry is drawn in. Uniform scaling keeps both at their authored proportions.
+  expect(Math.abs(geometry.pointAspectRatio - 1)).toBeLessThanOrEqual(0.05);
+  expect(Math.abs(geometry.svgAspectRatio - QUOTA_CHART_ASPECT_RATIO)).toBeLessThanOrEqual(0.05);
+
+  const controlWidths = await Promise.all(
+    ['Provider', 'Machine', 'Account scope'].map(
+      async (name) => (await history.getByRole('combobox', { name }).boundingBox())?.width ?? 0,
+    ),
+  );
+  expect(Math.max(...controlWidths) - Math.min(...controlWidths)).toBeLessThanOrEqual(1);
+  expect(Math.min(...controlWidths)).toBeGreaterThanOrEqual(120);
+
+  const rangeBox = await history.getByRole('button', { name: '24h' }).boundingBox();
+  const selectBox = await history.getByRole('combobox', { name: 'Provider' }).boundingBox();
+  expect(rangeBox?.width ?? 0).toBeGreaterThanOrEqual(56);
+  expect(Math.abs((rangeBox?.height ?? 0) - (selectBox?.height ?? 0))).toBeLessThanOrEqual(1);
+
+  // The words the SVG no longer carries have to exist somewhere a reader can read them: the legend,
+  // the HTML axis under each chart, and the per-series footer. Deleting any of them must fail here.
+  const legend = history.locator('[data-quota-legend]');
+  await expect(legend).toHaveCount(1);
+  await expect(legend).toHaveText('▼ reset boundary · ▽ collection gap · ○ held from before the window');
+
+  const carriedInArticle = history.locator('article', { hasText: RESET_COUNT_PATTERN }).first();
+  const axisLabels = carriedInArticle.locator('[data-quota-axis] span');
+  await expect(axisLabels).toHaveCount(3);
+  const axisAt24h = await axisLabels.allTextContents();
+  for (const label of axisAt24h) {
+    expect(label.trim()).not.toBe('');
+  }
+  expect(axisAt24h[0]).not.toBe(axisAt24h[2]);
+
+  const footer = carriedInArticle.locator('[data-quota-series-footer]');
+  await expect(footer).toContainText('Latest observation');
+  await expect(footer).toContainText('held at 48% since');
+  await expect(footer).toContainText('Next reset');
+  await expect(history.locator('[data-quota-hold-line]')).toHaveCount(1);
+  const carriedInRow = carriedInArticle.locator('[data-quota-carried-in-row]');
+  await expect(carriedInRow).toHaveCount(1);
+  await expect(carriedInRow).toContainText('held since');
+  await expect(carriedInRow).toContainText('48%');
+
   const providerSelect = history.getByRole('combobox', { name: 'Provider' });
   await expect(providerSelect.locator('option[value="codex"]')).toHaveCount(1);
   await expect(providerSelect.locator('option[value="claude"]')).toHaveCount(1);
@@ -441,6 +586,25 @@ test('Provider quota history shows reset and gap-aware ranges on desktop and mob
 
   await history.getByRole('button', { name: '7d' }).click();
   await expect(history.getByRole('button', { name: '7d' })).toHaveAttribute('aria-pressed', 'true');
+  await expect(historyRoot).toHaveAttribute('data-quota-window-from', '2026-07-08T10:40:00.000Z');
+  await expect(carriedIn).toHaveCount(0);
+  // The held value is in range at 7d, so every trace of carrying it in must be gone with it.
+  await expect(history.locator('[data-quota-hold-line]')).toHaveCount(0);
+  await expect(history.locator('[data-quota-carried-in-row]')).toHaveCount(0);
+  await expect(history.locator('[data-quota-series-footer]').first()).not.toContainText('held at');
+  // The axis is bound to the window, not to a fixed caption: a wider range must relabel it.
+  await expect
+    .poll(async () => (await history.locator('[data-quota-axis]').first().locator('span').allTextContents())[0])
+    .not.toBe(axisAt24h[0]);
+
+  await providerSelect.selectOption('older-provider');
+  await expect(history.getByText(OLDER_PROVIDER_SERIES_PATTERN)).toBeVisible();
+  await history.getByRole('button', { name: '24h' }).click();
+  await expect(history.getByRole('button', { name: '24h' })).toHaveAttribute('aria-pressed', 'true');
+  await expect(providerSelect).toHaveValue('');
+  await expect(providerSelect.locator('option[value="older-provider"]')).toHaveCount(0);
+  await expect(history.locator('article').first()).toBeVisible();
+
   await page.keyboard.press('Escape');
   await expect(history).not.toBeVisible();
 
@@ -449,6 +613,40 @@ test('Provider quota history shows reset and gap-aware ranges on desktop and mob
   await expect(page.getByRole('dialog', { name: 'Provider quota history' })).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(page.getByRole('dialog', { name: 'Provider quota history' })).not.toBeVisible();
+});
+
+test('keeps the collection source pill independent of the report filter', async ({ page }) => {
+  await openHydratedReport(page);
+  const summary = page.locator('[data-source-summary]');
+  const status = summary.locator('[data-source-summary-status]');
+  await expect(status).toHaveText('Sources ready');
+  const generation = await summary.getAttribute('data-source-summary-generation');
+  expect(generation).not.toBeNull();
+  expect(generation).not.toBe('');
+
+  // The filter is applied and then removed through the search box and its active-filter chip rather
+  // than through the harness dropdown: what this guards is that *a report filter transition* leaves
+  // the engine-owned pill untouched, and plan 092 replaces the dropdown's mechanic. Both controls
+  // used here are already pinned by sibling tests in this file, so the guard survives that change.
+  const search = page.getByRole('textbox', {
+    name: 'Filter sessions by title, project, model, provider, or harness',
+  });
+  await page.keyboard.press('/');
+  await expect(search).toBeFocused();
+  await search.fill('ai-usage');
+  await search.press('Enter');
+  await expect(page).toHaveURL(QUERY_URL_PATTERN);
+  await waitForFocusedReportSettled(page);
+
+  await expect(status).toHaveText('Sources ready');
+  expect(await summary.getAttribute('data-source-summary-generation')).toBe(generation);
+
+  await page.getByRole('button', { name: 'Query: ai-usage ×' }).click();
+  await expect(page).not.toHaveURL(QUERY_URL_PATTERN);
+  await waitForFocusedReportSettled(page);
+
+  await expect(status).toHaveText('Sources ready');
+  expect(await summary.getAttribute('data-source-summary-generation')).toBe(generation);
 });
 
 test('persists exploration state in the URL', async ({ page }) => {
@@ -490,7 +688,7 @@ test('updates the date range and opens a session drawer', async ({ page }) => {
 
   await range.getByRole('button', { exact: true, name: 'All time' }).click();
   await expect(page).toHaveURL(RANGE_URL_PATTERN);
-  await expect(range.getByText('Apr 12 → Jun 11, 2026 · 60 days', { exact: true })).toBeVisible();
+  await expect(range.getByText('Apr 12 → Jun 11, 2026 · 61 days', { exact: true })).toBeVisible();
 
   await reportViewsFor(page).getByRole('link', { exact: true, name: 'Sessions' }).click();
   await page.locator('tbody tr').first().locator('td').first().click();
@@ -509,6 +707,11 @@ test('opens a session from Overview without leaving the current analysis', async
   await sessionTrigger.click();
 
   await expect(page.getByRole('dialog')).toBeVisible();
+  // The Overview row describes the campaign, so the drawer it opens must describe the
+  // same campaign — the same total the trigger's accessible name already pins.
+  const drawer = page.getByRole('dialog', { name: 'Session details' });
+  await expect(drawer.locator('[data-session-drawer-campaign-scope]')).toHaveText('Campaign · 3 sessions');
+  await expect(drawer.locator('[data-detail-item="API value"]')).toContainText('$4.21');
   await expect(reportViewsFor(page).getByRole('link', { exact: true, name: 'Overview' })).toHaveAttribute(
     'aria-current',
     'page',
@@ -570,7 +773,21 @@ test('starts sessions with focused work columns and switches metric presets', as
 
   await page.setViewportSize({ height: 1000, width: 1440 });
   const campaignRow = page.getByRole('row').filter({ hasText: 'Build report UI' }).first();
-  expect(Math.round((await campaignRow.boundingBox())?.height ?? 0)).toBe(75);
+  await expect(campaignRow).not.toContainText('root-session time');
+  expect(await campaignRow.evaluate((row) => row.tabIndex === 0 && row.getBoundingClientRect().height >= 44)).toBe(
+    true,
+  );
+  const rowColumnEdges = await page.locator('tbody tr[data-session-row-id]').evaluateAll((rows) =>
+    rows.slice(0, 3).map((row) =>
+      [...row.children].map((cell) => {
+        const { left, right } = cell.getBoundingClientRect();
+        return [Math.round(left), Math.round(right)];
+      }),
+    ),
+  );
+  expect(rowColumnEdges).toHaveLength(3);
+  expect(rowColumnEdges[1]).toEqual(rowColumnEdges[0]);
+  expect(rowColumnEdges[2]).toEqual(rowColumnEdges[0]);
   await page.setViewportSize({ height: 900, width: 1024 });
 
   const sessionHeader = page.getByRole('columnheader', { name: 'Session' });
@@ -726,6 +943,7 @@ test('keeps the Top sessions panel readable without horizontal overflow at deskt
 test('selects the same heatmap day with mouse and keyboard', async ({ page }) => {
   const selectedDay = '2026-05-25';
   const assertSelectedDay = async () => {
+    await waitForFocusedReportSettled(page);
     await expect(reportViewsFor(page).getByRole('link', { exact: true, name: 'Sessions' })).toHaveAttribute(
       'aria-current',
       'page',
@@ -733,7 +951,10 @@ test('selects the same heatmap day with mouse and keyboard', async ({ page }) =>
     const range = page.getByRole('region', { name: 'Report period' });
     await range.getByRole('button', { name: 'Choose a custom report period' }).click();
     await expect(page.getByRole('textbox', { name: 'From' })).toHaveValue(selectedDay);
+    await expect(page.getByRole('textbox', { name: 'From' })).toHaveAttribute('placeholder', 'YYYY-MM-DD');
     await expect(page.getByRole('textbox', { name: 'To' })).toHaveValue(selectedDay);
+    await expect(page.getByRole('textbox', { name: 'To' })).toHaveAttribute('placeholder', 'YYYY-MM-DD');
+    await expect(range.getByText('May 25 → May 25, 2026 · 1 day', { exact: true })).toBeVisible();
   };
   const selectedCell = () =>
     page.getByRole('toolbar', { name: CALENDAR_NAME_PATTERN }).locator(`button[data-heatmap-day="${selectedDay}"]`);
@@ -825,7 +1046,29 @@ test('keeps sync limited to explicit file transfers', async ({ page }) => {
   await expect(page.getByRole('button', { name: 'Export current machine' })).toBeVisible();
   await expect(page.getByRole('heading', { level: 2, name: 'Machine fleet' })).toBeVisible();
   await expect(page.getByLabel('Machine fleet').getByText('Current machine', { exact: true })).toBeVisible();
+  const fleetSection = page
+    .getByRole('heading', { level: 2, name: 'Machine fleet' })
+    .locator('xpath=ancestor::section[1]');
+  const transferSection = page
+    .getByRole('heading', { level: 2, name: 'Manual transfer' })
+    .locator('xpath=ancestor::section[1]');
+  await expect(transferSection).toBeVisible();
+  await expect(fleetSection.locator('[data-machine-fleet-share]')).toHaveCount(1);
+  await expect(page.locator('main[data-route-shell="sync"] table')).toHaveCount(0);
+  await expect(page.getByRole('list', { name: 'Machine contribution summaries' })).toHaveCount(0);
+  const syncSections = page.locator('main[data-route-shell="sync"] > div > section');
+  await expect(syncSections).toHaveCount(2);
+  await expect
+    .poll(async () =>
+      syncSections.evaluateAll((sections) => {
+        const fleetBox = sections[0]?.getBoundingClientRect();
+        const transferBox = sections[1]?.getBoundingClientRect();
+        return fleetBox && transferBox ? Math.round(transferBox.top - fleetBox.bottom) : null;
+      }),
+    )
+    .toBe(16);
   await page.setViewportSize({ height: 844, width: 361 });
+  await expect(page.getByRole('list', { name: 'Machine contribution summaries' })).toHaveCount(0);
   const fileInput = page.locator('input[type="file"][accept=".json,application/json"]');
   const dropTarget = fileInput.locator('xpath=following-sibling::button[1]');
   await expect(dropTarget).toBeVisible();

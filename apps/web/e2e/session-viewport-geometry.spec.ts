@@ -2,9 +2,11 @@ import type { Locator, Page } from '@playwright/test';
 import { expect, openHydratedReport, test } from './browser-test';
 import { capturePlan073Smoke } from './plan073-smoke';
 
-const SESSION_VIEWPORT_BOTTOM_INSET = 24;
 const MOBILE_DRAWER_VIEWPORT = { height: 844, width: 390 } as const;
 const DESKTOP_DRAWER_VIEWPORT = { height: 900, width: 1280 } as const;
+const EXPAND_CAMPAIGN_BUTTON_PATTERN = /^Expand campaign /;
+const LOAD_MORE_CAMPAIGN_BUTTON_PATTERN = /^Load more sessions in /;
+const SESSION_POSITION_PATTERN = /\/|matching sessions/;
 
 type SessionDrawerViewport = 'desktop' | 'mobile';
 
@@ -39,6 +41,21 @@ const captureLifecycleWarnings = (page: Page): (() => readonly string[]) => {
     warnings.push(`${location.url}:${location.lineNumber}:${location.columnNumber} ${message.text()}`);
   });
   return () => warnings;
+};
+
+const captureResizeObserverLoopMessages = (page: Page): (() => readonly string[]) => {
+  const messages: string[] = [];
+  page.on('console', (message) => {
+    if (message.text().includes('ResizeObserver loop')) {
+      messages.push(message.text());
+    }
+  });
+  page.on('pageerror', (error) => {
+    if (error.message.includes('ResizeObserver loop')) {
+      messages.push(error.message);
+    }
+  });
+  return () => messages;
 };
 
 const startSelectionCloseCounter = async (page: Page): Promise<void> => {
@@ -85,7 +102,70 @@ const viewportCases = [
   },
 ] as const;
 
+test('keeps a paged expanded campaign inside the single Sessions scroll container', async ({ page }) => {
+  await page.setViewportSize({ height: 900, width: 1024 });
+  await openHydratedReport(page, '/');
+  await page.addScriptTag({
+    type: 'module',
+    url: '/src/lib/features/sessions/table/session-table.e2e-fixture.ts',
+  });
+  await expect(page.locator('[data-session-table-browser-fixture="paged-campaign"]')).toBeVisible();
+
+  const surface = page.locator('[data-session-surface="desktop"]');
+  const expandCampaign = surface.getByRole('button', { name: EXPAND_CAMPAIGN_BUTTON_PATTERN }).first();
+  await expect(expandCampaign).toBeVisible();
+  await expandCampaign.click();
+  const loadMore = page.getByRole('button', { name: LOAD_MORE_CAMPAIGN_BUTTON_PATTERN });
+  await expect(loadMore).toBeVisible();
+
+  await expect
+    .poll(
+      async () =>
+        await page.evaluate(() => {
+          const sessionSurface = document.querySelector<HTMLElement>('[data-session-surface="desktop"]');
+          const pagingButton = [...document.querySelectorAll<HTMLButtonElement>('button')].find((button) =>
+            button.textContent?.startsWith('Load more sessions in '),
+          );
+          const tableHeader = sessionSurface?.querySelector('thead');
+          if (!(sessionSurface && pagingButton?.parentElement && tableHeader)) {
+            throw new Error('Paged campaign geometry is unavailable');
+          }
+          const surfaceRect = sessionSurface.getBoundingClientRect();
+          const controlRect = pagingButton.parentElement.getBoundingClientRect();
+          const visibleBodyTop = Math.max(surfaceRect.top, tableHeader.getBoundingClientRect().bottom);
+          const fullyVisibleBodyRows = [...sessionSurface.querySelectorAll('tbody tr[data-session-row-id]')].filter(
+            (row) => {
+              const rowRect = row.getBoundingClientRect();
+              return rowRect.top >= visibleBodyTop - 1 && rowRect.bottom <= surfaceRect.bottom + 1;
+            },
+          ).length;
+          const surfaceMaximumScrollTop = sessionSurface.scrollHeight - sessionSurface.clientHeight;
+          return {
+            atLeastThreeFullyVisibleBodyRows: fullyVisibleBodyRows >= 3,
+            controlAfterSurface: controlRect.top >= surfaceRect.bottom - 1,
+            controlFullyVisible: controlRect.bottom <= window.innerHeight,
+            controlHeight: Math.round(controlRect.height),
+            documentMaximumScrollTop: document.documentElement.scrollHeight - window.innerHeight,
+            fullyVisibleBodyRows,
+            surfaceMaximumScrollTop,
+            surfaceScrollable: surfaceMaximumScrollTop > 0,
+          };
+        }),
+    )
+    .toMatchObject({
+      atLeastThreeFullyVisibleBodyRows: true,
+      controlAfterSurface: true,
+      controlFullyVisible: true,
+      controlHeight: 54,
+      documentMaximumScrollTop: 0,
+      fullyVisibleBodyRows: expect.any(Number),
+      surfaceMaximumScrollTop: expect.any(Number),
+      surfaceScrollable: true,
+    });
+});
+
 test('anchors the virtual Session viewport inside the screen on desktop and mobile', async ({ page }) => {
+  const resizeObserverLoopMessages = captureResizeObserverLoopMessages(page);
   for (const viewportCase of viewportCases) {
     await page.setViewportSize({ height: viewportCase.height, width: viewportCase.width });
     await openHydratedReport(page, '/?tab=sessions');
@@ -98,36 +178,48 @@ test('anchors the virtual Session viewport inside the screen on desktop and mobi
     await expect
       .poll(
         async () =>
-          await surface.evaluate((element, bottomInset) => {
+          await surface.evaluate((element, currentViewport) => {
             const rect = element.getBoundingClientRect();
             const regionRect = document.querySelector('[data-session-region-start]')?.getBoundingClientRect();
-            // The height follows the viewport alone. Deriving it from `rect.top`
-            // — as this assertion did until 2026-08-05 — is what let the surface
-            // grow as the page was scrolled and the document stretch away.
-            const expectedHeight = Math.max(1, window.innerHeight - bottomInset);
+            const navRect = document.querySelector('[data-app-navigation="mobile"]')?.getBoundingClientRect();
+            const isDesktop = currentViewport.mode === 'desktop';
+            const regionDocumentTop = regionRect ? regionRect.top + window.scrollY : Number.NaN;
             return {
               activeElementInsideRegion: Boolean(document.activeElement?.closest('[data-session-region-start]')),
-              fillsViewportHeight: Math.abs(element.clientHeight - expectedHeight) <= 2,
+              atLeastMinimumRows: element.clientHeight >= currentViewport.minimumRowHeight * (isDesktop ? 3 : 1),
+              desktopBottomGap:
+                !isDesktop || (window.innerHeight - rect.bottom >= 24 && window.innerHeight - rect.bottom <= 48),
               maxHeight: getComputedStyle(element).maxHeight,
+              mobileRegionAnchored: isDesktop || Boolean(regionRect && Math.abs(regionRect.top) <= 2),
+              mobileScrollRangeEndsAtAnchor:
+                isDesktop ||
+                Math.abs(document.documentElement.scrollHeight - window.innerHeight - regionDocumentTop) <= 2,
+              mobileSurfaceAboveNavigation: isDesktop || Boolean(navRect && rect.bottom <= navRect.top),
+              mobileWindowScrolled: isDesktop || window.scrollY > 0,
               minHeight: getComputedStyle(element).minHeight,
               overflowAnchor: getComputedStyle(element).overflowAnchor,
-              regionStartsInViewport: Boolean(
-                regionRect && regionRect.top >= -1 && regionRect.top < window.innerHeight * 0.2,
-              ),
-              surfaceStartsInViewport: rect.top >= 0 && rect.top < window.innerHeight * 0.25,
-              windowScrolledPastChrome: window.scrollY > 0,
+              regionStartsInViewport: Boolean(regionRect && regionRect.top >= -1),
+              singleScrollContainer: !isDesktop || document.documentElement.scrollHeight <= window.innerHeight + 1,
+              surfaceStartsInViewport: rect.top >= 0 && rect.top < window.innerHeight,
+              windowAtTop: !isDesktop || window.scrollY === 0,
             };
-          }, SESSION_VIEWPORT_BOTTOM_INSET),
+          }, viewportCase),
       )
       .toEqual({
         activeElementInsideRegion: false,
-        fillsViewportHeight: true,
+        atLeastMinimumRows: true,
+        desktopBottomGap: true,
         maxHeight: 'none',
+        mobileRegionAnchored: true,
+        mobileScrollRangeEndsAtAnchor: true,
+        mobileSurfaceAboveNavigation: true,
+        mobileWindowScrolled: true,
         minHeight: '0px',
         overflowAnchor: 'none',
         regionStartsInViewport: true,
+        singleScrollContainer: true,
         surfaceStartsInViewport: true,
-        windowScrolledPastChrome: true,
+        windowAtTop: true,
       });
 
     const rowHeight = await surface
@@ -137,10 +229,100 @@ test('anchors the virtual Session viewport inside the screen on desktop and mobi
     expect(rowHeight).toBeGreaterThanOrEqual(viewportCase.minimumRowHeight);
     expect(rowHeight).toBeLessThanOrEqual(viewportCase.maximumRowHeight);
 
+    if (viewportCase.mode === 'desktop') {
+      // This browser harness renders SessionTable directly. Keep that absence
+      // explicit, then install a clearly named synthetic export anchor in the
+      // production sibling position so the probe exercises external chrome.
+      await expect(page.locator('[data-sessions-export]')).toHaveCount(0);
+      await expect(page.locator('[data-session-table-owner]')).toHaveCount(1);
+      await page.evaluate(() => {
+        const fixtureOwner = document.querySelector('[data-session-table-owner]');
+        if (!fixtureOwner?.parentElement) {
+          throw new Error('Synthetic Sessions table owner is unavailable');
+        }
+        const rowGap = Number.parseFloat(getComputedStyle(fixtureOwner.parentElement).rowGap);
+        if (!Number.isFinite(rowGap)) {
+          throw new Error('Synthetic Sessions table owner has no measurable row gap');
+        }
+        const exportAnchor = document.createElement('div');
+        exportAnchor.dataset.sessionGeometryExportFixture = 'true';
+        exportAnchor.dataset.sessionsExport = '';
+        // The production export sibling exists before the surface is measured.
+        // Cancel the grid gap introduced only by installing this test anchor.
+        exportAnchor.style.marginBlockEnd = `${-rowGap}px`;
+        fixtureOwner.parentElement.insertBefore(exportAnchor, fixtureOwner);
+      });
+      const exportFixture = page.locator('[data-session-geometry-export-fixture][data-sessions-export]');
+      await expect(exportFixture).toHaveCount(1);
+      expect(
+        await exportFixture.evaluate(
+          (element) =>
+            element.parentElement === document.querySelector('[data-session-table-owner]')?.parentElement &&
+            element.nextElementSibling?.matches('[data-session-table-owner]'),
+        ),
+      ).toBe(true);
+      await page.evaluate(
+        () =>
+          new Promise<void>((resolve) => {
+            requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+          }),
+      );
+      const initialSurfaceHeight = await surface.evaluate((element) => element.clientHeight);
+      await page.evaluate(() => {
+        const exportAnchor = document.querySelector('[data-session-geometry-export-fixture][data-sessions-export]');
+        if (!exportAnchor?.parentElement) {
+          throw new Error('Synthetic Sessions export anchor is unavailable');
+        }
+        const rowGap = Number.parseFloat(getComputedStyle(exportAnchor.parentElement).rowGap);
+        if (!Number.isFinite(rowGap)) {
+          throw new Error('Synthetic Sessions export anchor has no measurable row gap');
+        }
+        const probe = document.createElement('div');
+        probe.dataset.sessionGeometryProbe = 'true';
+        probe.style.height = '80px';
+        probe.style.flex = '0 0 80px';
+        // Adding a grid sibling also adds one fixture row gap. Cancel only that
+        // gap so the external chrome mutation remains the probe's locked 80 px.
+        probe.style.marginBlockEnd = `${-rowGap}px`;
+        exportAnchor.parentElement.insertBefore(probe, exportAnchor);
+      });
+      const geometryProbe = page.locator('[data-session-geometry-probe]');
+      await expect(geometryProbe).toHaveCount(1);
+      expect(Math.round((await geometryProbe.boundingBox())?.height ?? 0)).toBe(80);
+      expect(
+        await geometryProbe.evaluate(
+          (element) =>
+            element.parentElement === document.querySelector('[data-session-geometry-export-fixture]')?.parentElement &&
+            element.nextElementSibling?.matches('[data-session-geometry-export-fixture][data-sessions-export]'),
+        ),
+      ).toBe(true);
+      await expect
+        .poll(
+          async () =>
+            await surface.evaluate(
+              (element, expectedHeight) => ({
+                heightDroppedByProbe: Math.abs(element.clientHeight - (expectedHeight - 80)) <= 2,
+                singleScrollContainer: document.documentElement.scrollHeight <= window.innerHeight + 1,
+              }),
+              initialSurfaceHeight,
+            ),
+        )
+        .toEqual({ heightDroppedByProbe: true, singleScrollContainer: true });
+      await geometryProbe.evaluate((element) => element.remove());
+      await expect
+        .poll(async () => await surface.evaluate((element) => element.clientHeight))
+        .toBe(initialSurfaceHeight);
+      await exportFixture.evaluate((element) => element.remove());
+      await expect(page.locator('[data-sessions-export]')).toHaveCount(0);
+    }
+
     await page.setViewportSize({
       height: viewportCase.mode === 'desktop' ? 220 : 300,
       width: viewportCase.width,
     });
+    await page.evaluate(() =>
+      document.querySelector('[data-session-region-start]')?.scrollIntoView({ block: 'start' }),
+    );
     await expect
       .poll(async () => await surface.evaluate((element) => element.scrollHeight > element.clientHeight))
       .toBe(true);
@@ -152,6 +334,29 @@ test('anchors the virtual Session viewport inside the screen on desktop and mobi
     await expect.poll(async () => await surface.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
     expect(await page.evaluate(() => window.scrollY)).toBe(outerScrollPosition);
   }
+  expect(resizeObserverLoopMessages()).toEqual([]);
+});
+
+test('keeps the tablet Sessions table inside its horizontal scroll surface', async ({ page }) => {
+  await page.setViewportSize({ height: 1024, width: 768 });
+  await openHydratedReport(page, '/?tab=sessions');
+
+  const surface = page.locator('[data-session-surface="desktop"]');
+  await expect(surface).toBeVisible();
+  await expect
+    .poll(
+      async () =>
+        await surface.evaluate((element) => ({
+          documentFitsViewport: document.documentElement.scrollWidth <= document.documentElement.clientWidth,
+          ownsHorizontalOverflow: element.scrollWidth > element.clientWidth,
+          surfaceFitsViewport: element.getBoundingClientRect().right <= document.documentElement.clientWidth + 1,
+        })),
+    )
+    .toEqual({
+      documentFitsViewport: true,
+      ownsHorizontalOverflow: true,
+      surfaceFitsViewport: true,
+    });
 });
 
 test('keeps the document height still while the Session surface is scrolled past', async ({ page }) => {
@@ -174,10 +379,10 @@ test('keeps the document height still while the Session surface is scrolled past
 
   const initial = await measure();
   expect(initial.surfaceHeight).not.toBeNull();
+  expect(initial.documentHeight).toBe(900);
 
-  // Sizing the surface from its own viewport-relative top was circular: each
-  // pixel scrolled grew the page by a pixel, so the reader never advanced and the
-  // bottom stayed out of reach. One viewport must yield one document height.
+  // At rest the document is exactly one viewport tall, so every requested page
+  // position below is clamped to 0 while the surface height stays fixed.
   for (const target of [120, 320, 560, 800, 320, 0]) {
     await page.evaluate((y) => window.scrollTo(0, y), target);
     await page.waitForTimeout(200);
@@ -216,19 +421,21 @@ test('keeps the mobile Session drawer modal, trapped, safe, and restorable', asy
     const rect = element.getBoundingClientRect();
     return {
       bottom: Math.round(rect.bottom),
+      layoutWidth: Math.min(document.documentElement.clientWidth, document.documentElement.scrollWidth),
       left: Math.round(rect.left),
       pageHasHorizontalOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth,
       right: Math.round(rect.right),
       width: Math.round(rect.width),
     };
   });
-  expect(geometry).toEqual({
+  expect(geometry).toMatchObject({
     bottom: MOBILE_DRAWER_VIEWPORT.height,
     left: 0,
     pageHasHorizontalOverflow: false,
-    right: MOBILE_DRAWER_VIEWPORT.width,
-    width: MOBILE_DRAWER_VIEWPORT.width,
   });
+  expect(geometry.layoutWidth).toBeLessThanOrEqual(MOBILE_DRAWER_VIEWPORT.width);
+  expect(geometry.right).toBe(geometry.layoutWidth);
+  expect(geometry.width).toBe(geometry.layoutWidth);
 
   const layers = await page.evaluate(() => {
     const zIndexOf = (selector: string): number => {
@@ -392,22 +599,22 @@ test('keeps the desktop Session drawer nonmodal and outside-focus friendly', asy
   await expect(drawer).toHaveAttribute('aria-modal', 'false');
   await expect(page.locator('[data-scope="drawer"][data-part="backdrop"]')).toHaveCount(0);
   await expect(sessionTrigger).toBeFocused();
-  expect(
-    await drawer.evaluate((element) => {
-      const rect = element.getBoundingClientRect();
-      return {
-        bottom: Math.round(rect.bottom),
-        right: Math.round(rect.right),
-        top: Math.round(rect.top),
-        width: Math.round(rect.width),
-      };
-    }),
-  ).toEqual({
+  const desktopGeometry = await drawer.evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    return {
+      bottom: Math.round(rect.bottom),
+      layoutRight: Math.min(document.documentElement.clientWidth, document.documentElement.scrollWidth),
+      right: Math.round(rect.right),
+      top: Math.round(rect.top),
+      width: Math.round(rect.width),
+    };
+  });
+  expect(desktopGeometry).toMatchObject({
     bottom: DESKTOP_DRAWER_VIEWPORT.height,
-    right: DESKTOP_DRAWER_VIEWPORT.width,
     top: 0,
     width: 440,
   });
+  expect(desktopGeometry.right).toBe(desktopGeometry.layoutRight);
   const actionGeometry = await drawer.locator('[data-session-drawer-header] button:visible').evaluateAll((elements) =>
     elements.map((element) => {
       const rect = element.getBoundingClientRect();
@@ -416,6 +623,31 @@ test('keeps the desktop Session drawer nonmodal and outside-focus friendly', asy
   );
   expect(actionGeometry.length).toBeGreaterThanOrEqual(3);
   expect(actionGeometry.every(({ height, width }) => height >= 44 && width >= 44)).toBe(true);
+  const drawerHeader = drawer.locator('[data-session-drawer-header]');
+  const drawerPosition = drawerHeader.locator('[data-session-drawer-position]');
+  await expect(drawerPosition).toHaveText(SESSION_POSITION_PATTERN);
+  const headerContentGeometry = await drawerHeader.evaluate((header) => {
+    const badge = header.querySelector('[data-session-drawer-harness] > *');
+    const position = header.querySelector('[data-session-drawer-position]');
+    const navigation = header.querySelector('[data-session-drawer-navigation]');
+    if (!(badge instanceof HTMLElement && position instanceof HTMLElement && navigation instanceof HTMLElement)) {
+      throw new Error('Expected the drawer header badge, position label, and navigation');
+    }
+    const badgeBox = badge.getBoundingClientRect();
+    return {
+      badgeClipped: badge.scrollWidth > badge.clientWidth + 1,
+      badgeRight: Math.round(badgeBox.right),
+      badgeWidth: Math.round(badgeBox.width),
+      headerOverflows: header.scrollWidth > header.clientWidth + 1,
+      navigationOverflows: navigation.scrollWidth > navigation.clientWidth + 1,
+      positionLeft: Math.round(position.getBoundingClientRect().left),
+    };
+  });
+  expect(headerContentGeometry.badgeClipped).toBe(false);
+  expect(headerContentGeometry.badgeWidth).toBeGreaterThan(40);
+  expect(headerContentGeometry.badgeRight).toBeLessThanOrEqual(headerContentGeometry.positionLeft);
+  expect(headerContentGeometry.navigationOverflows).toBe(false);
+  expect(headerContentGeometry.headerOverflows).toBe(false);
   await capturePlan073Smoke(page, testInfo, 'step7-drawer-1280x900-light');
 
   const overviewLink = page.getByRole('link', { exact: true, name: 'Overview' }).first();

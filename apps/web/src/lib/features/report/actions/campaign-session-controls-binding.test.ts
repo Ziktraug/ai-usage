@@ -37,6 +37,7 @@ const binding: CampaignSessionControlsBinding = {
   collection: { items: [campaign, hiddenSession], loading: false, nextCursor: null, totalCount: 2 },
   loadMore: () => undefined,
   query,
+  rolledUpClassifierCount: 0,
   selectionQuery: campaignSessionSelectionQuery(query, campaign.campaignKey ?? ''),
   sessionCount: 1,
   visibleRows: [campaign],

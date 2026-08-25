@@ -114,6 +114,10 @@ export const createSkillMarkdownEditorController = (
     if (changesIdentity) {
       generation += 1;
     }
+    const preservesSavedMessage =
+      state.message === 'SKILL.md saved.' &&
+      state.document?.skillName === document.skillName &&
+      state.document.sha256 === document.sha256;
     pendingDocument = undefined;
     publish({
       conflict: false,
@@ -122,7 +126,7 @@ export const createSkillMarkdownEditorController = (
       draft: document.content,
       error: null,
       loading: false,
-      message: null,
+      message: preservesSavedMessage ? state.message : null,
       saving: false,
       skillName: document.skillName,
     });

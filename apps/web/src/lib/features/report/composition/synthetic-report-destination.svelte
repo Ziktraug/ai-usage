@@ -1,6 +1,7 @@
 <script lang="ts">
   import { applyCampaignLabelOverrideMutation, type CampaignLabelOverride } from '@ai-usage/report-core/campaign-label';
   import {
+    buildFocusedDateDomain,
     type FocusedOverviewSessionItem,
     type FocusedTimelineSeries,
     matchesFocusedReportQuery,
@@ -41,6 +42,7 @@
   import { buildProviderStatusViews, providerHistoryAvailable } from '../../../../provider-status-model';
   import { demoReportPayload } from '../../../../report-data';
   import type { RuntimeMode } from '../../../../runtime-mode';
+  import { sessionAnalysisTargetForOverviewRow } from '../../../../session-analysis-target';
   import {
     columnVisibilityFromDiff,
     columnVisibilitySearchForVisibility,
@@ -58,6 +60,11 @@
   import QuotaHistoryOwner from '../actions/quota-history-owner.svelte';
   import ActiveFilters from '../breakdown/active-filters.svelte';
   import { createBreakdownNavigation } from '../breakdown/navigation';
+  import {
+    reportRangeProjection,
+    resolveTimelineGranularity,
+    type TimelineGranularityPreference,
+  } from '../range/report-range-model';
   import { activeTimelineSeriesKeys } from './active-timeline-series';
   import { importReportLazyModule } from './lazy-module-e2e-fixture';
   import { createLazyModuleLoader } from './lazy-module-loader';
@@ -212,7 +219,16 @@
   );
   const providers = buildProviderStatusViews(reportSupport, allRows, reportSupport.generatedAt);
   let dimension = $state<'campaign' | 'harness' | 'machine' | 'model' | 'origin' | 'provider' | 'project'>('harness');
-  let granularity = $state<'day' | 'month' | 'week'>('day');
+  let granularityPreference = $state<TimelineGranularityPreference>('auto');
+  const syntheticDateDomain = buildFocusedDateDomain(
+    allRows.flatMap((row) => (row.activeTime === null ? [] : [row.activeTime])),
+  );
+  const granularity = $derived(
+    resolveTimelineGranularity(
+      granularityPreference,
+      reportRangeProjection(renderedSearch.range, new Date(reportSupport.generatedAt), syntheticDateDomain).dayCount,
+    ),
+  );
   let timelineValue = $state<TimelineValue>('cost');
   // Headline value of the window under the pointer, so the hero keeps tracking the brush now that a
   // gesture only commits on release. This payload recomputes in memory, so the committed range
@@ -372,7 +388,7 @@
       ? { ...presented.row, campaignKey: campaignContext.campaignKey, sessionLabel: presented.label }
       : presented.row;
     detailRows = visibleRows;
-    selection = { row: presentedRow };
+    selection = { row: presentedRow, target: sessionAnalysisTargetForOverviewRow(presentedRow) };
     selectedRowId = presentedRow.rowId;
   };
   const selectSessionRow = (row: SessionPresentationRow): void => {
@@ -380,7 +396,9 @@
       return;
     }
     detailRows = tableRows;
-    selection = selectedRowId === row.rowId ? null : { row };
+    // Top-level table rows are campaign aggregates; loaded campaign members are plain
+    // sessions. The same helper the live destination uses tells them apart.
+    selection = selectedRowId === row.rowId ? null : { row, target: sessionAnalysisTargetForOverviewRow(row) };
     selectedRowId = selection?.row.rowId ?? null;
   };
 </script>
@@ -405,6 +423,10 @@
       onLoadMoreCampaignSessions={() => undefined}
       onSelectSession={selectSessionRow}
       query={syntheticSessionQuery}
+      rolledUpClassifierCount={Math.max(
+        0,
+        selectedCampaignView.visibleRows.length - selectedCampaignView.visibleCount,
+      )}
       visibleRows={selectedCampaignView.visibleRows}
     />
   {/if}
@@ -472,6 +494,7 @@
         harnessProviders: breakdown.groups.harnessProviders,
         models: breakdown.groups.models,
         projects: breakdown.groups.projects,
+        range: focusedQuery.range,
       }}
       navigation={{
         onSortChange: navigation.setBreakdownSort,
@@ -522,12 +545,13 @@
           dimension,
           generatedAt: reportSupport.generatedAt,
           granularity,
+          granularityPreference,
           machineFreshnessStatus,
           navigate,
           onDimensionFilter: navigation.setTimelineDimensionFilter,
           onOptionsChange: (options) => {
             dimension = options.dimension;
-            granularity = options.granularity;
+            granularityPreference = options.granularity;
             timelineValue = options.value;
           },
           onRangeChange: navigation.setDateRange,

@@ -137,9 +137,9 @@ read-only SQLite and the permanent browser/server and demo-isolation boundaries.
 | 071 | Measure and Optimize the Web Session Pipeline End to End | P1 | XL | current Plan 069 Query ownership; 070 | DONE |
 | 072 | Evaluate Deferred Web Session Optimizations (keyset, Ark split, direct destination SSR) | P1 | XL | 071 reviewed final | DONE |
 | 073 | Make the Report a Decision-First Executive and Investigation Workspace | P1 | L | 069, 072 (DONE); main `1868b108` | DONE |
-| 074 | Finish the Multi-Provider Quota History Surface | P1 | S | - | TODO |
+| 074 | Finish the Multi-Provider Quota History Surface | P1 | S | - | DONE |
 | 075 | Show Bundle Identity, Age, and Warnings in the /sync Import Preview | P1 | M | - | TODO |
-| 076 | Display Campaign Root Titles on Generic Child Sessions | P2 | S-M | - | TODO |
+| 076 | Display Campaign Root Titles on Generic Child Sessions | P2 | S-M | - | DONE |
 | 077 | Give /sources a First-Run Answer When Nothing Is Detected | P2 | M | - | TODO |
 | 078 | Export Filtered Session Rows as CSV From the Web Sessions View | P2 | S-M | - | TODO |
 | 079 | Drive Cursor Import and Machine Renaming From the Web | P2 | M | 075 (file overlap in sync feature; sequence or coordinate) | TODO |
@@ -149,6 +149,19 @@ read-only SQLite and the permanent browser/server and demo-isolation boundaries.
 | 083 | Design "Adopt Unmanaged Skill Into Source" (spike, then gated build) | P1 | L | - | DESIGN READY — awaiting approval |
 | 084 | Spike — a Session-Intent Signal From First Prompts, Within the Privacy Boundary | P3 | L | - | DESIGN READY — awaiting decision |
 | 085 | Spike — a Printable Period Recap on the Existing Print Path | P3 | M | - | DESIGN READY — awaiting decision (Firefox print-to-PDF gate unmet: no reachable Gecko exposes `--print`, so pagination is verified in one engine only) |
+| 086 | Remediate the 2026-08-23 Fresh-Eyes UI/UX Audit (program plan) | P0 | L (program) | 087–098 | DONE (all children accepted; U01–U42 closed; final 88-state fresh-eyes walk, full program gates, and whole-diff review passed) |
+| 087 | Fix the Skills Editor Stuck on "Loading…" After Client-Side Navigation | P0 | S–M | - | DONE |
+| 088 | One Canonical Number Per Concept | P0 | L | - | DONE (exceptional maintainer reopening D20; production and proof defects corrected, full gates and independent review accepted) |
+| 089 | Period Semantics — Inclusive Day Counts, Honest Campaign Dates, Auto Interval, Readable Range URLs | P0 | M–L | - | DONE (maintainer reopening D20; open bounds ordered in both directions, full gates and independent review accepted) |
+| 090 | Scope the Cursor AI Tab to the Report Period and List One Row per Commit | P1 | S–M | - | DONE (maintainer reopening D20; complete groups are dated before period filtering, with fresh model, rendered, browser, and full child gates) |
+| 091 | Sessions Table — One Scroll Container and Calmer Columns | P1 | M | - | DONE |
+| 092 | One Checkbox-Filter Mechanic, a Working `/` Shortcut, and a Filter Bar That Holds One Row | P1 | M | - | DONE (maintainer reopening D20; the shared Popover requires a dialog name, Harness/Machines use the checkbox mechanic, `/` focuses the query, and the complete 1280 px toolbar holds one row) |
+| 093 | Activity Explorer Controls, Model Palette, and Hero Number Format | P1 | M–L | 089 (`timeline` request + range model) | DONE (one four-state metric control, dated range brush, bounded single-day bar, rank-ordered 12-slot model palette, grouped-series disclosure, and non-breaking grouped hero value) |
+| 094 | Calm the Overview Secondary Panels (Harness Disclosure, Session Shape, Punchcard Fit, KPI Baseline, Rhythm Axis, Record Tiles) | P1 | M | 088, 093 (shared `harness-provider-model.ts`, `executive-overview.svelte`) | DONE |
+| 095 | Make Provider Status and Quota History Legible | P1 | M | - | DONE (maintainer reopening D20; missing machine IDs no longer collapse labelled observations, full gates and independent Codex review passed, and the child is merged into the program) |
+| 096 | Skills Management Surface Fixes — Legible Tree, Honest Statuses, One Health Surface, Matrix Geometry, Frontmatter False Positives | P1 | M | 087 (editor status branch) | DONE (maintainer reopening D20; refresh proof now observes the settled transformed response, the intended visual baseline is updated, and full child gates pass) |
+| 097 | Sync, Sources, Projects: Duplication and Jargon | P1 | M | 088 (fleet "Sessions" label) | DONE |
+| 098 | Session Drawer, Analysis, and Report Chrome Polish | P2 | M | 088 (drawer, records); 093/094 if they touched `preset.ts` | DONE |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) |
 REJECTED (with one-line rationale) | DESIGN READY (design/spike plans only:
@@ -198,6 +211,59 @@ exact filter, no self-contained-HTML export).
   delivered in Svelte form by `activity-explorer.svelte` + the
   dimension-parameterized `activity-timeline.svelte`; its file anchors
   predate the SvelteKit migration and the plan should be archived.
+
+## 2026-08-23 fresh-eyes UI/UX audit (plans 086-098)
+
+Generated on 2026-08-23 at `51815b70` from a deliberately uninformed review
+of the running app (no code, ADR, or prior plan read first): six routes and
+every sub-tab, all interactions, five viewports (1920/1280/1024/768/390),
+both themes, keyboard, console. 42 findings U01–U42 — the full table with
+symptoms and owners lives in plan 086; each child plan anchored its findings
+line by line in the working tree and states explicitly what it could not
+reproduce from code.
+
+- Plan 086 is the umbrella: findings table, execution order, cross-cutting
+  rules (presentation gate, per-metric provenance, ADR 0004/0005/0009, PII),
+  and the program gate (full test run + a fresh-eyes pass on `bun run demo`).
+- Plans 087–089 are P0: 087 fixes the Skills editor left on "Loading…" after
+  client-side navigation (hydration gate compares a merged signature with the
+  skills-only delta, so every Skills query is disabled after navigation);
+  088 gives each concept one canonical number (the Overview counts
+  `costLowerBound`, the harness breakdown does not, so their totals disagree;
+  fleet "sessions" are stored rows, not published ones; campaign rows
+  open a drawer for the root; "Longest session" is a root task-open window);
+  089 fixes period semantics (inclusive day count, partial-day comparison
+  caveat, campaign dates pulled from classifier members outside the range,
+  auto interval for long ranges, readable `range=` URLs, ISO date inputs).
+- Plans 090–097 are P1 surface work, one coherent slice each: Cursor AI tab
+  period + dedupe (090); Sessions table single scroll / honest columns /
+  collapsed identical provenance markers (091, ADR 0004 kept); one
+  checkbox-filter mechanic and the `/` shortcut that was lost in the
+  Solid→SvelteKit cutover (092); Activity explorer controls, a rank-ordered
+  model palette replacing `hash % 6`, hero number format (093); Overview
+  secondary panels (094); provider status / quota history legibility (095);
+  Skills tree, statuses, health, matrix, frontmatter false positives (096);
+  Sync/Sources/Projects duplication and jargon (097).
+- Plan 098 is the P2 drawer/analysis/chrome polish and runs last because it
+  shares `session-drawer.svelte` and `records.svelte` with 088.
+- Execution order: 087 → 088 → 089 → 091 → {092 ∥ 090} → 093 → 094 →
+  {095 ∥ 096 ∥ 097} → 098. Parallel markers apply to production scopes after
+  allowlist checks, not to every test path: 090 and 092 share
+  `apps/web/e2e/dashboard.spec.ts`, so that hunk must be serialized or rebased
+  additively. The dependency edges in plan 086 still apply.
+- Findings deliberately *not* turned into work: the warning-count pill flipping
+  to "Sources ready" after a harness filter (no code path couples the pill to
+  the report filter; attributed to a coincident engine state change — 095
+  adds attribution and an e2e guard); the Rhythm grid leaving substantial card
+  width unused (every in-card fix changes geometry pinned by ADR 0005/0009 —
+  deferred as a section-layout decision); the "To consolidate" dead end
+  (plan 083).
+- Plans 074 and 076 were already delivered by `c3de318a`; program closure
+  corrected their stale rows above to DONE.
+- Private audit screenshots and local histories were discovery inputs only and
+  are not committed. Only deterministic repository-owned synthetic fixtures
+  count toward a PASS or DONE decision; findings without that proof remain
+  BLOCKED or UNVERIFIED.
 
 ## Presentation gate
 

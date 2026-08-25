@@ -2,6 +2,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { writeSync } from 'node:fs';
 import { makeAiUsageWideEventResource } from '@ai-usage/effect-runtime';
 import { makeEngineWideEventSinkLayer, resolveWideEventLogDirectory } from '@ai-usage/effect-runtime/node';
+import { createLocalHistoryStorage } from '@ai-usage/local-machine/local-history';
 import { parseUsageEngineInstanceId, type UsageEngineInstanceId } from '@ai-usage/usage-engine-control';
 import { createUsageEngineBearerToken } from '@ai-usage/usage-engine-control/node';
 import { createLiveUsageEngineRuntime } from '@ai-usage/usage-engine-runtime/live';
@@ -57,6 +58,7 @@ const createProductionDependencies = (
       initialSourceDetection: collectionMode === 'foreground' ? 'deferred' : 'automatic',
       instanceId,
       operatorCwd: paths.operatorCwd,
+      storage: createLocalHistoryStorage(paths.homeDirectory),
       reportRecovery: ({
         deletedBytes,
         deletedEntries,
