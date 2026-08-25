@@ -25,7 +25,13 @@
  *   prior Bun 1.4 investigation recorded the hang as concurrency-dependent, and
  *   this is the concurrency the direct mode lacks.
  *
- * Usage: bun tools/stress-web-dev-start.ts [--iterations 15] [--debug 0|1|alternate] [--mode direct|playwright]
+ * --runner selects the Playwright runner runtime in playwright mode. The repo
+ * convention is `bun --bun playwright test` (runner under Bun), which is the
+ * reproducing chain; `node` runs the same CLI under Node while the webServer
+ * child still uses `bun --bun vite` (SSR needs bun:sqlite). If node reproduces
+ * nothing, dropping `--bun` from the test scripts is a version-free fix.
+ *
+ * Usage: bun tools/stress-web-dev-start.ts [--iterations 15] [--debug 0|1|alternate] [--mode direct|playwright] [--runner bun|node]
  * Requires `bun --filter @ai-usage/design-system build` and
  * `bun run --cwd apps/web dev:prepare` to have run first, like test:e2e.
  */
@@ -48,20 +54,23 @@ const logDirectory = path.join(rootDirectory, '.dev-server-stress');
 
 type DebugMode = '0' | '1' | 'alternate';
 type StressMode = 'direct' | 'playwright';
+type RunnerRuntime = 'bun' | 'node';
 
 interface StressOptions {
   readonly debug: DebugMode;
   readonly iterations: number;
   readonly mode: StressMode;
+  readonly runner: RunnerRuntime;
 }
 
 const USAGE =
-  'Usage: stress-web-dev-start.ts [--iterations <1-200>] [--debug 0|1|alternate] [--mode direct|playwright]';
+  'Usage: stress-web-dev-start.ts [--iterations <1-200>] [--debug 0|1|alternate] [--mode direct|playwright] [--runner bun|node]';
 
 const parseOptions = (argumentList: readonly string[]): StressOptions => {
   let debug: DebugMode = 'alternate';
   let iterations = DEFAULT_ITERATIONS;
   let mode: StressMode = 'direct';
+  let runner: RunnerRuntime = 'bun';
   for (let index = 0; index < argumentList.length; index += 2) {
     const flag = argumentList[index];
     const value = argumentList[index + 1];
@@ -71,6 +80,8 @@ const parseOptions = (argumentList: readonly string[]): StressOptions => {
       debug = value;
     } else if (flag === '--mode' && (value === 'direct' || value === 'playwright')) {
       mode = value;
+    } else if (flag === '--runner' && (value === 'bun' || value === 'node')) {
+      runner = value;
     } else {
       throw new Error(USAGE);
     }
@@ -78,7 +89,7 @@ const parseOptions = (argumentList: readonly string[]): StressOptions => {
   if (!(Number.isSafeInteger(iterations) && iterations > 0 && iterations <= 200)) {
     throw new Error(USAGE);
   }
-  return { debug, iterations, mode };
+  return { debug, iterations, mode, runner };
 };
 
 interface IterationResult {
@@ -153,11 +164,19 @@ const writeIterationLog = async (
  * environment is inherited and only DEBUG is toggled. A webServer hang
  * surfaces as Playwright's own timeout message, which is the classifier.
  */
-const runPlaywrightIteration = async (iteration: number, debugEnabled: boolean): Promise<IterationResult> => {
+const runPlaywrightIteration = async (
+  iteration: number,
+  debugEnabled: boolean,
+  runner: RunnerRuntime,
+): Promise<IterationResult> => {
   await rm(viteCacheDirectory, { force: true, recursive: true });
   const startedAt = Date.now();
+  const runnerCommand =
+    runner === 'node'
+      ? ['node', path.join(rootDirectory, 'node_modules', '.bin', 'playwright')]
+      : ['bun', '--bun', 'playwright'];
   const { child, drained, lines } = captureChild(
-    ['bun', '--bun', 'playwright', 'test', PLAYWRIGHT_SMOKE_SPEC, '--workers', '1'],
+    [...runnerCommand, 'test', PLAYWRIGHT_SMOKE_SPEC, '--workers', '1'],
     { ...process.env, ...(debugEnabled ? { DEBUG: 'vite:*' } : {}) },
     startedAt,
   );
@@ -226,7 +245,7 @@ const runDirectIteration = async (iteration: number, debugEnabled: boolean): Pro
   return { debugEnabled, elapsedMs, iteration, outcome };
 };
 
-const { debug, iterations, mode } = parseOptions(process.argv.slice(2));
+const { debug, iterations, mode, runner } = parseOptions(process.argv.slice(2));
 await rm(logDirectory, { force: true, recursive: true });
 await mkdir(logDirectory, { recursive: true });
 
@@ -235,18 +254,18 @@ for (let iteration = 1; iteration <= iterations; iteration += 1) {
   const debugEnabled = debug === 'alternate' ? iteration % 2 === 0 : debug === '1';
   const result =
     mode === 'playwright'
-      ? await runPlaywrightIteration(iteration, debugEnabled)
+      ? await runPlaywrightIteration(iteration, debugEnabled, runner)
       : await runDirectIteration(iteration, debugEnabled);
   results.push(result);
   console.log(
-    `iteration ${result.iteration}/${iterations} (${mode}, ${debugEnabled ? 'debug' : 'no debug'}): ${result.outcome} in ${result.elapsedMs}ms`,
+    `iteration ${result.iteration}/${iterations} (${mode}/${runner}, ${debugEnabled ? 'debug' : 'no debug'}): ${result.outcome} in ${result.elapsedMs}ms`,
   );
 }
 
 const hangs = results.filter((result) => result.outcome !== 'ready');
 await writeFile(
   path.join(logDirectory, 'summary.json'),
-  `${JSON.stringify({ iterations, mode, results }, null, 2)}\n`,
+  `${JSON.stringify({ iterations, mode, results, runner }, null, 2)}\n`,
   'utf8',
 );
 console.log(`\n${hangs.length}/${iterations} starts did not become ready. Logs: ${logDirectory}`);
