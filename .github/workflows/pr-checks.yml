@@ -120,7 +120,11 @@ jobs:
           bun-version: 1.3.13
       - run: bun install --frozen-lockfile
       - run: bun x playwright install --with-deps chromium
-      - run: bun run test:e2e
+      # Both e2e suites below start a real Vite dev server, which Bun 1.3.13
+      # intermittently fails to bring up (~1 run in 8; PR #48 has the
+      # diagnosis). The wrapper retries only that signature and never a test
+      # failure, so a genuine regression still fails on the first attempt.
+      - run: bun tools/retry-on-dev-server-hang.ts bun run test:e2e
       - name: Upload Playwright failure evidence
         if: failure()
         uses: actions/upload-artifact@v4
@@ -145,6 +149,6 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run build
       - run: bun x playwright install --with-deps chromium
-      - run: bun run test:e2e-demo
+      - run: bun tools/retry-on-dev-server-hang.ts bun run test:e2e-demo
       - run: bun run test:e2e-production
       - run: bun run --cwd apps/web benchmark:session-scroll
