@@ -162,11 +162,105 @@ read-only SQLite and the permanent browser/server and demo-isolation boundaries.
 | 096 | Skills Management Surface Fixes — Legible Tree, Honest Statuses, One Health Surface, Matrix Geometry, Frontmatter False Positives | P1 | M | 087 (editor status branch) | DONE (maintainer reopening D20; refresh proof now observes the settled transformed response, the intended visual baseline is updated, and full child gates pass) |
 | 097 | Sync, Sources, Projects: Duplication and Jargon | P1 | M | 088 (fleet "Sessions" label) | DONE |
 | 098 | Session Drawer, Analysis, and Report Chrome Polish | P2 | M | 088 (drawer, records); 093/094 if they touched `preset.ts` | DONE |
+| 099 | Evolve ai-usage Into a Multi-Tenant AI Operations and Memory Platform (program) | P0 | L (program) | 100-110 | TODO |
+| 100 | Define the Platform Topology, Capability Modules, and Data Ownership | P0 | L | - | TODO |
+| 101 | Add the PostgreSQL Server Foundation Without Replacing the Local SQLite Engine | P0 | L | 100 | TODO |
+| 102 | Introduce Stable Spaces, People, Devices, Repositories, Projects, and Checkouts | P0 | L | 100, 101 | TODO |
+| 103 | Model Authorization With ReBAC, Content Boundaries, and Aggregate-Only Roles | P0 | XL | 100-102 | TODO |
+| 104 | Add Authentication, GitHub Identity Separation, and Device Enrollment | P1 | L | 102, 103 | TODO (password login BLOCKED by deliberate decision — see plan 104 "Decisions this plan closes" §3) |
+| 105 | Migrate Agent Memory From NixOS Files Into a DB-Native Domain | P1 | XL | 100-104 | TODO |
+| 106 | Build Authorized Hybrid Memory Search and a Harness-Agnostic MCP Adapter | P1 | XL | 103, 105 | TODO |
+| 107 | Replicate Local Machine Facts to the Server With an Idempotent Outbox Protocol | P1 | XL | 101-104 | TODO |
+| 108 | Add Cross-Harness Handoffs and Work Threads | P1 | L | 102, 105-107 | TODO |
+| 109 | Archive Session Detail Safely for Cross-Machine Read-Only Continuity | P2 | L | 103, 104, 107, 108 | TODO |
+| 110 | Spike Native Session Portability Across Claude, Codex, OpenCode, and Cursor | P2 | L (spike) | 108, 109 | TODO |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) |
 REJECTED (with one-line rationale) | DESIGN READY (design/spike plans only:
 the design document is delivered and awaits a maintainer decision before any
 build phase).
+
+## 2026-08-26 AI operations and memory platform program (plans 099-110)
+
+Written on 2026-08-26 at `dac2214c`, then made executable on the same date
+against the working tree. The program extends ai-usage from a local
+single-operator report into a multi-device operations, memory, and continuity
+layer: shared PostgreSQL alongside the local SQLite plane, relationship-based
+authorization, DB-native Agent Memory, outbound-only device replication, and
+cross-harness work handoffs.
+
+- **Plan 099 is the umbrella**: 14 proposed program decisions, the execution
+  order, cross-cutting invariants (local mode stays first-class, no dual writer
+  in one data plane, explicit tenancy, content/metadata separation), 10 program
+  gates, and 9 program-level STOP conditions.
+- **Plan 100 is documentation-only and must land first.** It turns the 14
+  proposed decisions into ADRs 0022-0033 or rejects them with evidence, and it
+  resolves three vocabulary collisions before any schema exists.
+- Plans 101-104 build the platform floor: PostgreSQL foundation, identity model,
+  authorization, authentication. 103 and 104 are `Risk: CRITICAL`.
+- Plans 105-107 are the product capabilities: DB-native memory, authorized
+  search + MCP, device replication. 105/107 may run in parallel after 104 if
+  migration numbers are coordinated.
+- Plans 108-110 are continuity: work handoffs, opt-in session archive, and a
+  research-only native-portability spike whose deliverable may legitimately be
+  "not safely possible".
+
+### Decisions closed while making these executable
+
+Each of these blocked the first line of code and is now pre-committed with a
+named rejected alternative and a reversal condition:
+
+| Plan | Was open | Now |
+|---|---|---|
+| 101 | "a pinned container **or** an equivalent hermetic service" | `initdb` into `mkdtemp` on a Unix socket, PostgreSQL added to `flake.nix`. **The machine has no container runtime** — the original text was unexecutable here. |
+| 103 | OpenFGA vs SpiceDB vs PostgreSQL tables | PostgreSQL-native behind the `Authorizer` port, with a conformance suite, three anti-Zanzibar guardrails, and four measured escalation triggers. OpenFGA is the pre-designated escape hatch. |
+| 104 | "evaluate a library/provider" | Better Auth, verified by a spike before use. |
+| 104 | device credential form | bearer credential stored as an Argon2id verifier; asymmetric keys and mTLS rejected with reasons. |
+| 104 | password auth "optional first release" | **BLOCKED, deliberately** — it requires transactional email, which nothing else in 099-110 needs. |
+| 106 | when to add embeddings | FTS + `pg_trgm` first; pgvector gated on measured recall@10 < 0.8 concentrated in paraphrase queries. |
+| 109 | encryption at rest | per-Space envelope encryption selected; reconsider only if measured restore/rotation cannot meet the recovery SLO. |
+
+### Vocabulary collisions found in the working tree
+
+These would have produced silent defects. Plan 100 resolves the first three;
+the rest are documented in the plan that touches them.
+
+- **`handoff`** has three meanings: a staged CLI→engine file
+  (`packages/usage-engine-control/src/handoff.ts` + 9 files), a durable memory
+  entry type (the NixOS agent-memory contract), and plan 108's cross-harness
+  continuity. Plan 108's concept is named **Work handoff**.
+- **`authorize`** has 180 hits that mean *filesystem-trust provenance*, not
+  permission — `SourceAuthority` in
+  `packages/report-data/src/project-projection.ts:26`. Plan 103 must never reuse
+  the word "authority".
+- **`project`** already means two things (`Project source`, `Project group`);
+  the platform's cross-device `Project` is a third.
+- **`control plane`** and **`data plane`** are defined in `CONTEXT.md` as the
+  local engine seam and the local SQLite store specifically.
+
+### Work already in the tree that these plans reuse rather than rebuild
+
+- `packages/report-core/src/session-vcs.ts:166` — remote normalization
+  (https + SCP-style SSH, host lowercasing, length caps) with 149 lines of tests.
+- `packages/usage-engine-control/src/secret.ts` — a branded `WeakMap`-backed
+  secret type that renders `[REDACTED]` by construction.
+- `usage_store_metadata`'s monotonic `generation` counters and `CONTEXT.md`'s
+  **Source publication** acknowledgement discipline — the outbox contract in
+  plan 107 already exists locally.
+- `packages/skills/src/projection-lock.ts:44` — the cooperating-process lock and
+  unmanaged-entry rule that plan 106's MCP registration must reuse.
+- `tools/check-package-boundaries.ts:52` `retiredPackages` — `lan-pairing` and
+  `sync` were already removed for building what ADR 0029 forbids.
+
+### Registration points every new package must satisfy
+
+Missing any of these fails CI, and the first one fails *silently*:
+
+1. `tools/check-typescript-coverage.ts:4` `TYPECHECK_PROJECTS` — absence means
+   the package is never typechecked and nothing reports it.
+2. `tools/check-package-boundaries.ts:61` `boundaryPolicies`.
+3. `package.json` `exports` — enforced by
+   `tools/check-public-package-exports.ts`.
 
 ## 2026-08-20 direction audit (plans 074-085)
 

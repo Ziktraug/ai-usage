@@ -48,6 +48,68 @@ a provider, or create a misleading audit trail.
 
 This spike determines the highest safe interoperability level per harness.
 
+## Current state
+
+### The isolation precedent already exists — ADR 0003
+
+`docs/adr/0003-isolated-synthetic-runtime.md` is the repository's existing answer
+to "run against harness-shaped data without touching the operator's real
+history":
+
+> `bun run demo` runs on `127.0.0.1` with a temporary isolated home and committed
+> deterministic report data. Synthetic-runtime requests are rejected **before**
+> live collectors or mutation runtimes are constructed.
+
+The rejected alternative is the load-bearing part: *"Hiding navigation alone was
+rejected because presentation is not a privacy boundary."* The same standard
+applies here — a spike that "just won't open the real profile" is not isolated.
+Isolation is a construction-time property.
+
+### The fixture harness home already exists
+
+`packages/local-machine/src/testing/harness-home.ts`, exported as
+`./testing/harness-home` (`packages/local-machine/package.json:27`) and
+restricted by `tools/check-package-boundaries.ts:149` to test-only importers
+(`isTestOnlySource`, `:163-165`).
+
+**Build every experiment on this, not on a hand-made temp directory.** It
+already encodes what a harness home looks like, and it is already fenced off from
+production code paths by the boundary checker.
+
+### The existing record this spike extends
+
+`docs/session-analysis-sources.md` records what each harness truthfully exposes,
+with a quality vocabulary (`:15-23`) and a dated status header (`:3-5`,
+"current as of 2026-07-20"). It is the closest thing to a format inventory the
+repo has. This spike's deliverable is a sibling document, dated the same way —
+not an edit that silently ages the existing one.
+
+Per-harness readers to read first, because they encode what has already been
+learned about each format:
+
+- `packages/local-collectors/src/claude-history.ts`, `claude-agent-sdk.ts`
+- `packages/local-collectors/src/codex-history.ts`, `codex-app-server.ts`
+- `packages/local-collectors/src/collectors/` (OpenCode, Cursor)
+- `packages/local-machine/src/opencode-schema.ts`
+
+### The rule this spike must not break
+
+`AGENTS.md` and the program's cross-cutting invariant: **no child may write
+directly into undocumented Claude, Codex, OpenCode, or Cursor session stores.**
+Plan 110 is the only place authorized to *investigate* native portability, and
+the hard STOP conditions below are not advisory.
+
+Read that as: the deliverable of this plan may legitimately be **"this is not
+safely possible"**. Rejection with evidence is a valid outcome (plan 099's
+executor instructions say so explicitly). Do not treat a negative result as a
+failed spike.
+
+### Prerequisites
+
+Plans 108 and 109. Experiment D benchmarks against an accepted work handoff, so
+handoffs must work first — the whole point is to measure whether native
+conversion beats the handoff, and without the baseline there is nothing to beat.
+
 ## Research questions
 
 For Claude Code, Codex, OpenCode, and Cursor, answer:
@@ -305,6 +367,177 @@ write private files.
 Measure whether imported/resumed content is re-tokenized/re-uploaded and loses
 provider cache benefits. Record cost/latency implications without provider
 secrets.
+
+## Commands you will need
+
+| Purpose | Command | Expected on success |
+|---|---|---|
+| Prerequisite: handoffs work | `bun test apps/server/src/cross-harness-handoff.test.ts` | all pass |
+| Create the sandbox home | `bun tools/spike110-sandbox.ts --create` | prints an isolated `HOME`, refuses if `$HOME` is the real one |
+| Checksum before any mutation | `bun tools/spike110-sandbox.ts --checksum <dir>` | manifest written |
+| Verify no live path was touched | `bun tools/spike110-sandbox.ts --verify <dir>` | manifest matches |
+| Harness versions | `claude --version; codex --version; opencode --version` | recorded in the report |
+| Destroy the sandbox | `bun tools/spike110-sandbox.ts --destroy <dir>` | directory gone |
+| Existing fixture home | `bun test packages/local-machine/src/testing` | all pass |
+| Full verification (repo unchanged) | `bun run check && bun run lint && bun run typecheck && bun run test` | exit 0 |
+
+## Git workflow
+
+- Branch `spike/110-native-portability`, cut from plan 109's branch.
+- **This spike produces documents and throwaway tooling, not product code.** If
+  a diff appears under `packages/` or `apps/` beyond `tools/spike110-*.ts`, the
+  spike has escaped its scope — stop.
+- Stage by explicit path. Never `git add -A`.
+- Two commits:
+  1. `chore(tools): add the plan 110 sandbox harness`
+  2. `docs(research): record the native session portability findings`
+- Never commit anything captured from a real harness profile, even redacted.
+- Do not push or open a PR unless the operator asks.
+
+## Steps
+
+### Step 0: Build the sandbox, and make it refuse the real home
+
+Before any harness is launched. `tools/spike110-sandbox.ts`:
+
+- `--create` makes a disposable `HOME` under `$TMPDIR`, seeded from
+  `packages/local-machine/src/testing/harness-home.ts` plus a synthetic Git
+  repository with no secrets;
+- it **refuses to run** if the resolved home is the real one, or if any path it
+  would touch resolves inside `$HOME` — a hard guard, not a flag. ADR 0003's
+  standard: reject before constructing, not after;
+- `--checksum` writes a manifest (path, size, mtime, SHA-256) of every file in a
+  target directory;
+- `--verify` re-checksums and reports differences;
+- `--destroy` removes the sandbox.
+
+Add `spike110-sandbox.test.ts` proving the refusal: given `HOME` as the target,
+it exits non-zero and writes nothing.
+
+**Every mutation experiment is bracketed by `--checksum` before and `--verify`
+after.** A silent mutation of a copied store invalidates every conclusion drawn
+after it.
+
+**Verify**: `bun test tools/spike110-sandbox.test.ts` → passes, including the
+refusal case.
+
+### Step 1: Document the interoperability level per harness before experimenting
+
+For each of Claude, Codex, OpenCode, Cursor, record — from **published
+documentation only**, before touching a file:
+
+| Question | Source required |
+|---|---|
+| Is there a documented session export? | official docs URL |
+| Is there a documented session import / "start from context" API? | official docs URL |
+| Is the session store format documented? | official docs URL |
+| Is there a supported backup path? | official docs URL |
+| What does the licence/ToS say about reading or writing the store? | the licence text |
+
+A harness with **no documented import contract** cannot reach Experiment E. Fix
+that boundary now, in writing, rather than discovering it mid-experiment when a
+file write looks tempting.
+
+**Verify**: the table is complete with a citation per cell, or an explicit
+"not documented".
+
+### Step 2: Experiments A–D, read-only
+
+Run in order. A–D never write to a harness store.
+
+- **A** — baseline resume on the original machine. Record required files,
+  network calls, and provider state.
+- **B** — resume from an isolated *copy* on a second disposable home. Copy
+  SQLite stores coherently: clean shutdown first, then main + WAL + SHM
+  together, or the harness's supported backup path. Never read a live profile.
+  Record: opens or fails, provider calls, ID collisions, version constraints.
+- **C** — official new-session-from-context API, where Step 1 found one. Measure
+  which roles, events, and provenance survive.
+- **D** — the **baseline that matters**: plan 108's accepted handoff through MCP
+  into each target. Measure setup cost, context quality, and what is missing.
+
+Everything else is judged against D. If native conversion does not materially
+beat an accepted handoff, the honest conclusion is that handoffs are sufficient
+— and that is a valuable, cheap finding.
+
+**Verify**: `--verify` after each experiment → manifest matches.
+
+### Step 3: Experiment E, gated
+
+**Only for a harness where Step 1 found an official import contract.** Emit from
+the canonical model into that contract and validate through the harness's own
+API or UI.
+
+If Step 1 found no import contract for a harness, Experiment E does not run for
+it. Record "no official import contract — not attempted" rather than leaving a
+blank, so a later reader knows it was considered and excluded.
+
+Do not write private files. Do not reverse-engineer a private format into a
+writer. This is the plan's central prohibition.
+
+**Verify**: `--verify` → manifest matches for every store not written through an
+official API.
+
+### Step 4: Experiment F — cost and cache
+
+Measure whether imported or resumed content is re-tokenized and re-uploaded, and
+whether provider cache benefits are lost. Record cost and latency implications
+with no provider secrets in the output.
+
+This often dominates the decision: a conversion that works but re-uploads the
+entire context has a real recurring cost, and it belongs in the report next to
+the fidelity scores rather than as a footnote.
+
+**Verify**: figures recorded per harness, with the measurement method stated.
+
+### Step 5: Score each dimension separately
+
+Twelve dimensions, listed below in "Fidelity and safety evaluation". Report each
+separately.
+
+**Do not compute an aggregate score.** The plan says why, and it is worth
+repeating in the report itself: a session with 95% text fidelity and fabricated
+system or tool state is unsafe, and an average hides exactly that.
+
+Use a three-value scale — `faithful` / `degraded` / `fabricated` — rather than
+percentages. `fabricated` on any dimension is disqualifying regardless of the
+others, and a percentage invites averaging it away.
+
+**Verify**: every dimension has a value and a supporting observation per harness.
+
+### Step 6: Write the report and the recommendation
+
+`docs/native-session-portability-2026-XX-XX.md`, dated in the header the way
+`docs/session-analysis-sources.md:3-5` is, and listed in `docs/README.md` as a
+dated research snapshot rather than living reference.
+
+It must contain:
+
+1. the Step 1 documentation table with citations;
+2. per-harness interoperability level;
+3. the twelve-dimension scores;
+4. cost and cache findings;
+5. a recommendation per harness: **pursue**, **handoff is sufficient**, or
+   **unsafe — do not pursue**;
+6. any hard STOP condition encountered, and where.
+
+"Handoff is sufficient" for every harness is a complete and successful outcome.
+The program's ADR 0030 already chose handoff-first; this spike exists to test
+whether that choice should change, and confirming it is a result.
+
+**Verify**: `git diff --stat` shows changes only under `docs/`, `plans/`, and
+`tools/spike110-*`.
+
+### Step 7: Close the loop
+
+- If any harness scores `pursue`, write a follow-up plan (111+). Do not
+  implement it here.
+- If none does, amend ADR 0030's consequences with the evidence and mark this
+  spike `DONE (negative result)` in `plans/README.md:66`. A negative result with
+  evidence is worth more than an unwritten one.
+- Destroy every sandbox: `bun tools/spike110-sandbox.ts --destroy <dir>`.
+- Confirm no captured harness data reached the repository:
+  `git status --porcelain` → clean beyond the two intended commits.
 
 ## Fidelity and safety evaluation
 

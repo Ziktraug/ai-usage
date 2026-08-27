@@ -35,6 +35,61 @@ security boundary must remain explicit. Cross-machine detail should be a new
 archive authority produced by the source Device, not a server pretending a
 remote session is local.
 
+## Current state
+
+### The existing boundary this plan deliberately crosses
+
+`docs/session-analysis-sources.md:9-14` is today's rule:
+
+> **report metrics** are normalized rows that may be persisted, included in
+> report revisions, snapshots, merge bundles, JSON, and CSV;
+> **local detail** is read from the source machine only after the user opens a
+> supported session analysis. **It is not part of the report revision.**
+
+Session detail has never left the machine that produced it. This plan is the
+first to move it, which is why it is `Risk: CRITICAL` and opt-in. Class A/B/C
+below maps onto that existing split: Class A is roughly today's report metrics,
+Class B is today's local detail, Class C is the raw source that has never been
+readable off-machine and stays that way.
+
+### The detail machinery that exists
+
+- `packages/local-machine/src/session-detail.ts`, exported as
+  `./session-detail` (`packages/local-machine/package.json:24`).
+- Per-harness: `claude-session-analysis.ts`, `codex-session-analysis.ts`,
+  `opencode-session-analysis.ts`, plus `*-session-facts.ts`.
+- `docs/session-analysis-sources.md` records per-harness truthfulness with the
+  quality vocabulary (`:15-23`).
+
+`tools/check-package-boundaries.ts:147` already treats
+`@ai-usage/local-machine/session-detail` as a named subpath with restricted
+importers. Extending who may import it is a **boundary change**, and it must be
+a visible one — do not widen the policy to make an import convenient.
+
+### Opaque paths are already a rule
+
+`CONTEXT.md:96-99` (**Project source**): *"Locally observed paths may be
+canonicalized and inspected; paths from snapshots or merge bundles are opaque
+labels and never authorize local filesystem access."*
+
+Enforced by `SourceAuthority` in
+`packages/report-data/src/project-projection.ts:26` (see plan 103's Current
+state for why that word does not mean permission). An archive retrieved from the
+server is, by this rule, **opaque** on the retrieving device. State it in the
+archive contract: a path in an archive never authorizes a filesystem read.
+
+### Encryption context
+
+The program has no key-management component and none of 100–108 introduces one.
+If this plan requires envelope encryption with a KMS, that is a new
+infrastructure dependency — treat it as a decision for the maintainer (Step 1),
+not something to pick mid-implementation.
+
+### Prerequisites
+
+Plans 103, 104, 107, 108. This plan moves the most sensitive content in the
+program; the boundary that protects it must be in place and conformance-tested.
+
 ## Authority model
 
 Every Session detail request resolves to one of these authorities:
@@ -353,6 +408,180 @@ archived session.
 - local user can cancel pending archive before ACK where safely possible;
 - server archive can be read from another Device while source is offline;
 - connected Web labels stale/offline metadata honestly.
+
+## Commands you will need
+
+| Purpose | Command | Expected on success |
+|---|---|---|
+| Prerequisite: content types are separate | `grep -c "session_content" packages/authorization/src/model.ts` | ≥ 1 |
+| Classification tests | `bun test packages/session-archive/src/classification.test.ts` | all pass |
+| Redaction tests | `bun test packages/session-archive/src/redaction.test.ts` | all pass |
+| Default-off proof | `bun test packages/session-archive/src/opt-in.test.ts` | all pass |
+| No-Class-C proof | `bun test packages/session-archive/src/no-raw-artifacts.test.ts` | all pass |
+| Deletion tests | `bun test packages/session-archive/src/retention.test.ts` | all pass |
+| Authorization conformance | `bun test packages/authorization` | all scenarios pass |
+| Local regression, no cluster | `! pgrep -x postgres && bun run test:packages` | all pass |
+| Full verification | `bun run check && bun run lint && bun run typecheck && bun run test` | exit 0 |
+
+## Git workflow
+
+- Branch `plan/109-session-archive`, cut from plan 108's branch.
+- Migration `0008_session_archive` — verify the current highest number first.
+- Stage by explicit path. Never `git add -A`.
+- Four commits:
+  1. `feat(session-archive): add the normalized archive contract and classification`
+  2. `feat(session-archive): add opt-in capture with redaction`
+  3. `feat(server): add authorized archive retrieval and deletion`
+  4. `feat(web): add cross-machine read-only session detail`
+- **Do not push or open a PR.** This moves prompts off-machine for the first
+  time; the maintainer reviews.
+
+## Steps
+
+### Step 1: Apply the dated encryption decision before building storage
+
+The original plan left two questions open, and both change the schema:
+
+1. **Encryption at rest beyond PostgreSQL's own** — envelope encryption with
+   per-Space keys, or rely on disk/database encryption?
+2. **Where keys live** — no KMS exists in this program.
+
+**Dated resolution (2026-08-26): application-level envelope encryption of Class
+B payloads with a per-Space data key, wrapped by a deployment key supplied
+through typed config** (same parsing discipline as plan 101 and redaction
+discipline as plan 104). Database/disk encryption remains defense in depth; it
+does not replace the per-Space envelope.
+
+Rationale: it makes per-Space deletion meaningful — destroying the Space's data
+key renders its archives unrecoverable even in a leaked backup. That is a
+property the retention section needs and that database-level encryption cannot
+provide.
+
+Cost, stated plainly: key rotation and backup/restore both become more complex,
+and a lost deployment key means lost archives. Step 1 therefore first adds a
+synthetic backup/restore/rotation proof. Reconsider database-only encryption only
+if that measured proof cannot meet the recovery SLO documented in plan 101; stop
+and amend ADR 0038 rather than switching mid-implementation.
+
+### Step 2: Make Class C unreachable, not merely undocumented
+
+The strongest guarantee in this plan is that raw harness files never leave the
+machine. Enforce it in the type system and in the boundary checker:
+
+1. The capture function accepts only a `NormalizedSessionArchive` — a validated
+   structure built from the per-harness analyzers. It has **no** field that can
+   hold a file path's contents, a raw JSONL line, or a byte buffer.
+2. `no-raw-artifacts.test.ts`: run capture against fixtures for all four
+   harnesses; serialize the result; assert it contains no substring from the raw
+   fixture files beyond what the contract explicitly permits (normalized turn
+   text under policy). Assert on the raw *bytes* of the fixture, not on a
+   summary.
+3. Boundary policy: `@ai-usage/session-archive` may not depend on
+   `@ai-usage/local-collectors`. Capture consumes already-normalized analysis
+   output, never a collector's raw read.
+
+`classification.test.ts` asserts every field in the contract carries an explicit
+`A` | `B` classification, and that no field is unclassified — an unclassified
+field is the route by which Class C content arrives.
+
+**Verify**: `bun test packages/session-archive/src/no-raw-artifacts.test.ts`
+and `classification.test.ts` → all pass.
+
+### Step 3: Opt-in that is genuinely off by default
+
+`archive_policies (space_id, project_id NULL, enabled boolean NOT NULL DEFAULT
+false, prompt_policy text NOT NULL DEFAULT 'exclude', updated_by, updated_at)`.
+
+`opt-in.test.ts`:
+- a Space with no policy row → capture produces nothing. Assert on the archive
+  table being empty, not on a returned flag;
+- enabling at Space level does **not** retroactively archive existing sessions —
+  a retroactive sweep would archive content captured under the old policy;
+- a project policy may be stricter than its Space, never broader. Assert the
+  broader case is rejected;
+- disabling stops new capture and leaves existing archives, with the existing
+  ones separately deletable (Step 6);
+- `prompt_policy: 'exclude'` is the default even when `enabled` is true.
+  Enabling the archive and enabling prompt capture are two decisions.
+
+**Verify**: `bun test packages/session-archive/src/opt-in.test.ts` → all pass.
+
+### Step 4: Redaction at capture, on the source device
+
+Redaction runs **before** the payload leaves the machine. A server-side redactor
+would mean the unredacted content already crossed the boundary.
+
+- Reuse the redaction rules inventoried in plan 105 Step 0 where they apply;
+  do not write a second rule set with different behavior.
+- Record the applied rule-set version per archive so a later rule change is
+  auditable and re-redaction is scopeable.
+- `redaction.test.ts` with fixtures containing plausible secrets: an API key
+  shape, a `.env` line, an `Authorization:` header, a connection string with a
+  password, a private key header. Assert none survives.
+- Redaction failure **blocks** capture. It never publishes partially-redacted
+  content and never silently skips. Assert the typed error and that nothing was
+  written.
+
+**Verify**: `bun test packages/session-archive/src/redaction.test.ts` → all pass.
+
+### Step 5: Storage and retrieval
+
+Archives are a distinct resource type in plan 103's model
+(`session_content`), authorized separately from session metadata. The
+aggregate/content split from plan 103 Step 1 means an aggregate auditor cannot
+reach this table by any declared path — verify by walking the model, the same
+assertion plan 103's `model.test.ts` makes.
+
+Retrieval is read-only across machines. A path inside an archive is **opaque**
+on the retrieving device (`CONTEXT.md:96-99`); assert that the read UI never
+turns an archived path into a local filesystem read.
+
+**Verify**: `bun test apps/server/src/archive-retrieval.test.ts` — an
+aggregate-only principal is denied; a project collaborator with content
+permission succeeds; a metadata-only principal sees metadata and is denied
+content.
+
+### Step 6: Retention and deletion that actually deletes
+
+- Per-Space and per-Project retention; default **no automatic deletion**.
+- Deleting an archive removes the payload. Assert by querying the table
+  directly after deletion, not by calling the reader.
+- With envelope encryption (Step 1), destroying a Space's data key is the
+  documented bulk path; test that archives are unreadable afterwards.
+- Session **metadata** survives archive deletion — deleting detail must not
+  delete the report row. This is the assertion most likely to be missed, and it
+  breaks reports.
+- Deletion is recorded in the audit trail with actor and time.
+
+**Verify**: `bun test packages/session-archive/src/retention.test.ts` → all
+pass, including metadata survival.
+
+### Step 7: Cross-machine read UX and local-only behavior
+
+- The read surface labels provenance and freshness (ADR 0016/0017): which
+  device produced it, when, under which policy, and which parser limitations
+  applied (`docs/session-analysis-sources.md` quality vocabulary).
+- Local-only mode is unchanged: opening a local session analysis still reads
+  from the local machine. Assert no archive lookup occurs in local mode.
+- Never present an archived session as if it were live local detail. They have
+  different truthfulness, and the quality vocabulary is how that is shown.
+
+**Verify**: `bun run test:e2e -- e2e/<new-spec>.spec.ts` → passes, axe clean.
+Local-mode e2e still passes with no server.
+
+### Step 8: Documentation
+
+- `packages/session-archive/README.md` — the A/B/C classification, the
+  opt-in model, redaction, the encryption decision from Step 1, and deletion
+  semantics.
+- `docs/session-analysis-sources.md` — a new section recording that Class B may
+  now be archived under explicit policy, and that Class C never leaves the
+  machine. Update the `:9-14` boundary statement rather than contradicting it.
+- ADR 0038 `per-space-envelope-encryption-for-session-archives`, extending ADR
+  0033's opt-in archive boundary with the selected key/deletion model.
+- `CONTEXT.md` — **Session archive** with `_Avoid_`: "backup", "transcript",
+  "raw history".
+- `plans/README.md:66` row → `DONE`.
 
 ## Testing requirements
 

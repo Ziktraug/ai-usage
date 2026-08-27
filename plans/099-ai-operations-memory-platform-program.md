@@ -130,6 +130,79 @@ accepted ADRs or reject them with evidence before implementation proceeds.
     default; prompts and normalized chronology require explicit project/space
     policy; raw harness databases and transcripts are never default payloads.
 
+## Decisions closed during executable-plan preparation (2026-08-26)
+
+Plans 100–110 were written as specifications and then made executable against
+the working tree on the same date. Seven questions the program left to the
+executor were closed, because each blocked the first line of code and none can
+be resolved mid-flight without guessing. Each has a named rejected alternative
+and a reversal condition in its own plan.
+
+| Plan | Decision | Escape |
+|---|---|---|
+| 101 | `initdb` into `mkdtemp`, Unix socket, PostgreSQL in `flake.nix` | one cluster per test process if startup dominates |
+| 103 | PostgreSQL-native relations behind the `Authorizer` port | OpenFGA, on four measured triggers |
+| 104 | Better Auth, verified by spike before use | stop and report if the spike fails |
+| 104 | bearer device credential stored as an Argon2id verifier | asymmetric keys if non-repudiation is ever needed |
+| 104 | password login **BLOCKED** (needs transactional email) | one plugin + email infra when a real user needs it |
+| 106 | FTS + `pg_trgm`, no embeddings yet | pgvector on recall@10 < 0.8 in paraphrase queries |
+| 109 | per-Space envelope encryption for Class B archives | reconsider only if measured restore/rotation cannot meet the documented recovery SLO |
+
+**Plan 101's was not a preference — it was a blocker.** The development machine
+has no container runtime and no PostgreSQL binaries, so "a pinned container or
+an equivalent hermetic service" was unexecutable as written.
+
+### Vocabulary collisions found in the working tree
+
+Each would have produced a silent defect. Plan 100 Step 1 resolves the first
+three before any schema exists.
+
+- **`handoff`** — three meanings: a staged CLI→engine file
+  (`packages/usage-engine-control/src/handoff.ts` + 9 files), a durable memory
+  entry type (the NixOS agent-memory contract), and plan 108's cross-harness
+  continuity. Plan 108's is renamed **Work handoff**.
+- **`authorize`** — 180 hits in the tree, none meaning permission.
+  `SourceAuthority` (`packages/report-data/src/project-projection.ts:26`) is
+  *filesystem-trust provenance*. Plan 103 must not reuse the word "authority".
+- **`project`** — `Project source` and `Project group` already exist in
+  `CONTEXT.md`; the platform's cross-device `Project` is a third meaning.
+- **`control plane`** / **`data plane`** — both already defined in `CONTEXT.md`
+  for the *local* engine seam and the *local* SQLite store.
+
+### Prior art these plans reuse instead of rebuilding
+
+- `packages/report-core/src/session-vcs.ts:166` — remote normalization, already
+  handling https + SCP-style SSH, already tested. Plan 102 extends it; it does
+  not rewrite it.
+- `packages/usage-engine-control/src/secret.ts:4` — a branded `WeakMap`-backed
+  secret rendering `[REDACTED]` by construction. Plan 104's device credential
+  copies this shape.
+- `usage_store_metadata`'s monotonic `generation` counters plus `CONTEXT.md:19`
+  **Source publication** — plan 107's outbox acknowledgement discipline already
+  exists locally.
+- `packages/skills/src/projection-lock.ts:44` — the cooperating-process lock and
+  unmanaged-entry rule plan 106's MCP registration must reuse. Relevant because
+  `~/.claude/skills/agent-memory/SKILL.md` is a root-owned symlink into a NixOS
+  configuration repository, and clobbering it would break the machine.
+- `tools/check-package-boundaries.ts:52` `retiredPackages` — `lan-pairing` and
+  `sync` were already removed for building what ADR 0029 forbids. Cite this as
+  evidence rather than arguing the point again.
+
+### The three package checks
+
+Every new package must satisfy all three checks, but they do not have identical
+registration semantics:
+
+1. `tools/check-typescript-coverage.ts:4` `TYPECHECK_PROJECTS` — register the
+   package's `tsconfig`; the checker also scans tracked TypeScript and fails on
+   uncovered files, so omission is reported rather than silent.
+2. `tools/check-package-boundaries.ts:61` `boundaryPolicies` — add a policy when
+   the package has an architectural dependency rule. The checker does not require
+   one policy per package automatically, so add a focused test for the intended
+   boundary.
+3. Each workspace package's own `package.json` `exports` — cross-package imports
+   are enforced by `tools/check-public-package-exports.ts`.
+
 ## Child plans
 
 | Plan | Title | Priority | Effort | Depends on |

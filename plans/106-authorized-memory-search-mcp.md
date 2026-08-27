@@ -41,6 +41,61 @@ post-filtered global search can leak private memory. This plan builds the
 retrieval contract and exposes it consistently to Claude, Codex, OpenCode, and
 other MCP-capable harnesses.
 
+## Decision this plan closes: embeddings, and when
+
+The program forbids requiring `vector` until "an evaluation justifies it"
+(plan 101), and this plan lists vector search as Stage 3. Left as written, an
+executor either adds pgvector speculatively or skips it silently.
+
+**Decision: ship Stages 1 and 2 only — PostgreSQL full-text plus `pg_trgm`.
+Build the evaluation corpus first, and gate Stage 3 on a measured recall
+failure.**
+
+### Why this ordering
+
+The queries this product must answer are largely *lexical*: "did we already
+solve this error string", "what did we decide about the outbox", "which command
+was validated for X". Titles, commands, error strings, and identifiers are
+exactly where FTS and trigram are strong and where embeddings add little. The
+corpus is also small — an operator's accumulated memory, thousands of records,
+not millions.
+
+Embeddings additionally introduce a dependency the program has not otherwise
+taken: an embedding model, either a network call per record (contradicting
+"no provider credentials") or a locally-hosted model (a new runtime component).
+That cost is worth paying against evidence, not in anticipation.
+
+### The gate
+
+Build the evaluation corpus (Step 1) **before** the search implementation. Add
+pgvector only when, on that corpus:
+
+- **recall@10 for the hybrid FTS+trigram ranker is below 0.8** across the query
+  set, **and**
+- the failures are concentrated in paraphrase queries (semantically equivalent,
+  lexically disjoint) rather than in tuning problems — weights, stemming
+  configuration, or trigram thresholds.
+
+The second clause matters. Most early recall failures are configuration, and
+reaching for embeddings first hides them permanently behind a heavier mechanism.
+
+If the gate fires, pgvector goes into its own migration and its own plan, and
+`vector` becomes a documented extension requirement in
+`packages/postgres-store/README.md`.
+
+Record the measured recall in the ADR either way.
+
+### Language configuration — decide by measurement, not by default
+
+The plan notes the corpus is English and French. Do not assume one stemming
+configuration serves both. Step 1's corpus must contain French queries against
+French records, and the choice between per-chunk language tagging and the
+`simple` (language-neutral) configuration is made on that measurement.
+
+Default if the measurement is inconclusive: **`simple`**, plus trigram. It
+under-stems rather than mis-stems, and mis-stemming across two languages
+produces failures that look random and are very hard to debug later.
+
 ## Search domain
 
 Search only accepted, addressable projections by default:
@@ -53,6 +108,53 @@ Search only accepted, addressable projections by default:
 
 Pending Proposals and raw Observations require separate permissions and explicit
 query modes; they are not mixed into normal agent guidance.
+
+## Current state
+
+### No MCP server exists in this repository
+
+`grep -rn "modelcontextprotocol\|mcp" package.json packages/*/package.json
+apps/*/package.json` → no output. This plan introduces the first one.
+
+### The projection discipline to reuse
+
+`packages/skills` already solves "write configuration into harness-owned
+directories without clobbering what the harness or Nix owns":
+
+- `packages/skills/src/projection-lock.ts:20,44` —
+  `projectionLockIdentityForTarget` and `withSkillProjectionLock`, a
+  cooperating-process lock taken before mutating a target.
+- `CONTEXT.md:112-119` — **Projection** ("a plan captures target identity;
+  application revalidates it under a cooperating-process lock before mutation")
+  and **Unmanaged runtime entry** ("reported for consolidation but never
+  overwritten automatically").
+- `packages/skills/package.json:6-11` — the `.`/`application`/`config`/`shared`
+  export split.
+
+MCP registration is the same problem: writing a server entry into
+`~/.claude/…`, `~/.config/opencode/…`, or a Cursor config that may be
+root-owned Nix-managed symlinks — as
+`~/.claude/skills/agent-memory/SKILL.md` demonstrably is.
+
+**Reuse `withSkillProjectionLock` and the unmanaged-entry rule rather than
+writing a second config-projection mechanism.** If the lock is too
+skills-specific to reuse directly, extract it — do not fork it.
+
+### Authorization is a prerequisite, and scenario #13 already exists
+
+Plan 103 Step 3 requires golden scenario #13: *"search candidate scope excludes
+forbidden resources before ranking"*. That scenario was written **for this
+plan**. Extend `SCENARIOS` in `packages/authorization/src/conformance.ts` here;
+do not start a second matrix.
+
+If `packages/authorization/src/conformance.ts` has no scenario #13, stop — the
+authorization boundary this plan depends on was not finished.
+
+### Prerequisites
+
+- Plan 103: `Authorizer`, `listResources` with opaque cursors, conformance suite.
+- Plan 105: `memory_items`, `memory_revisions`, and the separate
+  `memory_content` resource type in `packages/authorization/src/model.ts`.
 
 ## Chunking model
 
@@ -429,6 +531,197 @@ Measure without logging content:
 
 Never log query text, snippets, embeddings, Memory content, or unauthorized
 candidate IDs by default.
+
+## Commands you will need
+
+| Purpose | Command | Expected on success |
+|---|---|---|
+| Prerequisite: scenario #13 exists | `grep -c "candidate scope" packages/authorization/src/conformance.ts` | ≥ 1 |
+| Prerequisite: content type declared | `grep -c "memory_content" packages/authorization/src/model.ts` | ≥ 1 |
+| Evaluation corpus | `bun tools/memory-search-eval.ts` | prints recall@k and MRR per query class |
+| Search tests | `bun test packages/memory-search` | all pass |
+| Leak tests | `bun test packages/memory-search/src/no-leak.test.ts` | all pass |
+| MCP adapter tests | `bun test packages/mcp-adapter` | all pass |
+| MCP over stdio, by hand | `echo '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' \| bun packages/mcp-adapter/src/stdio.ts` | tool list, no secrets |
+| Authorization conformance | `bun test packages/authorization` | all scenarios pass |
+| Local regression, no cluster | `! pgrep -x postgres && bun run test:packages` | all pass |
+| Full verification | `bun run check && bun run lint && bun run typecheck && bun run test` | exit 0 |
+
+## Git workflow
+
+- Branch `plan/106-memory-search-mcp`, cut from plan 105's branch.
+- Stage by explicit path. Never `git add -A`.
+- Four commits:
+  1. `test(memory-search): add the retrieval evaluation corpus and harness`
+  2. `feat(memory-search): add authorized full-text and trigram search`
+  3. `feat(mcp-adapter): add the harness-agnostic memory tools`
+  4. `docs(adr): record the search stack decision with measured recall`
+- Do not push or open a PR unless the operator asks.
+
+## Steps
+
+### Step 1: The evaluation corpus, before the search
+
+`tools/memory-search-eval.ts` plus `tools/fixtures/memory-search-corpus.json`.
+Synthetic records only — same privacy rule as plan 105 Step 0.
+
+The corpus needs at least 5 query classes, because they fail differently:
+
+| Class | Example | What it tests |
+|---|---|---|
+| exact identifier | `USAGE_STORE_SCHEMA_VERSION` | literal mode, no stemming |
+| error string | `SQLITE_BUSY: database is locked` | punctuation and trigram fallback |
+| paraphrase | "why did we drop peer sync" vs a record saying "LAN pairing removed" | **the embedding gate** |
+| misspelling | `postgrez outbox` | trigram thresholds |
+| French | "pourquoi le cache est invalidé" against a French record | language configuration |
+
+Report recall@1, recall@10, and MRR **per class**. An aggregate number hides
+exactly the paraphrase weakness the gate depends on.
+
+Include **negative** cases: queries whose only good match sits in a Space the
+principal cannot read. The expected result is that the record does not appear
+and the reported total does not change — these become the leak tests in Step 3.
+
+**Verify**: `bun tools/memory-search-eval.ts` runs against a seeded cluster and
+prints the table. It will report poor numbers before Step 2; that is the point.
+
+### Step 2: Authorized search, with the scope query first
+
+`packages/memory-search/src/search.ts`. The order in the plan's "Preferred
+shape" is the implementation order, and it is not negotiable:
+
+```ts
+export const searchMemory = (query: MemorySearchQuery, principal: PrincipalRef) =>
+  Effect.gen(function* () {
+    // 1. Authorization FIRST. Never a post-filter.
+    const scope = yield* authorizer.listResources({
+      principal, permission: 'read', resourceType: 'memory_item', limit: query.scopeLimit,
+    });
+    if (scope.kind === 'error') return yield* Effect.fail(new SearchUnavailable(scope.error));
+    // 2. Candidates constrained to `scope`, then ranked.
+    …
+  });
+```
+
+Two rules with tests attached:
+
+- **The ranking query takes the authorized scope as a bound parameter.** Assert
+  by inspecting the generated SQL in a test: it must contain the scope
+  constraint. A ranking query that scores everything and filters after is the
+  defect this plan exists to prevent, and it is invisible in behavior until
+  someone counts results.
+- **When `scope` is truncated by `limit`**, the response says so explicitly.
+  Silent truncation of an authorization scope is a correctness bug, not a
+  performance trade-off. `CONTEXT.md:80-83` already sets this precedent — the
+  focused report result "reports exact omission counts".
+
+Stage 1 (weighted `tsvector`, GIN) and Stage 2 (`pg_trgm`, threshold from Step 1)
+per the sections below. `pg_trgm` is already provisioned by plan 101.
+
+**Verify**: `bun tools/memory-search-eval.ts` → recall@10 per class. Compare
+against the gate. Record in the ADR.
+
+### Step 3: The leak tests
+
+`packages/memory-search/src/no-leak.test.ts`. Seed two Spaces with deliberately
+similar content, then assert that for a principal authorized only in Space A,
+**none** of the following differs from a run where Space B is empty:
+
+- result count and reported total;
+- pagination cursor values and page boundaries;
+- snippets and highlight offsets;
+- **relevance scores** — a forbidden document changing IDF and shifting scores
+  is a real, subtle side channel;
+- timing, to a coarse tolerance (assert the same query plan shape, not a
+  wall-clock threshold, which would be flaky).
+
+Then extend `packages/authorization/src/conformance.ts` with search-specific
+scenarios rather than starting a separate list.
+
+**Verify**: `bun test packages/memory-search/src/no-leak.test.ts` → all pass.
+Confirm each assertion fails when you temporarily remove the scope constraint —
+a leak test that passes against a broken implementation is worse than none.
+
+### Step 4: The MCP adapter
+
+`packages/mcp-adapter`, over the application services — never over SQL, never
+over the database.
+
+Tools, identical across harnesses:
+
+```text
+memory_search(query, filters?, limit?)   → ranked items with provenance
+memory_get(itemId)                       → one item's current revision
+memory_propose(kind, title, body, …)     → a proposal, never a memory item
+memory_propose_relation(fromId, toId, kind) → a proposal, never a durable edge
+```
+
+`memory_propose` and `memory_propose_relation` create **proposals**. There is no
+MCP tool that creates a memory item, revision, or relation directly — plan 105
+Step 2 made acceptance the only durable path, and the adapter must not open a
+side door. Assert it: a test enumerates the registered tool names against an
+allowlist and proves the proposal calls leave durable item/edge tables unchanged.
+
+Prompt-injection handling, per the plan's own section — and worth stating in the
+code, because it is the one thing an agent reading a response cannot recover
+from:
+
+- memory content is returned as **data**, wrapped and clearly labeled as
+  retrieved content, never as instructions;
+- every result carries provenance (who authored it, when, trust level, revision)
+  so the calling agent can weigh it;
+- superseded revisions are labeled as such when returned at all.
+
+**Verify**: `bun test packages/mcp-adapter` → all pass, including the tool
+allowlist test.
+
+### Step 5: Two runtime modes, one code path
+
+- **Local**: stdio or loopback; the local operator principal from plan 103's
+  `local-authorizer`; local database.
+- **Connected**: the device credential from plan 104; the server authorizes and
+  searches.
+
+Same tool schemas, same application services, different adapter wiring. Assert
+that: a test runs the same tool-call fixture through both compositions and
+asserts identical response *shape* (values differ, structure does not).
+
+No shared-server credential in any repository file. Add the credential path to
+`tools/check-secret-redaction.ts`'s scan from plan 104.
+
+**Verify**: `bun test packages/mcp-adapter/src/modes.test.ts` → all pass.
+
+### Step 6: Registration, using the existing projection discipline
+
+Harness configuration is written through the skills projection machinery, not a
+new mechanism:
+
+- take `withSkillProjectionLock` (`packages/skills/src/projection-lock.ts:44`)
+  before mutating a harness config;
+- an existing entry that is **not** a verified ai-usage projection is an
+  unmanaged runtime entry: report it for consolidation, never overwrite. This is
+  not theoretical — `~/.claude/skills/agent-memory/SKILL.md` is a root-owned
+  symlink into a NixOS configuration repository, and clobbering it would break
+  the operator's machine;
+- Nix-owned paths are reported and skipped, with an explicit message naming the
+  target.
+
+**Verify**: `bun test packages/mcp-adapter/src/registration.test.ts` — including
+a fixture where the target is a symlink to a read-only path, asserting a
+report-and-skip rather than an error or an overwrite.
+
+### Step 7: Documentation
+
+- `packages/memory-search/README.md` — stages, the authorization-first order,
+  the leak-test list, and the measured recall with the pgvector gate.
+- `packages/mcp-adapter/README.md` — tools, both modes, injection handling, and
+  registration.
+- ADR 0037 `authorized-hybrid-memory-search` — the FTS+trigram decision, the
+  measured recall, the pgvector gate, the language-configuration measurement,
+  and pgvector as the named rejected-for-now alternative.
+- `CONTEXT.md` — **Memory search scope** and **Retrieved content**, the latter
+  with `_Avoid_: instruction, guidance` in its avoid list.
+- `plans/README.md:66` row → `DONE`.
 
 ## Testing requirements
 

@@ -44,6 +44,86 @@ The target harness starts a normal native session, retrieves the accepted
 Handoff through MCP, verifies current source state, and continues without the
 user manually retelling the entire history.
 
+## Current state
+
+### `handoff` already means something else here — twice
+
+This is the plan's first correctness hazard, before any code:
+
+| Existing meaning | Where |
+|---|---|
+| A staged file passed CLI → engine via an inbox directory | `packages/usage-engine-control/src/handoff.ts`, `contracts.ts` (`UsageEngineHandoffId`), `packages/usage-engine-runtime/src/input-file.ts` + 7 more files |
+| A durable **memory entry type**, "current state and next actions" | the NixOS agent-memory contract (`references/memory-contract.md:18`), imported by plan 105 |
+| **This plan** — cross-harness work continuity | new |
+
+Naming decision, to be applied consistently:
+
+- this plan's concept is **Work handoff** in `CONTEXT.md`, and `WorkHandoff` in
+  code;
+- the file-transport meaning keeps `UsageEngineHandoff*` unchanged — it is
+  correct and in use;
+- the memory entry type keeps `handoff` **in stored imported data** for fidelity
+  (plan 105 Step 1's `CHECK` constraint).
+
+Verify plan 100 recorded the disambiguation in `CONTEXT.md` and plan 105 honored
+it. If not, fix it before writing a schema — renaming after data exists means
+rewriting rows across two tables.
+
+### Dated executable-contract normalization (2026-08-26)
+
+The original domain sketch below is retained verbatim as plan history. For
+implementation, normalize it as follows before creating migrations or exports:
+
+- `Handoff`, `HandoffId`, and `HandoffStatement` become `WorkHandoff`,
+  `WorkHandoffId`, and `WorkHandoffStatement`;
+- `WorkThread.projectId` is nullable;
+- `WorkThread.status` is `active | paused | completed | abandoned | archived`;
+- `WorkHandoff.status` is
+  `draft | accepted | superseded | rejected | expired`;
+- `currentHandoffId` becomes `currentWorkHandoffId`.
+- `memory.latest_handoff`, `handoff.get`, and the original `*_handoff`
+  permissions become `memory.latest_work_handoff`, `work_handoff.get`, and
+  `*_work_handoff` respectively.
+
+The Step 2 schema and every public tool/permission below use only this normalized
+contract. A contract/schema test enumerates both status sets from one shared
+constant so they cannot drift again.
+
+### Session facts already exist per harness
+
+`packages/local-machine/src/` holds `claude-session-facts.ts`,
+`opencode-session-facts.ts`, `claude-session-analysis.ts`,
+`codex-session-analysis.ts`, `opencode-session-analysis.ts`, and
+`session-detail.ts` (exported at `packages/local-machine/package.json:24` as
+`./session-detail`).
+
+`docs/session-analysis-sources.md` is the authoritative record of what each
+harness can truthfully provide, with a quality vocabulary (`:15-23`) this plan
+must reuse rather than restate: **Recorded**, **Derived**, **Partial**,
+**Estimated**, **Unavailable**.
+
+The line at `:24-25` is binding: *"An unavailable or estimated metric must not
+be presented as an exact zero or as a default setting."* A handoff that presents
+an inferred branch as a recorded one violates it.
+
+### The existing detail boundary this plan pushes against
+
+`docs/session-analysis-sources.md:9-14` draws the current line:
+
+> **report metrics** are normalized rows that may be persisted […];
+> **local detail** is read from the source machine only after the user opens a
+> supported session analysis. It is not part of the report revision.
+
+A handoff needs *some* local detail to be useful. This plan takes only bounded,
+explicitly-stated evidence — the full archive is plan 109, opt-in. Do not widen
+the boundary here.
+
+### Prerequisites
+
+Plans 102 (projects), 105 (memory), 106 (search), 107 (replication). A handoff
+that cannot be searched or replicated is a local note, which the file-based
+system already provides.
+
 ## Domain definitions
 
 ### Session reference
@@ -430,6 +510,194 @@ The first product gate should use synthetic sessions but mirror real work:
 
 Success is continuity without manual retelling, not proof that the target model
 makes the correct code change.
+
+## Commands you will need
+
+| Purpose | Command | Expected on success |
+|---|---|---|
+| Prerequisite: naming resolved | `grep -c "Handoff" CONTEXT.md` | ≥ 1 |
+| Prerequisite: memory exists | `test -f packages/memory/src/services.ts` | exit 0 |
+| Work-thread tests | `bun test packages/work-threads` | all pass |
+| Evidence provenance tests | `bun test packages/work-threads/src/evidence.test.ts` | all pass |
+| Staleness tests | `bun test packages/work-threads/src/staleness.test.ts` | all pass |
+| Cross-harness scenario | `bun test apps/server/src/cross-harness-handoff.test.ts` | all pass |
+| MCP tools | `bun test packages/mcp-adapter` | all pass |
+| Local regression, no cluster | `! pgrep -x postgres && bun run test:packages` | all pass |
+| Full verification | `bun run check && bun run lint && bun run typecheck && bun run test` | exit 0 |
+
+## Git workflow
+
+- Branch `plan/108-work-handoffs`, cut from plan 107's branch.
+- Migration `0007_work_threads` — check `packages/postgres-store/src/migrations.ts`
+  for the current highest number first; 105 and 107 may both have landed.
+- Stage by explicit path. Never `git add -A`.
+- Four commits:
+  1. `feat(work-threads): add work threads and handoffs with source-labelled evidence`
+  2. `feat(work-threads): add creation and continuation workflows`
+  3. `feat(mcp-adapter): expose handoff creation and retrieval tools`
+  4. `feat(web): add the work thread and handoff surfaces`
+- Do not push or open a PR unless the operator asks.
+
+## Steps
+
+### Step 1: Make evidence provenance unforgeable at the type level
+
+The program's STOP condition — "a cross-harness handoff cannot distinguish
+observed facts from generated summary content" — is satisfied structurally or
+not at all. A `source` string field will be filled in wrongly within a month.
+
+`packages/work-threads/src/evidence.ts`:
+
+```ts
+export type EvidenceSource =
+  | { readonly kind: 'observed'; readonly sessionFactId: SessionFactId; readonly quality: SessionFactQuality }
+  | { readonly kind: 'git-snapshot'; readonly deviceId: DeviceId; readonly capturedAt: Instant }
+  | { readonly kind: 'stated'; readonly by: PersonId; readonly statedAt: Instant }
+  | { readonly kind: 'generated'; readonly by: AgentRef; readonly model: string; readonly generatedAt: Instant };
+
+export interface EvidenceItem<T> {
+  readonly value: T;
+  readonly source: EvidenceSource;    // required, no default
+}
+```
+
+`SessionFactQuality` is `docs/session-analysis-sources.md:15-23`'s vocabulary
+(`recorded` | `derived` | `partial` | `estimated` | `unavailable`), imported
+rather than restated.
+
+There is **no** `EvidenceItem` constructor that omits `source`, and no default
+variant. Every handoff field is an `EvidenceItem<T>`, so an unlabelled statement
+is a typecheck failure — `strict` and `exactOptionalPropertyTypes` are on
+(`tsconfig.json:8,12`).
+
+`evidence.test.ts`: rendering a handoff always emits the source per field; a
+`generated` item is never presented with the same affordance as an `observed`
+one; an `unavailable` quality is never rendered as zero or as a default
+(`docs/session-analysis-sources.md:24-25`).
+
+**Verify**: `bun test packages/work-threads/src/evidence.test.ts` → all pass.
+
+### Step 2: Schema
+
+Migration `0007_work_threads`:
+
+```text
+work_threads   (id, space_id NOT NULL, project_id NULL, title, intent,
+                status text CHECK (status IN ('active','paused','completed','abandoned','archived')),
+                created_by, created_at, closed_at NULL)
+work_handoffs  (id, thread_id NOT NULL, space_id NOT NULL,
+                status text CHECK (status IN ('draft','accepted','superseded','rejected','expired')),
+                source_session_ref jsonb NOT NULL,
+                target_session_ref jsonb NULL,
+                evidence jsonb NOT NULL,          -- EvidenceItem-shaped, validated on write
+                created_by, created_at,
+                accepted_by NULL, accepted_at NULL)
+work_thread_sessions (thread_id, session_fact_id, role, linked_at)
+```
+
+- `status` defaults to `'draft'`. A generated handoff is never `accepted`
+  without an explicit act — the same rule plan 105 applies to memory proposals,
+  and for the same reason.
+- `evidence` is validated against the `EvidenceItem` schema on write, not just
+  typed. `jsonb` accepts anything; the validator is the guard.
+- `source_session_ref` is a `SessionReference` (below): a *reference*, not a
+  claim that the server can open the session.
+
+**Verify**: `bun test packages/postgres-store/src/migrations.test.ts` → all pass.
+
+### Step 3: Creation — draft by default, accepted by a person
+
+`createHandoff` produces `draft`. `acceptHandoff` requires a person principal
+and `Authorizer` permission on the thread.
+
+`creation.test.ts`:
+- an agent-proposed handoff is `draft` with every generated field labelled;
+- no background job can transition `draft → accepted` — assert by enumerating
+  the service surface for any function that accepts without a person principal;
+- accepting records `accepted_by` and `accepted_at`;
+- a handoff in a Space the principal cannot write is denied, with nothing written.
+
+**Verify**: `bun test packages/work-threads/src/creation.test.ts` → all pass.
+
+### Step 4: Continuation — re-check, never trust the snapshot
+
+The plan's own rule: *"A stored Handoff is not authority that the worktree still
+matches."*
+
+`continueHandoff` returns a **continuation briefing**, never a "ready" boolean:
+
+```ts
+export interface ContinuationBriefing {
+  readonly handoff: Handoff;
+  readonly checkoutState: 'matches' | 'diverged' | 'unavailable';
+  readonly divergences: readonly Divergence[];   // branch moved, HEAD differs, dirty, checkout missing
+  readonly staleness: { readonly capturedAt: Instant; readonly ageSeconds: number };
+}
+```
+
+`staleness.test.ts`:
+- the target device's HEAD differs → `diverged`, with the specific divergence;
+- the branch was deleted → `diverged`, not `unavailable`;
+- the checkout does not exist on the target device → `unavailable`, and the
+  briefing is still returned with its stated evidence intact — a handoff whose
+  worktree is gone is still useful context;
+- an old handoff → age reported, never silently hidden by a default filter
+  (ADR 0017).
+
+**Continuation creates a new native target session.** It never writes into
+another harness's store — ADR 0030, and plan 110 is the only place authorized to
+investigate that.
+
+**Verify**: `bun test packages/work-threads/src/staleness.test.ts` → all pass.
+
+### Step 5: Handoff as memory
+
+An accepted handoff becomes a memory **proposal** (plan 105), not a memory item.
+It goes through the same acceptance path as everything else. Reuse
+`proposeMemory`; do not add a bypass.
+
+**Verify**: `bun test packages/work-threads/src/handoff-memory.test.ts` — an
+accepted handoff creates a proposal, and the proposal still requires acceptance.
+
+### Step 6: The cross-harness scenario — program gate #8
+
+`apps/server/src/cross-harness-handoff.test.ts`:
+
+1. synthetic Claude session on device A produces session facts;
+2. an agent proposes a handoff; a person accepts it;
+3. synthetic Codex session on device B retrieves it through the MCP adapter;
+4. the briefing contains enough verified context to continue: project, branch,
+   stated decisions, open questions, next actions — each with its source;
+5. **no write occurred to any native harness store.** Assert it: snapshot the
+   fixture harness directories before and after and compare byte-for-byte.
+
+Step 5 is the assertion that keeps ADR 0030 honest.
+
+**Verify**: `bun test apps/server/src/cross-harness-handoff.test.ts` → all pass.
+
+### Step 7: MCP tools and surfaces
+
+Tools: `handoff_create` (→ draft), `handoff_get`, `thread_list`,
+`thread_sessions`. No `handoff_accept` over MCP — acceptance is a person's act,
+so it belongs on a surface where a person is authenticated, not in an agent's
+tool list.
+
+Web surfaces: thread list, thread detail with its session timeline, handoff
+detail with per-field provenance, and the accept action. ADR 0010/0012 and the
+presentation gate apply; one named Query policy per data identity.
+
+**Verify**: `bun test packages/mcp-adapter` → the tool allowlist test includes
+the absence of `handoff_accept`. `bun run test:e2e -- e2e/<new-spec>.spec.ts`
+→ passes, axe clean.
+
+### Step 8: Documentation
+
+- `packages/work-threads/README.md` — the evidence model, why `source` is
+  non-optional, and the draft→accepted rule.
+- `CONTEXT.md` — **Work handoff** and **Work thread**, with `_Avoid_` lists
+  naming the two colliding meanings explicitly.
+- ADR 0030's evidence — cite the no-native-write assertion from Step 6.
+- `plans/README.md:66` row → `DONE`.
 
 ## Testing requirements
 
