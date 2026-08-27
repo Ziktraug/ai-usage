@@ -162,17 +162,17 @@ read-only SQLite and the permanent browser/server and demo-isolation boundaries.
 | 096 | Skills Management Surface Fixes — Legible Tree, Honest Statuses, One Health Surface, Matrix Geometry, Frontmatter False Positives | P1 | M | 087 (editor status branch) | DONE (maintainer reopening D20; refresh proof now observes the settled transformed response, the intended visual baseline is updated, and full child gates pass) |
 | 097 | Sync, Sources, Projects: Duplication and Jargon | P1 | M | 088 (fleet "Sessions" label) | DONE |
 | 098 | Session Drawer, Analysis, and Report Chrome Polish | P2 | M | 088 (drawer, records); 093/094 if they touched `preset.ts` | DONE |
-| 099 | Evolve ai-usage Into a Multi-Tenant AI Operations and Memory Platform (program) | P0 | L (program) | 100-110 | TODO |
+| 099 | Evolve ai-usage Into a Multi-Tenant AI Operations and Memory Platform (program plan) | P0 | L (program) | 100-110 | TODO |
 | 100 | Define the Platform Topology, Capability Modules, and Data Ownership | P0 | L | - | TODO |
 | 101 | Add the PostgreSQL Server Foundation Without Replacing the Local SQLite Engine | P0 | L | 100 | TODO |
 | 102 | Introduce Stable Spaces, People, Devices, Repositories, Projects, and Checkouts | P0 | L | 100, 101 | TODO |
 | 103 | Model Authorization With ReBAC, Content Boundaries, and Aggregate-Only Roles | P0 | XL | 100-102 | TODO |
-| 104 | Add Authentication, GitHub Identity Separation, and Device Enrollment | P1 | L | 102, 103 | TODO (password login BLOCKED by deliberate decision — see plan 104 "Decisions this plan closes" §3) |
-| 105 | Migrate Agent Memory From NixOS Files Into a DB-Native Domain | P1 | XL | 100-104 | TODO |
-| 106 | Build Authorized Hybrid Memory Search and a Harness-Agnostic MCP Adapter | P1 | XL | 103, 105 | TODO |
-| 107 | Replicate Local Machine Facts to the Server With an Idempotent Outbox Protocol | P1 | XL | 101-104 | TODO |
-| 108 | Add Cross-Harness Handoffs and Work Threads | P1 | L | 102, 105-107 | TODO |
-| 109 | Archive Session Detail Safely for Cross-Machine Read-Only Continuity | P2 | L | 103, 104, 107, 108 | TODO |
+| 104 | Add Authentication, GitHub Identity Separation, and Device Enrollment | P1 | L | 102, 103 | TODO (connected V1 is GitHub-only; non-GitHub login is BLOCKED) |
+| 105 | Migrate Agent Memory From NixOS Files Into a DB-Native Domain | P1 | XL | 100-102 | TODO |
+| 106 | Build Authorized Hybrid Memory Search and a Harness-Agnostic MCP Adapter | P1 | XL | 102, 105 (local/single-user shared); 103, 104 (organization-connected) | TODO |
+| 107 | Replicate Local Machine Facts to the Server With an Idempotent Outbox Protocol | P1 | XL | 101-105 | TODO |
+| 108 | Add Cross-Harness Work Handoffs and Work Threads | P1 | L | 102, 105, 106 (local); 107 (connected) | TODO |
+| 109 | Archive Session Detail Safely for Cross-Machine Read-Only Continuity | P2 | L | 103, 104, 107, 108 connected phase | TODO |
 | 110 | Spike Native Session Portability Across Claude, Codex, OpenCode, and Cursor | P2 | L (spike) | 108, 109 | TODO |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) |
@@ -182,85 +182,105 @@ build phase).
 
 ## 2026-08-26 AI operations and memory platform program (plans 099-110)
 
-Written on 2026-08-26 at `dac2214c`, then made executable on the same date
-against the working tree. The program extends ai-usage from a local
-single-operator report into a multi-device operations, memory, and continuity
-layer: shared PostgreSQL alongside the local SQLite plane, relationship-based
-authorization, DB-native Agent Memory, outbound-only device replication, and
-cross-harness work handoffs.
+Written on 2026-08-26 at `dac2214c`, made executable in the follow-up commit,
+and reconciled into one current specification on 2026-08-27. The program keeps
+ai-usage fully useful offline while adding an optional connected authority for
+shared Memory, authorization, replication, Work handoffs, and sensitive session
+archives.
 
-- **Plan 099 is the umbrella**: 14 proposed program decisions, the execution
-  order, cross-cutting invariants (local mode stays first-class, no dual writer
-  in one data plane, explicit tenancy, content/metadata separation), 10 program
-  gates, and 9 program-level STOP conditions.
-- **Plan 100 is documentation-only and must land first.** It turns the 14
-  proposed decisions into ADRs 0022-0033 or rejects them with evidence, and it
-  resolves three vocabulary collisions before any schema exists.
-- Plans 101-104 build the platform floor: PostgreSQL foundation, identity model,
-  authorization, authentication. 103 and 104 are `Risk: CRITICAL`.
-- Plans 105-107 are the product capabilities: DB-native memory, authorized
-  search + MCP, device replication. 105/107 may run in parallel after 104 if
-  migration numbers are coordinated.
-- Plans 108-110 are continuity: work handoffs, opt-in session archive, and a
-  research-only native-portability spike whose deliverable may legitimately be
-  "not safely possible".
+### Execution sequence and first value milestone
 
-### Decisions closed while making these executable
+The first product validation is deliberately local-first:
 
-Each of these blocked the first line of code and is now pre-committed with a
-named rejected alternative and a reversal condition:
+1. 100 defines topology and language.
+2. 101 adds the minimal PostgreSQL/server foundation without making local mode
+   depend on it.
+3. 102 establishes the minimal identity kernel plus the application-owned
+   `Authorizer` port and `SingleUserAuthorizer`.
+4. 105 adds DB-native Agent Memory through local SQLite and shared PostgreSQL
+   adapters with the same domain/application contracts.
+5. 106 adds SQLite FTS5 locally, PostgreSQL FTS + `pg_trgm` for shared search,
+   and the harness-agnostic MCP surface.
+6. 108 proves a local cross-harness `WorkHandoff` vertical slice.
 
-| Plan | Was open | Now |
-|---|---|---|
-| 101 | "a pinned container **or** an equivalent hermetic service" | `initdb` into `mkdtemp` on a Unix socket, PostgreSQL added to `flake.nix`. **The machine has no container runtime** — the original text was unexecutable here. |
-| 103 | OpenFGA vs SpiceDB vs PostgreSQL tables | PostgreSQL-native behind the `Authorizer` port, with a conformance suite, three anti-Zanzibar guardrails, and four measured escalation triggers. OpenFGA is the pre-designated escape hatch. |
-| 104 | "evaluate a library/provider" | Better Auth, verified by a spike before use. |
-| 104 | device credential form | bearer credential stored as an Argon2id verifier; asymmetric keys and mTLS rejected with reasons. |
-| 104 | password auth "optional first release" | **BLOCKED, deliberately** — it requires transactional email, which nothing else in 099-110 needs. |
-| 106 | when to add embeddings | FTS + `pg_trgm` first; pgvector gated on measured recall@10 < 0.8 concentrated in paraphrase queries. |
-| 109 | encryption at rest | per-Space envelope encryption selected; reconsider only if measured restore/rotation cannot meet the recovery SLO. |
+The connected/multi-tenant layer then completes 103 authorization, 104 GitHub
+authentication/device enrollment, 107 multi-device replication, 108's
+connected extension, 109 sensitive archives, and 110's research-only native
+portability spike. Full ReBAC and authentication do not block the single-user
+Memory/MCP/Work-handoff proof; plan 109 still requires the complete shared
+security boundary.
 
-### Vocabulary collisions found in the working tree
+### Current architecture decisions
 
-These would have produced silent defects. Plan 100 resolves the first three;
-the rest are documented in the plan that touches them.
+- Local/offline Agent Memory is authoritative in a dedicated SQLite store with
+  local application services, FTS5, MCP access, and a durable replication
+  outbox. One local process owns write-capable access; Web, CLI, and MCP do not
+  open independent write connections. A separate bounded Memory service/IPC
+  seam must be named rather than overloading the report-less usage-engine
+  control plane.
+- Connected shared Memory is authoritative in PostgreSQL. Markdown/JSONL are
+  import, export, or projection formats in both modes, never mutation
+  authority. The NixOS Agent Memory remains the migration source and temporary
+  compatibility implementation until parity is demonstrated.
+- V1 authorization is an application-owned `Authorizer` with golden scenarios,
+  domain-specific PostgreSQL relationship tables, and explicit queries. It has
+  no generic Zanzibar DSL/interpreter, route-handler policy, or application-side
+  post-filtering. `SingleUserAuthorizer` supports the local milestone. OpenFGA
+  is the pre-designated escape hatch only when plan 103's measured triggers
+  fire.
+- Authorization-aware ranking represents the complete eligible authorized
+  scope in SQL before ranking. Returned-result pagination never truncates the
+  authorization graph, and forbidden candidates cannot affect counts,
+  snippets, cursors, ranks, statistics, or semantic scores.
+- Connected V1 login is GitHub-only. First-owner bootstrap authorizes the first
+  successfully authenticated GitHub identity; it does not support operators
+  who cannot use GitHub. Non-SCM login remains BLOCKED while local-only mode
+  remains usable without any account or network.
+- Device credentials and high-entropy enrollment grants use a public token ID
+  plus a random secret whose HMAC-SHA-256 digest is stored under a typed
+  deployment key. Verification is constant-time; plaintext is returned once;
+  rotation, revocation, and log redaction are mandatory. Argon2id is reserved
+  for future human passwords.
+- `ScmAccount` is a Person-owned provider identity, `ScmInstallation` is a
+  Space-owned GitHub App/organization repository grant, and `ScmCredential` is
+  an encrypted secret/reference attached to one of those concepts. None is an
+  authentication identity or device credential.
+- Replication distinguishes stable `fact_key`, per-publication `event_id`, and
+  exact-version `content_hash`. Enrichment produces a new event; acknowledged
+  rows remain historical. Idempotency prevents duplicate batch application but
+  does not by itself defend a stolen credential.
+- Cross-harness continuity is consistently **Work handoff** / `WorkHandoff` /
+  `WorkHandoffId` / `WorkHandoffStatement`, with `currentWorkHandoffId`. It uses
+  `memory.latest_work_handoff`, `work_handoff.get`, and
+  `work_thread.get_context`; legacy Memory `kind: "handoff"` and existing
+  `UsageEngineHandoff*` transport retain their separate meanings.
+- Session archives use one per-Space DEK wrapped by a separately configured
+  deployment KEK. This protects a leaked database/backup only when the KEK is
+  not also compromised. Removing active wrapped keys stops current application
+  access but does not promise cryptographic erasure of every historical backup;
+  restore and retention depend on the matching KEK and key-rotation policy.
+  V1 does not claim end-to-end encryption.
+- `pgvector` remains gated on measured semantic-recall failure: after lexical
+  tuning, recall@10 below 0.8 with misses concentrated in paraphrase queries.
 
-- **`handoff`** has three meanings: a staged CLI→engine file
-  (`packages/usage-engine-control/src/handoff.ts` + 9 files), a durable memory
-  entry type (the NixOS agent-memory contract), and plan 108's cross-harness
-  continuity. Plan 108's concept is named **Work handoff**.
-- **`authorize`** has 180 hits that mean *filesystem-trust provenance*, not
-  permission — `SourceAuthority` in
-  `packages/report-data/src/project-projection.ts:26`. Plan 103 must never reuse
-  the word "authority".
-- **`project`** already means two things (`Project source`, `Project group`);
-  the platform's cross-device `Project` is a third.
-- **`control plane`** and **`data plane`** are defined in `CONTEXT.md` as the
-  local engine seam and the local SQLite store specifically.
+### Vocabulary and repository anchors
 
-### Work already in the tree that these plans reuse rather than rebuild
-
-- `packages/report-core/src/session-vcs.ts:166` — remote normalization
-  (https + SCP-style SSH, host lowercasing, length caps) with 149 lines of tests.
-- `packages/usage-engine-control/src/secret.ts` — a branded `WeakMap`-backed
-  secret type that renders `[REDACTED]` by construction.
-- `usage_store_metadata`'s monotonic `generation` counters and `CONTEXT.md`'s
-  **Source publication** acknowledgement discipline — the outbox contract in
-  plan 107 already exists locally.
-- `packages/skills/src/projection-lock.ts:44` — the cooperating-process lock and
-  unmanaged-entry rule that plan 106's MCP registration must reuse.
-- `tools/check-package-boundaries.ts:52` `retiredPackages` — `lan-pairing` and
-  `sync` were already removed for building what ADR 0029 forbids.
-
-### Registration points every new package must satisfy
-
-Missing any of these fails CI, and the first one fails *silently*:
-
-1. `tools/check-typescript-coverage.ts:4` `TYPECHECK_PROJECTS` — absence means
-   the package is never typechecked and nothing reports it.
-2. `tools/check-package-boundaries.ts:61` `boundaryPolicies`.
-3. `package.json` `exports` — enforced by
-   `tools/check-public-package-exports.ts`.
+- `UsageEngineHandoff*` means existing CLI-to-engine staged-file transport;
+  imported Memory `kind: "handoff"` is retained for migration fidelity;
+  `WorkHandoff` is the new continuity domain.
+- `SourceAuthority` remains filesystem-trust provenance, not permission. The
+  platform's `Project` remains distinct from Project source/group, and the
+  existing usage data/control plane vocabulary keeps its ADR 0009 meaning.
+- Reuse `packages/report-core/src/session-vcs.ts` remote normalization,
+  `packages/usage-engine-control/src/secret.ts` redaction, monotonic store
+  generations and source-publication acknowledgement, and
+  `packages/skills/src/projection-lock.ts` registration locking. Do not revive
+  retired `lan-pairing` or `sync` packages.
+- Every future package must be registered in `TYPECHECK_PROJECTS`,
+  `boundaryPolicies`, and public package exports as applicable; the repository
+  checks in `tools/check-typescript-coverage.ts`,
+  `tools/check-package-boundaries.ts`, and
+  `tools/check-public-package-exports.ts` enforce those surfaces.
 
 ## 2026-08-20 direction audit (plans 074-085)
 

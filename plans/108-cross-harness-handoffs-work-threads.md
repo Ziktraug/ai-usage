@@ -1,783 +1,483 @@
-# Plan 108: Add Cross-Harness Handoffs and Work Threads
+# Plan 108: Add Cross-Harness Work Handoffs and Work Threads
 
 > **Executor instructions**: Build continuity above harnesses, not by forging
-> their private stores. A Handoff combines deterministic evidence with explicitly
-> reviewed narrative. A Work Thread groups logical work across native sessions.
-> Do not call activity metrics “outcomes” or infer success from tokens, duration,
-> commits, or lines changed.
+> private stores. Implement the local/offline vertical after plans 105/106, then
+> the connected extension after plan 107. Every statement distinguishes
+> observed, declared, and generated content. Do not infer successful outcomes
+> from tokens, duration, commits, or lines.
 >
 > **Drift check (run first)**:
 > `git diff --stat dac2214c..HEAD -- packages/report-core packages/report-data packages/usage-store packages/local-machine packages/memory packages/memory-search packages/mcp-adapter packages/project-registry packages/replication apps/usage-engine apps/server apps/web apps/cli docs/architecture.md docs/adr`
-> Re-read plans 105–107 and reconcile Memory, Project, Session, and replication
-> contracts before adding a second identity layer.
+
+## Authoritative decisions
+
+The contracts and steps below are the current implementation specification.
+Superseded alternatives remain in Git history and are not executable guidance.
 
 ## Status
 
 - **Priority**: P1
 - **Effort**: L
-- **Risk**: MEDIUM–HIGH — generated summaries can be mistaken for observed facts,
-  and incorrect Git state can make a continuation destructive
-- **Depends on**: 102, 105, 106, 107
+- **Risk**: MEDIUM–HIGH — generated narrative can be mistaken for fact and
+  stale Git state can make continuation destructive
+- **Depends on (local phase)**: 102, 105, 106
+- **Depends on (connected phase)**: local phase, 107 (and therefore 103/104)
 - **Category**: cross-harness continuity and work identity
 - **Planned at**: commit `dac2214c`, 2026-08-26
-- **Implementation status**: TODO
+- **Implementation status**: TODO, two phases
 
-## Why this matters
+## One vocabulary
 
-A developer may use Claude for architecture, Codex for implementation, OpenCode
-for review, and a different machine the next day. Native session history is
-fragmented by harness and machine. Reconstructing one provider’s private format
-inside another is brittle and unnecessary for the first valuable product.
+The three meanings remain distinct:
 
-The useful abstraction is the logical work:
+1. `UsageEngineHandoff*` is the existing CLI-to-engine staged-file transport;
+2. imported Agent Memory `kind: "handoff"` is a legacy record value retained
+   for import fidelity;
+3. **Work handoff** is the new cross-harness concept, represented only by
+   `WorkHandoff*` domain symbols.
+
+There is no bare new `Handoff`, `HandoffId`, or `HandoffStatement` TypeScript
+domain type in this plan. Prose uses **Work handoff**.
+
+Tool names are exactly:
 
 ```text
-Work Thread: Implement shared memory sync
-  Claude session — architecture
-  Handoff — accepted state at checkpoint
-  Codex session — implementation
-  OpenCode session — review
-  Handoff — next machine/context
+memory.latest_work_handoff
+work_handoff.get
+work_thread.get_context
 ```
 
-The target harness starts a normal native session, retrieves the accepted
-Handoff through MCP, verifies current source state, and continues without the
-user manually retelling the entire history.
+Work handoff permissions are exactly:
 
-## Current state
+```text
+view_work_handoff
+create_work_handoff
+accept_work_handoff
+manage_work_handoff
+```
 
-### `handoff` already means something else here — twice
+Do not introduce legacy tool aliases, underscore tool aliases, or legacy
+permission aliases for this domain.
 
-This is the plan's first correctness hazard, before any code:
+## Product value and phase order
 
-| Existing meaning | Where |
-|---|---|
-| A staged file passed CLI → engine via an inbox directory | `packages/usage-engine-control/src/handoff.ts`, `contracts.ts` (`UsageEngineHandoffId`), `packages/usage-engine-runtime/src/input-file.ts` + 7 more files |
-| A durable **memory entry type**, "current state and next actions" | the NixOS agent-memory contract (`references/memory-contract.md:18`), imported by plan 105 |
-| **This plan** — cross-harness work continuity | new |
+The first valuable workflow is local and offline:
 
-Naming decision, to be applied consistently:
+```text
+local Memory SQLite + FTS5 + local MCP
+  ↓
+source harness session + reviewed evidence
+  ↓
+accepted WorkHandoff in a Work Thread
+  ↓
+different local harness retrieves context through MCP
+  ↓
+normal new native target session
+```
 
-- this plan's concept is **Work handoff** in `CONTEXT.md`, and `WorkHandoff` in
-  code;
-- the file-transport meaning keeps `UsageEngineHandoff*` unchanged — it is
-  correct and in use;
-- the memory entry type keeps `handoff` **in stored imported data** for fidelity
-  (plan 105 Step 1's `CHECK` constraint).
+This phase needs no shared server, login, PostgreSQL, replication, or full
+organization ReBAC.
 
-Verify plan 100 recorded the disambiguation in `CONTEXT.md` and plan 105 honored
-it. If not, fix it before writing a schema — renaming after data exists means
-rewriting rows across two tables.
+The connected extension later stores shared Work Threads/Work handoffs in
+PostgreSQL, publishes eligible local facts through plan 107, and supports
+cross-device retrieval under full authorization. One domain/service contract
+serves both phases.
 
-### Dated executable-contract normalization (2026-08-26)
+## Existing evidence boundaries
 
-The original domain sketch below is retained verbatim as plan history. For
-implementation, normalize it as follows before creating migrations or exports:
+- per-harness session facts/analysis already exist in `packages/local-machine`;
+- `docs/session-analysis-sources.md` supplies the truthfulness vocabulary:
+  Recorded, Derived, Partial, Estimated, Unavailable;
+- local detail is currently source-machine-only. Work handoffs capture bounded,
+  selected evidence; they are not session archives (plan 109);
+- stored Git state is evidence captured at a time, never authority that the
+  target checkout still matches.
 
-- `Handoff`, `HandoffId`, and `HandoffStatement` become `WorkHandoff`,
-  `WorkHandoffId`, and `WorkHandoffStatement`;
-- `WorkThread.projectId` is nullable;
-- `WorkThread.status` is `active | paused | completed | abandoned | archived`;
-- `WorkHandoff.status` is
-  `draft | accepted | superseded | rejected | expired`;
-- `currentHandoffId` becomes `currentWorkHandoffId`.
-- `memory.latest_handoff`, `handoff.get`, and the original `*_handoff`
-  permissions become `memory.latest_work_handoff`, `work_handoff.get`, and
-  `*_work_handoff` respectively.
+## Domain contracts
 
-The Step 2 schema and every public tool/permission below use only this normalized
-contract. A contract/schema test enumerates both status sets from one shared
-constant so they cannot drift again.
+### Status sets
 
-### Session facts already exist per harness
+```ts
+export const WORK_HANDOFF_STATUSES = [
+  "draft",
+  "accepted",
+  "superseded",
+  "rejected",
+  "expired",
+] as const;
 
-`packages/local-machine/src/` holds `claude-session-facts.ts`,
-`opencode-session-facts.ts`, `claude-session-analysis.ts`,
-`codex-session-analysis.ts`, `opencode-session-analysis.ts`, and
-`session-detail.ts` (exported at `packages/local-machine/package.json:24` as
-`./session-detail`).
+export type WorkHandoffStatus = (typeof WORK_HANDOFF_STATUSES)[number];
 
-`docs/session-analysis-sources.md` is the authoritative record of what each
-harness can truthfully provide, with a quality vocabulary (`:15-23`) this plan
-must reuse rather than restate: **Recorded**, **Derived**, **Partial**,
-**Estimated**, **Unavailable**.
+export const WORK_THREAD_STATUSES = [
+  "active",
+  "paused",
+  "completed",
+  "abandoned",
+  "archived",
+] as const;
 
-The line at `:24-25` is binding: *"An unavailable or estimated metric must not
-be presented as an exact zero or as a default setting."* A handoff that presents
-an inferred branch as a recorded one violates it.
+export type WorkThreadStatus = (typeof WORK_THREAD_STATUSES)[number];
+```
 
-### The existing detail boundary this plan pushes against
-
-`docs/session-analysis-sources.md:9-14` draws the current line:
-
-> **report metrics** are normalized rows that may be persisted […];
-> **local detail** is read from the source machine only after the user opens a
-> supported session analysis. It is not part of the report revision.
-
-A handoff needs *some* local detail to be useful. This plan takes only bounded,
-explicitly-stated evidence — the full archive is plan 109, opt-in. Do not widen
-the boundary here.
-
-### Prerequisites
-
-Plans 102 (projects), 105 (memory), 106 (search), 107 (replication). A handoff
-that cannot be searched or replicated is a local note, which the file-based
-system already provides.
-
-## Domain definitions
+These shared constants drive runtime schemas, SQLite/PostgreSQL checks, public
+contracts, and tests. There is no `active` WorkHandoff status and no Work Thread
+status set missing `paused`.
 
 ### Session reference
 
-A portable reference to an observed native session:
-
 ```ts
 interface SessionReference {
-  deviceId: DeviceId;
-  harnessKey: string;
-  sourceSessionId: string | null;
-  sessionFactId: SessionFactId;
-  observedAt: Instant;
+  readonly deviceId: DeviceId;
+  readonly harnessKey: string;
+  readonly sourceSessionId: string | null;
+  readonly sessionFactId: SessionFactId;
+  readonly observedAt: Instant;
 }
 ```
 
-A reference does not claim the server can open or mutate the native session.
+The reference never claims the current process/server can open or mutate native
+session storage.
 
 ### Work Thread
 
 ```ts
 interface WorkThread {
-  id: WorkThreadId;
-  owningSpaceId: SpaceId;
-  projectId: ProjectId;
-  title: string;
-  status: "active" | "completed" | "abandoned" | "archived";
-  currentHandoffId: HandoffId | null;
-  createdByPersonId: PersonId;
-  createdAt: Instant;
-  updatedAt: Instant;
+  readonly id: WorkThreadId;
+  readonly owningSpaceId: SpaceId;
+  readonly projectId: ProjectId | null;
+  readonly title: string;
+  readonly intent:
+    | "planning"
+    | "implementation"
+    | "bugfix"
+    | "refactor"
+    | "review"
+    | "investigation"
+    | "documentation"
+    | "operations";
+  readonly status: WorkThreadStatus;
+  readonly currentWorkHandoffId: WorkHandoffId | null;
+  readonly createdByPersonId: PersonId;
+  readonly createdAt: Instant;
+  readonly updatedAt: Instant;
 }
 ```
 
-Related tables/relations:
+`projectId` is nullable for legitimate global, personal, exploratory, or
+pre-Project work. Work intent is explicitly declared, never inferred from prompt
+clustering. A Work Thread is not a Project, issue, branch, PR, Session, or
+campaign.
+
+### Work handoff
+
+```ts
+interface WorkHandoff {
+  readonly id: WorkHandoffId;
+  readonly owningSpaceId: SpaceId;
+  readonly projectId: ProjectId | null;
+  readonly workThreadId: WorkThreadId;
+  readonly revisionNumber: number;
+  readonly status: WorkHandoffStatus;
+
+  readonly sourceSessions: readonly SessionReference[];
+  readonly sourceDeviceId: DeviceId | null;
+  readonly sourceHarnessKeys: readonly string[];
+
+  readonly repositoryId: RepositoryId | null;
+  readonly branch: string | null;
+  readonly baseCommit: string | null;
+  readonly headCommit: string | null;
+  readonly pullRequests: readonly string[];
+
+  readonly changedAreas: readonly string[];
+  readonly relevantFiles: readonly string[];
+  readonly decisions: readonly WorkHandoffStatement[];
+  readonly completed: readonly WorkHandoffStatement[];
+  readonly openQuestions: readonly WorkHandoffStatement[];
+  readonly nextActions: readonly WorkHandoffStatement[];
+
+  readonly completeness: "complete" | "partial";
+  readonly createdByPrincipal: PrincipalRef;
+  readonly acceptedByPersonId: PersonId | null;
+  readonly acceptedAt: Instant | null;
+  readonly expiresAt: Instant | null;
+  readonly createdAt: Instant;
+}
+```
+
+Each revision is immutable. Creation defaults to `draft`. Acceptance records a
+Person and atomically sets `currentWorkHandoffId`, superseding the prior accepted
+revision. Rejection and expiry preserve history. Concurrent stale acceptance
+fails with a typed conflict.
+
+### Work handoff statement and evidence
+
+```ts
+type WorkHandoffEvidenceSource =
+  | { readonly kind: "observed-session"; readonly sessionFactId: SessionFactId; readonly quality: SessionFactQuality }
+  | { readonly kind: "observed-git"; readonly deviceId: DeviceId; readonly capturedAt: Instant }
+  | { readonly kind: "explicit-user"; readonly personId: PersonId; readonly statedAt: Instant }
+  | { readonly kind: "explicit-agent"; readonly agent: AgentRef; readonly statedAt: Instant }
+  | { readonly kind: "generated-summary"; readonly agent: AgentRef; readonly model: string; readonly generatedAt: Instant };
+
+interface WorkHandoffStatement {
+  readonly text: string;
+  readonly source: WorkHandoffEvidenceSource;
+  readonly provenance: readonly ResourceReference[];
+  readonly confidence: "observed" | "declared" | "generated";
+}
+```
+
+Source is required and has no default. Generated text cannot render as observed.
+Unavailable/estimated facts never render as exact zero/default.
+
+## Persistence and writer ownership
+
+The logical schema is implemented twice behind one repository/application
+contract:
 
 ```text
+work_threads
+  id, space_id, project_id NULL, title, intent, status,
+  current_work_handoff_id NULL, created_by, timestamps
+
+work_handoffs
+  id, thread_id, space_id, project_id NULL, revision_number, status,
+  source refs, Git evidence, statements/evidence, completeness,
+  created/accepted/expiry metadata
+
 work_thread_sessions
-  work_thread_id
-  session reference
-  role: planning | implementation | review | investigation | documentation | other
-  linked_by / linked_at
-  confidence/source
+  thread_id, session_fact_id, role, link source/confidence, linked_at
 
 work_thread_events
-  started, session-linked, handoff-created, status-changed, etc.
+  immutable lifecycle/audit events
 ```
 
-Rules:
+Local phase: these tables live in the dedicated Memory SQLite store and share
+its sole writer/application-service composition.
 
-- sessions are linked explicitly or through a reviewed high-confidence
-  suggestion;
-- one session may contribute to more than one Work Thread only through an
-  explicit supported case;
-- changing a title/status never rewrites session facts;
-- a Work Thread is not a project, branch, issue, or PR, though it may reference
-  all of them.
+Connected phase: equivalent PostgreSQL tables use the same domain validation,
+non-null Space fence, nullable Project, and Authorizer. Plan 107 carries
+`WorkHandoff`/Work Thread publication events added in the connected extension;
+it does not convert legacy Memory `kind: "handoff"` records automatically.
 
-### Handoff
+Web, CLI, and MCP never open write-capable SQLite/PostgreSQL connections. They
+call Work application services.
+
+## Application services
+
+```text
+createWorkThread
+changeWorkThreadStatus
+linkSessionToWorkThread
+createWorkHandoffDraft
+previewWorkHandoffAcceptance
+acceptWorkHandoff
+rejectWorkHandoff
+expireWorkHandoff
+getWorkHandoff
+getWorkThreadContext
+getLatestWorkHandoff
+continueFromWorkHandoff
+```
+
+Services use only the four normalized Work handoff permissions:
+
+- viewing retrieval/context uses `view_work_handoff`;
+- draft creation/session linking uses `create_work_handoff`;
+- Person acceptance uses `accept_work_handoff`;
+- thread/status/rejection/expiry/supersession administration uses
+  `manage_work_handoff`.
+
+Aggregate usage permission grants none of them. Source-session content is not
+automatically required to view a separately reviewed accepted Work handoff;
+provenance reveals only metadata the caller may see. Sensitive statements may
+add a condition but never bypass these permissions.
+
+Local phase composes `SingleUserAuthorizer`; connected phase composes the full
+adapter. No route/MCP permission logic exists.
+
+## Creation and acceptance
+
+```text
+select/create Work Thread (Project optional)
+  ↓
+select source sessions and optional checkout
+  ↓
+capture bounded session/Git evidence
+  ↓
+author or generate source-labelled statements
+  ↓
+preview evidence, uncertainty, sensitive fields, destination Space
+  ↓ state-bound acceptance proof
+Person accepts
+  ↓
+accepted immutable WorkHandoff + atomic currentWorkHandoffId
+```
+
+Generated proposals remain draft. No background job or MCP tool accepts them.
+Preview becomes stale when evidence/thread/current pointer changes.
+
+## Continuation
+
+The user selects target harness and, when applicable, target Device/checkout.
+The service verifies permission, Project/repository compatibility, branch/HEAD,
+dirty worktree risk, evidence availability, and MCP capability.
 
 ```ts
-interface Handoff {
-  id: HandoffId;
-  owningSpaceId: SpaceId;
-  projectId: ProjectId;
-  workThreadId: WorkThreadId;
-  revisionNumber: number;
-  status: "draft" | "active" | "superseded" | "rejected";
-
-  sourceSessions: SessionReference[];
-  sourceDeviceId: DeviceId | null;
-  sourceHarnessKeys: string[];
-
-  repositoryId: RepositoryId | null;
-  branch: string | null;
-  baseCommit: string | null;
-  headCommit: string | null;
-  pullRequests: string[];
-
-  changedAreas: string[];
-  relevantFiles: string[];
-  decisions: HandoffStatement[];
-  completed: HandoffStatement[];
-  openQuestions: HandoffStatement[];
-  nextActions: HandoffStatement[];
-
-  completeness: "complete" | "partial";
-  createdByPrincipal: PrincipalRef;
-  acceptedByPersonId: PersonId | null;
-  acceptedAt: Instant | null;
-  createdAt: Instant;
-}
-```
-
-A Handoff revision is immutable. Accepting a new one supersedes the previous
-active Handoff for the Work Thread atomically.
-
-### Handoff statement
-
-Every statement identifies its epistemic source:
-
-```ts
-type HandoffStatementSource =
-  | "observed-git"
-  | "observed-session"
-  | "explicit-user"
-  | "explicit-agent"
-  | "generated-summary";
-
-interface HandoffStatement {
-  text: string;
-  source: HandoffStatementSource;
-  provenance: ResourceReference[];
-  confidence: "observed" | "declared" | "generated";
-}
-```
-
-Generated summary text must never be serialized as if Git or session facts
-proved it.
-
-## Work intent
-
-Introduce an optional explicit work category when a Thread/Handoff is created:
-
-```text
-planning
-implementation
-bugfix
-refactor
-review
-investigation
-documentation
-operations
-```
-
-This is user/agent-declared intent, not prompt clustering. The repository’s prior
-intent spike found insufficient reliable signal in first prompts; do not reopen
-that rejected inference under a new name.
-
-## Evidence inputs
-
-### Deterministic ai-usage evidence
-
-Use existing/new normalized facts for:
-
-- Device, harness, source session identity;
-- Project/Repository mapping;
-- session start/end/title/models/tools/partial state;
-- branch/commit/PR references when provenance is reliable;
-- source freshness and parser limitations.
-
-### Git evidence
-
-The source Device may collect a bounded snapshot at Handoff creation:
-
-- repository identity;
-- current branch;
-- HEAD/base commit;
-- clean/dirty summary (never full secret-bearing diff by default);
-- relevant changed file names if explicitly included;
-- upstream/PR references when already known.
-
-The target Device must re-check current checkout state before presenting “ready
-to continue”. A stored Handoff is not authority that the worktree still matches.
-
-### Explicit statements
-
-Agent/user supplies:
-
-- decisions and rationale;
-- what is truly complete;
-- open questions;
-- intended next actions;
-- relevant areas/files not deterministically inferable.
-
-### Generated proposal
-
-An agent may propose a Handoff from evidence, but it remains `draft` with every
-statement source labelled. A Person or explicitly trusted workflow accepts it.
-No background job silently activates generated Handoffs.
-
-## Handoff creation workflow
-
-```text
-Select/create Work Thread
-  ↓
-Select source sessions and current Project checkout
-  ↓
-Capture deterministic session + Git evidence
-  ↓
-Agent/user writes or generates bounded statements
-  ↓
-Preview: evidence, uncertainty, sensitive fields, target Space
-  ↓
-Accept
-  ↓
-New active immutable Handoff; prior one superseded
-```
-
-Preview/accept must use a state-bound proof so source evidence changing between
-preview and acceptance yields `preview-stale` or a refreshed diff.
-
-## Continuation workflow
-
-### Target selection
-
-User chooses:
-
-- target Device/checkout;
-- target harness;
-- optional profile/Skills set;
-- active Handoff.
-
-The system verifies:
-
-- permission to view Handoff and Project;
-- target Device ownership/availability when local;
-- checkout resolves to the same Project/Repository;
-- target branch/commit compatibility;
-- dirty worktree risk;
-- required Handoff content is available and not deleted;
-- target MCP capability is configured.
-
-### MCP retrieval
-
-Enable `memory.latest_handoff` and optionally:
-
-```text
-handoff.get
-work_thread.get_context
-```
-
-Response is bounded and contains:
-
-- Work Thread and Project IDs/title;
-- source sessions/harnesses/devices as metadata;
-- Git state with observed-at time;
-- accepted decisions/completed/open/next statements with source labels;
-- relevant files/areas;
-- completeness and limitations;
-- instruction to verify source/tests/current user request.
-
-### Launch
-
-The first release may:
-
-- generate/copy a harness-neutral continuation prompt;
-- open a local harness CLI through a narrow allowlisted launcher after explicit
-  confirmation;
-- or leave launch manual while proving MCP retrieval.
-
-It must not write a fabricated native session record or pass arbitrary shell
-strings from the browser. Any launcher follows structured adapter/allowlist
-rules and remains local.
-
-## Handoff as Memory
-
-Handoffs are related to Agent Memory but have their own lifecycle:
-
-- Handoff = current operational continuation state for one Work Thread;
-- Memory Item = durable guidance intended to affect future work beyond the
-  checkpoint.
-
-A Handoff may reference active Memory Items. Completing a Thread may produce
-Memory Proposals (decision/pitfall/pattern), but does not auto-promote all
-Handoff text into durable Memory.
-
-Avoid duplicating Handoff content permanently in a `memory_items` row. Search may
-index accepted Handoffs as a separate authorized resource type.
-
-## Server/local ownership
-
-### Connected mode
-
-PostgreSQL owns shared Work Threads/Handoffs and revisions. Device replication
-publishes session facts/evidence; Handoff commands use server application
-services and Authorizer.
-
-### Local-only mode
-
-Support a local Handoff capability using local SQLite or a bounded local store if
-plan 100 accepted it. The domain contracts stay identical enough for later
-publication, but local-only operation must not require a Person login/server.
-
-Do not force the existing usage SQLite schema to own all Memory/Handoff tables if
-a separate local domain store is safer; plan 100’s data matrix decides the local
-composition.
-
-## Authorization
-
-Permissions:
-
-```text
-view_work_thread
-manage_work_thread
-view_handoff
-create_handoff
-accept_handoff
-continue_from_handoff
-link_session_to_work_thread
-```
-
-Rules:
-
-- viewing aggregate usage does not grant Handoff content;
-- source session content permission is not automatically required to view an
-  accepted Handoff, because the Handoff is a separately reviewed artifact;
-- provenance links reveal only metadata permitted to the caller;
-- creating/accepting in an organization requires Project/Space permission;
-- target Device selection cannot expose another person’s checkout paths;
-- sensitive Handoff statements may require stronger permission/policy.
-
-## Conflict and staleness behavior
-
-Handle:
-
-- two concurrent draft Handoffs;
-- accepting against a newer active revision;
-- branch or HEAD changed after capture;
-- source session facts updated/partial;
-- target checkout missing or at divergent commit;
-- Work Thread completed while another client continues;
-- memory decision superseded after Handoff acceptance.
-
-Never rewrite accepted Handoff history. Show stale/changed evidence and require a
-new revision or explicit continuation override.
-
-## Product surfaces
-
-### Work
-
-A future top-level `Work` destination may show:
-
-- active Threads;
-- latest Handoff and age;
-- source/target harness and Device metadata;
-- current branch/commit readiness;
-- next actions;
-- continue/copy-context action.
-
-Do not reorganize the full navigation until this vertical slice exists. The
-initial surface may live within Sessions/Project detail.
-
-### Session detail
-
-Show:
-
-- linked Work Thread;
-- create/update Handoff;
-- source/target relationship;
-- whether detailed content is local, archived, or opaque.
-
-### CLI
-
-Conceptual commands:
-
-```text
-ai-usage work list
-ai-usage handoff create --session ...
-ai-usage handoff show <id>
-ai-usage handoff continue <id> --harness codex
-```
-
-Final names follow the CLI grammar. Commands use application services rather
-than duplicating state logic.
-
-## Validation scenario
-
-The first product gate should use synthetic sessions but mirror real work:
-
-1. Claude session is linked to a new Work Thread for `ai-usage`;
-2. deterministic evidence identifies Project, branch, commit, source Device, and
-   partial/complete state;
-3. draft Handoff records one observed fact, one explicit decision, and one
-   generated next-action proposal;
-4. Person reviews and accepts it;
-5. Codex on another Device/checkout retrieves it through MCP;
-6. target verifies repository/branch/commit and reports one mismatch if fixture
-   is deliberately stale;
-7. Codex starts a new native session/context and links its resulting session to
-   the same Work Thread;
-8. no Claude private session file is written or copied;
-9. unauthorized user/auditor cannot retrieve the Handoff.
-
-Success is continuity without manual retelling, not proof that the target model
-makes the correct code change.
-
-## Commands you will need
-
-| Purpose | Command | Expected on success |
-|---|---|---|
-| Prerequisite: naming resolved | `grep -c "Handoff" CONTEXT.md` | ≥ 1 |
-| Prerequisite: memory exists | `test -f packages/memory/src/services.ts` | exit 0 |
-| Work-thread tests | `bun test packages/work-threads` | all pass |
-| Evidence provenance tests | `bun test packages/work-threads/src/evidence.test.ts` | all pass |
-| Staleness tests | `bun test packages/work-threads/src/staleness.test.ts` | all pass |
-| Cross-harness scenario | `bun test apps/server/src/cross-harness-handoff.test.ts` | all pass |
-| MCP tools | `bun test packages/mcp-adapter` | all pass |
-| Local regression, no cluster | `! pgrep -x postgres && bun run test:packages` | all pass |
-| Full verification | `bun run check && bun run lint && bun run typecheck && bun run test` | exit 0 |
-
-## Git workflow
-
-- Branch `plan/108-work-handoffs`, cut from plan 107's branch.
-- Migration `0007_work_threads` — check `packages/postgres-store/src/migrations.ts`
-  for the current highest number first; 105 and 107 may both have landed.
-- Stage by explicit path. Never `git add -A`.
-- Four commits:
-  1. `feat(work-threads): add work threads and handoffs with source-labelled evidence`
-  2. `feat(work-threads): add creation and continuation workflows`
-  3. `feat(mcp-adapter): expose handoff creation and retrieval tools`
-  4. `feat(web): add the work thread and handoff surfaces`
-- Do not push or open a PR unless the operator asks.
-
-## Steps
-
-### Step 1: Make evidence provenance unforgeable at the type level
-
-The program's STOP condition — "a cross-harness handoff cannot distinguish
-observed facts from generated summary content" — is satisfied structurally or
-not at all. A `source` string field will be filled in wrongly within a month.
-
-`packages/work-threads/src/evidence.ts`:
-
-```ts
-export type EvidenceSource =
-  | { readonly kind: 'observed'; readonly sessionFactId: SessionFactId; readonly quality: SessionFactQuality }
-  | { readonly kind: 'git-snapshot'; readonly deviceId: DeviceId; readonly capturedAt: Instant }
-  | { readonly kind: 'stated'; readonly by: PersonId; readonly statedAt: Instant }
-  | { readonly kind: 'generated'; readonly by: AgentRef; readonly model: string; readonly generatedAt: Instant };
-
-export interface EvidenceItem<T> {
-  readonly value: T;
-  readonly source: EvidenceSource;    // required, no default
-}
-```
-
-`SessionFactQuality` is `docs/session-analysis-sources.md:15-23`'s vocabulary
-(`recorded` | `derived` | `partial` | `estimated` | `unavailable`), imported
-rather than restated.
-
-There is **no** `EvidenceItem` constructor that omits `source`, and no default
-variant. Every handoff field is an `EvidenceItem<T>`, so an unlabelled statement
-is a typecheck failure — `strict` and `exactOptionalPropertyTypes` are on
-(`tsconfig.json:8,12`).
-
-`evidence.test.ts`: rendering a handoff always emits the source per field; a
-`generated` item is never presented with the same affordance as an `observed`
-one; an `unavailable` quality is never rendered as zero or as a default
-(`docs/session-analysis-sources.md:24-25`).
-
-**Verify**: `bun test packages/work-threads/src/evidence.test.ts` → all pass.
-
-### Step 2: Schema
-
-Migration `0007_work_threads`:
-
-```text
-work_threads   (id, space_id NOT NULL, project_id NULL, title, intent,
-                status text CHECK (status IN ('active','paused','completed','abandoned','archived')),
-                created_by, created_at, closed_at NULL)
-work_handoffs  (id, thread_id NOT NULL, space_id NOT NULL,
-                status text CHECK (status IN ('draft','accepted','superseded','rejected','expired')),
-                source_session_ref jsonb NOT NULL,
-                target_session_ref jsonb NULL,
-                evidence jsonb NOT NULL,          -- EvidenceItem-shaped, validated on write
-                created_by, created_at,
-                accepted_by NULL, accepted_at NULL)
-work_thread_sessions (thread_id, session_fact_id, role, linked_at)
-```
-
-- `status` defaults to `'draft'`. A generated handoff is never `accepted`
-  without an explicit act — the same rule plan 105 applies to memory proposals,
-  and for the same reason.
-- `evidence` is validated against the `EvidenceItem` schema on write, not just
-  typed. `jsonb` accepts anything; the validator is the guard.
-- `source_session_ref` is a `SessionReference` (below): a *reference*, not a
-  claim that the server can open the session.
-
-**Verify**: `bun test packages/postgres-store/src/migrations.test.ts` → all pass.
-
-### Step 3: Creation — draft by default, accepted by a person
-
-`createHandoff` produces `draft`. `acceptHandoff` requires a person principal
-and `Authorizer` permission on the thread.
-
-`creation.test.ts`:
-- an agent-proposed handoff is `draft` with every generated field labelled;
-- no background job can transition `draft → accepted` — assert by enumerating
-  the service surface for any function that accepts without a person principal;
-- accepting records `accepted_by` and `accepted_at`;
-- a handoff in a Space the principal cannot write is denied, with nothing written.
-
-**Verify**: `bun test packages/work-threads/src/creation.test.ts` → all pass.
-
-### Step 4: Continuation — re-check, never trust the snapshot
-
-The plan's own rule: *"A stored Handoff is not authority that the worktree still
-matches."*
-
-`continueHandoff` returns a **continuation briefing**, never a "ready" boolean:
-
-```ts
-export interface ContinuationBriefing {
-  readonly handoff: Handoff;
-  readonly checkoutState: 'matches' | 'diverged' | 'unavailable';
-  readonly divergences: readonly Divergence[];   // branch moved, HEAD differs, dirty, checkout missing
+interface ContinuationBriefing {
+  readonly workHandoff: WorkHandoff;
+  readonly checkoutState: "matches" | "diverged" | "unavailable";
+  readonly divergences: readonly Divergence[];
   readonly staleness: { readonly capturedAt: Instant; readonly ageSeconds: number };
 }
 ```
 
-`staleness.test.ts`:
-- the target device's HEAD differs → `diverged`, with the specific divergence;
-- the branch was deleted → `diverged`, not `unavailable`;
-- the checkout does not exist on the target device → `unavailable`, and the
-  briefing is still returned with its stated evidence intact — a handoff whose
-  worktree is gone is still useful context;
-- an old handoff → age reported, never silently hidden by a default filter
-  (ADR 0017).
+Missing checkout still returns the accepted stated context with `unavailable`.
+Branch/HEAD/dirty divergence is visible and never collapsed into a ready boolean.
+Continuation creates a normal new target session/context and later links its
+Session reference. It never writes a fabricated native record or executes an
+arbitrary shell string from Web/server.
 
-**Continuation creates a new native target session.** It never writes into
-another harness's store — ADR 0030, and plan 110 is the only place authorized to
-investigate that.
+## MCP contract
 
-**Verify**: `bun test packages/work-threads/src/staleness.test.ts` → all pass.
+The initial agent-facing Work tools are read-only and exactly:
 
-### Step 5: Handoff as memory
+```text
+memory.latest_work_handoff
+work_handoff.get
+work_thread.get_context
+```
 
-An accepted handoff becomes a memory **proposal** (plan 105), not a memory item.
-It goes through the same acceptance path as everything else. Reuse
-`proposeMemory`; do not add a bypass.
+They return bounded Work Thread/Project identity, accepted statements with
+source labels, relevant areas/files, source metadata, captured Git evidence,
+completeness, staleness, and instructions to verify current code/tests/user
+request.
 
-**Verify**: `bun test packages/work-threads/src/handoff-memory.test.ts` — an
-accepted handoff creates a proposal, and the proposal still requires acceptance.
+Draft creation/acceptance stays in application services exposed through
+authenticated Person UI/CLI flows. No `work_handoff.accept` MCP tool exists in
+the first release.
 
-### Step 6: The cross-harness scenario — program gate #8
+## Relationship to Memory
 
-`apps/server/src/cross-harness-handoff.test.ts`:
+A Work handoff is current operational continuity for one Work Thread. A Memory
+Item is durable guidance beyond a checkpoint. Search indexes accepted Work
+handoffs as their own resource; do not duplicate them as Memory Items.
 
-1. synthetic Claude session on device A produces session facts;
-2. an agent proposes a handoff; a person accepts it;
-3. synthetic Codex session on device B retrieves it through the MCP adapter;
-4. the briefing contains enough verified context to continue: project, branch,
-   stated decisions, open questions, next actions — each with its source;
-5. **no write occurred to any native harness store.** Assert it: snapshot the
-   fixture harness directories before and after and compare byte-for-byte.
+Completing a Work Thread or accepting a Work handoff may create a pending Memory
+Proposal via plan 105's service. It never creates/accepts an Item directly. A
+legacy imported Memory `kind: "handoff"` remains legacy Memory unless a Person
+explicitly creates a new WorkHandoff from it through a reviewed migration flow.
 
-Step 5 is the assertion that keeps ADR 0030 honest.
+## Phase A: local vertical slice
 
-**Verify**: `bun test apps/server/src/cross-harness-handoff.test.ts` → all pass.
+1. implement domain/status/evidence contracts and conformance tests;
+2. add SQLite tables to the dedicated Memory store under the existing local
+   writer;
+3. add application services with `SingleUserAuthorizer`;
+4. implement draft preview/Person acceptance and current pointer;
+5. activate the three MCP retrieval tools over local FTS5/application services;
+6. prove a synthetic Claude → accepted WorkHandoff → Codex new-session context
+   flow with no server/account/network/PostgreSQL call;
+7. prove native harness fixture directories are byte-identical before/after.
 
-### Step 7: MCP tools and surfaces
+This is the early product-validation milestone. Do not wait for plans 103/104/107.
 
-Tools: `handoff_create` (→ draft), `handoff_get`, `thread_list`,
-`thread_sessions`. No `handoff_accept` over MCP — acceptance is a person's act,
-so it belongs on a surface where a person is authenticated, not in an agent's
-tool list.
+## Phase B: connected extension
 
-Web surfaces: thread list, thread detail with its session timeline, handoff
-detail with per-field provenance, and the accept action. ADR 0010/0012 and the
-presentation gate apply; one named Query policy per data identity.
+After plan 107:
 
-**Verify**: `bun test packages/mcp-adapter` → the tool allowlist test includes
-the absence of `handoff_accept`. `bun run test:e2e -- e2e/<new-spec>.spec.ts`
-→ passes, axe clean.
+1. add equivalent PostgreSQL repository adapter and full Authorizer composition;
+2. add normalized WorkHandoff/Work Thread replication change kinds and fact/event
+   identity tests;
+3. publish eligible accepted local Work handoffs according to policy;
+4. enable shared/cross-device retrieval through the same MCP contracts;
+5. prove unauthorized member/auditor denial and offline source Device behavior;
+6. prove conflicting local/shared revisions surface review instead of silent
+   overwrite.
 
-### Step 8: Documentation
+Connected direct commands may create shared drafts; replicated/local changes
+must have one documented conflict/authority rule. Do not introduce two current
+pointers for one shared Work Thread.
 
-- `packages/work-threads/README.md` — the evidence model, why `source` is
-  non-optional, and the draft→accepted rule.
-- `CONTEXT.md` — **Work handoff** and **Work thread**, with `_Avoid_` lists
-  naming the two colliding meanings explicitly.
-- ADR 0030's evidence — cite the no-native-write assertion from Step 6.
-- `plans/README.md:66` row → `DONE`.
+## Product surfaces
 
-## Testing requirements
+Minimum local surface may live under Session/Project detail and shows Thread,
+draft/accepted Work handoff, per-statement source, staleness, and continue/copy
+context. Connected surface adds Device/freshness/conflict context. A top-level
+Work destination is deferred until the vertical proves value.
+
+CLI vocabulary uses explicit `work-thread` and `work-handoff` nouns, not a bare
+new `handoff` command that collides with engine transport.
+
+## Tests
 
 ### Domain/persistence
 
-- Work Thread create/status/archive;
-- explicit/reviewed session linking;
-- immutable Handoff revisions and atomic active pointer;
-- concurrent acceptance/stale preview;
-- source-labelled statements/provenance;
-- Handoff/Memory separation;
-- cross-Space/project relationship rejection;
-- delete/retention behavior.
+- exact status sets and schema/check alignment from shared constants;
+- nullable Project legitimate case;
+- Work Thread lifecycle and immutable WorkHandoff revisions;
+- atomic current pointer and concurrent stale acceptance;
+- source-required evidence and generated/observed presentation;
+- cross-Space rejection and content-free events;
+- legacy Memory handoff remains distinct.
 
-### Git/checkout safety
+### Git/continuation
 
-- clean matching target;
-- missing checkout;
-- same Repository different path;
-- branch mismatch;
-- HEAD divergence;
-- dirty worktree warning;
-- source evidence age;
-- paths remain Device-local/authorized;
-- no full diff or secret captured by default.
+- matching/missing/different checkout;
+- branch deleted, HEAD divergence, dirty state, evidence age;
+- paths remain Device-local/opaque when remote;
+- no full diff/secret by default;
+- no native store mutation and no arbitrary shell.
 
-### MCP/launcher
+### MCP/authorization
 
-- bounded latest Handoff response;
-- status/trust/source labels retained;
-- unauthorized retrieval;
-- stale Handoff indication;
-- identical schema across harness fixtures;
-- launcher allowlist/structured args/no `sh -c`;
-- no native session-store writes;
-- resulting target session can be linked back to Thread.
+- exact three tool names and no aliases;
+- exact four permission names and no old aliases;
+- bounded result and identical local/connected response shape;
+- unauthorized retrieval and aggregate-auditor denial;
+- no MCP acceptance;
+- local flow makes zero platform calls.
 
-### Presentation
+## Verification
 
-- Thread/Handoff state understandable on desktop/mobile;
-- generated versus observed copy is visually and accessibly distinguishable;
-- no hidden content in tooltips only;
-- presentation gate assertion fails on stale/missing readiness regression.
+- grep finds no bare new `interface Handoff`, `HandoffId`, or
+  `HandoffStatement` domain declaration;
+- status/tool/permission contract tests enumerate exact sets;
+- local cross-harness scenario passes before connected work;
+- connected scenario passes after plan 107 with same contracts;
+- native harness directories are unchanged;
+- lint, typecheck, package tests, e2e/accessibility gates pass.
 
 ## Done criteria
 
-- [ ] Work Thread and Handoff are stable, authorized, versioned domains above
-      native harness sessions.
-- [ ] Handoff statements preserve observed/declared/generated provenance.
-- [ ] Creation has state-bound preview and explicit acceptance.
-- [ ] Latest active Handoff is retrievable through shared MCP tools.
-- [ ] Target Device/checkout verifies current Git state before continuation.
-- [ ] At least one cross-harness, cross-device synthetic vertical slice passes.
-- [ ] Target starts a normal native session; no private harness store is forged.
-- [ ] Handoff does not auto-promote all content into durable Memory.
-- [ ] Aggregate-only roles cannot view Handoff content.
-- [ ] Local-only behavior remains possible according to accepted platform
-      topology.
+- [ ] Work Thread and WorkHandoff use one normalized domain contract.
+- [ ] WorkThread.projectId is nullable and both status sets are exact.
+- [ ] All WorkHandoff statements distinguish observed/declared/generated.
+- [ ] Local offline cross-harness flow works through the exact MCP tools.
+- [ ] Connected extension reuses contracts and depends on plan 107.
+- [ ] Target starts a normal native session and rechecks Git state.
+- [ ] Aggregate-only roles cannot see Work handoff content.
+- [ ] Work handoff does not auto-promote into durable Memory.
 
 ## STOP conditions
 
 Stop and report when:
 
-- a generated summary is stored as observed fact;
-- Work Thread linkage is inferred solely from prompt similarity;
-- continuation requires writing undocumented native session DB/JSONL;
-- target launch accepts an arbitrary shell string from Web/server;
-- the server needs access to target machine files;
-- dirty/divergent Git state is hidden to present a successful continuation;
-- Handoff content becomes visible through aggregate usage permission;
-- accepted Handoff history is overwritten;
-- all Handoff text is automatically promoted to durable Memory;
-- success/productivity is inferred from token count, duration, commits, or lines.
+- a bare new `Handoff` domain type or old tool/permission alias appears;
+- local WorkHandoff requires shared server/login/PostgreSQL;
+- generated content is stored/rendered as observed;
+- Project becomes required for legitimate non-project work;
+- accepted history/current pointer is overwritten non-transactionally;
+- continuation writes undocumented native stores or accepts arbitrary shell;
+- Work handoff content becomes visible through aggregate permission;
+- all content auto-promotes to Memory;
+- success is inferred from activity metrics.
 
 ## Out of scope
 
-- exact native session migration (plan 110);
-- synchronizing uncommitted worktrees;
-- automatic code checkout or Git credential distribution;
-- autonomous acceptance of generated Handoffs;
-- issue-tracker integration beyond stored references;
-- generalized workflow engine or project-management replacement;
-- recommendation scoring for which harness is “best”.
+- native session migration (plan 110);
+- uncommitted worktree synchronization/Git credential distribution;
+- autonomous acceptance;
+- generalized workflow/project-management engine;
+- harness recommendation scoring.

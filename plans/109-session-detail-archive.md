@@ -1,321 +1,233 @@
 # Plan 109: Archive Session Detail Safely for Cross-Machine Read-Only Continuity
 
-> **Executor instructions**: This plan adds an opt-in normalized archive, not raw
-> provider backup and not native session synchronization. Preserve the current
-> distinction between portable report facts and local session detail. Authorization,
-> sensitivity, retention, deletion, provenance, and size bounds must be settled
-> before the first prompt or turn is uploaded.
+> **Executor instructions**: Add an opt-in normalized archive, not raw provider
+> backup or native session synchronization. The complete shared security
+> boundary—organization authorization, GitHub authentication, Device
+> enrollment, replication, and connected WorkHandoff—must pass before any
+> prompt or turn leaves its source Device.
 >
 > **Drift check (run first)**:
-> `git diff --stat dac2214c..HEAD -- packages/local-machine packages/report-core packages/report-data packages/usage-store packages/replication packages/authorization packages/project-registry packages/memory packages/mcp-adapter apps/usage-engine apps/server apps/web apps/cli docs/architecture.md docs/adr`
-> Re-read current Session detail authority rules and plans 103, 107, and 108 on
-> any drift.
+> `git diff --stat dac2214c..HEAD -- packages/local-machine packages/report-core packages/report-data packages/usage-store packages/replication packages/authorization packages/project-registry packages/memory packages/mcp-adapter packages/work-threads apps/usage-engine apps/server apps/web apps/cli docs/architecture.md docs/adr`
+
+## Authoritative decisions
+
+The contracts and steps below are the current implementation specification.
+Superseded alternatives remain in Git history and are not executable guidance.
 
 ## Status
 
 - **Priority**: P2
 - **Effort**: L
-- **Risk**: CRITICAL — prompts, tool chronology, paths, and outputs may contain
-  source code, personal data, credentials, or organization-confidential content
-- **Depends on**: 103, 104, 107, 108
+- **Risk**: CRITICAL — prompts, chronology, paths, and outputs may contain code,
+  personal data, credentials, or organization-confidential content
+- **Depends on**: 103, 104, 107, 108 connected phase
 - **Category**: sensitive session archive and cross-machine read continuity
 - **Planned at**: commit `dac2214c`, 2026-08-26
 - **Implementation status**: TODO
 
-## Why this matters
+## Existing boundary
 
-Replicated usage rows can show that a session happened, where it fits in a
-Project, which harness/model ran, and how much work was recorded. They cannot
-always explain what the agent did or support a useful handoff review after the
-source machine is offline.
+Today, report facts may be persisted/ported while detailed session chronology is
+read only from an authorized local harness artifact on the source machine.
+`packages/local-machine/src/session-detail.ts` and per-harness analyzers own that
+bounded local interpretation; `docs/session-analysis-sources.md` owns its
+Recorded/Derived/Partial/Estimated/Unavailable quality vocabulary.
 
-The current product correctly treats imported/remote source paths as opaque and
-reads detailed chronology only from authorized local harness artifacts. That
-security boundary must remain explicit. Cross-machine detail should be a new
-archive authority produced by the source Device, not a server pretending a
-remote session is local.
+This plan deliberately introduces a third authority produced by the source
+Device. A server-retrieved path remains opaque and never authorizes local
+filesystem access on another Device.
 
-## Current state
-
-### The existing boundary this plan deliberately crosses
-
-`docs/session-analysis-sources.md:9-14` is today's rule:
-
-> **report metrics** are normalized rows that may be persisted, included in
-> report revisions, snapshots, merge bundles, JSON, and CSV;
-> **local detail** is read from the source machine only after the user opens a
-> supported session analysis. **It is not part of the report revision.**
-
-Session detail has never left the machine that produced it. This plan is the
-first to move it, which is why it is `Risk: CRITICAL` and opt-in. Class A/B/C
-below maps onto that existing split: Class A is roughly today's report metrics,
-Class B is today's local detail, Class C is the raw source that has never been
-readable off-machine and stays that way.
-
-### The detail machinery that exists
-
-- `packages/local-machine/src/session-detail.ts`, exported as
-  `./session-detail` (`packages/local-machine/package.json:24`).
-- Per-harness: `claude-session-analysis.ts`, `codex-session-analysis.ts`,
-  `opencode-session-analysis.ts`, plus `*-session-facts.ts`.
-- `docs/session-analysis-sources.md` records per-harness truthfulness with the
-  quality vocabulary (`:15-23`).
-
-`tools/check-package-boundaries.ts:147` already treats
-`@ai-usage/local-machine/session-detail` as a named subpath with restricted
-importers. Extending who may import it is a **boundary change**, and it must be
-a visible one — do not widen the policy to make an import convenient.
-
-### Opaque paths are already a rule
-
-`CONTEXT.md:96-99` (**Project source**): *"Locally observed paths may be
-canonicalized and inspected; paths from snapshots or merge bundles are opaque
-labels and never authorize local filesystem access."*
-
-Enforced by `SourceAuthority` in
-`packages/report-data/src/project-projection.ts:26` (see plan 103's Current
-state for why that word does not mean permission). An archive retrieved from the
-server is, by this rule, **opaque** on the retrieving device. State it in the
-archive contract: a path in an archive never authorizes a filesystem read.
-
-### Encryption context
-
-The program has no key-management component and none of 100–108 introduces one.
-If this plan requires envelope encryption with a KMS, that is a new
-infrastructure dependency — treat it as a decision for the maintainer (Step 1),
-not something to pick mid-implementation.
-
-### Prerequisites
-
-Plans 103, 104, 107, 108. This plan moves the most sensitive content in the
-program; the boundary that protects it must be in place and conformance-tested.
-
-## Authority model
-
-Every Session detail request resolves to one of these authorities:
+## Authority states
 
 ```text
 local-observed
-  parsed now from an authorized harness artifact on the source Device
+  parsed now from an authorized local harness artifact
 
 archived-observed
-  normalized, bounded detail captured by the source Device and stored under an
-  explicit archive policy
+  bounded normalized detail captured by the source Device under explicit policy
 
 portable-opaque
-  metadata/facts exist, but no authorized detail source is available
+  metadata exists but no authorized detail authority is available
 ```
 
-The UI/API/MCP must expose authority, captured-at time, parser/archive version,
-completeness, and limitations. Never silently fall back from local to archive or
-from archive to a synthetic reconstruction without changing the label.
+Contracts/UI/MCP expose authority, captured time, parser/archive version,
+completeness, redaction/truncation, and limitations. There is no silent fallback
+between states and no synthetic reconstruction labeled observed.
 
-## Data classification
+## Data classes
 
-### Class A — portable session metadata
+### Class A: portable metadata
 
-May replicate by default under plan 107 policy:
+May replicate under plan 107 policy: Session/Device/harness/Project IDs,
+timestamps, usage/model/tool counts, partial flags, authorized branch/commit/PR
+metadata, and bounded title under current privacy rules.
 
-- stable Session fact/reference;
-- Device/harness/Project/Repository IDs;
-- timestamps/duration/model/token/tool counts;
-- partial/ambiguous flags;
-- branch/commit/PR references when already authorized;
-- bounded title only under current privacy rules.
+### Class B: normalized archive detail
 
-### Class B — normalized session detail
+Opt-in: allowed prompt/user-turn text or summaries, normalized turns/phases,
+model transitions, tool names/categories and bounded status, token/timing detail,
+WorkHandoff-relevant chronology, coverage, truncation, parser warnings, and
+source authority. Policy decides each included field.
 
-Opt-in archive payload owned by this plan:
+### Class C: raw local artifacts
 
-- prompts or user-turn summaries according to policy;
-- normalized turns/phases and timestamps;
-- model transitions and effort metadata;
-- tool names/categories and bounded status;
-- token/timing detail;
-- accepted Handoff-relevant chronology;
-- coverage, truncation, parser warnings, and source authority.
-
-### Class C — raw local artifacts
-
-Never synchronized by default and not included in this plan:
-
-- Claude/Codex JSONL/rollout files;
-- OpenCode/Cursor SQLite databases;
-- raw terminal/tool output;
-- arbitrary source file contents;
-- environment variables, credentials, MCP secrets;
-- full uncommitted diffs/worktrees;
-- provider authentication/session state.
+Never uploaded by this plan: native JSONL/rollout files, harness SQLite DBs,
+terminal/tool output, source file bytes, environment/credentials, full diffs,
+provider auth/session state, attachments, or arbitrary binary blobs.
 
 ## Archive policy
 
-Archive is configured explicitly at Space and Project levels.
-
-Conceptual policy:
-
 ```ts
 interface SessionArchivePolicy {
-  mode: "disabled" | "metadata-only" | "normalized-detail";
-  includePrompts: "none" | "user-only" | "bounded";
-  includeToolNames: boolean;
-  includeToolOutputs: "none"; // fixed for v1
-  retentionDays: number | null;
-  sensitivity: Sensitivity;
-  requireUserConfirmation: boolean;
+  readonly mode: "disabled" | "metadata-only" | "normalized-detail";
+  readonly includePrompts: "none" | "user-only" | "bounded";
+  readonly includeToolNames: boolean;
+  readonly includeToolOutputs: "none";
+  readonly retentionDays: number | null;
+  readonly sensitivity: Sensitivity;
+  readonly requireUserConfirmation: boolean;
 }
 ```
 
-Rules:
-
-- default is `metadata-only` or disabled according to deployment choice;
-- organization Projects require organization-authorized policy, not a Device
-  owner toggle alone;
-- policy change affects future captures; historical archives are deleted only
-  through an explicit previewed operation;
-- personal and organization policies remain separate on one Device;
-- sensitive/high-risk Projects may forbid archive entirely;
-- raw tool outputs remain `none` in v1.
+- no policy row means no detail capture;
+- enabling detail and enabling prompt capture are separate acts; prompts default
+  to `none`;
+- Project policy may be stricter than Space policy, never broader;
+- organization capture requires authorized organization policy;
+- Device owner alone cannot opt in organization content;
+- policy changes affect future captures; historical deletion is explicit and
+  previewed;
+- raw tool outputs remain excluded in V1.
 
 ## Normalized archive contract
 
-Use a versioned contract derived from the existing bounded Session detail model
-rather than serializing harness-native structures.
-
 ```ts
 interface ArchivedSessionDetail {
-  archiveVersion: number;
-  parserVersion: string;
-  sessionFactId: SessionFactId;
-  deviceId: DeviceId;
-  harnessKey: string;
-  sourceSessionId: string | null;
-  owningSpaceId: SpaceId;
-  projectId: ProjectId;
-  capturedAt: Instant;
-  sourceObservedAt: Instant | null;
-  authority: "archived-observed";
-  completeness: "complete" | "partial";
-  contentHash: string;
-  sensitivity: Sensitivity;
-  retentionPolicyId: string;
-  detail: BoundedNormalizedSessionDetail;
-  limitations: ArchivedDetailLimitation[];
+  readonly archiveVersion: number;
+  readonly parserVersion: string;
+  readonly sessionFactId: SessionFactId;
+  readonly deviceId: DeviceId;
+  readonly harnessKey: string;
+  readonly sourceSessionId: string | null;
+  readonly owningSpaceId: SpaceId;
+  readonly projectId: ProjectId;
+  readonly capturedAt: Instant;
+  readonly sourceObservedAt: Instant | null;
+  readonly authority: "archived-observed";
+  readonly completeness: "complete" | "partial";
+  readonly contentHash: string;
+  readonly sensitivity: Sensitivity;
+  readonly policyId: SessionArchivePolicyId;
+  readonly detail: BoundedNormalizedSessionDetail;
+  readonly limitations: readonly ArchivedDetailLimitation[];
 }
 ```
 
-Strict bounds should match or be tighter than current Session detail limits:
-
-- maximum prompts/turns/phases/tools;
-- maximum per-text and total decoded bytes;
-- maximum timestamps/model segments;
-- explicit truncation markers;
-- decompression ratio/output bound;
-- no unknown keys in accepted versions unless the compatibility policy says
-  otherwise.
-
-Do not archive a detail response that already exceeds local safety budgets by
-streaming it unbounded to the server.
+Strict runtime validation enforces turn/prompt/phase/tool counts, per-text and
+total decoded bytes, timestamp/model segment counts, decompression ratio/output,
+explicit truncation, version compatibility, and exact keys. Capture accepts
+only this normalized structure; no raw path content/byte-buffer/native row type
+can enter the archive service.
 
 ## Capture flow
 
 ```text
-Local source session changes or reaches checkpoint
+source Session reaches checkpoint
+  ↓ local policy + Authorizer check
+bounded local session-detail resolver
   ↓
-usage-engine verifies Project/Space archive policy
-  ↓
-local Session detail resolver parses through current bounded authority
-  ↓
-redaction/classification pass
-  ↓
-archive preview/summary when confirmation is required
-  ↓
-content-addressed encrypted/compressed payload enters separate outbox
-  ↓
-server authenticates Device and authorizes archive_session_content
-  ↓
-transaction stores metadata + payload and indexes only permitted fields
-  ↓
-ACK records exact archive hash/version
+classification/redaction on source Device
+  ↓ optional state-bound preview/confirmation
+compress + envelope-encrypt Class B
+  ↓ separate archive outbox event
+outbound TLS upload
+  ↓ Device auth + archive_session_content authorization
+PostgreSQL metadata + ciphertext + event receipt transaction
+  ↓ ACK exact event/content hash
 ```
 
-Archive capture runs outside the local usage publication transaction. Failure to
-archive never blocks local collection or metadata replication.
+Capture and upload run outside local usage/Memory transactions. Failure never
+blocks collection, local detail, Memory, or metadata replication. Archive events
+use plan 107's fact/event/content identity and retry semantics, not a generic
+blob bypass.
 
-## Redaction and content minimization
+## Redaction and minimization
 
-Before persistence:
+Before encryption/persistence, remove or block environment values, credential
+shapes, bearer headers, `.env` content, connection-string passwords, private
+keys, configured project secrets, raw tool output, and unapproved paths/prompts.
+Record only redaction rule-set version and content-free findings.
 
-- remove environment variables and known credential structures;
-- reject or redact private keys, access tokens, bearer headers, `.env` content,
-  and configured secret patterns;
-- normalize local paths according to policy and never make them filesystem
-  authority on another Device;
-- store tool name/category, not arbitrary output;
-- bound prompt text and mark redaction/truncation;
-- retain enough provenance to explain that content was redacted without storing
-  the secret in diagnostics;
-- allow Project-specific deny patterns and archive-disabled paths;
-- no claim that heuristic redaction makes arbitrary transcripts safe.
+High-confidence secret detection or redaction failure blocks capture locally and
+writes no outbox event. Heuristic redaction is not claimed to make arbitrary
+transcripts safe.
 
-If a secret scan triggers a high-confidence finding, default to blocking the
-archive and showing a local actionable error rather than uploading a partially
-understood payload.
+## V1 encryption model
 
-## Encryption and storage
+Use application-level envelope encryption for Class B payloads:
 
-### In transit
+```text
+per Space:
+  one active data-encryption key (DEK), versioned
 
-- TLS required;
-- Device authentication from plan 104;
-- payload never in URL/query/logs;
-- request and decompression limits before parsing.
+deployment:
+  key-encryption key (KEK), versioned, supplied outside PostgreSQL
+  through typed redacted secret configuration
 
-### At rest
+PostgreSQL:
+  wrapped DEKs may be stored
+  ciphertext and non-sensitive authorization/listing metadata stay separate
+```
 
-At minimum:
+Encryption/decryption uses reviewed authenticated encryption and includes Space,
+archive ID, revision/version, and key versions as authenticated context. The KEK
+is never stored in PostgreSQL, logs, browser payloads, archive metadata responses,
+or backups managed only as DB dumps.
 
-- PostgreSQL/database-volume encryption is documented;
-- sensitive payload may be stored in a separate encrypted blob/object column or
-  store with metadata in PostgreSQL;
-- encryption keys are not stored alongside ciphertext in application tables;
-- backup/restore includes key-management requirements;
-- key rotation and deletion behavior are documented.
+### Guarantees and limitations
 
-### Client-side encryption readiness
+- envelope encryption protects a leaked database/DB backup when the separately
+  managed matching KEK is not also compromised;
+- database/disk encryption remains defense in depth;
+- deleting active wrapped DEKs prevents current application access to payloads
+  using them;
+- deleting current keys does **not** guarantee cryptographic erasure of every
+  historical backup;
+- old backups may remain recoverable while old KEKs and wrapped DEKs are
+  retained;
+- historical backup deletion follows explicit backup-retention and KEK-rotation
+  policy;
+- a lost required KEK makes affected archives unrecoverable;
+- V1 makes no end-to-end encryption claim: the server application can decrypt
+  authorized content.
 
-Design the envelope so a future deployment can encrypt detail on the Device and
-store ciphertext server-side. Do not claim end-to-end encryption in v1 unless
-key distribution, multi-user sharing, search limitations, rotation, recovery,
-and revocation are implemented and tested.
+### Backup, restore, and rotation
 
-Metadata needed for authorization and listing must remain separate from the
-sensitive payload. Avoid a schema that requires decrypting every archive to
-answer “which sessions have archived detail?”.
+Restore requires both:
 
-## Search and Memory interaction
+1. a compatible PostgreSQL backup containing metadata, ciphertext, and wrapped
+   DEKs;
+2. the matching KEK version supplied through typed secret configuration.
 
-Default Memory search must not index raw archived prompts.
+Tests perform backup/restore into an isolated database with the matching KEK,
+prove failure with missing/wrong KEK, rotate KEK wrapping without plaintext
+content change, rotate a Space DEK through a versioned rewrite, and prove old/new
+revisions remain readable according to retention policy.
 
-Allowed initial uses:
+No recovery-time SLO is claimed in this plan. The tested objective is functional
+correctness and documented operator steps. If a deployment needs a time target,
+it receives an owned operational objective with measured fixtures rather than an
+undefined reference.
 
-- exact Session detail retrieval by authorized Session ID;
-- Handoff creation/review from a selected archive;
-- user-triggered proposal generation whose source is explicitly the archive;
-- optional bounded local/server processing under a documented policy.
+## Storage and authorization
 
-Forbidden initial behavior:
+Store listing/authorization metadata separately from ciphertext so listing does
+not decrypt content. Logical records include archive identity/revision, Session
+fact, Space/Project/Device, policy/sensitivity, captured/source time,
+completeness/limitations summary, content hash, cipher algorithm/nonce/tag,
+DEK/KEK versions, lifecycle, and ciphertext reference.
 
-- automatically embedding every prompt;
-- mixing archive text into normal Memory search;
-- organization aggregate queries reading archive payloads;
-- using archive content to infer productivity or intent silently.
-
-If later search is added, it needs separate permission, sensitivity-aware index,
-retention/deletion propagation, and an evaluation plan.
-
-## Authorization
-
-Permissions remain distinct:
+Distinct permissions remain:
 
 ```text
 view_session_metadata
@@ -325,22 +237,22 @@ manage_session_archive_policy
 purge_session_archive
 ```
 
-Rules:
+Aggregate auditor has none of the content permissions. WorkHandoff readers do
+not automatically gain the source archive. `view_work_handoff` exposes only the
+separately reviewed Work handoff and authorized bounded provenance metadata.
+Authorization is applied before decryption/snippet generation.
 
-- `view_session_content` is required to retrieve/decrypt normalized detail;
-- aggregate auditor receives none of these content permissions;
-- Project collaborator access follows plan 103’s model, with extra sensitivity
-  condition where configured;
-- Device may upload only for an authorized Capture Context/Project policy;
-- source Device owner cannot archive organization content against organization
-  policy;
-- Handoff permission does not automatically expose the entire source archive;
-- provenance references shown to a Handoff reader are bounded to permitted
-  metadata.
+## Search and Memory interaction
 
-## Retention and deletion
+Normal Memory search never indexes archive prompts. Initial allowed use is exact
+authorized Session retrieval, selected WorkHandoff creation/review, and an
+explicit user-triggered Memory Proposal whose provenance names the exact archive
+revision. Any later archive search needs separate permission, index, evaluation,
+retention, and deletion propagation.
 
-Store archive metadata and payload with explicit lifecycle:
+## Retention, deletion, and backups
+
+Lifecycle:
 
 ```text
 active
@@ -349,330 +261,124 @@ purged
 blocked/quarantined
 ```
 
-Requirements:
+- default is no automatic content deletion unless policy specifies it;
+- expiry/purge uses a narrow service principal and previewed authorized action;
+- purge removes current ciphertext/blob, accessible cache/snippet/search
+  derivatives, and active wrapped-key references as applicable;
+- a content-free tombstone may retain provenance and deletion time;
+- Session metadata follows its own retention and survives archive purge;
+- server replicas/backups have documented retention/deletion limitations;
+- key deletion cannot be marketed as guaranteed erasure of historical backups;
+- reduced/redacted re-upload cannot resurrect purged content silently.
 
-- policy-based expiry job uses a narrow service principal;
-- user/admin purge is previewed and audited;
-- deletion removes ciphertext/blob, search derivatives, caches, and accessible
-  snippets;
-- a content-free tombstone may remain to explain provenance/deletion;
-- metadata-only Session fact may remain according to separate retention policy;
-- source Device can learn ACK/purge state without receiving another user’s
-  content;
-- backups and replicas have a documented deletion latency/limitation;
-- legal hold is out of scope but schema/status must not silently ignore it later.
+## Versioning and WorkHandoff relationship
 
-## Replacement and versioning
+New parser/content hash creates an immutable archive revision or advances a
+current pointer transactionally. Duplicate event/content receives idempotent
+ACK. A WorkHandoff may reference the exact archive revision used, while exposing
+only its separately reviewed statements to ordinary WorkHandoff readers.
 
-A source session may gain more complete detail later.
+The cross-machine archive remains read-only. Continuation uses
+`memory.latest_work_handoff`, `work_handoff.get`, and
+`work_thread.get_context`; it does not mutate/archive-native session state.
 
-- archive identity is stable per Session fact;
-- a new content hash/parser version creates an immutable archive revision or
-  atomically replaces current with retained revision metadata according to
-  policy;
-- stale/duplicate upload returns idempotent ACK;
-- reduced/redacted re-upload cannot accidentally resurrect purged content;
-- parser/version upgrade does not reinterpret old payload silently;
-- exact Handoff provenance can reference the archive revision it used.
+## Local/offline behavior
 
-## Cross-machine read UX
-
-Session detail should show:
-
-```text
-Archived from <authorized Device label>
-Captured <time>
-Source last observed <time>
-Authority: archived observation
-Completeness: partial/complete
-Redactions/truncations: summary
-Parser/archive version
-```
-
-When unavailable:
-
-- `portable-opaque`: explain that metadata exists but detail was not archived;
-- expired/purged: explain content no longer exists without revealing why to an
-  unauthorized user;
-- source online but no local access: do not attempt a server-to-device call;
-- unauthorized: use normal authorization behavior, not a content-existence leak.
-
-The archive is read-only. “Continue” uses plan 108 Handoff, not mutation of the
-archived session.
-
-## Local-only and offline behavior
-
-- local Session detail continues to parse local harness history as today;
-- no archive policy/server is required for local use;
-- queued archive survives network outage through a separate bounded outbox;
-- local user can cancel pending archive before ACK where safely possible;
-- server archive can be read from another Device while source is offline;
-- connected Web labels stale/offline metadata honestly.
-
-## Commands you will need
-
-| Purpose | Command | Expected on success |
-|---|---|---|
-| Prerequisite: content types are separate | `grep -c "session_content" packages/authorization/src/model.ts` | ≥ 1 |
-| Classification tests | `bun test packages/session-archive/src/classification.test.ts` | all pass |
-| Redaction tests | `bun test packages/session-archive/src/redaction.test.ts` | all pass |
-| Default-off proof | `bun test packages/session-archive/src/opt-in.test.ts` | all pass |
-| No-Class-C proof | `bun test packages/session-archive/src/no-raw-artifacts.test.ts` | all pass |
-| Deletion tests | `bun test packages/session-archive/src/retention.test.ts` | all pass |
-| Authorization conformance | `bun test packages/authorization` | all scenarios pass |
-| Local regression, no cluster | `! pgrep -x postgres && bun run test:packages` | all pass |
-| Full verification | `bun run check && bun run lint && bun run typecheck && bun run test` | exit 0 |
-
-## Git workflow
-
-- Branch `plan/109-session-archive`, cut from plan 108's branch.
-- Migration `0008_session_archive` — verify the current highest number first.
-- Stage by explicit path. Never `git add -A`.
-- Four commits:
-  1. `feat(session-archive): add the normalized archive contract and classification`
-  2. `feat(session-archive): add opt-in capture with redaction`
-  3. `feat(server): add authorized archive retrieval and deletion`
-  4. `feat(web): add cross-machine read-only session detail`
-- **Do not push or open a PR.** This moves prompts off-machine for the first
-  time; the maintainer reviews.
+Local Session detail continues to read local harness history without archive
+policy/server. Tests inject an archive connector that fails if called and assert
+zero calls. Queued archive upload can survive offline periods; source can cancel
+pending-not-ACKed events where plan 107 semantics permit. No global process
+inspection is a correctness gate.
 
 ## Steps
 
-### Step 1: Apply the dated encryption decision before building storage
+### Step 1: Implement/test the encryption boundary first
 
-The original plan left two questions open, and both change the schema:
+Add typed KEK config, per-Space DEK wrapping, ciphertext/metadata separation,
+authenticated context, isolated backup/restore, wrong-key failure, and rotation
+tests before production archive tables/routes.
 
-1. **Encryption at rest beyond PostgreSQL's own** — envelope encryption with
-   per-Space keys, or rely on disk/database encryption?
-2. **Where keys live** — no KMS exists in this program.
+### Step 2: Make Class C unrepresentable
 
-**Dated resolution (2026-08-26): application-level envelope encryption of Class
-B payloads with a per-Space data key, wrapped by a deployment key supplied
-through typed config** (same parsing discipline as plan 101 and redaction
-discipline as plan 104). Database/disk encryption remains defense in depth; it
-does not replace the per-Space envelope.
+Define normalized classified contracts with no raw byte/file/DB row fields. Add
+boundary rules excluding local collectors/private-store writers. Test all four
+harness fixtures for forbidden raw substrings.
 
-Rationale: it makes per-Space deletion meaningful — destroying the Space's data
-key renders its archives unrecoverable even in a leaked backup. That is a
-property the retention section needs and that database-level encryption cannot
-provide.
+### Step 3: Add genuinely opt-in policy
 
-Cost, stated plainly: key rotation and backup/restore both become more complex,
-and a lost deployment key means lost archives. Step 1 therefore first adds a
-synthetic backup/restore/rotation proof. Reconsider database-only encryption only
-if that measured proof cannot meet the recovery SLO documented in plan 101; stop
-and amend ADR 0038 rather than switching mid-implementation.
+Test no-row/no-detail, prompt-off default, stricter Project policy, organization
+authorization, non-retroactive enable, and explicit historical deletion.
 
-### Step 2: Make Class C unreachable, not merely undocumented
+### Step 4: Redact/encrypt on the source Device
 
-The strongest guarantee in this plan is that raw harness files never leave the
-machine. Enforce it in the type system and in the boundary checker:
+Reuse plan-105 redaction where applicable. Test secret fixtures, rule version,
+fail-closed capture, ciphertext-only outbox, and no local collection coupling.
 
-1. The capture function accepts only a `NormalizedSessionArchive` — a validated
-   structure built from the per-harness analyzers. It has **no** field that can
-   hold a file path's contents, a raw JSONL line, or a byte buffer.
-2. `no-raw-artifacts.test.ts`: run capture against fixtures for all four
-   harnesses; serialize the result; assert it contains no substring from the raw
-   fixture files beyond what the contract explicitly permits (normalized turn
-   text under policy). Assert on the raw *bytes* of the fixture, not on a
-   summary.
-3. Boundary policy: `@ai-usage/session-archive` may not depend on
-   `@ai-usage/local-collectors`. Capture consumes already-normalized analysis
-   output, never a collector's raw read.
+### Step 5: Add transactional upload/retrieval
 
-`classification.test.ts` asserts every field in the contract carries an explicit
-`A` | `B` classification, and that no field is unclassified — an unclassified
-field is the route by which Class C content arrives.
+Use plan 107 event identities and Device auth. Store metadata/ciphertext/wrapped
+DEK separately, authorize before decryption, and test exact duplicate/revision,
+aggregate denial, metadata-only access, and opaque paths.
 
-**Verify**: `bun test packages/session-archive/src/no-raw-artifacts.test.ts`
-and `classification.test.ts` → all pass.
+### Step 6: Add retention/purge/backup behavior
 
-### Step 3: Opt-in that is genuinely off by default
+Prove current payload and derivatives are removed, metadata survives, key
+deletion current-access behavior is accurate, and historical-backup limitations
+are documented/tested through retained/removed KEK fixtures.
 
-`archive_policies (space_id, project_id NULL, enabled boolean NOT NULL DEFAULT
-false, prompt_policy text NOT NULL DEFAULT 'exclude', updated_by, updated_at)`.
+### Step 7: Add cross-machine read UX and docs
 
-`opt-in.test.ts`:
-- a Space with no policy row → capture produces nothing. Assert on the archive
-  table being empty, not on a returned flag;
-- enabling at Space level does **not** retroactively archive existing sessions —
-  a retroactive sweep would archive content captured under the old policy;
-- a project policy may be stricter than its Space, never broader. Assert the
-  broader case is rejected;
-- disabling stops new capture and leaves existing archives, with the existing
-  ones separately deletable (Step 6);
-- `prompt_policy: 'exclude'` is the default even when `enabled` is true.
-  Enabling the archive and enabling prompt capture are two decisions.
+Label source Device, capture/source time, authority, completeness,
+redaction/truncation, parser/archive/key version, and unavailable/purged states
+without existence leakage. Update the session-analysis boundary and encryption
+ADR with honest guarantees.
 
-**Verify**: `bun test packages/session-archive/src/opt-in.test.ts` → all pass.
+## Verification
 
-### Step 4: Redaction at capture, on the source device
-
-Redaction runs **before** the payload leaves the machine. A server-side redactor
-would mean the unredacted content already crossed the boundary.
-
-- Reuse the redaction rules inventoried in plan 105 Step 0 where they apply;
-  do not write a second rule set with different behavior.
-- Record the applied rule-set version per archive so a later rule change is
-  auditable and re-redaction is scopeable.
-- `redaction.test.ts` with fixtures containing plausible secrets: an API key
-  shape, a `.env` line, an `Authorization:` header, a connection string with a
-  password, a private key header. Assert none survives.
-- Redaction failure **blocks** capture. It never publishes partially-redacted
-  content and never silently skips. Assert the typed error and that nothing was
-  written.
-
-**Verify**: `bun test packages/session-archive/src/redaction.test.ts` → all pass.
-
-### Step 5: Storage and retrieval
-
-Archives are a distinct resource type in plan 103's model
-(`session_content`), authorized separately from session metadata. The
-aggregate/content split from plan 103 Step 1 means an aggregate auditor cannot
-reach this table by any declared path — verify by walking the model, the same
-assertion plan 103's `model.test.ts` makes.
-
-Retrieval is read-only across machines. A path inside an archive is **opaque**
-on the retrieving device (`CONTEXT.md:96-99`); assert that the read UI never
-turns an archived path into a local filesystem read.
-
-**Verify**: `bun test apps/server/src/archive-retrieval.test.ts` — an
-aggregate-only principal is denied; a project collaborator with content
-permission succeeds; a metadata-only principal sees metadata and is denied
-content.
-
-### Step 6: Retention and deletion that actually deletes
-
-- Per-Space and per-Project retention; default **no automatic deletion**.
-- Deleting an archive removes the payload. Assert by querying the table
-  directly after deletion, not by calling the reader.
-- With envelope encryption (Step 1), destroying a Space's data key is the
-  documented bulk path; test that archives are unreadable afterwards.
-- Session **metadata** survives archive deletion — deleting detail must not
-  delete the report row. This is the assertion most likely to be missed, and it
-  breaks reports.
-- Deletion is recorded in the audit trail with actor and time.
-
-**Verify**: `bun test packages/session-archive/src/retention.test.ts` → all
-pass, including metadata survival.
-
-### Step 7: Cross-machine read UX and local-only behavior
-
-- The read surface labels provenance and freshness (ADR 0016/0017): which
-  device produced it, when, under which policy, and which parser limitations
-  applied (`docs/session-analysis-sources.md` quality vocabulary).
-- Local-only mode is unchanged: opening a local session analysis still reads
-  from the local machine. Assert no archive lookup occurs in local mode.
-- Never present an archived session as if it were live local detail. They have
-  different truthfulness, and the quality vocabulary is how that is shown.
-
-**Verify**: `bun run test:e2e -- e2e/<new-spec>.spec.ts` → passes, axe clean.
-Local-mode e2e still passes with no server.
-
-### Step 8: Documentation
-
-- `packages/session-archive/README.md` — the A/B/C classification, the
-  opt-in model, redaction, the encryption decision from Step 1, and deletion
-  semantics.
-- `docs/session-analysis-sources.md` — a new section recording that Class B may
-  now be archived under explicit policy, and that Class C never leaves the
-  machine. Update the `:9-14` boundary statement rather than contradicting it.
-- ADR 0038 `per-space-envelope-encryption-for-session-archives`, extending ADR
-  0033's opt-in archive boundary with the selected key/deletion model.
-- `CONTEXT.md` — **Session archive** with `_Avoid_`: "backup", "transcript",
-  "raw history".
-- `plans/README.md:66` row → `DONE`.
-
-## Testing requirements
-
-### Classification/contract
-
-- every Class A/B/C field category;
-- unknown keys/version rejection;
-- text/turn/prompt/tool/byte/decompression bounds;
-- truncation and completeness;
-- local path handling;
-- raw tool output never serialized;
-- synthetic secret blocks/redacts without log leakage.
-
-### Policy/authorization
-
-- default metadata-only/no detail;
-- personal opt-in;
-- organization policy required;
-- one Device with personal and organization Projects;
-- viewer metadata-only versus content permission;
-- aggregate auditor denied;
-- sensitive extra condition;
-- revoked Device upload denied;
-- policy change and historical behavior.
-
-### Lifecycle
-
-- capture outside collection transaction;
-- network failure leaves local product healthy;
-- duplicate/idempotent upload;
-- more-complete revision;
-- purge and retention expiry;
-- deletion propagation to derivatives/cache;
-- backup/key limitation documented/tested where practical;
-- content-free audit events.
-
-### End-to-end
-
-- Device A archives a synthetic session and goes offline;
-- Device B authorized user opens archived detail;
-- authority/completeness/captured-at are visible;
-- Handoff can reference exact archive revision;
-- unauthorized user and aggregate auditor cannot infer content/title/snippet;
-- raw harness fixture file never appears in server store/outbox;
-- metadata-only sessions remain useful without archive.
+- complete plans 103/104/107/108 security gates pass first;
+- no Class C raw artifact can enter a contract/outbox/store;
+- default policy writes no detail and prompt capture is separately opt-in;
+- backup + matching KEK restores; missing/wrong KEK fails; rotations pass;
+- tests do not claim current key deletion erases all historical backups;
+- no end-to-end encryption or undefined time-to-recover claim remains;
+- archive authorization happens before decrypt/snippet/existence response;
+- local mode records zero archive/platform calls;
+- lint, typecheck, classification/redaction/encryption/lifecycle/e2e pass.
 
 ## Done criteria
 
-- [ ] Local, archived, and opaque authority states are explicit in contracts and
-      UI.
-- [ ] Metadata replication remains default; normalized detail is opt-in by
-      Project/Space policy.
-- [ ] Archive contract is normalized, versioned, bounded, and excludes raw
-      harness artifacts/tool outputs.
-- [ ] Capture/redaction runs locally and failure never blocks usage collection.
-- [ ] Device auth and content-specific authorization protect upload/read/purge.
-- [ ] Aggregate-only roles cannot access or infer archive content.
-- [ ] At-rest/key-management and future client-side envelope boundaries are
-      documented honestly.
-- [ ] Retention, purge, revision, and derivative deletion are tested.
-- [ ] Cross-machine read works while the source Device is offline and labels
-      authority/completeness.
-- [ ] Handoff references archives without treating them as resumable native
-      sessions.
-- [ ] Raw JSONL/SQLite/provider credentials are absent from normal archives.
+- [ ] Local, archived, and opaque authority states are explicit.
+- [ ] Metadata remains default; normalized detail and prompts are separate opt-in
+      decisions.
+- [ ] Class C/raw harness artifacts are excluded structurally and by tests.
+- [ ] One per-Space DEK is wrapped by an external-config deployment KEK.
+- [ ] Restore needs DB backup + matching KEK and rotation is tested.
+- [ ] Historical backup/key-deletion limitations and no-E2E claim are explicit.
+- [ ] Aggregate roles cannot access/infer content.
+- [ ] Purge removes current accessible content/derivatives while metadata
+      retention remains separate.
+- [ ] WorkHandoff references do not make archives native resumable sessions.
 
 ## STOP conditions
 
 Stop and report when:
 
-- implementation proposes uploading raw harness history/database by default;
-- prompt/tool output is archived before policy, authorization, redaction, and
-  retention are implemented;
-- archive upload runs inside or can roll back local collection;
-- organization content can be opted in by Device owner alone;
-- aggregate queries require decrypting/reading session detail;
-- archived content is indexed into normal Memory search automatically;
-- the server can call back into the source Device to fetch missing detail;
-- authorization is applied only after payload decryption/snippet creation;
-- encryption is marketed as end-to-end without client key-sharing/recovery
-  design;
-- purge leaves embeddings/snippets/caches accessible;
-- archive is presented as a native resumable session.
+- raw history/database/tool output is uploaded;
+- prompt capture precedes policy/auth/redaction/encryption;
+- capture/upload can fail local collection;
+- organization content can be enabled by Device owner alone;
+- KEK is stored with ciphertext in PostgreSQL;
+- docs claim deleting an active key guarantees every backup is unreadable;
+- restore is not tested with DB backup + matching KEK;
+- encryption is marketed end-to-end;
+- authorization occurs after decrypt/snippet generation;
+- archive enters normal Memory search or is presented as native resume.
 
 ## Out of scope
 
-- raw provider backup/disaster recovery;
-- tool-output/file-content archive;
-- uncommitted worktree synchronization;
-- semantic search over all prompts;
+- raw provider backup/tool-output/file-content archives;
+- semantic search across prompts;
 - native session import/resume (plan 110);
 - remote source-machine fetch;
 - legal hold/eDiscovery;
-- cross-region encrypted object-store architecture.
+- cross-region encrypted object-store design.

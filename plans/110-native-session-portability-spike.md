@@ -1,193 +1,122 @@
 # Plan 110: Spike Native Session Portability Across Claude, Codex, OpenCode, and Cursor
 
 > **Executor instructions**: This is a bounded research spike, not permission to
-> mutate real harness stores. Work only with disposable profiles, synthetic
-> repositories, copied fixtures, and officially supported commands/APIs. A
-> conclusion that native portability is unsafe or unsupported is a successful
-> result. Production implementation requires a separate accepted plan.
+> mutate real/private harness stores. Use disposable profiles, synthetic repos,
+> copied fixtures, and official commands/APIs only. A negative finding is a
+> successful result. Production implementation requires separate maintainer
+> approval after this spike; do not create another numbered plan while running
+> the spike.
 >
-> **Drift check (run first)**:
-> Record exact installed harness versions and current official documentation/API
-> surfaces. Re-read plan 108’s Handoff contract and plan 109’s archive authority.
-> If any harness format/API changed during the spike, pin both versions and do
-> not generalize across them silently.
+> **Drift check (run first)**: record exact installed harness versions and
+> current official documentation/API surfaces. Re-read plan 108's
+> `WorkHandoff` contract and plan 109's archive authority. Pin version-specific
+> findings and never generalize silently.
+
+## Authoritative decisions
+
+The contracts and steps below are the current implementation specification.
+Superseded alternatives remain in Git history and are not executable guidance.
 
 ## Status
 
 - **Priority**: P2
 - **Effort**: L spike
 - **Risk**: HIGH if scope escapes the sandbox — private formats may corrupt
-  histories, fabricate provenance, or upload unintended context
+  history, fabricate provenance, or upload unintended context
 - **Depends on**: 108, 109
-- **Category**: research/spike; native session interoperability
+- **Category**: research; native session interoperability
 - **Planned at**: commit `dac2214c`, 2026-08-26
 - **Implementation status**: TODO
 
 ## Why this matters
 
-ai-usage can normalize usage facts, archive bounded detail, and create a
-harness-neutral Handoff. A stronger possibility is to recreate or continue a
-native session in another harness or on another machine.
+Plans 105–109 provide DB-native Memory, accepted Work handoffs, and an optional
+normalized archive. A stronger possibility is official native session import or
+same-harness resume across machines. Private stores may also contain hidden
+instructions, tool state, provider IDs, cached context, authentication bindings,
+attachments, and version migrations; writing plausible JSONL/SQLite is neither
+safe nor truthful.
 
-The conceptual pipeline is attractive:
+This spike determines the strongest proven interoperability level per harness
+and compares it with the accepted Work handoff baseline. It does not assume
+native conversion is better.
 
-```text
-Claude / Codex / OpenCode / Cursor native session
-        ↓ parser
-Canonical execution/session graph
-        ↓ emitter/import adapter
-Target native session
-```
+## Existing research anchors
 
-But private session stores may include hidden system instructions, tool protocol
-state, provider conversation IDs, cached tokens, authentication bindings,
-versioned migrations, attachment references, and invariants not visible in the
-reporting model. Writing a plausible JSONL row or SQLite record is not proof of a
-valid session. It may corrupt the harness, cause it to send fabricated history to
-a provider, or create a misleading audit trail.
+- ADR 0003 requires isolation at construction time, not merely hidden UI.
+- `packages/local-machine/src/testing/harness-home.ts` is the repository-owned
+  synthetic harness-home fixture and already has test-only import fencing.
+- `docs/session-analysis-sources.md` is the dated truthfulness inventory with
+  Recorded/Derived/Partial/Estimated/Unavailable.
+- Existing Claude/Codex/OpenCode/Cursor readers document current local formats;
+  read them before designing the research-only canonical graph.
+- Plan 108's local and connected scenarios prove the baseline through exactly
+  `memory.latest_work_handoff`, `work_handoff.get`, and
+  `work_thread.get_context`.
 
-This spike determines the highest safe interoperability level per harness.
-
-## Current state
-
-### The isolation precedent already exists — ADR 0003
-
-`docs/adr/0003-isolated-synthetic-runtime.md` is the repository's existing answer
-to "run against harness-shaped data without touching the operator's real
-history":
-
-> `bun run demo` runs on `127.0.0.1` with a temporary isolated home and committed
-> deterministic report data. Synthetic-runtime requests are rejected **before**
-> live collectors or mutation runtimes are constructed.
-
-The rejected alternative is the load-bearing part: *"Hiding navigation alone was
-rejected because presentation is not a privacy boundary."* The same standard
-applies here — a spike that "just won't open the real profile" is not isolated.
-Isolation is a construction-time property.
-
-### The fixture harness home already exists
-
-`packages/local-machine/src/testing/harness-home.ts`, exported as
-`./testing/harness-home` (`packages/local-machine/package.json:27`) and
-restricted by `tools/check-package-boundaries.ts:149` to test-only importers
-(`isTestOnlySource`, `:163-165`).
-
-**Build every experiment on this, not on a hand-made temp directory.** It
-already encodes what a harness home looks like, and it is already fenced off from
-production code paths by the boundary checker.
-
-### The existing record this spike extends
-
-`docs/session-analysis-sources.md` records what each harness truthfully exposes,
-with a quality vocabulary (`:15-23`) and a dated status header (`:3-5`,
-"current as of 2026-07-20"). It is the closest thing to a format inventory the
-repo has. This spike's deliverable is a sibling document, dated the same way —
-not an edit that silently ages the existing one.
-
-Per-harness readers to read first, because they encode what has already been
-learned about each format:
-
-- `packages/local-collectors/src/claude-history.ts`, `claude-agent-sdk.ts`
-- `packages/local-collectors/src/codex-history.ts`, `codex-app-server.ts`
-- `packages/local-collectors/src/collectors/` (OpenCode, Cursor)
-- `packages/local-machine/src/opencode-schema.ts`
-
-### The rule this spike must not break
-
-`AGENTS.md` and the program's cross-cutting invariant: **no child may write
-directly into undocumented Claude, Codex, OpenCode, or Cursor session stores.**
-Plan 110 is the only place authorized to *investigate* native portability, and
-the hard STOP conditions below are not advisory.
-
-Read that as: the deliverable of this plan may legitimately be **"this is not
-safely possible"**. Rejection with evidence is a valid outcome (plan 099's
-executor instructions say so explicitly). Do not treat a negative result as a
-failed spike.
-
-### Prerequisites
-
-Plans 108 and 109. Experiment D benchmarks against an accepted work handoff, so
-handoffs must work first — the whole point is to measure whether native
-conversion beats the handoff, and without the baseline there is nothing to beat.
+No experiment writes an undocumented harness store. A successful accidental
+file copy is evidence of current implementation behavior, not a supported API.
 
 ## Research questions
 
 For Claude Code, Codex, OpenCode, and Cursor, answer:
 
-1. What local artifacts represent session history?
-2. Which parts are documented public contracts versus implementation detail?
-3. Is there an official command/API to resume by ID?
-4. Is there an official import/create-session API?
-5. Can a session be exported portably?
-6. Is identity bound to provider-side conversation state or local account?
-7. Are system/developer instructions persisted, reconstructed, or hidden?
-8. How are tool calls/results represented and validated?
-9. What project/cwd/repository/worktree assumptions exist?
-10. Which attachments/files are referenced externally?
-11. What format/schema/version migrations occur?
-12. Can a copied session be opened on a second machine using the same account?
-13. Can a synthetic session be created without editing private storage?
-14. What data is sent back to the provider when resumed?
-15. What privacy/cost implications result from rehydrating context without the
-    original provider cache?
+1. local artifacts and which parts are documented contracts;
+2. official resume-by-ID and fork behavior;
+3. official export/import/create-from-context APIs;
+4. account/provider conversation binding;
+5. system/developer instruction reconstruction;
+6. tool call/result validation and possible replay;
+7. cwd/repository/worktree/Skills/MCP/permission assumptions;
+8. external attachments/references;
+9. schema/version migration behavior;
+10. supported cross-machine behavior and provider uploads;
+11. whether imported history is visibly identified as imported/generated;
+12. privacy, token, latency, cost, and cache implications.
 
 ## Interoperability levels
 
-Classify each source→target combination at the strongest proven level.
+### Level 0: metadata only
 
-### Level 0 — Metadata only
+Session fact visible; no transcript/context continuation.
 
-- usage/session fact visible in ai-usage;
-- no transcript or continuation.
+### Level 1: Work handoff continuation
 
-### Level 1 — Handoff continuation
+Target starts a normal new native session and retrieves an accepted
+`WorkHandoff`; no native import. This is the supported plan-108 baseline.
 
-- target opens a normal new native session;
-- accepted Handoff/context is supplied through MCP/prompt;
-- no native history import.
+### Level 2: normalized context
 
-This is the supported baseline from plan 108.
+Target new session receives bounded archived/normalized context as data, not
+fabricated prior native turns/tool state.
 
-### Level 2 — Normalized transcript context
+### Level 3: official native import/clone
 
-- target new session receives a bounded normalized archive or generated context;
-- conversation is context, not represented as native prior turns;
-- tool results/system state are not fabricated.
+Target exposes a documented supported API/command, identifies import truthfully,
+and validates version/account/project rules without private-store mutation.
 
-### Level 3 — Official native import/clone
+### Level 4: exact supported same-harness resume across machines
 
-- target harness exposes a documented supported API/command;
-- imported session is clearly identified as imported;
-- schema/version/account/project rules are validated;
-- no private store mutation.
+Officially supported identity/provider state survives with reproducible
+project/config/version requirements.
 
-### Level 4 — Exact native resume across machines
+### Level 5: official cross-harness native conversion
 
-- supported by the same harness/provider;
-- identity and server-side state remain valid;
-- project/worktree/config requirements are reproducible;
-- documented integrity and version behavior.
+Both export and import contracts preserve roles/instructions/tools/attachments/
+provenance without invention. Expect most pairs to remain level 1 or 2.
 
-### Level 5 — Cross-harness native conversion
+## Investigation matrices
 
-- only acceptable if both source export and target import are documented enough
-  to preserve role, instructions, tool state, attachments, and provenance
-  without invention.
+Per harness:
 
-Expect most combinations to remain Level 1 or 2. Do not treat that as failure.
-
-## Investigation matrix
-
-Deliver a table like:
-
-| Harness | Local format | Documented? | Official resume | Official import | Safe cross-machine | Strongest proven level | Decision |
+| Harness | Local format | Documented | Official resume | Official import | Safe cross-machine | Strongest level | Decision |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | Claude Code | | | | | | | |
 | Codex | | | | | | | |
 | OpenCode | | | | | | | |
 | Cursor | | | | | | | |
 
-And a source→target matrix:
+Source → target:
 
 | Source → target | Claude | Codex | OpenCode | Cursor |
 | --- | --- | --- | --- | --- |
@@ -196,443 +125,220 @@ And a source→target matrix:
 | OpenCode | | | | |
 | Cursor | | | | |
 
-Every cell records:
+Every cell records level, official surface, lost fields, account/project
+constraints, security/privacy risk, pinned versions, and pursue/defer/reject.
 
-- achieved level;
-- official surface used;
-- lost/unsupported fields;
-- account/project constraints;
-- security/privacy risk;
-- version tested;
-- whether a production adapter is recommended, rejected, or deferred.
-
-## Canonical execution graph spike
-
-Define a research-only canonical model rich enough to measure information loss.
-Do not replace `UsageRow` or production Session detail during the spike.
+## Research-only canonical graph
 
 ```ts
 interface CanonicalAgentSession {
-  identity: CanonicalSessionIdentity;
-  source: NativeSessionReference;
-  project: CanonicalProjectContext;
-  instructions: CanonicalInstructionSet;
-  events: CanonicalSessionEvent[];
-  modelPhases: CanonicalModelPhase[];
-  artifacts: CanonicalArtifactReference[];
-  provenance: CanonicalProvenance;
-  completeness: CanonicalCompleteness;
+  readonly identity: CanonicalSessionIdentity;
+  readonly source: NativeSessionReference;
+  readonly project: CanonicalProjectContext;
+  readonly instructions: CanonicalInstructionSet;
+  readonly events: readonly CanonicalSessionEvent[];
+  readonly modelPhases: readonly CanonicalModelPhase[];
+  readonly artifacts: readonly CanonicalArtifactReference[];
+  readonly provenance: CanonicalProvenance;
+  readonly completeness: CanonicalCompleteness;
 }
 ```
 
-Possible event kinds:
+Event kinds may include user/assistant messages, available reasoning summaries,
+tool-call/result references, model changes, compaction, attachment references,
+checkpoints, and interruptions. Every field records observed/inferred/generated,
+locator, completeness, sensitivity, and whether official target emission is
+permitted.
 
-```text
-user-message
-assistant-message
-reasoning-summary (only if actually available and legally/contractually usable)
-tool-call
-tool-result-reference
-model-change
-context-compaction
-attachment-reference
-checkpoint
-error/interruption
-```
+The graph measures loss. It does not replace UsageRow, archive contracts,
+Memory, WorkThread, or WorkHandoff, and it is never production authority.
 
-Every field records:
+## Safe environment
 
-- observed versus inferred/generated;
-- source locator;
-- availability/completeness;
-- sensitivity;
-- whether it can be emitted safely to a target.
+- dedicated disposable home/user/sandbox created before harness construction;
+- synthetic Git repo/prompts/tool outputs, no secrets;
+- copied read-only fixture stores and version-pinned binaries;
+- separate test accounts only where terms/cost permit;
+- checksums before/after each experiment;
+- coherent SQLite copy after shutdown or supported backup path;
+- no real personal/organization session history;
+- no captured provider credentials or request payload logs.
 
-The model is an evaluation instrument. Do not claim a lowest-common-denominator
-graph is sufficient for native resume merely because all formats can be parsed
-into it.
+`tools/spike110-sandbox.ts` must refuse any target resolving to the real home or
+live profile, create under a task-specific temp root, checksum/verify, and
+destroy only validated sandbox paths.
 
-## Test environment
-
-Use:
-
-- dedicated disposable OS user/home or sandbox;
-- separate provider test accounts where terms/cost permit;
-- synthetic Git repository with no secrets;
-- generated prompts and tool outputs;
-- copied read-only fixture stores;
-- version-pinned harness binaries;
-- network observation only when permitted and without collecting credentials;
-- backup/checksum before every mutation experiment;
-- no real personal or organization session history.
-
-For SQLite stores, copy main/WAL/SHM coherently after clean shutdown or through
-the harness’s supported backup path. Never edit the live profile.
-
-## Per-harness work
+## Per-harness investigation
 
 ### Claude Code
 
-Investigate:
-
-- local project/session transcript structure and retention;
-- resume/fork commands and ID rules;
-- account/provider-side relationship;
-- system instructions, Skills, MCP, hooks, and permission state on resume;
-- whether moving files to another machine is supported or merely happens to
-  parse;
-- behavior when referenced cwd/repo/files do not exist;
-- version migration and transcript pruning.
+Study official resume/fork/export surfaces, local transcript retention,
+provider/account binding, instructions/Skills/MCP/hooks/permissions, cwd/repo
+requirements, version migration, pruning, and cross-machine support.
 
 ### Codex
 
-Investigate:
-
-- rollout/session files and any app-server/session API;
-- resume/fork/export surfaces;
-- account/profile binding and provider conversation state;
-- developer/system instructions, approvals/sandbox, tools, and compaction;
-- worktree/cwd/Git state assumptions;
-- whether an official create/import path exists distinct from starting a new
-  thread with context.
+Study official CLI/app-server session surfaces, rollout files, provider/account
+binding, developer/system instructions, approvals/sandbox/tools/compaction,
+Git/worktree assumptions, and any official create/import distinct from a new
+thread with context.
 
 ### OpenCode
 
-Investigate:
-
-- SQLite/session/message/part schema and migrations;
-- official SDK/HTTP/CLI session create/fork/resume/export APIs;
-- model/provider routing metadata;
-- tool parts, attachments, permission state, agents, and project binding;
-- whether a supported API can create imported messages with provenance;
-- cross-machine DB or server synchronization behavior.
-
-OpenCode may offer the strongest documented local API; that does not justify
-writing its SQLite tables directly if an API exists.
+Study official SDK/HTTP/CLI session APIs, SQLite schema/migrations only as read
+evidence, provider/model routing, parts/attachments/permissions/agents/project
+binding, and supported imported-message provenance. Use official API if present;
+never write its tables directly.
 
 ### Cursor
 
-Investigate:
-
-- composer/chat/session storage and workspace binding;
-- official export/resume/import surfaces;
-- cloud/account synchronization versus local database;
-- model/tool/edit/accepted-change representation;
-- project/workspace IDs and extension-version migration;
-- whether the current ai-usage Cursor input is too aggregated for any
-  continuation claim.
-
-If Cursor exposes no stable session-level contract, classify accordingly rather
-than reverse-engineering a production writer.
+Study official composer/chat export/resume/import, local/cloud account sync,
+workspace binding, model/tool/edit/accepted-change representation, and version
+migration. If no stable contract exists, classify it rather than creating a
+writer.
 
 ## Experiments
 
-### Experiment A — Same-harness resume on original machine
+### A: official same-harness resume on original disposable home
 
-Baseline official resume behavior, required files, and network/provider state.
+Record required files/config/network/provider state.
 
-### Experiment B — Same-harness resume on second disposable machine
+### B: same-harness behavior on second disposable home
 
-Use only documented export/import/sync or an explicitly isolated copy experiment.
-Observe:
+Use documented export/import/sync or an isolated coherent copy experiment.
+Record success/failure, provider calls, ID collisions, missing repo/config, and
+version/account constraints. Copy behavior alone does not advance beyond an
+officially supported level.
 
-- session opens or fails;
-- provider calls and context re-upload;
-- missing repository/config behavior;
-- ID collision/duplication;
-- version/account constraints.
+### C: official new-session import/context API
 
-A successful accidental file copy is evidence of implementation behavior, not a
-supported production API.
+Where official docs prove one exists, create a new session and measure roles,
+events, instructions, tool state, attachments, and provenance retained.
 
-### Experiment C — Official new-session import/context API
+### D: Work handoff baseline
 
-Where available, create a new session from normalized context and measure which
-roles/events/provenance survive.
+Retrieve the same accepted `WorkHandoff` through the exact plan-108 MCP tools
+into each target. Measure setup, context quality, missing information,
+verification work, and native-store non-mutation.
 
-### Experiment D — Cross-harness Handoff baseline
+### E: research-only official emitter
 
-Use plan 108’s accepted Handoff through MCP into each target. Measure setup cost,
-context quality, and missing information. This is the benchmark native conversion
-must materially improve.
+Run only for an official import contract identified before experiments. Emit
+the canonical graph through that contract and validate through the harness API/
+UI. No official import means `not attempted`, not private-file reverse
+engineering.
 
-### Experiment E — Research-only format emitter
+### F: cost/cache/privacy
 
-Only when a harness has an official import contract. Emit from the canonical
-model into that contract and validate through the harness’s own API/UI. Do not
-write private files.
+Measure re-tokenization/re-upload, provider cache loss, latency, and recurring
+cost without secrets. A conversion that works but uploads all history has a
+material consequence.
 
-### Experiment F — Cost/cache impact
+## Evaluation
 
-Measure whether imported/resumed content is re-tokenized/re-uploaded and loses
-provider cache benefits. Record cost/latency implications without provider
-secrets.
+Score each dimension separately as `faithful`, `degraded`, or `fabricated`:
 
-## Commands you will need
+- message role/order;
+- system/developer instructions;
+- tool calls/results;
+- attachments/artifacts;
+- model/effort;
+- Project/Git/worktree;
+- permission/sandbox;
+- identity/provenance;
+- version stability;
+- cross-machine/account;
+- privacy/provider upload;
+- cost/token/cache.
 
-| Purpose | Command | Expected on success |
-|---|---|---|
-| Prerequisite: handoffs work | `bun test apps/server/src/cross-harness-handoff.test.ts` | all pass |
-| Create the sandbox home | `bun tools/spike110-sandbox.ts --create` | prints an isolated `HOME`, refuses if `$HOME` is the real one |
-| Checksum before any mutation | `bun tools/spike110-sandbox.ts --checksum <dir>` | manifest written |
-| Verify no live path was touched | `bun tools/spike110-sandbox.ts --verify <dir>` | manifest matches |
-| Harness versions | `claude --version; codex --version; opencode --version` | recorded in the report |
-| Destroy the sandbox | `bun tools/spike110-sandbox.ts --destroy <dir>` | directory gone |
-| Existing fixture home | `bun test packages/local-machine/src/testing` | all pass |
-| Full verification (repo unchanged) | `bun run check && bun run lint && bun run typecheck && bun run test` | exit 0 |
-
-## Git workflow
-
-- Branch `spike/110-native-portability`, cut from plan 109's branch.
-- **This spike produces documents and throwaway tooling, not product code.** If
-  a diff appears under `packages/` or `apps/` beyond `tools/spike110-*.ts`, the
-  spike has escaped its scope — stop.
-- Stage by explicit path. Never `git add -A`.
-- Two commits:
-  1. `chore(tools): add the plan 110 sandbox harness`
-  2. `docs(research): record the native session portability findings`
-- Never commit anything captured from a real harness profile, even redacted.
-- Do not push or open a PR unless the operator asks.
+Do not compute an aggregate percentage. `fabricated` in any safety-critical
+dimension disqualifies that path.
 
 ## Steps
 
-### Step 0: Build the sandbox, and make it refuse the real home
+### Step 0: Build the refusing sandbox
 
-Before any harness is launched. `tools/spike110-sandbox.ts`:
+Implement creation/checksum/verify/destroy with tests proving real-home refusal
+before writes. Every experiment is bracketed by checksum/verify.
 
-- `--create` makes a disposable `HOME` under `$TMPDIR`, seeded from
-  `packages/local-machine/src/testing/harness-home.ts` plus a synthetic Git
-  repository with no secrets;
-- it **refuses to run** if the resolved home is the real one, or if any path it
-  would touch resolves inside `$HOME` — a hard guard, not a flag. ADR 0003's
-  standard: reject before constructing, not after;
-- `--checksum` writes a manifest (path, size, mtime, SHA-256) of every file in a
-  target directory;
-- `--verify` re-checksums and reports differences;
-- `--destroy` removes the sandbox.
+### Step 1: Complete official-documentation table first
 
-Add `spike110-sandbox.test.ts` proving the refusal: given `HOME` as the target,
-it exits non-zero and writes nothing.
+For each harness, cite official docs/license for export, import/context API,
+store-format documentation, backup, and allowed mutation. Missing docs is an
+explicit finding and gates Experiment E off.
 
-**Every mutation experiment is bracketed by `--checksum` before and `--verify`
-after.** A silent mutation of a copied store invalidates every conclusion drawn
-after it.
+### Step 2: Run A–D read-only
 
-**Verify**: `bun test tools/spike110-sandbox.test.ts` → passes, including the
-refusal case.
+A–D never write private stores. Compare every result to the Work handoff
+baseline, not to an imagined perfect conversion.
 
-### Step 1: Document the interoperability level per harness before experimenting
+### Step 3: Run E only through official import
 
-For each of Claude, Codex, OpenCode, Cursor, record — from **published
-documentation only**, before touching a file:
+No official contract means do not run it. Verify every other store remains
+checksum-identical.
 
-| Question | Source required |
-|---|---|
-| Is there a documented session export? | official docs URL |
-| Is there a documented session import / "start from context" API? | official docs URL |
-| Is the session store format documented? | official docs URL |
-| Is there a supported backup path? | official docs URL |
-| What does the licence/ToS say about reading or writing the store? | the licence text |
+### Step 4: Measure F and score dimensions
 
-A harness with **no documented import contract** cannot reach Experiment E. Fix
-that boundary now, in writing, rather than discovering it mid-experiment when a
-file write looks tempting.
+State measurement methods, pinned versions, and evidence for every score. Do
+not hide fabricated state in an average.
 
-**Verify**: the table is complete with a citation per cell, or an explicit
-"not documented".
+### Step 5: Write the dated research report
 
-### Step 2: Experiments A–D, read-only
+Add one dated research snapshot to `docs/README.md` with matrices, official
+citations, dimension scores, cost/cache findings, hard STOPs, and per-harness
+recommendation: `pursue with separate approval`, `Work handoff is sufficient`,
+`defer pending official API`, or `unsafe—do not pursue`.
 
-Run in order. A–D never write to a harness store.
+### Step 6: Close safely
 
-- **A** — baseline resume on the original machine. Record required files,
-  network calls, and provider state.
-- **B** — resume from an isolated *copy* on a second disposable home. Copy
-  SQLite stores coherently: clean shutdown first, then main + WAL + SHM
-  together, or the harness's supported backup path. Never read a live profile.
-  Record: opens or fails, provider calls, ID collisions, version constraints.
-- **C** — official new-session-from-context API, where Step 1 found one. Measure
-  which roles, events, and provenance survive.
-- **D** — the **baseline that matters**: plan 108's accepted handoff through MCP
-  into each target. Measure setup cost, context quality, and what is missing.
-
-Everything else is judged against D. If native conversion does not materially
-beat an accepted handoff, the honest conclusion is that handoffs are sufficient
-— and that is a valuable, cheap finding.
-
-**Verify**: `--verify` after each experiment → manifest matches.
-
-### Step 3: Experiment E, gated
-
-**Only for a harness where Step 1 found an official import contract.** Emit from
-the canonical model into that contract and validate through the harness's own
-API or UI.
-
-If Step 1 found no import contract for a harness, Experiment E does not run for
-it. Record "no official import contract — not attempted" rather than leaving a
-blank, so a later reader knows it was considered and excluded.
-
-Do not write private files. Do not reverse-engineer a private format into a
-writer. This is the plan's central prohibition.
-
-**Verify**: `--verify` → manifest matches for every store not written through an
-official API.
-
-### Step 4: Experiment F — cost and cache
-
-Measure whether imported or resumed content is re-tokenized and re-uploaded, and
-whether provider cache benefits are lost. Record cost and latency implications
-with no provider secrets in the output.
-
-This often dominates the decision: a conversion that works but re-uploads the
-entire context has a real recurring cost, and it belongs in the report next to
-the fidelity scores rather than as a footnote.
-
-**Verify**: figures recorded per harness, with the measurement method stated.
-
-### Step 5: Score each dimension separately
-
-Twelve dimensions, listed below in "Fidelity and safety evaluation". Report each
-separately.
-
-**Do not compute an aggregate score.** The plan says why, and it is worth
-repeating in the report itself: a session with 95% text fidelity and fabricated
-system or tool state is unsafe, and an average hides exactly that.
-
-Use a three-value scale — `faithful` / `degraded` / `fabricated` — rather than
-percentages. `fabricated` on any dimension is disqualifying regardless of the
-others, and a percentage invites averaging it away.
-
-**Verify**: every dimension has a value and a supporting observation per harness.
-
-### Step 6: Write the report and the recommendation
-
-`docs/native-session-portability-2026-XX-XX.md`, dated in the header the way
-`docs/session-analysis-sources.md:3-5` is, and listed in `docs/README.md` as a
-dated research snapshot rather than living reference.
-
-It must contain:
-
-1. the Step 1 documentation table with citations;
-2. per-harness interoperability level;
-3. the twelve-dimension scores;
-4. cost and cache findings;
-5. a recommendation per harness: **pursue**, **handoff is sufficient**, or
-   **unsafe — do not pursue**;
-6. any hard STOP condition encountered, and where.
-
-"Handoff is sufficient" for every harness is a complete and successful outcome.
-The program's ADR 0030 already chose handoff-first; this spike exists to test
-whether that choice should change, and confirming it is a result.
-
-**Verify**: `git diff --stat` shows changes only under `docs/`, `plans/`, and
-`tools/spike110-*`.
-
-### Step 7: Close the loop
-
-- If any harness scores `pursue`, write a follow-up plan (111+). Do not
-  implement it here.
-- If none does, amend ADR 0030's consequences with the evidence and mark this
-  spike `DONE (negative result)` in `plans/README.md:66`. A negative result with
-  evidence is worth more than an unwritten one.
-- Destroy every sandbox: `bun tools/spike110-sandbox.ts --destroy <dir>`.
-- Confirm no captured harness data reached the repository:
-  `git status --porcelain` → clean beyond the two intended commits.
-
-## Fidelity and safety evaluation
-
-Score/report dimensions separately:
-
-- message role/order fidelity;
-- system/developer instruction fidelity;
-- tool call/result fidelity;
-- attachment/artifact fidelity;
-- model/effort fidelity;
-- project/Git/worktree fidelity;
-- permission/sandbox fidelity;
-- identity/provenance honesty;
-- cross-version stability;
-- cross-machine/account behavior;
-- privacy and provider-upload impact;
-- cost/token/cache impact.
-
-Do not combine them into one reassuring percentage. A session with 95% text
-fidelity and fabricated system/tool state is unsafe.
-
-## Hard STOP conditions
-
-Stop a harness/adapter investigation immediately when:
-
-- production would require direct writes to an undocumented JSONL/SQLite/private
-  database;
-- an official import cannot distinguish imported/generated history from genuine
-  provider history;
-- system/developer instructions would be guessed, omitted silently, or elevated
-  incorrectly;
-- tool calls/results must be fabricated or replayed to satisfy validation;
-- session identity is bound to server-side state that cannot be exported safely;
-- copying data would include provider credentials, cookies, OAuth state, or
-  private keys;
-- target may execute historical tool calls or commands during import/resume;
-- account/provider terms prohibit the experiment;
-- real personal/company sessions would be needed;
-- schema/version drift cannot be detected before mutation;
-- a failed experiment risks corrupting the user’s live harness profile.
-
-Record the STOP, strongest safe level, and recommended Handoff fallback.
-
-## Deliverables
-
-1. dated research memo with pinned versions and official sources;
-2. completed harness and source→target matrices;
-3. canonical-model loss analysis;
-4. experiment scripts/fixtures safe for disposable environments only;
-5. Handoff baseline comparison;
-6. security/privacy/cost findings;
-7. per-harness decision:
-   - recommend production adapter;
-   - handoff-only;
-   - defer pending official API;
-   - reject;
-8. follow-up production plans only for accepted official surfaces;
-9. explicit list of research code that must not ship.
+Destroy sandboxes and prove no captured harness data reached Git. If any route
+merits production work, return the evidence/recommendation to the maintainer;
+do not implement it or create a new numbered plan in this spike.
 
 ## Verification
 
+- sandbox refuses real home/live profiles and writes nothing on refusal;
 - all fixtures are synthetic and secret-scanned;
-- experiments cannot discover/use the real home/profile by default;
-- sandbox path guards and refusal tests exist;
-- checksums prove live stores are untouched;
-- official API/CLI behavior is captured in tests where automatable;
-- version mismatch is detected;
-- no production package imports research-only private-format emitters;
-- package-boundary scanner prevents accidental shipping if needed;
-- results reproduce on a clean disposable environment.
+- checksums prove no unauthorized store mutation;
+- official vs accidental behavior is labeled;
+- exact WorkHandoff/MCP vocabulary is used throughout;
+- research-only graph/tools cannot enter production package closure;
+- repo diff stays within approved research docs/tooling for the future spike;
+- lint/typecheck/relevant tests pass.
 
 ## Done criteria
 
-- [ ] Every harness has a pinned, evidence-backed interoperability classification.
-- [ ] Every source→target pair has a strongest safe level and rationale.
-- [ ] Handoff continuation is measured as the baseline.
-- [ ] Canonical graph exposes information loss rather than hiding it.
-- [ ] No experiment writes a real/live harness store.
-- [ ] Official import/resume surfaces are distinguished from reverse-engineered
-      implementation details.
-- [ ] Privacy, provider upload, token/cache, and version risks are documented.
-- [ ] Unsafe/private-store routes are rejected with STOP evidence.
-- [ ] Any recommended production adapter has its own follow-up plan and uses a
-      supported API.
-- [ ] Native portability is not promised where only Handoff/context transfer is
-      proven.
+- [ ] Every harness and source→target pair has a pinned evidence-backed level.
+- [ ] Work handoff is measured as the level-1 baseline.
+- [ ] Canonical graph exposes loss and is not production authority.
+- [ ] No real/live or undocumented private store is written.
+- [ ] Official import is distinguished from file-copy behavior.
+- [ ] Privacy/provider upload/cost/cache/version risks are explicit.
+- [ ] Recommendations require separate approval for production work.
+
+## Hard STOP conditions
+
+Stop a route immediately when:
+
+- production needs direct undocumented JSONL/SQLite/private-store writes;
+- imported/generated history cannot be distinguished from genuine history;
+- instructions/tool state must be guessed, silently omitted, fabricated, or
+  replayed;
+- session identity depends on unexportable provider state;
+- credentials/cookies/OAuth/private keys would be copied;
+- historical tool calls may execute on import/resume;
+- terms prohibit the experiment;
+- real personal/company data is required;
+- version drift cannot be detected before mutation;
+- live profile corruption is possible.
+
+Record the STOP, strongest safe level, and Work handoff fallback.
 
 ## Out of scope
 
-- production implementation of any adapter;
-- automatic two-way synchronization of native harness stores;
-- raw provider credential transfer;
-- uncommitted worktree migration;
+- production adapter implementation or a new numbered plan;
+- two-way native-store synchronization;
+- provider credential/worktree transfer;
 - remote shell/tool replay;
-- bypassing harness authentication or subscription limits;
-- declaring the canonical research graph a new source of truth;
-- changing plans 108–109 contracts unless the spike produces a reviewed
-  follow-up decision.
+- bypassing auth/subscription limits;
+- changing WorkHandoff/archive contracts without separate review.
