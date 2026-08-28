@@ -100,13 +100,6 @@ const CODEX_READ_VERBS: ReadonlySet<string> = new Set([
  */
 const CODEX_SCRIPTED_READ_VERBS: ReadonlySet<string> = new Set(['awk', 'grep', 'rg', 'sed']);
 
-/**
- * A redirect operator, optionally with its target attached (`>out`, `2>>log`).
- * A token in target position is being *written*, so `cat README.md >
- * …/SKILL.md` overwrites a skill rather than reading one.
- */
-const REDIRECT_OPERATOR = /^\d*>>?/;
-
 const isFlag = (token: string): boolean => token.startsWith('-') && token.length > 1;
 
 /**
@@ -119,38 +112,171 @@ const isFlag = (token: string): boolean => token.startsWith('-') && token.length
  * the plain readers take no valued flags that matter here.
  */
 interface CodexVerbFlags {
-  /** Long flags known to take a separate value. */
-  readonly long: ReadonlySet<string>;
-  /** Single letters that take a value, whether glued or as the next token. */
-  readonly short: ReadonlySet<string>;
+  readonly booleanLong: ReadonlySet<string>;
+  readonly booleanShort: ReadonlySet<string>;
+  readonly valuedLong: ReadonlySet<string>;
+  readonly valuedShort: ReadonlySet<string>;
 }
 
-const CODEX_VALUED_FLAGS: ReadonlyMap<string, CodexVerbFlags> = new Map([
+const verbFlags = (
+  booleanShort: string,
+  valuedShort: string,
+  booleanLong: readonly string[],
+  valuedLong: readonly string[],
+): CodexVerbFlags => ({
+  booleanLong: new Set(booleanLong),
+  booleanShort: new Set(booleanShort),
+  valuedLong: new Set(valuedLong),
+  valuedShort: new Set(valuedShort),
+});
+
+/**
+ * The flags each read verb is modelled to understand.
+ *
+ * Membership is asymmetric on purpose. A valued flag wrongly listed as boolean
+ * leaves its value sitting in operand position, which is an over-count — the
+ * one error class this module refuses. A boolean wrongly listed as valued only
+ * swallows a token, which is an under-count. So anything uncertain belongs in
+ * the valued sets, and the common flags are pinned exactly, per verb: `-n` is
+ * boolean for `sed` and `grep`, but takes a value for `head`, `tail` and `nl`.
+ */
+const CODEX_VERB_FLAGS: ReadonlyMap<string, CodexVerbFlags> = new Map([
   [
-    'rg',
-    {
-      long: new Set([
-        '--after-context',
-        '--before-context',
-        '--context',
-        '--file',
-        '--glob',
-        '--iglob',
-        '--max-columns',
-        '--max-count',
-        '--max-depth',
-        '--regexp',
-        '--replace',
-        '--type',
-        '--type-not',
-      ]),
-      short: new Set(['A', 'B', 'C', 'M', 'T', 'e', 'f', 'g', 'm', 'r', 't']),
-    },
+    'cat',
+    verbFlags(
+      'AbEensTtuv',
+      '',
+      [
+        '--show-all',
+        '--number-nonblank',
+        '--show-ends',
+        '--number',
+        '--squeeze-blank',
+        '--show-tabs',
+        '--show-nonprinting',
+      ],
+      [],
+    ),
+  ],
+  ['head', verbFlags('qvz', 'nc', ['--quiet', '--silent', '--verbose', '--zero-terminated'], ['--lines', '--bytes'])],
+  [
+    'tail',
+    verbFlags(
+      'fFqvz',
+      'ncs',
+      ['--quiet', '--silent', '--verbose', '--zero-terminated', '--follow', '--retry'],
+      ['--lines', '--bytes', '--sleep-interval', '--pid', '--max-unchanged-stats'],
+    ),
+  ],
+  [
+    'nl',
+    verbFlags(
+      'p',
+      'bdfhilnsvw',
+      ['--no-renumber'],
+      [
+        '--body-numbering',
+        '--section-delimiter',
+        '--footer-numbering',
+        '--header-numbering',
+        '--line-increment',
+        '--join-blank-lines',
+        '--number-format',
+        '--number-separator',
+        '--starting-line-number',
+        '--number-width',
+      ],
+    ),
+  ],
+  ['wc', verbFlags('clLmw', '', ['--bytes', '--chars', '--lines', '--max-line-length', '--words'], ['--files0-from'])],
+  [
+    'less',
+    verbFlags(
+      'EFGImNQRSXin',
+      'jkoptx',
+      ['--quit-at-eof', '--RAW-CONTROL-CHARS', '--chop-long-lines'],
+      ['--tabs', '--prompt'],
+    ),
+  ],
+  ['more', verbFlags('dfpcsu', 'n', [], [])],
+  ['view', verbFlags('RmMnb', 'cuS', [], [])],
+  [
+    'bat',
+    verbFlags(
+      'ApnA',
+      'lrHm',
+      ['--plain', '--number', '--show-all', '--no-config', '--force-colorization', '--list-themes'],
+      [
+        '--language',
+        '--style',
+        '--theme',
+        '--paging',
+        '--color',
+        '--decorations',
+        '--line-range',
+        '--wrap',
+        '--tabs',
+        '--italic-text',
+        '--map-syntax',
+        '--pager',
+        '--terminal-width',
+      ],
+    ),
+  ],
+  [
+    'sed',
+    verbFlags(
+      'nrsuEz',
+      'efl',
+      [
+        '--quiet',
+        '--silent',
+        '--regexp-extended',
+        '--separate',
+        '--unbuffered',
+        '--null-data',
+        '--debug',
+        '--posix',
+        '--sandbox',
+      ],
+      ['--expression', '--file', '--line-length'],
+    ),
   ],
   [
     'grep',
-    {
-      long: new Set([
+    verbFlags(
+      'EFGPabcHhIiLlnoqRrsUvwxyzZ',
+      'ABCDdefm',
+      [
+        '--extended-regexp',
+        '--fixed-strings',
+        '--basic-regexp',
+        '--perl-regexp',
+        '--text',
+        '--byte-offset',
+        '--count',
+        '--with-filename',
+        '--no-filename',
+        '--ignore-case',
+        '--files-without-match',
+        '--files-with-matches',
+        '--line-number',
+        '--only-matching',
+        '--quiet',
+        '--silent',
+        '--recursive',
+        '--dereference-recursive',
+        '--no-messages',
+        '--invert-match',
+        '--word-regexp',
+        '--line-regexp',
+        '--null',
+        '--null-data',
+        '--initial-tab',
+        '--line-buffered',
+        '--no-ignore-case',
+      ],
+      [
         '--after-context',
         '--before-context',
         '--context',
@@ -158,16 +284,111 @@ const CODEX_VALUED_FLAGS: ReadonlyMap<string, CodexVerbFlags> = new Map([
         '--directories',
         '--exclude',
         '--exclude-dir',
+        '--exclude-from',
         '--file',
         '--include',
         '--max-count',
         '--regexp',
-      ]),
-      short: new Set(['A', 'B', 'C', 'D', 'd', 'e', 'f', 'm']),
-    },
+        '--binary-files',
+        '--color',
+        '--colour',
+        '--label',
+        '--group-separator',
+      ],
+    ),
   ],
-  ['sed', { long: new Set(['--expression', '--file', '--line-length']), short: new Set(['e', 'f', 'l']) }],
-  ['awk', { long: new Set(['--assign', '--field-separator', '--file']), short: new Set(['F', 'f', 'v']) }],
+  [
+    'rg',
+    verbFlags(
+      'FLPSUVachilnopqsuvwxz',
+      'ABCDEMTdefgjmrt',
+      [
+        '--fixed-strings',
+        '--follow',
+        '--pcre2',
+        '--smart-case',
+        '--multiline',
+        '--count',
+        '--count-matches',
+        '--hidden',
+        '--ignore-case',
+        '--files-with-matches',
+        '--files-without-match',
+        '--line-number',
+        '--no-line-number',
+        '--only-matching',
+        '--no-filename',
+        '--with-filename',
+        '--quiet',
+        '--case-sensitive',
+        '--unrestricted',
+        '--invert-match',
+        '--word-regexp',
+        '--line-regexp',
+        '--null',
+        '--json',
+        '--files',
+        '--no-ignore',
+        '--no-heading',
+        '--heading',
+        '--vimgrep',
+        '--text',
+        '--search-zip',
+        '--trim',
+        '--stats',
+        '--debug',
+        '--no-config',
+        '--one-file-system',
+        '--crlf',
+        '--column',
+        '--block-buffered',
+        '--line-buffered',
+      ],
+      [
+        '--after-context',
+        '--before-context',
+        '--context',
+        '--dfa-size-limit',
+        '--encoding',
+        '--engine',
+        '--file',
+        '--glob',
+        '--iglob',
+        '--ignore-file',
+        '--max-columns',
+        '--max-count',
+        '--max-depth',
+        '--max-filesize',
+        '--regex-size-limit',
+        '--regexp',
+        '--replace',
+        '--sort',
+        '--sortr',
+        '--threads',
+        '--type',
+        '--type-add',
+        '--type-not',
+        '--colors',
+        '--color',
+        '--colour',
+        '--context-separator',
+        '--field-context-separator',
+        '--field-match-separator',
+        '--path-separator',
+        '--pre',
+        '--binary-files',
+      ],
+    ),
+  ],
+  [
+    'awk',
+    verbFlags(
+      '',
+      'Ffv',
+      ['--posix', '--traditional', '--lint'],
+      ['--assign', '--field-separator', '--file', '--source', '--exec'],
+    ),
+  ],
 ]);
 
 /**
@@ -176,7 +397,7 @@ const CODEX_VALUED_FLAGS: ReadonlyMap<string, CodexVerbFlags> = new Map([
  * would lose a real read: `grep -e needle …/SKILL.md` and its glued form
  * `grep -eneedle …/SKILL.md` both read the skill.
  */
-const CODEX_PATTERN_SUPPLYING_LONG: ReadonlySet<string> = new Set(['--expression', '--file', '--regexp']);
+const CODEX_PATTERN_SUPPLYING_LONG: ReadonlySet<string> = new Set(['--expression', '--file', '--regexp', '--source']);
 const CODEX_PATTERN_SUPPLYING_SHORT: ReadonlySet<string> = new Set(['e', 'f']);
 
 /**
@@ -195,48 +416,57 @@ interface ParsedFlag {
 }
 
 /**
- * Interpret one flag token under real short-cluster and attached-value rules.
+ * Interpret one flag token, or refuse.
  *
  * Short flags cluster (`-nm 1` is `-n -m 1`) and glue their values
- * (`-eneedle`), and getting either wrong shifts operand positions — which is
- * how a pattern ended up read as a file, and a file as a pattern.
+ * (`-eneedle`), and getting either wrong shifts every operand after it — which
+ * is how a pattern ends up read as a file.
  *
- * **Unknown long flags on a scripted verb consume the next token.** Their arity
- * cannot be known, and of the two safe choices this one is strictly the less
- * lossy: a swallowed token leaves operand position entirely, so the rule can
- * only ever *remove* a candidate read, never invent one. The cost is that a
- * boolean long flag (`rg --hidden needle …/SKILL.md`) swallows the pattern and
- * the real file then reads as the pattern — an under-count, which is the
- * direction an inferred tier should err.
+ * **An unmodeled flag returns `null`, and the caller abandons the segment.**
+ * Arity cannot be guessed from the token, and guessing either way is reachable
+ * as a false read: assume boolean and its value sits in operand position;
+ * assume valued and a real file gets swallowed. Since the modelled sets cover
+ * the flags real Codex commands actually use, refusing the rest makes
+ * flag-driven over-counts impossible by construction. The cost is that a
+ * segment using an unfamiliar flag reports nothing — an under-count, which is
+ * the direction this tier is required to err.
  */
-const parseFlagToken = (token: string, valuedFlags: CodexVerbFlags | undefined, scripted: boolean): ParsedFlag => {
+const parseFlagToken = (token: string, flags: CodexVerbFlags | undefined): ParsedFlag | null => {
+  if (flags === undefined) {
+    return null;
+  }
+  if (token === '--') {
+    // End of options: everything after it is an operand, which the caller
+    // already treats as the default.
+    return { suppliesPattern: false, takesNextToken: false };
+  }
   if (token.startsWith('--')) {
     const separator = token.indexOf('=');
     const name = separator < 0 ? token : token.slice(0, separator);
     const suppliesPattern = CODEX_PATTERN_SUPPLYING_LONG.has(name);
-    if (separator >= 0) {
+    if (flags.valuedLong.has(name)) {
+      return { suppliesPattern, takesNextToken: separator < 0 };
+    }
+    if (flags.booleanLong.has(name)) {
       return { suppliesPattern, takesNextToken: false };
     }
-    const known = valuedFlags?.long.has(name) === true;
-    return { suppliesPattern, takesNextToken: known || scripted };
+    return null;
   }
   // A short cluster is read left to right; the first letter that takes a value
   // claims the rest of the token, or the next token when nothing is glued.
   const letters = token.slice(1);
   for (const [index, letter] of [...letters].entries()) {
     const suppliesPattern = CODEX_PATTERN_SUPPLYING_SHORT.has(letter);
-    if (valuedFlags?.short.has(letter) === true) {
+    if (flags.valuedShort.has(letter)) {
       return { suppliesPattern, takesNextToken: index === letters.length - 1 };
     }
-    if (suppliesPattern) {
-      return { suppliesPattern: true, takesNextToken: false };
+    if (!flags.booleanShort.has(letter)) {
+      return null;
     }
   }
   return { suppliesPattern: false, takesNextToken: false };
 };
 
-/** Shell words, with one level of quoting removed. */
-const SHELL_TOKEN = /'[^']*'|"[^"]*"|\S+/g;
 const WHITESPACE = /\s/;
 
 export interface CodexSkillObservationContext {
@@ -420,9 +650,12 @@ export const decodeCodexCommands = (blob: unknown): string[] => {
     return [];
   }
   const commands: string[] = [];
-  for (const { end, start } of codexExecCallWindows(blob)) {
+  // Comments are blanked first, offset-preserving, so a commented-out `cmd`
+  // cannot win the key scan against the one the call actually ran.
+  const source = withoutJavaScriptComments(blob);
+  for (const { end, start } of codexExecCallWindows(source)) {
     const command =
-      jsonStringValueForKey(blob, 'cmd', start, end) ?? jsonStringValueForKey(blob, 'command', start, end);
+      jsonStringValueForKey(source, 'cmd', start, end) ?? jsonStringValueForKey(source, 'command', start, end);
     if (command !== null) {
       commands.push(command);
     }
@@ -495,8 +728,18 @@ const codexExecCallWindows = (blob: string): { end: number; start: number }[] =>
  * `open`, ignoring delimiters inside string literals, or `null` when the call
  * is never terminated.
  */
+const CLOSER_FOR: ReadonlyMap<string, string> = new Map([
+  ['(', ')'],
+  ['[', ']'],
+  ['{', '}'],
+]);
+
 const callArgumentEnd = (blob: string, open: number): number | null => {
-  let depth = 1;
+  // A stack, not a depth counter: counting alone accepts `{cmd:"…"]`, because a
+  // mismatched closer still balances the count. A mismatch means the snippet is
+  // not the grammar this module models, so the call is malformed and yields
+  // nothing.
+  const expected: string[] = [')'];
   let quote: string | null = null;
   for (let index = open; index < blob.length; index += 1) {
     const character = blob[index];
@@ -512,18 +755,74 @@ const callArgumentEnd = (blob: string, open: number): number | null => {
       quote = character;
       continue;
     }
-    if (character === '(' || character === '{' || character === '[') {
-      depth += 1;
+    const closer = character === undefined ? undefined : CLOSER_FOR.get(character);
+    if (closer !== undefined) {
+      expected.push(closer);
       continue;
     }
     if (character === ')' || character === '}' || character === ']') {
-      depth -= 1;
-      if (depth === 0) {
+      if (expected.pop() !== character) {
+        return null;
+      }
+      if (expected.length === 0) {
         return index;
       }
     }
   }
   return null;
+};
+
+/**
+ * Blank out JavaScript comments, preserving offsets so an already-computed
+ * window stays valid.
+ *
+ * A commented-out `cmd` is not a command the payload ran, but a key scan cannot
+ * tell: it finds the first `cmd` in the window, and a `/* cmd:"…" *␘/` sitting
+ * ahead of the real one wins. Comments are erased before any key is looked for.
+ */
+const withoutJavaScriptComments = (blob: string): string => {
+  const characters = [...blob];
+  let quote: string | null = null;
+  for (let index = 0; index < characters.length; index += 1) {
+    const character = characters[index];
+    if (quote !== null) {
+      if (character === '\\') {
+        index += 1;
+      } else if (character === quote) {
+        quote = null;
+      }
+      continue;
+    }
+    if (character === '"' || character === "'" || character === '`') {
+      quote = character;
+      continue;
+    }
+    if (character !== '/') {
+      continue;
+    }
+    const next = characters[index + 1];
+    if (next === '*') {
+      let end = index + 2;
+      while (end < characters.length && !(characters[end] === '*' && characters[end + 1] === '/')) {
+        end += 1;
+      }
+      const stop = Math.min(end + 2, characters.length);
+      for (let blank = index; blank < stop; blank += 1) {
+        characters[blank] = ' ';
+      }
+      index = stop - 1;
+      continue;
+    }
+    if (next === '/') {
+      let end = index;
+      while (end < characters.length && characters[end] !== '\n') {
+        characters[end] = ' ';
+        end += 1;
+      }
+      index = end;
+    }
+  }
+  return characters.join('');
 };
 
 const safeJsonObject = (blob: string): Record<string, unknown> | null => {
@@ -592,12 +891,136 @@ const jsonStringValueForKey = (blob: string, key: string, from: number, to: numb
   return null;
 };
 
-const shellTokens = (command: string): string[] => {
-  const tokens = command.match(SHELL_TOKEN) ?? [];
-  return tokens.map((token) => {
-    const quoted = (token.startsWith("'") && token.endsWith("'")) || (token.startsWith('"') && token.endsWith('"'));
-    return quoted && token.length >= 2 ? token.slice(1, -1) : token;
-  });
+interface ShellWord {
+  kind: 'word';
+  /** Any part of the token was quoted, so it can never be an operator or flag. */
+  quoted: boolean;
+  value: string;
+}
+
+interface ShellOperator {
+  kind: 'operator';
+  value: string;
+}
+
+type ShellItem = ShellOperator | ShellWord;
+
+/** Separators that end one command and begin another. */
+const SHELL_SEPARATORS: ReadonlySet<string> = new Set(['\n', '&', '&&', ';', ';;', '|', '||']);
+
+/**
+ * Operators that consume the following word as a redirection target. `<` forms
+ * are included even though they read: the target is excluded either way, which
+ * costs an occasional under-count and removes any need to reason about which
+ * direction a form points.
+ */
+const SHELL_REDIRECTS: ReadonlySet<string> = new Set(['&>', '&>>', '<', '<<', '<<<', '<>', '>', '>&', '>>', '>|']);
+
+/** Longest-first, so `&>>` is never read as `&` followed by `>>`. */
+const SHELL_OPERATOR_FORMS: readonly string[] = [
+  '&>>',
+  '<<<',
+  '&&',
+  '&>',
+  ';;',
+  '<<',
+  '<>',
+  '>&',
+  '>>',
+  '>|',
+  '||',
+  '&',
+  ';',
+  '<',
+  '>',
+  '|',
+  '\n',
+];
+
+const ALL_DIGITS = /^\d+$/;
+
+/**
+ * Split a command into words and operators in one quote-aware pass.
+ *
+ * Doing this before segmentation is what closes a family of false reads: a
+ * regex split on `;` or `|` fires inside `printf 'x;cat '`, inventing a segment
+ * whose verb came out of a quoted string. Here a quoted run can only ever be
+ * part of a word, so it can neither separate commands nor act as an operator.
+ *
+ * An unquoted `#` at the start of a word begins a shell comment and ends the
+ * command; everything after it was never executed.
+ */
+const shellItems = (command: string): ShellItem[] => {
+  const items: ShellItem[] = [];
+  let index = 0;
+  while (index < command.length) {
+    const character = command[index];
+    if (character === ' ' || character === '\t' || character === '\r') {
+      index += 1;
+      continue;
+    }
+    if (character === '#') {
+      break;
+    }
+    const operator = SHELL_OPERATOR_FORMS.find((form) => command.startsWith(form, index));
+    if (operator !== undefined) {
+      // A bare file-descriptor number belongs to the redirect, not to the words.
+      const previous = items.at(-1);
+      if (previous?.kind === 'word' && !previous.quoted && ALL_DIGITS.test(previous.value) && operator.includes('>')) {
+        items.pop();
+      }
+      items.push({ kind: 'operator', value: operator });
+      index += operator.length;
+      continue;
+    }
+    let value = '';
+    let quoted = false;
+    while (index < command.length) {
+      const current = command[index];
+      if (current === ' ' || current === '\t' || current === '\r') {
+        break;
+      }
+      if (SHELL_OPERATOR_FORMS.some((form) => command.startsWith(form, index))) {
+        break;
+      }
+      if (current === "'" || current === '"' || current === '`') {
+        quoted = true;
+        index += 1;
+        while (index < command.length && command[index] !== current) {
+          if (command[index] === '\\' && current !== "'") {
+            index += 1;
+          }
+          value += command[index] ?? '';
+          index += 1;
+        }
+        index += 1;
+        continue;
+      }
+      if (current === '\\') {
+        index += 1;
+        value += command[index] ?? '';
+        index += 1;
+        continue;
+      }
+      value += current;
+      index += 1;
+    }
+    items.push({ kind: 'word', quoted, value });
+  }
+  return items;
+};
+
+/** Split an item list into the individual commands it runs. */
+const shellSegments = (items: readonly ShellItem[]): ShellItem[][] => {
+  const segments: ShellItem[][] = [[]];
+  for (const item of items) {
+    if (item.kind === 'operator' && SHELL_SEPARATORS.has(item.value)) {
+      segments.push([]);
+      continue;
+    }
+    segments.at(-1)?.push(item);
+  }
+  return segments;
 };
 
 const ENVIRONMENT_ASSIGNMENT = /^[A-Za-z_]\w*=/;
@@ -606,23 +1029,15 @@ const ENVIRONMENT_ASSIGNMENT = /^[A-Za-z_]\w*=/;
  * The command's verb, without its directory or leading environment
  * assignments, so `/usr/bin/sed` and `LC_ALL=C sed` both read as `sed`.
  */
-const commandVerb = (tokens: readonly string[]): string => {
-  for (const token of tokens) {
-    if (ENVIRONMENT_ASSIGNMENT.test(token)) {
+const commandVerb = (items: readonly ShellItem[]): string => {
+  for (const item of items) {
+    if (item.kind !== 'word' || ENVIRONMENT_ASSIGNMENT.test(item.value)) {
       continue;
     }
-    return token.split('/').pop() ?? '';
+    return item.value.split('/').pop() ?? '';
   }
   return '';
 };
-
-/**
- * Shell separators. Real commands routinely wrap the read in a compound —
- * `set -euo pipefail; sed -n '1,240p' …/SKILL.md` — so the verb is taken from
- * the segment that actually names the document rather than from the head of
- * the whole command, which would be `set`.
- */
-const SHELL_SEGMENT = /[;\n]|&&|\|\||\|/;
 
 /**
  * The name-and-directory half of the exec matcher, split out so a streaming
@@ -638,9 +1053,7 @@ export const matchCodexSkillDocuments = (blob: unknown): CodexSkillCatalogueEntr
   const entries: CodexSkillCatalogueEntry[] = [];
   const seen = new Set<string>();
   for (const command of decodeCodexCommands(blob)) {
-    for (const segment of command.split(SHELL_SEGMENT)) {
-      // One past the ceiling, so the caller can tell a bounded list from a
-      // complete one. See `extractCodexSkillCatalogue`.
+    for (const segment of shellSegments(shellItems(command))) {
       for (const token of segmentReadOperands(segment)) {
         // Checked per token, not per segment: one `cat` can name any number of
         // documents, so a per-segment check leaves the token loop unbounded and
@@ -675,24 +1088,22 @@ export const matchCodexSkillDocuments = (blob: unknown): CodexSkillCatalogueEntr
  *
  * The verb is judged per segment, so `set -e; sed -n … SKILL.md` still reads.
  */
-const segmentReadOperands = (segment: string): string[] => {
-  const tokens = shellTokens(segment);
-  const verb = commandVerb(tokens);
+const segmentReadOperands = (items: readonly ShellItem[]): string[] => {
+  const verb = commandVerb(items);
   const scripted = CODEX_SCRIPTED_READ_VERBS.has(verb);
   if (!(scripted || CODEX_READ_VERBS.has(verb))) {
     return [];
   }
-  const valuedFlags = CODEX_VALUED_FLAGS.get(verb);
+  const knownFlags = CODEX_VERB_FLAGS.get(verb);
   const operands: string[] = [];
   let seenVerb = false;
   let redirectPending = false;
   let flagValuePending = false;
   let patternSupplied = false;
   let operandIndex = 0;
-  for (const token of tokens) {
-    if (REDIRECT_OPERATOR.test(token)) {
-      // `>` alone takes the next token; `>out` already carries its target.
-      redirectPending = token.replace(REDIRECT_OPERATOR, '').length === 0;
+  for (const item of items) {
+    if (item.kind === 'operator') {
+      redirectPending = SHELL_REDIRECTS.has(item.value);
       continue;
     }
     if (redirectPending) {
@@ -700,7 +1111,7 @@ const segmentReadOperands = (segment: string): string[] => {
       continue;
     }
     if (!seenVerb) {
-      if (ENVIRONMENT_ASSIGNMENT.test(token)) {
+      if (ENVIRONMENT_ASSIGNMENT.test(item.value)) {
         continue;
       }
       seenVerb = true;
@@ -710,12 +1121,17 @@ const segmentReadOperands = (segment: string): string[] => {
       flagValuePending = false;
       continue;
     }
-    if (isFlag(token)) {
-      if (verb === 'sed' && SED_IN_PLACE.test(token)) {
-        // An in-place edit rewrites the document and shows the model nothing.
+    if (!item.quoted && isFlag(item.value)) {
+      if (verb === 'sed' && SED_IN_PLACE.test(item.value)) {
         return [];
       }
-      const parsed = parseFlagToken(token, valuedFlags, scripted);
+      const parsed = parseFlagToken(item.value, knownFlags);
+      if (parsed === null) {
+        // An unmodeled flag. Its arity is unknown, so every operand position
+        // after it is unknown too - which is exactly how a pattern ends up read
+        // as a file. The segment is abandoned rather than guessed at.
+        return [];
+      }
       patternSupplied ||= parsed.suppliesPattern;
       flagValuePending = parsed.takesNextToken;
       continue;
@@ -726,7 +1142,7 @@ const segmentReadOperands = (segment: string): string[] => {
     if (scripted && !patternSupplied && operandIndex === 1) {
       continue;
     }
-    operands.push(token);
+    operands.push(item.value);
   }
   return operands;
 };

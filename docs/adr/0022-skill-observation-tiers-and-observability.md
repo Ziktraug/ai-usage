@@ -95,16 +95,21 @@ new columns on `usage_rows`.
   argument, quote-aware, with no whole-blob fallback — and matched against whole
   shell tokens, so a stored path is a path and never a fragment of the command
   that named it.
-- **Where the tier cannot be sure, it under-counts.** Three rules follow from
-  that and are load-bearing rather than incidental: only an allowlist of
-  exec-shaped tool calls is inspected, so an unfamiliar tool contributes nothing
-  rather than having its argument guessed at; a malformed or unterminated call
-  yields no command rather than widening the scan; and an unknown long flag on a
-  scripted verb is assumed to consume its value, which can only remove a
-  candidate read, never invent one. The `inferred` tier is the weakest evidence
-  in the model, so its errors must point at *fewer* observations — a missing
-  inferred read is a gap, a fabricated one is a false claim about what the
-  operator's model did.
+- **Where the tier cannot be sure, it reports nothing.** This is the governing
+  rule of the `inferred` matcher, and it is enforced by refusal rather than by
+  guesswork at every point the input leaves the modelled grammar: only an
+  allowlist of exec-shaped tool calls is inspected; a malformed, unterminated or
+  type-mismatched call yields no command; a segment whose verb is not a modelled
+  reader yields nothing; and a segment using a flag the verb's model does not
+  know is abandoned entirely, because an unknown arity makes every operand
+  position after it unknown too.
+
+  The consequence is deliberate: constructing a false `inferred` observation
+  requires input that the grammar does not model at all, and everything inside
+  the grammar errs toward fewer observations. A missing inferred read is a gap;
+  a fabricated one is a false claim about what the operator's model did, and the
+  two are not equally bad. Measured against real history, refusing this much
+  costs nothing — the modelled flag sets cover what real commands use.
 - Every bound in this family reports itself. A read budget or per-session
   ceiling is detected one past the bound, never at it, because a list that stops
   exactly at the limit is indistinguishable from a complete one; the resulting

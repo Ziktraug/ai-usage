@@ -739,6 +739,81 @@ describe('extractCodexSkillExecObservation', () => {
     ).toEqual(['real']);
   });
 
+  test('does not retain a commented-out cmd key', () => {
+    const decoy = `${SKILL_FIXTURE_HOME}/.agents/skills/decoy/SKILL.md`;
+    const snippet = `tools.exec_command({/* cmd:"cat ${decoy}", */ cmd:"echo hi"})`;
+
+    // The key scan finds the first `cmd`; a commented one sitting ahead of the
+    // real one would win.
+    expect(decodeCodexCommands(snippet)).toEqual(['echo hi']);
+    expect(extractCodexSkillExecObservation(snippet, 'call_comment', codexContext).observations).toEqual([]);
+  });
+
+  test('does not retain a cmd key hidden in a line comment', () => {
+    const decoy = `${SKILL_FIXTURE_HOME}/.agents/skills/decoy/SKILL.md`;
+    const snippet = `tools.exec_command({\n  // cmd:"cat ${decoy}"\n  cmd:"echo hi"\n})`;
+
+    expect(decodeCodexCommands(snippet)).toEqual(['echo hi']);
+    expect(extractCodexSkillExecObservation(snippet, 'call_line_comment', codexContext).observations).toEqual([]);
+  });
+
+  test('rejects a call whose delimiters are mismatched rather than merely balanced', () => {
+    const snippet = `tools.exec_command({cmd:"cat ${SKILL_FIXTURE_HOME}/.agents/skills/decoy/SKILL.md"]`;
+
+    // A depth counter accepts this: one opener, one closer. Types must match.
+    expect(decodeCodexCommands(snippet)).toEqual([]);
+    expect(extractCodexSkillExecObservation(snippet, 'call_mismatch', codexContext).observations).toEqual([]);
+  });
+
+  test('ends the command at an unquoted shell comment', () => {
+    const cmd = `cat /etc/hostname # cat ${SKILL_FIXTURE_HOME}/.agents/skills/decoy/SKILL.md`;
+
+    expect(extractCodexSkillExecObservation(JSON.stringify({ cmd }), 'call_hash', codexContext).observations).toEqual(
+      [],
+    );
+  });
+
+  test('does not split a command on a separator inside a quoted string', () => {
+    const cmd = `printf 'x;cat ' ${SKILL_FIXTURE_HOME}/.agents/skills/decoy/SKILL.md`;
+
+    // Splitting on `;` before tokenizing invents a segment whose verb came out
+    // of a quoted string; the real verb here is `printf`, which reads nothing.
+    expect(
+      extractCodexSkillExecObservation(JSON.stringify({ cmd }), 'call_quoted_sep', codexContext).observations,
+    ).toEqual([]);
+  });
+
+  test('treats every target-taking redirect form as a write', () => {
+    const decoy = `${SKILL_FIXTURE_HOME}/.agents/skills/decoy/SKILL.md`;
+    for (const cmd of [
+      `cat README.md &> ${decoy}`,
+      `cat README.md &>> ${decoy}`,
+      `cat README.md >& ${decoy}`,
+      `cat README.md >| ${decoy}`,
+      `cat README.md <> ${decoy}`,
+    ]) {
+      expect(
+        extractCodexSkillExecObservation(JSON.stringify({ cmd }), 'call_redirect_forms', codexContext).observations,
+      ).toEqual([]);
+    }
+  });
+
+  test('abandons a segment that uses an unmodeled flag', () => {
+    const decoy = `${SKILL_FIXTURE_HOME}/.agents/skills/decoy/SKILL.md`;
+    for (const cmd of [
+      // `-j` takes a value on rg but is not modelled: its arity is unknowable,
+      // so every operand position after it is too.
+      `rg -j 4 ${decoy} transcript.txt`,
+      // A plain reader is no safer: the flag's value is the decoy path itself.
+      `nl --number-separator ${decoy} /etc/hostname`,
+      `cat --unheard-of ${decoy}`,
+    ]) {
+      expect(
+        extractCodexSkillExecObservation(JSON.stringify({ cmd }), 'call_unknown_flag', codexContext).observations,
+      ).toEqual([]);
+    }
+  });
+
   test('deduplicates repeated names inside one command', () => {
     const extraction = extractCodexSkillExecObservation(
       JSON.stringify({
