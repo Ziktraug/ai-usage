@@ -117,6 +117,22 @@ _Avoid_: copy, source skill, installation package
 A file or directory found in a runtime target that is not a verified projection managed by ai-usage. It is reported for consolidation but never overwritten automatically.
 _Avoid_: broken projection, source skill
 
+**Skill observation**:
+One record that a named skill was invoked, or offered, in one session of one harness. It is an auxiliary fact keyed to the harness, the session, and a timestamp — never a column on a usage row, because a session produces many of them. It carries an observation tier, and it carries the skill name as the harness wrote it, before any resolution.
+_Avoid_: skill usage, skill invocation count, skill run
+
+**Observation tier**:
+The strength of the evidence behind one skill observation, with three values. `declared` — the harness recorded the invocation as such (Claude Code's `Skill` tool call, OpenCode's `skill` tool part). `inferred` — reconstructed from a weaker trace that was never meant to record an invocation (a Codex `exec` command that reads a SKILL.md). `exposed` — the skill was offered to the model in that session, with no evidence it was used (the Codex catalogue). The tier is part of the fact and travels with every count derived from it. Tiers are never silently merged, and a total that adds `declared` to `inferred` without saying so is a defect.
+_Avoid_: confidence score, invocation quality, provisional
+
+**Skill resolution**:
+The join from an observed skill name to an entry in the skill inventory. It may legitimately fail: harness-bundled and plugin-provided skills are real, invoked, and outside the managed source repository. An unresolved observation is retained and labelled as unresolved — it is the evidence for the "invoked but unmanaged" verdict, so dropping it would erase the finding.
+_Avoid_: orphan observation, invalid skill, unknown skill
+
+**Observability**:
+Whether a harness can report skill observations at all. Claude Code and OpenCode declare invocations; Codex exposes a catalogue and leaves only an inferable trace; Cursor records nothing and is therefore not observable. A harness that cannot report renders as *not observable*, never as `0` — a zero would assert that its projected skills go unused, which no data supports.
+_Avoid_: zero invocations, unused, no data (as a count)
+
 **Provider**:
 The billing or subscription route inferred for a usage row, such as Claude API, Claude sub, Codex API, Codex sub, or Cursor sub.
 _Avoid_: vendor, platform

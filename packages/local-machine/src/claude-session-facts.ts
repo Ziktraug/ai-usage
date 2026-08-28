@@ -16,6 +16,11 @@ import {
   type SessionVcsPullRequest,
   type SessionVcsRepository,
 } from '@ai-usage/report-core/session-vcs';
+import {
+  MAX_SKILL_OBSERVATIONS_PER_SESSION,
+  parseSkillObservation,
+  type SkillObservation,
+} from '@ai-usage/report-core/skill-observation';
 import type { UsageModelSegment } from '@ai-usage/report-core/types';
 import { addNonNegativeSafeIntegers, parseOptionalNonNegativeSafeInteger } from './metric-validation';
 import { dominant, usablePrompt } from './text';
@@ -643,6 +648,155 @@ const collectClaudeMetadata = (events: readonly ClaudeEvent[], input: ClaudeSess
       })
     : undefined;
   return { parentSourceSessionId, sidechain, sourcePath, title, ...(vcs ? { vcs } : {}) };
+};
+
+/**
+ * Claude Code writes the resolved skill directory as injected prompt text a
+ * couple of envelopes after the `Skill` tool call. That string is prompt text,
+ * not a contract, so the scan is bounded: measured over real local history,
+ * every resolvable invocation but one lands within three envelopes, and a miss
+ * past the bound is recorded as an unresolved observation rather than an error
+ * (ADR 0022 — unresolvable is a state, not a drop).
+ */
+export const CLAUDE_SKILL_LOOKAHEAD_ENVELOPES = 3;
+
+const CLAUDE_SKILL_TOOL_NAME = 'Skill';
+const CLAUDE_SKILL_BASE_DIRECTORY = /^Base directory for this skill:[ \t]*(\S.*)$/m;
+
+export interface ClaudeSkillObservationInput {
+  records: readonly unknown[];
+  sourceSessionId: string;
+}
+
+interface ClaudeSkillLookahead {
+  resolvedPath: string | null;
+  success: boolean | null;
+}
+
+const claudeTextBlocks = (record: Record<string, unknown>): string[] => {
+  const message = isRecord(record.message) ? record.message : null;
+  const { content } = message ?? {};
+  if (!Array.isArray(content)) {
+    return [];
+  }
+  const texts: string[] = [];
+  for (const block of content) {
+    if (isRecord(block) && block.type === 'text' && typeof block.text === 'string') {
+      texts.push(block.text);
+    }
+  }
+  return texts;
+};
+
+const claudeReferencesToolUse = (record: Record<string, unknown>, toolUseId: string | null): boolean => {
+  if (!toolUseId) {
+    return true;
+  }
+  if (record.sourceToolUseID === toolUseId || record.sourceToolAssistantUUID === toolUseId) {
+    return true;
+  }
+  const message = isRecord(record.message) ? record.message : null;
+  const { content } = message ?? {};
+  if (!Array.isArray(content)) {
+    // The envelope names no tool use at all; positional adjacency is the only
+    // available link, so it stays a candidate within the bounded window.
+    return record.sourceToolUseID === undefined;
+  }
+  return content.some((block) => isRecord(block) && block.tool_use_id === toolUseId);
+};
+
+/**
+ * Scan forward a bounded number of envelopes for the two facts Claude Code
+ * records *after* the call: the success flag and the resolved base directory.
+ * Envelopes that name a different tool use are skipped, never consumed.
+ */
+const claudeSkillLookahead = (
+  records: readonly unknown[],
+  fromIndex: number,
+  toolUseId: string | null,
+): ClaudeSkillLookahead => {
+  let resolvedPath: string | null = null;
+  let success: boolean | null = null;
+  const limit = Math.min(records.length, fromIndex + 1 + CLAUDE_SKILL_LOOKAHEAD_ENVELOPES);
+  for (let index = fromIndex + 1; index < limit; index += 1) {
+    const record = records[index];
+    if (!(isRecord(record) && claudeReferencesToolUse(record, toolUseId))) {
+      continue;
+    }
+    const toolUseResult = isRecord(record.toolUseResult) ? record.toolUseResult : null;
+    if (success === null && typeof toolUseResult?.success === 'boolean') {
+      success = toolUseResult.success;
+    }
+    if (resolvedPath === null) {
+      for (const text of claudeTextBlocks(record)) {
+        const matched = CLAUDE_SKILL_BASE_DIRECTORY.exec(text);
+        if (matched?.[1]) {
+          resolvedPath = matched[1].trim();
+          break;
+        }
+      }
+    }
+    if (resolvedPath !== null && success !== null) {
+      break;
+    }
+  }
+  return { resolvedPath, success };
+};
+
+/**
+ * Extract `declared` skill observations from one Claude Code transcript.
+ *
+ * Records are read in file order rather than timestamp order: the base-directory
+ * text is positionally adjacent to its call, and re-sorting would break the
+ * adjacency the look-ahead depends on.
+ *
+ * The `args` field is deliberately reduced to a boolean. Skill arguments are
+ * user prose and have been measured to carry client names and business context;
+ * ADR 0022 forbids persisting them.
+ */
+export const extractClaudeSkillObservations = (input: ClaudeSkillObservationInput): SkillObservation[] => {
+  if (!input.sourceSessionId || input.records.length > MAX_CLAUDE_RECORDS) {
+    return [];
+  }
+  const observations: SkillObservation[] = [];
+  for (const [index, record] of input.records.entries()) {
+    if (observations.length >= MAX_SKILL_OBSERVATIONS_PER_SESSION) {
+      break;
+    }
+    if (!isRecord(record)) {
+      continue;
+    }
+    const message = isRecord(record.message) ? record.message : null;
+    const { content } = message ?? {};
+    if (!Array.isArray(content)) {
+      continue;
+    }
+    for (const [blockIndex, block] of content.entries()) {
+      if (!(isRecord(block) && block.type === 'tool_use' && block.name === CLAUDE_SKILL_TOOL_NAME)) {
+        continue;
+      }
+      const blockInput = isRecord(block.input) ? block.input : {};
+      const skillName = typeof blockInput.skill === 'string' ? blockInput.skill : blockInput.name;
+      const toolUseId = typeof block.id === 'string' && block.id.length > 0 ? block.id : null;
+      const lookahead = claudeSkillLookahead(input.records, index, toolUseId);
+      const observation = parseSkillObservation({
+        argsPresent: typeof blockInput.args === 'string' && blockInput.args.trim().length > 0,
+        harnessKey: 'claude',
+        observationKey: toolUseId ?? `record-${index}-block-${blockIndex}`,
+        observedAt: typeof record.timestamp === 'string' ? record.timestamp : null,
+        projectPath: typeof record.cwd === 'string' ? record.cwd : null,
+        resolvedPath: lookahead.resolvedPath,
+        sessionId: typeof record.sessionId === 'string' ? record.sessionId : input.sourceSessionId,
+        skillName,
+        success: lookahead.success,
+        tier: 'declared',
+      });
+      if (observation) {
+        observations.push(observation);
+      }
+    }
+  }
+  return observations;
 };
 
 export const parseClaudeSessionFacts = (input: ClaudeSessionInput): ClaudeSessionFacts | null => {

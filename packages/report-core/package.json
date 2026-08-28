@@ -29,6 +29,7 @@
     "./report-capture-fingerprint": "./src/report-capture-fingerprint.ts",
     "./session-query": "./src/session-query.ts",
     "./session-vcs": "./src/session-vcs.ts",
+    "./skill-observation": "./src/skill-observation.ts",
     "./session-detail": "./src/session-detail.ts",
     "./session-lineage": "./src/session-lineage.ts",
     "./served-revision": "./src/served-revision.ts",

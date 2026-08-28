@@ -1,5 +1,10 @@
 import { approxCost, priceFor } from '@ai-usage/report-core/pricing';
 import type { SessionDetailTokenCounts } from '@ai-usage/report-core/session-detail';
+import {
+  MAX_SKILL_OBSERVATION_PATH_LENGTH,
+  parseSkillObservation,
+  type SkillObservation,
+} from '@ai-usage/report-core/skill-observation';
 import type { UsageModelSegment } from '@ai-usage/report-core/types';
 import {
   addNonNegativeFiniteNumbers,
@@ -144,6 +149,78 @@ export const decodeOpenCodeMessageRow = (value: unknown): OpenCodeMessageDecodeR
       },
     },
   };
+};
+
+export interface OpenCodeSkillPartRow {
+  data: unknown;
+  id?: unknown;
+  projectPath?: string | null;
+  session_id: unknown;
+  time_created?: unknown;
+}
+
+/**
+ * Decode one OpenCode `skill` tool part into a `declared` skill observation.
+ *
+ * Measured against real local history, every skill part carries a resolved
+ * skill directory in `state.metadata.dir`. That is captured when present, but
+ * its absence is a state and not a rejection (ADR 0022): the observation is
+ * still returned, with a `null` resolved path, so an unresolvable name remains
+ * visible as the "invoked but unmanaged" evidence it is.
+ *
+ * OpenCode's skill tool input carries only the skill name — there is no
+ * argument prose to record, so `argsPresent` is `null` rather than `false`.
+ */
+export const decodeOpenCodeSkillPart = (row: OpenCodeSkillPartRow): SkillObservation | null => {
+  const data = typeof row.data === 'string' ? (safeParse(row.data) ?? null) : row.data;
+  if (!(isJsonObject(data) && data.type === 'tool' && data.tool === 'skill')) {
+    return null;
+  }
+  const state = isJsonObject(data.state) ? data.state : null;
+  const input = isJsonObject(state?.input) ? state.input : null;
+  const metadata = isJsonObject(state?.metadata) ? state.metadata : null;
+  const time = isJsonObject(state?.time) ? state.time : null;
+  const observedMs = timestampMs(time?.start) ?? timestampMs(row.time_created);
+  const callId = boundedString(data.callID) ?? boundedString(row.id);
+  return parseSkillObservation({
+    argsPresent: null,
+    harnessKey: 'opencode',
+    observationKey: callId,
+    observedAt: observedMs === null ? null : new Date(observedMs).toISOString(),
+    projectPath: row.projectPath ?? null,
+    // A skill directory routinely exceeds the 512-char fact bound used for
+    // labels, so it gets the path bound instead. Downgrading a real path to
+    // "unresolved" because it is long would fabricate the very state ADR 0022
+    // reserves for genuinely unresolvable skills.
+    resolvedPath: boundedPath(metadata?.dir),
+    sessionId: boundedString(row.session_id),
+    skillName: boundedString(input?.name) ?? boundedString(metadata?.name),
+    success: openCodeSkillSuccess(state?.status),
+    tier: 'declared',
+  });
+};
+
+const boundedPath = (value: unknown): string | null => {
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const normalized = value.trim();
+  return normalized.length > 0 && normalized.length <= MAX_SKILL_OBSERVATION_PATH_LENGTH ? normalized : null;
+};
+
+const openCodeSkillSuccess = (status: unknown): boolean | null => {
+  if (status === 'completed') {
+    return true;
+  }
+  return status === 'error' ? false : null;
+};
+
+const safeParse = (value: string): unknown => {
+  try {
+    return JSON.parse(value) as unknown;
+  } catch {
+    return null;
+  }
 };
 
 export const mergeOpenCodeActivityIntervals = (
