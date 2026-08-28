@@ -88,12 +88,23 @@ new columns on `usage_rows`.
   (`sed -i … …/SKILL.md`, which rewrites and displays nothing), and a search
   pattern (`rg …/SKILL.md transcript.txt`, which searches *for* the path) are
   each evidence of something other than use; counting them would be false rather
-  than merely uncertain. Option-with-value forms are modelled, because a flag
-  that swallows its value shifts every later operand and lands a pattern in file
-  position. The command is decoded out of its tool-call envelope first — bounded
-  by the executed call's own balanced argument, with no whole-blob fallback — and
-  matched against whole shell tokens, so a stored path is a path and never a
-  fragment of the command that named it.
+  than merely uncertain. Option-with-value forms are modelled — long, short,
+  clustered, and glued — because a flag that swallows its value shifts every
+  later operand and lands a pattern in file position. The command is decoded out
+  of its tool-call envelope first — bounded by the executed call's own balanced
+  argument, quote-aware, with no whole-blob fallback — and matched against whole
+  shell tokens, so a stored path is a path and never a fragment of the command
+  that named it.
+- **Where the tier cannot be sure, it under-counts.** Three rules follow from
+  that and are load-bearing rather than incidental: only an allowlist of
+  exec-shaped tool calls is inspected, so an unfamiliar tool contributes nothing
+  rather than having its argument guessed at; a malformed or unterminated call
+  yields no command rather than widening the scan; and an unknown long flag on a
+  scripted verb is assumed to consume its value, which can only remove a
+  candidate read, never invent one. The `inferred` tier is the weakest evidence
+  in the model, so its errors must point at *fewer* observations — a missing
+  inferred read is a gap, a fabricated one is a false claim about what the
+  operator's model did.
 - Every bound in this family reports itself. A read budget or per-session
   ceiling is detected one past the bound, never at it, because a list that stops
   exactly at the limit is indistinguishable from a complete one; the resulting

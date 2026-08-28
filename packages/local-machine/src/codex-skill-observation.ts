@@ -118,70 +118,66 @@ const isFlag = (token: string): boolean => token.startsWith('-') && token.length
  * transcript into an inferred invocation. Only the scripted verbs need this —
  * the plain readers take no valued flags that matter here.
  */
-const CODEX_VALUED_FLAGS: ReadonlyMap<string, ReadonlySet<string>> = new Map([
+interface CodexVerbFlags {
+  /** Long flags known to take a separate value. */
+  readonly long: ReadonlySet<string>;
+  /** Single letters that take a value, whether glued or as the next token. */
+  readonly short: ReadonlySet<string>;
+}
+
+const CODEX_VALUED_FLAGS: ReadonlyMap<string, CodexVerbFlags> = new Map([
   [
     'rg',
-    new Set([
-      '-A',
-      '--after-context',
-      '-B',
-      '--before-context',
-      '-C',
-      '--context',
-      '-e',
-      '--regexp',
-      '-f',
-      '--file',
-      '-g',
-      '--glob',
-      '--iglob',
-      '-m',
-      '--max-count',
-      '--max-depth',
-      '-M',
-      '--max-columns',
-      '-r',
-      '--replace',
-      '-t',
-      '--type',
-      '-T',
-      '--type-not',
-    ]),
+    {
+      long: new Set([
+        '--after-context',
+        '--before-context',
+        '--context',
+        '--file',
+        '--glob',
+        '--iglob',
+        '--max-columns',
+        '--max-count',
+        '--max-depth',
+        '--regexp',
+        '--replace',
+        '--type',
+        '--type-not',
+      ]),
+      short: new Set(['A', 'B', 'C', 'M', 'T', 'e', 'f', 'g', 'm', 'r', 't']),
+    },
   ],
   [
     'grep',
-    new Set([
-      '-A',
-      '--after-context',
-      '-B',
-      '--before-context',
-      '-C',
-      '--context',
-      '-e',
-      '--regexp',
-      '-f',
-      '--file',
-      '-m',
-      '--max-count',
-      '--include',
-      '--exclude',
-      '--exclude-dir',
-      '-d',
-      '--directories',
-      '-D',
-      '--devices',
-    ]),
+    {
+      long: new Set([
+        '--after-context',
+        '--before-context',
+        '--context',
+        '--devices',
+        '--directories',
+        '--exclude',
+        '--exclude-dir',
+        '--file',
+        '--include',
+        '--max-count',
+        '--regexp',
+      ]),
+      short: new Set(['A', 'B', 'C', 'D', 'd', 'e', 'f', 'm']),
+    },
   ],
-  ['sed', new Set(['-e', '--expression', '-f', '--file', '-l', '--line-length'])],
-  ['awk', new Set(['-v', '--assign', '-f', '--file', '-F', '--field-separator'])],
+  ['sed', { long: new Set(['--expression', '--file', '--line-length']), short: new Set(['e', 'f', 'l']) }],
+  ['awk', { long: new Set(['--assign', '--field-separator', '--file']), short: new Set(['F', 'f', 'v']) }],
 ]);
 
 /**
  * Flags that supply the pattern or script themselves. When one is present the
  * first positional operand is already a file, so skipping it as "the pattern"
- * would lose a real read: `grep -e needle …/SKILL.md` does read the skill.
+ * would lose a real read: `grep -e needle …/SKILL.md` and its glued form
+ * `grep -eneedle …/SKILL.md` both read the skill.
  */
-const CODEX_PATTERN_SUPPLYING_FLAGS: ReadonlySet<string> = new Set(['--expression', '--file', '--regexp', '-e', '-f']);
+const CODEX_PATTERN_SUPPLYING_LONG: ReadonlySet<string> = new Set(['--expression', '--file', '--regexp']);
+const CODEX_PATTERN_SUPPLYING_SHORT: ReadonlySet<string> = new Set(['e', 'f']);
 
 /**
  * `sed` in-place mode. The suffix is attached rather than a separate token
@@ -191,12 +187,52 @@ const CODEX_PATTERN_SUPPLYING_FLAGS: ReadonlySet<string> = new Set(['--expressio
  */
 const SED_IN_PLACE = /^(?:-[a-zA-Z]*i|--in-place)/;
 
-/** Split `--glob=*.md` into its name and whether the value came attached. */
-const flagName = (token: string): { hasAttachedValue: boolean; name: string } => {
-  const separator = token.indexOf('=');
-  return separator < 0
-    ? { hasAttachedValue: false, name: token }
-    : { hasAttachedValue: true, name: token.slice(0, separator) };
+interface ParsedFlag {
+  /** The flag carries the pattern or script, so the first operand is a file. */
+  suppliesPattern: boolean;
+  /** The flag consumes the next whole token as its value. */
+  takesNextToken: boolean;
+}
+
+/**
+ * Interpret one flag token under real short-cluster and attached-value rules.
+ *
+ * Short flags cluster (`-nm 1` is `-n -m 1`) and glue their values
+ * (`-eneedle`), and getting either wrong shifts operand positions — which is
+ * how a pattern ended up read as a file, and a file as a pattern.
+ *
+ * **Unknown long flags on a scripted verb consume the next token.** Their arity
+ * cannot be known, and of the two safe choices this one is strictly the less
+ * lossy: a swallowed token leaves operand position entirely, so the rule can
+ * only ever *remove* a candidate read, never invent one. The cost is that a
+ * boolean long flag (`rg --hidden needle …/SKILL.md`) swallows the pattern and
+ * the real file then reads as the pattern — an under-count, which is the
+ * direction an inferred tier should err.
+ */
+const parseFlagToken = (token: string, valuedFlags: CodexVerbFlags | undefined, scripted: boolean): ParsedFlag => {
+  if (token.startsWith('--')) {
+    const separator = token.indexOf('=');
+    const name = separator < 0 ? token : token.slice(0, separator);
+    const suppliesPattern = CODEX_PATTERN_SUPPLYING_LONG.has(name);
+    if (separator >= 0) {
+      return { suppliesPattern, takesNextToken: false };
+    }
+    const known = valuedFlags?.long.has(name) === true;
+    return { suppliesPattern, takesNextToken: known || scripted };
+  }
+  // A short cluster is read left to right; the first letter that takes a value
+  // claims the rest of the token, or the next token when nothing is glued.
+  const letters = token.slice(1);
+  for (const [index, letter] of [...letters].entries()) {
+    const suppliesPattern = CODEX_PATTERN_SUPPLYING_SHORT.has(letter);
+    if (valuedFlags?.short.has(letter) === true) {
+      return { suppliesPattern, takesNextToken: index === letters.length - 1 };
+    }
+    if (suppliesPattern) {
+      return { suppliesPattern: true, takesNextToken: false };
+    }
+  }
+  return { suppliesPattern: false, takesNextToken: false };
 };
 
 /** Shell words, with one level of quoting removed. */
@@ -384,38 +420,82 @@ export const decodeCodexCommands = (blob: unknown): string[] => {
     return [];
   }
   const commands: string[] = [];
-  let markers = 0;
-  for (
-    let index = blob.indexOf(CODEX_EXEC_CALL_MARKER);
-    index >= 0;
-    index = blob.indexOf(CODEX_EXEC_CALL_MARKER, index + 1)
-  ) {
-    markers += 1;
-    const start = index + CODEX_EXEC_CALL_MARKER.length;
-    const end = callArgumentEnd(blob, start);
+  for (const { end, start } of codexExecCallWindows(blob)) {
     const command =
       jsonStringValueForKey(blob, 'cmd', start, end) ?? jsonStringValueForKey(blob, 'command', start, end);
     if (command !== null) {
       commands.push(command);
     }
   }
-  if (markers > 0) {
-    return commands;
+  // A blob with no well-formed call yields nothing. Measured over the real
+  // corpus, every SKILL.md-bearing exec payload is either a JSON object or a
+  // snippet carrying a marker, and no observation came from a fallback — so
+  // there is nothing to lose and a whole class of false positives (prose,
+  // patch bodies, quoted commands) to close.
+  return commands;
+};
+
+const WORD_CHARACTER = /[\w$]/;
+
+/**
+ * The argument windows of the `exec_command(` calls a snippet actually makes.
+ *
+ * Scanned in one quote-aware pass, which is what makes two whole families of
+ * false attribution impossible rather than merely unlikely:
+ *
+ * - a marker *inside a string literal* is not a call, so a command that merely
+ *   mentions `exec_command(` cannot open a window;
+ * - an *unbalanced* call yields no window at all. Returning end-of-blob there
+ *   would re-widen the window over everything that follows, which is the exact
+ *   hole the balanced bound was introduced to close. A malformed call is
+ *   dropped, so the count is a lower bound rather than a wrong one.
+ */
+const codexExecCallWindows = (blob: string): { end: number; start: number }[] => {
+  const windows: { end: number; start: number }[] = [];
+  let quote: string | null = null;
+  for (let index = 0; index < blob.length; index += 1) {
+    const character = blob[index];
+    if (quote !== null) {
+      if (character === '\\') {
+        index += 1;
+      } else if (character === quote) {
+        quote = null;
+      }
+      continue;
+    }
+    if (character === '"' || character === "'" || character === '`') {
+      quote = character;
+      continue;
+    }
+    if (character !== '(') {
+      continue;
+    }
+    const markerStart = index - CODEX_EXEC_CALL_MARKER.length + 1;
+    if (markerStart < 0 || !blob.startsWith(CODEX_EXEC_CALL_MARKER, markerStart)) {
+      continue;
+    }
+    // Reject a suffix match inside a longer identifier, e.g. `my_exec_command(`.
+    const preceding = markerStart > 0 ? blob[markerStart - 1] : '';
+    if (preceding && WORD_CHARACTER.test(preceding)) {
+      continue;
+    }
+    const start = index + 1;
+    const end = callArgumentEnd(blob, start);
+    if (end === null) {
+      continue;
+    }
+    windows.push({ end, start });
+    index = end;
   }
-  // No call marker at all: the payload is either an already-decoded shell
-  // command or a shape this module does not model. It is passed through as a
-  // command rather than key-scanned, so nothing can be attributed to a call
-  // that is not there — the read-verb check downstream is what rejects a
-  // non-command such as a patch body.
-  return [blob];
+  return windows;
 };
 
 /**
  * The index of the closing delimiter that ends the argument list opened at
- * `open`, ignoring delimiters inside string literals. Returns the blob length
- * for an unterminated call, which bounds the scan without inventing an end.
+ * `open`, ignoring delimiters inside string literals, or `null` when the call
+ * is never terminated.
  */
-const callArgumentEnd = (blob: string, open: number): number => {
+const callArgumentEnd = (blob: string, open: number): number | null => {
   let depth = 1;
   let quote: string | null = null;
   for (let index = open; index < blob.length; index += 1) {
@@ -443,7 +523,7 @@ const callArgumentEnd = (blob: string, open: number): number => {
       }
     }
   }
-  return blob.length;
+  return null;
 };
 
 const safeJsonObject = (blob: string): Record<string, unknown> | null => {
@@ -561,10 +641,13 @@ export const matchCodexSkillDocuments = (blob: unknown): CodexSkillCatalogueEntr
     for (const segment of command.split(SHELL_SEGMENT)) {
       // One past the ceiling, so the caller can tell a bounded list from a
       // complete one. See `extractCodexSkillCatalogue`.
-      if (entries.length > codexSkillObservationCeiling()) {
-        return entries;
-      }
       for (const token of segmentReadOperands(segment)) {
+        // Checked per token, not per segment: one `cat` can name any number of
+        // documents, so a per-segment check leaves the token loop unbounded and
+        // the ceiling never trips.
+        if (entries.length > codexSkillObservationCeiling()) {
+          return entries;
+        }
         const matched = CODEX_SKILL_DOCUMENT_TOKEN.exec(token);
         const name = matched?.[1];
         if (!name || seen.has(name)) {
@@ -632,11 +715,9 @@ const segmentReadOperands = (segment: string): string[] => {
         // An in-place edit rewrites the document and shows the model nothing.
         return [];
       }
-      const { hasAttachedValue, name } = flagName(token);
-      if (CODEX_PATTERN_SUPPLYING_FLAGS.has(name)) {
-        patternSupplied = true;
-      }
-      flagValuePending = !hasAttachedValue && valuedFlags?.has(name) === true;
+      const parsed = parseFlagToken(token, valuedFlags, scripted);
+      patternSupplied ||= parsed.suppliesPattern;
+      flagValuePending = parsed.takesNextToken;
       continue;
     }
     operandIndex += 1;

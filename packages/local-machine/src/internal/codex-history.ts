@@ -543,16 +543,30 @@ const codexToolCallCommandBlob = (payload: Record<string, unknown>): string | nu
 };
 
 /**
- * Tool calls that cannot be a skill read, skipped before any decoding. Patch
- * bodies and agent prompts routinely quote a SKILL.md path without reading one.
+ * The tool calls that can run a shell command, as an **allowlist**.
+ *
+ * A denylist was wrong in kind, not just in membership: any tool it had not
+ * heard of — and a census of the real corpus turns up `wait`, `wait_agent`,
+ * `send_message`, `list_agents`, `followup_task`, `spawn_agent`,
+ * `interrupt_agent` — had its raw argument fed to the matcher, so an agent
+ * prompt or a patch body quoting a path became an inferred invocation. Only
+ * these names run commands; an unknown tool contributes nothing.
+ *
+ * Grounded in the corpus: every `SKILL.md`-bearing tool call is
+ * `custom_tool_call`/`exec`, and `exec_command` is the only other exec-shaped
+ * name present. The shell variants are included for forward tolerance.
  */
-const CODEX_NON_EXEC_TOOL_NAMES: ReadonlySet<string> = new Set([
-  'apply_patch',
-  'spawn_agent',
-  'wait_agent',
-  'send_message',
-  'write_stdin',
-]);
+const CODEX_EXEC_TOOL_NAMES: ReadonlySet<string> = new Set(['exec', 'exec_command', 'local_shell', 'shell']);
+
+/** `local_shell_call` carries its command in `action` and may name no tool. */
+const CODEX_EXEC_TOOL_TYPES: ReadonlySet<string> = new Set(['local_shell_call']);
+
+const isCodexExecToolCall = (payload: Record<string, unknown>): boolean => {
+  if (typeof payload.type === 'string' && CODEX_EXEC_TOOL_TYPES.has(payload.type)) {
+    return true;
+  }
+  return typeof payload.name === 'string' && CODEX_EXEC_TOOL_NAMES.has(payload.name);
+};
 
 interface PendingCodexExecSignal {
   at: Date;
@@ -995,18 +1009,19 @@ export const createCodexSessionParser = (captureDetail = false) => {
   };
 
   const observeCodexSkillExec = (payload: Record<string, unknown>, at: Date): void => {
-    if (typeof payload.name === 'string' && CODEX_NON_EXEC_TOOL_NAMES.has(payload.name)) {
-      return;
-    }
-    if (pendingExecSignals.length >= codexSkillObservationCeiling()) {
-      // Dropped at the bound, which is the only place the drop is visible: by
-      // materialization time the over-ceiling signals are simply gone, so the
-      // count would look complete. Flagging here is what lets the warning fire.
-      skillSignalsTruncated = true;
+    if (!isCodexExecToolCall(payload)) {
       return;
     }
     const entries = matchCodexSkillDocuments(codexToolCallCommandBlob(payload));
     if (entries.length === 0) {
+      return;
+    }
+    if (pendingExecSignals.length >= codexSkillObservationCeiling()) {
+      // Flagged only for a call that actually carried a signal, and only here:
+      // by materialization time the over-ceiling signals are gone, so the count
+      // would look complete. A signal-less call dropped at the bound loses
+      // nothing and must not claim the count is partial.
+      skillSignalsTruncated = true;
       return;
     }
     skillSignalIndex += 1;

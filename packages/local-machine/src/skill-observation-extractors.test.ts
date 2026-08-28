@@ -276,6 +276,62 @@ describe('Codex per-session ceiling', () => {
     type: 'session_meta',
   };
 
+  test('ignores an unknown non-exec tool whose argument merely names a skill', () => {
+    // A denylist let any unheard-of tool through; the corpus carries `wait`,
+    // `list_agents`, `followup_task` and more, none of which run a command.
+    const session = rollout([
+      sessionMeta,
+      ...['followup_task', 'list_agents', 'wait', 'interrupt_agent'].map((name, index) => ({
+        payload: {
+          arguments: JSON.stringify({ cmd: `cat ${SKILL_FIXTURE_HOME}/.agents/skills/decoy/SKILL.md` }),
+          call_id: `call_${name}`,
+          name,
+          type: 'function_call',
+        },
+        timestamp: `2026-08-01T09:00:0${index + 2}.000Z`,
+        type: 'response_item',
+      })),
+    ]);
+
+    expect(session.skillObservations).toEqual([]);
+    expect(session.skillObservationsTruncated).toBe(false);
+  });
+
+  test('stops one past the ceiling when a single command names many documents', () => {
+    setCodexSkillObservationCeilingForTesting(2);
+    const documents = Array.from(
+      { length: 8 },
+      (_, index) => `${SKILL_FIXTURE_HOME}/.agents/skills/skill-${index}/SKILL.md`,
+    ).join(' ');
+
+    // A per-segment ceiling check leaves the token loop unbounded, so one `cat`
+    // returns every document it names.
+    const entries = matchCodexSkillDocuments(JSON.stringify({ cmd: `cat ${documents}` }));
+
+    expect(entries.length).toBeLessThanOrEqual(3);
+  });
+
+  test('does not flag truncation when the dropped calls carry no skill signal', () => {
+    setCodexSkillObservationCeilingForTesting(1);
+    const execCall = (index: number, cmd: string) => ({
+      payload: { call_id: `call_${index}`, input: JSON.stringify({ cmd }), name: 'exec', type: 'custom_tool_call' },
+      timestamp: '2026-08-01T09:00:02.000Z',
+      type: 'response_item',
+    });
+
+    const session = rollout([
+      sessionMeta,
+      execCall(0, `cat ${SKILL_FIXTURE_HOME}/.agents/skills/only/SKILL.md`),
+      // Past the ceiling, but carrying nothing. Nothing was lost, so the count
+      // is complete and must not claim otherwise.
+      execCall(1, 'echo nothing'),
+      execCall(2, 'ls /tmp'),
+    ]);
+
+    expect(session.skillObservations).toHaveLength(1);
+    expect(session.skillObservationsTruncated).toBe(false);
+  });
+
   test('flags a catalogue that overruns the ceiling', () => {
     setCodexSkillObservationCeilingForTesting(3);
     const entries = Array.from(
@@ -374,12 +430,36 @@ describe('decodeCodexCommand', () => {
     expect(decodeCodexCommands(undefined)).toEqual([]);
   });
 
-  test('passes a blob with no exec call through as an already-decoded command', () => {
-    // Nothing here can be attributed to a call that is not present, so the blob
-    // is treated as the command itself and rejected downstream by the verb
-    // check rather than key-scanned.
-    expect(decodeCodexCommand('*** Begin Patch')).toBe('*** Begin Patch');
+  test('yields nothing for a blob carrying no well-formed exec call', () => {
+    // Measured over the real corpus, every SKILL.md-bearing exec payload is
+    // either a JSON object or a snippet with a marker, and nothing came from a
+    // fallback — so refusing to guess closes prose, patch bodies and quoted
+    // commands as a class rather than case by case.
+    expect(decodeCodexCommand('*** Begin Patch')).toBeNull();
     expect(extractCodexSkillExecObservation('*** Begin Patch', 'call_patch', codexContext).observations).toEqual([]);
+  });
+
+  test('does not read natural-language prose as a command', () => {
+    const prose = `cat the file ${SKILL_FIXTURE_HOME}/.agents/skills/decoy/SKILL.md please`;
+
+    expect(decodeCodexCommands(prose)).toEqual([]);
+    expect(extractCodexSkillExecObservation(prose, 'call_prose', codexContext).observations).toEqual([]);
+  });
+
+  test('ignores an exec_command marker that sits inside a string literal', () => {
+    const snippet = `const log = "exec_command({cmd:\\"cat ${SKILL_FIXTURE_HOME}/.agents/skills/decoy/SKILL.md\\"})";`;
+
+    // A command that merely mentions the marker is not a call.
+    expect(decodeCodexCommands(snippet)).toEqual([]);
+    expect(extractCodexSkillExecObservation(snippet, 'call_quoted', codexContext).observations).toEqual([]);
+  });
+
+  test('yields nothing for an unbalanced call rather than widening to end of blob', () => {
+    const snippet = `await tools.exec_command({cmd:"echo hi"; const note={cmd:"cat ${SKILL_FIXTURE_HOME}/.agents/skills/decoy/SKILL.md"}`;
+
+    // Returning end-of-blob here would re-open the whole-blob window the
+    // balanced bound exists to close.
+    expect(extractCodexSkillExecObservation(snippet, 'call_unbalanced', codexContext).observations).toEqual([]);
   });
 });
 
@@ -552,6 +632,59 @@ describe('extractCodexSkillExecObservation', () => {
         ),
       ).toEqual(['review']);
     }
+  });
+
+  test('counts a glued pattern value, so the first operand stays a file', () => {
+    for (const cmd of [
+      `grep -eneedle ${SKILL_FIXTURE_HOME}/.agents/skills/review/SKILL.md`,
+      `rg -eneedle ${SKILL_FIXTURE_HOME}/.agents/skills/review/SKILL.md`,
+      `sed -e1,80p ${SKILL_FIXTURE_HOME}/.agents/skills/review/SKILL.md`,
+    ]) {
+      // The pattern is glued to the flag, so the skill path really is the file.
+      expect(
+        extractCodexSkillExecObservation(JSON.stringify({ cmd }), 'call_glued', codexContext).observations.map(
+          ({ skillName }) => skillName,
+        ),
+      ).toEqual(['review']);
+    }
+  });
+
+  test('lets a valued flag at the end of a short cluster consume the next token', () => {
+    for (const cmd of [
+      `grep -nm 1 ${SKILL_FIXTURE_HOME}/.agents/skills/review/SKILL.md transcript.txt`,
+      `rg -im 1 ${SKILL_FIXTURE_HOME}/.agents/skills/review/SKILL.md transcript.txt`,
+    ]) {
+      // `-nm 1` is `-n -m 1`: the cluster's last letter takes the value, so the
+      // skill path is still the pattern operand.
+      expect(
+        extractCodexSkillExecObservation(JSON.stringify({ cmd }), 'call_cluster', codexContext).observations,
+      ).toEqual([]);
+    }
+  });
+
+  test('assumes an unknown long flag on a scripted verb consumes its value', () => {
+    for (const cmd of [
+      `grep --label label ${SKILL_FIXTURE_HOME}/.agents/skills/review/SKILL.md transcript.txt`,
+      `rg --sort path ${SKILL_FIXTURE_HOME}/.agents/skills/review/SKILL.md transcript.txt`,
+    ]) {
+      // Arity is unknowable, so the rule errs toward removing a candidate
+      // rather than inventing a read.
+      expect(
+        extractCodexSkillExecObservation(JSON.stringify({ cmd }), 'call_unknown_long', codexContext).observations,
+      ).toEqual([]);
+    }
+  });
+
+  test('keeps the plain readers free of the unknown-long-flag rule', () => {
+    // `cat --show-all file` must still read the file; the assumption is scoped
+    // to scripted verbs, whose operand positions actually shift.
+    expect(
+      extractCodexSkillExecObservation(
+        JSON.stringify({ cmd: `cat --show-all ${SKILL_FIXTURE_HOME}/.agents/skills/review/SKILL.md` }),
+        'call_plain_long',
+        codexContext,
+      ).observations.map(({ skillName }) => skillName),
+    ).toEqual(['review']);
   });
 
   test('still counts a search whose file operand is the skill document', () => {

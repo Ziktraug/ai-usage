@@ -3,10 +3,14 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { setClaudeSkillObservationCeilingForTesting } from '@ai-usage/local-machine/claude-session-facts';
+import { setCodexSkillObservationCeilingForTesting } from '@ai-usage/local-machine/codex-skill-observation';
 import { createLocalHistoryStorage, LocalHistoryStorage } from '@ai-usage/local-machine/local-history';
 import { FIXTURE_SKILL_NAMES, seedHarnessHome } from '@ai-usage/local-machine/testing/harness-home';
 import { Effect } from 'effect';
 import { collectSelectedHarnessResults } from './collectors';
+import { collectClaudeResult } from './collectors/claude';
+import { collectCodexResult } from './collectors/codex';
 import { collectOpenCodeResult, setOpenCodeSkillPartLimitForTesting } from './collectors/opencode';
 
 const temporaryHomes: string[] = [];
@@ -157,7 +161,10 @@ const seedCodex = async (home: string): Promise<void> => {
       {
         payload: {
           call_id: 'call_exec_1',
-          input: "sed -n '1,240p' /home/alex/.agents/skills/pr-review/SKILL.md",
+          // The production envelope: a JavaScript snippet wrapping the command,
+          // not a bare shell string. A fixture that skips the envelope stops
+          // exercising the decoder that production depends on.
+          input: `const r = await tools.exec_command({cmd:"sed -n '1,240p' /home/alex/.agents/skills/pr-review/SKILL.md","workdir":"/home/alex/Projects/report"}); text(r.output);\n`,
           name: 'exec',
           type: 'custom_tool_call',
         },
@@ -257,7 +264,10 @@ const seedOpenCode = async (home: string, options: { includeUndecodableSkillPart
     part(
       'part-undecodable',
       { callID: 'call_undecodable', state: { status: 'completed' }, tool: 'skill', type: 'tool' },
-      1_771_069_566_250,
+      // Earliest, so it lands inside even a very small read window - seeded
+      // after the window it could never be reached and the reject count was
+      // always zero.
+      1_771_069_566_010,
     );
   }
   part(
@@ -455,7 +465,9 @@ describe('skill observation collection', () => {
     test('a warm cache restores the truncation flag and the reject count', async () => {
       const home = await makeHome();
       await seedOpenCode(home, { includeUndecodableSkillPart: true });
-      setOpenCodeSkillPartLimitForTesting(1);
+      // Two rows read of three: the undecodable part is inside the window, so a
+      // reject and a truncation are both in play on the same pass.
+      setOpenCodeSkillPartLimitForTesting(2);
       const storage = createLocalHistoryStorage(home);
 
       const cold = await Effect.runPromise(
@@ -465,13 +477,19 @@ describe('skill observation collection', () => {
         collectOpenCodeResult.pipe(Effect.provideService(LocalHistoryStorage, storage)),
       );
 
-      const operations = (result: { warnings: { operation: string }[] }) =>
-        result.warnings.map((warning) => warning.operation).sort();
+      const warningFor = (result: { warnings: { operation: string; rejectedRecords?: number }[] }, operation: string) =>
+        result.warnings.find((warning) => warning.operation === operation);
 
-      // A cache hit that dropped these would silently upgrade a partial,
-      // partially-rejected read into a complete one.
-      expect(operations(cold)).toContain('skillObservationTruncated');
-      expect(operations(warm)).toEqual(operations(cold));
+      // Both states must be real on the cold pass…
+      expect(warningFor(cold, 'skillObservationTruncated')).toBeDefined();
+      expect(warningFor(cold, 'skillObservationValidation')?.rejectedRecords).toBe(1);
+      // …and survive the cache, which would otherwise silently upgrade a
+      // partial, partially-rejected read into a complete one.
+      expect(warningFor(warm, 'skillObservationTruncated')).toBeDefined();
+      expect(warningFor(warm, 'skillObservationValidation')?.rejectedRecords).toBe(1);
+      expect(warm.warnings.map((warning) => warning.operation).sort()).toEqual(
+        cold.warnings.map((warning) => warning.operation).sort(),
+      );
       expect(warm.observations).toEqual(cold.observations);
     });
 
@@ -488,6 +506,63 @@ describe('skill observation collection', () => {
       expect(rejection?.rejectedRecords).toBe(1);
       // A changed skill transcript is not a corrupted token count.
       expect(result.warnings.some((warning) => warning.operation === 'metricValidation')).toBe(false);
+    });
+  });
+
+  describe('per-session ceilings reach the warning channel', () => {
+    afterEach(() => {
+      setClaudeSkillObservationCeilingForTesting(null);
+      setCodexSkillObservationCeilingForTesting(null);
+    });
+
+    test('a Claude ceiling overrun surfaces as a truncation warning from the collector', async () => {
+      const home = await makeHome();
+      await seedClaude(home);
+      // The fixture declares two skills; a ceiling of one forces the bound.
+      setClaudeSkillObservationCeilingForTesting(1);
+
+      const result = await Effect.runPromise(
+        collectClaudeResult.pipe(Effect.provideService(LocalHistoryStorage, createLocalHistoryStorage(home))),
+      );
+      const truncation = result.warnings.find((warning) => warning.operation === 'skillObservationTruncated');
+
+      // Tripping the ceiling in the extractor is only half the job; it has to
+      // reach a consumer as a stated lower bound.
+      expect(result.observations).toHaveLength(1);
+      expect(truncation).toBeDefined();
+      expect(truncation?.harness).toBe('claude');
+    });
+
+    test('a Codex ceiling overrun surfaces as a truncation warning from the collector', async () => {
+      const home = await makeHome();
+      await seedCodex(home);
+      // The fixture exposes two catalogue entries and reads one of them.
+      setCodexSkillObservationCeilingForTesting(1);
+
+      const result = await Effect.runPromise(
+        collectCodexResult.pipe(Effect.provideService(LocalHistoryStorage, createLocalHistoryStorage(home))),
+      );
+      const truncation = result.warnings.find((warning) => warning.operation === 'skillObservationTruncated');
+
+      expect(truncation).toBeDefined();
+      expect(truncation?.harness).toBe('codex');
+    });
+
+    test('a collection inside the ceilings raises no truncation warning', async () => {
+      const home = await makeHome();
+      await seedClaude(home);
+      await seedCodex(home);
+
+      const claude = await Effect.runPromise(
+        collectClaudeResult.pipe(Effect.provideService(LocalHistoryStorage, createLocalHistoryStorage(home))),
+      );
+      const codex = await Effect.runPromise(
+        collectCodexResult.pipe(Effect.provideService(LocalHistoryStorage, createLocalHistoryStorage(home))),
+      );
+
+      for (const result of [claude, codex]) {
+        expect(result.warnings.some((warning) => warning.operation === 'skillObservationTruncated')).toBe(false);
+      }
     });
   });
 
