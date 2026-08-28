@@ -422,6 +422,23 @@ interface ParsedFlag {
  * (`-eneedle`), and getting either wrong shifts every operand after it — which
  * is how a pattern ends up read as a file.
  *
+ * Two limits are assumed rather than closed, both measured against the real
+ * corpus before being accepted:
+ *
+ * - **A quoted dash-word is treated as an operand, not a flag**, so
+ *   `rg "--" …/SKILL.md f` can over-count. The corpus contains exactly three
+ *   quoted dash-words and all three are data operands that this behaviour reads
+ *   correctly; refusing quoted dash-words would break real reads to defend
+ *   against a construction with zero measured incidence.
+ * - **Conditional execution is not modelled**, so `false && cat …/SKILL.md`
+ *   counts although the read never happens. Telling the difference means
+ *   interpreting shell execution, and simply dropping post-`&&`/`||` segments
+ *   would discard the common, genuine `cd repo && cat …/SKILL.md` form.
+ *
+ * Both err toward a rare false observation on synthetic input. That is the
+ * honest reason this tier is labelled `inferred`, kept separate from
+ * `declared`, and never summed with it.
+ *
  * **An unmodeled flag returns `null`, and the caller abandons the segment.**
  * Arity cannot be guessed from the token, and guessing either way is reachable
  * as a false read: assume boolean and its value sits in operand position;
@@ -448,7 +465,9 @@ const parseFlagToken = (token: string, flags: CodexVerbFlags | undefined): Parse
       return { suppliesPattern, takesNextToken: separator < 0 };
     }
     if (flags.booleanLong.has(name)) {
-      return { suppliesPattern, takesNextToken: false };
+      // A boolean flag arriving with a value is not something the real tool
+      // accepts, so the input is outside the modelled grammar.
+      return separator < 0 ? { suppliesPattern, takesNextToken: false } : null;
     }
     return null;
   }
@@ -466,8 +485,6 @@ const parseFlagToken = (token: string, flags: CodexVerbFlags | undefined): Parse
   }
   return { suppliesPattern: false, takesNextToken: false };
 };
-
-const WHITESPACE = /\s/;
 
 export interface CodexSkillObservationContext {
   observedAt: string;
@@ -596,22 +613,34 @@ export const extractCodexSkillExecObservation = (
 ): SkillObservationExtraction => codexSkillExecObservations(matchCodexSkillDocuments(command), callId, context);
 
 /**
- * Recover the shell command out of a Codex tool-call payload.
+ * A command a payload runs, in the form the payload settled it.
  *
- * Production never hands us a bare shell string. The two shapes that carry a
- * `SKILL.md` in real history are:
- *
- * - `function_call` / `exec_command`, whose `arguments` is JSON:
- *   `{"cmd":"sed -n '1,220p' /…/SKILL.md","workdir":"…"}`
- * - `custom_tool_call` / `exec`, whose `input` is a JavaScript snippet:
- *   `const r = await tools.exec_command({"cmd":"…"}); text(r.output);`
- *
- * plus the classic `{"command":["cat","/…/SKILL.md"]}` array form. Feeding any
- * of these to a path matcher raw is what produced the junk-prefixed paths this
- * function exists to prevent, so the command is decoded first and matched
- * second. Returns `null` when no command can be recovered — never a guess.
+ * The distinction is load-bearing. An argv array has *already* decided its word
+ * boundaries; re-joining it into a string and re-tokenizing throws that away and
+ * lets a word's contents invent boundaries the array never had — `["printf",
+ * "x;cat ", path]` would re-split into a `cat` command that was never run. Shell
+ * strings have no such structure and must be tokenized.
  */
-export const decodeCodexCommand = (blob: unknown): string | null => decodeCodexCommands(blob)[0] ?? null;
+export interface CodexShellCommand {
+  kind: 'shell';
+  source: string;
+}
+
+export interface CodexArgvCommand {
+  kind: 'argv';
+  words: readonly string[];
+}
+
+export type CodexCommand = CodexArgvCommand | CodexShellCommand;
+
+/** The text of the first command a payload runs. Diagnostics only. */
+export const decodeCodexCommand = (blob: unknown): string | null => {
+  const first = decodeCodexCommands(blob)[0];
+  if (first === undefined) {
+    return null;
+  }
+  return first.kind === 'shell' ? first.source : first.words.join(' ');
+};
 
 /** The marker a snippet uses to invoke the shell, so a key can be tied to its call. */
 const CODEX_EXEC_CALL_MARKER = 'exec_command(';
@@ -621,43 +650,43 @@ const CODEX_EXEC_CALL_MARKER = 'exec_command(';
  *
  * A snippet may contain more than one `exec_command(...)` call, and may contain
  * the string `cmd` in places that are not one — a local variable, a comment, a
- * string being logged. A key therefore counts only when it sits inside the
- * argument list of an actual call, bounded by that call's own balanced closing
- * paren. Scanning "from this call to the next one" is not enough: with a single
- * call, that window runs to the end of the blob and swallows everything after
- * it.
+ * quoted sentence. A key therefore counts only when it is *structural*: a bare
+ * identifier or a complete quoted key at the current level, inside the argument
+ * list of an actual call, bounded by that call's own balanced closer.
  *
  * There is deliberately no whole-blob fallback once a call marker exists. A
- * `cmd` outside every call is not a command this payload ran, and guessing
- * otherwise is what let a decoy key be attributed to an unrelated exec.
+ * `cmd` outside every call is not a command this payload ran.
  */
-export const decodeCodexCommands = (blob: unknown): string[] => {
+export const decodeCodexCommands = (blob: unknown): CodexCommand[] => {
   if (typeof blob !== 'string' || blob.length === 0) {
     return [];
   }
   const parsed = safeJsonObject(blob);
   if (parsed) {
     if (typeof parsed.cmd === 'string') {
-      return [parsed.cmd];
+      return [{ kind: 'shell', source: parsed.cmd }];
     }
     if (typeof parsed.command === 'string') {
-      return [parsed.command];
+      return [{ kind: 'shell', source: parsed.command }];
     }
     if (Array.isArray(parsed.command)) {
+      // Structural: the array already settled its words, so they are carried
+      // through as words and never re-tokenized.
       const words = parsed.command.filter((word): word is string => typeof word === 'string');
-      return words.length > 0 ? [words.join(' ')] : [];
+      return words.length === parsed.command.length && words.length > 0 ? [{ kind: 'argv', words }] : [];
     }
     return [];
   }
-  const commands: string[] = [];
+  const commands: CodexCommand[] = [];
   // Comments are blanked first, offset-preserving, so a commented-out `cmd`
   // cannot win the key scan against the one the call actually ran.
   const source = withoutJavaScriptComments(blob);
   for (const { end, start } of codexExecCallWindows(source)) {
     const command =
-      jsonStringValueForKey(source, 'cmd', start, end) ?? jsonStringValueForKey(source, 'command', start, end);
+      structuralStringValueForKey(source, 'cmd', start, end) ??
+      structuralStringValueForKey(source, 'command', start, end);
     if (command !== null) {
-      commands.push(command);
+      commands.push({ kind: 'shell', source: command });
     }
   }
   // A blob with no well-formed call yields nothing. Measured over the real
@@ -836,59 +865,93 @@ const safeJsonObject = (blob: string): Record<string, unknown> | null => {
   }
 };
 
-/**
- * Decode the JSON string literal that follows `key:` inside an arbitrary blob.
- *
- * The key may be quoted or bare: the JavaScript-snippet shape writes an object
- * literal (`{cmd:"…"}`), not JSON, and requiring the quotes silently missed
- * 60% of real Codex exec records.
- */
-const jsonStringValueForKey = (blob: string, key: string, from: number, to: number): string | null => {
-  for (let start = blob.indexOf(key, from); start >= 0 && start < to; start = blob.indexOf(key, start + 1)) {
-    // Reject a substring hit inside a longer identifier, e.g. `subcmd`.
-    const preceding = start > 0 ? blob[start - 1] : '';
-    if (preceding && preceding !== '"' && preceding !== '{' && preceding !== ',' && !WHITESPACE.test(preceding)) {
+const JSON_ESCAPES: ReadonlyMap<string, string> = new Map([
+  ['n', '\n'],
+  ['r', '\r'],
+  ['t', '\t'],
+]);
+
+interface StringLiteral {
+  /** Index of the closing quote. */
+  end: number;
+  value: string;
+}
+
+/** Read the string literal opening at `open`, or `null` when it never closes. */
+const readStringLiteral = (blob: string, open: number): StringLiteral | null => {
+  const quote = blob[open];
+  let value = '';
+  for (let index = open + 1; index < blob.length; index += 1) {
+    const character = blob[index];
+    if (character === '\\' && quote !== "'") {
+      const escaped = blob[index + 1] ?? '';
+      value += JSON_ESCAPES.get(escaped) ?? escaped;
+      index += 1;
       continue;
     }
-    let index = start + key.length;
-    if (blob[index] === '"') {
-      index += 1;
+    if (character === quote) {
+      return { end: index, value };
     }
-    while (blob[index] === ' ' || blob[index] === '\t') {
-      index += 1;
-    }
-    if (blob[index] !== ':') {
-      continue;
-    }
-    index += 1;
-    while (blob[index] === ' ' || blob[index] === '\t') {
-      index += 1;
-    }
-    if (blob[index] !== '"') {
-      continue;
-    }
-    let literal = '';
-    let cursor = index + 1;
-    while (cursor < blob.length) {
-      const character = blob[cursor];
-      if (character === '\\') {
-        literal += blob.slice(cursor, cursor + 2);
-        cursor += 2;
-        continue;
-      }
-      if (character === '"') {
-        break;
-      }
-      literal += character;
-      cursor += 1;
-    }
-    try {
-      return JSON.parse(`"${literal}"`) as string;
-    } catch {
-      return null;
-    }
+    value += character;
   }
   return null;
+};
+
+const skipBlanks = (blob: string, from: number, to: number): number => {
+  let index = from;
+  while (index < to && (blob[index] === ' ' || blob[index] === '\t' || blob[index] === '\n')) {
+    index += 1;
+  }
+  return index;
+};
+
+/**
+ * The string value of a **structural** `key:` inside `[from, to)`.
+ *
+ * "Structural" is the whole point. A scan that merely looks for the key text
+ * finds it inside quoted prose too — `{justification:'please run cmd:"cat …"'}`
+ * hands back the sentence's decoy instead of the command the call ran. So a
+ * candidate counts only when it is a bare identifier at the current level, or a
+ * complete quoted key; a string literal that is *not* exactly the key is
+ * skipped whole, contents and all.
+ */
+const structuralStringValueForKey = (blob: string, key: string, from: number, to: number): string | null => {
+  let index = from;
+  while (index < to) {
+    const character = blob[index];
+    if (character === '"' || character === "'" || character === '`') {
+      const literal = readStringLiteral(blob, index);
+      if (literal === null || literal.end >= to) {
+        return null;
+      }
+      const afterKey = skipBlanks(blob, literal.end + 1, to);
+      if (literal.value === key && blob[afterKey] === ':') {
+        return structuralStringValue(blob, afterKey + 1, to);
+      }
+      index = literal.end + 1;
+      continue;
+    }
+    if (blob.startsWith(key, index)) {
+      const preceding = index > 0 ? blob[index - 1] : '';
+      const afterKey = skipBlanks(blob, index + key.length, to);
+      if (!(preceding && WORD_CHARACTER.test(preceding)) && blob[afterKey] === ':') {
+        return structuralStringValue(blob, afterKey + 1, to);
+      }
+    }
+    index += 1;
+  }
+  return null;
+};
+
+/** The string a structural key is assigned, or `null` when it is not a string. */
+const structuralStringValue = (blob: string, from: number, to: number): string | null => {
+  const start = skipBlanks(blob, from, to);
+  const character = blob[start];
+  if (character !== '"' && character !== "'" && character !== '`') {
+    return null;
+  }
+  const literal = readStringLiteral(blob, start);
+  return literal === null || literal.end >= to ? null : literal.value;
 };
 
 interface ShellWord {
@@ -950,7 +1013,7 @@ const ALL_DIGITS = /^\d+$/;
  * An unquoted `#` at the start of a word begins a shell comment and ends the
  * command; everything after it was never executed.
  */
-const shellItems = (command: string): ShellItem[] => {
+const shellItems = (command: string): ShellItem[] | null => {
   const items: ShellItem[] = [];
   let index = 0;
   while (index < command.length) {
@@ -966,7 +1029,12 @@ const shellItems = (command: string): ShellItem[] => {
     if (operator !== undefined) {
       // A bare file-descriptor number belongs to the redirect, not to the words.
       const previous = items.at(-1);
-      if (previous?.kind === 'word' && !previous.quoted && ALL_DIGITS.test(previous.value) && operator.includes('>')) {
+      if (
+        previous?.kind === 'word' &&
+        !previous.quoted &&
+        ALL_DIGITS.test(previous.value) &&
+        (operator.includes('>') || operator.includes('<'))
+      ) {
         items.pop();
       }
       items.push({ kind: 'operator', value: operator });
@@ -986,12 +1054,22 @@ const shellItems = (command: string): ShellItem[] => {
       if (current === "'" || current === '"' || current === '`') {
         quoted = true;
         index += 1;
-        while (index < command.length && command[index] !== current) {
+        let closed = false;
+        while (index < command.length) {
+          if (command[index] === current) {
+            closed = true;
+            break;
+          }
           if (command[index] === '\\' && current !== "'") {
             index += 1;
           }
           value += command[index] ?? '';
           index += 1;
+        }
+        if (!closed) {
+          // A real shell rejects an unterminated quote before running anything,
+          // so there is no command here to draw an observation from.
+          return null;
         }
         index += 1;
         continue;
@@ -1008,6 +1086,27 @@ const shellItems = (command: string): ShellItem[] => {
     items.push({ kind: 'word', quoted, value });
   }
   return items;
+};
+
+/**
+ * The command segments to scan, in the form the payload settled.
+ *
+ * An argv array is already tokenized, so it becomes exactly one segment of
+ * words: never re-split, never re-read for operators, never re-segmented. That
+ * is what stops a word's *contents* from inventing structure the array never
+ * had — `["printf", "x;cat ", path]` is one `printf` invocation, not a `printf`
+ * followed by a `cat`. Redirections and separators cannot exist in argv either,
+ * because the array is the argument vector, not a shell line.
+ *
+ * A shell string has no such structure and is tokenized; an unterminated quote
+ * makes it unrunnable, and yields nothing.
+ */
+const commandSegments = (command: CodexCommand): ShellItem[][] => {
+  if (command.kind === 'argv') {
+    return [command.words.map((value): ShellItem => ({ kind: 'word', quoted: false, value }))];
+  }
+  const items = shellItems(command.source);
+  return items === null ? [] : shellSegments(items);
 };
 
 /** Split an item list into the individual commands it runs. */
@@ -1053,7 +1152,7 @@ export const matchCodexSkillDocuments = (blob: unknown): CodexSkillCatalogueEntr
   const entries: CodexSkillCatalogueEntry[] = [];
   const seen = new Set<string>();
   for (const command of decodeCodexCommands(blob)) {
-    for (const segment of shellSegments(shellItems(command))) {
+    for (const segment of commandSegments(command)) {
       for (const token of segmentReadOperands(segment)) {
         // Checked per token, not per segment: one `cat` can name any number of
         // documents, so a per-segment check leaves the token loop unbounded and

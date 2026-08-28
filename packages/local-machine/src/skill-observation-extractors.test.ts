@@ -745,7 +745,7 @@ describe('extractCodexSkillExecObservation', () => {
 
     // The key scan finds the first `cmd`; a commented one sitting ahead of the
     // real one would win.
-    expect(decodeCodexCommands(snippet)).toEqual(['echo hi']);
+    expect(decodeCodexCommands(snippet)).toEqual([{ kind: 'shell', source: 'echo hi' }]);
     expect(extractCodexSkillExecObservation(snippet, 'call_comment', codexContext).observations).toEqual([]);
   });
 
@@ -753,7 +753,7 @@ describe('extractCodexSkillExecObservation', () => {
     const decoy = `${SKILL_FIXTURE_HOME}/.agents/skills/decoy/SKILL.md`;
     const snippet = `tools.exec_command({\n  // cmd:"cat ${decoy}"\n  cmd:"echo hi"\n})`;
 
-    expect(decodeCodexCommands(snippet)).toEqual(['echo hi']);
+    expect(decodeCodexCommands(snippet)).toEqual([{ kind: 'shell', source: 'echo hi' }]);
     expect(extractCodexSkillExecObservation(snippet, 'call_line_comment', codexContext).observations).toEqual([]);
   });
 
@@ -812,6 +812,67 @@ describe('extractCodexSkillExecObservation', () => {
         extractCodexSkillExecObservation(JSON.stringify({ cmd }), 'call_unknown_flag', codexContext).observations,
       ).toEqual([]);
     }
+  });
+
+  test('does not lift a cmd key out of a quoted prose value', () => {
+    const decoy = `${SKILL_FIXTURE_HOME}/.agents/skills/decoy/SKILL.md`;
+    const snippet = `tools.exec_command({justification:'please run cmd:"cat ${decoy}"',cmd:"echo hi"})`;
+
+    // The key text appears inside a quoted sentence; only a structural key at
+    // the current level is a key.
+    expect(decodeCodexCommands(snippet)).toEqual([{ kind: 'shell', source: 'echo hi' }]);
+    expect(extractCodexSkillExecObservation(snippet, 'call_prose_key', codexContext).observations).toEqual([]);
+  });
+
+  test('does not re-tokenize an argv array back into shell syntax', () => {
+    const decoy = `${SKILL_FIXTURE_HOME}/.agents/skills/decoy/SKILL.md`;
+    const blob = JSON.stringify({ command: ['printf', 'x;cat ', decoy] });
+
+    // The array already settled its words; re-joining and re-splitting would
+    // invent a `cat` command that was never run.
+    expect(decodeCodexCommands(blob)).toEqual([{ kind: 'argv', words: ['printf', 'x;cat ', decoy] }]);
+    expect(extractCodexSkillExecObservation(blob, 'call_argv_decoy', codexContext).observations).toEqual([]);
+  });
+
+  test('still counts a genuine argv read', () => {
+    const blob = JSON.stringify({ command: ['cat', `${SKILL_FIXTURE_HOME}/.agents/skills/review/SKILL.md`] });
+
+    expect(
+      extractCodexSkillExecObservation(blob, 'call_argv_read', codexContext).observations.map(
+        ({ skillName }) => skillName,
+      ),
+    ).toEqual(['review']);
+  });
+
+  test('refuses a command whose quote is never closed', () => {
+    const cmd = `cat '${SKILL_FIXTURE_HOME}/.agents/skills/decoy/SKILL.md`;
+
+    // A real shell rejects this before running anything.
+    expect(
+      extractCodexSkillExecObservation(JSON.stringify({ cmd }), 'call_open_quote', codexContext).observations,
+    ).toEqual([]);
+  });
+
+  test('treats a bare file descriptor before an input redirect as part of it', () => {
+    const decoy = `${SKILL_FIXTURE_HOME}/.agents/skills/decoy/SKILL.md`;
+    const cmd = `grep 2</dev/null ${decoy} /dev/null`;
+
+    // Leaving `2` as a word makes it the pattern operand and promotes the decoy
+    // path into file position.
+    expect(
+      extractCodexSkillExecObservation(JSON.stringify({ cmd }), 'call_fd_input', codexContext).observations,
+    ).toEqual([]);
+  });
+
+  test('refuses a boolean flag that arrives with an attached value', () => {
+    const decoy = `${SKILL_FIXTURE_HOME}/.agents/skills/decoy/SKILL.md`;
+    const cmd = `cat --number=bogus ${decoy}`;
+
+    // The real tool errors out before reading anything, so this is outside the
+    // modelled grammar.
+    expect(
+      extractCodexSkillExecObservation(JSON.stringify({ cmd }), 'call_bool_value', codexContext).observations,
+    ).toEqual([]);
   });
 
   test('deduplicates repeated names inside one command', () => {

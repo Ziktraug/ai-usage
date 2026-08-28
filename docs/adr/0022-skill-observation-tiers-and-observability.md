@@ -110,6 +110,23 @@ new columns on `usage_rows`.
   a fabricated one is a false claim about what the operator's model did, and the
   two are not equally bad. Measured against real history, refusing this much
   costs nothing — the modelled flag sets cover what real commands use.
+
+- **Two limits are assumed rather than closed**, each because closing it would
+  cost real observations to defend against a construction with no measured
+  incidence:
+
+  - a *quoted* dash-word is read as an operand rather than a flag, so
+    `rg "--" …/SKILL.md f` can over-count. The corpus holds exactly three quoted
+    dash-words, all genuine data operands that this behaviour handles correctly;
+  - conditional execution is not modelled, so `false && cat …/SKILL.md` counts
+    although it never runs. Distinguishing would mean interpreting shell
+    execution, and discarding post-`&&` segments would lose the common, real
+    `cd repo && cat …/SKILL.md` read.
+
+  Both admit a rare false observation on synthetic input. They are the reason
+  the tier is named `inferred` rather than treated as fact: it is reported
+  separately, labelled, and never summed with `declared`. A tier whose errors
+  are disclosed is usable; one presented as certain would not be.
 - Every bound in this family reports itself. A read budget or per-session
   ceiling is detected one past the bound, never at it, because a list that stops
   exactly at the limit is indistinguishable from a complete one; the resulting
