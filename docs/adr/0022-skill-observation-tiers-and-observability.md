@@ -82,12 +82,21 @@ new columns on `usage_rows`.
   and saying *not observable* is a legitimate answer that ships.
 - Codex contributes both an `exposed` and an `inferred` stream from the same
   session. They are produced by two separate extractors and are never combined.
-- The `inferred` tier claims the model *read* a skill, so the Codex matcher is
-  restricted to read-shaped commands. A `rm` or a patch body naming a `SKILL.md`
-  is not weak evidence of use — it is evidence of something else, and counting
-  it would be false rather than merely uncertain. The command is decoded out of
-  its tool-call envelope first and matched against whole shell tokens, so a
-  stored path is a path and never a fragment of the command that named it.
+- The `inferred` tier claims the model *read* a skill, so the Codex matcher
+  counts a path only where it is plausibly a read operand. A `rm`, a patch body,
+  a redirect target (`… > …/SKILL.md`, a write), and a search pattern
+  (`rg …/SKILL.md transcript.txt`, which searches *for* the path) are each
+  evidence of something other than use; counting them would be false rather than
+  merely uncertain. The command is decoded out of its tool-call envelope first —
+  scoped to the call that executed it — and matched against whole shell tokens,
+  so a stored path is a path and never a fragment of the command that named it.
+- **An observation's identity is stable; its content is not.** The identity names
+  one real event, but this product's *reading* of that event improves as the
+  collectors do, so a re-import with different content overwrites and is reported
+  as an update that advances the store generation. Freezing identity rows would
+  make a bad extraction permanent, with no repair short of deletion. An unchanged
+  re-import — the normal case on every sweep — changes nothing and advances
+  nothing.
 
 ## Rejected alternative
 

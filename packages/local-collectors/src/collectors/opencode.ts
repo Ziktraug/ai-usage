@@ -87,10 +87,32 @@ const OPENCODE_DB_CACHE_FILE = 'opencode-db-cache.json';
 // Observations are tens to hundreds; the bound guards a corrupt database, not
 // ordinary volume.
 const MAX_OPENCODE_SKILL_PARTS = 100_000;
+
+/**
+ * Testing override for the skill-part read budget. The production bound guards
+ * a corrupt database rather than ordinary volume, so exercising the truncation
+ * path honestly would mean writing 100k rows. Lowering the bound instead keeps
+ * the test about the behaviour — detect the bound, flag it, carry the flag
+ * through the cache — rather than about SQLite throughput.
+ *
+ * Follows the store's `set*FaultInjectorForTesting` precedent: an explicit,
+ * named seam rather than a mock of the collector.
+ */
+let openCodeSkillPartLimitOverride: number | null = null;
+
+export const setOpenCodeSkillPartLimitForTesting = (limit: number | null): void => {
+  if (limit !== null && !(Number.isSafeInteger(limit) && limit > 0)) {
+    throw new Error('OpenCode skill part limit override must be a positive safe integer or null');
+  }
+  openCodeSkillPartLimitOverride = limit;
+};
+
+const openCodeSkillPartLimit = (): number => openCodeSkillPartLimitOverride ?? MAX_OPENCODE_SKILL_PARTS;
 const SESSION_SQL = 'SELECT id, parent_id, title, directory, summary_additions, summary_deletions FROM session';
 const TOOL_COUNT_SQL = `SELECT session_id, count(*) n FROM part WHERE ${OPENCODE_TOOL_PART_PREDICATE} GROUP BY session_id`;
 // One over the bound, so hitting it is detectable rather than silent.
-const SKILL_PART_SQL = `SELECT id, session_id, time_created, data FROM part WHERE ${OPENCODE_SKILL_PART_PREDICATE} ORDER BY session_id, time_created, id LIMIT ${MAX_OPENCODE_SKILL_PARTS + 1}`;
+const skillPartSql = (limit: number) =>
+  `SELECT id, session_id, time_created, data FROM part WHERE ${OPENCODE_SKILL_PART_PREDICATE} ORDER BY session_id, time_created, id LIMIT ${limit + 1}`;
 const TURN_COUNT_SQL = `SELECT m.session_id, count(DISTINCT m.id) n FROM message m JOIN part p ON p.message_id = m.id WHERE json_valid(m.data) AND json_valid(p.data) AND json_extract(m.data, '$.role') = 'user' AND ${OPENCODE_DIRECT_USER_PART_PREDICATE} GROUP BY m.session_id`;
 const MESSAGE_SQL = 'SELECT session_id, data, time_created FROM message ORDER BY session_id, time_created, id';
 
@@ -191,7 +213,7 @@ const collectFromDb = (
             skillPartRows.push(
               ...(yield* withPerfSpan(
                 'aiUsage.collect.opencode.db.query.skillParts',
-                db.all<SkillPartRow>(SKILL_PART_SQL),
+                db.all<SkillPartRow>(skillPartSql(openCodeSkillPartLimit())),
                 (rows) => ({ db: source, rows: rows.length }),
               )),
             );
@@ -354,8 +376,9 @@ const collectFromDb = (
           const decoded: SkillObservation[] = [];
           let rejected = 0;
           // The read asks for one row past the bound purely to detect the bound.
-          const truncated = skillPartRows.length > MAX_OPENCODE_SKILL_PARTS;
-          for (const row of skillPartRows.slice(0, MAX_OPENCODE_SKILL_PARTS)) {
+          const limit = openCodeSkillPartLimit();
+          const truncated = skillPartRows.length > limit;
+          for (const row of skillPartRows.slice(0, limit)) {
             const observation = decodeOpenCodeSkillPart({ ...row, projectPath: meta.get(row.session_id)?.dir ?? null });
             if (observation) {
               decoded.push(observation);
@@ -509,7 +532,7 @@ export const collectOpenCodeResult: Effect.Effect<
     warnings.push(observationWarning);
   }
   if (observationsTruncated) {
-    warnings.push(skillObservationTruncationWarning('opencode', MAX_OPENCODE_SKILL_PARTS));
+    warnings.push(skillObservationTruncationWarning('opencode', openCodeSkillPartLimit()));
   }
   return { observations, rows: [...liveRows, ...stableRows], warnings };
 });

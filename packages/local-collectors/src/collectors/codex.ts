@@ -1,9 +1,13 @@
 import type { LocalHistoryWarning } from '@ai-usage/local-machine/errors';
-import type { SkillObservation } from '@ai-usage/report-core/skill-observation';
+import { MAX_SKILL_OBSERVATIONS_PER_SESSION, type SkillObservation } from '@ai-usage/report-core/skill-observation';
 import { Effect } from 'effect';
 import { hasCodexHistory, readCodexUsageSessionsResult } from '../codex-history';
 import { sessionToUsageRow } from '../collected-session';
-import { metricValidationWarning, skillObservationValidationWarning } from '../metric-validation';
+import {
+  metricValidationWarning,
+  skillObservationTruncationWarning,
+  skillObservationValidationWarning,
+} from '../metric-validation';
 
 export interface CodexCollectionResult {
   /**
@@ -22,10 +26,13 @@ export const collectCodexResult = Effect.gen(function* () {
   const result = yield* readCodexUsageSessionsResult;
   const warning = metricValidationWarning('codex', result.rejectedMetricRecords);
   const observationWarning = skillObservationValidationWarning('codex', result.rejectedObservations);
+  const truncationWarning = result.observationsTruncated
+    ? skillObservationTruncationWarning('codex', MAX_SKILL_OBSERVATIONS_PER_SESSION)
+    : null;
   return {
     observations: result.observations,
     rows: result.sessions.map(sessionToUsageRow),
-    warnings: [warning, observationWarning].filter((value) => value !== null),
+    warnings: [warning, observationWarning, truncationWarning].filter((value) => value !== null),
   };
 });
 

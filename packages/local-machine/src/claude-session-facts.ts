@@ -757,12 +757,14 @@ const claudeSkillLookahead = (
  */
 export const extractClaudeSkillObservations = (input: ClaudeSkillObservationInput): SkillObservationExtraction => {
   if (!input.sourceSessionId || input.records.length > MAX_CLAUDE_RECORDS) {
-    return { observations: [], rejected: 0 };
+    return { observations: [], rejected: 0, truncated: false };
   }
   const observations: SkillObservation[] = [];
   let rejected = 0;
+  let truncated = false;
   for (const [index, record] of input.records.entries()) {
     if (observations.length >= MAX_SKILL_OBSERVATIONS_PER_SESSION) {
+      truncated = true;
       break;
     }
     if (!isRecord(record)) {
@@ -803,7 +805,7 @@ export const extractClaudeSkillObservations = (input: ClaudeSkillObservationInpu
       }
     }
   }
-  return { observations, rejected };
+  return { observations, rejected, truncated };
 };
 
 export const parseClaudeSessionFacts = (input: ClaudeSessionInput): ClaudeSessionFacts | null => {

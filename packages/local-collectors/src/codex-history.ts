@@ -195,6 +195,7 @@ const cloneCodexSession = (session: CodexSession): CodexSession => ({
   models: [...session.models],
   skillObservations: session.skillObservations.map((observation) => ({ ...observation })),
   skillObservationRejects: session.skillObservationRejects,
+  skillObservationsTruncated: session.skillObservationsTruncated,
   phases: session.phases.map((phase) => ({
     ...phase,
     end: new Date(phase.end),
@@ -322,7 +323,8 @@ const reviveCachedSession = (json: string): CodexSession | null => {
       models.length !== rawModels?.length ||
       phases === null ||
       !skillObservations.valid ||
-      !skillObservationRejects.ok
+      !skillObservationRejects.ok ||
+      typeof value.skillObservationsTruncated !== 'boolean'
     ) {
       return null;
     }
@@ -359,6 +361,7 @@ const reviveCachedSession = (json: string): CodexSession | null => {
       hasTokenUsage: value.hasTokenUsage,
       skillObservations: skillObservations.observations,
       skillObservationRejects: skillObservationRejects.value,
+      skillObservationsTruncated: value.skillObservationsTruncated === true,
       ...(vcs ? { vcs } : {}),
     };
   } catch {
@@ -607,6 +610,8 @@ export interface CodexUsageSessionsResult {
    * are never combined into one count (ADR 0022).
    */
   observations: SkillObservation[];
+  /** Whether any session hit its per-session observation ceiling. */
+  observationsTruncated: boolean;
   rejectedMetricRecords: number;
   /** Skill candidates that failed validation; reported on their own channel. */
   rejectedObservations: number;
@@ -696,8 +701,10 @@ export const readCodexUsageSessionsResult: Effect.Effect<
     const observations: SkillObservation[] = [];
     const seenObservations = new Set<string>();
     let rejectedObservations = 0;
+    let observationsTruncated = false;
     for (const session of sessions) {
       rejectedObservations += session.skillObservationRejects;
+      observationsTruncated ||= session.skillObservationsTruncated;
       for (const observation of session.skillObservations) {
         const identity = skillObservationIdentity(observation);
         if (seenObservations.has(identity)) {
@@ -708,7 +715,13 @@ export const readCodexUsageSessionsResult: Effect.Effect<
       }
     }
 
-    return { observations, rejectedMetricRecords, rejectedObservations, sessions: usageSessions };
+    return {
+      observations,
+      observationsTruncated,
+      rejectedMetricRecords,
+      rejectedObservations,
+      sessions: usageSessions,
+    };
   }),
   (result) => ({
     observations: result.observations.length,

@@ -3,6 +3,7 @@ import { extractClaudeSkillObservations } from '@ai-usage/local-machine/claude-s
 import {
   codexSkillCatalogueObservations,
   decodeCodexCommand,
+  decodeCodexCommands,
   extractCodexSkillCatalogue,
   extractCodexSkillExecObservation,
   matchCodexSkillDocuments,
@@ -29,6 +30,7 @@ import {
   SKILL_FIXTURE_HOME,
   SKILL_FIXTURE_PROJECT,
 } from '@ai-usage/local-machine/test-fixtures/skill-observation-transcripts';
+import { MAX_SKILL_OBSERVATIONS_PER_SESSION } from '@ai-usage/report-core/skill-observation';
 
 const FIXTURE_HOME_PREFIX = /^\/home\/alex\//;
 
@@ -103,7 +105,37 @@ describe('extractClaudeSkillObservations', () => {
       sourceSessionId: CLAUDE_FIXTURE_SESSION,
     });
 
-    expect(extraction).toEqual({ observations: [], rejected: 0 });
+    expect(extraction).toEqual({ observations: [], rejected: 0, truncated: false });
+  });
+
+  test('flags the per-session ceiling instead of silently returning a short list', () => {
+    const skillCall = (index: number) => ({
+      cwd: SKILL_FIXTURE_PROJECT,
+      message: {
+        content: [{ id: `toolu_${index}`, input: { skill: `skill-${index}` }, name: 'Skill', type: 'tool_use' }],
+        role: 'assistant',
+      },
+      sessionId: CLAUDE_FIXTURE_SESSION,
+      timestamp: '2026-08-01T09:00:00.000Z',
+      type: 'assistant',
+    });
+    const records = Array.from({ length: MAX_SKILL_OBSERVATIONS_PER_SESSION + 5 }, (_, index) => skillCall(index));
+
+    const extraction = extractClaudeSkillObservations({ records, sourceSessionId: CLAUDE_FIXTURE_SESSION });
+
+    expect(extraction.observations).toHaveLength(MAX_SKILL_OBSERVATIONS_PER_SESSION);
+    // The count is a lower bound; saying so is the difference between a bounded
+    // read and a wrong number.
+    expect(extraction.truncated).toBe(true);
+  });
+
+  test('does not flag truncation for a session inside the ceiling', () => {
+    expect(
+      extractClaudeSkillObservations({
+        records: claudeResolvedSkillTranscript,
+        sourceSessionId: CLAUDE_FIXTURE_SESSION,
+      }).truncated,
+    ).toBe(false);
   });
 
   test('counts a Skill call that cannot be validated instead of dropping it silently', () => {
@@ -303,6 +335,63 @@ describe('extractCodexSkillExecObservation', () => {
     );
 
     expect(extraction.observations).toEqual([]);
+  });
+
+  test('does not count a skill document in redirect-target position as a read', () => {
+    for (const cmd of [
+      `cat README.md > ${SKILL_FIXTURE_HOME}/.agents/skills/review/SKILL.md`,
+      `cat README.md >${SKILL_FIXTURE_HOME}/.agents/skills/review/SKILL.md`,
+      `cat README.md >> ${SKILL_FIXTURE_HOME}/.agents/skills/review/SKILL.md`,
+      `cat README.md 2> ${SKILL_FIXTURE_HOME}/.agents/skills/review/SKILL.md`,
+    ]) {
+      // The token is being written, not read. An overwrite is not an invocation.
+      expect(
+        extractCodexSkillExecObservation(JSON.stringify({ cmd }), 'call_redirect', codexContext).observations,
+      ).toEqual([]);
+    }
+  });
+
+  test('does not count a skill document used as a search pattern operand', () => {
+    for (const verb of ['rg', 'grep']) {
+      const extraction = extractCodexSkillExecObservation(
+        JSON.stringify({ cmd: `${verb} ${SKILL_FIXTURE_HOME}/.agents/skills/review/SKILL.md /tmp/transcript.txt` }),
+        'call_pattern',
+        codexContext,
+      );
+      // The path is what is being searched *for*; the file read is the transcript.
+      expect(extraction.observations).toEqual([]);
+    }
+  });
+
+  test('still counts a search whose file operand is the skill document', () => {
+    const extraction = extractCodexSkillExecObservation(
+      JSON.stringify({ cmd: `rg needle ${SKILL_FIXTURE_HOME}/.agents/skills/review/SKILL.md` }),
+      'call_search_read',
+      codexContext,
+    );
+
+    expect(extraction.observations.map(({ skillName }) => skillName)).toEqual(['review']);
+  });
+
+  test('ties each decoded command to its own exec call in a multi-call snippet', () => {
+    const snippet = [
+      `const a = await tools.exec_command({cmd:"cat ${SKILL_FIXTURE_HOME}/.agents/skills/first/SKILL.md"});`,
+      `const b = await tools.exec_command({cmd:"cat ${SKILL_FIXTURE_HOME}/.agents/skills/second/SKILL.md"});`,
+    ].join('\n');
+
+    // A first-key-wins scan would report only `first`.
+    expect(decodeCodexCommands(snippet)).toHaveLength(2);
+    expect(
+      extractCodexSkillExecObservation(snippet, 'call_multi', codexContext).observations.map((o) => o.skillName),
+    ).toEqual(['first', 'second']);
+  });
+
+  test('does not attribute a cmd key that belongs to no exec call', () => {
+    const snippet = `const note = {cmd:"cat ${SKILL_FIXTURE_HOME}/.agents/skills/decoy/SKILL.md"};\nconst r = await tools.exec_command({cmd:"cat ${SKILL_FIXTURE_HOME}/.agents/skills/real/SKILL.md"});`;
+
+    expect(
+      extractCodexSkillExecObservation(snippet, 'call_scoped', codexContext).observations.map((o) => o.skillName),
+    ).toEqual(['real']);
   });
 
   test('deduplicates repeated names inside one command', () => {

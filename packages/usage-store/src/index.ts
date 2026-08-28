@@ -367,7 +367,13 @@ export interface SkillObservationImportResult {
   inserted: number;
   /** Observations that failed validation. Counted, so a broken collector is visible. */
   rejected: number;
+  /** Re-imports whose content matched the stored row exactly. */
   unchanged: number;
+  /**
+   * Re-imports under an existing identity whose content differed, so the
+   * durable row was rewritten. Advances the store generation.
+   */
+  updated: number;
 }
 
 export interface QuerySkillObservationsInput {

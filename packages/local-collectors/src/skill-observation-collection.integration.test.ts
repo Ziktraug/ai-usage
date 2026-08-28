@@ -7,6 +7,7 @@ import { createLocalHistoryStorage, LocalHistoryStorage } from '@ai-usage/local-
 import { FIXTURE_SKILL_NAMES, seedHarnessHome } from '@ai-usage/local-machine/testing/harness-home';
 import { Effect } from 'effect';
 import { collectSelectedHarnessResults } from './collectors';
+import { collectOpenCodeResult, setOpenCodeSkillPartLimitForTesting } from './collectors/opencode';
 
 const temporaryHomes: string[] = [];
 
@@ -183,7 +184,7 @@ const seedCodex = async (home: string): Promise<void> => {
 };
 
 /** One resolvable skill part and one whose directory the harness did not record. */
-const seedOpenCode = async (home: string): Promise<void> => {
+const seedOpenCode = async (home: string, options: { includeUndecodableSkillPart?: boolean } = {}): Promise<void> => {
   const dir = join(home, '.local', 'share', 'opencode');
   await mkdir(dir, { recursive: true });
   const db = new Database(join(dir, 'opencode.db'), { create: true });
@@ -249,6 +250,16 @@ const seedOpenCode = async (home: string): Promise<void> => {
     },
     1_771_069_566_200,
   );
+  if (options.includeUndecodableSkillPart) {
+    // Matches the skill predicate but names no skill anywhere: a transcript
+    // shape change, which must be counted rather than quietly shrinking the
+    // observation count.
+    part(
+      'part-undecodable',
+      { callID: 'call_undecodable', state: { status: 'completed' }, tool: 'skill', type: 'tool' },
+      1_771_069_566_250,
+    );
+  }
   part(
     'part-other-tool',
     { callID: 'call_bash', state: { input: {}, status: 'completed' }, tool: 'bash', type: 'tool' },
@@ -402,6 +413,82 @@ describe('skill observation collection', () => {
     expect(codex.filter(({ skillName }) => skillName === FIXTURE_SKILL_NAMES.codexUnread).map((o) => o.tier)).toEqual([
       'exposed',
     ]);
+  });
+
+  describe('OpenCode skill-part read budget', () => {
+    afterEach(() => {
+      setOpenCodeSkillPartLimitForTesting(null);
+    });
+
+    test('flags a read that hit its budget and says so in a warning', async () => {
+      const home = await makeHome();
+      await seedOpenCode(home);
+      // Two decodable skill parts are seeded; a budget of one forces the bound.
+      setOpenCodeSkillPartLimitForTesting(1);
+
+      const result = await Effect.runPromise(
+        collectOpenCodeResult.pipe(Effect.provideService(LocalHistoryStorage, createLocalHistoryStorage(home))),
+      );
+      const truncation = result.warnings.find((warning) => warning.operation === 'skillObservationTruncated');
+
+      // The count is a lower bound and the warning has to say so; silently
+      // returning the first row would present a partial read as complete.
+      expect(result.observations).toHaveLength(1);
+      expect(truncation).toBeDefined();
+      expect(truncation?.harness).toBe('opencode');
+      expect(truncation?.message).toContain('lower bound');
+    });
+
+    test('reports no truncation when the read fits inside its budget', async () => {
+      const home = await makeHome();
+      await seedOpenCode(home);
+      setOpenCodeSkillPartLimitForTesting(50);
+
+      const result = await Effect.runPromise(
+        collectOpenCodeResult.pipe(Effect.provideService(LocalHistoryStorage, createLocalHistoryStorage(home))),
+      );
+
+      expect(result.observations).toHaveLength(2);
+      expect(result.warnings.some((warning) => warning.operation === 'skillObservationTruncated')).toBe(false);
+    });
+
+    test('a warm cache restores the truncation flag and the reject count', async () => {
+      const home = await makeHome();
+      await seedOpenCode(home, { includeUndecodableSkillPart: true });
+      setOpenCodeSkillPartLimitForTesting(1);
+      const storage = createLocalHistoryStorage(home);
+
+      const cold = await Effect.runPromise(
+        collectOpenCodeResult.pipe(Effect.provideService(LocalHistoryStorage, storage)),
+      );
+      const warm = await Effect.runPromise(
+        collectOpenCodeResult.pipe(Effect.provideService(LocalHistoryStorage, storage)),
+      );
+
+      const operations = (result: { warnings: { operation: string }[] }) =>
+        result.warnings.map((warning) => warning.operation).sort();
+
+      // A cache hit that dropped these would silently upgrade a partial,
+      // partially-rejected read into a complete one.
+      expect(operations(cold)).toContain('skillObservationTruncated');
+      expect(operations(warm)).toEqual(operations(cold));
+      expect(warm.observations).toEqual(cold.observations);
+    });
+
+    test('an undecodable skill part is rejected on its own channel, not as a usage metric', async () => {
+      const home = await makeHome();
+      await seedOpenCode(home, { includeUndecodableSkillPart: true });
+
+      const result = await Effect.runPromise(
+        collectOpenCodeResult.pipe(Effect.provideService(LocalHistoryStorage, createLocalHistoryStorage(home))),
+      );
+      const rejection = result.warnings.find((warning) => warning.operation === 'skillObservationValidation');
+
+      expect(rejection).toBeDefined();
+      expect(rejection?.rejectedRecords).toBe(1);
+      // A changed skill transcript is not a corrupted token count.
+      expect(result.warnings.some((warning) => warning.operation === 'metricValidation')).toBe(false);
+    });
   });
 
   test('a second collection pass reuses the cache and re-parses nothing', async () => {

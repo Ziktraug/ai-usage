@@ -62,20 +62,33 @@ const CODEX_SKILL_DOCUMENT_TOKEN = new RegExp(
  * Derived from the verbs actually observed in real Codex history.
  */
 const CODEX_READ_VERBS: ReadonlySet<string> = new Set([
-  'awk',
   'bat',
   'cat',
-  'grep',
   'head',
   'less',
   'more',
   'nl',
-  'rg',
-  'sed',
   'tail',
   'view',
   'wc',
 ]);
+
+/**
+ * Read verbs whose *first* non-flag operand is a pattern or a script rather
+ * than a file: `rg …/SKILL.md transcript.txt` searches for the path, it does
+ * not read it, while `rg needle …/SKILL.md` does. Treating both alike is how a
+ * search over a transcript became an inferred invocation.
+ */
+const CODEX_SCRIPTED_READ_VERBS: ReadonlySet<string> = new Set(['awk', 'grep', 'rg', 'sed']);
+
+/**
+ * A redirect operator, optionally with its target attached (`>out`, `2>>log`).
+ * A token in target position is being *written*, so `cat README.md >
+ * …/SKILL.md` overwrites a skill rather than reading one.
+ */
+const REDIRECT_OPERATOR = /^\d*>>?/;
+
+const isFlag = (token: string): boolean => token.startsWith('-') && token.length > 1;
 
 /** Shell words, with one level of quoting removed. */
 const SHELL_TOKEN = /'[^']*'|"[^"]*"|\S+/g;
@@ -180,7 +193,7 @@ export const codexSkillCatalogueObservations = (
       rejected += 1;
     }
   }
-  return { observations, rejected };
+  return { observations, rejected, truncated: false };
 };
 
 /**
@@ -217,26 +230,66 @@ export const extractCodexSkillExecObservation = (
  * function exists to prevent, so the command is decoded first and matched
  * second. Returns `null` when no command can be recovered — never a guess.
  */
-export const decodeCodexCommand = (blob: unknown): string | null => {
+export const decodeCodexCommand = (blob: unknown): string | null => decodeCodexCommands(blob)[0] ?? null;
+
+/** The marker a snippet uses to invoke the shell, so a key can be tied to its call. */
+const CODEX_EXEC_CALL_MARKER = 'exec_command(';
+
+/**
+ * Every command a payload actually executes.
+ *
+ * A snippet may contain more than one `exec_command(...)` call, and may contain
+ * the string `cmd` in places that are not one. Taking the first `cmd` in the
+ * blob would therefore both miss later commands and risk attributing an
+ * unrelated key to the call. Each call's argument object is scanned in its own
+ * window instead — from the call marker up to the next one — so a decoded
+ * command always belongs to the call it was read from.
+ */
+export const decodeCodexCommands = (blob: unknown): string[] => {
   if (typeof blob !== 'string' || blob.length === 0) {
-    return null;
+    return [];
   }
   const parsed = safeJsonObject(blob);
   if (parsed) {
     if (typeof parsed.cmd === 'string') {
-      return parsed.cmd;
+      return [parsed.cmd];
     }
     if (typeof parsed.command === 'string') {
-      return parsed.command;
+      return [parsed.command];
     }
     if (Array.isArray(parsed.command)) {
       const words = parsed.command.filter((word): word is string => typeof word === 'string');
-      return words.length > 0 ? words.join(' ') : null;
+      return words.length > 0 ? [words.join(' ')] : [];
+    }
+    return [];
+  }
+  // The JavaScript-snippet shape is not parseable as a whole, so each embedded
+  // object literal is decoded in place, scoped to its own call.
+  const commands: string[] = [];
+  const callStarts: number[] = [];
+  for (
+    let index = blob.indexOf(CODEX_EXEC_CALL_MARKER);
+    index >= 0;
+    index = blob.indexOf(CODEX_EXEC_CALL_MARKER, index + 1)
+  ) {
+    callStarts.push(index + CODEX_EXEC_CALL_MARKER.length);
+  }
+  for (const [position, start] of callStarts.entries()) {
+    const end = callStarts[position + 1] ?? blob.length;
+    const command =
+      jsonStringValueForKey(blob, 'cmd', start, end) ?? jsonStringValueForKey(blob, 'command', start, end);
+    if (command !== null) {
+      commands.push(command);
     }
   }
-  // The JavaScript-snippet shape is not parseable as a whole, so the embedded
-  // JSON string is decoded in place rather than pattern-matched out of it.
-  return jsonStringValueForKey(blob, 'cmd') ?? jsonStringValueForKey(blob, 'command');
+  if (commands.length > 0) {
+    return commands;
+  }
+  // No recognizable call marker: fall back to a whole-blob scan rather than
+  // silently reporting a payload that plainly carries a command as empty.
+  const fallback =
+    jsonStringValueForKey(blob, 'cmd', 0, blob.length) ?? jsonStringValueForKey(blob, 'command', 0, blob.length);
+  return fallback === null ? [] : [fallback];
 };
 
 const safeJsonObject = (blob: string): Record<string, unknown> | null => {
@@ -257,8 +310,8 @@ const safeJsonObject = (blob: string): Record<string, unknown> | null => {
  * literal (`{cmd:"…"}`), not JSON, and requiring the quotes silently missed
  * 60% of real Codex exec records.
  */
-const jsonStringValueForKey = (blob: string, key: string): string | null => {
-  for (let start = blob.indexOf(key); start >= 0; start = blob.indexOf(key, start + 1)) {
+const jsonStringValueForKey = (blob: string, key: string, from: number, to: number): string | null => {
+  for (let start = blob.indexOf(key, from); start >= 0 && start < to; start = blob.indexOf(key, start + 1)) {
     // Reject a substring hit inside a longer identifier, e.g. `subcmd`.
     const preceding = start > 0 ? blob[start - 1] : '';
     if (preceding && preceding !== '"' && preceding !== '{' && preceding !== ',' && !WHITESPACE.test(preceding)) {
@@ -348,30 +401,80 @@ export const matchCodexSkillDocuments = (blob: unknown): CodexSkillCatalogueEntr
   if (typeof blob !== 'string' || !blob.includes('SKILL.md')) {
     return [];
   }
-  const command = decodeCodexCommand(blob) ?? blob;
+  const commands = decodeCodexCommands(blob);
   const entries: CodexSkillCatalogueEntry[] = [];
   const seen = new Set<string>();
-  for (const segment of command.split(SHELL_SEGMENT)) {
-    if (entries.length >= MAX_SKILL_OBSERVATIONS_PER_SESSION) {
-      break;
-    }
-    const tokens = shellTokens(segment);
-    // The verb is judged per segment, so `set -e; sed -n … SKILL.md` is a read
-    // while `rm …/SKILL.md` is not evidence that anything was used.
-    if (!CODEX_READ_VERBS.has(commandVerb(tokens))) {
-      continue;
-    }
-    for (const token of tokens) {
-      const matched = CODEX_SKILL_DOCUMENT_TOKEN.exec(token);
-      const name = matched?.[1];
-      if (!name || seen.has(name)) {
-        continue;
+  for (const command of commands.length > 0 ? commands : [blob]) {
+    for (const segment of command.split(SHELL_SEGMENT)) {
+      if (entries.length >= MAX_SKILL_OBSERVATIONS_PER_SESSION) {
+        return entries;
       }
-      seen.add(name);
-      entries.push({ name, path: codexSkillDirectory(token) });
+      for (const token of segmentReadOperands(segment)) {
+        const matched = CODEX_SKILL_DOCUMENT_TOKEN.exec(token);
+        const name = matched?.[1];
+        if (!name || seen.has(name)) {
+          continue;
+        }
+        seen.add(name);
+        entries.push({ name, path: codexSkillDirectory(token) });
+      }
     }
   }
   return entries;
+};
+
+/**
+ * The tokens of one command segment that are plausibly *files being read*.
+ *
+ * Three things disqualify a token, and each of them was a false inferred
+ * invocation before it was handled:
+ *
+ * - the segment's verb does not read at all (`rm …/SKILL.md`);
+ * - the token sits in redirect-target position, so it is being written
+ *   (`cat README.md > …/SKILL.md`);
+ * - the verb takes a pattern or script first, and the token is that operand
+ *   (`rg …/SKILL.md transcript.txt` searches *for* the path).
+ *
+ * The verb is judged per segment, so `set -e; sed -n … SKILL.md` still reads.
+ */
+const segmentReadOperands = (segment: string): string[] => {
+  const tokens = shellTokens(segment);
+  const verb = commandVerb(tokens);
+  const scripted = CODEX_SCRIPTED_READ_VERBS.has(verb);
+  if (!(scripted || CODEX_READ_VERBS.has(verb))) {
+    return [];
+  }
+  const operands: string[] = [];
+  let seenVerb = false;
+  let redirectPending = false;
+  let operandIndex = 0;
+  for (const token of tokens) {
+    if (REDIRECT_OPERATOR.test(token)) {
+      // `>` alone takes the next token; `>out` already carries its target.
+      redirectPending = token.replace(REDIRECT_OPERATOR, '').length === 0;
+      continue;
+    }
+    if (redirectPending) {
+      redirectPending = false;
+      continue;
+    }
+    if (!seenVerb) {
+      if (ENVIRONMENT_ASSIGNMENT.test(token)) {
+        continue;
+      }
+      seenVerb = true;
+      continue;
+    }
+    if (isFlag(token)) {
+      continue;
+    }
+    operandIndex += 1;
+    if (scripted && operandIndex === 1) {
+      continue;
+    }
+    operands.push(token);
+  }
+  return operands;
 };
 
 /** Project matched skill documents into `inferred` observations. */
@@ -403,5 +506,5 @@ export const codexSkillExecObservations = (
       rejected += 1;
     }
   }
-  return { observations, rejected };
+  return { observations, rejected, truncated: false };
 };

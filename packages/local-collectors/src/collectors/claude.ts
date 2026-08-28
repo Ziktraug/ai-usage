@@ -6,7 +6,7 @@ import { readLocalGitRepository } from '@ai-usage/local-machine/local-git';
 import { LocalHistoryStorage, walkFiles } from '@ai-usage/local-machine/local-history';
 import { type HarnessPaths, resolvePaths } from '@ai-usage/local-machine/platform-paths';
 import { base, safeJSON, usablePrompt } from '@ai-usage/local-machine/text';
-import type { SkillObservation } from '@ai-usage/report-core/skill-observation';
+import { MAX_SKILL_OBSERVATIONS_PER_SESSION, type SkillObservation } from '@ai-usage/report-core/skill-observation';
 import { actualCost, approximateApiCost } from '@ai-usage/report-core/usage-row';
 import { Effect } from 'effect';
 import { type CollectedSession, sessionToUsageRow } from '../collected-session';
@@ -15,6 +15,7 @@ import { COLLECTOR_CACHE_MAX_BYTES, SMALL_HISTORY_JSON_MAX_BYTES } from '../hist
 import {
   metricValidationWarning,
   parseNonNegativeSafeInteger,
+  skillObservationTruncationWarning,
   skillObservationValidationWarning,
 } from '../metric-validation';
 import { withPerfSpan } from '../perf';
@@ -36,6 +37,7 @@ interface FileFingerprint {
 interface ClaudeCache {
   fingerprintKey: string | null;
   observations: SkillObservation[];
+  observationsTruncated: boolean;
   rejectedMetricRecords: number;
   /** Cached so a warm re-scan reports the same partial-data state as a cold one. */
   rejectedObservations: number;
@@ -56,6 +58,7 @@ const readClaudeCache = (storage: LocalHistoryStorage): ClaudeCache | null => {
     const empty: ClaudeCache = {
       fingerprintKey: null,
       observations: [],
+      observationsTruncated: false,
       rejectedMetricRecords: 0,
       rejectedObservations: 0,
       rows: [],
@@ -68,6 +71,7 @@ const readClaudeCache = (storage: LocalHistoryStorage): ClaudeCache | null => {
     const parsed = readPrivateJson(cachePath, COLLECTOR_CACHE_MAX_BYTES) as {
       fingerprintKey?: unknown;
       observations?: unknown;
+      observationsTruncated?: unknown;
       rejectedMetricRecords?: unknown;
       rejectedObservations?: unknown;
       rows?: unknown;
@@ -86,7 +90,8 @@ const readClaudeCache = (storage: LocalHistoryStorage): ClaudeCache | null => {
         rejectedObservations.ok &&
         revived.valid &&
         revived.rejectedMetricRecords === 0 &&
-        observations.valid
+        observations.valid &&
+        typeof parsed.observationsTruncated === 'boolean'
       )
     ) {
       return empty;
@@ -94,6 +99,7 @@ const readClaudeCache = (storage: LocalHistoryStorage): ClaudeCache | null => {
     return {
       fingerprintKey: typeof parsed.fingerprintKey === 'string' ? parsed.fingerprintKey : null,
       observations: observations.observations,
+      observationsTruncated: parsed.observationsTruncated,
       rejectedMetricRecords: rejectedMetricRecords.value,
       rejectedObservations: rejectedObservations.value,
       rows: revived.rows,
@@ -111,6 +117,7 @@ const writeClaudeCache = (
   rejectedMetricRecords: number,
   observations: SkillObservation[],
   rejectedObservations: number,
+  observationsTruncated: boolean,
 ) => {
   if (!fingerprintKey) {
     return false;
@@ -119,6 +126,7 @@ const writeClaudeCache = (
   const value = {
     fingerprintKey,
     observations,
+    observationsTruncated,
     rejectedMetricRecords,
     rejectedObservations,
     rows,
@@ -326,12 +334,15 @@ export const collectClaudeResult = Effect.gen(function* () {
   if (cache?.fingerprintKey && cache.fingerprintKey === fingerprintKey) {
     const warning = metricValidationWarning('claude', cache.rejectedMetricRecords);
     const cachedObservationWarning = skillObservationValidationWarning('claude', cache.rejectedObservations);
+    const cachedTruncationWarning = cache.observationsTruncated
+      ? skillObservationTruncationWarning('claude', MAX_SKILL_OBSERVATIONS_PER_SESSION)
+      : null;
     return yield* withPerfSpan(
       'aiUsage.collect.claude.cache.hit',
       Effect.succeed({
         observations: cache.observations,
         rows: cache.rows,
-        warnings: [warning, cachedObservationWarning].filter((value) => value !== null),
+        warnings: [warning, cachedObservationWarning, cachedTruncationWarning].filter((value) => value !== null),
       }),
       (result) => ({
         observations: result.observations.length,
@@ -357,6 +368,7 @@ export const collectClaudeResult = Effect.gen(function* () {
   const existingSessionIds = new Set(files.map((filePath) => path.basename(filePath, '.jsonl')));
   let rejectedMetricRecords = 0;
   let rejectedObservations = 0;
+  let observationsTruncated = false;
 
   yield* withPerfSpan(
     'aiUsage.collect.claude.parseFiles',
@@ -384,6 +396,7 @@ export const collectClaudeResult = Effect.gen(function* () {
         const extraction = extractClaudeSkillObservations({ records, sourceSessionId });
         observations.push(...extraction.observations);
         rejectedObservations += extraction.rejected;
+        observationsTruncated ||= extraction.truncated;
 
         const initialFacts = parseClaudeSessionFacts({ isAgentFile, records, repository: null, sourceSessionId });
         if (!initialFacts) {
@@ -459,16 +472,27 @@ export const collectClaudeResult = Effect.gen(function* () {
   yield* withPerfSpan(
     'aiUsage.collect.claude.cache.write',
     Effect.sync(() =>
-      writeClaudeCache(storage, fingerprintKey, rows, rejectedMetricRecords, observations, rejectedObservations),
+      writeClaudeCache(
+        storage,
+        fingerprintKey,
+        rows,
+        rejectedMetricRecords,
+        observations,
+        rejectedObservations,
+        observationsTruncated,
+      ),
     ),
     (wrote) => ({ wrote }),
   );
   const warning = metricValidationWarning('claude', rejectedMetricRecords);
   const observationWarning = skillObservationValidationWarning('claude', rejectedObservations);
+  const truncationWarning = observationsTruncated
+    ? skillObservationTruncationWarning('claude', MAX_SKILL_OBSERVATIONS_PER_SESSION)
+    : null;
   return {
     observations,
     rows,
-    warnings: [warning, observationWarning].filter((value) => value !== null),
+    warnings: [warning, observationWarning, truncationWarning].filter((value) => value !== null),
   };
 });
 

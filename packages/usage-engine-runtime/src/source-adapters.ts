@@ -297,10 +297,14 @@ const createSessionSource = (input: {
               machineId: input.machine.id,
               observations,
             }).pipe(Effect.mapError((cause) => sourceFailure(input.id, cause)))
-          : { inserted: 0, rejected: 0, unchanged: 0 };
+          : { inserted: 0, rejected: 0, unchanged: 0, updated: 0 };
       const warnings = sanitizeSourceWarnings(input.label, [...collection.warnings, ...retentionWarnings]);
       return {
-        changed: imported.inserted > 0 || imported.updated > 0 || importedObservations.inserted > 0,
+        changed:
+          imported.inserted > 0 ||
+          imported.updated > 0 ||
+          importedObservations.inserted > 0 ||
+          importedObservations.updated > 0,
         inputCount: collection.rows.length,
         outputCount: rows.length,
         servedProjectionChanged: imported.fleetChanged,

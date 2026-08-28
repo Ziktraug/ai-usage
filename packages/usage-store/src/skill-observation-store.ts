@@ -1,4 +1,8 @@
-import { MAX_SKILL_OBSERVATION_BATCH, parseSkillObservation } from '@ai-usage/report-core/skill-observation';
+import {
+  MAX_SKILL_OBSERVATION_BATCH,
+  parseSkillObservation,
+  type SkillObservation,
+} from '@ai-usage/report-core/skill-observation';
 import { Effect } from 'effect';
 import { UsageStoreError, type UsageStoreErrorReason } from './errors';
 import type {
@@ -96,6 +100,42 @@ const booleanFromColumn = (value: number | null): boolean | null => {
   return value === 1;
 };
 
+interface StoredContentRecord {
+  args_present: number | null;
+  observed_at: string;
+  project_path: string | null;
+  resolved_path: string | null;
+  skill_name: string;
+  success: number | null;
+}
+
+/**
+ * Whether a re-imported observation says the same thing as the stored one.
+ *
+ * **Identity rows are mutable, deliberately.** The identity — machine, harness,
+ * session, tier, and the harness's own call id — names one real event that
+ * happened once. What can change is this product's *reading* of it: a collector
+ * fix that resolves a path it previously could not, or that stops mis-parsing
+ * one. Making identity rows immutable would freeze the worse reading forever
+ * and leave no way to repair history short of deleting it, so a changed
+ * extraction overwrites.
+ *
+ * Overwriting is only honest if it is reported, which is what this comparison
+ * is for: an unchanged repeat stays `unchanged` and leaves the served report
+ * alone, while a genuine correction counts as `updated` and advances the
+ * generation like any other durable change.
+ *
+ * `first_observed_at` and `last_observed_at` are excluded on purpose — they
+ * record when this store saw the row, not what the row says.
+ */
+const sameStoredContent = (stored: StoredContentRecord, observation: SkillObservation): boolean =>
+  stored.skill_name === observation.skillName &&
+  stored.observed_at === observation.observedAt &&
+  stored.project_path === observation.projectPath &&
+  stored.resolved_path === observation.resolvedPath &&
+  booleanFromColumn(stored.args_present) === observation.argsPresent &&
+  booleanFromColumn(stored.success) === observation.success;
+
 export const createSkillObservationStore = (dependencies: SkillObservationStoreDependencies) => {
   const { usageStoreError, usageStoreReadError, withUsageStoreReader, withUsageStoreWriter } = dependencies;
 
@@ -120,7 +160,7 @@ export const createSkillObservationStore = (dependencies: SkillObservationStoreD
     return withUsageStoreWriter(input.dbPath, (db) =>
       Effect.try({
         try: () => {
-          const result: SkillObservationImportResult = { inserted: 0, rejected: 0, unchanged: 0 };
+          const result: SkillObservationImportResult = { inserted: 0, rejected: 0, unchanged: 0, updated: 0 };
           const importedAt = (input.importedAt ?? new Date()).toISOString();
           db.exec('BEGIN IMMEDIATE');
           try {
@@ -128,8 +168,13 @@ export const createSkillObservationStore = (dependencies: SkillObservationStoreD
             // from a RETURNING expression: two imports inside one batch share
             // an `importedAt`, which would make a first/last timestamp
             // comparison call a repeat an insert.
+            //
+            // The row's semantic fields come back with it so a re-import can be
+            // classified honestly. See `sameStoredContent` for why an identity
+            // row is mutable at all.
             const existing = db.query(`
-              SELECT id FROM skill_observations
+              SELECT skill_name, observed_at, project_path, resolved_path, args_present, success
+              FROM skill_observations
               WHERE machine_id = ? AND harness_key = ? AND session_id = ? AND tier = ? AND observation_key = ?
             `);
             const insert = db.query(`
@@ -155,14 +200,13 @@ export const createSkillObservationStore = (dependencies: SkillObservationStoreD
                 result.rejected++;
                 continue;
               }
-              const seen =
-                existing.get(
-                  input.machineId,
-                  observation.harnessKey,
-                  observation.sessionId,
-                  observation.tier,
-                  observation.observationKey,
-                ) !== null;
+              const stored = existing.get(
+                input.machineId,
+                observation.harnessKey,
+                observation.sessionId,
+                observation.tier,
+                observation.observationKey,
+              ) as StoredContentRecord | null;
               insert.run(
                 observation.harnessKey,
                 observation.skillName,
@@ -178,17 +222,23 @@ export const createSkillObservationStore = (dependencies: SkillObservationStoreD
                 importedAt,
                 importedAt,
               );
-              if (seen) {
+              if (stored === null) {
+                result.inserted++;
+              } else if (sameStoredContent(stored, observation)) {
                 result.unchanged++;
               } else {
-                result.inserted++;
+                // The upsert above just rewrote six semantic fields. Reporting
+                // that as `unchanged` would tell the engine nothing happened
+                // while the durable row moved underneath it.
+                result.updated++;
               }
             }
             // Only a real change advances the generation. The collectors
             // re-import the same observations on every sweep, so counting an
             // unchanged repeat here would invalidate the served report once per
-            // cycle for no reason. Matches the provider-quota precedent.
-            if (result.inserted > 0) {
+            // cycle for no reason. Matches the provider-quota precedent. An
+            // update is a real change and does advance it.
+            if (result.inserted > 0 || result.updated > 0) {
               db.query("UPDATE usage_store_metadata SET value = value + 1 WHERE key = 'generation'").run();
             }
             db.exec('COMMIT');

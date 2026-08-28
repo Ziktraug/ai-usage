@@ -51,7 +51,7 @@ describe('skill observation store', () => {
     );
     const read = await Effect.runPromise(querySkillObservations({ dbPath }));
 
-    expect(imported).toEqual({ inserted: 1, rejected: 0, unchanged: 0 });
+    expect(imported).toEqual({ inserted: 1, rejected: 0, unchanged: 0, updated: 0 });
     expect(read.skipped).toBe(0);
     expect(read.truncated).toBe(false);
     // The read path re-validates every persisted row, so a null resolved path
@@ -100,8 +100,8 @@ describe('skill observation store', () => {
     );
     const read = await Effect.runPromise(querySkillObservations({ dbPath }));
 
-    expect(first).toEqual({ inserted: 1, rejected: 0, unchanged: 0 });
-    expect(second).toEqual({ inserted: 0, rejected: 0, unchanged: 1 });
+    expect(first).toEqual({ inserted: 1, rejected: 0, unchanged: 0, updated: 0 });
+    expect(second).toEqual({ inserted: 0, rejected: 0, unchanged: 1, updated: 0 });
     expect(read.observations).toHaveLength(1);
   });
 
@@ -132,7 +132,7 @@ describe('skill observation store', () => {
       }),
     );
 
-    expect(result).toEqual({ inserted: 1, rejected: 2, unchanged: 0 });
+    expect(result).toEqual({ inserted: 1, rejected: 2, unchanged: 0, updated: 0 });
   });
 
   test('the table holds exactly the expected columns, so no argument column can be added', async () => {
@@ -168,6 +168,55 @@ describe('skill observation store', () => {
     expect(columns.some(({ name }) => ARGUMENT_COLUMN_PATTERN.test(name))).toBe(false);
   });
 
+  test('a changed extraction under the same identity is reported as an update and bumps the generation', async () => {
+    const dbPath = await createStore('skill-updated');
+    await Effect.runPromise(
+      importSkillObservations({
+        dbPath,
+        machineId: MACHINE,
+        observations: [observation({ resolvedPath: '/home/alex/.claude/skills/old' })],
+      }),
+    );
+    const generationBefore = await Effect.runPromise(queryUsageStoreGeneration({ dbPath }));
+
+    // The same harness call, re-read by a collector that now resolves the path
+    // correctly. The row is rewritten, so saying "unchanged" would be false.
+    const corrected = await Effect.runPromise(
+      importSkillObservations({
+        dbPath,
+        machineId: MACHINE,
+        observations: [observation({ resolvedPath: '/home/alex/.claude/skills/new' })],
+      }),
+    );
+    const read = await Effect.runPromise(querySkillObservations({ dbPath }));
+
+    expect(corrected).toEqual({ inserted: 0, rejected: 0, unchanged: 0, updated: 1 });
+    expect(read.observations).toHaveLength(1);
+    expect(read.observations[0]?.observation.resolvedPath).toBe('/home/alex/.claude/skills/new');
+    expect(await Effect.runPromise(queryUsageStoreGeneration({ dbPath }))).toBeGreaterThan(generationBefore);
+  });
+
+  test('every semantic field is compared, so no durable rewrite reports as unchanged', async () => {
+    const variants = [
+      observation({ skillName: 'other-skill' }),
+      observation({ observedAt: '2026-08-02T09:00:00.000Z' }),
+      observation({ projectPath: '/home/alex/Projects/other' }),
+      observation({ resolvedPath: null }),
+      observation({ argsPresent: true }),
+      observation({ success: false }),
+    ];
+
+    for (const [index, variant] of variants.entries()) {
+      const dbPath = await createStore(`skill-field-${index}`);
+      await Effect.runPromise(importSkillObservations({ dbPath, machineId: MACHINE, observations: [observation()] }));
+      const result = await Effect.runPromise(
+        importSkillObservations({ dbPath, machineId: MACHINE, observations: [variant] }),
+      );
+      expect(result.updated).toBe(1);
+      expect(result.unchanged).toBe(0);
+    }
+  });
+
   test('an unchanged re-import does not advance the store generation', async () => {
     const dbPath = await createStore('skill-generation');
     await Effect.runPromise(importSkillObservations({ dbPath, machineId: MACHINE, observations: [observation()] }));
@@ -181,7 +230,7 @@ describe('skill observation store', () => {
     // The collectors re-import the same observations on every sweep. Bumping the
     // generation for an unchanged repeat would invalidate the served report once
     // per collection cycle for no reason.
-    expect(repeat).toEqual({ inserted: 0, rejected: 0, unchanged: 1 });
+    expect(repeat).toEqual({ inserted: 0, rejected: 0, unchanged: 1, updated: 0 });
     expect(generationAfterRepeat).toBe(generationAfterInsert);
 
     const added = await Effect.runPromise(

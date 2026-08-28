@@ -34,7 +34,14 @@ const TIERS: ReadonlySet<string> = new Set(SKILL_OBSERVATION_TIERS);
 
 /** Read-cost ceilings, not a vocabulary. Raising one is safe; lowering one is not. */
 export const MAX_SKILL_OBSERVATION_NAME_LENGTH = 512;
-export const MAX_SKILL_OBSERVATION_PATH_LENGTH = 2048;
+/**
+ * `PATH_MAX` on Linux and comfortably above macOS's limit, so no path a
+ * filesystem can actually hold is rejected by this bound. That matters more
+ * than the byte saving: a real path refused here would be stored as
+ * `resolvedPath: null`, which is the reserved state for a skill that resolves
+ * to nothing — recording a resolvable skill as unresolvable.
+ */
+export const MAX_SKILL_OBSERVATION_PATH_LENGTH = 4096;
 export const MAX_SKILL_OBSERVATIONS_PER_SESSION = 4096;
 export const MAX_SKILL_OBSERVATION_BATCH = 100_000;
 
@@ -74,6 +81,12 @@ export interface SkillObservation {
 export interface SkillObservationExtraction {
   observations: SkillObservation[];
   rejected: number;
+  /**
+   * Whether the per-session ceiling cut the list short. Like every other
+   * bounded read in this product, hitting the bound is reported rather than
+   * silently returning a smaller number as if it were complete.
+   */
+  truncated: boolean;
 }
 
 export const isSkillObservationTier = (value: unknown): value is SkillObservationTier =>

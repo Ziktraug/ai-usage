@@ -73,6 +73,8 @@ export interface CodexSession {
    * the `inferred` exec reads, kept as separate tiers on one list (ADR 0022).
    */
   skillObservations: SkillObservation[];
+  /** Whether the per-session observation ceiling cut the list short. */
+  skillObservationsTruncated: boolean;
   start: Date | null;
   subagentKind: CodexSubagentKind | null;
   subscription: boolean;
@@ -281,6 +283,7 @@ const emptySession = (): CodexSession => ({
   phases: [],
   skillObservations: [],
   skillObservationRejects: 0,
+  skillObservationsTruncated: false,
   subagentKind: null,
   threadSource: null,
   agentNickname: null,
@@ -1049,6 +1052,7 @@ export const createCodexSessionParser = (captureDetail = false) => {
     }
     session.skillObservations = observations.slice(0, MAX_SKILL_OBSERVATIONS_PER_SESSION);
     session.skillObservationRejects = rejected;
+    session.skillObservationsTruncated = observations.length > MAX_SKILL_OBSERVATIONS_PER_SESSION;
   };
 
   const finalize = (): void => {
