@@ -50,9 +50,15 @@ Four rules, binding on every producer and every consumer of skill observations.
    this family exists to produce.
 
 3. **Absence of observation is not zero usage.** Per-harness observability is
-   part of the presented model. A harness with no collector — Cursor today —
-   renders as *not observable*. It is never rendered as `0`, and it is never
-   included in a denominator that would make other harnesses look complete.
+   part of the presented model, carried as an explicit marker rather than
+   inferred from an empty list — `observed nothing` and `cannot observe` are the
+   same array, and only the marker separates them. A harness with no collector —
+   Cursor today — is `not-observable`. It is never rendered as `0`, and it is
+   never included in a denominator that would make other harnesses look
+   complete.
+
+   The marker is derived from the harness, not from what a run produced, so a
+   failed sweep of an observable harness stays observable.
 
 4. **Provenance is per metric, not global.** Each rendered count carries its own
    tier and harness coverage. No page-level data-quality banner is introduced;
@@ -76,6 +82,12 @@ new columns on `usage_rows`.
   and saying *not observable* is a legitimate answer that ships.
 - Codex contributes both an `exposed` and an `inferred` stream from the same
   session. They are produced by two separate extractors and are never combined.
+- The `inferred` tier claims the model *read* a skill, so the Codex matcher is
+  restricted to read-shaped commands. A `rm` or a patch body naming a `SKILL.md`
+  is not weak evidence of use — it is evidence of something else, and counting
+  it would be false rather than merely uncertain. The command is decoded out of
+  its tool-call envelope first and matched against whole shell tokens, so a
+  stored path is a path and never a fragment of the command that named it.
 
 ## Rejected alternative
 

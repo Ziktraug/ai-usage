@@ -31,7 +31,32 @@ export interface SeededHarnessHome {
 export interface SeedHarnessHomeOptions {
   codexSessionCount?: number;
   harnesses?: readonly HarnessFixtureKey[];
+  /**
+   * Seed the skill signals each harness leaves (declared, inferred, exposed).
+   * Opt-in because they add a tool call and extra records, which would shift
+   * the golden counters the existing consumers of this fixture assert on.
+   */
+  skillSignals?: boolean;
 }
+
+/**
+ * The skills the synthetic home exercises, one per observation tier plus the
+ * two states that must survive collection: a bundled skill that resolves to
+ * nothing, and a skill offered but never read.
+ */
+export const FIXTURE_SKILL_ROOT = '/home/alex/.agents/skills';
+export const FIXTURE_SKILL_NAMES = {
+  /** Claude Code, declared, resolved to a directory. */
+  claudeDeclared: 'improve',
+  /** Claude Code, declared, resolving to nothing — a harness-bundled skill. */
+  claudeUnresolved: 'artifact-design',
+  /** Codex, exposed by the catalogue and inferred from a read. */
+  codexExposed: 'pr-review',
+  /** Codex, exposed only: offered to the model, never read. */
+  codexUnread: 'imagegen',
+  /** OpenCode, declared, resolved. */
+  openCodeDeclared: 'web-design-guidelines',
+} as const;
 
 const FIXTURE_IDS = {
   claude: 'claude-fixture-025',
@@ -48,7 +73,93 @@ const ensureParent = async (filePath: string): Promise<void> => {
   await mkdir(dirname(filePath), { recursive: true });
 };
 
-const writeClaudeFixture = async (home: string, repository: string): Promise<void> => {
+/**
+ * The skill signals Claude Code leaves: a declared invocation that resolves to
+ * a directory, and a harness-bundled one that resolves to nothing.
+ */
+const claudeSkillEvents = (repository: string): readonly unknown[] => [
+  // A managed skill: declared, and resolved by the injected base directory.
+  {
+    type: 'assistant',
+    timestamp: '2026-07-01T08:01:40.000Z',
+    uuid: 'claude-skill-assistant-1',
+    parentUuid: 'claude-user-1',
+    cwd: repository,
+    sessionId: FIXTURE_IDS.claude,
+    requestId: 'claude-request-skill-1',
+    message: {
+      id: 'claude-message-skill-1',
+      model: 'claude-sonnet-4-6',
+      role: 'assistant',
+      content: [
+        {
+          type: 'tool_use',
+          id: 'toolu_fixture_managed',
+          name: 'Skill',
+          input: { skill: FIXTURE_SKILL_NAMES.claudeDeclared, args: HARNESS_FIXTURE_PRIVATE_PROMPT_SENTINEL },
+        },
+      ],
+      usage: { input_tokens: 5, output_tokens: 2, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+    },
+  },
+  {
+    type: 'user',
+    timestamp: '2026-07-01T08:01:41.000Z',
+    uuid: 'claude-skill-result-1',
+    cwd: repository,
+    sessionId: FIXTURE_IDS.claude,
+    toolUseResult: { commandName: FIXTURE_SKILL_NAMES.claudeDeclared, success: true },
+    message: {
+      role: 'user',
+      content: [{ type: 'tool_result', tool_use_id: 'toolu_fixture_managed', content: 'Launching skill' }],
+    },
+  },
+  {
+    type: 'user',
+    isMeta: true,
+    timestamp: '2026-07-01T08:01:42.000Z',
+    uuid: 'claude-skill-meta-1',
+    cwd: repository,
+    sessionId: FIXTURE_IDS.claude,
+    sourceToolUseID: 'toolu_fixture_managed',
+    message: {
+      role: 'user',
+      content: [
+        {
+          type: 'text',
+          text: `Base directory for this skill: ${FIXTURE_SKILL_ROOT}/${FIXTURE_SKILL_NAMES.claudeDeclared}`,
+        },
+      ],
+    },
+  },
+  // A harness-bundled skill: declared, resolving to nothing. That absence is
+  // the "invoked but unmanaged" signal, not a collection gap.
+  {
+    type: 'assistant',
+    timestamp: '2026-07-01T08:01:50.000Z',
+    uuid: 'claude-skill-assistant-2',
+    parentUuid: 'claude-user-1',
+    cwd: repository,
+    sessionId: FIXTURE_IDS.claude,
+    requestId: 'claude-request-skill-2',
+    message: {
+      id: 'claude-message-skill-2',
+      model: 'claude-sonnet-4-6',
+      role: 'assistant',
+      content: [
+        {
+          type: 'tool_use',
+          id: 'toolu_fixture_bundled',
+          name: 'Skill',
+          input: { skill: FIXTURE_SKILL_NAMES.claudeUnresolved },
+        },
+      ],
+      usage: { input_tokens: 4, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+    },
+  },
+];
+
+const writeClaudeFixture = async (home: string, repository: string, skillSignals: boolean): Promise<void> => {
   const filePath = join(home, '.claude', 'projects', '-work-fixture', `${FIXTURE_IDS.claude}.jsonl`);
   const subagentPath = join(home, '.claude', 'projects', '-work-fixture', 'agent-claude-fixture-027.jsonl');
   await ensureParent(filePath);
@@ -126,6 +237,7 @@ const writeClaudeFixture = async (home: string, repository: string): Promise<voi
         cwd: repository,
         gitBranch: 'fixture/main',
       },
+      ...(skillSignals ? claudeSkillEvents(repository) : []),
       {
         type: 'user',
         timestamp: '2026-07-01T08:02:00.000Z',
@@ -327,7 +439,56 @@ const codexSessionEvents = (
   ];
 };
 
-const writeCodexFixture = async (home: string, repository: string, sessionCount: number): Promise<string> => {
+/**
+ * The skill signals Codex leaves: a catalogue injected as a developer message
+ * (`exposed`) and a shell command reading a SKILL.md (`inferred`). They are two
+ * different tiers of evidence about the same skill and must stay distinguishable
+ * (ADR 0022).
+ *
+ * The developer payload serializes `type`/`id`/`role` before `content` on
+ * purpose: the collector gates on `"role":"developer"` appearing within the
+ * first 300 bytes of the line, which is how real Codex rollouts are ordered.
+ */
+const codexSkillEvents = (id: string, startMs: number): readonly unknown[] => [
+  {
+    timestamp: new Date(startMs + 1000).toISOString(),
+    type: 'response_item',
+    payload: {
+      type: 'message',
+      id: `${id}-skill-catalogue`,
+      role: 'developer',
+      content: [
+        {
+          type: 'input_text',
+          text: [
+            '### Available skills',
+            `- ${FIXTURE_SKILL_NAMES.codexExposed}: Review a pull request end to end. (file: ${FIXTURE_SKILL_ROOT}/${FIXTURE_SKILL_NAMES.codexExposed}/SKILL.md)`,
+            `- ${FIXTURE_SKILL_NAMES.codexUnread}: Generate images. (file: ${FIXTURE_SKILL_ROOT}/${FIXTURE_SKILL_NAMES.codexUnread}/SKILL.md)`,
+          ].join('\n'),
+        },
+      ],
+    },
+  },
+  {
+    timestamp: new Date(startMs + 2000).toISOString(),
+    type: 'response_item',
+    payload: {
+      type: 'custom_tool_call',
+      call_id: `${id}-skill-exec`,
+      name: 'exec',
+      // The production envelope: a JavaScript snippet whose object literal uses
+      // an unquoted key, not a bare shell string.
+      input: `const r = await tools.exec_command({cmd:"sed -n '1,240p' ${FIXTURE_SKILL_ROOT}/${FIXTURE_SKILL_NAMES.codexExposed}/SKILL.md","workdir":"/work/fixture"}); text(r.output);\n`,
+    },
+  },
+];
+
+const writeCodexFixture = async (
+  home: string,
+  repository: string,
+  sessionCount: number,
+  skillSignals: boolean,
+): Promise<string> => {
   if (!(Number.isSafeInteger(sessionCount) && sessionCount >= 2)) {
     throw new Error('codexSessionCount must be a safe integer of at least 2');
   }
@@ -343,6 +504,7 @@ const writeCodexFixture = async (home: string, repository: string, sessionCount:
         prompt: 'Implement fixture root',
         repository,
       }),
+      ...(skillSignals ? codexSkillEvents(FIXTURE_IDS.codexRoot, Date.parse('2026-07-02T09:00:00.000Z')) : []),
     ),
   );
   await writeFile(
@@ -377,7 +539,7 @@ const writeCodexFixture = async (home: string, repository: string, sessionCount:
   return rootPath;
 };
 
-const writeOpenCodeFixture = async (databasePath: string, repository: string): Promise<void> => {
+const writeOpenCodeFixture = async (databasePath: string, repository: string, skillSignals: boolean): Promise<void> => {
   await ensureParent(databasePath);
   const database = new Database(databasePath, { create: true });
   try {
@@ -507,6 +669,30 @@ const writeOpenCodeFixture = async (databasePath: string, repository: string): P
       Date.parse('2026-07-04T10:00:30.000Z'),
       JSON.stringify({ type: 'tool', tool: 'bash' }, null, 2),
     );
+    if (skillSignals) {
+      // OpenCode declares a skill invocation as a first-class tool part, and
+      // records the resolved skill directory alongside it.
+      insertPart.run(
+        'opencode-skill-part',
+        'opencode-assistant-1',
+        FIXTURE_IDS.opencode,
+        Date.parse('2026-07-04T10:00:40.000Z'),
+        JSON.stringify({
+          type: 'tool',
+          tool: 'skill',
+          callID: 'call_fixture_skill',
+          state: {
+            status: 'completed',
+            input: { name: FIXTURE_SKILL_NAMES.openCodeDeclared },
+            metadata: {
+              name: FIXTURE_SKILL_NAMES.openCodeDeclared,
+              dir: `${FIXTURE_SKILL_ROOT}/${FIXTURE_SKILL_NAMES.openCodeDeclared}`,
+            },
+            time: { start: Date.parse('2026-07-04T10:00:40.000Z'), end: Date.parse('2026-07-04T10:00:41.000Z') },
+          },
+        }),
+      );
+    }
     insertPart.run(
       'opencode-internal-user-part',
       'opencode-user-internal',
@@ -589,13 +775,13 @@ export const seedHarnessHome = async (
     );
   }
   if (seededHarnesses.includes('claude')) {
-    await writeClaudeFixture(home, paths.repository);
+    await writeClaudeFixture(home, paths.repository, options.skillSignals === true);
   }
   if (seededHarnesses.includes('codex')) {
-    await writeCodexFixture(home, paths.repository, options.codexSessionCount ?? 2);
+    await writeCodexFixture(home, paths.repository, options.codexSessionCount ?? 2, options.skillSignals === true);
   }
   if (seededHarnesses.includes('opencode')) {
-    await writeOpenCodeFixture(paths.opencodeDatabase, paths.repository);
+    await writeOpenCodeFixture(paths.opencodeDatabase, paths.repository, options.skillSignals === true);
   }
   if (seededHarnesses.includes('cursor')) {
     await writeCursorFixture(paths.cursorDatabase);

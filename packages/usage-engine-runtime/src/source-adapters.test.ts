@@ -10,6 +10,7 @@ import {
   queryLatestProviderQuotaObservations,
   queryNormalizedDatasetItems,
   queryReportRows,
+  querySkillObservations,
   usageStorePath,
 } from '@ai-usage/usage-store/testing';
 import { Duration, Effect } from 'effect';
@@ -47,6 +48,66 @@ const writeClaudeSession = (home: string, inputTokens = 10): void => {
       timestamp: '2026-07-16T10:00:00.000Z',
       type: 'assistant',
     })}\n`,
+  );
+};
+
+/**
+ * A transcript that both produces a usage row and declares a skill invocation,
+ * so one source run exercises the row write and the observation write together.
+ */
+const writeClaudeSkillSession = (home: string): void => {
+  const directory = path.join(home, '.claude', 'projects', '-home-alex-Projects-report');
+  mkdirSync(directory, { recursive: true });
+  const cwd = '/home/alex/Projects/report';
+  const events = [
+    {
+      cwd,
+      message: { content: [{ text: 'audit the release', type: 'text' }], role: 'user' },
+      sessionId: 'skill-session-1',
+      timestamp: '2026-07-16T10:00:00.000Z',
+      type: 'user',
+      uuid: 'user-1',
+    },
+    {
+      cwd,
+      message: {
+        content: [
+          {
+            id: 'toolu_managed',
+            input: { args: 'Northwind audit', skill: 'improve' },
+            name: 'Skill',
+            type: 'tool_use',
+          },
+        ],
+        id: 'message-1',
+        model: 'claude-sonnet-4-6',
+        role: 'assistant',
+        usage: { cache_creation_input_tokens: 0, cache_read_input_tokens: 0, input_tokens: 10, output_tokens: 5 },
+      },
+      parentUuid: 'user-1',
+      requestId: 'request-1',
+      sessionId: 'skill-session-1',
+      timestamp: '2026-07-16T10:00:01.000Z',
+      type: 'assistant',
+      uuid: 'assistant-1',
+    },
+    {
+      cwd,
+      isMeta: true,
+      message: {
+        content: [{ text: 'Base directory for this skill: /home/alex/.claude/skills/improve', type: 'text' }],
+        role: 'user',
+      },
+      sessionId: 'skill-session-1',
+      sourceToolUseID: 'toolu_managed',
+      timestamp: '2026-07-16T10:00:02.000Z',
+      type: 'user',
+      uuid: 'meta-1',
+    },
+  ];
+  writeFileSync(
+    path.join(directory, 'skill-session-1.jsonl'),
+    `${events.map((event) => JSON.stringify(event)).join('\n')}\n`,
   );
 };
 
@@ -352,6 +413,52 @@ describe('scheduled source adapters', () => {
         }),
       );
       expect(latest.observations).toHaveLength(1);
+    } finally {
+      rmSync(home, { force: true, recursive: true });
+    }
+  });
+
+  test('persists skill observations collected alongside the session rows', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'plan099-engine-source-skill-observations-'));
+    try {
+      writeClaudeSkillSession(home);
+      const registry = await createRegistry(home);
+      const source = registry.get('claude.sessions');
+
+      const result = await Effect.runPromise(source?.run(progressContext([])) ?? Effect.die('missing source'));
+      const stored = await Effect.runPromise(querySkillObservations({ dbPath: usageStorePath(home) }));
+
+      expect(result).toMatchObject({ changed: true });
+      expect(stored.skipped).toBe(0);
+      expect(stored.observations).toHaveLength(1);
+      expect(stored.observations[0]?.machineId).toBe(machine.id);
+      expect(stored.observations[0]?.observation).toMatchObject({
+        harnessKey: 'claude',
+        resolvedPath: '/home/alex/.claude/skills/improve',
+        skillName: 'improve',
+        tier: 'declared',
+      });
+      // The argument text must not survive the trip to the store.
+      expect(JSON.stringify(stored.observations)).not.toContain('Northwind');
+    } finally {
+      rmSync(home, { force: true, recursive: true });
+    }
+  });
+
+  test('a second run of an unchanged source reports no change from its observations', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'plan099-engine-source-skill-idempotent-'));
+    try {
+      writeClaudeSkillSession(home);
+      const registry = await createRegistry(home);
+      const source = registry.get('claude.sessions');
+      await Effect.runPromise(source?.run(progressContext([])) ?? Effect.die('missing source'));
+
+      const second = await Effect.runPromise(source?.run(progressContext([])) ?? Effect.die('missing source'));
+      const stored = await Effect.runPromise(querySkillObservations({ dbPath: usageStorePath(home) }));
+
+      // Re-importing the same observations must not re-publish the report.
+      expect(second).toMatchObject({ changed: false });
+      expect(stored.observations).toHaveLength(1);
     } finally {
       rmSync(home, { force: true, recursive: true });
     }

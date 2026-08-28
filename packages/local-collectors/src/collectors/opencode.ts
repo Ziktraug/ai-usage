@@ -21,6 +21,7 @@ import { actualCost } from '@ai-usage/report-core/usage-row';
 import { Effect } from 'effect';
 import { type CollectedSession, sessionToUsageRow } from '../collected-session';
 import {
+  type CachedSkillObservations,
   cachedDbCollection,
   type DbRowCache,
   dbStat,
@@ -28,7 +29,12 @@ import {
   storeDbRows,
   writeDbRowCache,
 } from '../collector-cache';
-import { metricValidationWarning, parseOptionalNonNegativeSafeInteger } from '../metric-validation';
+import {
+  metricValidationWarning,
+  parseOptionalNonNegativeSafeInteger,
+  skillObservationTruncationWarning,
+  skillObservationValidationWarning,
+} from '../metric-validation';
 import { withPerfSpan } from '../perf';
 import type { CollectorRow } from '../rtk-enrichment';
 
@@ -83,7 +89,8 @@ const OPENCODE_DB_CACHE_FILE = 'opencode-db-cache.json';
 const MAX_OPENCODE_SKILL_PARTS = 100_000;
 const SESSION_SQL = 'SELECT id, parent_id, title, directory, summary_additions, summary_deletions FROM session';
 const TOOL_COUNT_SQL = `SELECT session_id, count(*) n FROM part WHERE ${OPENCODE_TOOL_PART_PREDICATE} GROUP BY session_id`;
-const SKILL_PART_SQL = `SELECT id, session_id, time_created, data FROM part WHERE ${OPENCODE_SKILL_PART_PREDICATE} ORDER BY session_id, time_created, id LIMIT ${MAX_OPENCODE_SKILL_PARTS}`;
+// One over the bound, so hitting it is detectable rather than silent.
+const SKILL_PART_SQL = `SELECT id, session_id, time_created, data FROM part WHERE ${OPENCODE_SKILL_PART_PREDICATE} ORDER BY session_id, time_created, id LIMIT ${MAX_OPENCODE_SKILL_PARTS + 1}`;
 const TURN_COUNT_SQL = `SELECT m.session_id, count(DISTINCT m.id) n FROM message m JOIN part p ON p.message_id = m.id WHERE json_valid(m.data) AND json_valid(p.data) AND json_extract(m.data, '$.role') = 'user' AND ${OPENCODE_DIRECT_USER_PART_PREDICATE} GROUP BY m.session_id`;
 const MESSAGE_SQL = 'SELECT session_id, data, time_created FROM message ORDER BY session_id, time_created, id';
 
@@ -93,7 +100,7 @@ const collectFromDb = (
   source: 'live' | 'stable',
   cache: DbRowCache | null,
 ): Effect.Effect<
-  { observations: SkillObservation[]; rejectedMetricRecords: number; rows: CollectorRow[] },
+  CachedSkillObservations & { rejectedMetricRecords: number; rows: CollectorRow[] },
   import('@ai-usage/local-machine/errors').LocalHistoryError,
   never
 > =>
@@ -106,7 +113,7 @@ const collectFromDb = (
         (value) => ({ db: source, exists: value }),
       );
       if (!exists) {
-        return { observations: [], rejectedMetricRecords: 0, rows: [] };
+        return { observations: [], rejected: 0, rejectedMetricRecords: 0, rows: [], truncated: false };
       }
 
       const stat = dbStat(dbPath);
@@ -341,31 +348,39 @@ const collectFromDb = (
         }),
         (rows) => ({ db: source, rows: rows.length, sessions: rows.length }),
       );
-      const observations = yield* withPerfSpan(
+      const skillObservations = yield* withPerfSpan(
         'aiUsage.collect.opencode.parse.skillParts',
         Effect.sync(() => {
           const decoded: SkillObservation[] = [];
-          for (const row of skillPartRows) {
+          let rejected = 0;
+          // The read asks for one row past the bound purely to detect the bound.
+          const truncated = skillPartRows.length > MAX_OPENCODE_SKILL_PARTS;
+          for (const row of skillPartRows.slice(0, MAX_OPENCODE_SKILL_PARTS)) {
             const observation = decodeOpenCodeSkillPart({ ...row, projectPath: meta.get(row.session_id)?.dir ?? null });
             if (observation) {
               decoded.push(observation);
             } else {
-              // The row matched the skill predicate but could not be decoded.
-              // Counted with the other rejected records so a shape change is
-              // visible rather than silently reducing the count.
-              rejectedMetricRecords++;
+              // A row that matched the skill predicate but would not decode.
+              // Counted on its own channel: this is a skill-transcript shape
+              // change, not a corrupted token count.
+              rejected += 1;
             }
           }
-          return decoded;
+          return { observations: decoded, rejected, truncated };
         }),
-        (result) => ({ db: source, observations: result.length }),
+        (result) => ({
+          db: source,
+          observations: result.observations.length,
+          rejected: result.rejected,
+          truncated: result.truncated,
+        }),
       );
 
       const afterStat = dbStat(dbPath);
       if (JSON.stringify(stat) === JSON.stringify(afterStat)) {
-        storeDbRows(cache, dbPath, afterStat, sessions, rejectedMetricRecords, observations);
+        storeDbRows(cache, dbPath, afterStat, sessions, rejectedMetricRecords, skillObservations);
       }
-      return { observations, rejectedMetricRecords, rows: sessions };
+      return { ...skillObservations, rejectedMetricRecords, rows: sessions };
     }),
     (result) => ({ db: source, observations: result.observations.length, rows: result.rows.length }),
   );
@@ -410,11 +425,15 @@ export const collectOpenCodeResult: Effect.Effect<
   // other database.
   const seenObservations = new Set<string>();
   let rejectedMetricRecords = 0;
+  let rejectedObservations = 0;
+  let observationsTruncated = false;
   const appendRows = (
     target: CollectorRow[],
-    result: { observations: SkillObservation[]; rejectedMetricRecords: number; rows: CollectorRow[] },
+    result: CachedSkillObservations & { rejectedMetricRecords: number; rows: CollectorRow[] },
   ) => {
     rejectedMetricRecords += result.rejectedMetricRecords;
+    rejectedObservations += result.rejected;
+    observationsTruncated ||= result.truncated;
     for (const row of result.rows) {
       const sessionId = row.source?.sourceSessionId;
       if (sessionId && seen.has(sessionId)) {
@@ -484,6 +503,13 @@ export const collectOpenCodeResult: Effect.Effect<
   const metricWarning = metricValidationWarning('opencode', rejectedMetricRecords);
   if (metricWarning) {
     warnings.push(metricWarning);
+  }
+  const observationWarning = skillObservationValidationWarning('opencode', rejectedObservations);
+  if (observationWarning) {
+    warnings.push(observationWarning);
+  }
+  if (observationsTruncated) {
+    warnings.push(skillObservationTruncationWarning('opencode', MAX_OPENCODE_SKILL_PARTS));
   }
   return { observations, rows: [...liveRows, ...stableRows], warnings };
 });

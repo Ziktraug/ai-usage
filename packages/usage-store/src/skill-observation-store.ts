@@ -184,7 +184,11 @@ export const createSkillObservationStore = (dependencies: SkillObservationStoreD
                 result.inserted++;
               }
             }
-            if (result.inserted > 0 || result.unchanged > 0) {
+            // Only a real change advances the generation. The collectors
+            // re-import the same observations on every sweep, so counting an
+            // unchanged repeat here would invalidate the served report once per
+            // cycle for no reason. Matches the provider-quota precedent.
+            if (result.inserted > 0) {
               db.query("UPDATE usage_store_metadata SET value = value + 1 WHERE key = 'generation'").run();
             }
             db.exec('COMMIT');

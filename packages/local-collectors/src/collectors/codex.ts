@@ -3,7 +3,7 @@ import type { SkillObservation } from '@ai-usage/report-core/skill-observation';
 import { Effect } from 'effect';
 import { hasCodexHistory, readCodexUsageSessionsResult } from '../codex-history';
 import { sessionToUsageRow } from '../collected-session';
-import { metricValidationWarning } from '../metric-validation';
+import { metricValidationWarning, skillObservationValidationWarning } from '../metric-validation';
 
 export interface CodexCollectionResult {
   /**
@@ -21,10 +21,11 @@ export const collectCodexResult = Effect.gen(function* () {
   }
   const result = yield* readCodexUsageSessionsResult;
   const warning = metricValidationWarning('codex', result.rejectedMetricRecords);
+  const observationWarning = skillObservationValidationWarning('codex', result.rejectedObservations);
   return {
     observations: result.observations,
     rows: result.sessions.map(sessionToUsageRow),
-    warnings: warning ? [warning] : [],
+    warnings: [warning, observationWarning].filter((value) => value !== null),
   };
 });
 

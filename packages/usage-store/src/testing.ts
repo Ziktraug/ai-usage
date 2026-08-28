@@ -10,6 +10,7 @@ export {
   queryLatestProviderQuotaObservations,
   queryNormalizedDatasetItems,
   queryReportRows,
+  querySkillObservations,
   quiesceUsageStoreForShutdown,
   setLocalProjectionReadFaultInjectorForTesting,
   setServedReportPublicationFaultInjectorForTesting,

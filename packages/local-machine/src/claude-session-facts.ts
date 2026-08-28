@@ -20,6 +20,7 @@ import {
   MAX_SKILL_OBSERVATIONS_PER_SESSION,
   parseSkillObservation,
   type SkillObservation,
+  type SkillObservationExtraction,
 } from '@ai-usage/report-core/skill-observation';
 import type { UsageModelSegment } from '@ai-usage/report-core/types';
 import { addNonNegativeSafeIntegers, parseOptionalNonNegativeSafeInteger } from './metric-validation';
@@ -754,11 +755,12 @@ const claudeSkillLookahead = (
  * user prose and have been measured to carry client names and business context;
  * ADR 0022 forbids persisting them.
  */
-export const extractClaudeSkillObservations = (input: ClaudeSkillObservationInput): SkillObservation[] => {
+export const extractClaudeSkillObservations = (input: ClaudeSkillObservationInput): SkillObservationExtraction => {
   if (!input.sourceSessionId || input.records.length > MAX_CLAUDE_RECORDS) {
-    return [];
+    return { observations: [], rejected: 0 };
   }
   const observations: SkillObservation[] = [];
+  let rejected = 0;
   for (const [index, record] of input.records.entries()) {
     if (observations.length >= MAX_SKILL_OBSERVATIONS_PER_SESSION) {
       break;
@@ -793,10 +795,15 @@ export const extractClaudeSkillObservations = (input: ClaudeSkillObservationInpu
       });
       if (observation) {
         observations.push(observation);
+      } else {
+        // A `Skill` tool call that will not validate means the transcript shape
+        // moved. Counted so that shows up, rather than the count quietly
+        // shrinking.
+        rejected += 1;
       }
     }
   }
-  return observations;
+  return { observations, rejected };
 };
 
 export const parseClaudeSessionFacts = (input: ClaudeSessionInput): ClaudeSessionFacts | null => {

@@ -65,8 +65,40 @@ export interface SkillObservation {
   tier: SkillObservationTier;
 }
 
+/**
+ * What an extractor produces. The reject count exists because
+ * `parseSkillObservation` returning `null` is otherwise a silent drop: a
+ * harness that changed shape would quietly report fewer observations rather
+ * than surfacing that the extractor needs fixing.
+ */
+export interface SkillObservationExtraction {
+  observations: SkillObservation[];
+  rejected: number;
+}
+
 export const isSkillObservationTier = (value: unknown): value is SkillObservationTier =>
   typeof value === 'string' && TIERS.has(value);
+
+/**
+ * Whether a harness can report skill observations at all (see `CONTEXT.md`).
+ *
+ * This exists because an empty observation list is ambiguous on its own:
+ * `observed nothing` and `cannot observe` are the same array. ADR 0022 makes
+ * observability part of the model precisely so a consumer never has to guess,
+ * and so an unobservable harness is never rendered as a `0`.
+ */
+export type SkillObservability = 'observable' | 'not-observable';
+
+/**
+ * The harnesses with a skill-observation collector. Cursor is deliberately
+ * absent: its state database contains zero skill tool keys, so it records no
+ * usage to collect. Skills are still projected into it — which is exactly why
+ * a zero would be a false claim rather than a missing number.
+ */
+const OBSERVABLE_HARNESSES: ReadonlySet<string> = new Set(['claude', 'codex', 'opencode']);
+
+export const skillObservabilityFor = (harnessKey: string): SkillObservability =>
+  OBSERVABLE_HARNESSES.has(harnessKey) ? 'observable' : 'not-observable';
 
 const boundedNonEmpty = (value: unknown, maximumLength: number): string | null => {
   if (typeof value !== 'string') {

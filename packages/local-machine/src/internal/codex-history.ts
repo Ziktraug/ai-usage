@@ -66,6 +66,8 @@ export interface CodexSession {
   phases: CodexSessionPhase[];
   rejectedMetricRecords: number;
   reportPartial: boolean;
+  /** Skill candidates that failed validation, so a shape change is visible. */
+  skillObservationRejects: number;
   /**
    * Codex declares no skill invocations. These are the `exposed` catalogue and
    * the `inferred` exec reads, kept as separate tiers on one list (ADR 0022).
@@ -278,6 +280,7 @@ const emptySession = (): CodexSession => ({
   models: [],
   phases: [],
   skillObservations: [],
+  skillObservationRejects: 0,
   subagentKind: null,
   threadSource: null,
   agentNickname: null,
@@ -518,16 +521,34 @@ const codexDeveloperMessageText = (payload: Record<string, unknown>): string => 
 const codexToolCallId = (payload: Record<string, unknown>, fallbackIndex: number): string =>
   nonEmpty(payload.call_id) ?? nonEmpty(payload.id) ?? `record-${fallbackIndex}`;
 
-/** The shell command a Codex tool call carries, whichever record shape it uses. */
-const codexToolCallCommand = (payload: Record<string, unknown>): string | null => {
+/**
+ * The raw command blob a Codex tool call carries, whichever record shape it
+ * uses. It is handed on unparsed: `matchCodexSkillDocuments` owns decoding,
+ * because the blob is JSON or a JavaScript snippet rather than a shell string
+ * and matching it raw captures command text.
+ */
+const codexToolCallCommandBlob = (payload: Record<string, unknown>): string | null => {
   if (typeof payload.input === 'string') {
     return payload.input;
   }
   if (typeof payload.arguments === 'string') {
     return payload.arguments;
   }
-  return null;
+  const action = isRecord(payload.action) ? payload.action : null;
+  return action && Array.isArray(action.command) ? JSON.stringify({ command: action.command }) : null;
 };
+
+/**
+ * Tool calls that cannot be a skill read, skipped before any decoding. Patch
+ * bodies and agent prompts routinely quote a SKILL.md path without reading one.
+ */
+const CODEX_NON_EXEC_TOOL_NAMES: ReadonlySet<string> = new Set([
+  'apply_patch',
+  'spawn_agent',
+  'wait_agent',
+  'send_message',
+  'write_stdin',
+]);
 
 interface PendingCodexExecSignal {
   at: Date;
@@ -972,7 +993,10 @@ export const createCodexSessionParser = (captureDetail = false) => {
     if (pendingExecSignals.length >= MAX_SKILL_OBSERVATIONS_PER_SESSION) {
       return;
     }
-    const entries = matchCodexSkillDocuments(codexToolCallCommand(payload));
+    if (typeof payload.name === 'string' && CODEX_NON_EXEC_TOOL_NAMES.has(payload.name)) {
+      return;
+    }
+    const entries = matchCodexSkillDocuments(codexToolCallCommandBlob(payload));
     if (entries.length === 0) {
       return;
     }
@@ -1004,25 +1028,27 @@ export const createCodexSessionParser = (captureDetail = false) => {
     }
     const projectPath = session.cwd;
     const observations: SkillObservation[] = [];
+    let rejected = 0;
     if (pendingCatalogue) {
-      observations.push(
-        ...codexSkillCatalogueObservations(pendingCatalogue.entries, {
-          observedAt: pendingCatalogue.at.toISOString(),
-          projectPath,
-          sessionId,
-        }),
-      );
+      const exposed = codexSkillCatalogueObservations(pendingCatalogue.entries, {
+        observedAt: pendingCatalogue.at.toISOString(),
+        projectPath,
+        sessionId,
+      });
+      observations.push(...exposed.observations);
+      rejected += exposed.rejected;
     }
     for (const signal of pendingExecSignals) {
-      observations.push(
-        ...codexSkillExecObservations(signal.entries, signal.callId, {
-          observedAt: signal.at.toISOString(),
-          projectPath,
-          sessionId,
-        }),
-      );
+      const inferred = codexSkillExecObservations(signal.entries, signal.callId, {
+        observedAt: signal.at.toISOString(),
+        projectPath,
+        sessionId,
+      });
+      observations.push(...inferred.observations);
+      rejected += inferred.rejected;
     }
     session.skillObservations = observations.slice(0, MAX_SKILL_OBSERVATIONS_PER_SESSION);
+    session.skillObservationRejects = rejected;
   };
 
   const finalize = (): void => {

@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { SkillObservation } from '@ai-usage/report-core/skill-observation';
 import { Effect } from 'effect';
-import { querySkillObservations, type UsageStoreError } from './reader';
+import { querySkillObservations, queryUsageStoreGeneration, type UsageStoreError } from './reader';
 import { importSkillObservations, retainSkillObservations } from './writer';
 
 const temporaryRoots: string[] = [];
@@ -83,7 +83,11 @@ describe('skill observation store', () => {
     expect(declared.observations).toHaveLength(1);
     expect(inferred.observations).toHaveLength(1);
     expect(exposed.observations).toHaveLength(1);
-    expect(all.observations.every(({ observation: value }) => value.tier !== undefined)).toBe(true);
+    expect(all.observations.map(({ observation: value }) => value.tier).sort()).toEqual([
+      'declared',
+      'exposed',
+      'inferred',
+    ]);
   });
 
   test('re-importing an unchanged observation does not multiply the count', async () => {
@@ -131,7 +135,7 @@ describe('skill observation store', () => {
     expect(result).toEqual({ inserted: 1, rejected: 2, unchanged: 0 });
   });
 
-  test('never persists an arguments column, only argument presence', async () => {
+  test('the table holds exactly the expected columns, so no argument column can be added', async () => {
     const dbPath = await createStore('skill-no-args');
     await Effect.runPromise(
       importSkillObservations({ dbPath, machineId: MACHINE, observations: [observation({ argsPresent: true })] }),
@@ -141,9 +145,54 @@ describe('skill observation store', () => {
     const columns = store.query('PRAGMA table_info(skill_observations)').all() as { name: string }[];
     store.close(true);
 
-    expect(columns.map(({ name }) => name)).toContain('args_present');
+    // Asserted as an exact set rather than an absence check: `args_text` or
+    // `input_args` would slip past a test that only proves one name is missing.
+    // Widening this list is a deliberate act, and adding a column that holds
+    // argument prose would violate ADR 0022.
+    expect(columns.map(({ name }) => name).sort()).toEqual([
+      'args_present',
+      'first_observed_at',
+      'harness_key',
+      'id',
+      'last_observed_at',
+      'machine_id',
+      'observation_key',
+      'observed_at',
+      'project_path',
+      'resolved_path',
+      'session_id',
+      'skill_name',
+      'success',
+      'tier',
+    ]);
     expect(columns.some(({ name }) => ARGUMENT_COLUMN_PATTERN.test(name))).toBe(false);
-    expect(columns.some(({ name }) => name === 'input' || name === 'prompt')).toBe(false);
+  });
+
+  test('an unchanged re-import does not advance the store generation', async () => {
+    const dbPath = await createStore('skill-generation');
+    await Effect.runPromise(importSkillObservations({ dbPath, machineId: MACHINE, observations: [observation()] }));
+
+    const generationAfterInsert = await Effect.runPromise(queryUsageStoreGeneration({ dbPath }));
+    const repeat = await Effect.runPromise(
+      importSkillObservations({ dbPath, machineId: MACHINE, observations: [observation()] }),
+    );
+    const generationAfterRepeat = await Effect.runPromise(queryUsageStoreGeneration({ dbPath }));
+
+    // The collectors re-import the same observations on every sweep. Bumping the
+    // generation for an unchanged repeat would invalidate the served report once
+    // per collection cycle for no reason.
+    expect(repeat).toEqual({ inserted: 0, rejected: 0, unchanged: 1 });
+    expect(generationAfterRepeat).toBe(generationAfterInsert);
+
+    const added = await Effect.runPromise(
+      importSkillObservations({
+        dbPath,
+        machineId: MACHINE,
+        observations: [observation({ observationKey: 'toolu_02' })],
+      }),
+    );
+    expect(added.inserted).toBe(1);
+    expect(await Effect.runPromise(queryUsageStoreGeneration({ dbPath }))).toBeGreaterThan(generationAfterRepeat);
   });
 
   test('rejects a read budget outside its bounds', async () => {

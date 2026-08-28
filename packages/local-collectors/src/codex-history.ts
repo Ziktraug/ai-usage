@@ -194,6 +194,7 @@ const cloneCodexSession = (session: CodexSession): CodexSession => ({
   end: session.end ? new Date(session.end) : null,
   models: [...session.models],
   skillObservations: session.skillObservations.map((observation) => ({ ...observation })),
+  skillObservationRejects: session.skillObservationRejects,
   phases: session.phases.map((phase) => ({
     ...phase,
     end: new Date(phase.end),
@@ -297,6 +298,7 @@ const reviveCachedSession = (json: string): CodexSession | null => {
     // a cache entry whose observations no longer parse is a cache miss, not a
     // session that silently lost its observations.
     const skillObservations = reviveSkillObservationsResult(value.skillObservations);
+    const skillObservationRejects = parseNonNegativeSafeInteger(value.skillObservationRejects);
     let vcs: SessionVcsContext | undefined;
     try {
       vcs = value.vcs === undefined ? undefined : parseSessionVcsContext(value.vcs);
@@ -319,7 +321,8 @@ const reviveCachedSession = (json: string): CodexSession | null => {
       models === null ||
       models.length !== rawModels?.length ||
       phases === null ||
-      !skillObservations.valid
+      !skillObservations.valid ||
+      !skillObservationRejects.ok
     ) {
       return null;
     }
@@ -355,6 +358,7 @@ const reviveCachedSession = (json: string): CodexSession | null => {
       rejectedMetricRecords: rejectedMetricRecords.value,
       hasTokenUsage: value.hasTokenUsage,
       skillObservations: skillObservations.observations,
+      skillObservationRejects: skillObservationRejects.value,
       ...(vcs ? { vcs } : {}),
     };
   } catch {
@@ -604,6 +608,8 @@ export interface CodexUsageSessionsResult {
    */
   observations: SkillObservation[];
   rejectedMetricRecords: number;
+  /** Skill candidates that failed validation; reported on their own channel. */
+  rejectedObservations: number;
   sessions: CodexCollectedSession[];
 }
 
@@ -689,7 +695,9 @@ export const readCodexUsageSessionsResult: Effect.Effect<
     // observations are deduplicated on the identity the store keys on.
     const observations: SkillObservation[] = [];
     const seenObservations = new Set<string>();
+    let rejectedObservations = 0;
     for (const session of sessions) {
+      rejectedObservations += session.skillObservationRejects;
       for (const observation of session.skillObservations) {
         const identity = skillObservationIdentity(observation);
         if (seenObservations.has(identity)) {
@@ -700,7 +708,7 @@ export const readCodexUsageSessionsResult: Effect.Effect<
       }
     }
 
-    return { observations, rejectedMetricRecords, sessions: usageSessions };
+    return { observations, rejectedMetricRecords, rejectedObservations, sessions: usageSessions };
   }),
   (result) => ({
     observations: result.observations.length,

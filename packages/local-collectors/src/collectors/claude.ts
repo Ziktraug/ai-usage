@@ -12,7 +12,11 @@ import { Effect } from 'effect';
 import { type CollectedSession, sessionToUsageRow } from '../collected-session';
 import { collectorCachePath, reviveCollectorRowsResult, reviveSkillObservationsResult } from '../collector-cache';
 import { COLLECTOR_CACHE_MAX_BYTES, SMALL_HISTORY_JSON_MAX_BYTES } from '../history-budgets';
-import { metricValidationWarning, parseNonNegativeSafeInteger } from '../metric-validation';
+import {
+  metricValidationWarning,
+  parseNonNegativeSafeInteger,
+  skillObservationValidationWarning,
+} from '../metric-validation';
 import { withPerfSpan } from '../perf';
 import { readPrivateJson, writePrivateJson } from '../private-storage';
 import type { CollectorRow } from '../rtk-enrichment';
@@ -33,6 +37,8 @@ interface ClaudeCache {
   fingerprintKey: string | null;
   observations: SkillObservation[];
   rejectedMetricRecords: number;
+  /** Cached so a warm re-scan reports the same partial-data state as a cold one. */
+  rejectedObservations: number;
   rows: CollectorRow[];
   version: number;
 }
@@ -51,6 +57,7 @@ const readClaudeCache = (storage: LocalHistoryStorage): ClaudeCache | null => {
       fingerprintKey: null,
       observations: [],
       rejectedMetricRecords: 0,
+      rejectedObservations: 0,
       rows: [],
       version: CLAUDE_CACHE_VERSION,
     };
@@ -62,6 +69,7 @@ const readClaudeCache = (storage: LocalHistoryStorage): ClaudeCache | null => {
       fingerprintKey?: unknown;
       observations?: unknown;
       rejectedMetricRecords?: unknown;
+      rejectedObservations?: unknown;
       rows?: unknown;
       version?: number;
     };
@@ -71,13 +79,23 @@ const readClaudeCache = (storage: LocalHistoryStorage): ClaudeCache | null => {
     const revived = reviveCollectorRowsResult(parsed.rows);
     const observations = reviveSkillObservationsResult(parsed.observations);
     const rejectedMetricRecords = parseNonNegativeSafeInteger(parsed.rejectedMetricRecords);
-    if (!(rejectedMetricRecords.ok && revived.valid && revived.rejectedMetricRecords === 0 && observations.valid)) {
+    const rejectedObservations = parseNonNegativeSafeInteger(parsed.rejectedObservations);
+    if (
+      !(
+        rejectedMetricRecords.ok &&
+        rejectedObservations.ok &&
+        revived.valid &&
+        revived.rejectedMetricRecords === 0 &&
+        observations.valid
+      )
+    ) {
       return empty;
     }
     return {
       fingerprintKey: typeof parsed.fingerprintKey === 'string' ? parsed.fingerprintKey : null,
       observations: observations.observations,
       rejectedMetricRecords: rejectedMetricRecords.value,
+      rejectedObservations: rejectedObservations.value,
       rows: revived.rows,
       version: CLAUDE_CACHE_VERSION,
     };
@@ -92,12 +110,20 @@ const writeClaudeCache = (
   rows: CollectorRow[],
   rejectedMetricRecords: number,
   observations: SkillObservation[],
+  rejectedObservations: number,
 ) => {
   if (!fingerprintKey) {
     return false;
   }
   const cachePath = claudeCachePath(storage);
-  const value = { fingerprintKey, observations, rejectedMetricRecords, rows, version: CLAUDE_CACHE_VERSION };
+  const value = {
+    fingerprintKey,
+    observations,
+    rejectedMetricRecords,
+    rejectedObservations,
+    rows,
+    version: CLAUDE_CACHE_VERSION,
+  };
   if (Buffer.byteLength(JSON.stringify(value), 'utf8') > COLLECTOR_CACHE_MAX_BYTES) {
     return false;
   }
@@ -299,12 +325,13 @@ export const collectClaudeResult = Effect.gen(function* () {
   );
   if (cache?.fingerprintKey && cache.fingerprintKey === fingerprintKey) {
     const warning = metricValidationWarning('claude', cache.rejectedMetricRecords);
+    const cachedObservationWarning = skillObservationValidationWarning('claude', cache.rejectedObservations);
     return yield* withPerfSpan(
       'aiUsage.collect.claude.cache.hit',
       Effect.succeed({
         observations: cache.observations,
         rows: cache.rows,
-        warnings: warning ? [warning] : [],
+        warnings: [warning, cachedObservationWarning].filter((value) => value !== null),
       }),
       (result) => ({
         observations: result.observations.length,
@@ -329,6 +356,7 @@ export const collectClaudeResult = Effect.gen(function* () {
   const observations: SkillObservation[] = [];
   const existingSessionIds = new Set(files.map((filePath) => path.basename(filePath, '.jsonl')));
   let rejectedMetricRecords = 0;
+  let rejectedObservations = 0;
 
   yield* withPerfSpan(
     'aiUsage.collect.claude.parseFiles',
@@ -353,7 +381,9 @@ export const collectClaudeResult = Effect.gen(function* () {
         // Extracted before the usage-row parse and independently of it: a
         // transcript can record a skill invocation without producing a usage
         // row, and that invocation is still a fact about the skill.
-        observations.push(...extractClaudeSkillObservations({ records, sourceSessionId }));
+        const extraction = extractClaudeSkillObservations({ records, sourceSessionId });
+        observations.push(...extraction.observations);
+        rejectedObservations += extraction.rejected;
 
         const initialFacts = parseClaudeSessionFacts({ isAgentFile, records, repository: null, sourceSessionId });
         if (!initialFacts) {
@@ -428,11 +458,18 @@ export const collectClaudeResult = Effect.gen(function* () {
   const rows = sessions.map(sessionToUsageRow);
   yield* withPerfSpan(
     'aiUsage.collect.claude.cache.write',
-    Effect.sync(() => writeClaudeCache(storage, fingerprintKey, rows, rejectedMetricRecords, observations)),
+    Effect.sync(() =>
+      writeClaudeCache(storage, fingerprintKey, rows, rejectedMetricRecords, observations, rejectedObservations),
+    ),
     (wrote) => ({ wrote }),
   );
   const warning = metricValidationWarning('claude', rejectedMetricRecords);
-  return { observations, rows, warnings: warning ? [warning] : [] };
+  const observationWarning = skillObservationValidationWarning('claude', rejectedObservations);
+  return {
+    observations,
+    rows,
+    warnings: [warning, observationWarning].filter((value) => value !== null),
+  };
 });
 
 export const collectClaude = collectClaudeResult.pipe(Effect.map((result) => result.rows));

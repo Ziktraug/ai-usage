@@ -10,7 +10,11 @@ import {
   type HarnessMetadata,
   harnessKeys,
 } from '@ai-usage/report-core/harness-metadata';
-import type { SkillObservation } from '@ai-usage/report-core/skill-observation';
+import {
+  type SkillObservability,
+  type SkillObservation,
+  skillObservabilityFor,
+} from '@ai-usage/report-core/skill-observation';
 import type { Row } from '@ai-usage/report-core/types';
 import { Effect } from 'effect';
 import { withPerfSpan } from '../perf';
@@ -47,11 +51,13 @@ export interface HarnessCollectionResult {
   harness: HarnessKey;
   label: string;
   /**
-   * Skill observations this harness could report. An empty list from a harness
-   * with a collector means "none observed"; a harness with no collector — Cursor
-   * — is absent from observation reporting entirely and must never be rendered
-   * as a zero (ADR 0022).
+   * Whether this harness can report skill observations at all. Read this
+   * before reading `observations`: an empty list means "none observed" only
+   * when this says `observable`. For a `not-observable` harness the list is
+   * empty by construction and must never be rendered as a zero (ADR 0022).
    */
+  observability: SkillObservability;
+  /** Empty whenever `observability` is `not-observable`. */
   observations: SkillObservation[];
   rows: Row[];
   status: HarnessCollectionStatus;
@@ -61,6 +67,7 @@ export interface HarnessCollectionResult {
 export interface SelectedHarnessCollectionResult {
   durationMs: number;
   harnesses: HarnessCollectionResult[];
+  /** Flattened across observable harnesses only; see each harness's observability. */
   observations: SkillObservation[];
   rows: Row[];
   warnings: LocalHistoryWarning[];
@@ -141,10 +148,14 @@ const collectHarnessResult = (
       const outcome = yield* collectAdapter(adapter);
       const durationMs = Date.now() - startedAt;
       const harness = adapter.metadata.key;
+      // Derived from the harness, not from what was collected: a failed sweep
+      // of an observable harness is still an observable harness.
+      const observability = skillObservabilityFor(harness);
       if (outcome._tag === 'failure') {
         return {
           harness,
           label: adapter.metadata.label,
+          observability,
           observations: [],
           rows: [],
           warnings: [
@@ -160,7 +171,10 @@ const collectHarnessResult = (
       return {
         harness,
         label: adapter.metadata.label,
-        observations: outcome.observations,
+        observability,
+        // A harness that cannot observe contributes nothing even if an adapter
+        // somehow handed something back, so the two fields can never disagree.
+        observations: observability === 'observable' ? outcome.observations : [],
         rows: outcome.rows,
         warnings: outcome.warnings,
         durationMs,
@@ -168,6 +182,7 @@ const collectHarnessResult = (
       };
     }),
     (result) => ({
+      observability: result.observability,
       observations: result.observations.length,
       rows: result.rows.length,
       status: result.status,

@@ -18,6 +18,7 @@ import {
 } from '@ai-usage/local-machine/local-history';
 import { ensureMachineConfig, readMergedAiUsageConfigFrom } from '@ai-usage/local-machine/machine-config';
 import { firstExisting, resolvePathCandidates } from '@ai-usage/local-machine/platform-paths';
+import type { SkillObservation } from '@ai-usage/report-core/skill-observation';
 import type { UsageMachine } from '@ai-usage/report-core/snapshot';
 import type {
   CollectionSourceId,
@@ -33,6 +34,7 @@ import {
 import {
   importLocalRows,
   importNormalizedDatasetItems,
+  importSkillObservations,
   queryEnrichableUsageRows,
   queryUsageStoreGeneration,
   type RtkSavingsContribution,
@@ -221,7 +223,14 @@ const cursorOptions = (
 const collectHarness = (
   adapter: HarnessAdapter,
 ): Effect.Effect<
-  { rows: CollectorRow[]; warnings: readonly SanitizableSourceWarning[] },
+  {
+    // Optional, and deliberately so: a harness that cannot observe skills
+    // (Cursor) omits this rather than reporting an empty list, which would be
+    // indistinguishable from having observed nothing (ADR 0022).
+    observations?: readonly SkillObservation[];
+    rows: CollectorRow[];
+    warnings: readonly SanitizableSourceWarning[];
+  },
   unknown,
   LocalHistoryStorageService
 > => {
@@ -276,9 +285,22 @@ const createSessionSource = (input: {
         machine: input.machine,
         rows,
       }).pipe(Effect.mapError((cause) => sourceFailure(input.id, cause)));
+      // Skill observations are an auxiliary fact family with their own table,
+      // written on the same engine-owned pass as the rows they were parsed
+      // beside. The engine is the only writer (ADR 0009), so this is the one
+      // place they can reach the store.
+      const observations = collection.observations ?? [];
+      const importedObservations =
+        observations.length > 0
+          ? yield* importSkillObservations({
+              dbPath: input.dbPath,
+              machineId: input.machine.id,
+              observations,
+            }).pipe(Effect.mapError((cause) => sourceFailure(input.id, cause)))
+          : { inserted: 0, rejected: 0, unchanged: 0 };
       const warnings = sanitizeSourceWarnings(input.label, [...collection.warnings, ...retentionWarnings]);
       return {
-        changed: imported.inserted > 0 || imported.updated > 0,
+        changed: imported.inserted > 0 || imported.updated > 0 || importedObservations.inserted > 0,
         inputCount: collection.rows.length,
         outputCount: rows.length,
         servedProjectionChanged: imported.fleetChanged,

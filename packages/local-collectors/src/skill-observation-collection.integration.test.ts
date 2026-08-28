@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createLocalHistoryStorage, LocalHistoryStorage } from '@ai-usage/local-machine/local-history';
+import { FIXTURE_SKILL_NAMES, seedHarnessHome } from '@ai-usage/local-machine/testing/harness-home';
 import { Effect } from 'effect';
 import { collectSelectedHarnessResults } from './collectors';
 
@@ -339,6 +340,68 @@ describe('skill observation collection', () => {
 
     expect(claude?.observations).toEqual([]);
     expect(result.observations.length).toBeGreaterThan(0);
+  });
+
+  test('Cursor reports as not observable rather than as a harness that observed nothing', async () => {
+    const home = await makeHome();
+    await seedClaude(home);
+    await seedOpenCode(home);
+
+    const result = await Effect.runPromise(
+      collectSelectedHarnessResults({ harness: null, includeCursor: true }).pipe(
+        Effect.provideService(LocalHistoryStorage, createLocalHistoryStorage(home)),
+      ),
+    );
+    const cursor = result.harnesses.find((harness) => harness.harness === 'cursor');
+    const codex = result.harnesses.find((harness) => harness.harness === 'codex');
+
+    // Codex has a collector and this home has no Codex history, so it genuinely
+    // observed nothing. Cursor cannot observe at all. Both carry an empty list,
+    // and the marker is the only thing that tells them apart (ADR 0022).
+    expect(cursor?.observations).toEqual([]);
+    expect(codex?.observations).toEqual([]);
+    expect(cursor?.observability).toBe('not-observable');
+    expect(codex?.observability).toBe('observable');
+    expect(cursor?.observability).not.toBe(codex?.observability);
+  });
+
+  test('the shared synthetic home yields every tier, and Cursor stays not observable', async () => {
+    const home = await makeHome();
+    await seedHarnessHome(home, { harnesses: ['claude', 'codex', 'cursor', 'opencode'], skillSignals: true });
+
+    const result = await Effect.runPromise(
+      collectSelectedHarnessResults({ harness: null, includeCursor: true }).pipe(
+        Effect.provideService(LocalHistoryStorage, createLocalHistoryStorage(home)),
+      ),
+    );
+    const observability = new Map(result.harnesses.map((harness) => [harness.harness, harness.observability]));
+    const tiers = new Map<string, Set<string>>();
+    for (const harness of result.harnesses) {
+      tiers.set(harness.harness, new Set(harness.observations.map(({ tier }) => tier)));
+    }
+    const names = (harness: string) =>
+      new Set(result.harnesses.find((entry) => entry.harness === harness)?.observations.map((o) => o.skillName) ?? []);
+
+    expect(tiers.get('claude')).toEqual(new Set(['declared']));
+    expect(tiers.get('opencode')).toEqual(new Set(['declared']));
+    expect(tiers.get('codex')).toEqual(new Set(['exposed', 'inferred']));
+    expect(names('claude')).toEqual(
+      new Set([FIXTURE_SKILL_NAMES.claudeDeclared, FIXTURE_SKILL_NAMES.claudeUnresolved]),
+    );
+    expect(names('opencode')).toEqual(new Set([FIXTURE_SKILL_NAMES.openCodeDeclared]));
+    expect(names('codex')).toEqual(new Set([FIXTURE_SKILL_NAMES.codexExposed, FIXTURE_SKILL_NAMES.codexUnread]));
+
+    expect(observability.get('cursor')).toBe('not-observable');
+    expect(result.harnesses.find((harness) => harness.harness === 'cursor')?.observations).toEqual([]);
+
+    // The bundled Claude skill and the unread Codex skill are the two states the
+    // surface exists to show: invoked-but-unmanaged, and offered-but-unused.
+    const claude = result.harnesses.find((harness) => harness.harness === 'claude')?.observations ?? [];
+    expect(claude.find(({ skillName }) => skillName === FIXTURE_SKILL_NAMES.claudeUnresolved)?.resolvedPath).toBeNull();
+    const codex = result.harnesses.find((harness) => harness.harness === 'codex')?.observations ?? [];
+    expect(codex.filter(({ skillName }) => skillName === FIXTURE_SKILL_NAMES.codexUnread).map((o) => o.tier)).toEqual([
+      'exposed',
+    ]);
   });
 
   test('a second collection pass reuses the cache and re-parses nothing', async () => {
