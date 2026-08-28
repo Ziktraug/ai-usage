@@ -9,10 +9,17 @@ import { Effect } from 'effect';
 import {
   queryLatestProviderQuotaObservations,
   queryProviderQuotaObservations,
+  querySkillObservations,
   queryUsageLocalMachine,
   USAGE_STORE_SCHEMA_VERSION,
 } from './reader';
-import { importLocalRows, importProviderQuotaBatch, initializeUsageStore, updateUsageMachineLabel } from './writer';
+import {
+  importLocalRows,
+  importProviderQuotaBatch,
+  importSkillObservations,
+  initializeUsageStore,
+  updateUsageMachineLabel,
+} from './writer';
 
 const temporaryRoots: string[] = [];
 
@@ -272,5 +279,63 @@ describe('usage-store forward migration', () => {
     expect(latest.observations.map(({ firstObservedAt }) => firstObservedAt)).toEqual(['2026-07-15T01:00:00.000Z']);
     expect(streamCount.count).toBe(1);
     expect(headCount.count).toBe(1);
+  });
+
+  test('adds the skill observation family to a populated store already on the current version', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'usage-store-skill-observation-migration-'));
+    temporaryRoots.push(root);
+    const dbPath = path.join(root, 'usage-store.sqlite');
+    await Effect.runPromise(initializeUsageStore({ dbPath }));
+
+    // A store written before this family existed carries the current
+    // user_version, so absence of the table is the only available signal.
+    const beforeMigration = new Database(dbPath, { create: false, readwrite: true });
+    beforeMigration.exec('DROP TABLE skill_observations;');
+    const droppedVersion = beforeMigration.query('PRAGMA user_version').get() as { user_version: number };
+    beforeMigration.close(true);
+    expect(droppedVersion.user_version).toBe(USAGE_STORE_SCHEMA_VERSION);
+
+    expect(await Effect.runPromise(initializeUsageStore({ dbPath }))).toBe(USAGE_STORE_SCHEMA_VERSION);
+    expect(await Effect.runPromise(initializeUsageStore({ dbPath }))).toBe(USAGE_STORE_SCHEMA_VERSION);
+
+    await Effect.runPromise(
+      importSkillObservations({
+        dbPath,
+        machineId: 'machine-a',
+        observations: [
+          {
+            argsPresent: null,
+            harnessKey: 'opencode',
+            observationKey: 'call_abc',
+            observedAt: '2026-08-01T09:00:00.000Z',
+            projectPath: null,
+            resolvedPath: null,
+            sessionId: 'session-1',
+            skillName: 'write-a-skill',
+            success: true,
+            tier: 'declared',
+          },
+        ],
+      }),
+    );
+
+    const migrated = new Database(dbPath, { create: false, readonly: true });
+    const indexes = migrated
+      .query("SELECT name FROM sqlite_schema WHERE type = 'index' AND tbl_name = 'skill_observations' ORDER BY name")
+      .all() as { name: string }[];
+    const rowCount = migrated.query('SELECT COUNT(*) AS count FROM skill_observations').get() as { count: number };
+    migrated.close(true);
+
+    expect(rowCount.count).toBe(1);
+    expect(indexes.map(({ name }) => name)).toEqual([
+      'idx_skill_observations_identity',
+      'idx_skill_observations_machine',
+      'idx_skill_observations_range',
+      'idx_skill_observations_skill',
+    ]);
+
+    const read = await Effect.runPromise(querySkillObservations({ dbPath }));
+    expect(read.skipped).toBe(0);
+    expect(read.observations.map(({ observation }) => observation.skillName)).toEqual(['write-a-skill']);
   });
 });

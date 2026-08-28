@@ -28,6 +28,7 @@ import type { ProviderQuotaObservation } from '@ai-usage/report-core/provider-qu
 import { IMPORT_EXISTING_ROW_LOOKUP_BATCH_SIZE } from '@ai-usage/report-core/report-budgets';
 import type { SerializedRow } from '@ai-usage/report-core/report-data';
 import type { SessionDetailSourceAuthority } from '@ai-usage/report-core/session-detail';
+import type { SkillObservation, SkillObservationTier } from '@ai-usage/report-core/skill-observation';
 import type { UsageMachine } from '@ai-usage/report-core/snapshot';
 import type { CollectedUsageRow, UsageRowWithOptionalSource } from '@ai-usage/report-core/types';
 import { Effect } from 'effect';
@@ -48,6 +49,7 @@ import {
   ServedRevisionSchemaValidationError,
   servedReportSchemaSql,
 } from './served-revision';
+import { createSkillObservationStore } from './skill-observation-store';
 
 export type StoredUsageRowStatus = 'active' | 'superseded' | 'deleted';
 export type StoredSourceAuthority = 'local-observed' | 'portable-opaque';
@@ -352,6 +354,63 @@ export type QueryLatestLocalProviderQuotaObservationsInput = Omit<
   QueryLatestProviderQuotaObservationsInput,
   'machineId'
 >;
+
+export interface ImportSkillObservationsInput {
+  dbPath: string;
+  importedAt?: Date;
+  /** The machine that observed these; the observations themselves are machine-agnostic. */
+  machineId: string;
+  observations: readonly unknown[];
+}
+
+export interface SkillObservationImportResult {
+  inserted: number;
+  /** Observations that failed validation. Counted, so a broken collector is visible. */
+  rejected: number;
+  unchanged: number;
+}
+
+export interface QuerySkillObservationsInput {
+  dbPath: string;
+  from?: string;
+  harnessKey?: string;
+  machineId?: string;
+  maximumObservations?: number;
+  skillName?: string;
+  /**
+   * Filters to one observation tier. Omitting it returns every tier, each row
+   * still carrying its own — a caller must never add them together (ADR 0022).
+   */
+  tier?: SkillObservationTier;
+  to?: string;
+  trace?: (query: ServedRevisionQueryTrace) => void;
+}
+
+export interface StoredSkillObservation {
+  firstObservedAt: string;
+  id: number;
+  lastObservedAt: string;
+  machineId: string;
+  observation: SkillObservation;
+}
+
+export interface QuerySkillObservationsResult {
+  observations: StoredSkillObservation[];
+  /** Persisted rows that no longer pass validation. Never silently omitted. */
+  skipped: number;
+  truncated: boolean;
+}
+
+export interface RetainSkillObservationsInput {
+  dbPath: string;
+  now?: number;
+  /** Observations older than this window are deleted whole; defaults to 400 days. */
+  retentionMs?: number;
+}
+
+export interface RetainSkillObservationsResult {
+  deleted: number;
+}
 
 export interface ServedReportRevisionManifest {
   readonly captureFingerprint: string;
@@ -1047,6 +1106,11 @@ const migrate = (db: SqliteDatabase): boolean => {
     db.query("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'provider_quota_latest_heads'").get() ===
       null;
   schemaChanged ||= quotaReadProjectionMissing;
+  // A store written before the skill-observation family existed carries the
+  // current user_version, so absence of the table is the only signal that this
+  // migration has work to do.
+  schemaChanged ||=
+    db.query("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'skill_observations'").get() === null;
   db.exec('BEGIN IMMEDIATE');
   try {
     db.exec(`
@@ -1259,6 +1323,48 @@ const migrate = (db: SqliteDatabase): boolean => {
       -- provider_quota_source_events delete would scan that table per observation.
       CREATE INDEX IF NOT EXISTS idx_provider_quota_source_events_observation
         ON provider_quota_source_events(observation_id);
+
+    -- Skill observations (ADR 0022). An auxiliary fact family with its own
+    -- table and its own read path, deliberately NOT a widening of usage_rows:
+    -- a session produces many observations.
+    --
+    -- The column vocabulary is open on purpose. harness_key and skill_name
+    -- carry no CHECK constraint, and resolved_path and success are nullable,
+    -- because this store re-validates persisted rows on read: a narrower schema
+    -- added later would retroactively invalidate history already on disk.
+    -- Narrow at the presentation edge instead. tier is the single exception -
+    -- it is a closed three-value domain that the whole feature is built on, so
+    -- a row outside it is corruption, not data.
+    --
+    -- There is no arguments column, and there must never be one. Skill
+    -- arguments are user prose; only their presence is recorded.
+    CREATE TABLE IF NOT EXISTS skill_observations (
+      id INTEGER PRIMARY KEY,
+      harness_key TEXT NOT NULL,
+      skill_name TEXT NOT NULL,
+      tier TEXT NOT NULL CHECK (tier IN ('declared', 'inferred', 'exposed')),
+      machine_id TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      observation_key TEXT NOT NULL,
+      observed_at TEXT NOT NULL,
+      project_path TEXT,
+      resolved_path TEXT,
+      args_present INTEGER CHECK (args_present IN (0, 1)),
+      success INTEGER CHECK (success IN (0, 1)),
+      first_observed_at TEXT NOT NULL,
+      last_observed_at TEXT NOT NULL
+    );
+
+    -- Re-importing an unchanged transcript must not multiply the counts, so the
+    -- harness's own call identity is the natural key.
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_skill_observations_identity
+      ON skill_observations(machine_id, harness_key, session_id, tier, observation_key);
+    CREATE INDEX IF NOT EXISTS idx_skill_observations_skill
+      ON skill_observations(skill_name, harness_key, tier, observed_at DESC, id DESC);
+    CREATE INDEX IF NOT EXISTS idx_skill_observations_range
+      ON skill_observations(observed_at, id);
+    CREATE INDEX IF NOT EXISTS idx_skill_observations_machine
+      ON skill_observations(machine_id, observed_at, id);
     `);
     db.exec(servedReportSchemaSql);
     if (!hasExactUsageLocalMachineSchema(db)) {
@@ -3311,6 +3417,15 @@ export const {
   withUsageStoreReader,
   withUsageStoreWriter,
 });
+
+export const { importSkillObservations, querySkillObservations, retainSkillObservations } = createSkillObservationStore(
+  {
+    usageStoreError,
+    usageStoreReadError,
+    withUsageStoreReader,
+    withUsageStoreWriter,
+  },
+);
 
 export const exportLocalMergeBundle = (
   input: ExportLocalMergeBundleInput,
