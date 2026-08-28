@@ -430,14 +430,33 @@ interface ParsedFlag {
  *   quoted dash-words and all three are data operands that this behaviour reads
  *   correctly; refusing quoted dash-words would break real reads to defend
  *   against a construction with zero measured incidence.
- * - **Conditional execution is not modelled**, so `false && cat …/SKILL.md`
- *   counts although the read never happens. Telling the difference means
- *   interpreting shell execution, and simply dropping post-`&&`/`||` segments
- *   would discard the common, genuine `cd repo && cat …/SKILL.md` form.
+ * - **Compound shell constructs are not interpreted.** This matcher reads the
+ *   grammar of a command line; it does not execute one, and it does not
+ *   reimplement the tools a command names. So text that *looks* like a read,
+ *   inside a construct that would not perform one, can still be counted:
  *
- * Both err toward a rare false observation on synthetic input. That is the
- * honest reason this tier is labelled `inferred`, kept separate from
+ *   - a conditional chain that never runs (`false && cat …/SKILL.md`);
+ *   - a heredoc body, whose lines are re-scanned as commands
+ *     (`cat <<'EOF' … EOF`);
+ *   - a function body that is defined and never invoked (`f() { cat X }`);
+ *   - a flag *value* that the real tool would reject, since values are not
+ *     domain-validated (`head --lines=bogus …/SKILL.md` counts, though `head`
+ *     would error out first).
+ *
+ *   Each would require either interpreting shell execution or re-implementing
+ *   the tool's own argument validation. Every one of these constructs has zero
+ *   incidence in the measured corpus, and the cheap approximations that would
+ *   exclude them — dropping post-`&&`/`||` segments, refusing anything after a
+ *   `<<` — would discard common genuine reads such as
+ *   `cd repo && cat …/SKILL.md`.
+ *
+ * Both limits err toward a rare false observation on synthetic input. That is
+ * the honest reason this tier is labelled `inferred`, kept separate from
  * `declared`, and never summed with it.
+ *
+ * Related stated property: the structural key scan is depth-agnostic within a
+ * call's window. It finds a structural `cmd` at any nesting level inside the
+ * argument, rather than only at the top level of the argument object.
  *
  * **An unmodeled flag returns `null`, and the caller abandons the segment.**
  * Arity cannot be guessed from the token, and guessing either way is reachable
@@ -883,7 +902,13 @@ const readStringLiteral = (blob: string, open: number): StringLiteral | null => 
   let value = '';
   for (let index = open + 1; index < blob.length; index += 1) {
     const character = blob[index];
-    if (character === '\\' && quote !== "'") {
+    // JavaScript, not shell: `\'` is a valid escape inside a single-quoted JS
+    // string. Applying the shell rule here — where a backslash is literal
+    // inside `'…'` — closed the literal early at an escaped apostrophe, spilled
+    // the rest of the prose outside the string, and let the structural scan
+    // lift a key out of it. `shellItems` keeps the shell rule, because it reads
+    // shell text.
+    if (character === '\\') {
       const escaped = blob[index + 1] ?? '';
       value += JSON_ESCAPES.get(escaped) ?? escaped;
       index += 1;

@@ -824,6 +824,17 @@ describe('extractCodexSkillExecObservation', () => {
     expect(extractCodexSkillExecObservation(snippet, 'call_prose_key', codexContext).observations).toEqual([]);
   });
 
+  test('does not lift a cmd key out of prose containing an escaped apostrophe', () => {
+    const decoy = `${SKILL_FIXTURE_HOME}/.agents/skills/decoy/SKILL.md`;
+    const snippet = `tools.exec_command({justification:'don\\'t run cmd:"cat ${decoy}"',cmd:"echo hi"})`;
+
+    // The snippet is JavaScript, where `\\'` is a valid escape. Reading it with
+    // the shell rule closed the literal early and spilled the prose outside the
+    // string, where the structural scan found a key in it.
+    expect(decodeCodexCommands(snippet)).toEqual([{ kind: 'shell', source: 'echo hi' }]);
+    expect(extractCodexSkillExecObservation(snippet, 'call_escaped_quote', codexContext).observations).toEqual([]);
+  });
+
   test('does not re-tokenize an argv array back into shell syntax', () => {
     const decoy = `${SKILL_FIXTURE_HOME}/.agents/skills/decoy/SKILL.md`;
     const blob = JSON.stringify({ command: ['printf', 'x;cat ', decoy] });

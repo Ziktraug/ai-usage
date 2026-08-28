@@ -118,15 +118,25 @@ new columns on `usage_rows`.
   - a *quoted* dash-word is read as an operand rather than a flag, so
     `rg "--" …/SKILL.md f` can over-count. The corpus holds exactly three quoted
     dash-words, all genuine data operands that this behaviour handles correctly;
-  - conditional execution is not modelled, so `false && cat …/SKILL.md` counts
-    although it never runs. Distinguishing would mean interpreting shell
-    execution, and discarding post-`&&` segments would lose the common, real
-    `cd repo && cat …/SKILL.md` read.
+  - **compound shell constructs are not interpreted.** The matcher reads the
+    grammar of a command line; it neither executes one nor reimplements the
+    tools a command names. Text that looks like a read, inside a construct that
+    would not perform one, is therefore still counted — a conditional chain that
+    never runs (`false && cat X`), a heredoc body re-scanned as commands
+    (`cat <<'EOF' … EOF`), a function body defined but never invoked
+    (`f() { cat X }`), or a flag value the real tool would reject, since values
+    are not domain-validated (`head --lines=bogus X`).
 
-  Both admit a rare false observation on synthetic input. They are the reason
-  the tier is named `inferred` rather than treated as fact: it is reported
-  separately, labelled, and never summed with `declared`. A tier whose errors
-  are disclosed is usable; one presented as certain would not be.
+  Both admit a rare false observation on synthetic input, and every construct
+  named above has zero incidence in the measured corpus. Closing them would mean
+  interpreting shell execution or re-implementing each tool's argument
+  validation; the cheap approximations that would exclude them — dropping
+  post-`&&` segments, refusing anything after `<<` — cost common genuine reads
+  such as `cd repo && cat …/SKILL.md`.
+
+  This is the reason the tier is named `inferred` rather than treated as fact:
+  it is reported separately, labelled, and never summed with `declared`. A tier
+  whose errors are disclosed is usable; one presented as certain would not be.
 - Every bound in this family reports itself. A read budget or per-session
   ceiling is detected one past the bound, never at it, because a list that stops
   exactly at the limit is indistinguishable from a complete one; the resulting
