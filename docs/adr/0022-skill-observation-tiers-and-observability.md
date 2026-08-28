@@ -91,5 +91,8 @@ requires one canonical number per concept — "invocations" is three concepts.
   whose "Measured current state" section records the per-harness sampling
 - [`CONTEXT.md`](../../CONTEXT.md) — skill observation, observation tier, skill
   resolution, observability
+- [`packages/report-core/src/skill-observation.ts`](../../packages/report-core/src/skill-observation.ts) —
+  the shared fact and its permissive parser
 - [`packages/usage-store/src/skill-observation-store.ts`](../../packages/usage-store/src/skill-observation-store.ts)
-- [`packages/local-machine/src/skill-observation.ts`](../../packages/local-machine/src/skill-observation.ts)
+- [`packages/local-machine/src/codex-skill-observation.ts`](../../packages/local-machine/src/codex-skill-observation.ts) —
+  the two Codex extractors that must never be merged
