@@ -17,7 +17,7 @@ import {
   type SessionVcsRepository,
   sessionVcsCommitUrl,
 } from '@ai-usage/report-core/session-vcs';
-import { MAX_SKILL_OBSERVATIONS_PER_SESSION, type SkillObservation } from '@ai-usage/report-core/skill-observation';
+import type { SkillObservation } from '@ai-usage/report-core/skill-observation';
 import type { UsageModelSegment } from '@ai-usage/report-core/types';
 import { UNSEGMENTED_MULTI_MODEL_LABEL } from '@ai-usage/report-core/usage-row';
 import { Effect } from 'effect';
@@ -26,6 +26,7 @@ import {
   type CodexSkillCatalogueEntry,
   codexSkillCatalogueObservations,
   codexSkillExecObservations,
+  codexSkillObservationCeiling,
   extractCodexSkillCatalogue,
   matchCodexSkillDocuments,
 } from '../codex-skill-observation';
@@ -576,6 +577,7 @@ export const createCodexSessionParser = (captureDetail = false) => {
   const pendingExecSignals: PendingCodexExecSignal[] = [];
   let pendingCatalogue: PendingCodexCatalogueSignal | null = null;
   let skillSignalIndex = 0;
+  let skillSignalsTruncated = false;
   let lines = 0;
   let parsedLines = 0;
   let skippedLines = 0;
@@ -993,10 +995,14 @@ export const createCodexSessionParser = (captureDetail = false) => {
   };
 
   const observeCodexSkillExec = (payload: Record<string, unknown>, at: Date): void => {
-    if (pendingExecSignals.length >= MAX_SKILL_OBSERVATIONS_PER_SESSION) {
+    if (typeof payload.name === 'string' && CODEX_NON_EXEC_TOOL_NAMES.has(payload.name)) {
       return;
     }
-    if (typeof payload.name === 'string' && CODEX_NON_EXEC_TOOL_NAMES.has(payload.name)) {
+    if (pendingExecSignals.length >= codexSkillObservationCeiling()) {
+      // Dropped at the bound, which is the only place the drop is visible: by
+      // materialization time the over-ceiling signals are simply gone, so the
+      // count would look complete. Flagging here is what lets the warning fire.
+      skillSignalsTruncated = true;
       return;
     }
     const entries = matchCodexSkillDocuments(codexToolCallCommandBlob(payload));
@@ -1050,9 +1056,13 @@ export const createCodexSessionParser = (captureDetail = false) => {
       observations.push(...inferred.observations);
       rejected += inferred.rejected;
     }
-    session.skillObservations = observations.slice(0, MAX_SKILL_OBSERVATIONS_PER_SESSION);
+    const ceiling = codexSkillObservationCeiling();
+    session.skillObservations = observations.slice(0, ceiling);
     session.skillObservationRejects = rejected;
-    session.skillObservationsTruncated = observations.length > MAX_SKILL_OBSERVATIONS_PER_SESSION;
+    // Two independent bounds: signals dropped as they arrived, and the
+    // projected list overrunning the ceiling. Either one makes the count a
+    // lower bound.
+    session.skillObservationsTruncated = skillSignalsTruncated || observations.length > ceiling;
   };
 
   const finalize = (): void => {

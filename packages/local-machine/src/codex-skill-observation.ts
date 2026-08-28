@@ -27,6 +27,25 @@ import {
 export const CODEX_AVAILABLE_SKILLS_HEADING = '### Available skills';
 
 /**
+ * Testing override for the per-session observation ceiling, mirroring the
+ * OpenCode read-budget seam. The production ceiling guards a corrupt session
+ * rather than ordinary volume, so exercising the bound honestly would mean
+ * building 4096 entries; lowering it keeps the test about the behaviour —
+ * detect the bound, flag it, carry the flag to the warning channel.
+ */
+let codexSkillCeilingOverride: number | null = null;
+
+export const setCodexSkillObservationCeilingForTesting = (ceiling: number | null): void => {
+  if (ceiling !== null && !(Number.isSafeInteger(ceiling) && ceiling > 0)) {
+    throw new Error('Codex skill observation ceiling override must be a positive safe integer or null');
+  }
+  codexSkillCeilingOverride = ceiling;
+};
+
+export const codexSkillObservationCeiling = (): number =>
+  codexSkillCeilingOverride ?? MAX_SKILL_OBSERVATIONS_PER_SESSION;
+
+/**
  * `- <name>: <description> (file: <path>)` — the catalogue entry format.
  * The description is skipped entirely: it is prompt prose and never persisted.
  *
@@ -90,6 +109,96 @@ const REDIRECT_OPERATOR = /^\d*>>?/;
 
 const isFlag = (token: string): boolean => token.startsWith('-') && token.length > 1;
 
+/**
+ * Flags that consume the following token as their value.
+ *
+ * Without this, the value is counted as a positional operand and every later
+ * operand shifts by one: `rg --glob "*.md" …/SKILL.md transcript.txt` put the
+ * skill path in what the matcher read as file position, turning a search over a
+ * transcript into an inferred invocation. Only the scripted verbs need this —
+ * the plain readers take no valued flags that matter here.
+ */
+const CODEX_VALUED_FLAGS: ReadonlyMap<string, ReadonlySet<string>> = new Map([
+  [
+    'rg',
+    new Set([
+      '-A',
+      '--after-context',
+      '-B',
+      '--before-context',
+      '-C',
+      '--context',
+      '-e',
+      '--regexp',
+      '-f',
+      '--file',
+      '-g',
+      '--glob',
+      '--iglob',
+      '-m',
+      '--max-count',
+      '--max-depth',
+      '-M',
+      '--max-columns',
+      '-r',
+      '--replace',
+      '-t',
+      '--type',
+      '-T',
+      '--type-not',
+    ]),
+  ],
+  [
+    'grep',
+    new Set([
+      '-A',
+      '--after-context',
+      '-B',
+      '--before-context',
+      '-C',
+      '--context',
+      '-e',
+      '--regexp',
+      '-f',
+      '--file',
+      '-m',
+      '--max-count',
+      '--include',
+      '--exclude',
+      '--exclude-dir',
+      '-d',
+      '--directories',
+      '-D',
+      '--devices',
+    ]),
+  ],
+  ['sed', new Set(['-e', '--expression', '-f', '--file', '-l', '--line-length'])],
+  ['awk', new Set(['-v', '--assign', '-f', '--file', '-F', '--field-separator'])],
+]);
+
+/**
+ * Flags that supply the pattern or script themselves. When one is present the
+ * first positional operand is already a file, so skipping it as "the pattern"
+ * would lose a real read: `grep -e needle …/SKILL.md` does read the skill.
+ */
+const CODEX_PATTERN_SUPPLYING_FLAGS: ReadonlySet<string> = new Set(['--expression', '--file', '--regexp', '-e', '-f']);
+
+/**
+ * `sed` in-place mode. The suffix is attached rather than a separate token
+ * (`-i`, `-i.bak`), and it may sit in a short-flag cluster (`-ni`). In-place
+ * mode rewrites the file and shows the model nothing, so it is a write however
+ * much it looks like the read form.
+ */
+const SED_IN_PLACE = /^(?:-[a-zA-Z]*i|--in-place)/;
+
+/** Split `--glob=*.md` into its name and whether the value came attached. */
+const flagName = (token: string): { hasAttachedValue: boolean; name: string } => {
+  const separator = token.indexOf('=');
+  return separator < 0
+    ? { hasAttachedValue: false, name: token }
+    : { hasAttachedValue: true, name: token.slice(0, separator) };
+};
+
 /** Shell words, with one level of quoting removed. */
 const SHELL_TOKEN = /'[^']*'|"[^"]*"|\S+/g;
 const WHITESPACE = /\s/;
@@ -123,7 +232,13 @@ export const codexSkillDirectory = (documentPath: string): string | null =>
 
 /**
  * Parse the catalogue block out of an instructions blob. Pure and bounded: the
- * scan stops at the next heading, and at the per-session observation ceiling.
+ * scan stops at the next heading, and one entry past the per-session ceiling.
+ *
+ * Stopping *one past* is deliberate and matches the OpenCode read budget: a
+ * scan that stopped exactly at the ceiling returns a full-looking list that no
+ * caller can distinguish from a complete one, so the bound could never be
+ * reported. The caller slices to the ceiling and treats the extra entry as the
+ * truncation signal.
  *
  * A malformed or absent block yields an empty list rather than an error — the
  * catalogue is prompt text, not a contract, and its disappearance is a coverage
@@ -141,7 +256,7 @@ export const extractCodexSkillCatalogue = (instructions: unknown): CodexSkillCat
   const seen = new Set<string>();
   const lines = instructions.slice(headingIndex + CODEX_AVAILABLE_SKILLS_HEADING.length).split('\n');
   for (const line of lines) {
-    if (entries.length >= MAX_SKILL_OBSERVATIONS_PER_SESSION) {
+    if (entries.length > codexSkillObservationCeiling()) {
       break;
     }
     if (CODEX_CATALOGUE_SECTION_BREAK.test(line)) {
@@ -239,11 +354,16 @@ const CODEX_EXEC_CALL_MARKER = 'exec_command(';
  * Every command a payload actually executes.
  *
  * A snippet may contain more than one `exec_command(...)` call, and may contain
- * the string `cmd` in places that are not one. Taking the first `cmd` in the
- * blob would therefore both miss later commands and risk attributing an
- * unrelated key to the call. Each call's argument object is scanned in its own
- * window instead — from the call marker up to the next one — so a decoded
- * command always belongs to the call it was read from.
+ * the string `cmd` in places that are not one — a local variable, a comment, a
+ * string being logged. A key therefore counts only when it sits inside the
+ * argument list of an actual call, bounded by that call's own balanced closing
+ * paren. Scanning "from this call to the next one" is not enough: with a single
+ * call, that window runs to the end of the blob and swallows everything after
+ * it.
+ *
+ * There is deliberately no whole-blob fallback once a call marker exists. A
+ * `cmd` outside every call is not a command this payload ran, and guessing
+ * otherwise is what let a decoy key be attributed to an unrelated exec.
  */
 export const decodeCodexCommands = (blob: unknown): string[] => {
   if (typeof blob !== 'string' || blob.length === 0) {
@@ -263,33 +383,67 @@ export const decodeCodexCommands = (blob: unknown): string[] => {
     }
     return [];
   }
-  // The JavaScript-snippet shape is not parseable as a whole, so each embedded
-  // object literal is decoded in place, scoped to its own call.
   const commands: string[] = [];
-  const callStarts: number[] = [];
+  let markers = 0;
   for (
     let index = blob.indexOf(CODEX_EXEC_CALL_MARKER);
     index >= 0;
     index = blob.indexOf(CODEX_EXEC_CALL_MARKER, index + 1)
   ) {
-    callStarts.push(index + CODEX_EXEC_CALL_MARKER.length);
-  }
-  for (const [position, start] of callStarts.entries()) {
-    const end = callStarts[position + 1] ?? blob.length;
+    markers += 1;
+    const start = index + CODEX_EXEC_CALL_MARKER.length;
+    const end = callArgumentEnd(blob, start);
     const command =
       jsonStringValueForKey(blob, 'cmd', start, end) ?? jsonStringValueForKey(blob, 'command', start, end);
     if (command !== null) {
       commands.push(command);
     }
   }
-  if (commands.length > 0) {
+  if (markers > 0) {
     return commands;
   }
-  // No recognizable call marker: fall back to a whole-blob scan rather than
-  // silently reporting a payload that plainly carries a command as empty.
-  const fallback =
-    jsonStringValueForKey(blob, 'cmd', 0, blob.length) ?? jsonStringValueForKey(blob, 'command', 0, blob.length);
-  return fallback === null ? [] : [fallback];
+  // No call marker at all: the payload is either an already-decoded shell
+  // command or a shape this module does not model. It is passed through as a
+  // command rather than key-scanned, so nothing can be attributed to a call
+  // that is not there — the read-verb check downstream is what rejects a
+  // non-command such as a patch body.
+  return [blob];
+};
+
+/**
+ * The index of the closing delimiter that ends the argument list opened at
+ * `open`, ignoring delimiters inside string literals. Returns the blob length
+ * for an unterminated call, which bounds the scan without inventing an end.
+ */
+const callArgumentEnd = (blob: string, open: number): number => {
+  let depth = 1;
+  let quote: string | null = null;
+  for (let index = open; index < blob.length; index += 1) {
+    const character = blob[index];
+    if (quote !== null) {
+      if (character === '\\') {
+        index += 1;
+      } else if (character === quote) {
+        quote = null;
+      }
+      continue;
+    }
+    if (character === '"' || character === "'" || character === '`') {
+      quote = character;
+      continue;
+    }
+    if (character === '(' || character === '{' || character === '[') {
+      depth += 1;
+      continue;
+    }
+    if (character === ')' || character === '}' || character === ']') {
+      depth -= 1;
+      if (depth === 0) {
+        return index;
+      }
+    }
+  }
+  return blob.length;
 };
 
 const safeJsonObject = (blob: string): Record<string, unknown> | null => {
@@ -401,12 +555,13 @@ export const matchCodexSkillDocuments = (blob: unknown): CodexSkillCatalogueEntr
   if (typeof blob !== 'string' || !blob.includes('SKILL.md')) {
     return [];
   }
-  const commands = decodeCodexCommands(blob);
   const entries: CodexSkillCatalogueEntry[] = [];
   const seen = new Set<string>();
-  for (const command of commands.length > 0 ? commands : [blob]) {
+  for (const command of decodeCodexCommands(blob)) {
     for (const segment of command.split(SHELL_SEGMENT)) {
-      if (entries.length >= MAX_SKILL_OBSERVATIONS_PER_SESSION) {
+      // One past the ceiling, so the caller can tell a bounded list from a
+      // complete one. See `extractCodexSkillCatalogue`.
+      if (entries.length > codexSkillObservationCeiling()) {
         return entries;
       }
       for (const token of segmentReadOperands(segment)) {
@@ -444,9 +599,12 @@ const segmentReadOperands = (segment: string): string[] => {
   if (!(scripted || CODEX_READ_VERBS.has(verb))) {
     return [];
   }
+  const valuedFlags = CODEX_VALUED_FLAGS.get(verb);
   const operands: string[] = [];
   let seenVerb = false;
   let redirectPending = false;
+  let flagValuePending = false;
+  let patternSupplied = false;
   let operandIndex = 0;
   for (const token of tokens) {
     if (REDIRECT_OPERATOR.test(token)) {
@@ -465,11 +623,26 @@ const segmentReadOperands = (segment: string): string[] => {
       seenVerb = true;
       continue;
     }
+    if (flagValuePending) {
+      flagValuePending = false;
+      continue;
+    }
     if (isFlag(token)) {
+      if (verb === 'sed' && SED_IN_PLACE.test(token)) {
+        // An in-place edit rewrites the document and shows the model nothing.
+        return [];
+      }
+      const { hasAttachedValue, name } = flagName(token);
+      if (CODEX_PATTERN_SUPPLYING_FLAGS.has(name)) {
+        patternSupplied = true;
+      }
+      flagValuePending = !hasAttachedValue && valuedFlags?.has(name) === true;
       continue;
     }
     operandIndex += 1;
-    if (scripted && operandIndex === 1) {
+    // The first positional operand of a scripted verb is its pattern or script,
+    // unless a flag already supplied one.
+    if (scripted && !patternSupplied && operandIndex === 1) {
       continue;
     }
     operands.push(token);

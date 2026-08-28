@@ -4,6 +4,7 @@ export {
   importNormalizedDatasetItems,
   importPeerMergeBundle,
   importProviderQuotaBatch,
+  importSkillObservations,
   initializeUsageStore,
   publishServedReportRevision,
   queryCurrentServedReportRevision,

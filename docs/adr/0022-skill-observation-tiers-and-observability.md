@@ -84,12 +84,23 @@ new columns on `usage_rows`.
   session. They are produced by two separate extractors and are never combined.
 - The `inferred` tier claims the model *read* a skill, so the Codex matcher
   counts a path only where it is plausibly a read operand. A `rm`, a patch body,
-  a redirect target (`… > …/SKILL.md`, a write), and a search pattern
-  (`rg …/SKILL.md transcript.txt`, which searches *for* the path) are each
-  evidence of something other than use; counting them would be false rather than
-  merely uncertain. The command is decoded out of its tool-call envelope first —
-  scoped to the call that executed it — and matched against whole shell tokens,
-  so a stored path is a path and never a fragment of the command that named it.
+  a redirect target (`… > …/SKILL.md`, a write), an in-place edit
+  (`sed -i … …/SKILL.md`, which rewrites and displays nothing), and a search
+  pattern (`rg …/SKILL.md transcript.txt`, which searches *for* the path) are
+  each evidence of something other than use; counting them would be false rather
+  than merely uncertain. Option-with-value forms are modelled, because a flag
+  that swallows its value shifts every later operand and lands a pattern in file
+  position. The command is decoded out of its tool-call envelope first — bounded
+  by the executed call's own balanced argument, with no whole-blob fallback — and
+  matched against whole shell tokens, so a stored path is a path and never a
+  fragment of the command that named it.
+- Every bound in this family reports itself. A read budget or per-session
+  ceiling is detected one past the bound, never at it, because a list that stops
+  exactly at the limit is indistinguishable from a complete one; the resulting
+  count is presented as a lower bound rather than a number.
+- Observations are retained on the same discipline as the provider-quota family
+  and pruned during engine startup recovery. An auxiliary fact family with no
+  retention caller grows for the life of the store.
 - **An observation's identity is stable; its content is not.** The identity names
   one real event, but this product's *reading* of that event improves as the
   collectors do, so a re-import with different content overwrites and is reported

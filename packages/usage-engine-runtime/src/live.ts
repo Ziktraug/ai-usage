@@ -45,6 +45,7 @@ import {
   quiesceUsageStoreForShutdown,
   retainProviderQuotaObservations,
   retainServedReportRevisions,
+  retainSkillObservations,
   type UpdateUsageMachineLabelInput,
   type UsageStoreGenerations,
   updateUsageMachineLabel,
@@ -1071,6 +1072,9 @@ export const createLiveUsageEngineRuntime = (options: LiveUsageEngineRuntimeOpti
           async () => {
             await Effect.runPromise(retainServedReportRevisions({ dbPath: options.dbPath, now: now().getTime() }));
             await Effect.runPromise(retainProviderQuotaObservations({ dbPath: options.dbPath, now: now().getTime() }));
+            // Skill observations share the auxiliary-fact retention discipline:
+            // without a caller here they accumulate for the life of the store.
+            await Effect.runPromise(retainSkillObservations({ dbPath: options.dbPath, now: now().getTime() }));
           },
           { phase: 'startup' },
         );

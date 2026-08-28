@@ -1,5 +1,8 @@
-import { describe, expect, test } from 'bun:test';
-import { extractClaudeSkillObservations } from '@ai-usage/local-machine/claude-session-facts';
+import { afterEach, describe, expect, test } from 'bun:test';
+import {
+  extractClaudeSkillObservations,
+  setClaudeSkillObservationCeilingForTesting,
+} from '@ai-usage/local-machine/claude-session-facts';
 import {
   codexSkillCatalogueObservations,
   decodeCodexCommand,
@@ -7,7 +10,9 @@ import {
   extractCodexSkillCatalogue,
   extractCodexSkillExecObservation,
   matchCodexSkillDocuments,
+  setCodexSkillObservationCeilingForTesting,
 } from '@ai-usage/local-machine/codex-skill-observation';
+import { createCodexSessionParser } from '@ai-usage/local-machine/internal/codex-history';
 import { decodeOpenCodeSkillPart } from '@ai-usage/local-machine/opencode-session-facts';
 import {
   CLAUDE_FIXTURE_ARGUMENT_TEXT,
@@ -30,7 +35,6 @@ import {
   SKILL_FIXTURE_HOME,
   SKILL_FIXTURE_PROJECT,
 } from '@ai-usage/local-machine/test-fixtures/skill-observation-transcripts';
-import { MAX_SKILL_OBSERVATIONS_PER_SESSION } from '@ai-usage/report-core/skill-observation';
 
 const FIXTURE_HOME_PREFIX = /^\/home\/alex\//;
 
@@ -108,34 +112,57 @@ describe('extractClaudeSkillObservations', () => {
     expect(extraction).toEqual({ observations: [], rejected: 0, truncated: false });
   });
 
-  test('flags the per-session ceiling instead of silently returning a short list', () => {
-    const skillCall = (index: number) => ({
+  describe('per-session ceiling', () => {
+    afterEach(() => {
+      setClaudeSkillObservationCeilingForTesting(null);
+    });
+
+    const skillBlock = (index: number) => ({
+      id: `toolu_${index}`,
+      input: { skill: `skill-${index}` },
+      name: 'Skill',
+      type: 'tool_use',
+    });
+    const envelope = (blocks: unknown[]) => ({
       cwd: SKILL_FIXTURE_PROJECT,
-      message: {
-        content: [{ id: `toolu_${index}`, input: { skill: `skill-${index}` }, name: 'Skill', type: 'tool_use' }],
-        role: 'assistant',
-      },
+      message: { content: blocks, role: 'assistant' },
       sessionId: CLAUDE_FIXTURE_SESSION,
       timestamp: '2026-08-01T09:00:00.000Z',
       type: 'assistant',
     });
-    const records = Array.from({ length: MAX_SKILL_OBSERVATIONS_PER_SESSION + 5 }, (_, index) => skillCall(index));
 
-    const extraction = extractClaudeSkillObservations({ records, sourceSessionId: CLAUDE_FIXTURE_SESSION });
+    test('trips on many calls inside one envelope, not just across envelopes', () => {
+      setClaudeSkillObservationCeilingForTesting(3);
+      // A per-envelope check leaves the inner block loop unbounded, so a single
+      // message can blow straight past the ceiling and report `truncated:false`.
+      const records = [envelope(Array.from({ length: 5 }, (_, index) => skillBlock(index)))];
 
-    expect(extraction.observations).toHaveLength(MAX_SKILL_OBSERVATIONS_PER_SESSION);
-    // The count is a lower bound; saying so is the difference between a bounded
-    // read and a wrong number.
-    expect(extraction.truncated).toBe(true);
-  });
+      const extraction = extractClaudeSkillObservations({ records, sourceSessionId: CLAUDE_FIXTURE_SESSION });
 
-  test('does not flag truncation for a session inside the ceiling', () => {
-    expect(
-      extractClaudeSkillObservations({
-        records: claudeResolvedSkillTranscript,
+      expect(extraction.observations).toHaveLength(3);
+      expect(extraction.truncated).toBe(true);
+    });
+
+    test('trips across envelopes as well', () => {
+      setClaudeSkillObservationCeilingForTesting(3);
+      const records = Array.from({ length: 5 }, (_, index) => envelope([skillBlock(index)]));
+
+      const extraction = extractClaudeSkillObservations({ records, sourceSessionId: CLAUDE_FIXTURE_SESSION });
+
+      expect(extraction.observations).toHaveLength(3);
+      expect(extraction.truncated).toBe(true);
+    });
+
+    test('does not flag truncation for a session inside the ceiling', () => {
+      setClaudeSkillObservationCeilingForTesting(3);
+      const extraction = extractClaudeSkillObservations({
+        records: [envelope([skillBlock(0), skillBlock(1)])],
         sourceSessionId: CLAUDE_FIXTURE_SESSION,
-      }).truncated,
-    ).toBe(false);
+      });
+
+      expect(extraction.observations).toHaveLength(2);
+      expect(extraction.truncated).toBe(false);
+    });
   });
 
   test('counts a Skill call that cannot be validated instead of dropping it silently', () => {
@@ -230,6 +257,97 @@ describe('extractCodexSkillCatalogue', () => {
   });
 });
 
+describe('Codex per-session ceiling', () => {
+  afterEach(() => {
+    setCodexSkillObservationCeilingForTesting(null);
+  });
+
+  const rollout = (events: readonly unknown[]) => {
+    const parser = createCodexSessionParser(false);
+    for (const event of events) {
+      parser.visit(JSON.stringify(event));
+    }
+    return parser.finish().session;
+  };
+
+  const sessionMeta = {
+    payload: { cwd: SKILL_FIXTURE_PROJECT, id: 'codex-ceiling', originator: 'codex_cli_rs' },
+    timestamp: '2026-08-01T09:00:00.000Z',
+    type: 'session_meta',
+  };
+
+  test('flags a catalogue that overruns the ceiling', () => {
+    setCodexSkillObservationCeilingForTesting(3);
+    const entries = Array.from(
+      { length: 6 },
+      (_, index) =>
+        `- skill-${index}: Description. (file: ${SKILL_FIXTURE_HOME}/.agents/skills/skill-${index}/SKILL.md)`,
+    );
+    const catalogue = ['### Available skills', ...entries].join('\n');
+
+    const session = rollout([
+      sessionMeta,
+      {
+        // Key order matches production: type/id/role precede the large content,
+        // which is what keeps "role":"developer" inside the 300-byte prefix the
+        // collector gates on.
+        payload: {
+          type: 'message',
+          id: 'msg_dev',
+          role: 'developer',
+          content: [{ type: 'input_text', text: catalogue }],
+        },
+        timestamp: '2026-08-01T09:00:01.000Z',
+        type: 'response_item',
+      },
+    ]);
+
+    // Stopping exactly at the ceiling returns a full-looking list that no
+    // caller can tell from a complete one.
+    expect(session.skillObservations).toHaveLength(3);
+    expect(session.skillObservationsTruncated).toBe(true);
+  });
+
+  test('flags exec signals dropped at the bound, which vanish before materialization', () => {
+    setCodexSkillObservationCeilingForTesting(2);
+    const execCall = (index: number) => ({
+      payload: {
+        call_id: `call_${index}`,
+        input: JSON.stringify({ cmd: `cat ${SKILL_FIXTURE_HOME}/.agents/skills/skill-${index}/SKILL.md` }),
+        name: 'exec',
+        type: 'custom_tool_call',
+      },
+      timestamp: '2026-08-01T09:00:02.000Z',
+      type: 'response_item',
+    });
+
+    const session = rollout([sessionMeta, ...Array.from({ length: 5 }, (_, index) => execCall(index))]);
+
+    expect(session.skillObservations).toHaveLength(2);
+    expect(session.skillObservationsTruncated).toBe(true);
+  });
+
+  test('does not flag a session inside the ceiling', () => {
+    setCodexSkillObservationCeilingForTesting(5);
+    const session = rollout([
+      sessionMeta,
+      {
+        payload: {
+          call_id: 'call_one',
+          input: JSON.stringify({ cmd: `cat ${SKILL_FIXTURE_HOME}/.agents/skills/only/SKILL.md` }),
+          name: 'exec',
+          type: 'custom_tool_call',
+        },
+        timestamp: '2026-08-01T09:00:02.000Z',
+        type: 'response_item',
+      },
+    ]);
+
+    expect(session.skillObservations).toHaveLength(1);
+    expect(session.skillObservationsTruncated).toBe(false);
+  });
+});
+
 describe('decodeCodexCommand', () => {
   test('recovers the command from the JSON arguments envelope', () => {
     expect(decodeCodexCommand(codexExecCommandPayload.arguments)).toBe(
@@ -249,9 +367,19 @@ describe('decodeCodexCommand', () => {
     );
   });
 
-  test('returns null rather than guessing when no command is present', () => {
-    expect(decodeCodexCommand('*** Begin Patch')).toBeNull();
-    expect(decodeCodexCommand(undefined)).toBeNull();
+  test('yields nothing for an exec call whose argument carries no command', () => {
+    // A call marker is present, so only its own argument may be read — and it
+    // names no command. There is deliberately no whole-blob fallback.
+    expect(decodeCodexCommands('exec_command({workdir:"/tmp"})')).toEqual([]);
+    expect(decodeCodexCommands(undefined)).toEqual([]);
+  });
+
+  test('passes a blob with no exec call through as an already-decoded command', () => {
+    // Nothing here can be attributed to a call that is not present, so the blob
+    // is treated as the command itself and rejected downstream by the verb
+    // check rather than key-scanned.
+    expect(decodeCodexCommand('*** Begin Patch')).toBe('*** Begin Patch');
+    expect(extractCodexSkillExecObservation('*** Begin Patch', 'call_patch', codexContext).observations).toEqual([]);
   });
 });
 
@@ -363,6 +491,69 @@ describe('extractCodexSkillExecObservation', () => {
     }
   });
 
+  test('does not count an in-place sed edit as a read', () => {
+    for (const cmd of [
+      `sed -i s/a/b/ ${SKILL_FIXTURE_HOME}/.agents/skills/review/SKILL.md`,
+      `sed -i.bak s/a/b/ ${SKILL_FIXTURE_HOME}/.agents/skills/review/SKILL.md`,
+      `sed -ni s/a/b/ ${SKILL_FIXTURE_HOME}/.agents/skills/review/SKILL.md`,
+      `sed --in-place s/a/b/ ${SKILL_FIXTURE_HOME}/.agents/skills/review/SKILL.md`,
+    ]) {
+      // In-place mode rewrites the document and shows the model nothing.
+      expect(
+        extractCodexSkillExecObservation(JSON.stringify({ cmd }), 'call_in_place', codexContext).observations,
+      ).toEqual([]);
+    }
+  });
+
+  test('does not let a valued flag shift the pattern operand into file position', () => {
+    for (const cmd of [
+      `rg --glob "*.md" ${SKILL_FIXTURE_HOME}/.agents/skills/review/SKILL.md transcript.txt`,
+      `rg -g "*.md" ${SKILL_FIXTURE_HOME}/.agents/skills/review/SKILL.md transcript.txt`,
+      `grep -m 1 ${SKILL_FIXTURE_HOME}/.agents/skills/review/SKILL.md transcript.txt`,
+      `grep -A 3 ${SKILL_FIXTURE_HOME}/.agents/skills/review/SKILL.md transcript.txt`,
+    ]) {
+      // The flag consumes the next token, so the skill path is still the
+      // pattern being searched for, not a file being read.
+      expect(
+        extractCodexSkillExecObservation(JSON.stringify({ cmd }), 'call_valued_flag', codexContext).observations,
+      ).toEqual([]);
+    }
+  });
+
+  test('treats an attached flag value as self-contained', () => {
+    // `--glob=*.md` consumes no following token, so the skill path is the
+    // pattern operand here too.
+    expect(
+      extractCodexSkillExecObservation(
+        JSON.stringify({ cmd: `rg --glob=*.md ${SKILL_FIXTURE_HOME}/.agents/skills/review/SKILL.md transcript.txt` }),
+        'call_attached',
+        codexContext,
+      ).observations,
+    ).toEqual([]);
+    // …and the file operand after an attached value is still a read.
+    expect(
+      extractCodexSkillExecObservation(
+        JSON.stringify({ cmd: `rg --glob=*.md needle ${SKILL_FIXTURE_HOME}/.agents/skills/review/SKILL.md` }),
+        'call_attached_read',
+        codexContext,
+      ).observations.map(({ skillName }) => skillName),
+    ).toEqual(['review']);
+  });
+
+  test('counts the first operand as a file when a flag already supplied the pattern', () => {
+    for (const cmd of [
+      `grep -e needle ${SKILL_FIXTURE_HOME}/.agents/skills/review/SKILL.md`,
+      `rg --regexp needle ${SKILL_FIXTURE_HOME}/.agents/skills/review/SKILL.md`,
+      `sed -e 1,80p ${SKILL_FIXTURE_HOME}/.agents/skills/review/SKILL.md`,
+    ]) {
+      expect(
+        extractCodexSkillExecObservation(JSON.stringify({ cmd }), 'call_pattern_flag', codexContext).observations.map(
+          ({ skillName }) => skillName,
+        ),
+      ).toEqual(['review']);
+    }
+  });
+
   test('still counts a search whose file operand is the skill document', () => {
     const extraction = extractCodexSkillExecObservation(
       JSON.stringify({ cmd: `rg needle ${SKILL_FIXTURE_HOME}/.agents/skills/review/SKILL.md` }),
@@ -384,6 +575,27 @@ describe('extractCodexSkillExecObservation', () => {
     expect(
       extractCodexSkillExecObservation(snippet, 'call_multi', codexContext).observations.map((o) => o.skillName),
     ).toEqual(['first', 'second']);
+  });
+
+  test('does not attribute a cmd key that lives after the call it follows', () => {
+    // The call's own argument names no command; the `cmd` belongs to a later
+    // variable. A window that ran to end-of-blob swallowed it.
+    const snippet = `exec_command({workdir:"/tmp"}); const note={cmd:"cat ${SKILL_FIXTURE_HOME}/.agents/skills/decoy/SKILL.md"}`;
+
+    expect(decodeCodexCommands(snippet)).toEqual([]);
+    expect(extractCodexSkillExecObservation(snippet, 'call_decoy', codexContext).observations).toEqual([]);
+  });
+
+  test('does not fall back to a whole-blob scan when a call yields no command', () => {
+    const snippet = [
+      `const a = await tools.exec_command({cmd:"cat ${SKILL_FIXTURE_HOME}/.agents/skills/real/SKILL.md"});`,
+      `exec_command({workdir:"/tmp"});`,
+      `const leftover = {cmd:"cat ${SKILL_FIXTURE_HOME}/.agents/skills/decoy/SKILL.md"};`,
+    ].join('\n');
+
+    expect(
+      extractCodexSkillExecObservation(snippet, 'call_no_fallback', codexContext).observations.map((o) => o.skillName),
+    ).toEqual(['real']);
   });
 
   test('does not attribute a cmd key that belongs to no exec call', () => {

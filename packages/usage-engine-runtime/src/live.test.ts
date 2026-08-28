@@ -32,9 +32,11 @@ import {
 import type { UsageFileMergeService } from '@ai-usage/usage-merge';
 import {
   importLocalRows,
+  importSkillObservations,
   initializeUsageStore,
   queryCurrentServedReportRevision,
   queryReportRows,
+  querySkillObservations,
   updateUsageMachineLabel,
 } from '@ai-usage/usage-store/testing';
 import { Deferred, Duration, Effect, Layer, Stream } from 'effect';
@@ -1713,6 +1715,68 @@ describe('live usage engine publication', () => {
     expect((await runtime.status()).currentPublication?.revision).toBe(
       parseUsageEnginePublicationRevision(current.revision),
     );
+    await runtime.dispose();
+  });
+
+  test('applies skill observation retention during startup recovery', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'plan099-engine-skill-retention-'));
+    roots.push(root);
+    const home = path.join(root, 'home');
+    const dbPath = path.join(root, 'state', 'usage.sqlite');
+    const inboxDirectory = path.join(root, 'state', 'inbox');
+    const temporaryRoot = path.join(root, 'legacy-temp');
+    await Promise.all([
+      mkdir(inboxDirectory, { mode: 0o700, recursive: true }),
+      mkdir(temporaryRoot, { mode: 0o700, recursive: true }),
+    ]);
+    const storage = createLocalHistoryStorage(home);
+    await Effect.runPromise(initializeUsageStore({ dbPath }));
+    await Effect.runPromise(writeMachineConfig(machine).pipe(Effect.provideService(LocalHistoryStorage, storage)));
+
+    const observation = (observationKey: string, observedAt: string) => ({
+      argsPresent: false,
+      harnessKey: 'claude',
+      observationKey,
+      observedAt,
+      projectPath: '/home/alex/Projects/report',
+      resolvedPath: '/home/alex/.claude/skills/improve',
+      sessionId: 'retention-session',
+      skillName: 'improve',
+      success: true,
+      tier: 'declared',
+    });
+    await Effect.runPromise(
+      importSkillObservations({
+        dbPath,
+        machineId: machine.id,
+        observations: [
+          // Far outside the retention window, and inside it.
+          observation('toolu_ancient', '2020-01-01T00:00:00.000Z'),
+          observation('toolu_recent', '2026-07-29T10:00:00.000Z'),
+        ],
+      }),
+    );
+
+    const runtime = createLiveUsageEngineRuntime({
+      acquireWriterLease: async () => ({ release: async () => undefined }),
+      codexLiveAvailable: () => false,
+      configCwd: root,
+      dbPath,
+      inboxDirectory,
+      instanceId: '55555555-5555-4555-8555-555555555555',
+      now: () => now,
+      operatorCwd: root,
+      storage,
+      temporaryRoot,
+      wideEventSinkLayer: makeTestWideEventSinkLayer(noopWideEventSink),
+    });
+
+    await runtime.start();
+    const stored = await Effect.runPromise(querySkillObservations({ dbPath }));
+
+    // Without a production caller the store grows without bound, which is what
+    // the auxiliary-fact retention discipline exists to prevent.
+    expect(stored.observations.map(({ observation: value }) => value.observationKey)).toEqual(['toolu_recent']);
     await runtime.dispose();
   });
 });

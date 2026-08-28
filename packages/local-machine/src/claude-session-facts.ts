@@ -661,6 +661,24 @@ const collectClaudeMetadata = (events: readonly ClaudeEvent[], input: ClaudeSess
  */
 export const CLAUDE_SKILL_LOOKAHEAD_ENVELOPES = 3;
 
+/**
+ * Testing override for the per-session observation ceiling, mirroring the
+ * OpenCode read-budget seam. The production ceiling guards a corrupt transcript
+ * rather than ordinary volume, so exercising it honestly would mean building
+ * 4096 calls; lowering it keeps the test about the behaviour.
+ */
+let claudeSkillCeilingOverride: number | null = null;
+
+export const setClaudeSkillObservationCeilingForTesting = (ceiling: number | null): void => {
+  if (ceiling !== null && !(Number.isSafeInteger(ceiling) && ceiling > 0)) {
+    throw new Error('Claude skill observation ceiling override must be a positive safe integer or null');
+  }
+  claudeSkillCeilingOverride = ceiling;
+};
+
+export const claudeSkillObservationCeiling = (): number =>
+  claudeSkillCeilingOverride ?? MAX_SKILL_OBSERVATIONS_PER_SESSION;
+
 const CLAUDE_SKILL_TOOL_NAME = 'Skill';
 const CLAUDE_SKILL_BASE_DIRECTORY = /^Base directory for this skill:[ \t]*(\S.*)$/m;
 
@@ -762,9 +780,9 @@ export const extractClaudeSkillObservations = (input: ClaudeSkillObservationInpu
   const observations: SkillObservation[] = [];
   let rejected = 0;
   let truncated = false;
+  const ceiling = claudeSkillObservationCeiling();
   for (const [index, record] of input.records.entries()) {
-    if (observations.length >= MAX_SKILL_OBSERVATIONS_PER_SESSION) {
-      truncated = true;
+    if (truncated) {
       break;
     }
     if (!isRecord(record)) {
@@ -778,6 +796,13 @@ export const extractClaudeSkillObservations = (input: ClaudeSkillObservationInpu
     for (const [blockIndex, block] of content.entries()) {
       if (!(isRecord(block) && block.type === 'tool_use' && block.name === CLAUDE_SKILL_TOOL_NAME)) {
         continue;
+      }
+      // Checked per block, not per envelope: a single assistant message can
+      // carry any number of `Skill` calls, so a per-envelope check leaves the
+      // inner loop unbounded and the ceiling never trips.
+      if (observations.length >= ceiling) {
+        truncated = true;
+        break;
       }
       const blockInput = isRecord(block.input) ? block.input : {};
       const skillName = typeof blockInput.skill === 'string' ? blockInput.skill : blockInput.name;
