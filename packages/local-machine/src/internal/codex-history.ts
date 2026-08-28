@@ -17,9 +17,18 @@ import {
   type SessionVcsRepository,
   sessionVcsCommitUrl,
 } from '@ai-usage/report-core/session-vcs';
+import { MAX_SKILL_OBSERVATIONS_PER_SESSION, type SkillObservation } from '@ai-usage/report-core/skill-observation';
 import type { UsageModelSegment } from '@ai-usage/report-core/types';
 import { UNSEGMENTED_MULTI_MODEL_LABEL } from '@ai-usage/report-core/usage-row';
 import { Effect } from 'effect';
+import {
+  CODEX_AVAILABLE_SKILLS_HEADING,
+  type CodexSkillCatalogueEntry,
+  codexSkillCatalogueObservations,
+  codexSkillExecObservations,
+  extractCodexSkillCatalogue,
+  matchCodexSkillDocuments,
+} from '../codex-skill-observation';
 import type { LocalHistoryError } from '../errors';
 import {
   historyPath,
@@ -57,6 +66,11 @@ export interface CodexSession {
   phases: CodexSessionPhase[];
   rejectedMetricRecords: number;
   reportPartial: boolean;
+  /**
+   * Codex declares no skill invocations. These are the `exposed` catalogue and
+   * the `inferred` exec reads, kept as separate tiers on one list (ADR 0022).
+   */
+  skillObservations: SkillObservation[];
   start: Date | null;
   subagentKind: CodexSubagentKind | null;
   subscription: boolean;
@@ -263,6 +277,7 @@ const emptySession = (): CodexSession => ({
   model: 'codex',
   models: [],
   phases: [],
+  skillObservations: [],
   subagentKind: null,
   threadSource: null,
   agentNickname: null,
@@ -375,6 +390,22 @@ const isCodexToolCallPrefix = (prefix: string) =>
   prefix.includes('"type":"web_search_call"') ||
   prefix.includes('"type":"tool_search_call"');
 
+/**
+ * Codex injects its skill catalogue into a developer message, which the gate
+ * above deliberately skips: those lines run to tens of kilobytes and parsing
+ * every one of them across a full history sweep is not free.
+ *
+ * So the catalogue is admitted in two stages. The cheap prefix test below runs
+ * on the first 300 bytes like every other gate; only a line that already looks
+ * like a developer message pays for a full-line substring scan, and only a line
+ * that actually contains the catalogue heading is parsed.
+ */
+const isCodexDeveloperMessagePrefix = (prefix: string) =>
+  prefix.includes('"role":"developer"') || prefix.includes('"role": "developer"');
+
+const isCodexSkillCatalogueLine = (prefix: string, line: string) =>
+  isCodexDeveloperMessagePrefix(prefix) && line.includes(CODEX_AVAILABLE_SKILLS_HEADING);
+
 const shouldParseCodexPrefix = (prefix: string) =>
   prefix.includes('token_count') ||
   prefix.includes('session_meta') ||
@@ -465,12 +496,62 @@ const codexVcsFromSessionMeta = (payload: Record<string, unknown>, at: Date): Se
   });
 };
 
+/** Concatenate a developer message's text blocks, so the catalogue can be found in them. */
+const codexDeveloperMessageText = (payload: Record<string, unknown>): string => {
+  const { content } = payload;
+  if (typeof content === 'string') {
+    return content;
+  }
+  if (!Array.isArray(content)) {
+    return '';
+  }
+  const texts: string[] = [];
+  for (const block of content) {
+    if (isRecord(block) && typeof block.text === 'string') {
+      texts.push(block.text);
+    }
+  }
+  return texts.join('\n');
+};
+
+/** The identity Codex gives a tool call, used so a re-scan re-imports idempotently. */
+const codexToolCallId = (payload: Record<string, unknown>, fallbackIndex: number): string =>
+  nonEmpty(payload.call_id) ?? nonEmpty(payload.id) ?? `record-${fallbackIndex}`;
+
+/** The shell command a Codex tool call carries, whichever record shape it uses. */
+const codexToolCallCommand = (payload: Record<string, unknown>): string | null => {
+  if (typeof payload.input === 'string') {
+    return payload.input;
+  }
+  if (typeof payload.arguments === 'string') {
+    return payload.arguments;
+  }
+  return null;
+};
+
+interface PendingCodexExecSignal {
+  at: Date;
+  callId: string;
+  entries: CodexSkillCatalogueEntry[];
+}
+
+interface PendingCodexCatalogueSignal {
+  at: Date;
+  entries: CodexSkillCatalogueEntry[];
+}
+
 export const createCodexSessionParser = (captureDetail = false) => {
   const session = emptySession();
   const completedTasks: (MutableCodexTask & { durationMs: number; end: Date })[] = [];
   const observedTaskIntervals: CodexTaskInterval[] = [];
   const openTasks = new Map<string, MutableCodexTask>();
   const prompts: SessionDetailPrompt[] = [];
+  // Buffered rather than projected inline: the session id and cwd arrive with
+  // session_meta, and only matched names and paths are retained — never the
+  // command string, which is unbounded and carries whatever the model typed.
+  const pendingExecSignals: PendingCodexExecSignal[] = [];
+  let pendingCatalogue: PendingCodexCatalogueSignal | null = null;
+  let skillSignalIndex = 0;
   let lines = 0;
   let parsedLines = 0;
   let skippedLines = 0;
@@ -719,7 +800,8 @@ export const createCodexSessionParser = (captureDetail = false) => {
     }
     lines++;
     const prefix = codexLinePrefix(line);
-    if (!(shouldParseCodexPrefix(prefix) || isCodexToolCallPrefix(prefix))) {
+    const skillCatalogueLine = isCodexSkillCatalogueLine(prefix, line);
+    if (!(shouldParseCodexPrefix(prefix) || isCodexToolCallPrefix(prefix) || skillCatalogueLine)) {
       skippedLines++;
       return;
     }
@@ -753,6 +835,10 @@ export const createCodexSessionParser = (captureDetail = false) => {
         session.tools++;
         task.tools++;
       }
+      observeCodexSkillExec(payload, date);
+    }
+    if (skillCatalogueLine) {
+      observeCodexSkillCatalogue(codexDeveloperMessageText(payload), date);
     }
     const sessionMetaId = event.type === 'session_meta' ? nonEmpty(payload.id) : null;
     if (sessionMetaId && !session.id) {
@@ -882,11 +968,69 @@ export const createCodexSessionParser = (captureDetail = false) => {
     }
   };
 
+  const observeCodexSkillExec = (payload: Record<string, unknown>, at: Date): void => {
+    if (pendingExecSignals.length >= MAX_SKILL_OBSERVATIONS_PER_SESSION) {
+      return;
+    }
+    const entries = matchCodexSkillDocuments(codexToolCallCommand(payload));
+    if (entries.length === 0) {
+      return;
+    }
+    skillSignalIndex += 1;
+    pendingExecSignals.push({ at, callId: codexToolCallId(payload, skillSignalIndex), entries });
+  };
+
+  const observeCodexSkillCatalogue = (text: string, at: Date): void => {
+    // The catalogue is re-injected on every turn. It describes one session's
+    // exposure, so the first one wins rather than accumulating duplicates.
+    if (pendingCatalogue) {
+      return;
+    }
+    const entries = extractCodexSkillCatalogue(text);
+    if (entries.length > 0) {
+      pendingCatalogue = { at, entries };
+    }
+  };
+
+  /**
+   * Project the buffered signals once the session identity is known. A session
+   * that never declared an id cannot key an observation, so its signals are
+   * dropped here — the same rule the usage-row path applies to such a session.
+   */
+  const materializeSkillObservations = (): void => {
+    const sessionId = session.id;
+    if (!sessionId) {
+      return;
+    }
+    const projectPath = session.cwd;
+    const observations: SkillObservation[] = [];
+    if (pendingCatalogue) {
+      observations.push(
+        ...codexSkillCatalogueObservations(pendingCatalogue.entries, {
+          observedAt: pendingCatalogue.at.toISOString(),
+          projectPath,
+          sessionId,
+        }),
+      );
+    }
+    for (const signal of pendingExecSignals) {
+      observations.push(
+        ...codexSkillExecObservations(signal.entries, signal.callId, {
+          observedAt: signal.at.toISOString(),
+          projectPath,
+          sessionId,
+        }),
+      );
+    }
+    session.skillObservations = observations.slice(0, MAX_SKILL_OBSERVATIONS_PER_SESSION);
+  };
+
   const finalize = (): void => {
     if (finalized) {
       return;
     }
     finalized = true;
+    materializeSkillObservations();
     if (!hasContextualTokenSnapshot && legacyMaxTokens) {
       session.tin = legacyMaxTokens.input - legacyMaxTokens.cacheRead;
       session.tcr = legacyMaxTokens.cacheRead;

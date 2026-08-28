@@ -3,16 +3,19 @@ import { readLocalGitRepository } from '@ai-usage/local-machine/local-git';
 import { LocalHistoryStorage } from '@ai-usage/local-machine/local-history';
 import {
   OPENCODE_DIRECT_USER_PART_PREDICATE,
+  OPENCODE_SKILL_PART_PREDICATE,
   OPENCODE_TOOL_PART_PREDICATE,
 } from '@ai-usage/local-machine/opencode-schema';
 import {
   buildOpenCodeProjectionSummary,
   decodeOpenCodeMessageRow,
+  decodeOpenCodeSkillPart,
   type OpenCodeMessageFact,
 } from '@ai-usage/local-machine/opencode-session-facts';
 import { resolvePathCandidates } from '@ai-usage/local-machine/platform-paths';
 import { base, safeJSON } from '@ai-usage/local-machine/text';
 import { parseSessionVcsContext, type SessionVcsContext } from '@ai-usage/report-core/session-vcs';
+import { type SkillObservation, skillObservationIdentity } from '@ai-usage/report-core/skill-observation';
 import type { TitleSource } from '@ai-usage/report-core/types';
 import { actualCost } from '@ai-usage/report-core/usage-row';
 import { Effect } from 'effect';
@@ -53,15 +56,34 @@ interface MessageRow {
   session_id: string;
   time_created?: unknown;
 }
+interface SkillPartRow {
+  data: string;
+  id: string;
+  session_id: string;
+  time_created?: unknown;
+}
+
 export interface OpenCodeCollectionResult {
+  /**
+   * A new fact drawn from the collection source this collector already reads —
+   * not a new collection source. The source vocabulary is unchanged.
+   */
+  observations: SkillObservation[];
   rows: CollectorRow[];
   warnings: LocalHistoryWarning[];
 }
 
-const OPENCODE_DB_CACHE_VERSION = 11;
+// Bumped to 12 for the skill-observation stream: an entry written by version 11
+// carries rows but no observations, and reusing it would report a machine with
+// history as a machine that has never invoked a skill.
+const OPENCODE_DB_CACHE_VERSION = 12;
 const OPENCODE_DB_CACHE_FILE = 'opencode-db-cache.json';
+// Observations are tens to hundreds; the bound guards a corrupt database, not
+// ordinary volume.
+const MAX_OPENCODE_SKILL_PARTS = 100_000;
 const SESSION_SQL = 'SELECT id, parent_id, title, directory, summary_additions, summary_deletions FROM session';
 const TOOL_COUNT_SQL = `SELECT session_id, count(*) n FROM part WHERE ${OPENCODE_TOOL_PART_PREDICATE} GROUP BY session_id`;
+const SKILL_PART_SQL = `SELECT id, session_id, time_created, data FROM part WHERE ${OPENCODE_SKILL_PART_PREDICATE} ORDER BY session_id, time_created, id LIMIT ${MAX_OPENCODE_SKILL_PARTS}`;
 const TURN_COUNT_SQL = `SELECT m.session_id, count(DISTINCT m.id) n FROM message m JOIN part p ON p.message_id = m.id WHERE json_valid(m.data) AND json_valid(p.data) AND json_extract(m.data, '$.role') = 'user' AND ${OPENCODE_DIRECT_USER_PART_PREDICATE} GROUP BY m.session_id`;
 const MESSAGE_SQL = 'SELECT session_id, data, time_created FROM message ORDER BY session_id, time_created, id';
 
@@ -71,7 +93,7 @@ const collectFromDb = (
   source: 'live' | 'stable',
   cache: DbRowCache | null,
 ): Effect.Effect<
-  { rejectedMetricRecords: number; rows: CollectorRow[] },
+  { observations: SkillObservation[]; rejectedMetricRecords: number; rows: CollectorRow[] },
   import('@ai-usage/local-machine/errors').LocalHistoryError,
   never
 > =>
@@ -84,7 +106,7 @@ const collectFromDb = (
         (value) => ({ db: source, exists: value }),
       );
       if (!exists) {
-        return { rejectedMetricRecords: 0, rows: [] };
+        return { observations: [], rejectedMetricRecords: 0, rows: [] };
       }
 
       const stat = dbStat(dbPath);
@@ -92,6 +114,7 @@ const collectFromDb = (
       if (cached) {
         return yield* withPerfSpan('aiUsage.collect.opencode.cache.hit', Effect.succeed(cached), (result) => ({
           db: source,
+          observations: result.observations.length,
           rows: result.rows.length,
         }));
       }
@@ -100,6 +123,7 @@ const collectFromDb = (
       const toolCount = new Map<string, number>();
       const turnCount = new Map<string, number>();
       const agg = new Map<string, Agg>();
+      const skillPartRows: SkillPartRow[] = [];
       let rejectedMetricRecords = 0;
 
       yield* Effect.acquireUseRelease(
@@ -154,6 +178,16 @@ const collectFromDb = (
               }
               turnCount.set(row.session_id, count.value);
             }
+
+            // A narrowing of the tool-part read above, not a second read of
+            // the same table for a different purpose.
+            skillPartRows.push(
+              ...(yield* withPerfSpan(
+                'aiUsage.collect.opencode.db.query.skillParts',
+                db.all<SkillPartRow>(SKILL_PART_SQL),
+                (rows) => ({ db: source, rows: rows.length }),
+              )),
+            );
 
             const messageRows = yield* withPerfSpan(
               'aiUsage.collect.opencode.db.query.messages',
@@ -307,13 +341,33 @@ const collectFromDb = (
         }),
         (rows) => ({ db: source, rows: rows.length, sessions: rows.length }),
       );
+      const observations = yield* withPerfSpan(
+        'aiUsage.collect.opencode.parse.skillParts',
+        Effect.sync(() => {
+          const decoded: SkillObservation[] = [];
+          for (const row of skillPartRows) {
+            const observation = decodeOpenCodeSkillPart({ ...row, projectPath: meta.get(row.session_id)?.dir ?? null });
+            if (observation) {
+              decoded.push(observation);
+            } else {
+              // The row matched the skill predicate but could not be decoded.
+              // Counted with the other rejected records so a shape change is
+              // visible rather than silently reducing the count.
+              rejectedMetricRecords++;
+            }
+          }
+          return decoded;
+        }),
+        (result) => ({ db: source, observations: result.length }),
+      );
+
       const afterStat = dbStat(dbPath);
       if (JSON.stringify(stat) === JSON.stringify(afterStat)) {
-        storeDbRows(cache, dbPath, afterStat, sessions, rejectedMetricRecords);
+        storeDbRows(cache, dbPath, afterStat, sessions, rejectedMetricRecords, observations);
       }
-      return { rejectedMetricRecords, rows: sessions };
+      return { observations, rejectedMetricRecords, rows: sessions };
     }),
-    (result) => ({ db: source, rows: result.rows.length }),
+    (result) => ({ db: source, observations: result.observations.length, rows: result.rows.length }),
   );
 
 export const classifyOpenCodeTitle = (
@@ -349,8 +403,17 @@ export const collectOpenCodeResult: Effect.Effect<
   );
   const seen = new Set<string>();
   const warnings: LocalHistoryWarning[] = [];
+  const observations: SkillObservation[] = [];
+  // The live and stable databases overlap, so observations are deduplicated on
+  // the same identity the store keys on rather than on their session: an
+  // observation can belong to a session whose row was already taken from the
+  // other database.
+  const seenObservations = new Set<string>();
   let rejectedMetricRecords = 0;
-  const appendRows = (target: CollectorRow[], result: { rejectedMetricRecords: number; rows: CollectorRow[] }) => {
+  const appendRows = (
+    target: CollectorRow[],
+    result: { observations: SkillObservation[]; rejectedMetricRecords: number; rows: CollectorRow[] },
+  ) => {
     rejectedMetricRecords += result.rejectedMetricRecords;
     for (const row of result.rows) {
       const sessionId = row.source?.sourceSessionId;
@@ -361,6 +424,14 @@ export const collectOpenCodeResult: Effect.Effect<
         seen.add(sessionId);
       }
       target.push(row);
+    }
+    for (const observation of result.observations) {
+      const identity = skillObservationIdentity(observation);
+      if (seenObservations.has(identity)) {
+        continue;
+      }
+      seenObservations.add(identity);
+      observations.push(observation);
     }
   };
 
@@ -414,5 +485,5 @@ export const collectOpenCodeResult: Effect.Effect<
   if (metricWarning) {
     warnings.push(metricWarning);
   }
-  return { rows: [...liveRows, ...stableRows], warnings };
+  return { observations, rows: [...liveRows, ...stableRows], warnings };
 });

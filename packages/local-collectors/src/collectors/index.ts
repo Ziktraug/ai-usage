@@ -10,6 +10,7 @@ import {
   type HarnessMetadata,
   harnessKeys,
 } from '@ai-usage/report-core/harness-metadata';
+import type { SkillObservation } from '@ai-usage/report-core/skill-observation';
 import type { Row } from '@ai-usage/report-core/types';
 import { Effect } from 'effect';
 import { withPerfSpan } from '../perf';
@@ -28,6 +29,7 @@ import { collectOpenCode, collectOpenCodeResult } from './opencode';
 export { collectClaudeRetentionWarnings } from './claude';
 
 interface HarnessAdapterCollection {
+  observations?: SkillObservation[];
   rows: CollectorRow[];
   warnings: LocalHistoryWarning[];
 }
@@ -44,6 +46,13 @@ export interface HarnessCollectionResult {
   durationMs: number;
   harness: HarnessKey;
   label: string;
+  /**
+   * Skill observations this harness could report. An empty list from a harness
+   * with a collector means "none observed"; a harness with no collector — Cursor
+   * — is absent from observation reporting entirely and must never be rendered
+   * as a zero (ADR 0022).
+   */
+  observations: SkillObservation[];
   rows: Row[];
   status: HarnessCollectionStatus;
   warnings: LocalHistoryWarning[];
@@ -52,6 +61,7 @@ export interface HarnessCollectionResult {
 export interface SelectedHarnessCollectionResult {
   durationMs: number;
   harnesses: HarnessCollectionResult[];
+  observations: SkillObservation[];
   rows: Row[];
   warnings: LocalHistoryWarning[];
 }
@@ -90,17 +100,29 @@ export const selectedHarnessAdapters = (selection: HarnessSelection) => {
 };
 
 type HarnessAdapterOutcome =
-  | { _tag: 'success'; rows: CollectorRow[]; warnings: LocalHistoryWarning[] }
+  | {
+      _tag: 'success';
+      observations: SkillObservation[];
+      rows: CollectorRow[];
+      warnings: LocalHistoryWarning[];
+    }
   | { _tag: 'failure'; error: LocalHistoryError };
 
 const collectAdapter = (
   adapter: HarnessAdapter,
 ): Effect.Effect<HarnessAdapterOutcome, never, LocalHistoryStorageService> => {
-  const collection = adapter.collectResult ?? adapter.collect.pipe(Effect.map((rows) => ({ rows, warnings: [] })));
+  const collection: Effect.Effect<HarnessAdapterCollection, LocalHistoryError, LocalHistoryStorageService> =
+    adapter.collectResult ??
+    adapter.collect.pipe(Effect.map((rows): HarnessAdapterCollection => ({ observations: [], rows, warnings: [] })));
   return collection.pipe(
     Effect.match({
       onFailure: (error) => ({ _tag: 'failure' as const, error }),
-      onSuccess: (result) => ({ _tag: 'success' as const, rows: result.rows, warnings: result.warnings }),
+      onSuccess: (result) => ({
+        _tag: 'success' as const,
+        observations: result.observations ?? [],
+        rows: result.rows,
+        warnings: result.warnings,
+      }),
     }),
   );
 };
@@ -123,6 +145,7 @@ const collectHarnessResult = (
         return {
           harness,
           label: adapter.metadata.label,
+          observations: [],
           rows: [],
           warnings: [
             localHistoryWarningFromError(outcome.error, {
@@ -137,6 +160,7 @@ const collectHarnessResult = (
       return {
         harness,
         label: adapter.metadata.label,
+        observations: outcome.observations,
         rows: outcome.rows,
         warnings: outcome.warnings,
         durationMs,
@@ -144,6 +168,7 @@ const collectHarnessResult = (
       };
     }),
     (result) => ({
+      observations: result.observations.length,
       rows: result.rows.length,
       status: result.status,
       warnings: result.warnings.length,
@@ -191,12 +216,16 @@ export const collectSelectedHarnessResults = (selection: HarnessSelection) =>
       return {
         rows: publicRows,
         harnesses: publicHarnesses,
+        // Flattened for the writer, and still carried per harness above so a
+        // consumer can tell "observed nothing" from "cannot observe".
+        observations: publicHarnesses.flatMap((result) => result.observations),
         warnings: [...publicHarnesses.flatMap((result) => result.warnings), ...globalWarnings],
         durationMs: Date.now() - startedAt,
       };
     }),
     (result) => ({
       harnesses: result.harnesses.length,
+      observations: result.observations.length,
       rows: result.rows.length,
       warnings: result.warnings.length,
     }),

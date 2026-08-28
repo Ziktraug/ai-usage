@@ -1,15 +1,16 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { parseClaudeSessionFacts } from '@ai-usage/local-machine/claude-session-facts';
+import { extractClaudeSkillObservations, parseClaudeSessionFacts } from '@ai-usage/local-machine/claude-session-facts';
 import type { LocalHistoryError, LocalHistoryWarning } from '@ai-usage/local-machine/errors';
 import { readLocalGitRepository } from '@ai-usage/local-machine/local-git';
 import { LocalHistoryStorage, walkFiles } from '@ai-usage/local-machine/local-history';
 import { type HarnessPaths, resolvePaths } from '@ai-usage/local-machine/platform-paths';
 import { base, safeJSON, usablePrompt } from '@ai-usage/local-machine/text';
+import type { SkillObservation } from '@ai-usage/report-core/skill-observation';
 import { actualCost, approximateApiCost } from '@ai-usage/report-core/usage-row';
 import { Effect } from 'effect';
 import { type CollectedSession, sessionToUsageRow } from '../collected-session';
-import { collectorCachePath, reviveCollectorRowsResult } from '../collector-cache';
+import { collectorCachePath, reviveCollectorRowsResult, reviveSkillObservationsResult } from '../collector-cache';
 import { COLLECTOR_CACHE_MAX_BYTES, SMALL_HISTORY_JSON_MAX_BYTES } from '../history-budgets';
 import { metricValidationWarning, parseNonNegativeSafeInteger } from '../metric-validation';
 import { withPerfSpan } from '../perf';
@@ -30,11 +31,15 @@ interface FileFingerprint {
 }
 interface ClaudeCache {
   fingerprintKey: string | null;
+  observations: SkillObservation[];
   rejectedMetricRecords: number;
   rows: CollectorRow[];
   version: number;
 }
-const CLAUDE_CACHE_VERSION = 8;
+// Bumped to 9 for the skill-observation stream: an entry written by version 8
+// carries rows but no observations, and reusing it would report a machine with
+// history as a machine that has never invoked a skill.
+const CLAUDE_CACHE_VERSION = 9;
 const claudeCachePath = (storage: LocalHistoryStorage) => collectorCachePath(storage, 'claude-cache.json');
 
 const readClaudeCache = (storage: LocalHistoryStorage): ClaudeCache | null => {
@@ -42,26 +47,36 @@ const readClaudeCache = (storage: LocalHistoryStorage): ClaudeCache | null => {
     if (!fs.existsSync(storage.home)) {
       return null;
     }
+    const empty: ClaudeCache = {
+      fingerprintKey: null,
+      observations: [],
+      rejectedMetricRecords: 0,
+      rows: [],
+      version: CLAUDE_CACHE_VERSION,
+    };
     const cachePath = claudeCachePath(storage);
     if (!fs.existsSync(cachePath)) {
-      return { fingerprintKey: null, rejectedMetricRecords: 0, rows: [], version: CLAUDE_CACHE_VERSION };
+      return empty;
     }
     const parsed = readPrivateJson(cachePath, COLLECTOR_CACHE_MAX_BYTES) as {
       fingerprintKey?: unknown;
+      observations?: unknown;
       rejectedMetricRecords?: unknown;
       rows?: unknown;
       version?: number;
     };
     if (parsed.version !== CLAUDE_CACHE_VERSION) {
-      return { fingerprintKey: null, rejectedMetricRecords: 0, rows: [], version: CLAUDE_CACHE_VERSION };
+      return empty;
     }
     const revived = reviveCollectorRowsResult(parsed.rows);
+    const observations = reviveSkillObservationsResult(parsed.observations);
     const rejectedMetricRecords = parseNonNegativeSafeInteger(parsed.rejectedMetricRecords);
-    if (!(rejectedMetricRecords.ok && revived.valid && revived.rejectedMetricRecords === 0)) {
-      return { fingerprintKey: null, rejectedMetricRecords: 0, rows: [], version: CLAUDE_CACHE_VERSION };
+    if (!(rejectedMetricRecords.ok && revived.valid && revived.rejectedMetricRecords === 0 && observations.valid)) {
+      return empty;
     }
     return {
       fingerprintKey: typeof parsed.fingerprintKey === 'string' ? parsed.fingerprintKey : null,
+      observations: observations.observations,
       rejectedMetricRecords: rejectedMetricRecords.value,
       rows: revived.rows,
       version: CLAUDE_CACHE_VERSION,
@@ -76,12 +91,13 @@ const writeClaudeCache = (
   fingerprintKey: string | null,
   rows: CollectorRow[],
   rejectedMetricRecords: number,
+  observations: SkillObservation[],
 ) => {
   if (!fingerprintKey) {
     return false;
   }
   const cachePath = claudeCachePath(storage);
-  const value = { fingerprintKey, rejectedMetricRecords, rows, version: CLAUDE_CACHE_VERSION };
+  const value = { fingerprintKey, observations, rejectedMetricRecords, rows, version: CLAUDE_CACHE_VERSION };
   if (Buffer.byteLength(JSON.stringify(value), 'utf8') > COLLECTOR_CACHE_MAX_BYTES) {
     return false;
   }
@@ -253,6 +269,11 @@ export const collectClaudeRetentionWarnings: Effect.Effect<LocalHistoryWarning[]
   });
 
 export interface ClaudeCollectionResult {
+  /**
+   * A new fact drawn from the collection source this collector already reads —
+   * not a new collection source. The source vocabulary is unchanged.
+   */
+  observations: SkillObservation[];
   rows: CollectorRow[];
   warnings: LocalHistoryWarning[];
 }
@@ -280,8 +301,16 @@ export const collectClaudeResult = Effect.gen(function* () {
     const warning = metricValidationWarning('claude', cache.rejectedMetricRecords);
     return yield* withPerfSpan(
       'aiUsage.collect.claude.cache.hit',
-      Effect.succeed({ rows: cache.rows, warnings: warning ? [warning] : [] }),
-      (result) => ({ rows: result.rows.length, warnings: result.warnings.length }),
+      Effect.succeed({
+        observations: cache.observations,
+        rows: cache.rows,
+        warnings: warning ? [warning] : [],
+      }),
+      (result) => ({
+        observations: result.observations.length,
+        rows: result.rows.length,
+        warnings: result.warnings.length,
+      }),
     );
   }
 
@@ -297,6 +326,7 @@ export const collectClaudeResult = Effect.gen(function* () {
   }
 
   const sessions: CollectedSession[] = [];
+  const observations: SkillObservation[] = [];
   const existingSessionIds = new Set(files.map((filePath) => path.basename(filePath, '.jsonl')));
   let rejectedMetricRecords = 0;
 
@@ -319,6 +349,11 @@ export const collectClaudeResult = Effect.gen(function* () {
             records.push(event);
           }
         });
+
+        // Extracted before the usage-row parse and independently of it: a
+        // transcript can record a skill invocation without producing a usage
+        // row, and that invocation is still a fact about the skill.
+        observations.push(...extractClaudeSkillObservations({ records, sourceSessionId }));
 
         const initialFacts = parseClaudeSessionFacts({ isAgentFile, records, repository: null, sourceSessionId });
         if (!initialFacts) {
@@ -362,7 +397,7 @@ export const collectClaudeResult = Effect.gen(function* () {
           subagent: report.sidechain,
         });
       }
-      return { files: files.length, lines, sessions: sessions.length };
+      return { files: files.length, lines, observations: observations.length, sessions: sessions.length };
     }),
     (result) => result,
   );
@@ -393,11 +428,11 @@ export const collectClaudeResult = Effect.gen(function* () {
   const rows = sessions.map(sessionToUsageRow);
   yield* withPerfSpan(
     'aiUsage.collect.claude.cache.write',
-    Effect.sync(() => writeClaudeCache(storage, fingerprintKey, rows, rejectedMetricRecords)),
+    Effect.sync(() => writeClaudeCache(storage, fingerprintKey, rows, rejectedMetricRecords, observations)),
     (wrote) => ({ wrote }),
   );
   const warning = metricValidationWarning('claude', rejectedMetricRecords);
-  return { rows, warnings: warning ? [warning] : [] };
+  return { observations, rows, warnings: warning ? [warning] : [] };
 });
 
 export const collectClaude = collectClaudeResult.pipe(Effect.map((result) => result.rows));

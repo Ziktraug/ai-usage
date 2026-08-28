@@ -10,6 +10,7 @@ import { collectCursorResult } from './collectors/cursor';
 import { collectOpenCodeResult } from './collectors/opencode';
 
 const temporaryHomes: string[] = [];
+const CACHE_VERSION_PATTERN = /"version":(\d+)/;
 
 const makeHome = async (): Promise<string> => {
   const home = await mkdtemp(join(tmpdir(), 'ai-usage-db-integration-'));
@@ -68,19 +69,24 @@ describe('real SQLite harness collectors', () => {
     });
   });
 
-  test('invalidates OpenCode v10 row caches after adding origin provenance', async () => {
+  test('invalidates an OpenCode row cache written at an older version', async () => {
     const home = await makeHome();
     const fixture = await seedHarnessHome(home, { harnesses: ['opencode'] });
     await runAtHome(home, collectOpenCodeResult);
     const cachePath = join(home, '.config', 'ai-usage', 'opencode-db-cache.json');
     const currentCache = await readFile(cachePath, 'utf8');
+    // Derived from the cache the collector just wrote rather than pinned to a
+    // literal: every bump of the cache version is a deliberate invalidation,
+    // and this test asserts the invalidation, not the number.
+    const currentVersion = Number(CACHE_VERSION_PATTERN.exec(currentCache)?.[1]);
+    expect(Number.isSafeInteger(currentVersion)).toBe(true);
     const staleCache = currentCache
-      .replace('"name":"OpenCode fixture"', '"name":"stale-v10-cache"')
+      .replace('"name":"OpenCode fixture"', '"name":"stale-cache"')
       .replace('"origin":"subagent"', '"origin":"unknown"')
-      .replace('"version":11', '"version":10');
-    expect(staleCache).toContain('"name":"stale-v10-cache"');
+      .replace(`"version":${currentVersion}`, `"version":${currentVersion - 1}`);
+    expect(staleCache).toContain('"name":"stale-cache"');
     expect(staleCache).toContain('"origin":"unknown"');
-    expect(staleCache).toContain('"version":10');
+    expect(staleCache).toContain(`"version":${currentVersion - 1}`);
     await writeFile(cachePath, staleCache);
 
     const result = await runAtHome(home, collectOpenCodeResult);
@@ -90,7 +96,7 @@ describe('real SQLite harness collectors', () => {
     expect(row?.origin).toBe('subagent');
     expect(row?.originProvenance).toBeUndefined();
     expect(row?.source?.vcs?.repository?.ownerPath).toBe('fixture/ai-usage');
-    expect(await readFile(cachePath, 'utf8')).toContain('"version":11');
+    expect(await readFile(cachePath, 'utf8')).toContain(`"version":${currentVersion}`);
   });
 
   test('keeps valid OpenCode sessions when joined message and part JSON are malformed', async () => {

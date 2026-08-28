@@ -30,10 +30,12 @@ import { firstExisting } from '@ai-usage/local-machine/platform-paths';
 import { base, safeJSON } from '@ai-usage/local-machine/text';
 import { normalizeCodexRateLimitStatus, type ProviderStatus } from '@ai-usage/report-core/provider-status';
 import { parseSessionVcsContext, type SessionVcsContext } from '@ai-usage/report-core/session-vcs';
+import { type SkillObservation, skillObservationIdentity } from '@ai-usage/report-core/skill-observation';
 import type { SessionOrigin } from '@ai-usage/report-core/types';
 import { actualCost, approximateApiCost } from '@ai-usage/report-core/usage-row';
 import { Effect } from 'effect';
 import type { CollectedSession } from './collected-session';
+import { reviveSkillObservationsResult } from './collector-cache';
 import { parseNonNegativeSafeInteger } from './metric-validation';
 import { withPerfSpan } from './perf';
 
@@ -127,7 +129,10 @@ interface SqliteDatabase {
 // This cache stores normalized parser output, not raw JSONL. Bump whenever an
 // unchanged rollout could produce different counters, labels, origin, lineage,
 // phases, or turns.
-const CODEX_SESSION_CACHE_VERSION = 17;
+// Bumped to 18 for the skill-observation stream: an entry written by version 17
+// carries a parsed session with no observations, and reusing it would report a
+// machine with history as a machine that has never invoked a skill.
+const CODEX_SESSION_CACHE_VERSION = 18;
 
 const THREAD_SPAWN_EDGES_SQL = `
 select parent_thread_id as parent, child_thread_id as child
@@ -188,6 +193,7 @@ const cloneCodexSession = (session: CodexSession): CodexSession => ({
   ...session,
   end: session.end ? new Date(session.end) : null,
   models: [...session.models],
+  skillObservations: session.skillObservations.map((observation) => ({ ...observation })),
   phases: session.phases.map((phase) => ({
     ...phase,
     end: new Date(phase.end),
@@ -287,6 +293,10 @@ const reviveCachedSession = (json: string): CodexSession | null => {
       ? rawModels.filter((model): model is string => typeof model === 'string').slice(0, CODEX_DETAIL_MAX_PHASES)
       : null;
     const phases = reviveCachedPhases(value.phases);
+    // Re-validated on the way out of the cache, like every other cached field:
+    // a cache entry whose observations no longer parse is a cache miss, not a
+    // session that silently lost its observations.
+    const skillObservations = reviveSkillObservationsResult(value.skillObservations);
     let vcs: SessionVcsContext | undefined;
     try {
       vcs = value.vcs === undefined ? undefined : parseSessionVcsContext(value.vcs);
@@ -308,7 +318,8 @@ const reviveCachedSession = (json: string): CodexSession | null => {
       !(activeDuration === null || activeDuration.ok) ||
       models === null ||
       models.length !== rawModels?.length ||
-      phases === null
+      phases === null ||
+      !skillObservations.valid
     ) {
       return null;
     }
@@ -343,6 +354,7 @@ const reviveCachedSession = (json: string): CodexSession | null => {
       tout: tout.value,
       rejectedMetricRecords: rejectedMetricRecords.value,
       hasTokenUsage: value.hasTokenUsage,
+      skillObservations: skillObservations.observations,
       ...(vcs ? { vcs } : {}),
     };
   } catch {
@@ -585,6 +597,12 @@ const readCodexSessions = (
   );
 
 export interface CodexUsageSessionsResult {
+  /**
+   * Codex declares no skill invocations, so these are `exposed` catalogue
+   * entries and `inferred` exec reads. They are collected on the same pass and
+   * are never combined into one count (ADR 0022).
+   */
+  observations: SkillObservation[];
   rejectedMetricRecords: number;
   sessions: CodexCollectedSession[];
 }
@@ -667,9 +685,28 @@ export const readCodexUsageSessionsResult: Effect.Effect<
       });
     }
 
-    return { rejectedMetricRecords, sessions: usageSessions };
+    // A rollout file can appear under more than one session id, so
+    // observations are deduplicated on the identity the store keys on.
+    const observations: SkillObservation[] = [];
+    const seenObservations = new Set<string>();
+    for (const session of sessions) {
+      for (const observation of session.skillObservations) {
+        const identity = skillObservationIdentity(observation);
+        if (seenObservations.has(identity)) {
+          continue;
+        }
+        seenObservations.add(identity);
+        observations.push(observation);
+      }
+    }
+
+    return { observations, rejectedMetricRecords, sessions: usageSessions };
   }),
-  (result) => ({ rejectedMetricRecords: result.rejectedMetricRecords, sessions: result.sessions.length }),
+  (result) => ({
+    observations: result.observations.length,
+    rejectedMetricRecords: result.rejectedMetricRecords,
+    sessions: result.sessions.length,
+  }),
 );
 
 export const readCodexUsageSessions: Effect.Effect<

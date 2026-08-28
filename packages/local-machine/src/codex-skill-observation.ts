@@ -151,15 +151,21 @@ export const extractCodexSkillExecObservation = (
   command: unknown,
   callId: string,
   context: CodexSkillObservationContext,
-): SkillObservation[] => {
+): SkillObservation[] => codexSkillExecObservations(matchCodexSkillDocuments(command), callId, context);
+
+/**
+ * The name-and-directory half of the exec matcher, split out so a streaming
+ * parser can run it per line and retain only the match — never the command
+ * string, which is unbounded and carries whatever the model typed.
+ */
+export const matchCodexSkillDocuments = (command: unknown): CodexSkillCatalogueEntry[] => {
   if (typeof command !== 'string' || !command.includes('SKILL.md')) {
     return [];
   }
-  const observations: SkillObservation[] = [];
+  const entries: CodexSkillCatalogueEntry[] = [];
   const seen = new Set<string>();
-  CODEX_SKILL_DOCUMENT_PATH.lastIndex = 0;
   for (const matched of command.matchAll(CODEX_SKILL_DOCUMENT_PATH)) {
-    if (observations.length >= MAX_SKILL_OBSERVATIONS_PER_SESSION) {
+    if (entries.length >= MAX_SKILL_OBSERVATIONS_PER_SESSION) {
       break;
     }
     const documentPath = matched[1];
@@ -168,15 +174,28 @@ export const extractCodexSkillExecObservation = (
       continue;
     }
     seen.add(name);
+    entries.push({ name, path: codexSkillDirectory(documentPath) });
+  }
+  return entries;
+};
+
+/** Project matched skill documents into `inferred` observations. */
+export const codexSkillExecObservations = (
+  entries: readonly CodexSkillCatalogueEntry[],
+  callId: string,
+  context: CodexSkillObservationContext,
+): SkillObservation[] => {
+  const observations: SkillObservation[] = [];
+  for (const entry of entries) {
     const observation = parseSkillObservation({
       argsPresent: null,
       harnessKey: 'codex',
-      observationKey: `exec:${callId}:${name}`,
+      observationKey: `exec:${callId}:${entry.name}`,
       observedAt: context.observedAt,
       projectPath: context.projectPath,
-      resolvedPath: codexSkillDirectory(documentPath),
+      resolvedPath: entry.path,
       sessionId: context.sessionId,
-      skillName: name,
+      skillName: entry.name,
       // The command's exit status is in a separate output record; a read that
       // is merely inferred cannot honestly claim an outcome.
       success: null,
