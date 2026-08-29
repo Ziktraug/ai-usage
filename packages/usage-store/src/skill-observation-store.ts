@@ -28,9 +28,24 @@ import type {
  *   silently discarded.
  * - **The tier never collapses.** Reads group by tier and harness; nothing here
  *   sums across them.
+ * - **The tiers do not compete for the read budget.** They are not produced at
+ *   comparable rates: a Codex session writes one `exposed` row per catalogue
+ *   skill, so exposure outnumbers actual invocations by orders of magnitude. A
+ *   single pooled `ORDER BY observed_at DESC LIMIT n` therefore spends the whole
+ *   budget on catalogue injections and starves the evidence the feature exists
+ *   to show. See `querySkillObservations`.
  */
 
 const MAX_SKILL_OBSERVATION_READ = 50_000;
+/**
+ * The tiers that record a skill actually being used, as opposed to being listed
+ * in a catalogue. They are read first and to their own bound, because they are
+ * the scarce evidence: `exposed` is emitted per catalogue entry per session and
+ * will always win a race for a shared budget.
+ */
+const INVOCATION_TIERS: ReadonlySet<string> = new Set(['declared', 'inferred']);
+const INVOCATION_TIER_SQL = "tier IN ('declared', 'inferred')";
+const EXPOSURE_TIER_SQL = "tier = 'exposed'";
 const DEFAULT_SKILL_OBSERVATION_RETENTION_MS = 400 * 24 * 60 * 60 * 1000;
 // Bounds WAL growth of each retention transaction; every batch commits independently.
 const SKILL_OBSERVATION_RETENTION_BATCH_SIZE = 20_000;
@@ -98,6 +113,14 @@ const booleanFromColumn = (value: number | null): boolean | null => {
     return null;
   }
   return value === 1;
+};
+
+/** The read's documented order, applied across tier-group pages rather than by SQL alone. */
+const byRecencyDescending = (left: SkillObservationRecord, right: SkillObservationRecord): number => {
+  if (left.observed_at !== right.observed_at) {
+    return left.observed_at < right.observed_at ? 1 : -1;
+  }
+  return right.id - left.id;
 };
 
 interface StoredContentRecord {
@@ -305,10 +328,6 @@ export const createSkillObservationStore = (dependencies: SkillObservationStoreD
             clauses.push('harness_key = ?');
             params.push(input.harnessKey);
           }
-          if (input.tier !== undefined) {
-            clauses.push('tier = ?');
-            params.push(input.tier);
-          }
           if (input.machineId !== undefined) {
             clauses.push('machine_id = ?');
             params.push(input.machineId);
@@ -321,20 +340,74 @@ export const createSkillObservationStore = (dependencies: SkillObservationStoreD
             clauses.push('observed_at <= ?');
             params.push(input.to);
           }
-          const whereSql = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
-          const sql = `
+          /**
+           * One recency-ordered page of one tier group.
+           *
+           * Asks for `limit + 1` and reports the overflow, so a page that stops
+           * exactly at its budget is distinguishable from a complete one. A
+           * `limit` of zero is therefore a pure existence probe: it returns no
+           * rows and still answers whether any were left behind.
+           */
+          const readTierGroup = (
+            tierSql: string,
+            tierParams: readonly unknown[],
+            limit: number,
+          ): { readonly rows: SkillObservationRecord[]; readonly truncated: boolean } => {
+            const sql = `
             SELECT * FROM skill_observations
-            ${whereSql}
+            WHERE ${[...clauses, tierSql].join(' AND ')}
             ORDER BY observed_at DESC, id DESC
             LIMIT ?
           `;
-          const queryParams = [...params, maximum + 1];
-          input.trace?.({ params: queryParams, sql });
-          const rows = db.query(sql).all(...queryParams) as SkillObservationRecord[];
-          const truncated = rows.length > maximum;
+            const queryParams = [...params, ...tierParams, limit + 1];
+            input.trace?.({ params: queryParams, sql });
+            const rows = db.query(sql).all(...queryParams) as SkillObservationRecord[];
+            return { rows: rows.slice(0, limit), truncated: rows.length > limit };
+          };
+
+          /**
+           * Two reads, not one, and the order between them is the whole point.
+           *
+           * `exposed` is written once per catalogue entry per session, so on a
+           * real store it outnumbers actual invocations by roughly 66:1. Under a
+           * single pooled `LIMIT`, the most recent rows are almost entirely
+           * catalogue injections and months of real invocation history fall
+           * outside the window — which the surface then renders as
+           * "offered but never invoked", a statement the data contradicts.
+           *
+           * So the invocation tiers are read first, against the full budget, and
+           * exposure fills whatever is left. Both bounds are reported separately,
+           * because "we could not show every catalogue injection" and "we could
+           * not show every invocation" are different facts and only the second
+           * one makes an absence verdict unsafe.
+           */
+          const read =
+            input.tier === undefined
+              ? (() => {
+                  const invocation = readTierGroup(INVOCATION_TIER_SQL, [], maximum);
+                  const exposure = readTierGroup(EXPOSURE_TIER_SQL, [], maximum - invocation.rows.length);
+                  return {
+                    invocationTruncated: invocation.truncated,
+                    // Recency order is restored across the two pages, so this read's documented
+                    // ordering is unchanged. Only *which* rows it selects has changed.
+                    rows: [...invocation.rows, ...exposure.rows].sort(byRecencyDescending),
+                    truncated: invocation.truncated || exposure.truncated,
+                  };
+                })()
+              : (() => {
+                  // A caller that named one tier gets exactly that tier; there is no second group to
+                  // budget against. The invocation bound is then simply whether that read was cut
+                  // short, and only when the named tier is itself invocation evidence.
+                  const single = readTierGroup('tier = ?', [input.tier], maximum);
+                  return {
+                    invocationTruncated: single.truncated && INVOCATION_TIERS.has(input.tier),
+                    rows: single.rows,
+                    truncated: single.truncated,
+                  };
+                })();
           const observations: StoredSkillObservation[] = [];
           let skipped = 0;
-          for (const row of rows.slice(0, maximum)) {
+          for (const row of read.rows) {
             const stored = storedObservationFromRecord(row);
             if (stored) {
               observations.push(stored);
@@ -342,7 +415,12 @@ export const createSkillObservationStore = (dependencies: SkillObservationStoreD
               skipped++;
             }
           }
-          return { observations, skipped, truncated };
+          return {
+            invocationTruncated: read.invocationTruncated,
+            observations,
+            skipped,
+            truncated: read.truncated,
+          };
         },
         catch: (cause) => usageStoreReadError('querySkillObservations', input.dbPath, cause),
       }),

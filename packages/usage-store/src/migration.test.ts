@@ -332,6 +332,10 @@ describe('usage-store forward migration', () => {
       'idx_skill_observations_machine',
       'idx_skill_observations_range',
       'idx_skill_observations_skill',
+      // The tier-group read's covering index, added additively: `CREATE INDEX IF NOT EXISTS` in the
+      // same schema statement as the other four, with no schema-version bump, so an existing store
+      // gains it on the next open rather than through a migration step of its own.
+      'idx_skill_observations_tier',
     ]);
 
     const read = await Effect.runPromise(querySkillObservations({ dbPath }));

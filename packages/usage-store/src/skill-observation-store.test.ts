@@ -277,3 +277,149 @@ describe('skill observation store', () => {
     expect(read.observations.map(({ observation: value }) => value.observationKey)).toEqual(['recent']);
   });
 });
+
+/**
+ * The ratio these tests use is the one measured on the operator's real store: 78,442 `exposed` rows
+ * against 1,481 invocations, because Codex writes one exposure row per catalogue entry per session.
+ * Every earlier fixture was small and balanced, which is exactly why a pooled read budget looked
+ * correct for months.
+ */
+describe('skill observation read budgets, at the ratio a real store has', () => {
+  const EXPOSED_COUNT = 600;
+  const INFERRED_COUNT = 20;
+  const DECLARED_COUNT = 10;
+
+  const at = (minute: number): string => new Date(Date.UTC(2026, 7, 1, 0, minute)).toISOString();
+
+  /**
+   * Exposure is strictly *more recent* than every invocation, so a recency-ordered pooled read
+   * cannot see a single invocation once the budget is smaller than the exposure count. That is the
+   * real store's shape: months of invocation history sitting behind three weeks of catalogue rows.
+   */
+  const floodedStore = async (name: string): Promise<string> => {
+    const dbPath = await createStore(name);
+    const invocations = [
+      ...Array.from({ length: DECLARED_COUNT }, (_value, index) =>
+        observation({
+          harnessKey: 'claude',
+          observationKey: `declared-${index}`,
+          observedAt: at(index),
+          skillName: `used-skill-${index % 5}`,
+          tier: 'declared',
+        }),
+      ),
+      ...Array.from({ length: INFERRED_COUNT }, (_value, index) =>
+        observation({
+          harnessKey: 'codex',
+          observationKey: `inferred-${index}`,
+          observedAt: at(DECLARED_COUNT + index),
+          skillName: `used-skill-${index % 5}`,
+          tier: 'inferred',
+        }),
+      ),
+    ];
+    const exposures = Array.from({ length: EXPOSED_COUNT }, (_value, index) =>
+      observation({
+        harnessKey: 'codex',
+        observationKey: `exposed-${index}`,
+        observedAt: at(1000 + index),
+        skillName: `catalogue-skill-${index % 190}`,
+        tier: 'exposed',
+      }),
+    );
+    await Effect.runPromise(
+      importSkillObservations({ dbPath, machineId: MACHINE, observations: [...invocations, ...exposures] }),
+    );
+    return dbPath;
+  };
+
+  const tierCounts = (read: { observations: { observation: SkillObservation }[] }): Record<string, number> => {
+    const counts: Record<string, number> = {};
+    for (const { observation: value } of read.observations) {
+      counts[value.tier] = (counts[value.tier] ?? 0) + 1;
+    }
+    return counts;
+  };
+
+  test('reads every invocation first, and spends only what is left on the exposure catalogue', async () => {
+    const dbPath = await floodedStore('skill-tier-budget');
+
+    const read = await Effect.runPromise(querySkillObservations({ dbPath, maximumObservations: 100 }));
+
+    // The whole point: a budget far below the exposure count still returns every invocation.
+    expect(tierCounts(read)).toEqual({ declared: DECLARED_COUNT, exposed: 70, inferred: INFERRED_COUNT });
+    expect(read.observations).toHaveLength(100);
+    // Something was left behind, and the response says *which* group. Under a pooled read this
+    // budget would have returned 100 exposure rows and no invocation at all.
+    expect(read.truncated).toBe(true);
+    expect(read.invocationTruncated).toBe(false);
+  });
+
+  test('reports the invocation bound when the invocation tiers outgrow the budget themselves', async () => {
+    const dbPath = await floodedStore('skill-tier-budget-invocation');
+
+    const read = await Effect.runPromise(querySkillObservations({ dbPath, maximumObservations: 12 }));
+
+    // Now the scarce evidence is itself short, which is the one case an absence claim must not be
+    // made on. No exposure row is read at all: the invocation tiers spend the entire budget.
+    expect(tierCounts(read)).toEqual({ inferred: 12 });
+    expect(read.invocationTruncated).toBe(true);
+    expect(read.truncated).toBe(true);
+  });
+
+  test('spends nothing on exposure when invocations exactly fill the budget, and still reports it', async () => {
+    const dbPath = await floodedStore('skill-tier-budget-exact');
+
+    const read = await Effect.runPromise(
+      querySkillObservations({ dbPath, maximumObservations: DECLARED_COUNT + INFERRED_COUNT }),
+    );
+
+    // The invocation read fits exactly, so it is *not* truncated — but exposure got a budget of
+    // zero, and rows it could not return still exist. A zero-budget page is an existence probe, so
+    // the pooled bound is still honest.
+    expect(tierCounts(read)).toEqual({ declared: DECLARED_COUNT, inferred: INFERRED_COUNT });
+    expect(read.invocationTruncated).toBe(false);
+    expect(read.truncated).toBe(true);
+  });
+
+  test('returns a complete read as complete when the budget covers everything', async () => {
+    const dbPath = await floodedStore('skill-tier-budget-complete');
+
+    const read = await Effect.runPromise(querySkillObservations({ dbPath, maximumObservations: 5000 }));
+
+    expect(read.observations).toHaveLength(EXPOSED_COUNT + INFERRED_COUNT + DECLARED_COUNT);
+    expect(read.truncated).toBe(false);
+    expect(read.invocationTruncated).toBe(false);
+  });
+
+  test('keeps the read in recency order across the two tier pages', async () => {
+    const dbPath = await floodedStore('skill-tier-budget-order');
+
+    const read = await Effect.runPromise(querySkillObservations({ dbPath, maximumObservations: 100 }));
+    const observedAt = read.observations.map(({ observation: value }) => value.observedAt);
+
+    // Selecting per tier group must not change the order this read documents, only which rows it
+    // selects. Callers that assume "most recent first" keep that guarantee.
+    expect(observedAt).toEqual([...observedAt].sort().reverse());
+  });
+
+  test('a caller that names one tier gets that tier, and only invocation tiers set the invocation bound', async () => {
+    const dbPath = await floodedStore('skill-tier-budget-filtered');
+
+    const exposed = await Effect.runPromise(
+      querySkillObservations({ dbPath, maximumObservations: 5, tier: 'exposed' }),
+    );
+    const inferred = await Effect.runPromise(
+      querySkillObservations({ dbPath, maximumObservations: 5, tier: 'inferred' }),
+    );
+
+    expect(tierCounts(exposed)).toEqual({ exposed: 5 });
+    expect(exposed.truncated).toBe(true);
+    // A short read of the catalogue is not a short read of the evidence.
+    expect(exposed.invocationTruncated).toBe(false);
+
+    expect(tierCounts(inferred)).toEqual({ inferred: 5 });
+    expect(inferred.truncated).toBe(true);
+    expect(inferred.invocationTruncated).toBe(true);
+  });
+});

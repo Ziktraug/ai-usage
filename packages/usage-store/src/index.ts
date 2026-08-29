@@ -401,6 +401,17 @@ export interface StoredSkillObservation {
 }
 
 export interface QuerySkillObservationsResult {
+  /**
+   * The `declared`/`inferred` read reached *its own* budget, so invocation
+   * evidence is incomplete.
+   *
+   * Reported apart from `truncated` because the two support different claims. A
+   * read can legitimately truncate the exposure catalogue — which is per-session
+   * boilerplate — while carrying every invocation ever recorded; in that case no
+   * absence verdict is weakened. Only this flag says the evidence behind
+   * "never invoked" was itself cut short.
+   */
+  invocationTruncated: boolean;
   observations: StoredSkillObservation[];
   /** Persisted rows that no longer pass validation. Never silently omitted. */
   skipped: number;
@@ -1369,6 +1380,12 @@ const migrate = (db: SqliteDatabase): boolean => {
       ON skill_observations(skill_name, harness_key, tier, observed_at DESC, id DESC);
     CREATE INDEX IF NOT EXISTS idx_skill_observations_range
       ON skill_observations(observed_at, id);
+    -- The read budgets the tier groups separately, because exposure is written
+    -- per catalogue entry per session and would otherwise crowd out every real
+    -- invocation. That makes "most recent rows of these tiers" the hot query,
+    -- and this is the covering order for it.
+    CREATE INDEX IF NOT EXISTS idx_skill_observations_tier
+      ON skill_observations(tier, observed_at DESC, id DESC);
     CREATE INDEX IF NOT EXISTS idx_skill_observations_machine
       ON skill_observations(machine_id, observed_at, id);
     `);
