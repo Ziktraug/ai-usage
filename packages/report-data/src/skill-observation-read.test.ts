@@ -122,3 +122,84 @@ describe('bounded skill observation read', () => {
     expect(dataset.lowerBound).toBe(false);
   });
 });
+
+/**
+ * The ratio measured on the operator's real store: 78,442 exposure rows against 1,481 invocations,
+ * with the exposure rows more recent. Under a pooled read budget this shape returned zero invocation
+ * evidence and the surface reported skills with hundreds of real reads as "offered but never
+ * invoked".
+ */
+describe('skill observation read, against an exposure-flooded store', () => {
+  const EXPOSED_COUNT = 600;
+  const INFERRED_COUNT = 20;
+  const DECLARED_COUNT = 10;
+  const at = (minute: number): string => new Date(Date.UTC(2026, 7, 1, 0, minute)).toISOString();
+
+  const floodedStore = async (): Promise<string> =>
+    await storeHolding([
+      ...Array.from({ length: DECLARED_COUNT }, (_value, index) => ({
+        ...observation('used-skill', index),
+        harnessKey: 'claude',
+        observationKey: `declared-${index}`,
+        observedAt: at(index),
+        tier: 'declared' as const,
+      })),
+      ...Array.from({ length: INFERRED_COUNT }, (_value, index) => ({
+        ...observation('used-skill', index),
+        harnessKey: 'codex',
+        observationKey: `inferred-${index}`,
+        observedAt: at(DECLARED_COUNT + index),
+        tier: 'inferred' as const,
+      })),
+      ...Array.from({ length: EXPOSED_COUNT }, (_value, index) => ({
+        ...observation(`catalogue-skill-${index % 190}`, index),
+        harnessKey: 'codex',
+        observationKey: `exposed-${index}`,
+        observedAt: at(1000 + index),
+        tier: 'exposed' as const,
+      })),
+    ]);
+
+  const talliesFor = (dataset: Awaited<ReturnType<typeof read>>, skillName: string) =>
+    dataset.skills.find((skill) => skill.skillName === skillName)?.tallies ?? [];
+
+  const read = async (maximumObservations: number) =>
+    await Effect.runPromise(
+      querySkillObservationDataset({ dbPath: await floodedStore(), ...GENEROUS_BOUNDS, maximumObservations }),
+    );
+
+  test('carries every invocation through the fold even when the catalogue dwarfs the budget', async () => {
+    const dataset = await read(100);
+
+    // Not one invocation is lost, and the counts are the real ones rather than whatever fitted.
+    expect(talliesFor(dataset, 'used-skill').map(({ count, tier }) => [tier, count])).toEqual([
+      ['declared', DECLARED_COUNT],
+      ['inferred', INFERRED_COUNT],
+    ]);
+    // The counts are still floors, because the catalogue was cut — but the evidence behind an
+    // absence verdict is whole, and the two bounds say so separately.
+    expect(dataset.lowerBound).toBe(true);
+    expect(dataset.invocationLowerBound).toBe(false);
+  });
+
+  test('reports the invocation bound when the invocation tiers themselves do not fit', async () => {
+    const dataset = await read(12);
+
+    expect(dataset.invocationLowerBound).toBe(true);
+    expect(dataset.lowerBound).toBe(true);
+  });
+
+  test('clamping the skill list marks the invocation evidence incomplete', async () => {
+    const dbPath = await floodedStore();
+
+    const dataset = await Effect.runPromise(
+      querySkillObservationDataset({ dbPath, ...GENEROUS_BOUNDS, maximumSkills: 3 }),
+    );
+
+    expect(dataset.skills).toHaveLength(3);
+    // The dropped skills are re-added by the downstream inventory join with no tallies at all, which
+    // reads as "never observed". That is an absence claim this read cannot support, so it says so.
+    expect(dataset.invocationLowerBound).toBe(true);
+    expect(dataset.lowerBound).toBe(true);
+  });
+});

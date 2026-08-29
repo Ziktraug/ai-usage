@@ -43,26 +43,38 @@ export interface QuerySkillObservationDatasetInput extends SkillObservationReadB
   readonly dbPath: string;
 }
 
+/**
+ * Dropping a whole skill row here is not the same kind of clamp as dropping trailing observations.
+ *
+ * The inventory join runs downstream, and it re-adds every managed skill this dataset does not
+ * mention — as a skill with no tallies, which reads as *never observed*. So a managed skill dropped
+ * by these clamps comes back wearing a false absence verdict. That makes the skill clamps a
+ * truncation of invocation evidence in the only sense that matters to a verdict, and they say so.
+ */
 const clampSkills = (dataset: SkillObservationDataset, bounds: SkillObservationReadBounds): SkillObservationDataset => {
   let skills: readonly SkillObservationSummary[] = dataset.skills;
-  let lowerBound = dataset.lowerBound;
+  let clampedSkillRows = false;
   if (skills.length > bounds.maximumSkills) {
     skills = skills.slice(0, bounds.maximumSkills);
-    lowerBound = true;
+    clampedSkillRows = true;
   }
-  let clamped: SkillObservationDataset = { ...dataset, lowerBound, skills };
+  let clamped: SkillObservationDataset = { ...dataset, skills };
   // Byte clamping is a loop rather than one estimate because skill names and resolved paths are
   // open-vocabulary: their serialized size is not derivable from the row count. Halving converges
   // in a handful of passes and always terminates, because an empty skill list is under any budget
   // a harness roster fits in.
   while (clamped.skills.length > 0 && datasetBytes(clamped) > bounds.maximumBytes) {
-    clamped = {
-      ...clamped,
-      lowerBound: true,
-      skills: clamped.skills.slice(0, Math.floor(clamped.skills.length / 2)),
-    };
+    clampedSkillRows = true;
+    clamped = { ...clamped, skills: clamped.skills.slice(0, Math.floor(clamped.skills.length / 2)) };
   }
-  return clamped;
+  if (!clampedSkillRows) {
+    return clamped;
+  }
+  return {
+    ...clamped,
+    invocationLowerBound: true,
+    lowerBound: true,
+  };
 };
 
 interface PresentableObservations {
@@ -108,6 +120,7 @@ export const querySkillObservationDataset = (
       const presentable = presentableObservations(result.observations);
       return clampSkills(
         createSkillObservationDataset(presentable.observations, {
+          invocationLowerBound: result.invocationTruncated,
           lowerBound: result.truncated,
           skipped: result.skipped + presentable.refused,
         }),

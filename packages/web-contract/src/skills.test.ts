@@ -385,6 +385,7 @@ describe('Skills oRPC contract', () => {
         { harnessKey: 'opencode', label: 'OpenCode', observability: 'observable' },
         { harnessKey: 'cursor', label: 'Cursor', observability: 'not-observable' },
       ],
+      invocationLowerBound: false,
       lowerBound: false,
       skills: [
         {
@@ -448,9 +449,31 @@ describe('Skills oRPC contract', () => {
     expect(safeParse(skillObservationsSchema, { ...observations, total: 7 }).success).toBe(false);
   });
 
+  test('carries the invocation bound separately from the pooled one, and requires both', () => {
+    const base = {
+      harnesses: [{ harnessKey: 'codex', label: 'Codex', observability: 'observable' }],
+      invocationLowerBound: false,
+      lowerBound: true,
+      skills: [],
+      skipped: 0,
+    };
+
+    // The ordinary state of a real store: the exposure catalogue outran the read budget while every
+    // recorded invocation is present. One flag cannot express that, which is why there are two.
+    expect(safeParse(skillObservationsSchema, base).success).toBe(true);
+    expect(safeParse(skillObservationsSchema, { ...base, invocationLowerBound: true }).success).toBe(true);
+
+    // Required, not optional: a producer that omitted it would leave a consumer guessing whether an
+    // absence verdict is safe, and the safe guess and the useful guess are opposites.
+    const { invocationLowerBound, ...withoutInvocationBound } = base;
+    expect(invocationLowerBound).toBe(false);
+    expect(safeParse(skillObservationsSchema, withoutInvocationBound).success).toBe(false);
+  });
+
   test('carries the verdict the server decided, and only the verdicts it may decide', () => {
     const base = {
       harnesses: [{ harnessKey: 'claude', label: 'Claude Code', observability: 'observable' }],
+      invocationLowerBound: false,
       lowerBound: false,
       skills: [
         {
@@ -493,6 +516,7 @@ describe('Skills oRPC contract', () => {
   test('accepts an unresolved observation and refuses to lose it to the managed-name pattern', () => {
     const unresolved = {
       harnesses: [{ harnessKey: 'claude', label: 'Claude Code', observability: 'observable' }],
+      invocationLowerBound: false,
       lowerBound: false,
       skills: [
         {
@@ -544,6 +568,7 @@ describe('Skills oRPC contract', () => {
   test('requires the harness roster and a canonical timestamp on every observation count', () => {
     const base = {
       harnesses: [{ harnessKey: 'cursor', label: 'Cursor', observability: 'not-observable' }],
+      invocationLowerBound: true,
       lowerBound: true,
       skills: [],
       skipped: 2,

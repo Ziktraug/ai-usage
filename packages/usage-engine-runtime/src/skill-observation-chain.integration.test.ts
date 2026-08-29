@@ -91,9 +91,60 @@ describe('skill observation chain', () => {
       dataset.skills.find(({ skillName }) => skillName === FIXTURE_SKILL_NAMES.claudeUnresolved)?.resolvedPaths,
     ).toEqual([]);
     expect(dataset.lowerBound).toBe(false);
+    expect(dataset.invocationLowerBound).toBe(false);
     expect(dataset.skipped).toBe(0);
 
     // The argument text the fixture plants in the transcript never reaches the read.
     expect(JSON.stringify(dataset)).not.toContain('PRIVATE_DETAIL_PROMPT_SENTINEL');
+  });
+
+  test('an exposure flood cannot push collected invocations out of the read', async () => {
+    const home = await temporaryDirectory('plan099-chain-flood-home-');
+    const storeRoot = await temporaryDirectory('plan099-chain-flood-store-');
+    const dbPath = join(storeRoot, 'usage.sqlite');
+    await seedHarnessHome(home, { harnesses: ['claude', 'codex', 'opencode'], skillSignals: true });
+
+    const collected = await Effect.runPromise(
+      collectSelectedHarnessResults({ harness: null, includeCursor: false }).pipe(
+        Effect.provideService(LocalHistoryStorage, createLocalHistoryStorage(home)),
+      ),
+    );
+    // Every real invocation the collectors found, plus a catalogue flood that is strictly more
+    // recent — the shape of an actual store, where Codex writes one exposure row per catalogue entry
+    // per session and outnumbers invocations by roughly 66:1.
+    const flood = Array.from({ length: 400 }, (_value, index) => ({
+      argsPresent: null,
+      harnessKey: 'codex',
+      observationKey: `flood-${index}`,
+      observedAt: new Date(Date.UTC(2030, 0, 1, 0, index)).toISOString(),
+      projectPath: null,
+      resolvedPath: null,
+      sessionId: 'flood-session',
+      skillName: `catalogue-skill-${index % 190}`,
+      success: null,
+      tier: 'exposed' as const,
+    }));
+    await Effect.runPromise(
+      importSkillObservations({
+        dbPath,
+        machineId: 'machine-chain',
+        observations: [...collected.observations, ...flood],
+      }),
+    );
+
+    const dataset = await Effect.runPromise(
+      querySkillObservationDataset({ dbPath, ...READ_BOUNDS, maximumObservations: 40 }),
+    );
+    const tallies = dataset.skills.flatMap((skill) =>
+      skill.tallies.map((tally) => `${skill.skillName} ${tally.harnessKey} ${tally.tier}`),
+    );
+
+    // Under a pooled budget of 40 against 400 newer exposure rows, not one of these would survive.
+    expect(tallies).toContain(`${FIXTURE_SKILL_NAMES.claudeDeclared} claude declared`);
+    expect(tallies).toContain(`${FIXTURE_SKILL_NAMES.openCodeDeclared} opencode declared`);
+    expect(tallies).toContain(`${FIXTURE_SKILL_NAMES.codexExposed} codex inferred`);
+    // The catalogue was cut and says so; the evidence the verdicts rest on was not.
+    expect(dataset.lowerBound).toBe(true);
+    expect(dataset.invocationLowerBound).toBe(false);
   });
 });

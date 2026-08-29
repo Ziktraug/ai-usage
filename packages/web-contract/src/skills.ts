@@ -412,6 +412,15 @@ const skillObservationHarnessSchema = strictObject({
 
 const skillObservationsShapeSchema = strictObject({
   harnesses: pipe(array(skillObservationHarnessSchema), minLength(1), maxLength(MAX_OBSERVATION_HARNESSES)),
+  /**
+   * The `declared`/`inferred` read reached its own budget, so invocation evidence is incomplete.
+   *
+   * Distinct from `lowerBound`, and the distinction is the point. Exposure is written once per
+   * catalogue entry per session, so it dwarfs the invocation tiers and a read that truncates it is
+   * routine. Only this flag says the evidence behind "never invoked" was itself cut short — which is
+   * why it, and not `lowerBound`, is what makes an absence verdict provisional.
+   */
+  invocationLowerBound: boolean(),
   /** The read stopped at its bound, so every count is a lower bound rather than a number. */
   lowerBound: boolean(),
   skills: pipe(array(observedSkillSchema), maxLength(MAX_COLLECTION_ITEMS)),

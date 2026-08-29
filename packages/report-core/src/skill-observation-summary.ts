@@ -90,6 +90,18 @@ export interface SkillObservationDataset {
    */
   harnesses: readonly SkillObservationHarnessCoverage[];
   /**
+   * The *invocation* evidence — the `declared` and `inferred` tiers — was
+   * itself cut short.
+   *
+   * Separate from `lowerBound` because the tiers are read against separate
+   * budgets, and only this one can invalidate an absence claim. Exposure is
+   * written once per catalogue entry per session and dwarfs everything else, so
+   * a read that truncates exposure while carrying every recorded invocation is
+   * the ordinary case, not a degraded one: its counts are floors, but "this
+   * skill was never invoked" is still a claim it can support.
+   */
+  invocationLowerBound: boolean;
+  /**
    * The bounded read stopped short, so every count below is a lower bound
    * rather than a number. Reported one past the bound by the reader, because a
    * list that stops exactly at the limit is indistinguishable from a complete
@@ -183,6 +195,7 @@ const coverageFor = (observedHarnessKeys: ReadonlySet<string>): readonly SkillOb
 };
 
 export interface CreateSkillObservationDatasetOptions {
+  readonly invocationLowerBound?: boolean;
   readonly lowerBound?: boolean;
   readonly skipped?: number;
 }
@@ -231,6 +244,7 @@ export const createSkillObservationDataset = (
   }
   return {
     harnesses: coverageFor(observedHarnessKeys),
+    invocationLowerBound: options.invocationLowerBound ?? false,
     lowerBound: options.lowerBound ?? false,
     skills: [...skills.values()]
       .map((skill) => ({
