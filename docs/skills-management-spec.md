@@ -32,6 +32,54 @@ The feature provides a local control plane for inspecting, editing, enabling, an
 - Refuse to overwrite copied directories, unmanaged files, changed observations, or paths that escape configured roots.
 - Serialize source-state and Markdown writes across processes and publish them atomically.
 
+### Observed usage
+
+The inventory answers *what exists*. Skill observations answer *what actually
+runs*, which is what turns the inventory into a decision. The model is specified
+by [ADR 0022](adr/0022-skill-observation-tiers-and-observability.md); the
+requirements below are what the surface must honour.
+
+- Every rendered count carries its **observation tier** and the harness that
+  produced it. `declared` means the harness recorded the invocation as a skill
+  call; `inferred` means it was reconstructed from a weaker trace; `exposed`
+  means the skill was offered to the model with no evidence it was used. A
+  number that adds two tiers together is a defect, and the wire shape has no
+  field to put one in.
+- **Per-harness observability is part of the presented model.** A harness with
+  no collector renders as *not observable*, never as `0`. "Observed nothing" and
+  "cannot observe" are different sentences and the surface says both.
+- **Observations that resolve to no inventory entry are retained and grouped.**
+  Harness-bundled and plugin-provided skills are exactly that population, and
+  they carry the *observed but unmanaged* (adoption candidate) verdict.
+- A managed skill no observing harness has recorded carries the *projected but
+  never observed* (deletion candidate) verdict, and stays in the table rather
+  than disappearing from it.
+- Provenance is per metric. There is no page-level data-quality banner; a failed
+  observation read reports itself in the observation section alone.
+- Tier and observability are conveyed textually. Colour may reinforce them and
+  may never be their only carrier.
+- Wiring an "adopt into the source repository" action for an unmanaged observed
+  skill is **out of scope here** and remains the adoption workflow's.
+
+#### Per-harness coverage
+
+| Harness | Tiers produced | What is recoverable | Why |
+| --- | --- | --- | --- |
+| Claude Code | `declared` | name, timestamp, cwd, session, success, and a resolved base directory for most invocations | a first-class `Skill` tool call in the transcript |
+| OpenCode | `declared` | name, status, session, timestamp | a `skill` tool part in its database; it discloses no resolved path, so scope may legitimately fail to resolve |
+| Codex | `exposed`, `inferred` | the skill catalogue injected into every system prompt, plus `exec` commands that read a `SKILL.md` | Codex has no skill tool; the two streams come from two separate extractors and are never combined |
+| Cursor | none — **not observable** | nothing | its state database contains zero `skill` tool keys and its tracking database has no relevant table |
+
+**Cursor is unobservable, and that is a finding rather than a gap.** This product
+projects skills into `~/.cursor/skills`, so Cursor genuinely exposes them — it
+simply records nothing about their use. Rendering `0` for Cursor would assert
+that its projected skills go unused, which no data supports. It therefore renders
+as *not observable* and is never included in a denominator that would make the
+other harnesses look complete.
+
+Skill arguments are never persisted. They are user prose and have been measured
+to contain client names and business context; only their presence is recorded.
+
 ### Web experience
 
 - Expose Skills as a first-class web route with global and project scopes, a runtime matrix, diagnostics, configuration, and reconciliation controls.
@@ -46,8 +94,9 @@ The feature provides a local control plane for inspecting, editing, enabling, an
 
 ## Package boundaries
 
-- `@ai-usage/skills` owns contracts, validation, bounded filesystem operations, scans, projections, Markdown IO, and workflows.
-- `apps/web/src/server/skills*` owns server-side validation and adaptation behind the oRPC contract.
+- `@ai-usage/skills` owns contracts, validation, bounded filesystem operations, scans, projections, Markdown IO, and workflows. It is a filesystem-projection domain and must never gain a `@ai-usage/usage-store` dependency.
+- `apps/web/src/server/skills*` owns server-side validation and adaptation behind the oRPC contract, and is the only place the inventory meets observed usage — through the read-only `UsageReadModel` seam (ADR 0009).
+- `apps/web/src/lib/features/skills/observations` owns the inventory↔observation join and its presentation; `@ai-usage/report-core/skill-observation-summary` owns the pure fold from observations into the presented dataset.
 - `apps/web/src/lib/features/skills/shell` owns route operations and snapshot replacement policy (see its `INTEGRATION.md`).
 - `apps/web/src/routes/skills/` composes route presentation and URL-backed selection; `apps/web/src/lib/features/skills/{editor,management}` own the editor and management surfaces.
 - Browser-safe clients must use the documented `@ai-usage/skills/config` and `@ai-usage/skills/shared` exports and must not import server modules.

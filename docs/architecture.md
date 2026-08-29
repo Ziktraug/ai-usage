@@ -106,10 +106,48 @@ corrupt data.
 Served report support, Overview, Breakdown, Sessions, campaign children,
 neighbors, and detail anchors are bounded direct queries against revision-keyed
 durable projections. Quota history is a separate bounded direct read of durable
-provider-quota observations and does not name a served revision. SSR reads the
-current manifest and bounded support bootstrap in one transaction; destination
-queries after hydration name that same revision. The browser owns destination
-fingerprinting, supersession, atomic commit, and one expiry retry.
+provider-quota observations and does not name a served revision. Skill
+observations are a second such read (see below). SSR reads the current manifest
+and bounded support bootstrap in one transaction; destination queries after
+hydration name that same revision. The browser owns destination fingerprinting,
+supersession, atomic commit, and one expiry retry.
+
+#### Skill observations
+
+Skill observations are an auxiliary fact family with their own tables, their own
+collector pass, and a read path that never touches the report bootstrap
+(ADR 0022). One observation records that a named skill was invoked, or offered,
+in one session of one harness, and carries an **observation tier** —
+`declared`, `inferred`, or `exposed` — that is part of the fact rather than a
+qualifier on it.
+
+The read path is:
+
+`skill_observations` (durable)
+→ `querySkillObservations` (`@ai-usage/usage-store/reader`, bounded, `query_only`)
+→ `UsageReadModel.readSkillObservations` (`apps/web/src/server/usage-read-model.server.ts`)
+→ `createSkillObservationDataset` (`@ai-usage/report-core/skill-observation-summary`)
+→ the `skills.observations` oRPC procedure
+→ the `skill-observations` query family under the `collection-swr` policy.
+
+Three properties are load-bearing:
+
+- **It is independent of the report revision.** Observations answer a question
+  about the skills inventory, not about a published report, so `/skills` stays
+  answerable before the first publication and after every revision expires.
+- **Counts never leave their tier or their harness.** The dataset's smallest
+  unit is one count plus the tier and harness that produced it. There is no
+  per-skill or per-harness total to sum `declared` into `inferred`.
+- **Harness coverage is enumerated, not inferred.** Every harness appears with
+  an observability marker derived from the harness itself. Cursor has no
+  collector and renders as *not observable*, never as `0`.
+
+The inventory↔observation join happens in `apps/web/src/server/skills.server.ts`
+and the browser view model, never inside `@ai-usage/skills`, which stays a
+filesystem-projection domain with no usage-store dependency. A store this read
+cannot open fails the observation section explicitly rather than degrading to an
+empty dataset, because an empty dataset would draw every observable harness as a
+zero.
 
 Engine availability and stored-data availability are independent. If the
 engine stops after a compatible revision is committed, Web and `--stored` CLI
@@ -449,6 +487,10 @@ admission, cadence, dependencies, or publication ordering here.
 - Publication uses a canonical semantic capture fingerprint that excludes only
   observation time. An unchanged forced capture retains/renews current and
   skips Session rematerialization.
+- Skill observations carry their tier and harness through every derived count.
+  An unobservable harness is `not-observable`, never `0`, and an observation
+  that resolves to no inventory entry is retained and labelled rather than
+  dropped (ADR 0022). Skill argument text is never persisted.
 - Portable snapshot and merge-bundle rows carry credential-free display facts
   with `portable-opaque` authority. They never authorize local filesystem or
   provider access.

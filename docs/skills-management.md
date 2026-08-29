@@ -114,7 +114,25 @@ consolidate, and disabled. The UI does not merge those signals into one "needs
 attention" number.
 
 Skill consumers are called runtimes in UI copy and docs. "Harness" remains
-reserved for usage-report collectors.
+reserved for usage-report collectors — which is exactly why observed usage is
+reported per *harness*: it comes from the collectors, not from the projection
+targets.
+
+Observed usage is a second axis on the same inventory, and it is the one that
+turns it into a decision. The matrix carries an "Observed skill usage" panel and
+each global skill detail carries an "Observed usage" section. Every count states
+its observation tier (`declared`, `inferred`, `exposed`) and the harness that
+produced it, and the tiers are never added together. Cursor records nothing about
+skill use, so it renders as *not observable* rather than as a zero: it exposes
+the skills this product projects into it, and a zero would claim they go unused.
+Two verdicts get their own groups — *projected but never observed* (deletion
+candidates) and *observed but unmanaged* (adoption candidates, which is where
+harness-bundled and plugin skills land). Adopting an unmanaged observed skill
+into the source repository remains future work, as above.
+
+See [ADR 0022](adr/0022-skill-observation-tiers-and-observability.md) for the
+invariants and `docs/skills-management-spec.md` for the per-harness coverage
+table.
 
 Bulk runtime reconciliation remains preview-first and is distinct from saving a
 source document. "Reconcile all…" plans the actions server-side without mutating
