@@ -1,6 +1,10 @@
 import { describe, expect, test } from 'bun:test';
 import type { SkillObservations } from '@ai-usage/web-contract/skills';
-import { syntheticObservations, syntheticProvisionalObservations } from '../shell/synthetic-fixture.test-helper';
+import {
+  syntheticExposureTruncatedObservations,
+  syntheticObservations,
+  syntheticProvisionalObservations,
+} from '../shell/synthetic-fixture.test-helper';
 import {
   buildSkillObservationsView,
   deletionCandidateText,
@@ -103,7 +107,7 @@ describe('skill observations view', () => {
   test('qualifies every absence claim when the read could not prove absence', () => {
     const built = view(syntheticProvisionalObservations);
 
-    expect(built.observationsComplete).toBe(false);
+    expect(built.invocationEvidenceComplete).toBe(false);
     // A short read cannot prove a skill went unused, so the copy says what it actually knows.
     expect(verdictText({ verdict: 'never-observed', verdictProvisional: true })).toBe(
       'No observation within the read bound.',
@@ -140,6 +144,7 @@ describe('skill observations view', () => {
   test('reads honestly at n = 1 and with nothing observed at all', () => {
     const single: SkillObservations = {
       harnesses: syntheticObservations.harnesses,
+      invocationLowerBound: false,
       lowerBound: false,
       skills: [
         {
@@ -173,12 +178,18 @@ describe('skill observations view', () => {
       NOT_OBSERVABLE_TEXT,
     ]);
 
-    const empty = view({ harnesses: syntheticObservations.harnesses, lowerBound: false, skills: [], skipped: 0 });
+    const empty = view({
+      harnesses: syntheticObservations.harnesses,
+      invocationLowerBound: false,
+      lowerBound: false,
+      skills: [],
+      skipped: 0,
+    });
     expect(empty.rows).toEqual([]);
     expect(empty.deletionCandidates).toEqual([]);
     expect(empty.adoptionCandidates).toEqual([]);
     expect(empty.offeredOnly).toEqual([]);
-    expect(empty.observationsComplete).toBe(true);
+    expect(empty.invocationEvidenceComplete).toBe(true);
   });
 
   test('renders an observation instant identically wherever it is rendered', () => {
@@ -191,7 +202,7 @@ describe('skill observations view', () => {
   });
 
   test('lists managed skills before unmanaged ones and carries the read bound through', () => {
-    const built = view({ ...syntheticObservations, lowerBound: true, skipped: 4 });
+    const built = view({ ...syntheticObservations, invocationLowerBound: true, lowerBound: true, skipped: 4 });
 
     expect(built.rows.map(({ skillName }) => skillName)).toEqual([
       'alpha-skill',
@@ -201,6 +212,32 @@ describe('skill observations view', () => {
     ]);
     expect(built.lowerBound).toBe(true);
     expect(built.skipped).toBe(4);
-    expect(built.observationsComplete).toBe(false);
+    expect(built.invocationEvidenceComplete).toBe(false);
+  });
+
+  test('a truncated exposure catalogue leaves every verdict standing', () => {
+    const built = view(syntheticExposureTruncatedObservations);
+
+    // The condition a real store is permanently in: Codex writes one exposure row per catalogue
+    // entry per session, so the catalogue always outruns the budget. Treating that as a reason to
+    // hedge every verdict is what made months of real invocation history read as "never invoked" —
+    // and the hedge would never come off, because the condition never clears.
+    expect(built.lowerBound).toBe(true);
+    expect(built.invocationEvidenceComplete).toBe(true);
+    expect(built.onlyExposureTruncated).toBe(true);
+    for (const row of built.rows) {
+      expect(row.verdictProvisional).toBe(false);
+    }
+  });
+
+  test('separates a truncated catalogue from truncated invocation evidence', () => {
+    // Only the second one can make an absence claim unsafe, so only the second one says so.
+    expect(view(syntheticProvisionalObservations).onlyExposureTruncated).toBe(false);
+    expect(view(syntheticObservations).onlyExposureTruncated).toBe(false);
+    // Unreadable rows are unreadable whichever tier they held, so they never count as exposure-only.
+    expect(view({ ...syntheticExposureTruncatedObservations, skipped: 2 })).toMatchObject({
+      invocationEvidenceComplete: false,
+      onlyExposureTruncated: false,
+    });
   });
 });

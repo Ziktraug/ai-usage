@@ -61,6 +61,7 @@ const capability = (calls: string[] = []): SkillsCapability => ({
         { harnessKey: 'claude', label: 'Claude Code', observability: 'observable' as const },
         { harnessKey: 'cursor', label: 'Cursor', observability: 'not-observable' as const },
       ],
+      invocationLowerBound: false,
       lowerBound: false,
       skills: [],
       skipped: 0,

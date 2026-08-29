@@ -120,21 +120,26 @@ export const clampSkillObservationsResponse = (response: SkillObservations): Ski
       tallies,
     };
   });
-  let clamped: SkillObservations =
-    skills.length > MAX_SKILL_OBSERVATION_SKILLS
-      ? { ...response, harnesses, lowerBound: true, skills: skills.slice(0, MAX_SKILL_OBSERVATION_SKILLS) }
-      : { ...response, harnesses, lowerBound, skills };
+  let droppedSkillRows = skills.length > MAX_SKILL_OBSERVATION_SKILLS;
+  let clamped: SkillObservations = droppedSkillRows
+    ? { ...response, harnesses, lowerBound: true, skills: skills.slice(0, MAX_SKILL_OBSERVATION_SKILLS) }
+    : { ...response, harnesses, lowerBound, skills };
   // Halving rather than estimating, because skill names and resolved paths are open-vocabulary: the
   // serialized size of a row is not derivable from a row count. It always terminates — an empty
   // skill list leaves only a roster that is orders of magnitude inside the budget.
   while (clamped.skills.length > 0 && responseBytes(clamped) > MAX_SKILL_OBSERVATIONS_RESPONSE_BYTES) {
+    droppedSkillRows = true;
     clamped = {
       ...clamped,
       lowerBound: true,
       skills: clamped.skills.slice(0, Math.floor(clamped.skills.length / 2)),
     };
   }
-  return clamped;
+  // Dropping whole rows drops whatever invocation evidence they carried, so the response says its
+  // invocation evidence is incomplete. The per-skill `verdictProvisional` flags are untouched, and
+  // correctly so: they were decided before this clamp, and a surviving skill's own evidence is not
+  // weakened by another skill being left out. The two answer different questions.
+  return droppedSkillRows ? { ...clamped, invocationLowerBound: true } : clamped;
 };
 
 const INVOCATION_TIERS: ReadonlySet<string> = new Set(['declared', 'inferred']);
@@ -151,9 +156,20 @@ const verdictFor = (managed: boolean, invoked: boolean, offered: boolean): Skill
 export const joinSkillObservations = (input: SkillObservationJoinInput): SkillObservations => {
   const skillsByName = new Map(input.skills.map((skill) => [skill.name, skill]));
   const observedByName = new Map(input.observations.skills.map((skill) => [skill.skillName, skill]));
-  // A bounded or partially unreadable read cannot prove absence. Verdicts that rest on absence say
-  // so, so the surface can qualify them instead of presenting a short read as proof.
-  const absenceIsProvable = !input.observations.lowerBound && input.observations.skipped === 0;
+  /**
+   * Whether this read can prove that a skill went uninvoked.
+   *
+   * Keyed on the *invocation* bound, not the pooled one. Every absence verdict here — never
+   * observed, offered-only, deletion candidate — is a claim about `declared` and `inferred`
+   * evidence, and nothing else. A read that carried every recorded invocation and stopped short of
+   * the exposure catalogue has proved exactly what those verdicts assert; marking them provisional
+   * would hedge a claim the data fully supports, and on a real store exposure truncation is the
+   * permanent condition, so the hedge would never come off.
+   *
+   * The converse still holds: if the invocation read trips its own budget, or rows failed
+   * re-validation, absence is unproven and every such verdict says so.
+   */
+  const absenceIsProvable = !input.observations.invocationLowerBound && input.observations.skipped === 0;
   // Every managed skill appears, observed or not: a skill missing from the observation read is the
   // deletion candidate this family exists to name, and dropping it would erase the verdict.
   const names = [...new Set([...skillsByName.keys(), ...observedByName.keys()])].sort((left, right) =>
@@ -185,6 +201,7 @@ export const joinSkillObservations = (input: SkillObservationJoinInput): SkillOb
   });
   return clampSkillObservationsResponse({
     harnesses: input.observations.harnesses.map((harness) => ({ ...harness })),
+    invocationLowerBound: input.observations.invocationLowerBound,
     lowerBound: input.observations.lowerBound,
     skills,
     skipped: input.observations.skipped,

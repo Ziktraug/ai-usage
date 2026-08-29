@@ -9,6 +9,7 @@ import type { WebRpcRouterDependencies } from '../../../server/rpc/router';
 import type { SkillsCapability, SkillsCapabilityResult } from '../../../server/rpc/skills';
 import { loadSkillsShellRoute } from './data';
 import {
+  syntheticExposureTruncatedObservations,
   syntheticInventories,
   syntheticKnownPaths,
   syntheticManagedDocument,
@@ -208,8 +209,29 @@ describe('Svelte Skills workspace SSR', () => {
     expect(deletionGroupAttributes(html)).toContain('data-provisional="true"');
     expect(html).toContain('Provisional: this read was bounded');
     expect(html).toContain('No observation within the read bound.');
-    expect(html).toContain('data-skill-observations-lower-bound');
+    expect(html).toContain('data-skill-observations-lower-bound="invocations"');
     expect(html).not.toContain('Never observed by any harness.');
+  });
+
+  test('tells a truncated catalogue apart from truncated evidence instead of hedging both', () => {
+    const html = render(observationsComponent, {
+      props: { observations: syntheticExposureTruncatedObservations, variant: 'overview' },
+    }).body;
+
+    // A real store is permanently in this state, so flattening it into "the read reached its bound"
+    // meant every verdict carried a hedge that could never come off — which is how a store holding
+    // hundreds of real invocations came to read as if nothing had ever been invoked.
+    expect(html).toContain('data-skill-observations-lower-bound="exposure"');
+    expect(html).toContain('The verdicts are not affected.');
+    expect(deletionGroupAttributes(html)).toContain('data-provisional="false"');
+    expect(html).not.toContain('within the read bound');
+
+    const evidenceBounded = render(observationsComponent, {
+      props: { observations: syntheticProvisionalObservations, variant: 'overview' },
+    }).body;
+    expect(evidenceBounded).toContain('data-skill-observations-lower-bound="invocations"');
+    expect(evidenceBounded).toContain('within the read bound');
+    expect(deletionGroupAttributes(evidenceBounded)).toContain('data-provisional="true"');
   });
 
   test('renders the resolved-path ceiling as words rather than a silently short list', () => {

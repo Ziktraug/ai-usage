@@ -124,7 +124,9 @@ qualifier on it.
 The read path is:
 
 `skill_observations` (durable)
-→ `querySkillObservations` (`@ai-usage/usage-store/reader`, bounded, `query_only`)
+→ `querySkillObservations` (`@ai-usage/usage-store/reader`, bounded, `query_only`,
+reading the invocation tiers against the full budget before spending the
+remainder on exposure, and reporting the two bounds separately)
 → `querySkillObservationDataset` (`@ai-usage/report-data/skill-observation-read`,
 which refuses rows the presentation edge cannot render — counting them into
 `skipped` rather than failing the response — then folds and clamps to the caps it
@@ -139,7 +141,14 @@ cannot bound a payload the join grows)
 → the `skills.observations` oRPC procedure
 → the `skill-observations` query family under the `collection-swr` policy.
 
-Four properties are load-bearing:
+Five properties are load-bearing:
+
+- **The tiers get separate read budgets, and separate bounds.** Exposure is
+  written once per catalogue entry per session and outnumbers real invocations
+  by roughly 50:1, so a pooled recency-ordered budget returns catalogue rows and
+  nothing else. `lowerBound` says some count is a floor; `invocationLowerBound`
+  says the `declared`/`inferred` evidence was itself cut short, and only that
+  one makes an absence verdict provisional (ADR 0022).
 
 - **A completed publication *cycle* invalidates it — not a new revision.** The
   query policy revalidates on neither focus nor reconnect, because nothing a

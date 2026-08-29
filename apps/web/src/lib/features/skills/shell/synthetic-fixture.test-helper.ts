@@ -57,6 +57,7 @@ export const syntheticObservations: SkillObservations = {
     { harnessKey: 'opencode', label: 'OpenCode', observability: 'observable' },
     { harnessKey: 'cursor', label: 'Cursor', observability: 'not-observable' },
   ],
+  invocationLowerBound: false,
   lowerBound: false,
   skills: [
     {
@@ -146,13 +147,30 @@ export const syntheticObservations: SkillObservations = {
 };
 
 /** The same payload from a read that could not prove absence: every absence claim is provisional. */
+/**
+ * A read whose *invocation* evidence was cut short — the only kind that makes an absence claim
+ * provisional. Exposure truncation alone leaves the verdicts intact and is covered separately by
+ * `syntheticExposureTruncatedObservations`.
+ */
 export const syntheticProvisionalObservations: SkillObservations = {
   ...syntheticObservations,
+  invocationLowerBound: true,
   lowerBound: true,
   skills: syntheticObservations.skills.map((skill) => ({
     ...skill,
     verdictProvisional: !skill.tallies.some((tally) => tally.tier === 'declared' || tally.tier === 'inferred'),
   })),
+};
+
+/**
+ * The ordinary state of a store with real Codex history: the exposure catalogue outran the read
+ * budget, every recorded invocation is present, and no verdict is weakened. The counts are floors;
+ * the verdicts are not provisional.
+ */
+export const syntheticExposureTruncatedObservations: SkillObservations = {
+  ...syntheticObservations,
+  invocationLowerBound: false,
+  lowerBound: true,
 };
 
 export const syntheticKnownPaths: readonly KnownSkillProjectPath[] = [

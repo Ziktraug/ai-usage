@@ -120,10 +120,10 @@ describe('skill observation join', () => {
     }
   });
 
-  test('marks only absence claims provisional when the read was bounded', () => {
+  test('marks only absence claims provisional when the invocation read was bounded', () => {
     const bounded = createSkillObservationDataset(
       [observation({ harnessKey: 'claude', skillName: 'used', tier: 'declared' })],
-      { lowerBound: true },
+      { invocationLowerBound: true, lowerBound: true },
     );
 
     const result = join({
@@ -136,6 +136,46 @@ describe('skill observation join', () => {
     expect(skillNamed(result, 'unused')?.verdictProvisional).toBe(true);
     // Presence is not weakened by a short read: an invocation seen is an invocation that happened.
     expect(skillNamed(result, 'used')?.verdictProvisional).toBe(false);
+    expect(result.invocationLowerBound).toBe(true);
+  });
+
+  test('a truncated exposure catalogue does not make an absence verdict provisional', () => {
+    // The condition every real store is permanently in: Codex writes one exposure row per catalogue
+    // entry per session, so the catalogue always outruns the budget while the invocation tiers fit
+    // comfortably. Keying provisionality on the pooled bound hedged every verdict forever — and
+    // hedged them for a reason that has nothing to do with what the verdicts claim.
+    const exposureBounded = createSkillObservationDataset(
+      [
+        observation({ harnessKey: 'claude', skillName: 'used', tier: 'declared' }),
+        observation({ harnessKey: 'codex', skillName: 'catalogued', tier: 'exposed' }),
+      ],
+      { invocationLowerBound: false, lowerBound: true },
+    );
+
+    const result = join({
+      observations: exposureBounded,
+      projections: [
+        { skillName: 'unused', state: 'linked', targetId: 'claude' },
+        { skillName: 'catalogued', state: 'linked', targetId: 'claude' },
+      ],
+      skills: [managedSkill('used'), managedSkill('unused'), managedSkill('catalogued')],
+    });
+
+    // Every invocation ever recorded is in hand, so "never invoked" is a claim this read supports.
+    expect(skillNamed(result, 'unused')).toMatchObject({
+      deletionCandidate: true,
+      verdict: 'never-observed',
+      verdictProvisional: false,
+    });
+    expect(skillNamed(result, 'catalogued')).toMatchObject({
+      verdict: 'offered-only',
+      verdictProvisional: false,
+    });
+    expect(skillNamed(result, 'used')?.verdictProvisional).toBe(false);
+    // The counts are still floors, and the response still says so — just not through the flag that
+    // governs verdicts.
+    expect(result.lowerBound).toBe(true);
+    expect(result.invocationLowerBound).toBe(false);
   });
 
   test('treats unreadable stored rows the same way as a bounded read', () => {
@@ -149,6 +189,9 @@ describe('skill observation join', () => {
 
     expect(skillNamed(result, 'unused')?.verdictProvisional).toBe(true);
     expect(result.skipped).toBe(3);
+    // A row that failed re-validation could have been an invocation, so it counts against absence
+    // regardless of which bound the read reported.
+    expect(result.invocationLowerBound).toBe(false);
   });
 
   test('keeps a managed skill with no observations in the payload rather than dropping it', () => {
@@ -258,6 +301,10 @@ describe('skill observation response bounds', () => {
     // join added. Clamping only upstream would have let exactly this payload reach the schema.
     expect(result.skills).toHaveLength(MAX_SKILL_OBSERVATION_SKILLS);
     expect(result.lowerBound).toBe(true);
+    // Dropping whole rows drops whatever invocation evidence they carried, so the response no
+    // longer claims complete invocation coverage — even though each surviving row's own verdict was
+    // decided before the clamp and stands.
+    expect(result.invocationLowerBound).toBe(true);
     expect(safeParse(skillObservationsSchema, result).success).toBe(true);
   });
 
@@ -294,6 +341,7 @@ describe('skill observation response bounds', () => {
 
   const responseWithSkills = (count: number, nameLength: number): SkillObservations => ({
     harnesses: [{ harnessKey: 'claude', label: 'Claude Code', observability: 'observable' }],
+    invocationLowerBound: false,
     lowerBound: false,
     skills: Array.from({ length: count }, (_value, index) => ({
       deletionCandidate: false,

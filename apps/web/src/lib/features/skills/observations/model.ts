@@ -55,12 +55,22 @@ export interface SkillObservationsView {
   /** Managed, installed in every enabled runtime, and still never invoked: the deletion candidates. */
   deletionCandidates: readonly SkillObservationRow[];
   harnesses: readonly SkillObservationHarness[];
+  /**
+   * Whether the read can prove an absence at all — which depends on the *invocation* evidence
+   * alone, since every absence claim on this surface is a claim about `declared` and `inferred`
+   * rows. Exposure is catalogue boilerplate: truncating it costs nothing a verdict rests on.
+   */
+  invocationEvidenceComplete: boolean;
   /** The read hit its bound, so every count below is a lower bound. */
   lowerBound: boolean;
-  /** Whether the read can prove an absence at all. */
-  observationsComplete: boolean;
   /** Offered to a model with no evidence of use, and not already a deletion candidate. */
   offeredOnly: readonly SkillObservationRow[];
+  /**
+   * The counts are floors but the invocation evidence behind the verdicts is whole — the ordinary
+   * state of a store with real Codex history. The surface says which of the two it is rather than
+   * flattening both into one hedge.
+   */
+  onlyExposureTruncated: boolean;
   /** Managed skills first, then the unmanaged names, each alphabetically. */
   rows: readonly SkillObservationRow[];
   /** Persisted rows the reader could not re-validate. */
@@ -202,8 +212,9 @@ export const buildSkillObservationsView = (observations: SkillObservations): Ski
     adoptionCandidates: rows.filter((row) => row.verdict === 'invoked-unmanaged'),
     deletionCandidates: rows.filter((row) => row.deletionCandidate),
     harnesses: observations.harnesses,
+    invocationEvidenceComplete: !observations.invocationLowerBound && observations.skipped === 0,
     lowerBound: observations.lowerBound,
-    observationsComplete: !observations.lowerBound && observations.skipped === 0,
+    onlyExposureTruncated: observations.lowerBound && !(observations.invocationLowerBound || observations.skipped > 0),
     // Exclusive of the deletion group, so no skill is listed twice under two headings.
     offeredOnly: rows.filter((row) => row.verdict === 'offered-only' && !row.deletionCandidate),
     rows: [...rows.filter((row) => row.managed), ...rows.filter((row) => !row.managed)],

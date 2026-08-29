@@ -60,14 +60,20 @@ requirements below are what the surface must honour.
   or `inferred` evidence. A skill seen only at the `exposed` tier was listed in
   a catalogue the harness injects wholesale; it is reported under its own
   heading, because it is a fact about offering rather than about use.
-- **A bounded or partially unreadable read cannot prove absence.** When the read
-  reports a bound or skipped rows, every verdict that rests on absence is marked
-  provisional and says what it actually knows ("no observation within the read
-  bound"), and both the deletion group and the per-skill deletion sentence carry
-  the same qualification — the deletion proposal most of all, since it is the one
-  verdict acted on destructively. Verdicts that
-  rest on presence are unaffected: an invocation seen is an invocation that
-  happened.
+- **A bounded or partially unreadable read cannot prove absence — but only the
+  right kind of bound.** Every absence verdict here is a claim about `declared`
+  and `inferred` evidence, so it is the *invocation* bound that qualifies it, not
+  the pooled one. A read that carried every recorded invocation and stopped short
+  of the exposure catalogue has proved exactly what those verdicts assert, and
+  says so; that is the ordinary state of a store with real Codex history, and
+  hedging it would attach a caveat that could never come off. When the invocation
+  read does trip its own budget, or rows fail re-validation, every verdict that
+  rests on absence is marked provisional and says what it actually knows ("no
+  observation within the read bound"), and both the deletion group and the
+  per-skill deletion sentence carry the same qualification — the deletion
+  proposal most of all, since it is the one verdict acted on destructively.
+  Verdicts that rest on presence are unaffected: an invocation seen is an
+  invocation that happened.
 - Provenance is per metric. There is no page-level data-quality banner; a failed
   observation read reports itself in the observation section alone.
 - Tier and observability are conveyed textually. Colour may reinforce them and

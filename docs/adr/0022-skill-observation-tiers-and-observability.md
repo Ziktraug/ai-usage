@@ -152,6 +152,32 @@ new columns on `usage_rows`.
   per-skill resolved-path ceiling, which carries its own
   `resolvedPathsTruncated` marker: a silently short list of directories reads as
   a complete census of where a skill lives.
+- **The tiers do not share a read budget, and their bounds are reported
+  separately.** They are not produced at comparable rates. A Codex session emits
+  one `exposed` row per catalogue entry, so on the operator's real store exposure
+  outnumbers actual invocations 78,442 to 1,481 — 53 to 1. A single pooled
+  `ORDER BY observed_at DESC LIMIT n` therefore spends the entire budget on
+  catalogue injections: measured, a 20,000-row read returned 539 of 1,481
+  invocations and cut six months of invocation history down to three weeks, so
+  skills with hundreds of recorded reads rendered as *offered but never
+  invoked*. The read now takes the invocation tiers first, against the full
+  budget, and fills the remainder with exposure.
+
+  The two bounds are then distinct facts and are carried as two fields.
+  `lowerBound` means some count is a floor. `invocationLowerBound` means the
+  `declared`/`inferred` evidence was itself cut short — and **only that one makes
+  an absence verdict provisional**. Keying provisionality on the pooled bound
+  hedged every verdict on every real store, permanently, for a reason unrelated
+  to what the verdicts claim; a hedge that can never come off is not a
+  qualification, it is noise. A clamp that drops whole skill rows also sets
+  `invocationLowerBound`, because the inventory join re-adds every managed skill
+  it does not see — as a skill with no tallies, which reads as *never observed*.
+
+  **The generalisable rule: a fact family whose members are produced at wildly
+  different rates cannot share one recency-ordered budget.** The abundant member
+  wins every time, and the scarce member — which is usually the one carrying the
+  meaning — disappears silently while every bound-reporting mechanism says the
+  system is behaving correctly.
 - **The bound that has to hold is the one on the response.** The read is clamped
   before the inventory join, and the join then re-injects every managed skill,
   merges the store's harness keys into the catalogue roster, and widens each row,

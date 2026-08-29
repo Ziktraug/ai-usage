@@ -117,7 +117,7 @@
     <p class={meta} data-skill-observations-last-observed>
       {#if row?.lastObservedAt}
         Last observed <time datetime={row.lastObservedAt}>{formatObservedAt(row.lastObservedAt)}</time>
-      {:else if view.observationsComplete}
+      {:else if view.invocationEvidenceComplete}
         Never observed.
       {:else}
         No observation within the read bound.
@@ -126,9 +126,9 @@
     <p
       class={meta}
       data-skill-observations-verdict={row?.verdict ?? 'never-observed'}
-      data-verdict-provisional={(row?.verdictProvisional ?? !view.observationsComplete) ? 'true' : 'false'}
+      data-verdict-provisional={(row?.verdictProvisional ?? !view.invocationEvidenceComplete) ? 'true' : 'false'}
     >
-      {verdictText(row ?? { verdict: 'never-observed', verdictProvisional: !view.observationsComplete })}
+      {verdictText(row ?? { verdict: 'never-observed', verdictProvisional: !view.invocationEvidenceComplete })}
     </p>
     {#if row?.deletionCandidate}
       <p
@@ -177,9 +177,23 @@
       {/each}
     </ul>
 
+    <!-- Two different facts, and collapsing them into one hedge is what made a store full of real
+         invocation history read as if nothing had ever been invoked. A truncated exposure catalogue
+         is routine — Codex writes one exposure row per catalogue entry per session — and costs the
+         verdicts nothing; a truncated invocation read is the one that does. -->
     {#if view.lowerBound}
-      <p class={meta} data-skill-observations-lower-bound role="status">
-        The observation read reached its bound, so every count below is a lower bound.
+      <p
+        class={meta}
+        data-skill-observations-lower-bound={view.onlyExposureTruncated ? 'exposure' : 'invocations'}
+        role="status"
+      >
+        {#if view.onlyExposureTruncated}
+          The read carried every recorded invocation and stopped short of the full exposure catalogue, so
+          <em>exposed</em>
+          counts below are lower bounds. The verdicts are not affected.
+        {:else}
+          The observation read reached its bound, so every count below is a lower bound.
+        {/if}
       </p>
     {/if}
     {#if view.skipped > 0}
@@ -240,7 +254,7 @@
     <section
       aria-label="Projected everywhere but never invoked"
       class={section}
-      data-provisional={view.observationsComplete ? 'false' : 'true'}
+      data-provisional={view.invocationEvidenceComplete ? 'false' : 'true'}
       data-skill-observations-group="deletion"
     >
       <div class={sectionHeader}>
@@ -250,7 +264,7 @@
           Being offered to a model does not count as use, and Cursor cannot report, so its projections are not evidence
           either way.
         </p>
-        {#if !view.observationsComplete}
+        {#if !view.invocationEvidenceComplete}
           <p class={panelSub} data-skill-observations-provisional-note role="status">
             Provisional: this read was bounded or could not read every stored row, so absence here is not proof.
           </p>
@@ -258,7 +272,7 @@
       </div>
       {#if view.deletionCandidates.length === 0}
         <p class={meta}>
-          {view.observationsComplete
+          {view.invocationEvidenceComplete
             ? 'Every managed skill installed everywhere has been invoked at least once.'
             : 'Nothing qualifies within the read bound.'}
         </p>
