@@ -52,13 +52,21 @@ export const webQueryPolicies = {
     staleTime: SHORT_CONTROL_STALE_TIME_MS,
   }),
   /**
-   * For data whose only producer is a background collection cycle. It revalidates on nothing —
-   * not mount, not focus, not reconnect — because none of those events can have changed it; a
-   * finished collection is announced through explicit invalidation instead.
+   * For data whose only producer is a background collection cycle. Focus and reconnect cannot have
+   * changed it, so it ignores both; a finished collection is announced through explicit
+   * invalidation instead.
+   *
+   * Mount is different, and the difference is not cosmetic. TanStack refetches on mount only when
+   * the entry is *stale*, and an invalidated entry is stale, so `refetchOnMount: false` does not
+   * merely skip a pointless fetch — it strands an invalidation that arrived while nothing was
+   * subscribed. Leaving `/skills`, letting a collection cycle finish, and coming back would serve
+   * the pre-cycle value for the rest of the session, because the one event that could refresh it
+   * had already been discarded. With mount honouring staleness, a fresh entry still refetches
+   * nothing and a stale one recovers.
    */
   collectionSwr: policy({
     gcTime: DEFAULT_BOUNDED_GC_TIME_MS,
-    refetchOnMount: false,
+    refetchOnMount: true,
     refetchOnReconnect: false,
     refetchOnWindowFocus: false,
     retry: false,

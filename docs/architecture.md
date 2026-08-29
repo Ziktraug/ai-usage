@@ -128,17 +128,25 @@ The read path is:
 → `UsageReadModel.readSkillObservations` (`apps/web/src/server/usage-read-model.server.ts`)
 → `querySkillObservationDataset` (`@ai-usage/report-data/skill-observation-read`,
 which folds and clamps to the response caps, reporting any clamp as `lowerBound`)
-→ `joinSkillObservations` (`apps/web/src/server/skill-observation-join.ts`)
+→ `joinSkillObservations` (`apps/web/src/server/skill-observation-join.ts`,
+which adds the inventory side and then clamps the *assembled response* to the
+contract's caps, again reporting any clamp as `lowerBound` — the upstream clamp
+cannot bound a payload the join grows)
 → the `skills.observations` oRPC procedure
 → the `skill-observations` query family under the `collection-swr` policy.
 
 Three properties are load-bearing:
 
-- **A completed source publication invalidates it.** The query policy
-  revalidates on nothing — not mount, not focus, not reconnect — because nothing
-  a browser does can change it. The engine finishing a collection cycle can, and
-  that is exactly what a publication announces, so publication invalidation is
-  the identity's freshness path (`publicationInvalidatedKeys`).
+- **A completed publication *cycle* invalidates it — not a new revision.** The
+  query policy revalidates on neither focus nor reconnect, because nothing a
+  browser does can change it; it does revalidate on mount, which is the only
+  place an invalidation that arrived while nothing was subscribed can still be
+  honoured. The freshness signal itself is keyed on the cycle
+  (`publishedGeneration` and `lastPublishedAt` in the source-control snapshot),
+  not on the revision, because a cycle that leaves the report rows identical
+  renews the current revision instead of publishing a new one — and an
+  observation-only sweep is exactly that shape. See `publicationIdentity` in the
+  source-control service and `publicationInvalidatedKeys`.
 - **It is independent of the report revision.** Observations answer a question
   about the skills inventory, not about a published report, so `/skills` stays
   answerable before the first publication and after every revision expires.
@@ -419,8 +427,10 @@ request no route data.
 Session paging rows and cursors remain in exact Query page data. Components own
 only requested depth, expansion, selection, focus, URL intent, and
 virtualization. The source EventSource retains one explicit connection and
-writes its latest bounded snapshot into Query; publication invalidates only
-current report aliases.
+writes its latest bounded snapshot into Query. A completed publication cycle
+invalidates the current report aliases and the skill-observation identity, and
+nothing else; the aliases are included because a renewal rewrites the served
+revision's `publishedAt` and `expiresAt`, which the manifest carries.
 
 On-demand Session Analysis first resolves a private `local-observed` anchor
 from the exact served revision, validates its local machine identity, and only

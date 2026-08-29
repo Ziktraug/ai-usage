@@ -401,4 +401,38 @@ describe('Skills query options', () => {
     unsubscribe();
     queryClient.clear();
   });
+
+  test('QUERY-SKILL-OBSERVATION-FRESHNESS: an invalidation that lands while nothing is mounted is honoured on return', async () => {
+    const queryClient = createWebQueryClient();
+    let fetches = 0;
+    const observerOptions = {
+      ...webQueryPolicies.collectionSwr,
+      queryFn: () => {
+        fetches += 1;
+        return { fetches };
+      },
+      queryKey: skillObservationsKey(),
+    };
+
+    const first = new QueryObserver(queryClient, observerOptions);
+    const leaveSkills = first.subscribe(() => undefined);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(fetches).toBe(1);
+
+    // The operator navigates away from /skills, a collection cycle finishes, and they come back.
+    // Nothing was subscribed when the invalidation arrived, so mount is the only remaining chance
+    // to honour it — with `refetchOnMount: false` the pre-cycle value would be served forever.
+    leaveSkills();
+    for (const queryKey of publicationInvalidatedKeys()) {
+      await queryClient.invalidateQueries({ exact: true, queryKey });
+    }
+
+    const second = new QueryObserver(queryClient, observerOptions);
+    const returnToSkills = second.subscribe(() => undefined);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(fetches).toBe(2);
+    returnToSkills();
+    queryClient.clear();
+  });
 });

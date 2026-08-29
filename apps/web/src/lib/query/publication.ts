@@ -12,14 +12,16 @@ export const currentReportAliasKeys = (): readonly [CurrentAliasQueryKey, Curren
 export type PublicationInvalidatedQueryKey = CollectionSwrQueryKey | CurrentAliasQueryKey;
 
 /**
- * Everything a completed source publication makes stale.
+ * Everything a completed publication cycle makes stale.
  *
- * A publication is the engine announcing that a collection cycle finished and durable data moved.
- * The report aliases are the obvious dependents; skill observations are the other, because they are
- * written by that same cycle and their query policy revalidates on nothing — not mount, not focus,
- * not reconnect. Without this an open `/skills` tab would show the observations it loaded on first
- * paint for as long as it stayed open, which is precisely the staleness that policy trades away
- * pointless refetching for. This is the trade's other half.
+ * The trigger is the *cycle*, not a new revision — see `publicationIdentity` in the source-control
+ * service. A cycle that leaves the report rows identical renews the current revision rather than
+ * assembling a new one, and an observation-only sweep is exactly that shape.
+ *
+ * Both families here are dependents of the cycle rather than of the revision. Skill observations
+ * are written by it, and their query policy revalidates on nothing a browser does, so this is their
+ * only freshness path while a tab stays open. The report aliases move too: a renewal rewrites the
+ * served revision's `publishedAt` and `expiresAt`, which the manifest carries.
  */
 export const publicationInvalidatedKeys = (): readonly PublicationInvalidatedQueryKey[] => [
   ...currentReportAliasKeys(),

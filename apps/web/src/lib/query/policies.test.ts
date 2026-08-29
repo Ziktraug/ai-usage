@@ -38,11 +38,12 @@ describe('Web query key and policy vocabulary', () => {
     expect(queryPolicy('bounded-control-plane')).toBe(webQueryPolicies.boundedControlPlane);
     expect(queryPolicy('collection-swr')).toBe(webQueryPolicies.collectionSwr);
 
-    // Produced only by a background collection cycle, so no browser event revalidates it — not a
-    // mount, not focus, not a reconnect. Invalidation is the only thing that can.
+    // Produced only by a background collection cycle, so neither focus nor reconnect revalidates
+    // it. Mount does, because mount is the only place an invalidation that landed while nothing was
+    // subscribed can still be honoured — and it costs nothing while the entry is fresh.
     expect(webQueryPolicies.collectionSwr).toMatchObject({
       gcTime: DEFAULT_BOUNDED_GC_TIME_MS,
-      refetchOnMount: false,
+      refetchOnMount: true,
       refetchOnReconnect: false,
       refetchOnWindowFocus: false,
       retry: false,

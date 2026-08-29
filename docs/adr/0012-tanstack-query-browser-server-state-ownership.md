@@ -74,8 +74,12 @@ interaction state, not server state.
   page with a loading surface.
 - Initial documents may contain as much bounded, contract-approved data as is
   useful for first paint, subject to ADR 0007's privacy exclusions.
-- Publication invalidates current report aliases only. Immutable revisions,
-  Skills, Sync, and quota are not swept.
+- A completed publication cycle invalidates the current report aliases and, since
+  ADR 0022, the skill-observation identity that the same cycle writes. Immutable
+  revisions, the Skills snapshot, Sync, and quota are not swept. The trigger is
+  the cycle rather than a new revision: a cycle that leaves the report rows
+  unchanged renews the current revision, which still moves the manifest's
+  `publishedAt` and `expiresAt`.
 - SvelteKit route-data requests used for SPA routing may still occur, but they
   contain no prefetched business result and do not rebuild a Query client.
 - Ownership is enforced by static scans, Query lifecycle tests, hydration
