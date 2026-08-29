@@ -1,7 +1,20 @@
 import { describe, expect, test } from 'bun:test';
 import type { SkillObservation } from '@ai-usage/report-core/skill-observation';
 import { createSkillObservationDataset } from '@ai-usage/report-core/skill-observation-summary';
-import { joinSkillObservations, type SkillObservationJoinInput } from './skill-observation-join';
+import {
+  MAX_SKILL_OBSERVATION_HARNESS_ROSTER,
+  MAX_SKILL_OBSERVATION_SKILL_TALLIES,
+  MAX_SKILL_OBSERVATION_SKILLS,
+  MAX_SKILL_OBSERVATIONS_RESPONSE_BYTES,
+  type SkillObservations,
+  skillObservationsSchema,
+} from '@ai-usage/web-contract/skills';
+import { safeParse } from 'valibot';
+import {
+  clampSkillObservationsResponse,
+  joinSkillObservations,
+  type SkillObservationJoinInput,
+} from './skill-observation-join';
 
 const observation = (
   overrides: Pick<SkillObservation, 'harnessKey' | 'skillName' | 'tier'> & Partial<SkillObservation>,
@@ -154,6 +167,24 @@ describe('skill observation join', () => {
     });
   });
 
+  test('refuses a blanket deletion recommendation when no runtime is enabled', () => {
+    // With every target disabled there is nothing for a skill to be installed in, so "installed
+    // everywhere" is vacuously true of every managed skill. Reading it that way would propose
+    // deleting the whole inventory on the strength of a configuration the operator turned off.
+    const result = join({
+      observations: createSkillObservationDataset([]),
+      projections: [{ skillName: 'candidate', state: 'linked', targetId: 'claude' }],
+      skills: [managedSkill('candidate')],
+      targets: [{ enabled: false, id: 'claude' }],
+    });
+
+    expect(skillNamed(result, 'candidate')).toMatchObject({
+      deletionCandidate: false,
+      projectedEverywhere: false,
+      verdict: 'never-observed',
+    });
+  });
+
   test('carries the harness roster through so Cursor stays not observable', () => {
     const result = join({ observations: createSkillObservationDataset([]) });
 
@@ -163,5 +194,180 @@ describe('skill observation join', () => {
       { harnessKey: 'opencode', label: 'OpenCode', observability: 'observable' },
       { harnessKey: 'cursor', label: 'Cursor', observability: 'not-observable' },
     ]);
+  });
+});
+
+/**
+ * The bounds that matter are the ones on the *response*. The read is clamped before the join, and
+ * the join then re-injects the managed inventory and widens every row, so these cases all pass an
+ * upstream bound and would still be refused by the contract.
+ */
+describe('skill observation response bounds', () => {
+  const CATALOGUE_HARNESSES = 4;
+
+  const observedSkillNames = (count: number, prefix = 'skill'): readonly string[] =>
+    Array.from({ length: count }, (_value, index) => `${prefix}-${index}`);
+
+  const joinManagedSkills = (count: number) =>
+    join({
+      observations: createSkillObservationDataset([]),
+      skills: observedSkillNames(count).map((name) => managedSkill(name)),
+    });
+
+  test('a managed inventory exactly at the row cap survives the join intact', () => {
+    const result = joinManagedSkills(MAX_SKILL_OBSERVATION_SKILLS);
+
+    expect(result.skills).toHaveLength(MAX_SKILL_OBSERVATION_SKILLS);
+    expect(result.lowerBound).toBe(false);
+    expect(safeParse(skillObservationsSchema, result).success).toBe(true);
+  });
+
+  test('one managed skill past the row cap is clamped and says so rather than failing the contract', () => {
+    const result = joinManagedSkills(MAX_SKILL_OBSERVATION_SKILLS + 1);
+
+    // The read that produced this returned nothing at all; the extra rows are the inventory the
+    // join added. Clamping only upstream would have let exactly this payload reach the schema.
+    expect(result.skills).toHaveLength(MAX_SKILL_OBSERVATION_SKILLS);
+    expect(result.lowerBound).toBe(true);
+    expect(safeParse(skillObservationsSchema, result).success).toBe(true);
+  });
+
+  const joinUnknownHarnesses = (unknownCount: number) =>
+    join({
+      observations: createSkillObservationDataset(
+        Array.from({ length: unknownCount }, (_value, index) =>
+          observation({ harnessKey: `future-harness-${index}`, skillName: 'improve', tier: 'declared' }),
+        ),
+      ),
+    });
+
+  test('a harness roster exactly at the cap keeps every key', () => {
+    const result = joinUnknownHarnesses(MAX_SKILL_OBSERVATION_HARNESS_ROSTER - CATALOGUE_HARNESSES);
+
+    expect(result.harnesses).toHaveLength(MAX_SKILL_OBSERVATION_HARNESS_ROSTER);
+    expect(result.lowerBound).toBe(false);
+    expect(safeParse(skillObservationsSchema, result).success).toBe(true);
+  });
+
+  test('one harness key past the roster cap is clamped, and no unrenderable tally is shipped', () => {
+    const result = joinUnknownHarnesses(MAX_SKILL_OBSERVATION_HARNESS_ROSTER - CATALOGUE_HARNESSES + 1);
+
+    expect(result.harnesses).toHaveLength(MAX_SKILL_OBSERVATION_HARNESS_ROSTER);
+    expect(result.lowerBound).toBe(true);
+    // The surface renders a skill's counts by walking the roster, so a tally under a dropped key is
+    // a number nothing can present. It leaves with the key rather than travelling invisibly.
+    const rosterKeys = new Set(result.harnesses.map(({ harnessKey }) => harnessKey));
+    for (const tally of result.skills.flatMap(({ tallies }) => tallies)) {
+      expect(rosterKeys.has(tally.harnessKey)).toBe(true);
+    }
+    expect(safeParse(skillObservationsSchema, result).success).toBe(true);
+  });
+
+  const responseWithSkills = (count: number, nameLength: number): SkillObservations => ({
+    harnesses: [{ harnessKey: 'claude', label: 'Claude Code', observability: 'observable' }],
+    lowerBound: false,
+    skills: Array.from({ length: count }, (_value, index) => ({
+      deletionCandidate: false,
+      lastObservedAt: null,
+      managed: true,
+      projectedEverywhere: false,
+      resolvedPaths: [],
+      skillName: `${index}`.padStart(nameLength, 'n'),
+      tallies: [],
+      verdict: 'never-observed' as const,
+      verdictProvisional: false,
+    })),
+    skipped: 0,
+  });
+
+  const joinTallies = (tallyCount: number) => {
+    const tiers = ['declared', 'inferred', 'exposed'] as const;
+    return join({
+      observations: createSkillObservationDataset(
+        Array.from({ length: tallyCount }, (_value, index) =>
+          observation({
+            harnessKey: `future-harness-${Math.floor(index / tiers.length)}`,
+            skillName: 'improve',
+            tier: tiers[index % tiers.length] ?? 'declared',
+          }),
+        ),
+      ),
+    });
+  };
+
+  test('a skill exactly at the tally cap keeps every count', () => {
+    const result = joinTallies(MAX_SKILL_OBSERVATION_SKILL_TALLIES);
+
+    expect(result.skills[0]?.tallies).toHaveLength(MAX_SKILL_OBSERVATION_SKILL_TALLIES);
+    expect(result.lowerBound).toBe(false);
+    expect(safeParse(skillObservationsSchema, result).success).toBe(true);
+  });
+
+  test('one tally past the cap is clamped rather than rejected — harness × tier can outgrow it', () => {
+    const result = joinTallies(MAX_SKILL_OBSERVATION_SKILL_TALLIES + 1);
+
+    expect(result.skills[0]?.tallies).toHaveLength(MAX_SKILL_OBSERVATION_SKILL_TALLIES);
+    expect(result.lowerBound).toBe(true);
+    expect(safeParse(skillObservationsSchema, result).success).toBe(true);
+  });
+
+  // Long names, because a byte budget is not a row count: names and resolved paths are
+  // open-vocabulary, so the row cap alone can never bound the serialized size.
+  const LONG_NAME_LENGTH = 512;
+  const responseBytes = (response: SkillObservations): number =>
+    new TextEncoder().encode(JSON.stringify(response)).byteLength;
+
+  /** The largest row count that still serializes inside the budget, found without a linear scan. */
+  const rowsAtByteBudget = (): number => {
+    let low = 1;
+    let high = MAX_SKILL_OBSERVATION_SKILLS;
+    while (low < high) {
+      const middle = Math.ceil((low + high) / 2);
+      if (responseBytes(responseWithSkills(middle, LONG_NAME_LENGTH)) <= MAX_SKILL_OBSERVATIONS_RESPONSE_BYTES) {
+        low = middle;
+      } else {
+        high = middle - 1;
+      }
+    }
+    return low;
+  };
+
+  test('a response exactly at the byte budget is not trimmed', () => {
+    const atBudget = responseWithSkills(rowsAtByteBudget(), LONG_NAME_LENGTH);
+
+    // The row cap is not what is being tested here, so it must not be the bound that binds.
+    expect(atBudget.skills.length).toBeLessThan(MAX_SKILL_OBSERVATION_SKILLS);
+    expect(clampSkillObservationsResponse(atBudget)).toEqual(atBudget);
+    expect(safeParse(skillObservationsSchema, atBudget).success).toBe(true);
+  });
+
+  test('one row past the byte budget is trimmed until it fits and reports the bound', () => {
+    const oversized = responseWithSkills(rowsAtByteBudget() + 1, LONG_NAME_LENGTH);
+    expect(responseBytes(oversized)).toBeGreaterThan(MAX_SKILL_OBSERVATIONS_RESPONSE_BYTES);
+
+    const clamped = clampSkillObservationsResponse(oversized);
+
+    expect(responseBytes(clamped)).toBeLessThanOrEqual(MAX_SKILL_OBSERVATIONS_RESPONSE_BYTES);
+    expect(clamped.skills.length).toBeGreaterThan(0);
+    expect(clamped.lowerBound).toBe(true);
+    expect(safeParse(skillObservationsSchema, clamped).success).toBe(true);
+  });
+
+  test('the reviewer repro — a full observation read joined against a full inventory — still answers', () => {
+    const observations = createSkillObservationDataset(
+      observedSkillNames(MAX_SKILL_OBSERVATION_SKILLS, 'unknown').map((skillName) =>
+        observation({ harnessKey: 'claude', skillName, tier: 'declared' }),
+      ),
+    );
+    const result = join({
+      observations,
+      skills: observedSkillNames(MAX_SKILL_OBSERVATION_SKILLS, 'managed').map((name) => managedSkill(name)),
+    });
+
+    // 8192 joined rows against a 4096-row cap. Before the post-join clamp this parsed as a failure
+    // and the whole procedure answered `Unavailable` for a store that was entirely valid.
+    expect(result.skills.length).toBeLessThanOrEqual(MAX_SKILL_OBSERVATION_SKILLS);
+    expect(result.lowerBound).toBe(true);
+    expect(safeParse(skillObservationsSchema, result).success).toBe(true);
   });
 });

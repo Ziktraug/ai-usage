@@ -141,6 +141,14 @@ new columns on `usage_rows`.
   ceiling is detected one past the bound, never at it, because a list that stops
   exactly at the limit is indistinguishable from a complete one; the resulting
   count is presented as a lower bound rather than a number.
+- **The bound that has to hold is the one on the response.** The read is clamped
+  before the inventory join, and the join then re-injects every managed skill,
+  merges the store's harness keys into the catalogue roster, and widens each row,
+  so a payload that passed the read's bound can still exceed the contract's. A
+  cap exceeded is not a soft failure — the contract refuses the whole response
+  and a valid store renders as *unavailable* — so the assembled response is
+  clamped against the contract's published caps and every clamp sets
+  `lowerBound`. A shorter honest answer beats a `503`.
 - Observations are retained on the same discipline as the provider-quota family
   and pruned during engine startup recovery. An auxiliary fact family with no
   retention caller grows for the life of the store.

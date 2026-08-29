@@ -437,9 +437,16 @@ export const skillObservationsSchema = pipe(
  * The response caps, published so the server can clamp *to* them instead of assembling a response
  * this schema will reject. A store may legitimately hold more skills or more bytes than one
  * response carries; the producer's job is to bound and say so, not to fail.
+ *
+ * Every cap the assembled response can grow past is published, not only the ones the read applies:
+ * the read is clamped before the inventory join, and the join adds rows, harness keys, and fields.
+ * A cap that only the pre-join read knows about is a cap the final payload can still exceed.
  */
 export const MAX_SKILL_OBSERVATION_SKILLS = MAX_COLLECTION_ITEMS;
 export const MAX_SKILL_OBSERVATIONS_RESPONSE_BYTES = MAX_OBSERVATION_BYTES;
+export const MAX_SKILL_OBSERVATION_HARNESS_ROSTER = MAX_OBSERVATION_HARNESSES;
+export const MAX_SKILL_OBSERVATION_SKILL_TALLIES = MAX_OBSERVATION_TALLIES;
+export const MAX_SKILL_OBSERVATION_SKILL_RESOLVED_PATHS = MAX_OBSERVATION_RESOLVED_PATHS;
 
 const projectSkillObservationSchema = strictObject({
   description: string(),

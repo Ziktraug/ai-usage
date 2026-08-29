@@ -1,5 +1,14 @@
 import type { SkillObservationDataset } from '@ai-usage/report-core/skill-observation-summary';
-import type { SkillObservations, SkillObservationVerdict } from '@ai-usage/web-contract/skills';
+import {
+  MAX_SKILL_OBSERVATION_HARNESS_ROSTER,
+  MAX_SKILL_OBSERVATION_SKILL_RESOLVED_PATHS,
+  MAX_SKILL_OBSERVATION_SKILL_TALLIES,
+  MAX_SKILL_OBSERVATION_SKILLS,
+  MAX_SKILL_OBSERVATIONS_RESPONSE_BYTES,
+  type ObservedSkill,
+  type SkillObservations,
+  type SkillObservationVerdict,
+} from '@ai-usage/web-contract/skills';
 
 /**
  * The inventory↔observation join.
@@ -64,6 +73,62 @@ const projectedEverywhereFor = (skill: SkillObservationJoinSkill, input: SkillOb
   );
 };
 
+const textEncoder = new TextEncoder();
+
+const responseBytes = (response: SkillObservations): number => textEncoder.encode(JSON.stringify(response)).byteLength;
+
+/**
+ * Bounds the response the procedure actually returns.
+ *
+ * The read is clamped before this join, and that clamp is not enough: the join re-injects the whole
+ * managed inventory, so a store with few observations and many managed skills produces more rows
+ * than it read, and it merges the store's harness keys into the catalogue roster, so unknown keys
+ * can push the roster past its cap. Every row it emits is also wider than the row it folded. A cap
+ * checked only upstream is therefore a cap the assembled payload can still exceed — and exceeding
+ * one is not a soft failure: the contract refuses the whole response and a valid store becomes
+ * "skill observations are unavailable".
+ *
+ * So the final shape is clamped against the contract's own published caps, and every clamp reports
+ * itself through `lowerBound`, which every renderer already reads as "these counts are floors". A
+ * shorter honest answer beats a 503.
+ */
+export const clampSkillObservationsResponse = (response: SkillObservations): SkillObservations => {
+  let lowerBound = response.lowerBound;
+  let harnesses = response.harnesses;
+  if (harnesses.length > MAX_SKILL_OBSERVATION_HARNESS_ROSTER) {
+    harnesses = harnesses.slice(0, MAX_SKILL_OBSERVATION_HARNESS_ROSTER);
+    lowerBound = true;
+  }
+  // The surface renders a skill's counts by walking the roster, so a tally under a harness the
+  // roster no longer carries is a count nothing can present. Dropping it keeps the payload to what
+  // is renderable instead of shipping invisible numbers.
+  const rosterKeys = new Set(harnesses.map((harness) => harness.harnessKey));
+  const skills: ObservedSkill[] = response.skills.map((skill) => {
+    const rosteredTallies = skill.tallies.filter((tally) => rosterKeys.has(tally.harnessKey));
+    const tallies = rosteredTallies.slice(0, MAX_SKILL_OBSERVATION_SKILL_TALLIES);
+    const resolvedPaths = skill.resolvedPaths.slice(0, MAX_SKILL_OBSERVATION_SKILL_RESOLVED_PATHS);
+    if (tallies.length !== skill.tallies.length || resolvedPaths.length !== skill.resolvedPaths.length) {
+      lowerBound = true;
+    }
+    return { ...skill, resolvedPaths, tallies };
+  });
+  let clamped: SkillObservations =
+    skills.length > MAX_SKILL_OBSERVATION_SKILLS
+      ? { ...response, harnesses, lowerBound: true, skills: skills.slice(0, MAX_SKILL_OBSERVATION_SKILLS) }
+      : { ...response, harnesses, lowerBound, skills };
+  // Halving rather than estimating, because skill names and resolved paths are open-vocabulary: the
+  // serialized size of a row is not derivable from a row count. It always terminates — an empty
+  // skill list leaves only a roster that is orders of magnitude inside the budget.
+  while (clamped.skills.length > 0 && responseBytes(clamped) > MAX_SKILL_OBSERVATIONS_RESPONSE_BYTES) {
+    clamped = {
+      ...clamped,
+      lowerBound: true,
+      skills: clamped.skills.slice(0, Math.floor(clamped.skills.length / 2)),
+    };
+  }
+  return clamped;
+};
+
 const INVOCATION_TIERS: ReadonlySet<string> = new Set(['declared', 'inferred']);
 
 const verdictFor = (managed: boolean, invoked: boolean, offered: boolean): SkillObservationVerdict => {
@@ -109,10 +174,10 @@ export const joinSkillObservations = (input: SkillObservationJoinInput): SkillOb
       verdictProvisional: !(absenceIsProvable || invoked),
     };
   });
-  return {
+  return clampSkillObservationsResponse({
     harnesses: input.observations.harnesses.map((harness) => ({ ...harness })),
     lowerBound: input.observations.lowerBound,
     skills,
     skipped: input.observations.skipped,
-  };
+  });
 };
