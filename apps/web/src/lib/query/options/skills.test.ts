@@ -11,6 +11,7 @@ import { QueryObserver } from '@tanstack/svelte-query';
 import type { SkillsClientResult } from '../../rpc/skills-client';
 import { createWebQueryClient } from '../client';
 import { webQueryPolicies } from '../policies';
+import { publicationInvalidatedKeys } from '../publication';
 import {
   applyManagedMarkdownSaveToCache,
   applySkillsConfigurationSnapshotToCache,
@@ -21,6 +22,7 @@ import {
   projectSkillMarkdownQueryOptions,
   type SkillsQueryClient,
   type SkillsQueryError,
+  skillObservationsKey,
   skillsKnownProjectPathsKey,
   skillsKnownProjectPathsQueryOptions,
   skillsProjectInventoriesKey,
@@ -370,5 +372,33 @@ describe('Skills query options', () => {
     for (const unsubscribe of unsubscribers) {
       unsubscribe();
     }
+  });
+
+  test('QUERY-SKILL-OBSERVATION-FRESHNESS: a finished publication refetches a mounted observations surface', async () => {
+    const queryClient = createWebQueryClient();
+    let fetches = 0;
+    const observer = new QueryObserver(queryClient, {
+      ...webQueryPolicies.collectionSwr,
+      queryFn: () => {
+        fetches += 1;
+        return { fetches };
+      },
+      queryKey: skillObservationsKey(),
+    });
+    const unsubscribe = observer.subscribe(() => undefined);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(fetches).toBe(1);
+
+    // The policy revalidates on nothing a browser does, so without this the surface would show its
+    // first paint for as long as the tab stayed open. A publication is the engine saying the cycle
+    // that writes observations has finished, which is the only event that can change them.
+    for (const queryKey of publicationInvalidatedKeys()) {
+      await queryClient.invalidateQueries({ exact: true, queryKey });
+    }
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(fetches).toBe(2);
+    unsubscribe();
+    queryClient.clear();
   });
 });

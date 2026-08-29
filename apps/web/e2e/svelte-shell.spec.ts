@@ -336,6 +336,18 @@ test('restores Session scroll after a cross-route history remount', async ({ pag
 });
 
 test('reuses one browser cache across Skills children and Report Skills Sync navigation', async ({ page }) => {
+  // This measures cache reuse across navigation, so it must not also measure the app's reaction to
+  // a source publication. Publications are broadcast by the shared dev server, so a concurrent
+  // spec running a source would land one in this page's stream and legitimately refresh the
+  // skill-observation identity — a correct refresh, but not the thing under test here. An inert
+  // stream removes that cross-test coupling without weakening either behaviour.
+  await page.route('**/api/source-control', async (route) => {
+    if (route.request().method() !== 'GET') {
+      await route.fallback();
+      return;
+    }
+    await route.fulfill({ body: '', contentType: 'text/event-stream', status: 200 });
+  });
   const trace = createServerStateNetworkTrace(page);
   await page.goto('/');
   await waitForHydratedReport(page);
