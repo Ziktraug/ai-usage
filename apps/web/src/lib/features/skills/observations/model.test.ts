@@ -7,6 +7,7 @@ import {
   formatObservedAt,
   NO_OBSERVATIONS_TEXT,
   NOT_OBSERVABLE_TEXT,
+  resolvedPathsNote,
   skillObservationRow,
   tallySummary,
   verdictText,
@@ -79,10 +80,22 @@ describe('skill observations view', () => {
     );
   });
 
+  test('says when a resolved-path list stopped at its ceiling, and says nothing when it did not', () => {
+    // A ceiling that stays silent reads as a complete census of where the skill lives.
+    expect(resolvedPathsNote({ resolvedPaths: ['/synthetic/a', '/synthetic/b'], resolvedPathsTruncated: true })).toBe(
+      'Showing 2 of more directories this skill resolved to.',
+    );
+    // The retained set is the smallest paths in sort order, not the newest or the most used, so the
+    // sentence claims only that some are shown.
+    expect(resolvedPathsNote({ resolvedPaths: ['/synthetic/a'], resolvedPathsTruncated: false })).toBeUndefined();
+    expect(skillObservationRow(view(), 'alpha-skill')?.resolvedPathsTruncated).toBe(false);
+  });
+
   test('retains an observation that resolves to no inventory entry', () => {
     expect(skillObservationRow(view(), 'artifact-design')).toMatchObject({
       managed: false,
       resolvedPaths: [],
+      resolvedPathsTruncated: false,
       verdict: 'invoked-unmanaged',
     });
   });
@@ -135,6 +148,7 @@ describe('skill observations view', () => {
           managed: false,
           projectedEverywhere: false,
           resolvedPaths: [],
+          resolvedPathsTruncated: false,
           skillName: 'solo-skill',
           tallies: [
             {

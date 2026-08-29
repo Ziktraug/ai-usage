@@ -76,6 +76,14 @@ new columns on `usage_rows`.
   open-vocabulary skill name. This store re-validates persisted rows on read, so
   tightening the schema later would retroactively invalidate stored history.
   Validation belongs at the presentation edge.
+- **And the presentation edge refuses one row, never the response.** The response
+  schema is stricter than the store — a name carrying control characters cannot
+  be rendered as text — so the read filters such rows out and counts them into
+  `skipped`, the channel that already means "persisted rows the reader could not
+  re-validate". Shipping one would make the schema reject everything, and a
+  single malformed persisted row would take the whole observation surface down
+  with it. The predicate is defined once, in `report-core`, so the producer that
+  filters and the schema that enforces cannot drift apart.
 - Consumers cannot ask for "how many times was this skill used" without also
   choosing a tier and a harness. That friction is the point.
 - Adding a harness means deciding, at design time, which tier it can support —
@@ -140,7 +148,10 @@ new columns on `usage_rows`.
 - Every bound in this family reports itself. A read budget or per-session
   ceiling is detected one past the bound, never at it, because a list that stops
   exactly at the limit is indistinguishable from a complete one; the resulting
-  count is presented as a lower bound rather than a number.
+  count is presented as a lower bound rather than a number. This includes the
+  per-skill resolved-path ceiling, which carries its own
+  `resolvedPathsTruncated` marker: a silently short list of directories reads as
+  a complete census of where a skill lives.
 - **The bound that has to hold is the one on the response.** The read is clamped
   before the inventory join, and the join then re-injects every managed skill,
   merges the store's harness keys into the catalogue roster, and widens each row,

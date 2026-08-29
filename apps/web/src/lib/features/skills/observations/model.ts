@@ -154,6 +154,21 @@ export const verdictText = (row: Pick<SkillObservationRow, 'verdict' | 'verdictP
 };
 
 /**
+ * What a truncated resolved-path list says about itself.
+ *
+ * The list is a display aid with a ceiling, and a ceiling that says nothing reads as a complete
+ * census — "this skill lives in these eight places" rather than "these are eight of the places it
+ * lives". The retained set is the smallest paths in sort order, not the most recent or the most
+ * frequent, so the sentence says *shown*, and does not imply a ranking it does not have.
+ */
+export const resolvedPathsNote = (
+  row: Pick<SkillObservationRow, 'resolvedPaths' | 'resolvedPathsTruncated'>,
+): string | undefined =>
+  row.resolvedPathsTruncated
+    ? `Showing ${row.resolvedPaths.length} of more directories this skill resolved to.`
+    : undefined;
+
+/**
  * The deletion sentence on the per-skill detail.
  *
  * It is an absence claim like any other verdict, so a bounded or partially unreadable read must

@@ -212,6 +212,32 @@ describe('Svelte Skills workspace SSR', () => {
     expect(html).not.toContain('Never observed by any harness.');
   });
 
+  test('renders the resolved-path ceiling as words rather than a silently short list', () => {
+    const withTruncatedPaths: SkillObservations = {
+      ...syntheticObservations,
+      skills: syntheticObservations.skills.map((skill) =>
+        skill.skillName === 'alpha-skill'
+          ? {
+              ...skill,
+              resolvedPaths: [...skill.resolvedPaths, '/synthetic/other/alpha-skill'],
+              resolvedPathsTruncated: true,
+            }
+          : skill,
+      ),
+    };
+    const detail = (observations: SkillObservations): string =>
+      render(observationsComponent, { props: { observations, skillName: 'alpha-skill', variant: 'skill' } }).body;
+
+    const truncated = detail(withTruncatedPaths);
+    expect(truncated).toContain('data-skill-observations-resolved-paths-truncated');
+    expect(truncated).toContain('Showing 2 of more directories this skill resolved to.');
+
+    // A complete list says nothing, so the note never reads as a permanent caveat on every skill.
+    const complete = detail(syntheticObservations);
+    expect(complete).toContain('/synthetic/source/skills/alpha-skill');
+    expect(complete).not.toContain('data-skill-observations-resolved-paths-truncated');
+  });
+
   test('qualifies the deletion sentence on a skill detail, which is the claim a maintainer acts on', () => {
     const detail = (observations: SkillObservations): string =>
       render(observationsComponent, { props: { observations, skillName: 'beta-skill', variant: 'skill' } }).body;

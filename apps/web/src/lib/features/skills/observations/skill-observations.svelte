@@ -16,6 +16,7 @@
     deletionCandidateText,
     formatObservedAt,
     NOT_OBSERVABLE_TEXT,
+    resolvedPathsNote,
     SKILL_OBSERVATION_TIER_DESCRIPTIONS,
     skillObservationRow,
     verdictText,
@@ -142,6 +143,11 @@
       {#each row?.resolvedPaths ?? [] as resolvedPath (resolvedPath)}
         <p class={pathText}>{resolvedPath}</p>
       {/each}
+      {#if row?.resolvedPathsTruncated}
+        <p class={meta} data-skill-observations-resolved-paths-truncated>
+          {resolvedPathsNote(row)}
+        </p>
+      {/if}
     {:else if row?.lastObservedAt}
       <p class={meta}>No harness disclosed a directory for this skill.</p>
     {/if}

@@ -107,10 +107,18 @@ export const clampSkillObservationsResponse = (response: SkillObservations): Ski
     const rosteredTallies = skill.tallies.filter((tally) => rosterKeys.has(tally.harnessKey));
     const tallies = rosteredTallies.slice(0, MAX_SKILL_OBSERVATION_SKILL_TALLIES);
     const resolvedPaths = skill.resolvedPaths.slice(0, MAX_SKILL_OBSERVATION_SKILL_RESOLVED_PATHS);
-    if (tallies.length !== skill.tallies.length || resolvedPaths.length !== skill.resolvedPaths.length) {
+    const pathsClamped = resolvedPaths.length !== skill.resolvedPaths.length;
+    if (tallies.length !== skill.tallies.length || pathsClamped) {
       lowerBound = true;
     }
-    return { ...skill, resolvedPaths, tallies };
+    return {
+      ...skill,
+      resolvedPaths,
+      // Clamping here truncates the same list the fold's own ceiling truncates, so it sets the same
+      // per-skill flag rather than relying on the response-wide `lowerBound` to speak for it.
+      resolvedPathsTruncated: skill.resolvedPathsTruncated || pathsClamped,
+      tallies,
+    };
   });
   let clamped: SkillObservations =
     skills.length > MAX_SKILL_OBSERVATION_SKILLS
@@ -166,6 +174,7 @@ export const joinSkillObservations = (input: SkillObservationJoinInput): SkillOb
       managed,
       projectedEverywhere,
       resolvedPaths: [...(observed?.resolvedPaths ?? [])],
+      resolvedPathsTruncated: observed?.resolvedPathsTruncated ?? false,
       skillName,
       tallies: tallies.map((tally) => ({ ...tally })),
       verdict,

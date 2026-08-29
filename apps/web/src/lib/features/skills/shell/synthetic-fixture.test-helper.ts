@@ -65,6 +65,7 @@ export const syntheticObservations: SkillObservations = {
       managed: true,
       projectedEverywhere: true,
       resolvedPaths: ['/synthetic/source/skills/alpha-skill'],
+      resolvedPathsTruncated: false,
       skillName: 'alpha-skill',
       tallies: [
         {
@@ -92,6 +93,7 @@ export const syntheticObservations: SkillObservations = {
       managed: true,
       projectedEverywhere: true,
       resolvedPaths: [],
+      resolvedPathsTruncated: false,
       skillName: 'beta-skill',
       tallies: [],
       verdict: 'never-observed',
@@ -104,6 +106,7 @@ export const syntheticObservations: SkillObservations = {
       managed: false,
       projectedEverywhere: false,
       resolvedPaths: [],
+      resolvedPathsTruncated: false,
       skillName: 'artifact-design',
       tallies: [
         {
@@ -124,6 +127,7 @@ export const syntheticObservations: SkillObservations = {
       managed: false,
       projectedEverywhere: false,
       resolvedPaths: [],
+      resolvedPathsTruncated: false,
       skillName: 'imagegen',
       tallies: [
         {

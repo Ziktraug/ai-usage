@@ -393,6 +393,7 @@ describe('Skills oRPC contract', () => {
           managed: true,
           projectedEverywhere: true,
           resolvedPaths: ['/home/alex/.agents/skills/pr-review'],
+          resolvedPathsTruncated: false,
           skillName: 'pr-review',
           tallies: [
             {
@@ -460,6 +461,7 @@ describe('Skills oRPC contract', () => {
           managed: true,
           projectedEverywhere: true,
           resolvedPaths: [],
+          resolvedPathsTruncated: false,
           skillName: 'never-used',
           tallies: [],
           verdict: 'never-observed',
@@ -501,6 +503,7 @@ describe('Skills oRPC contract', () => {
           // A harness-bundled skill: it resolves to no inventory entry and to no directory. Both
           // are states, and both must survive the presentation edge (ADR 0022).
           resolvedPaths: [],
+          resolvedPathsTruncated: false,
           skillName: 'artifact-design',
           tallies: [
             {
@@ -565,6 +568,7 @@ describe('Skills oRPC contract', () => {
             managed: true,
             projectedEverywhere: false,
             resolvedPaths: [],
+            resolvedPathsTruncated: false,
             skillName: 'improve',
             tallies: [
               {

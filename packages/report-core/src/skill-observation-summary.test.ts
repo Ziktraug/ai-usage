@@ -78,10 +78,71 @@ describe('createSkillObservationDataset', () => {
       }),
     ]);
 
-    expect(dataset.skills.map(({ resolvedPaths, skillName }) => ({ resolvedPaths, skillName }))).toEqual([
-      { resolvedPaths: [], skillName: 'artifact-design' },
-      { resolvedPaths: ['/home/alex/.agents/skills/improve'], skillName: 'improve' },
+    expect(
+      dataset.skills.map(({ resolvedPaths, resolvedPathsTruncated, skillName }) => ({
+        resolvedPaths,
+        resolvedPathsTruncated,
+        skillName,
+      })),
+    ).toEqual([
+      { resolvedPaths: [], resolvedPathsTruncated: false, skillName: 'artifact-design' },
+      {
+        resolvedPaths: ['/home/alex/.agents/skills/improve'],
+        resolvedPathsTruncated: false,
+        skillName: 'improve',
+      },
     ]);
+  });
+
+  test('a resolved-path list that fits reports itself as complete', () => {
+    const dataset = createSkillObservationDataset(
+      Array.from({ length: 8 }, (_value, index) =>
+        observation({
+          harnessKey: 'claude',
+          observationKey: `path-${index}`,
+          resolvedPath: `/home/alex/.claude/skills/improve-${index}`,
+          tier: 'declared',
+        }),
+      ),
+    );
+
+    // Exactly at the ceiling and nothing was dropped, so the list is the whole answer.
+    expect(dataset.skills[0]?.resolvedPaths).toHaveLength(8);
+    expect(dataset.skills[0]?.resolvedPathsTruncated).toBe(false);
+  });
+
+  test('a resolved-path list that hit its ceiling says so', () => {
+    const dataset = createSkillObservationDataset(
+      Array.from({ length: 9 }, (_value, index) =>
+        observation({
+          harnessKey: 'claude',
+          observationKey: `path-${index}`,
+          resolvedPath: `/home/alex/.claude/skills/improve-${index}`,
+          tier: 'declared',
+        }),
+      ),
+    );
+
+    // Every bound in this family reports itself (ADR 0022). A list that silently stops at eight
+    // reads as "these are all of them", which is a claim the fold never made.
+    expect(dataset.skills[0]?.resolvedPaths).toHaveLength(8);
+    expect(dataset.skills[0]?.resolvedPathsTruncated).toBe(true);
+  });
+
+  test('re-seeing a path already retained is not a truncation', () => {
+    const dataset = createSkillObservationDataset(
+      Array.from({ length: 40 }, (_value, index) =>
+        observation({
+          harnessKey: 'claude',
+          observationKey: `repeat-${index}`,
+          resolvedPath: '/home/alex/.claude/skills/improve',
+          tier: 'declared',
+        }),
+      ),
+    );
+
+    expect(dataset.skills[0]?.resolvedPaths).toEqual(['/home/alex/.claude/skills/improve']);
+    expect(dataset.skills[0]?.resolvedPathsTruncated).toBe(false);
   });
 
   test('carries the read bound and the re-validation skip count through untouched', () => {
@@ -148,6 +209,7 @@ describe('createSkillObservationDataset', () => {
 
     const forward = createSkillObservationDataset(records);
     expect(forward).toEqual(createSkillObservationDataset([...records].reverse()));
+    expect(forward.skills[0]?.resolvedPathsTruncated).toBe(true);
     expect(forward.skills[0]?.resolvedPaths).toEqual([
       '/home/alex/.claude/skills/improve-0',
       '/home/alex/.claude/skills/improve-1',

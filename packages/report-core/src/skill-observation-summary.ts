@@ -64,6 +64,13 @@ export interface SkillObservationSummary {
    * and are exactly the "invoked but unmanaged" population (ADR 0022).
    */
   resolvedPaths: readonly string[];
+  /**
+   * The skill resolved to more distinct directories than `resolvedPaths` can
+   * carry. Every bound in this family reports itself (ADR 0022), and this one is
+   * no different: a silently short list reads as "these are all of them", which
+   * is a claim the fold did not make.
+   */
+  resolvedPathsTruncated: boolean;
   /** The skill name exactly as the harness wrote it, before any resolution. */
   skillName: string;
   tallies: readonly SkillObservationTally[];
@@ -104,6 +111,7 @@ interface TallyAccumulator {
 interface SkillAccumulator {
   lastObservedAt: string;
   resolvedPaths: Set<string>;
+  resolvedPathsTruncated: boolean;
   skillName: string;
   tallies: Map<string, TallyAccumulator>;
 }
@@ -123,19 +131,24 @@ const later = (left: string, right: string): string => (right > left ? right : l
  * Keeps the `maximum` smallest paths, by the same ordering the output is sorted
  * with. Adding then evicting the largest is order-independent by construction:
  * whatever sequence the paths arrive in, the survivors are the same set.
+ *
+ * Returns whether anything was evicted, because the caller has to be able to say
+ * so: a list that quietly stops at eight is indistinguishable from a complete
+ * one, which is the exact confusion ADR 0022 forbids everywhere else.
  */
-const retainSmallestPath = (paths: Set<string>, candidate: string, maximum: number): void => {
+const retainSmallestPath = (paths: Set<string>, candidate: string, maximum: number): boolean => {
   if (paths.has(candidate)) {
-    return;
+    return false;
   }
   paths.add(candidate);
   if (paths.size <= maximum) {
-    return;
+    return false;
   }
   const largest = [...paths].sort().at(-1);
   if (largest !== undefined) {
     paths.delete(largest);
   }
+  return true;
 };
 
 /**
@@ -191,12 +204,16 @@ export const createSkillObservationDataset = (
     const skill = skills.get(observation.skillName) ?? {
       lastObservedAt: observation.observedAt,
       resolvedPaths: new Set<string>(),
+      resolvedPathsTruncated: false,
       skillName: observation.skillName,
       tallies: new Map<string, TallyAccumulator>(),
     };
     skill.lastObservedAt = later(skill.lastObservedAt, observation.observedAt);
-    if (observation.resolvedPath !== null) {
-      retainSmallestPath(skill.resolvedPaths, observation.resolvedPath, MAX_RESOLVED_PATHS_PER_SKILL);
+    if (
+      observation.resolvedPath !== null &&
+      retainSmallestPath(skill.resolvedPaths, observation.resolvedPath, MAX_RESOLVED_PATHS_PER_SKILL)
+    ) {
+      skill.resolvedPathsTruncated = true;
     }
     // JSON rather than a delimiter, matching `skillObservationIdentity`: a harness key is an open
     // vocabulary, so any separator character could also appear inside one.
@@ -219,6 +236,7 @@ export const createSkillObservationDataset = (
       .map((skill) => ({
         lastObservedAt: skill.lastObservedAt,
         resolvedPaths: [...skill.resolvedPaths].sort(),
+        resolvedPathsTruncated: skill.resolvedPathsTruncated,
         skillName: skill.skillName,
         tallies: [...skill.tallies.values()]
           .map((tally) => ({

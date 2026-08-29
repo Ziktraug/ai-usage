@@ -185,6 +185,35 @@ describe('skill observation join', () => {
     });
   });
 
+  test('carries the resolved-path ceiling through as a fact, not as an absence', () => {
+    const observations = createSkillObservationDataset(
+      Array.from({ length: 9 }, (_value, index) =>
+        observation({
+          harnessKey: 'claude',
+          observationKey: `path-${index}`,
+          resolvedPath: `/home/alex/.claude/skills/improve-${index}`,
+          skillName: 'improve',
+          tier: 'declared',
+        }),
+      ),
+    );
+
+    const truncated = join({ observations });
+    expect(skillNamed(truncated, 'improve')?.resolvedPathsTruncated).toBe(true);
+
+    // A skill the read never resolved anywhere is not truncated — it is unresolved, which is a
+    // different state and the one that carries the "invoked but unmanaged" verdict.
+    const unresolved = join({
+      observations: createSkillObservationDataset([
+        observation({ harnessKey: 'claude', skillName: 'artifact-design', tier: 'declared' }),
+      ]),
+    });
+    expect(skillNamed(unresolved, 'artifact-design')).toMatchObject({
+      resolvedPaths: [],
+      resolvedPathsTruncated: false,
+    });
+  });
+
   test('carries the harness roster through so Cursor stays not observable', () => {
     const result = join({ observations: createSkillObservationDataset([]) });
 
@@ -272,6 +301,7 @@ describe('skill observation response bounds', () => {
       managed: true,
       projectedEverywhere: false,
       resolvedPaths: [],
+      resolvedPathsTruncated: false,
       skillName: `${index}`.padStart(nameLength, 'n'),
       tallies: [],
       verdict: 'never-observed' as const,
