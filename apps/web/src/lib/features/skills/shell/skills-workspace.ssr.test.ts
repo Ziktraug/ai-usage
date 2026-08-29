@@ -7,6 +7,7 @@ import { createServer } from 'vite';
 import { createWebRpcHttpHandler } from '../../../server/rpc/handler.server';
 import type { WebRpcRouterDependencies } from '../../../server/rpc/router';
 import type { SkillsCapability, SkillsCapabilityResult } from '../../../server/rpc/skills';
+import { NAME_SCOPED_COUNTS_TEXT } from '../observations/model';
 import { loadSkillsShellRoute } from './data';
 import {
   syntheticExposureTruncatedObservations,
@@ -22,6 +23,9 @@ import {
 interface SvelteServerModule {
   render: (component: Component, options?: { props?: Record<string, unknown> }) => { body: string };
 }
+
+/** The name-scope disclosure, asserted from the module that owns the wording. */
+const NAME_SCOPE_SENTENCE = NAME_SCOPED_COUNTS_TEXT;
 
 const DANGER_HEALTH_TOKEN_PATTERN = /class="[^"]*c_status\.danger[^"]*" data-health-tone="danger"/u;
 
@@ -236,12 +240,49 @@ describe('Svelte Skills workspace SSR', () => {
     expect(html).toContain('data-harness="cursor" data-observation-state="not-observable"');
   });
 
+  test('refuses to tell a project install the managed verdict of its namesake', () => {
+    const html = render(convergenceFixture, {
+      props: { pathname: '/skills/projects/synthetic-group/alpha-skill' },
+    }).body;
+
+    // The operator's real `pr-review` shape: one name, two installations. The counts are the name's,
+    // and `managed` is the name's too — so on the project install the `invoked` verdict would be
+    // inherited from the managed skill and the adoption reading that actually applies here would
+    // vanish. The collision is named instead of asserted or silently dropped.
+    expect(html).toContain('data-skill-observations="skill"');
+    expect(html).toContain('data-skill-observations-homonym');
+    expect(html).toContain('A managed skill of this name also exists');
+    expect(html).not.toContain('Invoked in at least one harness.');
+    expect(html).not.toContain('data-skill-observations-deletion-candidate');
+    // The counts themselves are still shown — they are true of the name, and the page says so.
+    expect(html).toContain('declared 2');
+    expect(html).toContain(NAME_SCOPE_SENTENCE);
+  });
+
+  test('keeps the adoption verdict for a project-only skill name', () => {
+    const html = render(convergenceFixture, {
+      props: { pathname: '/skills/projects/synthetic-group/project-review' },
+    }).body;
+
+    // "This name is nowhere in the managed repository" is a property of the name, so it stays a
+    // sound claim about the project install. Dropping it would cost the adoption signal for the
+    // ~39 project-local skills that legitimately carry it.
+    expect(html).toContain('Invoked but unmanaged — an adoption candidate for the source repository.');
+    expect(html).not.toContain('data-skill-observations-homonym');
+    expect(html).toContain(NAME_SCOPE_SENTENCE);
+  });
+
   test('keeps observed usage on the global skill branch', () => {
-    // The fix is additive: the branch that already worked must keep working.
+    // The fix is additive: the branch that already worked must keep working. `alpha-skill` is now
+    // installed twice, and on the *global* selection the managed verdict does describe what is
+    // selected, so it is stated plainly and no collision note appears.
     const html = render(convergenceFixture, { props: { pathname: '/skills/global/alpha-skill' } }).body;
 
     expect(html).toContain('data-skill-observations="skill"');
     expect(html).toContain('data-skill-observations-verdict="invoked"');
+    expect(html).toContain('Invoked in at least one harness.');
+    expect(html).not.toContain('data-skill-observations-homonym');
+    expect(html).toContain(NAME_SCOPE_SENTENCE);
     expect(html).toContain('# Alpha synthetic document');
   });
 

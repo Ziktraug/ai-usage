@@ -4,6 +4,7 @@ import type {
   SkillObservations,
   SkillObservationTally,
   SkillObservationTier,
+  SkillObservationVerdict,
 } from '@ai-usage/web-contract/skills';
 
 /**
@@ -162,6 +163,78 @@ export const verdictText = (row: Pick<SkillObservationRow, 'verdict' | 'verdictP
   }
   return row.verdictProvisional ? 'No observation within the read bound.' : 'Never observed by any harness.';
 };
+
+/** The two verdicts decided from managed-ness, and therefore the two that can misattribute. */
+const MANAGED_DERIVED_VERDICTS: ReadonlySet<SkillObservationVerdict> = new Set(['invoked', 'invoked-unmanaged']);
+
+/**
+ * Which installation of a name the detail surface is describing.
+ *
+ * It matters because observations aggregate by skill *name*, not by install: a harness records the
+ * name it was asked for, and only sometimes a resolved directory. So one set of counts covers every
+ * installation sharing a name, and a page showing them beside one selected install has to say so.
+ */
+export type SkillInstallScope = 'global' | 'project';
+
+/**
+ * Per-metric provenance for the counts on a per-skill detail, stated in words beside them.
+ *
+ * The resolved-path list is rendered directly under this sentence, so when a name really does
+ * resolve to several directories the reader sees the claim corroborated rather than asserted.
+ */
+export const NAME_SCOPED_COUNTS_TEXT =
+  'These counts are for the skill name, and cover every installation that shares it.';
+
+/**
+ * Whether the managed-derived sentences describe the install the page has selected.
+ *
+ * `managed` is a fact about the *name*: some skill of this name exists in the managed source
+ * repository. On a global selection that is the selected install, so the verdict describes it. On a
+ * project selection it is a different install — the project copy is not the managed one, whatever
+ * the name says — and presenting the managed verdict there states something about the selected item
+ * that was decided from somewhere else. On the operator's machine `pr-review` is exactly this: a
+ * managed global skill and a project-local skill sharing one name, where the project install would
+ * inherit `invoked` from the global one and lose the adoption reading that actually applies to it.
+ *
+ * A project-only name is unaffected: "this name is nowhere in the managed repository" is a property
+ * of the name, so `invoked-unmanaged` remains a sound claim about the project install and the
+ * adoption signal survives.
+ */
+export const managedVerdictDescribesInstall = (
+  row: Pick<SkillObservationRow, 'managed'>,
+  installScope: SkillInstallScope,
+): boolean => installScope === 'global' || !row.managed;
+
+/**
+ * What is said instead of a managed-derived verdict when the selected project install shares its
+ * name with a managed skill.
+ *
+ * Naming the collision rather than silently dropping the sentence: an absent verdict reads as
+ * "nothing to say", which would hide the one thing the reader most needs to know before acting on
+ * these counts.
+ */
+export const homonymNote = (
+  row: Pick<SkillObservationRow, 'managed'>,
+  installScope: SkillInstallScope,
+): string | undefined =>
+  managedVerdictDescribesInstall(row, installScope)
+    ? undefined
+    : 'A managed skill of this name also exists, so these counts cover both installations and no managed-or-unmanaged verdict is stated for this one.';
+
+/**
+ * The verdict sentence for one detail, or nothing when it would describe a different install.
+ *
+ * Only the managed-derived verdicts are withheld. `offered-only` and `never-observed` are claims
+ * about the name's evidence rather than about which repository holds it, so a collision leaves them
+ * true and they keep being said.
+ */
+export const installVerdictText = (
+  row: Pick<SkillObservationRow, 'managed' | 'verdict' | 'verdictProvisional'>,
+  installScope: SkillInstallScope,
+): string | undefined =>
+  managedVerdictDescribesInstall(row, installScope) || !MANAGED_DERIVED_VERDICTS.has(row.verdict)
+    ? verdictText(row)
+    : undefined;
 
 /**
  * What a truncated resolved-path list says about itself.

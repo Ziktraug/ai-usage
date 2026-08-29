@@ -15,20 +15,32 @@
     buildSkillObservationsView,
     deletionCandidateText,
     formatObservedAt,
+    homonymNote,
+    installVerdictText,
+    managedVerdictDescribesInstall,
+    NAME_SCOPED_COUNTS_TEXT,
     NOT_OBSERVABLE_TEXT,
     resolvedPathsNote,
     SKILL_OBSERVATION_TIER_DESCRIPTIONS,
+    type SkillInstallScope,
     skillObservationRow,
     verdictText,
   } from './model';
 
   let {
     errorMessage,
+    /**
+     * Which installation of the name this detail describes. Observations aggregate by name, so a
+     * project install and a managed one sharing a name share one set of counts — and only the
+     * caller knows which of them the page has selected.
+     */
+    installScope = 'global',
     observations,
     skillName,
     variant = 'overview',
   }: {
     errorMessage?: string | undefined;
+    installScope?: SkillInstallScope;
     observations?: SkillObservations | undefined;
     skillName?: string | undefined;
     variant?: 'overview' | 'skill';
@@ -37,6 +49,13 @@
   const view = $derived(observations === undefined ? undefined : buildSkillObservationsView(observations));
   const row = $derived(
     view === undefined || skillName === undefined ? undefined : skillObservationRow(view, skillName),
+  );
+  const managedClaimApplies = $derived(row === undefined || managedVerdictDescribesInstall(row, installScope));
+  const homonym = $derived(row === undefined ? undefined : homonymNote(row, installScope));
+  const detailVerdict = $derived(
+    row === undefined
+      ? verdictText({ verdict: 'never-observed', verdictProvisional: !(view?.invocationEvidenceComplete ?? true) })
+      : installVerdictText(row, installScope),
   );
 
   const stack = css({ display: 'grid', gap: '12px' });
@@ -123,14 +142,23 @@
         No observation within the read bound.
       {/if}
     </p>
-    <p
-      class={meta}
-      data-skill-observations-verdict={row?.verdict ?? 'never-observed'}
-      data-verdict-provisional={(row?.verdictProvisional ?? !view.invocationEvidenceComplete) ? 'true' : 'false'}
-    >
-      {verdictText(row ?? { verdict: 'never-observed', verdictProvisional: !view.invocationEvidenceComplete })}
-    </p>
-    {#if row?.deletionCandidate}
+    {#if detailVerdict !== undefined}
+      <p
+        class={meta}
+        data-skill-observations-verdict={row?.verdict ?? 'never-observed'}
+        data-verdict-provisional={(row?.verdictProvisional ?? !view.invocationEvidenceComplete) ? 'true' : 'false'}
+      >
+        {detailVerdict}
+      </p>
+    {/if}
+    <!-- A name that is installed twice has one set of counts, and the managed-derived verdict was
+         decided from the other install. Naming the collision beats dropping the sentence in
+         silence: an absent verdict reads as "nothing to say" rather than "ask a different
+         question". -->
+    {#if homonym !== undefined}
+      <p class={meta} data-skill-observations-homonym role="status">{homonym}</p>
+    {/if}
+    {#if row?.deletionCandidate && managedClaimApplies}
       <p
         class={meta}
         data-skill-observations-deletion-candidate
@@ -139,6 +167,9 @@
         {deletionCandidateText(row)}
       </p>
     {/if}
+    <!-- Per-metric provenance, beside the numbers rather than as a page banner. The resolved-path
+         list below corroborates it whenever a name really did resolve to more than one directory. -->
+    <p class={meta} data-skill-observations-name-scope>{NAME_SCOPED_COUNTS_TEXT}</p>
     {#if (row?.resolvedPaths.length ?? 0) > 0}
       {#each row?.resolvedPaths ?? [] as resolvedPath (resolvedPath)}
         <p class={pathText}>{resolvedPath}</p>

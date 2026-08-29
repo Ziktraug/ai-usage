@@ -309,6 +309,29 @@
   });
 </script>
 
+<!--
+  One mount for every per-skill detail branch. It is a snippet rather than two copies because the
+  defect this replaced was precisely a missing copy: the panel was mounted in the global branch and
+  nowhere else, so every project-local skill's counts were invisible. Parity is now structural.
+
+  Below the document at both call sites, deliberately: the SKILL.md source stays the primary object
+  of the page, and observed usage is the axis you consult about it. `installScope` is what keeps the
+  managed-derived verdict from being told about the wrong installation of a shared name.
+-->
+{#snippet skillObservations()}
+  {#if view.selectionDetail.kind === 'global-skill' || view.selectionDetail.kind === 'project-skill'}
+    <div class={section}>
+      <SkillObservationsPanel
+        errorMessage={observationsError}
+        installScope={view.selectionDetail.kind === 'global-skill' ? 'global' : 'project'}
+        {observations}
+        skillName={view.selectionDetail.skill.name}
+        variant="skill"
+      />
+    </div>
+  {/if}
+{/snippet}
+
 <div class={workspaceGrid} data-matrix-open={view.matrixOpen} data-skills-hydrated={hydrated} data-skills-workspace>
   <div class={desktopTree}>
     <SkillsTree
@@ -459,16 +482,7 @@
             {:else}
               <div class={placeholder}>SKILL.md editor integration slot</div>
             {/if}
-            <!-- Below the document, deliberately: the SKILL.md source stays the primary object of
-                 this page, and observed usage is the axis you consult about it. -->
-            <div class={section}>
-              <SkillObservationsPanel
-                errorMessage={observationsError}
-                {observations}
-                skillName={view.selectionDetail.skill.name}
-                variant="skill"
-              />
-            </div>
+            {@render skillObservations()}
           {:else}
             <header class={detailHeader}>
               <p class={panelSub}>
@@ -483,20 +497,11 @@
               {:else}
                 <div class={placeholder}>Project SKILL.md preview unavailable</div>
               {/if}
-              <!-- Below the document for the same reason as the global branch: the SKILL.md source
-                   stays the primary object of the page and observed usage is the axis you consult
-                   about it. A project-local skill needs this more, not less — it is outside the
-                   managed source repository, so it is exactly the population that carries the
-                   "observed but unmanaged" adoption verdict, and read-only here means observation
-                   is the only thing this page can tell you about it. -->
-              <div class={section}>
-                <SkillObservationsPanel
-                  errorMessage={observationsError}
-                  {observations}
-                  skillName={view.selectionDetail.skill.name}
-                  variant="skill"
-                />
-              </div>
+              <!-- A project-local skill needs this more, not less: it is outside the managed source
+                   repository, so it is the population that carries the "observed but unmanaged"
+                   adoption verdict, and read-only here means observation is the only thing this page
+                   can tell you about it. -->
+              {@render skillObservations()}
             {:else if view.selectionDetail.kind === 'project-scope'}
               <p class={meta}>{view.selectionDetail.project.path}</p>
               <p>{view.selectionDetail.inventories.length} scanned project inventories.</p>

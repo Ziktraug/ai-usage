@@ -233,6 +233,23 @@ export const syntheticInventories: readonly ProjectSkillInventory[] = [
         tokenCount: { approximate: true, references: 0, skillMd: 4, total: 4 },
         validationStatus: 'valid',
       },
+      {
+        // A project-local install whose name is *also* a managed skill — the operator's real
+        // `pr-review` shape. Observations aggregate by name, so this install and the managed one
+        // share one set of counts, and the managed-derived verdict belongs to the other install.
+        // No fixture had this collision, which is exactly why the misattribution shipped.
+        description: 'A project copy of a name that is also managed',
+        diagnostics: [],
+        invocation: 'auto',
+        markdownReadable: true,
+        name: 'alpha-skill',
+        path: '/synthetic/project/.agents/skills/alpha-skill',
+        placement: 'owned-directory',
+        runtimeDirId: 'agents-project',
+        skillMdPath: '/synthetic/project/.agents/skills/alpha-skill/SKILL.md',
+        tokenCount: { approximate: true, references: 0, skillMd: 4, total: 4 },
+        validationStatus: 'valid',
+      },
     ],
     projectPath: '/synthetic/project',
   },

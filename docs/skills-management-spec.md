@@ -48,6 +48,19 @@ requirements below are what the surface must honour.
 - **Per-harness observability is part of the presented model.** A harness with
   no collector renders as *not observable*, never as `0`. "Observed nothing" and
   "cannot observe" are different sentences and the surface says both.
+- **Counts are per skill *name*, and the surface says so.** A harness records the
+  name it was asked for and only sometimes a resolved directory — OpenCode
+  discloses none, Claude Code discloses one for about 70% of invocations — so
+  one set of counts covers every installation sharing a name. Each per-skill
+  detail states this beside the numbers, with the resolved-path list underneath
+  corroborating it whenever a name really did resolve to several directories.
+  Where a project-local install shares its name with a managed skill, the
+  managed-or-unmanaged verdict and the deletion candidacy belong to the *other*
+  installation: the surface names the collision and withholds them rather than
+  attributing them to what is selected. A project-only name keeps its adoption
+  verdict, because not being in the managed repository is a fact about the name.
+  Attributing counts per installation is a separate piece of work and would need
+  an explicit unattributable bucket.
 - **Observations that resolve to no inventory entry are retained and grouped.**
   Harness-bundled and plugin-provided skills are exactly that population, and
   they carry the *observed but unmanaged* (adoption candidate) verdict.

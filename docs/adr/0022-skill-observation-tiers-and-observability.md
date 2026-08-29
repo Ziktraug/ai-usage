@@ -84,6 +84,25 @@ new columns on `usage_rows`.
   single malformed persisted row would take the whole observation surface down
   with it. The predicate is defined once, in `report-core`, so the producer that
   filters and the schema that enforces cannot drift apart.
+- **Observations aggregate by skill *name*, not by installation.** Two
+  installations sharing a name — a managed global skill and a project-local copy
+  of `pr-review`, say — share one set of counts. This is forced by what the
+  harnesses record: OpenCode discloses no path at all, and Claude Code discloses
+  a resolved base directory for roughly 70% of invocations, so for most
+  observations there is nothing to attribute an install from. Per-install
+  attribution would need an explicit *unattributable* bucket alongside the
+  attributed ones, and is out of scope here.
+
+  Two consequences follow, and both are requirements rather than notes. The
+  name scope is **disclosed** wherever counts appear beside one selected
+  installation — per-metric provenance, in words, next to the numbers. And a
+  claim derived from the *inventory* rather than from the observations —
+  managed-or-unmanaged, and the deletion candidacy that depends on it — must not
+  be told about an installation it was not decided from: on a project-local
+  install whose name is also managed, that verdict describes the other install,
+  so the collision is named and the verdict withheld. A project-only name is
+  unaffected: "this name is nowhere in the managed repository" is a property of
+  the name, so the adoption verdict stays sound.
 - Consumers cannot ask for "how many times was this skill used" without also
   choosing a tier and a harness. That friction is the point.
 - Adding a harness means deciding, at design time, which tier it can support —
