@@ -21,6 +21,7 @@ import {
 import { createSkillsApplication } from '@ai-usage/skills/application';
 import { usageStoreErrorReasonFrom, usageStorePath } from '@ai-usage/usage-store/reader';
 import { Cause, Option, Runtime } from 'effect';
+import { joinSkillObservations } from './skill-observation-join';
 import type {
   KnownSkillProjectPath,
   ProjectSkillMarkdownDocument,
@@ -353,7 +354,24 @@ export const createSkillsServerAdapter = (dependencies: SkillsServerAdapterDepen
       runAdapterOperation(async () => clientReconcileResult(await application.previewReconcile())),
     readKnownProjectPaths: () => runAdapterOperation(readKnownProjectPaths),
     readMarkdown: (skillName) => runAdapterOperation(() => application.readMarkdown(skillName)),
-    readObservations: () => runAdapterOperation(dependencies.readSkillObservations),
+    // The inventory↔observation join, at the seam plan 099 decision 3 names. The snapshot read is
+    // what makes it a join at all: managed-ness and projection completeness are inventory facts, and
+    // a verdict about a skill's usefulness needs both sides. It costs one more inventory scan per
+    // observation read, which is the price of deciding this where the inventory actually is rather
+    // than shipping two half-answers to the browser to reconcile.
+    readObservations: () =>
+      runAdapterOperation(async () => {
+        const [snapshot, observations] = await Promise.all([
+          application.readSnapshot(),
+          dependencies.readSkillObservations(),
+        ]);
+        return joinSkillObservations({
+          observations,
+          projections: snapshot.projections,
+          skills: snapshot.skills,
+          targets: snapshot.targets,
+        });
+      }),
     readProjectInventories: () => runAdapterOperation(() => application.readProjectInventories()),
     readProjectMarkdown: (input) => runAdapterOperation(() => application.readProjectMarkdown(input)),
     readSnapshot: () =>

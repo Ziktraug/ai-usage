@@ -14,6 +14,7 @@ import {
   maxLength,
   minLength,
   minValue,
+  nullable,
   number,
   optional,
   picklist,
@@ -369,12 +370,42 @@ const skillObservationTallySchema = strictObject({
   tier: picklist(SKILL_OBSERVATION_TIERS),
 });
 
+/**
+ * The verdict, decided on the server where the inventory is (decision 3).
+ *
+ * - `invoked` — a managed skill some harness recorded being used.
+ * - `invoked-unmanaged` — used, but resolving to no inventory entry: the adoption candidate.
+ * - `offered-only` — the skill was put in front of a model and there is no evidence it was used.
+ *   That is a fact about *offering*, not about use, so it can never carry an adoption verdict; the
+ *   `exposed` tier is what a catalogue injection looks like, and a catalogue lists everything.
+ * - `never-observed` — no harness that can observe recorded anything at all.
+ */
+export const skillObservationVerdicts = ['invoked', 'invoked-unmanaged', 'offered-only', 'never-observed'] as const;
+
 const observedSkillSchema = strictObject({
-  lastObservedAt: observationTimestampSchema,
+  /**
+   * Managed *and* projected everywhere *and* never invoked. Computed from the inventory's
+   * projections rather than from managed-ness alone: a skill that is not actually installed in
+   * every runtime has an unremarkable reason to be unused, and proposing its deletion on that
+   * evidence would be wrong.
+   */
+  deletionCandidate: boolean(),
+  lastObservedAt: nullable(observationTimestampSchema),
+  /** Whether the name resolves to an entry in the managed inventory. */
+  managed: boolean(),
+  /** Whether every projection this skill has is healthy, and it has at least one. */
+  projectedEverywhere: boolean(),
   // Empty is the unresolved case and is carried, not dropped.
   resolvedPaths: pipe(array(boundedStringSchema), maxLength(MAX_OBSERVATION_RESOLVED_PATHS)),
   skillName: observedSkillNameSchema,
-  tallies: pipe(array(skillObservationTallySchema), minLength(1), maxLength(MAX_OBSERVATION_TALLIES)),
+  /** A skill can appear with no tallies: that is the never-observed verdict, not a dropped row. */
+  tallies: pipe(array(skillObservationTallySchema), maxLength(MAX_OBSERVATION_TALLIES)),
+  verdict: picklist(skillObservationVerdicts),
+  /**
+   * The read was bounded or skipped rows, so this verdict rests on an incomplete absence. Set only
+   * where absence is what the verdict claims — a positive verdict is not weakened by a short read.
+   */
+  verdictProvisional: boolean(),
 });
 
 /**
@@ -401,6 +432,14 @@ export const skillObservationsSchema = pipe(
   skillObservationsShapeSchema,
   check((value) => jsonWithinBytes(value, MAX_OBSERVATION_BYTES), 'Skill observations exceed their byte budget.'),
 );
+
+/**
+ * The response caps, published so the server can clamp *to* them instead of assembling a response
+ * this schema will reject. A store may legitimately hold more skills or more bytes than one
+ * response carries; the producer's job is to bound and say so, not to fail.
+ */
+export const MAX_SKILL_OBSERVATION_SKILLS = MAX_COLLECTION_ITEMS;
+export const MAX_SKILL_OBSERVATIONS_RESPONSE_BYTES = MAX_OBSERVATION_BYTES;
 
 const projectSkillObservationSchema = strictObject({
   description: string(),
@@ -638,6 +677,13 @@ export type SkillObservations = InferOutput<typeof skillObservationsSchema>;
 export type ObservedSkill = InferOutput<typeof observedSkillSchema>;
 export type SkillObservationTally = InferOutput<typeof skillObservationTallySchema>;
 export type SkillObservationHarness = InferOutput<typeof skillObservationHarnessSchema>;
+export type SkillObservationVerdict = (typeof skillObservationVerdicts)[number];
+/**
+ * Re-exported so browser code never has to reach past the contract for the tier vocabulary
+ * (ADR 0010/0012). The values themselves are owned by `report-core`.
+ */
+export { SKILL_OBSERVATION_TIERS } from '@ai-usage/report-core/skill-observation';
+export type SkillObservationTier = (typeof SKILL_OBSERVATION_TIERS)[number];
 export type SkillReconcileResult = InferOutput<typeof skillReconcileResultSchema>;
 export type SkillTargetInput = InferOutput<typeof skillTargetInputSchema>;
 export type SkillToggleInput = InferOutput<typeof skillToggleInputSchema>;

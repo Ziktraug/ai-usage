@@ -17,6 +17,8 @@ import type {
   SourceSkill,
   UnmanagedEntry,
 } from '@ai-usage/skills';
+import type { SkillObservations } from '@ai-usage/web-contract/skills';
+import { joinSkillObservations } from './skill-observation-join';
 import type {
   KnownSkillProjectPath,
   ProjectSkillMarkdownDocument,
@@ -371,10 +373,22 @@ const e2eObservations: readonly SkillObservation[] = [
 
 export const e2eSkillObservationDataset = (): SkillObservationDataset => createSkillObservationDataset(e2eObservations);
 
+/**
+ * The fixture runs the real join, so the e2e surface exercises the same verdict rules production
+ * does rather than a hand-written answer that could disagree with them.
+ */
+const e2eJoinedObservations = (): SkillObservations =>
+  joinSkillObservations({
+    observations: e2eSkillObservationDataset(),
+    projections,
+    skills,
+    targets,
+  });
+
 export const e2eUnmanagedObservedSkillNames = (): readonly string[] => Object.values(E2E_UNMANAGED_OBSERVED_SKILLS);
 
-export const readE2ESkillObservations = (): SkillsServerResult<SkillObservationDataset> => ({
-  data: e2eSkillObservationDataset(),
+export const readE2ESkillObservations = (): SkillsServerResult<SkillObservations> => ({
+  data: e2eJoinedObservations(),
   ok: true,
 });
 

@@ -12,6 +12,7 @@ import {
   skillMarkdownSaveResultSchema,
   skillNameInputSchema,
   skillObservationsSchema,
+  skillObservationVerdicts,
   skillsContract,
   skillsErrorMap,
   skillsProcedureIntents,
@@ -387,7 +388,10 @@ describe('Skills oRPC contract', () => {
       lowerBound: false,
       skills: [
         {
+          deletionCandidate: false,
           lastObservedAt: '2026-08-03T09:01:00.000Z',
+          managed: true,
+          projectedEverywhere: true,
           resolvedPaths: ['/home/alex/.agents/skills/pr-review'],
           skillName: 'pr-review',
           tallies: [
@@ -413,6 +417,8 @@ describe('Skills oRPC contract', () => {
               tier: 'exposed',
             },
           ],
+          verdict: 'invoked',
+          verdictProvisional: false,
         },
       ],
       skipped: 0,
@@ -441,13 +447,57 @@ describe('Skills oRPC contract', () => {
     expect(safeParse(skillObservationsSchema, { ...observations, total: 7 }).success).toBe(false);
   });
 
+  test('carries the verdict the server decided, and only the verdicts it may decide', () => {
+    const base = {
+      harnesses: [{ harnessKey: 'claude', label: 'Claude Code', observability: 'observable' }],
+      lowerBound: false,
+      skills: [
+        {
+          deletionCandidate: true,
+          // A skill with no observation at all still travels: dropping it would erase the deletion
+          // verdict this family exists to produce.
+          lastObservedAt: null,
+          managed: true,
+          projectedEverywhere: true,
+          resolvedPaths: [],
+          skillName: 'never-used',
+          tallies: [],
+          verdict: 'never-observed',
+          verdictProvisional: false,
+        },
+      ],
+      skipped: 0,
+    };
+
+    expect(safeParse(skillObservationsSchema, base).success).toBe(true);
+    for (const verdict of skillObservationVerdicts) {
+      expect(safeParse(skillObservationsSchema, { ...base, skills: [{ ...base.skills[0], verdict }] }).success).toBe(
+        true,
+      );
+    }
+    // "observed" is not a verdict: it does not distinguish being used from being offered.
+    for (const verdict of ['observed', 'unmanaged', 'exposed']) {
+      expect(safeParse(skillObservationsSchema, { ...base, skills: [{ ...base.skills[0], verdict }] }).success).toBe(
+        false,
+      );
+    }
+    // The provisional marker is required, so a producer cannot omit the fact that an absence claim
+    // rests on an incomplete read.
+    const { verdictProvisional, ...withoutProvisional } = base.skills[0] as Record<string, unknown>;
+    expect(verdictProvisional).toBe(false);
+    expect(safeParse(skillObservationsSchema, { ...base, skills: [withoutProvisional] }).success).toBe(false);
+  });
+
   test('accepts an unresolved observation and refuses to lose it to the managed-name pattern', () => {
     const unresolved = {
       harnesses: [{ harnessKey: 'claude', label: 'Claude Code', observability: 'observable' }],
       lowerBound: false,
       skills: [
         {
+          deletionCandidate: false,
           lastObservedAt: '2026-08-01T09:05:00.000Z',
+          managed: false,
+          projectedEverywhere: false,
           // A harness-bundled skill: it resolves to no inventory entry and to no directory. Both
           // are states, and both must survive the presentation edge (ADR 0022).
           resolvedPaths: [],
@@ -461,6 +511,8 @@ describe('Skills oRPC contract', () => {
               tier: 'declared',
             },
           ],
+          verdict: 'invoked-unmanaged',
+          verdictProvisional: false,
         },
       ],
       skipped: 0,
@@ -508,7 +560,10 @@ describe('Skills oRPC contract', () => {
         ...base,
         skills: [
           {
+            deletionCandidate: false,
             lastObservedAt: '2026-08-01',
+            managed: true,
+            projectedEverywhere: false,
             resolvedPaths: [],
             skillName: 'improve',
             tallies: [
@@ -520,6 +575,8 @@ describe('Skills oRPC contract', () => {
                 tier: 'declared',
               },
             ],
+            verdict: 'invoked',
+            verdictProvisional: false,
           },
         ],
       }).success,

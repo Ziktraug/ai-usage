@@ -973,24 +973,34 @@ test('renders skill observations with their tier and never as an unobservable ze
     expect(normalizeText((await cell.textContent()) ?? '')).toMatch(OBSERVATION_TEXT_PATTERN);
   }
 
-  // Both verdicts have a home, and an observation resolving to no inventory entry is retained.
-  const deletion = page.getByRole('region', { name: 'Projected but never observed' });
-  const adoption = page.getByRole('region', { name: 'Observed but unmanaged' });
+  // Each verdict has a home, and an observation resolving to no inventory entry is retained.
+  const deletion = page.getByRole('region', { name: 'Projected everywhere but never invoked' });
+  const adoption = page.getByRole('region', { name: 'Invoked but unmanaged' });
+  const offered = page.getByRole('region', { name: 'Offered but never invoked' });
+  // beta-skill is managed and linked in every enabled runtime, so its silence is evidence.
   await expect(deletion.getByRole('listitem').filter({ hasText: 'beta-skill' })).toBeVisible();
   await expect(adoption.getByRole('listitem').filter({ hasText: 'artifact-design' })).toBeVisible();
-  await expect(adoption.getByRole('listitem').filter({ hasText: 'imagegen' })).toBeVisible();
+  await expect(adoption.getByRole('listitem').filter({ hasText: 'pr-review' })).toBeVisible();
+  // imagegen was only ever listed in a Codex catalogue. That is offering, not use, so it must not
+  // be proposed for adoption anywhere.
+  await expect(offered.getByRole('listitem').filter({ hasText: 'imagegen' })).toBeVisible();
+  await expect(adoption.getByRole('listitem').filter({ hasText: 'imagegen' })).toHaveCount(0);
+  // alpha-skill is not linked to every target in the fixture, so its use is not a deletion story.
+  await expect(deletion.getByRole('listitem').filter({ hasText: 'alpha-skill' })).toHaveCount(0);
+  // A complete read states absence plainly rather than hedging it.
+  await expect(deletion).toHaveAttribute('data-provisional', 'false');
 
   // The same facts on the skill detail surface, for one skill.
   await openHydratedSkills(page, '/skills/global/alpha-skill');
   const detail = page.getByRole('region', { name: 'Observed usage' });
   await expect(detail.getByRole('definition').filter({ hasText: 'declared 3' })).toBeVisible();
   await expect(detail.getByRole('definition').filter({ hasText: OBSERVATION_NOT_OBSERVABLE_TEXT })).toBeVisible();
-  await expect(detail.getByText('Observed in at least one harness.')).toBeVisible();
+  await expect(detail.getByText('Invoked in at least one harness.')).toBeVisible();
 
   await openHydratedSkills(page, '/skills/global/beta-skill');
+  const betaDetail = page.getByRole('region', { name: 'Observed usage' });
+  await expect(betaDetail.getByText('Never observed by any harness.')).toBeVisible();
   await expect(
-    page
-      .getByRole('region', { name: 'Observed usage' })
-      .getByText('Projected but never observed — a deletion candidate.'),
+    betaDetail.getByText('Installed in every runtime and still never invoked — a deletion candidate.'),
   ).toBeVisible();
 });

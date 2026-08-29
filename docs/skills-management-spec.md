@@ -51,9 +51,21 @@ requirements below are what the surface must honour.
 - **Observations that resolve to no inventory entry are retained and grouped.**
   Harness-bundled and plugin-provided skills are exactly that population, and
   they carry the *observed but unmanaged* (adoption candidate) verdict.
-- A managed skill no observing harness has recorded carries the *projected but
-  never observed* (deletion candidate) verdict, and stays in the table rather
-  than disappearing from it.
+- The deletion verdict requires more than managed-ness: a skill earns it only
+  when it is **projected to every enabled runtime** and still never invoked.
+  A skill that is not actually installed everywhere has a mundane reason to be
+  unused, and proposing its deletion on that evidence would be wrong. Such a
+  skill stays in the table rather than disappearing from it.
+- **Being offered is not being used.** The adoption verdict requires `declared`
+  or `inferred` evidence. A skill seen only at the `exposed` tier was listed in
+  a catalogue the harness injects wholesale; it is reported under its own
+  heading, because it is a fact about offering rather than about use.
+- **A bounded or partially unreadable read cannot prove absence.** When the read
+  reports a bound or skipped rows, every verdict that rests on absence is marked
+  provisional and says what it actually knows ("no observation within the read
+  bound"), and the deletion group carries the same qualification. Verdicts that
+  rest on presence are unaffected: an invocation seen is an invocation that
+  happened.
 - Provenance is per metric. There is no page-level data-quality banner; a failed
   observation read reports itself in the observation section alone.
 - Tier and observability are conveyed textually. Colour may reinforce them and
@@ -96,7 +108,8 @@ to contain client names and business context; only their presence is recorded.
 
 - `@ai-usage/skills` owns contracts, validation, bounded filesystem operations, scans, projections, Markdown IO, and workflows. It is a filesystem-projection domain and must never gain a `@ai-usage/usage-store` dependency.
 - `apps/web/src/server/skills*` owns server-side validation and adaptation behind the oRPC contract, and is the only place the inventory meets observed usage — through the read-only `UsageReadModel` seam (ADR 0009).
-- `apps/web/src/lib/features/skills/observations` owns the inventory↔observation join and its presentation; `@ai-usage/report-core/skill-observation-summary` owns the pure fold from observations into the presented dataset.
+- `apps/web/src/server/skill-observation-join.ts` owns the inventory↔observation join: managed-ness, projection completeness, and every verdict are decided on the server and travel as facts. `apps/web/src/lib/features/skills/observations` owns presentation only, and imports nothing but the contract.
+- `@ai-usage/report-core/skill-observation-summary` owns the pure fold from observations into the presented dataset; `@ai-usage/report-data/skill-observation-read` owns the one bounded read that every consumer shares.
 - `apps/web/src/lib/features/skills/shell` owns route operations and snapshot replacement policy (see its `INTEGRATION.md`).
 - `apps/web/src/routes/skills/` composes route presentation and URL-backed selection; `apps/web/src/lib/features/skills/{editor,management}` own the editor and management surfaces.
 - Browser-safe clients must use the documented `@ai-usage/skills/config` and `@ai-usage/skills/shared` exports and must not import server modules.

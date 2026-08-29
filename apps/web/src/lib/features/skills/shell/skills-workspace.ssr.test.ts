@@ -84,6 +84,17 @@ const trustedHandlerFetch = (handler: (request: Request) => Promise<Response>) =
   return await handler(new Request(request, { headers }));
 };
 
+/** The opening tag of the deletion group, so attribute order in the render is not load-bearing. */
+const deletionGroupAttributes = (html: string): string => {
+  const marker = 'data-skill-observations-group="deletion"';
+  const markerIndex = html.indexOf(marker);
+  if (markerIndex === -1) {
+    throw new Error('The deletion group was not rendered.');
+  }
+  const openingTagStart = html.lastIndexOf('<', markerIndex);
+  return html.slice(openingTagStart, html.indexOf('>', markerIndex) + 1);
+};
+
 describe('Svelte Skills workspace SSR', () => {
   test('renders a meaningful selected Global workspace without ClientOnly', () => {
     const html = render(fixture).body;
@@ -163,16 +174,37 @@ describe('Svelte Skills workspace SSR', () => {
     expect(matrixHtml).not.toContain('declared 3');
     expect(matrixHtml).toContain('data-harness="cursor" data-observation-state="not-observable"');
     expect(matrixHtml).not.toContain('data-harness="cursor" data-observation-state="observed"');
-    // Both verdicts have a home, and the unmanaged observation was retained rather than dropped.
-    expect(matrixHtml).toContain('Projected but never observed');
-    expect(matrixHtml).toContain('Observed but unmanaged');
+    // Each verdict has a home, and the unmanaged observation was retained rather than dropped.
+    expect(matrixHtml).toContain('Projected everywhere but never invoked');
+    expect(matrixHtml).toContain('Invoked but unmanaged');
+    expect(matrixHtml).toContain('Offered but never invoked');
     expect(matrixHtml).toContain('artifact-design');
+    // A skill that was only offered is listed under offering, never proposed for adoption.
+    expect(matrixHtml).toContain('data-observation-verdict="offered-only"');
+    expect(matrixHtml).toContain('data-skill-observations-group="offered"');
+    // A complete read states its absences plainly rather than hedging them.
+    expect(deletionGroupAttributes(matrixHtml)).toContain('data-provisional="false"');
+    expect(matrixHtml).not.toContain('within the read bound');
 
     const detailHtml = render(convergenceFixture, { props: { pathname: '/skills/global/alpha-skill' } }).body;
     expect(detailHtml).toContain('data-skill-observations="skill"');
     expect(detailHtml).toContain('declared 2');
     expect(detailHtml).toContain('not observable');
-    expect(detailHtml).toContain('data-skill-observations-verdict="observed"');
+    expect(detailHtml).toContain('data-skill-observations-verdict="invoked"');
+  });
+
+  test('qualifies every absence claim when the read could not prove one', () => {
+    const html = render(convergenceFixture, {
+      props: { observationsProvisional: true, pathname: '/skills/matrix' },
+    }).body;
+
+    // A bounded read cannot prove a skill went unused, so the deletion group and the verdicts it
+    // rests on say what they actually know instead of repeating a claim the data cannot support.
+    expect(deletionGroupAttributes(html)).toContain('data-provisional="true"');
+    expect(html).toContain('Provisional: this read was bounded');
+    expect(html).toContain('No observation within the read bound.');
+    expect(html).toContain('data-skill-observations-lower-bound');
+    expect(html).not.toContain('Never observed by any harness.');
   });
 
   test('reports an unavailable observation read per metric instead of as a page banner', () => {

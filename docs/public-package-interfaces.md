@@ -110,6 +110,8 @@ not belong here.
 - `./portable-report`: pure snapshot merge and project-source assembly.
 - `./provider-quota-history`: bounded provider-quota history projection through
   the read-only store.
+- `./skill-observation-read`: the one bounded read of durable skill
+  observations, folded and clamped to the caller's response caps.
 - `./served-revision-query`: strict bounded support/focused/Session query
   validation and direct revision-keyed execution through the read-only store.
 

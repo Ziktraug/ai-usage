@@ -70,7 +70,6 @@
   const managementPlan = createSkillsManagementPlanController();
   const ATTENTION_SKILL_LIMIT = 6;
   $effect(() => onSourceChange?.(snapshot.config.sourceRepoPath ?? 'not configured'));
-  const managedSkillNames = $derived(snapshot.skills.map((entry) => entry.name));
   const slotContext = $derived({
     document: selectedDocument,
     observations,
@@ -465,7 +464,6 @@
             <div class={section}>
               <SkillObservationsPanel
                 errorMessage={observationsError}
-                {managedSkillNames}
                 {observations}
                 skillName={view.selectionDetail.skill.name}
                 variant="skill"

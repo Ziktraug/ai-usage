@@ -1,8 +1,13 @@
 import type { SourceControlCommand } from '@ai-usage/report-core/source-control';
 import type { SourceControlClient, SourceControlClientState } from '../../../source-control-client';
-import { currentReportAliasKeys } from '../../query/publication';
+import { type PublicationInvalidatedQueryKey, publicationInvalidatedKeys } from '../../query/publication';
 
-export type ReportQueryKey = ReturnType<typeof currentReportAliasKeys>[number];
+/**
+ * Not only report keys any more: a finished publication also makes the skill observations that same
+ * collection cycle wrote stale. The name says what the trigger is rather than what one dependent
+ * happens to be.
+ */
+export type PublicationQueryKey = PublicationInvalidatedQueryKey;
 
 export interface SourceControlService {
   readonly execute: (command: SourceControlCommand) => Promise<boolean>;
@@ -14,7 +19,7 @@ export interface SourceControlService {
 
 export interface SourceControlServiceOptions {
   readonly client: SourceControlClient;
-  readonly invalidateReportQuery: (queryKey: ReportQueryKey) => void;
+  readonly invalidatePublishedQuery: (queryKey: PublicationQueryKey) => void;
 }
 
 const publicationIdentity = (state: SourceControlClientState): string | undefined => {
@@ -24,7 +29,7 @@ const publicationIdentity = (state: SourceControlClientState): string | undefine
 
 export const createSourceControlService = ({
   client,
-  invalidateReportQuery,
+  invalidatePublishedQuery,
 }: SourceControlServiceOptions): SourceControlService => {
   const listeners = new Set<(state: SourceControlClientState) => void>();
   let state = client.getState();
@@ -36,8 +41,8 @@ export const createSourceControlService = ({
     const nextPublication = publicationIdentity(nextState);
     if (nextPublication && nextPublication !== observedPublication) {
       observedPublication = nextPublication;
-      for (const queryKey of currentReportAliasKeys()) {
-        invalidateReportQuery(queryKey);
+      for (const queryKey of publicationInvalidatedKeys()) {
+        invalidatePublishedQuery(queryKey);
       }
     }
     for (const listener of listeners) {

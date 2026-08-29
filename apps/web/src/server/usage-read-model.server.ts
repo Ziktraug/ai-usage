@@ -2,16 +2,14 @@ import type { FocusedSupportResult } from '@ai-usage/report-core/focused-report-
 import type { UsageMergeBundle } from '@ai-usage/report-core/merge-bundle';
 import { projectProviderQuotaObservation } from '@ai-usage/report-core/provider-quota';
 import { createProviderStatusDataset, type ProviderStatusDataset } from '@ai-usage/report-core/provider-status';
-import {
-  createSkillObservationDataset,
-  type SkillObservationDataset,
-} from '@ai-usage/report-core/skill-observation-summary';
+import type { SkillObservationDataset } from '@ai-usage/report-core/skill-observation-summary';
 import {
   queryServedRevisionData,
   type ServedRevisionQueryError,
   type ServedRevisionQueryKind,
   type ServedRevisionQueryResult,
 } from '@ai-usage/report-data/served-revision-query';
+import { querySkillObservationDataset } from '@ai-usage/report-data/skill-observation-read';
 import {
   type CurrentServedLocalProjectSources,
   type QueryUsageSyncFleetResult,
@@ -20,13 +18,16 @@ import {
   queryCurrentServedReportRevisionBootstrap,
   queryLatestProviderQuotaObservations,
   queryLocalMergeBundle,
-  querySkillObservations,
   queryUsageLocalMachine,
   queryUsageSyncFleet,
   type ServedReportRevisionManifest,
   type ServedRevisionQueryTrace,
   type UsageStoreError,
 } from '@ai-usage/usage-store/reader';
+import {
+  MAX_SKILL_OBSERVATION_SKILLS as MAX_CONTRACT_COLLECTION_ITEMS,
+  MAX_SKILL_OBSERVATIONS_RESPONSE_BYTES,
+} from '@ai-usage/web-contract/skills';
 import { Effect, type Either } from 'effect';
 import { resolveUsageWebRuntimePaths } from './usage-runtime-paths.server';
 
@@ -93,6 +94,20 @@ const MAXIMUM_RAIL_QUOTA_OBSERVATIONS = 64;
  * the dataset presents its counts as a lower bound rather than as numbers.
  */
 const MAXIMUM_SKILL_OBSERVATIONS = 20_000;
+
+/**
+ * The response bounds, which must not exceed what the contract will accept.
+ *
+ * These are lower than the observation bound on purpose: 20,000 observations can name more distinct
+ * skills, and serialize to more bytes, than one response may carry. Clamping here — and reporting
+ * it through `lowerBound` — keeps a large but entirely valid store answerable. Without the clamp the
+ * contract would reject the assembled response and the whole procedure would fail, turning "you have
+ * a lot of history" into "skill observations are unavailable".
+ *
+ * They are stated as the contract's own caps so the two cannot drift apart silently.
+ */
+const MAXIMUM_OBSERVED_SKILLS = MAX_CONTRACT_COLLECTION_ITEMS;
+const MAXIMUM_SKILL_OBSERVATION_BYTES = MAX_SKILL_OBSERVATIONS_RESPONSE_BYTES;
 
 export interface SqliteUsageReadModelOptions {
   readonly dbPath: string;
@@ -183,19 +198,16 @@ export const createSqliteUsageReadModel = (options: SqliteUsageReadModelOptions)
       callOptions,
     ),
   readLocalMachine: (callOptions) => runReadEffect(queryUsageLocalMachine({ dbPath: options.dbPath }), callOptions),
-  readSkillObservations: async (callOptions) => {
-    const result = await runReadEffect(
-      querySkillObservations({
+  readSkillObservations: (callOptions) =>
+    runReadEffect(
+      querySkillObservationDataset({
         dbPath: options.dbPath,
+        maximumBytes: MAXIMUM_SKILL_OBSERVATION_BYTES,
         maximumObservations: MAXIMUM_SKILL_OBSERVATIONS,
+        maximumSkills: MAXIMUM_OBSERVED_SKILLS,
       }),
       callOptions,
-    );
-    return createSkillObservationDataset(
-      result.observations.map(({ observation }) => observation),
-      { lowerBound: result.truncated, skipped: result.skipped },
-    );
-  },
+    ),
   readSyncFleet: (callOptions) => runReadEffect(queryUsageSyncFleet({ dbPath: options.dbPath }), callOptions),
 });
 

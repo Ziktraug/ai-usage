@@ -124,7 +124,6 @@
   />
   <SkillObservationsPanel
     errorMessage={context.observationsError}
-    managedSkillNames={context.snapshot.skills.map((entry) => entry.name)}
     observations={context.observations}
     variant="overview"
   />

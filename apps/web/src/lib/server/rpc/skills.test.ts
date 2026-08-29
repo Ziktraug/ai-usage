@@ -110,13 +110,14 @@ const capability = (calls: string[] = []): SkillsCapability => ({
 });
 
 describe('Skills server RPC leaf', () => {
-  test('routes all thirteen procedures to the injected capability', async () => {
+  test('routes all fourteen procedures to the injected capability', async () => {
     const calls: string[] = [];
     const client = createRouterClient(createSkillsRouter(() => capability(calls)));
     await client.createTargetDirectory({ targetId: 'agents' });
     await client.projectInventories({});
     await client.knownProjectPaths({});
     await client.managedMarkdown({ skillName: 'example' });
+    await client.observations({});
     await client.previewReconcileAll({});
     await client.projectMarkdown({
       projectPath: '/synthetic/project',
@@ -140,6 +141,7 @@ describe('Skills server RPC leaf', () => {
       'readProjectInventories',
       'readKnownProjectPaths',
       'readMarkdown',
+      'readObservations',
       'previewReconcileAll',
       'readProjectMarkdown',
       'reconcileAll',

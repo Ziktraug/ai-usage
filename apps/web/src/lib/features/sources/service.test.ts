@@ -1,8 +1,9 @@
 import { describe, expect, test } from 'bun:test';
 import type { ReportPublishedEvent, SourceControlCommand } from '@ai-usage/report-core/source-control';
 import type { SourceControlClient, SourceControlClientState } from '../../../source-control-client';
-import { currentReportAliasKeys } from '../../query/publication';
-import { createSourceControlService, type ReportQueryKey } from './service';
+import { skillObservationsKey } from '../../query/identities/skills';
+import { currentReportAliasKeys, publicationInvalidatedKeys } from '../../query/publication';
+import { createSourceControlService, type PublicationQueryKey } from './service';
 
 const initialState: SourceControlClientState = {
   commandError: null,
@@ -62,7 +63,7 @@ class FakeClient implements SourceControlClient {
 describe('Svelte source-control service', () => {
   test('owns one idempotent client subscription and disposes it exactly once', () => {
     const client = new FakeClient();
-    const service = createSourceControlService({ client, invalidateReportQuery: () => undefined });
+    const service = createSourceControlService({ client, invalidatePublishedQuery: () => undefined });
     const observed: SourceControlClientState[] = [];
     const unsubscribe = service.subscribe((state) => observed.push(state));
 
@@ -80,21 +81,38 @@ describe('Svelte source-control service', () => {
     expect(observed.at(-1)?.connection).toBe('connecting');
   });
 
-  test('deduplicates publications and invalidates only current Report aliases', () => {
+  test('deduplicates publications and refreshes everything the finished cycle wrote', () => {
     const client = new FakeClient();
-    const invalidated: ReportQueryKey[] = [];
+    const invalidated: PublicationQueryKey[] = [];
     const service = createSourceControlService({
       client,
-      invalidateReportQuery: (queryKey) => invalidated.push(queryKey),
+      invalidatePublishedQuery: (queryKey) => invalidated.push(queryKey),
     });
     service.start();
 
     client.emit({ ...client.state, publication: publication('revision-a') });
     client.emit({ ...client.state, publication: publication('revision-a') });
-    expect(invalidated).toEqual([...currentReportAliasKeys()]);
+    expect(invalidated).toEqual([...publicationInvalidatedKeys()]);
 
     client.emit({ ...client.state, publication: publication('revision-b') });
-    expect(invalidated).toEqual([...currentReportAliasKeys(), ...currentReportAliasKeys()]);
-    expect(invalidated.some((queryKey) => String(queryKey).includes('skill'))).toBe(false);
+    expect(invalidated).toEqual([...publicationInvalidatedKeys(), ...publicationInvalidatedKeys()]);
+  });
+
+  test('gives skill observations their only freshness path, since their policy revalidates on nothing', () => {
+    const client = new FakeClient();
+    const invalidated: PublicationQueryKey[] = [];
+    const service = createSourceControlService({
+      client,
+      invalidatePublishedQuery: (queryKey) => invalidated.push(queryKey),
+    });
+    service.start();
+
+    expect(invalidated).toEqual([]);
+    client.emit({ ...client.state, publication: publication('revision-a') });
+
+    // The collection cycle that produced this publication is the same one that wrote the
+    // observations, so a completed publication is exactly when an open tab's copy goes stale.
+    expect(invalidated).toContainEqual(skillObservationsKey());
+    expect(publicationInvalidatedKeys()).toEqual([...currentReportAliasKeys(), skillObservationsKey()]);
   });
 });

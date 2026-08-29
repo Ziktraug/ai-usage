@@ -133,14 +133,36 @@ describe('createSkillObservationDataset', () => {
     expect(createSkillObservationDataset(records)).toEqual(createSkillObservationDataset([...records].reverse()));
   });
 
-  test('appends a harness key the catalogue does not know rather than dropping its observations', () => {
+  test('an unknown harness key that produced observations is observable, so its tallies survive', () => {
     const dataset = createSkillObservationDataset([observation({ harnessKey: 'future-harness', tier: 'declared' })]);
 
+    // Marking it `not-observable` would assert the opposite of the evidence in hand, and would make
+    // the renderer suppress real stored history under a harness that demonstrably observed.
     expect(dataset.harnesses.at(-1)).toEqual({
       harnessKey: 'future-harness',
       label: 'future-harness',
-      observability: 'not-observable',
+      observability: 'observable',
     });
-    expect(dataset.skills[0]?.tallies[0]?.count).toBe(1);
+    expect(dataset.skills[0]?.tallies).toEqual([
+      {
+        count: 1,
+        harnessKey: 'future-harness',
+        harnessLabel: 'future-harness',
+        lastObservedAt: '2026-08-01T09:00:00.000Z',
+        tier: 'declared',
+      },
+    ]);
+  });
+
+  test('a catalogued harness keeps its own marker regardless of what a sweep returned', () => {
+    // Cursor cannot observe even in a dataset full of observations; Codex stays observable in one
+    // that holds none of its own. The marker is a property of the harness, not of the run.
+    const dataset = createSkillObservationDataset([observation({ harnessKey: 'claude', tier: 'declared' })]);
+    const marker = (harnessKey: string) =>
+      dataset.harnesses.find((harness) => harness.harnessKey === harnessKey)?.observability;
+
+    expect(marker('claude')).toBe('observable');
+    expect(marker('codex')).toBe('observable');
+    expect(marker('cursor')).toBe('not-observable');
   });
 });

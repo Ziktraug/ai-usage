@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { SkillObservations } from '@ai-usage/web-contract/skills';
-import { syntheticObservations } from '../shell/synthetic-fixture.test-helper';
+import { syntheticObservations, syntheticProvisionalObservations } from '../shell/synthetic-fixture.test-helper';
 import {
   buildSkillObservationsView,
   formatObservedAt,
@@ -8,16 +8,16 @@ import {
   NOT_OBSERVABLE_TEXT,
   skillObservationRow,
   tallySummary,
+  verdictText,
 } from './model';
 
 const DIGIT_PATTERN = /\d/u;
 
-const view = (managedSkillNames: readonly string[], observations: SkillObservations = syntheticObservations) =>
-  buildSkillObservationsView({ managedSkillNames, observations });
+const view = (observations: SkillObservations = syntheticObservations) => buildSkillObservationsView(observations);
 
 describe('skill observations view', () => {
   test('never renders a harness that cannot observe as a zero', () => {
-    const built = view(['alpha-skill']);
+    const built = view();
     const cursorCells = built.rows.flatMap((row) => row.harnesses.filter((cell) => cell.harnessKey === 'cursor'));
 
     expect(cursorCells).not.toHaveLength(0);
@@ -30,8 +30,7 @@ describe('skill observations view', () => {
   });
 
   test('states an observable harness with nothing to report as words, not a count', () => {
-    const built = view(['alpha-skill']);
-    const openCode = skillObservationRow(built, 'alpha-skill')?.harnesses.find(
+    const openCode = skillObservationRow(view(), 'alpha-skill')?.harnesses.find(
       (cell) => cell.harnessKey === 'opencode',
     );
 
@@ -42,8 +41,7 @@ describe('skill observations view', () => {
   });
 
   test('keeps a declared count and an inferred count as two phrases and never one number', () => {
-    const built = view(['alpha-skill']);
-    const row = skillObservationRow(built, 'alpha-skill');
+    const row = skillObservationRow(view(), 'alpha-skill');
     const claude = row?.harnesses.find((cell) => cell.harnessKey === 'claude');
     const codex = row?.harnesses.find((cell) => cell.harnessKey === 'codex');
 
@@ -54,26 +52,55 @@ describe('skill observations view', () => {
     expect(tallySummary([...(claude?.tallies ?? []), ...(codex?.tallies ?? [])])).toBe('declared 2 · inferred 1');
   });
 
-  test('names a managed skill nothing observed as a deletion candidate and keeps it in the table', () => {
-    const built = view(['alpha-skill', 'beta-skill']);
+  test('groups each server verdict under exactly one heading', () => {
+    const built = view();
 
     expect(built.deletionCandidates.map(({ skillName }) => skillName)).toEqual(['beta-skill']);
-    expect(skillObservationRow(built, 'beta-skill')).toMatchObject({
-      lastObservedAt: null,
-      managed: true,
-      verdict: 'never-observed',
+    expect(built.adoptionCandidates.map(({ skillName }) => skillName)).toEqual(['artifact-design']);
+    expect(built.offeredOnly.map(({ skillName }) => skillName)).toEqual(['imagegen']);
+
+    // No skill is listed twice, so a reader is never asked to reconcile two headings about one row.
+    const grouped = [...built.deletionCandidates, ...built.adoptionCandidates, ...built.offeredOnly].map(
+      ({ skillName }) => skillName,
+    );
+    expect(new Set(grouped).size).toBe(grouped.length);
+  });
+
+  test('a skill that was only offered is never proposed for adoption', () => {
+    const built = view();
+    const offered = skillObservationRow(built, 'imagegen');
+
+    // A catalogue lists everything a harness has; being in one is evidence of offering, not use.
+    expect(offered?.verdict).toBe('offered-only');
+    expect(built.adoptionCandidates).not.toContainEqual(offered);
+    expect(verdictText({ verdict: 'offered-only', verdictProvisional: false })).toBe(
+      'Offered to a model, with no evidence it was ever invoked.',
+    );
+  });
+
+  test('retains an observation that resolves to no inventory entry', () => {
+    expect(skillObservationRow(view(), 'artifact-design')).toMatchObject({
+      managed: false,
+      resolvedPaths: [],
+      verdict: 'invoked-unmanaged',
     });
   });
 
-  test('retains an observation that resolves to no inventory entry as an adoption candidate', () => {
-    const built = view(['alpha-skill']);
+  test('qualifies every absence claim when the read could not prove absence', () => {
+    const built = view(syntheticProvisionalObservations);
 
-    expect(built.adoptionCandidates.map(({ skillName }) => skillName)).toEqual(['artifact-design']);
-    expect(skillObservationRow(built, 'artifact-design')).toMatchObject({
-      managed: false,
-      resolvedPaths: [],
-      verdict: 'unmanaged',
-    });
+    expect(built.observationsComplete).toBe(false);
+    // A short read cannot prove a skill went unused, so the copy says what it actually knows.
+    expect(verdictText({ verdict: 'never-observed', verdictProvisional: true })).toBe(
+      'No observation within the read bound.',
+    );
+    expect(verdictText({ verdict: 'offered-only', verdictProvisional: true })).toBe(
+      'Offered to a model; no invocation within the read bound.',
+    );
+    expect(skillObservationRow(built, 'beta-skill')?.verdictProvisional).toBe(true);
+    // A positive verdict is not weakened by a short read: seeing an invocation still proves use.
+    expect(skillObservationRow(built, 'alpha-skill')?.verdictProvisional).toBe(false);
+    expect(verdictText({ verdict: 'invoked', verdictProvisional: false })).toBe('Invoked in at least one harness.');
   });
 
   test('reads honestly at n = 1 and with nothing observed at all', () => {
@@ -82,7 +109,10 @@ describe('skill observations view', () => {
       lowerBound: false,
       skills: [
         {
+          deletionCandidate: false,
           lastObservedAt: '2026-08-01T09:00:00.000Z',
+          managed: false,
+          projectedEverywhere: false,
           resolvedPaths: [],
           skillName: 'solo-skill',
           tallies: [
@@ -94,27 +124,26 @@ describe('skill observations view', () => {
               tier: 'exposed',
             },
           ],
+          verdict: 'offered-only',
+          verdictProvisional: false,
         },
       ],
       skipped: 0,
     };
 
-    expect(skillObservationRow(view([], single), 'solo-skill')?.harnesses.map(({ summary }) => summary)).toEqual([
+    expect(skillObservationRow(view(single), 'solo-skill')?.harnesses.map(({ summary }) => summary)).toEqual([
       NO_OBSERVATIONS_TEXT,
       'exposed 1',
       NO_OBSERVATIONS_TEXT,
       NOT_OBSERVABLE_TEXT,
     ]);
 
-    const empty = view(['alpha-skill'], {
-      harnesses: syntheticObservations.harnesses,
-      lowerBound: false,
-      skills: [],
-      skipped: 0,
-    });
-    expect(empty.rows).toHaveLength(1);
-    expect(empty.deletionCandidates.map(({ skillName }) => skillName)).toEqual(['alpha-skill']);
+    const empty = view({ harnesses: syntheticObservations.harnesses, lowerBound: false, skills: [], skipped: 0 });
+    expect(empty.rows).toEqual([]);
+    expect(empty.deletionCandidates).toEqual([]);
     expect(empty.adoptionCandidates).toEqual([]);
+    expect(empty.offeredOnly).toEqual([]);
+    expect(empty.observationsComplete).toBe(true);
   });
 
   test('renders an observation instant identically wherever it is rendered', () => {
@@ -127,10 +156,16 @@ describe('skill observations view', () => {
   });
 
   test('lists managed skills before unmanaged ones and carries the read bound through', () => {
-    const built = view(['zeta-skill', 'alpha-skill'], { ...syntheticObservations, lowerBound: true, skipped: 4 });
+    const built = view({ ...syntheticObservations, lowerBound: true, skipped: 4 });
 
-    expect(built.rows.map(({ skillName }) => skillName)).toEqual(['alpha-skill', 'zeta-skill', 'artifact-design']);
+    expect(built.rows.map(({ skillName }) => skillName)).toEqual([
+      'alpha-skill',
+      'beta-skill',
+      'artifact-design',
+      'imagegen',
+    ]);
     expect(built.lowerBound).toBe(true);
     expect(built.skipped).toBe(4);
+    expect(built.observationsComplete).toBe(false);
   });
 });

@@ -14,14 +14,21 @@
     syntheticKnownPaths,
     syntheticManagedDocument,
     syntheticObservations,
+    syntheticProvisionalObservations,
     syntheticSnapshot,
   } from './synthetic-fixture.test-helper';
 
   let {
     healthSnapshot,
     observationsError,
+    observationsProvisional = false,
     pathname = '/skills/global/alpha-skill',
-  }: { healthSnapshot?: 'management'; observationsError?: string; pathname?: string } = $props();
+  }: {
+    healthSnapshot?: 'management';
+    observationsError?: string;
+    observationsProvisional?: boolean;
+    pathname?: string;
+  } = $props();
 
   provideDirtyGuardRegistry(createDirtyGuardRegistry());
   const snapshot = $derived(healthSnapshot === 'management' ? syntheticManagementSnapshot() : syntheticSnapshot());
@@ -33,6 +40,12 @@
       snapshot,
     }),
   );
+  const observations = $derived.by(() => {
+    if (observationsError !== undefined) {
+      return;
+    }
+    return observationsProvisional ? syntheticProvisionalObservations : syntheticObservations;
+  });
   const snapshotUpdates: SkillsSnapshotUpdatePort = {
     pendingDecision: undefined,
     registerDraft: () => undefined,
@@ -55,7 +68,7 @@
     {editorSlot}
     {healthSlot}
     {matrixSlot}
-    observations={observationsError === undefined ? syntheticObservations : undefined}
+    {observations}
     {observationsError}
     selectedDocument={syntheticManagedDocument}
     snapshot={view.snapshot}

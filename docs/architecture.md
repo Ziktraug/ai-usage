@@ -126,12 +126,19 @@ The read path is:
 `skill_observations` (durable)
 → `querySkillObservations` (`@ai-usage/usage-store/reader`, bounded, `query_only`)
 → `UsageReadModel.readSkillObservations` (`apps/web/src/server/usage-read-model.server.ts`)
-→ `createSkillObservationDataset` (`@ai-usage/report-core/skill-observation-summary`)
+→ `querySkillObservationDataset` (`@ai-usage/report-data/skill-observation-read`,
+which folds and clamps to the response caps, reporting any clamp as `lowerBound`)
+→ `joinSkillObservations` (`apps/web/src/server/skill-observation-join.ts`)
 → the `skills.observations` oRPC procedure
 → the `skill-observations` query family under the `collection-swr` policy.
 
 Three properties are load-bearing:
 
+- **A completed source publication invalidates it.** The query policy
+  revalidates on nothing — not mount, not focus, not reconnect — because nothing
+  a browser does can change it. The engine finishing a collection cycle can, and
+  that is exactly what a publication announces, so publication invalidation is
+  the identity's freshness path (`publicationInvalidatedKeys`).
 - **It is independent of the report revision.** Observations answer a question
   about the skills inventory, not about a published report, so `/skills` stays
   answerable before the first publication and after every revision expires.
@@ -142,9 +149,12 @@ Three properties are load-bearing:
   an observability marker derived from the harness itself. Cursor has no
   collector and renders as *not observable*, never as `0`.
 
-The inventory↔observation join happens in `apps/web/src/server/skills.server.ts`
-and the browser view model, never inside `@ai-usage/skills`, which stays a
-filesystem-projection domain with no usage-store dependency. A store this read
+The inventory↔observation join happens entirely in the web server layer —
+`apps/web/src/server/skills.server.ts` reads both sides and
+`skill-observation-join.ts` decides every verdict — never inside
+`@ai-usage/skills`, which stays a filesystem-projection domain with no
+usage-store dependency, and never in the browser, which receives one
+already-decided answer and imports only the contract (ADR 0010/0012). A store this read
 cannot open fails the observation section explicitly rather than degrading to an
 empty dataset, because an empty dataset would draw every observable harness as a
 zero.

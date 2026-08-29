@@ -1,14 +1,22 @@
-import type { SkillObservationTier } from '@ai-usage/report-core/skill-observation';
-import type { SkillObservationHarness, SkillObservations, SkillObservationTally } from '@ai-usage/web-contract/skills';
+import type {
+  ObservedSkill,
+  SkillObservationHarness,
+  SkillObservations,
+  SkillObservationTally,
+  SkillObservationTier,
+} from '@ai-usage/web-contract/skills';
 
 /**
- * The join between the skills inventory (what exists on disk) and the skill-observation fact family
- * (what the harnesses recorded). It happens here, in the web layer, because `@ai-usage/skills` is a
- * filesystem-projection domain and must not learn to read the usage store (ADR 0022).
+ * Presentation for the skill-observation surface.
  *
- * Everything this module produces is text. Tier and observability are words, never a colour or a
- * position, so the surface reads the same to a screen reader, in a monochrome terminal screenshot,
- * and to somebody who cannot distinguish two of the palette's hues.
+ * This module deliberately does **not** join anything. Managed-ness, projection completeness, and
+ * every verdict are decided on the server, where the inventory is (plan 099 decision 3), and arrive
+ * as facts. What is left here is turning those facts into words — a step that needs no inventory
+ * data and therefore belongs in the browser.
+ *
+ * Everything it produces is text. Tier and observability are words, never a colour or a position,
+ * so the surface reads the same to a screen reader, in a monochrome screenshot, and to somebody who
+ * cannot distinguish two of the palette's hues.
  */
 
 export const SKILL_OBSERVATION_TIER_LABELS: Record<SkillObservationTier, string> = {
@@ -22,12 +30,6 @@ export const SKILL_OBSERVATION_TIER_DESCRIPTIONS: Record<SkillObservationTier, s
   exposed: 'The skill was offered to the model, with no evidence it was used.',
   inferred: 'Reconstructed from a weaker trace that was never meant to record an invocation.',
 };
-
-/**
- * `unmanaged` is the adoption candidate — observed, but resolving to no inventory entry.
- * `never-observed` is the deletion candidate — projected everywhere and never seen.
- */
-export type SkillObservationVerdict = 'never-observed' | 'observed' | 'unmanaged';
 
 export type SkillObservationHarnessState = 'no-observations' | 'not-observable' | 'observed';
 
@@ -43,23 +45,22 @@ export interface SkillObservationHarnessCell {
   tallies: readonly SkillObservationTally[];
 }
 
-export interface SkillObservationRow {
+export interface SkillObservationRow extends ObservedSkill {
   harnesses: readonly SkillObservationHarnessCell[];
-  lastObservedAt: string | null;
-  managed: boolean;
-  resolvedPaths: readonly string[];
-  skillName: string;
-  verdict: SkillObservationVerdict;
 }
 
 export interface SkillObservationsView {
-  /** Observed, but resolving to no inventory entry: the "invoked but unmanaged" verdict. */
+  /** Invoked, but resolving to no inventory entry: the adoption candidates. */
   adoptionCandidates: readonly SkillObservationRow[];
-  /** Managed and projected, but never observed by any harness that can observe. */
+  /** Managed, installed in every runtime, and still never invoked: the deletion candidates. */
   deletionCandidates: readonly SkillObservationRow[];
   harnesses: readonly SkillObservationHarness[];
   /** The read hit its bound, so every count below is a lower bound. */
   lowerBound: boolean;
+  /** Whether the read can prove an absence at all. */
+  observationsComplete: boolean;
+  /** Offered to a model with no evidence of use, and not already a deletion candidate. */
+  offeredOnly: readonly SkillObservationRow[];
   /** Managed skills first, then the unmanaged names, each alphabetically. */
   rows: readonly SkillObservationRow[];
   /** Persisted rows the reader could not re-validate. */
@@ -92,13 +93,18 @@ export const formatObservedAt = (isoTimestamp: string): string => {
 export const tallySummary = (tallies: readonly SkillObservationTally[]): string =>
   tallies.map((tally) => `${SKILL_OBSERVATION_TIER_LABELS[tally.tier]} ${tally.count}`).join(' · ');
 
+/**
+ * What one skill's row says about one harness.
+ *
+ * The `not-observable` branch comes first and returns before any count is considered, so there is
+ * no path on which a harness that cannot report renders a number — including the case where the
+ * store somehow holds rows under its key.
+ */
 const cellFor = (
   harness: SkillObservationHarness,
   tallies: readonly SkillObservationTally[],
 ): SkillObservationHarnessCell => {
   if (harness.observability === 'not-observable') {
-    // No count, ever. A harness that records nothing cannot report a zero, and rendering one would
-    // assert that its projected skills go unused.
     return {
       harnessKey: harness.harnessKey,
       label: harness.label,
@@ -125,51 +131,49 @@ const cellFor = (
   };
 };
 
-const verdictFor = (managed: boolean, observed: boolean): SkillObservationVerdict => {
-  if (!managed) {
-    return 'unmanaged';
+/**
+ * The sentence a verdict becomes.
+ *
+ * A provisional verdict is one that claims an absence the read could not establish — the read was
+ * bounded, or rows failed re-validation. It says what it actually knows ("no ... within the read
+ * bound") rather than repeating a claim it cannot support.
+ */
+export const verdictText = (row: Pick<SkillObservationRow, 'verdict' | 'verdictProvisional'>): string => {
+  if (row.verdict === 'invoked') {
+    return 'Invoked in at least one harness.';
   }
-  return observed ? 'observed' : 'never-observed';
+  if (row.verdict === 'invoked-unmanaged') {
+    return 'Invoked but unmanaged — an adoption candidate for the source repository.';
+  }
+  if (row.verdict === 'offered-only') {
+    return row.verdictProvisional
+      ? 'Offered to a model; no invocation within the read bound.'
+      : 'Offered to a model, with no evidence it was ever invoked.';
+  }
+  return row.verdictProvisional ? 'No observation within the read bound.' : 'Never observed by any harness.';
 };
 
-export interface BuildSkillObservationsViewInput {
-  readonly managedSkillNames: readonly string[];
-  readonly observations: SkillObservations;
-}
-
-export const buildSkillObservationsView = ({
-  managedSkillNames,
-  observations,
-}: BuildSkillObservationsViewInput): SkillObservationsView => {
-  const managed = new Set(managedSkillNames);
-  const observedByName = new Map(observations.skills.map((skill) => [skill.skillName, skill]));
-  // Every managed skill appears, observed or not: a skill missing from the observation read is the
-  // deletion candidate this feature exists to name, and dropping it would erase the verdict.
-  const names = [...new Set([...managedSkillNames, ...observedByName.keys()])].sort((left, right) =>
-    left.localeCompare(right),
-  );
-  const rows = names.map((skillName) => {
-    const observed = observedByName.get(skillName);
+export const buildSkillObservationsView = (observations: SkillObservations): SkillObservationsView => {
+  const rows = observations.skills.map((skill) => {
     const talliesByHarness = new Map<string, SkillObservationTally[]>();
-    for (const tally of observed?.tallies ?? []) {
+    for (const tally of skill.tallies) {
       talliesByHarness.set(tally.harnessKey, [...(talliesByHarness.get(tally.harnessKey) ?? []), tally]);
     }
     return {
+      ...skill,
       harnesses: observations.harnesses.map((harness) =>
         cellFor(harness, talliesByHarness.get(harness.harnessKey) ?? []),
       ),
-      lastObservedAt: observed?.lastObservedAt ?? null,
-      managed: managed.has(skillName),
-      resolvedPaths: observed?.resolvedPaths ?? [],
-      skillName,
-      verdict: verdictFor(managed.has(skillName), observed !== undefined),
     } satisfies SkillObservationRow;
   });
   return {
-    adoptionCandidates: rows.filter((row) => row.verdict === 'unmanaged'),
-    deletionCandidates: rows.filter((row) => row.verdict === 'never-observed'),
+    adoptionCandidates: rows.filter((row) => row.verdict === 'invoked-unmanaged'),
+    deletionCandidates: rows.filter((row) => row.deletionCandidate),
     harnesses: observations.harnesses,
     lowerBound: observations.lowerBound,
+    observationsComplete: !observations.lowerBound && observations.skipped === 0,
+    // Exclusive of the deletion group, so no skill is listed twice under two headings.
+    offeredOnly: rows.filter((row) => row.verdict === 'offered-only' && !row.deletionCandidate),
     rows: [...rows.filter((row) => row.managed), ...rows.filter((row) => !row.managed)],
     skipped: observations.skipped,
   };

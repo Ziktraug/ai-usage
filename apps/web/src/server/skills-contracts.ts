@@ -1,4 +1,3 @@
-import type { SkillObservationDataset } from '@ai-usage/report-core/skill-observation-summary';
 import type {
   ProjectionAction,
   ProjectSkillInventory,
@@ -9,6 +8,7 @@ import type {
   SkillTargetDirectoryInput,
   SkillToggleInput,
 } from '@ai-usage/skills';
+import type { SkillObservations } from '@ai-usage/web-contract/skills';
 import type { ProjectRuntimeDirId } from '../project-skill-directories';
 
 export type SkillsServerResult<T> =
@@ -64,9 +64,10 @@ export interface SkillsServerAdapter {
   readMarkdown: (skillName: string) => SkillsServerAdapterResult<SkillMarkdownDocument>;
   /**
    * The inventory↔usage join point. Observations are read here, through the read-only data plane,
-   * so `@ai-usage/skills` stays a filesystem-projection domain with no usage-store dependency.
+   * and joined against the inventory here, so `@ai-usage/skills` stays a filesystem-projection
+   * domain with no usage-store dependency and the browser receives one already-decided answer.
    */
-  readObservations: () => SkillsServerAdapterResult<SkillObservationDataset>;
+  readObservations: () => SkillsServerAdapterResult<SkillObservations>;
   readProjectInventories: () => SkillsServerAdapterResult<readonly ProjectSkillInventory[]>;
   readProjectMarkdown: (input: ProjectSkillMarkdownInput) => SkillsServerAdapterResult<ProjectSkillMarkdownDocument>;
   readSnapshot: () => SkillsServerAdapterResult<SkillManagementSnapshot>;

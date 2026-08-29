@@ -45,9 +45,10 @@ export const syntheticSnapshot = (
 });
 
 /**
- * One managed skill observed in two harnesses at two tiers, one unmanaged skill observed by Claude
- * Code, and Cursor enumerated as unable to observe. Enough to exercise every reading the surface has
- * to keep straight without inflating the counts any test asserts on.
+ * The already-joined observation payload, as the server produces it: one skill of each verdict, and
+ * Cursor enumerated as unable to observe. Written out rather than derived so the fixture states
+ * exactly what the surface is being asked to render — the verdict rules themselves are tested
+ * against `joinSkillObservations` directly.
  */
 export const syntheticObservations: SkillObservations = {
   harnesses: [
@@ -59,7 +60,10 @@ export const syntheticObservations: SkillObservations = {
   lowerBound: false,
   skills: [
     {
+      deletionCandidate: false,
       lastObservedAt: '2026-08-02T09:00:00.000Z',
+      managed: true,
+      projectedEverywhere: true,
       resolvedPaths: ['/synthetic/source/skills/alpha-skill'],
       skillName: 'alpha-skill',
       tallies: [
@@ -78,9 +82,27 @@ export const syntheticObservations: SkillObservations = {
           tier: 'inferred',
         },
       ],
+      verdict: 'invoked',
+      verdictProvisional: false,
     },
     {
+      // Installed everywhere and still never invoked: the deletion candidate.
+      deletionCandidate: true,
+      lastObservedAt: null,
+      managed: true,
+      projectedEverywhere: true,
+      resolvedPaths: [],
+      skillName: 'beta-skill',
+      tallies: [],
+      verdict: 'never-observed',
+      verdictProvisional: false,
+    },
+    {
+      // Invoked, resolving to no inventory entry: the adoption candidate.
+      deletionCandidate: false,
       lastObservedAt: '2026-08-01T10:00:00.000Z',
+      managed: false,
+      projectedEverywhere: false,
       resolvedPaths: [],
       skillName: 'artifact-design',
       tallies: [
@@ -92,9 +114,41 @@ export const syntheticObservations: SkillObservations = {
           tier: 'declared',
         },
       ],
+      verdict: 'invoked-unmanaged',
+      verdictProvisional: false,
+    },
+    {
+      // Offered to a model and never used. Real signal, but about offering, not use.
+      deletionCandidate: false,
+      lastObservedAt: '2026-08-01T11:00:00.000Z',
+      managed: false,
+      projectedEverywhere: false,
+      resolvedPaths: [],
+      skillName: 'imagegen',
+      tallies: [
+        {
+          count: 1,
+          harnessKey: 'codex',
+          harnessLabel: 'Codex',
+          lastObservedAt: '2026-08-01T11:00:00.000Z',
+          tier: 'exposed',
+        },
+      ],
+      verdict: 'offered-only',
+      verdictProvisional: false,
     },
   ],
   skipped: 0,
+};
+
+/** The same payload from a read that could not prove absence: every absence claim is provisional. */
+export const syntheticProvisionalObservations: SkillObservations = {
+  ...syntheticObservations,
+  lowerBound: true,
+  skills: syntheticObservations.skills.map((skill) => ({
+    ...skill,
+    verdictProvisional: !skill.tallies.some((tally) => tally.tier === 'declared' || tally.tier === 'inferred'),
+  })),
 };
 
 export const syntheticKnownPaths: readonly KnownSkillProjectPath[] = [

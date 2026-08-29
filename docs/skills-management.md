@@ -125,10 +125,16 @@ its observation tier (`declared`, `inferred`, `exposed`) and the harness that
 produced it, and the tiers are never added together. Cursor records nothing about
 skill use, so it renders as *not observable* rather than as a zero: it exposes
 the skills this product projects into it, and a zero would claim they go unused.
-Two verdicts get their own groups — *projected but never observed* (deletion
-candidates) and *observed but unmanaged* (adoption candidates, which is where
-harness-bundled and plugin skills land). Adopting an unmanaged observed skill
-into the source repository remains future work, as above.
+Three verdicts get their own groups. *Projected everywhere but never invoked*
+are deletion candidates — managed, installed in every enabled runtime, and still
+unused, which is the only shape of absence that means anything. *Invoked but
+unmanaged* are adoption candidates, which is where harness-bundled and plugin
+skills land. *Offered but never invoked* is where a skill goes when the only
+evidence is a catalogue listing: a harness injects its whole catalogue, so being
+in one says nothing about use and proposes nothing. When a read is bounded or
+could not read every stored row, the absence-based verdicts say so rather than
+claiming a skill went unused. Adopting an unmanaged invoked skill into the source
+repository remains future work, as above.
 
 See [ADR 0022](adr/0022-skill-observation-tiers-and-observability.md) for the
 invariants and `docs/skills-management-spec.md` for the per-harness coverage

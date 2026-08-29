@@ -17,40 +17,25 @@
     NOT_OBSERVABLE_TEXT,
     SKILL_OBSERVATION_TIER_DESCRIPTIONS,
     skillObservationRow,
+    verdictText,
   } from './model';
 
   let {
     errorMessage,
-    managedSkillNames,
     observations,
     skillName,
     variant = 'overview',
   }: {
     errorMessage?: string | undefined;
-    managedSkillNames: readonly string[];
     observations?: SkillObservations | undefined;
     skillName?: string | undefined;
     variant?: 'overview' | 'skill';
   } = $props();
 
-  const view = $derived(
-    observations === undefined ? undefined : buildSkillObservationsView({ managedSkillNames, observations }),
-  );
+  const view = $derived(observations === undefined ? undefined : buildSkillObservationsView(observations));
   const row = $derived(
     view === undefined || skillName === undefined ? undefined : skillObservationRow(view, skillName),
   );
-
-  // Every state below is a sentence. A count is never carried by a colour, a dot, or a position, so
-  // the tier and the observability survive a screen reader, a monochrome render, and a grep.
-  const verdictText = (verdict: 'never-observed' | 'observed' | 'unmanaged'): string => {
-    if (verdict === 'never-observed') {
-      return 'Projected but never observed — a deletion candidate.';
-    }
-    if (verdict === 'unmanaged') {
-      return 'Observed but unmanaged — an adoption candidate for the source repository.';
-    }
-    return 'Observed in at least one harness.';
-  };
 
   const stack = css({ display: 'grid', gap: '12px' });
   const section = css({ display: 'grid', gap: '8px' });
@@ -130,13 +115,24 @@
     <p class={meta} data-skill-observations-last-observed>
       {#if row?.lastObservedAt}
         Last observed <time datetime={row.lastObservedAt}>{formatObservedAt(row.lastObservedAt)}</time>
-      {:else}
+      {:else if view.observationsComplete}
         Never observed.
+      {:else}
+        No observation within the read bound.
       {/if}
     </p>
-    <p class={meta} data-skill-observations-verdict={row?.verdict ?? 'never-observed'}>
-      {verdictText(row?.verdict ?? 'never-observed')}
+    <p
+      class={meta}
+      data-skill-observations-verdict={row?.verdict ?? 'never-observed'}
+      data-verdict-provisional={(row?.verdictProvisional ?? !view.observationsComplete) ? 'true' : 'false'}
+    >
+      {verdictText(row ?? { verdict: 'never-observed', verdictProvisional: !view.observationsComplete })}
     </p>
+    {#if row?.deletionCandidate}
+      <p class={meta} data-skill-observations-deletion-candidate>
+        Installed in every runtime and still never invoked — a deletion candidate.
+      </p>
+    {/if}
     {#if (row?.resolvedPaths.length ?? 0) > 0}
       {#each row?.resolvedPaths ?? [] as resolvedPath (resolvedPath)}
         <p class={pathText}>{resolvedPath}</p>
@@ -230,38 +226,84 @@
       </table>
     </section>
 
-    <section aria-label="Projected but never observed" class={section} data-skill-observations-group="deletion">
+    <section
+      aria-label="Projected everywhere but never invoked"
+      class={section}
+      data-provisional={view.observationsComplete ? 'false' : 'true'}
+      data-skill-observations-group="deletion"
+    >
       <div class={sectionHeader}>
-        <h3 class={panelTitle}>Projected but never observed</h3>
+        <h3 class={panelTitle}>Projected everywhere but never invoked</h3>
         <p class={panelSub}>
-          Managed skills no harness that can observe has recorded. Deletion candidates — Cursor cannot report, so its
-          projections are not evidence either way.
+          Managed skills installed in every enabled runtime that no harness recorded being used. Deletion candidates.
+          Being offered to a model does not count as use, and Cursor cannot report, so its projections are not evidence
+          either way.
         </p>
+        {#if !view.observationsComplete}
+          <p class={panelSub} data-skill-observations-provisional-note role="status">
+            Provisional: this read was bounded or could not read every stored row, so absence here is not proof.
+          </p>
+        {/if}
       </div>
       {#if view.deletionCandidates.length === 0}
-        <p class={meta}>Every managed skill has been observed at least once.</p>
+        <p class={meta}>
+          {view.observationsComplete
+            ? 'Every managed skill installed everywhere has been invoked at least once.'
+            : 'Nothing qualifies within the read bound.'}
+        </p>
       {:else}
         <ul class={candidateList}>
           {#each view.deletionCandidates as candidate (candidate.skillName)}
-            <li>{candidate.skillName}</li>
+            <li>
+              {candidate.skillName}
+              <span class={meta}>{verdictText(candidate)}</span>
+            </li>
           {/each}
         </ul>
       {/if}
     </section>
 
-    <section aria-label="Observed but unmanaged" class={section} data-skill-observations-group="adoption">
+    <section aria-label="Invoked but unmanaged" class={section} data-skill-observations-group="adoption">
       <div class={sectionHeader}>
-        <h3 class={panelTitle}>Observed but unmanaged</h3>
+        <h3 class={panelTitle}>Invoked but unmanaged</h3>
         <p class={panelSub}>
-          Skills a harness recorded that resolve to no entry in the managed inventory — harness-bundled and
-          plugin-provided skills. Adoption candidates for the source repository.
+          Skills a harness recorded being <em>used</em> that resolve to no entry in the managed inventory —
+          harness-bundled and plugin-provided skills. Adoption candidates for the source repository. A skill that was
+          only offered to a model is listed separately: a catalogue lists everything, so being in one is not use.
         </p>
       </div>
       {#if view.adoptionCandidates.length === 0}
-        <p class={meta}>Every observed skill resolves to a managed inventory entry.</p>
+        <p class={meta}>Every invoked skill resolves to a managed inventory entry.</p>
       {:else}
         <ul class={candidateList}>
           {#each view.adoptionCandidates as candidate (candidate.skillName)}
+            <li>
+              {candidate.skillName}
+              <span class={meta}>
+                {candidate.harnesses
+                  .filter((cell) => cell.state === 'observed')
+                  .map((cell) => `${cell.label} ${cell.summary}`)
+                  .join(' · ')}
+              </span>
+            </li>
+          {/each}
+        </ul>
+      {/if}
+    </section>
+
+    <section aria-label="Offered but never invoked" class={section} data-skill-observations-group="offered">
+      <div class={sectionHeader}>
+        <h3 class={panelTitle}>Offered but never invoked</h3>
+        <p class={panelSub}>
+          Skills a harness put in front of a model with no evidence any of them was used. This is a fact about offering,
+          not about use, so it proposes nothing on its own.
+        </p>
+      </div>
+      {#if view.offeredOnly.length === 0}
+        <p class={meta}>No skill was offered without also being invoked.</p>
+      {:else}
+        <ul class={candidateList}>
+          {#each view.offeredOnly as candidate (candidate.skillName)}
             <li>
               {candidate.skillName}
               <span class={meta}>
