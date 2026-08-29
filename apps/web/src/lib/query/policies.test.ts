@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
-import { controlPlaneKey, currentAliasKey, finiteSwrKey, immutableRevisionKey } from './keys';
+import { collectionSwrKey, controlPlaneKey, currentAliasKey, finiteSwrKey, immutableRevisionKey } from './keys';
 import {
+  COLLECTION_SWR_STALE_TIME_MS,
   DEFAULT_BOUNDED_GC_TIME_MS,
   FINITE_SWR_STALE_TIME_MS,
   queryPolicy,
@@ -22,6 +23,12 @@ describe('Web query key and policy vocabulary', () => {
     ]);
     expect(finiteSwrKey('skills', 'snapshot', 4)).toEqual(['web', 'finite-swr', 'skills', 'snapshot', 4]);
     expect(controlPlaneKey('sync', 'fleet', true)).toEqual(['web', 'control-plane', 'sync', 'fleet', true]);
+    expect(collectionSwrKey('skill-observations', 'all')).toEqual([
+      'web',
+      'collection-swr',
+      'skill-observations',
+      'all',
+    ]);
   });
 
   test('requires named policies with explicit lifecycle behavior and bounded collection', () => {
@@ -29,6 +36,19 @@ describe('Web query key and policy vocabulary', () => {
     expect(queryPolicy('immutable-revision')).toBe(webQueryPolicies.immutableRevision);
     expect(queryPolicy('finite-swr')).toBe(webQueryPolicies.finiteSwr);
     expect(queryPolicy('bounded-control-plane')).toBe(webQueryPolicies.boundedControlPlane);
+    expect(queryPolicy('collection-swr')).toBe(webQueryPolicies.collectionSwr);
+
+    // Produced only by a background collection cycle, so no browser event revalidates it — not a
+    // mount, not focus, not a reconnect. Invalidation is the only thing that can.
+    expect(webQueryPolicies.collectionSwr).toMatchObject({
+      gcTime: DEFAULT_BOUNDED_GC_TIME_MS,
+      refetchOnMount: false,
+      refetchOnReconnect: false,
+      refetchOnWindowFocus: false,
+      retry: false,
+      staleTime: COLLECTION_SWR_STALE_TIME_MS,
+    });
+    expect(COLLECTION_SWR_STALE_TIME_MS).toBeGreaterThan(FINITE_SWR_STALE_TIME_MS);
 
     expect(webQueryPolicies.currentAliasSwr).toMatchObject({
       gcTime: DEFAULT_BOUNDED_GC_TIME_MS,

@@ -1,3 +1,8 @@
+import type { SkillObservation } from '@ai-usage/report-core/skill-observation';
+import {
+  createSkillObservationDataset,
+  type SkillObservationDataset,
+} from '@ai-usage/report-core/skill-observation-summary';
 import type {
   Projection,
   ProjectionAction,
@@ -309,6 +314,67 @@ export const readE2EProjectSkillMarkdown = (
     skillName: input.skillName,
     truncated: false,
   },
+  ok: true,
+});
+
+/**
+ * The skill names of the shared synthetic home (`seedHarnessHome({ skillSignals: true })`) that
+ * resolve to no managed inventory entry: a Claude Code bundled skill, a Codex skill both offered
+ * and read, and a Codex skill offered but never read. Kept in step with that fixture by
+ * `skills-e2e-fixture.server.test.ts`, so what the browser renders here is the same vocabulary a
+ * real collection over that home produces.
+ */
+const E2E_UNMANAGED_OBSERVED_SKILLS = {
+  claudeBundled: 'artifact-design',
+  codexOfferedAndRead: 'pr-review',
+  codexOfferedOnly: 'imagegen',
+} as const;
+
+const e2eObservation = (
+  harnessKey: string,
+  tier: SkillObservation['tier'],
+  skillName: string,
+  ordinal: number,
+  resolvedPath: string | null = null,
+): SkillObservation => ({
+  argsPresent: null,
+  harnessKey,
+  observationKey: `${harnessKey}-${tier}-${skillName}-${ordinal}`,
+  observedAt: new Date(Date.UTC(2026, 7, 1, 9, ordinal)).toISOString(),
+  projectPath: '/fixture/projects/alpha',
+  resolvedPath,
+  sessionId: `${harnessKey}-fixture-session`,
+  skillName,
+  success: null,
+  tier,
+});
+
+/**
+ * A deterministic observation set covering every reading the surface has to get right:
+ * a mixed-tier managed skill, a managed skill nothing observed (deletion candidate), unmanaged
+ * skills that were observed (adoption candidates), a skill offered but never read, and Cursor —
+ * which contributes nothing because it cannot observe, and must never be drawn as a zero.
+ */
+const e2eObservations: readonly SkillObservation[] = [
+  e2eObservation('claude', 'declared', 'alpha-skill', 1, '/fixture/source/skills/alpha-skill'),
+  e2eObservation('claude', 'declared', 'alpha-skill', 2, '/fixture/source/skills/alpha-skill'),
+  e2eObservation('claude', 'declared', 'alpha-skill', 3, '/fixture/source/skills/alpha-skill'),
+  e2eObservation('opencode', 'declared', 'alpha-skill', 4),
+  e2eObservation('codex', 'exposed', 'alpha-skill', 5),
+  e2eObservation('codex', 'exposed', 'alpha-skill', 6),
+  e2eObservation('codex', 'inferred', 'alpha-skill', 7),
+  e2eObservation('claude', 'declared', E2E_UNMANAGED_OBSERVED_SKILLS.claudeBundled, 8),
+  e2eObservation('codex', 'exposed', E2E_UNMANAGED_OBSERVED_SKILLS.codexOfferedAndRead, 9),
+  e2eObservation('codex', 'inferred', E2E_UNMANAGED_OBSERVED_SKILLS.codexOfferedAndRead, 10),
+  e2eObservation('codex', 'exposed', E2E_UNMANAGED_OBSERVED_SKILLS.codexOfferedOnly, 11),
+];
+
+export const e2eSkillObservationDataset = (): SkillObservationDataset => createSkillObservationDataset(e2eObservations);
+
+export const e2eUnmanagedObservedSkillNames = (): readonly string[] => Object.values(E2E_UNMANAGED_OBSERVED_SKILLS);
+
+export const readE2ESkillObservations = (): SkillsServerResult<SkillObservationDataset> => ({
+  data: e2eSkillObservationDataset(),
   ok: true,
 });
 

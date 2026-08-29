@@ -8,6 +8,7 @@ import type {
   SkillManagementSnapshot,
   SkillMarkdownDocument,
   SkillMarkdownSaveResult,
+  SkillObservations,
   SkillReconcileResult,
   SkillTargetInput,
   SkillToggleInput,
@@ -85,6 +86,8 @@ export const createSkillsClient = (rpc: SkillsRpcClient) => ({
     options: SkillsClientCallOptions = {},
   ): Promise<SkillsClientResult<SkillManagementSnapshot>> =>
     call((callOptions) => rpc.snapshot({}, callOptions), options),
+  getSkillObservations: (options: SkillsClientCallOptions = {}): Promise<SkillsClientResult<SkillObservations>> =>
+    call((callOptions) => rpc.observations({}, callOptions), options),
   getSkillProjectInventories: (
     options: SkillsClientCallOptions = {},
   ): Promise<SkillsClientResult<readonly ProjectSkillInventory[]>> =>

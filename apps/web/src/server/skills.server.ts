@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { createSkillsConfigStore } from '@ai-usage/local-machine/skills-config';
+import type { SkillObservationDataset } from '@ai-usage/report-core/skill-observation-summary';
 import type {
   SkillManagementConfig,
   SkillManagementConfigDocument,
@@ -300,6 +301,12 @@ export interface SkillsServerAdapterDependencies {
   homePath: string;
   readConfig: () => Promise<SkillManagementConfigDocument>;
   readKnownProjectSources: () => Promise<ProjectPathSourcePayload>;
+  /**
+   * The skill-observation read (ADR 0022). It lives on the dependencies rather than inside the
+   * skills application because the inventory domain must not learn to read the usage store; this
+   * seam is where the two meet, and it only ever reads.
+   */
+  readSkillObservations: () => Promise<SkillObservationDataset>;
   updateSkills: (skills: unknown) => Promise<void>;
 }
 
@@ -346,6 +353,7 @@ export const createSkillsServerAdapter = (dependencies: SkillsServerAdapterDepen
       runAdapterOperation(async () => clientReconcileResult(await application.previewReconcile())),
     readKnownProjectPaths: () => runAdapterOperation(readKnownProjectPaths),
     readMarkdown: (skillName) => runAdapterOperation(() => application.readMarkdown(skillName)),
+    readObservations: () => runAdapterOperation(dependencies.readSkillObservations),
     readProjectInventories: () => runAdapterOperation(() => application.readProjectInventories()),
     readProjectMarkdown: (input) => runAdapterOperation(() => application.readProjectMarkdown(input)),
     readSnapshot: () =>
@@ -377,7 +385,7 @@ export const createSkillsServerDependencies = (
   options: {
     configCwd?: string;
     homePath?: string;
-    readModel?: Pick<UsageReadModel, 'readCurrentLocalProjectSources'>;
+    readModel?: Pick<UsageReadModel, 'readCurrentLocalProjectSources' | 'readSkillObservations'>;
   } = {},
 ): SkillsServerAdapterDependencies => {
   const configCwd = options.configCwd ?? process.cwd();
@@ -420,11 +428,29 @@ export const createSkillsServerDependencies = (
     }
   };
 
+  /**
+   * A store this read cannot reach is not "no observations". Degrading to an empty dataset would
+   * render every observable harness as a zero, which is the one reading ADR 0022 forbids, so the
+   * failure is raised and the surface reports the observation section as unavailable — per metric,
+   * never as a page-level data-quality banner.
+   */
+  const readSkillObservations: SkillsServerAdapterDependencies['readSkillObservations'] = async () => {
+    try {
+      return await readModel.readSkillObservations();
+    } catch (error) {
+      if (usageStoreErrorReasonFrom(error) !== undefined) {
+        throw new Error('Skill observations are unavailable.');
+      }
+      throw error;
+    }
+  };
+
   return {
     configCwd,
     homePath: configStore.homePath,
     readConfig: configStore.read,
     readKnownProjectSources,
+    readSkillObservations,
     updateSkills: configStore.updateSkills,
   };
 };
@@ -443,6 +469,7 @@ export const previewReconcileAllActiveSkillsForServer = () => productionSkillsSe
 export const createSkillTargetDirectoryForServer = (input: SkillTargetDirectoryInput) =>
   productionSkillsServerAdapter.createTargetDirectory(input);
 export const readSkillProjectInventoriesForServer = () => productionSkillsServerAdapter.readProjectInventories();
+export const readSkillObservationsForServer = () => productionSkillsServerAdapter.readObservations();
 export const readSkillMarkdownForServer = (skillName: string) => productionSkillsServerAdapter.readMarkdown(skillName);
 export const writeSkillMarkdownForServer = (input: SkillMarkdownWriteInput) =>
   productionSkillsServerAdapter.saveMarkdown(input);

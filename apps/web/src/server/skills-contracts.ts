@@ -1,3 +1,4 @@
+import type { SkillObservationDataset } from '@ai-usage/report-core/skill-observation-summary';
 import type {
   ProjectionAction,
   ProjectSkillInventory,
@@ -61,6 +62,11 @@ export interface SkillsServerAdapter {
   previewReconcileAll: () => SkillsServerAdapterResult<SkillReconcileServerResult>;
   readKnownProjectPaths: () => SkillsServerAdapterResult<readonly KnownSkillProjectPath[]>;
   readMarkdown: (skillName: string) => SkillsServerAdapterResult<SkillMarkdownDocument>;
+  /**
+   * The inventory↔usage join point. Observations are read here, through the read-only data plane,
+   * so `@ai-usage/skills` stays a filesystem-projection domain with no usage-store dependency.
+   */
+  readObservations: () => SkillsServerAdapterResult<SkillObservationDataset>;
   readProjectInventories: () => SkillsServerAdapterResult<readonly ProjectSkillInventory[]>;
   readProjectMarkdown: (input: ProjectSkillMarkdownInput) => SkillsServerAdapterResult<ProjectSkillMarkdownDocument>;
   readSnapshot: () => SkillsServerAdapterResult<SkillManagementSnapshot>;

@@ -3,6 +3,10 @@ import type { UsageMergeBundle } from '@ai-usage/report-core/merge-bundle';
 import { projectProviderQuotaObservation } from '@ai-usage/report-core/provider-quota';
 import { createProviderStatusDataset, type ProviderStatusDataset } from '@ai-usage/report-core/provider-status';
 import {
+  createSkillObservationDataset,
+  type SkillObservationDataset,
+} from '@ai-usage/report-core/skill-observation-summary';
+import {
   queryServedRevisionData,
   type ServedRevisionQueryError,
   type ServedRevisionQueryKind,
@@ -16,6 +20,7 @@ import {
   queryCurrentServedReportRevisionBootstrap,
   queryLatestProviderQuotaObservations,
   queryLocalMergeBundle,
+  querySkillObservations,
   queryUsageLocalMachine,
   queryUsageSyncFleet,
   type ServedReportRevisionManifest,
@@ -61,6 +66,16 @@ export interface UsageReadModel {
     options?: UsageReadModelCallOptions,
   ) => Promise<{ readonly id: string; readonly label: string }>;
   readonly readLocalMergeBundle: (options?: UsageReadModelCallOptions) => Promise<UsageMergeBundle>;
+  /**
+   * The skill-observation fact family (ADR 0022), folded into its presented dataset.
+   *
+   * Like `readLatestProviderQuota` this deliberately bypasses the report bootstrap, and for a
+   * sharper reason than cost: observations are collected on their own cycle and answer a question
+   * about the *skills inventory*, not about a report revision. Routing them through the bootstrap
+   * would make an inventory fact expire with a revision it has nothing to do with, and would make
+   * `/skills` — which never renders report rows — unable to answer until a revision was published.
+   */
+  readonly readSkillObservations: (options?: UsageReadModelCallOptions) => Promise<SkillObservationDataset>;
   readonly readSyncFleet: (options?: UsageReadModelCallOptions) => Promise<QueryUsageSyncFleetResult>;
 }
 
@@ -70,6 +85,14 @@ export interface UsageReadModel {
  * read into the shell of every page.
  */
 const MAXIMUM_RAIL_QUOTA_OBSERVATIONS = 64;
+
+/**
+ * Skill observations are tens to hundreds per sweep and are retained for 400 days, so a few
+ * thousand is the realistic ceiling for one machine's history. The bound exists so a corrupt or
+ * runaway table cannot be read whole into a page render; when it bites, the reader reports it and
+ * the dataset presents its counts as a lower bound rather than as numbers.
+ */
+const MAXIMUM_SKILL_OBSERVATIONS = 20_000;
 
 export interface SqliteUsageReadModelOptions {
   readonly dbPath: string;
@@ -160,6 +183,19 @@ export const createSqliteUsageReadModel = (options: SqliteUsageReadModelOptions)
       callOptions,
     ),
   readLocalMachine: (callOptions) => runReadEffect(queryUsageLocalMachine({ dbPath: options.dbPath }), callOptions),
+  readSkillObservations: async (callOptions) => {
+    const result = await runReadEffect(
+      querySkillObservations({
+        dbPath: options.dbPath,
+        maximumObservations: MAXIMUM_SKILL_OBSERVATIONS,
+      }),
+      callOptions,
+    );
+    return createSkillObservationDataset(
+      result.observations.map(({ observation }) => observation),
+      { lowerBound: result.truncated, skipped: result.skipped },
+    );
+  },
   readSyncFleet: (callOptions) => runReadEffect(queryUsageSyncFleet({ dbPath: options.dbPath }), callOptions),
 });
 

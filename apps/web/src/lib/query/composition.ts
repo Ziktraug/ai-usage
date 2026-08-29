@@ -26,7 +26,15 @@ export interface WebQueryRuntimeOptions {
 export type PublicationQueryEffect = 'invalidate-current-alias' | 'none';
 
 export interface WebQueryOwnership {
-  readonly family: 'quota' | 'report-current' | 'report-exact' | 'session' | 'skills' | 'sources' | 'sync';
+  readonly family:
+    | 'quota'
+    | 'report-current'
+    | 'report-exact'
+    | 'session'
+    | 'skill-observations'
+    | 'skills'
+    | 'sources'
+    | 'sync';
   readonly policy: WebQueryPolicyName;
   readonly publication: PublicationQueryEffect;
   readonly rendering: 'browser-only' | 'ssr-awaited';
@@ -60,6 +68,15 @@ export const webQueryOwnership = [
   {
     family: 'skills',
     policy: 'finite-swr',
+    publication: 'none',
+    rendering: 'ssr-awaited',
+  },
+  {
+    // Its own identity, and therefore its own policy: the skills snapshot is a filesystem scan that
+    // changes when the operator edits skills, while observations change only when the engine
+    // collects. Folding them together would put one cadence on the other's refetch rules.
+    family: 'skill-observations',
+    policy: 'collection-swr',
     publication: 'none',
     rendering: 'ssr-awaited',
   },

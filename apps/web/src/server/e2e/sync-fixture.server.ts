@@ -146,6 +146,7 @@ const readModel: UsageReadModel = {
   readCurrentLocalProjectSources: unsupportedRead,
   readCurrentManifest: unsupportedRead,
   readLatestProviderQuota: unsupportedRead,
+  readSkillObservations: unsupportedRead,
   readLocalMergeBundle: () => Promise.resolve(localBundle()),
   readLocalMachine: () => Promise.resolve({ ...CURRENT_MACHINE }),
   readSyncFleet: () =>

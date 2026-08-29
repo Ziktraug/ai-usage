@@ -8,6 +8,7 @@ import type {
   SkillManagementSnapshot,
   SkillMarkdownDocument,
   SkillMarkdownSaveResult,
+  SkillObservations,
   SkillReconcileResult,
   SkillTargetInput,
   SkillToggleInput,
@@ -39,6 +40,7 @@ export interface SkillsCapability {
   previewReconcileAll: (options: SkillsCallOptions) => SkillsCapabilityCall<SkillReconcileResult>;
   readKnownProjectPaths: (options: SkillsCallOptions) => SkillsCapabilityCall<KnownSkillProjectPath[]>;
   readMarkdown: (skillName: string, options: SkillsCallOptions) => SkillsCapabilityCall<SkillMarkdownDocument>;
+  readObservations: (options: SkillsCallOptions) => SkillsCapabilityCall<SkillObservations>;
   readProjectInventories: (options: SkillsCallOptions) => SkillsCapabilityCall<ProjectSkillInventory[]>;
   readProjectMarkdown: (
     input: ProjectSkillMarkdownInput,
@@ -164,6 +166,11 @@ export const createSkillsRouter = (
     knownProjectPaths: skills.knownProjectPaths.handler(({ signal }) =>
       callCapability(selectCapability, preflight, signal, (capability, options) =>
         capability.readKnownProjectPaths(options),
+      ),
+    ),
+    observations: skills.observations.handler(({ signal }) =>
+      callCapability(selectCapability, preflight, signal, (capability, options) =>
+        capability.readObservations(options),
       ),
     ),
     managedMarkdown: skills.managedMarkdown.handler(({ input, signal }) =>

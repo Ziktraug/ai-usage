@@ -9,6 +9,7 @@ const GET_RPC_PATHS = new Set([
   'report/revisionManifest',
   'runtime/reportPerfEnabled',
   'skills/knownProjectPaths',
+  'skills/observations',
   'skills/previewReconcileAll',
   'skills/projectInventories',
   'skills/projectMarkdown',

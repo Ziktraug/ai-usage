@@ -233,6 +233,7 @@ description: Helps with adapter tests
         readModel: {
           readCurrentLocalProjectSources: () =>
             Promise.reject({ message: 'private database path', reason: 'schema-too-new' }),
+          readSkillObservations: () => Promise.reject(new Error('Unexpected skill observation read')),
         },
       });
 
@@ -265,6 +266,7 @@ description: Helps with adapter tests
         homePath: path.join(root, 'home'),
         readModel: {
           readCurrentLocalProjectSources: () => Promise.resolve({ revision: 'revision-a', sources }),
+          readSkillObservations: () => Promise.reject(new Error('Unexpected skill observation read')),
         },
       });
 
@@ -274,6 +276,64 @@ description: Helps with adapter tests
         error: { message: 'Project discovery exceeds its response budget.', tag: 'Error' },
         ok: false,
       });
+    } finally {
+      await rm(root, { force: true, recursive: true });
+    }
+  });
+
+  test('reads skill observations through the read-only seam without touching the skills domain', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'ai-usage-skills-server-observations-'));
+    try {
+      const dependencies = createSkillsServerDependencies({
+        configCwd: root,
+        homePath: path.join(root, 'home'),
+        readModel: {
+          readCurrentLocalProjectSources: () => Promise.reject(new Error('Unexpected project source read')),
+          readSkillObservations: () =>
+            Promise.resolve({
+              harnesses: [
+                { harnessKey: 'claude', label: 'Claude Code', observability: 'observable' as const },
+                { harnessKey: 'cursor', label: 'Cursor', observability: 'not-observable' as const },
+              ],
+              lowerBound: false,
+              skills: [],
+              skipped: 0,
+            }),
+        },
+      });
+
+      const result = await createSkillsServerAdapter(dependencies).readObservations();
+
+      expect(result).toMatchObject({
+        data: { harnesses: [{ harnessKey: 'claude' }, { harnessKey: 'cursor', observability: 'not-observable' }] },
+        ok: true,
+      });
+    } finally {
+      await rm(root, { force: true, recursive: true });
+    }
+  });
+
+  test('reports an unreadable store as unavailable rather than as zero observations', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'ai-usage-skills-server-observations-failure-'));
+    try {
+      const dependencies = createSkillsServerDependencies({
+        configCwd: root,
+        homePath: path.join(root, 'home'),
+        readModel: {
+          readCurrentLocalProjectSources: () => Promise.reject(new Error('Unexpected project source read')),
+          readSkillObservations: () => Promise.reject({ message: 'private database path', reason: 'store-missing' }),
+        },
+      });
+
+      const result = await createSkillsServerAdapter(dependencies).readObservations();
+
+      // An empty dataset here would draw every observable harness as a zero for every skill, which
+      // is exactly the false reading ADR 0022 forbids.
+      expect(result).toEqual({
+        error: { message: 'Skill observations are unavailable.', tag: 'Error' },
+        ok: false,
+      });
+      expect(JSON.stringify(result)).not.toContain('private database path');
     } finally {
       await rm(root, { force: true, recursive: true });
     }

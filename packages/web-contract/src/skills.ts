@@ -1,3 +1,4 @@
+import { SKILL_OBSERVATION_TIERS } from '@ai-usage/report-core/skill-observation';
 import { parseSkillConfigInput } from '@ai-usage/skills/config';
 import { skillNamePattern, skillTargetIdPattern } from '@ai-usage/skills/shared';
 import { oc } from '@orpc/contract';
@@ -34,15 +35,12 @@ const LAST_C0_CONTROL_CODE_POINT = 0x1f;
 const FIRST_C1_CONTROL_CODE_POINT = 0x7f;
 const LAST_C1_CONTROL_CODE_POINT = 0x9f;
 
-// Path separators and control characters are the only characters that could turn a reported entry
-// name into something other than a leaf name. Checked by code point because a regex range over the
-// control block is itself disallowed by the lint rules.
-const isSafeEntryName = (value: string): boolean => {
+// Checked by code point because a regex range over the control block is itself disallowed by the
+// lint rules.
+const isControlFreeText = (value: string): boolean => {
   for (const character of value) {
     const codePoint = character.codePointAt(0) ?? 0;
     if (
-      character === '/' ||
-      character === '\\' ||
       codePoint <= LAST_C0_CONTROL_CODE_POINT ||
       (codePoint >= FIRST_C1_CONTROL_CODE_POINT && codePoint <= LAST_C1_CONTROL_CODE_POINT)
     ) {
@@ -51,6 +49,11 @@ const isSafeEntryName = (value: string): boolean => {
   }
   return true;
 };
+
+// Path separators and control characters are the only characters that could turn a reported entry
+// name into something other than a leaf name.
+const isSafeEntryName = (value: string): boolean =>
+  isControlFreeText(value) && !(value.includes('/') || value.includes('\\'));
 const boundedStringSchema = pipe(string(), maxLength(4096));
 const nonNegativeFiniteNumberSchema = pipe(number(), finite(), safeInteger(), minValue(0));
 const skillNameSchema = pipe(string(), regex(skillNamePattern));
@@ -318,6 +321,87 @@ const knownSkillProjectPathShapeSchema = strictObject({
 
 export const knownSkillProjectPathSchema = pipe(jsonWirePreflightSchema, knownSkillProjectPathShapeSchema);
 
+const MAX_OBSERVED_SKILL_NAME_LENGTH = 512;
+const MAX_OBSERVATION_HARNESSES = 32;
+// One tally per harness × tier. Four harnesses times three tiers is twelve; the ceiling leaves room
+// for a harness this build does not yet know about without ever admitting an unbounded list.
+const MAX_OBSERVATION_TALLIES = 64;
+const MAX_OBSERVATION_RESOLVED_PATHS = 8;
+const MAX_OBSERVATION_BYTES = 2 * 1024 * 1024;
+
+const isStrictIsoTimestamp = (value: unknown): value is string => {
+  if (typeof value !== 'string') {
+    return false;
+  }
+  const parsed = new Date(value);
+  return Number.isFinite(parsed.getTime()) && parsed.toISOString() === value;
+};
+
+const observationTimestampSchema = custom<string>(isStrictIsoTimestamp, 'Expected a canonical ISO timestamp.');
+
+/**
+ * An observed skill name is reported data with an open vocabulary, not an identifier this product
+ * issued. Harness-bundled skills, plugin-provided skills, and skills deleted since the observation
+ * all appear here, and none of them need to match the managed-name pattern — validating this like a
+ * managed name would reject exactly the population that carries the "invoked but unmanaged" verdict
+ * (ADR 0022). Only control characters are refused, because they are the one class that could not be
+ * rendered as text.
+ */
+const observedSkillNameSchema = pipe(
+  string(),
+  minLength(1),
+  maxLength(MAX_OBSERVED_SKILL_NAME_LENGTH),
+  check(isControlFreeText, 'An observed skill name must be printable text.'),
+);
+
+const harnessKeySchema = pipe(string(), minLength(1), maxLength(MAX_OBSERVED_SKILL_NAME_LENGTH));
+
+/**
+ * A count that cannot travel without its tier and its harness. There is deliberately no total here
+ * and no per-harness roll-up: summing `declared` and `inferred` is a defect, and the wire shape
+ * refuses to offer a field to sum them into.
+ */
+const skillObservationTallySchema = strictObject({
+  count: nonNegativeFiniteNumberSchema,
+  harnessKey: harnessKeySchema,
+  harnessLabel: pipe(string(), maxLength(MAX_OBSERVED_SKILL_NAME_LENGTH)),
+  lastObservedAt: observationTimestampSchema,
+  tier: picklist(SKILL_OBSERVATION_TIERS),
+});
+
+const observedSkillSchema = strictObject({
+  lastObservedAt: observationTimestampSchema,
+  // Empty is the unresolved case and is carried, not dropped.
+  resolvedPaths: pipe(array(boundedStringSchema), maxLength(MAX_OBSERVATION_RESOLVED_PATHS)),
+  skillName: observedSkillNameSchema,
+  tallies: pipe(array(skillObservationTallySchema), minLength(1), maxLength(MAX_OBSERVATION_TALLIES)),
+});
+
+/**
+ * Harness coverage is enumerated rather than implied. `not-observable` is what keeps a harness with
+ * no collector — Cursor today — from being rendered as a harness that observed nothing.
+ */
+const skillObservationHarnessSchema = strictObject({
+  harnessKey: harnessKeySchema,
+  label: pipe(string(), minLength(1), maxLength(MAX_OBSERVED_SKILL_NAME_LENGTH)),
+  observability: picklist(['observable', 'not-observable']),
+});
+
+const skillObservationsShapeSchema = strictObject({
+  harnesses: pipe(array(skillObservationHarnessSchema), minLength(1), maxLength(MAX_OBSERVATION_HARNESSES)),
+  /** The read stopped at its bound, so every count is a lower bound rather than a number. */
+  lowerBound: boolean(),
+  skills: pipe(array(observedSkillSchema), maxLength(MAX_COLLECTION_ITEMS)),
+  /** Persisted rows the reader could not re-validate. Reported, never folded into a count. */
+  skipped: nonNegativeFiniteNumberSchema,
+});
+
+export const skillObservationsSchema = pipe(
+  jsonWirePreflightSchema,
+  skillObservationsShapeSchema,
+  check((value) => jsonWithinBytes(value, MAX_OBSERVATION_BYTES), 'Skill observations exceed their byte budget.'),
+);
+
 const projectSkillObservationSchema = strictObject({
   description: string(),
   diagnostics: pipe(array(diagnosticSchema), maxLength(MAX_COLLECTION_ITEMS)),
@@ -477,6 +561,10 @@ export const skillsContract = {
     .route({ method: 'GET', path: '/skills/known-paths' })
     .input(emptyInputSchema)
     .output(knownSkillProjectPathsSchema),
+  observations: skills
+    .route({ method: 'GET', path: '/skills/observations' })
+    .input(emptyInputSchema)
+    .output(skillObservationsSchema),
   managedMarkdown: skills
     .route({ method: 'POST', path: '/skills/markdown/read' })
     .input(skillNameInputSchema)
@@ -523,6 +611,7 @@ export const skillsProcedureIntents = {
   createTargetDirectory: 'mutation',
   projectInventories: 'query',
   knownProjectPaths: 'query',
+  observations: 'query',
   managedMarkdown: 'query',
   previewReconcileAll: 'query',
   projectMarkdown: 'query',
@@ -545,6 +634,10 @@ export type SkillManagementSnapshot = InferOutput<typeof skillManagementSnapshot
 export type SkillMarkdownDocument = InferOutput<typeof skillMarkdownDocumentSchema>;
 export type SkillMarkdownSaveResult = InferOutput<typeof skillMarkdownSaveResultSchema>;
 export type SkillNameInput = InferOutput<typeof skillNameInputSchema>;
+export type SkillObservations = InferOutput<typeof skillObservationsSchema>;
+export type ObservedSkill = InferOutput<typeof observedSkillSchema>;
+export type SkillObservationTally = InferOutput<typeof skillObservationTallySchema>;
+export type SkillObservationHarness = InferOutput<typeof skillObservationHarnessSchema>;
 export type SkillReconcileResult = InferOutput<typeof skillReconcileResultSchema>;
 export type SkillTargetInput = InferOutput<typeof skillTargetInputSchema>;
 export type SkillToggleInput = InferOutput<typeof skillToggleInputSchema>;

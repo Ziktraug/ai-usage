@@ -1,0 +1,146 @@
+import { describe, expect, test } from 'bun:test';
+import type { SkillObservation } from './skill-observation';
+import { createSkillObservationDataset, EMPTY_SKILL_OBSERVATION_DATASET } from './skill-observation-summary';
+
+const observation = (overrides: Partial<SkillObservation> & Pick<SkillObservation, 'harnessKey' | 'tier'>) => ({
+  argsPresent: null,
+  observationKey: `${overrides.harnessKey}-${overrides.tier}-${overrides.observedAt ?? '1'}`,
+  observedAt: '2026-08-01T09:00:00.000Z',
+  projectPath: '/home/alex/Projects/report',
+  resolvedPath: null,
+  sessionId: 'session-1',
+  skillName: 'improve',
+  success: null,
+  ...overrides,
+});
+
+describe('createSkillObservationDataset', () => {
+  test('keeps a declared count and an inferred count as two separate numbers', () => {
+    const dataset = createSkillObservationDataset([
+      observation({ harnessKey: 'claude', observationKey: 'a', tier: 'declared' }),
+      observation({ harnessKey: 'claude', observationKey: 'b', tier: 'declared' }),
+      observation({ harnessKey: 'codex', observationKey: 'c', tier: 'inferred' }),
+    ]);
+
+    const [skill] = dataset.skills;
+    expect(skill?.skillName).toBe('improve');
+    expect(skill?.tallies).toEqual([
+      {
+        count: 2,
+        harnessKey: 'claude',
+        harnessLabel: 'Claude Code',
+        lastObservedAt: '2026-08-01T09:00:00.000Z',
+        tier: 'declared',
+      },
+      {
+        count: 1,
+        harnessKey: 'codex',
+        harnessLabel: 'Codex',
+        lastObservedAt: '2026-08-01T09:00:00.000Z',
+        tier: 'inferred',
+      },
+    ]);
+    // There is nowhere in the shape to put a 3: no per-skill total and no
+    // per-harness total exists to sum the two tiers into.
+    expect(JSON.stringify(skill)).not.toContain('"total"');
+  });
+
+  test('keeps the Codex exposed and inferred streams apart for one skill', () => {
+    const dataset = createSkillObservationDataset([
+      observation({ harnessKey: 'codex', observationKey: 'exposed-1', skillName: 'pr-review', tier: 'exposed' }),
+      observation({ harnessKey: 'codex', observationKey: 'inferred-1', skillName: 'pr-review', tier: 'inferred' }),
+    ]);
+
+    expect(dataset.skills[0]?.tallies.map(({ count, tier }) => ({ count, tier }))).toEqual([
+      { count: 1, tier: 'inferred' },
+      { count: 1, tier: 'exposed' },
+    ]);
+  });
+
+  test('enumerates Cursor as not observable even when nothing was observed anywhere', () => {
+    expect(EMPTY_SKILL_OBSERVATION_DATASET.skills).toEqual([]);
+    expect(EMPTY_SKILL_OBSERVATION_DATASET.harnesses).toEqual([
+      { harnessKey: 'claude', label: 'Claude Code', observability: 'observable' },
+      { harnessKey: 'codex', label: 'Codex', observability: 'observable' },
+      { harnessKey: 'opencode', label: 'OpenCode', observability: 'observable' },
+      { harnessKey: 'cursor', label: 'Cursor', observability: 'not-observable' },
+    ]);
+  });
+
+  test('an unresolved skill keeps its observation and reports no resolved path', () => {
+    const dataset = createSkillObservationDataset([
+      observation({ harnessKey: 'claude', skillName: 'artifact-design', tier: 'declared' }),
+      observation({
+        harnessKey: 'claude',
+        observationKey: 'resolved',
+        resolvedPath: '/home/alex/.agents/skills/improve',
+        tier: 'declared',
+      }),
+    ]);
+
+    expect(dataset.skills.map(({ resolvedPaths, skillName }) => ({ resolvedPaths, skillName }))).toEqual([
+      { resolvedPaths: [], skillName: 'artifact-design' },
+      { resolvedPaths: ['/home/alex/.agents/skills/improve'], skillName: 'improve' },
+    ]);
+  });
+
+  test('carries the read bound and the re-validation skip count through untouched', () => {
+    const dataset = createSkillObservationDataset([observation({ harnessKey: 'opencode', tier: 'declared' })], {
+      lowerBound: true,
+      skipped: 3,
+    });
+
+    expect(dataset.lowerBound).toBe(true);
+    expect(dataset.skipped).toBe(3);
+  });
+
+  test('reports the latest observation per tally and per skill', () => {
+    const dataset = createSkillObservationDataset([
+      observation({
+        harnessKey: 'claude',
+        observationKey: 'old',
+        observedAt: '2026-08-01T09:00:00.000Z',
+        tier: 'declared',
+      }),
+      observation({
+        harnessKey: 'claude',
+        observationKey: 'new',
+        observedAt: '2026-08-04T09:00:00.000Z',
+        tier: 'declared',
+      }),
+      observation({
+        harnessKey: 'opencode',
+        observationKey: 'oc',
+        observedAt: '2026-08-02T09:00:00.000Z',
+        tier: 'declared',
+      }),
+    ]);
+
+    expect(dataset.skills[0]?.lastObservedAt).toBe('2026-08-04T09:00:00.000Z');
+    expect(dataset.skills[0]?.tallies.map(({ harnessKey, lastObservedAt }) => [harnessKey, lastObservedAt])).toEqual([
+      ['claude', '2026-08-04T09:00:00.000Z'],
+      ['opencode', '2026-08-02T09:00:00.000Z'],
+    ]);
+  });
+
+  test('is order independent', () => {
+    const records = [
+      observation({ harnessKey: 'codex', observationKey: 'x', skillName: 'zeta', tier: 'exposed' }),
+      observation({ harnessKey: 'claude', observationKey: 'y', skillName: 'alpha', tier: 'declared' }),
+      observation({ harnessKey: 'opencode', observationKey: 'z', skillName: 'alpha', tier: 'declared' }),
+    ];
+
+    expect(createSkillObservationDataset(records)).toEqual(createSkillObservationDataset([...records].reverse()));
+  });
+
+  test('appends a harness key the catalogue does not know rather than dropping its observations', () => {
+    const dataset = createSkillObservationDataset([observation({ harnessKey: 'future-harness', tier: 'declared' })]);
+
+    expect(dataset.harnesses.at(-1)).toEqual({
+      harnessKey: 'future-harness',
+      label: 'future-harness',
+      observability: 'not-observable',
+    });
+    expect(dataset.skills[0]?.tallies[0]?.count).toBe(1);
+  });
+});

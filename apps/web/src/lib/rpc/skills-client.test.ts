@@ -38,6 +38,16 @@ const fixtureCapability = (): SkillsCapability => ({
       sha256: 'a'.repeat(64),
       skillName,
     }),
+  readObservations: () =>
+    ok({
+      harnesses: [
+        { harnessKey: 'claude', label: 'Claude Code', observability: 'observable' as const },
+        { harnessKey: 'cursor', label: 'Cursor', observability: 'not-observable' as const },
+      ],
+      lowerBound: false,
+      skills: [],
+      skipped: 0,
+    }),
   readProjectInventories: () => ok([]),
   readProjectMarkdown: (input) =>
     ok({

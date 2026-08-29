@@ -4,6 +4,7 @@ import type {
   ProjectSkillMarkdownDocument,
   SkillManagementSnapshot,
   SkillMarkdownDocument,
+  SkillObservations,
 } from '@ai-usage/web-contract/skills';
 
 type WireSourceSkill = SkillManagementSnapshot['skills'][number];
@@ -42,6 +43,59 @@ export const syntheticSnapshot = (
   targets: [],
   unmanagedEntries: [],
 });
+
+/**
+ * One managed skill observed in two harnesses at two tiers, one unmanaged skill observed by Claude
+ * Code, and Cursor enumerated as unable to observe. Enough to exercise every reading the surface has
+ * to keep straight without inflating the counts any test asserts on.
+ */
+export const syntheticObservations: SkillObservations = {
+  harnesses: [
+    { harnessKey: 'claude', label: 'Claude Code', observability: 'observable' },
+    { harnessKey: 'codex', label: 'Codex', observability: 'observable' },
+    { harnessKey: 'opencode', label: 'OpenCode', observability: 'observable' },
+    { harnessKey: 'cursor', label: 'Cursor', observability: 'not-observable' },
+  ],
+  lowerBound: false,
+  skills: [
+    {
+      lastObservedAt: '2026-08-02T09:00:00.000Z',
+      resolvedPaths: ['/synthetic/source/skills/alpha-skill'],
+      skillName: 'alpha-skill',
+      tallies: [
+        {
+          count: 2,
+          harnessKey: 'claude',
+          harnessLabel: 'Claude Code',
+          lastObservedAt: '2026-08-02T09:00:00.000Z',
+          tier: 'declared',
+        },
+        {
+          count: 1,
+          harnessKey: 'codex',
+          harnessLabel: 'Codex',
+          lastObservedAt: '2026-08-01T09:00:00.000Z',
+          tier: 'inferred',
+        },
+      ],
+    },
+    {
+      lastObservedAt: '2026-08-01T10:00:00.000Z',
+      resolvedPaths: [],
+      skillName: 'artifact-design',
+      tallies: [
+        {
+          count: 1,
+          harnessKey: 'claude',
+          harnessLabel: 'Claude Code',
+          lastObservedAt: '2026-08-01T10:00:00.000Z',
+          tier: 'declared',
+        },
+      ],
+    },
+  ],
+  skipped: 0,
+};
 
 export const syntheticKnownPaths: readonly KnownSkillProjectPath[] = [
   {

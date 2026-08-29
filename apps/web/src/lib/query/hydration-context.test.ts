@@ -5,6 +5,7 @@ import {
   syntheticInventories,
   syntheticKnownPaths,
   syntheticManagedDocument,
+  syntheticObservations,
   syntheticProjectDocument,
   syntheticSnapshot,
 } from '../features/skills/shell/synthetic-fixture.test-helper';
@@ -51,6 +52,7 @@ const EMPTY_SKILLS_CLIENT: SkillsQueryClient = {
   getManagedSkillMarkdown: unusedSkillsCall,
   getProjectSkillMarkdown: unusedSkillsCall,
   getSkillManagementSnapshot: unusedSkillsCall,
+  getSkillObservations: unusedSkillsCall,
   getSkillProjectInventories: unusedSkillsCall,
 };
 const HYDRATION_IMPORT_PATTERN = /import\s+\{([^}]*)\}\s+from\s+'[^']*hydration-context\.svelte'/u;
@@ -186,6 +188,10 @@ describe('observer revalidation once coverage enables the Skills queries', () =>
       getSkillManagementSnapshot: () => {
         fetches += 1;
         return Promise.resolve({ data: refetchedSnapshot, ok: true });
+      },
+      getSkillObservations: () => {
+        fetches += 1;
+        return Promise.resolve({ data: syntheticObservations, ok: true });
       },
       getSkillProjectInventories: () => {
         fetches += 1;

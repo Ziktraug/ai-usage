@@ -67,6 +67,7 @@ const skillsClient = (overrides: Partial<SkillsQueryClient> = {}): SkillsQueryCl
   getManagedSkillMarkdown: () => Promise.resolve(unavailable()),
   getProjectSkillMarkdown: () => Promise.resolve(unavailable()),
   getSkillManagementSnapshot: () => Promise.resolve(unavailable()),
+  getSkillObservations: () => Promise.resolve(unavailable()),
   getSkillProjectInventories: () => Promise.resolve(unavailable()),
   ...overrides,
 });

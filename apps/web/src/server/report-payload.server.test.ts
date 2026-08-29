@@ -53,6 +53,7 @@ const readModelWith = (overrides: Partial<UsageReadModel> = {}): UsageReadModel 
   readCurrentLocalProjectSources: () => Promise.resolve({ revision, sources: [] }),
   readCurrentManifest: () => Promise.resolve(storeManifest),
   readLatestProviderQuota: () => Promise.reject(new Error('Unexpected provider quota read')),
+  readSkillObservations: () => Promise.reject(new Error('Unexpected skill observation read')),
   readLocalMergeBundle: () => Promise.reject(new Error('Unexpected merge export read')),
   readLocalMachine: () => Promise.reject(new Error('Unexpected local machine read')),
   readSyncFleet: () => Promise.reject(new Error('Unexpected Sync fleet read')),

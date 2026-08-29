@@ -163,6 +163,7 @@ describe('Web Query composition', () => {
       'session',
       'quota',
       'skills',
+      'skill-observations',
       'sync',
       'sources',
     ]);

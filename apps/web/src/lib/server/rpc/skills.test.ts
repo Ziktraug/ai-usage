@@ -54,6 +54,18 @@ const capability = (calls: string[] = []): SkillsCapability => ({
       skillName: 'example',
     });
   },
+  readObservations: () => {
+    calls.push('readObservations');
+    return ok({
+      harnesses: [
+        { harnessKey: 'claude', label: 'Claude Code', observability: 'observable' as const },
+        { harnessKey: 'cursor', label: 'Cursor', observability: 'not-observable' as const },
+      ],
+      lowerBound: false,
+      skills: [],
+      skipped: 0,
+    });
+  },
   readProjectInventories: () => {
     calls.push('readProjectInventories');
     return ok([]);

@@ -2,11 +2,18 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { FIXTURE_SKILL_NAMES, FIXTURE_SKILL_ROOT } from '@ai-usage/local-machine/testing/harness-home';
 import type { FocusedReportSupport } from '@ai-usage/report-core/focused-report-query';
 import type { SerializedRow } from '@ai-usage/report-core/report-data';
-import { importLocalRows, publishServedReportRevision, updateUsageMachineLabel } from '@ai-usage/usage-store/testing';
+import type { SkillObservation } from '@ai-usage/report-core/skill-observation';
+import {
+  importLocalRows,
+  importSkillObservations,
+  publishServedReportRevision,
+  updateUsageMachineLabel,
+} from '@ai-usage/usage-store/testing';
 import { Effect } from 'effect';
-import { createSqliteUsageReadModel } from './usage-read-model.server';
+import { createLiveUsageReadModel, createSqliteUsageReadModel } from './usage-read-model.server';
 
 const roots: string[] = [];
 
@@ -115,6 +122,165 @@ const fixture = async (): Promise<string> => {
   await publish(dbPath, 'revision-b', [row('B')], 2000);
   return dbPath;
 };
+
+/**
+ * The skill vocabulary of the shared synthetic home (`seedHarnessHome`), so this fixture and the
+ * collectors that populate a real store name the same skills. `improve` is declared and resolved,
+ * `artifact-design` is declared by Claude Code and resolves to nothing (a harness-bundled skill),
+ * and Codex contributes an `exposed` catalogue entry plus an `inferred` read of the same skill.
+ */
+const skillObservation = (
+  overrides: Pick<SkillObservation, 'harnessKey' | 'observationKey' | 'skillName' | 'tier'> & Partial<SkillObservation>,
+): SkillObservation => ({
+  argsPresent: null,
+  observedAt: '2026-08-01T09:00:00.000Z',
+  projectPath: '/home/alex/Projects/report',
+  resolvedPath: null,
+  sessionId: 'session-1',
+  success: null,
+  ...overrides,
+});
+
+const seededHomeObservations: readonly SkillObservation[] = [
+  skillObservation({
+    argsPresent: true,
+    harnessKey: 'claude',
+    observationKey: 'toolu_managed',
+    resolvedPath: `${FIXTURE_SKILL_ROOT}/${FIXTURE_SKILL_NAMES.claudeDeclared}`,
+    skillName: FIXTURE_SKILL_NAMES.claudeDeclared,
+    success: true,
+    tier: 'declared',
+  }),
+  skillObservation({
+    harnessKey: 'claude',
+    observationKey: 'toolu_bundled',
+    observedAt: '2026-08-01T09:05:00.000Z',
+    skillName: FIXTURE_SKILL_NAMES.claudeUnresolved,
+    tier: 'declared',
+  }),
+  skillObservation({
+    harnessKey: 'opencode',
+    observationKey: 'call_resolved',
+    observedAt: '2026-08-02T09:00:00.000Z',
+    skillName: FIXTURE_SKILL_NAMES.openCodeDeclared,
+    tier: 'declared',
+  }),
+  skillObservation({
+    harnessKey: 'codex',
+    observationKey: 'catalogue-pr-review',
+    observedAt: '2026-08-03T09:00:00.000Z',
+    skillName: FIXTURE_SKILL_NAMES.codexExposed,
+    tier: 'exposed',
+  }),
+  skillObservation({
+    harnessKey: 'codex',
+    observationKey: 'catalogue-imagegen',
+    observedAt: '2026-08-03T09:00:00.000Z',
+    skillName: FIXTURE_SKILL_NAMES.codexUnread,
+    tier: 'exposed',
+  }),
+  skillObservation({
+    harnessKey: 'codex',
+    observationKey: 'exec-pr-review',
+    observedAt: '2026-08-03T09:01:00.000Z',
+    skillName: FIXTURE_SKILL_NAMES.codexExposed,
+    tier: 'inferred',
+  }),
+];
+
+const storeWithSeededHomeObservations = async (): Promise<string> => {
+  const root = await mkdtemp(path.join(tmpdir(), 'plan099-web-skill-observations-'));
+  roots.push(root);
+  const dbPath = path.join(root, 'usage.sqlite');
+  await Effect.runPromise(
+    importSkillObservations({ dbPath, machineId: 'machine-a', observations: seededHomeObservations }),
+  );
+  return dbPath;
+};
+
+describe('SQLite usage read model skill observations', () => {
+  test('reads every tier and keeps Cursor not observable rather than zero', async () => {
+    const dbPath = await storeWithSeededHomeObservations();
+
+    const dataset = await createSqliteUsageReadModel({ dbPath }).readSkillObservations();
+
+    expect(dataset.harnesses).toEqual([
+      { harnessKey: 'claude', label: 'Claude Code', observability: 'observable' },
+      { harnessKey: 'codex', label: 'Codex', observability: 'observable' },
+      { harnessKey: 'opencode', label: 'OpenCode', observability: 'observable' },
+      { harnessKey: 'cursor', label: 'Cursor', observability: 'not-observable' },
+    ]);
+    expect(dataset.lowerBound).toBe(false);
+    expect(dataset.skipped).toBe(0);
+    expect(
+      dataset.skills.flatMap(({ skillName, tallies }) =>
+        tallies.map(({ count, harnessKey, tier }) => `${skillName} ${harnessKey} ${tier} ${count}`),
+      ),
+    ).toEqual([
+      `${FIXTURE_SKILL_NAMES.claudeUnresolved} claude declared 1`,
+      `${FIXTURE_SKILL_NAMES.codexUnread} codex exposed 1`,
+      `${FIXTURE_SKILL_NAMES.claudeDeclared} claude declared 1`,
+      `${FIXTURE_SKILL_NAMES.codexExposed} codex inferred 1`,
+      `${FIXTURE_SKILL_NAMES.codexExposed} codex exposed 1`,
+      `${FIXTURE_SKILL_NAMES.openCodeDeclared} opencode declared 1`,
+    ]);
+  });
+
+  test('retains an observation that resolves to nothing instead of dropping it', async () => {
+    const dbPath = await storeWithSeededHomeObservations();
+
+    const dataset = await createSqliteUsageReadModel({ dbPath }).readSkillObservations();
+    const bundled = dataset.skills.find(({ skillName }) => skillName === FIXTURE_SKILL_NAMES.claudeUnresolved);
+    const managed = dataset.skills.find(({ skillName }) => skillName === FIXTURE_SKILL_NAMES.claudeDeclared);
+
+    expect(bundled?.resolvedPaths).toEqual([]);
+    expect(bundled?.tallies).toHaveLength(1);
+    expect(managed?.resolvedPaths).toEqual([`${FIXTURE_SKILL_ROOT}/${FIXTURE_SKILL_NAMES.claudeDeclared}`]);
+  });
+
+  test('answers without a published report revision, so it cannot expire with one', async () => {
+    const dbPath = await storeWithSeededHomeObservations();
+    const readModel = createSqliteUsageReadModel({ dbPath, now: () => 10_000_000 });
+
+    // The same store, at the same instant: no revision exists to read, and the observation read is
+    // unaffected by that. This is the property that keeps `/skills` answerable before any report
+    // publication and after every revision has expired.
+    await expect(readModel.readCurrentBootstrap()).rejects.toMatchObject({ reason: 'revision-unavailable' });
+    await expect(readModel.readSkillObservations()).resolves.toMatchObject({ lowerBound: false });
+    expect((await readModel.readSkillObservations()).skills).toHaveLength(5);
+  });
+
+  test('the live read model reads the same store the runtime paths resolve', async () => {
+    const dbPath = await storeWithSeededHomeObservations();
+    const previous = process.env.AI_USAGE_DATABASE_PATH;
+    process.env.AI_USAGE_DATABASE_PATH = dbPath;
+    try {
+      const dataset = await createLiveUsageReadModel().readSkillObservations();
+      expect(dataset.skills.map(({ skillName }) => skillName)).toEqual(
+        [...new Set(seededHomeObservations.map(({ skillName }) => skillName))].sort((left, right) =>
+          left.localeCompare(right),
+        ),
+      );
+    } finally {
+      if (previous === undefined) {
+        Reflect.deleteProperty(process.env, 'AI_USAGE_DATABASE_PATH');
+      } else {
+        process.env.AI_USAGE_DATABASE_PATH = previous;
+      }
+    }
+  });
+
+  test('does not create a missing store to answer an observation read', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'plan099-web-skill-observations-missing-'));
+    roots.push(root);
+    const dbPath = path.join(root, 'missing', 'usage.sqlite');
+
+    await expect(createSqliteUsageReadModel({ dbPath }).readSkillObservations()).rejects.toMatchObject({
+      reason: 'store-missing',
+    });
+    await expect(Bun.file(dbPath).exists()).resolves.toBe(false);
+  });
+});
 
 describe('SQLite usage read model', () => {
   test('reads the current bootstrap and exact older revisions without an engine', async () => {

@@ -33,6 +33,7 @@ export const rpcPathByOperation = {
   getReportSessionNeighbors: '/session/neighbors',
   getReportSessionPage: '/session/page',
   getSkillManagementSnapshot: '/skills/snapshot',
+  getSkillObservations: '/skills/observations',
   getSkillProjectInventories: '/skills/projectInventories',
   getSyncFleet: '/sync/fleet',
   previewReconcileAllManagedSkills: '/skills/previewReconcileAll',

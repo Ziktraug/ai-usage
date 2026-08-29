@@ -11,6 +11,7 @@ import {
   skillMarkdownDocumentSchema,
   skillMarkdownSaveResultSchema,
   skillNameInputSchema,
+  skillObservationsSchema,
   skillsContract,
   skillsErrorMap,
   skillsProcedureIntents,
@@ -41,6 +42,7 @@ const procedureNames = [
   'createTargetDirectory',
   'knownProjectPaths',
   'managedMarkdown',
+  'observations',
   'previewReconcileAll',
   'projectInventories',
   'projectMarkdown',
@@ -54,12 +56,13 @@ const procedureNames = [
 ];
 
 describe('Skills oRPC contract', () => {
-  test('declares all thirteen operations and the frozen semantic intents', () => {
+  test('declares all fourteen operations and the frozen semantic intents', () => {
     expect(Object.keys(skillsContract).sort()).toEqual(procedureNames);
     expect(skillsProcedureIntents).toEqual({
       createTargetDirectory: 'mutation',
       projectInventories: 'query',
       knownProjectPaths: 'query',
+      observations: 'query',
       managedMarkdown: 'query',
       previewReconcileAll: 'query',
       projectMarkdown: 'query',
@@ -82,6 +85,7 @@ describe('Skills oRPC contract', () => {
       createTargetDirectory: 'POST',
       knownProjectPaths: 'GET',
       managedMarkdown: 'POST',
+      observations: 'GET',
       previewReconcileAll: 'GET',
       projectInventories: 'GET',
       projectMarkdown: 'GET',
@@ -370,6 +374,157 @@ describe('Skills oRPC contract', () => {
     expect(safeParse(skillManagementSnapshotSchema, snapshotWithManifestMarkdown('é'.repeat(131_073))).success).toBe(
       false,
     );
+  });
+
+  test('carries every observation tier with its harness and never a place to sum them', () => {
+    const observations = {
+      harnesses: [
+        { harnessKey: 'claude', label: 'Claude Code', observability: 'observable' },
+        { harnessKey: 'codex', label: 'Codex', observability: 'observable' },
+        { harnessKey: 'opencode', label: 'OpenCode', observability: 'observable' },
+        { harnessKey: 'cursor', label: 'Cursor', observability: 'not-observable' },
+      ],
+      lowerBound: false,
+      skills: [
+        {
+          lastObservedAt: '2026-08-03T09:01:00.000Z',
+          resolvedPaths: ['/home/alex/.agents/skills/pr-review'],
+          skillName: 'pr-review',
+          tallies: [
+            {
+              count: 2,
+              harnessKey: 'claude',
+              harnessLabel: 'Claude Code',
+              lastObservedAt: '2026-08-01T09:00:00.000Z',
+              tier: 'declared',
+            },
+            {
+              count: 1,
+              harnessKey: 'codex',
+              harnessLabel: 'Codex',
+              lastObservedAt: '2026-08-03T09:01:00.000Z',
+              tier: 'inferred',
+            },
+            {
+              count: 4,
+              harnessKey: 'codex',
+              harnessLabel: 'Codex',
+              lastObservedAt: '2026-08-03T09:00:00.000Z',
+              tier: 'exposed',
+            },
+          ],
+        },
+      ],
+      skipped: 0,
+    };
+
+    expect(safeParse(skillObservationsSchema, observations).success).toBe(true);
+    // A tally without its tier, or without its harness, is not a thing this wire shape can carry.
+    expect(
+      safeParse(skillObservationsSchema, {
+        ...observations,
+        skills: [
+          {
+            ...observations.skills[0],
+            tallies: [{ count: 3, harnessLabel: 'Claude Code', lastObservedAt: '2026-08-01T09:00:00.000Z' }],
+          },
+        ],
+      }).success,
+    ).toBe(false);
+    // And there is no field a sum of declared and inferred could be written into.
+    expect(
+      safeParse(skillObservationsSchema, {
+        ...observations,
+        skills: [{ ...observations.skills[0], total: 7 }],
+      }).success,
+    ).toBe(false);
+    expect(safeParse(skillObservationsSchema, { ...observations, total: 7 }).success).toBe(false);
+  });
+
+  test('accepts an unresolved observation and refuses to lose it to the managed-name pattern', () => {
+    const unresolved = {
+      harnesses: [{ harnessKey: 'claude', label: 'Claude Code', observability: 'observable' }],
+      lowerBound: false,
+      skills: [
+        {
+          lastObservedAt: '2026-08-01T09:05:00.000Z',
+          // A harness-bundled skill: it resolves to no inventory entry and to no directory. Both
+          // are states, and both must survive the presentation edge (ADR 0022).
+          resolvedPaths: [],
+          skillName: 'artifact-design',
+          tallies: [
+            {
+              count: 1,
+              harnessKey: 'claude',
+              harnessLabel: 'Claude Code',
+              lastObservedAt: '2026-08-01T09:05:00.000Z',
+              tier: 'declared',
+            },
+          ],
+        },
+      ],
+      skipped: 0,
+    };
+
+    expect(safeParse(skillObservationsSchema, unresolved).success).toBe(true);
+    // Names the managed pattern would reject are still valid observed names.
+    for (const skillName of ['Artifact_Design', 'plugin:code-review', 'skill.with.dots', 'ünïcødé']) {
+      expect(
+        safeParse(skillObservationsSchema, { ...unresolved, skills: [{ ...unresolved.skills[0], skillName }] }),
+      ).toMatchObject({ success: true });
+    }
+    // Control characters are the one class that cannot be rendered as text.
+    expect(
+      safeParse(skillObservationsSchema, {
+        ...unresolved,
+        skills: [{ ...unresolved.skills[0], skillName: `bad${String.fromCodePoint(7)}name` }],
+      }).success,
+    ).toBe(false);
+    expect(
+      safeParse(skillObservationsSchema, { ...unresolved, skills: [{ ...unresolved.skills[0], skillName: '' }] })
+        .success,
+    ).toBe(false);
+  });
+
+  test('requires the harness roster and a canonical timestamp on every observation count', () => {
+    const base = {
+      harnesses: [{ harnessKey: 'cursor', label: 'Cursor', observability: 'not-observable' }],
+      lowerBound: true,
+      skills: [],
+      skipped: 2,
+    };
+
+    expect(safeParse(skillObservationsSchema, base).success).toBe(true);
+    // An empty roster would leave a consumer unable to tell "cannot observe" from "observed nothing".
+    expect(safeParse(skillObservationsSchema, { ...base, harnesses: [] }).success).toBe(false);
+    expect(
+      safeParse(skillObservationsSchema, {
+        ...base,
+        harnesses: [{ harnessKey: 'cursor', label: 'Cursor', observability: 'partial' }],
+      }).success,
+    ).toBe(false);
+    expect(
+      safeParse(skillObservationsSchema, {
+        ...base,
+        skills: [
+          {
+            lastObservedAt: '2026-08-01',
+            resolvedPaths: [],
+            skillName: 'improve',
+            tallies: [
+              {
+                count: 1,
+                harnessKey: 'claude',
+                harnessLabel: 'Claude Code',
+                lastObservedAt: '2026-08-01T09:00:00.000Z',
+                tier: 'declared',
+              },
+            ],
+          },
+        ],
+      }).success,
+    ).toBe(false);
+    expect(safeParse(skillObservationsSchema, { ...base, skipped: -1 }).success).toBe(false);
   });
 
   test('keeps dirty-draft save outcomes in the successful output channel', () => {

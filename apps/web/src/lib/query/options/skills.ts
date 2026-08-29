@@ -10,18 +10,20 @@ import type { SkillsClient, SkillsClientResult } from '../../rpc/skills-client';
 import {
   managedSkillMarkdownKey,
   projectSkillMarkdownKey,
+  skillObservationsKey,
   skillsKnownProjectPathsKey,
   skillsProjectInventoriesKey,
   skillsSnapshotKey,
   unwrapSkillsQueryResult,
 } from '../identities/skills';
-import type { FiniteSwrQueryKey } from '../keys';
+import type { CollectionSwrQueryKey, FiniteSwrQueryKey } from '../keys';
 import { webQueryPolicies } from '../policies';
 
 export {
   managedSkillMarkdownKey,
   projectSkillMarkdownKey,
   SkillsQueryError,
+  skillObservationsKey,
   skillsKnownProjectPathsKey,
   skillsProjectInventoriesKey,
   skillsSnapshotKey,
@@ -34,11 +36,13 @@ export type SkillsQueryClient = Pick<
   | 'getManagedSkillMarkdown'
   | 'getProjectSkillMarkdown'
   | 'getSkillManagementSnapshot'
+  | 'getSkillObservations'
   | 'getSkillProjectInventories'
 >;
 export type SkillsInventoryQueryClient = Pick<SkillsQueryClient, 'getSkillProjectInventories'>;
+export type SkillObservationsQueryClient = Pick<SkillsQueryClient, 'getSkillObservations'>;
 
-export type SkillsInvalidationTarget = 'known-project-paths' | 'project-inventories' | 'snapshot';
+export type SkillsInvalidationTarget = 'known-project-paths' | 'observations' | 'project-inventories' | 'snapshot';
 
 export interface SkillsQueryContext {
   readonly browser: boolean;
@@ -68,6 +72,19 @@ export const skillsProjectInventoriesQueryOptions = (client: SkillsInventoryQuer
     enabled: context.browser && context.enabled,
     queryFn: async ({ signal }) => unwrapSkillsQueryResult(await client.getSkillProjectInventories({ signal })),
     queryKey: skillsProjectInventoriesKey(),
+  });
+
+/**
+ * The one query for the skill-observation identity, on the collection cadence rather than the
+ * snapshot's. Everything else on this page revalidates when the operator acts; this revalidates
+ * when the engine collects, which is why it does not share the snapshot's policy.
+ */
+export const skillObservationsQueryOptions = (client: SkillObservationsQueryClient, context: SkillsQueryContext) =>
+  queryOptions({
+    ...webQueryPolicies.collectionSwr,
+    enabled: context.browser && context.enabled,
+    queryFn: async ({ signal }) => unwrapSkillsQueryResult(await client.getSkillObservations({ signal })),
+    queryKey: skillObservationsKey(),
   });
 
 export const managedSkillMarkdownQueryOptions = (
@@ -112,9 +129,10 @@ export const skillsMutationOptions = <Variables, Result>(
 
 const invalidationKeys = {
   'known-project-paths': skillsKnownProjectPathsKey,
+  observations: skillObservationsKey,
   'project-inventories': skillsProjectInventoriesKey,
   snapshot: skillsSnapshotKey,
-} as const satisfies Record<SkillsInvalidationTarget, () => FiniteSwrQueryKey>;
+} as const satisfies Record<SkillsInvalidationTarget, () => CollectionSwrQueryKey | FiniteSwrQueryKey>;
 
 export const invalidateSkillsQueries = async (
   client: QueryClient,
@@ -137,7 +155,7 @@ export const applySkillsConfigurationSnapshotToCache = async (
   if (!refreshDependents) {
     return;
   }
-  await invalidateSkillsQueries(queryClient, ['known-project-paths', 'project-inventories']);
+  await invalidateSkillsQueries(queryClient, ['known-project-paths', 'observations', 'project-inventories']);
   if (!snapshot.configured) {
     return;
   }
