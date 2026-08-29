@@ -77,6 +77,8 @@ const textEncoder = new TextEncoder();
 
 const responseBytes = (response: SkillObservations): number => textEncoder.encode(JSON.stringify(response)).byteLength;
 
+const INVOCATION_TIERS: ReadonlySet<string> = new Set(['declared', 'inferred']);
+
 /**
  * Bounds the response the procedure actually returns.
  *
@@ -94,6 +96,16 @@ const responseBytes = (response: SkillObservations): number => textEncoder.encod
  */
 export const clampSkillObservationsResponse = (response: SkillObservations): SkillObservations => {
   let lowerBound = response.lowerBound;
+  /**
+   * One invariant, enforced at every clamp site below: **anything this function drops that carried
+   * `declared` or `inferred` evidence sets the invocation bound.**
+   *
+   * It is not enough to set the pooled `lowerBound`. That flag no longer governs the verdicts — the
+   * surface reads an exposure-only truncation as "the counts are floors and the verdicts stand", so
+   * a dropped invocation tally reported through `lowerBound` alone would render as a positive
+   * claim that every invocation was served.
+   */
+  let droppedInvocationEvidence = false;
   let harnesses = response.harnesses;
   if (harnesses.length > MAX_SKILL_OBSERVATION_HARNESS_ROSTER) {
     harnesses = harnesses.slice(0, MAX_SKILL_OBSERVATION_HARNESS_ROSTER);
@@ -110,6 +122,13 @@ export const clampSkillObservationsResponse = (response: SkillObservations): Ski
     const pathsClamped = resolvedPaths.length !== skill.resolvedPaths.length;
     if (tallies.length !== skill.tallies.length || pathsClamped) {
       lowerBound = true;
+    }
+    // A harness key falling off the roster, or a tally falling past the per-skill cap, drops a real
+    // count. Which bound that is depends on the tier it held: losing a catalogue injection costs
+    // the verdicts nothing, losing an invocation costs them their evidence.
+    const retained = new Set(tallies);
+    if (skill.tallies.some((tally) => !retained.has(tally) && INVOCATION_TIERS.has(tally.tier))) {
+      droppedInvocationEvidence = true;
     }
     return {
       ...skill,
@@ -139,10 +158,8 @@ export const clampSkillObservationsResponse = (response: SkillObservations): Ski
   // invocation evidence is incomplete. The per-skill `verdictProvisional` flags are untouched, and
   // correctly so: they were decided before this clamp, and a surviving skill's own evidence is not
   // weakened by another skill being left out. The two answer different questions.
-  return droppedSkillRows ? { ...clamped, invocationLowerBound: true } : clamped;
+  return droppedSkillRows || droppedInvocationEvidence ? { ...clamped, invocationLowerBound: true } : clamped;
 };
-
-const INVOCATION_TIERS: ReadonlySet<string> = new Set(['declared', 'inferred']);
 
 const verdictFor = (managed: boolean, invoked: boolean, offered: boolean): SkillObservationVerdict => {
   if (invoked) {

@@ -308,11 +308,11 @@ describe('skill observation response bounds', () => {
     expect(safeParse(skillObservationsSchema, result).success).toBe(true);
   });
 
-  const joinUnknownHarnesses = (unknownCount: number) =>
+  const joinUnknownHarnesses = (unknownCount: number, tier: SkillObservation['tier'] = 'declared') =>
     join({
       observations: createSkillObservationDataset(
         Array.from({ length: unknownCount }, (_value, index) =>
-          observation({ harnessKey: `future-harness-${index}`, skillName: 'improve', tier: 'declared' }),
+          observation({ harnessKey: `future-harness-${index}`, skillName: 'improve', tier }),
         ),
       ),
     });
@@ -337,6 +337,58 @@ describe('skill observation response bounds', () => {
       expect(rosterKeys.has(tally.harnessKey)).toBe(true);
     }
     expect(safeParse(skillObservationsSchema, result).success).toBe(true);
+  });
+
+  test('a roster clamp that drops a declared tally reports the invocation bound, not just the pooled one', () => {
+    const result = joinUnknownHarnesses(MAX_SKILL_OBSERVATION_HARNESS_ROSTER - CATALOGUE_HARNESSES + 1, 'declared');
+
+    // The dropped tally was invocation evidence. Reporting that through `lowerBound` alone is not a
+    // smaller claim than the truth, it is the opposite one: the surface reads an exposure-only
+    // truncation as "the counts are floors and every invocation was served", so this payload would
+    // have asserted completeness of the very evidence the clamp threw away.
+    expect(result.lowerBound).toBe(true);
+    expect(result.invocationLowerBound).toBe(true);
+    expect(safeParse(skillObservationsSchema, result).success).toBe(true);
+  });
+
+  test('a roster clamp that drops only exposed tallies leaves the invocation bound alone', () => {
+    const result = joinUnknownHarnesses(MAX_SKILL_OBSERVATION_HARNESS_ROSTER - CATALOGUE_HARNESSES + 1, 'exposed');
+
+    // A catalogue injection nothing can render is a count lost, not evidence lost. Setting the
+    // invocation bound here would hedge every absence verdict for a reason none of them rest on.
+    expect(result.lowerBound).toBe(true);
+    expect(result.invocationLowerBound).toBe(false);
+    expect(safeParse(skillObservationsSchema, result).success).toBe(true);
+  });
+
+  test('the per-skill tally cap obeys the same rule as the roster cap', () => {
+    // The other tally-dropping site. Which bound moves is decided by the tier of what was dropped,
+    // never by which clamp did the dropping — so the invariant holds wherever a tally can be lost.
+    //
+    // Tallies arrive sorted by harness then tier, so what falls past the cap is the last tier of the
+    // lexicographically last harness. `zz` carries invocation tiers only, which puts an `inferred`
+    // tally at the end; 21 harnesses of three tiers each fill the 63 places before it.
+    const fullHarnesses = ['declared', 'inferred', 'exposed'] as const;
+    const invocationDropped = join({
+      observations: createSkillObservationDataset([
+        ...Array.from({ length: 21 }, (_value, index) =>
+          fullHarnesses.map((tier) =>
+            observation({ harnessKey: `h-${String(index).padStart(2, '0')}`, skillName: 'improve', tier }),
+          ),
+        ).flat(),
+        observation({ harnessKey: 'zz', skillName: 'improve', tier: 'declared' }),
+        observation({ harnessKey: 'zz', skillName: 'improve', tier: 'inferred' }),
+      ]),
+    });
+
+    expect(invocationDropped.skills[0]?.tallies).toHaveLength(MAX_SKILL_OBSERVATION_SKILL_TALLIES);
+    expect(invocationDropped.invocationLowerBound).toBe(true);
+
+    // And when the cap happens to bite an `exposed` tally instead, the invocation bound stays put.
+    const exposureDropped = joinTallies(MAX_SKILL_OBSERVATION_SKILL_TALLIES + 1);
+    expect(exposureDropped.skills[0]?.tallies).toHaveLength(MAX_SKILL_OBSERVATION_SKILL_TALLIES);
+    expect(exposureDropped.lowerBound).toBe(true);
+    expect(exposureDropped.invocationLowerBound).toBe(false);
   });
 
   const responseWithSkills = (count: number, nameLength: number): SkillObservations => ({
