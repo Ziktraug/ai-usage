@@ -483,6 +483,20 @@
               {:else}
                 <div class={placeholder}>Project SKILL.md preview unavailable</div>
               {/if}
+              <!-- Below the document for the same reason as the global branch: the SKILL.md source
+                   stays the primary object of the page and observed usage is the axis you consult
+                   about it. A project-local skill needs this more, not less — it is outside the
+                   managed source repository, so it is exactly the population that carries the
+                   "observed but unmanaged" adoption verdict, and read-only here means observation
+                   is the only thing this page can tell you about it. -->
+              <div class={section}>
+                <SkillObservationsPanel
+                  errorMessage={observationsError}
+                  {observations}
+                  skillName={view.selectionDetail.skill.name}
+                  variant="skill"
+                />
+              </div>
             {:else if view.selectionDetail.kind === 'project-scope'}
               <p class={meta}>{view.selectionDetail.project.path}</p>
               <p>{view.selectionDetail.inventories.length} scanned project inventories.</p>

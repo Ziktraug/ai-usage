@@ -332,6 +332,13 @@ const E2E_UNMANAGED_OBSERVED_SKILLS = {
   codexOfferedOnly: 'imagegen',
 } as const;
 
+/**
+ * The project-local skill the project inventory above already carries. Kept out of
+ * `E2E_UNMANAGED_OBSERVED_SKILLS`, which is pinned to the names the shared synthetic harness home
+ * seeds; this one is a fixture of *this* runtime's project inventory, not of that home.
+ */
+const E2E_PROJECT_OBSERVED_SKILL = 'skill-name';
+
 const e2eObservation = (
   harnessKey: string,
   tier: SkillObservation['tier'],
@@ -369,6 +376,12 @@ const e2eObservations: readonly SkillObservation[] = [
   e2eObservation('codex', 'exposed', E2E_UNMANAGED_OBSERVED_SKILLS.codexOfferedAndRead, 9),
   e2eObservation('codex', 'inferred', E2E_UNMANAGED_OBSERVED_SKILLS.codexOfferedAndRead, 10),
   e2eObservation('codex', 'exposed', E2E_UNMANAGED_OBSERVED_SKILLS.codexOfferedOnly, 11),
+  // A skill that lives in a project's own runtime directory rather than the managed source
+  // repository. Deliberately named for the project inventory above, so selecting it in the tree
+  // exercises the project-skill detail branch — the branch that shipped with no observations at all
+  // because every fixture before this one selected a global skill.
+  e2eObservation('opencode', 'declared', E2E_PROJECT_OBSERVED_SKILL, 12),
+  e2eObservation('codex', 'inferred', E2E_PROJECT_OBSERVED_SKILL, 13),
 ];
 
 export const e2eSkillObservationDataset = (): SkillObservationDataset => createSkillObservationDataset(e2eObservations);

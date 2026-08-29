@@ -142,6 +142,38 @@ export const syntheticObservations: SkillObservations = {
       verdict: 'offered-only',
       verdictProvisional: false,
     },
+    {
+      // A project-local skill, observed. It lives in a project's own runtime directory rather than
+      // the managed source repository, so it is unmanaged by construction — and on a real machine
+      // this is the *majority* population, not an edge case. Every fixture used to hold global
+      // skills only, which is precisely why the project-skill detail surface shipped with no
+      // observations at all and no test noticed.
+      deletionCandidate: false,
+      lastObservedAt: '2026-08-03T12:00:00.000Z',
+      managed: false,
+      projectedEverywhere: false,
+      resolvedPaths: ['/synthetic/project/.agents/skills/project-review'],
+      resolvedPathsTruncated: false,
+      skillName: 'project-review',
+      tallies: [
+        {
+          count: 4,
+          harnessKey: 'codex',
+          harnessLabel: 'Codex',
+          lastObservedAt: '2026-08-03T12:00:00.000Z',
+          tier: 'inferred',
+        },
+        {
+          count: 2,
+          harnessKey: 'opencode',
+          harnessLabel: 'OpenCode',
+          lastObservedAt: '2026-08-02T12:00:00.000Z',
+          tier: 'declared',
+        },
+      ],
+      verdict: 'invoked-unmanaged',
+      verdictProvisional: false,
+    },
   ],
   skipped: 0,
 };

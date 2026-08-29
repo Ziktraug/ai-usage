@@ -62,7 +62,9 @@ describe('skill observations view', () => {
     const built = view();
 
     expect(built.deletionCandidates.map(({ skillName }) => skillName)).toEqual(['beta-skill']);
-    expect(built.adoptionCandidates.map(({ skillName }) => skillName)).toEqual(['artifact-design']);
+    // `project-review` is a project-local skill: outside the managed source repository, so it
+    // carries the adoption verdict for the same reason the harness-bundled one does.
+    expect(built.adoptionCandidates.map(({ skillName }) => skillName)).toEqual(['artifact-design', 'project-review']);
     expect(built.offeredOnly.map(({ skillName }) => skillName)).toEqual(['imagegen']);
 
     // No skill is listed twice, so a reader is never asked to reconcile two headings about one row.
@@ -209,6 +211,7 @@ describe('skill observations view', () => {
       'beta-skill',
       'artifact-design',
       'imagegen',
+      'project-review',
     ]);
     expect(built.lowerBound).toBe(true);
     expect(built.skipped).toBe(4);

@@ -14,6 +14,7 @@
     syntheticKnownPaths,
     syntheticManagedDocument,
     syntheticObservations,
+    syntheticProjectDocument,
     syntheticProvisionalObservations,
     syntheticSnapshot,
   } from './synthetic-fixture.test-helper';
@@ -46,6 +47,12 @@
     }
     return observationsProvisional ? syntheticProvisionalObservations : syntheticObservations;
   });
+  // Mirrors the shell, which resolves a managed document for a global selection and a read-only
+  // project document for a project one. A fixture that always handed over the managed document made
+  // the project branch render its "preview unavailable" placeholder in every test.
+  const selectedDocument = $derived(
+    view.selectionDetail.kind === 'project-skill' ? syntheticProjectDocument : syntheticManagedDocument,
+  );
   const snapshotUpdates: SkillsSnapshotUpdatePort = {
     pendingDecision: undefined,
     registerDraft: () => undefined,
@@ -70,7 +77,7 @@
     {matrixSlot}
     {observations}
     {observationsError}
-    selectedDocument={syntheticManagedDocument}
+    {selectedDocument}
     snapshot={view.snapshot}
     {snapshotUpdates}
     {view}

@@ -1009,4 +1009,18 @@ test('renders skill observations with their tier and never as an unobservable ze
     'data-verdict-provisional',
     'false',
   );
+
+  // A project-local skill, which is the majority of what a real machine holds. This detail branch
+  // rendered a description and a read-only preview and nothing else, so every count for every
+  // project skill was invisible exactly where the adoption decision gets made.
+  await openHydratedSkills(page, '/skills/projects/project%2Fopaque/skill-name');
+  const projectDetail = page.getByRole('region', { name: 'Observed usage' });
+  await expect(projectDetail.getByRole('definition').filter({ hasText: 'declared 1' })).toBeVisible();
+  await expect(projectDetail.getByRole('definition').filter({ hasText: 'inferred 1' })).toBeVisible();
+  await expect(
+    projectDetail.getByRole('definition').filter({ hasText: OBSERVATION_NOT_OBSERVABLE_TEXT }),
+  ).toBeVisible();
+  await expect(
+    projectDetail.getByText('Invoked but unmanaged — an adoption candidate for the source repository.'),
+  ).toBeVisible();
 });

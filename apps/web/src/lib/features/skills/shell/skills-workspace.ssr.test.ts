@@ -213,6 +213,48 @@ describe('Svelte Skills workspace SSR', () => {
     expect(html).not.toContain('Never observed by any harness.');
   });
 
+  test('shows observed usage on a project skill, not only on a global one', () => {
+    const html = render(convergenceFixture, {
+      props: { pathname: '/skills/projects/synthetic-group/project-review' },
+    }).body;
+
+    // The branch this surface actually spends most of its time in on a real machine: the operator's
+    // project inventories hold 49 project-local skills, 39 of them observed. Mounting the panel in
+    // the global branch alone hid every one of those counts behind a selection that renders a
+    // description and a read-only preview and nothing else.
+    expect(html).toContain('Project skill · read-only');
+    expect(html).toContain('data-skill-observations="skill"');
+    expect(html).toContain('inferred 4');
+    expect(html).toContain('declared 2');
+    // Read-only and outside the managed source repository, so the adoption verdict is the whole
+    // reason to look — and it is the verdict that was invisible here.
+    expect(html).toContain('data-skill-observations-verdict="invoked-unmanaged"');
+    expect(html).toContain('Invoked but unmanaged');
+    // Below the document, matching the global branch: the SKILL.md source stays the primary object.
+    expect(html.indexOf('# Project synthetic document')).toBeLessThan(html.indexOf('data-skill-observations="skill"'));
+    // Cursor still reads as unable to observe rather than as a zero, on this branch too.
+    expect(html).toContain('data-harness="cursor" data-observation-state="not-observable"');
+  });
+
+  test('keeps observed usage on the global skill branch', () => {
+    // The fix is additive: the branch that already worked must keep working.
+    const html = render(convergenceFixture, { props: { pathname: '/skills/global/alpha-skill' } }).body;
+
+    expect(html).toContain('data-skill-observations="skill"');
+    expect(html).toContain('data-skill-observations-verdict="invoked"');
+    expect(html).toContain('# Alpha synthetic document');
+  });
+
+  test('leaves scope selections without a per-scope observation rollup', () => {
+    // A scope node is not a skill. Aggregating observations across one would invent a number this
+    // model has no definition for — and tier-and-harness counts are exactly what must never be
+    // summed. The scope branches stay as they are, deliberately.
+    for (const pathname of ['/skills/global', '/skills/projects/synthetic-group']) {
+      const html = render(convergenceFixture, { props: { pathname } }).body;
+      expect(html).not.toContain('data-skill-observations="skill"');
+    }
+  });
+
   test('tells a truncated catalogue apart from truncated evidence instead of hedging both', () => {
     const html = render(observationsComponent, {
       props: { observations: syntheticExposureTruncatedObservations, variant: 'overview' },
