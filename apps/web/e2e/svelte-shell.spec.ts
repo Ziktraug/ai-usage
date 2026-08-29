@@ -361,13 +361,14 @@ test('reuses one browser cache across Skills children and Report Skills Sync nav
     operations: {
       'skills.knownProjectPaths': 1,
       'skills.managedMarkdown': 1,
+      'skills.observations': 1,
       'skills.projectInventories': 1,
       'skills.snapshot': 1,
       'sync.fleet': 1,
     },
-    owners: { 'web-query-browser': 5 },
+    owners: { 'web-query-browser': 6 },
     routeData: 4,
-    totalRpc: 5,
+    totalRpc: 6,
   });
   process.stdout.write(
     `${JSON.stringify({ scenario: 'report-skills-children-sync-report', type: 'plan-069-gate-4', value: counts })}\n`,

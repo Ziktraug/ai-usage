@@ -9,6 +9,7 @@
   import { skillsMutationOptions, skillsSnapshotKey } from '../../../query/options/skills';
   import { useOptionalWebQueryRpcContext } from '../../../query/rpc-context.svelte';
   import { createSkillsClient } from '../../../rpc/skills-client';
+  import SkillObservationsPanel from '../observations/skill-observations.svelte';
   import type { SkillsManagementPlanController } from '../shell/management-plan-controller';
   import type { SkillsShellSlotContext } from '../shell/slot-context';
   import {
@@ -120,5 +121,11 @@
     {reconcilePlan}
     snapshot={context.snapshot}
     toggleSkill={(skillName, enabled) => execute(toggleOperation(skillName, enabled), `toggle:${skillName}`)}
+  />
+  <SkillObservationsPanel
+    errorMessage={context.observationsError}
+    managedSkillNames={context.snapshot.skills.map((entry) => entry.name)}
+    observations={context.observations}
+    variant="overview"
   />
 </div>

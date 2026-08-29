@@ -33,8 +33,21 @@ const SKILL_TOGGLE_ACTION_PATTERN = /^(Disable|Enable)$/;
 const SUCCESS_NOTICE_DISMISS_DELAY_MS = 5000;
 const MAX_KEYBOARD_TABS = 64;
 const WHITESPACE_PATTERN = /\s+/g;
+const DIGIT_PATTERN = /\d/u;
+const BARE_NUMBER_PATTERN = /^\d+$/u;
+const CURSOR_COVERAGE_TEXT = 'Cursor — not observable';
+const ALPHA_ROW_HEADER_PATTERN = /^alpha-skill/u;
+const OBSERVATION_NOT_OBSERVABLE_TEXT = 'not observable';
+const MATRIX_TABLE_NAME = 'Skill exposure per runtime';
+// Every observation cell is one of three sentences, and each states its tier in words.
+const OBSERVATION_TEXT_PATTERN =
+  /^(?:not observable|none observed|(?:declared|inferred|exposed) \d+(?: · (?:declared|inferred|exposed) \d+)*)$/u;
 
 const normalizeText = (value: string): string => value.replace(WHITESPACE_PATTERN, ' ').trim();
+
+// The matrix page now carries two tables — skill exposure per runtime, and observed usage per
+// harness — so every locator here names the one it means.
+const matrixTable = (page: Page): Locator => page.getByRole('table', { name: MATRIX_TABLE_NAME });
 
 const expectColorToken = async (locator: Locator, token: string, property = 'color'): Promise<void> => {
   const expectedColor = await locator.evaluate((element, tokenName) => {
@@ -853,10 +866,10 @@ test('renders matrix cards on mobile and preserves the desktop comparison table'
   await expect(mobileCards).toBeVisible();
   await expect(mobileCards.getByRole('listitem').first()).toContainText('Auto');
   await expect(mobileCards.getByRole('listitem').first()).toContainText('4 tok');
-  await expect(page.getByRole('table')).toBeHidden();
+  await expect(matrixTable(page)).toBeHidden();
 
   await page.setViewportSize({ height: 800, width: 1280 });
-  const table = page.getByRole('table');
+  const table = matrixTable(page);
   await expect(table).toBeVisible();
   await expect(table).toHaveCSS('border-collapse', 'separate');
   await expect(table).toHaveCSS('font-size', '13px');
@@ -889,7 +902,7 @@ test('keeps matrix tiles, names, and the table legible beside the tree at 1280',
     ).toBe(1);
   }
 
-  const table = page.getByRole('table');
+  const table = matrixTable(page);
   await expect(table).toHaveCSS('table-layout', 'auto');
   await expect(table).toHaveCSS('min-width', '0px');
   expect((await table.getByRole('columnheader', { name: 'Skill' }).boundingBox())?.width ?? 0).toBeGreaterThanOrEqual(
@@ -920,4 +933,64 @@ test('keeps matrix tiles, names, and the table legible beside the tree at 1280',
     expect((await tile.boundingBox())?.width ?? 0).toBeGreaterThanOrEqual(150);
   }
   expect(await table.locator('..').evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+});
+
+// Plan 099 / ADR 0022. The three readings this surface must never produce: a zero for a harness
+// that cannot observe, a total that sums two tiers, and a state carried by colour alone.
+test('renders skill observations with their tier and never as an unobservable zero', async ({ page }) => {
+  await page.setViewportSize(DESKTOP_WORKSPACE_VIEWPORT);
+  await openHydratedSkills(page, '/skills/matrix');
+
+  const panel = page.getByRole('region', { name: 'Skill observations' });
+  await expect(panel).toBeVisible();
+
+  // (i) Cursor has no collector. It says so, and never carries a digit anywhere in the table.
+  const cursorCells = panel.locator('[data-harness="cursor"]');
+  await expect(cursorCells.first()).toHaveText(OBSERVATION_NOT_OBSERVABLE_TEXT);
+  for (const cell of await cursorCells.all()) {
+    await expect(cell).toHaveAttribute('data-observation-state', 'not-observable');
+    expect(normalizeText((await cell.textContent()) ?? '')).not.toMatch(DIGIT_PATTERN);
+  }
+  await expect(panel.getByRole('listitem').filter({ hasText: CURSOR_COVERAGE_TEXT })).toBeVisible();
+
+  // (ii) All three tiers are present, each as its own phrase; nothing sums declared and inferred.
+  const alphaRow = panel
+    .getByRole('row')
+    .filter({ has: page.getByRole('rowheader', { name: ALPHA_ROW_HEADER_PATTERN }) });
+  await expect(alphaRow.locator('[data-harness="claude"]')).toHaveText('declared 3');
+  await expect(alphaRow.locator('[data-harness="codex"]')).toHaveText('inferred 1 · exposed 2');
+  await expect(alphaRow.locator('[data-harness="opencode"]')).toHaveText('declared 1');
+  // Claude's 3 declared plus Codex's 1 inferred is not 4 of anything, and no cell offers a bare
+  // number a reader could take for a total.
+  for (const cell of await alphaRow.locator('[data-observation-state]').all()) {
+    expect(normalizeText((await cell.textContent()) ?? '')).not.toMatch(BARE_NUMBER_PATTERN);
+  }
+
+  // (iii) Every observation state is a word. Nothing here is encoded only as a colour.
+  const observationCells = panel.locator('[data-observation-state]');
+  expect(await observationCells.count()).toBeGreaterThan(0);
+  for (const cell of await observationCells.all()) {
+    expect(normalizeText((await cell.textContent()) ?? '')).toMatch(OBSERVATION_TEXT_PATTERN);
+  }
+
+  // Both verdicts have a home, and an observation resolving to no inventory entry is retained.
+  const deletion = page.getByRole('region', { name: 'Projected but never observed' });
+  const adoption = page.getByRole('region', { name: 'Observed but unmanaged' });
+  await expect(deletion.getByRole('listitem').filter({ hasText: 'beta-skill' })).toBeVisible();
+  await expect(adoption.getByRole('listitem').filter({ hasText: 'artifact-design' })).toBeVisible();
+  await expect(adoption.getByRole('listitem').filter({ hasText: 'imagegen' })).toBeVisible();
+
+  // The same facts on the skill detail surface, for one skill.
+  await openHydratedSkills(page, '/skills/global/alpha-skill');
+  const detail = page.getByRole('region', { name: 'Observed usage' });
+  await expect(detail.getByRole('definition').filter({ hasText: 'declared 3' })).toBeVisible();
+  await expect(detail.getByRole('definition').filter({ hasText: OBSERVATION_NOT_OBSERVABLE_TEXT })).toBeVisible();
+  await expect(detail.getByText('Observed in at least one harness.')).toBeVisible();
+
+  await openHydratedSkills(page, '/skills/global/beta-skill');
+  await expect(
+    page
+      .getByRole('region', { name: 'Observed usage' })
+      .getByText('Projected but never observed — a deletion candidate.'),
+  ).toBeVisible();
 });

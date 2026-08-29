@@ -310,6 +310,13 @@ test('Skills has no detectable accessibility violations', async ({ page }) => {
   await expectNoAxeViolations(page);
 });
 
+test('Skill observations have no detectable accessibility violations', async ({ page }) => {
+  await openHydratedSkills(page, '/skills/matrix');
+  await expect(page.getByRole('heading', { level: 2, name: 'Observed skill usage' })).toBeVisible();
+
+  await expectNoAxeViolations(page);
+});
+
 test('Sources has no detectable accessibility violations', async ({ page }) => {
   await page.goto('/sources');
   await expect(page.locator('main[data-hydrated="true"]')).toBeVisible();

@@ -13,13 +13,15 @@
     syntheticInventories,
     syntheticKnownPaths,
     syntheticManagedDocument,
+    syntheticObservations,
     syntheticSnapshot,
   } from './synthetic-fixture.test-helper';
 
   let {
     healthSnapshot,
+    observationsError,
     pathname = '/skills/global/alpha-skill',
-  }: { healthSnapshot?: 'management'; pathname?: string } = $props();
+  }: { healthSnapshot?: 'management'; observationsError?: string; pathname?: string } = $props();
 
   provideDirtyGuardRegistry(createDirtyGuardRegistry());
   const snapshot = $derived(healthSnapshot === 'management' ? syntheticManagementSnapshot() : syntheticSnapshot());
@@ -53,6 +55,8 @@
     {editorSlot}
     {healthSlot}
     {matrixSlot}
+    observations={observationsError === undefined ? syntheticObservations : undefined}
+    {observationsError}
     selectedDocument={syntheticManagedDocument}
     snapshot={view.snapshot}
     {snapshotUpdates}

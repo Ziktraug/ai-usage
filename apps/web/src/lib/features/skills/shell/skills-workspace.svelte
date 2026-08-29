@@ -14,7 +14,11 @@
     strongCell,
   } from '@ai-usage/design-system/svelte';
   import type { SkillManagementSnapshot } from '@ai-usage/skills';
-  import type { ProjectSkillMarkdownDocument, SkillMarkdownDocument } from '@ai-usage/web-contract/skills';
+  import type {
+    ProjectSkillMarkdownDocument,
+    SkillMarkdownDocument,
+    SkillObservations,
+  } from '@ai-usage/web-contract/skills';
   import { onDestroy, type Snippet, tick } from 'svelte';
   import {
     buildSkillHealthSummary,
@@ -26,6 +30,7 @@
     selectionKey,
   } from '../../../../skills-page-model';
   import { SKILLS_MOBILE_MEDIA_QUERY } from '../../../../skills-responsive';
+  import SkillObservationsPanel from '../observations/skill-observations.svelte';
   import {
     createSkillsManagementPlanController,
     type SkillsManagementPlanController,
@@ -41,6 +46,8 @@
     healthSlot,
     hydrated = false,
     matrixSlot,
+    observations,
+    observationsError,
     onSourceChange,
     selectedDocument,
     snapshot,
@@ -51,6 +58,8 @@
     healthSlot?: Snippet<[SkillsShellSlotContext, SkillsManagementPlanController, SkillsHealthSlotPlacement]>;
     hydrated?: boolean;
     matrixSlot?: Snippet<[SkillsShellSlotContext, SkillsManagementPlanController]>;
+    observations?: SkillObservations | undefined;
+    observationsError?: string | undefined;
     onSourceChange?: (source: string) => void;
     selectedDocument?: ProjectSkillMarkdownDocument | SkillMarkdownDocument | undefined;
     snapshot: SkillManagementSnapshot;
@@ -61,7 +70,15 @@
   const managementPlan = createSkillsManagementPlanController();
   const ATTENTION_SKILL_LIMIT = 6;
   $effect(() => onSourceChange?.(snapshot.config.sourceRepoPath ?? 'not configured'));
-  const slotContext = $derived({ document: selectedDocument, snapshot, snapshotUpdates, view });
+  const managedSkillNames = $derived(snapshot.skills.map((entry) => entry.name));
+  const slotContext = $derived({
+    document: selectedDocument,
+    observations,
+    observationsError,
+    snapshot,
+    snapshotUpdates,
+    view,
+  });
   const health = $derived(buildSkillHealthSummary(snapshot));
   const attentionSkills = $derived(
     snapshot.skills
@@ -443,6 +460,17 @@
             {:else}
               <div class={placeholder}>SKILL.md editor integration slot</div>
             {/if}
+            <!-- Below the document, deliberately: the SKILL.md source stays the primary object of
+                 this page, and observed usage is the axis you consult about it. -->
+            <div class={section}>
+              <SkillObservationsPanel
+                errorMessage={observationsError}
+                {managedSkillNames}
+                {observations}
+                skillName={view.selectionDetail.skill.name}
+                variant="skill"
+              />
+            </div>
           {:else}
             <header class={detailHeader}>
               <p class={panelSub}>

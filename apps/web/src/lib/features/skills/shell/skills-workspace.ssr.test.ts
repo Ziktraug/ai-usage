@@ -11,6 +11,7 @@ import {
   syntheticInventories,
   syntheticKnownPaths,
   syntheticManagedDocument,
+  syntheticObservations,
   syntheticProjectDocument,
   syntheticSnapshot,
 } from './synthetic-fixture.test-helper';
@@ -152,8 +153,41 @@ describe('Svelte Skills workspace SSR', () => {
     expect(matrixHtml.match(/Healthy links/gu) ?? []).toHaveLength(1);
   });
 
+  test('renders every observation count with its tier and Cursor as words, not a zero', () => {
+    const matrixHtml = render(convergenceFixture, { props: { pathname: '/skills/matrix' } }).body;
+
+    expect(matrixHtml).toContain('data-skill-observations="overview"');
+    expect(matrixHtml).toContain('declared 2');
+    expect(matrixHtml).toContain('inferred 1');
+    // The two tiers are never added together. 2 + 1 has no cell to live in.
+    expect(matrixHtml).not.toContain('declared 3');
+    expect(matrixHtml).toContain('data-harness="cursor" data-observation-state="not-observable"');
+    expect(matrixHtml).not.toContain('data-harness="cursor" data-observation-state="observed"');
+    // Both verdicts have a home, and the unmanaged observation was retained rather than dropped.
+    expect(matrixHtml).toContain('Projected but never observed');
+    expect(matrixHtml).toContain('Observed but unmanaged');
+    expect(matrixHtml).toContain('artifact-design');
+
+    const detailHtml = render(convergenceFixture, { props: { pathname: '/skills/global/alpha-skill' } }).body;
+    expect(detailHtml).toContain('data-skill-observations="skill"');
+    expect(detailHtml).toContain('declared 2');
+    expect(detailHtml).toContain('not observable');
+    expect(detailHtml).toContain('data-skill-observations-verdict="observed"');
+  });
+
+  test('reports an unavailable observation read per metric instead of as a page banner', () => {
+    const html = render(convergenceFixture, {
+      props: { observationsError: 'Skill observations are unavailable.', pathname: '/skills/matrix' },
+    }).body;
+
+    expect(html).toContain('data-skill-observations-state="unavailable"');
+    // The rest of the page still renders its own numbers; nothing global was flagged.
+    expect(html).toContain('Healthy links');
+    expect(html).not.toContain('data-skill-observations="overview"');
+  });
+
   test('hydrates a bounded awaited route into a new provider without duplicate Skills acquisition', async () => {
-    const calls = { acquisitions: 0, inventories: 0, knownPaths: 0, managed: 0, snapshot: 0 };
+    const calls = { acquisitions: 0, inventories: 0, knownPaths: 0, managed: 0, observations: 0, snapshot: 0 };
     const baseSnapshot = syntheticSnapshot();
     const snapshot = { ...baseSnapshot, config: { ...baseSnapshot.config, sourceRepoPath: '/fixture/source' } };
     const capability: SkillsCapability = {
@@ -166,6 +200,10 @@ describe('Svelte Skills workspace SSR', () => {
       readMarkdown: () => {
         calls.managed += 1;
         return ok(syntheticManagedDocument);
+      },
+      readObservations: () => {
+        calls.observations += 1;
+        return ok(syntheticObservations);
       },
       readProjectInventories: () => {
         calls.inventories += 1;
@@ -220,7 +258,14 @@ describe('Svelte Skills workspace SSR', () => {
     expect(html).toContain('alpha-skill');
     expect(html).toContain('aria-label="Selected skill detail"');
     expect(html).not.toContain('Loading skills');
-    expect(callsAfterRoute).toEqual({ acquisitions: 4, inventories: 1, knownPaths: 1, managed: 1, snapshot: 1 });
+    expect(callsAfterRoute).toEqual({
+      acquisitions: 5,
+      inventories: 1,
+      knownPaths: 1,
+      managed: 1,
+      observations: 1,
+      snapshot: 1,
+    });
     expect(calls).toEqual(callsAfterRoute);
   });
 });

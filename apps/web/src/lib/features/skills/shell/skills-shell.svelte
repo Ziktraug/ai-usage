@@ -16,6 +16,7 @@
     managedSkillMarkdownQueryOptions,
     projectSkillMarkdownQueryOptions,
     type SkillsQueryClient,
+    skillObservationsQueryOptions,
     skillsKnownProjectPathsQueryOptions,
     skillsProjectInventoriesQueryOptions,
     skillsSnapshotQueryOptions,
@@ -65,6 +66,7 @@
     getManagedSkillMarkdown: (skillName, options) => resolveClient().getManagedSkillMarkdown(skillName, options),
     getProjectSkillMarkdown: (input, options) => resolveClient().getProjectSkillMarkdown(input, options),
     getSkillManagementSnapshot: (options) => resolveClient().getSkillManagementSnapshot(options),
+    getSkillObservations: (options) => resolveClient().getSkillObservations(options),
     getSkillProjectInventories: (options) => resolveClient().getSkillProjectInventories(options),
   };
   let mounted = $state(false);
@@ -87,6 +89,14 @@
     skillsProjectInventoriesQueryOptions(client, {
       browser: mounted,
       enabled: queriesEnabled && snapshotQuery.data?.configured === true,
+    }),
+  );
+  // Its own query, on its own identity and cadence: observations move when the engine collects,
+  // never because this page navigated (ADR 0022 / the collection-swr policy).
+  const observationsQuery = createQuery(() =>
+    skillObservationsQueryOptions(client, {
+      browser: mounted,
+      enabled: queriesEnabled,
     }),
   );
   const querySnapshot = $derived(
@@ -198,10 +208,20 @@
     managedSkillName === undefined ? projectDocumentQuery.data : managedDocumentQuery.data,
   );
   const skillsFetching = useIsFetching({ queryKey: ['web', 'finite-swr', 'skills'] });
+  // Observations live under their own cadence prefix, so the skills fetch gate above cannot see
+  // them. Counting them separately keeps the hydration contract honest instead of declaring the
+  // page settled while one of its reads is still in flight.
+  const observationsFetching = useIsFetching({ queryKey: ['web', 'collection-swr', 'skill-observations'] });
+  const observationsError = $derived(
+    observationsQuery.error instanceof Error ? observationsQuery.error.message : undefined,
+  );
   const queryContractReady = $derived(
     mounted &&
       snapshotQuery.data !== undefined &&
       knownPathsQuery.data !== undefined &&
+      (observationsQuery.data !== undefined || observationsQuery.error !== null) &&
+      !observationsQuery.isFetching &&
+      observationsFetching.current === 0 &&
       (snapshotQuery.data.configured !== true || inventoriesQuery.data !== undefined) &&
       (managedSkillName === undefined || managedDocumentQuery.data !== undefined) &&
       (projectDocumentInput === undefined || projectDocumentQuery.data !== undefined) &&
@@ -249,6 +269,8 @@
     {...(healthSlot === undefined ? {} : { healthSlot })}
     {hydrated}
     {...(matrixSlot === undefined ? {} : { matrixSlot })}
+    observations={observationsQuery.data}
+    {observationsError}
     {selectedDocument}
     {...(onSourceChange === undefined ? {} : { onSourceChange })}
     snapshot={view.snapshot}

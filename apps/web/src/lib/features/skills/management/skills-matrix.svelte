@@ -311,7 +311,7 @@
   </div>
 
   <div class={cx(tableWrap, matrixWrap)}>
-    <table class={table}>
+    <table aria-label="Skill exposure per runtime" class={table}>
       <thead>
         <tr>
           <th class={stickyCol}>Skill</th>
