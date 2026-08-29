@@ -3,10 +3,10 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import type { SkillObservation } from '@ai-usage/report-core/skill-observation';
+import { completeSkillObservationCollection, type SkillObservation } from '@ai-usage/report-core/skill-observation';
 import { Effect } from 'effect';
 import { querySkillObservations, queryUsageStoreGeneration, type UsageStoreError } from './reader';
-import { importSkillObservations, retainSkillObservations } from './writer';
+import { importSkillObservations, initializeUsageStore, retainSkillObservations } from './writer';
 
 const temporaryRoots: string[] = [];
 
@@ -51,7 +51,7 @@ describe('skill observation store', () => {
     );
     const read = await Effect.runPromise(querySkillObservations({ dbPath }));
 
-    expect(imported).toEqual({ inserted: 1, rejected: 0, unchanged: 0, updated: 0 });
+    expect(imported).toEqual({ inserted: 1, rejected: 0, stateChanged: false, unchanged: 0, updated: 0 });
     expect(read.skipped).toBe(0);
     expect(read.truncated).toBe(false);
     // The read path re-validates every persisted row, so a null resolved path
@@ -100,8 +100,8 @@ describe('skill observation store', () => {
     );
     const read = await Effect.runPromise(querySkillObservations({ dbPath }));
 
-    expect(first).toEqual({ inserted: 1, rejected: 0, unchanged: 0, updated: 0 });
-    expect(second).toEqual({ inserted: 0, rejected: 0, unchanged: 1, updated: 0 });
+    expect(first).toEqual({ inserted: 1, rejected: 0, stateChanged: false, unchanged: 0, updated: 0 });
+    expect(second).toEqual({ inserted: 0, rejected: 0, stateChanged: false, unchanged: 1, updated: 0 });
     expect(read.observations).toHaveLength(1);
   });
 
@@ -132,7 +132,140 @@ describe('skill observation store', () => {
       }),
     );
 
-    expect(result).toEqual({ inserted: 1, rejected: 2, unchanged: 0, updated: 0 });
+    expect(result).toEqual({ inserted: 1, rejected: 2, stateChanged: false, unchanged: 0, updated: 0 });
+  });
+
+  test('rejects malformed producer completeness through the typed input boundary', async () => {
+    const dbPath = await createStore('skill-invalid-completeness');
+
+    const result = await Effect.runPromise(
+      Effect.either(
+        importSkillObservations({
+          collection: null as never,
+          dbPath,
+          machineId: MACHINE,
+          observations: [],
+        }),
+      ),
+    );
+
+    expect(result).toMatchObject({ _tag: 'Left', left: { reason: 'invalid-input' } });
+  });
+
+  test('persists producer incompleteness even for an empty sweep', async () => {
+    const dbPath = await createStore('skill-empty-incomplete');
+    const completeness = completeSkillObservationCollection();
+    completeness.invocation.truncated = true;
+
+    const imported = await Effect.runPromise(
+      importSkillObservations({
+        collection: { completeness, harnessKey: 'claude' },
+        dbPath,
+        machineId: MACHINE,
+        observations: [],
+      }),
+    );
+    const read = await Effect.runPromise(querySkillObservations({ dbPath }));
+
+    expect(imported).toEqual({ inserted: 0, rejected: 0, stateChanged: true, unchanged: 0, updated: 0 });
+    expect(read.observations).toEqual([]);
+    expect(read.collectionInvocationIncomplete).toBe(true);
+    expect(read.collectionExposureIncomplete).toBe(false);
+  });
+
+  test('treats legacy observable rows without collection state as incomplete', async () => {
+    const dbPath = await createStore('skill-legacy-completeness');
+    await Effect.runPromise(
+      importSkillObservations({
+        dbPath,
+        machineId: MACHINE,
+        observations: [observation()],
+      }),
+    );
+
+    const read = await Effect.runPromise(querySkillObservations({ dbPath }));
+
+    expect(read.collectionInvocationIncomplete).toBe(true);
+    expect(read.collectionExposureIncomplete).toBe(false);
+  });
+
+  test('advances generation only when the durable completeness answer changes', async () => {
+    const dbPath = await createStore('skill-completeness-generation');
+    const incomplete = completeSkillObservationCollection();
+    incomplete.invocation.rejected = 1;
+    const batch = {
+      collection: { completeness: incomplete, harnessKey: 'claude' },
+      dbPath,
+      machineId: MACHINE,
+      observations: [observation()],
+    } as const;
+
+    const first = await Effect.runPromise(importSkillObservations(batch));
+    const afterFirst = await Effect.runPromise(queryUsageStoreGeneration({ dbPath }));
+    const repeat = await Effect.runPromise(importSkillObservations(batch));
+    const afterRepeat = await Effect.runPromise(queryUsageStoreGeneration({ dbPath }));
+    const cleared = await Effect.runPromise(
+      importSkillObservations({
+        ...batch,
+        collection: { completeness: completeSkillObservationCollection(), harnessKey: 'claude' },
+      }),
+    );
+    const read = await Effect.runPromise(querySkillObservations({ dbPath }));
+
+    expect(first.stateChanged).toBe(true);
+    expect(repeat.stateChanged).toBe(false);
+    expect(afterRepeat).toBe(afterFirst);
+    expect(cleared.stateChanged).toBe(true);
+    expect(await Effect.runPromise(queryUsageStoreGeneration({ dbPath }))).toBeGreaterThan(afterRepeat);
+    expect(read.collectionInvocationIncomplete).toBe(false);
+  });
+
+  test('keeps exposure-only producer loss separate from invocation completeness', async () => {
+    const dbPath = await createStore('skill-exposure-incomplete');
+    const completeness = completeSkillObservationCollection();
+    completeness.exposure.rejected = 2;
+    await Effect.runPromise(
+      importSkillObservations({
+        collection: { completeness, harnessKey: 'codex' },
+        dbPath,
+        machineId: MACHINE,
+        observations: [],
+      }),
+    );
+
+    const read = await Effect.runPromise(querySkillObservations({ dbPath }));
+    expect(read.collectionExposureIncomplete).toBe(true);
+    expect(read.collectionInvocationIncomplete).toBe(false);
+  });
+
+  test('rolls observation rows and completeness back together', async () => {
+    const dbPath = await createStore('skill-completeness-rollback');
+    await Effect.runPromise(initializeUsageStore({ dbPath }));
+    const db = new Database(dbPath, { create: false, readwrite: true });
+    db.exec(`
+      CREATE TRIGGER fail_skill_collection_state
+      BEFORE INSERT ON skill_observation_collection_state
+      BEGIN
+        SELECT RAISE(ABORT, 'injected collection-state failure');
+      END
+    `);
+    db.close(true);
+
+    const result = await Effect.runPromise(
+      Effect.either(
+        importSkillObservations({
+          collection: { completeness: completeSkillObservationCollection(), harnessKey: 'claude' },
+          dbPath,
+          machineId: MACHINE,
+          observations: [observation()],
+        }),
+      ),
+    );
+    const read = await Effect.runPromise(querySkillObservations({ dbPath }));
+
+    expect(result._tag).toBe('Left');
+    expect(read.observations).toEqual([]);
+    expect(read.collectionInvocationIncomplete).toBe(false);
   });
 
   test('the table holds exactly the expected columns, so no argument column can be added', async () => {
@@ -190,7 +323,7 @@ describe('skill observation store', () => {
     );
     const read = await Effect.runPromise(querySkillObservations({ dbPath }));
 
-    expect(corrected).toEqual({ inserted: 0, rejected: 0, unchanged: 0, updated: 1 });
+    expect(corrected).toEqual({ inserted: 0, rejected: 0, stateChanged: false, unchanged: 0, updated: 1 });
     expect(read.observations).toHaveLength(1);
     expect(read.observations[0]?.observation.resolvedPath).toBe('/home/alex/.claude/skills/new');
     expect(await Effect.runPromise(queryUsageStoreGeneration({ dbPath }))).toBeGreaterThan(generationBefore);
@@ -230,7 +363,7 @@ describe('skill observation store', () => {
     // The collectors re-import the same observations on every sweep. Bumping the
     // generation for an unchanged repeat would invalidate the served report once
     // per collection cycle for no reason.
-    expect(repeat).toEqual({ inserted: 0, rejected: 0, unchanged: 1, updated: 0 });
+    expect(repeat).toEqual({ inserted: 0, rejected: 0, stateChanged: false, unchanged: 1, updated: 0 });
     expect(generationAfterRepeat).toBe(generationAfterInsert);
 
     const added = await Effect.runPromise(
@@ -275,6 +408,25 @@ describe('skill observation store', () => {
 
     expect(retained.deleted).toBe(1);
     expect(read.observations.map(({ observation: value }) => value.observationKey)).toEqual(['recent']);
+  });
+
+  test('a rescan cutoff cannot resurrect observations already outside retention', async () => {
+    const dbPath = await createStore('skill-retention-rescan');
+    const imported = await Effect.runPromise(
+      importSkillObservations({
+        dbPath,
+        machineId: MACHINE,
+        minimumObservedAt: '2026-01-01T00:00:00.000Z',
+        observations: [
+          observation({ observationKey: 'retained-away', observedAt: '2024-01-01T00:00:00.000Z' }),
+          observation({ observationKey: 'inside-window', observedAt: '2026-07-31T00:00:00.000Z' }),
+        ],
+      }),
+    );
+    const read = await Effect.runPromise(querySkillObservations({ dbPath }));
+
+    expect(imported.inserted).toBe(1);
+    expect(read.observations.map(({ observation: value }) => value.observationKey)).toEqual(['inside-window']);
   });
 });
 

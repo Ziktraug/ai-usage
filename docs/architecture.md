@@ -123,7 +123,8 @@ qualifier on it.
 
 The read path is:
 
-`skill_observations` (durable)
+`skill_observations` + `skill_observation_collection_state` (durable rows plus
+producer completeness, written together even for an empty observation batch)
 → `querySkillObservations` (`@ai-usage/usage-store/reader`, bounded, `query_only`,
 reading the invocation tiers against the full budget before spending the
 remainder on exposure, and reporting the two bounds separately)
@@ -141,7 +142,7 @@ cannot bound a payload the join grows)
 → the `skills.observations` oRPC procedure
 → the `skill-observations` query family under the `collection-swr` policy.
 
-Five properties are load-bearing:
+Six properties are load-bearing:
 
 - **The tiers get separate read budgets, and separate bounds.** Exposure is
   written once per catalogue entry per session and outnumbers real invocations
@@ -150,7 +151,15 @@ Five properties are load-bearing:
   says the `declared`/`inferred` evidence was itself cut short, and only that
   one makes an absence verdict provisional (ADR 0022).
 
-- **A completed publication *cycle* invalidates it — not a new revision.** The
+- **Producer bounds are data-plane facts, not transient warnings.** Extractor
+  rejection/truncation is persisted per machine and harness, split between
+  invocation and exposure. A completeness-only change advances the store
+  generation; a complete later rescan can clear it. This prevents an empty,
+  truncated sweep from turning into an exact "never invoked" verdict after the
+  source-control warning disappears or the process restarts.
+
+- **A completed publication *cycle* or a Skills inventory mutation invalidates
+  it — not only a new report revision.** The
   query policy revalidates on neither focus nor reconnect, because nothing a
   browser does can change it; it does revalidate on mount, which is the only
   place an invalidation that arrived while nothing was subscribed can still be

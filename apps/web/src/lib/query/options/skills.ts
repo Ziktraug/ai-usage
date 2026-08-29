@@ -145,17 +145,27 @@ export const invalidateSkillsQueries = async (
     }),
   );
 };
+export const applySkillsSnapshotToCache = async <Snapshot>(
+  queryClient: QueryClient,
+  snapshot: Snapshot,
+): Promise<void> => {
+  queryClient.setQueryData(skillsSnapshotKey(), snapshot);
+  // The observations procedure joins durable facts to this inventory on the
+  // server. A new snapshot therefore invalidates the joined answer even when
+  // no collection ran.
+  await invalidateSkillsQueries(queryClient, ['observations']);
+};
 export const applySkillsConfigurationSnapshotToCache = async (
   queryClient: QueryClient,
   skillsClient: SkillsInventoryQueryClient,
   snapshot: SkillManagementSnapshot,
   refreshDependents: boolean,
 ): Promise<void> => {
-  queryClient.setQueryData(skillsSnapshotKey(), snapshot);
+  await applySkillsSnapshotToCache(queryClient, snapshot);
   if (!refreshDependents) {
     return;
   }
-  await invalidateSkillsQueries(queryClient, ['known-project-paths', 'observations', 'project-inventories']);
+  await invalidateSkillsQueries(queryClient, ['known-project-paths', 'project-inventories']);
   if (!snapshot.configured) {
     return;
   }

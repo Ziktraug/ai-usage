@@ -11,7 +11,7 @@ import type {
  * Presentation for the skill-observation surface.
  *
  * This module deliberately does **not** join anything. Managed-ness, projection completeness, and
- * every verdict are decided on the server, where the inventory is (plan 099 decision 3), and arrive
+ * every verdict are decided on the server, where the inventory is (plan 111 decision 3), and arrive
  * as facts. What is left here is turning those facts into words — a step that needs no inventory
  * data and therefore belongs in the browser.
  *

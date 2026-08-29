@@ -6,7 +6,11 @@ import { readLocalGitRepository } from '@ai-usage/local-machine/local-git';
 import { LocalHistoryStorage, walkFiles } from '@ai-usage/local-machine/local-history';
 import { type HarnessPaths, resolvePaths } from '@ai-usage/local-machine/platform-paths';
 import { base, safeJSON, usablePrompt } from '@ai-usage/local-machine/text';
-import { MAX_SKILL_OBSERVATIONS_PER_SESSION, type SkillObservation } from '@ai-usage/report-core/skill-observation';
+import {
+  MAX_SKILL_OBSERVATIONS_PER_SESSION,
+  type SkillObservation,
+  type SkillObservationCollectionCompleteness,
+} from '@ai-usage/report-core/skill-observation';
 import { actualCost, approximateApiCost } from '@ai-usage/report-core/usage-row';
 import { Effect } from 'effect';
 import { type CollectedSession, sessionToUsageRow } from '../collected-session';
@@ -303,6 +307,7 @@ export const collectClaudeRetentionWarnings: Effect.Effect<LocalHistoryWarning[]
   });
 
 export interface ClaudeCollectionResult {
+  observationCompleteness: SkillObservationCollectionCompleteness;
   /**
    * A new fact drawn from the collection source this collector already reads —
    * not a new collection source. The source vocabulary is unchanged.
@@ -311,6 +316,14 @@ export interface ClaudeCollectionResult {
   rows: CollectorRow[];
   warnings: LocalHistoryWarning[];
 }
+
+const claudeObservationCompleteness = (
+  rejected: number,
+  truncated: boolean,
+): SkillObservationCollectionCompleteness => ({
+  exposure: { rejected: 0, truncated: false },
+  invocation: { rejected, truncated },
+});
 
 export const collectClaudeResult = Effect.gen(function* () {
   const storage = yield* LocalHistoryStorage;
@@ -340,6 +353,7 @@ export const collectClaudeResult = Effect.gen(function* () {
     return yield* withPerfSpan(
       'aiUsage.collect.claude.cache.hit',
       Effect.succeed({
+        observationCompleteness: claudeObservationCompleteness(cache.rejectedObservations, cache.observationsTruncated),
         observations: cache.observations,
         rows: cache.rows,
         warnings: [warning, cachedObservationWarning, cachedTruncationWarning].filter((value) => value !== null),
@@ -490,6 +504,7 @@ export const collectClaudeResult = Effect.gen(function* () {
     ? skillObservationTruncationWarning('claude', MAX_SKILL_OBSERVATIONS_PER_SESSION)
     : null;
   return {
+    observationCompleteness: claudeObservationCompleteness(rejectedObservations, observationsTruncated),
     observations,
     rows,
     warnings: [warning, observationWarning, truncationWarning].filter((value) => value !== null),

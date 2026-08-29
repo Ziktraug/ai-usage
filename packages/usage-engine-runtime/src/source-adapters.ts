@@ -18,7 +18,11 @@ import {
 } from '@ai-usage/local-machine/local-history';
 import { ensureMachineConfig, readMergedAiUsageConfigFrom } from '@ai-usage/local-machine/machine-config';
 import { firstExisting, resolvePathCandidates } from '@ai-usage/local-machine/platform-paths';
-import type { SkillObservation } from '@ai-usage/report-core/skill-observation';
+import {
+  SKILL_OBSERVATION_RETENTION_MS,
+  type SkillObservation,
+  type SkillObservationCollectionCompleteness,
+} from '@ai-usage/report-core/skill-observation';
 import type { UsageMachine } from '@ai-usage/report-core/snapshot';
 import type {
   CollectionSourceId,
@@ -227,6 +231,7 @@ const collectHarness = (
     // Optional, and deliberately so: a harness that cannot observe skills
     // (Cursor) omits this rather than reporting an empty list, which would be
     // indistinguishable from having observed nothing (ADR 0022).
+    observationCompleteness?: SkillObservationCollectionCompleteness;
     observations?: readonly SkillObservation[];
     rows: CollectorRow[];
     warnings: readonly SanitizableSourceWarning[];
@@ -247,6 +252,7 @@ const createSessionSource = (input: {
   id: 'claude.sessions' | 'codex.sessions' | 'cursor.sessions' | 'opencode.sessions';
   label: string;
   machine: UsageMachine;
+  now: () => Date;
   storage: LocalHistoryStorageService;
 }): ScheduledSource => ({
   cadence: Duration.millis(getCollectionSourceDefinition(input.id).cadenceMs),
@@ -280,6 +286,7 @@ const createSessionSource = (input: {
         phase: 'importing',
         total: rows.length,
       });
+      yield* abortIfRequested(context.signal);
       const imported = yield* importLocalRows({
         dbPath: input.dbPath,
         machine: input.machine,
@@ -290,21 +297,31 @@ const createSessionSource = (input: {
       // beside. The engine is the only writer (ADR 0009), so this is the one
       // place they can reach the store.
       const observations = collection.observations ?? [];
+      yield* abortIfRequested(context.signal);
       const importedObservations =
-        observations.length > 0
-          ? yield* importSkillObservations({
+        collection.observations === undefined
+          ? { inserted: 0, rejected: 0, stateChanged: false, unchanged: 0, updated: 0 }
+          : yield* importSkillObservations({
+              collection: {
+                completeness: collection.observationCompleteness ?? {
+                  exposure: { rejected: 0, truncated: true },
+                  invocation: { rejected: 0, truncated: true },
+                },
+                harnessKey: adapter.metadata.key,
+              },
               dbPath: input.dbPath,
               machineId: input.machine.id,
+              minimumObservedAt: new Date(input.now().getTime() - SKILL_OBSERVATION_RETENTION_MS).toISOString(),
               observations,
-            }).pipe(Effect.mapError((cause) => sourceFailure(input.id, cause)))
-          : { inserted: 0, rejected: 0, unchanged: 0, updated: 0 };
+            }).pipe(Effect.mapError((cause) => sourceFailure(input.id, cause)));
       const warnings = sanitizeSourceWarnings(input.label, [...collection.warnings, ...retentionWarnings]);
       return {
         changed:
           imported.inserted > 0 ||
           imported.updated > 0 ||
           importedObservations.inserted > 0 ||
-          importedObservations.updated > 0,
+          importedObservations.updated > 0 ||
+          importedObservations.stateChanged,
         inputCount: collection.rows.length,
         outputCount: rows.length,
         servedProjectionChanged: imported.fleetChanged,
@@ -510,6 +527,7 @@ export const createScheduledSourceRegistry = (
         id: 'claude.sessions',
         label: 'Claude sessions',
         machine,
+        now: options.now ?? (() => new Date()),
         storage,
       }),
       createSessionSource({
@@ -519,6 +537,7 @@ export const createScheduledSourceRegistry = (
         id: 'codex.sessions',
         label: 'Codex sessions',
         machine,
+        now: options.now ?? (() => new Date()),
         storage,
       }),
       createSessionSource({
@@ -528,6 +547,7 @@ export const createScheduledSourceRegistry = (
         id: 'opencode.sessions',
         label: 'OpenCode sessions',
         machine,
+        now: options.now ?? (() => new Date()),
         storage,
       }),
       createSessionSource({
@@ -549,6 +569,7 @@ export const createScheduledSourceRegistry = (
         id: 'cursor.sessions',
         label: 'Cursor sessions',
         machine,
+        now: options.now ?? (() => new Date()),
         storage,
       }),
       createProviderQuotaSource({

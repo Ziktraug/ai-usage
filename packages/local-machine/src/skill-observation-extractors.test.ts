@@ -112,6 +112,18 @@ describe('extractClaudeSkillObservations', () => {
     expect(extraction).toEqual({ observations: [], rejected: 0, truncated: false });
   });
 
+  test('marks a transcript rejected by the record budget as incomplete', () => {
+    const extraction = extractClaudeSkillObservations({
+      // One past the production 100k-record parser budget. The contents do not
+      // matter: refusing the transcript means an invocation could have been
+      // left behind and must never look like an ordinary empty collection.
+      records: Array.from({ length: 100_001 }, () => ({})),
+      sourceSessionId: CLAUDE_FIXTURE_SESSION,
+    });
+
+    expect(extraction).toEqual({ observations: [], rejected: 0, truncated: true });
+  });
+
   describe('per-session ceiling', () => {
     afterEach(() => {
       setClaudeSkillObservationCeilingForTesting(null);

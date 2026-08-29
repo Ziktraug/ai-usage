@@ -15,6 +15,7 @@ import { publicationInvalidatedKeys } from '../publication';
 import {
   applyManagedMarkdownSaveToCache,
   applySkillsConfigurationSnapshotToCache,
+  applySkillsSnapshotToCache,
   invalidateSkillsQueries,
   managedSkillMarkdownKey,
   managedSkillMarkdownQueryOptions,
@@ -341,6 +342,16 @@ describe('Skills query options', () => {
     expect(order).toEqual([]);
     expect(inventoryFetches).toBe(1);
     unsubscribe();
+  });
+
+  test('QUERY-SKILL-OBSERVATION-INVENTORY: a published snapshot invalidates the joined observation answer', async () => {
+    const queryClient = createWebQueryClient();
+    queryClient.setQueryData(skillObservationsKey(), { marker: 'stale inventory join' });
+
+    await applySkillsSnapshotToCache(queryClient, snapshot);
+
+    expect(queryClient.getQueryData<SkillManagementSnapshot>(skillsSnapshotKey())).toBe(snapshot);
+    expect(queryClient.getQueryState(skillObservationsKey())?.isInvalidated).toBe(true);
   });
 
   test('QUERY-SMALLEST-KEY-UPDATE: invalidates/refetches only selected exact Skills keys', async () => {

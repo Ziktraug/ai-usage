@@ -447,6 +447,8 @@ describe('skill observation collection', () => {
       expect(truncation).toBeDefined();
       expect(truncation?.harness).toBe('opencode');
       expect(truncation?.message).toContain('lower bound');
+      expect(result.observationCompleteness.invocation.truncated).toBe(true);
+      expect(result.observationCompleteness.exposure.truncated).toBe(false);
     });
 
     test('reports no truncation when the read fits inside its budget', async () => {
@@ -490,6 +492,8 @@ describe('skill observation collection', () => {
       expect(warm.warnings.map((warning) => warning.operation).sort()).toEqual(
         cold.warnings.map((warning) => warning.operation).sort(),
       );
+      expect(warm.observationCompleteness).toEqual(cold.observationCompleteness);
+      expect(warm.observationCompleteness.invocation).toEqual({ rejected: 1, truncated: true });
       expect(warm.observations).toEqual(cold.observations);
     });
 
@@ -531,6 +535,7 @@ describe('skill observation collection', () => {
       expect(result.observations).toHaveLength(1);
       expect(truncation).toBeDefined();
       expect(truncation?.harness).toBe('claude');
+      expect(result.observationCompleteness.invocation.truncated).toBe(true);
     });
 
     test('a Codex ceiling overrun surfaces as a truncation warning from the collector', async () => {
@@ -546,6 +551,7 @@ describe('skill observation collection', () => {
 
       expect(truncation).toBeDefined();
       expect(truncation?.harness).toBe('codex');
+      expect(result.observationCompleteness.invocation.truncated).toBe(true);
     });
 
     test('a collection inside the ceilings raises no truncation warning', async () => {
@@ -562,6 +568,7 @@ describe('skill observation collection', () => {
 
       for (const result of [claude, codex]) {
         expect(result.warnings.some((warning) => warning.operation === 'skillObservationTruncated')).toBe(false);
+        expect(result.observationCompleteness.invocation.truncated).toBe(false);
       }
     });
   });

@@ -44,6 +44,34 @@ export const MAX_SKILL_OBSERVATION_NAME_LENGTH = 512;
 export const MAX_SKILL_OBSERVATION_PATH_LENGTH = 4096;
 export const MAX_SKILL_OBSERVATIONS_PER_SESSION = 4096;
 export const MAX_SKILL_OBSERVATION_BATCH = 100_000;
+/**
+ * Durable observation history kept by the data plane. Collection sources can
+ * rescan older transcripts on every sweep, so the same cutoff is also applied
+ * before import; otherwise startup retention would be undone by the next run.
+ */
+export const SKILL_OBSERVATION_RETENTION_MS = 400 * 24 * 60 * 60 * 1000;
+
+export interface SkillObservationCompletenessPart {
+  /** Candidates that looked like observations but failed validation. */
+  rejected: number;
+  /** A producer-side bound stopped before every candidate was inspected. */
+  truncated: boolean;
+}
+
+/**
+ * Completeness of one observable harness sweep, split by the claim it can
+ * support. Exposure may be incomplete without weakening an invocation-absence
+ * verdict; invocation evidence may not.
+ */
+export interface SkillObservationCollectionCompleteness {
+  exposure: SkillObservationCompletenessPart;
+  invocation: SkillObservationCompletenessPart;
+}
+
+export const completeSkillObservationCollection = (): SkillObservationCollectionCompleteness => ({
+  exposure: { rejected: 0, truncated: false },
+  invocation: { rejected: 0, truncated: false },
+});
 
 export interface SkillObservation {
   /**

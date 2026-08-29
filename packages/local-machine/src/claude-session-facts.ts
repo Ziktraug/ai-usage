@@ -775,7 +775,14 @@ const claudeSkillLookahead = (
  */
 export const extractClaudeSkillObservations = (input: ClaudeSkillObservationInput): SkillObservationExtraction => {
   if (!input.sourceSessionId || input.records.length > MAX_CLAUDE_RECORDS) {
-    return { observations: [], rejected: 0, truncated: false };
+    return {
+      observations: [],
+      rejected: 0,
+      // A transcript rejected for exceeding the reader budget may contain
+      // invocations. Returning an ordinary empty result would certify their
+      // absence downstream.
+      truncated: input.records.length > MAX_CLAUDE_RECORDS,
+    };
   }
   const observations: SkillObservation[] = [];
   let rejected = 0;

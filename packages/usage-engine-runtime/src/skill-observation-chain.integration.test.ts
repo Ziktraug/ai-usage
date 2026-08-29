@@ -41,8 +41,8 @@ const READ_BOUNDS = {
 
 describe('skill observation chain', () => {
   test('carries all three tiers, and Cursor as not observable, from a seeded home to the read model', async () => {
-    const home = await temporaryDirectory('plan099-chain-home-');
-    const storeRoot = await temporaryDirectory('plan099-chain-store-');
+    const home = await temporaryDirectory('plan111-chain-home-');
+    const storeRoot = await temporaryDirectory('plan111-chain-store-');
     const dbPath = join(storeRoot, 'usage.sqlite');
     await seedHarnessHome(home, { harnesses: ['claude', 'codex', 'cursor', 'opencode'], skillSignals: true });
 
@@ -51,13 +51,22 @@ describe('skill observation chain', () => {
         Effect.provideService(LocalHistoryStorage, createLocalHistoryStorage(home)),
       ),
     );
-    await Effect.runPromise(
-      importSkillObservations({
-        dbPath,
-        machineId: 'machine-chain',
-        observations: collected.observations,
-      }),
-    );
+    for (const harness of collected.harnesses) {
+      if (harness.observationCompleteness === null) {
+        continue;
+      }
+      await Effect.runPromise(
+        importSkillObservations({
+          collection: {
+            completeness: harness.observationCompleteness,
+            harnessKey: harness.harness,
+          },
+          dbPath,
+          machineId: 'machine-chain',
+          observations: harness.observations,
+        }),
+      );
+    }
 
     const dataset = await Effect.runPromise(querySkillObservationDataset({ dbPath, ...READ_BOUNDS }));
 
@@ -99,8 +108,8 @@ describe('skill observation chain', () => {
   });
 
   test('an exposure flood cannot push collected invocations out of the read', async () => {
-    const home = await temporaryDirectory('plan099-chain-flood-home-');
-    const storeRoot = await temporaryDirectory('plan099-chain-flood-store-');
+    const home = await temporaryDirectory('plan111-chain-flood-home-');
+    const storeRoot = await temporaryDirectory('plan111-chain-flood-store-');
     const dbPath = join(storeRoot, 'usage.sqlite');
     await seedHarnessHome(home, { harnesses: ['claude', 'codex', 'opencode'], skillSignals: true });
 
@@ -124,13 +133,22 @@ describe('skill observation chain', () => {
       success: null,
       tier: 'exposed' as const,
     }));
-    await Effect.runPromise(
-      importSkillObservations({
-        dbPath,
-        machineId: 'machine-chain',
-        observations: [...collected.observations, ...flood],
-      }),
-    );
+    for (const harness of collected.harnesses) {
+      if (harness.observationCompleteness === null) {
+        continue;
+      }
+      await Effect.runPromise(
+        importSkillObservations({
+          collection: {
+            completeness: harness.observationCompleteness,
+            harnessKey: harness.harness,
+          },
+          dbPath,
+          machineId: 'machine-chain',
+          observations: harness.harness === 'codex' ? [...harness.observations, ...flood] : harness.observations,
+        }),
+      );
+    }
 
     const dataset = await Effect.runPromise(
       querySkillObservationDataset({ dbPath, ...READ_BOUNDS, maximumObservations: 40 }),

@@ -935,7 +935,7 @@ test('keeps matrix tiles, names, and the table legible beside the tree at 1280',
   expect(await table.locator('..').evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
 });
 
-// Plan 099 / ADR 0022. The three readings this surface must never produce: a zero for a harness
+// Plan 111 / ADR 0022. The three readings this surface must never produce: a zero for a harness
 // that cannot observe, a total that sums two tiers, and a state carried by colour alone.
 test('renders skill observations with their tier and never as an unobservable zero', async ({ page }) => {
   await page.setViewportSize(DESKTOP_WORKSPACE_VIEWPORT);

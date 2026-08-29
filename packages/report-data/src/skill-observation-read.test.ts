@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import type { SkillObservation } from '@ai-usage/report-core/skill-observation';
+import { completeSkillObservationCollection, type SkillObservation } from '@ai-usage/report-core/skill-observation';
 import { importSkillObservations } from '@ai-usage/usage-store/testing';
 import { Effect } from 'effect';
 import { querySkillObservationDataset } from './skill-observation-read';
@@ -36,10 +36,23 @@ const observation = (skillName: string, ordinal: number): SkillObservation => ({
 });
 
 const storeHolding = async (observations: readonly SkillObservation[]): Promise<string> => {
-  const root = await mkdtemp(path.join(tmpdir(), 'plan099-skill-observation-read-'));
+  const root = await mkdtemp(path.join(tmpdir(), 'plan111-skill-observation-read-'));
   roots.push(root);
   const dbPath = path.join(root, 'usage.sqlite');
-  await Effect.runPromise(importSkillObservations({ dbPath, machineId: 'machine-a', observations: [...observations] }));
+  const harnessKeys = [...new Set(observations.map(({ harnessKey }) => harnessKey))];
+  for (const harnessKey of harnessKeys) {
+    await Effect.runPromise(
+      importSkillObservations({
+        collection: { completeness: completeSkillObservationCollection(), harnessKey },
+        dbPath,
+        machineId: 'machine-a',
+        observations: observations.filter((candidate) => candidate.harnessKey === harnessKey),
+      }),
+    );
+  }
+  if (harnessKeys.length === 0) {
+    await Effect.runPromise(importSkillObservations({ dbPath, machineId: 'machine-a', observations: [] }));
+  }
   return dbPath;
 };
 
@@ -56,6 +69,7 @@ describe('bounded skill observation read', () => {
 
     expect(dataset.skills).toHaveLength(GENEROUS_BOUNDS.maximumSkills);
     expect(dataset.lowerBound).toBe(false);
+    expect(dataset.invocationLowerBound).toBe(false);
   });
 
   test('clamps one past the cap and says so instead of failing the whole read', async () => {
@@ -119,7 +133,45 @@ describe('bounded skill observation read', () => {
     // Refused at the presentation edge, reported through the channel that already means exactly
     // this: rows the reader could not re-validate, counted and never folded into a tally.
     expect(dataset.skipped).toBe(1);
-    expect(dataset.lowerBound).toBe(false);
+    expect(dataset.lowerBound).toBe(true);
+    expect(dataset.invocationLowerBound).toBe(true);
+  });
+
+  test('carries producer-side invocation loss into the absence bound', async () => {
+    const dbPath = await storeHolding([]);
+    const completeness = completeSkillObservationCollection();
+    completeness.invocation.truncated = true;
+    await Effect.runPromise(
+      importSkillObservations({
+        collection: { completeness, harnessKey: 'claude' },
+        dbPath,
+        machineId: 'machine-a',
+        observations: [],
+      }),
+    );
+
+    const dataset = await Effect.runPromise(querySkillObservationDataset({ dbPath, ...GENEROUS_BOUNDS }));
+    expect(dataset.skills).toEqual([]);
+    expect(dataset.lowerBound).toBe(true);
+    expect(dataset.invocationLowerBound).toBe(true);
+  });
+
+  test('does not weaken invocation absence for exposure-only producer loss', async () => {
+    const dbPath = await storeHolding([]);
+    const completeness = completeSkillObservationCollection();
+    completeness.exposure.truncated = true;
+    await Effect.runPromise(
+      importSkillObservations({
+        collection: { completeness, harnessKey: 'codex' },
+        dbPath,
+        machineId: 'machine-a',
+        observations: [],
+      }),
+    );
+
+    const dataset = await Effect.runPromise(querySkillObservationDataset({ dbPath, ...GENEROUS_BOUNDS }));
+    expect(dataset.lowerBound).toBe(true);
+    expect(dataset.invocationLowerBound).toBe(false);
   });
 });
 

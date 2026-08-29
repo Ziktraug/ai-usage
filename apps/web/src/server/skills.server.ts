@@ -354,7 +354,7 @@ export const createSkillsServerAdapter = (dependencies: SkillsServerAdapterDepen
       runAdapterOperation(async () => clientReconcileResult(await application.previewReconcile())),
     readKnownProjectPaths: () => runAdapterOperation(readKnownProjectPaths),
     readMarkdown: (skillName) => runAdapterOperation(() => application.readMarkdown(skillName)),
-    // The inventory↔observation join, at the seam plan 099 decision 3 names. The snapshot read is
+    // The inventory↔observation join, at the seam plan 111 decision 3 names. The snapshot read is
     // what makes it a join at all: managed-ness and projection completeness are inventory facts, and
     // a verdict about a skill's usefulness needs both sides. It costs one more inventory scan per
     // observation read, which is the price of deciding this where the inventory actually is rather

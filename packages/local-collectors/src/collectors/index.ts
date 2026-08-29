@@ -13,6 +13,7 @@ import {
 import {
   type SkillObservability,
   type SkillObservation,
+  type SkillObservationCollectionCompleteness,
   skillObservabilityFor,
 } from '@ai-usage/report-core/skill-observation';
 import type { Row } from '@ai-usage/report-core/types';
@@ -33,6 +34,7 @@ import { collectOpenCode, collectOpenCodeResult } from './opencode';
 export { collectClaudeRetentionWarnings } from './claude';
 
 interface HarnessAdapterCollection {
+  observationCompleteness?: SkillObservationCollectionCompleteness;
   observations?: SkillObservation[];
   rows: CollectorRow[];
   warnings: LocalHistoryWarning[];
@@ -57,6 +59,8 @@ export interface HarnessCollectionResult {
    * empty by construction and must never be rendered as a zero (ADR 0022).
    */
   observability: SkillObservability;
+  /** Null when the harness cannot observe or the sweep itself failed. */
+  observationCompleteness: SkillObservationCollectionCompleteness | null;
   /** Empty whenever `observability` is `not-observable`. */
   observations: SkillObservation[];
   rows: Row[];
@@ -109,6 +113,7 @@ export const selectedHarnessAdapters = (selection: HarnessSelection) => {
 type HarnessAdapterOutcome =
   | {
       _tag: 'success';
+      observationCompleteness?: SkillObservationCollectionCompleteness;
       observations: SkillObservation[];
       rows: CollectorRow[];
       warnings: LocalHistoryWarning[];
@@ -126,6 +131,9 @@ const collectAdapter = (
       onFailure: (error) => ({ _tag: 'failure' as const, error }),
       onSuccess: (result) => ({
         _tag: 'success' as const,
+        ...(result.observationCompleteness === undefined
+          ? {}
+          : { observationCompleteness: result.observationCompleteness }),
         observations: result.observations ?? [],
         rows: result.rows,
         warnings: result.warnings,
@@ -156,6 +164,7 @@ const collectHarnessResult = (
           harness,
           label: adapter.metadata.label,
           observability,
+          observationCompleteness: null,
           observations: [],
           rows: [],
           warnings: [
@@ -172,6 +181,7 @@ const collectHarnessResult = (
         harness,
         label: adapter.metadata.label,
         observability,
+        observationCompleteness: observability === 'observable' ? (outcome.observationCompleteness ?? null) : null,
         // A harness that cannot observe contributes nothing even if an adapter
         // somehow handed something back, so the two fields can never disagree.
         observations: observability === 'observable' ? outcome.observations : [],

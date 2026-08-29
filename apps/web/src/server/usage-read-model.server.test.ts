@@ -5,7 +5,7 @@ import path from 'node:path';
 import { FIXTURE_SKILL_NAMES, FIXTURE_SKILL_ROOT } from '@ai-usage/local-machine/testing/harness-home';
 import type { FocusedReportSupport } from '@ai-usage/report-core/focused-report-query';
 import type { SerializedRow } from '@ai-usage/report-core/report-data';
-import type { SkillObservation } from '@ai-usage/report-core/skill-observation';
+import { completeSkillObservationCollection, type SkillObservation } from '@ai-usage/report-core/skill-observation';
 import {
   importLocalRows,
   importSkillObservations,
@@ -189,12 +189,19 @@ const seededHomeObservations: readonly SkillObservation[] = [
 ];
 
 const storeWithSeededHomeObservations = async (): Promise<string> => {
-  const root = await mkdtemp(path.join(tmpdir(), 'plan099-web-skill-observations-'));
+  const root = await mkdtemp(path.join(tmpdir(), 'plan111-web-skill-observations-'));
   roots.push(root);
   const dbPath = path.join(root, 'usage.sqlite');
-  await Effect.runPromise(
-    importSkillObservations({ dbPath, machineId: 'machine-a', observations: seededHomeObservations }),
-  );
+  for (const harnessKey of [...new Set(seededHomeObservations.map((observation) => observation.harnessKey))]) {
+    await Effect.runPromise(
+      importSkillObservations({
+        collection: { completeness: completeSkillObservationCollection(), harnessKey },
+        dbPath,
+        machineId: 'machine-a',
+        observations: seededHomeObservations.filter((observation) => observation.harnessKey === harnessKey),
+      }),
+    );
+  }
   return dbPath;
 };
 
@@ -271,7 +278,7 @@ describe('SQLite usage read model skill observations', () => {
   });
 
   test('does not create a missing store to answer an observation read', async () => {
-    const root = await mkdtemp(path.join(tmpdir(), 'plan099-web-skill-observations-missing-'));
+    const root = await mkdtemp(path.join(tmpdir(), 'plan111-web-skill-observations-missing-'));
     roots.push(root);
     const dbPath = path.join(root, 'missing', 'usage.sqlite');
 

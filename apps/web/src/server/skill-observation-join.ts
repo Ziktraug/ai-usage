@@ -13,7 +13,7 @@ import {
 /**
  * The inventory↔observation join.
  *
- * It lives on the server because that is where the inventory is (plan 099 decision 3): the skills
+ * It lives on the server because that is where the inventory is (plan 111 decision 3): the skills
  * domain is a filesystem projection and must never learn to read the usage store, and the browser
  * must not be handed two half-answers to reconcile. Everything that needs both sides — managed-ness,
  * projection completeness, and therefore every verdict — is decided here, once, and travels as a

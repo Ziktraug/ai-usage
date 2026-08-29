@@ -6,7 +6,7 @@
     type ReconcilePlanSummary,
     type SkillCellStateFilter,
   } from '../../../../skills-page-model';
-  import { skillsMutationOptions, skillsSnapshotKey } from '../../../query/options/skills';
+  import { applySkillsSnapshotToCache, skillsMutationOptions } from '../../../query/options/skills';
   import { useOptionalWebQueryRpcContext } from '../../../query/rpc-context.svelte';
   import { createSkillsClient } from '../../../rpc/skills-client';
   import SkillObservationsPanel from '../observations/skill-observations.svelte';
@@ -73,8 +73,8 @@
     operationMutation.isPending ? (operationMutation.variables?.pendingLabel ?? null) : null,
   );
   const operationError = $derived(operationMutation.error instanceof Error ? operationMutation.error.message : null);
-  const publish = (snapshot: typeof context.snapshot): void => {
-    queryClient.setQueryData(skillsSnapshotKey(), snapshot);
+  const publish = async (snapshot: typeof context.snapshot): Promise<void> => {
+    await applySkillsSnapshotToCache(queryClient, snapshot);
   };
   const execute = async (operation: SkillsManagementOperation, pendingLabel: string): Promise<void> => {
     if (operationMutation.isPending) {
@@ -84,7 +84,7 @@
     operationMessage = null;
     try {
       const result = await operationMutation.mutateAsync({ operation, pendingLabel });
-      publish(result.snapshot);
+      await publish(result.snapshot);
       managementPlan.publish(result.plan);
       operationMessage = { message: skillsManagementSuccessMessage(operation, result), tone: 'success' };
     } catch {

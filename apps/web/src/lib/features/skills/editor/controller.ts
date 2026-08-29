@@ -26,7 +26,7 @@ export interface SkillMarkdownEditorController extends StateSubscription<SkillMa
 
 export interface SkillMarkdownEditorDependencies {
   readonly loadMarkdown: (skillName: string) => Promise<SkillsClientResult<SkillMarkdownDocument>>;
-  readonly onSaved: (skillName: string, result: SkillsClientResult<SkillMarkdownSaveResult>) => void;
+  readonly onSaved: (skillName: string, result: SkillsClientResult<SkillMarkdownSaveResult>) => Promise<void> | void;
   readonly saveMarkdown: (input: {
     readonly baseSha256: string;
     readonly content: string;
@@ -214,7 +214,7 @@ export const createSkillMarkdownEditorController = (
         publish({ message: 'Could not save SKILL.md: server returned a different skill.', saving: false });
         return;
       }
-      dependencies.onSaved(skillName, result);
+      await dependencies.onSaved(skillName, result);
       const followUpDraft = state.draft !== submittedDraft;
       pendingDocument = undefined;
       publish({

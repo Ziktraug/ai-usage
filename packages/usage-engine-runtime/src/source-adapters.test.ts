@@ -1,10 +1,12 @@
-import { describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { ProviderQuotaBatchSource } from '@ai-usage/local-collectors';
+import { setClaudeSkillObservationCeilingForTesting } from '@ai-usage/local-machine/claude-session-facts';
 import { createLocalHistoryStorage, LocalHistoryStorage } from '@ai-usage/local-machine/local-history';
 import { collectionSourceIds } from '@ai-usage/report-core/source-control';
+import { querySkillObservationDataset } from '@ai-usage/report-data/skill-observation-read';
 import {
   initializeUsageStore,
   queryLatestProviderQuotaObservations,
@@ -13,11 +15,15 @@ import {
   querySkillObservations,
   usageStorePath,
 } from '@ai-usage/usage-store/testing';
-import { Duration, Effect } from 'effect';
+import { Duration, Effect, Exit } from 'effect';
 import { stageCursorUsageExport } from './input-file';
 import { createScheduledSourceRegistry, type SourceRunContext } from './source-adapters';
 
 const machine = { id: 'machine-a', label: 'Machine A' };
+
+afterEach(() => {
+  setClaudeSkillObservationCeilingForTesting(null);
+});
 
 const createRegistry = async (home: string, options: Parameters<typeof createScheduledSourceRegistry>[0] = {}) =>
   Effect.runPromise(
@@ -55,7 +61,7 @@ const writeClaudeSession = (home: string, inputTokens = 10): void => {
  * A transcript that both produces a usage row and declares a skill invocation,
  * so one source run exercises the row write and the observation write together.
  */
-const writeClaudeSkillSession = (home: string): void => {
+const writeClaudeSkillSession = (home: string, skillNames: readonly string[] = ['improve']): void => {
   const directory = path.join(home, '.claude', 'projects', '-home-alex-Projects-report');
   mkdirSync(directory, { recursive: true });
   const cwd = '/home/alex/Projects/report';
@@ -71,14 +77,12 @@ const writeClaudeSkillSession = (home: string): void => {
     {
       cwd,
       message: {
-        content: [
-          {
-            id: 'toolu_managed',
-            input: { args: 'Northwind audit', skill: 'improve' },
-            name: 'Skill',
-            type: 'tool_use',
-          },
-        ],
+        content: skillNames.map((skill, index) => ({
+          id: index === 0 ? 'toolu_managed' : `toolu_${index}`,
+          input: { args: 'Northwind audit', skill },
+          name: 'Skill',
+          type: 'tool_use',
+        })),
         id: 'message-1',
         model: 'claude-sonnet-4-6',
         role: 'assistant',
@@ -419,7 +423,7 @@ describe('scheduled source adapters', () => {
   });
 
   test('persists skill observations collected alongside the session rows', async () => {
-    const home = mkdtempSync(path.join(tmpdir(), 'plan099-engine-source-skill-observations-'));
+    const home = mkdtempSync(path.join(tmpdir(), 'plan111-engine-source-skill-observations-'));
     try {
       writeClaudeSkillSession(home);
       const registry = await createRegistry(home);
@@ -445,8 +449,35 @@ describe('scheduled source adapters', () => {
     }
   });
 
+  test('re-checks cancellation before the auxiliary observation write', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'plan111-engine-source-skill-abort-'));
+    try {
+      writeClaudeSkillSession(home);
+      const registry = await createRegistry(home);
+      const source = registry.get('claude.sessions');
+      let abortReads = 0;
+      const signal = {
+        get aborted() {
+          abortReads += 1;
+          return abortReads >= 3;
+        },
+      } as AbortSignal;
+
+      const exit = await Effect.runPromiseExit(
+        source?.run({ ...progressContext([]), signal }) ?? Effect.die('missing source'),
+      );
+      const rows = await Effect.runPromise(queryReportRows({ dbPath: usageStorePath(home) }));
+      const observations = await Effect.runPromise(querySkillObservations({ dbPath: usageStorePath(home) }));
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(rows.rows).toHaveLength(1);
+      expect(observations.observations).toHaveLength(0);
+    } finally {
+      rmSync(home, { force: true, recursive: true });
+    }
+  });
+
   test('a second run of an unchanged source reports no change from its observations', async () => {
-    const home = mkdtempSync(path.join(tmpdir(), 'plan099-engine-source-skill-idempotent-'));
+    const home = mkdtempSync(path.join(tmpdir(), 'plan111-engine-source-skill-idempotent-'));
     try {
       writeClaudeSkillSession(home);
       const registry = await createRegistry(home);
@@ -459,6 +490,32 @@ describe('scheduled source adapters', () => {
       // Re-importing the same observations must not re-publish the report.
       expect(second).toMatchObject({ changed: false });
       expect(stored.observations).toHaveLength(1);
+    } finally {
+      rmSync(home, { force: true, recursive: true });
+    }
+  });
+
+  test('persists a producer-side invocation bound through the fresh read model', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'plan111-engine-source-skill-incomplete-'));
+    try {
+      setClaudeSkillObservationCeilingForTesting(1);
+      writeClaudeSkillSession(home, ['improve', 'review']);
+      const registry = await createRegistry(home, { now: () => new Date('2026-08-29T10:00:00.000Z') });
+      const source = registry.get('claude.sessions');
+
+      await Effect.runPromise(source?.run(progressContext([])) ?? Effect.die('missing source'));
+      const dataset = await Effect.runPromise(
+        querySkillObservationDataset({
+          dbPath: usageStorePath(home),
+          maximumBytes: 2 * 1024 * 1024,
+          maximumObservations: 20_000,
+          maximumSkills: 4096,
+        }),
+      );
+
+      expect(dataset.skills.map(({ skillName }) => skillName)).toEqual(['improve']);
+      expect(dataset.lowerBound).toBe(true);
+      expect(dataset.invocationLowerBound).toBe(true);
     } finally {
       rmSync(home, { force: true, recursive: true });
     }

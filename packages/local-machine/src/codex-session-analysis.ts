@@ -29,7 +29,7 @@ import { firstExisting } from './platform-paths';
  * The Codex skill extractors live in their own module because
  * `internal/codex-history.ts` — which this file imports — needs them during
  * parsing, and re-exporting them here rather than defining them here keeps that
- * dependency acyclic. They remain reachable at this seam, per plan 099.
+ * dependency acyclic. They remain reachable at this seam, per plan 111.
  */
 export {
   CODEX_AVAILABLE_SKILLS_HEADING,

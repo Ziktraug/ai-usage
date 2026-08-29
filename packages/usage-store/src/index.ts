@@ -28,7 +28,11 @@ import type { ProviderQuotaObservation } from '@ai-usage/report-core/provider-qu
 import { IMPORT_EXISTING_ROW_LOOKUP_BATCH_SIZE } from '@ai-usage/report-core/report-budgets';
 import type { SerializedRow } from '@ai-usage/report-core/report-data';
 import type { SessionDetailSourceAuthority } from '@ai-usage/report-core/session-detail';
-import type { SkillObservation, SkillObservationTier } from '@ai-usage/report-core/skill-observation';
+import type {
+  SkillObservation,
+  SkillObservationCollectionCompleteness,
+  SkillObservationTier,
+} from '@ai-usage/report-core/skill-observation';
 import type { UsageMachine } from '@ai-usage/report-core/snapshot';
 import type { CollectedUsageRow, UsageRowWithOptionalSource } from '@ai-usage/report-core/types';
 import { Effect } from 'effect';
@@ -356,10 +360,21 @@ export type QueryLatestLocalProviderQuotaObservationsInput = Omit<
 >;
 
 export interface ImportSkillObservationsInput {
+  /**
+   * Producer completeness for this observable harness sweep. Persisted even
+   * when `observations` is empty so a truncated empty sweep cannot masquerade
+   * as an ordinary empty result.
+   */
+  collection?: {
+    completeness: SkillObservationCollectionCompleteness;
+    harnessKey: string;
+  };
   dbPath: string;
   importedAt?: Date;
   /** The machine that observed these; the observations themselves are machine-agnostic. */
   machineId: string;
+  /** Optional inclusive cutoff used by rescan-based collectors to avoid resurrecting retained rows. */
+  minimumObservedAt?: string;
   observations: readonly unknown[];
 }
 
@@ -367,6 +382,8 @@ export interface SkillObservationImportResult {
   inserted: number;
   /** Observations that failed validation. Counted, so a broken collector is visible. */
   rejected: number;
+  /** The durable producer-completeness answer changed. */
+  stateChanged: boolean;
   /** Re-imports whose content matched the stored row exactly. */
   unchanged: number;
   /**
@@ -401,6 +418,10 @@ export interface StoredSkillObservation {
 }
 
 export interface QuerySkillObservationsResult {
+  /** Producer-side exposure collection was incomplete. */
+  collectionExposureIncomplete: boolean;
+  /** Producer-side invocation collection was incomplete. */
+  collectionInvocationIncomplete: boolean;
   /**
    * The `declared`/`inferred` read reached *its own* budget, so invocation
    * evidence is incomplete.
@@ -1126,8 +1147,13 @@ const migrate = (db: SqliteDatabase): boolean => {
   // A store written before the skill-observation family existed carries the
   // current user_version, so absence of the table is the only signal that this
   // migration has work to do.
-  schemaChanged ||=
+  const skillObservationsMissing =
     db.query("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'skill_observations'").get() === null;
+  const skillObservationCollectionStateMissing =
+    db
+      .query("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'skill_observation_collection_state'")
+      .get() === null;
+  schemaChanged ||= skillObservationsMissing || skillObservationCollectionStateMissing;
   db.exec('BEGIN IMMEDIATE');
   try {
     db.exec(`
@@ -1355,6 +1381,17 @@ const migrate = (db: SqliteDatabase): boolean => {
     --
     -- There is no arguments column, and there must never be one. Skill
     -- arguments are user prose; only their presence is recorded.
+    CREATE TABLE IF NOT EXISTS skill_observation_collection_state (
+      machine_id TEXT NOT NULL,
+      harness_key TEXT NOT NULL,
+      invocation_truncated INTEGER NOT NULL CHECK (invocation_truncated IN (0, 1)),
+      invocation_rejected INTEGER NOT NULL CHECK (invocation_rejected >= 0),
+      exposure_truncated INTEGER NOT NULL CHECK (exposure_truncated IN (0, 1)),
+      exposure_rejected INTEGER NOT NULL CHECK (exposure_rejected >= 0),
+      collected_at TEXT NOT NULL,
+      PRIMARY KEY (machine_id, harness_key)
+    ) WITHOUT ROWID;
+
     CREATE TABLE IF NOT EXISTS skill_observations (
       id INTEGER PRIMARY KEY,
       harness_key TEXT NOT NULL,
@@ -1389,6 +1426,37 @@ const migrate = (db: SqliteDatabase): boolean => {
     CREATE INDEX IF NOT EXISTS idx_skill_observations_machine
       ON skill_observations(machine_id, observed_at, id);
     `);
+    if (skillObservationCollectionStateMissing) {
+      // Stores written by the first implementation have observation/session
+      // rows but no durable producer bound. The lost answer cannot be
+      // reconstructed, so migrate those observable machine/harness pairs as
+      // incomplete until their next successful sweep replaces the sentinel.
+      db.query(`
+        INSERT INTO skill_observation_collection_state (
+          machine_id, harness_key,
+          invocation_truncated, invocation_rejected,
+          exposure_truncated, exposure_rejected,
+          collected_at
+        )
+        SELECT machine_id, harness_key, 1, 0, 0, 0, ?
+        FROM (
+          SELECT origin_machine_id AS machine_id, harness_key
+          FROM usage_rows
+          WHERE source_authority = 'local-observed'
+            AND harness_key IN ('claude', 'codex', 'opencode')
+          GROUP BY origin_machine_id, harness_key
+          UNION
+          SELECT machine_id, harness_key
+          FROM skill_observations
+          WHERE harness_key IN ('claude', 'codex', 'opencode')
+          GROUP BY machine_id, harness_key
+        )
+      `).run(new Date().toISOString());
+      const { changed } = db.query('SELECT changes() AS changed').get() as { changed: number };
+      if (changed > 0) {
+        db.query("UPDATE usage_store_metadata SET value = value + 1 WHERE key = 'generation'").run();
+      }
+    }
     db.exec(servedReportSchemaSql);
     if (!hasExactUsageLocalMachineSchema(db)) {
       throw new Error('The local machine projection schema is incompatible.');

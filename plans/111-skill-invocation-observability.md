@@ -1,4 +1,4 @@
-# Plan 099: Skill Invocation Observability — Declared, Inferred, and Exposed Signals Across Claude Code, OpenCode, and Codex
+# Plan 111: Skill Invocation Observability — Declared, Inferred, and Exposed Signals Across Claude Code, OpenCode, and Codex
 
 > **Executor instructions**: Follow this plan step by step. Run every
 > verification command and confirm the expected result before moving to the
@@ -82,7 +82,7 @@ Measured: **40 invocations, 28 with a resolved base directory** (16 user-global,
 absence is a **signal, not a gap**: those skills are real, invoked, and correctly
 outside the managed inventory.
 
-### B. OpenCode — declared, scope unresolved
+### B. OpenCode — declared, with a resolved directory when disclosed
 
 `~/.local/share/opencode/opencode.db`, table `part`:
 
@@ -92,9 +92,9 @@ outside the managed inventory.
           "output":"<skill_content name=\"write-a-skill\">…"}}
 ```
 
-Available: skill name, status, `session_id`, `time_created`. **No resolved
-path** — scope must be resolved against the inventory plus the session's
-directory, and may legitimately fail to resolve.
+Available: skill name, status, `session_id`, `time_created`, and the resolved
+skill directory in `state.metadata.dir` when present. The metadata is optional,
+so an observation may still legitimately remain unresolved.
 
 Measured: **140 skill-tool parts.**
 
@@ -180,8 +180,10 @@ must not open a second one.
    banner. Each rendered number carries its own tier and harness coverage, as
    the rest of the product already does.
 
-7. **Small numbers.** Tens-to-hundreds of observations, not thousands. Design
-   the surface to read honestly at n=1. No dense histograms.
+7. **Read honestly at every scale.** Invocation observations are relatively
+   scarce, but catalogue exposure is not: the execution corpus reached 78,442
+   exposed rows against 1,481 invocations. Use separate bounded tier-group reads
+   and design the surface to remain legible at n=1. No dense histograms.
 
 ## Steps
 
@@ -231,19 +233,26 @@ no-base-directory case (bundled skill) and the OpenCode unresolvable-name case.
 
 Wire the extractors into `packages/local-collectors/src/collectors/{claude,opencode,codex}.ts`,
 producing a new observation stream alongside the existing session rows. Reuse
-`collector-cache.ts` so a re-scan is incremental — a full history sweep must not
-re-parse unchanged files. This is a **new fact from existing collection
-sources**, not a new collection source; the source vocabulary does not change.
+`collector-cache.ts` so an unchanged corpus is a cache hit. The existing Claude
+cache is corpus-fingerprinted rather than per-file: changing one transcript
+still re-parses the corpus. Per-file incremental invalidation is a separate
+performance improvement, not a correctness claim of this plan. This is a **new
+fact from existing collection sources**, not a new collection source; the
+source vocabulary does not change.
 
-**Done when**: a demo-runtime collection produces observations for the three
-harnesses, and a second run produces no additional work (cache hit).
+**Done when**: an isolated synthetic-home collector integration produces
+observations for the three harnesses, and a second run produces no additional
+work (cache hit). The demo runtime intentionally runs web alone and forbids
+local-history and engine capabilities, so it is not a collection fixture.
 
 ### Step 4 — Persist
 
 New tables in `packages/usage-store`, mirroring the provider-quota module's
 shape and retention discipline. At minimum: harness key, skill name, tier,
 timestamp, session id, project path, resolved target path (nullable), success
-(nullable). Include the migration and its test alongside the existing ones in
+(nullable). Persist producer completeness per machine and harness in the same
+transaction, including for an empty batch, with invocation and exposure kept
+separate. Include the migration and its test alongside the existing ones in
 `migration.test.ts`.
 
 **Beware the read re-validation trap**: this store re-validates persisted rows on
@@ -283,8 +292,10 @@ On the skill detail and matrix surfaces, render for each skill:
 - per-harness observation counts **with their tier**, and *not observable* for
   harnesses with no collector (Cursor today);
 - last-seen timestamp;
-- the two verdicts this feature exists for: **projected but never observed**
-  (deletion candidate) and **observed but unmanaged** (adoption candidate).
+- the two verdicts this feature exists for: **projected everywhere but never
+  invoked** (deletion candidate) and **invoked but unmanaged** (adoption
+  candidate). An incomplete invocation read makes the absence verdict
+  provisional; exposure-only truncation does not.
 
 The second verdict needs a home for observations that resolve to no inventory
 entry — the bundled and plugin skills. Surfacing them as a distinct group is
@@ -345,12 +356,14 @@ State plainly, in the docs, that Cursor is unobservable and why.
 bun test packages/local-machine
 bun test packages/local-collectors
 bun test packages/usage-store
+bun run test
 bun run typecheck
 bun run check
-bun run demo        # observe the surface against synthetic runtime
+bun run build
+bun run test:e2e    # includes the synthetic /skills surface and axe gate
 ```
 
-Manual: open `/skills`, pick a skill observed in more than one harness, and
+Manual: run the supervised development stack, open `/skills`, pick a skill observed in more than one harness, and
 confirm the tiers are distinguishable without colour. Then pick a skill with no
 observations and confirm it does not read as "unused" in harnesses that cannot
 report.

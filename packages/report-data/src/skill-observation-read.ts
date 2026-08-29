@@ -120,8 +120,17 @@ export const querySkillObservationDataset = (
       const presentable = presentableObservations(result.observations);
       return clampSkills(
         createSkillObservationDataset(presentable.observations, {
-          invocationLowerBound: result.invocationTruncated,
-          lowerBound: result.truncated,
+          invocationLowerBound:
+            result.invocationTruncated ||
+            result.collectionInvocationIncomplete ||
+            result.skipped > 0 ||
+            presentable.refused > 0,
+          lowerBound:
+            result.truncated ||
+            result.collectionInvocationIncomplete ||
+            result.collectionExposureIncomplete ||
+            result.skipped > 0 ||
+            presentable.refused > 0,
           skipped: result.skipped + presentable.refused,
         }),
         input,

@@ -24,7 +24,7 @@ gap is structural rather than incidental. Measured against real local history on
 | Harness | Signal | What is recoverable |
 | --- | --- | --- |
 | Claude Code | `Skill` tool call | name, timestamp, cwd, session, success, and a resolved base directory for ~72% of invocations |
-| OpenCode | `skill` tool part | name, status, session, timestamp; **no** resolved path |
+| OpenCode | `skill` tool part | name, status, session, timestamp, and the resolved directory from `state.metadata.dir` when present |
 | Codex | none | a catalogue injected into every system prompt, plus `exec` commands that read a `SKILL.md` |
 | Cursor | none | nothing — zero `skill` tool keys in its state database |
 
@@ -87,9 +87,10 @@ new columns on `usage_rows`.
 - **Observations aggregate by skill *name*, not by installation.** Two
   installations sharing a name — a managed global skill and a project-local copy
   of `pr-review`, say — share one set of counts. This is forced by what the
-  harnesses record: OpenCode discloses no path at all, and Claude Code discloses
-  a resolved base directory for roughly 70% of invocations, so for most
-  observations there is nothing to attribute an install from. Per-install
+  harnesses record: OpenCode normally discloses `state.metadata.dir`, but that
+  field remains optional, and Claude Code discloses a resolved base directory
+  for roughly 70% of invocations. A complete installation-level answer must
+  therefore retain observations that have nothing safe to attribute. Per-install
   attribution would need an explicit *unattributable* bucket alongside the
   attributed ones, and is out of scope here.
 
@@ -171,6 +172,16 @@ new columns on `usage_rows`.
   per-skill resolved-path ceiling, which carries its own
   `resolvedPathsTruncated` marker: a silently short list of directories reads as
   a complete census of where a skill lives.
+- **Producer bounds survive the collection cycle.** Extractor truncation and
+  rejection are persisted as tier-group completeness beside the observations,
+  in the same transaction and even for an empty batch. A warning alone is an
+  operational event and cannot support a durable absence verdict after restart.
+  Invocation incompleteness feeds `invocationLowerBound`; exposure-only
+  incompleteness feeds only `lowerBound`. A semantic change in completeness
+  advances the store generation even when every observation row is unchanged.
+  A same-version migration seeds legacy observable machine/harness pairs as
+  incomplete until their next successful sweep; missing historical producer
+  state is never interpreted as proof of completeness.
 - **The tiers do not share a read budget, and their bounds are reported
   separately.** They are not produced at comparable rates. A Codex session emits
   one `exposed` row per catalogue entry, so on the operator's real store exposure
@@ -206,8 +217,10 @@ new columns on `usage_rows`.
   clamped against the contract's published caps and every clamp sets
   `lowerBound`. A shorter honest answer beats a `503`.
 - Observations are retained on the same discipline as the provider-quota family
-  and pruned during engine startup recovery. An auxiliary fact family with no
-  retention caller grows for the life of the store.
+  and pruned during engine startup recovery. Rescan-based collectors also pass
+  the same cutoff to import, so the next sweep cannot resurrect rows that
+  retention just removed. An auxiliary fact family with no retention caller or
+  import cutoff grows for the life of the store.
 - **An observation's identity is stable; its content is not.** The identity names
   one real event, but this product's *reading* of that event improves as the
   collectors do, so a re-import with different content overwrites and is reported
@@ -226,7 +239,7 @@ requires one canonical number per concept — "invocations" is three concepts.
 
 ## Evidence
 
-- [Plan 099 — skill invocation observability](../../plans/099-skill-invocation-observability.md),
+- [Plan 111 — skill invocation observability](../../plans/111-skill-invocation-observability.md),
   whose "Measured current state" section records the per-harness sampling
 - [`CONTEXT.md`](../../CONTEXT.md) — skill observation, observation tier, skill
   resolution, observability

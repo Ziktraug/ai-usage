@@ -31,8 +31,8 @@
   import { fmtNum } from '../../../foundation/presentation/format';
   import {
     applySkillsConfigurationSnapshotToCache,
+    applySkillsSnapshotToCache,
     skillsMutationOptions,
-    skillsSnapshotKey,
   } from '../../../query/options/skills';
   import { useOptionalWebQueryRpcContext } from '../../../query/rpc-context.svelte';
   import { createSkillsClient } from '../../../rpc/skills-client';
@@ -304,7 +304,7 @@
     try {
       const result = await managementMutation.mutateAsync({ operation, pendingLabel });
       managementPlan.publish(result.plan);
-      queryClient.setQueryData(skillsSnapshotKey(), result.snapshot);
+      await applySkillsSnapshotToCache(queryClient, result.snapshot);
       setSuccessMessage(skillsManagementSuccessMessage(operation, result));
       if (operation.type === 'preview-reconcile') {
         await tick();

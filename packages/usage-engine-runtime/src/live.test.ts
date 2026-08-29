@@ -1719,7 +1719,7 @@ describe('live usage engine publication', () => {
   });
 
   test('applies skill observation retention during startup recovery', async () => {
-    const root = await mkdtemp(path.join(tmpdir(), 'plan099-engine-skill-retention-'));
+    const root = await mkdtemp(path.join(tmpdir(), 'plan111-engine-skill-retention-'));
     roots.push(root);
     const home = path.join(root, 'home');
     const dbPath = path.join(root, 'state', 'usage.sqlite');

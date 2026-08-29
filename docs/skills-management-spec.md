@@ -50,7 +50,8 @@ requirements below are what the surface must honour.
   "cannot observe" are different sentences and the surface says both.
 - **Counts are per skill *name*, and the surface says so.** A harness records the
   name it was asked for and only sometimes a resolved directory — OpenCode
-  discloses none, Claude Code discloses one for about 70% of invocations — so
+  normally discloses one in `state.metadata.dir`, while Claude Code does so for
+  about 70% of invocations — so
   one set of counts covers every installation sharing a name. Each per-skill
   detail states this beside the numbers, with the resolved-path list underneath
   corroborating it whenever a name really did resolve to several directories.
@@ -87,6 +88,11 @@ requirements below are what the surface must honour.
   proposal most of all, since it is the one verdict acted on destructively.
   Verdicts that rest on presence are unaffected: an invocation seen is an
   invocation that happened.
+- Producer-side truncations and rejections follow the same rule. Each observable
+  harness persists invocation and exposure completeness with the batch, even
+  when that batch contains zero observations. Invocation loss makes an absence
+  provisional; exposure-only loss makes exposure counts lower bounds without
+  weakening the invocation verdict.
 - Provenance is per metric. There is no page-level data-quality banner; a failed
   observation read reports itself in the observation section alone.
 - Tier and observability are conveyed textually. Colour may reinforce them and
@@ -99,7 +105,7 @@ requirements below are what the surface must honour.
 | Harness | Tiers produced | What is recoverable | Why |
 | --- | --- | --- | --- |
 | Claude Code | `declared` | name, timestamp, cwd, session, success, and a resolved base directory for most invocations | a first-class `Skill` tool call in the transcript |
-| OpenCode | `declared` | name, status, session, timestamp | a `skill` tool part in its database; it discloses no resolved path, so scope may legitimately fail to resolve |
+| OpenCode | `declared` | name, status, session, timestamp, and the resolved directory when `state.metadata.dir` is present | a `skill` tool part in its database; missing metadata remains an explicit unresolved state |
 | Codex | `exposed`, `inferred` | the skill catalogue injected into every system prompt, plus `exec` commands that read a `SKILL.md` | Codex has no skill tool; the two streams come from two separate extractors and are never combined |
 | Cursor | none — **not observable** | nothing | its state database contains zero `skill` tool keys and its tracking database has no relevant table |
 

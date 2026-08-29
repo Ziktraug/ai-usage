@@ -63,7 +63,7 @@ optimizations behind quantitative retention and correctness gates. It preserves
 continuous 5,000-row scrolling, exact revisions, TanStack Query ownership, direct
 read-only SQLite and the permanent browser/server and demo-isolation boundaries.
 
-Plan 099 records the 2026-08-27 skill-observability feasibility measurement at
+Plan 111 records the 2026-08-27 skill-observability feasibility measurement at
 `dc9717a5`. Claude Code and OpenCode declare skill invocations as first-class
 tool calls; Codex declares only exposure (its injected catalogue) and leaves
 invocation inferable from an `exec` reading a SKILL.md; Cursor records nothing.
@@ -173,7 +173,7 @@ dependency.
 | 096 | Skills Management Surface Fixes — Legible Tree, Honest Statuses, One Health Surface, Matrix Geometry, Frontmatter False Positives | P1 | M | 087 (editor status branch) | DONE (maintainer reopening D20; refresh proof now observes the settled transformed response, the intended visual baseline is updated, and full child gates pass) |
 | 097 | Sync, Sources, Projects: Duplication and Jargon | P1 | M | 088 (fleet "Sessions" label) | DONE |
 | 098 | Session Drawer, Analysis, and Report Chrome Polish | P2 | M | 088 (drawer, records); 093/094 if they touched `preset.ts` | DONE |
-| 099 | Skill Invocation Observability — Declared, Inferred, and Exposed Signals Across Claude Code, OpenCode, and Codex | P2 | L | - | DONE — three-tier skill observations collected, stored, read independently of the report revision, and surfaced on /skills with Cursor as not-observable (ADR 0022) |
+| 111 | Skill Invocation Observability — Declared, Inferred, and Exposed Signals Across Claude Code, OpenCode, and Codex | P2 | L | - | DONE — three-tier skill observations collected, stored, read independently of the report revision, and surfaced on /skills with Cursor as not-observable (ADR 0022) |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) |
 REJECTED (with one-line rationale) | DESIGN READY (design/spike plans only:

@@ -15,7 +15,11 @@ import {
 import { resolvePathCandidates } from '@ai-usage/local-machine/platform-paths';
 import { base, safeJSON } from '@ai-usage/local-machine/text';
 import { parseSessionVcsContext, type SessionVcsContext } from '@ai-usage/report-core/session-vcs';
-import { type SkillObservation, skillObservationIdentity } from '@ai-usage/report-core/skill-observation';
+import {
+  type SkillObservation,
+  type SkillObservationCollectionCompleteness,
+  skillObservationIdentity,
+} from '@ai-usage/report-core/skill-observation';
 import type { TitleSource } from '@ai-usage/report-core/types';
 import { actualCost } from '@ai-usage/report-core/usage-row';
 import { Effect } from 'effect';
@@ -70,6 +74,7 @@ interface SkillPartRow {
 }
 
 export interface OpenCodeCollectionResult {
+  observationCompleteness: SkillObservationCollectionCompleteness;
   /**
    * A new fact drawn from the collection source this collector already reads —
    * not a new collection source. The source vocabulary is unchanged.
@@ -534,5 +539,13 @@ export const collectOpenCodeResult: Effect.Effect<
   if (observationsTruncated) {
     warnings.push(skillObservationTruncationWarning('opencode', openCodeSkillPartLimit()));
   }
-  return { observations, rows: [...liveRows, ...stableRows], warnings };
+  return {
+    observationCompleteness: {
+      exposure: { rejected: 0, truncated: false },
+      invocation: { rejected: rejectedObservations, truncated: observationsTruncated },
+    },
+    observations,
+    rows: [...liveRows, ...stableRows],
+    warnings,
+  };
 });
