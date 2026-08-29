@@ -1,3 +1,4 @@
+import { isPrintableSkillObservationText, type SkillObservation } from '@ai-usage/report-core/skill-observation';
 import {
   createSkillObservationDataset,
   type SkillObservationDataset,
@@ -64,17 +65,53 @@ const clampSkills = (dataset: SkillObservationDataset, bounds: SkillObservationR
   return clamped;
 };
 
+interface PresentableObservations {
+  readonly observations: readonly SkillObservation[];
+  /** Rows the presentation edge refused, to be added to the reader's own skipped count. */
+  readonly refused: number;
+}
+
+/**
+ * The presentation edge's content check, and the reason it is a filter rather than a failure.
+ *
+ * The store is deliberately permissive about `skillName`: it is an open vocabulary, and tightening
+ * the persisted shape later would retroactively invalidate history already on disk (ADR 0022). The
+ * response schema is not permissive — it refuses a name carrying control characters, because
+ * nothing can render one. Shipping such a row would make the schema reject the entire response, so
+ * one malformed persisted row would take the whole observation surface down with it.
+ *
+ * A refused row is therefore counted into `skipped`, which already means exactly this: "persisted
+ * rows the reader could not re-validate, reported and never folded into a count". Every other row
+ * still answers, and the count says something was left out.
+ */
+const presentableObservations = (
+  rows: readonly { readonly observation: SkillObservation }[],
+): PresentableObservations => {
+  const observations: SkillObservation[] = [];
+  let refused = 0;
+  for (const { observation } of rows) {
+    if (isPrintableSkillObservationText(observation.skillName)) {
+      observations.push(observation);
+    } else {
+      refused += 1;
+    }
+  }
+  return { observations, refused };
+};
+
 export const querySkillObservationDataset = (
   input: QuerySkillObservationDatasetInput,
 ): Effect.Effect<SkillObservationDataset, UsageStoreError> =>
   Effect.map(
     querySkillObservations({ dbPath: input.dbPath, maximumObservations: input.maximumObservations }),
-    (result) =>
-      clampSkills(
-        createSkillObservationDataset(
-          result.observations.map(({ observation }) => observation),
-          { lowerBound: result.truncated, skipped: result.skipped },
-        ),
+    (result) => {
+      const presentable = presentableObservations(result.observations);
+      return clampSkills(
+        createSkillObservationDataset(presentable.observations, {
+          lowerBound: result.truncated,
+          skipped: result.skipped + presentable.refused,
+        }),
         input,
-      ),
+      );
+    },
   );

@@ -13,6 +13,9 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { force: true, recursive: true })));
 });
 
+/** A C0 control character, written as an escape so it survives every editor and diff viewer. */
+const BELL = String.fromCodePoint(0x07);
+
 const GENEROUS_BOUNDS = {
   maximumBytes: 2 * 1024 * 1024,
   maximumObservations: 50_000,
@@ -32,21 +35,18 @@ const observation = (skillName: string, ordinal: number): SkillObservation => ({
   tier: 'declared',
 });
 
-const storeWith = async (skillCount: number): Promise<string> => {
+const storeHolding = async (observations: readonly SkillObservation[]): Promise<string> => {
   const root = await mkdtemp(path.join(tmpdir(), 'plan099-skill-observation-read-'));
   roots.push(root);
   const dbPath = path.join(root, 'usage.sqlite');
-  await Effect.runPromise(
-    importSkillObservations({
-      dbPath,
-      machineId: 'machine-a',
-      observations: Array.from({ length: skillCount }, (_, index) =>
-        observation(`skill-${String(index).padStart(5, '0')}`, index),
-      ),
-    }),
-  );
+  await Effect.runPromise(importSkillObservations({ dbPath, machineId: 'machine-a', observations: [...observations] }));
   return dbPath;
 };
+
+const storeWith = async (skillCount: number): Promise<string> =>
+  await storeHolding(
+    Array.from({ length: skillCount }, (_, index) => observation(`skill-${String(index).padStart(5, '0')}`, index)),
+  );
 
 describe('bounded skill observation read', () => {
   test('answers a store holding exactly the cap without claiming a bound', async () => {
@@ -100,5 +100,25 @@ describe('bounded skill observation read', () => {
     expect(dataset.skills.map(({ skillName }) => skillName)).toEqual(['skill-00000', 'skill-00001', 'skill-00002']);
     expect(dataset.lowerBound).toBe(false);
     expect(dataset.skipped).toBe(0);
+  });
+
+  test('counts an unrenderable stored name as skipped instead of poisoning the whole response', async () => {
+    // The store is permissive about names on purpose — tightening it would retroactively invalidate
+    // history on disk — so a control character can legitimately be sitting in a persisted row. The
+    // response schema is not permissive, and shipping that row would make it refuse *everything*:
+    // one weird row would take the entire observation surface down.
+    const dbPath = await storeHolding([
+      observation('good-skill', 0),
+      observation(`bad${BELL}skill`, 1),
+      observation('another-good-skill', 2),
+    ]);
+
+    const dataset = await Effect.runPromise(querySkillObservationDataset({ dbPath, ...GENEROUS_BOUNDS }));
+
+    expect(dataset.skills.map(({ skillName }) => skillName)).toEqual(['another-good-skill', 'good-skill']);
+    // Refused at the presentation edge, reported through the channel that already means exactly
+    // this: rows the reader could not re-validate, counted and never folded into a tally.
+    expect(dataset.skipped).toBe(1);
+    expect(dataset.lowerBound).toBe(false);
   });
 });

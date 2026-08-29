@@ -113,6 +113,36 @@ const OBSERVABLE_HARNESSES: ReadonlySet<string> = new Set(['claude', 'codex', 'o
 export const skillObservabilityFor = (harnessKey: string): SkillObservability =>
   OBSERVABLE_HARNESSES.has(harnessKey) ? 'observable' : 'not-observable';
 
+const LAST_C0_CONTROL_CODE_POINT = 0x1f;
+const FIRST_C1_CONTROL_CODE_POINT = 0x7f;
+const LAST_C1_CONTROL_CODE_POINT = 0x9f;
+
+/**
+ * Whether a string is renderable as text.
+ *
+ * This is the *presentation* rule, and it lives here so there is exactly one of
+ * it. The parser above deliberately does not apply it: the store is permissive
+ * because tightening it later would retroactively invalidate history already on
+ * disk. The presentation edge is where an unrenderable name is refused, and it
+ * must refuse only that name — a single control character in one persisted row
+ * must never cost the caller the whole response.
+ *
+ * Checked by code point rather than a regex, because a character-class range
+ * over the control block is itself disallowed by this repository's lint rules.
+ */
+export const isPrintableSkillObservationText = (value: string): boolean => {
+  for (const character of value) {
+    const codePoint = character.codePointAt(0) ?? 0;
+    if (
+      codePoint <= LAST_C0_CONTROL_CODE_POINT ||
+      (codePoint >= FIRST_C1_CONTROL_CODE_POINT && codePoint <= LAST_C1_CONTROL_CODE_POINT)
+    ) {
+      return false;
+    }
+  }
+  return true;
+};
+
 const boundedNonEmpty = (value: unknown, maximumLength: number): string | null => {
   if (typeof value !== 'string') {
     return null;

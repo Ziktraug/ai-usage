@@ -1,4 +1,4 @@
-import { SKILL_OBSERVATION_TIERS } from '@ai-usage/report-core/skill-observation';
+import { isPrintableSkillObservationText, SKILL_OBSERVATION_TIERS } from '@ai-usage/report-core/skill-observation';
 import { parseSkillConfigInput } from '@ai-usage/skills/config';
 import { skillNamePattern, skillTargetIdPattern } from '@ai-usage/skills/shared';
 import { oc } from '@orpc/contract';
@@ -32,24 +32,10 @@ import { publicErrorDataSchema } from './errors';
 import { emptyInputSchema, isJsonWireValue, jsonWireValueSchema } from './schema-conventions';
 
 const MAX_DISCOVERED_ENTRY_NAME_LENGTH = 255;
-const LAST_C0_CONTROL_CODE_POINT = 0x1f;
-const FIRST_C1_CONTROL_CODE_POINT = 0x7f;
-const LAST_C1_CONTROL_CODE_POINT = 0x9f;
 
-// Checked by code point because a regex range over the control block is itself disallowed by the
-// lint rules.
-const isControlFreeText = (value: string): boolean => {
-  for (const character of value) {
-    const codePoint = character.codePointAt(0) ?? 0;
-    if (
-      codePoint <= LAST_C0_CONTROL_CODE_POINT ||
-      (codePoint >= FIRST_C1_CONTROL_CODE_POINT && codePoint <= LAST_C1_CONTROL_CODE_POINT)
-    ) {
-      return false;
-    }
-  }
-  return true;
-};
+// One definition of "renderable as text", owned by `report-core` so the producer that filters
+// against this rule and the schema that enforces it cannot drift apart.
+const isControlFreeText = isPrintableSkillObservationText;
 
 // Path separators and control characters are the only characters that could turn a reported entry
 // name into something other than a leaf name.
@@ -397,6 +383,12 @@ const observedSkillSchema = strictObject({
   projectedEverywhere: boolean(),
   // Empty is the unresolved case and is carried, not dropped.
   resolvedPaths: pipe(array(boundedStringSchema), maxLength(MAX_OBSERVATION_RESOLVED_PATHS)),
+  /**
+   * The skill resolved to more directories than this list carries. Required, not optional: every
+   * bound in this family reports itself, and an omitted flag would let a producer ship a short list
+   * that reads as complete.
+   */
+  resolvedPathsTruncated: boolean(),
   skillName: observedSkillNameSchema,
   /** A skill can appear with no tallies: that is the never-observed verdict, not a dropped row. */
   tallies: pipe(array(skillObservationTallySchema), maxLength(MAX_OBSERVATION_TALLIES)),
