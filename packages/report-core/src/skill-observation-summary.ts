@@ -26,7 +26,17 @@ import {
  *   than as an absence a renderer would be free to draw as `0`.
  */
 
-/** Distinct resolved directories kept per skill; a display aid, not a census. */
+/**
+ * Distinct resolved directories kept per skill; a display aid, not a census.
+ *
+ * When a skill resolves to more than this, the retained set is the
+ * lexicographically **smallest** paths, not the first ones seen. That rule is
+ * what keeps the fold order-independent: "first eight" makes the retained set a
+ * function of the order the reader happened to return rows in, so the same
+ * store could render two different path lists. The bound is applied while
+ * accumulating rather than at the end, so a skill observed thousands of times
+ * never holds thousands of paths in memory to throw all but eight away.
+ */
 const MAX_RESOLVED_PATHS_PER_SKILL = 8;
 
 const TIER_ORDER: ReadonlyMap<SkillObservationTier, number> = new Map(
@@ -110,6 +120,25 @@ const tierRank = (tier: SkillObservationTier): number => TIER_ORDER.get(tier) ??
 const later = (left: string, right: string): string => (right > left ? right : left);
 
 /**
+ * Keeps the `maximum` smallest paths, by the same ordering the output is sorted
+ * with. Adding then evicting the largest is order-independent by construction:
+ * whatever sequence the paths arrive in, the survivors are the same set.
+ */
+const retainSmallestPath = (paths: Set<string>, candidate: string, maximum: number): void => {
+  if (paths.has(candidate)) {
+    return;
+  }
+  paths.add(candidate);
+  if (paths.size <= maximum) {
+    return;
+  }
+  const largest = [...paths].sort().at(-1);
+  if (largest !== undefined) {
+    paths.delete(largest);
+  }
+};
+
+/**
  * Observability for one harness key.
  *
  * For a key in the catalogue this is `skillObservabilityFor`: the marker is a property of the
@@ -166,8 +195,8 @@ export const createSkillObservationDataset = (
       tallies: new Map<string, TallyAccumulator>(),
     };
     skill.lastObservedAt = later(skill.lastObservedAt, observation.observedAt);
-    if (observation.resolvedPath !== null && skill.resolvedPaths.size < MAX_RESOLVED_PATHS_PER_SKILL) {
-      skill.resolvedPaths.add(observation.resolvedPath);
+    if (observation.resolvedPath !== null) {
+      retainSmallestPath(skill.resolvedPaths, observation.resolvedPath, MAX_RESOLVED_PATHS_PER_SKILL);
     }
     // JSON rather than a delimiter, matching `skillObservationIdentity`: a harness key is an open
     // vocabulary, so any separator character could also appear inside one.

@@ -133,6 +133,33 @@ describe('createSkillObservationDataset', () => {
     expect(createSkillObservationDataset(records)).toEqual(createSkillObservationDataset([...records].reverse()));
   });
 
+  test('is order independent past the resolved-path bound, where a first-n rule would not be', () => {
+    // Nine distinct paths against a ceiling of eight. "Keep the first eight" would retain
+    // `path-0…path-7` forwards and `path-1…path-8` backwards, so the same store would render two
+    // different path lists depending only on how the reader happened to return the rows.
+    const records = Array.from({ length: 9 }, (_value, index) =>
+      observation({
+        harnessKey: 'claude',
+        observationKey: `path-${index}`,
+        resolvedPath: `/home/alex/.claude/skills/improve-${index}`,
+        tier: 'declared',
+      }),
+    );
+
+    const forward = createSkillObservationDataset(records);
+    expect(forward).toEqual(createSkillObservationDataset([...records].reverse()));
+    expect(forward.skills[0]?.resolvedPaths).toEqual([
+      '/home/alex/.claude/skills/improve-0',
+      '/home/alex/.claude/skills/improve-1',
+      '/home/alex/.claude/skills/improve-2',
+      '/home/alex/.claude/skills/improve-3',
+      '/home/alex/.claude/skills/improve-4',
+      '/home/alex/.claude/skills/improve-5',
+      '/home/alex/.claude/skills/improve-6',
+      '/home/alex/.claude/skills/improve-7',
+    ]);
+  });
+
   test('an unknown harness key that produced observations is observable, so its tallies survive', () => {
     const dataset = createSkillObservationDataset([observation({ harnessKey: 'future-harness', tier: 'declared' })]);
 
