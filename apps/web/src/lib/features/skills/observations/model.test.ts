@@ -3,6 +3,7 @@ import type { SkillObservations } from '@ai-usage/web-contract/skills';
 import { syntheticObservations, syntheticProvisionalObservations } from '../shell/synthetic-fixture.test-helper';
 import {
   buildSkillObservationsView,
+  deletionCandidateText,
   formatObservedAt,
   NO_OBSERVATIONS_TEXT,
   NOT_OBSERVABLE_TEXT,
@@ -101,6 +102,26 @@ describe('skill observations view', () => {
     // A positive verdict is not weakened by a short read: seeing an invocation still proves use.
     expect(skillObservationRow(built, 'alpha-skill')?.verdictProvisional).toBe(false);
     expect(verdictText({ verdict: 'invoked', verdictProvisional: false })).toBe('Invoked in at least one harness.');
+  });
+
+  test('qualifies the deletion sentence too, since it is the strongest absence claim on the page', () => {
+    const built = view(syntheticProvisionalObservations);
+    const candidate = built.deletionCandidates[0];
+
+    expect(candidate?.verdictProvisional).toBe(true);
+    // Proposing a deletion is the one verdict a maintainer acts on destructively, so a read that
+    // could not establish absence must not phrase it as established.
+    expect(deletionCandidateText({ verdictProvisional: true })).toBe(
+      'Installed in every enabled runtime, with no invocation within the read bound — a provisional deletion candidate.',
+    );
+    expect(deletionCandidateText({ verdictProvisional: false })).toBe(
+      'Installed in every enabled runtime and still never invoked — a deletion candidate.',
+    );
+    // The rule the verdict is computed with is the rule both sentences state: a disabled target is
+    // not a runtime the skill was expected to be in.
+    for (const provisional of [true, false]) {
+      expect(deletionCandidateText({ verdictProvisional: provisional })).toContain('every enabled runtime');
+    }
   });
 
   test('reads honestly at n = 1 and with nothing observed at all', () => {

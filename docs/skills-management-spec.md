@@ -63,7 +63,9 @@ requirements below are what the surface must honour.
 - **A bounded or partially unreadable read cannot prove absence.** When the read
   reports a bound or skipped rows, every verdict that rests on absence is marked
   provisional and says what it actually knows ("no observation within the read
-  bound"), and the deletion group carries the same qualification. Verdicts that
+  bound"), and both the deletion group and the per-skill deletion sentence carry
+  the same qualification — the deletion proposal most of all, since it is the one
+  verdict acted on destructively. Verdicts that
   rest on presence are unaffected: an invocation seen is an invocation that
   happened.
 - Provenance is per metric. There is no page-level data-quality banner; a failed

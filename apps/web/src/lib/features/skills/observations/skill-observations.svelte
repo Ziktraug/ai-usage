@@ -13,6 +13,7 @@
   import type { SkillObservations } from '@ai-usage/web-contract/skills';
   import {
     buildSkillObservationsView,
+    deletionCandidateText,
     formatObservedAt,
     NOT_OBSERVABLE_TEXT,
     SKILL_OBSERVATION_TIER_DESCRIPTIONS,
@@ -129,8 +130,12 @@
       {verdictText(row ?? { verdict: 'never-observed', verdictProvisional: !view.observationsComplete })}
     </p>
     {#if row?.deletionCandidate}
-      <p class={meta} data-skill-observations-deletion-candidate>
-        Installed in every runtime and still never invoked — a deletion candidate.
+      <p
+        class={meta}
+        data-skill-observations-deletion-candidate
+        data-verdict-provisional={row.verdictProvisional ? 'true' : 'false'}
+      >
+        {deletionCandidateText(row)}
       </p>
     {/if}
     {#if (row?.resolvedPaths.length ?? 0) > 0}

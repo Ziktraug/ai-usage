@@ -1001,6 +1001,12 @@ test('renders skill observations with their tier and never as an unobservable ze
   const betaDetail = page.getByRole('region', { name: 'Observed usage' });
   await expect(betaDetail.getByText('Never observed by any harness.')).toBeVisible();
   await expect(
-    betaDetail.getByText('Installed in every runtime and still never invoked — a deletion candidate.'),
+    betaDetail.getByText('Installed in every enabled runtime and still never invoked — a deletion candidate.'),
   ).toBeVisible();
+  // The e2e read is complete, so the sentence is stated rather than hedged. The provisional wording
+  // is covered where a bounded read can be constructed, in the SSR suite.
+  await expect(betaDetail.locator('[data-skill-observations-deletion-candidate]')).toHaveAttribute(
+    'data-verdict-provisional',
+    'false',
+  );
 });

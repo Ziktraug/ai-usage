@@ -487,7 +487,6 @@ export const previewReconcileAllActiveSkillsForServer = () => productionSkillsSe
 export const createSkillTargetDirectoryForServer = (input: SkillTargetDirectoryInput) =>
   productionSkillsServerAdapter.createTargetDirectory(input);
 export const readSkillProjectInventoriesForServer = () => productionSkillsServerAdapter.readProjectInventories();
-export const readSkillObservationsForServer = () => productionSkillsServerAdapter.readObservations();
 export const readSkillMarkdownForServer = (skillName: string) => productionSkillsServerAdapter.readMarkdown(skillName);
 export const writeSkillMarkdownForServer = (input: SkillMarkdownWriteInput) =>
   productionSkillsServerAdapter.saveMarkdown(input);

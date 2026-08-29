@@ -52,7 +52,7 @@ export interface SkillObservationRow extends ObservedSkill {
 export interface SkillObservationsView {
   /** Invoked, but resolving to no inventory entry: the adoption candidates. */
   adoptionCandidates: readonly SkillObservationRow[];
-  /** Managed, installed in every runtime, and still never invoked: the deletion candidates. */
+  /** Managed, installed in every enabled runtime, and still never invoked: the deletion candidates. */
   deletionCandidates: readonly SkillObservationRow[];
   harnesses: readonly SkillObservationHarness[];
   /** The read hit its bound, so every count below is a lower bound. */
@@ -152,6 +152,23 @@ export const verdictText = (row: Pick<SkillObservationRow, 'verdict' | 'verdictP
   }
   return row.verdictProvisional ? 'No observation within the read bound.' : 'Never observed by any harness.';
 };
+
+/**
+ * The deletion sentence on the per-skill detail.
+ *
+ * It is an absence claim like any other verdict, so a bounded or partially unreadable read must
+ * qualify it. The absolute wording states a fact the read did not establish — "still never invoked"
+ * when the reader stopped at its bound means "not within what we looked at" — and a maintainer
+ * acting on it deletes a skill on evidence that was never gathered.
+ *
+ * "Every *enabled* runtime" because that is the rule the verdict is actually computed with: a
+ * disabled target is not a place the skill was expected to be, and the group heading already says
+ * so. The two sentences describing one verdict must not describe two different ones.
+ */
+export const deletionCandidateText = (row: Pick<SkillObservationRow, 'verdictProvisional'>): string =>
+  row.verdictProvisional
+    ? 'Installed in every enabled runtime, with no invocation within the read bound — a provisional deletion candidate.'
+    : 'Installed in every enabled runtime and still never invoked — a deletion candidate.';
 
 export const buildSkillObservationsView = (observations: SkillObservations): SkillObservationsView => {
   const rows = observations.skills.map((skill) => {

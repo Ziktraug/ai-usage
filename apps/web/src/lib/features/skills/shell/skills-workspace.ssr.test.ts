@@ -1,5 +1,6 @@
 import { afterAll, describe, expect, test } from 'bun:test';
 import { fileURLToPath } from 'node:url';
+import type { SkillObservations } from '@ai-usage/web-contract/skills';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
 import type { Component } from 'svelte';
 import { createServer } from 'vite';
@@ -13,6 +14,7 @@ import {
   syntheticManagedDocument,
   syntheticObservations,
   syntheticProjectDocument,
+  syntheticProvisionalObservations,
   syntheticSnapshot,
 } from './synthetic-fixture.test-helper';
 
@@ -55,15 +57,18 @@ const viteServer = await createServer({
 const closeViteServer = (): Promise<void> => viteServer.close();
 afterAll(closeViteServer);
 
-const [fixtureModule, hydrationFixtureModule, convergenceFixtureModule, svelteServerModule] = await Promise.all([
-  viteServer.ssrLoadModule('/apps/web/src/lib/features/skills/shell/skills-workspace.fixture.svelte'),
-  viteServer.ssrLoadModule('/apps/web/src/lib/features/skills/shell/skills-shell.hydration.fixture.svelte'),
-  viteServer.ssrLoadModule('/apps/web/src/lib/features/skills/shell/skills-convergence.fixture.svelte'),
-  viteServer.ssrLoadModule('svelte/server'),
-]);
+const [fixtureModule, hydrationFixtureModule, convergenceFixtureModule, observationsModule, svelteServerModule] =
+  await Promise.all([
+    viteServer.ssrLoadModule('/apps/web/src/lib/features/skills/shell/skills-workspace.fixture.svelte'),
+    viteServer.ssrLoadModule('/apps/web/src/lib/features/skills/shell/skills-shell.hydration.fixture.svelte'),
+    viteServer.ssrLoadModule('/apps/web/src/lib/features/skills/shell/skills-convergence.fixture.svelte'),
+    viteServer.ssrLoadModule('/apps/web/src/lib/features/skills/observations/skill-observations.svelte'),
+    viteServer.ssrLoadModule('svelte/server'),
+  ]);
 const fixture = componentFrom(fixtureModule);
 const hydrationFixture = componentFrom(hydrationFixtureModule);
 const convergenceFixture = componentFrom(convergenceFixtureModule);
+const observationsComponent = componentFrom(observationsModule);
 const { render } = rendererFrom(svelteServerModule);
 
 const ok = <Value>(data: Value): SkillsCapabilityResult<Value> => ({ data, ok: true });
@@ -205,6 +210,25 @@ describe('Svelte Skills workspace SSR', () => {
     expect(html).toContain('No observation within the read bound.');
     expect(html).toContain('data-skill-observations-lower-bound');
     expect(html).not.toContain('Never observed by any harness.');
+  });
+
+  test('qualifies the deletion sentence on a skill detail, which is the claim a maintainer acts on', () => {
+    const detail = (observations: SkillObservations): string =>
+      render(observationsComponent, { props: { observations, skillName: 'beta-skill', variant: 'skill' } }).body;
+
+    const complete = detail(syntheticObservations);
+    expect(complete).toContain('data-skill-observations-deletion-candidate');
+    expect(complete).toContain('Installed in every enabled runtime and still never invoked — a deletion candidate.');
+
+    // Same skill, same verdict, a read that could not establish the absence it rests on. Proposing a
+    // deletion is the one verdict acted on destructively, so it must not be phrased as established.
+    const provisional = detail(syntheticProvisionalObservations);
+    expect(provisional).toContain(
+      'Installed in every enabled runtime, with no invocation within the read bound — a provisional deletion candidate.',
+    );
+    expect(provisional).not.toContain('still never invoked');
+    // The group heading already says "every enabled runtime"; both sentences describe one rule.
+    expect(provisional).not.toContain('Installed in every runtime');
   });
 
   test('reports an unavailable observation read per metric instead of as a page banner', () => {
