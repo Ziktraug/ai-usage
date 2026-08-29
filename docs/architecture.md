@@ -125,9 +125,13 @@ The read path is:
 
 `skill_observations` (durable)
 → `querySkillObservations` (`@ai-usage/usage-store/reader`, bounded, `query_only`)
-→ `UsageReadModel.readSkillObservations` (`apps/web/src/server/usage-read-model.server.ts`)
 → `querySkillObservationDataset` (`@ai-usage/report-data/skill-observation-read`,
-which folds and clamps to the response caps, reporting any clamp as `lowerBound`)
+which refuses rows the presentation edge cannot render — counting them into
+`skipped` rather than failing the response — then folds and clamps to the caps it
+is given, reporting any clamp as `lowerBound`)
+→ `UsageReadModel.readSkillObservations`
+(`apps/web/src/server/usage-read-model.server.ts`, which supplies those caps,
+stated as the contract's own numbers)
 → `joinSkillObservations` (`apps/web/src/server/skill-observation-join.ts`,
 which adds the inventory side and then clamps the *assembled response* to the
 contract's caps, again reporting any clamp as `lowerBound` — the upstream clamp
@@ -135,7 +139,7 @@ cannot bound a payload the join grows)
 → the `skills.observations` oRPC procedure
 → the `skill-observations` query family under the `collection-swr` policy.
 
-Three properties are load-bearing:
+Four properties are load-bearing:
 
 - **A completed publication *cycle* invalidates it — not a new revision.** The
   query policy revalidates on neither focus nor reconnect, because nothing a

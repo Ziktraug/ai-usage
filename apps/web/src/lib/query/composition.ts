@@ -23,7 +23,15 @@ export interface WebQueryRuntimeOptions {
   readonly url: URL;
 }
 
-export type PublicationQueryEffect = 'invalidate-current-alias' | 'none';
+/**
+ * What a completed publication cycle does to one query family.
+ *
+ * `invalidate-current-alias` sweeps the two current report aliases. `invalidate-collection-identity`
+ * sweeps a family whose only producer is the collection cycle itself, and which therefore has no
+ * other freshness path — its policy revalidates on nothing a browser does. `none` means the cycle
+ * cannot have changed it: an immutable revision, or data the operator owns.
+ */
+export type PublicationQueryEffect = 'invalidate-collection-identity' | 'invalidate-current-alias' | 'none';
 
 export interface WebQueryOwnership {
   readonly family:
@@ -75,9 +83,13 @@ export const webQueryOwnership = [
     // Its own identity, and therefore its own policy: the skills snapshot is a filesystem scan that
     // changes when the operator edits skills, while observations change only when the engine
     // collects. Folding them together would put one cadence on the other's refetch rules.
+    //
+    // And therefore its own publication behaviour. This is the one family besides the report aliases
+    // that a completed cycle invalidates, because the cycle is its only producer — nothing a browser
+    // does can change it, so without this it would never refresh in an open tab.
     family: 'skill-observations',
     policy: 'collection-swr',
-    publication: 'none',
+    publication: 'invalidate-collection-identity',
     rendering: 'ssr-awaited',
   },
   {
