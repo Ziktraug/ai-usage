@@ -1,0 +1,28 @@
+{
+  "name": "@ai-usage/memory-sqlite",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./identity": "./src/identity.ts"
+  },
+  "dependencies": {
+    "@ai-usage/authorization": "workspace:*",
+    "@ai-usage/memory-search": "workspace:*",
+    "@ai-usage/memory-service": "workspace:*",
+    "@ai-usage/platform-core": "workspace:*",
+    "@ai-usage/project-registry": "workspace:*",
+    "@ai-usage/replication-outbox": "workspace:*",
+    "@ai-usage/replication-protocol": "workspace:*"
+  },
+  "devDependencies": {
+    "@ai-usage/report-core": "workspace:*"
+  },
+  "scripts": {
+    "build": "tsc --noEmit",
+    "check": "tsc --noEmit",
+    "test": "bun test",
+    "lint": "biome check .",
+    "format": "biome format --write ."
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "name": "@ai-usage/memory-search",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./chunking": "./src/chunking.ts",
+    "./evaluation": "./src/evaluation.ts",
+    "./evaluation-harness": "./src/evaluation-harness.ts",
+    "./evaluation-metrics": "./src/evaluation-metrics.ts",
+    "./ranking": "./src/ranking.ts"
+  },
+  "dependencies": {
+    "@ai-usage/authorization-contract": "workspace:*",
+    "@ai-usage/memory-service": "workspace:*",
+    "@ai-usage/platform-core": "workspace:*"
+  },
+  "scripts": {
+    "build": "tsc --noEmit",
+    "check": "tsc --noEmit",
+    "test": "bun test",
+    "lint": "biome check .",
+    "format": "biome format --write ."
+  }
+}
