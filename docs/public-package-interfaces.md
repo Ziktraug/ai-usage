@@ -1,7 +1,16 @@
 # Public package interfaces
 
-Workspace packages expose only the seams below. Cross-package imports must use
-declared package exports, never private `src` paths or relative workspace paths.
+Existing workspace packages expose only their current seams below.
+Cross-package imports must use declared package exports, never private `src`
+paths or relative workspace paths.
+
+Platform entries introduced by plans 101–107 are accepted target interfaces,
+not exports currently available on `main`. They remain pending until their plan
+status reaches `DONE`: `platform-core`, `authorization-contract`,
+`authorization`, `identity`, `project-application`, `project-registry`,
+`replication-*`, `memory-*`, `mcp-adapter`, `postgres-store`, `server`, and
+`mcp`, plus the platform-specific extensions described for existing packages
+and apps. All other entries describe current interfaces.
 
 ## `@ai-usage/effect-runtime`
 
@@ -53,6 +62,82 @@ This package imports no other `@ai-usage/*` package.
 
 `report-core` is pure: no filesystem, SQLite, Effect runtime, browser, or app
 state.
+
+## `@ai-usage/platform-core`
+
+- `./identity`: branded canonical UUID IDs, canonical instants, identity value
+  validation, and Space/Person/Device/SCM/Repository/Project/Checkout/Capture
+  Context domain contracts.
+
+This package is pure and owns no storage, transport, authorization adapter, or
+application runtime.
+
+## `@ai-usage/authorization-contract`
+
+- `.`: portable tri-state `Authorizer`, permission, principal, resource,
+  bounded resource-listing, and complete opaque resource-scope contracts.
+
+This package depends only on `platform-core`. It contains no policy adapter,
+scope contents, persistence, transport, or browser integration.
+
+## `@ai-usage/authorization`
+
+- `.`: re-export of the portable authorization contract.
+- `./conformance`: immutable adapter-independent organization scenarios for
+  adapter verification.
+- `./in-memory`: explicit organization-policy adapter and relation-read
+  instrumentation for application-service/conformance tests.
+- `./organization-model`: concrete organization membership, Team, resource,
+  grant, sensitivity, expiry, and revocation state contracts.
+- `./permission-resource`: the frozen permission/resource-kind map.
+- `./scope-internal`: opaque-scope construction and adapter consumption;
+  restricted to SQLite/PostgreSQL adapter code and tests, never routes/UI/MCP.
+- `./single-user`: personal-Space-only local adapter with explicit
+  principal/Space/resource checks and unavailable-infrastructure results.
+
+Authentication and PostgreSQL queries are not part of this package. The
+organization adapters implement explicit domain rules rather than a generic
+policy DSL.
+
+## `@ai-usage/identity`
+
+- `.`: provider-independent Authentication identity, domain session, Device
+  credential/grant metadata, and typed identity-service result contracts.
+- `./better-auth`: the GitHub-only Better Auth `1.7.2` application wrapper and
+  adapter ports; production composition is restricted to `apps/server` and the
+  PostgreSQL authentication adapter.
+- `./device-enrollment`: authorization-aware grant, exchange, authentication,
+  list, rename, rotation, and revocation application service.
+- `./device-tokens`: redacted public-ID/HMAC token and deployment-key-ring
+  values with narrow transport accessors and constant-time verification.
+- `./private-device-credential`: Node-only owner/no-follow private-file adapter
+  for the local recoverable Device credential.
+- `./session-digest-adapter`: adapter-private Better Auth token-digest wrapper.
+- `./testing`: shared-authentication factory injection for tests/gates only.
+
+The package owns application contracts and security policy, not PostgreSQL,
+SQLite, HTTP routing, or Drizzle persistence. Better Auth imports remain inside
+its two adapter-private modules.
+
+## `@ai-usage/project-application`
+
+- `.`: authorization-aware Project-listing service, authorized Project catalog
+  port, bounded page/result contracts, and typed catalog failures.
+
+The service calls `Authorizer.materializeResourceScope`, treats the complete
+scope as opaque, and passes it to persistence. It owns no SQL, transport, or
+browser code and never post-filters unrestricted Projects.
+
+## `@ai-usage/project-registry`
+
+- `./resolution`: pure repository alias normalization, observed Checkout input,
+  candidate contracts, and explicit resolution outcome union.
+- `./mapping`: additive acknowledged Project-source mapping reader/writer
+  contracts.
+- `./review`: privacy-safe Checkout review and explicit create/link/
+  leave-unassigned action contracts.
+
+This package owns no persistence and never resolves ambiguity by itself.
 
 ## `@ai-usage/local-machine`
 
@@ -132,15 +217,99 @@ lease, or subprocess exports. Production `report-data` code may import only
   checkpoints, changes journal mode, or writes.
 - `./writer`: migrations, normalized imports, enrichment, transfer mutations,
   source checkpoints/attempts, atomic served-revision publication, recovery,
-  retention, and explicit checkpointing. Production use is restricted to the
-  deep `usage-engine-runtime` and `usage-merge` owners.
+  retention, explicit checkpointing, and usage replication outbox operations.
+  Production use is restricted to the deep `usage-engine-runtime` and
+  `usage-merge` owners.
 - `./testing`: temporary mixed read/write fixtures for tests and E2E only.
 
 There is deliberately no root export.
 
+## `@ai-usage/replication-protocol`
+
+- `.`: IO-free protocol version, strict Capture Context/batch/event/ACK/problem
+  parsers, closed fact payloads, canonical serialization/hashes, deterministic
+  publication IDs, bounds, and stream constants.
+
+It imports only portable platform identities and owns no HTTP, SQLite,
+PostgreSQL, authentication, filesystem, or runtime composition.
+
+## `@ai-usage/replication-outbox`
+
+- `.`: portable SQLite statement port, exact outbox schema, generation/event
+  state transitions, status/history projection, ACK proof, and bounded retry.
+- `./worker`: storage/transport ports and one bounded claim/publish/ACK cycle.
+
+Production code never opens a database or network connection itself.
+
+## `@ai-usage/replication-client`
+
+- `.`: outbound-only bounded HTTP Device-resolution and batch-publication
+  transport. It requires TLS outside explicit loopback tests and never owns a
+  local or shared persistence adapter.
+
+## `@ai-usage/memory-sqlite`
+
+- `./identity`: owner-only local `memory.sqlite` identity-kernel lifecycle,
+  atomic single-user bootstrap, Project/Repository/Checkout persistence,
+  additive mappings, resolution review actions, DB-native Memory persistence,
+  import state, non-replacing coherent backup, and replication outbox ownership.
+
+This is a write-capable local adapter. Production composition is restricted to
+`apps/usage-engine`; Web, CLI, and MCP must use application-service seams.
+
+## `@ai-usage/memory-service`
+
+- `.`: protocol-v1 contracts, strict parsers, fixed operation paths, and byte/
+  count/deadline bounds.
+- `./application`: authorization-first Memory application services.
+- `./client`: injected authenticated numeric-loopback client with bounded
+  response reads and cancellation/deadline mapping.
+- `./conformance`: adapter-independent persistence conformance.
+- `./domain`: storage-independent Observation, Proposal, Item, Revision,
+  relation, import, export, and outbox contracts.
+- `./export`: deterministic bounded portable serializers.
+- `./migration`: bounded legacy/native parsers and preview-proof contracts.
+- `./node`: owner-only/no-follow rendezvous parsing/publication and bearer-token
+  handling for server-side runtimes.
+- `./redaction`: pre-persistence classification and redaction.
+- `./read-contract`: strict loopback search, exact-item, and Project-context
+  request/result parsers.
+- `./repository`: explicit persistence port and typed failures.
+- `./search`: bounded versioned search query/result contract, normalization,
+  cursor/result limits, and runtime response parser.
+
+This package may import the portable authorization, identity, and
+Project-registry contracts but no storage adapter. Browser code does not import
+`./client` or `./node`.
+
+## `@ai-usage/memory-search`
+
+- `./chunking`: deterministic accepted-revision chunks.
+- `./evaluation`: committed synthetic documents and expected query cases.
+- `./evaluation-harness`: adapter-independent corpus seeding.
+- `./evaluation-metrics`: recall/MRR/no-answer/no-leak/latency/size reporting
+  and the evidence gate for vector search.
+- `./ranking`: bounded lexical and trigram query helpers.
+
+This package owns no database. SQLite and PostgreSQL adapters consume the same
+portable corpus and ranking contracts.
+
+## `@ai-usage/mcp-adapter`
+
+- `.`: exact read-only tool names, schemas, cards, local/connected
+  application-service composition, and MCP server construction.
+- `./registration`: identity-checked/idempotent JSON and Codex stdio
+  registration helpers.
+- `./stdio`: stdio transport connection only.
+
+Only this package imports the MCP SDK. It may consume Memory/authorization/
+identity contracts and Skills projection locking, but no SQLite or PostgreSQL
+adapter.
+
 ## `@ai-usage/usage-engine-control`
 
-- `.`: protocol-v1 branded command, result, status, event, and error contracts;
+- `.`: protocol-v3 branded command, result, status, event, and error contracts,
+  including the content-free combined replication-status output;
   strict parsers; frozen budgets; retry classification; and the path-free web
   command subset.
 - `./client`: injected authenticated numeric-loopback HTTP client with bounded
@@ -173,6 +342,8 @@ import this writer-capable service.
 - `.`: scoped `UsageEngineRuntime` lifecycle and injected factory contract.
 - `./live`: production collection, configuration, store-writer, publication,
   and transfer composition.
+- `./replication`: bounded Usage outbox recovery/backfill and worker-port
+  adaptation; network transport remains composed only by `apps/usage-engine`.
 - `./recovery`: bounded scavenging of verified legacy filesystem artifacts.
   SQLite incomplete-revision cleanup belongs to the live writer's
   retention/recovery path.
@@ -194,6 +365,47 @@ client and never starts an app-owned provider timer.
   foreground `once <command-request-json>` process. It is a terminal process
   boundary, not an in-process API.
 
+## `@ai-usage/postgres-store`
+
+- `./authentication`: shared-authentication database and identity-store port;
+  Better Auth row/adapter types remain behind the application wrapper.
+- `./authorization`: connected authorization administration and Authorizer
+  contracts composed by the shared writer.
+- `./identity`: validated shared identity repository contracts returned by the
+  write-pool composition; no row or pool type escapes.
+- `./devices`: Device enrollment/lifecycle persistence port returned by the
+  writer composition; HMAC verifier fields never enter HTTP projections.
+- `./memory`: shared PostgreSQL Memory repository port returned by the writer
+  composition.
+- `./schema`: the current platform schema identity/version contract; no
+  inferred Drizzle row type or pool escapes.
+- `./migrations`: the explicit ordinal migration registry and validation
+  contracts; only `apps/server` may consume migration capabilities.
+- `./performance-testing`: Project authorization query access for the
+  repository benchmark only; forbidden from production packages.
+- `./projects`: authorized Project persistence-catalog contract.
+- `./reader`: validated readiness result and typed bounded failures.
+- `./writer`: the write-pool composition and lifecycle; production use is
+  restricted to `apps/server`.
+- `./testing`: disposable raw fixture/migration helpers and the failing-factory
+  injection seam for test or fixture source only.
+
+There is deliberately no root export. The package imports only authorization,
+`platform-core`, `project-application`, and `project-registry` contracts from
+the workspace and owns no SQLite, HTTP, local-machine, or harness filesystem
+access.
+
+## `@ai-usage/server`
+
+- `./main`: executable connected-server process entrypoint. It is not a
+  browser or in-process domain API.
+
+## `@ai-usage/mcp`
+
+Executable-only local stdio composition. It imports the MCP adapter, Memory
+loopback client, and runtime-path contracts; it exports no in-process domain or
+storage API.
+
 ## `@ai-usage/skills`
 
 - `.`: Skills domain facade, scanning, validation, projection, and diagnostics.
@@ -214,18 +426,31 @@ client and never starts an app-owned provider timer.
 ## Application dependency rules
 
 - `apps/usage-engine` is the only production app that imports
-  `usage-engine-runtime` or composes `usage-store/writer` transitively.
-- `apps/web` may import design-system, effect-runtime, report-core/report-data,
-  skills, usage-engine-control, `usage-store/reader`,
+  `usage-engine-runtime`, composes `usage-store/writer` transitively, or opens
+  `memory-sqlite/identity` write-capable in local mode. It also owns the local
+  Memory-service listener and optional outbound replication-supervisor
+  lifecycles.
+- `apps/web` may import design-system, effect-runtime, platform-core,
+  report-core/report-data,
+  skills, usage-engine-control, web-contract, `usage-store/reader`,
   `local-machine/campaign-label-config`, `local-machine/session-detail`, and
-  `local-machine/skills-config`. It must not reach collectors or engine-runtime
-  directly or transitively.
-- `apps/cli` may import effect-runtime, report-core,
+  `local-machine/skills-config`. Server-only files may additionally import
+  Memory-service contracts/client/node; browser code imports only the oRPC
+  Project and Memory contracts. Web must not reach a storage adapter, collectors, or
+  engine-runtime directly or transitively. Its production closure also cannot
+  reach the authorization implementation or `project-application`.
+- `apps/cli` may import effect-runtime, Memory-service client/search contracts,
+  platform-core, report-core,
   `@ai-usage/report-data/portable-report`, usage-engine-control,
   `usage-store/reader`, and `@ai-usage/usage-engine/main` for a bounded
   foreground process. The executable is a terminal process boundary, not an
   in-process runtime dependency. CLI must not import collectors,
-  engine-runtime, or the writer.
+  engine-runtime, the usage writer, or PostgreSQL.
+- `apps/server` may import `postgres-store/writer`, identity application
+  services, authorization,
+  Project-catalog, and migration contracts plus connected application-service
+  contracts. It must not import usage-store, collectors, local-machine,
+  usage-engine, CLI, or Web implementations.
 
 ## Guardrails
 
