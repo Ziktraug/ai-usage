@@ -1,6 +1,7 @@
 import { expect, test } from 'bun:test';
-import { lstat } from 'node:fs/promises';
-import { PostgresHarnessError, retryPostgresStart, startPostgresCluster } from './pg-harness';
+import { lstat, mkdir, rm } from 'node:fs/promises';
+import path from 'node:path';
+import { startPostgresCluster } from './pg-harness';
 
 const runPostgresTests = process.env.AI_USAGE_RUN_POSTGRES_TESTS === '1';
 
@@ -32,38 +33,25 @@ const queryCluster = async (socketDir: string): Promise<string> => {
 };
 
 if (runPostgresTests) {
-  test('retries only one transient PostgreSQL start failure', async () => {
-    let attempts = 0;
-    const result = await retryPostgresStart(() => {
-      attempts += 1;
-      if (attempts === 1) {
-        return Promise.reject(new PostgresHarnessError('start-failed', 'transient runner pressure'));
+  test('keeps its Unix socket path bounded when Nix supplies a long TMPDIR', async () => {
+    const longTempRoot = path.join('/tmp', `ai-usage-ci-${'long-'.repeat(16)}`);
+    const previousTempRoot = process.env.TMPDIR;
+    await mkdir(longTempRoot, { recursive: true });
+    process.env.TMPDIR = longTempRoot;
+    let cluster: Awaited<ReturnType<typeof startPostgresCluster>> | undefined;
+    try {
+      cluster = await startPostgresCluster('disabled-first-owner-bootstrap');
+      expect(Buffer.byteLength(path.join(cluster.socketDir, '.s.PGSQL.5432'))).toBeLessThanOrEqual(107);
+      expect(await queryCluster(cluster.socketDir)).toBe('postgres');
+    } finally {
+      if (previousTempRoot === undefined) {
+        Reflect.deleteProperty(process.env, 'TMPDIR');
+      } else {
+        process.env.TMPDIR = previousTempRoot;
       }
-      return Promise.resolve('ready');
-    });
-
-    expect(result).toBe('ready');
-    expect(attempts).toBe(2);
-  });
-
-  test('does not retry other harness failures or a second start failure', async () => {
-    let initializationAttempts = 0;
-    await expect(
-      retryPostgresStart(() => {
-        initializationAttempts += 1;
-        return Promise.reject(new PostgresHarnessError('initialization-failed'));
-      }),
-    ).rejects.toMatchObject({ code: 'initialization-failed' });
-    expect(initializationAttempts).toBe(1);
-
-    let startAttempts = 0;
-    await expect(
-      retryPostgresStart(() => {
-        startAttempts += 1;
-        return Promise.reject(new PostgresHarnessError('start-failed'));
-      }),
-    ).rejects.toMatchObject({ code: 'start-failed' });
-    expect(startAttempts).toBe(2);
+      await cluster?.stop();
+      await rm(longTempRoot, { force: true, recursive: true });
+    }
   });
 
   test('starts two isolated PostgreSQL 17 clusters and removes both roots idempotently', async () => {

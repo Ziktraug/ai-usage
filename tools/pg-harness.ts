@@ -1,11 +1,10 @@
 import { appendFile, chmod, mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 const COMMAND_OUTPUT_LIMIT = 4096;
-const POSTGRES_START_ATTEMPTS = 2;
 const POSTGRES_START_TIMEOUT_SECONDS = 15;
 const POSTGRES_STOP_TIMEOUT_SECONDS = 15;
+const POSTGRES_TEMP_ROOT = '/tmp';
 
 export type PostgresHarnessFailureCode = 'binary-missing' | 'initialization-failed' | 'start-failed' | 'stop-failed';
 
@@ -84,28 +83,11 @@ const clusterUrl = (socketDir: string): string => {
   return url.toString();
 };
 
-export const retryPostgresStart = async <Result>(attempt: () => Promise<Result>): Promise<Result> => {
-  for (let attemptIndex = 0; attemptIndex < POSTGRES_START_ATTEMPTS; attemptIndex += 1) {
-    try {
-      return await attempt();
-    } catch (error) {
-      const canRetry =
-        attemptIndex + 1 < POSTGRES_START_ATTEMPTS &&
-        error instanceof PostgresHarnessError &&
-        error.code === 'start-failed';
-      if (!canRetry) {
-        throw error;
-      }
-    }
-  }
-  throw new PostgresHarnessError('start-failed', 'PostgreSQL start retry policy exhausted unexpectedly.');
-};
-
-const startPostgresClusterAttempt = async (label: string): Promise<PostgresCluster> => {
+export const startPostgresCluster = async (label: string): Promise<PostgresCluster> => {
   const startedAt = performance.now();
   const initdb = resolveBinary('initdb');
   const pgCtl = resolveBinary('pg_ctl');
-  const rootDir = await mkdtemp(path.join(tmpdir(), `ai-usage-pg-${normalizeLabel(label)}-`));
+  const rootDir = await mkdtemp(path.join(POSTGRES_TEMP_ROOT, `aiu-pg-${normalizeLabel(label)}-`));
   const dataDir = path.join(rootDir, 'data');
   const socketDir = path.join(rootDir, 'socket');
   const logPath = path.join(rootDir, 'postgres.log');
@@ -253,6 +235,3 @@ const startPostgresClusterAttempt = async (label: string): Promise<PostgresClust
     url: clusterUrl(socketDir),
   };
 };
-
-export const startPostgresCluster = (label: string): Promise<PostgresCluster> =>
-  retryPostgresStart(() => startPostgresClusterAttempt(label));
