@@ -108,6 +108,8 @@ export interface SkillObservationDataset {
    * one.
    */
   lowerBound: boolean;
+  /** The observable producer has not yet persisted any completeness answer for this collection. */
+  producerCompletenessMissing: boolean;
   skills: readonly SkillObservationSummary[];
   /** Persisted rows the reader could not re-validate. Counted, never hidden. */
   skipped: number;
@@ -197,6 +199,7 @@ const coverageFor = (observedHarnessKeys: ReadonlySet<string>): readonly SkillOb
 export interface CreateSkillObservationDatasetOptions {
   readonly invocationLowerBound?: boolean;
   readonly lowerBound?: boolean;
+  readonly producerCompletenessMissing?: boolean;
   readonly skipped?: number;
 }
 
@@ -246,6 +249,7 @@ export const createSkillObservationDataset = (
     harnesses: coverageFor(observedHarnessKeys),
     invocationLowerBound: options.invocationLowerBound ?? false,
     lowerBound: options.lowerBound ?? false,
+    producerCompletenessMissing: options.producerCompletenessMissing ?? false,
     skills: [...skills.values()]
       .map((skill) => ({
         lastObservedAt: skill.lastObservedAt,

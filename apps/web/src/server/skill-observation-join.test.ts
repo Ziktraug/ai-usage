@@ -459,6 +459,7 @@ describe('skill observation response bounds', () => {
     harnesses: [{ harnessKey: 'claude', label: 'Claude Code', observability: 'observable' }],
     invocationLowerBound: false,
     lowerBound: false,
+    producerCompletenessMissing: false,
     skills: Array.from({ length: count }, (_value, index) => ({
       deletionCandidate: false,
       lastObservedAt: null,

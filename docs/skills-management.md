@@ -86,11 +86,11 @@ Global and configured projects are peer scopes in the left navigation tree.
 The global scope overview is the decision surface: three verdict tiles (to
 adopt, to delete, catalogue only) lead, a single links strip states link health
 in one taxonomy — healthy · to link · to repair · blocked — and a joined
-inventory table shows each managed skill's exposure marks, observed use per
-tier, last observation, and verdict on one row, followed by the project scopes
-with their own observed-use summaries. Selecting a project scope shows the same
-join for that repo's skills. Selecting a managed global skill opens a summary
-band — state, exposure, observed use, verdict, and the skill's two operations —
+inventory table shows each managed skill's exposure marks, skill signals per
+tier, last signal, and verdict on one row, followed by the project scopes with
+their own invocation-evidence summaries. Selecting a project scope shows the
+same join for that repo's skills. Selecting a managed global skill opens a
+summary band — state, exposure, skill signals, verdict, and the skill's two operations —
 above its canonical `SKILL.md`, which stays the dominant, directly editable
 document without a separate preview or Edit mode. Save is explicit through the
 visible button or `Ctrl+S` / `Cmd+S`; there is no autosave. A successful Save
@@ -128,35 +128,38 @@ numbers without its unit. The UI does not merge those signals into one "needs
 attention" number.
 
 Skill consumers are called runtimes in UI copy and docs. "Harness" remains
-reserved for usage-report collectors — which is exactly why observed usage is
-reported per *harness*: it comes from the collectors, not from the projection
+reserved for usage-report collectors — which is exactly why skill signals are
+reported per *harness*: they come from the collectors, not from the projection
 targets.
 
-Observed usage is a second axis on the same inventory, and it is the one that
-turns it into a decision — so it renders joined to the inventory, not beside
-it. The landing page's verdict tiles and joined inventory table are its first
-surface; the matrix carries the full "Observed skill usage" panel and each
-skill detail carries an "Observed usage" section. Every count states its
-observation tier (`declared`, `inferred`, `exposed`) and the harness that
-produced it, and the tiers are never added together. The panel's table lists
-managed names and names with invocation evidence, strongest evidence first and
-most recent first; last-observed dates older than ninety days carry a textual
-`stale` marker. Cursor records nothing about skill use, so it renders as *not
+Skill observations are a second axis on the same inventory, so they render
+joined to it rather than beside it. The landing page's verdict tiles and joined
+inventory table are the first surface; the matrix and skill details both carry
+a "Skill observations" section. Every count states its observation tier
+(`declared`, `inferred`, `exposed`) and the harness that produced it, and the
+tiers are never added together. `declared` and `inferred` are invocation
+evidence; `exposed` is availability only. The panel's table lists managed names
+and names with invocation evidence, strongest evidence first and most recent
+signal first; signal dates older than ninety days carry a textual `stale`
+marker. Cursor records nothing about skill observations, so it renders as *not
 observable* rather than as a zero — stated once per surface in the coverage
 roster, never repeated as a column of identical cells. Three verdicts get their
-own groups. *Projected everywhere but never invoked* are deletion candidates —
-managed, installed in every enabled runtime, and still unused, which is the
-only shape of absence that means anything. *Invoked but unmanaged* are adoption
-candidates, listed by residence in three sub-groups: names installed in runtime
-directories (the adoptable backlog), names shipped by a harness or plugin, and
-names owned by a project repository — whose verdict sentence names that
-ownership instead of prescribing adoption. *Offered but never invoked* is where
-a skill goes when the only evidence is a catalogue listing: a harness injects
-its whole catalogue, so being in one says nothing about use — the group folds
-to one expandable row per catalogue. When a read is bounded or could not read
-every stored row, the absence-based verdicts say so rather than claiming a
-skill went unused. Adopting an unmanaged invoked skill into the source
-repository remains future work, as above.
+own groups. *Projected everywhere, no invocation recorded* contains deletion
+candidates only when invocation history is complete: managed skills installed
+in every enabled runtime with no recorded invocation. *Invocation evidence,
+unmanaged* contains adoption candidates, listed by residence in three
+sub-groups: names installed in runtime directories (the adoptable backlog),
+names shipped by a harness or plugin, and names owned by a project repository —
+whose verdict sentence names that ownership instead of prescribing adoption.
+*Available to a model, no invocation recorded* contains names whose only signal is a catalogue
+listing: a harness injects its whole catalogue, so being in one says nothing
+about use, and the group folds to one expandable row per catalogue. When
+invocation history is bounded, partially unreadable, rejected, skipped, or not
+yet established by the first producer sweep, absence-derived verdicts instead
+say *no invocation in loaded history* and remain provisional. Exposure-only
+incompleteness does not weaken an otherwise complete invocation verdict.
+Adopting an unmanaged skill with invocation evidence into the source repository
+remains future work, as above.
 
 See [ADR 0022](adr/0022-skill-observation-tiers-and-observability.md) for the
 invariants and `docs/skills-management-spec.md` for the per-harness coverage

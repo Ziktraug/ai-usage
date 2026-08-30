@@ -63,6 +63,7 @@ const capability = (calls: string[] = []): SkillsCapability => ({
       ],
       invocationLowerBound: false,
       lowerBound: false,
+      producerCompletenessMissing: false,
       skills: [],
       skipped: 0,
     });

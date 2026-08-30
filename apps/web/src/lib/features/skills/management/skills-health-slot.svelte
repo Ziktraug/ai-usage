@@ -44,6 +44,7 @@
     homonymNote,
     installVerdictText,
     NAME_SCOPED_COUNTS_TEXT,
+    noSignalsText,
     observationRecency,
     observationRecencyNote,
     observedHarnessSummary,
@@ -182,7 +183,7 @@
   );
   // Usage joined onto the consolidation backlog by name — what separates an adoptable entry from a
   // deletable one. Undefined while the observation read is still in flight, so the fold can tell
-  // "not loaded" from "never observed".
+  // "not loaded" from an authoritative empty observation history.
   const unmanagedUsageByName = $derived.by(() => {
     if (observationsView === undefined) {
       return;
@@ -486,20 +487,22 @@
           {/if}
         </div>
         <div class={summaryFact}>
-          <span class={summaryFactLabel}>Observed use</span>
+          <span class={summaryFactLabel}>Skill signals</span>
           {#if context.observationsError !== undefined}
             <span class={muted}>unavailable</span>
           {:else if observationsView === undefined}
             <span aria-busy="true" class={muted}>loading…</span>
           {:else if selectedObservedSummary.length > 0}
             <span data-summary-observed>{selectedObservedSummary}</span>
+          {:else if observationsView.producerCompletenessMissing}
+            <span class={muted}>collecting historical observations…</span>
           {:else}
-            <span class={muted}>none observed</span>
+            <span class={muted}>{noSignalsText(observationsView.signalsComplete)}</span>
           {/if}
           <span class={muted}>{NAME_SCOPED_COUNTS_TEXT}</span>
         </div>
         <div class={summaryFact}>
-          <span class={summaryFactLabel}>Last observed</span>
+          <span class={summaryFactLabel}>Last signal</span>
           {#if selectedObservationRow?.lastObservedAt}
             <span
               class={summaryFactStrong}
@@ -515,7 +518,7 @@
               {/if}
             </span>
           {:else if observationsView !== undefined}
-            <span class={muted}>never</span>
+            <span class={muted}>{noSignalsText(observationsView.signalsComplete)}</span>
           {:else}
             <span class={muted}>—</span>
           {/if}

@@ -32,12 +32,13 @@ The feature provides a local control plane for inspecting, editing, enabling, an
 - Refuse to overwrite copied directories, unmanaged files, changed observations, or paths that escape configured roots.
 - Serialize source-state and Markdown writes across processes and publish them atomically.
 
-### Observed usage
+### Skill observations
 
-The inventory answers *what exists*. Skill observations answer *what actually
-runs*, which is what turns the inventory into a decision. The model is specified
-by [ADR 0022](adr/0022-skill-observation-tiers-and-observability.md); the
-requirements below are what the surface must honour.
+The inventory answers *what exists*. Skill observations add invocation evidence
+and availability signals, which turn the inventory into a decision without
+pretending that being offered to a model means being used. The model is
+specified by [ADR 0022](adr/0022-skill-observation-tiers-and-observability.md);
+the requirements below are what the surface must honour.
 
 - Every rendered count carries its **observation tier** and the harness that
   produced it. `declared` means the harness recorded the invocation as a skill
@@ -75,14 +76,15 @@ requirements below are what the surface must honour.
   verdict, which stays a fact about the name.
 - **Presentation reads in evidence order and folds the catalogue.** The
   overview table carries managed names and names with invocation evidence,
-  strongest tier first and most recent first — never alphabetically, which
-  buried the most-used skill among catalogue entries. Names seen only at the
+  strongest tier first and most recent signal first — never alphabetically,
+  which buried the strongest invocation evidence among catalogue entries. Names seen only at the
   `exposed` tier are folded into one expandable row per catalogue (plugin
   prefix, or a standalone group), because every entry of one catalogue carries
   the same single fact. A harness that cannot observe is named once per
   surface, in the coverage roster, rather than once per row.
 - The deletion verdict requires more than managed-ness: a skill earns it only
-  when it is **projected to every enabled runtime** and still never invoked.
+  when it is **projected to every enabled runtime** and complete invocation
+  history contains no recorded invocation.
   A skill that is not actually installed everywhere has a mundane reason to be
   unused, and proposing its deletion on that evidence would be wrong. Such a
   skill stays in the table rather than disappearing from it.
@@ -99,7 +101,7 @@ requirements below are what the surface must honour.
   hedging it would attach a caveat that could never come off. When the invocation
   read does trip its own budget, or rows fail re-validation, every verdict that
   rests on absence is marked provisional and says what it actually knows ("no
-  observation within the read bound"), and both the deletion group and the
+  invocation in loaded history"), and both the deletion group and the
   per-skill deletion sentence carry the same qualification — the deletion
   proposal most of all, since it is the one verdict acted on destructively.
   Verdicts that rest on presence are unaffected: an invocation seen is an
@@ -108,7 +110,10 @@ requirements below are what the surface must honour.
   harness persists invocation and exposure completeness with the batch, even
   when that batch contains zero observations. Invocation loss makes an absence
   provisional; exposure-only loss makes exposure counts lower bounds without
-  weakening the invocation verdict.
+  weakening the invocation verdict. Until any producer completeness state is
+  present, an empty store means the first historical collection is not yet
+  established, not a completed sweep with zero invocations. The surface names
+  that collection state and keeps every absence-derived verdict provisional.
 - Provenance is per metric. There is no page-level data-quality banner; a failed
   observation read reports itself in the observation section alone.
 - Tier and observability are conveyed textually. Colour may reinforce them and
@@ -150,7 +155,7 @@ to contain client names and business context; only their presence is recorded.
 ## Package boundaries
 
 - `@ai-usage/skills` owns contracts, validation, bounded filesystem operations, scans, projections, Markdown IO, and workflows. It is a filesystem-projection domain and must never gain a `@ai-usage/usage-store` dependency.
-- `apps/web/src/server/skills*` owns server-side validation and adaptation behind the oRPC contract, and is the only place the inventory meets observed usage — through the read-only `UsageReadModel` seam (ADR 0009).
+- `apps/web/src/server/skills*` owns server-side validation and adaptation behind the oRPC contract, and is the only place the inventory meets skill observations — through the read-only `UsageReadModel` seam (ADR 0009).
 - `apps/web/src/server/skill-observation-join.ts` owns the inventory↔observation join: managed-ness, projection completeness, and every verdict are decided on the server and travel as facts. `apps/web/src/lib/features/skills/observations` owns presentation only, and imports nothing but the contract.
 - `@ai-usage/report-core/skill-observation-summary` owns the pure fold from observations into the presented dataset; `@ai-usage/report-data/skill-observation-read` owns the one bounded read that every consumer shares.
 - `apps/web/src/lib/features/skills/shell` owns route operations and snapshot replacement policy (see its `INTEGRATION.md`).

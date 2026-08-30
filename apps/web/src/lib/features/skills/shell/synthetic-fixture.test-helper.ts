@@ -59,6 +59,7 @@ export const syntheticObservations: SkillObservations = {
   ],
   invocationLowerBound: false,
   lowerBound: false,
+  producerCompletenessMissing: false,
   skills: [
     {
       deletionCandidate: false,
@@ -89,7 +90,7 @@ export const syntheticObservations: SkillObservations = {
       verdictProvisional: false,
     },
     {
-      // Installed everywhere and still never invoked: the deletion candidate.
+      // Installed everywhere without invocation evidence: the deletion candidate.
       deletionCandidate: true,
       lastObservedAt: null,
       managed: true,
@@ -126,7 +127,7 @@ export const syntheticObservations: SkillObservations = {
       verdictProvisional: false,
     },
     {
-      // Offered to a model and never used. Real signal, but about offering, not use.
+      // Available to a model without invocation evidence. Availability is not invocation.
       deletionCandidate: false,
       lastObservedAt: '2026-08-01T11:00:00.000Z',
       managed: false,

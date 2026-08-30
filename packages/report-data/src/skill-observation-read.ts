@@ -131,6 +131,7 @@ export const querySkillObservationDataset = (
             result.collectionExposureIncomplete ||
             result.skipped > 0 ||
             presentable.refused > 0,
+          producerCompletenessMissing: result.producerCompletenessMissing,
           skipped: result.skipped + presentable.refused,
         }),
         input,

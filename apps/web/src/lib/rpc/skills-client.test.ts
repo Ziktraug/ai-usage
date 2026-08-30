@@ -46,6 +46,7 @@ const fixtureCapability = (): SkillsCapability => ({
       ],
       invocationLowerBound: false,
       lowerBound: false,
+      producerCompletenessMissing: false,
       skills: [],
       skipped: 0,
     }),

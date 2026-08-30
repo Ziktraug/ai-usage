@@ -299,6 +299,7 @@ description: Helps with adapter tests
               ],
               invocationLowerBound: false,
               lowerBound: false,
+              producerCompletenessMissing: false,
               skills: [
                 {
                   lastObservedAt: '2026-08-01T09:00:00.000Z',

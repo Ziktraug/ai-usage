@@ -258,6 +258,7 @@ export const joinSkillObservations = (input: SkillObservationJoinInput): SkillOb
     harnesses: input.observations.harnesses.map((harness) => ({ ...harness })),
     invocationLowerBound: input.observations.invocationLowerBound,
     lowerBound: input.observations.lowerBound,
+    producerCompletenessMissing: input.observations.producerCompletenessMissing,
     skills,
     skipped: input.observations.skipped,
   });

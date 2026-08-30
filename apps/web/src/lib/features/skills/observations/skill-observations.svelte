@@ -22,6 +22,7 @@
     managedVerdictDescribesInstall,
     NAME_SCOPED_COUNTS_TEXT,
     NOT_OBSERVABLE_TEXT,
+    noSignalsText,
     observationRecency,
     observationRecencyNote,
     observedHarnessSummary,
@@ -159,14 +160,19 @@
 {:else if view === undefined}
   <p aria-busy="true" class={muted} data-skill-observations-state="loading">Loading skill observations…</p>
 {:else if variant === 'skill'}
-  <section aria-label="Observed usage" class={section} data-skill-observations="skill">
+  <section aria-label="Skill observations" class={section} data-skill-observations="skill">
     <div class={sectionHeader}>
-      <h3 class={panelTitle}>Observed usage</h3>
+      <h3 class={panelTitle}>Skill observations</h3>
       <p class={panelSub}>
         Each count carries the tier of evidence behind it and the harness that recorded it. Tiers are never added
         together.
       </p>
     </div>
+    {#if view.producerCompletenessMissing}
+      <p class={meta} data-skill-observations-collection-pending role="status">
+        Collecting historical skill observations… Results are incomplete until this pass finishes.
+      </p>
+    {/if}
     <dl class={definitionList}>
       {#each row?.harnesses ?? [] as cell (cell.harnessKey)}
         <div class={definitionRow}>
@@ -177,13 +183,11 @@
         </div>
       {/each}
     </dl>
-    <p class={meta} data-skill-observations-last-observed>
+    <p class={meta} data-skill-observations-last-signal>
       {#if row?.lastObservedAt}
-        Last observed <time datetime={row.lastObservedAt}>{formatObservedAt(row.lastObservedAt)}</time>
-      {:else if view.invocationEvidenceComplete}
-        Never observed.
+        Last signal <time datetime={row.lastObservedAt}>{formatObservedAt(row.lastObservedAt)}</time>
       {:else}
-        No observation within the read bound.
+        Last signal — {noSignalsText(view.signalsComplete)}.
       {/if}
     </p>
     {#if detailVerdict !== undefined}
@@ -235,7 +239,7 @@
     id="observed-usage"
   >
     <div class={sectionHeader}>
-      <h2 class={panelTitle}>Observed skill usage</h2>
+      <h2 class={panelTitle}>Skill observations</h2>
       <p class={panelSub}>
         Every count below carries its tier and its harness. A declared invocation and an inferred read are different
         evidence and are never summed.
@@ -246,7 +250,7 @@
       {#each view.harnesses as harness (harness.harnessKey)}
         <li data-harness-observability={harness.observability}>
           {harness.label}
-          — {harness.observability === 'observable' ? 'can report skill usage' : NOT_OBSERVABLE_TEXT}
+          — {harness.observability === 'observable' ? 'can report skill observations' : NOT_OBSERVABLE_TEXT}
         </li>
       {/each}
     </ul>
@@ -261,7 +265,11 @@
          invocation history read as if nothing had ever been invoked. A truncated exposure catalogue
          is routine — Codex writes one exposure row per catalogue entry per session — and costs the
          verdicts nothing; a truncated invocation read is the one that does. -->
-    {#if view.lowerBound}
+    {#if view.producerCompletenessMissing}
+      <p class={meta} data-skill-observations-collection-pending role="status">
+        Collecting historical skill observations… Results are incomplete until this pass finishes.
+      </p>
+    {:else if view.lowerBound}
       <p
         class={meta}
         data-skill-observations-lower-bound={view.onlyExposureTruncated ? 'exposure' : 'invocations'}
@@ -284,14 +292,14 @@
     {/if}
 
     <p class={meta} data-skill-observations-table-note>
-      Rows are ordered by evidence strength, then most recent observation. — means an observable harness recorded
-      nothing. Skills only ever seen in a catalogue are folded under “Offered but never invoked” below.
+      Rows are ordered by evidence strength, then most recent signal. — means {noSignalsText(view.signalsComplete)}
+      for an observable harness. Skills only seen in a catalogue are folded into the availability section below.
     </p>
     <!-- The wrapper scrolls when the harness columns exceed the panel, so it is a named, focusable
          region: a keyboard user must be able to reach the columns a pointer user can drag to. -->
     <!-- svelte-ignore a11y_no_noninteractive_tabindex -- a scrollable region must be keyboard-reachable -->
     <!-- biome-ignore lint/a11y/noNoninteractiveTabindex: axe requires a scrollable region to be keyboard-focusable -->
-    <section aria-label="Observed skill usage by harness" class={cx(tableWrap, observationsTableWrap)} tabindex="0">
+    <section aria-label="Skill observations by harness" class={cx(tableWrap, observationsTableWrap)} tabindex="0">
       <table class={table}>
         <thead>
           <tr>
@@ -299,7 +307,7 @@
             {#each view.observableHarnesses as harness (harness.harnessKey)}
               <th scope="col">{harness.label}</th>
             {/each}
-            <th scope="col">Last observed</th>
+            <th scope="col">Last signal</th>
           </tr>
         </thead>
         <tbody>
@@ -340,7 +348,7 @@
                       <span class={staleMark}> · {observationRecencyNote(observationRow.lastObservedAt)}</span>
                     {/if}
                   {:else}
-                    never
+                    {noSignalsText(view.signalsComplete)}
                   {/if}
                 </td>
               </tr>
@@ -351,29 +359,35 @@
     </section>
 
     <section
-      aria-label="Projected everywhere but never invoked"
+      aria-label={view.invocationEvidenceComplete
+        ? 'Projected everywhere, no invocation recorded'
+        : 'Projected everywhere, no invocation in loaded history'}
       class={section}
       data-provisional={view.invocationEvidenceComplete ? 'false' : 'true'}
       data-skill-observations-group="deletion"
       id="observations-deletion"
     >
       <div class={sectionHeader}>
-        <h3 class={panelTitle}>Projected everywhere but never invoked</h3>
+        <h3 class={panelTitle}>
+          {view.invocationEvidenceComplete
+            ? 'Projected everywhere, no invocation recorded'
+            : 'Projected everywhere, no invocation in loaded history'}
+        </h3>
         <p class={panelSub}>
-          Managed skills installed in every enabled runtime that no harness recorded being used. Deletion candidates.
-          Being offered to a model does not count as use, and Cursor cannot report, so its projections are not evidence
-          either way.
+          Managed skills installed in every enabled runtime with no invocation evidence in the history available here.
+          Deletion candidates only when invocation history is complete. Being offered to a model does not count as use,
+          and Cursor cannot report, so its projections are not evidence either way.
         </p>
         {#if !view.invocationEvidenceComplete}
           <p class={panelSub} data-skill-observations-provisional-note role="status">
-            Provisional: this read was bounded or could not read every stored row, so absence here is not proof.
+            Provisional: invocation history is incomplete, so absence here is not proof.
           </p>
         {/if}
       </div>
       {#if view.deletionCandidates.length === 0}
         <p class={meta}>
           {view.invocationEvidenceComplete
-            ? 'Every managed skill installed everywhere has been invoked at least once.'
+            ? 'No managed skill installed everywhere lacks invocation evidence.'
             : 'Nothing qualifies within the read bound.'}
         </p>
       {:else}
@@ -389,21 +403,21 @@
     </section>
 
     <section
-      aria-label="Invoked but unmanaged"
+      aria-label="Invocation evidence, unmanaged"
       class={section}
       data-skill-observations-group="adoption"
       id="observations-adoption"
     >
       <div class={sectionHeader}>
-        <h3 class={panelTitle}>Invoked but unmanaged</h3>
+        <h3 class={panelTitle}>Invocation evidence, unmanaged</h3>
         <p class={panelSub}>
-          Skills a harness recorded being <em>used</em> that resolve to no entry in the managed inventory. Three very
-          different situations, so they are listed apart. A skill that was only offered to a model is listed under its
-          catalogue further down: a catalogue lists everything, so being in one is not use.
+          Skills with declared or inferred invocation evidence that resolve to no entry in the managed inventory. Three
+          very different situations, so they are listed apart. A skill that was only available to a model is listed
+          under its catalogue further down: a catalogue lists everything, so availability is not invocation.
         </p>
       </div>
       {#if view.adoptionCandidates.length === 0}
-        <p class={meta}>Every invoked skill resolves to a managed inventory entry.</p>
+        <p class={meta}>Every skill with invocation evidence resolves to a managed inventory entry.</p>
       {:else}
         {#each view.adoptionGroups as group (group.residence)}
           <div class={subGroup} data-skill-observations-residence={group.residence}>
@@ -418,7 +432,7 @@
                   <span class={meta}>
                     {observedHarnessSummary(candidate)}
                     {#if candidate.lastObservedAt}
-                      · last
+                      · last signal
                       <time datetime={candidate.lastObservedAt}>{formatObservedDate(candidate.lastObservedAt)}</time>
                     {/if}
                   </span>
@@ -431,21 +445,30 @@
     </section>
 
     <section
-      aria-label="Offered but never invoked"
+      aria-label={view.invocationEvidenceComplete
+        ? 'Available to a model, no invocation recorded'
+        : 'Available to a model, no invocation in loaded history'}
       class={section}
       data-skill-observations-group="offered"
       id="observations-offered"
     >
       <div class={sectionHeader}>
-        <h3 class={panelTitle}>Offered but never invoked</h3>
+        <h3 class={panelTitle}>
+          {view.invocationEvidenceComplete
+            ? 'Available to a model, no invocation recorded'
+            : 'Available to a model, no invocation in loaded history'}
+        </h3>
         <p class={panelSub}>
-          Skills a harness put in front of a model with no evidence any of them was used. A fact about offering, not
-          about use, so it proposes nothing on its own — and it is folded by catalogue, because every entry of one
-          catalogue carries the same fact.
+          Skills a harness made available to a model without invocation evidence. Availability proposes nothing on its
+          own — and it is folded by catalogue, because every entry of one catalogue carries the same fact.
         </p>
       </div>
       {#if view.catalogueRollups.length === 0}
-        <p class={meta}>No skill was offered without also being invoked.</p>
+        <p class={meta}>
+          {view.invocationEvidenceComplete
+            ? 'No skill was available to a model without an invocation also being recorded.'
+            : 'No availability-only signal appears in loaded history.'}
+        </p>
       {:else}
         {#each view.catalogueRollups as rollup (rollup.key)}
           <details class={rollupPanel} data-skill-observations-catalogue={rollup.key}>
@@ -457,7 +480,8 @@
               {/each}
               {#if rollup.lastObservedAt}
                 <span class={meta}
-                  >last <time datetime={rollup.lastObservedAt}>{formatObservedDate(rollup.lastObservedAt)}</time></span
+                  >last signal
+                  <time datetime={rollup.lastObservedAt}>{formatObservedDate(rollup.lastObservedAt)}</time></span
                 >
               {/if}
             </summary>

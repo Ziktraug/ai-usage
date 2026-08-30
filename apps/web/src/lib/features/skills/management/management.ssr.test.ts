@@ -100,10 +100,10 @@ describe('Svelte Skills management SSR', () => {
     expect(html).not.toContain('Review consolidation');
   });
 
-  test('does not call an unmanaged entry never observed when invocation evidence is incomplete', () => {
+  test('does not state absolute invocation absence for an unmanaged entry when history is incomplete', () => {
     const html = render(fixture, { props: { observationsProvisional: true, pathname: '/skills/global' } }).body;
 
-    expect(html).toContain('No observation within the read bound');
+    expect(html).toContain('no invocation in loaded history');
     expect(html).not.toContain('never observed');
   });
 });

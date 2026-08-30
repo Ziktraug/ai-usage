@@ -541,14 +541,25 @@ export const createSkillObservationStore = (dependencies: SkillObservationStoreD
             `)
             .all(...stateParams) as SkillObservationCollectionStateRecord[];
           const statePairs = new Set(states.map(collectionPairKey));
+          const observableCollectionRequested =
+            input.harnessKey === undefined || skillObservabilityFor(input.harnessKey) === 'observable';
           // A direct/legacy observation import can omit the producer state. Use
           // the already-bounded rows rather than an unbounded second store scan:
           // a missing state beside observable evidence is unknown, not complete.
-          const collectionStateMissing = read.rows.some(
-            (row) =>
-              skillObservabilityFor(row.harness_key) === 'observable' &&
-              !statePairs.has(collectionPairKey({ harness_key: row.harness_key, machine_id: row.machine_id })),
-          );
+          //
+          // The completely empty case is distinct and load-bearing. Before the
+          // first historical sweep, there are neither observations nor producer
+          // states, so rows alone cannot reveal the missing answer. An explicit
+          // complete empty sweep persists a state row and clears this condition;
+          // a not-observable harness such as Cursor never enters it.
+          const collectionStateMissing =
+            observableCollectionRequested &&
+            (states.length === 0 ||
+              read.rows.some(
+                (row) =>
+                  skillObservabilityFor(row.harness_key) === 'observable' &&
+                  !statePairs.has(collectionPairKey({ harness_key: row.harness_key, machine_id: row.machine_id })),
+              ));
           return {
             collectionExposureIncomplete: states.some(
               (state) => state.exposure_truncated === 1 || state.exposure_rejected > 0,
@@ -558,6 +569,7 @@ export const createSkillObservationStore = (dependencies: SkillObservationStoreD
               states.some((state) => state.invocation_truncated === 1 || state.invocation_rejected > 0),
             invocationTruncated: read.invocationTruncated,
             observations,
+            producerCompletenessMissing: collectionStateMissing,
             skipped,
             truncated: read.truncated,
           };

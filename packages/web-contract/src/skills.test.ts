@@ -387,6 +387,7 @@ describe('Skills oRPC contract', () => {
       ],
       invocationLowerBound: false,
       lowerBound: false,
+      producerCompletenessMissing: false,
       skills: [
         {
           deletionCandidate: false,
@@ -450,11 +451,12 @@ describe('Skills oRPC contract', () => {
     expect(safeParse(skillObservationsSchema, { ...observations, total: 7 }).success).toBe(false);
   });
 
-  test('carries the invocation bound separately from the pooled one, and requires both', () => {
+  test('carries invocation, pooled, and producer-completeness state separately and requires each', () => {
     const base = {
       harnesses: [{ harnessKey: 'codex', label: 'Codex', observability: 'observable' }],
       invocationLowerBound: false,
       lowerBound: true,
+      producerCompletenessMissing: false,
       skills: [],
       skipped: 0,
     };
@@ -469,6 +471,9 @@ describe('Skills oRPC contract', () => {
     const { invocationLowerBound, ...withoutInvocationBound } = base;
     expect(invocationLowerBound).toBe(false);
     expect(safeParse(skillObservationsSchema, withoutInvocationBound).success).toBe(false);
+    const { producerCompletenessMissing, ...withoutProducerState } = base;
+    expect(producerCompletenessMissing).toBe(false);
+    expect(safeParse(skillObservationsSchema, withoutProducerState).success).toBe(false);
   });
 
   test('carries the verdict the server decided, and only the verdicts it may decide', () => {
@@ -476,6 +481,7 @@ describe('Skills oRPC contract', () => {
       harnesses: [{ harnessKey: 'claude', label: 'Claude Code', observability: 'observable' }],
       invocationLowerBound: false,
       lowerBound: false,
+      producerCompletenessMissing: false,
       skills: [
         {
           deletionCandidate: true,
@@ -520,6 +526,7 @@ describe('Skills oRPC contract', () => {
       harnesses: [{ harnessKey: 'claude', label: 'Claude Code', observability: 'observable' }],
       invocationLowerBound: false,
       lowerBound: false,
+      producerCompletenessMissing: false,
       skills: [
         {
           deletionCandidate: false,
@@ -560,6 +567,7 @@ describe('Skills oRPC contract', () => {
       harnesses: [{ harnessKey: 'claude', label: 'Claude Code', observability: 'observable' }],
       invocationLowerBound: false,
       lowerBound: false,
+      producerCompletenessMissing: false,
       skills: [
         {
           deletionCandidate: false,
@@ -613,6 +621,7 @@ describe('Skills oRPC contract', () => {
       harnesses: [{ harnessKey: 'cursor', label: 'Cursor', observability: 'not-observable' }],
       invocationLowerBound: true,
       lowerBound: true,
+      producerCompletenessMissing: false,
       skills: [],
       skipped: 2,
     };

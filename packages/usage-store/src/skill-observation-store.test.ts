@@ -152,6 +152,49 @@ describe('skill observation store', () => {
     expect(result).toMatchObject({ _tag: 'Left', left: { reason: 'invalid-input' } });
   });
 
+  test('treats an empty store without producer state as pre-collection evidence', async () => {
+    const dbPath = await createStore('skill-empty-uncollected');
+    await Effect.runPromise(initializeUsageStore({ dbPath }));
+
+    const read = await Effect.runPromise(querySkillObservations({ dbPath }));
+
+    expect(read.observations).toEqual([]);
+    expect(read.collectionInvocationIncomplete).toBe(true);
+    expect(read.collectionExposureIncomplete).toBe(false);
+    expect(read.producerCompletenessMissing).toBe(true);
+  });
+
+  test('treats an explicit complete empty sweep as complete evidence', async () => {
+    const dbPath = await createStore('skill-empty-complete');
+    await Effect.runPromise(
+      importSkillObservations({
+        collection: { completeness: completeSkillObservationCollection(), harnessKey: 'claude' },
+        dbPath,
+        machineId: MACHINE,
+        observations: [],
+      }),
+    );
+
+    const read = await Effect.runPromise(querySkillObservations({ dbPath }));
+
+    expect(read.observations).toEqual([]);
+    expect(read.collectionInvocationIncomplete).toBe(false);
+    expect(read.collectionExposureIncomplete).toBe(false);
+    expect(read.producerCompletenessMissing).toBe(false);
+  });
+
+  test('does not invent producer incompleteness for an unobservable harness filter', async () => {
+    const dbPath = await createStore('skill-empty-cursor');
+    await Effect.runPromise(initializeUsageStore({ dbPath }));
+
+    const read = await Effect.runPromise(querySkillObservations({ dbPath, harnessKey: 'cursor' }));
+
+    expect(read.observations).toEqual([]);
+    expect(read.collectionInvocationIncomplete).toBe(false);
+    expect(read.collectionExposureIncomplete).toBe(false);
+    expect(read.producerCompletenessMissing).toBe(false);
+  });
+
   test('persists producer incompleteness even for an empty sweep', async () => {
     const dbPath = await createStore('skill-empty-incomplete');
     const completeness = completeSkillObservationCollection();
@@ -171,6 +214,7 @@ describe('skill observation store', () => {
     expect(read.observations).toEqual([]);
     expect(read.collectionInvocationIncomplete).toBe(true);
     expect(read.collectionExposureIncomplete).toBe(false);
+    expect(read.producerCompletenessMissing).toBe(false);
   });
 
   test('treats legacy observable rows without collection state as incomplete', async () => {
@@ -187,6 +231,7 @@ describe('skill observation store', () => {
 
     expect(read.collectionInvocationIncomplete).toBe(true);
     expect(read.collectionExposureIncomplete).toBe(false);
+    expect(read.producerCompletenessMissing).toBe(true);
   });
 
   test('advances generation only when the durable completeness answer changes', async () => {
@@ -218,6 +263,7 @@ describe('skill observation store', () => {
     expect(cleared.stateChanged).toBe(true);
     expect(await Effect.runPromise(queryUsageStoreGeneration({ dbPath }))).toBeGreaterThan(afterRepeat);
     expect(read.collectionInvocationIncomplete).toBe(false);
+    expect(read.producerCompletenessMissing).toBe(false);
   });
 
   test('keeps exposure-only producer loss separate from invocation completeness', async () => {
@@ -236,6 +282,7 @@ describe('skill observation store', () => {
     const read = await Effect.runPromise(querySkillObservations({ dbPath }));
     expect(read.collectionExposureIncomplete).toBe(true);
     expect(read.collectionInvocationIncomplete).toBe(false);
+    expect(read.producerCompletenessMissing).toBe(false);
   });
 
   test('rolls observation rows and completeness back together', async () => {
@@ -265,7 +312,10 @@ describe('skill observation store', () => {
 
     expect(result._tag).toBe('Left');
     expect(read.observations).toEqual([]);
-    expect(read.collectionInvocationIncomplete).toBe(false);
+    // The failed transaction left neither observations nor a completeness state. That is the same
+    // authoritative pre-collection state as a new store, not a completed empty sweep.
+    expect(read.collectionInvocationIncomplete).toBe(true);
+    expect(read.producerCompletenessMissing).toBe(true);
   });
 
   test('the table holds exactly the expected columns, so no argument column can be added', async () => {

@@ -62,6 +62,36 @@ const storeWith = async (skillCount: number): Promise<string> =>
   );
 
 describe('bounded skill observation read', () => {
+  test('treats an empty store without producer state as pre-collection invocation evidence', async () => {
+    const dbPath = await storeHolding([]);
+
+    const dataset = await Effect.runPromise(querySkillObservationDataset({ dbPath, ...GENEROUS_BOUNDS }));
+
+    expect(dataset.skills).toEqual([]);
+    expect(dataset.invocationLowerBound).toBe(true);
+    expect(dataset.lowerBound).toBe(true);
+    expect(dataset.producerCompletenessMissing).toBe(true);
+  });
+
+  test('treats an explicit complete empty sweep as complete invocation evidence', async () => {
+    const dbPath = await storeHolding([]);
+    await Effect.runPromise(
+      importSkillObservations({
+        collection: { completeness: completeSkillObservationCollection(), harnessKey: 'claude' },
+        dbPath,
+        machineId: 'machine-a',
+        observations: [],
+      }),
+    );
+
+    const dataset = await Effect.runPromise(querySkillObservationDataset({ dbPath, ...GENEROUS_BOUNDS }));
+
+    expect(dataset.skills).toEqual([]);
+    expect(dataset.invocationLowerBound).toBe(false);
+    expect(dataset.lowerBound).toBe(false);
+    expect(dataset.producerCompletenessMissing).toBe(false);
+  });
+
   test('answers a store holding exactly the cap without claiming a bound', async () => {
     const dbPath = await storeWith(GENEROUS_BOUNDS.maximumSkills);
 
@@ -135,6 +165,7 @@ describe('bounded skill observation read', () => {
     expect(dataset.skipped).toBe(1);
     expect(dataset.lowerBound).toBe(true);
     expect(dataset.invocationLowerBound).toBe(true);
+    expect(dataset.producerCompletenessMissing).toBe(false);
   });
 
   test('carries producer-side invocation loss into the absence bound', async () => {
@@ -154,6 +185,27 @@ describe('bounded skill observation read', () => {
     expect(dataset.skills).toEqual([]);
     expect(dataset.lowerBound).toBe(true);
     expect(dataset.invocationLowerBound).toBe(true);
+    expect(dataset.producerCompletenessMissing).toBe(false);
+  });
+
+  test('carries producer-side rejected invocations into the absence bound', async () => {
+    const dbPath = await storeHolding([]);
+    const completeness = completeSkillObservationCollection();
+    completeness.invocation.rejected = 2;
+    await Effect.runPromise(
+      importSkillObservations({
+        collection: { completeness, harnessKey: 'claude' },
+        dbPath,
+        machineId: 'machine-a',
+        observations: [],
+      }),
+    );
+
+    const dataset = await Effect.runPromise(querySkillObservationDataset({ dbPath, ...GENEROUS_BOUNDS }));
+    expect(dataset.skills).toEqual([]);
+    expect(dataset.lowerBound).toBe(true);
+    expect(dataset.invocationLowerBound).toBe(true);
+    expect(dataset.producerCompletenessMissing).toBe(false);
   });
 
   test('does not weaken invocation absence for exposure-only producer loss', async () => {
@@ -172,6 +224,7 @@ describe('bounded skill observation read', () => {
     const dataset = await Effect.runPromise(querySkillObservationDataset({ dbPath, ...GENEROUS_BOUNDS }));
     expect(dataset.lowerBound).toBe(true);
     expect(dataset.invocationLowerBound).toBe(false);
+    expect(dataset.producerCompletenessMissing).toBe(false);
   });
 });
 

@@ -39,13 +39,13 @@ const ALPHA_ROW_HEADER_PATTERN = /^alpha-skill/u;
 const OBSERVATION_NOT_OBSERVABLE_TEXT = 'not observable';
 const MATRIX_TABLE_NAME = 'Skill exposure per runtime';
 // Every observation cell states its tier in words, or is an em-dash whose accessible text still
-// says "none observed" — never a bare number, never a colour alone.
+// states the absence and its scope — never a bare number, never a colour alone.
 const OBSERVATION_TEXT_PATTERN =
-  /^(?:—\s*none observed|not observable|none observed|(?:declared|inferred|exposed) \d+(?: · (?:declared|inferred|exposed) \d+)*)$/u;
+  /^(?:—\s*no signals (?:recorded|in loaded history)|not observable|no signals (?:recorded|in loaded history)|(?:declared|inferred|exposed) \d+(?: · (?:declared|inferred|exposed) \d+)*)$/u;
 
 const normalizeText = (value: string): string => value.replace(WHITESPACE_PATTERN, ' ').trim();
 
-// The matrix page now carries two tables — skill exposure per runtime, and observed usage per
+// The matrix page now carries two tables — skill exposure per runtime, and skill signals per
 // harness — so every locator here names the one it means.
 const matrixTable = (page: Page): Locator => page.getByRole('table', { name: MATRIX_TABLE_NAME });
 
@@ -729,18 +729,18 @@ test('opens the landing page on verdict tiles, a links strip, and the joined inv
   await expect(strip).toContainText('to repair');
   await expect(strip).toContainText('blocked');
 
-  // The inventory joins both axes on one row: exposure marks beside observed use and a verdict.
-  const inventory = detail.getByRole('region', { name: 'Managed skills with observed use' });
+  // The inventory joins both axes on one row: exposure marks beside skill signals and a verdict.
+  const inventory = detail.getByRole('region', { name: 'Managed skills with skill signals' });
   const alphaRow = inventory.locator('[data-inventory-skill="alpha-skill"]');
   await expect(alphaRow).toContainText('declared 3');
-  await expect(alphaRow).toContainText('invoked');
+  await expect(alphaRow).toContainText('invocation evidence');
 
   // The verdict tiles land on the matrix verdict groups by anchor.
   const adoptTile = detail.locator('[data-verdict-tile="adopt"]');
   await expect(adoptTile).toContainText('To adopt');
   await adoptTile.click();
   await expect(page).toHaveURL(ADOPTION_ANCHOR_URL);
-  await expect(page.getByRole('region', { name: 'Invoked but unmanaged' })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Invocation evidence, unmanaged' })).toBeVisible();
 
   // The strip's review link keeps the keyboard path to the matrix the tiles used to provide.
   await expectKeyboardMatrixNavigation(page, REVIEW_AND_RECONCILE_PATTERN);
@@ -811,9 +811,9 @@ test('presents unmanaged copies as neutral backlog rows with their reconciliatio
   await expect(unmanagedRow).toHaveCount(1);
   await expect(unmanagedRow).toHaveAttribute('data-backlog-tone', 'neutral');
   await expect(unmanagedRow).toContainText('legacy-local-copy');
-  // The backlog row states its observed usage — the fact adoption or deletion is decided from —
+  // The backlog row states its invocation evidence — the fact adoption or deletion is decided from —
   // instead of repeating one identical navigation button per entry.
-  await expect(unmanagedRow.locator('[data-unmanaged-entry-usage]')).toHaveText('never observed');
+  await expect(unmanagedRow.locator('[data-unmanaged-entry-usage]')).toHaveText('no invocation recorded');
   await consolidation.getByRole('button', { name: 'Review in the matrix' }).click();
   await expect(page).toHaveURL(SKILLS_MATRIX_URL);
   await expect(page.getByRole('heading', { level: 2, name: 'Managed skills — exposure per runtime' })).toBeVisible();
@@ -966,7 +966,7 @@ test('renders skill observations with their tier and never as an unobservable ze
   await page.setViewportSize(DESKTOP_WORKSPACE_VIEWPORT);
   await openHydratedSkills(page, '/skills/matrix');
 
-  const panel = page.getByRole('region', { name: 'Skill observations' });
+  const panel = page.getByRole('region', { exact: true, name: 'Skill observations' });
   await expect(panel).toBeVisible();
 
   // (i) Cursor has no collector. The roster says so once, in words; the table carries no Cursor
@@ -995,35 +995,37 @@ test('renders skill observations with their tier and never as an unobservable ze
   }
 
   // Each verdict has a home, and an observation resolving to no inventory entry is retained.
-  const deletion = page.getByRole('region', { name: 'Projected everywhere but never invoked' });
-  const adoption = page.getByRole('region', { name: 'Invoked but unmanaged' });
-  const offered = page.getByRole('region', { name: 'Offered but never invoked' });
+  const deletion = page.getByRole('region', { name: 'Projected everywhere, no invocation recorded' });
+  const adoption = page.getByRole('region', { name: 'Invocation evidence, unmanaged' });
+  const offered = page.getByRole('region', { name: 'Available to a model, no invocation recorded' });
   // beta-skill is managed and linked in every enabled runtime, so its silence is evidence.
   await expect(deletion.getByRole('listitem').filter({ hasText: 'beta-skill' })).toBeVisible();
   await expect(adoption.getByRole('listitem').filter({ hasText: 'artifact-design' })).toBeVisible();
   await expect(adoption.getByRole('listitem').filter({ hasText: 'pr-review' })).toBeVisible();
-  // imagegen was only ever listed in a Codex catalogue. That is offering, not use, so it must not
+  // imagegen was only ever listed in a Codex catalogue. Availability is not invocation, so it must not
   // be proposed for adoption anywhere — it lives folded under its catalogue.
   await offered.locator('[data-skill-observations-catalogue="standalone"] > summary').click();
   await expect(offered.getByRole('listitem').filter({ hasText: 'imagegen' })).toBeVisible();
   await expect(adoption.getByRole('listitem').filter({ hasText: 'imagegen' })).toHaveCount(0);
-  // alpha-skill is not linked to every target in the fixture, so its use is not a deletion story.
+  // alpha-skill is not linked to every target in the fixture, so its evidence is not a deletion story.
   await expect(deletion.getByRole('listitem').filter({ hasText: 'alpha-skill' })).toHaveCount(0);
   // A complete read states absence plainly rather than hedging it.
   await expect(deletion).toHaveAttribute('data-provisional', 'false');
 
   // The same facts on the skill detail surface, for one skill.
   await openHydratedSkills(page, '/skills/global/alpha-skill');
-  const detail = page.getByRole('region', { name: 'Observed usage' });
+  const detail = page.getByRole('region', { name: 'Skill observations' });
   await expect(detail.getByRole('definition').filter({ hasText: 'declared 3' })).toBeVisible();
+  await expect(detail.getByRole('definition').filter({ hasText: 'exposed 2' })).toBeVisible();
   await expect(detail.getByRole('definition').filter({ hasText: OBSERVATION_NOT_OBSERVABLE_TEXT })).toBeVisible();
-  await expect(detail.getByText('Invoked in at least one harness.')).toBeVisible();
+  await expect(detail.getByText('Last signal', { exact: false })).toBeVisible();
+  await expect(detail.getByText('Invocation evidence from at least one harness.')).toBeVisible();
 
   await openHydratedSkills(page, '/skills/global/beta-skill');
-  const betaDetail = page.getByRole('region', { name: 'Observed usage' });
-  await expect(betaDetail.getByText('Never observed by any harness.')).toBeVisible();
+  const betaDetail = page.getByRole('region', { name: 'Skill observations' });
+  await expect(betaDetail.getByText('No skill signal recorded by an observable harness.')).toBeVisible();
   await expect(
-    betaDetail.getByText('Installed in every enabled runtime and still never invoked — a deletion candidate.'),
+    betaDetail.getByText('Installed in every enabled runtime, with no invocation recorded — a deletion candidate.'),
   ).toBeVisible();
   // The e2e read is complete, so the sentence is stated rather than hedged. The provisional wording
   // is covered where a bounded read can be constructed, in the SSR suite.
@@ -1036,7 +1038,7 @@ test('renders skill observations with their tier and never as an unobservable ze
   // rendered a description and a read-only preview and nothing else, so every count for every
   // project skill was invisible exactly where the adoption decision gets made.
   await openHydratedSkills(page, '/skills/projects/project%2Fopaque/skill-name');
-  const projectDetail = page.getByRole('region', { name: 'Observed usage' });
+  const projectDetail = page.getByRole('region', { name: 'Skill observations' });
   await expect(projectDetail.getByRole('definition').filter({ hasText: 'declared 1' })).toBeVisible();
   await expect(projectDetail.getByRole('definition').filter({ hasText: 'inferred 1' })).toBeVisible();
   await expect(
@@ -1045,6 +1047,8 @@ test('renders skill observations with their tier and never as an unobservable ze
   // The verdict follows the residence the real join computed: this install is owned by its own
   // project, so the sentence names that instead of prescribing adoption into the source repo.
   await expect(
-    projectDetail.getByText('Invoked — owned by a project repository, outside the shared source.', { exact: false }),
+    projectDetail.getByText('Invocation evidence — owned by a project repository, outside the shared source.', {
+      exact: false,
+    }),
   ).toBeVisible();
 });

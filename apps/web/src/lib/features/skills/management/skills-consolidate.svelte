@@ -50,12 +50,11 @@
     onReviewEntry: () => void;
     total: number;
     /**
-     * Observed usage per skill name, joined in by the caller. This is what turns the backlog from
-     * a file listing into a decision aid: an entry that is invoked earns adoption, one never
-     * observed earns deletion — and the fold says which is which.
+     * Skill signals per name, joined in by the caller. This is what turns the backlog from a file
+     * listing into a decision aid without treating availability as invocation evidence.
      */
     usageByName?: ReadonlyMap<string, { lastObservedAt: string | null; summary: string }>;
-    /** Whether an absent invocation row is strong enough to say "never observed". */
+    /** Whether an absent invocation row is strong enough to state a complete absence. */
     usageEvidenceComplete?: boolean;
   } = $props();
 
@@ -103,7 +102,7 @@
                   {#if usage !== undefined && usage.summary.length > 0}
                     {usage.summary}
                   {:else if usageByName !== undefined}
-                    {usageEvidenceComplete ? 'never observed' : 'No observation within the read bound'}
+                    {usageEvidenceComplete ? 'no invocation recorded' : 'no invocation in loaded history'}
                   {/if}
                 </span>
               </div>

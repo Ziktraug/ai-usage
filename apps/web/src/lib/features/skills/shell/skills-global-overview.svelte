@@ -27,6 +27,7 @@
     formatObservedAt,
     formatObservedDate,
     NAME_SCOPED_COUNTS_TEXT,
+    noSignalsText,
     observationEvidenceRank,
     observationRecency,
     observationRecencyNote,
@@ -104,12 +105,15 @@
       return { label: row.verdictProvisional ? 'deletion candidate?' : 'deletion candidate', pill: statusPillWarn };
     }
     if (row.verdict === 'invoked') {
-      return { label: 'invoked', pill: statusPillOk };
+      return { label: 'invocation evidence', pill: statusPillOk };
     }
     if (row.verdict === 'offered-only') {
       return { label: 'offered only', pill: statusPillInfo };
     }
-    return { label: row.verdictProvisional ? 'not observed in bound' : 'never invoked', pill: statusPillInfo };
+    return {
+      label: row.verdictProvisional ? 'no invocation in loaded history' : 'no invocation recorded',
+      pill: statusPillInfo,
+    };
   };
 
   const stack = css({ display: 'grid', gap: '12px' });
@@ -206,6 +210,11 @@
 </script>
 
 <div class={stack} data-skills-global-overview>
+  {#if observationsView?.producerCompletenessMissing}
+    <p class={meta} data-skill-observations-collection-pending role="status">
+      Collecting historical skill observations… Results are incomplete until this pass finishes.
+    </p>
+  {/if}
   <div class={tileGrid} data-skills-overview-observations={observationsState} data-skills-verdict-tiles>
     <a class={cx(metricTile, tileLink)} data-verdict-tile="adopt" href="/skills/matrix#observations-adoption">
       <div class={metricLabel}>To adopt</div>
@@ -219,9 +228,9 @@
           {:else if observationsState === 'loading'}
             loading observations…
           {:else if strongestAdoptable}
-            invoked from a runtime directory, no managed home — latest: {strongestAdoptable.skillName}
+            invocation evidence from a runtime directory, no managed home — latest: {strongestAdoptable.skillName}
           {:else}
-            nothing invoked lives loose in a runtime directory
+            no unmanaged runtime skill has invocation evidence
           {/if}
         </div>
       </div>
@@ -238,9 +247,11 @@
           {:else if observationsState === 'loading'}
             loading observations…
           {:else if (observationsView?.deletionCandidates.length ?? 0) > 0}
-            projected everywhere, never invoked{observationsView?.invocationEvidenceComplete ? '' : ' — provisional'}
+            {observationsView?.invocationEvidenceComplete
+              ? 'projected everywhere, no invocation recorded'
+              : 'projected everywhere, no invocation in loaded history — provisional'}
           {:else if observationsView?.invocationEvidenceComplete}
-            every managed skill installed everywhere has been invoked
+            no managed skill installed everywhere lacks invocation evidence
           {:else}
             nothing qualifies within the read bound
           {/if}
@@ -257,7 +268,9 @@
           {:else if observationsState === 'loading'}
             loading observations…
           {:else}
-            offered to a model, never invoked — folded by catalogue
+            {observationsView?.invocationEvidenceComplete
+              ? 'available to a model, no invocation recorded — folded by catalogue'
+              : 'available to a model, no invocation in loaded history — folded by catalogue'}
           {/if}
         </div>
       </div>
@@ -298,14 +311,14 @@
 
   <!-- svelte-ignore a11y_no_noninteractive_tabindex -- a scrollable region must be keyboard-reachable -->
   <!-- biome-ignore lint/a11y/noNoninteractiveTabindex: axe requires a scrollable region to be keyboard-focusable -->
-  <section aria-label="Managed skills with observed use" class={cx(tableWrap, inventoryTableWrap)} tabindex="0">
+  <section aria-label="Managed skills with skill signals" class={cx(tableWrap, inventoryTableWrap)} tabindex="0">
     <table class={table} data-skills-inventory-table>
       <thead>
         <tr>
           <th scope="col">Skill</th>
           <th scope="col">Exposure</th>
-          <th scope="col">Observed use</th>
-          <th scope="col">Last</th>
+          <th scope="col">Skill signals</th>
+          <th scope="col">Last signal</th>
           <th scope="col">Verdict</th>
         </tr>
       </thead>
@@ -355,7 +368,7 @@
                   {observedHarnessSummary(observationRow)}
                 {:else}
                   <span aria-hidden="true" class={muted}>—</span>
-                  <span class={visuallyHidden}>none observed</span>
+                  <span class={visuallyHidden}>{noSignalsText(observationsView?.signalsComplete ?? false)}</span>
                 {/if}
               </td>
               <td
@@ -376,7 +389,7 @@
                     <span class={staleMark}> · {observationRecencyNote(observationRow.lastObservedAt)}</span>
                   {/if}
                 {:else}
-                  <span class={muted}>never</span>
+                  <span class={muted}>{noSignalsText(observationsView?.signalsComplete ?? false)}</span>
                 {/if}
               </td>
               <td>
@@ -405,14 +418,14 @@
   {#if projectScopes.length > 0}
     <!-- svelte-ignore a11y_no_noninteractive_tabindex -- a scrollable region must be keyboard-reachable -->
     <!-- biome-ignore lint/a11y/noNoninteractiveTabindex: axe requires a scrollable region to be keyboard-focusable -->
-    <section aria-label="Project scopes with observed use" class={cx(tableWrap, inventoryTableWrap)} tabindex="0">
+    <section aria-label="Project scopes with skill signals" class={cx(tableWrap, inventoryTableWrap)} tabindex="0">
       <table class={table} data-skills-project-scope-table>
         <thead>
           <tr>
             <th scope="col">Project scope</th>
             <th scope="col">Skills</th>
-            <th scope="col">Observed use</th>
-            <th scope="col">Last</th>
+            <th scope="col">Skill signals</th>
+            <th scope="col">Last signal</th>
           </tr>
         </thead>
         <tbody>
@@ -435,11 +448,11 @@
                   <span class={muted} data-observation-state="loading">…</span>
                 {:else if usage.observedCount > 0 && usage.top !== undefined}
                   {usage.observedCount}
-                  observed — top: {usage.top.skillName}
+                  with invocation evidence — top: {usage.top.skillName}
                   ({observedHarnessSummary(usage.top)})
                 {:else}
                   <span aria-hidden="true" class={muted}>—</span>
-                  <span class={visuallyHidden}>none observed</span>
+                  <span class={visuallyHidden}>{noSignalsText(observationsView?.signalsComplete ?? false)}</span>
                 {/if}
               </td>
               <td

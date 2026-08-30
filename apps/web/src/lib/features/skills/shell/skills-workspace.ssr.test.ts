@@ -191,9 +191,9 @@ describe('Svelte Skills workspace SSR', () => {
     expect(matrixHtml).toContain('not observable');
     expect(matrixHtml).not.toContain('data-harness="cursor"');
     // Each verdict has a home, and the unmanaged observation was retained rather than dropped.
-    expect(matrixHtml).toContain('Projected everywhere but never invoked');
-    expect(matrixHtml).toContain('Invoked but unmanaged');
-    expect(matrixHtml).toContain('Offered but never invoked');
+    expect(matrixHtml).toContain('Projected everywhere, no invocation recorded');
+    expect(matrixHtml).toContain('Invocation evidence, unmanaged');
+    expect(matrixHtml).toContain('Available to a model, no invocation recorded');
     expect(matrixHtml).toContain('artifact-design');
     // A skill that was only offered lives under its catalogue fold — not in the main table, and
     // never in the adoption group.
@@ -201,6 +201,7 @@ describe('Svelte Skills workspace SSR', () => {
     expect(matrixHtml).toContain('data-skill-observations-catalogue="standalone"');
     expect(matrixHtml).toContain('imagegen');
     expect(matrixHtml).not.toContain('data-observation-verdict="offered-only"');
+    expect(matrixHtml).not.toContain('Observed skill usage');
     // A complete read states its absences plainly rather than hedging them.
     expect(deletionGroupAttributes(matrixHtml)).toContain('data-provisional="false"');
     expect(matrixHtml).not.toContain('within the read bound');
@@ -215,7 +216,7 @@ describe('Svelte Skills workspace SSR', () => {
   test('opens a skill detail on a synthesis band above the editor', () => {
     const html = render(convergenceFixture, { props: { pathname: '/skills/global/alpha-skill' } }).body;
 
-    // State, exposure, observed use, verdict, and both operations — readable before any scrolling,
+    // State, exposure, skill signals, verdict, and both operations — readable before any scrolling,
     // and still reachable in the 768–1279px band where the inspector drops below the content.
     expect(html).toContain('data-skill-summary-band');
     expect(html.indexOf('data-skill-summary-band')).toBeLessThan(html.indexOf('data-skill-markdown-editor'));
@@ -247,13 +248,32 @@ describe('Svelte Skills workspace SSR', () => {
     // A bounded read cannot prove a skill went unused, so the deletion group and the verdicts it
     // rests on say what they actually know instead of repeating a claim the data cannot support.
     expect(deletionGroupAttributes(html)).toContain('data-provisional="true"');
-    expect(html).toContain('Provisional: this read was bounded');
-    expect(html).toContain('No observation within the read bound.');
+    expect(html).toContain('Provisional: invocation history is incomplete');
+    expect(html).toContain('No invocation in loaded history; invocation history is incomplete.');
     expect(html).toContain('data-skill-observations-lower-bound="invocations"');
-    expect(html).not.toContain('Never observed by any harness.');
+    expect(html).not.toContain('No skill signal recorded by an observable harness.');
   });
 
-  test('renders a project scope as its skills joined with observed use', () => {
+  test('explains that the first historical collection is still in progress', () => {
+    const globalHtml = render(convergenceFixture, {
+      props: { pathname: '/skills/global', producerCompletenessMissing: true },
+    }).body;
+    const matrixHtml = render(convergenceFixture, {
+      props: { pathname: '/skills/matrix', producerCompletenessMissing: true },
+    }).body;
+
+    for (const html of [globalHtml, matrixHtml]) {
+      expect(html).toContain('data-skill-observations-collection-pending');
+      expect(html).toContain(
+        'Collecting historical skill observations… Results are incomplete until this pass finishes.',
+      );
+      expect(html).toContain('no invocation in loaded history');
+      expect(html).not.toContain('no invocation recorded');
+      expect(html).not.toContain('No skill signal recorded by an observable harness.');
+    }
+  });
+
+  test('renders a project scope as its skills joined with skill signals', () => {
     const html = render(convergenceFixture, { props: { pathname: '/skills/projects/synthetic-group' } }).body;
 
     // The scope page was a dead end — a path and an inventory count. It now carries the one thing
@@ -267,7 +287,7 @@ describe('Svelte Skills workspace SSR', () => {
     expect(html).toContain('Owned and edited in this repository');
   });
 
-  test('shows observed usage on a project skill, not only on a global one', () => {
+  test('shows skill signals on a project skill, not only on a global one', () => {
     const html = render(convergenceFixture, {
       props: { pathname: '/skills/projects/synthetic-group/project-review' },
     }).body;
@@ -284,7 +304,7 @@ describe('Svelte Skills workspace SSR', () => {
     // look. Its wording follows the residence: this install is owned by its project, and telling it
     // to be adopted would prescribe a move nobody planned.
     expect(html).toContain('data-skill-observations-verdict="invoked-unmanaged"');
-    expect(html).toContain('Invoked — owned by a project repository');
+    expect(html).toContain('Invocation evidence — owned by a project repository');
     // Below the document, matching the global branch: the SKILL.md source stays the primary object.
     expect(html.indexOf('# Project synthetic document')).toBeLessThan(html.indexOf('data-skill-observations="skill"'));
     // Cursor still reads as unable to observe rather than as a zero, on this branch too.
@@ -303,7 +323,7 @@ describe('Svelte Skills workspace SSR', () => {
     expect(html).toContain('data-skill-observations="skill"');
     expect(html).toContain('data-skill-observations-homonym');
     expect(html).toContain('A managed skill of this name also exists');
-    expect(html).not.toContain('Invoked in at least one harness.');
+    expect(html).not.toContain('Invocation evidence from at least one harness.');
     expect(html).not.toContain('data-skill-observations-deletion-candidate');
     // The counts themselves are still shown — they are true of the name, and the page says so.
     expect(html).toContain('declared 2');
@@ -319,12 +339,12 @@ describe('Svelte Skills workspace SSR', () => {
     // sound claim about the project install. The sentence follows the residence — project-owned —
     // rather than prescribing adoption into the source repository for a deliberately scoped skill.
     expect(html).toContain('data-skill-observations-verdict="invoked-unmanaged"');
-    expect(html).toContain('Invoked — owned by a project repository, outside the shared source.');
+    expect(html).toContain('Invocation evidence — owned by a project repository, outside the shared source.');
     expect(html).not.toContain('data-skill-observations-homonym');
     expect(html).toContain(NAME_SCOPE_SENTENCE);
   });
 
-  test('keeps observed usage on the global skill branch', () => {
+  test('keeps skill signals on the global skill branch', () => {
     // The fix is additive: the branch that already worked must keep working. `alpha-skill` is now
     // installed twice, and on the *global* selection the managed verdict does describe what is
     // selected, so it is stated plainly and no collision note appears.
@@ -332,7 +352,7 @@ describe('Svelte Skills workspace SSR', () => {
 
     expect(html).toContain('data-skill-observations="skill"');
     expect(html).toContain('data-skill-observations-verdict="invoked"');
-    expect(html).toContain('Invoked in at least one harness.');
+    expect(html).toContain('Invocation evidence from at least one harness.');
     expect(html).not.toContain('data-skill-observations-homonym');
     expect(html).toContain(NAME_SCOPE_SENTENCE);
     expect(html).toContain('# Alpha synthetic document');
@@ -365,7 +385,7 @@ describe('Svelte Skills workspace SSR', () => {
       props: { observations: syntheticProvisionalObservations, variant: 'overview' },
     }).body;
     expect(evidenceBounded).toContain('data-skill-observations-lower-bound="invocations"');
-    expect(evidenceBounded).toContain('within the read bound');
+    expect(evidenceBounded).toContain('no invocation in loaded history');
     expect(deletionGroupAttributes(evidenceBounded)).toContain('data-provisional="true"');
   });
 
@@ -401,15 +421,17 @@ describe('Svelte Skills workspace SSR', () => {
 
     const complete = detail(syntheticObservations);
     expect(complete).toContain('data-skill-observations-deletion-candidate');
-    expect(complete).toContain('Installed in every enabled runtime and still never invoked — a deletion candidate.');
+    expect(complete).toContain(
+      'Installed in every enabled runtime, with no invocation recorded — a deletion candidate.',
+    );
 
     // Same skill, same verdict, a read that could not establish the absence it rests on. Proposing a
     // deletion is the one verdict acted on destructively, so it must not be phrased as established.
     const provisional = detail(syntheticProvisionalObservations);
     expect(provisional).toContain(
-      'Installed in every enabled runtime, with no invocation within the read bound — a provisional deletion candidate.',
+      'Installed in every enabled runtime, with no invocation in loaded history — a provisional deletion candidate.',
     );
-    expect(provisional).not.toContain('still never invoked');
+    expect(provisional).not.toContain('no invocation recorded');
     // The group heading already says "every enabled runtime"; both sentences describe one rule.
     expect(provisional).not.toContain('Installed in every runtime');
   });

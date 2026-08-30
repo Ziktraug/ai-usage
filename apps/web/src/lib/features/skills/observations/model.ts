@@ -100,7 +100,7 @@ export interface SkillObservationsView {
    * catalogue entry in the main table would outweigh the invocation signal ~2:1 on a real store.
    */
   catalogueRollups: readonly SkillCatalogueRollup[];
-  /** Managed, installed in every enabled runtime, and still never invoked: the deletion candidates. */
+  /** Managed, installed in every enabled runtime, and without invocation evidence: deletion candidates. */
   deletionCandidates: readonly SkillObservationRow[];
   harnesses: readonly SkillObservationHarness[];
   /**
@@ -127,8 +127,12 @@ export interface SkillObservationsView {
    * flattening both into one hedge.
    */
   onlyExposureTruncated: boolean;
+  /** No producer-completeness answer exists yet, so the first historical sweep is still pending. */
+  producerCompletenessMissing: boolean;
   /** Managed skills first, then the unmanaged names, each alphabetically. */
   rows: readonly SkillObservationRow[];
+  /** Whether the combined invocation and availability signal history is complete. */
+  signalsComplete: boolean;
   /** Persisted rows the reader could not re-validate. */
   skipped: number;
 }
@@ -147,7 +151,11 @@ export const skillObservationsPresentationState = (
 };
 
 export const NOT_OBSERVABLE_TEXT = 'not observable';
-export const NO_OBSERVATIONS_TEXT = 'none observed';
+export const NO_SIGNALS_RECORDED_TEXT = 'no signals recorded';
+export const NO_SIGNALS_IN_LOADED_HISTORY_TEXT = 'no signals in loaded history';
+
+export const noSignalsText = (signalsComplete: boolean): string =>
+  signalsComplete ? NO_SIGNALS_RECORDED_TEXT : NO_SIGNALS_IN_LOADED_HISTORY_TEXT;
 
 /**
  * `2026-08-01 09:07 UTC`, from a canonical ISO instant.
@@ -182,6 +190,7 @@ export const tallySummary = (tallies: readonly SkillObservationTally[]): string 
 const cellFor = (
   harness: SkillObservationHarness,
   tallies: readonly SkillObservationTally[],
+  signalsComplete: boolean,
 ): SkillObservationHarnessCell => {
   if (harness.observability === 'not-observable') {
     return {
@@ -197,7 +206,7 @@ const cellFor = (
       harnessKey: harness.harnessKey,
       label: harness.label,
       state: 'no-observations',
-      summary: NO_OBSERVATIONS_TEXT,
+      summary: noSignalsText(signalsComplete),
       tallies: [],
     };
   }
@@ -222,26 +231,28 @@ export const verdictText = (
     Partial<Pick<SkillObservationRow, 'unmanagedResidence'>>,
 ): string => {
   if (row.verdict === 'invoked') {
-    return 'Invoked in at least one harness.';
+    return 'Invocation evidence from at least one harness.';
   }
   if (row.verdict === 'invoked-unmanaged') {
     // The verdict is one fact — no managed entry carries this name — but the three residences it
     // can have call for three different sentences. Telling a deliberately project-scoped skill it
     // is "an adoption candidate for the source repository" prescribes a move nobody planned.
     if (row.unmanagedResidence === 'project-owned') {
-      return 'Invoked — owned by a project repository, outside the shared source. Adopt it only to make it global.';
+      return 'Invocation evidence — owned by a project repository, outside the shared source. Adopt it only to make it global.';
     }
     if (row.unmanagedResidence === 'external') {
-      return 'Invoked but unmanaged — it ships with a harness or plugin, outside the source repository.';
+      return 'Invocation evidence, but unmanaged — it ships with a harness or plugin, outside the source repository.';
     }
-    return 'Invoked but unmanaged — an adoption candidate for the source repository.';
+    return 'Invocation evidence, but unmanaged — an adoption candidate for the source repository.';
   }
   if (row.verdict === 'offered-only') {
     return row.verdictProvisional
-      ? 'Offered to a model; no invocation within the read bound.'
-      : 'Offered to a model, with no evidence it was ever invoked.';
+      ? 'Available to a model; no invocation in loaded history.'
+      : 'Available to a model; no invocation recorded.';
   }
-  return row.verdictProvisional ? 'No observation within the read bound.' : 'Never observed by any harness.';
+  return row.verdictProvisional
+    ? 'No invocation in loaded history; invocation history is incomplete.'
+    : 'No skill signal recorded by an observable harness.';
 };
 
 /** The two verdicts decided from managed-ness, and therefore the two that can misattribute. */
@@ -335,8 +346,8 @@ export const resolvedPathsNote = (
  * The deletion sentence on the per-skill detail.
  *
  * It is an absence claim like any other verdict, so a bounded or partially unreadable read must
- * qualify it. The absolute wording states a fact the read did not establish — "still never invoked"
- * when the reader stopped at its bound means "not within what we looked at" — and a maintainer
+ * qualify it. Absolute absence wording states a fact the read did not establish when the reader
+ * stopped at its bound — and a maintainer
  * acting on it deletes a skill on evidence that was never gathered.
  *
  * "Every *enabled* runtime" because that is the rule the verdict is actually computed with: a
@@ -345,8 +356,8 @@ export const resolvedPathsNote = (
  */
 export const deletionCandidateText = (row: Pick<SkillObservationRow, 'verdictProvisional'>): string =>
   row.verdictProvisional
-    ? 'Installed in every enabled runtime, with no invocation within the read bound — a provisional deletion candidate.'
-    : 'Installed in every enabled runtime and still never invoked — a deletion candidate.';
+    ? 'Installed in every enabled runtime, with no invocation in loaded history — a provisional deletion candidate.'
+    : 'Installed in every enabled runtime, with no invocation recorded — a deletion candidate.';
 
 /**
  * How strong the evidence behind a row is: 2 for a declared invocation, 1 for an inferred read,
@@ -494,6 +505,7 @@ export const ADOPTION_GROUP_COPY: Record<SkillUnmanagedResidence, { heading: str
 };
 
 export const buildSkillObservationsView = (observations: SkillObservations): SkillObservationsView => {
+  const signalsComplete = !observations.lowerBound && observations.skipped === 0;
   const rows = observations.skills.map((skill) => {
     const talliesByHarness = new Map<string, SkillObservationTally[]>();
     for (const tally of skill.tallies) {
@@ -502,7 +514,7 @@ export const buildSkillObservationsView = (observations: SkillObservations): Ski
     return {
       ...skill,
       harnesses: observations.harnesses.map((harness) =>
-        cellFor(harness, talliesByHarness.get(harness.harnessKey) ?? []),
+        cellFor(harness, talliesByHarness.get(harness.harnessKey) ?? [], signalsComplete),
       ),
     } satisfies SkillObservationRow;
   });
@@ -521,9 +533,11 @@ export const buildSkillObservationsView = (observations: SkillObservations): Ski
     lowerBound: observations.lowerBound,
     observableHarnesses: observations.harnesses.filter((harness) => harness.observability === 'observable'),
     onlyExposureTruncated: observations.lowerBound && !(observations.invocationLowerBound || observations.skipped > 0),
+    producerCompletenessMissing: observations.producerCompletenessMissing,
     // Exclusive of the deletion group, so no skill is listed twice under two headings.
     offeredOnly,
     rows: [...rows.filter((row) => row.managed), ...rows.filter((row) => !row.managed)],
+    signalsComplete,
     skipped: observations.skipped,
   };
 };

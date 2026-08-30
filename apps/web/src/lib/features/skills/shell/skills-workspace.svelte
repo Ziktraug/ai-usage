@@ -315,7 +315,7 @@
   nowhere else, so every project-local skill's counts were invisible. Parity is now structural.
 
   Below the document at both call sites, deliberately: the SKILL.md source stays the primary object
-  of the page, and observed usage is the axis you consult about it. `installScope` is what keeps the
+  of the page, and skill observations are the axis you consult about it. `installScope` is what keeps the
   managed-derived verdict from being told about the wrong installation of a shared name.
 -->
 {#snippet skillObservations()}
@@ -457,7 +457,7 @@
               </header>
               <p class={muted}>{view.selectionDetail.skill.description || 'No description provided.'}</p>
             </div>
-            <!-- The synthesis band: state, exposure, observed use, verdict, and the two operations,
+            <!-- The synthesis band: state, exposure, skill signals, verdict, and the two operations,
                  readable before any scrolling. The editor stays the primary object below it (plan
                  006); below 1280px this band is also what keeps the actions reachable, since the
                  inspector column drops under the whole page there. -->
@@ -500,6 +500,7 @@
                   {observationsState}
                   projectPath={view.selectionDetail.project.path}
                   rows={projectScopeRows}
+                  signalsComplete={observationsView?.signalsComplete ?? false}
                 />
                 <p class={meta}>Owned and edited in this repository — observed in place, never written to.</p>
               {:else}

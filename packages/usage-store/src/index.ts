@@ -434,6 +434,8 @@ export interface QuerySkillObservationsResult {
    */
   invocationTruncated: boolean;
   observations: StoredSkillObservation[];
+  /** No durable producer-completeness answer exists for the observable collection in scope. */
+  producerCompletenessMissing: boolean;
   /** Persisted rows that no longer pass validation. Never silently omitted. */
   skipped: number;
   truncated: boolean;

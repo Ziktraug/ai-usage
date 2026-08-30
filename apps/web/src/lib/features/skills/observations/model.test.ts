@@ -11,7 +11,7 @@ import {
   deletionCandidateText,
   formatObservedAt,
   formatObservedDate,
-  NO_OBSERVATIONS_TEXT,
+  NO_SIGNALS_RECORDED_TEXT,
   NOT_OBSERVABLE_TEXT,
   observationEvidenceRank,
   observationRecency,
@@ -45,7 +45,7 @@ describe('skill observations view', () => {
     );
 
     expect(openCode?.state).toBe('no-observations');
-    expect(openCode?.summary).toBe(NO_OBSERVATIONS_TEXT);
+    expect(openCode?.summary).toBe(NO_SIGNALS_RECORDED_TEXT);
     // "cannot observe" and "observed nothing" are different sentences, and the surface says both.
     expect(openCode?.summary).not.toBe(NOT_OBSERVABLE_TEXT);
   });
@@ -86,7 +86,7 @@ describe('skill observations view', () => {
     expect(offered?.verdict).toBe('offered-only');
     expect(built.adoptionCandidates).not.toContainEqual(offered);
     expect(verdictText({ verdict: 'offered-only', verdictProvisional: false })).toBe(
-      'Offered to a model, with no evidence it was ever invoked.',
+      'Available to a model; no invocation recorded.',
     );
   });
 
@@ -116,15 +116,17 @@ describe('skill observations view', () => {
     expect(built.invocationEvidenceComplete).toBe(false);
     // A short read cannot prove a skill went unused, so the copy says what it actually knows.
     expect(verdictText({ verdict: 'never-observed', verdictProvisional: true })).toBe(
-      'No observation within the read bound.',
+      'No invocation in loaded history; invocation history is incomplete.',
     );
     expect(verdictText({ verdict: 'offered-only', verdictProvisional: true })).toBe(
-      'Offered to a model; no invocation within the read bound.',
+      'Available to a model; no invocation in loaded history.',
     );
     expect(skillObservationRow(built, 'beta-skill')?.verdictProvisional).toBe(true);
-    // A positive verdict is not weakened by a short read: seeing an invocation still proves use.
+    // Positive invocation evidence is not weakened by a short read.
     expect(skillObservationRow(built, 'alpha-skill')?.verdictProvisional).toBe(false);
-    expect(verdictText({ verdict: 'invoked', verdictProvisional: false })).toBe('Invoked in at least one harness.');
+    expect(verdictText({ verdict: 'invoked', verdictProvisional: false })).toBe(
+      'Invocation evidence from at least one harness.',
+    );
   });
 
   test('qualifies the deletion sentence too, since it is the strongest absence claim on the page', () => {
@@ -135,10 +137,10 @@ describe('skill observations view', () => {
     // Proposing a deletion is the one verdict a maintainer acts on destructively, so a read that
     // could not establish absence must not phrase it as established.
     expect(deletionCandidateText({ verdictProvisional: true })).toBe(
-      'Installed in every enabled runtime, with no invocation within the read bound — a provisional deletion candidate.',
+      'Installed in every enabled runtime, with no invocation in loaded history — a provisional deletion candidate.',
     );
     expect(deletionCandidateText({ verdictProvisional: false })).toBe(
-      'Installed in every enabled runtime and still never invoked — a deletion candidate.',
+      'Installed in every enabled runtime, with no invocation recorded — a deletion candidate.',
     );
     // The rule the verdict is computed with is the rule both sentences state: a disabled target is
     // not a runtime the skill was expected to be in.
@@ -152,6 +154,7 @@ describe('skill observations view', () => {
       harnesses: syntheticObservations.harnesses,
       invocationLowerBound: false,
       lowerBound: false,
+      producerCompletenessMissing: false,
       skills: [
         {
           deletionCandidate: false,
@@ -179,9 +182,9 @@ describe('skill observations view', () => {
     };
 
     expect(skillObservationRow(view(single), 'solo-skill')?.harnesses.map(({ summary }) => summary)).toEqual([
-      NO_OBSERVATIONS_TEXT,
+      NO_SIGNALS_RECORDED_TEXT,
       'exposed 1',
-      NO_OBSERVATIONS_TEXT,
+      NO_SIGNALS_RECORDED_TEXT,
       NOT_OBSERVABLE_TEXT,
     ]);
 
@@ -189,6 +192,7 @@ describe('skill observations view', () => {
       harnesses: syntheticObservations.harnesses,
       invocationLowerBound: false,
       lowerBound: false,
+      producerCompletenessMissing: false,
       skills: [],
       skipped: 0,
     });
@@ -327,6 +331,17 @@ describe('skill observations view', () => {
     expect(built.lowerBound).toBe(true);
     expect(built.skipped).toBe(4);
     expect(built.invocationEvidenceComplete).toBe(false);
+  });
+
+  test('carries a missing producer answer as the initial collection state', () => {
+    const built = view({
+      ...syntheticProvisionalObservations,
+      producerCompletenessMissing: true,
+    });
+
+    expect(built.producerCompletenessMissing).toBe(true);
+    expect(built.invocationEvidenceComplete).toBe(false);
+    expect(built.signalsComplete).toBe(false);
   });
 
   test('a truncated exposure catalogue leaves every verdict standing', () => {

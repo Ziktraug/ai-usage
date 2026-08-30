@@ -438,6 +438,8 @@ const skillObservationsShapeSchema = strictObject({
   invocationLowerBound: boolean(),
   /** The read stopped at its bound, so every count is a lower bound rather than a number. */
   lowerBound: boolean(),
+  /** No observable producer has persisted a completeness answer for this collection yet. */
+  producerCompletenessMissing: boolean(),
   skills: pipe(array(observedSkillSchema), maxLength(MAX_COLLECTION_ITEMS)),
   /** Persisted rows the reader could not re-validate. Reported, never folded into a count. */
   skipped: nonNegativeFiniteNumberSchema,

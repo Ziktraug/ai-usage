@@ -8,6 +8,7 @@
     formatObservedAt,
     formatObservedDate,
     NAME_SCOPED_COUNTS_TEXT,
+    noSignalsText,
     observationRecency,
     observationRecencyNote,
     observedHarnessSummary,
@@ -28,12 +29,14 @@
     observationsState,
     projectPath,
     rows,
+    signalsComplete,
   }: {
     knownProjects: readonly KnownProjectScope[];
     /** Keeps loading, unavailable, and a complete empty result distinct. */
     observationsState: 'loading' | 'ready' | 'unavailable';
     projectPath: string;
     rows: readonly ProjectScopeSkillRow[];
+    signalsComplete: boolean;
   } = $props();
 
   const projectTableWrap = css({
@@ -58,19 +61,30 @@
   const observedCell = css({ fontSize: '12px' });
   const observedAtCell = css({ whiteSpace: 'nowrap' });
   const staleMark = css({ color: 'status.warn', fontSize: '11px', fontWeight: 650 });
+  const visuallyHidden = css({
+    position: 'absolute',
+    width: '1px',
+    height: '1px',
+    margin: '-1px',
+    padding: 0,
+    overflow: 'hidden',
+    clip: 'rect(0 0 0 0)',
+    whiteSpace: 'nowrap',
+    border: 0,
+  });
 </script>
 
 <!-- svelte-ignore a11y_no_noninteractive_tabindex -- a scrollable region must be keyboard-reachable -->
 <!-- biome-ignore lint/a11y/noNoninteractiveTabindex: axe requires a scrollable region to be keyboard-focusable -->
-<section aria-label="Project skills with observed use" class={cx(tableWrap, projectTableWrap)} tabindex="0">
+<section aria-label="Project skills with skill signals" class={cx(tableWrap, projectTableWrap)} tabindex="0">
   <p class={muted} data-skill-observations-name-scope>{NAME_SCOPED_COUNTS_TEXT}</p>
   <table class={table} data-project-skills-table>
     <thead>
       <tr>
         <th scope="col">Skill · {count(rows.length, 'owned by this repo', 'owned by this repo')}</th>
         <th scope="col">Placement</th>
-        <th scope="col">Observed use</th>
-        <th scope="col">Last</th>
+        <th scope="col">Skill signals</th>
+        <th scope="col">Last signal</th>
       </tr>
     </thead>
     <tbody>
@@ -98,7 +112,8 @@
             {:else if row.observationRow !== undefined && observedHarnessSummary(row.observationRow).length > 0}
               {observedHarnessSummary(row.observationRow)}
             {:else}
-              <span class={muted}>—</span>
+              <span aria-hidden="true" class={muted}>—</span>
+              <span class={visuallyHidden}>{noSignalsText(signalsComplete)}</span>
             {/if}
           </td>
           <td
@@ -121,7 +136,8 @@
                 <span class={staleMark}> · {observationRecencyNote(row.observationRow.lastObservedAt)}</span>
               {/if}
             {:else}
-              <span class={muted}>—</span>
+              <span aria-hidden="true" class={muted}>—</span>
+              <span class={visuallyHidden}>{noSignalsText(signalsComplete)}</span>
             {/if}
           </td>
         </tr>

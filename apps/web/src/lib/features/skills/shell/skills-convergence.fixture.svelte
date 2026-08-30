@@ -22,11 +22,13 @@
   let {
     healthSnapshot,
     observationsError,
+    producerCompletenessMissing = false,
     observationsProvisional = false,
     pathname = '/skills/global/alpha-skill',
   }: {
     healthSnapshot?: 'management';
     observationsError?: string;
+    producerCompletenessMissing?: boolean;
     observationsProvisional?: boolean;
     pathname?: string;
   } = $props();
@@ -44,6 +46,12 @@
   const observations = $derived.by(() => {
     if (observationsError !== undefined) {
       return;
+    }
+    if (producerCompletenessMissing) {
+      return {
+        ...syntheticProvisionalObservations,
+        producerCompletenessMissing: true,
+      };
     }
     return observationsProvisional ? syntheticProvisionalObservations : syntheticObservations;
   });
