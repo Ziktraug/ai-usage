@@ -90,6 +90,28 @@ jobs:
       - run: bun run test:web-client-manifest
       - run: bun run test:web-bundle
 
+  local-platform-independence:
+    name: Local Mode Without PostgreSQL
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.13
+      - run: bun install --frozen-lockfile
+      - run: bun run test:local-platform
+
+  postgres-foundation:
+    name: PostgreSQL 17 Foundation
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
+      - name: Run the flake-locked PostgreSQL suite
+        run: nix develop --command bash -lc 'bun install --frozen-lockfile && postgres --version && bun run test:postgres'
+
   lifecycle:
     name: Production and Lifecycle
     runs-on: ubuntu-latest

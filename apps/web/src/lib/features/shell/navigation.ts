@@ -13,7 +13,15 @@ import {
   parseDashboardSearchUrl,
 } from '../../foundation/navigation/svelte/dashboard-url';
 
-export type ShellIconName = 'breakdown' | 'overview' | 'sessions' | 'skills' | 'sources' | 'sync';
+export type ShellIconName =
+  | 'breakdown'
+  | 'memory'
+  | 'overview'
+  | 'projects'
+  | 'sessions'
+  | 'skills'
+  | 'sources'
+  | 'sync';
 
 export interface ShellDestination {
   readonly href: string;
@@ -22,6 +30,8 @@ export interface ShellDestination {
 }
 
 export const shellManagementDestinations = [
+  { href: '/memory', icon: 'memory', label: 'Memory' },
+  { href: '/projects', icon: 'projects', label: 'Projects' },
   { href: '/skills', icon: 'skills', label: 'Skills' },
   { href: '/sync', icon: 'sync', label: 'Sync' },
   { href: '/sources', icon: 'sources', label: 'Sources' },

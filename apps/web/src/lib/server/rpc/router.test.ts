@@ -2,9 +2,12 @@ import { expect, test } from 'bun:test';
 import type { WebRpcRouterDependencies } from './router';
 import { createWebRpcRouter } from './router';
 
-test('composes every V1-V4 router leaf under one root router', () => {
+test('composes every router leaf under one root router', () => {
   const router = createWebRpcRouter({
+    memory: {},
+    projects: {},
     report: {},
+    replication: {},
     session: {},
     skills: {},
     sync: {},
@@ -12,8 +15,11 @@ test('composes every V1-V4 router leaf under one root router', () => {
 
   expect(Object.keys(router).sort()).toEqual([
     'campaign',
+    'memory',
     'projectGroup',
+    'projects',
     'quota',
+    'replication',
     'report',
     'runtime',
     'session',

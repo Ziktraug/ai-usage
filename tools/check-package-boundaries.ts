@@ -72,6 +72,105 @@ const boundaryPolicies: BoundaryPolicy[] = [
     reason: 'report-core must stay pure and independent of workspace runtime packages.',
   },
   {
+    packageName: '@ai-usage/platform-core',
+    forbiddenDependencies: ['@ai-usage/*', 'drizzle-orm', 'pg'],
+    forbiddenImports: ['@ai-usage/*', 'bun:sqlite', 'drizzle-orm', 'node:fs', 'node:http', 'node:https', 'pg'],
+    reason: 'platform-core must contain only portable identity values and contracts.',
+  },
+  {
+    packageName: '@ai-usage/authorization-contract',
+    forbiddenDependencies: ['drizzle-orm', 'pg'],
+    forbiddenImports: ['bun:sqlite', 'drizzle-orm', 'node:fs', 'node:http', 'node:https', 'pg'],
+    reason: 'authorization-contract contains only the portable Authorizer port and value contracts.',
+  },
+  {
+    packageName: '@ai-usage/authorization',
+    forbiddenDependencies: ['drizzle-orm', 'pg'],
+    forbiddenImports: ['bun:sqlite', 'drizzle-orm', 'node:fs', 'node:http', 'node:https', 'pg'],
+    reason: 'authorization owns the application port and local policy, not persistence or transport.',
+  },
+  {
+    packageName: '@ai-usage/project-registry',
+    forbiddenDependencies: ['drizzle-orm', 'pg'],
+    forbiddenImports: ['bun:sqlite', 'drizzle-orm', 'node:fs', 'node:http', 'node:https', 'pg'],
+    reason: 'project-registry owns pure resolution and mapping contracts, not persistence or transport.',
+  },
+  {
+    packageName: '@ai-usage/project-application',
+    forbiddenDependencies: ['drizzle-orm', 'pg'],
+    forbiddenImports: ['bun:sqlite', 'drizzle-orm', 'node:fs', 'node:http', 'node:https', 'pg'],
+    reason: 'project-application owns the application service and ports, not persistence or transport.',
+  },
+  {
+    packageName: '@ai-usage/replication-protocol',
+    forbiddenDependencies: ['drizzle-orm', 'pg'],
+    forbiddenImports: ['bun:sqlite', 'drizzle-orm', 'node:fs', 'node:http', 'node:https', 'pg'],
+    reason: 'replication-protocol is the IO-free canonical wire contract.',
+  },
+  {
+    packageName: '@ai-usage/replication-outbox',
+    forbiddenDependencies: ['drizzle-orm', 'pg'],
+    forbiddenImports: ['drizzle-orm', 'node:fs', 'node:http', 'node:https', 'pg'],
+    reason: 'replication-outbox owns portable state transitions, not a database or network adapter.',
+  },
+  {
+    packageName: '@ai-usage/replication-client',
+    forbiddenDependencies: [
+      '@ai-usage/memory-sqlite',
+      '@ai-usage/postgres-store',
+      '@ai-usage/usage-store',
+      'drizzle-orm',
+      'pg',
+    ],
+    forbiddenImports: [
+      '@ai-usage/memory-sqlite',
+      '@ai-usage/postgres-store',
+      '@ai-usage/usage-store',
+      'bun:sqlite',
+      'drizzle-orm',
+      'node:fs',
+      'pg',
+    ],
+    reason: 'replication-client is the outbound HTTPS adapter and must not own either persistence authority.',
+  },
+  {
+    packageName: '@ai-usage/identity',
+    forbiddenDependencies: ['@better-auth/drizzle-adapter', 'drizzle-orm', 'pg'],
+    forbiddenImports: ['@better-auth/drizzle-adapter', 'bun:sqlite', 'drizzle-orm', 'pg'],
+    reason: 'identity owns authentication and Device application services, not their persistence adapter.',
+  },
+  {
+    packageName: '@ai-usage/memory-sqlite',
+    forbiddenDependencies: ['@ai-usage/postgres-store', 'drizzle-orm', 'pg'],
+    forbiddenImports: [
+      '@ai-usage/postgres-store',
+      '@ai-usage/usage-store',
+      'drizzle-orm',
+      'node:http',
+      'node:https',
+      'pg',
+    ],
+    reason: 'memory-sqlite is the dedicated local authority and must not reach PostgreSQL, Usage SQLite, or HTTP.',
+  },
+  {
+    packageName: '@ai-usage/memory-service',
+    forbiddenDependencies: ['@ai-usage/memory-sqlite', '@ai-usage/postgres-store', 'drizzle-orm', 'pg'],
+    forbiddenImports: ['@ai-usage/memory-sqlite', '@ai-usage/postgres-store', 'bun:sqlite', 'drizzle-orm', 'pg'],
+    reason: 'memory-service owns bounded transport contracts and discovery, never a storage adapter.',
+  },
+  {
+    packageName: '@ai-usage/memory-search',
+    forbiddenDependencies: ['@ai-usage/memory-sqlite', '@ai-usage/postgres-store', 'drizzle-orm', 'pg'],
+    forbiddenImports: ['@ai-usage/memory-sqlite', '@ai-usage/postgres-store', 'bun:sqlite', 'drizzle-orm', 'pg'],
+    reason: 'memory-search owns portable chunking and evaluation contracts, never a storage authority.',
+  },
+  {
+    packageName: '@ai-usage/mcp-adapter',
+    forbiddenDependencies: ['@ai-usage/memory-sqlite', '@ai-usage/postgres-store', 'bun:sqlite', 'drizzle-orm', 'pg'],
+    forbiddenImports: ['@ai-usage/memory-sqlite', '@ai-usage/postgres-store', 'bun:sqlite', 'drizzle-orm', 'pg'],
+    reason: 'mcp-adapter owns the bounded edge protocol and must call application services, never storage.',
+  },
+  {
     packageName: '@ai-usage/skills',
     forbiddenDependencies: ['@ai-usage/*'],
     forbiddenImports: ['@ai-usage/*'],
@@ -82,6 +181,13 @@ const boundaryPolicies: BoundaryPolicy[] = [
     forbiddenDependencies: ['@ai-usage/local-collectors', '@ai-usage/report-data', '@ai-usage/web', '@ai-usage/cli'],
     forbiddenImports: ['@ai-usage/local-collectors', '@ai-usage/report-data', '@ai-usage/web', '@ai-usage/cli'],
     reason: 'usage-store must not depend on collectors, app packages, or report-data.',
+  },
+  {
+    packageName: '@ai-usage/postgres-store',
+    forbiddenDependencies: [],
+    forbiddenImports: ['bun:sqlite', 'node:fs', 'node:http', 'node:https'],
+    reason:
+      'postgres-store may consume only pure platform contracts and must stay independent from local SQLite, HTTP, and repository harness files.',
   },
   {
     packageName: '@ai-usage/report-data',
@@ -106,6 +212,30 @@ const boundaryPolicies: BoundaryPolicy[] = [
     forbiddenDependencies: ['@ai-usage/cli', '@ai-usage/local-collectors', ...retiredPackages],
     forbiddenImports: ['@ai-usage/cli', '@ai-usage/local-collectors', ...retiredPackages],
     reason: 'web must not import CLI, collectors, or retired network adapter packages.',
+  },
+  {
+    packageName: '@ai-usage/server',
+    forbiddenDependencies: [
+      '@ai-usage/cli',
+      '@ai-usage/local-collectors',
+      '@ai-usage/local-machine',
+      '@ai-usage/usage-engine',
+      '@ai-usage/usage-engine-control',
+      '@ai-usage/usage-engine-runtime',
+      '@ai-usage/usage-store',
+      '@ai-usage/web',
+    ],
+    forbiddenImports: [
+      '@ai-usage/cli',
+      '@ai-usage/local-collectors',
+      '@ai-usage/local-machine',
+      '@ai-usage/usage-engine',
+      '@ai-usage/usage-engine-control',
+      '@ai-usage/usage-engine-runtime',
+      '@ai-usage/usage-store',
+      '@ai-usage/web',
+    ],
+    reason: 'server must not compose local usage, collection, machine, CLI, or Web runtimes.',
   },
   {
     packageName: '@ai-usage/local-machine',
@@ -137,6 +267,31 @@ const webPerformanceTestingImporter = 'apps/web/src/hooks.server.ts';
 const usageStoreReader = `${usageStorePackage}/reader`;
 const usageStoreWriter = `${usageStorePackage}/writer`;
 const usageStoreTesting = `${usageStorePackage}/testing`;
+const postgresStorePackage = '@ai-usage/postgres-store';
+const postgresStoreMigrations = `${postgresStorePackage}/migrations`;
+const postgresStorePerformanceTesting = `${postgresStorePackage}/performance-testing`;
+const postgresStoreTesting = `${postgresStorePackage}/testing`;
+const postgresStoreWriter = `${postgresStorePackage}/writer`;
+const platformServerPackage = '@ai-usage/server';
+const platformCorePackage = '@ai-usage/platform-core';
+const authorizationContractPackage = '@ai-usage/authorization-contract';
+const authorizationPackage = '@ai-usage/authorization';
+const identityPackage = '@ai-usage/identity';
+const identitySharedAuthentication = `${identityPackage}/better-auth`;
+const identityTesting = `${identityPackage}/testing`;
+const betterAuthPackage = 'better-auth';
+const betterAuthDrizzleAdapter = '@better-auth/drizzle-adapter';
+const authorizationScopeInternal = `${authorizationPackage}/scope-internal`;
+const projectApplicationPackage = '@ai-usage/project-application';
+const projectRegistryPackage = '@ai-usage/project-registry';
+const memorySqlitePackage = '@ai-usage/memory-sqlite';
+const memorySearchPackage = '@ai-usage/memory-search';
+const memoryServicePackage = '@ai-usage/memory-service';
+const mcpAdapterPackage = '@ai-usage/mcp-adapter';
+const replicationClientPackage = '@ai-usage/replication-client';
+const replicationOutboxPackage = '@ai-usage/replication-outbox';
+const replicationProtocolPackage = '@ai-usage/replication-protocol';
+const mcpSdkPackage = '@modelcontextprotocol/sdk';
 const engineControlPackage = '@ai-usage/usage-engine-control';
 const engineControlTesting = `${engineControlPackage}/testing`;
 const engineRuntimePackage = '@ai-usage/usage-engine-runtime';
@@ -157,6 +312,8 @@ const engineRuntimeAllowedWorkspaceDependencies = new Set([
   '@ai-usage/local-machine',
   '@ai-usage/report-core',
   '@ai-usage/report-data',
+  '@ai-usage/replication-outbox',
+  '@ai-usage/replication-protocol',
   '@ai-usage/usage-engine-control',
   usageMergePackage,
   usageStorePackage,
@@ -178,10 +335,113 @@ const targetDependencyReason = (
   specifier: string,
   applicationPackages: ReadonlySet<string>,
 ): string | undefined => {
+  if (specifier === betterAuthPackage && packageName !== identityPackage) {
+    return 'Only identity may depend directly on Better Auth.';
+  }
+  if (specifier === betterAuthDrizzleAdapter && packageName !== postgresStorePackage) {
+    return 'Only postgres-store may depend on the Better Auth Drizzle adapter.';
+  }
   if (!isWorkspaceSpecifier(specifier)) {
     return;
   }
   const dependencyPackage = workspacePackageNameFor(specifier);
+  if (
+    packageName === postgresStorePackage &&
+    dependencyPackage !== authorizationPackage &&
+    dependencyPackage !== identityPackage &&
+    dependencyPackage !== memorySearchPackage &&
+    dependencyPackage !== memoryServicePackage &&
+    dependencyPackage !== platformCorePackage &&
+    dependencyPackage !== projectApplicationPackage &&
+    dependencyPackage !== projectRegistryPackage &&
+    dependencyPackage !== replicationProtocolPackage
+  ) {
+    return 'postgres-store may depend only on authorization, identity, Memory, platform-core, project, and replication contracts.';
+  }
+  if (
+    packageName === identityPackage &&
+    dependencyPackage !== authorizationPackage &&
+    dependencyPackage !== platformCorePackage
+  ) {
+    return 'identity may depend only on authorization and portable platform-core workspace contracts.';
+  }
+  if (packageName === authorizationContractPackage && dependencyPackage !== platformCorePackage) {
+    return 'authorization-contract may depend only on portable platform-core contracts.';
+  }
+  if (
+    packageName === authorizationPackage &&
+    dependencyPackage !== authorizationContractPackage &&
+    dependencyPackage !== platformCorePackage
+  ) {
+    return 'authorization may depend only on its portable contract and platform-core.';
+  }
+  if (
+    packageName === projectRegistryPackage &&
+    dependencyPackage !== platformCorePackage &&
+    dependencyPackage !== '@ai-usage/report-core'
+  ) {
+    return 'project-registry may depend only on authorization, platform-core, and pure report-core VCS contracts.';
+  }
+  if (
+    packageName === projectApplicationPackage &&
+    dependencyPackage !== authorizationPackage &&
+    dependencyPackage !== platformCorePackage
+  ) {
+    return 'project-application may depend only on authorization and portable platform-core contracts.';
+  }
+  if (
+    packageName === memorySqlitePackage &&
+    dependencyPackage !== authorizationPackage &&
+    dependencyPackage !== memorySearchPackage &&
+    dependencyPackage !== memoryServicePackage &&
+    dependencyPackage !== platformCorePackage &&
+    dependencyPackage !== projectRegistryPackage &&
+    dependencyPackage !== replicationOutboxPackage &&
+    dependencyPackage !== replicationProtocolPackage &&
+    dependencyPackage !== '@ai-usage/report-core'
+  ) {
+    return 'memory-sqlite may depend only on authorization, Memory, platform, project, replication, and test-only report contracts.';
+  }
+  if (
+    packageName === memoryServicePackage &&
+    dependencyPackage !== authorizationContractPackage &&
+    dependencyPackage !== platformCorePackage &&
+    dependencyPackage !== projectRegistryPackage &&
+    dependencyPackage !== replicationProtocolPackage
+  ) {
+    return 'memory-service may depend only on portable authorization, platform, project, and replication contracts.';
+  }
+  if (packageName === replicationProtocolPackage && dependencyPackage !== platformCorePackage) {
+    return 'replication-protocol may depend only on portable platform-core contracts.';
+  }
+  if (
+    packageName === replicationOutboxPackage &&
+    dependencyPackage !== platformCorePackage &&
+    dependencyPackage !== replicationProtocolPackage
+  ) {
+    return 'replication-outbox may depend only on platform-core and replication-protocol.';
+  }
+  if (
+    packageName === replicationClientPackage &&
+    dependencyPackage !== identityPackage &&
+    dependencyPackage !== platformCorePackage &&
+    dependencyPackage !== replicationOutboxPackage &&
+    dependencyPackage !== replicationProtocolPackage
+  ) {
+    return 'replication-client may depend only on identity, platform-core, and portable replication contracts.';
+  }
+  if (
+    packageName === mcpAdapterPackage &&
+    dependencyPackage !== authorizationContractPackage &&
+    dependencyPackage !== memoryServicePackage &&
+    dependencyPackage !== platformCorePackage &&
+    dependencyPackage !== '@ai-usage/skills'
+  ) {
+    return 'mcp-adapter may depend only on portable authorization, Memory application, and identity contracts.';
+  }
+  if (dependencyPackage === memorySqlitePackage && packageName !== engineAppPackage) {
+    return 'Only apps/usage-engine may own the write-capable local Memory SQLite adapter.';
+  }
   if (packageName === engineControlPackage && dependencyPackage !== '@ai-usage/report-core') {
     return 'usage-engine-control may depend only on pure report-core contracts.';
   }
@@ -218,11 +478,79 @@ const targetImportReason = (
   specifier: string,
   applicationPackages: ReadonlySet<string>,
 ): string | undefined => {
+  if (packageName === replicationOutboxPackage && specifier === 'bun:sqlite' && !isTestOnlySource(relativeFile)) {
+    return 'replication-outbox production code must use its portable SQLite port, not open a database.';
+  }
+  if (isPackageOrSubpath(specifier, mcpSdkPackage) && packageName !== mcpAdapterPackage) {
+    return 'Only mcp-adapter may import the MCP protocol SDK directly.';
+  }
+  if (specifier === betterAuthPackage) {
+    if (packageName !== identityPackage) {
+      return 'Only identity may import Better Auth directly.';
+    }
+    if (
+      relativeFile !== 'packages/identity/src/shared-authentication.ts' &&
+      relativeFile !== 'packages/identity/src/session-digest-adapter.ts'
+    ) {
+      return 'Better Auth types and runtime must remain inside identity adapter-private modules.';
+    }
+  }
   if (
-    (isPackageOrSubpath(specifier, usageStoreTesting) || isPackageOrSubpath(specifier, engineControlTesting)) &&
+    specifier === betterAuthDrizzleAdapter &&
+    (packageName !== postgresStorePackage ||
+      relativeFile !== 'packages/postgres-store/src/internal/authentication-adapter.ts')
+  ) {
+    return 'The Better Auth Drizzle adapter is private to the PostgreSQL authentication adapter.';
+  }
+  if (
+    isPackageOrSubpath(specifier, identitySharedAuthentication) &&
+    packageName !== platformServerPackage &&
+    packageName !== postgresStorePackage &&
+    !isTestOnlySource(relativeFile)
+  ) {
+    return 'Shared authentication may be composed only by apps/server and the private PostgreSQL adapter.';
+  }
+  if (
+    (isPackageOrSubpath(specifier, usageStoreTesting) ||
+      isPackageOrSubpath(specifier, engineControlTesting) ||
+      isPackageOrSubpath(specifier, identityTesting) ||
+      isPackageOrSubpath(specifier, postgresStorePerformanceTesting) ||
+      isPackageOrSubpath(specifier, postgresStoreTesting)) &&
     isTestOnlySource(relativeFile)
   ) {
     return;
+  }
+  if (specifier === postgresStorePackage) {
+    return 'The PostgreSQL store has no mixed root export; import an explicit subpath.';
+  }
+  if (
+    specifier === authorizationScopeInternal &&
+    packageName !== postgresStorePackage &&
+    packageName !== memorySqlitePackage &&
+    !isTestOnlySource(relativeFile)
+  ) {
+    return 'Opaque authorization scope internals may be imported only by persistence adapters or test fixtures.';
+  }
+  if (isPackageOrSubpath(specifier, memorySqlitePackage) && packageName !== engineAppPackage) {
+    return 'Only apps/usage-engine may import the write-capable local Memory SQLite adapter.';
+  }
+  if (
+    (specifier === postgresStoreWriter || specifier === postgresStoreMigrations) &&
+    packageName !== platformServerPackage
+  ) {
+    return 'Only apps/server may import PostgreSQL writer and migration capabilities.';
+  }
+  if (
+    (packageName === '@ai-usage/web' || packageName === '@ai-usage/cli') &&
+    isPackageOrSubpath(specifier, postgresStorePackage)
+  ) {
+    return 'Web and CLI production code must remain independent from the shared PostgreSQL store.';
+  }
+  if (
+    (packageName === '@ai-usage/web' || packageName === '@ai-usage/cli') &&
+    isPackageOrSubpath(specifier, authorizationPackage)
+  ) {
+    return 'Web and CLI production code import only transport contracts, never authorization implementation.';
   }
   if (specifier === usageStorePackage) {
     return 'The mixed usage-store root is retired; import reader, writer, or testing explicitly.';
@@ -277,7 +605,13 @@ const targetImportReason = (
   ) {
     return 'CLI may import only the collector-free report-data portable-report facade.';
   }
-  if (isPackageOrSubpath(specifier, usageStoreTesting) || isPackageOrSubpath(specifier, engineControlTesting)) {
+  if (
+    isPackageOrSubpath(specifier, usageStoreTesting) ||
+    isPackageOrSubpath(specifier, engineControlTesting) ||
+    isPackageOrSubpath(specifier, identityTesting) ||
+    isPackageOrSubpath(specifier, postgresStorePerformanceTesting) ||
+    isPackageOrSubpath(specifier, postgresStoreTesting)
+  ) {
     return 'Testing adapters may be imported only by test or fixture source.';
   }
   if (
@@ -433,12 +767,29 @@ async function collectImportViolations(
 
   for (const file of files) {
     const text = await readFile(file, 'utf8');
-    for (const match of text.matchAll(workspaceImportPattern)) {
+    for (const match of text.matchAll(moduleImportPattern)) {
       const specifier = match[1] ?? match[2] ?? match[3];
       if (!specifier) {
         continue;
       }
-      if (!policy.forbiddenImports.some((pattern) => matchesPattern(specifier, pattern))) {
+      const resolvedRelativeImport = specifier.startsWith('.')
+        ? path.resolve(path.dirname(file), specifier)
+        : undefined;
+      const relativeImportEscapesPostgresStore =
+        policy.packageName === postgresStorePackage &&
+        resolvedRelativeImport !== undefined &&
+        (() => {
+          const relativeTarget = path.relative(packageInfo.directory, resolvedRelativeImport);
+          return (
+            relativeTarget === '..' || relativeTarget.startsWith(`..${path.sep}`) || path.isAbsolute(relativeTarget)
+          );
+        })();
+      if (
+        !(
+          relativeImportEscapesPostgresStore ||
+          policy.forbiddenImports.some((pattern) => matchesPattern(specifier, pattern))
+        )
+      ) {
         continue;
       }
       violations.push({
@@ -485,7 +836,7 @@ const collectTargetImportViolations = async (
   for (const file of files) {
     const text = await readFile(file, 'utf8');
     const relativeFile = path.relative(root, file).split(path.sep).join('/');
-    for (const match of text.matchAll(workspaceImportPattern)) {
+    for (const match of text.matchAll(moduleImportPattern)) {
       const specifier = match[1] ?? match[2] ?? match[3];
       if (specifier === undefined) {
         continue;
@@ -644,7 +995,13 @@ const collectApplicationProductionClosureViolations = async (
   root: string,
   packages: ReadonlyMap<string, PackageInfo>,
 ): Promise<PackageBoundaryViolation[]> => {
-  const forbiddenPackages = new Set(['@ai-usage/local-collectors', engineRuntimePackage]);
+  const forbiddenPackages = new Set([
+    '@ai-usage/local-collectors',
+    authorizationPackage,
+    engineRuntimePackage,
+    memorySqlitePackage,
+    postgresStorePackage,
+  ]);
   const violations: PackageBoundaryViolation[] = [];
   const importEdges = await collectProductionWorkspaceImportEdges(root, packages);
   for (const applicationPackage of ['@ai-usage/web', '@ai-usage/cli']) {
@@ -684,7 +1041,7 @@ const collectApplicationProductionClosureViolations = async (
           if (current.packageName !== applicationPackage) {
             violations.push({
               file,
-              message: `${applicationPackage} production dependencies must stay collector- and engine-runtime-free. Reached through ${dependencyPath.join(' -> ')}.`,
+              message: `${applicationPackage} production dependencies must stay collector-, engine-runtime-, authorization-implementation-, Memory-writer-, and PostgreSQL-store-free. Reached through ${dependencyPath.join(' -> ')}.`,
               packageName: applicationPackage,
               specifier: dependencyName,
             });

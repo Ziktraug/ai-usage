@@ -22,6 +22,7 @@
     publicationStatus,
     rtkDependencyStatus,
   } from './publication-status';
+  import ReplicationStatus from './replication-status.svelte';
   import SourceActions from './source-actions.svelte';
   import SourceCard from './source-card.svelte';
   import { actionRow, banner, bannerError, ghostButton, headerActions, headerTop, statusPill } from './styles';
@@ -205,6 +206,7 @@
             </div>
           </details>
         </section>
+        <ReplicationStatus />
         {#if firstRun}
           <section class={cx(panel, sourceCard)} data-first-run-guidance>
             <h2 class={groupTitle}>No local history detected yet</h2>

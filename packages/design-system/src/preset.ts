@@ -123,6 +123,7 @@ export const aiUsagePreset = definePreset({
           // surface plus a whisper of copper, so they read as tinted surfaces
           // rather than saturated brown blocks against the cool neutrals.
           accent: dual('#AC4B12', '#E0833C'),
+          accentContrast: dual('#FFFFFF', '#1F1D19'),
           accentSoft: dual('#F5E6D8', '#332A20'),
           accentTint: dual('#F8F0E5', '#23201B'),
           focusRing: dual('rgba(177, 78, 18, 0.28)', 'rgba(224, 131, 60, 0.35)'),

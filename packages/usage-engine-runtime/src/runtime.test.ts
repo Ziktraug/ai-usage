@@ -323,6 +323,37 @@ describe('usage engine runtime', () => {
     await runtime.dispose();
   });
 
+  test('returns combined replication status without collecting or publishing', async () => {
+    const trace: string[] = [];
+    const sourceControl = createTestSourceControl();
+    const runtime = createUsageEngineRuntime({
+      ...createDependencies({ sourceControl, trace }),
+      readReplicationStatus: () =>
+        Promise.resolve({
+          kind: 'replication-status',
+          lastDiagnostic: null,
+          memory: null,
+          mode: 'connected',
+          runtimeState: 'connecting',
+          usage: null,
+        }),
+    });
+    await runtime.start();
+
+    await runtime.executeCommand({ command: 'replication-status' }, COMMAND_ID);
+    const completion = await runtime.waitForCommand(COMMAND_ID);
+
+    expect(completion).toMatchObject({
+      command: 'replication-status',
+      output: { kind: 'replication-status', mode: 'connected', runtimeState: 'connecting' },
+      state: 'succeeded',
+    });
+    expect(sourceControl.calls.filter((entry) => entry === 'publish')).toHaveLength(0);
+    expect(trace).not.toContain('set-machine-label');
+
+    await runtime.dispose();
+  });
+
   test('cancels a queued command once, cleans its handoff, and coalesces retries to the aborted completion', async () => {
     let releaseActive: (() => void) | undefined;
     let signalActiveStarted: (() => void) | undefined;

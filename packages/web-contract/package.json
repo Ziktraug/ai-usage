@@ -6,6 +6,9 @@
   "exports": {
     ".": "./src/contract.ts",
     "./errors": "./src/errors.ts",
+    "./memory": "./src/memory.ts",
+    "./projects": "./src/projects.ts",
+    "./replication": "./src/replication.ts",
     "./schema-conventions": "./src/schema-conventions.ts",
     "./report": "./src/report.ts",
     "./session": "./src/session.ts",

@@ -1,0 +1,22 @@
+{
+  "name": "@ai-usage/replication-client",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@ai-usage/identity": "workspace:*",
+    "@ai-usage/platform-core": "workspace:*",
+    "@ai-usage/replication-outbox": "workspace:*",
+    "@ai-usage/replication-protocol": "workspace:*"
+  },
+  "scripts": {
+    "build": "tsc --noEmit",
+    "check": "tsc --noEmit",
+    "test": "bun test",
+    "lint": "biome check .",
+    "format": "biome format --write ."
+  }
+}

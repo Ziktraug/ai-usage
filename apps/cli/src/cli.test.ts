@@ -115,11 +115,73 @@ describe('CLI command parsing', () => {
     });
   });
 
+  test('parses bounded Memory search modes and scope', () => {
+    expect(
+      Effect.runSync(
+        parseCommand([
+          'memory',
+          'search',
+          'SQLITE_BUSY: database is locked',
+          '--literal',
+          '--project',
+          '0198f179-4837-7000-8000-000000000020',
+          '--include-space-wide',
+          '--limit',
+          '25',
+          '--json',
+        ]),
+      ),
+    ).toEqual({
+      _tag: 'MemorySearch',
+      args: {
+        cursor: null,
+        includeSpaceWide: true,
+        json: true,
+        limit: 25,
+        matchingMode: 'literal',
+        projectId: '0198f179-4837-7000-8000-000000000020',
+        query: 'SQLITE_BUSY: database is locked',
+      },
+    });
+  });
+
+  test('rejects unsafe or ambiguous Memory search arguments', () => {
+    expect(Effect.runSync(Effect.flip(parseCommand(['memory', 'search']))).message).toBe(
+      'memory search expects a query',
+    );
+    expect(Effect.runSync(Effect.flip(parseCommand(['memory', 'search', 'one', 'two']))).message).toBe(
+      'memory search expects one quoted query',
+    );
+    expect(
+      Effect.runSync(Effect.flip(parseCommand(['memory', 'search', 'query', '--include-space-wide']))).message,
+    ).toBe('--include-space-wide requires --project');
+    expect(Effect.runSync(Effect.flip(parseCommand(['memory', 'search', 'query', '--limit', '26']))).message).toBe(
+      '--limit expects an integer from 1 to 25',
+    );
+  });
+
   test('parses Cursor import command', () => {
     expect(Effect.runSync(parseCommand(['cursor', 'import', '/tmp/export.csv']))).toEqual({
       _tag: 'CursorImport',
       args: { file: '/tmp/export.csv' },
     });
+  });
+
+  test('parses replication status output and rejects mutations', () => {
+    expect(Effect.runSync(parseCommand(['replication', 'status']))).toEqual({
+      _tag: 'ReplicationStatus',
+      args: { json: false },
+    });
+    expect(Effect.runSync(parseCommand(['replication', 'status', '--json']))).toEqual({
+      _tag: 'ReplicationStatus',
+      args: { json: true },
+    });
+    expect(Effect.runSync(Effect.flip(parseCommand(['replication', 'status', '--reset']))).message).toBe(
+      'Unknown option for replication status: --reset',
+    );
+    expect(Effect.runSync(Effect.flip(parseCommand(['replication', 'repair']))).message).toBe(
+      'Unknown replication subcommand: repair',
+    );
   });
 
   test('parses setup with file inputs and local collection', () => {
