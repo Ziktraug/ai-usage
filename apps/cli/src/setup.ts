@@ -11,6 +11,16 @@ export const MAX_SETUP_PROJECT_GROUPS = 256;
 export const MAX_SETUP_PROJECT_SOURCES = 500;
 const BYTE_COUNT_PATTERN = /^\d+$/;
 const LOOPBACK_HOSTNAMES = new Set(['127.0.0.1', '[::1]', 'localhost']);
+const SETUP_RESPONSE_SECURITY_HEADERS = {
+  'cache-control': 'no-store',
+  'content-security-policy':
+    "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+  'cross-origin-opener-policy': 'same-origin',
+  'cross-origin-resource-policy': 'same-origin',
+  'referrer-policy': 'no-referrer',
+  'x-content-type-options': 'nosniff',
+  'x-frame-options': 'DENY',
+} as const;
 
 interface SetupServerOptions {
   maxProjectGroupBodyBytes?: number;
@@ -36,8 +46,15 @@ export interface SetupServerHandle {
   stop: (closeActiveConnections?: boolean) => Promise<void>;
 }
 
+const secureSetupResponse = (response: Response): Response => {
+  for (const [name, value] of Object.entries(SETUP_RESPONSE_SECURITY_HEADERS)) {
+    response.headers.set(name, value);
+  }
+  return response;
+};
+
 const setupJsonFailure = (status: number, tag: string, message: string): Response =>
-  Response.json({ error: { tag, message } }, { status });
+  secureSetupResponse(Response.json({ error: { tag, message } }, { status }));
 
 const isTrustedSetupHost = (host: string): boolean => {
   try {
@@ -97,6 +114,13 @@ const validateSetupMutationOrigin = (request: Request): Response | null => {
     return setupJsonFailure(400, 'InvalidOrigin', 'The request Origin or Host header is invalid.');
   }
   return null;
+};
+
+const validateSetupNavigation = (request: Request): Response | null => {
+  const fetchSite = request.headers.get('sec-fetch-site')?.trim().toLowerCase();
+  return fetchSite && fetchSite !== 'same-origin' && fetchSite !== 'none'
+    ? setupJsonFailure(403, 'CrossSiteNavigation', 'Setup pages must be opened directly or from this application.')
+    : null;
 };
 
 const validateSetupJsonContentType = (request: Request): Response | null => {
@@ -575,7 +599,11 @@ export const createSetupServer = ({
 
       const url = new URL(request.url);
       if (url.pathname === '/' || url.pathname === '/index.html') {
-        return new Response(html, { headers: { 'content-type': 'text/html; charset=utf-8' } });
+        const navigationFailure = validateSetupNavigation(request);
+        if (navigationFailure) {
+          return navigationFailure;
+        }
+        return secureSetupResponse(new Response(html, { headers: { 'content-type': 'text/html; charset=utf-8' } }));
       }
 
       if (url.pathname === '/api/project-groups' && request.method === 'PUT') {
@@ -597,7 +625,7 @@ export const createSetupServer = ({
         }
         try {
           await writeProjectGroups(parsed.projectGroups);
-          return new Response('ok');
+          return secureSetupResponse(new Response('ok'));
         } catch {
           return setupJsonFailure(
             500,
@@ -608,10 +636,10 @@ export const createSetupServer = ({
       }
 
       if (url.pathname === '/api/sources') {
-        return Response.json(sources);
+        return secureSetupResponse(Response.json(sources));
       }
 
-      return new Response('not found', { status: 404 });
+      return secureSetupResponse(new Response('not found', { status: 404 }));
     },
   });
   if (server.port === undefined) {

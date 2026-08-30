@@ -183,7 +183,7 @@ const writeSkillSourceStateUnlocked = async (filePath: string, stateValue: Skill
   await atomicWriteFile(filePath, `${JSON.stringify(stateValue, null, 2)}\n`);
 };
 
-const withSkillSourceStateMutation = async <Result>(
+export const withSkillSourceStateLock = async <Result>(
   sourceRepoPath: string,
   mutation: (canonicalStatePath: string) => Promise<Result>,
 ): Promise<Result> => {
@@ -201,7 +201,7 @@ const withSkillSourceStateMutation = async <Result>(
 };
 
 export const writeSkillSourceState = async (sourceRepoPath: string, stateValue: SkillSourceState): Promise<void> =>
-  withSkillSourceStateMutation(sourceRepoPath, (filePath) => writeSkillSourceStateUnlocked(filePath, stateValue));
+  withSkillSourceStateLock(sourceRepoPath, (filePath) => writeSkillSourceStateUnlocked(filePath, stateValue));
 
 export const setSkillEnabled = async (
   sourceRepoPath: string,
@@ -210,7 +210,7 @@ export const setSkillEnabled = async (
 ): Promise<SkillSourceState> => {
   const parsedSkillName = parseSkillName(skillName);
   const parsedEnabled = parseBoolean(enabled, 'enabled');
-  return await withSkillSourceStateMutation(sourceRepoPath, async (filePath) => {
+  return await withSkillSourceStateLock(sourceRepoPath, async (filePath) => {
     const current = await loadSkillSourceState(sourceRepoPath);
     if (current.diagnostics.some((diagnostic) => diagnostic.severity === 'error')) {
       throw new Error('source skill state must be readable JSON before it can be updated');

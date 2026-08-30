@@ -216,8 +216,8 @@ export const createSkillObservationStore = (dependencies: SkillObservationStoreD
 
   /**
    * Re-import of an unchanged transcript is the normal case, not an error: the
-   * collectors re-scan on every sweep. A repeated observation refreshes
-   * `last_observed_at` and counts as unchanged.
+   * collectors re-scan on every sweep. A repeated observation counts as
+   * unchanged without issuing a write or refreshing `last_observed_at`.
    */
   const importSkillObservations = (
     input: ImportSkillObservationsInput,
@@ -297,6 +297,10 @@ export const createSkillObservationStore = (dependencies: SkillObservationStoreD
                 observation.tier,
                 observation.observationKey,
               ) as StoredContentRecord | null;
+              if (stored !== null && sameStoredContent(stored, observation)) {
+                result.unchanged++;
+                continue;
+              }
               insert.run(
                 observation.harnessKey,
                 observation.skillName,
@@ -314,8 +318,6 @@ export const createSkillObservationStore = (dependencies: SkillObservationStoreD
               );
               if (stored === null) {
                 result.inserted++;
-              } else if (sameStoredContent(stored, observation)) {
-                result.unchanged++;
               } else {
                 // The upsert above just rewrote six semantic fields. Reporting
                 // that as `unchanged` would tell the engine nothing happened

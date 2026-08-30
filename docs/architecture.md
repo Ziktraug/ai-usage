@@ -706,6 +706,10 @@ Portable source-repository state is JSON data, never executable TypeScript.
 Projection plans capture a non-symlink target's canonical/device/inode identity
 and revalidate it under a cross-process lock. Target creation walks and
 validates every component instead of recursively creating an unobserved tree.
+Reconciliation takes the source-state lock before any target projection lock
+and revalidates the current enabled intent before mutation, so a concurrently
+superseded create, repair, or unlink plan becomes a no-op. No projection path
+acquires those locks in the opposite order.
 Portable Node APIs narrow common races but do not claim complete protection
 from a hostile same-UID actor inside every syscall window.
 

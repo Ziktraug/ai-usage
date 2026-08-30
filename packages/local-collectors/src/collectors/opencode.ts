@@ -454,6 +454,7 @@ export const collectOpenCodeResult: Effect.Effect<
   const seenObservations = new Set<string>();
   let rejectedMetricRecords = 0;
   let rejectedObservations = 0;
+  let databaseReadIncomplete = false;
   let observationsTruncated = false;
   const appendRows = (
     target: CollectorRow[],
@@ -491,6 +492,7 @@ export const collectOpenCodeResult: Effect.Effect<
       }),
     );
     if (result._tag === 'failure') {
+      databaseReadIncomplete = true;
       warnings.push(
         localHistoryWarningFromError(result.error, {
           harness: 'opencode',
@@ -511,6 +513,7 @@ export const collectOpenCodeResult: Effect.Effect<
       }),
     );
     if (result._tag === 'failure') {
+      databaseReadIncomplete = true;
       warnings.push(
         localHistoryWarningFromError(result.error, {
           harness: 'opencode',
@@ -542,7 +545,7 @@ export const collectOpenCodeResult: Effect.Effect<
   return {
     observationCompleteness: {
       exposure: { rejected: 0, truncated: false },
-      invocation: { rejected: rejectedObservations, truncated: observationsTruncated },
+      invocation: { rejected: rejectedObservations, truncated: observationsTruncated || databaseReadIncomplete },
     },
     observations,
     rows: [...liveRows, ...stableRows],

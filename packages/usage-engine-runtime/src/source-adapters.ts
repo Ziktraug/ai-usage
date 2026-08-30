@@ -19,6 +19,8 @@ import {
 import { ensureMachineConfig, readMergedAiUsageConfigFrom } from '@ai-usage/local-machine/machine-config';
 import { firstExisting, resolvePathCandidates } from '@ai-usage/local-machine/platform-paths';
 import {
+  MAX_SKILL_OBSERVATION_BATCH,
+  parseSkillObservation,
   SKILL_OBSERVATION_RETENTION_MS,
   type SkillObservation,
   type SkillObservationCollectionCompleteness,
@@ -245,6 +247,80 @@ const collectHarness = (
   return adapter.collect.pipe(Effect.map((rows) => ({ rows, warnings: [] })));
 };
 
+interface SkillObservationImportCandidate {
+  readonly index: number;
+  readonly normalizedObservedAt: string | null;
+  readonly observation: SkillObservation;
+}
+
+export interface PreparedSkillObservationImport {
+  readonly completeness: SkillObservationCollectionCompleteness;
+  readonly observations: readonly SkillObservation[];
+}
+
+/**
+ * Applies the engine-owned retention and write budgets before the store sees a
+ * rescan. Actual invocations get the budget first: catalogue exposure is both
+ * much larger and weaker evidence, so letting it compete in one pooled slice
+ * can erase the exact observations the Skills surface exists to report.
+ */
+export const prepareSkillObservationImport = (input: {
+  readonly completeness: SkillObservationCollectionCompleteness;
+  readonly maximumObservations?: number;
+  readonly minimumObservedAt: string;
+  readonly observations: readonly SkillObservation[];
+}): PreparedSkillObservationImport => {
+  const maximumObservations = input.maximumObservations ?? MAX_SKILL_OBSERVATION_BATCH;
+  if (
+    !Number.isSafeInteger(maximumObservations) ||
+    maximumObservations <= 0 ||
+    maximumObservations > MAX_SKILL_OBSERVATION_BATCH
+  ) {
+    throw new RangeError('Skill observation import budget is invalid');
+  }
+
+  const retained: SkillObservationImportCandidate[] = input.observations.flatMap((observation, index) => {
+    const parsed = parseSkillObservation(observation);
+    if (parsed !== null && parsed.observedAt < input.minimumObservedAt) {
+      return [];
+    }
+    return [{ index, normalizedObservedAt: parsed?.observedAt ?? null, observation }];
+  });
+  const completeness: SkillObservationCollectionCompleteness = {
+    exposure: { ...input.completeness.exposure },
+    invocation: { ...input.completeness.invocation },
+  };
+  if (retained.length <= maximumObservations) {
+    return { completeness, observations: retained.map(({ observation }) => observation) };
+  }
+
+  const byRecency = (left: SkillObservationImportCandidate, right: SkillObservationImportCandidate): number => {
+    // Invalid internal candidates stay at the front so the store can reject and
+    // count them instead of an engine-side bound silently hiding the defect.
+    if (left.normalizedObservedAt === null || right.normalizedObservedAt === null) {
+      if (left.normalizedObservedAt === right.normalizedObservedAt) {
+        return left.index - right.index;
+      }
+      return left.normalizedObservedAt === null ? -1 : 1;
+    }
+    if (left.normalizedObservedAt !== right.normalizedObservedAt) {
+      return left.normalizedObservedAt < right.normalizedObservedAt ? 1 : -1;
+    }
+    return left.index - right.index;
+  };
+  const invocation = retained.filter(({ observation }) => observation.tier !== 'exposed').sort(byRecency);
+  const exposure = retained.filter(({ observation }) => observation.tier === 'exposed').sort(byRecency);
+  const keptInvocation = invocation.slice(0, maximumObservations);
+  const exposureBudget = maximumObservations - keptInvocation.length;
+  const keptExposure = exposure.slice(0, exposureBudget);
+  completeness.invocation.truncated ||= keptInvocation.length < invocation.length;
+  completeness.exposure.truncated ||= keptExposure.length < exposure.length;
+  return {
+    completeness,
+    observations: [...keptInvocation, ...keptExposure].map(({ observation }) => observation),
+  };
+};
+
 const createSessionSource = (input: {
   adapter: () => Effect.Effect<HarnessAdapter, SourceRunError>;
   dbPath: string;
@@ -296,23 +372,28 @@ const createSessionSource = (input: {
       // written on the same engine-owned pass as the rows they were parsed
       // beside. The engine is the only writer (ADR 0009), so this is the one
       // place they can reach the store.
-      const observations = collection.observations ?? [];
+      const minimumObservedAt = new Date(input.now().getTime() - SKILL_OBSERVATION_RETENTION_MS).toISOString();
+      const preparedObservations = prepareSkillObservationImport({
+        completeness: collection.observationCompleteness ?? {
+          exposure: { rejected: 0, truncated: true },
+          invocation: { rejected: 0, truncated: true },
+        },
+        minimumObservedAt,
+        observations: collection.observations ?? [],
+      });
       yield* abortIfRequested(context.signal);
       const importedObservations =
         collection.observations === undefined
           ? { inserted: 0, rejected: 0, stateChanged: false, unchanged: 0, updated: 0 }
           : yield* importSkillObservations({
               collection: {
-                completeness: collection.observationCompleteness ?? {
-                  exposure: { rejected: 0, truncated: true },
-                  invocation: { rejected: 0, truncated: true },
-                },
+                completeness: preparedObservations.completeness,
                 harnessKey: adapter.metadata.key,
               },
               dbPath: input.dbPath,
               machineId: input.machine.id,
-              minimumObservedAt: new Date(input.now().getTime() - SKILL_OBSERVATION_RETENTION_MS).toISOString(),
-              observations,
+              minimumObservedAt,
+              observations: preparedObservations.observations,
             }).pipe(Effect.mapError((cause) => sourceFailure(input.id, cause)));
       const warnings = sanitizeSourceWarnings(input.label, [...collection.warnings, ...retentionWarnings]);
       return {

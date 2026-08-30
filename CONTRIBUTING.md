@@ -35,7 +35,9 @@ app connection.
   engine state/rendezvous/inbox, log directory, port, and fixture. Never inspect
   or mutate a maintainer's existing ai-usage state.
 - Add focused regression coverage and preserve accessibility, cancellation, exact-revision, and loopback-only behavior.
-- Run `bun run fix`, then the relevant tests. Before submitting a broad change, run `bun run check`, `bun run lint`, `bun run typecheck`, `bun run test`, and `bun run build`.
+- Run `bun run fix`, then the relevant tests. Before submitting a broad change,
+  run `bun run verify`; browser behavior changes must also run the relevant E2E
+  gate.
 
 For a file-level SQLite backup, stop the usage engine cleanly first. Do not copy
 the main database alone while WAL may be active, and do not treat writer locks,

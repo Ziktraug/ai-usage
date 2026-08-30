@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { lstat, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, readlink, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
@@ -11,6 +11,53 @@ import {
   toggleSkillEnabled,
   writeSkillManagementConfig,
 } from './workflows';
+
+const exampleSkillMarkdown = `---
+name: example-skill
+description: Helps with examples
+---
+# Example
+`;
+
+const createIntentRaceFixture = async (prefix: string, initialEnabled: boolean, projected: boolean) => {
+  const root = await mkdtemp(path.join(tmpdir(), prefix));
+  const sourceRepoPath = path.join(root, 'source');
+  const targetPath = path.join(root, 'target');
+  const skillPath = path.join(sourceRepoPath, 'skills', 'example-skill');
+  const projectionPath = path.join(targetPath, 'example-skill');
+  await mkdir(skillPath, { recursive: true });
+  await mkdir(targetPath, { recursive: true });
+  await writeFile(path.join(skillPath, 'SKILL.md'), exampleSkillMarkdown, 'utf8');
+  if (projected) {
+    await symlink(skillPath, projectionPath);
+  }
+  if (!initialEnabled) {
+    await toggleSkillEnabled({ enabled: false, skillName: 'example-skill', sourceRepoPath });
+  }
+  return {
+    input: {
+      config: {
+        skills: {
+          sourceRepoPath,
+          targets: {
+            codex: {
+              enabled: true,
+              kind: 'standard-interop',
+              path: targetPath,
+              scope: 'system',
+            },
+          },
+        },
+      },
+      homePath: root,
+      skillName: 'example-skill',
+    } as const,
+    projectionPath,
+    root,
+    skillPath,
+    sourceRepoPath,
+  };
+};
 
 describe('skill management workflows', () => {
   test('returns a UI-safe unconfigured snapshot', async () => {
@@ -443,6 +490,76 @@ description: Helps with examples
       await expect(lstat(path.join(targetPath, 'example-skill'))).rejects.toThrow();
     } finally {
       await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test('a concurrent disable supersedes a planned projection creation', async () => {
+    const fixture = await createIntentRaceFixture('ai-usage-skills-disable-create-race-', true, false);
+    try {
+      const planningReached = Promise.withResolvers<void>();
+      const continueApplying = Promise.withResolvers<void>();
+
+      const reconcile = reconcileSkill(fixture.input, {
+        afterPlanning: async (actions) => {
+          planningReached.resolve();
+          expect(actions.map((action) => action.type)).toEqual(['create-symlink']);
+          await continueApplying.promise;
+        },
+      });
+      await planningReached.promise;
+      await toggleSkillEnabled({ enabled: false, skillName: 'example-skill', sourceRepoPath: fixture.sourceRepoPath });
+      continueApplying.resolve();
+      const result = await reconcile;
+
+      expect(result.actions).toEqual([
+        {
+          path: fixture.projectionPath,
+          reason: 'source skill enabled state changed after planning',
+          skillName: 'example-skill',
+          targetId: 'codex',
+          type: 'noop',
+        },
+      ]);
+      expect(result.snapshot.skills[0]?.enabled).toBe(false);
+      expect(result.snapshot.projections[0]?.state).toBe('missing');
+      await expect(lstat(fixture.projectionPath)).rejects.toThrow();
+    } finally {
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  });
+
+  test('a concurrent enable supersedes a planned projection unlink', async () => {
+    const fixture = await createIntentRaceFixture('ai-usage-skills-enable-unlink-race-', false, true);
+    try {
+      const planningReached = Promise.withResolvers<void>();
+      const continueApplying = Promise.withResolvers<void>();
+
+      const reconcile = reconcileSkill(fixture.input, {
+        afterPlanning: async (actions) => {
+          planningReached.resolve();
+          expect(actions.map((action) => action.type)).toEqual(['unlink-managed-symlink']);
+          await continueApplying.promise;
+        },
+      });
+      await planningReached.promise;
+      await toggleSkillEnabled({ enabled: true, skillName: 'example-skill', sourceRepoPath: fixture.sourceRepoPath });
+      continueApplying.resolve();
+      const result = await reconcile;
+
+      expect(result.actions).toEqual([
+        {
+          path: fixture.projectionPath,
+          reason: 'source skill enabled state changed after planning',
+          skillName: 'example-skill',
+          targetId: 'codex',
+          type: 'noop',
+        },
+      ]);
+      expect(result.snapshot.skills[0]?.enabled).toBe(true);
+      expect(result.snapshot.projections[0]?.state).toBe('linked');
+      await expect(readlink(fixture.projectionPath)).resolves.toBe(fixture.skillPath);
+    } finally {
+      await rm(fixture.root, { recursive: true, force: true });
     }
   });
 });

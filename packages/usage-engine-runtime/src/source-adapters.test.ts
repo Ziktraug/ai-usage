@@ -5,6 +5,7 @@ import path from 'node:path';
 import type { ProviderQuotaBatchSource } from '@ai-usage/local-collectors';
 import { setClaudeSkillObservationCeilingForTesting } from '@ai-usage/local-machine/claude-session-facts';
 import { createLocalHistoryStorage, LocalHistoryStorage } from '@ai-usage/local-machine/local-history';
+import { completeSkillObservationCollection, type SkillObservation } from '@ai-usage/report-core/skill-observation';
 import { collectionSourceIds } from '@ai-usage/report-core/source-control';
 import { querySkillObservationDataset } from '@ai-usage/report-data/skill-observation-read';
 import {
@@ -17,7 +18,7 @@ import {
 } from '@ai-usage/usage-store/testing';
 import { Duration, Effect, Exit } from 'effect';
 import { stageCursorUsageExport } from './input-file';
-import { createScheduledSourceRegistry, type SourceRunContext } from './source-adapters';
+import { createScheduledSourceRegistry, prepareSkillObservationImport, type SourceRunContext } from './source-adapters';
 
 const machine = { id: 'machine-a', label: 'Machine A' };
 
@@ -120,6 +121,88 @@ const progressContext = (progress: unknown[]): SourceRunContext => ({
     Effect.sync(() => {
       progress.push(update);
     }),
+});
+
+const skillObservation = (overrides: Partial<SkillObservation> = {}): SkillObservation => ({
+  argsPresent: true,
+  harnessKey: 'codex',
+  observationKey: 'observation-1',
+  observedAt: '2026-08-20T10:00:00.000Z',
+  projectPath: '/work/project',
+  resolvedPath: '/home/alex/.codex/skills/improve',
+  sessionId: 'session-1',
+  skillName: 'improve',
+  success: true,
+  tier: 'declared',
+  ...overrides,
+});
+
+describe('skill observation import preparation', () => {
+  test('applies retention before the bounded write batch', () => {
+    const prepared = prepareSkillObservationImport({
+      completeness: completeSkillObservationCollection(),
+      maximumObservations: 2,
+      minimumObservedAt: '2026-08-01T00:00:00.000Z',
+      observations: [
+        skillObservation({ observationKey: 'expired-1', observedAt: '2025-01-01T00:00:00.000Z' }),
+        skillObservation({ observationKey: 'expired-2', observedAt: '2025-01-02T00:00:00.000Z' }),
+        skillObservation({ observationKey: 'current-1' }),
+        skillObservation({ observationKey: 'current-2', tier: 'exposed' }),
+      ],
+    });
+
+    expect(prepared.observations.map(({ observationKey }) => observationKey)).toEqual(['current-1', 'current-2']);
+    expect(prepared.completeness).toEqual(completeSkillObservationCollection());
+  });
+
+  test('spends a saturated batch on invocation evidence before exposure', () => {
+    const prepared = prepareSkillObservationImport({
+      completeness: completeSkillObservationCollection(),
+      maximumObservations: 2,
+      minimumObservedAt: '2026-08-01T00:00:00.000Z',
+      observations: [
+        skillObservation({
+          observationKey: 'exposed-newest',
+          observedAt: '2026-08-29T00:00:00.000Z',
+          tier: 'exposed',
+        }),
+        skillObservation({ observationKey: 'declared', observedAt: '2026-08-20T00:00:00.000Z' }),
+        skillObservation({
+          observationKey: 'inferred',
+          observedAt: '2026-08-21T00:00:00.000Z',
+          tier: 'inferred',
+        }),
+      ],
+    });
+
+    expect(prepared.observations.map(({ observationKey }) => observationKey)).toEqual(['inferred', 'declared']);
+    expect(prepared.completeness).toEqual({
+      exposure: { rejected: 0, truncated: true },
+      invocation: { rejected: 0, truncated: false },
+    });
+  });
+
+  test('reports when invocation evidence itself exceeds the batch', () => {
+    const prepared = prepareSkillObservationImport({
+      completeness: completeSkillObservationCollection(),
+      maximumObservations: 1,
+      minimumObservedAt: '2026-08-01T00:00:00.000Z',
+      observations: [
+        skillObservation({ observationKey: 'declared', observedAt: '2026-08-20T00:00:00.000Z' }),
+        skillObservation({
+          observationKey: 'inferred-newest',
+          observedAt: '2026-08-21T00:00:00.000Z',
+          tier: 'inferred',
+        }),
+      ],
+    });
+
+    expect(prepared.observations.map(({ observationKey }) => observationKey)).toEqual(['inferred-newest']);
+    expect(prepared.completeness).toEqual({
+      exposure: { rejected: 0, truncated: false },
+      invocation: { rejected: 0, truncated: true },
+    });
+  });
 });
 
 describe('scheduled source adapters', () => {

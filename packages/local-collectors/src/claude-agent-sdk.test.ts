@@ -1,6 +1,11 @@
 import { describe, expect, test } from 'bun:test';
+import { tmpdir } from 'node:os';
 import { Effect, Exit } from 'effect';
-import { type ClaudeUsageQuery, createClaudeAgentSdkBatchSource } from './claude-agent-sdk';
+import {
+  type ClaudeUsageQuery,
+  createClaudeAgentSdkBatchSource,
+  createClaudeQuotaQueryOptions,
+} from './claude-agent-sdk';
 
 const REQUEST = {
   machineId: 'machine-1',
@@ -54,6 +59,25 @@ const collect = async (result: unknown, onInterrupt?: () => void) =>
   await Effect.runPromise(sourceReturning(result, onInterrupt).collect(REQUEST));
 
 describe('Claude Agent SDK quota source', () => {
+  test('opens the production control session without ambient agent configuration', () => {
+    expect(createClaudeQuotaQueryOptions()).toEqual({
+      additionalDirectories: [],
+      agents: {},
+      allowedTools: [],
+      cwd: tmpdir(),
+      hooks: {},
+      mcpServers: {},
+      permissionMode: 'dontAsk',
+      persistSession: false,
+      plugins: [],
+      settings: { disableAllHooks: true },
+      settingSources: [],
+      skills: [],
+      strictMcpConfig: true,
+      tools: [],
+    });
+  });
+
   test('maps the limits array into provider windows', async () => {
     const batch = await collect(livePayload());
     const [observation] = batch.observations;

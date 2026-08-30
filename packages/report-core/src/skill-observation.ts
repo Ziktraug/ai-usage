@@ -54,7 +54,7 @@ export const SKILL_OBSERVATION_RETENTION_MS = 400 * 24 * 60 * 60 * 1000;
 export interface SkillObservationCompletenessPart {
   /** Candidates that looked like observations but failed validation. */
   rejected: number;
-  /** A producer-side bound stopped before every candidate was inspected. */
+  /** A producer-side bound or partial read stopped before every candidate was inspected. */
   truncated: boolean;
 }
 

@@ -91,19 +91,34 @@ describe('skill observation store', () => {
     ]);
   });
 
-  test('re-importing an unchanged observation does not multiply the count', async () => {
+  test('re-importing an unchanged observation neither multiplies nor rewrites the row', async () => {
     const dbPath = await createStore('skill-idempotent');
+    const firstImportedAt = new Date('2026-08-20T10:00:00.000Z');
     const first = await Effect.runPromise(
-      importSkillObservations({ dbPath, machineId: MACHINE, observations: [observation()] }),
+      importSkillObservations({
+        dbPath,
+        importedAt: firstImportedAt,
+        machineId: MACHINE,
+        observations: [observation()],
+      }),
     );
     const second = await Effect.runPromise(
-      importSkillObservations({ dbPath, machineId: MACHINE, observations: [observation()] }),
+      importSkillObservations({
+        dbPath,
+        importedAt: new Date('2026-08-20T10:01:00.000Z'),
+        machineId: MACHINE,
+        observations: [observation()],
+      }),
     );
     const read = await Effect.runPromise(querySkillObservations({ dbPath }));
 
     expect(first).toEqual({ inserted: 1, rejected: 0, stateChanged: false, unchanged: 0, updated: 0 });
     expect(second).toEqual({ inserted: 0, rejected: 0, stateChanged: false, unchanged: 1, updated: 0 });
     expect(read.observations).toHaveLength(1);
+    expect(read.observations[0]).toMatchObject({
+      firstObservedAt: firstImportedAt.toISOString(),
+      lastObservedAt: firstImportedAt.toISOString(),
+    });
   });
 
   test('the same observation key in two harnesses is two observations', async () => {

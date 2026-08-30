@@ -29,6 +29,8 @@ The feature provides a local control plane for inspecting, editing, enabling, an
 - Preview bulk reconciliation before applying it.
 - Create configured target directories only after an explicit user action.
 - Reconcile valid enabled skills as managed symlinks and unlink only managed projections for disabled skills.
+- Revalidate the current enabled state while holding the source-state lock before applying a planned projection
+  mutation; acquire that lock before the target projection lock.
 - Refuse to overwrite copied directories, unmanaged files, changed observations, or paths that escape configured roots.
 - Serialize source-state and Markdown writes across processes and publish them atomically.
 

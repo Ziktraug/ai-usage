@@ -240,6 +240,7 @@ describe('real SQLite harness collectors', () => {
     const mainResult = await runAtHome(mainHome, collectOpenCodeResult);
 
     expect(mainResult.rows).toEqual([]);
+    expect(mainResult.observationCompleteness.invocation.truncated).toBe(true);
     expect(mainResult.warnings).toHaveLength(1);
     expect(mainResult.warnings[0]).toMatchObject({
       harness: 'opencode',
@@ -259,6 +260,7 @@ describe('real SQLite harness collectors', () => {
     const walResult = await runAtHome(walHome, collectOpenCodeResult);
 
     expect(walResult.rows).toEqual([]);
+    expect(walResult.observationCompleteness.invocation.truncated).toBe(true);
     expect(walResult.warnings).toHaveLength(1);
     expect(walResult.warnings[0]).toMatchObject({
       harness: 'opencode',
