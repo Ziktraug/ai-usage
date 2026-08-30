@@ -23,7 +23,7 @@ Superseded alternatives remain in Git history and are not executable guidance.
 - **Depends on**: 101, 102, 103, 104, 105
 - **Category**: connected multi-device replication and shared read model
 - **Planned at**: commit `dac2214c`, 2026-08-26
-- **Implementation status**: TODO
+- **Implementation status**: IN PROGRESS
 
 ## Topology and ownership
 

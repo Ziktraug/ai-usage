@@ -26,7 +26,7 @@ Superseded alternatives remain in Git history and are not executable guidance.
 - **Depends on**: 100, 101, 102
 - **Category**: local/shared Agent Memory domain and migration
 - **Planned at**: commit `dac2214c`, 2026-08-26
-- **Implementation status**: TODO
+- **Implementation status**: DONE
 
 ## Locked topology
 
@@ -446,3 +446,44 @@ Stop and report when:
 - WorkHandoff domain (plan 108);
 - session archives/native conversion;
 - hosted LLM generation or public plugin APIs.
+
+## Execution log — 2026-08-30
+
+- Inventoried the external NixOS implementation at commit
+  `71915d4566dd1079ec4fa8bd14666d59e4e1bbef`. The command/flag, Markdown,
+  JSONL, fingerprint/watermark, layout, redaction, lock, adapter, and synthetic
+  scenario inventory is recorded without private content in
+  `packages/memory-service/README.md`.
+- Added one storage-independent Memory domain/application surface plus shared
+  conformance over the dedicated local SQLite authority and PostgreSQL. The
+  portable `authorization-contract` keeps Web and other transport consumers
+  free of authorization implementation dependencies; complete scopes are
+  materialized before proposal, item, or export content reads.
+- Composed the local sole writer in `apps/usage-engine`, including the bounded
+  authenticated numeric-loopback Memory service, private rendezvous, durable
+  outbox, non-replacing owner-only coherent backup, and a zero-platform-call
+  local-independence gate.
+- Delivered the local Web proposal-review vertical: provenance, trust and
+  sensitivity inspection, accept, edit-then-accept, and reject through oRPC and
+  TanStack Query, with SSR, accessibility, and browser coverage.
+- Implemented bounded synthetic legacy/native import as
+  scan/preview/state-bound-confirm, durable idempotency, quarantine without
+  partial content mutations, deterministic Markdown/JSONL export, and privacy
+  purge through content, relations, authorization rows, and unsent outbox
+  derivatives. The content-free mapping is
+  `packages/memory-service/migration-mapping.json`.
+- The documented intentional re-import losses are limited to collapsing
+  historical exported revisions into one current import revision, collapsing
+  person scope to Space scope, omitting non-supersession relations, and
+  representing rejected exported items as rejected proposals. Stable accepted
+  identities, current content, kind, status, trust, sensitivity, supersession,
+  and bounded provenance remain portable.
+- Verification passed: formatting/lint/type coverage, all package/tool tests,
+  41 real PostgreSQL tests, identical SQLite/PostgreSQL Memory conformance,
+  local independence with zero platform/authentication factory calls, build,
+  client-manifest and bundle guards, production startup, dev/build isolation,
+  and 181 Playwright tests. Authorization scope materialization measured
+  p95 4.815 ms on the plan-103 reference workload, below its 150 ms trigger.
+- The NixOS source remains active and untouched. Compatibility is deliberately
+  retained until plan 106 supplies search/MCP and the remaining representative
+  command/adapter parity; no adapter switch or source deletion happened here.

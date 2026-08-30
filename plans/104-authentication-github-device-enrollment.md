@@ -22,7 +22,7 @@ Superseded alternatives remain in Git history and are not executable guidance.
 - **Depends on**: 102, 103
 - **Category**: shared authentication, SCM connections, Device trust
 - **Planned at**: commit `dac2214c`, 2026-08-26
-- **Implementation status**: TODO; non-GitHub login BLOCKED in V1
+- **Implementation status**: DONE; non-GitHub login remains explicitly BLOCKED in V1
 
 ## V1 decisions
 

@@ -163,14 +163,14 @@ read-only SQLite and the permanent browser/server and demo-isolation boundaries.
 | 097 | Sync, Sources, Projects: Duplication and Jargon | P1 | M | 088 (fleet "Sessions" label) | DONE |
 | 098 | Session Drawer, Analysis, and Report Chrome Polish | P2 | M | 088 (drawer, records); 093/094 if they touched `preset.ts` | DONE |
 | 099 | Evolve ai-usage Into a Multi-Tenant AI Operations and Memory Platform (program plan) | P0 | L (program) | 100-110 | TODO |
-| 100 | Define the Platform Topology, Capability Modules, and Data Ownership | P0 | L | - | TODO |
-| 101 | Add the PostgreSQL Server Foundation Without Replacing the Local SQLite Engine | P0 | L | 100 | TODO |
-| 102 | Introduce Stable Spaces, People, Devices, Repositories, Projects, and Checkouts | P0 | L | 100, 101 | TODO |
-| 103 | Model Authorization With ReBAC, Content Boundaries, and Aggregate-Only Roles | P0 | XL | 100-102 | TODO |
-| 104 | Add Authentication, GitHub Identity Separation, and Device Enrollment | P1 | L | 102, 103 | TODO (connected V1 is GitHub-only; non-GitHub login is BLOCKED) |
-| 105 | Migrate Agent Memory From NixOS Files Into a DB-Native Domain | P1 | XL | 100-102 | TODO |
-| 106 | Build Authorized Hybrid Memory Search and a Harness-Agnostic MCP Adapter | P1 | XL | 102, 105 (local/single-user shared); 103, 104 (organization-connected) | TODO |
-| 107 | Replicate Local Machine Facts to the Server With an Idempotent Outbox Protocol | P1 | XL | 101-105 | TODO |
+| 100 | Define the Platform Topology, Capability Modules, and Data Ownership | P0 | L | - | DONE |
+| 101 | Add the PostgreSQL Server Foundation Without Replacing the Local SQLite Engine | P0 | L | 100 | DONE |
+| 102 | Introduce Stable Spaces, People, Devices, Repositories, Projects, and Checkouts | P0 | L | 100, 101 | DONE |
+| 103 | Model Authorization With ReBAC, Content Boundaries, and Aggregate-Only Roles | P0 | XL | 100-102 | DONE |
+| 104 | Add Authentication, GitHub Identity Separation, and Device Enrollment | P1 | L | 102, 103 | DONE (connected V1 is GitHub-only; non-GitHub login remains explicitly BLOCKED) |
+| 105 | Migrate Agent Memory From NixOS Files Into a DB-Native Domain | P1 | XL | 100-102 | DONE |
+| 106 | Build Authorized Hybrid Memory Search and a Harness-Agnostic MCP Adapter | P1 | XL | 102, 105 (local/single-user shared); 103, 104 (organization-connected) | DONE |
+| 107 | Replicate Local Machine Facts to the Server With an Idempotent Outbox Protocol | P1 | XL | 101-105 | IN PROGRESS |
 | 108 | Add Cross-Harness Work Handoffs and Work Threads | P1 | L | 102, 105, 106 (local); 107 (connected) | TODO |
 | 109 | Archive Session Detail Safely for Cross-Machine Read-Only Continuity | P2 | L | 103, 104, 107, 108 connected phase | TODO |
 | 110 | Spike Native Session Portability Across Claude, Codex, OpenCode, and Cursor | P2 | L (spike) | 108, 109 | TODO |

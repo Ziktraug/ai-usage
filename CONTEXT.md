@@ -35,14 +35,35 @@ the revision and never silently switch to current.
 _Avoid_: copied database, artifact directory, live unversioned query
 
 **Data plane**:
-The durable SQLite database queried directly through read-only/query-only
-connections by Web and CLI.
-_Avoid_: control HTTP, report endpoint
+The durable storage authorities behind explicit application and reader ports.
+The existing usage SQLite database remains the report data plane queried
+directly by Web and CLI through read-only/query-only connections. The dedicated
+local Memory SQLite database and shared PostgreSQL database are separate
+authorities; their presence does not authorize Web, CLI, or MCP to open
+write-capable connections or imply that one reader queries all three.
+_Avoid_: control HTTP, report endpoint, one undifferentiated database
 
 **Control plane**:
 The authenticated numeric-loopback usage-engine surface carrying only commands,
 status, and bounded sanitized SSE events.
-_Avoid_: data API, report transport, remote service
+It is neither a Memory service/IPC seam nor the connected platform/server.
+_Avoid_: data API, report transport, remote service, platform API
+
+**Memory service**:
+The separately named, authenticated numeric-loopback application-service seam
+for local Memory-domain reads and mutations. Its protocol, bearer token,
+rendezvous, and lifecycle are independent from the usage-engine control plane;
+the current local surface exposes bounded Project-resolution and Memory-
+proposal review workflows. Import/export remain explicit application-service
+operations rather than implicit file synchronization.
+_Avoid_: control plane, report API, public platform endpoint
+
+**Platform/server**:
+The connected shared application surface. It authenticates external requests,
+calls application services, and composes the sole PostgreSQL writer. It never
+reads machine-local harness files and does not replace the local usage-engine
+control plane.
+_Avoid_: control plane, usage engine, local collector
 
 **Enrichment contribution**:
 A versioned, validated value owned by one enricher and keyed to a stable base usage-row identity. Report reads compose it with the producer-owned base row; neither writer replaces the other's durable data.
@@ -93,6 +114,107 @@ _Avoid_: usage snapshot, database backup, report payload
 An explicit export, out-of-band file copy, and import. It does not imply discovery, a listener available to another machine, or background synchronization.
 _Avoid_: pairing, replication, automatic transfer
 
+**Person**:
+The stable domain identity of one human. A Person is independent of login
+identities, SCM accounts, Devices, and display handles, and owns one personal
+Space in the identity kernel.
+_Avoid_: user account, GitHub user, device owner record
+
+**Authentication identity**:
+One verified login identity linked to a Person. It proves an authentication
+event; it is not an SCM account, an SCM installation, or a Device credential.
+_Avoid_: Person, SCM account, bearer token
+
+**SCM account**:
+One Person-scoped source-control-provider identity with a required Person. It
+does not represent an organization installation or carry a recoverable secret
+inline.
+_Avoid_: authentication identity, SCM installation, nullable-person account
+
+**SCM installation**:
+One Space-scoped provider installation or repository grant. It belongs to the
+Space rather than to one Person and never assigns content ownership by itself.
+_Avoid_: SCM account, authentication identity, repository owner
+
+**SCM credential**:
+An encrypted recoverable secret or secret reference attached to exactly one SCM
+account or SCM installation. It remains distinct from authentication and Device
+credentials.
+_Avoid_: access identity, installation, device token
+
+**Device**:
+A stable identity for one local ai-usage runtime. Its Person owner, owning
+Space, label, enrollment state, and credential are separate facts; a hostname
+or existing usage-machine record is not silently promoted to a Device.
+_Avoid_: machine label, hostname, credential
+
+**Space**:
+The explicit personal or organization ownership and authorization root for
+connected resources. A resource is assigned to a Space before storage or
+publication; repository, path, SCM, or Device observations never infer an
+organization Space later.
+_Avoid_: tenant guessed from repository, project group, organization login
+
+**Team**:
+A Space-scoped organization group whose active Person memberships may inherit
+explicit resource grants through at most three concrete child-to-parent Team
+levels. It is not a login group, SCM team, customer policy object, or generic
+authorization tuple.
+_Avoid_: role, SCM team, arbitrary subject set, recursive policy graph
+
+**Authorizer**:
+The application-owned port for tri-state permission checks, bounded ordinary
+resource listing, and complete opaque authorized-resource scope. It separates
+allow, deny, and operational error and is the only permission seam used by
+application services in local and connected compositions.
+_Avoid_: route guard, UI filter, database role, authentication provider
+
+**Authorized-resource scope**:
+A complete, opaque, request-scoped representation of every resource authorized
+for one principal, permission, resource kind, model version, and active Space.
+Application/edge code cannot inspect it as an ACL array. Persistence queries
+consume it before result limiting or ranking and must revalidate current
+relations when consistency requires it.
+_Avoid_: permission page, truncated ID list, post-filter, search-result ACL
+
+**Usage aggregate**:
+A content-free organization or Project usage projection authorized separately
+from Session metadata, Session content, Memory, and Work handoffs. Aggregate
+access never implies access to the contributing personal content.
+_Avoid_: redacted Session content, admin wildcard, usage-auditor transcript
+
+**Repository**:
+A stable Space-scoped source-control identity with provider identifiers and
+historical remote aliases as locators. A Repository may be renamed or
+transferred without becoming a different Project.
+_Avoid_: Project, Checkout, remote URL as primary identity
+
+**Project**:
+A stable cross-device identity for work, optionally linked to a Repository and
+monorepo subpath. Non-Git Projects are first-class. It is distinct from the
+machine-scoped Project source and the local presentation-only Project group.
+_Avoid_: project source, project group, repository URL, checkout path
+
+**Checkout**:
+A Device-local observation of a working path, optionally resolved to a Project
+and Repository. Its path and remote are locators and provenance, never tenant
+or filesystem authority on another Device.
+_Avoid_: Project, Repository, capture authority
+
+**Capture context**:
+The explicit Device, Person, Space, optional Project, and optional SCM context
+attached before or during publication of a fact. Its assignment source is
+recorded; unresolved work stays personal or explicitly unassigned rather than
+being reassigned later from repository or Device clues.
+_Avoid_: inferred tenant, post-storage ownership repair, project source
+
+**Replication generation**:
+A monotonic position in one Device and replication stream. A server
+acknowledges it only after durable apply. It is distinct from logical fact
+identity, publication event identity, exact content identity, and report
+publication generations.
+_Avoid_: batch ID, event ID, content hash, report generation
+
 **Project source**:
 A machine-scoped project path carried by a usage row. Locally observed paths may be canonicalized and inspected; paths from snapshots or merge bundles are opaque labels and never authorize local filesystem access. Its identity combines the machine and source path so similarly named folders stay distinct.
 _Avoid_: project group, repository scan root
@@ -100,6 +222,42 @@ _Avoid_: project group, repository scan root
 **Project group**:
 An explicit local configuration that presents multiple project sources as one named project in reports.
 _Avoid_: project source, inferred alias
+
+**Memory observation**:
+Immutable, provenance-bearing evidence captured or imported for possible use by
+Agent Memory. It is not active guidance and is never accepted implicitly.
+_Avoid_: Memory item, proposal, raw prompt dump
+
+**Memory proposal**:
+Candidate guidance derived from explicit input or linked Memory observations
+and awaiting Person review. Generated content stays labelled and cannot accept
+itself.
+_Avoid_: accepted memory, autonomous distillation, mutable draft item
+
+**Memory item**:
+The stable identity of accepted Agent Memory guidance in one Space, with scope,
+kind, trust, sensitivity, lifecycle status, and a current Memory revision.
+_Avoid_: observation, proposal, Markdown file, revision row
+
+**Memory revision**:
+One immutable version of a Memory item. Revising appends a new revision and
+advances the current pointer atomically; exact older revisions remain
+addressable.
+_Avoid_: in-place edit, file version, proposal
+
+**Work thread**:
+A durable continuity container across Sessions and harnesses, with an explicit
+intent and lifecycle and an optional Project. It is not a Session, Project,
+issue, branch, pull request, or campaign.
+_Avoid_: session thread, campaign, task inferred from prompts
+
+**Work handoff**:
+An immutable, evidence-labelled `WorkHandoff` revision that transfers reviewed
+continuation context within a Work thread. Acceptance by a Person advances the
+thread's current Work handoff; the target starts a normal new harness Session.
+It is distinct from `UsageEngineHandoff*` staged-file transport and imported
+Memory `kind: "handoff"`.
+_Avoid_: Handoff, native session conversion, generated summary presented as fact
 
 **Skill source repository**:
 The configured local repository containing canonical managed Agent Skill documents and portable JSON source state.

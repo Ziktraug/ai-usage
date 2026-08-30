@@ -25,7 +25,7 @@ Superseded alternatives remain in Git history and are not executable guidance.
 - **Connected organization activation**: also requires 103 and 104
 - **Category**: local/shared retrieval and MCP
 - **Planned at**: commit `dac2214c`, 2026-08-26
-- **Implementation status**: TODO
+- **Implementation status**: DONE
 
 ## Locked search topology
 
