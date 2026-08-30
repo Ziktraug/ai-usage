@@ -1,8 +1,9 @@
-import { appendFile, chmod, mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { appendFile, chmod, mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 const COMMAND_OUTPUT_LIMIT = 4096;
+const POSTGRES_START_ATTEMPTS = 2;
 const POSTGRES_START_TIMEOUT_SECONDS = 15;
 const POSTGRES_STOP_TIMEOUT_SECONDS = 15;
 
@@ -83,7 +84,24 @@ const clusterUrl = (socketDir: string): string => {
   return url.toString();
 };
 
-export const startPostgresCluster = async (label: string): Promise<PostgresCluster> => {
+export const retryPostgresStart = async <Result>(attempt: () => Promise<Result>): Promise<Result> => {
+  for (let attemptIndex = 0; attemptIndex < POSTGRES_START_ATTEMPTS; attemptIndex += 1) {
+    try {
+      return await attempt();
+    } catch (error) {
+      const canRetry =
+        attemptIndex + 1 < POSTGRES_START_ATTEMPTS &&
+        error instanceof PostgresHarnessError &&
+        error.code === 'start-failed';
+      if (!canRetry) {
+        throw error;
+      }
+    }
+  }
+  throw new PostgresHarnessError('start-failed', 'PostgreSQL start retry policy exhausted unexpectedly.');
+};
+
+const startPostgresClusterAttempt = async (label: string): Promise<PostgresCluster> => {
   const startedAt = performance.now();
   const initdb = resolveBinary('initdb');
   const pgCtl = resolveBinary('pg_ctl');
@@ -156,10 +174,24 @@ export const startPostgresCluster = async (label: string): Promise<PostgresClust
         'stop-failed',
       ).catch(() => undefined);
     }
+    const serverLog =
+      error instanceof PostgresHarnessError && error.code === 'start-failed'
+        ? await readFile(logPath, 'utf8').catch(() => '')
+        : '';
+    const reportedError =
+      serverLog && error instanceof PostgresHarnessError
+        ? new PostgresHarnessError(
+            'start-failed',
+            boundedOutput([error.detail, serverLog].filter(Boolean).join('\n')),
+            {
+              cause: error,
+            },
+          )
+        : error;
     if (!keepOnFailure) {
       await rm(rootDir, { force: true, recursive: true });
     }
-    throw error;
+    throw reportedError;
   }
 
   let stopOperation: Promise<void> | undefined;
@@ -221,3 +253,6 @@ export const startPostgresCluster = async (label: string): Promise<PostgresClust
     url: clusterUrl(socketDir),
   };
 };
+
+export const startPostgresCluster = (label: string): Promise<PostgresCluster> =>
+  retryPostgresStart(() => startPostgresClusterAttempt(label));
