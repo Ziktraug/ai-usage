@@ -1,8 +1,10 @@
+import { Database } from 'bun:sqlite';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { completeSkillObservationCollection, type SkillObservation } from '@ai-usage/report-core/skill-observation';
+import { SKILL_OBSERVATION_OBSERVABLE_HARNESS_KEYS } from '@ai-usage/report-core/skill-observation-evidence';
 import { importSkillObservations } from '@ai-usage/usage-store/testing';
 import { Effect } from 'effect';
 import { querySkillObservationDataset } from './skill-observation-read';
@@ -21,7 +23,7 @@ const GENEROUS_BOUNDS = {
   maximumObservations: 50_000,
   maximumSkills: 4096,
 } as const;
-const EXPECTED_OBSERVABLE_HARNESSES = ['claude', 'codex', 'opencode'] as const;
+const EXPECTED_OBSERVABLE_HARNESSES = SKILL_OBSERVATION_OBSERVABLE_HARNESS_KEYS;
 
 const observation = (skillName: string, ordinal: number): SkillObservation => ({
   argsPresent: null,
@@ -145,6 +147,25 @@ describe('bounded skill observation read', () => {
     // procedure would fail — turning "you have a lot of history" into "observations are unavailable".
     expect(dataset.skills).toHaveLength(GENEROUS_BOUNDS.maximumSkills);
     expect(dataset.lowerBound).toBe(true);
+    expect(dataset.invocationLowerBound).toBe(true);
+  });
+
+  test('keeps an exposure-only skill clamp out of the invocation bound', async () => {
+    const dbPath = await storeHolding(
+      Array.from({ length: 4 }, (_value, index) => ({
+        ...observation(`catalogue-skill-${index}`, index),
+        harnessKey: 'codex',
+        tier: 'exposed' as const,
+      })),
+    );
+
+    const dataset = await Effect.runPromise(
+      querySkillObservationDataset({ dbPath, ...GENEROUS_BOUNDS, maximumSkills: 3 }),
+    );
+
+    expect(dataset.skills).toHaveLength(3);
+    expect(dataset.lowerBound).toBe(true);
+    expect(dataset.invocationLowerBound).toBe(false);
   });
 
   test('clamps to the byte budget and reports that as a lower bound too', async () => {
@@ -157,6 +178,7 @@ describe('bounded skill observation read', () => {
     expect(new TextEncoder().encode(JSON.stringify(dataset)).byteLength).toBeLessThanOrEqual(2048);
     expect(dataset.skills.length).toBeLessThan(64);
     expect(dataset.lowerBound).toBe(true);
+    expect(dataset.invocationLowerBound).toBe(true);
   });
 
   test('reports the observation-row bound it reached', async () => {
@@ -200,6 +222,58 @@ describe('bounded skill observation read', () => {
     expect(dataset.lowerBound).toBe(true);
     expect(dataset.invocationLowerBound).toBe(true);
     expect(dataset.producerCompletenessMissing).toBe(false);
+  });
+
+  test('counts an unrenderable exposed row without weakening invocation absence', async () => {
+    const dbPath = await storeHolding([
+      {
+        ...observation(`catalogue${BELL}skill`, 0),
+        harnessKey: 'codex',
+        tier: 'exposed',
+      },
+    ]);
+
+    const dataset = await Effect.runPromise(querySkillObservationDataset({ dbPath, ...GENEROUS_BOUNDS }));
+
+    expect(dataset.skills).toEqual([]);
+    expect(dataset.skipped).toBe(1);
+    expect(dataset.lowerBound).toBe(true);
+    expect(dataset.invocationLowerBound).toBe(false);
+  });
+
+  test('keeps persisted exposure refusals separate while declared and unknown loss hedge absence', async () => {
+    const exposedDbPath = await storeHolding([
+      { ...observation('catalogue-skill', 0), harnessKey: 'codex', tier: 'exposed' },
+    ]);
+    const declaredDbPath = await storeHolding([observation('invoked-skill', 0)]);
+    for (const dbPath of [exposedDbPath, declaredDbPath]) {
+      const db = new Database(dbPath, { create: false, readwrite: true });
+      db.query("UPDATE skill_observations SET observed_at = 'not-a-timestamp'").run();
+      db.close(true);
+    }
+    const unknownDbPath = await storeHolding([]);
+    await Effect.runPromise(
+      importSkillObservations({
+        collection: { completeness: completeSkillObservationCollection(), harnessKey: 'codex' },
+        dbPath: unknownDbPath,
+        machineId: 'machine-a',
+        observations: [{ ...observation('unknown-skill', 0), observedAt: 'invalid', tier: 'future' }],
+      }),
+    );
+
+    const exposed = await Effect.runPromise(
+      querySkillObservationDataset({ dbPath: exposedDbPath, ...GENEROUS_BOUNDS }),
+    );
+    const declared = await Effect.runPromise(
+      querySkillObservationDataset({ dbPath: declaredDbPath, ...GENEROUS_BOUNDS }),
+    );
+    const unknown = await Effect.runPromise(
+      querySkillObservationDataset({ dbPath: unknownDbPath, ...GENEROUS_BOUNDS }),
+    );
+
+    expect(exposed).toMatchObject({ invocationLowerBound: false, lowerBound: true, skipped: 1 });
+    expect(declared).toMatchObject({ invocationLowerBound: true, lowerBound: true, skipped: 1 });
+    expect(unknown).toMatchObject({ invocationLowerBound: true, lowerBound: true, skipped: 0 });
   });
 
   test('carries producer-side invocation loss into the absence bound', async () => {

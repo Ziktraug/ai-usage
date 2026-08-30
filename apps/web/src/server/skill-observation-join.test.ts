@@ -1,5 +1,10 @@
 import { describe, expect, test } from 'bun:test';
 import type { SkillObservation } from '@ai-usage/report-core/skill-observation';
+import {
+  applySkillObservationEvidenceLoss,
+  COMPLETE_SKILL_OBSERVATION_EVIDENCE,
+  resolveSkillObservationEvidence,
+} from '@ai-usage/report-core/skill-observation-evidence';
 import { createSkillObservationDataset } from '@ai-usage/report-core/skill-observation-summary';
 import {
   MAX_SKILL_OBSERVATION_HARNESS_ROSTER,
@@ -121,9 +126,13 @@ describe('skill observation join', () => {
   });
 
   test('marks only absence claims provisional when the invocation read was bounded', () => {
+    const evidence = applySkillObservationEvidenceLoss(COMPLETE_SKILL_OBSERVATION_EVIDENCE, {
+      counts: true,
+      invocation: true,
+    });
     const bounded = createSkillObservationDataset(
       [observation({ harnessKey: 'claude', skillName: 'used', tier: 'declared' })],
-      { invocationLowerBound: true, lowerBound: true },
+      evidence,
     );
 
     const result = join({
@@ -144,12 +153,16 @@ describe('skill observation join', () => {
     // entry per session, so the catalogue always outruns the budget while the invocation tiers fit
     // comfortably. Keying provisionality on the pooled bound hedged every verdict forever — and
     // hedged them for a reason that has nothing to do with what the verdicts claim.
+    const evidence = applySkillObservationEvidenceLoss(COMPLETE_SKILL_OBSERVATION_EVIDENCE, {
+      counts: true,
+      invocation: false,
+    });
     const exposureBounded = createSkillObservationDataset(
       [
         observation({ harnessKey: 'claude', skillName: 'used', tier: 'declared' }),
         observation({ harnessKey: 'codex', skillName: 'catalogued', tier: 'exposed' }),
       ],
-      { invocationLowerBound: false, lowerBound: true },
+      evidence,
     );
 
     const result = join({
@@ -179,7 +192,16 @@ describe('skill observation join', () => {
   });
 
   test('treats unreadable stored rows the same way as a bounded read', () => {
-    const skipped = createSkillObservationDataset([], { skipped: 3 });
+    const evidence = resolveSkillObservationEvidence({
+      collection: {
+        exposureIncomplete: false,
+        invocationIncomplete: false,
+        producerCompletenessMissing: false,
+      },
+      read: { invocationTruncated: false, truncated: false },
+      refusedRows: [{ exposure: 0, invocation: 0, unknown: 3 }],
+    });
+    const skipped = createSkillObservationDataset([], evidence);
 
     const result = join({
       observations: skipped,
@@ -189,9 +211,29 @@ describe('skill observation join', () => {
 
     expect(skillNamed(result, 'unused')?.verdictProvisional).toBe(true);
     expect(result.skipped).toBe(3);
-    // A row that failed re-validation could have been an invocation, so it counts against absence
-    // regardless of which bound the read reported.
-    expect(result.invocationLowerBound).toBe(false);
+    // A row that failed re-validation could have been an invocation, so the shared evidence policy
+    // weakens the invocation bound before the join decides the absence verdict.
+    expect(result.invocationLowerBound).toBe(true);
+  });
+
+  test('counts an exposure refusal without making invocation absence provisional', () => {
+    const evidence = resolveSkillObservationEvidence({
+      collection: {
+        exposureIncomplete: false,
+        invocationIncomplete: false,
+        producerCompletenessMissing: false,
+      },
+      read: { invocationTruncated: false, truncated: false },
+      refusedRows: [{ exposure: 2, invocation: 0, unknown: 0 }],
+    });
+
+    const result = join({
+      observations: createSkillObservationDataset([], evidence),
+      skills: [managedSkill('unused')],
+    });
+
+    expect(skillNamed(result, 'unused')?.verdictProvisional).toBe(false);
+    expect(result).toMatchObject({ invocationLowerBound: false, lowerBound: true, skipped: 2 });
   });
 
   test('keeps a managed skill with no observations in the payload rather than dropping it', () => {
@@ -365,11 +407,24 @@ describe('skill observation response bounds', () => {
     // join added. Clamping only upstream would have let exactly this payload reach the schema.
     expect(result.skills).toHaveLength(MAX_SKILL_OBSERVATION_SKILLS);
     expect(result.lowerBound).toBe(true);
-    // Dropping whole rows drops whatever invocation evidence they carried, so the response no
-    // longer claims complete invocation coverage — even though each surviving row's own verdict was
-    // decided before the clamp and stands.
-    expect(result.invocationLowerBound).toBe(true);
+    // These inventory-only rows carried no observation evidence. The response is shorter, but its
+    // invocation evidence remains complete.
+    expect(result.invocationLowerBound).toBe(false);
     expect(safeParse(skillObservationsSchema, result).success).toBe(true);
+  });
+
+  test('a whole-row clamp keeps exposure-only loss out of the invocation bound', () => {
+    const result = join({
+      observations: createSkillObservationDataset(
+        observedSkillNames(MAX_SKILL_OBSERVATION_SKILLS + 1).map((skillName, index) =>
+          observation({ harnessKey: 'codex', observationKey: `exposed-${index}`, skillName, tier: 'exposed' }),
+        ),
+      ),
+    });
+
+    expect(result.skills).toHaveLength(MAX_SKILL_OBSERVATION_SKILLS);
+    expect(result.lowerBound).toBe(true);
+    expect(result.invocationLowerBound).toBe(false);
   });
 
   const joinUnknownHarnesses = (unknownCount: number, tier: SkillObservation['tier'] = 'declared') =>
@@ -546,6 +601,7 @@ describe('skill observation response bounds', () => {
     expect(responseBytes(clamped)).toBeLessThanOrEqual(MAX_SKILL_OBSERVATIONS_RESPONSE_BYTES);
     expect(clamped.skills.length).toBeGreaterThan(0);
     expect(clamped.lowerBound).toBe(true);
+    expect(clamped.invocationLowerBound).toBe(false);
     expect(safeParse(skillObservationsSchema, clamped).success).toBe(true);
   });
 
@@ -564,6 +620,7 @@ describe('skill observation response bounds', () => {
     // and the whole procedure answered `Unavailable` for a store that was entirely valid.
     expect(result.skills.length).toBeLessThanOrEqual(MAX_SKILL_OBSERVATION_SKILLS);
     expect(result.lowerBound).toBe(true);
+    expect(result.invocationLowerBound).toBe(true);
     expect(safeParse(skillObservationsSchema, result).success).toBe(true);
   });
 });

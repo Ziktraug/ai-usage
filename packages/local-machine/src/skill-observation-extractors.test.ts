@@ -306,7 +306,10 @@ describe('Codex per-session ceiling', () => {
     ]);
 
     expect(session.skillObservations).toEqual([]);
-    expect(session.skillObservationsTruncated).toBe(false);
+    expect(session.skillObservationCompleteness).toEqual({
+      exposure: { rejected: 0, truncated: false },
+      invocation: { rejected: 0, truncated: false },
+    });
   });
 
   test('stops one past the ceiling when a single command names many documents', () => {
@@ -341,10 +344,13 @@ describe('Codex per-session ceiling', () => {
     ]);
 
     expect(session.skillObservations).toHaveLength(1);
-    expect(session.skillObservationsTruncated).toBe(false);
+    expect(session.skillObservationCompleteness).toEqual({
+      exposure: { rejected: 0, truncated: false },
+      invocation: { rejected: 0, truncated: false },
+    });
   });
 
-  test('flags a catalogue that overruns the ceiling', () => {
+  test('an exposure ceiling overrun leaves invocation completeness intact', () => {
     setCodexSkillObservationCeilingForTesting(3);
     const entries = Array.from(
       { length: 6 },
@@ -373,7 +379,10 @@ describe('Codex per-session ceiling', () => {
     // Stopping exactly at the ceiling returns a full-looking list that no
     // caller can tell from a complete one.
     expect(session.skillObservations).toHaveLength(3);
-    expect(session.skillObservationsTruncated).toBe(true);
+    expect(session.skillObservationCompleteness).toEqual({
+      exposure: { rejected: 0, truncated: true },
+      invocation: { rejected: 0, truncated: false },
+    });
   });
 
   test('flags exec signals dropped at the bound, which vanish before materialization', () => {
@@ -392,7 +401,50 @@ describe('Codex per-session ceiling', () => {
     const session = rollout([sessionMeta, ...Array.from({ length: 5 }, (_, index) => execCall(index))]);
 
     expect(session.skillObservations).toHaveLength(2);
-    expect(session.skillObservationsTruncated).toBe(true);
+    expect(session.skillObservationCompleteness).toEqual({
+      exposure: { rejected: 0, truncated: false },
+      invocation: { rejected: 0, truncated: true },
+    });
+  });
+
+  test('exposure and invocation use independent per-session ceilings', () => {
+    setCodexSkillObservationCeilingForTesting(1);
+    const catalogue = [
+      '### Available skills',
+      `- offered: Description. (file: ${SKILL_FIXTURE_HOME}/.agents/skills/offered/SKILL.md)`,
+    ].join('\n');
+    const session = rollout([
+      sessionMeta,
+      {
+        payload: {
+          type: 'message',
+          id: 'msg_dev',
+          role: 'developer',
+          content: [{ type: 'input_text', text: catalogue }],
+        },
+        timestamp: '2026-08-01T09:00:01.000Z',
+        type: 'response_item',
+      },
+      {
+        payload: {
+          call_id: 'call_read',
+          input: JSON.stringify({ cmd: `cat ${SKILL_FIXTURE_HOME}/.agents/skills/read/SKILL.md` }),
+          name: 'exec',
+          type: 'custom_tool_call',
+        },
+        timestamp: '2026-08-01T09:00:02.000Z',
+        type: 'response_item',
+      },
+    ]);
+
+    expect(session.skillObservations.map(({ skillName, tier }) => `${tier}:${skillName}`)).toEqual([
+      'exposed:offered',
+      'inferred:read',
+    ]);
+    expect(session.skillObservationCompleteness).toEqual({
+      exposure: { rejected: 0, truncated: false },
+      invocation: { rejected: 0, truncated: false },
+    });
   });
 
   test('does not flag a session inside the ceiling', () => {
@@ -412,7 +464,10 @@ describe('Codex per-session ceiling', () => {
     ]);
 
     expect(session.skillObservations).toHaveLength(1);
-    expect(session.skillObservationsTruncated).toBe(false);
+    expect(session.skillObservationCompleteness).toEqual({
+      exposure: { rejected: 0, truncated: false },
+      invocation: { rejected: 0, truncated: false },
+    });
   });
 });
 

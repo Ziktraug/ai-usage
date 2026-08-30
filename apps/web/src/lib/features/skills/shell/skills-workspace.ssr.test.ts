@@ -1,5 +1,6 @@
 import { afterAll, describe, expect, test } from 'bun:test';
 import { fileURLToPath } from 'node:url';
+import type { SkillManagementSnapshot } from '@ai-usage/skills';
 import type { SkillObservations } from '@ai-usage/web-contract/skills';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
 import type { Component } from 'svelte';
@@ -7,8 +8,11 @@ import { createServer } from 'vite';
 import { createWebRpcHttpHandler } from '../../../server/rpc/handler.server';
 import type { WebRpcRouterDependencies } from '../../../server/rpc/router';
 import type { SkillsCapability, SkillsCapabilityResult } from '../../../server/rpc/skills';
+import { syntheticManagementSnapshot } from '../management/synthetic-fixture.test-helper';
 import { NAME_SCOPED_COUNTS_TEXT } from '../observations/model';
+import { createSkillsPresentationProjection } from '../presentation';
 import { loadSkillsShellRoute } from './data';
+import { createSkillsShellViewModel, normalizeSkillsQuerySnapshot } from './model';
 import {
   syntheticExposureTruncatedObservations,
   syntheticInventories,
@@ -76,6 +80,22 @@ const hydrationFixture = componentFrom(hydrationFixtureModule);
 const convergenceFixture = componentFrom(convergenceFixtureModule);
 const observationsComponent = componentFrom(observationsModule);
 const { render } = rendererFrom(svelteServerModule);
+
+const presentationFor = (
+  observations: SkillObservations,
+  pathname = '/skills/global/alpha-skill',
+  snapshot: SkillManagementSnapshot = normalizeSkillsQuerySnapshot(syntheticSnapshot()),
+) =>
+  createSkillsPresentationProjection({
+    observations,
+    observationsError: undefined,
+    view: createSkillsShellViewModel({
+      inventories: syntheticInventories,
+      knownProjectPaths: syntheticKnownPaths,
+      pathname,
+      snapshot,
+    }),
+  });
 
 const ok = <Value>(data: Value): SkillsCapabilityResult<Value> => ({ data, ok: true });
 const unavailable = (): Promise<never> => Promise.reject(new Error('Synthetic unrelated service unavailable.'));
@@ -159,6 +179,33 @@ describe('Svelte Skills workspace SSR', () => {
     const matrixHtml = render(convergenceFixture, { props: { pathname: '/skills/matrix' } }).body;
     expect(matrixHtml).toContain('data-skills-management-matrix-slot');
     expect(matrixHtml).not.toContain('Synthetic matrix slot');
+  });
+
+  test('shares one management pending gate across the matrix and health inspector', () => {
+    const html = render(convergenceFixture, {
+      props: {
+        healthSnapshot: 'management',
+        managementPending: 'refresh-skills',
+        pathname: '/skills/matrix',
+      },
+    }).body;
+    const previewButtons = html.match(/<button[^>]*data-management-operation="preview-reconcile"[^>]*>/gu) ?? [];
+
+    expect(previewButtons).toHaveLength(2);
+    expect(previewButtons.every((button) => button.includes('disabled'))).toBe(true);
+  });
+
+  test('announces a shared health outcome only in the initiating placement', () => {
+    const html = render(convergenceFixture, {
+      props: {
+        managementNoticePlacement: 'summary',
+        pathname: '/skills/global/alpha-skill',
+      },
+    }).body;
+
+    const matchingLiveRegions =
+      html.match(/<p[^>]*role="status"[^>]*>[^<]*Synthetic operation complete\.[^<]*<\/p>/gu) ?? [];
+    expect(matchingLiveRegions).toHaveLength(1);
   });
 
   test('says each health number once and tones an empty link count as danger', () => {
@@ -370,7 +417,10 @@ describe('Svelte Skills workspace SSR', () => {
 
   test('tells a truncated catalogue apart from truncated evidence instead of hedging both', () => {
     const html = render(observationsComponent, {
-      props: { observations: syntheticExposureTruncatedObservations, variant: 'overview' },
+      props: {
+        observationPresentation: presentationFor(syntheticExposureTruncatedObservations).observations,
+        variant: 'overview',
+      },
     }).body;
 
     // A real store is permanently in this state, so flattening it into "the read reached its bound"
@@ -382,7 +432,10 @@ describe('Svelte Skills workspace SSR', () => {
     expect(html).not.toContain('within the read bound');
 
     const evidenceBounded = render(observationsComponent, {
-      props: { observations: syntheticProvisionalObservations, variant: 'overview' },
+      props: {
+        observationPresentation: presentationFor(syntheticProvisionalObservations).observations,
+        variant: 'overview',
+      },
     }).body;
     expect(evidenceBounded).toContain('data-skill-observations-lower-bound="invocations"');
     expect(evidenceBounded).toContain('no invocation in loaded history');
@@ -402,8 +455,16 @@ describe('Svelte Skills workspace SSR', () => {
           : skill,
       ),
     };
-    const detail = (observations: SkillObservations): string =>
-      render(observationsComponent, { props: { observations, skillName: 'alpha-skill', variant: 'skill' } }).body;
+    const detail = (observations: SkillObservations): string => {
+      const presentation = presentationFor(observations);
+      return render(observationsComponent, {
+        props: {
+          observationPresentation: presentation.observations,
+          selectedPresentation: presentation.selected,
+          variant: 'skill',
+        },
+      }).body;
+    };
 
     const truncated = detail(withTruncatedPaths);
     expect(truncated).toContain('data-skill-observations-resolved-paths-truncated');
@@ -416,8 +477,16 @@ describe('Svelte Skills workspace SSR', () => {
   });
 
   test('qualifies the deletion sentence on a skill detail, which is the claim a maintainer acts on', () => {
-    const detail = (observations: SkillObservations): string =>
-      render(observationsComponent, { props: { observations, skillName: 'beta-skill', variant: 'skill' } }).body;
+    const detail = (observations: SkillObservations): string => {
+      const presentation = presentationFor(observations, '/skills/global/beta-skill', syntheticManagementSnapshot());
+      return render(observationsComponent, {
+        props: {
+          observationPresentation: presentation.observations,
+          selectedPresentation: presentation.selected,
+          variant: 'skill',
+        },
+      }).body;
+    };
 
     const complete = detail(syntheticObservations);
     expect(complete).toContain('data-skill-observations-deletion-candidate');

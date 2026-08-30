@@ -2,10 +2,14 @@
   import WebQueryProvider from '../../../query/provider.svelte';
   import { createDirtyGuardRegistry, provideDirtyGuardRegistry } from '../../shell/dirty-navigation-context';
   import SkillsEditorSlot from '../editor/skills-editor-slot.svelte';
+  import type { SkillsHealthOperationOwner } from '../management/operation-episode.svelte';
   import SkillsHealthSlot from '../management/skills-health-slot.svelte';
   import SkillsMatrixSlot from '../management/skills-matrix-slot.svelte';
-  import { syntheticManagementSnapshot } from '../management/synthetic-fixture.test-helper';
-  import type { SkillsManagementPlanController } from './management-plan-controller';
+  import {
+    syntheticManagementOperationEpisode,
+    syntheticManagementSnapshot,
+  } from '../management/synthetic-fixture.test-helper';
+  import { createSkillsPresentationProjection } from '../presentation';
   import { createSkillsShellViewModel } from './model';
   import SkillsWorkspace from './skills-workspace.svelte';
   import type { SkillsHealthSlotPlacement, SkillsShellSlotContext, SkillsSnapshotUpdatePort } from './slot-context';
@@ -21,12 +25,16 @@
 
   let {
     healthSnapshot,
+    managementNoticePlacement,
+    managementPending,
     observationsError,
     producerCompletenessMissing = false,
     observationsProvisional = false,
     pathname = '/skills/global/alpha-skill',
   }: {
     healthSnapshot?: 'management';
+    managementNoticePlacement?: SkillsHealthSlotPlacement;
+    managementPending?: string;
     observationsError?: string;
     producerCompletenessMissing?: boolean;
     observationsProvisional?: boolean;
@@ -55,6 +63,24 @@
     }
     return observationsProvisional ? syntheticProvisionalObservations : syntheticObservations;
   });
+  const presentation = $derived(createSkillsPresentationProjection({ observations, observationsError, view }));
+  const managementNoticeOwner = $derived<SkillsHealthOperationOwner | undefined>(
+    managementNoticePlacement === undefined ? undefined : `health-${managementNoticePlacement}`,
+  );
+  const management = $derived(
+    syntheticManagementOperationEpisode({
+      ...(managementNoticeOwner === undefined
+        ? {}
+        : {
+            notice: {
+              message: 'Synthetic operation complete.',
+              owner: managementNoticeOwner,
+              tone: 'success' as const,
+            },
+          }),
+      pendingOperation: managementPending ?? null,
+    }),
+  );
   // Mirrors the shell, which resolves a managed document for a global selection and a read-only
   // project document for a project one. A fixture that always handed over the managed document made
   // the project branch render its "preview unavailable" placeholder in every test.
@@ -73,22 +99,21 @@
 {/snippet}
 {#snippet healthSlot(
   _context: SkillsShellSlotContext,
-  _managementPlan: SkillsManagementPlanController,
   _placement: SkillsHealthSlotPlacement,
 )}
-  <SkillsHealthSlot context={_context} managementPlan={_managementPlan} placement={_placement} />
+  <SkillsHealthSlot context={_context} placement={_placement} />
 {/snippet}
-{#snippet matrixSlot(_context: SkillsShellSlotContext, _managementPlan: SkillsManagementPlanController)}
-  <SkillsMatrixSlot context={_context} managementPlan={_managementPlan} />
+{#snippet matrixSlot(_context: SkillsShellSlotContext)}
+  <SkillsMatrixSlot context={_context} />
 {/snippet}
 
 <WebQueryProvider>
   <SkillsWorkspace
     {editorSlot}
     {healthSlot}
+    {management}
     {matrixSlot}
-    {observations}
-    {observationsError}
+    {presentation}
     {selectedDocument}
     snapshot={view.snapshot}
     {snapshotUpdates}

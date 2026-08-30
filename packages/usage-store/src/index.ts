@@ -33,6 +33,7 @@ import type {
   SkillObservationCollectionCompleteness,
   SkillObservationTier,
 } from '@ai-usage/report-core/skill-observation';
+import type { SkillObservationRefusalCounts } from '@ai-usage/report-core/skill-observation-evidence';
 import type { UsageMachine } from '@ai-usage/report-core/snapshot';
 import type { CollectedUsageRow, UsageRowWithOptionalSource } from '@ai-usage/report-core/types';
 import { Effect } from 'effect';
@@ -444,6 +445,8 @@ export interface QuerySkillObservationsResult {
   observations: StoredSkillObservation[];
   /** No durable producer-completeness answer exists for the observable collection in scope. */
   producerCompletenessMissing: boolean;
+  /** Re-validation refusals split by the claim their stored tier could have supported. */
+  refusedRows: SkillObservationRefusalCounts;
   /** Persisted rows that no longer pass validation. Never silently omitted. */
   skipped: number;
   truncated: boolean;
@@ -1166,6 +1169,9 @@ const migrate = (db: SqliteDatabase): boolean => {
   schemaChanged ||= skillObservationsMissing || skillObservationCollectionStateMissing;
   db.exec('BEGIN IMMEDIATE');
   try {
+    // Skill tier and observable-producer literals in this schema-v3 migration are historical
+    // snapshots. Changing them requires a new schema migration; do not derive them from runtime
+    // capability constants.
     db.exec(`
       CREATE TABLE IF NOT EXISTS usage_rows (
       origin_machine_id TEXT NOT NULL,

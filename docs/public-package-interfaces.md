@@ -50,8 +50,11 @@ This package imports no other `@ai-usage/*` package.
 - `./session-lineage`: parent/root session normalization.
 - `./session-query`: strict Session paging/campaign/neighbor/cursor contracts.
 - `./session-vcs`: bounded credential-free repository/branch/commit/PR facts.
-- `./skill-observation`: the skill-observation fact, its tiers, and per-harness
-  observability.
+- `./skill-observation`: the persisted skill-observation fact, parser, producer
+  completeness, and storage bounds.
+- `./skill-observation-evidence`: the pure evidence policy for tier capability,
+  observable harnesses, categorized loss, response clamps, and whether an
+  invocation-absence claim is supportable.
 - `./skill-observation-summary`: the pure fold from observations into the
   presented per-tier, per-harness dataset.
 - `./snapshot`: portable usage snapshots.

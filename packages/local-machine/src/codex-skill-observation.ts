@@ -27,10 +27,10 @@ import {
 export const CODEX_AVAILABLE_SKILLS_HEADING = '### Available skills';
 
 /**
- * Testing override for the per-session observation ceiling, mirroring the
- * OpenCode read-budget seam. The production ceiling guards a corrupt session
- * rather than ordinary volume, so exercising the bound honestly would mean
- * building 4096 entries; lowering it keeps the test about the behaviour —
+ * Testing override for each tier's per-session observation ceiling, mirroring
+ * the OpenCode read-budget seam. The production ceiling guards a corrupt
+ * session rather than ordinary volume, so exercising the bound honestly would
+ * mean building 4096 entries; lowering it keeps the test about the behaviour —
  * detect the bound, flag it, carry the flag to the warning channel.
  */
 let codexSkillCeilingOverride: number | null = null;
@@ -534,7 +534,7 @@ export const codexSkillDirectory = (documentPath: string): string | null =>
 
 /**
  * Parse the catalogue block out of an instructions blob. Pure and bounded: the
- * scan stops at the next heading, and one entry past the per-session ceiling.
+ * scan stops at the next heading, and one entry past the exposure ceiling.
  *
  * Stopping *one past* is deliberate and matches the OpenCode read budget: a
  * scan that stopped exactly at the ceiling returns a full-looking list that no

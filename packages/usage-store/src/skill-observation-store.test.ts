@@ -4,6 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { completeSkillObservationCollection, type SkillObservation } from '@ai-usage/report-core/skill-observation';
+import { SKILL_OBSERVATION_OBSERVABLE_HARNESS_KEYS } from '@ai-usage/report-core/skill-observation-evidence';
 import { Effect } from 'effect';
 import { querySkillObservations, queryUsageStoreGeneration, type UsageStoreError } from './reader';
 import { importSkillObservations, initializeUsageStore, retainSkillObservations } from './writer';
@@ -15,7 +16,7 @@ afterEach(async () => {
 });
 
 const MACHINE = 'machine-a';
-const EXPECTED_OBSERVABLE_HARNESSES = ['claude', 'codex', 'opencode'] as const;
+const EXPECTED_OBSERVABLE_HARNESSES = SKILL_OBSERVATION_OBSERVABLE_HARNESS_KEYS;
 const ARGUMENT_COLUMN_PATTERN = /arg(ument)?s$/u;
 
 const observation = (overrides: Partial<SkillObservation> = {}): SkillObservation => ({
@@ -91,6 +92,29 @@ describe('skill observation store', () => {
     ]);
   });
 
+  test('classifies persisted row refusals by their stored tier capability', async () => {
+    const dbPath = await createStore('skill-refusal-capability');
+    await Effect.runPromise(
+      importSkillObservations({
+        dbPath,
+        machineId: MACHINE,
+        observations: [
+          observation({ observationKey: 'declared-invalid', tier: 'declared' }),
+          observation({ harnessKey: 'codex', observationKey: 'exposed-invalid', tier: 'exposed' }),
+        ],
+      }),
+    );
+    const db = new Database(dbPath, { create: false, readwrite: true });
+    db.query("UPDATE skill_observations SET observed_at = 'not-a-timestamp'").run();
+    db.close(true);
+
+    const read = await Effect.runPromise(querySkillObservations({ dbPath }));
+
+    expect(read.observations).toEqual([]);
+    expect(read.refusedRows).toEqual({ exposure: 1, invocation: 1, unknown: 0 });
+    expect(read.skipped).toBe(2);
+  });
+
   test('re-importing an unchanged observation neither multiplies nor rewrites the row', async () => {
     const dbPath = await createStore('skill-idempotent');
     const firstImportedAt = new Date('2026-08-20T10:00:00.000Z');
@@ -149,6 +173,38 @@ describe('skill observation store', () => {
     );
 
     expect(result).toEqual({ inserted: 1, rejected: 2, stateChanged: false, unchanged: 0, updated: 0 });
+  });
+
+  test('persists known exposure rejection separately and hedges an unknown tier', async () => {
+    const exposureDbPath = await createStore('skill-exposed-store-rejection');
+    const unknownDbPath = await createStore('skill-unknown-store-rejection');
+    const complete = completeSkillObservationCollection();
+    const exposed = await Effect.runPromise(
+      importSkillObservations({
+        collection: { completeness: complete, harnessKey: 'codex' },
+        dbPath: exposureDbPath,
+        machineId: MACHINE,
+        observations: [{ ...observation({ harnessKey: 'codex', tier: 'exposed' }), observedAt: 'invalid' }],
+      }),
+    );
+    const unknown = await Effect.runPromise(
+      importSkillObservations({
+        collection: { completeness: completeSkillObservationCollection(), harnessKey: 'codex' },
+        dbPath: unknownDbPath,
+        machineId: MACHINE,
+        observations: [{ ...observation({ harnessKey: 'codex' }), observedAt: 'invalid', tier: 'future' }],
+      }),
+    );
+
+    const exposureRead = await Effect.runPromise(querySkillObservations({ dbPath: exposureDbPath }));
+    const unknownRead = await Effect.runPromise(querySkillObservations({ dbPath: unknownDbPath }));
+
+    expect(exposed.rejected).toBe(1);
+    expect(exposureRead.collectionExposureIncomplete).toBe(true);
+    expect(exposureRead.collectionInvocationIncomplete).toBe(false);
+    expect(unknown.rejected).toBe(1);
+    expect(unknownRead.collectionExposureIncomplete).toBe(false);
+    expect(unknownRead.collectionInvocationIncomplete).toBe(true);
   });
 
   test('rejects malformed producer completeness through the typed input boundary', async () => {

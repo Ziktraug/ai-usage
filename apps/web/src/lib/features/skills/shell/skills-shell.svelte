@@ -23,7 +23,8 @@
   } from '../../../query/options/skills';
   import { useWebQueryRpcContext } from '../../../query/rpc-context.svelte';
   import { createSkillsClient } from '../../../rpc/skills-client';
-  import type { SkillsManagementPlanController } from './management-plan-controller';
+  import { createSkillsManagementOperationEpisode } from '../management/operation-episode.svelte';
+  import { createSkillsPresentationProjection } from '../presentation';
   import { createSkillsShellViewModel, normalizeSkillsQuerySnapshot } from './model';
   import { createSkillsFallbackNavigationRequest } from './skills-fallback-navigation';
   import SkillsWorkspace from './skills-workspace.svelte';
@@ -41,9 +42,9 @@
     runtimeMode,
   }: {
     editorSlot?: Snippet<[SkillsShellSlotContext]>;
-    healthSlot?: Snippet<[SkillsShellSlotContext, SkillsManagementPlanController, SkillsHealthSlotPlacement]>;
+    healthSlot?: Snippet<[SkillsShellSlotContext, SkillsHealthSlotPlacement]>;
     hydrationState: WebQueryHydrationState;
-    matrixSlot?: Snippet<[SkillsShellSlotContext, SkillsManagementPlanController]>;
+    matrixSlot?: Snippet<[SkillsShellSlotContext]>;
     navigationState: App.PageState;
     onSourceChange?: (source: string) => void;
     pathname: string;
@@ -69,6 +70,7 @@
     getSkillObservations: (options) => resolveClient().getSkillObservations(options),
     getSkillProjectInventories: (options) => resolveClient().getSkillProjectInventories(options),
   };
+  const management = createSkillsManagementOperationEpisode(resolveClient);
   let mounted = $state(false);
   const hydrationContext = useWebQueryHydrationContext();
   const hydrationApplied = $derived(hydrationContext.covers(hydrationState));
@@ -215,6 +217,15 @@
   const observationsError = $derived(
     observationsQuery.error instanceof Error ? observationsQuery.error.message : undefined,
   );
+  const presentation = $derived(
+    view === undefined
+      ? undefined
+      : createSkillsPresentationProjection({
+          observations: observationsQuery.data,
+          observationsError,
+          view,
+        }),
+  );
   const queryContractReady = $derived(
     mounted &&
       snapshotQuery.data !== undefined &&
@@ -263,14 +274,14 @@
   });
 </script>
 
-{#if view}
+{#if view && presentation}
   <SkillsWorkspace
     {...(editorSlot === undefined ? {} : { editorSlot })}
     {...(healthSlot === undefined ? {} : { healthSlot })}
     {hydrated}
+    {management}
     {...(matrixSlot === undefined ? {} : { matrixSlot })}
-    observations={observationsQuery.data}
-    {observationsError}
+    {presentation}
     {selectedDocument}
     {...(onSourceChange === undefined ? {} : { onSourceChange })}
     snapshot={view.snapshot}

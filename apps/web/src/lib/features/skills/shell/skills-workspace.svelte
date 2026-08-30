@@ -14,32 +14,13 @@
     strongCell,
   } from '@ai-usage/design-system/svelte';
   import type { SkillManagementSnapshot } from '@ai-usage/skills';
-  import type {
-    ProjectSkillMarkdownDocument,
-    SkillMarkdownDocument,
-    SkillObservations,
-  } from '@ai-usage/web-contract/skills';
+  import type { ProjectSkillMarkdownDocument, SkillMarkdownDocument } from '@ai-usage/web-contract/skills';
   import { onDestroy, type Snippet, tick } from 'svelte';
-  import {
-    buildProjectSkillRows,
-    count,
-    describeProjectSkillPlacement,
-    globalSkillAttention,
-    type SkillSelection,
-    selectionKey,
-  } from '../../../../skills-page-model';
+  import { count, type SkillSelection, selectionKey } from '../../../../skills-page-model';
   import { SKILLS_MOBILE_MEDIA_QUERY } from '../../../../skills-responsive';
-  import {
-    buildSkillObservationsView,
-    compareObservationRows,
-    type SkillObservationRow,
-    skillObservationsPresentationState,
-  } from '../observations/model';
+  import type { SkillsManagementOperationEpisodePort } from '../management/operation-episode.svelte';
   import SkillObservationsPanel from '../observations/skill-observations.svelte';
-  import {
-    createSkillsManagementPlanController,
-    type SkillsManagementPlanController,
-  } from './management-plan-controller';
+  import type { SkillsPresentationProjection } from '../presentation';
   import type { SkillsShellViewModel } from './model';
   import ProjectScopeTable from './project-scope-table.svelte';
   import SelectionLink from './selection-link.svelte';
@@ -52,85 +33,36 @@
     editorSlot,
     healthSlot,
     hydrated = false,
+    management,
     matrixSlot,
-    observations,
-    observationsError,
     onSourceChange,
+    presentation,
     selectedDocument,
     snapshot,
     snapshotUpdates,
     view,
   }: {
     editorSlot?: Snippet<[SkillsShellSlotContext]>;
-    healthSlot?: Snippet<[SkillsShellSlotContext, SkillsManagementPlanController, SkillsHealthSlotPlacement]>;
+    healthSlot?: Snippet<[SkillsShellSlotContext, SkillsHealthSlotPlacement]>;
     hydrated?: boolean;
-    matrixSlot?: Snippet<[SkillsShellSlotContext, SkillsManagementPlanController]>;
-    observations?: SkillObservations | undefined;
-    observationsError?: string | undefined;
+    management: SkillsManagementOperationEpisodePort;
+    matrixSlot?: Snippet<[SkillsShellSlotContext]>;
     onSourceChange?: (source: string) => void;
+    presentation: SkillsPresentationProjection;
     selectedDocument?: ProjectSkillMarkdownDocument | SkillMarkdownDocument | undefined;
     snapshot: SkillManagementSnapshot;
     snapshotUpdates: SkillsSnapshotUpdatePort;
     view: SkillsShellViewModel;
   } = $props();
 
-  const managementPlan = createSkillsManagementPlanController();
-  const ATTENTION_SKILL_LIMIT = 6;
   $effect(() => onSourceChange?.(snapshot.config.sourceRepoPath ?? 'not configured'));
   const slotContext = $derived({
     document: selectedDocument,
-    observations,
-    observationsError,
+    management,
+    presentation,
     snapshot,
     snapshotUpdates,
     view,
-  });
-  const allAttentionSkills = $derived(
-    snapshot.skills
-      .map((skill) => ({ attention: globalSkillAttention(snapshot, skill), skill }))
-      .filter(
-        (entry) => entry.attention.issueCount > 0 || entry.skill.validationStatus !== 'valid' || !entry.skill.enabled,
-      )
-      .sort((left, right) => {
-        if (left.attention.issueCount !== right.attention.issueCount) {
-          return right.attention.issueCount - left.attention.issueCount;
-        }
-        return left.skill.name.localeCompare(right.skill.name);
-      }),
-  );
-  const attentionSkills = $derived(allAttentionSkills.slice(0, ATTENTION_SKILL_LIMIT));
-  const attentionOverflow = $derived(allAttentionSkills.length - attentionSkills.length);
-  const observationsView = $derived(observations === undefined ? undefined : buildSkillObservationsView(observations));
-  const observationsState = $derived(skillObservationsPresentationState(observations, observationsError));
-  const observationRowsByName = $derived(new Map((observationsView?.rows ?? []).map((row) => [row.skillName, row])));
-  interface ProjectScopeSkillRow {
-    description: string;
-    name: string;
-    observationRow: SkillObservationRow | undefined;
-    placements: readonly string[];
-    validationStatus: string;
-  }
-  const projectScopeRows = $derived.by<readonly ProjectScopeSkillRow[]>(() => {
-    if (view.selectionDetail.kind !== 'project-scope') {
-      return [];
-    }
-    const rows = buildProjectSkillRows(view.selectionDetail.inventories, view.knownProjects).map((row) => ({
-      description: row.description,
-      name: row.name,
-      observationRow: observationRowsByName.get(row.name),
-      placements: [...new Set(row.observations.map((observation) => describeProjectSkillPlacement(observation)))],
-      validationStatus: row.validationStatus,
-    }));
-    // Evidence order like everywhere else on the surface; unobserved names trail alphabetically.
-    return rows.toSorted((left, right) => {
-      if (left.observationRow !== undefined && right.observationRow !== undefined) {
-        return compareObservationRows(left.observationRow, right.observationRow);
-      }
-      if (left.observationRow !== right.observationRow) {
-        return left.observationRow === undefined ? 1 : -1;
-      }
-      return left.name.localeCompare(right.name);
-    });
   });
   const attentionPillClass = (enabled: boolean, validationStatus: string, issueCount: number): string => {
     if (!enabled) {
@@ -322,10 +254,8 @@
   {#if view.selectionDetail.kind === 'global-skill' || view.selectionDetail.kind === 'project-skill'}
     <div class={section}>
       <SkillObservationsPanel
-        errorMessage={observationsError}
-        installScope={view.selectionDetail.kind === 'global-skill' ? 'global' : 'project'}
-        {observations}
-        skillName={view.selectionDetail.skill.name}
+        observationPresentation={presentation.observations}
+        selectedPresentation={presentation.selected}
         variant="skill"
       />
     </div>
@@ -369,7 +299,7 @@
   <div class={centerStack}>
     {#if view.matrixOpen}
       {#if matrixSlot}
-        <div data-skills-matrix-slot>{@render matrixSlot(slotContext, managementPlan)}</div>
+        <div data-skills-matrix-slot>{@render matrixSlot(slotContext)}</div>
       {:else}
         <div class={placeholder}>Skill matrix integration slot</div>
       {/if}
@@ -391,23 +321,17 @@
                 Shared source skills managed from {snapshot.config.sourceRepoPath ?? 'an unconfigured source'}.
               </p>
             </div>
-            <SkillsGlobalOverview
-              knownProjects={view.knownProjects}
-              {observations}
-              {observationsError}
-              {snapshot}
-              tree={view.tree}
-            />
+            <SkillsGlobalOverview knownProjects={view.knownProjects} {presentation} />
             <section class={section}>
               <div class={sectionHeader}>
                 <h3 class={panelTitle}>Needs attention</h3>
                 <p class={panelSub}>Exposure issues first, then invalid or disabled skills.</p>
               </div>
-              {#if attentionSkills.length === 0}
+              {#if presentation.attention.entries.length === 0}
                 <p class={meta}>No skills need attention.</p>
               {:else}
                 <div class={compactList}>
-                  {#each attentionSkills as entry (entry.skill.name)}
+                  {#each presentation.attention.entries as entry (entry.skill.name)}
                     <SelectionLink
                       class={compactRow}
                       knownProjects={view.knownProjects}
@@ -433,16 +357,18 @@
                     </SelectionLink>
                   {/each}
                 </div>
-                {#if attentionOverflow > 0}
+                {#if presentation.attention.overflow > 0}
                   <p class={meta} data-skills-attention-overflow>
-                    + {count(attentionOverflow, 'more skill needs attention', 'more skills need attention')} —
+                    +
+                    {count(presentation.attention.overflow, 'more skill needs attention', 'more skills need attention')}
+                    —
                     <a href="/skills/matrix">open the matrix</a>
                   </p>
                 {/if}
               {/if}
             </section>
             {#if healthSlot}
-              <div data-skills-health-detail>{@render healthSlot(slotContext, managementPlan, 'detail')}</div>
+              <div data-skills-health-detail>{@render healthSlot(slotContext, 'detail')}</div>
             {/if}
           {:else if view.selectionDetail.kind === 'global-skill'}
             <div class={hero}>
@@ -462,7 +388,7 @@
                  006); below 1280px this band is also what keeps the actions reachable, since the
                  inspector column drops under the whole page there. -->
             {#if healthSlot}
-              <div data-skills-summary-band-slot>{@render healthSlot(slotContext, managementPlan, 'summary')}</div>
+              <div data-skills-summary-band-slot>{@render healthSlot(slotContext, 'summary')}</div>
             {/if}
             {#if editorSlot}
               <div data-skills-editor-slot>{@render editorSlot(slotContext)}</div>
@@ -480,7 +406,7 @@
             {#if view.selectionDetail.kind === 'project-skill'}
               <p class={muted}>{view.selectionDetail.skill.description || 'No description provided.'}</p>
               {#if healthSlot}
-                <div data-skills-summary-band-slot>{@render healthSlot(slotContext, managementPlan, 'summary')}</div>
+                <div data-skills-summary-band-slot>{@render healthSlot(slotContext, 'summary')}</div>
               {/if}
               {#if selectedDocument && 'truncated' in selectedDocument}
                 <pre class={preview}>{selectedDocument.content}</pre>
@@ -494,13 +420,13 @@
               {@render skillObservations()}
             {:else if view.selectionDetail.kind === 'project-scope'}
               <p class={meta}>{view.selectionDetail.project.path}</p>
-              {#if projectScopeRows.length > 0}
+              {#if presentation.projectScopeRows.length > 0}
                 <ProjectScopeTable
                   knownProjects={view.knownProjects}
-                  {observationsState}
+                  observationsState={presentation.observations.state}
                   projectPath={view.selectionDetail.project.path}
-                  rows={projectScopeRows}
-                  signalsComplete={observationsView?.signalsComplete ?? false}
+                  rows={presentation.projectScopeRows}
+                  signalsComplete={presentation.observations.view?.signalsComplete ?? false}
                 />
                 <p class={meta}>Owned and edited in this repository — observed in place, never written to.</p>
               {:else}
@@ -517,6 +443,6 @@
   </div>
 
   <div class={mobileContext} data-matrix-open={view.matrixOpen}>
-    <SkillsInspector {...(healthSlot === undefined ? {} : { healthSlot })} {managementPlan} {slotContext} {view} />
+    <SkillsInspector {...(healthSlot === undefined ? {} : { healthSlot })} {slotContext} {view} />
   </div>
 </div>

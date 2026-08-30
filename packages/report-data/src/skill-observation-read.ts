@@ -1,5 +1,12 @@
 import { isPrintableSkillObservationText, type SkillObservation } from '@ai-usage/report-core/skill-observation';
 import {
+  applySkillObservationEvidenceLoss,
+  resolveSkillObservationEvidence,
+  type SkillObservationEvidence,
+  type SkillObservationRefusalCounts,
+  skillObservationTierSupportsInvocation,
+} from '@ai-usage/report-core/skill-observation-evidence';
+import {
   createSkillObservationDataset,
   type SkillObservationDataset,
   type SkillObservationSummary,
@@ -50,40 +57,43 @@ export interface QuerySkillObservationDatasetInput extends SkillObservationReadB
  * Dropping a whole skill row here is not the same kind of clamp as dropping trailing observations.
  *
  * The inventory join runs downstream, and it re-adds every managed skill this dataset does not
- * mention — as a skill with no tallies, which reads as *never observed*. So a managed skill dropped
- * by these clamps comes back wearing a false absence verdict. That makes the skill clamps a
- * truncation of invocation evidence in the only sense that matters to a verdict, and they say so.
+ * mention. Losing a row that carried `declared`/`inferred` evidence can therefore create a false
+ * invocation-absence verdict; losing an exposure-only row cannot. The discarded rows are still in
+ * hand here, so the two loss categories remain separate rather than hedging every absence claim.
  */
 const clampSkills = (dataset: SkillObservationDataset, bounds: SkillObservationReadBounds): SkillObservationDataset => {
+  const rowsCarryInvocation = (rows: readonly SkillObservationSummary[]): boolean =>
+    rows.some((skill) => skill.tallies.some((tally) => skillObservationTierSupportsInvocation(tally.tier)));
+
+  let evidence: SkillObservationEvidence = dataset;
   let skills: readonly SkillObservationSummary[] = dataset.skills;
-  let clampedSkillRows = false;
   if (skills.length > bounds.maximumSkills) {
+    evidence = applySkillObservationEvidenceLoss(evidence, {
+      counts: true,
+      invocation: rowsCarryInvocation(skills.slice(bounds.maximumSkills)),
+    });
     skills = skills.slice(0, bounds.maximumSkills);
-    clampedSkillRows = true;
   }
-  let clamped: SkillObservationDataset = { ...dataset, skills };
+  let clamped: SkillObservationDataset = { ...dataset, ...evidence, skills };
   // Byte clamping is a loop rather than one estimate because skill names and resolved paths are
   // open-vocabulary: their serialized size is not derivable from the row count. Halving converges
   // in a handful of passes and always terminates, because an empty skill list is under any budget
   // a harness roster fits in.
   while (clamped.skills.length > 0 && datasetBytes(clamped) > bounds.maximumBytes) {
-    clampedSkillRows = true;
-    clamped = { ...clamped, skills: clamped.skills.slice(0, Math.floor(clamped.skills.length / 2)) };
+    const retainedCount = Math.floor(clamped.skills.length / 2);
+    evidence = applySkillObservationEvidenceLoss(evidence, {
+      counts: true,
+      invocation: rowsCarryInvocation(clamped.skills.slice(retainedCount)),
+    });
+    clamped = { ...clamped, ...evidence, skills: clamped.skills.slice(0, retainedCount) };
   }
-  if (!clampedSkillRows) {
-    return clamped;
-  }
-  return {
-    ...clamped,
-    invocationLowerBound: true,
-    lowerBound: true,
-  };
+  return clamped;
 };
 
 interface PresentableObservations {
   readonly observations: readonly SkillObservation[];
-  /** Rows the presentation edge refused, to be added to the reader's own skipped count. */
-  readonly refused: number;
+  /** Rows the presentation edge refused, split by the claim their known tier supported. */
+  readonly refusedRows: SkillObservationRefusalCounts;
 }
 
 /**
@@ -103,15 +113,21 @@ const presentableObservations = (
   rows: readonly { readonly observation: SkillObservation }[],
 ): PresentableObservations => {
   const observations: SkillObservation[] = [];
-  let refused = 0;
+  let refusedExposure = 0;
+  let refusedInvocation = 0;
   for (const { observation } of rows) {
     if (isPrintableSkillObservationText(observation.skillName)) {
       observations.push(observation);
+    } else if (skillObservationTierSupportsInvocation(observation.tier)) {
+      refusedInvocation += 1;
     } else {
-      refused += 1;
+      refusedExposure += 1;
     }
   }
-  return { observations, refused };
+  return {
+    observations,
+    refusedRows: { exposure: refusedExposure, invocation: refusedInvocation, unknown: 0 },
+  };
 };
 
 export const querySkillObservationDataset = (
@@ -129,23 +145,18 @@ export const querySkillObservationDataset = (
     }),
     (result) => {
       const presentable = presentableObservations(result.observations);
-      return clampSkills(
-        createSkillObservationDataset(presentable.observations, {
-          invocationLowerBound:
-            result.invocationTruncated ||
-            result.collectionInvocationIncomplete ||
-            result.skipped > 0 ||
-            presentable.refused > 0,
-          lowerBound:
-            result.truncated ||
-            result.collectionInvocationIncomplete ||
-            result.collectionExposureIncomplete ||
-            result.skipped > 0 ||
-            presentable.refused > 0,
+      const evidence = resolveSkillObservationEvidence({
+        collection: {
+          exposureIncomplete: result.collectionExposureIncomplete,
+          invocationIncomplete: result.collectionInvocationIncomplete,
           producerCompletenessMissing: result.producerCompletenessMissing,
-          skipped: result.skipped + presentable.refused,
-        }),
-        input,
-      );
+        },
+        read: {
+          invocationTruncated: result.invocationTruncated,
+          truncated: result.truncated,
+        },
+        refusedRows: [result.refusedRows, presentable.refusedRows],
+      });
+      return clampSkills(createSkillObservationDataset(presentable.observations, evidence), input);
     },
   );

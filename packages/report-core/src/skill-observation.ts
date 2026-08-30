@@ -1,5 +1,14 @@
 import { isRecord } from './datasets';
 import { normalizeIsoTimestamp } from './provider-status';
+import { isSkillObservationTier, type SkillObservationTier } from './skill-observation-evidence';
+
+export {
+  isSkillObservationTier,
+  SKILL_OBSERVATION_TIERS,
+  type SkillObservability,
+  type SkillObservationTier,
+  skillObservabilityFor,
+} from './skill-observation-evidence';
 
 /**
  * A skill observation is one record that a named skill was invoked, or offered,
@@ -26,12 +35,6 @@ import { normalizeIsoTimestamp } from './provider-status';
  * them** — a narrower shape retroactively invalidates history already on disk.
  * Narrow at the presentation edge instead.
  */
-export const SKILL_OBSERVATION_TIERS = ['declared', 'inferred', 'exposed'] as const;
-
-export type SkillObservationTier = (typeof SKILL_OBSERVATION_TIERS)[number];
-
-const TIERS: ReadonlySet<string> = new Set(SKILL_OBSERVATION_TIERS);
-
 /** Read-cost ceilings, not a vocabulary. Raising one is safe; lowering one is not. */
 export const MAX_SKILL_OBSERVATION_NAME_LENGTH = 512;
 /**
@@ -116,30 +119,6 @@ export interface SkillObservationExtraction {
    */
   truncated: boolean;
 }
-
-export const isSkillObservationTier = (value: unknown): value is SkillObservationTier =>
-  typeof value === 'string' && TIERS.has(value);
-
-/**
- * Whether a harness can report skill observations at all (see `CONTEXT.md`).
- *
- * This exists because an empty observation list is ambiguous on its own:
- * `observed nothing` and `cannot observe` are the same array. ADR 0022 makes
- * observability part of the model precisely so a consumer never has to guess,
- * and so an unobservable harness is never rendered as a `0`.
- */
-export type SkillObservability = 'observable' | 'not-observable';
-
-/**
- * The harnesses with a skill-observation collector. Cursor is deliberately
- * absent: its state database contains zero skill tool keys, so it records no
- * usage to collect. Skills are still projected into it — which is exactly why
- * a zero would be a false claim rather than a missing number.
- */
-const OBSERVABLE_HARNESSES: ReadonlySet<string> = new Set(['claude', 'codex', 'opencode']);
-
-export const skillObservabilityFor = (harnessKey: string): SkillObservability =>
-  OBSERVABLE_HARNESSES.has(harnessKey) ? 'observable' : 'not-observable';
 
 const LAST_C0_CONTROL_CODE_POINT = 0x1f;
 const FIRST_C1_CONTROL_CODE_POINT = 0x7f;

@@ -6,6 +6,7 @@ import { FIXTURE_SKILL_NAMES, FIXTURE_SKILL_ROOT } from '@ai-usage/local-machine
 import type { FocusedReportSupport } from '@ai-usage/report-core/focused-report-query';
 import type { SerializedRow } from '@ai-usage/report-core/report-data';
 import { completeSkillObservationCollection, type SkillObservation } from '@ai-usage/report-core/skill-observation';
+import { SKILL_OBSERVATION_OBSERVABLE_HARNESS_KEYS } from '@ai-usage/report-core/skill-observation-evidence';
 import {
   importLocalRows,
   importSkillObservations,
@@ -222,7 +223,7 @@ describe('SQLite usage read model skill observations', () => {
     );
     const readModel = createSqliteUsageReadModel({ dbPath });
     const scope = {
-      expectedProducerHarnessKeys: ['claude', 'codex', 'opencode'],
+      expectedProducerHarnessKeys: SKILL_OBSERVATION_OBSERVABLE_HARNESS_KEYS,
       machineId: 'machine-a',
     } as const;
 

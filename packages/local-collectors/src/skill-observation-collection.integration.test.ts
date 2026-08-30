@@ -538,7 +538,7 @@ describe('skill observation collection', () => {
       expect(result.observationCompleteness.invocation.truncated).toBe(true);
     });
 
-    test('a Codex ceiling overrun surfaces as a truncation warning from the collector', async () => {
+    test('a Codex exposure ceiling overrun preserves invocation completeness', async () => {
       const home = await makeHome();
       await seedCodex(home);
       // The fixture exposes two catalogue entries and reads one of them.
@@ -551,7 +551,13 @@ describe('skill observation collection', () => {
 
       expect(truncation).toBeDefined();
       expect(truncation?.harness).toBe('codex');
-      expect(result.observationCompleteness.invocation.truncated).toBe(true);
+      expect(result.observationCompleteness).toEqual({
+        exposure: { rejected: 0, truncated: true },
+        invocation: { rejected: 0, truncated: false },
+      });
+      expect(result.observations.some(({ skillName, tier }) => skillName === 'pr-review' && tier === 'inferred')).toBe(
+        true,
+      );
     });
 
     test('a collection inside the ceilings raises no truncation warning', async () => {

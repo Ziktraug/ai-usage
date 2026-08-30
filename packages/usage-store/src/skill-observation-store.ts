@@ -7,8 +7,14 @@ import {
   SKILL_OBSERVATION_RETENTION_MS,
   type SkillObservation,
   type SkillObservationCollectionCompleteness,
-  skillObservabilityFor,
 } from '@ai-usage/report-core/skill-observation';
+import {
+  isSkillObservationTier,
+  SKILL_OBSERVATION_INVOCATION_TIERS,
+  type SkillObservationRefusalCounts,
+  skillObservabilityFor,
+  skillObservationTierSupportsInvocation,
+} from '@ai-usage/report-core/skill-observation-evidence';
 import { Effect } from 'effect';
 import { UsageStoreError, type UsageStoreErrorReason } from './errors';
 import type {
@@ -50,8 +56,7 @@ const MAX_EXPECTED_SKILL_OBSERVATION_PRODUCERS = 64;
  * the scarce evidence: `exposed` is emitted per catalogue entry per session and
  * will always win a race for a shared budget.
  */
-const INVOCATION_TIERS: ReadonlySet<string> = new Set(['declared', 'inferred']);
-const INVOCATION_TIER_SQL = "tier IN ('declared', 'inferred')";
+const INVOCATION_TIER_SQL = `tier IN (${SKILL_OBSERVATION_INVOCATION_TIERS.map(() => '?').join(', ')})`;
 const EXPOSURE_TIER_SQL = "tier = 'exposed'";
 // Bounds WAL growth of each retention transaction; every batch commits independently.
 const SKILL_OBSERVATION_RETENTION_BATCH_SIZE = 20_000;
@@ -248,6 +253,8 @@ export const createSkillObservationStore = (dependencies: SkillObservationStoreD
             unchanged: 0,
             updated: 0,
           };
+          let exposureRejectedAtStore = 0;
+          let invocationRejectedAtStore = 0;
           const importedAt = (input.importedAt ?? new Date()).toISOString();
           db.exec('BEGIN IMMEDIATE');
           try {
@@ -285,6 +292,14 @@ export const createSkillObservationStore = (dependencies: SkillObservationStoreD
                 // A malformed observation is counted, never dropped in silence:
                 // the collector that produced it is the thing to fix.
                 result.rejected++;
+                const candidateTier = isRecord(candidate) ? candidate.tier : undefined;
+                if (isSkillObservationTier(candidateTier) && !skillObservationTierSupportsInvocation(candidateTier)) {
+                  exposureRejectedAtStore++;
+                } else {
+                  // A known invocation tier, or a candidate whose tier cannot be recovered, may
+                  // have been invocation evidence. Unknown loss stays conservative.
+                  invocationRejectedAtStore++;
+                }
                 continue;
               }
               if (typeof minimumObservedAt === 'string' && observation.observedAt < minimumObservedAt) {
@@ -328,10 +343,12 @@ export const createSkillObservationStore = (dependencies: SkillObservationStoreD
             if (input.collection !== undefined) {
               const harnessKey = input.collection.harnessKey.trim();
               const completeness: SkillObservationCollectionCompleteness = {
-                exposure: { ...input.collection.completeness.exposure },
-                // A store-edge refusal has an unknown tier, so it must weaken the invocation claim.
+                exposure: {
+                  rejected: input.collection.completeness.exposure.rejected + exposureRejectedAtStore,
+                  truncated: input.collection.completeness.exposure.truncated,
+                },
                 invocation: {
-                  rejected: input.collection.completeness.invocation.rejected + result.rejected,
+                  rejected: input.collection.completeness.invocation.rejected + invocationRejectedAtStore,
                   truncated: input.collection.completeness.invocation.truncated,
                 },
               };
@@ -512,7 +529,7 @@ export const createSkillObservationStore = (dependencies: SkillObservationStoreD
           const read =
             input.tier === undefined
               ? (() => {
-                  const invocation = readTierGroup(INVOCATION_TIER_SQL, [], maximum);
+                  const invocation = readTierGroup(INVOCATION_TIER_SQL, SKILL_OBSERVATION_INVOCATION_TIERS, maximum);
                   const exposure = readTierGroup(EXPOSURE_TIER_SQL, [], maximum - invocation.rows.length);
                   return {
                     invocationTruncated: invocation.truncated,
@@ -528,21 +545,32 @@ export const createSkillObservationStore = (dependencies: SkillObservationStoreD
                   // short, and only when the named tier is itself invocation evidence.
                   const single = readTierGroup('tier = ?', [input.tier], maximum);
                   return {
-                    invocationTruncated: single.truncated && INVOCATION_TIERS.has(input.tier),
+                    invocationTruncated: single.truncated && skillObservationTierSupportsInvocation(input.tier),
                     rows: single.rows,
                     truncated: single.truncated,
                   };
                 })();
           const observations: StoredSkillObservation[] = [];
-          let skipped = 0;
+          let skippedExposure = 0;
+          let skippedInvocation = 0;
+          let skippedUnknown = 0;
           for (const row of read.rows) {
             const stored = storedObservationFromRecord(row);
             if (stored) {
               observations.push(stored);
+            } else if (!isSkillObservationTier(row.tier)) {
+              skippedUnknown++;
+            } else if (skillObservationTierSupportsInvocation(row.tier)) {
+              skippedInvocation++;
             } else {
-              skipped++;
+              skippedExposure++;
             }
           }
+          const refusedRows: SkillObservationRefusalCounts = {
+            exposure: skippedExposure,
+            invocation: skippedInvocation,
+            unknown: skippedUnknown,
+          };
           const stateClauses: string[] = [];
           const stateParams: unknown[] = [];
           if (input.harnessKey !== undefined) {
@@ -610,7 +638,8 @@ export const createSkillObservationStore = (dependencies: SkillObservationStoreD
             invocationTruncated: read.invocationTruncated,
             observations,
             producerCompletenessMissing: collectionStateMissing,
-            skipped,
+            refusedRows,
+            skipped: skippedExposure + skippedInvocation + skippedUnknown,
             truncated: read.truncated,
           };
         },

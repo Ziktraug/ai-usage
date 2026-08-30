@@ -10,16 +10,12 @@
     table,
     tableWrap,
   } from '@ai-usage/design-system/report';
-  import type { SkillObservations } from '@ai-usage/web-contract/skills';
+  import type { SkillsObservationPresentation, SkillsSelectedPresentation } from '../presentation';
   import {
     ADOPTION_GROUP_COPY,
-    buildSkillObservationsView,
     deletionCandidateText,
     formatObservedAt,
     formatObservedDate,
-    homonymNote,
-    installVerdictText,
-    managedVerdictDescribesInstall,
     NAME_SCOPED_COUNTS_TEXT,
     NOT_OBSERVABLE_TEXT,
     noSignalsText,
@@ -29,41 +25,25 @@
     resolvedPathsNote,
     SKILL_OBSERVATION_TIER_DESCRIPTIONS,
     SKILL_OBSERVATION_TIER_ORDER,
-    type SkillInstallScope,
-    skillObservationRow,
     verdictText,
   } from './model';
 
   let {
-    errorMessage,
-    /**
-     * Which installation of the name this detail describes. Observations aggregate by name, so a
-     * project install and a managed one sharing a name share one set of counts — and only the
-     * caller knows which of them the page has selected.
-     */
-    installScope = 'global',
-    observations,
-    skillName,
+    observationPresentation,
+    selectedPresentation,
     variant = 'overview',
   }: {
-    errorMessage?: string | undefined;
-    installScope?: SkillInstallScope;
-    observations?: SkillObservations | undefined;
-    skillName?: string | undefined;
+    observationPresentation: SkillsObservationPresentation;
+    selectedPresentation?: SkillsSelectedPresentation | undefined;
     variant?: 'overview' | 'skill';
   } = $props();
 
-  const view = $derived(observations === undefined ? undefined : buildSkillObservationsView(observations));
-  const row = $derived(
-    view === undefined || skillName === undefined ? undefined : skillObservationRow(view, skillName),
-  );
-  const managedClaimApplies = $derived(row === undefined || managedVerdictDescribesInstall(row, installScope));
-  const homonym = $derived(row === undefined ? undefined : homonymNote(row, installScope));
-  const detailVerdict = $derived(
-    row === undefined
-      ? verdictText({ verdict: 'never-observed', verdictProvisional: !(view?.invocationEvidenceComplete ?? true) })
-      : installVerdictText(row, installScope),
-  );
+  const view = $derived(observationPresentation.view);
+  const errorMessage = $derived(observationPresentation.errorMessage);
+  const row = $derived(selectedPresentation?.observationRow);
+  const managedClaimApplies = $derived(selectedPresentation?.managedClaimApplies ?? true);
+  const homonym = $derived(selectedPresentation?.homonym);
+  const detailVerdict = $derived(selectedPresentation?.verdict);
 
   const stack = css({ display: 'grid', gap: '12px' });
   const section = css({ display: 'grid', gap: '8px' });

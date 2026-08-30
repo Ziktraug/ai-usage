@@ -318,9 +318,11 @@ producer completeness, written together even for an empty observation batch)
 reading the invocation tiers against the full budget before spending the
 remainder on exposure, and reporting the two bounds separately)
 → `querySkillObservationDataset` (`@ai-usage/report-data/skill-observation-read`,
-which refuses rows the presentation edge cannot render — counting them into
-`skipped` rather than failing the response — then folds and clamps to the caps it
-is given, reporting any clamp as `lowerBound`)
+which classifies rows the presentation edge cannot render by their known tier,
+folds producer/read/refusal facts through
+`@ai-usage/report-core/skill-observation-evidence`, then folds and clamps to the
+caps it is given, reporting count loss as `lowerBound` and invocation or
+unknown-tier loss as `invocationLowerBound`)
 → `UsageReadModel.readSkillObservations`
 (`apps/web/src/server/usage-read-model.server.ts`, which supplies those caps,
 stated as the contract's own numbers)
@@ -339,6 +341,14 @@ Seven properties are load-bearing:
   nothing else. `lowerBound` says some count is a floor; `invocationLowerBound`
   says the `declared`/`inferred` evidence was itself cut short, and only that
   one makes an absence verdict provisional (ADR 0022).
+
+- **One pure evidence policy decides what each loss can weaken.** Producer
+  incompleteness, bounded reads, categorized refused rows, and later response
+  clamps enter `skill-observation-evidence`; callers consume its claim-ready
+  result instead of reconstructing the Boolean protocol. A known `exposed`
+  loss weakens counts only. A `declared`, `inferred`, or unknown-tier loss also
+  weakens invocation absence. The durable facts remain in SQLite and the final
+  inventory join remains Web-owned.
 
 - **Producer bounds are data-plane facts, not transient warnings.** Extractor
   rejection/truncation is persisted per machine and harness, split between
@@ -796,6 +806,15 @@ cancellation, retained data, invalidation, hydration, and bounded collection.
 The shared contract-first oRPC client transports typed calls and exposes one
 generated Svelte Query utility tree; it does not decide visibility or
 freshness. Client-visible modules must not import `*.server.*`.
+
+The Skills shell derives one immutable `SkillsPresentationProjection` from the
+accepted inventory, Project, selection, and observation Query values. Workspace,
+global, health, matrix, and observation renderers consume that projection rather
+than rebuilding cross-surface joins. One shell-lived management-operation
+episode owns the Query mutation observer, contract dispatch, snapshot
+publication, dependent invalidation, pending state, reconcile plan, and scoped
+outcome notice. Configuration drafts remain local presentation state; neither
+module introduces another server-state cache.
 
 Current report aliases and finite reads use named 30-second SWR policies.
 Exact report and Session keys include the immutable revision and canonical

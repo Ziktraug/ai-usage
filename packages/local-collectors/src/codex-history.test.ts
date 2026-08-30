@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { readCodexSessionAnalysis } from '@ai-usage/local-machine/codex-session-analysis';
+import { setCodexSkillObservationCeilingForTesting } from '@ai-usage/local-machine/codex-skill-observation';
 import { LocalHistoryError } from '@ai-usage/local-machine/errors';
 import {
   createLocalHistoryStorage,
@@ -2585,5 +2586,159 @@ Preserve the existing aggregation semantics.`,
     } finally {
       rmSync(home, { recursive: true, force: true });
     }
+  });
+
+  test('keeps an exposure-only producer bound distinct across cold and warm cache reads', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-codex-skill-cache-'));
+    setCodexSkillObservationCeilingForTesting(1);
+    try {
+      const sessionPath = path.join(home, '.codex', 'sessions', '2026', 'skill-cache.jsonl');
+      mkdirSync(path.dirname(sessionPath), { recursive: true });
+      const malformedSkillName = 'x'.repeat(513);
+      const catalogue = [
+        '### Available skills',
+        `- ${malformedSkillName}: Invalid bounded name.`,
+        '- first: First skill. (file: /home/alex/.agents/skills/first/SKILL.md)',
+        '- second: Second skill. (file: /home/alex/.agents/skills/second/SKILL.md)',
+      ].join('\n');
+      writeFileSync(
+        sessionPath,
+        jsonl(
+          {
+            payload: { cwd: '/work/cache-project', id: 'skill-cache-thread', originator: 'codex_cli_rs' },
+            timestamp: '2026-08-01T09:00:00.000Z',
+            type: 'session_meta',
+          },
+          {
+            payload: {
+              type: 'message',
+              id: 'msg_developer',
+              role: 'developer',
+              content: [{ type: 'input_text', text: catalogue }],
+            },
+            timestamp: '2026-08-01T09:00:01.000Z',
+            type: 'response_item',
+          },
+        ),
+      );
+
+      const cold = await runWithRealStorage(collectCodexResult, home);
+      const warm = await runWithRealStorage(collectCodexResult, home);
+
+      expect(cold.observationCompleteness).toEqual({
+        exposure: { rejected: 1, truncated: true },
+        invocation: { rejected: 0, truncated: false },
+      });
+      expect(warm.observationCompleteness).toEqual(cold.observationCompleteness);
+      expect(warm.observations.map(({ skillName, tier }) => `${tier}:${skillName}`)).toEqual(['exposed:first']);
+    } finally {
+      setCodexSkillObservationCeilingForTesting(null);
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test('keeps an invocation-only producer bound distinct across cold and warm cache reads', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-codex-skill-cache-'));
+    setCodexSkillObservationCeilingForTesting(1);
+    try {
+      const sessionPath = path.join(home, '.codex', 'sessions', '2026', 'skill-cache.jsonl');
+      mkdirSync(path.dirname(sessionPath), { recursive: true });
+      const malformedSkillName = 'x'.repeat(513);
+      writeFileSync(
+        sessionPath,
+        jsonl(
+          {
+            payload: { cwd: '/work/cache-project', id: 'skill-cache-thread', originator: 'codex_cli_rs' },
+            timestamp: '2026-08-01T09:00:00.000Z',
+            type: 'session_meta',
+          },
+          {
+            payload: {
+              type: 'custom_tool_call',
+              name: 'exec',
+              call_id: 'call_reads',
+              input: JSON.stringify({
+                cmd: `cat /home/alex/.agents/skills/${malformedSkillName}/SKILL.md /home/alex/.agents/skills/valid/SKILL.md`,
+              }),
+            },
+            timestamp: '2026-08-01T09:00:01.000Z',
+            type: 'response_item',
+          },
+        ),
+      );
+
+      const cold = await runWithRealStorage(collectCodexResult, home);
+      const warm = await runWithRealStorage(collectCodexResult, home);
+
+      expect(cold.observationCompleteness).toEqual({
+        exposure: { rejected: 0, truncated: false },
+        invocation: { rejected: 1, truncated: true },
+      });
+      expect(warm.observationCompleteness).toEqual(cold.observationCompleteness);
+      expect(warm.observations.map(({ skillName, tier }) => `${tier}:${skillName}`)).toEqual(['inferred:valid']);
+    } finally {
+      setCodexSkillObservationCeilingForTesting(null);
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test('aggregates exposure and invocation producer losses independently across sessions', () => {
+    const storage = new TestMemoryStorage();
+    const malformedSkillName = 'x'.repeat(513);
+    storage.writeText(
+      '.codex/sessions/2026/exposure-loss.jsonl',
+      jsonl(
+        {
+          payload: { cwd: '/work/aggregate-project', id: 'exposure-loss', originator: 'codex_cli_rs' },
+          timestamp: '2026-08-01T09:00:00.000Z',
+          type: 'session_meta',
+        },
+        {
+          payload: {
+            type: 'message',
+            id: 'msg_developer',
+            role: 'developer',
+            content: [
+              {
+                type: 'input_text',
+                text: ['### Available skills', `- ${malformedSkillName}: Invalid bounded name.`].join('\n'),
+              },
+            ],
+          },
+          timestamp: '2026-08-01T09:00:01.000Z',
+          type: 'response_item',
+        },
+      ),
+    );
+    storage.writeText(
+      '.codex/sessions/2026/invocation-loss.jsonl',
+      jsonl(
+        {
+          payload: { cwd: '/work/aggregate-project', id: 'invocation-loss', originator: 'codex_cli_rs' },
+          timestamp: '2026-08-01T10:00:00.000Z',
+          type: 'session_meta',
+        },
+        {
+          payload: {
+            type: 'custom_tool_call',
+            name: 'exec',
+            call_id: 'call_invalid_read',
+            input: JSON.stringify({ cmd: `cat /home/alex/.agents/skills/${malformedSkillName}/SKILL.md` }),
+          },
+          timestamp: '2026-08-01T10:00:01.000Z',
+          type: 'response_item',
+        },
+      ),
+    );
+
+    const result = runWithStorage(collectCodexResult, storage);
+
+    expect(result.observationCompleteness).toEqual({
+      exposure: { rejected: 1, truncated: false },
+      invocation: { rejected: 1, truncated: false },
+    });
+    expect(result.warnings.find(({ operation }) => operation === 'skillObservationValidation')?.rejectedRecords).toBe(
+      2,
+    );
   });
 });

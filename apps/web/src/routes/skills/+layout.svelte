@@ -7,7 +7,6 @@
   import SkillsEditorSlot from '$lib/features/skills/editor/skills-editor-slot.svelte';
   import SkillsHealthSlot from '$lib/features/skills/management/skills-health-slot.svelte';
   import SkillsMatrixSlot from '$lib/features/skills/management/skills-matrix-slot.svelte';
-  import type { SkillsManagementPlanController } from '$lib/features/skills/shell/management-plan-controller';
   import SkillsShell from '$lib/features/skills/shell/skills-shell.svelte';
   import type { SkillsHealthSlotPlacement, SkillsShellSlotContext } from '$lib/features/skills/shell/slot-context';
   import type { LayoutProps } from './$types';
@@ -56,20 +55,18 @@
 
 {#snippet healthSlot(
   _context: SkillsShellSlotContext,
-  _managementPlan: SkillsManagementPlanController,
   _placement: SkillsHealthSlotPlacement,
 )}
   <SkillsHealthSlot
     context={_context}
-    managementPlan={_managementPlan}
     onRefreshFocus={() => refreshButtonElement?.focus()}
     onRefreshPendingChange={(pending) => (refreshPending = pending)}
     onRefreshReady={(action) => (refreshAction = action)}
     placement={_placement}
   />
 {/snippet}
-{#snippet matrixSlot(_context: SkillsShellSlotContext, _managementPlan: SkillsManagementPlanController)}
-  <SkillsMatrixSlot context={_context} managementPlan={_managementPlan} />
+{#snippet matrixSlot(_context: SkillsShellSlotContext)}
+  <SkillsMatrixSlot context={_context} />
 {/snippet}
 
 <RouteFrame eyebrow={null} {headerActions} {headerMeta} heading="Skill management">

@@ -1,6 +1,7 @@
 import type { SkillManagementSnapshot } from '@ai-usage/skills';
 import { normalizeSkillsQuerySnapshot } from '../shell/model';
 import { syntheticSnapshot as shellSyntheticSnapshot } from '../shell/synthetic-fixture.test-helper';
+import type { SkillsManagementOperationEpisodePort, SkillsManagementOperationNotice } from './operation-episode.svelte';
 
 export const syntheticManagementSnapshot = (): SkillManagementSnapshot => {
   const base = normalizeSkillsQuerySnapshot(shellSyntheticSnapshot());
@@ -89,3 +90,13 @@ export const syntheticManagementSnapshot = (): SkillManagementSnapshot => {
     ],
   };
 };
+
+export const syntheticManagementOperationEpisode = (
+  options: { readonly notice?: SkillsManagementOperationNotice | null; readonly pendingOperation?: string | null } = {},
+): SkillsManagementOperationEpisodePort => ({
+  clearPlan: () => undefined,
+  execute: async () => undefined,
+  notice: options.notice ?? null,
+  pendingOperation: options.pendingOperation ?? null,
+  plan: null,
+});

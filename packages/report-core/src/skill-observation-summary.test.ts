@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { SkillObservation } from './skill-observation';
+import { resolveSkillObservationEvidence } from './skill-observation-evidence';
 import { createSkillObservationDataset, EMPTY_SKILL_OBSERVATION_DATASET } from './skill-observation-summary';
 
 const observation = (overrides: Partial<SkillObservation> & Pick<SkillObservation, 'harnessKey' | 'tier'>) => ({
@@ -145,13 +146,23 @@ describe('createSkillObservationDataset', () => {
     expect(dataset.skills[0]?.resolvedPathsTruncated).toBe(false);
   });
 
-  test('carries the read bound and the re-validation skip count through untouched', () => {
-    const dataset = createSkillObservationDataset([observation({ harnessKey: 'opencode', tier: 'declared' })], {
-      lowerBound: true,
-      skipped: 3,
+  test('carries resolved evidence and the re-validation skip count through untouched', () => {
+    const evidence = resolveSkillObservationEvidence({
+      collection: {
+        exposureIncomplete: false,
+        invocationIncomplete: false,
+        producerCompletenessMissing: false,
+      },
+      read: { invocationTruncated: false, truncated: false },
+      refusedRows: [{ exposure: 0, invocation: 0, unknown: 3 }],
     });
+    const dataset = createSkillObservationDataset(
+      [observation({ harnessKey: 'opencode', tier: 'declared' })],
+      evidence,
+    );
 
     expect(dataset.lowerBound).toBe(true);
+    expect(dataset.invocationLowerBound).toBe(true);
     expect(dataset.skipped).toBe(3);
   });
 

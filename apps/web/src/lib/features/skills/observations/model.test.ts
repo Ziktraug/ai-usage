@@ -359,14 +359,17 @@ describe('skill observations view', () => {
     }
   });
 
-  test('separates a truncated catalogue from truncated invocation evidence', () => {
+  test('takes invocation completeness from its authoritative bound, not the skipped diagnostic count', () => {
     // Only the second one can make an absence claim unsafe, so only the second one says so.
     expect(view(syntheticProvisionalObservations).onlyExposureTruncated).toBe(false);
     expect(view(syntheticObservations).onlyExposureTruncated).toBe(false);
-    // Unreadable rows are unreadable whichever tier they held, so they never count as exposure-only.
+    // The producer has already folded any skipped row that could hide invocation evidence into
+    // `invocationLowerBound`; treating this diagnostic count as a second policy would hedge a
+    // verdict the authoritative field says is complete.
     expect(view({ ...syntheticExposureTruncatedObservations, skipped: 2 })).toMatchObject({
-      invocationEvidenceComplete: false,
-      onlyExposureTruncated: false,
+      invocationEvidenceComplete: true,
+      onlyExposureTruncated: true,
     });
+    expect(view({ ...syntheticObservations, skipped: 2 }).signalsComplete).toBe(true);
   });
 });

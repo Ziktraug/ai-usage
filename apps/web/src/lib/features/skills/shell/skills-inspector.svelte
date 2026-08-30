@@ -3,18 +3,15 @@
   import { panel, panelSub, panelTitle } from '@ai-usage/design-system/svelte';
   import type { Snippet } from 'svelte';
   import { count } from '../../../../skills-page-model';
-  import type { SkillsManagementPlanController } from './management-plan-controller';
   import type { SkillsShellViewModel } from './model';
   import type { SkillsHealthSlotPlacement, SkillsShellSlotContext } from './slot-context';
 
   let {
     healthSlot,
-    managementPlan,
     slotContext,
     view,
   }: {
-    healthSlot?: Snippet<[SkillsShellSlotContext, SkillsManagementPlanController, SkillsHealthSlotPlacement]>;
-    managementPlan: SkillsManagementPlanController;
+    healthSlot?: Snippet<[SkillsShellSlotContext, SkillsHealthSlotPlacement]>;
     slotContext: SkillsShellSlotContext;
     view: SkillsShellViewModel;
   } = $props();
@@ -69,10 +66,10 @@
     {/if}
     {#if healthSlot}
       {#if view.selectionDetail.kind === 'global-skill' || view.selectionDetail.kind === 'global-scope'}
-        <div data-skills-health-slot>{@render healthSlot(slotContext, managementPlan, 'inspector')}</div>
+        <div data-skills-health-slot>{@render healthSlot(slotContext, 'inspector')}</div>
       {:else}
         <div class={section} data-skills-health-slot>
-          {@render healthSlot(slotContext, managementPlan, 'inspector')}
+          {@render healthSlot(slotContext, 'inspector')}
         </div>
       {/if}
     {/if}

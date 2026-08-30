@@ -244,6 +244,7 @@
     <button
       {...busyAttributes(pendingOperation === 'preview-reconcile')}
       class={cx(commandButton, pendingButton, positionedButton)}
+      data-management-operation="preview-reconcile"
       data-pending={pendingOperation === 'preview-reconcile' ? 'true' : undefined}
       disabled={pendingOperation !== null || !canReconcileAll(snapshot)}
       onclick={onPreviewReconcile}

@@ -1,11 +1,13 @@
 import { HARNESS_METADATA, harnessKeys } from './harness-metadata';
+import type { SkillObservation } from './skill-observation';
 import {
+  COMPLETE_SKILL_OBSERVATION_EVIDENCE,
   SKILL_OBSERVATION_TIERS,
   type SkillObservability,
-  type SkillObservation,
+  type SkillObservationEvidence,
   type SkillObservationTier,
   skillObservabilityFor,
-} from './skill-observation';
+} from './skill-observation-evidence';
 
 /**
  * The presented shape of the skill-observation fact family: what every consumer
@@ -82,37 +84,14 @@ export interface SkillObservationHarnessCoverage {
   observability: SkillObservability;
 }
 
-export interface SkillObservationDataset {
+export interface SkillObservationDataset extends SkillObservationEvidence {
   /**
    * Every harness, including the ones with no collector. Derived from the
    * harness catalogue rather than from what this read returned, so a failed
    * sweep of an observable harness never demotes it to `not-observable`.
    */
   harnesses: readonly SkillObservationHarnessCoverage[];
-  /**
-   * The *invocation* evidence — the `declared` and `inferred` tiers — was
-   * itself cut short.
-   *
-   * Separate from `lowerBound` because the tiers are read against separate
-   * budgets, and only this one can invalidate an absence claim. Exposure is
-   * written once per catalogue entry per session and dwarfs everything else, so
-   * a read that truncates exposure while carrying every recorded invocation is
-   * the ordinary case, not a degraded one: its counts are floors, but "this
-   * skill was never invoked" is still a claim it can support.
-   */
-  invocationLowerBound: boolean;
-  /**
-   * The bounded read stopped short, so every count below is a lower bound
-   * rather than a number. Reported one past the bound by the reader, because a
-   * list that stops exactly at the limit is indistinguishable from a complete
-   * one.
-   */
-  lowerBound: boolean;
-  /** The observable producer has not yet persisted any completeness answer for this collection. */
-  producerCompletenessMissing: boolean;
   skills: readonly SkillObservationSummary[];
-  /** Persisted rows the reader could not re-validate. Counted, never hidden. */
-  skipped: number;
 }
 
 interface TallyAccumulator {
@@ -196,13 +175,6 @@ const coverageFor = (observedHarnessKeys: ReadonlySet<string>): readonly SkillOb
   }));
 };
 
-export interface CreateSkillObservationDatasetOptions {
-  readonly invocationLowerBound?: boolean;
-  readonly lowerBound?: boolean;
-  readonly producerCompletenessMissing?: boolean;
-  readonly skipped?: number;
-}
-
 /**
  * Folds raw observations into the presented dataset. Pure, order-independent,
  * and deterministic: the same observations in any order produce the same
@@ -211,7 +183,7 @@ export interface CreateSkillObservationDatasetOptions {
  */
 export const createSkillObservationDataset = (
   observations: readonly SkillObservation[],
-  options: CreateSkillObservationDatasetOptions = {},
+  evidence: SkillObservationEvidence = COMPLETE_SKILL_OBSERVATION_EVIDENCE,
 ): SkillObservationDataset => {
   const skills = new Map<string, SkillAccumulator>();
   const observedHarnessKeys = new Set<string>();
@@ -246,10 +218,8 @@ export const createSkillObservationDataset = (
     skills.set(observation.skillName, skill);
   }
   return {
+    ...evidence,
     harnesses: coverageFor(observedHarnessKeys),
-    invocationLowerBound: options.invocationLowerBound ?? false,
-    lowerBound: options.lowerBound ?? false,
-    producerCompletenessMissing: options.producerCompletenessMissing ?? false,
     skills: [...skills.values()]
       .map((skill) => ({
         lastObservedAt: skill.lastObservedAt,
@@ -272,7 +242,6 @@ export const createSkillObservationDataset = (
           ),
       }))
       .sort((left, right) => left.skillName.localeCompare(right.skillName)),
-    skipped: options.skipped ?? 0,
   };
 };
 

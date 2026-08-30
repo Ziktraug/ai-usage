@@ -505,7 +505,7 @@ export const ADOPTION_GROUP_COPY: Record<SkillUnmanagedResidence, { heading: str
 };
 
 export const buildSkillObservationsView = (observations: SkillObservations): SkillObservationsView => {
-  const signalsComplete = !observations.lowerBound && observations.skipped === 0;
+  const signalsComplete = !observations.lowerBound;
   const rows = observations.skills.map((skill) => {
     const talliesByHarness = new Map<string, SkillObservationTally[]>();
     for (const tally of skill.tallies) {
@@ -526,13 +526,13 @@ export const buildSkillObservationsView = (observations: SkillObservations): Ski
     catalogueRollups: buildCatalogueRollups(offeredOnly.filter((row) => !row.managed)),
     deletionCandidates: rows.filter((row) => row.deletionCandidate),
     harnesses: observations.harnesses,
-    invocationEvidenceComplete: !observations.invocationLowerBound && observations.skipped === 0,
+    invocationEvidenceComplete: !observations.invocationLowerBound,
     invocationRows: rows
       .filter((row) => row.managed || observationEvidenceRank(row) > 0)
       .toSorted(compareObservationRows),
     lowerBound: observations.lowerBound,
     observableHarnesses: observations.harnesses.filter((harness) => harness.observability === 'observable'),
-    onlyExposureTruncated: observations.lowerBound && !(observations.invocationLowerBound || observations.skipped > 0),
+    onlyExposureTruncated: observations.lowerBound && !observations.invocationLowerBound,
     producerCompletenessMissing: observations.producerCompletenessMissing,
     // Exclusive of the deletion group, so no skill is listed twice under two headings.
     offeredOnly,

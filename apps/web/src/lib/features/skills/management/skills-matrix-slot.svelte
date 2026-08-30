@@ -1,104 +1,29 @@
 <script lang="ts">
   import { cx } from '@ai-usage/design-system/css';
-  import { createMutation, useQueryClient } from '@tanstack/svelte-query';
-  import {
-    buildSkillHealthSummary,
-    type ReconcilePlanSummary,
-    type SkillCellStateFilter,
-  } from '../../../../skills-page-model';
-  import { applySkillsSnapshotToCache, skillsMutationOptions } from '../../../query/options/skills';
-  import { useOptionalWebQueryRpcContext } from '../../../query/rpc-context.svelte';
-  import { createSkillsClient } from '../../../rpc/skills-client';
+  import type { SkillCellStateFilter } from '../../../../skills-page-model';
   import SkillObservationsPanel from '../observations/skill-observations.svelte';
-  import type { SkillsManagementPlanController } from '../shell/management-plan-controller';
   import type { SkillsShellSlotContext } from '../shell/slot-context';
   import {
     previewReconcileOperation,
     reconcileAllOperation,
-    runSkillsManagementOperation,
-    type SkillsManagementClient,
     type SkillsManagementOperation,
-    skillsManagementSuccessMessage,
     toggleOperation,
   } from './model';
   import SkillsHealth from './skills-health.svelte';
   import SkillsMatrix from './skills-matrix.svelte';
   import { errorNotice, notice, stack } from './styles';
 
-  let {
-    client: injectedClient,
-    context,
-    managementPlan,
-  }: {
-    client?: SkillsManagementClient;
-    context: SkillsShellSlotContext;
-    managementPlan: SkillsManagementPlanController;
-  } = $props();
-  const queryClient = useQueryClient();
-  const rpc = useOptionalWebQueryRpcContext()?.rpc;
-  let browserClient: SkillsManagementClient | undefined;
+  let { context }: { context: SkillsShellSlotContext } = $props();
   let activeFilter = $state<SkillCellStateFilter | undefined>();
-  let reconcilePlan = $state<ReconcilePlanSummary | null>(null);
-  $effect(() => {
-    reconcilePlan = managementPlan.getState();
-    return managementPlan.subscribe((plan) => {
-      reconcilePlan = plan;
-    });
-  });
-  let operationMessage = $state<{
-    message: string;
-    tone: 'error' | 'success';
-  } | null>(null);
-  const health = $derived(buildSkillHealthSummary(context.snapshot));
-  const resolveClient = (): SkillsManagementClient => {
-    if (injectedClient) {
-      return injectedClient;
-    }
-    if (!rpc) {
-      throw new Error('The shared browser RPC context is unavailable.');
-    }
-    browserClient ??= createSkillsClient(rpc.skills);
-    return browserClient;
-  };
-  const operationMutation = createMutation(() =>
-    skillsMutationOptions(
-      'management',
-      async (variables: { operation: SkillsManagementOperation; pendingLabel: string }) => {
-        const result = await runSkillsManagementOperation(resolveClient(), variables.operation);
-        if (!result.ok) {
-          throw new Error(result.error);
-        }
-        return { ...result, ...variables };
-      },
-    ),
-  );
-  const pendingOperation = $derived(
-    operationMutation.isPending ? (operationMutation.variables?.pendingLabel ?? null) : null,
-  );
-  const operationError = $derived(operationMutation.error instanceof Error ? operationMutation.error.message : null);
-  const publish = async (snapshot: typeof context.snapshot): Promise<void> => {
-    await applySkillsSnapshotToCache(queryClient, snapshot);
-  };
+  const health = $derived(context.presentation.health);
+  const pendingOperation = $derived(context.management.pendingOperation);
+  const reconcilePlan = $derived(context.management.plan);
+  const operationNotice = $derived(context.management.notice?.owner === 'matrix' ? context.management.notice : null);
   const execute = async (operation: SkillsManagementOperation, pendingLabel: string): Promise<void> => {
-    if (operationMutation.isPending) {
+    if (pendingOperation !== null) {
       return;
     }
-    managementPlan.clear();
-    operationMessage = null;
-    try {
-      const result = await operationMutation.mutateAsync({
-        operation,
-        pendingLabel,
-      });
-      await publish(result.snapshot);
-      managementPlan.publish(result.plan);
-      operationMessage = {
-        message: skillsManagementSuccessMessage(operation, result),
-        tone: 'success',
-      };
-    } catch {
-      return;
-    }
+    await context.management.execute({ kind: 'management', operation, owner: 'matrix', pendingLabel });
   };
 </script>
 
@@ -111,11 +36,11 @@
     snapshot={context.snapshot}
     summary={health}
   />
-  {#if operationError}
-    <p class={cx(notice, errorNotice)} role="alert">{operationError}</p>
-  {:else if operationMessage}
+  {#if operationNotice?.tone === 'error'}
+    <p class={cx(notice, errorNotice)} role="alert">{operationNotice.message}</p>
+  {:else if operationNotice}
     <p aria-live="polite" class={notice} role="status">
-      {operationMessage.message}
+      {operationNotice.message}
     </p>
   {/if}
   <SkillsMatrix
@@ -124,11 +49,7 @@
       : { activeCellStateFilter: activeFilter }}
     onApplyReconcile={() => execute(reconcileAllOperation, "reconcile-all")}
     onCancelReconcile={() => {
-      managementPlan.clear();
-      // Cancelling dismisses
-      //  the whole preview episode — a lingering "preview refreshed" notice
-      // would describe a plan that no longer exists.
-      operationMessage = null;
+      context.management.clearPlan();
     }}
     onCellStateFilterChange={(filter) => {
       activeFilter = filter;
@@ -141,9 +62,5 @@
     toggleSkill={(skillName, enabled) =>
       execute(toggleOperation(skillName, enabled), `toggle:${skillName}`)}
   />
-  <SkillObservationsPanel
-    errorMessage={context.observationsError}
-    observations={context.observations}
-    variant="overview"
-  />
+  <SkillObservationsPanel observationPresentation={context.presentation.observations} variant="overview" />
 </div>

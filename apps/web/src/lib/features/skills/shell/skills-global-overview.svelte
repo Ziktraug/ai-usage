@@ -11,50 +11,33 @@
     tableWrap,
   } from '@ai-usage/design-system/report';
   import { statusPill, statusPillInfo, statusPillOk, statusPillWarn, strongCell } from '@ai-usage/design-system/svelte';
-  import type { SkillManagementSnapshot } from '@ai-usage/skills';
-  import type { SkillObservations } from '@ai-usage/web-contract/skills';
-  import {
-    buildSkillHealthSummary,
-    buildSkillMatrix,
-    healthyLinkTone,
-    type KnownProjectScope,
-    type SkillTreeModel,
-  } from '../../../../skills-page-model';
+  import { healthyLinkTone, type KnownProjectScope } from '../../../../skills-page-model';
   import { MATRIX_DOT_GLYPHS, matrixDotTone } from '../management/model';
   import {
-    buildSkillObservationsView,
-    compareObservationRows,
     formatObservedAt,
     formatObservedDate,
     NAME_SCOPED_COUNTS_TEXT,
     noSignalsText,
-    observationEvidenceRank,
     observationRecency,
     observationRecencyNote,
     observedHarnessSummary,
     type SkillObservationRow,
-    skillObservationsPresentationState,
     verdictText,
   } from '../observations/model';
+  import type { SkillsPresentationProjection } from '../presentation';
   import SelectionLink from './selection-link.svelte';
 
   let {
     knownProjects,
-    observations,
-    observationsError,
-    snapshot,
-    tree,
+    presentation,
   }: {
     knownProjects: readonly KnownProjectScope[];
-    observations?: SkillObservations | undefined;
-    observationsError?: string | undefined;
-    snapshot: SkillManagementSnapshot;
-    tree: SkillTreeModel;
+    presentation: SkillsPresentationProjection;
   } = $props();
 
-  const observationsView = $derived(observations === undefined ? undefined : buildSkillObservationsView(observations));
-  const observationsState = $derived(skillObservationsPresentationState(observations, observationsError));
-  const rowsByName = $derived(new Map((observationsView?.rows ?? []).map((row) => [row.skillName, row])));
+  const observationsView = $derived(presentation.observations.view);
+  const observationsState = $derived(presentation.observations.state);
+  const rowsByName = $derived(presentation.observations.rowsByName);
   const adoptableGroup = $derived(
     observationsView?.adoptionGroups.find((group) => group.residence === 'runtime-installed'),
   );
@@ -65,7 +48,7 @@
     }
     return observationsView.deletionCandidates.length > 0 ? warnValue : okValue;
   });
-  const health = $derived(buildSkillHealthSummary(snapshot));
+  const health = $derived(presentation.health);
   const linksToneClass = $derived.by(() => {
     const tone = healthyLinkTone(health);
     if (tone === 'danger') {
@@ -73,32 +56,9 @@
     }
     return tone === 'warn' ? warnValue : undefined;
   });
-  const matrix = $derived(buildSkillMatrix(snapshot));
-  const targetLabelById = $derived(new Map(matrix.targets.map((target) => [target.id, target.label])));
-  const projectScopes = $derived(tree.scopes.filter((scope) => scope.type === 'project' && scope.hasSkills));
-
-  interface ProjectUsageSummary {
-    lastObservedAt: string | null;
-    observedCount: number;
-    top: SkillObservationRow | undefined;
-  }
-
-  const projectUsage = (skillNames: readonly string[]): ProjectUsageSummary => {
-    const rows = skillNames.flatMap((name) => {
-      const row = rowsByName.get(name);
-      return row === undefined ? [] : [row];
-    });
-    const observed = rows.filter((row) => observationEvidenceRank(row) > 0).toSorted(compareObservationRows);
-    return {
-      lastObservedAt: rows.reduce<string | null>(
-        (latest, row) =>
-          row.lastObservedAt !== null && row.lastObservedAt > (latest ?? '') ? row.lastObservedAt : latest,
-        null,
-      ),
-      observedCount: observed.length,
-      top: observed.at(0),
-    };
-  };
+  const matrix = $derived(presentation.matrix);
+  const targetLabelById = $derived(presentation.targetLabelById);
+  const projectScopes = $derived(presentation.projectScopes);
 
   const verdictPill = (row: SkillObservationRow): { label: string; pill: string } => {
     if (row.deletionCandidate) {
@@ -430,7 +390,7 @@
         </thead>
         <tbody>
           {#each projectScopes as scope (scope.key)}
-            {@const usage = projectUsage(scope.skills.map((skill) => skill.name))}
+            {@const usage = presentation.projectUsageByScopeKey.get(scope.key)}
             <tr data-project-scope-row={scope.label}>
               <th class={cx(strongCell, skillNameCell)} scope="row">
                 <SelectionLink class={skillNameLink} {knownProjects} selection={scope.selection}>
@@ -446,7 +406,7 @@
                   <span class={muted} data-observation-state="unavailable">unavailable</span>
                 {:else if observationsState === 'loading'}
                   <span class={muted} data-observation-state="loading">…</span>
-                {:else if usage.observedCount > 0 && usage.top !== undefined}
+                {:else if (usage?.observedCount ?? 0) > 0 && usage?.top !== undefined}
                   {usage.observedCount}
                   with invocation evidence — top: {usage.top.skillName}
                   ({observedHarnessSummary(usage.top)})
@@ -457,13 +417,13 @@
               </td>
               <td
                 class={observedAtCell}
-                data-observation-recency={usage.lastObservedAt ? observationRecency(usage.lastObservedAt) : undefined}
+                data-observation-recency={usage?.lastObservedAt ? observationRecency(usage.lastObservedAt) : undefined}
               >
                 {#if observationsState === 'unavailable'}
                   <span class={muted} data-observation-state="unavailable">unavailable</span>
                 {:else if observationsState === 'loading'}
                   <span class={muted} data-observation-state="loading">…</span>
-                {:else if usage.lastObservedAt}
+                {:else if usage?.lastObservedAt}
                   <time datetime={usage.lastObservedAt} title={formatObservedAt(usage.lastObservedAt)}
                     >{formatObservedDate(usage.lastObservedAt)}</time
                   >

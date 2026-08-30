@@ -17,7 +17,11 @@ import {
   type SessionVcsRepository,
   sessionVcsCommitUrl,
 } from '@ai-usage/report-core/session-vcs';
-import type { SkillObservation } from '@ai-usage/report-core/skill-observation';
+import {
+  completeSkillObservationCollection,
+  type SkillObservation,
+  type SkillObservationCollectionCompleteness,
+} from '@ai-usage/report-core/skill-observation';
 import type { UsageModelSegment } from '@ai-usage/report-core/types';
 import { UNSEGMENTED_MULTI_MODEL_LABEL } from '@ai-usage/report-core/usage-row';
 import { Effect } from 'effect';
@@ -67,15 +71,13 @@ export interface CodexSession {
   phases: CodexSessionPhase[];
   rejectedMetricRecords: number;
   reportPartial: boolean;
-  /** Skill candidates that failed validation, so a shape change is visible. */
-  skillObservationRejects: number;
+  /** Producer completeness stays split between exposure and invocation evidence. */
+  skillObservationCompleteness: SkillObservationCollectionCompleteness;
   /**
    * Codex declares no skill invocations. These are the `exposed` catalogue and
    * the `inferred` exec reads, kept as separate tiers on one list (ADR 0022).
    */
   skillObservations: SkillObservation[];
-  /** Whether the per-session observation ceiling cut the list short. */
-  skillObservationsTruncated: boolean;
   start: Date | null;
   subagentKind: CodexSubagentKind | null;
   subscription: boolean;
@@ -283,8 +285,7 @@ const emptySession = (): CodexSession => ({
   models: [],
   phases: [],
   skillObservations: [],
-  skillObservationRejects: 0,
-  skillObservationsTruncated: false,
+  skillObservationCompleteness: completeSkillObservationCollection(),
   subagentKind: null,
   threadSource: null,
   agentNickname: null,
@@ -591,7 +592,7 @@ export const createCodexSessionParser = (captureDetail = false) => {
   const pendingExecSignals: PendingCodexExecSignal[] = [];
   let pendingCatalogue: PendingCodexCatalogueSignal | null = null;
   let skillSignalIndex = 0;
-  let skillSignalsTruncated = false;
+  let invocationSignalsTruncated = false;
   let lines = 0;
   let parsedLines = 0;
   let skippedLines = 0;
@@ -1021,7 +1022,7 @@ export const createCodexSessionParser = (captureDetail = false) => {
       // by materialization time the over-ceiling signals are gone, so the count
       // would look complete. A signal-less call dropped at the bound loses
       // nothing and must not claim the count is partial.
-      skillSignalsTruncated = true;
+      invocationSignalsTruncated = true;
       return;
     }
     skillSignalIndex += 1;
@@ -1051,33 +1052,43 @@ export const createCodexSessionParser = (captureDetail = false) => {
       return;
     }
     const projectPath = session.cwd;
-    const observations: SkillObservation[] = [];
-    let rejected = 0;
+    const exposureObservations: SkillObservation[] = [];
+    const invocationObservations: SkillObservation[] = [];
+    let exposureCandidates = 0;
+    let exposureRejected = 0;
+    let invocationCandidates = 0;
+    let invocationRejected = 0;
     if (pendingCatalogue) {
+      exposureCandidates = pendingCatalogue.entries.length;
       const exposed = codexSkillCatalogueObservations(pendingCatalogue.entries, {
         observedAt: pendingCatalogue.at.toISOString(),
         projectPath,
         sessionId,
       });
-      observations.push(...exposed.observations);
-      rejected += exposed.rejected;
+      exposureObservations.push(...exposed.observations);
+      exposureRejected += exposed.rejected;
     }
     for (const signal of pendingExecSignals) {
+      invocationCandidates += signal.entries.length;
       const inferred = codexSkillExecObservations(signal.entries, signal.callId, {
         observedAt: signal.at.toISOString(),
         projectPath,
         sessionId,
       });
-      observations.push(...inferred.observations);
-      rejected += inferred.rejected;
+      invocationObservations.push(...inferred.observations);
+      invocationRejected += inferred.rejected;
     }
     const ceiling = codexSkillObservationCeiling();
-    session.skillObservations = observations.slice(0, ceiling);
-    session.skillObservationRejects = rejected;
-    // Two independent bounds: signals dropped as they arrived, and the
-    // projected list overrunning the ceiling. Either one makes the count a
-    // lower bound.
-    session.skillObservationsTruncated = skillSignalsTruncated || observations.length > ceiling;
+    const exposureTruncated = exposureCandidates > ceiling;
+    const invocationTruncated = invocationSignalsTruncated || invocationCandidates > ceiling;
+    session.skillObservations = [
+      ...exposureObservations.slice(0, ceiling),
+      ...invocationObservations.slice(0, ceiling),
+    ];
+    session.skillObservationCompleteness = {
+      exposure: { rejected: exposureRejected, truncated: exposureTruncated },
+      invocation: { rejected: invocationRejected, truncated: invocationTruncated },
+    };
   };
 
   const finalize = (): void => {

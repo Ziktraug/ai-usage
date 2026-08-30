@@ -14,62 +14,32 @@
     statusPillWarn,
     strongCell,
   } from '@ai-usage/design-system/svelte';
-  import { createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { onDestroy, onMount, tick } from 'svelte';
   import { goto } from '$app/navigation';
-  import { deriveInstallationAction, groupSkillDiagnostics } from '../../../../skill-document-inspector-model';
-  import {
-    buildGlobalSkillExposure,
-    buildSkillHealthSummary,
-    canReconcileAll,
-    count,
-    describeProjectSkillPlacement,
-    groupUnmanagedEntries,
-    skillDiagnosticLabel,
-    skillInvocation,
-  } from '../../../../skills-page-model';
+  import { canReconcileAll, count, skillDiagnosticLabel, skillInvocation } from '../../../../skills-page-model';
   import { SKILLS_DESKTOP_MEDIA_QUERY } from '../../../../skills-responsive';
   import { fmtNum } from '../../../foundation/presentation/format';
   import {
-    applySkillsConfigurationSnapshotToCache,
-    applySkillsSnapshotToCache,
-    skillsMutationOptions,
-  } from '../../../query/options/skills';
-  import { useOptionalWebQueryRpcContext } from '../../../query/rpc-context.svelte';
-  import { createSkillsClient } from '../../../rpc/skills-client';
-  import {
-    buildSkillObservationsView,
     formatObservedAt,
     formatObservedDate,
-    homonymNote,
-    installVerdictText,
     NAME_SCOPED_COUNTS_TEXT,
     noSignalsText,
     observationRecency,
     observationRecencyNote,
-    observedHarnessSummary,
-    skillObservationRow,
-    verdictText,
   } from '../observations/model';
-  import type { SkillsManagementPlanController } from '../shell/management-plan-controller';
   import type { SkillsHealthSlotPlacement, SkillsShellSlotContext } from '../shell/slot-context';
   import {
-    matrixDotTone,
     observeInspectorDisclosure,
     previewReconcileOperation,
     reconcileSkillOperation,
     resolveSkillsRefreshAcceptance,
-    runSkillsManagementOperation,
-    runSkillsRefreshOperation,
-    type SkillsConfigurationClient,
     type SkillsManagementOperation,
     type SkillsRefreshAcceptanceTarget,
-    type SkillsRefreshClient,
     type SkillsRefreshDecisionState,
-    skillsManagementSuccessMessage,
     skillsSnapshotAcceptanceSignature,
     toggleOperation,
   } from './model';
+  import type { SkillsHealthOperationOwner } from './operation-episode.svelte';
   import SkillsConfiguration from './skills-configuration.svelte';
   import SkillsConsolidate from './skills-consolidate.svelte';
   import {
@@ -83,28 +53,19 @@
     stack,
   } from './styles';
 
-  type SkillsHealthClient = SkillsConfigurationClient & SkillsRefreshClient;
-
   let {
-    client: injectedClient,
     context,
-    managementPlan,
     placement = 'inspector',
     onRefreshFocus,
     onRefreshPendingChange,
     onRefreshReady,
   }: {
-    client?: SkillsHealthClient;
     context: SkillsShellSlotContext;
-    managementPlan: SkillsManagementPlanController;
     placement?: SkillsHealthSlotPlacement;
     onRefreshFocus?: () => void;
     onRefreshPendingChange?: (pending: boolean) => void;
     onRefreshReady?: (action: () => Promise<void>) => void;
   } = $props();
-  const queryClient = useQueryClient();
-  const rpc = useOptionalWebQueryRpcContext()?.rpc;
-  let browserClient: SkillsHealthClient | undefined;
   let inspectorSectionsOpen = $state(false);
   let operationMessage = $state<{ message: string; tone: 'error' | 'success' } | null>(null);
   let awaitingRefresh = $state<SkillsRefreshAcceptanceTarget>();
@@ -118,131 +79,28 @@
     placement !== 'summary' &&
       (placement === 'detail' || context.view.selectionDetail.kind !== 'global-scope' || context.view.matrixOpen),
   );
-  const health = $derived(buildSkillHealthSummary(context.snapshot));
-  const disabledSkills = $derived(context.snapshot.skills.filter((skill) => !skill.enabled));
-  const unmanagedGroups = $derived(groupUnmanagedEntries(context.snapshot));
-  const selectedSkill = $derived(
-    context.view.selectionDetail.kind === 'global-skill' ? context.view.selectionDetail.skill : undefined,
+  const health = $derived(context.presentation.health);
+  const disabledSkills = $derived(context.presentation.disabledSkills);
+  const unmanagedGroups = $derived(context.presentation.unmanagedGroups);
+  const selectedSkill = $derived(context.presentation.selected.globalSkill);
+  const selectedSkillName = $derived(context.presentation.selected.name);
+  const diagnostics = $derived(context.presentation.selected.diagnostics);
+  const exposure = $derived(context.presentation.selected.exposure);
+  const installationAction = $derived(context.presentation.selected.installationAction);
+  const observationsView = $derived(context.presentation.observations.view);
+  const selectedObservationRow = $derived(context.presentation.selected.observationRow);
+  const selectedSummaryVerdict = $derived(context.presentation.selected.verdict);
+  const selectedHomonym = $derived(context.presentation.selected.homonym);
+  const projectPlacementSummary = $derived(context.presentation.selected.projectPlacementSummary);
+  const exposureTones = $derived(context.presentation.selected.exposureTones);
+  const exposureSummaryText = $derived(context.presentation.selected.exposureSummaryText);
+  const selectedObservedSummary = $derived(context.presentation.selected.observedSummary);
+  const unmanagedUsageByName = $derived(context.presentation.unmanagedUsageByName);
+  const pendingOperation = $derived(context.management.pendingOperation);
+  const operationOwner = $derived<SkillsHealthOperationOwner>(`health-${placement}`);
+  const managementNotice = $derived(
+    context.management.notice?.owner === operationOwner ? context.management.notice : null,
   );
-  const selectedProjectSkill = $derived(
-    context.view.selectionDetail.kind === 'project-skill' ? context.view.selectionDetail.skill : undefined,
-  );
-  const selectedSkillName = $derived(selectedSkill?.name ?? selectedProjectSkill?.name);
-  const selectedInstallScope = $derived(context.view.selectionDetail.kind === 'project-skill' ? 'project' : 'global');
-  const diagnostics = $derived(selectedSkill ? groupSkillDiagnostics(selectedSkill.diagnostics) : []);
-  const exposure = $derived(selectedSkill ? buildGlobalSkillExposure(context.snapshot, selectedSkill.name) : []);
-  const installationAction = $derived(selectedSkill ? deriveInstallationAction(selectedSkill, exposure) : undefined);
-  const observationsView = $derived(
-    context.observations === undefined ? undefined : buildSkillObservationsView(context.observations),
-  );
-  const selectedObservationRow = $derived(
-    observationsView === undefined || selectedSkillName === undefined
-      ? undefined
-      : skillObservationRow(observationsView, selectedSkillName),
-  );
-  const selectedSummaryVerdict = $derived.by(() => {
-    if (selectedObservationRow !== undefined) {
-      return installVerdictText(selectedObservationRow, selectedInstallScope);
-    }
-    if (observationsView === undefined) {
-      return;
-    }
-    return verdictText({
-      verdict: 'never-observed',
-      verdictProvisional: !observationsView.invocationEvidenceComplete,
-    });
-  });
-  const selectedHomonym = $derived(
-    selectedObservationRow === undefined ? undefined : homonymNote(selectedObservationRow, selectedInstallScope),
-  );
-  const projectPlacementSummary = $derived(
-    selectedProjectSkill === undefined
-      ? []
-      : [...new Set(selectedProjectSkill.observations.map(describeProjectSkillPlacement))],
-  );
-  const exposureTones = $derived.by(() => {
-    const tones = { broken: 0, copy: 0, linked: 0, missing: 0 };
-    for (const item of exposure) {
-      const tone = matrixDotTone(item.state);
-      if (tone !== 'none') {
-        tones[tone] += 1;
-      }
-    }
-    return tones;
-  });
-  const exposureSummaryText = $derived.by(() => {
-    const parts = [
-      exposureTones.missing > 0 ? `${exposureTones.missing} to link` : undefined,
-      exposureTones.broken > 0 ? `${exposureTones.broken} to repair` : undefined,
-      exposureTones.copy > 0 ? `${exposureTones.copy} blocked` : undefined,
-    ].filter((part) => part !== undefined);
-    return parts.length === 0 ? '' : parts.join(' · ');
-  });
-  const selectedObservedSummary = $derived(
-    selectedObservationRow === undefined ? '' : observedHarnessSummary(selectedObservationRow),
-  );
-  // Usage joined onto the consolidation backlog by name — what separates an adoptable entry from a
-  // deletable one. Undefined while the observation read is still in flight, so the fold can tell
-  // "not loaded" from an authoritative empty observation history.
-  const unmanagedUsageByName = $derived.by(() => {
-    if (observationsView === undefined) {
-      return;
-    }
-    return new Map(
-      observationsView.rows.map((row) => [
-        row.skillName,
-        {
-          lastObservedAt: row.lastObservedAt,
-          summary: observedHarnessSummary(row),
-        },
-      ]),
-    );
-  });
-  const resolveClient = (): SkillsHealthClient => {
-    if (injectedClient) {
-      return injectedClient;
-    }
-    if (!rpc) {
-      throw new Error('The shared browser RPC context is unavailable.');
-    }
-    browserClient ??= createSkillsClient(rpc.skills);
-    return browserClient;
-  };
-  const managementMutation = createMutation(() =>
-    skillsMutationOptions(
-      'health-management',
-      async (variables: { operation: SkillsManagementOperation; pendingLabel: string }) => {
-        const result = await runSkillsManagementOperation(resolveClient(), variables.operation);
-        if (!result.ok) {
-          throw new Error(result.error);
-        }
-        return { ...result, ...variables };
-      },
-    ),
-  );
-  const refreshMutation = createMutation(() =>
-    skillsMutationOptions('refresh-snapshot', async (_variables: undefined) => {
-      const client = resolveClient();
-      const result = await runSkillsRefreshOperation(client);
-      if (!result.ok) {
-        throw new Error(result.error);
-      }
-      await applySkillsConfigurationSnapshotToCache(queryClient, client, result.snapshot, true);
-      return result;
-    }),
-  );
-  const pendingOperation = $derived.by<string | null>(() => {
-    if (refreshMutation.isPending) {
-      return 'refresh-skills';
-    }
-    return managementMutation.isPending ? (managementMutation.variables?.pendingLabel ?? null) : null;
-  });
-  const operationError = $derived.by<string | null>(() => {
-    if (managementMutation.error instanceof Error) {
-      return managementMutation.error.message;
-    }
-    return refreshMutation.error instanceof Error ? refreshMutation.error.message : null;
-  });
   const inspectorSection = css({ borderTop: '1px solid token(colors.line)', display: 'grid', gap: '8px', pt: '12px' });
   const inspectorRow = css({
     display: 'grid',
@@ -418,40 +276,41 @@
     'aria-busy': pendingOperation === 'preview-reconcile' ? 'true' : 'false',
   } as const);
   const execute = async (operation: SkillsManagementOperation, pendingLabel: string): Promise<void> => {
-    if (managementMutation.isPending || refreshMutation.isPending) {
+    if (pendingOperation !== null) {
       return;
     }
-    managementPlan.clear();
     operationMessage = null;
     clearDismissTimer();
-    try {
-      const result = await managementMutation.mutateAsync({ operation, pendingLabel });
-      managementPlan.publish(result.plan);
-      await applySkillsSnapshotToCache(queryClient, result.snapshot);
-      setSuccessMessage(skillsManagementSuccessMessage(operation, result));
-      if (operation.type === 'preview-reconcile') {
-        await tick();
-        await goto('/skills/matrix');
-      }
-    } catch {
-      return;
+    const result = await context.management.execute({
+      kind: 'management',
+      operation,
+      owner: operationOwner,
+      pendingLabel,
+    });
+    if (result !== undefined && operation.type === 'preview-reconcile') {
+      await tick();
+      await goto('/skills/matrix');
     }
   };
   const refreshSkills = async (): Promise<void> => {
-    if (managementMutation.isPending || refreshMutation.isPending) {
+    if (pendingOperation !== null) {
       return;
     }
     operationMessage = null;
     clearDismissTimer();
-    try {
-      const result = await refreshMutation.mutateAsync(undefined);
+    const result = await context.management.execute({
+      kind: 'refresh',
+      owner: operationOwner,
+      pendingLabel: 'refresh-skills',
+    });
+    if (result === undefined) {
+      awaitingRefresh = undefined;
+    } else {
       const signature = skillsSnapshotAcceptanceSignature(result.snapshot);
       awaitingRefresh = { publicationReady: false, signature };
       if (awaitingRefresh?.signature === signature) {
         awaitingRefresh = { publicationReady: true, signature };
       }
-    } catch {
-      awaitingRefresh = undefined;
     }
   };
   const reviewConsolidation = async (): Promise<void> => {
@@ -486,7 +345,7 @@
         </div>
         <div class={summaryFact}>
           <span class={summaryFactLabel}>Skill signals</span>
-          {#if context.observationsError !== undefined}
+          {#if context.presentation.observations.errorMessage !== undefined}
             <span class={muted}>unavailable</span>
           {:else if observationsView === undefined}
             <span aria-busy="true" class={muted}>loading…</span>
@@ -606,7 +465,7 @@
             {/if}
           </div>
         </details>
-        <SkillsConfiguration {...(injectedClient === undefined ? {} : { client: injectedClient })} {context} />
+        <SkillsConfiguration {context} />
       </div>
     {:else}
       <section class={actionGrid}>
@@ -620,6 +479,7 @@
         <button
           {...previewBusyAttributes}
           class={cx(ghostButton, pendingButton)}
+          data-management-operation="preview-reconcile"
           disabled={pendingOperation !== null || !canReconcileAll(context.snapshot)}
           onclick={() => execute(previewReconcileOperation, 'preview-reconcile')}
           type="button"
@@ -738,11 +598,15 @@
       <p class={muted}>Read-only runtime observation.</p>
     </section>
   {/if}
-  {#if operationError}
-    <p class={cx(banner, bannerError, operationNotice)} role="alert">{operationError}</p>
+  {#if managementNotice?.tone === 'error'}
+    <p class={cx(banner, bannerError, operationNotice)} role="alert">{managementNotice.message}</p>
   {:else if operationMessage}
     <p aria-live="polite" class={cx(banner, bannerOk, operationNotice, passiveOperationNotice)} role="status">
       {operationMessage.message}
+    </p>
+  {:else if managementNotice}
+    <p aria-live="polite" class={cx(banner, bannerOk, operationNotice, passiveOperationNotice)} role="status">
+      {managementNotice.message}
     </p>
   {/if}
 </div>

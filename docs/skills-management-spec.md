@@ -158,9 +158,10 @@ to contain client names and business context; only their presence is recorded.
 
 - `@ai-usage/skills` owns contracts, validation, bounded filesystem operations, scans, projections, Markdown IO, and workflows. It is a filesystem-projection domain and must never gain a `@ai-usage/usage-store` dependency.
 - `apps/web/src/server/skills*` owns server-side validation and adaptation behind the oRPC contract, and is the only place the inventory meets skill observations — through the read-only `UsageReadModel` seam (ADR 0009).
-- `apps/web/src/server/skill-observation-join.ts` owns the inventory↔observation join: managed-ness, projection completeness, and every verdict are decided on the server and travel as facts. `apps/web/src/lib/features/skills/observations` owns presentation only, and imports nothing but the contract.
-- `@ai-usage/report-core/skill-observation-summary` owns the pure fold from observations into the presented dataset; `@ai-usage/report-data/skill-observation-read` owns the one bounded read that every consumer shares.
-- `apps/web/src/lib/features/skills/shell` owns route operations and snapshot replacement policy (see its `INTEGRATION.md`).
+- `apps/web/src/server/skill-observation-join.ts` owns the inventory↔observation join: managed-ness, projection completeness, and every verdict are decided on the server and travel as facts. Browser presentation consumes those verdicts without independently resolving inventory against observations.
+- `@ai-usage/report-core/skill-observation-evidence` owns tier capability and the pure policy that turns producer, read, refusal, and clamp loss into claim readiness. `@ai-usage/report-core/skill-observation-summary` owns the pure fold from observations into the presented dataset; `@ai-usage/report-data/skill-observation-read` owns the one bounded read that every consumer shares.
+- `apps/web/src/lib/features/skills/presentation.ts` owns the one immutable presentation projection shared by workspace, global, health, Project, and observation renderers.
+- `apps/web/src/lib/features/skills/shell` owns snapshot replacement policy (see its `INTEGRATION.md`); its shell-lived management-operation episode owns one Query mutation lifecycle from contract dispatch through publication, invalidation, pending state, reconcile plan, and outcome presentation.
 - `apps/web/src/routes/skills/` composes route presentation and URL-backed selection; `apps/web/src/lib/features/skills/{editor,management}` own the editor and management surfaces.
 - Browser-safe clients must use the documented `@ai-usage/skills/config` and `@ai-usage/skills/shared` exports and must not import server modules.
 

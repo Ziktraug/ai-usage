@@ -30,7 +30,12 @@ import { firstExisting } from '@ai-usage/local-machine/platform-paths';
 import { base, safeJSON } from '@ai-usage/local-machine/text';
 import { normalizeCodexRateLimitStatus, type ProviderStatus } from '@ai-usage/report-core/provider-status';
 import { parseSessionVcsContext, type SessionVcsContext } from '@ai-usage/report-core/session-vcs';
-import { type SkillObservation, skillObservationIdentity } from '@ai-usage/report-core/skill-observation';
+import {
+  completeSkillObservationCollection,
+  type SkillObservation,
+  type SkillObservationCollectionCompleteness,
+  skillObservationIdentity,
+} from '@ai-usage/report-core/skill-observation';
 import type { SessionOrigin } from '@ai-usage/report-core/types';
 import { actualCost, approximateApiCost } from '@ai-usage/report-core/usage-row';
 import { Effect } from 'effect';
@@ -129,10 +134,9 @@ interface SqliteDatabase {
 // This cache stores normalized parser output, not raw JSONL. Bump whenever an
 // unchanged rollout could produce different counters, labels, origin, lineage,
 // phases, or turns.
-// Bumped to 18 for the skill-observation stream: an entry written by version 17
-// carries a parsed session with no observations, and reusing it would report a
-// machine with history as a machine that has never invoked a skill.
-const CODEX_SESSION_CACHE_VERSION = 18;
+// Bumped to 19 when Codex producer completeness stopped pooling `exposed` and
+// `inferred`: version 18 cannot say which tier was rejected or truncated.
+const CODEX_SESSION_CACHE_VERSION = 19;
 
 const THREAD_SPAWN_EDGES_SQL = `
 select parent_thread_id as parent, child_thread_id as child
@@ -194,8 +198,10 @@ const cloneCodexSession = (session: CodexSession): CodexSession => ({
   end: session.end ? new Date(session.end) : null,
   models: [...session.models],
   skillObservations: session.skillObservations.map((observation) => ({ ...observation })),
-  skillObservationRejects: session.skillObservationRejects,
-  skillObservationsTruncated: session.skillObservationsTruncated,
+  skillObservationCompleteness: {
+    exposure: { ...session.skillObservationCompleteness.exposure },
+    invocation: { ...session.skillObservationCompleteness.invocation },
+  },
   phases: session.phases.map((phase) => ({
     ...phase,
     end: new Date(phase.end),
@@ -272,6 +278,27 @@ const reviveCachedPhases = (value: unknown): CodexSessionPhase[] | null => {
   return phases;
 };
 
+const reviveSkillObservationCompletenessPart = (
+  value: unknown,
+): SkillObservationCollectionCompleteness['exposure'] | null => {
+  if (!(isRecord(value) && Object.keys(value).every((key) => key === 'rejected' || key === 'truncated'))) {
+    return null;
+  }
+  const rejected = parseNonNegativeSafeInteger(value.rejected);
+  return rejected.ok && typeof value.truncated === 'boolean'
+    ? { rejected: rejected.value, truncated: value.truncated }
+    : null;
+};
+
+const reviveSkillObservationCompleteness = (value: unknown): SkillObservationCollectionCompleteness | null => {
+  if (!(isRecord(value) && Object.keys(value).every((key) => key === 'exposure' || key === 'invocation'))) {
+    return null;
+  }
+  const exposure = reviveSkillObservationCompletenessPart(value.exposure);
+  const invocation = reviveSkillObservationCompletenessPart(value.invocation);
+  return exposure && invocation ? { exposure, invocation } : null;
+};
+
 const reviveCachedSession = (json: string): CodexSession | null => {
   try {
     const value = JSON.parse(json) as unknown;
@@ -299,7 +326,7 @@ const reviveCachedSession = (json: string): CodexSession | null => {
     // a cache entry whose observations no longer parse is a cache miss, not a
     // session that silently lost its observations.
     const skillObservations = reviveSkillObservationsResult(value.skillObservations);
-    const skillObservationRejects = parseNonNegativeSafeInteger(value.skillObservationRejects);
+    const skillObservationCompleteness = reviveSkillObservationCompleteness(value.skillObservationCompleteness);
     let vcs: SessionVcsContext | undefined;
     try {
       vcs = value.vcs === undefined ? undefined : parseSessionVcsContext(value.vcs);
@@ -323,8 +350,7 @@ const reviveCachedSession = (json: string): CodexSession | null => {
       models.length !== rawModels?.length ||
       phases === null ||
       !skillObservations.valid ||
-      !skillObservationRejects.ok ||
-      typeof value.skillObservationsTruncated !== 'boolean'
+      skillObservationCompleteness === null
     ) {
       return null;
     }
@@ -360,8 +386,7 @@ const reviveCachedSession = (json: string): CodexSession | null => {
       rejectedMetricRecords: rejectedMetricRecords.value,
       hasTokenUsage: value.hasTokenUsage,
       skillObservations: skillObservations.observations,
-      skillObservationRejects: skillObservationRejects.value,
-      skillObservationsTruncated: value.skillObservationsTruncated === true,
+      skillObservationCompleteness,
       ...(vcs ? { vcs } : {}),
     };
   } catch {
@@ -604,17 +629,14 @@ const readCodexSessions = (
   );
 
 export interface CodexUsageSessionsResult {
+  observationCompleteness: SkillObservationCollectionCompleteness;
   /**
    * Codex declares no skill invocations, so these are `exposed` catalogue
    * entries and `inferred` exec reads. They are collected on the same pass and
    * are never combined into one count (ADR 0022).
    */
   observations: SkillObservation[];
-  /** Whether any session hit its per-session observation ceiling. */
-  observationsTruncated: boolean;
   rejectedMetricRecords: number;
-  /** Skill candidates that failed validation; reported on their own channel. */
-  rejectedObservations: number;
   sessions: CodexCollectedSession[];
 }
 
@@ -700,11 +722,12 @@ export const readCodexUsageSessionsResult: Effect.Effect<
     // observations are deduplicated on the identity the store keys on.
     const observations: SkillObservation[] = [];
     const seenObservations = new Set<string>();
-    let rejectedObservations = 0;
-    let observationsTruncated = false;
+    const observationCompleteness = completeSkillObservationCollection();
     for (const session of sessions) {
-      rejectedObservations += session.skillObservationRejects;
-      observationsTruncated ||= session.skillObservationsTruncated;
+      observationCompleteness.exposure.rejected += session.skillObservationCompleteness.exposure.rejected;
+      observationCompleteness.exposure.truncated ||= session.skillObservationCompleteness.exposure.truncated;
+      observationCompleteness.invocation.rejected += session.skillObservationCompleteness.invocation.rejected;
+      observationCompleteness.invocation.truncated ||= session.skillObservationCompleteness.invocation.truncated;
       for (const observation of session.skillObservations) {
         const identity = skillObservationIdentity(observation);
         if (seenObservations.has(identity)) {
@@ -716,10 +739,9 @@ export const readCodexUsageSessionsResult: Effect.Effect<
     }
 
     return {
+      observationCompleteness,
       observations,
-      observationsTruncated,
       rejectedMetricRecords,
-      rejectedObservations,
       sessions: usageSessions,
     };
   }),

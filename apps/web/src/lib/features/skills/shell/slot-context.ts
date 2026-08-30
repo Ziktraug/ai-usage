@@ -1,9 +1,7 @@
 import type { SkillManagementSnapshot } from '@ai-usage/skills';
-import type {
-  ProjectSkillMarkdownDocument,
-  SkillMarkdownDocument,
-  SkillObservations,
-} from '@ai-usage/web-contract/skills';
+import type { ProjectSkillMarkdownDocument, SkillMarkdownDocument } from '@ai-usage/web-contract/skills';
+import type { SkillsManagementOperationEpisodePort } from '../management/operation-episode.svelte';
+import type { SkillsPresentationProjection } from '../presentation';
 import type { SkillsShellViewModel } from './model';
 import type { SkillsDraftGuardPort } from './snapshot-controller';
 
@@ -34,13 +32,10 @@ export interface SkillsSnapshotUpdatePort {
  */
 export interface SkillsShellSlotContext {
   readonly document: ProjectSkillMarkdownDocument | SkillMarkdownDocument | undefined;
-  /**
-   * The skill-observation dataset, on its own query identity and its own collection cadence.
-   * `undefined` means "not read yet", which is why it is not the same thing as an empty dataset.
-   */
-  readonly observations: SkillObservations | undefined;
-  /** Set when the observation read failed. Reported per metric, never as a page-level banner. */
-  readonly observationsError: string | undefined;
+  /** One shell-lived Query mutation episode shared by every management presentation. */
+  readonly management: SkillsManagementOperationEpisodePort;
+  /** Joined immutable presentation facts derived once from the accepted Query results. */
+  readonly presentation: SkillsPresentationProjection;
   readonly snapshot: SkillManagementSnapshot;
   readonly snapshotUpdates: SkillsSnapshotUpdatePort;
   readonly view: SkillsShellViewModel;

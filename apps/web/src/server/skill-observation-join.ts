@@ -1,3 +1,9 @@
+import {
+  applySkillObservationEvidenceLoss,
+  type SkillObservationEvidence,
+  skillObservationTierSupportsInvocation,
+  skillObservationVerdictIsProvisional,
+} from '@ai-usage/report-core/skill-observation-evidence';
 import type { SkillObservationDataset } from '@ai-usage/report-core/skill-observation-summary';
 import {
   MAX_SKILL_OBSERVATION_HARNESS_ROSTER,
@@ -88,7 +94,8 @@ const textEncoder = new TextEncoder();
 
 const responseBytes = (response: SkillObservations): number => textEncoder.encode(JSON.stringify(response)).byteLength;
 
-const INVOCATION_TIERS: ReadonlySet<string> = new Set(['declared', 'inferred']);
+const skillsCarryInvocation = (skills: readonly Pick<ObservedSkill, 'tallies'>[]): boolean =>
+  skills.some((skill) => skill.tallies.some((tally) => skillObservationTierSupportsInvocation(tally.tier)));
 
 /**
  * Bounds the response the procedure actually returns.
@@ -106,21 +113,11 @@ const INVOCATION_TIERS: ReadonlySet<string> = new Set(['declared', 'inferred']);
  * shorter honest answer beats a 503.
  */
 export const clampSkillObservationsResponse = (response: SkillObservations): SkillObservations => {
-  let lowerBound = response.lowerBound;
-  /**
-   * One invariant, enforced at every clamp site below: **anything this function drops that carried
-   * `declared` or `inferred` evidence sets the invocation bound.**
-   *
-   * It is not enough to set the pooled `lowerBound`. That flag no longer governs the verdicts — the
-   * surface reads an exposure-only truncation as "the counts are floors and the verdicts stand", so
-   * a dropped invocation tally reported through `lowerBound` alone would render as a positive
-   * claim that every invocation was served.
-   */
-  let droppedInvocationEvidence = false;
+  let evidence: SkillObservationEvidence = response;
   let harnesses = response.harnesses;
   if (harnesses.length > MAX_SKILL_OBSERVATION_HARNESS_ROSTER) {
     harnesses = harnesses.slice(0, MAX_SKILL_OBSERVATION_HARNESS_ROSTER);
-    lowerBound = true;
+    evidence = applySkillObservationEvidenceLoss(evidence, { counts: true, invocation: false });
   }
   // The surface renders a skill's counts by walking the roster, so a tally under a harness the
   // roster no longer carries is a count nothing can present. Dropping it keeps the payload to what
@@ -131,15 +128,18 @@ export const clampSkillObservationsResponse = (response: SkillObservations): Ski
     const tallies = rosteredTallies.slice(0, MAX_SKILL_OBSERVATION_SKILL_TALLIES);
     const resolvedPaths = skill.resolvedPaths.slice(0, MAX_SKILL_OBSERVATION_SKILL_RESOLVED_PATHS);
     const pathsClamped = resolvedPaths.length !== skill.resolvedPaths.length;
-    if (tallies.length !== skill.tallies.length || pathsClamped) {
-      lowerBound = true;
-    }
     // A harness key falling off the roster, or a tally falling past the per-skill cap, drops a real
     // count. Which bound that is depends on the tier it held: losing a catalogue injection costs
     // the verdicts nothing, losing an invocation costs them their evidence.
     const retained = new Set(tallies);
-    if (skill.tallies.some((tally) => !retained.has(tally) && INVOCATION_TIERS.has(tally.tier))) {
-      droppedInvocationEvidence = true;
+    const invocationDropped = skill.tallies.some(
+      (tally) => !retained.has(tally) && skillObservationTierSupportsInvocation(tally.tier),
+    );
+    if (tallies.length !== skill.tallies.length || pathsClamped) {
+      evidence = applySkillObservationEvidenceLoss(evidence, {
+        counts: true,
+        invocation: invocationDropped,
+      });
     }
     return {
       ...skill,
@@ -150,26 +150,34 @@ export const clampSkillObservationsResponse = (response: SkillObservations): Ski
       tallies,
     };
   });
-  let droppedSkillRows = skills.length > MAX_SKILL_OBSERVATION_SKILLS;
-  let clamped: SkillObservations = droppedSkillRows
-    ? { ...response, harnesses, lowerBound: true, skills: skills.slice(0, MAX_SKILL_OBSERVATION_SKILLS) }
-    : { ...response, harnesses, lowerBound, skills };
+  let retainedSkills = skills;
+  if (skills.length > MAX_SKILL_OBSERVATION_SKILLS) {
+    evidence = applySkillObservationEvidenceLoss(evidence, {
+      counts: true,
+      invocation: skillsCarryInvocation(skills.slice(MAX_SKILL_OBSERVATION_SKILLS)),
+    });
+    retainedSkills = skills.slice(0, MAX_SKILL_OBSERVATION_SKILLS);
+  }
+  let clamped: SkillObservations = { ...response, ...evidence, harnesses, skills: retainedSkills };
   // Halving rather than estimating, because skill names and resolved paths are open-vocabulary: the
   // serialized size of a row is not derivable from a row count. It always terminates — an empty
   // skill list leaves only a roster that is orders of magnitude inside the budget.
   while (clamped.skills.length > 0 && responseBytes(clamped) > MAX_SKILL_OBSERVATIONS_RESPONSE_BYTES) {
-    droppedSkillRows = true;
+    const retainedCount = Math.floor(clamped.skills.length / 2);
+    evidence = applySkillObservationEvidenceLoss(evidence, {
+      counts: true,
+      invocation: skillsCarryInvocation(clamped.skills.slice(retainedCount)),
+    });
     clamped = {
       ...clamped,
-      lowerBound: true,
-      skills: clamped.skills.slice(0, Math.floor(clamped.skills.length / 2)),
+      ...evidence,
+      skills: clamped.skills.slice(0, retainedCount),
     };
   }
-  // Dropping whole rows drops whatever invocation evidence they carried, so the response says its
-  // invocation evidence is incomplete. The per-skill `verdictProvisional` flags are untouched, and
-  // correctly so: they were decided before this clamp, and a surviving skill's own evidence is not
-  // weakened by another skill being left out. The two answer different questions.
-  return droppedSkillRows || droppedInvocationEvidence ? { ...clamped, invocationLowerBound: true } : clamped;
+  // The per-skill `verdictProvisional` flags are untouched: they were decided before this clamp, and
+  // a surviving skill's own evidence is not weakened by another skill being left out. The response
+  // bounds instead report which kind of evidence the discarded rows actually carried.
+  return clamped;
 };
 
 /**
@@ -217,10 +225,9 @@ export const joinSkillObservations = (input: SkillObservationJoinInput): SkillOb
    * would hedge a claim the data fully supports, and on a real store exposure truncation is the
    * permanent condition, so the hedge would never come off.
    *
-   * The converse still holds: if the invocation read trips its own budget, or rows failed
-   * re-validation, absence is unproven and every such verdict says so.
+   * The converse still holds: if the invocation read trips its own budget, or invocation/unknown
+   * rows failed re-validation, absence is unproven and every such verdict says so.
    */
-  const absenceIsProvable = !input.observations.invocationLowerBound && input.observations.skipped === 0;
   // Every managed skill appears, observed or not: a skill missing from the observation read is the
   // deletion candidate this family exists to name, and dropping it would erase the verdict.
   const names = [...new Set([...skillsByName.keys(), ...observedByName.keys()])].sort((left, right) =>
@@ -233,7 +240,7 @@ export const joinSkillObservations = (input: SkillObservationJoinInput): SkillOb
     const inventorySkill = skillsByName.get(skillName);
     const managed = inventorySkill !== undefined;
     const tallies = observed?.tallies ?? [];
-    const invoked = tallies.some((tally) => INVOCATION_TIERS.has(tally.tier));
+    const invoked = tallies.some((tally) => skillObservationTierSupportsInvocation(tally.tier));
     const offered = tallies.length > 0;
     const projectedEverywhere = inventorySkill === undefined ? false : projectedEverywhereFor(inventorySkill, input);
     const verdict = verdictFor(managed, invoked, offered);
@@ -251,7 +258,7 @@ export const joinSkillObservations = (input: SkillObservationJoinInput): SkillOb
       verdict,
       // A positive verdict is not weakened by a short read: seeing an invocation proves use whether
       // or not more rows existed beyond the bound. Only claims of absence are provisional.
-      verdictProvisional: !(absenceIsProvable || invoked),
+      verdictProvisional: skillObservationVerdictIsProvisional(input.observations, invoked),
     };
   });
   return clampSkillObservationsResponse({

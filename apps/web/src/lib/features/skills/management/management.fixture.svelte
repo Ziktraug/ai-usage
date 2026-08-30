@@ -1,6 +1,6 @@
 <script lang="ts">
   import WebQueryProvider from '../../../query/provider.svelte';
-  import { createSkillsManagementPlanController } from '../shell/management-plan-controller';
+  import { createSkillsPresentationProjection } from '../presentation';
   import { createSkillsShellViewModel } from '../shell/model';
   import type { SkillsShellSlotContext, SkillsSnapshotUpdatePort } from '../shell/slot-context';
   import {
@@ -11,7 +11,7 @@
   } from '../shell/synthetic-fixture.test-helper';
   import SkillsHealthSlot from './skills-health-slot.svelte';
   import SkillsMatrixSlot from './skills-matrix-slot.svelte';
-  import { syntheticManagementSnapshot } from './synthetic-fixture.test-helper';
+  import { syntheticManagementOperationEpisode, syntheticManagementSnapshot } from './synthetic-fixture.test-helper';
 
   let {
     observationsProvisional = false,
@@ -31,11 +31,15 @@
     registerDraft: () => undefined,
     unregisterDraft: () => undefined,
   };
-  const managementPlan = createSkillsManagementPlanController();
+  const management = syntheticManagementOperationEpisode();
   const context = $derived<SkillsShellSlotContext>({
     document: undefined,
-    observations: observationsProvisional ? syntheticProvisionalObservations : syntheticObservations,
-    observationsError: undefined,
+    management,
+    presentation: createSkillsPresentationProjection({
+      observations: observationsProvisional ? syntheticProvisionalObservations : syntheticObservations,
+      observationsError: undefined,
+      view,
+    }),
     snapshot,
     snapshotUpdates,
     view,
@@ -44,12 +48,8 @@
 
 <WebQueryProvider>
   {#if pathname === '/skills/matrix'}
-    <SkillsMatrixSlot {context} {managementPlan} />
+    <SkillsMatrixSlot {context} />
   {:else}
-    <SkillsHealthSlot
-      {context}
-      {managementPlan}
-      placement={view.selectionDetail.kind === 'global-scope' ? 'detail' : 'inspector'}
-    />
+    <SkillsHealthSlot {context} placement={view.selectionDetail.kind === 'global-scope' ? 'detail' : 'inspector'} />
   {/if}
 </WebQueryProvider>

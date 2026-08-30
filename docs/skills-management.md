@@ -25,6 +25,13 @@ duplicate acquisition. Filesystem access and mutation rules stay behind
 `@ai-usage/skills` workflows and server-only web modules reached through the
 explicit Web RPC boundary.
 
+Within the browser, the shell builds one immutable presentation projection from
+the accepted Query results and passes it to every Skills renderer. One
+shell-lived management-operation episode owns the Query mutation observer,
+contract dispatch, cache publication and invalidation, pending state, reconcile
+plan, and placement-scoped outcome. Configuration drafts remain local to their
+form and TanStack Query remains the only owner of server state.
+
 ## Storage
 
 User-local skill configuration lives in the existing ai-usage config file:

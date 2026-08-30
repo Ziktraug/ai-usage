@@ -1,4 +1,5 @@
-import { isPrintableSkillObservationText, SKILL_OBSERVATION_TIERS } from '@ai-usage/report-core/skill-observation';
+import { isPrintableSkillObservationText } from '@ai-usage/report-core/skill-observation';
+import { SKILL_OBSERVATION_TIERS as skillObservationTiers } from '@ai-usage/report-core/skill-observation-evidence';
 import { parseSkillConfigInput } from '@ai-usage/skills/config';
 import { skillNamePattern, skillTargetIdPattern } from '@ai-usage/skills/shared';
 import { oc } from '@orpc/contract';
@@ -353,7 +354,7 @@ const skillObservationTallySchema = strictObject({
   harnessKey: harnessKeySchema,
   harnessLabel: pipe(string(), maxLength(MAX_OBSERVED_SKILL_NAME_LENGTH)),
   lastObservedAt: observationTimestampSchema,
-  tier: picklist(SKILL_OBSERVATION_TIERS),
+  tier: picklist(skillObservationTiers),
 });
 
 /**
@@ -708,8 +709,10 @@ export type SkillUnmanagedResidence = NonNullable<ObservedSkill['unmanagedReside
  * Re-exported so browser code never has to reach past the contract for the tier vocabulary
  * (ADR 0010/0012). The values themselves are owned by `report-core`.
  */
-export { SKILL_OBSERVATION_TIERS } from '@ai-usage/report-core/skill-observation';
-export type SkillObservationTier = (typeof SKILL_OBSERVATION_TIERS)[number];
+export {
+  SKILL_OBSERVATION_TIERS,
+  type SkillObservationTier,
+} from '@ai-usage/report-core/skill-observation-evidence';
 export type SkillReconcileResult = InferOutput<typeof skillReconcileResultSchema>;
 export type SkillTargetInput = InferOutput<typeof skillTargetInputSchema>;
 export type SkillToggleInput = InferOutput<typeof skillToggleInputSchema>;

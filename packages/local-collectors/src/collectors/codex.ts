@@ -1,5 +1,6 @@
 import type { LocalHistoryWarning } from '@ai-usage/local-machine/errors';
 import {
+  completeSkillObservationCollection,
   MAX_SKILL_OBSERVATIONS_PER_SESSION,
   type SkillObservation,
   type SkillObservationCollectionCompleteness,
@@ -27,35 +28,24 @@ export interface CodexCollectionResult {
 export const collectCodexResult = Effect.gen(function* () {
   if (!(yield* hasCodexHistory)) {
     return {
-      observationCompleteness: {
-        exposure: { rejected: 0, truncated: false },
-        invocation: { rejected: 0, truncated: false },
-      },
+      observationCompleteness: completeSkillObservationCollection(),
       observations: [],
       rows: [],
       warnings: [],
     };
   }
   const result = yield* readCodexUsageSessionsResult;
+  const rejectedObservations =
+    result.observationCompleteness.exposure.rejected + result.observationCompleteness.invocation.rejected;
+  const observationsTruncated =
+    result.observationCompleteness.exposure.truncated || result.observationCompleteness.invocation.truncated;
   const warning = metricValidationWarning('codex', result.rejectedMetricRecords);
-  const observationWarning = skillObservationValidationWarning('codex', result.rejectedObservations);
-  const truncationWarning = result.observationsTruncated
+  const observationWarning = skillObservationValidationWarning('codex', rejectedObservations);
+  const truncationWarning = observationsTruncated
     ? skillObservationTruncationWarning('codex', MAX_SKILL_OBSERVATIONS_PER_SESSION)
     : null;
   return {
-    // The current Codex session cache reports one combined producer bound. Until that cache carries
-    // the two causes separately, attributing it to both tiers is conservative: it can hedge an
-    // absence unnecessarily, but it can never certify an absence after losing an invocation.
-    observationCompleteness: {
-      exposure: {
-        rejected: result.rejectedObservations,
-        truncated: result.observationsTruncated,
-      },
-      invocation: {
-        rejected: result.rejectedObservations,
-        truncated: result.observationsTruncated,
-      },
-    },
+    observationCompleteness: result.observationCompleteness,
     observations: result.observations,
     rows: result.sessions.map(sessionToUsageRow),
     warnings: [warning, observationWarning, truncationWarning].filter((value) => value !== null),
