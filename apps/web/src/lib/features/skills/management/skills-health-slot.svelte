@@ -320,9 +320,7 @@
     alignItems: 'center',
     alignContent: 'center',
     gap: '8px',
-    border: 'none',
-    bg: 'transparent',
-    p: '0',
+    minW: 0,
   });
   const staleText = css({ color: 'status.warn', fontWeight: 650 });
   const foldBody = css({ display: 'grid', gap: '14px', p: '0 16px 16px' });
@@ -532,7 +530,7 @@
           {/if}
         </div>
         {#if selectedSkill}
-          <div class={cx(summaryFact, summaryActions)} data-summary-actions>
+          <div class={summaryActions} data-summary-actions>
             <button
               class={cx(ghostButton, pendingButton)}
               disabled={pendingOperation !== null}
