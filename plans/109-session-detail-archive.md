@@ -23,7 +23,7 @@ Superseded alternatives remain in Git history and are not executable guidance.
 - **Depends on**: 103, 104, 107, 108 connected phase
 - **Category**: sensitive session archive and cross-machine read continuity
 - **Planned at**: commit `dac2214c`, 2026-08-26
-- **Implementation status**: TODO
+- **Plan status**: TODO
 
 ## Existing boundary
 

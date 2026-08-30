@@ -162,15 +162,15 @@ read-only SQLite and the permanent browser/server and demo-isolation boundaries.
 | 096 | Skills Management Surface Fixes — Legible Tree, Honest Statuses, One Health Surface, Matrix Geometry, Frontmatter False Positives | P1 | M | 087 (editor status branch) | DONE (maintainer reopening D20; refresh proof now observes the settled transformed response, the intended visual baseline is updated, and full child gates pass) |
 | 097 | Sync, Sources, Projects: Duplication and Jargon | P1 | M | 088 (fleet "Sessions" label) | DONE |
 | 098 | Session Drawer, Analysis, and Report Chrome Polish | P2 | M | 088 (drawer, records); 093/094 if they touched `preset.ts` | DONE |
-| 099 | Evolve ai-usage Into a Multi-Tenant AI Operations and Memory Platform (program plan) | P0 | L (program) | 100-110 | TODO |
+| 099 | Evolve ai-usage Into a Multi-Tenant AI Operations and Memory Platform (program plan) | P0 | L (program) | 100-110 | IN PROGRESS (architecture accepted; runtime not yet on `main`) |
 | 100 | Define the Platform Topology, Capability Modules, and Data Ownership | P0 | L | - | DONE |
-| 101 | Add the PostgreSQL Server Foundation Without Replacing the Local SQLite Engine | P0 | L | 100 | DONE |
-| 102 | Introduce Stable Spaces, People, Devices, Repositories, Projects, and Checkouts | P0 | L | 100, 101 | DONE |
-| 103 | Model Authorization With ReBAC, Content Boundaries, and Aggregate-Only Roles | P0 | XL | 100-102 | DONE |
-| 104 | Add Authentication, GitHub Identity Separation, and Device Enrollment | P1 | L | 102, 103 | DONE (connected V1 is GitHub-only; non-GitHub login remains explicitly BLOCKED) |
-| 105 | Migrate Agent Memory From NixOS Files Into a DB-Native Domain | P1 | XL | 100-102 | DONE |
-| 106 | Build Authorized Hybrid Memory Search and a Harness-Agnostic MCP Adapter | P1 | XL | 102, 105 (local/single-user shared); 103, 104 (organization-connected) | DONE |
-| 107 | Replicate Local Machine Facts to the Server With an Idempotent Outbox Protocol | P1 | XL | 101-105 | IN PROGRESS |
+| 101 | Add the PostgreSQL Server Foundation Without Replacing the Local SQLite Engine | P0 | L | 100 | IN PROGRESS (implementation pending integration) |
+| 102 | Introduce Stable Spaces, People, Devices, Repositories, Projects, and Checkouts | P0 | L | 100, 101 | IN PROGRESS (implementation pending integration) |
+| 103 | Model Authorization With ReBAC, Content Boundaries, and Aggregate-Only Roles | P0 | XL | 100-102 | IN PROGRESS (implementation pending integration) |
+| 104 | Add Authentication, GitHub Identity Separation, and Device Enrollment | P1 | L | 102, 103 | IN PROGRESS (implementation pending integration; connected V1 is GitHub-only; non-GitHub login remains explicitly BLOCKED) |
+| 105 | Migrate Agent Memory From NixOS Files Into a DB-Native Domain | P1 | XL | 100-102 | IN PROGRESS (implementation pending integration) |
+| 106 | Build Authorized Hybrid Memory Search and a Harness-Agnostic MCP Adapter | P1 | XL | 102, 105 (local/single-user shared); 103, 104 (organization-connected) | IN PROGRESS (implementation pending integration) |
+| 107 | Replicate Local Machine Facts to the Server With an Idempotent Outbox Protocol | P1 | XL | 101-105 | IN PROGRESS (partial implementation pending integration; remaining criteria open) |
 | 108 | Add Cross-Harness Work Handoffs and Work Threads | P1 | L | 102, 105, 106 (local); 107 (connected) | TODO |
 | 109 | Archive Session Detail Safely for Cross-Machine Read-Only Continuity | P2 | L | 103, 104, 107, 108 connected phase | TODO |
 | 110 | Spike Native Session Portability Across Claude, Codex, OpenCode, and Cursor | P2 | L (spike) | 108, 109 | TODO |
@@ -179,6 +179,12 @@ Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) |
 REJECTED (with one-line rationale) | DESIGN READY (design/spike plans only:
 the design document is delivered and awaits a maintainer decision before any
 build phase).
+
+`DONE` means the plan's done criteria are present and verified on `main`.
+`IN PROGRESS` may record implementation completed on another branch but not yet
+integrated; that work is not available on `main` until the row moves to `DONE`.
+ADR `Accepted` status records a settled architecture decision and is independent
+of this implementation status.
 
 ## 2026-08-26 AI operations and memory platform program (plans 099-110)
 

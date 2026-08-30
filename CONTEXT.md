@@ -2,6 +2,11 @@
 
 This context describes the local AI usage reporting domain. The CLI turns provider-free local history from installed AI coding tools into usage rows, analytics, and CSV. Quota collection is the explicit exception: the usage engine may ask the installed `codex app-server` or the experimental Claude Agent SDK for a fresh usage-limit observation before readers project the durable local result. Those provider clients own communication and authentication.
 
+Some entries below name accepted platform concepts before their runtime plans
+are integrated. A term's presence records the settled vocabulary, not feature
+availability; [`plans/README.md`](plans/README.md) is the implementation-status
+authority.
+
 ## Language
 
 **Harness**:
@@ -52,10 +57,10 @@ _Avoid_: data API, report transport, remote service, platform API
 **Memory service**:
 The separately named, authenticated numeric-loopback application-service seam
 for local Memory-domain reads and mutations. Its protocol, bearer token,
-rendezvous, and lifecycle are independent from the usage-engine control plane;
-the current local surface exposes bounded Project-resolution and Memory-
-proposal review workflows. Import/export remain explicit application-service
-operations rather than implicit file synchronization.
+rendezvous, and lifecycle are independent from the usage-engine control plane.
+Its accepted surface keeps Project resolution, Memory proposal review, and
+explicit import/export behind application services rather than implicit file
+synchronization.
 _Avoid_: control plane, report API, public platform endpoint
 
 **Platform/server**:

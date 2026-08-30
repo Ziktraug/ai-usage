@@ -1,9 +1,14 @@
 # Authorization model and operations
 
-This is the living reference for the local and connected authorization seam.
+> **Implementation status:** Accepted target specification. The authorization
+> packages, PostgreSQL model, benchmark, and verification evidence below are
+> pending integration and are not available on `main`; plan 103 remains
+> `IN PROGRESS` in `plans/README.md`.
+
+This is the accepted reference for the local and connected authorization seam.
 It describes the application-owned `Authorizer`, the PostgreSQL V1 relation
 model, the Project-listing vertical, coarse row-level security, audit writes,
-and the measured OpenFGA escape hatch delivered by plan 103.
+and the measured OpenFGA escape hatch prepared by plan 103 implementation work.
 
 Authentication and credential issuance are separate plan-104 concerns. An
 authenticated identity becomes a Person principal before it reaches this
@@ -49,7 +54,7 @@ sensitive Memory, SCM-installation separation, cursor safety, complete scope,
 fail-closed adapter errors, and content-free aggregate evaluation. The same
 organization scenarios run unchanged against the PostgreSQL adapter.
 
-The current organization role semantics are deliberately narrow:
+The accepted V1 organization role semantics are deliberately narrow:
 
 - `admin` manages organization membership, Teams, and authorization; it is not
   an implicit Session, Memory, or Work handoff content reader;
@@ -85,7 +90,7 @@ reverse-listing indexes are schema constraints. There is no
 `authorization_relations` table, generic relation interpreter, policy language,
 or external authorization service.
 
-Every implemented relationship mutation shares one PostgreSQL transaction
+Every target relationship mutation shares one PostgreSQL transaction
 with its content-free audit event. Organization bootstrap creates the
 organization, first admin membership, and audit record atomically. Project
 grant/revocation writes and their audit records are also atomic, and revocation
@@ -142,7 +147,7 @@ rejected. The plan-102 identity tables retain their composite foreign-key and
 application-query isolation; extending RLS to them requires first converting
 every identity adapter operation to the same transaction-local context.
 
-The current migration runner's `verify` mode still acquires the advisory lock
+The pending migration runner's `verify` mode acquires the advisory lock
 and executes `CREATE TABLE IF NOT EXISTS platform_migrations`. A restricted
 runtime role therefore needs `USAGE, CREATE` on its schema as well as the
 table privileges it exercises, unless deployment runs compatibility checking

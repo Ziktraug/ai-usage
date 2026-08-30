@@ -22,7 +22,8 @@ Superseded alternatives remain in Git history and are not executable guidance.
 - **Depends on**: none
 - **Category**: architecture and product topology
 - **Planned at**: commit `dac2214c`, 2026-08-26
-- **Implementation status**: DONE
+- **Plan status**: DONE — documentation-only architecture plan; its accepted
+  decisions land with this plan
 
 ## Current repository anchors
 
@@ -40,8 +41,9 @@ Superseded alternatives remain in Git history and are not executable guidance.
 - No `apps/server`, PostgreSQL, Drizzle, generic authorization engine, or
   platform package exists at the plan baseline.
 
-Plan 100 must create ADRs at the next free numbers at execution time. Do not
-assume `0022` is still free without checking the current ledger.
+Plan 100 checked the live ledger and reserved concurrent decision work before
+creating ADRs 0023–0036. ADR 0022 is intentionally outside this plan; do not
+renumber or reuse it here.
 
 ## Runtime topology
 

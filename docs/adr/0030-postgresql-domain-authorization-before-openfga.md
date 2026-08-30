@@ -41,6 +41,10 @@ read-after-write behavior, self-hosted lifecycle, and operational cost.
 
 ## Measured trigger evaluation
 
+The measurements below were produced by pending-integration implementation
+work. They support this accepted choice, but neither the benchmark nor the
+authorization runtime is available on `main` until plan 103 reaches `DONE`.
+
 On 2026-08-29, the reproducible PostgreSQL-17 benchmark seeded 50 organization
 Spaces × 200 Projects × 20 People, three nested Team levels, and a mix of Team,
 direct, and absent grants. After 10 warm-ups, 250 complete Project-scope

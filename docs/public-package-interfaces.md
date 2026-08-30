@@ -1,7 +1,16 @@
 # Public package interfaces
 
-Workspace packages expose only the seams below. Cross-package imports must use
-declared package exports, never private `src` paths or relative workspace paths.
+Existing workspace packages expose only their current seams below.
+Cross-package imports must use declared package exports, never private `src`
+paths or relative workspace paths.
+
+Platform entries introduced by plans 101–107 are accepted target interfaces,
+not exports currently available on `main`. They remain pending until their plan
+status reaches `DONE`: `platform-core`, `authorization-contract`,
+`authorization`, `identity`, `project-application`, `project-registry`,
+`replication-*`, `memory-*`, `mcp-adapter`, `postgres-store`, `server`, and
+`mcp`, plus the platform-specific extensions described for existing packages
+and apps. All other entries describe current interfaces.
 
 ## `@ai-usage/effect-runtime`
 

@@ -1,10 +1,15 @@
 # Authentication and Device enrollment
 
-This living reference defines the connected authentication, Web-session, and
+> **Implementation status:** Accepted target specification. Authentication,
+> enrollment, routes, packages, and verification evidence below are pending
+> integration and are not available on `main`; plan 104 remains `IN PROGRESS`
+> in `plans/README.md`.
+
+This accepted reference defines the connected authentication, Web-session, and
 Device-enrollment slice. Authentication establishes a Person principal;
-`Authorizer` still decides every resource operation. Local-only Usage, Skills,
-Memory, Project review, CLI reads, and Web builds remain available with no
-login or shared-server call.
+`Authorizer` still decides every resource operation. The target must preserve
+local-only Usage, Skills, Memory, Project review, CLI reads, and Web builds with
+no login or shared-server call.
 
 ## Supported boundary
 
@@ -16,10 +21,10 @@ unsupported; local-only mode is the supported no-account composition. Future
 human passwords require an accepted recovery/email/abuse design and Argon2id;
 that password-hash rule does not apply to random Device tokens.
 
-The implementation pins Better Auth and its Drizzle adapter to `1.7.2`. The
-compatibility spike used Bun `1.3.13`, SvelteKit's standard Request boundary,
-PostgreSQL/Drizzle, GitHub OAuth with PKCE, secure cookies, database state, and
-explicit linking. `@ai-usage/identity` hides library row/API types; only
+The pending implementation pins Better Auth and its Drizzle adapter to `1.7.2`.
+The compatibility spike used Bun `1.3.13`, SvelteKit's standard Request
+boundary, PostgreSQL/Drizzle, GitHub OAuth with PKCE, secure cookies, database
+state, and explicit linking. `@ai-usage/identity` hides library row/API types; only
 `apps/server` composes shared authentication, and only the PostgreSQL adapter
 imports the Better Auth Drizzle adapter.
 

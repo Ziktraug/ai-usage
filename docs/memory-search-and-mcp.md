@@ -1,12 +1,17 @@
 # Memory search and MCP
 
-Memory retrieval is one authorization-first application contract with two
-storage projections and several edge adapters. Local/offline mode uses the
-dedicated `memory.sqlite` authority and FTS5. Connected mode uses PostgreSQL
-full-text search plus `pg_trgm`. Web, CLI, and MCP never query either database
-directly.
+> **Implementation status:** Accepted target specification. The search and MCP
+> packages, commands, routes, corpus measurements, and verification evidence
+> below are pending integration and are not available on `main`; plan 106
+> remains `IN PROGRESS` in `plans/README.md`.
 
-This document is the living operating and safety reference. The synthetic
+Memory retrieval is specified as one authorization-first application contract
+with two storage projections and several edge adapters. Local/offline mode uses
+the dedicated `memory.sqlite` authority and FTS5. Connected mode uses
+PostgreSQL full-text search plus `pg_trgm`. Web, CLI, and MCP never query either
+database directly.
+
+This document is the accepted operating and safety specification. The synthetic
 corpus and its measured numbers are regression evidence, not a production
 latency SLA.
 
@@ -24,7 +29,7 @@ explicit history mode and explicit statuses. The application service requests
 preserves command/error punctuation and identifiers; hybrid mode combines
 lexical and bounded fuzzy evidence.
 
-The current contract versions are:
+The accepted target contract versions are:
 
 | Contract | Version |
 | --- | --- |
@@ -70,8 +75,8 @@ SQLite binds that scope to its structured predicates. PostgreSQL materializes
 the complete authorized relation in the query and joins it before FTS/trigram
 eligibility and scoring. Result limit and cursor are applied only afterward.
 
-The implementation never ranks a global corpus and post-filters it, and never
-ranks an arbitrary bounded page returned by the Authorizer. If a complete scope
+The target implementation must never rank a global corpus and post-filter it or
+rank an arbitrary bounded page returned by the Authorizer. If a complete scope
 cannot be represented, search fails closed. The no-leak fixtures compare the
 entire response with a deliberately stronger forbidden match present and
 absent; IDs, order, total, snippets, cursor, page boundary, and every rank

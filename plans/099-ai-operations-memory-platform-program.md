@@ -27,7 +27,8 @@ Superseded alternatives remain in Git history and are not executable guidance.
 - **Depends on**: plans 100–110
 - **Category**: product/platform direction
 - **Planned at**: commit `dac2214c`, 2026-08-26
-- **Implementation status**: TODO
+- **Program status**: IN PROGRESS — architecture accepted; runtime plans are not
+  yet available on `main`
 
 ## Why this matters
 

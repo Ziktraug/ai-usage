@@ -1,6 +1,11 @@
 # Identity kernel and Project resolution
 
-This is the living reference for the identity kernel introduced by plan 102. It
+> **Implementation status:** Accepted target specification. The identity
+> packages, stores, service, routes, and verification evidence below are
+> pending integration and are not available on `main`; plan 102 remains
+> `IN PROGRESS` in `plans/README.md`.
+
+This is the accepted reference for the identity kernel specified by plan 102. It
 defines stable identities shared by the local SQLite and connected PostgreSQL
 adapters, the local single-user authorization boundary, repository resolution,
 and the smallest review workflow. Organization ReBAC is documented in
@@ -131,7 +136,7 @@ production engine may replace the stale Memory rendezvous left by a crash only
 after its usage writer lease has established exclusive runtime ownership; the
 real-process crash-recovery test fixes that ordering.
 
-The current protocol exposes only two bounded repository-resolution operations:
+The target protocol exposes only two bounded repository-resolution operations:
 
 - `GET /v1/repository-resolutions`;
 - `POST /v1/repository-resolutions/actions`.

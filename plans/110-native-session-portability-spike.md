@@ -26,7 +26,7 @@ Superseded alternatives remain in Git history and are not executable guidance.
 - **Depends on**: 108, 109
 - **Category**: research; native session interoperability
 - **Planned at**: commit `dac2214c`, 2026-08-26
-- **Implementation status**: TODO
+- **Plan status**: TODO
 
 ## Why this matters
 

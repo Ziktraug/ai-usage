@@ -24,7 +24,7 @@ Superseded alternatives remain in Git history and are not executable guidance.
 - **Depends on (connected phase)**: local phase, 107 (and therefore 103/104)
 - **Category**: cross-harness continuity and work identity
 - **Planned at**: commit `dac2214c`, 2026-08-26
-- **Implementation status**: TODO, two phases
+- **Plan status**: TODO, two phases
 
 ## One vocabulary
 

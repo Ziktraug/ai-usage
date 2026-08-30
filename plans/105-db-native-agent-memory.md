@@ -26,7 +26,8 @@ Superseded alternatives remain in Git history and are not executable guidance.
 - **Depends on**: 100, 101, 102
 - **Category**: local/shared Agent Memory domain and migration
 - **Planned at**: commit `dac2214c`, 2026-08-26
-- **Implementation status**: DONE
+- **Plan status**: IN PROGRESS — implementation exists outside `main`, pending
+  integration
 
 ## Locked topology
 
@@ -447,7 +448,11 @@ Stop and report when:
 - session archives/native conversion;
 - hosted LLM generation or public plugin APIs.
 
-## Execution log — 2026-08-30
+## Pending-integration execution log — 2026-08-30
+
+This evidence was produced by implementation work outside `main`. It records
+what is ready to integrate, but it does not satisfy this plan's `DONE` status
+until the implementation and its gates are present on `main`.
 
 - Inventoried the external NixOS implementation at commit
   `71915d4566dd1079ec4fa8bd14666d59e4e1bbef`. The command/flag, Markdown,

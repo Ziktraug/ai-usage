@@ -4,10 +4,18 @@ One decision per file, numbered in acceptance order. A superseded ADR is never
 deleted or rewritten beyond its status header; the superseding record names the
 exact clauses it replaces.
 
+`Accepted` means the architecture decision is settled. It does not mean the
+corresponding runtime implementation is available on `main`; implementation
+status is tracked independently in [`plans/README.md`](../../plans/README.md).
+
 On 2026-08-25 two number collisions were resolved: the direct-Rhythm ADR
 (formerly 0009) became 0013 and the effect-runtime ADR (formerly 0002) became
 0014. Historical plans reference the old numbers; each renumbered file carries
 a **Formerly** note.
+
+ADR 0022 is intentionally absent from this branch because that ordinal was
+reserved by concurrent decision work. This platform series begins at 0023 to
+avoid a known numbering collision.
 
 | ADR | Decision | Date | Status |
 | --- | --- | --- | --- |

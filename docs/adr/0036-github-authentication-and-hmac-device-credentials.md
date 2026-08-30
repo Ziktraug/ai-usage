@@ -15,11 +15,14 @@ V1 does not have.
 ## Decision
 
 Connected V1 uses Better Auth `1.7.2`, pinned exactly, behind
-`@ai-usage/identity` application services. The isolated compatibility spike
-proved the repository's Bun `1.3.13`/SvelteKit request boundary, the matching
+`@ai-usage/identity` application services. A pending-integration isolated
+compatibility spike recorded support for the repository's Bun
+`1.3.13`/SvelteKit request boundary, the matching
 `@better-auth/drizzle-adapter` `1.7.2` with PostgreSQL, GitHub OAuth/PKCE,
 secure cookies, database-backed state, encrypted provider tokens, and explicit
-account linking. Auth-library rows and APIs remain adapter-private.
+account linking. That evidence supports the accepted decision; the runtime is
+not available on `main` until plan 104 reaches `DONE`. Auth-library rows and
+APIs remain adapter-private.
 
 GitHub is the only normal shared login. It requests exactly `read:user` and
 `user:email`, identifies an Authentication identity by the stable GitHub

@@ -1,15 +1,20 @@
 # Platform server and PostgreSQL operations
 
-This runbook is the living operational reference for the connected platform
-foundation. It covers the PostgreSQL lifecycle, migration ledger, server
-health, and backup/restore behavior delivered by plan 101. Plan 102 adds the
+> **Implementation status:** Accepted target specification. The runtime,
+> packages, commands, routes, and verification evidence below are pending
+> integration and are not available on `main`; plans 101–104 remain
+> `IN PROGRESS` in `plans/README.md`.
+
+This runbook is the accepted operational specification for the connected
+platform foundation. It covers the target PostgreSQL lifecycle, migration
+ledger, server health, and backup/restore behavior of plan 101. Plan 102 adds the
 identity migration to that same ledger; its model and adapter behavior live in
 [identity kernel and Project resolution](identity-kernel.md). Plan 103 adds the
 organization authorization schema, transaction-local Space RLS, audit writes,
 and authorized Project query described in [authorization](authorization.md).
 Plan 104 adds GitHub-only authentication, Web sessions, and Device enrollment
 described in [authentication and Device enrollment](authentication-and-device-enrollment.md).
-Agent Memory and search are delivered in their dedicated references. Device
+Agent Memory and search are specified in their dedicated references. Device
 replication is documented in [Device replication](device-replication.md);
 WorkHandoff and session-archive extensions remain dependent-plan work.
 
@@ -22,9 +27,10 @@ validated readers, pool adapter, and test-only fixtures. It owns no HTTP,
 local-machine reader, SQLite adapter, or repository harness filesystem access.
 
 PostgreSQL does **not** replace the local usage SQLite authority or the separate
-local `memory.sqlite` identity/Memory authority. Local Usage, the delivered
-identity kernel and review service, CLI reads, the Web demo/build, and the usage
-engine start without an account, platform configuration, or PostgreSQL
+local `memory.sqlite` identity/Memory authority. Local Usage remains available
+now. The accepted identity kernel and review service must preserve that
+independence when integrated: CLI reads, the Web demo/build, and the usage
+engine must start without an account, platform configuration, or PostgreSQL
 connection attempt.
 
 ## Version and repository-owned lifecycle
@@ -157,7 +163,7 @@ whose `space_id` differs from the active context is rejected by `WITH CHECK`.
 Fine-grained permissions still come from the application Authorizer queries;
 RLS is defense in depth only.
 
-The current migration verifier executes `CREATE TABLE IF NOT EXISTS` for the
+The pending migration verifier executes `CREATE TABLE IF NOT EXISTS` for the
 ledger after taking its advisory lock. A combined runtime/migration role needs
 `USAGE, CREATE` on its schema plus only the table privileges exercised by the
 application. A deployment may instead perform compatibility checking with a

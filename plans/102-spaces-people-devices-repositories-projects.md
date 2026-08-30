@@ -23,7 +23,8 @@ Superseded alternatives remain in Git history and are not executable guidance.
 - **Depends on**: 100, 101
 - **Category**: minimal identity kernel, project registry, authorization port
 - **Planned at**: commit `dac2214c`, 2026-08-26
-- **Implementation status**: DONE
+- **Plan status**: IN PROGRESS — implementation exists outside `main`, pending
+  integration
 
 ## Current repository anchors
 

@@ -1,9 +1,14 @@
 # DB-native Agent Memory
 
-This package owns the Agent Memory domain, application-service contracts, and
-the separately named local protocol. SQLite and PostgreSQL adapters implement
-the same repository port. Markdown and JSONL are explicit import, export, and
-projection formats; they are not mutation authorities.
+> **Implementation status:** Accepted package specification and
+> pending-integration evidence. Only this README is present on `main`; the
+> package implementation and generated migration mapping land with plan 105,
+> which remains `IN PROGRESS` in `plans/README.md`.
+
+This package will own the Agent Memory domain, application-service contracts,
+and the separately named local protocol. SQLite and PostgreSQL adapters will
+implement the same repository port. Markdown and JSONL are explicit import,
+export, and projection formats; they are not mutation authorities.
 
 ## Pinned migration source
 
@@ -139,8 +144,9 @@ one transaction, reports an already-confirmed import, or returns stale. Invalid
 or ambiguous batches are quarantined without partial content mutation. The
 source documents are input values only and are never rewritten or deleted.
 
-The machine-readable, content-free mapping is
-[`migration-mapping.json`](./migration-mapping.json).
+The machine-readable, content-free `migration-mapping.json` will land with the
+plan-105 implementation; it is intentionally absent from this documentation-only
+branch.
 
 ## Portable export and intentional reimport losses
 

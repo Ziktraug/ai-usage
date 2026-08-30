@@ -22,7 +22,8 @@ Superseded alternatives remain in Git history and are not executable guidance.
 - **Depends on**: 100
 - **Category**: shared-server foundation
 - **Planned at**: commit `dac2214c`, 2026-08-26
-- **Implementation status**: DONE
+- **Plan status**: IN PROGRESS — implementation exists outside `main`, pending
+  integration
 
 ## Current repository anchors
 

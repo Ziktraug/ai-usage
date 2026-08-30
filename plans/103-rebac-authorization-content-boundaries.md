@@ -23,7 +23,8 @@ Superseded alternatives remain in Git history and are not executable guidance.
 - **Depends on**: 100, 101, 102
 - **Category**: full organization authorization and privacy boundary
 - **Planned at**: commit `dac2214c`, 2026-08-26
-- **Implementation status**: DONE
+- **Plan status**: IN PROGRESS — implementation exists outside `main`, pending
+  integration
 
 ## V1 authorization decision
 

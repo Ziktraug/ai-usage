@@ -1,6 +1,11 @@
 # Device replication
 
-Device replication publishes selected local facts to the connected platform.
+> **Implementation status:** Accepted target specification. The replication
+> runtime, protocol packages, routes, commands, and verification evidence below
+> are pending integration and are not available on `main`; plan 107 remains
+> `IN PROGRESS` with additional done criteria still open.
+
+Device replication will publish selected local facts to the connected platform.
 It is an asynchronous publication path, not a remote-control channel and not a
 replacement for either local SQLite authority.
 
