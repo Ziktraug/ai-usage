@@ -43,6 +43,7 @@ import type {
  */
 
 const MAX_SKILL_OBSERVATION_READ = 50_000;
+const MAX_EXPECTED_SKILL_OBSERVATION_PRODUCERS = 64;
 /**
  * The tiers that record a skill actually being used, as opposed to being listed
  * in a catalogue. They are read first and to their own bound, because they are
@@ -417,11 +418,29 @@ export const createSkillObservationStore = (dependencies: SkillObservationStoreD
       Effect.try({
         try: () => {
           const maximum = input.maximumObservations ?? MAX_SKILL_OBSERVATION_READ;
-          if (!(Number.isSafeInteger(maximum) && maximum > 0 && maximum <= MAX_SKILL_OBSERVATION_READ)) {
+          const expectedProducerHarnessKeys = input.expectedProducerHarnessKeys?.map((harnessKey) => harnessKey.trim());
+          const expectedProducerHarnessKeySet =
+            expectedProducerHarnessKeys === undefined ? undefined : new Set(expectedProducerHarnessKeys);
+          const expectedProducerRosterValid =
+            expectedProducerHarnessKeys === undefined ||
+            (expectedProducerHarnessKeys.length <= MAX_EXPECTED_SKILL_OBSERVATION_PRODUCERS &&
+              expectedProducerHarnessKeySet?.size === expectedProducerHarnessKeys.length &&
+              expectedProducerHarnessKeys.every(
+                (harnessKey) => harnessKey.length > 0 && harnessKey.length <= MAX_SKILL_OBSERVATION_NAME_LENGTH,
+              ) &&
+              (expectedProducerHarnessKeys.length === 0 || input.machineId !== undefined));
+          if (
+            !(
+              Number.isSafeInteger(maximum) &&
+              maximum > 0 &&
+              maximum <= MAX_SKILL_OBSERVATION_READ &&
+              expectedProducerRosterValid
+            )
+          ) {
             throw usageStoreError(
               'querySkillObservations',
               input.dbPath,
-              `maximumObservations must be from 1 through ${MAX_SKILL_OBSERVATION_READ}`,
+              'Skill observation query bounds or expected producer roster are invalid',
               'invalid-input',
             );
           }
@@ -541,6 +560,20 @@ export const createSkillObservationStore = (dependencies: SkillObservationStoreD
             `)
             .all(...stateParams) as SkillObservationCollectionStateRecord[];
           const statePairs = new Set(states.map(collectionPairKey));
+          const relevantExpectedHarnessKeys =
+            expectedProducerHarnessKeySet === undefined
+              ? undefined
+              : new Set(
+                  [...expectedProducerHarnessKeySet].filter(
+                    (harnessKey) =>
+                      skillObservabilityFor(harnessKey) === 'observable' &&
+                      (input.harnessKey === undefined || harnessKey === input.harnessKey),
+                  ),
+                );
+          const relevantStates =
+            relevantExpectedHarnessKeys === undefined
+              ? states
+              : states.filter((state) => relevantExpectedHarnessKeys.has(state.harness_key));
           const observableCollectionRequested =
             input.harnessKey === undefined || skillObservabilityFor(input.harnessKey) === 'observable';
           // A direct/legacy observation import can omit the producer state. Use
@@ -553,20 +586,25 @@ export const createSkillObservationStore = (dependencies: SkillObservationStoreD
           // complete empty sweep persists a state row and clears this condition;
           // a not-observable harness such as Cursor never enters it.
           const collectionStateMissing =
-            observableCollectionRequested &&
-            (states.length === 0 ||
-              read.rows.some(
-                (row) =>
-                  skillObservabilityFor(row.harness_key) === 'observable' &&
-                  !statePairs.has(collectionPairKey({ harness_key: row.harness_key, machine_id: row.machine_id })),
-              ));
+            relevantExpectedHarnessKeys === undefined
+              ? observableCollectionRequested &&
+                (states.length === 0 ||
+                  read.rows.some(
+                    (row) =>
+                      skillObservabilityFor(row.harness_key) === 'observable' &&
+                      !statePairs.has(collectionPairKey({ harness_key: row.harness_key, machine_id: row.machine_id })),
+                  ))
+              : [...relevantExpectedHarnessKeys].some(
+                  (harnessKey) =>
+                    !statePairs.has(collectionPairKey({ harness_key: harnessKey, machine_id: input.machineId ?? '' })),
+                );
           return {
-            collectionExposureIncomplete: states.some(
+            collectionExposureIncomplete: relevantStates.some(
               (state) => state.exposure_truncated === 1 || state.exposure_rejected > 0,
             ),
             collectionInvocationIncomplete:
               collectionStateMissing ||
-              states.some((state) => state.invocation_truncated === 1 || state.invocation_rejected > 0),
+              relevantStates.some((state) => state.invocation_truncated === 1 || state.invocation_rejected > 0),
             invocationTruncated: read.invocationTruncated,
             observations,
             producerCompletenessMissing: collectionStateMissing,

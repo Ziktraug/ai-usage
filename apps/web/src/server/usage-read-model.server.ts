@@ -47,6 +47,12 @@ export interface UsageReadModelCallOptions {
   readonly signal?: AbortSignal;
 }
 
+export interface SkillObservationReadOptions extends UsageReadModelCallOptions {
+  readonly expectedProducerHarnessKeys?: readonly string[];
+  readonly harnessKey?: string;
+  readonly machineId?: string;
+}
+
 export interface UsageReadModel {
   readonly queryRevision: (
     input: UsageReadModelQuery,
@@ -76,7 +82,7 @@ export interface UsageReadModel {
    * would make an inventory fact expire with a revision it has nothing to do with, and would make
    * `/skills` — which never renders report rows — unable to answer until a revision was published.
    */
-  readonly readSkillObservations: (options?: UsageReadModelCallOptions) => Promise<SkillObservationDataset>;
+  readonly readSkillObservations: (options?: SkillObservationReadOptions) => Promise<SkillObservationDataset>;
   readonly readSyncFleet: (options?: UsageReadModelCallOptions) => Promise<QueryUsageSyncFleetResult>;
 }
 
@@ -198,10 +204,15 @@ export const createSqliteUsageReadModel = (options: SqliteUsageReadModelOptions)
       callOptions,
     ),
   readLocalMachine: (callOptions) => runReadEffect(queryUsageLocalMachine({ dbPath: options.dbPath }), callOptions),
-  readSkillObservations: (callOptions) =>
+  readSkillObservations: (callOptions = {}) =>
     runReadEffect(
       querySkillObservationDataset({
         dbPath: options.dbPath,
+        ...(callOptions.expectedProducerHarnessKeys === undefined
+          ? {}
+          : { expectedProducerHarnessKeys: callOptions.expectedProducerHarnessKeys }),
+        ...(callOptions.harnessKey === undefined ? {} : { harnessKey: callOptions.harnessKey }),
+        ...(callOptions.machineId === undefined ? {} : { machineId: callOptions.machineId }),
         maximumBytes: MAXIMUM_SKILL_OBSERVATION_BYTES,
         maximumObservations: MAXIMUM_SKILL_OBSERVATIONS,
         maximumSkills: MAXIMUM_OBSERVED_SKILLS,

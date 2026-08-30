@@ -233,6 +233,7 @@ description: Helps with adapter tests
         readModel: {
           readCurrentLocalProjectSources: () =>
             Promise.reject({ message: 'private database path', reason: 'schema-too-new' }),
+          readLocalMachine: () => Promise.resolve({ id: 'machine-local', label: 'Local machine' }),
           readSkillObservations: () => Promise.reject(new Error('Unexpected skill observation read')),
         },
       });
@@ -266,6 +267,7 @@ description: Helps with adapter tests
         homePath: path.join(root, 'home'),
         readModel: {
           readCurrentLocalProjectSources: () => Promise.resolve({ revision: 'revision-a', sources }),
+          readLocalMachine: () => Promise.resolve({ id: 'machine-local', label: 'Local machine' }),
           readSkillObservations: () => Promise.reject(new Error('Unexpected skill observation read')),
         },
       });
@@ -284,6 +286,7 @@ description: Helps with adapter tests
   test('reads skill observations through the read-only seam without touching the skills domain', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'ai-usage-skills-server-observations-'));
     try {
+      const observationReadScopes: unknown[] = [];
       const dependencies = createSkillsServerDependencies({
         configCwd: root,
         homePath: path.join(root, 'home'),
@@ -291,8 +294,10 @@ description: Helps with adapter tests
           // The observation read consults project discovery for residence classification (plan
           // 112), so the seam now includes it — still read-only, still outside the skills domain.
           readCurrentLocalProjectSources: () => Promise.resolve({ revision: 'revision-a', sources: [] }),
-          readSkillObservations: () =>
-            Promise.resolve({
+          readLocalMachine: () => Promise.resolve({ id: 'machine-local', label: 'Local machine' }),
+          readSkillObservations: (options) => {
+            observationReadScopes.push(options);
+            return Promise.resolve({
               harnesses: [
                 { harnessKey: 'claude', label: 'Claude Code', observability: 'observable' as const },
                 { harnessKey: 'cursor', label: 'Cursor', observability: 'not-observable' as const },
@@ -318,8 +323,13 @@ description: Helps with adapter tests
                 },
               ],
               skipped: 0,
-            }),
+            });
+          },
         },
+        readSourcePolicyOverrides: () =>
+          Promise.resolve({
+            'opencode.sessions': { enabled: false },
+          }),
       });
 
       const result = await createSkillsServerAdapter(dependencies).readObservations();
@@ -333,6 +343,12 @@ description: Helps with adapter tests
         },
         ok: true,
       });
+      expect(observationReadScopes).toEqual([
+        {
+          expectedProducerHarnessKeys: ['claude', 'codex'],
+          machineId: 'machine-local',
+        },
+      ]);
     } finally {
       await rm(root, { force: true, recursive: true });
     }
@@ -345,7 +361,8 @@ description: Helps with adapter tests
         configCwd: root,
         homePath: path.join(root, 'home'),
         readModel: {
-          readCurrentLocalProjectSources: () => Promise.reject(new Error('Unexpected project source read')),
+          readCurrentLocalProjectSources: () => Promise.resolve({ revision: 'revision-a', sources: [] }),
+          readLocalMachine: () => Promise.resolve({ id: 'machine-local', label: 'Local machine' }),
           readSkillObservations: () => Promise.reject({ message: 'private database path', reason: 'store-missing' }),
         },
       });

@@ -4,6 +4,7 @@ import { usageStorePath } from '@ai-usage/usage-store/reader';
 export interface UsageWebRuntimePaths {
   readonly configCwd: string;
   readonly databasePath: string;
+  readonly homeDirectory: string;
   readonly inboxDirectory: string;
   readonly rendezvousPath: string;
   readonly stateDirectory: string;
@@ -25,6 +26,7 @@ export const resolveUsageWebRuntimePaths = (options: ResolveUsageWebRuntimePaths
   return {
     configCwd: paths.configCwd,
     databasePath: paths.databasePath,
+    homeDirectory: paths.homeDirectory,
     inboxDirectory: paths.inboxDirectory,
     rendezvousPath: paths.rendezvousPath,
     stateDirectory: paths.stateDirectory,

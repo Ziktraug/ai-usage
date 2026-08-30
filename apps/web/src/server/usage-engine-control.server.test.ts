@@ -13,6 +13,7 @@ test('loads only a rendezvous bound to the web database and config target', asyn
   const paths: UsageWebRuntimePaths = {
     configCwd: path.join(root, 'config'),
     databasePath: path.join(root, 'store', 'usage.sqlite'),
+    homeDirectory: root,
     inboxDirectory: path.join(stateDirectory, 'inbox'),
     rendezvousPath: path.join(stateDirectory, 'rendezvous.json'),
     stateDirectory,

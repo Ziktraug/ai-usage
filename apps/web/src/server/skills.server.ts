@@ -1,7 +1,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { createSkillsConfigStore } from '@ai-usage/local-machine/skills-config';
+import { readLocalSourcePolicyOverrides } from '@ai-usage/local-machine/source-policy-config';
+import { skillObservabilityFor } from '@ai-usage/report-core/skill-observation';
 import type { SkillObservationDataset } from '@ai-usage/report-core/skill-observation-summary';
+import { enabledSessionHarnessKeys, type SourcePolicyOverrides } from '@ai-usage/report-core/source-control';
 import type {
   SkillManagementConfig,
   SkillManagementConfigDocument,
@@ -30,6 +33,7 @@ import type {
   SkillsServerResult,
 } from './skills-contracts';
 import { createLiveUsageReadModel, createSqliteUsageReadModel, type UsageReadModel } from './usage-read-model.server';
+import { resolveUsageWebRuntimePaths } from './usage-runtime-paths.server';
 
 const toJson = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 
@@ -431,19 +435,25 @@ export const createSkillsServerDependencies = (
   options: {
     configCwd?: string;
     homePath?: string;
-    readModel?: Pick<UsageReadModel, 'readCurrentLocalProjectSources' | 'readSkillObservations'>;
+    readModel?: Pick<UsageReadModel, 'readCurrentLocalProjectSources' | 'readLocalMachine' | 'readSkillObservations'>;
+    readSourcePolicyOverrides?: () => Promise<SourcePolicyOverrides>;
   } = {},
 ): SkillsServerAdapterDependencies => {
-  const configCwd = options.configCwd ?? process.cwd();
+  const runtimePaths =
+    options.configCwd === undefined || options.homePath === undefined ? resolveUsageWebRuntimePaths() : undefined;
+  const configCwd = options.configCwd ?? runtimePaths?.configCwd ?? process.cwd();
+  const homePath = options.homePath ?? runtimePaths?.homeDirectory;
   const configStore = createSkillsConfigStore({
     configCwd,
-    ...(options.homePath === undefined ? {} : { homePath: options.homePath }),
+    ...(homePath === undefined ? {} : { homePath }),
   });
   const readModel =
     options.readModel ??
     (options.homePath === undefined
       ? createLiveUsageReadModel()
       : createSqliteUsageReadModel({ dbPath: usageStorePath(configStore.homePath) }));
+  const readSourcePolicyOverrides =
+    options.readSourcePolicyOverrides ?? (() => readLocalSourcePolicyOverrides(configStore.homePath));
   const readKnownProjectSources: SkillsServerAdapterDependencies['readKnownProjectSources'] = async () => {
     try {
       const result = await readModel.readCurrentLocalProjectSources();
@@ -482,7 +492,17 @@ export const createSkillsServerDependencies = (
    */
   const readSkillObservations: SkillsServerAdapterDependencies['readSkillObservations'] = async () => {
     try {
-      return await readModel.readSkillObservations();
+      const [localMachine, sourcePolicies] = await Promise.all([
+        readModel.readLocalMachine(),
+        readSourcePolicyOverrides(),
+      ]);
+      const expectedProducerHarnessKeys = enabledSessionHarnessKeys(sourcePolicies).filter(
+        (harnessKey) => skillObservabilityFor(harnessKey) === 'observable',
+      );
+      return await readModel.readSkillObservations({
+        expectedProducerHarnessKeys,
+        machineId: localMachine.id,
+      });
     } catch (error) {
       if (usageStoreErrorReasonFrom(error) !== undefined) {
         throw new Error('Skill observations are unavailable.');

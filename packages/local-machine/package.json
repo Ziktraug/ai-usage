@@ -24,6 +24,7 @@
     "./session-label": "./src/session-label.ts",
     "./session-detail": "./src/session-detail.ts",
     "./skills-config": "./src/skills-config.ts",
+    "./source-policy-config": "./src/source-policy-config.ts",
     "./text": "./src/text.ts",
     "./test-fixtures/skill-observation-transcripts": "./src/test-fixtures/skill-observation-transcripts.ts",
     "./testing/harness-home": "./src/testing/harness-home.ts",

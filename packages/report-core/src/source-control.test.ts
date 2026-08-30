@@ -3,6 +3,7 @@ import {
   chooseNewestSourceControlSnapshot,
   collectionSourceDefinitions,
   collectionSourceIds,
+  enabledSessionHarnessKeys,
   isCollectionSourceId,
   isSourcePolicyOverrides,
   parseReportPublishedEvent,
@@ -73,6 +74,18 @@ describe('collection source contracts', () => {
 
   test('enables every source by default', () => {
     expect(collectionSourceDefinitions.every(({ defaultEnabled }) => defaultEnabled)).toBe(true);
+  });
+
+  test('derives the enabled session harness roster from catalogue policy', () => {
+    expect(enabledSessionHarnessKeys()).toEqual(['claude', 'codex', 'opencode', 'cursor']);
+    expect(
+      enabledSessionHarnessKeys({
+        'codex.sessions': { enabled: false },
+        'opencode.sessions': { enabled: false },
+        // Non-session policy never changes the harness roster.
+        'rtk.savings': { enabled: false },
+      }),
+    ).toEqual(['claude', 'cursor']);
   });
 
   test('derives the provider-usage group rather than naming one source', () => {

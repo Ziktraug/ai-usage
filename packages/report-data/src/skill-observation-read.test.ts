@@ -21,6 +21,7 @@ const GENEROUS_BOUNDS = {
   maximumObservations: 50_000,
   maximumSkills: 4096,
 } as const;
+const EXPECTED_OBSERVABLE_HARNESSES = ['claude', 'codex', 'opencode'] as const;
 
 const observation = (skillName: string, ordinal: number): SkillObservation => ({
   argsPresent: null,
@@ -62,6 +63,39 @@ const storeWith = async (skillCount: number): Promise<string> =>
   );
 
 describe('bounded skill observation read', () => {
+  test('requires every expected producer before an empty global read becomes complete', async () => {
+    const dbPath = await storeHolding([]);
+    const read = () =>
+      Effect.runPromise(
+        querySkillObservationDataset({
+          dbPath,
+          ...GENEROUS_BOUNDS,
+          expectedProducerHarnessKeys: EXPECTED_OBSERVABLE_HARNESSES,
+          machineId: 'machine-a',
+        }),
+      );
+
+    expect(await read()).toMatchObject({
+      invocationLowerBound: true,
+      lowerBound: true,
+      producerCompletenessMissing: true,
+    });
+    for (const harnessKey of EXPECTED_OBSERVABLE_HARNESSES) {
+      await Effect.runPromise(
+        importSkillObservations({
+          collection: { completeness: completeSkillObservationCollection(), harnessKey },
+          dbPath,
+          machineId: 'machine-a',
+          observations: [],
+        }),
+      );
+      const dataset = await read();
+      const allProducersCompleted = harnessKey === 'opencode';
+      expect(dataset.producerCompletenessMissing).toBe(!allProducersCompleted);
+      expect(dataset.invocationLowerBound).toBe(!allProducersCompleted);
+    }
+  });
+
   test('treats an empty store without producer state as pre-collection invocation evidence', async () => {
     const dbPath = await storeHolding([]);
 

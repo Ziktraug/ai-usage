@@ -15,6 +15,7 @@ afterEach(async () => {
 });
 
 const MACHINE = 'machine-a';
+const EXPECTED_OBSERVABLE_HARNESSES = ['claude', 'codex', 'opencode'] as const;
 const ARGUMENT_COLUMN_PATTERN = /arg(ument)?s$/u;
 
 const observation = (overrides: Partial<SkillObservation> = {}): SkillObservation => ({
@@ -156,7 +157,13 @@ describe('skill observation store', () => {
     const dbPath = await createStore('skill-empty-uncollected');
     await Effect.runPromise(initializeUsageStore({ dbPath }));
 
-    const read = await Effect.runPromise(querySkillObservations({ dbPath }));
+    const read = await Effect.runPromise(
+      querySkillObservations({
+        dbPath,
+        expectedProducerHarnessKeys: EXPECTED_OBSERVABLE_HARNESSES,
+        machineId: MACHINE,
+      }),
+    );
 
     expect(read.observations).toEqual([]);
     expect(read.collectionInvocationIncomplete).toBe(true);
@@ -183,11 +190,174 @@ describe('skill observation store', () => {
     expect(read.producerCompletenessMissing).toBe(false);
   });
 
+  test('keeps a global read incomplete when only one expected producer completed', async () => {
+    const dbPath = await createStore('skill-partial-producer-roster');
+    await Effect.runPromise(
+      importSkillObservations({
+        collection: { completeness: completeSkillObservationCollection(), harnessKey: 'claude' },
+        dbPath,
+        machineId: MACHINE,
+        observations: [],
+      }),
+    );
+
+    const read = await Effect.runPromise(
+      querySkillObservations({
+        dbPath,
+        expectedProducerHarnessKeys: EXPECTED_OBSERVABLE_HARNESSES,
+        machineId: MACHINE,
+      }),
+    );
+
+    expect(read.collectionInvocationIncomplete).toBe(true);
+    expect(read.producerCompletenessMissing).toBe(true);
+  });
+
+  test('keeps a global read incomplete when only two expected producers completed', async () => {
+    const dbPath = await createStore('skill-two-producers');
+    for (const harnessKey of ['claude', 'codex'] as const) {
+      await Effect.runPromise(
+        importSkillObservations({
+          collection: { completeness: completeSkillObservationCollection(), harnessKey },
+          dbPath,
+          machineId: MACHINE,
+          observations: [],
+        }),
+      );
+    }
+
+    const read = await Effect.runPromise(
+      querySkillObservations({
+        dbPath,
+        expectedProducerHarnessKeys: EXPECTED_OBSERVABLE_HARNESSES,
+        machineId: MACHINE,
+      }),
+    );
+
+    expect(read.collectionInvocationIncomplete).toBe(true);
+    expect(read.producerCompletenessMissing).toBe(true);
+  });
+
+  test('accepts completed empty sweeps from every expected observable producer', async () => {
+    const dbPath = await createStore('skill-all-producers');
+    for (const harnessKey of EXPECTED_OBSERVABLE_HARNESSES) {
+      await Effect.runPromise(
+        importSkillObservations({
+          collection: { completeness: completeSkillObservationCollection(), harnessKey },
+          dbPath,
+          machineId: MACHINE,
+          observations: [],
+        }),
+      );
+    }
+
+    const read = await Effect.runPromise(
+      querySkillObservations({
+        dbPath,
+        expectedProducerHarnessKeys: EXPECTED_OBSERVABLE_HARNESSES,
+        machineId: MACHINE,
+      }),
+    );
+
+    expect(read.collectionInvocationIncomplete).toBe(false);
+    expect(read.producerCompletenessMissing).toBe(false);
+  });
+
+  test('distinguishes a present incomplete producer state from a missing producer state', async () => {
+    const dbPath = await createStore('skill-producer-invocation-loss');
+    for (const harnessKey of EXPECTED_OBSERVABLE_HARNESSES) {
+      const completeness = completeSkillObservationCollection();
+      if (harnessKey === 'codex') {
+        completeness.invocation.rejected = 1;
+      }
+      await Effect.runPromise(
+        importSkillObservations({
+          collection: { completeness, harnessKey },
+          dbPath,
+          machineId: MACHINE,
+          observations: [],
+        }),
+      );
+    }
+
+    const read = await Effect.runPromise(
+      querySkillObservations({
+        dbPath,
+        expectedProducerHarnessKeys: EXPECTED_OBSERVABLE_HARNESSES,
+        machineId: MACHINE,
+      }),
+    );
+
+    expect(read.collectionInvocationIncomplete).toBe(true);
+    expect(read.producerCompletenessMissing).toBe(false);
+  });
+
+  test('keeps invocation evidence complete when only producer exposure is incomplete', async () => {
+    const dbPath = await createStore('skill-producer-exposure-loss');
+    for (const harnessKey of EXPECTED_OBSERVABLE_HARNESSES) {
+      const completeness = completeSkillObservationCollection();
+      if (harnessKey === 'codex') {
+        completeness.exposure.truncated = true;
+      }
+      await Effect.runPromise(
+        importSkillObservations({
+          collection: { completeness, harnessKey },
+          dbPath,
+          machineId: MACHINE,
+          observations: [],
+        }),
+      );
+    }
+
+    const read = await Effect.runPromise(
+      querySkillObservations({
+        dbPath,
+        expectedProducerHarnessKeys: EXPECTED_OBSERVABLE_HARNESSES,
+        machineId: MACHINE,
+      }),
+    );
+
+    expect(read.collectionExposureIncomplete).toBe(true);
+    expect(read.collectionInvocationIncomplete).toBe(false);
+    expect(read.producerCompletenessMissing).toBe(false);
+  });
+
+  test('a filtered observable read requires only its producer state', async () => {
+    const dbPath = await createStore('skill-filtered-observable');
+    await Effect.runPromise(
+      importSkillObservations({
+        collection: { completeness: completeSkillObservationCollection(), harnessKey: 'claude' },
+        dbPath,
+        machineId: MACHINE,
+        observations: [],
+      }),
+    );
+
+    const read = await Effect.runPromise(
+      querySkillObservations({
+        dbPath,
+        expectedProducerHarnessKeys: EXPECTED_OBSERVABLE_HARNESSES,
+        harnessKey: 'claude',
+        machineId: MACHINE,
+      }),
+    );
+
+    expect(read.collectionInvocationIncomplete).toBe(false);
+    expect(read.producerCompletenessMissing).toBe(false);
+  });
+
   test('does not invent producer incompleteness for an unobservable harness filter', async () => {
     const dbPath = await createStore('skill-empty-cursor');
     await Effect.runPromise(initializeUsageStore({ dbPath }));
 
-    const read = await Effect.runPromise(querySkillObservations({ dbPath, harnessKey: 'cursor' }));
+    const read = await Effect.runPromise(
+      querySkillObservations({
+        dbPath,
+        expectedProducerHarnessKeys: EXPECTED_OBSERVABLE_HARNESSES,
+        harnessKey: 'cursor',
+        machineId: MACHINE,
+      }),
+    );
 
     expect(read.observations).toEqual([]);
     expect(read.collectionInvocationIncomplete).toBe(false);

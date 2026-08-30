@@ -164,6 +164,8 @@ This package owns no persistence and never resolves ambiguity by itself.
 - `./session-label`: safe session labels.
 - `./skills-config`: field-scoped Skills config store; reads/writes only the
   `skills` field while preserving unrelated config.
+- `./source-policy-config`: read-only current-machine source-policy overrides
+  for server-side composition.
 - `./text`: bounded text helpers.
 - `./testing/harness-home`: deterministic synthetic harness homes and mutation
   helpers for tests/E2E only.
@@ -172,8 +174,9 @@ This package owns no persistence and never resolves ambiguity by itself.
 This package is collector-independent and must not import local collectors,
 report-data, the store, engine/runtime, or apps. Web production imports are
 restricted exactly to `@ai-usage/local-machine/campaign-label-config`,
-`@ai-usage/local-machine/session-detail`, and
-`@ai-usage/local-machine/skills-config`.
+`@ai-usage/local-machine/session-detail`,
+`@ai-usage/local-machine/skills-config`, and
+`@ai-usage/local-machine/source-policy-config`.
 
 ## `@ai-usage/local-collectors`
 

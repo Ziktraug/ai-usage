@@ -41,6 +41,9 @@ export interface SkillObservationReadBounds {
 
 export interface QuerySkillObservationDatasetInput extends SkillObservationReadBounds {
   readonly dbPath: string;
+  readonly expectedProducerHarnessKeys?: readonly string[];
+  readonly harnessKey?: string;
+  readonly machineId?: string;
 }
 
 /**
@@ -115,7 +118,15 @@ export const querySkillObservationDataset = (
   input: QuerySkillObservationDatasetInput,
 ): Effect.Effect<SkillObservationDataset, UsageStoreError> =>
   Effect.map(
-    querySkillObservations({ dbPath: input.dbPath, maximumObservations: input.maximumObservations }),
+    querySkillObservations({
+      dbPath: input.dbPath,
+      maximumObservations: input.maximumObservations,
+      ...(input.expectedProducerHarnessKeys === undefined
+        ? {}
+        : { expectedProducerHarnessKeys: input.expectedProducerHarnessKeys }),
+      ...(input.harnessKey === undefined ? {} : { harnessKey: input.harnessKey }),
+      ...(input.machineId === undefined ? {} : { machineId: input.machineId }),
+    }),
     (result) => {
       const presentable = presentableObservations(result.observations);
       return clampSkills(

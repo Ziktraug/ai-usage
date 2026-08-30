@@ -13,6 +13,7 @@ import {
   updateUsageMachineLabel,
 } from '@ai-usage/usage-store/testing';
 import { Effect } from 'effect';
+import { joinSkillObservations } from './skill-observation-join';
 import { createLiveUsageReadModel, createSqliteUsageReadModel } from './usage-read-model.server';
 
 const roots: string[] = [];
@@ -206,6 +207,70 @@ const storeWithSeededHomeObservations = async (): Promise<string> => {
 };
 
 describe('SQLite usage read model skill observations', () => {
+  test('keeps absence verdicts provisional until every expected producer completed', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'plan111-web-partial-producer-roster-'));
+    roots.push(root);
+    const dbPath = path.join(root, 'usage.sqlite');
+    await Effect.runPromise(importLocalRows({ dbPath, machine: { id: 'machine-a', label: 'Machine A' }, rows: [] }));
+    await Effect.runPromise(
+      importSkillObservations({
+        collection: { completeness: completeSkillObservationCollection(), harnessKey: 'claude' },
+        dbPath,
+        machineId: 'machine-a',
+        observations: [],
+      }),
+    );
+    const readModel = createSqliteUsageReadModel({ dbPath });
+    const scope = {
+      expectedProducerHarnessKeys: ['claude', 'codex', 'opencode'],
+      machineId: 'machine-a',
+    } as const;
+
+    const partial = await readModel.readSkillObservations(scope);
+    const partialPresentation = joinSkillObservations({
+      observations: partial,
+      projections: [{ skillName: 'unused', state: 'linked', targetId: 'claude' }],
+      skills: [{ enabled: true, name: 'unused', validationStatus: 'valid' }],
+      targets: [{ enabled: true, id: 'claude' }],
+    });
+
+    expect(partial).toMatchObject({
+      invocationLowerBound: true,
+      lowerBound: true,
+      producerCompletenessMissing: true,
+    });
+    expect(partialPresentation.skills[0]).toMatchObject({
+      deletionCandidate: true,
+      verdict: 'never-observed',
+      verdictProvisional: true,
+    });
+
+    for (const harnessKey of ['codex', 'opencode'] as const) {
+      await Effect.runPromise(
+        importSkillObservations({
+          collection: { completeness: completeSkillObservationCollection(), harnessKey },
+          dbPath,
+          machineId: 'machine-a',
+          observations: [],
+        }),
+      );
+    }
+    const complete = await readModel.readSkillObservations(scope);
+    const completePresentation = joinSkillObservations({
+      observations: complete,
+      projections: [{ skillName: 'unused', state: 'linked', targetId: 'claude' }],
+      skills: [{ enabled: true, name: 'unused', validationStatus: 'valid' }],
+      targets: [{ enabled: true, id: 'claude' }],
+    });
+
+    expect(complete).toMatchObject({
+      invocationLowerBound: false,
+      lowerBound: false,
+      producerCompletenessMissing: false,
+    });
+    expect(completePresentation.skills[0]?.verdictProvisional).toBe(false);
+  });
+
   test('reads every tier and keeps Cursor not observable rather than zero', async () => {
     const dbPath = await storeWithSeededHomeObservations();
 

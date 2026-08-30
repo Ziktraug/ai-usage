@@ -331,7 +331,7 @@ cannot bound a payload the join grows)
 → the `skills.observations` oRPC procedure
 → the `skill-observations` query family under the `collection-swr` policy.
 
-Six properties are load-bearing:
+Seven properties are load-bearing:
 
 - **The tiers get separate read budgets, and separate bounds.** Exposure is
   written once per catalogue entry per session and outnumbers real invocations
@@ -346,6 +346,17 @@ Six properties are load-bearing:
   generation; a complete later rescan can clear it. This prevents an empty,
   truncated sweep from turning into an exact "never invoked" verdict after the
   source-control warning disappears or the process restarts.
+
+- **Global completeness requires the whole relevant producer roster.** The
+  server composition derives the current machine's expected harnesses from the
+  authoritative session-source catalogue and persisted source policy, then
+  removes harnesses whose skill observations are `not-observable`. The generic
+  store reader receives those expected machine/harness pairs explicitly; it
+  never infers completion from observation rows. An explicitly disabled session
+  source is outside the selected roster, while source availability is a
+  separate axis and cannot substitute for a persisted sweep. A harness-filtered
+  read intersects the roster with that harness, and Cursor requires no producer
+  state.
 
 - **A completed publication *cycle* or a Skills inventory mutation invalidates
   it — not only a new report revision.** The

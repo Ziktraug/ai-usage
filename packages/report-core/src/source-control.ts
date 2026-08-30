@@ -1,4 +1,5 @@
 import { isCanonicalInstant } from './canonical-instant';
+import type { HarnessKey } from './harness-metadata';
 import { MAX_PORTABLE_USAGE_ROWS } from './portable-usage';
 import { isServedRevision } from './served-revision';
 
@@ -30,6 +31,8 @@ export interface CollectionSourceDefinition {
    */
   readonly experimental?: boolean;
   readonly group: CollectionSourceGroup;
+  /** The harness whose session history this source produces, when applicable. */
+  readonly harnessKey?: HarnessKey;
   readonly id: CollectionSourceId;
   readonly kind: CollectionSourceKind;
   readonly label: string;
@@ -43,6 +46,7 @@ export const collectionSourceDefinitions = [
     cadenceMs: oneMinuteMs,
     defaultEnabled: true,
     group: 'sessions',
+    harnessKey: 'claude',
     id: 'claude.sessions',
     kind: 'producer',
     label: 'Claude sessions',
@@ -51,6 +55,7 @@ export const collectionSourceDefinitions = [
     cadenceMs: oneMinuteMs,
     defaultEnabled: true,
     group: 'sessions',
+    harnessKey: 'codex',
     id: 'codex.sessions',
     kind: 'producer',
     label: 'Codex sessions',
@@ -59,6 +64,7 @@ export const collectionSourceDefinitions = [
     cadenceMs: oneMinuteMs,
     defaultEnabled: true,
     group: 'sessions',
+    harnessKey: 'opencode',
     id: 'opencode.sessions',
     kind: 'producer',
     label: 'OpenCode sessions',
@@ -67,6 +73,7 @@ export const collectionSourceDefinitions = [
     cadenceMs: oneMinuteMs,
     defaultEnabled: true,
     group: 'sessions',
+    harnessKey: 'cursor',
     id: 'cursor.sessions',
     kind: 'producer',
     label: 'Cursor sessions',
@@ -159,6 +166,23 @@ export const isSourcePolicyOverrides = (value: unknown): value is SourcePolicyOv
 
 export const resolveSourceEnabled = (id: CollectionSourceId, overrides?: SourcePolicyOverrides): boolean =>
   overrides?.[id]?.enabled ?? getCollectionSourceDefinition(id).defaultEnabled;
+
+/**
+ * Harnesses selected by the current machine's session-source policy.
+ *
+ * The source catalogue owns the source-to-harness mapping, and source policy
+ * owns selection. Availability is deliberately absent: detected input and a
+ * completed producer sweep are different facts, so detection cannot stand in
+ * for persisted completeness.
+ */
+export const enabledSessionHarnessKeys = (overrides?: SourcePolicyOverrides): readonly HarnessKey[] =>
+  collectionSourceDefinitions.flatMap((definition) =>
+    definition.group === 'sessions' &&
+    definition.harnessKey !== undefined &&
+    resolveSourceEnabled(definition.id, overrides)
+      ? [definition.harnessKey]
+      : [],
+  );
 
 export const updateSourcePolicyOverrides = (
   overrides: SourcePolicyOverrides | undefined,

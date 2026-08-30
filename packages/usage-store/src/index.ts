@@ -395,6 +395,14 @@ export interface SkillObservationImportResult {
 
 export interface QuerySkillObservationsInput {
   dbPath: string;
+  /**
+   * Observable harnesses expected to have completed collection in this read's
+   * machine scope. The store does not derive this roster from observation rows
+   * or own source-policy configuration; its composition caller supplies it. A
+   * non-empty roster requires `machineId`, because completeness is persisted
+   * per machine and harness.
+   */
+  expectedProducerHarnessKeys?: readonly string[];
   from?: string;
   harnessKey?: string;
   machineId?: string;
