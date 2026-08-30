@@ -13,9 +13,9 @@ On 2026-08-25 two number collisions were resolved: the direct-Rhythm ADR
 0014. Historical plans reference the old numbers; each renumbered file carries
 a **Formerly** note.
 
-ADR 0022 is intentionally absent from this branch because that ordinal was
-reserved by concurrent decision work. This platform series begins at 0023 to
-avoid a known numbering collision.
+ADR 0022 belongs to the concurrent Skill observation decision work. The
+platform series therefore begins at 0023, preserving both accepted decisions
+without a numbering collision.
 
 | ADR | Decision | Date | Status |
 | --- | --- | --- | --- |
