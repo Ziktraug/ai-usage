@@ -1,10 +1,11 @@
 # Documentation map
 
-Two kinds of documents live here. **Living reference** is kept current and is
-safe to rely on. **Dated records** are design plans, audits, and measurement
-snapshots that were true at their stated date; they are retained for
-provenance, not maintained. When they disagree with living reference, the
-living reference wins.
+Three kinds of documents live here. **Living reference** is kept current and is
+safe to rely on. **Accepted platform specifications** record settled target
+contracts whose runtime status is tracked separately. **Dated records** are
+design plans, audits, and measurement snapshots that were true at their stated
+date; they are retained for provenance, not maintained. When they disagree with
+living reference, the living reference wins.
 
 ## Living reference
 
@@ -13,8 +14,8 @@ living reference wins.
 - [`adr/`](adr/README.md) — the architecture decision index. Start here for
   "why is it like this".
 - [`../CONTEXT.md`](../CONTEXT.md) — the ubiquitous language of the domain.
-- [`public-package-interfaces.md`](public-package-interfaces.md) — the only
-  seams packages may import from each other.
+- [`public-package-interfaces.md`](public-package-interfaces.md) — current
+  import seams plus explicitly marked accepted platform targets.
 - [`generated-tooling-ownership.md`](generated-tooling-ownership.md) — which
   generated trees exist and who owns them.
 - [`skills-management.md`](skills-management.md) — the Skills control plane
@@ -27,6 +28,32 @@ living reference wins.
   2026-08-08).
 - [`future-work.md`](future-work.md) — the standing backlog and product
   guardrails.
+
+## Accepted platform specifications
+
+The architecture in this section is accepted, but its runtime implementation
+is not yet available on `main`. Plans 101–107 remain `IN PROGRESS` until their
+implementation and verification are integrated; commands, routes, packages,
+and measurements described by these specifications are not current-runtime
+claims. See [`../plans/README.md`](../plans/README.md) for delivery status.
+
+- [`platform-server-operations.md`](platform-server-operations.md) — connected
+  PostgreSQL 17 lifecycle, migrations, health, configuration, and recovery.
+- [`identity-kernel.md`](identity-kernel.md) — stable Space/Person/Device/
+  Repository/Project identities, authorization seam, resolution, persistence,
+  and the local review service.
+- [`authorization.md`](authorization.md) — Authorizer port, organization roles,
+  explicit PostgreSQL relations/queries, complete scope, RLS, audit, benchmark,
+  and the measured OpenFGA escape hatch.
+- [`authentication-and-device-enrollment.md`](authentication-and-device-enrollment.md)
+  — GitHub-only connected login, Web sessions, bootstrap, Device enrollment,
+  token/key rotation, private local storage, support limits, and threat model.
+- [`device-replication.md`](device-replication.md) — outbound-only publication,
+  protocol identities, SQLite outbox recovery, transactional PostgreSQL apply,
+  replay/security boundary, diagnostics, privacy tombstones, and fallback.
+- [`memory-search-and-mcp.md`](memory-search-and-mcp.md) — authorization-first
+  SQLite/PostgreSQL search, corpus metrics, vector gate, Web/CLI surfaces, MCP
+  tools, registration, and retrieved-content safety.
 
 ## Dated records
 

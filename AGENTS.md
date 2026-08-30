@@ -16,6 +16,9 @@ remote service, no provider credentials.
   research snapshots).
 - `plans/README.md` — the execution backlog and its status table. Plans are
   historical execution records, not current documentation.
+- `plans/099-ai-operations-memory-platform-program.md` — the dependency order,
+  offline guarantees, and STOP conditions for platform plans 100–110. Read the
+  specific child plan in full before executing it.
 
 ## The two rules that shape everything
 

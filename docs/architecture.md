@@ -7,15 +7,35 @@ Claude Agent SDK. Those provider clients own communication and authentication.
 `ai-usage` does not read provider credentials, call private provider HTTP
 endpoints, or persist raw provider payloads.
 
-The central runtime rule is a strict split between two planes:
+The current usage-report runtime keeps a strict split between two planes:
 
-- the durable SQLite database is the **data plane**;
+- the durable usage SQLite database is the existing **data plane**;
 - authenticated numeric-loopback HTTP is the **control plane**.
 
 `apps/usage-engine` is the only production composition root that may open the
 usage database read-write. Web and CLI query durable revision-keyed projections
 through read-only, query-only SQLite connections. The control plane carries
 commands, status, and bounded SSE events only; it is not a report data API.
+The accepted platform topology adds separate Memory and shared authorities; it
+does not broaden either of these usage-runtime planes.
+
+## Platform decision and delivery status
+
+ADRs 0023–0036 and plan 100 record accepted architecture. Acceptance settles
+the target boundaries; it does not make their runtime implementation available.
+On `main` after this documentation lands:
+
+- plan 100 is `DONE` because it is the documentation-only architecture plan;
+- plans 101–106 are `IN PROGRESS`: implementation exists outside `main` and is
+  pending integration;
+- plan 107 is `IN PROGRESS`: partial implementation is pending integration and
+  remaining done criteria are still open;
+- plans 108–110 remain `TODO`.
+
+The platform-specific topology, package, command, route, and measurement
+sections below are therefore accepted target specifications until their plan
+row reaches `DONE`. The existing usage-report data flow and ownership sections
+continue to describe current runtime behavior.
 
 ## Data flow
 
@@ -50,6 +70,152 @@ fiber. Joiners wait without owning cancellation; owner interruption aborts the
 provider child before another durable phase begins. Quota history is not part
 of `UsageReportPayload`, served report revisions, snapshots, or merge bundles.
 
+## Accepted platform topology
+
+Plans 100–110 extend the same monorepo and product with explicit local and
+connected compositions. These are accepted ownership boundaries; packages and
+runtime behavior land only through their dependent implementation plans.
+
+### Local/offline composition
+
+```text
+apps/usage-engine
+  existing usage-domain sole writer
+  owns the usage SQLite write connection
+  will compose the local identity/Memory writer by default
+  owns durable publication/outbox scheduling
+
+dedicated Memory SQLite store
+  Agent Memory observations/proposals/items/revisions
+  Work Threads and Work handoffs
+  local FTS5 index
+  Memory/WorkHandoff replication outbox
+
+apps/web / apps/cli / local MCP
+  call local application services
+  never open independent write-capable Memory SQLite connections
+```
+
+The Memory store is not part of the usage SQLite data plane. The accepted target
+assigns it the local identity kernel, Project-resolution state, DB-native Agent
+Memory, its derived FTS5 search projection, and the Memory replication outbox.
+Work handoffs remain a dependent plan. One local process owns every
+write-capable connection to it;
+the existing supervised usage-engine process is the composition root because it
+already has explicit lifetime and sole-writer ownership. A separate Memory
+process requires a new lifecycle decision covering its lock, startup, shutdown,
+recovery, authentication, and IPC behavior.
+
+The usage-engine control plane remains limited to usage commands, status, and
+bounded events. Memory data and mutations do not cross under that name. If a
+local application-service boundary needs IPC, it receives a separately named,
+authenticated, bounded Memory service seam.
+
+### Connected/shared composition
+
+```text
+Device ── outbound HTTPS ── apps/server
+                                authenticated external endpoints
+                                application-service composition root
+                                sole PostgreSQL write composition root
+                                  ├─ identity and authorization
+                                  ├─ shared Memory and search
+                                  ├─ replication projections
+                                  ├─ shared Work handoffs
+                                  └─ opt-in session archives
+
+apps/web (connected mode)
+  reuses the product and contract-first browser boundary
+  never imports PostgreSQL or authorization adapters in browser code
+```
+
+`apps/server` will also own the GitHub-only shared-authentication HTTP boundary,
+domain Web-session projection, and Device enrollment/lifecycle routes.
+`@ai-usage/identity` wraps Better Auth and the Device application services;
+`@ai-usage/postgres-store` keeps library/database rows private. A login resolves
+to a Person but never bypasses the application `Authorizer`.
+
+The shared server never reads machine-local harness files. PostgreSQL is
+authoritative for connected product state and explicitly published/shared
+resources, not for unpublished local Memory or native harness history. Devices
+initiate every connection; the connected composition adds no inbound Device
+listener or LAN discovery.
+
+### Target mode guarantees
+
+The accepted local composition must provide Usage, Skills, a stable local
+Person/personal Space/Device, Project resolution, DB-native Agent Memory, FTS5
+search, the `/projects` and `/memory` workflows, CLI search, and read-only MCP
+without an account, login, external network, shared server, or PostgreSQL. Work
+handoffs remain a later plan. Tests inject a platform connection adapter that
+throws if called and assert zero calls while local operations pass.
+
+Connected mode adds personal and organization Spaces, authorized cross-device
+search, shared Work handoffs, replication, and opt-in normalized session
+archives. It never silently demotes local SQLite into a cache of PostgreSQL.
+The same domain and application-service contracts sit above local SQLite and
+shared PostgreSQL adapters.
+
+## Platform data ownership
+
+Every logical resource has one mutation authority at a time. Replication is an
+explicit publication transition: a local outbox owns an unacknowledged event;
+after durable apply, PostgreSQL owns the shared projection and receipt without
+becoming authority over the source harness file.
+
+| Concern | Target mutation authority | Target local role | Target connected role |
+| --- | --- | --- | --- |
+| Harness raw history | Native harness | Read locally | Never published by default |
+| Usage checkpoints and report revisions | `apps/usage-engine` + usage SQLite | Authoritative | Published projection only |
+| Local Agent Memory | Memory application service + Memory SQLite | Authoritative | Published by policy |
+| Shared Agent Memory | Memory application service + PostgreSQL | Import/export only | Authoritative |
+| Local Work Thread and Work handoff | Work application service + Memory SQLite | Authoritative | Published by policy |
+| Shared Work Thread and Work handoff | Work application service + PostgreSQL | Replicated projection | Authoritative |
+| Local Memory search | SQLite FTS5 projection | Available | Not queried remotely |
+| Shared Memory search | PostgreSQL FTS + `pg_trgm` projection | No direct database access | Available through services |
+| Replication event | Owning SQLite outbox until ACK; PostgreSQL receipt after apply | Durable outbound state | Durable receipt/projection |
+| Space, Person, organization membership | Identity application service + PostgreSQL in connected mode | Single-user identity kernel | Authoritative |
+| Device credential | Private local secret + server verifier metadata | Plaintext secret only | Verifier and lifecycle metadata |
+| SCM account | Person-scoped identity service + PostgreSQL | Optional metadata | Authoritative |
+| SCM installation | Space-scoped identity service + PostgreSQL | No local ownership inference | Authoritative |
+| SCM credential | Identity service encrypted secret/reference | Never inferred | Attached to account or installation |
+| Session archive metadata and ciphertext | Archive application service + PostgreSQL | Queued publication only | Opt-in authority |
+| Skills source and projections | Existing Skills filesystem domain | Authoritative | Future policy only |
+
+Markdown and JSONL are accepted as Agent Memory import, export, and projection
+formats. The target import is an explicit bounded preview/confirm workflow with
+a proof bound to the source and destination Memory state. Portable export must
+be deterministic, omit principal IDs and raw source locators, and never be
+watched for implicit write-back. List/export reads must consume a complete
+authorization scope before content queries.
+The NixOS Agent Memory remains the migration source and temporary compatibility
+implementation until application-service parity is demonstrated; it is never a
+second mutation authority.
+
+## Application services and trusted capabilities
+
+Web/oRPC, CLI, MCP, and jobs are edge adapters over explicit application
+services and ports. Route handlers and MCP tools neither implement permission
+logic nor instantiate write repositories. SQLite and PostgreSQL adapters share
+runtime-validated domain commands/results while their inferred storage rows
+remain private. Search and MCP contracts, measurements, registration, and
+retrieved-content rules are documented in
+[Memory search and MCP](memory-search-and-mcp.md).
+
+The accepted capability IDs are `usage`, `sources`, `skills`, `replication`,
+`memory`, `work-handoff`, and `organization-governance`. Trusted capability
+modules may contribute routes, jobs, MCP tools, navigation, and permission
+requirements through normal composition. They share one reviewed migration
+sequence, run no arbitrary third-party code, and expose no public plugin SDK.
+A generic registry is introduced only when at least two real consumers would
+otherwise duplicate composition logic.
+
+A disabled capability has no navigation, public route, tool, or job execution,
+and commands return a typed capability-disabled result. Disabling never skips
+migrations or erases historical tables. Every real package remains subject to
+the TypeScript project registry, package-boundary checks, and declared public
+exports; speculative empty packages are not architecture.
+
 ## Runtime and process ownership
 
 ### Usage engine
@@ -73,6 +239,29 @@ identity/label, project groups, Cursor imports, merge preview/confirmation,
 collection, enrichment, and publication. The unrelated Skills control plane
 remains web-owned and may update only the `skills` field through a field-scoped
 config store that preserves unrelated configuration.
+
+Under the accepted local platform composition, after the usage writer starts,
+the engine will also open the separate owner-only
+`memory.sqlite` identity kernel and start its independently authenticated
+Memory service. The service carries bounded Project review, Memory review,
+exact-item, Project-context, and search operations; it is not the usage control
+plane. The engine closes the Memory service before the identity kernel and the
+usage runtime. Only this post-writer-lease startup path replaces a stale Memory
+rendezvous left by a crashed engine; the generic publisher preserves existing
+files. This composition does not make identity data part of the usage database
+or broaden the usage control-plane protocol.
+
+When plan 107 is integrated and `AI_USAGE_PLATFORM_BASE_URL` is explicitly
+present, the same composition will also start an independent outbound
+replication supervisor after local startup.
+It binds the offline identity kernel to the authenticated shared Device/Person/
+Space snapshot, recovers and scans each owning outbox through bounded writer
+ports, then performs HTTPS only after the SQLite transactions close. Missing
+credentials and platform failures never degrade local engine readiness. On
+shutdown, the outbound request is aborted and the supervisor closes before the
+Memory service, Memory kernel, and usage writer. The exact protocol, retry,
+privacy, and PostgreSQL apply contracts live in
+[Device replication](device-replication.md).
 
 ### Control plane
 
@@ -183,6 +372,100 @@ and quota contracts, session detail/VCS contracts, portable snapshots, merge
 bundles, and serialization. It reads no filesystem, SQLite database, browser
 global, or app runtime state.
 
+The platform-specific package sections from `@ai-usage/platform-core` through
+`@ai-usage/mcp-adapter` are accepted target ownership. Those packages and
+exports are pending integration and are not present on `main` yet.
+
+### `@ai-usage/platform-core`
+
+Owns canonical branded UUID identity types, canonical instants, bounded identity
+text, and the shared Space, Person, Device, SCM, Repository, Project, Checkout,
+and Capture Context contracts. It is pure and exports no storage or transport
+implementation.
+
+### `@ai-usage/authorization-contract`
+
+Owns the portable tri-state `Authorizer` port, resource/permission values, and
+complete opaque authorized-resource-scope contract. This small package lets
+application contracts remain independent from authorization implementations
+without duplicating or structurally weakening the port.
+
+### `@ai-usage/authorization`
+
+Re-exports the portable contract and owns the bounded `SingleUserAuthorizer`,
+opaque-scope construction/adapter binding, and the adapter-independent
+organization conformance model. The local adapter allows only the bootstrapped
+Person over compatible resources in the personal Space; it is not an allow-all
+substitute for organization authorization. The package owns no PostgreSQL
+client, transport, or browser integration.
+
+### `@ai-usage/identity`
+
+Owns the GitHub-only shared-authentication wrapper, explicit identity-linking
+policy, Web-session domain projection, redacted public-ID/HMAC Device tokens,
+Device enrollment/lifecycle application service, and the Node-only private
+local credential-file adapter. Better Auth `1.7.2` and its session/account rows
+remain behind adapter-private subpaths. The package imports domain contracts
+and `Authorizer`, but no PostgreSQL/SQLite adapter or HTTP router.
+
+Local composition does not instantiate shared authentication. Connected
+composition supplies PostgreSQL identity/Device ports and still calls
+`Authorizer` for every Space/Device operation. Login, SCM account/installation,
+provider credential, Device, and Device credential remain distinct.
+
+### `@ai-usage/project-application`
+
+Owns the authorization-aware Project-listing application service and its
+persistence catalog port. The service requests a complete `view_project`
+scope, passes it opaquely to the catalog, and never post-filters an unrestricted
+Project result. It imports only authorization and platform identity contracts.
+
+### `@ai-usage/project-registry`
+
+Owns pure repository normalization/resolution outcomes, the additive
+Project-source mapping contract, and privacy-safe Checkout review/action
+contracts. It never opens a database or chooses between ambiguous candidates.
+
+### `@ai-usage/memory-sqlite`
+
+Owns the dedicated local identity kernel in `memory.sqlite`, including atomic
+single-user bootstrap, strict SQLite schema, Project/Repository/Checkout
+persistence, identity events, additive mappings, review actions, DB-native
+Memory, its import ledger/state binding, owner-only coherent backup, and the
+local replication outbox. It also owns deterministic FTS5 revision chunks,
+transactional projection maintenance, structured eligibility, cursor binding,
+and authorization-scoped local ranking. Only
+the usage-engine composition may open this write-capable adapter in production.
+
+### `@ai-usage/memory-service`
+
+Owns the Memory domain/application contracts, adapter conformance, redaction,
+bounded legacy/native import, deterministic portable export, and the separately
+named protocol-v1 service contracts. It also owns the shared bounded search
+query/result contract, runtime parsers, exact-item and Project-context reads.
+Its numeric-loopback client and
+owner-only/no-follow rendezvous primitives reach the sole local writer. It
+imports no SQLite or PostgreSQL adapter and is distinct from
+`usage-engine-control`.
+
+### `@ai-usage/memory-search`
+
+Owns deterministic chunking, portable lexical/trigram query helpers, the
+synthetic cross-adapter evaluation corpus, and metrics/vector-gate reporting.
+It imports no database adapter. SQLite and PostgreSQL consume these portable
+contracts while retaining ownership of their SQL projections and queries.
+
+### `@ai-usage/mcp-adapter`
+
+Owns the harness-neutral MCP protocol edge, strict runtime input schemas,
+bounded serialization, read-only tool annotations, cancellation, stable error
+sanitization, retrieved-data labeling, local/connected application-service
+composition, and safe registration helpers. It registers only real read tools
+and imports no storage adapter. Harness configuration reuses identity-checked
+Skills projection locking and refuses unmanaged same-name entries.
+
+Current package ownership resumes below.
+
 ### `@ai-usage/local-machine`
 
 Owns collector-independent local-machine primitives:
@@ -278,21 +561,48 @@ bounded warning projection, and store-error mapping. Engine-runtime owns file
 and command adaptation and must not duplicate these semantics. Only
 engine-runtime may import this writer-capable package.
 
+### `@ai-usage/postgres-store` (accepted target; pending integration)
+
+Owns the connected PostgreSQL adapter behind explicit `./schema`,
+`./migrations`, `./reader`, `./writer`, `./identity`, `./authorization`,
+`./authentication`, `./devices`, `./memory`, and `./projects` subpaths.
+`./testing` and `./performance-testing` are restricted to test/benchmark source.
+There is no mixed root export. Storage rows and the `pg` pool remain private;
+readers return validated domain results and typed bounded failures.
+
+The migration registry uses explicit unique ordinals. One reserved client owns
+one advisory lock, validates an exact applied prefix, applies one transaction
+per migration, records its ledger row in that transaction, and always releases
+the lock. Plan 101's ordinal-1 foundation creates only `platform_migrations`
+and `platform_schema_metadata`; plan 102's ordinal-2 migration adds the identity
+kernel; plan 103's ordinal-3 migration adds concrete authorization relations,
+authorization scopes, audit events, and forced transaction-local Space RLS.
+The invalid-value fixture remains test-only.
+
+The package imports only authorization, platform identity, Project-application,
+and Project-registry contracts from the workspace; it imports no SQLite, HTTP,
+repository harness, or filesystem adapter. Only `apps/server` may import its
+writer/migration capabilities in production. Testing injection, raw fixture
+helpers, and authorization benchmark SQL are restricted to test/benchmark
+source. See [authorization](authorization.md).
+
 ### `@ai-usage/usage-engine-control`
 
 Owns strict protocol contracts, client, completion tracking, private rendezvous
 parsing, and in-memory test adapters. Its Node handoff seam stages bounded
 bytes, fsyncs owner-only/no-follow inbox files, returns opaque IDs, and cleans
 them; the engine independently revalidates/consumes the file and owns document
-semantics. The package imports no runtime, data, collector, store, or app
-package. Its contracts are operational only and enforce fixed
-byte/count/time/path budgets.
+semantics. Plan 107 will extend its operational command set with a content-free
+combined replication status, never outbox payloads. The package imports no
+runtime, data, collector, store, or app package. Its contracts are operational
+only and enforce fixed byte/count/time/path budgets.
 
 ### `@ai-usage/usage-engine-runtime`
 
 Owns the deep write-side application service: source state and cadence,
 adapters, quota refresh, enrichment, source-policy/config mutations, transfer
-workflows, publication, recovery, and sanitized engine events. It may import
+workflows, publication, recovery, and sanitized engine events. Plan 107 will
+add Usage replication outbox adaptation. It may import
 collectors, report-data assembly, `usage-store/writer`, and control contracts,
 but no app. Only `apps/usage-engine` may compose its live implementation.
 
@@ -323,22 +633,64 @@ Owns argument parsing, terminal/CSV/JSON/payload rendering, bounded portable
 files, the loopback setup UI, and CLI diagnostics. Stored reads use the SQLite
 reader without an engine. Fresh or mutating operations use one engine client or
 one bounded foreground engine, then read the committed revision. The CLI never
-imports collectors, engine-runtime, or `usage-store/writer`.
+imports collectors, engine-runtime, or `usage-store/writer`. After plan 106
+integration, `memory search` will use the separately authenticated local Memory
+client and never open `memory.sqlite` or PostgreSQL.
 
 Portable snapshot/output files remain explicit CLI writes performed after
 bounded reads. CLI wide-event delivery is file-only: it never writes event or
 sink diagnostics to stdout/stderr and drains its scoped appender before an
 explicit exit so structured output and warning order remain unchanged.
 
+### `apps/mcp` (accepted target; pending integration)
+
+Owns the local stdio process and explicit registration command. It resolves the
+owner-only Memory rendezvous, adapts the bounded client to
+`@ai-usage/mcp-adapter`, and never opens a database. Failure to reach the local
+service is explicit; the process does not change modes or corpora.
+
+### `apps/server` (accepted target; pending integration)
+
+Owns the connected process, typed redacted configuration, health HTTP edge,
+one shared PostgreSQL write composition root, migration/readiness startup, and
+bounded graceful/forced shutdown. Its only foundation routes are
+`GET /health/live` and `GET /health/ready`; not-ready responses are generic and
+contain no database URL, hostname, credentials, SQL, migration detail, or raw
+exception.
+
+The shared writer exposes the plan-102 identity repository, plan-103
+organization Authorizer, and authorization-aware Project catalog behind domain
+contracts. The connected HTTP surface still has no identity, login,
+organization, or Project endpoint because principal establishment belongs to
+plan 104; permission logic is already confined to application services rather
+than future handlers.
+
+It does not import usage SQLite, collectors, local-machine readers, the usage
+engine, CLI, or Web. `bun run dev:platform` is the explicit disposable
+PostgreSQL connected-development composition; `bun run dev` remains local and
+PostgreSQL-free. See [platform server operations](platform-server-operations.md).
+
 ### `apps/web`
 
 Owns SvelteKit SSR/UI, browser Query composition, the explicit oRPC
 endpoint at `apps/web/src/routes/rpc/[...rest]/+server.ts`, source-control SSE
 routes, manual-transfer file leaves, `/sync`, web read observability, and the
-unrelated `/skills` route. Report queries use the
-read-only server facades over `usage-store/reader`; commands use
-`usage-engine-control`. Web never imports collectors, engine-runtime, source
-adapters, or `usage-store/writer`.
+unrelated `/skills` route. Report queries use the read-only server facades over
+`usage-store/reader`; commands use `usage-engine-control`. Web never imports
+collectors, engine-runtime, source adapters, or `usage-store/writer`.
+
+Under the accepted platform target, Web will also own `/projects`, whose
+SSR/oRPC server edge calls the separate local Memory service for bounded
+resolution reviews and explicit create/link/leave-unassigned actions. Browser
+code will import only the oRPC contract and TanStack Query will own the review
+identity. `/memory` will expose accepted active search through one bounded oRPC
+procedure and one TanStack Query identity containing every result-shaping
+field; the server edge will call the same Memory client as CLI and MCP.
+`/sources` will read the content-free combined Device replication status
+through one browser-only `bounded-control-plane` Query identity. The Web server
+will adapt the engine's strict status command to the oRPC contract; the browser
+will receive only mode, runtime state, closed diagnostics, stream counters,
+bounded error codes, generations, and freshness timestamps.
 
 The SSR support bootstrap shares a 512 KiB budget across filter options,
 provider representative rows/statuses, and warnings. It returns exact omission
@@ -471,7 +823,8 @@ admission, cadence, dependencies, or publication ordering here.
 - Relative workspace imports and private `@ai-usage/*/src/**` imports are
   forbidden.
 - Boundary tooling checks direct imports and the production dependency closure
-  of Web and CLI. It rejects collector, writer, and runtime side doors.
+  of Web and CLI. It rejects collector, writer, runtime, and PostgreSQL side
+  doors.
 - Sole-writer searches must find `usage-store/writer` only behind
   `usage-engine-runtime` and its one app composition root.
 - `bun run lint` runs Biome restricted-import rules plus workspace-path,
