@@ -12,9 +12,20 @@ import {
 } from './browser-test';
 
 const RGB_COMPONENT_PATTERN = /[\d.]+/g;
-const NAVIGATION_DESTINATIONS = ['Overview', 'Sessions', 'Analysis', 'Skills', 'Sync', 'Sources'] as const;
+const NAVIGATION_DESTINATIONS = [
+  'Overview',
+  'Sessions',
+  'Analysis',
+  'Memory',
+  'Projects',
+  'Skills',
+  'Sync',
+  'Sources',
+] as const;
 const routes = [
   { heading: 'Usage report', path: '/' },
+  { heading: 'Memory', path: '/memory' },
+  { heading: 'Projects', path: '/projects' },
   { heading: 'Skill management', path: '/skills' },
   { heading: 'Sources', path: '/sources' },
   { heading: 'Sync', path: '/sync' },
@@ -174,7 +185,7 @@ for (const route of routes) {
     const manageButton = mobileNavigation.getByRole('button', { name: 'Manage' });
     await manageButton.click();
     const manageNavigation = page.getByRole('navigation', { name: 'Manage destinations' });
-    for (const label of ['Skills', 'Sync', 'Sources']) {
+    for (const label of ['Memory', 'Projects', 'Skills', 'Sync', 'Sources']) {
       await expect(manageNavigation.getByRole('link', { exact: true, name: label })).toBeVisible();
     }
     await page.keyboard.press('Escape');
@@ -306,6 +317,15 @@ for (const colorScheme of ['light', 'dark'] as const) {
 test('Skills has no detectable accessibility violations', async ({ page }) => {
   await openHydratedSkills(page, '/skills/global/alpha-skill');
   await expect(page.getByRole('textbox', { name: 'alpha-skill SKILL.md' })).toBeVisible();
+
+  await expectNoAxeViolations(page);
+});
+
+test('Projects has no detectable accessibility violations', async ({ page }) => {
+  await page.goto('/projects');
+  await waitForHydratedNavigation(page);
+  await expect(page.getByRole('heading', { level: 2, name: 'checkout:0198f179' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Leave unassigned' })).toBeVisible();
 
   await expectNoAxeViolations(page);
 });

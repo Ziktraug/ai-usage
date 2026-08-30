@@ -8,6 +8,8 @@ import { createUsageEngineBearerToken } from '@ai-usage/usage-engine-control/nod
 import { createLiveUsageEngineRuntime } from '@ai-usage/usage-engine-runtime/live';
 import { startUsageEngineControlServer, type UsageEngineInternalFailureBoundary } from './control-server';
 import { acquireUsageEngineLock, UsageEngineWriterLockContendedError } from './engine-lock';
+import { localMemoryIdentityDatabasePath, withLocalMemoryIdentityKernel } from './memory-identity-runtime';
+import { createRandomMemoryServiceToken, startLocalMemoryService } from './memory-service-server';
 import {
   createUsageEngineProcess,
   interruptedExitCode,
@@ -19,6 +21,12 @@ import { checkUsageEngine } from './process-check';
 import { resolveUsageEngineProcessPaths } from './process-paths';
 import { createUsageEngineTermination } from './process-signals';
 import { publishUsageEngineRendezvous } from './rendezvous-file';
+import {
+  type DeviceReplicationDiagnostic,
+  deviceReplicationStatusOutput,
+  localOnlyReplicationStatus,
+  startConfiguredDeviceReplication,
+} from './replication-runtime';
 
 export const defineUsageEngineComposition = <Factory>(factory: Factory): Factory => factory;
 
@@ -38,14 +46,24 @@ const reportCleanupFailure = (resource: UsageEngineCleanupResource): void => {
   process.stderr.write(`usage-engine cleanupFailure=${resource}\n`);
 };
 
+const reportReplicationDiagnostic = (diagnostic: DeviceReplicationDiagnostic): void => {
+  if (diagnostic.code === 'idle') {
+    return;
+  }
+  const stream = diagnostic.streamId === undefined ? '' : ` stream=${diagnostic.streamId}`;
+  const problem = diagnostic.problemCode === undefined ? '' : ` problem=${diagnostic.problemCode}`;
+  process.stderr.write(`usage-engine replication=${diagnostic.code}${stream}${problem}\n`);
+};
+
 const createProductionDependencies = (
   env: NodeJS.ProcessEnv,
   logDirectory: string | null,
 ): UsageEngineProcessDependencies => ({
   check: checkUsageEngine,
   createInstanceId: () => engineInstanceIdFrom(env),
-  createRuntime: ({ collectionMode, instanceId, paths }) =>
-    createLiveUsageEngineRuntime({
+  createRuntime: ({ collectionMode, instanceId, paths }) => {
+    let readReplicationStatus = localOnlyReplicationStatus;
+    const usageRuntime = createLiveUsageEngineRuntime({
       acquireWriterLease: async () =>
         await acquireUsageEngineLock({
           databasePath: paths.databasePath,
@@ -58,6 +76,7 @@ const createProductionDependencies = (
       initialSourceDetection: collectionMode === 'foreground' ? 'deferred' : 'automatic',
       instanceId,
       operatorCwd: paths.operatorCwd,
+      readReplicationStatus: async () => readReplicationStatus(),
       storage: createLocalHistoryStorage(paths.homeDirectory),
       reportRecovery: ({
         deletedBytes,
@@ -87,7 +106,32 @@ const createProductionDependencies = (
           surface: 'engine',
         },
       }),
-    }),
+    });
+    return withLocalMemoryIdentityKernel(usageRuntime, localMemoryIdentityDatabasePath(paths.stateDirectory), {
+      ...(env.AI_USAGE_PLATFORM_BASE_URL === undefined
+        ? {}
+        : {
+            startReplication: (kernel) => {
+              const replication = startConfiguredDeviceReplication({
+                allowInsecureLoopback: env.NODE_ENV !== 'production',
+                baseUrl: env.AI_USAGE_PLATFORM_BASE_URL ?? '',
+                kernel,
+                reportDiagnostic: reportReplicationDiagnostic,
+                stateDirectory: paths.stateDirectory,
+                usageDatabasePath: paths.databasePath,
+              });
+              readReplicationStatus = () => deviceReplicationStatusOutput(replication.status());
+              return Promise.resolve(replication);
+            },
+          }),
+      startService: async (kernel) =>
+        await startLocalMemoryService({
+          kernel,
+          stateDirectory: paths.stateDirectory,
+          token: createRandomMemoryServiceToken(),
+        }),
+    });
+  },
   createToken: () => createUsageEngineBearerToken(randomBytes(32).toString('base64url')),
   publishRendezvous: publishUsageEngineRendezvous,
   reportCleanupFailure,

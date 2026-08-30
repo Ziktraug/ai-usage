@@ -163,7 +163,10 @@ describe('Web Query composition', () => {
       'session',
       'quota',
       'skills',
+      'memory',
+      'projects',
       'sync',
+      'replication',
       'sources',
     ]);
     expect(webQueryOwnership.filter(({ publication }) => publication !== 'none')).toEqual([

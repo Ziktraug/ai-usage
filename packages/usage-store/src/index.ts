@@ -2,6 +2,23 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { type DeviceId, type Instant, parseInstant } from '@ai-usage/platform-core/identity';
+import {
+  type ClaimedReplicationBatch,
+  createSqliteReplicationOutbox,
+  type ReplicationOutboxHistoryItem,
+  type ReplicationOutboxStatus,
+  type ReplicationSqliteDatabase,
+  replicationOutboxSchemaSql,
+} from '@ai-usage/replication-outbox';
+import {
+  type CaptureContextSnapshot,
+  type ReplicationAck,
+  type ReplicationBatch,
+  replicationEventIdForSeed,
+  replicationHash,
+  USAGE_REPLICATION_STREAM_ID,
+} from '@ai-usage/replication-protocol';
 import {
   isNormalizedDatasetIdentity,
   isNormalizedDatasetItem,
@@ -52,7 +69,7 @@ import {
 export type StoredUsageRowStatus = 'active' | 'superseded' | 'deleted';
 export type StoredSourceAuthority = 'local-observed' | 'portable-opaque';
 
-export const USAGE_STORE_SCHEMA_VERSION = 3;
+export const USAGE_STORE_SCHEMA_VERSION = 4;
 const USAGE_STORE_READER_BUSY_TIMEOUT_MS = 1000;
 
 export interface ImportResult {
@@ -69,7 +86,72 @@ export interface ImportLocalRowsInput {
   dbPath: string;
   importedAt?: Date;
   machine: UsageMachine;
+  replication?: UsageReplicationPublication;
   rows: UsageRowWithOptionalSource[];
+}
+
+export interface UsageReplicationCaptureAssignment {
+  readonly captureContext: CaptureContextSnapshot;
+  readonly rowKey: string;
+}
+
+export interface UsageReplicationPublication {
+  readonly assignments: readonly UsageReplicationCaptureAssignment[];
+  readonly deviceId: DeviceId;
+}
+
+export interface BackfillUsageReplicationOutboxInput extends UsageReplicationPublication {
+  readonly dbPath: string;
+  readonly enqueuedAt?: Date;
+  readonly includeDeviceFact?: boolean;
+}
+
+export interface BackfillUsageReplicationOutboxResult {
+  readonly enqueued: number;
+  readonly unchanged: number;
+}
+
+export interface QueryUsageReplicationCandidatesInput {
+  readonly afterRowKey?: string | null;
+  readonly dbPath: string;
+  readonly maximumItems?: number;
+}
+
+export interface UsageReplicationCandidatePage {
+  readonly nextCursor: string | null;
+  readonly rowKeys: readonly string[];
+}
+
+export interface InitializeUsageReplicationOutboxInput {
+  readonly createdAt?: Date;
+  readonly dbPath: string;
+  readonly deviceId: DeviceId;
+}
+
+export interface QueryUsageReplicationOutboxInput {
+  readonly dbPath: string;
+}
+
+export interface RecoverUsageReplicationOutboxInput extends QueryUsageReplicationOutboxInput {
+  readonly recoveredAt?: Date;
+}
+
+export interface ClaimUsageReplicationBatchInput extends QueryUsageReplicationOutboxInput {
+  readonly maximumEvents?: number;
+  readonly now?: Date;
+}
+
+export interface AcknowledgeUsageReplicationBatchInput extends QueryUsageReplicationOutboxInput {
+  readonly ack: ReplicationAck;
+  readonly batch: ReplicationBatch;
+}
+
+export interface FailUsageReplicationBatchInput extends QueryUsageReplicationOutboxInput {
+  readonly batch: ReplicationBatch;
+  readonly errorCode: string;
+  readonly now?: Date;
+  readonly random?: () => number;
+  readonly retryAfterSeconds?: number;
 }
 
 export interface UpdateUsageMachineLabelInput {
@@ -1260,6 +1342,7 @@ const migrate = (db: SqliteDatabase): boolean => {
       CREATE INDEX IF NOT EXISTS idx_provider_quota_source_events_observation
         ON provider_quota_source_events(observation_id);
     `);
+    db.exec(replicationOutboxSchemaSql);
     db.exec(servedReportSchemaSql);
     if (!hasExactUsageLocalMachineSchema(db)) {
       throw new Error('The local machine projection schema is incompatible.');
@@ -2086,11 +2169,194 @@ const writeClassifiedMergeRows = (
   return result;
 };
 
+interface StoredUsageReplicationRow {
+  readonly harness_key: unknown;
+  readonly machine_label: unknown;
+  readonly model: unknown;
+  readonly origin_machine_id: unknown;
+  readonly row_key: unknown;
+  readonly source_authority: unknown;
+  readonly source_fingerprint: unknown;
+  readonly source_session_id: unknown;
+  readonly status: unknown;
+  readonly token_total: unknown;
+  readonly updated_at: unknown;
+}
+
+const requiredReplicationText = (value: unknown, operation: string): string => {
+  if (typeof value !== 'string') {
+    throw new Error(`Invalid usage replication ${operation}.`);
+  }
+  return value;
+};
+
+const usageReplicationOutbox = (db: SqliteDatabase) =>
+  createSqliteReplicationOutbox(db as unknown as ReplicationSqliteDatabase);
+
+const usageSessionFactKey = (deviceId: DeviceId, row: StoredUsageReplicationRow): string =>
+  `usage-session:${replicationHash({
+    deviceId,
+    harness: requiredReplicationText(row.harness_key, 'harness'),
+    originMachineId: requiredReplicationText(row.origin_machine_id, 'origin machine'),
+    sourceFingerprint: requiredReplicationText(row.source_fingerprint, 'source fingerprint'),
+    sourceSessionId: row.source_session_id,
+    version: 1,
+  })}`;
+
+const publishUsageReplicationRows = (
+  db: SqliteDatabase,
+  publication: UsageReplicationPublication,
+  enqueuedAt: Instant,
+  eligibleRowKeys?: ReadonlySet<string>,
+  includeDeviceFact = true,
+): BackfillUsageReplicationOutboxResult => {
+  if (publication.assignments.length > 1000) {
+    throw new Error('Usage replication capture assignments exceed the bounded scan size.');
+  }
+  const assignments = new Map<string, CaptureContextSnapshot>();
+  for (const assignment of publication.assignments) {
+    if (
+      assignment.rowKey.length === 0 ||
+      assignment.rowKey.length > 512 ||
+      assignment.captureContext.deviceId !== publication.deviceId ||
+      assignments.has(assignment.rowKey)
+    ) {
+      throw new Error('Usage replication capture assignment is invalid.');
+    }
+    assignments.set(assignment.rowKey, assignment.captureContext);
+  }
+  if (assignments.size === 0) {
+    return { enqueued: 0, unchanged: 0 };
+  }
+  const rowKeys = [...assignments.keys()];
+  const placeholders = rowKeys.map(() => '?').join(', ');
+  const rows = db
+    .query(
+      `SELECT row_key, origin_machine_id, harness_key, source_session_id, source_fingerprint,
+              source_authority, status, model, token_total, updated_at, machine_label
+       FROM usage_rows
+       WHERE row_key IN (${placeholders})
+       ORDER BY row_key`,
+    )
+    .all(...rowKeys) as StoredUsageReplicationRow[];
+  if (rows.length !== assignments.size) {
+    throw new Error('Usage replication capture assignment references an unknown row.');
+  }
+  const outbox = usageReplicationOutbox(db);
+  outbox.initialize({ createdAt: enqueuedAt, deviceId: publication.deviceId, streamId: USAGE_REPLICATION_STREAM_ID });
+  let enqueued = 0;
+  let unchanged = 0;
+
+  const firstRow = rows[0];
+  const firstContext = firstRow ? assignments.get(requiredReplicationText(firstRow.row_key, 'row key')) : undefined;
+  if (firstContext && includeDeviceFact) {
+    const deviceRow = db
+      .query(
+        `SELECT machine_label, updated_at
+         FROM usage_rows
+         WHERE source_authority = 'local-observed'
+         ORDER BY updated_at DESC, row_key DESC
+         LIMIT 1`,
+      )
+      .get() as Pick<StoredUsageReplicationRow, 'machine_label' | 'updated_at'> | null;
+    if (!deviceRow) {
+      throw new Error('Usage replication Device source is unavailable.');
+    }
+    const lastSeenAt = parseInstant(deviceRow.updated_at, 'device.lastSeenAt');
+    const devicePayload = {
+      deviceId: publication.deviceId,
+      kind: 'device-fact-upsert' as const,
+      label: requiredReplicationText(deviceRow.machine_label, 'machine label'),
+      lastSeenAt,
+      status: 'active' as const,
+    };
+    const deviceEventId = replicationEventIdForSeed({
+      captureContextId: firstContext.id,
+      factKey: `device:${publication.deviceId}`,
+      payload: devicePayload,
+    });
+    const existed = db.query('SELECT 1 FROM replication_outbox_events WHERE event_id = ?').get(deviceEventId) !== null;
+    outbox.enqueue({
+      captureContext: firstContext,
+      changeKind: devicePayload.kind,
+      enqueuedAt,
+      eventId: deviceEventId,
+      factKey: `device:${publication.deviceId}`,
+      payload: devicePayload,
+    });
+    if (existed) {
+      unchanged += 1;
+    } else {
+      enqueued += 1;
+    }
+  }
+
+  for (const row of rows) {
+    const rowKey = requiredReplicationText(row.row_key, 'row key');
+    if (eligibleRowKeys && !eligibleRowKeys.has(rowKey)) {
+      continue;
+    }
+    if (
+      row.source_authority !== 'local-observed' ||
+      (row.status !== 'active' && row.status !== 'deleted' && row.status !== 'superseded') ||
+      typeof row.token_total !== 'number' ||
+      !Number.isSafeInteger(row.token_total) ||
+      row.token_total < 0
+    ) {
+      throw new Error('Usage replication source row is invalid.');
+    }
+    const captureContext = assignments.get(rowKey);
+    if (!captureContext) {
+      throw new Error('Usage replication capture context is unavailable.');
+    }
+    const factKey = usageSessionFactKey(publication.deviceId, row);
+    const observedAt = parseInstant(row.updated_at, 'usageSession.observedAt');
+    const payload =
+      row.status === 'active'
+        ? {
+            harness: requiredReplicationText(row.harness_key, 'harness'),
+            kind: 'usage-session-upsert' as const,
+            model: requiredReplicationText(row.model, 'model'),
+            observedAt,
+            projectId: captureContext.projectId,
+            sourceFingerprint: requiredReplicationText(row.source_fingerprint, 'source fingerprint'),
+            sourceSessionId:
+              row.source_session_id === null
+                ? null
+                : requiredReplicationText(row.source_session_id, 'source session id'),
+            status: 'active' as const,
+            tokenTotal: row.token_total,
+          }
+        : {
+            kind: 'usage-session-tombstone' as const,
+            reasonCode: row.status,
+            tombstonedAt: observedAt,
+          };
+    const eventId = replicationEventIdForSeed({ captureContextId: captureContext.id, factKey, payload });
+    const existed = db.query('SELECT 1 FROM replication_outbox_events WHERE event_id = ?').get(eventId) !== null;
+    outbox.enqueue({
+      captureContext,
+      changeKind: payload.kind,
+      enqueuedAt,
+      eventId,
+      factKey,
+      payload,
+    });
+    if (existed) {
+      unchanged += 1;
+    } else {
+      enqueued += 1;
+    }
+  }
+  return { enqueued, unchanged };
+};
+
 const importMergeRows = (
   dbPath: string,
   rows: SerializedMergeRow[],
   importedAt = new Date(),
   authority: StoredSourceAuthority = 'portable-opaque',
+  replication?: UsageReplicationPublication,
 ): Effect.Effect<ImportResult, UsageStoreError> =>
   withUsageStoreWriter(dbPath, (db) =>
     Effect.try({
@@ -2107,6 +2373,21 @@ const importMergeRows = (
             now,
           );
           const result = writeClassifiedMergeRows(db, preparedRows, classifiedRows, now, authority);
+          if (replication) {
+            if (authority !== 'local-observed') {
+              throw new Error('Only locally observed usage can enter the replication outbox.');
+            }
+            publishUsageReplicationRows(
+              db,
+              replication,
+              parseInstant(now, 'replication.enqueuedAt'),
+              new Set(
+                classifiedRows
+                  .filter(({ classification }) => classification !== 'unchanged')
+                  .map(({ row }) => row.rowKey),
+              ),
+            );
+          }
           db.exec('COMMIT');
           return result;
         } catch (error) {
@@ -2124,6 +2405,176 @@ export const importLocalRows = (input: ImportLocalRowsInput): Effect.Effect<Impo
     input.rows.map((row) => toSerializedMergeRow(row, input.machine)),
     input.importedAt,
     'local-observed',
+    input.replication,
+  );
+
+export const initializeUsageReplicationOutbox = (
+  input: InitializeUsageReplicationOutboxInput,
+): Effect.Effect<void, UsageStoreError> =>
+  withUsageStoreWriter(input.dbPath, (db) =>
+    Effect.try({
+      try: () => {
+        usageReplicationOutbox(db).initialize({
+          createdAt: parseInstant((input.createdAt ?? new Date()).toISOString(), 'replication.createdAt'),
+          deviceId: input.deviceId,
+          streamId: USAGE_REPLICATION_STREAM_ID,
+        });
+      },
+      catch: (cause) => usageStoreError('initializeUsageReplicationOutbox', input.dbPath, cause, 'storage-failure'),
+    }),
+  );
+
+export const backfillUsageReplicationOutbox = (
+  input: BackfillUsageReplicationOutboxInput,
+): Effect.Effect<BackfillUsageReplicationOutboxResult, UsageStoreError> =>
+  withUsageStoreWriter(input.dbPath, (db) =>
+    Effect.try({
+      try: () => {
+        db.exec('BEGIN IMMEDIATE');
+        try {
+          const result = publishUsageReplicationRows(
+            db,
+            input,
+            parseInstant((input.enqueuedAt ?? new Date()).toISOString(), 'replication.enqueuedAt'),
+            undefined,
+            input.includeDeviceFact,
+          );
+          db.exec('COMMIT');
+          return result;
+        } catch (error) {
+          db.exec('ROLLBACK');
+          throw error;
+        }
+      },
+      catch: (cause) => usageStoreError('backfillUsageReplicationOutbox', input.dbPath, cause, 'storage-failure'),
+    }),
+  );
+
+export const queryUsageReplicationCandidates = (
+  input: QueryUsageReplicationCandidatesInput,
+): Effect.Effect<UsageReplicationCandidatePage, UsageStoreError> =>
+  withUsageStoreWriter(input.dbPath, (db) =>
+    Effect.try({
+      try: () => {
+        const maximumItems = input.maximumItems ?? 500;
+        if (
+          !Number.isSafeInteger(maximumItems) ||
+          maximumItems <= 0 ||
+          maximumItems > 1000 ||
+          (input.afterRowKey !== undefined &&
+            input.afterRowKey !== null &&
+            (input.afterRowKey.length === 0 || input.afterRowKey.length > 512))
+        ) {
+          throw new Error('Usage replication candidate query is invalid.');
+        }
+        const rows = db
+          .query(
+            `SELECT row_key
+             FROM usage_rows
+             WHERE source_authority = 'local-observed' AND row_key > ?
+             ORDER BY row_key ASC
+             LIMIT ?`,
+          )
+          .all(input.afterRowKey ?? '', maximumItems + 1) as { readonly row_key: unknown }[];
+        const hasNext = rows.length > maximumItems;
+        const selected = hasNext ? rows.slice(0, maximumItems) : rows;
+        const rowKeys = selected.map(({ row_key }) => requiredReplicationText(row_key, 'candidate row key'));
+        return {
+          nextCursor: hasNext ? (rowKeys.at(-1) ?? null) : null,
+          rowKeys,
+        };
+      },
+      catch: (cause) => usageStoreError('queryUsageReplicationCandidates', input.dbPath, cause, 'storage-failure'),
+    }),
+  );
+
+export const queryUsageReplicationOutboxStatus = (
+  input: QueryUsageReplicationOutboxInput,
+): Effect.Effect<ReplicationOutboxStatus, UsageStoreError> =>
+  withUsageStoreWriter(input.dbPath, (db) =>
+    Effect.try({
+      try: () => usageReplicationOutbox(db).status(),
+      catch: (cause) => usageStoreError('queryUsageReplicationOutboxStatus', input.dbPath, cause, 'storage-failure'),
+    }),
+  );
+
+export const listUsageReplicationOutboxHistory = (
+  input: QueryUsageReplicationOutboxInput & { readonly maximumItems?: number },
+): Effect.Effect<readonly ReplicationOutboxHistoryItem[], UsageStoreError> =>
+  withUsageStoreWriter(input.dbPath, (db) =>
+    Effect.try({
+      try: () => usageReplicationOutbox(db).listHistory(input.maximumItems),
+      catch: (cause) => usageStoreError('listUsageReplicationOutboxHistory', input.dbPath, cause, 'storage-failure'),
+    }),
+  );
+
+export const recoverUsageReplicationInFlight = (
+  input: RecoverUsageReplicationOutboxInput,
+): Effect.Effect<number, UsageStoreError> =>
+  withUsageStoreWriter(input.dbPath, (db) =>
+    Effect.try({
+      try: () =>
+        usageReplicationOutbox(db).recoverInFlight(
+          parseInstant((input.recoveredAt ?? new Date()).toISOString(), 'replication.recoveredAt'),
+        ),
+      catch: (cause) => usageStoreError('recoverUsageReplicationInFlight', input.dbPath, cause, 'storage-failure'),
+    }),
+  );
+
+export const claimUsageReplicationBatch = (
+  input: ClaimUsageReplicationBatchInput,
+): Effect.Effect<ClaimedReplicationBatch | null, UsageStoreError> =>
+  withUsageStoreWriter(input.dbPath, (db) =>
+    Effect.try({
+      try: () =>
+        usageReplicationOutbox(db).claimReady({
+          maximumEvents: input.maximumEvents ?? 100,
+          now: parseInstant((input.now ?? new Date()).toISOString(), 'replication.now'),
+        }),
+      catch: (cause) => usageStoreError('claimUsageReplicationBatch', input.dbPath, cause, 'storage-failure'),
+    }),
+  );
+
+export const acknowledgeUsageReplicationBatch = (
+  input: AcknowledgeUsageReplicationBatchInput,
+): Effect.Effect<void, UsageStoreError> =>
+  withUsageStoreWriter(input.dbPath, (db) =>
+    Effect.try({
+      try: () => usageReplicationOutbox(db).acknowledge(input.batch, input.ack),
+      catch: (cause) => usageStoreError('acknowledgeUsageReplicationBatch', input.dbPath, cause, 'storage-failure'),
+    }),
+  );
+
+export const retryUsageReplicationBatch = (
+  input: FailUsageReplicationBatchInput,
+): Effect.Effect<Instant, UsageStoreError> =>
+  withUsageStoreWriter(input.dbPath, (db) =>
+    Effect.try({
+      try: () =>
+        usageReplicationOutbox(db).retry({
+          batch: input.batch,
+          errorCode: input.errorCode,
+          now: parseInstant((input.now ?? new Date()).toISOString(), 'replication.now'),
+          ...(input.random === undefined ? {} : { random: input.random }),
+          ...(input.retryAfterSeconds === undefined ? {} : { retryAfterSeconds: input.retryAfterSeconds }),
+        }),
+      catch: (cause) => usageStoreError('retryUsageReplicationBatch', input.dbPath, cause, 'storage-failure'),
+    }),
+  );
+
+export const blockUsageReplicationBatch = (
+  input: Omit<FailUsageReplicationBatchInput, 'random' | 'retryAfterSeconds'>,
+): Effect.Effect<void, UsageStoreError> =>
+  withUsageStoreWriter(input.dbPath, (db) =>
+    Effect.try({
+      try: () =>
+        usageReplicationOutbox(db).block({
+          batch: input.batch,
+          errorCode: input.errorCode,
+          now: parseInstant((input.now ?? new Date()).toISOString(), 'replication.now'),
+        }),
+      catch: (cause) => usageStoreError('blockUsageReplicationBatch', input.dbPath, cause, 'storage-failure'),
+    }),
   );
 
 export const updateUsageMachineLabel = (

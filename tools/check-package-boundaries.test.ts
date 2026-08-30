@@ -14,6 +14,21 @@ const reportDataPackage = `${workspacePackageScope}report-data`;
 const reportDataPortableReport = `${reportDataPackage}/portable-report`;
 const usageStoreInternal = `${workspacePackageScope}usage-store/internal`;
 const usageStorePerformanceTesting = `${workspacePackageScope}usage-store/performance-testing`;
+const postgresStorePackage = `${workspacePackageScope}postgres-store`;
+const postgresStoreMigrations = `${postgresStorePackage}/migrations`;
+const postgresStorePerformanceTesting = `${postgresStorePackage}/performance-testing`;
+const postgresStoreTesting = `${postgresStorePackage}/testing`;
+const postgresStoreWriter = `${postgresStorePackage}/writer`;
+const platformBridgePackage = ['@ai-usage', 'platform-bridge'].join('/');
+const platformCorePackage = `${workspacePackageScope}platform-core`;
+const authorizationContractPackage = `${workspacePackageScope}authorization-contract`;
+const authorizationPackage = `${workspacePackageScope}authorization`;
+const authorizationScopeInternal = `${authorizationPackage}/scope-internal`;
+const identityPackage = `${workspacePackageScope}identity`;
+const identitySharedAuthentication = `${identityPackage}/better-auth`;
+const projectApplicationPackage = `${workspacePackageScope}project-application`;
+const memorySqlitePackage = `${workspacePackageScope}memory-sqlite`;
+const memoryServicePackage = `${workspacePackageScope}memory-service`;
 const retiredLanPackage = `${workspacePackageScope}lan-pairing`;
 const retiredSyncPackage = `${workspacePackageScope}sync`;
 const webBridgePackage = ['@ai-usage', 'web-bridge'].join('/');
@@ -798,6 +813,436 @@ describe('package boundary guard', () => {
     }
 
     expect(await collectViolations(root)).toEqual([]);
+  });
+
+  test('keeps postgres-store limited to pure platform contracts and PostgreSQL infrastructure', async () => {
+    const root = await createFixture();
+    await writePackage(
+      root,
+      'packages',
+      'postgres-store',
+      {
+        dependencies: { '@ai-usage/usage-store': 'workspace:*' },
+        name: postgresStorePackage,
+      },
+      [
+        "import '@ai-usage/usage-store/reader';",
+        "import 'bun:sqlite';",
+        "import 'node:fs/promises';",
+        "import 'node:http';",
+        "import '../../../tools/pg-harness';",
+      ].join('\n'),
+    );
+
+    const violations = await collectViolations(root);
+    expect(violations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ file: 'packages/postgres-store/package.json', specifier: '@ai-usage/usage-store' }),
+        expect.objectContaining({ file: 'packages/postgres-store/src/index.ts', specifier: 'bun:sqlite' }),
+        expect.objectContaining({ file: 'packages/postgres-store/src/index.ts', specifier: 'node:fs/promises' }),
+        expect.objectContaining({ file: 'packages/postgres-store/src/index.ts', specifier: 'node:http' }),
+        expect.objectContaining({
+          file: 'packages/postgres-store/src/index.ts',
+          specifier: '../../../tools/pg-harness',
+        }),
+      ]),
+    );
+  });
+
+  test('keeps platform identity, authorization, and Project services free from runtime adapters', async () => {
+    const root = await createFixture();
+    await writePackage(
+      root,
+      'packages',
+      'platform-core',
+      { dependencies: { '@ai-usage/usage-store': 'workspace:*' }, name: platformCorePackage },
+      "import 'bun:sqlite';\nimport 'node:fs/promises';\n",
+    );
+    await writePackage(root, 'packages', 'authorization', {
+      dependencies: { '@ai-usage/usage-store': 'workspace:*' },
+      name: authorizationPackage,
+    });
+    await writePackage(root, 'packages', 'authorization-contract', {
+      dependencies: { '@ai-usage/usage-store': 'workspace:*' },
+      name: authorizationContractPackage,
+    });
+    await writePackage(
+      root,
+      'packages',
+      'project-application',
+      { dependencies: { pg: '1.0.0' }, name: projectApplicationPackage },
+      "import 'pg';\n",
+    );
+
+    expect(await collectViolations(root)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ packageName: platformCorePackage, specifier: '@ai-usage/usage-store' }),
+        expect.objectContaining({ packageName: platformCorePackage, specifier: 'bun:sqlite' }),
+        expect.objectContaining({ packageName: platformCorePackage, specifier: 'node:fs/promises' }),
+        expect.objectContaining({ packageName: authorizationPackage, specifier: '@ai-usage/usage-store' }),
+        expect.objectContaining({ packageName: authorizationContractPackage, specifier: '@ai-usage/usage-store' }),
+        expect.objectContaining({ packageName: projectApplicationPackage, specifier: 'pg' }),
+      ]),
+    );
+  });
+
+  test('allows only apps/usage-engine to own the local Memory SQLite adapter', async () => {
+    const root = await createFixture();
+    await writePackage(
+      root,
+      'apps',
+      'web',
+      { dependencies: { [memorySqlitePackage]: 'workspace:*' }, name: '@ai-usage/web' },
+      `import '${memorySqlitePackage}/identity';\n`,
+    );
+    await writePackage(
+      root,
+      'apps',
+      'usage-engine',
+      { dependencies: { [memorySqlitePackage]: 'workspace:*' }, name: '@ai-usage/usage-engine' },
+      `import '${memorySqlitePackage}/identity';\n`,
+    );
+
+    const violations = await collectViolations(root);
+    expect(violations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ packageName: '@ai-usage/web', specifier: memorySqlitePackage }),
+        expect.objectContaining({ packageName: '@ai-usage/web', specifier: `${memorySqlitePackage}/identity` }),
+      ]),
+    );
+    expect(violations).not.toContainEqual(
+      expect.objectContaining({ packageName: '@ai-usage/usage-engine', specifier: memorySqlitePackage }),
+    );
+  });
+
+  test('keeps the local Memory adapter independent from PostgreSQL, Usage SQLite, and HTTP', async () => {
+    const root = await createFixture();
+    await writePackage(
+      root,
+      'packages',
+      'memory-sqlite',
+      {
+        dependencies: { [postgresStorePackage]: 'workspace:*', '@ai-usage/usage-store': 'workspace:*' },
+        name: memorySqlitePackage,
+      },
+      "import '@ai-usage/postgres-store/writer';\nimport '@ai-usage/usage-store/writer';\nimport 'node:http';\n",
+    );
+
+    expect(await collectViolations(root)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ packageName: memorySqlitePackage, specifier: postgresStorePackage }),
+        expect.objectContaining({ packageName: memorySqlitePackage, specifier: '@ai-usage/usage-store' }),
+        expect.objectContaining({ packageName: memorySqlitePackage, specifier: `${postgresStorePackage}/writer` }),
+        expect.objectContaining({ packageName: memorySqlitePackage, specifier: '@ai-usage/usage-store/writer' }),
+        expect.objectContaining({ packageName: memorySqlitePackage, specifier: 'node:http' }),
+      ]),
+    );
+  });
+
+  test('keeps the named Memory service independent from every storage adapter', async () => {
+    const root = await createFixture();
+    await writePackage(
+      root,
+      'packages',
+      'memory-service',
+      {
+        dependencies: { [memorySqlitePackage]: 'workspace:*', [postgresStorePackage]: 'workspace:*' },
+        name: memoryServicePackage,
+      },
+      `import '${memorySqlitePackage}/identity';\nimport '${postgresStoreWriter}';\n`,
+    );
+
+    expect(await collectViolations(root)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ packageName: memoryServicePackage, specifier: memorySqlitePackage }),
+        expect.objectContaining({ packageName: memoryServicePackage, specifier: postgresStorePackage }),
+        expect.objectContaining({ packageName: memoryServicePackage, specifier: `${memorySqlitePackage}/identity` }),
+        expect.objectContaining({ packageName: memoryServicePackage, specifier: postgresStoreWriter }),
+      ]),
+    );
+  });
+
+  test('allows only apps/server to import PostgreSQL writer and migration capabilities', async () => {
+    const root = await createFixture();
+    await writePackage(
+      root,
+      'packages',
+      'orphan-platform-writer',
+      { name: '@ai-usage/orphan-platform-writer' },
+      `import '${postgresStoreWriter}';\nimport '${postgresStoreMigrations}';\n`,
+    );
+    await writePackage(
+      root,
+      'apps',
+      'server',
+      { name: '@ai-usage/server' },
+      `import '${postgresStoreWriter}';\nimport '${postgresStoreMigrations}';\n`,
+    );
+
+    const violations = await collectViolations(root);
+    expect(violations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          packageName: '@ai-usage/orphan-platform-writer',
+          specifier: postgresStoreWriter,
+        }),
+        expect.objectContaining({
+          packageName: '@ai-usage/orphan-platform-writer',
+          specifier: postgresStoreMigrations,
+        }),
+      ]),
+    );
+    expect(violations).not.toContainEqual(
+      expect.objectContaining({ packageName: '@ai-usage/server', specifier: postgresStoreWriter }),
+    );
+    expect(violations).not.toContainEqual(
+      expect.objectContaining({ packageName: '@ai-usage/server', specifier: postgresStoreMigrations }),
+    );
+  });
+
+  test('allows postgres-store testing and benchmark adapters only from test and fixture source', async () => {
+    const root = await createFixture();
+    await writePackage(
+      root,
+      'packages',
+      'platform-consumer',
+      { name: '@ai-usage/platform-consumer' },
+      `import '${postgresStorePerformanceTesting}';\nimport '${postgresStoreTesting}';\n`,
+    );
+    await writeFile(
+      path.join(root, 'packages/platform-consumer/src/allowed.test.ts'),
+      `import '${postgresStorePerformanceTesting}';\nimport '${postgresStoreTesting}';\n`,
+    );
+
+    expect(await collectViolations(root)).toContainEqual(
+      expect.objectContaining({
+        file: 'packages/platform-consumer/src/index.ts',
+        packageName: '@ai-usage/platform-consumer',
+        specifier: postgresStoreTesting,
+      }),
+    );
+    expect(await collectViolations(root)).toContainEqual(
+      expect.objectContaining({
+        file: 'packages/platform-consumer/src/index.ts',
+        packageName: '@ai-usage/platform-consumer',
+        specifier: postgresStorePerformanceTesting,
+      }),
+    );
+    expect(await collectViolations(root)).not.toContainEqual(
+      expect.objectContaining({
+        file: 'packages/platform-consumer/src/allowed.test.ts',
+        specifier: postgresStoreTesting,
+      }),
+    );
+  });
+
+  test('keeps apps/server independent from local Usage and machine runtimes', async () => {
+    const root = await createFixture();
+    await writePackage(
+      root,
+      'apps',
+      'server',
+      {
+        dependencies: { '@ai-usage/local-collectors': 'workspace:*', '@ai-usage/usage-store': 'workspace:*' },
+        name: '@ai-usage/server',
+      },
+      "import '@ai-usage/local-machine/testing/harness-home';\nimport '@ai-usage/usage-store/writer';\n",
+    );
+
+    expect(await collectViolations(root)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ packageName: '@ai-usage/server', specifier: '@ai-usage/local-collectors' }),
+        expect.objectContaining({ packageName: '@ai-usage/server', specifier: '@ai-usage/usage-store' }),
+        expect.objectContaining({
+          packageName: '@ai-usage/server',
+          specifier: '@ai-usage/local-machine/testing/harness-home',
+        }),
+        expect.objectContaining({ packageName: '@ai-usage/server', specifier: '@ai-usage/usage-store/writer' }),
+      ]),
+    );
+  });
+
+  test('keeps Web and CLI production dependency closures authorization-implementation- and PostgreSQL-free', async () => {
+    const root = await createFixture();
+    await writePackage(
+      root,
+      'apps',
+      'web',
+      {
+        dependencies: { [memoryServicePackage]: 'workspace:*', [platformBridgePackage]: 'workspace:*' },
+        name: '@ai-usage/web',
+      },
+      `import '${memoryServicePackage}/client';\nimport '${platformBridgePackage}';\n`,
+    );
+    await writePackage(root, 'packages', 'platform-bridge', {
+      dependencies: { [authorizationPackage]: 'workspace:*', [postgresStorePackage]: 'workspace:*' },
+      name: platformBridgePackage,
+    });
+    await writePackage(root, 'packages', 'authorization-contract', {
+      dependencies: { [platformCorePackage]: 'workspace:*' },
+      name: authorizationContractPackage,
+    });
+    await writePackage(root, 'packages', 'memory-service', {
+      dependencies: { [authorizationContractPackage]: 'workspace:*' },
+      name: memoryServicePackage,
+    });
+    await writePackage(
+      root,
+      'apps',
+      'cli',
+      { name: '@ai-usage/cli' },
+      `import '${authorizationPackage}';\nimport '${postgresStorePackage}/reader';\n`,
+    );
+
+    expect(await collectViolations(root)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          message: expect.stringContaining('@ai-usage/web -> @ai-usage/platform-bridge -> @ai-usage/postgres-store'),
+          packageName: '@ai-usage/web',
+          specifier: postgresStorePackage,
+        }),
+        expect.objectContaining({ packageName: '@ai-usage/cli', specifier: `${postgresStorePackage}/reader` }),
+        expect.objectContaining({ packageName: '@ai-usage/cli', specifier: authorizationPackage }),
+        expect.objectContaining({
+          message: expect.stringContaining('@ai-usage/web -> @ai-usage/platform-bridge -> @ai-usage/authorization'),
+          packageName: '@ai-usage/web',
+          specifier: authorizationPackage,
+        }),
+      ]),
+    );
+  });
+
+  test('keeps opaque authorization scope internals inside the persistence adapter and tests', async () => {
+    const root = await createFixture();
+    await writePackage(
+      root,
+      'packages',
+      'route-adapter',
+      { name: '@ai-usage/route-adapter' },
+      `import '${authorizationScopeInternal}';\n`,
+    );
+    await writePackage(
+      root,
+      'packages',
+      'postgres-store',
+      { name: postgresStorePackage },
+      `import '${authorizationScopeInternal}';\n`,
+    );
+    await writePackage(
+      root,
+      'packages',
+      'memory-sqlite',
+      { name: memorySqlitePackage },
+      `import '${authorizationScopeInternal}';\n`,
+    );
+    await writeFile(
+      path.join(root, 'packages/route-adapter/src/scope.test.ts'),
+      `import '${authorizationScopeInternal}';\n`,
+    );
+
+    const violations = await collectViolations(root);
+    expect(violations).toContainEqual(
+      expect.objectContaining({
+        file: 'packages/route-adapter/src/index.ts',
+        packageName: '@ai-usage/route-adapter',
+        specifier: authorizationScopeInternal,
+      }),
+    );
+    expect(violations).not.toContainEqual(
+      expect.objectContaining({
+        file: 'packages/postgres-store/src/index.ts',
+        specifier: authorizationScopeInternal,
+      }),
+    );
+    expect(violations).not.toContainEqual(
+      expect.objectContaining({
+        file: 'packages/memory-sqlite/src/index.ts',
+        specifier: authorizationScopeInternal,
+      }),
+    );
+    expect(violations).not.toContainEqual(
+      expect.objectContaining({
+        file: 'packages/route-adapter/src/scope.test.ts',
+        specifier: authorizationScopeInternal,
+      }),
+    );
+  });
+
+  test('keeps Better Auth and its Drizzle adapter inside their dedicated owners', async () => {
+    const root = await createFixture();
+    await writePackage(
+      root,
+      'packages',
+      'identity',
+      {
+        dependencies: { 'better-auth': '1.7.2' },
+        name: identityPackage,
+      },
+      "import { betterAuth } from 'better-auth';\nvoid betterAuth;\n",
+    );
+    await writeFile(
+      path.join(root, 'packages/identity/src/shared-authentication.ts'),
+      "import { betterAuth } from 'better-auth';\nvoid betterAuth;\n",
+    );
+    await writePackage(
+      root,
+      'packages',
+      'route-adapter',
+      {
+        dependencies: { '@better-auth/drizzle-adapter': '1.7.2', 'better-auth': '1.7.2' },
+        name: '@ai-usage/route-adapter',
+      },
+      "import 'better-auth';\nimport '@better-auth/drizzle-adapter';\n",
+    );
+
+    const violations = await collectViolations(root);
+    expect(violations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ packageName: '@ai-usage/route-adapter', specifier: 'better-auth' }),
+        expect.objectContaining({
+          packageName: '@ai-usage/route-adapter',
+          specifier: '@better-auth/drizzle-adapter',
+        }),
+        expect.objectContaining({
+          file: 'packages/identity/src/index.ts',
+          packageName: identityPackage,
+          specifier: 'better-auth',
+        }),
+      ]),
+    );
+    expect(violations).not.toContainEqual(
+      expect.objectContaining({ file: 'packages/identity/src/shared-authentication.ts', specifier: 'better-auth' }),
+    );
+  });
+
+  test('allows shared authentication composition only in the server and PostgreSQL adapter', async () => {
+    const root = await createFixture();
+    await writePackage(root, 'apps', 'web', { name: '@ai-usage/web' }, `import '${identitySharedAuthentication}';\n`);
+    await writePackage(
+      root,
+      'apps',
+      'server',
+      { name: '@ai-usage/server' },
+      `import '${identitySharedAuthentication}';\n`,
+    );
+    await writePackage(
+      root,
+      'packages',
+      'postgres-store',
+      { name: postgresStorePackage },
+      `import type {} from '${identitySharedAuthentication}';\n`,
+    );
+
+    const violations = await collectViolations(root);
+    expect(violations).toContainEqual(
+      expect.objectContaining({ packageName: '@ai-usage/web', specifier: identitySharedAuthentication }),
+    );
+    expect(violations).not.toContainEqual(
+      expect.objectContaining({ packageName: '@ai-usage/server', specifier: identitySharedAuthentication }),
+    );
+    expect(violations).not.toContainEqual(
+      expect.objectContaining({ packageName: postgresStorePackage, specifier: identitySharedAuthentication }),
+    );
   });
 
   test('accepts the current workspace graph', async () => {

@@ -26,7 +26,17 @@ export interface WebQueryRuntimeOptions {
 export type PublicationQueryEffect = 'invalidate-current-alias' | 'none';
 
 export interface WebQueryOwnership {
-  readonly family: 'quota' | 'report-current' | 'report-exact' | 'session' | 'skills' | 'sources' | 'sync';
+  readonly family:
+    | 'memory'
+    | 'projects'
+    | 'quota'
+    | 'replication'
+    | 'report-current'
+    | 'report-exact'
+    | 'session'
+    | 'skills'
+    | 'sources'
+    | 'sync';
   readonly policy: WebQueryPolicyName;
   readonly publication: PublicationQueryEffect;
   readonly rendering: 'browser-only' | 'ssr-awaited';
@@ -64,10 +74,28 @@ export const webQueryOwnership = [
     rendering: 'ssr-awaited',
   },
   {
+    family: 'memory',
+    policy: 'bounded-control-plane',
+    publication: 'none',
+    rendering: 'ssr-awaited',
+  },
+  {
+    family: 'projects',
+    policy: 'bounded-control-plane',
+    publication: 'none',
+    rendering: 'ssr-awaited',
+  },
+  {
     family: 'sync',
     policy: 'bounded-control-plane',
     publication: 'none',
     rendering: 'ssr-awaited',
+  },
+  {
+    family: 'replication',
+    policy: 'bounded-control-plane',
+    publication: 'none',
+    rendering: 'browser-only',
   },
   {
     family: 'sources',
