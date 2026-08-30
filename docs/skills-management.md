@@ -83,20 +83,31 @@ Draft -> Source repository -> Runtimes
 ```
 
 Global and configured projects are peer scopes in the left navigation tree.
-Selecting a scope shows an overview. Selecting a managed global skill opens its
-canonical `SKILL.md` as the dominant, directly editable document without a
-separate preview or Edit mode. Save is explicit through the visible button or
-`Ctrl+S` / `Cmd+S`; there is no autosave. A successful Save writes only the
-source repository and leaves the document editable. It never installs, repairs,
-enables, disables, or otherwise reconciles a runtime projection.
+The global scope overview is the decision surface: three verdict tiles (to
+adopt, to delete, catalogue only) lead, a single links strip states link health
+in one taxonomy — healthy · to link · to repair · blocked — and a joined
+inventory table shows each managed skill's exposure marks, observed use per
+tier, last observation, and verdict on one row, followed by the project scopes
+with their own observed-use summaries. Selecting a project scope shows the same
+join for that repo's skills. Selecting a managed global skill opens a summary
+band — state, exposure, observed use, verdict, and the skill's two operations —
+above its canonical `SKILL.md`, which stays the dominant, directly editable
+document without a separate preview or Edit mode. Save is explicit through the
+visible button or `Ctrl+S` / `Cmd+S`; there is no autosave. A successful Save
+writes only the source repository and leaves the document editable. It never
+installs, repairs, enables, disables, or otherwise reconciles a runtime
+projection.
 
 The right panel becomes the selected global document's Inspector. It contains
 validation and grouped diagnostics, document token and invocation metadata,
-source identity, enabled state, and exposure in each configured runtime. Runtime
-Install or Repair and source Enable or Disable remain explicit actions in that
-Inspector, separate from document Save. Project-owned skills keep their
-read-only `SKILL.md` view until an adoption workflow provides a canonical source
-document.
+source identity, enabled state, and exposure in each configured runtime — the
+facts. Runtime Install or Repair and source Enable or Disable live in the
+summary band above the editor, one place at every viewport width, separate from
+document Save. Project-owned skills keep their read-only `SKILL.md` view until
+an adoption workflow provides a canonical source document. Their detail opens
+on a read-only synthesis band instead: project placement, name-scoped observed
+use, last observation, and a collision-safe verdict. It never exposes the
+global source toggle or reconciliation actions for a project-owned document.
 
 The skills-by-runtimes matrix remains available as a secondary exposure view.
 Status dots are used inside matrix cells where the runtime column gives them
@@ -109,8 +120,11 @@ the source repository is future work.
 Disabling a skill is a first-class toggle. It never requires moving files by
 hand, and the UI keeps disabled skills visible in a collapsed shelf.
 
-Health is reported as separate counters: healthy links, to repair, to
-consolidate, and disabled. The UI does not merge those signals into one "needs
+Health is reported as separate counters in one taxonomy everywhere: healthy
+links, to link, to repair, blocked, to consolidate, and disabled. The matrix
+states them as tiles that count links; the skill-count filter chips beside the
+matrix are labelled as counting skills, so the same word never carries two
+numbers without its unit. The UI does not merge those signals into one "needs
 attention" number.
 
 Skill consumers are called runtimes in UI copy and docs. "Harness" remains
@@ -119,21 +133,29 @@ reported per *harness*: it comes from the collectors, not from the projection
 targets.
 
 Observed usage is a second axis on the same inventory, and it is the one that
-turns it into a decision. The matrix carries an "Observed skill usage" panel and
-each global skill detail carries an "Observed usage" section. Every count states
-its observation tier (`declared`, `inferred`, `exposed`) and the harness that
-produced it, and the tiers are never added together. Cursor records nothing about
-skill use, so it renders as *not observable* rather than as a zero: it exposes
-the skills this product projects into it, and a zero would claim they go unused.
-Three verdicts get their own groups. *Projected everywhere but never invoked*
-are deletion candidates — managed, installed in every enabled runtime, and still
-unused, which is the only shape of absence that means anything. *Invoked but
-unmanaged* are adoption candidates, which is where harness-bundled and plugin
-skills land. *Offered but never invoked* is where a skill goes when the only
-evidence is a catalogue listing: a harness injects its whole catalogue, so being
-in one says nothing about use and proposes nothing. When a read is bounded or
-could not read every stored row, the absence-based verdicts say so rather than
-claiming a skill went unused. Adopting an unmanaged invoked skill into the source
+turns it into a decision — so it renders joined to the inventory, not beside
+it. The landing page's verdict tiles and joined inventory table are its first
+surface; the matrix carries the full "Observed skill usage" panel and each
+skill detail carries an "Observed usage" section. Every count states its
+observation tier (`declared`, `inferred`, `exposed`) and the harness that
+produced it, and the tiers are never added together. The panel's table lists
+managed names and names with invocation evidence, strongest evidence first and
+most recent first; last-observed dates older than ninety days carry a textual
+`stale` marker. Cursor records nothing about skill use, so it renders as *not
+observable* rather than as a zero — stated once per surface in the coverage
+roster, never repeated as a column of identical cells. Three verdicts get their
+own groups. *Projected everywhere but never invoked* are deletion candidates —
+managed, installed in every enabled runtime, and still unused, which is the
+only shape of absence that means anything. *Invoked but unmanaged* are adoption
+candidates, listed by residence in three sub-groups: names installed in runtime
+directories (the adoptable backlog), names shipped by a harness or plugin, and
+names owned by a project repository — whose verdict sentence names that
+ownership instead of prescribing adoption. *Offered but never invoked* is where
+a skill goes when the only evidence is a catalogue listing: a harness injects
+its whole catalogue, so being in one says nothing about use — the group folds
+to one expandable row per catalogue. When a read is bounded or could not read
+every stored row, the absence-based verdicts say so rather than claiming a
+skill went unused. Adopting an unmanaged invoked skill into the source
 repository remains future work, as above.
 
 See [ADR 0022](adr/0022-skill-observation-tiers-and-observability.md) for the

@@ -392,6 +392,21 @@ const observedSkillSchema = strictObject({
   skillName: observedSkillNameSchema,
   /** A skill can appear with no tallies: that is the never-observed verdict, not a dropped row. */
   tallies: pipe(array(skillObservationTallySchema), maxLength(MAX_OBSERVATION_TALLIES)),
+  /**
+   * Where an unmanaged name lives, decided at the join from data the read already carries
+   * (runtime-directory unmanaged entries and known project paths). It refines the adoption verdict
+   * for presentation — three populations calling for three different treatments — without touching
+   * verdict semantics (ADR 0022):
+   *
+   * - `runtime-installed` — the name has an unmanaged entry in a runtime skills directory. This is
+   *   the adoptable backlog: files this product could own.
+   * - `project-owned` — a resolved directory sits inside a known project. Deliberately
+   *   project-scoped; adopting it would change its ownership, not repair an omission.
+   * - `external` — everything else: harness-bundled, plugin-provided, or since deleted.
+   *
+   * `null` for managed names, whose home is the source repository and needs no classifying.
+   */
+  unmanagedResidence: nullable(picklist(['runtime-installed', 'project-owned', 'external'])),
   verdict: picklist(skillObservationVerdicts),
   /**
    * The read was bounded or skipped rows, so this verdict rests on an incomplete absence. Set only
@@ -686,6 +701,7 @@ export type ObservedSkill = InferOutput<typeof observedSkillSchema>;
 export type SkillObservationTally = InferOutput<typeof skillObservationTallySchema>;
 export type SkillObservationHarness = InferOutput<typeof skillObservationHarnessSchema>;
 export type SkillObservationVerdict = (typeof skillObservationVerdicts)[number];
+export type SkillUnmanagedResidence = NonNullable<ObservedSkill['unmanagedResidence']>;
 /**
  * Re-exported so browser code never has to reach past the contract for the tier vocabulary
  * (ADR 0010/0012). The values themselves are owned by `report-core`.

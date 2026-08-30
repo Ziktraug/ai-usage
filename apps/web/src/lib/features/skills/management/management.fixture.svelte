@@ -7,12 +7,16 @@
     syntheticInventories,
     syntheticKnownPaths,
     syntheticObservations,
+    syntheticProvisionalObservations,
   } from '../shell/synthetic-fixture.test-helper';
   import SkillsHealthSlot from './skills-health-slot.svelte';
   import SkillsMatrixSlot from './skills-matrix-slot.svelte';
   import { syntheticManagementSnapshot } from './synthetic-fixture.test-helper';
 
-  let { pathname = '/skills/global/alpha-skill' }: { pathname?: string } = $props();
+  let {
+    observationsProvisional = false,
+    pathname = '/skills/global/alpha-skill',
+  }: { observationsProvisional?: boolean; pathname?: string } = $props();
   const snapshot = syntheticManagementSnapshot();
   const view = $derived(
     createSkillsShellViewModel({
@@ -30,7 +34,7 @@
   const managementPlan = createSkillsManagementPlanController();
   const context = $derived<SkillsShellSlotContext>({
     document: undefined,
-    observations: syntheticObservations,
+    observations: observationsProvisional ? syntheticProvisionalObservations : syntheticObservations,
     observationsError: undefined,
     snapshot,
     snapshotUpdates,

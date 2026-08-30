@@ -21,15 +21,29 @@ export const skillStateFilterOrder = [
   'disabled',
 ] as const satisfies readonly SkillCellStateFilter[];
 
+/** One taxonomy across tiles, chips, and legend: linked · to link · to repair · blocked · disabled. */
 export const skillStateFilterLabels: Readonly<Record<SkillCellStateFilter, string>> = {
   blocked: 'Blocked',
-  broken: 'Broken',
+  broken: 'To repair',
   disabled: 'Disabled',
   linked: 'Linked',
-  'not-linked': 'Not linked',
+  'not-linked': 'To link',
 };
 
 export type MatrixDotTone = 'broken' | 'copy' | 'linked' | 'missing' | 'none';
+
+/**
+ * The letterform inside an exposure mark. Shape and letter carry the state so two marks never
+ * differ by hue alone — a dashed ring and a plain ring were indistinguishable at rendered size,
+ * and the harness palette itself fails deutan vision between two of its hues.
+ */
+export const MATRIX_DOT_GLYPHS: Readonly<Record<MatrixDotTone, string>> = {
+  broken: '!',
+  copy: 'C',
+  linked: '✓',
+  missing: '→',
+  none: '—',
+};
 
 export const matrixDotTone = (state: MatrixCellState): MatrixDotTone => {
   if (state === 'linked') {
@@ -181,6 +195,11 @@ export const skillsManagementSuccessMessage = (
     (action) => action.type !== 'noop' && action.type !== 'refuse-unmanaged-mutation',
   );
   if (applied.length === 0) {
+    // A toggle that moved no files still changed the skill's state, and the message says so —
+    // "Nothing to change." after flipping a switch reads as the flip having failed.
+    if (operation.type === 'toggle-skill') {
+      return `${operation.enabled ? 'Enabled' : 'Disabled'} ${operation.skillName} — no file changes were needed.`;
+    }
     return 'Nothing to change.';
   }
   const action = applied.length === 1 ? applied[0] : undefined;

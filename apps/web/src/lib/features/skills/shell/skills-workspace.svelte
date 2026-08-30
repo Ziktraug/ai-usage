@@ -21,22 +21,29 @@
   } from '@ai-usage/web-contract/skills';
   import { onDestroy, type Snippet, tick } from 'svelte';
   import {
-    buildSkillHealthSummary,
+    buildProjectSkillRows,
     count,
+    describeProjectSkillPlacement,
     globalSkillAttention,
-    healthyLinkTone,
-    type SkillHealthTone,
     type SkillSelection,
     selectionKey,
   } from '../../../../skills-page-model';
   import { SKILLS_MOBILE_MEDIA_QUERY } from '../../../../skills-responsive';
+  import {
+    buildSkillObservationsView,
+    compareObservationRows,
+    type SkillObservationRow,
+    skillObservationsPresentationState,
+  } from '../observations/model';
   import SkillObservationsPanel from '../observations/skill-observations.svelte';
   import {
     createSkillsManagementPlanController,
     type SkillsManagementPlanController,
   } from './management-plan-controller';
   import type { SkillsShellViewModel } from './model';
+  import ProjectScopeTable from './project-scope-table.svelte';
   import SelectionLink from './selection-link.svelte';
+  import SkillsGlobalOverview from './skills-global-overview.svelte';
   import SkillsInspector from './skills-inspector.svelte';
   import SkillsTree from './skills-tree.svelte';
   import type { SkillsHealthSlotPlacement, SkillsShellSlotContext, SkillsSnapshotUpdatePort } from './slot-context';
@@ -78,8 +85,7 @@
     snapshotUpdates,
     view,
   });
-  const health = $derived(buildSkillHealthSummary(snapshot));
-  const attentionSkills = $derived(
+  const allAttentionSkills = $derived(
     snapshot.skills
       .map((skill) => ({ attention: globalSkillAttention(snapshot, skill), skill }))
       .filter(
@@ -90,9 +96,42 @@
           return right.attention.issueCount - left.attention.issueCount;
         }
         return left.skill.name.localeCompare(right.skill.name);
-      })
-      .slice(0, ATTENTION_SKILL_LIMIT),
+      }),
   );
+  const attentionSkills = $derived(allAttentionSkills.slice(0, ATTENTION_SKILL_LIMIT));
+  const attentionOverflow = $derived(allAttentionSkills.length - attentionSkills.length);
+  const observationsView = $derived(observations === undefined ? undefined : buildSkillObservationsView(observations));
+  const observationsState = $derived(skillObservationsPresentationState(observations, observationsError));
+  const observationRowsByName = $derived(new Map((observationsView?.rows ?? []).map((row) => [row.skillName, row])));
+  interface ProjectScopeSkillRow {
+    description: string;
+    name: string;
+    observationRow: SkillObservationRow | undefined;
+    placements: readonly string[];
+    validationStatus: string;
+  }
+  const projectScopeRows = $derived.by<readonly ProjectScopeSkillRow[]>(() => {
+    if (view.selectionDetail.kind !== 'project-scope') {
+      return [];
+    }
+    const rows = buildProjectSkillRows(view.selectionDetail.inventories, view.knownProjects).map((row) => ({
+      description: row.description,
+      name: row.name,
+      observationRow: observationRowsByName.get(row.name),
+      placements: [...new Set(row.observations.map((observation) => describeProjectSkillPlacement(observation)))],
+      validationStatus: row.validationStatus,
+    }));
+    // Evidence order like everywhere else on the surface; unobserved names trail alphabetically.
+    return rows.toSorted((left, right) => {
+      if (left.observationRow !== undefined && right.observationRow !== undefined) {
+        return compareObservationRows(left.observationRow, right.observationRow);
+      }
+      if (left.observationRow !== right.observationRow) {
+        return left.observationRow === undefined ? 1 : -1;
+      }
+      return left.name.localeCompare(right.name);
+    });
+  });
   const attentionPillClass = (enabled: boolean, validationStatus: string, issueCount: number): string => {
     if (!enabled) {
       return statusPillInfo;
@@ -223,45 +262,6 @@
   const detailHeader = css({ display: 'grid', gap: '5px' });
   const titleRow = css({ display: 'flex', flexWrap: 'wrap', gap: '8px 10px', alignItems: 'center' });
   const detailTitle = css({ fontSize: { base: '22px', md: '28px' }, fontWeight: 750, overflowWrap: 'anywhere' });
-  const metadataGrid = css({
-    display: 'grid',
-    gridTemplateColumns: { base: '1fr', md: 'repeat(2, minmax(0, 1fr))' },
-    gap: '10px',
-  });
-  const metadataItem = css({
-    display: 'grid',
-    gap: '3px',
-    p: '10px',
-    border: '1px solid token(colors.line)',
-    borderRadius: 'sm',
-    bg: 'surfaceMuted',
-    minW: 0,
-  });
-  const metadataLink = css({
-    color: 'ink',
-    textDecoration: 'none',
-    _hover: { borderColor: 'accent' },
-    _focusVisible: { outline: '2px solid token(colors.accent)', outlineOffset: '2px' },
-  });
-  const dangerValue = css({ color: 'status.danger' });
-  const warningValue = css({ color: 'status.warn' });
-  const okValue = css({ color: 'status.ok' });
-  const healthToneClass = (tone: SkillHealthTone): string | undefined => {
-    if (tone === 'danger') {
-      return dangerValue;
-    }
-    if (tone === 'warn') {
-      return warningValue;
-    }
-    return tone === 'ok' ? okValue : undefined;
-  };
-  const metadataLabel = css({
-    color: 'muted',
-    fontSize: '11px',
-    fontWeight: 650,
-    textTransform: 'uppercase',
-    letterSpacing: '0.06em',
-  });
   const section = css({ display: 'grid', gap: '10px' });
   const sectionHeader = css({ display: 'grid', gap: '2px' });
   const compactList = css({ display: 'grid', gap: '8px' });
@@ -391,39 +391,13 @@
                 Shared source skills managed from {snapshot.config.sourceRepoPath ?? 'an unconfigured source'}.
               </p>
             </div>
-            <div class={metadataGrid}>
-              <a class={cx(metadataItem, metadataLink)} data-sveltekit-noscroll href="/skills/matrix">
-                <span class={metadataLabel}>Healthy links</span>
-                <span class={healthToneClass(healthyLinkTone(health))} data-health-tone={healthyLinkTone(health)}
-                  >{health.healthyLinkCount}/{health.expectedLinkCount}</span
-                >
-              </a>
-              <a class={cx(metadataItem, metadataLink)} data-sveltekit-noscroll href="/skills/matrix">
-                <span class={metadataLabel}>To repair</span>
-                <span
-                  class={health.toRepairCount > 0 ? dangerValue : undefined}
-                  data-health-tone={health.toRepairCount > 0 ? 'danger' : 'neutral'}
-                  >{health.toRepairCount}</span
-                >
-              </a>
-              <a class={cx(metadataItem, metadataLink)} data-sveltekit-noscroll href="/skills/matrix">
-                <span class={metadataLabel}>Blocked</span>
-                <span
-                  class={health.blockedCount > 0 ? dangerValue : undefined}
-                  data-health-tone={health.blockedCount > 0 ? 'danger' : 'neutral'}
-                  >{health.blockedCount}</span
-                >
-              </a>
-              <div class={metadataItem}>
-                <span class={metadataLabel}>To consolidate</span>
-                <span
-                  class={health.consolidateCount > 0 ? warningValue : undefined}
-                  data-health-tone={health.consolidateCount > 0 ? 'warn' : 'neutral'}
-                  >{health.consolidateCopies}
-                  copies / {health.consolidateSymlinks} symlinks</span
-                >
-              </div>
-            </div>
+            <SkillsGlobalOverview
+              knownProjects={view.knownProjects}
+              {observations}
+              {observationsError}
+              {snapshot}
+              tree={view.tree}
+            />
             <section class={section}>
               <div class={sectionHeader}>
                 <h3 class={panelTitle}>Needs attention</h3>
@@ -459,6 +433,12 @@
                     </SelectionLink>
                   {/each}
                 </div>
+                {#if attentionOverflow > 0}
+                  <p class={meta} data-skills-attention-overflow>
+                    + {count(attentionOverflow, 'more skill needs attention', 'more skills need attention')} —
+                    <a href="/skills/matrix">open the matrix</a>
+                  </p>
+                {/if}
               {/if}
             </section>
             {#if healthSlot}
@@ -477,6 +457,13 @@
               </header>
               <p class={muted}>{view.selectionDetail.skill.description || 'No description provided.'}</p>
             </div>
+            <!-- The synthesis band: state, exposure, observed use, verdict, and the two operations,
+                 readable before any scrolling. The editor stays the primary object below it (plan
+                 006); below 1280px this band is also what keeps the actions reachable, since the
+                 inspector column drops under the whole page there. -->
+            {#if healthSlot}
+              <div data-skills-summary-band-slot>{@render healthSlot(slotContext, managementPlan, 'summary')}</div>
+            {/if}
             {#if editorSlot}
               <div data-skills-editor-slot>{@render editorSlot(slotContext)}</div>
             {:else}
@@ -492,6 +479,9 @@
             </header>
             {#if view.selectionDetail.kind === 'project-skill'}
               <p class={muted}>{view.selectionDetail.skill.description || 'No description provided.'}</p>
+              {#if healthSlot}
+                <div data-skills-summary-band-slot>{@render healthSlot(slotContext, managementPlan, 'summary')}</div>
+              {/if}
               {#if selectedDocument && 'truncated' in selectedDocument}
                 <pre class={preview}>{selectedDocument.content}</pre>
               {:else}
@@ -504,7 +494,17 @@
               {@render skillObservations()}
             {:else if view.selectionDetail.kind === 'project-scope'}
               <p class={meta}>{view.selectionDetail.project.path}</p>
-              <p>{view.selectionDetail.inventories.length} scanned project inventories.</p>
+              {#if projectScopeRows.length > 0}
+                <ProjectScopeTable
+                  knownProjects={view.knownProjects}
+                  {observationsState}
+                  projectPath={view.selectionDetail.project.path}
+                  rows={projectScopeRows}
+                />
+                <p class={meta}>Owned and edited in this repository — observed in place, never written to.</p>
+              {:else}
+                <p class={muted}>No skills found in this project's runtime directories.</p>
+              {/if}
             {:else}
               <h3 class={panelTitle}>Choose a skill</h3>
               <p class={panelSub}>Select a global skill to edit its SKILL.md or inspect a project scope.</p>

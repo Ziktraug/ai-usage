@@ -100,7 +100,7 @@
     onclick={() => onFilterChange('broken')}
     type="button"
   >
-    <div class={metricLabel}>Broken</div>
+    <div class={metricLabel}>To repair</div>
     <div>
       <div class={cx(metricValue, summary.toRepairCount > 0 ? dangerValue : undefined)}>
         {summary.toRepairCount}

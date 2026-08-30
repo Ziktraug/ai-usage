@@ -419,6 +419,7 @@ describe('Skills oRPC contract', () => {
               tier: 'exposed',
             },
           ],
+          unmanagedResidence: null,
           verdict: 'invoked',
           verdictProvisional: false,
         },
@@ -487,6 +488,7 @@ describe('Skills oRPC contract', () => {
           resolvedPathsTruncated: false,
           skillName: 'never-used',
           tallies: [],
+          unmanagedResidence: null,
           verdict: 'never-observed',
           verdictProvisional: false,
         },
@@ -511,6 +513,46 @@ describe('Skills oRPC contract', () => {
     const { verdictProvisional, ...withoutProvisional } = base.skills[0] as Record<string, unknown>;
     expect(verdictProvisional).toBe(false);
     expect(safeParse(skillObservationsSchema, { ...base, skills: [withoutProvisional] }).success).toBe(false);
+  });
+
+  test('carries the residence of an unmanaged name, and only the residences the join may decide', () => {
+    const base = {
+      harnesses: [{ harnessKey: 'claude', label: 'Claude Code', observability: 'observable' }],
+      invocationLowerBound: false,
+      lowerBound: false,
+      skills: [
+        {
+          deletionCandidate: false,
+          lastObservedAt: '2026-08-01T09:05:00.000Z',
+          managed: false,
+          projectedEverywhere: false,
+          resolvedPaths: [],
+          resolvedPathsTruncated: false,
+          skillName: 'agent-memory',
+          tallies: [],
+          unmanagedResidence: 'runtime-installed',
+          verdict: 'never-observed',
+          verdictProvisional: false,
+        },
+      ],
+      skipped: 0,
+    };
+
+    for (const unmanagedResidence of ['runtime-installed', 'project-owned', 'external', null]) {
+      expect(
+        safeParse(skillObservationsSchema, { ...base, skills: [{ ...base.skills[0], unmanagedResidence }] }).success,
+      ).toBe(true);
+    }
+    // Required, and a closed vocabulary: a producer cannot invent a fourth population, and cannot
+    // silently omit the classification the adoption surface segments by.
+    for (const unmanagedResidence of ['bundled', 'unknown', 'managed']) {
+      expect(
+        safeParse(skillObservationsSchema, { ...base, skills: [{ ...base.skills[0], unmanagedResidence }] }).success,
+      ).toBe(false);
+    }
+    const { unmanagedResidence, ...withoutResidence } = base.skills[0] as Record<string, unknown>;
+    expect(unmanagedResidence).toBe('runtime-installed');
+    expect(safeParse(skillObservationsSchema, { ...base, skills: [withoutResidence] }).success).toBe(false);
   });
 
   test('accepts an unresolved observation and refuses to lose it to the managed-name pattern', () => {
@@ -538,6 +580,7 @@ describe('Skills oRPC contract', () => {
               tier: 'declared',
             },
           ],
+          unmanagedResidence: 'external',
           verdict: 'invoked-unmanaged',
           verdictProvisional: false,
         },
@@ -604,6 +647,7 @@ describe('Skills oRPC contract', () => {
                 tier: 'declared',
               },
             ],
+            unmanagedResidence: null,
             verdict: 'invoked',
             verdictProvisional: false,
           },

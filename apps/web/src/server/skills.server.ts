@@ -147,6 +147,26 @@ export const skillManagementSnapshotForClient = (snapshot: SkillManagementSnapsh
 
 const pathEntryLabel = (entry: { project: string }) => entry.project;
 
+/**
+ * Report labels carry a ` — <machine>` suffix so a fleet view can tell two machines apart. This
+ * surface is already filtered to the local machine, so the suffix restates the only possible value
+ * on every row — and it is what pushed real project names into ellipsis in the tree.
+ */
+const stripMachineSuffix = (label: string, machineLabel: string | undefined): string => {
+  if (!machineLabel) {
+    return label;
+  }
+  const suffix = ` — ${machineLabel}`;
+  return label.endsWith(suffix) ? label.slice(0, -suffix.length) : label;
+};
+
+/**
+ * Agent worktree checkouts under a repo's tool directory are working copies of that repo, not
+ * projects of their own. Listing each one duplicated the repo once per concurrent session — the
+ * operator's tree carried the same project four times.
+ */
+const WORKTREE_CHECKOUT_PATTERN = /\/\.claude\/worktrees(?:\/|$)/u;
+
 const addKnownProjectPath = (
   entries: Map<string, KnownSkillProjectPath>,
   input: {
@@ -170,6 +190,9 @@ const addKnownProjectPath = (
   }
   const projectPath = path.resolve(rawProjectPath);
   if (options.homePath !== undefined && projectPath === path.resolve(options.homePath)) {
+    return;
+  }
+  if (WORKTREE_CHECKOUT_PATTERN.test(projectPath)) {
     return;
   }
   if (
@@ -196,8 +219,8 @@ const addKnownProjectPath = (
   }
   entries.set(projectPath, {
     ...(input.groupId ? { groupId: input.groupId } : {}),
-    ...(input.groupLabel ? { groupLabel: input.groupLabel } : {}),
-    label: input.label ?? pathEntryLabel(input),
+    ...(input.groupLabel ? { groupLabel: stripMachineSuffix(input.groupLabel, input.machineLabel) } : {}),
+    label: stripMachineSuffix(input.label ?? pathEntryLabel(input), input.machineLabel),
     ...(input.machineLabel ? { machineLabel: input.machineLabel } : {}),
     path: projectPath,
     project: input.project,
@@ -361,15 +384,20 @@ export const createSkillsServerAdapter = (dependencies: SkillsServerAdapterDepen
     // than shipping two half-answers to the browser to reconcile.
     readObservations: () =>
       runAdapterOperation(async () => {
-        const [snapshot, observations] = await Promise.all([
+        const [snapshot, observations, knownProjectPaths] = await Promise.all([
           application.readSnapshot(),
           dependencies.readSkillObservations(),
+          readKnownProjectPaths(),
         ]);
         return joinSkillObservations({
           observations,
+          // The same roots the project scan walks, so "project-owned" and the project tree agree
+          // on what counts as a project.
+          projectPathPrefixes: projectSkillScanPathsFrom(snapshot.config, knownProjectPaths),
           projections: snapshot.projections,
           skills: snapshot.skills,
           targets: snapshot.targets,
+          unmanagedEntryNames: snapshot.unmanagedEntries.map((entry) => entry.entryName),
         });
       }),
     readProjectInventories: () => runAdapterOperation(() => application.readProjectInventories()),

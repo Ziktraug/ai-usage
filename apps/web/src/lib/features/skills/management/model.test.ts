@@ -102,6 +102,15 @@ describe('Skills management presentation and mutation seam', () => {
         snapshot,
       }),
     ).toBe('Nothing to change.');
+    // A toggle that moved no files still flipped the state, and the message must say the flip
+    // happened rather than reading as a no-op.
+    expect(
+      skillsManagementSuccessMessage(toggleOperation('alpha-skill', false), {
+        actions: [],
+        plan: null,
+        snapshot,
+      }),
+    ).toBe('Disabled alpha-skill — no file changes were needed.');
 
     expect(
       await runSkillsRefreshOperation({

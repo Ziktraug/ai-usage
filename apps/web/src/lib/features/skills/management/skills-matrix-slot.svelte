@@ -45,7 +45,10 @@
       reconcilePlan = plan;
     });
   });
-  let operationMessage = $state<{ message: string; tone: 'error' | 'success' } | null>(null);
+  let operationMessage = $state<{
+    message: string;
+    tone: 'error' | 'success';
+  } | null>(null);
   const health = $derived(buildSkillHealthSummary(context.snapshot));
   const resolveClient = (): SkillsManagementClient => {
     if (injectedClient) {
@@ -83,10 +86,16 @@
     managementPlan.clear();
     operationMessage = null;
     try {
-      const result = await operationMutation.mutateAsync({ operation, pendingLabel });
+      const result = await operationMutation.mutateAsync({
+        operation,
+        pendingLabel,
+      });
       await publish(result.snapshot);
       managementPlan.publish(result.plan);
-      operationMessage = { message: skillsManagementSuccessMessage(operation, result), tone: 'success' };
+      operationMessage = {
+        message: skillsManagementSuccessMessage(operation, result),
+        tone: 'success',
+      };
     } catch {
       return;
     }
@@ -95,7 +104,7 @@
 
 <div class={stack} data-skills-management-matrix-slot>
   <SkillsHealth
-    {...(activeFilter === undefined ? {} : { activeFilter })}
+    {...activeFilter === undefined ? {} : { activeFilter }}
     onFilterChange={(filter) => {
       activeFilter = activeFilter === filter ? undefined : filter;
     }}
@@ -105,22 +114,32 @@
   {#if operationError}
     <p class={cx(notice, errorNotice)} role="alert">{operationError}</p>
   {:else if operationMessage}
-    <p aria-live="polite" class={notice} role="status">{operationMessage.message}</p>
+    <p aria-live="polite" class={notice} role="status">
+      {operationMessage.message}
+    </p>
   {/if}
   <SkillsMatrix
-    {...(activeFilter === undefined ? {} : { activeCellStateFilter: activeFilter })}
-    onApplyReconcile={() => execute(reconcileAllOperation, 'reconcile-all')}
+    {...activeFilter === undefined
+      ? {}
+      : { activeCellStateFilter: activeFilter }}
+    onApplyReconcile={() => execute(reconcileAllOperation, "reconcile-all")}
     onCancelReconcile={() => {
       managementPlan.clear();
+      // Cancelling dismisses
+      //  the whole preview episode — a lingering "preview refreshed" notice
+      // would describe a plan that no longer exists.
+      operationMessage = null;
     }}
     onCellStateFilterChange={(filter) => {
       activeFilter = filter;
     }}
-    onPreviewReconcile={() => execute(previewReconcileOperation, 'preview-reconcile')}
+    onPreviewReconcile={() =>
+      execute(previewReconcileOperation, "preview-reconcile")}
     {pendingOperation}
     {reconcilePlan}
     snapshot={context.snapshot}
-    toggleSkill={(skillName, enabled) => execute(toggleOperation(skillName, enabled), `toggle:${skillName}`)}
+    toggleSkill={(skillName, enabled) =>
+      execute(toggleOperation(skillName, enabled), `toggle:${skillName}`)}
   />
   <SkillObservationsPanel
     errorMessage={context.observationsError}

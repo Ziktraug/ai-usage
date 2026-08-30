@@ -48,16 +48,17 @@ describe('Svelte Skills management SSR', () => {
     expect(html.replace(/\s+/gu, ' ')).toContain('1,240 / 1,000 tokens');
     expect(html).toContain('Installed in');
     expect(html).toContain('Not linked');
-    expect(html).toContain('Disable');
+    // Operations moved to the summary band above the editor; the inspector is the home of facts.
+    expect(html).not.toContain('>Disable<');
     expect(html).not.toContain('SkillMarkdownTokenWarning');
   });
-  test('renders mobile-safe closed Inspector disclosures with Actions in the same responsive contract', () => {
+  test('renders mobile-safe closed Inspector disclosures, with no Actions section to duplicate the band', () => {
     const html = render(fixture).body;
     const inspectorDisclosures = html.match(/<details[^>]+data-inspector-section="[^"]+"[^>]*>/gu) ?? [];
 
-    expect(inspectorDisclosures).toHaveLength(5);
+    expect(inspectorDisclosures).toHaveLength(4);
     expect(inspectorDisclosures.every((element) => !element.includes(' open'))).toBe(true);
-    expect(html).toContain('data-inspector-section="actions"');
+    expect(html).not.toContain('data-inspector-section="actions"');
   });
 
   test('renders Configuration & runtimes from the settled global snapshot without acquiring a browser client', () => {
@@ -94,6 +95,15 @@ describe('Svelte Skills management SSR', () => {
     expect(html).toContain('data-backlog-tone="neutral"');
     expect(html).toContain('legacy-local-copy');
     expect(html).toContain('Nothing is ever deleted automatically.');
-    expect(html).toContain('Review consolidation');
+    // One review affordance for the fold, not one identical button per entry.
+    expect(html).toContain('Review in the matrix');
+    expect(html).not.toContain('Review consolidation');
+  });
+
+  test('does not call an unmanaged entry never observed when invocation evidence is incomplete', () => {
+    const html = render(fixture, { props: { observationsProvisional: true, pathname: '/skills/global' } }).body;
+
+    expect(html).toContain('No observation within the read bound');
+    expect(html).not.toContain('never observed');
   });
 });

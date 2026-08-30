@@ -380,7 +380,13 @@ const e2eObservations: readonly SkillObservation[] = [
   // repository. Deliberately named for the project inventory above, so selecting it in the tree
   // exercises the project-skill detail branch — the branch that shipped with no observations at all
   // because every fixture before this one selected a global skill.
-  e2eObservation('opencode', 'declared', E2E_PROJECT_OBSERVED_SKILL, 12),
+  e2eObservation(
+    'opencode',
+    'declared',
+    E2E_PROJECT_OBSERVED_SKILL,
+    12,
+    '/fixture/projects/opaque-project-source/.agents/skills/skill-name',
+  ),
   e2eObservation('codex', 'inferred', E2E_PROJECT_OBSERVED_SKILL, 13),
 ];
 
@@ -393,9 +399,14 @@ export const e2eSkillObservationDataset = (): SkillObservationDataset => createS
 const e2eJoinedObservations = (): SkillObservations =>
   joinSkillObservations({
     observations: e2eSkillObservationDataset(),
+    // The same residence inputs production wires: the snapshot's runtime-directory entries and the
+    // scan's project roots, so `skill-name` classifies as project-owned and the bundled ones as
+    // external — through the real rules, not a hand-written answer.
+    projectPathPrefixes: ['/fixture/projects/opaque-project-source', '/fixture/work/opaque-project-source'],
     projections,
     skills,
     targets,
+    unmanagedEntryNames: snapshot.unmanagedEntries.map((entry) => entry.entryName),
   });
 
 export const e2eUnmanagedObservedSkillNames = (): readonly string[] => Object.values(E2E_UNMANAGED_OBSERVED_SKILLS);

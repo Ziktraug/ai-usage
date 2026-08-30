@@ -19,12 +19,12 @@ const MIN_DESKTOP_INSPECTOR_WIDTH_PX = 260;
 const MIN_DESKTOP_TREE_WIDTH_PX = 190;
 const BETA_SKILL_URL = /\/skills\/global\/beta-skill$/;
 const SKILLS_MATRIX_URL = /\/skills\/matrix$/;
+const ADOPTION_ANCHOR_URL = /\/skills\/matrix#observations-adoption$/;
+const REVIEW_AND_RECONCILE_PATTERN = /^Review & reconcile$/;
 const SKILLS_DETAIL_GAP_PX = 14;
 const SKILLS_SECTION_HEADER_GAP_PX = 2;
 const CREATED_TARGET_PATTERN = /Created target directory/;
 const HEALTHY_LINKS_PATTERN = /^Healthy links/;
-const TO_REPAIR_PATTERN = /^To repair/;
-const BLOCKED_PATTERN = /^Blocked/;
 const LONG_PROJECT_LABEL = 'customer-analytics-platform-with-an-exceptionally-long-scope-name';
 const MOBILE_VIEWPORT = { height: 844, width: 390 } as const;
 const SAVE_MANAGED_MARKDOWN_RPC_ROUTE = `**${SKILLS_SAVE_RPC_PATH}`;
@@ -33,15 +33,15 @@ const SKILL_TOGGLE_ACTION_PATTERN = /^(Disable|Enable)$/;
 const SUCCESS_NOTICE_DISMISS_DELAY_MS = 5000;
 const MAX_KEYBOARD_TABS = 64;
 const WHITESPACE_PATTERN = /\s+/g;
-const DIGIT_PATTERN = /\d/u;
 const BARE_NUMBER_PATTERN = /^\d+$/u;
 const CURSOR_COVERAGE_TEXT = 'Cursor — not observable';
 const ALPHA_ROW_HEADER_PATTERN = /^alpha-skill/u;
 const OBSERVATION_NOT_OBSERVABLE_TEXT = 'not observable';
 const MATRIX_TABLE_NAME = 'Skill exposure per runtime';
-// Every observation cell is one of three sentences, and each states its tier in words.
+// Every observation cell states its tier in words, or is an em-dash whose accessible text still
+// says "none observed" — never a bare number, never a colour alone.
 const OBSERVATION_TEXT_PATTERN =
-  /^(?:not observable|none observed|(?:declared|inferred|exposed) \d+(?: · (?:declared|inferred|exposed) \d+)*)$/u;
+  /^(?:—\s*none observed|not observable|none observed|(?:declared|inferred|exposed) \d+(?: · (?:declared|inferred|exposed) \d+)*)$/u;
 
 const normalizeText = (value: string): string => value.replace(WHITESPACE_PATTERN, ' ').trim();
 
@@ -416,11 +416,12 @@ test('keeps every Skills mutation inside the deterministic E2E backend', async (
   await expect(page.getByText(CREATED_TARGET_PATTERN)).toBeVisible();
 
   await page.getByRole('link', { exact: true, name: 'alpha-skill' }).first().click();
-  const inspector = page.getByRole('complementary', { name: 'Inspector' });
-  await inspector.getByRole('button', { exact: true, name: 'Install' }).click();
+  // The skill's operations live in the summary band above the editor.
+  const band = page.locator('[data-skill-summary-band]');
+  await band.getByRole('button', { exact: true, name: 'Install' }).click();
   await expect(page.getByText('alpha-skill linked to Codex.')).toBeVisible();
-  await inspector.getByRole('button', { name: 'Disable' }).click();
-  await expect(inspector.getByRole('button', { name: 'Enable' })).toBeVisible();
+  await band.getByRole('button', { name: 'Disable' }).click();
+  await expect(band.getByRole('button', { name: 'Enable' })).toBeVisible();
 
   await openHydratedSkills(page, '/skills/matrix');
   await page.getByRole('button', { name: 'Preview reconcile' }).first().click();
@@ -428,7 +429,7 @@ test('keeps every Skills mutation inside the deterministic E2E backend', async (
   await expect(page.getByText('alpha-skill linked to Codex.')).toBeVisible();
 });
 
-test('shows the document inspector with actions in a single place', async ({ page }) => {
+test('keeps the inspector for facts and the summary band as the one place for actions', async ({ page }) => {
   await openHydratedSkills(page, '/skills/global/alpha-skill');
 
   const inspector = page.getByRole('complementary', { name: 'Inspector' });
@@ -438,9 +439,13 @@ test('shows the document inspector with actions in a single place', async ({ pag
   await expect(inspector.getByRole('heading', { level: 3, name: 'Document' })).toBeVisible();
   await expect(inspector.getByRole('heading', { level: 3, name: 'Source' })).toBeVisible();
   await expect(inspector.getByRole('heading', { level: 3, name: 'Installed in' })).toBeVisible();
-  await expect(inspector.getByRole('heading', { level: 3, name: 'Actions' })).toBeVisible();
+  await expect(inspector.getByRole('heading', { level: 3, name: 'Actions' })).toHaveCount(0);
 
+  // The band above the editor is where the operations live — still exactly one of each on the page.
+  const band = page.locator('[data-skill-summary-band]');
+  await expect(band).toBeVisible();
   await expect(page.getByRole('button', { name: SKILL_TOGGLE_ACTION_PATTERN })).toHaveCount(1);
+  await expect(band.getByRole('button', { name: SKILL_TOGGLE_ACTION_PATTERN })).toHaveCount(1);
   await expect(page.getByRole('button', { exact: true, name: 'Install' })).toHaveCount(1);
   await expect(page.getByRole('button', { exact: true, name: 'Repair' })).toHaveCount(0);
   await expect(page.getByRole('button', { exact: true, name: 'Review installation' })).toHaveCount(0);
@@ -650,7 +655,9 @@ test('keeps colliding scope names legible and says each health number once', asy
     '2',
   );
   await expect(page.getByRole('status').filter({ hasText: PASSIVE_RELOAD_NOTICE })).toHaveCount(0);
-  await expect(page.getByText('Healthy links', { exact: true })).toHaveCount(1);
+  // The landing page states link health once, in its strip; "Healthy links" is the matrix tile's.
+  await expect(page.getByText('Healthy links', { exact: true })).toHaveCount(0);
+  await expect(page.locator('[data-skills-links-strip]')).toHaveCount(1);
 
   await tree.getByRole('button', { name: 'Expand Opaque project' }).nth(1).click();
   await tree.getByRole('link', { exact: true, name: 'twin-skill' }).click();
@@ -707,22 +714,36 @@ test('renders matrix health states with their public computed color tokens', asy
   await expectColorToken(healthyLinksValue, '--colors-ink');
 });
 
-test('exposes health drill-down links with token tones, focus rings, and matrix navigation', async ({ page }) => {
+test('opens the landing page on verdict tiles, a links strip, and the joined inventory', async ({ page }) => {
   await page.setViewportSize({ height: 900, width: 1280 });
   await openHydratedSkills(page, '/skills/global');
 
   const detail = page.getByRole('region', { name: 'Selected skill detail' });
-  const healthyLinks = detail.getByRole('link', { name: HEALTHY_LINKS_PATTERN });
-  const healthyLinksValue = healthyLinks.locator('[data-health-tone="warn"]');
-  const repairValue = detail.getByRole('link', { name: TO_REPAIR_PATTERN }).locator('[data-health-tone="neutral"]');
-  await expect(healthyLinksValue).toHaveText('3/4');
-  await expect(repairValue).toHaveText('0');
-  await expectColorToken(healthyLinksValue, '--colors-status-warn');
-  await expectColorToken(repairValue, '--colors-ink');
 
-  await expectKeyboardMatrixNavigation(page, HEALTHY_LINKS_PATTERN);
-  await expectKeyboardMatrixNavigation(page, TO_REPAIR_PATTERN);
-  await expectKeyboardMatrixNavigation(page, BLOCKED_PATTERN);
+  // One links strip, one taxonomy, the fraction toned with the real token.
+  const strip = detail.locator('[data-skills-links-strip]');
+  const stripTone = strip.locator('[data-links-tone="warn"]');
+  await expect(stripTone).toContainText('3/4');
+  await expectColorToken(stripTone, '--colors-status-warn');
+  await expect(strip).toContainText('to link');
+  await expect(strip).toContainText('to repair');
+  await expect(strip).toContainText('blocked');
+
+  // The inventory joins both axes on one row: exposure marks beside observed use and a verdict.
+  const inventory = detail.getByRole('region', { name: 'Managed skills with observed use' });
+  const alphaRow = inventory.locator('[data-inventory-skill="alpha-skill"]');
+  await expect(alphaRow).toContainText('declared 3');
+  await expect(alphaRow).toContainText('invoked');
+
+  // The verdict tiles land on the matrix verdict groups by anchor.
+  const adoptTile = detail.locator('[data-verdict-tile="adopt"]');
+  await expect(adoptTile).toContainText('To adopt');
+  await adoptTile.click();
+  await expect(page).toHaveURL(ADOPTION_ANCHOR_URL);
+  await expect(page.getByRole('region', { name: 'Invoked but unmanaged' })).toBeVisible();
+
+  // The strip's review link keeps the keyboard path to the matrix the tiles used to provide.
+  await expectKeyboardMatrixNavigation(page, REVIEW_AND_RECONCILE_PATTERN);
 });
 
 test('stacks the global health disclosures in the tablet workspace', async ({ page }) => {
@@ -790,7 +811,10 @@ test('presents unmanaged copies as neutral backlog rows with their reconciliatio
   await expect(unmanagedRow).toHaveCount(1);
   await expect(unmanagedRow).toHaveAttribute('data-backlog-tone', 'neutral');
   await expect(unmanagedRow).toContainText('legacy-local-copy');
-  await unmanagedRow.getByRole('button', { name: 'Review consolidation' }).click();
+  // The backlog row states its observed usage — the fact adoption or deletion is decided from —
+  // instead of repeating one identical navigation button per entry.
+  await expect(unmanagedRow.locator('[data-unmanaged-entry-usage]')).toHaveText('never observed');
+  await consolidation.getByRole('button', { name: 'Review in the matrix' }).click();
   await expect(page).toHaveURL(SKILLS_MATRIX_URL);
   await expect(page.getByRole('heading', { level: 2, name: 'Managed skills — exposure per runtime' })).toBeVisible();
 });
@@ -874,7 +898,8 @@ test('renders matrix cards on mobile and preserves the desktop comparison table'
   await expect(table).toHaveCSS('border-collapse', 'separate');
   await expect(table).toHaveCSS('font-size', '13px');
   const stateBox = await table.getByRole('img').first().boundingBox();
-  expect(stateBox?.width).toBe(15);
+  // The letterform exposure marks are 18px squares — shape and letter carry the state.
+  expect(stateBox?.width).toBe(18);
   await expect(mobileCards).toBeHidden();
   const inspector = page.getByRole('complementary', { name: 'Selection actions' });
   await expect(inspector.locator('[data-skills-configuration]')).toHaveCount(0);
@@ -944,14 +969,10 @@ test('renders skill observations with their tier and never as an unobservable ze
   const panel = page.getByRole('region', { name: 'Skill observations' });
   await expect(panel).toBeVisible();
 
-  // (i) Cursor has no collector. It says so, and never carries a digit anywhere in the table.
-  const cursorCells = panel.locator('[data-harness="cursor"]');
-  await expect(cursorCells.first()).toHaveText(OBSERVATION_NOT_OBSERVABLE_TEXT);
-  for (const cell of await cursorCells.all()) {
-    await expect(cell).toHaveAttribute('data-observation-state', 'not-observable');
-    expect(normalizeText((await cell.textContent()) ?? '')).not.toMatch(DIGIT_PATTERN);
-  }
+  // (i) Cursor has no collector. The roster says so once, in words; the table carries no Cursor
+  // column at all, so no row can ever read as a Cursor zero.
   await expect(panel.getByRole('listitem').filter({ hasText: CURSOR_COVERAGE_TEXT })).toBeVisible();
+  await expect(panel.locator('[data-harness="cursor"]')).toHaveCount(0);
 
   // (ii) All three tiers are present, each as its own phrase; nothing sums declared and inferred.
   const alphaRow = panel
@@ -982,7 +1003,8 @@ test('renders skill observations with their tier and never as an unobservable ze
   await expect(adoption.getByRole('listitem').filter({ hasText: 'artifact-design' })).toBeVisible();
   await expect(adoption.getByRole('listitem').filter({ hasText: 'pr-review' })).toBeVisible();
   // imagegen was only ever listed in a Codex catalogue. That is offering, not use, so it must not
-  // be proposed for adoption anywhere.
+  // be proposed for adoption anywhere — it lives folded under its catalogue.
+  await offered.locator('[data-skill-observations-catalogue="standalone"] > summary').click();
   await expect(offered.getByRole('listitem').filter({ hasText: 'imagegen' })).toBeVisible();
   await expect(adoption.getByRole('listitem').filter({ hasText: 'imagegen' })).toHaveCount(0);
   // alpha-skill is not linked to every target in the fixture, so its use is not a deletion story.
@@ -1020,7 +1042,9 @@ test('renders skill observations with their tier and never as an unobservable ze
   await expect(
     projectDetail.getByRole('definition').filter({ hasText: OBSERVATION_NOT_OBSERVABLE_TEXT }),
   ).toBeVisible();
+  // The verdict follows the residence the real join computed: this install is owned by its own
+  // project, so the sentence names that instead of prescribing adoption into the source repo.
   await expect(
-    projectDetail.getByText('Invoked but unmanaged — an adoption candidate for the source repository.'),
+    projectDetail.getByText('Invoked — owned by a project repository, outside the shared source.', { exact: false }),
   ).toBeVisible();
 });

@@ -288,7 +288,9 @@ description: Helps with adapter tests
         configCwd: root,
         homePath: path.join(root, 'home'),
         readModel: {
-          readCurrentLocalProjectSources: () => Promise.reject(new Error('Unexpected project source read')),
+          // The observation read consults project discovery for residence classification (plan
+          // 112), so the seam now includes it — still read-only, still outside the skills domain.
+          readCurrentLocalProjectSources: () => Promise.resolve({ revision: 'revision-a', sources: [] }),
           readSkillObservations: () =>
             Promise.resolve({
               harnesses: [
@@ -297,7 +299,23 @@ description: Helps with adapter tests
               ],
               invocationLowerBound: false,
               lowerBound: false,
-              skills: [],
+              skills: [
+                {
+                  lastObservedAt: '2026-08-01T09:00:00.000Z',
+                  resolvedPaths: [],
+                  resolvedPathsTruncated: false,
+                  skillName: 'artifact-design',
+                  tallies: [
+                    {
+                      count: 1,
+                      harnessKey: 'claude',
+                      harnessLabel: 'Claude Code',
+                      lastObservedAt: '2026-08-01T09:00:00.000Z',
+                      tier: 'declared' as const,
+                    },
+                  ],
+                },
+              ],
               skipped: 0,
             }),
         },
@@ -306,7 +324,12 @@ description: Helps with adapter tests
       const result = await createSkillsServerAdapter(dependencies).readObservations();
 
       expect(result).toMatchObject({
-        data: { harnesses: [{ harnessKey: 'claude' }, { harnessKey: 'cursor', observability: 'not-observable' }] },
+        data: {
+          harnesses: [{ harnessKey: 'claude' }, { harnessKey: 'cursor', observability: 'not-observable' }],
+          // The join classified the unmanaged name from the wired inputs: no runtime entry, no
+          // known project directory, so it lives outside anything this product manages.
+          skills: [{ skillName: 'artifact-design', unmanagedResidence: 'external', verdict: 'invoked-unmanaged' }],
+        },
         ok: true,
       });
     } finally {
@@ -429,6 +452,95 @@ describe('skills server input validation', () => {
         sessions: 3,
       },
     ]);
+  });
+
+  test('strips the redundant machine suffix from local project labels', () => {
+    const result = knownSkillProjectPathsFromReportPayload(
+      {
+        projectGroups: [
+          {
+            grouped: false,
+            id: 'source:secret',
+            // Report labels disambiguate machines; this surface is filtered to one, so the
+            // suffix restates the only possible value on every row.
+            name: 'secret — Workstation',
+            sources: [
+              {
+                label: 'secret — Workstation',
+                machineId: 'local-machine',
+                machineLabel: 'Workstation',
+                project: 'secret',
+                sessions: 1,
+                sourcePath: '/home/nathan/Projects/Github/secret',
+              },
+            ],
+          },
+        ],
+        rows: [],
+      },
+      { directoryExists: () => true, localMachineId: 'local-machine' },
+    );
+
+    expect(result).toMatchObject([{ groupLabel: 'secret', label: 'secret' }]);
+    // A label that merely mentions the machine mid-name is left alone.
+    expect(
+      knownSkillProjectPathsFromReportPayload(
+        {
+          projectGroups: [],
+          rows: [],
+          sources: [
+            {
+              label: 'Workstation tools',
+              machineId: 'local-machine',
+              machineLabel: 'Workstation',
+              project: 'workstation-tools',
+              sessions: 1,
+              sourcePath: '/home/nathan/Projects/Github/workstation-tools',
+            },
+          ],
+        },
+        { directoryExists: () => true, localMachineId: 'local-machine' },
+      ),
+    ).toMatchObject([{ label: 'Workstation tools' }]);
+  });
+
+  test('drops agent worktree checkouts so a repo is listed once, not once per session', () => {
+    const result = knownSkillProjectPathsFromReportPayload(
+      {
+        projectGroups: [],
+        rows: [],
+        sources: [
+          {
+            label: 'ai-usage',
+            machineId: 'local-machine',
+            machineLabel: 'Workstation',
+            project: 'ai-usage',
+            sessions: 3,
+            sourcePath: '/home/nathan/Projects/Github/ai-usage',
+          },
+          {
+            label: 'ai-usage',
+            machineId: 'local-machine',
+            machineLabel: 'Workstation',
+            project: 'ai-usage',
+            sessions: 1,
+            sourcePath: '/home/nathan/Projects/Github/ai-usage/.claude/worktrees/exec-099a',
+          },
+          {
+            label: 'ai-usage',
+            machineId: 'local-machine',
+            machineLabel: 'Workstation',
+            project: 'ai-usage',
+            sessions: 1,
+            sourcePath: '/home/nathan/Projects/Github/ai-usage/.claude/worktrees/exec-099b',
+          },
+        ],
+      },
+      { directoryExists: () => true, localMachineId: 'local-machine' },
+    );
+
+    // The checkouts are working copies of the same repo, not projects of their own.
+    expect(result.map((entry) => entry.path)).toEqual(['/home/nathan/Projects/Github/ai-usage']);
   });
 
   test('keeps project group identity on known skill project paths', () => {

@@ -12,16 +12,22 @@
   } from '@ai-usage/design-system/report';
   import type { SkillObservations } from '@ai-usage/web-contract/skills';
   import {
+    ADOPTION_GROUP_COPY,
     buildSkillObservationsView,
     deletionCandidateText,
     formatObservedAt,
+    formatObservedDate,
     homonymNote,
     installVerdictText,
     managedVerdictDescribesInstall,
     NAME_SCOPED_COUNTS_TEXT,
     NOT_OBSERVABLE_TEXT,
+    observationRecency,
+    observationRecencyNote,
+    observedHarnessSummary,
     resolvedPathsNote,
     SKILL_OBSERVATION_TIER_DESCRIPTIONS,
+    SKILL_OBSERVATION_TIER_ORDER,
     type SkillInstallScope,
     skillObservationRow,
     verdictText,
@@ -99,6 +105,44 @@
   const observedAt = css({ whiteSpace: 'nowrap' });
   const candidateList = css({ display: 'grid', gap: '4px', m: 0, pl: '18px', fontSize: '13px' });
   const pathText = css({ color: 'muted', fontFamily: 'mono', fontSize: '11px', overflowWrap: 'anywhere' });
+  const visuallyHidden = css({
+    position: 'absolute',
+    width: '1px',
+    height: '1px',
+    margin: '-1px',
+    padding: 0,
+    overflow: 'hidden',
+    clip: 'rect(0 0 0 0)',
+    whiteSpace: 'nowrap',
+    border: 0,
+  });
+  const emptyCellMark = css({ color: 'muted' });
+  const staleMark = css({ color: 'status.warn', fontSize: '11px', fontWeight: 650 });
+  const subGroup = css({ display: 'grid', gap: '6px', pt: '10px', borderTop: '1px solid token(colors.line)' });
+  const subGroupHeader = css({ display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', gap: '4px 8px' });
+  const subGroupTitle = css({ fontSize: '13px', fontWeight: 700 });
+  const rollupSummary = css({
+    display: 'flex',
+    flexWrap: 'wrap',
+    alignItems: 'baseline',
+    gap: '4px 10px',
+    p: '7px 0',
+    cursor: 'pointer',
+    fontSize: '13px',
+    _hover: { color: 'accent' },
+    _focusVisible: { outline: '2px solid token(colors.accent)', outlineOffset: '2px' },
+  });
+  const rollupPanel = css({ borderTop: '1px solid token(colors.line)' });
+  const rollupNames = css({
+    m: 0,
+    p: '0 0 8px',
+    listStyle: 'none',
+    display: 'flex',
+    flexWrap: 'wrap',
+    gap: '4px 14px',
+    color: 'muted',
+    fontSize: '12px',
+  });
   // Tighter than the exposure matrix on purpose: six columns of short phrases fit the 1280 band
   // beside the tree, so the "not observable" column stays on screen instead of behind a scroll.
   const observationsTableWrap = css({
@@ -184,7 +228,12 @@
     {/if}
   </section>
 {:else}
-  <section aria-label="Skill observations" class={cx(panel, stack)} data-skill-observations="overview">
+  <section
+    aria-label="Skill observations"
+    class={cx(panel, stack)}
+    data-skill-observations="overview"
+    id="observed-usage"
+  >
     <div class={sectionHeader}>
       <h2 class={panelTitle}>Observed skill usage</h2>
       <p class={panelSub}>
@@ -203,8 +252,8 @@
     </ul>
 
     <ul aria-label="Observation tiers" class={coverageList}>
-      {#each Object.entries(SKILL_OBSERVATION_TIER_DESCRIPTIONS) as [ tier, description ] (tier)}
-        <li>{tier} — {description}</li>
+      {#each SKILL_OBSERVATION_TIER_ORDER as tier (tier)}
+        <li>{tier} — {SKILL_OBSERVATION_TIER_DESCRIPTIONS[tier]}</li>
       {/each}
     </ul>
 
@@ -234,6 +283,10 @@
       </p>
     {/if}
 
+    <p class={meta} data-skill-observations-table-note>
+      Rows are ordered by evidence strength, then most recent observation. — means an observable harness recorded
+      nothing. Skills only ever seen in a catalogue are folded under “Offered but never invoked” below.
+    </p>
     <!-- The wrapper scrolls when the harness columns exceed the panel, so it is a named, focusable
          region: a keyboard user must be able to reach the columns a pointer user can drag to. -->
     <!-- svelte-ignore a11y_no_noninteractive_tabindex -- a scrollable region must be keyboard-reachable -->
@@ -243,34 +296,49 @@
         <thead>
           <tr>
             <th scope="col">Skill</th>
-            {#each view.harnesses as harness (harness.harnessKey)}
+            {#each view.observableHarnesses as harness (harness.harnessKey)}
               <th scope="col">{harness.label}</th>
             {/each}
             <th scope="col">Last observed</th>
           </tr>
         </thead>
         <tbody>
-          {#if view.rows.length === 0}
+          {#if view.invocationRows.length === 0}
             <tr>
-              <td class={muted} colspan={view.harnesses.length + 2}>No skills to report.</td>
+              <td class={muted} colspan={view.observableHarnesses.length + 2}>No skills to report.</td>
             </tr>
           {:else}
-            {#each view.rows as observationRow (observationRow.skillName)}
+            {#each view.invocationRows as observationRow (observationRow.skillName)}
               <tr data-observation-verdict={observationRow.verdict}>
                 <th class={cx(strongCell, skillRowHeader)} scope="row">
                   {observationRow.skillName}
                   <span class={managedTag}>{observationRow.managed ? ' managed' : ' unmanaged'}</span>
                 </th>
-                {#each observationRow.harnesses as cell (cell.harnessKey)}
+                {#each observationRow.harnesses.filter((cell) => cell.state !== 'not-observable') as cell (cell.harnessKey)}
                   <td class={observationCell} data-harness={cell.harnessKey} data-observation-state={cell.state}>
-                    {cell.summary}
+                    {#if cell.state === 'no-observations'}
+                      <span aria-hidden="true" class={emptyCellMark}>—</span>
+                      <span class={visuallyHidden}>{cell.summary}</span>
+                    {:else}
+                      {cell.summary}
+                    {/if}
                   </td>
                 {/each}
-                <td class={cx(observationCell, observedAt)}>
+                <td
+                  class={cx(observationCell, observedAt)}
+                  data-observation-recency={observationRow.lastObservedAt
+                    ? observationRecency(observationRow.lastObservedAt)
+                    : undefined}
+                >
                   {#if observationRow.lastObservedAt}
-                    <time datetime={observationRow.lastObservedAt}
-                      >{formatObservedAt(observationRow.lastObservedAt)}</time
+                    <time
+                      datetime={observationRow.lastObservedAt}
+                      title={formatObservedAt(observationRow.lastObservedAt)}
+                      >{formatObservedDate(observationRow.lastObservedAt)}</time
                     >
+                    {#if observationRecencyNote(observationRow.lastObservedAt)}
+                      <span class={staleMark}> · {observationRecencyNote(observationRow.lastObservedAt)}</span>
+                    {/if}
                   {:else}
                     never
                   {/if}
@@ -287,6 +355,7 @@
       class={section}
       data-provisional={view.invocationEvidenceComplete ? 'false' : 'true'}
       data-skill-observations-group="deletion"
+      id="observations-deletion"
     >
       <div class={sectionHeader}>
         <h3 class={panelTitle}>Projected everywhere but never invoked</h3>
@@ -319,58 +388,86 @@
       {/if}
     </section>
 
-    <section aria-label="Invoked but unmanaged" class={section} data-skill-observations-group="adoption">
+    <section
+      aria-label="Invoked but unmanaged"
+      class={section}
+      data-skill-observations-group="adoption"
+      id="observations-adoption"
+    >
       <div class={sectionHeader}>
         <h3 class={panelTitle}>Invoked but unmanaged</h3>
         <p class={panelSub}>
-          Skills a harness recorded being <em>used</em> that resolve to no entry in the managed inventory —
-          harness-bundled and plugin-provided skills. Adoption candidates for the source repository. A skill that was
-          only offered to a model is listed separately: a catalogue lists everything, so being in one is not use.
+          Skills a harness recorded being <em>used</em> that resolve to no entry in the managed inventory. Three very
+          different situations, so they are listed apart. A skill that was only offered to a model is listed under its
+          catalogue further down: a catalogue lists everything, so being in one is not use.
         </p>
       </div>
       {#if view.adoptionCandidates.length === 0}
         <p class={meta}>Every invoked skill resolves to a managed inventory entry.</p>
       {:else}
-        <ul class={candidateList}>
-          {#each view.adoptionCandidates as candidate (candidate.skillName)}
-            <li>
-              {candidate.skillName}
-              <span class={meta}>
-                {candidate.harnesses
-                  .filter((cell) => cell.state === 'observed')
-                  .map((cell) => `${cell.label} ${cell.summary}`)
-                  .join(' · ')}
-              </span>
-            </li>
-          {/each}
-        </ul>
+        {#each view.adoptionGroups as group (group.residence)}
+          <div class={subGroup} data-skill-observations-residence={group.residence}>
+            <div class={subGroupHeader}>
+              <h4 class={subGroupTitle}>{ADOPTION_GROUP_COPY[group.residence].heading} · {group.rows.length}</h4>
+              <p class={cx(panelSub, meta)}>{ADOPTION_GROUP_COPY[group.residence].description}</p>
+            </div>
+            <ul class={candidateList}>
+              {#each group.rows as candidate (candidate.skillName)}
+                <li>
+                  {candidate.skillName}
+                  <span class={meta}>
+                    {observedHarnessSummary(candidate)}
+                    {#if candidate.lastObservedAt}
+                      · last
+                      <time datetime={candidate.lastObservedAt}>{formatObservedDate(candidate.lastObservedAt)}</time>
+                    {/if}
+                  </span>
+                </li>
+              {/each}
+            </ul>
+          </div>
+        {/each}
       {/if}
     </section>
 
-    <section aria-label="Offered but never invoked" class={section} data-skill-observations-group="offered">
+    <section
+      aria-label="Offered but never invoked"
+      class={section}
+      data-skill-observations-group="offered"
+      id="observations-offered"
+    >
       <div class={sectionHeader}>
         <h3 class={panelTitle}>Offered but never invoked</h3>
         <p class={panelSub}>
-          Skills a harness put in front of a model with no evidence any of them was used. This is a fact about offering,
-          not about use, so it proposes nothing on its own.
+          Skills a harness put in front of a model with no evidence any of them was used. A fact about offering, not
+          about use, so it proposes nothing on its own — and it is folded by catalogue, because every entry of one
+          catalogue carries the same fact.
         </p>
       </div>
-      {#if view.offeredOnly.length === 0}
+      {#if view.catalogueRollups.length === 0}
         <p class={meta}>No skill was offered without also being invoked.</p>
       {:else}
-        <ul class={candidateList}>
-          {#each view.offeredOnly as candidate (candidate.skillName)}
-            <li>
-              {candidate.skillName}
-              <span class={meta}>
-                {candidate.harnesses
-                  .filter((cell) => cell.state === 'observed')
-                  .map((cell) => `${cell.label} ${cell.summary}`)
-                  .join(' · ')}
-              </span>
-            </li>
-          {/each}
-        </ul>
+        {#each view.catalogueRollups as rollup (rollup.key)}
+          <details class={rollupPanel} data-skill-observations-catalogue={rollup.key}>
+            <summary class={rollupSummary}>
+              <span class={strongCell}>{rollup.label}</span>
+              <span class={meta}>{rollup.rows.length} {rollup.rows.length === 1 ? 'skill' : 'skills'}</span>
+              {#each rollup.exposureSummaries as exposureSummary (exposureSummary)}
+                <span class={meta}>{exposureSummary}</span>
+              {/each}
+              {#if rollup.lastObservedAt}
+                <span class={meta}
+                  >last <time datetime={rollup.lastObservedAt}>{formatObservedDate(rollup.lastObservedAt)}</time></span
+                >
+              {/if}
+            </summary>
+            <ul class={rollupNames}>
+              {#each rollup.rows as candidate (candidate.skillName)}
+                <li>{candidate.skillName}</li>
+              {/each}
+            </ul>
+          </details>
+        {/each}
       {/if}
     </section>
   </section>

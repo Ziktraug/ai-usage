@@ -27,7 +27,8 @@ interface SvelteServerModule {
 /** The name-scope disclosure, asserted from the module that owns the wording. */
 const NAME_SCOPE_SENTENCE = NAME_SCOPED_COUNTS_TEXT;
 
-const DANGER_HEALTH_TOKEN_PATTERN = /class="[^"]*c_status\.danger[^"]*" data-health-tone="danger"/u;
+const HEALTHY_FRACTION_PATTERN = /\d+\/\d+\s*\n?\s*healthy/gu;
+const DANGER_LINKS_TONE_PATTERN = /class="[^"]*c_status\.danger[^"]*"\s+data-links-tone="danger"/u;
 
 const componentFrom = (loaded: unknown): Component => {
   if (typeof loaded !== 'object' || loaded === null || !('default' in loaded) || typeof loaded.default !== 'function') {
@@ -164,9 +165,11 @@ describe('Svelte Skills workspace SSR', () => {
     const detailHtml = render(convergenceFixture, {
       props: { healthSnapshot: 'management', pathname: '/skills/global' },
     }).body;
-    expect(detailHtml.match(/Healthy links/gu) ?? []).toHaveLength(1);
-    expect(detailHtml).toContain('data-health-tone="danger"');
-    expect(detailHtml).toMatch(DANGER_HEALTH_TOKEN_PATTERN);
+    // The landing page carries one links strip — a single taxonomy, each number said once.
+    expect(detailHtml.match(/data-skills-links-strip/gu) ?? []).toHaveLength(1);
+    expect(detailHtml.match(HEALTHY_FRACTION_PATTERN) ?? []).toHaveLength(1);
+    // The zero is toned with the danger token, and the tone is stated as data for tests and AT.
+    expect(detailHtml).toMatch(DANGER_LINKS_TONE_PATTERN);
 
     const matrixHtml = render(convergenceFixture, {
       props: { healthSnapshot: 'management', pathname: '/skills/matrix' },
@@ -182,16 +185,22 @@ describe('Svelte Skills workspace SSR', () => {
     expect(matrixHtml).toContain('inferred 1');
     // The two tiers are never added together. 2 + 1 has no cell to live in.
     expect(matrixHtml).not.toContain('declared 3');
-    expect(matrixHtml).toContain('data-harness="cursor" data-observation-state="not-observable"');
-    expect(matrixHtml).not.toContain('data-harness="cursor" data-observation-state="observed"');
+    // Cursor is stated once per surface, in the roster — not repeated as a column of identical
+    // cells. It still never renders as a zero: the roster line is words.
+    expect(matrixHtml).toContain('data-harness-observability="not-observable"');
+    expect(matrixHtml).toContain('not observable');
+    expect(matrixHtml).not.toContain('data-harness="cursor"');
     // Each verdict has a home, and the unmanaged observation was retained rather than dropped.
     expect(matrixHtml).toContain('Projected everywhere but never invoked');
     expect(matrixHtml).toContain('Invoked but unmanaged');
     expect(matrixHtml).toContain('Offered but never invoked');
     expect(matrixHtml).toContain('artifact-design');
-    // A skill that was only offered is listed under offering, never proposed for adoption.
-    expect(matrixHtml).toContain('data-observation-verdict="offered-only"');
+    // A skill that was only offered lives under its catalogue fold — not in the main table, and
+    // never in the adoption group.
     expect(matrixHtml).toContain('data-skill-observations-group="offered"');
+    expect(matrixHtml).toContain('data-skill-observations-catalogue="standalone"');
+    expect(matrixHtml).toContain('imagegen');
+    expect(matrixHtml).not.toContain('data-observation-verdict="offered-only"');
     // A complete read states its absences plainly rather than hedging them.
     expect(deletionGroupAttributes(matrixHtml)).toContain('data-provisional="false"');
     expect(matrixHtml).not.toContain('within the read bound');
@@ -201,6 +210,33 @@ describe('Svelte Skills workspace SSR', () => {
     expect(detailHtml).toContain('declared 2');
     expect(detailHtml).toContain('not observable');
     expect(detailHtml).toContain('data-skill-observations-verdict="invoked"');
+  });
+
+  test('opens a skill detail on a synthesis band above the editor', () => {
+    const html = render(convergenceFixture, { props: { pathname: '/skills/global/alpha-skill' } }).body;
+
+    // State, exposure, observed use, verdict, and both operations — readable before any scrolling,
+    // and still reachable in the 768–1279px band where the inspector drops below the content.
+    expect(html).toContain('data-skill-summary-band');
+    expect(html.indexOf('data-skill-summary-band')).toBeLessThan(html.indexOf('data-skill-markdown-editor'));
+    expect(html).toContain('data-summary-exposure');
+    expect(html).toContain('data-summary-observed');
+    expect(html).toContain('data-summary-verdict="invoked"');
+    expect(html).toContain('data-summary-actions');
+  });
+
+  test('opens a project skill on a read-only synthesis band above its document', () => {
+    const html = render(convergenceFixture, {
+      props: { pathname: '/skills/projects/synthetic-group/project-review' },
+    }).body;
+
+    expect(html).toContain('data-skill-summary-band');
+    expect(html.indexOf('data-skill-summary-band')).toBeLessThan(html.indexOf('# Project synthetic document'));
+    expect(html).toContain('data-summary-placement');
+    expect(html).toContain('data-summary-observed');
+    expect(html).toContain('data-summary-verdict="invoked-unmanaged"');
+    expect(html).toContain('Project-owned · read-only');
+    expect(html).not.toContain('data-summary-actions');
   });
 
   test('qualifies every absence claim when the read could not prove one', () => {
@@ -217,6 +253,20 @@ describe('Svelte Skills workspace SSR', () => {
     expect(html).not.toContain('Never observed by any harness.');
   });
 
+  test('renders a project scope as its skills joined with observed use', () => {
+    const html = render(convergenceFixture, { props: { pathname: '/skills/projects/synthetic-group' } }).body;
+
+    // The scope page was a dead end — a path and an inventory count. It now carries the one thing
+    // a project selection is for: the repo's skills, each joined to what the harnesses recorded.
+    expect(html).toContain('data-project-skills-table');
+    expect(html).toContain('data-project-skill-row="project-review"');
+    expect(html).toContain('declared 2');
+    expect(html).toContain('Standard Agents · owned directory');
+    expect(html).toContain(NAME_SCOPE_SENTENCE);
+    expect(html).not.toContain('scanned project inventories');
+    expect(html).toContain('Owned and edited in this repository');
+  });
+
   test('shows observed usage on a project skill, not only on a global one', () => {
     const html = render(convergenceFixture, {
       props: { pathname: '/skills/projects/synthetic-group/project-review' },
@@ -230,10 +280,11 @@ describe('Svelte Skills workspace SSR', () => {
     expect(html).toContain('data-skill-observations="skill"');
     expect(html).toContain('inferred 4');
     expect(html).toContain('declared 2');
-    // Read-only and outside the managed source repository, so the adoption verdict is the whole
-    // reason to look — and it is the verdict that was invisible here.
+    // Read-only and outside the managed source repository, so the verdict is the whole reason to
+    // look. Its wording follows the residence: this install is owned by its project, and telling it
+    // to be adopted would prescribe a move nobody planned.
     expect(html).toContain('data-skill-observations-verdict="invoked-unmanaged"');
-    expect(html).toContain('Invoked but unmanaged');
+    expect(html).toContain('Invoked — owned by a project repository');
     // Below the document, matching the global branch: the SKILL.md source stays the primary object.
     expect(html.indexOf('# Project synthetic document')).toBeLessThan(html.indexOf('data-skill-observations="skill"'));
     // Cursor still reads as unable to observe rather than as a zero, on this branch too.
@@ -265,9 +316,10 @@ describe('Svelte Skills workspace SSR', () => {
     }).body;
 
     // "This name is nowhere in the managed repository" is a property of the name, so it stays a
-    // sound claim about the project install. Dropping it would cost the adoption signal for the
-    // ~39 project-local skills that legitimately carry it.
-    expect(html).toContain('Invoked but unmanaged — an adoption candidate for the source repository.');
+    // sound claim about the project install. The sentence follows the residence — project-owned —
+    // rather than prescribing adoption into the source repository for a deliberately scoped skill.
+    expect(html).toContain('data-skill-observations-verdict="invoked-unmanaged"');
+    expect(html).toContain('Invoked — owned by a project repository, outside the shared source.');
     expect(html).not.toContain('data-skill-observations-homonym');
     expect(html).toContain(NAME_SCOPE_SENTENCE);
   });
@@ -335,7 +387,7 @@ describe('Svelte Skills workspace SSR', () => {
 
     const truncated = detail(withTruncatedPaths);
     expect(truncated).toContain('data-skill-observations-resolved-paths-truncated');
-    expect(truncated).toContain('Showing 2 of more directories this skill resolved to.');
+    expect(truncated).toContain('Showing 2 directories — the name resolved to more than this list carries.');
 
     // A complete list says nothing, so the note never reads as a permanent caveat on every skill.
     const complete = detail(syntheticObservations);
@@ -371,6 +423,31 @@ describe('Svelte Skills workspace SSR', () => {
     // The rest of the page still renders its own numbers; nothing global was flagged.
     expect(html).toContain('Healthy links');
     expect(html).not.toContain('data-skill-observations="overview"');
+  });
+
+  test('keeps unavailable observations unavailable on the landing and project tables', () => {
+    const globalHtml = render(convergenceFixture, {
+      props: { observationsError: 'Synthetic observation failure.', pathname: '/skills/global' },
+    }).body;
+    expect(globalHtml).toContain('data-skills-overview-observations="unavailable"');
+    expect(globalHtml).toContain('data-observation-state="unavailable"');
+    expect(globalHtml).not.toContain('data-observation-state="loading"');
+    expect(globalHtml).not.toContain('>never<');
+
+    const projectHtml = render(convergenceFixture, {
+      props: { observationsError: 'Synthetic observation failure.', pathname: '/skills/projects/synthetic-group' },
+    }).body;
+    expect(projectHtml).toContain('data-project-observations-state="unavailable"');
+    expect(projectHtml).toContain('unavailable');
+    expect(projectHtml).not.toContain('data-project-observations-state="loading"');
+  });
+
+  test('discloses name scope and not-observable harnesses on the decision surface', () => {
+    const html = render(convergenceFixture, { props: { pathname: '/skills/global' } }).body;
+
+    expect(html).toContain(NAME_SCOPE_SENTENCE);
+    expect(html).toContain('data-skills-overview-observability="not-observable"');
+    expect(html.replace(/\s+/gu, ' ')).toContain('Cursor — not observable');
   });
 
   test('hydrates a bounded awaited route into a new provider without duplicate Skills acquisition', async () => {

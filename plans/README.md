@@ -174,6 +174,7 @@ dependency.
 | 097 | Sync, Sources, Projects: Duplication and Jargon | P1 | M | 088 (fleet "Sessions" label) | DONE |
 | 098 | Session Drawer, Analysis, and Report Chrome Polish | P2 | M | 088 (drawer, records); 093/094 if they touched `preset.ts` | DONE |
 | 111 | Skill Invocation Observability — Declared, Inferred, and Exposed Signals Across Claude Code, OpenCode, and Codex | P2 | L | - | DONE — three-tier skill observations collected, stored, read independently of the report revision, and surfaced on /skills with Cursor as not-observable (ADR 0022) |
+| 112 | Skills Decision-First Surface — Verdicts on the Landing Page, Ranked Observations, Joined Axes | P1 | L | 111 | DONE — landing = verdict tiles + joined inventory + one links taxonomy; observations ranked by evidence with residence-segmented adoption groups and catalogue rollups (`unmanagedResidence` join fact); detail opens on a summary band that owns the skill's actions; project scope is its skills table; tree drops the machine suffix and worktree duplicates. Adopt action itself remains plan 083 (design awaiting approval). Audit: artifact e29ddc46 |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) |
 REJECTED (with one-line rationale) | DESIGN READY (design/spike plans only:

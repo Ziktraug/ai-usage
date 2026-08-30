@@ -133,6 +133,10 @@ _Avoid_: orphan observation, invalid skill, unknown skill
 Whether a harness can report skill observations at all. Claude Code and OpenCode declare invocations; Codex exposes a catalogue and leaves only an inferable trace; Cursor records nothing and is therefore not observable. A harness that cannot report renders as *not observable*, never as `0` — a zero would assert that its projected skills go unused, which no data supports.
 _Avoid_: zero invocations, unused, no data (as a count)
 
+**Skill residence**:
+Where an unmanaged observed name lives, decided at the inventory↔observation join from data already read. `runtime-installed` — the name has an unmanaged entry in a runtime skills directory: the adoptable backlog. `project-owned` — a resolved directory sits inside a known project: deliberately scoped, not missing. `external` — everything else: harness-bundled, plugin-provided, or since deleted. Residence refines how the adoption verdict is presented and worded; it never changes the verdict itself, which remains a fact about the name.
+_Avoid_: skill origin (that is the install-source axis), orphan class
+
 **Provider**:
 The billing or subscription route inferred for a usage row, such as Claude API, Claude sub, Codex API, Codex sub, or Cursor sub.
 _Avoid_: vendor, platform

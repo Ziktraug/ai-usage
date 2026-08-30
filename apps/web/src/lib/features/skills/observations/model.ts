@@ -5,6 +5,7 @@ import type {
   SkillObservationTally,
   SkillObservationTier,
   SkillObservationVerdict,
+  SkillUnmanagedResidence,
 } from '@ai-usage/web-contract/skills';
 
 /**
@@ -26,11 +27,19 @@ export const SKILL_OBSERVATION_TIER_LABELS: Record<SkillObservationTier, string>
   inferred: 'inferred',
 };
 
+/**
+ * Listed in confidence order — declared, inferred, exposed — because that is the order the surface
+ * ranks evidence in, and a legend that enumerates in a different order than the table sorts by
+ * teaches the wrong model.
+ */
 export const SKILL_OBSERVATION_TIER_DESCRIPTIONS: Record<SkillObservationTier, string> = {
   declared: 'The harness recorded the invocation as a skill call.',
-  exposed: 'The skill was offered to the model, with no evidence it was used.',
   inferred: 'Reconstructed from a weaker trace that was never meant to record an invocation.',
+  exposed: 'The skill was offered to the model, with no evidence it was used.',
 };
+
+/** Confidence order, strongest first. The legend, the ranking, and the tables all follow it. */
+export const SKILL_OBSERVATION_TIER_ORDER: readonly SkillObservationTier[] = ['declared', 'inferred', 'exposed'];
 
 export type SkillObservationHarnessState = 'no-observations' | 'not-observable' | 'observed';
 
@@ -50,9 +59,47 @@ export interface SkillObservationRow extends ObservedSkill {
   harnesses: readonly SkillObservationHarnessCell[];
 }
 
+/** One sub-group of the adoption backlog: the residence, and its rows in evidence order. */
+export interface SkillAdoptionGroup {
+  residence: SkillUnmanagedResidence;
+  rows: readonly SkillObservationRow[];
+}
+
+/**
+ * One catalogue of exposed-only names, folded to a single row. A catalogue lists everything, so its
+ * entries carry one shared fact — "this catalogue was offered N times" — and rendering each entry as
+ * its own row repeats that fact once per entry.
+ */
+export interface SkillCatalogueRollup {
+  /**
+   * The exposure counts seen across entries, one phrase per harness: `Codex exposed ×96` when
+   * uniform, `Codex exposed ×13–224` when they differ. A range over one tier and one harness,
+   * never a sum across either axis.
+   */
+  exposureSummaries: readonly string[];
+  /** The prefix before `:` in the skill names, or `standalone` for unprefixed names. */
+  key: string;
+  label: string;
+  /** Most recent exposure across the catalogue's entries. */
+  lastObservedAt: string | null;
+  rows: readonly SkillObservationRow[];
+}
+
 export interface SkillObservationsView {
   /** Invoked, but resolving to no inventory entry: the adoption candidates. */
   adoptionCandidates: readonly SkillObservationRow[];
+  /**
+   * The adoption candidates segmented by where the name lives, in a fixed order: runtime-installed
+   * (the adoptable backlog), then external (harness- and plugin-provided), then project-owned
+   * (deliberately scoped). Three populations, three treatments — one flat list proposed the same
+   * action for all of them. Groups with no rows are omitted.
+   */
+  adoptionGroups: readonly SkillAdoptionGroup[];
+  /**
+   * Exposed-only unmanaged names folded by catalogue. These rows appear here and nowhere else: a
+   * catalogue entry in the main table would outweigh the invocation signal ~2:1 on a real store.
+   */
+  catalogueRollups: readonly SkillCatalogueRollup[];
   /** Managed, installed in every enabled runtime, and still never invoked: the deletion candidates. */
   deletionCandidates: readonly SkillObservationRow[];
   harnesses: readonly SkillObservationHarness[];
@@ -62,8 +109,16 @@ export interface SkillObservationsView {
    * rows. Exposure is catalogue boilerplate: truncating it costs nothing a verdict rests on.
    */
   invocationEvidenceComplete: boolean;
+  /**
+   * The rows the main table shows: every managed name and every name with invocation evidence,
+   * strongest evidence first, then most recent. Exposed-only unmanaged names live in
+   * `catalogueRollups` instead.
+   */
+  invocationRows: readonly SkillObservationRow[];
   /** The read hit its bound, so every count below is a lower bound. */
   lowerBound: boolean;
+  /** The roster minus the harnesses that cannot report — the only ones a count column can carry. */
+  observableHarnesses: readonly SkillObservationHarness[];
   /** Offered to a model with no evidence of use, and not already a deletion candidate. */
   offeredOnly: readonly SkillObservationRow[];
   /**
@@ -77,6 +132,19 @@ export interface SkillObservationsView {
   /** Persisted rows the reader could not re-validate. */
   skipped: number;
 }
+
+export type SkillObservationsPresentationState = 'loading' | 'ready' | 'unavailable';
+
+/** Preserve the distinction between a pending read, a failed read, and a complete empty result. */
+export const skillObservationsPresentationState = (
+  observations: SkillObservations | undefined,
+  errorMessage: string | undefined,
+): SkillObservationsPresentationState => {
+  if (errorMessage !== undefined) {
+    return 'unavailable';
+  }
+  return observations === undefined ? 'loading' : 'ready';
+};
 
 export const NOT_OBSERVABLE_TEXT = 'not observable';
 export const NO_OBSERVATIONS_TEXT = 'none observed';
@@ -149,11 +217,23 @@ const cellFor = (
  * bounded, or rows failed re-validation. It says what it actually knows ("no ... within the read
  * bound") rather than repeating a claim it cannot support.
  */
-export const verdictText = (row: Pick<SkillObservationRow, 'verdict' | 'verdictProvisional'>): string => {
+export const verdictText = (
+  row: Pick<SkillObservationRow, 'verdict' | 'verdictProvisional'> &
+    Partial<Pick<SkillObservationRow, 'unmanagedResidence'>>,
+): string => {
   if (row.verdict === 'invoked') {
     return 'Invoked in at least one harness.';
   }
   if (row.verdict === 'invoked-unmanaged') {
+    // The verdict is one fact — no managed entry carries this name — but the three residences it
+    // can have call for three different sentences. Telling a deliberately project-scoped skill it
+    // is "an adoption candidate for the source repository" prescribes a move nobody planned.
+    if (row.unmanagedResidence === 'project-owned') {
+      return 'Invoked — owned by a project repository, outside the shared source. Adopt it only to make it global.';
+    }
+    if (row.unmanagedResidence === 'external') {
+      return 'Invoked but unmanaged — it ships with a harness or plugin, outside the source repository.';
+    }
     return 'Invoked but unmanaged — an adoption candidate for the source repository.';
   }
   if (row.verdict === 'offered-only') {
@@ -248,7 +328,7 @@ export const resolvedPathsNote = (
   row: Pick<SkillObservationRow, 'resolvedPaths' | 'resolvedPathsTruncated'>,
 ): string | undefined =>
   row.resolvedPathsTruncated
-    ? `Showing ${row.resolvedPaths.length} of more directories this skill resolved to.`
+    ? `Showing ${row.resolvedPaths.length} directories — the name resolved to more than this list carries.`
     : undefined;
 
 /**
@@ -268,6 +348,151 @@ export const deletionCandidateText = (row: Pick<SkillObservationRow, 'verdictPro
     ? 'Installed in every enabled runtime, with no invocation within the read bound — a provisional deletion candidate.'
     : 'Installed in every enabled runtime and still never invoked — a deletion candidate.';
 
+/**
+ * How strong the evidence behind a row is: 2 for a declared invocation, 1 for an inferred read,
+ * 0 for exposure or nothing. A ranking, not a merge — each tier keeps its own count everywhere.
+ */
+export const observationEvidenceRank = (row: Pick<ObservedSkill, 'tallies'>): number => {
+  if (row.tallies.some((tally) => tally.tier === 'declared')) {
+    return 2;
+  }
+  return row.tallies.some((tally) => tally.tier === 'inferred') ? 1 : 0;
+};
+
+/**
+ * Strongest evidence first, then most recent, then the name. Alphabetical order made the most used
+ * skill on the machine typographically identical to a catalogue entry forty rows away; evidence
+ * order is what turns the table back into a ranking a maintainer can act on.
+ */
+export const compareObservationRows = (left: SkillObservationRow, right: SkillObservationRow): number => {
+  const rankDifference = observationEvidenceRank(right) - observationEvidenceRank(left);
+  if (rankDifference !== 0) {
+    return rankDifference;
+  }
+  const leftObservedAt = left.lastObservedAt ?? '';
+  const rightObservedAt = right.lastObservedAt ?? '';
+  if (leftObservedAt !== rightObservedAt) {
+    return rightObservedAt.localeCompare(leftObservedAt);
+  }
+  return left.skillName.localeCompare(right.skillName);
+};
+
+/** One canonical tier-and-harness summary for every joined inventory surface. */
+export const observedHarnessSummary = (row: Pick<SkillObservationRow, 'harnesses'>): string =>
+  row.harnesses
+    .filter((cell) => cell.state === 'observed')
+    .map((cell) => `${cell.label} ${cell.summary}`)
+    .join(' · ');
+
+/** Fixed presentation order: the actionable backlog first, the informational populations after. */
+const ADOPTION_GROUP_ORDER: readonly SkillUnmanagedResidence[] = ['runtime-installed', 'external', 'project-owned'];
+
+const buildAdoptionGroups = (adoptionCandidates: readonly SkillObservationRow[]): readonly SkillAdoptionGroup[] =>
+  ADOPTION_GROUP_ORDER.flatMap((residence) => {
+    // A row the join could not classify would only exist through a producer bug; treating it as
+    // external keeps it visible rather than dropping the adoption signal on the floor.
+    const rows = adoptionCandidates
+      .filter((row) => (row.unmanagedResidence ?? 'external') === residence)
+      .toSorted(compareObservationRows);
+    return rows.length === 0 ? [] : [{ residence, rows }];
+  });
+
+/** The catalogue a plugin-namespaced name belongs to, or `standalone` for a bare name. */
+const catalogueKeyFor = (skillName: string): string => {
+  const separatorIndex = skillName.indexOf(':');
+  return separatorIndex > 0 ? skillName.slice(0, separatorIndex) : 'standalone';
+};
+
+const exposureSummariesFor = (rows: readonly SkillObservationRow[]): readonly string[] => {
+  const countsByHarness = new Map<string, { counts: number[]; label: string }>();
+  for (const tally of rows.flatMap((row) => row.tallies.filter((candidate) => candidate.tier === 'exposed'))) {
+    const current = countsByHarness.get(tally.harnessKey) ?? { counts: [], label: tally.harnessLabel };
+    current.counts.push(tally.count);
+    countsByHarness.set(tally.harnessKey, current);
+  }
+  return [...countsByHarness.values()]
+    .toSorted((left, right) => left.label.localeCompare(right.label))
+    .map(({ counts, label }) => {
+      const sortedCounts = counts.toSorted((left, right) => left - right);
+      const lowest = sortedCounts.at(0);
+      const highest = sortedCounts.at(-1);
+      // A range over one tier and harness — the spread of per-entry exposure counts — never a sum.
+      return lowest === highest ? `${label} exposed ×${lowest}` : `${label} exposed ×${lowest}–${highest}`;
+    });
+};
+
+const buildCatalogueRollups = (exposedOnly: readonly SkillObservationRow[]): readonly SkillCatalogueRollup[] => {
+  const rollups = new Map<string, SkillObservationRow[]>();
+  for (const row of exposedOnly) {
+    const key = catalogueKeyFor(row.skillName);
+    rollups.set(key, [...(rollups.get(key) ?? []), row]);
+  }
+  return [...rollups.entries()]
+    .map(([key, rows]) => ({
+      exposureSummaries: exposureSummariesFor(rows),
+      key,
+      label: key === 'standalone' ? 'Standalone entries' : key,
+      lastObservedAt: rows.reduce<string | null>(
+        (latest, row) =>
+          row.lastObservedAt !== null && row.lastObservedAt > (latest ?? '') ? row.lastObservedAt : latest,
+        null,
+      ),
+      rows: rows.toSorted((left, right) => left.skillName.localeCompare(right.skillName)),
+    }))
+    .toSorted((left, right) => right.rows.length - left.rows.length || left.label.localeCompare(right.label));
+};
+
+/** `2026-08-09`, for table cells where the full instant would push the column off screen. */
+export const formatObservedDate = (isoTimestamp: string): string => {
+  const formatted = formatObservedAt(isoTimestamp);
+  return formatted.includes(' ') ? (formatted.split(' ').at(0) ?? formatted) : formatted;
+};
+
+export type SkillObservationRecency = 'aging' | 'fresh' | 'stale';
+
+const UTC_DAY_MS = 86_400_000;
+
+/**
+ * Freshness bucket for a last-observed instant: `fresh` under 30 UTC days, `aging` under 90,
+ * `stale` beyond. Computed from whole UTC days so a server paint and its hydration agree except
+ * across a midnight boundary — the same tolerance `formatObservedAt` already accepts.
+ */
+export const observationRecency = (isoTimestamp: string, now: Date = new Date()): SkillObservationRecency => {
+  const observed = new Date(isoTimestamp);
+  if (!Number.isFinite(observed.getTime())) {
+    return 'fresh';
+  }
+  const observedDate = Date.UTC(observed.getUTCFullYear(), observed.getUTCMonth(), observed.getUTCDate());
+  const currentDate = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  const elapsedDays = Math.floor((currentDate - observedDate) / UTC_DAY_MS);
+  if (elapsedDays > 90) {
+    return 'stale';
+  }
+  return elapsedDays >= 30 ? 'aging' : 'fresh';
+};
+
+/** The textual marker beside a stale date — recency is words first, tone second. */
+export const observationRecencyNote = (isoTimestamp: string, now: Date = new Date()): string | undefined =>
+  observationRecency(isoTimestamp, now) === 'stale' ? 'stale' : undefined;
+
+export const ADOPTION_GROUP_COPY: Record<SkillUnmanagedResidence, { heading: string; description: string }> = {
+  external: {
+    description:
+      'Ships with a harness or one of its plugins — it lives upstream. Re-create it in the source repository only to own a fork of it.',
+    heading: 'Ships with a harness or plugin',
+  },
+  'project-owned': {
+    description:
+      'Owned by a project repository and observed in place — deliberately scoped, not missing. Adopt one only to make it global.',
+    heading: 'Owned by a project repository',
+  },
+  'runtime-installed': {
+    description:
+      'Installed directly in a runtime skills directory, outside any source repository. This is the adoptable backlog.',
+    heading: 'Installed in runtime directories',
+  },
+};
+
 export const buildSkillObservationsView = (observations: SkillObservations): SkillObservationsView => {
   const rows = observations.skills.map((skill) => {
     const talliesByHarness = new Map<string, SkillObservationTally[]>();
@@ -281,15 +506,23 @@ export const buildSkillObservationsView = (observations: SkillObservations): Ski
       ),
     } satisfies SkillObservationRow;
   });
+  const adoptionCandidates = rows.filter((row) => row.verdict === 'invoked-unmanaged');
+  const offeredOnly = rows.filter((row) => row.verdict === 'offered-only' && !row.deletionCandidate);
   return {
-    adoptionCandidates: rows.filter((row) => row.verdict === 'invoked-unmanaged'),
+    adoptionCandidates,
+    adoptionGroups: buildAdoptionGroups(adoptionCandidates),
+    catalogueRollups: buildCatalogueRollups(offeredOnly.filter((row) => !row.managed)),
     deletionCandidates: rows.filter((row) => row.deletionCandidate),
     harnesses: observations.harnesses,
     invocationEvidenceComplete: !observations.invocationLowerBound && observations.skipped === 0,
+    invocationRows: rows
+      .filter((row) => row.managed || observationEvidenceRank(row) > 0)
+      .toSorted(compareObservationRows),
     lowerBound: observations.lowerBound,
+    observableHarnesses: observations.harnesses.filter((harness) => harness.observability === 'observable'),
     onlyExposureTruncated: observations.lowerBound && !(observations.invocationLowerBound || observations.skipped > 0),
     // Exclusive of the deletion group, so no skill is listed twice under two headings.
-    offeredOnly: rows.filter((row) => row.verdict === 'offered-only' && !row.deletionCandidate),
+    offeredOnly,
     rows: [...rows.filter((row) => row.managed), ...rows.filter((row) => !row.managed)],
     skipped: observations.skipped,
   };

@@ -8,7 +8,7 @@
   import type { SkillsManagementPlanController } from './management-plan-controller';
   import { createSkillsShellViewModel } from './model';
   import SkillsWorkspace from './skills-workspace.svelte';
-  import type { SkillsShellSlotContext, SkillsSnapshotUpdatePort } from './slot-context';
+  import type { SkillsHealthSlotPlacement, SkillsShellSlotContext, SkillsSnapshotUpdatePort } from './slot-context';
   import {
     syntheticInventories,
     syntheticKnownPaths,
@@ -63,8 +63,12 @@
 {#snippet editorSlot(_context: SkillsShellSlotContext)}
   <SkillsEditorSlot context={_context} />
 {/snippet}
-{#snippet healthSlot(_context: SkillsShellSlotContext, _managementPlan: SkillsManagementPlanController)}
-  <SkillsHealthSlot context={_context} managementPlan={_managementPlan} />
+{#snippet healthSlot(
+  _context: SkillsShellSlotContext,
+  _managementPlan: SkillsManagementPlanController,
+  _placement: SkillsHealthSlotPlacement,
+)}
+  <SkillsHealthSlot context={_context} managementPlan={_managementPlan} placement={_placement} />
 {/snippet}
 {#snippet matrixSlot(_context: SkillsShellSlotContext, _managementPlan: SkillsManagementPlanController)}
   <SkillsMatrixSlot context={_context} managementPlan={_managementPlan} />

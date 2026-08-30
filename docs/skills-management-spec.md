@@ -65,6 +65,22 @@ requirements below are what the surface must honour.
 - **Observations that resolve to no inventory entry are retained and grouped.**
   Harness-bundled and plugin-provided skills are exactly that population, and
   they carry the *observed but unmanaged* (adoption candidate) verdict.
+- **An unmanaged name also carries its residence**, decided at the join from
+  data the read already has: `runtime-installed` when the name has an unmanaged
+  entry in a runtime skills directory (the adoptable backlog),
+  `project-owned` when a resolved directory sits inside a known project
+  (deliberately scoped), `external` otherwise (harness-bundled,
+  plugin-provided, or gone). Residence segments and words the adoption
+  presentation — three populations, three treatments — and never alters the
+  verdict, which stays a fact about the name.
+- **Presentation reads in evidence order and folds the catalogue.** The
+  overview table carries managed names and names with invocation evidence,
+  strongest tier first and most recent first — never alphabetically, which
+  buried the most-used skill among catalogue entries. Names seen only at the
+  `exposed` tier are folded into one expandable row per catalogue (plugin
+  prefix, or a standalone group), because every entry of one catalogue carries
+  the same single fact. A harness that cannot observe is named once per
+  surface, in the coverage roster, rather than once per row.
 - The deletion verdict requires more than managed-ness: a skill earns it only
   when it is **projected to every enabled runtime** and still never invoked.
   A skill that is not actually installed everywhere has a mundane reason to be

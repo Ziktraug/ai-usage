@@ -44,8 +44,19 @@ export interface SkillObservationJoinTarget {
 export interface SkillObservationJoinInput {
   readonly observations: SkillObservationDataset;
   readonly projections: readonly SkillObservationJoinProjection[];
+  /**
+   * Absolute paths of known project roots. An unmanaged name whose resolved directory sits inside
+   * one is `project-owned` rather than `external`. Optional because the join stays meaningful
+   * without it — every unmanaged name then classifies conservatively.
+   */
+  readonly projectPathPrefixes?: readonly string[];
   readonly skills: readonly SkillObservationJoinSkill[];
   readonly targets: readonly SkillObservationJoinTarget[];
+  /**
+   * Names of unmanaged entries found in runtime skills directories (the snapshot's
+   * `unmanagedEntries`). A name that appears here is `runtime-installed`: the adoptable backlog.
+   */
+  readonly unmanagedEntryNames?: readonly string[];
 }
 
 /**
@@ -161,6 +172,29 @@ export const clampSkillObservationsResponse = (response: SkillObservations): Ski
   return droppedSkillRows || droppedInvocationEvidence ? { ...clamped, invocationLowerBound: true } : clamped;
 };
 
+/**
+ * Where an unmanaged name lives (contract field `unmanagedResidence`).
+ *
+ * Decided here because both sides of the classification are join inputs: the runtime-directory
+ * entry list is inventory data and the project roots come from the usage store's known paths. The
+ * priority order matters — a name with a runtime-directory entry is `runtime-installed` even when
+ * it also resolves into a project, because the runtime copy is the thing adoption would act on.
+ */
+const residenceFor = (
+  skillName: string,
+  resolvedPaths: readonly string[],
+  unmanagedNames: ReadonlySet<string>,
+  projectPrefixes: readonly string[],
+): ObservedSkill['unmanagedResidence'] => {
+  if (unmanagedNames.has(skillName)) {
+    return 'runtime-installed';
+  }
+  const ownedByProject = resolvedPaths.some((resolvedPath) =>
+    projectPrefixes.some((prefix) => resolvedPath === prefix || resolvedPath.startsWith(`${prefix}/`)),
+  );
+  return ownedByProject ? 'project-owned' : 'external';
+};
+
 const verdictFor = (managed: boolean, invoked: boolean, offered: boolean): SkillObservationVerdict => {
   if (invoked) {
     return managed ? 'invoked' : 'invoked-unmanaged';
@@ -192,6 +226,8 @@ export const joinSkillObservations = (input: SkillObservationJoinInput): SkillOb
   const names = [...new Set([...skillsByName.keys(), ...observedByName.keys()])].sort((left, right) =>
     left.localeCompare(right),
   );
+  const unmanagedNames = new Set(input.unmanagedEntryNames ?? []);
+  const projectPrefixes = input.projectPathPrefixes ?? [];
   const skills = names.map((skillName) => {
     const observed = observedByName.get(skillName);
     const inventorySkill = skillsByName.get(skillName);
@@ -201,15 +237,17 @@ export const joinSkillObservations = (input: SkillObservationJoinInput): SkillOb
     const offered = tallies.length > 0;
     const projectedEverywhere = inventorySkill === undefined ? false : projectedEverywhereFor(inventorySkill, input);
     const verdict = verdictFor(managed, invoked, offered);
+    const resolvedPaths = [...(observed?.resolvedPaths ?? [])];
     return {
       deletionCandidate: managed && projectedEverywhere && !invoked,
       lastObservedAt: observed?.lastObservedAt ?? null,
       managed,
       projectedEverywhere,
-      resolvedPaths: [...(observed?.resolvedPaths ?? [])],
+      resolvedPaths,
       resolvedPathsTruncated: observed?.resolvedPathsTruncated ?? false,
       skillName,
       tallies: tallies.map((tally) => ({ ...tally })),
+      unmanagedResidence: managed ? null : residenceFor(skillName, resolvedPaths, unmanagedNames, projectPrefixes),
       verdict,
       // A positive verdict is not weakened by a short read: seeing an invocation proves use whether
       // or not more rows existed beyond the bound. Only claims of absence are provisional.

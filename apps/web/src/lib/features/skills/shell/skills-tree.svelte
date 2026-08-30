@@ -2,7 +2,7 @@
   import { css, cx } from '@ai-usage/design-system/css';
   import { panel, panelSub, panelTitle, strongCell } from '@ai-usage/design-system/svelte';
   import type { KnownProjectScope, SkillSelection, SkillTreeModel } from '../../../../skills-page-model';
-  import { selectionKey } from '../../../../skills-page-model';
+  import { count as countText, selectionKey } from '../../../../skills-page-model';
   import SelectionLink from './selection-link.svelte';
 
   let {
@@ -162,7 +162,7 @@
     aria-label="Filter scopes and skills"
     class={searchInput}
     oninput={(event) => onFilterChange(event.currentTarget.value)}
-    placeholder="Filter scopes or skills..."
+    placeholder="Filter scopes or skills…"
     value={filterQuery}
   >
   <div class={treeStack}>
@@ -215,11 +215,11 @@
                 >
                 {#if scope.shortPath}
                   <span class={scopePath} data-skill-scope-path>{scope.shortPath}</span>
-                  <span class={count}>{scope.skills.length}</span>
+                  <span class={count} title={countText(scope.skills.length, 'skill')}>{scope.skills.length}</span>
                 {/if}
               </span>
               {#if !scope.shortPath}
-                <span class={count}>{scope.skills.length}</span>
+                <span class={count} title={countText(scope.skills.length, 'skill')}>{scope.skills.length}</span>
               {/if}
             </SelectionLink>
           </div>
@@ -235,8 +235,10 @@
                 >
                   <span class={skillLabel}>{skill.name}</span>
                   {#if skill.issueCount > 0 || skill.validationStatus === 'invalid'}
+                    <!-- The warning shape is what separates "issues" from the muted scope counts
+                         beside it — two bare numbers in two colours read as one system. -->
                     <span class={attention} title={skill.attentionSummary || undefined}>
-                      {skill.validationStatus === 'invalid' ? '!' : skill.issueCount}
+                      {skill.validationStatus === 'invalid' ? '⚠ !' : `⚠ ${skill.issueCount}`}
                     </span>
                   {/if}
                 </SelectionLink>

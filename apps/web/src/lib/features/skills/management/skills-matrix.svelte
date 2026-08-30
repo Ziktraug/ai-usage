@@ -14,12 +14,6 @@
     pendingButton,
     searchInput,
     skillsReconcilePlanList,
-    statusDot,
-    statusDotBroken,
-    statusDotCopy,
-    statusDotLinked,
-    statusDotMissing,
-    statusDotNone,
     statusPill,
     statusPillDanger,
     statusPillInfo,
@@ -36,10 +30,44 @@
     type SkillCellStateFilter,
     type SkillInvocation,
   } from '../../../../skills-page-model';
-  import { buildSkillsMatrixView, matrixDotTone, skillStateFilterLabels, skillStateFilterOrder } from './model';
+  import {
+    buildSkillsMatrixView,
+    MATRIX_DOT_GLYPHS,
+    type MatrixDotTone,
+    matrixDotTone,
+    skillStateFilterLabels,
+    skillStateFilterOrder,
+  } from './model';
   import SkillSwitch from './skill-switch.svelte';
 
   const filterBar = css({ display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center', mb: '12px' });
+  // The tiles above count links; every chip in this bar counts skills. One visible unit label is
+  // what keeps "Blocked 5" and "Blocked 2" from reading as a contradiction.
+  const filterBarUnit = css({
+    color: 'muted',
+    fontSize: '11px',
+    fontWeight: 700,
+    letterSpacing: '0.07em',
+    textTransform: 'uppercase',
+  });
+  // Shape + letter carry each exposure state; hue only reinforces (two of the palette hues share a
+  // deutan appearance, and a dashed ring versus a plain one vanished at rendered size).
+  const glyphMark = css({
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    w: '18px',
+    h: '18px',
+    borderRadius: 'xs',
+    fontFamily: 'mono',
+    fontSize: '11px',
+    fontWeight: 700,
+    '&[data-tone="linked"]': { bg: 'status.okSoft', color: 'status.ok' },
+    '&[data-tone="missing"]': { bg: 'surfaceMuted', color: 'muted' },
+    '&[data-tone="broken"]': { bg: 'status.dangerSoft', color: 'status.danger' },
+    '&[data-tone="copy"]': { bg: 'status.warnSoft', color: 'status.warn' },
+    '&[data-tone="none"]': { color: 'muted' },
+  });
   const activeFilter = css({ borderColor: 'accent', color: 'accent', bg: 'accentTint' });
   const positionedButton = css({ position: 'relative' });
   const matrixWrap = css({
@@ -184,22 +212,13 @@
   const runtimeCopy = $derived(`${view.matrix.targets.length} enabled / ${snapshot.targets.length} configured`);
   const toggleStateFilter = (filter: SkillCellStateFilter): void =>
     onCellStateFilterChange(activeCellStateFilter === filter ? undefined : filter);
-  const dotClass = (state: Parameters<typeof matrixDotTone>[0]): string | undefined => {
-    const tone = matrixDotTone(state);
-    if (tone === 'linked') {
-      return statusDotLinked;
-    }
-    if (tone === 'missing') {
-      return statusDotMissing;
-    }
-    if (tone === 'broken') {
-      return statusDotBroken;
-    }
-    if (tone === 'copy') {
-      return statusDotCopy;
-    }
-    return statusDotNone;
-  };
+  const LEGEND_ENTRIES: readonly { label: string; tone: MatrixDotTone }[] = [
+    { label: 'Linked', tone: 'linked' },
+    { label: 'To link', tone: 'missing' },
+    { label: 'To repair', tone: 'broken' },
+    { label: 'Blocked — an unmanaged copy sits where the link belongs', tone: 'copy' },
+    { label: 'Disabled', tone: 'none' },
+  ];
   const validationClass = (status: string): string => {
     if (status === 'invalid') {
       return statusPillDanger;
@@ -273,6 +292,7 @@
   {/if}
 
   <div class={filterBar}>
+    <span class={filterBarUnit}>Skills</span>
     <button class={filterClass(invocation === undefined)} onclick={() => (invocation = undefined)} type="button">
       All {view.allCount}
     </button>
@@ -308,6 +328,16 @@
       placeholder="Filter skills…"
       value={query}
     >
+  </div>
+
+  <!-- Before the table, so the marks are defined before they are read, not after. -->
+  <div class={legend}>
+    {#each LEGEND_ENTRIES as entry (entry.tone)}
+      <span class={legendItem}>
+        <span aria-hidden="true" class={glyphMark} data-tone={entry.tone}>{MATRIX_DOT_GLYPHS[entry.tone]}</span>
+        {entry.label}
+      </span>
+    {/each}
   </div>
 
   <div class={cx(tableWrap, matrixWrap)}>
@@ -366,13 +396,11 @@
                 </div>
               </td>
               {#each row.cells as cell}
+                {@const tone = matrixDotTone(cell.state)}
                 <td class={cx(centerCell, row.enabled ? undefined : inactiveCells)}>
-                  <span
-                    aria-label={cell.label}
-                    class={cx(statusDot, dotClass(cell.state))}
-                    role="img"
-                    title={cell.label}
-                  ></span>
+                  <span aria-label={cell.label} class={glyphMark} data-tone={tone} role="img" title={cell.label}
+                    >{MATRIX_DOT_GLYPHS[tone]}</span
+                  >
                 </td>
               {/each}
             </tr>
@@ -429,8 +457,10 @@
               <dd class={mobileRuntimeState}>
                 <span
                   aria-hidden="true"
-                  class={cx(statusDot, dotClass(cell.state), row.enabled ? undefined : inactiveCells)}
-                ></span>{cell.label}
+                  class={cx(glyphMark, row.enabled ? undefined : inactiveCells)}
+                  data-tone={matrixDotTone(cell.state)}
+                  >{MATRIX_DOT_GLYPHS[matrixDotTone(cell.state)]}</span
+                >{cell.label}
               </dd>
             </div>
           {/each}
@@ -438,12 +468,4 @@
       </li>
     {/each}
   </ul>
-
-  <div class={legend}>
-    <span class={legendItem}> <span class={cx(statusDot, statusDotLinked)}></span>Linked </span>
-    <span class={legendItem}> <span class={cx(statusDot, statusDotMissing)}></span>Not linked </span>
-    <span class={legendItem}> <span class={cx(statusDot, statusDotBroken)}></span>Broken / wrong target </span>
-    <span class={legendItem}> <span class={cx(statusDot, statusDotCopy)}></span>Copy (not a link) </span>
-    <span class={legendItem}> <span class={cx(statusDot, statusDotNone)}></span>Disabled </span>
-  </div>
 </section>

@@ -23,6 +23,7 @@
     buildSkillHealthSummary,
     canReconcileAll,
     count,
+    describeProjectSkillPlacement,
     groupUnmanagedEntries,
     skillDiagnosticLabel,
     skillInvocation,
@@ -36,9 +37,23 @@
   } from '../../../query/options/skills';
   import { useOptionalWebQueryRpcContext } from '../../../query/rpc-context.svelte';
   import { createSkillsClient } from '../../../rpc/skills-client';
+  import {
+    buildSkillObservationsView,
+    formatObservedAt,
+    formatObservedDate,
+    homonymNote,
+    installVerdictText,
+    NAME_SCOPED_COUNTS_TEXT,
+    observationRecency,
+    observationRecencyNote,
+    observedHarnessSummary,
+    skillObservationRow,
+    verdictText,
+  } from '../observations/model';
   import type { SkillsManagementPlanController } from '../shell/management-plan-controller';
   import type { SkillsHealthSlotPlacement, SkillsShellSlotContext } from '../shell/slot-context';
   import {
+    matrixDotTone,
     observeInspectorDisclosure,
     previewReconcileOperation,
     reconcileSkillOperation,
@@ -96,8 +111,11 @@
   let mounted = $state(false);
   let dismissTimer: ReturnType<typeof setTimeout> | undefined;
   let restoreFocusFrame: number | undefined;
+  // The summary band never owns the refresh registration: it always renders beside an inspector
+  // instance that already does, and two owners would race the pending indicator.
   const ownsRefreshRegistration = $derived(
-    placement === 'detail' || context.view.selectionDetail.kind !== 'global-scope' || context.view.matrixOpen,
+    placement !== 'summary' &&
+      (placement === 'detail' || context.view.selectionDetail.kind !== 'global-scope' || context.view.matrixOpen),
   );
   const health = $derived(buildSkillHealthSummary(context.snapshot));
   const disabledSkills = $derived(context.snapshot.skills.filter((skill) => !skill.enabled));
@@ -105,9 +123,80 @@
   const selectedSkill = $derived(
     context.view.selectionDetail.kind === 'global-skill' ? context.view.selectionDetail.skill : undefined,
   );
+  const selectedProjectSkill = $derived(
+    context.view.selectionDetail.kind === 'project-skill' ? context.view.selectionDetail.skill : undefined,
+  );
+  const selectedSkillName = $derived(selectedSkill?.name ?? selectedProjectSkill?.name);
+  const selectedInstallScope = $derived(context.view.selectionDetail.kind === 'project-skill' ? 'project' : 'global');
   const diagnostics = $derived(selectedSkill ? groupSkillDiagnostics(selectedSkill.diagnostics) : []);
   const exposure = $derived(selectedSkill ? buildGlobalSkillExposure(context.snapshot, selectedSkill.name) : []);
   const installationAction = $derived(selectedSkill ? deriveInstallationAction(selectedSkill, exposure) : undefined);
+  const observationsView = $derived(
+    context.observations === undefined ? undefined : buildSkillObservationsView(context.observations),
+  );
+  const selectedObservationRow = $derived(
+    observationsView === undefined || selectedSkillName === undefined
+      ? undefined
+      : skillObservationRow(observationsView, selectedSkillName),
+  );
+  const selectedSummaryVerdict = $derived.by(() => {
+    if (selectedObservationRow !== undefined) {
+      return installVerdictText(selectedObservationRow, selectedInstallScope);
+    }
+    if (observationsView === undefined) {
+      return;
+    }
+    return verdictText({
+      verdict: 'never-observed',
+      verdictProvisional: !observationsView.invocationEvidenceComplete,
+    });
+  });
+  const selectedHomonym = $derived(
+    selectedObservationRow === undefined ? undefined : homonymNote(selectedObservationRow, selectedInstallScope),
+  );
+  const projectPlacementSummary = $derived(
+    selectedProjectSkill === undefined
+      ? []
+      : [...new Set(selectedProjectSkill.observations.map(describeProjectSkillPlacement))],
+  );
+  const exposureTones = $derived.by(() => {
+    const tones = { broken: 0, copy: 0, linked: 0, missing: 0 };
+    for (const item of exposure) {
+      const tone = matrixDotTone(item.state);
+      if (tone !== 'none') {
+        tones[tone] += 1;
+      }
+    }
+    return tones;
+  });
+  const exposureSummaryText = $derived.by(() => {
+    const parts = [
+      exposureTones.missing > 0 ? `${exposureTones.missing} to link` : undefined,
+      exposureTones.broken > 0 ? `${exposureTones.broken} to repair` : undefined,
+      exposureTones.copy > 0 ? `${exposureTones.copy} blocked` : undefined,
+    ].filter((part) => part !== undefined);
+    return parts.length === 0 ? '' : parts.join(' · ');
+  });
+  const selectedObservedSummary = $derived(
+    selectedObservationRow === undefined ? '' : observedHarnessSummary(selectedObservationRow),
+  );
+  // Usage joined onto the consolidation backlog by name — what separates an adoptable entry from a
+  // deletable one. Undefined while the observation read is still in flight, so the fold can tell
+  // "not loaded" from "never observed".
+  const unmanagedUsageByName = $derived.by(() => {
+    if (observationsView === undefined) {
+      return;
+    }
+    return new Map(
+      observationsView.rows.map((row) => [
+        row.skillName,
+        {
+          lastObservedAt: row.lastObservedAt,
+          summary: observedHarnessSummary(row),
+        },
+      ]),
+    );
+  });
   const resolveClient = (): SkillsHealthClient => {
     if (injectedClient) {
       return injectedClient;
@@ -200,6 +289,41 @@
     overflowWrap: 'anywhere',
   });
   const actionGrid = css({ display: 'grid', gap: '8px' });
+  const summaryBand = css({
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+    gap: '10px',
+    alignItems: 'start',
+  });
+  const summaryFact = css({
+    display: 'grid',
+    gap: '3px',
+    p: '9px 11px',
+    border: '1px solid token(colors.line)',
+    borderRadius: 'sm',
+    bg: 'surfaceMuted',
+    minW: 0,
+    fontSize: '12.5px',
+  });
+  const summaryFactLabel = css({
+    color: 'muted',
+    fontSize: '10.5px',
+    fontWeight: 700,
+    textTransform: 'uppercase',
+    letterSpacing: '0.07em',
+  });
+  const summaryFactStrong = css({ fontWeight: 700 });
+  const summaryActions = css({
+    display: 'flex',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    alignContent: 'center',
+    gap: '8px',
+    border: 'none',
+    bg: 'transparent',
+    p: '0',
+  });
+  const staleText = css({ color: 'status.warn', fontWeight: 650 });
   const foldBody = css({ display: 'grid', gap: '14px', p: '0 16px 16px' });
   const detailSlotStack = css({ display: 'grid', gap: '14px' });
   const SUCCESS_MESSAGE_DURATION_MS = 5000;
@@ -343,9 +467,115 @@
   class={context.view.selectionDetail.kind === 'global-scope' && placement === 'detail' ? detailSlotStack : stack}
   data-skills-management-health-slot
 >
-  {#if context.view.selectionDetail.kind === 'global-scope'}
+  {#if placement === 'summary'}
+    {#if selectedSkillName}
+      <section aria-label="Skill summary" class={summaryBand} data-skill-summary-band>
+        <div class={summaryFact}>
+          {#if selectedSkill}
+            <span class={summaryFactLabel}>Exposure</span>
+            <span class={summaryFactStrong} data-summary-exposure>{exposureTones.linked}/{exposure.length} linked</span>
+            {#if exposureSummaryText.length > 0}
+              <span class={muted}>{exposureSummaryText}</span>
+            {/if}
+          {:else}
+            <span class={summaryFactLabel}>Placement</span>
+            <span class={summaryFactStrong} data-summary-placement>
+              {count(projectPlacementSummary.length, 'project placement')}
+            </span>
+            <span class={muted}>{projectPlacementSummary.join(' · ')}</span>
+          {/if}
+        </div>
+        <div class={summaryFact}>
+          <span class={summaryFactLabel}>Observed use</span>
+          {#if context.observationsError !== undefined}
+            <span class={muted}>unavailable</span>
+          {:else if observationsView === undefined}
+            <span aria-busy="true" class={muted}>loading…</span>
+          {:else if selectedObservedSummary.length > 0}
+            <span data-summary-observed>{selectedObservedSummary}</span>
+          {:else}
+            <span class={muted}>none observed</span>
+          {/if}
+          <span class={muted}>{NAME_SCOPED_COUNTS_TEXT}</span>
+        </div>
+        <div class={summaryFact}>
+          <span class={summaryFactLabel}>Last observed</span>
+          {#if selectedObservationRow?.lastObservedAt}
+            <span
+              class={summaryFactStrong}
+              data-observation-recency={observationRecency(selectedObservationRow.lastObservedAt)}
+            >
+              <time
+                datetime={selectedObservationRow.lastObservedAt}
+                title={formatObservedAt(selectedObservationRow.lastObservedAt)}
+                >{formatObservedDate(selectedObservationRow.lastObservedAt)}</time
+              >
+              {#if observationRecencyNote(selectedObservationRow.lastObservedAt)}
+                <span class={staleText}> · {observationRecencyNote(selectedObservationRow.lastObservedAt)}</span>
+              {/if}
+            </span>
+          {:else if observationsView !== undefined}
+            <span class={muted}>never</span>
+          {:else}
+            <span class={muted}>—</span>
+          {/if}
+          {#if selectedSummaryVerdict !== undefined}
+            <span class={muted} data-summary-verdict={selectedObservationRow?.verdict ?? 'never-observed'}
+              >{selectedSummaryVerdict}</span
+            >
+          {/if}
+          {#if selectedHomonym !== undefined}
+            <span class={muted}>{selectedHomonym}</span>
+          {/if}
+        </div>
+        {#if selectedSkill}
+          <div class={cx(summaryFact, summaryActions)} data-summary-actions>
+            <button
+              class={cx(ghostButton, pendingButton)}
+              disabled={pendingOperation !== null}
+              onclick={() =>
+                execute(toggleOperation(selectedSkill.name, !selectedSkill.enabled), `toggle:${selectedSkill.name}`)}
+              type="button"
+            >
+              {selectedSkill.enabled ? 'Disable' : 'Enable'}
+            </button>
+            <button
+              class={cx(commandButton, pendingButton)}
+              disabled={pendingOperation !== null || installationAction?.mode === 'none'}
+              onclick={() => {
+                if (!installationAction || installationAction.mode === 'none') {
+                  return;
+                }
+                execute(
+                  installationAction.mode === 'preview'
+                    ? previewReconcileOperation
+                    : reconcileSkillOperation(selectedSkill.name),
+                  installationAction.mode === 'preview' ? 'preview-reconcile' : `reconcile:${selectedSkill.name}`,
+                );
+              }}
+              type="button"
+            >
+              {installationAction?.label ?? 'Install'}
+            </button>
+          </div>
+        {:else}
+          <div class={summaryFact} data-summary-state>
+            <span class={summaryFactLabel}>State</span>
+            <span class={summaryFactStrong}>Project-owned · read-only</span>
+            <span class={muted}>Edit this skill in its project repository.</span>
+          </div>
+        {/if}
+      </section>
+    {/if}
+  {:else if context.view.selectionDetail.kind === 'global-scope'}
     {#if placement === 'detail'}
-      <SkillsConsolidate groups={unmanagedGroups} onReviewEntry={reviewConsolidation} total={health.consolidateCount} />
+      <SkillsConsolidate
+        groups={unmanagedGroups}
+        onReviewEntry={reviewConsolidation}
+        total={health.consolidateCount}
+        {...(unmanagedUsageByName === undefined ? {} : { usageByName: unmanagedUsageByName })}
+        usageEvidenceComplete={observationsView?.invocationEvidenceComplete ?? false}
+      />
       <div class={foldsGrid}>
         <details class={cx(panel, skillsDisclosurePanel)}>
           <summary class={skillsDisclosureSummary}>
@@ -494,42 +724,12 @@
         </details>
       {/each}
     </details>
-    <details class={inspectorSection} data-inspector-section="actions" open={inspectorSectionsOpen}>
-      <summary><h3 class={inspectorHeading}>Actions</h3></summary>
-      <div class={actionGrid}>
-        <button
-          class={cx(ghostButton, pendingButton)}
-          disabled={pendingOperation !== null}
-          onclick={() => execute(toggleOperation(selectedSkill.name, !selectedSkill.enabled), `toggle:${selectedSkill.name}`)}
-          type="button"
-        >
-          {selectedSkill.enabled ? 'Disable' : 'Enable'}
-        </button>
-        <button
-          class={cx(commandButton, pendingButton)}
-          disabled={pendingOperation !== null || installationAction?.mode === 'none'}
-          onclick={() => {
-            if (!installationAction || installationAction.mode === 'none') {
-              return;
-            }
-            execute(
-              installationAction.mode === 'preview'
-                ? previewReconcileOperation
-                : reconcileSkillOperation(selectedSkill.name),
-              installationAction.mode === 'preview' ? 'preview-reconcile' : `reconcile:${selectedSkill.name}`,
-            );
-          }}
-          type="button"
-        >
-          {installationAction?.label ?? 'Install'}
-        </button>
-      </div>
-    </details>
+  <!-- The skill's operations live in the summary band above the editor — one place, reachable
+         before any scrolling at every width. The inspector stays the home of facts. -->
   {:else if context.view.selectionDetail.kind === 'project-scope'}
     <section class={compactStack}>
       <h3 class={heading}>Project scope</h3>
-      <p class={pathText}>{context.view.selectionDetail.project.path}</p>
-      <p>{count(context.view.selectionDetail.inventories.length, 'inventory', 'inventories')}</p>
+      <p class={muted}>Owned by its repository — this product only reads here.</p>
     </section>
   {:else}
     <section class={compactStack}>

@@ -54,9 +54,6 @@
     {#if view.selectionDetail.kind === 'project-scope'}
       <div class={section}>
         <span class={path}>{view.selectionDetail.project.path}</span>
-        <div class={row}>
-          <span class={muted}>Inventories</span><span>{view.selectionDetail.inventories.length}</span>
-        </div>
       </div>
     {:else if view.selectionDetail.kind === 'project-skill'}
       <div class={section}>

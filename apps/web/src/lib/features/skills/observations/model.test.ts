@@ -7,10 +7,14 @@ import {
 } from '../shell/synthetic-fixture.test-helper';
 import {
   buildSkillObservationsView,
+  compareObservationRows,
   deletionCandidateText,
   formatObservedAt,
+  formatObservedDate,
   NO_OBSERVATIONS_TEXT,
   NOT_OBSERVABLE_TEXT,
+  observationEvidenceRank,
+  observationRecency,
   resolvedPathsNote,
   skillObservationRow,
   tallySummary,
@@ -89,7 +93,7 @@ describe('skill observations view', () => {
   test('says when a resolved-path list stopped at its ceiling, and says nothing when it did not', () => {
     // A ceiling that stays silent reads as a complete census of where the skill lives.
     expect(resolvedPathsNote({ resolvedPaths: ['/synthetic/a', '/synthetic/b'], resolvedPathsTruncated: true })).toBe(
-      'Showing 2 of more directories this skill resolved to.',
+      'Showing 2 directories — the name resolved to more than this list carries.',
     );
     // The retained set is the smallest paths in sort order, not the newest or the most used, so the
     // sentence claims only that some are shown.
@@ -166,6 +170,7 @@ describe('skill observations view', () => {
               tier: 'exposed',
             },
           ],
+          unmanagedResidence: 'external',
           verdict: 'offered-only',
           verdictProvisional: false,
         },
@@ -192,6 +197,112 @@ describe('skill observations view', () => {
     expect(empty.adoptionCandidates).toEqual([]);
     expect(empty.offeredOnly).toEqual([]);
     expect(empty.invocationEvidenceComplete).toBe(true);
+  });
+
+  test('ranks the main table by evidence strength, then recency — never alphabetically', () => {
+    const built = view();
+
+    // Three rows carry declared evidence; the most recently observed leads. The managed-but-silent
+    // `beta-skill` trails the field instead of sitting alphabetically between them.
+    expect(built.invocationRows.map(({ skillName }) => skillName)).toEqual([
+      'project-review',
+      'alpha-skill',
+      'artifact-design',
+      'beta-skill',
+    ]);
+    // Exposed-only unmanaged names are not in the main table at all: they live in the rollups.
+    expect(built.invocationRows.map(({ skillName }) => skillName)).not.toContain('imagegen');
+    expect(observationEvidenceRank({ tallies: [] })).toBe(0);
+    const inferredOnly = skillObservationRow(built, 'imagegen');
+    expect(inferredOnly === undefined ? -1 : observationEvidenceRank(inferredOnly)).toBe(0);
+  });
+
+  test('orders equal-evidence rows by most recent observation', () => {
+    const alpha = skillObservationRow(view(), 'alpha-skill');
+    const projectReview = skillObservationRow(view(), 'project-review');
+    if (alpha === undefined || projectReview === undefined) {
+      throw new Error('fixture rows missing');
+    }
+    // Both carry declared evidence; project-review was seen a day later.
+    expect(compareObservationRows(alpha, projectReview)).toBeGreaterThan(0);
+    expect(compareObservationRows(projectReview, alpha)).toBeLessThan(0);
+  });
+
+  test('lists only observable harnesses as table columns while the roster keeps Cursor', () => {
+    const built = view();
+
+    expect(built.observableHarnesses.map(({ harnessKey }) => harnessKey)).toEqual(['claude', 'codex', 'opencode']);
+    // The roster still names the harness that cannot report — said once per surface, not per row.
+    expect(built.harnesses.map(({ harnessKey }) => harnessKey)).toContain('cursor');
+  });
+
+  test('segments the adoption backlog by residence, actionable population first', () => {
+    const built = view();
+
+    expect(built.adoptionGroups.map(({ residence }) => residence)).toEqual(['external', 'project-owned']);
+    expect(built.adoptionGroups.flatMap(({ rows }) => rows.map(({ skillName }) => skillName))).toEqual([
+      'artifact-design',
+      'project-review',
+    ]);
+    // Every adoption candidate lands in exactly one group.
+    expect(built.adoptionGroups.flatMap(({ rows }) => rows)).toHaveLength(built.adoptionCandidates.length);
+  });
+
+  test('folds exposed-only names into catalogue rollups instead of rows', () => {
+    const catalogue: SkillObservations = {
+      ...syntheticObservations,
+      skills: [
+        ...syntheticObservations.skills,
+        ...['vercel:swr', 'vercel:auth', 'plugin-management:plugin-management'].map((skillName) => ({
+          deletionCandidate: false,
+          lastObservedAt: '2026-08-04T09:00:00.000Z',
+          managed: false,
+          projectedEverywhere: false,
+          resolvedPaths: [],
+          resolvedPathsTruncated: false,
+          skillName,
+          tallies: [
+            {
+              count: skillName === 'vercel:auth' ? 95 : 96,
+              harnessKey: 'codex',
+              harnessLabel: 'Codex',
+              lastObservedAt: '2026-08-04T09:00:00.000Z',
+              tier: 'exposed' as const,
+            },
+          ],
+          unmanagedResidence: 'external' as const,
+          verdict: 'offered-only' as const,
+          verdictProvisional: false,
+        })),
+      ],
+    };
+
+    const built = view(catalogue);
+    expect(built.catalogueRollups.map(({ label }) => label)).toEqual([
+      'vercel',
+      'plugin-management',
+      'Standalone entries',
+    ]);
+    const vercel = built.catalogueRollups.at(0);
+    expect(vercel?.rows.map(({ skillName }) => skillName)).toEqual(['vercel:auth', 'vercel:swr']);
+    // A spread over one tier, never a sum across tiers.
+    expect(vercel?.exposureSummaries).toEqual(['Codex exposed ×95–96']);
+    expect(built.catalogueRollups.at(1)?.exposureSummaries).toEqual(['Codex exposed ×96']);
+    // The unprefixed `imagegen` folds into the standalone catalogue rather than standing as a row.
+    expect(built.catalogueRollups.at(2)?.rows.map(({ skillName }) => skillName)).toEqual(['imagegen']);
+  });
+
+  test('buckets recency from whole UTC days so a paint and its hydration agree', () => {
+    const now = new Date('2026-08-29T12:00:00.000Z');
+
+    expect(observationRecency('2026-08-28T09:00:00.000Z', now)).toBe('fresh');
+    expect(observationRecency('2026-07-20T09:00:00.000Z', now)).toBe('aging');
+    expect(observationRecency('2026-02-16T09:00:00.000Z', now)).toBe('stale');
+    expect(observationRecency('2026-05-31T00:00:00.000Z', now)).toBe('aging');
+    expect(observationRecency('2026-05-30T23:59:59.999Z', now)).toBe('stale');
+    expect(observationRecency('not-a-timestamp', now)).toBe('fresh');
+    expect(formatObservedDate('2026-08-09T10:43:00.000Z')).toBe('2026-08-09');
+    expect(formatObservedDate('not-a-timestamp')).toBe('not-a-timestamp');
   });
 
   test('renders an observation instant identically wherever it is rendered', () => {

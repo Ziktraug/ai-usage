@@ -257,6 +257,70 @@ describe('skill observation join', () => {
     });
   });
 
+  test('classifies where an unmanaged name lives, and never classifies a managed one', () => {
+    const result = join({
+      observations: createSkillObservationDataset([
+        // A hand-installed copy in a runtime skills directory: the adoptable backlog.
+        observation({ harnessKey: 'opencode', skillName: 'agent-memory', tier: 'declared' }),
+        // Owned by a project the scan already knows: deliberately scoped, not an omission.
+        observation({
+          harnessKey: 'opencode',
+          resolvedPath: '/home/alex/Projects/nixos/.agents/skills/nix-modules',
+          skillName: 'nix-modules',
+          tier: 'declared',
+        }),
+        // Harness-bundled: no runtime entry, no project directory, still real.
+        observation({ harnessKey: 'claude', skillName: 'artifact-design', tier: 'declared' }),
+        observation({ harnessKey: 'opencode', skillName: 'pr-review', tier: 'declared' }),
+      ]),
+      projectPathPrefixes: ['/home/alex/Projects/nixos'],
+      skills: [managedSkill('pr-review')],
+      unmanagedEntryNames: ['agent-memory'],
+    });
+
+    expect(skillNamed(result, 'agent-memory')?.unmanagedResidence).toBe('runtime-installed');
+    expect(skillNamed(result, 'nix-modules')?.unmanagedResidence).toBe('project-owned');
+    expect(skillNamed(result, 'artifact-design')?.unmanagedResidence).toBe('external');
+    // Managed names have a home already; classifying them would state a second, competing one.
+    expect(skillNamed(result, 'pr-review')?.unmanagedResidence).toBeNull();
+  });
+
+  test('a runtime-directory entry outranks a project directory when a name has both', () => {
+    const result = join({
+      observations: createSkillObservationDataset([
+        observation({
+          harnessKey: 'opencode',
+          resolvedPath: '/home/alex/Projects/nixos/.agents/skills/dotfiles-management',
+          skillName: 'dotfiles-management',
+          tier: 'declared',
+        }),
+      ]),
+      projectPathPrefixes: ['/home/alex/Projects/nixos'],
+      // The same name also sits as a stray copy in a runtime skills directory — that copy is the
+      // thing adoption would act on, so the runtime residence wins.
+      unmanagedEntryNames: ['dotfiles-management'],
+    });
+
+    expect(skillNamed(result, 'dotfiles-management')?.unmanagedResidence).toBe('runtime-installed');
+  });
+
+  test('a project prefix matches whole path segments, not string prefixes', () => {
+    const result = join({
+      observations: createSkillObservationDataset([
+        observation({
+          harnessKey: 'opencode',
+          resolvedPath: '/home/alex/Projects/nixos-exaprint/.agents/skills/printer',
+          skillName: 'printer',
+          tier: 'declared',
+        }),
+      ]),
+      projectPathPrefixes: ['/home/alex/Projects/nixos'],
+    });
+
+    // `/home/alex/Projects/nixos-exaprint` is a different project, not a subdirectory of `nixos`.
+    expect(skillNamed(result, 'printer')?.unmanagedResidence).toBe('external');
+  });
+
   test('carries the harness roster through so Cursor stays not observable', () => {
     const result = join({ observations: createSkillObservationDataset([]) });
 
@@ -404,6 +468,7 @@ describe('skill observation response bounds', () => {
       resolvedPathsTruncated: false,
       skillName: `${index}`.padStart(nameLength, 'n'),
       tallies: [],
+      unmanagedResidence: null,
       verdict: 'never-observed' as const,
       verdictProvisional: false,
     })),
