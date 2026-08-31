@@ -2588,12 +2588,23 @@ Preserve the existing aggregation semantics.`,
     }
   });
 
-  test('keeps malformed JSONL completeness across cold and warm reads without dropping a valid final line', async () => {
+  test('keeps signal-bearing malformed JSONL completeness across cold and warm reads without dropping a valid final line', async () => {
     const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-codex-jsonl-cache-'));
     try {
       const sessionsDirectory = path.join(home, '.codex', 'sessions', '2026');
       mkdirSync(sessionsDirectory, { recursive: true });
-      writeFileSync(path.join(sessionsDirectory, 'invalid-only.jsonl'), '{"unreadable":');
+      // Only the first line could have carried a skill signal — an exec read
+      // charged to invocation. The truncated `turn_context` is parsed for usage
+      // rows alone, and neither line is exposure evidence; letting either inflate
+      // the reject count would make this read a permanent lower bound.
+      writeFileSync(
+        path.join(sessionsDirectory, 'invalid-only.jsonl'),
+        [
+          '{"timestamp":"2026-08-01T09:00:00.000Z","type":"response_item","payload":{"type":"custom_tool_call"',
+          '{"timestamp":"2026-08-01T09:00:00.000Z","type":"turn_context","payload":{"cwd"',
+          '{"unreadable":',
+        ].join('\n'),
+      );
 
       const finalSkillDocument = '/home/alex/.agents/skills/final-record/SKILL.md';
       writeFileSync(
@@ -2621,7 +2632,7 @@ Preserve the existing aggregation semantics.`,
       const warm = await runWithRealStorage(collectCodexResult, home);
 
       expect(cold.observationCompleteness).toEqual({
-        exposure: { rejected: 1, truncated: false },
+        exposure: { rejected: 0, truncated: false },
         invocation: { rejected: 1, truncated: false },
       });
       expect(warm.observationCompleteness).toEqual(cold.observationCompleteness);

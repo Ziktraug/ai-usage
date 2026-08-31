@@ -404,9 +404,10 @@ const isCodexToolCallPrefix = (prefix: string) =>
 /**
  * Codex injects its skill catalogue into a developer message, which the normal
  * event gate deliberately skips: those lines run to tens of kilobytes and
- * extracting every one of them across a full history sweep is not free. Every
- * non-empty line is still JSON-validated so a partial write cannot certify
- * either skill-observation channel as complete.
+ * extracting every one of them across a full history sweep is not free. A line
+ * that reaches this gate and then fails to parse is counted as unreadable
+ * exposure evidence, so a partial write of the catalogue cannot certify the
+ * exposure channel as complete.
  *
  * So the catalogue is admitted in two stages. The cheap prefix test below runs
  * on the first 300 bytes like every other gate; only a line that already looks
@@ -600,7 +601,10 @@ export const createCodexSessionParser = (captureDetail = false) => {
   let invocationSignalsTruncated = false;
   let unplacedExposureSignals = 0;
   let unplacedInvocationSignals = 0;
-  let unreadableSkillObservationLines = 0;
+  // Counted per channel, never shared: an unreadable line is lost skill
+  // evidence only for the channel it could have carried.
+  let unreadableExposureLines = 0;
+  let unreadableInvocationLines = 0;
   let lines = 0;
   let parsedLines = 0;
   let skippedLines = 0;
@@ -850,17 +854,35 @@ export const createCodexSessionParser = (captureDetail = false) => {
     lines++;
     const prefix = codexLinePrefix(line);
     const skillCatalogueLine = isCodexSkillCatalogueLine(prefix, line);
+    // A line the cheap prefix gate rejects is dropped without paying for a JSON
+    // parse: on a full history sweep that parse is the dominant cost, and a
+    // rejected line is not skill evidence to begin with. What a line that is
+    // admitted and then fails to parse costs, and to which channel, is decided
+    // below by shape rather than by admission.
     if (!(shouldParseCodexPrefix(prefix) || isCodexToolCallPrefix(prefix) || skillCatalogueLine)) {
-      if (!safeJSON(line)) {
-        unreadableSkillObservationLines++;
-      }
       skippedLines++;
       return;
     }
     parsedLines++;
     const event = safeJSON(line);
     if (!event) {
-      unreadableSkillObservationLines++;
+      // The prefix gate above serves the usage-row parser, so passing it is not
+      // evidence that this line could have carried a skill observation. A line
+      // admitted only by `shouldParseCodexPrefix` — token_count, session_meta,
+      // turn_context, a message, a reasoning block — cannot carry one at all,
+      // and calling its loss lost skill evidence would be false rather than
+      // merely uncertain. Only the two shapes that could have carried a signal
+      // fail closed, each on its own channel: a tool call could have been an
+      // exec reading a SKILL.md, and a developer message whose heading is still
+      // readable could have been the catalogue. A truncation that cut the
+      // heading away cannot be claimed as a catalogue, so it counts for
+      // nothing — the same direction of error the rest of this module takes.
+      if (isCodexToolCallPrefix(prefix)) {
+        unreadableInvocationLines++;
+      }
+      if (skillCatalogueLine) {
+        unreadableExposureLines++;
+      }
       return;
     }
     const payload = isRecord(event.payload) ? event.payload : {};
@@ -1070,19 +1092,13 @@ export const createCodexSessionParser = (captureDetail = false) => {
       const exposureCandidates = pendingCatalogue?.entries.length ?? 0;
       const invocationCandidates = pendingExecSignals.reduce((total, signal) => total + signal.entries.length, 0);
       const ceiling = codexSkillObservationCeiling();
-      session.rejectedSkillObservationRecords =
-        unreadableSkillObservationLines +
-        unplacedExposureSignals +
-        exposureCandidates +
-        unplacedInvocationSignals +
-        invocationCandidates;
+      const exposureRejected = unreadableExposureLines + unplacedExposureSignals + exposureCandidates;
+      const invocationRejected = unreadableInvocationLines + unplacedInvocationSignals + invocationCandidates;
+      session.rejectedSkillObservationRecords = exposureRejected + invocationRejected;
       session.skillObservationCompleteness = {
-        exposure: {
-          rejected: unreadableSkillObservationLines + unplacedExposureSignals + exposureCandidates,
-          truncated: exposureCandidates > ceiling,
-        },
+        exposure: { rejected: exposureRejected, truncated: exposureCandidates > ceiling },
         invocation: {
-          rejected: unreadableSkillObservationLines + unplacedInvocationSignals + invocationCandidates,
+          rejected: invocationRejected,
           truncated: invocationSignalsTruncated || invocationCandidates > ceiling,
         },
       };
@@ -1096,9 +1112,9 @@ export const createCodexSessionParser = (captureDetail = false) => {
     // an ambiguous catalogue never rewrites invocation evidence.
     const catalogueNamesByPath = new Map<string, string | null>();
     let exposureCandidates = 0;
-    let exposureRejected = unreadableSkillObservationLines + unplacedExposureSignals;
+    let exposureRejected = unreadableExposureLines + unplacedExposureSignals;
     let invocationCandidates = 0;
-    let invocationRejected = unreadableSkillObservationLines + unplacedInvocationSignals;
+    let invocationRejected = unreadableInvocationLines + unplacedInvocationSignals;
     if (pendingCatalogue) {
       exposureCandidates = pendingCatalogue.entries.length;
       for (const entry of pendingCatalogue.entries) {
@@ -1137,7 +1153,7 @@ export const createCodexSessionParser = (captureDetail = false) => {
     const ceiling = codexSkillObservationCeiling();
     const exposureTruncated = exposureCandidates > ceiling;
     const invocationTruncated = invocationSignalsTruncated || invocationCandidates > ceiling;
-    session.rejectedSkillObservationRecords = exposureRejected + invocationRejected - unreadableSkillObservationLines;
+    session.rejectedSkillObservationRecords = exposureRejected + invocationRejected;
     session.skillObservations = [
       ...exposureObservations.slice(0, ceiling),
       ...invocationObservations.slice(0, ceiling),

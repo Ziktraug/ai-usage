@@ -1,3 +1,5 @@
+import { COLLECTION_SWR_STALE_TIME_MS } from './policies';
+
 /**
  * Converts an absolute producer-proof deadline into TanStack's duration-from-`dataUpdatedAt`
  * stale-time model. Missing, malformed, or already-expired proof is stale immediately.
@@ -31,5 +33,3 @@ export const skillObservationProducerProofStatus = (input: {
   }
   return input.isStale ? 'expired' : 'current';
 };
-
-import { COLLECTION_SWR_STALE_TIME_MS } from './policies';

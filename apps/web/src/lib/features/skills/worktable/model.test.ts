@@ -195,3 +195,77 @@ describe('Skills worktable observation presentation', () => {
     );
   });
 });
+
+const syntheticTarget = (id: string, label: string, enabled = true) => ({
+  enabled,
+  id,
+  kind: 'standard-interop' as const,
+  label,
+  missing: false,
+  observed: true,
+  path: `/synthetic/runtime/${id}/skills`,
+  scope: 'system' as const,
+});
+
+const snapshotWithTargets = (targets: readonly ReturnType<typeof syntheticTarget>[]) => ({
+  ...syntheticSnapshot(),
+  targets,
+});
+
+const evidenceIn = (
+  row:
+    | {
+        readonly cells: readonly {
+          readonly columnKey: string;
+          readonly evidence: readonly { readonly text: string }[];
+        }[];
+      }
+    | undefined,
+  columnKey: string,
+) => row?.cells.find((cell) => cell.columnKey === columnKey)?.evidence.map((entry) => entry.text);
+
+describe('Skills worktable placement-target columns', () => {
+  test('resolves a declared target id to its harness, without a second column of the same label', () => {
+    const { model } = projection(
+      syntheticObservations,
+      undefined,
+      snapshotWithTargets([syntheticTarget('claude-code', 'Claude Code')]),
+    );
+
+    expect(model.columns.find((column) => column.key === 'target:claude-code')?.harnessKey).toBe('claude');
+    expect(model.columns.filter((column) => column.label === 'Claude Code')).toHaveLength(1);
+    expect(
+      evidenceIn(
+        model.managedRows.find((row) => row.name === 'alpha-skill'),
+        'target:claude-code',
+      ),
+    ).toEqual(['2']);
+  });
+
+  test('gives an unrecognised target id no harness even when its label matches one', () => {
+    const { model } = projection(
+      syntheticObservations,
+      undefined,
+      snapshotWithTargets([syntheticTarget('team-codex', 'Codex')]),
+    );
+    const alpha = model.managedRows.find((row) => row.name === 'alpha-skill');
+
+    expect(model.columns.find((column) => column.key === 'target:team-codex')?.harnessKey).toBeUndefined();
+    expect(evidenceIn(alpha, 'target:team-codex')).toEqual([]);
+    expect(evidenceIn(alpha, 'harness:codex')).toEqual(['~1']);
+  });
+
+  test('keeps a column for every observable harness no enabled target claims', () => {
+    const { model } = projection(
+      syntheticObservations,
+      undefined,
+      snapshotWithTargets([syntheticTarget('codex', 'Codex'), syntheticTarget('opencode', 'OpenCode', false)]),
+    );
+
+    expect(model.columns.map((column) => [column.key, column.harnessKey])).toEqual([
+      ['target:codex', 'codex'],
+      ['harness:claude', 'claude'],
+      ['harness:opencode', 'opencode'],
+    ]);
+  });
+});

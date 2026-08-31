@@ -218,18 +218,38 @@ const evidenceFor = (
   ];
 };
 
+/**
+ * Placement target id → observable harness key, for the ids that do not already spell the key.
+ *
+ * Declared, not inferred. The join used to fall back to a case-insensitive comparison of the two
+ * display labels, which made which-counts-land-in-which-column a function of display copy: rename
+ * either label and the counts do not disappear, they split into a second column carrying an
+ * identical label, because `buildColumns` appends every observable harness no target claimed. Two
+ * identically-labelled columns is a silent presentation defect — nothing errors, the reader just
+ * sees one harness twice. A label match could never help a custom target either, since a custom
+ * target's label is title-cased from its own id (`targetLabelFor`), so `my-claude` reads
+ * `My Claude` and matches nothing. An id this table does not name resolves to no harness.
+ *
+ * The table belongs here, in the presentation layer: `@ai-usage/skills` deliberately does not
+ * depend on `@ai-usage/report-core`, so neither package can own the correspondence between a
+ * placement target and a harness.
+ */
+const HARNESS_KEY_BY_TARGET_ID: ReadonlyMap<string, string> = new Map([['claude-code', 'claude']]);
+
 const buildColumns = (
   snapshot: SkillManagementSnapshot,
   view: SkillObservationsView | undefined,
 ): readonly SkillsWorktableColumn[] => {
   const harnesses = view?.observableHarnesses ?? [];
-  const harnessFor = (targetId: string, label: string): string | undefined =>
-    harnesses.find((harness) => harness.harnessKey === targetId || harness.label.toLowerCase() === label.toLowerCase())
-      ?.harnessKey;
+  // A target id equal to a harness key resolves to that harness; anything else must be declared.
+  const harnessFor = (targetId: string): string | undefined => {
+    const harnessKey = HARNESS_KEY_BY_TARGET_ID.get(targetId) ?? targetId;
+    return harnesses.find((harness) => harness.harnessKey === harnessKey)?.harnessKey;
+  };
   const targetColumns = snapshot.targets
     .filter((target) => target.enabled)
     .map((target) => ({
-      harnessKey: harnessFor(target.id, target.label),
+      harnessKey: harnessFor(target.id),
       key: `target:${target.id}`,
       label: target.label,
       targetId: target.id,

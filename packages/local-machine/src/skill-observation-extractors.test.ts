@@ -4,6 +4,7 @@ import {
   setClaudeSkillObservationCeilingForTesting,
 } from '@ai-usage/local-machine/claude-session-facts';
 import {
+  CODEX_AVAILABLE_SKILLS_HEADING,
   codexSkillCatalogueObservations,
   decodeCodexCommand,
   decodeCodexCommands,
@@ -288,16 +289,57 @@ describe('Codex per-session ceiling', () => {
     type: 'session_meta',
   };
 
-  test('marks every non-empty malformed JSONL line as incomplete for both skill channels', () => {
+  const completenessAfterMalformedLine = (malformed: string) => {
     const parser = createCodexSessionParser(false);
     parser.visit(JSON.stringify(sessionMeta));
-    // The malformed line carries no readable prefix. Neither producer can
-    // prove it contained no signal, so both channels must fail closed.
-    parser.visit('{"unreadable":');
+    parser.visit(malformed);
+    return parser.finish().session.skillObservationCompleteness;
+  };
 
-    expect(parser.finish().session.skillObservationCompleteness).toEqual({
-      exposure: { rejected: 1, truncated: false },
+  test('charges a malformed tool call to the invocation channel alone', () => {
+    // The readable head already declares an exec-shaped tool call, so the lost
+    // remainder could have been a SKILL.md read. It could not have been the
+    // catalogue, and claiming otherwise would make exposure a lower bound on
+    // evidence it never had.
+    expect(
+      completenessAfterMalformedLine(
+        '{"timestamp":"2026-08-01T09:01:00.000Z","type":"response_item","payload":{"type":"custom_tool_call"',
+      ),
+    ).toEqual({
+      exposure: { rejected: 0, truncated: false },
       invocation: { rejected: 1, truncated: false },
+    });
+  });
+
+  test('charges a malformed catalogue line to the exposure channel alone', () => {
+    // The heading survived the truncation, so this line was the catalogue and
+    // its unread entries are lost exposure evidence — but no exec ran here.
+    expect(
+      completenessAfterMalformedLine(
+        `{"timestamp":"2026-08-01T09:01:00.000Z","type":"response_item","payload":{"role":"developer","type":"message","content":[{"type":"input_text","text":"${CODEX_AVAILABLE_SKILLS_HEADING}\\n- tdd:`,
+      ),
+    ).toEqual({
+      exposure: { rejected: 1, truncated: false },
+      invocation: { rejected: 0, truncated: false },
+    });
+  });
+
+  test('leaves both channels complete for a malformed line admitted only for usage rows', () => {
+    // `turn_context` is parsed for model and effort, never for skills. Losing it
+    // loses no skill evidence, and counting it would make every Codex session
+    // that ever suffered a partial write a permanent lower bound.
+    expect(
+      completenessAfterMalformedLine('{"timestamp":"2026-08-01T09:01:00.000Z","type":"turn_context","payload":{"cwd"'),
+    ).toEqual({
+      exposure: { rejected: 0, truncated: false },
+      invocation: { rejected: 0, truncated: false },
+    });
+  });
+
+  test('leaves both channels complete for a malformed line the prefix gate never admitted', () => {
+    expect(completenessAfterMalformedLine('{"unreadable":')).toEqual({
+      exposure: { rejected: 0, truncated: false },
+      invocation: { rejected: 0, truncated: false },
     });
   });
 

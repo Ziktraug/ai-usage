@@ -140,7 +140,12 @@ interface SqliteDatabase {
 // completeness, and distinct rejection diagnostics now produce different skill
 // facts. Older versions would preserve missing, incorrectly named, falsely
 // complete, or double-counted results for an unchanged rollout.
-const CODEX_SESSION_CACHE_VERSION = 21;
+// Bumped to 22 because an unreadable line is now charged only to the channel it
+// could have carried — invocation for a tool call, exposure for a catalogue,
+// neither for a line admitted only for usage rows. A version 21 entry carries
+// reject counts inflated by lines that could never have held a skill signal, and
+// reusing it would keep reporting a complete read as a lower bound.
+const CODEX_SESSION_CACHE_VERSION = 22;
 
 const THREAD_SPAWN_EDGES_SQL = `
 select parent_thread_id as parent, child_thread_id as child

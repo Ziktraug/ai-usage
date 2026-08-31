@@ -43,8 +43,10 @@ window; invocation evidence needs a durable record.
    invented proof. Missing, malformed, stale, disabled, rejected, or truncated
    producer state keeps the relevant evidence provisional. Collection-state
    reads are bounded and report overflow as incompleteness. Malformed collector
-   input contributes to the persisted rejection count instead of disappearing
-   before that answer is written.
+   input that could have carried a skill signal contributes to the persisted
+   rejection count — on the channel it could have carried it for — instead of
+   disappearing before that answer is written. Input that could not have carried
+   one is not counted as lost skill evidence.
 
 3. **The browser expires evidence independently from refetch completion.** The
    named `collection-swr` policy keeps its one-minute refetch interval, focus
