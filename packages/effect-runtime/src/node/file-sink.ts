@@ -34,6 +34,17 @@ interface OwnedAppendHandle {
   readonly stat: () => Promise<{ readonly isFile: () => boolean; readonly nlink: number }>;
 }
 
+interface OwnedAppendFileHandle extends OwnedAppendHandle {
+  readonly close: () => Promise<void>;
+}
+
+type OpenOwnedAppendHandle = (filePath: string, flags: number, mode: number) => Promise<OwnedAppendFileHandle>;
+
+interface OwnedFileAppendOptions {
+  readonly markProgress?: () => void;
+  readonly openHandle?: OpenOwnedAppendHandle;
+}
+
 export interface FileWideEventSinkOptions {
   readonly appendLine?: AppendLine;
   readonly appendTimeoutMs?: number;
@@ -100,18 +111,32 @@ const compareFileSequence = (left: string, right: string): number => {
 };
 
 const withTimeout = async (
-  operation: (signal: AbortSignal) => Promise<void>,
+  operation: (signal: AbortSignal, markProgress: () => void) => Promise<void>,
   timeoutMs: number,
   registerExternalAbort: (abort: (() => void) | undefined) => void,
   onTimeout: () => void,
 ): Promise<void> => {
   const controller = new AbortController();
+  let deadlineCheck: ReturnType<typeof setImmediate> | undefined;
+  let progressTurn: ReturnType<typeof setTimeout> | undefined;
+  let operationSettled = false;
+  let progressVersion = 0;
   let timeout: ReturnType<typeof setTimeout> | undefined;
   const runOperation = async (): Promise<void> => {
     await Promise.resolve();
-    await operation(controller.signal);
+    await operation(controller.signal, () => {
+      progressVersion += 1;
+    });
   };
   const pending = runOperation();
+  pending.then(
+    () => {
+      operationSettled = true;
+    },
+    () => {
+      operationSettled = true;
+    },
+  );
   let rejectCancellation!: (error: Error) => void;
   const cancellation = new Promise<never>((_resolve, reject) => {
     rejectCancellation = reject;
@@ -122,8 +147,27 @@ const withTimeout = async (
   };
   registerExternalAbort(() => abort(new AppendInterruptedError('Wide-event file append interrupted by shutdown')));
   timeout = setTimeout(() => {
-    onTimeout();
-    abort(new AppendBlockedError(`Wide-event file append exceeded ${timeoutMs}ms`));
+    let observedProgressVersion = progressVersion;
+    // Give filesystem callbacks that were already ready at the deadline one full poll turn.
+    // Only the owned-file appender receives this marker, and its five I/O stages bound the grace.
+    const scheduleProgressTurn = (): void => {
+      progressTurn = setTimeout(() => {
+        deadlineCheck = setImmediate(checkDeadline);
+      }, 0);
+    };
+    const checkDeadline = (): void => {
+      if (operationSettled) {
+        return;
+      }
+      if (progressVersion !== observedProgressVersion) {
+        observedProgressVersion = progressVersion;
+        scheduleProgressTurn();
+        return;
+      }
+      onTimeout();
+      abort(new AppendBlockedError(`Wide-event file append exceeded ${timeoutMs}ms`));
+    };
+    scheduleProgressTurn();
   }, timeoutMs);
   try {
     await Promise.race([pending, cancellation]);
@@ -136,6 +180,12 @@ const withTimeout = async (
     throw error;
   } finally {
     registerExternalAbort(undefined);
+    if (deadlineCheck !== undefined) {
+      clearImmediate(deadlineCheck);
+    }
+    if (progressTurn !== undefined) {
+      clearTimeout(progressTurn);
+    }
     if (timeout !== undefined) {
       clearTimeout(timeout);
     }
@@ -209,23 +259,39 @@ export const appendLineToOwnedHandle = async (
   filePath: string,
   line: string,
   signal: AbortSignal,
+  markProgress: () => void = () => undefined,
 ): Promise<void> => {
   const metadata = await handle.stat();
+  markProgress();
   if (!(metadata.isFile() && metadata.nlink === 1)) {
     throw new Error(`Refusing unsafe wide-event log file: ${filePath}`);
   }
   await handle.chmod(0o600);
+  markProgress();
   await handle.appendFile(line, { encoding: 'utf8', signal });
+  markProgress();
 };
 
-export const appendLineToOwnedFile: AppendLine = async (filePath, line, signal) => {
+export const appendLineToOwnedFile = async (
+  filePath: string,
+  line: string,
+  signal: AbortSignal,
+  options: OwnedFileAppendOptions = {},
+): Promise<void> => {
+  if (signal.aborted) {
+    throw new Error('Wide-event file append interrupted');
+  }
+  const markProgress = options.markProgress ?? (() => undefined);
+  const openHandle = options.openHandle ?? open;
   // biome-ignore lint/suspicious/noBitwiseOperators: open flags are OR'd intentionally
   const flags = constants.O_APPEND | constants.O_CREAT | constants.O_NOFOLLOW | constants.O_WRONLY;
-  const handle = await open(filePath, flags, 0o600);
+  const handle = await openHandle(filePath, flags, 0o600);
+  markProgress();
   try {
-    await appendLineToOwnedHandle(handle, filePath, line, signal);
+    await appendLineToOwnedHandle(handle, filePath, line, signal, markProgress);
   } finally {
     await handle.close();
+    markProgress();
   }
 };
 
@@ -236,7 +302,12 @@ export const createFileWideEventSink = (
   readonly dispose: () => Promise<void>;
 } => {
   const directory = options.directory;
-  const appendLine = options.appendLine ?? appendLineToOwnedFile;
+  const configuredAppendLine = options.appendLine;
+  const appendLine =
+    configuredAppendLine === undefined
+      ? (filePath: string, line: string, signal: AbortSignal, markProgress: () => void) =>
+          appendLineToOwnedFile(filePath, line, signal, { markProgress })
+      : (filePath: string, line: string, signal: AbortSignal) => configuredAppendLine(filePath, line, signal);
   const appendTimeoutMs = options.appendTimeoutMs ?? DEFAULT_APPEND_TIMEOUT_MS;
   const drainTimeoutMs = options.drainTimeoutMs ?? DEFAULT_DRAIN_TIMEOUT_MS;
   const lockTimeoutMs = options.lockTimeoutMs ?? DEFAULT_LOCK_TIMEOUT_MS;
@@ -327,7 +398,7 @@ export const createFileWideEventSink = (
         assertSafeRegularFilePath(target);
         // Timeout covers filesystem I/O only; lock wait is bounded separately.
         await withTimeout(
-          (signal) => appendLine(target, line, signal),
+          (signal, markProgress) => appendLine(target, line, signal, markProgress),
           appendTimeoutMs,
           (abort) => {
             abortActiveAppend = abort;

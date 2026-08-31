@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import {
   chmodSync,
+  constants,
+  existsSync,
+  linkSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
@@ -17,7 +20,12 @@ import { Effect } from 'effect';
 import { runBoundaryEffect } from '../boundary';
 import type { WideEventSnapshot } from '../model';
 import { makeTestWideEventSinkLayer } from '../sink';
-import { appendLineToOwnedHandle, createFileWideEventSink, type FileWideEventWarning } from './file-sink';
+import {
+  appendLineToOwnedFile,
+  appendLineToOwnedHandle,
+  createFileWideEventSink,
+  type FileWideEventWarning,
+} from './file-sink';
 import { acquireCooperativeLock, ensureOwnedLogDirectory, withCooperativeLock } from './lock';
 import { resolveWideEventLogDirectory } from './resolve-log-dir';
 
@@ -133,6 +141,115 @@ describe('node wide-event sinks', () => {
     expect(operations).toEqual(['chmod']);
   });
 
+  test('opens with no-follow and closes after rejecting an unsafe owned handle', async () => {
+    let closed = false;
+    let openedFlags = 0;
+    let repaired = false;
+    let wrote = false;
+
+    await expect(
+      appendLineToOwnedFile('/fixture/wide-events.ndjson', 'sensitive\n', new AbortController().signal, {
+        openHandle: (_filePath, flags, mode) => {
+          openedFlags = flags;
+          expect(mode).toBe(0o600);
+          return Promise.resolve({
+            appendFile: () => {
+              wrote = true;
+              return Promise.resolve();
+            },
+            chmod: () => {
+              repaired = true;
+              return Promise.resolve();
+            },
+            close: () => {
+              closed = true;
+              return Promise.resolve();
+            },
+            stat: () => Promise.resolve({ isFile: () => true, nlink: 2 }),
+          });
+        },
+      }),
+    ).rejects.toThrow('Refusing unsafe wide-event log file');
+
+    // biome-ignore lint/suspicious/noBitwiseOperators: verifies the security-critical open flag.
+    expect(openedFlags & constants.O_NOFOLLOW).toBe(constants.O_NOFOLLOW);
+    expect({ closed, repaired, wrote }).toEqual({ closed: true, repaired: false, wrote: false });
+  });
+
+  test('keeps the event loop responsive and the circuit bounded while pre-write open is pending', async () => {
+    const directory = makeTempDir();
+    let markOpenStarted!: () => void;
+    const openStarted = new Promise<void>((resolve) => {
+      markOpenStarted = resolve;
+    });
+    let releaseOpen!: () => void;
+    const openBlocked = new Promise<void>((resolve) => {
+      releaseOpen = resolve;
+    });
+    let markAppendTimedOut!: () => void;
+    const appendTimedOut = new Promise<void>((resolve) => {
+      markAppendTimedOut = resolve;
+    });
+    const sink = createFileWideEventSink({
+      appendLine: (filePath, line, signal) =>
+        appendLineToOwnedFile(filePath, line, signal, {
+          openHandle: async () => {
+            markOpenStarted();
+            await openBlocked;
+            return {
+              appendFile: () => Promise.resolve(),
+              chmod: () => Promise.resolve(),
+              close: () => Promise.resolve(),
+              stat: () => Promise.resolve({ isFile: () => true, nlink: 1 }),
+            };
+          },
+        }),
+      appendTimeoutMs: 20,
+      directory,
+      warn: ({ kind }) => {
+        if (kind === 'append-timeout') {
+          markAppendTimedOut();
+        }
+      },
+    });
+
+    await Effect.runPromise(sink.submit(sampleEvent('blocked-open')));
+    await openStarted;
+    const outcome = await Promise.race([
+      appendTimedOut.then(() => 'timed-out' as const),
+      Bun.sleep(100).then(() => 'event-loop-blocked' as const),
+    ]);
+
+    expect(outcome).toBe('timed-out');
+    expect(await withCooperativeLock(directory, async () => 'acquired', 20)).toBeNull();
+    releaseOpen();
+    await sink.drain();
+    expect(await withCooperativeLock(directory, async () => 'acquired', 200)).toBe('acquired');
+    expect(await Effect.runPromise(sink.diagnostics())).toEqual({ accepted: 0, dropped: 0, failed: 1 });
+    await sink.dispose();
+  });
+
+  test('refuses symlink and multi-link log files without changing their targets', async () => {
+    const directory = makeTempDir();
+    const target = path.join(directory, 'target.ndjson');
+    const symbolic = path.join(directory, 'symbolic.ndjson');
+    const hard = path.join(directory, 'hard.ndjson');
+    writeFileSync(target, 'existing\n', { mode: 0o600 });
+    try {
+      symlinkSync(target, symbolic);
+      linkSync(target, hard);
+    } catch {
+      // Skip on platforms without link permission.
+      return;
+    }
+
+    await expect(appendLineToOwnedFile(symbolic, 'symlink-write\n', new AbortController().signal)).rejects.toThrow();
+    await expect(appendLineToOwnedFile(hard, 'hardlink-write\n', new AbortController().signal)).rejects.toThrow(
+      'Refusing unsafe wide-event log file',
+    );
+    expect(readFileSync(target, 'utf8')).toBe('existing\n');
+  });
+
   test('rejects symlink log directories', () => {
     const root = makeTempDir();
     const real = path.join(root, 'real');
@@ -187,6 +304,60 @@ describe('node wide-event sinks', () => {
     await Effect.runPromise(sink.submit(sampleEvent('after')));
     const diagnostics = await Effect.runPromise(sink.diagnostics());
     expect(diagnostics.failed + diagnostics.dropped).toBeGreaterThan(0);
+    await sink.dispose();
+  });
+
+  test('finishes an engaged local append across one busy event-loop interval', async () => {
+    const directory = makeTempDir();
+    const filePath = path.join(directory, 'wide-events-2026-07-21.ndjson');
+    const warnings: FileWideEventWarning[] = [];
+    const sink = createFileWideEventSink({
+      appendTimeoutMs: 40,
+      directory,
+      now: () => new Date('2026-07-21T12:00:00.000Z'),
+      warn: (warning) => warnings.push(warning),
+    });
+
+    await Effect.runPromise(sink.submit(sampleEvent('busy-loop')));
+    for (let attempts = 0; attempts < 100 && !existsSync(filePath); attempts++) {
+      await Bun.sleep(1);
+    }
+    expect(existsSync(filePath)).toBe(true);
+
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 80);
+    await sink.drain();
+
+    expect(warnings).toEqual([]);
+    expect(await Effect.runPromise(sink.diagnostics())).toEqual({ accepted: 1, dropped: 0, failed: 0 });
+    expect(readFileSync(filePath, 'utf8')).toContain('busy-loop');
+    await sink.dispose();
+  });
+
+  test('lets an engaged append callback settle before a delayed timeout check', async () => {
+    const directory = makeTempDir();
+    let markAppendEngaged!: () => void;
+    const appendEngaged = new Promise<void>((resolve) => {
+      markAppendEngaged = resolve;
+    });
+    const warnings: FileWideEventWarning[] = [];
+    const sink = createFileWideEventSink({
+      appendLine: () =>
+        new Promise<void>((resolve) => {
+          markAppendEngaged();
+          setTimeout(resolve, 40);
+        }),
+      appendTimeoutMs: 40,
+      directory,
+      warn: (warning) => warnings.push(warning),
+    });
+
+    await Effect.runPromise(sink.submit(sampleEvent('engaged-before-stall')));
+    await appendEngaged;
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 80);
+    await sink.drain();
+
+    expect(warnings).toEqual([]);
+    expect(await Effect.runPromise(sink.diagnostics())).toEqual({ accepted: 1, dropped: 0, failed: 0 });
     await sink.dispose();
   });
 
