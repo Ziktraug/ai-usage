@@ -35,6 +35,22 @@ export type SkillObservability = 'observable' | 'not-observable';
 /** Harnesses with a skill-observation collector. Cursor is deliberately absent. */
 export const SKILL_OBSERVATION_OBSERVABLE_HARNESS_KEYS = ['claude', 'codex', 'opencode'] as const;
 
+/** Maximum age at which a producer answer may still underwrite an absence claim. */
+export const SKILL_OBSERVATION_PRODUCER_MAX_AGE_MS = 5 * 60 * 1000;
+/**
+ * Active browser revalidation cadence for the time-bounded producer proof.
+ * The engine normally sweeps once per minute, so this also picks up a completed
+ * sweep promptly when publication invalidation is unavailable.
+ */
+export const SKILL_OBSERVATION_PRODUCER_REVALIDATION_MS = 60 * 1000;
+/**
+ * Oldest producer answer a new server read accepts. The remaining minute is
+ * reserved for browser caching, so a response cannot extend a five-minute
+ * producer proof with a second five-minute cache window.
+ */
+export const SKILL_OBSERVATION_PRODUCER_READ_MAX_AGE_MS =
+  SKILL_OBSERVATION_PRODUCER_MAX_AGE_MS - SKILL_OBSERVATION_PRODUCER_REVALIDATION_MS;
+
 const OBSERVABLE_HARNESSES: ReadonlySet<string> = new Set(SKILL_OBSERVATION_OBSERVABLE_HARNESS_KEYS);
 
 export const skillObservabilityFor = (harnessKey: string): SkillObservability =>
@@ -49,6 +65,7 @@ export const skillObservabilityFor = (harnessKey: string): SkillObservability =>
 export interface SkillObservationEvidence {
   readonly invocationLowerBound: boolean;
   readonly lowerBound: boolean;
+  /** At least one expected producer lacks usable current state; rejection/truncation stay separate. */
   readonly producerCompletenessMissing: boolean;
   readonly skipped: number;
 }

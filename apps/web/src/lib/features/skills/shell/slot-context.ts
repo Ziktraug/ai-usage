@@ -5,14 +5,6 @@ import type { SkillsPresentationProjection } from '../presentation';
 import type { SkillsShellViewModel } from './model';
 import type { SkillsDraftGuardPort } from './snapshot-controller';
 
-/**
- * Where the health slot is being rendered. `summary` is the synthesis band above the SKILL.md
- * editor on a skill detail: the same facts and operations the inspector carries, compacted so
- * state, exposure, skill signals, and the verdict are readable before any scrolling — including in
- * the 768–1279px band where the inspector column drops below the page content.
- */
-export type SkillsHealthSlotPlacement = 'detail' | 'inspector' | 'summary';
-
 export interface SkillsPendingSnapshotDecision {
   readonly discard: () => Promise<boolean>;
   readonly focus: () => void;

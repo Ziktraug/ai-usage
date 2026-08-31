@@ -69,19 +69,10 @@
 )}
   <section aria-label="Synthetic health slot">Health integration · {_context.snapshot.summary.skillCount}</section>
 {/snippet}
-{#snippet matrixSlot(
-  _context: SkillsShellSlotContext,
-)}
-  <section aria-label="Synthetic matrix slot">
-    Matrix integration · {_context.snapshotUpdates.pendingDecision ? 'pending' : 'settled'}
-  </section>
-{/snippet}
-
 <SkillsWorkspace
   {editorSlot}
   {healthSlot}
   {management}
-  {matrixSlot}
   {presentation}
   {selectedDocument}
   snapshot={view.snapshot}

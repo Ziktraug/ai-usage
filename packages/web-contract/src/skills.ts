@@ -439,8 +439,13 @@ const skillObservationsShapeSchema = strictObject({
   invocationLowerBound: boolean(),
   /** The read stopped at its bound, so every count is a lower bound rather than a number. */
   lowerBound: boolean(),
-  /** No observable producer has persisted a completeness answer for this collection yet. */
+  /** At least one expected producer lacks usable current state (missing, stale, disabled, or omitted). */
   producerCompletenessMissing: boolean(),
+  /**
+   * End-to-end expiry of the producer-completeness proof behind this response. `null` explicitly
+   * means no time-bounded proof is available; consumers must then qualify absence as provisional.
+   */
+  producerProofValidUntil: nullable(observationTimestampSchema),
   skills: pipe(array(observedSkillSchema), maxLength(MAX_COLLECTION_ITEMS)),
   /** Persisted rows the reader could not re-validate. Reported, never folded into a count. */
   skipped: nonNegativeFiniteNumberSchema,

@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, setSystemTime, test } from 'bun:test';
 import type { SkillManagementSnapshot as DomainSkillManagementSnapshot } from '@ai-usage/skills';
 import type {
   ProjectSkillMarkdownDocument,
@@ -6,6 +6,7 @@ import type {
   SkillManagementSnapshot,
   SkillMarkdownDocument,
   SkillMarkdownSaveResult,
+  SkillObservations,
 } from '@ai-usage/web-contract/skills';
 import { QueryObserver } from '@tanstack/svelte-query';
 import type { SkillsClientResult } from '../../rpc/skills-client';
@@ -24,6 +25,7 @@ import {
   type SkillsQueryClient,
   type SkillsQueryError,
   skillObservationsKey,
+  skillObservationsQueryOptions,
   skillsKnownProjectPathsKey,
   skillsKnownProjectPathsQueryOptions,
   skillsProjectInventoriesKey,
@@ -81,7 +83,21 @@ const projectMarkdownInput = {
   skillName: 'review',
 } as const satisfies ProjectSkillMarkdownInput;
 
+const producerProofPayload = (producerProofValidUntil: string | null): SkillObservations => ({
+  harnesses: [{ harnessKey: 'claude', label: 'Claude Code', observability: 'observable' }],
+  invocationLowerBound: false,
+  lowerBound: false,
+  producerCompletenessMissing: false,
+  producerProofValidUntil,
+  skills: [],
+  skipped: 0,
+});
+
 describe('Skills query options', () => {
+  afterEach(() => {
+    setSystemTime();
+  });
+
   test('QUERY-SKILLS-SNAPSHOT: uses separate finite SWR keys and explicit browser enablement', async () => {
     const calls: string[] = [];
     const signals: AbortSignal[] = [];
@@ -400,9 +416,8 @@ describe('Skills query options', () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(fetches).toBe(1);
 
-    // The policy revalidates on nothing a browser does, so without this the surface would show its
-    // first paint for as long as the tab stayed open. A publication is the engine saying the cycle
-    // that writes observations has finished, which is the only event that can change them.
+    // Publication remains the prompt path: it refreshes as soon as the engine finishes the cycle
+    // that writes observations rather than waiting for the temporal-proof policy to revalidate.
     for (const queryKey of publicationInvalidatedKeys()) {
       await queryClient.invalidateQueries({ exact: true, queryKey });
     }
@@ -444,6 +459,68 @@ describe('Skills query options', () => {
 
     expect(fetches).toBe(2);
     returnToSkills();
+    queryClient.clear();
+  });
+
+  test('QUERY-SKILL-OBSERVATION-FRESHNESS: remount revalidates a still-fresh producer proof', async () => {
+    const queryClient = createWebQueryClient();
+    let fetches = 0;
+    const observerOptions = {
+      ...webQueryPolicies.collectionSwr,
+      queryFn: () => {
+        fetches += 1;
+        return { fetches };
+      },
+      queryKey: skillObservationsKey(),
+    };
+
+    const first = new QueryObserver(queryClient, observerOptions);
+    const leaveSkills = first.subscribe(() => undefined);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(fetches).toBe(1);
+    leaveSkills();
+
+    // Remounting just before the one-minute stale boundary resets TanStack's interval. The mount
+    // must therefore fetch even while the cached answer is still fresh, or the old proof can stay
+    // visible for nearly a second cache interval after its five-minute producer budget expires.
+    const second = new QueryObserver(queryClient, observerOptions);
+    const returnToSkills = second.subscribe(() => undefined);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(fetches).toBe(2);
+    returnToSkills();
+    queryClient.clear();
+  });
+
+  test('QUERY-SKILL-OBSERVATION-PROOF: cached data becomes stale at its server deadline', () => {
+    const queryClient = createWebQueryClient();
+    const baseTime = Date.parse('2026-08-01T10:00:00.000Z');
+    const deadline = '2026-08-01T10:00:30.000Z';
+    queryClient.setQueryData(skillObservationsKey(), producerProofPayload(deadline), { updatedAt: baseTime });
+    const options = skillObservationsQueryOptions(skillsClient(), { browser: true, enabled: true });
+
+    setSystemTime(new Date(baseTime + 29_999));
+    expect(new QueryObserver(queryClient, options).getCurrentResult().isStale).toBe(false);
+
+    setSystemTime(new Date(baseTime + 30_000));
+    expect(new QueryObserver(queryClient, options).getCurrentResult().isStale).toBe(true);
+    queryClient.clear();
+  });
+
+  test('QUERY-SKILL-OBSERVATION-PROOF: a response completed after its deadline is stale immediately', () => {
+    const queryClient = createWebQueryClient();
+    const completedAt = Date.parse('2026-08-01T10:02:00.000Z');
+    queryClient.setQueryData(skillObservationsKey(), producerProofPayload('2026-08-01T10:01:00.000Z'), {
+      updatedAt: completedAt,
+    });
+    setSystemTime(new Date(completedAt));
+
+    const observer = new QueryObserver(
+      queryClient,
+      skillObservationsQueryOptions(skillsClient(), { browser: true, enabled: true }),
+    );
+
+    expect(observer.getCurrentResult().isStale).toBe(true);
     queryClient.clear();
   });
 });

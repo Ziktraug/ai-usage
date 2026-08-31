@@ -46,10 +46,14 @@ export const skillTreeSelectionFromUrl = (
   return skillSelectionFromPath(parsed.pathname, knownProjects);
 };
 
+/**
+ * Where a URL naming a skill that is not here lands: the worktable, which lists every skill that
+ * does exist. Before plan 113 this went to the global scope page, which no longer exists.
+ */
 export const skillsFallbackIntent = (currentUrl: string | URL): NavigationIntent => ({
   replace: true,
   resetScroll: false,
-  url: destinationUrl(currentUrl, '/skills/global'),
+  url: destinationUrl(currentUrl, '/skills'),
 });
 
 const destinationUrl = (currentUrl: string | URL, pathname: string): URL => {

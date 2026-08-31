@@ -2,7 +2,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createSkillsConfigStore } from '@ai-usage/local-machine/skills-config';
 import { readLocalSourcePolicyOverrides } from '@ai-usage/local-machine/source-policy-config';
-import { skillObservabilityFor } from '@ai-usage/report-core/skill-observation';
+import {
+  SKILL_OBSERVATION_OBSERVABLE_HARNESS_KEYS,
+  SKILL_OBSERVATION_PRODUCER_READ_MAX_AGE_MS,
+} from '@ai-usage/report-core/skill-observation-evidence';
 import type { SkillObservationDataset } from '@ai-usage/report-core/skill-observation-summary';
 import { enabledSessionHarnessKeys, type SourcePolicyOverrides } from '@ai-usage/report-core/source-control';
 import type {
@@ -298,7 +301,11 @@ export const projectSkillScanPathsFrom = (
   skillsConfig: SkillManagementConfig,
   knownProjectPaths: readonly Pick<KnownSkillProjectPath, 'path'>[],
 ): readonly string[] => [
-  ...new Set([...(skillsConfig.projectPaths ?? []), ...knownProjectPaths.map((projectPath) => projectPath.path)]),
+  ...new Set(
+    [...(skillsConfig.projectPaths ?? []), ...knownProjectPaths.map((projectPath) => projectPath.path)].map(
+      (projectPath) => path.resolve(projectPath),
+    ),
+  ),
 ];
 
 const localDirectoryExists = (projectPath: string) => {
@@ -388,16 +395,22 @@ export const createSkillsServerAdapter = (dependencies: SkillsServerAdapterDepen
     // than shipping two half-answers to the browser to reconcile.
     readObservations: () =>
       runAdapterOperation(async () => {
-        const [snapshot, observations, knownProjectPaths] = await Promise.all([
+        const [snapshot, observations, knownProjectPaths, projectInventories] = await Promise.all([
           application.readSnapshot(),
           dependencies.readSkillObservations(),
           readKnownProjectPaths(),
+          application.readProjectInventories(),
         ]);
         return joinSkillObservations({
           observations,
           // The same roots the project scan walks, so "project-owned" and the project tree agree
           // on what counts as a project.
           projectPathPrefixes: projectSkillScanPathsFrom(snapshot.config, knownProjectPaths),
+          projectSkillNames: [
+            ...new Set(
+              projectInventories.flatMap((inventory) => inventory.observations.map((observation) => observation.name)),
+            ),
+          ],
           projections: snapshot.projections,
           skills: snapshot.skills,
           targets: snapshot.targets,
@@ -435,6 +448,7 @@ export const createSkillsServerDependencies = (
   options: {
     configCwd?: string;
     homePath?: string;
+    now?: () => Date;
     readModel?: Pick<UsageReadModel, 'readCurrentLocalProjectSources' | 'readLocalMachine' | 'readSkillObservations'>;
     readSourcePolicyOverrides?: () => Promise<SourcePolicyOverrides>;
   } = {},
@@ -454,6 +468,7 @@ export const createSkillsServerDependencies = (
       : createSqliteUsageReadModel({ dbPath: usageStorePath(configStore.homePath) }));
   const readSourcePolicyOverrides =
     options.readSourcePolicyOverrides ?? (() => readLocalSourcePolicyOverrides(configStore.homePath));
+  const now = options.now ?? (() => new Date());
   const readKnownProjectSources: SkillsServerAdapterDependencies['readKnownProjectSources'] = async () => {
     try {
       const result = await readModel.readCurrentLocalProjectSources();
@@ -496,12 +511,19 @@ export const createSkillsServerDependencies = (
         readModel.readLocalMachine(),
         readSourcePolicyOverrides(),
       ]);
-      const expectedProducerHarnessKeys = enabledSessionHarnessKeys(sourcePolicies).filter(
-        (harnessKey) => skillObservabilityFor(harnessKey) === 'observable',
+      const enabledHarnessKeys = new Set(enabledSessionHarnessKeys(sourcePolicies));
+      const expectedProducerHarnessKeys = SKILL_OBSERVATION_OBSERVABLE_HARNESS_KEYS;
+      const incompleteProducerHarnessKeys = expectedProducerHarnessKeys.filter(
+        (harnessKey) => !enabledHarnessKeys.has(harnessKey),
       );
+      const minimumProducerCollectedAt = new Date(
+        now().getTime() - SKILL_OBSERVATION_PRODUCER_READ_MAX_AGE_MS,
+      ).toISOString();
       return await readModel.readSkillObservations({
         expectedProducerHarnessKeys,
+        incompleteProducerHarnessKeys,
         machineId: localMachine.id,
+        minimumProducerCollectedAt,
       });
     } catch (error) {
       if (usageStoreErrorReasonFrom(error) !== undefined) {

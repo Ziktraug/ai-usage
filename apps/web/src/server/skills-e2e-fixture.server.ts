@@ -1,4 +1,5 @@
 import type { SkillObservation } from '@ai-usage/report-core/skill-observation';
+import { COMPLETE_SKILL_OBSERVATION_EVIDENCE } from '@ai-usage/report-core/skill-observation-evidence';
 import {
   createSkillObservationDataset,
   type SkillObservationDataset,
@@ -339,6 +340,12 @@ const E2E_UNMANAGED_OBSERVED_SKILLS = {
  */
 const E2E_PROJECT_OBSERVED_SKILL = 'skill-name';
 
+/**
+ * The unmanaged runtime-directory entry the snapshot already carries. Naming it here as an observed
+ * skill is what turns it into a runtime-installed adoption candidate through the real join.
+ */
+const E2E_RUNTIME_INSTALLED_OBSERVED_SKILL = 'legacy-local-copy';
+
 const e2eObservation = (
   harnessKey: string,
   tier: SkillObservation['tier'],
@@ -388,9 +395,21 @@ const e2eObservations: readonly SkillObservation[] = [
     '/fixture/projects/opaque-project-source/.agents/skills/skill-name',
   ),
   e2eObservation('codex', 'inferred', E2E_PROJECT_OBSERVED_SKILL, 13),
+  // The adoptable backlog: a copy sitting in a runtime skills directory with no managed source
+  // behind it, which some harness recorded being used. Without this the "To adopt" group had no
+  // population at all, so nothing exercised the ranked backlog or its gated action.
+  e2eObservation(
+    'claude',
+    'declared',
+    E2E_RUNTIME_INSTALLED_OBSERVED_SKILL,
+    14,
+    '/fixture/targets/codex/legacy-local-copy',
+  ),
+  e2eObservation('codex', 'inferred', E2E_RUNTIME_INSTALLED_OBSERVED_SKILL, 15),
 ];
 
-export const e2eSkillObservationDataset = (): SkillObservationDataset => createSkillObservationDataset(e2eObservations);
+export const e2eSkillObservationDataset = (): SkillObservationDataset =>
+  createSkillObservationDataset(e2eObservations, COMPLETE_SKILL_OBSERVATION_EVIDENCE, '2099-01-01T00:00:00.000Z');
 
 /**
  * The fixture runs the real join, so the e2e surface exercises the same verdict rules production

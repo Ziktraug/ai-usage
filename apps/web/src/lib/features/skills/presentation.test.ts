@@ -48,7 +48,7 @@ describe('Skills presentation projection', () => {
     });
   });
 
-  test('carries project selection evidence, placement, and scope ordering through one join', () => {
+  test('carries project selection evidence and placement through one join', () => {
     const detail = projectionFor('/skills/projects/synthetic-group/project-review');
     expect(detail.selected).toMatchObject({
       installScope: 'project',
@@ -61,10 +61,10 @@ describe('Skills presentation projection', () => {
     expect(detail.selected.observationRow).toBe(detail.observations.rowsByName.get('project-review'));
 
     const scope = projectionFor('/skills/projects/synthetic-group');
-    expect(scope.projectScopeRows.map((row) => row.name)).toEqual(['project-review', 'alpha-skill']);
-    expect(scope.projectScopeRows[0]).toMatchObject({
-      observationRow: { skillName: 'project-review', verdict: 'invoked-unmanaged' },
-      placements: ['Standard Agents · owned directory'],
+    expect(scope.selected.name).toBeUndefined();
+    expect(scope.projectUsageByScopeKey.values().next().value).toMatchObject({
+      observedCount: 2,
+      top: { skillName: 'project-review', verdict: 'invoked-unmanaged' },
     });
   });
 
@@ -89,6 +89,113 @@ describe('Skills presentation projection', () => {
     expect(presentation.selected.observationRow).toBeUndefined();
     expect(presentation.selected.verdict).toBeUndefined();
     expect(presentation.unmanagedUsageByName).toBeUndefined();
+  });
+
+  test('neutralizes retained observation data after a background refetch error', () => {
+    const view = createSkillsShellViewModel({
+      inventories: syntheticInventories,
+      knownProjectPaths: syntheticKnownPaths,
+      pathname: '/skills/global/alpha-skill',
+      snapshot: syntheticSnapshot(),
+    });
+    const presentation = createSkillsPresentationProjection({
+      observations: syntheticObservations,
+      observationsError: 'Synthetic background refetch failure.',
+      view,
+    });
+
+    expect(presentation.observations).toMatchObject({
+      errorMessage: 'Synthetic background refetch failure.',
+      state: 'unavailable',
+      view: undefined,
+    });
+    expect(presentation.observations.rowsByName.size).toBe(0);
+    expect(presentation.observations.omittedSkillNames.size).toBe(0);
+    expect(presentation.selected).toMatchObject({
+      observationRow: undefined,
+      observationRowOmitted: false,
+      observedSummary: '',
+      verdict: undefined,
+    });
+    expect(presentation.projectUsageByScopeKey.size).toBe(0);
+    expect(presentation.unmanagedUsageByName).toBeUndefined();
+  });
+
+  test('does not invent an absence verdict when the bounded response omitted the selected skill', () => {
+    const view = createSkillsShellViewModel({
+      inventories: syntheticInventories,
+      knownProjectPaths: syntheticKnownPaths,
+      pathname: '/skills/global/alpha-skill',
+      snapshot: syntheticSnapshot(),
+    });
+    const presentation = createSkillsPresentationProjection({
+      observations: {
+        ...syntheticObservations,
+        invocationLowerBound: true,
+        lowerBound: true,
+        skills: syntheticObservations.skills.filter((skill) => skill.skillName !== 'alpha-skill'),
+      },
+      observationsError: undefined,
+      view,
+    });
+
+    expect(presentation.selected).toMatchObject({
+      observationRow: undefined,
+      observationRowOmitted: true,
+      verdict: undefined,
+    });
+    expect(presentation.observations.omittedSkillNames.has('alpha-skill')).toBe(true);
+  });
+
+  test('treats an expected name absent from an exact joined response as omitted', () => {
+    const view = createSkillsShellViewModel({
+      inventories: syntheticInventories,
+      knownProjectPaths: syntheticKnownPaths,
+      pathname: '/skills/global/alpha-skill',
+      snapshot: syntheticSnapshot(),
+    });
+    const presentation = createSkillsPresentationProjection({
+      observations: {
+        ...syntheticObservations,
+        invocationLowerBound: false,
+        lowerBound: false,
+        skills: syntheticObservations.skills.filter((skill) => skill.skillName !== 'alpha-skill'),
+      },
+      observationsError: undefined,
+      view,
+    });
+
+    expect(presentation.selected).toMatchObject({
+      observationRow: undefined,
+      observationRowOmitted: true,
+      verdict: undefined,
+    });
+    expect(presentation.observations.omittedSkillNames.has('alpha-skill')).toBe(true);
+  });
+
+  test('carries observation omissions into project usage even when the joined response claims exactness', () => {
+    const view = createSkillsShellViewModel({
+      inventories: syntheticInventories,
+      knownProjectPaths: syntheticKnownPaths,
+      pathname: '/skills/projects/synthetic-group',
+      snapshot: syntheticSnapshot(),
+    });
+    const presentation = createSkillsPresentationProjection({
+      observations: {
+        ...syntheticObservations,
+        invocationLowerBound: false,
+        lowerBound: false,
+        skills: syntheticObservations.skills.filter((skill) => skill.skillName !== 'project-review'),
+      },
+      observationsError: undefined,
+      view,
+    });
+
+    expect(presentation.projectUsageByScopeKey.values().next().value).toMatchObject({
+      observationRowsOmitted: true,
+      observedCount: 1,
+      observedCountLowerBound: true,
+    });
   });
 
   test('projects the server invocation bound without reinterpreting skipped diagnostics', () => {

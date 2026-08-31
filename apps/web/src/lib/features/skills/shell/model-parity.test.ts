@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
+import { skillHref } from '../../../foundation/navigation/svelte/skills-url';
 import { createSkillsShellViewModel, knownProjectScopesFromPaths, normalizeSkillsQuerySnapshot } from './model';
-import { skillSelectionHref } from './navigation';
 import { syntheticInventories, syntheticKnownPaths, syntheticSnapshot } from './synthetic-fixture.test-helper';
 
 describe('Svelte Skills shell model', () => {
@@ -38,10 +38,7 @@ describe('Svelte Skills shell model', () => {
       },
     ]);
     expect(
-      skillSelectionHref(
-        { projectPath: 'synthetic-group', skillName: 'skill / name', type: 'project-skill' },
-        projects,
-      ),
+      skillHref({ projectPath: 'synthetic-group', skillName: 'skill / name', type: 'project-skill' }, projects),
     ).toBe('/skills/projects/synthetic-group/skill%20%2F%20name');
   });
 
@@ -69,7 +66,8 @@ describe('Svelte Skills shell model', () => {
       pathname: '/skills/global/missing-skill',
       snapshot: syntheticSnapshot(),
     });
-    expect(view.fallbackHref).toBe('/skills/global');
-    expect(view.selection).toEqual({ skillName: 'alpha-skill', type: 'global-skill' });
+    expect(view.fallbackHref).toBe('/skills');
+    expect(view.selection).toBeUndefined();
+    expect(view.selectionDetail).toEqual({ kind: 'none' });
   });
 });

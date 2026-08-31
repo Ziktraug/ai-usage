@@ -48,10 +48,10 @@ interface ClaudeCache {
   rows: CollectorRow[];
   version: number;
 }
-// Bumped to 9 for the skill-observation stream: an entry written by version 8
-// carries rows but no observations, and reusing it would report a machine with
-// history as a machine that has never invoked a skill.
-const CLAUDE_CACHE_VERSION = 9;
+// Bumped to 10 because version 9 silently discarded malformed JSONL records.
+// Reusing one could certify invocation absence even though an incomplete final
+// record hid a Skill call.
+const CLAUDE_CACHE_VERSION = 10;
 const claudeCachePath = (storage: LocalHistoryStorage) => collectorCachePath(storage, 'claude-cache.json');
 
 const readClaudeCache = (storage: LocalHistoryStorage): ClaudeCache | null => {
@@ -401,6 +401,11 @@ export const collectClaudeResult = Effect.gen(function* () {
           const event = safeJSON(line);
           if (event) {
             records.push(event);
+          } else {
+            // A live JSONL file can expose its final record while Claude Code is
+            // still appending it. That record may be a Skill call, so dropping
+            // it cannot support an exact invocation-absence claim.
+            rejectedObservations++;
           }
         });
 

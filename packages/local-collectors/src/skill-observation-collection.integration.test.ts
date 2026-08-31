@@ -513,6 +513,27 @@ describe('skill observation collection', () => {
     });
   });
 
+  test('a partial Claude JSONL tail cannot certify invocation history as complete', async () => {
+    const home = await makeHome();
+    const dir = join(home, '.claude', 'projects', '-home-alex-Projects-report');
+    await mkdir(dir, { recursive: true });
+    await writeFile(
+      join(dir, `${CLAUDE_SESSION}.jsonl`),
+      '{"type":"assistant","message":{"content":[{"name":"Skill","type":"tool_use","input":{"skill":"improve"}}]',
+      'utf8',
+    );
+
+    const result = await Effect.runPromise(
+      collectClaudeResult.pipe(Effect.provideService(LocalHistoryStorage, createLocalHistoryStorage(home))),
+    );
+
+    expect(result.observations).toHaveLength(0);
+    expect(result.observationCompleteness.invocation).toEqual({ rejected: 1, truncated: false });
+    expect(result.warnings.find((warning) => warning.operation === 'skillObservationValidation')?.rejectedRecords).toBe(
+      1,
+    );
+  });
+
   describe('per-session ceilings reach the warning channel', () => {
     afterEach(() => {
       setClaudeSkillObservationCeilingForTesting(null);

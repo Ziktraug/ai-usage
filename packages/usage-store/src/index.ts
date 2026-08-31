@@ -374,8 +374,8 @@ export interface ImportSkillObservationsInput {
   importedAt?: Date;
   /** The machine that observed these; the observations themselves are machine-agnostic. */
   machineId: string;
-  /** Optional inclusive cutoff used by rescan-based collectors to avoid resurrecting retained rows. */
-  minimumObservedAt?: string;
+  /** Optional inclusive cutoff used by rescans to avoid resurrecting retained exposure rows. */
+  minimumExposureObservedAt?: string;
   observations: readonly unknown[];
 }
 
@@ -406,8 +406,16 @@ export interface QuerySkillObservationsInput {
   expectedProducerHarnessKeys?: readonly string[];
   from?: string;
   harnessKey?: string;
+  /**
+   * Expected producers that cannot currently publish a collection answer (for
+   * example because their source is disabled). A previous successful sweep is
+   * not reusable while a producer is in this set.
+   */
+  incompleteProducerHarnessKeys?: readonly string[];
   machineId?: string;
   maximumObservations?: number;
+  /** Oldest producer collection answer accepted as current for this read. */
+  minimumProducerCollectedAt?: string;
   skillName?: string;
   /**
    * Filters to one observation tier. Omitting it returns every tier, each row
@@ -443,8 +451,14 @@ export interface QuerySkillObservationsResult {
    */
   invocationTruncated: boolean;
   observations: StoredSkillObservation[];
-  /** No durable producer-completeness answer exists for the observable collection in scope. */
+  /** At least one expected producer lacks usable current state (missing, stale, disabled, or omitted). */
   producerCompletenessMissing: boolean;
+  /**
+   * End-to-end expiry of the producer proof accepted by this read. Derived from
+   * `minimumProducerCollectedAt`, never from when later folding or joins finish. `null` means this
+   * read had no time-bounded producer proof.
+   */
+  producerProofValidUntil: string | null;
   /** Re-validation refusals split by the claim their stored tier could have supported. */
   refusedRows: SkillObservationRefusalCounts;
   /** Persisted rows that no longer pass validation. Never silently omitted. */
@@ -454,9 +468,9 @@ export interface QuerySkillObservationsResult {
 
 export interface RetainSkillObservationsInput {
   dbPath: string;
+  /** Exposure observations older than this window are deleted whole; defaults to 400 days. */
+  exposureRetentionMs?: number;
   now?: number;
-  /** Observations older than this window are deleted whole; defaults to 400 days. */
-  retentionMs?: number;
 }
 
 export interface RetainSkillObservationsResult {

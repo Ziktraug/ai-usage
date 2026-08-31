@@ -95,10 +95,12 @@ interface CodexSessionReadResult {
   cacheWriteMs: number;
   files: number;
   lines: number;
+  observationCompleteness: SkillObservationCollectionCompleteness;
   parsedLines: number;
   parseMs: number;
   readMs: number;
   rejectedMetricRecords: number;
+  rejectedSkillObservationRecords: number;
   sessions: CodexSession[];
   skippedLines: number;
 }
@@ -134,9 +136,11 @@ interface SqliteDatabase {
 // This cache stores normalized parser output, not raw JSONL. Bump whenever an
 // unchanged rollout could produce different counters, labels, origin, lineage,
 // phases, or turns.
-// Bumped to 19 when Codex producer completeness stopped pooling `exposed` and
-// `inferred`: version 18 cannot say which tier was rejected or truncated.
-const CODEX_SESSION_CACHE_VERSION = 19;
+// Bumped to 21 because system-skill paths, namespaced plugin reads, unreadable-line
+// completeness, and distinct rejection diagnostics now produce different skill
+// facts. Older versions would preserve missing, incorrectly named, falsely
+// complete, or double-counted results for an unchanged rollout.
+const CODEX_SESSION_CACHE_VERSION = 21;
 
 const THREAD_SPAWN_EDGES_SQL = `
 select parent_thread_id as parent, child_thread_id as child
@@ -313,6 +317,7 @@ const reviveCachedSession = (json: string): CodexSession | null => {
       value.tcr,
       value.tout,
       value.rejectedMetricRecords,
+      value.rejectedSkillObservationRecords,
     ].map(parseNonNegativeSafeInteger);
     const start = reviveDate(value.start);
     const end = reviveDate(value.end);
@@ -354,8 +359,11 @@ const reviveCachedSession = (json: string): CodexSession | null => {
     ) {
       return null;
     }
-    const [turns, tools, maxTotal, tin, tcr, tout, rejectedMetricRecords] = counters;
+    const [turns, tools, maxTotal, tin, tcr, tout, rejectedMetricRecords, rejectedSkillObservationRecords] = counters;
     if (!(turns?.ok && tools?.ok && maxTotal?.ok && tin?.ok && tcr?.ok && tout?.ok && rejectedMetricRecords?.ok)) {
+      return null;
+    }
+    if (!rejectedSkillObservationRecords?.ok) {
       return null;
     }
     return {
@@ -384,6 +392,7 @@ const reviveCachedSession = (json: string): CodexSession | null => {
       tcr: tcr.value,
       tout: tout.value,
       rejectedMetricRecords: rejectedMetricRecords.value,
+      rejectedSkillObservationRecords: rejectedSkillObservationRecords.value,
       hasTokenUsage: value.hasTokenUsage,
       skillObservations: skillObservations.observations,
       skillObservationCompleteness,
@@ -517,13 +526,21 @@ const readCodexSessions = (
       let cacheReadMs = 0;
       let cacheWriteMs = 0;
       let lines = 0;
+      const observationCompleteness = completeSkillObservationCollection();
       let parseMs = 0;
       let parsedLines = 0;
       let readMs = 0;
       let rejectedMetricRecords = 0;
+      let rejectedSkillObservationRecords = 0;
       let skippedLines = 0;
       const files = yield* listCodexSessionFilesForCollection;
       const parsedForCache: { filePath: string; session: CodexSession; stat: CodexSessionFileStat }[] = [];
+      const mergeObservationCompleteness = (value: SkillObservationCollectionCompleteness): void => {
+        observationCompleteness.exposure.rejected += value.exposure.rejected;
+        observationCompleteness.exposure.truncated ||= value.exposure.truncated;
+        observationCompleteness.invocation.rejected += value.invocation.rejected;
+        observationCompleteness.invocation.truncated ||= value.invocation.truncated;
+      };
 
       yield* Effect.acquireUseRelease(
         Effect.gen(function* () {
@@ -545,6 +562,8 @@ const readCodexSessions = (
               if (cached && cached.size === stat?.size && cached.mtimeMs === stat.mtimeMs) {
                 cacheHits++;
                 rejectedMetricRecords += cached.session.rejectedMetricRecords;
+                rejectedSkillObservationRecords += cached.session.rejectedSkillObservationRecords;
+                mergeObservationCompleteness(cached.session.skillObservationCompleteness);
                 const session = cloneCodexSession(cached.session);
                 mergeMetadata(session, session.id ? metadata.get(session.id) : undefined);
                 if (session.id || session.start) {
@@ -565,8 +584,10 @@ const readCodexSessions = (
               parseMs += parsed.parseMs;
               parsedLines += parsed.parsedLines;
               rejectedMetricRecords += parsed.rejectedMetricRecords;
+              rejectedSkillObservationRecords += parsed.session.rejectedSkillObservationRecords;
               skippedLines += parsed.skippedLines;
               const session = parsed.session;
+              mergeObservationCompleteness(session.skillObservationCompleteness);
               if (stat) {
                 parsedForCache.push({ filePath, session: cloneCodexSession(session), stat });
               }
@@ -603,10 +624,12 @@ const readCodexSessions = (
         cacheWriteMs,
         files: files.length,
         lines,
+        observationCompleteness,
         parseMs,
         parsedLines,
         readMs,
         rejectedMetricRecords,
+        rejectedSkillObservationRecords,
         sessions,
         skippedLines,
       };
@@ -623,6 +646,7 @@ const readCodexSessions = (
       parsedLines: result.parsedLines,
       readMs: result.readMs,
       rejectedMetricRecords: result.rejectedMetricRecords,
+      rejectedSkillObservationRecords: result.rejectedSkillObservationRecords,
       sessions: result.sessions.length,
       skippedLines: result.skippedLines,
     }),
@@ -637,6 +661,7 @@ export interface CodexUsageSessionsResult {
    */
   observations: SkillObservation[];
   rejectedMetricRecords: number;
+  rejectedSkillObservationRecords: number;
   sessions: CodexCollectedSession[];
 }
 
@@ -648,7 +673,8 @@ export const readCodexUsageSessionsResult: Effect.Effect<
   'aiUsage.collect.codex.usageSessions',
   Effect.gen(function* () {
     const metadata = yield* readCodexThreadMetadata;
-    const { rejectedMetricRecords, sessions } = yield* readCodexSessions(metadata);
+    const { observationCompleteness, rejectedMetricRecords, rejectedSkillObservationRecords, sessions } =
+      yield* readCodexSessions(metadata);
     const byId = new Map<string, CodexSession>();
     for (const session of sessions) {
       if (session.id) {
@@ -722,12 +748,7 @@ export const readCodexUsageSessionsResult: Effect.Effect<
     // observations are deduplicated on the identity the store keys on.
     const observations: SkillObservation[] = [];
     const seenObservations = new Set<string>();
-    const observationCompleteness = completeSkillObservationCollection();
     for (const session of sessions) {
-      observationCompleteness.exposure.rejected += session.skillObservationCompleteness.exposure.rejected;
-      observationCompleteness.exposure.truncated ||= session.skillObservationCompleteness.exposure.truncated;
-      observationCompleteness.invocation.rejected += session.skillObservationCompleteness.invocation.rejected;
-      observationCompleteness.invocation.truncated ||= session.skillObservationCompleteness.invocation.truncated;
       for (const observation of session.skillObservations) {
         const identity = skillObservationIdentity(observation);
         if (seenObservations.has(identity)) {
@@ -742,12 +763,14 @@ export const readCodexUsageSessionsResult: Effect.Effect<
       observationCompleteness,
       observations,
       rejectedMetricRecords,
+      rejectedSkillObservationRecords,
       sessions: usageSessions,
     };
   }),
   (result) => ({
     observations: result.observations.length,
     rejectedMetricRecords: result.rejectedMetricRecords,
+    rejectedSkillObservationRecords: result.rejectedSkillObservationRecords,
     sessions: result.sessions.length,
   }),
 );

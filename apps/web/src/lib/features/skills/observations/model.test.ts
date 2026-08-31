@@ -9,12 +9,14 @@ import {
   buildSkillObservationsView,
   compareObservationRows,
   deletionCandidateText,
+  formatObservationCount,
   formatObservedAt,
   formatObservedDate,
   NO_SIGNALS_RECORDED_TEXT,
   NOT_OBSERVABLE_TEXT,
   observationEvidenceRank,
   observationRecency,
+  observationSignalLabel,
   resolvedPathsNote,
   skillObservationRow,
   tallySummary,
@@ -60,6 +62,31 @@ describe('skill observations view', () => {
     // The two tiers are two facts about one skill; 2 + 1 = 3 is not one of them.
     expect(row?.harnesses.map((cell) => cell.summary).join(' ')).not.toContain('3');
     expect(tallySummary([...(claude?.tallies ?? []), ...(codex?.tallies ?? [])])).toBe('declared 2 · inferred 1');
+  });
+
+  test('qualifies only the tiers whose read was bounded', () => {
+    const exposureBounded = view(syntheticExposureTruncatedObservations);
+    const alpha = skillObservationRow(exposureBounded, 'alpha-skill');
+    const imagegen = skillObservationRow(exposureBounded, 'imagegen');
+
+    expect(alpha?.harnesses.find((cell) => cell.harnessKey === 'claude')?.summary).toBe('declared 2');
+    expect(alpha?.harnesses.find((cell) => cell.harnessKey === 'codex')?.summary).toBe('inferred 1');
+    expect(imagegen?.harnesses.find((cell) => cell.harnessKey === 'codex')?.summary).toBe('exposed ≥1');
+
+    const invocationBounded = view(syntheticProvisionalObservations);
+    const boundedAlpha = skillObservationRow(invocationBounded, 'alpha-skill');
+    expect(boundedAlpha?.harnesses.find((cell) => cell.harnessKey === 'claude')?.summary).toBe('declared ≥2');
+    expect(boundedAlpha?.harnesses.find((cell) => cell.harnessKey === 'codex')?.summary).toBe('inferred ≥1');
+  });
+
+  test('formats aggregate observation populations as exact counts or explicit floors', () => {
+    expect(formatObservationCount(0, false)).toBe('0');
+    expect(formatObservationCount(2, false)).toBe('2');
+    expect(formatObservationCount(0, true)).toBe('≥0');
+    expect(formatObservationCount(2, true)).toBe('≥2');
+
+    expect(view(syntheticExposureTruncatedObservations).invocationLowerBound).toBe(false);
+    expect(view(syntheticProvisionalObservations).invocationLowerBound).toBe(true);
   });
 
   test('groups each server verdict under exactly one heading', () => {
@@ -155,6 +182,7 @@ describe('skill observations view', () => {
       invocationLowerBound: false,
       lowerBound: false,
       producerCompletenessMissing: false,
+      producerProofValidUntil: syntheticObservations.producerProofValidUntil,
       skills: [
         {
           deletionCandidate: false,
@@ -193,6 +221,7 @@ describe('skill observations view', () => {
       invocationLowerBound: false,
       lowerBound: false,
       producerCompletenessMissing: false,
+      producerProofValidUntil: syntheticObservations.producerProofValidUntil,
       skills: [],
       skipped: 0,
     });
@@ -257,6 +286,27 @@ describe('skill observations view', () => {
       ...syntheticObservations,
       skills: [
         ...syntheticObservations.skills,
+        {
+          deletionCandidate: false,
+          lastObservedAt: '2026-08-04T09:00:00.000Z',
+          managed: true,
+          projectedEverywhere: false,
+          resolvedPaths: [],
+          resolvedPathsTruncated: false,
+          skillName: 'managed-catalogue-entry',
+          tallies: [
+            {
+              count: 96,
+              harnessKey: 'codex',
+              harnessLabel: 'Codex',
+              lastObservedAt: '2026-08-04T09:00:00.000Z',
+              tier: 'exposed' as const,
+            },
+          ],
+          unmanagedResidence: null,
+          verdict: 'offered-only' as const,
+          verdictProvisional: false,
+        },
         ...['vercel:swr', 'vercel:auth', 'plugin-management:plugin-management'].map((skillName) => ({
           deletionCandidate: false,
           lastObservedAt: '2026-08-04T09:00:00.000Z',
@@ -294,6 +344,8 @@ describe('skill observations view', () => {
     expect(built.catalogueRollups.at(1)?.exposureSummaries).toEqual(['Codex exposed ×96']);
     // The unprefixed `imagegen` folds into the standalone catalogue rather than standing as a row.
     expect(built.catalogueRollups.at(2)?.rows.map(({ skillName }) => skillName)).toEqual(['imagegen']);
+    expect(built.catalogueEntryCount).toBe(4);
+    expect(built.offeredOnly).toHaveLength(5);
   });
 
   test('buckets recency from whole UTC days so a paint and its hydration agree', () => {
@@ -316,6 +368,14 @@ describe('skill observations view', () => {
     expect(formatObservedAt('2026-12-31T23:59:59.999Z')).toBe('2026-12-31 23:59 UTC');
     // A value that is not an instant is shown as it was stored rather than as a fabricated date.
     expect(formatObservedAt('not-a-timestamp')).toBe('not-a-timestamp');
+  });
+
+  test('labels a date as the latest retained signal whenever the global read is bounded', () => {
+    expect(observationSignalLabel(false)).toBe('Last signal');
+    expect(observationSignalLabel(true)).toBe('Latest retained signal');
+    expect(observationSignalLabel(view(syntheticExposureTruncatedObservations).lowerBound)).toBe(
+      'Latest retained signal',
+    );
   });
 
   test('lists managed skills before unmanaged ones and carries the read bound through', () => {
@@ -354,6 +414,7 @@ describe('skill observations view', () => {
     expect(built.lowerBound).toBe(true);
     expect(built.invocationEvidenceComplete).toBe(true);
     expect(built.onlyExposureTruncated).toBe(true);
+    expect(built.catalogueRollups.at(0)?.exposureSummaries).toEqual(['Codex exposed ×≥1']);
     for (const row of built.rows) {
       expect(row.verdictProvisional).toBe(false);
     }

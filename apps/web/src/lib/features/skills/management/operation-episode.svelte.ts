@@ -15,8 +15,13 @@ import {
   skillsManagementSuccessMessage,
 } from './model';
 
-export type SkillsHealthOperationOwner = 'health-detail' | 'health-inspector' | 'health-summary';
-export type SkillsManagementOperationOwner = 'configuration' | SkillsHealthOperationOwner | 'matrix';
+/** The page-level operation host: refresh and reconcile, owned by the worktable's header. */
+export type SkillsHealthOperationOwner = 'health-page';
+export type SkillsManagementOperationOwner =
+  | 'configuration'
+  | SkillsHealthOperationOwner
+  | 'skill-drawer'
+  | 'worktable';
 
 export type SkillsManagementOperationCommand =
   | {
@@ -29,7 +34,7 @@ export type SkillsManagementOperationCommand =
   | {
       readonly kind: 'management';
       readonly operation: SkillsManagementOperation;
-      readonly owner: SkillsHealthOperationOwner | 'matrix';
+      readonly owner: SkillsHealthOperationOwner | 'skill-drawer' | 'worktable';
       readonly pendingLabel: string;
     }
   | {

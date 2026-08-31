@@ -50,7 +50,9 @@ export interface QuerySkillObservationDatasetInput extends SkillObservationReadB
   readonly dbPath: string;
   readonly expectedProducerHarnessKeys?: readonly string[];
   readonly harnessKey?: string;
+  readonly incompleteProducerHarnessKeys?: readonly string[];
   readonly machineId?: string;
+  readonly minimumProducerCollectedAt?: string;
 }
 
 /**
@@ -141,7 +143,13 @@ export const querySkillObservationDataset = (
         ? {}
         : { expectedProducerHarnessKeys: input.expectedProducerHarnessKeys }),
       ...(input.harnessKey === undefined ? {} : { harnessKey: input.harnessKey }),
+      ...(input.incompleteProducerHarnessKeys === undefined
+        ? {}
+        : { incompleteProducerHarnessKeys: input.incompleteProducerHarnessKeys }),
       ...(input.machineId === undefined ? {} : { machineId: input.machineId }),
+      ...(input.minimumProducerCollectedAt === undefined
+        ? {}
+        : { minimumProducerCollectedAt: input.minimumProducerCollectedAt }),
     }),
     (result) => {
       const presentable = presentableObservations(result.observations);
@@ -157,6 +165,9 @@ export const querySkillObservationDataset = (
         },
         refusedRows: [result.refusedRows, presentable.refusedRows],
       });
-      return clampSkills(createSkillObservationDataset(presentable.observations, evidence), input);
+      return clampSkills(
+        createSkillObservationDataset(presentable.observations, evidence, result.producerProofValidUntil),
+        input,
+      );
     },
   );

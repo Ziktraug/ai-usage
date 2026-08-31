@@ -41,18 +41,17 @@ const restoreReportHistory = async (page: Page, expectedUrl: string): Promise<vo
 
 const shellRoutes = [
   { heading: 'Usage report', marker: 'report', path: '/' },
-  { heading: 'Skill management', marker: null, path: '/skills/global' },
-  { heading: 'Skill management', marker: null, path: '/skills/global/alpha-skill' },
-  { heading: 'Skill management', marker: null, path: '/skills/matrix' },
-  { heading: 'Skill management', marker: null, path: '/skills/projects/project%2Fopaque' },
-  {
-    heading: 'Skill management',
-    marker: null,
-    path: '/skills/projects/project%2Fopaque/skill-name',
-  },
+  { heading: 'Skills', marker: null, path: '/skills' },
   { heading: 'Sources', marker: 'sources', path: '/sources' },
   { heading: 'Sync', marker: 'sync', path: '/sync' },
 ] as const;
+
+/**
+ * The two per-skill URLs open a drawer over the worktable (plan 113) rather than a page of their
+ * own, so they are asserted for the payload they server-render, for hydration, and for the drawer
+ * they open — the shell chrome itself is covered by the routes above.
+ */
+const drawerRoutes = ['/skills/global/alpha-skill', '/skills/projects/project%2Fopaque/skill-name'] as const;
 
 test('server-renders and reloads every Svelte shell route with accessible navigation', async ({ page, request }) => {
   test.setTimeout(60_000);
@@ -77,15 +76,23 @@ test('server-renders and reloads every Svelte shell route with accessible naviga
       expect(html).toContain(`data-route-shell="${route.marker}"`);
     }
     expect(html).toContain(route.heading);
-    if (route.path === '/skills/global/alpha-skill') {
-      expect(html).toContain('data-skills-workspace');
-      expect(html).toContain('data-skill-markdown-editor');
-      expect(html).toContain('data-skills-management-health-slot');
-    }
   }
-  const fallback = await request.get('/skills', { maxRedirects: 0 });
-  expect(fallback.status()).toBe(307);
-  expect(fallback.headers().location).toBe('/skills/global');
+  for (const path of drawerRoutes) {
+    const response = await request.get(path);
+    expect(response.status()).toBe(200);
+    const html = await response.text();
+    // The worktable and its operation host are the server-rendered payload of a per-skill URL.
+    expect(html).toContain('data-skills-workspace');
+    expect(html).toContain('data-skills-worktable');
+    expect(html).toContain('data-skills-management-health-slot');
+    expect(html).toContain('Skills');
+  }
+  // The scope and matrix URLs became groups of the worktable (plan 113); their addresses still work.
+  for (const retired of ['/skills/global', '/skills/matrix', '/skills/projects/project%2Fopaque']) {
+    const fallback = await request.get(retired, { maxRedirects: 0 });
+    expect(fallback.status()).toBe(307);
+    expect(fallback.headers().location).toBe('/skills');
+  }
   const trailingSlash = await request.get('/sources/', { maxRedirects: 0 });
   expect(trailingSlash.status()).toBe(308);
   expect(trailingSlash.headers().location).toBe('/sources');
@@ -112,6 +119,14 @@ test('server-renders and reloads every Svelte shell route with accessible naviga
     const axe = await new AxeBuilder({ page }).analyze();
     expect(axe.violations).toEqual([]);
   }
+  for (const path of drawerRoutes) {
+    await page.goto(path);
+    await expect(page.locator('[data-skills-workspace]')).toHaveAttribute('data-skills-hydrated', 'true');
+    await expect(page.getByRole('dialog')).toBeVisible();
+    const drawerAxe = await new AxeBuilder({ page }).analyze();
+    expect(drawerAxe.violations).toEqual([]);
+  }
+
   await page.goto('/skills/projects/project%2Fopaque/skill-name?foreign=kept#anchor');
   await expect(page.locator('[data-skills-workspace]')).toHaveAttribute('data-skills-hydrated', 'true');
   await page.reload();
@@ -129,7 +144,7 @@ test('server-renders and reloads every Svelte shell route with accessible naviga
 
   const historyLength = await page.evaluate(() => history.length);
   await page.getByRole('link', { name: 'Skills' }).click();
-  await expect(page).toHaveURL('/skills/global');
+  await expect(page).toHaveURL('/skills');
   expect(await page.evaluate(() => history.length)).toBe(historyLength + 1);
   await restoreReportHistory(page, '/');
 
@@ -239,9 +254,14 @@ test('blocks dirty navigation through Keep, Discard, reload, focus, and cleanup'
     }),
   ).toBe(false);
 
-  const manage = page.getByRole('button', { name: 'Manage' });
-  await manage.click();
-  await page.getByRole('link', { name: 'Sources', exact: true }).click();
+  // The editor lives in a drawer over the worktable (plan 113). It is deliberately not modal, so
+  // the application rail stays reachable — and leaving through it is exactly the navigation the
+  // unsaved-draft guard has to block.
+  // Dismissing the drawer is a navigation back to the worktable, and it is the departure a reader
+  // makes most often from a half-written SKILL.md — so it is the one the guard is exercised on.
+  // Below the labelled breakpoint the drawer covers the mobile navigation popover, which is why
+  // this is not driven through the rail here.
+  await page.getByRole('button', { name: 'Close skill detail' }).click();
   await expect(page).toHaveURL('/skills/global/alpha-skill');
   const prompt = page.getByRole('alertdialog', { name: 'Discard unsaved changes?' });
   await expect(prompt).toBeVisible();
@@ -251,13 +271,9 @@ test('blocks dirty navigation through Keep, Discard, reload, focus, and cleanup'
   await expect(page.getByRole('button', { name: 'Discard changes' })).toBeFocused();
   await page.keyboard.press('Tab');
   await expect(page.getByRole('button', { name: 'Keep editing' })).toBeFocused();
-  await manage.focus();
-  await page.keyboard.press('Tab');
-  await expect(page.getByRole('button', { name: 'Keep editing' })).toBeFocused();
   await page.keyboard.press('Escape');
   await expect(editor).toHaveValue('Unsaved synthetic draft');
   await expect(editor).toBeFocused();
-  await expect(manage).toHaveAttribute('aria-expanded', 'true');
 
   await page.setViewportSize({ height: 900, width: 1280 });
 
@@ -329,7 +345,7 @@ test('restores Session scroll after a cross-route history remount', async ({ pag
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(300);
 
   await page.getByRole('link', { name: 'Skills' }).click();
-  await expect(page).toHaveURL('/skills/global');
+  await expect(page).toHaveURL('/skills');
   await restoreReportHistory(page, '/?tab=sessions');
   await expect(page.locator('[data-session-table-owner]')).toBeVisible();
   await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(300);
@@ -363,6 +379,10 @@ test('reuses one browser cache across Skills children and Report Skills Sync nav
   await page.locator('a[href="/skills/global/alpha-skill"]').first().click();
   await expect(page).toHaveURL('/skills/global/alpha-skill');
   await waitForHydratedSkills(page);
+  // The detail is a drawer over the worktable now. Dismissing it is the reader's way back to the
+  // table, and it is a navigation of its own — so this walk closes it before leaving Skills.
+  await page.keyboard.press('Escape');
+  await expect(page).toHaveURL('/skills');
   await navigateAndWaitForRouteData(page, page.getByRole('link', { exact: true, name: 'Sync' }), '/sync/__data.json');
   await expect(page.locator('main[data-route-shell="sync"]')).toBeVisible();
   await navigateAndWaitForRouteData(page, page.getByRole('link', { exact: true, name: 'Overview' }), '/__data.json');
@@ -379,7 +399,10 @@ test('reuses one browser cache across Skills children and Report Skills Sync nav
       'sync.fleet': 1,
     },
     owners: { 'web-query-browser': 6 },
-    routeData: 4,
+    // Three, not four: `/skills` is now a page with no load of its own, so returning to it from a
+    // skill's drawer reuses the layout data already held instead of asking for route data again.
+    // The invariant this gate exists for — one acquisition per Skills operation — is unchanged.
+    routeData: 3,
     totalRpc: 6,
   });
   process.stdout.write(
@@ -392,7 +415,9 @@ test('reuses one browser cache across Skills children and Report Skills Sync nav
   expect(trace.counts('fresh-skills-revisit')).toEqual({
     operations: {},
     owners: {},
-    routeData: 2,
+    // One, not two: the rail's Skills link lands on the worktable directly. It used to redirect
+    // through `/skills/global`, and that hop was the second route-data request.
+    routeData: 1,
     totalRpc: 0,
   });
   trace.dispose();

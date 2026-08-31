@@ -60,6 +60,7 @@ export const syntheticObservations: SkillObservations = {
   invocationLowerBound: false,
   lowerBound: false,
   producerCompletenessMissing: false,
+  producerProofValidUntil: '2099-08-02T09:05:00.000Z',
   skills: [
     {
       deletionCandidate: false,

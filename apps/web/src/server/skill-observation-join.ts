@@ -56,6 +56,8 @@ export interface SkillObservationJoinInput {
    * without it — every unmanaged name then classifies conservatively.
    */
   readonly projectPathPrefixes?: readonly string[];
+  /** Names present in the project-skill inventory, including names with no observations yet. */
+  readonly projectSkillNames?: readonly string[];
   readonly skills: readonly SkillObservationJoinSkill[];
   readonly targets: readonly SkillObservationJoinTarget[];
   /**
@@ -192,10 +194,14 @@ const residenceFor = (
   skillName: string,
   resolvedPaths: readonly string[],
   unmanagedNames: ReadonlySet<string>,
+  projectNames: ReadonlySet<string>,
   projectPrefixes: readonly string[],
 ): ObservedSkill['unmanagedResidence'] => {
   if (unmanagedNames.has(skillName)) {
     return 'runtime-installed';
+  }
+  if (projectNames.has(skillName)) {
+    return 'project-owned';
   }
   const ownedByProject = resolvedPaths.some((resolvedPath) =>
     projectPrefixes.some((prefix) => resolvedPath === prefix || resolvedPath.startsWith(`${prefix}/`)),
@@ -230,7 +236,8 @@ export const joinSkillObservations = (input: SkillObservationJoinInput): SkillOb
    */
   // Every managed skill appears, observed or not: a skill missing from the observation read is the
   // deletion candidate this family exists to name, and dropping it would erase the verdict.
-  const names = [...new Set([...skillsByName.keys(), ...observedByName.keys()])].sort((left, right) =>
+  const projectNames = new Set(input.projectSkillNames ?? []);
+  const names = [...new Set([...skillsByName.keys(), ...observedByName.keys(), ...projectNames])].sort((left, right) =>
     left.localeCompare(right),
   );
   const unmanagedNames = new Set(input.unmanagedEntryNames ?? []);
@@ -254,7 +261,9 @@ export const joinSkillObservations = (input: SkillObservationJoinInput): SkillOb
       resolvedPathsTruncated: observed?.resolvedPathsTruncated ?? false,
       skillName,
       tallies: tallies.map((tally) => ({ ...tally })),
-      unmanagedResidence: managed ? null : residenceFor(skillName, resolvedPaths, unmanagedNames, projectPrefixes),
+      unmanagedResidence: managed
+        ? null
+        : residenceFor(skillName, resolvedPaths, unmanagedNames, projectNames, projectPrefixes),
       verdict,
       // A positive verdict is not weakened by a short read: seeing an invocation proves use whether
       // or not more rows existed beyond the bound. Only claims of absence are provisional.
@@ -266,6 +275,7 @@ export const joinSkillObservations = (input: SkillObservationJoinInput): SkillOb
     invocationLowerBound: input.observations.invocationLowerBound,
     lowerBound: input.observations.lowerBound,
     producerCompletenessMissing: input.observations.producerCompletenessMissing,
+    producerProofValidUntil: input.observations.producerProofValidUntil,
     skills,
     skipped: input.observations.skipped,
   });

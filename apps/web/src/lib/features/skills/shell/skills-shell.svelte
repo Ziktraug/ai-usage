@@ -26,25 +26,24 @@
   import { createSkillsManagementOperationEpisode } from '../management/operation-episode.svelte';
   import { createSkillsPresentationProjection } from '../presentation';
   import { createSkillsShellViewModel, normalizeSkillsQuerySnapshot } from './model';
+  import { skillObservationQueryPresentation } from './observation-query-presentation';
   import { createSkillsFallbackNavigationRequest } from './skills-fallback-navigation';
   import SkillsWorkspace from './skills-workspace.svelte';
-  import type { SkillsHealthSlotPlacement, SkillsShellSlotContext, SkillsSnapshotUpdatePort } from './slot-context';
+  import type { SkillsShellSlotContext, SkillsSnapshotUpdatePort } from './slot-context';
   import { createSkillsSnapshotController, type SkillsDraftGuardPort } from './snapshot-controller';
 
   let {
     editorSlot,
     healthSlot,
     hydrationState,
-    matrixSlot,
     navigationState,
     onSourceChange,
     pathname,
     runtimeMode,
   }: {
     editorSlot?: Snippet<[SkillsShellSlotContext]>;
-    healthSlot?: Snippet<[SkillsShellSlotContext, SkillsHealthSlotPlacement]>;
+    healthSlot?: Snippet<[SkillsShellSlotContext]>;
     hydrationState: WebQueryHydrationState;
-    matrixSlot?: Snippet<[SkillsShellSlotContext]>;
     navigationState: App.PageState;
     onSourceChange?: (source: string) => void;
     pathname: string;
@@ -175,7 +174,7 @@
         })
       : undefined,
   );
-  const managedSkillName = $derived(view?.selection.type === 'global-skill' ? view.selection.skillName : undefined);
+  const managedSkillName = $derived(view?.selection?.type === 'global-skill' ? view.selection.skillName : undefined);
   const managedDocumentQuery = createQuery(() =>
     managedSkillMarkdownQueryOptions(client, managedSkillName ?? '', {
       browser: mounted,
@@ -214,14 +213,20 @@
   // them. Counting them separately keeps the hydration contract honest instead of declaring the
   // page settled while one of its reads is still in flight.
   const observationsFetching = useIsFetching({ queryKey: ['web', 'collection-swr', 'skill-observations'] });
-  const observationsError = $derived(
-    observationsQuery.error instanceof Error ? observationsQuery.error.message : undefined,
+  const observationQueryPresentation = $derived(
+    skillObservationQueryPresentation({
+      data: observationsQuery.data,
+      error: observationsQuery.error,
+      isFetching: observationsQuery.isFetching,
+      isStale: observationsQuery.isStale,
+    }),
   );
+  const observationsError = $derived(observationQueryPresentation.observationsError);
   const presentation = $derived(
     view === undefined
       ? undefined
       : createSkillsPresentationProjection({
-          observations: observationsQuery.data,
+          observations: observationQueryPresentation.observations,
           observationsError,
           view,
         }),
@@ -280,7 +285,6 @@
     {...(healthSlot === undefined ? {} : { healthSlot })}
     {hydrated}
     {management}
-    {...(matrixSlot === undefined ? {} : { matrixSlot })}
     {presentation}
     {selectedDocument}
     {...(onSourceChange === undefined ? {} : { onSourceChange })}

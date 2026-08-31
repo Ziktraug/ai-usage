@@ -60,6 +60,7 @@ describe('Skills E2E mutation backend', () => {
     }
     // It must survive the same presentation edge the real read does.
     expect(safeParse(skillObservationsSchema, result.data).success).toBe(true);
+    expect(result.data.producerProofValidUntil).toBe('2099-01-01T00:00:00.000Z');
     expect(result.data.harnesses).toEqual([
       { harnessKey: 'claude', label: 'Claude Code', observability: 'observable' },
       { harnessKey: 'codex', label: 'Codex', observability: 'observable' },

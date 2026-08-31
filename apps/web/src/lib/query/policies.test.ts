@@ -1,4 +1,8 @@
 import { describe, expect, test } from 'bun:test';
+import {
+  SKILL_OBSERVATION_PRODUCER_MAX_AGE_MS,
+  SKILL_OBSERVATION_PRODUCER_READ_MAX_AGE_MS,
+} from '@ai-usage/report-core/skill-observation-evidence';
 import { collectionSwrKey, controlPlaneKey, currentAliasKey, finiteSwrKey, immutableRevisionKey } from './keys';
 import {
   COLLECTION_SWR_STALE_TIME_MS,
@@ -38,18 +42,22 @@ describe('Web query key and policy vocabulary', () => {
     expect(queryPolicy('bounded-control-plane')).toBe(webQueryPolicies.boundedControlPlane);
     expect(queryPolicy('collection-swr')).toBe(webQueryPolicies.collectionSwr);
 
-    // Produced only by a background collection cycle, so neither focus nor reconnect revalidates
-    // it. Mount does, because mount is the only place an invalidation that landed while nothing was
-    // subscribed can still be honoured — and it costs nothing while the entry is fresh.
+    // The answer contains a time-bounded producer-completeness proof. It must therefore revalidate
+    // when that proof can expire, even if no collection event arrives, and on focus after a tab was
+    // suspended. Reconnect remains event-driven.
     expect(webQueryPolicies.collectionSwr).toMatchObject({
       gcTime: DEFAULT_BOUNDED_GC_TIME_MS,
-      refetchOnMount: true,
+      refetchInterval: COLLECTION_SWR_STALE_TIME_MS,
+      refetchOnMount: 'always',
       refetchOnReconnect: false,
-      refetchOnWindowFocus: false,
+      refetchOnWindowFocus: true,
       retry: false,
       staleTime: COLLECTION_SWR_STALE_TIME_MS,
     });
     expect(COLLECTION_SWR_STALE_TIME_MS).toBeGreaterThan(FINITE_SWR_STALE_TIME_MS);
+    expect(SKILL_OBSERVATION_PRODUCER_READ_MAX_AGE_MS + COLLECTION_SWR_STALE_TIME_MS).toBe(
+      SKILL_OBSERVATION_PRODUCER_MAX_AGE_MS,
+    );
 
     expect(webQueryPolicies.currentAliasSwr).toMatchObject({
       gcTime: DEFAULT_BOUNDED_GC_TIME_MS,

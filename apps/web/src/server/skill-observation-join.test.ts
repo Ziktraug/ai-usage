@@ -48,6 +48,15 @@ const skillNamed = (result: ReturnType<typeof join>, skillName: string) =>
   result.skills.find((skill) => skill.skillName === skillName);
 
 describe('skill observation join', () => {
+  test('preserves the producer proof deadline through the inventory join', () => {
+    const result = join({
+      observations: createSkillObservationDataset([], COMPLETE_SKILL_OBSERVATION_EVIDENCE, '2026-08-01T10:01:00.000Z'),
+    });
+
+    expect(result.producerProofValidUntil).toBe('2026-08-01T10:01:00.000Z');
+    expect(safeParse(skillObservationsSchema, result).success).toBe(true);
+  });
+
   test('an exposed-only skill is never an adoption candidate', () => {
     const result = join({
       observations: createSkillObservationDataset([
@@ -327,6 +336,22 @@ describe('skill observation join', () => {
     expect(skillNamed(result, 'pr-review')?.unmanagedResidence).toBeNull();
   });
 
+  test('keeps an unobserved project skill as a server-decided project-owned row', () => {
+    const result = join({
+      observations: createSkillObservationDataset([]),
+      projectSkillNames: ['project-review'],
+    });
+
+    expect(skillNamed(result, 'project-review')).toMatchObject({
+      deletionCandidate: false,
+      managed: false,
+      projectedEverywhere: false,
+      tallies: [],
+      unmanagedResidence: 'project-owned',
+      verdict: 'never-observed',
+    });
+  });
+
   test('a runtime-directory entry outranks a project directory when a name has both', () => {
     const result = join({
       observations: createSkillObservationDataset([
@@ -515,6 +540,7 @@ describe('skill observation response bounds', () => {
     invocationLowerBound: false,
     lowerBound: false,
     producerCompletenessMissing: false,
+    producerProofValidUntil: null,
     skills: Array.from({ length: count }, (_value, index) => ({
       deletionCandidate: false,
       lastObservedAt: null,

@@ -4,7 +4,6 @@
   import SkillsEditorSlot from '../editor/skills-editor-slot.svelte';
   import type { SkillsHealthOperationOwner } from '../management/operation-episode.svelte';
   import SkillsHealthSlot from '../management/skills-health-slot.svelte';
-  import SkillsMatrixSlot from '../management/skills-matrix-slot.svelte';
   import {
     syntheticManagementOperationEpisode,
     syntheticManagementSnapshot,
@@ -12,8 +11,9 @@
   import { createSkillsPresentationProjection } from '../presentation';
   import { createSkillsShellViewModel } from './model';
   import SkillsWorkspace from './skills-workspace.svelte';
-  import type { SkillsHealthSlotPlacement, SkillsShellSlotContext, SkillsSnapshotUpdatePort } from './slot-context';
+  import type { SkillsShellSlotContext, SkillsSnapshotUpdatePort } from './slot-context';
   import {
+    syntheticExposureTruncatedObservations,
     syntheticInventories,
     syntheticKnownPaths,
     syntheticManagedDocument,
@@ -25,17 +25,27 @@
 
   let {
     healthSnapshot,
-    managementNoticePlacement,
+    omitObservationName,
+    managementNotice = false,
     managementPending,
     observationsError,
+    observationsExposureTruncated = false,
+    observationsLoading = false,
+    retainObservationsOnError = false,
+    observationsSkipped = 0,
     producerCompletenessMissing = false,
     observationsProvisional = false,
     pathname = '/skills/global/alpha-skill',
   }: {
     healthSnapshot?: 'management';
-    managementNoticePlacement?: SkillsHealthSlotPlacement;
+    omitObservationName?: string;
+    managementNotice?: boolean;
     managementPending?: string;
     observationsError?: string;
+    observationsExposureTruncated?: boolean;
+    observationsLoading?: boolean;
+    retainObservationsOnError?: boolean;
+    observationsSkipped?: number;
     producerCompletenessMissing?: boolean;
     observationsProvisional?: boolean;
     pathname?: string;
@@ -52,20 +62,32 @@
     }),
   );
   const observations = $derived.by(() => {
-    if (observationsError !== undefined) {
+    if (observationsLoading || (observationsError !== undefined && !retainObservationsOnError)) {
       return;
     }
+    const boundedObservations = observationsProvisional ? syntheticProvisionalObservations : syntheticObservations;
+    let selectedObservations = observationsExposureTruncated
+      ? syntheticExposureTruncatedObservations
+      : boundedObservations;
     if (producerCompletenessMissing) {
-      return {
+      selectedObservations = {
         ...syntheticProvisionalObservations,
         producerCompletenessMissing: true,
+        producerProofValidUntil: null,
       };
     }
-    return observationsProvisional ? syntheticProvisionalObservations : syntheticObservations;
+    const observationsWithSkipped =
+      observationsSkipped > 0 ? { ...selectedObservations, skipped: observationsSkipped } : selectedObservations;
+    return omitObservationName === undefined
+      ? observationsWithSkipped
+      : {
+          ...observationsWithSkipped,
+          skills: observationsWithSkipped.skills.filter((skill) => skill.skillName !== omitObservationName),
+        };
   });
   const presentation = $derived(createSkillsPresentationProjection({ observations, observationsError, view }));
   const managementNoticeOwner = $derived<SkillsHealthOperationOwner | undefined>(
-    managementNoticePlacement === undefined ? undefined : `health-${managementNoticePlacement}`,
+    managementNotice ? 'health-page' : undefined,
   );
   const management = $derived(
     syntheticManagementOperationEpisode({
@@ -97,14 +119,8 @@
 {#snippet editorSlot(_context: SkillsShellSlotContext)}
   <SkillsEditorSlot context={_context} />
 {/snippet}
-{#snippet healthSlot(
-  _context: SkillsShellSlotContext,
-  _placement: SkillsHealthSlotPlacement,
-)}
-  <SkillsHealthSlot context={_context} placement={_placement} />
-{/snippet}
-{#snippet matrixSlot(_context: SkillsShellSlotContext)}
-  <SkillsMatrixSlot context={_context} />
+{#snippet healthSlot(_context: SkillsShellSlotContext)}
+  <SkillsHealthSlot context={_context} />
 {/snippet}
 
 <WebQueryProvider>
@@ -112,7 +128,6 @@
     {editorSlot}
     {healthSlot}
     {management}
-    {matrixSlot}
     {presentation}
     {selectedDocument}
     snapshot={view.snapshot}

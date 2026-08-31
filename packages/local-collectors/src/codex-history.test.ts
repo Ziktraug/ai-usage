@@ -2588,6 +2588,56 @@ Preserve the existing aggregation semantics.`,
     }
   });
 
+  test('keeps malformed JSONL completeness across cold and warm reads without dropping a valid final line', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-codex-jsonl-cache-'));
+    try {
+      const sessionsDirectory = path.join(home, '.codex', 'sessions', '2026');
+      mkdirSync(sessionsDirectory, { recursive: true });
+      writeFileSync(path.join(sessionsDirectory, 'invalid-only.jsonl'), '{"unreadable":');
+
+      const finalSkillDocument = '/home/alex/.agents/skills/final-record/SKILL.md';
+      writeFileSync(
+        path.join(sessionsDirectory, 'valid-final-line.jsonl'),
+        [
+          JSON.stringify({
+            payload: { cwd: '/work/cache-project', id: 'valid-final-line', originator: 'codex_cli_rs' },
+            timestamp: '2026-08-01T09:00:00.000Z',
+            type: 'session_meta',
+          }),
+          JSON.stringify({
+            payload: {
+              call_id: 'call_final_record',
+              input: JSON.stringify({ cmd: `cat ${finalSkillDocument}` }),
+              name: 'exec',
+              type: 'custom_tool_call',
+            },
+            timestamp: '2026-08-01T09:00:01.000Z',
+            type: 'response_item',
+          }),
+        ].join('\n'),
+      );
+
+      const cold = await runWithRealStorage(collectCodexResult, home);
+      const warm = await runWithRealStorage(collectCodexResult, home);
+
+      expect(cold.observationCompleteness).toEqual({
+        exposure: { rejected: 1, truncated: false },
+        invocation: { rejected: 1, truncated: false },
+      });
+      expect(warm.observationCompleteness).toEqual(cold.observationCompleteness);
+      expect(warm.observations.map(({ skillName, tier }) => `${tier}:${skillName}`)).toEqual(['inferred:final-record']);
+      const coldWarning = cold.warnings.find(({ operation }) => operation === 'skillObservationValidation');
+      const warmWarning = warm.warnings.find(({ operation }) => operation === 'skillObservationValidation');
+      expect(coldWarning).toMatchObject({
+        message: 'Rejected 1 malformed codex skill observation record(s).',
+        rejectedRecords: 1,
+      });
+      expect(warmWarning).toEqual(coldWarning);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   test('keeps an exposure-only producer bound distinct across cold and warm cache reads', async () => {
     const home = mkdtempSync(path.join(tmpdir(), 'ai-usage-codex-skill-cache-'));
     setCodexSkillObservationCeilingForTesting(1);

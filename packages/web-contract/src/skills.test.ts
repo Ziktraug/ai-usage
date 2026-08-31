@@ -388,6 +388,7 @@ describe('Skills oRPC contract', () => {
       invocationLowerBound: false,
       lowerBound: false,
       producerCompletenessMissing: false,
+      producerProofValidUntil: '2026-08-01T10:01:00.000Z',
       skills: [
         {
           deletionCandidate: false,
@@ -457,6 +458,7 @@ describe('Skills oRPC contract', () => {
       invocationLowerBound: false,
       lowerBound: true,
       producerCompletenessMissing: false,
+      producerProofValidUntil: '2026-08-01T10:01:00.000Z',
       skills: [],
       skipped: 0,
     };
@@ -474,6 +476,11 @@ describe('Skills oRPC contract', () => {
     const { producerCompletenessMissing, ...withoutProducerState } = base;
     expect(producerCompletenessMissing).toBe(false);
     expect(safeParse(skillObservationsSchema, withoutProducerState).success).toBe(false);
+    const { producerProofValidUntil, ...withoutProducerProofDeadline } = base;
+    expect(producerProofValidUntil).toBe('2026-08-01T10:01:00.000Z');
+    expect(safeParse(skillObservationsSchema, withoutProducerProofDeadline).success).toBe(false);
+    expect(safeParse(skillObservationsSchema, { ...base, producerProofValidUntil: null }).success).toBe(true);
+    expect(safeParse(skillObservationsSchema, { ...base, producerProofValidUntil: '2026-08-01' }).success).toBe(false);
   });
 
   test('carries the verdict the server decided, and only the verdicts it may decide', () => {
@@ -482,6 +489,7 @@ describe('Skills oRPC contract', () => {
       invocationLowerBound: false,
       lowerBound: false,
       producerCompletenessMissing: false,
+      producerProofValidUntil: '2026-08-01T10:01:00.000Z',
       skills: [
         {
           deletionCandidate: true,
@@ -527,6 +535,7 @@ describe('Skills oRPC contract', () => {
       invocationLowerBound: false,
       lowerBound: false,
       producerCompletenessMissing: false,
+      producerProofValidUntil: '2026-08-01T10:01:00.000Z',
       skills: [
         {
           deletionCandidate: false,
@@ -568,6 +577,7 @@ describe('Skills oRPC contract', () => {
       invocationLowerBound: false,
       lowerBound: false,
       producerCompletenessMissing: false,
+      producerProofValidUntil: '2026-08-01T10:01:00.000Z',
       skills: [
         {
           deletionCandidate: false,
@@ -622,6 +632,7 @@ describe('Skills oRPC contract', () => {
       invocationLowerBound: true,
       lowerBound: true,
       producerCompletenessMissing: false,
+      producerProofValidUntil: null,
       skills: [],
       skipped: 2,
     };

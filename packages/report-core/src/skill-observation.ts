@@ -48,11 +48,12 @@ export const MAX_SKILL_OBSERVATION_PATH_LENGTH = 4096;
 export const MAX_SKILL_OBSERVATIONS_PER_SESSION = 4096;
 export const MAX_SKILL_OBSERVATION_BATCH = 100_000;
 /**
- * Durable observation history kept by the data plane. Collection sources can
- * rescan older transcripts on every sweep, so the same cutoff is also applied
- * before import; otherwise startup retention would be undone by the next run.
+ * Retention window for catalogue exposure. Declared and inferred invocations
+ * remain durable. Collection sources can rescan older transcripts on every
+ * sweep, so the same exposure cutoff is applied before import; otherwise
+ * startup retention would be undone by the next run.
  */
-export const SKILL_OBSERVATION_RETENTION_MS = 400 * 24 * 60 * 60 * 1000;
+export const SKILL_OBSERVATION_EXPOSURE_RETENTION_MS = 400 * 24 * 60 * 60 * 1000;
 
 export interface SkillObservationCompletenessPart {
   /** Candidates that looked like observations but failed validation. */

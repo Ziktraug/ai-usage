@@ -35,12 +35,10 @@ export const collectCodexResult = Effect.gen(function* () {
     };
   }
   const result = yield* readCodexUsageSessionsResult;
-  const rejectedObservations =
-    result.observationCompleteness.exposure.rejected + result.observationCompleteness.invocation.rejected;
   const observationsTruncated =
     result.observationCompleteness.exposure.truncated || result.observationCompleteness.invocation.truncated;
   const warning = metricValidationWarning('codex', result.rejectedMetricRecords);
-  const observationWarning = skillObservationValidationWarning('codex', rejectedObservations);
+  const observationWarning = skillObservationValidationWarning('codex', result.rejectedSkillObservationRecords);
   const truncationWarning = observationsTruncated
     ? skillObservationTruncationWarning('codex', MAX_SKILL_OBSERVATIONS_PER_SESSION)
     : null;

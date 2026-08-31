@@ -10,7 +10,6 @@
     syntheticProvisionalObservations,
   } from '../shell/synthetic-fixture.test-helper';
   import SkillsHealthSlot from './skills-health-slot.svelte';
-  import SkillsMatrixSlot from './skills-matrix-slot.svelte';
   import { syntheticManagementOperationEpisode, syntheticManagementSnapshot } from './synthetic-fixture.test-helper';
 
   let {
@@ -47,9 +46,5 @@
 </script>
 
 <WebQueryProvider>
-  {#if pathname === '/skills/matrix'}
-    <SkillsMatrixSlot {context} />
-  {:else}
-    <SkillsHealthSlot {context} placement={view.selectionDetail.kind === 'global-scope' ? 'detail' : 'inspector'} />
-  {/if}
+  <SkillsHealthSlot {context} />
 </WebQueryProvider>

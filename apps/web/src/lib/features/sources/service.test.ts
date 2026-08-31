@@ -134,7 +134,7 @@ describe('Svelte source-control service', () => {
     expect(invalidated).toEqual([...publicationInvalidatedKeys(), ...publicationInvalidatedKeys()]);
   });
 
-  test('gives skill observations their only freshness path, since their policy revalidates on nothing', () => {
+  test('gives skill observations their prompt producer-driven freshness path', () => {
     const client = new FakeClient();
     const invalidated: PublicationQueryKey[] = [];
     const service = createSourceControlService({

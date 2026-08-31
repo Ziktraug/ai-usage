@@ -316,7 +316,8 @@ The read path is:
 producer completeness, written together even for an empty observation batch)
 → `querySkillObservations` (`@ai-usage/usage-store/reader`, bounded, `query_only`,
 reading the invocation tiers against the full budget before spending the
-remainder on exposure, and reporting the two bounds separately)
+remainder on exposure, reporting the two bounds separately, and deriving
+`producerProofValidUntil` from the producer cutoff rather than completion time)
 → `querySkillObservationDataset` (`@ai-usage/report-data/skill-observation-read`,
 which classifies rows the presentation edge cannot render by their known tier,
 folds producer/read/refusal facts through
@@ -329,11 +330,11 @@ stated as the contract's own numbers)
 → `joinSkillObservations` (`apps/web/src/server/skill-observation-join.ts`,
 which adds the inventory side and then clamps the *assembled response* to the
 contract's caps, again reporting any clamp as `lowerBound` — the upstream clamp
-cannot bound a payload the join grows)
+cannot bound a payload the join grows — while preserving the proof deadline)
 → the `skills.observations` oRPC procedure
 → the `skill-observations` query family under the `collection-swr` policy.
 
-Seven properties are load-bearing:
+These properties are load-bearing:
 
 - **The tiers get separate read budgets, and separate bounds.** Exposure is
   written once per catalogue entry per session and outnumbers real invocations
@@ -357,28 +358,40 @@ Seven properties are load-bearing:
   truncated sweep from turning into an exact "never invoked" verdict after the
   source-control warning disappears or the process restarts.
 
-- **Global completeness requires the whole relevant producer roster.** The
-  server composition derives the current machine's expected harnesses from the
-  authoritative session-source catalogue and persisted source policy, then
-  removes harnesses whose skill observations are `not-observable`. The generic
-  store reader receives those expected machine/harness pairs explicitly; it
-  never infers completion from observation rows. An explicitly disabled session
-  source is outside the selected roster, while source availability is a
-  separate axis and cannot substitute for a persisted sweep. A harness-filtered
-  read intersects the roster with that harness, and Cursor requires no producer
-  state.
+- **Global completeness requires every observable producer to answer recently.**
+  The Web composition always supplies Claude, Codex, and OpenCode for the
+  current machine. Persisted source policy can mark one of those expected
+  producers incomplete, but never remove it from the proof roster; disabling
+  collection is not evidence of absence. The store accepts a producer answer
+  only while its persisted `collected_at` is within the four-minute server-read
+  window; the browser cache owns the final minute of the five-minute end-to-end
+  proof budget. The store publishes that deadline as
+  `producerProofValidUntil`; folds and inventory scans cannot renew it. Missing,
+  stale, disabled, malformed, rejected, truncated, or state-read-overflow
+  answers make absence provisional. A harness-filtered read intersects the
+  roster with that harness, and Cursor remains `not-observable`, so it requires
+  no producer state (ADR 0037).
+
+- **Invocation history is durable; exposure is windowed.** The scarce
+  `declared` and `inferred` facts survive age-based recovery and rescans. Only
+  the high-volume `exposed` catalogue stream is pruned at 400 days, and only
+  exposure receives the matching import cutoff, so a sweep cannot resurrect
+  expired catalogue rows (ADR 0037).
 
 - **A completed publication *cycle* or a Skills inventory mutation invalidates
-  it — not only a new report revision.** The
-  query policy revalidates on neither focus nor reconnect, because nothing a
-  browser does can change it; it does revalidate on mount, which is the only
-  place an invalidation that arrived while nothing was subscribed can still be
-  honoured. The freshness signal itself is keyed on the cycle
+  it — not only a new report revision.** The query policy also revalidates every
+  minute and on window focus, because the producer proof can expire even
+  when a stopped or disabled collector emits no invalidation. Mount always
+  refetches so recreating a TanStack observer cannot restart the interval beyond
+  the proof's remaining lifetime. Independently, its data-aware stale time is
+  capped at one minute and ends at `producerProofValidUntil`; stale or in-flight
+  retained data is fail-closed rather than presented as settled exact evidence.
+  The fast freshness signal is keyed on the cycle
   (`publishedGeneration` and `lastPublishedAt` in the source-control snapshot),
   not on the revision, because a cycle that leaves the report rows identical
   renews the current revision instead of publishing a new one — and an
   observation-only sweep is exactly that shape. See `publicationIdentity` in the
-  source-control service and `publicationInvalidatedKeys`.
+  source-control service and `publicationInvalidatedKeys` (ADR 0037).
 - **It is independent of the report revision.** Observations answer a question
   about the skills inventory, not about a published report, so `/skills` stays
   answerable before the first publication and after every revision expires.

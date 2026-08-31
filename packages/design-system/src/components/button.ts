@@ -89,30 +89,6 @@ export const themeToggleButton = css({
   _print: { display: 'none' },
 });
 
-export const activeFilterButton = css({
-  appearance: 'none',
-  display: 'inline-flex',
-  alignItems: 'center',
-  h: '24px',
-  px: '10px',
-  border: '1px solid token(colors.line)',
-  borderRadius: 'full',
-  bg: 'surface',
-  color: 'ink',
-  fontSize: '11px',
-  fontWeight: 600,
-  cursor: 'pointer',
-  transition: 'border-color 0.15s, color 0.15s',
-  _hover: {
-    borderColor: 'accent',
-    color: 'accent',
-  },
-  _focusVisible: {
-    outline: '2px solid token(colors.accent)',
-    outlineOffset: '2px',
-  },
-});
-
 export const filterTextButton = css({
   appearance: 'none',
   display: 'inline',
@@ -193,35 +169,6 @@ export const sortButton = css({
   cursor: 'pointer',
   _hover: {
     color: 'ink',
-  },
-  _focusVisible: {
-    outline: '2px solid token(colors.accent)',
-    outlineOffset: '2px',
-  },
-});
-
-export const refreshButton = css({
-  appearance: 'none',
-  display: 'inline-flex',
-  alignItems: 'center',
-  h: '100%',
-  p: 0,
-  border: '0',
-  bg: 'transparent',
-  color: 'accent',
-  fontSize: '12px',
-  fontWeight: 650,
-  lineHeight: 1,
-  minW: '44px',
-  justifyContent: 'center',
-  cursor: 'pointer',
-  transition: 'color 0.15s',
-  _hover: {
-    color: 'ink',
-  },
-  _disabled: {
-    color: 'faint',
-    cursor: 'not-allowed',
   },
   _focusVisible: {
     outline: '2px solid token(colors.accent)',

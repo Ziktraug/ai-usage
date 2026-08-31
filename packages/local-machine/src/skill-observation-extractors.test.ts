@@ -288,6 +288,111 @@ describe('Codex per-session ceiling', () => {
     type: 'session_meta',
   };
 
+  test('marks every non-empty malformed JSONL line as incomplete for both skill channels', () => {
+    const parser = createCodexSessionParser(false);
+    parser.visit(JSON.stringify(sessionMeta));
+    // The malformed line carries no readable prefix. Neither producer can
+    // prove it contained no signal, so both channels must fail closed.
+    parser.visit('{"unreadable":');
+
+    expect(parser.finish().session.skillObservationCompleteness).toEqual({
+      exposure: { rejected: 1, truncated: false },
+      invocation: { rejected: 1, truncated: false },
+    });
+  });
+
+  test('rejects otherwise readable skill signals whose timestamp cannot be placed in history', () => {
+    const parser = createCodexSessionParser(false);
+    parser.visit(JSON.stringify(sessionMeta));
+    parser.visit(
+      JSON.stringify({
+        payload: {
+          call_id: 'call_without_time',
+          input: JSON.stringify({ cmd: `cat ${SKILL_FIXTURE_HOME}/.agents/skills/unplaced/SKILL.md` }),
+          name: 'exec',
+          type: 'custom_tool_call',
+        },
+        timestamp: 'not-a-time',
+        type: 'response_item',
+      }),
+    );
+    parser.visit(
+      JSON.stringify({
+        payload: {
+          type: 'message',
+          id: 'msg_without_time',
+          role: 'developer',
+          content: [
+            {
+              type: 'input_text',
+              text: [
+                '### Available skills',
+                `- unplaced: Description. (file: ${SKILL_FIXTURE_HOME}/.agents/skills/unplaced/SKILL.md)`,
+              ].join('\n'),
+            },
+          ],
+        },
+        timestamp: 'not-a-time',
+        type: 'response_item',
+      }),
+    );
+
+    expect(parser.finish().session.skillObservationCompleteness).toEqual({
+      exposure: { rejected: 1, truncated: false },
+      invocation: { rejected: 1, truncated: false },
+    });
+  });
+
+  test('rejects an invocation signal that has no session identity', () => {
+    const parser = createCodexSessionParser(false);
+    parser.visit(
+      JSON.stringify({
+        payload: {
+          call_id: 'call_without_session',
+          input: JSON.stringify({ cmd: `cat ${SKILL_FIXTURE_HOME}/.agents/skills/unkeyed/SKILL.md` }),
+          name: 'exec',
+          type: 'custom_tool_call',
+        },
+        timestamp: '2026-08-01T09:00:01.000Z',
+        type: 'response_item',
+      }),
+    );
+
+    expect(parser.finish().session.skillObservationCompleteness).toEqual({
+      exposure: { rejected: 0, truncated: false },
+      invocation: { rejected: 1, truncated: false },
+    });
+  });
+
+  test('rejects an exposure signal that has no session identity', () => {
+    const parser = createCodexSessionParser(false);
+    parser.visit(
+      JSON.stringify({
+        payload: {
+          type: 'message',
+          id: 'msg_without_session',
+          role: 'developer',
+          content: [
+            {
+              type: 'input_text',
+              text: [
+                '### Available skills',
+                `- unkeyed: Description. (file: ${SKILL_FIXTURE_HOME}/.agents/skills/unkeyed/SKILL.md)`,
+              ].join('\n'),
+            },
+          ],
+        },
+        timestamp: '2026-08-01T09:00:01.000Z',
+        type: 'response_item',
+      }),
+    );
+
+    expect(parser.finish().session.skillObservationCompleteness).toEqual({
+      exposure: { rejected: 1, truncated: false },
+      invocation: { rejected: 0, truncated: false },
+    });
+  });
+
   test('ignores an unknown non-exec tool whose argument merely names a skill', () => {
     // A denylist let any unheard-of tool through; the corpus carries `wait`,
     // `list_agents`, `followup_task` and more, none of which run a command.
@@ -447,6 +552,59 @@ describe('Codex per-session ceiling', () => {
     });
   });
 
+  test('correlates a plugin document read with its namespaced catalogue entry', () => {
+    const pluginDirectory = `${SKILL_FIXTURE_HOME}/.codex/plugins/cache/openai-curated-remote/vercel/0.21.4/skills/nextjs`;
+    const pluginDocument = `${pluginDirectory}/SKILL.md`;
+    const catalogue = ['### Available skills', `- vercel:nextjs: Build with Next.js. (file: ${pluginDocument})`].join(
+      '\n',
+    );
+    const session = rollout([
+      sessionMeta,
+      {
+        payload: {
+          type: 'message',
+          id: 'msg_dev',
+          role: 'developer',
+          content: [{ type: 'input_text', text: catalogue }],
+        },
+        timestamp: '2026-08-01T09:00:01.000Z',
+        type: 'response_item',
+      },
+      {
+        payload: {
+          call_id: 'call_plugin_read',
+          input: JSON.stringify({ cmd: `cat ${pluginDocument}` }),
+          name: 'exec',
+          type: 'custom_tool_call',
+        },
+        timestamp: '2026-08-01T09:00:02.000Z',
+        type: 'response_item',
+      },
+    ]);
+
+    expect(
+      session.skillObservations.map(({ observationKey, resolvedPath, skillName, tier }) => ({
+        observationKey,
+        resolvedPath,
+        skillName,
+        tier,
+      })),
+    ).toEqual([
+      {
+        observationKey: 'catalogue:vercel:nextjs',
+        resolvedPath: pluginDirectory,
+        skillName: 'vercel:nextjs',
+        tier: 'exposed',
+      },
+      {
+        observationKey: 'exec:call_plugin_read:nextjs',
+        resolvedPath: pluginDirectory,
+        skillName: 'vercel:nextjs',
+        tier: 'inferred',
+      },
+    ]);
+  });
+
   test('does not flag a session inside the ceiling', () => {
     setCodexSkillObservationCeilingForTesting(5);
     const session = rollout([
@@ -531,6 +689,21 @@ describe('decodeCodexCommand', () => {
 });
 
 describe('extractCodexSkillExecObservation', () => {
+  test('infers a read of a Codex system skill from its nested installation path', () => {
+    const extraction = extractCodexSkillExecObservation(
+      JSON.stringify({ cmd: `cat ${SKILL_FIXTURE_HOME}/.codex/skills/.system/imagegen/SKILL.md` }),
+      'call_system_skill',
+      codexContext,
+    );
+
+    expect(extraction.observations.map(({ resolvedPath, skillName }) => ({ resolvedPath, skillName }))).toEqual([
+      {
+        resolvedPath: `${SKILL_FIXTURE_HOME}/.codex/skills/.system/imagegen`,
+        skillName: 'imagegen',
+      },
+    ]);
+  });
+
   test('infers a read from the production JSON arguments envelope with a clean path', () => {
     const extraction = extractCodexSkillExecObservation(
       codexExecCommandPayload.arguments,

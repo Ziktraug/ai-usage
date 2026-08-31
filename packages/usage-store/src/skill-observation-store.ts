@@ -4,13 +4,14 @@ import {
   MAX_SKILL_OBSERVATION_BATCH,
   MAX_SKILL_OBSERVATION_NAME_LENGTH,
   parseSkillObservation,
-  SKILL_OBSERVATION_RETENTION_MS,
+  SKILL_OBSERVATION_EXPOSURE_RETENTION_MS,
   type SkillObservation,
   type SkillObservationCollectionCompleteness,
 } from '@ai-usage/report-core/skill-observation';
 import {
   isSkillObservationTier,
   SKILL_OBSERVATION_INVOCATION_TIERS,
+  SKILL_OBSERVATION_PRODUCER_MAX_AGE_MS,
   type SkillObservationRefusalCounts,
   skillObservabilityFor,
   skillObservationTierSupportsInvocation,
@@ -61,6 +62,14 @@ const EXPOSURE_TIER_SQL = "tier = 'exposed'";
 // Bounds WAL growth of each retention transaction; every batch commits independently.
 const SKILL_OBSERVATION_RETENTION_BATCH_SIZE = 20_000;
 
+const producerProofValidUntilFrom = (minimumProducerCollectedAt: string | undefined): string | null => {
+  if (minimumProducerCollectedAt === undefined) {
+    return null;
+  }
+  const validUntil = new Date(Date.parse(minimumProducerCollectedAt) + SKILL_OBSERVATION_PRODUCER_MAX_AGE_MS);
+  return Number.isFinite(validUntil.getTime()) ? validUntil.toISOString() : null;
+};
+
 interface SqliteStatement {
   all(...params: unknown[]): unknown[];
   finalize(): void;
@@ -95,6 +104,7 @@ interface SkillObservationRecord {
 }
 
 interface SkillObservationCollectionStateRecord {
+  collected_at: string;
   exposure_rejected: number;
   exposure_truncated: number;
   harness_key: string;
@@ -227,12 +237,14 @@ export const createSkillObservationStore = (dependencies: SkillObservationStoreD
   const importSkillObservations = (
     input: ImportSkillObservationsInput,
   ): Effect.Effect<SkillObservationImportResult, UsageStoreError> => {
-    const minimumObservedAt =
-      input.minimumObservedAt === undefined ? undefined : normalizeIsoTimestamp(input.minimumObservedAt);
+    const minimumExposureObservedAt =
+      input.minimumExposureObservedAt === undefined
+        ? undefined
+        : normalizeIsoTimestamp(input.minimumExposureObservedAt);
     if (
       input.observations.length > MAX_SKILL_OBSERVATION_BATCH ||
       !validCollection(input.collection) ||
-      (input.minimumObservedAt !== undefined && minimumObservedAt === null)
+      (input.minimumExposureObservedAt !== undefined && minimumExposureObservedAt === null)
     ) {
       return Effect.fail(
         usageStoreError(
@@ -302,7 +314,11 @@ export const createSkillObservationStore = (dependencies: SkillObservationStoreD
                 }
                 continue;
               }
-              if (typeof minimumObservedAt === 'string' && observation.observedAt < minimumObservedAt) {
+              if (
+                typeof minimumExposureObservedAt === 'string' &&
+                observation.tier === 'exposed' &&
+                observation.observedAt < minimumExposureObservedAt
+              ) {
                 continue;
               }
               const stored = existing.get(
@@ -440,26 +456,56 @@ export const createSkillObservationStore = (dependencies: SkillObservationStoreD
           const expectedProducerHarnessKeys = input.expectedProducerHarnessKeys?.map((harnessKey) => harnessKey.trim());
           const expectedProducerHarnessKeySet =
             expectedProducerHarnessKeys === undefined ? undefined : new Set(expectedProducerHarnessKeys);
+          const incompleteProducerHarnessKeys = input.incompleteProducerHarnessKeys?.map((harnessKey) =>
+            harnessKey.trim(),
+          );
+          const incompleteProducerHarnessKeySet =
+            incompleteProducerHarnessKeys === undefined ? undefined : new Set(incompleteProducerHarnessKeys);
+          const minimumProducerCollectedAt =
+            input.minimumProducerCollectedAt === undefined
+              ? undefined
+              : normalizeIsoTimestamp(input.minimumProducerCollectedAt);
+          const producerProofValidUntil = producerProofValidUntilFrom(minimumProducerCollectedAt ?? undefined);
           const expectedProducerRosterValid =
             expectedProducerHarnessKeys === undefined ||
             (expectedProducerHarnessKeys.length <= MAX_EXPECTED_SKILL_OBSERVATION_PRODUCERS &&
               expectedProducerHarnessKeySet?.size === expectedProducerHarnessKeys.length &&
               expectedProducerHarnessKeys.every(
-                (harnessKey) => harnessKey.length > 0 && harnessKey.length <= MAX_SKILL_OBSERVATION_NAME_LENGTH,
+                (harnessKey) =>
+                  harnessKey.length > 0 &&
+                  harnessKey.length <= MAX_SKILL_OBSERVATION_NAME_LENGTH &&
+                  skillObservabilityFor(harnessKey) === 'observable',
               ) &&
+              (input.harnessKey === undefined ||
+                skillObservabilityFor(input.harnessKey) !== 'observable' ||
+                expectedProducerHarnessKeySet.has(input.harnessKey)) &&
               (expectedProducerHarnessKeys.length === 0 || input.machineId !== undefined));
+          const incompleteProducerRosterValid =
+            incompleteProducerHarnessKeys === undefined ||
+            (expectedProducerHarnessKeySet !== undefined &&
+              incompleteProducerHarnessKeys.length <= MAX_EXPECTED_SKILL_OBSERVATION_PRODUCERS &&
+              incompleteProducerHarnessKeySet?.size === incompleteProducerHarnessKeys.length &&
+              incompleteProducerHarnessKeys.every(
+                (harnessKey) =>
+                  harnessKey.length > 0 &&
+                  harnessKey.length <= MAX_SKILL_OBSERVATION_NAME_LENGTH &&
+                  expectedProducerHarnessKeySet.has(harnessKey),
+              ));
           if (
             !(
               Number.isSafeInteger(maximum) &&
               maximum > 0 &&
               maximum <= MAX_SKILL_OBSERVATION_READ &&
-              expectedProducerRosterValid
+              expectedProducerRosterValid &&
+              incompleteProducerRosterValid &&
+              (input.minimumProducerCollectedAt === undefined ||
+                (minimumProducerCollectedAt !== null && producerProofValidUntil !== null))
             )
           ) {
             throw usageStoreError(
               'querySkillObservations',
               input.dbPath,
-              'Skill observation query bounds or expected producer roster are invalid',
+              'Skill observation query bounds, producer freshness, or producer roster are invalid',
               'invalid-input',
             );
           }
@@ -571,25 +617,6 @@ export const createSkillObservationStore = (dependencies: SkillObservationStoreD
             invocation: skippedInvocation,
             unknown: skippedUnknown,
           };
-          const stateClauses: string[] = [];
-          const stateParams: unknown[] = [];
-          if (input.harnessKey !== undefined) {
-            stateClauses.push('harness_key = ?');
-            stateParams.push(input.harnessKey);
-          }
-          if (input.machineId !== undefined) {
-            stateClauses.push('machine_id = ?');
-            stateParams.push(input.machineId);
-          }
-          const states = db
-            .query(`
-              SELECT machine_id, harness_key,
-                invocation_truncated, invocation_rejected, exposure_truncated, exposure_rejected
-              FROM skill_observation_collection_state
-              ${stateClauses.length > 0 ? `WHERE ${stateClauses.join(' AND ')}` : ''}
-            `)
-            .all(...stateParams) as SkillObservationCollectionStateRecord[];
-          const statePairs = new Set(states.map(collectionPairKey));
           const relevantExpectedHarnessKeys =
             expectedProducerHarnessKeySet === undefined
               ? undefined
@@ -600,10 +627,58 @@ export const createSkillObservationStore = (dependencies: SkillObservationStoreD
                       (input.harnessKey === undefined || harnessKey === input.harnessKey),
                   ),
                 );
+          const stateClauses: string[] = [];
+          const stateParams: unknown[] = [];
+          if (input.harnessKey !== undefined) {
+            stateClauses.push('harness_key = ?');
+            stateParams.push(input.harnessKey);
+          }
+          if (input.machineId !== undefined) {
+            stateClauses.push('machine_id = ?');
+            stateParams.push(input.machineId);
+          }
+          if (relevantExpectedHarnessKeys !== undefined && relevantExpectedHarnessKeys.size > 0) {
+            stateClauses.push(`harness_key IN (${[...relevantExpectedHarnessKeys].map(() => '?').join(', ')})`);
+            stateParams.push(...relevantExpectedHarnessKeys);
+          }
+          const stateLimit = relevantExpectedHarnessKeys?.size ?? MAX_EXPECTED_SKILL_OBSERVATION_PRODUCERS;
+          const stateSql = `
+            SELECT machine_id, harness_key, collected_at,
+              invocation_truncated, invocation_rejected, exposure_truncated, exposure_rejected
+            FROM skill_observation_collection_state
+            ${stateClauses.length > 0 ? `WHERE ${stateClauses.join(' AND ')}` : ''}
+            ORDER BY machine_id, harness_key
+            LIMIT ?
+          `;
+          const stateQueryParams = [...stateParams, stateLimit + 1];
+          input.trace?.({ params: stateQueryParams, sql: stateSql });
+          const stateRows =
+            relevantExpectedHarnessKeys?.size === 0
+              ? []
+              : (db.query(stateSql).all(...stateQueryParams) as SkillObservationCollectionStateRecord[]);
+          const stateReadTruncated = stateRows.length > stateLimit;
+          const states = stateRows.slice(0, stateLimit);
           const relevantStates =
             relevantExpectedHarnessKeys === undefined
-              ? states
+              ? states.filter((state) => skillObservabilityFor(state.harness_key) === 'observable')
               : states.filter((state) => relevantExpectedHarnessKeys.has(state.harness_key));
+          const stateIsCurrent = (state: SkillObservationCollectionStateRecord): boolean => {
+            if (typeof minimumProducerCollectedAt !== 'string') {
+              return true;
+            }
+            const collectedAt = normalizeIsoTimestamp(state.collected_at);
+            return collectedAt !== null && collectedAt >= minimumProducerCollectedAt;
+          };
+          const incompleteRelevantHarnessKeys = new Set(
+            [...(incompleteProducerHarnessKeySet ?? [])].filter(
+              (harnessKey) => relevantExpectedHarnessKeys?.has(harnessKey) ?? false,
+            ),
+          );
+          const usableStatePairs = new Set(
+            relevantStates
+              .filter((state) => stateIsCurrent(state) && !incompleteRelevantHarnessKeys.has(state.harness_key))
+              .map(collectionPairKey),
+          );
           const observableCollectionRequested =
             input.harnessKey === undefined || skillObservabilityFor(input.harnessKey) === 'observable';
           // A direct/legacy observation import can omit the producer state. Use
@@ -613,31 +688,41 @@ export const createSkillObservationStore = (dependencies: SkillObservationStoreD
           // The completely empty case is distinct and load-bearing. Before the
           // first historical sweep, there are neither observations nor producer
           // states, so rows alone cannot reveal the missing answer. An explicit
-          // complete empty sweep persists a state row and clears this condition;
-          // a not-observable harness such as Cursor never enters it.
+          // empty sweep persists a state row; it clears this condition only
+          // while that state is current and the producer remains available. A
+          // not-observable harness such as Cursor never enters it.
           const collectionStateMissing =
             relevantExpectedHarnessKeys === undefined
               ? observableCollectionRequested &&
-                (states.length === 0 ||
+                (stateReadTruncated ||
+                  relevantStates.length === 0 ||
+                  relevantStates.some((state) => !stateIsCurrent(state)) ||
                   read.rows.some(
                     (row) =>
                       skillObservabilityFor(row.harness_key) === 'observable' &&
-                      !statePairs.has(collectionPairKey({ harness_key: row.harness_key, machine_id: row.machine_id })),
+                      !usableStatePairs.has(
+                        collectionPairKey({ harness_key: row.harness_key, machine_id: row.machine_id }),
+                      ),
                   ))
-              : [...relevantExpectedHarnessKeys].some(
+              : stateReadTruncated ||
+                incompleteRelevantHarnessKeys.size > 0 ||
+                [...relevantExpectedHarnessKeys].some(
                   (harnessKey) =>
-                    !statePairs.has(collectionPairKey({ harness_key: harnessKey, machine_id: input.machineId ?? '' })),
+                    !usableStatePairs.has(
+                      collectionPairKey({ harness_key: harnessKey, machine_id: input.machineId ?? '' }),
+                    ),
                 );
           return {
-            collectionExposureIncomplete: relevantStates.some(
-              (state) => state.exposure_truncated === 1 || state.exposure_rejected > 0,
-            ),
+            collectionExposureIncomplete:
+              collectionStateMissing ||
+              relevantStates.some((state) => state.exposure_truncated === 1 || state.exposure_rejected > 0),
             collectionInvocationIncomplete:
               collectionStateMissing ||
               relevantStates.some((state) => state.invocation_truncated === 1 || state.invocation_rejected > 0),
             invocationTruncated: read.invocationTruncated,
             observations,
             producerCompletenessMissing: collectionStateMissing,
+            producerProofValidUntil,
             refusedRows,
             skipped: skippedExposure + skippedInvocation + skippedUnknown,
             truncated: read.truncated,
@@ -654,8 +739,15 @@ export const createSkillObservationStore = (dependencies: SkillObservationStoreD
       Effect.try({
         try: () => {
           const now = input.now ?? Date.now();
-          const retentionMs = input.retentionMs ?? SKILL_OBSERVATION_RETENTION_MS;
-          if (!(Number.isSafeInteger(now) && now >= 0 && Number.isSafeInteger(retentionMs) && retentionMs > 0)) {
+          const exposureRetentionMs = input.exposureRetentionMs ?? SKILL_OBSERVATION_EXPOSURE_RETENTION_MS;
+          if (
+            !(
+              Number.isSafeInteger(now) &&
+              now >= 0 &&
+              Number.isSafeInteger(exposureRetentionMs) &&
+              exposureRetentionMs > 0
+            )
+          ) {
             throw usageStoreError(
               'retainSkillObservations',
               input.dbPath,
@@ -663,14 +755,17 @@ export const createSkillObservationStore = (dependencies: SkillObservationStoreD
               'invalid-input',
             );
           }
-          // Observations are small and few - tens to hundreds - so retention is
-          // a plain age cutoff rather than the quota family's downsampling.
-          // Nothing here is aggregated away: an observation is kept whole or
-          // dropped whole, so a surviving count never silently changes meaning.
-          const cutoff = new Date(now - retentionMs).toISOString();
+          // Catalogue exposure is abundant and weaker than invocation evidence,
+          // so only that tier uses an age cutoff. Declared and inferred history
+          // remains durable.
+          const cutoff = new Date(now - exposureRetentionMs).toISOString();
           const deleteBatch = db.query(`
             DELETE FROM skill_observations
-            WHERE id IN (SELECT id FROM skill_observations WHERE observed_at < ? LIMIT ?)
+            WHERE id IN (
+              SELECT id FROM skill_observations
+              WHERE tier = 'exposed' AND observed_at < ?
+              LIMIT ?
+            )
           `);
           const countChanges = db.query('SELECT changes() AS changed');
           let deleted = 0;

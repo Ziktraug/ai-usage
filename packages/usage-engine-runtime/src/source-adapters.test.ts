@@ -138,20 +138,32 @@ const skillObservation = (overrides: Partial<SkillObservation> = {}): SkillObser
 });
 
 describe('skill observation import preparation', () => {
-  test('applies retention before the bounded write batch', () => {
+  test('applies the age cutoff only to exposure before the bounded write batch', () => {
     const prepared = prepareSkillObservationImport({
       completeness: completeSkillObservationCollection(),
-      maximumObservations: 2,
-      minimumObservedAt: '2026-08-01T00:00:00.000Z',
+      maximumObservations: 3,
+      minimumExposureObservedAt: '2026-08-01T00:00:00.000Z',
       observations: [
-        skillObservation({ observationKey: 'expired-1', observedAt: '2025-01-01T00:00:00.000Z' }),
-        skillObservation({ observationKey: 'expired-2', observedAt: '2025-01-02T00:00:00.000Z' }),
-        skillObservation({ observationKey: 'current-1' }),
-        skillObservation({ observationKey: 'current-2', tier: 'exposed' }),
+        skillObservation({ observationKey: 'historical-declared', observedAt: '2025-01-01T00:00:00.000Z' }),
+        skillObservation({
+          observationKey: 'historical-inferred',
+          observedAt: '2025-01-02T00:00:00.000Z',
+          tier: 'inferred',
+        }),
+        skillObservation({
+          observationKey: 'expired-exposure',
+          observedAt: '2025-01-03T00:00:00.000Z',
+          tier: 'exposed',
+        }),
+        skillObservation({ observationKey: 'current-exposure', tier: 'exposed' }),
       ],
     });
 
-    expect(prepared.observations.map(({ observationKey }) => observationKey)).toEqual(['current-1', 'current-2']);
+    expect(prepared.observations.map(({ observationKey }) => observationKey)).toEqual([
+      'historical-declared',
+      'historical-inferred',
+      'current-exposure',
+    ]);
     expect(prepared.completeness).toEqual(completeSkillObservationCollection());
   });
 
@@ -159,7 +171,7 @@ describe('skill observation import preparation', () => {
     const prepared = prepareSkillObservationImport({
       completeness: completeSkillObservationCollection(),
       maximumObservations: 2,
-      minimumObservedAt: '2026-08-01T00:00:00.000Z',
+      minimumExposureObservedAt: '2026-08-01T00:00:00.000Z',
       observations: [
         skillObservation({
           observationKey: 'exposed-newest',
@@ -186,7 +198,7 @@ describe('skill observation import preparation', () => {
     const prepared = prepareSkillObservationImport({
       completeness: completeSkillObservationCollection(),
       maximumObservations: 1,
-      minimumObservedAt: '2026-08-01T00:00:00.000Z',
+      minimumExposureObservedAt: '2026-08-01T00:00:00.000Z',
       observations: [
         skillObservation({ observationKey: 'declared', observedAt: '2026-08-20T00:00:00.000Z' }),
         skillObservation({

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { css, cx } from '@ai-usage/design-system/css';
-  import { panel, skillsDisclosurePanel, skillsDisclosureSummary } from '@ai-usage/design-system/report';
+  import { skillsReconcilePlanList } from '@ai-usage/design-system/report';
   import {
     banner,
     bannerError,
@@ -8,198 +8,63 @@
     commandButton,
     ghostButton,
     meta,
+    muted,
     pendingButton,
-    statusPill,
-    statusPillOk,
-    statusPillWarn,
     strongCell,
   } from '@ai-usage/design-system/svelte';
-  import { onDestroy, onMount, tick } from 'svelte';
-  import { goto } from '$app/navigation';
-  import { canReconcileAll, count, skillDiagnosticLabel, skillInvocation } from '../../../../skills-page-model';
-  import { SKILLS_DESKTOP_MEDIA_QUERY } from '../../../../skills-responsive';
-  import { fmtNum } from '../../../foundation/presentation/format';
+  import { onDestroy, onMount } from 'svelte';
+  import { canReconcileAll } from '../../../../skills-page-model';
+  import type { SkillsShellSlotContext } from '../shell/slot-context';
   import {
-    formatObservedAt,
-    formatObservedDate,
-    NAME_SCOPED_COUNTS_TEXT,
-    noSignalsText,
-    observationRecency,
-    observationRecencyNote,
-  } from '../observations/model';
-  import type { SkillsHealthSlotPlacement, SkillsShellSlotContext } from '../shell/slot-context';
-  import {
-    observeInspectorDisclosure,
     previewReconcileOperation,
-    reconcileSkillOperation,
+    reconcileAllOperation,
     resolveSkillsRefreshAcceptance,
     type SkillsManagementOperation,
     type SkillsRefreshAcceptanceTarget,
     type SkillsRefreshDecisionState,
     skillsSnapshotAcceptanceSignature,
-    toggleOperation,
   } from './model';
-  import type { SkillsHealthOperationOwner } from './operation-episode.svelte';
-  import SkillsConfiguration from './skills-configuration.svelte';
-  import SkillsConsolidate from './skills-consolidate.svelte';
-  import {
-    compactStack,
-    diagnosticRow,
-    heading,
-    muted,
-    operationNotice,
-    passiveOperationNotice,
-    pathText,
-    stack,
-  } from './styles';
+  import { operationNotice, passiveOperationNotice, stack } from './styles';
 
+  /**
+   * The worktable's operation host.
+   *
+   * It renders no facts: the table carries those now (plan 113). What lives here is the pair of
+   * page-level operations — refresh the snapshot, reconcile the links — plus the reconcile plan
+   * that must be read before anything is written, and the notice every operation reports through.
+   * The page header owns the two buttons, so both actions are registered outward rather than drawn.
+   */
   let {
     context,
-    placement = 'inspector',
+    onReconcileReady,
     onRefreshFocus,
     onRefreshPendingChange,
     onRefreshReady,
   }: {
     context: SkillsShellSlotContext;
-    placement?: SkillsHealthSlotPlacement;
+    onReconcileReady?: (action: (() => Promise<void>) | undefined) => void;
     onRefreshFocus?: () => void;
     onRefreshPendingChange?: (pending: boolean) => void;
     onRefreshReady?: (action: () => Promise<void>) => void;
   } = $props();
-  let inspectorSectionsOpen = $state(false);
+
   let operationMessage = $state<{ message: string; tone: 'error' | 'success' } | null>(null);
   let awaitingRefresh = $state<SkillsRefreshAcceptanceTarget>();
   let refreshDecisionOpen = $state(false);
   let mounted = $state(false);
   let dismissTimer: ReturnType<typeof setTimeout> | undefined;
   let restoreFocusFrame: number | undefined;
-  // The summary band never owns the refresh registration: it always renders beside an inspector
-  // instance that already does, and two owners would race the pending indicator.
-  const ownsRefreshRegistration = $derived(
-    placement !== 'summary' &&
-      (placement === 'detail' || context.view.selectionDetail.kind !== 'global-scope' || context.view.matrixOpen),
-  );
-  const health = $derived(context.presentation.health);
-  const disabledSkills = $derived(context.presentation.disabledSkills);
-  const unmanagedGroups = $derived(context.presentation.unmanagedGroups);
-  const selectedSkill = $derived(context.presentation.selected.globalSkill);
-  const selectedSkillName = $derived(context.presentation.selected.name);
-  const diagnostics = $derived(context.presentation.selected.diagnostics);
-  const exposure = $derived(context.presentation.selected.exposure);
-  const installationAction = $derived(context.presentation.selected.installationAction);
-  const observationsView = $derived(context.presentation.observations.view);
-  const selectedObservationRow = $derived(context.presentation.selected.observationRow);
-  const selectedSummaryVerdict = $derived(context.presentation.selected.verdict);
-  const selectedHomonym = $derived(context.presentation.selected.homonym);
-  const projectPlacementSummary = $derived(context.presentation.selected.projectPlacementSummary);
-  const exposureTones = $derived(context.presentation.selected.exposureTones);
-  const exposureSummaryText = $derived(context.presentation.selected.exposureSummaryText);
-  const selectedObservedSummary = $derived(context.presentation.selected.observedSummary);
-  const unmanagedUsageByName = $derived(context.presentation.unmanagedUsageByName);
-  const pendingOperation = $derived(context.management.pendingOperation);
-  const operationOwner = $derived<SkillsHealthOperationOwner>(`health-${placement}`);
-  const managementNotice = $derived(
-    context.management.notice?.owner === operationOwner ? context.management.notice : null,
-  );
-  const inspectorSection = css({ borderTop: '1px solid token(colors.line)', display: 'grid', gap: '8px', pt: '12px' });
-  const inspectorRow = css({
-    display: 'grid',
-    gridTemplateColumns: 'minmax(0, 1fr) auto',
-    gap: '8px',
-    alignItems: 'center',
-  });
-  const metricList = css({ display: 'grid', gap: '6px' });
-  const metricRow = css({
-    display: 'grid',
-    gridTemplateColumns: 'minmax(0, 1fr) auto',
-    gap: '8px',
-    alignItems: 'baseline',
-    fontSize: '13px',
-  });
-  const inspectorHeading = css({ fontSize: '13px', fontWeight: 700 });
-  const inspectorMeta = css({ color: 'muted', fontSize: '13px' });
-  const inspectorValue = css({ minW: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' });
-  const sourceValue = css({
-    display: 'block',
-    minW: 0,
-    overflow: 'hidden',
-    color: 'muted',
-    fontFamily: 'mono',
-    fontSize: '11px',
-    textOverflow: 'ellipsis',
-    whiteSpace: 'nowrap',
-  });
-  const runtimeSummary = css({
-    display: 'grid',
-    gridTemplateColumns: 'minmax(0, 1fr) auto',
-    gap: '8px',
-    alignItems: 'center',
-    py: '8px',
-    cursor: 'pointer',
-  });
-  const runtimeDisclosure = css({ borderTop: '1px solid token(colors.line)', _first: { borderTop: '0' } });
-  const runtimePaths = css({
-    display: 'grid',
-    gap: '4px',
-    pb: '8px',
-    color: 'muted',
-    fontFamily: 'mono',
-    fontSize: '11px',
-    overflowWrap: 'anywhere',
-  });
-  const actionGrid = css({ display: 'grid', gap: '8px' });
-  const summaryBand = css({
-    display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
-    gap: '10px',
-    alignItems: 'start',
-  });
-  const summaryFact = css({
-    display: 'grid',
-    gap: '3px',
-    p: '9px 11px',
-    border: '1px solid token(colors.line)',
-    borderRadius: 'sm',
-    bg: 'surfaceMuted',
-    minW: 0,
-    fontSize: '12.5px',
-  });
-  const summaryFactLabel = css({
-    color: 'muted',
-    fontSize: '10.5px',
-    fontWeight: 700,
-    textTransform: 'uppercase',
-    letterSpacing: '0.07em',
-  });
-  const summaryFactStrong = css({ fontWeight: 700 });
-  const summaryActions = css({
-    display: 'flex',
-    flexWrap: 'wrap',
-    alignItems: 'center',
-    alignContent: 'center',
-    gap: '8px',
-    minW: 0,
-  });
-  const staleText = css({ color: 'status.warn', fontWeight: 650 });
-  const foldBody = css({ display: 'grid', gap: '14px', p: '0 16px 16px' });
-  const detailSlotStack = css({ display: 'grid', gap: '14px' });
   const SUCCESS_MESSAGE_DURATION_MS = 5000;
-  const foldsGrid = css({
-    display: 'grid',
-    gridTemplateColumns: '1fr',
-    gap: '16px',
-    '@media screen and (min-width: 1440px)': {
-      gridTemplateColumns: 'minmax(0, 0.75fr) minmax(360px, 1.25fr)',
-    },
-  });
-  const disabledRow = css({
-    display: 'grid',
-    gridTemplateColumns: 'minmax(0, 1fr) auto',
-    gap: '10px',
-    alignItems: 'center',
-    p: '10px 0',
-    borderTop: '1px solid token(colors.line)',
-  });
+  const pendingOperation = $derived(context.management.pendingOperation);
+  const reconcilePlan = $derived(context.management.plan);
+  const managementNotice = $derived(
+    context.management.notice?.owner === 'health-page' ? context.management.notice : null,
+  );
+  const reconcileAvailable = $derived(canReconcileAll(context.snapshot));
+  const applyBusyAttributes = $derived({
+    'aria-busy': pendingOperation === 'reconcile-all' ? 'true' : 'false',
+  } as const);
+
   const clearDismissTimer = (): void => {
     if (dismissTimer !== undefined) {
       clearTimeout(dismissTimer);
@@ -226,27 +91,64 @@
       onRefreshFocus?.();
     });
   };
+  const execute = async (operation: SkillsManagementOperation, pendingLabel: string): Promise<void> => {
+    if (pendingOperation !== null) {
+      return;
+    }
+    operationMessage = null;
+    clearDismissTimer();
+    await context.management.execute({
+      kind: 'management',
+      operation,
+      owner: 'health-page',
+      pendingLabel,
+    });
+  };
+  const previewReconcile = async (): Promise<void> => {
+    await execute(previewReconcileOperation, 'preview-reconcile');
+  };
+  const refreshSkills = async (): Promise<void> => {
+    if (pendingOperation !== null) {
+      return;
+    }
+    operationMessage = null;
+    clearDismissTimer();
+    const result = await context.management.execute({
+      kind: 'refresh',
+      owner: 'health-page',
+      pendingLabel: 'refresh-skills',
+    });
+    if (result === undefined) {
+      awaitingRefresh = undefined;
+      return;
+    }
+    const signature = skillsSnapshotAcceptanceSignature(result.snapshot);
+    awaitingRefresh = { publicationReady: false, signature };
+    if (awaitingRefresh?.signature === signature) {
+      awaitingRefresh = { publicationReady: true, signature };
+    }
+  };
+
   onMount(() => {
     mounted = true;
-    return observeInspectorDisclosure(window.matchMedia(SKILLS_DESKTOP_MEDIA_QUERY), (open) => {
-      inspectorSectionsOpen = open;
-    });
   });
   onDestroy(() => {
     clearDismissTimer();
     if (restoreFocusFrame !== undefined) {
       window.cancelAnimationFrame(restoreFocusFrame);
     }
+    onReconcileReady?.(undefined);
   });
   $effect(() => {
-    if (mounted && ownsRefreshRegistration) {
+    if (mounted) {
       onRefreshReady?.(refreshSkills);
     }
   });
   $effect(() => {
-    if (ownsRefreshRegistration) {
-      onRefreshPendingChange?.(pendingOperation !== null);
-    }
+    onReconcileReady?.(mounted && reconcileAvailable && pendingOperation === null ? previewReconcile : undefined);
+  });
+  $effect(() => {
+    onRefreshPendingChange?.(pendingOperation !== null);
   });
   $effect(() => {
     const decisionPending = context.snapshotUpdates.pendingDecision !== undefined;
@@ -272,331 +174,74 @@
       scheduleRefreshFocus();
     }
   });
-  const previewBusyAttributes = $derived({
-    'aria-busy': pendingOperation === 'preview-reconcile' ? 'true' : 'false',
-  } as const);
-  const execute = async (operation: SkillsManagementOperation, pendingLabel: string): Promise<void> => {
-    if (pendingOperation !== null) {
-      return;
-    }
-    operationMessage = null;
-    clearDismissTimer();
-    const result = await context.management.execute({
-      kind: 'management',
-      operation,
-      owner: operationOwner,
-      pendingLabel,
-    });
-    if (result !== undefined && operation.type === 'preview-reconcile') {
-      await tick();
-      await goto('/skills/matrix');
-    }
-  };
-  const refreshSkills = async (): Promise<void> => {
-    if (pendingOperation !== null) {
-      return;
-    }
-    operationMessage = null;
-    clearDismissTimer();
-    const result = await context.management.execute({
-      kind: 'refresh',
-      owner: operationOwner,
-      pendingLabel: 'refresh-skills',
-    });
-    if (result === undefined) {
-      awaitingRefresh = undefined;
-    } else {
-      const signature = skillsSnapshotAcceptanceSignature(result.snapshot);
-      awaitingRefresh = { publicationReady: false, signature };
-      if (awaitingRefresh?.signature === signature) {
-        awaitingRefresh = { publicationReady: true, signature };
-      }
-    }
-  };
-  const reviewConsolidation = async (): Promise<void> => {
-    await goto('/skills/matrix');
-  };
-  const copyText = async (value: string): Promise<void> => {
-    await navigator.clipboard.writeText(value);
-  };
+
+  const planPanel = css({
+    display: 'grid',
+    gap: '8px',
+    p: '12px 14px',
+    border: '1px solid token(colors.lineStrong)',
+    borderRadius: 'sm',
+    bg: 'accentTint',
+  });
+  const planLabel = css({
+    color: 'muted',
+    fontSize: '11px',
+    fontWeight: 650,
+    letterSpacing: '0.07em',
+    textTransform: 'uppercase',
+  });
+  const planActions = css({ display: 'flex', flexWrap: 'wrap', gap: '8px' });
+  const planSkippedList = css({ color: 'muted' });
+  const positionedButton = css({ position: 'relative' });
 </script>
 
-<div
-  class={context.view.selectionDetail.kind === 'global-scope' && placement === 'detail' ? detailSlotStack : stack}
-  data-skills-management-health-slot
->
-  {#if placement === 'summary'}
-    {#if selectedSkillName}
-      <section aria-label="Skill summary" class={summaryBand} data-skill-summary-band>
-        <div class={summaryFact}>
-          {#if selectedSkill}
-            <span class={summaryFactLabel}>Exposure</span>
-            <span class={summaryFactStrong} data-summary-exposure>{exposureTones.linked}/{exposure.length} linked</span>
-            {#if exposureSummaryText.length > 0}
-              <span class={muted}>{exposureSummaryText}</span>
-            {/if}
-          {:else}
-            <span class={summaryFactLabel}>Placement</span>
-            <span class={summaryFactStrong} data-summary-placement>
-              {count(projectPlacementSummary.length, 'project placement')}
-            </span>
-            <span class={muted}>{projectPlacementSummary.join(' · ')}</span>
-          {/if}
-        </div>
-        <div class={summaryFact}>
-          <span class={summaryFactLabel}>Skill signals</span>
-          {#if context.presentation.observations.errorMessage !== undefined}
-            <span class={muted}>unavailable</span>
-          {:else if observationsView === undefined}
-            <span aria-busy="true" class={muted}>loading…</span>
-          {:else if selectedObservedSummary.length > 0}
-            <span data-summary-observed>{selectedObservedSummary}</span>
-          {:else if observationsView.producerCompletenessMissing}
-            <span class={muted}>collecting historical observations…</span>
-          {:else}
-            <span class={muted}>{noSignalsText(observationsView.signalsComplete)}</span>
-          {/if}
-          <span class={muted}>{NAME_SCOPED_COUNTS_TEXT}</span>
-        </div>
-        <div class={summaryFact}>
-          <span class={summaryFactLabel}>Last signal</span>
-          {#if selectedObservationRow?.lastObservedAt}
-            <span
-              class={summaryFactStrong}
-              data-observation-recency={observationRecency(selectedObservationRow.lastObservedAt)}
-            >
-              <time
-                datetime={selectedObservationRow.lastObservedAt}
-                title={formatObservedAt(selectedObservationRow.lastObservedAt)}
-                >{formatObservedDate(selectedObservationRow.lastObservedAt)}</time
-              >
-              {#if observationRecencyNote(selectedObservationRow.lastObservedAt)}
-                <span class={staleText}> · {observationRecencyNote(selectedObservationRow.lastObservedAt)}</span>
-              {/if}
-            </span>
-          {:else if observationsView !== undefined}
-            <span class={muted}>{noSignalsText(observationsView.signalsComplete)}</span>
-          {:else}
-            <span class={muted}>—</span>
-          {/if}
-          {#if selectedSummaryVerdict !== undefined}
-            <span class={muted} data-summary-verdict={selectedObservationRow?.verdict ?? 'never-observed'}
-              >{selectedSummaryVerdict}</span
-            >
-          {/if}
-          {#if selectedHomonym !== undefined}
-            <span class={muted}>{selectedHomonym}</span>
-          {/if}
-        </div>
-        {#if selectedSkill}
-          <div class={summaryActions} data-summary-actions>
-            <button
-              class={cx(ghostButton, pendingButton)}
-              disabled={pendingOperation !== null}
-              onclick={() =>
-                execute(toggleOperation(selectedSkill.name, !selectedSkill.enabled), `toggle:${selectedSkill.name}`)}
-              type="button"
-            >
-              {selectedSkill.enabled ? 'Disable' : 'Enable'}
-            </button>
-            <button
-              class={cx(commandButton, pendingButton)}
-              disabled={pendingOperation !== null || installationAction?.mode === 'none'}
-              onclick={() => {
-                if (!installationAction || installationAction.mode === 'none') {
-                  return;
-                }
-                execute(
-                  installationAction.mode === 'preview'
-                    ? previewReconcileOperation
-                    : reconcileSkillOperation(selectedSkill.name),
-                  installationAction.mode === 'preview' ? 'preview-reconcile' : `reconcile:${selectedSkill.name}`,
-                );
-              }}
-              type="button"
-            >
-              {installationAction?.label ?? 'Install'}
-            </button>
-          </div>
-        {:else}
-          <div class={summaryFact} data-summary-state>
-            <span class={summaryFactLabel}>State</span>
-            <span class={summaryFactStrong}>Project-owned · read-only</span>
-            <span class={muted}>Edit this skill in its project repository.</span>
-          </div>
-        {/if}
-      </section>
-    {/if}
-  {:else if context.view.selectionDetail.kind === 'global-scope'}
-    {#if placement === 'detail'}
-      <SkillsConsolidate
-        groups={unmanagedGroups}
-        onReviewEntry={reviewConsolidation}
-        total={health.consolidateCount}
-        {...(unmanagedUsageByName === undefined ? {} : { usageByName: unmanagedUsageByName })}
-        usageEvidenceComplete={observationsView?.invocationEvidenceComplete ?? false}
-      />
-      <div class={foldsGrid}>
-        <details class={cx(panel, skillsDisclosurePanel)}>
-          <summary class={skillsDisclosureSummary}>
-            <span class={strongCell}>Disabled</span>
-            <span class={meta}>{disabledSkills.length}</span>
-          </summary>
-          <div class={foldBody}>
-            {#if disabledSkills.length === 0}
-              <p class={meta}>No disabled skills.</p>
-            {:else}
-              {#each disabledSkills as skill (skill.name)}
-                <div class={disabledRow}>
-                  <div>
-                    <div class={strongCell}>{skill.name}</div>
-                    <div class={meta}>{skill.description || 'No description'}</div>
-                  </div>
-                  <button
-                    class={cx(ghostButton, pendingButton)}
-                    disabled={pendingOperation !== null}
-                    onclick={() => execute(toggleOperation(skill.name, true), `toggle:${skill.name}`)}
-                    type="button"
-                  >
-                    Enable
-                  </button>
-                </div>
-              {/each}
-            {/if}
-          </div>
-        </details>
-        <SkillsConfiguration {context} />
-      </div>
-    {:else}
-      <section class={actionGrid}>
+<div class={stack} data-skills-management-health-slot>
+  {#if reconcilePlan}
+    <section aria-label="Reconcile plan" class={planPanel} data-skills-reconcile-plan>
+      <div class={strongCell}>Planned actions ({reconcilePlan.apply.length})</div>
+      {#if reconcilePlan.apply.length > 0}
+        <ul class={skillsReconcilePlanList}>
+          {#each reconcilePlan.apply as line (line)}
+            <li>{line}</li>
+          {/each}
+        </ul>
+      {:else}
+        <p class={muted}>Nothing to apply — every active skill is already linked.</p>
+      {/if}
+      {#if reconcilePlan.skipped.length > 0}
+        <div class={planLabel}>Skipped ({reconcilePlan.skipped.length}) — unmanaged content is never touched</div>
+        <ul class={cx(skillsReconcilePlanList, planSkippedList)}>
+          {#each reconcilePlan.skipped as line (line)}
+            <li>{line}</li>
+          {/each}
+        </ul>
+      {/if}
+      <div class={planActions}>
+        <button
+          {...applyBusyAttributes}
+          class={cx(commandButton, pendingButton, positionedButton)}
+          data-pending={pendingOperation === 'reconcile-all' ? 'true' : undefined}
+          disabled={pendingOperation !== null || reconcilePlan.apply.length === 0}
+          onclick={() => execute(reconcileAllOperation, 'reconcile-all')}
+          type="button"
+        >
+          Apply {reconcilePlan.apply.length}
+          {reconcilePlan.apply.length === 1 ? 'action' : 'actions'}
+        </button>
         <button
           class={ghostButton}
-          onclick={() => goto(context.view.matrixOpen ? '/skills/global' : '/skills/matrix')}
+          disabled={pendingOperation !== null}
+          onclick={() => context.management.clearPlan()}
           type="button"
         >
-          {context.view.matrixOpen ? 'Close matrix' : 'Exposure matrix'}
-        </button>
-        <button
-          {...previewBusyAttributes}
-          class={cx(ghostButton, pendingButton)}
-          data-management-operation="preview-reconcile"
-          disabled={pendingOperation !== null || !canReconcileAll(context.snapshot)}
-          onclick={() => execute(previewReconcileOperation, 'preview-reconcile')}
-          type="button"
-        >
-          Preview reconcile
-        </button>
-      </section>
-    {/if}
-  {:else if selectedSkill}
-    <details class={inspectorSection} data-inspector-section="validation" open={inspectorSectionsOpen}>
-      <summary><h3 class={inspectorHeading}>Validation</h3></summary>
-      {#if diagnostics.length === 0}
-        <p class={meta}>No validation diagnostics.</p>
-      {/if}
-      {#each diagnostics as diagnostic, index}
-        <fieldset
-          aria-label={`Finding ${index + 1}: ${diagnostic.severity}`}
-          class={diagnosticRow}
-          data-severity={diagnostic.severity}
-          data-validation-finding={index + 1}
-        >
-          <span class={muted}>Finding {index + 1}</span>
-          <code>{skillDiagnosticLabel(diagnostic.code)}</code>
-          {#if diagnostic.count > 1}
-            <span class={muted}>{diagnostic.count} occurrences</span>
-          {/if}
-          <p class={muted}>{diagnostic.message}</p>
-          {#if diagnostic.tokenMeasurement}
-            <p class={muted} data-token-measurement>
-              {fmtNum(diagnostic.tokenMeasurement.observed)}
-              / {fmtNum(diagnostic.tokenMeasurement.threshold)} tokens
-            </p>
-          {/if}
-          {#if diagnostic.paths.length > 0}
-            <details>
-              <summary class={muted}>Related paths</summary>
-              {#each diagnostic.paths as path}
-                <code class={pathText} title={path}>{path}</code>
-              {/each}
-            </details>
-          {/if}
-        </fieldset>
-      {/each}
-    </details>
-    <details class={inspectorSection} data-inspector-section="document" open={inspectorSectionsOpen}>
-      <summary><h3 class={inspectorHeading}>Document</h3></summary>
-      <div class={metricList}>
-        <div class={metricRow}>
-          <span class={inspectorMeta}>Total tokens</span>
-          <strong>{selectedSkill.tokenCount ? fmtNum(selectedSkill.tokenCount.total) : 'Unknown'}</strong>
-        </div>
-        {#if selectedSkill.tokenCount}
-          <div class={metricRow}>
-            <span class={inspectorMeta}>SKILL.md tokens</span>
-            <strong>{fmtNum(selectedSkill.tokenCount.skillMd)}</strong>
-          </div>
-        {/if}
-        <div class={metricRow}>
-          <span class={inspectorMeta}>Invocation</span>
-          <strong>{skillInvocation(selectedSkill) === 'auto' ? 'Auto' : 'Manual'}</strong>
-        </div>
-        <div class={metricRow}>
-          <span class={inspectorMeta}>State</span>
-          <strong>{selectedSkill.enabled ? 'Enabled' : 'Disabled'}</strong>
-        </div>
-      </div>
-    </details>
-    <details class={inspectorSection} data-inspector-section="source" open={inspectorSectionsOpen}>
-      <summary><h3 class={inspectorHeading}>Source</h3></summary>
-      <div class={inspectorRow}>
-        <div class={inspectorValue}>
-          <div class={meta}>Source path</div>
-          <code class={sourceValue} title={selectedSkill.path}>{selectedSkill.path}</code>
-        </div>
-        <button class={ghostButton} onclick={() => copyText(selectedSkill.path)} type="button">Copy source path</button>
-      </div>
-      <div class={inspectorRow}>
-        <div class={inspectorValue}>
-          <div class={meta}>SKILL.md</div>
-          <code class={sourceValue} title={selectedSkill.skillMdPath}>{selectedSkill.skillMdPath}</code>
-        </div>
-        <button class={ghostButton} onclick={() => copyText(selectedSkill.skillMdPath)} type="button">
-          Copy SKILL.md path
+          Cancel
         </button>
       </div>
-    </details>
-    <details class={inspectorSection} data-inspector-section="installed-in" open={inspectorSectionsOpen}>
-      <summary><h3 class={inspectorHeading}>Installed in</h3></summary>
-      {#each exposure as item}
-        <details class={runtimeDisclosure}>
-          <summary class={runtimeSummary}>
-            <span class={strongCell}
-              >{context.snapshot.targets.find((target) => target.id === item.targetId)?.label ?? item.targetId}</span
-            >
-            <span class={cx(statusPill, item.state === 'linked' ? statusPillOk : statusPillWarn)}>{item.label}</span>
-          </summary>
-          <div class={runtimePaths}>
-            <div>Expected: {item.expectedPath}</div>
-            {#if item.actualPath}
-              <div>Actual: {item.actualPath}</div>
-            {/if}
-          </div>
-        </details>
-      {/each}
-    </details>
-  <!-- The skill's operations live in the summary band above the editor — one place, reachable
-         before any scrolling at every width. The inspector stays the home of facts. -->
-  {:else if context.view.selectionDetail.kind === 'project-scope'}
-    <section class={compactStack}>
-      <h3 class={heading}>Project scope</h3>
-      <p class={muted}>Owned by its repository — this product only reads here.</p>
     </section>
-  {:else}
-    <section class={compactStack}>
-      <h3 class={heading}>Project skill</h3>
-      <p class={muted}>Read-only runtime observation.</p>
-    </section>
+  {:else if !reconcileAvailable}
+    <p class={meta} data-skills-reconcile-unavailable>
+      Reconcile needs a configured source repository with at least one enabled target.
+    </p>
   {/if}
   {#if managementNotice?.tone === 'error'}
     <p class={cx(banner, bannerError, operationNotice)} role="alert">{managementNotice.message}</p>

@@ -290,6 +290,7 @@ description: Helps with adapter tests
       const dependencies = createSkillsServerDependencies({
         configCwd: root,
         homePath: path.join(root, 'home'),
+        now: () => new Date('2026-08-01T10:00:00.000Z'),
         readModel: {
           // The observation read consults project discovery for residence classification (plan
           // 112), so the seam now includes it — still read-only, still outside the skills domain.
@@ -305,6 +306,7 @@ description: Helps with adapter tests
               invocationLowerBound: false,
               lowerBound: false,
               producerCompletenessMissing: false,
+              producerProofValidUntil: '2026-08-01T10:01:00.000Z',
               skills: [
                 {
                   lastObservedAt: '2026-08-01T09:00:00.000Z',
@@ -337,6 +339,7 @@ description: Helps with adapter tests
       expect(result).toMatchObject({
         data: {
           harnesses: [{ harnessKey: 'claude' }, { harnessKey: 'cursor', observability: 'not-observable' }],
+          producerProofValidUntil: '2026-08-01T10:01:00.000Z',
           // The join classified the unmanaged name from the wired inputs: no runtime entry, no
           // known project directory, so it lives outside anything this product manages.
           skills: [{ skillName: 'artifact-design', unmanagedResidence: 'external', verdict: 'invoked-unmanaged' }],
@@ -345,10 +348,67 @@ description: Helps with adapter tests
       });
       expect(observationReadScopes).toEqual([
         {
-          expectedProducerHarnessKeys: ['claude', 'codex'],
+          expectedProducerHarnessKeys: ['claude', 'codex', 'opencode'],
+          incompleteProducerHarnessKeys: ['opencode'],
           machineId: 'machine-local',
+          minimumProducerCollectedAt: '2026-08-01T09:56:00.000Z',
         },
       ]);
+    } finally {
+      await rm(root, { force: true, recursive: true });
+    }
+  });
+
+  test('joins an unobserved project skill before the response reaches the browser', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'ai-usage-skills-server-project-observations-'));
+    try {
+      const projectPath = path.join(root, 'project');
+      await writeProjectSkill(path.join(projectPath, '.agents', 'skills', 'project-review'), 'project-review');
+      const dependencies = {
+        ...createSkillsServerDependencies({
+          configCwd: root,
+          homePath: path.join(root, 'home'),
+          readModel: {
+            readCurrentLocalProjectSources: () => Promise.resolve({ revision: 'revision-a', sources: [] }),
+            readLocalMachine: () => Promise.resolve({ id: 'machine-local', label: 'Local machine' }),
+            readSkillObservations: () =>
+              Promise.resolve({
+                harnesses: [
+                  { harnessKey: 'claude', label: 'Claude Code', observability: 'observable' as const },
+                  { harnessKey: 'cursor', label: 'Cursor', observability: 'not-observable' as const },
+                ],
+                invocationLowerBound: false,
+                lowerBound: false,
+                producerCompletenessMissing: false,
+                producerProofValidUntil: '2026-08-01T10:01:00.000Z',
+                skills: [],
+                skipped: 0,
+              }),
+          },
+        }),
+        readConfig: () => Promise.resolve({ skills: { projectPaths: [projectPath] } }),
+      };
+
+      const adapter = createSkillsServerAdapter(dependencies);
+      const inventories = await adapter.readProjectInventories();
+      expect(inventories.ok ? inventories.data.flatMap((inventory) => inventory.observations) : []).toMatchObject([
+        { name: 'project-review' },
+      ]);
+      const result = await adapter.readObservations();
+
+      expect(result).toMatchObject({
+        data: {
+          skills: [
+            {
+              skillName: 'project-review',
+              tallies: [],
+              unmanagedResidence: 'project-owned',
+              verdict: 'never-observed',
+            },
+          ],
+        },
+        ok: true,
+      });
     } finally {
       await rm(root, { force: true, recursive: true });
     }
@@ -817,6 +877,12 @@ describe('skills server input validation', () => {
   test('does not curate configured project paths from scan paths', () => {
     expect(projectSkillScanPathsFrom({ projectPaths: ['/configured/container'] }, [])).toEqual([
       '/configured/container',
+    ]);
+  });
+
+  test('normalizes configured project paths to the absolute roots scanned by the application', () => {
+    expect(projectSkillScanPathsFrom({ projectPaths: ['./configured/../configured/project/'] }, [])).toEqual([
+      path.resolve('configured/project'),
     ]);
   });
 

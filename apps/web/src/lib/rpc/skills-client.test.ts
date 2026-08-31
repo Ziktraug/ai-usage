@@ -47,6 +47,7 @@ const fixtureCapability = (): SkillsCapability => ({
       invocationLowerBound: false,
       lowerBound: false,
       producerCompletenessMissing: false,
+      producerProofValidUntil: '2026-08-01T10:01:00.000Z',
       skills: [],
       skipped: 0,
     }),

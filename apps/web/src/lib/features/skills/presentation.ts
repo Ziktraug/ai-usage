@@ -8,7 +8,6 @@ import {
 } from '../../../skill-document-inspector-model';
 import {
   buildGlobalSkillExposure,
-  buildProjectSkillRows,
   buildSkillHealthSummary,
   buildSkillMatrix,
   describeProjectSkillPlacement,
@@ -35,7 +34,6 @@ import {
   type SkillObservationsPresentationState,
   type SkillObservationsView,
   skillObservationsPresentationState,
-  verdictText,
 } from './observations/model';
 import type { SkillsShellViewModel } from './shell/model';
 
@@ -45,6 +43,7 @@ type GlobalSkill = SkillManagementSnapshot['skills'][number];
 
 export interface SkillsObservationPresentation {
   readonly errorMessage: string | undefined;
+  readonly omittedSkillNames: ReadonlySet<string>;
   readonly rowsByName: ReadonlyMap<string, SkillObservationRow>;
   readonly state: SkillObservationsPresentationState;
   readonly view: SkillObservationsView | undefined;
@@ -63,13 +62,16 @@ export interface SkillsProjectScopePresentationRow {
   readonly description: string;
   readonly name: string;
   readonly observationRow: SkillObservationRow | undefined;
+  readonly observationRowOmitted: boolean;
   readonly placements: readonly string[];
   readonly validationStatus: string;
 }
 
 export interface SkillsProjectUsagePresentation {
   readonly lastObservedAt: string | null;
+  readonly observationRowsOmitted: boolean;
   readonly observedCount: number;
+  readonly observedCountLowerBound: boolean;
   readonly top: SkillObservationRow | undefined;
 }
 
@@ -85,6 +87,7 @@ export interface SkillsSelectedPresentation {
   readonly managedClaimApplies: boolean;
   readonly name: string | undefined;
   readonly observationRow: SkillObservationRow | undefined;
+  readonly observationRowOmitted: boolean;
   readonly observedSummary: string;
   readonly projectPlacementSummary: readonly string[];
   readonly projectSkill: ProjectSkillRow | undefined;
@@ -114,49 +117,38 @@ export interface SkillsPresentationProjection {
 const buildObservationPresentation = (
   observations: SkillObservations | undefined,
   errorMessage: string | undefined,
+  expectedSkillNames: ReadonlySet<string>,
 ): SkillsObservationPresentation => {
-  const view = observations === undefined ? undefined : buildSkillObservationsView(observations);
+  // TanStack can retain the previous successful value while a background refetch reports an
+  // error. That value remains useful to the cache, but it is not a successful answer for this
+  // render: observation facts stay neutral until the identity succeeds again.
+  const view =
+    observations === undefined || errorMessage !== undefined ? undefined : buildSkillObservationsView(observations);
+  const rowsByName = new Map((view?.rows ?? []).map((row) => [row.skillName, row]));
   return {
     errorMessage,
-    rowsByName: new Map((view?.rows ?? []).map((row) => [row.skillName, row])),
+    omittedSkillNames:
+      view === undefined
+        ? new Set()
+        : new Set([...expectedSkillNames].filter((skillName) => !rowsByName.has(skillName))),
+    rowsByName,
     state: skillObservationsPresentationState(observations, errorMessage),
     view,
   };
 };
 
-const buildProjectScopeRows = (
-  view: SkillsShellViewModel,
-  observations: SkillsObservationPresentation,
-): readonly SkillsProjectScopePresentationRow[] => {
-  if (view.selectionDetail.kind !== 'project-scope') {
-    return [];
-  }
-  const rows = buildProjectSkillRows(view.selectionDetail.inventories, view.knownProjects).map((row) => ({
-    description: row.description,
-    name: row.name,
-    observationRow: observations.rowsByName.get(row.name),
-    placements: [...new Set(row.observations.map((observation) => describeProjectSkillPlacement(observation)))],
-    validationStatus: row.validationStatus,
-  }));
-  return rows.toSorted((left, right) => {
-    if (left.observationRow !== undefined && right.observationRow !== undefined) {
-      return compareObservationRows(left.observationRow, right.observationRow);
-    }
-    if (left.observationRow !== right.observationRow) {
-      return left.observationRow === undefined ? 1 : -1;
-    }
-    return left.name.localeCompare(right.name);
-  });
-};
-
 const buildProjectUsage = (
   view: SkillsShellViewModel,
   observations: SkillsObservationPresentation,
-): ReadonlyMap<string, SkillsProjectUsagePresentation> =>
-  new Map(
+): ReadonlyMap<string, SkillsProjectUsagePresentation> => {
+  if (observations.view === undefined) {
+    return new Map();
+  }
+  return new Map(
     view.tree.scopes
       .filter((scope) => scope.type === 'project' && scope.hasSkills)
       .map((scope) => {
+        const observationRowsOmitted = scope.skills.some((skill) => observations.omittedSkillNames.has(skill.name));
         const rows = scope.skills.flatMap((skill) => {
           const row = observations.rowsByName.get(skill.name);
           return row === undefined ? [] : [row];
@@ -170,12 +162,15 @@ const buildProjectUsage = (
                 row.lastObservedAt !== null && row.lastObservedAt > (latest ?? '') ? row.lastObservedAt : latest,
               null,
             ),
+            observationRowsOmitted,
             observedCount: observed.length,
+            observedCountLowerBound: observationRowsOmitted || observations.view?.invocationLowerBound === true,
             top: observed.at(0),
           },
         ] as const;
       }),
   );
+};
 
 const buildSelectedPresentation = (
   view: SkillsShellViewModel,
@@ -186,6 +181,7 @@ const buildSelectedPresentation = (
   const name = globalSkill?.name ?? projectSkill?.name;
   const installScope: SkillInstallScope = projectSkill === undefined ? 'global' : 'project';
   const observationRow = name === undefined ? undefined : observations.rowsByName.get(name);
+  const observationRowOmitted = name !== undefined && observations.omittedSkillNames.has(name);
   const exposure = globalSkill === undefined ? [] : buildGlobalSkillExposure(view.snapshot, globalSkill.name);
   const exposureTones = { broken: 0, copy: 0, linked: 0, missing: 0 };
   for (const item of exposure) {
@@ -201,18 +197,7 @@ const buildSelectedPresentation = (
   ]
     .filter((part) => part !== undefined)
     .join(' · ');
-  const verdict = (() => {
-    if (observationRow !== undefined) {
-      return installVerdictText(observationRow, installScope);
-    }
-    if (observations.view === undefined || name === undefined) {
-      return;
-    }
-    return verdictText({
-      verdict: 'never-observed',
-      verdictProvisional: !observations.view.invocationEvidenceComplete,
-    });
-  })();
+  const verdict = observationRow === undefined ? undefined : installVerdictText(observationRow, installScope);
   return {
     diagnostics: globalSkill === undefined ? [] : groupSkillDiagnostics(globalSkill.diagnostics),
     exposure,
@@ -224,6 +209,7 @@ const buildSelectedPresentation = (
     installationAction: globalSkill === undefined ? undefined : deriveInstallationAction(globalSkill, exposure),
     name,
     observationRow,
+    observationRowOmitted,
     observedSummary: observationRow === undefined ? '' : observedHarnessSummary(observationRow),
     projectPlacementSummary:
       projectSkill === undefined
@@ -240,7 +226,15 @@ export const createSkillsPresentationProjection = (input: {
   readonly observationsError: string | undefined;
   readonly view: SkillsShellViewModel;
 }): SkillsPresentationProjection => {
-  const observations = buildObservationPresentation(input.observations, input.observationsError);
+  const expectedObservationSkillNames = new Set([
+    ...input.view.snapshot.skills.map((skill) => skill.name),
+    ...input.view.tree.scopes.flatMap((scope) => scope.skills.map((skill) => skill.name)),
+  ]);
+  const observations = buildObservationPresentation(
+    input.observations,
+    input.observationsError,
+    expectedObservationSkillNames,
+  );
   const allAttention = input.view.snapshot.skills
     .map((skill) => ({ attention: globalSkillAttention(input.view.snapshot, skill), skill }))
     .filter(
@@ -272,7 +266,9 @@ export const createSkillsPresentationProjection = (input: {
     health: buildSkillHealthSummary(input.view.snapshot),
     matrix,
     observations,
-    projectScopeRows: buildProjectScopeRows(input.view, observations),
+    // Scope routes are folded into the worktable; a scope is no longer a selectable detail.
+    // Preserve this compatibility seam as empty until every historical consumer is retired.
+    projectScopeRows: [],
     projectScopes: input.view.tree.scopes.filter((scope) => scope.type === 'project' && scope.hasSkills),
     projectUsageByScopeKey: buildProjectUsage(input.view, observations),
     selected: buildSelectedPresentation(input.view, observations),

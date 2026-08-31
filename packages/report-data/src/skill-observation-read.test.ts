@@ -98,6 +98,33 @@ describe('bounded skill observation read', () => {
     }
   });
 
+  test('preserves the store-anchored producer proof deadline through folding', async () => {
+    const dbPath = await storeHolding([]);
+    for (const harnessKey of EXPECTED_OBSERVABLE_HARNESSES) {
+      await Effect.runPromise(
+        importSkillObservations({
+          collection: { completeness: completeSkillObservationCollection(), harnessKey },
+          dbPath,
+          importedAt: new Date('2026-08-01T10:00:00.000Z'),
+          machineId: 'machine-a',
+          observations: [],
+        }),
+      );
+    }
+
+    const dataset = await Effect.runPromise(
+      querySkillObservationDataset({
+        dbPath,
+        ...GENEROUS_BOUNDS,
+        expectedProducerHarnessKeys: EXPECTED_OBSERVABLE_HARNESSES,
+        machineId: 'machine-a',
+        minimumProducerCollectedAt: '2026-08-01T09:56:00.000Z',
+      }),
+    );
+
+    expect(dataset.producerProofValidUntil).toBe('2026-08-01T10:01:00.000Z');
+  });
+
   test('treats an empty store without producer state as pre-collection invocation evidence', async () => {
     const dbPath = await storeHolding([]);
 

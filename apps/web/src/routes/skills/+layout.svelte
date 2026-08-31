@@ -6,18 +6,18 @@
   import RouteFrame from '$lib/features/shell/route-frame.svelte';
   import SkillsEditorSlot from '$lib/features/skills/editor/skills-editor-slot.svelte';
   import SkillsHealthSlot from '$lib/features/skills/management/skills-health-slot.svelte';
-  import SkillsMatrixSlot from '$lib/features/skills/management/skills-matrix-slot.svelte';
   import SkillsShell from '$lib/features/skills/shell/skills-shell.svelte';
-  import type { SkillsHealthSlotPlacement, SkillsShellSlotContext } from '$lib/features/skills/shell/slot-context';
+  import type { SkillsShellSlotContext } from '$lib/features/skills/shell/slot-context';
   import type { LayoutProps } from './$types';
 
   let { children, data }: LayoutProps = $props();
   let skillsSource = $state(untrack(() => data.source));
   let refreshAction = $state<(() => Promise<void>) | undefined>();
+  let reconcileAction = $state<(() => Promise<void>) | undefined>();
   let refreshPending = $state(false);
   let refreshButtonElement = $state<HTMLButtonElement>();
   const refreshBusyAttributes = $derived({ 'aria-busy': refreshPending ? 'true' : 'false' } as const);
-  const refreshButton = css({
+  const headerButton = css({
     appearance: 'none',
     display: 'inline-flex',
     alignItems: 'center',
@@ -31,7 +31,12 @@
     fontSize: '12px',
     fontWeight: 650,
     whiteSpace: 'nowrap',
+    cursor: 'pointer',
+    _hover: { borderColor: 'accent', color: 'accent' },
+    _focusVisible: { outline: '2px solid token(colors.accent)', outlineOffset: '2px' },
+    _disabled: { cursor: 'default', opacity: 0.5 },
   });
+  const primaryHeaderButton = css({ borderColor: 'accent', color: 'accent' });
 </script>
 
 {#snippet editorSlot(_context: SkillsShellSlotContext)}
@@ -43,7 +48,7 @@
 {#snippet headerActions()}
   <button
     {...refreshBusyAttributes}
-    class={refreshButton}
+    class={headerButton}
     disabled={refreshPending || refreshAction === undefined}
     onclick={() => refreshAction?.()}
     type="button"
@@ -51,30 +56,32 @@
   >
     Refresh skills
   </button>
+  <button
+    class={[headerButton, primaryHeaderButton]}
+    data-management-operation="preview-reconcile"
+    disabled={refreshPending || reconcileAction === undefined}
+    onclick={() => reconcileAction?.()}
+    type="button"
+  >
+    Reconcile links…
+  </button>
 {/snippet}
 
-{#snippet healthSlot(
-  _context: SkillsShellSlotContext,
-  _placement: SkillsHealthSlotPlacement,
-)}
+{#snippet healthSlot(_context: SkillsShellSlotContext)}
   <SkillsHealthSlot
     context={_context}
+    onReconcileReady={(action) => (reconcileAction = action)}
     onRefreshFocus={() => refreshButtonElement?.focus()}
     onRefreshPendingChange={(pending) => (refreshPending = pending)}
     onRefreshReady={(action) => (refreshAction = action)}
-    placement={_placement}
   />
 {/snippet}
-{#snippet matrixSlot(_context: SkillsShellSlotContext)}
-  <SkillsMatrixSlot context={_context} />
-{/snippet}
 
-<RouteFrame eyebrow={null} {headerActions} {headerMeta} heading="Skill management">
+<RouteFrame eyebrow={null} {headerActions} {headerMeta} heading="Skills">
   <SkillsShell
     {editorSlot}
     {healthSlot}
     hydrationState={data.queryState}
-    {matrixSlot}
     navigationState={page.state}
     onSourceChange={(source) => (skillsSource = source)}
     pathname={page.url.pathname}

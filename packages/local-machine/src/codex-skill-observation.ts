@@ -71,7 +71,7 @@ const CODEX_CATALOGUE_SECTION_BREAK = /^#{1,6}[ \t]/;
  * retain. Matching is therefore done against already-tokenized shell words.
  */
 const CODEX_SKILL_DOCUMENT_TOKEN = new RegExp(
-  `^(?:~|\\.{1,2})?(?:/[\\w.:@+-]+)*/skills/(${CODEX_SKILL_NAME_SEGMENT}(?::${CODEX_SKILL_NAME_SEGMENT})*)/SKILL\\.md$`,
+  `^(?:~|\\.{1,2})?(?:/[\\w.:@+-]+)*/skills/(?:\\.system/)?(${CODEX_SKILL_NAME_SEGMENT}(?::${CODEX_SKILL_NAME_SEGMENT})*)/SKILL\\.md$`,
 );
 
 /**
@@ -1271,15 +1271,24 @@ const segmentReadOperands = (items: readonly ShellItem[]): string[] => {
   return operands;
 };
 
-/** Project matched skill documents into `inferred` observations. */
+/**
+ * Project matched skill documents into `inferred` observations.
+ *
+ * A session catalogue may refine a path-derived basename to its namespaced
+ * skill name. The observation key deliberately keeps the path-derived name:
+ * it is part of the stable event identity, while `skillName` is mutable fact
+ * content that a later sweep may correct in place.
+ */
 export const codexSkillExecObservations = (
   entries: readonly CodexSkillCatalogueEntry[],
   callId: string,
   context: CodexSkillObservationContext,
+  catalogueNamesByPath?: ReadonlyMap<string, string | null>,
 ): SkillObservationExtraction => {
   const observations: SkillObservation[] = [];
   let rejected = 0;
   for (const entry of entries) {
+    const catalogueName = entry.path === null ? undefined : catalogueNamesByPath?.get(entry.path);
     const observation = parseSkillObservation({
       argsPresent: null,
       harnessKey: 'codex',
@@ -1288,7 +1297,7 @@ export const codexSkillExecObservations = (
       projectPath: context.projectPath,
       resolvedPath: entry.path,
       sessionId: context.sessionId,
-      skillName: entry.name,
+      skillName: typeof catalogueName === 'string' ? catalogueName : entry.name,
       // The command's exit status is in a separate output record; a read that
       // is merely inferred cannot honestly claim an outcome.
       success: null,

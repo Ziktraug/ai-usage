@@ -78,7 +78,7 @@ describe('Skills management operation episode', () => {
     const outcome = await executeSkillsManagementOperationEpisode(queryClient, client, {
       kind: 'management',
       operation: { type: 'preview-reconcile' },
-      owner: 'health-summary',
+      owner: 'health-page',
       pendingLabel: 'preview-reconcile',
     });
 
@@ -88,7 +88,7 @@ describe('Skills management operation episode', () => {
     expect(outcome).toMatchObject({
       kind: 'management',
       message: 'Reconcile preview refreshed.',
-      owner: 'health-summary',
+      owner: 'health-page',
       plan: {
         apply: ['link alpha-skill @ Codex → /synthetic/runtime/skills/alpha-skill'],
         skipped: ['legacy-local-copy @ Codex — unmanaged copy'],
@@ -125,10 +125,10 @@ describe('Skills management operation episode', () => {
     calls.length = 0;
     const refreshed = await executeSkillsManagementOperationEpisode(queryClient, client, {
       kind: 'refresh',
-      owner: 'health-inspector',
+      owner: 'health-page',
       pendingLabel: 'refresh-skills',
     });
-    expect(refreshed).toMatchObject({ kind: 'refresh', message: undefined, owner: 'health-inspector', plan: null });
+    expect(refreshed).toMatchObject({ kind: 'refresh', message: undefined, owner: 'health-page', plan: null });
     expect(calls).toEqual([{ type: 'refresh' }, { type: 'project-inventories' }]);
   });
 
@@ -178,7 +178,7 @@ describe('Skills management operation episode', () => {
     const command = {
       kind: 'management',
       operation: { type: 'preview-reconcile' },
-      owner: 'matrix',
+      owner: 'worktable',
       pendingLabel: 'preview-reconcile',
     } as const;
     const first = port.execute(command);
@@ -190,14 +190,14 @@ describe('Skills management operation episode', () => {
     const outcome: SkillsManagementOperationOutcome = {
       kind: 'management',
       message: 'Reconcile preview refreshed.',
-      owner: 'matrix',
+      owner: 'worktable',
       plan: { apply: ['link alpha-skill'], skipped: [] },
       snapshot: syntheticManagementSnapshot(),
     };
     pending.resolve(outcome);
     await expect(first).resolves.toBe(outcome);
     expect(port.pendingOperation).toBeNull();
-    expect(port.notice).toEqual({ message: 'Reconcile preview refreshed.', owner: 'matrix', tone: 'success' });
+    expect(port.notice).toEqual({ message: 'Reconcile preview refreshed.', owner: 'worktable', tone: 'success' });
     expect(port.plan).toBe(outcome.plan);
 
     port.clearPlan();

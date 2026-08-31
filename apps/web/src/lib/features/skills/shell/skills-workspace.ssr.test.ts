@@ -9,7 +9,6 @@ import { createWebRpcHttpHandler } from '../../../server/rpc/handler.server';
 import type { WebRpcRouterDependencies } from '../../../server/rpc/router';
 import type { SkillsCapability, SkillsCapabilityResult } from '../../../server/rpc/skills';
 import { syntheticManagementSnapshot } from '../management/synthetic-fixture.test-helper';
-import { NAME_SCOPED_COUNTS_TEXT } from '../observations/model';
 import { createSkillsPresentationProjection } from '../presentation';
 import { loadSkillsShellRoute } from './data';
 import { createSkillsShellViewModel, normalizeSkillsQuerySnapshot } from './model';
@@ -27,12 +26,6 @@ import {
 interface SvelteServerModule {
   render: (component: Component, options?: { props?: Record<string, unknown> }) => { body: string };
 }
-
-/** The name-scope disclosure, asserted from the module that owns the wording. */
-const NAME_SCOPE_SENTENCE = NAME_SCOPED_COUNTS_TEXT;
-
-const HEALTHY_FRACTION_PATTERN = /\d+\/\d+\s*\n?\s*healthy/gu;
-const DANGER_LINKS_TONE_PATTERN = /class="[^"]*c_status\.danger[^"]*"\s+data-links-tone="danger"/u;
 
 const componentFrom = (loaded: unknown): Component => {
   if (typeof loaded !== 'object' || loaded === null || !('default' in loaded) || typeof loaded.default !== 'function') {
@@ -126,293 +119,295 @@ const deletionGroupAttributes = (html: string): string => {
   return html.slice(openingTagStart, html.indexOf('>', markerIndex) + 1);
 };
 
+const worktableRow = (html: string, skillName: string): string => {
+  const marker = `data-worktable-row="${skillName}"`;
+  const markerIndex = html.indexOf(marker);
+  if (markerIndex === -1) {
+    throw new Error(`The ${skillName} worktable row was not rendered.`);
+  }
+  const rowStart = html.lastIndexOf('<tr', markerIndex);
+  return html.slice(rowStart, html.indexOf('</tr>', markerIndex) + 5);
+};
+
+const worktableCell = (row: string, columnKey: string): string => {
+  const marker = `data-worktable-cell="${columnKey}"`;
+  const markerIndex = row.indexOf(marker);
+  if (markerIndex === -1) {
+    throw new Error(`The ${columnKey} worktable cell was not rendered.`);
+  }
+  const cellStart = row.lastIndexOf('<td', markerIndex);
+  return row.slice(cellStart, row.indexOf('</td>', markerIndex) + 5);
+};
+
 describe('Svelte Skills workspace SSR', () => {
-  test('renders a meaningful selected Global workspace without ClientOnly', () => {
-    const html = render(fixture).body;
-    expect(html).toContain('data-skills-workspace');
-    expect(html).toContain('Global and project scopes');
-    expect(html).toContain('alpha-skill');
-    expect(html).toContain('Editable SKILL.md');
-    expect(html).toContain('# Alpha synthetic document');
-    expect(html).toContain('aria-label="Inspector"');
-    expect(html).toContain('Health integration');
-    expect(html).toContain('Browse skills');
-    expect(html).toContain('aria-label="Skill picker scopes"');
-    expect(html).toContain('aria-label="Selected skill detail"');
-    expect(html).toContain('data-p9-slot-contract');
-    expect(html).not.toContain('Loading skills');
-  });
-  test('marks populated and empty scope names with their full labels', () => {
-    const html = render(fixture, { props: { includeEmptyScope: true, pathname: '/skills/global' } }).body;
-    const markers = html.match(/data-skill-scope-name/gu) ?? [];
+  test('renders one worktable instead of a tree, an inspector, and a matrix page', () => {
+    const html = render(convergenceFixture, { props: { pathname: '/skills' } }).body;
 
-    expect(markers.length).toBeGreaterThanOrEqual(4);
-    expect(html).toContain('data-skill-scope-name="" title="Synthetic group"');
-    expect(html).toContain('data-skill-scope-name="" title="Synthetic empty project"');
+    expect(html).toContain('data-skills-worktable');
+    expect(html).toContain('data-worktable-group="managed"');
+    expect(html).toContain('data-worktable-group="to-adopt"');
+    expect(html).toContain('data-worktable-group="projects"');
+    expect(html).toContain('data-worktable-group="catalogue"');
+    // The three surfaces this replaced. Their absence is the point of the redesign: one row per
+    // skill name, and the decision it is waiting on is which group it sits in.
+    expect(html).not.toContain('data-skills-tree');
+    expect(html).not.toContain('data-skills-inspector');
+    expect(html).not.toContain('Skill exposure per runtime');
   });
 
-  test('renders nested Project selection and its settled read-only document', () => {
-    const html = render(fixture, {
-      props: { pathname: '/skills/projects/synthetic-group/project-review' },
+  test('offers the decision strip as filters over the same table, not as five destinations', () => {
+    const html = render(convergenceFixture, { props: { pathname: '/skills' } }).body;
+
+    for (const filter of ['all', 'to-adopt', 'links-healthy', 'to-delete', 'catalogue-only']) {
+      expect(html).toContain(`data-worktable-filter="${filter}"`);
+    }
+    // Filters are buttons over the rendered table. A link would reload the page and lose the scroll
+    // position the reader was using to compare two rows.
+    expect(html).not.toContain('href="/skills/matrix"');
+  });
+
+  test('joins a placement mark with the invocation counts of the same harness in one cell', () => {
+    const html = render(convergenceFixture, {
+      props: { healthSnapshot: 'management', pathname: '/skills' },
     }).body;
-    expect(html).toContain('project-review');
-    expect(html).toContain('Project skill · read-only');
-    expect(html).toContain('# Project synthetic document');
-    expect(html).toContain('/skills/projects/synthetic-group/project-review');
+
+    // alpha-skill is missing from the Codex target and was invoked there — the join the exposure
+    // matrix and the observation table each carried one half of.
+    expect(html).toContain('data-worktable-cell="target:codex"');
+    expect(html).toContain('Codex — to link');
+    expect(html).toContain('data-evidence-tier="inferred"');
   });
 
-  test('exposes the management packet matrix slot without implementing it', () => {
-    const html = render(fixture, { props: { pathname: '/skills/matrix' } }).body;
-    expect(html).toContain('aria-label="Synthetic matrix slot"');
-    expect(html).toContain('Matrix integration');
-    expect(html).toContain('Matrix integration · settled');
+  test('writes a recorded invocation as a number and a reconstructed one with a tilde', () => {
+    const html = render(convergenceFixture, {
+      props: { healthSnapshot: 'management', pathname: '/skills' },
+    }).body;
+    const normalized = html.replace(/\s+/gu, ' ');
+
+    expect(normalized).toContain('>2<');
+    expect(normalized).toContain('>~1<');
+    // The abbreviations are gone from the cells, and the tier survives in words for a screen reader.
+    expect(normalized).toContain('2 recorded invocations in Claude Code');
+    expect(normalized).toContain('1 invocation reconstructed from traces in Codex');
+    expect(normalized).not.toContain('decl 2');
+    expect(normalized).not.toContain('inf 1');
   });
 
-  test('composes the real editor, health, and matrix slots through one shell context', () => {
-    const html = render(convergenceFixture).body;
-    expect(html).toContain('data-skills-workspace');
-    expect(html).toContain('data-skill-markdown-editor');
+  test('keeps offered-to-a-model counts out of every table cell', () => {
+    const html = render(convergenceFixture, { props: { pathname: '/skills' } }).body;
+
+    // `imagegen` is exposed-only. Availability is not use, so it is folded into the catalogue group
+    // and never given a count column of its own.
+    expect(html).toContain('data-worktable-group="catalogue"');
+    expect(html).not.toContain('exposed 1');
+  });
+
+  test('summarises each repository as one expandable row rather than a navigable empty page', () => {
+    const html = render(convergenceFixture, { props: { pathname: '/skills' } }).body;
+
+    expect(html).toContain('data-worktable-project="project:synthetic-group"');
+    expect(html).toContain('with invocation evidence — top:');
+    expect(html).toContain('project-review (~4 Codex · 2 OpenCode)');
+    expect(html).toContain('data-worktable-project-expand="project:synthetic-group"');
+    // A project scope is a row here, so nothing routes to a page that would render empty.
+    expect(html).not.toContain('href="/skills/projects/synthetic-group"');
+  });
+
+  test('renders a disabled managed skill as kept in source with its history intact', () => {
+    const html = render(convergenceFixture, {
+      props: { healthSnapshot: 'management', pathname: '/skills' },
+    }).body;
+
+    expect(html).toContain('data-worktable-disabled-state');
+    expect(html.replace(/\s+/gu, ' ')).toContain('Kept in source');
+    // Disabling removes links, never observations: the row is still in the table with its counts.
+    expect(html).toContain('data-worktable-row="beta-skill"');
+  });
+
+  test('renders the adopt action disabled behind the sentence that explains the gate', () => {
+    const html = render(convergenceFixture, { props: { pathname: '/skills' } }).body;
+    const normalized = html.replace(/\s+/gu, ' ');
+
+    expect(normalized).toContain('id="worktable-adopt-gate"');
+    expect(normalized).toContain('waits on the approved file-operation plan');
+  });
+
+  test('names the harnesses that cannot report beside the strip rather than as a zero', () => {
+    const html = render(convergenceFixture, { props: { pathname: '/skills' } }).body;
+
+    expect(html).toContain('data-harness-observability="not-observable"');
+    expect(html).toContain('Cursor');
+    expect(html).toContain('not observable');
+  });
+
+  test('teaches both notations once, beside the strip', () => {
+    const html = render(convergenceFixture, { props: { pathname: '/skills' } }).body;
+
+    expect(html.replace(/\s+/gu, ' ')).toContain('reconstructed from traces — never added together.');
+  });
+
+  test('keeps the page-level operations and their plan in one host', () => {
+    const html = render(convergenceFixture, { props: { pathname: '/skills' } }).body;
+
+    expect(html).toContain('data-skills-page-actions');
     expect(html).toContain('data-skills-management-health-slot');
-    expect(html).not.toContain('Synthetic editor slot');
-    expect(html).not.toContain('Health integration');
-
-    const matrixHtml = render(convergenceFixture, { props: { pathname: '/skills/matrix' } }).body;
-    expect(matrixHtml).toContain('data-skills-management-matrix-slot');
-    expect(matrixHtml).not.toContain('Synthetic matrix slot');
   });
 
-  test('shares one management pending gate across the matrix and health inspector', () => {
+  test('reports the observation read state on the worktable itself', () => {
+    const loading = render(convergenceFixture, {
+      props: { observationsError: 'Synthetic failure.', pathname: '/skills' },
+    }).body;
+    expect(loading).toContain('data-skill-observations-state="unavailable"');
+    // A failed observation read is a failed column, not a failed page: the table still renders.
+    expect(loading).toContain('data-skills-worktable');
+  });
+
+  test('masks retained worktable facts after a background refetch error', () => {
+    const html = render(convergenceFixture, {
+      props: {
+        observationsError: 'Synthetic background refetch failure.',
+        pathname: '/skills/global/alpha-skill',
+        retainObservationsOnError: true,
+      },
+    }).body;
+    const row = worktableRow(html, 'alpha-skill');
+
+    expect(html).toContain('aria-label="All — skill observations unavailable"');
+    expect(row).toContain('observations unavailable');
+    expect(row).not.toContain('data-evidence-tier');
+    expect(row).not.toContain('no invocation recorded');
+  });
+
+  test('renders an exact-response identity mismatch as omitted, including for assistive text', () => {
     const html = render(convergenceFixture, {
       props: {
         healthSnapshot: 'management',
-        managementPending: 'refresh-skills',
-        pathname: '/skills/matrix',
-      },
-    }).body;
-    const previewButtons = html.match(/<button[^>]*data-management-operation="preview-reconcile"[^>]*>/gu) ?? [];
-
-    expect(previewButtons).toHaveLength(2);
-    expect(previewButtons.every((button) => button.includes('disabled'))).toBe(true);
-  });
-
-  test('announces a shared health outcome only in the initiating placement', () => {
-    const html = render(convergenceFixture, {
-      props: {
-        managementNoticePlacement: 'summary',
+        omitObservationName: 'alpha-skill',
         pathname: '/skills/global/alpha-skill',
       },
     }).body;
+    const row = worktableRow(html, 'alpha-skill');
+    const targetCell = worktableCell(row, 'target:codex');
 
-    const matchingLiveRegions =
-      html.match(/<p[^>]*role="status"[^>]*>[^<]*Synthetic operation complete\.[^<]*<\/p>/gu) ?? [];
-    expect(matchingLiveRegions).toHaveLength(1);
+    expect(row).toContain('Omitted from this observation response.');
+    expect(targetCell).toContain('observation row omitted from this response');
+    expect(targetCell).not.toContain('>—</span>');
+    expect(row).not.toContain('no invocation recorded');
   });
 
-  test('says each health number once and tones an empty link count as danger', () => {
-    const detailHtml = render(convergenceFixture, {
-      props: { healthSnapshot: 'management', pathname: '/skills/global' },
+  test('announces loading and unavailable observation evidence beside a placement glyph', () => {
+    const cases = [
+      {
+        expected: 'skill observations loading',
+        props: { healthSnapshot: 'management' as const, observationsLoading: true },
+      },
+      {
+        expected: 'skill observations unavailable',
+        props: { healthSnapshot: 'management' as const, observationsError: 'Synthetic failure.' },
+      },
+    ];
+
+    for (const fixtureCase of cases) {
+      const html = render(convergenceFixture, { props: { ...fixtureCase.props, pathname: '/skills' } }).body;
+      const targetCell = worktableCell(worktableRow(html, 'alpha-skill'), 'target:codex');
+      expect(targetCell).toContain(fixtureCase.expected);
+      expect(targetCell).not.toContain('>—</span>');
+    }
+  });
+
+  test('uses generic lower-bound copy and retained dates on the worktable', () => {
+    const exposureHtml = render(convergenceFixture, {
+      props: { observationsExposureTruncated: true, pathname: '/skills/global/alpha-skill' },
     }).body;
-    // The landing page carries one links strip — a single taxonomy, each number said once.
-    expect(detailHtml.match(/data-skills-links-strip/gu) ?? []).toHaveLength(1);
-    expect(detailHtml.match(HEALTHY_FRACTION_PATTERN) ?? []).toHaveLength(1);
-    // The zero is toned with the danger token, and the tone is stated as data for tests and AT.
-    expect(detailHtml).toMatch(DANGER_LINKS_TONE_PATTERN);
+    const exposureNormalized = exposureHtml.replace(/\s+/gu, ' ');
 
-    const matrixHtml = render(convergenceFixture, {
-      props: { healthSnapshot: 'management', pathname: '/skills/matrix' },
+    expect(exposureNormalized).toContain('Exposure evidence is incomplete');
+    expect(exposureNormalized).toContain('latest retained 2026-08-02');
+    expect(exposureNormalized).not.toContain('stopped short');
+    expect(exposureNormalized).not.toContain('reached its bound');
+
+    const invocationHtml = render(convergenceFixture, {
+      props: { observationsProvisional: true, pathname: '/skills/global/alpha-skill' },
     }).body;
-    expect(matrixHtml.match(/Healthy links/gu) ?? []).toHaveLength(1);
+    const invocationNormalized = invocationHtml.replace(/\s+/gu, ' ');
+    expect(invocationNormalized).toContain('Observation evidence is incomplete');
+    expect(invocationNormalized).toContain('at least 2 recorded');
+    expect(invocationNormalized).toContain('aria-label="To delete — 1 provisional managed deletion candidates"');
+    expect(invocationNormalized).not.toContain('reached its bound');
   });
 
-  test('renders every observation count with its tier and Cursor as words, not a zero', () => {
-    const matrixHtml = render(convergenceFixture, { props: { pathname: '/skills/matrix' } }).body;
+  test('composes the editor and page-action slots through one shell context', () => {
+    const html = render(convergenceFixture, { props: { pathname: '/skills' } }).body;
 
-    expect(matrixHtml).toContain('data-skill-observations="overview"');
-    expect(matrixHtml).toContain('declared 2');
-    expect(matrixHtml).toContain('inferred 1');
-    // The two tiers are never added together. 2 + 1 has no cell to live in.
-    expect(matrixHtml).not.toContain('declared 3');
-    // Cursor is stated once per surface, in the roster — not repeated as a column of identical
-    // cells. It still never renders as a zero: the roster line is words.
-    expect(matrixHtml).toContain('data-harness-observability="not-observable"');
-    expect(matrixHtml).toContain('not observable');
-    expect(matrixHtml).not.toContain('data-harness="cursor"');
-    // Each verdict has a home, and the unmanaged observation was retained rather than dropped.
-    expect(matrixHtml).toContain('Projected everywhere, no invocation recorded');
-    expect(matrixHtml).toContain('Invocation evidence, unmanaged');
-    expect(matrixHtml).toContain('Available to a model, no invocation recorded');
-    expect(matrixHtml).toContain('artifact-design');
-    // A skill that was only offered lives under its catalogue fold — not in the main table, and
-    // never in the adoption group.
-    expect(matrixHtml).toContain('data-skill-observations-group="offered"');
-    expect(matrixHtml).toContain('data-skill-observations-catalogue="standalone"');
-    expect(matrixHtml).toContain('imagegen');
-    expect(matrixHtml).not.toContain('data-observation-verdict="offered-only"');
-    expect(matrixHtml).not.toContain('Observed skill usage');
-    // A complete read states its absences plainly rather than hedging them.
-    expect(deletionGroupAttributes(matrixHtml)).toContain('data-provisional="false"');
-    expect(matrixHtml).not.toContain('within the read bound');
-
-    const detailHtml = render(convergenceFixture, { props: { pathname: '/skills/global/alpha-skill' } }).body;
-    expect(detailHtml).toContain('data-skill-observations="skill"');
-    expect(detailHtml).toContain('declared 2');
-    expect(detailHtml).toContain('not observable');
-    expect(detailHtml).toContain('data-skill-observations-verdict="invoked"');
+    expect(html).toContain('data-skills-management-health-slot');
+    expect(html).toContain('data-skills-worktable');
   });
 
-  test('opens a skill detail on a synthesis band above the editor', () => {
-    const html = render(convergenceFixture, { props: { pathname: '/skills/global/alpha-skill' } }).body;
-
-    // State, exposure, skill signals, verdict, and both operations — readable before any scrolling,
-    // and still reachable in the 768–1279px band where the inspector drops below the content.
-    expect(html).toContain('data-skill-summary-band');
-    expect(html.indexOf('data-skill-summary-band')).toBeLessThan(html.indexOf('data-skill-markdown-editor'));
-    expect(html).toContain('data-summary-exposure');
-    expect(html).toContain('data-summary-observed');
-    expect(html).toContain('data-summary-verdict="invoked"');
-    expect(html).toContain('data-summary-actions');
-  });
-
-  test('opens a project skill on a read-only synthesis band above its document', () => {
+  test('qualifies a bounded read on the worktable without hedging the whole page', () => {
     const html = render(convergenceFixture, {
-      props: { pathname: '/skills/projects/synthetic-group/project-review' },
+      props: { observationsProvisional: true, pathname: '/skills' },
     }).body;
 
-    expect(html).toContain('data-skill-summary-band');
-    expect(html.indexOf('data-skill-summary-band')).toBeLessThan(html.indexOf('# Project synthetic document'));
-    expect(html).toContain('data-summary-placement');
-    expect(html).toContain('data-summary-observed');
-    expect(html).toContain('data-summary-verdict="invoked-unmanaged"');
-    expect(html).toContain('Project-owned · read-only');
-    expect(html).not.toContain('data-summary-actions');
-  });
-
-  test('qualifies every absence claim when the read could not prove one', () => {
-    const html = render(convergenceFixture, {
-      props: { observationsProvisional: true, pathname: '/skills/matrix' },
-    }).body;
-
-    // A bounded read cannot prove a skill went unused, so the deletion group and the verdicts it
-    // rests on say what they actually know instead of repeating a claim the data cannot support.
-    expect(deletionGroupAttributes(html)).toContain('data-provisional="true"');
-    expect(html).toContain('Provisional: invocation history is incomplete');
-    expect(html).toContain('No invocation in loaded history; invocation history is incomplete.');
     expect(html).toContain('data-skill-observations-lower-bound="invocations"');
-    expect(html).not.toContain('No skill signal recorded by an observable harness.');
   });
 
-  test('explains that the first historical collection is still in progress', () => {
-    const globalHtml = render(convergenceFixture, {
-      props: { pathname: '/skills/global', producerCompletenessMissing: true },
-    }).body;
-    const matrixHtml = render(convergenceFixture, {
-      props: { pathname: '/skills/matrix', producerCompletenessMissing: true },
-    }).body;
-
-    for (const html of [globalHtml, matrixHtml]) {
-      expect(html).toContain('data-skill-observations-collection-pending');
-      expect(html).toContain(
-        'Collecting historical skill observations… Results are incomplete until this pass finishes.',
-      );
-      expect(html).toContain('no invocation in loaded history');
-      expect(html).not.toContain('no invocation recorded');
-      expect(html).not.toContain('No skill signal recorded by an observable harness.');
-    }
-  });
-
-  test('renders a project scope as its skills joined with skill signals', () => {
-    const html = render(convergenceFixture, { props: { pathname: '/skills/projects/synthetic-group' } }).body;
-
-    // The scope page was a dead end — a path and an inventory count. It now carries the one thing
-    // a project selection is for: the repo's skills, each joined to what the harnesses recorded.
-    expect(html).toContain('data-project-skills-table');
-    expect(html).toContain('data-project-skill-row="project-review"');
-    expect(html).toContain('declared 2');
-    expect(html).toContain('Standard Agents · owned directory');
-    expect(html).toContain(NAME_SCOPE_SENTENCE);
-    expect(html).not.toContain('scanned project inventories');
-    expect(html).toContain('Owned and edited in this repository');
-  });
-
-  test('shows skill signals on a project skill, not only on a global one', () => {
+  test('explains why current producer state is unavailable', () => {
     const html = render(convergenceFixture, {
-      props: { pathname: '/skills/projects/synthetic-group/project-review' },
+      props: { producerCompletenessMissing: true, pathname: '/skills' },
     }).body;
 
-    // The branch this surface actually spends most of its time in on a real machine: the operator's
-    // project inventories hold 49 project-local skills, 39 of them observed. Mounting the panel in
-    // the global branch alone hid every one of those counts behind a selection that renders a
-    // description and a read-only preview and nothing else.
-    expect(html).toContain('Project skill · read-only');
-    expect(html).toContain('data-skill-observations="skill"');
-    expect(html).toContain('inferred 4');
-    expect(html).toContain('declared 2');
-    // Read-only and outside the managed source repository, so the verdict is the whole reason to
-    // look. Its wording follows the residence: this install is owned by its project, and telling it
-    // to be adopted would prescribe a move nobody planned.
-    expect(html).toContain('data-skill-observations-verdict="invoked-unmanaged"');
-    expect(html).toContain('Invocation evidence — owned by a project repository');
-    // Below the document, matching the global branch: the SKILL.md source stays the primary object.
-    expect(html.indexOf('# Project synthetic document')).toBeLessThan(html.indexOf('data-skill-observations="skill"'));
-    // Cursor still reads as unable to observe rather than as a zero, on this branch too.
-    expect(html).toContain('data-harness="cursor" data-observation-state="not-observable"');
+    expect(html).toContain('data-skill-observations-collection-pending');
+    expect(html).toContain('data-skill-observations-lower-bound="invocations"');
   });
 
-  test('refuses to tell a project install the managed verdict of its namesake', () => {
+  test('reports skipped stored observations on the worktable', () => {
+    const html = render(convergenceFixture, { props: { observationsSkipped: 2, pathname: '/skills' } }).body;
+
+    expect(html).toContain('data-skill-observations-skipped');
+    expect(html.replace(/\s+/gu, ' ')).toContain('2 stored observations could not be read and are not counted.');
+  });
+
+  test('discloses name scope on the worktable itself', () => {
+    const html = render(convergenceFixture, { props: { pathname: '/skills' } }).body;
+
+    expect(html).toContain('data-worktable-name-scope');
+    expect(html.replace(/\s+/gu, ' ')).toContain(
+      'Counts are name-scoped and cover every installation sharing the name.',
+    );
+  });
+
+  test('renders the worktable from settled data alone, with no query client mounted', () => {
+    const html = render(fixture, { props: { pathname: '/skills' } }).body;
+
+    expect(html).toContain('data-skills-worktable');
+    expect(html).toContain('data-worktable-group="managed"');
+    expect(html).toContain('alpha-skill');
+  });
+
+  test('keeps configuration and the unmanaged backlog below the table instead of on another page', () => {
     const html = render(convergenceFixture, {
-      props: { pathname: '/skills/projects/synthetic-group/alpha-skill' },
+      props: { healthSnapshot: 'management', pathname: '/skills' },
     }).body;
 
-    // The operator's real `pr-review` shape: one name, two installations. The counts are the name's,
-    // and `managed` is the name's too — so on the project install the `invoked` verdict would be
-    // inherited from the managed skill and the adoption reading that actually applies here would
-    // vanish. The collision is named instead of asserted or silently dropped.
-    expect(html).toContain('data-skill-observations="skill"');
-    expect(html).toContain('data-skill-observations-homonym');
-    expect(html).toContain('A managed skill of this name also exists');
-    expect(html).not.toContain('Invocation evidence from at least one harness.');
-    expect(html).not.toContain('data-skill-observations-deletion-candidate');
-    // The counts themselves are still shown — they are true of the name, and the page says so.
-    expect(html).toContain('declared 2');
-    expect(html).toContain(NAME_SCOPE_SENTENCE);
+    expect(html).toContain('data-skills-configuration');
+    expect(html).toContain('Configuration &amp; runtimes');
+    expect(html).toContain('Source repository');
+    expect(html).toContain('value="/synthetic/source"');
+    expect(html).toContain('data-consolidation-panel');
+    expect(html).toContain('data-backlog-tone="neutral"');
+    expect(html).toContain('legacy-local-copy');
+    expect(html).toContain('Nothing is ever deleted automatically.');
+    // The matrix was the old second destination for this backlog; there is no second destination.
+    expect(html).not.toContain('Review in the matrix');
   });
 
-  test('keeps the adoption verdict for a project-only skill name', () => {
+  test('does not state absolute invocation absence for an unmanaged entry when history is incomplete', () => {
     const html = render(convergenceFixture, {
-      props: { pathname: '/skills/projects/synthetic-group/project-review' },
+      props: { healthSnapshot: 'management', observationsProvisional: true, pathname: '/skills' },
     }).body;
 
-    // "This name is nowhere in the managed repository" is a property of the name, so it stays a
-    // sound claim about the project install. The sentence follows the residence — project-owned —
-    // rather than prescribing adoption into the source repository for a deliberately scoped skill.
-    expect(html).toContain('data-skill-observations-verdict="invoked-unmanaged"');
-    expect(html).toContain('Invocation evidence — owned by a project repository, outside the shared source.');
-    expect(html).not.toContain('data-skill-observations-homonym');
-    expect(html).toContain(NAME_SCOPE_SENTENCE);
-  });
-
-  test('keeps skill signals on the global skill branch', () => {
-    // The fix is additive: the branch that already worked must keep working. `alpha-skill` is now
-    // installed twice, and on the *global* selection the managed verdict does describe what is
-    // selected, so it is stated plainly and no collision note appears.
-    const html = render(convergenceFixture, { props: { pathname: '/skills/global/alpha-skill' } }).body;
-
-    expect(html).toContain('data-skill-observations="skill"');
-    expect(html).toContain('data-skill-observations-verdict="invoked"');
-    expect(html).toContain('Invocation evidence from at least one harness.');
-    expect(html).not.toContain('data-skill-observations-homonym');
-    expect(html).toContain(NAME_SCOPE_SENTENCE);
-    expect(html).toContain('# Alpha synthetic document');
-  });
-
-  test('leaves scope selections without a per-scope observation rollup', () => {
-    // A scope node is not a skill. Aggregating observations across one would invent a number this
-    // model has no definition for — and tier-and-harness counts are exactly what must never be
-    // summed. The scope branches stay as they are, deliberately.
-    for (const pathname of ['/skills/global', '/skills/projects/synthetic-group']) {
-      const html = render(convergenceFixture, { props: { pathname } }).body;
-      expect(html).not.toContain('data-skill-observations="skill"');
-    }
+    expect(html).toContain('no invocation in loaded history');
+    expect(html).not.toContain('never observed');
   });
 
   test('tells a truncated catalogue apart from truncated evidence instead of hedging both', () => {
@@ -427,7 +422,8 @@ describe('Svelte Skills workspace SSR', () => {
     // meant every verdict carried a hedge that could never come off — which is how a store holding
     // hundreds of real invocations came to read as if nothing had ever been invoked.
     expect(html).toContain('data-skill-observations-lower-bound="exposure"');
-    expect(html).toContain('The verdicts are not affected.');
+    expect(html.replace(/\s+/gu, ' ')).toContain('Invocation verdicts are not affected.');
+    expect(html).toContain('Latest retained signal');
     expect(deletionGroupAttributes(html)).toContain('data-provisional="false"');
     expect(html).not.toContain('within the read bound');
 
@@ -440,6 +436,49 @@ describe('Svelte Skills workspace SSR', () => {
     expect(evidenceBounded).toContain('data-skill-observations-lower-bound="invocations"');
     expect(evidenceBounded).toContain('no invocation in loaded history');
     expect(deletionGroupAttributes(evidenceBounded)).toContain('data-provisional="true"');
+
+    const detail = (observations: SkillObservations): string => {
+      const presentation = presentationFor(observations);
+      return render(observationsComponent, {
+        props: {
+          observationPresentation: presentation.observations,
+          selectedPresentation: presentation.selected,
+          variant: 'skill',
+        },
+      }).body;
+    };
+    const detailExposureBounded = detail(syntheticExposureTruncatedObservations);
+    expect(detailExposureBounded).toContain('data-skill-observations-lower-bound="exposure"');
+    expect(detailExposureBounded.replace(/\s+/gu, ' ')).toContain('Invocation verdicts are not affected.');
+    expect(detailExposureBounded).toContain('Latest retained signal');
+
+    const detailEvidenceBounded = detail(syntheticProvisionalObservations);
+    expect(detailEvidenceBounded).toContain('data-skill-observations-lower-bound="invocations"');
+    expect(detailEvidenceBounded).toContain('Observation evidence is incomplete');
+    expect(detailEvidenceBounded).toContain('Latest retained signal');
+  });
+
+  test('reports skipped stored observations on a selected skill detail', () => {
+    const presentation = presentationFor({ ...syntheticExposureTruncatedObservations, skipped: 2 });
+    const html = render(observationsComponent, {
+      props: {
+        observationPresentation: presentation.observations,
+        selectedPresentation: presentation.selected,
+        variant: 'skill',
+      },
+    }).body;
+
+    expect(html).toContain('data-skill-observations-skipped');
+    expect(html.replace(/\s+/gu, ' ')).toContain('2 stored observations could not be read and are not counted.');
+  });
+
+  test('reports skipped stored observations on global and project overview surfaces', () => {
+    for (const pathname of ['/skills/global', '/skills/projects/synthetic-group']) {
+      const html = render(convergenceFixture, { props: { observationsSkipped: 2, pathname } }).body;
+
+      expect(html).toContain('data-skill-observations-skipped');
+      expect(html.replace(/\s+/gu, ' ')).toContain('2 stored observations could not be read and are not counted.');
+    }
   });
 
   test('renders the resolved-path ceiling as words rather than a silently short list', () => {
@@ -507,38 +546,13 @@ describe('Svelte Skills workspace SSR', () => {
 
   test('reports an unavailable observation read per metric instead of as a page banner', () => {
     const html = render(convergenceFixture, {
-      props: { observationsError: 'Skill observations are unavailable.', pathname: '/skills/matrix' },
+      props: { observationsError: 'Skill observations are unavailable.', pathname: '/skills' },
     }).body;
 
     expect(html).toContain('data-skill-observations-state="unavailable"');
     // The rest of the page still renders its own numbers; nothing global was flagged.
-    expect(html).toContain('Healthy links');
+    expect(html).toContain('data-worktable-filter="links-healthy"');
     expect(html).not.toContain('data-skill-observations="overview"');
-  });
-
-  test('keeps unavailable observations unavailable on the landing and project tables', () => {
-    const globalHtml = render(convergenceFixture, {
-      props: { observationsError: 'Synthetic observation failure.', pathname: '/skills/global' },
-    }).body;
-    expect(globalHtml).toContain('data-skills-overview-observations="unavailable"');
-    expect(globalHtml).toContain('data-observation-state="unavailable"');
-    expect(globalHtml).not.toContain('data-observation-state="loading"');
-    expect(globalHtml).not.toContain('>never<');
-
-    const projectHtml = render(convergenceFixture, {
-      props: { observationsError: 'Synthetic observation failure.', pathname: '/skills/projects/synthetic-group' },
-    }).body;
-    expect(projectHtml).toContain('data-project-observations-state="unavailable"');
-    expect(projectHtml).toContain('unavailable');
-    expect(projectHtml).not.toContain('data-project-observations-state="loading"');
-  });
-
-  test('discloses name scope and not-observable harnesses on the decision surface', () => {
-    const html = render(convergenceFixture, { props: { pathname: '/skills/global' } }).body;
-
-    expect(html).toContain(NAME_SCOPE_SENTENCE);
-    expect(html).toContain('data-skills-overview-observability="not-observable"');
-    expect(html.replace(/\s+/gu, ' ')).toContain('Cursor — not observable');
   });
 
   test('hydrates a bounded awaited route into a new provider without duplicate Skills acquisition', async () => {
@@ -611,7 +625,7 @@ describe('Svelte Skills workspace SSR', () => {
     expect(html).toContain('Source /fixture/source');
     expect(html).not.toContain('Source not configured');
     expect(html).toContain('alpha-skill');
-    expect(html).toContain('aria-label="Selected skill detail"');
+    expect(html).toContain('data-skills-worktable');
     expect(html).not.toContain('Loading skills');
     expect(callsAfterRoute).toEqual({
       acquisitions: 5,

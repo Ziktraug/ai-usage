@@ -50,7 +50,9 @@ export interface UsageReadModelCallOptions {
 export interface SkillObservationReadOptions extends UsageReadModelCallOptions {
   readonly expectedProducerHarnessKeys?: readonly string[];
   readonly harnessKey?: string;
+  readonly incompleteProducerHarnessKeys?: readonly string[];
   readonly machineId?: string;
+  readonly minimumProducerCollectedAt?: string;
 }
 
 export interface UsageReadModel {
@@ -94,10 +96,10 @@ export interface UsageReadModel {
 const MAXIMUM_RAIL_QUOTA_OBSERVATIONS = 64;
 
 /**
- * Skill observations are tens to hundreds per sweep and are retained for 400 days, so a few
- * thousand is the realistic ceiling for one machine's history. The bound exists so a corrupt or
- * runaway table cannot be read whole into a page render; when it bites, the reader reports it and
- * the dataset presents its counts as a lower bound rather than as numbers.
+ * Skill exposure observations are retained for 400 days while the much rarer invocation facts are
+ * durable, so a few thousand is still the realistic ceiling for one machine's history. The bound
+ * exists so a corrupt or runaway table cannot be read whole into a page render; when it bites, the
+ * reader reports it and the dataset presents its counts as a lower bound rather than as numbers.
  */
 const MAXIMUM_SKILL_OBSERVATIONS = 20_000;
 
@@ -212,7 +214,13 @@ export const createSqliteUsageReadModel = (options: SqliteUsageReadModelOptions)
           ? {}
           : { expectedProducerHarnessKeys: callOptions.expectedProducerHarnessKeys }),
         ...(callOptions.harnessKey === undefined ? {} : { harnessKey: callOptions.harnessKey }),
+        ...(callOptions.incompleteProducerHarnessKeys === undefined
+          ? {}
+          : { incompleteProducerHarnessKeys: callOptions.incompleteProducerHarnessKeys }),
         ...(callOptions.machineId === undefined ? {} : { machineId: callOptions.machineId }),
+        ...(callOptions.minimumProducerCollectedAt === undefined
+          ? {}
+          : { minimumProducerCollectedAt: callOptions.minimumProducerCollectedAt }),
         maximumBytes: MAXIMUM_SKILL_OBSERVATION_BYTES,
         maximumObservations: MAXIMUM_SKILL_OBSERVATIONS,
         maximumSkills: MAXIMUM_OBSERVED_SKILLS,

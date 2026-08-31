@@ -85,8 +85,9 @@ export const webQueryOwnership = [
     // collects. Folding them together would put one cadence on the other's refetch rules.
     //
     // And therefore its own publication behaviour. This is the one family besides the report aliases
-    // that a completed cycle invalidates, because the cycle is its only producer — nothing a browser
-    // does can change it, so without this it would never refresh in an open tab.
+    // that a completed cycle invalidates, because the cycle is its only producer. Interval/focus
+    // revalidation expires producer completeness safely; publication remains the prompt path for
+    // newly written observations in an open tab.
     family: 'skill-observations',
     policy: 'collection-swr',
     publication: 'invalidate-collection-identity',

@@ -99,6 +99,7 @@ export interface SkillObservationsView {
    * Exposed-only unmanaged names folded by catalogue. These rows appear here and nowhere else: a
    * catalogue entry in the main table would outweigh the invocation signal ~2:1 on a real store.
    */
+  catalogueEntryCount: number;
   catalogueRollups: readonly SkillCatalogueRollup[];
   /** Managed, installed in every enabled runtime, and without invocation evidence: deletion candidates. */
   deletionCandidates: readonly SkillObservationRow[];
@@ -109,6 +110,8 @@ export interface SkillObservationsView {
    * rows. Exposure is catalogue boilerplate: truncating it costs nothing a verdict rests on.
    */
   invocationEvidenceComplete: boolean;
+  /** Whether declared/inferred populations and counts are floors. */
+  invocationLowerBound: boolean;
   /**
    * The rows the main table shows: every managed name and every name with invocation evidence,
    * strongest evidence first, then most recent. Exposed-only unmanaged names live in
@@ -127,7 +130,7 @@ export interface SkillObservationsView {
    * flattening both into one hedge.
    */
   onlyExposureTruncated: boolean;
-  /** No producer-completeness answer exists yet, so the first historical sweep is still pending. */
+  /** At least one expected producer has missing, stale, disabled, or omitted collection state. */
   producerCompletenessMissing: boolean;
   /** Managed skills first, then the unmanaged names, each alphabetically. */
   rows: readonly SkillObservationRow[];
@@ -153,9 +156,18 @@ export const skillObservationsPresentationState = (
 export const NOT_OBSERVABLE_TEXT = 'not observable';
 export const NO_SIGNALS_RECORDED_TEXT = 'no signals recorded';
 export const NO_SIGNALS_IN_LOADED_HISTORY_TEXT = 'no signals in loaded history';
+export const OBSERVATION_ROW_OMITTED_TEXT = 'Omitted from this observation response.';
 
 export const noSignalsText = (signalsComplete: boolean): string =>
   signalsComplete ? NO_SIGNALS_RECORDED_TEXT : NO_SIGNALS_IN_LOADED_HISTORY_TEXT;
+
+/** Render an aggregate retained population without making a bounded response look exact. */
+export const formatObservationCount = (count: number, lowerBound: boolean): string =>
+  `${lowerBound ? '≥' : ''}${count}`;
+
+/** A bounded response can only identify the latest timestamp it retained, not the true latest one. */
+export const observationSignalLabel = (lowerBound: boolean): 'Last signal' | 'Latest retained signal' =>
+  lowerBound ? 'Latest retained signal' : 'Last signal';
 
 /**
  * `2026-08-01 09:07 UTC`, from a canonical ISO instant.
@@ -177,8 +189,26 @@ export const formatObservedAt = (isoTimestamp: string): string => {
  * One phrase per tier, joined by a separator that is not arithmetic. `declared 3 · inferred 1`
  * states two facts; `4` would state a third that is not true of anything.
  */
-export const tallySummary = (tallies: readonly SkillObservationTally[]): string =>
-  tallies.map((tally) => `${SKILL_OBSERVATION_TIER_LABELS[tally.tier]} ${tally.count}`).join(' · ');
+type SkillObservationReadBounds = Pick<SkillObservations, 'invocationLowerBound' | 'lowerBound'>;
+
+const COMPLETE_SKILL_OBSERVATION_READ: SkillObservationReadBounds = {
+  invocationLowerBound: false,
+  lowerBound: false,
+};
+
+const tallyIsLowerBound = (tally: SkillObservationTally, bounds: SkillObservationReadBounds): boolean =>
+  tally.tier === 'exposed' ? bounds.lowerBound : bounds.invocationLowerBound;
+
+export const tallySummary = (
+  tallies: readonly SkillObservationTally[],
+  bounds: SkillObservationReadBounds = COMPLETE_SKILL_OBSERVATION_READ,
+): string =>
+  tallies
+    .map(
+      (tally) =>
+        `${SKILL_OBSERVATION_TIER_LABELS[tally.tier]} ${tallyIsLowerBound(tally, bounds) ? '≥' : ''}${tally.count}`,
+    )
+    .join(' · ');
 
 /**
  * What one skill's row says about one harness.
@@ -191,6 +221,7 @@ const cellFor = (
   harness: SkillObservationHarness,
   tallies: readonly SkillObservationTally[],
   signalsComplete: boolean,
+  bounds: SkillObservationReadBounds,
 ): SkillObservationHarnessCell => {
   if (harness.observability === 'not-observable') {
     return {
@@ -214,7 +245,7 @@ const cellFor = (
     harnessKey: harness.harnessKey,
     label: harness.label,
     state: 'observed',
-    summary: tallySummary(tallies),
+    summary: tallySummary(tallies, bounds),
     tallies,
   };
 };
@@ -414,7 +445,7 @@ const catalogueKeyFor = (skillName: string): string => {
   return separatorIndex > 0 ? skillName.slice(0, separatorIndex) : 'standalone';
 };
 
-const exposureSummariesFor = (rows: readonly SkillObservationRow[]): readonly string[] => {
+const exposureSummariesFor = (rows: readonly SkillObservationRow[], exposureLowerBound: boolean): readonly string[] => {
   const countsByHarness = new Map<string, { counts: number[]; label: string }>();
   for (const tally of rows.flatMap((row) => row.tallies.filter((candidate) => candidate.tier === 'exposed'))) {
     const current = countsByHarness.get(tally.harnessKey) ?? { counts: [], label: tally.harnessLabel };
@@ -427,12 +458,18 @@ const exposureSummariesFor = (rows: readonly SkillObservationRow[]): readonly st
       const sortedCounts = counts.toSorted((left, right) => left - right);
       const lowest = sortedCounts.at(0);
       const highest = sortedCounts.at(-1);
+      const lowerBoundMark = exposureLowerBound ? '≥' : '';
       // A range over one tier and harness — the spread of per-entry exposure counts — never a sum.
-      return lowest === highest ? `${label} exposed ×${lowest}` : `${label} exposed ×${lowest}–${highest}`;
+      return lowest === highest
+        ? `${label} exposed ×${lowerBoundMark}${lowest}`
+        : `${label} exposed ×${lowerBoundMark}${lowest}–${lowerBoundMark}${highest}`;
     });
 };
 
-const buildCatalogueRollups = (exposedOnly: readonly SkillObservationRow[]): readonly SkillCatalogueRollup[] => {
+const buildCatalogueRollups = (
+  exposedOnly: readonly SkillObservationRow[],
+  exposureLowerBound: boolean,
+): readonly SkillCatalogueRollup[] => {
   const rollups = new Map<string, SkillObservationRow[]>();
   for (const row of exposedOnly) {
     const key = catalogueKeyFor(row.skillName);
@@ -440,7 +477,7 @@ const buildCatalogueRollups = (exposedOnly: readonly SkillObservationRow[]): rea
   }
   return [...rollups.entries()]
     .map(([key, rows]) => ({
-      exposureSummaries: exposureSummariesFor(rows),
+      exposureSummaries: exposureSummariesFor(rows, exposureLowerBound),
       key,
       label: key === 'standalone' ? 'Standalone entries' : key,
       lastObservedAt: rows.reduce<string | null>(
@@ -514,18 +551,24 @@ export const buildSkillObservationsView = (observations: SkillObservations): Ski
     return {
       ...skill,
       harnesses: observations.harnesses.map((harness) =>
-        cellFor(harness, talliesByHarness.get(harness.harnessKey) ?? [], signalsComplete),
+        cellFor(harness, talliesByHarness.get(harness.harnessKey) ?? [], signalsComplete, observations),
       ),
     } satisfies SkillObservationRow;
   });
   const adoptionCandidates = rows.filter((row) => row.verdict === 'invoked-unmanaged');
   const offeredOnly = rows.filter((row) => row.verdict === 'offered-only' && !row.deletionCandidate);
+  const catalogueRollups = buildCatalogueRollups(
+    offeredOnly.filter((row) => !row.managed),
+    observations.lowerBound,
+  );
   return {
     adoptionCandidates,
     adoptionGroups: buildAdoptionGroups(adoptionCandidates),
-    catalogueRollups: buildCatalogueRollups(offeredOnly.filter((row) => !row.managed)),
+    catalogueEntryCount: catalogueRollups.reduce((count, rollup) => count + rollup.rows.length, 0),
+    catalogueRollups,
     deletionCandidates: rows.filter((row) => row.deletionCandidate),
     harnesses: observations.harnesses,
+    invocationLowerBound: observations.invocationLowerBound,
     invocationEvidenceComplete: !observations.invocationLowerBound,
     invocationRows: rows
       .filter((row) => row.managed || observationEvidenceRank(row) > 0)

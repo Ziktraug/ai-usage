@@ -47,7 +47,8 @@
     usageEvidenceComplete = false,
   }: {
     groups: readonly UnmanagedGroup[];
-    onReviewEntry: () => void;
+    /** Optional: the worktable already lists these entries, so it offers no second destination. */
+    onReviewEntry?: () => void;
     total: number;
     /**
      * Skill signals per name, joined in by the caller. This is what turns the backlog from a file
@@ -73,9 +74,11 @@
       symlinks whose targets are outside the source repository. Adopting one means moving it into the source repo and
       symlinking back. Nothing is ever deleted automatically.
     </p>
-    <div>
-      <button class={ghostButton} onclick={onReviewEntry} type="button">Review in the matrix</button>
-    </div>
+    {#if onReviewEntry}
+      <div>
+        <button class={ghostButton} onclick={onReviewEntry} type="button">Review in the matrix</button>
+      </div>
+    {/if}
     {#if groups.length === 0}
       <p class={meta}>No unmanaged target entries.</p>
     {:else}

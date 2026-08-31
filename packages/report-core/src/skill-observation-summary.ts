@@ -91,6 +91,11 @@ export interface SkillObservationDataset extends SkillObservationEvidence {
    * sweep of an observable harness never demotes it to `not-observable`.
    */
   harnesses: readonly SkillObservationHarnessCoverage[];
+  /**
+   * End-to-end expiry of the producer-completeness proof carried by this dataset. `null` is an
+   * explicit absence of a time-bounded proof and must never be interpreted as exact evidence.
+   */
+  producerProofValidUntil: string | null;
   skills: readonly SkillObservationSummary[];
 }
 
@@ -184,6 +189,7 @@ const coverageFor = (observedHarnessKeys: ReadonlySet<string>): readonly SkillOb
 export const createSkillObservationDataset = (
   observations: readonly SkillObservation[],
   evidence: SkillObservationEvidence = COMPLETE_SKILL_OBSERVATION_EVIDENCE,
+  producerProofValidUntil: string | null = null,
 ): SkillObservationDataset => {
   const skills = new Map<string, SkillAccumulator>();
   const observedHarnessKeys = new Set<string>();
@@ -220,6 +226,7 @@ export const createSkillObservationDataset = (
   return {
     ...evidence,
     harnesses: coverageFor(observedHarnessKeys),
+    producerProofValidUntil,
     skills: [...skills.values()]
       .map((skill) => ({
         lastObservedAt: skill.lastObservedAt,

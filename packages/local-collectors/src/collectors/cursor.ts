@@ -39,7 +39,7 @@ const TOKEN_SQL = "SELECT key, value FROM cursorDiskKV WHERE key LIKE 'bubbleId:
 const USER_BUBBLE_SQL = "SELECT key, value FROM cursorDiskKV WHERE key LIKE 'bubbleId:%' AND value LIKE '%\"type\":1%'";
 
 // Bumped to 6 with the shared cache entry gaining an observation list. Cursor
-// records no skill usage and is not observable (ADR 0022), so its list is always
+// records no skill observations and is not observable (ADR 0022), so its list is always
 // empty — but the entry shape changed, and an undeclared invalidation is worse
 // than a declared one.
 const CURSOR_DB_CACHE_VERSION = 6;

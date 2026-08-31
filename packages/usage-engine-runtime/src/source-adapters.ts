@@ -21,7 +21,7 @@ import { firstExisting, resolvePathCandidates } from '@ai-usage/local-machine/pl
 import {
   MAX_SKILL_OBSERVATION_BATCH,
   parseSkillObservation,
-  SKILL_OBSERVATION_RETENTION_MS,
+  SKILL_OBSERVATION_EXPOSURE_RETENTION_MS,
   type SkillObservation,
   type SkillObservationCollectionCompleteness,
 } from '@ai-usage/report-core/skill-observation';
@@ -259,15 +259,16 @@ export interface PreparedSkillObservationImport {
 }
 
 /**
- * Applies the engine-owned retention and write budgets before the store sees a
- * rescan. Actual invocations get the budget first: catalogue exposure is both
- * much larger and weaker evidence, so letting it compete in one pooled slice
- * can erase the exact observations the Skills surface exists to report.
+ * Applies the engine-owned exposure retention and write budgets before the
+ * store sees a rescan. Actual invocations get the budget first: catalogue
+ * exposure is both much larger and weaker evidence, so letting it compete in
+ * one pooled slice can erase the exact observations the Skills surface exists
+ * to report.
  */
 export const prepareSkillObservationImport = (input: {
   readonly completeness: SkillObservationCollectionCompleteness;
   readonly maximumObservations?: number;
-  readonly minimumObservedAt: string;
+  readonly minimumExposureObservedAt: string;
   readonly observations: readonly SkillObservation[];
 }): PreparedSkillObservationImport => {
   const maximumObservations = input.maximumObservations ?? MAX_SKILL_OBSERVATION_BATCH;
@@ -281,7 +282,7 @@ export const prepareSkillObservationImport = (input: {
 
   const retained: SkillObservationImportCandidate[] = input.observations.flatMap((observation, index) => {
     const parsed = parseSkillObservation(observation);
-    if (parsed !== null && parsed.observedAt < input.minimumObservedAt) {
+    if (parsed !== null && parsed.tier === 'exposed' && parsed.observedAt < input.minimumExposureObservedAt) {
       return [];
     }
     return [{ index, normalizedObservedAt: parsed?.observedAt ?? null, observation }];
@@ -372,13 +373,15 @@ const createSessionSource = (input: {
       // written on the same engine-owned pass as the rows they were parsed
       // beside. The engine is the only writer (ADR 0009), so this is the one
       // place they can reach the store.
-      const minimumObservedAt = new Date(input.now().getTime() - SKILL_OBSERVATION_RETENTION_MS).toISOString();
+      const minimumExposureObservedAt = new Date(
+        input.now().getTime() - SKILL_OBSERVATION_EXPOSURE_RETENTION_MS,
+      ).toISOString();
       const preparedObservations = prepareSkillObservationImport({
         completeness: collection.observationCompleteness ?? {
           exposure: { rejected: 0, truncated: true },
           invocation: { rejected: 0, truncated: true },
         },
-        minimumObservedAt,
+        minimumExposureObservedAt,
         observations: collection.observations ?? [],
       });
       yield* abortIfRequested(context.signal);
@@ -392,7 +395,7 @@ const createSessionSource = (input: {
               },
               dbPath: input.dbPath,
               machineId: input.machine.id,
-              minimumObservedAt,
+              minimumExposureObservedAt,
               observations: preparedObservations.observations,
             }).pipe(Effect.mapError((cause) => sourceFailure(input.id, cause)));
       const warnings = sanitizeSourceWarnings(input.label, [...collection.warnings, ...retentionWarnings]);

@@ -23,7 +23,8 @@ describe('Skills URL parity', () => {
     expect(skillDestinationFromUrl('http://local/skills/global')).toEqual({ type: 'global-scope' });
     const fallback = skillsFallbackIntent('http://local/skills?utm=kept#section');
     expect(fallback).toMatchObject({ replace: true, resetScroll: false });
-    expect(String(fallback.url)).toBe('http://local/skills/global?utm=kept#section');
+    // Plan 113: the worktable is the canonical landing, so a stale deep link lands on it.
+    expect(String(fallback.url)).toBe('http://local/skills?utm=kept#section');
     const treeSelection = skillTreeSelectionFromUrl('http://local/skills/matrix');
     expect(treeSelection).toEqual({ type: 'global-scope' });
     expect(treeSelection && selectionKey(treeSelection)).toBe('global');

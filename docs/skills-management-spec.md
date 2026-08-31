@@ -110,12 +110,20 @@ the requirements below are what the surface must honour.
   invocation that happened.
 - Producer-side truncations and rejections follow the same rule. Each observable
   harness persists invocation and exposure completeness with the batch, even
-  when that batch contains zero observations. Invocation loss makes an absence
-  provisional; exposure-only loss makes exposure counts lower bounds without
-  weakening the invocation verdict. Until any producer completeness state is
-  present, an empty store means the first historical collection is not yet
-  established, not a completed sweep with zero invocations. The surface names
-  that collection state and keeps every absence-derived verdict provisional.
+  when that batch contains zero observations. The global proof always requires
+  Claude, Codex, and OpenCode: disabling one marks it incomplete rather than
+  removing it from the roster. Each answer must also be no more than five
+  minutes old. Missing, stale, disabled, malformed, rejected, truncated, or
+  bounded-away producer state keeps every absence-derived verdict provisional;
+  exposure-only rejection or truncation still weakens exposure counts without
+  weakening invocation evidence (ADR 0037). The surface describes this as a
+  complete recent collection not yet being available, never as a zero. The
+  server carries the proof's absolute expiry through the inventory join; stale
+  or in-flight retained browser data is qualified as provisional even while
+  TanStack keeps displaying its last successful payload.
+- Invocation observations are durable. The 400-day age window and rescan cutoff
+  apply only to the high-volume `exposed` catalogue stream; `declared` and
+  `inferred` history remains available for absence-derived decisions (ADR 0037).
 - Provenance is per metric. There is no page-level data-quality banner; a failed
   observation read reports itself in the observation section alone.
 - Tier and observability are conveyed textually. Colour may reinforce them and

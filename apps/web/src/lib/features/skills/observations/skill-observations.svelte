@@ -14,19 +14,23 @@
   import {
     ADOPTION_GROUP_COPY,
     deletionCandidateText,
+    formatObservationCount,
     formatObservedAt,
     formatObservedDate,
     NAME_SCOPED_COUNTS_TEXT,
     NOT_OBSERVABLE_TEXT,
     noSignalsText,
+    OBSERVATION_ROW_OMITTED_TEXT,
     observationRecency,
     observationRecencyNote,
+    observationSignalLabel,
     observedHarnessSummary,
     resolvedPathsNote,
     SKILL_OBSERVATION_TIER_DESCRIPTIONS,
     SKILL_OBSERVATION_TIER_ORDER,
     verdictText,
   } from './model';
+  import ObservationReadQualification from './observation-read-qualification.svelte';
 
   let {
     observationPresentation,
@@ -41,9 +45,14 @@
   const view = $derived(observationPresentation.view);
   const errorMessage = $derived(observationPresentation.errorMessage);
   const row = $derived(selectedPresentation?.observationRow);
+  const rowOmitted = $derived(selectedPresentation?.observationRowOmitted ?? false);
   const managedClaimApplies = $derived(selectedPresentation?.managedClaimApplies ?? true);
   const homonym = $derived(selectedPresentation?.homonym);
   const detailVerdict = $derived(selectedPresentation?.verdict);
+  const signalLabel = $derived(observationSignalLabel(view?.lowerBound ?? false));
+
+  const cataloguePopulationCount = (count: number): string =>
+    view?.invocationLowerBound ? `${count} provisional` : formatObservationCount(count, view?.lowerBound ?? false);
 
   const stack = css({ display: 'grid', gap: '12px' });
   const section = css({ display: 'grid', gap: '8px' });
@@ -75,12 +84,14 @@
   // The shared table style renders every `th` as an uppercase column label. A skill name is data,
   // not a label, so the row header opts out rather than shouting the inventory back at the reader.
   const skillRowHeader = css({
+    minW: 0,
     textTransform: 'none',
     letterSpacing: 'normal',
     color: 'ink',
     fontSize: '13px',
     fontWeight: 600,
-    whiteSpace: 'nowrap',
+    overflowWrap: 'anywhere',
+    whiteSpace: 'normal',
   });
   const managedTag = css({ color: 'muted', fontSize: '11px', fontWeight: 500, textTransform: 'none' });
   const observedAt = css({ whiteSpace: 'nowrap' });
@@ -127,7 +138,10 @@
   // Tighter than the exposure matrix on purpose: six columns of short phrases fit the 1280 band
   // beside the tree, so the "not observable" column stays on screen instead of behind a scroll.
   const observationsTableWrap = css({
+    contain: 'inline-size paint',
+    maxW: 'full',
     minH: 'auto',
+    minW: 0,
     '& > table': { tableLayout: 'auto', minW: 0, fontSize: '12px' },
     '& th, & td': { px: '8px' },
   });
@@ -148,26 +162,30 @@
         together.
       </p>
     </div>
-    {#if view.producerCompletenessMissing}
-      <p class={meta} data-skill-observations-collection-pending role="status">
-        Collecting historical skill observations… Results are incomplete until this pass finishes.
-      </p>
+    <ObservationReadQualification {view} />
+    {#if rowOmitted}
+      <p class={meta} data-skill-observation-row-omitted role="status">{OBSERVATION_ROW_OMITTED_TEXT}</p>
+    {:else}
+      <dl class={definitionList}>
+        {#each row?.harnesses ?? [] as cell (cell.harnessKey)}
+          <div class={definitionRow}>
+            <dt class={strongCell}>{cell.label}</dt>
+            <dd class={detailObservationCell} data-harness={cell.harnessKey} data-observation-state={cell.state}>
+              {cell.summary}
+            </dd>
+          </div>
+        {/each}
+      </dl>
     {/if}
-    <dl class={definitionList}>
-      {#each row?.harnesses ?? [] as cell (cell.harnessKey)}
-        <div class={definitionRow}>
-          <dt class={strongCell}>{cell.label}</dt>
-          <dd class={detailObservationCell} data-harness={cell.harnessKey} data-observation-state={cell.state}>
-            {cell.summary}
-          </dd>
-        </div>
-      {/each}
-    </dl>
     <p class={meta} data-skill-observations-last-signal>
-      {#if row?.lastObservedAt}
-        Last signal <time datetime={row.lastObservedAt}>{formatObservedAt(row.lastObservedAt)}</time>
+      {#if rowOmitted}
+        {signalLabel}
+        — {OBSERVATION_ROW_OMITTED_TEXT}
+      {:else if row?.lastObservedAt}
+        {signalLabel} <time datetime={row.lastObservedAt}>{formatObservedAt(row.lastObservedAt)}</time>
       {:else}
-        Last signal — {noSignalsText(view.signalsComplete)}.
+        {signalLabel}
+        — {noSignalsText(view.signalsComplete)}.
       {/if}
     </p>
     {#if detailVerdict !== undefined}
@@ -197,18 +215,20 @@
     {/if}
     <!-- Per-metric provenance, beside the numbers rather than as a page banner. The resolved-path
          list below corroborates it whenever a name really did resolve to more than one directory. -->
-    <p class={meta} data-skill-observations-name-scope>{NAME_SCOPED_COUNTS_TEXT}</p>
-    {#if (row?.resolvedPaths.length ?? 0) > 0}
-      {#each row?.resolvedPaths ?? [] as resolvedPath (resolvedPath)}
-        <p class={pathText}>{resolvedPath}</p>
-      {/each}
-      {#if row?.resolvedPathsTruncated}
-        <p class={meta} data-skill-observations-resolved-paths-truncated>
-          {resolvedPathsNote(row)}
-        </p>
+    {#if !rowOmitted}
+      <p class={meta} data-skill-observations-name-scope>{NAME_SCOPED_COUNTS_TEXT}</p>
+      {#if (row?.resolvedPaths.length ?? 0) > 0}
+        {#each row?.resolvedPaths ?? [] as resolvedPath (resolvedPath)}
+          <p class={pathText}>{resolvedPath}</p>
+        {/each}
+        {#if row?.resolvedPathsTruncated}
+          <p class={meta} data-skill-observations-resolved-paths-truncated>
+            {resolvedPathsNote(row)}
+          </p>
+        {/if}
+      {:else if row?.lastObservedAt}
+        <p class={meta}>No harness disclosed a directory for this skill.</p>
       {/if}
-    {:else if row?.lastObservedAt}
-      <p class={meta}>No harness disclosed a directory for this skill.</p>
     {/if}
   </section>
 {:else}
@@ -241,35 +261,7 @@
       {/each}
     </ul>
 
-    <!-- Two different facts, and collapsing them into one hedge is what made a store full of real
-         invocation history read as if nothing had ever been invoked. A truncated exposure catalogue
-         is routine — Codex writes one exposure row per catalogue entry per session — and costs the
-         verdicts nothing; a truncated invocation read is the one that does. -->
-    {#if view.producerCompletenessMissing}
-      <p class={meta} data-skill-observations-collection-pending role="status">
-        Collecting historical skill observations… Results are incomplete until this pass finishes.
-      </p>
-    {:else if view.lowerBound}
-      <p
-        class={meta}
-        data-skill-observations-lower-bound={view.onlyExposureTruncated ? 'exposure' : 'invocations'}
-        role="status"
-      >
-        {#if view.onlyExposureTruncated}
-          The read carried every recorded invocation and stopped short of the full exposure catalogue, so
-          <em>exposed</em>
-          counts below are lower bounds. The verdicts are not affected.
-        {:else}
-          The observation read reached its bound, so every count below is a lower bound.
-        {/if}
-      </p>
-    {/if}
-    {#if view.skipped > 0}
-      <p class={meta} data-skill-observations-skipped role="status">
-        {view.skipped}
-        stored observations could not be read and are not counted.
-      </p>
-    {/if}
+    <ObservationReadQualification {view} />
 
     <p class={meta} data-skill-observations-table-note>
       Rows are ordered by evidence strength, then most recent signal. — means {noSignalsText(view.signalsComplete)}
@@ -287,13 +279,17 @@
             {#each view.observableHarnesses as harness (harness.harnessKey)}
               <th scope="col">{harness.label}</th>
             {/each}
-            <th scope="col">Last signal</th>
+            <th scope="col">{signalLabel}</th>
           </tr>
         </thead>
         <tbody>
           {#if view.invocationRows.length === 0}
             <tr>
-              <td class={muted} colspan={view.observableHarnesses.length + 2}>No skills to report.</td>
+              <td class={muted} colspan={view.observableHarnesses.length + 2}>
+                {view.invocationLowerBound
+                  ? 'No managed or invocation-evidence row appears in this response.'
+                  : 'No skills to report.'}
+              </td>
             </tr>
           {:else}
             {#each view.invocationRows as observationRow (observationRow.skillName)}
@@ -368,7 +364,7 @@
         <p class={meta}>
           {view.invocationEvidenceComplete
             ? 'No managed skill installed everywhere lacks invocation evidence.'
-            : 'Nothing qualifies within the read bound.'}
+            : 'Nothing qualifies within the retained history.'}
         </p>
       {:else}
         <ul class={candidateList}>
@@ -397,12 +393,22 @@
         </p>
       </div>
       {#if view.adoptionCandidates.length === 0}
-        <p class={meta}>Every skill with invocation evidence resolves to a managed inventory entry.</p>
+        <p class={meta}>
+          {view.invocationLowerBound
+            ? 'No unmanaged invocation-evidence row appears in this response.'
+            : 'Every skill with invocation evidence resolves to a managed inventory entry.'}
+        </p>
       {:else}
         {#each view.adoptionGroups as group (group.residence)}
           <div class={subGroup} data-skill-observations-residence={group.residence}>
             <div class={subGroupHeader}>
-              <h4 class={subGroupTitle}>{ADOPTION_GROUP_COPY[group.residence].heading} · {group.rows.length}</h4>
+              <h4 class={subGroupTitle}>
+                {ADOPTION_GROUP_COPY[group.residence].heading}
+                ·
+                <span data-adoption-group-count={group.residence}
+                  >{formatObservationCount(group.rows.length, view.invocationLowerBound)}</span
+                >
+              </h4>
               <p class={cx(panelSub, meta)}>{ADOPTION_GROUP_COPY[group.residence].description}</p>
             </div>
             <ul class={candidateList}>
@@ -412,7 +418,7 @@
                   <span class={meta}>
                     {observedHarnessSummary(candidate)}
                     {#if candidate.lastObservedAt}
-                      · last signal
+                      · {signalLabel.toLowerCase()}
                       <time datetime={candidate.lastObservedAt}>{formatObservedDate(candidate.lastObservedAt)}</time>
                     {/if}
                   </span>
@@ -445,22 +451,29 @@
       </div>
       {#if view.catalogueRollups.length === 0}
         <p class={meta}>
-          {view.invocationEvidenceComplete
-            ? 'No skill was available to a model without an invocation also being recorded.'
-            : 'No availability-only signal appears in loaded history.'}
+          {#if view.invocationLowerBound}
+            No catalogue-only row appears in this response; invocation history is incomplete.
+          {:else if view.lowerBound}
+            No catalogue-only row was retained in this incomplete response.
+          {:else}
+            No skill was available to a model without an invocation also being recorded.
+          {/if}
         </p>
       {:else}
         {#each view.catalogueRollups as rollup (rollup.key)}
           <details class={rollupPanel} data-skill-observations-catalogue={rollup.key}>
             <summary class={rollupSummary}>
               <span class={strongCell}>{rollup.label}</span>
-              <span class={meta}>{rollup.rows.length} {rollup.rows.length === 1 ? 'skill' : 'skills'}</span>
+              <span class={meta} data-catalogue-entry-count={rollup.key}
+                >{cataloguePopulationCount(rollup.rows.length)}
+                {rollup.rows.length === 1 ? 'skill' : 'skills'}</span
+              >
               {#each rollup.exposureSummaries as exposureSummary (exposureSummary)}
                 <span class={meta}>{exposureSummary}</span>
               {/each}
               {#if rollup.lastObservedAt}
                 <span class={meta}
-                  >last signal
+                  >{signalLabel.toLowerCase()}
                   <time datetime={rollup.lastObservedAt}>{formatObservedDate(rollup.lastObservedAt)}</time></span
                 >
               {/if}

@@ -40,70 +40,21 @@ const fixture = componentFrom(fixtureModule);
 const { render } = rendererFrom(svelteServerModule);
 
 describe('Svelte Skills management SSR', () => {
-  test('renders individually named diagnostics and authoritative installation context', () => {
+  test('renders the page-level operation host without drawing any facts of its own', () => {
     const html = render(fixture).body;
+
     expect(html).toContain('data-skills-management-health-slot');
-    expect(html).toContain('Finding 1: warning');
-    expect(html).toContain('Skill document token warning');
-    expect(html.replace(/\s+/gu, ' ')).toContain('1,240 / 1,000 tokens');
-    expect(html).toContain('Installed in');
-    expect(html).toContain('Not linked');
-    // Operations moved to the summary band above the editor; the inspector is the home of facts.
-    expect(html).not.toContain('>Disable<');
-    expect(html).not.toContain('SkillMarkdownTokenWarning');
+    // The worktable carries every fact now; this host exists for refresh, reconcile, and notices.
+    expect(html).not.toContain('data-inspector-section');
+    expect(html).not.toContain('Installed in');
+    expect(html).not.toContain('data-skill-summary-band');
   });
-  test('renders mobile-safe closed Inspector disclosures, with no Actions section to duplicate the band', () => {
+
+  test('shows no reconcile plan until one has been previewed', () => {
     const html = render(fixture).body;
-    const inspectorDisclosures = html.match(/<details[^>]+data-inspector-section="[^"]+"[^>]*>/gu) ?? [];
 
-    expect(inspectorDisclosures).toHaveLength(4);
-    expect(inspectorDisclosures.every((element) => !element.includes(' open'))).toBe(true);
-    expect(html).not.toContain('data-inspector-section="actions"');
-  });
-
-  test('renders Configuration & runtimes from the settled global snapshot without acquiring a browser client', () => {
-    const html = render(fixture, { props: { pathname: '/skills/global' } }).body;
-
-    expect(html).toContain('data-skills-configuration');
-    expect(html).toContain('Configuration &amp; runtimes');
-    expect(html).toContain('Source repository');
-    expect(html).toContain('value="/synthetic/source"');
-    expect(html).toContain('Project paths');
-    expect(html).toContain('/synthetic/project');
-    expect(html).toContain('Runtimes');
-    expect(html).toContain('Codex');
-    expect(html).toContain('Save source');
-  });
-
-  test('renders the responsive matrix, filters, reconcile action, and both projections from settled data', () => {
-    const html = render(fixture, { props: { pathname: '/skills/matrix' } }).body;
-    expect(html).toContain('data-skills-management-matrix-slot');
-    expect(html).toContain('Managed skills — exposure per runtime');
-    expect(html).toContain('aria-label="Managed skills by runtime"');
-    expect(html).toContain('<table');
-    expect(html).toContain('Reconcile all…');
-    expect(html).toContain('alpha-skill');
-    expect(html).toContain('beta-skill');
-    expect(html).toContain('Not linked');
-    expect(html).toContain('Disabled');
-    expect(html).toContain('data-health-tone="danger"');
-  });
-
-  test('renders neutral unmanaged backlog without invoking a filesystem or RPC client', () => {
-    const html = render(fixture, { props: { pathname: '/skills/global' } }).body;
-    expect(html).toContain('data-consolidation-panel');
-    expect(html).toContain('data-backlog-tone="neutral"');
-    expect(html).toContain('legacy-local-copy');
-    expect(html).toContain('Nothing is ever deleted automatically.');
-    // One review affordance for the fold, not one identical button per entry.
-    expect(html).toContain('Review in the matrix');
-    expect(html).not.toContain('Review consolidation');
-  });
-
-  test('does not state absolute invocation absence for an unmanaged entry when history is incomplete', () => {
-    const html = render(fixture, { props: { observationsProvisional: true, pathname: '/skills/global' } }).body;
-
-    expect(html).toContain('no invocation in loaded history');
-    expect(html).not.toContain('never observed');
+    // Nothing is written before the plan is readable, so a settled render offers no Apply button.
+    expect(html).not.toContain('data-skills-reconcile-plan');
+    expect(html).not.toContain('Apply 1 action');
   });
 });

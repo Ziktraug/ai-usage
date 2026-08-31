@@ -70,6 +70,8 @@ export interface CodexSession {
   parent: string | null;
   phases: CodexSessionPhase[];
   rejectedMetricRecords: number;
+  /** Distinct rejected skill-observation inputs; shared JSONL failures count once. */
+  rejectedSkillObservationRecords: number;
   reportPartial: boolean;
   /** Producer completeness stays split between exposure and invocation evidence. */
   skillObservationCompleteness: SkillObservationCollectionCompleteness;
@@ -278,6 +280,7 @@ const emptySession = (): CodexSession => ({
   reportPartial: false,
   observedPriorTokenUsage: false,
   rejectedMetricRecords: 0,
+  rejectedSkillObservationRecords: 0,
   start: null,
   end: null,
   cwd: null,
@@ -399,14 +402,16 @@ const isCodexToolCallPrefix = (prefix: string) =>
   prefix.includes('"type":"tool_search_call"');
 
 /**
- * Codex injects its skill catalogue into a developer message, which the gate
- * above deliberately skips: those lines run to tens of kilobytes and parsing
- * every one of them across a full history sweep is not free.
+ * Codex injects its skill catalogue into a developer message, which the normal
+ * event gate deliberately skips: those lines run to tens of kilobytes and
+ * extracting every one of them across a full history sweep is not free. Every
+ * non-empty line is still JSON-validated so a partial write cannot certify
+ * either skill-observation channel as complete.
  *
  * So the catalogue is admitted in two stages. The cheap prefix test below runs
  * on the first 300 bytes like every other gate; only a line that already looks
  * like a developer message pays for a full-line substring scan, and only a line
- * that actually contains the catalogue heading is parsed.
+ * that actually contains the catalogue heading is inspected for entries.
  */
 const isCodexDeveloperMessagePrefix = (prefix: string) =>
   prefix.includes('"role":"developer"') || prefix.includes('"role": "developer"');
@@ -593,6 +598,9 @@ export const createCodexSessionParser = (captureDetail = false) => {
   let pendingCatalogue: PendingCodexCatalogueSignal | null = null;
   let skillSignalIndex = 0;
   let invocationSignalsTruncated = false;
+  let unplacedExposureSignals = 0;
+  let unplacedInvocationSignals = 0;
+  let unreadableSkillObservationLines = 0;
   let lines = 0;
   let parsedLines = 0;
   let skippedLines = 0;
@@ -843,18 +851,29 @@ export const createCodexSessionParser = (captureDetail = false) => {
     const prefix = codexLinePrefix(line);
     const skillCatalogueLine = isCodexSkillCatalogueLine(prefix, line);
     if (!(shouldParseCodexPrefix(prefix) || isCodexToolCallPrefix(prefix) || skillCatalogueLine)) {
+      if (!safeJSON(line)) {
+        unreadableSkillObservationLines++;
+      }
       skippedLines++;
       return;
     }
     parsedLines++;
     const event = safeJSON(line);
     if (!event) {
+      unreadableSkillObservationLines++;
       return;
     }
+    const payload = isRecord(event.payload) ? event.payload : {};
     const timestamp =
       typeof event.timestamp === 'string' || typeof event.timestamp === 'number' ? event.timestamp : Number.NaN;
     const date = new Date(timestamp);
     if (!Number.isFinite(date.getTime())) {
+      if (isCodexToolCallPrefix(prefix) && isCodexExecToolCall(payload)) {
+        unplacedInvocationSignals += matchCodexSkillDocuments(codexToolCallCommandBlob(payload)).length;
+      }
+      if (skillCatalogueLine) {
+        unplacedExposureSignals += extractCodexSkillCatalogue(codexDeveloperMessageText(payload)).length;
+      }
       return;
     }
     if (!session.start || date < session.start) {
@@ -864,7 +883,6 @@ export const createCodexSessionParser = (captureDetail = false) => {
       session.end = date;
     }
 
-    const payload = isRecord(event.payload) ? event.payload : {};
     if (isCodexToolCallPrefix(prefix)) {
       const metadata = isRecord(payload.internal_chat_message_metadata_passthrough)
         ? payload.internal_chat_message_metadata_passthrough
@@ -1049,17 +1067,50 @@ export const createCodexSessionParser = (captureDetail = false) => {
   const materializeSkillObservations = (): void => {
     const sessionId = session.id;
     if (!sessionId) {
+      const exposureCandidates = pendingCatalogue?.entries.length ?? 0;
+      const invocationCandidates = pendingExecSignals.reduce((total, signal) => total + signal.entries.length, 0);
+      const ceiling = codexSkillObservationCeiling();
+      session.rejectedSkillObservationRecords =
+        unreadableSkillObservationLines +
+        unplacedExposureSignals +
+        exposureCandidates +
+        unplacedInvocationSignals +
+        invocationCandidates;
+      session.skillObservationCompleteness = {
+        exposure: {
+          rejected: unreadableSkillObservationLines + unplacedExposureSignals + exposureCandidates,
+          truncated: exposureCandidates > ceiling,
+        },
+        invocation: {
+          rejected: unreadableSkillObservationLines + unplacedInvocationSignals + invocationCandidates,
+          truncated: invocationSignalsTruncated || invocationCandidates > ceiling,
+        },
+      };
       return;
     }
     const projectPath = session.cwd;
     const exposureObservations: SkillObservation[] = [];
     const invocationObservations: SkillObservation[] = [];
+    // Exact-path correlation is the only safe way to recover a plugin's
+    // namespaced catalogue name. `null` marks a path claimed by two names, so
+    // an ambiguous catalogue never rewrites invocation evidence.
+    const catalogueNamesByPath = new Map<string, string | null>();
     let exposureCandidates = 0;
-    let exposureRejected = 0;
+    let exposureRejected = unreadableSkillObservationLines + unplacedExposureSignals;
     let invocationCandidates = 0;
-    let invocationRejected = 0;
+    let invocationRejected = unreadableSkillObservationLines + unplacedInvocationSignals;
     if (pendingCatalogue) {
       exposureCandidates = pendingCatalogue.entries.length;
+      for (const entry of pendingCatalogue.entries) {
+        if (entry.path === null) {
+          continue;
+        }
+        const previousName = catalogueNamesByPath.get(entry.path);
+        catalogueNamesByPath.set(
+          entry.path,
+          previousName === undefined || previousName === entry.name ? entry.name : null,
+        );
+      }
       const exposed = codexSkillCatalogueObservations(pendingCatalogue.entries, {
         observedAt: pendingCatalogue.at.toISOString(),
         projectPath,
@@ -1070,17 +1121,23 @@ export const createCodexSessionParser = (captureDetail = false) => {
     }
     for (const signal of pendingExecSignals) {
       invocationCandidates += signal.entries.length;
-      const inferred = codexSkillExecObservations(signal.entries, signal.callId, {
-        observedAt: signal.at.toISOString(),
-        projectPath,
-        sessionId,
-      });
+      const inferred = codexSkillExecObservations(
+        signal.entries,
+        signal.callId,
+        {
+          observedAt: signal.at.toISOString(),
+          projectPath,
+          sessionId,
+        },
+        catalogueNamesByPath,
+      );
       invocationObservations.push(...inferred.observations);
       invocationRejected += inferred.rejected;
     }
     const ceiling = codexSkillObservationCeiling();
     const exposureTruncated = exposureCandidates > ceiling;
     const invocationTruncated = invocationSignalsTruncated || invocationCandidates > ceiling;
+    session.rejectedSkillObservationRecords = exposureRejected + invocationRejected - unreadableSkillObservationLines;
     session.skillObservations = [
       ...exposureObservations.slice(0, ceiling),
       ...invocationObservations.slice(0, ceiling),

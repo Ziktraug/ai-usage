@@ -18,6 +18,7 @@ import {
 } from '../identities/skills';
 import type { CollectionSwrQueryKey, FiniteSwrQueryKey } from '../keys';
 import { webQueryPolicies } from '../policies';
+import { skillObservationProducerProofStaleTime } from '../skill-observation-proof';
 
 export {
   managedSkillMarkdownKey,
@@ -76,8 +77,9 @@ export const skillsProjectInventoriesQueryOptions = (client: SkillsInventoryQuer
 
 /**
  * The one query for the skill-observation identity, on the collection cadence rather than the
- * snapshot's. Everything else on this page revalidates when the operator acts; this revalidates
- * when the engine collects, which is why it does not share the snapshot's policy.
+ * snapshot's. Collection publication remains the prompt path, while interval, focus, and mount
+ * revalidation prevent the producer-completeness proof from outliving its budget. That distinct
+ * lifecycle is why observations do not share the snapshot's policy.
  */
 export const skillObservationsQueryOptions = (client: SkillObservationsQueryClient, context: SkillsQueryContext) =>
   queryOptions({
@@ -85,6 +87,11 @@ export const skillObservationsQueryOptions = (client: SkillObservationsQueryClie
     enabled: context.browser && context.enabled,
     queryFn: async ({ signal }) => unwrapSkillsQueryResult(await client.getSkillObservations({ signal })),
     queryKey: skillObservationsKey(),
+    staleTime: (query) =>
+      skillObservationProducerProofStaleTime(
+        query.state.data?.producerProofValidUntil ?? null,
+        query.state.dataUpdatedAt,
+      ),
   });
 
 export const managedSkillMarkdownQueryOptions = (

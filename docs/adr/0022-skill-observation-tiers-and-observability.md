@@ -3,6 +3,8 @@
 - **Status**: Accepted
 - **Date**: 2026-08-28
 - **Amends**: none
+- **Amended by**: [0037](0037-current-producers-and-durable-skill-invocations.md)
+  (producer roster, completeness freshness, and tier-specific retention)
 - **Related**: [0009](0009-sole-writer-usage-engine-and-direct-sqlite-readers.md)
   (two planes), [0016](0016-collect-everything-present-faithfully.md),
   [0017](0017-absence-is-a-gap-not-a-category.md),

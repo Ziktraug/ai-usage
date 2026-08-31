@@ -56,6 +56,7 @@ describe('skill observation store', () => {
     expect(imported).toEqual({ inserted: 1, rejected: 0, stateChanged: false, unchanged: 0, updated: 0 });
     expect(read.skipped).toBe(0);
     expect(read.truncated).toBe(false);
+    expect(read.producerProofValidUntil).toBeNull();
     // The read path re-validates every persisted row, so a null resolved path
     // has to survive validation, not merely survive the write.
     expect(read.observations.map(({ observation: value }) => value)).toEqual([bundled]);
@@ -224,6 +225,41 @@ describe('skill observation store', () => {
     expect(result).toMatchObject({ _tag: 'Left', left: { reason: 'invalid-input' } });
   });
 
+  test('rejects an unknown expected producer instead of certifying an empty roster', async () => {
+    const dbPath = await createStore('skill-invalid-producer-roster');
+    await Effect.runPromise(initializeUsageStore({ dbPath }));
+
+    const result = await Effect.runPromise(
+      Effect.either(
+        querySkillObservations({
+          dbPath,
+          expectedProducerHarnessKeys: ['claud'],
+          machineId: MACHINE,
+        }),
+      ),
+    );
+
+    expect(result).toMatchObject({ _tag: 'Left', left: { reason: 'invalid-input' } });
+  });
+
+  test('rejects an observable harness filter outside the expected producer roster', async () => {
+    const dbPath = await createStore('skill-inconsistent-producer-filter');
+    await Effect.runPromise(initializeUsageStore({ dbPath }));
+
+    const result = await Effect.runPromise(
+      Effect.either(
+        querySkillObservations({
+          dbPath,
+          expectedProducerHarnessKeys: ['codex'],
+          harnessKey: 'claude',
+          machineId: MACHINE,
+        }),
+      ),
+    );
+
+    expect(result).toMatchObject({ _tag: 'Left', left: { reason: 'invalid-input' } });
+  });
+
   test('treats an empty store without producer state as pre-collection evidence', async () => {
     const dbPath = await createStore('skill-empty-uncollected');
     await Effect.runPromise(initializeUsageStore({ dbPath }));
@@ -238,7 +274,7 @@ describe('skill observation store', () => {
 
     expect(read.observations).toEqual([]);
     expect(read.collectionInvocationIncomplete).toBe(true);
-    expect(read.collectionExposureIncomplete).toBe(false);
+    expect(read.collectionExposureIncomplete).toBe(true);
     expect(read.producerCompletenessMissing).toBe(true);
   });
 
@@ -332,6 +368,111 @@ describe('skill observation store', () => {
 
     expect(read.collectionInvocationIncomplete).toBe(false);
     expect(read.producerCompletenessMissing).toBe(false);
+  });
+
+  test('requires every producer answer to be recent before proving an empty history', async () => {
+    const dbPath = await createStore('skill-stale-producers');
+    for (const harnessKey of EXPECTED_OBSERVABLE_HARNESSES) {
+      await Effect.runPromise(
+        importSkillObservations({
+          collection: { completeness: completeSkillObservationCollection(), harnessKey },
+          dbPath,
+          importedAt: new Date('2026-08-01T09:00:00.000Z'),
+          machineId: MACHINE,
+          observations: [],
+        }),
+      );
+    }
+
+    const read = await Effect.runPromise(
+      querySkillObservations({
+        dbPath,
+        expectedProducerHarnessKeys: EXPECTED_OBSERVABLE_HARNESSES,
+        machineId: MACHINE,
+        minimumProducerCollectedAt: '2026-08-01T09:05:00.000Z',
+      }),
+    );
+
+    expect(read.collectionExposureIncomplete).toBe(true);
+    expect(read.collectionInvocationIncomplete).toBe(true);
+    expect(read.producerCompletenessMissing).toBe(true);
+  });
+
+  test('anchors the producer proof deadline to the read cutoff', async () => {
+    const dbPath = await createStore('skill-producer-proof-deadline');
+    for (const harnessKey of EXPECTED_OBSERVABLE_HARNESSES) {
+      await Effect.runPromise(
+        importSkillObservations({
+          collection: { completeness: completeSkillObservationCollection(), harnessKey },
+          dbPath,
+          importedAt: new Date('2026-08-01T10:00:00.000Z'),
+          machineId: MACHINE,
+          observations: [],
+        }),
+      );
+    }
+
+    const read = await Effect.runPromise(
+      querySkillObservations({
+        dbPath,
+        expectedProducerHarnessKeys: EXPECTED_OBSERVABLE_HARNESSES,
+        machineId: MACHINE,
+        minimumProducerCollectedAt: '2026-08-01T09:56:00.000Z',
+      }),
+    );
+
+    // The four-minute read cutoff is part of a five-minute end-to-end budget. This deadline is
+    // fixed before downstream folding and inventory scans, rather than minted when they finish.
+    expect(read.producerProofValidUntil).toBe('2026-08-01T10:01:00.000Z');
+  });
+
+  test('does not let a disabled producer reuse its last complete answer', async () => {
+    const dbPath = await createStore('skill-disabled-producer');
+    for (const harnessKey of EXPECTED_OBSERVABLE_HARNESSES) {
+      await Effect.runPromise(
+        importSkillObservations({
+          collection: { completeness: completeSkillObservationCollection(), harnessKey },
+          dbPath,
+          importedAt: new Date('2026-08-01T09:05:00.000Z'),
+          machineId: MACHINE,
+          observations: [],
+        }),
+      );
+    }
+
+    const read = await Effect.runPromise(
+      querySkillObservations({
+        dbPath,
+        expectedProducerHarnessKeys: EXPECTED_OBSERVABLE_HARNESSES,
+        incompleteProducerHarnessKeys: ['opencode'],
+        machineId: MACHINE,
+        minimumProducerCollectedAt: '2026-08-01T09:00:00.000Z',
+      }),
+    );
+
+    expect(read.collectionExposureIncomplete).toBe(true);
+    expect(read.collectionInvocationIncomplete).toBe(true);
+    expect(read.producerCompletenessMissing).toBe(true);
+  });
+
+  test('bounds a legacy collection-state read without an expected producer roster', async () => {
+    const dbPath = await createStore('skill-bounded-producer-state');
+    for (let index = 0; index < 65; index += 1) {
+      await Effect.runPromise(
+        importSkillObservations({
+          collection: { completeness: completeSkillObservationCollection(), harnessKey: 'claude' },
+          dbPath,
+          machineId: `machine-${index}`,
+          observations: [],
+        }),
+      );
+    }
+
+    const read = await Effect.runPromise(querySkillObservations({ dbPath }));
+
+    expect(read.collectionExposureIncomplete).toBe(true);
+    expect(read.collectionInvocationIncomplete).toBe(true);
+    expect(read.producerCompletenessMissing).toBe(true);
   });
 
   test('distinguishes a present incomplete producer state from a missing producer state', async () => {
@@ -471,7 +612,7 @@ describe('skill observation store', () => {
     const read = await Effect.runPromise(querySkillObservations({ dbPath }));
 
     expect(read.collectionInvocationIncomplete).toBe(true);
-    expect(read.collectionExposureIncomplete).toBe(false);
+    expect(read.collectionExposureIncomplete).toBe(true);
     expect(read.producerCompletenessMissing).toBe(true);
   });
 
@@ -678,7 +819,7 @@ describe('skill observation store', () => {
     expect((result as { left: UsageStoreError }).left.reason).toBe('invalid-input');
   });
 
-  test('retention deletes whole observations older than the window and keeps the rest', async () => {
+  test('retention deletes only exposed observations older than the window', async () => {
     const dbPath = await createStore('skill-retention');
     const now = Date.parse('2026-08-01T00:00:00.000Z');
     await Effect.runPromise(
@@ -686,38 +827,68 @@ describe('skill observation store', () => {
         dbPath,
         machineId: MACHINE,
         observations: [
-          observation({ observationKey: 'old', observedAt: '2024-01-01T00:00:00.000Z' }),
-          observation({ observationKey: 'recent', observedAt: '2026-07-31T00:00:00.000Z' }),
+          observation({ observationKey: 'historical-declared', observedAt: '2024-01-01T00:00:00.000Z' }),
+          observation({
+            observationKey: 'historical-inferred',
+            observedAt: '2024-01-02T00:00:00.000Z',
+            tier: 'inferred',
+          }),
+          observation({
+            observationKey: 'expired-exposure',
+            observedAt: '2024-01-03T00:00:00.000Z',
+            tier: 'exposed',
+          }),
+          observation({ observationKey: 'current-exposure', observedAt: '2026-07-31T00:00:00.000Z', tier: 'exposed' }),
         ],
       }),
     );
 
     const retained = await Effect.runPromise(
-      retainSkillObservations({ dbPath, now, retentionMs: 30 * 24 * 60 * 60 * 1000 }),
+      retainSkillObservations({ dbPath, exposureRetentionMs: 30 * 24 * 60 * 60 * 1000, now }),
     );
     const read = await Effect.runPromise(querySkillObservations({ dbPath }));
 
-    expect(retained.deleted).toBe(1);
-    expect(read.observations.map(({ observation: value }) => value.observationKey)).toEqual(['recent']);
+    expect({
+      deleted: retained.deleted,
+      observationKeys: read.observations.map(({ observation: value }) => value.observationKey).sort(),
+    }).toEqual({
+      deleted: 1,
+      observationKeys: ['current-exposure', 'historical-declared', 'historical-inferred'],
+    });
   });
 
-  test('a rescan cutoff cannot resurrect observations already outside retention', async () => {
+  test('a rescan cutoff refuses expired exposure without discarding invocation history', async () => {
     const dbPath = await createStore('skill-retention-rescan');
     const imported = await Effect.runPromise(
       importSkillObservations({
         dbPath,
         machineId: MACHINE,
-        minimumObservedAt: '2026-01-01T00:00:00.000Z',
+        minimumExposureObservedAt: '2026-01-01T00:00:00.000Z',
         observations: [
-          observation({ observationKey: 'retained-away', observedAt: '2024-01-01T00:00:00.000Z' }),
-          observation({ observationKey: 'inside-window', observedAt: '2026-07-31T00:00:00.000Z' }),
+          observation({ observationKey: 'historical-declared', observedAt: '2024-01-01T00:00:00.000Z' }),
+          observation({
+            observationKey: 'historical-inferred',
+            observedAt: '2024-01-02T00:00:00.000Z',
+            tier: 'inferred',
+          }),
+          observation({
+            observationKey: 'expired-exposure',
+            observedAt: '2024-01-03T00:00:00.000Z',
+            tier: 'exposed',
+          }),
+          observation({ observationKey: 'current-exposure', observedAt: '2026-07-31T00:00:00.000Z', tier: 'exposed' }),
         ],
       }),
     );
     const read = await Effect.runPromise(querySkillObservations({ dbPath }));
 
-    expect(imported.inserted).toBe(1);
-    expect(read.observations.map(({ observation: value }) => value.observationKey)).toEqual(['inside-window']);
+    expect({
+      inserted: imported.inserted,
+      observationKeys: read.observations.map(({ observation: value }) => value.observationKey).sort(),
+    }).toEqual({
+      inserted: 3,
+      observationKeys: ['current-exposure', 'historical-declared', 'historical-inferred'],
+    });
   });
 });
 

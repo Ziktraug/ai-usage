@@ -19,9 +19,10 @@ export type PublicationInvalidatedQueryKey = CollectionSwrQueryKey | CurrentAlia
  * assembling a new one, and an observation-only sweep is exactly that shape.
  *
  * Both families here are dependents of the cycle rather than of the revision. Skill observations
- * are written by it, and their query policy revalidates on nothing a browser does, so this is their
- * only freshness path while a tab stays open. The report aliases move too: a renewal rewrites the
- * served revision's `publishedAt` and `expiresAt`, which the manifest carries.
+ * are written by it, so this is their immediate producer-driven freshness path; their named policy
+ * also revalidates the time-bounded completeness proof on an interval and on focus. The report
+ * aliases move too: a renewal rewrites the served revision's `publishedAt` and `expiresAt`, which
+ * the manifest carries.
  */
 export const publicationInvalidatedKeys = (): readonly PublicationInvalidatedQueryKey[] => [
   ...currentReportAliasKeys(),

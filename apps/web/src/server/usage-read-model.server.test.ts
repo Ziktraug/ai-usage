@@ -225,6 +225,7 @@ describe('SQLite usage read model skill observations', () => {
     const scope = {
       expectedProducerHarnessKeys: SKILL_OBSERVATION_OBSERVABLE_HARNESS_KEYS,
       machineId: 'machine-a',
+      minimumProducerCollectedAt: '2026-08-01T09:56:00.000Z',
     } as const;
 
     const partial = await readModel.readSkillObservations(scope);
@@ -239,6 +240,7 @@ describe('SQLite usage read model skill observations', () => {
       invocationLowerBound: true,
       lowerBound: true,
       producerCompletenessMissing: true,
+      producerProofValidUntil: '2026-08-01T10:01:00.000Z',
     });
     expect(partialPresentation.skills[0]).toMatchObject({
       deletionCandidate: true,
@@ -268,6 +270,7 @@ describe('SQLite usage read model skill observations', () => {
       invocationLowerBound: false,
       lowerBound: false,
       producerCompletenessMissing: false,
+      producerProofValidUntil: '2026-08-01T10:01:00.000Z',
     });
     expect(completePresentation.skills[0]?.verdictProvisional).toBe(false);
   });

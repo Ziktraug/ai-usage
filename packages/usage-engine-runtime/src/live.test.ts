@@ -17,6 +17,7 @@ import { ensureMachineConfig, readAiUsageConfig, writeMachineConfig } from '@ai-
 import { createUsageMergeBundle, serializeUsageMergeBundle } from '@ai-usage/report-core/merge-bundle';
 import { parseMergePreviewProof } from '@ai-usage/report-core/merge-proof';
 import { projectSourceSelectorKey } from '@ai-usage/report-core/project-group';
+import type { SkillObservation } from '@ai-usage/report-core/skill-observation';
 import type { UsageMachine } from '@ai-usage/report-core/snapshot';
 import {
   type CollectionSourceId,
@@ -1718,7 +1719,7 @@ describe('live usage engine publication', () => {
     await runtime.dispose();
   });
 
-  test('applies skill observation retention during startup recovery', async () => {
+  test('prunes expired exposure without discarding invocation history during startup recovery', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'plan111-engine-skill-retention-'));
     roots.push(root);
     const home = path.join(root, 'home');
@@ -1733,7 +1734,11 @@ describe('live usage engine publication', () => {
     await Effect.runPromise(initializeUsageStore({ dbPath }));
     await Effect.runPromise(writeMachineConfig(machine).pipe(Effect.provideService(LocalHistoryStorage, storage)));
 
-    const observation = (observationKey: string, observedAt: string) => ({
+    const observation = (
+      observationKey: string,
+      observedAt: string,
+      tier: SkillObservation['tier'] = 'declared',
+    ): SkillObservation => ({
       argsPresent: false,
       harnessKey: 'claude',
       observationKey,
@@ -1743,16 +1748,17 @@ describe('live usage engine publication', () => {
       sessionId: 'retention-session',
       skillName: 'improve',
       success: true,
-      tier: 'declared',
+      tier,
     });
     await Effect.runPromise(
       importSkillObservations({
         dbPath,
         machineId: machine.id,
         observations: [
-          // Far outside the retention window, and inside it.
-          observation('toolu_ancient', '2020-01-01T00:00:00.000Z'),
-          observation('toolu_recent', '2026-07-29T10:00:00.000Z'),
+          observation('historical-declared', '2020-01-01T00:00:00.000Z'),
+          observation('historical-inferred', '2020-01-02T00:00:00.000Z', 'inferred'),
+          observation('expired-exposure', '2020-01-03T00:00:00.000Z', 'exposed'),
+          observation('current-exposure', '2026-07-29T10:00:00.000Z', 'exposed'),
         ],
       }),
     );
@@ -1774,9 +1780,11 @@ describe('live usage engine publication', () => {
     await runtime.start();
     const stored = await Effect.runPromise(querySkillObservations({ dbPath }));
 
-    // Without a production caller the store grows without bound, which is what
-    // the auxiliary-fact retention discipline exists to prevent.
-    expect(stored.observations.map(({ observation: value }) => value.observationKey)).toEqual(['toolu_recent']);
+    expect(stored.observations.map(({ observation: value }) => value.observationKey).sort()).toEqual([
+      'current-exposure',
+      'historical-declared',
+      'historical-inferred',
+    ]);
     await runtime.dispose();
   });
 });
