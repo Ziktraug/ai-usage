@@ -385,6 +385,12 @@ describe('Skills oRPC contract', () => {
         { harnessKey: 'opencode', label: 'OpenCode', observability: 'observable' },
         { harnessKey: 'cursor', label: 'Cursor', observability: 'not-observable' },
       ],
+      harnessIncompleteness: {
+        exposure: [],
+        exposureUnattributed: false,
+        invocation: [],
+        invocationUnattributed: false,
+      },
       invocationLowerBound: false,
       lowerBound: false,
       producerCompletenessMissing: false,
@@ -455,6 +461,12 @@ describe('Skills oRPC contract', () => {
   test('carries invocation, pooled, and producer-completeness state separately and requires each', () => {
     const base = {
       harnesses: [{ harnessKey: 'codex', label: 'Codex', observability: 'observable' }],
+      harnessIncompleteness: {
+        exposure: [],
+        exposureUnattributed: false,
+        invocation: [],
+        invocationUnattributed: false,
+      },
       invocationLowerBound: false,
       lowerBound: true,
       producerCompletenessMissing: false,
@@ -486,6 +498,12 @@ describe('Skills oRPC contract', () => {
   test('carries the verdict the server decided, and only the verdicts it may decide', () => {
     const base = {
       harnesses: [{ harnessKey: 'claude', label: 'Claude Code', observability: 'observable' }],
+      harnessIncompleteness: {
+        exposure: [],
+        exposureUnattributed: false,
+        invocation: [],
+        invocationUnattributed: false,
+      },
       invocationLowerBound: false,
       lowerBound: false,
       producerCompletenessMissing: false,
@@ -532,6 +550,12 @@ describe('Skills oRPC contract', () => {
   test('carries the residence of an unmanaged name, and only the residences the join may decide', () => {
     const base = {
       harnesses: [{ harnessKey: 'claude', label: 'Claude Code', observability: 'observable' }],
+      harnessIncompleteness: {
+        exposure: [],
+        exposureUnattributed: false,
+        invocation: [],
+        invocationUnattributed: false,
+      },
       invocationLowerBound: false,
       lowerBound: false,
       producerCompletenessMissing: false,
@@ -574,6 +598,12 @@ describe('Skills oRPC contract', () => {
   test('accepts an unresolved observation and refuses to lose it to the managed-name pattern', () => {
     const unresolved = {
       harnesses: [{ harnessKey: 'claude', label: 'Claude Code', observability: 'observable' }],
+      harnessIncompleteness: {
+        exposure: [],
+        exposureUnattributed: false,
+        invocation: [],
+        invocationUnattributed: false,
+      },
       invocationLowerBound: false,
       lowerBound: false,
       producerCompletenessMissing: false,
@@ -629,6 +659,12 @@ describe('Skills oRPC contract', () => {
   test('requires the harness roster and a canonical timestamp on every observation count', () => {
     const base = {
       harnesses: [{ harnessKey: 'cursor', label: 'Cursor', observability: 'not-observable' }],
+      harnessIncompleteness: {
+        exposure: [],
+        exposureUnattributed: false,
+        invocation: [],
+        invocationUnattributed: true,
+      },
       invocationLowerBound: true,
       lowerBound: true,
       producerCompletenessMissing: false,

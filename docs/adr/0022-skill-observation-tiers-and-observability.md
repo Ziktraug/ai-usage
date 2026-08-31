@@ -210,6 +210,40 @@ new columns on `usage_rows`.
   wins every time, and the scarce member — which is usually the one carrying the
   meaning — disappears silently while every bound-reporting mechanism says the
   system is behaving correctly.
+- **A bound belongs to the harness whose evidence was lost, and a cross-harness
+  claim keeps the global one.** This is decision 4 made structural. A count on
+  this surface cannot exist without its harness, so a producer answer that names
+  which harness it failed for scopes its own bound: one permanently-truncated
+  Codex tool-call line on the operator's real store used to render Claude Code's
+  47 fully-collected declared invocations as `≥47` and degrade "no signal
+  recorded for Claude Code" to "no signal in loaded history". Both statements
+  belong to one harness, and neither had lost anything.
+
+  The two facts are therefore carried together — the global `lowerBound` /
+  `invocationLowerBound` and a per-channel list of the harnesses each loss
+  belongs to — and **which one a statement reads is decided by what the
+  statement claims about**, not by which is more conservative:
+
+  - a rendered count, and a per-harness absence phrase, read the harness's own
+    entry;
+  - `deletionCandidate`, `never-observed`, `offered-only` and every
+    `verdictProvisional` read the **global** flag, because each asserts a skill
+    was invoked in *no* observable harness. One harness's short evidence makes
+    that unprovable however complete the others are, so scoping them would turn
+    an unproven absence into a stated fact — the opposite of the correction
+    above, and a worse error than the hedge it would remove.
+
+  Attribution is only ever claimed where it is known. A loss that cannot name a
+  harness — a recency-ordered read that stopped mid-history, a refusal count that
+  records how many rows failed re-validation but not whose — sets an explicit
+  *unattributed* marker that hedges every harness, and a producer reporting a
+  loss without naming a harness is read the same way. Fail-closed is the default:
+  a list that must be truncated to fit the response sets that marker too, because
+  a silently short list of affected harnesses reads as proof that the omitted
+  ones are clean. Clamps downstream *can* name their harnesses, since the rows
+  they drop are in hand; they mark every harness that carried a dropped row, on
+  the channel that was degraded, which over-hedges an exposure-only contributor
+  to a dropped row rather than under-hedging anything.
 - **The bound that has to hold is the one on the response.** The read is clamped
   before the inventory join, and the join then re-injects every managed skill,
   merges the store's harness keys into the catalogue roster, and widens each row,

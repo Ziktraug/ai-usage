@@ -100,6 +100,49 @@ const skillsCarryInvocation = (skills: readonly Pick<ObservedSkill, 'tallies'>[]
   skills.some((skill) => skill.tallies.some((tally) => skillObservationTierSupportsInvocation(tally.tier)));
 
 /**
+ * The harnesses a set of dropped rows carried counts for.
+ *
+ * A clamp here knows exactly which rows it threw away, so its loss is attributable: only these
+ * harnesses are hedged, and a harness whose rows all survived keeps rendering exact numbers. An
+ * empty list is read upstream as unattributable and hedges every harness, which is the correct
+ * reading when a clamp genuinely cannot name one.
+ */
+const skillsHarnessKeys = (skills: readonly Pick<ObservedSkill, 'tallies'>[]): readonly string[] => [
+  ...new Set(skills.flatMap((skill) => skill.tallies.map((tally) => tally.harnessKey))),
+];
+
+/**
+ * The evidence's per-harness detail in wire shape.
+ *
+ * The policy owns readonly arrays; the contract's inferred type owns mutable ones, so the copy is
+ * the seam rather than a cast.
+ */
+const wireHarnessIncompleteness = (evidence: SkillObservationEvidence): SkillObservations['harnessIncompleteness'] => ({
+  exposure: [...evidence.harnessIncompleteness.exposure],
+  exposureUnattributed: evidence.harnessIncompleteness.exposureUnattributed,
+  invocation: [...evidence.harnessIncompleteness.invocation],
+  invocationUnattributed: evidence.harnessIncompleteness.invocationUnattributed,
+});
+
+/**
+ * Clamps the two per-harness lists to the roster cap, fail-closed.
+ *
+ * A list that no longer names every affected harness cannot be trusted to say a harness it omits is
+ * clean, so truncating it sets the channel's unattributed flag — the state that hedges everybody.
+ * A silently short list would do the opposite and read as proof of exactness.
+ */
+const clampHarnessIncompleteness = (
+  incompleteness: SkillObservations['harnessIncompleteness'],
+): SkillObservations['harnessIncompleteness'] => ({
+  exposure: incompleteness.exposure.slice(0, MAX_SKILL_OBSERVATION_HARNESS_ROSTER),
+  exposureUnattributed:
+    incompleteness.exposureUnattributed || incompleteness.exposure.length > MAX_SKILL_OBSERVATION_HARNESS_ROSTER,
+  invocation: incompleteness.invocation.slice(0, MAX_SKILL_OBSERVATION_HARNESS_ROSTER),
+  invocationUnattributed:
+    incompleteness.invocationUnattributed || incompleteness.invocation.length > MAX_SKILL_OBSERVATION_HARNESS_ROSTER,
+});
+
+/**
  * Bounds the response the procedure actually returns.
  *
  * The read is clamped before this join, and that clamp is not enough: the join re-injects the whole
@@ -118,8 +161,17 @@ export const clampSkillObservationsResponse = (response: SkillObservations): Ski
   let evidence: SkillObservationEvidence = response;
   let harnesses = response.harnesses;
   if (harnesses.length > MAX_SKILL_OBSERVATION_HARNESS_ROSTER) {
+    const droppedHarnessKeys = harnesses
+      .slice(MAX_SKILL_OBSERVATION_HARNESS_ROSTER)
+      .map((harness) => harness.harnessKey);
     harnesses = harnesses.slice(0, MAX_SKILL_OBSERVATION_HARNESS_ROSTER);
-    evidence = applySkillObservationEvidenceLoss(evidence, { counts: true, invocation: false });
+    // Every count these harnesses held disappears with them, and no other harness loses anything,
+    // so the loss belongs precisely to the dropped keys.
+    evidence = applySkillObservationEvidenceLoss(evidence, {
+      counts: true,
+      harnessKeys: droppedHarnessKeys,
+      invocation: false,
+    });
   }
   // The surface renders a skill's counts by walking the roster, so a tally under a harness the
   // roster no longer carries is a count nothing can present. Dropping it keeps the payload to what
@@ -140,6 +192,9 @@ export const clampSkillObservationsResponse = (response: SkillObservations): Ski
     if (tallies.length !== skill.tallies.length || pathsClamped) {
       evidence = applySkillObservationEvidenceLoss(evidence, {
         counts: true,
+        // The dropped tallies name their own harnesses. A clamped path list does not belong to any
+        // harness, so it leaves the list empty and hedges the pooled counts everywhere.
+        harnessKeys: skill.tallies.filter((tally) => !retained.has(tally)).map((tally) => tally.harnessKey),
         invocation: invocationDropped,
       });
     }
@@ -154,32 +209,43 @@ export const clampSkillObservationsResponse = (response: SkillObservations): Ski
   });
   let retainedSkills = skills;
   if (skills.length > MAX_SKILL_OBSERVATION_SKILLS) {
+    const dropped = skills.slice(MAX_SKILL_OBSERVATION_SKILLS);
     evidence = applySkillObservationEvidenceLoss(evidence, {
       counts: true,
-      invocation: skillsCarryInvocation(skills.slice(MAX_SKILL_OBSERVATION_SKILLS)),
+      harnessKeys: skillsHarnessKeys(dropped),
+      invocation: skillsCarryInvocation(dropped),
     });
     retainedSkills = skills.slice(0, MAX_SKILL_OBSERVATION_SKILLS);
   }
-  let clamped: SkillObservations = { ...response, ...evidence, harnesses, skills: retainedSkills };
+  let clamped: SkillObservations = {
+    ...response,
+    ...evidence,
+    harnessIncompleteness: wireHarnessIncompleteness(evidence),
+    harnesses,
+    skills: retainedSkills,
+  };
   // Halving rather than estimating, because skill names and resolved paths are open-vocabulary: the
   // serialized size of a row is not derivable from a row count. It always terminates — an empty
   // skill list leaves only a roster that is orders of magnitude inside the budget.
   while (clamped.skills.length > 0 && responseBytes(clamped) > MAX_SKILL_OBSERVATIONS_RESPONSE_BYTES) {
     const retainedCount = Math.floor(clamped.skills.length / 2);
+    const dropped = clamped.skills.slice(retainedCount);
     evidence = applySkillObservationEvidenceLoss(evidence, {
       counts: true,
-      invocation: skillsCarryInvocation(clamped.skills.slice(retainedCount)),
+      harnessKeys: skillsHarnessKeys(dropped),
+      invocation: skillsCarryInvocation(dropped),
     });
     clamped = {
       ...clamped,
       ...evidence,
+      harnessIncompleteness: wireHarnessIncompleteness(evidence),
       skills: clamped.skills.slice(0, retainedCount),
     };
   }
   // The per-skill `verdictProvisional` flags are untouched: they were decided before this clamp, and
   // a surviving skill's own evidence is not weakened by another skill being left out. The response
   // bounds instead report which kind of evidence the discarded rows actually carried.
-  return clamped;
+  return { ...clamped, harnessIncompleteness: clampHarnessIncompleteness(clamped.harnessIncompleteness) };
 };
 
 /**
@@ -271,6 +337,9 @@ export const joinSkillObservations = (input: SkillObservationJoinInput): SkillOb
     };
   });
   return clampSkillObservationsResponse({
+    // Per-harness detail travels beside the global bounds, never instead of them: the verdicts
+    // above are cross-harness claims and keep reading `invocationLowerBound`.
+    harnessIncompleteness: wireHarnessIncompleteness(input.observations),
     harnesses: input.observations.harnesses.map((harness) => ({ ...harness })),
     invocationLowerBound: input.observations.invocationLowerBound,
     lowerBound: input.observations.lowerBound,

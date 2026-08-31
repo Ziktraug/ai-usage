@@ -426,8 +426,34 @@ const skillObservationHarnessSchema = strictObject({
   observability: picklist(['observable', 'not-observable']),
 });
 
+/**
+ * Which harnesses each incompleteness belongs to.
+ *
+ * On the wire because a count on this surface always belongs to one harness, so the browser must be
+ * able to render Claude Code's fully-collected invocations as an exact number while Codex's are
+ * floors. Without this field the two global booleans are the only answer available, and one
+ * harness's rejected line hedges every number on the page (ADR 0022 decision 4: provenance is per
+ * metric, not global).
+ *
+ * The `*Unattributed` flags are the fail-closed half: some losses cannot name a harness — a bounded
+ * read stops somewhere in a recency-ordered stream, and a refusal count does not carry whose row it
+ * refused — and those hedge every harness, including one with a clean producer answer.
+ *
+ * Both lists are bounded by the harness roster cap, because a harness that cannot appear in
+ * `harnesses` has no count on this surface to qualify. The server clamps to this cap and sets the
+ * matching unattributed flag when it does, so a truncated list never reads as a complete one.
+ */
+const skillObservationHarnessIncompletenessSchema = strictObject({
+  exposure: pipe(array(harnessKeySchema), maxLength(MAX_OBSERVATION_HARNESSES)),
+  exposureUnattributed: boolean(),
+  invocation: pipe(array(harnessKeySchema), maxLength(MAX_OBSERVATION_HARNESSES)),
+  invocationUnattributed: boolean(),
+});
+
 const skillObservationsShapeSchema = strictObject({
   harnesses: pipe(array(skillObservationHarnessSchema), minLength(1), maxLength(MAX_OBSERVATION_HARNESSES)),
+  /** Per-harness detail behind the two global bounds below; see the schema's own doc comment. */
+  harnessIncompleteness: skillObservationHarnessIncompletenessSchema,
   /**
    * The `declared`/`inferred` read reached its own budget, so invocation evidence is incomplete.
    *
@@ -437,7 +463,15 @@ const skillObservationsShapeSchema = strictObject({
    * why it, and not `lowerBound`, is what makes an absence verdict provisional.
    */
   invocationLowerBound: boolean(),
-  /** The read stopped at its bound, so every count is a lower bound rather than a number. */
+  /**
+   * The read stopped at its bound, so every count is a lower bound rather than a number.
+   *
+   * This and `invocationLowerBound` stay **global on purpose**. Every cross-harness claim —
+   * `deletionCandidate`, `never-observed`, `offered-only`, `verdictProvisional` — asserts that a
+   * skill was not invoked in *any* observable harness, and one harness's short evidence is enough to
+   * make that unprovable. `harnessIncompleteness` refines a number that already belongs to one
+   * harness; it must never be substituted for these in a claim about all of them.
+   */
   lowerBound: boolean(),
   /** At least one expected producer lacks usable current state (missing, stale, disabled, or omitted). */
   producerCompletenessMissing: boolean(),
@@ -705,6 +739,7 @@ export type SkillMarkdownDocument = InferOutput<typeof skillMarkdownDocumentSche
 export type SkillMarkdownSaveResult = InferOutput<typeof skillMarkdownSaveResultSchema>;
 export type SkillNameInput = InferOutput<typeof skillNameInputSchema>;
 export type SkillObservations = InferOutput<typeof skillObservationsSchema>;
+export type SkillObservationHarnessIncompleteness = InferOutput<typeof skillObservationHarnessIncompletenessSchema>;
 export type ObservedSkill = InferOutput<typeof observedSkillSchema>;
 export type SkillObservationTally = InferOutput<typeof skillObservationTallySchema>;
 export type SkillObservationHarness = InferOutput<typeof skillObservationHarnessSchema>;
@@ -717,7 +752,14 @@ export type SkillUnmanagedResidence = NonNullable<ObservedSkill['unmanagedReside
 export {
   SKILL_OBSERVATION_TIERS,
   type SkillObservationTier,
+  skillObservationHarnessInvocationIsComplete,
+  skillObservationHarnessSignalsAreComplete,
 } from '@ai-usage/report-core/skill-observation-evidence';
+/**
+ * The per-tally bound predicate, re-exported for the same reason as the tier vocabulary: browser
+ * code answers "is this number exact?" from the contract alone and never reaches past it.
+ */
+export { skillObservationTallyIsLowerBound } from '@ai-usage/report-core/skill-observation-summary';
 export type SkillReconcileResult = InferOutput<typeof skillReconcileResultSchema>;
 export type SkillTargetInput = InferOutput<typeof skillTargetInputSchema>;
 export type SkillToggleInput = InferOutput<typeof skillToggleInputSchema>;

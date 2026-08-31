@@ -1,11 +1,14 @@
-import type {
-  ObservedSkill,
-  SkillObservationHarness,
-  SkillObservations,
-  SkillObservationTally,
-  SkillObservationTier,
-  SkillObservationVerdict,
-  SkillUnmanagedResidence,
+import {
+  type ObservedSkill,
+  type SkillObservationHarness,
+  type SkillObservations,
+  type SkillObservationTally,
+  type SkillObservationTier,
+  type SkillObservationVerdict,
+  type SkillUnmanagedResidence,
+  skillObservationHarnessInvocationIsComplete,
+  skillObservationHarnessSignalsAreComplete,
+  skillObservationTallyIsLowerBound,
 } from '@ai-usage/web-contract/skills';
 
 /**
@@ -105,6 +108,12 @@ export interface SkillObservationsView {
   deletionCandidates: readonly SkillObservationRow[];
   harnesses: readonly SkillObservationHarness[];
   /**
+   * Per-harness incompleteness, kept on the view so a renderer can qualify one harness's number
+   * without reaching for the global bound. Read it through
+   * `skillObservationHarnessInvocationIsComplete` / `skillObservationHarnessSignalsAreComplete`.
+   */
+  harnessIncompleteness: SkillObservations['harnessIncompleteness'];
+  /**
    * Whether the read can prove an absence at all — which depends on the *invocation* evidence
    * alone, since every absence claim on this surface is a claim about `declared` and `inferred`
    * rows. Exposure is catalogue boilerplate: truncating it costs nothing a verdict rests on.
@@ -189,15 +198,18 @@ export const formatObservedAt = (isoTimestamp: string): string => {
  * One phrase per tier, joined by a separator that is not arithmetic. `declared 3 · inferred 1`
  * states two facts; `4` would state a third that is not true of anything.
  */
-type SkillObservationReadBounds = Pick<SkillObservations, 'invocationLowerBound' | 'lowerBound'>;
+/**
+ * What a count needs to know about the read that produced it.
+ *
+ * Per-harness, not global: a tally belongs to one harness, so a rejection recorded against a
+ * different harness's producer says nothing about it. The global bounds stay on the view for the
+ * cross-harness statements that genuinely need them.
+ */
+type SkillObservationReadBounds = Pick<SkillObservations, 'harnessIncompleteness'>;
 
 const COMPLETE_SKILL_OBSERVATION_READ: SkillObservationReadBounds = {
-  invocationLowerBound: false,
-  lowerBound: false,
+  harnessIncompleteness: { exposure: [], exposureUnattributed: false, invocation: [], invocationUnattributed: false },
 };
-
-const tallyIsLowerBound = (tally: SkillObservationTally, bounds: SkillObservationReadBounds): boolean =>
-  tally.tier === 'exposed' ? bounds.lowerBound : bounds.invocationLowerBound;
 
 export const tallySummary = (
   tallies: readonly SkillObservationTally[],
@@ -206,7 +218,7 @@ export const tallySummary = (
   tallies
     .map(
       (tally) =>
-        `${SKILL_OBSERVATION_TIER_LABELS[tally.tier]} ${tallyIsLowerBound(tally, bounds) ? '≥' : ''}${tally.count}`,
+        `${SKILL_OBSERVATION_TIER_LABELS[tally.tier]} ${skillObservationTallyIsLowerBound(bounds, tally) ? '≥' : ''}${tally.count}`,
     )
     .join(' · ');
 
@@ -220,7 +232,6 @@ export const tallySummary = (
 const cellFor = (
   harness: SkillObservationHarness,
   tallies: readonly SkillObservationTally[],
-  signalsComplete: boolean,
   bounds: SkillObservationReadBounds,
 ): SkillObservationHarnessCell => {
   if (harness.observability === 'not-observable') {
@@ -237,7 +248,9 @@ const cellFor = (
       harnessKey: harness.harnessKey,
       label: harness.label,
       state: 'no-observations',
-      summary: noSignalsText(signalsComplete),
+      // This harness's own completeness. "Claude Code recorded nothing" is a claim about Claude
+      // Code's history, and Codex's truncated sweep cannot make it provisional.
+      summary: noSignalsText(skillObservationHarnessSignalsAreComplete(bounds, harness.harnessKey)),
       tallies: [],
     };
   }
@@ -445,20 +458,28 @@ const catalogueKeyFor = (skillName: string): string => {
   return separatorIndex > 0 ? skillName.slice(0, separatorIndex) : 'standalone';
 };
 
-const exposureSummariesFor = (rows: readonly SkillObservationRow[], exposureLowerBound: boolean): readonly string[] => {
-  const countsByHarness = new Map<string, { counts: number[]; label: string }>();
+// Each summary is one harness's exposure spread, so it is qualified by that harness's own bound.
+const exposureSummariesFor = (
+  rows: readonly SkillObservationRow[],
+  bounds: SkillObservationReadBounds,
+): readonly string[] => {
+  const countsByHarness = new Map<string, { counts: number[]; harnessKey: string; label: string }>();
   for (const tally of rows.flatMap((row) => row.tallies.filter((candidate) => candidate.tier === 'exposed'))) {
-    const current = countsByHarness.get(tally.harnessKey) ?? { counts: [], label: tally.harnessLabel };
+    const current = countsByHarness.get(tally.harnessKey) ?? {
+      counts: [],
+      harnessKey: tally.harnessKey,
+      label: tally.harnessLabel,
+    };
     current.counts.push(tally.count);
     countsByHarness.set(tally.harnessKey, current);
   }
   return [...countsByHarness.values()]
     .toSorted((left, right) => left.label.localeCompare(right.label))
-    .map(({ counts, label }) => {
+    .map(({ counts, harnessKey, label }) => {
       const sortedCounts = counts.toSorted((left, right) => left - right);
       const lowest = sortedCounts.at(0);
       const highest = sortedCounts.at(-1);
-      const lowerBoundMark = exposureLowerBound ? '≥' : '';
+      const lowerBoundMark = skillObservationTallyIsLowerBound(bounds, { harnessKey, tier: 'exposed' }) ? '≥' : '';
       // A range over one tier and harness — the spread of per-entry exposure counts — never a sum.
       return lowest === highest
         ? `${label} exposed ×${lowerBoundMark}${lowest}`
@@ -468,7 +489,7 @@ const exposureSummariesFor = (rows: readonly SkillObservationRow[], exposureLowe
 
 const buildCatalogueRollups = (
   exposedOnly: readonly SkillObservationRow[],
-  exposureLowerBound: boolean,
+  bounds: SkillObservationReadBounds,
 ): readonly SkillCatalogueRollup[] => {
   const rollups = new Map<string, SkillObservationRow[]>();
   for (const row of exposedOnly) {
@@ -477,7 +498,7 @@ const buildCatalogueRollups = (
   }
   return [...rollups.entries()]
     .map(([key, rows]) => ({
-      exposureSummaries: exposureSummariesFor(rows, exposureLowerBound),
+      exposureSummaries: exposureSummariesFor(rows, bounds),
       key,
       label: key === 'standalone' ? 'Standalone entries' : key,
       lastObservedAt: rows.reduce<string | null>(
@@ -551,7 +572,7 @@ export const buildSkillObservationsView = (observations: SkillObservations): Ski
     return {
       ...skill,
       harnesses: observations.harnesses.map((harness) =>
-        cellFor(harness, talliesByHarness.get(harness.harnessKey) ?? [], signalsComplete, observations),
+        cellFor(harness, talliesByHarness.get(harness.harnessKey) ?? [], observations),
       ),
     } satisfies SkillObservationRow;
   });
@@ -559,7 +580,7 @@ export const buildSkillObservationsView = (observations: SkillObservations): Ski
   const offeredOnly = rows.filter((row) => row.verdict === 'offered-only' && !row.deletionCandidate);
   const catalogueRollups = buildCatalogueRollups(
     offeredOnly.filter((row) => !row.managed),
-    observations.lowerBound,
+    observations,
   );
   return {
     adoptionCandidates,
@@ -567,6 +588,7 @@ export const buildSkillObservationsView = (observations: SkillObservations): Ski
     catalogueEntryCount: catalogueRollups.reduce((count, rollup) => count + rollup.rows.length, 0),
     catalogueRollups,
     deletionCandidates: rows.filter((row) => row.deletionCandidate),
+    harnessIncompleteness: observations.harnessIncompleteness,
     harnesses: observations.harnesses,
     invocationLowerBound: observations.invocationLowerBound,
     invocationEvidenceComplete: !observations.invocationLowerBound,
@@ -587,3 +609,19 @@ export const buildSkillObservationsView = (observations: SkillObservations): Ski
 
 export const skillObservationRow = (view: SkillObservationsView, skillName: string): SkillObservationRow | undefined =>
   view.rows.find((row) => row.skillName === skillName);
+
+/**
+ * Whether one harness's own invocation counts are exact.
+ *
+ * Deliberately **not** the input to any cross-harness verdict. `deletionCandidate`,
+ * `never-observed` and `offered-only` claim a skill was invoked in no observable harness at all,
+ * so they keep reading `view.invocationLowerBound`: if any harness's invocation evidence is short,
+ * that claim is unprovable no matter how complete the others are. The two questions look similar
+ * and have different answers; unifying them would turn an unproven absence into a stated fact.
+ */
+export const harnessInvocationEvidenceComplete = (view: SkillObservationsView, harnessKey: string): boolean =>
+  skillObservationHarnessInvocationIsComplete(view, harnessKey);
+
+/** The per-harness form of `signalsComplete`, for "no signal recorded for X". */
+export const harnessSignalsComplete = (view: SkillObservationsView, harnessKey: string): boolean =>
+  skillObservationHarnessSignalsAreComplete(view, harnessKey);

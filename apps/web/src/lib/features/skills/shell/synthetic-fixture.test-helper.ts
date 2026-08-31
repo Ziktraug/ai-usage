@@ -57,6 +57,7 @@ export const syntheticObservations: SkillObservations = {
     { harnessKey: 'opencode', label: 'OpenCode', observability: 'observable' },
     { harnessKey: 'cursor', label: 'Cursor', observability: 'not-observable' },
   ],
+  harnessIncompleteness: { exposure: [], exposureUnattributed: false, invocation: [], invocationUnattributed: false },
   invocationLowerBound: false,
   lowerBound: false,
   producerCompletenessMissing: false,
@@ -195,6 +196,7 @@ export const syntheticObservations: SkillObservations = {
  */
 export const syntheticProvisionalObservations: SkillObservations = {
   ...syntheticObservations,
+  harnessIncompleteness: { exposure: [], exposureUnattributed: true, invocation: [], invocationUnattributed: true },
   invocationLowerBound: true,
   lowerBound: true,
   skills: syntheticObservations.skills.map((skill) => ({
@@ -210,8 +212,31 @@ export const syntheticProvisionalObservations: SkillObservations = {
  */
 export const syntheticExposureTruncatedObservations: SkillObservations = {
   ...syntheticObservations,
+  harnessIncompleteness: { exposure: [], exposureUnattributed: true, invocation: [], invocationUnattributed: false },
   invocationLowerBound: false,
   lowerBound: true,
+};
+
+/**
+ * The operator's measured machine: Claude Code and OpenCode collected cleanly, one permanently
+ * truncated Codex tool-call line was rejected. The loss is named, so only Codex's counts are floors
+ * — while every *cross-harness* absence claim stays provisional, because absence still cannot be
+ * proved while any observable harness is short.
+ */
+export const syntheticCodexRejectedObservations: SkillObservations = {
+  ...syntheticObservations,
+  harnessIncompleteness: {
+    exposure: ['codex'],
+    exposureUnattributed: false,
+    invocation: ['codex'],
+    invocationUnattributed: false,
+  },
+  invocationLowerBound: true,
+  lowerBound: true,
+  skills: syntheticObservations.skills.map((skill) => ({
+    ...skill,
+    verdictProvisional: !skill.tallies.some((tally) => tally.tier === 'declared' || tally.tier === 'inferred'),
+  })),
 };
 
 export const syntheticKnownPaths: readonly KnownSkillProjectPath[] = [

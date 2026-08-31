@@ -11,6 +11,7 @@ import {
 import {
   isSkillObservationTier,
   SKILL_OBSERVATION_INVOCATION_TIERS,
+  SKILL_OBSERVATION_OBSERVABLE_HARNESS_KEYS,
   SKILL_OBSERVATION_PRODUCER_MAX_AGE_MS,
   type SkillObservationRefusalCounts,
   skillObservabilityFor,
@@ -712,13 +713,40 @@ export const createSkillObservationStore = (dependencies: SkillObservationStoreD
                       collectionPairKey({ harness_key: harnessKey, machine_id: input.machineId ?? '' }),
                     ),
                 );
+          // Which harnesses the incompleteness actually belongs to, so a consumer rendering one
+          // harness's own count is not hedged by a different harness's rejection. The global
+          // booleans below are unchanged and stay the answer for any cross-harness claim.
+          //
+          // `collectionStateMissing` is a fact about the expected roster as a whole — this read
+          // cannot say whose answer was the missing, stale, disabled, or bounded-away one — so it
+          // marks every expected harness rather than pretending to attribute it to one.
+          const scopedHarnessKeys =
+            relevantExpectedHarnessKeys ??
+            new Set(
+              SKILL_OBSERVATION_OBSERVABLE_HARNESS_KEYS.filter(
+                (harnessKey) => input.harnessKey === undefined || harnessKey === input.harnessKey,
+              ),
+            );
+          const incompleteHarnessKeysFor = (
+            channelIsIncomplete: (state: SkillObservationCollectionStateRecord) => boolean,
+          ): string[] => {
+            const keys = new Set<string>(collectionStateMissing ? scopedHarnessKeys : []);
+            for (const state of relevantStates) {
+              if (channelIsIncomplete(state)) {
+                keys.add(state.harness_key);
+              }
+            }
+            return [...keys].sort();
+          };
+          const exposureIsIncomplete = (state: SkillObservationCollectionStateRecord): boolean =>
+            state.exposure_truncated === 1 || state.exposure_rejected > 0;
+          const invocationIsIncomplete = (state: SkillObservationCollectionStateRecord): boolean =>
+            state.invocation_truncated === 1 || state.invocation_rejected > 0;
           return {
-            collectionExposureIncomplete:
-              collectionStateMissing ||
-              relevantStates.some((state) => state.exposure_truncated === 1 || state.exposure_rejected > 0),
-            collectionInvocationIncomplete:
-              collectionStateMissing ||
-              relevantStates.some((state) => state.invocation_truncated === 1 || state.invocation_rejected > 0),
+            collectionExposureIncomplete: collectionStateMissing || relevantStates.some(exposureIsIncomplete),
+            collectionExposureIncompleteHarnessKeys: incompleteHarnessKeysFor(exposureIsIncomplete),
+            collectionInvocationIncomplete: collectionStateMissing || relevantStates.some(invocationIsIncomplete),
+            collectionInvocationIncompleteHarnessKeys: incompleteHarnessKeysFor(invocationIsIncomplete),
             invocationTruncated: read.invocationTruncated,
             observations,
             producerCompletenessMissing: collectionStateMissing,

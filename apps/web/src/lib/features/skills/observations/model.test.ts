@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import type { SkillObservations } from '@ai-usage/web-contract/skills';
 import {
+  syntheticCodexRejectedObservations,
   syntheticExposureTruncatedObservations,
   syntheticObservations,
   syntheticProvisionalObservations,
@@ -12,6 +13,9 @@ import {
   formatObservationCount,
   formatObservedAt,
   formatObservedDate,
+  harnessInvocationEvidenceComplete,
+  harnessSignalsComplete,
+  NO_SIGNALS_IN_LOADED_HISTORY_TEXT,
   NO_SIGNALS_RECORDED_TEXT,
   NOT_OBSERVABLE_TEXT,
   observationEvidenceRank,
@@ -179,6 +183,12 @@ describe('skill observations view', () => {
   test('reads honestly at n = 1 and with nothing observed at all', () => {
     const single: SkillObservations = {
       harnesses: syntheticObservations.harnesses,
+      harnessIncompleteness: {
+        exposure: [],
+        exposureUnattributed: false,
+        invocation: [],
+        invocationUnattributed: false,
+      },
       invocationLowerBound: false,
       lowerBound: false,
       producerCompletenessMissing: false,
@@ -218,6 +228,12 @@ describe('skill observations view', () => {
 
     const empty = view({
       harnesses: syntheticObservations.harnesses,
+      harnessIncompleteness: {
+        exposure: [],
+        exposureUnattributed: false,
+        invocation: [],
+        invocationUnattributed: false,
+      },
       invocationLowerBound: false,
       lowerBound: false,
       producerCompletenessMissing: false,
@@ -346,6 +362,35 @@ describe('skill observations view', () => {
     expect(built.catalogueRollups.at(2)?.rows.map(({ skillName }) => skillName)).toEqual(['imagegen']);
     expect(built.catalogueEntryCount).toBe(4);
     expect(built.offeredOnly).toHaveLength(5);
+  });
+
+  test('scopes the lower-bound mark to the harness whose evidence was lost', () => {
+    const built = view(syntheticCodexRejectedObservations);
+    const alpha = skillObservationRow(built, 'alpha-skill');
+
+    expect(alpha?.harnesses.find((cell) => cell.harnessKey === 'claude')?.summary).toBe('declared 2');
+    expect(alpha?.harnesses.find((cell) => cell.harnessKey === 'codex')?.summary).toBe('inferred ≥1');
+    expect(harnessInvocationEvidenceComplete(built, 'claude')).toBe(true);
+    expect(harnessInvocationEvidenceComplete(built, 'codex')).toBe(false);
+    // The absence phrases follow the same rule, one harness at a time.
+    const beta = skillObservationRow(built, 'beta-skill');
+    expect(beta?.harnesses.find((cell) => cell.harnessKey === 'opencode')?.summary).toBe(NO_SIGNALS_RECORDED_TEXT);
+    expect(beta?.harnesses.find((cell) => cell.harnessKey === 'codex')?.summary).toBe(
+      NO_SIGNALS_IN_LOADED_HISTORY_TEXT,
+    );
+    expect(harnessSignalsComplete(built, 'opencode')).toBe(true);
+    // And the response-wide answers, which every cross-harness verdict reads, are unchanged.
+    expect(built.invocationLowerBound).toBe(true);
+    expect(built.invocationEvidenceComplete).toBe(false);
+    expect(built.signalsComplete).toBe(false);
+    expect(built.deletionCandidates.every((row) => row.verdictProvisional)).toBe(true);
+  });
+
+  test('qualifies a catalogue exposure spread by the harness that produced it', () => {
+    const built = view(syntheticCodexRejectedObservations);
+
+    expect(built.catalogueRollups.at(0)?.exposureSummaries).toEqual(['Codex exposed ×≥1']);
+    expect(view(syntheticObservations).catalogueRollups.at(0)?.exposureSummaries).toEqual(['Codex exposed ×1']);
   });
 
   test('buckets recency from whole UTC days so a paint and its hydration agree', () => {

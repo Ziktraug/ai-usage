@@ -85,6 +85,7 @@ const projectMarkdownInput = {
 
 const producerProofPayload = (producerProofValidUntil: string | null): SkillObservations => ({
   harnesses: [{ harnessKey: 'claude', label: 'Claude Code', observability: 'observable' }],
+  harnessIncompleteness: { exposure: [], exposureUnattributed: false, invocation: [], invocationUnattributed: false },
   invocationLowerBound: false,
   lowerBound: false,
   producerCompletenessMissing: false,

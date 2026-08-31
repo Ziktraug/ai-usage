@@ -370,6 +370,91 @@ describe('skill observation store', () => {
     expect(read.producerCompletenessMissing).toBe(false);
   });
 
+  test('attributes one producer rejection to its own harness and leaves its siblings exact', async () => {
+    // The operator's real store: Claude Code and OpenCode collected cleanly, Codex permanently
+    // rejected one truncated tool-call line. Before per-harness scoping, that one line turned every
+    // Claude Code count on the surface into a floor.
+    const dbPath = await createStore('skill-scoped-rejection');
+    for (const harnessKey of EXPECTED_OBSERVABLE_HARNESSES) {
+      await Effect.runPromise(
+        importSkillObservations({
+          collection: {
+            completeness:
+              harnessKey === 'codex'
+                ? { exposure: { rejected: 0, truncated: false }, invocation: { rejected: 1, truncated: false } }
+                : completeSkillObservationCollection(),
+            harnessKey,
+          },
+          dbPath,
+          machineId: MACHINE,
+          observations: [],
+        }),
+      );
+    }
+
+    const read = await Effect.runPromise(
+      querySkillObservations({
+        dbPath,
+        expectedProducerHarnessKeys: EXPECTED_OBSERVABLE_HARNESSES,
+        machineId: MACHINE,
+      }),
+    );
+
+    // The global answer is unchanged: a cross-harness absence still cannot be proved.
+    expect(read.collectionInvocationIncomplete).toBe(true);
+    expect(read.producerCompletenessMissing).toBe(false);
+    expect(read.collectionInvocationIncompleteHarnessKeys).toEqual(['codex']);
+    expect(read.collectionExposureIncompleteHarnessKeys).toEqual([]);
+  });
+
+  test('marks every expected harness when producer state is missing rather than guessing whose', async () => {
+    const dbPath = await createStore('skill-missing-state-scope');
+    await Effect.runPromise(initializeUsageStore({ dbPath }));
+
+    const read = await Effect.runPromise(
+      querySkillObservations({
+        dbPath,
+        expectedProducerHarnessKeys: EXPECTED_OBSERVABLE_HARNESSES,
+        machineId: MACHINE,
+      }),
+    );
+
+    expect(read.producerCompletenessMissing).toBe(true);
+    expect(read.collectionInvocationIncompleteHarnessKeys).toEqual([...EXPECTED_OBSERVABLE_HARNESSES].sort());
+    expect(read.collectionExposureIncompleteHarnessKeys).toEqual([...EXPECTED_OBSERVABLE_HARNESSES].sort());
+  });
+
+  test('keeps exposure-only rejection off the invocation channel of the same harness', async () => {
+    const dbPath = await createStore('skill-scoped-exposure-rejection');
+    for (const harnessKey of EXPECTED_OBSERVABLE_HARNESSES) {
+      await Effect.runPromise(
+        importSkillObservations({
+          collection: {
+            completeness:
+              harnessKey === 'codex'
+                ? { exposure: { rejected: 2, truncated: false }, invocation: { rejected: 0, truncated: false } }
+                : completeSkillObservationCollection(),
+            harnessKey,
+          },
+          dbPath,
+          machineId: MACHINE,
+          observations: [],
+        }),
+      );
+    }
+
+    const read = await Effect.runPromise(
+      querySkillObservations({
+        dbPath,
+        expectedProducerHarnessKeys: EXPECTED_OBSERVABLE_HARNESSES,
+        machineId: MACHINE,
+      }),
+    );
+
+    expect(read.collectionInvocationIncompleteHarnessKeys).toEqual([]);
+    expect(read.collectionExposureIncompleteHarnessKeys).toEqual(['codex']);
+  });
+
   test('requires every producer answer to be recent before proving an empty history', async () => {
     const dbPath = await createStore('skill-stale-producers');
     for (const harnessKey of EXPECTED_OBSERVABLE_HARNESSES) {

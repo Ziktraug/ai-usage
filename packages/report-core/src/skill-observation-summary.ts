@@ -7,6 +7,9 @@ import {
   type SkillObservationEvidence,
   type SkillObservationTier,
   skillObservabilityFor,
+  skillObservationHarnessInvocationIsComplete,
+  skillObservationHarnessSignalsAreComplete,
+  skillObservationTierSupportsInvocation,
 } from './skill-observation-evidence';
 
 /**
@@ -56,6 +59,25 @@ export interface SkillObservationTally {
   lastObservedAt: string;
   tier: SkillObservationTier;
 }
+
+/**
+ * Whether one tally's count is a floor rather than a number.
+ *
+ * A tally already carries the only two things the answer depends on — its harness and its tier —
+ * so the question is answered from that tally's own channel, not from the response-wide bound. A
+ * Codex rejection makes Codex's counts floors; it says nothing about what Claude Code recorded.
+ *
+ * The evidence argument is deliberately the whole evidence rather than a precomputed flag on the
+ * tally: a later clamp can widen the loss, and a flag frozen at fold time would keep claiming
+ * exactness the response no longer supports.
+ */
+export const skillObservationTallyIsLowerBound = (
+  evidence: Pick<SkillObservationEvidence, 'harnessIncompleteness'>,
+  tally: Pick<SkillObservationTally, 'harnessKey' | 'tier'>,
+): boolean =>
+  skillObservationTierSupportsInvocation(tally.tier)
+    ? !skillObservationHarnessInvocationIsComplete(evidence, tally.harnessKey)
+    : !skillObservationHarnessSignalsAreComplete(evidence, tally.harnessKey);
 
 export interface SkillObservationSummary {
   /** The most recent observation of this skill across every tier and harness. */

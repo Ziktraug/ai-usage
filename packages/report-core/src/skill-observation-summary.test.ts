@@ -1,7 +1,11 @@
 import { describe, expect, test } from 'bun:test';
 import type { SkillObservation } from './skill-observation';
 import { resolveSkillObservationEvidence } from './skill-observation-evidence';
-import { createSkillObservationDataset, EMPTY_SKILL_OBSERVATION_DATASET } from './skill-observation-summary';
+import {
+  createSkillObservationDataset,
+  EMPTY_SKILL_OBSERVATION_DATASET,
+  skillObservationTallyIsLowerBound,
+} from './skill-observation-summary';
 
 const observation = (overrides: Partial<SkillObservation> & Pick<SkillObservation, 'harnessKey' | 'tier'>) => ({
   argsPresent: null,
@@ -252,6 +256,44 @@ describe('createSkillObservationDataset', () => {
         tier: 'declared',
       },
     ]);
+  });
+
+  test('a tally is a floor only when its own harness and channel lost evidence', () => {
+    const evidence = resolveSkillObservationEvidence({
+      collection: {
+        exposureIncomplete: false,
+        invocationIncomplete: true,
+        invocationIncompleteHarnessKeys: ['codex'],
+        producerCompletenessMissing: false,
+      },
+      read: { invocationTruncated: false, truncated: false },
+      refusedRows: [],
+    });
+    const dataset = createSkillObservationDataset(
+      [
+        observation({ harnessKey: 'claude', tier: 'declared' }),
+        observation({ harnessKey: 'codex', tier: 'inferred' }),
+        observation({ harnessKey: 'codex', tier: 'exposed' }),
+        observation({ harnessKey: 'future-harness', tier: 'declared' }),
+      ],
+      evidence,
+    );
+    const bound = (harnessKey: string, tier: 'declared' | 'exposed' | 'inferred') =>
+      skillObservationTallyIsLowerBound(
+        dataset,
+        dataset.skills[0]?.tallies.find((tally) => tally.harnessKey === harnessKey && tally.tier === tier) ?? {
+          harnessKey,
+          tier,
+        },
+      );
+
+    expect(bound('codex', 'inferred')).toBe(true);
+    // Codex losing invocation rows makes its own pooled history short too, but Claude Code's
+    // fully-collected count stays a number rather than a floor.
+    expect(bound('codex', 'exposed')).toBe(true);
+    expect(bound('claude', 'declared')).toBe(false);
+    // A harness key this build does not know carries no attributed loss and is treated the same.
+    expect(bound('future-harness', 'declared')).toBe(false);
   });
 
   test('a catalogued harness keeps its own marker regardless of what a sweep returned', () => {

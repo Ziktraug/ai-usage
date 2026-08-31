@@ -66,13 +66,22 @@ export interface QuerySkillObservationDatasetInput extends SkillObservationReadB
 const clampSkills = (dataset: SkillObservationDataset, bounds: SkillObservationReadBounds): SkillObservationDataset => {
   const rowsCarryInvocation = (rows: readonly SkillObservationSummary[]): boolean =>
     rows.some((skill) => skill.tallies.some((tally) => skillObservationTierSupportsInvocation(tally.tier)));
+  // The dropped rows are still in hand, so the loss is attributable: only the harnesses that
+  // actually had counts in them are hedged, and a harness untouched by the clamp keeps its exact
+  // numbers. An empty list would be read as unattributable and hedge everybody, which is why it is
+  // taken from the rows rather than guessed.
+  const rowsHarnessKeys = (rows: readonly SkillObservationSummary[]): readonly string[] => [
+    ...new Set(rows.flatMap((skill) => skill.tallies.map((tally) => tally.harnessKey))),
+  ];
 
   let evidence: SkillObservationEvidence = dataset;
   let skills: readonly SkillObservationSummary[] = dataset.skills;
   if (skills.length > bounds.maximumSkills) {
+    const dropped = skills.slice(bounds.maximumSkills);
     evidence = applySkillObservationEvidenceLoss(evidence, {
       counts: true,
-      invocation: rowsCarryInvocation(skills.slice(bounds.maximumSkills)),
+      harnessKeys: rowsHarnessKeys(dropped),
+      invocation: rowsCarryInvocation(dropped),
     });
     skills = skills.slice(0, bounds.maximumSkills);
   }
@@ -83,9 +92,11 @@ const clampSkills = (dataset: SkillObservationDataset, bounds: SkillObservationR
   // a harness roster fits in.
   while (clamped.skills.length > 0 && datasetBytes(clamped) > bounds.maximumBytes) {
     const retainedCount = Math.floor(clamped.skills.length / 2);
+    const dropped = clamped.skills.slice(retainedCount);
     evidence = applySkillObservationEvidenceLoss(evidence, {
       counts: true,
-      invocation: rowsCarryInvocation(clamped.skills.slice(retainedCount)),
+      harnessKeys: rowsHarnessKeys(dropped),
+      invocation: rowsCarryInvocation(dropped),
     });
     clamped = { ...clamped, ...evidence, skills: clamped.skills.slice(0, retainedCount) };
   }
@@ -156,7 +167,9 @@ export const querySkillObservationDataset = (
       const evidence = resolveSkillObservationEvidence({
         collection: {
           exposureIncomplete: result.collectionExposureIncomplete,
+          exposureIncompleteHarnessKeys: result.collectionExposureIncompleteHarnessKeys,
           invocationIncomplete: result.collectionInvocationIncomplete,
+          invocationIncompleteHarnessKeys: result.collectionInvocationIncompleteHarnessKeys,
           producerCompletenessMissing: result.producerCompletenessMissing,
         },
         read: {

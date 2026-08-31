@@ -6,6 +6,7 @@ import { createSkillsPresentationProjection } from '../presentation';
 import { createSkillsShellViewModel } from '../shell/model';
 import { skillObservationQueryPresentation } from '../shell/observation-query-presentation';
 import {
+  syntheticCodexRejectedObservations,
   syntheticExposureTruncatedObservations,
   syntheticInventories,
   syntheticKnownPaths,
@@ -193,6 +194,48 @@ describe('Skills worktable observation presentation', () => {
     expect(worktableHistorySentence(invocationSilentRow, invocation.presentation.observations.view)).toContain(
       'No invocation in loaded history by any harness that can report.',
     );
+  });
+});
+
+describe('Skills worktable per-harness evidence scoping', () => {
+  test('renders a clean harness exactly while its rejected sibling renders a floor', () => {
+    const { model, presentation } = projection(syntheticCodexRejectedObservations);
+    const alpha = model.managedRows.find((row) => row.name === 'alpha-skill');
+    const evidenceByColumn = new Map(
+      alpha?.cells.map((cell) => [
+        model.columns.find((column) => column.key === cell.columnKey)?.harnessKey,
+        cell.evidence,
+      ]),
+    );
+
+    // Claude Code collected every line it had, so its two declared invocations are a number.
+    expect(evidenceByColumn.get('claude')?.map((entry) => entry.text)).toEqual(['2']);
+    expect(evidenceByColumn.get('claude')?.at(0)?.accessibleText).toBe('2 recorded invocations in Claude Code');
+    // Codex rejected one line, so only Codex's counts are floors.
+    expect(evidenceByColumn.get('codex')?.map((entry) => entry.text)).toEqual(['~≥1']);
+    expect(evidenceByColumn.get('codex')?.at(0)?.accessibleText).toBe(
+      'at least 1 invocation reconstructed from traces in Codex',
+    );
+
+    // The cross-harness verdicts are untouched: "invoked in no observable harness" cannot be proved
+    // while Codex's invocation evidence is short, whatever Claude Code's numbers are worth.
+    expect(model.deletionCandidatesProvisional).toBe(true);
+    expect(model.filters.find((filter) => filter.id === 'to-delete')?.value).toBe('1 provisional');
+    expect(presentation.observations.view?.invocationLowerBound).toBe(true);
+    expect(presentation.observations.view?.invocationEvidenceComplete).toBe(false);
+  });
+
+  test('qualifies a per-harness absence phrase by that harness own completeness', () => {
+    const { presentation } = projection(syntheticCodexRejectedObservations);
+    const sentence = worktableHistorySentence(
+      presentation.observations.rowsByName.get('beta-skill'),
+      presentation.observations.view,
+    );
+
+    expect(sentence).toContain('No signal recorded for Claude Code, OpenCode.');
+    expect(sentence).toContain('No signal in loaded history for Codex.');
+    // The "any harness that can report" clause is cross-harness and stays global.
+    expect(sentence).toContain('No invocation in loaded history by any harness that can report.');
   });
 });
 

@@ -108,6 +108,17 @@ the requirements below are what the surface must honour.
   proposal most of all, since it is the one verdict acted on destructively.
   Verdicts that rest on presence are unaffected: an invocation seen is an
   invocation that happened.
+- **A bound is scoped to the harness that lost the evidence; a cross-harness
+  claim is not.** Each rendered count belongs to one harness, so it is qualified
+  by that harness's own collection answer: a Codex rejection makes Codex's counts
+  floors and leaves Claude Code's exact, and "no signal recorded for Claude Code"
+  stays an exact statement while "no signal in loaded history for Codex" sits
+  beside it. The deletion, never-observed and offered-only verdicts keep reading
+  the global bound, because each claims a skill was invoked in *no* observable
+  harness and one harness's short evidence makes that unprovable. A loss that
+  cannot name a harness — a read that stopped at its bound, a re-validation
+  refusal, a producer answer reporting a loss without saying whose — hedges every
+  harness (ADR 0022).
 - Producer-side truncations and rejections follow the same rule. Each observable
   harness persists invocation and exposure completeness with the batch, even
   when that batch contains zero observations. The global proof always requires
@@ -116,7 +127,10 @@ the requirements below are what the surface must honour.
   minutes old. Missing, stale, disabled, malformed, rejected, truncated, or
   bounded-away producer state keeps every absence-derived verdict provisional;
   exposure-only rejection or truncation still weakens exposure counts without
-  weakening invocation evidence (ADR 0037). The surface describes this as a
+  weakening invocation evidence (ADR 0037). A producer answer names the harness
+  it failed for, so its rejection or truncation qualifies that harness's own
+  counts rather than every harness's; missing producer state names no one and
+  therefore marks every expected producer. The surface describes this as a
   complete recent collection not yet being available, never as a zero. The
   server carries the proof's absolute expiry through the inventory join; stale
   or in-flight retained browser data is qualified as provisional even while
@@ -124,8 +138,10 @@ the requirements below are what the surface must honour.
 - Invocation observations are durable. The 400-day age window and rescan cutoff
   apply only to the high-volume `exposed` catalogue stream; `declared` and
   `inferred` history remains available for absence-derived decisions (ADR 0037).
-- Provenance is per metric. There is no page-level data-quality banner; a failed
-  observation read reports itself in the observation section alone.
+- Provenance is per metric — per *harness* as well as per section. There is no
+  page-level data-quality banner, and no response-wide hedge on a number that
+  belongs to a harness whose collection was complete; a failed observation read
+  reports itself in the observation section alone.
 - Tier and observability are conveyed textually. Colour may reinforce them and
   may never be their only carrier.
 - Wiring an "adopt into the source repository" action for an unmanaged observed

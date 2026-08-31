@@ -435,10 +435,21 @@ export interface StoredSkillObservation {
 }
 
 export interface QuerySkillObservationsResult {
-  /** Producer-side exposure collection was incomplete. */
+  /** Producer-side exposure collection was incomplete for at least one expected producer. */
   collectionExposureIncomplete: boolean;
-  /** Producer-side invocation collection was incomplete. */
+  /**
+   * The harnesses that particular incompleteness belongs to.
+   *
+   * Reported beside the global boolean rather than instead of it: a count that belongs to one
+   * harness must not be hedged by another harness's rejection, while a claim about *every*
+   * harness still needs the global answer. Missing producer state cannot be attributed to one
+   * producer, so it lists every expected harness.
+   */
+  collectionExposureIncompleteHarnessKeys: readonly string[];
+  /** Producer-side invocation collection was incomplete for at least one expected producer. */
   collectionInvocationIncomplete: boolean;
+  /** The harnesses that particular incompleteness belongs to; see the exposure field. */
+  collectionInvocationIncompleteHarnessKeys: readonly string[];
   /**
    * The `declared`/`inferred` read reached *its own* budget, so invocation
    * evidence is incomplete.

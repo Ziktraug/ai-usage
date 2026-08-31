@@ -13,6 +13,8 @@ import { MATRIX_DOT_GLYPHS, type MatrixDotTone, matrixDotTone } from '../managem
 import {
   compareObservationRows,
   formatObservedDate,
+  harnessInvocationEvidenceComplete,
+  harnessSignalsComplete,
   OBSERVATION_ROW_OMITTED_TEXT,
   observationEvidenceRank,
   observationRecency,
@@ -311,12 +313,18 @@ const cellsFor = (
     readonly skillName: string;
   },
 ): readonly SkillsWorktableCell[] => {
-  const invocationLowerBound = context.observations.view?.invocationLowerBound ?? false;
+  const view = context.observations.view;
   return context.columns.map((column) => {
+    // A cell holds one harness's counts, so it is qualified by that harness's own evidence. Before
+    // this, one Codex rejection rendered every Claude Code cell on the table as `≥`.
+    const columnInvocationLowerBound =
+      view !== undefined && column.harnessKey !== undefined
+        ? !harnessInvocationEvidenceComplete(view, column.harnessKey)
+        : false;
     const evidence =
       column.harnessKey === undefined || input.observationRow === undefined
         ? []
-        : evidenceFor(input.observationRow, column.harnessKey, column.label, invocationLowerBound);
+        : evidenceFor(input.observationRow, column.harnessKey, column.label, columnInvocationLowerBound);
     if (!input.placementTargets || column.targetId === undefined) {
       return { columnKey: column.key, evidence, glyph: undefined, placementLabel: undefined, tone: undefined };
     }
@@ -707,8 +715,9 @@ export const createSkillsWorktableModel = (input: {
 
 const harnessEvidencePhrase = (
   cell: SkillObservationRow['harnesses'][number],
-  invocationLowerBound: boolean,
+  view: SkillObservationsView,
 ): string | undefined => {
+  const invocationLowerBound = !harnessInvocationEvidenceComplete(view, cell.harnessKey);
   const declared = cell.tallies.find((tally) => tally.tier === 'declared');
   const inferred = cell.tallies.find((tally) => tally.tier === 'inferred');
   const bound = invocationLowerBound ? 'at least ' : '';
@@ -735,19 +744,27 @@ export const worktableHistorySentence = (
   if (row === undefined) {
     return 'No observation row was carried for this name.';
   }
+  // The "no invocation by *any* harness" clause is a cross-harness claim, so it keeps the global
+  // bound: one harness's short evidence is enough to make it unprovable. The per-harness clauses
+  // below are claims about one harness and use that harness's own answer.
   const invocationEvidenceComplete = !view.invocationLowerBound;
   const invoked = row.harnesses.flatMap((cell) => {
-    const phrase = harnessEvidencePhrase(cell, view.invocationLowerBound);
+    const phrase = harnessEvidencePhrase(cell, view);
     return phrase === undefined ? [] : [phrase];
   });
-  const silent = row.harnesses.filter((cell) => cell.state === 'no-observations').map((cell) => cell.label);
+  const silentCells = row.harnesses.filter((cell) => cell.state === 'no-observations');
+  const silentRecorded = silentCells
+    .filter((cell) => harnessSignalsComplete(view, cell.harnessKey))
+    .map((cell) => cell.label);
+  const silentLoaded = silentCells
+    .filter((cell) => !harnessSignalsComplete(view, cell.harnessKey))
+    .map((cell) => cell.label);
   const sentences = [
     invoked.length === 0
       ? `No invocation ${invocationEvidenceComplete ? 'recorded' : 'in loaded history'} by any harness that can report.`
       : `Invoked in ${invoked.join(' and ')}.`,
-    ...(silent.length === 0
-      ? []
-      : [`No signal ${view.signalsComplete ? 'recorded' : 'in loaded history'} for ${silent.join(', ')}.`]),
+    ...(silentRecorded.length === 0 ? [] : [`No signal recorded for ${silentRecorded.join(', ')}.`]),
+    ...(silentLoaded.length === 0 ? [] : [`No signal in loaded history for ${silentLoaded.join(', ')}.`]),
     ...(row.lastObservedAt === null
       ? []
       : [`${view.lowerBound ? 'Latest retained signal' : 'Last signal'} ${formatObservedDate(row.lastObservedAt)}.`]),

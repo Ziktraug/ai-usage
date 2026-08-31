@@ -4,7 +4,10 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { completeSkillObservationCollection, type SkillObservation } from '@ai-usage/report-core/skill-observation';
-import { SKILL_OBSERVATION_OBSERVABLE_HARNESS_KEYS } from '@ai-usage/report-core/skill-observation-evidence';
+import {
+  SKILL_OBSERVATION_OBSERVABLE_HARNESS_KEYS,
+  skillObservationHarnessInvocationIsComplete,
+} from '@ai-usage/report-core/skill-observation-evidence';
 import { importSkillObservations } from '@ai-usage/usage-store/testing';
 import { Effect } from 'effect';
 import { querySkillObservationDataset } from './skill-observation-read';
@@ -65,6 +68,66 @@ const storeWith = async (skillCount: number): Promise<string> =>
   );
 
 describe('bounded skill observation read', () => {
+  test('carries one producer rejection through as that harness alone', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'plan111-skill-observation-scope-'));
+    roots.push(root);
+    const dbPath = path.join(root, 'usage.sqlite');
+    for (const harnessKey of EXPECTED_OBSERVABLE_HARNESSES) {
+      await Effect.runPromise(
+        importSkillObservations({
+          collection: {
+            completeness:
+              harnessKey === 'codex'
+                ? { exposure: { rejected: 0, truncated: false }, invocation: { rejected: 1, truncated: false } }
+                : completeSkillObservationCollection(),
+            harnessKey,
+          },
+          dbPath,
+          machineId: 'machine-a',
+          observations: harnessKey === 'claude' ? [observation('improve', 1), observation('improve', 2)] : [],
+        }),
+      );
+    }
+
+    const dataset = await Effect.runPromise(
+      querySkillObservationDataset({
+        dbPath,
+        ...GENEROUS_BOUNDS,
+        expectedProducerHarnessKeys: EXPECTED_OBSERVABLE_HARNESSES,
+        machineId: 'machine-a',
+      }),
+    );
+
+    expect(dataset.harnessIncompleteness.invocation).toEqual(['codex']);
+    expect(dataset.harnessIncompleteness.invocationUnattributed).toBe(false);
+    expect(skillObservationHarnessInvocationIsComplete(dataset, 'claude')).toBe(true);
+    expect(skillObservationHarnessInvocationIsComplete(dataset, 'codex')).toBe(false);
+    // The Claude Code count is exact even though the response as a whole cannot prove an absence.
+    expect(dataset.skills[0]?.tallies).toEqual([
+      {
+        count: 2,
+        harnessKey: 'claude',
+        harnessLabel: 'Claude Code',
+        lastObservedAt: '2026-08-01T09:00:00.000Z',
+        tier: 'declared',
+      },
+    ]);
+    expect(dataset.invocationLowerBound).toBe(true);
+  });
+
+  test('attributes a skill-count clamp to the harnesses whose rows it dropped', async () => {
+    const dbPath = await storeWith(4);
+
+    const dataset = await Effect.runPromise(
+      querySkillObservationDataset({ dbPath, ...GENEROUS_BOUNDS, maximumSkills: 2 }),
+    );
+
+    expect(dataset.skills).toHaveLength(2);
+    expect(dataset.harnessIncompleteness.invocation).toEqual(['claude']);
+    expect(dataset.harnessIncompleteness.invocationUnattributed).toBe(false);
+    expect(skillObservationHarnessInvocationIsComplete(dataset, 'opencode')).toBe(true);
+  });
+
   test('requires every expected producer before an empty global read becomes complete', async () => {
     const dbPath = await storeHolding([]);
     const read = () =>

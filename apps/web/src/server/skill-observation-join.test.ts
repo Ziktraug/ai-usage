@@ -57,6 +57,63 @@ describe('skill observation join', () => {
     expect(safeParse(skillObservationsSchema, result).success).toBe(true);
   });
 
+  test('carries per-harness incompleteness through without touching the cross-harness verdicts', () => {
+    const evidence = resolveSkillObservationEvidence({
+      collection: {
+        exposureIncomplete: false,
+        invocationIncomplete: true,
+        invocationIncompleteHarnessKeys: ['codex'],
+        producerCompletenessMissing: false,
+      },
+      read: { invocationTruncated: false, truncated: false },
+      refusedRows: [],
+    });
+    const result = join({
+      observations: createSkillObservationDataset(
+        [observation({ harnessKey: 'claude', skillName: 'improve', tier: 'declared' })],
+        evidence,
+      ),
+      projections: [{ skillName: 'unused', state: 'linked', targetId: 'claude' }],
+      skills: [managedSkill('unused')],
+    });
+
+    expect(result.harnessIncompleteness).toEqual({
+      exposure: [],
+      exposureUnattributed: false,
+      invocation: ['codex'],
+      invocationUnattributed: false,
+    });
+    // Deletion is a claim about *every* observable harness, so Codex's short evidence still makes
+    // it provisional even though Claude Code's own counts are exact.
+    expect(skillNamed(result, 'unused')).toMatchObject({ deletionCandidate: true, verdictProvisional: true });
+    expect(result.invocationLowerBound).toBe(true);
+    expect(safeParse(skillObservationsSchema, result).success).toBe(true);
+  });
+
+  test('an unknown harness key carrying observations travels without breaking the wire shape', () => {
+    const evidence = resolveSkillObservationEvidence({
+      collection: {
+        exposureIncomplete: true,
+        exposureIncompleteHarnessKeys: ['future-harness'],
+        invocationIncomplete: false,
+        producerCompletenessMissing: false,
+      },
+      read: { invocationTruncated: false, truncated: false },
+      refusedRows: [],
+    });
+    const result = join({
+      observations: createSkillObservationDataset(
+        [observation({ harnessKey: 'future-harness', skillName: 'improve', tier: 'declared' })],
+        evidence,
+      ),
+    });
+
+    expect(result.harnesses.at(-1)?.harnessKey).toBe('future-harness');
+    expect(result.harnessIncompleteness.exposure).toEqual(['future-harness']);
+    expect(result.invocationLowerBound).toBe(false);
+    expect(safeParse(skillObservationsSchema, result).success).toBe(true);
+  });
+
   test('an exposed-only skill is never an adoption candidate', () => {
     const result = join({
       observations: createSkillObservationDataset([
@@ -495,6 +552,19 @@ describe('skill observation response bounds', () => {
     expect(safeParse(skillObservationsSchema, result).success).toBe(true);
   });
 
+  test('a roster clamp attributes the loss to the keys it dropped', () => {
+    const result = joinUnknownHarnesses(MAX_SKILL_OBSERVATION_HARNESS_ROSTER - CATALOGUE_HARNESSES + 1, 'declared');
+    const rosterKeys = new Set(result.harnesses.map(({ harnessKey }) => harnessKey));
+
+    // Every hedged key is one the clamp actually removed, and nothing claims a loss it cannot name.
+    expect(result.harnessIncompleteness.invocation.length).toBeGreaterThan(0);
+    for (const harnessKey of result.harnessIncompleteness.invocation) {
+      expect(rosterKeys.has(harnessKey)).toBe(false);
+    }
+    expect(result.harnessIncompleteness.invocationUnattributed).toBe(false);
+    expect(safeParse(skillObservationsSchema, result).success).toBe(true);
+  });
+
   test('a roster clamp that drops only exposed tallies leaves the invocation bound alone', () => {
     const result = joinUnknownHarnesses(MAX_SKILL_OBSERVATION_HARNESS_ROSTER - CATALOGUE_HARNESSES + 1, 'exposed');
 
@@ -537,6 +607,7 @@ describe('skill observation response bounds', () => {
 
   const responseWithSkills = (count: number, nameLength: number): SkillObservations => ({
     harnesses: [{ harnessKey: 'claude', label: 'Claude Code', observability: 'observable' }],
+    harnessIncompleteness: { exposure: [], exposureUnattributed: false, invocation: [], invocationUnattributed: false },
     invocationLowerBound: false,
     lowerBound: false,
     producerCompletenessMissing: false,
