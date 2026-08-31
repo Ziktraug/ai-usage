@@ -10,8 +10,8 @@ import {
 const DELAYED_RUNTIME_CLEANUP_MS = 75;
 const SHORT_GRACEFUL_SHUTDOWN_MS = 100;
 
-test('uses the canonical nested Skills route for the production smoke', () => {
-  expect(SKILLS_PRODUCTION_SMOKE_PATH).toBe('/skills/global');
+test('uses the canonical Skills worktable route for the production smoke', () => {
+  expect(SKILLS_PRODUCTION_SMOKE_PATH).toBe('/skills');
 });
 
 test('rejects synthetic private paths in the canonical Skills HTML', () => {
@@ -20,7 +20,7 @@ test('rejects synthetic private paths in the canonical Skills HTML', () => {
   ).not.toThrow();
   expect(() =>
     assertSyntheticSkillsProductionPrivacy('<div>/synthetic/private/project</div>', ['/synthetic/private']),
-  ).toThrow('/skills/global embedded synthetic private data in its initial HTML.');
+  ).toThrow('/skills embedded synthetic private data in its initial HTML.');
 });
 
 const reservePort = (): Promise<number> =>
