@@ -4,12 +4,14 @@ import { skillObservationProducerProofStatus } from '../../../query/skill-observ
 export interface SkillObservationQueryPresentation {
   readonly observations: SkillObservations | undefined;
   readonly observationsError: string | undefined;
+  readonly producerProofCurrent: boolean;
 }
 
 /**
  * TanStack keeps successful data during background work and after a refetch failure. The cache may
- * retain it, but the Skills projection may only consume it while its producer proof is settled and
- * current. A refresh renders as loading; an expired or failed proof renders as unavailable.
+ * retain it, and the Skills projection keeps those positive facts visible during a refresh. The
+ * producer-proof qualification separately prevents retained data from carrying an exact absence.
+ * An expired or failed proof still renders as unavailable once no refresh is in flight.
  */
 export const skillObservationQueryPresentation = (input: {
   readonly data: SkillObservations | undefined;
@@ -19,20 +21,21 @@ export const skillObservationQueryPresentation = (input: {
 }): SkillObservationQueryPresentation => {
   const errorMessage = input.error instanceof Error ? input.error.message : undefined;
   if (errorMessage !== undefined) {
-    return { observations: input.data, observationsError: errorMessage };
+    return { observations: input.data, observationsError: errorMessage, producerProofCurrent: false };
   }
   if (input.data === undefined) {
-    return { observations: undefined, observationsError: undefined };
+    return { observations: undefined, observationsError: undefined, producerProofCurrent: false };
   }
   const proofStatus = skillObservationProducerProofStatus(input);
   if (proofStatus === 'refreshing') {
-    return { observations: undefined, observationsError: undefined };
+    return { observations: input.data, observationsError: undefined, producerProofCurrent: false };
   }
   if (proofStatus === 'expired') {
     return {
       observations: input.data,
       observationsError: 'The producer completeness proof has expired.',
+      producerProofCurrent: false,
     };
   }
-  return { observations: input.data, observationsError: undefined };
+  return { observations: input.data, observationsError: undefined, producerProofCurrent: true };
 };

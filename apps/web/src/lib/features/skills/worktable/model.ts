@@ -607,9 +607,9 @@ export const createSkillsWorktableModel = (input: {
   );
   const allNamesLowerBound = observationsView?.lowerBound === true;
   const adoptionLowerBound = observationsView?.invocationLowerBound === true;
-  const deletionProvisional = observationsView?.invocationLowerBound === true || managedObservationRowsOmitted;
+  const deletionProvisional = observationsView?.invocationEvidenceComplete !== true || managedObservationRowsOmitted;
   const catalogueLowerBound = observationsView?.lowerBound === true;
-  const catalogueProvisional = observationsView?.invocationLowerBound === true || projectObservationRowsOmitted;
+  const catalogueProvisional = observationsView?.invocationEvidenceComplete !== true || projectObservationRowsOmitted;
   const catalogueRollups = rawCatalogueRollups.map((rollup) => ({
     ...rollup,
     entryCountText: cataloguePopulationText(rollup.rows.length, catalogueLowerBound, catalogueProvisional),
@@ -747,7 +747,7 @@ export const worktableHistorySentence = (
   // The "no invocation by *any* harness" clause is a cross-harness claim, so it keeps the global
   // bound: one harness's short evidence is enough to make it unprovable. The per-harness clauses
   // below are claims about one harness and use that harness's own answer.
-  const invocationEvidenceComplete = !view.invocationLowerBound;
+  const invocationEvidenceComplete = view.invocationEvidenceComplete;
   const invoked = row.harnesses.flatMap((cell) => {
     const phrase = harnessEvidencePhrase(cell, view);
     return phrase === undefined ? [] : [phrase];

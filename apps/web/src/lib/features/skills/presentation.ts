@@ -118,12 +118,15 @@ const buildObservationPresentation = (
   observations: SkillObservations | undefined,
   errorMessage: string | undefined,
   expectedSkillNames: ReadonlySet<string>,
+  producerProofCurrent: boolean,
 ): SkillsObservationPresentation => {
   // TanStack can retain the previous successful value while a background refetch reports an
   // error. That value remains useful to the cache, but it is not a successful answer for this
   // render: observation facts stay neutral until the identity succeeds again.
   const view =
-    observations === undefined || errorMessage !== undefined ? undefined : buildSkillObservationsView(observations);
+    observations === undefined || errorMessage !== undefined
+      ? undefined
+      : buildSkillObservationsView(observations, { producerProofCurrent });
   const rowsByName = new Map((view?.rows ?? []).map((row) => [row.skillName, row]));
   return {
     errorMessage,
@@ -224,6 +227,7 @@ const buildSelectedPresentation = (
 export const createSkillsPresentationProjection = (input: {
   readonly observations: SkillObservations | undefined;
   readonly observationsError: string | undefined;
+  readonly producerProofCurrent?: boolean;
   readonly view: SkillsShellViewModel;
 }): SkillsPresentationProjection => {
   const expectedObservationSkillNames = new Set([
@@ -234,6 +238,7 @@ export const createSkillsPresentationProjection = (input: {
     input.observations,
     input.observationsError,
     expectedObservationSkillNames,
+    input.producerProofCurrent ?? true,
   );
   const allAttention = input.view.snapshot.skills
     .map((skill) => ({ attention: globalSkillAttention(input.view.snapshot, skill), skill }))

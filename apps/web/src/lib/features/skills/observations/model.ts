@@ -116,7 +116,8 @@ export interface SkillObservationsView {
   /**
    * Whether the read can prove an absence at all — which depends on the *invocation* evidence
    * alone, since every absence claim on this surface is a claim about `declared` and `inferred`
-   * rows. Exposure is catalogue boilerplate: truncating it costs nothing a verdict rests on.
+   * rows and on the browser holding a settled producer proof. Exposure is catalogue boilerplate:
+   * truncating it costs nothing a verdict rests on.
    */
   invocationEvidenceComplete: boolean;
   /** Whether declared/inferred populations and counts are floors. */
@@ -141,6 +142,8 @@ export interface SkillObservationsView {
   onlyExposureTruncated: boolean;
   /** At least one expected producer has missing, stale, disabled, or omitted collection state. */
   producerCompletenessMissing: boolean;
+  /** Whether the browser is presenting a settled producer proof rather than retained data during refresh. */
+  producerProofCurrent: boolean;
   /** Managed skills first, then the unmanaged names, each alphabetically. */
   rows: readonly SkillObservationRow[];
   /** Whether the combined invocation and availability signal history is complete. */
@@ -562,8 +565,14 @@ export const ADOPTION_GROUP_COPY: Record<SkillUnmanagedResidence, { heading: str
   },
 };
 
-export const buildSkillObservationsView = (observations: SkillObservations): SkillObservationsView => {
-  const signalsComplete = !observations.lowerBound;
+const ABSENCE_BASED_VERDICTS: ReadonlySet<SkillObservationVerdict> = new Set(['never-observed', 'offered-only']);
+
+export const buildSkillObservationsView = (
+  observations: SkillObservations,
+  options: { readonly producerProofCurrent?: boolean } = {},
+): SkillObservationsView => {
+  const producerProofCurrent = options.producerProofCurrent ?? true;
+  const signalsComplete = producerProofCurrent && !observations.lowerBound;
   const rows = observations.skills.map((skill) => {
     const talliesByHarness = new Map<string, SkillObservationTally[]>();
     for (const tally of skill.tallies) {
@@ -574,6 +583,8 @@ export const buildSkillObservationsView = (observations: SkillObservations): Ski
       harnesses: observations.harnesses.map((harness) =>
         cellFor(harness, talliesByHarness.get(harness.harnessKey) ?? [], observations),
       ),
+      verdictProvisional:
+        skill.verdictProvisional || (!producerProofCurrent && ABSENCE_BASED_VERDICTS.has(skill.verdict)),
     } satisfies SkillObservationRow;
   });
   const adoptionCandidates = rows.filter((row) => row.verdict === 'invoked-unmanaged');
@@ -591,7 +602,7 @@ export const buildSkillObservationsView = (observations: SkillObservations): Ski
     harnessIncompleteness: observations.harnessIncompleteness,
     harnesses: observations.harnesses,
     invocationLowerBound: observations.invocationLowerBound,
-    invocationEvidenceComplete: !observations.invocationLowerBound,
+    invocationEvidenceComplete: producerProofCurrent && !observations.invocationLowerBound,
     invocationRows: rows
       .filter((row) => row.managed || observationEvidenceRank(row) > 0)
       .toSorted(compareObservationRows),
@@ -599,6 +610,7 @@ export const buildSkillObservationsView = (observations: SkillObservations): Ski
     observableHarnesses: observations.harnesses.filter((harness) => harness.observability === 'observable'),
     onlyExposureTruncated: observations.lowerBound && !observations.invocationLowerBound,
     producerCompletenessMissing: observations.producerCompletenessMissing,
+    producerProofCurrent,
     // Exclusive of the deletion group, so no skill is listed twice under two headings.
     offeredOnly,
     rows: [...rows.filter((row) => row.managed), ...rows.filter((row) => !row.managed)],
@@ -624,4 +636,4 @@ export const harnessInvocationEvidenceComplete = (view: SkillObservationsView, h
 
 /** The per-harness form of `signalsComplete`, for "no signal recorded for X". */
 export const harnessSignalsComplete = (view: SkillObservationsView, harnessKey: string): boolean =>
-  skillObservationHarnessSignalsAreComplete(view, harnessKey);
+  view.producerProofCurrent && skillObservationHarnessSignalsAreComplete(view, harnessKey);

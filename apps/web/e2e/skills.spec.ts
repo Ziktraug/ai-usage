@@ -15,6 +15,7 @@ const SKILLS_WORKTABLE_URL = /\/skills$/;
 const DESKTOP_WORKSPACE_VIEWPORT = { height: 900, width: 1280 } as const;
 const MOBILE_VIEWPORT = { height: 844, width: 390 } as const;
 const SAVE_MANAGED_MARKDOWN_RPC_ROUTE = `**${SKILLS_SAVE_RPC_PATH}`;
+const SKILLS_OBSERVATIONS_RPC_ROUTE = '**/rpc/skills/observations?*';
 const SKILLS_REFRESH_RPC_ROUTE = '**/rpc/skills/refreshSnapshot';
 const SUCCESS_NOTICE_DISMISS_DELAY_MS = 5000;
 const WHITESPACE_PATTERN = /\s+/g;
@@ -22,6 +23,7 @@ const CURSOR_COVERAGE_TEXT = 'Cursor — not observable';
 const OBSERVATION_NOT_OBSERVABLE_TEXT = 'not observable';
 const ALL_FILTER_PATTERN = /^All —/;
 const CATALOGUE_FILTER_PATTERN = /^Catalogue only —/;
+const TO_DELETE_FILTER_PATTERN = /^To delete —/;
 const APPLY_ACTION_PATTERN = /^Apply \d+ action/;
 const CREATED_TARGET_PATTERN = /Created target directory/;
 const ADOPTION_GATE_PATTERN = /waits on the approved file-operation plan/;
@@ -454,6 +456,42 @@ test('marks the header refresh busy while the snapshot is in flight', async ({ p
     releaseResponse.resolve();
   }
   await expect(refreshButton).toHaveAttribute('aria-busy', 'false');
+});
+
+test('keeps retained observation evidence visible while observations refetch', async ({ page }) => {
+  await openHydratedSkills(page, '/skills');
+
+  const alpha = worktableRow(page, 'alpha-skill');
+  const declaredEvidence = alpha.locator('[data-worktable-cell="target:claude"] [data-evidence-tier="declared"]');
+  const inferredEvidence = alpha.locator('[data-worktable-cell="target:codex"] [data-evidence-tier="inferred"]');
+  await expect(declaredEvidence).toContainText('3');
+  await expect(inferredEvidence).toContainText('~1');
+
+  const responsePrepared = Promise.withResolvers<void>();
+  const releaseResponse = Promise.withResolvers<void>();
+  await page.route(SKILLS_OBSERVATIONS_RPC_ROUTE, async (route) => {
+    const response = await route.fetch();
+    responsePrepared.resolve();
+    await releaseResponse.promise;
+    await route.fulfill({ response });
+  });
+
+  await page.getByRole('button', { name: 'Reconcile links…' }).click();
+  await responsePrepared.promise;
+  try {
+    await expect(page.getByRole('columnheader', { name: 'OpenCode' })).toBeVisible();
+    await expect(declaredEvidence).toContainText('3');
+    await expect(inferredEvidence).toContainText('~1');
+    await expect(page.locator('[data-skill-observations-state="loading"]')).toHaveCount(0);
+    await expect(page.locator('[data-skill-observations-proof-refreshing]').first()).toBeVisible();
+    await expect(page.getByRole('button', { name: TO_DELETE_FILTER_PATTERN })).toContainText('provisional');
+  } finally {
+    releaseResponse.resolve();
+  }
+
+  await expect(page.locator('[data-skill-observations-proof-refreshing]')).toHaveCount(0);
+  await expect(declaredEvidence).toContainText('3');
+  await expect(inferredEvidence).toContainText('~1');
 });
 
 test('preserves a source repository draft across an unrelated snapshot refresh', async ({ page }) => {

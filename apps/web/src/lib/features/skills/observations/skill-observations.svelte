@@ -52,7 +52,9 @@
   const signalLabel = $derived(observationSignalLabel(view?.lowerBound ?? false));
 
   const cataloguePopulationCount = (count: number): string =>
-    view?.invocationLowerBound ? `${count} provisional` : formatObservationCount(count, view?.lowerBound ?? false);
+    view?.invocationEvidenceComplete === false
+      ? `${count} provisional`
+      : formatObservationCount(count, view?.lowerBound ?? false);
 
   const stack = css({ display: 'grid', gap: '12px' });
   const section = css({ display: 'grid', gap: '8px' });

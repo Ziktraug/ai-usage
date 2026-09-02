@@ -5,6 +5,12 @@
   let { view }: { view: SkillObservationsView | undefined } = $props();
 </script>
 
+{#if view && !view.producerProofCurrent}
+  <p class={meta} data-skill-observations-proof-refreshing role="status">
+    Refreshing skill observations. Previous results remain visible; absence-based verdicts are provisional until the
+    refreshed proof settles.
+  </p>
+{/if}
 {#if view?.producerCompletenessMissing}
   <p class={meta} data-skill-observations-collection-pending role="status">
     Producer collection state is missing, stale, disabled, or omitted from this response. Results remain provisional

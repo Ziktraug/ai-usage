@@ -228,6 +228,7 @@
       : createSkillsPresentationProjection({
           observations: observationQueryPresentation.observations,
           observationsError,
+          producerProofCurrent: observationQueryPresentation.producerProofCurrent,
           view,
         }),
   );

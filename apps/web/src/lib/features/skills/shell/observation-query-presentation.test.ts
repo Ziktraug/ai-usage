@@ -11,10 +11,10 @@ describe('Skills observation Query presentation edge', () => {
         isFetching: false,
         isStale: false,
       }),
-    ).toEqual({ observations: syntheticObservations, observationsError: undefined });
+    ).toEqual({ observations: syntheticObservations, observationsError: undefined, producerProofCurrent: true });
   });
 
-  test('masks retained data while its proof is being refreshed', () => {
+  test('keeps retained data visible while marking its refreshing proof non-current', () => {
     for (const isStale of [false, true]) {
       expect(
         skillObservationQueryPresentation({
@@ -23,7 +23,11 @@ describe('Skills observation Query presentation edge', () => {
           isFetching: true,
           isStale,
         }),
-      ).toEqual({ observations: undefined, observationsError: undefined });
+      ).toEqual({
+        observations: syntheticObservations,
+        observationsError: undefined,
+        producerProofCurrent: false,
+      });
     }
   });
 
@@ -38,6 +42,7 @@ describe('Skills observation Query presentation edge', () => {
     ).toEqual({
       observations: syntheticObservations,
       observationsError: 'The producer completeness proof has expired.',
+      producerProofCurrent: false,
     });
   });
 
@@ -52,6 +57,7 @@ describe('Skills observation Query presentation edge', () => {
     ).toEqual({
       observations: syntheticObservations,
       observationsError: 'Synthetic background refetch failure.',
+      producerProofCurrent: false,
     });
   });
 });

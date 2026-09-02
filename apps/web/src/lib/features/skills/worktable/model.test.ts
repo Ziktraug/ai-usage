@@ -25,6 +25,7 @@ const projection = (
   observations: SkillObservations | undefined,
   observationsError?: string,
   snapshot: unknown = syntheticSnapshot(),
+  producerProofCurrent = true,
 ) => {
   const view = createSkillsShellViewModel({
     inventories: syntheticInventories,
@@ -32,7 +33,12 @@ const projection = (
     pathname: '/skills',
     snapshot,
   });
-  const presentation = createSkillsPresentationProjection({ observations, observationsError, view });
+  const presentation = createSkillsPresentationProjection({
+    observations,
+    observationsError,
+    producerProofCurrent,
+    view,
+  });
   return { model: createSkillsWorktableModel({ presentation, view }), presentation };
 };
 
@@ -57,21 +63,33 @@ describe('Skills worktable observation presentation', () => {
     });
   });
 
-  test('masks retained observation facts while the producer proof is refreshing', () => {
+  test('retains observation facts while making absence-based claims provisional during refresh', () => {
     const queryPresentation = skillObservationQueryPresentation({
       data: syntheticObservations,
       error: null,
       isFetching: true,
       isStale: true,
     });
-    const { model, presentation } = projection(queryPresentation.observations, queryPresentation.observationsError);
-
-    expect(presentation.observations.state).toBe('loading');
-    expect(model.filters.find((filter) => filter.id === 'all')?.value).toBe('—');
-    expect(model.managedRows.find((row) => row.name === 'alpha-skill')?.lastSignalText).toBe('loading observations…');
-    expect(model.managedRows.find((row) => row.name === 'alpha-skill')?.cells.flatMap((cell) => cell.evidence)).toEqual(
-      [],
+    const { model, presentation } = projection(
+      queryPresentation.observations,
+      queryPresentation.observationsError,
+      syntheticSnapshot(),
+      queryPresentation.producerProofCurrent,
     );
+
+    expect(presentation.observations.state).toBe('ready');
+    expect(presentation.observations.view?.producerProofCurrent).toBe(false);
+    expect(model.filters.find((filter) => filter.id === 'all')?.value).not.toBe('—');
+    expect(model.filters.find((filter) => filter.id === 'to-delete')?.value).toContain('provisional');
+    expect(model.managedRows.find((row) => row.name === 'alpha-skill')?.lastSignalText).not.toContain('loading');
+    const retainedEvidence = model.managedRows
+      .find((row) => row.name === 'alpha-skill')
+      ?.cells.flatMap((cell) => cell.evidence);
+    expect(retainedEvidence).not.toEqual([]);
+    expect(retainedEvidence?.map((evidence) => evidence.text)).toContain('~1');
+    expect(retainedEvidence?.map((evidence) => evidence.text)).not.toContain('~≥1');
+    expect(presentation.observations.rowsByName.get('alpha-skill')?.verdictProvisional).toBe(false);
+    expect(presentation.observations.rowsByName.get('beta-skill')?.verdictProvisional).toBe(true);
   });
 
   test('marks an expected managed row omitted even when the joined response claims to be exact', () => {
