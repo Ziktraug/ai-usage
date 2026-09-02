@@ -12,6 +12,10 @@
     finalFocusEl?: () => HTMLElement | null;
     initialFocusEl?: () => HTMLElement | null;
     modal?: boolean;
+    /** Preventing the event keeps the drawer open, for surfaces that belong to it but render elsewhere. */
+    onFocusOutside?: (event: { detail: { originalEvent: Event }; preventDefault: () => void }) => void;
+    /** Preventing the event keeps the drawer open, for interactions it must not answer with a close. */
+    onInteractOutside?: (event: { detail: { originalEvent: Event }; preventDefault: () => void }) => void;
     onOpenChange: (open: boolean) => void;
     open: boolean;
     preventScroll?: boolean;
@@ -26,6 +30,8 @@
     finalFocusEl,
     initialFocusEl,
     modal,
+    onFocusOutside,
+    onInteractOutside,
     onOpenChange,
     open,
     preventScroll,
@@ -165,6 +171,8 @@
   {initialFocusEl}
   {modal}
   onExitComplete={handleExitComplete}
+  {onFocusOutside}
+  {onInteractOutside}
   onOpenChange={handleOpenChange}
   {preventScroll}
   {trapFocus}

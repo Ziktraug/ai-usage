@@ -325,6 +325,25 @@
   finalFocusEl={() => (previousFocus instanceof HTMLElement && previousFocus.isConnected ? previousFocus : null)}
   initialFocusEl={initialDrawerFocus}
   modal={false}
+  onFocusOutside={(event) => {
+    // The guard's confirmation renders in the shell, so focus entering it reads as an outside
+    // interaction and dismisses this drawer — re-attempting the navigation it just refused. The
+    // question is about this drawer, so it counts as part of it.
+    const target = event.detail.originalEvent.target;
+    if (target instanceof Element && target.closest('[role="alertdialog"]') !== null) {
+      event.preventDefault();
+    }
+  }}
+  onInteractOutside={(event) => {
+    // A click on the application navigation is already a departure, and it closes this drawer by
+    // changing the URL. Answering it with a close of this drawer's own puts two destinations in
+    // front of the unsaved-draft guard at once, and the one it keeps is decided by which arrives
+    // first — so discarding could replay the worktable rather than the link that was clicked.
+    const target = event.detail.originalEvent.target;
+    if (target instanceof Element && target.closest('[data-app-navigation]') !== null) {
+      event.preventDefault();
+    }
+  }}
   onOpenChange={(nextOpen) => {
     if (!nextOpen) {
       closeAndRestoreFocus().catch(() => undefined);
