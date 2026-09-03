@@ -100,6 +100,22 @@ export interface ProjectSkillRow {
   validationStatus: SkillValidationStatus;
 }
 
+const projectRuntimeLabels: Readonly<Record<ProjectSkillRowObservation['runtimeDirId'], string>> = {
+  'agents-project': 'Standard Agents',
+  'claude-project': 'Claude Code',
+};
+
+const projectPlacementLabels: Readonly<Record<ProjectSkillRowObservation['placement'], string>> = {
+  'external-symlink': 'external symlink',
+  'owned-directory': 'owned directory',
+  'project-symlink': 'project symlink',
+  'symlink-to-source': 'linked to shared source',
+};
+
+export const describeProjectSkillPlacement = (
+  observation: Pick<ProjectSkillRowObservation, 'placement' | 'runtimeDirId'>,
+): string => `${projectRuntimeLabels[observation.runtimeDirId]} · ${projectPlacementLabels[observation.placement]}`;
+
 export interface GlobalSkillExposure {
   actualPath?: string;
   canReconcile: boolean;
@@ -799,6 +815,26 @@ const reconcileActionVerb: Record<string, string> = {
   'unlink-managed-symlink': 'unlink',
 };
 
+/**
+ * The refusal reason arrives as machine text over a state slug — `refusing to mutate
+ * unmanaged-copy`. The plan panel is user copy, so the slug becomes words; an unrecognised reason
+ * passes through untranslated rather than being hidden.
+ */
+const REFUSAL_STATE_WORDS: Readonly<Record<string, string>> = {
+  'duplicate-name-conflict': 'a conflicting entry already uses this name',
+  'duplicate-same-content': 'an identical unmanaged duplicate sits here',
+  'unmanaged-copy': 'an unmanaged copy sits here',
+  'unmanaged-symlink': 'an unmanaged symlink sits here',
+};
+
+const REFUSAL_REASON_PATTERN = /^refusing to mutate (?<state>\S+)$/u;
+
+const humanizeRefusalReason = (reason: string): string => {
+  const state = REFUSAL_REASON_PATTERN.exec(reason)?.groups?.state;
+  const words = state === undefined ? undefined : REFUSAL_STATE_WORDS[state];
+  return words ?? reason;
+};
+
 export const describeReconcileActions = (
   actions: readonly ProjectionAction[],
   targets: readonly SkillTarget[],
@@ -808,7 +844,7 @@ export const describeReconcileActions = (
   const skipped: string[] = [];
   for (const action of actions) {
     if (action.type === 'refuse-unmanaged-mutation') {
-      skipped.push(`${action.skillName} @ ${targetLabel(action.targetId)} — ${action.reason}`);
+      skipped.push(`${action.skillName} @ ${targetLabel(action.targetId)} — ${humanizeRefusalReason(action.reason)}`);
       continue;
     }
     if (action.type === 'noop') {

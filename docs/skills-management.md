@@ -25,6 +25,13 @@ duplicate acquisition. Filesystem access and mutation rules stay behind
 `@ai-usage/skills` workflows and server-only web modules reached through the
 explicit Web RPC boundary.
 
+Within the browser, the shell builds one immutable presentation projection from
+the accepted Query results and passes it to every Skills renderer. One
+shell-lived management-operation episode owns the Query mutation observer,
+contract dispatch, cache publication and invalidation, pending state, reconcile
+plan, and placement-scoped outcome. Configuration drafts remain local to their
+form and TanStack Query remains the only owner of server state.
+
 ## Storage
 
 User-local skill configuration lives in the existing ai-usage config file:
@@ -82,39 +89,74 @@ flow:
 Draft -> Source repository -> Runtimes
 ```
 
-Global and configured projects are peer scopes in the left navigation tree.
-Selecting a scope shows an overview. Selecting a managed global skill opens its
-canonical `SKILL.md` as the dominant, directly editable document without a
-separate preview or Edit mode. Save is explicit through the visible button or
-`Ctrl+S` / `Cmd+S`; there is no autosave. A successful Save writes only the
-source repository and leaves the document editable. It never installs, repairs,
-enables, disables, or otherwise reconciles a runtime projection.
+`/skills` has one worktable rather than separate tree, overview, Inspector, and
+matrix surfaces. Its filter strip keeps All, To adopt, Links healthy, To delete,
+and Catalogue only on the same table. Rows are grouped by the decision they
+support: Managed, To adopt, Projects, and Catalogue only. Each runtime or
+harness column joins its placement mark with that harness's invocation evidence;
+recorded and reconstructed counts remain visibly distinct and are never added.
+Project repositories are one expandable summary row each. A durable
+project-owned observation remains in its repository group even when the current
+inventory no longer carries that skill.
 
-The right panel becomes the selected global document's Inspector. It contains
-validation and grouped diagnostics, document token and invocation metadata,
-source identity, enabled state, and exposure in each configured runtime. Runtime
-Install or Repair and source Enable or Disable remain explicit actions in that
-Inspector, separate from document Save. Project-owned skills keep their
-read-only `SKILL.md` view until an adoption workflow provides a canonical source
+Selecting a managed or project-owned skill opens a non-modal drawer over the
+worktable while the URL remains the selection authority. The drawer carries
+placement, name-scoped observation evidence, validation findings, and the
+document. A managed `SKILL.md` is directly editable without a preview-first
+mode; Save is explicit through the visible button or `Ctrl+S` / `Cmd+S`, never
+autosave. Saving updates only the source repository and never reconciles a
+runtime projection. Runtime Link or Repair and source Enable or Disable are
+separate controls in the drawer or worktable. Project-owned documents remain
+read-only until a separate adoption workflow creates a canonical source
 document.
 
-The skills-by-runtimes matrix remains available as a secondary exposure view.
-Status dots are used inside matrix cells where the runtime column gives them
-context, but the matrix is not the default object model of the page.
+The retired `/skills/matrix`, `/skills/global`, and project-scope pages redirect
+to the worktable. Per-skill URLs remain drawer destinations. Configuration and
+the grouped unmanaged-runtime backlog live in folds below the table, so retiring
+the matrix removes no operation or diagnostic destination.
 
 Unmanaged runtime entries are shown as a grouped, collapsed consolidation
 backlog. They are never rendered as a flat list; adopting or importing them into
 the source repository is future work.
 
 Disabling a skill is a first-class toggle. It never requires moving files by
-hand, and the UI keeps disabled skills visible in a collapsed shelf.
+hand, and the UI keeps disabled skills visible in the Managed group with their
+invocation history and without a placement claim.
 
-Health is reported as separate counters: healthy links, to repair, to
-consolidate, and disabled. The UI does not merge those signals into one "needs
-attention" number.
+Health remains separate from invocation evidence. The Links healthy filter
+states healthy links over expected links, while To adopt, To delete, and
+Catalogue only count skill names under their own evidence rules. The UI does
+not merge those signals into one "needs attention" number.
 
 Skill consumers are called runtimes in UI copy and docs. "Harness" remains
-reserved for usage-report collectors.
+reserved for usage-report collectors — which is exactly why skill signals are
+reported per *harness*: they come from the collectors, not from the projection
+targets.
+
+Skill observations are a second axis on the same inventory, so they render in
+the worktable cells and drawer rather than beside placement. A plain number is
+a `declared` invocation and a tilde-prefixed number is an `inferred` one;
+accessible text spells out both tiers and their harness. `exposed` remains
+availability only and is folded into Catalogue only or described in the drawer.
+Signal dates older than ninety days carry a textual `stale` marker. Cursor
+records nothing, so it is stated once as *not observable* and never rendered as
+a zero.
+
+Managed skills installed in every enabled runtime with no invocation evidence
+form the To delete population only when the invocation proof is current and
+complete. Runtime-installed unmanaged names with invocation evidence form To
+adopt; harness- and plugin-owned names remain visible as upstream evidence; and
+project-owned names stay in their repository group. When invocation history is
+bounded, partially unreadable, rejected, skipped, stale, or being refreshed,
+positive observations remain visible while every absence-derived verdict says
+*no invocation in loaded history* and remains provisional. Count caveats name
+only the affected harness and tier; exposure-only incompleteness does not weaken
+an otherwise complete invocation verdict. Adopting unmanaged evidence into the
+source repository remains future work.
+
+See [ADR 0022](adr/0022-skill-observation-tiers-and-observability.md) for the
+invariants and `docs/skills-management-spec.md` for the per-harness coverage
+table.
 
 Bulk runtime reconciliation remains preview-first and is distinct from saving a
 source document. "Reconcile all…" plans the actions server-side without mutating

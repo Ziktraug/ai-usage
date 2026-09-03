@@ -2,73 +2,26 @@
   import { css, cx } from '@ai-usage/design-system/css';
   import { panel, skillsDisclosurePanel, skillsDisclosureSummary } from '@ai-usage/design-system/report';
   import type { SkillManagementSnapshot } from '@ai-usage/skills';
-  import { createMutation, useQueryClient } from '@tanstack/svelte-query';
   import { untrack } from 'svelte';
-  import { applySkillsConfigurationSnapshotToCache, skillsMutationOptions } from '../../../query/options/skills';
-  import { useOptionalWebQueryRpcContext } from '../../../query/rpc-context.svelte';
-  import { createSkillsClient } from '../../../rpc/skills-client';
   import type { SkillsShellSlotContext } from '../shell/slot-context';
   import {
     editSourceRepositoryDraft,
-    runSkillsConfigurationOperation,
-    type SkillsConfigurationClient,
     type SkillsConfigurationOperation,
     skillsConfigInput,
-    skillsConfigurationRefreshesDependents,
     sourceRepositoryDraftFrom,
     syncSourceRepositoryDraft,
   } from './model';
   import { button, compactStack, errorNotice, heading, muted, notice, pathText, primaryButton } from './styles';
 
-  let {
-    client: injectedClient,
-    context,
-  }: {
-    client?: SkillsConfigurationClient;
-    context: SkillsShellSlotContext;
-  } = $props();
+  let { context }: { context: SkillsShellSlotContext } = $props();
 
-  const queryClient = useQueryClient();
-  const rpc = useOptionalWebQueryRpcContext()?.rpc;
-  let browserClient: SkillsConfigurationClient | undefined;
   let observedSourceRepoPath = $state(untrack(() => context.snapshot.config.sourceRepoPath ?? ''));
   let sourceDraft = $state(untrack(() => sourceRepositoryDraftFrom(context.snapshot)));
   let projectPathDraft = $state('');
-  let operationMessage = $state<{ message: string; tone: 'error' | 'success' } | null>(null);
-
-  const resolveClient = (): SkillsConfigurationClient => {
-    if (injectedClient) {
-      return injectedClient;
-    }
-    if (!rpc) {
-      throw new Error('The shared browser RPC context is unavailable.');
-    }
-    browserClient ??= createSkillsClient(rpc.skills);
-    return browserClient;
-  };
-  const operationMutation = createMutation(() =>
-    skillsMutationOptions(
-      'configuration',
-      async (variables: { operation: SkillsConfigurationOperation; pendingLabel: string; successMessage: string }) => {
-        const client = resolveClient();
-        const result = await runSkillsConfigurationOperation(client, variables.operation);
-        if (!result.ok) {
-          throw new Error(result.error);
-        }
-        await applySkillsConfigurationSnapshotToCache(
-          queryClient,
-          client,
-          result.snapshot,
-          skillsConfigurationRefreshesDependents(variables.operation),
-        );
-        return { ...result, ...variables };
-      },
-    ),
+  const pendingOperation = $derived(context.management.pendingOperation);
+  const operationNotice = $derived(
+    context.management.notice?.owner === 'configuration' ? context.management.notice : null,
   );
-  const pendingOperation = $derived(
-    operationMutation.isPending ? (operationMutation.variables?.pendingLabel ?? null) : null,
-  );
-  const operationError = $derived(operationMutation.error instanceof Error ? operationMutation.error.message : null);
   const busyAttributes = (busy: boolean) =>
     ({
       'aria-busy': busy ? 'true' : 'false',
@@ -79,17 +32,17 @@
     pendingLabel: string,
     successMessage: string,
   ): Promise<SkillManagementSnapshot | undefined> => {
-    if (operationMutation.isPending) {
+    if (pendingOperation !== null) {
       return;
     }
-    operationMessage = null;
-    try {
-      const result = await operationMutation.mutateAsync({ operation, pendingLabel, successMessage });
-      operationMessage = { message: successMessage, tone: 'success' };
-      return result.snapshot;
-    } catch {
-      return;
-    }
+    const result = await context.management.execute({
+      kind: 'configuration',
+      operation,
+      owner: 'configuration',
+      pendingLabel,
+      successMessage,
+    });
+    return result?.snapshot;
   };
 
   const saveSource = async (): Promise<void> => {
@@ -317,8 +270,8 @@
   </div>
 </details>
 
-{#if operationError}
-  <p class={cx(notice, errorNotice)} role="alert">{operationError}</p>
-{:else if operationMessage}
-  <p aria-live="polite" class={notice} role="status">{operationMessage.message}</p>
+{#if operationNotice?.tone === 'error'}
+  <p class={cx(notice, errorNotice)} role="alert">{operationNotice.message}</p>
+{:else if operationNotice}
+  <p aria-live="polite" class={notice} role="status">{operationNotice.message}</p>
 {/if}

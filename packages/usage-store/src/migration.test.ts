@@ -4,15 +4,23 @@ import { chmod, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { ProviderQuotaObservation } from '@ai-usage/report-core/provider-quota';
+import { completeSkillObservationCollection } from '@ai-usage/report-core/skill-observation';
 import { actualCost, normalizeUsageRow } from '@ai-usage/report-core/usage-row';
 import { Effect } from 'effect';
 import {
   queryLatestProviderQuotaObservations,
   queryProviderQuotaObservations,
+  querySkillObservations,
   queryUsageLocalMachine,
   USAGE_STORE_SCHEMA_VERSION,
 } from './reader';
-import { importLocalRows, importProviderQuotaBatch, initializeUsageStore, updateUsageMachineLabel } from './writer';
+import {
+  importLocalRows,
+  importProviderQuotaBatch,
+  importSkillObservations,
+  initializeUsageStore,
+  updateUsageMachineLabel,
+} from './writer';
 
 const temporaryRoots: string[] = [];
 
@@ -272,5 +280,111 @@ describe('usage-store forward migration', () => {
     expect(latest.observations.map(({ firstObservedAt }) => firstObservedAt)).toEqual(['2026-07-15T01:00:00.000Z']);
     expect(streamCount.count).toBe(1);
     expect(headCount.count).toBe(1);
+  });
+
+  test('adds the skill observation family to a populated store already on the current version', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'usage-store-skill-observation-migration-'));
+    temporaryRoots.push(root);
+    const dbPath = path.join(root, 'usage-store.sqlite');
+    await Effect.runPromise(initializeUsageStore({ dbPath }));
+    const machine = { id: 'legacy-machine', label: 'Legacy machine' };
+    await Effect.runPromise(updateUsageMachineLabel({ dbPath, machine }));
+    await Effect.runPromise(
+      importLocalRows({
+        dbPath,
+        machine,
+        rows: [
+          {
+            ...normalizeUsageRow({
+              calls: 1,
+              cost: actualCost(null),
+              date: new Date('2026-08-01T08:00:00.000Z'),
+              durationMs: 1000,
+              endDate: new Date('2026-08-01T08:01:00.000Z'),
+              harness: 'Claude Code',
+              model: 'claude-sonnet-4-6',
+              name: 'Legacy session',
+              project: 'ai-usage',
+              provider: 'Claude sub',
+              tokens: { cr: 0, cw: 0, in: 10, out: 20 },
+            }),
+            source: {
+              harnessKey: 'claude',
+              sourcePath: '/home/alex/Projects/ai-usage',
+              sourceSessionId: 'legacy-session',
+            },
+          },
+        ],
+      }),
+    );
+
+    // A store written before this family existed carries the current
+    // user_version, so absence of the table is the only available signal.
+    const beforeMigration = new Database(dbPath, { create: false, readwrite: true });
+    expect(
+      beforeMigration.query('SELECT origin_machine_id, harness_key, source_authority FROM usage_rows').all(),
+    ).toEqual([{ harness_key: 'claude', origin_machine_id: machine.id, source_authority: 'local-observed' }]);
+    beforeMigration.exec('DROP TABLE skill_observations;');
+    beforeMigration.exec('DROP TABLE skill_observation_collection_state;');
+    const droppedVersion = beforeMigration.query('PRAGMA user_version').get() as { user_version: number };
+    beforeMigration.close(true);
+    expect(droppedVersion.user_version).toBe(USAGE_STORE_SCHEMA_VERSION);
+
+    expect(await Effect.runPromise(initializeUsageStore({ dbPath }))).toBe(USAGE_STORE_SCHEMA_VERSION);
+    expect(await Effect.runPromise(initializeUsageStore({ dbPath }))).toBe(USAGE_STORE_SCHEMA_VERSION);
+    const legacyCompleteness = await Effect.runPromise(querySkillObservations({ dbPath }));
+    expect(legacyCompleteness.collectionInvocationIncomplete).toBe(true);
+
+    await Effect.runPromise(
+      importSkillObservations({
+        collection: {
+          completeness: completeSkillObservationCollection(),
+          harnessKey: 'opencode',
+        },
+        dbPath,
+        machineId: 'machine-a',
+        observations: [
+          {
+            argsPresent: null,
+            harnessKey: 'opencode',
+            observationKey: 'call_abc',
+            observedAt: '2026-08-01T09:00:00.000Z',
+            projectPath: null,
+            resolvedPath: null,
+            sessionId: 'session-1',
+            skillName: 'write-a-skill',
+            success: true,
+            tier: 'declared',
+          },
+        ],
+      }),
+    );
+
+    const migrated = new Database(dbPath, { create: false, readonly: true });
+    const indexes = migrated
+      .query("SELECT name FROM sqlite_schema WHERE type = 'index' AND tbl_name = 'skill_observations' ORDER BY name")
+      .all() as { name: string }[];
+    const rowCount = migrated.query('SELECT COUNT(*) AS count FROM skill_observations').get() as { count: number };
+    const stateCount = migrated.query('SELECT COUNT(*) AS count FROM skill_observation_collection_state').get() as {
+      count: number;
+    };
+    migrated.close(true);
+
+    expect(rowCount.count).toBe(1);
+    expect(stateCount.count).toBe(2);
+    expect(indexes.map(({ name }) => name)).toEqual([
+      'idx_skill_observations_identity',
+      'idx_skill_observations_machine',
+      'idx_skill_observations_range',
+      'idx_skill_observations_skill',
+      // The tier-group read's covering index, added additively: `CREATE INDEX IF NOT EXISTS` in the
+      // same schema statement as the other four, with no schema-version bump, so an existing store
+      // gains it on the next open rather than through a migration step of its own.
+      'idx_skill_observations_tier',
+    ]);
+
+    const read = await Effect.runPromise(querySkillObservations({ dbPath }));
+    expect(read.skipped).toBe(0);
+    expect(read.observations.map(({ observation }) => observation.skillName)).toEqual(['write-a-skill']);
   });
 });

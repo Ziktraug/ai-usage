@@ -9,6 +9,6 @@ describe('Skills fallback navigation request', () => {
 
     expect(request.state).toBe(state);
     expect(request.intent).toMatchObject({ replace: true, resetScroll: false });
-    expect(String(request.intent.url)).toBe('http://local/skills/global?utm=kept#section');
+    expect(String(request.intent.url)).toBe('http://local/skills?utm=kept#section');
   });
 });

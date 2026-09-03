@@ -1,9 +1,9 @@
 import type { SkillManagementSnapshot } from '@ai-usage/skills';
 import type { ProjectSkillMarkdownDocument, SkillMarkdownDocument } from '@ai-usage/web-contract/skills';
+import type { SkillsManagementOperationEpisodePort } from '../management/operation-episode.svelte';
+import type { SkillsPresentationProjection } from '../presentation';
 import type { SkillsShellViewModel } from './model';
 import type { SkillsDraftGuardPort } from './snapshot-controller';
-
-export type SkillsHealthSlotPlacement = 'detail' | 'inspector';
 
 export interface SkillsPendingSnapshotDecision {
   readonly discard: () => Promise<boolean>;
@@ -24,6 +24,10 @@ export interface SkillsSnapshotUpdatePort {
  */
 export interface SkillsShellSlotContext {
   readonly document: ProjectSkillMarkdownDocument | SkillMarkdownDocument | undefined;
+  /** One shell-lived Query mutation episode shared by every management presentation. */
+  readonly management: SkillsManagementOperationEpisodePort;
+  /** Joined immutable presentation facts derived once from the accepted Query results. */
+  readonly presentation: SkillsPresentationProjection;
   readonly snapshot: SkillManagementSnapshot;
   readonly snapshotUpdates: SkillsSnapshotUpdatePort;
   readonly view: SkillsShellViewModel;

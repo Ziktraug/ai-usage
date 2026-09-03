@@ -4,6 +4,7 @@ import type {
   ProjectSkillMarkdownDocument,
   SkillManagementSnapshot,
   SkillMarkdownDocument,
+  SkillObservations,
 } from '@ai-usage/web-contract/skills';
 
 type WireSourceSkill = SkillManagementSnapshot['skills'][number];
@@ -43,6 +44,201 @@ export const syntheticSnapshot = (
   unmanagedEntries: [],
 });
 
+/**
+ * The already-joined observation payload, as the server produces it: one skill of each verdict, and
+ * Cursor enumerated as unable to observe. Written out rather than derived so the fixture states
+ * exactly what the surface is being asked to render — the verdict rules themselves are tested
+ * against `joinSkillObservations` directly.
+ */
+export const syntheticObservations: SkillObservations = {
+  harnesses: [
+    { harnessKey: 'claude', label: 'Claude Code', observability: 'observable' },
+    { harnessKey: 'codex', label: 'Codex', observability: 'observable' },
+    { harnessKey: 'opencode', label: 'OpenCode', observability: 'observable' },
+    { harnessKey: 'cursor', label: 'Cursor', observability: 'not-observable' },
+  ],
+  harnessIncompleteness: { exposure: [], exposureUnattributed: false, invocation: [], invocationUnattributed: false },
+  invocationLowerBound: false,
+  lowerBound: false,
+  producerCompletenessMissing: false,
+  producerProofValidUntil: '2099-08-02T09:05:00.000Z',
+  skills: [
+    {
+      deletionCandidate: false,
+      lastObservedAt: '2026-08-02T09:00:00.000Z',
+      managed: true,
+      projectedEverywhere: true,
+      resolvedPaths: ['/synthetic/source/skills/alpha-skill'],
+      resolvedPathsTruncated: false,
+      skillName: 'alpha-skill',
+      tallies: [
+        {
+          count: 2,
+          harnessKey: 'claude',
+          harnessLabel: 'Claude Code',
+          lastObservedAt: '2026-08-02T09:00:00.000Z',
+          tier: 'declared',
+        },
+        {
+          count: 1,
+          harnessKey: 'codex',
+          harnessLabel: 'Codex',
+          lastObservedAt: '2026-08-01T09:00:00.000Z',
+          tier: 'inferred',
+        },
+      ],
+      unmanagedResidence: null,
+      verdict: 'invoked',
+      verdictProvisional: false,
+    },
+    {
+      // Installed everywhere without invocation evidence: the deletion candidate.
+      deletionCandidate: true,
+      lastObservedAt: null,
+      managed: true,
+      projectedEverywhere: true,
+      resolvedPaths: [],
+      resolvedPathsTruncated: false,
+      skillName: 'beta-skill',
+      tallies: [],
+      unmanagedResidence: null,
+      verdict: 'never-observed',
+      verdictProvisional: false,
+    },
+    {
+      // Invoked, resolving to no inventory entry: the adoption candidate.
+      deletionCandidate: false,
+      lastObservedAt: '2026-08-01T10:00:00.000Z',
+      managed: false,
+      projectedEverywhere: false,
+      resolvedPaths: [],
+      resolvedPathsTruncated: false,
+      skillName: 'artifact-design',
+      tallies: [
+        {
+          count: 1,
+          harnessKey: 'claude',
+          harnessLabel: 'Claude Code',
+          lastObservedAt: '2026-08-01T10:00:00.000Z',
+          tier: 'declared',
+        },
+      ],
+      // Harness-bundled: no runtime-directory entry and no project directory claims the name.
+      unmanagedResidence: 'external',
+      verdict: 'invoked-unmanaged',
+      verdictProvisional: false,
+    },
+    {
+      // Available to a model without invocation evidence. Availability is not invocation.
+      deletionCandidate: false,
+      lastObservedAt: '2026-08-01T11:00:00.000Z',
+      managed: false,
+      projectedEverywhere: false,
+      resolvedPaths: [],
+      resolvedPathsTruncated: false,
+      skillName: 'imagegen',
+      tallies: [
+        {
+          count: 1,
+          harnessKey: 'codex',
+          harnessLabel: 'Codex',
+          lastObservedAt: '2026-08-01T11:00:00.000Z',
+          tier: 'exposed',
+        },
+      ],
+      unmanagedResidence: 'external',
+      verdict: 'offered-only',
+      verdictProvisional: false,
+    },
+    {
+      // A project-local skill, observed. It lives in a project's own runtime directory rather than
+      // the managed source repository, so it is unmanaged by construction — and on a real machine
+      // this is the *majority* population, not an edge case. Every fixture used to hold global
+      // skills only, which is precisely why the project-skill detail surface shipped with no
+      // observations at all and no test noticed.
+      deletionCandidate: false,
+      lastObservedAt: '2026-08-03T12:00:00.000Z',
+      managed: false,
+      projectedEverywhere: false,
+      resolvedPaths: ['/synthetic/project/.agents/skills/project-review'],
+      resolvedPathsTruncated: false,
+      skillName: 'project-review',
+      tallies: [
+        {
+          count: 4,
+          harnessKey: 'codex',
+          harnessLabel: 'Codex',
+          lastObservedAt: '2026-08-03T12:00:00.000Z',
+          tier: 'inferred',
+        },
+        {
+          count: 2,
+          harnessKey: 'opencode',
+          harnessLabel: 'OpenCode',
+          lastObservedAt: '2026-08-02T12:00:00.000Z',
+          tier: 'declared',
+        },
+      ],
+      // Its resolved directory sits inside the known synthetic project: deliberately scoped.
+      unmanagedResidence: 'project-owned',
+      verdict: 'invoked-unmanaged',
+      verdictProvisional: false,
+    },
+  ],
+  skipped: 0,
+};
+
+/** The same payload from a read that could not prove absence: every absence claim is provisional. */
+/**
+ * A read whose *invocation* evidence was cut short — the only kind that makes an absence claim
+ * provisional. Exposure truncation alone leaves the verdicts intact and is covered separately by
+ * `syntheticExposureTruncatedObservations`.
+ */
+export const syntheticProvisionalObservations: SkillObservations = {
+  ...syntheticObservations,
+  harnessIncompleteness: { exposure: [], exposureUnattributed: true, invocation: [], invocationUnattributed: true },
+  invocationLowerBound: true,
+  lowerBound: true,
+  skills: syntheticObservations.skills.map((skill) => ({
+    ...skill,
+    verdictProvisional: !skill.tallies.some((tally) => tally.tier === 'declared' || tally.tier === 'inferred'),
+  })),
+};
+
+/**
+ * The ordinary state of a store with real Codex history: the exposure catalogue outran the read
+ * budget, every recorded invocation is present, and no verdict is weakened. The counts are floors;
+ * the verdicts are not provisional.
+ */
+export const syntheticExposureTruncatedObservations: SkillObservations = {
+  ...syntheticObservations,
+  harnessIncompleteness: { exposure: [], exposureUnattributed: true, invocation: [], invocationUnattributed: false },
+  invocationLowerBound: false,
+  lowerBound: true,
+};
+
+/**
+ * The operator's measured machine: Claude Code and OpenCode collected cleanly, one permanently
+ * truncated Codex tool-call line was rejected. The loss is named, so only Codex's counts are floors
+ * — while every *cross-harness* absence claim stays provisional, because absence still cannot be
+ * proved while any observable harness is short.
+ */
+export const syntheticCodexRejectedObservations: SkillObservations = {
+  ...syntheticObservations,
+  harnessIncompleteness: {
+    exposure: ['codex'],
+    exposureUnattributed: false,
+    invocation: ['codex'],
+    invocationUnattributed: false,
+  },
+  invocationLowerBound: true,
+  lowerBound: true,
+  skills: syntheticObservations.skills.map((skill) => ({
+    ...skill,
+    verdictProvisional: !skill.tallies.some((tally) => tally.tier === 'declared' || tally.tier === 'inferred'),
+  })),
+};
+
 export const syntheticKnownPaths: readonly KnownSkillProjectPath[] = [
   {
     groupId: 'synthetic-group',
@@ -68,6 +264,23 @@ export const syntheticInventories: readonly ProjectSkillInventory[] = [
         placement: 'owned-directory',
         runtimeDirId: 'agents-project',
         skillMdPath: '/synthetic/project/.agents/skills/project-review/SKILL.md',
+        tokenCount: { approximate: true, references: 0, skillMd: 4, total: 4 },
+        validationStatus: 'valid',
+      },
+      {
+        // A project-local install whose name is *also* a managed skill — the operator's real
+        // `pr-review` shape. Observations aggregate by name, so this install and the managed one
+        // share one set of counts, and the managed-derived verdict belongs to the other install.
+        // No fixture had this collision, which is exactly why the misattribution shipped.
+        description: 'A project copy of a name that is also managed',
+        diagnostics: [],
+        invocation: 'auto',
+        markdownReadable: true,
+        name: 'alpha-skill',
+        path: '/synthetic/project/.agents/skills/alpha-skill',
+        placement: 'owned-directory',
+        runtimeDirId: 'agents-project',
+        skillMdPath: '/synthetic/project/.agents/skills/alpha-skill/SKILL.md',
         tokenCount: { approximate: true, references: 0, skillMd: 4, total: 4 },
         validationStatus: 'valid',
       },

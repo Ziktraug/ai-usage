@@ -233,6 +233,8 @@ description: Helps with adapter tests
         readModel: {
           readCurrentLocalProjectSources: () =>
             Promise.reject({ message: 'private database path', reason: 'schema-too-new' }),
+          readLocalMachine: () => Promise.resolve({ id: 'machine-local', label: 'Local machine' }),
+          readSkillObservations: () => Promise.reject(new Error('Unexpected skill observation read')),
         },
       });
 
@@ -265,6 +267,8 @@ description: Helps with adapter tests
         homePath: path.join(root, 'home'),
         readModel: {
           readCurrentLocalProjectSources: () => Promise.resolve({ revision: 'revision-a', sources }),
+          readLocalMachine: () => Promise.resolve({ id: 'machine-local', label: 'Local machine' }),
+          readSkillObservations: () => Promise.reject(new Error('Unexpected skill observation read')),
         },
       });
 
@@ -274,6 +278,176 @@ description: Helps with adapter tests
         error: { message: 'Project discovery exceeds its response budget.', tag: 'Error' },
         ok: false,
       });
+    } finally {
+      await rm(root, { force: true, recursive: true });
+    }
+  });
+
+  test('reads skill observations through the read-only seam without touching the skills domain', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'ai-usage-skills-server-observations-'));
+    try {
+      const observationReadScopes: unknown[] = [];
+      const dependencies = createSkillsServerDependencies({
+        configCwd: root,
+        homePath: path.join(root, 'home'),
+        now: () => new Date('2026-08-01T10:00:00.000Z'),
+        readModel: {
+          // The observation read consults project discovery for residence classification (plan
+          // 112), so the seam now includes it — still read-only, still outside the skills domain.
+          readCurrentLocalProjectSources: () => Promise.resolve({ revision: 'revision-a', sources: [] }),
+          readLocalMachine: () => Promise.resolve({ id: 'machine-local', label: 'Local machine' }),
+          readSkillObservations: (options) => {
+            observationReadScopes.push(options);
+            return Promise.resolve({
+              harnesses: [
+                { harnessKey: 'claude', label: 'Claude Code', observability: 'observable' as const },
+                { harnessKey: 'cursor', label: 'Cursor', observability: 'not-observable' as const },
+              ],
+              harnessIncompleteness: {
+                exposure: [],
+                exposureUnattributed: false,
+                invocation: [],
+                invocationUnattributed: false,
+              },
+              invocationLowerBound: false,
+              lowerBound: false,
+              producerCompletenessMissing: false,
+              producerProofValidUntil: '2026-08-01T10:01:00.000Z',
+              skills: [
+                {
+                  lastObservedAt: '2026-08-01T09:00:00.000Z',
+                  resolvedPaths: [],
+                  resolvedPathsTruncated: false,
+                  skillName: 'artifact-design',
+                  tallies: [
+                    {
+                      count: 1,
+                      harnessKey: 'claude',
+                      harnessLabel: 'Claude Code',
+                      lastObservedAt: '2026-08-01T09:00:00.000Z',
+                      tier: 'declared' as const,
+                    },
+                  ],
+                },
+              ],
+              skipped: 0,
+            });
+          },
+        },
+        readSourcePolicyOverrides: () =>
+          Promise.resolve({
+            'opencode.sessions': { enabled: false },
+          }),
+      });
+
+      const result = await createSkillsServerAdapter(dependencies).readObservations();
+
+      expect(result).toMatchObject({
+        data: {
+          harnesses: [{ harnessKey: 'claude' }, { harnessKey: 'cursor', observability: 'not-observable' }],
+          producerProofValidUntil: '2026-08-01T10:01:00.000Z',
+          // The join classified the unmanaged name from the wired inputs: no runtime entry, no
+          // known project directory, so it lives outside anything this product manages.
+          skills: [{ skillName: 'artifact-design', unmanagedResidence: 'external', verdict: 'invoked-unmanaged' }],
+        },
+        ok: true,
+      });
+      expect(observationReadScopes).toEqual([
+        {
+          expectedProducerHarnessKeys: ['claude', 'codex', 'opencode'],
+          incompleteProducerHarnessKeys: ['opencode'],
+          machineId: 'machine-local',
+          minimumProducerCollectedAt: '2026-08-01T09:56:00.000Z',
+        },
+      ]);
+    } finally {
+      await rm(root, { force: true, recursive: true });
+    }
+  });
+
+  test('joins an unobserved project skill before the response reaches the browser', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'ai-usage-skills-server-project-observations-'));
+    try {
+      const projectPath = path.join(root, 'project');
+      await writeProjectSkill(path.join(projectPath, '.agents', 'skills', 'project-review'), 'project-review');
+      const dependencies = {
+        ...createSkillsServerDependencies({
+          configCwd: root,
+          homePath: path.join(root, 'home'),
+          readModel: {
+            readCurrentLocalProjectSources: () => Promise.resolve({ revision: 'revision-a', sources: [] }),
+            readLocalMachine: () => Promise.resolve({ id: 'machine-local', label: 'Local machine' }),
+            readSkillObservations: () =>
+              Promise.resolve({
+                harnesses: [
+                  { harnessKey: 'claude', label: 'Claude Code', observability: 'observable' as const },
+                  { harnessKey: 'cursor', label: 'Cursor', observability: 'not-observable' as const },
+                ],
+                harnessIncompleteness: {
+                  exposure: [],
+                  exposureUnattributed: false,
+                  invocation: [],
+                  invocationUnattributed: false,
+                },
+                invocationLowerBound: false,
+                lowerBound: false,
+                producerCompletenessMissing: false,
+                producerProofValidUntil: '2026-08-01T10:01:00.000Z',
+                skills: [],
+                skipped: 0,
+              }),
+          },
+        }),
+        readConfig: () => Promise.resolve({ skills: { projectPaths: [projectPath] } }),
+      };
+
+      const adapter = createSkillsServerAdapter(dependencies);
+      const inventories = await adapter.readProjectInventories();
+      expect(inventories.ok ? inventories.data.flatMap((inventory) => inventory.observations) : []).toMatchObject([
+        { name: 'project-review' },
+      ]);
+      const result = await adapter.readObservations();
+
+      expect(result).toMatchObject({
+        data: {
+          skills: [
+            {
+              skillName: 'project-review',
+              tallies: [],
+              unmanagedResidence: 'project-owned',
+              verdict: 'never-observed',
+            },
+          ],
+        },
+        ok: true,
+      });
+    } finally {
+      await rm(root, { force: true, recursive: true });
+    }
+  });
+
+  test('reports an unreadable store as unavailable rather than as zero observations', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'ai-usage-skills-server-observations-failure-'));
+    try {
+      const dependencies = createSkillsServerDependencies({
+        configCwd: root,
+        homePath: path.join(root, 'home'),
+        readModel: {
+          readCurrentLocalProjectSources: () => Promise.resolve({ revision: 'revision-a', sources: [] }),
+          readLocalMachine: () => Promise.resolve({ id: 'machine-local', label: 'Local machine' }),
+          readSkillObservations: () => Promise.reject({ message: 'private database path', reason: 'store-missing' }),
+        },
+      });
+
+      const result = await createSkillsServerAdapter(dependencies).readObservations();
+
+      // An empty dataset here would draw every observable harness as a zero for every skill, which
+      // is exactly the false reading ADR 0022 forbids.
+      expect(result).toEqual({
+        error: { message: 'Skill observations are unavailable.', tag: 'Error' },
+        ok: false,
+      });
+      expect(JSON.stringify(result)).not.toContain('private database path');
     } finally {
       await rm(root, { force: true, recursive: true });
     }
@@ -368,6 +542,95 @@ describe('skills server input validation', () => {
         sessions: 3,
       },
     ]);
+  });
+
+  test('strips the redundant machine suffix from local project labels', () => {
+    const result = knownSkillProjectPathsFromReportPayload(
+      {
+        projectGroups: [
+          {
+            grouped: false,
+            id: 'source:secret',
+            // Report labels disambiguate machines; this surface is filtered to one, so the
+            // suffix restates the only possible value on every row.
+            name: 'secret — Workstation',
+            sources: [
+              {
+                label: 'secret — Workstation',
+                machineId: 'local-machine',
+                machineLabel: 'Workstation',
+                project: 'secret',
+                sessions: 1,
+                sourcePath: '/home/nathan/Projects/Github/secret',
+              },
+            ],
+          },
+        ],
+        rows: [],
+      },
+      { directoryExists: () => true, localMachineId: 'local-machine' },
+    );
+
+    expect(result).toMatchObject([{ groupLabel: 'secret', label: 'secret' }]);
+    // A label that merely mentions the machine mid-name is left alone.
+    expect(
+      knownSkillProjectPathsFromReportPayload(
+        {
+          projectGroups: [],
+          rows: [],
+          sources: [
+            {
+              label: 'Workstation tools',
+              machineId: 'local-machine',
+              machineLabel: 'Workstation',
+              project: 'workstation-tools',
+              sessions: 1,
+              sourcePath: '/home/nathan/Projects/Github/workstation-tools',
+            },
+          ],
+        },
+        { directoryExists: () => true, localMachineId: 'local-machine' },
+      ),
+    ).toMatchObject([{ label: 'Workstation tools' }]);
+  });
+
+  test('drops agent worktree checkouts so a repo is listed once, not once per session', () => {
+    const result = knownSkillProjectPathsFromReportPayload(
+      {
+        projectGroups: [],
+        rows: [],
+        sources: [
+          {
+            label: 'ai-usage',
+            machineId: 'local-machine',
+            machineLabel: 'Workstation',
+            project: 'ai-usage',
+            sessions: 3,
+            sourcePath: '/home/nathan/Projects/Github/ai-usage',
+          },
+          {
+            label: 'ai-usage',
+            machineId: 'local-machine',
+            machineLabel: 'Workstation',
+            project: 'ai-usage',
+            sessions: 1,
+            sourcePath: '/home/nathan/Projects/Github/ai-usage/.claude/worktrees/exec-099a',
+          },
+          {
+            label: 'ai-usage',
+            machineId: 'local-machine',
+            machineLabel: 'Workstation',
+            project: 'ai-usage',
+            sessions: 1,
+            sourcePath: '/home/nathan/Projects/Github/ai-usage/.claude/worktrees/exec-099b',
+          },
+        ],
+      },
+      { directoryExists: () => true, localMachineId: 'local-machine' },
+    );
+
+    // The checkouts are working copies of the same repo, not projects of their own.
+    expect(result.map((entry) => entry.path)).toEqual(['/home/nathan/Projects/Github/ai-usage']);
   });
 
   test('keeps project group identity on known skill project paths', () => {
@@ -626,6 +889,12 @@ describe('skills server input validation', () => {
   test('does not curate configured project paths from scan paths', () => {
     expect(projectSkillScanPathsFrom({ projectPaths: ['/configured/container'] }, [])).toEqual([
       '/configured/container',
+    ]);
+  });
+
+  test('normalizes configured project paths to the absolute roots scanned by the application', () => {
+    expect(projectSkillScanPathsFrom({ projectPaths: ['./configured/../configured/project/'] }, [])).toEqual([
+      path.resolve('configured/project'),
     ]);
   });
 

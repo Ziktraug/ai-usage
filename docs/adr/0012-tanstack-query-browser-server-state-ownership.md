@@ -6,6 +6,8 @@
   paging, or replay to `ServedReportSession` and the Session table owner
 - **Preserves**: ADR 0002, ADR 0007, ADR 0009, and ADR 0010's SvelteKit,
   oRPC, trust, privacy, file-transfer, and direct-read decisions
+- **Amended by**: [0037](0037-current-producers-and-durable-skill-invocations.md)
+  (time-bounded skill-observation producer proof)
 
 ## Context
 
@@ -45,6 +47,11 @@ Named policies define freshness rather than components:
 - current report aliases use a 30-second stale-while-revalidate policy plus
   publication invalidation;
 - finite Skills, quota, and similar reads use a 30-second SWR policy;
+- skill observations use one-minute `collection-swr` revalidation plus
+  publication invalidation, focus revalidation, and unconditional mount
+  revalidation. Their server-provided proof deadline defines a data-aware stale
+  time capped at one minute, and stale or in-flight retained data is qualified
+  as provisional (ADR 0037);
 - bounded control snapshots use their short named policy;
 - exact report and Session values include immutable revision and canonical
   request identity, remain fresh indefinitely, and have bounded garbage
@@ -74,8 +81,12 @@ interaction state, not server state.
   page with a loading surface.
 - Initial documents may contain as much bounded, contract-approved data as is
   useful for first paint, subject to ADR 0007's privacy exclusions.
-- Publication invalidates current report aliases only. Immutable revisions,
-  Skills, Sync, and quota are not swept.
+- A completed publication cycle invalidates the current report aliases and, since
+  ADR 0022, the skill-observation identity that the same cycle writes. Immutable
+  revisions, the Skills snapshot, Sync, and quota are not swept. The trigger is
+  the cycle rather than a new revision: a cycle that leaves the report rows
+  unchanged renews the current revision, which still moves the manifest's
+  `publishedAt` and `expiresAt`.
 - SvelteKit route-data requests used for SPA routing may still occur, but they
   contain no prefetched business result and do not rebuild a Query client.
 - Ownership is enforced by static scans, Query lifecycle tests, hydration

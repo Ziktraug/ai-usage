@@ -43,7 +43,24 @@
     groups,
     onReviewEntry,
     total,
-  }: { groups: readonly UnmanagedGroup[]; onReviewEntry: () => void; total: number } = $props();
+    usageByName,
+    usageEvidenceComplete = false,
+  }: {
+    groups: readonly UnmanagedGroup[];
+    /** Optional: the worktable already lists these entries, so it offers no second destination. */
+    onReviewEntry?: () => void;
+    total: number;
+    /**
+     * Skill signals per name, joined in by the caller. This is what turns the backlog from a file
+     * listing into a decision aid without treating availability as invocation evidence.
+     */
+    usageByName?: ReadonlyMap<string, { lastObservedAt: string | null; summary: string }>;
+    /** Whether an absent invocation row is strong enough to state a complete absence. */
+    usageEvidenceComplete?: boolean;
+  } = $props();
+
+  const usageFor = (name: string): { lastObservedAt: string | null; summary: string } | undefined =>
+    usageByName?.get(name);
 </script>
 
 <details class={cx(panel, skillsDisclosurePanel)} data-consolidation-panel>
@@ -53,9 +70,15 @@
   </summary>
   <div class={body}>
     <p class={muted}>
-      These skills live directly in runtime folders, outside your source repository. Adopting them means moving them
-      into the source repo and symlinking back. Nothing is ever deleted automatically.
+      These entries live in runtime skill directories without a managed source behind them — copies outright, and
+      symlinks whose targets are outside the source repository. Adopting one means moving it into the source repo and
+      symlinking back. Nothing is ever deleted automatically.
     </p>
+    {#if onReviewEntry}
+      <div>
+        <button class={ghostButton} onclick={onReviewEntry} type="button">Review in the matrix</button>
+      </div>
+    {/if}
     {#if groups.length === 0}
       <p class={meta}>No unmanaged target entries.</p>
     {:else}
@@ -68,6 +91,7 @@
           </summary>
           <div class={entryList}>
             {#each group.entries as entry}
+              {@const usage = usageFor(entry.name)}
               <div
                 class={entryRow}
                 data-backlog-tone={entry.state === 'unmanaged-copy' ? 'neutral' : 'warning'}
@@ -77,7 +101,13 @@
                   >{entry.state === 'unmanaged-copy' ? 'copy' : 'symlink'}</span
                 >
                 <span class={skillsPathText} title={entry.path}>{entry.name}</span>
-                <button class={ghostButton} onclick={onReviewEntry} type="button">Review consolidation</button>
+                <span class={meta} data-unmanaged-entry-usage>
+                  {#if usage !== undefined && usage.summary.length > 0}
+                    {usage.summary}
+                  {:else if usageByName !== undefined}
+                    {usageEvidenceComplete ? 'no invocation recorded' : 'no invocation in loaded history'}
+                  {/if}
+                </span>
               </div>
             {/each}
           </div>

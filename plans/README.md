@@ -63,6 +63,17 @@ optimizations behind quantitative retention and correctness gates. It preserves
 continuous 5,000-row scrolling, exact revisions, TanStack Query ownership, direct
 read-only SQLite and the permanent browser/server and demo-isolation boundaries.
 
+Plan 111 records the 2026-08-27 skill-observability feasibility measurement at
+`dc9717a5`. Claude Code and OpenCode declare skill invocations as first-class
+tool calls; Codex declares only exposure (its injected catalogue) and leaves
+invocation inferable from an `exec` reading a SKILL.md; Cursor records nothing.
+The plan therefore introduces observation tiers (declared / inferred / exposed)
+as a domain concept and forbids presenting an unobservable harness as a zero.
+Observations are an auxiliary fact family modelled on `provider_quota_*`, not a
+`usage_rows` column, and the inventory-to-usage join reuses the existing
+`skills.server.ts` read-only seam so `@ai-usage/skills` gains no usage-store
+dependency.
+
 ## Execution order & status
 
 | Plan | Title | Priority | Effort | Depends on | Status |
@@ -174,6 +185,9 @@ read-only SQLite and the permanent browser/server and demo-isolation boundaries.
 | 108 | Add Cross-Harness Work Handoffs and Work Threads | P1 | L | 102, 105, 106 (local); 107 (connected) | TODO |
 | 109 | Archive Session Detail Safely for Cross-Machine Read-Only Continuity | P2 | L | 103, 104, 107, 108 connected phase | TODO |
 | 110 | Spike Native Session Portability Across Claude, Codex, OpenCode, and Cursor | P2 | L (spike) | 108, 109 | TODO |
+| 111 | Skill Invocation Observability — Declared, Inferred, and Exposed Signals Across Claude Code, OpenCode, and Codex | P2 | L | - | IN PROGRESS (implementation verified on PR #51; pending integration on `main`; ADR 0022 accepted) |
+| 112 | Skills Decision-First Surface — Verdicts on the Landing Page, Ranked Observations, Joined Axes | P1 | L | 111 | IN PROGRESS (implementation verified on PR #51; pending integration on `main`; adopt action remains plan 083) |
+| 113 | Skills Worktable — One Surface Joining Placement and Evidence, Detail as a Drawer | P1 | L | 111, 112 | DONE (implementation verified on `agent/099-skill-invocation-observability`; pending integration on `main`; adopt action remains plan 083; Activity sparkline recorded as a contract gap) |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED (with one-line reason) |
 REJECTED (with one-line rationale) | DESIGN READY (design/spike plans only:

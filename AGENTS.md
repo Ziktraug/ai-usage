@@ -36,8 +36,10 @@ remote service, no provider credentials.
 - `bun run dev` — supervised engine + web development
 - `bun run demo` — isolated synthetic runtime (safe, no local history)
 - `bun run build` / `bun run start` — production build and supervised start
-- `bun run check` — full verification; `lint`, `typecheck`, `test` also exist
-  individually
+- `bun run check` — fast Ultracite formatting and static checks
+- `bun run verify` — broad repository gate: check, lint, typecheck, tests, build
+- `bun run lint` / `bun run typecheck` / `bun run test` — individual gates
+- `bun run test:e2e` — browser regressions (run the relevant E2E variant)
 - `bun x ultracite fix` — format and autofix before committing (Biome)
 
 ## Code standards

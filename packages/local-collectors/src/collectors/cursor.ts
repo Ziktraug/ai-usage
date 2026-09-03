@@ -38,7 +38,11 @@ const COMPOSER_SQL = "SELECT key, value FROM cursorDiskKV WHERE key LIKE 'compos
 const TOKEN_SQL = "SELECT key, value FROM cursorDiskKV WHERE key LIKE 'bubbleId:%' AND value LIKE '%\"inputTokens\"%'";
 const USER_BUBBLE_SQL = "SELECT key, value FROM cursorDiskKV WHERE key LIKE 'bubbleId:%' AND value LIKE '%\"type\":1%'";
 
-const CURSOR_DB_CACHE_VERSION = 5;
+// Bumped to 6 with the shared cache entry gaining an observation list. Cursor
+// records no skill observations and is not observable (ADR 0022), so its list is always
+// empty — but the entry shape changed, and an undeclared invalidation is worse
+// than a declared one.
+const CURSOR_DB_CACHE_VERSION = 6;
 const CURSOR_DB_CACHE_FILE = 'cursor-db-cache.json';
 
 export type CursorCsvIngestionOptions = Partial<CursorCsvOptions> & {

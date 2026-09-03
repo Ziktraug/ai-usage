@@ -24,6 +24,7 @@ const RPC_OPERATIONS = {
   '/rpc/skills/createTargetDirectory': 'skills.createTargetDirectory',
   '/rpc/skills/knownProjectPaths': 'skills.knownProjectPaths',
   '/rpc/skills/managedMarkdown': 'skills.managedMarkdown',
+  '/rpc/skills/observations': 'skills.observations',
   '/rpc/skills/previewReconcileAll': 'skills.previewReconcileAll',
   '/rpc/skills/projectInventories': 'skills.projectInventories',
   '/rpc/skills/projectMarkdown': 'skills.projectMarkdown',

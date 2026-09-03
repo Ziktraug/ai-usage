@@ -564,8 +564,8 @@ export const finishSourceJobTransition = (
 ): StateTransition<SourceFinishDecision> => {
   const source = state.sources[job.sourceId];
   const result = completion._tag === 'success' ? completion.result : undefined;
-  const failed = completion._tag === 'failed';
   const unavailable = result?.unavailable;
+  const successfulAvailable = completion._tag === 'success' && !unavailable;
   const warnings = result ? sanitizeWarnings(result.warnings) : [];
   const availability = unavailable ? 'not-detected' : source.availability;
   const lastOutcome = outcomeAfterRun(completion, unavailable, warnings.length);
@@ -604,7 +604,7 @@ export const finishSourceJobTransition = (
     ...(result === undefined
       ? {}
       : { inputCount: sanitizeCount(result.inputCount), outputCount: sanitizeCount(result.outputCount) }),
-    ...(failed || unavailable ? {} : { lastSuccessAt: toIso(finishedAt) }),
+    ...(successfulAvailable ? { lastSuccessAt: toIso(finishedAt) } : {}),
   };
   const nextState = withSourceState(
     {

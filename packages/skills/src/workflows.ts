@@ -32,7 +32,7 @@ import {
 } from './projections';
 import { parseSkillName } from './shared';
 import { scanSkillSourceRepository } from './source-scan';
-import { loadSkillSourceState, setSkillEnabled } from './source-state';
+import { loadSkillSourceState, setSkillEnabled, withSkillSourceStateLock } from './source-state';
 import { parseRequiredNonEmptyString } from './validation';
 
 const emptySkillManagementSnapshot = (
@@ -201,26 +201,73 @@ const planReconcileActions = (
   return actions;
 };
 
+interface ReconcileWorkflowHooks {
+  afterPlanning?(actions: readonly ProjectionAction[]): Promise<void>;
+}
+
+type MutableProjectionAction = Extract<
+  ProjectionAction,
+  { type: 'create-symlink' | 'repair-symlink' | 'unlink-managed-symlink' }
+>;
+
+const isMutableProjectionAction = (action: ProjectionAction): action is MutableProjectionAction =>
+  action.type === 'create-symlink' || action.type === 'repair-symlink' || action.type === 'unlink-managed-symlink';
+
+const expectedEnabledState = (action: MutableProjectionAction): boolean => action.type !== 'unlink-managed-symlink';
+
+const staleIntentAction = (action: ProjectionAction): ProjectionAction => ({
+  path: action.path,
+  reason: 'source skill enabled state changed after planning',
+  skillName: action.skillName,
+  targetId: action.targetId,
+  type: 'noop',
+});
+
 const applyPlannedActions = async (
   input: LoadSkillManagementSnapshotInput,
   snapshot: SkillManagementSnapshot,
   predicate: (skill: SourceSkill) => boolean,
   privateStatePath: string,
+  hooks: ReconcileWorkflowHooks = {},
 ): Promise<SkillReconcileResult> => {
   const actions = planReconcileActions(snapshot, predicate);
-  for (const action of actions) {
-    if (
-      action.type === 'create-symlink' ||
-      action.type === 'repair-symlink' ||
-      action.type === 'unlink-managed-symlink'
-    ) {
-      await applyProjectionAction(action, { privateStatePath });
-    }
+  await hooks.afterPlanning?.(actions);
+  if (!actions.some(isMutableProjectionAction)) {
+    return { actions, snapshot: await loadSkillManagementSnapshot(input) };
   }
-  return { actions, snapshot: await loadSkillManagementSnapshot(input) };
+
+  const sourceRepoPath = snapshot.config.sourceRepoPath;
+  if (sourceRepoPath === undefined) {
+    throw new Error('Cannot apply a projection without a configured source repository');
+  }
+  const appliedActions = await withSkillSourceStateLock(sourceRepoPath, async () => {
+    const currentSourceState = await loadSkillSourceState(sourceRepoPath);
+    if (currentSourceState.diagnostics.some((diagnostic) => diagnostic.severity === 'error')) {
+      throw new Error('source skill state must be readable JSON before projections can be reconciled');
+    }
+    const results: ProjectionAction[] = [];
+    for (const action of actions) {
+      if (!isMutableProjectionAction(action)) {
+        results.push(action);
+        continue;
+      }
+      const currentEnabled = currentSourceState.state.skillEnabledByName[action.skillName] ?? true;
+      if (currentEnabled !== expectedEnabledState(action)) {
+        results.push(staleIntentAction(action));
+        continue;
+      }
+      await applyProjectionAction(action, { privateStatePath });
+      results.push(action);
+    }
+    return results;
+  });
+  return { actions: appliedActions, snapshot: await loadSkillManagementSnapshot(input) };
 };
 
-export const reconcileSkill = async (input: ReconcileSkillInput): Promise<SkillReconcileResult> => {
+export const reconcileSkill = async (
+  input: ReconcileSkillInput,
+  hooks: ReconcileWorkflowHooks = {},
+): Promise<SkillReconcileResult> => {
   const skillName = parseSkillName(input.skillName);
   const snapshot = await loadSkillManagementSnapshot(input);
   return applyPlannedActions(
@@ -228,14 +275,22 @@ export const reconcileSkill = async (input: ReconcileSkillInput): Promise<SkillR
     snapshot,
     (skill) => skill.name === skillName,
     path.join(input.homePath, '.config', 'ai-usage'),
+    hooks,
   );
 };
 
 export const reconcileAllActiveSkills = async (
   input: LoadSkillManagementSnapshotInput,
+  hooks: ReconcileWorkflowHooks = {},
 ): Promise<SkillReconcileResult> => {
   const snapshot = await loadSkillManagementSnapshot(input);
-  return applyPlannedActions(input, snapshot, activeSkillPredicate, path.join(input.homePath, '.config', 'ai-usage'));
+  return applyPlannedActions(
+    input,
+    snapshot,
+    activeSkillPredicate,
+    path.join(input.homePath, '.config', 'ai-usage'),
+    hooks,
+  );
 };
 
 export const previewReconcileAllActiveSkills = async (

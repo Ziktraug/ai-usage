@@ -1,5 +1,6 @@
 <script lang="ts">
-  import type { SkillsManagementPlanController } from './management-plan-controller';
+  import { syntheticManagementOperationEpisode } from '../management/synthetic-fixture.test-helper';
+  import { createSkillsPresentationProjection } from '../presentation';
   import { createSkillsShellViewModel } from './model';
   import SkillsWorkspace from './skills-workspace.svelte';
   import type { SkillsShellSlotContext, SkillsSnapshotUpdatePort } from './slot-context';
@@ -45,6 +46,10 @@
   const selectedDocument = $derived(
     view.selectionDetail.kind === 'project-skill' ? syntheticProjectDocument : syntheticManagedDocument,
   );
+  const presentation = $derived(
+    createSkillsPresentationProjection({ observations: undefined, observationsError: undefined, view }),
+  );
+  const management = syntheticManagementOperationEpisode();
   const snapshotUpdates: SkillsSnapshotUpdatePort = {
     pendingDecision: undefined,
     registerDraft: () => undefined,
@@ -61,23 +66,14 @@
 {/snippet}
 {#snippet healthSlot(
   _context: SkillsShellSlotContext,
-  _managementPlan: SkillsManagementPlanController,
 )}
   <section aria-label="Synthetic health slot">Health integration · {_context.snapshot.summary.skillCount}</section>
 {/snippet}
-{#snippet matrixSlot(
-  _context: SkillsShellSlotContext,
-  _managementPlan: SkillsManagementPlanController,
-)}
-  <section aria-label="Synthetic matrix slot">
-    Matrix integration · {_context.snapshotUpdates.pendingDecision ? 'pending' : 'settled'}
-  </section>
-{/snippet}
-
 <SkillsWorkspace
   {editorSlot}
   {healthSlot}
-  {matrixSlot}
+  {management}
+  {presentation}
   {selectedDocument}
   snapshot={view.snapshot}
   {snapshotUpdates}

@@ -4,9 +4,11 @@ import { createORPCSvelteQueryUtils } from '@orpc/svelte-query';
 import { QueryObserver } from '@tanstack/svelte-query';
 import { createWebQueryClient, dehydrateWebQueryClient } from './client';
 import { createPublicationQueryInvalidator, createWebQueryRuntime, webQueryOwnership } from './composition';
+import { skillObservationsKey } from './identities/skills';
 import { controlPlaneKey, currentAliasKey, finiteSwrKey, immutableRevisionKey } from './keys';
 import { reportBootstrapKey, reportManifestKey } from './options/report';
 import { queryPolicy } from './policies';
+import { currentReportAliasKeys, publicationInvalidatedKeys } from './publication';
 
 const invalidRpcResponse = (): Response => Response.json({ invalid: true });
 const BULK_GC_TIME_MS = 20;
@@ -163,9 +165,13 @@ describe('Web Query composition', () => {
       'session',
       'quota',
       'skills',
+      'skill-observations',
       'sync',
       'sources',
     ]);
+    // Exactly two families react to a completed publication cycle, and they react differently. The
+    // report aliases are swept because the cycle republished or renewed the revision they name;
+    // skill observations are swept because that same cycle wrote them and nothing else can.
     expect(webQueryOwnership.filter(({ publication }) => publication !== 'none')).toEqual([
       {
         family: 'report-current',
@@ -173,7 +179,16 @@ describe('Web Query composition', () => {
         publication: 'invalidate-current-alias',
         rendering: 'ssr-awaited',
       },
+      {
+        family: 'skill-observations',
+        policy: 'collection-swr',
+        publication: 'invalidate-collection-identity',
+        rendering: 'ssr-awaited',
+      },
     ]);
+    // The declared behaviour is the behaviour: what a cycle actually invalidates is what this
+    // metadata says it does, so the two cannot drift apart unnoticed.
+    expect(publicationInvalidatedKeys()).toEqual([...currentReportAliasKeys(), skillObservationsKey()]);
     for (const { policy } of webQueryOwnership) {
       expect(Number.isFinite(queryPolicy(policy).gcTime)).toBe(true);
     }

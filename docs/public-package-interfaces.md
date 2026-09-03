@@ -50,6 +50,14 @@ This package imports no other `@ai-usage/*` package.
 - `./session-lineage`: parent/root session normalization.
 - `./session-query`: strict Session paging/campaign/neighbor/cursor contracts.
 - `./session-vcs`: bounded credential-free repository/branch/commit/PR facts.
+- `./skill-observation`: the persisted skill-observation fact, parser, producer
+  completeness, and storage bounds.
+- `./skill-observation-evidence`: the pure evidence policy for tier capability,
+  observable harnesses, categorized loss, response clamps, and whether an
+  invocation-absence claim is supportable.
+- `./skill-observation-summary`: the pure fold from observations into the
+  presented per-tier, per-harness dataset, preserving the nullable end-to-end
+  producer-proof deadline supplied by its reader.
 - `./snapshot`: portable usage snapshots.
 - `./source-control`: canonical source identifiers, policies, status, command,
   and event contracts.
@@ -142,6 +150,8 @@ This package owns no persistence and never resolves ambiguity by itself.
 - `./claude-session-analysis`: bounded exact-session Claude reader.
 - `./claude-session-facts`: pure Claude semantic facts.
 - `./codex-session-analysis`: bounded exact-session Codex reader.
+- `./codex-skill-observation`: pure Codex catalogue and `SKILL.md` read
+  observation extractors.
 - `./errors`: local-history error/warning contracts.
 - `./history-budgets`: shared local-history budgets.
 - `./internal/codex-history`: shared Codex parser/projection core for the
@@ -160,7 +170,11 @@ This package owns no persistence and never resolves ambiguity by itself.
 - `./session-label`: safe session labels.
 - `./skills-config`: field-scoped Skills config store; reads/writes only the
   `skills` field while preserving unrelated config.
+- `./source-policy-config`: read-only current-machine source-policy overrides
+  for server-side composition.
 - `./text`: bounded text helpers.
+- `./test-fixtures/skill-observation-transcripts`: deterministic synthetic
+  Claude, Codex, and OpenCode observation transcripts for cross-package tests.
 - `./testing/harness-home`: deterministic synthetic harness homes and mutation
   helpers for tests/E2E only.
 - `./testing/memory-storage`: in-memory local-history test adapter.
@@ -168,8 +182,9 @@ This package owns no persistence and never resolves ambiguity by itself.
 This package is collector-independent and must not import local collectors,
 report-data, the store, engine/runtime, or apps. Web production imports are
 restricted exactly to `@ai-usage/local-machine/campaign-label-config`,
-`@ai-usage/local-machine/session-detail`, and
-`@ai-usage/local-machine/skills-config`.
+`@ai-usage/local-machine/session-detail`,
+`@ai-usage/local-machine/skills-config`, and
+`@ai-usage/local-machine/source-policy-config`.
 
 ## `@ai-usage/local-collectors`
 
@@ -191,6 +206,8 @@ not belong here.
 - `./portable-report`: pure snapshot merge and project-source assembly.
 - `./provider-quota-history`: bounded provider-quota history projection through
   the read-only store.
+- `./skill-observation-read`: the one bounded read of durable skill
+  observations, folded and clamped to the caller's response caps.
 - `./served-revision-query`: strict bounded support/focused/Session query
   validation and direct revision-keyed execution through the read-only store.
 
@@ -206,9 +223,10 @@ lease, or subprocess exports. Production `report-data` code may import only
   is restricted to `apps/web/src/hooks.server.ts`; it must never enter a client
   chunk or become a general report API.
 - `./reader`: compatible-schema inspection, current/exact served-revision
-  queries, stored report/quota/fleet reads, and typed read failures. Opens only
-  an existing database read-only and query-only; never creates, migrates,
-  checkpoints, changes journal mode, or writes.
+  queries, stored report/quota/fleet reads, time-anchored skill-observation
+  proof expiry, and typed read failures. Opens only an existing database
+  read-only and query-only; never creates, migrates, checkpoints, changes
+  journal mode, or writes.
 - `./writer`: migrations, normalized imports, enrichment, transfer mutations,
   source checkpoints/attempts, atomic served-revision publication, recovery,
   retention, explicit checkpointing, and usage replication outbox operations.

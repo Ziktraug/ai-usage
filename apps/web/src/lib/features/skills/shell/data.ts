@@ -4,6 +4,7 @@ import type { WebQueryRuntime, WebQueryRuntimeOptions } from '../../../query/com
 import {
   managedSkillMarkdownQueryOptions,
   projectSkillMarkdownQueryOptions,
+  skillObservationsQueryOptions,
   skillsKnownProjectPathsQueryOptions,
   skillsProjectInventoriesQueryOptions,
   skillsSnapshotQueryOptions,
@@ -37,6 +38,9 @@ export const prefetchSkillsShellQueries = async (runtime: SkillsPrefetchRuntime,
   const [snapshot, knownProjectPaths] = await Promise.all([
     runtime.queryClient.fetchQuery(skillsSnapshotQueryOptions(client, serverQueryContext)),
     runtime.queryClient.fetchQuery(skillsKnownProjectPathsQueryOptions(client, serverQueryContext)),
+    // Prefetched with the rest so the first paint carries observations rather than a spinner. A
+    // failed read is a failed section, not a failed page, so it must not reject this load.
+    runtime.queryClient.fetchQuery(skillObservationsQueryOptions(client, serverQueryContext)).catch(() => undefined),
   ]);
   const source = snapshot.config.sourceRepoPath ?? 'not configured';
   const inventories = snapshot.configured

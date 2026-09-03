@@ -17,6 +17,7 @@ import { ensureMachineConfig, readAiUsageConfig, writeMachineConfig } from '@ai-
 import { createUsageMergeBundle, serializeUsageMergeBundle } from '@ai-usage/report-core/merge-bundle';
 import { parseMergePreviewProof } from '@ai-usage/report-core/merge-proof';
 import { projectSourceSelectorKey } from '@ai-usage/report-core/project-group';
+import type { SkillObservation } from '@ai-usage/report-core/skill-observation';
 import type { UsageMachine } from '@ai-usage/report-core/snapshot';
 import {
   type CollectionSourceId,
@@ -32,9 +33,11 @@ import {
 import type { UsageFileMergeService } from '@ai-usage/usage-merge';
 import {
   importLocalRows,
+  importSkillObservations,
   initializeUsageStore,
   queryCurrentServedReportRevision,
   queryReportRows,
+  querySkillObservations,
   updateUsageMachineLabel,
 } from '@ai-usage/usage-store/testing';
 import { Deferred, Duration, Effect, Layer, Stream } from 'effect';
@@ -1713,6 +1716,75 @@ describe('live usage engine publication', () => {
     expect((await runtime.status()).currentPublication?.revision).toBe(
       parseUsageEnginePublicationRevision(current.revision),
     );
+    await runtime.dispose();
+  });
+
+  test('prunes expired exposure without discarding invocation history during startup recovery', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'plan111-engine-skill-retention-'));
+    roots.push(root);
+    const home = path.join(root, 'home');
+    const dbPath = path.join(root, 'state', 'usage.sqlite');
+    const inboxDirectory = path.join(root, 'state', 'inbox');
+    const temporaryRoot = path.join(root, 'legacy-temp');
+    await Promise.all([
+      mkdir(inboxDirectory, { mode: 0o700, recursive: true }),
+      mkdir(temporaryRoot, { mode: 0o700, recursive: true }),
+    ]);
+    const storage = createLocalHistoryStorage(home);
+    await Effect.runPromise(initializeUsageStore({ dbPath }));
+    await Effect.runPromise(writeMachineConfig(machine).pipe(Effect.provideService(LocalHistoryStorage, storage)));
+
+    const observation = (
+      observationKey: string,
+      observedAt: string,
+      tier: SkillObservation['tier'] = 'declared',
+    ): SkillObservation => ({
+      argsPresent: false,
+      harnessKey: 'claude',
+      observationKey,
+      observedAt,
+      projectPath: '/home/alex/Projects/report',
+      resolvedPath: '/home/alex/.claude/skills/improve',
+      sessionId: 'retention-session',
+      skillName: 'improve',
+      success: true,
+      tier,
+    });
+    await Effect.runPromise(
+      importSkillObservations({
+        dbPath,
+        machineId: machine.id,
+        observations: [
+          observation('historical-declared', '2020-01-01T00:00:00.000Z'),
+          observation('historical-inferred', '2020-01-02T00:00:00.000Z', 'inferred'),
+          observation('expired-exposure', '2020-01-03T00:00:00.000Z', 'exposed'),
+          observation('current-exposure', '2026-07-29T10:00:00.000Z', 'exposed'),
+        ],
+      }),
+    );
+
+    const runtime = createLiveUsageEngineRuntime({
+      acquireWriterLease: async () => ({ release: async () => undefined }),
+      codexLiveAvailable: () => false,
+      configCwd: root,
+      dbPath,
+      inboxDirectory,
+      instanceId: '55555555-5555-4555-8555-555555555555',
+      now: () => now,
+      operatorCwd: root,
+      storage,
+      temporaryRoot,
+      wideEventSinkLayer: makeTestWideEventSinkLayer(noopWideEventSink),
+    });
+
+    await runtime.start();
+    const stored = await Effect.runPromise(querySkillObservations({ dbPath }));
+
+    expect(stored.observations.map(({ observation: value }) => value.observationKey).sort()).toEqual([
+      'current-exposure',
+      'historical-declared',
+      'historical-inferred',
+    ]);
     await runtime.dispose();
   });
 });

@@ -1,3 +1,9 @@
+import type { SkillObservation } from '@ai-usage/report-core/skill-observation';
+import { COMPLETE_SKILL_OBSERVATION_EVIDENCE } from '@ai-usage/report-core/skill-observation-evidence';
+import {
+  createSkillObservationDataset,
+  type SkillObservationDataset,
+} from '@ai-usage/report-core/skill-observation-summary';
 import type {
   Projection,
   ProjectionAction,
@@ -12,6 +18,8 @@ import type {
   SourceSkill,
   UnmanagedEntry,
 } from '@ai-usage/skills';
+import type { SkillObservations } from '@ai-usage/web-contract/skills';
+import { joinSkillObservations } from './skill-observation-join';
 import type {
   KnownSkillProjectPath,
   ProjectSkillMarkdownDocument,
@@ -309,6 +317,121 @@ export const readE2EProjectSkillMarkdown = (
     skillName: input.skillName,
     truncated: false,
   },
+  ok: true,
+});
+
+/**
+ * The skill names of the shared synthetic home (`seedHarnessHome({ skillSignals: true })`) that
+ * resolve to no managed inventory entry: a Claude Code bundled skill, a Codex skill both offered
+ * and read, and a Codex skill offered but never read. Kept in step with that fixture by
+ * `skills-e2e-fixture.server.test.ts`, so what the browser renders here is the same vocabulary a
+ * real collection over that home produces.
+ */
+const E2E_UNMANAGED_OBSERVED_SKILLS = {
+  claudeBundled: 'artifact-design',
+  codexOfferedAndRead: 'pr-review',
+  codexOfferedOnly: 'imagegen',
+} as const;
+
+/**
+ * The project-local skill the project inventory above already carries. Kept out of
+ * `E2E_UNMANAGED_OBSERVED_SKILLS`, which is pinned to the names the shared synthetic harness home
+ * seeds; this one is a fixture of *this* runtime's project inventory, not of that home.
+ */
+const E2E_PROJECT_OBSERVED_SKILL = 'skill-name';
+
+/**
+ * The unmanaged runtime-directory entry the snapshot already carries. Naming it here as an observed
+ * skill is what turns it into a runtime-installed adoption candidate through the real join.
+ */
+const E2E_RUNTIME_INSTALLED_OBSERVED_SKILL = 'legacy-local-copy';
+
+const e2eObservation = (
+  harnessKey: string,
+  tier: SkillObservation['tier'],
+  skillName: string,
+  ordinal: number,
+  resolvedPath: string | null = null,
+): SkillObservation => ({
+  argsPresent: null,
+  harnessKey,
+  observationKey: `${harnessKey}-${tier}-${skillName}-${ordinal}`,
+  observedAt: new Date(Date.UTC(2026, 7, 1, 9, ordinal)).toISOString(),
+  projectPath: '/fixture/projects/alpha',
+  resolvedPath,
+  sessionId: `${harnessKey}-fixture-session`,
+  skillName,
+  success: null,
+  tier,
+});
+
+/**
+ * A deterministic observation set covering every reading the surface has to get right:
+ * a mixed-tier managed skill, a managed skill nothing observed (deletion candidate), unmanaged
+ * skills that were observed (adoption candidates), a skill offered but never read, and Cursor —
+ * which contributes nothing because it cannot observe, and must never be drawn as a zero.
+ */
+const e2eObservations: readonly SkillObservation[] = [
+  e2eObservation('claude', 'declared', 'alpha-skill', 1, '/fixture/source/skills/alpha-skill'),
+  e2eObservation('claude', 'declared', 'alpha-skill', 2, '/fixture/source/skills/alpha-skill'),
+  e2eObservation('claude', 'declared', 'alpha-skill', 3, '/fixture/source/skills/alpha-skill'),
+  e2eObservation('opencode', 'declared', 'alpha-skill', 4),
+  e2eObservation('codex', 'exposed', 'alpha-skill', 5),
+  e2eObservation('codex', 'exposed', 'alpha-skill', 6),
+  e2eObservation('codex', 'inferred', 'alpha-skill', 7),
+  e2eObservation('claude', 'declared', E2E_UNMANAGED_OBSERVED_SKILLS.claudeBundled, 8),
+  e2eObservation('codex', 'exposed', E2E_UNMANAGED_OBSERVED_SKILLS.codexOfferedAndRead, 9),
+  e2eObservation('codex', 'inferred', E2E_UNMANAGED_OBSERVED_SKILLS.codexOfferedAndRead, 10),
+  e2eObservation('codex', 'exposed', E2E_UNMANAGED_OBSERVED_SKILLS.codexOfferedOnly, 11),
+  // A skill that lives in a project's own runtime directory rather than the managed source
+  // repository. Deliberately named for the project inventory above, so selecting it in the tree
+  // exercises the project-skill detail branch — the branch that shipped with no observations at all
+  // because every fixture before this one selected a global skill.
+  e2eObservation(
+    'opencode',
+    'declared',
+    E2E_PROJECT_OBSERVED_SKILL,
+    12,
+    '/fixture/projects/opaque-project-source/.agents/skills/skill-name',
+  ),
+  e2eObservation('codex', 'inferred', E2E_PROJECT_OBSERVED_SKILL, 13),
+  // The adoptable backlog: a copy sitting in a runtime skills directory with no managed source
+  // behind it, which some harness recorded being used. Without this the "To adopt" group had no
+  // population at all, so nothing exercised the ranked backlog or its gated action.
+  e2eObservation(
+    'claude',
+    'declared',
+    E2E_RUNTIME_INSTALLED_OBSERVED_SKILL,
+    14,
+    '/fixture/targets/codex/legacy-local-copy',
+  ),
+  e2eObservation('codex', 'inferred', E2E_RUNTIME_INSTALLED_OBSERVED_SKILL, 15),
+];
+
+export const e2eSkillObservationDataset = (): SkillObservationDataset =>
+  createSkillObservationDataset(e2eObservations, COMPLETE_SKILL_OBSERVATION_EVIDENCE, '2099-01-01T00:00:00.000Z');
+
+/**
+ * The fixture runs the real join, so the e2e surface exercises the same verdict rules production
+ * does rather than a hand-written answer that could disagree with them.
+ */
+const e2eJoinedObservations = (): SkillObservations =>
+  joinSkillObservations({
+    observations: e2eSkillObservationDataset(),
+    // The same residence inputs production wires: the snapshot's runtime-directory entries and the
+    // scan's project roots, so `skill-name` classifies as project-owned and the bundled ones as
+    // external — through the real rules, not a hand-written answer.
+    projectPathPrefixes: ['/fixture/projects/opaque-project-source', '/fixture/work/opaque-project-source'],
+    projections,
+    skills,
+    targets,
+    unmanagedEntryNames: snapshot.unmanagedEntries.map((entry) => entry.entryName),
+  });
+
+export const e2eUnmanagedObservedSkillNames = (): readonly string[] => Object.values(E2E_UNMANAGED_OBSERVED_SKILLS);
+
+export const readE2ESkillObservations = (): SkillsServerResult<SkillObservations> => ({
+  data: e2eJoinedObservations(),
   ok: true,
 });
 

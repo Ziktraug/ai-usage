@@ -17,9 +17,23 @@ import {
   type SessionVcsRepository,
   sessionVcsCommitUrl,
 } from '@ai-usage/report-core/session-vcs';
+import {
+  completeSkillObservationCollection,
+  type SkillObservation,
+  type SkillObservationCollectionCompleteness,
+} from '@ai-usage/report-core/skill-observation';
 import type { UsageModelSegment } from '@ai-usage/report-core/types';
 import { UNSEGMENTED_MULTI_MODEL_LABEL } from '@ai-usage/report-core/usage-row';
 import { Effect } from 'effect';
+import {
+  CODEX_AVAILABLE_SKILLS_HEADING,
+  type CodexSkillCatalogueEntry,
+  codexSkillCatalogueObservations,
+  codexSkillExecObservations,
+  codexSkillObservationCeiling,
+  extractCodexSkillCatalogue,
+  matchCodexSkillDocuments,
+} from '../codex-skill-observation';
 import type { LocalHistoryError } from '../errors';
 import {
   historyPath,
@@ -56,7 +70,16 @@ export interface CodexSession {
   parent: string | null;
   phases: CodexSessionPhase[];
   rejectedMetricRecords: number;
+  /** Distinct rejected skill-observation inputs; shared JSONL failures count once. */
+  rejectedSkillObservationRecords: number;
   reportPartial: boolean;
+  /** Producer completeness stays split between exposure and invocation evidence. */
+  skillObservationCompleteness: SkillObservationCollectionCompleteness;
+  /**
+   * Codex declares no skill invocations. These are the `exposed` catalogue and
+   * the `inferred` exec reads, kept as separate tiers on one list (ADR 0022).
+   */
+  skillObservations: SkillObservation[];
   start: Date | null;
   subagentKind: CodexSubagentKind | null;
   subscription: boolean;
@@ -257,12 +280,15 @@ const emptySession = (): CodexSession => ({
   reportPartial: false,
   observedPriorTokenUsage: false,
   rejectedMetricRecords: 0,
+  rejectedSkillObservationRecords: 0,
   start: null,
   end: null,
   cwd: null,
   model: 'codex',
   models: [],
   phases: [],
+  skillObservations: [],
+  skillObservationCompleteness: completeSkillObservationCollection(),
   subagentKind: null,
   threadSource: null,
   agentNickname: null,
@@ -375,6 +401,25 @@ const isCodexToolCallPrefix = (prefix: string) =>
   prefix.includes('"type":"web_search_call"') ||
   prefix.includes('"type":"tool_search_call"');
 
+/**
+ * Codex injects its skill catalogue into a developer message, which the normal
+ * event gate deliberately skips: those lines run to tens of kilobytes and
+ * extracting every one of them across a full history sweep is not free. A line
+ * that reaches this gate and then fails to parse is counted as unreadable
+ * exposure evidence, so a partial write of the catalogue cannot certify the
+ * exposure channel as complete.
+ *
+ * So the catalogue is admitted in two stages. The cheap prefix test below runs
+ * on the first 300 bytes like every other gate; only a line that already looks
+ * like a developer message pays for a full-line substring scan, and only a line
+ * that actually contains the catalogue heading is inspected for entries.
+ */
+const isCodexDeveloperMessagePrefix = (prefix: string) =>
+  prefix.includes('"role":"developer"') || prefix.includes('"role": "developer"');
+
+const isCodexSkillCatalogueLine = (prefix: string, line: string) =>
+  isCodexDeveloperMessagePrefix(prefix) && line.includes(CODEX_AVAILABLE_SKILLS_HEADING);
+
 const shouldParseCodexPrefix = (prefix: string) =>
   prefix.includes('token_count') ||
   prefix.includes('session_meta') ||
@@ -465,12 +510,101 @@ const codexVcsFromSessionMeta = (payload: Record<string, unknown>, at: Date): Se
   });
 };
 
+/** Concatenate a developer message's text blocks, so the catalogue can be found in them. */
+const codexDeveloperMessageText = (payload: Record<string, unknown>): string => {
+  const { content } = payload;
+  if (typeof content === 'string') {
+    return content;
+  }
+  if (!Array.isArray(content)) {
+    return '';
+  }
+  const texts: string[] = [];
+  for (const block of content) {
+    if (isRecord(block) && typeof block.text === 'string') {
+      texts.push(block.text);
+    }
+  }
+  return texts.join('\n');
+};
+
+/** The identity Codex gives a tool call, used so a re-scan re-imports idempotently. */
+const codexToolCallId = (payload: Record<string, unknown>, fallbackIndex: number): string =>
+  nonEmpty(payload.call_id) ?? nonEmpty(payload.id) ?? `record-${fallbackIndex}`;
+
+/**
+ * The raw command blob a Codex tool call carries, whichever record shape it
+ * uses. It is handed on unparsed: `matchCodexSkillDocuments` owns decoding,
+ * because the blob is JSON or a JavaScript snippet rather than a shell string
+ * and matching it raw captures command text.
+ */
+const codexToolCallCommandBlob = (payload: Record<string, unknown>): string | null => {
+  if (typeof payload.input === 'string') {
+    return payload.input;
+  }
+  if (typeof payload.arguments === 'string') {
+    return payload.arguments;
+  }
+  const action = isRecord(payload.action) ? payload.action : null;
+  return action && Array.isArray(action.command) ? JSON.stringify({ command: action.command }) : null;
+};
+
+/**
+ * The tool calls that can run a shell command, as an **allowlist**.
+ *
+ * A denylist was wrong in kind, not just in membership: any tool it had not
+ * heard of — and a census of the real corpus turns up `wait`, `wait_agent`,
+ * `send_message`, `list_agents`, `followup_task`, `spawn_agent`,
+ * `interrupt_agent` — had its raw argument fed to the matcher, so an agent
+ * prompt or a patch body quoting a path became an inferred invocation. Only
+ * these names run commands; an unknown tool contributes nothing.
+ *
+ * Grounded in the corpus: every `SKILL.md`-bearing tool call is
+ * `custom_tool_call`/`exec`, and `exec_command` is the only other exec-shaped
+ * name present. The shell variants are included for forward tolerance.
+ */
+const CODEX_EXEC_TOOL_NAMES: ReadonlySet<string> = new Set(['exec', 'exec_command', 'local_shell', 'shell']);
+
+/** `local_shell_call` carries its command in `action` and may name no tool. */
+const CODEX_EXEC_TOOL_TYPES: ReadonlySet<string> = new Set(['local_shell_call']);
+
+const isCodexExecToolCall = (payload: Record<string, unknown>): boolean => {
+  if (typeof payload.type === 'string' && CODEX_EXEC_TOOL_TYPES.has(payload.type)) {
+    return true;
+  }
+  return typeof payload.name === 'string' && CODEX_EXEC_TOOL_NAMES.has(payload.name);
+};
+
+interface PendingCodexExecSignal {
+  at: Date;
+  callId: string;
+  entries: CodexSkillCatalogueEntry[];
+}
+
+interface PendingCodexCatalogueSignal {
+  at: Date;
+  entries: CodexSkillCatalogueEntry[];
+}
+
 export const createCodexSessionParser = (captureDetail = false) => {
   const session = emptySession();
   const completedTasks: (MutableCodexTask & { durationMs: number; end: Date })[] = [];
   const observedTaskIntervals: CodexTaskInterval[] = [];
   const openTasks = new Map<string, MutableCodexTask>();
   const prompts: SessionDetailPrompt[] = [];
+  // Buffered rather than projected inline: the session id and cwd arrive with
+  // session_meta, and only matched names and paths are retained — never the
+  // command string, which is unbounded and carries whatever the model typed.
+  const pendingExecSignals: PendingCodexExecSignal[] = [];
+  let pendingCatalogue: PendingCodexCatalogueSignal | null = null;
+  let skillSignalIndex = 0;
+  let invocationSignalsTruncated = false;
+  let unplacedExposureSignals = 0;
+  let unplacedInvocationSignals = 0;
+  // Counted per channel, never shared: an unreadable line is lost skill
+  // evidence only for the channel it could have carried.
+  let unreadableExposureLines = 0;
+  let unreadableInvocationLines = 0;
   let lines = 0;
   let parsedLines = 0;
   let skippedLines = 0;
@@ -719,19 +853,49 @@ export const createCodexSessionParser = (captureDetail = false) => {
     }
     lines++;
     const prefix = codexLinePrefix(line);
-    if (!(shouldParseCodexPrefix(prefix) || isCodexToolCallPrefix(prefix))) {
+    const skillCatalogueLine = isCodexSkillCatalogueLine(prefix, line);
+    // A line the cheap prefix gate rejects is dropped without paying for a JSON
+    // parse: on a full history sweep that parse is the dominant cost, and a
+    // rejected line is not skill evidence to begin with. What a line that is
+    // admitted and then fails to parse costs, and to which channel, is decided
+    // below by shape rather than by admission.
+    if (!(shouldParseCodexPrefix(prefix) || isCodexToolCallPrefix(prefix) || skillCatalogueLine)) {
       skippedLines++;
       return;
     }
     parsedLines++;
     const event = safeJSON(line);
     if (!event) {
+      // The prefix gate above serves the usage-row parser, so passing it is not
+      // evidence that this line could have carried a skill observation. A line
+      // admitted only by `shouldParseCodexPrefix` — token_count, session_meta,
+      // turn_context, a message, a reasoning block — cannot carry one at all,
+      // and calling its loss lost skill evidence would be false rather than
+      // merely uncertain. Only the two shapes that could have carried a signal
+      // fail closed, each on its own channel: a tool call could have been an
+      // exec reading a SKILL.md, and a developer message whose heading is still
+      // readable could have been the catalogue. A truncation that cut the
+      // heading away cannot be claimed as a catalogue, so it counts for
+      // nothing — the same direction of error the rest of this module takes.
+      if (isCodexToolCallPrefix(prefix)) {
+        unreadableInvocationLines++;
+      }
+      if (skillCatalogueLine) {
+        unreadableExposureLines++;
+      }
       return;
     }
+    const payload = isRecord(event.payload) ? event.payload : {};
     const timestamp =
       typeof event.timestamp === 'string' || typeof event.timestamp === 'number' ? event.timestamp : Number.NaN;
     const date = new Date(timestamp);
     if (!Number.isFinite(date.getTime())) {
+      if (isCodexToolCallPrefix(prefix) && isCodexExecToolCall(payload)) {
+        unplacedInvocationSignals += matchCodexSkillDocuments(codexToolCallCommandBlob(payload)).length;
+      }
+      if (skillCatalogueLine) {
+        unplacedExposureSignals += extractCodexSkillCatalogue(codexDeveloperMessageText(payload)).length;
+      }
       return;
     }
     if (!session.start || date < session.start) {
@@ -741,7 +905,6 @@ export const createCodexSessionParser = (captureDetail = false) => {
       session.end = date;
     }
 
-    const payload = isRecord(event.payload) ? event.payload : {};
     if (isCodexToolCallPrefix(prefix)) {
       const metadata = isRecord(payload.internal_chat_message_metadata_passthrough)
         ? payload.internal_chat_message_metadata_passthrough
@@ -753,6 +916,10 @@ export const createCodexSessionParser = (captureDetail = false) => {
         session.tools++;
         task.tools++;
       }
+      observeCodexSkillExec(payload, date);
+    }
+    if (skillCatalogueLine) {
+      observeCodexSkillCatalogue(codexDeveloperMessageText(payload), date);
     }
     const sessionMetaId = event.type === 'session_meta' ? nonEmpty(payload.id) : null;
     if (sessionMetaId && !session.id) {
@@ -882,11 +1049,127 @@ export const createCodexSessionParser = (captureDetail = false) => {
     }
   };
 
+  const observeCodexSkillExec = (payload: Record<string, unknown>, at: Date): void => {
+    if (!isCodexExecToolCall(payload)) {
+      return;
+    }
+    const entries = matchCodexSkillDocuments(codexToolCallCommandBlob(payload));
+    if (entries.length === 0) {
+      return;
+    }
+    if (pendingExecSignals.length >= codexSkillObservationCeiling()) {
+      // Flagged only for a call that actually carried a signal, and only here:
+      // by materialization time the over-ceiling signals are gone, so the count
+      // would look complete. A signal-less call dropped at the bound loses
+      // nothing and must not claim the count is partial.
+      invocationSignalsTruncated = true;
+      return;
+    }
+    skillSignalIndex += 1;
+    pendingExecSignals.push({ at, callId: codexToolCallId(payload, skillSignalIndex), entries });
+  };
+
+  const observeCodexSkillCatalogue = (text: string, at: Date): void => {
+    // The catalogue is re-injected on every turn. It describes one session's
+    // exposure, so the first one wins rather than accumulating duplicates.
+    if (pendingCatalogue) {
+      return;
+    }
+    const entries = extractCodexSkillCatalogue(text);
+    if (entries.length > 0) {
+      pendingCatalogue = { at, entries };
+    }
+  };
+
+  /**
+   * Project the buffered signals once the session identity is known. A session
+   * that never declared an id cannot key an observation, so its signals are
+   * dropped here — the same rule the usage-row path applies to such a session.
+   */
+  const materializeSkillObservations = (): void => {
+    const sessionId = session.id;
+    if (!sessionId) {
+      const exposureCandidates = pendingCatalogue?.entries.length ?? 0;
+      const invocationCandidates = pendingExecSignals.reduce((total, signal) => total + signal.entries.length, 0);
+      const ceiling = codexSkillObservationCeiling();
+      const exposureRejected = unreadableExposureLines + unplacedExposureSignals + exposureCandidates;
+      const invocationRejected = unreadableInvocationLines + unplacedInvocationSignals + invocationCandidates;
+      session.rejectedSkillObservationRecords = exposureRejected + invocationRejected;
+      session.skillObservationCompleteness = {
+        exposure: { rejected: exposureRejected, truncated: exposureCandidates > ceiling },
+        invocation: {
+          rejected: invocationRejected,
+          truncated: invocationSignalsTruncated || invocationCandidates > ceiling,
+        },
+      };
+      return;
+    }
+    const projectPath = session.cwd;
+    const exposureObservations: SkillObservation[] = [];
+    const invocationObservations: SkillObservation[] = [];
+    // Exact-path correlation is the only safe way to recover a plugin's
+    // namespaced catalogue name. `null` marks a path claimed by two names, so
+    // an ambiguous catalogue never rewrites invocation evidence.
+    const catalogueNamesByPath = new Map<string, string | null>();
+    let exposureCandidates = 0;
+    let exposureRejected = unreadableExposureLines + unplacedExposureSignals;
+    let invocationCandidates = 0;
+    let invocationRejected = unreadableInvocationLines + unplacedInvocationSignals;
+    if (pendingCatalogue) {
+      exposureCandidates = pendingCatalogue.entries.length;
+      for (const entry of pendingCatalogue.entries) {
+        if (entry.path === null) {
+          continue;
+        }
+        const previousName = catalogueNamesByPath.get(entry.path);
+        catalogueNamesByPath.set(
+          entry.path,
+          previousName === undefined || previousName === entry.name ? entry.name : null,
+        );
+      }
+      const exposed = codexSkillCatalogueObservations(pendingCatalogue.entries, {
+        observedAt: pendingCatalogue.at.toISOString(),
+        projectPath,
+        sessionId,
+      });
+      exposureObservations.push(...exposed.observations);
+      exposureRejected += exposed.rejected;
+    }
+    for (const signal of pendingExecSignals) {
+      invocationCandidates += signal.entries.length;
+      const inferred = codexSkillExecObservations(
+        signal.entries,
+        signal.callId,
+        {
+          observedAt: signal.at.toISOString(),
+          projectPath,
+          sessionId,
+        },
+        catalogueNamesByPath,
+      );
+      invocationObservations.push(...inferred.observations);
+      invocationRejected += inferred.rejected;
+    }
+    const ceiling = codexSkillObservationCeiling();
+    const exposureTruncated = exposureCandidates > ceiling;
+    const invocationTruncated = invocationSignalsTruncated || invocationCandidates > ceiling;
+    session.rejectedSkillObservationRecords = exposureRejected + invocationRejected;
+    session.skillObservations = [
+      ...exposureObservations.slice(0, ceiling),
+      ...invocationObservations.slice(0, ceiling),
+    ];
+    session.skillObservationCompleteness = {
+      exposure: { rejected: exposureRejected, truncated: exposureTruncated },
+      invocation: { rejected: invocationRejected, truncated: invocationTruncated },
+    };
+  };
+
   const finalize = (): void => {
     if (finalized) {
       return;
     }
     finalized = true;
+    materializeSkillObservations();
     if (!hasContextualTokenSnapshot && legacyMaxTokens) {
       session.tin = legacyMaxTokens.input - legacyMaxTokens.cacheRead;
       session.tcr = legacyMaxTokens.cacheRead;

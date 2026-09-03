@@ -164,6 +164,50 @@ describe('source control state transitions', () => {
     expect(finished.state.sources['claude.sessions'].reason.code).toBe(reason);
   });
 
+  test('does not record a first success when a source run times out', () => {
+    const initial = detectedState('claude.sessions');
+    const queued = admitSourceJob(initial, 'claude.sessions', true, 10, 'detection');
+    const started = startSourceJobTransition(queued.state, queued.decision!, 11);
+    const finished = finishSourceJobTransition(
+      started.state,
+      queued.decision!,
+      11,
+      started.decision.rtkTargetGeneration,
+      { _tag: 'timed-out', failureKind: 'source-timeout' },
+      12,
+    );
+
+    expect(finished.state.sources['claude.sessions'].lastSuccessAt).toBeUndefined();
+  });
+
+  test('preserves the previous success timestamp when a later source run times out', () => {
+    const initial = detectedState('claude.sessions');
+    const firstQueued = admitSourceJob(initial, 'claude.sessions', true, 10, 'detection');
+    const firstStarted = startSourceJobTransition(firstQueued.state, firstQueued.decision!, 11);
+    const succeeded = finishSourceJobTransition(
+      firstStarted.state,
+      firstQueued.decision!,
+      11,
+      firstStarted.decision.rtkTargetGeneration,
+      { _tag: 'success', result: { changed: false, inputCount: 1, outputCount: 1, warnings: [] } },
+      12,
+    );
+    const lastSuccessAt = succeeded.state.sources['claude.sessions'].lastSuccessAt;
+    const secondQueued = admitSourceJob(succeeded.state, 'claude.sessions', true, 20, 'cadence');
+    const secondStarted = startSourceJobTransition(secondQueued.state, secondQueued.decision!, 21);
+    const timedOut = finishSourceJobTransition(
+      secondStarted.state,
+      secondQueued.decision!,
+      21,
+      secondStarted.decision.rtkTargetGeneration,
+      { _tag: 'timed-out', failureKind: 'source-timeout' },
+      22,
+    );
+
+    expect(lastSuccessAt).toBe('1970-01-01T00:00:00.012Z');
+    expect(timedOut.state.sources['claude.sessions'].lastSuccessAt).toBe(lastSuccessAt);
+  });
+
   test('releases producer dirty data only after the captured RTK dependency completes', () => {
     let state = detectedState('claude.sessions', 'rtk.savings');
     const producer = admitSourceJob(state, 'claude.sessions', true, 10, 'detection');

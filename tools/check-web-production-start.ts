@@ -25,7 +25,10 @@ const OVERALL_DEADLINE_MS = 30_000;
 const EVENT_LOOP_PROBE_BUDGET_MS = 1250;
 const OWNED_PROCESS_POLL_INTERVAL_MS = 25;
 const REPRESENTATIVE_SESSION_COUNT = 64;
-export const SKILLS_PRODUCTION_SMOKE_PATH = '/skills/global';
+// Plan 113 folded every skill scope into one worktable: /skills/global, /skills/matrix and the
+// project scopes now redirect (307) instead of serving HTML, so the smoke probes the surface that
+// actually renders the shell.
+export const SKILLS_PRODUCTION_SMOKE_PATH = '/skills';
 const SKILLS_SHELL_MARKER = 'data-skills-workspace';
 
 export const assertSyntheticSkillsProductionPrivacy = (html: string, privateMarkers: readonly string[]): void => {

@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { LocalHistoryStorage } from '@ai-usage/local-machine/local-history';
 import { isSessionVcsContext } from '@ai-usage/report-core/session-vcs';
+import { parseSkillObservation, type SkillObservation } from '@ai-usage/report-core/skill-observation';
 import { isOriginProvenanceKind, isSessionOrigin } from '@ai-usage/report-core/types';
 import { MAX_USAGE_MODEL_SEGMENTS } from '@ai-usage/report-core/usage-row';
 import { COLLECTOR_CACHE_MAX_BYTES } from './history-budgets';
@@ -261,6 +262,33 @@ export const reviveCollectorRowsResult = (
 
 export const reviveCollectorRows = (value: unknown): CollectorRow[] => reviveCollectorRowsResult(value).rows;
 
+/**
+ * Skill observations ride in the same cache entry as the rows they were parsed
+ * alongside. Keeping them in a separate cache would mean a re-scan that hits
+ * the row cache still has to re-read every transcript to rebuild observations,
+ * which is exactly the incremental behaviour the cache exists to provide.
+ *
+ * A cache written before observations existed revives as `valid: false`, so the
+ * caller re-parses once rather than persisting an empty observation set forever.
+ */
+export const reviveSkillObservationsResult = (value: unknown): { observations: SkillObservation[]; valid: boolean } => {
+  if (value === undefined) {
+    return { observations: [], valid: false };
+  }
+  if (!Array.isArray(value)) {
+    return { observations: [], valid: false };
+  }
+  const observations: SkillObservation[] = [];
+  for (const candidate of value) {
+    const observation = parseSkillObservation(candidate);
+    if (!observation) {
+      return { observations: [], valid: false };
+    }
+    observations.push(observation);
+  }
+  return { observations, valid: true };
+};
+
 export interface DbStat {
   dev: number;
   ino: number;
@@ -300,7 +328,19 @@ export const dbStat = (dbPath: string): DbStat | null => {
 export const collectorCachePath = (storage: LocalHistoryStorage, fileName: string) =>
   path.join(storage.home, '.config', 'ai-usage', fileName);
 
-export interface DbRowCacheEntry extends DbStat {
+/**
+ * The skill-observation half of a cached collection. Rejects and truncation are
+ * cached with the observations because a warm re-scan must report the same
+ * partial-data state as the cold one — a cache hit that dropped the truncation
+ * flag would silently upgrade a lower bound into a complete count.
+ */
+export interface CachedSkillObservations {
+  observations: SkillObservation[];
+  rejected: number;
+  truncated: boolean;
+}
+
+export interface DbRowCacheEntry extends DbStat, CachedSkillObservations {
   rejectedMetricRecords: number;
   rows: CollectorRow[];
 }
@@ -323,7 +363,16 @@ export const readDbRowCache = (storage: LocalHistoryStorage, fileName: string, v
     }
     const parsed = readPrivateJson(cachePath, COLLECTOR_CACHE_MAX_BYTES) as
       | {
-          entries?: Record<string, DbStat & { rejectedMetricRecords?: unknown; rows: unknown }>;
+          entries?: Record<
+            string,
+            DbStat & {
+              observations?: unknown;
+              rejected?: unknown;
+              rejectedMetricRecords?: unknown;
+              rows: unknown;
+              truncated?: unknown;
+            }
+          >;
           version?: number;
         }
       | undefined;
@@ -345,13 +394,27 @@ export const readDbRowCache = (storage: LocalHistoryStorage, fileName: string, v
       }
       const rejectedMetricRecords = parseNonNegativeSafeInteger(entry.rejectedMetricRecords);
       const revived = reviveCollectorRowsResult(entry.rows);
-      if (!(rejectedMetricRecords.ok && revived.valid && revived.rejectedMetricRecords === 0)) {
+      const observations = reviveSkillObservationsResult(entry.observations);
+      const observationRejects = parseNonNegativeSafeInteger(entry.rejected);
+      if (
+        !(
+          rejectedMetricRecords.ok &&
+          revived.valid &&
+          revived.rejectedMetricRecords === 0 &&
+          observations.valid &&
+          observationRejects.ok &&
+          typeof entry.truncated === 'boolean'
+        )
+      ) {
         continue;
       }
       entries[dbPath] = {
         ...entry,
+        observations: observations.observations,
+        rejected: observationRejects.value,
         rejectedMetricRecords: rejectedMetricRecords.value,
         rows: revived.rows,
+        truncated: entry.truncated,
       };
     }
     return { dirty: false, entries, version };
@@ -391,7 +454,7 @@ export const cachedDbCollection = (
   cache: DbRowCache | null,
   dbPath: string,
   stat: DbStat | null,
-): { rejectedMetricRecords: number; rows: CollectorRow[] } | null => {
+): (CachedSkillObservations & { rejectedMetricRecords: number; rows: CollectorRow[] }) | null => {
   if (!(cache && stat)) {
     return null;
   }
@@ -407,10 +470,18 @@ export const cachedDbCollection = (
     cached.walSize === stat.walSize &&
     cached.walMtimeMs === stat.walMtimeMs
   ) {
-    return { rejectedMetricRecords: cached.rejectedMetricRecords, rows: cached.rows };
+    return {
+      observations: cached.observations,
+      rejected: cached.rejected,
+      rejectedMetricRecords: cached.rejectedMetricRecords,
+      rows: cached.rows,
+      truncated: cached.truncated,
+    };
   }
   return null;
 };
+
+const NO_SKILL_OBSERVATIONS: CachedSkillObservations = { observations: [], rejected: 0, truncated: false };
 
 /** Store freshly collected rows for a db path and mark the cache dirty. No-op without a cache or stat. */
 export const storeDbRows = (
@@ -419,10 +490,11 @@ export const storeDbRows = (
   stat: DbStat | null,
   rows: CollectorRow[],
   rejectedMetricRecords = 0,
+  skillObservations: CachedSkillObservations = NO_SKILL_OBSERVATIONS,
 ): void => {
   if (!(cache && stat)) {
     return;
   }
-  cache.entries[dbPath] = { ...stat, rejectedMetricRecords, rows };
+  cache.entries[dbPath] = { ...stat, ...skillObservations, rejectedMetricRecords, rows };
   cache.dirty = true;
 };

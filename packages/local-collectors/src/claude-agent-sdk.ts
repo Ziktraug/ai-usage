@@ -1,4 +1,6 @@
+import { tmpdir } from 'node:os';
 import { normalizeClaudeAgentSdkQuotaObservation } from '@ai-usage/report-core/provider-quota';
+import type { Options as ClaudeAgentSdkQueryOptions } from '@anthropic-ai/claude-agent-sdk';
 import { Data, Effect } from 'effect';
 import type { ProviderQuotaBatch, ProviderQuotaBatchSource, ProviderQuotaCollectRequest } from './provider-quota';
 
@@ -48,14 +50,36 @@ const silentPrompt = async function* (): AsyncGenerator<never> {
   });
 };
 
+/**
+ * Keep the control-only quota session isolated from whichever repository happens to host the engine.
+ * Authentication remains available through the SDK's normal credential store and inherited environment;
+ * filesystem settings, tools, plugins, hooks, skills, agents, and MCP servers do not.
+ */
+export const createClaudeQuotaQueryOptions = (): ClaudeAgentSdkQueryOptions => ({
+  additionalDirectories: [],
+  agents: {},
+  allowedTools: [],
+  cwd: tmpdir(),
+  hooks: {},
+  mcpServers: {},
+  permissionMode: 'dontAsk',
+  persistSession: false,
+  plugins: [],
+  settings: { disableAllHooks: true },
+  settingSources: [],
+  skills: [],
+  strictMcpConfig: true,
+  tools: [],
+});
+
 const openPublishedQuery = async (): Promise<ClaudeUsageQuery> => {
   const sdk = (await import('@anthropic-ai/claude-agent-sdk')) as {
-    query?: (input: { options?: Record<string, unknown>; prompt: AsyncIterable<never> }) => unknown;
+    query?: (input: { options?: ClaudeAgentSdkQueryOptions; prompt: AsyncIterable<never> }) => unknown;
   };
   if (typeof sdk.query !== 'function') {
     throw collectionError('unsupported', 'The Claude Agent SDK does not expose query().');
   }
-  const session = sdk.query({ options: {}, prompt: silentPrompt() });
+  const session = sdk.query({ options: createClaudeQuotaQueryOptions(), prompt: silentPrompt() });
   if (
     typeof session !== 'object' ||
     session === null ||

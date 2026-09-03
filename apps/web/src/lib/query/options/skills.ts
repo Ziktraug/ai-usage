@@ -10,18 +10,21 @@ import type { SkillsClient, SkillsClientResult } from '../../rpc/skills-client';
 import {
   managedSkillMarkdownKey,
   projectSkillMarkdownKey,
+  skillObservationsKey,
   skillsKnownProjectPathsKey,
   skillsProjectInventoriesKey,
   skillsSnapshotKey,
   unwrapSkillsQueryResult,
 } from '../identities/skills';
-import type { FiniteSwrQueryKey } from '../keys';
+import type { CollectionSwrQueryKey, FiniteSwrQueryKey } from '../keys';
 import { webQueryPolicies } from '../policies';
+import { skillObservationProducerProofStaleTime } from '../skill-observation-proof';
 
 export {
   managedSkillMarkdownKey,
   projectSkillMarkdownKey,
   SkillsQueryError,
+  skillObservationsKey,
   skillsKnownProjectPathsKey,
   skillsProjectInventoriesKey,
   skillsSnapshotKey,
@@ -34,11 +37,13 @@ export type SkillsQueryClient = Pick<
   | 'getManagedSkillMarkdown'
   | 'getProjectSkillMarkdown'
   | 'getSkillManagementSnapshot'
+  | 'getSkillObservations'
   | 'getSkillProjectInventories'
 >;
 export type SkillsInventoryQueryClient = Pick<SkillsQueryClient, 'getSkillProjectInventories'>;
+export type SkillObservationsQueryClient = Pick<SkillsQueryClient, 'getSkillObservations'>;
 
-export type SkillsInvalidationTarget = 'known-project-paths' | 'project-inventories' | 'snapshot';
+export type SkillsInvalidationTarget = 'known-project-paths' | 'observations' | 'project-inventories' | 'snapshot';
 
 export interface SkillsQueryContext {
   readonly browser: boolean;
@@ -68,6 +73,25 @@ export const skillsProjectInventoriesQueryOptions = (client: SkillsInventoryQuer
     enabled: context.browser && context.enabled,
     queryFn: async ({ signal }) => unwrapSkillsQueryResult(await client.getSkillProjectInventories({ signal })),
     queryKey: skillsProjectInventoriesKey(),
+  });
+
+/**
+ * The one query for the skill-observation identity, on the collection cadence rather than the
+ * snapshot's. Collection publication remains the prompt path, while interval, focus, and mount
+ * revalidation prevent the producer-completeness proof from outliving its budget. That distinct
+ * lifecycle is why observations do not share the snapshot's policy.
+ */
+export const skillObservationsQueryOptions = (client: SkillObservationsQueryClient, context: SkillsQueryContext) =>
+  queryOptions({
+    ...webQueryPolicies.collectionSwr,
+    enabled: context.browser && context.enabled,
+    queryFn: async ({ signal }) => unwrapSkillsQueryResult(await client.getSkillObservations({ signal })),
+    queryKey: skillObservationsKey(),
+    staleTime: (query) =>
+      skillObservationProducerProofStaleTime(
+        query.state.data?.producerProofValidUntil ?? null,
+        query.state.dataUpdatedAt,
+      ),
   });
 
 export const managedSkillMarkdownQueryOptions = (
@@ -112,9 +136,10 @@ export const skillsMutationOptions = <Variables, Result>(
 
 const invalidationKeys = {
   'known-project-paths': skillsKnownProjectPathsKey,
+  observations: skillObservationsKey,
   'project-inventories': skillsProjectInventoriesKey,
   snapshot: skillsSnapshotKey,
-} as const satisfies Record<SkillsInvalidationTarget, () => FiniteSwrQueryKey>;
+} as const satisfies Record<SkillsInvalidationTarget, () => CollectionSwrQueryKey | FiniteSwrQueryKey>;
 
 export const invalidateSkillsQueries = async (
   client: QueryClient,
@@ -127,13 +152,23 @@ export const invalidateSkillsQueries = async (
     }),
   );
 };
+export const applySkillsSnapshotToCache = async <Snapshot>(
+  queryClient: QueryClient,
+  snapshot: Snapshot,
+): Promise<void> => {
+  queryClient.setQueryData(skillsSnapshotKey(), snapshot);
+  // The observations procedure joins durable facts to this inventory on the
+  // server. A new snapshot therefore invalidates the joined answer even when
+  // no collection ran.
+  await invalidateSkillsQueries(queryClient, ['observations']);
+};
 export const applySkillsConfigurationSnapshotToCache = async (
   queryClient: QueryClient,
   skillsClient: SkillsInventoryQueryClient,
   snapshot: SkillManagementSnapshot,
   refreshDependents: boolean,
 ): Promise<void> => {
-  queryClient.setQueryData(skillsSnapshotKey(), snapshot);
+  await applySkillsSnapshotToCache(queryClient, snapshot);
   if (!refreshDependents) {
     return;
   }

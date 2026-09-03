@@ -13,6 +13,7 @@ describe('usage web runtime paths', () => {
     ).toEqual({
       configCwd: '/workspace',
       databasePath: '/isolated/home/.config/ai-usage/usage-store.sqlite',
+      homeDirectory: '/isolated/home',
       inboxDirectory: '/isolated/home/.config/ai-usage/engine/inbox',
       rendezvousPath: '/isolated/home/.config/ai-usage/engine/rendezvous.json',
       stateDirectory: '/isolated/home/.config/ai-usage/engine',

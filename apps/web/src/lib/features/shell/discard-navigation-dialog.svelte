@@ -15,6 +15,9 @@
   let keepButton = $state<HTMLButtonElement>();
   let discardButton = $state<HTMLButtonElement>();
   let pending = $state(false);
+  // Recorded when the dismissal is decided, not when it renders: `keep` hands focus to the editor
+  // synchronously, while this effect's queued `tick` is still outstanding and would take it back.
+  let dismissing = false;
 
   const backdrop = css({
     position: 'fixed',
@@ -47,6 +50,11 @@
     _focusVisible: { outline: '2px solid token(colors.accent)', outlineOffset: '2px' },
   });
 
+  const keep = (): void => {
+    dismissing = true;
+    onKeep();
+  };
+
   const discard = async (): Promise<void> => {
     pending = true;
     try {
@@ -60,7 +68,7 @@
     if (event.key === 'Escape' && !pending) {
       event.preventDefault();
       event.stopPropagation();
-      onKeep();
+      keep();
       return;
     }
     if (event.key !== 'Tab') {
@@ -82,9 +90,17 @@
       pending = false;
       return;
     }
-    tick().then(() => keepButton?.focus());
-    document.addEventListener('keydown', onKeydown, true);
-    return () => document.removeEventListener('keydown', onKeydown, true);
+    dismissing = false;
+    tick().then(() => {
+      if (!dismissing) {
+        keepButton?.focus();
+      }
+    });
+    // Window capture runs before the drawer's own document-capture Escape handler, whose layer
+    // checks `defaultPrevented`. Losing that order dismisses the drawer too, which re-attempts the
+    // navigation the guard just refused.
+    window.addEventListener('keydown', onKeydown, true);
+    return () => window.removeEventListener('keydown', onKeydown, true);
   });
 </script>
 
@@ -100,7 +116,7 @@
       <h2 id="discard-navigation-title">Discard unsaved changes?</h2>
       <p id="discard-navigation-description">Your unsaved draft will be lost if you leave this page.</p>
       <div class={actions}>
-        <button class={button} disabled={pending} onclick={onKeep} type="button" bind:this={keepButton}>
+        <button class={button} disabled={pending} onclick={keep} type="button" bind:this={keepButton}>
           Keep editing
         </button>
         <button class={button} disabled={pending} onclick={discard} type="button" bind:this={discardButton}>

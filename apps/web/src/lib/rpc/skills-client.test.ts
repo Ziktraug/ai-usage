@@ -38,6 +38,25 @@ const fixtureCapability = (): SkillsCapability => ({
       sha256: 'a'.repeat(64),
       skillName,
     }),
+  readObservations: () =>
+    ok({
+      harnesses: [
+        { harnessKey: 'claude', label: 'Claude Code', observability: 'observable' as const },
+        { harnessKey: 'cursor', label: 'Cursor', observability: 'not-observable' as const },
+      ],
+      harnessIncompleteness: {
+        exposure: [],
+        exposureUnattributed: false,
+        invocation: [],
+        invocationUnattributed: false,
+      },
+      invocationLowerBound: false,
+      lowerBound: false,
+      producerCompletenessMissing: false,
+      producerProofValidUntil: '2026-08-01T10:01:00.000Z',
+      skills: [],
+      skipped: 0,
+    }),
   readProjectInventories: () => ok([]),
   readProjectMarkdown: (input) =>
     ok({

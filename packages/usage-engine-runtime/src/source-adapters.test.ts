@@ -1,22 +1,30 @@
-import { describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { ProviderQuotaBatchSource } from '@ai-usage/local-collectors';
+import { setClaudeSkillObservationCeilingForTesting } from '@ai-usage/local-machine/claude-session-facts';
 import { createLocalHistoryStorage, LocalHistoryStorage } from '@ai-usage/local-machine/local-history';
+import { completeSkillObservationCollection, type SkillObservation } from '@ai-usage/report-core/skill-observation';
 import { collectionSourceIds } from '@ai-usage/report-core/source-control';
+import { querySkillObservationDataset } from '@ai-usage/report-data/skill-observation-read';
 import {
   initializeUsageStore,
   queryLatestProviderQuotaObservations,
   queryNormalizedDatasetItems,
   queryReportRows,
+  querySkillObservations,
   usageStorePath,
 } from '@ai-usage/usage-store/testing';
-import { Duration, Effect } from 'effect';
+import { Duration, Effect, Exit } from 'effect';
 import { stageCursorUsageExport } from './input-file';
-import { createScheduledSourceRegistry, type SourceRunContext } from './source-adapters';
+import { createScheduledSourceRegistry, prepareSkillObservationImport, type SourceRunContext } from './source-adapters';
 
 const machine = { id: 'machine-a', label: 'Machine A' };
+
+afterEach(() => {
+  setClaudeSkillObservationCeilingForTesting(null);
+});
 
 const createRegistry = async (home: string, options: Parameters<typeof createScheduledSourceRegistry>[0] = {}) =>
   Effect.runPromise(
@@ -50,11 +58,163 @@ const writeClaudeSession = (home: string, inputTokens = 10): void => {
   );
 };
 
+/**
+ * A transcript that both produces a usage row and declares a skill invocation,
+ * so one source run exercises the row write and the observation write together.
+ */
+const writeClaudeSkillSession = (home: string, skillNames: readonly string[] = ['improve']): void => {
+  const directory = path.join(home, '.claude', 'projects', '-home-alex-Projects-report');
+  mkdirSync(directory, { recursive: true });
+  const cwd = '/home/alex/Projects/report';
+  const events = [
+    {
+      cwd,
+      message: { content: [{ text: 'audit the release', type: 'text' }], role: 'user' },
+      sessionId: 'skill-session-1',
+      timestamp: '2026-07-16T10:00:00.000Z',
+      type: 'user',
+      uuid: 'user-1',
+    },
+    {
+      cwd,
+      message: {
+        content: skillNames.map((skill, index) => ({
+          id: index === 0 ? 'toolu_managed' : `toolu_${index}`,
+          input: { args: 'Northwind audit', skill },
+          name: 'Skill',
+          type: 'tool_use',
+        })),
+        id: 'message-1',
+        model: 'claude-sonnet-4-6',
+        role: 'assistant',
+        usage: { cache_creation_input_tokens: 0, cache_read_input_tokens: 0, input_tokens: 10, output_tokens: 5 },
+      },
+      parentUuid: 'user-1',
+      requestId: 'request-1',
+      sessionId: 'skill-session-1',
+      timestamp: '2026-07-16T10:00:01.000Z',
+      type: 'assistant',
+      uuid: 'assistant-1',
+    },
+    {
+      cwd,
+      isMeta: true,
+      message: {
+        content: [{ text: 'Base directory for this skill: /home/alex/.claude/skills/improve', type: 'text' }],
+        role: 'user',
+      },
+      sessionId: 'skill-session-1',
+      sourceToolUseID: 'toolu_managed',
+      timestamp: '2026-07-16T10:00:02.000Z',
+      type: 'user',
+      uuid: 'meta-1',
+    },
+  ];
+  writeFileSync(
+    path.join(directory, 'skill-session-1.jsonl'),
+    `${events.map((event) => JSON.stringify(event)).join('\n')}\n`,
+  );
+};
+
 const progressContext = (progress: unknown[]): SourceRunContext => ({
   reportProgress: (update) =>
     Effect.sync(() => {
       progress.push(update);
     }),
+});
+
+const skillObservation = (overrides: Partial<SkillObservation> = {}): SkillObservation => ({
+  argsPresent: true,
+  harnessKey: 'codex',
+  observationKey: 'observation-1',
+  observedAt: '2026-08-20T10:00:00.000Z',
+  projectPath: '/work/project',
+  resolvedPath: '/home/alex/.codex/skills/improve',
+  sessionId: 'session-1',
+  skillName: 'improve',
+  success: true,
+  tier: 'declared',
+  ...overrides,
+});
+
+describe('skill observation import preparation', () => {
+  test('applies the age cutoff only to exposure before the bounded write batch', () => {
+    const prepared = prepareSkillObservationImport({
+      completeness: completeSkillObservationCollection(),
+      maximumObservations: 3,
+      minimumExposureObservedAt: '2026-08-01T00:00:00.000Z',
+      observations: [
+        skillObservation({ observationKey: 'historical-declared', observedAt: '2025-01-01T00:00:00.000Z' }),
+        skillObservation({
+          observationKey: 'historical-inferred',
+          observedAt: '2025-01-02T00:00:00.000Z',
+          tier: 'inferred',
+        }),
+        skillObservation({
+          observationKey: 'expired-exposure',
+          observedAt: '2025-01-03T00:00:00.000Z',
+          tier: 'exposed',
+        }),
+        skillObservation({ observationKey: 'current-exposure', tier: 'exposed' }),
+      ],
+    });
+
+    expect(prepared.observations.map(({ observationKey }) => observationKey)).toEqual([
+      'historical-declared',
+      'historical-inferred',
+      'current-exposure',
+    ]);
+    expect(prepared.completeness).toEqual(completeSkillObservationCollection());
+  });
+
+  test('spends a saturated batch on invocation evidence before exposure', () => {
+    const prepared = prepareSkillObservationImport({
+      completeness: completeSkillObservationCollection(),
+      maximumObservations: 2,
+      minimumExposureObservedAt: '2026-08-01T00:00:00.000Z',
+      observations: [
+        skillObservation({
+          observationKey: 'exposed-newest',
+          observedAt: '2026-08-29T00:00:00.000Z',
+          tier: 'exposed',
+        }),
+        skillObservation({ observationKey: 'declared', observedAt: '2026-08-20T00:00:00.000Z' }),
+        skillObservation({
+          observationKey: 'inferred',
+          observedAt: '2026-08-21T00:00:00.000Z',
+          tier: 'inferred',
+        }),
+      ],
+    });
+
+    expect(prepared.observations.map(({ observationKey }) => observationKey)).toEqual(['inferred', 'declared']);
+    expect(prepared.completeness).toEqual({
+      exposure: { rejected: 0, truncated: true },
+      invocation: { rejected: 0, truncated: false },
+    });
+  });
+
+  test('reports when invocation evidence itself exceeds the batch', () => {
+    const prepared = prepareSkillObservationImport({
+      completeness: completeSkillObservationCollection(),
+      maximumObservations: 1,
+      minimumExposureObservedAt: '2026-08-01T00:00:00.000Z',
+      observations: [
+        skillObservation({ observationKey: 'declared', observedAt: '2026-08-20T00:00:00.000Z' }),
+        skillObservation({
+          observationKey: 'inferred-newest',
+          observedAt: '2026-08-21T00:00:00.000Z',
+          tier: 'inferred',
+        }),
+      ],
+    });
+
+    expect(prepared.observations.map(({ observationKey }) => observationKey)).toEqual(['inferred-newest']);
+    expect(prepared.completeness).toEqual({
+      exposure: { rejected: 0, truncated: false },
+      invocation: { rejected: 0, truncated: true },
+    });
+  });
 });
 
 describe('scheduled source adapters', () => {
@@ -352,6 +512,105 @@ describe('scheduled source adapters', () => {
         }),
       );
       expect(latest.observations).toHaveLength(1);
+    } finally {
+      rmSync(home, { force: true, recursive: true });
+    }
+  });
+
+  test('persists skill observations collected alongside the session rows', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'plan111-engine-source-skill-observations-'));
+    try {
+      writeClaudeSkillSession(home);
+      const registry = await createRegistry(home);
+      const source = registry.get('claude.sessions');
+
+      const result = await Effect.runPromise(source?.run(progressContext([])) ?? Effect.die('missing source'));
+      const stored = await Effect.runPromise(querySkillObservations({ dbPath: usageStorePath(home) }));
+
+      expect(result).toMatchObject({ changed: true });
+      expect(stored.skipped).toBe(0);
+      expect(stored.observations).toHaveLength(1);
+      expect(stored.observations[0]?.machineId).toBe(machine.id);
+      expect(stored.observations[0]?.observation).toMatchObject({
+        harnessKey: 'claude',
+        resolvedPath: '/home/alex/.claude/skills/improve',
+        skillName: 'improve',
+        tier: 'declared',
+      });
+      // The argument text must not survive the trip to the store.
+      expect(JSON.stringify(stored.observations)).not.toContain('Northwind');
+    } finally {
+      rmSync(home, { force: true, recursive: true });
+    }
+  });
+
+  test('re-checks cancellation before the auxiliary observation write', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'plan111-engine-source-skill-abort-'));
+    try {
+      writeClaudeSkillSession(home);
+      const registry = await createRegistry(home);
+      const source = registry.get('claude.sessions');
+      let abortReads = 0;
+      const signal = {
+        get aborted() {
+          abortReads += 1;
+          return abortReads >= 3;
+        },
+      } as AbortSignal;
+
+      const exit = await Effect.runPromiseExit(
+        source?.run({ ...progressContext([]), signal }) ?? Effect.die('missing source'),
+      );
+      const rows = await Effect.runPromise(queryReportRows({ dbPath: usageStorePath(home) }));
+      const observations = await Effect.runPromise(querySkillObservations({ dbPath: usageStorePath(home) }));
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(rows.rows).toHaveLength(1);
+      expect(observations.observations).toHaveLength(0);
+    } finally {
+      rmSync(home, { force: true, recursive: true });
+    }
+  });
+
+  test('a second run of an unchanged source reports no change from its observations', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'plan111-engine-source-skill-idempotent-'));
+    try {
+      writeClaudeSkillSession(home);
+      const registry = await createRegistry(home);
+      const source = registry.get('claude.sessions');
+      await Effect.runPromise(source?.run(progressContext([])) ?? Effect.die('missing source'));
+
+      const second = await Effect.runPromise(source?.run(progressContext([])) ?? Effect.die('missing source'));
+      const stored = await Effect.runPromise(querySkillObservations({ dbPath: usageStorePath(home) }));
+
+      // Re-importing the same observations must not re-publish the report.
+      expect(second).toMatchObject({ changed: false });
+      expect(stored.observations).toHaveLength(1);
+    } finally {
+      rmSync(home, { force: true, recursive: true });
+    }
+  });
+
+  test('persists a producer-side invocation bound through the fresh read model', async () => {
+    const home = mkdtempSync(path.join(tmpdir(), 'plan111-engine-source-skill-incomplete-'));
+    try {
+      setClaudeSkillObservationCeilingForTesting(1);
+      writeClaudeSkillSession(home, ['improve', 'review']);
+      const registry = await createRegistry(home, { now: () => new Date('2026-08-29T10:00:00.000Z') });
+      const source = registry.get('claude.sessions');
+
+      await Effect.runPromise(source?.run(progressContext([])) ?? Effect.die('missing source'));
+      const dataset = await Effect.runPromise(
+        querySkillObservationDataset({
+          dbPath: usageStorePath(home),
+          maximumBytes: 2 * 1024 * 1024,
+          maximumObservations: 20_000,
+          maximumSkills: 4096,
+        }),
+      );
+
+      expect(dataset.skills.map(({ skillName }) => skillName)).toEqual(['improve']);
+      expect(dataset.lowerBound).toBe(true);
+      expect(dataset.invocationLowerBound).toBe(true);
     } finally {
       rmSync(home, { force: true, recursive: true });
     }

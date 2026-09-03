@@ -18,6 +18,13 @@ import {
 } from '@ai-usage/local-machine/local-history';
 import { ensureMachineConfig, readMergedAiUsageConfigFrom } from '@ai-usage/local-machine/machine-config';
 import { firstExisting, resolvePathCandidates } from '@ai-usage/local-machine/platform-paths';
+import {
+  MAX_SKILL_OBSERVATION_BATCH,
+  parseSkillObservation,
+  SKILL_OBSERVATION_EXPOSURE_RETENTION_MS,
+  type SkillObservation,
+  type SkillObservationCollectionCompleteness,
+} from '@ai-usage/report-core/skill-observation';
 import type { UsageMachine } from '@ai-usage/report-core/snapshot';
 import type {
   CollectionSourceId,
@@ -33,6 +40,7 @@ import {
 import {
   importLocalRows,
   importNormalizedDatasetItems,
+  importSkillObservations,
   queryEnrichableUsageRows,
   queryUsageStoreGeneration,
   type RtkSavingsContribution,
@@ -221,7 +229,15 @@ const cursorOptions = (
 const collectHarness = (
   adapter: HarnessAdapter,
 ): Effect.Effect<
-  { rows: CollectorRow[]; warnings: readonly SanitizableSourceWarning[] },
+  {
+    // Optional, and deliberately so: a harness that cannot observe skills
+    // (Cursor) omits this rather than reporting an empty list, which would be
+    // indistinguishable from having observed nothing (ADR 0022).
+    observationCompleteness?: SkillObservationCollectionCompleteness;
+    observations?: readonly SkillObservation[];
+    rows: CollectorRow[];
+    warnings: readonly SanitizableSourceWarning[];
+  },
   unknown,
   LocalHistoryStorageService
 > => {
@@ -231,6 +247,81 @@ const collectHarness = (
   return adapter.collect.pipe(Effect.map((rows) => ({ rows, warnings: [] })));
 };
 
+interface SkillObservationImportCandidate {
+  readonly index: number;
+  readonly normalizedObservedAt: string | null;
+  readonly observation: SkillObservation;
+}
+
+export interface PreparedSkillObservationImport {
+  readonly completeness: SkillObservationCollectionCompleteness;
+  readonly observations: readonly SkillObservation[];
+}
+
+/**
+ * Applies the engine-owned exposure retention and write budgets before the
+ * store sees a rescan. Actual invocations get the budget first: catalogue
+ * exposure is both much larger and weaker evidence, so letting it compete in
+ * one pooled slice can erase the exact observations the Skills surface exists
+ * to report.
+ */
+export const prepareSkillObservationImport = (input: {
+  readonly completeness: SkillObservationCollectionCompleteness;
+  readonly maximumObservations?: number;
+  readonly minimumExposureObservedAt: string;
+  readonly observations: readonly SkillObservation[];
+}): PreparedSkillObservationImport => {
+  const maximumObservations = input.maximumObservations ?? MAX_SKILL_OBSERVATION_BATCH;
+  if (
+    !Number.isSafeInteger(maximumObservations) ||
+    maximumObservations <= 0 ||
+    maximumObservations > MAX_SKILL_OBSERVATION_BATCH
+  ) {
+    throw new RangeError('Skill observation import budget is invalid');
+  }
+
+  const retained: SkillObservationImportCandidate[] = input.observations.flatMap((observation, index) => {
+    const parsed = parseSkillObservation(observation);
+    if (parsed !== null && parsed.tier === 'exposed' && parsed.observedAt < input.minimumExposureObservedAt) {
+      return [];
+    }
+    return [{ index, normalizedObservedAt: parsed?.observedAt ?? null, observation }];
+  });
+  const completeness: SkillObservationCollectionCompleteness = {
+    exposure: { ...input.completeness.exposure },
+    invocation: { ...input.completeness.invocation },
+  };
+  if (retained.length <= maximumObservations) {
+    return { completeness, observations: retained.map(({ observation }) => observation) };
+  }
+
+  const byRecency = (left: SkillObservationImportCandidate, right: SkillObservationImportCandidate): number => {
+    // Invalid internal candidates stay at the front so the store can reject and
+    // count them instead of an engine-side bound silently hiding the defect.
+    if (left.normalizedObservedAt === null || right.normalizedObservedAt === null) {
+      if (left.normalizedObservedAt === right.normalizedObservedAt) {
+        return left.index - right.index;
+      }
+      return left.normalizedObservedAt === null ? -1 : 1;
+    }
+    if (left.normalizedObservedAt !== right.normalizedObservedAt) {
+      return left.normalizedObservedAt < right.normalizedObservedAt ? 1 : -1;
+    }
+    return left.index - right.index;
+  };
+  const invocation = retained.filter(({ observation }) => observation.tier !== 'exposed').sort(byRecency);
+  const exposure = retained.filter(({ observation }) => observation.tier === 'exposed').sort(byRecency);
+  const keptInvocation = invocation.slice(0, maximumObservations);
+  const exposureBudget = maximumObservations - keptInvocation.length;
+  const keptExposure = exposure.slice(0, exposureBudget);
+  completeness.invocation.truncated ||= keptInvocation.length < invocation.length;
+  completeness.exposure.truncated ||= keptExposure.length < exposure.length;
+  return {
+    completeness,
+    observations: [...keptInvocation, ...keptExposure].map(({ observation }) => observation),
+  };
+};
+
 const createSessionSource = (input: {
   adapter: () => Effect.Effect<HarnessAdapter, SourceRunError>;
   dbPath: string;
@@ -238,6 +329,7 @@ const createSessionSource = (input: {
   id: 'claude.sessions' | 'codex.sessions' | 'cursor.sessions' | 'opencode.sessions';
   label: string;
   machine: UsageMachine;
+  now: () => Date;
   storage: LocalHistoryStorageService;
 }): ScheduledSource => ({
   cadence: Duration.millis(getCollectionSourceDefinition(input.id).cadenceMs),
@@ -271,14 +363,49 @@ const createSessionSource = (input: {
         phase: 'importing',
         total: rows.length,
       });
+      yield* abortIfRequested(context.signal);
       const imported = yield* importLocalRows({
         dbPath: input.dbPath,
         machine: input.machine,
         rows,
       }).pipe(Effect.mapError((cause) => sourceFailure(input.id, cause)));
+      // Skill observations are an auxiliary fact family with their own table,
+      // written on the same engine-owned pass as the rows they were parsed
+      // beside. The engine is the only writer (ADR 0009), so this is the one
+      // place they can reach the store.
+      const minimumExposureObservedAt = new Date(
+        input.now().getTime() - SKILL_OBSERVATION_EXPOSURE_RETENTION_MS,
+      ).toISOString();
+      const preparedObservations = prepareSkillObservationImport({
+        completeness: collection.observationCompleteness ?? {
+          exposure: { rejected: 0, truncated: true },
+          invocation: { rejected: 0, truncated: true },
+        },
+        minimumExposureObservedAt,
+        observations: collection.observations ?? [],
+      });
+      yield* abortIfRequested(context.signal);
+      const importedObservations =
+        collection.observations === undefined
+          ? { inserted: 0, rejected: 0, stateChanged: false, unchanged: 0, updated: 0 }
+          : yield* importSkillObservations({
+              collection: {
+                completeness: preparedObservations.completeness,
+                harnessKey: adapter.metadata.key,
+              },
+              dbPath: input.dbPath,
+              machineId: input.machine.id,
+              minimumExposureObservedAt,
+              observations: preparedObservations.observations,
+            }).pipe(Effect.mapError((cause) => sourceFailure(input.id, cause)));
       const warnings = sanitizeSourceWarnings(input.label, [...collection.warnings, ...retentionWarnings]);
       return {
-        changed: imported.inserted > 0 || imported.updated > 0,
+        changed:
+          imported.inserted > 0 ||
+          imported.updated > 0 ||
+          importedObservations.inserted > 0 ||
+          importedObservations.updated > 0 ||
+          importedObservations.stateChanged,
         inputCount: collection.rows.length,
         outputCount: rows.length,
         servedProjectionChanged: imported.fleetChanged,
@@ -484,6 +611,7 @@ export const createScheduledSourceRegistry = (
         id: 'claude.sessions',
         label: 'Claude sessions',
         machine,
+        now: options.now ?? (() => new Date()),
         storage,
       }),
       createSessionSource({
@@ -493,6 +621,7 @@ export const createScheduledSourceRegistry = (
         id: 'codex.sessions',
         label: 'Codex sessions',
         machine,
+        now: options.now ?? (() => new Date()),
         storage,
       }),
       createSessionSource({
@@ -502,6 +631,7 @@ export const createScheduledSourceRegistry = (
         id: 'opencode.sessions',
         label: 'OpenCode sessions',
         machine,
+        now: options.now ?? (() => new Date()),
         storage,
       }),
       createSessionSource({
@@ -523,6 +653,7 @@ export const createScheduledSourceRegistry = (
         id: 'cursor.sessions',
         label: 'Cursor sessions',
         machine,
+        now: options.now ?? (() => new Date()),
         storage,
       }),
       createProviderQuotaSource({

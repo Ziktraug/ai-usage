@@ -31,10 +31,17 @@ internal seam instead of importing a public facade from inside the package:
 
 - `contracts.ts`, `config.ts`, and `validation.ts` own JSON-safe contracts and input parsing;
 - `filesystem.ts` owns bounded reads, cross-process locks, and atomic writes;
-- `source-state.ts`, `source-scan.ts`, and `project-scan.ts` own inventory inputs;
+- `source-state.ts`, `source-scan.ts`, and `project-scan.ts` own inventory inputs and the
+  cross-process source-intent lock;
 - `skill-markdown.ts` and `skill-markdown-io.ts` own parsing and transactional editor IO;
 - `projections.ts` owns target observation, planning, and safe projection mutations;
 - `workflows.ts` composes filesystem-safe use cases and `application.ts` exposes their narrow application facade.
+
+Reconciliation acquires the source-intent lock before any target projection
+lock and revalidates the current enabled state before applying a planned
+mutation. This ordering prevents a plan made from stale source state from
+overturning a concurrent enable or disable without introducing a target-to-source
+lock cycle.
 
 Workspace-package imports are forbidden by both Biome and
 `tools/check-package-boundaries.ts` so the control plane cannot acquire report,

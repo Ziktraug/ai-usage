@@ -295,10 +295,122 @@ corrupt data.
 Served report support, Overview, Breakdown, Sessions, campaign children,
 neighbors, and detail anchors are bounded direct queries against revision-keyed
 durable projections. Quota history is a separate bounded direct read of durable
-provider-quota observations and does not name a served revision. SSR reads the
-current manifest and bounded support bootstrap in one transaction; destination
-queries after hydration name that same revision. The browser owns destination
-fingerprinting, supersession, atomic commit, and one expiry retry.
+provider-quota observations and does not name a served revision. Skill
+observations are a second such read (see below). SSR reads the current manifest
+and bounded support bootstrap in one transaction; destination queries after
+hydration name that same revision. The browser owns destination fingerprinting,
+supersession, atomic commit, and one expiry retry.
+
+#### Skill observations
+
+Skill observations are an auxiliary fact family with their own tables, their own
+collector pass, and a read path that never touches the report bootstrap
+(ADR 0022). One observation records that a named skill was invoked, or offered,
+in one session of one harness, and carries an **observation tier** —
+`declared`, `inferred`, or `exposed` — that is part of the fact rather than a
+qualifier on it.
+
+The read path is:
+
+`skill_observations` + `skill_observation_collection_state` (durable rows plus
+producer completeness, written together even for an empty observation batch)
+→ `querySkillObservations` (`@ai-usage/usage-store/reader`, bounded, `query_only`,
+reading the invocation tiers against the full budget before spending the
+remainder on exposure, reporting the two bounds separately, and deriving
+`producerProofValidUntil` from the producer cutoff rather than completion time)
+→ `querySkillObservationDataset` (`@ai-usage/report-data/skill-observation-read`,
+which classifies rows the presentation edge cannot render by their known tier,
+folds producer/read/refusal facts through
+`@ai-usage/report-core/skill-observation-evidence`, then folds and clamps to the
+caps it is given, reporting count loss as `lowerBound` and invocation or
+unknown-tier loss as `invocationLowerBound`)
+→ `UsageReadModel.readSkillObservations`
+(`apps/web/src/server/usage-read-model.server.ts`, which supplies those caps,
+stated as the contract's own numbers)
+→ `joinSkillObservations` (`apps/web/src/server/skill-observation-join.ts`,
+which adds the inventory side and then clamps the *assembled response* to the
+contract's caps, again reporting any clamp as `lowerBound` — the upstream clamp
+cannot bound a payload the join grows — while preserving the proof deadline)
+→ the `skills.observations` oRPC procedure
+→ the `skill-observations` query family under the `collection-swr` policy.
+
+These properties are load-bearing:
+
+- **The tiers get separate read budgets, and separate bounds.** Exposure is
+  written once per catalogue entry per session and outnumbers real invocations
+  by roughly 50:1, so a pooled recency-ordered budget returns catalogue rows and
+  nothing else. `lowerBound` says some count is a floor; `invocationLowerBound`
+  says the `declared`/`inferred` evidence was itself cut short, and only that
+  one makes an absence verdict provisional (ADR 0022).
+
+- **One pure evidence policy decides what each loss can weaken.** Producer
+  incompleteness, bounded reads, categorized refused rows, and later response
+  clamps enter `skill-observation-evidence`; callers consume its claim-ready
+  result instead of reconstructing the Boolean protocol. A known `exposed`
+  loss weakens counts only. A `declared`, `inferred`, or unknown-tier loss also
+  weakens invocation absence. The durable facts remain in SQLite and the final
+  inventory join remains Web-owned.
+
+- **Producer bounds are data-plane facts, not transient warnings.** Extractor
+  rejection/truncation is persisted per machine and harness, split between
+  invocation and exposure. A completeness-only change advances the store
+  generation; a complete later rescan can clear it. This prevents an empty,
+  truncated sweep from turning into an exact "never invoked" verdict after the
+  source-control warning disappears or the process restarts.
+
+- **Global completeness requires every observable producer to answer recently.**
+  The Web composition always supplies Claude, Codex, and OpenCode for the
+  current machine. Persisted source policy can mark one of those expected
+  producers incomplete, but never remove it from the proof roster; disabling
+  collection is not evidence of absence. The store accepts a producer answer
+  only while its persisted `collected_at` is within the four-minute server-read
+  window; the browser cache owns the final minute of the five-minute end-to-end
+  proof budget. The store publishes that deadline as
+  `producerProofValidUntil`; folds and inventory scans cannot renew it. Missing,
+  stale, disabled, malformed, rejected, truncated, or state-read-overflow
+  answers make absence provisional. A harness-filtered read intersects the
+  roster with that harness, and Cursor remains `not-observable`, so it requires
+  no producer state (ADR 0037).
+
+- **Invocation history is durable; exposure is windowed.** The scarce
+  `declared` and `inferred` facts survive age-based recovery and rescans. Only
+  the high-volume `exposed` catalogue stream is pruned at 400 days, and only
+  exposure receives the matching import cutoff, so a sweep cannot resurrect
+  expired catalogue rows (ADR 0037).
+
+- **A completed publication *cycle* or a Skills inventory mutation invalidates
+  it — not only a new report revision.** The query policy also revalidates every
+  minute and on window focus, because the producer proof can expire even
+  when a stopped or disabled collector emits no invalidation. Mount always
+  refetches so recreating a TanStack observer cannot restart the interval beyond
+  the proof's remaining lifetime. Independently, its data-aware stale time is
+  capped at one minute and ends at `producerProofValidUntil`; stale or in-flight
+  retained data is fail-closed rather than presented as settled exact evidence.
+  The fast freshness signal is keyed on the cycle
+  (`publishedGeneration` and `lastPublishedAt` in the source-control snapshot),
+  not on the revision, because a cycle that leaves the report rows identical
+  renews the current revision instead of publishing a new one — and an
+  observation-only sweep is exactly that shape. See `publicationIdentity` in the
+  source-control service and `publicationInvalidatedKeys` (ADR 0037).
+- **It is independent of the report revision.** Observations answer a question
+  about the skills inventory, not about a published report, so `/skills` stays
+  answerable before the first publication and after every revision expires.
+- **Counts never leave their tier or their harness.** The dataset's smallest
+  unit is one count plus the tier and harness that produced it. There is no
+  per-skill or per-harness total to sum `declared` into `inferred`.
+- **Harness coverage is enumerated, not inferred.** Every harness appears with
+  an observability marker derived from the harness itself. Cursor has no
+  collector and renders as *not observable*, never as `0`.
+
+The inventory↔observation join happens entirely in the web server layer —
+`apps/web/src/server/skills.server.ts` reads both sides and
+`skill-observation-join.ts` decides every verdict — never inside
+`@ai-usage/skills`, which stays a filesystem-projection domain with no
+usage-store dependency, and never in the browser, which receives one
+already-decided answer and imports only the contract (ADR 0010/0012). A store this read
+cannot open fails the observation section explicitly rather than degrading to an
+empty dataset, because an empty dataset would draw every observable harness as a
+zero.
 
 Engine availability and stored-data availability are independent. If the
 engine stops after a compatible revision is committed, Web and `--stored` CLI
@@ -617,6 +729,10 @@ Portable source-repository state is JSON data, never executable TypeScript.
 Projection plans capture a non-symlink target's canonical/device/inode identity
 and revalidate it under a cross-process lock. Target creation walks and
 validates every component instead of recursively creating an unobserved tree.
+Reconciliation takes the source-state lock before any target projection lock
+and revalidates the current enabled intent before mutation, so a concurrently
+superseded create, repair, or unlink plan becomes a no-op. No projection path
+acquires those locks in the opposite order.
 Portable Node APIs narrow common races but do not claim complete protection
 from a hostile same-UID actor inside every syscall window.
 
@@ -704,6 +820,15 @@ The shared contract-first oRPC client transports typed calls and exposes one
 generated Svelte Query utility tree; it does not decide visibility or
 freshness. Client-visible modules must not import `*.server.*`.
 
+The Skills shell derives one immutable `SkillsPresentationProjection` from the
+accepted inventory, Project, selection, and observation Query values. Workspace,
+global, health, matrix, and observation renderers consume that projection rather
+than rebuilding cross-surface joins. One shell-lived management-operation
+episode owns the Query mutation observer, contract dispatch, snapshot
+publication, dependent invalidation, pending state, reconcile plan, and scoped
+outcome notice. Configuration drafts remain local presentation state; neither
+module introduces another server-state cache.
+
 Current report aliases and finite reads use named 30-second SWR policies.
 Exact report and Session keys include the immutable revision and canonical
 request fingerprint, remain fresh indefinitely, and are never swept by
@@ -723,8 +848,10 @@ request no route data.
 Session paging rows and cursors remain in exact Query page data. Components own
 only requested depth, expansion, selection, focus, URL intent, and
 virtualization. The source EventSource retains one explicit connection and
-writes its latest bounded snapshot into Query; publication invalidates only
-current report aliases.
+writes its latest bounded snapshot into Query. A completed publication cycle
+invalidates the current report aliases and the skill-observation identity, and
+nothing else; the aliases are included because a renewal rewrites the served
+revision's `publishedAt` and `expiresAt`, which the manifest carries.
 
 On-demand Session Analysis first resolves a private `local-observed` anchor
 from the exact served revision, validates its local machine identity, and only
@@ -801,6 +928,10 @@ admission, cadence, dependencies, or publication ordering here.
 - Publication uses a canonical semantic capture fingerprint that excludes only
   observation time. An unchanged forced capture retains/renews current and
   skips Session rematerialization.
+- Skill observations carry their tier and harness through every derived count.
+  An unobservable harness is `not-observable`, never `0`, and an observation
+  that resolves to no inventory entry is retained and labelled rather than
+  dropped (ADR 0022). Skill argument text is never persisted.
 - Portable snapshot and merge-bundle rows carry credential-free display facts
   with `portable-opaque` authority. They never authorize local filesystem or
   provider access.

@@ -29,7 +29,7 @@
   const client = untrack(() => injectedClient ?? createSourceControlClientForMode(runtimeMode));
   const service = createSourceControlService({
     client,
-    invalidateReportQuery: (queryKey) => {
+    invalidatePublishedQuery: (queryKey) => {
       queryClient.invalidateQueries({ exact: true, queryKey }).catch(() => undefined);
     },
   });

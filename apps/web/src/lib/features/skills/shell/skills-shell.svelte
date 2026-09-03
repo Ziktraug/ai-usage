@@ -16,33 +16,34 @@
     managedSkillMarkdownQueryOptions,
     projectSkillMarkdownQueryOptions,
     type SkillsQueryClient,
+    skillObservationsQueryOptions,
     skillsKnownProjectPathsQueryOptions,
     skillsProjectInventoriesQueryOptions,
     skillsSnapshotQueryOptions,
   } from '../../../query/options/skills';
   import { useWebQueryRpcContext } from '../../../query/rpc-context.svelte';
   import { createSkillsClient } from '../../../rpc/skills-client';
-  import type { SkillsManagementPlanController } from './management-plan-controller';
+  import { createSkillsManagementOperationEpisode } from '../management/operation-episode.svelte';
+  import { createSkillsPresentationProjection } from '../presentation';
   import { createSkillsShellViewModel, normalizeSkillsQuerySnapshot } from './model';
+  import { skillObservationQueryPresentation } from './observation-query-presentation';
   import { createSkillsFallbackNavigationRequest } from './skills-fallback-navigation';
   import SkillsWorkspace from './skills-workspace.svelte';
-  import type { SkillsHealthSlotPlacement, SkillsShellSlotContext, SkillsSnapshotUpdatePort } from './slot-context';
+  import type { SkillsShellSlotContext, SkillsSnapshotUpdatePort } from './slot-context';
   import { createSkillsSnapshotController, type SkillsDraftGuardPort } from './snapshot-controller';
 
   let {
     editorSlot,
     healthSlot,
     hydrationState,
-    matrixSlot,
     navigationState,
     onSourceChange,
     pathname,
     runtimeMode,
   }: {
     editorSlot?: Snippet<[SkillsShellSlotContext]>;
-    healthSlot?: Snippet<[SkillsShellSlotContext, SkillsManagementPlanController, SkillsHealthSlotPlacement]>;
+    healthSlot?: Snippet<[SkillsShellSlotContext]>;
     hydrationState: WebQueryHydrationState;
-    matrixSlot?: Snippet<[SkillsShellSlotContext, SkillsManagementPlanController]>;
     navigationState: App.PageState;
     onSourceChange?: (source: string) => void;
     pathname: string;
@@ -65,8 +66,10 @@
     getManagedSkillMarkdown: (skillName, options) => resolveClient().getManagedSkillMarkdown(skillName, options),
     getProjectSkillMarkdown: (input, options) => resolveClient().getProjectSkillMarkdown(input, options),
     getSkillManagementSnapshot: (options) => resolveClient().getSkillManagementSnapshot(options),
+    getSkillObservations: (options) => resolveClient().getSkillObservations(options),
     getSkillProjectInventories: (options) => resolveClient().getSkillProjectInventories(options),
   };
+  const management = createSkillsManagementOperationEpisode(resolveClient);
   let mounted = $state(false);
   const hydrationContext = useWebQueryHydrationContext();
   const hydrationApplied = $derived(hydrationContext.covers(hydrationState));
@@ -87,6 +90,14 @@
     skillsProjectInventoriesQueryOptions(client, {
       browser: mounted,
       enabled: queriesEnabled && snapshotQuery.data?.configured === true,
+    }),
+  );
+  // Its own query, on its own identity and cadence: observations move when the engine collects,
+  // never because this page navigated (ADR 0022 / the collection-swr policy).
+  const observationsQuery = createQuery(() =>
+    skillObservationsQueryOptions(client, {
+      browser: mounted,
+      enabled: queriesEnabled,
     }),
   );
   const querySnapshot = $derived(
@@ -163,7 +174,7 @@
         })
       : undefined,
   );
-  const managedSkillName = $derived(view?.selection.type === 'global-skill' ? view.selection.skillName : undefined);
+  const managedSkillName = $derived(view?.selection?.type === 'global-skill' ? view.selection.skillName : undefined);
   const managedDocumentQuery = createQuery(() =>
     managedSkillMarkdownQueryOptions(client, managedSkillName ?? '', {
       browser: mounted,
@@ -198,10 +209,36 @@
     managedSkillName === undefined ? projectDocumentQuery.data : managedDocumentQuery.data,
   );
   const skillsFetching = useIsFetching({ queryKey: ['web', 'finite-swr', 'skills'] });
+  // Observations live under their own cadence prefix, so the skills fetch gate above cannot see
+  // them. Counting them separately keeps the hydration contract honest instead of declaring the
+  // page settled while one of its reads is still in flight.
+  const observationsFetching = useIsFetching({ queryKey: ['web', 'collection-swr', 'skill-observations'] });
+  const observationQueryPresentation = $derived(
+    skillObservationQueryPresentation({
+      data: observationsQuery.data,
+      error: observationsQuery.error,
+      isFetching: observationsQuery.isFetching,
+      isStale: observationsQuery.isStale,
+    }),
+  );
+  const observationsError = $derived(observationQueryPresentation.observationsError);
+  const presentation = $derived(
+    view === undefined
+      ? undefined
+      : createSkillsPresentationProjection({
+          observations: observationQueryPresentation.observations,
+          observationsError,
+          producerProofCurrent: observationQueryPresentation.producerProofCurrent,
+          view,
+        }),
+  );
   const queryContractReady = $derived(
     mounted &&
       snapshotQuery.data !== undefined &&
       knownPathsQuery.data !== undefined &&
+      (observationsQuery.data !== undefined || observationsQuery.error !== null) &&
+      !observationsQuery.isFetching &&
+      observationsFetching.current === 0 &&
       (snapshotQuery.data.configured !== true || inventoriesQuery.data !== undefined) &&
       (managedSkillName === undefined || managedDocumentQuery.data !== undefined) &&
       (projectDocumentInput === undefined || projectDocumentQuery.data !== undefined) &&
@@ -243,12 +280,13 @@
   });
 </script>
 
-{#if view}
+{#if view && presentation}
   <SkillsWorkspace
     {...(editorSlot === undefined ? {} : { editorSlot })}
     {...(healthSlot === undefined ? {} : { healthSlot })}
     {hydrated}
-    {...(matrixSlot === undefined ? {} : { matrixSlot })}
+    {management}
+    {presentation}
     {selectedDocument}
     {...(onSourceChange === undefined ? {} : { onSourceChange })}
     snapshot={view.snapshot}

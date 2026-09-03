@@ -10,12 +10,15 @@ import {
   waitForHydratedReport,
   waitForHydratedSkills,
 } from './browser-test';
+import { encodeRpcResponseBody } from './rpc-test-transport';
 
 const RGB_COMPONENT_PATTERN = /[\d.]+/g;
+const ALL_FILTER_PATTERN = /^All —/;
+const MAX_PROJECT_EXPANSIONS = 12;
 const NAVIGATION_DESTINATIONS = ['Overview', 'Sessions', 'Analysis', 'Skills', 'Sync', 'Sources'] as const;
 const routes = [
   { heading: 'Usage report', path: '/' },
-  { heading: 'Skill management', path: '/skills' },
+  { heading: 'Skills', path: '/skills' },
   { heading: 'Sources', path: '/sources' },
   { heading: 'Sync', path: '/sync' },
 ] as const;
@@ -306,6 +309,64 @@ for (const colorScheme of ['light', 'dark'] as const) {
 test('Skills has no detectable accessibility violations', async ({ page }) => {
   await openHydratedSkills(page, '/skills/global/alpha-skill');
   await expect(page.getByRole('textbox', { name: 'alpha-skill SKILL.md' })).toBeVisible();
+
+  await expectNoAxeViolations(page);
+});
+
+test('a reused project SKILL.md preview tracks whether the current document is scrollable', async ({ page }) => {
+  await openHydratedSkills(page, '/skills/projects/project%2Fopaque/skill-name');
+
+  // Hold the preview box at one size across client-side navigation. Its intrinsic content changes,
+  // while a stable scrollbar gutter keeps its observed content box unchanged.
+  await page.addStyleTag({
+    content:
+      '[aria-label$=" SKILL.md preview"] { height: 100px !important; max-height: 100px !important; overflow-y: scroll !important; scrollbar-gutter: stable; }',
+  });
+  const shortPreview = page.getByRole('region', { name: 'skill-name SKILL.md preview' });
+  await expect(shortPreview).toBeVisible();
+  expect(await shortPreview.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(false);
+  await expect(shortPreview).not.toHaveAttribute('tabindex', '0');
+
+  const longProjectMarkdown = Array.from(
+    { length: 120 },
+    (_, index) => `Preview line ${index + 1}: deterministic content.`,
+  ).join(' ');
+  await page.route('**/rpc/skills/projectMarkdown?*', async (route) => {
+    await route.fulfill({
+      body: encodeRpcResponseBody({
+        content: `# twin-skill\n\n${longProjectMarkdown}\n`,
+        path: '/fixture/work/opaque-project-source/.agents/skills/twin-skill/SKILL.md',
+        skillName: 'twin-skill',
+        truncated: false,
+      }),
+      contentType: 'application/json',
+      status: 200,
+    });
+  });
+  // The tree is gone: a project is a worktable row that expands in place, and its skills link into
+  // the same drawer this preview lives in.
+  await page.getByRole('button', { name: 'Close skill detail' }).click();
+  // Expanding one repository turns its own control into Collapse, so the remaining set is re-read
+  // each pass rather than indexed into a list that shrinks underneath the loop.
+  const expandButtons = page.locator('[data-worktable-project-expand][aria-expanded="false"]');
+  await expect(expandButtons.first()).toBeVisible();
+  for (let pass = 0; pass < MAX_PROJECT_EXPANSIONS && (await expandButtons.count()) > 0; pass += 1) {
+    await expandButtons.first().click();
+  }
+  await page.getByRole('link', { exact: true, name: 'twin-skill' }).click();
+
+  const longPreview = page.getByRole('region', { name: 'twin-skill SKILL.md preview' });
+  await expect(longPreview).toContainText('Preview line 120');
+  expect(await longPreview.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
+  await expectNoAxeViolations(page);
+  await expect(longPreview).toHaveAccessibleName('twin-skill SKILL.md preview');
+  await expect(longPreview).toHaveAttribute('tabindex', '0');
+});
+
+test('the skills worktable has no detectable accessibility violations', async ({ page }) => {
+  await openHydratedSkills(page, '/skills');
+  await expect(page.getByRole('table')).toBeVisible();
+  await expect(page.getByRole('button', { name: ALL_FILTER_PATTERN })).toBeVisible();
 
   await expectNoAxeViolations(page);
 });

@@ -17,6 +17,7 @@ import {
   syntheticInventories,
   syntheticKnownPaths,
   syntheticManagedDocument,
+  syntheticObservations,
   syntheticProjectDocument,
   syntheticSnapshot,
 } from './synthetic-fixture.test-helper';
@@ -25,7 +26,7 @@ const ok = <Value>(data: Value): SkillsCapabilityResult<Value> => ({ data, ok: t
 
 describe('Svelte Skills SSR data adapter', () => {
   test('prefetches each canonical resource once and reuses fresh cache state', async () => {
-    const calls = { inventories: 0, knownPaths: 0, managed: 0, project: 0, snapshot: 0 };
+    const calls = { inventories: 0, knownPaths: 0, managed: 0, observations: 0, project: 0, snapshot: 0 };
     const snapshot = syntheticSnapshot();
     const capability: SkillsCapability = {
       createTargetDirectory: (_input: SkillTargetInput) => ok(snapshot),
@@ -37,6 +38,10 @@ describe('Svelte Skills SSR data adapter', () => {
       readMarkdown: () => {
         calls.managed += 1;
         return ok(syntheticManagedDocument);
+      },
+      readObservations: () => {
+        calls.observations += 1;
+        return ok(syntheticObservations);
       },
       readProjectInventories: () => {
         calls.inventories += 1;
@@ -66,13 +71,13 @@ describe('Svelte Skills SSR data adapter', () => {
     const source = await prefetchSkillsShellQueries(runtime, '/skills/global/alpha-skill');
     await prefetchSkillsShellQueries(runtime, '/skills/global/alpha-skill');
     expect(source).toBe('/synthetic/source');
-    expect(calls).toEqual({ inventories: 1, knownPaths: 1, managed: 1, project: 0, snapshot: 1 });
+    expect(calls).toEqual({ inventories: 1, knownPaths: 1, managed: 1, observations: 1, project: 0, snapshot: 1 });
     expect(queryClient.getQueryData<SkillMarkdownDocument>(managedSkillMarkdownKey('alpha-skill'))).toEqual(
       syntheticManagedDocument,
     );
 
     await prefetchSkillsShellQueries(runtime, '/skills/projects/synthetic-group/project-review');
-    expect(calls).toEqual({ inventories: 1, knownPaths: 1, managed: 1, project: 1, snapshot: 1 });
+    expect(calls).toEqual({ inventories: 1, knownPaths: 1, managed: 1, observations: 1, project: 1, snapshot: 1 });
     expect(
       queryClient.getQueryData<ProjectSkillMarkdownDocument>(
         projectSkillMarkdownKey({

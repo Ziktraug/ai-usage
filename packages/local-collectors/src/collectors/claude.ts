@@ -1,17 +1,27 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { parseClaudeSessionFacts } from '@ai-usage/local-machine/claude-session-facts';
+import { extractClaudeSkillObservations, parseClaudeSessionFacts } from '@ai-usage/local-machine/claude-session-facts';
 import type { LocalHistoryError, LocalHistoryWarning } from '@ai-usage/local-machine/errors';
 import { readLocalGitRepository } from '@ai-usage/local-machine/local-git';
 import { LocalHistoryStorage, walkFiles } from '@ai-usage/local-machine/local-history';
 import { type HarnessPaths, resolvePaths } from '@ai-usage/local-machine/platform-paths';
 import { base, safeJSON, usablePrompt } from '@ai-usage/local-machine/text';
+import {
+  MAX_SKILL_OBSERVATIONS_PER_SESSION,
+  type SkillObservation,
+  type SkillObservationCollectionCompleteness,
+} from '@ai-usage/report-core/skill-observation';
 import { actualCost, approximateApiCost } from '@ai-usage/report-core/usage-row';
 import { Effect } from 'effect';
 import { type CollectedSession, sessionToUsageRow } from '../collected-session';
-import { collectorCachePath, reviveCollectorRowsResult } from '../collector-cache';
+import { collectorCachePath, reviveCollectorRowsResult, reviveSkillObservationsResult } from '../collector-cache';
 import { COLLECTOR_CACHE_MAX_BYTES, SMALL_HISTORY_JSON_MAX_BYTES } from '../history-budgets';
-import { metricValidationWarning, parseNonNegativeSafeInteger } from '../metric-validation';
+import {
+  metricValidationWarning,
+  parseNonNegativeSafeInteger,
+  skillObservationTruncationWarning,
+  skillObservationValidationWarning,
+} from '../metric-validation';
 import { withPerfSpan } from '../perf';
 import { readPrivateJson, writePrivateJson } from '../private-storage';
 import type { CollectorRow } from '../rtk-enrichment';
@@ -30,11 +40,18 @@ interface FileFingerprint {
 }
 interface ClaudeCache {
   fingerprintKey: string | null;
+  observations: SkillObservation[];
+  observationsTruncated: boolean;
   rejectedMetricRecords: number;
+  /** Cached so a warm re-scan reports the same partial-data state as a cold one. */
+  rejectedObservations: number;
   rows: CollectorRow[];
   version: number;
 }
-const CLAUDE_CACHE_VERSION = 8;
+// Bumped to 10 because version 9 silently discarded malformed JSONL records.
+// Reusing one could certify invocation absence even though an incomplete final
+// record hid a Skill call.
+const CLAUDE_CACHE_VERSION = 10;
 const claudeCachePath = (storage: LocalHistoryStorage) => collectorCachePath(storage, 'claude-cache.json');
 
 const readClaudeCache = (storage: LocalHistoryStorage): ClaudeCache | null => {
@@ -42,27 +59,53 @@ const readClaudeCache = (storage: LocalHistoryStorage): ClaudeCache | null => {
     if (!fs.existsSync(storage.home)) {
       return null;
     }
+    const empty: ClaudeCache = {
+      fingerprintKey: null,
+      observations: [],
+      observationsTruncated: false,
+      rejectedMetricRecords: 0,
+      rejectedObservations: 0,
+      rows: [],
+      version: CLAUDE_CACHE_VERSION,
+    };
     const cachePath = claudeCachePath(storage);
     if (!fs.existsSync(cachePath)) {
-      return { fingerprintKey: null, rejectedMetricRecords: 0, rows: [], version: CLAUDE_CACHE_VERSION };
+      return empty;
     }
     const parsed = readPrivateJson(cachePath, COLLECTOR_CACHE_MAX_BYTES) as {
       fingerprintKey?: unknown;
+      observations?: unknown;
+      observationsTruncated?: unknown;
       rejectedMetricRecords?: unknown;
+      rejectedObservations?: unknown;
       rows?: unknown;
       version?: number;
     };
     if (parsed.version !== CLAUDE_CACHE_VERSION) {
-      return { fingerprintKey: null, rejectedMetricRecords: 0, rows: [], version: CLAUDE_CACHE_VERSION };
+      return empty;
     }
     const revived = reviveCollectorRowsResult(parsed.rows);
+    const observations = reviveSkillObservationsResult(parsed.observations);
     const rejectedMetricRecords = parseNonNegativeSafeInteger(parsed.rejectedMetricRecords);
-    if (!(rejectedMetricRecords.ok && revived.valid && revived.rejectedMetricRecords === 0)) {
-      return { fingerprintKey: null, rejectedMetricRecords: 0, rows: [], version: CLAUDE_CACHE_VERSION };
+    const rejectedObservations = parseNonNegativeSafeInteger(parsed.rejectedObservations);
+    if (
+      !(
+        rejectedMetricRecords.ok &&
+        rejectedObservations.ok &&
+        revived.valid &&
+        revived.rejectedMetricRecords === 0 &&
+        observations.valid &&
+        typeof parsed.observationsTruncated === 'boolean'
+      )
+    ) {
+      return empty;
     }
     return {
       fingerprintKey: typeof parsed.fingerprintKey === 'string' ? parsed.fingerprintKey : null,
+      observations: observations.observations,
+      observationsTruncated: parsed.observationsTruncated,
       rejectedMetricRecords: rejectedMetricRecords.value,
+      rejectedObservations: rejectedObservations.value,
       rows: revived.rows,
       version: CLAUDE_CACHE_VERSION,
     };
@@ -76,12 +119,23 @@ const writeClaudeCache = (
   fingerprintKey: string | null,
   rows: CollectorRow[],
   rejectedMetricRecords: number,
+  observations: SkillObservation[],
+  rejectedObservations: number,
+  observationsTruncated: boolean,
 ) => {
   if (!fingerprintKey) {
     return false;
   }
   const cachePath = claudeCachePath(storage);
-  const value = { fingerprintKey, rejectedMetricRecords, rows, version: CLAUDE_CACHE_VERSION };
+  const value = {
+    fingerprintKey,
+    observations,
+    observationsTruncated,
+    rejectedMetricRecords,
+    rejectedObservations,
+    rows,
+    version: CLAUDE_CACHE_VERSION,
+  };
   if (Buffer.byteLength(JSON.stringify(value), 'utf8') > COLLECTOR_CACHE_MAX_BYTES) {
     return false;
   }
@@ -253,9 +307,23 @@ export const collectClaudeRetentionWarnings: Effect.Effect<LocalHistoryWarning[]
   });
 
 export interface ClaudeCollectionResult {
+  observationCompleteness: SkillObservationCollectionCompleteness;
+  /**
+   * A new fact drawn from the collection source this collector already reads —
+   * not a new collection source. The source vocabulary is unchanged.
+   */
+  observations: SkillObservation[];
   rows: CollectorRow[];
   warnings: LocalHistoryWarning[];
 }
+
+const claudeObservationCompleteness = (
+  rejected: number,
+  truncated: boolean,
+): SkillObservationCollectionCompleteness => ({
+  exposure: { rejected: 0, truncated: false },
+  invocation: { rejected, truncated },
+});
 
 export const collectClaudeResult = Effect.gen(function* () {
   const storage = yield* LocalHistoryStorage;
@@ -278,10 +346,23 @@ export const collectClaudeResult = Effect.gen(function* () {
   );
   if (cache?.fingerprintKey && cache.fingerprintKey === fingerprintKey) {
     const warning = metricValidationWarning('claude', cache.rejectedMetricRecords);
+    const cachedObservationWarning = skillObservationValidationWarning('claude', cache.rejectedObservations);
+    const cachedTruncationWarning = cache.observationsTruncated
+      ? skillObservationTruncationWarning('claude', MAX_SKILL_OBSERVATIONS_PER_SESSION)
+      : null;
     return yield* withPerfSpan(
       'aiUsage.collect.claude.cache.hit',
-      Effect.succeed({ rows: cache.rows, warnings: warning ? [warning] : [] }),
-      (result) => ({ rows: result.rows.length, warnings: result.warnings.length }),
+      Effect.succeed({
+        observationCompleteness: claudeObservationCompleteness(cache.rejectedObservations, cache.observationsTruncated),
+        observations: cache.observations,
+        rows: cache.rows,
+        warnings: [warning, cachedObservationWarning, cachedTruncationWarning].filter((value) => value !== null),
+      }),
+      (result) => ({
+        observations: result.observations.length,
+        rows: result.rows.length,
+        warnings: result.warnings.length,
+      }),
     );
   }
 
@@ -297,8 +378,11 @@ export const collectClaudeResult = Effect.gen(function* () {
   }
 
   const sessions: CollectedSession[] = [];
+  const observations: SkillObservation[] = [];
   const existingSessionIds = new Set(files.map((filePath) => path.basename(filePath, '.jsonl')));
   let rejectedMetricRecords = 0;
+  let rejectedObservations = 0;
+  let observationsTruncated = false;
 
   yield* withPerfSpan(
     'aiUsage.collect.claude.parseFiles',
@@ -317,8 +401,21 @@ export const collectClaudeResult = Effect.gen(function* () {
           const event = safeJSON(line);
           if (event) {
             records.push(event);
+          } else {
+            // A live JSONL file can expose its final record while Claude Code is
+            // still appending it. That record may be a Skill call, so dropping
+            // it cannot support an exact invocation-absence claim.
+            rejectedObservations++;
           }
         });
+
+        // Extracted before the usage-row parse and independently of it: a
+        // transcript can record a skill invocation without producing a usage
+        // row, and that invocation is still a fact about the skill.
+        const extraction = extractClaudeSkillObservations({ records, sourceSessionId });
+        observations.push(...extraction.observations);
+        rejectedObservations += extraction.rejected;
+        observationsTruncated ||= extraction.truncated;
 
         const initialFacts = parseClaudeSessionFacts({ isAgentFile, records, repository: null, sourceSessionId });
         if (!initialFacts) {
@@ -362,7 +459,7 @@ export const collectClaudeResult = Effect.gen(function* () {
           subagent: report.sidechain,
         });
       }
-      return { files: files.length, lines, sessions: sessions.length };
+      return { files: files.length, lines, observations: observations.length, sessions: sessions.length };
     }),
     (result) => result,
   );
@@ -393,11 +490,30 @@ export const collectClaudeResult = Effect.gen(function* () {
   const rows = sessions.map(sessionToUsageRow);
   yield* withPerfSpan(
     'aiUsage.collect.claude.cache.write',
-    Effect.sync(() => writeClaudeCache(storage, fingerprintKey, rows, rejectedMetricRecords)),
+    Effect.sync(() =>
+      writeClaudeCache(
+        storage,
+        fingerprintKey,
+        rows,
+        rejectedMetricRecords,
+        observations,
+        rejectedObservations,
+        observationsTruncated,
+      ),
+    ),
     (wrote) => ({ wrote }),
   );
   const warning = metricValidationWarning('claude', rejectedMetricRecords);
-  return { rows, warnings: warning ? [warning] : [] };
+  const observationWarning = skillObservationValidationWarning('claude', rejectedObservations);
+  const truncationWarning = observationsTruncated
+    ? skillObservationTruncationWarning('claude', MAX_SKILL_OBSERVATIONS_PER_SESSION)
+    : null;
+  return {
+    observationCompleteness: claudeObservationCompleteness(rejectedObservations, observationsTruncated),
+    observations,
+    rows,
+    warnings: [warning, observationWarning, truncationWarning].filter((value) => value !== null),
+  };
 });
 
 export const collectClaude = collectClaudeResult.pipe(Effect.map((result) => result.rows));

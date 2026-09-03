@@ -37,51 +37,9 @@ export const statusPillInfo = css({
   color: 'muted',
 });
 
-export const statusDot = css({
-  display: 'inline-flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  w: '15px',
-  h: '15px',
-  borderRadius: 'full',
-  flexShrink: 0,
-  color: 'canvas',
-  fontSize: '10px',
-  fontWeight: 800,
-  lineHeight: 1,
-});
-
-export const statusDotLinked = css({
-  bg: 'status.ok',
-  _before: {
-    content: '"✓"',
-  },
-});
-
-export const statusDotMissing = css({
-  bg: 'transparent',
-  border: '2px solid token(colors.status.warn)',
-});
-
-export const statusDotBroken = css({
-  bg: 'status.danger',
-  borderRadius: 'xs',
-  _before: {
-    content: '"!"',
-  },
-});
-
-export const statusDotCopy = css({
-  bg: 'transparent',
-  border: '2px dotted token(colors.muted)',
-});
-
-export const statusDotNone = css({
-  w: '12px',
-  h: '2px',
-  borderRadius: 'full',
-  bg: 'faint',
-});
+// The circular exposure dots that used to live here were replaced by letterform marks rendered by
+// the skills surfaces themselves: at 12–15px a dashed ring and a plain ring were indistinguishable,
+// and two of the state hues share a deutan appearance — shape and letter now carry the state.
 
 export const banner = css({
   display: 'grid',

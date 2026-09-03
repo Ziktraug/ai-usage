@@ -244,6 +244,15 @@ export const operationRequestPolicies = [
   }),
   defineOperationPolicy({
     applicationErrorFamilies: skillsErrors,
+    method: 'GET',
+    operation: 'getSkillObservations',
+    requestSize: 'none',
+    responseSize: 'bounded-json',
+    target: 'skills.observations',
+    transport: 'query',
+  }),
+  defineOperationPolicy({
+    applicationErrorFamilies: skillsErrors,
     method: 'POST',
     operation: 'saveSkillManagementConfig',
     requestSize: 'bounded-rpc-json',

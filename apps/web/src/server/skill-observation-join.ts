@@ -1,0 +1,351 @@
+import {
+  applySkillObservationEvidenceLoss,
+  type SkillObservationEvidence,
+  skillObservationTierSupportsInvocation,
+  skillObservationVerdictIsProvisional,
+} from '@ai-usage/report-core/skill-observation-evidence';
+import type { SkillObservationDataset } from '@ai-usage/report-core/skill-observation-summary';
+import {
+  MAX_SKILL_OBSERVATION_HARNESS_ROSTER,
+  MAX_SKILL_OBSERVATION_SKILL_RESOLVED_PATHS,
+  MAX_SKILL_OBSERVATION_SKILL_TALLIES,
+  MAX_SKILL_OBSERVATION_SKILLS,
+  MAX_SKILL_OBSERVATIONS_RESPONSE_BYTES,
+  type ObservedSkill,
+  type SkillObservations,
+  type SkillObservationVerdict,
+} from '@ai-usage/web-contract/skills';
+
+/**
+ * The inventory↔observation join.
+ *
+ * It lives on the server because that is where the inventory is (plan 111 decision 3): the skills
+ * domain is a filesystem projection and must never learn to read the usage store, and the browser
+ * must not be handed two half-answers to reconcile. Everything that needs both sides — managed-ness,
+ * projection completeness, and therefore every verdict — is decided here, once, and travels as a
+ * fact. The browser's remaining job is to render words.
+ *
+ * This module is pure: it takes the two already-read inputs and returns the wire shape. That is what
+ * makes the verdict rules testable without a filesystem or a store.
+ */
+
+/** The projection facts this join needs, as `SkillManagementSnapshot` supplies them. */
+export interface SkillObservationJoinProjection {
+  readonly skillName: string;
+  readonly state: string;
+  readonly targetId: string;
+}
+
+export interface SkillObservationJoinSkill {
+  readonly enabled: boolean;
+  readonly name: string;
+  readonly validationStatus: string;
+}
+
+export interface SkillObservationJoinTarget {
+  readonly enabled: boolean;
+  readonly id: string;
+}
+
+export interface SkillObservationJoinInput {
+  readonly observations: SkillObservationDataset;
+  readonly projections: readonly SkillObservationJoinProjection[];
+  /**
+   * Absolute paths of known project roots. An unmanaged name whose resolved directory sits inside
+   * one is `project-owned` rather than `external`. Optional because the join stays meaningful
+   * without it — every unmanaged name then classifies conservatively.
+   */
+  readonly projectPathPrefixes?: readonly string[];
+  /** Names present in the project-skill inventory, including names with no observations yet. */
+  readonly projectSkillNames?: readonly string[];
+  readonly skills: readonly SkillObservationJoinSkill[];
+  readonly targets: readonly SkillObservationJoinTarget[];
+  /**
+   * Names of unmanaged entries found in runtime skills directories (the snapshot's
+   * `unmanagedEntries`). A name that appears here is `runtime-installed`: the adoptable backlog.
+   */
+  readonly unmanagedEntryNames?: readonly string[];
+}
+
+/**
+ * Whether every runtime that should hold this skill actually holds it, using the same rule the
+ * health summary counts with: an enabled, valid skill is projected everywhere when every enabled
+ * target resolves to a `linked` projection.
+ *
+ * The deletion verdict depends on this rather than on managed-ness, because "managed but never
+ * observed" has a mundane explanation — it may simply not be installed anywhere. Only a skill that
+ * genuinely installed everywhere and still goes unused is evidence of anything.
+ */
+const projectedEverywhereFor = (skill: SkillObservationJoinSkill, input: SkillObservationJoinInput): boolean => {
+  if (!skill.enabled || skill.validationStatus === 'invalid') {
+    return false;
+  }
+  const activeTargets = input.targets.filter((target) => target.enabled);
+  if (activeTargets.length === 0) {
+    return false;
+  }
+  return activeTargets.every((target) =>
+    input.projections.some(
+      (projection) =>
+        projection.skillName === skill.name && projection.targetId === target.id && projection.state === 'linked',
+    ),
+  );
+};
+
+const textEncoder = new TextEncoder();
+
+const responseBytes = (response: SkillObservations): number => textEncoder.encode(JSON.stringify(response)).byteLength;
+
+const skillsCarryInvocation = (skills: readonly Pick<ObservedSkill, 'tallies'>[]): boolean =>
+  skills.some((skill) => skill.tallies.some((tally) => skillObservationTierSupportsInvocation(tally.tier)));
+
+/**
+ * The harnesses a set of dropped rows carried counts for.
+ *
+ * A clamp here knows exactly which rows it threw away, so its loss is attributable: only these
+ * harnesses are hedged, and a harness whose rows all survived keeps rendering exact numbers. An
+ * empty list is read upstream as unattributable and hedges every harness, which is the correct
+ * reading when a clamp genuinely cannot name one.
+ */
+const skillsHarnessKeys = (skills: readonly Pick<ObservedSkill, 'tallies'>[]): readonly string[] => [
+  ...new Set(skills.flatMap((skill) => skill.tallies.map((tally) => tally.harnessKey))),
+];
+
+/**
+ * The evidence's per-harness detail in wire shape.
+ *
+ * The policy owns readonly arrays; the contract's inferred type owns mutable ones, so the copy is
+ * the seam rather than a cast.
+ */
+const wireHarnessIncompleteness = (evidence: SkillObservationEvidence): SkillObservations['harnessIncompleteness'] => ({
+  exposure: [...evidence.harnessIncompleteness.exposure],
+  exposureUnattributed: evidence.harnessIncompleteness.exposureUnattributed,
+  invocation: [...evidence.harnessIncompleteness.invocation],
+  invocationUnattributed: evidence.harnessIncompleteness.invocationUnattributed,
+});
+
+/**
+ * Clamps the two per-harness lists to the roster cap, fail-closed.
+ *
+ * A list that no longer names every affected harness cannot be trusted to say a harness it omits is
+ * clean, so truncating it sets the channel's unattributed flag — the state that hedges everybody.
+ * A silently short list would do the opposite and read as proof of exactness.
+ */
+const clampHarnessIncompleteness = (
+  incompleteness: SkillObservations['harnessIncompleteness'],
+): SkillObservations['harnessIncompleteness'] => ({
+  exposure: incompleteness.exposure.slice(0, MAX_SKILL_OBSERVATION_HARNESS_ROSTER),
+  exposureUnattributed:
+    incompleteness.exposureUnattributed || incompleteness.exposure.length > MAX_SKILL_OBSERVATION_HARNESS_ROSTER,
+  invocation: incompleteness.invocation.slice(0, MAX_SKILL_OBSERVATION_HARNESS_ROSTER),
+  invocationUnattributed:
+    incompleteness.invocationUnattributed || incompleteness.invocation.length > MAX_SKILL_OBSERVATION_HARNESS_ROSTER,
+});
+
+/**
+ * Bounds the response the procedure actually returns.
+ *
+ * The read is clamped before this join, and that clamp is not enough: the join re-injects the whole
+ * managed inventory, so a store with few observations and many managed skills produces more rows
+ * than it read, and it merges the store's harness keys into the catalogue roster, so unknown keys
+ * can push the roster past its cap. Every row it emits is also wider than the row it folded. A cap
+ * checked only upstream is therefore a cap the assembled payload can still exceed — and exceeding
+ * one is not a soft failure: the contract refuses the whole response and a valid store becomes
+ * "skill observations are unavailable".
+ *
+ * So the final shape is clamped against the contract's own published caps, and every clamp reports
+ * itself through `lowerBound`, which every renderer already reads as "these counts are floors". A
+ * shorter honest answer beats a 503.
+ */
+export const clampSkillObservationsResponse = (response: SkillObservations): SkillObservations => {
+  let evidence: SkillObservationEvidence = response;
+  let harnesses = response.harnesses;
+  if (harnesses.length > MAX_SKILL_OBSERVATION_HARNESS_ROSTER) {
+    const droppedHarnessKeys = harnesses
+      .slice(MAX_SKILL_OBSERVATION_HARNESS_ROSTER)
+      .map((harness) => harness.harnessKey);
+    harnesses = harnesses.slice(0, MAX_SKILL_OBSERVATION_HARNESS_ROSTER);
+    // Every count these harnesses held disappears with them, and no other harness loses anything,
+    // so the loss belongs precisely to the dropped keys.
+    evidence = applySkillObservationEvidenceLoss(evidence, {
+      counts: true,
+      harnessKeys: droppedHarnessKeys,
+      invocation: false,
+    });
+  }
+  // The surface renders a skill's counts by walking the roster, so a tally under a harness the
+  // roster no longer carries is a count nothing can present. Dropping it keeps the payload to what
+  // is renderable instead of shipping invisible numbers.
+  const rosterKeys = new Set(harnesses.map((harness) => harness.harnessKey));
+  const skills: ObservedSkill[] = response.skills.map((skill) => {
+    const rosteredTallies = skill.tallies.filter((tally) => rosterKeys.has(tally.harnessKey));
+    const tallies = rosteredTallies.slice(0, MAX_SKILL_OBSERVATION_SKILL_TALLIES);
+    const resolvedPaths = skill.resolvedPaths.slice(0, MAX_SKILL_OBSERVATION_SKILL_RESOLVED_PATHS);
+    const pathsClamped = resolvedPaths.length !== skill.resolvedPaths.length;
+    // A harness key falling off the roster, or a tally falling past the per-skill cap, drops a real
+    // count. Which bound that is depends on the tier it held: losing a catalogue injection costs
+    // the verdicts nothing, losing an invocation costs them their evidence.
+    const retained = new Set(tallies);
+    const invocationDropped = skill.tallies.some(
+      (tally) => !retained.has(tally) && skillObservationTierSupportsInvocation(tally.tier),
+    );
+    if (tallies.length !== skill.tallies.length || pathsClamped) {
+      evidence = applySkillObservationEvidenceLoss(evidence, {
+        counts: true,
+        // The dropped tallies name their own harnesses. A clamped path list does not belong to any
+        // harness, so it leaves the list empty and hedges the pooled counts everywhere.
+        harnessKeys: skill.tallies.filter((tally) => !retained.has(tally)).map((tally) => tally.harnessKey),
+        invocation: invocationDropped,
+      });
+    }
+    return {
+      ...skill,
+      resolvedPaths,
+      // Clamping here truncates the same list the fold's own ceiling truncates, so it sets the same
+      // per-skill flag rather than relying on the response-wide `lowerBound` to speak for it.
+      resolvedPathsTruncated: skill.resolvedPathsTruncated || pathsClamped,
+      tallies,
+    };
+  });
+  let retainedSkills = skills;
+  if (skills.length > MAX_SKILL_OBSERVATION_SKILLS) {
+    const dropped = skills.slice(MAX_SKILL_OBSERVATION_SKILLS);
+    evidence = applySkillObservationEvidenceLoss(evidence, {
+      counts: true,
+      harnessKeys: skillsHarnessKeys(dropped),
+      invocation: skillsCarryInvocation(dropped),
+    });
+    retainedSkills = skills.slice(0, MAX_SKILL_OBSERVATION_SKILLS);
+  }
+  let clamped: SkillObservations = {
+    ...response,
+    ...evidence,
+    harnessIncompleteness: wireHarnessIncompleteness(evidence),
+    harnesses,
+    skills: retainedSkills,
+  };
+  // Halving rather than estimating, because skill names and resolved paths are open-vocabulary: the
+  // serialized size of a row is not derivable from a row count. It always terminates — an empty
+  // skill list leaves only a roster that is orders of magnitude inside the budget.
+  while (clamped.skills.length > 0 && responseBytes(clamped) > MAX_SKILL_OBSERVATIONS_RESPONSE_BYTES) {
+    const retainedCount = Math.floor(clamped.skills.length / 2);
+    const dropped = clamped.skills.slice(retainedCount);
+    evidence = applySkillObservationEvidenceLoss(evidence, {
+      counts: true,
+      harnessKeys: skillsHarnessKeys(dropped),
+      invocation: skillsCarryInvocation(dropped),
+    });
+    clamped = {
+      ...clamped,
+      ...evidence,
+      harnessIncompleteness: wireHarnessIncompleteness(evidence),
+      skills: clamped.skills.slice(0, retainedCount),
+    };
+  }
+  // The per-skill `verdictProvisional` flags are untouched: they were decided before this clamp, and
+  // a surviving skill's own evidence is not weakened by another skill being left out. The response
+  // bounds instead report which kind of evidence the discarded rows actually carried.
+  return { ...clamped, harnessIncompleteness: clampHarnessIncompleteness(clamped.harnessIncompleteness) };
+};
+
+/**
+ * Where an unmanaged name lives (contract field `unmanagedResidence`).
+ *
+ * Decided here because both sides of the classification are join inputs: the runtime-directory
+ * entry list is inventory data and the project roots come from the usage store's known paths. The
+ * priority order matters — a name with a runtime-directory entry is `runtime-installed` even when
+ * it also resolves into a project, because the runtime copy is the thing adoption would act on.
+ */
+const residenceFor = (
+  skillName: string,
+  resolvedPaths: readonly string[],
+  unmanagedNames: ReadonlySet<string>,
+  projectNames: ReadonlySet<string>,
+  projectPrefixes: readonly string[],
+): ObservedSkill['unmanagedResidence'] => {
+  if (unmanagedNames.has(skillName)) {
+    return 'runtime-installed';
+  }
+  if (projectNames.has(skillName)) {
+    return 'project-owned';
+  }
+  const ownedByProject = resolvedPaths.some((resolvedPath) =>
+    projectPrefixes.some((prefix) => resolvedPath === prefix || resolvedPath.startsWith(`${prefix}/`)),
+  );
+  return ownedByProject ? 'project-owned' : 'external';
+};
+
+const verdictFor = (managed: boolean, invoked: boolean, offered: boolean): SkillObservationVerdict => {
+  if (invoked) {
+    return managed ? 'invoked' : 'invoked-unmanaged';
+  }
+  // Exposure is evidence that a catalogue listed the skill, not that a model used it. Promoting it
+  // to an adoption verdict would propose adopting whatever a harness happens to inject.
+  return offered ? 'offered-only' : 'never-observed';
+};
+
+export const joinSkillObservations = (input: SkillObservationJoinInput): SkillObservations => {
+  const skillsByName = new Map(input.skills.map((skill) => [skill.name, skill]));
+  const observedByName = new Map(input.observations.skills.map((skill) => [skill.skillName, skill]));
+  /**
+   * Whether this read can prove that a skill went uninvoked.
+   *
+   * Keyed on the *invocation* bound, not the pooled one. Every absence verdict here — never
+   * observed, offered-only, deletion candidate — is a claim about `declared` and `inferred`
+   * evidence, and nothing else. A read that carried every recorded invocation and stopped short of
+   * the exposure catalogue has proved exactly what those verdicts assert; marking them provisional
+   * would hedge a claim the data fully supports, and on a real store exposure truncation is the
+   * permanent condition, so the hedge would never come off.
+   *
+   * The converse still holds: if the invocation read trips its own budget, or invocation/unknown
+   * rows failed re-validation, absence is unproven and every such verdict says so.
+   */
+  // Every managed skill appears, observed or not: a skill missing from the observation read is the
+  // deletion candidate this family exists to name, and dropping it would erase the verdict.
+  const projectNames = new Set(input.projectSkillNames ?? []);
+  const names = [...new Set([...skillsByName.keys(), ...observedByName.keys(), ...projectNames])].sort((left, right) =>
+    left.localeCompare(right),
+  );
+  const unmanagedNames = new Set(input.unmanagedEntryNames ?? []);
+  const projectPrefixes = input.projectPathPrefixes ?? [];
+  const skills = names.map((skillName) => {
+    const observed = observedByName.get(skillName);
+    const inventorySkill = skillsByName.get(skillName);
+    const managed = inventorySkill !== undefined;
+    const tallies = observed?.tallies ?? [];
+    const invoked = tallies.some((tally) => skillObservationTierSupportsInvocation(tally.tier));
+    const offered = tallies.length > 0;
+    const projectedEverywhere = inventorySkill === undefined ? false : projectedEverywhereFor(inventorySkill, input);
+    const verdict = verdictFor(managed, invoked, offered);
+    const resolvedPaths = [...(observed?.resolvedPaths ?? [])];
+    return {
+      deletionCandidate: managed && projectedEverywhere && !invoked,
+      lastObservedAt: observed?.lastObservedAt ?? null,
+      managed,
+      projectedEverywhere,
+      resolvedPaths,
+      resolvedPathsTruncated: observed?.resolvedPathsTruncated ?? false,
+      skillName,
+      tallies: tallies.map((tally) => ({ ...tally })),
+      unmanagedResidence: managed
+        ? null
+        : residenceFor(skillName, resolvedPaths, unmanagedNames, projectNames, projectPrefixes),
+      verdict,
+      // A positive verdict is not weakened by a short read: seeing an invocation proves use whether
+      // or not more rows existed beyond the bound. Only claims of absence are provisional.
+      verdictProvisional: skillObservationVerdictIsProvisional(input.observations, invoked),
+    };
+  });
+  return clampSkillObservationsResponse({
+    // Per-harness detail travels beside the global bounds, never instead of them: the verdicts
+    // above are cross-harness claims and keep reading `invocationLowerBound`.
+    harnessIncompleteness: wireHarnessIncompleteness(input.observations),
+    harnesses: input.observations.harnesses.map((harness) => ({ ...harness })),
+    invocationLowerBound: input.observations.invocationLowerBound,
+    lowerBound: input.observations.lowerBound,
+    producerCompletenessMissing: input.observations.producerCompletenessMissing,
+    producerProofValidUntil: input.observations.producerProofValidUntil,
+    skills,
+    skipped: input.observations.skipped,
+  });
+};

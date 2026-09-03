@@ -2,7 +2,12 @@ import { describe, expect, test } from 'bun:test';
 import type { SkillMarkdownDocument, SkillMarkdownSaveResult } from '@ai-usage/web-contract/skills';
 import { QueryObserver } from '@tanstack/svelte-query';
 import { createWebQueryClient } from '../../../query/client';
-import { managedSkillMarkdownKey, skillsKnownProjectPathsKey, skillsSnapshotKey } from '../../../query/options/skills';
+import {
+  managedSkillMarkdownKey,
+  skillObservationsKey,
+  skillsKnownProjectPathsKey,
+  skillsSnapshotKey,
+} from '../../../query/options/skills';
 import { webQueryPolicies } from '../../../query/policies';
 import type { SkillsClientResult } from '../../../rpc/skills-client';
 import { createDirtyGuardRegistry } from '../../shell/dirty-navigation-context';
@@ -120,7 +125,7 @@ describe('P9 Skills editor slot integration', () => {
     queryClient.clear();
   });
 
-  test('publishes a confirmed save to only the exact markdown and snapshot keys', async () => {
+  test('publishes a confirmed save and invalidates the inventory-joined observations', async () => {
     const queryClient = createWebQueryClient();
     const initialWire = syntheticSnapshot();
     const nextSnapshot = {
@@ -130,6 +135,7 @@ describe('P9 Skills editor slot integration', () => {
     const unrelatedKey = skillsKnownProjectPathsKey();
     const unrelated = [{ label: 'untouched' }];
     queryClient.setQueryData(managedSkillMarkdownKey('alpha-skill'), syntheticManagedDocument);
+    queryClient.setQueryData(skillObservationsKey(), { marker: 'old inventory join' });
     queryClient.setQueryData(skillsSnapshotKey(), initialWire);
     queryClient.setQueryData(unrelatedKey, unrelated);
     const slot = createSkillsEditorSlotController({
@@ -154,6 +160,7 @@ describe('P9 Skills editor slot integration', () => {
       savedDocument,
     );
     expect(queryClient.getQueryData<typeof nextSnapshot>(skillsSnapshotKey())).toEqual(nextSnapshot);
+    expect(queryClient.getQueryState(skillObservationsKey())?.isInvalidated).toBe(true);
     expect(queryClient.getQueryData<typeof unrelated>(unrelatedKey)).toBe(unrelated);
     queryClient.clear();
   });

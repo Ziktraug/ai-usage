@@ -1,9 +1,7 @@
 import type { ProjectionAction, SkillManagementConfig, SkillManagementSnapshot } from '@ai-usage/skills';
-import { parseSkillReconcileResult, parseSkillSnapshotResult } from '../../../../skills-client-contracts';
 import {
   buildSkillMatrix,
   count,
-  describeReconcileActions,
   filterMatrixRows,
   type MatrixCellState,
   type ReconcilePlanSummary,
@@ -11,7 +9,6 @@ import {
   type SkillInvocation,
   type SkillRowFilter,
 } from '../../../../skills-page-model';
-import type { SkillsInventoryQueryClient } from '../../../query/options/skills';
 
 export const skillStateFilterOrder = [
   'linked',
@@ -21,15 +18,29 @@ export const skillStateFilterOrder = [
   'disabled',
 ] as const satisfies readonly SkillCellStateFilter[];
 
+/** One taxonomy across tiles, chips, and legend: linked · to link · to repair · blocked · disabled. */
 export const skillStateFilterLabels: Readonly<Record<SkillCellStateFilter, string>> = {
   blocked: 'Blocked',
-  broken: 'Broken',
+  broken: 'To repair',
   disabled: 'Disabled',
   linked: 'Linked',
-  'not-linked': 'Not linked',
+  'not-linked': 'To link',
 };
 
 export type MatrixDotTone = 'broken' | 'copy' | 'linked' | 'missing' | 'none';
+
+/**
+ * The letterform inside an exposure mark. Shape and letter carry the state so two marks never
+ * differ by hue alone — a dashed ring and a plain ring were indistinguishable at rendered size,
+ * and the harness palette itself fails deutan vision between two of its hues.
+ */
+export const MATRIX_DOT_GLYPHS: Readonly<Record<MatrixDotTone, string>> = {
+  broken: '!',
+  copy: 'C',
+  linked: '✓',
+  missing: '→',
+  none: '—',
+};
 
 export const matrixDotTone = (state: MatrixCellState): MatrixDotTone => {
   if (state === 'linked') {
@@ -106,23 +117,6 @@ export interface SkillsManagementSuccess {
   readonly snapshot: SkillManagementSnapshot;
 }
 
-export type SkillsManagementResult =
-  | { readonly error: string; readonly ok: false }
-  | ({ readonly ok: true } & SkillsManagementSuccess);
-
-export interface SkillsRefreshClient {
-  refreshSkillManagementSnapshot(): Promise<unknown>;
-}
-
-export type SkillsRefreshResult =
-  | { readonly error: string; readonly ok: false }
-  | { readonly ok: true; readonly snapshot: SkillManagementSnapshot };
-
-export const runSkillsRefreshOperation = async (client: SkillsRefreshClient): Promise<SkillsRefreshResult> => {
-  const result = parseSkillSnapshotResult(await client.refreshSkillManagementSnapshot());
-  return result.ok ? { ok: true, snapshot: result.data } : { error: result.error.message, ok: false };
-};
-
 export interface SkillsRefreshAcceptanceTarget {
   readonly publicationReady: boolean;
   readonly signature: string;
@@ -181,6 +175,11 @@ export const skillsManagementSuccessMessage = (
     (action) => action.type !== 'noop' && action.type !== 'refuse-unmanaged-mutation',
   );
   if (applied.length === 0) {
+    // A toggle that moved no files still changed the skill's state, and the message says so —
+    // "Nothing to change." after flipping a switch reads as the flip having failed.
+    if (operation.type === 'toggle-skill') {
+      return `${operation.enabled ? 'Enabled' : 'Disabled'} ${operation.skillName} — no file changes were needed.`;
+    }
     return 'Nothing to change.';
   }
   const action = applied.length === 1 ? applied[0] : undefined;
@@ -195,16 +194,6 @@ export const skillsManagementSuccessMessage = (
   }
   return `${managementFallbackMessage(operation)}: ${count(applied.length, 'change')} applied.`;
 };
-
-export interface SkillsManagementClient {
-  createManagedSkillTargetDirectory(input: { targetId: string }): Promise<unknown>;
-  previewReconcileAllManagedSkills(): Promise<unknown>;
-  reconcileAllManagedSkills(): Promise<unknown>;
-  reconcileManagedSkill(skillName: string): Promise<unknown>;
-  saveSkillManagementConfig(input: SkillManagementConfig): Promise<unknown>;
-  toggleManagedSkill(input: { enabled: boolean; skillName: string }): Promise<unknown>;
-}
-export type SkillsConfigurationClient = SkillsManagementClient & SkillsInventoryQueryClient;
 
 export interface SkillsSourceRepositoryDraft {
   readonly dirty: boolean;
@@ -246,22 +235,6 @@ export type SkillsConfigurationOperation =
 export const skillsConfigurationRefreshesDependents = (operation: SkillsConfigurationOperation): boolean =>
   operation.type === 'save-config';
 
-export type SkillsConfigurationResult =
-  | { readonly error: string; readonly ok: false }
-  | { readonly ok: true; readonly snapshot: SkillManagementSnapshot };
-
-export const runSkillsConfigurationOperation = async (
-  client: SkillsManagementClient,
-  operation: SkillsConfigurationOperation,
-): Promise<SkillsConfigurationResult> => {
-  const wireResult =
-    operation.type === 'save-config'
-      ? await client.saveSkillManagementConfig(operation.config)
-      : await client.createManagedSkillTargetDirectory({ targetId: operation.targetId });
-  const result = parseSkillSnapshotResult(wireResult);
-  return result.ok ? { ok: true, snapshot: result.data } : { error: result.error.message, ok: false };
-};
-
 export interface InspectorMediaQuery {
   addEventListener(type: 'change', listener: () => void): void;
   readonly matches: boolean;
@@ -276,38 +249,6 @@ export const observeInspectorDisclosure = (
   synchronize();
   mediaQuery.addEventListener('change', synchronize);
   return () => mediaQuery.removeEventListener('change', synchronize);
-};
-
-const unwrapReconcile = (wireResult: unknown, preview: boolean): SkillsManagementResult => {
-  const result = parseSkillReconcileResult(wireResult);
-  if (!result.ok) {
-    return { error: result.error.message, ok: false };
-  }
-  return {
-    actions: result.data.actions,
-    ok: true,
-    plan: preview ? describeReconcileActions(result.data.actions, result.data.snapshot.targets) : null,
-    snapshot: result.data.snapshot,
-  };
-};
-
-export const runSkillsManagementOperation = async (
-  client: SkillsManagementClient,
-  operation: SkillsManagementOperation,
-): Promise<SkillsManagementResult> => {
-  if (operation.type === 'preview-reconcile') {
-    return unwrapReconcile(await client.previewReconcileAllManagedSkills(), true);
-  }
-  if (operation.type === 'reconcile-all') {
-    return unwrapReconcile(await client.reconcileAllManagedSkills(), false);
-  }
-  if (operation.type === 'reconcile-skill') {
-    return unwrapReconcile(await client.reconcileManagedSkill(operation.skillName), false);
-  }
-  return unwrapReconcile(
-    await client.toggleManagedSkill({ enabled: operation.enabled, skillName: operation.skillName }),
-    false,
-  );
 };
 
 export const toggleOperation = (skillName: string, enabled: boolean): SkillsManagementOperation => ({

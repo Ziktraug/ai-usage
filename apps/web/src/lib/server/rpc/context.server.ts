@@ -11,6 +11,7 @@ import {
   skillManagementSnapshotSchema,
   skillMarkdownDocumentSchema,
   skillMarkdownSaveResultSchema,
+  skillObservationsSchema,
   skillReconcileResultSchema,
 } from '@ai-usage/web-contract/skills';
 import { parse } from 'valibot';
@@ -71,6 +72,12 @@ const adaptSkillsCapability = (adapter: SkillsServerAdapter): SkillsCapability =
         await normalizeSkillsResult(adapter.readMarkdown(skillName), (value) =>
           parse(skillMarkdownDocumentSchema, value),
         ),
+    ),
+  readObservations: async (options) =>
+    await phaseBound(
+      options.signal,
+      async () =>
+        await normalizeSkillsResult(adapter.readObservations(), (value) => parse(skillObservationsSchema, value)),
     ),
   readProjectInventories: async (options) =>
     await phaseBound(
@@ -146,6 +153,7 @@ const e2eSkillsAdapter = async (variant: E2ESkillsFixtureVariant = 'extended'): 
       ? fixture.readExtendedE2EKnownSkillProjectPaths
       : fixture.readE2EKnownSkillProjectPaths,
     readMarkdown: fixture.readE2ESkillMarkdown,
+    readObservations: fixture.readE2ESkillObservations,
     readProjectInventories: extended
       ? fixture.readExtendedE2ESkillProjectInventories
       : fixture.readE2ESkillProjectInventories,

@@ -1,6 +1,6 @@
 import type { ProjectSkillMarkdownInput } from '@ai-usage/web-contract/skills';
 import type { SkillsClientResult } from '../../rpc/skills-client';
-import { type FiniteSwrQueryKey, finiteSwrKey } from '../keys';
+import { type CollectionSwrQueryKey, collectionSwrKey, type FiniteSwrQueryKey, finiteSwrKey } from '../keys';
 
 export class SkillsQueryError extends Error {
   readonly tag: string;
@@ -24,6 +24,13 @@ export const skillsSnapshotKey = (): FiniteSwrQueryKey => finiteSwrKey('skills',
 export const skillsKnownProjectPathsKey = (): FiniteSwrQueryKey => finiteSwrKey('skills', 'known-project-paths');
 
 export const skillsProjectInventoriesKey = (): FiniteSwrQueryKey => finiteSwrKey('skills', 'project-inventories');
+
+/**
+ * A separate identity from the skills snapshot, on a separate cadence prefix. Observations are
+ * produced by the engine's collection cycle; the snapshot is produced by scanning the filesystem
+ * on request. Sharing one key would make either invalidation lie about the other.
+ */
+export const skillObservationsKey = (): CollectionSwrQueryKey => collectionSwrKey('skill-observations', 'all');
 
 export const managedSkillMarkdownKey = (skillName: string): FiniteSwrQueryKey =>
   finiteSwrKey('skills', 'markdown', 'scope', 'managed', 'skill', skillName);

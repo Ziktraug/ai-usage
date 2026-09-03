@@ -10,6 +10,12 @@ import {
   type HarnessMetadata,
   harnessKeys,
 } from '@ai-usage/report-core/harness-metadata';
+import {
+  type SkillObservability,
+  type SkillObservation,
+  type SkillObservationCollectionCompleteness,
+  skillObservabilityFor,
+} from '@ai-usage/report-core/skill-observation';
 import type { Row } from '@ai-usage/report-core/types';
 import { Effect } from 'effect';
 import { withPerfSpan } from '../perf';
@@ -28,6 +34,8 @@ import { collectOpenCode, collectOpenCodeResult } from './opencode';
 export { collectClaudeRetentionWarnings } from './claude';
 
 interface HarnessAdapterCollection {
+  observationCompleteness?: SkillObservationCollectionCompleteness;
+  observations?: SkillObservation[];
   rows: CollectorRow[];
   warnings: LocalHistoryWarning[];
 }
@@ -44,6 +52,17 @@ export interface HarnessCollectionResult {
   durationMs: number;
   harness: HarnessKey;
   label: string;
+  /**
+   * Whether this harness can report skill observations at all. Read this
+   * before reading `observations`: an empty list means "none observed" only
+   * when this says `observable`. For a `not-observable` harness the list is
+   * empty by construction and must never be rendered as a zero (ADR 0022).
+   */
+  observability: SkillObservability;
+  /** Null when the harness cannot observe or the sweep itself failed. */
+  observationCompleteness: SkillObservationCollectionCompleteness | null;
+  /** Empty whenever `observability` is `not-observable`. */
+  observations: SkillObservation[];
   rows: Row[];
   status: HarnessCollectionStatus;
   warnings: LocalHistoryWarning[];
@@ -52,6 +71,8 @@ export interface HarnessCollectionResult {
 export interface SelectedHarnessCollectionResult {
   durationMs: number;
   harnesses: HarnessCollectionResult[];
+  /** Flattened across observable harnesses only; see each harness's observability. */
+  observations: SkillObservation[];
   rows: Row[];
   warnings: LocalHistoryWarning[];
 }
@@ -90,17 +111,33 @@ export const selectedHarnessAdapters = (selection: HarnessSelection) => {
 };
 
 type HarnessAdapterOutcome =
-  | { _tag: 'success'; rows: CollectorRow[]; warnings: LocalHistoryWarning[] }
+  | {
+      _tag: 'success';
+      observationCompleteness?: SkillObservationCollectionCompleteness;
+      observations: SkillObservation[];
+      rows: CollectorRow[];
+      warnings: LocalHistoryWarning[];
+    }
   | { _tag: 'failure'; error: LocalHistoryError };
 
 const collectAdapter = (
   adapter: HarnessAdapter,
 ): Effect.Effect<HarnessAdapterOutcome, never, LocalHistoryStorageService> => {
-  const collection = adapter.collectResult ?? adapter.collect.pipe(Effect.map((rows) => ({ rows, warnings: [] })));
+  const collection: Effect.Effect<HarnessAdapterCollection, LocalHistoryError, LocalHistoryStorageService> =
+    adapter.collectResult ??
+    adapter.collect.pipe(Effect.map((rows): HarnessAdapterCollection => ({ observations: [], rows, warnings: [] })));
   return collection.pipe(
     Effect.match({
       onFailure: (error) => ({ _tag: 'failure' as const, error }),
-      onSuccess: (result) => ({ _tag: 'success' as const, rows: result.rows, warnings: result.warnings }),
+      onSuccess: (result) => ({
+        _tag: 'success' as const,
+        ...(result.observationCompleteness === undefined
+          ? {}
+          : { observationCompleteness: result.observationCompleteness }),
+        observations: result.observations ?? [],
+        rows: result.rows,
+        warnings: result.warnings,
+      }),
     }),
   );
 };
@@ -119,10 +156,16 @@ const collectHarnessResult = (
       const outcome = yield* collectAdapter(adapter);
       const durationMs = Date.now() - startedAt;
       const harness = adapter.metadata.key;
+      // Derived from the harness, not from what was collected: a failed sweep
+      // of an observable harness is still an observable harness.
+      const observability = skillObservabilityFor(harness);
       if (outcome._tag === 'failure') {
         return {
           harness,
           label: adapter.metadata.label,
+          observability,
+          observationCompleteness: null,
+          observations: [],
           rows: [],
           warnings: [
             localHistoryWarningFromError(outcome.error, {
@@ -137,6 +180,11 @@ const collectHarnessResult = (
       return {
         harness,
         label: adapter.metadata.label,
+        observability,
+        observationCompleteness: observability === 'observable' ? (outcome.observationCompleteness ?? null) : null,
+        // A harness that cannot observe contributes nothing even if an adapter
+        // somehow handed something back, so the two fields can never disagree.
+        observations: observability === 'observable' ? outcome.observations : [],
         rows: outcome.rows,
         warnings: outcome.warnings,
         durationMs,
@@ -144,6 +192,8 @@ const collectHarnessResult = (
       };
     }),
     (result) => ({
+      observability: result.observability,
+      observations: result.observations.length,
       rows: result.rows.length,
       status: result.status,
       warnings: result.warnings.length,
@@ -191,12 +241,16 @@ export const collectSelectedHarnessResults = (selection: HarnessSelection) =>
       return {
         rows: publicRows,
         harnesses: publicHarnesses,
+        // Flattened for the writer, and still carried per harness above so a
+        // consumer can tell "observed nothing" from "cannot observe".
+        observations: publicHarnesses.flatMap((result) => result.observations),
         warnings: [...publicHarnesses.flatMap((result) => result.warnings), ...globalWarnings],
         durationMs: Date.now() - startedAt,
       };
     }),
     (result) => ({
       harnesses: result.harnesses.length,
+      observations: result.observations.length,
       rows: result.rows.length,
       warnings: result.warnings.length,
     }),

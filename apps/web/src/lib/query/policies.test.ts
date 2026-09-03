@@ -1,6 +1,11 @@
 import { describe, expect, test } from 'bun:test';
-import { controlPlaneKey, currentAliasKey, finiteSwrKey, immutableRevisionKey } from './keys';
 import {
+  SKILL_OBSERVATION_PRODUCER_MAX_AGE_MS,
+  SKILL_OBSERVATION_PRODUCER_READ_MAX_AGE_MS,
+} from '@ai-usage/report-core/skill-observation-evidence';
+import { collectionSwrKey, controlPlaneKey, currentAliasKey, finiteSwrKey, immutableRevisionKey } from './keys';
+import {
+  COLLECTION_SWR_STALE_TIME_MS,
   DEFAULT_BOUNDED_GC_TIME_MS,
   FINITE_SWR_STALE_TIME_MS,
   queryPolicy,
@@ -22,6 +27,12 @@ describe('Web query key and policy vocabulary', () => {
     ]);
     expect(finiteSwrKey('skills', 'snapshot', 4)).toEqual(['web', 'finite-swr', 'skills', 'snapshot', 4]);
     expect(controlPlaneKey('sync', 'fleet', true)).toEqual(['web', 'control-plane', 'sync', 'fleet', true]);
+    expect(collectionSwrKey('skill-observations', 'all')).toEqual([
+      'web',
+      'collection-swr',
+      'skill-observations',
+      'all',
+    ]);
   });
 
   test('requires named policies with explicit lifecycle behavior and bounded collection', () => {
@@ -29,6 +40,24 @@ describe('Web query key and policy vocabulary', () => {
     expect(queryPolicy('immutable-revision')).toBe(webQueryPolicies.immutableRevision);
     expect(queryPolicy('finite-swr')).toBe(webQueryPolicies.finiteSwr);
     expect(queryPolicy('bounded-control-plane')).toBe(webQueryPolicies.boundedControlPlane);
+    expect(queryPolicy('collection-swr')).toBe(webQueryPolicies.collectionSwr);
+
+    // The answer contains a time-bounded producer-completeness proof. It must therefore revalidate
+    // when that proof can expire, even if no collection event arrives, and on focus after a tab was
+    // suspended. Reconnect remains event-driven.
+    expect(webQueryPolicies.collectionSwr).toMatchObject({
+      gcTime: DEFAULT_BOUNDED_GC_TIME_MS,
+      refetchInterval: COLLECTION_SWR_STALE_TIME_MS,
+      refetchOnMount: 'always',
+      refetchOnReconnect: false,
+      refetchOnWindowFocus: true,
+      retry: false,
+      staleTime: COLLECTION_SWR_STALE_TIME_MS,
+    });
+    expect(COLLECTION_SWR_STALE_TIME_MS).toBeGreaterThan(FINITE_SWR_STALE_TIME_MS);
+    expect(SKILL_OBSERVATION_PRODUCER_READ_MAX_AGE_MS + COLLECTION_SWR_STALE_TIME_MS).toBe(
+      SKILL_OBSERVATION_PRODUCER_MAX_AGE_MS,
+    );
 
     expect(webQueryPolicies.currentAliasSwr).toMatchObject({
       gcTime: DEFAULT_BOUNDED_GC_TIME_MS,

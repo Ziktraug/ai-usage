@@ -2,8 +2,8 @@ import type { SkillMarkdownDocument, SkillMarkdownSaveResult } from '@ai-usage/w
 import type { QueryClient } from '@tanstack/svelte-query';
 import {
   applyManagedMarkdownSaveToCache,
+  applySkillsSnapshotToCache,
   managedSkillMarkdownKey,
-  skillsSnapshotKey,
 } from '../../../query/options/skills';
 import type { SkillsClient, SkillsClientResult } from '../../../rpc/skills-client';
 import type { DirtyGuardRegistry } from '../../shell/dirty-navigation-context';
@@ -34,12 +34,12 @@ export const createSkillsEditorSlotController = (options: {
         }
         return result;
       },
-      onSaved: (skillName: string, result: SkillsClientResult<SkillMarkdownSaveResult>): void => {
+      onSaved: async (skillName: string, result: SkillsClientResult<SkillMarkdownSaveResult>): Promise<void> => {
         if (!applyManagedMarkdownSaveToCache(options.queryClient, skillName, result)) {
           return;
         }
         if (result.ok && 'snapshot' in result.data) {
-          options.queryClient.setQueryData(skillsSnapshotKey(), result.data.snapshot);
+          await applySkillsSnapshotToCache(options.queryClient, result.data.snapshot);
         }
       },
       saveMarkdown: async (input) => await options.client.saveManagedSkillMarkdown(input),

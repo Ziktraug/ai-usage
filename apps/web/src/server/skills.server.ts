@@ -1,6 +1,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { createSkillsConfigStore } from '@ai-usage/local-machine/skills-config';
+import { readLocalSourcePolicyOverrides } from '@ai-usage/local-machine/source-policy-config';
+import {
+  SKILL_OBSERVATION_OBSERVABLE_HARNESS_KEYS,
+  SKILL_OBSERVATION_PRODUCER_READ_MAX_AGE_MS,
+} from '@ai-usage/report-core/skill-observation-evidence';
+import type { SkillObservationDataset } from '@ai-usage/report-core/skill-observation-summary';
+import { enabledSessionHarnessKeys, type SourcePolicyOverrides } from '@ai-usage/report-core/source-control';
 import type {
   SkillManagementConfig,
   SkillManagementConfigDocument,
@@ -20,6 +27,7 @@ import {
 import { createSkillsApplication } from '@ai-usage/skills/application';
 import { usageStoreErrorReasonFrom, usageStorePath } from '@ai-usage/usage-store/reader';
 import { Cause, Option, Runtime } from 'effect';
+import { joinSkillObservations } from './skill-observation-join';
 import type {
   KnownSkillProjectPath,
   ProjectSkillMarkdownDocument,
@@ -28,6 +36,7 @@ import type {
   SkillsServerResult,
 } from './skills-contracts';
 import { createLiveUsageReadModel, createSqliteUsageReadModel, type UsageReadModel } from './usage-read-model.server';
+import { resolveUsageWebRuntimePaths } from './usage-runtime-paths.server';
 
 const toJson = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 
@@ -145,6 +154,26 @@ export const skillManagementSnapshotForClient = (snapshot: SkillManagementSnapsh
 
 const pathEntryLabel = (entry: { project: string }) => entry.project;
 
+/**
+ * Report labels carry a ` — <machine>` suffix so a fleet view can tell two machines apart. This
+ * surface is already filtered to the local machine, so the suffix restates the only possible value
+ * on every row — and it is what pushed real project names into ellipsis in the tree.
+ */
+const stripMachineSuffix = (label: string, machineLabel: string | undefined): string => {
+  if (!machineLabel) {
+    return label;
+  }
+  const suffix = ` — ${machineLabel}`;
+  return label.endsWith(suffix) ? label.slice(0, -suffix.length) : label;
+};
+
+/**
+ * Agent worktree checkouts under a repo's tool directory are working copies of that repo, not
+ * projects of their own. Listing each one duplicated the repo once per concurrent session — the
+ * operator's tree carried the same project four times.
+ */
+const WORKTREE_CHECKOUT_PATTERN = /\/\.claude\/worktrees(?:\/|$)/u;
+
 const addKnownProjectPath = (
   entries: Map<string, KnownSkillProjectPath>,
   input: {
@@ -168,6 +197,9 @@ const addKnownProjectPath = (
   }
   const projectPath = path.resolve(rawProjectPath);
   if (options.homePath !== undefined && projectPath === path.resolve(options.homePath)) {
+    return;
+  }
+  if (WORKTREE_CHECKOUT_PATTERN.test(projectPath)) {
     return;
   }
   if (
@@ -194,8 +226,8 @@ const addKnownProjectPath = (
   }
   entries.set(projectPath, {
     ...(input.groupId ? { groupId: input.groupId } : {}),
-    ...(input.groupLabel ? { groupLabel: input.groupLabel } : {}),
-    label: input.label ?? pathEntryLabel(input),
+    ...(input.groupLabel ? { groupLabel: stripMachineSuffix(input.groupLabel, input.machineLabel) } : {}),
+    label: stripMachineSuffix(input.label ?? pathEntryLabel(input), input.machineLabel),
     ...(input.machineLabel ? { machineLabel: input.machineLabel } : {}),
     path: projectPath,
     project: input.project,
@@ -269,7 +301,11 @@ export const projectSkillScanPathsFrom = (
   skillsConfig: SkillManagementConfig,
   knownProjectPaths: readonly Pick<KnownSkillProjectPath, 'path'>[],
 ): readonly string[] => [
-  ...new Set([...(skillsConfig.projectPaths ?? []), ...knownProjectPaths.map((projectPath) => projectPath.path)]),
+  ...new Set(
+    [...(skillsConfig.projectPaths ?? []), ...knownProjectPaths.map((projectPath) => projectPath.path)].map(
+      (projectPath) => path.resolve(projectPath),
+    ),
+  ),
 ];
 
 const localDirectoryExists = (projectPath: string) => {
@@ -300,6 +336,12 @@ export interface SkillsServerAdapterDependencies {
   homePath: string;
   readConfig: () => Promise<SkillManagementConfigDocument>;
   readKnownProjectSources: () => Promise<ProjectPathSourcePayload>;
+  /**
+   * The skill-observation read (ADR 0022). It lives on the dependencies rather than inside the
+   * skills application because the inventory domain must not learn to read the usage store; this
+   * seam is where the two meet, and it only ever reads.
+   */
+  readSkillObservations: () => Promise<SkillObservationDataset>;
   updateSkills: (skills: unknown) => Promise<void>;
 }
 
@@ -346,6 +388,35 @@ export const createSkillsServerAdapter = (dependencies: SkillsServerAdapterDepen
       runAdapterOperation(async () => clientReconcileResult(await application.previewReconcile())),
     readKnownProjectPaths: () => runAdapterOperation(readKnownProjectPaths),
     readMarkdown: (skillName) => runAdapterOperation(() => application.readMarkdown(skillName)),
+    // The inventory↔observation join, at the seam plan 111 decision 3 names. The snapshot read is
+    // what makes it a join at all: managed-ness and projection completeness are inventory facts, and
+    // a verdict about a skill's usefulness needs both sides. It costs one more inventory scan per
+    // observation read, which is the price of deciding this where the inventory actually is rather
+    // than shipping two half-answers to the browser to reconcile.
+    readObservations: () =>
+      runAdapterOperation(async () => {
+        const [snapshot, observations, knownProjectPaths, projectInventories] = await Promise.all([
+          application.readSnapshot(),
+          dependencies.readSkillObservations(),
+          readKnownProjectPaths(),
+          application.readProjectInventories(),
+        ]);
+        return joinSkillObservations({
+          observations,
+          // The same roots the project scan walks, so "project-owned" and the project tree agree
+          // on what counts as a project.
+          projectPathPrefixes: projectSkillScanPathsFrom(snapshot.config, knownProjectPaths),
+          projectSkillNames: [
+            ...new Set(
+              projectInventories.flatMap((inventory) => inventory.observations.map((observation) => observation.name)),
+            ),
+          ],
+          projections: snapshot.projections,
+          skills: snapshot.skills,
+          targets: snapshot.targets,
+          unmanagedEntryNames: snapshot.unmanagedEntries.map((entry) => entry.entryName),
+        });
+      }),
     readProjectInventories: () => runAdapterOperation(() => application.readProjectInventories()),
     readProjectMarkdown: (input) => runAdapterOperation(() => application.readProjectMarkdown(input)),
     readSnapshot: () =>
@@ -377,19 +448,27 @@ export const createSkillsServerDependencies = (
   options: {
     configCwd?: string;
     homePath?: string;
-    readModel?: Pick<UsageReadModel, 'readCurrentLocalProjectSources'>;
+    now?: () => Date;
+    readModel?: Pick<UsageReadModel, 'readCurrentLocalProjectSources' | 'readLocalMachine' | 'readSkillObservations'>;
+    readSourcePolicyOverrides?: () => Promise<SourcePolicyOverrides>;
   } = {},
 ): SkillsServerAdapterDependencies => {
-  const configCwd = options.configCwd ?? process.cwd();
+  const runtimePaths =
+    options.configCwd === undefined || options.homePath === undefined ? resolveUsageWebRuntimePaths() : undefined;
+  const configCwd = options.configCwd ?? runtimePaths?.configCwd ?? process.cwd();
+  const homePath = options.homePath ?? runtimePaths?.homeDirectory;
   const configStore = createSkillsConfigStore({
     configCwd,
-    ...(options.homePath === undefined ? {} : { homePath: options.homePath }),
+    ...(homePath === undefined ? {} : { homePath }),
   });
   const readModel =
     options.readModel ??
     (options.homePath === undefined
       ? createLiveUsageReadModel()
       : createSqliteUsageReadModel({ dbPath: usageStorePath(configStore.homePath) }));
+  const readSourcePolicyOverrides =
+    options.readSourcePolicyOverrides ?? (() => readLocalSourcePolicyOverrides(configStore.homePath));
+  const now = options.now ?? (() => new Date());
   const readKnownProjectSources: SkillsServerAdapterDependencies['readKnownProjectSources'] = async () => {
     try {
       const result = await readModel.readCurrentLocalProjectSources();
@@ -420,11 +499,46 @@ export const createSkillsServerDependencies = (
     }
   };
 
+  /**
+   * A store this read cannot reach is not "no observations". Degrading to an empty dataset would
+   * render every observable harness as a zero, which is the one reading ADR 0022 forbids, so the
+   * failure is raised and the surface reports the observation section as unavailable — per metric,
+   * never as a page-level data-quality banner.
+   */
+  const readSkillObservations: SkillsServerAdapterDependencies['readSkillObservations'] = async () => {
+    try {
+      const [localMachine, sourcePolicies] = await Promise.all([
+        readModel.readLocalMachine(),
+        readSourcePolicyOverrides(),
+      ]);
+      const enabledHarnessKeys = new Set(enabledSessionHarnessKeys(sourcePolicies));
+      const expectedProducerHarnessKeys = SKILL_OBSERVATION_OBSERVABLE_HARNESS_KEYS;
+      const incompleteProducerHarnessKeys = expectedProducerHarnessKeys.filter(
+        (harnessKey) => !enabledHarnessKeys.has(harnessKey),
+      );
+      const minimumProducerCollectedAt = new Date(
+        now().getTime() - SKILL_OBSERVATION_PRODUCER_READ_MAX_AGE_MS,
+      ).toISOString();
+      return await readModel.readSkillObservations({
+        expectedProducerHarnessKeys,
+        incompleteProducerHarnessKeys,
+        machineId: localMachine.id,
+        minimumProducerCollectedAt,
+      });
+    } catch (error) {
+      if (usageStoreErrorReasonFrom(error) !== undefined) {
+        throw new Error('Skill observations are unavailable.');
+      }
+      throw error;
+    }
+  };
+
   return {
     configCwd,
     homePath: configStore.homePath,
     readConfig: configStore.read,
     readKnownProjectSources,
+    readSkillObservations,
     updateSkills: configStore.updateSkills,
   };
 };

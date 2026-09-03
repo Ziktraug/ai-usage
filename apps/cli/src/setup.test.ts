@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { request as httpRequest } from 'node:http';
+import { request as httpRequest, type IncomingHttpHeaders } from 'node:http';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createUsageSnapshot } from '@ai-usage/report-core/snapshot';
@@ -115,7 +115,7 @@ const sendSetupRequest = (
     method?: string;
     path?: string;
   } = {},
-): Promise<{ body: string; status: number }> =>
+): Promise<{ body: string; headers: IncomingHttpHeaders; status: number }> =>
   new Promise((resolve, reject) => {
     const request = httpRequest(
       {
@@ -129,7 +129,11 @@ const sendSetupRequest = (
         const chunks: Buffer[] = [];
         response.on('data', (chunk: Buffer) => chunks.push(chunk));
         response.on('end', () => {
-          resolve({ body: Buffer.concat(chunks).toString('utf8'), status: response.statusCode ?? 0 });
+          resolve({
+            body: Buffer.concat(chunks).toString('utf8'),
+            headers: response.headers,
+            status: response.statusCode ?? 0,
+          });
         });
       },
     );
@@ -141,6 +145,43 @@ const sendSetupRequest = (
   });
 
 describe('setup HTTP boundary', () => {
+  test('denies framing and cross-site page navigations', async () => {
+    const server = createSetupServer({
+      port: 0,
+      projectGroups: [],
+      sources: [],
+      warnings: [],
+      writeProjectGroups: () => Promise.resolve(),
+    });
+    try {
+      const page = await sendSetupRequest(server.port);
+      const crossSiteFrame = await sendSetupRequest(server.port, {
+        headers: {
+          host: `localhost:${server.port}`,
+          'sec-fetch-dest': 'iframe',
+          'sec-fetch-mode': 'navigate',
+          'sec-fetch-site': 'cross-site',
+        },
+      });
+
+      expect(page.status).toBe(200);
+      expect(page.headers['content-security-policy']).toContain("frame-ancestors 'none'");
+      expect(page.headers['x-frame-options']).toBe('DENY');
+      expect(page.headers['x-content-type-options']).toBe('nosniff');
+      expect(page.headers['cross-origin-resource-policy']).toBe('same-origin');
+      expect(page.headers['cache-control']).toBe('no-store');
+      expect(crossSiteFrame.status).toBe(403);
+      expect(JSON.parse(crossSiteFrame.body)).toEqual({
+        error: {
+          message: 'Setup pages must be opened directly or from this application.',
+          tag: 'CrossSiteNavigation',
+        },
+      });
+    } finally {
+      await server.stop(true);
+    }
+  });
+
   test('binds an actual closable listener to IPv4 loopback', async () => {
     const server = createSetupServer({
       port: 0,

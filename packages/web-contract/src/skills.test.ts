@@ -11,6 +11,8 @@ import {
   skillMarkdownDocumentSchema,
   skillMarkdownSaveResultSchema,
   skillNameInputSchema,
+  skillObservationsSchema,
+  skillObservationVerdicts,
   skillsContract,
   skillsErrorMap,
   skillsProcedureIntents,
@@ -41,6 +43,7 @@ const procedureNames = [
   'createTargetDirectory',
   'knownProjectPaths',
   'managedMarkdown',
+  'observations',
   'previewReconcileAll',
   'projectInventories',
   'projectMarkdown',
@@ -54,12 +57,13 @@ const procedureNames = [
 ];
 
 describe('Skills oRPC contract', () => {
-  test('declares all thirteen operations and the frozen semantic intents', () => {
+  test('declares all fourteen operations and the frozen semantic intents', () => {
     expect(Object.keys(skillsContract).sort()).toEqual(procedureNames);
     expect(skillsProcedureIntents).toEqual({
       createTargetDirectory: 'mutation',
       projectInventories: 'query',
       knownProjectPaths: 'query',
+      observations: 'query',
       managedMarkdown: 'query',
       previewReconcileAll: 'query',
       projectMarkdown: 'query',
@@ -82,6 +86,7 @@ describe('Skills oRPC contract', () => {
       createTargetDirectory: 'POST',
       knownProjectPaths: 'GET',
       managedMarkdown: 'POST',
+      observations: 'GET',
       previewReconcileAll: 'GET',
       projectInventories: 'GET',
       projectMarkdown: 'GET',
@@ -370,6 +375,342 @@ describe('Skills oRPC contract', () => {
     expect(safeParse(skillManagementSnapshotSchema, snapshotWithManifestMarkdown('é'.repeat(131_073))).success).toBe(
       false,
     );
+  });
+
+  test('carries every observation tier with its harness and never a place to sum them', () => {
+    const observations = {
+      harnesses: [
+        { harnessKey: 'claude', label: 'Claude Code', observability: 'observable' },
+        { harnessKey: 'codex', label: 'Codex', observability: 'observable' },
+        { harnessKey: 'opencode', label: 'OpenCode', observability: 'observable' },
+        { harnessKey: 'cursor', label: 'Cursor', observability: 'not-observable' },
+      ],
+      harnessIncompleteness: {
+        exposure: [],
+        exposureUnattributed: false,
+        invocation: [],
+        invocationUnattributed: false,
+      },
+      invocationLowerBound: false,
+      lowerBound: false,
+      producerCompletenessMissing: false,
+      producerProofValidUntil: '2026-08-01T10:01:00.000Z',
+      skills: [
+        {
+          deletionCandidate: false,
+          lastObservedAt: '2026-08-03T09:01:00.000Z',
+          managed: true,
+          projectedEverywhere: true,
+          resolvedPaths: ['/home/alex/.agents/skills/pr-review'],
+          resolvedPathsTruncated: false,
+          skillName: 'pr-review',
+          tallies: [
+            {
+              count: 2,
+              harnessKey: 'claude',
+              harnessLabel: 'Claude Code',
+              lastObservedAt: '2026-08-01T09:00:00.000Z',
+              tier: 'declared',
+            },
+            {
+              count: 1,
+              harnessKey: 'codex',
+              harnessLabel: 'Codex',
+              lastObservedAt: '2026-08-03T09:01:00.000Z',
+              tier: 'inferred',
+            },
+            {
+              count: 4,
+              harnessKey: 'codex',
+              harnessLabel: 'Codex',
+              lastObservedAt: '2026-08-03T09:00:00.000Z',
+              tier: 'exposed',
+            },
+          ],
+          unmanagedResidence: null,
+          verdict: 'invoked',
+          verdictProvisional: false,
+        },
+      ],
+      skipped: 0,
+    };
+
+    expect(safeParse(skillObservationsSchema, observations).success).toBe(true);
+    // A tally without its tier, or without its harness, is not a thing this wire shape can carry.
+    expect(
+      safeParse(skillObservationsSchema, {
+        ...observations,
+        skills: [
+          {
+            ...observations.skills[0],
+            tallies: [{ count: 3, harnessLabel: 'Claude Code', lastObservedAt: '2026-08-01T09:00:00.000Z' }],
+          },
+        ],
+      }).success,
+    ).toBe(false);
+    // And there is no field a sum of declared and inferred could be written into.
+    expect(
+      safeParse(skillObservationsSchema, {
+        ...observations,
+        skills: [{ ...observations.skills[0], total: 7 }],
+      }).success,
+    ).toBe(false);
+    expect(safeParse(skillObservationsSchema, { ...observations, total: 7 }).success).toBe(false);
+  });
+
+  test('carries invocation, pooled, and producer-completeness state separately and requires each', () => {
+    const base = {
+      harnesses: [{ harnessKey: 'codex', label: 'Codex', observability: 'observable' }],
+      harnessIncompleteness: {
+        exposure: [],
+        exposureUnattributed: false,
+        invocation: [],
+        invocationUnattributed: false,
+      },
+      invocationLowerBound: false,
+      lowerBound: true,
+      producerCompletenessMissing: false,
+      producerProofValidUntil: '2026-08-01T10:01:00.000Z',
+      skills: [],
+      skipped: 0,
+    };
+
+    // The ordinary state of a real store: the exposure catalogue outran the read budget while every
+    // recorded invocation is present. One flag cannot express that, which is why there are two.
+    expect(safeParse(skillObservationsSchema, base).success).toBe(true);
+    expect(safeParse(skillObservationsSchema, { ...base, invocationLowerBound: true }).success).toBe(true);
+
+    // Required, not optional: a producer that omitted it would leave a consumer guessing whether an
+    // absence verdict is safe, and the safe guess and the useful guess are opposites.
+    const { invocationLowerBound, ...withoutInvocationBound } = base;
+    expect(invocationLowerBound).toBe(false);
+    expect(safeParse(skillObservationsSchema, withoutInvocationBound).success).toBe(false);
+    const { producerCompletenessMissing, ...withoutProducerState } = base;
+    expect(producerCompletenessMissing).toBe(false);
+    expect(safeParse(skillObservationsSchema, withoutProducerState).success).toBe(false);
+    const { producerProofValidUntil, ...withoutProducerProofDeadline } = base;
+    expect(producerProofValidUntil).toBe('2026-08-01T10:01:00.000Z');
+    expect(safeParse(skillObservationsSchema, withoutProducerProofDeadline).success).toBe(false);
+    expect(safeParse(skillObservationsSchema, { ...base, producerProofValidUntil: null }).success).toBe(true);
+    expect(safeParse(skillObservationsSchema, { ...base, producerProofValidUntil: '2026-08-01' }).success).toBe(false);
+  });
+
+  test('carries the verdict the server decided, and only the verdicts it may decide', () => {
+    const base = {
+      harnesses: [{ harnessKey: 'claude', label: 'Claude Code', observability: 'observable' }],
+      harnessIncompleteness: {
+        exposure: [],
+        exposureUnattributed: false,
+        invocation: [],
+        invocationUnattributed: false,
+      },
+      invocationLowerBound: false,
+      lowerBound: false,
+      producerCompletenessMissing: false,
+      producerProofValidUntil: '2026-08-01T10:01:00.000Z',
+      skills: [
+        {
+          deletionCandidate: true,
+          // A skill with no observation at all still travels: dropping it would erase the deletion
+          // verdict this family exists to produce.
+          lastObservedAt: null,
+          managed: true,
+          projectedEverywhere: true,
+          resolvedPaths: [],
+          resolvedPathsTruncated: false,
+          skillName: 'never-used',
+          tallies: [],
+          unmanagedResidence: null,
+          verdict: 'never-observed',
+          verdictProvisional: false,
+        },
+      ],
+      skipped: 0,
+    };
+
+    expect(safeParse(skillObservationsSchema, base).success).toBe(true);
+    for (const verdict of skillObservationVerdicts) {
+      expect(safeParse(skillObservationsSchema, { ...base, skills: [{ ...base.skills[0], verdict }] }).success).toBe(
+        true,
+      );
+    }
+    // "observed" is not a verdict: it does not distinguish being used from being offered.
+    for (const verdict of ['observed', 'unmanaged', 'exposed']) {
+      expect(safeParse(skillObservationsSchema, { ...base, skills: [{ ...base.skills[0], verdict }] }).success).toBe(
+        false,
+      );
+    }
+    // The provisional marker is required, so a producer cannot omit the fact that an absence claim
+    // rests on an incomplete read.
+    const { verdictProvisional, ...withoutProvisional } = base.skills[0] as Record<string, unknown>;
+    expect(verdictProvisional).toBe(false);
+    expect(safeParse(skillObservationsSchema, { ...base, skills: [withoutProvisional] }).success).toBe(false);
+  });
+
+  test('carries the residence of an unmanaged name, and only the residences the join may decide', () => {
+    const base = {
+      harnesses: [{ harnessKey: 'claude', label: 'Claude Code', observability: 'observable' }],
+      harnessIncompleteness: {
+        exposure: [],
+        exposureUnattributed: false,
+        invocation: [],
+        invocationUnattributed: false,
+      },
+      invocationLowerBound: false,
+      lowerBound: false,
+      producerCompletenessMissing: false,
+      producerProofValidUntil: '2026-08-01T10:01:00.000Z',
+      skills: [
+        {
+          deletionCandidate: false,
+          lastObservedAt: '2026-08-01T09:05:00.000Z',
+          managed: false,
+          projectedEverywhere: false,
+          resolvedPaths: [],
+          resolvedPathsTruncated: false,
+          skillName: 'agent-memory',
+          tallies: [],
+          unmanagedResidence: 'runtime-installed',
+          verdict: 'never-observed',
+          verdictProvisional: false,
+        },
+      ],
+      skipped: 0,
+    };
+
+    for (const unmanagedResidence of ['runtime-installed', 'project-owned', 'external', null]) {
+      expect(
+        safeParse(skillObservationsSchema, { ...base, skills: [{ ...base.skills[0], unmanagedResidence }] }).success,
+      ).toBe(true);
+    }
+    // Required, and a closed vocabulary: a producer cannot invent a fourth population, and cannot
+    // silently omit the classification the adoption surface segments by.
+    for (const unmanagedResidence of ['bundled', 'unknown', 'managed']) {
+      expect(
+        safeParse(skillObservationsSchema, { ...base, skills: [{ ...base.skills[0], unmanagedResidence }] }).success,
+      ).toBe(false);
+    }
+    const { unmanagedResidence, ...withoutResidence } = base.skills[0] as Record<string, unknown>;
+    expect(unmanagedResidence).toBe('runtime-installed');
+    expect(safeParse(skillObservationsSchema, { ...base, skills: [withoutResidence] }).success).toBe(false);
+  });
+
+  test('accepts an unresolved observation and refuses to lose it to the managed-name pattern', () => {
+    const unresolved = {
+      harnesses: [{ harnessKey: 'claude', label: 'Claude Code', observability: 'observable' }],
+      harnessIncompleteness: {
+        exposure: [],
+        exposureUnattributed: false,
+        invocation: [],
+        invocationUnattributed: false,
+      },
+      invocationLowerBound: false,
+      lowerBound: false,
+      producerCompletenessMissing: false,
+      producerProofValidUntil: '2026-08-01T10:01:00.000Z',
+      skills: [
+        {
+          deletionCandidate: false,
+          lastObservedAt: '2026-08-01T09:05:00.000Z',
+          managed: false,
+          projectedEverywhere: false,
+          // A harness-bundled skill: it resolves to no inventory entry and to no directory. Both
+          // are states, and both must survive the presentation edge (ADR 0022).
+          resolvedPaths: [],
+          resolvedPathsTruncated: false,
+          skillName: 'artifact-design',
+          tallies: [
+            {
+              count: 1,
+              harnessKey: 'claude',
+              harnessLabel: 'Claude Code',
+              lastObservedAt: '2026-08-01T09:05:00.000Z',
+              tier: 'declared',
+            },
+          ],
+          unmanagedResidence: 'external',
+          verdict: 'invoked-unmanaged',
+          verdictProvisional: false,
+        },
+      ],
+      skipped: 0,
+    };
+
+    expect(safeParse(skillObservationsSchema, unresolved).success).toBe(true);
+    // Names the managed pattern would reject are still valid observed names.
+    for (const skillName of ['Artifact_Design', 'plugin:code-review', 'skill.with.dots', 'ünïcødé']) {
+      expect(
+        safeParse(skillObservationsSchema, { ...unresolved, skills: [{ ...unresolved.skills[0], skillName }] }),
+      ).toMatchObject({ success: true });
+    }
+    // Control characters are the one class that cannot be rendered as text.
+    expect(
+      safeParse(skillObservationsSchema, {
+        ...unresolved,
+        skills: [{ ...unresolved.skills[0], skillName: `bad${String.fromCodePoint(7)}name` }],
+      }).success,
+    ).toBe(false);
+    expect(
+      safeParse(skillObservationsSchema, { ...unresolved, skills: [{ ...unresolved.skills[0], skillName: '' }] })
+        .success,
+    ).toBe(false);
+  });
+
+  test('requires the harness roster and a canonical timestamp on every observation count', () => {
+    const base = {
+      harnesses: [{ harnessKey: 'cursor', label: 'Cursor', observability: 'not-observable' }],
+      harnessIncompleteness: {
+        exposure: [],
+        exposureUnattributed: false,
+        invocation: [],
+        invocationUnattributed: true,
+      },
+      invocationLowerBound: true,
+      lowerBound: true,
+      producerCompletenessMissing: false,
+      producerProofValidUntil: null,
+      skills: [],
+      skipped: 2,
+    };
+
+    expect(safeParse(skillObservationsSchema, base).success).toBe(true);
+    // An empty roster would leave a consumer unable to tell "cannot observe" from "observed nothing".
+    expect(safeParse(skillObservationsSchema, { ...base, harnesses: [] }).success).toBe(false);
+    expect(
+      safeParse(skillObservationsSchema, {
+        ...base,
+        harnesses: [{ harnessKey: 'cursor', label: 'Cursor', observability: 'partial' }],
+      }).success,
+    ).toBe(false);
+    expect(
+      safeParse(skillObservationsSchema, {
+        ...base,
+        skills: [
+          {
+            deletionCandidate: false,
+            lastObservedAt: '2026-08-01',
+            managed: true,
+            projectedEverywhere: false,
+            resolvedPaths: [],
+            resolvedPathsTruncated: false,
+            skillName: 'improve',
+            tallies: [
+              {
+                count: 1,
+                harnessKey: 'claude',
+                harnessLabel: 'Claude Code',
+                lastObservedAt: '2026-08-01T09:00:00.000Z',
+                tier: 'declared',
+              },
+            ],
+            unmanagedResidence: null,
+            verdict: 'invoked',
+            verdictProvisional: false,
+          },
+        ],
+      }).success,
+    ).toBe(false);
+    expect(safeParse(skillObservationsSchema, { ...base, skipped: -1 }).success).toBe(false);
   });
 
   test('keeps dirty-draft save outcomes in the successful output channel', () => {
