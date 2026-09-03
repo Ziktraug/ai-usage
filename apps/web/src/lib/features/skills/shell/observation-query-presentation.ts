@@ -11,7 +11,8 @@ export interface SkillObservationQueryPresentation {
  * TanStack keeps successful data during background work and after a refetch failure. The cache may
  * retain it, and the Skills projection keeps those positive facts visible during a refresh. The
  * producer-proof qualification separately prevents retained data from carrying an exact absence.
- * An expired or failed proof still renders as unavailable once no refresh is in flight.
+ * Expiry or a failed refetch is reported beside the retained facts; neither erases positive
+ * evidence from the last successful answer.
  */
 export const skillObservationQueryPresentation = (input: {
   readonly data: SkillObservations | undefined;

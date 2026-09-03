@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import type { SkillObservations } from '@ai-usage/web-contract/skills';
 import { syntheticManagementSnapshot } from '../management/synthetic-fixture.test-helper';
-import { OBSERVATION_ROW_OMITTED_TEXT } from '../observations/model';
+import { OBSERVATION_ROW_OMITTED_TEXT, skillObservationReadQualifications } from '../observations/model';
 import { createSkillsPresentationProjection } from '../presentation';
 import { createSkillsShellViewModel } from '../shell/model';
 import { skillObservationQueryPresentation } from '../shell/observation-query-presentation';
@@ -14,12 +14,7 @@ import {
   syntheticProvisionalObservations,
   syntheticSnapshot,
 } from '../shell/synthetic-fixture.test-helper';
-import {
-  createSkillsWorktableModel,
-  worktableExposureCaveat,
-  worktableHistorySentence,
-  worktableManagedEmptyText,
-} from './model';
+import { createSkillsWorktableModel, worktableHistorySentence, worktableManagedEmptyText } from './model';
 
 const projection = (
   observations: SkillObservations | undefined,
@@ -43,24 +38,25 @@ const projection = (
 };
 
 describe('Skills worktable observation presentation', () => {
-  test('masks observation-dependent values when a retained Query value has a refetch error', () => {
+  test('keeps positive facts visible and absence claims provisional after a retained Query refetch error', () => {
     const { model, presentation } = projection(syntheticObservations, 'Synthetic background refetch failure.');
 
-    expect(presentation.observations.view).toBeUndefined();
-    expect(model.filters.map(({ id, value }) => [id, value])).toEqual([
-      ['all', '—'],
-      ['to-adopt', '—'],
-      ['links-healthy', '0/0'],
-      ['to-delete', '—'],
-      ['catalogue-only', '—'],
-    ]);
+    expect(presentation.observations.view).toMatchObject({
+      invocationEvidenceComplete: false,
+      producerProofCurrent: false,
+    });
+    expect(model.filters.find((filter) => filter.id === 'all')?.value).not.toBe('—');
+    expect(model.filters.find((filter) => filter.id === 'to-delete')?.value).toContain('provisional');
     expect(model.managedRows.find((row) => row.name === 'alpha-skill')).toMatchObject({
-      lastSignalText: 'observations unavailable',
+      lastSignalText: 'last 2026-08-02',
     });
     expect(model.projectRows.at(0)).toMatchObject({
-      lastSignalText: 'observations unavailable',
-      summary: 'Skill observations unavailable',
+      lastSignalText: 'last 2026-08-03',
+      observedCount: 2,
     });
+    expect(
+      model.managedRows.find((row) => row.name === 'alpha-skill')?.cells.flatMap((cell) => cell.evidence),
+    ).not.toEqual([]);
   });
 
   test('retains observation facts while making absence-based claims provisional during refresh', () => {
@@ -90,6 +86,37 @@ describe('Skills worktable observation presentation', () => {
     expect(retainedEvidence?.map((evidence) => evidence.text)).not.toContain('~≥1');
     expect(presentation.observations.rowsByName.get('alpha-skill')?.verdictProvisional).toBe(false);
     expect(presentation.observations.rowsByName.get('beta-skill')?.verdictProvisional).toBe(true);
+  });
+
+  test('keeps durable project-owned observations when the current project inventory is empty', () => {
+    const view = createSkillsShellViewModel({
+      inventories: [],
+      knownProjectPaths: syntheticKnownPaths,
+      pathname: '/skills',
+      snapshot: syntheticSnapshot(),
+    });
+    const presentation = createSkillsPresentationProjection({
+      observations: syntheticObservations,
+      observationsError: undefined,
+      view,
+    });
+    const model = createSkillsWorktableModel({ presentation, view });
+
+    expect(view.tree.emptyScopes).toHaveLength(1);
+    expect(model.projectRows).toHaveLength(1);
+    expect(model.projectRows[0]).toMatchObject({
+      label: 'Synthetic group',
+      observedCount: 1,
+      skillCount: 1,
+    });
+    expect(model.projectRows[0]?.expandedRows).toEqual([
+      expect.objectContaining({
+        href: undefined,
+        kind: 'project-observation',
+        name: 'project-review',
+        residence: expect.stringContaining('retained project-owned observation'),
+      }),
+    ]);
   });
 
   test('marks an expected managed row omitted even when the joined response claims to be exact', () => {
@@ -194,12 +221,25 @@ describe('Skills worktable observation presentation', () => {
         invocation.presentation.observations.view,
       ),
     ).toContain('at least 2 recorded');
-    expect(worktableExposureCaveat(exposure.presentation.observations.view)).toBe(
-      'Exposure evidence is incomplete, so exposed counts are lower bounds.',
-    );
-    expect(worktableExposureCaveat(invocation.presentation.observations.view)).toBe(
-      'Observation evidence is incomplete, so declared, inferred, and exposed counts are lower bounds.',
-    );
+    expect(skillObservationReadQualifications(exposure.presentation.observations.view!)).toEqual([
+      {
+        channel: 'exposure',
+        message:
+          'Exposure evidence has an unattributed gap, so affected exposed counts are lower bounds. Invocation verdicts are not affected.',
+      },
+    ]);
+    expect(skillObservationReadQualifications(invocation.presentation.observations.view!)).toEqual([
+      {
+        channel: 'invocations',
+        message:
+          'Invocation evidence has an unattributed gap, so affected declared or inferred counts are lower bounds and cross-harness absence verdicts are provisional.',
+      },
+      {
+        channel: 'exposure',
+        message:
+          'Exposure evidence has an unattributed gap, so affected exposed counts are lower bounds. Invocation verdicts are not affected.',
+      },
+    ]);
 
     const exposureSilentRow = exposure.presentation.observations.rowsByName.get('beta-skill');
     const invocationSilentRow = invocation.presentation.observations.rowsByName.get('beta-skill');
@@ -241,6 +281,18 @@ describe('Skills worktable per-harness evidence scoping', () => {
     expect(model.filters.find((filter) => filter.id === 'to-delete')?.value).toBe('1 provisional');
     expect(presentation.observations.view?.invocationLowerBound).toBe(true);
     expect(presentation.observations.view?.invocationEvidenceComplete).toBe(false);
+    expect(skillObservationReadQualifications(presentation.observations.view!)).toEqual([
+      {
+        channel: 'invocations',
+        message:
+          'Invocation evidence is incomplete for Codex. Only Codex declared or inferred counts are lower bounds; cross-harness absence verdicts are provisional.',
+      },
+      {
+        channel: 'exposure',
+        message:
+          'Exposure evidence is incomplete for Codex. Only Codex exposed counts are lower bounds. Invocation verdicts are not affected.',
+      },
+    ]);
   });
 
   test('qualifies a per-harness absence phrase by that harness own completeness', () => {

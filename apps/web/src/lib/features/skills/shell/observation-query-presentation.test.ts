@@ -31,7 +31,7 @@ describe('Skills observation Query presentation edge', () => {
     }
   });
 
-  test('fails closed when the retained proof is expired', () => {
+  test('retains positive facts while failing absence proof closed after expiry', () => {
     expect(
       skillObservationQueryPresentation({
         data: syntheticObservations,
@@ -46,7 +46,7 @@ describe('Skills observation Query presentation edge', () => {
     });
   });
 
-  test('keeps a background refetch error authoritative over retained data', () => {
+  test('reports a background refetch error without discarding retained data', () => {
     expect(
       skillObservationQueryPresentation({
         data: syntheticObservations,

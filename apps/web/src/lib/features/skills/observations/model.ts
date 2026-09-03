@@ -159,10 +159,10 @@ export const skillObservationsPresentationState = (
   observations: SkillObservations | undefined,
   errorMessage: string | undefined,
 ): SkillObservationsPresentationState => {
-  if (errorMessage !== undefined) {
-    return 'unavailable';
+  if (observations !== undefined) {
+    return 'ready';
   }
-  return observations === undefined ? 'loading' : 'ready';
+  return errorMessage === undefined ? 'loading' : 'unavailable';
 };
 
 export const NOT_OBSERVABLE_TEXT = 'not observable';
@@ -172,6 +172,61 @@ export const OBSERVATION_ROW_OMITTED_TEXT = 'Omitted from this observation respo
 
 export const noSignalsText = (signalsComplete: boolean): string =>
   signalsComplete ? NO_SIGNALS_RECORDED_TEXT : NO_SIGNALS_IN_LOADED_HISTORY_TEXT;
+
+export interface SkillObservationReadQualification {
+  readonly channel: 'exposure' | 'invocations';
+  readonly message: string;
+}
+
+const formatHarnessList = (labels: readonly string[]): string => {
+  if (labels.length <= 1) {
+    return labels[0] ?? '';
+  }
+  if (labels.length === 2) {
+    return `${labels[0]} and ${labels[1]}`;
+  }
+  return `${labels.slice(0, -1).join(', ')}, and ${labels.at(-1)}`;
+};
+
+const incompleteHarnessLabels = (view: SkillObservationsView, harnessKeys: readonly string[]): readonly string[] => {
+  const labelByKey = new Map(view.harnesses.map((harness) => [harness.harnessKey, harness.label]));
+  return harnessKeys.map((harnessKey) => labelByKey.get(harnessKey) ?? harnessKey);
+};
+
+/**
+ * Read-level qualifications name only the channel and harnesses whose evidence was lost.
+ * Individual counts still carry their own lower-bound marker; cross-harness absence verdicts use
+ * the global invocation bound because one incomplete producer makes that claim unprovable.
+ */
+export const skillObservationReadQualifications = (
+  view: SkillObservationsView,
+): readonly SkillObservationReadQualification[] => {
+  const invocationHarnesses = incompleteHarnessLabels(view, view.harnessIncompleteness.invocation);
+  const exposureHarnesses = incompleteHarnessLabels(view, view.harnessIncompleteness.exposure);
+  const invocationGapIsUnattributed =
+    view.harnessIncompleteness.invocationUnattributed || invocationHarnesses.length === 0;
+  const invocation = view.invocationLowerBound
+    ? {
+        channel: 'invocations' as const,
+        message: invocationGapIsUnattributed
+          ? 'Invocation evidence has an unattributed gap, so affected declared or inferred counts are lower bounds and cross-harness absence verdicts are provisional.'
+          : `Invocation evidence is incomplete for ${formatHarnessList(invocationHarnesses)}. Only ${formatHarnessList(invocationHarnesses)} declared or inferred counts are lower bounds; cross-harness absence verdicts are provisional.`,
+      }
+    : undefined;
+  const exposureIncomplete =
+    view.harnessIncompleteness.exposureUnattributed || view.harnessIncompleteness.exposure.length > 0;
+  const exposure = exposureIncomplete
+    ? {
+        channel: 'exposure' as const,
+        message: view.harnessIncompleteness.exposureUnattributed
+          ? 'Exposure evidence has an unattributed gap, so affected exposed counts are lower bounds. Invocation verdicts are not affected.'
+          : `Exposure evidence is incomplete for ${formatHarnessList(exposureHarnesses)}. Only ${formatHarnessList(exposureHarnesses)} exposed counts are lower bounds. Invocation verdicts are not affected.`,
+      }
+    : undefined;
+  return [invocation, exposure].filter(
+    (qualification): qualification is SkillObservationReadQualification => qualification !== undefined,
+  );
+};
 
 /** Render an aggregate retained population without making a bounded response look exact. */
 export const formatObservationCount = (count: number, lowerBound: boolean): string =>

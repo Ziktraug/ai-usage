@@ -41,11 +41,6 @@ describe('Skills presentation projection', () => {
       toLinkCount: 0,
       toRepairCount: 0,
     });
-    expect(presentation.projectUsageByScopeKey.values().next().value).toMatchObject({
-      lastObservedAt: '2026-08-03T12:00:00.000Z',
-      observedCount: 2,
-      top: { skillName: 'project-review', verdict: 'invoked-unmanaged' },
-    });
   });
 
   test('carries project selection evidence and placement through one join', () => {
@@ -59,13 +54,6 @@ describe('Skills presentation projection', () => {
         'Invocation evidence — owned by a project repository, outside the shared source. Adopt it only to make it global.',
     });
     expect(detail.selected.observationRow).toBe(detail.observations.rowsByName.get('project-review'));
-
-    const scope = projectionFor('/skills/projects/synthetic-group');
-    expect(scope.selected.name).toBeUndefined();
-    expect(scope.projectUsageByScopeKey.values().next().value).toMatchObject({
-      observedCount: 2,
-      top: { skillName: 'project-review', verdict: 'invoked-unmanaged' },
-    });
   });
 
   test('keeps a failed observation identity unavailable without inventing absence facts', () => {
@@ -91,7 +79,7 @@ describe('Skills presentation projection', () => {
     expect(presentation.unmanagedUsageByName).toBeUndefined();
   });
 
-  test('neutralizes retained observation data after a background refetch error', () => {
+  test('retains positive observation data while making absence claims provisional after a refetch error', () => {
     const view = createSkillsShellViewModel({
       inventories: syntheticInventories,
       knownProjectPaths: syntheticKnownPaths,
@@ -106,19 +94,18 @@ describe('Skills presentation projection', () => {
 
     expect(presentation.observations).toMatchObject({
       errorMessage: 'Synthetic background refetch failure.',
-      state: 'unavailable',
-      view: undefined,
+      state: 'ready',
+      view: { invocationEvidenceComplete: false, producerProofCurrent: false },
     });
-    expect(presentation.observations.rowsByName.size).toBe(0);
-    expect(presentation.observations.omittedSkillNames.size).toBe(0);
+    expect(presentation.observations.rowsByName.size).toBe(syntheticObservations.skills.length);
     expect(presentation.selected).toMatchObject({
-      observationRow: undefined,
+      observationRow: { skillName: 'alpha-skill', verdict: 'invoked', verdictProvisional: false },
       observationRowOmitted: false,
-      observedSummary: '',
-      verdict: undefined,
+      observedSummary: 'Claude Code declared 2 · Codex inferred 1',
+      verdict: 'Invocation evidence from at least one harness.',
     });
-    expect(presentation.projectUsageByScopeKey.size).toBe(0);
-    expect(presentation.unmanagedUsageByName).toBeUndefined();
+    expect(presentation.observations.rowsByName.get('beta-skill')?.verdictProvisional).toBe(true);
+    expect(presentation.unmanagedUsageByName).toBeDefined();
   });
 
   test('does not invent an absence verdict when the bounded response omitted the selected skill', () => {
@@ -171,31 +158,6 @@ describe('Skills presentation projection', () => {
       verdict: undefined,
     });
     expect(presentation.observations.omittedSkillNames.has('alpha-skill')).toBe(true);
-  });
-
-  test('carries observation omissions into project usage even when the joined response claims exactness', () => {
-    const view = createSkillsShellViewModel({
-      inventories: syntheticInventories,
-      knownProjectPaths: syntheticKnownPaths,
-      pathname: '/skills/projects/synthetic-group',
-      snapshot: syntheticSnapshot(),
-    });
-    const presentation = createSkillsPresentationProjection({
-      observations: {
-        ...syntheticObservations,
-        invocationLowerBound: false,
-        lowerBound: false,
-        skills: syntheticObservations.skills.filter((skill) => skill.skillName !== 'project-review'),
-      },
-      observationsError: undefined,
-      view,
-    });
-
-    expect(presentation.projectUsageByScopeKey.values().next().value).toMatchObject({
-      observationRowsOmitted: true,
-      observedCount: 1,
-      observedCountLowerBound: true,
-    });
   });
 
   test('projects the server invocation bound without reinterpreting skipped diagnostics', () => {

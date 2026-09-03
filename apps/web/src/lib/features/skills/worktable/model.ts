@@ -85,7 +85,7 @@ export interface SkillsWorktableCell {
   readonly tone: MatrixDotTone | undefined;
 }
 
-export type SkillsWorktableRowKind = 'adoption' | 'managed' | 'project-skill';
+export type SkillsWorktableRowKind = 'adoption' | 'managed' | 'project-observation' | 'project-skill';
 
 export interface SkillsWorktableSkillRow {
   readonly cells: readonly SkillsWorktableCell[];
@@ -454,6 +454,58 @@ const projectSkillRowsFor = (
   });
 };
 
+const pathBelongsToProject = (resolvedPath: string, projectPath: string): boolean =>
+  resolvedPath === projectPath || resolvedPath.startsWith(projectPath.endsWith('/') ? projectPath : `${projectPath}/`);
+
+/**
+ * Invocation observations outlive the project inventory that first resolved them. When a project
+ * scan is empty or temporarily unavailable, keep those positive facts in that repository's group
+ * instead of dropping the name from every worktable population.
+ */
+const retainedProjectObservationRowsFor = (
+  context: RowContext,
+  scope: SkillTreeScopeNode,
+  currentNames: ReadonlySet<string>,
+): readonly SkillsWorktableSkillRow[] => {
+  const sourcePaths = scope.sourcePaths ?? (scope.path === undefined ? [] : [scope.path]);
+  return (context.observations.view?.adoptionCandidates ?? [])
+    .filter(
+      (row) =>
+        row.unmanagedResidence === 'project-owned' &&
+        !currentNames.has(row.skillName) &&
+        row.resolvedPaths.some((resolvedPath) =>
+          sourcePaths.some((projectPath) => pathBelongsToProject(resolvedPath, projectPath)),
+        ),
+    )
+    .map((row) => {
+      const retainedPath = row.resolvedPaths.find((resolvedPath) =>
+        sourcePaths.some((projectPath) => pathBelongsToProject(resolvedPath, projectPath)),
+      );
+      return {
+        cells: cellsFor(context, {
+          enabled: true,
+          observationRow: row,
+          placementTargets: false,
+          skillName: row.skillName,
+        }),
+        description: 'Retained invocation evidence; no current project inventory entry.',
+        enabled: true,
+        href: undefined,
+        invocationLabel: 'Auto',
+        issueCount: 0,
+        kind: 'project-observation' as const,
+        lastObservedAt: row.lastObservedAt,
+        lastSignalRecency: row.lastObservedAt === null ? undefined : observationRecency(row.lastObservedAt),
+        lastSignalStale: row.lastObservedAt !== null && observationRecencyNote(row.lastObservedAt) !== undefined,
+        lastSignalText: lastSignalTextFor(row.lastObservedAt, context.observations),
+        name: row.skillName,
+        observationRowOmitted: false,
+        residence: `${retainedPath ?? scope.path ?? scope.key} · retained project-owned observation`,
+        validationStatus: 'valid',
+      };
+    });
+};
+
 /** `~17 Codex · 3 OpenCode` — one phrase per harness and tier, never a total. */
 const topEvidenceSummary = (row: SkillsWorktableSkillRow, columns: readonly SkillsWorktableColumn[]): string => {
   const labelByColumnKey = new Map(columns.map((column) => [column.key, column.label]));
@@ -499,10 +551,14 @@ const buildProjectRows = (
   view: SkillsShellViewModel,
   knownProjects: readonly KnownProjectScope[],
 ): readonly SkillsWorktableProjectRow[] =>
-  view.tree.scopes
-    .filter((scope) => scope.type === 'project' && scope.hasSkills)
+  [...view.tree.scopes, ...view.tree.emptyScopes]
+    .filter((scope) => scope.type === 'project')
     .map((scope) => {
-      const rows = projectSkillRowsFor(context, scope, view);
+      const currentRows = projectSkillRowsFor(context, scope, view);
+      const rows = [
+        ...currentRows,
+        ...retainedProjectObservationRowsFor(context, scope, new Set(currentRows.map((row) => row.name))),
+      ].toSorted((left, right) => left.name.localeCompare(right.name));
       const observed = rows.filter((row) => row.cells.some((cell) => cell.evidence.length > 0));
       const top = observed
         .toSorted((left, right) => (right.lastObservedAt ?? '').localeCompare(left.lastObservedAt ?? ''))
@@ -535,6 +591,7 @@ const buildProjectRows = (
         }),
       };
     })
+    .filter((project) => project.skillCount > 0)
     .toSorted((left, right) => right.observedCount - left.observedCount || left.label.localeCompare(right.label));
 
 const cataloguePopulationText = (value: number, lowerBound: boolean, provisional: boolean): string => {
@@ -770,22 +827,6 @@ export const worktableHistorySentence = (
       : [`${view.lowerBound ? 'Latest retained signal' : 'Last signal'} ${formatObservedDate(row.lastObservedAt)}.`]),
   ];
   return sentences.join(' ');
-};
-
-/**
- * The lower-bound caveat spelled out beside the drawer's exposure prose. It names the affected
- * evidence without guessing whether the loss came from rejection, truncation, or revalidation.
- */
-export const worktableExposureCaveat = (view: SkillObservationsView | undefined): string | undefined => {
-  if (view === undefined) {
-    return;
-  }
-  if (view.onlyExposureTruncated) {
-    return 'Exposure evidence is incomplete, so exposed counts are lower bounds.';
-  }
-  return view.lowerBound
-    ? 'Observation evidence is incomplete, so declared, inferred, and exposed counts are lower bounds.'
-    : undefined;
 };
 
 export const worktableObservabilityText = (observable: boolean): string =>

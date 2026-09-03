@@ -26,7 +26,7 @@
   import type { SkillsPresentationProjection } from '../presentation';
   import type { SkillsShellViewModel } from '../shell/model';
   import type { SkillsShellSlotContext } from '../shell/slot-context';
-  import { worktableExposureCaveat, worktableHistorySentence } from './model';
+  import { worktableHistorySentence } from './model';
 
   let {
     editorSlot,
@@ -100,10 +100,8 @@
   const globalSkill = $derived(selected.globalSkill);
   const projectSkill = $derived(selected.projectSkill);
   const observationsView = $derived(presentation.observations.view);
-  const observationsError = $derived(presentation.observations.errorMessage);
   const pendingOperation = $derived(management.pendingOperation);
   const historySentence = $derived(worktableHistorySentence(selected.observationRow, observationsView));
-  const exposureCaveat = $derived(worktableExposureCaveat(observationsView));
   const notObservableHarnesses = $derived(
     (observationsView?.harnesses ?? []).filter((harness) => harness.observability === 'not-observable'),
   );
@@ -393,10 +391,8 @@
 
     <section aria-label="What the history says" class={section}>
       <h3 class={panelTitle}>What the history says</h3>
-      {#if observationsError !== undefined}
-        <p data-skill-drawer-history="unavailable" role="status">
-          Skill observations are unavailable. {observationsError}
-        </p>
+      {#if observationsView === undefined}
+        <p data-skill-drawer-history="unavailable" role="status">Skill observations are unavailable.</p>
       {:else if selected.observationRowOmitted}
         <p data-skill-drawer-history="omitted" role="status">Omitted from this observation response.</p>
       {:else}
@@ -445,9 +441,6 @@
           — {NOT_OBSERVABLE_TEXT}. Placement here is not evidence either way.
         </p>
       {/each}
-      {#if exposureCaveat !== undefined}
-        <p class={meta} data-skill-drawer-lower-bound role="status">{exposureCaveat}</p>
-      {/if}
       <p class={meta} data-skill-drawer-name-scope>{NAME_SCOPED_COUNTS_TEXT}</p>
       <!-- The per-harness tiers, spelled out in words. The table's `~` notation is compact by
            design; this is where it is said in full, together with the resolved directories, the
@@ -513,10 +506,10 @@
 
 <style>
   /*
-                             * The drawer is not modal, so the page underneath stays usable — but Ark's positioner spans the
-                             * whole viewport and would swallow every click aimed past the panel. Scoped with `:has` to this
-                             * drawer so the modal session drawer, whose backdrop is meant to catch those clicks, is untouched.
-                             */
+                               * The drawer is not modal, so the page underneath stays usable — but Ark's positioner spans the
+                               * whole viewport and would swallow every click aimed past the panel. Scoped with `:has` to this
+                               * drawer so the modal session drawer, whose backdrop is meant to catch those clicks, is untouched.
+                               */
   :global([data-scope="drawer"][data-part="positioner"]:has(.skills-drawer-panel)) {
     pointer-events: none;
   }

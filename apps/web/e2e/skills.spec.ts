@@ -30,6 +30,13 @@ const ADOPTION_GATE_PATTERN = /waits on the approved file-operation plan/;
 
 const normalizeText = (value: string): string => value.replace(WHITESPACE_PATTERN, ' ').trim();
 
+const withExpiredProducerProof = (value: unknown): unknown => {
+  if (!(typeof value === 'object' && value !== null && 'producerProofValidUntil' in value)) {
+    throw new Error('The intercepted skill-observation response did not expose its producer-proof deadline.');
+  }
+  return { ...value, producerProofValidUntil: '1970-01-01T00:00:00.000Z' };
+};
+
 /** The drawer is the only per-skill surface now; every detail assertion is scoped to it. */
 const skillDrawer = (page: Page, name: string): Locator => page.getByRole('dialog', { name: `${name} detail` });
 
@@ -483,15 +490,42 @@ test('keeps retained observation evidence visible while observations refetch', a
     await expect(declaredEvidence).toContainText('3');
     await expect(inferredEvidence).toContainText('~1');
     await expect(page.locator('[data-skill-observations-state="loading"]')).toHaveCount(0);
-    await expect(page.locator('[data-skill-observations-proof-refreshing]').first()).toBeVisible();
+    // The provisional filter and row-level verdicts carry the qualification; ADR 0022 forbids a
+    // page-level data-quality banner during the refresh.
+    await expect(page.locator('[data-skill-observations-proof-refreshing]')).toHaveCount(0);
     await expect(page.getByRole('button', { name: TO_DELETE_FILTER_PATTERN })).toContainText('provisional');
   } finally {
     releaseResponse.resolve();
   }
 
-  await expect(page.locator('[data-skill-observations-proof-refreshing]')).toHaveCount(0);
   await expect(declaredEvidence).toContainText('3');
   await expect(inferredEvidence).toContainText('~1');
+});
+
+test('keeps positive evidence visible when the refreshed producer proof is expired', async ({ page }) => {
+  await openHydratedSkills(page, '/skills');
+
+  const alpha = worktableRow(page, 'alpha-skill');
+  const declaredEvidence = alpha.locator('[data-worktable-cell="target:claude"] [data-evidence-tier="declared"]');
+  const inferredEvidence = alpha.locator('[data-worktable-cell="target:codex"] [data-evidence-tier="inferred"]');
+  await expect(declaredEvidence).toContainText('3');
+  await expect(inferredEvidence).toContainText('~1');
+
+  await page.route(SKILLS_OBSERVATIONS_RPC_ROUTE, async (route) => {
+    const response = await route.fetch();
+    const observations = withExpiredProducerProof(decodeRpcResponseBody(await response.text()));
+    await route.fulfill({ response, body: encodeRpcResponseBody(observations) });
+  });
+
+  await page.getByRole('button', { name: 'Reconcile links…' }).click();
+
+  await expect(page.getByRole('main').locator('[data-skill-observations-refresh-error]')).toContainText(
+    'The producer completeness proof has expired.',
+  );
+  await expect(declaredEvidence).toContainText('3');
+  await expect(inferredEvidence).toContainText('~1');
+  await expect(page.locator('[data-skill-observations-state="unavailable"]')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: TO_DELETE_FILTER_PATTERN })).toContainText('provisional');
 });
 
 test('preserves a source repository draft across an unrelated snapshot refresh', async ({ page }) => {

@@ -77,7 +77,7 @@ the requirements below are what the surface must honour.
   presentation — three populations, three treatments — and never alters the
   verdict, which stays a fact about the name.
 - **Presentation reads in evidence order and folds the catalogue.** The
-  overview table carries managed names and names with invocation evidence,
+  worktable carries managed names and names with invocation evidence,
   strongest tier first and most recent signal first — never alphabetically,
   which buried the strongest invocation evidence among catalogue entries. Names seen only at the
   `exposed` tier are folded into one expandable row per catalogue (plugin
@@ -168,15 +168,27 @@ to contain client names and business context; only their presence is recorded.
 
 ### Web experience
 
-- Expose Skills as a first-class web route with global and project scopes, a runtime matrix, diagnostics, configuration, and reconciliation controls.
+- Expose Skills as one first-class worktable route. Keep Managed, To adopt,
+  Projects, and Catalogue only as groups of that table; retired matrix and
+  scope-only URLs redirect to it.
+- Join runtime placement and per-harness invocation evidence in each worktable
+  row. Keep recorded and reconstructed counts distinct in visible and
+  accessible text, and keep exposure-only catalogue facts out of invocation
+  cells.
+- Summarize each project repository as one expandable row. Preserve positive,
+  durable project-owned observations in that group when a current inventory is
+  empty or no longer carries the observed skill.
 - Open each managed global `SKILL.md` as a directly editable source document without a preview-first mode or Edit button.
-- Keep Save explicit through the document toolbar and `Ctrl+S` / `Cmd+S`. Saving updates the source repository only; installing or repairing runtime projections remains a separate action in the Inspector.
+- Keep Save explicit through the document toolbar and `Ctrl+S` / `Cmd+S`. Saving updates the source repository only; installing or repairing runtime projections remains a separate drawer or worktable action.
 - Surface unchanged, saved (this session), unsaved, saving, validation-error, and changed-on-disk states while preserving the exact local draft after revision conflicts or other save failures.
 - Preserve dirty Markdown drafts across selection, refresh, and disk-reload operations. If a new snapshot removes the edited skill, require explicit discard before replacing the snapshot.
-- Give the editor priority in the responsive layout: tree, document, then Inspector on wide screens; tree and document with the Inspector stacked after it at intermediate widths; compact picker, document, then Inspector on narrow screens.
+- Open per-skill detail in a non-modal drawer over the worktable, with the URL as
+  selection authority and focus restored to the originating row after close.
 - Keep project-owned `SKILL.md` documents read-only until a separate adoption workflow creates a canonical source document.
 - Keep snapshot replacement, notices, dependent inventory refresh, and editor refresh behind one route-controller workflow.
-- Provide deterministic desktop and narrow-viewport browser coverage for immediate editing, pointer and keyboard Save, source/runtime separation, conflict and discard protection, Inspector action ownership, configuration, filtering, reconciliation, project inventory, and unmanaged entries.
+- Keep configuration and the grouped unmanaged-runtime backlog in folds on the
+  worktable page.
+- Provide deterministic desktop and narrow-viewport browser coverage for immediate editing, pointer and keyboard Save, source/runtime separation, conflict and discard protection, drawer action ownership, configuration, filtering, reconciliation, project inventory, and unmanaged entries.
 
 ## Package boundaries
 
@@ -184,7 +196,7 @@ to contain client names and business context; only their presence is recorded.
 - `apps/web/src/server/skills*` owns server-side validation and adaptation behind the oRPC contract, and is the only place the inventory meets skill observations — through the read-only `UsageReadModel` seam (ADR 0009).
 - `apps/web/src/server/skill-observation-join.ts` owns the inventory↔observation join: managed-ness, projection completeness, and every verdict are decided on the server and travel as facts. Browser presentation consumes those verdicts without independently resolving inventory against observations.
 - `@ai-usage/report-core/skill-observation-evidence` owns tier capability and the pure policy that turns producer, read, refusal, and clamp loss into claim readiness. `@ai-usage/report-core/skill-observation-summary` owns the pure fold from observations into the presented dataset; `@ai-usage/report-data/skill-observation-read` owns the one bounded read that every consumer shares.
-- `apps/web/src/lib/features/skills/presentation.ts` owns the one immutable presentation projection shared by workspace, global, health, Project, and observation renderers.
+- `apps/web/src/lib/features/skills/presentation.ts` owns the one immutable presentation projection shared by the worktable, drawer, management folds, and observation renderers.
 - `apps/web/src/lib/features/skills/shell` owns snapshot replacement policy (see its `INTEGRATION.md`); its shell-lived management-operation episode owns one Query mutation lifecycle from contract dispatch through publication, invalidation, pending state, reconcile plan, and outcome presentation.
 - `apps/web/src/routes/skills/` composes route presentation and URL-backed selection; `apps/web/src/lib/features/skills/{editor,management}` own the editor and management surfaces.
 - Browser-safe clients must use the documented `@ai-usage/skills/config` and `@ai-usage/skills/shared` exports and must not import server modules.

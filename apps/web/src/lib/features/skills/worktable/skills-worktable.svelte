@@ -384,7 +384,12 @@
   </ul>
 
   <ObservationReadQualification view={presentation.observations.view} />
-  {#if observationsError !== undefined}
+  {#if observationsError !== undefined && presentation.observations.view !== undefined}
+    <p class={muted} data-skill-observations-refresh-error role="status">
+      Current observation proof is unavailable. Retained positive evidence remains visible; absence-based verdicts are
+      provisional. {observationsError}
+    </p>
+  {:else if observationsError !== undefined}
     <p class={muted} data-skill-observations-state="unavailable" role="status">
       Skill observations are unavailable. {observationsError}
     </p>

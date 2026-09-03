@@ -262,7 +262,7 @@ describe('Svelte Skills workspace SSR', () => {
     expect(loading).toContain('data-skills-worktable');
   });
 
-  test('masks retained worktable facts after a background refetch error', () => {
+  test('keeps retained worktable facts visible after a background refetch error', () => {
     const html = render(convergenceFixture, {
       props: {
         observationsError: 'Synthetic background refetch failure.',
@@ -272,10 +272,11 @@ describe('Svelte Skills workspace SSR', () => {
     }).body;
     const row = worktableRow(html, 'alpha-skill');
 
-    expect(html).toContain('aria-label="All — skill observations unavailable"');
-    expect(row).toContain('observations unavailable');
-    expect(row).not.toContain('data-evidence-tier');
-    expect(row).not.toContain('no invocation recorded');
+    expect(html).toContain('data-skill-observations-refresh-error');
+    expect(html).not.toContain('aria-label="All — skill observations unavailable"');
+    expect(row).not.toContain('observations unavailable');
+    expect(row).toContain('data-evidence-tier');
+    expect(html).toContain('provisional managed deletion candidates');
   });
 
   test('renders an exact-response identity mismatch as omitted, including for assistive text', () => {
@@ -321,7 +322,7 @@ describe('Svelte Skills workspace SSR', () => {
     }).body;
     const exposureNormalized = exposureHtml.replace(/\s+/gu, ' ');
 
-    expect(exposureNormalized).toContain('Exposure evidence is incomplete');
+    expect(exposureNormalized).toContain('Exposure evidence has an unattributed gap');
     expect(exposureNormalized).toContain('latest retained 2026-08-02');
     expect(exposureNormalized).not.toContain('stopped short');
     expect(exposureNormalized).not.toContain('reached its bound');
@@ -330,7 +331,7 @@ describe('Svelte Skills workspace SSR', () => {
       props: { observationsProvisional: true, pathname: '/skills/global/alpha-skill' },
     }).body;
     const invocationNormalized = invocationHtml.replace(/\s+/gu, ' ');
-    expect(invocationNormalized).toContain('Observation evidence is incomplete');
+    expect(invocationNormalized).toContain('Invocation evidence has an unattributed gap');
     expect(invocationNormalized).toContain('at least 2 recorded');
     expect(invocationNormalized).toContain('aria-label="To delete — 1 provisional managed deletion candidates"');
     expect(invocationNormalized).not.toContain('reached its bound');
@@ -454,7 +455,7 @@ describe('Svelte Skills workspace SSR', () => {
 
     const detailEvidenceBounded = detail(syntheticProvisionalObservations);
     expect(detailEvidenceBounded).toContain('data-skill-observations-lower-bound="invocations"');
-    expect(detailEvidenceBounded).toContain('Observation evidence is incomplete');
+    expect(detailEvidenceBounded).toContain('Invocation evidence has an unattributed gap');
     expect(detailEvidenceBounded).toContain('Latest retained signal');
   });
 

@@ -589,6 +589,7 @@ export const codexSkillCatalogueObservations = (
 ): SkillObservationExtraction => {
   const observations: SkillObservation[] = [];
   let rejected = 0;
+  const ceiling = codexSkillObservationCeiling();
   for (const entry of entries) {
     const observation = parseSkillObservation({
       argsPresent: null,
@@ -604,13 +605,13 @@ export const codexSkillCatalogueObservations = (
       success: null,
       tier: 'exposed',
     });
-    if (observation) {
+    if (observation && observations.length < ceiling) {
       observations.push(observation);
-    } else {
+    } else if (!observation) {
       rejected += 1;
     }
   }
-  return { observations, rejected, truncated: false };
+  return { observations, rejected, truncated: entries.length > ceiling };
 };
 
 /**
@@ -1287,6 +1288,7 @@ export const codexSkillExecObservations = (
 ): SkillObservationExtraction => {
   const observations: SkillObservation[] = [];
   let rejected = 0;
+  const ceiling = codexSkillObservationCeiling();
   for (const entry of entries) {
     const catalogueName = entry.path === null ? undefined : catalogueNamesByPath?.get(entry.path);
     const observation = parseSkillObservation({
@@ -1303,11 +1305,11 @@ export const codexSkillExecObservations = (
       success: null,
       tier: 'inferred',
     });
-    if (observation) {
+    if (observation && observations.length < ceiling) {
       observations.push(observation);
-    } else {
+    } else if (!observation) {
       rejected += 1;
     }
   }
-  return { observations, rejected, truncated: false };
+  return { observations, rejected, truncated: entries.length > ceiling };
 };

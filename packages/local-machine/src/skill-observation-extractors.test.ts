@@ -6,6 +6,7 @@ import {
 import {
   CODEX_AVAILABLE_SKILLS_HEADING,
   codexSkillCatalogueObservations,
+  codexSkillExecObservations,
   decodeCodexCommand,
   decodeCodexCommands,
   extractCodexSkillCatalogue,
@@ -471,6 +472,53 @@ describe('Codex per-session ceiling', () => {
     const entries = matchCodexSkillDocuments(JSON.stringify({ cmd: `cat ${documents}` }));
 
     expect(entries.length).toBeLessThanOrEqual(3);
+  });
+
+  test('the public exec extractor clamps its result and reports the overrun', () => {
+    setCodexSkillObservationCeilingForTesting(2);
+    const documents = Array.from(
+      { length: 5 },
+      (_, index) => `${SKILL_FIXTURE_HOME}/.agents/skills/public-${index}/SKILL.md`,
+    ).join(' ');
+
+    const extraction = extractCodexSkillExecObservation(
+      JSON.stringify({ cmd: `cat ${documents}` }),
+      'call_public_ceiling',
+      codexContext,
+    );
+
+    expect(extraction.observations.map(({ skillName }) => skillName)).toEqual(['public-0', 'public-1']);
+    expect(extraction.truncated).toBe(true);
+  });
+
+  test('the public catalogue projector clamps its result and reports the overrun', () => {
+    setCodexSkillObservationCeilingForTesting(2);
+    const entries = Array.from({ length: 5 }, (_, index) => ({
+      name: `catalogue-${index}`,
+      path: `${SKILL_FIXTURE_HOME}/.agents/skills/catalogue-${index}`,
+    }));
+
+    const extraction = codexSkillCatalogueObservations(entries, codexContext);
+
+    expect(extraction.observations.map(({ skillName }) => skillName)).toEqual(['catalogue-0', 'catalogue-1']);
+    expect(extraction.truncated).toBe(true);
+  });
+
+  test('a rejected entry does not consume the public projector observation ceiling', () => {
+    setCodexSkillObservationCeilingForTesting(1);
+    const invalidName = 'x'.repeat(513);
+    const entries = [
+      { name: invalidName, path: `${SKILL_FIXTURE_HOME}/.agents/skills/${invalidName}` },
+      { name: 'retained', path: `${SKILL_FIXTURE_HOME}/.agents/skills/retained` },
+    ];
+
+    const catalogue = codexSkillCatalogueObservations(entries, codexContext);
+    const inferred = codexSkillExecObservations(entries, 'call_rejected_then_valid', codexContext);
+
+    expect(catalogue.observations.map(({ skillName }) => skillName)).toEqual(['retained']);
+    expect(inferred.observations.map(({ skillName }) => skillName)).toEqual(['retained']);
+    expect(catalogue).toMatchObject({ rejected: 1, truncated: true });
+    expect(inferred).toMatchObject({ rejected: 1, truncated: true });
   });
 
   test('does not flag truncation when the dropped calls carry no skill signal', () => {

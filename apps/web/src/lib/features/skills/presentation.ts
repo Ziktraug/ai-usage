@@ -17,17 +17,14 @@ import {
   type ProjectSkillRow,
   type SkillHealthSummary,
   type SkillMatrix,
-  type SkillTreeScopeNode,
   type UnmanagedGroup,
 } from '../../../skills-page-model';
 import { matrixDotTone } from './management/model';
 import {
   buildSkillObservationsView,
-  compareObservationRows,
   homonymNote,
   installVerdictText,
   managedVerdictDescribesInstall,
-  observationEvidenceRank,
   observedHarnessSummary,
   type SkillInstallScope,
   type SkillObservationRow,
@@ -58,23 +55,6 @@ export interface SkillsAttentionEntry {
   readonly skill: GlobalSkill;
 }
 
-export interface SkillsProjectScopePresentationRow {
-  readonly description: string;
-  readonly name: string;
-  readonly observationRow: SkillObservationRow | undefined;
-  readonly observationRowOmitted: boolean;
-  readonly placements: readonly string[];
-  readonly validationStatus: string;
-}
-
-export interface SkillsProjectUsagePresentation {
-  readonly lastObservedAt: string | null;
-  readonly observationRowsOmitted: boolean;
-  readonly observedCount: number;
-  readonly observedCountLowerBound: boolean;
-  readonly top: SkillObservationRow | undefined;
-}
-
 export interface SkillsSelectedPresentation {
   readonly diagnostics: readonly GroupedSkillDiagnostic[];
   readonly exposure: readonly GlobalSkillExposure[];
@@ -103,9 +83,6 @@ export interface SkillsPresentationProjection {
   readonly health: SkillHealthSummary;
   readonly matrix: SkillMatrix;
   readonly observations: SkillsObservationPresentation;
-  readonly projectScopeRows: readonly SkillsProjectScopePresentationRow[];
-  readonly projectScopes: readonly SkillTreeScopeNode[];
-  readonly projectUsageByScopeKey: ReadonlyMap<string, SkillsProjectUsagePresentation>;
   readonly selected: SkillsSelectedPresentation;
   readonly targetLabelById: ReadonlyMap<string, string>;
   readonly unmanagedGroups: readonly UnmanagedGroup[];
@@ -120,13 +97,13 @@ const buildObservationPresentation = (
   expectedSkillNames: ReadonlySet<string>,
   producerProofCurrent: boolean,
 ): SkillsObservationPresentation => {
-  // TanStack can retain the previous successful value while a background refetch reports an
-  // error. That value remains useful to the cache, but it is not a successful answer for this
-  // render: observation facts stay neutral until the identity succeeds again.
+  // TanStack retains the previous successful value during revalidation and after a background
+  // failure. Positive observations in that value remain facts. Only the time-bounded producer proof
+  // is invalidated, so absence-derived verdicts become provisional until a current answer settles.
   const view =
-    observations === undefined || errorMessage !== undefined
+    observations === undefined
       ? undefined
-      : buildSkillObservationsView(observations, { producerProofCurrent });
+      : buildSkillObservationsView(observations, { producerProofCurrent: producerProofCurrent && !errorMessage });
   const rowsByName = new Map((view?.rows ?? []).map((row) => [row.skillName, row]));
   return {
     errorMessage,
@@ -138,41 +115,6 @@ const buildObservationPresentation = (
     state: skillObservationsPresentationState(observations, errorMessage),
     view,
   };
-};
-
-const buildProjectUsage = (
-  view: SkillsShellViewModel,
-  observations: SkillsObservationPresentation,
-): ReadonlyMap<string, SkillsProjectUsagePresentation> => {
-  if (observations.view === undefined) {
-    return new Map();
-  }
-  return new Map(
-    view.tree.scopes
-      .filter((scope) => scope.type === 'project' && scope.hasSkills)
-      .map((scope) => {
-        const observationRowsOmitted = scope.skills.some((skill) => observations.omittedSkillNames.has(skill.name));
-        const rows = scope.skills.flatMap((skill) => {
-          const row = observations.rowsByName.get(skill.name);
-          return row === undefined ? [] : [row];
-        });
-        const observed = rows.filter((row) => observationEvidenceRank(row) > 0).toSorted(compareObservationRows);
-        return [
-          scope.key,
-          {
-            lastObservedAt: rows.reduce<string | null>(
-              (latest, row) =>
-                row.lastObservedAt !== null && row.lastObservedAt > (latest ?? '') ? row.lastObservedAt : latest,
-              null,
-            ),
-            observationRowsOmitted,
-            observedCount: observed.length,
-            observedCountLowerBound: observationRowsOmitted || observations.view?.invocationLowerBound === true,
-            top: observed.at(0),
-          },
-        ] as const;
-      }),
-  );
 };
 
 const buildSelectedPresentation = (
@@ -271,11 +213,6 @@ export const createSkillsPresentationProjection = (input: {
     health: buildSkillHealthSummary(input.view.snapshot),
     matrix,
     observations,
-    // Scope routes are folded into the worktable; a scope is no longer a selectable detail.
-    // Preserve this compatibility seam as empty until every historical consumer is retired.
-    projectScopeRows: [],
-    projectScopes: input.view.tree.scopes.filter((scope) => scope.type === 'project' && scope.hasSkills),
-    projectUsageByScopeKey: buildProjectUsage(input.view, observations),
     selected: buildSelectedPresentation(input.view, observations),
     targetLabelById: new Map(matrix.targets.map((target) => [target.id, target.label])),
     unmanagedGroups: groupUnmanagedEntries(input.view.snapshot),

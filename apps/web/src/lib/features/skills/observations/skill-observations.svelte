@@ -149,12 +149,14 @@
   });
 </script>
 
-{#if errorMessage}
-  <p class={muted} data-skill-observations-state="unavailable" role="status">
-    Skill observations are unavailable. {errorMessage}
-  </p>
-{:else if view === undefined}
-  <p aria-busy="true" class={muted} data-skill-observations-state="loading">Loading skill observations…</p>
+{#if view === undefined}
+  {#if errorMessage}
+    <p class={muted} data-skill-observations-state="unavailable" role="status">
+      Skill observations are unavailable. {errorMessage}
+    </p>
+  {:else}
+    <p aria-busy="true" class={muted} data-skill-observations-state="loading">Loading skill observations…</p>
+  {/if}
 {:else if variant === 'skill'}
   <section aria-label="Skill observations" class={section} data-skill-observations="skill">
     <div class={sectionHeader}>
@@ -165,6 +167,12 @@
       </p>
     </div>
     <ObservationReadQualification {view} />
+    {#if errorMessage}
+      <p class={meta} data-skill-observations-refresh-error role="status">
+        Current observation proof is unavailable. Retained positive evidence remains visible; absence-based verdicts are
+        provisional. {errorMessage}
+      </p>
+    {/if}
     {#if rowOmitted}
       <p class={meta} data-skill-observation-row-omitted role="status">{OBSERVATION_ROW_OMITTED_TEXT}</p>
     {:else}
@@ -264,6 +272,12 @@
     </ul>
 
     <ObservationReadQualification {view} />
+    {#if errorMessage}
+      <p class={meta} data-skill-observations-refresh-error role="status">
+        Current observation proof is unavailable. Retained positive evidence remains visible; absence-based verdicts are
+        provisional. {errorMessage}
+      </p>
+    {/if}
 
     <p class={meta} data-skill-observations-table-note>
       Rows are ordered by evidence strength, then most recent signal. — means {noSignalsText(view.signalsComplete)}
