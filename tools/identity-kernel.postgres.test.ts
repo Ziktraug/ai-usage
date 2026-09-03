@@ -327,6 +327,29 @@ if (runPostgresTests) {
             repositoryId: alternativeRepositoryId,
           },
         );
+        const secondSpaceId = createSpaceId();
+        const secondPersonId = createPersonId();
+        const sameProviderRepositoryId = createRepositoryId();
+        await store.identity.createPersonalIdentity({
+          person: {
+            displayName: 'Second operator',
+            id: secondPersonId,
+            personalSpaceId: secondSpaceId,
+            status: 'active',
+          },
+          space: { createdAt: observedAt, displayName: 'Second personal', id: secondSpaceId, kind: 'personal' },
+        });
+        await expect(
+          store.identity.createRepositoryWithAlias(
+            { ...repository, id: sameProviderRepositoryId, owningSpaceId: secondSpaceId },
+            {
+              ...alias,
+              id: createRepositoryAliasId(),
+              owningSpaceId: secondSpaceId,
+              repositoryId: sameProviderRepositoryId,
+            },
+          ),
+        ).resolves.toBeUndefined();
         await store.identity.createProject(project);
         await store.identity.attachProjectRepository({
           projectId,

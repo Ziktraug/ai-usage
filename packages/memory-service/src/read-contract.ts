@@ -1,4 +1,10 @@
-import { parseMemoryItemId, parseProjectId, parseSpaceId, type SpaceId } from '@ai-usage/platform-core/identity';
+import {
+  parseMemoryItemId,
+  parseMemoryRevisionId,
+  parseProjectId,
+  parseSpaceId,
+  type SpaceId,
+} from '@ai-usage/platform-core/identity';
 import { type MemoryProjectContext, memoryProjectContextBounds } from './application';
 import { type MemoryItemResult, memoryKinds, parseMemoryItemResult } from './domain';
 import {
@@ -11,6 +17,7 @@ export type MemorySearchReadRequest = Omit<MemorySearchParameters, 'spaceId'>;
 
 export interface MemoryItemReadRequest {
   readonly itemId: ReturnType<typeof parseMemoryItemId>;
+  readonly revisionId?: ReturnType<typeof parseMemoryRevisionId>;
 }
 
 export interface MemoryProjectContextReadRequest {
@@ -88,10 +95,13 @@ export const parseMemorySearchReadRequest = (value: unknown, spaceId: SpaceId): 
 };
 
 export const parseMemoryItemReadRequest = (value: unknown): MemoryItemReadRequest => {
-  if (!(isRecord(value) && hasExactKeys(value, ['itemId']))) {
+  if (!(isRecord(value) && hasOnlyKeys(value, ['itemId', 'revisionId']) && Object.hasOwn(value, 'itemId'))) {
     throw new Error('Memory item read request is invalid.');
   }
-  return { itemId: parseMemoryItemId(value.itemId) };
+  return {
+    itemId: parseMemoryItemId(value.itemId),
+    ...(value.revisionId === undefined ? {} : { revisionId: parseMemoryRevisionId(value.revisionId) }),
+  };
 };
 
 export const parseMemoryProjectContextReadRequest = (value: unknown): MemoryProjectContextReadRequest => {

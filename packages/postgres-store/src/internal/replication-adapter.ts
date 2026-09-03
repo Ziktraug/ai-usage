@@ -9,6 +9,7 @@ import {
   parseScmAccountId,
   parseScmInstallationId,
   parseSpaceId,
+  type SpaceId,
 } from '@ai-usage/platform-core/identity';
 import {
   type CaptureContextSnapshot,
@@ -87,6 +88,16 @@ const integer = (value: unknown, field: string): number => {
 
 const optionalId = <Value>(value: unknown, parse: (candidate: unknown) => Value): Value | null =>
   value === null ? null : parse(value);
+
+const activateSpace = async (client: PoolClient, spaceId: SpaceId): Promise<void> => {
+  const result = await client.query<{ readonly active_space_id: unknown }>(
+    "SELECT set_config('ai_usage.active_space_id', $1, TRUE) AS active_space_id",
+    [spaceId],
+  );
+  if (result.rows[0]?.active_space_id !== spaceId) {
+    throw new PlatformStoreError('validation-failed', 'activate-replication-space');
+  }
+};
 
 const mapCaptureContext = (row: CaptureContextRow): CaptureContextSnapshot => {
   if (
@@ -258,15 +269,15 @@ const validateCaptureContexts = async (
   batch: ReplicationBatch,
 ): Promise<Map<CaptureContextId, CaptureContextSnapshot> | null> => {
   const contexts = new Map<CaptureContextId, CaptureContextSnapshot>();
-  const authorizedProjects = new Map<ProjectId | null, boolean>();
+  const authorizedProjects = new Map<string, boolean>();
   for (const snapshot of batch.captureContexts) {
     if (
       snapshot.deviceId !== input.authenticatedDevice.id ||
-      snapshot.personId !== input.authenticatedDevice.ownerPersonId ||
-      snapshot.spaceId !== input.authenticatedDevice.owningSpaceId
+      snapshot.personId !== input.authenticatedDevice.ownerPersonId
     ) {
       return null;
     }
+    await activateSpace(client, snapshot.spaceId);
     let result = await client.query<CaptureContextRow>(
       `SELECT id, device_id, person_id, space_id, project_id, scm_account_id, scm_installation_id, source
        FROM capture_contexts
@@ -277,10 +288,11 @@ const validateCaptureContexts = async (
     if (existing && !sameCaptureContext(snapshot, mapCaptureContext(existing))) {
       return null;
     }
-    let authorized = authorizedProjects.get(snapshot.projectId);
+    const authorizationKey = `${snapshot.spaceId}:${snapshot.projectId ?? ''}`;
+    let authorized = authorizedProjects.get(authorizationKey);
     if (authorized === undefined) {
       authorized = await authorizeProjectContext(client, snapshot);
-      authorizedProjects.set(snapshot.projectId, authorized);
+      authorizedProjects.set(authorizationKey, authorized);
     }
     if (!(authorized && (await scmContextIsBound(client, snapshot)))) {
       return null;
@@ -368,11 +380,17 @@ const validateOverlap = async (
   client: PoolClient,
   batch: ReplicationBatch,
   accepted: ReplicationGeneration,
+  contexts: ReadonlyMap<CaptureContextId, CaptureContextSnapshot>,
 ): Promise<boolean> => {
   for (const event of batch.events) {
     if (event.generation > accepted) {
       break;
     }
+    const context = contexts.get(event.captureContextId);
+    if (!context) {
+      return false;
+    }
+    await activateSpace(client, context.spaceId);
     const result = await client.query<EventReceiptRow>(
       `SELECT event_id, generation, fact_key, content_hash, change_kind, capture_context_id
        FROM replication_event_receipts
@@ -391,7 +409,9 @@ const eventIdAvailable = async (
   client: PoolClient,
   batch: ReplicationBatch,
   event: ReplicationEvent,
+  context: CaptureContextSnapshot,
 ): Promise<boolean> => {
+  await activateSpace(client, context.spaceId);
   const result = await client.query<EventReceiptRow>(
     `SELECT event_id, generation, fact_key, content_hash, change_kind, capture_context_id
      FROM replication_event_receipts
@@ -408,6 +428,7 @@ const insertEventAndProjection = async (
   context: CaptureContextSnapshot,
   appliedAt: string,
 ): Promise<void> => {
+  await activateSpace(client, context.spaceId);
   await client.query(
     `INSERT INTO replication_event_receipts
        (device_id, space_id, stream_id, event_id, generation, fact_key, content_hash,
@@ -498,6 +519,7 @@ const applyAuthorizedBatch = async (
   requestHash: string,
   contexts: ReadonlyMap<CaptureContextId, CaptureContextSnapshot>,
 ): Promise<ApplyReplicationBatchResult> => {
+  await activateSpace(client, input.authenticatedDevice.owningSpaceId);
   await lockReplicationStream(client, batch);
   const priorReceipt = await readBatchReceipt(client, batch);
   if (priorReceipt) {
@@ -514,13 +536,14 @@ const applyAuthorizedBatch = async (
   ) {
     return problem('overlap-conflict');
   }
-  if (!(await validateOverlap(client, batch, generation.accepted))) {
+  if (!(await validateOverlap(client, batch, generation.accepted, contexts))) {
     return problem('overlap-conflict');
   }
 
   const newEvents = batch.events.filter(({ generation: eventGeneration }) => eventGeneration > generation.accepted);
   for (const event of newEvents) {
-    if (!(await eventIdAvailable(client, batch, event))) {
+    const context = contexts.get(event.captureContextId);
+    if (!(context && (await eventIdAvailable(client, batch, event, context)))) {
       return problem('event-id-conflict');
     }
   }
@@ -549,6 +572,7 @@ const applyAuthorizedBatch = async (
     streamId: batch.streamId,
     warnings: [],
   });
+  await activateSpace(client, input.authenticatedDevice.owningSpaceId);
   await storeBatchReceipt(client, batch, input.authenticatedDevice.owningSpaceId, requestHash, ack);
   const proof = replicationAckProof(ack);
   if (newEvents.length > 0) {

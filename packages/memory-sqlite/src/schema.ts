@@ -59,7 +59,7 @@ export const localMemoryIdentitySchema = `
   ) STRICT;
 
   CREATE UNIQUE INDEX repositories_provider_identity_unique
-    ON repositories (provider, provider_repository_id)
+    ON repositories (space_id, provider, provider_repository_id)
     WHERE provider_repository_id IS NOT NULL;
 
   CREATE TABLE repository_aliases (

@@ -18,6 +18,7 @@ export interface BackfillUsageReplicationPagesInput {
   readonly afterRowKey?: string | null;
   readonly captureContext: CaptureContextSnapshot;
   readonly dbPath: string;
+  readonly deviceLabel?: string;
   readonly enqueuedAt?: Date;
   readonly maximumPages?: number;
   readonly pageSize?: number;
@@ -64,6 +65,7 @@ export const backfillUsageReplicationPages = async (
         assignments: page.rowKeys.map((rowKey: string) => ({ captureContext: input.captureContext, rowKey })),
         dbPath: input.dbPath,
         deviceId: input.captureContext.deviceId,
+        ...(input.deviceLabel === undefined ? {} : { deviceLabel: input.deviceLabel }),
         includeDeviceFact: cursor === null,
         ...(input.enqueuedAt === undefined ? {} : { enqueuedAt: input.enqueuedAt }),
       }),

@@ -1,8 +1,5 @@
 import { AUTHORIZATION_MODEL_VERSION, type AuthorizationPrincipal } from '@ai-usage/authorization';
-import {
-  readAuthorizedResourceScopeAdapterBinding,
-  readAuthorizedResourceScopeIds,
-} from '@ai-usage/authorization/scope-internal';
+import { readAuthorizedResourceScopeAdapterBinding } from '@ai-usage/authorization/scope-internal';
 import { createMemorySearchChunks, memorySearchStructuredText } from '@ai-usage/memory-search/chunking';
 import {
   compileMemorySearchQuery,
@@ -901,24 +898,31 @@ const decodeProposalCursor = (cursor: string | null | undefined, query: ListMemo
   }
 };
 
-const authorizedMemoryIds = (
+const memoryAuthorization = (
   query: Pick<ListMemoryItemsQuery, 'authorizationScope' | 'spaceId'>,
   operation: string,
-): readonly string[] => {
+  expectedPermission: 'manage_memory' | 'view_memory' = 'view_memory',
+) => {
   const { authorizationScope } = query;
   if (
     authorizationScope.activeSpaceId !== query.spaceId ||
     authorizationScope.modelVersion !== AUTHORIZATION_MODEL_VERSION ||
-    authorizationScope.permission !== 'view_memory' ||
+    authorizationScope.permission !== expectedPermission ||
     authorizationScope.resourceKind !== 'memory'
   ) {
     throw new MemoryRepositoryError('invalid-input', operation);
   }
+  let binding: unknown;
   try {
-    return readAuthorizedResourceScopeIds(authorizationScope).map((id) => parseMemoryItemId(id));
+    binding = readAuthorizedResourceScopeAdapterBinding(authorizationScope);
   } catch {
     throw new MemoryRepositoryError('invalid-input', operation);
   }
+  const scopeSql = authorizationScopeSql(expectedPermission, 'memory');
+  if (!(isPostgreSqlAuthorizationScopeBinding(binding) && scopeSql)) {
+    throw new MemoryRepositoryError('invalid-input', operation);
+  }
+  return { binding, scopeSql };
 };
 
 const POSTGRESQL_MEMORY_SEARCH_ADAPTER_VERSION = 'postgres-fts-trgm-v1' as const;
@@ -984,26 +988,7 @@ const decodeMemorySearchCursor = (
 
 const memorySearchAuthorization = (query: SearchMemoryRepositoryQuery) => {
   const expectedPermission = query.historyMode === 'include' ? 'manage_memory' : 'view_memory';
-  const { authorizationScope } = query;
-  if (
-    authorizationScope.activeSpaceId !== query.spaceId ||
-    authorizationScope.modelVersion !== AUTHORIZATION_MODEL_VERSION ||
-    authorizationScope.permission !== expectedPermission ||
-    authorizationScope.resourceKind !== 'memory'
-  ) {
-    throw new MemoryRepositoryError('invalid-input', 'search-items-authorization');
-  }
-  let binding: unknown;
-  try {
-    binding = readAuthorizedResourceScopeAdapterBinding(authorizationScope);
-  } catch {
-    throw new MemoryRepositoryError('invalid-input', 'search-items-authorization');
-  }
-  const scopeSql = authorizationScopeSql(expectedPermission, 'memory');
-  if (!(isPostgreSqlAuthorizationScopeBinding(binding) && scopeSql)) {
-    throw new MemoryRepositoryError('invalid-input', 'search-items-authorization');
-  }
-  return { binding, scopeSql };
+  return memoryAuthorization(query, 'search-items-authorization', expectedPermission);
 };
 
 const postgresMemorySearchSql = (query: SearchMemoryRepositoryQuery) => {
@@ -1393,14 +1378,15 @@ export const createPlatformMemoryRepository = (pool: Pool): PlatformMemoryReposi
       }),
     exportMemory: (query: ExportMemoryQuery): Promise<MemoryExportSnapshot> =>
       withMemoryTransaction(pool, query.spaceId, 'export-memory', async (client) => {
-        const authorizedIds = authorizedMemoryIds(query, 'export-memory');
+        const authorization = memoryAuthorization(query, 'export-memory');
         const itemResult = await client.query<ItemRevisionRow>(
-          `${itemSelect}
+          `WITH authorized_resources AS (${authorization.scopeSql})
+           ${itemSelect}
+           INNER JOIN authorized_resources authorized ON authorized.id = item.id
            WHERE item.space_id = $1
-             AND ($2::UUID IS NULL OR item.project_id = $2::UUID)
-             AND item.id = ANY($3::UUID[])
+             AND ($4::UUID IS NULL OR item.project_id = $4::UUID)
            ORDER BY item.id ASC LIMIT 1001`,
-          [query.spaceId, query.projectId ?? null, authorizedIds],
+          [query.spaceId, authorization.binding.personId, authorization.binding.trustedDevice, query.projectId ?? null],
         );
         if (itemResult.rows.length > 1000) {
           throw new MemoryRepositoryError('invalid-input', 'export-memory');
@@ -1459,12 +1445,15 @@ export const createPlatformMemoryRepository = (pool: Pool): PlatformMemoryReposi
         }
         return { items, spaceId: query.spaceId };
       }),
-    getItem: (spaceId, itemId) =>
+    getItem: (spaceId, itemId, revisionId) =>
       withMemoryTransaction(pool, spaceId, 'get-item', async (client) => {
-        const result = await client.query<ItemRevisionRow>(`${itemSelect} WHERE item.space_id = $1 AND item.id = $2`, [
-          spaceId,
-          itemId,
-        ]);
+        const result = await client.query<ItemRevisionRow>(
+          revisionId === undefined || revisionId === null
+            ? `${itemSelect} WHERE item.space_id = $1 AND item.id = $2`
+            : `${itemRevisionHistorySelect}
+               WHERE item.space_id = $1 AND item.id = $2 AND revision.id = $3`,
+          revisionId === undefined || revisionId === null ? [spaceId, itemId] : [spaceId, itemId, revisionId],
+        );
         const row = result.rows[0];
         return row ? mapItemResult(row) : null;
       }),
@@ -1499,23 +1488,25 @@ export const createPlatformMemoryRepository = (pool: Pool): PlatformMemoryReposi
         return Promise.reject(error);
       }
       return withMemoryTransaction(pool, query.spaceId, 'list-items', async (client) => {
-        const authorizedIds = authorizedMemoryIds(query, 'list-items');
+        const authorization = memoryAuthorization(query, 'list-items');
         const result = await client.query<ItemRevisionRow>(
-          `${itemSelect}
+          `WITH authorized_resources AS (${authorization.scopeSql})
+           ${itemSelect}
+           INNER JOIN authorized_resources authorized ON authorized.id = item.id
            WHERE item.space_id = $1
-             AND ($2::UUID IS NULL OR item.project_id = $2::UUID)
-             AND ($3::TEXT IS NULL OR item.status = $3::TEXT)
-             AND ($4::UUID IS NULL OR item.id > $4::UUID)
-             AND item.id = ANY($6::UUID[])
+             AND ($4::UUID IS NULL OR item.project_id = $4::UUID)
+             AND ($5::TEXT IS NULL OR item.status = $5::TEXT)
+             AND ($6::UUID IS NULL OR item.id > $6::UUID)
            ORDER BY item.id ASC
-           LIMIT $5`,
+           LIMIT $7`,
           [
             query.spaceId,
+            authorization.binding.personId,
+            authorization.binding.trustedDevice,
             query.projectId ?? null,
             query.status ?? null,
             afterItemId,
             query.pageSize + 1,
-            authorizedIds,
           ],
         );
         const hasNext = result.rows.length > query.pageSize;
@@ -1547,14 +1538,22 @@ export const createPlatformMemoryRepository = (pool: Pool): PlatformMemoryReposi
         return Promise.reject(error);
       }
       return withMemoryTransaction(pool, query.spaceId, 'list-proposals', async (client) => {
-        const authorizedIds = authorizedMemoryIds(query, 'list-proposals');
+        const authorization = memoryAuthorization(query, 'list-proposals');
         const result = await client.query<ProposalRow>(
-          `${proposalSelect}
-           WHERE space_id = $1 AND status = $2
-             AND ($3::UUID IS NULL OR id > $3::UUID)
-             AND id = ANY($5::UUID[])
-           ORDER BY id ASC LIMIT $4`,
-          [query.spaceId, query.status, afterProposalId, query.pageSize + 1, authorizedIds],
+          `WITH authorized_resources AS (${authorization.scopeSql})
+           ${proposalSelect}
+           WHERE space_id = $1 AND status = $4
+             AND ($5::UUID IS NULL OR id > $5::UUID)
+             AND EXISTS (SELECT 1 FROM authorized_resources authorized WHERE authorized.id = memory_proposals.id)
+           ORDER BY id ASC LIMIT $6`,
+          [
+            query.spaceId,
+            authorization.binding.personId,
+            authorization.binding.trustedDevice,
+            query.status,
+            afterProposalId,
+            query.pageSize + 1,
+          ],
         );
         const hasNext = result.rows.length > query.pageSize;
         const pageRows = hasNext ? result.rows.slice(0, query.pageSize) : result.rows;

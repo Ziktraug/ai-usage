@@ -7,9 +7,13 @@ import {
 } from '@ai-usage/memory-service/application';
 import { type MemoryServiceClient, MemoryServiceClientError } from '@ai-usage/memory-service/client';
 import { type MemoryItemResult, memoryContentHash, memoryRevisionContent } from '@ai-usage/memory-service/domain';
-import type { MemoryProjectContextReadRequest, MemorySearchReadRequest } from '@ai-usage/memory-service/read-contract';
+import type {
+  MemoryItemReadRequest,
+  MemoryProjectContextReadRequest,
+  MemorySearchReadRequest,
+} from '@ai-usage/memory-service/read-contract';
 import { type MemorySearchPage, type MemorySearchResult, memorySearchBounds } from '@ai-usage/memory-service/search';
-import type { MemoryItemId, ProjectId, SpaceId } from '@ai-usage/platform-core/identity';
+import type { ProjectId, SpaceId } from '@ai-usage/platform-core/identity';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod/v4';
 
@@ -27,7 +31,7 @@ export const memoryMcpBounds = Object.freeze({
 
 export interface MemoryMcpReadService {
   readonly getMemoryItem: (
-    itemId: MemoryItemId,
+    input: MemoryItemReadRequest,
     signal: AbortSignal,
   ) => Promise<MemoryApplicationResult<MemoryItemResult>>;
   readonly getProjectContext: (
@@ -51,12 +55,12 @@ export const createApplicationMemoryMcpReadService = (
   context: MemoryMcpApplicationContext,
 ): MemoryMcpReadService => {
   const service: MemoryMcpReadService = {
-    getMemoryItem: async (itemId: MemoryItemId, signal: AbortSignal) =>
+    getMemoryItem: async (input: MemoryItemReadRequest, signal: AbortSignal) =>
       signal.aborted
         ? { error: { code: 'cancelled', operation: 'get-memory-item' }, kind: 'error' }
         : await application.getMemoryItem({
             authorization: context.authorization,
-            itemId,
+            ...input,
             principal: context.principal,
             spaceId: context.spaceId,
           }),
@@ -100,9 +104,9 @@ const clientFailure = (operation: 'get-memory-item' | 'get-project-context' | 's
 
 export const createClientMemoryMcpReadService = (client: MemoryServiceClient): MemoryMcpReadService => {
   const service: MemoryMcpReadService = {
-    getMemoryItem: async (itemId: MemoryItemId, signal: AbortSignal) => {
+    getMemoryItem: async (input: MemoryItemReadRequest, signal: AbortSignal) => {
       try {
-        return { kind: 'success', value: await client.getMemoryItem(itemId, { signal }) };
+        return { kind: 'success', value: await client.getMemoryItem(input, { signal }) };
       } catch (error) {
         if (signal.aborted) {
           return { error: { code: 'cancelled', operation: 'get-memory-item' }, kind: 'error' };
@@ -268,11 +272,14 @@ export const createMemoryMcpServer = (service: MemoryMcpReadService): McpServer 
     {
       annotations: readOnlyAnnotations,
       description: 'Get one exact authorized accepted Memory revision as retrieved data.',
-      inputSchema: { itemId: uuid },
+      inputSchema: { itemId: uuid, revisionId: uuid.optional() },
       title: 'Get Memory',
     },
-    async ({ itemId }, extra) => {
-      const result = await service.getMemoryItem(itemId as MemoryItemId, extra.signal);
+    async ({ itemId, revisionId }, extra) => {
+      const result = await service.getMemoryItem(
+        { itemId, ...(revisionId === undefined ? {} : { revisionId }) } as MemoryItemReadRequest,
+        extra.signal,
+      );
       return result.kind === 'success'
         ? safeToolResult({ card: itemCard(result.value), contentRole: 'retrieved-data', notice: retrievedDataNotice })
         : failureToolResult(result);

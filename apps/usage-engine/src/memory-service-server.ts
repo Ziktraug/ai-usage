@@ -239,6 +239,7 @@ export const createLocalMemoryServiceHandler = async ({
             authorization: memoryAuthorization,
             itemId: query.itemId,
             principal,
+            ...(query.revisionId === undefined ? {} : { revisionId: query.revisionId }),
             spaceId: bootstrap.space.id,
           });
           return result.kind === 'success' ? successResponse(result.value) : memoryReadErrorResponse(result.error.code);

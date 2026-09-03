@@ -71,6 +71,7 @@ const withStorePath = async (run: (dbPath: string) => Promise<void>): Promise<vo
 const publicationFor = (row: UsageRowWithOptionalSource) => ({
   assignments: [{ captureContext, rowKey: toSerializedMergeRow(row, machine).rowKey }],
   deviceId,
+  deviceLabel: 'Enrolled workstation',
 });
 
 test('writes normalized usage and its outbox events atomically without local paths', async () => {
@@ -101,6 +102,7 @@ test('writes normalized usage and its outbox events atomically without local pat
       'device-fact-upsert',
       'usage-session-upsert',
     ]);
+    expect(claim.batch.events[0]?.payload).toMatchObject({ label: 'Enrolled workstation' });
     expect(JSON.stringify(claim.batch)).not.toContain('/private/local/path');
     expect(claim.batch.captureContexts[0]?.projectId).toBe(projectId);
 
@@ -135,6 +137,33 @@ test('writes normalized usage and its outbox events atomically without local pat
       acknowledged: 2,
       pending: 0,
     });
+  });
+});
+
+test('does not publish a hostname-derived Device label without an enrolled label', async () => {
+  await withStorePath(async (dbPath) => {
+    const row = usageRow();
+    const hostnameMachine: UsageMachine = { id: machine.id, label: 'private-hostname.local' };
+    await Effect.runPromise(
+      importLocalRows({
+        dbPath,
+        importedAt: capturedAt,
+        machine: hostnameMachine,
+        replication: {
+          assignments: [{ captureContext, rowKey: toSerializedMergeRow(row, hostnameMachine).rowKey }],
+          deviceId,
+        },
+        rows: [row],
+      }),
+    );
+    const claim = await Effect.runPromise(
+      claimUsageReplicationBatch({ dbPath, now: new Date('2026-08-30T11:01:00.000Z') }),
+    );
+    if (!claim) {
+      throw new Error('Expected privacy-preserving usage replication batch.');
+    }
+    expect(claim.batch.events.map(({ changeKind }) => changeKind)).toEqual(['usage-session-upsert']);
+    expect(JSON.stringify(claim.batch)).not.toContain(hostnameMachine.label);
   });
 });
 

@@ -258,6 +258,7 @@ export interface CreateMemoryRelationCommand extends MemoryCommandContext {
 
 export interface GetMemoryItemQuery extends MemoryCommandContext {
   readonly itemId: MemoryItemId;
+  readonly revisionId?: MemoryRevisionId | null;
   readonly spaceId: SpaceId;
 }
 
@@ -1065,7 +1066,7 @@ export const createMemoryApplicationService = (
         return denied;
       }
       try {
-        const result = await repository.getItem(query.spaceId, query.itemId);
+        const result = await repository.getItem(query.spaceId, query.itemId, query.revisionId);
         if (!result) {
           return errorResult(operation, 'not-found');
         }

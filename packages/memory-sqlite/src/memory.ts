@@ -1419,11 +1419,16 @@ export const createSqliteMemoryRepository = (database: Database): MemoryReposito
         });
         return { items, spaceId: query.spaceId };
       }),
-    getItem: (spaceId, itemId) =>
+    getItem: (spaceId, itemId, revisionId) =>
       storageOperation('get-item', () => {
         const row = database
-          .query(`${itemSelect} WHERE item.space_id = $spaceId AND item.id = $itemId`)
-          .get({ itemId, spaceId }) as ItemRevisionRow | null;
+          .query(
+            revisionId === undefined || revisionId === null
+              ? `${itemSelect} WHERE item.space_id = $spaceId AND item.id = $itemId`
+              : `${itemRevisionHistorySelect}
+                 WHERE item.space_id = $spaceId AND item.id = $itemId AND revision.id = $revisionId`,
+          )
+          .get({ itemId, revisionId: revisionId ?? null, spaceId }) as ItemRevisionRow | null;
         return row ? mapItemResult(row) : null;
       }),
     getProposal: (spaceId, proposalId) =>

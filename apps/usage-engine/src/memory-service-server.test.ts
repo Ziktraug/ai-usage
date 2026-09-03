@@ -163,8 +163,31 @@ describe('local Memory service', () => {
     if (accepted.kind !== 'accepted') {
       throw new Error('Protocol fixture proposal was not accepted.');
     }
-    expect(await client.getMemoryItem(accepted.itemId)).toMatchObject({
+    expect(await client.getMemoryItem({ itemId: accepted.itemId })).toMatchObject({
       item: { id: accepted.itemId, status: 'active', trust: 'harvest-accepted' },
+      revision: { id: accepted.revisionId, title: 'Local protocol review' },
+    });
+    const revised = await application.reviseMemoryItem({
+      authorization,
+      expectedCurrentRevisionId: accepted.revisionId,
+      guidance: ['Read an exact revision when its ID is supplied.'],
+      itemId: accepted.itemId,
+      principal,
+      reason: 'exercise exact revision addressing',
+      spaceId: bootstrap.space.id,
+      structuredContent: { source: 'synthetic revised local protocol' },
+      summary: 'The current revision changed after acceptance.',
+      title: 'Revised local protocol Memory',
+    });
+    if (revised.kind !== 'success') {
+      throw new Error('Protocol fixture revision failed.');
+    }
+    expect(await client.getMemoryItem({ itemId: accepted.itemId })).toMatchObject({
+      item: { currentRevisionId: revised.value.revision.id },
+      revision: { id: revised.value.revision.id, title: 'Revised local protocol Memory' },
+    });
+    expect(await client.getMemoryItem({ itemId: accepted.itemId, revisionId: accepted.revisionId })).toMatchObject({
+      item: { currentRevisionId: revised.value.revision.id },
       revision: { id: accepted.revisionId, title: 'Local protocol review' },
     });
     expect(await client.searchMemory({ limit: 10, query: 'local protocol review' })).toMatchObject({

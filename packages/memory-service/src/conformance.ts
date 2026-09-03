@@ -23,7 +23,9 @@ import { type MemoryAuditEvent, type MemoryRepository, MemoryRepositoryError } f
 
 export interface MemoryRepositoryConformanceFixture {
   readonly close: () => Promise<void>;
-  readonly createAuthorizationScope: (resourceIds: readonly string[]) => AuthorizedResourceScope;
+  readonly createAuthorizationScope: (
+    resourceIds: readonly string[],
+  ) => AuthorizedResourceScope | Promise<AuthorizedResourceScope>;
   readonly personId: PersonId;
   readonly projectId: ProjectId | null;
   readonly repository: MemoryRepository;
@@ -237,6 +239,21 @@ export const runMemoryRepositoryConformance = async (
       reviewerPersonId: fixture.personId,
       revision: relatedRevision,
     });
+    const historical = await fixture.repository.getItem(fixture.spaceId, itemId, firstRevisionId);
+    assert(
+      historical?.item.currentRevisionId === secondRevision.id &&
+        historical.revision.id === firstRevisionId &&
+        historical.revision.revisionNumber === 1,
+      'an exact historical revision must retain the current item pointer and return the requested revision',
+    );
+    assert(
+      (await fixture.repository.getItem(fixture.spaceId, itemId, relatedRevisionId)) === null,
+      'a revision belonging to another item must not be addressable through this item',
+    );
+    assert(
+      (await fixture.repository.getItem(fixture.spaceId, itemId, createMemoryRevisionId())) === null,
+      'an unknown exact revision must not fall back to the current revision',
+    );
     const relationId = createMemoryRelationId();
     await fixture.repository.createRelation(
       {
@@ -268,7 +285,7 @@ export const runMemoryRepositoryConformance = async (
       'invalid-input',
     );
 
-    const listScope = fixture.createAuthorizationScope([itemId, relatedItemId]);
+    const listScope = await fixture.createAuthorizationScope([itemId, relatedItemId]);
     const page = await fixture.repository.listItems({
       authorizationScope: listScope,
       pageSize: 1,
@@ -434,7 +451,7 @@ export const runMemoryRepositoryConformance = async (
       repeatedPreview.alreadyConfirmed && repeatedPreview.duplicateObservationFingerprints[0] === importedFingerprint,
       'repeated import preview must report durable idempotency',
     );
-    const exportScope = fixture.createAuthorizationScope([itemId, relatedItemId, importedItemId]);
+    const exportScope = await fixture.createAuthorizationScope([itemId, relatedItemId, importedItemId]);
     const exported = await fixture.repository.exportMemory({
       authorizationScope: exportScope,
       spaceId: fixture.spaceId,

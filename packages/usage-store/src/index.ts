@@ -105,6 +105,7 @@ export interface UsageReplicationCaptureAssignment {
 export interface UsageReplicationPublication {
   readonly assignments: readonly UsageReplicationCaptureAssignment[];
   readonly deviceId: DeviceId;
+  readonly deviceLabel?: string;
 }
 
 export interface BackfillUsageReplicationOutboxInput extends UsageReplicationPublication {
@@ -2487,16 +2488,16 @@ const publishUsageReplicationRows = (
 
   const firstRow = rows[0];
   const firstContext = firstRow ? assignments.get(requiredReplicationText(firstRow.row_key, 'row key')) : undefined;
-  if (firstContext && includeDeviceFact) {
+  if (firstContext && includeDeviceFact && publication.deviceLabel !== undefined) {
     const deviceRow = db
       .query(
-        `SELECT machine_label, updated_at
+        `SELECT updated_at
          FROM usage_rows
          WHERE source_authority = 'local-observed'
          ORDER BY updated_at DESC, row_key DESC
          LIMIT 1`,
       )
-      .get() as Pick<StoredUsageReplicationRow, 'machine_label' | 'updated_at'> | null;
+      .get() as Pick<StoredUsageReplicationRow, 'updated_at'> | null;
     if (!deviceRow) {
       throw new Error('Usage replication Device source is unavailable.');
     }
@@ -2504,7 +2505,7 @@ const publishUsageReplicationRows = (
     const devicePayload = {
       deviceId: publication.deviceId,
       kind: 'device-fact-upsert' as const,
-      label: requiredReplicationText(deviceRow.machine_label, 'machine label'),
+      label: publication.deviceLabel,
       lastSeenAt,
       status: 'active' as const,
     };

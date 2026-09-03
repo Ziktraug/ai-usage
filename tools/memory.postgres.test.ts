@@ -1,5 +1,4 @@
 import { describe, expect, test } from 'bun:test';
-import { createAuthorizedResourceScope } from '@ai-usage/authorization/scope-internal';
 import { createApplicationMemoryMcpReadService } from '@ai-usage/mcp-adapter';
 import {
   activeMemorySearchEvaluationCases,
@@ -57,13 +56,18 @@ if (runPostgresTests) {
             await store.close().catch(() => undefined);
             await cluster.stop();
           },
-          createAuthorizationScope: (resourceIds: readonly string[]) =>
-            createAuthorizedResourceScope({
-              activeSpaceId: spaceId,
+          createAuthorizationScope: async (_resourceIds: readonly string[]) => {
+            const result = await store.authorization.materializeResourceScope({
+              context: { activeSpaceId: spaceId, trustedDevice: true },
               permission: 'view_memory',
-              resourceIds,
+              principal: { kind: 'person', personId },
               resourceKind: 'memory',
-            }),
+            });
+            if (result.kind === 'error') {
+              throw new Error('PostgreSQL Memory conformance authorization failed.');
+            }
+            return result;
+          },
           personId,
           projectId: null,
           repository: store.memory,
@@ -185,6 +189,179 @@ if (runPostgresTests) {
           value: { itemCount: 0, revisionCount: 0 },
         });
       } finally {
+        await store.close().catch(() => undefined);
+        await cluster.stop();
+      }
+    }, 30_000);
+
+    test('re-evaluates authorization when a previously materialized Memory scope is revoked', async () => {
+      const cluster = await startPostgresCluster('memory-revoked-materialized-scope');
+      const store = await createPlatformStore({
+        connectTimeoutMs: 5000,
+        databaseUrl: cluster.url,
+        migrationMode: 'apply',
+        poolSize: 4,
+        queryTimeoutMs: 5000,
+        tlsMode: 'disable',
+      });
+      const pool = new Pool({ connectionString: cluster.url, max: 1 });
+      try {
+        const personalSpaceId = createSpaceId();
+        const organizationSpaceId = createSpaceId();
+        const personId = createPersonId();
+        const createdAt = instantNow(() => new Date('2026-08-29T15:00:00.000Z'));
+        await store.identity.createPersonalIdentity({
+          person: {
+            displayName: 'Revocable Memory member',
+            id: personId,
+            personalSpaceId,
+            status: 'active',
+          },
+          space: { createdAt, displayName: 'Personal space', id: personalSpaceId, kind: 'personal' },
+        });
+        await pool.query(
+          `INSERT INTO spaces (id, kind, display_name, created_at)
+           VALUES ($1, 'organization', 'Revocable Memory organization', $2)`,
+          [organizationSpaceId, createdAt],
+        );
+        await store.authorization.administration.createOrganizationWithAdmin({
+          actorPersonId: personId,
+          createdAt,
+          spaceId: organizationSpaceId,
+        });
+        const service = createMemoryApplicationService(
+          store.authorization,
+          store.memory,
+          () => new Date('2026-08-29T15:01:00.000Z'),
+        );
+        const authorization = { activeSpaceId: organizationSpaceId, trustedDevice: true } as const;
+        const principal = { kind: 'person' as const, personId };
+        const createPendingProposal = async (suffix: string) => {
+          const content = { source: `revocable scope ${suffix}` } as const;
+          const observation = await service.recordObservation({
+            authorization,
+            captureContextId: null,
+            content,
+            fingerprint: memoryFingerprint(content),
+            principal,
+            projectId: null,
+            sensitivity: 'normal',
+            sourceKind: 'user',
+            sourceLocator: `synthetic:revocable-${suffix}`,
+          });
+          if (observation.kind !== 'success') {
+            throw new Error('Revocable scope observation failed.');
+          }
+          const proposal = await service.createProposal({
+            authorization,
+            guidance: ['Re-evaluate grants at read time.'],
+            observationIds: [observation.value.id],
+            principal,
+            projectId: null,
+            proposedKind: 'constraint',
+            sensitivity: 'normal',
+            structuredContent: { suffix },
+            summary: `Revocable Memory proposal ${suffix}.`,
+            title: `Revocable Memory ${suffix}`,
+            trustCandidate: 'explicit',
+          });
+          if (proposal.kind !== 'success') {
+            throw new Error('Revocable scope proposal failed.');
+          }
+          return proposal.value;
+        };
+        const acceptedProposalId = await createPendingProposal('accepted');
+        const pendingProposalId = await createPendingProposal('pending');
+        const accepted = await service.acceptProposal({
+          authorization,
+          principal,
+          proposalId: acceptedProposalId,
+          scope: 'space',
+          spaceId: organizationSpaceId,
+        });
+        if (accepted.kind !== 'success') {
+          throw new Error('Revocable scope acceptance failed.');
+        }
+        const materialized = await store.authorization.materializeResourceScope({
+          context: authorization,
+          permission: 'view_memory',
+          principal,
+          resourceKind: 'memory',
+        });
+        if (materialized.kind === 'error') {
+          throw new Error('Revocable scope materialization failed.');
+        }
+        await expect(
+          store.memory.listItems({
+            authorizationScope: materialized,
+            cursor: null,
+            pageSize: 10,
+            projectId: null,
+            spaceId: organizationSpaceId,
+          }),
+        ).resolves.toMatchObject({ items: [{ item: { id: accepted.value.item.id } }] });
+        await expect(
+          store.memory.listProposals({
+            authorizationScope: materialized,
+            cursor: null,
+            pageSize: 10,
+            spaceId: organizationSpaceId,
+            status: 'pending',
+          }),
+        ).resolves.toMatchObject({ items: [{ proposal: { id: pendingProposalId } }] });
+        await expect(
+          store.memory.exportMemory({
+            authorizationScope: materialized,
+            projectId: null,
+            spaceId: organizationSpaceId,
+          }),
+        ).resolves.toMatchObject({ items: [{ item: { id: accepted.value.item.id } }] });
+
+        const client = await pool.connect();
+        try {
+          await client.query('BEGIN');
+          await client.query("SELECT set_config('ai_usage.active_space_id', $1, TRUE)", [organizationSpaceId]);
+          await client.query(
+            `UPDATE memory_content_grants
+             SET status = 'revoked', revoked_at = $3
+             WHERE space_id = $1 AND person_id = $2`,
+            [organizationSpaceId, personId, '2026-08-29T15:02:00.000Z'],
+          );
+          await client.query('COMMIT');
+        } catch (error) {
+          await client.query('ROLLBACK').catch(() => undefined);
+          throw error;
+        } finally {
+          client.release();
+        }
+
+        await expect(
+          store.memory.listItems({
+            authorizationScope: materialized,
+            cursor: null,
+            pageSize: 10,
+            projectId: null,
+            spaceId: organizationSpaceId,
+          }),
+        ).resolves.toMatchObject({ items: [] });
+        await expect(
+          store.memory.listProposals({
+            authorizationScope: materialized,
+            cursor: null,
+            pageSize: 10,
+            spaceId: organizationSpaceId,
+            status: 'pending',
+          }),
+        ).resolves.toMatchObject({ items: [] });
+        await expect(
+          store.memory.exportMemory({
+            authorizationScope: materialized,
+            projectId: null,
+            spaceId: organizationSpaceId,
+          }),
+        ).resolves.toEqual({ items: [], spaceId: organizationSpaceId });
+      } finally {
+        await pool.end().catch(() => undefined);
         await store.close().catch(() => undefined);
         await cluster.stop();
       }

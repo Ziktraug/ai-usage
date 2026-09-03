@@ -395,7 +395,7 @@ export const parseMemoryItemResult = (value: unknown): MemoryItemResult => {
     summary: wireText(revisionValue.summary, 16_384, 'memoryItemResult.revision.summary', true),
     title: wireText(revisionValue.title, 512, 'memoryItemResult.revision.title'),
   };
-  if (item.id !== revision.memoryItemId || item.currentRevisionId !== revision.id) {
+  if (item.id !== revision.memoryItemId) {
     throw new MemoryDomainValidationError('memoryItemResult.identity');
   }
   return { item, revision };

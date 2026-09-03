@@ -328,21 +328,17 @@ export const createPlatformAuthenticationStore = (pool: Pool): PlatformAuthentic
       }
     },
     resolveAuthenticationIdentity: async (authenticationIdentityId) => {
-      try {
-        const result = await pool.query<ResolvedIdentityRow>(
-          `SELECT identity.id, identity.person_id, identity.provider
-           FROM authentication_identities identity
-           INNER JOIN people person ON person.id = identity.person_id
-           WHERE identity.id = $1
-             AND identity.revoked_at IS NULL
-             AND person.status = 'active'`,
-          [authenticationIdentityId],
-        );
-        const row = result.rows[0];
-        return row?.provider === 'github' ? principal(row.id, row.person_id) : null;
-      } catch {
-        return null;
-      }
+      const result = await pool.query<ResolvedIdentityRow>(
+        `SELECT identity.id, identity.person_id, identity.provider
+         FROM authentication_identities identity
+         INNER JOIN people person ON person.id = identity.person_id
+         WHERE identity.id = $1
+           AND identity.revoked_at IS NULL
+           AND person.status = 'active'`,
+        [authenticationIdentityId],
+      );
+      const row = result.rows[0];
+      return row?.provider === 'github' ? principal(row.id, row.person_id) : null;
     },
     recordAuthenticationEvent: async (input) => {
       try {
@@ -359,7 +355,7 @@ export const createPlatformAuthenticationStore = (pool: Pool): PlatformAuthentic
           }
           await recordIdentityEvent(client, {
             eventType: input.eventType,
-            identityId: input.webSessionId,
+            identityId: input.authenticationIdentityId,
             personId: parsePersonId(row.person_id),
             recordedAt: input.observedAt,
           });

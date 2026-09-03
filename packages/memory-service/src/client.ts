@@ -17,6 +17,7 @@ import {
 import type { MemoryItemResult } from './domain';
 import { type MemoryServiceRendezvous, revealMemoryServiceToken } from './node';
 import {
+  type MemoryItemReadRequest,
   type MemoryProjectContextReadRequest,
   type MemorySearchReadRequest,
   parseMemoryItemReadResult,
@@ -35,7 +36,7 @@ export interface MemoryServiceClient {
     options?: MemoryServiceRequestOptions,
   ) => Promise<CheckoutResolutionActionResult>;
   readonly getMemoryItem: (
-    itemId: MemoryItemResult['item']['id'],
+    input: MemoryItemReadRequest,
     options?: MemoryServiceRequestOptions,
   ) => Promise<MemoryItemResult>;
   readonly getProjectContext: (
@@ -195,8 +196,14 @@ export const createMemoryServiceClient = ({
         parseMemoryProposalReviewSnapshot,
         options,
       ),
-    getMemoryItem: async (itemId, options) =>
-      await request('/v1/memory-items/get', 'POST', { itemId }, parseMemoryItemReadResult, options),
+    getMemoryItem: async (input, options) => {
+      const result = await request('/v1/memory-items/get', 'POST', input, parseMemoryItemReadResult, options);
+      const expectedRevisionId = input.revisionId ?? result.item.currentRevisionId;
+      if (result.item.id !== input.itemId || result.revision.id !== expectedRevisionId) {
+        throw new MemoryServiceClientError('invalid-response', 'Memory service returned a different item revision.');
+      }
+      return result;
+    },
     getProjectContext: async (input, options) =>
       await request('/v1/memory-project-context', 'POST', input, parseMemoryProjectContext, options),
     searchMemory: async (input, options) =>

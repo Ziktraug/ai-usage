@@ -185,7 +185,11 @@ export interface MemoryRepository {
   readonly createProposal: (input: CreateProposalInput) => Promise<MemoryProposalId>;
   readonly createRelation: (relation: MemoryRelation, audit: MemoryAuditEvent) => Promise<void>;
   readonly exportMemory: (query: ExportMemoryQuery) => Promise<MemoryExportSnapshot>;
-  readonly getItem: (spaceId: SpaceId, itemId: MemoryItemId) => Promise<MemoryItemResult | null>;
+  readonly getItem: (
+    spaceId: SpaceId,
+    itemId: MemoryItemId,
+    revisionId?: MemoryRevisionId | null,
+  ) => Promise<MemoryItemResult | null>;
   readonly getProposal: (spaceId: SpaceId, proposalId: MemoryProposalId) => Promise<MemoryProposal | null>;
   readonly listAuthorizationResourceIds: (spaceId: SpaceId) => Promise<readonly string[]>;
   readonly listItems: (query: ListMemoryItemsQuery) => Promise<MemoryItemPage>;

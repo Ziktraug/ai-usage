@@ -116,7 +116,7 @@ export const PLATFORM_MIGRATIONS: readonly PlatformMigration[] = Object.freeze([
       );
 
       CREATE UNIQUE INDEX repositories_provider_identity_unique
-        ON repositories (provider, provider_repository_id)
+        ON repositories (space_id, provider, provider_repository_id)
         WHERE provider_repository_id IS NOT NULL;
 
       CREATE TABLE repository_aliases (
@@ -1243,7 +1243,7 @@ export const PLATFORM_MIGRATIONS: readonly PlatformMigration[] = Object.freeze([
         received_at TIMESTAMPTZ NOT NULL,
         PRIMARY KEY (device_id, stream_id, event_id),
         UNIQUE (device_id, stream_id, generation),
-        FOREIGN KEY (device_id, space_id) REFERENCES devices (id, space_id) ON DELETE RESTRICT,
+        FOREIGN KEY (device_id) REFERENCES devices (id) ON DELETE RESTRICT,
         FOREIGN KEY (capture_context_id, space_id)
           REFERENCES capture_contexts (id, space_id) ON DELETE RESTRICT,
         FOREIGN KEY (project_id, space_id) REFERENCES projects (id, space_id) ON DELETE RESTRICT

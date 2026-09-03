@@ -174,6 +174,31 @@ describe('Memory MCP adapter', () => {
     }
   });
 
+  test('passes an optional exact revision ID through memory.get', async () => {
+    let requested: unknown = null;
+    const fixture = await connected({
+      ...readService(),
+      getMemoryItem: (input) => {
+        requested = input;
+        return Promise.resolve({ kind: 'success', value: itemResult });
+      },
+    });
+    try {
+      const result = await fixture.client.callTool(
+        {
+          arguments: { itemId, revisionId },
+          name: 'memory.get',
+        },
+        CallToolResultSchema,
+      );
+      expect(result.isError).not.toBe(true);
+      expect(requested).toEqual({ itemId, revisionId });
+      expect(result.structuredContent).toMatchObject({ card: { id: itemId, revisionId } });
+    } finally {
+      await fixture.close();
+    }
+  });
+
   test('enforces input bounds before calling the service and sanitizes application failures', async () => {
     let calls = 0;
     const service: MemoryMcpReadService = {

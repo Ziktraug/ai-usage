@@ -117,6 +117,7 @@ export interface StartConfiguredDeviceReplicationInput {
 interface PreparedReplication {
   readonly captureContext: CaptureContextSnapshot;
   readonly client: HttpReplicationClient;
+  readonly deviceLabel: string;
   readonly localSpaceId: SpaceId;
   readonly memoryOutbox: ReplicationWorkerOutboxPort;
   readonly usageOutbox: ReplicationWorkerOutboxPort;
@@ -267,6 +268,7 @@ export const startDeviceReplicationRuntime = (input: StartDeviceReplicationRunti
     return {
       captureContext,
       client,
+      deviceLabel: resolution.value.device.label,
       localSpaceId,
       memoryOutbox: createMemoryReplicationOutboxPort(input.kernel),
       usageOutbox: createUsageReplicationOutboxPort(input.usageDatabasePath),
@@ -298,6 +300,7 @@ export const startDeviceReplicationRuntime = (input: StartDeviceReplicationRunti
         afterRowKey: usageBackfillCursor,
         captureContext: prepared.captureContext,
         dbPath: input.usageDatabasePath,
+        deviceLabel: prepared.deviceLabel,
         enqueuedAt: clock(),
         maximumPages: 2,
         pageSize: 500,

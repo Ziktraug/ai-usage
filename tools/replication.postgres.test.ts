@@ -1,7 +1,13 @@
 import { describe, expect, test } from 'bun:test';
 import { createDeviceEnrollmentService } from '@ai-usage/identity/device-enrollment';
 import { createDeploymentTokenKey, createDeploymentTokenKeyRing } from '@ai-usage/identity/device-tokens';
-import { createCaptureContextId, createPersonId, createSpaceId, instantNow } from '@ai-usage/platform-core/identity';
+import {
+  createCaptureContextId,
+  createPersonId,
+  createProjectId,
+  createSpaceId,
+  instantNow,
+} from '@ai-usage/platform-core/identity';
 import { createPlatformTestingDatabase } from '@ai-usage/postgres-store/testing';
 import { createPlatformStore } from '@ai-usage/postgres-store/writer';
 import {
@@ -330,6 +336,194 @@ if (runPostgresTests) {
           kind: 'problem',
           problem: { code: 'revoked' },
         });
+      } finally {
+        await database.close().catch(() => undefined);
+        await store.close().catch(() => undefined);
+        await cluster.stop();
+      }
+    }, 30_000);
+
+    test('accepts one Device batch containing independently authorized personal and organization contexts', async () => {
+      const cluster = await startPostgresCluster('replication-multi-space-contexts');
+      const store = await createPlatformStore({
+        connectTimeoutMs: 5000,
+        databaseUrl: cluster.url,
+        migrationMode: 'apply',
+        poolSize: 8,
+        queryTimeoutMs: 5000,
+        tlsMode: 'disable',
+      });
+      const database = createPlatformTestingDatabase(cluster.url);
+      try {
+        const personId = createPersonId();
+        const personalSpaceId = createSpaceId();
+        const organizationSpaceId = createSpaceId();
+        const organizationProjectId = createProjectId();
+        await store.identity.createPersonalIdentity({
+          person: {
+            displayName: 'Multi-space replication owner',
+            id: personId,
+            personalSpaceId,
+            status: 'active',
+          },
+          space: {
+            createdAt: observedAt,
+            displayName: 'Personal replication space',
+            id: personalSpaceId,
+            kind: 'personal',
+          },
+        });
+        await database.query(
+          `INSERT INTO spaces (id, kind, display_name, created_at)
+           VALUES ($1, 'organization', 'Organization replication space', $2)`,
+          [organizationSpaceId, observedAt],
+        );
+        await store.authorization.administration.createOrganizationWithAdmin({
+          actorPersonId: personId,
+          createdAt: observedAt,
+          spaceId: organizationSpaceId,
+        });
+        await store.identity.createProject({
+          displayName: 'Organization replication project',
+          id: organizationProjectId,
+          kind: 'local',
+          owningSpaceId: organizationSpaceId,
+          repositoryId: null,
+          repositorySubpath: null,
+          status: 'active',
+        });
+        await store.authorization.administration.grantProjectAccess({
+          actorPersonId: personId,
+          expiresAt: null,
+          grantedAt: observedAt,
+          grantId: crypto.randomUUID(),
+          projectId: organizationProjectId,
+          role: 'viewer',
+          spaceId: organizationSpaceId,
+          subject: { kind: 'person', personId },
+        });
+        const key = createDeploymentTokenKey(Buffer.alloc(32, 72).toString('base64url'), 1);
+        const devices = createDeviceEnrollmentService({
+          authorizer: store.authorization,
+          clock: () => new Date(observedAt),
+          keyRing: createDeploymentTokenKeyRing([key], 1),
+          store: store.devices,
+        });
+        const grant = await devices.requestEnrollmentGrant({
+          context: { activeSpaceId: personalSpaceId, trustedDevice: false },
+          label: 'Multi-space laptop',
+          principal: { kind: 'person', personId },
+        });
+        if (grant.kind !== 'success') {
+          throw new Error('Expected multi-space Device enrollment grant.');
+        }
+        const exchanged = await devices.exchangeEnrollmentGrant(grant.value.token);
+        if (exchanged.kind !== 'success') {
+          throw new Error('Expected multi-space Device enrollment exchange.');
+        }
+        const personalContext = {
+          deviceId: exchanged.value.device.id,
+          id: createCaptureContextId(),
+          personId,
+          projectId: null,
+          scmAccountId: null,
+          scmInstallationId: null,
+          source: 'personal-fallback' as const,
+          spaceId: personalSpaceId,
+        };
+        const organizationContext = {
+          deviceId: exchanged.value.device.id,
+          id: createCaptureContextId(),
+          personId,
+          projectId: organizationProjectId,
+          scmAccountId: null,
+          scmInstallationId: null,
+          source: 'project-rule' as const,
+          spaceId: organizationSpaceId,
+        };
+        await store.identity.saveCaptureContext(personalContext);
+        await store.identity.saveCaptureContext(organizationContext);
+        const personalEvent = createReplicationEvent({
+          captureContextId: personalContext.id,
+          changeKind: 'usage-session-upsert',
+          eventId: createReplicationEventId(),
+          factKey: 'usage-session:personal',
+          generation: parseReplicationGeneration(1),
+          payload: {
+            harness: 'codex',
+            kind: 'usage-session-upsert',
+            model: 'gpt-5',
+            observedAt,
+            projectId: null,
+            sourceFingerprint: 'a'.repeat(64),
+            sourceSessionId: 'personal-session',
+            status: 'active',
+            tokenTotal: 10,
+          },
+        });
+        const organizationEvent = createReplicationEvent({
+          captureContextId: organizationContext.id,
+          changeKind: 'usage-session-upsert',
+          eventId: createReplicationEventId(),
+          factKey: 'usage-session:organization',
+          generation: parseReplicationGeneration(2),
+          payload: {
+            harness: 'codex',
+            kind: 'usage-session-upsert',
+            model: 'gpt-5',
+            observedAt,
+            projectId: organizationProjectId,
+            sourceFingerprint: 'b'.repeat(64),
+            sourceSessionId: 'organization-session',
+            status: 'active',
+            tokenTotal: 20,
+          },
+        });
+        const batch = createReplicationBatch({
+          batchId: createReplicationBatchId(),
+          captureContexts: [personalContext, organizationContext],
+          deviceId: exchanged.value.device.id,
+          events: [personalEvent, organizationEvent],
+          fromGenerationExclusive: parseReplicationGeneration(0),
+          streamId: USAGE_REPLICATION_STREAM_ID,
+          toGenerationInclusive: parseReplicationGeneration(2),
+        });
+        await expect(
+          store.replication.applyBatch({
+            authenticatedCredentialId: exchanged.value.credential.id,
+            authenticatedDevice: exchanged.value.device,
+            batch,
+          }),
+        ).resolves.toMatchObject({
+          ack: { counts: { applied: 2, duplicate: 0, projected: 2, tombstoned: 0 } },
+          kind: 'ack',
+        });
+        expect(
+          await database.queryRowCountInSpace(
+            personalSpaceId,
+            'SELECT 1 FROM replicated_fact_projections WHERE fact_key = $1',
+            [personalEvent.factKey],
+          ),
+        ).toBe(1);
+        expect(
+          await database.queryRowCountInSpace(
+            organizationSpaceId,
+            'SELECT 1 FROM replicated_fact_projections WHERE fact_key = $1',
+            [organizationEvent.factKey],
+          ),
+        ).toBe(1);
+        expect(
+          await database.queryRowCount(
+            'SELECT 1 FROM replication_stream_states WHERE device_id = $1 AND space_id = $2',
+            [exchanged.value.device.id, personalSpaceId],
+          ),
+        ).toBe(1);
+        expect(
+          await database.queryRowCount(
+            'SELECT 1 FROM replication_stream_states WHERE device_id = $1 AND space_id = $2',
+            [exchanged.value.device.id, organizationSpaceId],
+          ),
+        ).toBe(0);
       } finally {
         await database.close().catch(() => undefined);
         await store.close().catch(() => undefined);

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { createSharedAuthenticationService } from '@ai-usage/identity/better-auth';
-import { parseInstant } from '@ai-usage/platform-core/identity';
+import { parseAuthenticationIdentityId, parseInstant } from '@ai-usage/platform-core/identity';
 import { createPlatformStore } from '@ai-usage/postgres-store/writer';
 import { Pool } from 'pg';
 import { startPostgresCluster } from './pg-harness';
@@ -167,6 +167,26 @@ if (runPostgresTests) {
           (SELECT count(*)::INTEGER FROM people) AS people,
           (SELECT count(*)::INTEGER FROM web_sessions) AS sessions`);
         expect(counts.rows[0]).toEqual({ accounts: 1, bootstrap: 1, identities: 1, people: 1, sessions: 1 });
+
+        const loginAudit = await pool.query<{
+          readonly authentication_identity_id: string;
+          readonly subject_id: string;
+          readonly subject_type: string;
+        }>(`SELECT identity.id AS authentication_identity_id, event.subject_id, event.subject_type
+            FROM identity_events event
+            INNER JOIN authentication_identities identity ON identity.id = event.subject_id
+            WHERE event.event_type = 'shared-login-succeeded'
+            ORDER BY event.recorded_at ASC
+            LIMIT 1`);
+        const loginAuditRow = loginAudit.rows[0];
+        if (!loginAuditRow) {
+          throw new Error('Expected a shared-login identity audit event.');
+        }
+        expect(loginAuditRow).toEqual({
+          authentication_identity_id: loginAuditRow.authentication_identity_id,
+          subject_id: loginAuditRow.authentication_identity_id,
+          subject_type: 'authentication-identity',
+        });
 
         const persisted = await pool.query<{
           readonly absolute_lifetime_seconds: number;
@@ -479,6 +499,27 @@ if (runPostgresTests) {
         expect(counts.rows[0]).toEqual({ bootstrap: 0, people: 0 });
       } finally {
         await pool.end().catch(() => undefined);
+        await store.close().catch(() => undefined);
+        await cluster.stop();
+      }
+    }, 30_000);
+
+    test('distinguishes an absent authentication identity from a database outage', async () => {
+      const cluster = await startPostgresCluster('authentication-identity-resolution');
+      const store = await createPlatformStore({
+        connectTimeoutMs: 5000,
+        databaseUrl: cluster.url,
+        migrationMode: 'apply',
+        poolSize: 2,
+        queryTimeoutMs: 5000,
+        tlsMode: 'disable',
+      });
+      const unknownIdentityId = parseAuthenticationIdentityId(crypto.randomUUID());
+      try {
+        await expect(store.authentication.resolveAuthenticationIdentity(unknownIdentityId)).resolves.toBeNull();
+        await store.close();
+        await expect(store.authentication.resolveAuthenticationIdentity(unknownIdentityId)).rejects.toBeDefined();
+      } finally {
         await store.close().catch(() => undefined);
         await cluster.stop();
       }

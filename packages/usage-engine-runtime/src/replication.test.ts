@@ -46,6 +46,7 @@ test('continues bounded usage recovery scans without repeating the Device fact o
     const first = await backfillUsageReplicationPages({
       captureContext,
       dbPath,
+      deviceLabel: 'Enrolled replication machine',
       enqueuedAt: capturedAt,
       maximumPages: 2,
       pageSize: 1,
@@ -56,6 +57,7 @@ test('continues bounded usage recovery scans without repeating the Device fact o
       afterRowKey: first.nextCursor,
       captureContext,
       dbPath,
+      deviceLabel: 'Enrolled replication machine',
       enqueuedAt: capturedAt,
       maximumPages: 2,
       pageSize: 1,
