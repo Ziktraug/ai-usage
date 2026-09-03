@@ -12,6 +12,7 @@ describe('Web RPC client composition', () => {
   test('keeps the frozen read-only operation set on GET and mutations on POST', () => {
     expect(rpcMethodForPath(['report', 'revisionBootstrap'])).toBe('GET');
     expect(rpcMethodForPath(['skills', 'snapshot'])).toBe('GET');
+    expect(rpcMethodForPath(['replication', 'status'])).toBe('GET');
     expect(rpcMethodForPath(['campaign', 'setLabelOverride'])).toBe('POST');
   });
 });

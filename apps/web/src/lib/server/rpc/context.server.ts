@@ -294,6 +294,73 @@ const createSessionDependencies = (): WebRpcRouterDependencies['session'] => ({
     }),
 });
 
+const createProjectsDependencies = (): WebRpcRouterDependencies['projects'] => ({
+  applyResolutionAction: async (input, signal) =>
+    await phaseBound(signal, async () => {
+      const mode = await runtimeMode(abortOptions(signal));
+      if (mode === 'e2e') {
+        const fixture = await import('../../../server/projects-e2e-fixture.server');
+        return fixture.applyE2EProjectResolutionAction(input);
+      }
+      const server = await import('../../../server/memory-service.server');
+      return await server.applyProjectResolutionActionForServer(input, signal);
+    }),
+  isDemo: async (signal) => (await runtimeMode(abortOptions(signal))) === 'demo',
+  listResolutionReviews: async (signal) =>
+    await phaseBound(signal, async () => {
+      const mode = await runtimeMode(abortOptions(signal));
+      if (mode === 'e2e') {
+        const fixture = await import('../../../server/projects-e2e-fixture.server');
+        return fixture.readE2EProjectResolutionReviews();
+      }
+      const server = await import('../../../server/memory-service.server');
+      return await server.getProjectResolutionReviewsForServer(signal);
+    }),
+});
+
+const createMemoryDependencies = (): WebRpcRouterDependencies['memory'] => ({
+  applyProposalReviewAction: async (input, signal) =>
+    await phaseBound(signal, async () => {
+      const mode = await runtimeMode(abortOptions(signal));
+      if (mode === 'e2e') {
+        const fixture = await import('../../../server/memory-e2e-fixture.server');
+        return fixture.applyE2EMemoryProposalReviewAction(input);
+      }
+      const server = await import('../../../server/memory-service.server');
+      return await server.applyMemoryProposalReviewActionForServer(input, signal);
+    }),
+  isDemo: async (signal) => (await runtimeMode(abortOptions(signal))) === 'demo',
+  listProposalReviews: async (signal) =>
+    await phaseBound(signal, async () => {
+      const mode = await runtimeMode(abortOptions(signal));
+      if (mode === 'e2e') {
+        const fixture = await import('../../../server/memory-e2e-fixture.server');
+        return fixture.readE2EMemoryProposalReviews();
+      }
+      const server = await import('../../../server/memory-service.server');
+      return await server.getMemoryProposalReviewsForServer(signal);
+    }),
+  searchMemory: async (input, signal) =>
+    await phaseBound(signal, async () => {
+      const mode = await runtimeMode(abortOptions(signal));
+      if (mode === 'e2e') {
+        const fixture = await import('../../../server/memory-e2e-fixture.server');
+        return fixture.searchE2EMemory(input);
+      }
+      const server = await import('../../../server/memory-service.server');
+      return await server.searchMemoryForServer(input, signal);
+    }),
+});
+
+const createReplicationDependencies = (): WebRpcRouterDependencies['replication'] => ({
+  isDemo: async (signal) => (await runtimeMode(abortOptions(signal))) === 'demo',
+  readStatus: async (signal) =>
+    await phaseBound(signal, async () => {
+      const server = await import('../../../server/replication-status.server');
+      return await server.getReplicationStatusForServer(signal);
+    }),
+});
+
 const createSyncDependencies = (request: Request): WebRpcRouterDependencies['sync'] => ({
   getFleet: async (signal) =>
     await phaseBound(signal, async () => {
@@ -316,7 +383,10 @@ const createSyncDependencies = (request: Request): WebRpcRouterDependencies['syn
 export const createWebRpcRouterDependencies = (request: Request): Promise<WebRpcRouterDependencies> => {
   const fixtureVariant = e2eSkillsFixtureVariantForHeaders(request.headers);
   return Promise.resolve({
+    memory: createMemoryDependencies(),
+    projects: createProjectsDependencies(),
     report: createReportDependencies(request),
+    replication: createReplicationDependencies(),
     session: createSessionDependencies(),
     skills: {
       preflight: preflightSkills,

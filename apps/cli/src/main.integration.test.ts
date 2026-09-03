@@ -124,6 +124,18 @@ test(
   'runs stateful machine and snapshot commands in an isolated profile',
   async () => {
     await withCliSandbox(async ({ root, runCli }) => {
+      const replication = await runCli(['replication', 'status', '--json']);
+      expect(replication.exitCode).toBe(0);
+      expect(replication.stderr).toBe('');
+      expect(JSON.parse(replication.stdout)).toEqual({
+        kind: 'replication-status',
+        lastDiagnostic: null,
+        memory: null,
+        mode: 'local-only',
+        runtimeState: 'disabled',
+        usage: null,
+      });
+
       const first = await runCli(['machine']);
       const second = await runCli(['machine']);
       if (first.exitCode !== 0) {
@@ -167,6 +179,18 @@ test(
       let expected: Awaited<ReturnType<typeof runCli>>[] = [];
       try {
         await waitForUsageEngineDaemon(daemon, rendezvousPath);
+        const replication = await runCli(['replication', 'status', '--json']);
+        expect(replication.exitCode).toBe(0);
+        expect(JSON.parse(replication.stdout)).toMatchObject({ mode: 'local-only', runtimeState: 'disabled' });
+        const memorySearch = await runCli(['memory', 'search', 'authorized ranking', '--json']);
+        expect(memorySearch.exitCode).toBe(0);
+        expect(memorySearch.stderr).toBe('');
+        expect(JSON.parse(memorySearch.stdout)).toMatchObject({
+          items: [],
+          nextCursor: null,
+          rankingVersion: expect.stringContaining('memory-search-lexical-v1'),
+          total: 0,
+        });
         const daemonFresh = await runCli([...selection, '--json']);
         if (daemonFresh.exitCode !== 0) {
           const rendezvous = await loadUsageEngineRendezvous(rendezvousPath);

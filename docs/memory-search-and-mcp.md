@@ -166,7 +166,7 @@ falls back to a different local corpus.
 | Tool | Input | Output |
 | --- | --- | --- |
 | `memory.search` | bounded search fields: `query`, `limit`, optional cursor/mode/Project/kind/status/trust | revision-pinned cards, total/cursor, rank, match explanation, provenance |
-| `memory.get` | `itemId` UUID | exact authorized current item/revision card |
+| `memory.get` | `itemId` UUID and optional exact `revisionId` UUID | exact authorized current or historical item/revision card |
 | `memory.project_context` | Project UUID and limit (default 16, max 32) | deterministic active constraints, decisions, pitfalls, and commands |
 
 `memory.latest_work_handoff`, `work_handoff.get`, and
@@ -175,7 +175,9 @@ Plan 108 activates them only with real Work application services. There is no
 MCP acceptance, revision, supersession, relation, or direct Item-creation tool.
 
 Every response includes `contentRole: "retrieved-data"`, a fixed notice, exact
-revision/content identity, status, trust, sensitivity, and verification.
+revision/content identity, status, trust, sensitivity, and verification. An
+exact historical `memory.get` result is labeled `accepted-historical-revision`;
+current results are labeled `accepted-current-revision`.
 Search cards additionally preserve match explanation, rank, and bounded
 provenance. Retrieved text—including prompt-injection fixtures—is serialized as
 quoted JSON data and cannot override the current user request, system

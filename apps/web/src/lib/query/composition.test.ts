@@ -166,7 +166,10 @@ describe('Web Query composition', () => {
       'quota',
       'skills',
       'skill-observations',
+      'memory',
+      'projects',
       'sync',
+      'replication',
       'sources',
     ]);
     // Exactly two families react to a completed publication cycle, and they react differently. The

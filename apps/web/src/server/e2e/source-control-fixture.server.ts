@@ -10,6 +10,7 @@ import {
   USAGE_ENGINE_PROTOCOL_VERSION,
   type UsageEngineCommand,
   type UsageEngineCommandResult,
+  type UsageEngineReplicationStatusOutput,
   type UsageEngineStatus,
 } from '@ai-usage/usage-engine-control';
 import type { UsageEngineControlClient } from '@ai-usage/usage-engine-control/client';
@@ -210,7 +211,10 @@ const lifecycleForPolicyChange = (
 };
 
 const executeFixtureCommand = (command: UsageEngineCommand, commandId: string): UsageEngineCommandResult => {
-  let output: { readonly kind: 'none' } | ReturnType<typeof previewSyncE2EHandoff> = {
+  let output:
+    | { readonly kind: 'none' }
+    | ReturnType<typeof previewSyncE2EHandoff>
+    | UsageEngineReplicationStatusOutput = {
     kind: 'none',
   };
   if (command.command === 'run-source') {
@@ -241,6 +245,37 @@ const executeFixtureCommand = (command: UsageEngineCommand, commandId: string): 
     }
   } else if (command.command === 'detect-all') {
     updateSnapshot((snapshot) => ({ ...snapshot }));
+  } else if (command.command === 'replication-status') {
+    output = {
+      kind: 'replication-status',
+      lastDiagnostic: { code: 'idle', problemCode: null, streamId: 'memory-v1' },
+      memory: {
+        acknowledged: 2,
+        acknowledgedThroughGeneration: 2,
+        blocked: 0,
+        inFlight: 0,
+        lastAcknowledgedAt: '2026-07-16T10:00:00.000Z',
+        lastErrorCode: null,
+        nextRetryAt: null,
+        oldestUnacknowledgedAt: '2026-07-16T10:01:00.000Z',
+        pending: 1,
+        streamId: 'memory-v1',
+      },
+      mode: 'connected',
+      runtimeState: 'waiting',
+      usage: {
+        acknowledged: 4,
+        acknowledgedThroughGeneration: 4,
+        blocked: 0,
+        inFlight: 0,
+        lastAcknowledgedAt: '2026-07-16T10:00:30.000Z',
+        lastErrorCode: null,
+        nextRetryAt: null,
+        oldestUnacknowledgedAt: null,
+        pending: 0,
+        streamId: 'usage-v1',
+      },
+    };
   } else if (command.command === 'preview-merge') {
     output = previewSyncE2EHandoff(command.input);
   } else if (command.command === 'confirm-merge') {

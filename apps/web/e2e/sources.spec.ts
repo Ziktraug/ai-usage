@@ -67,9 +67,16 @@ test.afterEach(async ({ request }) => {
 });
 
 test('states each source health once and keeps source metadata concise', async ({ context, page }) => {
+  const serverStateTrace = createServerStateNetworkTrace(page);
   await context.grantPermissions(['clipboard-read', 'clipboard-write']);
   await openHydratedSources(page);
   await expect(page.getByRole('heading', { level: 1, name: 'Sources' })).toBeVisible();
+  const replication = page.locator('[data-replication-status]');
+  await expect(replication).toBeVisible();
+  await expect(replication.locator('[data-replication-mode="connected"]')).toHaveText('Waiting to publish');
+  await expect(replication.locator('[data-replication-stream]')).toHaveCount(2);
+  await expect(replication.locator('[data-replication-freshness]')).toHaveCount(2);
+  expect(serverStateTrace.records().filter(({ operation }) => operation === 'replication.status')).toHaveLength(1);
 
   const sourceCards = page.locator('main [data-source-card]');
   const healthySummary = page.locator('[data-healthy-source-summary]');
@@ -123,6 +130,7 @@ test('states each source health once and keeps source metadata concise', async (
   await copyRevision.click();
   await expect(copyRevision).toHaveText('Copied');
   expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(fullRevision);
+  serverStateTrace.dispose();
 });
 
 test('keeps business sources independent through a picked disable and publishes once', async ({ context, page }) => {

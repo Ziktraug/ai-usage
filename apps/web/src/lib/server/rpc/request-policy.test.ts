@@ -113,7 +113,7 @@ describe('request policy matrix', () => {
   });
 
   test('requires demo rejection and trusted-local validation for every policy', () => {
-    expect(requestPolicyMatrix).toHaveLength(35);
+    expect(requestPolicyMatrix).toHaveLength(41);
     expect(new Set(requestPolicyMatrix.map(({ id }) => id)).size).toBe(requestPolicyMatrix.length);
 
     for (const policy of requestPolicyMatrix) {

@@ -42,9 +42,9 @@ export type UsageEngineHandoffId = Branded<string, 'UsageEngineHandoffId'>;
 export type UsageEnginePublicationRevision = ServedRevision;
 export type UsageEngineProjectSourceReference = Branded<string, 'UsageEngineProjectSourceReference'>;
 
-// Preview-merge gained required bundle identity and warning-detail fields. Keeping protocol v1 would
-// admit a long-running old engine and then fail the first preview as an opaque invalid response.
-export const USAGE_ENGINE_PROTOCOL_VERSION = 2 as UsageEngineProtocolVersion;
+// Replication status added a command and a closed output contract. Keeping protocol v2 would admit
+// a long-running old engine and then reject the first status request as an opaque command failure.
+export const USAGE_ENGINE_PROTOCOL_VERSION = 3 as UsageEngineProtocolVersion;
 
 const kibibyte = 1024;
 const maxOpaqueIdBytes = 160;
@@ -76,6 +76,7 @@ export const usageEngineControlBounds = {
 const opaqueIdPattern = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,159}$/;
 const replayEventIdPattern = /^(engine|snapshot):(0|[1-9]\d*)$/;
 const boundedCodePattern = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/;
+const replicationErrorCodePattern = /^[a-z0-9][a-z0-9-]{0,127}$/u;
 const projectSourceReferencePattern = /^project-source:[a-f0-9]{64}$/;
 const encoder = new TextEncoder();
 
@@ -264,6 +265,7 @@ export type UsageEngineFileInput =
 export type UsageEngineCommand =
   | { readonly command: 'detect-all' }
   | { readonly command: 'collect-fresh-report'; readonly harness: HarnessKey | null; readonly includeCursor: boolean }
+  | { readonly command: 'replication-status' }
   | { readonly command: 'run-all-enabled' }
   | { readonly command: 'run-source'; readonly sourceId: CollectionSourceId }
   | { readonly command: 'publish' }
@@ -493,6 +495,7 @@ export const parseUsageEngineCommand = (value: unknown): UsageEngineCommand => {
     case 'detect-all':
     case 'run-all-enabled':
     case 'publish':
+    case 'replication-status':
     case 'collect-fresh-quota':
       if (!hasExactKeys(command, ['command'])) {
         return fail('Usage engine command contains unknown fields.');
@@ -850,6 +853,62 @@ export interface UsageEnginePublicationOutput {
   readonly publication: UsageEngineCurrentPublication;
 }
 
+export type UsageEngineReplicationDiagnosticCode =
+  | 'acknowledged'
+  | 'blocked'
+  | 'configuration-invalid'
+  | 'credential-missing'
+  | 'credential-unavailable'
+  | 'device-rejected'
+  | 'device-unreachable'
+  | 'idle'
+  | 'retry-scheduled'
+  | 'setup-failed';
+
+export type UsageEngineReplicationProblemCode =
+  | 'batch-id-conflict'
+  | 'capture-context-forbidden'
+  | 'event-id-conflict'
+  | 'generation-gap'
+  | 'invalid-batch'
+  | 'overlap-conflict'
+  | 'protocol-incompatible'
+  | 'rate-limited'
+  | 'request-too-large'
+  | 'revoked'
+  | 'server-unavailable'
+  | 'unauthenticated';
+
+export type UsageEngineReplicationStreamId = 'memory-v1' | 'usage-v1';
+
+export interface UsageEngineReplicationDiagnostic {
+  readonly code: UsageEngineReplicationDiagnosticCode;
+  readonly problemCode: UsageEngineReplicationProblemCode | null;
+  readonly streamId: UsageEngineReplicationStreamId | null;
+}
+
+export interface UsageEngineReplicationStreamStatus {
+  readonly acknowledged: number;
+  readonly acknowledgedThroughGeneration: number;
+  readonly blocked: number;
+  readonly inFlight: number;
+  readonly lastAcknowledgedAt: string | null;
+  readonly lastErrorCode: string | null;
+  readonly nextRetryAt: string | null;
+  readonly oldestUnacknowledgedAt: string | null;
+  readonly pending: number;
+  readonly streamId: UsageEngineReplicationStreamId;
+}
+
+export interface UsageEngineReplicationStatusOutput {
+  readonly kind: 'replication-status';
+  readonly lastDiagnostic: UsageEngineReplicationDiagnostic | null;
+  readonly memory: UsageEngineReplicationStreamStatus | null;
+  readonly mode: 'connected' | 'local-only';
+  readonly runtimeState: 'connecting' | 'disabled' | 'disposed' | 'publishing' | 'waiting';
+  readonly usage: UsageEngineReplicationStreamStatus | null;
+}
+
 interface UsageEngineCommandCompletionBase {
   readonly commandId: UsageEngineCommandId;
   readonly completedAt: string;
@@ -882,6 +941,11 @@ export type UsageEngineCommandCompletion =
       readonly state: 'succeeded';
     })
   | (UsageEngineCommandCompletionBase & {
+      readonly command: 'replication-status';
+      readonly output: UsageEngineReplicationStatusOutput;
+      readonly state: 'succeeded';
+    })
+  | (UsageEngineCommandCompletionBase & {
       readonly command: Exclude<
         UsageEngineCommandName,
         | 'collect-fresh-quota'
@@ -889,6 +953,7 @@ export type UsageEngineCommandCompletion =
         | 'import-cursor'
         | 'preview-merge'
         | 'publish'
+        | 'replication-status'
         | 'set-machine-label'
       >;
       readonly output: { readonly kind: 'none' };
@@ -908,6 +973,7 @@ const usageEngineCommandNames = new Set<UsageEngineCommandName>([
   'import-cursor',
   'preview-merge',
   'publish',
+  'replication-status',
   'replace-project-aliases',
   'replace-project-groups',
   'replace-project-groups-by-reference',
@@ -1131,6 +1197,179 @@ export const parseUsageEnginePublicationOutput = (value: unknown): UsageEnginePu
   return { kind: 'publication', publication: parseRequiredPublication(value.publication) };
 };
 
+const replicationDiagnosticCodes = new Set<UsageEngineReplicationDiagnosticCode>([
+  'acknowledged',
+  'blocked',
+  'configuration-invalid',
+  'credential-missing',
+  'credential-unavailable',
+  'device-rejected',
+  'device-unreachable',
+  'idle',
+  'retry-scheduled',
+  'setup-failed',
+]);
+
+const replicationProblemCodes = new Set<UsageEngineReplicationProblemCode>([
+  'batch-id-conflict',
+  'capture-context-forbidden',
+  'event-id-conflict',
+  'generation-gap',
+  'invalid-batch',
+  'overlap-conflict',
+  'protocol-incompatible',
+  'rate-limited',
+  'request-too-large',
+  'revoked',
+  'server-unavailable',
+  'unauthenticated',
+]);
+
+const replicationStreamIds = new Set<UsageEngineReplicationStreamId>(['memory-v1', 'usage-v1']);
+
+const parseReplicationDiagnostic = (value: unknown): UsageEngineReplicationDiagnostic | null => {
+  if (value === null) {
+    return null;
+  }
+  if (!(isRecord(value) && hasExactKeys(value, ['code', 'problemCode', 'streamId']))) {
+    return fail('Usage engine replication diagnostic contains unknown or missing fields.');
+  }
+  if (!replicationDiagnosticCodes.has(value.code as UsageEngineReplicationDiagnosticCode)) {
+    return fail('Usage engine replication diagnostic code is unknown.');
+  }
+  if (
+    value.problemCode !== null &&
+    !replicationProblemCodes.has(value.problemCode as UsageEngineReplicationProblemCode)
+  ) {
+    return fail('Usage engine replication problem code is unknown.');
+  }
+  if (value.streamId !== null && !replicationStreamIds.has(value.streamId as UsageEngineReplicationStreamId)) {
+    return fail('Usage engine replication diagnostic stream is unknown.');
+  }
+  return {
+    code: value.code as UsageEngineReplicationDiagnosticCode,
+    problemCode: value.problemCode as UsageEngineReplicationProblemCode | null,
+    streamId: value.streamId as UsageEngineReplicationStreamId | null,
+  };
+};
+
+const parseNullableReplicationTimestamp = (value: unknown, label: string): string | null =>
+  value === null ? null : parseIsoTimestamp(value, label);
+
+const parseReplicationStreamStatus = (
+  value: unknown,
+  expectedStreamId: UsageEngineReplicationStreamId,
+): UsageEngineReplicationStreamStatus | null => {
+  if (value === null) {
+    return null;
+  }
+  if (
+    !(
+      isRecord(value) &&
+      hasExactKeys(value, [
+        'acknowledged',
+        'acknowledgedThroughGeneration',
+        'blocked',
+        'inFlight',
+        'lastAcknowledgedAt',
+        'lastErrorCode',
+        'nextRetryAt',
+        'oldestUnacknowledgedAt',
+        'pending',
+        'streamId',
+      ]) &&
+      value.streamId === expectedStreamId
+    )
+  ) {
+    return fail('Usage engine replication stream status contains unknown, missing, or inconsistent fields.');
+  }
+  const lastErrorCode =
+    value.lastErrorCode === null
+      ? null
+      : parseBoundedString(value.lastErrorCode, 128, 'Usage engine replication error code');
+  if (lastErrorCode !== null && !replicationErrorCodePattern.test(lastErrorCode)) {
+    return fail('Usage engine replication error code is invalid.');
+  }
+  return {
+    acknowledged: parseNonNegativeSafeInteger(
+      value.acknowledged,
+      Number.MAX_SAFE_INTEGER,
+      'Usage engine replication acknowledged count',
+    ),
+    acknowledgedThroughGeneration: parseNonNegativeSafeInteger(
+      value.acknowledgedThroughGeneration,
+      Number.MAX_SAFE_INTEGER,
+      'Usage engine replication acknowledged generation',
+    ),
+    blocked: parseNonNegativeSafeInteger(
+      value.blocked,
+      Number.MAX_SAFE_INTEGER,
+      'Usage engine replication blocked count',
+    ),
+    inFlight: parseNonNegativeSafeInteger(
+      value.inFlight,
+      Number.MAX_SAFE_INTEGER,
+      'Usage engine replication in-flight count',
+    ),
+    lastAcknowledgedAt: parseNullableReplicationTimestamp(
+      value.lastAcknowledgedAt,
+      'Usage engine replication last ACK timestamp',
+    ),
+    lastErrorCode,
+    nextRetryAt: parseNullableReplicationTimestamp(value.nextRetryAt, 'Usage engine replication retry timestamp'),
+    oldestUnacknowledgedAt: parseNullableReplicationTimestamp(
+      value.oldestUnacknowledgedAt,
+      'Usage engine replication oldest unacknowledged timestamp',
+    ),
+    pending: parseNonNegativeSafeInteger(
+      value.pending,
+      Number.MAX_SAFE_INTEGER,
+      'Usage engine replication pending count',
+    ),
+    streamId: expectedStreamId,
+  };
+};
+
+const replicationRuntimeStates = new Set<UsageEngineReplicationStatusOutput['runtimeState']>([
+  'connecting',
+  'disabled',
+  'disposed',
+  'publishing',
+  'waiting',
+]);
+
+export const parseUsageEngineReplicationStatusOutput = (value: unknown): UsageEngineReplicationStatusOutput => {
+  if (
+    !(
+      isRecord(value) &&
+      hasExactKeys(value, ['kind', 'lastDiagnostic', 'memory', 'mode', 'runtimeState', 'usage']) &&
+      value.kind === 'replication-status' &&
+      (value.mode === 'connected' || value.mode === 'local-only') &&
+      replicationRuntimeStates.has(value.runtimeState as UsageEngineReplicationStatusOutput['runtimeState'])
+    )
+  ) {
+    return fail('Usage engine replication status output is invalid.');
+  }
+  const lastDiagnostic = parseReplicationDiagnostic(value.lastDiagnostic);
+  const memory = parseReplicationStreamStatus(value.memory, 'memory-v1');
+  const usage = parseReplicationStreamStatus(value.usage, 'usage-v1');
+  if (
+    (value.mode === 'local-only' &&
+      (value.runtimeState !== 'disabled' || lastDiagnostic !== null || memory !== null || usage !== null)) ||
+    (value.mode === 'connected' && value.runtimeState === 'disabled')
+  ) {
+    return fail('Usage engine replication mode and runtime status are inconsistent.');
+  }
+  return {
+    kind: 'replication-status',
+    lastDiagnostic,
+    memory,
+    mode: value.mode,
+    runtimeState: value.runtimeState as UsageEngineReplicationStatusOutput['runtimeState'],
+    usage,
+  };
+};
+
 export const parseUsageEngineCommandCompletion = (value: unknown): UsageEngineCommandCompletion => {
   assertSerializedBound(
     value,
@@ -1171,6 +1410,9 @@ export const parseUsageEngineCommandCompletion = (value: unknown): UsageEngineCo
   }
   if (command === 'publish') {
     return { ...base, command, output: parseUsageEnginePublicationOutput(value.output), state: 'succeeded' };
+  }
+  if (command === 'replication-status') {
+    return { ...base, command, output: parseUsageEngineReplicationStatusOutput(value.output), state: 'succeeded' };
   }
   if (!(isRecord(value.output) && hasExactKeys(value.output, ['kind']) && value.output.kind === 'none')) {
     return fail('Only a preview command may carry merge preview output.');

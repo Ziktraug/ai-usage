@@ -16,6 +16,8 @@ export interface SessionVcsRepository {
   webUrl: string | null;
 }
 
+export type SessionVcsRepositoryProvider = 'generic' | 'github' | 'gitlab';
+
 export interface SessionVcsBranchSpan {
   firstObservedAt: string | null;
   lastObservedAt: string | null;
@@ -202,6 +204,22 @@ export const normalizeSessionVcsRepository = (
     return null;
   }
   return { host, ownerPath, provenance, webUrl: repositoryWebUrl(host, ownerPath) };
+};
+
+export const sessionVcsRepositoryProvider = (repository: SessionVcsRepository): SessionVcsRepositoryProvider => {
+  if (repository.host === 'github.com') {
+    return 'github';
+  }
+  if (repository.host === 'gitlab.com') {
+    return 'gitlab';
+  }
+  return 'generic';
+};
+
+export const sessionVcsRepositoryAliasKey = (repository: SessionVcsRepository): string => {
+  const provider = sessionVcsRepositoryProvider(repository);
+  const ownerPath = provider === 'generic' ? repository.ownerPath : repository.ownerPath.toLowerCase();
+  return `${repository.host.toLowerCase()}/${ownerPath}`;
 };
 
 export const sessionVcsBranchUrl = (repository: SessionVcsRepository, branch: string): string | null => {
