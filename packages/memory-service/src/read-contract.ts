@@ -6,7 +6,7 @@ import {
   type SpaceId,
 } from '@ai-usage/platform-core/identity';
 import { type MemoryProjectContext, memoryProjectContextBounds } from './application';
-import { type MemoryItemResult, memoryKinds, parseMemoryItemResult } from './domain';
+import { type MemoryItemResult, memoryKinds, parseCurrentMemoryItemResult, parseMemoryItemResult } from './domain';
 import {
   type MemorySearchParameters,
   type NormalizedMemorySearchParameters,
@@ -135,7 +135,7 @@ export const parseMemoryProjectContext = (value: unknown): MemoryProjectContext 
   }
   const projectId = parseProjectId(value.projectId);
   const spaceId = parseSpaceId(value.spaceId);
-  const items = value.items.map(parseMemoryItemResult);
+  const items = value.items.map(parseCurrentMemoryItemResult);
   if (
     items.some(
       ({ item }) => item.owningSpaceId !== spaceId || (item.projectId !== null && item.projectId !== projectId),

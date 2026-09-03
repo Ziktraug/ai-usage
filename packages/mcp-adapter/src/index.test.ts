@@ -25,6 +25,7 @@ const projectId = parseProjectId('019d3000-0000-7000-8000-000000000002');
 const personId = parsePersonId('019d3000-0000-7000-8000-000000000003');
 const itemId = parseMemoryItemId('019d3000-0000-7000-8000-000000000004');
 const revisionId = parseMemoryRevisionId('019d3000-0000-7000-8000-000000000005');
+const currentRevisionId = parseMemoryRevisionId('019d3000-0000-7000-8000-000000000007');
 const observationId = parseMemoryObservationId('019d3000-0000-7000-8000-000000000006');
 const createdAt = parseInstant('2026-08-30T12:00:00.000Z');
 
@@ -180,7 +181,10 @@ describe('Memory MCP adapter', () => {
       ...readService(),
       getMemoryItem: (input) => {
         requested = input;
-        return Promise.resolve({ kind: 'success', value: itemResult });
+        return Promise.resolve({
+          kind: 'success',
+          value: { ...itemResult, item: { ...itemResult.item, currentRevisionId } },
+        });
       },
     });
     try {
@@ -193,7 +197,9 @@ describe('Memory MCP adapter', () => {
       );
       expect(result.isError).not.toBe(true);
       expect(requested).toEqual({ itemId, revisionId });
-      expect(result.structuredContent).toMatchObject({ card: { id: itemId, revisionId } });
+      expect(result.structuredContent).toMatchObject({
+        card: { id: itemId, revisionId, verification: 'accepted-historical-revision' },
+      });
     } finally {
       await fixture.close();
     }

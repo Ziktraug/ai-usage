@@ -171,9 +171,4 @@ if (runPostgresTests) {
       }
     }, 30_000);
   });
-} else {
-  // biome-ignore lint/suspicious/noSkippedTests: PostgreSQL integration requires the repository-owned PostgreSQL 17 binaries.
-  describe.skip('outbound Device replication', () => {
-    test('requires AI_USAGE_RUN_POSTGRES_TESTS=1', () => undefined);
-  });
 }

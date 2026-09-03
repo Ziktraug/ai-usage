@@ -58,6 +58,10 @@ interface EventReceiptRow extends QueryResultRow {
   readonly generation: unknown;
 }
 
+interface EventIdentityRow extends QueryResultRow {
+  readonly event_hash: unknown;
+}
+
 interface GenerationRow extends QueryResultRow {
   readonly accepted_through_generation: unknown;
   readonly last_ack_proof: unknown;
@@ -67,10 +71,22 @@ interface IdRow extends QueryResultRow {
   readonly id: unknown;
 }
 
+type ReplicationProblemResult = Extract<ApplyReplicationBatchResult, { readonly kind: 'problem' }>;
+
+class ReplicationProblemRollback extends PlatformStoreError {
+  readonly result: ReplicationProblemResult;
+
+  constructor(result: ReplicationProblemResult) {
+    super('validation-failed', 'rollback-replication-problem');
+    this.name = 'ReplicationProblemRollback';
+    this.result = result;
+  }
+}
+
 const problem = (
   code: ReplicationProblem['code'],
   expectedGeneration?: ReplicationGeneration,
-): ApplyReplicationBatchResult => ({
+): ReplicationProblemResult => ({
   kind: 'problem',
   problem: {
     code,
@@ -405,20 +421,41 @@ const validateOverlap = async (
   return true;
 };
 
-const eventIdAvailable = async (
+const readEventIdentityHash = async (
   client: PoolClient,
   batch: ReplicationBatch,
   event: ReplicationEvent,
-  context: CaptureContextSnapshot,
-): Promise<boolean> => {
-  await activateSpace(client, context.spaceId);
-  const result = await client.query<EventReceiptRow>(
-    `SELECT event_id, generation, fact_key, content_hash, change_kind, capture_context_id
-     FROM replication_event_receipts
+  owningSpaceId: SpaceId,
+): Promise<string | null> => {
+  await activateSpace(client, owningSpaceId);
+  const result = await client.query<EventIdentityRow>(
+    `SELECT event_hash
+     FROM replication_event_identities
      WHERE device_id = $1 AND stream_id = $2 AND event_id = $3`,
     [batch.deviceId, batch.streamId, event.eventId],
   );
-  return result.rows.length === 0;
+  const value = result.rows[0]?.event_hash;
+  if (value === undefined) {
+    return null;
+  }
+  if (typeof value !== 'string' || !replicationHashPattern.test(value)) {
+    throw new PlatformStoreError('validation-failed', 'map-replication-event-identity');
+  }
+  return value;
+};
+
+const reserveEventId = async (
+  client: PoolClient,
+  batch: ReplicationBatch,
+  event: ReplicationEvent,
+  owningSpaceId: SpaceId,
+): Promise<void> => {
+  await activateSpace(client, owningSpaceId);
+  await client.query(
+    `INSERT INTO replication_event_identities (device_id, space_id, stream_id, event_id, event_hash)
+     VALUES ($1, $2, $3, $4, $5)`,
+    [batch.deviceId, owningSpaceId, batch.streamId, event.eventId, replicationHash(event)],
+  );
 };
 
 const insertEventAndProjection = async (
@@ -426,8 +463,10 @@ const insertEventAndProjection = async (
   batch: ReplicationBatch,
   event: ReplicationEvent,
   context: CaptureContextSnapshot,
+  owningSpaceId: SpaceId,
   appliedAt: string,
 ): Promise<void> => {
+  await reserveEventId(client, batch, event, owningSpaceId);
   await activateSpace(client, context.spaceId);
   await client.query(
     `INSERT INTO replication_event_receipts
@@ -536,6 +575,12 @@ const applyAuthorizedBatch = async (
   ) {
     return problem('overlap-conflict');
   }
+  for (const event of batch.events) {
+    const existingHash = await readEventIdentityHash(client, batch, event, input.authenticatedDevice.owningSpaceId);
+    if (existingHash !== null && existingHash !== replicationHash(event)) {
+      return problem('event-id-conflict');
+    }
+  }
   if (!(await validateOverlap(client, batch, generation.accepted, contexts))) {
     return problem('overlap-conflict');
   }
@@ -543,7 +588,8 @@ const applyAuthorizedBatch = async (
   const newEvents = batch.events.filter(({ generation: eventGeneration }) => eventGeneration > generation.accepted);
   for (const event of newEvents) {
     const context = contexts.get(event.captureContextId);
-    if (!(context && (await eventIdAvailable(client, batch, event, context)))) {
+    const existingHash = await readEventIdentityHash(client, batch, event, input.authenticatedDevice.owningSpaceId);
+    if (!(context && existingHash === null)) {
       return problem('event-id-conflict');
     }
   }
@@ -554,7 +600,7 @@ const applyAuthorizedBatch = async (
     if (!context) {
       throw new PlatformStoreError('validation-failed', 'resolve-replication-event-context');
     }
-    await insertEventAndProjection(client, batch, event, context, appliedAt);
+    await insertEventAndProjection(client, batch, event, context, input.authenticatedDevice.owningSpaceId, appliedAt);
   }
   const ack = parseReplicationAck({
     acceptedThroughGeneration: batch.toGenerationInclusive,
@@ -628,16 +674,23 @@ export const createPlatformReplicationStore = (pool: Pool): PlatformReplicationS
         'apply-replication-batch',
         async (client) => {
           if (!(await credentialIsCurrent(client, input))) {
-            return problem('revoked');
+            throw new ReplicationProblemRollback(problem('revoked'));
           }
           const contexts = await validateCaptureContexts(client, input, batch);
           if (!contexts) {
-            return problem('capture-context-forbidden');
+            throw new ReplicationProblemRollback(problem('capture-context-forbidden'));
           }
-          return applyAuthorizedBatch(client, input, batch, requestHash, contexts);
+          const result = await applyAuthorizedBatch(client, input, batch, requestHash, contexts);
+          if (result.kind === 'problem') {
+            throw new ReplicationProblemRollback(result);
+          }
+          return result;
         },
       );
-    } catch {
+    } catch (error) {
+      if (error instanceof ReplicationProblemRollback) {
+        return error.result;
+      }
       return problem('server-unavailable');
     }
   },

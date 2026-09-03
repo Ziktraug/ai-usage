@@ -1217,6 +1217,16 @@ export const PLATFORM_MIGRATIONS: readonly PlatformMigration[] = Object.freeze([
         FOREIGN KEY (device_id, space_id) REFERENCES devices (id, space_id) ON DELETE RESTRICT
       );
 
+      CREATE TABLE replication_event_identities (
+        device_id UUID NOT NULL,
+        space_id UUID NOT NULL,
+        stream_id TEXT NOT NULL CHECK (stream_id IN ('usage-v1', 'memory-v1')),
+        event_id UUID NOT NULL,
+        event_hash TEXT NOT NULL CHECK (event_hash ~ '^[0-9a-f]{64}$'),
+        PRIMARY KEY (device_id, stream_id, event_id),
+        FOREIGN KEY (device_id, space_id) REFERENCES devices (id, space_id) ON DELETE RESTRICT
+      );
+
       CREATE TABLE replication_event_receipts (
         device_id UUID NOT NULL,
         space_id UUID NOT NULL,
@@ -1244,6 +1254,8 @@ export const PLATFORM_MIGRATIONS: readonly PlatformMigration[] = Object.freeze([
         PRIMARY KEY (device_id, stream_id, event_id),
         UNIQUE (device_id, stream_id, generation),
         FOREIGN KEY (device_id) REFERENCES devices (id) ON DELETE RESTRICT,
+        FOREIGN KEY (device_id, stream_id, event_id)
+          REFERENCES replication_event_identities (device_id, stream_id, event_id) ON DELETE RESTRICT,
         FOREIGN KEY (capture_context_id, space_id)
           REFERENCES capture_contexts (id, space_id) ON DELETE RESTRICT,
         FOREIGN KEY (project_id, space_id) REFERENCES projects (id, space_id) ON DELETE RESTRICT
@@ -1319,6 +1331,12 @@ export const PLATFORM_MIGRATIONS: readonly PlatformMigration[] = Object.freeze([
       ALTER TABLE replication_event_receipts ENABLE ROW LEVEL SECURITY;
       ALTER TABLE replication_event_receipts FORCE ROW LEVEL SECURITY;
       CREATE POLICY replication_event_receipts_space_fence ON replication_event_receipts
+        USING (space_id = NULLIF(current_setting('ai_usage.active_space_id', TRUE), '')::UUID)
+        WITH CHECK (space_id = NULLIF(current_setting('ai_usage.active_space_id', TRUE), '')::UUID);
+
+      ALTER TABLE replication_event_identities ENABLE ROW LEVEL SECURITY;
+      ALTER TABLE replication_event_identities FORCE ROW LEVEL SECURITY;
+      CREATE POLICY replication_event_identities_space_fence ON replication_event_identities
         USING (space_id = NULLIF(current_setting('ai_usage.active_space_id', TRUE), '')::UUID)
         WITH CHECK (space_id = NULLIF(current_setting('ai_usage.active_space_id', TRUE), '')::UUID);
 

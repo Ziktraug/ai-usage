@@ -177,8 +177,10 @@ export interface MemoryItemResult {
   readonly revision: MemoryRevision;
 }
 
+export interface CurrentMemoryItemResult extends MemoryItemResult {}
+
 export interface MemoryItemPage {
-  readonly items: readonly MemoryItemResult[];
+  readonly items: readonly CurrentMemoryItemResult[];
   readonly nextCursor: string | null;
 }
 
@@ -399,6 +401,14 @@ export const parseMemoryItemResult = (value: unknown): MemoryItemResult => {
     throw new MemoryDomainValidationError('memoryItemResult.identity');
   }
   return { item, revision };
+};
+
+export const parseCurrentMemoryItemResult = (value: unknown): CurrentMemoryItemResult => {
+  const result = parseMemoryItemResult(value);
+  if (result.item.currentRevisionId !== result.revision.id) {
+    throw new MemoryDomainValidationError('memoryItemResult.currentRevision');
+  }
+  return result;
 };
 
 export const memoryRevisionContent = (

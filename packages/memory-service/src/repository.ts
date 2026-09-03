@@ -10,6 +10,7 @@ import type {
   SpaceId,
 } from '@ai-usage/platform-core/identity';
 import type {
+  CurrentMemoryItemResult,
   MemoryExportSnapshot,
   MemoryImport,
   MemoryItem,
@@ -180,7 +181,7 @@ export interface ExportMemoryQuery {
 }
 
 export interface MemoryRepository {
-  readonly acceptProposal: (input: AcceptProposalInput) => Promise<MemoryItemResult>;
+  readonly acceptProposal: (input: AcceptProposalInput) => Promise<CurrentMemoryItemResult>;
   readonly confirmImport: (input: ConfirmMemoryImportInput) => Promise<ConfirmMemoryImportResult>;
   readonly createProposal: (input: CreateProposalInput) => Promise<MemoryProposalId>;
   readonly createRelation: (relation: MemoryRelation, audit: MemoryAuditEvent) => Promise<void>;

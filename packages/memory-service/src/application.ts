@@ -28,6 +28,7 @@ import {
 } from '@ai-usage/platform-core/identity';
 import { createReplicationEventId } from '@ai-usage/replication-protocol';
 import {
+  type CurrentMemoryItemResult,
   type MemoryItem,
   type MemoryItemPage,
   type MemoryItemResult,
@@ -311,14 +312,16 @@ export interface GetMemoryProjectContextQuery extends MemoryCommandContext {
 }
 
 export interface MemoryProjectContext {
-  readonly items: readonly MemoryItemResult[];
+  readonly items: readonly CurrentMemoryItemResult[];
   readonly projectId: ProjectId;
   readonly spaceId: SpaceId;
   readonly truncated: boolean;
 }
 
 export interface MemoryApplicationService {
-  readonly acceptProposal: (command: AcceptMemoryProposalCommand) => Promise<MemoryApplicationResult<MemoryItemResult>>;
+  readonly acceptProposal: (
+    command: AcceptMemoryProposalCommand,
+  ) => Promise<MemoryApplicationResult<CurrentMemoryItemResult>>;
   readonly confirmMemoryImport: (
     command: ConfirmMemoryImportCommand,
   ) => Promise<MemoryApplicationResult<MemoryImportConfirmation>>;
@@ -343,7 +346,9 @@ export interface MemoryApplicationService {
     command: RecordMemoryObservationCommand,
   ) => Promise<MemoryApplicationResult<{ readonly created: boolean; readonly id: MemoryObservationId }>>;
   readonly rejectProposal: (command: RejectMemoryProposalCommand) => Promise<MemoryApplicationResult<void>>;
-  readonly reviseMemoryItem: (command: ReviseMemoryItemCommand) => Promise<MemoryApplicationResult<MemoryItemResult>>;
+  readonly reviseMemoryItem: (
+    command: ReviseMemoryItemCommand,
+  ) => Promise<MemoryApplicationResult<CurrentMemoryItemResult>>;
   readonly searchMemory: (query: SearchMemoryApplicationQuery) => Promise<MemoryApplicationResult<MemorySearchPage>>;
   readonly supersedeMemoryItem: (command: SupersedeMemoryItemCommand) => Promise<MemoryApplicationResult<void>>;
 }
@@ -1109,7 +1114,7 @@ export const createMemoryApplicationService = (
         return errorResult(operation, 'authorization-unavailable');
       }
       try {
-        const candidates: MemoryItemResult[] = [];
+        const candidates: CurrentMemoryItemResult[] = [];
         let cursor: string | null = null;
         let scannedItems = 0;
         do {

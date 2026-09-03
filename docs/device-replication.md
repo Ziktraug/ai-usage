@@ -150,6 +150,11 @@ One PostgreSQL transaction:
 6. upserts or tombstones the current projection by `fact_key`;
 7. advances stream state and stores the reconstructible bounded ACK.
 
+An owner-Space event-identity registry keeps Device/stream event IDs visible to
+the ingest transaction even when event receipts are fenced into different
+Spaces. Every problem result rolls the transaction back, including any Capture
+Contexts materialized while validating the batch.
+
 The ACK is returned only after commit. An exact duplicate returns the stored
 ACK. Reusing an event or batch identity with different canonical content is a
 conflict and writes nothing. Gaps and disagreeing overlap write nothing. A

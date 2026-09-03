@@ -191,8 +191,9 @@ if (runPostgresTests) {
           await database.queryRowCount('SELECT 1 FROM replication_event_receipts WHERE fact_key = $1', [factKey]),
         ).toBe(3);
 
+        const gapContext = { ...context, id: createCaptureContextId() };
         const gapEvent = createReplicationEvent({
-          captureContextId: context.id,
+          captureContextId: gapContext.id,
           changeKind: 'device-fact-upsert',
           eventId: createReplicationEventId(),
           factKey,
@@ -207,7 +208,7 @@ if (runPostgresTests) {
         });
         const gapBatch = createReplicationBatch({
           batchId: createReplicationBatchId(),
-          captureContexts: [context],
+          captureContexts: [gapContext],
           deviceId: exchanged.value.device.id,
           events: [gapEvent],
           fromGenerationExclusive: parseReplicationGeneration(4),
@@ -218,6 +219,7 @@ if (runPostgresTests) {
           kind: 'problem',
           problem: { code: 'generation-gap', expectedGeneration: parseReplicationGeneration(3) },
         });
+        expect(await database.queryRowCount('SELECT 1 FROM capture_contexts WHERE id = $1', [gapContext.id])).toBe(0);
 
         const overlapEvent = createReplicationEvent({
           captureContextId: context.id,
@@ -247,47 +249,122 @@ if (runPostgresTests) {
           problem: { code: 'overlap-conflict' },
         });
 
-        const reusedEvent = createReplicationEvent({
+        const batchConflictId = createReplicationBatchId();
+        const batchConflictEventOne = createReplicationEvent({
           captureContextId: context.id,
           changeKind: 'device-fact-upsert',
-          eventId: secondEvent.eventId,
+          eventId: createReplicationEventId(),
           factKey,
           generation: parseReplicationGeneration(4),
           payload: {
             deviceId: exchanged.value.device.id,
             kind: 'device-fact-upsert',
-            label: 'Reused event ID',
+            label: 'Concurrent batch winner one',
             lastSeenAt: observedAt,
             status: 'active',
           },
         });
-        const reusedEventBatch = createReplicationBatch({
-          batchId: createReplicationBatchId(),
+        const batchConflictEventTwo = createReplicationEvent({
+          captureContextId: context.id,
+          changeKind: 'device-fact-upsert',
+          eventId: createReplicationEventId(),
+          factKey,
+          generation: parseReplicationGeneration(4),
+          payload: {
+            deviceId: exchanged.value.device.id,
+            kind: 'device-fact-upsert',
+            label: 'Concurrent batch winner two',
+            lastSeenAt: observedAt,
+            status: 'active',
+          },
+        });
+        const batchConflictOne = createReplicationBatch({
+          batchId: batchConflictId,
           captureContexts: [context],
           deviceId: exchanged.value.device.id,
-          events: [reusedEvent],
+          events: [batchConflictEventOne],
           fromGenerationExclusive: parseReplicationGeneration(3),
           streamId: USAGE_REPLICATION_STREAM_ID,
           toGenerationInclusive: parseReplicationGeneration(4),
         });
-        expect(await store.replication.applyBatch({ ...authenticated, batch: reusedEventBatch })).toEqual({
-          kind: 'problem',
-          problem: { code: 'event-id-conflict' },
-        });
-
-        const batchIdConflict = createReplicationBatch({
-          batchId: tombstoneBatch.batchId,
+        const batchConflictTwo = createReplicationBatch({
+          batchId: batchConflictId,
           captureContexts: [context],
           deviceId: exchanged.value.device.id,
-          events: [reusedEvent],
+          events: [batchConflictEventTwo],
           fromGenerationExclusive: parseReplicationGeneration(3),
           streamId: USAGE_REPLICATION_STREAM_ID,
           toGenerationInclusive: parseReplicationGeneration(4),
         });
-        expect(await store.replication.applyBatch({ ...authenticated, batch: batchIdConflict })).toEqual({
+        const concurrentBatchResults = await Promise.all([
+          store.replication.applyBatch({ ...authenticated, batch: batchConflictOne }),
+          store.replication.applyBatch({ ...authenticated, batch: batchConflictTwo }),
+        ]);
+        expect(concurrentBatchResults.filter(({ kind }) => kind === 'ack')).toHaveLength(1);
+        expect(concurrentBatchResults.find(({ kind }) => kind === 'problem')).toEqual({
           kind: 'problem',
           problem: { code: 'batch-id-conflict' },
         });
+
+        const sharedEventId = createReplicationEventId();
+        const eventConflictOne = createReplicationEvent({
+          captureContextId: context.id,
+          changeKind: 'device-fact-upsert',
+          eventId: sharedEventId,
+          factKey,
+          generation: parseReplicationGeneration(5),
+          payload: {
+            deviceId: exchanged.value.device.id,
+            kind: 'device-fact-upsert',
+            label: 'Concurrent event winner one',
+            lastSeenAt: observedAt,
+            status: 'active',
+          },
+        });
+        const eventConflictTwo = createReplicationEvent({
+          captureContextId: context.id,
+          changeKind: 'device-fact-upsert',
+          eventId: sharedEventId,
+          factKey,
+          generation: parseReplicationGeneration(5),
+          payload: {
+            deviceId: exchanged.value.device.id,
+            kind: 'device-fact-upsert',
+            label: 'Concurrent event winner two',
+            lastSeenAt: observedAt,
+            status: 'active',
+          },
+        });
+        const eventConflictBatchOne = createReplicationBatch({
+          batchId: createReplicationBatchId(),
+          captureContexts: [context],
+          deviceId: exchanged.value.device.id,
+          events: [eventConflictOne],
+          fromGenerationExclusive: parseReplicationGeneration(4),
+          streamId: USAGE_REPLICATION_STREAM_ID,
+          toGenerationInclusive: parseReplicationGeneration(5),
+        });
+        const eventConflictBatchTwo = createReplicationBatch({
+          batchId: createReplicationBatchId(),
+          captureContexts: [context],
+          deviceId: exchanged.value.device.id,
+          events: [eventConflictTwo],
+          fromGenerationExclusive: parseReplicationGeneration(4),
+          streamId: USAGE_REPLICATION_STREAM_ID,
+          toGenerationInclusive: parseReplicationGeneration(5),
+        });
+        const concurrentEventResults = await Promise.all([
+          store.replication.applyBatch({ ...authenticated, batch: eventConflictBatchOne }),
+          store.replication.applyBatch({ ...authenticated, batch: eventConflictBatchTwo }),
+        ]);
+        expect(concurrentEventResults.filter(({ kind }) => kind === 'ack')).toHaveLength(1);
+        expect(concurrentEventResults.find(({ kind }) => kind === 'problem')).toEqual({
+          kind: 'problem',
+          problem: { code: 'event-id-conflict' },
+        });
+        expect(await database.queryRowCount('SELECT 1 FROM replication_event_identities')).toBe(5);
+        expect(await database.queryRowCount('SELECT 1 FROM replication_event_receipts')).toBe(5);
+        expect(await database.queryRowCount('SELECT 1 FROM replication_batch_receipts')).toBe(5);
 
         const forbiddenBatch = createReplicationBatch({
           batchId: createReplicationBatchId(),
@@ -299,7 +376,7 @@ if (runPostgresTests) {
               changeKind: 'device-fact-upsert',
               eventId: createReplicationEventId(),
               factKey,
-              generation: parseReplicationGeneration(4),
+              generation: parseReplicationGeneration(6),
               payload: {
                 deviceId: exchanged.value.device.id,
                 kind: 'device-fact-upsert',
@@ -309,15 +386,15 @@ if (runPostgresTests) {
               },
             }),
           ],
-          fromGenerationExclusive: parseReplicationGeneration(3),
+          fromGenerationExclusive: parseReplicationGeneration(5),
           streamId: USAGE_REPLICATION_STREAM_ID,
-          toGenerationInclusive: parseReplicationGeneration(4),
+          toGenerationInclusive: parseReplicationGeneration(6),
         });
         expect(await store.replication.applyBatch({ ...authenticated, batch: forbiddenBatch })).toEqual({
           kind: 'problem',
           problem: { code: 'capture-context-forbidden' },
         });
-        expect(await database.queryRowCount('SELECT 1 FROM replication_event_receipts')).toBe(3);
+        expect(await database.queryRowCount('SELECT 1 FROM replication_event_receipts')).toBe(5);
 
         await expect(
           database.query('UPDATE replication_event_receipts SET fact_key = $1 WHERE event_id = $2', [
@@ -332,7 +409,7 @@ if (runPostgresTests) {
             principal: { kind: 'person', personId },
           }),
         ).resolves.toMatchObject({ kind: 'success' });
-        expect(await store.replication.applyBatch({ ...authenticated, batch: reusedEventBatch })).toEqual({
+        expect(await store.replication.applyBatch({ ...authenticated, batch: eventConflictBatchOne })).toEqual({
           kind: 'problem',
           problem: { code: 'revoked' },
         });
@@ -488,16 +565,18 @@ if (runPostgresTests) {
           streamId: USAGE_REPLICATION_STREAM_ID,
           toGenerationInclusive: parseReplicationGeneration(2),
         });
-        await expect(
-          store.replication.applyBatch({
-            authenticatedCredentialId: exchanged.value.credential.id,
-            authenticatedDevice: exchanged.value.device,
-            batch,
-          }),
-        ).resolves.toMatchObject({
+        const accepted = await store.replication.applyBatch({
+          authenticatedCredentialId: exchanged.value.credential.id,
+          authenticatedDevice: exchanged.value.device,
+          batch,
+        });
+        expect(accepted).toMatchObject({
           ack: { counts: { applied: 2, duplicate: 0, projected: 2, tombstoned: 0 } },
           kind: 'ack',
         });
+        if (accepted.kind !== 'ack') {
+          throw new Error('Expected multi-space replication ACK.');
+        }
         expect(
           await database.queryRowCountInSpace(
             personalSpaceId,
@@ -524,16 +603,48 @@ if (runPostgresTests) {
             [exchanged.value.device.id, organizationSpaceId],
           ),
         ).toBe(0);
+
+        const reusedAcrossSpaces = createReplicationEvent({
+          captureContextId: personalContext.id,
+          changeKind: 'usage-session-upsert',
+          eventId: organizationEvent.eventId,
+          factKey: 'usage-session:cross-space-event-id-conflict',
+          generation: parseReplicationGeneration(3),
+          payload: {
+            harness: 'codex',
+            kind: 'usage-session-upsert',
+            model: 'gpt-5',
+            observedAt,
+            projectId: null,
+            sourceFingerprint: 'c'.repeat(64),
+            sourceSessionId: 'cross-space-event-id-conflict',
+            status: 'active',
+            tokenTotal: 30,
+          },
+        });
+        const collisionBatch = createReplicationBatch({
+          batchId: createReplicationBatchId(),
+          captureContexts: [personalContext],
+          deviceId: exchanged.value.device.id,
+          events: [reusedAcrossSpaces],
+          fromGenerationExclusive: parseReplicationGeneration(2),
+          previousAckProof: replicationAckProof(accepted.ack),
+          streamId: USAGE_REPLICATION_STREAM_ID,
+          toGenerationInclusive: parseReplicationGeneration(3),
+        });
+        expect(
+          await store.replication.applyBatch({
+            authenticatedCredentialId: exchanged.value.credential.id,
+            authenticatedDevice: exchanged.value.device,
+            batch: collisionBatch,
+          }),
+        ).toEqual({ kind: 'problem', problem: { code: 'event-id-conflict' } });
+        expect(await database.queryRowCount('SELECT 1 FROM replication_event_receipts')).toBe(2);
       } finally {
         await database.close().catch(() => undefined);
         await store.close().catch(() => undefined);
         await cluster.stop();
       }
     }, 30_000);
-  });
-} else {
-  // biome-ignore lint/suspicious/noSkippedTests: PostgreSQL integration requires the repository-owned PostgreSQL 17 binaries.
-  describe.skip('PostgreSQL replication ingest', () => {
-    test('requires AI_USAGE_RUN_POSTGRES_TESTS=1', () => undefined);
   });
 }

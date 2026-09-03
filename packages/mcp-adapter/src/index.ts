@@ -180,7 +180,10 @@ const itemCard = ({ item, revision }: MemoryItemResult) => ({
   summary: revision.summary.slice(0, memorySearchBounds.maxSummaryCharacters),
   title: revision.title.slice(0, memorySearchBounds.maxTitleCharacters),
   trust: item.trust,
-  verification: 'accepted-current-revision' as const,
+  verification:
+    item.currentRevisionId === revision.id
+      ? ('accepted-current-revision' as const)
+      : ('accepted-historical-revision' as const),
 });
 
 const safeToolResult = (payload: Record<string, unknown>) => {
