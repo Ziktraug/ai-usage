@@ -1053,7 +1053,8 @@ test('keeps sync limited to explicit file transfers', async ({ page }) => {
     .getByRole('heading', { level: 2, name: 'Manual transfer' })
     .locator('xpath=ancestor::section[1]');
   await expect(transferSection).toBeVisible();
-  await expect(fleetSection.locator('[data-machine-fleet-share]')).toHaveCount(1);
+  // One machine has nothing to share the fleet with, so the share fact is omitted rather than shown as 100%.
+  await expect(fleetSection.locator('[data-machine-fleet-share]')).toHaveCount(0);
   await expect(page.locator('main[data-route-shell="sync"] table')).toHaveCount(0);
   await expect(page.getByRole('list', { name: 'Machine contribution summaries' })).toHaveCount(0);
   const syncSections = page.locator('main[data-route-shell="sync"] > div > section');

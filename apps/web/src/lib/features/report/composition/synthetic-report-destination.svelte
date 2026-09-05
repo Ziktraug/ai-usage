@@ -492,6 +492,7 @@
         generatedAt: reportSupport.generatedAt,
         harnesses: breakdown.groups.harnesses,
         harnessProviders: breakdown.groups.harnessProviders,
+        machineCount: machineOptions.length,
         models: breakdown.groups.models,
         projects: breakdown.groups.projects,
         range: focusedQuery.range,

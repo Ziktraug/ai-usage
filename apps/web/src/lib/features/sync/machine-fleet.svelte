@@ -96,9 +96,12 @@
           <div class={machineFact}>
             <span class={machineFactLabel}>Stored sessions</span><span>{machine.sessionCount.toLocaleString()}</span>
           </div>
-          <div class={machineFact} data-machine-fleet-share>
-            <span class={machineFactLabel}>Fleet share</span><span>{shares.get(machine.id) ?? '0%'}</span>
-          </div>
+          {#if machines.length + omittedMachines > 1}
+            <!-- A share only compares; one machine has nothing to compare against. -->
+            <div class={machineFact} data-machine-fleet-share>
+              <span class={machineFactLabel}>Fleet share</span><span>{shares.get(machine.id) ?? '0%'}</span>
+            </div>
+          {/if}
           <div class={machineFact}>
             <span class={machineFactLabel}>Newest session</span
             ><span>{formatFleetAge(machine.newestSessionAt, now)}</span>
