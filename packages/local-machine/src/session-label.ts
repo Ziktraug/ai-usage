@@ -1,6 +1,9 @@
 export const DERIVED_SESSION_LABEL_MAX_CHARACTERS = 200;
 
 const CONTEXT_BLOCK_PATTERN = /<context\b[^>]*>[\s\S]*?<\/context\s*>/giu;
+// Harness-injected wrappers, never something the person typed: an attached image's placeholder
+// (`<image name=[Image #1] path="…">`) and Claude Code's system reminders. Paired or self-closing.
+const INJECTED_TAG_BLOCK_PATTERN = /<(image|system-reminder|attachment)\b[^>]*>(?:[\s\S]*?<\/\1\s*>)?/giu;
 const TAGGED_LOG_BLOCK_PATTERN = /<(log|logs|console|terminal|output)\b[^>]*>[\s\S]*?<\/\1\s*>/giu;
 const BRACKETED_LOG_BLOCK_PATTERN =
   /\[(?:log|logs|console|terminal|output)\][\s\S]*?\[\/(?:log|logs|console|terminal|output)\]/giu;
@@ -116,7 +119,7 @@ export const deriveSessionLabelFromPrompt = (prompt: string | null | undefined):
   if (!prompt) {
     return null;
   }
-  const withoutContext = prompt.replace(CONTEXT_BLOCK_PATTERN, '\n');
+  const withoutContext = prompt.replace(CONTEXT_BLOCK_PATTERN, '\n').replace(INJECTED_TAG_BLOCK_PATTERN, '\n');
   const withoutLogs = stripPastedLogBlocks(withoutContext);
   const withReadableFileLinks = withoutLogs.replace(LOCAL_FILE_LINK_PATTERN, '@$1');
   const headingLine = firstLineBelowMarkdownHeading(withReadableFileLinks);

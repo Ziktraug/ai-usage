@@ -61,3 +61,19 @@ Exécuter les tests ciblés.`;
     expect(label?.endsWith('…')).toBe(true);
   });
 });
+
+describe('derived session labels · injected wrappers', () => {
+  test('drops attached-image placeholders and system reminders before the first sentence', () => {
+    const prompt = `<image name=[Image #1] path="/tmp/claude-1000/shots/home.jpg">
+<system-reminder>
+Background task event, not user input.
+</system-reminder>
+Regarde cette capture et propose des améliorations. Puis liste les fichiers.`;
+
+    expect(deriveSessionLabelFromPrompt(prompt)).toBe('Regarde cette capture et propose des améliorations.');
+  });
+
+  test('returns null when only wrappers remain', () => {
+    expect(deriveSessionLabelFromPrompt('<image name=[Image #1] path="/tmp/x.png">')).toBeNull();
+  });
+});
