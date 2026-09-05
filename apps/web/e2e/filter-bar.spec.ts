@@ -138,7 +138,7 @@ test('keeps source status and its action in one bounded group at the 768px break
   await expect(actions).toBeVisible();
   await expect(actions.locator('[aria-label="Collection source status"]')).toHaveCount(1);
   const status = actions.getByRole('link', { name: 'Sources ready' });
-  const runAll = actions.getByRole('button', { name: 'Run all' });
+  const runAll = actions.getByRole('button', { name: 'Collect now' });
   await expect(status).toBeVisible();
   await expect(runAll).toBeVisible();
   const toolbar = page.locator('[data-dashboard-filter-stack]');

@@ -12,6 +12,7 @@ const BETA_SKILL_CONTENT = '# beta-skill\n\nDeterministic Playwright fixture.\n'
 const ALPHA_SKILL_URL = /\/skills\/global\/alpha-skill$/;
 const BETA_SKILL_URL = /\/skills\/global\/beta-skill$/;
 const SKILLS_WORKTABLE_URL = /\/skills$/;
+const STATE_COLUMN_PATTERN = /State/;
 const DESKTOP_WORKSPACE_VIEWPORT = { height: 900, width: 1280 } as const;
 const MOBILE_VIEWPORT = { height: 844, width: 390 } as const;
 const SAVE_MANAGED_MARKDOWN_RPC_ROUTE = `**${SKILLS_SAVE_RPC_PATH}`;
@@ -553,4 +554,52 @@ test('keeps every Skills mutation inside the deterministic E2E backend', async (
   await expect(page.getByRole('region', { name: 'Reconcile plan' })).toBeVisible();
   await page.getByRole('button', { name: APPLY_ACTION_PATTERN }).click();
   await expect(page.getByText('alpha-skill linked to Codex.')).toBeVisible();
+});
+
+test('keeps the skill name in view while the worktable scrolls sideways at 1024px', async ({ page }) => {
+  await page.setViewportSize({ height: 768, width: 1024 });
+  await openHydratedSkills(page, '/skills');
+  const worktable = page.getByRole('region', { name: 'Skills worktable' });
+  await expect(worktable).toBeVisible();
+  const overflow = await worktable.evaluate((element) => element.scrollWidth - element.clientWidth);
+  expect(overflow).toBeGreaterThan(0);
+
+  const firstName = worktable.locator('tbody th[scope="row"]').first();
+  const stateHeader = worktable.getByRole('columnheader', { name: STATE_COLUMN_PATTERN });
+  const nameBefore = await firstName.boundingBox();
+  const stateBefore = await stateHeader.boundingBox();
+  const wrapBox = await worktable.boundingBox();
+  expect(nameBefore && wrapBox && nameBefore.x >= wrapBox.x - 1).toBe(true);
+  // The action column starts off-screen: that is the situation the cue and the sticky column exist for.
+  expect(stateBefore && wrapBox && stateBefore.x + stateBefore.width > wrapBox.x + wrapBox.width).toBe(true);
+
+  await worktable.evaluate((element) => {
+    element.scrollLeft = element.scrollWidth;
+  });
+  await expect
+    .poll(async () => {
+      const [nameAfter, stateAfter] = await Promise.all([firstName.boundingBox(), stateHeader.boundingBox()]);
+      return {
+        nameStaysPinned: Boolean(nameAfter && nameBefore && Math.abs(nameAfter.x - nameBefore.x) <= 1),
+        stateReachable: Boolean(
+          stateAfter && wrapBox && stateAfter.x + stateAfter.width <= wrapBox.x + wrapBox.width + 1,
+        ),
+      };
+    })
+    .toEqual({ nameStaysPinned: true, stateReachable: true });
+
+  // The cue: the wrapper paints its edge shadows only while columns hide past an edge.
+  expect(await worktable.evaluate((element) => getComputedStyle(element).backgroundImage)).toContain('linear-gradient');
+
+  // Keyboard users reach the same column: the region is focusable and arrow keys scroll it.
+  await worktable.evaluate((element) => {
+    element.scrollLeft = 0;
+  });
+  await worktable.focus();
+  await expect(worktable).toBeFocused();
+  await page.keyboard.press('ArrowRight');
+  await expect.poll(async () => await worktable.evaluate((element) => element.scrollLeft)).toBeGreaterThan(0);
+  const [nameKeyboard, stateKeyboard] = await Promise.all([firstName.boundingBox(), stateHeader.boundingBox()]);
+  expect(nameKeyboard && nameBefore && Math.abs(nameKeyboard.x - nameBefore.x) <= 1).toBe(true);
+  expect(stateKeyboard !== null).toBe(true);
 });

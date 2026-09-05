@@ -87,11 +87,16 @@ export const projectLinesPresentation = (
   }
   const delta = `+${fmtNum(project.linesAdded)}/-${fmtNum(project.linesDeleted)}`;
   if (measuredSessions < totalSessions) {
+    // A lower bound of zero says nothing a reader can use; the coverage line already states the
+    // measured scope, so the value reads as the measured zero it is instead of "at least nothing".
+    const measuredZero = project.linesAdded === 0 && project.linesDeleted === 0;
     return {
       coverage: `${fmtNum(measuredSessions)} of ${fmtNum(totalSessions)} sessions measured`,
-      label: `≥ ${delta}`,
+      label: measuredZero ? delta : `≥ ${delta}`,
       status: 'lower-bound',
-      title: `Lines added/deleted summed over the ${fmtNum(measuredSessions)} of ${fmtNum(totalSessions)} sessions that report line changes; the rest are not counted`,
+      title: measuredZero
+        ? `No line changes reported by the ${fmtNum(measuredSessions)} of ${fmtNum(totalSessions)} sessions that report line counts; the rest are not counted`
+        : `Lines added/deleted summed over the ${fmtNum(measuredSessions)} of ${fmtNum(totalSessions)} sessions that report line changes; the rest are not counted`,
     };
   }
   return {

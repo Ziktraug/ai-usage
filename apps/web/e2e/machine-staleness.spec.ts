@@ -9,7 +9,7 @@ test('surfaces a stale machine outside sync while preserving its raw filter valu
   const activity = page.getByRole('region', { name: 'Activity' });
   const chartOptions = activity.locator('details[aria-label="Explore activity"]');
   await chartOptions.locator('summary').click();
-  await chartOptions.getByRole('radio', { exact: true, name: 'Machine' }).click();
+  await activity.getByLabel('Group by').selectOption({ label: 'Machine' });
   await expect(activity.getByTitle('Filter by Fixture Machine · Stale')).toContainText('Fixture Machine · Stale');
 
   const machineFilter = page.getByRole('button', { name: 'Filter by machine' });

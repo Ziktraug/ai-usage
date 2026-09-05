@@ -63,12 +63,15 @@
     groups,
     onManageProjectGroups,
     onProjectFilter,
+    showMachines = true,
   }: {
     catalogue?: readonly UsageReportProjectGroup[];
     emptyMessage: string;
     groups: readonly ProjectGroup[];
     onManageProjectGroups: () => void;
     onProjectFilter: (value: string) => void;
+    /** False when the whole store is known to hold one machine: the qualifier would repeat itself. */
+    showMachines?: boolean;
   } = $props();
 
   const valueFor = (project: ProjectGroup) =>
@@ -128,7 +131,7 @@
                   </button>
                 {/if}
               </div>
-              {#if identity.machines.length > 0}
+              {#if showMachines && identity.machines.length > 0}
                 <span class={projectMachine} data-project-machine>{identity.machines.join(' · ')}</span>
               {/if}
             </th>
@@ -189,7 +192,7 @@
                 </button>
               {/if}
             </div>
-            {#if identity.machines.length > 0}
+            {#if showMachines && identity.machines.length > 0}
               <span class={projectMachine} data-project-machine>{identity.machines.join(' · ')}</span>
             {/if}
           </div>

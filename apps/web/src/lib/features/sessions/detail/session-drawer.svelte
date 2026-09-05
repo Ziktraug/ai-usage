@@ -420,12 +420,17 @@
             value={fmtMoney(chargedAmount)}
           />
         {/if}
-        <DrawerDetailItem
-          {...detailHintControl}
-          hint="Cursor export value covered by the subscription quota"
-          label="Subscription value"
-          value={fmtMoney(row.costQuota)}
-        />
+        {#if row.harness === 'Cursor' && row.costQuota !== null && row.costQuota !== undefined}
+          <!-- Only the Cursor export reports a quota-covered value. Applicability is the source, not
+               the number: campaign totals reduce an absent quota to 0, so a non-null value alone
+               would still print $0.00 under a Codex campaign. A Cursor zero stays visible. -->
+          <DrawerDetailItem
+            {...detailHintControl}
+            hint="Cursor export value covered by the subscription quota"
+            label="Subscription value"
+            value={fmtMoney(row.costQuota)}
+          />
+        {/if}
         <DrawerDetailItem {...detailHintControl} label="Calls" value={fmtNum(row.calls)} />
         <DrawerDetailItem
           {...detailHintControl}

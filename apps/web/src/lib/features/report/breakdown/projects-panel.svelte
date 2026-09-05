@@ -23,6 +23,7 @@
     disabled,
     generatedAt,
     groups,
+    machineCount = null,
     onProjectFilter,
     onSave,
     payload,
@@ -30,6 +31,8 @@
     disabled: boolean;
     generatedAt: string;
     groups: readonly ProjectGroup[];
+    /** Store-wide machine count when known exactly; null when unknown or truncated. */
+    machineCount?: number | null;
     onProjectFilter: (value: string) => void;
     onSave: (projectGroups: readonly ProjectGroupConfig[]) => Promise<void>;
     payload: Pick<WebReportPayloadWithoutRows, 'projectGroupConfigs' | 'projectGroups'>;
@@ -90,6 +93,7 @@
       groups={visible}
       onManageProjectGroups={openManagement}
       {onProjectFilter}
+      showMachines={machineCount !== 1}
     />
   </section>
   <details class={disclosureClass} bind:this={disclosure}>

@@ -77,7 +77,7 @@ const columnLabels = [
   'API value',
   'Share',
   'Processed tokens',
-  'Pricing coverage',
+  'Rates known',
   'API value / 1M tokens',
 ] as const;
 const TABLE_CAPTION_PATTERN = /<caption[^>]*>Model API-value analysis<\/caption>/;
@@ -130,15 +130,21 @@ describe('responsive Models analysis', () => {
     expect(body).toContain('aria-label="Filter sessions by model partial"');
     expect(body).toContain('<article aria-label="partial"');
     expect(body).toContain('API value / 1M tokens is unavailable because this model has zero processed tokens.');
-    const coverageLabel = '3 / 3 · 100%';
-    const coverageQualification = '1 of 3 sessions without token counters · API value is a lower bound';
-    const coverageStart = body.indexOf(coverageLabel);
-    const coverageCell = body.slice(coverageStart, body.indexOf('</td>', coverageStart));
-    expect(coverageStart).toBeGreaterThan(-1);
-    expect(coverageCell).toContain(coverageQualification);
+    // The missing-counter note sits under the API value it bounds, once per representation; the
+    // rates-known cell carries no counter talk.
+    const valueQualification = '1 of 3 sessions without token counters · API value is a lower bound';
+    const table = body.slice(body.indexOf('data-model-analysis-table'), body.indexOf('data-model-analysis-cards'));
+    const valueStart = table.indexOf('≥ $4.00');
+    const valueCell = table.slice(valueStart, table.indexOf('</td>', valueStart));
+    expect(valueStart).toBeGreaterThan(-1);
+    expect(valueCell).toContain(valueQualification);
+    const coverageStart = table.indexOf('3 / 3 · 100%');
+    const coverageCell = table.slice(coverageStart, table.indexOf('</td>', coverageStart));
+    expect(coverageCell).not.toContain('token counters');
+    expect(table).toContain('≥ 150');
     const mobileCards = body.slice(body.indexOf('data-model-analysis-cards'));
     expect(mobileCards).toContain('Processed tokens: cache read + cache write + input + output.');
-    expect(mobileCards.match(new RegExp(coverageQualification, 'g'))).toHaveLength(1);
+    expect(mobileCards.match(new RegExp(valueQualification, 'g'))).toHaveLength(1);
   });
 
   test('keeps the Breakdown route contract behind the visible Analysis dimension', () => {
@@ -177,5 +183,41 @@ describe('responsive Models analysis', () => {
   test('preserves the exact local-search empty copy', () => {
     expect(modelAnalysisEmptyMessage(' model-without-results ')).toBe('No breakdown rows match this search');
     expect(modelAnalysisEmptyMessage('')).toBe('No models');
+  });
+});
+
+describe('model comparison bars', () => {
+  test('draws one bar per visible model, hatching lower bounds and leaving unknown measures empty', () => {
+    const groups = [
+      group('measured'),
+      group('counterless', { cache: 80, costSum: 4, fresh: 70, priced: 3, sessions: 3, usageUnavailable: 1 }),
+      group('unpriced', {
+        cache: 40,
+        costSum: 0,
+        fresh: 60,
+        priced: 0,
+        sessions: 1,
+        unpriced: 1,
+        unpricedFreshTokens: 60,
+      }),
+    ];
+    const { body } = render(component, {
+      props: {
+        generatedAt: '2026-08-09T12:00:00.000Z',
+        groups,
+        onModelFilter: () => undefined,
+        onSortChange: () => undefined,
+        sort: 'value',
+      },
+    });
+    const comparison = body.slice(
+      body.indexOf('<section aria-label="Model comparison'),
+      body.indexOf('data-model-analysis-table'),
+    );
+    expect(comparison).toContain('aria-label="Model comparison by value"');
+    expect(comparison.match(/data-model-bar=/g)).toHaveLength(3);
+    expect(comparison.match(/data-lower-bound="true"/g)).toHaveLength(1);
+    expect(comparison).toContain('no measure');
+    expect(comparison).toContain('width: 100%');
   });
 });

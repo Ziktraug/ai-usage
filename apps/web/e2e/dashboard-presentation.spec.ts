@@ -29,7 +29,7 @@ const MODEL_ANALYSIS_COLUMNS = [
   'API value',
   'Share',
   'Processed tokens',
-  'Pricing coverage',
+  'Rates known',
   'API value / 1M tokens',
 ] as const;
 // 1080x900 sits in the md-but-not-xl band and 1080x1920 is the portrait display. Both are daily

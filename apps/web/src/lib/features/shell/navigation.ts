@@ -36,6 +36,21 @@ export const dashboardSearchCodec: DashboardSearchCodec<DashboardSearch> = {
 export const activeReportTab = (url: URL): PrimaryDashboardTab =>
   primaryDashboardTabFor(parseDashboardSearchUrl(url, dashboardSearchCodec).tab);
 
+/**
+ * The page title names the destination, not the product: three views share `/`, and a reader (or a
+ * screen reader) landing on one should learn which from the `h1`, not from the navigation rail.
+ */
+export const reportDestinationHeading = (tab: PrimaryDashboardTab): string => {
+  switch (tab) {
+    case 'sessions':
+      return 'Sessions';
+    case 'breakdown':
+      return 'Analysis';
+    default:
+      return 'Usage overview';
+  }
+};
+
 export const reportDestinationUrl = (currentUrl: URL, tab: PrimaryDashboardTab): URL => {
   const search = parseDashboardSearchUrl(currentUrl, dashboardSearchCodec);
   const nextTab = tab === 'breakdown' ? breakdownTabFor(search.tab) : tab;

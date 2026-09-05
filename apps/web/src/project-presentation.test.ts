@@ -171,9 +171,9 @@ describe('project breakdown presentation', () => {
       ),
     ).toEqual({
       coverage: '2 of 5 sessions measured',
-      label: '≥ +0/-0',
+      label: '+0/-0',
       status: 'lower-bound',
-      title: 'Lines added/deleted summed over the 2 of 5 sessions that report line changes; the rest are not counted',
+      title: 'No line changes reported by the 2 of 5 sessions that report line counts; the rest are not counted',
     });
     expect(
       projectLinesPresentation(

@@ -18,7 +18,7 @@ test('isolates the synthetic demo from every local data and control capability',
   await page.goto('/');
   await waitForHydratedReport(page);
   await expect(page.getByText('Demo data', { exact: true })).toBeVisible();
-  await expect(page.getByRole('heading', { level: 1, name: 'Usage report' })).toBeVisible();
+  await expect(page.getByRole('heading', { level: 1, name: 'Usage overview' })).toBeVisible();
   await expect(reportViewsFor(page).getByRole('link', { exact: true, name: 'Overview' })).toHaveAttribute(
     'aria-current',
     'page',

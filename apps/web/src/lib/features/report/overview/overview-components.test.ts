@@ -153,7 +153,7 @@ describe('decision-first Overview Svelte surfaces', () => {
     const activityMetric = body.match(ACTIVITY_METRIC_FIELDSET_PATTERN)?.[0] ?? '';
     expect(activityMetric.match(ARIA_PRESSED_PATTERN)).toHaveLength(4);
     expect(body).not.toContain('aria-label="Metric"');
-    expect(body).toContain('Grouping, interval, exact dates');
+    expect(body).toContain('Interval, exact dates');
     expect(body).toContain('data-report-range-part="brush-axis"');
     expect(body).toContain('data-brush-tick');
     expect(body).toContain('data-series-key="');

@@ -3,8 +3,12 @@
   import { header, meta, title, titleBlock } from '@ai-usage/design-system/svelte';
   import { reportFreshnessLabel, reportFreshnessTime } from './report-view-model';
 
-  let { generatedAt, hasReportData, isDemo }: { generatedAt: string | null; hasReportData: boolean; isDemo: boolean } =
-    $props();
+  let {
+    generatedAt,
+    hasReportData,
+    heading = 'Usage overview',
+    isDemo,
+  }: { generatedAt: string | null; hasReportData: boolean; heading?: string; isDemo: boolean } = $props();
 
   const headerTop = css({ alignItems: 'flex-start', display: 'flex', justifyContent: 'space-between' });
   const eyebrowRow = css({ alignItems: 'center', display: 'flex', gap: '8px' });
@@ -35,7 +39,7 @@
           <span class={demoBadge}>Demo data</span>
         {/if}
       </div>
-      <h1 class={title}>Usage report</h1>
+      <h1 class={title}>{heading}</h1>
       <div
         class={meta}
         data-report-freshness

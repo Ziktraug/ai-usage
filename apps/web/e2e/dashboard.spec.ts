@@ -76,7 +76,7 @@ test('loads a deterministic report overview', async ({ page }) => {
   expect(initialHtml).toContain('Daily activity calendar');
   expect(initialHtml).not.toContain('Generated ');
 
-  await expect(page.getByRole('heading', { level: 1, name: 'Usage report' })).toBeVisible();
+  await expect(page.getByRole('heading', { level: 1, name: 'Usage overview' })).toBeVisible();
   await expect(page.locator('[data-report-freshness]')).toHaveText('Data as of Jun 11, 12:00');
   await expect(page.locator('[data-report-freshness] time')).toHaveAttribute('datetime', '2026-06-11T12:00:00.000Z');
   await expect(page.getByRole('region', { name: 'Report period' })).toBeVisible();
@@ -166,7 +166,7 @@ test('retries a failed report through the Router loading lifecycle', async ({ co
   await page.getByRole('button', { name: 'Retry' }).click();
 
   await context.setExtraHTTPHeaders({});
-  await expect(page.getByRole('heading', { level: 1, name: 'Usage report' })).toBeVisible();
+  await expect(page.getByRole('heading', { level: 1, name: 'Usage overview' })).toBeVisible();
   await expect(reportViewsFor(page).getByRole('link', { exact: true, name: 'Overview' })).toHaveAttribute(
     'aria-current',
     'page',
@@ -1053,7 +1053,8 @@ test('keeps sync limited to explicit file transfers', async ({ page }) => {
     .getByRole('heading', { level: 2, name: 'Manual transfer' })
     .locator('xpath=ancestor::section[1]');
   await expect(transferSection).toBeVisible();
-  await expect(fleetSection.locator('[data-machine-fleet-share]')).toHaveCount(1);
+  // One machine has nothing to share the fleet with, so the share fact is omitted rather than shown as 100%.
+  await expect(fleetSection.locator('[data-machine-fleet-share]')).toHaveCount(0);
   await expect(page.locator('main[data-route-shell="sync"] table')).toHaveCount(0);
   await expect(page.getByRole('list', { name: 'Machine contribution summaries' })).toHaveCount(0);
   const syncSections = page.locator('main[data-route-shell="sync"] > div > section');

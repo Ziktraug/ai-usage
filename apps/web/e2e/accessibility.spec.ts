@@ -17,7 +17,7 @@ const ALL_FILTER_PATTERN = /^All —/;
 const MAX_PROJECT_EXPANSIONS = 12;
 const NAVIGATION_DESTINATIONS = ['Overview', 'Sessions', 'Analysis', 'Skills', 'Sync', 'Sources'] as const;
 const routes = [
-  { heading: 'Usage report', path: '/' },
+  { heading: 'Usage overview', path: '/' },
   { heading: 'Skills', path: '/skills' },
   { heading: 'Sources', path: '/sources' },
   { heading: 'Sync', path: '/sync' },

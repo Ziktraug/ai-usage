@@ -27,7 +27,15 @@ export const sessionsExportScopeLabel = (
   totalCampaignRows: number,
   filteredSessions: number,
 ): string =>
-  `Exports ${rows.length.toLocaleString()} of ${totalCampaignRows.toLocaleString()} campaign rows currently loaded, representing ${loadedSessionCount(rows).toLocaleString()} of ${filteredSessions.toLocaleString()} filtered sessions`;
+  `Represents ${loadedSessionCount(rows).toLocaleString()} of ${filteredSessions.toLocaleString()} filtered sessions · ${rows.length.toLocaleString()} of ${totalCampaignRows.toLocaleString()} campaign rows loaded`;
+
+/**
+ * The action names what it does: the export covers the loaded campaign aggregates, never the whole
+ * filtered result. Putting the count on the button is what stops a bounded page being mistaken for
+ * a complete export; the scope label beside it carries the session unit.
+ */
+export const sessionsExportButtonLabel = (rows: readonly SessionPresentationRow[]): string =>
+  `Export ${rows.length.toLocaleString()} loaded campaign${rows.length === 1 ? '' : 's'}`;
 
 const sessionCampaignExportRow = (row: SessionPresentationRow): SessionCampaignExportRow => {
   if (row.campaignKey === undefined || row.campaignVisibleCount === undefined || row.campaignTotalCount === undefined) {

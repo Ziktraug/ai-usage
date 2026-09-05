@@ -16,7 +16,31 @@
   const activityPanel = css({ display: 'grid', gap: '12px', p: { base: '14px', md: '18px' } });
   const brushAxis = css({ position: 'relative', minH: '14px', color: 'muted', fontSize: '10px', lineHeight: 1 });
   const brushTick = css({ position: 'absolute', top: 0, transform: 'translateX(-50%)', whiteSpace: 'nowrap' });
-  const executiveMetricGroup = css({ border: 0, m: 0, minW: 0, order: { md: -1 }, p: 0 });
+  const executiveMetricGroup = css({ border: 0, m: 0, minW: 0, p: 0 });
+  // Metric and grouping are the two questions a reader asks of this chart; both sit in the toolbar.
+  // Interval and exact dates stay behind the disclosure.
+  const toolbarRow = css({
+    display: 'flex',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: '8px 16px',
+    minW: 0,
+    order: { md: -1 },
+  });
+  const groupByField = css({ display: 'inline-flex', alignItems: 'center', gap: '8px', minW: 0 });
+  const groupByLabel = css({ color: 'muted', fontSize: '12px', fontWeight: 600, whiteSpace: 'nowrap' });
+  const groupBySelect = css({
+    h: { base: '44px', md: '32px' },
+    px: '10px',
+    border: '1px solid token(colors.lineStrong)',
+    borderRadius: 'sm',
+    bg: 'surface',
+    color: 'ink',
+    fontSize: '12px',
+    fontWeight: 600,
+    cursor: 'pointer',
+    _focusVisible: { outline: '2px solid token(colors.accent)', outlineOffset: '2px' },
+  });
   const executiveMetricButton = css({ minH: '44px' });
 </script>
 
@@ -442,25 +466,44 @@
     <span>{chartSummary}</span>
     <span title={selectedMetricSummary.title ?? undefined}>{selectedMetricSummary.label}</span>
   </div>
-  <fieldset aria-label="Activity metric" class={cx(presetGroup, executiveMetricGroup)}>
-    {#each valueItems as item (item.value)}
-      <button
-        aria-pressed={value === item.value}
-        class={cx(presetButton, executiveMetricButton)}
-        data-active={value === item.value ? 'true' : 'false'}
-        onclick={() => changeValue(item.value)}
-        type="button"
+  <div class={toolbarRow} data-activity-toolbar>
+    <fieldset aria-label="Activity metric" class={cx(presetGroup, executiveMetricGroup)}>
+      {#each valueItems as item (item.value)}
+        <button
+          aria-pressed={value === item.value}
+          class={cx(presetButton, executiveMetricButton)}
+          data-active={value === item.value ? 'true' : 'false'}
+          onclick={() => changeValue(item.value)}
+          type="button"
+        >
+          {item.label}
+        </button>
+      {/each}
+    </fieldset>
+    <!-- A native select: seven dimensions as a segmented control wrapped the toolbar at 1280px and
+         pushed the hero past the first screen. The metric keeps its segments; the grouping is one
+         labelled control the keyboard already knows. -->
+    <label class={groupByField}>
+      <span class={groupByLabel}>Group by</span>
+      <select
+        aria-label="Group by"
+        class={groupBySelect}
+        data-activity-group-by
+        onchange={(event) => changeDimension(event.currentTarget.value)}
+        value={dimension}
       >
-        {item.label}
-      </button>
-    {/each}
-  </fieldset>
+        {#each dimensionItems as item (item.value)}
+          <option value={item.value}>{item.label}</option>
+        {/each}
+      </select>
+    </label>
+  </div>
   <details aria-label="Explore activity" class={timeChartOptions} data-report-range-part="activity-explorer">
     <summary class={timeChartOptionsSummary}>
       <span class={timeChartOptionsTitle}>Explore activity</span>
       <!-- The current dimension/interval/metric already reads above the chart; repeating it here
            would spend the disclosure label on something the reader can see. Name what is inside. -->
-      <span class={timeChartOptionsCurrent}>Grouping, interval, exact dates</span>
+      <span class={timeChartOptionsCurrent}>Interval, exact dates</span>
     </summary>
     <div class={explorerContent}>
       <div class={summaryRow}>
@@ -522,13 +565,6 @@
         </div>
       </div>
       <div class={timeRangeViewControls}>
-        <SegmentedControl
-          ariaLabel="Group by"
-          items={dimensionItems}
-          label="Group by"
-          onValueChange={changeDimension}
-          value={dimension}
-        />
         <SegmentedControl
           ariaLabel="Interval"
           items={granularityItems}

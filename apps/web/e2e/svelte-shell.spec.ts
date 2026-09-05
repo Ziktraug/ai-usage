@@ -40,7 +40,7 @@ const restoreReportHistory = async (page: Page, expectedUrl: string): Promise<vo
 };
 
 const shellRoutes = [
-  { heading: 'Usage report', marker: 'report', path: '/' },
+  { heading: 'Usage overview', marker: 'report', path: '/' },
   { heading: 'Skills', marker: null, path: '/skills' },
   { heading: 'Sources', marker: 'sources', path: '/sources' },
   { heading: 'Sync', marker: 'sync', path: '/sync' },
