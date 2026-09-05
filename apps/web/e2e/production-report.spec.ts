@@ -153,7 +153,7 @@ test('renders the report timeline on the initial production Overview', async ({ 
   const initialResponse = await page.request.get('/');
   const initialHtml = await initialResponse.text();
   expect(initialResponse.ok()).toBe(true);
-  expect(initialHtml).toContain('Usage report');
+  expect(initialHtml).toContain('Usage overview');
   expect(initialHtml).not.toContain('Loading report data');
   expect(initialHtml).toContain('focused-overview-v1:');
   // Useful bounded report/query data belongs in SSR. Only explicit secret-bearing

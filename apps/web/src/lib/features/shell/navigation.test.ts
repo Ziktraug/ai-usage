@@ -6,6 +6,7 @@ import {
   isActiveManagementDestination,
   isManagementPath,
   navigationTypeForScroll,
+  reportDestinationHeading,
   reportDestinationUrl,
   shouldPreserveReportScroll,
 } from './navigation';
@@ -69,5 +70,13 @@ describe('Svelte application shell navigation', () => {
     expect(ownerSource).toContain('page.url.pathname');
     expect(ownerSource).toContain('page.url.search');
     expect(ownerSource).not.toContain('invalidateAll');
+  });
+});
+
+describe('report destination headings', () => {
+  test('names the destination, never the product', () => {
+    expect(reportDestinationHeading('overview')).toBe('Usage overview');
+    expect(reportDestinationHeading('sessions')).toBe('Sessions');
+    expect(reportDestinationHeading('breakdown')).toBe('Analysis');
   });
 });
