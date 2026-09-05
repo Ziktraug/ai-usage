@@ -154,6 +154,15 @@
     border: '1px solid token(colors.line)',
     borderRadius: 'md',
     bg: 'surface',
+    // Scroll cue: a hairline shadow appears on whichever edge still hides columns. The two `local`
+    // layers are surface-coloured covers that travel with the content and reveal the fixed shadows
+    // only when there is content past that edge — so a table that fits shows nothing.
+    backgroundImage:
+      'linear-gradient(to right, token(colors.surface) 40%, transparent), linear-gradient(to left, token(colors.surface) 40%, transparent), linear-gradient(to right, token(colors.lineStrong), transparent), linear-gradient(to left, token(colors.lineStrong), transparent)',
+    backgroundPosition: 'left center, right center, left center, right center',
+    backgroundRepeat: 'no-repeat',
+    backgroundSize: '48px 100%, 48px 100%, 10px 100%, 10px 100%',
+    backgroundAttachment: 'local, local, scroll, scroll',
     _focusVisible: { outline: '2px solid token(colors.accent)', outlineOffset: '2px' },
   });
   const worktable = css({
@@ -171,6 +180,15 @@
       whiteSpace: 'nowrap',
     },
     '& tbody tr': { borderBottom: '1px solid token(colors.line)' },
+    // The skill's identity stays in view while the evidence columns scroll under it; the State /
+    // Action column at the far right is otherwise reachable only by guessing that the table scrolls.
+    '& thead th:first-child, & tbody th[scope="row"]': {
+      position: 'sticky',
+      left: 0,
+      zIndex: 1,
+      bg: 'surface',
+      boxShadow: '1px 0 0 token(colors.line)',
+    },
   });
   const groupHeaderRow = css({ bg: 'surfaceMuted' });
   const groupHeaderCell = css({
