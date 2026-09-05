@@ -25,9 +25,12 @@
   let {
     createExport,
     environment = browserSharingEnvironment,
+    exportLabel = 'Export CSV',
   }: {
     createExport: () => Promise<ExportFile>;
     environment?: () => SharingEnvironment;
+    /** Destination-specific action name when the export covers less than the visible result. */
+    exportLabel?: string;
   } = $props();
 
   let notice: SharingNotice | undefined = $state();
@@ -42,7 +45,7 @@
 
 <div class={actions} data-report-sharing-actions>
   <button class={ghostButton} onclick={copyLink} type="button">Copy link</button>
-  <button class={ghostButton} onclick={exportCsv} type="button">Export CSV</button>
+  <button class={ghostButton} onclick={exportCsv} type="button">{exportLabel}</button>
   {#if notice?.tone === 'error'}
     <span aria-live="assertive" class={cx(noticeText, errorNoticeText)} role="alert">{notice.message}</span>
   {:else if notice}

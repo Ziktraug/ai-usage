@@ -6,7 +6,11 @@
     SessionQueryRequest,
   } from '@ai-usage/report-core/session-query';
   import { sessionQueryFingerprint } from '@ai-usage/report-core/session-query';
-  import { createSessionsExport, sessionsExportScopeLabel } from '../../../../dashboard-breakdown-export';
+  import {
+    createSessionsExport,
+    sessionsExportButtonLabel,
+    sessionsExportScopeLabel,
+  } from '../../../../dashboard-breakdown-export';
   import type { DashboardSearch } from '../../../../dashboard-search';
   import {
     sessionAnalysisTargetForPageItem,
@@ -140,7 +144,10 @@
           queryState?.sessionCount ?? _rows.length,
         )}
       </span>
-      <ReportSharingActions createExport={() => createSessionsExport(generatedAt ?? new Date().toISOString(), _rows)} />
+      <ReportSharingActions
+        createExport={() => createSessionsExport(generatedAt ?? new Date().toISOString(), _rows)}
+        exportLabel={sessionsExportButtonLabel(_rows)}
+      />
     </div>
     <SessionTable
       {...(queryState?.campaignChildren === undefined
