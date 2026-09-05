@@ -37,7 +37,7 @@ const fixtureBlock = (html: string, fixture: 'actions' | 'summary'): string => {
   return html.slice(start, nextFixture < 0 ? undefined : nextFixture);
 };
 
-const renderedButton = (html: string, label: 'Run all' | 'Run now'): string => {
+const renderedButton = (html: string, label: 'Collect now' | 'Run now'): string => {
   const buttonPattern = new RegExp(`<button\\b[^>]*>[\\s\\S]*?${label}[\\s\\S]*?<\\/button>`, 'u');
   const button = html.match(buttonPattern)?.[0];
   if (!button) {
@@ -73,7 +73,7 @@ describe('rendered source-control pending semantics', () => {
     const summary = fixtureBlock(html, 'summary');
 
     const runNow = renderedButton(actions, 'Run now');
-    const runAll = renderedButton(summary, 'Run all');
+    const runAll = renderedButton(summary, 'Collect now');
     expect(runNow).toContain('aria-busy="true"');
     expect(DISABLED_ATTRIBUTE_PATTERN.test(runNow)).toBe(true);
     expect(runAll).toContain('aria-busy="true"');
@@ -105,7 +105,7 @@ describe('rendered source-control pending semantics', () => {
     const summary = fixtureBlock(html, 'summary');
 
     const runNow = renderedButton(actions, 'Run now');
-    const runAll = renderedButton(summary, 'Run all');
+    const runAll = renderedButton(summary, 'Collect now');
     expect(runNow).not.toContain('aria-busy');
     expect(DISABLED_ATTRIBUTE_PATTERN.test(runNow)).toBe(false);
     expect(runAll).not.toContain('aria-busy');

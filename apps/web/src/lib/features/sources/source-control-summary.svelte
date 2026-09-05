@@ -102,6 +102,10 @@
     minW: 0,
   });
   const sourceLabel = css({ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: '12px' });
+  // "Collect now" is one pixel too wide for the 390px filter row (plan 092 sized that row to the
+  // pixel). The accessible name stays "Collect now"; the visible label drops "now" below `sm`.
+  const wideLabel = css({ display: { base: 'none', sm: 'inline' } });
+  const narrowLabel = css({ display: { base: 'inline', sm: 'none' } });
 </script>
 
 <section
@@ -169,11 +173,14 @@
   </a>
   <button
     {...pendingAriaBusyAttributes(runPending)}
+    aria-label="Collect now"
     class={ghostButton}
     disabled={!snapshot || controlState.connection !== 'live' || runPending}
     onclick={() => sourceControl.execute({ command: 'run-all' }).catch(() => undefined)}
+    title="Collect from every enabled source now. The report updates only if the collected data changed."
     type="button"
   >
-    Run all
+    <span aria-hidden="true" class={wideLabel}>Collect now</span
+    ><span aria-hidden="true" class={narrowLabel}>Collect</span>
   </button>
 </section>

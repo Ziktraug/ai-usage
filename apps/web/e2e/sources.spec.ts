@@ -148,7 +148,8 @@ test('keeps business sources independent through a picked disable and publishes 
   await openHydratedReport(reportPage);
   const summary = reportPage.getByRole('region', { name: 'Collection source status' });
   const summaryCard = summary.locator('[data-source-card]');
-  await summary.hover();
+  // The card opens from the status link, not from the whole group (which also holds the action button).
+  await summary.getByRole('link').hover();
   await expect(summaryCard).toBeVisible();
   await expect(summaryCard.getByText('Codex sessions', { exact: true })).toBeVisible();
   const runningDetail = summaryCard.getByText(RUNNING_ELAPSED_PATTERN);
