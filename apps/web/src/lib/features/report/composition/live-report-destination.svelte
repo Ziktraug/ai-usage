@@ -572,6 +572,7 @@
 <ReportWarnings
   cleanupDisabled={!mutationsEnabled}
   {omittedSupportItemCount}
+  {presentMachineLabel}
   {...(cleaningProjectWarningGroupId === undefined ? {} : { cleaningProjectWarningGroupId })}
   onCleanupProjectWarning={(warning) =>
     cleanupProjectWarning(warning, async () => {
