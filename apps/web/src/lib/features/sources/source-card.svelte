@@ -40,6 +40,14 @@
   const axisLabel = css({ color: 'muted', fontSize: '10px', fontWeight: 700, textTransform: 'uppercase' });
   const axisValue = css({ fontSize: '12px', overflowWrap: 'anywhere' });
   const detailList = css({ display: 'grid', gap: '5px', color: 'muted', fontSize: '12px', lineHeight: 1.5 });
+  // Outcome and the next action lead; cadence, timings and counters are what an operator opens when
+  // a run looks wrong, not what they read to know whether it did.
+  const runDetails = css({
+    color: 'muted',
+    fontSize: '12px',
+    '& > summary': { cursor: 'pointer', fontWeight: 650, color: 'ink' },
+    '&[open] > summary': { mb: '6px' },
+  });
   const progressStack = css({ display: 'grid', gap: '5px' });
   const progressBar = css({ width: '100%', accentColor: 'accent' });
 </script>
@@ -65,9 +73,6 @@
     <div class={axis}>
       <span class={axisLabel}>Last success</span><span class={axisValue}>{fmtDate(source.lastSuccessAt ?? null)}</span>
     </div>
-    <div class={axis}>
-      <span class={axisLabel}>Next due</span><span class={axisValue}>{fmtDate(source.nextDueAt ?? null)}</span>
-    </div>
   </div>
   {#if source.progress}
     <div class={progressStack}>
@@ -90,19 +95,25 @@
     {#if source.reason.code !== 'none'}
       <p>Reason: {source.reason.message ?? source.reason.code}</p>
     {/if}
-    {#if source.inputCount !== undefined || source.outputCount !== undefined}
-      <p>Last run: {fmtNum(source.inputCount ?? 0)} inputs · {fmtNum(source.outputCount ?? 0)} outputs</p>
-    {/if}
-    <p>
-      Cadence: {fmtNum(Math.round(source.cadenceMs / 1000))}s · duration
-      {source.durationMs === undefined ? 'not available' : `${fmtNum(source.durationMs)}ms`}
-      · queue delay
-      {source.queueDelayMs === undefined ? 'not available' : `${fmtNum(source.queueDelayMs)}ms`}
-    </p>
-    <p>Started {fmtDate(source.lastStartedAt ?? null)} · finished {fmtDate(source.lastFinishedAt ?? null)}</p>
     {#each source.warnings as warning (`${warning.code}:${warning.message ?? ''}`)}
       <p>Warning: {warning.message ?? warning.code}</p>
     {/each}
   </div>
+  <details class={runDetails} data-source-run-details>
+    <summary>Run details</summary>
+    <div class={detailList}>
+      <p>Next due {fmtDate(source.nextDueAt ?? null)}</p>
+      {#if source.inputCount !== undefined || source.outputCount !== undefined}
+        <p>Last run: {fmtNum(source.inputCount ?? 0)} inputs · {fmtNum(source.outputCount ?? 0)} outputs</p>
+      {/if}
+      <p>
+        Cadence: {fmtNum(Math.round(source.cadenceMs / 1000))}s · duration
+        {source.durationMs === undefined ? 'not available' : `${fmtNum(source.durationMs)}ms`}
+        · queue delay
+        {source.queueDelayMs === undefined ? 'not available' : `${fmtNum(source.queueDelayMs)}ms`}
+      </p>
+      <p>Started {fmtDate(source.lastStartedAt ?? null)} · finished {fmtDate(source.lastFinishedAt ?? null)}</p>
+    </div>
+  </details>
   <SourceActions {available} {execute} {pending} {source} />
 </article>

@@ -239,6 +239,22 @@
             </div>
           </section>
         {/if}
+        {#each groupOrder as group (group)}
+          {@const grouped = sourcesInGroup(deviations, group)}
+          {#if grouped.length > 0}
+            <section aria-labelledby={`source-group-${group}`} class={groupStack}>
+              <div class={groupHeader}>
+                <h2 class={groupTitle} id={`source-group-${group}`}>{groupLabels[group]}</h2>
+                <span class={meta}>{sourceCountLabel(grouped.length)}</span>
+              </div>
+              <div class={sourceGrid}>
+                {#each grouped as source (source.id)}
+                  <SourceCard available={controlsAvailable} execute={sourceControl.execute} {pending} {source} />
+                {/each}
+              </div>
+            </section>
+          {/if}
+        {/each}
         <details class={cx(panel, healthySummary)} data-healthy-source-summary>
           <summary class={healthySummaryHeader}>
             <h2 class={groupTitle}>Healthy sources</h2>
@@ -265,22 +281,6 @@
             {/each}
           </div>
         </details>
-        {#each groupOrder as group (group)}
-          {@const grouped = sourcesInGroup(deviations, group)}
-          {#if grouped.length > 0}
-            <section aria-labelledby={`source-group-${group}`} class={groupStack}>
-              <div class={groupHeader}>
-                <h2 class={groupTitle} id={`source-group-${group}`}>{groupLabels[group]}</h2>
-                <span class={meta}>{sourceCountLabel(grouped.length)}</span>
-              </div>
-              <div class={sourceGrid}>
-                {#each grouped as source (source.id)}
-                  <SourceCard available={controlsAvailable} execute={sourceControl.execute} {pending} {source} />
-                {/each}
-              </div>
-            </section>
-          {/if}
-        {/each}
       {:else}
         <div class={panel}>Connecting to the source control plane…</div>
       {/if}
