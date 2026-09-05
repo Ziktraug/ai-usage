@@ -29,7 +29,7 @@ export const shell = css({
 export const header = css({
   display: 'grid',
   gap: '20px',
-  pb: '16px',
+  pb: { base: '20px', md: '28px' },
 });
 
 export const headerTop = css({
@@ -53,7 +53,7 @@ export const headerActions = css({
 
 export const titleBlock = css({
   display: 'grid',
-  gap: '8px',
+  gap: '10px',
   minW: 0,
 });
 
@@ -80,10 +80,10 @@ export const demoBadge = css({
 });
 
 export const title = css({
-  fontSize: { base: '26px', md: '30px' },
-  lineHeight: '1.1',
+  fontSize: { base: '28px', md: '36px' },
+  lineHeight: { base: '34px', md: '40px' },
   fontWeight: 650,
-  letterSpacing: '-0.02em',
+  letterSpacing: '-0.045em',
 });
 
 export const meta = css({

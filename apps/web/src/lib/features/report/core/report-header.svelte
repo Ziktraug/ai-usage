@@ -13,7 +13,7 @@
   const headerTop = css({ alignItems: 'flex-start', display: 'flex', justifyContent: 'space-between' });
   const eyebrowRow = css({ alignItems: 'center', display: 'flex', gap: '8px' });
   const eyebrow = css({
-    color: 'muted',
+    color: 'accent',
     fontSize: '11px',
     fontWeight: 700,
     letterSpacing: '0.12em',
@@ -34,7 +34,7 @@
   <div class={headerTop}>
     <div class={titleBlock}>
       <div class={eyebrowRow}>
-        <div class={eyebrow}>ai-usage</div>
+        <div class={eyebrow}>Activity report</div>
         {#if isDemo}
           <span class={demoBadge}>Demo data</span>
         {/if}

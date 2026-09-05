@@ -9,7 +9,7 @@ export const actionRow = css({
   gap: '8px',
 });
 
-export const panelHeader = css({ display: 'grid', gap: '2px' });
+export const panelHeader = css({ display: 'grid', gap: '5px', mb: '12px' });
 export const strongCell = css({ fontWeight: 600, overflowWrap: 'anywhere' });
 
 export const statusPill = css({
@@ -36,12 +36,13 @@ export const ghostButton = css({
   bg: 'surface',
   border: '1px solid token(colors.line)',
   borderRadius: 'sm',
-  color: 'muted',
+  color: 'ink',
   cursor: 'pointer',
   display: 'inline-flex',
   fontSize: '12px',
   fontWeight: 600,
   justifyContent: 'center',
+  minH: { base: '44px', md: '36px' },
   px: '12px',
   py: '5px',
   transition: 'border-color 0.15s, color 0.15s',
@@ -58,7 +59,7 @@ export const pageStack = css({ display: 'grid', gap: '16px' });
 export const unavailablePanel = css({
   alignContent: 'center',
   bg: 'surface',
-  border: '1px dashed token(colors.lineStrong)',
+  border: '1px solid token(colors.line)',
   borderRadius: 'md',
   display: 'grid',
   gap: '8px',

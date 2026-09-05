@@ -1,10 +1,10 @@
 <script lang="ts">
   import { css, cx } from '@ai-usage/design-system/css';
   import {
+    eyebrow as eyebrowStyle,
     header,
     headerActions as headerActionsStyle,
     headerTop,
-    meta,
     page,
     shell,
     title,
@@ -34,7 +34,7 @@
       <div class={headerTop}>
         <div class={titleBlock}>
           {#if eyebrow}
-            <p class={meta}>{eyebrow}</p>
+            <p class={eyebrowStyle}>{eyebrow}</p>
           {/if}
           <h1 class={cx(title, eyebrow ? undefined : compactTitle)}>{heading}</h1>
           {#if headerMeta}

@@ -10,7 +10,7 @@ export const pendingButton = css({
 });
 
 export const commandButton = css({
-  h: '36px',
+  h: { base: '44px', md: '36px' },
   px: '16px',
   ml: 'auto',
   border: '1px solid token(colors.ink)',
@@ -48,7 +48,8 @@ export const ghostButton = css({
   border: '1px solid token(colors.line)',
   borderRadius: 'sm',
   bg: 'surface',
-  color: 'muted',
+  color: 'ink',
+  minH: { base: '44px', md: '36px' },
   px: '12px',
   py: '5px',
   fontSize: '12px',
@@ -72,7 +73,7 @@ export const themeToggleButton = css({
   w: '36px',
   h: '36px',
   flexShrink: 0,
-  border: '1px solid token(colors.lineStrong)',
+  border: '1px solid token(colors.line)',
   borderRadius: 'sm',
   bg: 'surface',
   color: 'muted',
@@ -139,7 +140,7 @@ export const presetButton = css({
   },
   '&[data-active="true"], &[data-state=checked], &[data-state=on]': {
     bg: 'accentSoft',
-    borderColor: 'accent',
+    borderColor: 'transparent',
     color: 'accent',
   },
   '&[data-default="true"][data-active="true"], &[data-default="true"][data-state=checked], &[data-default="true"][data-state=on]':
@@ -212,7 +213,14 @@ export const drawerClose = css({
 export const topRow = css({
   appearance: 'none',
   display: 'grid',
-  gridTemplateColumns: '24px minmax(0, 1fr) auto auto',
+  gridTemplateColumns: { base: '20px minmax(0, 1fr) auto', md: '24px minmax(0, 1fr) auto auto' },
+  '& > :nth-child(3)': { gridColumn: { base: '2 / -1', md: 'auto' }, gridRow: { base: '1', md: 'auto' } },
+  '& > :nth-child(4)': {
+    gridColumn: { base: '2', md: 'auto' },
+    gridRow: { base: '2', md: 'auto' },
+    justifySelf: 'start',
+  },
+  '& > :nth-child(5)': { gridColumn: { base: '3', md: 'auto' }, gridRow: { base: '2', md: 'auto' } },
   gap: '12px',
   alignItems: 'center',
   textAlign: 'left',

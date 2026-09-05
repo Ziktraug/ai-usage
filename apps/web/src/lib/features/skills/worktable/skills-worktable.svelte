@@ -85,32 +85,38 @@
   const ADOPT_GATE_TEXT =
     'Adopting a runtime copy into the source repository is not implemented yet — it waits on the approved file-operation plan.';
 
-  const strip = css({ display: 'flex', flexWrap: 'wrap', gap: '10px', alignItems: 'stretch' });
+  const strip = css({ display: 'flex', flexWrap: 'wrap', gap: '6px', alignItems: 'stretch' });
   const chip = css({
     appearance: 'none',
-    display: 'grid',
-    gap: '6px',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '10px',
     alignContent: 'center',
-    p: '12px 16px',
+    p: '10px 12px',
+    minH: '44px',
     border: '1px solid token(colors.line)',
-    borderRadius: 'md',
+    borderRadius: 'sm',
     bg: 'surface',
     color: 'ink',
     textAlign: 'left',
     cursor: 'pointer',
     _hover: { borderColor: 'accent' },
     _focusVisible: { outline: '2px solid token(colors.accent)', outlineOffset: '2px' },
-    '&[aria-pressed="true"]': { borderColor: 'accent', bg: 'accentTint' },
+    '&[aria-pressed="true"]': {
+      borderColor: 'transparent',
+      bg: 'accentSoft',
+      color: 'accent',
+      boxShadow: 'inset 0 -2px 0 token(colors.accent)',
+    },
   });
   const chipLabel = css({
     color: 'muted',
     fontSize: '11px',
     fontWeight: 600,
-    letterSpacing: '0.07em',
-    textTransform: 'uppercase',
+    letterSpacing: '0',
     '[aria-pressed="true"] &': { color: 'ink' },
   });
-  const chipValue = css({ fontFamily: 'mono', fontSize: '22px', fontWeight: 600, lineHeight: 1 });
+  const chipValue = css({ fontFamily: 'mono', fontSize: '13px', fontWeight: 600, lineHeight: 1, whiteSpace: 'nowrap' });
   const stripAside = css({ display: 'grid', gap: '8px', alignContent: 'center', flex: '1 1 240px', minW: 0 });
   const observabilityLine = css({
     display: 'flex',
@@ -169,7 +175,8 @@
     width: 'full',
     borderCollapse: 'collapse',
     fontSize: '13px',
-    '& th, & td': { p: '10px 16px', textAlign: 'left', verticalAlign: 'middle' },
+    '& th, & td': { p: '14px 16px', textAlign: 'left', verticalAlign: 'middle' },
+    '& tbody th[scope="row"]': { fontWeight: 400 },
     '& thead th': {
       color: 'muted',
       fontSize: '11px',
@@ -199,7 +206,12 @@
     alignItems: 'baseline',
   });
   const groupTitle = css({ fontSize: '12px', fontWeight: 650 });
-  const nameCell = css({ display: 'grid', gap: '2px', minW: '260px', maxW: '380px' });
+  const nameCell = css({
+    display: 'grid',
+    gap: '5px',
+    minW: { base: '170px', md: '240px' },
+    maxW: { base: '200px', md: '380px' },
+  });
   const nameLink = css({
     color: 'ink',
     fontWeight: 650,

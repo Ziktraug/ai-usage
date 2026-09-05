@@ -35,7 +35,14 @@ export const button = css({
   _focusVisible: { outline: '2px solid token(colors.accent)', outlineOffset: '2px' },
   _disabled: { cursor: 'default', opacity: 0.5 },
 });
-export const primaryButton = css({ bg: 'accent', color: 'surface', borderColor: 'accent' });
+export const primaryButton = css({
+  bg: 'ink',
+  color: 'canvas',
+  borderColor: 'ink',
+  justifySelf: 'start',
+  fontWeight: 650,
+  _hover: { bg: 'inkHover', borderColor: 'inkHover' },
+});
 export const diagnosticRow = css({
   display: 'grid',
   gap: '4px',

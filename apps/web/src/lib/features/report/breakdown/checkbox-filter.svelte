@@ -53,7 +53,13 @@
     m: 0,
     minW: 0,
     p: 0,
-    '& [data-scope=checkbox][data-part=root]': { maxW: 'none', w: 'full' },
+    '& [data-scope=checkbox][data-part=root]': {
+      maxW: 'none',
+      w: 'full',
+      borderColor: 'transparent',
+      bg: 'transparent',
+      _hover: { bg: 'surfaceMuted' },
+    },
     '& [data-scope=checkbox][data-part=label]': {
       overflow: 'visible',
       textOverflow: 'clip',

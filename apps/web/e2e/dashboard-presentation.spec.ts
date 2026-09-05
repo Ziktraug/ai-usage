@@ -412,7 +412,7 @@ test('uses compact circular Punchcard marks inside accessible targets with a low
   await expect(punchcardVisual).toHaveCSS('row-gap', '2px');
   await expect(punchcardVisual).toHaveCSS('overflow-y', 'hidden');
   await expect(punchcardHeader).toHaveCSS('display', 'grid');
-  await expect(punchcardHeader).toHaveCSS('row-gap', '2px');
+  await expect(punchcardHeader).toHaveCSS('row-gap', '5px');
   expect(await punchcardCells.count()).toBeGreaterThan(0);
 
   const hoveredTarget = punchcardTargets.last();
@@ -572,54 +572,22 @@ test('separates timeline boundary dates and retains no horizontally intersecting
 
 test('keeps the mobile filter stack coherent with content above the fold', async ({ page }) => {
   await page.setViewportSize(MOBILE_VIEWPORT);
-  await page.goto('/');
-
-  const search = page.getByRole('textbox', {
-    name: 'Filter sessions by title, project, model, provider, or harness',
-  });
-  const harness = page.getByRole('button', { name: 'Filter by harness' });
-  const origin = page.getByRole('button', { name: 'Filter by origin' });
-  const machine = page.getByRole('button', { name: 'Filter by machine' });
-  const sourceStatus = page.getByRole('region', { name: 'Collection source status' });
-  const searchBox = await search.boundingBox();
-  const harnessBox = await harness.boundingBox();
-  const originBox = await origin.boundingBox();
-  const sourceStatusBox = (await sourceStatus.count()) > 0 ? await sourceStatus.boundingBox() : null;
-
-  expect(Math.abs((searchBox?.x ?? 0) - (harnessBox?.x ?? 0))).toBeLessThanOrEqual(MAX_ALIGNMENT_DRIFT_PX);
-  const harnessCenterY = (harnessBox?.y ?? 0) + (harnessBox?.height ?? 0) / 2;
-  const originCenterY = (originBox?.y ?? 0) + (originBox?.height ?? 0) / 2;
-  expect(Math.abs(harnessCenterY - originCenterY)).toBeLessThanOrEqual(MAX_ALIGNMENT_DRIFT_PX);
-  expect((originBox?.x ?? 0) + (originBox?.width ?? 0) - (harnessBox?.x ?? 0)).toBeCloseTo(searchBox?.width ?? 0, 0);
-  if ((await machine.count()) === 0) {
-    if (sourceStatusBox) {
-      expect(Math.abs((searchBox?.x ?? 0) - sourceStatusBox.x)).toBeLessThanOrEqual(MAX_ALIGNMENT_DRIFT_PX);
-      expect(Math.abs((searchBox?.width ?? 0) - sourceStatusBox.width)).toBeLessThanOrEqual(MAX_ALIGNMENT_DRIFT_PX);
-    } else {
-      expect((originBox?.x ?? 0) + (originBox?.width ?? 0) - (harnessBox?.x ?? 0)).toBeCloseTo(
-        searchBox?.width ?? 0,
-        0,
-      );
-    }
-  } else {
-    const machineBox = await machine.boundingBox();
-    expect(Math.abs((harnessBox?.x ?? 0) - (machineBox?.x ?? 0))).toBeLessThanOrEqual(MAX_ALIGNMENT_DRIFT_PX);
-    expect(Math.abs((harnessBox?.width ?? 0) - (machineBox?.width ?? 0))).toBeLessThanOrEqual(MAX_ALIGNMENT_DRIFT_PX);
-    if (sourceStatusBox) {
-      expect(Math.abs((originBox?.x ?? 0) - sourceStatusBox.x)).toBeLessThanOrEqual(MAX_ALIGNMENT_DRIFT_PX);
-      expect(Math.abs((originBox?.width ?? 0) - sourceStatusBox.width)).toBeLessThanOrEqual(MAX_ALIGNMENT_DRIFT_PX);
-      const machineCenterY = (machineBox?.y ?? 0) + (machineBox?.height ?? 0) / 2;
-      const sourceStatusCenterY = sourceStatusBox.y + sourceStatusBox.height / 2;
-      expect(Math.abs(machineCenterY - sourceStatusCenterY)).toBeLessThanOrEqual(MAX_ALIGNMENT_DRIFT_PX);
-    } else {
-      expect(Math.abs((searchBox?.width ?? 0) - (machineBox?.width ?? 0))).toBeLessThanOrEqual(MAX_ALIGNMENT_DRIFT_PX);
-    }
-  }
-  if (sourceStatusBox && searchBox) {
-    expect(sourceStatusBox.x + sourceStatusBox.width).toBeLessThanOrEqual(
-      searchBox.x + searchBox.width + MAX_ALIGNMENT_DRIFT_PX,
-    );
-  }
+  await openHydratedReport(page);
+  const toolbar = page.locator('[data-dashboard-filter-stack]');
+  const search = page.getByRole('textbox', { name: 'Filter sessions by title, project, model, provider, or harness' });
+  const toggle = page.getByRole('button', { name: 'Filters', exact: true });
+  await expect(page.getByRole('button', { name: 'Filter by harness' })).toBeHidden();
+  const [searchBox, toggleBox, toolbarBox, heroBox] = await Promise.all([
+    search.boundingBox(),
+    toggle.boundingBox(),
+    toolbar.boundingBox(),
+    page.locator('[data-executive-kpi]').boundingBox(),
+  ]);
+  expect(Math.abs((searchBox?.y ?? 0) - (toggleBox?.y ?? 0))).toBeLessThanOrEqual(MAX_ALIGNMENT_DRIFT_PX);
+  expect(toolbarBox?.height).toBeLessThanOrEqual(64);
+  expect(heroBox?.y).toBeLessThan(360);
+  await toggle.click();
+  await expect(page.getByRole('button', { name: 'Filter by harness' })).toBeVisible();
   expect(searchBox?.width ?? Number.POSITIVE_INFINITY).toBeLessThanOrEqual(MOBILE_VIEWPORT.width - 32);
   const filterControlGeometry = await page
     .locator('[data-dashboard-filter-stack]')
@@ -650,7 +618,7 @@ test('keeps the mobile filter stack coherent with content above the fold', async
 });
 
 for (const width of [1280, 1080]) {
-  test(`keeps the complete filter bar on one row at ${width}px`, async ({ page }) => {
+  test(`keeps the complete filter bar bounded and readable at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ height: 900, width });
     await openHydratedReport(page);
 
@@ -666,7 +634,12 @@ for (const width of [1280, 1080]) {
     const tops = boxes.flatMap((box) => (box === null ? [] : [Math.round(box.y)]));
 
     expect(tops).toHaveLength(controls.length);
-    expect(Math.max(...tops) - Math.min(...tops)).toBeLessThanOrEqual(MAX_ALIGNMENT_DRIFT_PX);
+    if (width >= 1280) {
+      expect(Math.max(...tops) - Math.min(...tops)).toBeLessThanOrEqual(MAX_ALIGNMENT_DRIFT_PX);
+    } else {
+      expect(new Set(tops).size).toBeLessThanOrEqual(2);
+      expect(boxes[0]?.width).toBeGreaterThanOrEqual(180);
+    }
     expect(await toolbar.evaluate((element) => element.scrollWidth)).toBeLessThanOrEqual(
       await toolbar.evaluate((element) => element.clientWidth),
     );

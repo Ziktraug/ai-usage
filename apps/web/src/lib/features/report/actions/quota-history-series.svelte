@@ -5,7 +5,7 @@
     ProviderQuotaHistoryWindow,
   } from '../../../../provider-quota-history-model';
   import { fmtDate, fmtPct } from '../../../foundation/presentation/format';
-  import { muted, panel, row, table, tableCell } from '../breakdown/styles';
+  import { muted, panel, table, tableCell } from '../breakdown/styles';
 
   const chart = css({
     w: 'full',
@@ -97,9 +97,11 @@
 </script>
 
 <article class={panel}>
-  <div class={row}>
+  <div class={css({ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '16px' })}>
     <strong>{series.label}</strong
-    ><strong>{series.currentPercent === null ? 'Unknown' : fmtPct(series.currentPercent)}</strong>
+    ><strong class={css({ textStyle: 'numeric', fontSize: '24px', fontWeight: 650 })}
+      >{series.currentPercent === null ? 'Unknown' : fmtPct(series.currentPercent)}</strong
+    >
   </div>
   <p class={muted}>{series.providerLabel} · {series.machineLabel ?? series.machineId}</p>
   <p class={muted}>

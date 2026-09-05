@@ -23,7 +23,7 @@ describe('Svelte overlay Panda styles', () => {
 
   test('keeps the responsive Drawer above navigation with safe mobile geometry and 44px header actions', () => {
     expect(drawerClass).toContain('md:top_0');
-    expect(drawerClass).toContain('md:w_440px');
+    expect(drawerClass).toContain('md:w_480px');
     expect(drawerClass).not.toContain('sm:top_0');
     expect(drawerClass).toContain('z_60');
     expect(drawerClass).toContain('open:anim_sheetIn');

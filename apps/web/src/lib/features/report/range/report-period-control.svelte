@@ -6,27 +6,42 @@
     display: 'flex',
     alignItems: 'center',
     flexWrap: 'wrap',
-    gap: '8px',
+    gap: { base: '4px', md: '6px' },
   });
-  const label = css({ color: 'muted', fontSize: '12px', fontWeight: 'semibold' });
+  const label = css({
+    display: { base: 'none', md: 'block' },
+    color: 'muted',
+    fontSize: '12px',
+    fontWeight: 'semibold',
+  });
   const preset = css({
     display: 'inline-flex',
     alignItems: 'center',
     justifyContent: 'center',
-    minH: '44px',
-    px: '11px',
-    border: '1px solid token(colors.line)',
-    borderRadius: 'md',
-    bg: 'surface',
-    color: 'ink',
+    minH: { base: '44px', md: '34px' },
+    px: { base: '8px', md: '11px' },
+    border: '1px solid transparent',
+    borderRadius: 'sm',
+    bg: 'transparent',
+    color: 'muted',
     fontSize: '12px',
-    _hover: { borderColor: 'lineStrong' },
+    _hover: { bg: 'surfaceMuted', color: 'ink' },
+    _focusVisible: { outline: '2px solid token(colors.accent)', outlineOffset: '2px' },
   });
-  const selectedPreset = css({ borderColor: 'accent', bg: 'accentTint', color: 'ink' });
+  const selectedPreset = css({ bg: 'accentSoft', color: 'accent', fontWeight: 650 });
   const periodSummary = css({ color: 'muted', fontSize: '12px' });
-  const customFields = css({ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '8px' });
+  const customFields = css({
+    display: 'flex',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: '8px 12px',
+    w: { base: 'full', md: 'auto' },
+  });
   const field = css({
-    display: 'inline-flex',
+    display: 'grid',
+    gridTemplateColumns: 'auto minmax(0, 1fr)',
+    flex: '1 1 150px',
+    minW: 0,
     alignItems: 'center',
     gap: '6px',
     color: 'muted',
@@ -195,45 +210,49 @@
   </button>
   {#if range.mode === 'custom'}
     <div class={customFields} data-report-range-part="adjustments">
-      <label class={field} for="report-period-from">From</label>
-      <input
-        aria-describedby={validationError ? customErrorId : undefined}
-        aria-invalid={invalidFrom}
-        autocomplete="off"
-        class={cx(input, invalidFrom ? invalidInput : undefined)}
-        id="report-period-from"
-        maxlength="10"
-        onchange={(event) => {
+      <label class={field} for="report-period-from"
+        ><span>From</span>
+        <input
+          aria-describedby={validationError ? customErrorId : undefined}
+          aria-invalid={invalidFrom}
+          autocomplete="off"
+          class={cx(input, invalidFrom ? invalidInput : undefined)}
+          id="report-period-from"
+          maxlength="10"
+          onchange={(event) => {
           draftFrom = event.currentTarget.value;
           commitDraftEdit();
         }}
-        onkeydown={restoreOnEscape}
-        placeholder="YYYY-MM-DD"
-        spellcheck="false"
-        title="Date as YYYY-MM-DD"
-        type="text"
-        value={draftFrom}
-        bind:this={fromInputElement}
-      >
-      <label class={field} for="report-period-to">To</label>
-      <input
-        aria-describedby={validationError ? customErrorId : undefined}
-        aria-invalid={invalidTo}
-        autocomplete="off"
-        class={cx(input, invalidTo ? invalidInput : undefined)}
-        id="report-period-to"
-        maxlength="10"
-        onchange={(event) => {
+          onkeydown={restoreOnEscape}
+          placeholder="YYYY-MM-DD"
+          spellcheck="false"
+          title="Date as YYYY-MM-DD"
+          type="text"
+          value={draftFrom}
+          bind:this={fromInputElement}
+        >
+      </label>
+      <label class={field} for="report-period-to"
+        ><span>To</span>
+        <input
+          aria-describedby={validationError ? customErrorId : undefined}
+          aria-invalid={invalidTo}
+          autocomplete="off"
+          class={cx(input, invalidTo ? invalidInput : undefined)}
+          id="report-period-to"
+          maxlength="10"
+          onchange={(event) => {
           draftTo = event.currentTarget.value;
           commitDraftEdit();
         }}
-        onkeydown={restoreOnEscape}
-        placeholder="YYYY-MM-DD"
-        spellcheck="false"
-        title="Date as YYYY-MM-DD"
-        type="text"
-        value={draftTo}
-      >
+          onkeydown={restoreOnEscape}
+          placeholder="YYYY-MM-DD"
+          spellcheck="false"
+          title="Date as YYYY-MM-DD"
+          type="text"
+          value={draftTo}
+        >
+      </label>
       {#if validationError}
         <p class={validationMessage} id={customErrorId} role="alert">{validationError.message}</p>
       {/if}

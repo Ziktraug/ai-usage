@@ -1,6 +1,6 @@
 <script lang="ts">
   import { css } from '@ai-usage/design-system/css';
-  import { header, meta, page, shell, title, titleBlock } from '@ai-usage/design-system/svelte';
+  import { eyebrow, header, meta, page, shell, title, titleBlock } from '@ai-usage/design-system/svelte';
   import { useQueryClient } from '@tanstack/svelte-query';
   import { browser } from '$app/environment';
   import { buildSyncFleetMachineViews, manualTransferMutationAvailability } from '../../../manual-transfer-model';
@@ -67,8 +67,9 @@
   <header class={header}>
     <div class={headerTop}>
       <div class={titleBlock}>
-        <p class={meta}>File transfer</p>
+        <p class={eyebrow}>Manual transfer</p>
         <h1 class={title}>Sync</h1>
+        <p class={meta}>Bring your machine histories together, one file at a time.</p>
       </div>
     </div>
   </header>

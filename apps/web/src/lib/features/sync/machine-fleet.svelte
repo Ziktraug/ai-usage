@@ -37,7 +37,7 @@
     gridTemplateColumns: { base: '1fr', md: 'repeat(2, minmax(0, 1fr))' },
   });
   const machineCard = css({ display: 'grid', gap: '14px', minW: 0 });
-  const machineCardCurrent = css({ borderColor: 'accent', boxShadow: '0 0 0 1px token(colors.accent)' });
+  const machineCardCurrent = css({ borderColor: 'line', boxShadow: 'card' });
   const machineHeader = css({
     alignItems: 'start',
     display: 'flex',
@@ -46,7 +46,12 @@
     justifyContent: 'space-between',
   });
   const machineFacts = css({ display: 'grid', gap: '10px', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))' });
-  const machineFact = css({ display: 'grid', gap: '3px', minW: 0 });
+  const machineFact = css({
+    display: 'grid',
+    gap: '6px',
+    minW: 0,
+    '& > span:last-child': { textStyle: 'numeric', fontSize: '15px' },
+  });
   const machineFactLabel = css({ color: 'muted', fontSize: '10px', fontWeight: 700, textTransform: 'uppercase' });
   const disclosure = css({ color: 'muted', fontSize: '12px', lineHeight: 1.5 });
   const snapshotCommand = css({

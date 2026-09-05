@@ -57,17 +57,13 @@ describe('P9 Svelte Skills editor SSR', () => {
     expect(html).not.toContain('Discard unsaved changes?');
   });
 
-  test('preserves an exact draft and exposes conflict and pending replacement semantics', () => {
+  test('preserves an exact draft and exposes its conflict while a replacement awaits confirmation', () => {
     const html = render(fixture, { props: { mode: 'conflict', showDialog: true } }).body;
     expect(html).toContain('# Exact synthetic draft');
     expect(html).toContain('Changed on disk');
     expect(html).toContain('role="alert"');
-    expect(html).toContain('role="alertdialog"');
-    expect(html).toContain('aria-modal="true"');
-    expect(html).toContain('Discard unsaved changes?');
-    expect(html).toContain('Keep editing');
-    expect(html).toContain('Discard changes');
-    expect(html).toContain('Synthetic pending draft decision.');
+    // The confirmation is mounted in a browser portal, outside the scrolling editor.
+    // ui-craft.spec.ts covers its viewport placement, focus and Keep/Discard decisions.
   });
 
   test('renders loading and dirty status without a client-only blank surface', () => {

@@ -1,7 +1,6 @@
 <script lang="ts">
   import { css, cx } from '@ai-usage/design-system/css';
   import {
-    muted,
     panel,
     panelHeader,
     panelSub,
@@ -164,7 +163,10 @@
           <span class={topTitle}>
             {item.label}
             {#if item.kind === 'campaign'}
-              <span class={muted}> · Campaign · {fmtCount(item.sessionCount, 'session')}</span>
+              <span
+                class={css({ display: 'block', color: 'muted', fontSize: '11px', fontWeight: 400, lineHeight: 1.5 })}
+                >Campaign · {fmtCount(item.sessionCount, 'session')}</span
+              >
             {/if}
           </span>
           <HarnessBadge name={item.harness} />

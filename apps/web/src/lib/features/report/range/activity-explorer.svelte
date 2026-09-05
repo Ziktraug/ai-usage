@@ -16,7 +16,15 @@
   const activityPanel = css({ display: 'grid', gap: '12px', p: { base: '14px', md: '18px' } });
   const brushAxis = css({ position: 'relative', minH: '14px', color: 'muted', fontSize: '10px', lineHeight: 1 });
   const brushTick = css({ position: 'absolute', top: 0, transform: 'translateX(-50%)', whiteSpace: 'nowrap' });
-  const executiveMetricGroup = css({ border: 0, m: 0, minW: 0, p: 0 });
+  const executiveMetricGroup = css({
+    border: 0,
+    m: 0,
+    minW: 0,
+    p: 0,
+    '& > button': { flex: '1 1 auto', px: { base: '8px', md: '10px' }, fontSize: { base: '11px', md: '12px' } },
+    flexWrap: 'nowrap',
+    w: { base: 'full', md: 'auto' },
+  });
   // Metric and grouping are the two questions a reader asks of this chart; both sit in the toolbar.
   // Interval and exact dates stay behind the disclosure.
   const toolbarRow = css({

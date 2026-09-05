@@ -1,6 +1,6 @@
 <script lang="ts">
   import { css, cx } from '@ai-usage/design-system/css';
-  import { panel, panelSub, panelTitle } from '@ai-usage/design-system/svelte';
+  import { commandButton, panel, panelSub, panelTitle } from '@ai-usage/design-system/svelte';
   import type { UsageEngineMergePreviewOutput } from '@ai-usage/usage-engine-control';
   import { onDestroy } from 'svelte';
   import { formatManualImportSummary, formatTransferBytes } from '../../../manual-transfer-model';
@@ -41,6 +41,8 @@
     textAlign: 'center',
   });
   const dropZoneActive = css({ bg: 'surfaceElevated', borderColor: 'accent' });
+  const dropZoneCompact = css({ minH: '64px', p: '12px' });
+  const errorPanel = css({ bg: 'status.dangerSoft', color: 'status.danger', borderColor: 'status.danger' });
   const operationPanel = css({
     bg: 'surfaceMuted',
     border: '1px solid token(colors.line)',
@@ -247,7 +249,7 @@
     <div class={panelSub}>Export usage as a file or import a file from another machine.</div>
   </div>
   {#if notice?.kind === 'error'}
-    <div class={operationPanel} role="alert">{notice.message}</div>
+    <div class={cx(operationPanel, errorPanel)} role="alert">{notice.message}</div>
   {:else if notice}
     <div class={operationPanel} role="status">{notice.message}</div>
   {/if}
@@ -269,7 +271,7 @@
     bind:this={fileInput}
   >
   <button
-    class={cx(dropZone, dragActive && dropZoneActive)}
+    class={cx(dropZone, dragActive && dropZoneActive, preview && dropZoneCompact)}
     disabled={!mutationAvailable || pending !== null}
     onclick={() => fileInput.click()}
     ondragenter={() => (dragActive = true)}
@@ -287,35 +289,6 @@
     <span class={strongCell}>Drop a merge file here or choose a file</span>
     <span class={panelSub}>JSON only. The file is previewed before any local usage changes.</span>
   </button>
-  <div class={cursorSection}>
-    <div class={strongCell}>Cursor usage export</div>
-    <div class={panelSub}>
-      From cursor.com &rarr; usage events export. Copied into local ignored storage, then collected like any other
-      source.
-    </div>
-    <input
-      accept=".csv,text/csv"
-      disabled={!mutationAvailable || pending !== null}
-      hidden
-      onchange={async (event) => {
-        const input = event.currentTarget;
-        await importCursorExport(input.files?.[0]);
-        input.value = '';
-      }}
-      type="file"
-      bind:this={cursorInput}
-    >
-    <div class={actionRow}>
-      <button
-        class={ghostButton}
-        disabled={!mutationAvailable || pending !== null}
-        onclick={() => cursorInput.click()}
-        type="button"
-      >
-        {pending === 'cursor' ? 'Importing' : 'Import a Cursor usage CSV'}
-      </button>
-    </div>
-  </div>
   {#if preview}
     <div class={operationPanel} role="status">
       <div class={strongCell}>Review merge import</div>
@@ -352,7 +325,7 @@
       <div class={panelSub}>Peer provenance is preserved; local history is not replaced wholesale.</div>
       <div class={actionRow}>
         <button
-          class={ghostButton}
+          class={commandButton}
           disabled={!mutationAvailable || pending !== null}
           onclick={confirmImport}
           type="button"
@@ -365,6 +338,35 @@
       </div>
     </div>
   {/if}
+  <div class={cursorSection}>
+    <div class={strongCell}>Cursor usage export</div>
+    <div class={panelSub}>
+      From cursor.com &rarr; usage events export. Copied into local ignored storage, then collected like any other
+      source.
+    </div>
+    <input
+      accept=".csv,text/csv"
+      disabled={!mutationAvailable || pending !== null}
+      hidden
+      onchange={async (event) => {
+        const input = event.currentTarget;
+        await importCursorExport(input.files?.[0]);
+        input.value = '';
+      }}
+      type="file"
+      bind:this={cursorInput}
+    >
+    <div class={actionRow}>
+      <button
+        class={ghostButton}
+        disabled={!mutationAvailable || pending !== null}
+        onclick={() => cursorInput.click()}
+        type="button"
+      >
+        {pending === 'cursor' ? 'Importing' : 'Import a Cursor usage CSV'}
+      </button>
+    </div>
+  </div>
   {#if progress}
     <ManualTransferProgress now={progressNow} operation={pending ?? 'preview'} {progress} />
   {/if}

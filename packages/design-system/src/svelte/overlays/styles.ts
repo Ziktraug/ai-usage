@@ -6,7 +6,7 @@ export const drawerClass = css({
   bottom: '0',
   top: { base: 'auto', md: '0' },
   left: { base: '0', md: 'auto' },
-  w: { base: '100%', md: '440px' },
+  w: { base: '100%', md: '480px' },
   maxW: '100vw',
   maxH: { base: '78dvh', md: 'none' },
   display: 'flex',
@@ -29,7 +29,7 @@ export const drawerTop = css({
   gridTemplateColumns: 'auto minmax(0, 1fr)',
   alignItems: 'center',
   gap: '10px',
-  p: '12px 16px',
+  p: '16px 20px',
   borderBottom: '1px solid token(colors.line)',
   flexShrink: 0,
   minW: 0,
@@ -51,8 +51,9 @@ export const drawerBody = css({
 });
 
 export const drawerTitle = css({
-  fontSize: '15px',
+  fontSize: '20px',
   fontWeight: 650,
+  letterSpacing: '-0.025em',
   lineHeight: '1.35',
   overflowWrap: 'anywhere',
 });

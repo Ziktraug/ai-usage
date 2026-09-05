@@ -66,8 +66,8 @@ export const aiUsagePreset = definePreset({
           },
         },
         radii: {
-          sm: { value: '8px' },
-          md: { value: '12px' },
+          sm: { value: '6px' },
+          md: { value: '10px' },
           full: { value: '999px' },
         },
       },
@@ -111,11 +111,11 @@ export const aiUsagePreset = definePreset({
           // Ink.
           ink: dual('#1F1D19', '#EAEBEE'),
           inkHover: dual('#3B3833', '#D3D5DA'),
-          muted: dual('#6E6A60', '#8F9199'),
-          faint: dual('#706A62', '#898B93'),
+          muted: dual('#6E6A60', '#A4A6AE'),
+          faint: dual('#706A62', '#989BA4'),
 
           // Hairlines and control borders.
-          line: dual('#E5E2DA', '#292B30'),
+          line: dual('#E5E2DA', '#33353B'),
           lineStrong: dual('#89857D', '#74777F'),
 
           // Copper accent — the single brand color.

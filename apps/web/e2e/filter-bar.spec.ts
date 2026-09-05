@@ -38,9 +38,17 @@ const expectAnchoredUnder = async (page: Page, trigger: Locator, dialog: Locator
   if (fitsToTheRight) {
     expect(Math.abs(dialogBox.x - triggerBox.x)).toBeLessThanOrEqual(PIXEL_TOLERANCE);
   } else {
-    expect(Math.abs(dialogBox.x + dialogBox.width - (layoutWidth - ZAG_OVERFLOW_PADDING))).toBeLessThanOrEqual(
-      PIXEL_TOLERANCE,
-    );
+    // Floating positioning can flip to bottom-end when that fits before shifting to the
+    // viewport edge. Both keep the menu anchored; a wider trigger now makes the flip possible.
+    const right = dialogBox.x + dialogBox.width;
+    expect(
+      Math.min(
+        Math.abs(right - (triggerBox.x + triggerBox.width)),
+        Math.abs(right - (layoutWidth - ZAG_OVERFLOW_PADDING)),
+      ),
+    ).toBeLessThanOrEqual(PIXEL_TOLERANCE);
+    expect(dialogBox.x).toBeGreaterThanOrEqual(ZAG_OVERFLOW_PADDING - PIXEL_TOLERANCE);
+    expect(right).toBeLessThanOrEqual(layoutWidth - ZAG_OVERFLOW_PADDING + PIXEL_TOLERANCE);
   }
 };
 
@@ -106,6 +114,7 @@ test('anchors shifted Origin and Machine dialogs below their narrow triggers at 
 }) => {
   await page.setViewportSize({ height: 844, width: 390 });
   await openHydratedReport(page);
+  await page.getByRole('button', { name: 'Filters', exact: true }).click();
   for (const filter of [
     { name: 'origin', title: 'Session origin' },
     { name: 'machine', title: 'Machine' },

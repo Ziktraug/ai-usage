@@ -1,6 +1,6 @@
 <script lang="ts">
   import { css, cx } from '@ai-usage/design-system/css';
-  import { header, meta, page, panel, shell, title, titleBlock } from '@ai-usage/design-system/svelte';
+  import { eyebrow, header, meta, page, panel, shell, title, titleBlock } from '@ai-usage/design-system/svelte';
   import type { CollectionSourceGroup, SourceControlCommand } from '@ai-usage/report-core/source-control';
   import { onDestroy } from 'svelte';
   import { fmtDate, fmtNum } from '../../foundation/presentation/format';
@@ -87,13 +87,21 @@
   const axisValue = css({ fontSize: '12px', overflowWrap: 'anywhere' });
   const revisionValue = css({ display: 'flex', alignItems: 'center', gap: '6px', minW: 0 });
   const revisionCode = css({ overflow: 'hidden', fontFamily: 'mono', fontSize: '11px', textOverflow: 'ellipsis' });
-  const healthySummary = css({ overflow: 'hidden' });
+  const healthySummary = css({
+    overflow: 'hidden',
+    border: '1px solid token(colors.line)',
+    borderRadius: 'md',
+    bg: 'surface',
+    boxShadow: 'card',
+    minW: 0,
+  });
   const healthySummaryHeader = css({
     display: 'flex',
     justifyContent: 'space-between',
     alignItems: 'center',
     gap: '12px',
     p: '14px 16px',
+    minH: '56px',
     cursor: 'pointer',
   });
   const healthyList = css({ display: 'grid', borderTop: '1px solid token(colors.line)' });
@@ -116,9 +124,9 @@
     <header class={header}>
       <div class={headerTop}>
         <div class={titleBlock}>
-          <p class={meta}>Server-owned collection</p>
+          <p class={eyebrow}>Local collection</p>
           <h1 class={title}>Sources</h1>
-          <p class={meta}>Policy, availability, lifecycle, and outcomes stay independent for every collector.</p>
+          <p class={meta}>Manage collection sources and keep your local report up to date.</p>
         </div>
         <div class={headerActions}>
           <button
@@ -140,7 +148,9 @@
         </div>
       </div>
     </header>
-    <div aria-atomic="true" aria-live="polite" class={meta} role="status">{conciseSourceStatus(controlState)}</div>
+    <div aria-atomic="true" aria-live="polite" class={cx(meta, css({ mb: '16px' }))} role="status">
+      {conciseSourceStatus(controlState)}
+    </div>
     <div class={pageStack}>
       {#if controlState.connection === 'disconnected'}
         <div class={banner}>Connection interrupted. Showing the last server snapshot while reconnecting.</div>
@@ -255,7 +265,7 @@
             </section>
           {/if}
         {/each}
-        <details class={cx(panel, healthySummary)} data-healthy-source-summary>
+        <details class={healthySummary} data-healthy-source-summary>
           <summary class={healthySummaryHeader}>
             <h2 class={groupTitle}>Healthy sources</h2>
             <span class={cx(statusPill, sourceToneClass('ok'))}>{sourceCountLabel(healthy.length)}</span>

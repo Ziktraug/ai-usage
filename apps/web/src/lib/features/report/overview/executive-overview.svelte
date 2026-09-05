@@ -161,13 +161,11 @@
           {/if}
         </div>
       </section>
-
       {#if activity}
         <div class={activityCell}>
           <ActivityExplorer {...activity} />
         </div>
       {/if}
-
       <div class={evidence}>
         <h3 class={modelsTitle}>API value by harness</h3>
         <ul class={groupList}>

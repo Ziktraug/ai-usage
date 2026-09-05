@@ -1,6 +1,6 @@
 <script lang="ts">
   import { css, cx } from '@ai-usage/design-system/css';
-  import { panel, skillsDisclosurePanel, skillsDisclosureSummary } from '@ai-usage/design-system/report';
+  import { skillsDisclosurePanel, skillsDisclosureSummary } from '@ai-usage/design-system/report';
   import type { SkillManagementSnapshot } from '@ai-usage/skills';
   import { untrack } from 'svelte';
   import type { SkillsShellSlotContext } from '../shell/slot-context';
@@ -103,7 +103,12 @@
     sourceDraft = syncSourceRepositoryDraft(sourceDraft, context.snapshot);
   });
 
-  const body = css({ display: 'grid', gap: '16px', pt: '8px' });
+  const body = css({
+    display: 'grid',
+    gap: '24px',
+    maxW: '760px',
+    '& input, & select, & button': { minH: { base: '44px', md: '36px' } },
+  });
   const formRow = css({ display: 'grid', gap: '8px' });
   const label = css({ display: 'grid', gap: '5px', color: 'muted', fontSize: '12px', fontWeight: 650 });
   const input = css({
@@ -115,6 +120,7 @@
     bg: 'surface',
     color: 'ink',
     fontSize: '13px',
+    _focusVisible: { outline: '2px solid token(colors.accent)', outlineOffset: '2px' },
   });
   const actionRow = css({ display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'end' });
   const projectRow = css({
@@ -126,7 +132,7 @@
   const targetRow = css({ display: 'grid', gap: '5px', pt: '8px', borderTop: '1px solid token(colors.line)' });
 </script>
 
-<details class={cx(panel, skillsDisclosurePanel)} data-skills-configuration>
+<details class={skillsDisclosurePanel} data-skills-configuration>
   <summary class={skillsDisclosureSummary}>
     <strong>Configuration &amp; runtimes</strong>
     <span class={muted}>

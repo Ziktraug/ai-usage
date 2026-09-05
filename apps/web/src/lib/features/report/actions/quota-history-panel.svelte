@@ -1,6 +1,6 @@
 <script lang="ts">
   import { css, cx } from '@ai-usage/design-system/css';
-  import { Drawer } from '@ai-usage/design-system/svelte';
+  import { Drawer, drawerBody } from '@ai-usage/design-system/svelte';
   import type { ProviderQuotaHistoryResult } from '@ai-usage/report-core/provider-quota';
   import {
     buildProviderQuotaHistoryModel,
@@ -16,8 +16,15 @@
   // beside 36 px selects, so the height has to be stated: it tracks `field`'s own responsive height.
   const rangeButton = css({ minW: '56px', minH: { base: '44px', sm: '36px' } });
   const selectedRange = css({ borderColor: 'accent', bg: 'accentTint', color: 'accent' });
-  const historyControl = css({ display: 'grid', gap: '4px', fontSize: '12px' });
-  const historySelect = cx(field, css({ w: '168px', minW: '168px' }));
+  const historyControl = css({
+    display: 'grid',
+    gap: '6px',
+    fontSize: '12px',
+    color: 'muted',
+    flex: '1 1 140px',
+    minW: 0,
+  });
+  const historySelect = cx(field, css({ w: 'full', minW: 0 }));
 
   const historyRanges = ['24h', '7d', '30d'] as const satisfies readonly ProviderQuotaHistoryRange[];
 
@@ -105,12 +112,14 @@
   trapFocus
 >
   <div
-    class={stack}
+    class={cx(stack, drawerBody)}
     data-quota-history
     data-quota-window-from={model?.window.from}
     data-quota-window-to={model?.window.to}
   >
-    <header class={row}>
+    <header
+      class={css({ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto', gap: '12px', alignItems: 'start', pb: '16px', borderBottom: '1px solid token(colors.line)' })}
+    >
       <div>
         <h2 class={title}>Provider quota history</h2>
         <p class={muted}>Provider-defined quota observations retained on this machine.</p>

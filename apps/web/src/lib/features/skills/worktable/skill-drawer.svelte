@@ -209,14 +209,24 @@
 
   const drawerContent = css({ w: { base: '100vw', md: 'min(620px, 94vw)' } });
   const stack = css({ display: 'grid', gap: '18px', minW: 0 });
-  const header = css({ display: 'grid', gap: '10px' });
-  const titleRow = css({ display: 'flex', flexWrap: 'wrap', gap: '8px 10px', alignItems: 'center' });
+  const header = css({ display: 'grid', gap: '12px', pb: '20px', borderBottom: '1px solid token(colors.line)' });
+  const titleRow = css({
+    position: 'relative',
+    display: 'flex',
+    flexWrap: 'wrap',
+    gap: '8px 10px',
+    alignItems: 'center',
+    pr: '48px',
+    '& > h2': { w: 'full' },
+  });
   const drawerTitleText = css({ fontSize: '22px', fontWeight: 750, overflowWrap: 'anywhere' });
   const closeButtonClass = css({
     appearance: 'none',
-    ml: 'auto',
-    w: '32px',
-    h: '32px',
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    w: '44px',
+    h: '44px',
     border: '1px solid token(colors.line)',
     borderRadius: 'sm',
     bg: 'surface',
@@ -235,7 +245,14 @@
   });
   const placementRow = css({
     display: 'grid',
-    gridTemplateColumns: '132px minmax(0, 1fr) auto',
+    gridTemplateColumns: { base: 'minmax(0, 1fr) auto', md: '120px minmax(0, 1fr) auto' },
+    '& > :nth-child(2)': {
+      gridColumn: { base: '1 / -1', md: 'auto' },
+      gridRow: { base: '2', md: 'auto' },
+      overflowWrap: 'anywhere',
+      minW: 0,
+    },
+    '& > :nth-child(3)': { gridColumn: { base: '2', md: 'auto' }, gridRow: { base: '1', md: 'auto' } },
     gap: '12px',
     alignItems: 'center',
     p: '10px 12px',
@@ -265,7 +282,7 @@
     border: '1px solid token(colors.lineStrong)',
     borderRadius: 'sm',
     bg: 'surface',
-    color: 'accent',
+    color: 'ink',
     fontSize: '12px',
     fontWeight: 650,
     cursor: 'pointer',
@@ -338,7 +355,7 @@
     // front of the unsaved-draft guard at once, and the one it keeps is decided by which arrives
     // first — so discarding could replay the worktable rather than the link that was clicked.
     const target = event.detail.originalEvent.target;
-    if (target instanceof Element && target.closest('[data-app-navigation]') !== null) {
+    if (target instanceof Element && target.closest('[data-app-navigation], [data-discard-confirmation]') !== null) {
       event.preventDefault();
     }
   }}

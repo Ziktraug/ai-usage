@@ -3,6 +3,7 @@ import { css } from '@ai-usage/design-system/css';
 export const executiveGrid = css({
   display: 'grid',
   gridTemplateColumns: { base: '1fr', lg: 'minmax(18rem, 0.85fr) minmax(0, 1.35fr)' },
+  gridTemplateRows: { lg: 'auto 1fr' },
   gap: { base: '24px', lg: '18px 40px' },
   alignItems: 'start',
   minW: 0,

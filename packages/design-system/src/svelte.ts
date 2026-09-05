@@ -27,6 +27,7 @@ export { searchInput } from './components/field';
 export {
   actionRow,
   activeFilters,
+  eyebrow,
   filterSummary,
   header,
   headerActions,

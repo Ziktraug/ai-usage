@@ -1,7 +1,8 @@
 <script lang="ts">
   import { css } from '@ai-usage/design-system/css';
   import { commandButton, panelSub, panelTitle } from '@ai-usage/design-system/svelte';
-  import { onDestroy, tick } from 'svelte';
+  import { Portal } from '@ark-ui/svelte/portal';
+  import { onDestroy } from 'svelte';
   import { createDiscardDialogController } from './discard-dialog-controller';
 
   let {
@@ -59,7 +60,7 @@
     alignItems: 'center',
   });
   const keepButtonStyle = css({
-    minH: '38px',
+    minH: '44px',
     px: '12px',
     border: '1px solid token(colors.lineStrong)',
     borderRadius: 'md',
@@ -95,12 +96,19 @@
     }
   };
 
+  // A portal mounts its children after the parent's first tick. Focus follows the mounted
+  // button so a scrolled editor never leaves keyboard focus behind the confirmation.
+  $effect(() => {
+    if (open && keepButton) {
+      keepButton.focus();
+    }
+  });
+
   $effect(() => {
     if (!open) {
       return;
     }
     const returnFocusElement = document.activeElement instanceof HTMLElement ? document.activeElement : undefined;
-    tick().then(() => keepButton?.focus());
     document.addEventListener('keydown', onKeydown, true);
     return () => {
       document.removeEventListener('keydown', onKeydown, true);
@@ -116,31 +124,39 @@
 </script>
 
 {#if open}
-  <div class={backdrop}>
-    <div
-      aria-describedby={`${idPrefix}-description`}
-      aria-labelledby={`${idPrefix}-title`}
-      aria-modal="true"
-      class={dialog}
-      role="alertdialog"
-    >
-      <h2 class={panelTitle} id={`${idPrefix}-title`}>Discard unsaved changes?</h2>
-      <p class={panelSub} id={`${idPrefix}-description`}>{description}</p>
-      <div class={actions}>
-        <button class={keepButtonStyle} disabled={pending} onclick={decision.keep} type="button" bind:this={keepButton}>
-          Keep editing
-        </button>
-        <button
-          {...(pending ? { 'aria-busy': 'true' as const } : {})}
-          class={commandButton}
-          disabled={pending}
-          onclick={decision.discard}
-          type="button"
-          bind:this={discardButton}
-        >
-          {pending ? 'Discarding…' : 'Discard changes'}
-        </button>
+  <Portal>
+    <div class={backdrop} data-discard-confirmation>
+      <div
+        aria-describedby={`${idPrefix}-description`}
+        aria-labelledby={`${idPrefix}-title`}
+        aria-modal="true"
+        class={dialog}
+        role="alertdialog"
+      >
+        <h2 class={panelTitle} id={`${idPrefix}-title`}>Discard unsaved changes?</h2>
+        <p class={panelSub} id={`${idPrefix}-description`}>{description}</p>
+        <div class={actions}>
+          <button
+            class={keepButtonStyle}
+            disabled={pending}
+            onclick={decision.keep}
+            type="button"
+            bind:this={keepButton}
+          >
+            Keep editing
+          </button>
+          <button
+            {...(pending ? { 'aria-busy': 'true' as const } : {})}
+            class={commandButton}
+            disabled={pending}
+            onclick={decision.discard}
+            type="button"
+            bind:this={discardButton}
+          >
+            {pending ? 'Discarding…' : 'Discard changes'}
+          </button>
+        </div>
       </div>
     </div>
-  </div>
+  </Portal>
 {/if}

@@ -556,8 +556,8 @@ test('keeps every Skills mutation inside the deterministic E2E backend', async (
   await expect(page.getByText('alpha-skill linked to Codex.')).toBeVisible();
 });
 
-test('keeps the skill name in view while the worktable scrolls sideways at 1024px', async ({ page }) => {
-  await page.setViewportSize({ height: 768, width: 1024 });
+test('keeps the skill name in view while the worktable scrolls sideways at 768px', async ({ page }) => {
+  await page.setViewportSize({ height: 768, width: 768 });
   await openHydratedSkills(page, '/skills');
   const worktable = page.getByRole('region', { name: 'Skills worktable' });
   await expect(worktable).toBeVisible();

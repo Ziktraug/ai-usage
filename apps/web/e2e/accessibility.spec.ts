@@ -136,7 +136,7 @@ for (const route of routes) {
         await expect(notice).toHaveCSS('display', 'grid');
         await expect(notice).toHaveCSS('padding', '10px 12px');
         await expect(notice).toHaveCSS('border-top-width', '1px');
-        await expect(notice).toHaveCSS('border-radius', '8px');
+        await expect(notice).toHaveCSS('border-radius', '6px');
         await expect(notice).toHaveCSS('font-size', '13px');
         const noticeBox = await notice.boundingBox();
         const fleetBox = await fleet.boundingBox();

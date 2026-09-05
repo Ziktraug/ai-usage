@@ -1,4 +1,5 @@
 <script lang="ts" module>
+  import { css } from '@ai-usage/design-system/css';
   import {
     advancedAnalysis,
     advancedAnalysisContent,
@@ -105,8 +106,12 @@
         records={result.view.records}
         topSessions={result.view.topSessions}
       />
-      <ActivityHeatmap heatmap={result.view.heatmap} {onSelectDay} />
-      <TokenAnatomy summary={result.summary} />
+      <div
+        class={css({ display: 'grid', gridTemplateColumns: { base: 'minmax(0, 1fr)', xl: 'minmax(0, 1fr) minmax(0, 1fr)' }, gap: '24px', alignItems: 'start', minW: 0 })}
+      >
+        <ActivityHeatmap heatmap={result.view.heatmap} {onSelectDay} />
+        <TokenAnatomy summary={result.summary} />
+      </div>
       <section aria-labelledby="advanced-analysis-title" class={advancedAnalysis} data-overview-advanced-analysis>
         <header class={advancedAnalysisHeader}>
           <h3 id="advanced-analysis-title">Advanced analysis</h3>

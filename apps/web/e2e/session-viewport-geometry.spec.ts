@@ -620,7 +620,7 @@ test('keeps the desktop Session drawer nonmodal and outside-focus friendly', asy
   expect(desktopGeometry).toMatchObject({
     bottom: DESKTOP_DRAWER_VIEWPORT.height,
     top: 0,
-    width: 440,
+    width: 480,
   });
   expect(desktopGeometry.right).toBe(desktopGeometry.layoutRight);
   const actionGeometry = await drawer.locator('[data-session-drawer-header] button:visible').evaluateAll((elements) =>
