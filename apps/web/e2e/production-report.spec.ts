@@ -606,7 +606,7 @@ test('records one exact expiry and one failed background refresh while retaining
   trace.checkpoint('background-failure');
   const chartOptions = page.getByRole('region', { name: 'Activity' }).locator('details[aria-label="Explore activity"]');
   await chartOptions.locator('summary').click();
-  await chartOptions.getByRole('radio', { exact: true, name: 'Model' }).click();
+  await page.getByRole('region', { name: 'Activity' }).getByLabel('Group by').selectOption({ label: 'Model' });
   await expect(page.locator('[data-report-refresh-error]')).toBeVisible();
   await expect(completeOutput).toBeVisible();
   await expect(workspace).toHaveAttribute('data-plan-069-workspace', 'last-good');
@@ -666,7 +666,7 @@ test('keeps the Report range mounted while focused chart options refresh', async
   });
   const chartOptions = activity.locator('details[aria-label="Explore activity"]');
   await chartOptions.locator('summary').click();
-  await chartOptions.getByRole('radio', { exact: true, name: 'Model' }).click();
+  await activity.getByLabel('Group by').selectOption({ label: 'Model' });
   await expect(dateRange).toHaveAttribute('data-stability-marker', 'original-range', { timeout: 1000 });
   await expect(timeline).toHaveAttribute('data-stability-marker', 'original-chart');
   await expect(dateRange).toHaveAttribute('data-stability-marker', 'original-range');

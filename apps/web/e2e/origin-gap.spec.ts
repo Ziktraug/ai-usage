@@ -13,7 +13,7 @@ test('renders undeclared origin outside the stack with its three causes', async 
   const activity = page.getByRole('region', { name: 'Activity' });
   const chartOptions = activity.locator('details[aria-label="Explore activity"]');
   await chartOptions.locator('summary').click();
-  await chartOptions.getByRole('radio', { exact: true, name: 'Origin' }).click();
+  await activity.getByLabel('Group by').selectOption({ label: 'Origin' });
   await activity
     .getByRole('group', { name: 'Activity metric' })
     .getByRole('button', { exact: true, name: 'Sessions' })

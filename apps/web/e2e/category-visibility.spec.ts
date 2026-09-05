@@ -68,9 +68,9 @@ test('keeps every populated harness and machine visible with default dimension f
   const activity = page.getByRole('region', { name: 'Activity' });
   const chartOptions = activity.locator('details[aria-label="Explore activity"]');
   await chartOptions.locator('summary').click();
-  const machineRadio = chartOptions.getByRole('radio', { exact: true, name: 'Machine' });
-  await machineRadio.click();
-  await expect(machineRadio).toBeChecked();
+  const groupBy = activity.getByLabel('Group by');
+  await groupBy.selectOption({ label: 'Machine' });
+  await expect(groupBy).toHaveValue('machine');
   const sessionsButton = activity
     .getByRole('group', { name: 'Activity metric' })
     .getByRole('button', { exact: true, name: 'Sessions' });

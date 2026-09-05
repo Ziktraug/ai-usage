@@ -84,7 +84,7 @@ test('renames and resets one page-local campaign label without changing its filt
   const activity = page.getByRole('region', { name: 'Activity' });
   const chartOptions = activity.locator('details[aria-label="Explore activity"]');
   await chartOptions.locator('summary').click();
-  await chartOptions.getByRole('radio', { exact: true, name: 'Campaign' }).click();
+  await activity.getByLabel('Group by').selectOption({ label: 'Campaign' });
   await expect(activity.getByTitle(RENAMED_LABEL, { exact: true })).toContainText(RENAMED_LABEL);
   await expect.poll(() => campaignFilterFromUrl(page)).toBe(CAMPAIGN_KEY);
 
