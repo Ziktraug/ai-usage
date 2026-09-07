@@ -68,12 +68,21 @@
       {/each}
     </dl>
     {#if summary.rtkSaved > 0}
-      <div class={rtkNote}>
-        <span>
-          RTK saved <strong>{fmtCompact(summary.rtkSaved)}</strong> tokens ({fmtPct(summary.rtkInput ? (summary.rtkSaved / summary.rtkInput) * 100 : 0)}
-          of matched input) across <strong>{fmtNum(summary.rtkSessions)}</strong> sessions.
-        </span>
-      </div>
+      <!-- A side fact about a few sessions, not a headline: the summary line carries the number and
+           its scope, the disclosure explains what RTK is and what "matched input" means. -->
+      <details class={rtkNote} data-token-anatomy-rtk>
+        <summary>
+          RTK saved <strong>{fmtCompact(summary.rtkSaved)}</strong> tokens on
+          <strong>{fmtNum(summary.rtkSessions)}</strong>
+          {summary.rtkSessions === 1 ? 'session' : 'sessions'}
+        </summary>
+        <p>
+          RTK is a local CLI proxy that trims command output before it reaches the model. The saving is
+          {fmtPct(summary.rtkInput ? (summary.rtkSaved / summary.rtkInput) * 100 : 0)}
+          of the input RTK matched to these sessions by project and time window; sessions without a matched RTK command
+          are not counted.
+        </p>
+      </details>
     {/if}
   {:else}
     <div class={emptyPanel}>No token data in range</div>

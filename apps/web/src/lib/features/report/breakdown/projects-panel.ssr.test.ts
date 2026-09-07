@@ -151,7 +151,8 @@ describe('Projects breakdown render', () => {
     expect(body).toContain('Fixture Machine Secondary');
     expect(body).toContain('Fixture Machine · Fixture Machine Secondary');
     expect(body).toContain('data-project-lines="lower-bound"');
-    expect(body).toContain('≥ +0/-0');
+    expect(body).toContain('+0/-0');
+    expect(body).not.toContain('≥ +0/-0');
     expect(body).toContain('1 of 3 sessions measured');
     expect(body).toContain('data-project-lines="exact"');
     expect(body).toContain('+860/-120');

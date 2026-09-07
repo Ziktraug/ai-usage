@@ -3,15 +3,13 @@
   import type { ProviderStatusTone } from '../../../../provider-status-model';
 
   const panelIntro = css({ display: 'flex', flexWrap: 'wrap', gap: '12px', justifyContent: 'space-between' });
-  const statusList = css({ display: 'grid', gap: '10px', listStyle: 'none', m: 0, p: 0 });
+  const statusList = css({ display: 'grid', gap: '8px', listStyle: 'none', m: 0, p: 0 });
   const providerCard = css({
-    bg: 'surfaceMuted',
-    border: '1px solid token(colors.line)',
-    borderRadius: 'md',
+    borderTop: '1px solid token(colors.line)',
     containerType: 'inline-size',
     display: 'grid',
     gap: '12px',
-    p: '14px',
+    py: '22px',
   });
   const providerTop = css({
     alignItems: 'start',
@@ -123,22 +121,21 @@
     m: 0,
     p: 0,
   });
-  const compactOverview = css({ display: 'grid', gap: '10px' });
+  const compactOverview = css({ display: 'grid', gap: '20px' });
   const compactProviderList = css({
     display: 'grid',
-    gap: '8px',
+    gap: '24px',
     gridTemplateColumns: { base: '1fr', lg: 'repeat(2, minmax(0, 1fr))' },
     listStyle: 'none',
     m: 0,
     p: 0,
   });
   const compactProvider = css({
-    bg: 'surfaceMuted',
-    border: '1px solid token(colors.line)',
-    borderRadius: 'md',
+    borderTop: '1px solid token(colors.line)',
     display: 'grid',
-    gap: '8px',
-    p: '10px 12px',
+    gap: '12px',
+    py: '16px',
+    px: '4px',
   });
   const compactProviderTop = css({
     alignItems: 'center',

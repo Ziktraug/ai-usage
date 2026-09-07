@@ -27,6 +27,7 @@ export { searchInput } from './components/field';
 export {
   actionRow,
   activeFilters,
+  eyebrow,
   filterSummary,
   header,
   headerActions,
@@ -36,7 +37,6 @@ export {
   shell,
   summaryPill,
   title,
-  titleBlock,
 } from './components/layout';
 
 export {

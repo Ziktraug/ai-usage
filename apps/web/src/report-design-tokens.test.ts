@@ -73,8 +73,8 @@ test('Report alerts use warning and danger roles instead of the interaction acce
   const warningSource = readFileSync(path.join(reportCoreDirectory, 'report-warnings.svelte'), 'utf8');
   const statusSource = readFileSync(path.join(reportCoreDirectory, 'report-status.svelte'), 'utf8');
 
-  expect(warningSource).toContain("borderColor: 'status.warn'");
-  expect(warningSource).toContain("bg: 'status.warnSoft'");
+  expect(warningSource).toContain("borderInlineStart: '2px solid token(colors.status.warn)'");
+  expect(warningSource).toContain("color: 'status.warn'");
   expect(warningSource).not.toContain("bg: 'accentTint'");
   expect(statusSource).toContain("borderColor: 'status.danger'");
   expect(statusSource).toContain("bg: 'status.dangerSoft'");

@@ -105,20 +105,23 @@ describe('usage row', () => {
   });
 
   test('uses the session date for prices with a validity window', () => {
-    const row = normalizeUsageRow({
-      date: new Date('2026-09-01T00:00:00.000Z'),
-      endDate: new Date('2026-09-01T00:02:00.000Z'),
-      harness: 'Claude',
-      provider: 'Anthropic API',
-      name: 'fixture',
-      model: 'claude-sonnet-5',
-      tokens: { in: 1_000_000, out: 1_000_000, cr: 0, cw: 0 },
-      cost: approximateApiCost,
-      calls: 1,
-    });
+    // GPT-5.6 Sol was cut from 5/30 to 4/20 per MTok on 2026-08-21, so a session
+    // must be priced at the rate that was in effect when it ran.
+    const priceOn = (day: string) =>
+      normalizeUsageRow({
+        date: new Date(`${day}T00:00:00.000Z`),
+        endDate: new Date(`${day}T00:02:00.000Z`),
+        harness: 'Codex',
+        provider: 'OpenAI API',
+        name: 'fixture',
+        model: 'gpt-5.6-sol',
+        tokens: { in: 1_000_000, out: 1_000_000, cr: 0, cw: 0 },
+        cost: approximateApiCost,
+        calls: 1,
+      });
 
-    expect(row.costKnown).toBe(true);
-    expect(row.costApprox).toBe(18);
+    expect(priceOn('2026-08-20')).toMatchObject({ costApprox: 35, costKnown: true });
+    expect(priceOn('2026-08-21')).toMatchObject({ costApprox: 24, costKnown: true });
   });
 
   test('keeps a partial API-value lower bound without claiming exact API spend', () => {

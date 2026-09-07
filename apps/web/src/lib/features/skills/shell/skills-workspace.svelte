@@ -52,13 +52,14 @@
     await goto('/skills', { noScroll: true });
   };
 
-  const page = css({ display: 'grid', gap: '16px', minW: 0 });
+  const page = css({ display: 'grid', gap: '20px', minW: 0 });
   const headline = css({ color: 'muted', fontSize: '12px' });
   const folds = css({
     display: 'grid',
     gridTemplateColumns: { base: '1fr', '2xl': 'minmax(0, 0.9fr) minmax(360px, 1.1fr)' },
-    gap: '16px',
+    gap: '24px',
     alignItems: 'start',
+    pt: '12px',
   });
 </script>
 

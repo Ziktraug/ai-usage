@@ -15,8 +15,11 @@ test('uses one token magnitude and accessible drawer explanations', async ({ pag
   await expect(totalTokens).toContainText('401k');
   await expect(totalTokens).not.toContainText('400,900');
 
+  // Subscription value is a Cursor-only field; this campaign is Codex, so the hint geometry is read
+  // from the API value item, which every row carries.
+  await expect(drawer.locator('[data-detail-item="Subscription value"]')).toHaveCount(0);
   const subValueHelp = drawer.getByRole('button', {
-    name: 'About Subscription value',
+    name: 'About API value',
   });
   await expect(subValueHelp).toHaveAttribute('aria-haspopup', 'dialog');
   const hintGeometry = await subValueHelp.evaluate((button) => {
@@ -42,7 +45,7 @@ test('uses one token magnitude and accessible drawer explanations', async ({ pag
   expect(hintGeometry.glyphWidth).toBeLessThanOrEqual(16);
   expect(hintGeometry.rowHeight).toBeLessThanOrEqual(24);
   await subValueHelp.click();
-  await expect(page.getByText('Cursor export value covered by the subscription quota')).toBeVisible();
+  await expect(page.getByText('Estimated API-equivalent value at standard prices')).toBeVisible();
   await subValueHelp.click();
 
   const taskOpenHelp = drawer.getByRole('button', {

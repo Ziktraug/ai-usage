@@ -1,5 +1,6 @@
 <!-- biome-ignore-all lint/a11y/useValidAriaValues: Svelte emits the closed boolean WAI-ARIA value asserted by SSR tests -->
 <script lang="ts">
+  import { css } from '@ai-usage/design-system/css';
   import {
     CellWithProvenance,
     filterTextButton,
@@ -87,12 +88,20 @@
       <span class={muted} data-session-origin="classifier"> {projection.originLabel}</span>
     {/if}
     {#if projection.campaignLabel}
-      <span class={muted} data-session-campaign-annotation title={projection.campaignLabel}>
+      <span
+        class={css({ display: 'block', color: 'muted', fontSize: '11px', fontWeight: 400, lineHeight: 1.5 })}
+        data-session-campaign-annotation
+        title={projection.campaignLabel}
+      >
         {projection.campaignLabel}</span
       >
     {/if}
     {#if projection.classifierLabel}
-      <span class={muted} data-campaign-classifier-rollup title={projection.classifierLabel}>
+      <span
+        class={css({ color: 'muted', fontSize: '11px', fontWeight: 400 })}
+        data-campaign-classifier-rollup
+        title={projection.classifierLabel}
+      >
         {projection.classifierLabel}
       </span>
     {/if}

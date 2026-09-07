@@ -34,6 +34,8 @@
       generatedAt: string;
       harnesses: readonly AnalyticsGroup[];
       harnessProviders: readonly AnalyticsGroup[];
+      /** Exact store-wide machine count, or null when the option list is truncated. */
+      machineCount?: number | null;
       models: readonly AnalyticsGroup[];
       projects: readonly ProjectGroup[];
       range: SessionQueryRange;
@@ -96,6 +98,7 @@
       disabled={projectEditor.disabled}
       generatedAt={data.generatedAt}
       groups={data.projects}
+      machineCount={data.machineCount ?? null}
       onProjectFilter={(value) => onFieldFilter('project', value)}
       onSave={projectEditor.onSave}
       payload={projectEditor.payload}

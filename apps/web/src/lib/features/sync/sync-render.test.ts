@@ -98,12 +98,12 @@ describe('Sync rendered SSR parity', () => {
     expect(body).toContain('Laptop');
     expect(body).toContain('7');
     expect(body).toMatch(STORED_SESSIONS_FACT_PATTERN);
-    expect(body).toContain('Fleet share');
-    expect(body).toContain('100%');
+    // One machine has nothing to share the fleet with: the fact is omitted, not printed as 100%.
+    expect(body).not.toContain('Fleet share');
     expect(body).not.toContain('Machine contributions');
     expect(body).not.toContain('Machine contribution summaries');
     expect(body).not.toContain('<table');
-    expect(body.match(/data-machine-fleet-share/g)).toHaveLength(1);
+    expect(body.match(/data-machine-fleet-share/g)).toBeNull();
     expect(body).not.toMatch(BARE_SESSIONS_LABEL_PATTERN);
     expect(body).toContain('Manual transfer');
     // The Cursor export is a second, separately labelled action next to the merge drop zone.

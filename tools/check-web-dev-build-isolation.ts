@@ -433,7 +433,9 @@ const requestApplication = async (port: number, signal?: AbortSignal): Promise<b
       signal: signal ? AbortSignal.any([timeoutSignal, signal]) : timeoutSignal,
     });
     const body = await response.text();
-    return response.status === 200 && body.includes('Usage report');
+    // The Overview root attribute is present in both the served and empty states; the h1 wording
+    // is editorial and has already been renamed once.
+    return response.status === 200 && body.includes('data-report-overview');
   } catch {
     return false;
   }

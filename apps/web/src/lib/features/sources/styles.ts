@@ -26,7 +26,8 @@ export const ghostButton = css({
   border: '1px solid token(colors.line)',
   borderRadius: 'sm',
   bg: 'surface',
-  color: 'muted',
+  color: 'ink',
+  minH: { base: '44px', md: '36px' },
   px: '12px',
   py: '5px',
   fontSize: '12px',
@@ -42,21 +43,20 @@ export const statusPill = css({
   alignItems: 'center',
   h: '22px',
   px: '8px',
-  border: '1px solid token(colors.line)',
+  border: '1px solid transparent',
   borderRadius: 'full',
   fontSize: '11px',
   fontWeight: 650,
   lineHeight: 1,
   whiteSpace: 'nowrap',
 });
-export const statusPillOk = css({ bg: 'status.okSoft', borderColor: 'status.ok', color: 'status.ok' });
-export const statusPillWarn = css({ bg: 'status.warnSoft', borderColor: 'status.warn', color: 'status.warn' });
+export const statusPillOk = css({ bg: 'status.okSoft', color: 'status.ok' });
+export const statusPillWarn = css({ bg: 'status.warnSoft', color: 'status.warn' });
 export const statusPillDanger = css({
   bg: 'status.dangerSoft',
-  borderColor: 'status.danger',
   color: 'status.danger',
 });
-export const statusPillInfo = css({ bg: 'surfaceMuted', borderColor: 'line', color: 'muted' });
+export const statusPillInfo = css({ bg: 'surfaceMuted', color: 'muted' });
 export const banner = css({
   display: 'grid',
   gridTemplateColumns: 'minmax(0, 1fr) auto',

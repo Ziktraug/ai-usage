@@ -88,6 +88,9 @@
   const MOBILE_MINIMUM_VIEWPORT_HEIGHT = sessionVirtualBudgets.mobile.rowHeight;
   const MOBILE_WINDOW_ANCHOR_THRESHOLD_RATIO = 0.5;
   const sessionTableOwner = css({ minW: 0 });
+  const columnPresetGroup = css({
+    '& [data-scope=popover][data-part=trigger]': { minH: '30px' },
+  });
   const documentTop = (element: Element): number => element.getBoundingClientRect().top + window.scrollY;
   const documentBottom = (element: Element): number => element.getBoundingClientRect().bottom + window.scrollY;
   const staticBottomInsetBySurface = new WeakMap<HTMLElement, number>();
@@ -206,12 +209,8 @@
     const minimumHeight = surfaceMode === 'desktop' ? DESKTOP_MINIMUM_VIEWPORT_HEIGHT : MOBILE_MINIMUM_VIEWPORT_HEIGHT;
     const owner = element.closest('[data-session-table-owner]');
     const regionStart = sessionRegionStartElement;
-    const measuredStaticBottomInset = owner
-      ? Math.max(0, Math.round(documentBottom(document.body) - documentBottom(owner)))
-      : 0;
-    const dynamicOwnerBottomInset = owner
-      ? Math.max(0, Math.round(documentBottom(owner) - documentBottom(element)))
-      : 0;
+    const measuredStaticBottomInset = owner ? Math.max(0, documentBottom(document.body) - documentBottom(owner)) : 0;
+    const dynamicOwnerBottomInset = owner ? Math.max(0, documentBottom(owner) - documentBottom(element)) : 0;
     const previousBottomInset = staticBottomInsetBySurface.get(element);
     const staticBottomInset =
       previousBottomInset === undefined
@@ -455,7 +454,7 @@
   <section aria-label="Sessions" class={sessionTableOwner} data-session-mode={activeMode} data-session-table-owner>
     <div class={tableControls} data-session-region-start bind:this={sessionRegionStartElement}>
       {#if activeMode === 'desktop'}
-        <fieldset aria-label="Session column presets" class={presetGroup}>
+        <fieldset aria-label="Session column presets" class={cx(presetGroup, columnPresetGroup)}>
           {#each sessionColumnPresets as preset (preset.id)}
             {@const active = activePreset === preset.id}
             <button

@@ -22,12 +22,12 @@
     display: 'inline-flex',
     alignItems: 'center',
     justifyContent: 'center',
-    h: '36px',
+    h: { base: '44px', md: '36px' },
     px: '12px',
-    border: '1px solid token(colors.lineStrong)',
+    border: '1px solid token(colors.line)',
     borderRadius: 'sm',
     bg: 'surface',
-    color: 'muted',
+    color: 'ink',
     fontSize: '12px',
     fontWeight: 650,
     whiteSpace: 'nowrap',
@@ -36,7 +36,12 @@
     _focusVisible: { outline: '2px solid token(colors.accent)', outlineOffset: '2px' },
     _disabled: { cursor: 'default', opacity: 0.5 },
   });
-  const primaryHeaderButton = css({ borderColor: 'accent', color: 'accent' });
+  const primaryHeaderButton = css({
+    borderColor: 'ink',
+    bg: 'ink',
+    color: 'canvas',
+    _hover: { bg: 'inkHover', borderColor: 'inkHover', color: 'canvas' },
+  });
 </script>
 
 {#snippet editorSlot(_context: SkillsShellSlotContext)}
@@ -77,7 +82,7 @@
   />
 {/snippet}
 
-<RouteFrame eyebrow={null} {headerActions} {headerMeta} heading="Skills">
+<RouteFrame eyebrow="Skill library" {headerActions} {headerMeta} heading="Skills">
   <SkillsShell
     {editorSlot}
     {healthSlot}

@@ -1,12 +1,35 @@
 <script lang="ts" module>
   import { css } from '@ai-usage/design-system/css';
 
-  const answer = css({ containerType: 'inline-size', display: 'grid', gap: { base: '14px', md: '18px' }, minW: 0 });
+  const headline = css({
+    display: 'grid',
+    gridTemplateColumns: { base: 'minmax(0, 1fr)', lg: 'minmax(0, 1.05fr) minmax(0, 1fr)' },
+    alignItems: 'start',
+    gap: { base: '22px', lg: '48px' },
+    py: { base: '12px', md: '20px' },
+    minW: 0,
+  });
+  const answer = css({ containerType: 'inline-size', display: 'grid', gap: '16px', minW: 0 });
+  const supportingMetrics = css({
+    display: 'grid',
+    gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+    gap: { base: '18px 24px', md: '24px 32px' },
+    m: 0,
+    minW: 0,
+  });
+  const breakdowns = css({
+    display: 'grid',
+    gridTemplateColumns: { base: 'minmax(0, 1fr)', lg: 'minmax(0, 0.8fr) minmax(0, 1.2fr)' },
+    gap: { base: '28px', lg: '48px' },
+    borderTop: '1px solid token(colors.line)',
+    pt: { base: '24px', md: '32px' },
+    minW: 0,
+  });
   const answerHeading = css({ display: 'grid', gap: '8px' });
   const qualification = css({ color: 'muted', fontSize: '12px', lineHeight: 1.5, m: 0, maxW: '58ch' });
   const comparison = css({ color: 'ink', fontSize: '13px', fontWeight: 600, lineHeight: 1.45, m: 0 });
-  const evidence = css({ display: 'grid', gap: '8px' });
-  const activityCell = css({ minW: 0, gridColumn: { lg: '2' }, gridRow: { lg: '1 / span 2' } });
+  const evidence = css({ alignContent: 'start', display: 'grid', gap: '14px', minW: 0 });
+  const activityCell = css({ minW: 0, borderTop: '1px solid token(colors.line)', pt: { base: '20px', md: '28px' } });
   const groupList = css({ display: 'grid', gap: '2px', listStyle: 'none', m: 0, p: 0 });
   const groupRow = css({
     alignItems: 'center',
@@ -22,18 +45,18 @@
   const groupValue = css({ fontSize: '12px', fontWeight: 650, textAlign: 'right', whiteSpace: 'nowrap' });
   const metric = css({
     alignContent: 'start',
-    borderTop: '1px solid token(colors.line)',
     display: 'grid',
-    gap: '3px',
+    gap: '7px',
     m: 0,
     minW: 0,
-    pt: '12px',
+    pt: '4px',
     '& dd, & dt': { m: 0 },
   });
   const metricValue = css({
     textStyle: 'numeric',
-    fontSize: { base: '22px', md: '24px' },
-    fontWeight: 650,
+    fontSize: { base: '25px', md: '30px' },
+    fontWeight: 500,
+    letterSpacing: '-0.035em',
     lineHeight: 1.1,
   });
   const insight = css({
@@ -67,9 +90,7 @@
     editorialSection,
     executiveCaption,
     executiveEssentialLabel,
-    executiveGrid,
     ghostButton,
-    metricStrip,
     numericDisplay,
     sectionDivider,
   } from '@ai-usage/design-system/report';
@@ -143,7 +164,7 @@
 {:else}
   <section aria-labelledby="executive-overview-title" class={editorialSection}>
     <h2 class={srOnly} id="executive-overview-title">Executive overview</h2>
-    <div class={executiveGrid}>
+    <div class={headline} data-overview-headline>
       <section aria-label="Estimated API-equivalent value" class={answer} data-executive-kpi>
         <div class={answerHeading} {...previewAttributes}>
           <span class={executiveEssentialLabel}>Estimated API-equivalent value</span>
@@ -161,39 +182,25 @@
           {/if}
         </div>
       </section>
-
-      {#if activity}
-        <div class={activityCell}>
-          <ActivityExplorer {...activity} />
-        </div>
-      {/if}
-
-      <div class={evidence}>
-        <h3 class={modelsTitle}>API value by harness</h3>
-        <ul class={groupList}>
-          {#each model.harnesses as harness (harness.group.key)}
-            <li class={groupRow}>
-              <span class={groupName}><HarnessBadge name={harness.group.label} /></span>
-              <span class={groupShare}>{harness.shareLabel}</span>
-              <strong class={groupValue} title={harness.value.title}>{harness.value.label}</strong>
-            </li>
-          {/each}
-        </ul>
-      </div>
+      <dl class={supportingMetrics} data-executive-metrics>
+        {#each model.supportMetrics as supportMetric (supportMetric.key)}
+          <div class={metric}>
+            <dt class={executiveEssentialLabel}>{supportMetric.label}</dt>
+            <dd class={metricValue}>{supportMetric.value}</dd>
+            <dd class={executiveCaption}>{supportMetric.detail}</dd>
+            {#if supportMetric.qualification}
+              <dd class={executiveCaption}>{supportMetric.qualification}</dd>
+            {/if}
+          </div>
+        {/each}
+      </dl>
     </div>
 
-    <dl class={metricStrip} data-executive-metrics>
-      {#each model.supportMetrics as supportMetric (supportMetric.key)}
-        <div class={metric}>
-          <dt class={executiveEssentialLabel}>{supportMetric.label}</dt>
-          <dd class={metricValue}>{supportMetric.value}</dd>
-          <dd class={executiveCaption}>{supportMetric.detail}</dd>
-          {#if supportMetric.qualification}
-            <dd class={executiveCaption}>{supportMetric.qualification}</dd>
-          {/if}
-        </div>
-      {/each}
-    </dl>
+    {#if activity}
+      <div class={activityCell}>
+        <ActivityExplorer {...activity} />
+      </div>
+    {/if}
 
     {#if model.insight}
       <p class={cx(insight, sectionDivider)} data-period-insight>
@@ -203,23 +210,40 @@
       </p>
     {/if}
 
-    <section aria-labelledby="top-models-title" class={cx(editorialSection, sectionDivider)}>
-      <div class={modelsHeader}>
+    <div class={breakdowns} data-overview-breakdowns>
+      <section aria-labelledby="harness-values-title" class={evidence}>
         <div>
-          <h3 class={modelsTitle} id="top-models-title">Top models</h3>
-          <p class={executiveCaption}>Up to five models by known API-equivalent value.</p>
+          <h3 class={modelsTitle} id="harness-values-title">API value by harness</h3>
+          <p class={executiveCaption}>Each harness, in the selected period.</p>
         </div>
-        <a class={cx(ghostButton, action)} href={modelsHref} onclick={openModels}>Open Analysis → Models</a>
-      </div>
-      <ul class={groupList}>
-        {#each model.models as modelGroup (modelGroup.group.key)}
-          <li class={groupRow}>
-            <span class={groupName}>{modelGroup.group.label}</span>
-            <span class={groupShare}>{modelGroup.processedTokensLabel} tokens</span>
-            <strong class={groupValue} title={modelGroup.value.title}>{modelGroup.value.label}</strong>
-          </li>
-        {/each}
-      </ul>
-    </section>
+        <ul class={groupList}>
+          {#each model.harnesses as harness (harness.group.key)}
+            <li class={groupRow}>
+              <span class={groupName}><HarnessBadge name={harness.group.label} /></span>
+              <span class={groupShare}>{harness.shareLabel}</span>
+              <strong class={groupValue} title={harness.value.title}>{harness.value.label}</strong>
+            </li>
+          {/each}
+        </ul>
+      </section>
+      <section aria-labelledby="top-models-title" class={evidence}>
+        <div class={modelsHeader}>
+          <div>
+            <h3 class={modelsTitle} id="top-models-title">Top models</h3>
+            <p class={executiveCaption}>Up to five models by known API-equivalent value.</p>
+          </div>
+          <a class={cx(ghostButton, action)} href={modelsHref} onclick={openModels}>Open Analysis → Models</a>
+        </div>
+        <ul class={groupList}>
+          {#each model.models as modelGroup (modelGroup.group.key)}
+            <li class={groupRow}>
+              <span class={groupName}>{modelGroup.group.label}</span>
+              <span class={groupShare}>{modelGroup.processedTokensLabel} tokens</span>
+              <strong class={groupValue} title={modelGroup.value.title}>{modelGroup.value.label}</strong>
+            </li>
+          {/each}
+        </ul>
+      </section>
+    </div>
   </section>
 {/if}

@@ -3,6 +3,8 @@
   import { css } from '@ai-usage/design-system/css';
 
   const analysisDrawer = css({ w: { base: '100vw', md: 'min(960px, 94vw)' } });
+  const sessionIdentity = css({ display: 'grid', gap: '8px', minW: 0 });
+  const sessionProject = css({ color: 'accent', fontSize: '11px', letterSpacing: '0.02em', overflowWrap: 'anywhere' });
   const tokenSegmentClasses = {
     cacheRead: css({ bg: 'accent', opacity: 0.22 }),
     cacheWrite: css({ bg: 'accent', opacity: 0.42 }),
@@ -350,7 +352,8 @@
       </nav>
     </div>
     <div class={drawerBody} data-session-drawer-body>
-      <div data-session-drawer-scope={campaignScope ? 'campaign' : 'session'}>
+      <div class={sessionIdentity} data-session-drawer-scope={campaignScope ? 'campaign' : 'session'}>
+        <div class={sessionProject}>{row.projectLabel}</div>
         <div class={drawerTitle}>{row.sessionLabel}</div>
         <div class={muted}>{row.providerDisplay} · {row.modelLabel}</div>
         {#if campaignScope}
@@ -420,12 +423,17 @@
             value={fmtMoney(chargedAmount)}
           />
         {/if}
-        <DrawerDetailItem
-          {...detailHintControl}
-          hint="Cursor export value covered by the subscription quota"
-          label="Subscription value"
-          value={fmtMoney(row.costQuota)}
-        />
+        {#if row.harness === 'Cursor' && row.costQuota !== null && row.costQuota !== undefined}
+          <!-- Only the Cursor export reports a quota-covered value. Applicability is the source, not
+               the number: campaign totals reduce an absent quota to 0, so a non-null value alone
+               would still print $0.00 under a Codex campaign. A Cursor zero stays visible. -->
+          <DrawerDetailItem
+            {...detailHintControl}
+            hint="Cursor export value covered by the subscription quota"
+            label="Subscription value"
+            value={fmtMoney(row.costQuota)}
+          />
+        {/if}
         <DrawerDetailItem {...detailHintControl} label="Calls" value={fmtNum(row.calls)} />
         <DrawerDetailItem
           {...detailHintControl}

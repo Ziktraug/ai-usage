@@ -492,13 +492,14 @@
         generatedAt: reportSupport.generatedAt,
         harnesses: breakdown.groups.harnesses,
         harnessProviders: breakdown.groups.harnessProviders,
+        machineCount: machineOptions.length,
         models: breakdown.groups.models,
         projects: breakdown.groups.projects,
         range: focusedQuery.range,
       }}
       navigation={{
         onSortChange: navigation.setBreakdownSort,
-        onTabChange: (tab) => navigate((current) => ({ ...current, tab })),
+        onTabChange: navigation.setBreakdownTab,
         sort: renderedSearch.breakdownSort,
         tab: renderedSearch.tab,
       }}

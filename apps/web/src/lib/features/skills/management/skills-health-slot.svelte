@@ -177,9 +177,10 @@
 
   const planPanel = css({
     display: 'grid',
-    gap: '8px',
-    p: '12px 14px',
-    border: '1px solid token(colors.lineStrong)',
+    gap: '12px',
+    p: '20px 24px',
+    border: '1px solid token(colors.line)',
+    borderLeft: '2px solid token(colors.accent)',
     borderRadius: 'sm',
     bg: 'accentTint',
   });

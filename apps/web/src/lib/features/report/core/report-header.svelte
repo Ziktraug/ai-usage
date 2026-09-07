@@ -1,43 +1,47 @@
 <script lang="ts">
   import { css } from '@ai-usage/design-system/css';
-  import { header, meta, title, titleBlock } from '@ai-usage/design-system/svelte';
+  import WorkspaceHeader from '../../shell/workspace-header.svelte';
   import { reportFreshnessLabel, reportFreshnessTime } from './report-view-model';
 
-  let { generatedAt, hasReportData, isDemo }: { generatedAt: string | null; hasReportData: boolean; isDemo: boolean } =
-    $props();
+  let {
+    generatedAt,
+    hasReportData,
+    heading = 'Usage overview',
+    isDemo,
+  }: { generatedAt: string | null; hasReportData: boolean; heading?: string; isDemo: boolean } = $props();
 
-  const headerTop = css({ alignItems: 'flex-start', display: 'flex', justifyContent: 'space-between' });
-  const eyebrowRow = css({ alignItems: 'center', display: 'flex', gap: '8px' });
-  const eyebrow = css({
+  const freshness = css({
+    alignItems: 'center',
+    display: 'flex',
+    flexWrap: 'wrap',
+    gap: '8px 12px',
     color: 'muted',
     fontSize: '11px',
-    fontWeight: 700,
-    letterSpacing: '0.12em',
-    textTransform: 'uppercase',
+    lineHeight: 1.5,
   });
   const demoBadge = css({
-    bg: 'accentTint',
-    borderRadius: 'full',
-    color: 'accent',
+    border: '1px solid token(colors.lineStrong)',
+    borderRadius: 'sm',
+    color: 'muted',
     fontSize: '10px',
-    fontWeight: 700,
-    px: '8px',
-    py: '2px',
+    px: '7px',
+    py: '3px',
+  });
+  const description = $derived.by(() => {
+    if (heading === 'Usage overview') {
+      return 'A little perspective on the work you are building.';
+    }
+    if (heading === 'Sessions') {
+      return 'Follow the work, from the first prompt to the details.';
+    }
+    return 'Explore the models, harnesses, and projects behind your usage.';
   });
 </script>
 
-<header class={header}>
-  <div class={headerTop}>
-    <div class={titleBlock}>
-      <div class={eyebrowRow}>
-        <div class={eyebrow}>ai-usage</div>
-        {#if isDemo}
-          <span class={demoBadge}>Demo data</span>
-        {/if}
-      </div>
-      <h1 class={title}>Usage report</h1>
-      <div
-        class={meta}
+<WorkspaceHeader atmospheric={heading === 'Usage overview'} {description} eyebrow="Local activity" {heading}>
+  {#snippet meta()}
+    <div class={freshness}>
+      <span
         data-report-freshness
         title="When the stored report was last assembled from collected usage. It changes only when the data changes, not when you navigate."
       >
@@ -46,7 +50,10 @@
         {:else}
           {reportFreshnessLabel(generatedAt, hasReportData)}
         {/if}
-      </div>
+      </span>
+      {#if isDemo}
+        <span class={demoBadge}>Demo data</span>
+      {/if}
     </div>
-  </div>
-</header>
+  {/snippet}
+</WorkspaceHeader>

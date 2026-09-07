@@ -131,7 +131,7 @@ describe('sessions destination export actions SSR', () => {
 
     expect(html).toContain('data-sessions-export');
     expect(html).toContain('data-report-sharing-actions');
-    expect(normalized).toContain('Export CSV');
+    expect(normalized).toContain('Export 2 loaded campaigns');
     // Campaign rows are not flattened into the destination row list, so the CSV
     // carries the aggregate and never a second copy of a child session — stated
     // as visible text, not a tooltip only a mouse can reach.
@@ -141,8 +141,8 @@ describe('sessions destination export actions SSR', () => {
     // The units have to stay distinct in the rendered text: 2 of 4 campaign rows loaded, standing
     // for 5 of 7 filtered sessions. Comparing a campaign-row count against a session total is the
     // exact confusion this label replaced.
-    expect(normalized).toContain('2 of 4 campaign rows currently loaded');
-    expect(normalized).toContain('representing 5 of 7 filtered sessions');
+    expect(normalized).toContain('2 of 4 campaign rows loaded');
+    expect(normalized).toContain('Represents 5 of 7 filtered sessions');
   });
 
   test('falls back to the loaded count before a page has reported a filtered total', () => {

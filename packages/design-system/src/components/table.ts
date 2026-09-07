@@ -79,7 +79,6 @@ export const tableWrap = css({
   border: '1px solid token(colors.line)',
   borderRadius: 'md',
   bg: 'surface',
-  boxShadow: 'card',
   backgroundImage: `linear-gradient(to bottom, token(colors.surface) 30%, transparent),
     linear-gradient(to top, token(colors.surface) 30%, transparent),
     linear-gradient(to bottom, token(colors.lineStrong), transparent),
@@ -123,7 +122,7 @@ export const tableControls = css({
 
 export const right = css({ textAlign: 'right' });
 export const muted = css({ color: 'muted' });
-export const strongCell = css({ fontWeight: 600, overflowWrap: 'anywhere' });
+export const strongCell = css({ fontWeight: 550, overflowWrap: 'anywhere' });
 export const numCell = css({
   textStyle: 'numeric',
   textAlign: 'right',
@@ -135,7 +134,7 @@ export const dateCell = css({
   lineHeight: '1.4',
   color: 'muted',
 });
-export const sessionCell = css({ fontWeight: 600, overflowWrap: 'break-word' });
+export const sessionCell = css({ fontWeight: 500, overflowWrap: 'break-word' });
 export const sessionTitleClamp = css({
   lineClamp: 2,
 });
@@ -163,7 +162,6 @@ export const projectSummaryCard = css({
   border: '1px solid token(colors.line)',
   borderRadius: 'md',
   bg: 'surface',
-  boxShadow: 'card',
 });
 
 export const projectSummaryHeader = css({
@@ -290,7 +288,6 @@ export const sessionSummaryCard = css({
   border: '1px solid token(colors.line)',
   borderRadius: 'md',
   bg: 'surface',
-  boxShadow: 'card',
   '&[data-selected="true"]': {
     borderColor: 'accent',
     bg: 'accentTint',
@@ -338,7 +335,7 @@ export const sessionSummaryOpen = css({
 export const sessionSummaryTitle = css({
   lineClamp: 2,
   fontSize: '13px',
-  fontWeight: 650,
+  fontWeight: 550,
   lineHeight: 1.35,
   overflowWrap: 'anywhere',
 });

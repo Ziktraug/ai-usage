@@ -13,6 +13,21 @@ const windowFor = (overrides: Partial<Parameters<typeof calculateSessionRowWindo
   });
 
 describe('session row window', () => {
+  test('keeps fractional chrome from adding a second document scroll range', () => {
+    const surfaceTop = 541.593_75;
+    const bottomInset = 32.25;
+    const height = calculateSessionViewportHeight({
+      anchorTop: 0,
+      bottomInset,
+      minimumHeight: 129,
+      surfaceTop,
+      viewportHeight: 900,
+    });
+    expect(height).toBe(326);
+    expect(surfaceTop + height + bottomInset).toBeLessThanOrEqual(900);
+    expect(surfaceTop + height + bottomInset).toBeGreaterThan(899);
+  });
+
   test('sizes the desktop surface between its document position and the page bottom', () => {
     expect(
       calculateSessionViewportHeight({

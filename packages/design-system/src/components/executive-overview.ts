@@ -1,13 +1,5 @@
 import { css } from '@ai-usage/design-system/css';
 
-export const executiveGrid = css({
-  display: 'grid',
-  gridTemplateColumns: { base: '1fr', lg: 'minmax(18rem, 0.85fr) minmax(0, 1.35fr)' },
-  gap: { base: '24px', lg: '18px 40px' },
-  alignItems: 'start',
-  minW: 0,
-});
-
 export const editorialSection = css({
   display: 'grid',
   gap: { base: '16px', md: '20px' },
@@ -23,7 +15,7 @@ export const editorialSection = css({
   '& > header > h2': {
     m: 0,
     fontSize: { base: '19px', md: '21px' },
-    fontWeight: 650,
+    fontWeight: 550,
     letterSpacing: '-0.015em',
     lineHeight: 1.25,
   },
@@ -41,29 +33,6 @@ export const sectionDivider = css({
   pt: { base: '22px', md: '28px' },
 });
 
-export const metricStrip = css({
-  display: 'grid',
-  gridTemplateColumns: {
-    base: '1fr',
-    md: 'repeat(2, minmax(0, 1fr))',
-    lg: 'repeat(4, minmax(0, 1fr))',
-  },
-  gap: { base: '10px', md: '16px 24px', lg: '20px' },
-  alignItems: 'stretch',
-  minW: 0,
-  '& > *': {
-    minW: 0,
-  },
-});
-
-export const containedInteractive = css({
-  position: 'relative',
-  minW: 0,
-  border: '1px solid token(colors.line)',
-  borderRadius: 'md',
-  bg: 'surface',
-});
-
 export const numericDisplay = css({
   textStyle: 'numeric',
   color: 'ink',
@@ -71,7 +40,7 @@ export const numericDisplay = css({
     base: 'clamp(28px, calc(150cqi / var(--hero-chars, 8)), 40px)',
     md: 'clamp(28px, calc(150cqi / var(--hero-chars, 8)), 52px)',
   },
-  fontWeight: 650,
+  fontWeight: 550,
   lineHeight: 0.98,
   overflowWrap: 'normal',
   whiteSpace: 'nowrap',

@@ -155,12 +155,13 @@ test('uses one report range for the dashboard and activity chart', async ({ page
   await expect(
     activityFor(page).getByText('Harness · Day · Estimated API-equivalent value', { exact: true }),
   ).toBeVisible();
-  await expect(chartOptions.getByText('Group by', { exact: true })).not.toBeVisible();
+  // Grouping is a toolbar question, answered without opening the explorer.
+  await expect(activityFor(page).getByText('Group by', { exact: true })).toBeVisible();
 
   await chartOptions.locator('summary').click();
 
   await expect(chartOptions).toHaveAttribute('open', '');
-  await expect(chartOptions.getByText('Group by', { exact: true })).toBeVisible();
+  await expect(chartOptions.getByText('Group by', { exact: true })).toHaveCount(0);
   await expect(chartOptions.getByText('Interval', { exact: true })).toBeVisible();
   await expect(chartOptions.getByText('Metric', { exact: true })).toHaveCount(0);
   await expect(chartOptions.locator('[data-brush-tick]')).toHaveText(['May', 'Jun']);
@@ -452,10 +453,11 @@ test('changes every chart option from its segmented controls', async ({ page }) 
   await openHydratedReport(page);
 
   const chartOptions = await openActivityExplorer(page);
+  const groupBy = activityFor(page).getByLabel('Group by');
 
   for (const option of ['Campaign', 'Machine', 'Origin', 'Model', 'Provider', 'Project', 'Harness']) {
-    await chartOptions.getByRole('radio', { exact: true, name: option }).click();
-    await expect(chartOptions.getByRole('radio', { exact: true, name: option })).toBeChecked();
+    await groupBy.selectOption({ label: option });
+    await expect(groupBy).toHaveValue(option.toLowerCase());
   }
 
   for (const option of ['Week', 'Month', 'Day']) {
@@ -517,9 +519,9 @@ test('groups the timeline by campaign, machine, and origin with matching legends
   await openHydratedReport(page);
 
   const activity = activityFor(page);
-  const chartOptions = await openActivityExplorer(page);
+  await openActivityExplorer(page);
 
-  await chartOptions.getByRole('radio', { exact: true, name: 'Campaign' }).click();
+  await activity.getByLabel('Group by').selectOption({ label: 'Campaign' });
   await expect(activity.getByText('Campaign · Day · Estimated API-equivalent value', { exact: true })).toBeVisible();
   await expect(activity.getByTitle('Build report UI', { exact: true })).toContainText('Build report UI');
   await expect(activity.getByTitle('Recover Claude history', { exact: true })).toContainText('Recover Claude history');
@@ -530,7 +532,7 @@ test('groups the timeline by campaign, machine, and origin with matching legends
   await expect(activity.getByTitle('Inspect OpenCode root', { exact: true })).toContainText('Inspect OpenCode root');
   await activityMetricFor(page).getByRole('button', { exact: true, name: 'API value' }).click();
 
-  await chartOptions.getByRole('radio', { exact: true, name: 'Machine' }).click();
+  await activity.getByLabel('Group by').selectOption({ label: 'Machine' });
   await expect(activity.getByText('Machine · Day · Estimated API-equivalent value', { exact: true })).toBeVisible();
   await expect(activity.getByTitle('Filter by Fixture Machine · Stale')).toContainText('Fixture Machine · Stale');
   // The unattributed session is the free-model one, so the value legend drops it for the same reason
@@ -539,7 +541,7 @@ test('groups the timeline by campaign, machine, and origin with matching legends
 
   await activityMetricFor(page).getByRole('button', { exact: true, name: 'Sessions' }).click();
   await expect(activity.getByTitle('Unknown machine')).toContainText('Unknown machine');
-  await chartOptions.getByRole('radio', { exact: true, name: 'Origin' }).click();
+  await activity.getByLabel('Group by').selectOption({ label: 'Origin' });
   await expect(activity.getByText('Origin · Day · Sessions', { exact: true })).toBeVisible();
   await expect(activity.getByRole('button', { name: HUMAN_LEGEND_PATTERN })).toContainText('Human');
   await expect(activity.getByRole('button', { name: DELEGATED_LEGEND_PATTERN })).toContainText('Delegated');
@@ -1019,8 +1021,7 @@ test('assigns each ranked model series a distinct palette token and keeps the gr
   await openHydratedReport(page);
 
   const activity = activityFor(page);
-  const chartOptions = await openActivityExplorer(page);
-  await chartOptions.getByRole('radio', { exact: true, name: 'Model' }).click();
+  await activity.getByLabel('Group by').selectOption({ label: 'Model' });
   const entries = activity.locator('[data-report-range-part="total-legend"] [data-series-key]');
   await waitForFocusedReportSettled(page);
   await expect(entries).toHaveCount(12);

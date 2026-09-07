@@ -24,18 +24,17 @@
   const projectTable = css({ minW: '840px' });
   const statusPill = css({ px: '7px', py: '2px', borderRadius: 'full', fontSize: '10px' });
   const statusPillInfo = css({ bg: 'accentTint', color: 'accent' });
-  const projectSummaryList = css({ display: 'grid', gap: '10px', listStyle: 'none', p: 0, m: 0 });
+  const projectSummaryList = css({ display: 'grid', gap: 0, listStyle: 'none', p: 0, m: 0 });
   const projectSummaryCard = css({
     display: 'grid',
     gap: '10px',
-    p: '12px',
-    border: '1px solid token(colors.line)',
-    borderRadius: 'md',
-    bg: 'surface',
+    py: '18px',
+    px: '4px',
+    borderBottom: '1px solid token(colors.line)',
   });
   const projectSummaryHeader = css({ display: 'flex', justifyContent: 'space-between', gap: '10px' });
   const projectSummaryHeadline = css({ display: 'grid', justifyItems: 'end', gap: '2px' });
-  const projectSummaryCost = css({ fontWeight: 750, textStyle: 'numeric' });
+  const projectSummaryCost = css({ fontWeight: 550, textStyle: 'numeric' });
   const projectSummarySessions = css({ color: 'muted', fontSize: '11px' });
   const projectSummaryMetrics = css({
     display: 'grid',
@@ -63,12 +62,15 @@
     groups,
     onManageProjectGroups,
     onProjectFilter,
+    showMachines = true,
   }: {
     catalogue?: readonly UsageReportProjectGroup[];
     emptyMessage: string;
     groups: readonly ProjectGroup[];
     onManageProjectGroups: () => void;
     onProjectFilter: (value: string) => void;
+    /** False when the whole store is known to hold one machine: the qualifier would repeat itself. */
+    showMachines?: boolean;
   } = $props();
 
   const valueFor = (project: ProjectGroup) =>
@@ -128,7 +130,7 @@
                   </button>
                 {/if}
               </div>
-              {#if identity.machines.length > 0}
+              {#if showMachines && identity.machines.length > 0}
                 <span class={projectMachine} data-project-machine>{identity.machines.join(' · ')}</span>
               {/if}
             </th>
@@ -189,7 +191,7 @@
                 </button>
               {/if}
             </div>
-            {#if identity.machines.length > 0}
+            {#if showMachines && identity.machines.length > 0}
               <span class={projectMachine} data-project-machine>{identity.machines.join(' · ')}</span>
             {/if}
           </div>

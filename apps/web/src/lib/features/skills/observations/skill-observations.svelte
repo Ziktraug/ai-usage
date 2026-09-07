@@ -57,8 +57,8 @@
       : formatObservationCount(count, view?.lowerBound ?? false);
 
   const stack = css({ display: 'grid', gap: '12px' });
-  const section = css({ display: 'grid', gap: '8px' });
-  const sectionHeader = css({ display: 'grid', gap: '2px' });
+  const section = css({ display: 'grid', gap: '12px', minW: 0 });
+  const sectionHeader = css({ display: 'grid', gap: '6px' });
   const coverageList = css({
     display: 'flex',
     flexWrap: 'wrap',
@@ -69,20 +69,25 @@
     color: 'muted',
     fontSize: '12px',
   });
-  const definitionList = css({ display: 'grid', gap: '6px', m: 0 });
+  const definitionList = css({ display: 'grid', m: 0 });
   const definitionRow = css({
     display: 'grid',
     gridTemplateColumns: 'minmax(0, 1fr) auto',
     gap: '8px',
     alignItems: 'baseline',
-    p: '6px 0',
+    p: '12px 0',
     borderTop: '1px solid token(colors.line)',
     fontSize: '13px',
   });
   // `declared 3` is one phrase and must never break across lines into `declare` / `d 3`. The table
   // sits in an `overflow-x: auto` wrapper, so a wide row scrolls rather than shredding its words.
   const observationCell = css({ whiteSpace: 'nowrap' });
-  const detailObservationCell = css({ overflowWrap: 'anywhere' });
+  const detailObservationCell = css({
+    overflowWrap: 'anywhere',
+    textAlign: 'right',
+    fontFamily: 'mono',
+    fontSize: '12px',
+  });
   // The shared table style renders every `th` as an uppercase column label. A skill name is data,
   // not a label, so the row header opts out rather than shouting the inventory back at the reader.
   const skillRowHeader = css({

@@ -26,12 +26,12 @@
     borderRadius: 'md',
     boxShadow: 'overlay',
     display: 'grid',
-    gap: '2px',
+    gap: '8px',
     maxH: '360px',
-    maxW: 'min(480px, calc(100vw - 16px))',
+    maxW: 'min(480px, var(--available-width, calc(100vw - 16px)))',
     minW: 'var(--reference-width)',
     overflowY: 'auto',
-    p: '6px',
+    p: '8px',
     w: 'max-content',
     zIndex: 50,
   });
@@ -43,9 +43,10 @@
     gap: '12px',
     justifyContent: 'space-between',
     px: '10px',
-    py: '4px',
+    py: '10px',
+    borderBottom: '1px solid token(colors.line)',
   });
-  const filterTitle = css({ color: 'ink', fontWeight: 700 });
+  const filterTitle = css({ color: 'ink', fontWeight: 550 });
   const optionList = css({
     display: 'grid',
     gap: '4px',
@@ -53,17 +54,24 @@
     m: 0,
     minW: 0,
     p: 0,
-    '& [data-scope=checkbox][data-part=root]': { maxW: 'none', w: 'full' },
+    '& [data-scope=checkbox][data-part=root]': {
+      maxW: 'none',
+      w: 'full',
+      minH: { base: '44px', sm: '36px' },
+      borderColor: 'transparent',
+      bg: 'transparent',
+      _hover: { bg: 'surfaceMuted' },
+    },
     '& [data-scope=checkbox][data-part=label]': {
       overflow: 'visible',
       textOverflow: 'clip',
-      whiteSpace: 'nowrap',
+      whiteSpace: { base: 'normal', sm: 'nowrap' },
     },
   });
   const optionLabel = css({
     display: 'block',
     minW: 0,
-    whiteSpace: 'nowrap',
+    whiteSpace: { base: 'normal', sm: 'nowrap' },
   });
   const allRow = css({
     appearance: 'none',
@@ -78,7 +86,7 @@
     fontSize: '12px',
     gap: '6px',
     gridTemplateColumns: '14px minmax(0, max-content)',
-    minH: { base: '44px', sm: '28px' },
+    minH: { base: '44px', sm: '36px' },
     px: '8px',
     textAlign: 'left',
     w: 'full',

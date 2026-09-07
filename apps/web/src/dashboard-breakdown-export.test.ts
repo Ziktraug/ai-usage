@@ -1,7 +1,11 @@
 import { describe, expect, test } from 'bun:test';
 import { SESSION_CAMPAIGN_EXPORT_COLUMNS } from '@ai-usage/report-core/csv';
 import type { SessionPresentationRow } from '@ai-usage/report-core/session-query';
-import { createSessionsExport, sessionsExportScopeLabel } from './dashboard-breakdown-export';
+import {
+  createSessionsExport,
+  sessionsExportButtonLabel,
+  sessionsExportScopeLabel,
+} from './dashboard-breakdown-export';
 import { syntheticSessionRow } from './lib/features/sessions/table/session-table.fixtures';
 
 const GENERATED_AT = '2026-08-20T18:45:00.000Z';
@@ -90,11 +94,14 @@ describe('sessions CSV export adapter', () => {
   test('states campaign pagination and represented session coverage in their own units', () => {
     const rows = [campaignRow(1, { campaignVisibleCount: 3 }), campaignRow(2, { campaignVisibleCount: 2 })];
     expect(sessionsExportScopeLabel(rows, 12, 47)).toBe(
-      'Exports 2 of 12 campaign rows currently loaded, representing 5 of 47 filtered sessions',
+      'Represents 5 of 47 filtered sessions · 2 of 12 campaign rows loaded',
     );
     expect(sessionsExportScopeLabel([], 0, 0)).toBe(
-      'Exports 0 of 0 campaign rows currently loaded, representing 0 of 0 filtered sessions',
+      'Represents 0 of 0 filtered sessions · 0 of 0 campaign rows loaded',
     );
+    expect(sessionsExportButtonLabel(rows)).toBe('Export 2 loaded campaigns');
+    expect(sessionsExportButtonLabel([campaignRow(1, { campaignVisibleCount: 3 })])).toBe('Export 1 loaded campaign');
+    expect(sessionsExportButtonLabel([])).toBe('Export 0 loaded campaigns');
   });
 
   test('refuses a non-campaign presentation row instead of exporting a fabricated aggregate', async () => {

@@ -43,6 +43,8 @@ export interface ModelAnalysisRowView {
   readonly shareLabel: string;
   readonly value: ApiValuePresentation;
   readonly valuePerMillion: ApiValuePresentation;
+  /** Visible note under the API value when its counters, not its rates, make it a lower bound. */
+  readonly valueQualification: string | null;
 }
 
 const usageUnavailableOnly = (group: AnalyticsGroup): boolean =>
@@ -187,17 +189,14 @@ const pricingCoveragePresentation = (
   if (group.sessions === 0) {
     return { label: '0 / 0 · —', qualification: 'Pricing coverage unavailable · no model sessions' };
   }
-  const qualifications: string[] = [];
-  if (group.unpriced > 0) {
-    qualifications.push(`${PARTIALLY_MEASURED_LABEL} · ${fmtNum(group.unpricedFreshTokens)} unpriced fresh tokens`);
-  }
-  const unavailableQualification = unavailableCounterQualification(group);
-  if (unavailableQualification) {
-    qualifications.push(`${unavailableQualification} · API value is a lower bound`);
-  }
+  // Rates known and counters present are two different facts. This column answers the first; the
+  // missing-counter note lives under the values it actually bounds (API value, processed tokens).
   return {
     label: `${fmtNum(group.priced)} / ${fmtNum(group.sessions)} · ${fmtPct((group.priced / group.sessions) * 100)}`,
-    qualification: qualifications.length > 0 ? qualifications.join(' · ') : null,
+    qualification:
+      group.unpriced > 0
+        ? `${PARTIALLY_MEASURED_LABEL} · ${fmtNum(group.unpricedFreshTokens)} unpriced fresh tokens`
+        : null,
   };
 };
 
@@ -211,6 +210,8 @@ export const modelAnalysisRows = (
     const processedTokens = processedTokensForAnalytics(group);
     const unavailable = usageUnavailableOnly(group);
     const pricingCoverage = pricingCoveragePresentation(group);
+    const countersMissing = !unavailable && group.usageUnavailable > 0;
+    const counterQualification = unavailableCounterQualification(group);
     return {
       group,
       label: breakdownModelLabel(group.key),
@@ -218,11 +219,15 @@ export const modelAnalysisRows = (
       pricingCoverageLabel: pricingCoverage.label,
       pricingQualification: pricingCoverage.qualification,
       processedTokens,
-      processedTokensLabel: unavailable ? '—' : fmtCompact(processedTokens),
-      processedTokensQualification: unavailable ? USAGE_UNAVAILABLE_HINT : unavailableCounterQualification(group),
+      // A missing counter bounds the token total the same way it bounds the value: mark the number,
+      // state the reason once, under the value.
+      processedTokensLabel: unavailable ? '—' : `${countersMissing ? '≥ ' : ''}${fmtCompact(processedTokens)}`,
+      processedTokensQualification: unavailable ? USAGE_UNAVAILABLE_HINT : null,
       processedTokensTitle: processedTokensTitle(group),
       shareLabel: unavailable ? '—' : fmtPct(group.costPercent),
       value: modelValue(group),
+      valueQualification:
+        countersMissing && counterQualification ? `${counterQualification} · API value is a lower bound` : null,
       valuePerMillion: modelValuePerMillion(group, processedTokens),
     };
   });
@@ -236,3 +241,84 @@ export const analyticsExportRows = (
 ): readonly AnalyticsExportRow[] => rows.map(({ group, label }) => ({ group, label }));
 
 export { breakdownLabelMatchesSearch } from '../../../../group-panel-presentation';
+
+export interface ModelComparisonBar {
+  readonly key: string;
+  readonly label: string;
+  /** True when the plotted measure is itself a lower bound; the bar is drawn hatched. */
+  readonly lowerBound: boolean;
+  readonly measureLabel: string;
+  /** Position in the sorted list; drives the ranked model palette so colours stay stable per rank. */
+  readonly rank: number;
+  /** Share of the largest known measure, 0–100; null when the measure is unknown for this model. */
+  readonly widthPercent: number | null;
+}
+
+// Sessions are counted even when their token counters are missing; only the token-derived measures
+// become unknown for a counterless model (ADR 0016: qualify per metric, not per row).
+const comparisonMeasure = (row: ModelAnalysisRowView, sort: BreakdownSort): number | null => {
+  if (sort === 'sessions') {
+    return row.group.sessions;
+  }
+  if (usageUnavailableOnly(row.group)) {
+    return null;
+  }
+  if (sort === 'tokens') {
+    return row.processedTokens;
+  }
+  return row.value.status === 'unknown' ? null : row.group.costSum;
+};
+
+const comparisonLowerBound = (row: ModelAnalysisRowView, sort: BreakdownSort): boolean => {
+  if (sort === 'sessions') {
+    return false;
+  }
+  if (sort === 'tokens') {
+    return row.processedTokensLabel.startsWith('≥');
+  }
+  return row.value.status === 'lower-bound';
+};
+
+// A measured zero is a zero-length bar, not an unknown: null is reserved for values nobody knows.
+const comparisonWidth = (measure: number | null, max: number): number | null => {
+  if (measure === null) {
+    return null;
+  }
+  return max === 0 ? 0 : (measure / max) * 100;
+};
+
+const comparisonMeasureLabel = (row: ModelAnalysisRowView, sort: BreakdownSort): string => {
+  switch (sort) {
+    case 'sessions':
+      return `${fmtNum(row.group.sessions)} ${row.group.sessions === 1 ? 'session' : 'sessions'}`;
+    case 'tokens':
+      return row.processedTokensLabel;
+    default:
+      return row.value.label;
+  }
+};
+
+/**
+ * The visual half of the Models table: one bar per model for the measure the table is sorted by,
+ * every model with its own colour, no rollup. Bars reuse the table rows, so the numbers are the
+ * canonical ones (ADR 0018); a lower-bound measure hatches its bar instead of pretending precision,
+ * and an unknown measure keeps its row with no bar at all.
+ */
+export const modelComparisonBars = (
+  rows: readonly ModelAnalysisRowView[],
+  sort: BreakdownSort,
+): readonly ModelComparisonBar[] => {
+  const measures = rows.map((row) => comparisonMeasure(row, sort));
+  const max = Math.max(0, ...measures.map((measure) => measure ?? 0));
+  return rows.map((row, index) => {
+    const measure = measures[index] ?? null;
+    return {
+      key: row.group.key,
+      label: row.label,
+      lowerBound: comparisonLowerBound(row, sort),
+      measureLabel: comparisonMeasureLabel(row, sort),
+      rank: index,
+      widthPercent: comparisonWidth(measure, max),
+    };
+  });
+};

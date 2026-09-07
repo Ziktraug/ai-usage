@@ -187,6 +187,13 @@ test('anchors the virtual Session viewport inside the screen on desktop and mobi
             return {
               activeElementInsideRegion: Boolean(document.activeElement?.closest('[data-session-region-start]')),
               atLeastMinimumRows: element.clientHeight >= currentViewport.minimumRowHeight * (isDesktop ? 3 : 1),
+              // Six complete body rows, not six row-heights of container: the header lives in the surface too.
+              sixBodyRowsVisible:
+                !isDesktop ||
+                [...element.querySelectorAll('tr[data-index]')].filter((row) => {
+                  const rowRect = row.getBoundingClientRect();
+                  return rowRect.top >= rect.top - 1 && rowRect.bottom <= rect.bottom + 1;
+                }).length >= Math.min(6, element.querySelectorAll('tr[data-index]').length),
               desktopBottomGap:
                 !isDesktop || (window.innerHeight - rect.bottom >= 24 && window.innerHeight - rect.bottom <= 48),
               maxHeight: getComputedStyle(element).maxHeight,
@@ -218,6 +225,7 @@ test('anchors the virtual Session viewport inside the screen on desktop and mobi
         overflowAnchor: 'none',
         regionStartsInViewport: true,
         singleScrollContainer: true,
+        sixBodyRowsVisible: true,
         surfaceStartsInViewport: true,
         windowAtTop: true,
       });
@@ -612,7 +620,7 @@ test('keeps the desktop Session drawer nonmodal and outside-focus friendly', asy
   expect(desktopGeometry).toMatchObject({
     bottom: DESKTOP_DRAWER_VIEWPORT.height,
     top: 0,
-    width: 440,
+    width: 480,
   });
   expect(desktopGeometry.right).toBe(desktopGeometry.layoutRight);
   const actionGeometry = await drawer.locator('[data-session-drawer-header] button:visible').evaluateAll((elements) =>

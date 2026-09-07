@@ -4,11 +4,10 @@ export const panel = css({
   display: 'grid',
   gap: '14px',
   alignContent: 'start',
-  p: '16px 18px',
+  p: { base: '16px', md: '20px 22px' },
   border: '1px solid token(colors.line)',
   borderRadius: 'md',
   bg: 'surface',
-  boxShadow: 'card',
   minW: 0,
 });
 
@@ -25,24 +24,25 @@ export const passivePanel = css({
 
 export const panelHeader = css({
   display: 'grid',
-  gap: '2px',
+  gap: '5px',
 });
 
 export const panelTitle = css({
-  fontSize: '14px',
-  fontWeight: 650,
+  fontSize: '16px',
+  fontWeight: 550,
+  letterSpacing: '-0.015em',
 });
 
 export const panelSub = css({
   color: 'muted',
   fontSize: '12px',
+  lineHeight: 1.5,
 });
 
 export const groupPanel = css({
   border: '1px solid token(colors.line)',
   borderRadius: 'md',
   bg: 'surface',
-  boxShadow: 'card',
   overflow: 'hidden',
 });
 
@@ -57,7 +57,7 @@ export const groupHeader = css({
 
 export const groupTitle = css({
   fontSize: '14px',
-  fontWeight: 650,
+  fontWeight: 550,
   overflowWrap: 'anywhere',
 });
 
