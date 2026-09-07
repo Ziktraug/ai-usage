@@ -144,7 +144,7 @@ for (const route of routes) {
         expect(fleetBox).not.toBeNull();
         expect(noticeBox?.x).toBe(fleetBox?.x);
         expect(noticeBox?.width).toBe(fleetBox?.width);
-        expect(fleetBox?.y).toBe((noticeBox?.y ?? 0) + (noticeBox?.height ?? 0) + 16);
+        expect(fleetBox?.y).toBe((noticeBox?.y ?? 0) + (noticeBox?.height ?? 0) + 36);
       } finally {
         await ssrContext.close();
       }

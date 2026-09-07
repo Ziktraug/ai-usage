@@ -73,8 +73,8 @@ test('keeps the decision-first Overview and provider-last reading order', async 
   const executiveSource = await Bun.file(new URL('./executive-overview.svelte', import.meta.url)).text();
   const executiveSurfaces = [
     'data-executive-kpi',
-    '<ActivityExplorer',
     'data-executive-metrics',
+    '<ActivityExplorer',
     'data-period-insight',
     'Top models',
   ];

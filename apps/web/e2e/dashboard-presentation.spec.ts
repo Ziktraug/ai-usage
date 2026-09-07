@@ -13,7 +13,7 @@ import {
   waitForHydratedReport,
 } from './browser-test';
 
-const MAX_DASHBOARD_METRIC_COLUMNS = 4;
+const EXECUTIVE_SUPPORT_METRIC_COLUMNS = 2;
 /** Panda's `md` breakpoint, where `[data-model-analysis-table]` replaces the card list. */
 const MODEL_TABLE_MIN_WIDTH_PX = 768;
 const MAX_ALIGNMENT_DRIFT_PX = 1;
@@ -44,7 +44,7 @@ const FIRST_READ_SCENARIOS = [
 ] as const;
 
 for (const scenario of FIRST_READ_SCENARIOS) {
-  test(`keeps the decision-first Overview in the initial ${scenario.name} viewport`, async ({ page }, testInfo) => {
+  test(`keeps the Atelier overview readable at ${scenario.name}`, async ({ page }, testInfo) => {
     await page.emulateMedia({ colorScheme: scenario.colorScheme, reducedMotion: 'reduce' });
     await page.setViewportSize(scenario.viewport);
     await openHydratedReport(page);
@@ -85,28 +85,25 @@ for (const scenario of FIRST_READ_SCENARIOS) {
     ).toBe(1);
     expect(await kpi.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
 
+    const headline = page.locator('[data-overview-headline]');
+    const headlineBox = await headline.boundingBox();
+    const chartBox = await chart.boundingBox();
+    if (!(headlineBox && chartBox)) {
+      throw new Error('Headline and activity must expose layout geometry');
+    }
+    expect(chartBox.y).toBeGreaterThanOrEqual(headlineBox.y + headlineBox.height);
+    expect(Math.abs(chartBox.x - headlineBox.x)).toBeLessThanOrEqual(MAX_ALIGNMENT_DRIFT_PX);
+    expect(Math.abs(chartBox.width - headlineBox.width)).toBeLessThanOrEqual(MAX_ALIGNMENT_DRIFT_PX);
+
     if (scenario.viewport.width >= 1280) {
       expect(kpiSize).toBeGreaterThanOrEqual(44);
-      for (const surface of [kpi, chart, metrics]) {
-        const box = await surface.boundingBox();
-        expect(Math.ceil((box?.y ?? Number.POSITIVE_INFINITY) + (box?.height ?? 0))).toBeLessThanOrEqual(
-          scenario.viewport.height,
-        );
-      }
-    } else {
-      const mobileNavigation = page.locator('[data-app-navigation="mobile"]');
-      const navigationBox = await mobileNavigation.boundingBox();
-      const periodBox = await period.boundingBox();
       const kpiBox = await kpi.boundingBox();
-      const chartBox = await chart.boundingBox();
-      const chartHeadingBox = await chart.getByRole('heading', { level: 3, name: 'Activity' }).boundingBox();
-      const chartPlotBox = await chart.locator('[data-report-range-part="chart"]').boundingBox();
-      const navigationTop = navigationBox?.y ?? scenario.viewport.height - 64;
-      expect((periodBox?.y ?? -1) + (periodBox?.height ?? 0)).toBeLessThanOrEqual(navigationTop);
-      expect((kpiBox?.y ?? -1) + (kpiBox?.height ?? 0)).toBeLessThanOrEqual(navigationTop);
-      expect(chartBox?.y ?? Number.POSITIVE_INFINITY).toBeLessThan(navigationTop);
-      expect((chartHeadingBox?.y ?? -1) + (chartHeadingBox?.height ?? 0)).toBeLessThanOrEqual(navigationTop);
-      expect((chartPlotBox?.y ?? Number.POSITIVE_INFINITY) + 24).toBeLessThanOrEqual(navigationTop);
+      const metricsBox = await metrics.boundingBox();
+      expect(Math.abs((kpiBox?.y ?? 0) - (metricsBox?.y ?? 0))).toBeLessThanOrEqual(MAX_ALIGNMENT_DRIFT_PX);
+    } else if (scenario.viewport.width < 768) {
+      const kpiBox = await kpi.boundingBox();
+      const metricsBox = await metrics.boundingBox();
+      expect(metricsBox?.y ?? -1).toBeGreaterThanOrEqual((kpiBox?.y ?? 0) + (kpiBox?.height ?? 0));
     }
 
     // The quota rail's own data query is gated to live mode (`provider-quota-query-shell.svelte`),
@@ -129,7 +126,7 @@ for (const scenario of FIRST_READ_SCENARIOS) {
   });
 }
 
-test('keeps the four executive metrics aligned below a visually dominant KPI', async ({ page }) => {
+test('keeps four supporting metrics aligned beside the dominant API value', async ({ page }) => {
   await page.setViewportSize({ height: 1000, width: 1440 });
   await page.goto('/');
 
@@ -149,7 +146,7 @@ test('keeps the four executive metrics aligned below a visually dominant KPI', a
   const columnCount = await grid.evaluate(
     (element) => getComputedStyle(element).gridTemplateColumns.trim().split(' ').filter(Boolean).length,
   );
-  expect(columnCount).toBe(MAX_DASHBOARD_METRIC_COLUMNS);
+  expect(columnCount).toBe(EXECUTIVE_SUPPORT_METRIC_COLUMNS);
 
   const valueOffsetsOf = () =>
     metrics.evaluateAll((elements) =>
@@ -310,6 +307,66 @@ test('renders Token anatomy as four exact definition rows without a segmented ba
   );
   expect(new Set(boxes.map((box) => box.left)).size).toBe(1);
   expect(boxes.map((box) => box.top)).toEqual([...boxes.map((box) => box.top)].sort((left, right) => left - right));
+});
+
+test('keeps every Analysis choice and the directly selected Cursor AI label visible on mobile', async ({ page }) => {
+  await page.setViewportSize(MOBILE_VIEWPORT);
+  await openHydratedReport(page, '/?tab=cursor-ai');
+
+  const choices = page.getByRole('tablist', { name: 'Analysis dimension' });
+  const selected = choices.getByRole('tab', { name: 'Cursor AI', exact: true });
+  await expect(selected).toHaveAttribute('aria-selected', 'true');
+  await expect(choices.getByRole('tab')).toHaveText(['Models', 'Harnesses & providers', 'Projects', 'Cursor AI']);
+
+  const geometry = await choices.evaluate((element) => {
+    const list = element.getBoundingClientRect();
+    return {
+      clipped: element.scrollWidth > element.clientWidth,
+      tabs: [...element.querySelectorAll('[role="tab"]')].map((tab) => {
+        const box = tab.getBoundingClientRect();
+        return {
+          clipped: tab.scrollWidth > tab.clientWidth,
+          inside: box.left >= list.left && box.right <= list.right,
+          height: box.height,
+          top: box.top,
+        };
+      }),
+    };
+  });
+  expect(geometry.clipped).toBe(false);
+  expect(geometry.tabs.every((tab) => tab.inside && !tab.clipped && tab.height >= 44)).toBe(true);
+  expect(new Set(geometry.tabs.map((tab) => tab.top)).size).toBe(2);
+
+  await selected.focus();
+  await page.keyboard.press('ArrowLeft');
+  await expect(choices.getByRole('tab', { name: 'Projects', exact: true })).toBeFocused();
+  await expect(choices.getByRole('tab', { name: 'Projects', exact: true })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.locator('[data-projects-panel]')).toBeVisible();
+});
+
+test('lets keyboard users scroll the Cursor attribution table on narrow screens', async ({ page }) => {
+  await page.setViewportSize(MOBILE_VIEWPORT);
+  await openHydratedReport(page, '/?tab=cursor-ai');
+  await page
+    .getByRole('region', { name: 'Report period' })
+    .getByRole('button', { name: 'All time', exact: true })
+    .click();
+  await waitForFocusedReportSettled(page);
+
+  const region = page.getByRole('region', { name: 'Cursor commit attribution table', exact: true });
+  await expect(region).toBeVisible();
+  await expect(region.getByRole('table')).toBeVisible();
+  await expect(region.getByRole('columnheader')).toHaveCount(8);
+  expect(await region.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(true);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(
+    true,
+  );
+
+  await region.focus();
+  await expect(region).toBeFocused();
+  await region.press('ArrowRight');
+  await expect.poll(() => region.evaluate((element) => element.scrollLeft)).toBeGreaterThan(0);
+  await expect(region).toBeFocused();
 });
 
 test('renders secondary status only on Overview and puts Projects before closed group management', async ({ page }) => {
@@ -585,7 +642,10 @@ test('keeps the mobile filter stack coherent with content above the fold', async
   ]);
   expect(Math.abs((searchBox?.y ?? 0) - (toggleBox?.y ?? 0))).toBeLessThanOrEqual(MAX_ALIGNMENT_DRIFT_PX);
   expect(toolbarBox?.height).toBeLessThanOrEqual(64);
-  expect(heroBox?.y).toBeLessThan(360);
+  const mobileNavigationBox = await page.locator('[data-app-navigation="mobile"]').boundingBox();
+  expect((heroBox?.y ?? Number.POSITIVE_INFINITY) + (heroBox?.height ?? 0)).toBeLessThanOrEqual(
+    mobileNavigationBox?.y ?? 0,
+  );
   await toggle.click();
   await expect(page.getByRole('button', { name: 'Filter by harness' })).toBeVisible();
   expect(searchBox?.width ?? Number.POSITIVE_INFINITY).toBeLessThanOrEqual(MOBILE_VIEWPORT.width - 32);

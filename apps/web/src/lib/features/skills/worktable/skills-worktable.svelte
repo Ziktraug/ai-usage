@@ -85,28 +85,36 @@
   const ADOPT_GATE_TEXT =
     'Adopting a runtime copy into the source repository is not implemented yet — it waits on the approved file-operation plan.';
 
-  const strip = css({ display: 'flex', flexWrap: 'wrap', gap: '6px', alignItems: 'stretch' });
+  const strip = css({
+    display: 'flex',
+    flexWrap: 'wrap',
+    gap: '8px',
+    alignItems: 'stretch',
+    pb: '20px',
+    borderBottom: '1px solid token(colors.line)',
+  });
   const chip = css({
     appearance: 'none',
-    display: 'flex',
-    alignItems: 'center',
+    display: 'grid',
     gap: '10px',
-    alignContent: 'center',
-    p: '10px 12px',
-    minH: '44px',
-    border: '1px solid token(colors.line)',
+    alignContent: 'start',
+    p: '14px 16px',
+    minH: '84px',
+    flex: { base: '1 1 130px', md: '0 1 auto' },
+    minW: { base: 0, md: '110px' },
+    border: '1px solid transparent',
     borderRadius: 'sm',
-    bg: 'surface',
+    bg: 'transparent',
     color: 'ink',
     textAlign: 'left',
     cursor: 'pointer',
-    _hover: { borderColor: 'accent' },
+    _hover: { bg: 'surfaceMuted' },
     _focusVisible: { outline: '2px solid token(colors.accent)', outlineOffset: '2px' },
     '&[aria-pressed="true"]': {
       borderColor: 'transparent',
-      bg: 'accentSoft',
+      bg: 'accentTint',
       color: 'accent',
-      boxShadow: 'inset 0 -2px 0 token(colors.accent)',
+      boxShadow: 'inset 0 2px 0 token(colors.accent)',
     },
   });
   const chipLabel = css({
@@ -116,8 +124,33 @@
     letterSpacing: '0',
     '[aria-pressed="true"] &': { color: 'ink' },
   });
-  const chipValue = css({ fontFamily: 'mono', fontSize: '13px', fontWeight: 600, lineHeight: 1, whiteSpace: 'nowrap' });
-  const stripAside = css({ display: 'grid', gap: '8px', alignContent: 'center', flex: '1 1 240px', minW: 0 });
+  const chipValue = css({
+    display: 'grid',
+    gap: '6px',
+    minW: 0,
+    fontFamily: 'mono',
+    fontSize: '24px',
+    fontWeight: 400,
+    letterSpacing: '-0.05em',
+    lineHeight: 1.1,
+    overflowWrap: 'anywhere',
+  });
+  const chipQualifier = css({
+    color: 'muted',
+    fontFamily: 'sans',
+    fontSize: '11px',
+    letterSpacing: 'normal',
+    lineHeight: 1.4,
+  });
+  const provisionalSuffix = ' provisional';
+  const stripAside = css({
+    display: 'grid',
+    gap: '8px',
+    alignContent: 'center',
+    flex: '1 1 260px',
+    minW: 0,
+    p: '12px 16px',
+  });
   const observabilityLine = css({
     display: 'flex',
     flexWrap: 'wrap',
@@ -142,7 +175,6 @@
     p: 0,
     listStyle: 'none',
     color: 'muted',
-    fontFamily: 'mono',
     fontSize: '11px',
   });
   // A grid child sizes to its content by default, so without an explicit floor the table's own
@@ -157,8 +189,8 @@
     position: 'relative',
     minW: 0,
     maxW: 'full',
-    border: '1px solid token(colors.line)',
-    borderRadius: 'md',
+    borderTop: '1px solid token(colors.line)',
+    borderBottom: '1px solid token(colors.line)',
     bg: 'surface',
     // Scroll cue: a hairline shadow appears on whichever edge still hides columns. The two `local`
     // layers are surface-coloured covers that travel with the content and reveal the fixed shadows
@@ -175,7 +207,7 @@
     width: 'full',
     borderCollapse: 'collapse',
     fontSize: '13px',
-    '& th, & td': { p: '14px 16px', textAlign: 'left', verticalAlign: 'middle' },
+    '& th, & td': { p: '12px 14px', textAlign: 'left', verticalAlign: 'middle' },
     '& tbody th[scope="row"]': { fontWeight: 400 },
     '& thead th': {
       color: 'muted',
@@ -187,6 +219,7 @@
       whiteSpace: 'nowrap',
     },
     '& tbody tr': { borderBottom: '1px solid token(colors.line)' },
+    '& tbody tr[data-worktable-row]:hover': { bg: 'surfaceMuted' },
     // The skill's identity stays in view while the evidence columns scroll under it; the State /
     // Action column at the far right is otherwise reachable only by guessing that the table scrolls.
     '& thead th:first-child, & tbody th[scope="row"]': {
@@ -205,7 +238,7 @@
     gap: '4px 12px',
     alignItems: 'baseline',
   });
-  const groupTitle = css({ fontSize: '12px', fontWeight: 650 });
+  const groupTitle = css({ fontSize: '12px', fontWeight: 600, color: 'accent' });
   const nameCell = css({
     display: 'grid',
     gap: '5px',
@@ -292,7 +325,7 @@
     cursor: 'not-allowed',
     opacity: 0.7,
   });
-  const selectedRow = css({ bg: 'accentTint' });
+  const selectedRow = css({ bg: 'accentTint', '& > th[scope="row"]': { bg: 'accentTint' } });
   const visuallyHidden = css({
     position: 'absolute',
     w: '1px',
@@ -373,6 +406,7 @@
 <div class={stack} data-skills-worktable>
   <section aria-label="Skill decisions" class={strip}>
     {#each model.filters as entry (entry.id)}
+      {@const provisional = entry.value.endsWith(provisionalSuffix)}
       <button
         aria-label={`${entry.label} — ${entry.accessibleValue}`}
         aria-pressed={filter === entry.id ? 'true' : 'false'}
@@ -382,7 +416,12 @@
         type="button"
       >
         <span class={chipLabel}>{entry.label}</span>
-        <span class={chipValue}>{entry.value}</span>
+        <span class={chipValue} data-worktable-metric-value>
+          <span>{provisional ? entry.value.slice(0, -provisionalSuffix.length) : entry.value}</span>
+          {#if provisional}
+            <span class={chipQualifier}>{provisionalSuffix}</span>
+          {/if}
+        </span>
       </button>
     {/each}
     <div class={stripAside}>

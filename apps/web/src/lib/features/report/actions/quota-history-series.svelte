@@ -11,9 +11,14 @@
     w: 'full',
     h: 'auto',
     aspectRatio: '3 / 1',
-    bg: 'surface',
-    border: '1px solid token(colors.line)',
-    borderRadius: 'sm',
+    color: 'accent',
+  });
+  const seriesHeader = css({
+    display: 'grid',
+    gridTemplateColumns: 'minmax(0, 1fr) auto',
+    alignItems: 'baseline',
+    gap: '16px',
+    '& > strong:first-child': { fontWeight: 500, overflowWrap: 'anywhere' },
   });
   const axisRow = css({ display: 'flex', justifyContent: 'space-between', color: 'muted', fontSize: '11px' });
   const tableWrap = css({ overflowX: 'auto' });
@@ -97,9 +102,9 @@
 </script>
 
 <article class={panel}>
-  <div class={css({ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '16px' })}>
+  <div class={seriesHeader}>
     <strong>{series.label}</strong
-    ><strong class={css({ textStyle: 'numeric', fontSize: '24px', fontWeight: 650 })}
+    ><strong class={css({ textStyle: 'numeric', fontSize: '28px', fontWeight: 500 })}
       >{series.currentPercent === null ? 'Unknown' : fmtPct(series.currentPercent)}</strong
     >
   </div>

@@ -7,14 +7,52 @@
     type ProviderQuotaHistoryRange,
     providerQuotaHistoryWindow,
   } from '../../../../provider-quota-history-model';
-  import { button, field, list, muted, panel, row, stack, title } from '../breakdown/styles';
+  import { button, field, list, muted, stack } from '../breakdown/styles';
   import QuotaHistorySeries from './quota-history-series.svelte';
 
-  const rangeControls = css({ display: 'flex', flexWrap: 'wrap', gap: '8px', border: 0, m: 0, p: 0 });
-  // `Drawer` styles its content with `drawerClass` only — `drawerBody`, which forces descendant
-  // controls to 44 px, is never applied here. Without this the buttons sit at their 32 px minimum
-  // beside 36 px selects, so the height has to be stated: it tracks `field`'s own responsive height.
-  const rangeButton = css({ minW: '56px', minH: { base: '44px', sm: '36px' } });
+  const rangeControls = css({
+    display: 'flex',
+    flexWrap: 'wrap',
+    gap: '8px',
+    border: 0,
+    m: 0,
+    p: 0,
+    gridColumn: '1 / -1',
+    '& > legend': { color: 'muted', fontSize: '11px', mb: '8px' },
+    '& > button[aria-pressed]': { minW: '56px' },
+  });
+  const historyControls = css({
+    display: 'grid',
+    gridTemplateColumns: { base: 'minmax(0, 1fr)', sm: 'repeat(3, minmax(0, 1fr))' },
+    gap: '16px 12px',
+    minW: 0,
+    pb: '8px',
+    '& > button': { gridColumn: '1 / -1', justifySelf: 'start' },
+  });
+  const historyHeader = css({
+    display: 'grid',
+    gridTemplateColumns: 'minmax(0, 1fr) auto',
+    gap: '12px',
+    alignItems: 'start',
+    pb: '24px',
+    borderBottom: '1px solid token(colors.line)',
+  });
+  const historyHeading = css({
+    fontSize: '24px',
+    fontWeight: 500,
+    letterSpacing: '-0.03em',
+    lineHeight: 1.2,
+    mb: '8px',
+  });
+  const historyNotice = css({
+    borderInlineStart: '2px solid token(colors.status.warn)',
+    px: '14px',
+    py: '8px',
+    color: 'muted',
+    fontSize: '12px',
+    lineHeight: 1.6,
+  });
+  const historyState = css({ color: 'muted', fontSize: '13px', lineHeight: 1.6, py: '24px' });
   const selectedRange = css({ borderColor: 'accent', bg: 'accentTint', color: 'accent' });
   const historyControl = css({
     display: 'grid',
@@ -117,11 +155,9 @@
     data-quota-window-from={model?.window.from}
     data-quota-window-to={model?.window.to}
   >
-    <header
-      class={css({ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) auto', gap: '12px', alignItems: 'start', pb: '16px', borderBottom: '1px solid token(colors.line)' })}
-    >
+    <header class={historyHeader}>
       <div>
-        <h2 class={title}>Provider quota history</h2>
+        <h2 class={historyHeading}>Provider quota history</h2>
         <p class={muted}>Provider-defined quota observations retained on this machine.</p>
       </div>
       <button
@@ -135,15 +171,15 @@
       </button>
     </header>
     {#if errorMessage}
-      <div class={panel} role="status">{errorMessage}</div>
+      <div class={historyNotice} role="status">{errorMessage}</div>
     {/if}
-    <div class={row}>
+    <div class={historyControls}>
       <fieldset class={rangeControls}>
         <legend>History range</legend>
         {#each historyRanges as item (item)}
           <button
             {...pressedAria(item)}
-            class={[button, rangeButton, range === item ? selectedRange : undefined]}
+            class={[button, range === item ? selectedRange : undefined]}
             onclick={() => changeRange(item)}
             type="button"
           >
@@ -181,13 +217,13 @@
       <button class={button} onclick={resetFilters} type="button">Reset filters</button>
     </div>
     {#if loading}
-      <div role="status">Loading quota history…</div>
+      <div class={historyState} role="status">Loading quota history…</div>
     {/if}
     {#if !loading && model?.emptyMessage}
-      <div>{model.emptyMessage}</div>
+      <div class={historyState}>{model.emptyMessage}</div>
     {/if}
     {#if model?.partial}
-      <div class={panel}>History is partial or contains skipped corrupt observations.</div>
+      <div class={historyNotice}>History is partial or contains skipped corrupt observations.</div>
     {/if}
     {#if visibleSeries.length > 0}
       <p class={muted} data-quota-legend>▼ reset boundary · ▽ collection gap · ○ held from before the window</p>

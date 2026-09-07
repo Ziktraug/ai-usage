@@ -1,6 +1,6 @@
 <script lang="ts">
   import { css, cx } from '@ai-usage/design-system/css';
-  import { panel, panelSub, panelTitle } from '@ai-usage/design-system/svelte';
+  import { panelSub, panelTitle } from '@ai-usage/design-system/svelte';
   import {
     formatFleetAge,
     INVALID_STORED_ROWS_EXPLANATION,
@@ -33,27 +33,42 @@
 
   const fleetGrid = css({
     display: 'grid',
-    gap: '12px',
-    gridTemplateColumns: { base: '1fr', md: 'repeat(2, minmax(0, 1fr))' },
+    gridTemplateColumns: 'minmax(0, 1fr)',
+    borderTop: '1px solid token(colors.line)',
   });
-  const machineCard = css({ display: 'grid', gap: '14px', minW: 0 });
-  const machineCardCurrent = css({ borderColor: 'line', boxShadow: 'card' });
+  const machineCard = css({
+    display: 'grid',
+    gap: '18px 32px',
+    minW: 0,
+    py: '22px',
+    gridTemplateColumns: { base: 'minmax(0, 1fr)', xl: 'minmax(220px, 0.8fr) minmax(0, 1.2fr)' },
+    borderBottom: '1px solid token(colors.line)',
+  });
+  const machineCardCurrent = css({ '& h3': { color: 'accent' } });
   const machineHeader = css({
     alignItems: 'start',
-    display: 'flex',
-    flexWrap: 'wrap',
+    display: 'grid',
     gap: '10px',
-    justifyContent: 'space-between',
   });
-  const machineFacts = css({ display: 'grid', gap: '10px', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))' });
+  const machineFacts = css({
+    display: 'grid',
+    gap: '16px',
+    gridTemplateColumns: { base: 'repeat(2, minmax(0, 1fr))', md: 'repeat(4, minmax(0, 1fr))' },
+  });
   const machineFact = css({
     display: 'grid',
     gap: '6px',
     minW: 0,
-    '& > span:last-child': { textStyle: 'numeric', fontSize: '15px' },
+    '& > span:last-child': { textStyle: 'numeric', fontSize: '19px', letterSpacing: '-0.04em' },
   });
   const machineFactLabel = css({ color: 'muted', fontSize: '10px', fontWeight: 700, textTransform: 'uppercase' });
-  const disclosure = css({ color: 'muted', fontSize: '12px', lineHeight: 1.5 });
+  const disclosure = css({
+    color: 'muted',
+    fontSize: '12px',
+    lineHeight: 1.6,
+    gridColumn: '1 / -1',
+    '& > summary': { cursor: 'pointer', _hover: { color: 'accent' } },
+  });
   const snapshotCommand = css({
     bg: 'surfaceMuted',
     border: '1px solid token(colors.line)',
@@ -83,7 +98,7 @@
   </div>
   <div class={fleetGrid}>
     {#each machines as machine (machine.id)}
-      <article class={cx(panel, machineCard, machine.current && machineCardCurrent)} data-machine-stale={machine.stale}>
+      <article class={cx(machineCard, machine.current && machineCardCurrent)} data-machine-stale={machine.stale}>
         <div class={machineHeader}>
           <MachineLabelEditor
             editable={machine.current && renameAvailable && onRename !== undefined}

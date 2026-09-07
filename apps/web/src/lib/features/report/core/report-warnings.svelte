@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { css, cx } from '@ai-usage/design-system/css';
-  import { panel, panelSub, panelTitle } from '@ai-usage/design-system/svelte';
+  import { css } from '@ai-usage/design-system/css';
+  import { panelSub } from '@ai-usage/design-system/svelte';
   import type { UsageReportWarning } from '@ai-usage/report-core/report-data';
   import { presentReportWarning, reportNoticesSummary } from './report-warnings-model';
 
@@ -24,11 +24,23 @@
   // Closed by default: the summary line states the count and the consequence, which is all the
   // report reader needs. The details exist for the reader about to act on them.
   const warningPanel = css({
-    borderColor: 'status.warn',
-    bg: 'status.warnSoft',
-    mt: '16px',
-    gap: '6px',
-    py: '10px',
+    display: 'grid',
+    gridTemplateColumns: 'auto minmax(0, 1fr)',
+    alignItems: 'start',
+    borderInlineStart: '2px solid token(colors.status.warn)',
+    mt: '12px',
+    gap: '4px 16px',
+    px: '12px',
+    '&:has(> details[open])': { pb: '16px' },
+  });
+  const warningTitle = css({
+    display: 'flex',
+    alignItems: 'center',
+    minH: '44px',
+    color: 'status.warn',
+    fontSize: '11px',
+    fontWeight: 550,
+    m: 0,
   });
   const warningDetails = css({
     display: 'grid',
@@ -36,10 +48,12 @@
     '& > summary': {
       display: 'flex',
       flexWrap: 'wrap',
-      alignItems: 'baseline',
+      alignItems: 'center',
       gap: '4px 10px',
+      minH: '44px',
       cursor: 'pointer',
       listStyle: 'none',
+      _focusVisible: { outline: '2px solid token(colors.accent)', outlineOffset: '2px' },
       '&::-webkit-details-marker': { display: 'none' },
       '&::before': { content: '"▸"', color: 'muted', fontSize: '11px', mr: '2px' },
     },
@@ -85,8 +99,8 @@
 {#if warnings.length > 0 || omittedSupportItemCount > 0}
   <!-- The heading stays outside the disclosure: a heading inside <summary> is flattened by some
        accessibility mappings, and the heading is how a screen-reader user finds this block. -->
-  <section aria-labelledby="report-warnings-title" class={cx(panel, warningPanel)} data-report-warnings>
-    <h2 class={panelTitle} id="report-warnings-title">Report warnings</h2>
+  <section aria-labelledby="report-warnings-title" class={warningPanel} data-report-warnings>
+    <h2 class={warningTitle} id="report-warnings-title">Report warnings</h2>
     <details class={warningDetails}>
       <summary>
         <span class={panelSub} data-report-warnings-summary>

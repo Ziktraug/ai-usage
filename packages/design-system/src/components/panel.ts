@@ -8,7 +8,6 @@ export const panel = css({
   border: '1px solid token(colors.line)',
   borderRadius: 'md',
   bg: 'surface',
-  boxShadow: 'card',
   minW: 0,
 });
 
@@ -30,7 +29,7 @@ export const panelHeader = css({
 
 export const panelTitle = css({
   fontSize: '16px',
-  fontWeight: 650,
+  fontWeight: 550,
   letterSpacing: '-0.015em',
 });
 
@@ -44,7 +43,6 @@ export const groupPanel = css({
   border: '1px solid token(colors.line)',
   borderRadius: 'md',
   bg: 'surface',
-  boxShadow: 'card',
   overflow: 'hidden',
 });
 
@@ -59,7 +57,7 @@ export const groupHeader = css({
 
 export const groupTitle = css({
   fontSize: '14px',
-  fontWeight: 650,
+  fontWeight: 550,
   overflowWrap: 'anywhere',
 });
 

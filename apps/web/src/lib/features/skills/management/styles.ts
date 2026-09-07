@@ -2,7 +2,7 @@ import { css } from '@ai-usage/design-system/css';
 
 export const stack = css({ display: 'grid', gap: '12px' });
 export const compactStack = css({ display: 'grid', gap: '7px' });
-export const heading = css({ fontWeight: 700 });
+export const heading = css({ fontSize: '14px', fontWeight: 600, letterSpacing: '-0.02em' });
 export const muted = css({ color: 'muted', fontSize: '12px' });
 export const pathText = css({ fontFamily: 'mono', fontSize: '11px', color: 'muted', overflowWrap: 'anywhere' });
 export const pill = css({
@@ -29,6 +29,7 @@ export const button = css({
   color: 'ink',
   px: '10px',
   py: '7px',
+  minH: { base: '44px', md: '36px' },
   cursor: 'pointer',
   fontSize: '12px',
   _hover: { borderColor: 'accent' },
@@ -36,12 +37,12 @@ export const button = css({
   _disabled: { cursor: 'default', opacity: 0.5 },
 });
 export const primaryButton = css({
-  bg: 'ink',
-  color: 'canvas',
-  borderColor: 'ink',
+  bg: 'accentTint',
+  color: 'accent',
+  borderColor: 'line',
   justifySelf: 'start',
   fontWeight: 650,
-  _hover: { bg: 'inkHover', borderColor: 'inkHover' },
+  _hover: { bg: 'accentSoft', borderColor: 'accent' },
 });
 export const diagnosticRow = css({
   display: 'grid',
@@ -97,7 +98,13 @@ export const switchButton = css({
   },
   _disabled: { opacity: 0.5, cursor: 'not-allowed' },
 });
-export const notice = css({ p: '8px', borderRadius: 'sm', bg: 'accentTint', fontSize: '12px' });
+export const notice = css({
+  p: '12px 14px',
+  borderRadius: 'sm',
+  bg: 'accentTint',
+  fontSize: '12px',
+  borderLeft: '2px solid token(colors.accent)',
+});
 export const errorNotice = css({ bg: 'status.dangerSoft', color: 'status.danger' });
 export const operationNotice = css({
   position: 'fixed',

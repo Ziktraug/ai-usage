@@ -13,7 +13,7 @@ export const actionRow = css({
 });
 
 export const page = css({
-  minHeight: '100vh',
+  minHeight: 'calc(100vh - var(--ai-usage-shell-header-height, 0px))',
   bg: 'canvas',
   color: 'ink',
   fontFamily: 'sans',
@@ -51,18 +51,6 @@ export const headerActions = css({
   _print: { display: 'none' },
 });
 
-export const titleBlock = css({
-  display: 'grid',
-  gap: '10px',
-  minW: 0,
-});
-
-export const eyebrowRow = css({
-  display: 'flex',
-  alignItems: 'center',
-  gap: '10px',
-});
-
 export const eyebrow = css({
   textStyle: 'eyebrow',
   color: 'accent',
@@ -82,7 +70,7 @@ export const demoBadge = css({
 export const title = css({
   fontSize: { base: '28px', md: '36px' },
   lineHeight: { base: '34px', md: '40px' },
-  fontWeight: 650,
+  fontWeight: 550,
   letterSpacing: '-0.045em',
 });
 

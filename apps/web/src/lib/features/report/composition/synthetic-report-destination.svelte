@@ -499,7 +499,7 @@
       }}
       navigation={{
         onSortChange: navigation.setBreakdownSort,
-        onTabChange: (tab) => navigate((current) => ({ ...current, tab })),
+        onTabChange: navigation.setBreakdownTab,
         sort: renderedSearch.breakdownSort,
         tab: renderedSearch.tab,
       }}

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { css } from '@ai-usage/design-system/css';
+  import { css, cx } from '@ai-usage/design-system/css';
   import { commandButton, panelSub, panelTitle } from '@ai-usage/design-system/svelte';
   import { Portal } from '@ark-ui/svelte/portal';
   import { onDestroy } from 'svelte';
@@ -41,16 +41,17 @@
     placeItems: 'center',
     p: '18px',
     bg: 'rgba(0, 0, 0, 0.55)',
+    backdropFilter: 'blur(6px)',
   });
   const dialog = css({
     display: 'grid',
-    gap: '14px',
+    gap: '18px',
     w: 'min(440px, 100%)',
-    p: '18px',
+    p: '26px',
     border: '1px solid token(colors.lineStrong)',
     borderRadius: 'md',
     bg: 'surface',
-    boxShadow: 'lg',
+    boxShadow: 'overlay',
   });
   const actions = css({
     display: 'flex',
@@ -64,10 +65,18 @@
     px: '12px',
     border: '1px solid token(colors.lineStrong)',
     borderRadius: 'md',
-    bg: 'surface',
-    color: 'ink',
-    fontWeight: 700,
+    bg: 'accentTint',
+    color: 'accent',
+    fontWeight: 600,
+    cursor: 'pointer',
+    _hover: { borderColor: 'accent' },
     _focusVisible: { outline: '2px solid token(colors.accent)', outlineOffset: '2px' },
+  });
+  const discardButtonStyle = css({
+    bg: 'status.dangerSoft',
+    color: 'status.danger',
+    borderColor: 'transparent',
+    _hover: { bg: 'status.dangerSoft', borderColor: 'status.danger' },
   });
 
   const onKeydown = (event: KeyboardEvent): void => {
@@ -109,9 +118,10 @@
       return;
     }
     const returnFocusElement = document.activeElement instanceof HTMLElement ? document.activeElement : undefined;
-    document.addEventListener('keydown', onKeydown, true);
+    // Consume confirmation keys before the underlying drawer's document-capture listener.
+    window.addEventListener('keydown', onKeydown, true);
     return () => {
-      document.removeEventListener('keydown', onKeydown, true);
+      window.removeEventListener('keydown', onKeydown, true);
       queueMicrotask(() => {
         if (restoreFocus) {
           restoreFocus();
@@ -147,7 +157,7 @@
           </button>
           <button
             {...(pending ? { 'aria-busy': 'true' as const } : {})}
-            class={commandButton}
+            class={cx(commandButton, discardButtonStyle)}
             disabled={pending}
             onclick={decision.discard}
             type="button"

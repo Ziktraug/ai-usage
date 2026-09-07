@@ -622,6 +622,13 @@ test('provides one accessible responsive source-control surface', async ({ page 
   await page.goto('/');
   await expect(page.locator('main[data-hydrated="true"]')).toBeVisible();
 
+  const filters = page.getByRole('button', { exact: true, name: 'Filters' });
+  await expect(filters).toHaveAttribute('aria-expanded', 'false');
+  await filters.focus();
+  await expect(filters).toBeFocused();
+  await filters.press('Enter');
+  await expect(filters).toHaveAttribute('aria-expanded', 'true');
+
   const sourceSummary = page.getByRole('region', { name: 'Collection source status' }).locator('a[href="/sources"]');
   await expect(sourceSummary).toBeVisible();
   await sourceSummary.focus();

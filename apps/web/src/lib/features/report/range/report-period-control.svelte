@@ -6,13 +6,15 @@
     display: 'flex',
     alignItems: 'center',
     flexWrap: 'wrap',
-    gap: { base: '4px', md: '6px' },
+    gap: { base: '4px', md: '8px' },
   });
   const label = css({
     display: { base: 'none', md: 'block' },
     color: 'muted',
-    fontSize: '12px',
-    fontWeight: 'semibold',
+    fontSize: '10px',
+    fontWeight: 500,
+    letterSpacing: '0.1em',
+    textTransform: 'uppercase',
   });
   const preset = css({
     display: 'inline-flex',
@@ -28,7 +30,7 @@
     _hover: { bg: 'surfaceMuted', color: 'ink' },
     _focusVisible: { outline: '2px solid token(colors.accent)', outlineOffset: '2px' },
   });
-  const selectedPreset = css({ bg: 'accentSoft', color: 'accent', fontWeight: 650 });
+  const selectedPreset = css({ bg: 'accentTint', color: 'accent', fontWeight: 500 });
   const periodSummary = css({ color: 'muted', fontSize: '12px' });
   const customFields = css({
     display: 'flex',
@@ -53,8 +55,8 @@
     minH: '44px',
     px: '10px',
     border: '1px solid token(colors.line)',
-    borderRadius: 'md',
-    bg: 'surface',
+    borderRadius: 'sm',
+    bg: 'surfaceMuted',
     color: 'ink',
     fontSize: '13px',
     _focusVisible: { borderColor: 'accent', boxShadow: '0 0 0 3px token(colors.focusRing)', outline: 'none' },

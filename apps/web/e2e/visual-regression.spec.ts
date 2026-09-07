@@ -11,6 +11,7 @@ const DRAWER_MAX_DIFF_PIXELS = 24;
 const EXECUTIVE_METRIC_COUNT = 4;
 const MIN_PRIMARY_VALUE_FONT_SIZE_PX = 44;
 const MIN_TOUCH_TARGET_PX = 44;
+const MAX_ALIGNMENT_DRIFT_PX = 1;
 const NARROW_MAX_DIFF_PIXELS = 22;
 const SKILLS_MAX_DIFF_PIXELS = 12;
 const DISABLE_LCD_TEXT_ARGUMENT = '--disable-lcd-text';
@@ -124,11 +125,12 @@ const expectViewportProfile = async (
   expect(await page.evaluate(() => matchMedia('(prefers-color-scheme: dark)').matches)).toBe(colorScheme === 'dark');
 };
 
-const expectDecisionFirstOverviewAtTop = async (page: Page) => {
+const expectAtelierOverviewAtTop = async (page: Page) => {
   const period = page.getByRole('region', { name: 'Report period' });
   const kpi = page.locator('[data-executive-kpi]');
   const chart = page.locator('[data-executive-chart]');
   const chartPlot = chart.locator('[data-report-range-part="chart"]');
+  const headline = page.locator('[data-overview-headline]');
   const metrics = page.locator('[data-executive-metrics]');
   const metricItems = metrics.locator(':scope > div');
   const investigation = page.getByRole('heading', { level: 2, name: 'Investigate' });
@@ -156,8 +158,8 @@ const expectDecisionFirstOverviewAtTop = async (page: Page) => {
     );
     const markers = [
       element.querySelector('[data-executive-kpi]'),
-      element.querySelector('[data-executive-chart]'),
       element.querySelector('[data-executive-metrics]'),
+      element.querySelector('[data-executive-chart]'),
       investigationHeading ?? null,
     ];
     const documentOrder = [...element.querySelectorAll('*')];
@@ -184,7 +186,15 @@ const expectDecisionFirstOverviewAtTop = async (page: Page) => {
   );
   expect(primaryValueFontSize).toBeGreaterThan(secondaryValueFontSize);
 
-  return { chart, kpi, metricItems, period, primaryValueFontSize };
+  const [headlineBox, chartBox] = await Promise.all([headline.boundingBox(), chart.boundingBox()]);
+  if (!(headlineBox && chartBox)) {
+    throw new Error('The overview headline and Activity chart must expose geometry');
+  }
+  expect(chartBox.y).toBeGreaterThanOrEqual(headlineBox.y + headlineBox.height);
+  expect(Math.abs(chartBox.x - headlineBox.x)).toBeLessThanOrEqual(MAX_ALIGNMENT_DRIFT_PX);
+  expect(Math.abs(chartBox.width - headlineBox.width)).toBeLessThanOrEqual(MAX_ALIGNMENT_DRIFT_PX);
+
+  return { chart, kpi, metricItems, metrics, period, primaryValueFontSize };
 };
 
 const screenshotOptions = {
@@ -197,17 +207,20 @@ test('matches the initial desktop light Overview at 1440x1000', async ({ page })
   await page.setViewportSize(OVERVIEW_DESKTOP_VIEWPORT);
   await openStableOverview(page);
   await expectViewportProfile(page, OVERVIEW_DESKTOP_VIEWPORT, 'light');
-  const { chart, kpi, metricItems, primaryValueFontSize } = await expectDecisionFirstOverviewAtTop(page);
+  const { chart, kpi, metricItems, primaryValueFontSize } = await expectAtelierOverviewAtTop(page);
   expect(primaryValueFontSize).toBeGreaterThanOrEqual(MIN_PRIMARY_VALUE_FONT_SIZE_PX);
 
   const foldBottoms = [
     await kpi.evaluate((element) => Math.ceil(element.getBoundingClientRect().bottom)),
-    await chart.evaluate((element) => Math.ceil(element.getBoundingClientRect().bottom)),
     ...(await metricItems.evaluateAll((elements) =>
       elements.map((element) => Math.ceil(element.getBoundingClientRect().bottom)),
     )),
   ];
   expect(foldBottoms.every((bottom) => bottom <= OVERVIEW_DESKTOP_VIEWPORT.height)).toBe(true);
+  const chartHeadingBottom = await chart
+    .getByRole('heading', { level: 3, name: 'Activity' })
+    .evaluate((element) => Math.ceil(element.getBoundingClientRect().bottom));
+  expect(chartHeadingBottom).toBeLessThanOrEqual(OVERVIEW_DESKTOP_VIEWPORT.height);
 
   await expect(page).toHaveScreenshot('overview-desktop.png', {
     ...screenshotOptions,
@@ -220,23 +233,19 @@ test('matches the initial narrow dark Overview at 390x844', async ({ page }) => 
   await page.setViewportSize(NARROW_VIEWPORT);
   await openStableOverview(page);
   await expectViewportProfile(page, NARROW_VIEWPORT, 'dark');
-  const { chart, kpi, period } = await expectDecisionFirstOverviewAtTop(page);
+  const { kpi, metrics, period } = await expectAtelierOverviewAtTop(page);
 
   const mobileNavigation = page.locator('[data-app-navigation="mobile"]');
-  const chartHeading = chart.getByRole('heading', { level: 3, name: 'Activity' });
   await expect(mobileNavigation).toBeVisible();
-  await expect(chartHeading).toBeVisible();
   const navigationTop = await mobileNavigation.evaluate((element) => Math.floor(element.getBoundingClientRect().top));
-  const [periodBottom, kpiBottom, chartTop, chartHeadingBottom] = await Promise.all([
+  const [periodBottom, kpiBottom, metricsTop] = await Promise.all([
     period.evaluate((element) => Math.ceil(element.getBoundingClientRect().bottom)),
     kpi.evaluate((element) => Math.ceil(element.getBoundingClientRect().bottom)),
-    chart.evaluate((element) => Math.floor(element.getBoundingClientRect().top)),
-    chartHeading.evaluate((element) => Math.ceil(element.getBoundingClientRect().bottom)),
+    metrics.evaluate((element) => Math.floor(element.getBoundingClientRect().top)),
   ]);
   expect(periodBottom).toBeLessThanOrEqual(navigationTop);
   expect(kpiBottom).toBeLessThanOrEqual(navigationTop);
-  expect(chartTop).toBeLessThan(navigationTop);
-  expect(chartHeadingBottom).toBeLessThanOrEqual(navigationTop);
+  expect(metricsTop).toBeGreaterThanOrEqual(kpiBottom);
 
   const presetGeometry = await period.locator('button:visible').evaluateAll((elements) =>
     elements.map((element) => {

@@ -4,11 +4,11 @@
 
   const panel = css({ display: 'grid', gap: '20px', minW: 0, w: 'full' });
   const header = css({ display: 'grid', gap: '5px' });
-  const heading = css({ color: 'ink', fontSize: '18px', fontWeight: 700, lineHeight: 1.25, m: 0 });
+  const heading = css({ color: 'ink', fontSize: '22px', fontWeight: 500, lineHeight: 1.25, m: 0 });
   const sectionHeading = css({ color: 'ink', fontSize: '14px', fontWeight: 700, lineHeight: 1.3, m: 0 });
   const muted = css({ color: 'muted', fontSize: '12px', lineHeight: 1.5 });
   const numeric = css({ fontFamily: 'mono', fontVariantNumeric: 'tabular-nums' });
-  const section = css({ display: 'grid', gap: '12px', minW: 0 });
+  const section = css({ display: 'grid', gap: '16px', minW: 0, borderTop: '1px solid token(colors.line)', pt: '24px' });
   const sectionHeader = css({ display: 'grid', gap: '3px' });
   const durationCaption = css({ display: 'flex', flexWrap: 'wrap', gap: '4px 8px', color: 'muted', fontSize: '11px' });
   const durationCaptionPart = css({ whiteSpace: 'nowrap' });
@@ -28,10 +28,7 @@
     display: 'grid',
     gap: '8px',
     minW: 0,
-    p: { base: '10px', md: '12px' },
-    border: '1px solid token(colors.line)',
-    borderRadius: 'md',
-    bg: 'surfaceMuted',
+    py: '14px',
   });
   const timelineAxis = css({
     display: 'grid',
@@ -66,7 +63,7 @@
     lineHeight: 1,
     transform: 'translateX(-50%)',
   });
-  const timelineList = css({ display: 'grid', gap: '7px', listStyle: 'none', m: 0, p: 0 });
+  const timelineList = css({ display: 'grid', gap: '12px', listStyle: 'none', m: 0, p: 0 });
   const timelineRow = css({
     display: 'grid',
     gridTemplateColumns: { base: 'minmax(0, 1fr)', md: 'minmax(220px, 0.42fr) minmax(0, 1fr) minmax(72px, 0.16fr)' },
@@ -129,8 +126,7 @@
   });
   const promptDisclosure = css({
     overflow: 'hidden',
-    border: '1px solid token(colors.line)',
-    borderRadius: 'md',
+    borderBottom: '1px solid token(colors.line)',
     bg: 'surfaceMuted',
   });
   const promptSummary = css({
@@ -138,7 +134,7 @@
     gridTemplateColumns: 'auto minmax(0, 1fr)',
     gap: '9px',
     alignItems: 'center',
-    p: '10px 12px',
+    p: '14px 12px',
     color: 'ink',
     cursor: 'pointer',
     listStyle: 'none',

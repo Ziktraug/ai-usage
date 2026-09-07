@@ -1,15 +1,16 @@
 <script lang="ts">
   import { css } from '@ai-usage/design-system/css';
-  import { eyebrow, header, meta, page, shell, title, titleBlock } from '@ai-usage/design-system/svelte';
+  import { page, shell } from '@ai-usage/design-system/svelte';
   import { useQueryClient } from '@tanstack/svelte-query';
   import { browser } from '$app/environment';
   import { buildSyncFleetMachineViews, manualTransferMutationAvailability } from '../../../manual-transfer-model';
   import type { SourceControlConnectionState } from '../../../source-control-client';
   import { buildSyncFleetComparisonRows } from '../../../sync-machine-comparison-model';
   import { invalidateSyncFleet } from '../../query/options/sync';
+  import WorkspaceHeader from '../shell/workspace-header.svelte';
   import MachineFleet from './machine-fleet.svelte';
   import ManualTransfer from './manual-transfer.svelte';
-  import { headerTop, pageStack, unavailablePanel, unavailableText } from './styles';
+  import { pageStack, unavailablePanel, unavailableText } from './styles';
   import type { SyncPageData } from './sync-load';
   import { createHydratedSyncFleetQuery, createSyncMachineRenamer } from './sync-query.svelte';
 
@@ -64,16 +65,12 @@
 </script>
 
 <div class={shell}>
-  <header class={header}>
-    <div class={headerTop}>
-      <div class={titleBlock}>
-        <p class={eyebrow}>Manual transfer</p>
-        <h1 class={title}>Sync</h1>
-        <p class={meta}>Bring your machine histories together, one file at a time.</p>
-      </div>
-    </div>
-  </header>
   <main class={page} data-route-shell="sync">
+    <WorkspaceHeader
+      description="Bring your machine histories together, one file at a time."
+      eyebrow="Across your machines"
+      heading="Sync"
+    />
     <div class={pageStack}>
       {#if fleet}
         {#if mutation.message}

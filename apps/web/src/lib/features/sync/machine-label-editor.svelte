@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { css, cx } from '@ai-usage/design-system/css';
+  import { css } from '@ai-usage/design-system/css';
   import { searchInput } from '@ai-usage/design-system/svelte';
   import {
     editingMachineLabel,
@@ -24,7 +24,8 @@
     onRename: (label: string) => Promise<string | null>;
   } = $props();
 
-  const machineTitle = css({ fontSize: '15px', fontWeight: 750, overflowWrap: 'anywhere' });
+  const machineTitle = css({ fontSize: '18px', fontWeight: 500, letterSpacing: '-0.03em', overflowWrap: 'anywhere' });
+  const viewLayout = css({ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '10px', minW: 0 });
   const editorLayout = css({ display: 'grid', gap: '8px', minW: 0 });
   const editorStatus = css({ color: 'muted', fontSize: '12px' });
 
@@ -44,7 +45,7 @@
 </script>
 
 {#if editor.phase === 'view'}
-  <div class={cx(actionRow, editorLayout)} data-machine-label-editor="view">
+  <div class={viewLayout} data-machine-label-editor="view">
     <h3 class={machineTitle}>{label}</h3>
     {#if editable}
       <button class={ghostButton} onclick={() => (editor = editingMachineLabel(label))} type="button">Rename</button>

@@ -1,3 +1,4 @@
+<!-- biome-ignore-all lint/a11y/noNoninteractiveTabindex: the horizontally scrolling table region must be keyboard-reachable -->
 <script lang="ts">
   import { css } from '@ai-usage/design-system/css';
   import { MetricTile } from '@ai-usage/design-system/svelte';
@@ -14,7 +15,12 @@
     gridTemplateColumns: { base: '1fr', sm: 'repeat(2, 1fr)', lg: 'repeat(4, 1fr)' },
     gap: '10px',
   });
-  const tableWrap = css({ overflowX: 'auto' });
+  const tableWrap = css({
+    minW: 0,
+    maxW: 'full',
+    overflowX: 'auto',
+    _focusVisible: { outline: '2px solid token(colors.accent)', outlineOffset: '4px' },
+  });
   const table = css({
     w: 'full',
     borderCollapse: 'collapse',
@@ -73,7 +79,8 @@
     />
     <MetricTile hint="Lines Cursor classified as human-authored" label="Human lines" value={fmtNum(humanLines)} />
   </div>
-  <div class={tableWrap}>
+  <!-- svelte-ignore a11y_no_noninteractive_tabindex -- keyboard users scroll the table through this named region -->
+  <section aria-label="Cursor commit attribution table" class={tableWrap} tabindex="0">
     <p class={tableNote} id={TABLE_DESCRIPTION_ID}>{tableDescription}</p>
     <table
       aria-describedby={TABLE_DESCRIPTION_ID}
@@ -122,5 +129,5 @@
         {/each}
       </tbody>
     </table>
-  </div>
+  </section>
 {/if}

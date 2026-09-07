@@ -13,7 +13,7 @@
     order: { md: -1 },
   });
   const explorerContent = css({ display: 'grid', gap: '12px', pt: '12px' });
-  const activityPanel = css({ display: 'grid', gap: '12px', p: { base: '14px', md: '18px' } });
+  const activityPanel = css({ display: 'grid', gap: '16px', minW: 0 });
   const brushAxis = css({ position: 'relative', minH: '14px', color: 'muted', fontSize: '10px', lineHeight: 1 });
   const brushTick = css({ position: 'absolute', top: 0, transform: 'translateX(-50%)', whiteSpace: 'nowrap' });
   const executiveMetricGroup = css({
@@ -54,7 +54,6 @@
 
 <script lang="ts">
   import { cx } from '@ai-usage/design-system/css';
-  import { containedInteractive } from '@ai-usage/design-system/report';
   import {
     monthGridline,
     panelSub,
@@ -450,12 +449,7 @@
   };
 </script>
 
-<section
-  aria-labelledby="activity-title"
-  class={cx(containedInteractive, activityPanel)}
-  data-activity-explorer
-  data-executive-chart
->
+<section aria-labelledby="activity-title" class={activityPanel} data-activity-explorer data-executive-chart>
   <div class={heading}>
     <h3 class={panelTitle} id="activity-title">Activity</h3>
     <p class={panelSub}>Daily evidence for the selected report period</p>

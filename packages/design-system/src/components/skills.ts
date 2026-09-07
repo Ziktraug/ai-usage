@@ -6,7 +6,6 @@ export const skillsDisclosurePanel = css({
   border: '1px solid token(colors.line)',
   borderRadius: 'md',
   bg: 'surface',
-  boxShadow: 'card',
   p: '0',
   gap: '0',
   '& > div': { p: { base: '16px', md: '20px 22px' }, borderTop: '1px solid token(colors.line)' },

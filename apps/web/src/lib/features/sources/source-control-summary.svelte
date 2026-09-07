@@ -59,12 +59,12 @@
     minW: 0,
     h: '36px',
     px: '10px',
-    border: '1px solid token(colors.lineStrong)',
+    border: '1px solid token(colors.line)',
     borderRadius: 'sm',
     bg: 'surface',
     color: 'ink',
     fontSize: '12px',
-    fontWeight: 650,
+    fontWeight: 550,
     textDecoration: 'none',
     whiteSpace: 'nowrap',
     _focus: { '& [data-source-card]': { display: 'grid' } },
@@ -84,14 +84,14 @@
     right: '0',
     width: 'min(360px, calc(100vw - 40px))',
     gap: '10px',
-    p: '12px',
+    p: '18px',
     border: '1px solid token(colors.lineStrong)',
     borderRadius: 'md',
     bg: 'surface',
-    boxShadow: 'lg',
+    boxShadow: 'overlay',
   });
   const cardHeader = css({ display: 'flex', justifyContent: 'space-between', gap: '12px', alignItems: 'center' });
-  const cardTitle = css({ fontSize: '13px', fontWeight: 700 });
+  const cardTitle = css({ fontSize: '13px', fontWeight: 600 });
   const cardMeta = css({ color: 'muted', fontSize: '12px', lineHeight: 1.5 });
   const sourceList = css({ display: 'grid', gap: '6px' });
   const sourceRow = css({

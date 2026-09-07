@@ -348,8 +348,8 @@ test('shows the executive answer, evidence, four metrics, and investigation in o
   const readingOrder = await page.locator('[data-report-overview]').evaluate((element) => {
     const markers = [
       element.querySelector('[data-executive-kpi]'),
-      element.querySelector('[data-executive-chart]'),
       element.querySelector('[data-executive-metrics]'),
+      element.querySelector('[data-executive-chart]'),
       [...element.querySelectorAll('h2')].find((heading) => heading.textContent?.trim() === 'Investigate') ?? null,
       [...element.querySelectorAll('h2')].find((heading) => heading.textContent?.trim() === 'Provider status') ?? null,
     ];
@@ -378,10 +378,10 @@ test('shows the executive answer, evidence, four metrics, and investigation in o
   await expect(punchcardVisual).not.toHaveAttribute('aria-hidden', 'true');
   expect(await punchcardVisual.getByRole('button', { name: PUNCHCARD_FILTER_PATTERN }).count()).toBeGreaterThan(0);
 
-  expect(await metrics.evaluate((element) => getComputedStyle(element).gridTemplateColumns.split(' ').length)).toBe(4);
+  expect(await metrics.evaluate((element) => getComputedStyle(element).gridTemplateColumns.split(' ').length)).toBe(2);
 
   await page.setViewportSize({ height: 844, width: 390 });
-  expect(await metrics.evaluate((element) => getComputedStyle(element).gridTemplateColumns.split(' ').length)).toBe(1);
+  expect(await metrics.evaluate((element) => getComputedStyle(element).gridTemplateColumns.split(' ').length)).toBe(2);
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
 });
 
@@ -793,7 +793,7 @@ test('starts sessions with focused work columns and switches metric presets', as
   const sessionHeader = page.getByRole('columnheader', { name: 'Session' });
   await sessionHeader.getByRole('button').click();
   const sessionSortArrow = sessionHeader.locator('[aria-hidden="true"]');
-  await expect(sessionSortArrow).toHaveCSS('color', 'rgb(172, 75, 18)');
+  await expect(sessionSortArrow).toHaveCSS('color', 'rgb(115, 80, 149)');
   await expect(sessionSortArrow).toHaveCSS('font-size', '10px');
   await expect(sessionSortArrow).toHaveCSS('line-height', '10px');
   expect(
@@ -1067,7 +1067,7 @@ test('keeps sync limited to explicit file transfers', async ({ page }) => {
         return fleetBox && transferBox ? Math.round(transferBox.top - fleetBox.bottom) : null;
       }),
     )
-    .toBe(16);
+    .toBe(36);
   await page.setViewportSize({ height: 844, width: 361 });
   await expect(page.getByRole('list', { name: 'Machine contribution summaries' })).toHaveCount(0);
   const fileInput = page.locator('input[type="file"][accept=".json,application/json"]');
@@ -1092,7 +1092,8 @@ test('keeps sync limited to explicit file transfers', async ({ page }) => {
   await expect(progress).toHaveCSS('border-top-width', '1px');
   await expect(progress).toHaveCSS('border-radius', '999px');
   await expect(dropTarget).toContainText('Drop a merge file here or choose a file');
-  await expect(dropTarget).toHaveCSS('height', '128px');
+  await expect(dropTarget).toHaveCSS('min-height', '180px');
+  await expect(dropTarget).toHaveCSS('height', '180px');
   const dropTargetBox = await dropTarget.boundingBox();
   const progressBox = await progress.boundingBox();
   expect(dropTargetBox).not.toBeNull();

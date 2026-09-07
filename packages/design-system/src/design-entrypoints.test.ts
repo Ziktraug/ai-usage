@@ -28,12 +28,9 @@ test('the Report entrypoint exposes the executive editorial primitives', async (
   const reportModule = await import('./report');
 
   for (const name of [
-    'containedInteractive',
     'editorialSection',
     'executiveCaption',
     'executiveEssentialLabel',
-    'executiveGrid',
-    'metricStrip',
     'numericDisplay',
     'sectionDivider',
   ]) {

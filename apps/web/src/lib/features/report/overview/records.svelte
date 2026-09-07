@@ -36,6 +36,17 @@
     lineHeight: 1,
   });
   const srOnly = css({ srOnly: true });
+  const sessionContext = css({
+    display: 'block',
+    color: 'muted',
+    fontSize: '11px',
+    fontWeight: 400,
+    lineHeight: 1.6,
+    mt: '4px',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+  });
 
   const unchangedItem = (item: FocusedOverviewSessionItem): FocusedOverviewSessionItem => item;
   let {
@@ -162,6 +173,7 @@
           <span class={topRank}>{index + 1}</span>
           <span class={topTitle}>
             {item.label}
+            <span class={sessionContext}>{item.row.projectLabel} · {fmtDateOnly(item.row.date)}</span>
             {#if item.kind === 'campaign'}
               <span
                 class={css({ display: 'block', color: 'muted', fontSize: '11px', fontWeight: 400, lineHeight: 1.5 })}

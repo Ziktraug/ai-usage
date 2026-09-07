@@ -11,6 +11,16 @@
     sectionDivider,
     twoColumns,
   } from '@ai-usage/design-system/report';
+
+  const investigation = css({
+    display: 'grid',
+    gap: { base: '24px', md: '32px' },
+    borderTop: '1px solid token(colors.line)',
+    pt: { base: '28px', md: '40px' },
+    minW: 0,
+    '& > header > h2': { fontSize: '19px', fontWeight: 500, letterSpacing: '-0.02em', m: 0 },
+    '& > header > p': { color: 'muted', fontSize: '12px', mt: '6px' },
+  });
 </script>
 
 <script lang="ts">
@@ -94,7 +104,7 @@
     {onOpenModels}
   />
   {#if executiveModel.emptyState === null}
-    <section aria-labelledby="overview-investigate-title" class={editorialSection}>
+    <section aria-labelledby="overview-investigate-title" class={investigation}>
       <header>
         <h2 id="overview-investigate-title">Investigate</h2>
         <p>Open the sessions, rhythms, and token structure behind the executive answer.</p>

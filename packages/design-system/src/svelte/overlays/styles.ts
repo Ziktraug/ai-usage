@@ -37,9 +37,9 @@ export const drawerTop = css({
 
 export const drawerBody = css({
   display: 'grid',
-  gap: '14px',
+  gap: '20px',
   alignContent: 'start',
-  p: '16px 18px',
+  p: '20px',
   pb: { base: 'calc(16px + env(safe-area-inset-bottom))', md: '18px' },
   flex: '1 1 auto',
   minH: 0,
@@ -52,7 +52,7 @@ export const drawerBody = css({
 
 export const drawerTitle = css({
   fontSize: '20px',
-  fontWeight: 650,
+  fontWeight: 550,
   letterSpacing: '-0.025em',
   lineHeight: '1.35',
   overflowWrap: 'anywhere',

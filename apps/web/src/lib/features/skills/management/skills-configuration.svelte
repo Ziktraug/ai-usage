@@ -105,8 +105,10 @@
 
   const body = css({
     display: 'grid',
-    gap: '24px',
+    gap: '28px',
     maxW: '760px',
+    minW: 0,
+    '& > section + section': { pt: '20px', borderTop: '1px solid token(colors.line)' },
     '& input, & select, & button': { minH: { base: '44px', md: '36px' } },
   });
   const formRow = css({ display: 'grid', gap: '8px' });
@@ -117,7 +119,7 @@
     px: '10px',
     border: '1px solid token(colors.line)',
     borderRadius: 'sm',
-    bg: 'surface',
+    bg: 'canvas',
     color: 'ink',
     fontSize: '13px',
     _focusVisible: { outline: '2px solid token(colors.accent)', outlineOffset: '2px' },
@@ -143,6 +145,7 @@
     </span>
   </summary>
   <div class={body}>
+    <h2 class={css({ srOnly: true })}>Skill configuration</h2>
     <section class={compactStack}>
       <label class={label}>
         <span>Source repository</span>
@@ -248,7 +251,7 @@
       {#each context.snapshot.targets as target (target.id)}
         <div class={targetRow}>
           <strong>{target.label}</strong>
-          <span class={muted}>
+          <span class={cx(muted, css({ overflowWrap: 'anywhere' }))}>
             {target.enabled ? 'Enabled' : 'Disabled'}
             · {target.missing ? 'Missing directory' : 'Observed'} ·
             {target.path}

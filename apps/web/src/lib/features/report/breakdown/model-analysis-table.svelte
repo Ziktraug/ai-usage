@@ -1,6 +1,5 @@
 <script lang="ts">
   import { css, cx } from '@ai-usage/design-system/css';
-  import { containedInteractive } from '@ai-usage/design-system/report';
   import {
     actionRow,
     dimensionSwatch,
@@ -91,7 +90,7 @@
     letterSpacing: '0.06em',
     textTransform: 'uppercase',
   });
-  const barList = css({ display: 'grid', gap: '4px', m: 0, p: 0, listStyle: 'none' });
+  const barList = css({ display: 'grid', gap: '10px', m: 0, p: 0, listStyle: 'none' });
   // Narrow: label and value share a line, the track runs under them. Wide: one line per model.
   const barRow = css({
     display: 'grid',
@@ -113,7 +112,7 @@
   const barTrackClass = css({
     gridArea: 'track',
     position: 'relative',
-    h: '10px',
+    h: '6px',
     minW: 0,
     borderRadius: 'sm',
     bg: 'track',
@@ -140,7 +139,7 @@
   const emptyMessage = $derived(modelAnalysisEmptyMessage(query));
 </script>
 
-<section class={cx(containedInteractive, analysisPanel)} data-breakdown-panel="models">
+<section class={analysisPanel} data-breakdown-panel="models">
   <header class={groupHeader}>
     <h2 class={groupTitle}>Models</h2>
     <span class={groupCount} title={`${fmtNum(visibleRows.length)} models`}>{fmtNum(visibleRows.length)} models</span>

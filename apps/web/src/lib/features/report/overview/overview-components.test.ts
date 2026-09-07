@@ -165,8 +165,8 @@ describe('decision-first Overview Svelte surfaces', () => {
 
     const readingOrder = [
       'data-executive-kpi',
-      'data-executive-chart',
       'data-executive-metrics',
+      'data-executive-chart',
       'Open Analysis',
       'Investigate',
       'Top sessions',

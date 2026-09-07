@@ -1,9 +1,10 @@
 <script lang="ts">
   import { css, cx } from '@ai-usage/design-system/css';
-  import { eyebrow, header, meta, page, panel, shell, title, titleBlock } from '@ai-usage/design-system/svelte';
+  import { meta, page, panel, shell } from '@ai-usage/design-system/svelte';
   import type { CollectionSourceGroup, SourceControlCommand } from '@ai-usage/report-core/source-control';
   import { onDestroy } from 'svelte';
   import { fmtDate, fmtNum } from '../../foundation/presentation/format';
+  import WorkspaceHeader from '../shell/workspace-header.svelte';
   import { useSourceControl } from './context.svelte';
   import { createCopyFeedback, registerCopyFeedbackDisposal } from './copy-feedback';
   import { noSessionInputDetected, sessionHistoryLocations } from './first-run';
@@ -24,7 +25,7 @@
   } from './publication-status';
   import SourceActions from './source-actions.svelte';
   import SourceCard from './source-card.svelte';
-  import { actionRow, banner, bannerError, ghostButton, headerActions, headerTop, statusPill } from './styles';
+  import { actionRow, banner, bannerError, ghostButton, statusPill } from './styles';
 
   const sourceControl = useSourceControl();
   const controlState = $derived(sourceControl.state());
@@ -67,20 +68,36 @@
     }
   };
 
-  const pageStack = css({ display: 'grid', gap: '18px' });
-  const groupStack = css({ display: 'grid', gap: '10px' });
+  const pageStack = css({ display: 'grid', gap: '28px', minW: 0 });
+  const groupStack = css({ display: 'grid', gap: '4px', minW: 0 });
   const groupHeader = css({ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '12px' });
-  const groupTitle = css({ fontSize: '16px', fontWeight: 700 });
+  const groupTitle = css({ fontSize: '15px', fontWeight: 600, letterSpacing: '-0.02em' });
   const sourceGrid = css({
     display: 'grid',
-    gridTemplateColumns: { base: '1fr', lg: 'repeat(2, minmax(0, 1fr))' },
-    gap: '12px',
+    gridTemplateColumns: 'minmax(0, 1fr)',
+    gap: 0,
   });
-  const sourceCard = css({ display: 'grid', gap: '14px', minW: 0 });
+  const sourceCard = css({ display: 'grid', gap: '14px', minW: 0, p: { base: '18px', md: '22px 24px' } });
+  const publicationCard = css({ borderLeft: '2px solid token(colors.accent)', bg: 'accentTint' });
+  const statusLine = css({
+    display: 'flex',
+    flexWrap: 'wrap',
+    gap: '8px 20px',
+    alignItems: 'center',
+    pb: '16px',
+    borderBottom: '1px solid token(colors.line)',
+  });
+  const statusCount = css({ color: 'ink', fontFamily: 'mono', fontWeight: 500 });
+  const historyLocations = css({
+    display: 'grid',
+    gridTemplateColumns: { base: '1fr', md: 'repeat(2, minmax(0, 1fr))' },
+    gap: '16px',
+  });
   const axes = css({
     display: 'grid',
     gridTemplateColumns: { base: 'repeat(2, minmax(0, 1fr))', sm: 'repeat(4, minmax(0, 1fr))' },
-    gap: '8px',
+    gap: '12px 20px',
+    pt: '14px',
   });
   const axis = css({ display: 'grid', gap: '3px', minW: 0 });
   const axisLabel = css({ color: 'muted', fontSize: '10px', fontWeight: 700, textTransform: 'uppercase' });
@@ -89,10 +106,8 @@
   const revisionCode = css({ overflow: 'hidden', fontFamily: 'mono', fontSize: '11px', textOverflow: 'ellipsis' });
   const healthySummary = css({
     overflow: 'hidden',
-    border: '1px solid token(colors.line)',
-    borderRadius: 'md',
-    bg: 'surface',
-    boxShadow: 'card',
+    borderTop: '1px solid token(colors.line)',
+    borderBottom: '1px solid token(colors.line)',
     minW: 0,
   });
   const healthySummaryHeader = css({
@@ -100,7 +115,7 @@
     justifyContent: 'space-between',
     alignItems: 'center',
     gap: '12px',
-    p: '14px 16px',
+    p: '16px 0',
     minH: '56px',
     cursor: 'pointer',
   });
@@ -110,7 +125,7 @@
     gridTemplateColumns: { base: 'minmax(0, 1fr)', md: 'minmax(0, 1fr) auto auto' },
     gap: '8px 12px',
     alignItems: 'center',
-    p: '12px 16px',
+    p: '14px 0',
     '& + &': { borderTop: '1px solid token(colors.line)' },
   });
   const healthyName = css({ display: 'grid', gap: '3px', minW: 0 });
@@ -121,33 +136,26 @@
 
 <main class={page} data-hydrated={controlState.connection === 'stopped' ? 'false' : 'true'} data-route-shell="sources">
   <div class={shell}>
-    <header class={header}>
-      <div class={headerTop}>
-        <div class={titleBlock}>
-          <p class={eyebrow}>Local collection</p>
-          <h1 class={title}>Sources</h1>
-          <p class={meta}>Manage collection sources and keep your local report up to date.</p>
-        </div>
-        <div class={headerActions}>
-          <button
-            class={ghostButton}
-            disabled={!(snapshot && controlsAvailable) || pending}
-            onclick={() => executeCommand({ command: 'detect-all' })}
-            type="button"
-          >
-            Detect all
-          </button>
-          <button
-            class={ghostButton}
-            disabled={!(snapshot && controlsAvailable) || pending}
-            onclick={() => executeCommand({ command: 'run-all' })}
-            type="button"
-          >
-            Run all enabled
-          </button>
-        </div>
-      </div>
-    </header>
+    <WorkspaceHeader description="A clear view of what feeds your report." eyebrow="Local collection" heading="Sources">
+      {#snippet actions()}
+        <button
+          class={ghostButton}
+          disabled={!(snapshot && controlsAvailable) || pending}
+          onclick={() => executeCommand({ command: 'detect-all' })}
+          type="button"
+        >
+          Detect all
+        </button>
+        <button
+          class={ghostButton}
+          disabled={!(snapshot && controlsAvailable) || pending}
+          onclick={() => executeCommand({ command: 'run-all' })}
+          type="button"
+        >
+          Run all enabled
+        </button>
+      {/snippet}
+    </WorkspaceHeader>
     <div aria-atomic="true" aria-live="polite" class={cx(meta, css({ mb: '16px' }))} role="status">
       {conciseSourceStatus(controlState)}
     </div>
@@ -160,11 +168,13 @@
       {/if}
       {#if snapshot}
         {@const rtk = rtkDependencyStatus(snapshot.publication)}
-        <p class={meta}>
-          {fmtNum(snapshot.runningCount)}
-          running · {fmtNum(snapshot.queueDepth)} queued · snapshot {fmtDate(snapshot.generatedAt)}
-        </p>
-        <section class={cx(panel, sourceCard)}>
+        <section aria-label="Collection activity" class={cx(meta, statusLine)}>
+          <span><strong class={statusCount}>{fmtNum(snapshot.runningCount)}</strong> running</span>
+          <span><strong class={statusCount}>{fmtNum(snapshot.queueDepth)}</strong> queued</span>
+          <span><strong class={statusCount}>{fmtNum(healthy.length)}</strong> healthy sources</span>
+          <span>Snapshot {fmtDate(snapshot.generatedAt)}</span>
+        </section>
+        <section class={cx(panel, sourceCard, publicationCard)}>
           <h2 class={groupTitle}>Report publishing</h2>
           <p class={meta} data-publication-status>{publicationStatus(snapshot.publication)}</p>
           <details data-publication-details>
@@ -222,7 +232,7 @@
               ai-usage reads the session history that installed coding tools write on this machine. Use one of these
               tools once, then run Detect all. Once a source is detected, scheduled collection keeps it up to date.
             </p>
-            <div class={sourceGrid}>
+            <div class={historyLocations}>
               {#each sessionHistoryLocations as location (location.harness)}
                 <div class={axis} data-first-run-harness>
                   <span class={axisLabel}>{location.harness}</span>

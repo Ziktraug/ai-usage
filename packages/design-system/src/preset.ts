@@ -74,10 +74,10 @@ export const aiUsagePreset = definePreset({
       textStyles: {
         eyebrow: {
           value: {
-            fontFamily: 'mono',
-            fontSize: '11px',
-            fontWeight: 600,
-            letterSpacing: '0.18em',
+            fontFamily: 'sans',
+            fontSize: '10px',
+            fontWeight: 550,
+            letterSpacing: '0.14em',
             textTransform: 'uppercase',
           },
         },
@@ -99,39 +99,36 @@ export const aiUsagePreset = definePreset({
       },
       semanticTokens: {
         colors: {
-          // Surfaces — warm paper in light, neutral graphite in dark.
-          // Dark neutrals are kept hue-neutral (a hair cool) so the copper
-          // accent carries all the warmth instead of the whole canvas.
-          canvas: dual('#F6F4EF', '#111113'),
-          surface: dual('#FFFFFF', '#18191C'),
-          surfaceMuted: dual('#EFECE5', '#212327'),
-          controlDefault: dual('#EFECE5', '#212327'),
-          track: dual('#ECE8E0', '#2C2E33'),
+          // Atelier surfaces: soft mineral paper and cool graphite.
+          // The accent belongs to navigation and interaction, not status or chart identity.
+          canvas: dual('#F6F5F8', '#111116'),
+          surface: dual('#FFFFFF', '#17171E'),
+          surfaceMuted: dual('#EEECF2', '#23222D'),
+          controlDefault: dual('#EEECF2', '#23222D'),
+          track: dual('#E5E1ED', '#302E3C'),
 
           // Ink.
-          ink: dual('#1F1D19', '#EAEBEE'),
-          inkHover: dual('#3B3833', '#D3D5DA'),
-          muted: dual('#6E6A60', '#A4A6AE'),
-          faint: dual('#706A62', '#989BA4'),
+          ink: dual('#27232F', '#EAE8F1'),
+          inkHover: dual('#41384D', '#D6CCE5'),
+          muted: dual('#676170', '#A6A2B4'),
+          faint: dual('#6A6273', '#A19DAF'),
 
           // Hairlines and control borders.
-          line: dual('#E5E2DA', '#33353B'),
-          lineStrong: dual('#89857D', '#74777F'),
+          line: dual('#DED9E5', '#302D3B'),
+          lineStrong: dual('#8A8195', '#7E768C'),
 
-          // Copper accent — the single brand color.
-          // Dark soft/tint are desaturated "warm graphite": the neutral dark
-          // surface plus a whisper of copper, so they read as tinted surfaces
-          // rather than saturated brown blocks against the cool neutrals.
-          accent: dual('#AC4B12', '#E0833C'),
-          accentSoft: dual('#F5E6D8', '#332A20'),
-          accentTint: dual('#F8F0E5', '#23201B'),
-          focusRing: dual('rgba(177, 78, 18, 0.28)', 'rgba(224, 131, 60, 0.35)'),
+          // Lavender is the Atelier interaction accent. Tinted surfaces stay quiet
+          // enough for dense tables and long-form session and Skill detail.
+          accent: dual('#735095', '#C5ADEE'),
+          accentSoft: dual('#EDE3F7', '#332A43'),
+          accentTint: dual('#F2ECF8', '#25202F'),
+          focusRing: dual('rgba(115, 80, 149, 0.28)', 'rgba(197, 173, 238, 0.35)'),
 
-          // Translucent copper is reserved for active interaction feedback. It
+          // Translucent lavender is reserved for active interaction feedback. It
           // stays separate from categorical and status roles in both schemes.
           interaction: {
-            brush: dual('rgba(172, 75, 18, 0.13)', 'rgba(224, 131, 60, 0.16)'),
-            brushHover: dual('rgba(172, 75, 18, 0.06)', 'rgba(224, 131, 60, 0.09)'),
+            brush: dual('rgba(115, 80, 149, 0.13)', 'rgba(197, 173, 238, 0.16)'),
+            brushHover: dual('rgba(115, 80, 149, 0.06)', 'rgba(197, 173, 238, 0.09)'),
           },
 
           // Categorical series palette for charts (model migration, etc.).
@@ -183,7 +180,7 @@ export const aiUsagePreset = definePreset({
           },
         },
         shadows: {
-          card: dual('0 1px 2px rgba(31, 29, 25, 0.05)', '0 1px 3px rgba(0, 0, 0, 0.5)'),
+          card: dual('0 1px 2px rgba(39, 35, 47, 0.02)', '0 1px 2px rgba(0, 0, 0, 0.12)'),
           overlay: dual('-12px 0 32px rgba(31, 29, 25, 0.14)', '-12px 0 32px rgba(0, 0, 0, 0.55)'),
         },
       },

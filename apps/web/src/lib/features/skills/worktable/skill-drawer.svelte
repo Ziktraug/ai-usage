@@ -207,8 +207,8 @@
     return document.activeElement instanceof HTMLElement ? document.activeElement : null;
   };
 
-  const drawerContent = css({ w: { base: '100vw', md: 'min(620px, 94vw)' } });
-  const stack = css({ display: 'grid', gap: '18px', minW: 0 });
+  const drawerContent = css({ w: { base: '100%', md: 'min(680px, 94vw)' } });
+  const stack = css({ display: 'grid', gap: '28px', minW: 0 });
   const header = css({ display: 'grid', gap: '12px', pb: '20px', borderBottom: '1px solid token(colors.line)' });
   const titleRow = css({
     position: 'relative',
@@ -219,7 +219,12 @@
     pr: '48px',
     '& > h2': { w: 'full' },
   });
-  const drawerTitleText = css({ fontSize: '22px', fontWeight: 750, overflowWrap: 'anywhere' });
+  const drawerTitleText = css({
+    fontSize: '28px',
+    fontWeight: 500,
+    letterSpacing: '-0.04em',
+    overflowWrap: 'anywhere',
+  });
   const closeButtonClass = css({
     appearance: 'none',
     position: 'absolute',
@@ -227,9 +232,9 @@
     right: 0,
     w: '44px',
     h: '44px',
-    border: '1px solid token(colors.line)',
+    border: '1px solid transparent',
     borderRadius: 'sm',
-    bg: 'surface',
+    bg: 'surfaceMuted',
     color: 'muted',
     cursor: 'pointer',
     _hover: { borderColor: 'accent', color: 'accent' },
@@ -239,8 +244,8 @@
   const section = css({ display: 'grid', gap: '10px', minW: 0 });
   const placementList = css({
     display: 'grid',
-    border: '1px solid token(colors.line)',
-    borderRadius: 'sm',
+    borderTop: '1px solid token(colors.line)',
+    borderBottom: '1px solid token(colors.line)',
     overflow: 'hidden',
   });
   const placementRow = css({
@@ -255,7 +260,7 @@
     '& > :nth-child(3)': { gridColumn: { base: '2', md: 'auto' }, gridRow: { base: '1', md: 'auto' } },
     gap: '12px',
     alignItems: 'center',
-    p: '10px 12px',
+    p: '12px 0',
     borderTop: '1px solid token(colors.line)',
     _first: { borderTop: 0 },
     fontSize: '12.5px',
@@ -285,6 +290,7 @@
     color: 'ink',
     fontSize: '12px',
     fontWeight: 650,
+    minH: { base: '44px', md: '32px' },
     cursor: 'pointer',
     _hover: { borderColor: 'accent' },
     _focusVisible: { outline: '2px solid token(colors.accent)', outlineOffset: '2px' },
@@ -329,7 +335,7 @@
       // the viewport. The drawer stops short of it so the rest of the app stays one tap away.
       h: { base: 'calc(100dvh - 64px)', md: '100dvh' },
       overflow: 'auto',
-      p: '20px 24px',
+      p: { base: '20px', md: '28px 32px' },
       bg: 'surface',
       borderLeft: '1px solid token(colors.line)',
       boxShadow: 'overlay',
@@ -368,7 +374,10 @@
   trapFocus={false}
 >
   <div class={stack} data-skill-drawer={selected.name}>
-    <header class={header}>
+    <div class={header}>
+      <p class={css({ color: 'accent', fontSize: '10px', letterSpacing: '0.14em', textTransform: 'uppercase' })}>
+        {globalSkill ? 'Managed skill' : 'Project skill'}
+      </p>
       <div class={titleRow}>
         <h2 class={drawerTitleText}>{selected.name}</h2>
         {#if globalSkill}
@@ -404,7 +413,7 @@
       </div>
       <p class={muted}>{globalSkill?.description || projectSkill?.description || 'No description provided.'}</p>
       <p class={pathLine} data-skill-drawer-residence>{residenceLine}</p>
-    </header>
+    </div>
 
     <section aria-label="What the history says" class={section}>
       <h3 class={panelTitle}>What the history says</h3>
@@ -523,10 +532,10 @@
 
 <style>
   /*
-                                                                                                                                                             * The drawer is not modal, so the page underneath stays usable — but Ark's positioner spans the
-                                                                                                                                                             * whole viewport and would swallow every click aimed past the panel. Scoped with `:has` to this
-                                                                                                                                                             * drawer so the modal session drawer, whose backdrop is meant to catch those clicks, is untouched.
-                                                                                                                                                             */
+                                         * The drawer is not modal, so the page underneath stays usable — but Ark's positioner spans the
+                                         * whole viewport and would swallow every click aimed past the panel. Scoped with `:has` to this
+                                         * drawer so the modal session drawer, whose backdrop is meant to catch those clicks, is untouched.
+                                         */
   :global([data-scope="drawer"][data-part="positioner"]:has(.skills-drawer-panel)) {
     pointer-events: none;
   }

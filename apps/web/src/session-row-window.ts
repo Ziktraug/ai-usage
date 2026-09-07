@@ -26,6 +26,7 @@ export interface SessionViewportHeightInput {
 }
 
 const nonNegativeInteger = (value: number): number => (Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0);
+const nonNegativeOffset = (value: number): number => (Number.isFinite(value) ? Math.max(0, value) : 0);
 
 /**
  * The surface height uses document offsets, never the surface's current
@@ -46,10 +47,12 @@ const nonNegativeInteger = (value: number): number => (Number.isFinite(value) ? 
  * session region to the top.
  */
 export const calculateSessionViewportHeight = (input: SessionViewportHeightInput): number => {
-  const viewportHeight = Math.max(1, nonNegativeInteger(input.viewportHeight));
-  const chromeAboveSurface = Math.max(0, nonNegativeInteger(input.surfaceTop) - nonNegativeInteger(input.anchorTop));
-  const bottomInset = nonNegativeInteger(input.bottomInset);
-  const usableHeight = viewportHeight - chromeAboveSurface - bottomInset;
+  const viewportHeight = Math.max(1, nonNegativeOffset(input.viewportHeight));
+  const chromeAboveSurface = Math.max(0, nonNegativeOffset(input.surfaceTop) - nonNegativeOffset(input.anchorTop));
+  const bottomInset = nonNegativeOffset(input.bottomInset);
+  // Text and borders can place the surface between pixels. Round the remaining
+  // space down, rather than rounding the chrome down and growing past the viewport.
+  const usableHeight = Math.floor(viewportHeight - chromeAboveSurface - bottomInset);
   // A viewport too short for the chrome plus the minimum keeps a usable surface
   // and lets the page scroll to it, rather than collapsing the table.
   return Math.max(Math.max(1, nonNegativeInteger(input.minimumHeight)), usableHeight);

@@ -37,7 +37,6 @@ export {
   shell,
   summaryPill,
   title,
-  titleBlock,
 } from './components/layout';
 
 export {
