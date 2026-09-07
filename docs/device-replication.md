@@ -1,9 +1,9 @@
 # Device replication
 
-> **Implementation status:** Accepted target specification. The replication
-> runtime, protocol packages, routes, commands, and verification evidence below
-> are pending integration and are not available on `main`; plan 107 remains
-> `IN PROGRESS` with additional done criteria still open.
+> **Implementation status:** The replication runtime, protocol packages,
+> routes, and commands below are integrated on `main` (2026-09-07). Plan 107
+> remains `IN PROGRESS`: server-side bundle bootstrap and blocked-stream repair
+> controls are still open (see Operations and fallback).
 
 Device replication will publish selected local facts to the connected platform.
 It is an asynchronous publication path, not a remote-control channel and not a
@@ -143,7 +143,11 @@ One PostgreSQL transaction:
 
 1. locks and rechecks the active Device credential and Device;
 2. validates every explicit Capture Context and current identity/Project/SCM
-   binding;
+   binding, and requires contribution authority for its Space: the personal
+   Space owner, an active `admin`/`member` organization membership for a
+   Space context, or a `collaborator`+ Project grant (`propose_memory`) for a
+   Project context. Viewer grants and auditor memberships cannot publish
+   facts, and the request is never treated as a trusted-Device request;
 3. serializes a Device/stream with an advisory transaction lock;
 4. checks batch/event identity, previous ACK proof, overlap, and generation;
 5. inserts immutable batch and event receipts;

@@ -31,11 +31,11 @@ living reference, the living reference wins.
 
 ## Accepted platform specifications
 
-The architecture in this section is accepted, but its runtime implementation
-is not yet available on `main`. Plans 101–107 remain `IN PROGRESS` until their
-implementation and verification are integrated; commands, routes, packages,
-and measurements described by these specifications are not current-runtime
-claims. See [`../plans/README.md`](../plans/README.md) for delivery status.
+The architecture in this section is accepted and its runtime for plans
+101–107 is integrated on `main` (2026-09-07). Plan 107 stays `IN PROGRESS`
+for its open bootstrap/repair criteria. Measurements quoted by these
+specifications are the evidence recorded at integration time. See
+[`../plans/README.md`](../plans/README.md) for delivery status.
 
 - [`platform-server-operations.md`](platform-server-operations.md) — connected
   PostgreSQL 17 lifecycle, migrations, health, configuration, and recovery.

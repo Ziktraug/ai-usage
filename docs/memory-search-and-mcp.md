@@ -1,9 +1,8 @@
 # Memory search and MCP
 
-> **Implementation status:** Accepted target specification. The search and MCP
-> packages, commands, routes, corpus measurements, and verification evidence
-> below are pending integration and are not available on `main`; plan 106
-> remains `IN PROGRESS` in `plans/README.md`.
+> **Implementation status:** Integrated on `main` (plan 106 `DONE`,
+> 2026-09-07). Corpus measurements and verification evidence below record the
+> validation run at integration time, not a continuously refreshed benchmark.
 
 Memory retrieval is specified as one authorization-first application contract
 with two storage projections and several edge adapters. Local/offline mode uses

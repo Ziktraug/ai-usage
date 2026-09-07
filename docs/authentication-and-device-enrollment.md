@@ -1,9 +1,8 @@
 # Authentication and Device enrollment
 
-> **Implementation status:** Accepted target specification. Authentication,
-> enrollment, routes, packages, and verification evidence below are pending
-> integration and are not available on `main`; plan 104 remains `IN PROGRESS`
-> in `plans/README.md`.
+> **Implementation status:** Integrated on `main` (plan 104 `DONE`,
+> 2026-09-07). Connected V1 login is GitHub-only; non-GitHub login remains
+> explicitly blocked.
 
 This accepted reference defines the connected authentication, Web-session, and
 Device-enrollment slice. Authentication establishes a Person principal;

@@ -40,6 +40,14 @@ remote service, no provider credentials.
 - `bun run verify` — broad repository gate: check, lint, typecheck, tests, build
 - `bun run lint` / `bun run typecheck` / `bun run test` — individual gates
 - `bun run test:e2e` — browser regressions (run the relevant E2E variant)
+- `bun run test:postgres` — PostgreSQL 17 suites; needs `nix develop` (CI runs
+  them flake-locked). Not part of `verify`.
+- `bun run test:local-platform` — proves local mode never consults the
+  PostgreSQL or authentication factories. CI-only, not part of `verify`.
+- `bun run dev:platform` — disposable PostgreSQL + connected server
+  (`docs/platform-server-operations.md`); `dev` stays PostgreSQL-free
+- `bun run mcp` / `bun run mcp:register:codex` — local stdio Memory MCP server
+  and its Codex registration
 - `bun x ultracite fix` — format and autofix before committing (Biome)
 
 ## Code standards

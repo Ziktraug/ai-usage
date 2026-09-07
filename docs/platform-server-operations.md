@@ -1,9 +1,8 @@
 # Platform server and PostgreSQL operations
 
-> **Implementation status:** Accepted target specification. The runtime,
-> packages, commands, routes, and verification evidence below are pending
-> integration and are not available on `main`; plans 101–104 remain
-> `IN PROGRESS` in `plans/README.md`.
+> **Implementation status:** Integrated on `main` (plans 101–104 `DONE`,
+> 2026-09-07). `bun run dev` stays local and PostgreSQL-free; the connected
+> composition is the explicit `bun run dev:platform` opt-in.
 
 This runbook is the accepted operational specification for the connected
 platform foundation. It covers the target PostgreSQL lifecycle, migration

@@ -153,6 +153,13 @@ Space, label, enrollment state, and credential are separate facts; a hostname
 or existing usage-machine record is not silently promoted to a Device.
 _Avoid_: machine label, hostname, credential
 
+**Replication outbox**:
+The Device-local, transactional queue of immutable fact events awaiting
+outbound publication, one per owning SQLite authority. It preserves generation
+order and replay identity; it is not a cache, a sync log the server can read,
+or a second mutation authority.
+_Avoid_: sync queue, event log, pending changes
+
 **Space**:
 The explicit personal or organization ownership and authorization root for
 connected resources. A resource is assigned to a Space before storage or
@@ -205,6 +212,12 @@ A Device-local observation of a working path, optionally resolved to a Project
 and Repository. Its path and remote are locators and provenance, never tenant
 or filesystem authority on another Device.
 _Avoid_: Project, Repository, capture authority
+
+**Resolution review**:
+The Person-facing decision that binds one observed Checkout to a Project (or
+leaves it explicitly unassigned) when repository resolution cannot decide
+alone. It records the chosen source and never infers an organization Space.
+_Avoid_: auto-assignment, project guess, unresolved warning
 
 **Capture context**:
 The explicit Device, Person, Space, optional Project, and optional SCM context
