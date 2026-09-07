@@ -1,10 +1,11 @@
 <script lang="ts">
   import { css } from '@ai-usage/design-system/css';
-  import { header, meta, page, shell, title, titleBlock } from '@ai-usage/design-system/svelte';
+  import { page, shell } from '@ai-usage/design-system/svelte';
   import type { ProjectResolutionAction } from '@ai-usage/web-contract/projects';
   import { useQueryClient } from '@tanstack/svelte-query';
   import { browser } from '$app/environment';
   import { acknowledgeProjectResolutionReview } from '../../query/options/projects';
+  import WorkspaceHeader from '../shell/workspace-header.svelte';
   import type { ProjectsPageData } from './projects-load';
   import { createHydratedProjectResolutionQuery, createProjectResolutionActor } from './projects-query.svelte';
   import ResolutionReviewCard from './resolution-review-card.svelte';
@@ -16,7 +17,6 @@
   const snapshot = $derived(reviewsQuery.data);
 
   const pageStack = css({ display: 'grid', gap: '16px', maxW: '1040px' });
-  const intro = css({ maxW: '720px', color: 'muted', fontSize: '14px', lineHeight: 1.6 });
   const panel = css({
     p: '18px',
     border: '1px solid token(colors.line)',
@@ -40,17 +40,12 @@
 </script>
 
 <div class={shell} data-query-state={data.queryState.dehydratedState.queries.length > 0 ? 'hydrated' : 'deferred'}>
-  <header class={header}>
-    <div class={titleBlock}>
-      <p class={meta}>Repository identity</p>
-      <h1 class={title}>Projects</h1>
-      <p class={intro}>
-        Review Checkouts that cannot be assigned safely. Paths stay private; each choice applies only to the displayed
-        personal Space.
-      </p>
-    </div>
-  </header>
   <main class={page} data-route-shell="projects">
+    <WorkspaceHeader
+      description="Review Checkouts that cannot be assigned safely. Paths stay private; each choice applies only to the displayed personal Space."
+      eyebrow="Repository identity"
+      heading="Projects"
+    />
     <div class={pageStack}>
       {#if snapshot}
         {#if snapshot.reviews.length === 0}

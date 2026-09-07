@@ -1,10 +1,11 @@
 <script lang="ts">
   import { css } from '@ai-usage/design-system/css';
-  import { header, meta, page, shell, title, titleBlock } from '@ai-usage/design-system/svelte';
+  import { page, shell } from '@ai-usage/design-system/svelte';
   import type { MemoryProposalReviewAction } from '@ai-usage/web-contract/memory';
   import { useQueryClient } from '@tanstack/svelte-query';
   import { browser } from '$app/environment';
   import { acknowledgeMemoryProposalReview } from '../../query/options/memory';
+  import WorkspaceHeader from '../shell/workspace-header.svelte';
   import type { MemoryPageData } from './memory-load';
   import { createHydratedMemoryProposalQuery, createMemoryProposalActor } from './memory-query.svelte';
   import MemorySearch from './memory-search.svelte';
@@ -17,7 +18,6 @@
   const snapshot = $derived(proposalsQuery.data);
 
   const pageStack = css({ display: 'grid', gap: '16px', maxW: '1040px' });
-  const intro = css({ maxW: '760px', color: 'muted', fontSize: '14px', lineHeight: 1.6 });
   const panel = css({
     p: '18px',
     border: '1px solid token(colors.line)',
@@ -42,17 +42,12 @@
 </script>
 
 <div class={shell} data-query-state={data.queryState.dehydratedState.queries.length > 0 ? 'hydrated' : 'deferred'}>
-  <header class={header}>
-    <div class={titleBlock}>
-      <p class={meta}>Reviewed knowledge</p>
-      <h1 class={title}>Memory</h1>
-      <p class={intro}>
-        Review generated knowledge before it becomes durable guidance. Every proposal keeps its evidence, trust, and
-        sensitivity visible; acceptance is always an explicit Person action.
-      </p>
-    </div>
-  </header>
   <main class={page} data-route-shell="memory">
+    <WorkspaceHeader
+      description="Review generated knowledge before it becomes durable guidance. Every proposal keeps its evidence, trust, and sensitivity visible; acceptance is always an explicit Person action."
+      eyebrow="Reviewed knowledge"
+      heading="Memory"
+    />
     <div class={pageStack}>
       <MemorySearch />
       {#if snapshot}

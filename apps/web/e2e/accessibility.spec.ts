@@ -382,6 +382,14 @@ test('the skills worktable has no detectable accessibility violations', async ({
   await expectNoAxeViolations(page);
 });
 
+test('Memory has no detectable accessibility violations', async ({ page }) => {
+  await page.goto('/memory');
+  await waitForHydratedNavigation(page);
+  await expect(page.getByRole('heading', { level: 2, name: 'Keep local Memory offline-first' })).toBeVisible();
+
+  await expectNoAxeViolations(page);
+});
+
 test('Projects has no detectable accessibility violations', async ({ page }) => {
   await page.goto('/projects');
   await waitForHydratedNavigation(page);
