@@ -275,11 +275,34 @@ const authorize = async (
 const addSeconds = (value: Date, seconds: number): Instant =>
   instantNow(() => new Date(value.getTime() + seconds * 1000));
 
-const safeStoreCall = async <Value>(operation: () => Promise<Value>): Promise<Value | null> => {
+/**
+ * Outcome of a store lookup that may legitimately find nothing. A thrown store
+ * error is an outage, never an absent credential: the two must stay
+ * distinguishable so callers can answer `identity-unavailable` (retryable)
+ * instead of `identity-invalid-input` (terminal).
+ */
+type StoreLookup<Value> =
+  | { readonly kind: 'found'; readonly value: Value }
+  | { readonly kind: 'absent' }
+  | { readonly kind: 'unavailable' };
+
+const lookupStore = async <Value>(operation: () => Promise<Value | null>): Promise<StoreLookup<Value>> => {
+  let value: Value | null;
+  try {
+    value = await operation();
+  } catch {
+    return { kind: 'unavailable' };
+  }
+  return value === null ? { kind: 'absent' } : { kind: 'found', value };
+};
+
+const guardedStoreCall = async <Value>(
+  operation: () => Promise<DeviceStoreResult<Value>>,
+): Promise<DeviceStoreResult<Value>> => {
   try {
     return await operation();
   } catch {
-    return null;
+    return { code: 'unavailable', kind: 'error' };
   }
 };
 
@@ -299,28 +322,30 @@ export const createDeviceEnrollmentService = (config: DeviceEnrollmentServiceCon
   const service: DeviceEnrollmentService = {
     authenticateDevice: async (token) => {
       const operation = 'authenticate-device' as const;
-      const found = await safeStoreCall(() => config.store.findDeviceCredential(token.publicTokenId));
-      if (!found) {
+      const lookup = await lookupStore(() => config.store.findDeviceCredential(token.publicTokenId));
+      if (lookup.kind === 'unavailable') {
+        return failure(operation, 'identity-unavailable');
+      }
+      if (lookup.kind === 'absent') {
         return failure(operation, 'identity-invalid-input');
       }
-      if (
-        found.revokedAt !== null ||
-        found.device.status === 'revoked' ||
-        !verifyDeviceCredentialToken(token, found.verifier, config.keyRing)
-      ) {
-        return failure(operation, found.revokedAt === null ? 'identity-invalid-input' : 'identity-revoked');
+      const found = lookup.value;
+      // Verify the secret before disclosing lifecycle state: a wrong token must
+      // not learn whether the credential it names has been revoked.
+      if (!verifyDeviceCredentialToken(token, found.verifier, config.keyRing)) {
+        return failure(operation, 'identity-invalid-input');
+      }
+      if (found.revokedAt !== null || found.device.status === 'revoked') {
+        return failure(operation, 'identity-revoked');
       }
       const usedAt = instantNow(clock);
-      const confirmed = await safeStoreCall(() =>
+      const confirmed = await guardedStoreCall(() =>
         config.store.confirmDeviceCredentialUse({
           credentialId: found.id,
           expectedVerifier: found.verifier,
           usedAt,
         }),
       );
-      if (!confirmed) {
-        return failure(operation, 'identity-unavailable');
-      }
       if (confirmed.kind === 'error') {
         return mapStoreFailure(operation, confirmed);
       }
@@ -332,10 +357,14 @@ export const createDeviceEnrollmentService = (config: DeviceEnrollmentServiceCon
 
     exchangeEnrollmentGrant: async (token) => {
       const operation = 'exchange-enrollment-grant' as const;
-      const grant = await safeStoreCall(() => config.store.findEnrollmentGrant(token.publicTokenId));
-      if (!grant) {
+      const lookup = await lookupStore(() => config.store.findEnrollmentGrant(token.publicTokenId));
+      if (lookup.kind === 'unavailable') {
+        return failure(operation, 'identity-unavailable');
+      }
+      if (lookup.kind === 'absent') {
         return failure(operation, 'identity-invalid-input');
       }
+      const grant = lookup.value;
       const now = clock();
       if (!verifyEnrollmentGrantToken(token, grant.verifier, config.keyRing)) {
         return failure(operation, 'identity-invalid-input');
@@ -378,7 +407,7 @@ export const createDeviceEnrollmentService = (config: DeviceEnrollmentServiceCon
         rotatedAt: null,
         verifier: generated.verifier,
       };
-      const exchanged = await safeStoreCall(() =>
+      const exchanged = await guardedStoreCall(() =>
         config.store.exchangeEnrollmentGrant({
           authorization: { context, principal },
           credential,
@@ -387,9 +416,6 @@ export const createDeviceEnrollmentService = (config: DeviceEnrollmentServiceCon
           expectedGrant: grant,
         }),
       );
-      if (!exchanged) {
-        return failure(operation, 'identity-unavailable');
-      }
       if (exchanged.kind === 'error') {
         return mapStoreFailure(operation, exchanged);
       }
@@ -422,16 +448,13 @@ export const createDeviceEnrollmentService = (config: DeviceEnrollmentServiceCon
       if (scope.kind === 'error') {
         return failure(operation, 'identity-unavailable');
       }
-      const listed = await safeStoreCall(() =>
+      const listed = await guardedStoreCall(() =>
         config.store.listAuthorizedDevices({
           ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
           pageSize: input.pageSize,
           scope,
         }),
       );
-      if (!listed) {
-        return failure(operation, 'identity-unavailable');
-      }
       return listed.kind === 'error' ? mapStoreFailure(operation, listed) : { kind: 'success', value: listed.value };
     },
 
@@ -455,7 +478,7 @@ export const createDeviceEnrollmentService = (config: DeviceEnrollmentServiceCon
       if (authorization !== 'allow') {
         return failure(operation, authorization === 'deny' ? 'identity-denied' : 'identity-unavailable');
       }
-      const renamed = await safeStoreCall(() =>
+      const renamed = await guardedStoreCall(() =>
         config.store.renameDevice({
           authorization: { context: input.context, principal },
           deviceId: input.deviceId,
@@ -463,9 +486,6 @@ export const createDeviceEnrollmentService = (config: DeviceEnrollmentServiceCon
           spaceId: input.context.activeSpaceId,
         }),
       );
-      if (!renamed) {
-        return failure(operation, 'identity-unavailable');
-      }
       return renamed.kind === 'error' ? mapStoreFailure(operation, renamed) : { kind: 'success', value: renamed.value };
     },
 
@@ -502,16 +522,13 @@ export const createDeviceEnrollmentService = (config: DeviceEnrollmentServiceCon
         personId: principal.personId,
         spaceId: input.context.activeSpaceId,
       };
-      const stored = await safeStoreCall(() =>
+      const stored = await guardedStoreCall(() =>
         config.store.createEnrollmentGrant({
           authorization: { context: input.context, principal },
           metadata: grant,
           verifier: generated.verifier,
         }),
       );
-      if (!stored) {
-        return failure(operation, 'identity-unavailable');
-      }
       if (stored.kind === 'error') {
         return mapStoreFailure(operation, stored);
       }
@@ -534,12 +551,9 @@ export const createDeviceEnrollmentService = (config: DeviceEnrollmentServiceCon
       if (scope.kind === 'error') {
         return failure(operation, 'identity-unavailable');
       }
-      const revoked = await safeStoreCall(() =>
+      const revoked = await guardedStoreCall(() =>
         config.store.revokeAllAuthorizedDevices({ revokedAt: instantNow(clock), scope }),
       );
-      if (!revoked) {
-        return failure(operation, 'identity-unavailable');
-      }
       return revoked.kind === 'error' ? mapStoreFailure(operation, revoked) : { kind: 'success', value: revoked.value };
     },
 
@@ -557,7 +571,7 @@ export const createDeviceEnrollmentService = (config: DeviceEnrollmentServiceCon
       if (authorization !== 'allow') {
         return failure(operation, authorization === 'deny' ? 'identity-denied' : 'identity-unavailable');
       }
-      const revoked = await safeStoreCall(() =>
+      const revoked = await guardedStoreCall(() =>
         config.store.revokeDevice({
           authorization: { context: input.context, principal },
           deviceId: input.deviceId,
@@ -565,9 +579,6 @@ export const createDeviceEnrollmentService = (config: DeviceEnrollmentServiceCon
           spaceId: input.context.activeSpaceId,
         }),
       );
-      if (!revoked) {
-        return failure(operation, 'identity-unavailable');
-      }
       return revoked.kind === 'error' ? mapStoreFailure(operation, revoked) : { kind: 'success', value: revoked.value };
     },
 
@@ -597,7 +608,7 @@ export const createDeviceEnrollmentService = (config: DeviceEnrollmentServiceCon
         rotatedAt: null,
         verifier: generated.verifier,
       };
-      const rotated = await safeStoreCall(() =>
+      const rotated = await guardedStoreCall(() =>
         config.store.rotateDeviceCredential({
           authorization: { context: input.context, principal },
           credential,
@@ -606,9 +617,6 @@ export const createDeviceEnrollmentService = (config: DeviceEnrollmentServiceCon
           spaceId: input.context.activeSpaceId,
         }),
       );
-      if (!rotated) {
-        return failure(operation, 'identity-unavailable');
-      }
       if (rotated.kind === 'error') {
         return mapStoreFailure(operation, rotated);
       }

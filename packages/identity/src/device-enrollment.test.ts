@@ -15,6 +15,7 @@ import {
 import {
   createDeploymentTokenKey,
   createDeploymentTokenKeyRing,
+  parseDeviceCredentialToken,
   revealDeviceCredentialTokenForTransport,
   revealEnrollmentGrantTokenForTransport,
 } from './device-tokens';
@@ -288,5 +289,114 @@ describe('Device enrollment application service', () => {
       kind: 'error',
     });
     expect(fixture.grants.size).toBe(0);
+  });
+
+  test('reports a Device credential store outage as unavailable, not as an invalid credential', async () => {
+    const fixture = createFakeStore();
+    const healthy = createDeviceEnrollmentService({
+      authorizer: createAuthorizer(),
+      clock: () => now,
+      keyRing,
+      store: fixture.store,
+    });
+    const created = await healthy.requestEnrollmentGrant({ context, label: 'Outage laptop', principal });
+    if (created.kind !== 'success') {
+      throw new Error('Expected enrollment grant creation to succeed.');
+    }
+    const exchanged = await healthy.exchangeEnrollmentGrant(created.value.token);
+    if (exchanged.kind !== 'success') {
+      throw new Error('Expected enrollment exchange to succeed.');
+    }
+    const unknownToken = parseDeviceCredentialToken(`${'u'.repeat(22)}.${'s'.repeat(43)}`);
+    await expect(healthy.authenticateDevice(unknownToken)).resolves.toEqual({
+      error: { code: 'identity-invalid-input', operation: 'authenticate-device' },
+      kind: 'error',
+    });
+
+    const outage = createDeviceEnrollmentService({
+      authorizer: createAuthorizer(),
+      clock: () => now,
+      keyRing,
+      store: {
+        ...fixture.store,
+        findDeviceCredential: () => Promise.reject(new Error('database unreachable')),
+      },
+    });
+
+    await expect(outage.authenticateDevice(exchanged.value.token)).resolves.toEqual({
+      error: { code: 'identity-unavailable', operation: 'authenticate-device' },
+      kind: 'error',
+    });
+    await expect(outage.authenticateDevice(unknownToken)).resolves.toEqual({
+      error: { code: 'identity-unavailable', operation: 'authenticate-device' },
+      kind: 'error',
+    });
+  });
+
+  test('reports an enrollment grant store outage as unavailable, not as an invalid grant', async () => {
+    const fixture = createFakeStore();
+    const healthy = createDeviceEnrollmentService({
+      authorizer: createAuthorizer(),
+      clock: () => now,
+      keyRing,
+      store: fixture.store,
+    });
+    const created = await healthy.requestEnrollmentGrant({ context, label: 'Outage exchange', principal });
+    if (created.kind !== 'success') {
+      throw new Error('Expected enrollment grant creation to succeed.');
+    }
+    const outage = createDeviceEnrollmentService({
+      authorizer: createAuthorizer(),
+      clock: () => now,
+      keyRing,
+      store: {
+        ...fixture.store,
+        findEnrollmentGrant: () => Promise.reject(new Error('database unreachable')),
+      },
+    });
+
+    await expect(outage.exchangeEnrollmentGrant(created.value.token)).resolves.toEqual({
+      error: { code: 'identity-unavailable', operation: 'exchange-enrollment-grant' },
+      kind: 'error',
+    });
+    expect(fixture.credentials.size).toBe(0);
+    expect([...fixture.grants.values()].every((grant) => grant.consumedAt === null)).toBe(true);
+  });
+
+  test('does not disclose revocation to a token that fails verification', async () => {
+    const fixture = createFakeStore();
+    const service = createDeviceEnrollmentService({
+      authorizer: createAuthorizer(),
+      clock: () => now,
+      keyRing,
+      store: fixture.store,
+    });
+    const created = await service.requestEnrollmentGrant({ context, label: 'Revoked desktop', principal });
+    if (created.kind !== 'success') {
+      throw new Error('Expected enrollment grant creation to succeed.');
+    }
+    const exchanged = await service.exchangeEnrollmentGrant(created.value.token);
+    if (exchanged.kind !== 'success') {
+      throw new Error('Expected enrollment exchange to succeed.');
+    }
+    const revoked = await service.revokeDevice({ context, deviceId: exchanged.value.device.id, principal });
+    if (revoked.kind !== 'success') {
+      throw new Error('Expected Device revocation to succeed.');
+    }
+    const [publicTokenId, secret] = revealDeviceCredentialTokenForTransport(exchanged.value.token).split('.');
+    if (!(publicTokenId && secret)) {
+      throw new Error('Expected a two-part Device credential token.');
+    }
+    const forgedSecret = secret[0] === 'A' ? `B${secret.slice(1)}` : `A${secret.slice(1)}`;
+    const wrongSecretToken = parseDeviceCredentialToken(`${publicTokenId}.${forgedSecret}`);
+
+    await expect(service.authenticateDevice(wrongSecretToken)).resolves.toEqual({
+      error: { code: 'identity-invalid-input', operation: 'authenticate-device' },
+      kind: 'error',
+    });
+    await expect(service.authenticateDevice(exchanged.value.token)).resolves.toEqual({
+      error: { code: 'identity-revoked', operation: 'authenticate-device' },
+      kind: 'error',
+    });
   });
 });
