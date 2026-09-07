@@ -19,7 +19,7 @@ import {
   parseMemoryProjectContextReadRequest,
   parseMemorySearchReadRequest,
 } from '@ai-usage/memory-service/read-contract';
-import type { LocalIdentityKernel } from '@ai-usage/memory-sqlite/identity';
+import { type LocalIdentityKernel, MemoryIdentityStoreError } from '@ai-usage/memory-sqlite/identity';
 
 const jsonMediaType = 'application/json';
 const protocolHeader = 'x-ai-usage-memory-protocol-version';
@@ -78,6 +78,20 @@ const proposalActionErrorResponse = (code: MemoryApplicationErrorCode): Response
     return errorResponse('service-unavailable', 'Memory proposal action could not be applied.', 409);
   }
   return errorResponse('service-unavailable', 'Memory proposal action could not be applied.', 503);
+};
+
+/**
+ * Resolution review goes straight to the identity kernel, whose typed failures
+ * carry a store code rather than an application code. `validation-failed` is
+ * the kernel's rejection of the caller's input (unknown checkout, bad project
+ * binding, empty name) and is the caller's problem; every other code means
+ * the store itself is unavailable.
+ */
+const resolutionErrorResponse = (error: unknown, message: string): Response => {
+  if (error instanceof MemoryIdentityStoreError && error.code === 'validation-failed') {
+    return errorResponse('invalid-request', message, 400);
+  }
+  return errorResponse('service-unavailable', message, 503);
 };
 
 const memoryReadErrorResponse = (code: MemoryApplicationErrorCode): Response => {
@@ -366,8 +380,8 @@ export const createLocalMemoryServiceHandler = async ({
         try {
           const reviews = await kernel.listResolutionReviews(bootstrap.space.id);
           return successResponse({ reviews, spaceId: bootstrap.space.id });
-        } catch {
-          return errorResponse('service-unavailable', 'Memory resolution review is unavailable.', 503);
+        } catch (error) {
+          return resolutionErrorResponse(error, 'Memory resolution review is unavailable.');
         }
       }
       if (url.pathname === '/v1/repository-resolutions/actions') {
@@ -402,8 +416,8 @@ export const createLocalMemoryServiceHandler = async ({
         }
         try {
           return successResponse(await kernel.applyResolutionAction(action));
-        } catch {
-          return errorResponse('service-unavailable', 'Memory resolution action could not be applied.', 503);
+        } catch (error) {
+          return resolutionErrorResponse(error, 'Memory resolution action could not be applied.');
         }
       }
       return new Response(null, { status: 404 });

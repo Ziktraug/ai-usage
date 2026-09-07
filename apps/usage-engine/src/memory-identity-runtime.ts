@@ -5,11 +5,27 @@ import {
   openLocalIdentityKernel,
 } from '@ai-usage/memory-sqlite/identity';
 import type { UsageEngineRuntimeHost } from '@ai-usage/usage-engine-runtime';
+import { usageEngineLockPath } from './engine-lock';
 
 export const localMemoryIdentityDatabasePath = (stateDirectory: string): string =>
   path.join(stateDirectory, 'memory.sqlite');
 
+/**
+ * The Memory SQLite writer lease is keyed to the Memory database path, so it
+ * lives next to `memory.sqlite` inside the owned engine state directory. Two
+ * engines that share a state directory but point at different usage databases
+ * hold distinct usage locks; this lock is what still excludes them here.
+ */
+export const localMemoryIdentityLockPath = (stateDirectory: string): string =>
+  usageEngineLockPath(localMemoryIdentityDatabasePath(stateDirectory));
+
+export interface LocalMemoryIdentityWriterLease {
+  readonly release: () => Promise<void>;
+}
+
 export interface LocalMemoryIdentityRuntimeDependencies {
+  /** Acquired after the Usage writer lease is established and before the Memory kernel opens. */
+  readonly acquireLease?: () => Promise<LocalMemoryIdentityWriterLease>;
   readonly openKernel?: (options: OpenLocalIdentityKernelOptions) => Promise<LocalIdentityKernel>;
   readonly startReplication?: (kernel: LocalIdentityKernel) => Promise<{ readonly dispose: () => Promise<void> }>;
   readonly startService?: (kernel: LocalIdentityKernel) => Promise<{ readonly dispose: () => Promise<void> }>;
@@ -38,6 +54,7 @@ export const withLocalMemoryIdentityKernel = (
   databasePath: string,
   dependencies: LocalMemoryIdentityRuntimeDependencies = defaultDependencies,
 ): UsageEngineRuntimeHost => {
+  let lease: LocalMemoryIdentityWriterLease | undefined;
   let kernel: LocalIdentityKernel | undefined;
   let replication: { readonly dispose: () => Promise<void> } | undefined;
   let service: { readonly dispose: () => Promise<void> } | undefined;
@@ -45,6 +62,7 @@ export const withLocalMemoryIdentityKernel = (
   const start = async (): Promise<void> => {
     await runtime.start();
     try {
+      lease = await dependencies.acquireLease?.();
       kernel = await (dependencies.openKernel ?? openLocalIdentityKernel)({ databasePath });
       service = await dependencies.startService?.(kernel);
       replication = await dependencies.startReplication?.(kernel);
@@ -56,6 +74,8 @@ export const withLocalMemoryIdentityKernel = (
       service = undefined;
       await kernel?.close().catch((cleanupError: unknown) => cleanupFailures.push(cleanupError));
       kernel = undefined;
+      await lease?.release().catch((cleanupError: unknown) => cleanupFailures.push(cleanupError));
+      lease = undefined;
       await runtime.dispose().catch((cleanupError: unknown) => cleanupFailures.push(cleanupError));
       if (cleanupFailures.length > 0) {
         throw new AggregateError([error, ...cleanupFailures], 'The local Memory runtime failed during startup.');
@@ -82,10 +102,18 @@ export const withLocalMemoryIdentityKernel = (
     await opened?.close();
   };
 
+  const releaseLease = async (): Promise<void> => {
+    const held = lease;
+    lease = undefined;
+    await held?.release();
+  };
+
   const wrapped: UsageEngineRuntimeHost = {
     cancelCommand: (commandId) => runtime.cancelCommand(commandId),
     changes: () => runtime.changes(),
-    dispose: () => combineCleanup([closeReplication, closeService, closeKernel, () => runtime.dispose()]),
+    dispose: () => combineCleanup([closeReplication, closeService, closeKernel, releaseLease, () => runtime.dispose()]),
+    // Mirrors the Usage lease: a retained lease stays on disk so the next
+    // engine takes the stale-owner recovery path instead of a silent takeover.
     disposeRetainingWriterLease: () =>
       combineCleanup([closeReplication, closeService, closeKernel, () => runtime.disposeRetainingWriterLease()]),
     execute: (command) => runtime.execute(command),

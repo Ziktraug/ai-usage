@@ -86,6 +86,31 @@ describe('local Memory service', () => {
     await kernel.close();
   });
 
+  test('reports a rejected resolution action as the caller error it is, not as an outage', async () => {
+    const { kernel } = await fixture();
+    const bootstrap = await kernel.getBootstrapIdentity();
+    const token = createMemoryServiceToken('0123456789abcdefghijklmnopqrstuvwxyzABCDEFG');
+    const handler = await createLocalMemoryServiceHandler({ kernel, token });
+    const request = new Request('http://127.0.0.1/v1/repository-resolutions/actions', {
+      body: JSON.stringify({
+        checkoutId: createCheckoutId(),
+        kind: 'leave-unassigned',
+        spaceId: bootstrap.space.id,
+      }),
+      headers: {
+        authorization: 'Bearer 0123456789abcdefghijklmnopqrstuvwxyzABCDEFG',
+        'content-type': 'application/json',
+        'x-ai-usage-memory-protocol-version': '1',
+      },
+      method: 'POST',
+    });
+
+    const response = await handler.handle(request, '127.0.0.1');
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ error: { code: 'invalid-request' }, ok: false });
+    await kernel.close();
+  });
+
   test('reviews one pending Memory proposal through the authenticated local protocol', async () => {
     const { kernel, stateDirectory } = await fixture();
     const bootstrap = await kernel.getBootstrapIdentity();

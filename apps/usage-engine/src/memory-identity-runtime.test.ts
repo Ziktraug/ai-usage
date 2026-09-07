@@ -1,7 +1,28 @@
-import { describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, test } from 'bun:test';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import type { LocalIdentityKernel } from '@ai-usage/memory-sqlite/identity';
 import type { UsageEngineRuntimeHost } from '@ai-usage/usage-engine-runtime';
-import { localMemoryIdentityDatabasePath, withLocalMemoryIdentityKernel } from './memory-identity-runtime';
+import { acquireUsageEngineLock, UsageEngineWriterLockContendedError } from './engine-lock';
+import {
+  localMemoryIdentityDatabasePath,
+  localMemoryIdentityLockPath,
+  withLocalMemoryIdentityKernel,
+} from './memory-identity-runtime';
+
+const fixtures: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(fixtures.splice(0).map((fixture) => rm(fixture, { force: true, recursive: true })));
+});
+
+const createStateDirectory = async (): Promise<string> => {
+  // mkdtemp creates the directory owner-only (0700), which is what the lock requires.
+  const fixture = await mkdtemp(path.join(tmpdir(), 'ai-usage-memory-lease-'));
+  fixtures.push(fixture);
+  return fixture;
+};
 
 const emptyChanges = (): AsyncIterable<never> => ({
   [Symbol.asyncIterator]: (): AsyncIterator<never> => ({
@@ -38,6 +59,16 @@ const fakeKernel = (events: string[]): LocalIdentityKernel =>
       return Promise.resolve();
     },
   }) as LocalIdentityKernel;
+
+const fakeLease = (events: string[]) => () => {
+  events.push('memory-lease-acquire');
+  return Promise.resolve({
+    release: () => {
+      events.push('memory-lease-release');
+      return Promise.resolve();
+    },
+  });
+};
 
 describe('usage-engine local Memory identity ownership', () => {
   test('opens only after the Usage writer lease is established and closes before releasing it', async () => {
@@ -81,6 +112,81 @@ describe('usage-engine local Memory identity ownership', () => {
     ]);
   });
 
+  test('holds the Memory writer lease from after Usage start until after the kernel closes', async () => {
+    const events: string[] = [];
+    const runtime = withLocalMemoryIdentityKernel(fakeRuntime(events), '/state/memory.sqlite', {
+      acquireLease: fakeLease(events),
+      openKernel: (options) => {
+        events.push(`memory-open:${options.databasePath}`);
+        return Promise.resolve(fakeKernel(events));
+      },
+      startService: () => {
+        events.push('memory-service-start');
+        return Promise.resolve({
+          dispose: () => {
+            events.push('memory-service-dispose');
+            return Promise.resolve();
+          },
+        });
+      },
+    });
+
+    await runtime.start();
+    await runtime.dispose();
+    expect(events).toEqual([
+      'runtime-start',
+      'memory-lease-acquire',
+      'memory-open:/state/memory.sqlite',
+      'memory-service-start',
+      'memory-service-dispose',
+      'memory-close',
+      'memory-lease-release',
+      'runtime-dispose',
+    ]);
+  });
+
+  test('retains the Memory writer lease alongside the Usage lease on a retaining disposal', async () => {
+    const events: string[] = [];
+    const runtime = withLocalMemoryIdentityKernel(fakeRuntime(events), '/state/memory.sqlite', {
+      acquireLease: fakeLease(events),
+      openKernel: () => Promise.resolve(fakeKernel(events)),
+    });
+
+    await runtime.start();
+    await runtime.disposeRetainingWriterLease();
+    expect(events).toEqual([
+      'runtime-start',
+      'memory-lease-acquire',
+      'memory-close',
+      'runtime-dispose-retaining-lease',
+    ]);
+  });
+
+  test('releases the Memory lease and the Usage writer when the Memory kernel fails to open', async () => {
+    const events: string[] = [];
+    const runtime = withLocalMemoryIdentityKernel(fakeRuntime(events), '/state/memory.sqlite', {
+      acquireLease: fakeLease(events),
+      openKernel: () => Promise.reject(new Error('memory failed')),
+    });
+
+    await expect(runtime.start()).rejects.toThrow('memory failed');
+    expect(events).toEqual(['runtime-start', 'memory-lease-acquire', 'memory-lease-release', 'runtime-dispose']);
+  });
+
+  test('releases the Usage writer when the Memory lease is contended', async () => {
+    const events: string[] = [];
+    const runtime = withLocalMemoryIdentityKernel(fakeRuntime(events), '/state/memory.sqlite', {
+      acquireLease: () => Promise.reject(new UsageEngineWriterLockContendedError('memory lock held')),
+      openKernel: () => {
+        events.push('memory-open');
+        return Promise.resolve(fakeKernel(events));
+      },
+    });
+
+    await expect(runtime.start()).rejects.toBeInstanceOf(UsageEngineWriterLockContendedError);
+    expect(events).toEqual(['runtime-start', 'runtime-dispose']);
+  });
+
   test('releases the Usage writer when Memory bootstrap fails', async () => {
     const events: string[] = [];
     const runtime = withLocalMemoryIdentityKernel(fakeRuntime(events), '/state/memory.sqlite', {
@@ -120,7 +226,30 @@ describe('usage-engine local Memory identity ownership', () => {
     expect(events).toEqual(['runtime-start', 'memory-service-dispose', 'memory-close', 'runtime-dispose']);
   });
 
-  test('uses one dedicated database below the owned engine state directory', () => {
+  test('uses one dedicated database and lock below the owned engine state directory', () => {
     expect(localMemoryIdentityDatabasePath('/private/state')).toBe('/private/state/memory.sqlite');
+    expect(localMemoryIdentityLockPath('/private/state')).toBe('/private/state/memory.sqlite.engine.lock');
+  });
+
+  test('excludes a second Memory writer through a lock keyed to the Memory database path', async () => {
+    const stateDirectory = await createStateDirectory();
+    const memoryDatabasePath = localMemoryIdentityDatabasePath(stateDirectory);
+    const lockPath = localMemoryIdentityLockPath(stateDirectory);
+    const acquire = (instanceId: string) =>
+      acquireUsageEngineLock({ databasePath: memoryDatabasePath, instanceId, stateDirectory });
+
+    const first = await acquire('11111111-1111-4111-8111-111111111111');
+    expect(first.path).toBe(lockPath);
+    expect(path.dirname(lockPath)).toBe(stateDirectory);
+    await expect(Bun.file(lockPath).exists()).resolves.toBe(true);
+
+    // A second engine with a different usage database but the same state
+    // directory holds a distinct usage lock; the Memory lock is what stops it.
+    const contender = acquire('33333333-3333-4333-8333-333333333333');
+    await expect(contender).rejects.toBeInstanceOf(UsageEngineWriterLockContendedError);
+    await expect(contender).rejects.toThrow(`Usage engine lock ${lockPath} is owned by live PID ${process.pid}`);
+
+    await first.release();
+    await expect(Bun.file(lockPath).exists()).resolves.toBe(false);
   });
 });

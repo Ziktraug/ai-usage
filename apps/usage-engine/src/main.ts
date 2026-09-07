@@ -107,7 +107,18 @@ const createProductionDependencies = (
         },
       }),
     });
-    return withLocalMemoryIdentityKernel(usageRuntime, localMemoryIdentityDatabasePath(paths.stateDirectory), {
+    const memoryDatabasePath = localMemoryIdentityDatabasePath(paths.stateDirectory);
+    return withLocalMemoryIdentityKernel(usageRuntime, memoryDatabasePath, {
+      // The Memory store gets its own writer lease keyed to its own path: the
+      // usage lock lives beside the usage database, so two engines with
+      // different usage databases but one state directory would otherwise both
+      // open memory.sqlite read-write.
+      acquireLease: async () =>
+        await acquireUsageEngineLock({
+          databasePath: memoryDatabasePath,
+          instanceId,
+          stateDirectory: paths.stateDirectory,
+        }),
       ...(env.AI_USAGE_PLATFORM_BASE_URL === undefined
         ? {}
         : {
