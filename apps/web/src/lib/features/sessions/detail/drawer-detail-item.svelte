@@ -31,11 +31,17 @@
     fontSize: '13px',
     lineHeight: 1.5,
   });
-  const detailItem = css({ display: 'grid', gap: '5px', minW: 0 });
+  const detailItem = css({
+    display: 'grid',
+    gap: '8px',
+    minW: 0,
+    py: '10px',
+    borderTop: '1px solid token(colors.line)',
+  });
   const detailLabel = css({ textStyle: 'label', color: 'muted' });
   const detailValue = css({
     textStyle: 'numeric',
-    fontSize: '13px',
+    fontSize: '15px',
     fontWeight: 500,
     overflowWrap: 'anywhere',
   });

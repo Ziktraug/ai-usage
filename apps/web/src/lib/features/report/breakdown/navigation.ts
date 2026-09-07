@@ -82,7 +82,7 @@ export const createBreakdownNavigation = (
     clearOrigin: () => update((search) => ({ ...search, origin: [] })),
     clearTimeCell: () => update(withoutDashboardTimeCell),
     setBreakdownSort: (breakdownSort) => update((search) => ({ ...search, breakdownSort })),
-    setBreakdownTab: (tab) => update((search) => ({ ...search, tab })),
+    setBreakdownTab: (tab) => updateSearch((search) => ({ ...search, tab }), { keepFocus: true }),
     setColumnBase: (colsBase) => update((search) => ({ ...search, cols: [], colsBase }), true),
     setDateRange: (range) => update((search) => ({ ...search, range })),
     setFieldFilter: (key, value) =>

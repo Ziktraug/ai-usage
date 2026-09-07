@@ -1,14 +1,13 @@
 import { css } from '@ai-usage/design-system/css';
 
-export const stack = css({ display: 'grid', gap: '14px', minW: 0 });
+export const stack = css({ display: 'grid', gap: '20px', minW: 0 });
 export const row = css({ display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center' });
 export const panel = css({
   display: 'grid',
-  gap: '12px',
-  border: '1px solid token(colors.line)',
-  borderRadius: 'md',
-  p: '14px',
-  bg: 'surface',
+  gap: '16px',
+  borderTop: '1px solid token(colors.line)',
+  py: '20px',
+  minW: 0,
 });
 export const panelHeader = css({
   display: 'flex',
@@ -17,16 +16,16 @@ export const panelHeader = css({
   alignItems: 'center',
   justifyContent: 'space-between',
 });
-export const title = css({ fontSize: '16px', fontWeight: 700 });
+export const title = css({ fontSize: '18px', fontWeight: 550, letterSpacing: '-0.02em' });
 export const muted = css({ color: 'muted', fontSize: '12px' });
 export const field = css({
   h: { base: '44px', sm: '36px' },
   border: '1px solid token(colors.lineStrong)',
   borderRadius: 'sm',
-  bg: 'surface',
+  bg: 'surfaceMuted',
   color: 'ink',
   px: '12px',
-  fontSize: '13px',
+  fontSize: '12px',
   outline: 'none',
   _placeholder: { color: 'faint' },
   _focusVisible: { borderColor: 'accent', boxShadow: '0 0 0 3px token(colors.focusRing)' },
@@ -36,8 +35,8 @@ export const button = css({
   minH: '32px',
   border: '1px solid token(colors.line)',
   borderRadius: 'sm',
-  bg: 'surface',
-  color: 'ink',
+  bg: 'transparent',
+  color: 'muted',
   px: '10px',
   fontSize: '12px',
   fontWeight: 650,
@@ -59,7 +58,7 @@ export const pill = css({
   cursor: 'pointer',
   _focusVisible: { outline: '2px solid token(colors.accent)', outlineOffset: '2px' },
 });
-export const list = css({ display: 'grid', gap: '8px' });
+export const list = css({ display: 'grid', gap: 0 });
 export const item = css({
   display: 'grid',
   gridTemplateColumns: { base: 'minmax(0, 1fr)', sm: 'minmax(0, 1fr) auto' },
@@ -73,9 +72,10 @@ export const toolbar = css({
   position: { base: 'static', md: 'sticky' },
   top: 0,
   zIndex: 20,
-  display: 'flex',
+  display: { base: 'grid', sm: 'flex' },
+  gridTemplateColumns: 'minmax(0, 1fr) auto',
   flexDirection: { base: 'column', sm: 'row' },
-  flexWrap: { base: 'nowrap', sm: 'wrap', lg: 'nowrap' },
+  flexWrap: { base: 'nowrap', sm: 'wrap', xl: 'nowrap' },
   gap: { base: '8px', sm: '10px' },
   alignItems: 'center',
   py: { base: '8px', sm: '12px' },
@@ -90,8 +90,10 @@ export const toolbar = css({
   },
 });
 export const controls = css({
-  display: { base: 'grid', sm: 'contents' },
-  gridTemplateColumns: 'minmax(0, 0.7fr) minmax(0, 1.3fr)',
+  display: { base: 'none', sm: 'contents' },
+  '&[data-expanded=true]': { display: { base: 'grid', sm: 'contents' } },
+  gridColumn: '1 / -1',
+  gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
   w: { base: 'full', sm: 'auto' },
   gap: { base: '8px', sm: '0' },
   alignItems: 'center',
@@ -122,9 +124,30 @@ export const tableCell = css({ borderTop: '1px solid token(colors.line)', p: '6p
 
 export const analysisTabs = css({
   minW: 0,
-  '& [role="tab"]': { minH: { base: '44px', md: '40px' } },
+  '& [role="tablist"]': {
+    display: { base: 'grid', md: 'flex' },
+    gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+    overflowX: 'visible',
+    borderBottom: '1px solid token(colors.line)',
+    gap: '4px',
+    pb: '8px',
+  },
+  '& [role="tab"]': {
+    minH: '44px',
+    minW: 0,
+    fontWeight: 500,
+    px: { base: '10px', md: '16px' },
+    textAlign: { base: 'left', md: 'center' },
+    whiteSpace: { base: 'normal', md: 'nowrap' },
+    borderRadius: { base: 'sm', md: 0 },
+  },
+  '& [role="tab"][data-selected]': {
+    bg: { base: 'accentTint', md: 'transparent' },
+    borderColor: { base: 'transparent', md: 'accent' },
+  },
+  '& [role="tabpanel"]': { pt: '24px' },
 });
-export const analysisPanel = css({ overflow: 'hidden' });
+export const analysisPanel = css({ minW: 0, overflow: 'hidden', borderTop: '1px solid token(colors.line)' });
 export const analysisActions = css({
   gridColumn: '1 / -1',
   minW: 0,
@@ -170,15 +193,16 @@ export const modelTableDescription = css({
 export const modelTableHeaderCell = css({
   p: '10px 12px',
   borderBottom: '1px solid token(colors.lineStrong)',
-  bg: 'surfaceMuted',
+  bg: 'transparent',
   color: 'muted',
-  fontSize: '11px',
-  fontWeight: 700,
+  fontSize: '10px',
+  fontWeight: 500,
+  letterSpacing: '0.03em',
   lineHeight: 1.35,
   verticalAlign: 'bottom',
 });
 export const modelTableCell = css({
-  p: '12px',
+  p: '15px 12px',
   borderBottom: '1px solid token(colors.line)',
   color: 'ink',
   lineHeight: 1.45,

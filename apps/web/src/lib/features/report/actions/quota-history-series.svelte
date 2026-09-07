@@ -5,15 +5,20 @@
     ProviderQuotaHistoryWindow,
   } from '../../../../provider-quota-history-model';
   import { fmtDate, fmtPct } from '../../../foundation/presentation/format';
-  import { muted, panel, row, table, tableCell } from '../breakdown/styles';
+  import { muted, panel, table, tableCell } from '../breakdown/styles';
 
   const chart = css({
     w: 'full',
     h: 'auto',
     aspectRatio: '3 / 1',
-    bg: 'surface',
-    border: '1px solid token(colors.line)',
-    borderRadius: 'sm',
+    color: 'accent',
+  });
+  const seriesHeader = css({
+    display: 'grid',
+    gridTemplateColumns: 'minmax(0, 1fr) auto',
+    alignItems: 'baseline',
+    gap: '16px',
+    '& > strong:first-child': { fontWeight: 500, overflowWrap: 'anywhere' },
   });
   const axisRow = css({ display: 'flex', justifyContent: 'space-between', color: 'muted', fontSize: '11px' });
   const tableWrap = css({ overflowX: 'auto' });
@@ -97,9 +102,11 @@
 </script>
 
 <article class={panel}>
-  <div class={row}>
+  <div class={seriesHeader}>
     <strong>{series.label}</strong
-    ><strong>{series.currentPercent === null ? 'Unknown' : fmtPct(series.currentPercent)}</strong>
+    ><strong class={css({ textStyle: 'numeric', fontSize: '28px', fontWeight: 500 })}
+      >{series.currentPercent === null ? 'Unknown' : fmtPct(series.currentPercent)}</strong
+    >
   </div>
   <p class={muted}>{series.providerLabel} · {series.machineLabel ?? series.machineId}</p>
   <p class={muted}>

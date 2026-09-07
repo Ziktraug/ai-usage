@@ -61,4 +61,18 @@ describe('P8 breakdown navigation', () => {
     navigation.setPrimaryTab('breakdown');
     expect(current.tab).toBe('projects');
   });
+
+  test('preserves focus while changing Analysis dimension with the tab control', () => {
+    let current: DashboardSearch = { ...dashboardSearchDefaultsFor('cost'), tab: 'cursor-ai' };
+    let options: SearchNavigationOptions | undefined;
+    const navigation = createBreakdownNavigation((update, nextOptions) => {
+      current = update(current);
+      options = nextOptions;
+    });
+
+    navigation.setBreakdownTab('projects');
+
+    expect(current.tab).toBe('projects');
+    expect(options?.keepFocus).toBe(true);
+  });
 });

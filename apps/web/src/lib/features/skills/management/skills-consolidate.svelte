@@ -4,7 +4,6 @@
     ghostButton,
     meta,
     muted,
-    panel,
     skillsDisclosurePanel,
     skillsDisclosureSummary,
     skillsPathText,
@@ -63,7 +62,7 @@
     usageByName?.get(name);
 </script>
 
-<details class={cx(panel, skillsDisclosurePanel)} data-consolidation-panel>
+<details class={skillsDisclosurePanel} data-consolidation-panel>
   <summary class={skillsDisclosureSummary}>
     <span class={strongCell}>To consolidate</span
     ><span class={cx(statusPill, statusPillWarn)}>{count(total, 'entry', 'entries')}</span>

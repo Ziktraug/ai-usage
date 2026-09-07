@@ -6,12 +6,12 @@
   const drawerActions = css({ display: 'flex', flexWrap: 'wrap', gap: '8px' });
   const ghostButton = css({
     display: 'block',
-    border: '1px solid token(colors.line)',
-    borderRadius: 'sm',
-    bg: 'surface',
+    border: 0,
+    borderTop: '1px solid token(colors.line)',
+    bg: 'transparent',
     color: 'muted',
-    px: '12px',
-    py: '5px',
+    px: '4px',
+    py: '12px',
     fontSize: '12px',
     fontWeight: 600,
     textAlign: 'left',
@@ -20,7 +20,7 @@
     _focusVisible: { outline: '2px solid token(colors.accent)', outlineOffset: '2px' },
   });
   const hiddenSession = css({ opacity: 0.58 });
-  const campaignList = css({ display: 'grid', gap: '8px', mt: '10px' });
+  const campaignList = css({ display: 'grid', gap: 0, mt: '16px' });
 </script>
 
 <script lang="ts">

@@ -76,7 +76,7 @@ test('loads a deterministic report overview', async ({ page }) => {
   expect(initialHtml).toContain('Daily activity calendar');
   expect(initialHtml).not.toContain('Generated ');
 
-  await expect(page.getByRole('heading', { level: 1, name: 'Usage report' })).toBeVisible();
+  await expect(page.getByRole('heading', { level: 1, name: 'Usage overview' })).toBeVisible();
   await expect(page.locator('[data-report-freshness]')).toHaveText('Data as of Jun 11, 12:00');
   await expect(page.locator('[data-report-freshness] time')).toHaveAttribute('datetime', '2026-06-11T12:00:00.000Z');
   await expect(page.getByRole('region', { name: 'Report period' })).toBeVisible();
@@ -166,7 +166,7 @@ test('retries a failed report through the Router loading lifecycle', async ({ co
   await page.getByRole('button', { name: 'Retry' }).click();
 
   await context.setExtraHTTPHeaders({});
-  await expect(page.getByRole('heading', { level: 1, name: 'Usage report' })).toBeVisible();
+  await expect(page.getByRole('heading', { level: 1, name: 'Usage overview' })).toBeVisible();
   await expect(reportViewsFor(page).getByRole('link', { exact: true, name: 'Overview' })).toHaveAttribute(
     'aria-current',
     'page',
@@ -348,8 +348,8 @@ test('shows the executive answer, evidence, four metrics, and investigation in o
   const readingOrder = await page.locator('[data-report-overview]').evaluate((element) => {
     const markers = [
       element.querySelector('[data-executive-kpi]'),
-      element.querySelector('[data-executive-chart]'),
       element.querySelector('[data-executive-metrics]'),
+      element.querySelector('[data-executive-chart]'),
       [...element.querySelectorAll('h2')].find((heading) => heading.textContent?.trim() === 'Investigate') ?? null,
       [...element.querySelectorAll('h2')].find((heading) => heading.textContent?.trim() === 'Provider status') ?? null,
     ];
@@ -378,10 +378,10 @@ test('shows the executive answer, evidence, four metrics, and investigation in o
   await expect(punchcardVisual).not.toHaveAttribute('aria-hidden', 'true');
   expect(await punchcardVisual.getByRole('button', { name: PUNCHCARD_FILTER_PATTERN }).count()).toBeGreaterThan(0);
 
-  expect(await metrics.evaluate((element) => getComputedStyle(element).gridTemplateColumns.split(' ').length)).toBe(4);
+  expect(await metrics.evaluate((element) => getComputedStyle(element).gridTemplateColumns.split(' ').length)).toBe(2);
 
   await page.setViewportSize({ height: 844, width: 390 });
-  expect(await metrics.evaluate((element) => getComputedStyle(element).gridTemplateColumns.split(' ').length)).toBe(1);
+  expect(await metrics.evaluate((element) => getComputedStyle(element).gridTemplateColumns.split(' ').length)).toBe(2);
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
 });
 
@@ -793,7 +793,7 @@ test('starts sessions with focused work columns and switches metric presets', as
   const sessionHeader = page.getByRole('columnheader', { name: 'Session' });
   await sessionHeader.getByRole('button').click();
   const sessionSortArrow = sessionHeader.locator('[aria-hidden="true"]');
-  await expect(sessionSortArrow).toHaveCSS('color', 'rgb(172, 75, 18)');
+  await expect(sessionSortArrow).toHaveCSS('color', 'rgb(115, 80, 149)');
   await expect(sessionSortArrow).toHaveCSS('font-size', '10px');
   await expect(sessionSortArrow).toHaveCSS('line-height', '10px');
   expect(
@@ -1053,7 +1053,8 @@ test('keeps sync limited to explicit file transfers', async ({ page }) => {
     .getByRole('heading', { level: 2, name: 'Manual transfer' })
     .locator('xpath=ancestor::section[1]');
   await expect(transferSection).toBeVisible();
-  await expect(fleetSection.locator('[data-machine-fleet-share]')).toHaveCount(1);
+  // One machine has nothing to share the fleet with, so the share fact is omitted rather than shown as 100%.
+  await expect(fleetSection.locator('[data-machine-fleet-share]')).toHaveCount(0);
   await expect(page.locator('main[data-route-shell="sync"] table')).toHaveCount(0);
   await expect(page.getByRole('list', { name: 'Machine contribution summaries' })).toHaveCount(0);
   const syncSections = page.locator('main[data-route-shell="sync"] > div > section');
@@ -1066,7 +1067,7 @@ test('keeps sync limited to explicit file transfers', async ({ page }) => {
         return fleetBox && transferBox ? Math.round(transferBox.top - fleetBox.bottom) : null;
       }),
     )
-    .toBe(16);
+    .toBe(36);
   await page.setViewportSize({ height: 844, width: 361 });
   await expect(page.getByRole('list', { name: 'Machine contribution summaries' })).toHaveCount(0);
   const fileInput = page.locator('input[type="file"][accept=".json,application/json"]');
@@ -1091,7 +1092,8 @@ test('keeps sync limited to explicit file transfers', async ({ page }) => {
   await expect(progress).toHaveCSS('border-top-width', '1px');
   await expect(progress).toHaveCSS('border-radius', '999px');
   await expect(dropTarget).toContainText('Drop a merge file here or choose a file');
-  await expect(dropTarget).toHaveCSS('height', '128px');
+  await expect(dropTarget).toHaveCSS('min-height', '180px');
+  await expect(dropTarget).toHaveCSS('height', '180px');
   const dropTargetBox = await dropTarget.boundingBox();
   const progressBox = await progress.boundingBox();
   expect(dropTargetBox).not.toBeNull();

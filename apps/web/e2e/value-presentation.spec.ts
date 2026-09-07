@@ -5,7 +5,7 @@ const MODEL_ANALYSIS_COLUMNS = [
   'API value',
   'Share',
   'Processed tokens',
-  'Pricing coverage',
+  'Rates known',
   'API value / 1M tokens',
 ] as const;
 const LOWER_BOUND_PATTERN = /^≥/;

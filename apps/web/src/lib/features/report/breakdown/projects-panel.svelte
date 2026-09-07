@@ -23,6 +23,7 @@
     disabled,
     generatedAt,
     groups,
+    machineCount = null,
     onProjectFilter,
     onSave,
     payload,
@@ -30,6 +31,8 @@
     disabled: boolean;
     generatedAt: string;
     groups: readonly ProjectGroup[];
+    /** Store-wide machine count when known exactly; null when unknown or truncated. */
+    machineCount?: number | null;
     onProjectFilter: (value: string) => void;
     onSave: (projectGroups: readonly ProjectGroupConfig[]) => Promise<void>;
     payload: Pick<WebReportPayloadWithoutRows, 'projectGroupConfigs' | 'projectGroups'>;
@@ -52,16 +55,15 @@
     filename: reportCsvFilename('projects', generatedAt),
   });
   const disclosureClass = css({
-    mt: '14px',
+    mt: '28px',
     '& > summary': {
-      p: '12px 14px',
-      border: '1px solid token(colors.line)',
-      borderRadius: 'md',
-      bg: 'surface',
+      p: '16px 0',
+      borderTop: '1px solid token(colors.line)',
       color: 'ink',
       cursor: 'pointer',
       fontSize: '13px',
-      fontWeight: 650,
+      fontWeight: 500,
+      _focusVisible: { outline: '2px solid token(colors.accent)', outlineOffset: '2px' },
     },
     '&[open] > summary': { mb: '10px' },
   });
@@ -90,6 +92,7 @@
       groups={visible}
       onManageProjectGroups={openManagement}
       {onProjectFilter}
+      showMachines={machineCount !== 1}
     />
   </section>
   <details class={disclosureClass} bind:this={disclosure}>

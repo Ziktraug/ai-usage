@@ -30,6 +30,9 @@ const REPRESENTATIVE_SESSION_COUNT = 64;
 // actually renders the shell.
 export const SKILLS_PRODUCTION_SMOKE_PATH = '/skills';
 const SKILLS_SHELL_MARKER = 'data-skills-workspace';
+// The Overview root carries this attribute in both its served and empty states, so the smoke does
+// not depend on the h1 wording, which the product renames for editorial reasons.
+const OVERVIEW_SHELL_MARKER = 'data-report-overview';
 
 export const assertSyntheticSkillsProductionPrivacy = (html: string, privateMarkers: readonly string[]): void => {
   const leakedMarker = privateMarkers.find((marker) => marker.length > 0 && html.includes(marker));
@@ -730,7 +733,7 @@ const runHealthyProductionSmoke = async (): Promise<void> => {
             'production smoke',
             OVERALL_DEADLINE_MS,
             (async () => {
-              await waitForApplicationPage(port, child, '/', 'Usage report');
+              await waitForApplicationPage(port, child, '/', OVERVIEW_SHELL_MARKER);
               if (!(await Bun.file(rendezvousPath).exists())) {
                 throw new Error('Production supervisor started web without an engine rendezvous.');
               }

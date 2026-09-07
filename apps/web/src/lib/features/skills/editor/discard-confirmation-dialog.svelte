@@ -1,7 +1,8 @@
 <script lang="ts">
-  import { css } from '@ai-usage/design-system/css';
+  import { css, cx } from '@ai-usage/design-system/css';
   import { commandButton, panelSub, panelTitle } from '@ai-usage/design-system/svelte';
-  import { onDestroy, tick } from 'svelte';
+  import { Portal } from '@ark-ui/svelte/portal';
+  import { onDestroy } from 'svelte';
   import { createDiscardDialogController } from './discard-dialog-controller';
 
   let {
@@ -40,16 +41,17 @@
     placeItems: 'center',
     p: '18px',
     bg: 'rgba(0, 0, 0, 0.55)',
+    backdropFilter: 'blur(6px)',
   });
   const dialog = css({
     display: 'grid',
-    gap: '14px',
+    gap: '18px',
     w: 'min(440px, 100%)',
-    p: '18px',
+    p: '26px',
     border: '1px solid token(colors.lineStrong)',
     borderRadius: 'md',
     bg: 'surface',
-    boxShadow: 'lg',
+    boxShadow: 'overlay',
   });
   const actions = css({
     display: 'flex',
@@ -59,14 +61,22 @@
     alignItems: 'center',
   });
   const keepButtonStyle = css({
-    minH: '38px',
+    minH: '44px',
     px: '12px',
     border: '1px solid token(colors.lineStrong)',
     borderRadius: 'md',
-    bg: 'surface',
-    color: 'ink',
-    fontWeight: 700,
+    bg: 'accentTint',
+    color: 'accent',
+    fontWeight: 600,
+    cursor: 'pointer',
+    _hover: { borderColor: 'accent' },
     _focusVisible: { outline: '2px solid token(colors.accent)', outlineOffset: '2px' },
+  });
+  const discardButtonStyle = css({
+    bg: 'status.dangerSoft',
+    color: 'status.danger',
+    borderColor: 'transparent',
+    _hover: { bg: 'status.dangerSoft', borderColor: 'status.danger' },
   });
 
   const onKeydown = (event: KeyboardEvent): void => {
@@ -95,15 +105,23 @@
     }
   };
 
+  // A portal mounts its children after the parent's first tick. Focus follows the mounted
+  // button so a scrolled editor never leaves keyboard focus behind the confirmation.
+  $effect(() => {
+    if (open && keepButton) {
+      keepButton.focus();
+    }
+  });
+
   $effect(() => {
     if (!open) {
       return;
     }
     const returnFocusElement = document.activeElement instanceof HTMLElement ? document.activeElement : undefined;
-    tick().then(() => keepButton?.focus());
-    document.addEventListener('keydown', onKeydown, true);
+    // Consume confirmation keys before the underlying drawer's document-capture listener.
+    window.addEventListener('keydown', onKeydown, true);
     return () => {
-      document.removeEventListener('keydown', onKeydown, true);
+      window.removeEventListener('keydown', onKeydown, true);
       queueMicrotask(() => {
         if (restoreFocus) {
           restoreFocus();
@@ -116,31 +134,39 @@
 </script>
 
 {#if open}
-  <div class={backdrop}>
-    <div
-      aria-describedby={`${idPrefix}-description`}
-      aria-labelledby={`${idPrefix}-title`}
-      aria-modal="true"
-      class={dialog}
-      role="alertdialog"
-    >
-      <h2 class={panelTitle} id={`${idPrefix}-title`}>Discard unsaved changes?</h2>
-      <p class={panelSub} id={`${idPrefix}-description`}>{description}</p>
-      <div class={actions}>
-        <button class={keepButtonStyle} disabled={pending} onclick={decision.keep} type="button" bind:this={keepButton}>
-          Keep editing
-        </button>
-        <button
-          {...(pending ? { 'aria-busy': 'true' as const } : {})}
-          class={commandButton}
-          disabled={pending}
-          onclick={decision.discard}
-          type="button"
-          bind:this={discardButton}
-        >
-          {pending ? 'Discarding…' : 'Discard changes'}
-        </button>
+  <Portal>
+    <div class={backdrop} data-discard-confirmation>
+      <div
+        aria-describedby={`${idPrefix}-description`}
+        aria-labelledby={`${idPrefix}-title`}
+        aria-modal="true"
+        class={dialog}
+        role="alertdialog"
+      >
+        <h2 class={panelTitle} id={`${idPrefix}-title`}>Discard unsaved changes?</h2>
+        <p class={panelSub} id={`${idPrefix}-description`}>{description}</p>
+        <div class={actions}>
+          <button
+            class={keepButtonStyle}
+            disabled={pending}
+            onclick={decision.keep}
+            type="button"
+            bind:this={keepButton}
+          >
+            Keep editing
+          </button>
+          <button
+            {...(pending ? { 'aria-busy': 'true' as const } : {})}
+            class={cx(commandButton, discardButtonStyle)}
+            disabled={pending}
+            onclick={decision.discard}
+            type="button"
+            bind:this={discardButton}
+          >
+            {pending ? 'Discarding…' : 'Discard changes'}
+          </button>
+        </div>
       </div>
     </div>
-  </div>
+  </Portal>
 {/if}

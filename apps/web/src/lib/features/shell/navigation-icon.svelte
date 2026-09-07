@@ -11,7 +11,7 @@
   stroke="currentColor"
   stroke-linecap="round"
   stroke-linejoin="round"
-  stroke-width="2"
+  stroke-width="1.6"
   style="flex-shrink: 0"
   viewBox="0 0 24 24"
   width={size}

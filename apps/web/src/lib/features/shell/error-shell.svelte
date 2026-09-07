@@ -1,17 +1,7 @@
 <script lang="ts">
   import { css } from '@ai-usage/design-system/css';
-  import {
-    commandButton,
-    header,
-    meta,
-    page,
-    panel,
-    panelSub,
-    panelTitle,
-    shell,
-    title,
-    titleBlock,
-  } from '@ai-usage/design-system/svelte';
+  import { commandButton, page, panel, panelSub, panelTitle, shell } from '@ai-usage/design-system/svelte';
+  import WorkspaceHeader from './workspace-header.svelte';
 
   let {
     message = 'Report data could not be loaded.',
@@ -42,19 +32,14 @@
 {#if status === 404}
   <main class={page}>
     <div class={shell}>
-      <h1 class={title}>Not Found</h1>
+      <WorkspaceHeader description="This page could not be found." eyebrow="Workspace" heading="Not Found" />
       <a class={commandButton} href="/">Return to report</a>
     </div>
   </main>
 {:else}
   <main class={page} data-hydrated="false">
     <div class={shell}>
-      <header class={header}>
-        <div class={titleBlock}>
-          <p class={meta}>ai-usage</p>
-          <h1 class={title}>Usage report</h1>
-        </div>
-      </header>
+      <WorkspaceHeader eyebrow="Workspace" heading="Usage report" />
       <section aria-live="polite" class={`${panel} ${statusPanel}`}>
         <h2 class={panelTitle}>Report unavailable</h2>
         <p class={panelSub}>{message}</p>

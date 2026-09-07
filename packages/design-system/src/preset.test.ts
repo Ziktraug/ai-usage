@@ -231,7 +231,7 @@ test('reserves a stable scrollbar gutter on the document scroll root', () => {
 
 test('preset preserves the exact global CSS, keyframes, tokens, and semantic values', () => {
   const presetHash = new Bun.CryptoHasher('sha256').update(JSON.stringify(aiUsagePreset)).digest('hex');
-  expect(presetHash).toBe('e6640f24cc8e57f8f5cbb9cb107f5db001521ac8d6b547389f8a34a1f82fe571');
+  expect(presetHash).toBe('e2daab8f3247504a5a6147e713a2b4accadf3e1dfa00d4c88255d7087c6512cb');
 });
 
 test('punchcard controls meet the minimum interactive target size', () => {

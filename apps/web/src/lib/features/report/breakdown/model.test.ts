@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { AnalyticsGroup } from '@ai-usage/report-core/analytics';
-import { analyticsExportRows, breakdownRows, modelAnalysisRows } from './model';
+import { analyticsExportRows, breakdownRows, modelAnalysisRows, modelComparisonBars } from './model';
 
 const group = (key: string, overrides: Partial<AnalyticsGroup> = {}): AnalyticsGroup => ({
   ambiguous: 0,
@@ -192,12 +192,15 @@ describe('Models analysis projection', () => {
 
     expect(row).toMatchObject({
       priceState: 'partially measured',
+      // Rates are known for every session; only the counters are missing. The column that answers
+      // "are the rates known" stays clean, and the note sits under the value it bounds.
       pricingCoverageLabel: '3 / 3 · 100%',
-      pricingQualification: '1 of 3 sessions without token counters · API value is a lower bound',
+      pricingQualification: null,
       processedTokens: 200,
-      processedTokensLabel: '200',
-      processedTokensQualification: '1 of 3 sessions without token counters',
+      processedTokensLabel: '≥ 200',
+      processedTokensQualification: null,
       value: { label: '≥ $4.00', status: 'lower-bound' },
+      valueQualification: '1 of 3 sessions without token counters · API value is a lower bound',
       valuePerMillion: { label: '—', status: 'unknown' },
     });
     expect(row?.valuePerMillion.title).toContain('detailed local token counters are missing');
@@ -218,5 +221,64 @@ describe('Models analysis projection', () => {
     const visible = modelAnalysisRows(groups, '  UNSPECIFIED CODEX  ', 'tokens');
     expect(visible.map(({ label }) => label)).toEqual(['Unspecified Codex model']);
     expect(analyticsExportRows(visible)).toEqual([{ group: groups[2]!, label: 'Unspecified Codex model' }]);
+  });
+});
+
+describe('model comparison bars', () => {
+  const rows = modelAnalysisRows(
+    [
+      group('big', { cache: 100, costSum: 8, fresh: 100, priced: 2, sessions: 2 }),
+      group('bounded', { cache: 50, costSum: 4, fresh: 50, priced: 3, sessions: 3, usageUnavailable: 1 }),
+      group('unknown', {
+        cache: 40,
+        costSum: 0,
+        fresh: 60,
+        priced: 0,
+        sessions: 1,
+        unpriced: 1,
+        unpricedFreshTokens: 60,
+      }),
+    ],
+    '',
+    'value',
+  );
+
+  test('scales every model against the largest known value and hatches lower bounds', () => {
+    expect(modelComparisonBars(rows, 'value')).toEqual([
+      { key: 'big', label: 'big', lowerBound: false, measureLabel: '$8.00', rank: 0, widthPercent: 100 },
+      { key: 'bounded', label: 'bounded', lowerBound: true, measureLabel: '≥ $4.00', rank: 1, widthPercent: 50 },
+      { key: 'unknown', label: 'unknown', lowerBound: false, measureLabel: '—', rank: 2, widthPercent: null },
+    ]);
+  });
+
+  test('counts sessions for a counterless model and keeps a measured zero at zero width', () => {
+    const counterless = modelAnalysisRows(
+      [
+        group('counterless', { cache: 0, costSum: 0, fresh: 0, priced: 3, sessions: 3, usageUnavailable: 3 }),
+        group('idle', { cache: 0, costSum: 0, fresh: 0, priced: 1, sessions: 1 }),
+      ],
+      '',
+      'sessions',
+    );
+    expect(modelComparisonBars(counterless, 'sessions').map((bar) => [bar.measureLabel, bar.widthPercent])).toEqual([
+      ['3 sessions', 100],
+      ['1 session', (1 / 3) * 100],
+    ]);
+    expect(modelComparisonBars(counterless, 'value').map((bar) => bar.widthPercent)).toEqual([null, 0]);
+  });
+
+  test('follows the sort measure for tokens and sessions', () => {
+    const tokens = modelComparisonBars(rows, 'tokens');
+    expect(tokens.map((bar) => [bar.measureLabel, bar.widthPercent, bar.lowerBound])).toEqual([
+      ['200', 100, false],
+      ['≥ 100', 50, true],
+      ['100', 50, false],
+    ]);
+    const sessions = modelComparisonBars(rows, 'sessions');
+    expect(sessions.map((bar) => [bar.measureLabel, bar.widthPercent])).toEqual([
+      ['2 sessions', (2 / 3) * 100],
+      ['3 sessions', 100],
+      ['1 session', (1 / 3) * 100],
+    ]);
   });
 });

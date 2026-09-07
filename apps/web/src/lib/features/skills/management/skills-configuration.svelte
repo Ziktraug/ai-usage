@@ -1,6 +1,6 @@
 <script lang="ts">
   import { css, cx } from '@ai-usage/design-system/css';
-  import { panel, skillsDisclosurePanel, skillsDisclosureSummary } from '@ai-usage/design-system/report';
+  import { skillsDisclosurePanel, skillsDisclosureSummary } from '@ai-usage/design-system/report';
   import type { SkillManagementSnapshot } from '@ai-usage/skills';
   import { untrack } from 'svelte';
   import type { SkillsShellSlotContext } from '../shell/slot-context';
@@ -103,7 +103,14 @@
     sourceDraft = syncSourceRepositoryDraft(sourceDraft, context.snapshot);
   });
 
-  const body = css({ display: 'grid', gap: '16px', pt: '8px' });
+  const body = css({
+    display: 'grid',
+    gap: '28px',
+    maxW: '760px',
+    minW: 0,
+    '& > section + section': { pt: '20px', borderTop: '1px solid token(colors.line)' },
+    '& input, & select, & button': { minH: { base: '44px', md: '36px' } },
+  });
   const formRow = css({ display: 'grid', gap: '8px' });
   const label = css({ display: 'grid', gap: '5px', color: 'muted', fontSize: '12px', fontWeight: 650 });
   const input = css({
@@ -112,9 +119,10 @@
     px: '10px',
     border: '1px solid token(colors.line)',
     borderRadius: 'sm',
-    bg: 'surface',
+    bg: 'canvas',
     color: 'ink',
     fontSize: '13px',
+    _focusVisible: { outline: '2px solid token(colors.accent)', outlineOffset: '2px' },
   });
   const actionRow = css({ display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'end' });
   const projectRow = css({
@@ -126,7 +134,7 @@
   const targetRow = css({ display: 'grid', gap: '5px', pt: '8px', borderTop: '1px solid token(colors.line)' });
 </script>
 
-<details class={cx(panel, skillsDisclosurePanel)} data-skills-configuration>
+<details class={skillsDisclosurePanel} data-skills-configuration>
   <summary class={skillsDisclosureSummary}>
     <strong>Configuration &amp; runtimes</strong>
     <span class={muted}>
@@ -137,6 +145,7 @@
     </span>
   </summary>
   <div class={body}>
+    <h2 class={css({ srOnly: true })}>Skill configuration</h2>
     <section class={compactStack}>
       <label class={label}>
         <span>Source repository</span>
@@ -242,7 +251,7 @@
       {#each context.snapshot.targets as target (target.id)}
         <div class={targetRow}>
           <strong>{target.label}</strong>
-          <span class={muted}>
+          <span class={cx(muted, css({ overflowWrap: 'anywhere' }))}>
             {target.enabled ? 'Enabled' : 'Disabled'}
             · {target.missing ? 'Missing directory' : 'Observed'} ·
             {target.path}

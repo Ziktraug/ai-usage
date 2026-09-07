@@ -10,7 +10,7 @@
   const muted = css({ color: 'muted' });
   const drawerActions = css({ display: 'flex', flexWrap: 'wrap', gap: '8px' });
   const campaignLabelInputId = 'session-drawer-campaign-label';
-  const editorLayout = css({ display: 'grid', gap: '8px' });
+  const editorLayout = css({ display: 'grid', gap: '12px', borderTop: '1px solid token(colors.line)', pt: '20px' });
 
   let { editor }: { editor: CampaignLabelEditorState } = $props();
   let draft = $state(untrack(() => editor.effectiveLabel));

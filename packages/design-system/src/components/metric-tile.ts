@@ -17,7 +17,6 @@ export const metricTile = css({
   border: '1px solid token(colors.line)',
   borderRadius: 'md',
   bg: 'surface',
-  boxShadow: 'card',
   display: 'grid',
   alignContent: 'start',
   gap: '10px',

@@ -60,7 +60,11 @@ claims. See [`../plans/README.md`](../plans/README.md) for delivery status.
 - [`app-audit-2026-07-10.md`](app-audit-2026-07-10.md) — full application
   audit; findings remediated through the plans/ backlog.
 - [`model-pricing-audit-2026-07-15.md`](model-pricing-audit-2026-07-15.md) —
-  pricing research snapshot; the pricing table was updated from it.
+  pricing research snapshot; the pricing table was updated from it. Superseded
+  by the 2026-09-05 refresh for current rates.
+- [`model-pricing-audit-2026-09-05.md`](model-pricing-audit-2026-09-05.md) —
+  pricing refresh; dated GPT-5.6 cuts, the withdrawn Sonnet 5 increase, and the
+  models that stay deliberately unpriced.
 - [`project-grouping-plan.md`](project-grouping-plan.md) — delivered grouping
   design (2026-07); paths predate later refactors.
 - [`provider-status-windows-plan.md`](provider-status-windows-plan.md) —

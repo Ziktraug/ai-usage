@@ -29,6 +29,7 @@
     shouldPreserveReportScroll,
   } from './navigation';
   import NavigationLink from './navigation-link.svelte';
+  import ProductMark from './product-mark.svelte';
   import type { ProviderQuotaRailEntry } from './provider-quota-rail';
   import ProviderQuotaRail from './provider-quota-rail.svelte';
   import { useSessionWindowAnchorOwner } from './session-window-anchor-context';
@@ -60,19 +61,23 @@
     _print: { display: 'none' },
   });
   const productName = css({
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: { md: 'center', xl: 'flex-start' },
+    gap: '10px',
     px: { md: 0, xl: '10px' },
     pb: { md: '18px', xl: '24px' },
-    color: 'accent',
-    fontSize: '15px',
-    fontWeight: 750,
-    letterSpacing: '-0.01em',
+    color: 'ink',
+    fontSize: '17px',
+    fontWeight: 550,
+    letterSpacing: '-0.035em',
     textAlign: { md: 'center', xl: 'start' },
   });
   // The wordmark stays in the accessibility tree at every width; the short mark is the visual
   // stand-in the icon rail draws in its place.
-  const productMark = css({ display: { md: 'block', xl: 'none' } });
+  const productMark = css({ display: 'flex', color: 'accent', flexShrink: 0 });
   const productWordmark = css({ srOnly: { md: true, xl: false } });
-  const navigationGroup = css({ display: 'grid', gap: '6px', mb: { md: '16px', xl: '22px' } });
+  const navigationGroup = css({ display: 'grid', gap: '4px', mb: { md: '20px', xl: '30px' } });
   // The icon rail drops the group headings, so a hairline carries the grouping the labels used to.
   const navigationGroupDivider = css({
     md: { pt: '16px', borderTop: '1px solid token(colors.line)' },
@@ -84,8 +89,8 @@
     pb: '3px',
     color: 'muted',
     fontSize: '10px',
-    fontWeight: 750,
-    letterSpacing: '0.08em',
+    fontWeight: 500,
+    letterSpacing: '0.12em',
     textTransform: 'uppercase',
   });
   const navigationLink = css({
@@ -98,9 +103,9 @@
     px: { base: '10px', md: 0, xl: '10px' },
     borderWidth: '1px',
     borderStyle: 'solid',
-    borderRadius: 'md',
+    borderRadius: 'sm',
     fontSize: '13px',
-    fontWeight: 650,
+    fontWeight: 450,
     textDecoration: 'none',
     transition: 'background-color 0.12s ease, border-color 0.12s ease, color 0.12s ease',
     _hover: { bg: 'surfaceMuted', color: 'ink' },
@@ -116,7 +121,12 @@
     xl: { '&:hover [data-rail-tooltip], &:focus-visible [data-rail-tooltip]': { display: 'none' } },
   });
   const navigationLinkInactive = css({ borderColor: 'transparent', color: 'muted' });
-  const navigationLinkActive = css({ borderColor: 'lineStrong', bg: 'accentSoft', color: 'ink' });
+  const navigationLinkActive = css({
+    borderColor: 'transparent',
+    bg: 'accentSoft',
+    color: 'accent',
+    fontWeight: 550,
+  });
   // One `mt: auto` for the whole bottom stack: the quota panel renders conditionally, so hanging the
   // push off the panel itself would drop the theme toggle back up against the navigation links
   // whenever no provider reports a quota.
@@ -152,7 +162,7 @@
     bg: 'transparent',
     fontFamily: 'sans',
     fontSize: '11px',
-    fontWeight: 700,
+    fontWeight: 550,
     textDecoration: 'none',
     _focusVisible: { outline: '2px solid token(colors.accent)', outlineOffset: '-2px' },
   });
@@ -416,7 +426,7 @@
   data-hydrated={navigationHydrated ? 'true' : 'false'}
 >
   <div class={productName}>
-    <span aria-hidden="true" class={productMark}>ai</span><span class={productWordmark}>ai-usage</span>
+    <span aria-hidden="true" class={productMark}><ProductMark /></span><span class={productWordmark}>ai-usage</span>
   </div>
   <nav aria-label="Report views" class={navigationGroup}>
     <div class={navigationGroupLabel}>Report</div>
@@ -483,6 +493,7 @@
 </nav>
 {#if showManage && manageOpen}
   <nav aria-label="Manage destinations" class={managePopover} id={managePopoverId}>
+    <span class={css({ color: 'muted', fontSize: '11px', fontWeight: 650, px: '10px', py: '6px' })}>Manage</span>
     {#each shellManagementDestinations as destination (destination.href)}
       <NavigationLink
         active={isActiveManagementDestination(page.url.pathname, destination.href)}
@@ -492,6 +503,10 @@
         label={destination.label}
       />
     {/each}
-    <ThemeToggle />
+    <div
+      class={css({ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderTop: '1px solid token(colors.line)', pt: '10px', px: '10px', color: 'muted', fontSize: '12px' })}
+    >
+      <span>Appearance</span><ThemeToggle />
+    </div>
   </nav>
 {/if}

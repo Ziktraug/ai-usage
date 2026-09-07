@@ -1,4 +1,6 @@
+<!-- biome-ignore-all lint/a11y/useValidAriaValues: Svelte serializes the controlled disclosure boolean; browser regressions assert its behavior. -->
 <script lang="ts">
+  import { css } from '@ai-usage/design-system/css';
   import { Tooltip } from '@ai-usage/design-system/svelte';
   import type { SessionOrigin } from '@ai-usage/report-core/session-query';
   import type { Snippet } from 'svelte';
@@ -35,6 +37,26 @@
   } = $props();
   let editingQuery = false;
   let queryInput = $state<HTMLInputElement | undefined>();
+  let filtersOpen = $state(false);
+  const activeDimensions = $derived(
+    [search.harness, search.origin, search.machine].filter((values) => values.length > 0).length,
+  );
+  const mobileFilterToggle = css({
+    display: { base: 'inline-flex', sm: 'none' },
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: '6px',
+    minH: '44px',
+    px: '12px',
+    border: '1px solid token(colors.lineStrong)',
+    borderRadius: 'sm',
+    bg: 'surface',
+    color: 'ink',
+    fontSize: '12px',
+    fontWeight: 600,
+    '&[aria-expanded=true]': { bg: 'accentSoft', borderColor: 'accent' },
+    _focusVisible: { outline: '2px solid token(colors.accent)', outlineOffset: '2px' },
+  });
   const setQuery = (value: string): void => {
     navigation.setQuery(value, editingQuery);
     editingQuery = true;
@@ -86,7 +108,17 @@
     value={search.q}
     bind:this={queryInput}
   >
-  <div class={controls}>
+  <button
+    aria-controls="report-dimension-filters"
+    aria-expanded={filtersOpen}
+    class={mobileFilterToggle}
+    onclick={() => { filtersOpen = !filtersOpen; }}
+    type="button"
+  >
+    Filters{activeDimensions > 0 ? ` · ${activeDimensions}` : ''}
+    <span aria-hidden="true">{filtersOpen ? '−' : '+'}</span>
+  </button>
+  <div class={controls} data-expanded={filtersOpen} id="report-dimension-filters">
     <CheckboxFilter
       label="Filter by harness"
       noun="harnesses"

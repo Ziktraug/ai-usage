@@ -173,6 +173,7 @@ test('keeps executive composition presentation-only and threads retained state t
   for (const source of [liveSource, syntheticSource]) {
     expect(source).toContain('onClearFilters: navigation.clearAllFilters');
     expect(source).toContain("onOpenModels: () => navigation.setBreakdownTab('models')");
+    expect(source).toContain('onTabChange: navigation.setBreakdownTab');
     expect(source).toContain('activeDestinationLoadFailed');
     expect(source).toContain('onRetry={retryReportDestination}');
   }
