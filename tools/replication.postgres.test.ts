@@ -475,7 +475,7 @@ if (runPostgresTests) {
           grantedAt: observedAt,
           grantId: crypto.randomUUID(),
           projectId: organizationProjectId,
-          role: 'viewer',
+          role: 'collaborator',
           spaceId: organizationSpaceId,
           subject: { kind: 'person', personId },
         });
@@ -640,6 +640,216 @@ if (runPostgresTests) {
           }),
         ).toEqual({ kind: 'problem', problem: { code: 'event-id-conflict' } });
         expect(await database.queryRowCount('SELECT 1 FROM replication_event_receipts')).toBe(2);
+      } finally {
+        await database.close().catch(() => undefined);
+        await store.close().catch(() => undefined);
+        await cluster.stop();
+      }
+    }, 30_000);
+
+    test('requires contribution-level authority for organization capture contexts', async () => {
+      const cluster = await startPostgresCluster('replication-contribution-authority');
+      const store = await createPlatformStore({
+        connectTimeoutMs: 5000,
+        databaseUrl: cluster.url,
+        migrationMode: 'apply',
+        poolSize: 8,
+        queryTimeoutMs: 5000,
+        tlsMode: 'disable',
+      });
+      const database = createPlatformTestingDatabase(cluster.url);
+      try {
+        const adminPersonId = createPersonId();
+        const adminSpaceId = createSpaceId();
+        const organizationSpaceId = createSpaceId();
+        const organizationProjectId = createProjectId();
+        await store.identity.createPersonalIdentity({
+          person: {
+            displayName: 'Organization admin',
+            id: adminPersonId,
+            personalSpaceId: adminSpaceId,
+            status: 'active',
+          },
+          space: { createdAt: observedAt, displayName: 'Admin personal space', id: adminSpaceId, kind: 'personal' },
+        });
+        await database.query(
+          `INSERT INTO spaces (id, kind, display_name, created_at)
+           VALUES ($1, 'organization', 'Contribution authority organization', $2)`,
+          [organizationSpaceId, observedAt],
+        );
+        await store.authorization.administration.createOrganizationWithAdmin({
+          actorPersonId: adminPersonId,
+          createdAt: observedAt,
+          spaceId: organizationSpaceId,
+        });
+        await store.identity.createProject({
+          displayName: 'Contribution authority project',
+          id: organizationProjectId,
+          kind: 'local',
+          owningSpaceId: organizationSpaceId,
+          repositoryId: null,
+          repositorySubpath: null,
+          status: 'active',
+        });
+        const key = createDeploymentTokenKey(Buffer.alloc(32, 73).toString('base64url'), 1);
+        const devices = createDeviceEnrollmentService({
+          authorizer: store.authorization,
+          clock: () => new Date(observedAt),
+          keyRing: createDeploymentTokenKeyRing([key], 1),
+          store: store.devices,
+        });
+
+        const enrollPerson = async (displayName: string) => {
+          const personId = createPersonId();
+          const personalSpaceId = createSpaceId();
+          await store.identity.createPersonalIdentity({
+            person: { displayName, id: personId, personalSpaceId, status: 'active' },
+            space: {
+              createdAt: observedAt,
+              displayName: `${displayName} space`,
+              id: personalSpaceId,
+              kind: 'personal',
+            },
+          });
+          const grant = await devices.requestEnrollmentGrant({
+            context: { activeSpaceId: personalSpaceId, trustedDevice: false },
+            label: `${displayName} laptop`,
+            principal: { kind: 'person', personId },
+          });
+          if (grant.kind !== 'success') {
+            throw new Error(`Expected Device enrollment grant for ${displayName}.`);
+          }
+          const exchanged = await devices.exchangeEnrollmentGrant(grant.value.token);
+          if (exchanged.kind !== 'success') {
+            throw new Error(`Expected Device enrollment exchange for ${displayName}.`);
+          }
+          return {
+            authenticated: {
+              authenticatedCredentialId: exchanged.value.credential.id,
+              authenticatedDevice: exchanged.value.device,
+            },
+            deviceId: exchanged.value.device.id,
+            personId,
+          };
+        };
+        const publishOrganizationSession = async (
+          person: Awaited<ReturnType<typeof enrollPerson>>,
+          projectId: typeof organizationProjectId | null,
+          sessionName: string,
+        ) => {
+          const context = {
+            deviceId: person.deviceId,
+            id: createCaptureContextId(),
+            personId: person.personId,
+            projectId,
+            scmAccountId: null,
+            scmInstallationId: null,
+            source: projectId === null ? ('explicit' as const) : ('project-rule' as const),
+            spaceId: organizationSpaceId,
+          };
+          const event = createReplicationEvent({
+            captureContextId: context.id,
+            changeKind: 'usage-session-upsert',
+            eventId: createReplicationEventId(),
+            factKey: `usage-session:${sessionName}`,
+            generation: parseReplicationGeneration(1),
+            payload: {
+              harness: 'codex',
+              kind: 'usage-session-upsert',
+              model: 'gpt-5',
+              observedAt,
+              projectId,
+              sourceFingerprint: 'd'.repeat(64),
+              sourceSessionId: sessionName,
+              status: 'active',
+              tokenTotal: 10,
+            },
+          });
+          const batch = createReplicationBatch({
+            batchId: createReplicationBatchId(),
+            captureContexts: [context],
+            deviceId: person.deviceId,
+            events: [event],
+            fromGenerationExclusive: parseReplicationGeneration(0),
+            streamId: USAGE_REPLICATION_STREAM_ID,
+            toGenerationInclusive: parseReplicationGeneration(1),
+          });
+          const result = await store.replication.applyBatch({ ...person.authenticated, batch });
+          const contextRows = await database.queryRowCountInSpace(
+            organizationSpaceId,
+            'SELECT 1 FROM capture_contexts WHERE id = $1',
+            [context.id],
+          );
+          const projectionRows = await database.queryRowCountInSpace(
+            organizationSpaceId,
+            'SELECT 1 FROM replicated_fact_projections WHERE fact_key = $1',
+            [event.factKey],
+          );
+          const receiptRows = await database.queryRowCount(
+            'SELECT 1 FROM replication_event_receipts WHERE device_id = $1',
+            [person.deviceId],
+          );
+          return { contextRows, projectionRows, receiptRows, result };
+        };
+
+        const viewer = await enrollPerson('Project viewer');
+        await store.authorization.administration.grantProjectAccess({
+          actorPersonId: adminPersonId,
+          expiresAt: null,
+          grantedAt: observedAt,
+          grantId: crypto.randomUUID(),
+          projectId: organizationProjectId,
+          role: 'viewer',
+          spaceId: organizationSpaceId,
+          subject: { kind: 'person', personId: viewer.personId },
+        });
+        expect(await publishOrganizationSession(viewer, organizationProjectId, 'viewer-session')).toEqual({
+          contextRows: 0,
+          projectionRows: 0,
+          receiptRows: 0,
+          result: { kind: 'problem', problem: { code: 'capture-context-forbidden' } },
+        });
+
+        const auditor = await enrollPerson('Usage auditor');
+        await database.withSpaceContext(organizationSpaceId, (query) =>
+          query(
+            `INSERT INTO space_memberships (space_id, person_id, role, status, created_at)
+             VALUES ($1, $2, 'usage-auditor', 'active', $3)`,
+            [organizationSpaceId, auditor.personId, observedAt],
+          ),
+        );
+        expect(await publishOrganizationSession(auditor, null, 'auditor-session')).toEqual({
+          contextRows: 0,
+          projectionRows: 0,
+          receiptRows: 0,
+          result: { kind: 'problem', problem: { code: 'capture-context-forbidden' } },
+        });
+        expect(await publishOrganizationSession(auditor, organizationProjectId, 'auditor-project-session')).toEqual({
+          contextRows: 0,
+          projectionRows: 0,
+          receiptRows: 0,
+          result: { kind: 'problem', problem: { code: 'capture-context-forbidden' } },
+        });
+
+        const collaborator = await enrollPerson('Project collaborator');
+        await store.authorization.administration.grantProjectAccess({
+          actorPersonId: adminPersonId,
+          expiresAt: null,
+          grantedAt: observedAt,
+          grantId: crypto.randomUUID(),
+          projectId: organizationProjectId,
+          role: 'collaborator',
+          spaceId: organizationSpaceId,
+          subject: { kind: 'person', personId: collaborator.personId },
+        });
+        expect(
+          await publishOrganizationSession(collaborator, organizationProjectId, 'collaborator-session'),
+        ).toMatchObject({
+          contextRows: 1,
+          projectionRows: 1,
+          receiptRows: 1,
+          result: { ack: { counts: { applied: 1, duplicate: 0, projected: 1, tombstoned: 0 } }, kind: 'ack' },
+        });
       } finally {
         await database.close().catch(() => undefined);
         await store.close().catch(() => undefined);

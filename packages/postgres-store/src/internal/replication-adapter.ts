@@ -212,6 +212,12 @@ const credentialIsCurrent = async (
   return result.rows.length === 1;
 };
 
+/**
+ * Storing replicated facts under a Space is a contribution, so a capture
+ * context needs contribution-level authority: the personal-space owner, or an
+ * organization membership that can contribute (`admin`/`member`). Read-only
+ * auditor memberships can observe a Space but never publish into it.
+ */
 const authorizeSpaceContext = async (client: PoolClient, context: CaptureContextSnapshot): Promise<boolean> => {
   const result = await client.query<IdRow>(
     `SELECT space.id
@@ -232,6 +238,7 @@ const authorizeSpaceContext = async (client: PoolClient, context: CaptureContext
              AND organization.status = 'active'
              AND membership.person_id = $2
              AND membership.status = 'active'
+             AND membership.role IN ('admin', 'member')
          )
        )`,
     [context.spaceId, context.personId],
@@ -243,14 +250,18 @@ const authorizeProjectContext = async (client: PoolClient, context: CaptureConte
   if (context.projectId === null) {
     return authorizeSpaceContext(client, context);
   }
-  const query = authorizationScopeSql('view_project', 'project');
+  // A project context is a contribution to that project, so it needs the same
+  // authority as proposing Memory there (collaborator or maintainer), not the
+  // viewer grant that merely lets a person read it. Replicating Devices are
+  // never treated as trusted for this decision.
+  const query = authorizationScopeSql('propose_memory', 'project');
   if (!query) {
     throw new PlatformStoreError('validation-failed', 'resolve-replication-project-scope');
   }
   const result = await client.query<IdRow>(`SELECT id FROM (${query}) scope WHERE id = $4::UUID LIMIT 1`, [
     context.spaceId,
     context.personId,
-    true,
+    false,
     context.projectId,
   ]);
   return result.rows.length === 1;
