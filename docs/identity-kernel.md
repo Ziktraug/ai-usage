@@ -1,7 +1,7 @@
 # Identity kernel and Project resolution
 
-> **Implementation status:** Integrated on `main` (plan 102 `DONE`,
-> 2026-09-07).
+> **Implementation status:** Integrated on `main` via PR #53 (plan 102
+> `DONE`).
 
 This is the accepted reference for the identity kernel specified by plan 102. It
 defines stable identities shared by the local SQLite and connected PostgreSQL

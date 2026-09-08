@@ -173,15 +173,15 @@ dependency.
 | 096 | Skills Management Surface Fixes — Legible Tree, Honest Statuses, One Health Surface, Matrix Geometry, Frontmatter False Positives | P1 | M | 087 (editor status branch) | DONE (maintainer reopening D20; refresh proof now observes the settled transformed response, the intended visual baseline is updated, and full child gates pass) |
 | 097 | Sync, Sources, Projects: Duplication and Jargon | P1 | M | 088 (fleet "Sessions" label) | DONE |
 | 098 | Session Drawer, Analysis, and Report Chrome Polish | P2 | M | 088 (drawer, records); 093/094 if they touched `preset.ts` | DONE |
-| 099 | Evolve ai-usage Into a Multi-Tenant AI Operations and Memory Platform (program plan) | P0 | L (program) | 100-110 | IN PROGRESS (architecture accepted; runtime for 101–107 integrated on `main` 2026-09-07; 107 partial; 108–110 TODO) |
+| 099 | Evolve ai-usage Into a Multi-Tenant AI Operations and Memory Platform (program plan) | P0 | L (program) | 100-110 | IN PROGRESS (architecture accepted; runtime for 101–107 integrated on `main` via PR #53; 107 partial; 108–110 TODO) |
 | 100 | Define the Platform Topology, Capability Modules, and Data Ownership | P0 | L | - | DONE |
-| 101 | Add the PostgreSQL Server Foundation Without Replacing the Local SQLite Engine | P0 | L | 100 | DONE (integrated on `main` 2026-09-07) |
-| 102 | Introduce Stable Spaces, People, Devices, Repositories, Projects, and Checkouts | P0 | L | 100, 101 | DONE (integrated on `main` 2026-09-07) |
-| 103 | Model Authorization With ReBAC, Content Boundaries, and Aggregate-Only Roles | P0 | XL | 100-102 | DONE (integrated on `main` 2026-09-07) |
-| 104 | Add Authentication, GitHub Identity Separation, and Device Enrollment | P1 | L | 102, 103 | DONE (integrated on `main` 2026-09-07; connected V1 is GitHub-only; non-GitHub login remains explicitly BLOCKED) |
-| 105 | Migrate Agent Memory From NixOS Files Into a DB-Native Domain | P1 | XL | 100-102 | DONE (integrated on `main` 2026-09-07) |
-| 106 | Build Authorized Hybrid Memory Search and a Harness-Agnostic MCP Adapter | P1 | XL | 102, 105 (local/single-user shared); 103, 104 (organization-connected) | DONE (integrated on `main` 2026-09-07) |
-| 107 | Replicate Local Machine Facts to the Server With an Idempotent Outbox Protocol | P1 | XL | 101-105 | IN PROGRESS (runtime replication slice integrated on `main` 2026-09-07; server-side bundle bootstrap and blocked-stream repair criteria still open) |
+| 101 | Add the PostgreSQL Server Foundation Without Replacing the Local SQLite Engine | P0 | L | 100 | DONE (integrated on `main` via PR #53) |
+| 102 | Introduce Stable Spaces, People, Devices, Repositories, Projects, and Checkouts | P0 | L | 100, 101 | DONE (integrated on `main` via PR #53) |
+| 103 | Model Authorization With ReBAC, Content Boundaries, and Aggregate-Only Roles | P0 | XL | 100-102 | DONE (integrated on `main` via PR #53) |
+| 104 | Add Authentication, GitHub Identity Separation, and Device Enrollment | P1 | L | 102, 103 | DONE (integrated on `main` via PR #53; connected V1 is GitHub-only; non-GitHub login remains explicitly BLOCKED) |
+| 105 | Migrate Agent Memory From NixOS Files Into a DB-Native Domain | P1 | XL | 100-102 | DONE (integrated on `main` via PR #53; import preview/confirm, export, and Observation/Proposal creation exist as Memory application operations without a local-service, CLI, Web, or MCP surface yet — backlog in `docs/future-work.md`) |
+| 106 | Build Authorized Hybrid Memory Search and a Harness-Agnostic MCP Adapter | P1 | XL | 102, 105 (local/single-user shared); 103, 104 (organization-connected) | DONE (integrated on `main` via PR #53) |
+| 107 | Replicate Local Machine Facts to the Server With an Idempotent Outbox Protocol | P1 | XL | 101-105 | IN PROGRESS (runtime replication slice integrated on `main` via PR #53; server-side bundle bootstrap and blocked-stream repair criteria still open) |
 | 108 | Add Cross-Harness Work Handoffs and Work Threads | P1 | L | 102, 105, 106 (local); 107 (connected) | TODO |
 | 109 | Archive Session Detail Safely for Cross-Machine Read-Only Continuity | P2 | L | 103, 104, 107, 108 connected phase | TODO |
 | 110 | Spike Native Session Portability Across Claude, Codex, OpenCode, and Cursor | P2 | L (spike) | 108, 109 | TODO |

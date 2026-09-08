@@ -58,5 +58,8 @@ an explicit decision rather than an implicit one.
   second engine keyed to the same `memory.sqlite` contends.
 - `bun run check` / `bun run dev` behavior is unchanged for one engine; a
   second engine sharing a state directory now fails visibly instead of
-  corrupting Memory.
+  corrupting Memory. While the first engine serves, the earlier orphan-
+  rendezvous check already refuses the second one as `startup-failure`; the
+  Memory lease is what refuses it, as `writer-lock-contended`, when only that
+  lease is held (for example between a crash and the next recovery).
 - Reopening the degraded-mode question is a new ADR, not a code-only change.

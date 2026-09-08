@@ -1,7 +1,7 @@
 # Authorization model and operations
 
-> **Implementation status:** Integrated on `main` (plan 103 `DONE`,
-> 2026-09-07). Benchmark and verification evidence below record the validation
+> **Implementation status:** Integrated on `main` via PR #53 (plan 103
+> `DONE`). Benchmark and verification evidence below record the validation
 > run at integration time.
 
 This is the accepted reference for the local and connected authorization seam.

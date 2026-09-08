@@ -22,7 +22,7 @@ does not broaden either of these usage-runtime planes.
 ## Platform decision and delivery status
 
 ADRs 0023–0038 and plan 100 record accepted architecture. The platform
-runtime for plans 101–107 was integrated on `main` on 2026-09-07:
+runtime for plans 101–107 is integrated on `main` via PR #53:
 
 - plans 100–106 are `DONE`;
 - plan 107 is `IN PROGRESS`: the outbound replication runtime, protocol, and
@@ -32,8 +32,12 @@ runtime for plans 101–107 was integrated on `main` on 2026-09-07:
 
 The platform-specific topology, package, command, and route sections below
 describe current runtime behavior, except where a sentence names an open plan
-107 criterion. Corpus and performance measurements remain the evidence recorded
-by their dated research snapshots.
+107 criterion. Memory import/export, Observation/Proposal creation, and
+Device-side enrollment exist as application operations without an operator
+surface; [`future-work.md`](future-work.md) tracks them. Corpus and
+performance measurements remain the evidence recorded by their dated research
+snapshots. Moving the local SQLite stores across code versions follows
+[`local-store-upgrade.md`](local-store-upgrade.md).
 
 ## Data flow
 

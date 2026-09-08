@@ -1,7 +1,7 @@
 # Memory search and MCP
 
-> **Implementation status:** Integrated on `main` (plan 106 `DONE`,
-> 2026-09-07). Corpus measurements and verification evidence below record the
+> **Implementation status:** Integrated on `main` via PR #53 (plan 106
+> `DONE`). Corpus measurements and verification evidence below record the
 > validation run at integration time, not a continuously refreshed benchmark.
 
 Memory retrieval is specified as one authorization-first application contract
@@ -146,6 +146,13 @@ TanStack Query owns one key containing every result-shaping input. Search is
 disabled during SSR until an operator submits a query; proposal review remains
 separately SSR-hydrated.
 
+Proposals reach that review only through the Memory application's
+`recordObservation`, `createProposal`, `previewMemoryImport`, and
+`confirmMemoryImport` operations, which the local service, CLI, Web, and MCP
+do not expose yet; `exportMemory` is in the same state. A fresh local store
+therefore has an empty corpus until such a surface exists
+([`future-work.md`](future-work.md)).
+
 With the supervised engine running, CLI search is:
 
 ```sh
@@ -205,7 +212,10 @@ bun run mcp:register:codex
 bun apps/mcp/src/register.ts json /absolute/project/.mcp.json
 ```
 
-The JSON path must end in `.mcp.json` or `mcp.json`. Registration shares the
+The JSON path must end in `.mcp.json` or `mcp.json` and receives the
+`mcpServers` shape (the Claude Code project-scope and Cursor conventions);
+there is no OpenCode registration mode, and any other stdio MCP client is
+pointed at `bun run mcp` by hand. Registration shares the
 Skills projection lock, validates parent/target identity, refuses symlinks,
 bounds existing files to 1 MiB, uses an owner-only atomic temp write, preserves
 unrelated keys/servers, and is idempotent. A same-name registration with

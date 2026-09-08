@@ -1,11 +1,11 @@
 # Device replication
 
 > **Implementation status:** The replication runtime, protocol packages,
-> routes, and commands below are integrated on `main` (2026-09-07). Plan 107
+> routes, and commands below are integrated on `main` via PR #53. Plan 107
 > remains `IN PROGRESS`: server-side bundle bootstrap and blocked-stream repair
 > controls are still open (see Operations and fallback).
 
-Device replication will publish selected local facts to the connected platform.
+Device replication publishes selected local facts to the connected platform.
 It is an asynchronous publication path, not a remote-control channel and not a
 replacement for either local SQLite authority.
 
@@ -28,8 +28,12 @@ contracts; replication does not use them.
 Local mode does not construct the connector. Connected publication is enabled
 only when `AI_USAGE_PLATFORM_BASE_URL` is present. The usage engine then loads
 the owner-only Device credential from `device-credential.json` below its owned
-state directory. HTTPS is mandatory except for an explicitly permitted
-loopback HTTP origin in non-production execution. A missing/unsafe credential,
+state directory. No CLI or engine command writes that file yet: the operator
+exchanges an enrollment grant over the server's HTTP routes and stores the
+credential with `@ai-usage/identity/private-device-credential`
+([`future-work.md`](future-work.md)). HTTPS is mandatory except for an
+explicitly permitted loopback HTTP origin in non-production execution. A
+missing/unsafe credential,
 invalid endpoint, revoked Device, or unavailable server produces only a bounded
 content-free replication diagnostic and a later retry; engine startup,
 collection, Memory, search, MCP, and local reads continue.
@@ -177,11 +181,15 @@ receipts, and fact projections are protected by forced Space RLS and immutable
 receipt triggers. Back up and restore them with the complete PostgreSQL database
 and migration ledger, never as isolated tables.
 
-The existing preview/confirm manual usage merge and deterministic Memory
-export/import remain the offline and air-gapped fallback. They do not perform
-network work. A connected server-side bootstrap that maps a transferred bundle
-to the same replication fact keys, plus preview/confirm repair controls for a
-blocked stream, is not exposed yet; plan 107 therefore remains in progress.
+The existing preview/confirm manual usage merge remains the offline and
+air-gapped fallback for usage facts; it performs no network work. Memory
+export and preview/confirm import exist as Memory application operations
+(`exportMemory`, `previewMemoryImport`, `confirmMemoryImport`) that no local
+service, CLI, Web, or MCP surface exposes yet. A connected server-side
+bootstrap that maps a transferred bundle to the same replication fact keys,
+plus preview/confirm repair controls for a blocked stream, is not exposed
+either; plan 107 therefore remains in progress, and
+[`future-work.md`](future-work.md) tracks all three.
 
 Focused verification:
 

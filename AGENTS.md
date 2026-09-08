@@ -2,14 +2,18 @@
 
 `ai-usage` turns local AI coding-tool history (Claude Code, Codex, OpenCode,
 Cursor) into a usage report: a Bun workspace with a SvelteKit web app, a CLI,
-and a background usage engine. It is a local, single-operator product — no
-remote service, no provider credentials.
+and a background usage engine. It is local-first: the default composition is
+single-operator with no remote service and no provider credentials; the
+connected platform (`apps/server`, PostgreSQL 17, GitHub login, outbound Device
+replication) is an explicit opt-in that local mode never contacts.
 
 ## Read these before changing behavior
 
 - `CONTEXT.md` — the ubiquitous language (harness, collection source, source
   publication, …). Use these words; the "Avoid" lists are binding.
 - `docs/architecture.md` — data flow, process ownership, package ownership.
+- `docs/local-store-upgrade.md` — moving the local usage and Memory SQLite
+  stores across code versions (backup first; there is no downgrade path).
 - `docs/adr/README.md` — the decision index. Architecture and product
   invariants live here; check it before re-deciding anything.
 - `docs/README.md` — map of the remaining docs (living reference vs dated

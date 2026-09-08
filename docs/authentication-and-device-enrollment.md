@@ -1,8 +1,10 @@
 # Authentication and Device enrollment
 
-> **Implementation status:** Integrated on `main` (plan 104 `DONE`,
-> 2026-09-07). Connected V1 login is GitHub-only; non-GitHub login remains
-> explicitly blocked.
+> **Implementation status:** Integrated on `main` via PR #53 (plan 104
+> `DONE`). Connected V1 login is GitHub-only; non-GitHub login remains
+> explicitly blocked. The server routes exist; no CLI or engine command yet
+> performs the Device-side exchange and writes `device-credential.json`
+> (see [`future-work.md`](future-work.md)).
 
 This accepted reference defines the connected authentication, Web-session, and
 Device-enrollment slice. Authentication establishes a Person principal;
