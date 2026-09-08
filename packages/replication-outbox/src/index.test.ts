@@ -267,6 +267,93 @@ describe('SQLite replication outbox', () => {
     database.close();
   });
 
+  test('bounds a claim by canonical nodes and drains a backlog of node-heavy events', () => {
+    const { database, outbox } = createOutbox();
+    const nodes = Array.from({ length: 200 }, () => 0);
+    for (let index = 1; index <= 60; index += 1) {
+      outbox.enqueue({
+        captureContext,
+        changeKind: 'memory-item-revision-upsert',
+        enqueuedAt: instant,
+        eventId: replicationEventIdForSeed({ index, test: 'node-heavy-backlog' }),
+        factKey: `memory-item:${itemId}`,
+        payload: { ...payload(revisionOneId, index, `Nodes ${index}`), structuredContent: { nodes } },
+      });
+    }
+    expect(outbox.status()).toMatchObject({ pending: 60 });
+
+    const first = outbox.claimReady({ maximumEvents: 100, now: instant });
+    if (!first) {
+      throw new Error('expected a node-bounded claim');
+    }
+    expect(first.batch.events.length).toBeGreaterThan(1);
+    expect(first.batch.events.length).toBeLessThan(60);
+    expect(Number(first.batch.fromGenerationExclusive)).toBe(0);
+    expect(outbox.status()).toMatchObject({
+      inFlight: first.batch.events.length,
+      lastErrorCode: null,
+      pending: 60 - first.batch.events.length,
+    });
+    outbox.retry({ batch: first.batch, errorCode: 'unreachable', now: instant, random: () => 0 });
+    const retried = outbox.claimReady({ maximumEvents: 100, now: later });
+    expect(retried?.batch.batchId).toBe(first.batch.batchId);
+    if (!retried) {
+      throw new Error('expected the same prefix on retry');
+    }
+
+    let claim: typeof retried | null = retried;
+    let acknowledgedThrough = 0;
+    let cycles = 0;
+    while (claim) {
+      expect(Number(claim.batch.fromGenerationExclusive)).toBe(acknowledgedThrough);
+      expect(claim.batch.events.map(({ generation }) => Number(generation))).toEqual(
+        claim.batch.events.map((_, index) => acknowledgedThrough + index + 1),
+      );
+      outbox.acknowledge(claim.batch, ackFor(claim.batch));
+      acknowledgedThrough = Number(claim.batch.toGenerationInclusive);
+      cycles += 1;
+      claim = outbox.claimReady({ maximumEvents: 100, now: later });
+    }
+    expect(cycles).toBeGreaterThan(1);
+    expect(acknowledgedThrough).toBe(60);
+    expect(outbox.status()).toMatchObject({
+      acknowledged: 60,
+      acknowledgedThroughGeneration: 60,
+      inFlight: 0,
+      lastErrorCode: null,
+      pending: 0,
+    });
+    database.close();
+  });
+
+  test('blocks a single event whose canonical nodes cannot fit a batch instead of retrying it forever', () => {
+    const { database, outbox } = createOutbox();
+    // Enqueue accepts the event (its stored envelope stays within the visitor's node cap), while
+    // the batch envelope around it pushes the whole batch over the cap.
+    const nodes = Array.from({ length: 9965 }, () => 0);
+    outbox.enqueue({
+      captureContext,
+      changeKind: 'memory-item-revision-upsert',
+      enqueuedAt: instant,
+      eventId: replicationEventIdForSeed({ test: 'node-oversized' }),
+      factKey: `memory-item:${itemId}`,
+      payload: { ...payload(revisionOneId, 1, 'Node heavy'), structuredContent: { nodes } },
+    });
+    enqueue(outbox, '20000000-0000-4000-8000-00000000000a', revisionTwoId, 2, 'Corrected');
+    expect(outbox.claimReady({ maximumEvents: 100, now: instant })).toBeNull();
+    expect(outbox.status()).toMatchObject({
+      blocked: 1,
+      inFlight: 0,
+      lastErrorCode: 'event-oversized',
+      pending: 1,
+    });
+    expect(outbox.listHistory()).toEqual([
+      expect.objectContaining({ generation: 2, state: 'pending' }),
+      expect.objectContaining({ generation: 1, state: 'blocked' }),
+    ]);
+    database.close();
+  });
+
   test('rejects a stored identity change', () => {
     const { database, outbox } = createOutbox();
     expect(() =>

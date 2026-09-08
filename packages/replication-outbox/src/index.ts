@@ -23,6 +23,7 @@ import {
   type ReplicationEvent,
   type ReplicationEventId,
   type ReplicationPayload,
+  ReplicationProtocolError,
   type ReplicationStreamId,
   replicationAckProof,
   replicationBounds,
@@ -592,6 +593,23 @@ export const createSqliteReplicationOutbox = (database: ReplicationSqliteDatabas
       if (rows.length === 0) {
         return null;
       }
+      // Nothing else can ever be claimed ahead of an event that cannot fit a batch on its own, so
+      // retrying would loop forever. Block it visibly instead; the stream waits for the operator.
+      const blockOversized = (eventId: ReplicationEventId): void => {
+        if (
+          changes(
+            database
+              .query(
+                `UPDATE replication_outbox_events
+                 SET state = 'blocked', next_attempt_at = NULL, last_error_code = ?
+                 WHERE event_id = ? AND state = 'pending'`,
+              )
+              .run(REPLICATION_OUTBOX_OVERSIZED_EVENT_ERROR_CODE, eventId),
+          ) !== 1
+        ) {
+          throw new ReplicationOutboxError('batch-state-conflict', 'claim-block-oversized');
+        }
+      };
       // The claim is a contiguous generation prefix bounded by event count and by serialized bytes:
       // the running total of every selected event's canonical JSON, every distinct capture
       // context's canonical JSON, one separator byte each, and the envelope reserve must stay
@@ -627,21 +645,7 @@ export const createSqliteReplicationOutbox = (database: ReplicationSqliteDatabas
           canonicalByteLength(record.event) + 1 + (priorContext ? 0 : canonicalByteLength(record.captureContext) + 1);
         if (estimatedBytes + eventBytes > maximumBatchBytes) {
           if (selected.length === 0) {
-            // Nothing else can ever be claimed ahead of this event, so retrying would loop
-            // forever. Block it visibly instead; the stream waits for operator intervention.
-            if (
-              changes(
-                database
-                  .query(
-                    `UPDATE replication_outbox_events
-                     SET state = 'blocked', next_attempt_at = NULL, last_error_code = ?
-                     WHERE event_id = ? AND state = 'pending'`,
-                  )
-                  .run(REPLICATION_OUTBOX_OVERSIZED_EVENT_ERROR_CODE, record.event.eventId),
-              ) !== 1
-            ) {
-              throw new ReplicationOutboxError('batch-state-conflict', 'claim-block-oversized');
-            }
+            blockOversized(record.event.eventId);
             return null;
           }
           break;
@@ -654,7 +658,52 @@ export const createSqliteReplicationOutbox = (database: ReplicationSqliteDatabas
       if (selected.length === 0) {
         return null;
       }
-      const eventIds = selected.map(({ event }) => event.eventId);
+      // The byte estimate cannot see every protocol bound: the canonical visitor also caps nodes
+      // and depth per value, and the batch is hashed as one value. So the batch is built through
+      // the protocol and shortened from its tail until it validates, which keeps the prefix rule
+      // and therefore the batch id deterministic on retry. Only size bounds are absorbed here;
+      // any other protocol error keeps throwing.
+      const fromGenerationExclusive = parseReplicationGeneration(identity.acknowledgedThroughGeneration);
+      let batch: ReplicationBatch | null = null;
+      while (batch === null) {
+        const toGenerationInclusive = selected.at(-1)?.event.generation;
+        if (toGenerationInclusive === undefined) {
+          throw new ReplicationOutboxError('batch-state-conflict', 'claim-empty');
+        }
+        const batchContexts = new Map<CaptureContextId, CaptureContextSnapshot>();
+        for (const record of selected) {
+          batchContexts.set(record.captureContext.id, record.captureContext);
+        }
+        try {
+          batch = createReplicationBatch({
+            batchId: batchIdForEvents(
+              identity.deviceId,
+              identity.streamId,
+              selected.map(({ event }) => event.eventId),
+            ),
+            captureContexts: [...batchContexts.values()],
+            deviceId: identity.deviceId,
+            events: selected.map(({ event }) => event),
+            fromGenerationExclusive,
+            ...(identity.previousAckProof === null ? {} : { previousAckProof: identity.previousAckProof }),
+            streamId: identity.streamId,
+            toGenerationInclusive,
+          });
+        } catch (error) {
+          if (!(error instanceof ReplicationProtocolError && error.code === 'bounds-exceeded')) {
+            throw error;
+          }
+          const dropped = selected.pop();
+          if (dropped === undefined) {
+            throw new ReplicationOutboxError('batch-state-conflict', 'claim-empty');
+          }
+          if (selected.length === 0) {
+            blockOversized(dropped.event.eventId);
+            return null;
+          }
+        }
+      }
+      const eventIds = batch.events.map(({ eventId }) => eventId);
       const placeholders = eventIds.map(() => '?').join(', ');
       const changed = changes(
         database
@@ -666,24 +715,9 @@ export const createSqliteReplicationOutbox = (database: ReplicationSqliteDatabas
           )
           .run(...eventIds),
       );
-      if (changed !== selected.length) {
+      if (changed !== eventIds.length) {
         throw new ReplicationOutboxError('batch-state-conflict', 'claim-update');
       }
-      const fromGenerationExclusive = parseReplicationGeneration(identity.acknowledgedThroughGeneration);
-      const toGenerationInclusive = selected.at(-1)?.event.generation;
-      if (toGenerationInclusive === undefined) {
-        throw new ReplicationOutboxError('batch-state-conflict', 'claim-empty');
-      }
-      const batch = createReplicationBatch({
-        batchId: batchIdForEvents(identity.deviceId, identity.streamId, eventIds),
-        captureContexts: [...contexts.values()],
-        deviceId: identity.deviceId,
-        events: selected.map(({ event }) => event),
-        fromGenerationExclusive,
-        ...(identity.previousAckProof === null ? {} : { previousAckProof: identity.previousAckProof }),
-        streamId: identity.streamId,
-        toGenerationInclusive,
-      });
       return {
         attemptCount: (initialAttemptCount ?? 0) + 1,
         batch,
