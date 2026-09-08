@@ -6,6 +6,7 @@ import type { LocalIdentityKernel } from '@ai-usage/memory-sqlite/identity';
 import type { UsageEngineRuntimeHost } from '@ai-usage/usage-engine-runtime';
 import { acquireUsageEngineLock, UsageEngineWriterLockContendedError } from './engine-lock';
 import {
+  LocalMemoryRuntimeStartCancelledError,
   localMemoryIdentityDatabasePath,
   localMemoryIdentityLockPath,
   withLocalMemoryIdentityKernel,
@@ -30,7 +31,22 @@ const emptyChanges = (): AsyncIterable<never> => ({
   }),
 });
 
-const fakeRuntime = (events: string[]): UsageEngineRuntimeHost => ({
+const deferred = <Value>() => {
+  let resolve: ((value: Value | PromiseLike<Value>) => void) | undefined;
+  const promise = new Promise<Value>((resolver) => {
+    resolve = resolver;
+  });
+  return { promise, resolve: (value: Value) => resolve?.(value) };
+};
+
+/** Lets every already-runnable continuation run without advancing any gated promise. */
+const settle = async (): Promise<void> => {
+  for (let index = 0; index < 8; index += 1) {
+    await Promise.resolve();
+  }
+};
+
+const fakeRuntime = (events: string[], overrides: Partial<UsageEngineRuntimeHost> = {}): UsageEngineRuntimeHost => ({
   cancelCommand: () => Promise.reject(new Error('unused')),
   changes: emptyChanges,
   dispose: () => {
@@ -50,6 +66,7 @@ const fakeRuntime = (events: string[]): UsageEngineRuntimeHost => ({
   status: () => Promise.reject(new Error('unused')),
   waitForCommand: () => Promise.reject(new Error('unused')),
   waitForIdle: () => Promise.reject(new Error('unused')),
+  ...overrides,
 });
 
 const fakeKernel = (events: string[]): LocalIdentityKernel =>
@@ -224,6 +241,196 @@ describe('usage-engine local Memory identity ownership', () => {
 
     await expect(runtime.start()).rejects.toThrow('replication failed');
     expect(events).toEqual(['runtime-start', 'memory-service-dispose', 'memory-close', 'runtime-dispose']);
+  });
+
+  test('dispose during a pending Memory lease releases the lease it later receives and starts nothing', async () => {
+    const events: string[] = [];
+    const leaseGate = deferred<{ readonly release: () => Promise<void> }>();
+    const runtime = withLocalMemoryIdentityKernel(fakeRuntime(events), '/state/memory.sqlite', {
+      acquireLease: () => {
+        events.push('memory-lease-acquire');
+        return leaseGate.promise;
+      },
+      openKernel: () => {
+        events.push('memory-open');
+        return Promise.resolve(fakeKernel(events));
+      },
+      startReplication: () => {
+        events.push('replication-start');
+        return Promise.resolve({ dispose: () => Promise.resolve() });
+      },
+      startService: () => {
+        events.push('memory-service-start');
+        return Promise.resolve({ dispose: () => Promise.resolve() });
+      },
+    });
+
+    const started = runtime.start();
+    await settle();
+    expect(events).toEqual(['runtime-start', 'memory-lease-acquire']);
+
+    const disposed = runtime.dispose();
+    await settle();
+    // The Usage writer is not released while a Memory stage is still in flight.
+    expect(events).toEqual(['runtime-start', 'memory-lease-acquire']);
+
+    leaseGate.resolve({
+      release: () => {
+        events.push('memory-lease-release');
+        return Promise.resolve();
+      },
+    });
+    await expect(started).rejects.toBeInstanceOf(LocalMemoryRuntimeStartCancelledError);
+    await disposed;
+    expect(events).toEqual(['runtime-start', 'memory-lease-acquire', 'memory-lease-release', 'runtime-dispose']);
+  });
+
+  test('dispose during a pending Memory kernel open closes the kernel and releases the lease', async () => {
+    const events: string[] = [];
+    const kernelGate = deferred<LocalIdentityKernel>();
+    const runtime = withLocalMemoryIdentityKernel(fakeRuntime(events), '/state/memory.sqlite', {
+      acquireLease: fakeLease(events),
+      openKernel: () => {
+        events.push('memory-open');
+        return kernelGate.promise;
+      },
+      startService: () => {
+        events.push('memory-service-start');
+        return Promise.resolve({ dispose: () => Promise.resolve() });
+      },
+    });
+
+    const started = runtime.start();
+    await settle();
+    expect(events).toEqual(['runtime-start', 'memory-lease-acquire', 'memory-open']);
+
+    const disposed = runtime.dispose();
+    await settle();
+    expect(events).toEqual(['runtime-start', 'memory-lease-acquire', 'memory-open']);
+
+    kernelGate.resolve(fakeKernel(events));
+    await expect(started).rejects.toBeInstanceOf(LocalMemoryRuntimeStartCancelledError);
+    await disposed;
+    expect(events).toEqual([
+      'runtime-start',
+      'memory-lease-acquire',
+      'memory-open',
+      'memory-close',
+      'memory-lease-release',
+      'runtime-dispose',
+    ]);
+  });
+
+  test('dispose during a pending Memory service publication tears the service, kernel, and lease down', async () => {
+    const events: string[] = [];
+    const serviceGate = deferred<{ readonly dispose: () => Promise<void> }>();
+    const runtime = withLocalMemoryIdentityKernel(fakeRuntime(events), '/state/memory.sqlite', {
+      acquireLease: fakeLease(events),
+      openKernel: () => Promise.resolve(fakeKernel(events)),
+      startReplication: () => {
+        events.push('replication-start');
+        return Promise.resolve({ dispose: () => Promise.resolve() });
+      },
+      startService: () => {
+        events.push('memory-service-start');
+        return serviceGate.promise;
+      },
+    });
+
+    const started = runtime.start();
+    await settle();
+    expect(events).toEqual(['runtime-start', 'memory-lease-acquire', 'memory-service-start']);
+
+    const disposed = runtime.dispose();
+    await settle();
+    expect(events).toEqual(['runtime-start', 'memory-lease-acquire', 'memory-service-start']);
+
+    serviceGate.resolve({
+      dispose: () => {
+        events.push('memory-service-dispose');
+        return Promise.resolve();
+      },
+    });
+    await expect(started).rejects.toBeInstanceOf(LocalMemoryRuntimeStartCancelledError);
+    await disposed;
+    expect(events).toEqual([
+      'runtime-start',
+      'memory-lease-acquire',
+      'memory-service-start',
+      'memory-service-dispose',
+      'memory-close',
+      'memory-lease-release',
+      'runtime-dispose',
+    ]);
+  });
+
+  test('a retaining disposal during a pending Memory lease keeps that lease on disk once it arrives', async () => {
+    const events: string[] = [];
+    const leaseGate = deferred<{ readonly release: () => Promise<void> }>();
+    const runtime = withLocalMemoryIdentityKernel(fakeRuntime(events), '/state/memory.sqlite', {
+      acquireLease: () => {
+        events.push('memory-lease-acquire');
+        return leaseGate.promise;
+      },
+      openKernel: () => {
+        events.push('memory-open');
+        return Promise.resolve(fakeKernel(events));
+      },
+      startService: () => {
+        events.push('memory-service-start');
+        return Promise.resolve({ dispose: () => Promise.resolve() });
+      },
+    });
+
+    const started = runtime.start();
+    await settle();
+    const disposed = runtime.disposeRetainingWriterLease();
+    await settle();
+    expect(events).toEqual(['runtime-start', 'memory-lease-acquire']);
+
+    leaseGate.resolve({
+      release: () => {
+        events.push('memory-lease-release');
+        return Promise.resolve();
+      },
+    });
+    await expect(started).rejects.toBeInstanceOf(LocalMemoryRuntimeStartCancelledError);
+    await disposed;
+    // Mirrors the Usage lease: both stay on disk for the next engine's stale-owner recovery.
+    expect(events).toEqual(['runtime-start', 'memory-lease-acquire', 'runtime-dispose-retaining-lease']);
+  });
+
+  test('dispose during the Usage startup lets the Usage runtime abort at once and acquires nothing', async () => {
+    const events: string[] = [];
+    const usageStartGate = deferred<void>();
+    const runtime = withLocalMemoryIdentityKernel(
+      fakeRuntime(events, {
+        start: () => {
+          events.push('runtime-start');
+          return usageStartGate.promise;
+        },
+      }),
+      '/state/memory.sqlite',
+      {
+        acquireLease: fakeLease(events),
+        openKernel: () => {
+          events.push('memory-open');
+          return Promise.resolve(fakeKernel(events));
+        },
+      },
+    );
+
+    const started = runtime.start();
+    await settle();
+    const disposed = runtime.dispose();
+    await settle();
+    // Nothing of the Memory runtime exists yet, so the Usage runtime may abort its own startup now.
+    expect(events).toEqual(['runtime-start', 'runtime-dispose']);
+
+    usageStartGate.resolve();
+    await expect(started).rejects.toBeInstanceOf(LocalMemoryRuntimeStartCancelledError);
+    await disposed;
+    expect(events).toEqual(['runtime-start', 'runtime-dispose']);
   });
 
   test('uses one dedicated database and lock below the owned engine state directory', () => {
