@@ -150,26 +150,26 @@ if (runPostgresTests) {
       }
     }, 30_000);
 
-    test('applies the compiled ledger to ordinal 9 and verifies it cleanly', async () => {
+    test('applies the compiled ledger to ordinal 10 and verifies it cleanly', async () => {
       const { database, stop } = await startDatabase('migrations-compiled-verify');
       try {
         expect(await database.runMigrations({ mode: 'apply' })).toEqual({
           appliedIds: PLATFORM_MIGRATIONS.map(({ id }) => id),
-          currentOrdinal: 9,
+          currentOrdinal: 10,
         });
-        expect(await database.runMigrations({ mode: 'verify' })).toEqual({ appliedIds: [], currentOrdinal: 9 });
+        expect(await database.runMigrations({ mode: 'verify' })).toEqual({ appliedIds: [], currentOrdinal: 10 });
         expect(
           await database.queryRowCount(
-            "SELECT 1 FROM platform_schema_metadata WHERE key = 'foundation_schema_version' AND value = '9'",
+            "SELECT 1 FROM platform_schema_metadata WHERE key = 'foundation_schema_version' AND value = '10'",
           ),
         ).toBe(1);
         expect(
           await database.queryRowCount(
             `SELECT 1 FROM pg_trigger
-             WHERE tgname = 'authentication_provider_accounts_keep_last'
+             WHERE tgname IN ('authentication_provider_accounts_keep_last', 'authentication_provider_accounts_refuse_revoked')
                AND tgrelid = 'authentication_provider_accounts'::regclass`,
           ),
-        ).toBe(1);
+        ).toBe(2);
       } finally {
         await stop();
       }

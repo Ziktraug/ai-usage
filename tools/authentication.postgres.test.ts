@@ -1020,5 +1020,242 @@ if (runPostgresTests) {
         await cluster.stop();
       }
     }, 30_000);
+
+    test('refuses a relink that completes inside the unlink window before the identity is revoked', async () => {
+      const cluster = await startPostgresCluster('shared-authentication-unlink-window');
+      const store = await createPlatformStore({
+        connectTimeoutMs: 5000,
+        databaseUrl: cluster.url,
+        migrationMode: 'apply',
+        poolSize: 8,
+        queryTimeoutMs: 5000,
+        tlsMode: 'disable',
+      });
+      const pool = new Pool({ connectionString: cluster.url, max: 2 });
+      // Better Auth commits the provider-account deletion first and only then
+      // calls the revocation port from its after-hook; the gate holds the unlink
+      // exactly there, so a relink can be completed inside that window.
+      let revocationGate: (() => Promise<void>) | null = null;
+      const service = createSharedAuthenticationService({
+        baseUrl,
+        bootstrapFirstOwner: true,
+        clientId: 'github-client-id',
+        clientSecret: 'github-client-secret',
+        database: store.authentication.database,
+        identityStore: {
+          ...store.authentication,
+          revokeAuthenticationIdentity: async (input) => {
+            await revocationGate?.();
+            return store.authentication.revokeAuthenticationIdentity(input);
+          },
+        },
+        secrets: [{ value: 'auth-secret-with-more-than-thirty-two-characters-v1', version: 1 }],
+      });
+      const subject = { current: '789012' };
+      const oauth = createOAuthFlow(service, subject);
+      const counts = async () => {
+        const result = await pool.query<{
+          readonly accounts: number;
+          readonly active_identities: number;
+          readonly orphaned_accounts: number;
+          readonly revoked_identities: number;
+        }>(`SELECT
+          (SELECT count(*)::INTEGER FROM authentication_provider_accounts) AS accounts,
+          (SELECT count(*)::INTEGER FROM authentication_identities WHERE revoked_at IS NULL) AS active_identities,
+          (SELECT count(*)::INTEGER FROM authentication_provider_accounts account
+             INNER JOIN authentication_identities identity
+               ON identity.provider = 'github' AND identity.provider_subject = account.account_id
+             WHERE identity.revoked_at IS NOT NULL) AS orphaned_accounts,
+          (SELECT count(*)::INTEGER FROM authentication_identities WHERE revoked_at IS NOT NULL)
+            AS revoked_identities`);
+        return result.rows[0];
+      };
+      try {
+        const bootstrapSession = await oauth.complete('/api/auth/sign-in/social');
+        subject.current = '345678';
+        await oauth.complete('/api/auth/link-social', bootstrapSession);
+        subject.current = '789012';
+        const sessionB = await oauth.complete('/api/auth/sign-in/social');
+        if (!sessionB) {
+          throw new Error('Expected a Web-session cookie created through identity B.');
+        }
+        const accountC = await pool.query<{ readonly id: string }>(
+          "SELECT id FROM authentication_provider_accounts WHERE account_id = '345678'",
+        );
+        const accountCId = accountC.rows[0]?.id;
+        if (!accountCId) {
+          throw new Error("Expected C's provider account.");
+        }
+
+        let enterWindow = (): void => undefined;
+        const windowEntered = new Promise<void>((resolve) => {
+          enterWindow = resolve;
+        });
+        let releaseUnlink = (): void => undefined;
+        const unlinkReleased = new Promise<void>((resolve) => {
+          releaseUnlink = resolve;
+        });
+        revocationGate = async () => {
+          enterWindow();
+          await unlinkReleased;
+        };
+        const unlinkC = service.handle(postJson('/api/auth/unlink-account', { accountId: accountCId }, sessionB));
+        await windowEntered;
+        revocationGate = null;
+        // The deletion is committed, the identity is still active and unbound.
+        expect(await counts()).toEqual({
+          accounts: 1,
+          active_identities: 2,
+          orphaned_accounts: 0,
+          revoked_identities: 0,
+        });
+
+        subject.current = '345678';
+        const relink = await oauth.start('/api/auth/link-social', sessionB);
+        expect(relink.started.status).toBe(200);
+        if (!relink.state) {
+          throw new Error('Expected a relink state.');
+        }
+        const relinkCallback = await oauth.callback(relink.state, [
+          sessionB,
+          cookieHeader(getSetCookies(relink.started)),
+        ]);
+        expect(relinkCallback.status).toBe(400);
+        expect(await relinkCallback.json()).toMatchObject({ code: 'IDENTITY_REVOKED' });
+
+        releaseUnlink();
+        expect((await unlinkC).status).toBe(200);
+        expect(await counts()).toEqual({
+          accounts: 1,
+          active_identities: 1,
+          orphaned_accounts: 0,
+          revoked_identities: 1,
+        });
+        subject.current = '789012';
+        const sessionB2 = await oauth.complete('/api/auth/sign-in/social');
+        if (!sessionB2) {
+          throw new Error('Expected a second Web-session cookie created through identity B.');
+        }
+        await expect(service.resolveSession(new Headers({ cookie: sessionB2 }))).resolves.toMatchObject({
+          kind: 'authenticated',
+        });
+      } finally {
+        oauth.restore();
+        await pool.end().catch(() => undefined);
+        await store.close().catch(() => undefined);
+        await cluster.stop();
+      }
+    }, 30_000);
+
+    test('keeps a principal signing in beside an orphaned provider account and reports the anomaly once', async () => {
+      const cluster = await startPostgresCluster('shared-authentication-orphaned-account');
+      const store = await createPlatformStore({
+        connectTimeoutMs: 5000,
+        databaseUrl: cluster.url,
+        migrationMode: 'apply',
+        poolSize: 8,
+        queryTimeoutMs: 5000,
+        tlsMode: 'disable',
+      });
+      const pool = new Pool({ connectionString: cluster.url, max: 2 });
+      const service = createSharedAuthenticationService({
+        baseUrl,
+        bootstrapFirstOwner: true,
+        clientId: 'github-client-id',
+        clientSecret: 'github-client-secret',
+        database: store.authentication.database,
+        identityStore: store.authentication,
+        secrets: [{ value: 'auth-secret-with-more-than-thirty-two-characters-v1', version: 1 }],
+      });
+      const subject = { current: '789012' };
+      const oauth = createOAuthFlow(service, subject);
+      const counts = async () => {
+        const result = await pool.query<{
+          readonly accounts: number;
+          readonly active_identities: number;
+          readonly anomalies: number;
+          readonly sessions: number;
+        }>(`SELECT
+          (SELECT count(*)::INTEGER FROM authentication_provider_accounts) AS accounts,
+          (SELECT count(*)::INTEGER FROM authentication_identities WHERE revoked_at IS NULL) AS active_identities,
+          (SELECT count(*)::INTEGER FROM identity_events
+             WHERE event_type = 'authentication-provider-account-orphaned') AS anomalies,
+          (SELECT count(*)::INTEGER FROM web_sessions) AS sessions`);
+        return result.rows[0];
+      };
+      try {
+        const bootstrapSession = await oauth.complete('/api/auth/sign-in/social');
+        subject.current = '345678';
+        await oauth.complete('/api/auth/link-social', bootstrapSession);
+        subject.current = '789012';
+        const sessionB = await oauth.complete('/api/auth/sign-in/social');
+        if (!sessionB) {
+          throw new Error('Expected a Web-session cookie created through identity B.');
+        }
+        const accountC = await pool.query<{ readonly id: string; readonly user_id: string }>(
+          "SELECT id, user_id FROM authentication_provider_accounts WHERE account_id = '345678'",
+        );
+        const accountCRow = accountC.rows[0];
+        if (!accountCRow) {
+          throw new Error("Expected C's provider account.");
+        }
+        expect(
+          (await service.handle(postJson('/api/auth/unlink-account', { accountId: accountCRow.id }, sessionB))).status,
+        ).toBe(200);
+        expect(await counts()).toEqual({ accounts: 1, active_identities: 1, anomalies: 0, sessions: 1 });
+
+        // Plant the orphan an older race left behind: an account row whose subject
+        // maps to the revoked identity. The database guard refuses such inserts,
+        // so it is bypassed for this one statement only.
+        await pool.query(`DO $$
+          BEGIN
+            IF EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'authentication_provider_accounts_refuse_revoked') THEN
+              ALTER TABLE authentication_provider_accounts DISABLE TRIGGER authentication_provider_accounts_refuse_revoked;
+            END IF;
+          END $$`);
+        await pool.query(
+          `INSERT INTO authentication_provider_accounts
+             (issuer, account_id, provider_id, user_id, created_at, updated_at)
+           VALUES ('local:oauth:github', '345678', 'github', $1, now(), now())`,
+          [accountCRow.user_id],
+        );
+        await pool.query(`DO $$
+          BEGIN
+            IF EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'authentication_provider_accounts_refuse_revoked') THEN
+              ALTER TABLE authentication_provider_accounts ENABLE TRIGGER authentication_provider_accounts_refuse_revoked;
+            END IF;
+          END $$`);
+        expect(await counts()).toMatchObject({ accounts: 2, active_identities: 1 });
+
+        // B keeps signing in; the orphan is ignored and reported once.
+        const sessionB2 = await oauth.complete('/api/auth/sign-in/social');
+        if (!sessionB2) {
+          throw new Error('Expected a second Web-session cookie created through identity B.');
+        }
+        await expect(service.resolveSession(new Headers({ cookie: sessionB2 }))).resolves.toMatchObject({
+          kind: 'authenticated',
+        });
+        expect(await counts()).toEqual({ accounts: 2, active_identities: 1, anomalies: 1, sessions: 2 });
+
+        // A sign-in through the orphaned subject is refused and creates no session.
+        subject.current = '345678';
+        const orphanSignIn = await oauth.start('/api/auth/sign-in/social');
+        expect(orphanSignIn.started.status).toBe(200);
+        if (!orphanSignIn.state) {
+          throw new Error('Expected an OAuth state for the orphaned subject.');
+        }
+        const orphanCallback = await oauth.callback(orphanSignIn.state, [
+          cookieHeader(getSetCookies(orphanSignIn.started)),
+        ]);
+        expect(orphanCallback.headers.get('location')).not.toBe(`${baseUrl}/done`);
+        expect(getSetCookies(orphanCallback).some((value) => value.startsWith('__Host-ai-usage-session='))).toBe(false);
+        expect(await counts()).toEqual({ accounts: 2, active_identities: 1, anomalies: 1, sessions: 2 });
+      } finally {
+        oauth.restore();
+        await pool.end().catch(() => undefined);
+        await store.close().catch(() => undefined);
+        await cluster.stop();
+      }
+    }, 30_000);
   });
 }

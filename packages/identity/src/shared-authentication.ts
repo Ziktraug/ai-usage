@@ -14,23 +14,26 @@ import { getInjectedSharedAuthenticationServiceFactory } from './internal/shared
 import { withWebSessionTokenDigests } from './session-digest-adapter';
 
 /**
- * SQLSTATE raised by the PostgreSQL `authentication_provider_accounts_keep_last`
- * trigger (migration ordinal 9) when a delete would remove a principal's last
- * provider account. The trigger is what makes the invariant hold under
- * concurrent unlink requests; the application-level checks around it are only
- * fast paths, so its refusal has to surface as the same last-account response.
+ * SQLSTATEs raised by the PostgreSQL guards on `authentication_provider_accounts`:
+ * `authentication_provider_accounts_keep_last` (migration ordinal 9) when a
+ * delete would remove a principal's last provider account, and
+ * `authentication_provider_accounts_refuse_revoked` (ordinal 10) when an insert
+ * would relink an unlinked identity. The triggers are what make both invariants
+ * hold under concurrent requests; the application-level checks around them are
+ * only fast paths, so their refusals surface as the same typed responses.
  */
 const LAST_PROVIDER_ACCOUNT_SQLSTATE = 'IA001';
+const REVOKED_IDENTITY_RELINK_SQLSTATE = 'IA002';
 const MAXIMUM_ERROR_CAUSE_DEPTH = 4;
 
-const refusesLastProviderAccount = (error: unknown): boolean => {
+const hasSqlState = (error: unknown, sqlState: string): boolean => {
   let current: unknown = error;
   for (
     let depth = 0;
     depth < MAXIMUM_ERROR_CAUSE_DEPTH && typeof current === 'object' && current !== null;
     depth += 1
   ) {
-    if ('code' in current && current.code === LAST_PROVIDER_ACCOUNT_SQLSTATE) {
+    if ('code' in current && current.code === sqlState) {
       return true;
     }
     current = 'cause' in current ? current.cause : undefined;
@@ -46,32 +49,57 @@ const lastProviderAccountRefusal = (): APIError =>
     message: "You can't unlink your last account",
   });
 
-const guardAccountDeletes = <Adapter extends DBTransactionAdapter>(adapter: Adapter): Adapter => ({
+// An unlinked identity cannot be linked again; there is no relink authority yet.
+const revokedIdentityRefusal = (): APIError =>
+  new APIError('BAD_REQUEST', {
+    code: 'IDENTITY_REVOKED',
+    message: 'This identity was unlinked and cannot be linked again.',
+  });
+
+const guardAccountWrites = <Adapter extends DBTransactionAdapter>(adapter: Adapter): Adapter => ({
   ...adapter,
+  create: async <T extends Record<string, unknown>, R = T>(input: {
+    readonly data: Omit<T, 'id'>;
+    readonly forceAllowId?: boolean | undefined;
+    readonly model: string;
+    readonly select?: string[] | undefined;
+  }): Promise<R> => {
+    try {
+      return await adapter.create<T, R>(input);
+    } catch (error) {
+      throw input.model === 'account' && hasSqlState(error, REVOKED_IDENTITY_RELINK_SQLSTATE)
+        ? revokedIdentityRefusal()
+        : error;
+    }
+  },
   delete: async (input: Parameters<DBTransactionAdapter['delete']>[0]): Promise<void> => {
     try {
       await adapter.delete(input);
     } catch (error) {
-      throw input.model === 'account' && refusesLastProviderAccount(error) ? lastProviderAccountRefusal() : error;
+      throw input.model === 'account' && hasSqlState(error, LAST_PROVIDER_ACCOUNT_SQLSTATE)
+        ? lastProviderAccountRefusal()
+        : error;
     }
   },
   deleteMany: async (input: Parameters<DBTransactionAdapter['deleteMany']>[0]): Promise<number> => {
     try {
       return await adapter.deleteMany(input);
     } catch (error) {
-      throw input.model === 'account' && refusesLastProviderAccount(error) ? lastProviderAccountRefusal() : error;
+      throw input.model === 'account' && hasSqlState(error, LAST_PROVIDER_ACCOUNT_SQLSTATE)
+        ? lastProviderAccountRefusal()
+        : error;
     }
   },
 });
 
-const withLastProviderAccountRefusal =
+const withProviderAccountGuards =
   (database: DBAdapterInstance): DBAdapterInstance =>
   (options) => {
     const adapter = database(options);
     const result: DBAdapter = {
-      ...guardAccountDeletes(adapter),
-      id: `${adapter.id}-last-account-guard`,
-      transaction: (run) => adapter.transaction((transaction) => run(guardAccountDeletes(transaction))),
+      ...guardAccountWrites(adapter),
+      id: `${adapter.id}-provider-account-guards`,
+      transaction: (run) => adapter.transaction((transaction) => run(guardAccountWrites(transaction))),
     };
     return result;
   };
@@ -175,13 +203,6 @@ const revokedSessionRefusal = (): APIError =>
   new APIError('UNAUTHORIZED', {
     code: 'SESSION_EXPIRED',
     message: 'Session expired. Re-authenticate to perform this action.',
-  });
-
-// An unlinked identity cannot be linked again; there is no relink authority yet.
-const revokedIdentityRefusal = (): APIError =>
-  new APIError('BAD_REQUEST', {
-    code: 'IDENTITY_REVOKED',
-    message: 'This identity was unlinked and cannot be linked again.',
   });
 
 interface ResolvedWebSession {
@@ -367,7 +388,7 @@ export const createSharedAuthenticationService = (
     appName: 'ai-usage',
     basePath: '/api/auth',
     baseURL: baseUrl.origin,
-    database: withLastProviderAccountRefusal(withWebSessionTokenDigests(config.database)),
+    database: withProviderAccountGuards(withWebSessionTokenDigests(config.database)),
     databaseHooks: {
       account: {
         create: {

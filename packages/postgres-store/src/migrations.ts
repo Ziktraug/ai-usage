@@ -1397,6 +1397,44 @@ export const PLATFORM_MIGRATIONS: readonly PlatformMigration[] = Object.freeze([
       WHERE key = '${PLATFORM_SCHEMA_METADATA_KEY}';
     `,
   }),
+  Object.freeze({
+    id: '0010_revoked_authentication_identity_relink_guard',
+    ordinal: 10,
+    up: `
+      -- An unlinked identity cannot be linked again. Better Auth inserts the
+      -- provider account before the application revokes the identity of an
+      -- unlink, so only the database can refuse a relink atomically with the
+      -- insertion, whatever the hook ordering: the insert queues on the same
+      -- principal row lock the delete guard and the revocation take, then refuses
+      -- a subject whose identity is revoked, or is still active but already
+      -- unbound from its deleted account (an unlink whose revocation is pending).
+      CREATE OR REPLACE FUNCTION refuse_revoked_authentication_identity_relink() RETURNS trigger
+      LANGUAGE plpgsql AS $$
+      BEGIN
+        PERFORM 1 FROM authentication_principals WHERE id = NEW.user_id FOR UPDATE;
+        IF EXISTS (
+          SELECT 1
+          FROM authentication_identities identity
+          WHERE identity.provider = 'github'
+            AND identity.provider_subject = NEW.account_id
+            AND (identity.revoked_at IS NOT NULL OR identity.authentication_provider_account_id IS NULL)
+        ) THEN
+          RAISE EXCEPTION 'the provider subject maps to an unlinked authentication identity'
+            USING ERRCODE = 'IA002';
+        END IF;
+        RETURN NEW;
+      END;
+      $$;
+
+      CREATE TRIGGER authentication_provider_accounts_refuse_revoked
+        BEFORE INSERT ON authentication_provider_accounts
+        FOR EACH ROW EXECUTE FUNCTION refuse_revoked_authentication_identity_relink();
+
+      UPDATE platform_schema_metadata
+      SET value = '${PLATFORM_SCHEMA_VERSION}', updated_at = now()
+      WHERE key = '${PLATFORM_SCHEMA_METADATA_KEY}';
+    `,
+  }),
 ]);
 
 const migrationIdPattern = /^[a-z0-9][a-z0-9_]{2,127}$/u;

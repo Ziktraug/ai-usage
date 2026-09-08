@@ -13,6 +13,7 @@ describe('platform migration registry', () => {
       { id: '0007_authorized_memory_search', ordinal: 7 },
       { id: '0008_device_outbox_replication', ordinal: 8 },
       { id: '0009_last_authentication_provider_account_guard', ordinal: 9 },
+      { id: '0010_revoked_authentication_identity_relink_guard', ordinal: 10 },
     ]);
     expect(validatePlatformMigrations(PLATFORM_MIGRATIONS)).toBe(PLATFORM_MIGRATIONS);
   });

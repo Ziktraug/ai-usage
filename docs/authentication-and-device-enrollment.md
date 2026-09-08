@@ -71,7 +71,10 @@ Sessions are non-sliding with a 24-hour absolute/idle limit and 15-minute fresh
 window. Each login creates a new session. Linking forces reauthentication;
 unlinking an identity invalidates a session bound to it, and an unlinked
 identity cannot be linked again (`IDENTITY_REVOKED`, refused before any
-provider-account row is written). `POST
+provider-account row is written and, against a relink racing the unlink, by
+the database guard of migration ordinal 10). A provider account an older race
+did orphan is ignored, reported once as
+`authentication-provider-account-orphaned`, and never authenticates. `POST
 /api/session/revoke-all` and Better Auth sign-out remove sessions. Every
 cookie-authenticated application mutation also requires the configured exact
 Origin; OAuth state, PKCE, CSRF, and origin checks remain enabled.

@@ -1,5 +1,5 @@
 export const PLATFORM_SCHEMA_METADATA_KEY = 'foundation_schema_version';
-export const PLATFORM_SCHEMA_VERSION = 9;
+export const PLATFORM_SCHEMA_VERSION = 10;
 
 export interface PlatformSchemaIdentity {
   readonly metadataKey: typeof PLATFORM_SCHEMA_METADATA_KEY;

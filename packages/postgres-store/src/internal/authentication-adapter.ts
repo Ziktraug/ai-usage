@@ -60,7 +60,12 @@ const identityFailure = <Value>(
     | 'bootstrap-first-owner'
     | 'link-authentication-identity'
     | 'unlink-authentication-identity',
-  code: 'identity-conflict' | 'identity-denied' | 'identity-invalid-input' | 'identity-unavailable',
+  code:
+    | 'identity-conflict'
+    | 'identity-denied'
+    | 'identity-invalid-input'
+    | 'identity-revoked'
+    | 'identity-unavailable',
 ): IdentityServiceResult<Value> => ({ error: { code, operation }, kind: 'error' });
 
 const principal = (identityId: unknown, personId: unknown): SharedAuthenticationPrincipal => {
@@ -110,6 +115,30 @@ const recordIdentityEvent = async (
      VALUES ($1, $2, $3, 'authentication-identity', $4, $5, '{}'::JSONB)`,
     [crypto.randomUUID(), row.personal_space_id, input.eventType, input.identityId, input.recordedAt],
   );
+};
+
+const ORPHANED_PROVIDER_ACCOUNT_EVENT = 'authentication-provider-account-orphaned';
+
+/** Reports an orphaned provider account once per revoked identity so an operator can remove the row. */
+const recordOrphanedProviderAccount = async (
+  client: PoolClient,
+  identity: IdentityRow,
+  recordedAt: string,
+): Promise<void> => {
+  const identityId = parseAuthenticationIdentityId(identity.id);
+  const reported = await client.query(
+    'SELECT 1 FROM identity_events WHERE event_type = $1 AND subject_id = $2 LIMIT 1',
+    [ORPHANED_PROVIDER_ACCOUNT_EVENT, identityId],
+  );
+  if (reported.rows.length > 0) {
+    return;
+  }
+  await recordIdentityEvent(client, {
+    eventType: ORPHANED_PROVIDER_ACCOUNT_EVENT,
+    identityId,
+    personId: parsePersonId(identity.person_id),
+    recordedAt,
+  });
 };
 
 const loadProviderAccounts = async (client: PoolClient, authenticationPrincipalId: string) => {
@@ -188,12 +217,32 @@ const synchronizeInTransaction = async (
     return identityFailure('link-authentication-identity', 'identity-denied');
   }
   const identities = await loadIdentities(client, input.authenticationPrincipalId);
-  const revokedProviderSubjects = new Set(
+  const revokedIdentityBySubject = new Map(
     identities
       .filter((identity) => identity.revoked_at !== null)
-      .map((identity) => parseIdentityText(identity.provider_subject, 'providerSubject')),
+      .map((identity) => [parseIdentityText(identity.provider_subject, 'providerSubject'), identity] as const),
   );
-  if (accounts.some((account) => revokedProviderSubjects.has(account.providerSubject))) {
+  const preferredProviderSubject =
+    input.preferredProviderSubject === undefined
+      ? undefined
+      : parseIdentityText(input.preferredProviderSubject, 'providerSubject');
+  // A provider account whose subject was unlinked is an orphan (a relink that
+  // raced the revocation before the database guard of ordinal 10). It never
+  // authenticates and is reported once for cleanup, but it must not take the
+  // principal's other identities down with it.
+  const usableAccounts: typeof accounts = [];
+  for (const account of accounts) {
+    const revokedIdentity = revokedIdentityBySubject.get(account.providerSubject);
+    if (revokedIdentity) {
+      await recordOrphanedProviderAccount(client, revokedIdentity, input.observedAt);
+    } else {
+      usableAccounts.push(account);
+    }
+  }
+  if (preferredProviderSubject !== undefined && revokedIdentityBySubject.has(preferredProviderSubject)) {
+    return identityFailure('link-authentication-identity', 'identity-revoked');
+  }
+  if (usableAccounts.length === 0) {
     return identityFailure('link-authentication-identity', 'identity-denied');
   }
   const activeIdentities = identities.filter((identity) => identity.revoked_at === null);
@@ -207,14 +256,10 @@ const synchronizeInTransaction = async (
     const identityBySubject = new Map(
       activeIdentities.map((identity) => [parseIdentityText(identity.provider_subject, 'providerSubject'), identity]),
     );
-    const preferredProviderSubject =
-      input.preferredProviderSubject === undefined
-        ? undefined
-        : parseIdentityText(input.preferredProviderSubject, 'providerSubject');
     let selectedIdentity =
       preferredProviderSubject === undefined ? activeIdentities[0] : identityBySubject.get(preferredProviderSubject);
     let linkedIdentity = false;
-    for (const account of accounts) {
+    for (const account of usableAccounts) {
       const existing = identityBySubject.get(account.providerSubject);
       if (existing) {
         selectedIdentity ??= existing;
@@ -274,7 +319,7 @@ const synchronizeInTransaction = async (
      VALUES ($1, $2, $3, 'active')`,
     [personId, displayName, spaceId],
   );
-  const firstAccount = accounts[0];
+  const firstAccount = usableAccounts[0];
   if (!firstAccount) {
     return identityFailure('bootstrap-first-owner', 'identity-unavailable');
   }
@@ -382,6 +427,11 @@ export const createPlatformAuthenticationStore = (pool: Pool): PlatformAuthentic
       try {
         return await withTransaction(pool, async (client) => {
           await client.query('SELECT pg_advisory_xact_lock($1, $2)', [BOOTSTRAP_LOCK_NAMESPACE, BOOTSTRAP_LOCK_ID]);
+          // Serializes with the relink guard of ordinal 10, which locks the same
+          // principal row before inserting a provider account.
+          await client.query('SELECT 1 FROM authentication_principals WHERE id = $1 FOR UPDATE', [
+            input.authenticationPrincipalId,
+          ]);
           const identities = await loadIdentities(client, input.authenticationPrincipalId);
           const active = identities.filter((identity) => identity.revoked_at === null);
           const target = active.find(
