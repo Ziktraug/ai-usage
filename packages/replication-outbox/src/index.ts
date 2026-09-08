@@ -25,6 +25,7 @@ import {
   type ReplicationPayload,
   type ReplicationStreamId,
   replicationAckProof,
+  replicationBounds,
   replicationHash,
 } from '@ai-usage/replication-protocol';
 
@@ -140,6 +141,11 @@ export interface ClaimedReplicationBatch {
 }
 
 export interface ClaimReplicationBatchInput {
+  /**
+   * Serialized-byte budget for the claimed batch. Clamped to `replicationBounds.batchBytes`, which
+   * is also the default; a lower value only narrows the claim, never widens it.
+   */
+  readonly maximumBatchBytes?: number;
   readonly maximumEvents: number;
   readonly now: Instant;
 }
@@ -217,6 +223,20 @@ interface StoredPayloadEnvelope {
 
 const hashPattern = /^[0-9a-f]{64}$/u;
 const errorCodePattern = /^[a-z0-9][a-z0-9-]{0,127}$/u;
+
+/**
+ * Bytes reserved for the batch envelope around the events and capture contexts: batch, Device and
+ * stream ids, the generation range, the previous ACK proof, the idempotency key, the protocol
+ * version, and the JSON framing. The envelope is about 400 bytes; the reserve leaves room for wide
+ * generation numbers so the running estimate stays an upper bound of the canonical batch size.
+ */
+const batchEnvelopeReserveBytes = 1024;
+
+/** `last_error_code` recorded on an event that cannot fit a batch on its own. */
+export const REPLICATION_OUTBOX_OVERSIZED_EVENT_ERROR_CODE = 'event-oversized';
+
+const canonicalByteLength = (value: unknown): number =>
+  new TextEncoder().encode(canonicalReplicationJson(value)).byteLength;
 
 const changes = (result: unknown): number => {
   if (
@@ -550,7 +570,14 @@ export const createSqliteReplicationOutbox = (database: ReplicationSqliteDatabas
   const claimReady = (input: ClaimReplicationBatchInput): ClaimedReplicationBatch | null =>
     withImmediateTransaction(database, () => {
       const maximumEvents = Math.trunc(input.maximumEvents);
-      if (maximumEvents <= 0 || maximumEvents > 100) {
+      if (maximumEvents <= 0 || maximumEvents > replicationBounds.eventsPerBatch) {
+        throw new ReplicationOutboxError('batch-state-conflict', 'claim-limit');
+      }
+      const maximumBatchBytes = Math.min(
+        Math.trunc(input.maximumBatchBytes ?? replicationBounds.batchBytes),
+        replicationBounds.batchBytes,
+      );
+      if (!Number.isSafeInteger(maximumBatchBytes) || maximumBatchBytes <= 0) {
         throw new ReplicationOutboxError('batch-state-conflict', 'claim-limit');
       }
       const identity = ensureIdentity(database);
@@ -565,9 +592,15 @@ export const createSqliteReplicationOutbox = (database: ReplicationSqliteDatabas
       if (rows.length === 0) {
         return null;
       }
+      // The claim is a contiguous generation prefix bounded by event count and by serialized bytes:
+      // the running total of every selected event's canonical JSON, every distinct capture
+      // context's canonical JSON, one separator byte each, and the envelope reserve must stay
+      // within the budget. The same pending prefix therefore yields the same batch on retry.
       const selected: ReplicationOutboxEventRecord[] = [];
+      const contexts = new Map<CaptureContextId, CaptureContextSnapshot>();
       let expectedGeneration = identity.acknowledgedThroughGeneration + 1;
       let initialAttemptCount: number | undefined;
+      let estimatedBytes = batchEnvelopeReserveBytes;
       for (const row of rows) {
         const record = mapEventRow(row);
         if (record.event.generation !== expectedGeneration) {
@@ -583,6 +616,38 @@ export const createSqliteReplicationOutbox = (database: ReplicationSqliteDatabas
         if (record.attemptCount !== initialAttemptCount || selected.length >= maximumEvents) {
           break;
         }
+        const priorContext = contexts.get(record.captureContext.id);
+        if (
+          priorContext &&
+          canonicalReplicationJson(priorContext) !== canonicalReplicationJson(record.captureContext)
+        ) {
+          throw new ReplicationOutboxError('event-conflict', 'claim-capture-context');
+        }
+        const eventBytes =
+          canonicalByteLength(record.event) + 1 + (priorContext ? 0 : canonicalByteLength(record.captureContext) + 1);
+        if (estimatedBytes + eventBytes > maximumBatchBytes) {
+          if (selected.length === 0) {
+            // Nothing else can ever be claimed ahead of this event, so retrying would loop
+            // forever. Block it visibly instead; the stream waits for operator intervention.
+            if (
+              changes(
+                database
+                  .query(
+                    `UPDATE replication_outbox_events
+                     SET state = 'blocked', next_attempt_at = NULL, last_error_code = ?
+                     WHERE event_id = ? AND state = 'pending'`,
+                  )
+                  .run(REPLICATION_OUTBOX_OVERSIZED_EVENT_ERROR_CODE, record.event.eventId),
+              ) !== 1
+            ) {
+              throw new ReplicationOutboxError('batch-state-conflict', 'claim-block-oversized');
+            }
+            return null;
+          }
+          break;
+        }
+        estimatedBytes += eventBytes;
+        contexts.set(record.captureContext.id, record.captureContext);
         selected.push(record);
         expectedGeneration += 1;
       }
@@ -603,14 +668,6 @@ export const createSqliteReplicationOutbox = (database: ReplicationSqliteDatabas
       );
       if (changed !== selected.length) {
         throw new ReplicationOutboxError('batch-state-conflict', 'claim-update');
-      }
-      const contexts = new Map<CaptureContextId, CaptureContextSnapshot>();
-      for (const record of selected) {
-        const prior = contexts.get(record.captureContext.id);
-        if (prior && canonicalReplicationJson(prior) !== canonicalReplicationJson(record.captureContext)) {
-          throw new ReplicationOutboxError('event-conflict', 'claim-capture-context');
-        }
-        contexts.set(record.captureContext.id, record.captureContext);
       }
       const fromGenerationExclusive = parseReplicationGeneration(identity.acknowledgedThroughGeneration);
       const toGenerationInclusive = selected.at(-1)?.event.generation;

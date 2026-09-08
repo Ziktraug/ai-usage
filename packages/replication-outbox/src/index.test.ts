@@ -11,9 +11,12 @@ import type {
   SpaceId,
 } from '@ai-usage/platform-core/identity';
 import {
+  canonicalReplicationJson,
   MEMORY_REPLICATION_STREAM_ID,
   parseReplicationEventId,
   type ReplicationAck,
+  replicationBounds,
+  replicationEventIdForSeed,
 } from '@ai-usage/replication-protocol';
 import { createSqliteReplicationOutbox, ReplicationOutboxError } from '.';
 
@@ -175,6 +178,92 @@ describe('SQLite replication outbox', () => {
       expect.objectContaining({ generation: 1, state: 'acknowledged' }),
     ]);
     expect(JSON.stringify(outbox.status())).not.toContain('accepted Memory');
+    database.close();
+  });
+
+  test('bounds a claim by serialized bytes and drains a backlog of large events', () => {
+    const { database, outbox } = createOutbox();
+    const blob = 'x'.repeat(36 * 1024);
+    for (let index = 1; index <= 30; index += 1) {
+      const large = { ...payload(revisionOneId, index, `Large ${index}`), structuredContent: { blob, index } };
+      outbox.enqueue({
+        captureContext,
+        changeKind: 'memory-item-revision-upsert',
+        enqueuedAt: instant,
+        eventId: replicationEventIdForSeed({ index, test: 'large-backlog' }),
+        factKey: `memory-item:${itemId}`,
+        payload: large,
+      });
+    }
+    expect(outbox.status()).toMatchObject({ pending: 30 });
+
+    const first = outbox.claimReady({ maximumEvents: 100, now: instant });
+    if (!first) {
+      throw new Error('expected a byte-bounded claim');
+    }
+    const firstBytes = new TextEncoder().encode(canonicalReplicationJson(first.batch)).byteLength;
+    expect(firstBytes).toBeLessThanOrEqual(replicationBounds.batchBytes);
+    expect(firstBytes).toBeGreaterThan(replicationBounds.batchBytes - 2 * 40 * 1024);
+    expect(first.batch.events.length).toBeGreaterThan(1);
+    expect(first.batch.events.length).toBeLessThan(30);
+    expect(Number(first.batch.fromGenerationExclusive)).toBe(0);
+    expect(first.batch.events.map(({ generation }) => Number(generation))).toEqual(
+      first.batch.events.map((_, index) => index + 1),
+    );
+    expect(outbox.status()).toMatchObject({
+      inFlight: first.batch.events.length,
+      lastErrorCode: null,
+      pending: 30 - first.batch.events.length,
+    });
+
+    outbox.retry({ batch: first.batch, errorCode: 'unreachable', now: instant, random: () => 0 });
+    const retried = outbox.claimReady({ maximumEvents: 100, now: later });
+    expect(retried?.batch.batchId).toBe(first.batch.batchId);
+    if (!retried) {
+      throw new Error('expected the same prefix on retry');
+    }
+
+    let claim: typeof retried | null = retried;
+    let acknowledgedThrough = 0;
+    let cycles = 0;
+    while (claim) {
+      expect(Number(claim.batch.fromGenerationExclusive)).toBe(acknowledgedThrough);
+      expect(new TextEncoder().encode(canonicalReplicationJson(claim.batch)).byteLength).toBeLessThanOrEqual(
+        replicationBounds.batchBytes,
+      );
+      outbox.acknowledge(claim.batch, ackFor(claim.batch));
+      acknowledgedThrough = Number(claim.batch.toGenerationInclusive);
+      cycles += 1;
+      claim = outbox.claimReady({ maximumEvents: 100, now: later });
+    }
+    expect(cycles).toBeGreaterThan(1);
+    expect(acknowledgedThrough).toBe(30);
+    expect(outbox.status()).toMatchObject({
+      acknowledged: 30,
+      acknowledgedThroughGeneration: 30,
+      inFlight: 0,
+      lastErrorCode: null,
+      pending: 0,
+    });
+    database.close();
+  });
+
+  test('blocks a single event that cannot fit the batch budget instead of retrying it forever', () => {
+    const { database, outbox } = createOutbox();
+    enqueue(outbox, '20000000-0000-4000-8000-000000000009', revisionOneId, 1, 'Initial');
+    enqueue(outbox, '20000000-0000-4000-8000-00000000000a', revisionTwoId, 2, 'Corrected');
+    expect(outbox.claimReady({ maximumBatchBytes: 512, maximumEvents: 100, now: instant })).toBeNull();
+    expect(outbox.status()).toMatchObject({
+      blocked: 1,
+      inFlight: 0,
+      lastErrorCode: 'event-oversized',
+      pending: 1,
+    });
+    expect(outbox.listHistory()).toEqual([
+      expect.objectContaining({ generation: 2, state: 'pending' }),
+      expect.objectContaining({ generation: 1, state: 'blocked' }),
+    ]);
+    expect(outbox.claimReady({ maximumEvents: 100, now: later })).toBeNull();
     database.close();
   });
 
