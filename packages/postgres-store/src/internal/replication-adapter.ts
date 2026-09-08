@@ -469,6 +469,15 @@ const reserveEventId = async (
   );
 };
 
+type ProjectionOutcome = 'owned-by-other-device' | 'projected';
+
+/**
+ * A fact projection stays bound to the Device that first published it. The
+ * conflict target is only (space_id, fact_key) and fact keys are chosen by the
+ * client, so without the ownership fence any Device that may contribute to the
+ * Space could overwrite or tombstone another Device's projection by reusing
+ * its key. The receipt inserted here is discarded with the batch rollback.
+ */
 const insertEventAndProjection = async (
   client: PoolClient,
   batch: ReplicationBatch,
@@ -476,7 +485,7 @@ const insertEventAndProjection = async (
   context: CaptureContextSnapshot,
   owningSpaceId: SpaceId,
   appliedAt: string,
-): Promise<void> => {
+): Promise<ProjectionOutcome> => {
   await reserveEventId(client, batch, event, owningSpaceId);
   await activateSpace(client, context.spaceId);
   await client.query(
@@ -500,13 +509,12 @@ const insertEventAndProjection = async (
     ],
   );
   const status = event.changeKind.endsWith('-tombstone') ? 'tombstone' : 'active';
-  await client.query(
+  const projection = await client.query(
     `INSERT INTO replicated_fact_projections
        (space_id, fact_key, device_id, stream_id, current_event_id, current_generation,
         content_hash, change_kind, capture_context_id, project_id, status, payload, updated_at)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::JSONB, $13)
      ON CONFLICT (space_id, fact_key) DO UPDATE SET
-       device_id = EXCLUDED.device_id,
        stream_id = EXCLUDED.stream_id,
        current_event_id = EXCLUDED.current_event_id,
        current_generation = EXCLUDED.current_generation,
@@ -516,7 +524,8 @@ const insertEventAndProjection = async (
        project_id = EXCLUDED.project_id,
        status = EXCLUDED.status,
        payload = EXCLUDED.payload,
-       updated_at = EXCLUDED.updated_at`,
+       updated_at = EXCLUDED.updated_at
+     WHERE replicated_fact_projections.device_id = EXCLUDED.device_id`,
     [
       context.spaceId,
       event.factKey,
@@ -533,6 +542,7 @@ const insertEventAndProjection = async (
       appliedAt,
     ],
   );
+  return projection.rowCount === 1 ? 'projected' : 'owned-by-other-device';
 };
 
 const storeBatchReceipt = async (
@@ -611,7 +621,17 @@ const applyAuthorizedBatch = async (
     if (!context) {
       throw new PlatformStoreError('validation-failed', 'resolve-replication-event-context');
     }
-    await insertEventAndProjection(client, batch, event, context, input.authenticatedDevice.owningSpaceId, appliedAt);
+    const outcome = await insertEventAndProjection(
+      client,
+      batch,
+      event,
+      context,
+      input.authenticatedDevice.owningSpaceId,
+      appliedAt,
+    );
+    if (outcome === 'owned-by-other-device') {
+      return problem('fact-owner-conflict');
+    }
   }
   const ack = parseReplicationAck({
     acceptedThroughGeneration: batch.toGenerationInclusive,

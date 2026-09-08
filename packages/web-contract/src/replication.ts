@@ -35,6 +35,7 @@ const replicationProblemCodeSchema = picklist([
   'batch-id-conflict',
   'capture-context-forbidden',
   'event-id-conflict',
+  'fact-owner-conflict',
   'generation-gap',
   'invalid-batch',
   'overlap-conflict',

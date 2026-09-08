@@ -254,6 +254,7 @@ export type ReplicationProblemCode =
   | 'batch-id-conflict'
   | 'capture-context-forbidden'
   | 'event-id-conflict'
+  | 'fact-owner-conflict'
   | 'generation-gap'
   | 'invalid-batch'
   | 'overlap-conflict'
@@ -922,6 +923,7 @@ const problemCodes = new Set<ReplicationProblemCode>([
   'batch-id-conflict',
   'capture-context-forbidden',
   'event-id-conflict',
+  'fact-owner-conflict',
   'generation-gap',
   'invalid-batch',
   'overlap-conflict',

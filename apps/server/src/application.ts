@@ -391,6 +391,7 @@ const replicationProblemStatus = (code: ReplicationProblemCode): number => {
       return 403;
     case 'batch-id-conflict':
     case 'event-id-conflict':
+    case 'fact-owner-conflict':
     case 'generation-gap':
     case 'overlap-conflict':
       return 409;

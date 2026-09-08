@@ -71,6 +71,7 @@ if (runPostgresTests) {
         });
         const application = createPlatformApplicationHandler(config, store);
         const seenRequests: string[] = [];
+        const seenStatuses: number[] = [];
         const enroll = async (label: string) => {
           const grant = await devices.requestEnrollmentGrant({
             context: { activeSpaceId: spaceId, trustedDevice: false },
@@ -126,9 +127,11 @@ if (runPostgresTests) {
           const transport = createHttpReplicationTransport({
             baseUrl,
             credentialToken: enrollment.token,
-            fetch: (url, init) => {
+            fetch: async (url, init) => {
               seenRequests.push(url.toString());
-              return application(new Request(url, init));
+              const response = await application(new Request(url, init));
+              seenStatuses.push(response.status);
+              return response;
             },
           });
           const result = await runReplicationWorkerCycle({
@@ -138,6 +141,7 @@ if (runPostgresTests) {
           });
           expect(result).toMatchObject({ kind: 'acknowledged', publishedEvents: 1 });
           expect(outbox.status()).toMatchObject({ acknowledged: 1, inFlight: 0, pending: 0 });
+          return { context, outbox, transport };
         };
 
         const deviceA = await enroll('Offline Device A');
@@ -151,7 +155,7 @@ if (runPostgresTests) {
         ).toBe(1);
 
         const deviceB = await enroll('Online Device B');
-        await publishDevice(deviceB);
+        const publishedB = await publishDevice(deviceB);
         expect(await database.queryRowCount('SELECT 1 FROM replicated_fact_projections')).toBe(2);
         expect(
           await database.queryRowCount(
@@ -160,7 +164,48 @@ if (runPostgresTests) {
             [`device:${deviceA.device.id}`],
           ),
         ).toBe(1);
-        expect(seenRequests).toEqual([`${baseUrl}/api/replication/batches`, `${baseUrl}/api/replication/batches`]);
+
+        // Device B reuses Device A's fact key. The server answers 409
+        // fact-owner-conflict, the client classifies it as permanent, and the
+        // stream blocks visibly instead of retrying; Device A's projection is intact.
+        publishedB.outbox.enqueue({
+          captureContext: publishedB.context,
+          changeKind: 'device-fact-upsert',
+          enqueuedAt: observedAt,
+          eventId: createReplicationEventId(),
+          factKey: `device:${deviceA.device.id}`,
+          payload: {
+            deviceId: deviceB.device.id,
+            kind: 'device-fact-upsert',
+            label: 'Impersonated Device A',
+            lastSeenAt: observedAt,
+            status: 'active',
+          },
+        });
+        expect(
+          await runReplicationWorkerCycle({
+            clock: () => new Date(observedAt),
+            outbox: outboxPort(publishedB.outbox),
+            transport: publishedB.transport,
+          }),
+        ).toMatchObject({ kind: 'blocked', reason: 'fact-owner-conflict' });
+        expect(publishedB.outbox.status()).toMatchObject({
+          acknowledged: 1,
+          blocked: 1,
+          inFlight: 0,
+          lastErrorCode: 'fact-owner-conflict',
+          pending: 0,
+        });
+        expect(await database.queryRowCount('SELECT 1 FROM replicated_fact_projections')).toBe(2);
+        expect(
+          await database.queryRowCount(
+            `SELECT 1 FROM replicated_fact_projections
+             WHERE fact_key = $1 AND device_id = $2 AND status = 'active' AND payload ->> 'label' = $3`,
+            [`device:${deviceA.device.id}`, deviceA.device.id, deviceA.device.label],
+          ),
+        ).toBe(1);
+        expect(seenRequests).toEqual(Array.from({ length: 3 }, () => `${baseUrl}/api/replication/batches`));
+        expect(seenStatuses).toEqual([200, 200, 409]);
       } finally {
         for (const local of localDatabases) {
           local.close();

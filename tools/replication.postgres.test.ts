@@ -7,6 +7,7 @@ import {
   createProjectId,
   createSpaceId,
   instantNow,
+  type ProjectId,
 } from '@ai-usage/platform-core/identity';
 import { createPlatformTestingDatabase } from '@ai-usage/postgres-store/testing';
 import { createPlatformStore } from '@ai-usage/postgres-store/writer';
@@ -16,6 +17,8 @@ import {
   createReplicationEvent,
   createReplicationEventId,
   parseReplicationGeneration,
+  type ReplicationAck,
+  type ReplicationEvent,
   replicationAckProof,
   USAGE_REPLICATION_STREAM_ID,
 } from '@ai-usage/replication-protocol';
@@ -23,6 +26,45 @@ import { startPostgresCluster } from './pg-harness';
 
 const runPostgresTests = process.env.AI_USAGE_RUN_POSTGRES_TESTS === '1';
 const observedAt = instantNow(() => new Date('2026-08-30T12:00:00.000Z'));
+
+/** Creates a Person with a personal Space and enrolls one Device for them. */
+const enrollContributor = async (
+  store: Awaited<ReturnType<typeof createPlatformStore>>,
+  devices: ReturnType<typeof createDeviceEnrollmentService>,
+  displayName: string,
+) => {
+  const personId = createPersonId();
+  const personalSpaceId = createSpaceId();
+  await store.identity.createPersonalIdentity({
+    person: { displayName, id: personId, personalSpaceId, status: 'active' },
+    space: {
+      createdAt: observedAt,
+      displayName: `${displayName} space`,
+      id: personalSpaceId,
+      kind: 'personal',
+    },
+  });
+  const grant = await devices.requestEnrollmentGrant({
+    context: { activeSpaceId: personalSpaceId, trustedDevice: false },
+    label: `${displayName} laptop`,
+    principal: { kind: 'person', personId },
+  });
+  if (grant.kind !== 'success') {
+    throw new Error(`Expected Device enrollment grant for ${displayName}.`);
+  }
+  const exchanged = await devices.exchangeEnrollmentGrant(grant.value.token);
+  if (exchanged.kind !== 'success') {
+    throw new Error(`Expected Device enrollment exchange for ${displayName}.`);
+  }
+  return {
+    authenticated: {
+      authenticatedCredentialId: exchanged.value.credential.id,
+      authenticatedDevice: exchanged.value.device,
+    },
+    deviceId: exchanged.value.device.id,
+    personId,
+  };
+};
 
 if (runPostgresTests) {
   describe('PostgreSQL replication ingest', () => {
@@ -699,39 +741,7 @@ if (runPostgresTests) {
           store: store.devices,
         });
 
-        const enrollPerson = async (displayName: string) => {
-          const personId = createPersonId();
-          const personalSpaceId = createSpaceId();
-          await store.identity.createPersonalIdentity({
-            person: { displayName, id: personId, personalSpaceId, status: 'active' },
-            space: {
-              createdAt: observedAt,
-              displayName: `${displayName} space`,
-              id: personalSpaceId,
-              kind: 'personal',
-            },
-          });
-          const grant = await devices.requestEnrollmentGrant({
-            context: { activeSpaceId: personalSpaceId, trustedDevice: false },
-            label: `${displayName} laptop`,
-            principal: { kind: 'person', personId },
-          });
-          if (grant.kind !== 'success') {
-            throw new Error(`Expected Device enrollment grant for ${displayName}.`);
-          }
-          const exchanged = await devices.exchangeEnrollmentGrant(grant.value.token);
-          if (exchanged.kind !== 'success') {
-            throw new Error(`Expected Device enrollment exchange for ${displayName}.`);
-          }
-          return {
-            authenticated: {
-              authenticatedCredentialId: exchanged.value.credential.id,
-              authenticatedDevice: exchanged.value.device,
-            },
-            deviceId: exchanged.value.device.id,
-            personId,
-          };
-        };
+        const enrollPerson = (displayName: string) => enrollContributor(store, devices, displayName);
         const publishOrganizationSession = async (
           person: Awaited<ReturnType<typeof enrollPerson>>,
           projectId: typeof organizationProjectId | null,
@@ -850,6 +860,266 @@ if (runPostgresTests) {
           receiptRows: 1,
           result: { ack: { counts: { applied: 1, duplicate: 0, projected: 1, tombstoned: 0 } }, kind: 'ack' },
         });
+      } finally {
+        await database.close().catch(() => undefined);
+        await store.close().catch(() => undefined);
+        await cluster.stop();
+      }
+    }, 30_000);
+
+    test('binds a fact projection to the Device that first published it', async () => {
+      const cluster = await startPostgresCluster('replication-fact-owner');
+      const store = await createPlatformStore({
+        connectTimeoutMs: 5000,
+        databaseUrl: cluster.url,
+        migrationMode: 'apply',
+        poolSize: 8,
+        queryTimeoutMs: 5000,
+        tlsMode: 'disable',
+      });
+      const database = createPlatformTestingDatabase(cluster.url);
+      try {
+        const adminPersonId = createPersonId();
+        const adminSpaceId = createSpaceId();
+        const organizationSpaceId = createSpaceId();
+        const projectAId = createProjectId();
+        const projectBId = createProjectId();
+        await store.identity.createPersonalIdentity({
+          person: {
+            displayName: 'Fact owner organization admin',
+            id: adminPersonId,
+            personalSpaceId: adminSpaceId,
+            status: 'active',
+          },
+          space: { createdAt: observedAt, displayName: 'Fact owner admin space', id: adminSpaceId, kind: 'personal' },
+        });
+        await database.query(
+          `INSERT INTO spaces (id, kind, display_name, created_at)
+           VALUES ($1, 'organization', 'Fact owner organization', $2)`,
+          [organizationSpaceId, observedAt],
+        );
+        await store.authorization.administration.createOrganizationWithAdmin({
+          actorPersonId: adminPersonId,
+          createdAt: observedAt,
+          spaceId: organizationSpaceId,
+        });
+        for (const [id, displayName] of [
+          [projectAId, 'Fact owner project A'],
+          [projectBId, 'Fact owner project B'],
+        ] as const) {
+          await store.identity.createProject({
+            displayName,
+            id,
+            kind: 'local',
+            owningSpaceId: organizationSpaceId,
+            repositoryId: null,
+            repositorySubpath: null,
+            status: 'active',
+          });
+        }
+        const key = createDeploymentTokenKey(Buffer.alloc(32, 74).toString('base64url'), 1);
+        const devices = createDeviceEnrollmentService({
+          authorizer: store.authorization,
+          clock: () => new Date(observedAt),
+          keyRing: createDeploymentTokenKeyRing([key], 1),
+          store: store.devices,
+        });
+        const grantCollaborator = (personId: ReturnType<typeof createPersonId>, projectId: ProjectId) =>
+          store.authorization.administration.grantProjectAccess({
+            actorPersonId: adminPersonId,
+            expiresAt: null,
+            grantedAt: observedAt,
+            grantId: crypto.randomUUID(),
+            projectId,
+            role: 'collaborator',
+            spaceId: organizationSpaceId,
+            subject: { kind: 'person', personId },
+          });
+        const publisher = await enrollContributor(store, devices, 'Fact publisher');
+        await grantCollaborator(publisher.personId, projectAId);
+        await grantCollaborator(publisher.personId, projectBId);
+        const contributor = await enrollContributor(store, devices, 'Project B contributor');
+        await grantCollaborator(contributor.personId, projectBId);
+
+        type Contributor = Awaited<ReturnType<typeof enrollContributor>>;
+        const factKey = 'usage-session:shared-fact-key';
+        const projectContext = (person: Contributor, projectId: ProjectId) => ({
+          deviceId: person.deviceId,
+          id: createCaptureContextId(),
+          personId: person.personId,
+          projectId,
+          scmAccountId: null,
+          scmInstallationId: null,
+          source: 'project-rule' as const,
+          spaceId: organizationSpaceId,
+        });
+        const sessionUpsert = (
+          context: ReturnType<typeof projectContext>,
+          generation: number,
+          sessionName: string,
+          key = factKey,
+        ): ReplicationEvent =>
+          createReplicationEvent({
+            captureContextId: context.id,
+            changeKind: 'usage-session-upsert',
+            eventId: createReplicationEventId(),
+            factKey: key,
+            generation: parseReplicationGeneration(generation),
+            payload: {
+              harness: 'codex',
+              kind: 'usage-session-upsert',
+              model: 'gpt-5',
+              observedAt,
+              projectId: context.projectId,
+              sourceFingerprint: 'e'.repeat(64),
+              sourceSessionId: sessionName,
+              status: 'active',
+              tokenTotal: 10 * generation,
+            },
+          });
+        const sessionTombstone = (context: ReturnType<typeof projectContext>, generation: number): ReplicationEvent =>
+          createReplicationEvent({
+            captureContextId: context.id,
+            changeKind: 'usage-session-tombstone',
+            eventId: createReplicationEventId(),
+            factKey,
+            generation: parseReplicationGeneration(generation),
+            payload: { kind: 'usage-session-tombstone', reasonCode: 'source-deleted', tombstonedAt: observedAt },
+          });
+        const publish = (
+          person: Contributor,
+          context: ReturnType<typeof projectContext>,
+          event: ReplicationEvent,
+          previousAck?: ReplicationAck,
+        ) =>
+          store.replication.applyBatch({
+            ...person.authenticated,
+            batch: createReplicationBatch({
+              batchId: createReplicationBatchId(),
+              captureContexts: [context],
+              deviceId: person.deviceId,
+              events: [event],
+              fromGenerationExclusive: parseReplicationGeneration(event.generation - 1),
+              ...(previousAck === undefined ? {} : { previousAckProof: replicationAckProof(previousAck) }),
+              streamId: USAGE_REPLICATION_STREAM_ID,
+              toGenerationInclusive: event.generation,
+            }),
+          });
+        const projectionRows = (
+          deviceId: Contributor['deviceId'],
+          projectId: ProjectId,
+          event: ReplicationEvent,
+          status: 'active' | 'tombstone',
+        ) =>
+          database.queryRowCountInSpace(
+            organizationSpaceId,
+            `SELECT 1 FROM replicated_fact_projections
+             WHERE fact_key = $1 AND device_id = $2 AND project_id = $3 AND current_event_id = $4
+               AND status = $5 AND content_hash = $6 AND payload = $7::JSONB`,
+            [factKey, deviceId, projectId, event.eventId, status, event.contentHash, JSON.stringify(event.payload)],
+          );
+        const deviceRows = async (deviceId: Contributor['deviceId']) => ({
+          batchReceipts: await database.queryRowCount('SELECT 1 FROM replication_batch_receipts WHERE device_id = $1', [
+            deviceId,
+          ]),
+          eventIdentities: await database.queryRowCount(
+            'SELECT 1 FROM replication_event_identities WHERE device_id = $1',
+            [deviceId],
+          ),
+          eventReceipts: await database.queryRowCount('SELECT 1 FROM replication_event_receipts WHERE device_id = $1', [
+            deviceId,
+          ]),
+          streamStates: await database.queryRowCount('SELECT 1 FROM replication_stream_states WHERE device_id = $1', [
+            deviceId,
+          ]),
+        });
+
+        const publisherContextA = projectContext(publisher, projectAId);
+        const firstEvent = sessionUpsert(publisherContextA, 1, 'publisher-project-a');
+        const first = await publish(publisher, publisherContextA, firstEvent);
+        expect(first).toMatchObject({
+          ack: { counts: { applied: 1, duplicate: 0, projected: 1, tombstoned: 0 } },
+          kind: 'ack',
+        });
+        if (first.kind !== 'ack') {
+          throw new Error('Expected the first fact-owner ACK.');
+        }
+        expect(await projectionRows(publisher.deviceId, projectAId, firstEvent, 'active')).toBe(1);
+
+        // Another Device with contribution authority in the same Space (Project B
+        // collaborator) reuses the publisher's fact key: neither an upsert nor a
+        // tombstone may touch the projection, and the rejected batches leave no
+        // receipt, identity, context, or stream state behind.
+        const contributorContextB = projectContext(contributor, projectBId);
+        expect(
+          await publish(contributor, contributorContextB, sessionUpsert(contributorContextB, 1, 'contributor-b')),
+        ).toEqual({ kind: 'problem', problem: { code: 'fact-owner-conflict' } });
+        expect(await publish(contributor, contributorContextB, sessionTombstone(contributorContextB, 1))).toEqual({
+          kind: 'problem',
+          problem: { code: 'fact-owner-conflict' },
+        });
+        expect(await projectionRows(publisher.deviceId, projectAId, firstEvent, 'active')).toBe(1);
+        expect(await deviceRows(contributor.deviceId)).toEqual({
+          batchReceipts: 0,
+          eventIdentities: 0,
+          eventReceipts: 0,
+          streamStates: 0,
+        });
+        expect(
+          await database.queryRowCountInSpace(organizationSpaceId, 'SELECT 1 FROM capture_contexts WHERE id = $1', [
+            contributorContextB.id,
+          ]),
+        ).toBe(0);
+        expect(
+          await database.queryRowCountInSpace(organizationSpaceId, 'SELECT 1 FROM replicated_fact_projections'),
+        ).toBe(1);
+
+        // The contributor's generation was not advanced server-side: its own
+        // fact still publishes at generation 1 through the same context.
+        expect(
+          await publish(
+            contributor,
+            contributorContextB,
+            sessionUpsert(contributorContextB, 1, 'contributor-own', 'usage-session:contributor-own'),
+          ),
+        ).toMatchObject({
+          ack: { acceptedThroughGeneration: 1, counts: { applied: 1, duplicate: 0, projected: 1, tombstoned: 0 } },
+          kind: 'ack',
+        });
+
+        // The owning Device re-assigns the same fact to Project B, then tombstones it.
+        const publisherContextB = projectContext(publisher, projectBId);
+        const reassigned = sessionUpsert(publisherContextB, 2, 'publisher-project-b');
+        const second = await publish(publisher, publisherContextB, reassigned, first.ack);
+        expect(second).toMatchObject({
+          ack: { counts: { applied: 1, duplicate: 0, projected: 1, tombstoned: 0 } },
+          kind: 'ack',
+        });
+        if (second.kind !== 'ack') {
+          throw new Error('Expected the re-assignment ACK.');
+        }
+        expect(await projectionRows(publisher.deviceId, projectBId, reassigned, 'active')).toBe(1);
+
+        const tombstone = sessionTombstone(publisherContextB, 3);
+        expect(await publish(publisher, publisherContextB, tombstone, second.ack)).toMatchObject({
+          ack: { counts: { applied: 1, duplicate: 0, projected: 1, tombstoned: 1 } },
+          kind: 'ack',
+        });
+        expect(await projectionRows(publisher.deviceId, projectBId, tombstone, 'tombstone')).toBe(1);
+        expect(
+          await database.queryRowCountInSpace(
+            organizationSpaceId,
+            'SELECT 1 FROM replication_event_receipts WHERE fact_key = $1 AND device_id = $2',
+            [factKey, publisher.deviceId],
+          ),
+        ).toBe(3);
+        expect(
+          await database.queryRowCountInSpace(
+            organizationSpaceId,
+            'SELECT 1 FROM replication_event_receipts WHERE fact_key = $1',
+            [factKey],
+          ),
+        ).toBe(3);
       } finally {
         await database.close().catch(() => undefined);
         await store.close().catch(() => undefined);
